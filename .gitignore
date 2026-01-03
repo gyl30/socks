@@ -1,0 +1,28 @@
+# Prerequisites
+*.d
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Fortran module files
+*.mod *.smod
+
+# Executables
+*.exe
+*.out
+build
+compile_commands.json
+.cache
+.idea
+.ccls-cache
+.vscode
+.tasks
+all
+1
