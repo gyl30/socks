@@ -17,9 +17,8 @@ find_package(Boost 1.85.0)
 include_directories(${Boost_INCLUDE_DIRS})
 message(STATUS "Found Boost:    V${Boost_VERSION} (in ${Boost_DIR})")
 
-find_package(fmt 10 REQUIRED)
 add_executable(socks main.cpp log.cpp)
 
 target_include_directories(socks PRIVATE ${Boost_INCLUDE_DIRS} third/spdlog/include)
 
-target_link_libraries(socks PRIVATE ${Boost_LIBRARIES} fmt::fmt)
+target_link_libraries(socks PRIVATE ${Boost_LIBRARIES})
