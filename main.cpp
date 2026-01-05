@@ -60,7 +60,7 @@ int main(int argc, char** argv)
             std::string r_port = argv[3];
             std::uint16_t l_port = std::stoi(argv[4]);
 
-            mux::LocalClient client(pool.get_io_context(), r_ip, r_port, l_port);
+            mux::LocalClient client(pool, r_ip, r_port, l_port);
             client.start();
 
             pool.run();

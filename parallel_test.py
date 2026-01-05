@@ -10,7 +10,7 @@ import sys
 SOCKS_HOST = '127.0.0.1'
 SOCKS_PORT = 1080
 ECHO_SERVER_PORT = 8888
-CONCURRENCY = 5000        # 并发线程数
+CONCURRENCY = 100        # 并发线程数
 DATA_SIZE = 1024 * 100   # 每个线程发送的数据量 (10KB)
 
 # 统计
