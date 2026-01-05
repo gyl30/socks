@@ -14,47 +14,51 @@
 namespace mux
 {
 
-class RemoteSession : public std::enable_shared_from_this<RemoteSession>
+class remote_session : public std::enable_shared_from_this<remote_session>
 {
    public:
-    RemoteSession(std::shared_ptr<MuxTunnel> tunnel, std::uint32_t stream_id, boost::asio::any_io_executor ex)
+    remote_session(std::shared_ptr<mux_tunnel> tunnel, std::uint32_t stream_id, boost::asio::any_io_executor ex)
         : tunnel_(tunnel), stream_id_(stream_id), executor_(ex), resolver_(ex)
     {
     }
 
-    boost::asio::awaitable<void> start(std::vector<std::uint8_t> syn_data)
+    [[nodiscard]] boost::asio::awaitable<void> start(std::vector<std::uint8_t> syn_data)
     {
         auto self = shared_from_this();
-        syn_payload req;
-        if (!syn_payload::decode(syn_data.data(), syn_data.size(), req))
+        SynPayload req;
+        if (!SynPayload::decode(syn_data.data(), syn_data.size(), req))
         {
-            LOG_WARN("RemoteSession decode syn payload failed");
+            LOG_WARN("remote_session decode syn payload failed");
             co_return;
         }
 
-        LOG_INFO("session {} req: cmd={} target={}:{}", stream_id_, req.socks_cmd, req.addr, req.port);
+        LOG_INFO("session {} req cmd {} target {}:{}", stream_id_, req.socks_cmd, req.addr, req.port);
 
         stream_ = tunnel_->accept_stream(stream_id_);
-        if (!stream_)
+        if (stream_ == nullptr)
         {
-            LOG_WARN("RemoteSession accept_stream failed or tunnel closed");
+            LOG_WARN("remote_session accept_stream failed or tunnel closed");
             co_return;
         }
 
         if (req.socks_cmd == 0x01)
+        {
             co_await do_connect(req.addr, req.port);
+        }
         else if (req.socks_cmd == 0x03)
+        {
             co_await do_udp_associate(req.addr, req.port);
+        }
         else
         {
-            LOG_WARN("RemoteSession unknown cmd {}", req.socks_cmd);
+            LOG_WARN("remote_session unknown cmd {}", req.socks_cmd);
             co_await send_ack(0x07, "0.0.0.0", 0);
             co_await stream_->close();
         }
     }
 
    private:
-    boost::asio::awaitable<void> do_connect(const std::string& host, std::uint16_t port)
+    [[nodiscard]] boost::asio::awaitable<void> do_connect(const std::string& host, std::uint16_t port)
     {
         auto tcp_socket = std::make_shared<boost::asio::ip::tcp::socket>(executor_);
         bool connected = false;
@@ -82,7 +86,7 @@ class RemoteSession : public std::enable_shared_from_this<RemoteSession>
 
         if (!connected)
         {
-            LOG_WARN("session {} connect failed: {}", stream_id_, error_msg);
+            LOG_WARN("session {} connect failed {}", stream_id_, error_msg);
             co_await send_ack(0x04, "0.0.0.0", 0);
             co_await stream_->close();
             co_return;
@@ -98,17 +102,19 @@ class RemoteSession : public std::enable_shared_from_this<RemoteSession>
         co_await stream_->close();
     }
 
-    boost::asio::awaitable<void> send_ack(std::uint8_t rep, std::string addr, std::uint16_t port)
+    [[nodiscard]] boost::asio::awaitable<void> send_ack(std::uint8_t rep, std::string addr, std::uint16_t port)
     {
-        ack_payload ack{rep, addr, port};
+        AckPayload ack{rep, addr, port};
         auto buf = ack.encode();
-        frame_header h{stream_id_, (uint16_t)buf.size(), CMD_ACK};
+        FrameHeader h{stream_id_, static_cast<std::uint16_t>(buf.size()), CMD_ACK};
         auto ec = co_await tunnel_->send_frame(h, std::move(buf));
         if (ec)
-            LOG_WARN("send_ack failed: {}", ec.message());
+        {
+            LOG_WARN("send_ack failed {}", ec.message());
+        }
     }
 
-    boost::asio::awaitable<void> transfer_tcp_to_stream(std::shared_ptr<boost::asio::ip::tcp::socket> sock)
+    [[nodiscard]] boost::asio::awaitable<void> transfer_tcp_to_stream(std::shared_ptr<boost::asio::ip::tcp::socket> sock)
     {
         std::vector<std::uint8_t> data(16384);
         while (true)
@@ -117,14 +123,16 @@ class RemoteSession : public std::enable_shared_from_this<RemoteSession>
             if (ec)
             {
                 if (ec != boost::asio::error::eof && ec != boost::asio::error::operation_aborted)
-                    LOG_WARN("transfer_tcp_to_stream read error: {}", ec.message());
+                {
+                    LOG_WARN("transfer_tcp_to_stream read error {}", ec.message());
+                }
                 break;
             }
 
             data.resize(n);
             if (auto e = co_await stream_->send_data(std::move(data)))
             {
-                LOG_WARN("transfer_tcp_to_stream send error: {}", e.message());
+                LOG_WARN("transfer_tcp_to_stream send error {}", e.message());
                 break;
             }
 
@@ -132,7 +140,7 @@ class RemoteSession : public std::enable_shared_from_this<RemoteSession>
         }
     }
 
-    boost::asio::awaitable<void> transfer_stream_to_tcp(std::shared_ptr<boost::asio::ip::tcp::socket> sock)
+    [[nodiscard]] boost::asio::awaitable<void> transfer_stream_to_tcp(std::shared_ptr<boost::asio::ip::tcp::socket> sock)
     {
         while (true)
         {
@@ -140,22 +148,26 @@ class RemoteSession : public std::enable_shared_from_this<RemoteSession>
             if (ec)
             {
                 if (ec != boost::asio::experimental::error::channel_closed)
-                    LOG_WARN("transfer_stream_to_tcp read error: {}", ec.message());
+                {
+                    LOG_WARN("transfer_stream_to_tcp read error {}", ec.message());
+                }
                 break;
             }
             if (data.empty())
+            {
                 break;
+            }
 
             auto [e2, n] = co_await boost::asio::async_write(*sock, boost::asio::buffer(data), boost::asio::as_tuple(boost::asio::use_awaitable));
             if (e2)
             {
-                LOG_WARN("transfer_stream_to_tcp write error: {}", e2.message());
+                LOG_WARN("transfer_stream_to_tcp write error {}", e2.message());
                 break;
             }
         }
     }
 
-    boost::asio::awaitable<void> do_udp_associate(const std::string&, std::uint16_t)
+    [[nodiscard]] boost::asio::awaitable<void> do_udp_associate(const std::string&, std::uint16_t)
     {
         auto udp_socket = std::make_shared<boost::asio::ip::udp::socket>(executor_, boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0));
         co_await send_ack(0x00, "0.0.0.0", udp_socket->local_endpoint().port());
@@ -167,7 +179,7 @@ class RemoteSession : public std::enable_shared_from_this<RemoteSession>
         co_await stream_->close();
     }
 
-    boost::asio::awaitable<void> transfer_stream_to_udp(std::shared_ptr<boost::asio::ip::udp::socket> udp_sock)
+    [[nodiscard]] boost::asio::awaitable<void> transfer_stream_to_udp(std::shared_ptr<boost::asio::ip::udp::socket> udp_sock)
     {
         while (true)
         {
@@ -175,31 +187,37 @@ class RemoteSession : public std::enable_shared_from_this<RemoteSession>
             if (ec)
             {
                 if (ec != boost::asio::experimental::error::channel_closed)
-                    LOG_WARN("transfer_stream_to_udp read error: {}", ec.message());
+                {
+                    LOG_WARN("transfer_stream_to_udp read error {}", ec.message());
+                }
                 break;
             }
             if (data.empty())
+            {
                 break;
+            }
 
             if (data.size() < 10 || data[2] != 0x00)
+            {
                 continue;
+            }
 
             std::size_t header_len = 0;
             boost::asio::ip::udp::endpoint target;
-            std::uint8_t atyp = data[3];
+            const std::uint8_t atyp = data[3];
 
             if (atyp == 0x01)
             {
                 boost::asio::ip::address_v4::bytes_type b;
                 std::memcpy(b.data(), &data[4], 4);
-                std::uint16_t p;
+                std::uint16_t p = 0;
                 std::memcpy(&p, &data[8], 2);
                 target = boost::asio::ip::udp::endpoint(boost::asio::ip::address_v4(b), ntohs(p));
                 header_len = 10;
             }
             else
             {
-                LOG_WARN("transfer_stream_to_udp unsupported atyp: {}", atyp);
+                LOG_WARN("transfer_stream_to_udp unsupported atyp {}", atyp);
                 continue;
             }
 
@@ -207,13 +225,13 @@ class RemoteSession : public std::enable_shared_from_this<RemoteSession>
                 boost::asio::buffer(data.data() + header_len, data.size() - header_len), target, boost::asio::as_tuple(boost::asio::use_awaitable));
             if (e2)
             {
-                LOG_WARN("transfer_stream_to_udp send error: {}", e2.message());
+                LOG_WARN("transfer_stream_to_udp send error {}", e2.message());
                 break;
             }
         }
     }
 
-    boost::asio::awaitable<void> transfer_udp_to_stream(std::shared_ptr<boost::asio::ip::udp::socket> udp_sock)
+    [[nodiscard]] boost::asio::awaitable<void> transfer_udp_to_stream(std::shared_ptr<boost::asio::ip::udp::socket> udp_sock)
     {
         std::vector<std::uint8_t> buf(65536);
         boost::asio::ip::udp::endpoint sender;
@@ -224,43 +242,45 @@ class RemoteSession : public std::enable_shared_from_this<RemoteSession>
             if (ec)
             {
                 if (ec != boost::asio::error::operation_aborted)
-                    LOG_WARN("transfer_udp_to_stream recv error: {}", ec.message());
+                {
+                    LOG_WARN("transfer_udp_to_stream recv error {}", ec.message());
+                }
                 break;
             }
 
             std::vector<std::uint8_t> packet;
             packet.reserve(len + 10);
-            packet.push_back(0);
-            packet.push_back(0);
-            packet.push_back(0);
-            packet.push_back(0x01);
+            packet.push_back(0);       // RSV
+            packet.push_back(0);       // RSV
+            packet.push_back(0);       // FRAG
+            packet.push_back(0x01);    // ATYP IPv4
             auto b = sender.address().to_v4().to_bytes();
             packet.insert(packet.end(), b.begin(), b.end());
-            std::uint16_t p = htons(sender.port());
-            const std::uint8_t* pp = reinterpret_cast<const std::uint8_t*>(&p);
+            const std::uint16_t p = htons(sender.port());
+            const auto* pp = reinterpret_cast<const std::uint8_t*>(&p);
             packet.push_back(pp[0]);
             packet.push_back(pp[1]);
             packet.insert(packet.end(), buf.begin(), buf.begin() + len);
 
             if (auto e = co_await stream_->send_data(std::move(packet)))
             {
-                LOG_WARN("transfer_udp_to_stream send error: {}", e.message());
+                LOG_WARN("transfer_udp_to_stream send error {}", e.message());
                 break;
             }
         }
     }
 
-    std::shared_ptr<MuxTunnel> tunnel_;
-    std::shared_ptr<MuxStream> stream_;
+    std::shared_ptr<mux_tunnel> tunnel_;
+    std::shared_ptr<mux_stream> stream_;
     std::uint32_t stream_id_;
     boost::asio::any_io_executor executor_;
     boost::asio::ip::tcp::resolver resolver_;
 };
 
-class RemoteServer
+class remote_server
 {
    public:
-    RemoteServer(io_context_pool& pool, std::uint16_t port)
+    remote_server(io_context_pool& pool, std::uint16_t port)
         : pool_(pool), acceptor_(pool.get_io_context(), boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v6(), port))
     {
     }
@@ -272,25 +292,24 @@ class RemoteServer
     }
 
    private:
-    boost::asio::awaitable<void> accept_loop()
+    [[nodiscard]] boost::asio::awaitable<void> accept_loop()
     {
         while (true)
         {
             boost::asio::ip::tcp::socket socket(acceptor_.get_executor());
-
             auto [ec] = co_await acceptor_.async_accept(socket, boost::asio::as_tuple(boost::asio::use_awaitable));
             if (ec)
             {
-                LOG_WARN("server accept failed: {}", ec.message());
+                LOG_WARN("server accept failed {}", ec.message());
                 continue;
             }
 
-            auto tunnel = std::make_shared<MuxTunnel>(std::move(socket));
+            auto tunnel = std::make_shared<mux_tunnel>(std::move(socket));
             tunnel->set_syn_handler(
                 [this, tunnel](std::uint32_t stream_id, std::vector<std::uint8_t> payload) -> boost::asio::awaitable<void>
                 {
                     auto& session_ctx = pool_.get_io_context();
-                    auto session = std::make_shared<RemoteSession>(tunnel, stream_id, session_ctx.get_executor());
+                    auto session = std::make_shared<remote_session>(tunnel, stream_id, session_ctx.get_executor());
                     boost::asio::co_spawn(
                         session_ctx, [session, p = std::move(payload)]() mutable { return session->start(std::move(p)); }, boost::asio::detached);
                     co_return;
