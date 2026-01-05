@@ -10,9 +10,9 @@
 
 void print_usage(const char* prog)
 {
-    std::cout << "Usage:\n";
-    std::cout << "  Run as Local Client: " << prog << " -c <remote_ip> <remote_port> <local_port>\n";
-    std::cout << "  Run as Remote Server: " << prog << " -s <bind_port>\n";
+    std::cout << "usage:\n";
+    std::cout << "  run as local client " << prog << " -c <remote_ip> <remote_port> <local_port>\n";
+    std::cout << "  run as remote server " << prog << " -s <bind_port>\n";
 }
 
 int main(int argc, char** argv)
@@ -28,7 +28,7 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    std::string mode = argv[1];
+    const std::string mode = argv[1];
 
     try
     {
@@ -42,9 +42,9 @@ int main(int argc, char** argv)
                 print_usage(argv[0]);
                 return 1;
             }
-            std::uint16_t port = std::stoi(argv[2]);
+            std::uint16_t port = static_cast<std::uint16_t>(std::stoi(argv[2]));
 
-            mux::RemoteServer server(pool, port);
+            mux::remote_server server(pool, port);
             server.start();
 
             pool.run();
@@ -58,9 +58,9 @@ int main(int argc, char** argv)
             }
             std::string r_ip = argv[2];
             std::string r_port = argv[3];
-            std::uint16_t l_port = std::stoi(argv[4]);
+            std::uint16_t l_port = static_cast<std::uint16_t>(std::stoi(argv[4]));
 
-            mux::LocalClient client(pool, r_ip, r_port, l_port);
+            mux::local_client client(pool, r_ip, r_port, l_port);
             client.start();
 
             pool.run();
@@ -73,7 +73,7 @@ int main(int argc, char** argv)
     }
     catch (const std::exception& e)
     {
-        LOG_ERROR("Fatal: {}", e.what());
+        LOG_ERROR("fatal {}", e.what());
         return 1;
     }
 

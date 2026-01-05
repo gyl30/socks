@@ -5,6 +5,8 @@
 #include <vector>
 #include <memory>
 #include <thread>
+#include <atomic>
+#include <stdexcept>
 #include "log.h"
 
 class io_context_pool
@@ -52,16 +54,16 @@ class io_context_pool
         }
     }
 
-    boost::asio::io_context& get_io_context()
+    [[nodiscard]] boost::asio::io_context& get_io_context()
     {
-        std::size_t index = next_io_context_.fetch_add(1, std::memory_order_relaxed) % io_contexts_.size();
+        const std::size_t index = next_io_context_.fetch_add(1, std::memory_order_relaxed) % io_contexts_.size();
         return *io_contexts_[index];
     }
 
    private:
-    std::vector<std::shared_ptr<boost::asio::io_context>> io_contexts_;
-    std::vector<std::shared_ptr<boost::asio::executor_work_guard<boost::asio::io_context::executor_type>>> work_;
-    std::atomic<std::size_t> next_io_context_;
+    std::vector<std::shared_ptr<boost::asio::io_context>> io_contexts_ = {};
+    std::vector<std::shared_ptr<boost::asio::executor_work_guard<boost::asio::io_context::executor_type>>> work_ = {};
+    std::atomic<std::size_t> next_io_context_ = {0};
 };
 
 #endif

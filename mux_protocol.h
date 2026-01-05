@@ -22,7 +22,7 @@ constexpr std::uint8_t CMD_RST = 0x05;
 constexpr std::size_t HEADER_SIZE = 7;
 constexpr std::size_t MAX_PAYLOAD = 16384;
 
-struct frame_header
+struct FrameHeader
 {
     std::uint32_t stream_id;
     std::uint16_t length;
@@ -30,20 +30,20 @@ struct frame_header
 
     void encode(std::uint8_t* buf) const
     {
-        buf[0] = (stream_id >> 24) & 0xFF;
-        buf[1] = (stream_id >> 16) & 0xFF;
-        buf[2] = (stream_id >> 8) & 0xFF;
-        buf[3] = (stream_id)&0xFF;
+        buf[0] = static_cast<std::uint8_t>((stream_id >> 24) & 0xFF);
+        buf[1] = static_cast<std::uint8_t>((stream_id >> 16) & 0xFF);
+        buf[2] = static_cast<std::uint8_t>((stream_id >> 8) & 0xFF);
+        buf[3] = static_cast<std::uint8_t>(stream_id & 0xFF);
 
-        buf[4] = (length >> 8) & 0xFF;
-        buf[5] = (length)&0xFF;
+        buf[4] = static_cast<std::uint8_t>((length >> 8) & 0xFF);
+        buf[5] = static_cast<std::uint8_t>(length & 0xFF);
 
         buf[6] = command;
     }
 
-    static frame_header decode(const std::uint8_t* buf)
+    [[nodiscard]] static FrameHeader decode(const std::uint8_t* buf)
     {
-        frame_header h;
+        FrameHeader h;
         h.stream_id = (static_cast<std::uint32_t>(buf[0]) << 24) | (static_cast<std::uint32_t>(buf[1]) << 16) |
                       (static_cast<std::uint32_t>(buf[2]) << 8) | (static_cast<std::uint32_t>(buf[3]));
 
@@ -54,42 +54,45 @@ struct frame_header
     }
 };
 
-struct syn_payload
+struct SynPayload
 {
     std::uint8_t socks_cmd;
     std::string addr;
     std::uint16_t port;
 
-    std::vector<std::uint8_t> encode() const
+    [[nodiscard]] std::vector<std::uint8_t> encode() const
     {
         std::vector<std::uint8_t> buf;
         buf.push_back(socks_cmd);
         if (addr.size() > 255)
-
+        {
             buf.push_back(static_cast<std::uint8_t>(255));
+        }
         else
+        {
             buf.push_back(static_cast<std::uint8_t>(addr.size()));
+        }
 
-        std::size_t copy_len = std::min(addr.size(), std::size_t(255));
+        const std::size_t copy_len = std::min(addr.size(), std::size_t(255));
         buf.insert(buf.end(), addr.begin(), addr.begin() + copy_len);
 
-        buf.push_back((port >> 8) & 0xFF);
-        buf.push_back(port & 0xFF);
+        buf.push_back(static_cast<std::uint8_t>((port >> 8) & 0xFF));
+        buf.push_back(static_cast<std::uint8_t>(port & 0xFF));
         return buf;
     }
 
-    static bool decode(const std::uint8_t* data, std::size_t len, syn_payload& out)
+    [[nodiscard]] static bool decode(const std::uint8_t* data, std::size_t len, SynPayload& out)
     {
         if (len < 4)
         {
-            LOG_WARN("syn payload too short: {}", len);
+            LOG_WARN("syn payload too short {}", len);
             return false;
         }
         out.socks_cmd = data[0];
-        std::uint8_t addr_len = data[1];
+        const std::uint8_t addr_len = data[1];
         if (len < 2 + static_cast<std::size_t>(addr_len) + 2)
         {
-            LOG_WARN("syn payload len invalid for addr_len: {}", addr_len);
+            LOG_WARN("syn payload len invalid for addr_len {}", addr_len);
             return false;
         }
         out.addr = std::string(reinterpret_cast<const char*>(&data[2]), addr_len);
@@ -99,40 +102,42 @@ struct syn_payload
     }
 };
 
-struct ack_payload
+struct AckPayload
 {
     std::uint8_t socks_rep;
     std::string bnd_addr;
     std::uint16_t bnd_port;
 
-    std::vector<std::uint8_t> encode() const
+    [[nodiscard]] std::vector<std::uint8_t> encode() const
     {
         std::vector<std::uint8_t> buf;
         buf.push_back(socks_rep);
         if (bnd_addr.size() > 255)
+        {
             buf.push_back(0);
+        }
         else
         {
             buf.push_back(static_cast<std::uint8_t>(bnd_addr.size()));
             buf.insert(buf.end(), bnd_addr.begin(), bnd_addr.end());
         }
-        buf.push_back((bnd_port >> 8) & 0xFF);
-        buf.push_back(bnd_port & 0xFF);
+        buf.push_back(static_cast<std::uint8_t>((bnd_port >> 8) & 0xFF));
+        buf.push_back(static_cast<std::uint8_t>(bnd_port & 0xFF));
         return buf;
     }
 
-    static bool decode(const std::uint8_t* data, std::size_t len, ack_payload& out)
+    [[nodiscard]] static bool decode(const std::uint8_t* data, std::size_t len, AckPayload& out)
     {
         if (len < 4)
         {
-            LOG_WARN("ack payload too short: {}", len);
+            LOG_WARN("ack payload too short {}", len);
             return false;
         }
         out.socks_rep = data[0];
-        std::uint8_t addr_len = data[1];
+        const std::uint8_t addr_len = data[1];
         if (len < 2 + static_cast<std::size_t>(addr_len) + 2)
         {
-            LOG_WARN("ack payload len invalid for addr_len: {}", addr_len);
+            LOG_WARN("ack payload len invalid for addr_len {}", addr_len);
             return false;
         }
         out.bnd_addr = std::string(reinterpret_cast<const char*>(&data[2]), addr_len);
