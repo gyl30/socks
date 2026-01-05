@@ -30,35 +30,14 @@ class MuxStream : public std::enable_shared_from_this<MuxStream>
 
     std::uint32_t get_id() const { return id_; }
 
-    boost::asio::awaitable<std::vector<std::uint8_t>> async_read_some()
+    boost::asio::awaitable<std::pair<boost::system::error_code, std::vector<std::uint8_t>>> async_read_some()
     {
-        try
-        {
-            auto [ec, data] = co_await recv_channel_.async_receive(boost::asio::as_tuple(boost::asio::use_awaitable));
-            if (ec)
-            {
-                if (ec == boost::asio::experimental::error::channel_closed)
-                {
-                    co_return std::vector<std::uint8_t>{};
-                }
-
-                if (ec != boost::asio::error::operation_aborted)
-                {
-                    LOG_WARN("stream {} channel receive error: {}", id_, ec.message());
-                }
-                throw std::system_error(ec);
-            }
-            co_return data;
-        }
-        catch (...)
-        {
-            throw;
-        }
+        co_return co_await recv_channel_.async_receive(boost::asio::as_tuple(boost::asio::use_awaitable));
     }
 
-    boost::asio::awaitable<void> send_data(std::vector<std::uint8_t> payload);
+    boost::asio::awaitable<boost::system::error_code> send_data(std::vector<std::uint8_t> payload);
 
-    boost::asio::awaitable<void> async_write_some(const void* data, std::size_t len);
+    boost::asio::awaitable<boost::system::error_code> async_write_some(const void* data, std::size_t len);
 
     boost::asio::awaitable<void> close();
 
@@ -66,6 +45,10 @@ class MuxStream : public std::enable_shared_from_this<MuxStream>
     {
         boost::system::error_code ec;
         co_await recv_channel_.async_send(ec, std::move(payload), boost::asio::use_awaitable);
+        if (ec)
+        {
+            LOG_WARN("stream {} push_data channel error: {}", id_, ec.message());
+        }
     }
 
     void remote_close() { recv_channel_.close(); }
@@ -86,7 +69,12 @@ class MuxTunnel : public std::enable_shared_from_this<MuxTunnel>
     {
         boost::system::error_code ec;
         socket_.set_option(boost::asio::ip::tcp::no_delay(true), ec);
+        if (ec)
+            LOG_WARN("set nodelay failed: {}", ec.message());
+
         socket_.set_option(boost::asio::socket_base::keep_alive(true), ec);
+        if (ec)
+            LOG_WARN("set keepalive failed: {}", ec.message());
     }
 
     boost::asio::any_io_executor get_executor() { return socket_.get_executor(); }
@@ -95,27 +83,30 @@ class MuxTunnel : public std::enable_shared_from_this<MuxTunnel>
 
     boost::asio::awaitable<void> run()
     {
-        using boost::asio::experimental::awaitable_operators::operator&&;
+        using boost::asio::experimental::awaitable_operators::operator||;
         LOG_INFO("mux tunnel started on socket fd={}", socket_.native_handle());
 
-        try
-        {
-            co_await (read_loop() && write_loop());
-        }
-        catch (const std::exception& e)
-        {
-            LOG_ERROR("mux tunnel fatal error: {}", e.what());
-        }
+        co_await (read_loop() || write_loop());
 
         close_all_streams();
         LOG_INFO("mux tunnel stopped");
     }
 
-    boost::asio::awaitable<void> send_frame(frame_header header, std::vector<std::uint8_t> payload)
+    boost::asio::awaitable<boost::system::error_code> send_frame(frame_header header, std::vector<std::uint8_t> payload)
     {
         if (!write_channel_.is_open())
-            co_return;
-        co_await write_channel_.async_send(boost::system::error_code(), header, std::move(payload), boost::asio::use_awaitable);
+        {
+            LOG_WARN("tunnel send_frame failed: write channel closed");
+            co_return boost::asio::error::broken_pipe;
+        }
+
+        auto [ec] = co_await write_channel_.async_send(
+            boost::system::error_code(), header, std::move(payload), boost::asio::as_tuple(boost::asio::use_awaitable));
+        if (ec)
+        {
+            LOG_WARN("tunnel send_frame async_send error: {}", ec.message());
+        }
+        co_return ec;
     }
 
     std::shared_ptr<MuxStream> create_stream()
@@ -148,14 +139,28 @@ class MuxTunnel : public std::enable_shared_from_this<MuxTunnel>
         std::array<std::uint8_t, HEADER_SIZE> header_buf;
         while (true)
         {
-            co_await boost::asio::async_read(socket_, boost::asio::buffer(header_buf), boost::asio::use_awaitable);
+            auto [ec, n] =
+                co_await boost::asio::async_read(socket_, boost::asio::buffer(header_buf), boost::asio::as_tuple(boost::asio::use_awaitable));
+            if (ec)
+            {
+                if (ec != boost::asio::error::eof && ec != boost::asio::error::operation_aborted)
+                    LOG_WARN("tunnel read header error: {}", ec.message());
+                break;
+            }
+
             auto header = frame_header::decode(header_buf.data());
 
             std::vector<std::uint8_t> payload;
             if (header.length > 0)
             {
                 payload.resize(header.length);
-                co_await boost::asio::async_read(socket_, boost::asio::buffer(payload), boost::asio::use_awaitable);
+                auto [ec2, n2] =
+                    co_await boost::asio::async_read(socket_, boost::asio::buffer(payload), boost::asio::as_tuple(boost::asio::use_awaitable));
+                if (ec2)
+                {
+                    LOG_WARN("tunnel read payload error: {}", ec2.message());
+                    break;
+                }
             }
             co_await dispatch(header, std::move(payload));
         }
@@ -195,6 +200,7 @@ class MuxTunnel : public std::enable_shared_from_this<MuxTunnel>
             }
             else if (header.command != CMD_RST && header.command != CMD_FIN)
             {
+                LOG_WARN("recv frame for unknown stream {}, sending RST", header.stream_id);
                 frame_header h_rst{header.stream_id, 0, CMD_RST};
                 co_await send_frame(h_rst, {});
             }
@@ -208,11 +214,20 @@ class MuxTunnel : public std::enable_shared_from_this<MuxTunnel>
         {
             auto [ec, header, payload] = co_await write_channel_.async_receive(boost::asio::as_tuple(boost::asio::use_awaitable));
             if (ec)
+            {
+                if (ec != boost::asio::experimental::error::channel_closed)
+                    LOG_WARN("tunnel write_channel receive error: {}", ec.message());
                 break;
+            }
 
             header.encode(header_buf.data());
             std::array<boost::asio::const_buffer, 2> buffers = {boost::asio::buffer(header_buf), boost::asio::buffer(payload)};
-            co_await boost::asio::async_write(socket_, buffers, boost::asio::use_awaitable);
+            auto [ec2, n] = co_await boost::asio::async_write(socket_, buffers, boost::asio::as_tuple(boost::asio::use_awaitable));
+            if (ec2)
+            {
+                LOG_WARN("tunnel socket write error: {}", ec2.message());
+                break;
+            }
         }
     }
 
@@ -232,35 +247,38 @@ class MuxTunnel : public std::enable_shared_from_this<MuxTunnel>
     SynHandler syn_handler_;
 };
 
-inline boost::asio::awaitable<void> MuxStream::send_data(std::vector<std::uint8_t> payload)
+inline boost::asio::awaitable<boost::system::error_code> MuxStream::send_data(std::vector<std::uint8_t> payload)
 {
-    auto self = shared_from_this();
     auto t = tunnel_.lock();
     if (!t)
-        throw std::runtime_error("tunnel destroyed");
+    {
+        LOG_WARN("stream {} send_data failed: tunnel destroyed", id_);
+        co_return boost::asio::error::broken_pipe;
+    }
 
     frame_header header;
     header.stream_id = id_;
     header.length = static_cast<std::uint16_t>(payload.size());
     header.command = CMD_DAT;
 
-    co_await t->send_frame(header, std::move(payload));
+    co_return co_await t->send_frame(header, std::move(payload));
 }
 
-inline boost::asio::awaitable<void> MuxStream::async_write_some(const void* data, std::size_t len)
+inline boost::asio::awaitable<boost::system::error_code> MuxStream::async_write_some(const void* data, std::size_t len)
 {
     std::vector<std::uint8_t> payload(static_cast<const std::uint8_t*>(data), static_cast<const std::uint8_t*>(data) + len);
-    co_await send_data(std::move(payload));
+    co_return co_await send_data(std::move(payload));
 }
 
 inline boost::asio::awaitable<void> MuxStream::close()
 {
-    auto self = shared_from_this();
     auto t = tunnel_.lock();
     if (t)
     {
         frame_header header{.stream_id = id_, .length = 0, .command = CMD_FIN};
-        co_await t->send_frame(header, {});
+        auto ec = co_await t->send_frame(header, {});
+        if (ec)
+            LOG_WARN("stream {} close send FIN failed: {}", id_, ec.message());
         t->remove_stream(id_);
     }
     recv_channel_.close();
