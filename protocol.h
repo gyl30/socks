@@ -28,6 +28,6 @@ constexpr std::uint8_t REP_CONN_REFUSED = 0x05;
 constexpr std::uint8_t REP_TTL_EXPIRED = 0x06;
 constexpr std::uint8_t REP_CMD_NOT_SUPPORTED = 0x07;
 constexpr std::uint8_t REP_ADDR_TYPE_NOT_SUPPORTED = 0x08;
-}    // namespace socks5
+}    // namespace socks
 
 #endif

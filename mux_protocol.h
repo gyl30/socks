@@ -5,9 +5,10 @@
 #include <array>
 #include <vector>
 #include <string>
-#include <stdexcept>
 #include <cstring>
+#include <algorithm>
 #include <boost/asio.hpp>
+#include "log.h"
 
 namespace mux
 {
@@ -32,10 +33,10 @@ struct frame_header
         buf[0] = (stream_id >> 24) & 0xFF;
         buf[1] = (stream_id >> 16) & 0xFF;
         buf[2] = (stream_id >> 8) & 0xFF;
-        buf[3] = (stream_id) & 0xFF;
+        buf[3] = (stream_id)&0xFF;
 
         buf[4] = (length >> 8) & 0xFF;
-        buf[5] = (length) & 0xFF;
+        buf[5] = (length)&0xFF;
 
         buf[6] = command;
     }
@@ -64,27 +65,37 @@ struct syn_payload
         std::vector<std::uint8_t> buf;
         buf.push_back(socks_cmd);
         if (addr.size() > 255)
-            throw std::runtime_error("address too long");
-        buf.push_back(static_cast<std::uint8_t>(addr.size()));
-        buf.insert(buf.end(), addr.begin(), addr.end());
+
+            buf.push_back(static_cast<std::uint8_t>(255));
+        else
+            buf.push_back(static_cast<std::uint8_t>(addr.size()));
+
+        std::size_t copy_len = std::min(addr.size(), std::size_t(255));
+        buf.insert(buf.end(), addr.begin(), addr.begin() + copy_len);
+
         buf.push_back((port >> 8) & 0xFF);
         buf.push_back(port & 0xFF);
         return buf;
     }
 
-    static syn_payload decode(const std::uint8_t* data, std::size_t len)
+    static bool decode(const std::uint8_t* data, std::size_t len, syn_payload& out)
     {
         if (len < 4)
-            throw std::runtime_error("syn payload too short");
-        syn_payload p;
-        p.socks_cmd = data[0];
+        {
+            LOG_WARN("syn payload too short: {}", len);
+            return false;
+        }
+        out.socks_cmd = data[0];
         std::uint8_t addr_len = data[1];
-        if (len < 2 + addr_len + 2)
-            throw std::runtime_error("syn payload invalid len");
-        p.addr = std::string(reinterpret_cast<const char*>(&data[2]), addr_len);
+        if (len < 2 + static_cast<std::size_t>(addr_len) + 2)
+        {
+            LOG_WARN("syn payload len invalid for addr_len: {}", addr_len);
+            return false;
+        }
+        out.addr = std::string(reinterpret_cast<const char*>(&data[2]), addr_len);
         const std::uint8_t* port_ptr = &data[2 + addr_len];
-        p.port = (static_cast<std::uint16_t>(port_ptr[0]) << 8) | port_ptr[1];
-        return p;
+        out.port = (static_cast<std::uint16_t>(port_ptr[0]) << 8) | port_ptr[1];
+        return true;
     }
 };
 
@@ -110,19 +121,24 @@ struct ack_payload
         return buf;
     }
 
-    static ack_payload decode(const std::uint8_t* data, std::size_t len)
+    static bool decode(const std::uint8_t* data, std::size_t len, ack_payload& out)
     {
         if (len < 4)
-            throw std::runtime_error("ack payload too short");
-        ack_payload p;
-        p.socks_rep = data[0];
+        {
+            LOG_WARN("ack payload too short: {}", len);
+            return false;
+        }
+        out.socks_rep = data[0];
         std::uint8_t addr_len = data[1];
-        if (len < 2 + addr_len + 2)
-            throw std::runtime_error("ack payload invalid len");
-        p.bnd_addr = std::string(reinterpret_cast<const char*>(&data[2]), addr_len);
+        if (len < 2 + static_cast<std::size_t>(addr_len) + 2)
+        {
+            LOG_WARN("ack payload len invalid for addr_len: {}", addr_len);
+            return false;
+        }
+        out.bnd_addr = std::string(reinterpret_cast<const char*>(&data[2]), addr_len);
         const std::uint8_t* port_ptr = &data[2 + addr_len];
-        p.bnd_port = (static_cast<std::uint16_t>(port_ptr[0]) << 8) | port_ptr[1];
-        return p;
+        out.bnd_port = (static_cast<std::uint16_t>(port_ptr[0]) << 8) | port_ptr[1];
+        return true;
     }
 };
 
