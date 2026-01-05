@@ -1,62 +1,81 @@
 #include <iostream>
-#include <memory>
+#include <string>
 #include <vector>
 #include <thread>
 #include <boost/asio.hpp>
 #include "log.h"
-#include "session.h"
-#include "scoped_exit.h"
+#include "local_client.h"
+#include "remote_server.h"
 #include "context_pool.h"
 
-[[nodiscard]] boost::asio::awaitable<void> listener(boost::asio::ip::tcp::acceptor acceptor, io_context_pool& pool)
+void print_usage(const char* prog)
 {
-    while (true)
-    {
-        boost::asio::io_context& target_ctx = pool.get_io_context();
-        auto target_executor = target_ctx.get_executor();
-
-        boost::asio::ip::tcp::socket socket = co_await acceptor.async_accept(target_executor, boost::asio::use_awaitable);
-
-        boost::asio::co_spawn(
-            target_executor,
-            [socket = std::move(socket)]() mutable -> boost::asio::awaitable<void>
-            { co_await std::make_shared<session>(std::move(socket))->start(); },
-            boost::asio::detached);
-    }
+    std::cout << "Usage:\n";
+    std::cout << "  Run as Local Client: " << prog << " -c <remote_ip> <remote_port> <local_port>\n";
+    std::cout << "  Run as Remote Server: " << prog << " -s <bind_port>\n";
 }
 
-int main(int /*unused*/, char** argv)
+int main(int argc, char** argv)
 {
     const std::string app_name(argv[0]);
     init_log(app_name + ".log");
-    DEFER(shutdown_log());
+
+    set_level("info");
+
+    if (argc < 2)
+    {
+        print_usage(argv[0]);
+        return 1;
+    }
+
+    std::string mode = argv[1];
 
     try
     {
         const auto threads_count = std::thread::hardware_concurrency();
-        LOG_INFO("server initializing with {} threads", threads_count);
+        io_context_pool pool(threads_count > 0 ? threads_count : 4);
 
-        io_context_pool pool(threads_count);
+        if (mode == "-s")
+        {
+            if (argc < 3)
+            {
+                print_usage(argv[0]);
+                return 1;
+            }
+            std::uint16_t port = std::stoi(argv[2]);
 
-        boost::asio::io_context& acceptor_ctx = pool.get_io_context();
+            mux::RemoteServer server(pool, port);
+            server.start();
 
-        const boost::asio::ip::tcp::endpoint ep(boost::asio::ip::tcp::v6(), 1080);
+            pool.run();
+        }
+        else if (mode == "-c")
+        {
+            if (argc < 5)
+            {
+                print_usage(argv[0]);
+                return 1;
+            }
+            std::string r_ip = argv[2];
+            std::string r_port = argv[3];
+            std::uint16_t l_port = std::stoi(argv[4]);
 
-        boost::asio::ip::tcp::acceptor acceptor(acceptor_ctx);
-        acceptor.open(ep.protocol());
-        acceptor.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true));
-        acceptor.bind(ep);
-        acceptor.listen(boost::asio::socket_base::max_listen_connections);
+            mux::LocalClient client(pool.get_io_context(), r_ip, r_port, l_port);
+            client.start();
 
-        boost::asio::co_spawn(acceptor_ctx, listener(std::move(acceptor), pool), boost::asio::detached);
-
-        pool.run();
+            pool.run();
+        }
+        else
+        {
+            print_usage(argv[0]);
+            return 1;
+        }
     }
     catch (const std::exception& e)
     {
-        LOG_ERROR("fatal exception {}", e.what());
-        std::cerr << "exception " << e.what() << std::endl;
+        LOG_ERROR("Fatal: {}", e.what());
         return 1;
     }
+
     return 0;
 }
