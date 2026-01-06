@@ -2,6 +2,7 @@
 #define REMOTE_SERVER_H
 
 #include <boost/asio.hpp>
+#include <boost/asio/ssl.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
 #include <boost/asio/as_tuple.hpp>
 #include <memory>
@@ -250,10 +251,10 @@ class remote_session : public std::enable_shared_from_this<remote_session>
 
             std::vector<std::uint8_t> packet;
             packet.reserve(len + 10);
-            packet.push_back(0);       // RSV
-            packet.push_back(0);       // RSV
-            packet.push_back(0);       // FRAG
-            packet.push_back(0x01);    // ATYP IPv4
+            packet.push_back(0);
+            packet.push_back(0);
+            packet.push_back(0);
+            packet.push_back(0x01);
             auto b = sender.address().to_v4().to_bytes();
             packet.insert(packet.end(), b.begin(), b.end());
             const std::uint16_t p = htons(sender.port());
@@ -281,8 +282,12 @@ class remote_server
 {
    public:
     remote_server(io_context_pool& pool, std::uint16_t port)
-        : pool_(pool), acceptor_(pool.get_io_context(), boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v6(), port))
+        : pool_(pool),
+          acceptor_(pool.get_io_context(), boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v6(), port)),
+          ssl_context_(boost::asio::ssl::context::tlsv13_server)
     {
+        ssl_context_.use_certificate_chain_file("server.crt");
+        ssl_context_.use_private_key_file("server.key", boost::asio::ssl::context::pem);
     }
 
     void start()
@@ -304,7 +309,16 @@ class remote_server
                 continue;
             }
 
-            auto tunnel = std::make_shared<mux_tunnel>(std::move(socket));
+            auto ssl_stream = std::make_shared<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>>(std::move(socket), ssl_context_);
+            auto [ec_handshake] =
+                co_await ssl_stream->async_handshake(boost::asio::ssl::stream_base::server, boost::asio::as_tuple(boost::asio::use_awaitable));
+            if (ec_handshake)
+            {
+                LOG_WARN("ssl handshake failed {}", ec_handshake.message());
+                continue;
+            }
+
+            auto tunnel = std::make_shared<mux_tunnel>(std::move(*ssl_stream));
             tunnel->set_syn_handler(
                 [this, tunnel](std::uint32_t stream_id, std::vector<std::uint8_t> payload) -> boost::asio::awaitable<void>
                 {
@@ -320,6 +334,7 @@ class remote_server
 
     io_context_pool& pool_;
     boost::asio::ip::tcp::acceptor acceptor_;
+    boost::asio::ssl::context ssl_context_;
 };
 
 }    // namespace mux
