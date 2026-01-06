@@ -11,15 +11,15 @@
 void print_usage(const char* prog)
 {
     std::cout << "usage:\n";
-    std::cout << "  run as local client " << prog << " -c <remote_ip> <remote_port> <local_port>\n";
-    std::cout << "  run as remote server " << prog << " -s <bind_port>\n";
+    std::cout << "  run as local client " << prog << " -c <remote_ip> <remote_port> <local_port> <auth_key_hex>\n";
+    std::cout << "  run as remote server " << prog << " -s <bind_port> <fallback_host> <fallback_port> <auth_key_hex>\n";
+    std::cout << "  generate key: openssl rand -hex 32\n";
 }
 
 int main(int argc, char** argv)
 {
     const std::string app_name(argv[0]);
     init_log(app_name + ".log");
-
     set_level("info");
 
     if (argc < 2)
@@ -37,21 +37,24 @@ int main(int argc, char** argv)
 
         if (mode == "-s")
         {
-            if (argc < 3)
+            if (argc < 6)
             {
                 print_usage(argv[0]);
                 return 1;
             }
             std::uint16_t port = static_cast<std::uint16_t>(std::stoi(argv[2]));
+            std::string fb_host = argv[3];
+            std::string fb_port = argv[4];
+            std::string auth_key = argv[5];
 
-            mux::remote_server server(pool, port);
+            mux::remote_server server(pool, port, fb_host, fb_port, auth_key);
             server.start();
 
             pool.run();
         }
         else if (mode == "-c")
         {
-            if (argc < 5)
+            if (argc < 6)
             {
                 print_usage(argv[0]);
                 return 1;
@@ -59,8 +62,9 @@ int main(int argc, char** argv)
             std::string r_ip = argv[2];
             std::string r_port = argv[3];
             std::uint16_t l_port = static_cast<std::uint16_t>(std::stoi(argv[4]));
+            std::string auth_key = argv[5];
 
-            mux::local_client client(pool, r_ip, r_port, l_port);
+            mux::local_client client(pool, r_ip, r_port, l_port, auth_key);
             client.start();
 
             pool.run();
