@@ -30,7 +30,7 @@ class mux_stream : public std::enable_shared_from_this<mux_stream>
 
     [[nodiscard]] std::uint32_t id() const { return id_; }
 
-    [[nodiscard]] boost::asio::awaitable<std::pair<boost::system::error_code, std::vector<std::uint8_t>>> async_read_some()
+    [[nodiscard]] boost::asio::awaitable<std::tuple<boost::system::error_code, std::vector<std::uint8_t>>> async_read_some()
     {
         co_return co_await recv_channel_.async_receive(boost::asio::as_tuple(boost::asio::use_awaitable));
     }
