@@ -2,6 +2,7 @@
 #define MUX_TUNNEL_H
 
 #include <boost/asio.hpp>
+#include <boost/asio/ssl.hpp>
 #include <boost/asio/experimental/concurrent_channel.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
 #include <boost/asio/as_tuple.hpp>
@@ -30,7 +31,7 @@ class mux_stream : public std::enable_shared_from_this<mux_stream>
 
     [[nodiscard]] std::uint32_t id() const { return id_; }
 
-    [[nodiscard]] boost::asio::awaitable<std::tuple<boost::system::error_code, std::vector<std::uint8_t>>> async_read_some()
+    [[nodiscard]] boost::asio::awaitable<std::pair<boost::system::error_code, std::vector<std::uint8_t>>> async_read_some()
     {
         co_return co_await recv_channel_.async_receive(boost::asio::as_tuple(boost::asio::use_awaitable));
     }
@@ -62,19 +63,20 @@ class mux_stream : public std::enable_shared_from_this<mux_stream>
 class mux_tunnel : public std::enable_shared_from_this<mux_tunnel>
 {
    public:
-    using PhysicalSocket = boost::asio::ip::tcp::socket;
+    using SslSocket = boost::asio::ssl::stream<boost::asio::ip::tcp::socket>;
     using SynHandler = std::function<boost::asio::awaitable<void>(std::uint32_t, std::vector<std::uint8_t>)>;
 
-    explicit mux_tunnel(PhysicalSocket socket) : socket_(std::move(socket)), write_channel_(socket_.get_executor(), 4096)
+    explicit mux_tunnel(SslSocket socket) : socket_(std::move(socket)), write_channel_(socket_.get_executor(), 4096)
     {
         boost::system::error_code ec;
-        socket_.set_option(boost::asio::ip::tcp::no_delay(true), ec);
+
+        socket_.next_layer().set_option(boost::asio::ip::tcp::no_delay(true), ec);
         if (ec)
         {
             LOG_WARN("set nodelay failed {}", ec.message());
         }
 
-        socket_.set_option(boost::asio::socket_base::keep_alive(true), ec);
+        socket_.next_layer().set_option(boost::asio::socket_base::keep_alive(true), ec);
         if (ec)
         {
             LOG_WARN("set keepalive failed {}", ec.message());
@@ -88,7 +90,8 @@ class mux_tunnel : public std::enable_shared_from_this<mux_tunnel>
     [[nodiscard]] boost::asio::awaitable<void> run()
     {
         using boost::asio::experimental::awaitable_operators::operator||;
-        LOG_INFO("mux tunnel started on socket fd {}", socket_.native_handle());
+
+        LOG_INFO("mux tunnel started on socket fd {}", socket_.next_layer().native_handle());
 
         co_await (read_loop() || write_loop());
 
@@ -252,7 +255,7 @@ class mux_tunnel : public std::enable_shared_from_this<mux_tunnel>
         streams_.clear();
     }
 
-    PhysicalSocket socket_;
+    SslSocket socket_;
     boost::asio::experimental::concurrent_channel<void(boost::system::error_code, FrameHeader, std::vector<std::uint8_t>)> write_channel_;
     std::mutex mutex_;
     std::unordered_map<std::uint32_t, std::shared_ptr<mux_stream>> streams_;
