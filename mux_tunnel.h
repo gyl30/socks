@@ -19,12 +19,24 @@
 namespace mux
 {
 
-class mux_tunnel;
+class mux_stream;
+
+class mux_tunnel_interface : public std::enable_shared_from_this<mux_tunnel_interface>
+{
+   public:
+    virtual ~mux_tunnel_interface() = default;
+
+    virtual boost::asio::awaitable<void> run() = 0;
+    virtual boost::asio::awaitable<boost::system::error_code> send_frame(FrameHeader header, std::vector<std::uint8_t> payload) = 0;
+    virtual std::shared_ptr<mux_stream> create_stream() = 0;
+    virtual std::shared_ptr<mux_stream> accept_stream(std::uint32_t id) = 0;
+    virtual void remove_stream(std::uint32_t id) = 0;
+};
 
 class mux_stream : public std::enable_shared_from_this<mux_stream>
 {
    public:
-    mux_stream(std::uint32_t id, std::shared_ptr<mux_tunnel> tunnel, const boost::asio::any_io_executor& ex)
+    mux_stream(std::uint32_t id, std::shared_ptr<mux_tunnel_interface> tunnel, const boost::asio::any_io_executor& ex)
         : id_(id), tunnel_(tunnel), recv_channel_(ex, 1024)
     {
     }
@@ -56,67 +68,47 @@ class mux_stream : public std::enable_shared_from_this<mux_stream>
 
    private:
     std::uint32_t id_ = 0;
-    std::weak_ptr<mux_tunnel> tunnel_;
+    std::weak_ptr<mux_tunnel_interface> tunnel_;
     boost::asio::experimental::concurrent_channel<void(boost::system::error_code, std::vector<std::uint8_t>)> recv_channel_;
 };
 
-class mux_tunnel : public std::enable_shared_from_this<mux_tunnel>
+template <typename StreamLayer>
+class mux_tunnel_impl : public mux_tunnel_interface
 {
    public:
-    using SslSocket = boost::asio::ssl::stream<boost::asio::ip::tcp::socket>;
+    using SslSocket = boost::asio::ssl::stream<StreamLayer>;
     using SynHandler = std::function<boost::asio::awaitable<void>(std::uint32_t, std::vector<std::uint8_t>)>;
 
-    explicit mux_tunnel(SslSocket socket) : socket_(std::move(socket)), write_channel_(socket_.get_executor(), 4096)
+    explicit mux_tunnel_impl(SslSocket socket) : socket_(std::move(socket)), write_channel_(socket_.get_executor(), 4096)
     {
         boost::system::error_code ec;
 
-        socket_.next_layer().set_option(boost::asio::ip::tcp::no_delay(true), ec);
-        if (ec)
-        {
-            LOG_WARN("set nodelay failed {}", ec.message());
-        }
-
-        socket_.next_layer().set_option(boost::asio::socket_base::keep_alive(true), ec);
-        if (ec)
-        {
-            LOG_WARN("set keepalive failed {}", ec.message());
-        }
+        socket_.lowest_layer().set_option(boost::asio::ip::tcp::no_delay(true), ec);
+        socket_.lowest_layer().set_option(boost::asio::socket_base::keep_alive(true), ec);
     }
-
-    boost::asio::any_io_executor get_executor() { return socket_.get_executor(); }
 
     void set_syn_handler(SynHandler handler) { syn_handler_ = std::move(handler); }
 
-    [[nodiscard]] boost::asio::awaitable<void> run()
+    boost::asio::awaitable<void> run() override
     {
         using boost::asio::experimental::awaitable_operators::operator||;
-
-        LOG_INFO("mux tunnel started on socket fd {}", socket_.next_layer().native_handle());
-
+        LOG_INFO("mux tunnel started");
         co_await (read_loop() || write_loop());
-
         close_all_streams();
         LOG_INFO("mux tunnel stopped");
     }
 
-    [[nodiscard]] boost::asio::awaitable<boost::system::error_code> send_frame(FrameHeader header, std::vector<std::uint8_t> payload)
+    boost::asio::awaitable<boost::system::error_code> send_frame(FrameHeader header, std::vector<std::uint8_t> payload) override
     {
         if (!write_channel_.is_open())
-        {
-            LOG_WARN("tunnel send_frame failed write channel closed");
             co_return boost::asio::error::broken_pipe;
-        }
 
         auto [ec] = co_await write_channel_.async_send(
             boost::system::error_code(), header, std::move(payload), boost::asio::as_tuple(boost::asio::use_awaitable));
-        if (ec)
-        {
-            LOG_WARN("tunnel send_frame async_send error {}", ec.message());
-        }
         co_return ec;
     }
 
-    [[nodiscard]] std::shared_ptr<mux_stream> create_stream()
+    std::shared_ptr<mux_stream> create_stream() override
     {
         std::lock_guard<std::mutex> lock(mutex_);
         std::uint32_t id = next_local_id_;
@@ -126,7 +118,7 @@ class mux_tunnel : public std::enable_shared_from_this<mux_tunnel>
         return stream;
     }
 
-    [[nodiscard]] std::shared_ptr<mux_stream> accept_stream(std::uint32_t id)
+    std::shared_ptr<mux_stream> accept_stream(std::uint32_t id) override
     {
         std::lock_guard<std::mutex> lock(mutex_);
         auto stream = std::make_shared<mux_stream>(id, shared_from_this(), socket_.get_executor());
@@ -134,7 +126,7 @@ class mux_tunnel : public std::enable_shared_from_this<mux_tunnel>
         return stream;
     }
 
-    void remove_stream(std::uint32_t id)
+    void remove_stream(std::uint32_t id) override
     {
         std::lock_guard<std::mutex> lock(mutex_);
         streams_.erase(id);
@@ -149,16 +141,9 @@ class mux_tunnel : public std::enable_shared_from_this<mux_tunnel>
             auto [ec, n] =
                 co_await boost::asio::async_read(socket_, boost::asio::buffer(header_buf), boost::asio::as_tuple(boost::asio::use_awaitable));
             if (ec)
-            {
-                if (ec != boost::asio::error::eof && ec != boost::asio::error::operation_aborted)
-                {
-                    LOG_WARN("tunnel read header error {}", ec.message());
-                }
                 break;
-            }
 
             auto header = FrameHeader::decode(header_buf.data());
-
             std::vector<std::uint8_t> payload;
             if (header.length > 0)
             {
@@ -166,10 +151,7 @@ class mux_tunnel : public std::enable_shared_from_this<mux_tunnel>
                 auto [ec2, n2] =
                     co_await boost::asio::async_read(socket_, boost::asio::buffer(payload), boost::asio::as_tuple(boost::asio::use_awaitable));
                 if (ec2)
-                {
-                    LOG_WARN("tunnel read payload error {}", ec2.message());
                     break;
-                }
             }
             co_await dispatch(header, std::move(payload));
         }
@@ -179,7 +161,6 @@ class mux_tunnel : public std::enable_shared_from_this<mux_tunnel>
     {
         if (header.command == CMD_SYN)
         {
-            LOG_INFO("recv syn for stream {}", header.stream_id);
             if (syn_handler_)
             {
                 boost::asio::co_spawn(socket_.get_executor(), syn_handler_(header.stream_id, std::move(payload)), boost::asio::detached);
@@ -192,9 +173,7 @@ class mux_tunnel : public std::enable_shared_from_this<mux_tunnel>
                 std::lock_guard<std::mutex> lock(mutex_);
                 auto it = streams_.find(header.stream_id);
                 if (it != streams_.end())
-                {
                     stream = it->second;
-                }
             }
 
             if (stream != nullptr)
@@ -211,7 +190,6 @@ class mux_tunnel : public std::enable_shared_from_this<mux_tunnel>
             }
             else if (header.command != CMD_RST && header.command != CMD_FIN)
             {
-                LOG_WARN("recv frame for unknown stream {} sending rst", header.stream_id);
                 FrameHeader h_rst{header.stream_id, 0, CMD_RST};
                 co_await send_frame(h_rst, {});
             }
@@ -225,22 +203,13 @@ class mux_tunnel : public std::enable_shared_from_this<mux_tunnel>
         {
             auto [ec, header, payload] = co_await write_channel_.async_receive(boost::asio::as_tuple(boost::asio::use_awaitable));
             if (ec)
-            {
-                if (ec != boost::asio::experimental::error::channel_closed)
-                {
-                    LOG_WARN("tunnel write_channel receive error {}", ec.message());
-                }
                 break;
-            }
 
             header.encode(header_buf.data());
             std::array<boost::asio::const_buffer, 2> buffers = {boost::asio::buffer(header_buf), boost::asio::buffer(payload)};
             auto [ec2, n] = co_await boost::asio::async_write(socket_, buffers, boost::asio::as_tuple(boost::asio::use_awaitable));
             if (ec2)
-            {
-                LOG_WARN("tunnel socket write error {}", ec2.message());
                 break;
-            }
         }
     }
 
@@ -267,10 +236,7 @@ inline boost::asio::awaitable<boost::system::error_code> mux_stream::send_data(s
 {
     auto t = tunnel_.lock();
     if (t == nullptr)
-    {
-        LOG_WARN("stream {} send_data failed tunnel destroyed", id_);
         co_return boost::asio::error::broken_pipe;
-    }
 
     FrameHeader header;
     header.stream_id = id_;
@@ -295,12 +261,7 @@ inline boost::asio::awaitable<void> mux_stream::close()
         header.stream_id = id_;
         header.length = 0;
         header.command = CMD_FIN;
-
-        auto ec = co_await t->send_frame(header, {});
-        if (ec)
-        {
-            LOG_WARN("stream {} close send fin failed {}", id_, ec.message());
-        }
+        co_await t->send_frame(header, {});
         t->remove_stream(id_);
     }
     recv_channel_.close();
