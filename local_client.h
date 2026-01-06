@@ -2,6 +2,7 @@
 #define LOCAL_CLIENT_H
 
 #include <boost/asio.hpp>
+#include <boost/asio/ssl.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
 #include <boost/asio/as_tuple.hpp>
 #include <memory>
@@ -463,8 +464,14 @@ class local_client
 {
    public:
     local_client(io_context_pool& pool, const std::string& remote_host, const std::string& remote_port, std::uint16_t local_port)
-        : pool_(pool), remote_host_(remote_host), remote_port_(remote_port), local_port_(local_port), acceptor_(pool_.get_io_context())
+        : pool_(pool),
+          remote_host_(remote_host),
+          remote_port_(remote_port),
+          local_port_(local_port),
+          acceptor_(pool_.get_io_context()),
+          ssl_context_(boost::asio::ssl::context::tlsv13_client)
     {
+        ssl_context_.set_verify_mode(boost::asio::ssl::verify_none);
     }
 
     void start() { boost::asio::co_spawn(acceptor_.get_executor(), run(), boost::asio::detached); }
@@ -488,7 +495,22 @@ class local_client
             co_return;
         }
 
-        tunnel_ = std::make_shared<mux_tunnel>(std::move(socket));
+        boost::asio::ssl::stream<boost::asio::ip::tcp::socket> ssl_stream(std::move(socket), ssl_context_);
+
+        if (!SSL_set_tlsext_host_name(ssl_stream.native_handle(), "apple.com"))
+        {
+            LOG_ERROR("failed to set sni");
+            co_return;
+        }
+
+        auto [ec3] = co_await ssl_stream.async_handshake(boost::asio::ssl::stream_base::client, boost::asio::as_tuple(boost::asio::use_awaitable));
+        if (ec3)
+        {
+            LOG_ERROR("ssl handshake failed {}", ec3.message());
+            co_return;
+        }
+
+        tunnel_ = std::make_shared<mux_tunnel>(std::move(ssl_stream));
         boost::asio::co_spawn(acceptor_.get_executor(), tunnel_->run(), boost::asio::detached);
 
         boost::asio::ip::tcp::endpoint local_ep(boost::asio::ip::tcp::v4(), local_port_);
@@ -528,6 +550,7 @@ class local_client
     std::string remote_port_;
     std::uint16_t local_port_;
     boost::asio::ip::tcp::acceptor acceptor_;
+    boost::asio::ssl::context ssl_context_;
     std::shared_ptr<mux_tunnel> tunnel_;
 };
 
