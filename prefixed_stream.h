@@ -29,15 +29,10 @@ class PrefixedStream
                 if (!prefix_.empty())
                 {
                     size_t bytes_copied = boost::asio::buffer_copy(buffers, boost::asio::buffer(prefix_));
-
                     if (bytes_copied >= prefix_.size())
-                    {
                         prefix_.clear();
-                    }
                     else
-                    {
                         prefix_.erase(prefix_.begin(), prefix_.begin() + bytes_copied);
-                    }
 
                     auto ex = boost::asio::get_associated_executor(handler, get_executor());
                     boost::asio::post(ex,

@@ -21,11 +21,10 @@ find_package(Boost 1.85.0)
 include_directories(${Boost_INCLUDE_DIRS})
 message(STATUS "Found Boost:    V${Boost_VERSION} (in ${Boost_DIR})")
 
-set(OPENSSL_USE_STATIC_LIBS ON)
-find_package(OpenSSL REQUIRED)
+add_subdirectory(third/boringssl)
 
 add_executable(socks main.cpp log.cpp)
 
 target_include_directories(socks PRIVATE ${Boost_INCLUDE_DIRS} third/spdlog/include)
 
-target_link_libraries(socks PRIVATE ${Boost_LIBRARIES} OpenSSL::SSL OpenSSL::Crypto)
+target_link_libraries(socks PRIVATE ${Boost_LIBRARIES} ssl crypto)
