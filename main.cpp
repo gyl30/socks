@@ -11,9 +11,8 @@
 void print_usage(const char* prog)
 {
     std::cout << "usage:\n";
-    std::cout << "  run as local client " << prog << " -c <remote_ip> <remote_port> <local_port> <auth_key_hex>\n";
+    std::cout << "  run as local client " << prog << " -c <remote_host> <remote_port> <local_port> <auth_key_hex>\n";
     std::cout << "  run as remote server " << prog << " -s <bind_port> <fallback_host> <fallback_port> <auth_key_hex>\n";
-    std::cout << "  generate key: openssl rand -hex 32\n";
 }
 
 int main(int argc, char** argv)
@@ -59,12 +58,12 @@ int main(int argc, char** argv)
                 print_usage(argv[0]);
                 return 1;
             }
-            std::string r_ip = argv[2];
+            std::string r_host = argv[2];
             std::string r_port = argv[3];
             std::uint16_t l_port = static_cast<std::uint16_t>(std::stoi(argv[4]));
             std::string auth_key = argv[5];
 
-            mux::local_client client(pool, r_ip, r_port, l_port, auth_key);
+            mux::local_client client(pool, r_host, r_port, l_port, auth_key);
             client.start();
 
             pool.run();
