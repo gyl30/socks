@@ -19,9 +19,8 @@ int main(int argc, char** argv)
 {
     const std::string app_name(argv[0]);
     init_log(app_name + ".log");
-    
-    // CHANGE: Set to debug to see Crypto details
-    set_level("trace"); 
+
+    set_level("trace");
 
     if (argc < 2)
     {
