@@ -21,7 +21,11 @@ find_package(Boost 1.85.0)
 include_directories(${Boost_INCLUDE_DIRS})
 message(STATUS "Found Boost:    V${Boost_VERSION} (in ${Boost_DIR})")
 
-add_subdirectory(third/boringssl)
+set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+set(FUZZ OFF CACHE BOOL "" FORCE)
+set(RUST_BINDINGS OFF CACHE BOOL "" FORCE)
+set(INSTALL_ENABLED 0 CACHE BOOL "" FORCE)
+add_subdirectory(third/boringssl EXCLUDE_FROM_ALL)
 
 add_executable(socks main.cpp log.cpp)
 
