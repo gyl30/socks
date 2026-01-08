@@ -27,7 +27,12 @@ class socks_session : public std::enable_shared_from_this<socks_session>
     {
     }
 
-    void start() { boost::asio::co_spawn(socket_.get_executor(), run(), boost::asio::detached); }
+    void start()
+    {
+        auto self = shared_from_this();
+        boost::asio::co_spawn(
+            socket_.get_executor(), [self]() mutable -> boost::asio::awaitable<void> { co_await self->run(); }, boost::asio::detached);
+    }
 
    private:
     boost::asio::awaitable<void> run()
@@ -210,7 +215,6 @@ class local_client
         {
             LOG_INFO("[Client] Connecting to {}:{}", r_host_, r_port_);
 
-            // 1. Resolve and Connect
             auto socket = std::make_shared<boost::asio::ip::tcp::socket>(pool_.get_io_context());
             boost::asio::ip::tcp::resolver res(pool_.get_io_context());
             auto [ec, eps] = co_await res.async_resolve(r_host_, r_port_, boost::asio::as_tuple(boost::asio::use_awaitable));
@@ -229,7 +233,6 @@ class local_client
 
             LOG_INFO("[Client] Connected. Starting REALITY Handshake...");
 
-            // 2. Generate Keys & Session ID
             uint8_t client_pub[32], client_priv[32];
             X25519_keypair(client_pub, client_priv);
             std::vector<uint8_t> client_pub_vec(client_pub, client_pub + 32);
@@ -247,27 +250,23 @@ class local_client
             std::vector<uint8_t> client_random(32);
             RAND_bytes(client_random.data(), 32);
 
-            // REALITY Auth Key Derivation
             std::vector<uint8_t> salt(client_random.begin(), client_random.begin() + 20);
             std::vector<uint8_t> auth_key = reality::CryptoUtil::hkdf_extract(salt, shared_secret);
-            auth_key = reality::CryptoUtil::hkdf_expand(auth_key, reality::CryptoUtil::hex_to_bytes("5245414c495459"), 32);    // "REALITY"
+            auth_key = reality::CryptoUtil::hkdf_expand(auth_key, reality::CryptoUtil::hex_to_bytes("5245414c495459"), 32);
             LOG_DEBUG("[Client] Auth Key: {}", reality::CryptoUtil::bytes_to_hex(auth_key));
 
-            // Construct Encrypted Session ID Payload
             std::vector<uint8_t> payload(16);
             payload[0] = 1;
             payload[1] = 8;
             payload[2] = 0;
-            payload[3] = 0;    // Version
+            payload[3] = 0;
             uint32_t now = static_cast<uint32_t>(std::time(nullptr));
             payload[4] = (now >> 24) & 0xFF;
             payload[5] = (now >> 16) & 0xFF;
             payload[6] = (now >> 8) & 0xFF;
             payload[7] = now & 0xFF;
-            RAND_bytes(payload.data() + 8, 8);    // Short ID
+            RAND_bytes(payload.data() + 8, 8);
 
-            // Construct AAD
-            // CORRECT AAD: Handshake Message ONLY (No TLS Record Header)
             std::vector<uint8_t> zero_sid(32, 0);
             std::vector<uint8_t> aad = reality::construct_client_hello(client_random, zero_sid, client_pub_vec, r_host_);
 
@@ -276,7 +275,6 @@ class local_client
             std::vector<uint8_t> nonce(client_random.begin() + 20, client_random.end());
             LOG_DEBUG("[Client] Nonce: {}", reality::CryptoUtil::bytes_to_hex(nonce));
 
-            // Encrypt SID
             std::vector<uint8_t> enc_sid = reality::CryptoUtil::aes_gcm_encrypt(auth_key, nonce, payload, aad);
 
             if (enc_sid.size() != 32)
@@ -285,10 +283,8 @@ class local_client
                 co_return;
             }
 
-            // Final ClientHello
             std::vector<uint8_t> client_hello = reality::construct_client_hello(client_random, enc_sid, client_pub_vec, r_host_);
 
-            // 3. Send ClientHello
             std::vector<uint8_t> ch_record;
             ch_record.reserve(5 + client_hello.size());
             std::vector<uint8_t> header = reality::write_record_header(reality::CONTENT_TYPE_HANDSHAKE, client_hello.size());
@@ -302,7 +298,6 @@ class local_client
             Transcript transcript;
             transcript.update(client_hello);
 
-            // 4. Read ServerHello
             uint8_t head_buf[5];
             co_await boost::asio::async_read(*socket, boost::asio::buffer(head_buf, 5), boost::asio::use_awaitable);
             if (head_buf[0] != reality::CONTENT_TYPE_HANDSHAKE)
@@ -319,7 +314,6 @@ class local_client
 
             transcript.update(server_hello);
 
-            // Extract Server PubKey
             std::vector<uint8_t> server_ephemeral_pub = reality::extract_server_public_key(server_hello);
             if (server_ephemeral_pub.size() != 32)
             {
@@ -327,7 +321,6 @@ class local_client
                 co_return;
             }
 
-            // 5. Derive Handshake Keys
             std::vector<uint8_t> shared_secret_hs =
                 reality::CryptoUtil::x25519_derive(std::vector<uint8_t>(client_priv, client_priv + 32), server_ephemeral_pub);
             if (shared_secret_hs.empty())
@@ -342,7 +335,6 @@ class local_client
 
             LOG_DEBUG("[Client] Handshake Keys Derived. Reading Encrypted Messages...");
 
-            // 6. Read Encrypted Handshake Records
             std::vector<uint8_t> buffer;
             uint64_t server_seq = 0;
             bool finished_received = false;
@@ -356,7 +348,6 @@ class local_client
 
                 if (h[0] == reality::CONTENT_TYPE_CHANGE_CIPHER_SPEC)
                 {
-                    // Bug Fix: Read payload
                     std::vector<uint8_t> ignore(len);
                     co_await boost::asio::async_read(*socket, boost::asio::buffer(ignore), boost::asio::use_awaitable);
                     LOG_DEBUG("[Client] Ignored CCS");
@@ -411,19 +402,18 @@ class local_client
                     std::vector<uint8_t> msg(buffer.begin() + offset, buffer.begin() + offset + 4 + len);
 
                     if (type == 0x08)
-                    {    // EncryptedExtensions
+                    {
                         LOG_DEBUG("[Client] Got EncryptedExtensions");
                         transcript.update(msg);
                     }
                     else if (type == 0x0b)
-                    {    // Certificate
+                    {
                         LOG_DEBUG("[Client] Got Certificate");
                         transcript.update(msg);
 
-                        // Verify HMAC
                         size_t c_pos = 4;
                         uint8_t ctx_len = msg[c_pos++];
-                        c_pos += ctx_len + 3;    // + ListLen(3)
+                        c_pos += ctx_len + 3;
                         if (c_pos + 3 > msg.size())
                         {
                             LOG_ERROR("Cert msg malformed");
@@ -464,12 +454,12 @@ class local_client
                         LOG_INFO("[Client] REALITY Auth Success!");
                     }
                     else if (type == 0x0f)
-                    {    // CertificateVerify
+                    {
                         LOG_DEBUG("[Client] Got CertificateVerify");
                         transcript.update(msg);
                     }
                     else if (type == 0x14)
-                    {    // Finished
+                    {
                         LOG_DEBUG("[Client] Got Finished");
                         transcript.update(msg);
                         finished_received = true;
@@ -480,7 +470,6 @@ class local_client
                 buffer.erase(buffer.begin(), buffer.begin() + offset);
             }
 
-            // 7. Send Client Finished
             auto app_secrets = reality::TlsKeySchedule::derive_application_secrets(hs_keys.master_secret, transcript.finish());
 
             auto client_verify_data =
@@ -502,18 +491,13 @@ class local_client
             LOG_DEBUG("[Client] Sending Client Finished...");
             co_await boost::asio::async_write(*socket, boost::asio::buffer(output), boost::asio::use_awaitable);
 
-            // 8. Setup Application Stream
             auto c_app_keys = reality::TlsKeySchedule::derive_traffic_keys(app_secrets.first);
             auto s_app_keys = reality::TlsKeySchedule::derive_traffic_keys(app_secrets.second);
 
             LOG_INFO("[Client] REALITY Tunnel Established.");
 
-            auto reality_socket = std::make_shared<reality::reality_stream<boost::asio::ip::tcp::socket>>(std::move(*socket),
-                                                                                                          s_app_keys.first,
-                                                                                                          s_app_keys.second,    // Read Key/IV
-                                                                                                          c_app_keys.first,
-                                                                                                          c_app_keys.second    // Write Key/IV
-            );
+            auto reality_socket = std::make_shared<reality::reality_stream<boost::asio::ip::tcp::socket>>(
+                std::move(*socket), s_app_keys.first, s_app_keys.second, c_app_keys.first, c_app_keys.second);
 
             tunnel_ = std::make_shared<mux_tunnel_impl<reality::reality_stream<boost::asio::ip::tcp::socket>>>(std::move(*reality_socket));
             co_await tunnel_->run();
