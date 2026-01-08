@@ -82,25 +82,21 @@ inline std::vector<uint8_t> construct_client_hello(const std::vector<uint8_t>& c
 
     std::vector<uint8_t> extensions;
 
-    // 1. SNI Extension
     if (!server_name.empty())
     {
-        MessageBuilder::push_u16(extensions, 0x0000);    // Type
+        MessageBuilder::push_u16(extensions, 0x0000);
         uint16_t sni_len = static_cast<uint16_t>(server_name.size());
-        // Structure: ListLen(2) | NameType(1) | NameLen(2) | Name...
+
         uint16_t ext_data_len = 2 + 1 + 2 + sni_len;
 
-        // BUG FIX: Was ext_data_len - 2, causing offset misalignment for subsequent extensions
         MessageBuilder::push_u16(extensions, ext_data_len);
 
-        // ServerNameList Length
         MessageBuilder::push_u16(extensions, sni_len + 3);
-        extensions.push_back(0x00);    // HostName Type
+        extensions.push_back(0x00);
         MessageBuilder::push_u16(extensions, sni_len);
         MessageBuilder::push_string(extensions, server_name);
     }
 
-    // 2. Supported Versions
     {
         MessageBuilder::push_u16(extensions, 0x002b);
         MessageBuilder::push_u16(extensions, 3);
@@ -108,7 +104,6 @@ inline std::vector<uint8_t> construct_client_hello(const std::vector<uint8_t>& c
         MessageBuilder::push_u16(extensions, 0x0304);
     }
 
-    // 3. Supported Groups
     {
         MessageBuilder::push_u16(extensions, 0x000a);
         MessageBuilder::push_u16(extensions, 4);
@@ -116,7 +111,6 @@ inline std::vector<uint8_t> construct_client_hello(const std::vector<uint8_t>& c
         MessageBuilder::push_u16(extensions, 0x001d);
     }
 
-    // 4. Key Share
     {
         MessageBuilder::push_u16(extensions, 0x0033);
         uint16_t key_len = static_cast<uint16_t>(client_public_key.size());
@@ -129,7 +123,6 @@ inline std::vector<uint8_t> construct_client_hello(const std::vector<uint8_t>& c
         MessageBuilder::push_bytes(extensions, client_public_key);
     }
 
-    // 5. Signature Algorithms
     {
         MessageBuilder::push_u16(extensions, 0x000d);
         MessageBuilder::push_u16(extensions, 4);

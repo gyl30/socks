@@ -18,9 +18,7 @@ class reality_stream
     using executor_type = typename NextLayer::executor_type;
     using lowest_layer_type = typename NextLayer::lowest_layer_type;
 
-    reality_stream(NextLayer next, 
-                   std::vector<uint8_t> r_key, std::vector<uint8_t> r_iv,
-                   std::vector<uint8_t> w_key, std::vector<uint8_t> w_iv)
+    reality_stream(NextLayer next, std::vector<uint8_t> r_key, std::vector<uint8_t> r_iv, std::vector<uint8_t> w_key, std::vector<uint8_t> w_iv)
         : next_layer_(std::move(next)),
           read_key_(std::move(r_key)),
           read_iv_(std::move(r_iv)),
@@ -33,42 +31,32 @@ class reality_stream
     lowest_layer_type& lowest_layer() { return next_layer_.lowest_layer(); }
     const lowest_layer_type& lowest_layer() const { return next_layer_.lowest_layer(); }
 
-    // Async Write Some
-    // Encrypts plaintext into TLS records and writes to next layer
     template <typename ConstBufferSequence, typename WriteToken>
     auto async_write_some(const ConstBufferSequence& buffers, WriteToken&& token)
     {
         return boost::asio::async_initiate<WriteToken, void(boost::system::error_code, std::size_t)>(
             [this](auto handler, const ConstBufferSequence& buffers)
             {
-                // 1. Copy input buffer to a flat vector (TLS encrypt needs contiguous memory)
                 std::size_t buffer_size = boost::asio::buffer_size(buffers);
                 if (buffer_size == 0)
                 {
                     auto ex = boost::asio::get_associated_executor(handler, get_executor());
-                    boost::asio::post(ex, [handler = std::move(handler)]() mutable {
-                        handler(boost::system::error_code(), 0);
-                    });
+                    boost::asio::post(ex, [handler = std::move(handler)]() mutable { handler(boost::system::error_code(), 0); });
                     return;
                 }
 
-                // Limit max write to MAX_TLS_PLAINTEXT_LEN to fit in one record
                 std::size_t bytes_to_encrypt = std::min(buffer_size, MAX_TLS_PLAINTEXT_LEN);
-                
+
                 std::vector<uint8_t> plaintext(bytes_to_encrypt);
                 boost::asio::buffer_copy(boost::asio::buffer(plaintext), buffers, bytes_to_encrypt);
 
-                // DEBUG LOG
                 LOG_DEBUG("Encrypting App Data: {} bytes, Seq: {}", bytes_to_encrypt, write_seq_);
 
-                // 2. Encrypt
-                // Use CONTENT_TYPE_APPLICATION_DATA (0x17)
-                std::vector<uint8_t> ciphertext = TlsRecordLayer::encrypt_record(
-                    write_key_, write_iv_, write_seq_, plaintext, CONTENT_TYPE_APPLICATION_DATA);
-                
+                std::vector<uint8_t> ciphertext =
+                    TlsRecordLayer::encrypt_record(write_key_, write_iv_, write_seq_, plaintext, CONTENT_TYPE_APPLICATION_DATA);
+
                 write_seq_++;
 
-                // 3. Send (need to keep ciphertext alive until write completes)
                 auto ciphertext_ptr = std::make_shared<std::vector<uint8_t>>(std::move(ciphertext));
 
                 boost::asio::async_write(
@@ -76,50 +64,49 @@ class reality_stream
                     boost::asio::buffer(*ciphertext_ptr),
                     [handler = std::move(handler), ciphertext_ptr, bytes_to_encrypt](boost::system::error_code ec, std::size_t /*written*/) mutable
                     {
-                        if (ec) {
+                        if (ec)
+                        {
                             LOG_ERROR("Write failed: {}", ec.message());
                         }
-                        // Return the amount of *plaintext* bytes consumed, not ciphertext bytes written
+
                         handler(ec, ec ? 0 : bytes_to_encrypt);
                     });
             },
-            token, buffers);
+            token,
+            buffers);
     }
 
-    // Async Read Some
-    // Reads encrypted data, decrypts it, and returns plaintext
     template <typename MutableBufferSequence, typename ReadToken>
     auto async_read_some(const MutableBufferSequence& buffers, ReadToken&& token)
     {
         return boost::asio::async_initiate<ReadToken, void(boost::system::error_code, std::size_t)>(
             [this](auto handler, const MutableBufferSequence& buffers)
             {
-                // If we have decrypted data buffered, return it immediately
                 if (!decrypted_buffer_.empty())
                 {
                     std::size_t bytes_copied = boost::asio::buffer_copy(buffers, boost::asio::buffer(decrypted_buffer_));
-                    
-                    // Remove consumed bytes
-                    if (bytes_copied == decrypted_buffer_.size()) {
+
+                    if (bytes_copied == decrypted_buffer_.size())
+                    {
                         decrypted_buffer_.clear();
-                    } else {
+                    }
+                    else
+                    {
                         decrypted_buffer_.erase(decrypted_buffer_.begin(), decrypted_buffer_.begin() + bytes_copied);
                     }
 
                     auto ex = boost::asio::get_associated_executor(handler, get_executor());
-                    boost::asio::post(ex, [handler = std::move(handler), bytes_copied]() mutable {
-                        handler(boost::system::error_code(), bytes_copied);
-                    });
+                    boost::asio::post(ex,
+                                      [handler = std::move(handler), bytes_copied]() mutable { handler(boost::system::error_code(), bytes_copied); });
                     return;
                 }
 
-                // Otherwise, start the read loop
                 read_loop(std::move(handler), buffers);
             },
-            token, buffers);
+            token,
+            buffers);
     }
 
-    // Helper to gracefully shutdown
     template <typename ShutdownToken>
     auto async_shutdown(ShutdownToken&& token)
     {
@@ -127,9 +114,7 @@ class reality_stream
             [this](auto handler)
             {
                 auto ex = boost::asio::get_associated_executor(handler, get_executor());
-                boost::asio::post(ex, [handler = std::move(handler)]() mutable {
-                    handler(boost::system::error_code());
-                });
+                boost::asio::post(ex, [handler = std::move(handler)]() mutable { handler(boost::system::error_code()); });
             },
             token);
     }
@@ -138,91 +123,87 @@ class reality_stream
     template <typename ReadHandler, typename MutableBufferSequence>
     void read_loop(ReadHandler handler, const MutableBufferSequence& out_buffers)
     {
-        // We need to read at least the header (5 bytes)
         if (incoming_buffer_.size() < TLS_RECORD_HEADER_SIZE)
         {
             std::size_t bytes_needed = TLS_RECORD_HEADER_SIZE - incoming_buffer_.size();
-            
+
             auto temp_buf = std::make_shared<std::vector<uint8_t>>(bytes_needed);
-            
-            boost::asio::async_read(
-                next_layer_,
-                boost::asio::buffer(*temp_buf),
-                [this, handler = std::move(handler), out_buffers, temp_buf](boost::system::error_code ec, std::size_t n) mutable
-                {
-                    if (ec) { 
-                        LOG_ERROR("Read Header failed: {}", ec.message());
-                        handler(ec, 0); 
-                        return; 
-                    }
-                    
-                    incoming_buffer_.insert(incoming_buffer_.end(), temp_buf->begin(), temp_buf->begin() + n);
-                    read_loop(std::move(handler), out_buffers);
-                });
+
+            boost::asio::async_read(next_layer_,
+                                    boost::asio::buffer(*temp_buf),
+                                    [this, handler = std::move(handler), out_buffers, temp_buf](boost::system::error_code ec, std::size_t n) mutable
+                                    {
+                                        if (ec)
+                                        {
+                                            LOG_ERROR("Read Header failed: {}", ec.message());
+                                            handler(ec, 0);
+                                            return;
+                                        }
+
+                                        incoming_buffer_.insert(incoming_buffer_.end(), temp_buf->begin(), temp_buf->begin() + n);
+                                        read_loop(std::move(handler), out_buffers);
+                                    });
             return;
         }
 
-        // Parse Length
         uint16_t record_len = (static_cast<uint16_t>(incoming_buffer_[3]) << 8) | incoming_buffer_[4];
         std::size_t total_frame_size = TLS_RECORD_HEADER_SIZE + record_len;
 
-        // Read Payload
         if (incoming_buffer_.size() < total_frame_size)
         {
             std::size_t bytes_needed = total_frame_size - incoming_buffer_.size();
             auto temp_buf = std::make_shared<std::vector<uint8_t>>(bytes_needed);
 
-            boost::asio::async_read(
-                next_layer_,
-                boost::asio::buffer(*temp_buf),
-                [this, handler = std::move(handler), out_buffers, temp_buf](boost::system::error_code ec, std::size_t n) mutable
-                {
-                    if (ec) { 
-                        LOG_ERROR("Read Payload failed: {}", ec.message());
-                        handler(ec, 0); 
-                        return; 
-                    }
-                    
-                    incoming_buffer_.insert(incoming_buffer_.end(), temp_buf->begin(), temp_buf->begin() + n);
-                    read_loop(std::move(handler), out_buffers);
-                });
+            boost::asio::async_read(next_layer_,
+                                    boost::asio::buffer(*temp_buf),
+                                    [this, handler = std::move(handler), out_buffers, temp_buf](boost::system::error_code ec, std::size_t n) mutable
+                                    {
+                                        if (ec)
+                                        {
+                                            LOG_ERROR("Read Payload failed: {}", ec.message());
+                                            handler(ec, 0);
+                                            return;
+                                        }
+
+                                        incoming_buffer_.insert(incoming_buffer_.end(), temp_buf->begin(), temp_buf->begin() + n);
+                                        read_loop(std::move(handler), out_buffers);
+                                    });
             return;
         }
 
-        // We have a full record. Process it.
         try
         {
             uint8_t content_type = 0;
-            // Take exactly one record from buffer
+
             std::vector<uint8_t> record_data(incoming_buffer_.begin(), incoming_buffer_.begin() + total_frame_size);
-            
-            // Remove from buffer
-            if (incoming_buffer_.size() == total_frame_size) {
+
+            if (incoming_buffer_.size() == total_frame_size)
+            {
                 incoming_buffer_.clear();
-            } else {
+            }
+            else
+            {
                 incoming_buffer_.erase(incoming_buffer_.begin(), incoming_buffer_.begin() + total_frame_size);
             }
 
-            // LOG_DEBUG("Decrypting App Record. Len: {}, Seq: {}", record_len, read_seq_);
+            std::vector<uint8_t> plaintext = TlsRecordLayer::decrypt_record(read_key_, read_iv_, read_seq_, record_data, content_type);
 
-            // Decrypt
-            std::vector<uint8_t> plaintext = TlsRecordLayer::decrypt_record(
-                read_key_, read_iv_, read_seq_, record_data, content_type);
-            
             read_seq_++;
 
             if (content_type == CONTENT_TYPE_APPLICATION_DATA)
             {
                 LOG_DEBUG("Decrypted App Data: {} bytes", plaintext.size());
-                
+
                 decrypted_buffer_.insert(decrypted_buffer_.end(), plaintext.begin(), plaintext.end());
-                
-                // Satisfy the read request
+
                 std::size_t bytes_copied = boost::asio::buffer_copy(out_buffers, boost::asio::buffer(decrypted_buffer_));
-                
-                if (bytes_copied == decrypted_buffer_.size()) {
+
+                if (bytes_copied == decrypted_buffer_.size())
+                {
                     decrypted_buffer_.clear();
-                } else {
+                }
+                else
+                {
                     decrypted_buffer_.erase(decrypted_buffer_.begin(), decrypted_buffer_.begin() + bytes_copied);
                 }
 
@@ -231,7 +212,7 @@ class reality_stream
             else if (content_type == CONTENT_TYPE_ALERT)
             {
                 LOG_INFO("Received TLS Alert");
-                // Alert usually means close
+
                 handler(boost::asio::error::eof, 0);
             }
             else if (content_type == CONTENT_TYPE_CHANGE_CIPHER_SPEC)
@@ -242,7 +223,7 @@ class reality_stream
             else if (content_type == CONTENT_TYPE_HANDSHAKE)
             {
                 LOG_DEBUG("Ignored Post-Handshake Handshake Msg (KeyUpdate/NewSessionTicket)");
-                // Just ignore and read next record
+
                 read_loop(std::move(handler), out_buffers);
             }
             else
@@ -259,21 +240,19 @@ class reality_stream
     }
 
     NextLayer next_layer_;
-    
-    // Traffic Keys
+
     std::vector<uint8_t> read_key_;
     std::vector<uint8_t> read_iv_;
     std::vector<uint8_t> write_key_;
     std::vector<uint8_t> write_iv_;
-    
+
     uint64_t read_seq_ = 0;
     uint64_t write_seq_ = 0;
 
-    // Buffers
-    std::vector<uint8_t> incoming_buffer_;  // Ciphertext from TCP
-    std::vector<uint8_t> decrypted_buffer_; // Plaintext waiting to be read by app
+    std::vector<uint8_t> incoming_buffer_;
+    std::vector<uint8_t> decrypted_buffer_;
 };
 
-} // namespace reality
+}    // namespace reality
 
 #endif

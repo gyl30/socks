@@ -25,7 +25,7 @@ struct ClientHelloData
     std::vector<uint8_t> random;
     std::vector<uint8_t> x25519_pub;
     bool is_tls13 = false;
-    size_t sid_offset = 0; // Offset of Session ID in the buffer
+    size_t sid_offset = 0;
 };
 
 class CHParser
@@ -37,53 +37,71 @@ class CHParser
         const uint8_t* p = buf.data();
         size_t len = buf.size();
 
-        // Optional: Support buffer with or without TLS Header
-        if (len >= 5 && p[0] == 0x16 && p[1] == 0x03) {
-            p += 5; len -= 5;
+        if (len >= 5 && p[0] == 0x16 && p[1] == 0x03)
+        {
+            p += 5;
+            len -= 5;
         }
 
-        if (len < 39 || p[0] != 0x01) return info;
+        if (len < 39 || p[0] != 0x01)
+            return info;
 
-        size_t current_idx = p - buf.data(); 
+        size_t current_idx = p - buf.data();
 
-        p += 6; len -= 6; current_idx += 6; // Type, Len, Ver
+        p += 6;
+        len -= 6;
+        current_idx += 6;
 
-        // Random
         info.random.assign(p, p + 32);
-        p += 32; len -= 32; current_idx += 32;
+        p += 32;
+        len -= 32;
+        current_idx += 32;
 
-        // Session ID
         uint8_t sid_len = *p;
-        info.sid_offset = current_idx + 1; // Skip len byte
-        p++; len--; current_idx++;
+        info.sid_offset = current_idx + 1;
+        p++;
+        len--;
+        current_idx++;
 
-        if (len < sid_len) return info;
-        if (sid_len > 0) {
+        if (len < sid_len)
+            return info;
+        if (sid_len > 0)
+        {
             info.session_id.assign(p, p + sid_len);
         }
-        p += sid_len; len -= sid_len; current_idx += sid_len;
+        p += sid_len;
+        len -= sid_len;
+        current_idx += sid_len;
 
-        // Cipher Suites
-        if (len < 2) return info;
+        if (len < 2)
+            return info;
         uint16_t cs_len = (p[0] << 8) | p[1];
-        p += 2; len -= 2;
-        if (len < cs_len) return info;
-        p += cs_len; len -= cs_len;
+        p += 2;
+        len -= 2;
+        if (len < cs_len)
+            return info;
+        p += cs_len;
+        len -= cs_len;
 
-        // Compression
-        if (len < 1) return info;
+        if (len < 1)
+            return info;
         uint8_t comp_len = *p;
-        p += 1; len -= 1;
-        if (len < comp_len) return info;
-        p += comp_len; len -= comp_len;
+        p += 1;
+        len -= 1;
+        if (len < comp_len)
+            return info;
+        p += comp_len;
+        len -= comp_len;
 
-        // Extensions
-        if (len < 2) return info;
+        if (len < 2)
+            return info;
         uint16_t ext_len = (p[0] << 8) | p[1];
-        p += 2; len -= 2;
+        p += 2;
+        len -= 2;
 
         const uint8_t* ext_end = p + ext_len;
-        if (len < ext_len) return info;
+        if (len < ext_len)
+            return info;
 
         while (p + 4 <= ext_end)
         {
@@ -91,14 +109,16 @@ class CHParser
             uint16_t elen = (p[2] << 8) | p[3];
             p += 4;
 
-            if (etype == 51) // KeyShare
+            if (etype == 51)
             {
-                if (elen >= 6) {
-                    const uint8_t* kp = p + 2; 
+                if (elen >= 6)
+                {
+                    const uint8_t* kp = p + 2;
                     uint16_t group = (kp[0] << 8) | kp[1];
                     uint16_t klen = (kp[2] << 8) | kp[3];
-                    
-                    if (group == 0x001d && klen == 32 && (kp + 4 + 32 <= p + elen)) {
+
+                    if (group == 0x001d && klen == 32 && (kp + 4 + 32 <= p + elen))
+                    {
                         info.x25519_pub.assign(kp + 4, kp + 4 + 32);
                         info.is_tls13 = true;
                     }
@@ -121,7 +141,8 @@ class remote_session : public std::enable_shared_from_this<remote_session>
     boost::asio::awaitable<void> start(std::vector<uint8_t> syn_data)
     {
         auto stream = tunnel_->accept_stream(id_);
-        if (!stream) co_return;
+        if (!stream)
+            co_return;
 
         mux::SynPayload syn;
         if (!mux::SynPayload::decode(syn_data.data(), syn_data.size(), syn))
@@ -133,21 +154,27 @@ class remote_session : public std::enable_shared_from_this<remote_session>
 
         LOG_INFO("Session {} connecting to {}:{}", id_, syn.addr, syn.port);
 
+        bool connected = false;
         try
         {
             auto eps = co_await resolver_.async_resolve(syn.addr, std::to_string(syn.port), boost::asio::use_awaitable);
             co_await boost::asio::async_connect(target_socket_, eps, boost::asio::use_awaitable);
+            connected = true;
         }
         catch (const std::exception& e)
         {
             LOG_ERROR("Session {} connect failed: {}", id_, e.what());
+        }
+
+        if (!connected)
+        {
             co_await stream->close();
             co_return;
         }
 
         using boost::asio::experimental::awaitable_operators::operator||;
         co_await (upstream(stream) || downstream(stream));
-        
+
         target_socket_.close();
     }
 
@@ -159,12 +186,16 @@ class remote_session : public std::enable_shared_from_this<remote_session>
             while (true)
             {
                 auto [ec, data] = co_await stream->async_read_some();
-                if (ec) break;
-                if (data.empty()) continue;
+                if (ec)
+                    break;
+                if (data.empty())
+                    continue;
                 co_await boost::asio::async_write(target_socket_, boost::asio::buffer(data), boost::asio::use_awaitable);
             }
         }
-        catch (...) {}
+        catch (...)
+        {
+        }
         target_socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_send);
     }
 
@@ -179,7 +210,9 @@ class remote_session : public std::enable_shared_from_this<remote_session>
                 co_await stream->async_write_some(buf.data(), n);
             }
         }
-        catch (...) {}
+        catch (...)
+        {
+        }
         co_await stream->close();
     }
 
@@ -200,7 +233,7 @@ class remote_server
           fallback_port_(std::move(fb_port))
     {
         server_private_key_ = reality::CryptoUtil::hex_to_bytes(auth_key_hex);
-        
+
         std::vector<uint8_t> pub = reality::CryptoUtil::extract_public_key(server_private_key_);
         LOG_INFO("============================================================");
         LOG_INFO("Server Private Key: {}", auth_key_hex);
@@ -208,26 +241,24 @@ class remote_server
         LOG_INFO("PLEASE USE THIS PUBLIC KEY FOR THE CLIENT!");
         LOG_INFO("============================================================");
 
-        LOG_INFO("Scraping certificate from {}:{}", fallback_host_, fallback_port_);
-        if (cert_manager_.fetch_real_cert(fallback_host_, fallback_port_))
-        {
-            LOG_INFO("REALITY Certificate Ready.");
-        }
-        else
-        {
-            LOG_ERROR("Failed to fetch REALITY cert!");
-        }
+        LOG_INFO("REALITY Certificate Manager Initialized (Synthetic Ed25519).");
     }
 
     void start() { boost::asio::co_spawn(acceptor_.get_executor(), accept_loop(), boost::asio::detached); }
 
    private:
-    struct Transcript {
+    struct Transcript
+    {
         EVP_MD_CTX* ctx;
-        Transcript() { ctx = EVP_MD_CTX_new(); EVP_DigestInit(ctx, EVP_sha256()); }
+        Transcript()
+        {
+            ctx = EVP_MD_CTX_new();
+            EVP_DigestInit(ctx, EVP_sha256());
+        }
         ~Transcript() { EVP_MD_CTX_free(ctx); }
         void update(const std::vector<uint8_t>& data) { EVP_DigestUpdate(ctx, data.data(), data.size()); }
-        std::vector<uint8_t> finish() {
+        std::vector<uint8_t> finish()
+        {
             EVP_MD_CTX* ctx_copy = EVP_MD_CTX_new();
             EVP_MD_CTX_copy(ctx_copy, ctx);
             std::vector<uint8_t> hash(EVP_MD_size(EVP_sha256()));
@@ -262,14 +293,21 @@ class remote_server
     {
         std::vector<uint8_t> buffer(4096);
         auto [ec, n] = co_await socket->async_read_some(boost::asio::buffer(buffer), boost::asio::as_tuple(boost::asio::use_awaitable));
-        if (ec) { LOG_ERROR("Read failed: {}", ec.message()); co_return; }
+        if (ec)
+        {
+            LOG_ERROR("Read failed: {}", ec.message());
+            co_return;
+        }
         buffer.resize(n);
 
-        // 1. Read complete TLS Record
-        if (n < 5) { LOG_ERROR("Packet too short"); co_return; }
-        
-        // Check for TLS Record Header (0x16, 0x03, 0x0X)
-        if (buffer[0] != 0x16) {
+        if (n < 5)
+        {
+            LOG_ERROR("Packet too short");
+            co_return;
+        }
+
+        if (buffer[0] != 0x16)
+        {
             LOG_WARN("[Server] Not a TLS Handshake Record (0x{:02x})", buffer[0]);
             co_await handle_fallback(socket, buffer);
             co_return;
@@ -278,20 +316,23 @@ class remote_server
         uint16_t record_len = (buffer[3] << 8) | buffer[4];
         size_t full_len = 5 + record_len;
 
-        // Read until we have the full record
-        while (buffer.size() < full_len) {
+        while (buffer.size() < full_len)
+        {
             std::vector<uint8_t> tmp(full_len - buffer.size());
             auto [ec2, n2] = co_await boost::asio::async_read(*socket, boost::asio::buffer(tmp), boost::asio::as_tuple(boost::asio::use_awaitable));
-            if (ec2) break;
+            if (ec2)
+                break;
             buffer.insert(buffer.end(), tmp.begin(), tmp.begin() + n2);
         }
 
-        if (buffer.size() < full_len) { LOG_ERROR("Incomplete record"); co_return; }
+        if (buffer.size() < full_len)
+        {
+            LOG_ERROR("Incomplete record");
+            co_return;
+        }
 
-        // 2. Extract Payload (Handshake Message) for AAD
         std::vector<uint8_t> handshake_msg(buffer.begin() + 5, buffer.begin() + full_len);
-        
-        // 3. Parse Payload directly
+
         auto info = CHParser::parse(handshake_msg);
         bool authorized = false;
         std::vector<uint8_t> current_auth_key;
@@ -309,30 +350,37 @@ class remote_server
                 std::vector<uint8_t> info_str = reality::CryptoUtil::hex_to_bytes("5245414c495459");
                 std::vector<uint8_t> prk = reality::CryptoUtil::hkdf_extract(salt, shared);
                 current_auth_key = reality::CryptoUtil::hkdf_expand(prk, info_str, 32);
-                
+
                 LOG_INFO("[Server] Auth Key: {}", reality::CryptoUtil::bytes_to_hex(current_auth_key));
 
                 std::vector<uint8_t> nonce(info.random.begin() + 20, info.random.end());
                 LOG_INFO("[Server] Nonce: {}", reality::CryptoUtil::bytes_to_hex(nonce));
-                
+
                 std::vector<uint8_t> aad = handshake_msg;
-                if (info.sid_offset + 32 <= aad.size()) {
+                if (info.sid_offset + 32 <= aad.size())
+                {
                     std::fill(aad.begin() + info.sid_offset, aad.begin() + info.sid_offset + 32, 0);
-                    LOG_INFO("[Server] AAD Size: {}, First 5: {:02x} {:02x} {:02x} {:02x} {:02x}", 
-                        aad.size(), aad[0], aad[1], aad[2], aad[3], aad[4]);
-                } else {
+                    LOG_INFO(
+                        "[Server] AAD Size: {}, First 5: {:02x} {:02x} {:02x} {:02x} {:02x}", aad.size(), aad[0], aad[1], aad[2], aad[3], aad[4]);
+                }
+                else
+                {
                     LOG_ERROR("Invalid SID Offset");
                 }
 
                 auto plaintext = reality::CryptoUtil::aes_gcm_decrypt(current_auth_key, nonce, info.session_id, aad);
-                
-                if (plaintext.size() == 16) {
+
+                if (plaintext.size() == 16)
+                {
                     uint32_t ts = (plaintext[4] << 24) | (plaintext[5] << 16) | (plaintext[6] << 8) | plaintext[7];
                     uint32_t now = static_cast<uint32_t>(std::time(nullptr));
                     uint32_t diff = (ts > now) ? (ts - now) : (now - ts);
                     LOG_INFO("[Server] Decrypted OK. TimeDiff={}s", diff);
-                    if (diff < 120) authorized = true;
-                } else {
+                    if (diff < 120)
+                        authorized = true;
+                }
+                else
+                {
                     LOG_WARN("[Server] Decryption Failed.");
                 }
             }
@@ -355,13 +403,14 @@ class remote_server
         }
     }
 
-    boost::asio::awaitable<void> handle_reality_handshake(std::shared_ptr<boost::asio::ip::tcp::socket> socket, 
+    boost::asio::awaitable<void> handle_reality_handshake(std::shared_ptr<boost::asio::ip::tcp::socket> socket,
                                                           const std::vector<uint8_t>& client_hello_record,
                                                           const ClientHelloData& ch_info,
                                                           const std::vector<uint8_t>& auth_key)
     {
         Transcript transcript;
-        if (client_hello_record.size() > 5) {
+        if (client_hello_record.size() > 5)
+        {
             std::vector<uint8_t> ch_payload(client_hello_record.begin() + 5, client_hello_record.end());
             transcript.update(ch_payload);
         }
@@ -373,9 +422,8 @@ class remote_server
         std::vector<uint8_t> srv_random(32);
         RAND_bytes(srv_random.data(), 32);
 
-        std::vector<uint8_t> shared_hs = reality::CryptoUtil::x25519_derive(
-            std::vector<uint8_t>(srv_priv, srv_priv + 32), ch_info.x25519_pub);
-        
+        std::vector<uint8_t> shared_hs = reality::CryptoUtil::x25519_derive(std::vector<uint8_t>(srv_priv, srv_priv + 32), ch_info.x25519_pub);
+
         std::vector<uint8_t> server_hello = reality::construct_server_hello(srv_random, ch_info.session_id, 0x1301, srv_pub_vec);
         transcript.update(server_hello);
 
@@ -394,8 +442,7 @@ class remote_server
         transcript.update(cert_verify);
 
         std::vector<uint8_t> server_finished = reality::construct_finished(
-            reality::TlsKeySchedule::compute_finished_verify_data(hs_keys.server_handshake_traffic_secret, transcript.finish())
-        );
+            reality::TlsKeySchedule::compute_finished_verify_data(hs_keys.server_handshake_traffic_secret, transcript.finish()));
         transcript.update(server_finished);
 
         std::vector<uint8_t> combined_payload;
@@ -405,35 +452,40 @@ class remote_server
         combined_payload.insert(combined_payload.end(), server_finished.begin(), server_finished.end());
 
         std::vector<uint8_t> enc_records = reality::TlsRecordLayer::encrypt_record(
-            server_hs_keys.first, server_hs_keys.second, 0, 
-            combined_payload, reality::CONTENT_TYPE_HANDSHAKE);
+            server_hs_keys.first, server_hs_keys.second, 0, combined_payload, reality::CONTENT_TYPE_HANDSHAKE);
 
         std::vector<uint8_t> flight;
-        
+
         std::vector<uint8_t> sh_rec = reality::write_record_header(reality::CONTENT_TYPE_HANDSHAKE, server_hello.size());
         flight.insert(flight.end(), sh_rec.begin(), sh_rec.end());
         flight.insert(flight.end(), server_hello.begin(), server_hello.end());
 
         flight.push_back(reality::CONTENT_TYPE_CHANGE_CIPHER_SPEC);
-        flight.push_back(0x03); flight.push_back(0x03);
-        flight.push_back(0x00); flight.push_back(0x01);
+        flight.push_back(0x03);
+        flight.push_back(0x03);
+        flight.push_back(0x00);
+        flight.push_back(0x01);
         flight.push_back(0x01);
 
         flight.insert(flight.end(), enc_records.begin(), enc_records.end());
 
         co_await boost::asio::async_write(*socket, boost::asio::buffer(flight), boost::asio::use_awaitable);
 
-        // 5. Read Client Finished
         uint8_t h[5];
         co_await boost::asio::async_read(*socket, boost::asio::buffer(h, 5), boost::asio::use_awaitable);
-        
-        if (h[0] == reality::CONTENT_TYPE_CHANGE_CIPHER_SPEC) {
+
+        if (h[0] == reality::CONTENT_TYPE_CHANGE_CIPHER_SPEC)
+        {
             uint8_t dummy;
             co_await boost::asio::async_read(*socket, boost::asio::buffer(&dummy, 1), boost::asio::use_awaitable);
             co_await boost::asio::async_read(*socket, boost::asio::buffer(h, 5), boost::asio::use_awaitable);
         }
 
-        if (h[0] != reality::CONTENT_TYPE_APPLICATION_DATA) { LOG_ERROR("Exp AppData for Client Fin"); co_return; }
+        if (h[0] != reality::CONTENT_TYPE_APPLICATION_DATA)
+        {
+            LOG_ERROR("Exp AppData for Client Fin");
+            co_return;
+        }
         uint16_t len = (h[3] << 8) | h[4];
         std::vector<uint8_t> record(len);
         co_await boost::asio::async_read(*socket, boost::asio::buffer(record), boost::asio::use_awaitable);
@@ -443,19 +495,16 @@ class remote_server
         memcpy(ct_with_header.data() + 5, record.data(), len);
 
         uint8_t type;
-        std::vector<uint8_t> pt = reality::TlsRecordLayer::decrypt_record(
-            client_hs_keys.first, client_hs_keys.second, 0, ct_with_header, type);
-        
-        if (type != reality::CONTENT_TYPE_HANDSHAKE || pt.empty() || pt[0] != 0x14) {
-            LOG_ERROR("Invalid Client Finished"); co_return;
+        std::vector<uint8_t> pt = reality::TlsRecordLayer::decrypt_record(client_hs_keys.first, client_hs_keys.second, 0, ct_with_header, type);
+
+        if (type != reality::CONTENT_TYPE_HANDSHAKE || pt.empty() || pt[0] != 0x14)
+        {
+            LOG_ERROR("Invalid Client Finished");
+            co_return;
         }
 
-        // 6. Derive Application Secrets & Start Tunnel
-        // FIX: Derive secrets BEFORE updating transcript with Client Finished
-        // RFC 8446: Traffic secrets are derived from Master Secret and transcript up to Server Finished.
         auto app_secrets = reality::TlsKeySchedule::derive_application_secrets(hs_keys.master_secret, transcript.finish());
-        
-        // NOW update transcript with Client Finished (not needed for this session's app keys, but good for completeness/resumption)
+
         transcript.update(pt);
 
         auto c_app_keys = reality::TlsKeySchedule::derive_traffic_keys(app_secrets.first);
@@ -464,10 +513,7 @@ class remote_server
         LOG_INFO("[Server] REALITY Handshake Complete. Tunnel Start.");
 
         auto reality_socket = std::make_shared<reality::reality_stream<boost::asio::ip::tcp::socket>>(
-            std::move(*socket),
-            c_app_keys.first, c_app_keys.second, 
-            s_app_keys.first, s_app_keys.second 
-        );
+            std::move(*socket), c_app_keys.first, c_app_keys.second, s_app_keys.first, s_app_keys.second);
 
         auto tunnel = std::make_shared<mux_tunnel_impl<reality::reality_stream<boost::asio::ip::tcp::socket>>>(std::move(*reality_socket));
         tunnel->set_syn_handler(
@@ -475,8 +521,11 @@ class remote_server
             {
                 auto& session_ctx = pool_.get_io_context();
                 auto session = std::make_shared<remote_session>(tunnel, id, session_ctx.get_executor());
+
                 boost::asio::co_spawn(
-                    session_ctx, [session, p = std::move(p)]() mutable { return session->start(std::move(p)); }, boost::asio::detached);
+                    session_ctx,
+                    [session, p = std::move(p)]() mutable -> boost::asio::awaitable<void> { co_await session->start(std::move(p)); },
+                    boost::asio::detached);
                 co_return;
             });
         co_await tunnel->run();
@@ -499,7 +548,8 @@ class remote_server
                     while (true)
                     {
                         auto [e, n] = co_await from.async_read_some(boost::asio::buffer(data), boost::asio::as_tuple(boost::asio::use_awaitable));
-                        if (e) break;
+                        if (e)
+                            break;
                         co_await boost::asio::async_write(to, boost::asio::buffer(data, n), boost::asio::as_tuple(boost::asio::use_awaitable));
                     }
                 };

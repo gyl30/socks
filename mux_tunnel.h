@@ -77,11 +77,10 @@ class mux_tunnel_impl : public mux_tunnel_interface
    public:
     using SynHandler = std::function<boost::asio::awaitable<void>(std::uint32_t, std::vector<std::uint8_t>)>;
 
-    // 注意：这里没有 SSL Socket 包装，直接使用 StreamLayer
     explicit mux_tunnel_impl(StreamLayer socket) : socket_(std::move(socket)), write_channel_(socket_.get_executor(), 4096)
     {
         boost::system::error_code ec;
-        // 尝试设置 TCP 选项，如果是 reality_stream，lowest_layer() 会返回 tcp socket
+
         socket_.lowest_layer().set_option(boost::asio::ip::tcp::no_delay(true), ec);
         socket_.lowest_layer().set_option(boost::asio::socket_base::keep_alive(true), ec);
     }

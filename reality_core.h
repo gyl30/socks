@@ -11,7 +11,6 @@
 #include <iomanip>
 #include <stdexcept>
 
-// OpenSSL headers
 #include <openssl/evp.h>
 #include <openssl/curve25519.h>
 #include <openssl/hkdf.h>
@@ -26,19 +25,11 @@
 #include <openssl/asn1.h>
 #include <openssl/bytestring.h>
 
-// Networking for CertManager scraping
-#include <netdb.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <unistd.h>
-
 #include "log.h"
 
 namespace reality
 {
 
-// TLS 1.3 Constants
 static const uint8_t K_REALITY_INFO[] = "REALITY";
 static const uint8_t TLS1_2_VERSION_MAJOR = 0x03;
 static const uint8_t TLS1_2_VERSION_MINOR = 0x03;
@@ -88,7 +79,6 @@ class CryptoUtil
         return bytes;
     }
 
-    // Extract Public Key from Private Key (X25519)
     static std::vector<uint8_t> extract_public_key(const std::vector<uint8_t>& private_key)
     {
         if (private_key.size() != 32)
@@ -109,7 +99,6 @@ class CryptoUtil
         return public_key;
     }
 
-    // X25519 Key Derivation
     static std::vector<uint8_t> x25519_derive(const std::vector<uint8_t>& private_key, const std::vector<uint8_t>& peer_public_key)
     {
         if (private_key.size() != 32 || peer_public_key.size() != 32)
@@ -122,7 +111,6 @@ class CryptoUtil
         return shared;
     }
 
-    // Basic HKDF
     static std::vector<uint8_t> hkdf_extract(const std::vector<uint8_t>& salt, const std::vector<uint8_t>& ikm)
     {
         const EVP_MD* md = EVP_sha256();
@@ -147,7 +135,6 @@ class CryptoUtil
         return okm;
     }
 
-    // TLS 1.3 HKDF-Expand-Label
     static std::vector<uint8_t> hkdf_expand_label(const std::vector<uint8_t>& secret,
                                                   const std::string& label,
                                                   const std::vector<uint8_t>& context,
@@ -158,22 +145,18 @@ class CryptoUtil
         std::vector<uint8_t> hkdf_label;
         hkdf_label.reserve(2 + 1 + full_label.size() + 1 + context.size());
 
-        // Length (u16 be)
         hkdf_label.push_back((length >> 8) & 0xFF);
         hkdf_label.push_back(length & 0xFF);
 
-        // Label len + content
         hkdf_label.push_back(static_cast<uint8_t>(full_label.size()));
         hkdf_label.insert(hkdf_label.end(), full_label.begin(), full_label.end());
 
-        // Context len + content
         hkdf_label.push_back(static_cast<uint8_t>(context.size()));
         hkdf_label.insert(hkdf_label.end(), context.begin(), context.end());
 
         return hkdf_expand(secret, hkdf_label, length);
     }
 
-    // AES-GCM Decrypt
     static std::vector<uint8_t> aes_gcm_decrypt(const std::vector<uint8_t>& key,
                                                 const std::vector<uint8_t>& nonce,
                                                 const std::vector<uint8_t>& ciphertext,
@@ -217,7 +200,6 @@ class CryptoUtil
         return plaintext;
     }
 
-    // AES-GCM Encrypt
     static std::vector<uint8_t> aes_gcm_encrypt(const std::vector<uint8_t>& key,
                                                 const std::vector<uint8_t>& nonce,
                                                 const std::vector<uint8_t>& plaintext,
@@ -402,88 +384,43 @@ class CertManager
     CertManager()
     {
         EVP_PKEY_CTX* pctx = EVP_PKEY_CTX_new_id(EVP_PKEY_ED25519, NULL);
-        EVP_PKEY_keygen_init(pctx);
-        EVP_PKEY_keygen(pctx, &temp_key_);
-        EVP_PKEY_CTX_free(pctx);
+        if (pctx)
+        {
+            EVP_PKEY_keygen_init(pctx);
+            EVP_PKEY_keygen(pctx, &temp_key_);
+            EVP_PKEY_CTX_free(pctx);
+        }
     }
 
     ~CertManager()
     {
         if (temp_key_)
             EVP_PKEY_free(temp_key_);
-        if (scraped_cert_)
-            X509_free(scraped_cert_);
-        if (reality_cert_)
-            X509_free(reality_cert_);
-        if (chain_)
-            sk_X509_pop_free(chain_, X509_free);
     }
 
-    bool fetch_real_cert(const std::string& host, const std::string& port)
-    {
-        SSL_CTX* ctx = SSL_CTX_new(TLS_client_method());
-        SSL* ssl = SSL_new(ctx);
-
-        int sock = socket(AF_INET, SOCK_STREAM, 0);
-        struct hostent* he = gethostbyname(host.c_str());
-        if (!he)
-        {
-            SSL_free(ssl);
-            SSL_CTX_free(ctx);
-            close(sock);
-            return false;
-        }
-
-        struct sockaddr_in server_addr;
-        memset(&server_addr, 0, sizeof(server_addr));
-        memcpy(&server_addr.sin_addr, he->h_addr_list[0], he->h_length);
-        server_addr.sin_family = AF_INET;
-        server_addr.sin_port = htons(std::stoi(port));
-
-        if (connect(sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) != 0)
-        {
-            SSL_free(ssl);
-            SSL_CTX_free(ctx);
-            close(sock);
-            return false;
-        }
-
-        SSL_set_fd(ssl, sock);
-        SSL_set_tlsext_host_name(ssl, host.c_str());
-
-        if (SSL_connect(ssl) != 1)
-        {
-            SSL_free(ssl);
-            SSL_CTX_free(ctx);
-            close(sock);
-            return false;
-        }
-
-        const STACK_OF(X509)* chain = SSL_get_peer_cert_chain(ssl);
-        chain_ = sk_X509_deep_copy(chain, X509_dup, X509_free);
-        if (sk_X509_num(chain_) > 0)
-        {
-            scraped_cert_ = X509_dup(sk_X509_value(chain_, 0));
-        }
-
-        SSL_shutdown(ssl);
-        close(sock);
-        SSL_free(ssl);
-        SSL_CTX_free(ctx);
-
-        return scraped_cert_ != nullptr;
-    }
-
-    // Changed: Returns a new DER vector for the specific auth_key, does not store state
     std::vector<uint8_t> generate_reality_cert(const std::vector<uint8_t>& auth_key)
     {
-        if (!scraped_cert_ || !temp_key_)
+        if (!temp_key_)
             return {};
 
-        X509* temp_cert = X509_dup(scraped_cert_);
+        X509* x509 = X509_new();
+        if (!x509)
+            return {};
 
-        X509_set_pubkey(temp_cert, temp_key_);
-        X509_sign(temp_cert, temp_key_, NULL);
+        X509_set_version(x509, 2);
+
+        ASN1_INTEGER_set(X509_get_serialNumber(x509), 0);
+
+        X509_gmtime_adj(X509_get_notBefore(x509), 0);
+        X509_gmtime_adj(X509_get_notAfter(x509), 315360000L);
+
+        X509_set_pubkey(x509, temp_key_);
+
+        if (X509_sign(x509, temp_key_, NULL) == 0)
+        {
+            X509_free(x509);
+            return {};
+        }
 
         uint8_t pub_raw[32];
         size_t len = 32;
@@ -493,11 +430,11 @@ class CertManager
         unsigned int hmac_len;
         HMAC(EVP_sha512(), auth_key.data(), auth_key.size(), pub_raw, 32, hmac_sig, &hmac_len);
 
-        int len_der = i2d_X509(temp_cert, NULL);
+        int len_der = i2d_X509(x509, NULL);
         uint8_t* der = (uint8_t*)OPENSSL_malloc(len_der);
         uint8_t* p = der;
-        i2d_X509(temp_cert, &p);
-        X509_free(temp_cert);
+        i2d_X509(x509, &p);
+        X509_free(x509);
 
         if (len_der > 64)
         {
@@ -513,9 +450,6 @@ class CertManager
 
    private:
     EVP_PKEY* temp_key_ = nullptr;
-    X509* scraped_cert_ = nullptr;
-    X509* reality_cert_ = nullptr;    // Unused now in dynamic gen, but kept for destructor safety
-    STACK_OF(X509) * chain_ = nullptr;
 };
 
 }    // namespace reality
