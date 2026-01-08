@@ -2,7 +2,6 @@
 #define MUX_TUNNEL_H
 
 #include <boost/asio.hpp>
-#include <boost/asio/ssl.hpp>
 #include <boost/asio/experimental/concurrent_channel.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
 #include <boost/asio/as_tuple.hpp>
@@ -43,7 +42,7 @@ class mux_stream : public std::enable_shared_from_this<mux_stream>
 
     [[nodiscard]] std::uint32_t id() const { return id_; }
 
-    [[nodiscard]] boost::asio::awaitable<std::pair<boost::system::error_code, std::vector<std::uint8_t>>> async_read_some()
+    [[nodiscard]] boost::asio::awaitable<std::tuple<boost::system::error_code, std::vector<std::uint8_t>>> async_read_some()
     {
         co_return co_await recv_channel_.async_receive(boost::asio::as_tuple(boost::asio::use_awaitable));
     }
@@ -76,13 +75,13 @@ template <typename StreamLayer>
 class mux_tunnel_impl : public mux_tunnel_interface
 {
    public:
-    using SslSocket = boost::asio::ssl::stream<StreamLayer>;
     using SynHandler = std::function<boost::asio::awaitable<void>(std::uint32_t, std::vector<std::uint8_t>)>;
 
-    explicit mux_tunnel_impl(SslSocket socket) : socket_(std::move(socket)), write_channel_(socket_.get_executor(), 4096)
+    // 注意：这里没有 SSL Socket 包装，直接使用 StreamLayer
+    explicit mux_tunnel_impl(StreamLayer socket) : socket_(std::move(socket)), write_channel_(socket_.get_executor(), 4096)
     {
         boost::system::error_code ec;
-
+        // 尝试设置 TCP 选项，如果是 reality_stream，lowest_layer() 会返回 tcp socket
         socket_.lowest_layer().set_option(boost::asio::ip::tcp::no_delay(true), ec);
         socket_.lowest_layer().set_option(boost::asio::socket_base::keep_alive(true), ec);
     }
@@ -224,7 +223,7 @@ class mux_tunnel_impl : public mux_tunnel_interface
         streams_.clear();
     }
 
-    SslSocket socket_;
+    StreamLayer socket_;
     boost::asio::experimental::concurrent_channel<void(boost::system::error_code, FrameHeader, std::vector<std::uint8_t>)> write_channel_;
     std::mutex mutex_;
     std::unordered_map<std::uint32_t, std::shared_ptr<mux_stream>> streams_;
