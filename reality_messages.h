@@ -5,6 +5,7 @@
 #include <string>
 #include <cstdint>
 #include <cstring>
+#include <random>
 #include "reality_core.h"
 
 namespace reality
@@ -13,6 +14,8 @@ namespace reality
 class MessageBuilder
 {
    public:
+    static void push_u8(std::vector<uint8_t>& buf, uint8_t val) { buf.push_back(val); }
+
     static void push_u16(std::vector<uint8_t>& buf, uint16_t val)
     {
         buf.push_back((val >> 8) & 0xFF);
@@ -39,6 +42,229 @@ class MessageBuilder
     static void push_bytes(std::vector<uint8_t>& buf, const uint8_t* data, size_t len) { buf.insert(buf.end(), data, data + len); }
 
     static void push_string(std::vector<uint8_t>& buf, const std::string& str) { buf.insert(buf.end(), str.begin(), str.end()); }
+
+    static void append_ext(std::vector<uint8_t>& dest, const std::vector<uint8_t>& ext) { dest.insert(dest.end(), ext.begin(), ext.end()); }
+};
+
+class ChromeClientHelloBuilder
+{
+   public:
+    static std::vector<uint8_t> build_grease_ext(uint16_t grease_val)
+    {
+        std::vector<uint8_t> ext;
+        MessageBuilder::push_u16(ext, grease_val);
+        MessageBuilder::push_u16(ext, 0x0000);
+        return ext;
+    }
+
+    static std::vector<uint8_t> build_sni_ext(const std::string& host)
+    {
+        std::vector<uint8_t> ext;
+        if (host.empty())
+            return ext;
+
+        MessageBuilder::push_u16(ext, 0x0000);
+
+        std::vector<uint8_t> sn_list;
+        std::vector<uint8_t> sn_entry;
+        sn_entry.push_back(0x00);
+        MessageBuilder::push_u16(sn_entry, static_cast<uint16_t>(host.size()));
+        MessageBuilder::push_string(sn_entry, host);
+
+        MessageBuilder::push_u16(sn_list, static_cast<uint16_t>(sn_entry.size()));
+        MessageBuilder::push_bytes(sn_list, sn_entry);
+
+        MessageBuilder::push_u16(ext, static_cast<uint16_t>(sn_list.size()));
+        MessageBuilder::push_bytes(ext, sn_list);
+        return ext;
+    }
+
+    static std::vector<uint8_t> build_extended_master_secret()
+    {
+        std::vector<uint8_t> ext;
+        MessageBuilder::push_u16(ext, 0x0017);
+        MessageBuilder::push_u16(ext, 0x0000);
+        return ext;
+    }
+
+    static std::vector<uint8_t> build_renegotiation_info()
+    {
+        std::vector<uint8_t> ext;
+        MessageBuilder::push_u16(ext, 0xff01);
+        MessageBuilder::push_u16(ext, 0x0001);
+        ext.push_back(0x00);
+        return ext;
+    }
+
+    static std::vector<uint8_t> build_supported_groups(uint16_t grease_group)
+    {
+        std::vector<uint8_t> ext;
+        MessageBuilder::push_u16(ext, 0x000a);
+
+        std::vector<uint8_t> groups;
+        MessageBuilder::push_u16(groups, grease_group);
+        MessageBuilder::push_u16(groups, 0x001d);
+        MessageBuilder::push_u16(groups, 0x0017);
+        MessageBuilder::push_u16(groups, 0x0018);
+
+        MessageBuilder::push_u16(ext, static_cast<uint16_t>(groups.size() + 2));
+        MessageBuilder::push_u16(ext, static_cast<uint16_t>(groups.size()));
+        MessageBuilder::push_bytes(ext, groups);
+        return ext;
+    }
+
+    static std::vector<uint8_t> build_ec_point_formats()
+    {
+        std::vector<uint8_t> ext;
+        MessageBuilder::push_u16(ext, 0x000b);
+        MessageBuilder::push_u16(ext, 0x0002);
+        ext.push_back(0x01);
+        ext.push_back(0x00);
+        return ext;
+    }
+
+    static std::vector<uint8_t> build_session_ticket()
+    {
+        std::vector<uint8_t> ext;
+        MessageBuilder::push_u16(ext, 0x0023);
+        MessageBuilder::push_u16(ext, 0x0000);
+        return ext;
+    }
+
+    static std::vector<uint8_t> build_alpn()
+    {
+        std::vector<uint8_t> ext;
+        MessageBuilder::push_u16(ext, 0x0010);
+
+        std::vector<uint8_t> protos;
+
+        protos.push_back(2);
+        protos.push_back('h');
+        protos.push_back('2');
+
+        protos.push_back(8);
+        MessageBuilder::push_string(protos, "http/1.1");
+
+        MessageBuilder::push_u16(ext, static_cast<uint16_t>(protos.size() + 2));
+        MessageBuilder::push_u16(ext, static_cast<uint16_t>(protos.size()));
+        MessageBuilder::push_bytes(ext, protos);
+        return ext;
+    }
+
+    static std::vector<uint8_t> build_status_request()
+    {
+        std::vector<uint8_t> ext;
+        MessageBuilder::push_u16(ext, 0x0005);
+        MessageBuilder::push_u16(ext, 0x0005);
+        ext.push_back(0x01);
+        MessageBuilder::push_u16(ext, 0x0000);
+        MessageBuilder::push_u16(ext, 0x0000);
+        return ext;
+    }
+
+    static std::vector<uint8_t> build_signature_algorithms()
+    {
+        std::vector<uint8_t> ext;
+        MessageBuilder::push_u16(ext, 0x000d);
+
+        std::vector<uint16_t> algs = {0x0403, 0x0804, 0x0401, 0x0503, 0x0805, 0x0501, 0x0806, 0x0601};
+
+        MessageBuilder::push_u16(ext, static_cast<uint16_t>(algs.size() * 2 + 2));
+        MessageBuilder::push_u16(ext, static_cast<uint16_t>(algs.size() * 2));
+        for (auto a : algs) MessageBuilder::push_u16(ext, a);
+
+        return ext;
+    }
+
+    static std::vector<uint8_t> build_sct()
+    {
+        std::vector<uint8_t> ext;
+        MessageBuilder::push_u16(ext, 0x0012);
+        MessageBuilder::push_u16(ext, 0x0000);
+        return ext;
+    }
+
+    static std::vector<uint8_t> build_key_share(uint16_t grease_group, const std::vector<uint8_t>& pub_key)
+    {
+        std::vector<uint8_t> ext;
+        MessageBuilder::push_u16(ext, 0x0033);
+
+        std::vector<uint8_t> shares;
+
+        MessageBuilder::push_u16(shares, grease_group);
+        MessageBuilder::push_u16(shares, 1);
+        shares.push_back(0x00);
+
+        MessageBuilder::push_u16(shares, 0x001d);
+        MessageBuilder::push_u16(shares, static_cast<uint16_t>(pub_key.size()));
+        MessageBuilder::push_bytes(shares, pub_key);
+
+        MessageBuilder::push_u16(ext, static_cast<uint16_t>(shares.size() + 2));
+        MessageBuilder::push_u16(ext, static_cast<uint16_t>(shares.size()));
+        MessageBuilder::push_bytes(ext, shares);
+        return ext;
+    }
+
+    static std::vector<uint8_t> build_psk_key_exchange_modes()
+    {
+        std::vector<uint8_t> ext;
+        MessageBuilder::push_u16(ext, 0x002d);
+        MessageBuilder::push_u16(ext, 0x0002);
+        ext.push_back(0x01);
+        ext.push_back(0x01);
+        return ext;
+    }
+
+    static std::vector<uint8_t> build_supported_versions(uint16_t grease_ver)
+    {
+        std::vector<uint8_t> ext;
+        MessageBuilder::push_u16(ext, 0x002b);
+
+        std::vector<uint8_t> vers;
+        MessageBuilder::push_u16(vers, grease_ver);
+        MessageBuilder::push_u16(vers, 0x0304);
+        MessageBuilder::push_u16(vers, 0x0303);
+
+        MessageBuilder::push_u16(ext, static_cast<uint16_t>(vers.size() + 1));
+        ext.push_back(static_cast<uint8_t>(vers.size()));
+        MessageBuilder::push_bytes(ext, vers);
+        return ext;
+    }
+
+    static std::vector<uint8_t> build_compress_certificate()
+    {
+        std::vector<uint8_t> ext;
+        MessageBuilder::push_u16(ext, 0x001b);
+        MessageBuilder::push_u16(ext, 0x0003);
+        ext.push_back(0x02);
+        MessageBuilder::push_u16(ext, 0x0002);
+        return ext;
+    }
+
+    static std::vector<uint8_t> build_padding(size_t current_len)
+    {
+        size_t target_len = 517;
+
+        if (current_len >= target_len)
+        {
+            target_len = current_len + 32;
+        }
+
+        size_t padding_needed = target_len - current_len;
+
+        if (padding_needed < 4)
+        {
+            padding_needed += 32;
+        }
+
+        size_t data_len = padding_needed - 4;
+
+        std::vector<uint8_t> ext;
+        MessageBuilder::push_u16(ext, 0x0015);
+        MessageBuilder::push_u16(ext, static_cast<uint16_t>(data_len));
+        ext.insert(ext.end(), data_len, 0x00);
+        return ext;
+    }
 };
 
 inline std::vector<uint8_t> write_record_header(uint8_t record_type, uint16_t length)
@@ -47,20 +273,22 @@ inline std::vector<uint8_t> write_record_header(uint8_t record_type, uint16_t le
     header.reserve(5);
     header.push_back(record_type);
     header.push_back(TLS1_2_VERSION_MAJOR);
-    header.push_back(TLS1_2_VERSION_MINOR);
+    header.push_back(TLS1_0_VERSION_MINOR);
     MessageBuilder::push_u16(header, length);
     return header;
 }
 
-inline std::vector<uint8_t> construct_client_hello(
-    const std::vector<uint8_t>& client_random,
-    const std::vector<uint8_t>& session_id,
-    const std::vector<uint8_t>& client_public_key,
-    const std::string& server_name,
-    const std::vector<uint16_t>& cipher_suites = {0x1a1a, 0x1301, 0x1302, 0x1303, 0xc02b, 0xc02f, 0xc02c, 0xc030, 0xcca9, 0xcca8, 0xc013, 0xc014}
-
-)
+inline std::vector<uint8_t> construct_client_hello(const std::vector<uint8_t>& client_random,
+                                                   const std::vector<uint8_t>& session_id,
+                                                   const std::vector<uint8_t>& client_public_key,
+                                                   const std::string& server_name)
 {
+    uint16_t g_cipher = CryptoUtil::get_random_grease();
+    uint16_t g_ext1 = CryptoUtil::get_random_grease();
+    uint16_t g_ext2 = CryptoUtil::get_random_grease();
+    uint16_t g_group = CryptoUtil::get_random_grease();
+    uint16_t g_ver = CryptoUtil::get_random_grease();
+
     std::vector<uint8_t> hello;
 
     hello.push_back(0x01);
@@ -69,69 +297,41 @@ inline std::vector<uint8_t> construct_client_hello(
     hello.push_back(0);
 
     MessageBuilder::push_u16(hello, 0x0303);
+
     MessageBuilder::push_bytes(hello, client_random);
 
     hello.push_back(static_cast<uint8_t>(session_id.size()));
     MessageBuilder::push_bytes(hello, session_id);
 
-    MessageBuilder::push_u16(hello, static_cast<uint16_t>(cipher_suites.size() * 2));
-    for (uint16_t suite : cipher_suites)
-    {
-        MessageBuilder::push_u16(hello, suite);
-    }
+    std::vector<uint16_t> suites = {
+        g_cipher, 0x1301, 0x1302, 0x1303, 0xc02b, 0xc02f, 0xc02c, 0xc030, 0xcca9, 0xcca8, 0xc013, 0xc014, 0x009c, 0x009d, 0x002f, 0x0035};
+    MessageBuilder::push_u16(hello, static_cast<uint16_t>(suites.size() * 2));
+    for (auto s : suites) MessageBuilder::push_u16(hello, s);
 
     hello.push_back(1);
     hello.push_back(0x00);
 
     std::vector<uint8_t> extensions;
 
-    if (!server_name.empty())
-    {
-        MessageBuilder::push_u16(extensions, 0x0000);
-        uint16_t sni_len = static_cast<uint16_t>(server_name.size());
+    MessageBuilder::append_ext(extensions, ChromeClientHelloBuilder::build_grease_ext(g_ext1));
+    MessageBuilder::append_ext(extensions, ChromeClientHelloBuilder::build_sni_ext(server_name));
+    MessageBuilder::append_ext(extensions, ChromeClientHelloBuilder::build_extended_master_secret());
+    MessageBuilder::append_ext(extensions, ChromeClientHelloBuilder::build_renegotiation_info());
+    MessageBuilder::append_ext(extensions, ChromeClientHelloBuilder::build_supported_groups(g_group));
+    MessageBuilder::append_ext(extensions, ChromeClientHelloBuilder::build_ec_point_formats());
+    MessageBuilder::append_ext(extensions, ChromeClientHelloBuilder::build_session_ticket());
+    MessageBuilder::append_ext(extensions, ChromeClientHelloBuilder::build_alpn());
+    MessageBuilder::append_ext(extensions, ChromeClientHelloBuilder::build_status_request());
+    MessageBuilder::append_ext(extensions, ChromeClientHelloBuilder::build_signature_algorithms());
+    MessageBuilder::append_ext(extensions, ChromeClientHelloBuilder::build_sct());
+    MessageBuilder::append_ext(extensions, ChromeClientHelloBuilder::build_key_share(g_group, client_public_key));
+    MessageBuilder::append_ext(extensions, ChromeClientHelloBuilder::build_psk_key_exchange_modes());
+    MessageBuilder::append_ext(extensions, ChromeClientHelloBuilder::build_supported_versions(g_ver));
+    MessageBuilder::append_ext(extensions, ChromeClientHelloBuilder::build_compress_certificate());
+    MessageBuilder::append_ext(extensions, ChromeClientHelloBuilder::build_grease_ext(g_ext2));
 
-        uint16_t ext_data_len = 2 + 1 + 2 + sni_len;
-
-        MessageBuilder::push_u16(extensions, ext_data_len);
-
-        MessageBuilder::push_u16(extensions, sni_len + 3);
-        extensions.push_back(0x00);
-        MessageBuilder::push_u16(extensions, sni_len);
-        MessageBuilder::push_string(extensions, server_name);
-    }
-
-    {
-        MessageBuilder::push_u16(extensions, 0x002b);
-        MessageBuilder::push_u16(extensions, 3);
-        extensions.push_back(2);
-        MessageBuilder::push_u16(extensions, 0x0304);
-    }
-
-    {
-        MessageBuilder::push_u16(extensions, 0x000a);
-        MessageBuilder::push_u16(extensions, 4);
-        MessageBuilder::push_u16(extensions, 2);
-        MessageBuilder::push_u16(extensions, 0x001d);
-    }
-
-    {
-        MessageBuilder::push_u16(extensions, 0x0033);
-        uint16_t key_len = static_cast<uint16_t>(client_public_key.size());
-        uint16_t ext_len = 2 + 2 + 2 + key_len;
-        MessageBuilder::push_u16(extensions, ext_len);
-
-        MessageBuilder::push_u16(extensions, ext_len - 2);
-        MessageBuilder::push_u16(extensions, 0x001d);
-        MessageBuilder::push_u16(extensions, key_len);
-        MessageBuilder::push_bytes(extensions, client_public_key);
-    }
-
-    {
-        MessageBuilder::push_u16(extensions, 0x000d);
-        MessageBuilder::push_u16(extensions, 4);
-        MessageBuilder::push_u16(extensions, 2);
-        MessageBuilder::push_u16(extensions, 0x0807);
-    }
+    size_t current_size = hello.size() + 2 + extensions.size();
+    MessageBuilder::append_ext(extensions, ChromeClientHelloBuilder::build_padding(current_size));
 
     MessageBuilder::push_u16(hello, static_cast<uint16_t>(extensions.size()));
     MessageBuilder::push_bytes(hello, extensions);
