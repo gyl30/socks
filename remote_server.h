@@ -14,7 +14,6 @@
 #include "mux_tunnel.h"
 #include "log.h"
 #include "context_pool.h"
-#include "prefixed_stream.h"
 
 namespace mux
 {

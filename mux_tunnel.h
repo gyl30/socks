@@ -1,17 +1,16 @@
 #ifndef MUX_TUNNEL_H
 #define MUX_TUNNEL_H
 
+#include <memory>
+#include <vector>
+#include <array>
+#include <mutex>
+#include <functional>
+#include <unordered_map>
 #include <boost/asio.hpp>
 #include <boost/asio/experimental/concurrent_channel.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
 #include <boost/asio/as_tuple.hpp>
-#include <unordered_map>
-#include <memory>
-#include <vector>
-#include <functional>
-#include <array>
-#include <mutex>
-#include <system_error>
 #include "mux_protocol.h"
 #include "log.h"
 
@@ -24,7 +23,6 @@ class mux_tunnel_interface : public std::enable_shared_from_this<mux_tunnel_inte
 {
    public:
     virtual ~mux_tunnel_interface() = default;
-
     virtual boost::asio::awaitable<void> run() = 0;
     virtual boost::asio::awaitable<boost::system::error_code> send_frame(FrameHeader header, std::vector<std::uint8_t> payload) = 0;
     virtual std::shared_ptr<mux_stream> create_stream() = 0;
@@ -35,7 +33,7 @@ class mux_tunnel_interface : public std::enable_shared_from_this<mux_tunnel_inte
 class mux_stream : public std::enable_shared_from_this<mux_stream>
 {
    public:
-    mux_stream(std::uint32_t id, std::shared_ptr<mux_tunnel_interface> tunnel, const boost::asio::any_io_executor& ex)
+    mux_stream(std::uint32_t id, const std::shared_ptr<mux_tunnel_interface>& tunnel, const boost::asio::any_io_executor& ex)
         : id_(id), tunnel_(tunnel), recv_channel_(ex, 1024)
     {
     }
@@ -99,7 +97,9 @@ class mux_tunnel_impl : public mux_tunnel_interface
     boost::asio::awaitable<boost::system::error_code> send_frame(FrameHeader header, std::vector<std::uint8_t> payload) override
     {
         if (!write_channel_.is_open())
+        {
             co_return boost::asio::error::broken_pipe;
+        }
 
         auto [ec] = co_await write_channel_.async_send(
             boost::system::error_code(), header, std::move(payload), boost::asio::as_tuple(boost::asio::use_awaitable));
@@ -139,7 +139,9 @@ class mux_tunnel_impl : public mux_tunnel_interface
             auto [ec, n] =
                 co_await boost::asio::async_read(socket_, boost::asio::buffer(header_buf), boost::asio::as_tuple(boost::asio::use_awaitable));
             if (ec)
+            {
                 break;
+            }
 
             auto header = FrameHeader::decode(header_buf.data());
             std::vector<std::uint8_t> payload;
@@ -149,7 +151,9 @@ class mux_tunnel_impl : public mux_tunnel_interface
                 auto [ec2, n2] =
                     co_await boost::asio::async_read(socket_, boost::asio::buffer(payload), boost::asio::as_tuple(boost::asio::use_awaitable));
                 if (ec2)
+                {
                     break;
+                }
             }
             co_await dispatch(header, std::move(payload));
         }
@@ -171,7 +175,9 @@ class mux_tunnel_impl : public mux_tunnel_interface
                 std::lock_guard<std::mutex> lock(mutex_);
                 auto it = streams_.find(header.stream_id);
                 if (it != streams_.end())
+                {
                     stream = it->second;
+                }
             }
 
             if (stream != nullptr)
@@ -188,7 +194,7 @@ class mux_tunnel_impl : public mux_tunnel_interface
             }
             else if (header.command != CMD_RST && header.command != CMD_FIN)
             {
-                FrameHeader h_rst{header.stream_id, 0, CMD_RST};
+                FrameHeader h_rst{.stream_id = header.stream_id, .length = 0, .command = CMD_RST};
                 co_await send_frame(h_rst, {});
             }
         }
@@ -201,13 +207,17 @@ class mux_tunnel_impl : public mux_tunnel_interface
         {
             auto [ec, header, payload] = co_await write_channel_.async_receive(boost::asio::as_tuple(boost::asio::use_awaitable));
             if (ec)
+            {
                 break;
+            }
 
             header.encode(header_buf.data());
             std::array<boost::asio::const_buffer, 2> buffers = {boost::asio::buffer(header_buf), boost::asio::buffer(payload)};
             auto [ec2, n] = co_await boost::asio::async_write(socket_, buffers, boost::asio::as_tuple(boost::asio::use_awaitable));
             if (ec2)
+            {
                 break;
+            }
         }
     }
 
@@ -234,7 +244,9 @@ inline boost::asio::awaitable<boost::system::error_code> mux_stream::send_data(s
 {
     auto t = tunnel_.lock();
     if (t == nullptr)
+    {
         co_return boost::asio::error::broken_pipe;
+    }
 
     FrameHeader header;
     header.stream_id = id_;
