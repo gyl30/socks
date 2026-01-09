@@ -5,7 +5,6 @@
 #include <string>
 #include <cstdint>
 #include <cstring>
-#include <random>
 #include "reality_core.h"
 
 namespace reality
@@ -61,7 +60,9 @@ class ChromeClientHelloBuilder
     {
         std::vector<uint8_t> ext;
         if (host.empty())
+        {
             return ext;
+        }
 
         MessageBuilder::push_u16(ext, 0x0000);
 
@@ -169,9 +170,12 @@ class ChromeClientHelloBuilder
 
         std::vector<uint16_t> algs = {0x0403, 0x0804, 0x0401, 0x0503, 0x0805, 0x0501, 0x0806, 0x0601};
 
-        MessageBuilder::push_u16(ext, static_cast<uint16_t>(algs.size() * 2 + 2));
+        MessageBuilder::push_u16(ext, static_cast<uint16_t>((algs.size() * 2) + 2));
         MessageBuilder::push_u16(ext, static_cast<uint16_t>(algs.size() * 2));
-        for (auto a : algs) MessageBuilder::push_u16(ext, a);
+        for (auto a : algs)
+        {
+            MessageBuilder::push_u16(ext, a);
+        }
 
         return ext;
     }
@@ -306,7 +310,10 @@ inline std::vector<uint8_t> construct_client_hello(const std::vector<uint8_t>& c
     std::vector<uint16_t> suites = {
         g_cipher, 0x1301, 0x1302, 0x1303, 0xc02b, 0xc02f, 0xc02c, 0xc030, 0xcca9, 0xcca8, 0xc013, 0xc014, 0x009c, 0x009d, 0x002f, 0x0035};
     MessageBuilder::push_u16(hello, static_cast<uint16_t>(suites.size() * 2));
-    for (auto s : suites) MessageBuilder::push_u16(hello, s);
+    for (auto s : suites)
+    {
+        MessageBuilder::push_u16(hello, s);
+    }
 
     hello.push_back(1);
     hello.push_back(0x00);
@@ -440,9 +447,9 @@ inline std::vector<uint8_t> construct_certificate_verify(EVP_PKEY* signing_key, 
     to_sign.insert(to_sign.end(), handshake_hash.begin(), handshake_hash.end());
 
     EVP_MD_CTX* mctx = EVP_MD_CTX_new();
-    EVP_DigestSignInit(mctx, NULL, NULL, NULL, signing_key);
+    EVP_DigestSignInit(mctx, nullptr, nullptr, nullptr, signing_key);
     size_t sig_len = 0;
-    EVP_DigestSign(mctx, NULL, &sig_len, to_sign.data(), to_sign.size());
+    EVP_DigestSign(mctx, nullptr, &sig_len, to_sign.data(), to_sign.size());
     std::vector<uint8_t> signature(sig_len);
     EVP_DigestSign(mctx, signature.data(), &sig_len, to_sign.data(), to_sign.size());
     EVP_MD_CTX_free(mctx);
@@ -470,9 +477,11 @@ inline std::vector<uint8_t> construct_finished(const std::vector<uint8_t>& verif
 
 inline std::vector<uint8_t> extract_server_public_key(const std::vector<uint8_t>& server_hello)
 {
-    size_t pos = 0;
+    uint32_t pos = 0;
     if (server_hello.size() < 4)
+    {
         return {};
+    }
 
     if (server_hello[0] == 0x16)
     {
@@ -480,9 +489,13 @@ inline std::vector<uint8_t> extract_server_public_key(const std::vector<uint8_t>
     }
 
     if (pos + 38 > server_hello.size())
+    {
         return {};
+    }
     if (server_hello[pos] != 0x02)
+    {
         return {};
+    }
 
     pos += 1 + 3 + 2 + 32;
 
@@ -493,13 +506,17 @@ inline std::vector<uint8_t> extract_server_public_key(const std::vector<uint8_t>
     pos += 1;
 
     if (pos + 2 > server_hello.size())
+    {
         return {};
+    }
     uint16_t ext_len = (server_hello[pos] << 8) | server_hello[pos + 1];
     pos += 2;
 
     size_t end = pos + ext_len;
     if (end > server_hello.size())
+    {
         return {};
+    }
 
     while (pos + 4 <= end)
     {
@@ -514,7 +531,7 @@ inline std::vector<uint8_t> extract_server_public_key(const std::vector<uint8_t>
                 uint16_t klen = (server_hello[pos + 2] << 8) | server_hello[pos + 3];
                 if (klen == 32 && pos + 4 + 32 <= end)
                 {
-                    return std::vector<uint8_t>(server_hello.begin() + pos + 4, server_hello.begin() + pos + 4 + 32);
+                    return {server_hello.begin() + pos + 4, server_hello.begin() + pos + 4 + 32};
                 }
             }
         }

@@ -1,12 +1,12 @@
 #ifndef REALITY_STREAM_H
 #define REALITY_STREAM_H
 
-#include <boost/asio.hpp>
 #include <vector>
 #include <memory>
 #include <cstring>
-#include "reality_core.h"
+#include <boost/asio.hpp>
 #include "log.h"
+#include "reality_core.h"
 
 namespace reality
 {
@@ -31,6 +31,13 @@ class reality_stream
     lowest_layer_type& lowest_layer() { return next_layer_.lowest_layer(); }
     const lowest_layer_type& lowest_layer() const { return next_layer_.lowest_layer(); }
 
+    void on_write(boost::system::error_code ec, std::size_t /*written*/)
+    {
+        if (ec)
+        {
+            LOG_ERROR("Write failed: {}", ec.message());
+        }
+    }
     template <typename ConstBufferSequence, typename WriteToken>
     auto async_write_some(const ConstBufferSequence& buffers, WriteToken&& token)
     {
@@ -62,13 +69,9 @@ class reality_stream
                 boost::asio::async_write(
                     next_layer_,
                     boost::asio::buffer(*ciphertext_ptr),
-                    [handler = std::move(handler), ciphertext_ptr, bytes_to_encrypt](boost::system::error_code ec, std::size_t /*written*/) mutable
+                    [this, handler = std::move(handler), ciphertext_ptr, bytes_to_encrypt](boost::system::error_code ec, std::size_t written) mutable
                     {
-                        if (ec)
-                        {
-                            LOG_ERROR("Write failed: {}", ec.message());
-                        }
-
+                        on_write(ec, written);
                         handler(ec, ec ? 0 : bytes_to_encrypt);
                     });
             },
@@ -84,7 +87,7 @@ class reality_stream
             {
                 if (!decrypted_buffer_.empty())
                 {
-                    std::size_t bytes_copied = boost::asio::buffer_copy(buffers, boost::asio::buffer(decrypted_buffer_));
+                    auto bytes_copied = boost::asio::buffer_copy(buffers, boost::asio::buffer(decrypted_buffer_));
 
                     if (bytes_copied == decrypted_buffer_.size())
                     {
@@ -140,14 +143,15 @@ class reality_stream
                                             return;
                                         }
 
-                                        incoming_buffer_.insert(incoming_buffer_.end(), temp_buf->begin(), temp_buf->begin() + n);
+                                        incoming_buffer_.insert(
+                                            incoming_buffer_.end(), temp_buf->begin(), temp_buf->begin() + static_cast<uint32_t>(n));
                                         read_loop(std::move(handler), out_buffers);
                                     });
             return;
         }
 
         uint16_t record_len = (static_cast<uint16_t>(incoming_buffer_[3]) << 8) | incoming_buffer_[4];
-        std::size_t total_frame_size = TLS_RECORD_HEADER_SIZE + record_len;
+        uint32_t total_frame_size = TLS_RECORD_HEADER_SIZE + record_len;
 
         if (incoming_buffer_.size() < total_frame_size)
         {
@@ -165,7 +169,8 @@ class reality_stream
                                             return;
                                         }
 
-                                        incoming_buffer_.insert(incoming_buffer_.end(), temp_buf->begin(), temp_buf->begin() + n);
+                                        incoming_buffer_.insert(
+                                            incoming_buffer_.end(), temp_buf->begin(), temp_buf->begin() + static_cast<uint32_t>(n));
                                         read_loop(std::move(handler), out_buffers);
                                     });
             return;
@@ -196,7 +201,7 @@ class reality_stream
 
                 decrypted_buffer_.insert(decrypted_buffer_.end(), plaintext.begin(), plaintext.end());
 
-                std::size_t bytes_copied = boost::asio::buffer_copy(out_buffers, boost::asio::buffer(decrypted_buffer_));
+                auto bytes_copied = boost::asio::buffer_copy(out_buffers, boost::asio::buffer(decrypted_buffer_));
 
                 if (bytes_copied == decrypted_buffer_.size())
                 {
