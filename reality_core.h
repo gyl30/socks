@@ -4,11 +4,6 @@
 #include <vector>
 #include <string>
 #include <cstring>
-#include <iostream>
-#include <memory>
-#include <array>
-#include <algorithm>
-#include <iomanip>
 #include <stdexcept>
 
 #include <openssl/evp.h>
@@ -24,8 +19,7 @@
 #include <openssl/mem.h>
 #include <openssl/asn1.h>
 #include <openssl/bytestring.h>
-
-#include "log.h"
+#include <boost/algorithm/hex.hpp>
 
 namespace reality
 {
@@ -51,36 +45,26 @@ static const std::vector<uint16_t> GREASE_VALUES = {
 class CryptoUtil
 {
    public:
-    static std::string bytes_to_hex(const std::vector<uint8_t>& bytes, size_t max_len = 0)
+    static std::string bytes_to_hex(const std::vector<uint8_t>& bytes)
     {
-        std::string str;
-        size_t len = bytes.size();
-        if (max_len > 0 && len > max_len)
-            len = max_len;
-
-        str.reserve(len * 2);
-        static const char hex_chars[] = "0123456789abcdef";
-        for (size_t i = 0; i < len; ++i)
-        {
-            uint8_t b = bytes[i];
-            str.push_back(hex_chars[b >> 4]);
-            str.push_back(hex_chars[b & 0x0F]);
-        }
-        if (max_len > 0 && bytes.size() > max_len)
-            str += "...";
-        return str;
+        std::string result;
+        boost::algorithm::hex(bytes, std::back_inserter(result));
+        return result;
     }
 
     static std::vector<uint8_t> hex_to_bytes(const std::string& hex)
     {
-        std::vector<uint8_t> bytes;
-        for (unsigned int i = 0; i < hex.length(); i += 2)
+        try
         {
-            std::string byteString = hex.substr(i, 2);
-            uint8_t byte = (uint8_t)strtol(byteString.c_str(), NULL, 16);
-            bytes.push_back(byte);
+            std::vector<uint8_t> result;
+            boost::algorithm::unhex(hex, std::back_inserter(result));
+            return result;
         }
-        return bytes;
+        catch (...)
+        {
+            return {};
+        }
+        return {};
     }
 
     static uint16_t get_random_grease()
@@ -93,11 +77,15 @@ class CryptoUtil
     static std::vector<uint8_t> extract_public_key(const std::vector<uint8_t>& private_key)
     {
         if (private_key.size() != 32)
+        {
             return {};
+        }
 
-        EVP_PKEY* pkey = EVP_PKEY_new_raw_private_key(EVP_PKEY_X25519, NULL, private_key.data(), 32);
-        if (!pkey)
+        EVP_PKEY* pkey = EVP_PKEY_new_raw_private_key(EVP_PKEY_X25519, nullptr, private_key.data(), 32);
+        if (pkey == nullptr)
+        {
             return {};
+        }
 
         size_t len = 32;
         std::vector<uint8_t> public_key(32);
@@ -113,9 +101,11 @@ class CryptoUtil
     static std::vector<uint8_t> x25519_derive(const std::vector<uint8_t>& private_key, const std::vector<uint8_t>& peer_public_key)
     {
         if (private_key.size() != 32 || peer_public_key.size() != 32)
+        {
             return {};
+        }
         std::vector<uint8_t> shared(32);
-        if (!X25519(shared.data(), private_key.data(), peer_public_key.data()))
+        if (X25519(shared.data(), private_key.data(), peer_public_key.data()) == 0)
         {
             return {};
         }
@@ -127,7 +117,7 @@ class CryptoUtil
         const EVP_MD* md = EVP_sha256();
         std::vector<uint8_t> prk(EVP_MAX_MD_SIZE);
         size_t len = EVP_MAX_MD_SIZE;
-        if (!HKDF_extract(prk.data(), &len, md, ikm.data(), ikm.size(), salt.data(), salt.size()))
+        if (HKDF_extract(prk.data(), &len, md, ikm.data(), ikm.size(), salt.data(), salt.size()) == 0)
         {
             return {};
         }
@@ -139,7 +129,7 @@ class CryptoUtil
     {
         const EVP_MD* md = EVP_sha256();
         std::vector<uint8_t> okm(len);
-        if (!HKDF_expand(okm.data(), len, md, prk.data(), prk.size(), info.data(), info.size()))
+        if (HKDF_expand(okm.data(), len, md, prk.data(), prk.size(), info.data(), info.size()) == 0)
         {
             return {};
         }
@@ -174,33 +164,43 @@ class CryptoUtil
                                                 const std::vector<uint8_t>& aad)
     {
         if (ciphertext.size() < AEAD_TAG_SIZE)
+        {
             return {};
+        }
 
         const EVP_AEAD* aead = nullptr;
         if (key.size() == 16)
+        {
             aead = EVP_aead_aes_128_gcm();
+        }
         else if (key.size() == 32)
+        {
             aead = EVP_aead_aes_256_gcm();
+        }
         else
+        {
             return {};
+        }
 
         EVP_AEAD_CTX* ctx = EVP_AEAD_CTX_new(aead, key.data(), key.size(), AEAD_TAG_SIZE);
-        if (!ctx)
+        if (ctx == nullptr)
+        {
             return {};
+        }
 
         std::vector<uint8_t> plaintext(ciphertext.size());
         size_t out_len;
 
-        if (!EVP_AEAD_CTX_open(ctx,
-                               plaintext.data(),
-                               &out_len,
-                               plaintext.size(),
-                               nonce.data(),
-                               nonce.size(),
-                               ciphertext.data(),
-                               ciphertext.size(),
-                               aad.data(),
-                               aad.size()))
+        if (EVP_AEAD_CTX_open(ctx,
+                              plaintext.data(),
+                              &out_len,
+                              plaintext.size(),
+                              nonce.data(),
+                              nonce.size(),
+                              ciphertext.data(),
+                              ciphertext.size(),
+                              aad.data(),
+                              aad.size()) == 0)
         {
             EVP_AEAD_CTX_free(ctx);
             return {};
@@ -218,29 +218,37 @@ class CryptoUtil
     {
         const EVP_AEAD* aead = nullptr;
         if (key.size() == 16)
+        {
             aead = EVP_aead_aes_128_gcm();
+        }
         else if (key.size() == 32)
+        {
             aead = EVP_aead_aes_256_gcm();
+        }
         else
+        {
             return {};
+        }
 
         EVP_AEAD_CTX* ctx = EVP_AEAD_CTX_new(aead, key.data(), key.size(), AEAD_TAG_SIZE);
-        if (!ctx)
+        if (ctx == nullptr)
+        {
             return {};
+        }
 
         std::vector<uint8_t> ciphertext(plaintext.size() + EVP_AEAD_max_overhead(aead));
         size_t out_len;
 
-        if (!EVP_AEAD_CTX_seal(ctx,
-                               ciphertext.data(),
-                               &out_len,
-                               ciphertext.size(),
-                               nonce.data(),
-                               nonce.size(),
-                               plaintext.data(),
-                               plaintext.size(),
-                               aad.data(),
-                               aad.size()))
+        if (EVP_AEAD_CTX_seal(ctx,
+                              ciphertext.data(),
+                              &out_len,
+                              ciphertext.size(),
+                              nonce.data(),
+                              nonce.size(),
+                              plaintext.data(),
+                              plaintext.size(),
+                              aad.data(),
+                              aad.size()) == 0)
         {
             EVP_AEAD_CTX_free(ctx);
             return {};
@@ -292,9 +300,9 @@ class TlsKeySchedule
         std::vector<uint8_t> s_hs_secret = CryptoUtil::hkdf_expand_label(handshake_secret, "s hs traffic", server_hello_hash, hash_len);
 
         std::vector<uint8_t> derived_secret_2 = CryptoUtil::hkdf_expand_label(handshake_secret, "derived", empty_hash, hash_len);
-        std::vector<uint8_t> master_secret = CryptoUtil::hkdf_extract(derived_secret_2, zero_salt);
+        std::vector<uint8_t> master_secret = CryptoUtil::hkdf_extract(derived_secret_2, zero_salt);    // NOLINT
 
-        return {c_hs_secret, s_hs_secret, master_secret};
+        return {.client_handshake_traffic_secret = c_hs_secret, .server_handshake_traffic_secret = s_hs_secret, .master_secret = master_secret};
     }
 
     static std::pair<std::vector<uint8_t>, std::vector<uint8_t>> derive_application_secrets(const std::vector<uint8_t>& master_secret,
@@ -315,7 +323,7 @@ class TlsKeySchedule
         unsigned int hmac_len;
         HMAC(EVP_sha256(), finished_key.data(), finished_key.size(), handshake_hash.data(), handshake_hash.size(), hmac_out, &hmac_len);
 
-        return std::vector<uint8_t>(hmac_out, hmac_out + hmac_len);
+        return {hmac_out, hmac_out + hmac_len};
     }
 };
 
@@ -359,7 +367,9 @@ class TlsRecordLayer
                                                uint8_t& out_content_type)
     {
         if (ciphertext_with_header.size() < TLS_RECORD_HEADER_SIZE + AEAD_TAG_SIZE)
+        {
             throw std::runtime_error("Record too short");
+        }
 
         std::vector<uint8_t> aad(ciphertext_with_header.begin(), ciphertext_with_header.begin() + 5);
         std::vector<uint8_t> ciphertext(ciphertext_with_header.begin() + 5, ciphertext_with_header.end());
@@ -372,7 +382,9 @@ class TlsRecordLayer
 
         std::vector<uint8_t> plaintext = CryptoUtil::aes_gcm_decrypt(key, nonce, ciphertext, aad);
         if (plaintext.empty())
+        {
             throw std::runtime_error("Decryption failed");
+        }
 
         while (!plaintext.empty() && plaintext.back() == 0)
         {
@@ -380,7 +392,9 @@ class TlsRecordLayer
         }
 
         if (plaintext.empty())
+        {
             throw std::runtime_error("Invalid cleartext record (all zeros)");
+        }
 
         out_content_type = plaintext.back();
         plaintext.pop_back();
@@ -394,8 +408,8 @@ class CertManager
    public:
     CertManager()
     {
-        EVP_PKEY_CTX* pctx = EVP_PKEY_CTX_new_id(EVP_PKEY_ED25519, NULL);
-        if (pctx)
+        EVP_PKEY_CTX* pctx = EVP_PKEY_CTX_new_id(EVP_PKEY_ED25519, nullptr);
+        if (pctx != nullptr)
         {
             EVP_PKEY_keygen_init(pctx);
             EVP_PKEY_keygen(pctx, &temp_key_);
@@ -405,18 +419,24 @@ class CertManager
 
     ~CertManager()
     {
-        if (temp_key_)
+        if (temp_key_ != nullptr)
+        {
             EVP_PKEY_free(temp_key_);
+        }
     }
 
     std::vector<uint8_t> generate_reality_cert(const std::vector<uint8_t>& auth_key)
     {
-        if (!temp_key_)
+        if (temp_key_ == nullptr)
+        {
             return {};
+        }
 
         X509* x509 = X509_new();
-        if (!x509)
+        if (x509 == nullptr)
+        {
             return {};
+        }
 
         X509_set_version(x509, 2);
 
@@ -427,7 +447,7 @@ class CertManager
 
         X509_set_pubkey(x509, temp_key_);
 
-        if (X509_sign(x509, temp_key_, NULL) == 0)
+        if (X509_sign(x509, temp_key_, nullptr) == 0)
         {
             X509_free(x509);
             return {};
@@ -441,8 +461,8 @@ class CertManager
         unsigned int hmac_len;
         HMAC(EVP_sha512(), auth_key.data(), auth_key.size(), pub_raw, 32, hmac_sig, &hmac_len);
 
-        int len_der = i2d_X509(x509, NULL);
-        uint8_t* der = (uint8_t*)OPENSSL_malloc(len_der);
+        int len_der = i2d_X509(x509, nullptr);
+        auto* der = static_cast<uint8_t*>(OPENSSL_malloc(len_der));
         uint8_t* p = der;
         i2d_X509(x509, &p);
         X509_free(x509);
@@ -457,7 +477,7 @@ class CertManager
         return result;
     }
 
-    EVP_PKEY* get_key() const { return temp_key_; }
+    [[nodiscard]] EVP_PKEY* get_key() const { return temp_key_; }
 
    private:
     EVP_PKEY* temp_key_ = nullptr;

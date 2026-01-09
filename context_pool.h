@@ -1,12 +1,11 @@
 #ifndef CONTEXT_POOL_H
 #define CONTEXT_POOL_H
 
-#include <boost/asio.hpp>
 #include <vector>
 #include <memory>
 #include <thread>
 #include <atomic>
-#include <stdexcept>
+#include <boost/asio.hpp>
 #include "log.h"
 
 class io_context_pool
@@ -30,9 +29,10 @@ class io_context_pool
     void run()
     {
         std::vector<std::thread> threads;
-        for (std::size_t i = 0; i < io_contexts_.size(); ++i)
+        threads.reserve(io_contexts_.size());
+        for (auto& io_context : io_contexts_)
         {
-            threads.emplace_back([this, i]() { io_contexts_[i]->run(); });
+            threads.emplace_back([&io_context]() { io_context->run(); });
         }
 
         LOG_INFO("io_context_pool running with {} threads", threads.size());
@@ -61,9 +61,9 @@ class io_context_pool
     }
 
    private:
-    std::vector<std::shared_ptr<boost::asio::io_context>> io_contexts_ = {};
-    std::vector<std::shared_ptr<boost::asio::executor_work_guard<boost::asio::io_context::executor_type>>> work_ = {};
     std::atomic<std::size_t> next_io_context_ = {0};
+    std::vector<std::shared_ptr<boost::asio::io_context>> io_contexts_;
+    std::vector<std::shared_ptr<boost::asio::executor_work_guard<boost::asio::io_context::executor_type>>> work_;
 };
 
 #endif
