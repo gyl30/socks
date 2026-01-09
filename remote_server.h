@@ -37,31 +37,28 @@ class CHParser
         const uint8_t* p = buf.data();
         size_t len = buf.size();
 
-        if (len >= 5 && p[0] == 0x16 && p[1] == 0x03)
+        if (len >= 5 && p[0] == 0x16 && (p[1] == 0x03))
         {
             p += 5;
             len -= 5;
         }
 
-        if (len < 39 || p[0] != 0x01)
+        if (len < 6 || p[0] != 0x01)
             return info;
-
-        size_t current_idx = p - buf.data();
 
         p += 6;
         len -= 6;
-        current_idx += 6;
 
         info.random.assign(p, p + 32);
         p += 32;
         len -= 32;
-        current_idx += 32;
 
         uint8_t sid_len = *p;
-        info.sid_offset = current_idx + 1;
+
+        info.sid_offset = (p - buf.data()) + 1;
+
         p++;
         len--;
-        current_idx++;
 
         if (len < sid_len)
             return info;
@@ -71,7 +68,6 @@ class CHParser
         }
         p += sid_len;
         len -= sid_len;
-        current_idx += sid_len;
 
         if (len < 2)
             return info;
@@ -109,18 +105,36 @@ class CHParser
             uint16_t elen = (p[2] << 8) | p[3];
             p += 4;
 
-            if (etype == 51)
-            {
-                if (elen >= 6)
-                {
-                    const uint8_t* kp = p + 2;
-                    uint16_t group = (kp[0] << 8) | kp[1];
-                    uint16_t klen = (kp[2] << 8) | kp[3];
+            if (p + elen > ext_end)
+                break;
 
-                    if (group == 0x001d && klen == 32 && (kp + 4 + 32 <= p + elen))
+            if (etype == 0x0033)
+            {
+                if (elen >= 2)
+                {
+                    uint16_t client_shares_len = (p[0] << 8) | p[1];
+                    const uint8_t* share_ptr = p + 2;
+                    const uint8_t* share_end = p + elen;
+
+                    if (share_end > ext_end)
+                        share_end = ext_end;
+
+                    while (share_ptr + 4 <= share_end)
                     {
-                        info.x25519_pub.assign(kp + 4, kp + 4 + 32);
-                        info.is_tls13 = true;
+                        uint16_t group = (share_ptr[0] << 8) | share_ptr[1];
+                        uint16_t key_len = (share_ptr[2] << 8) | share_ptr[3];
+                        share_ptr += 4;
+
+                        if (share_ptr + key_len > share_end)
+                            break;
+
+                        if (group == 0x001d && key_len == 32)
+                        {
+                            info.x25519_pub.assign(share_ptr, share_ptr + 32);
+                            info.is_tls13 = true;
+                            break;
+                        }
+                        share_ptr += key_len;
                     }
                 }
             }
@@ -279,8 +293,7 @@ class remote_server
             if (!ec)
             {
                 LOG_INFO("[Server] Accepted connection from {}", sock->remote_endpoint().address().to_string());
-                boost::asio::co_spawn(
-                    pool_.get_io_context(), [this, sock]() mutable { return handle_connection(sock); }, boost::asio::detached);
+                boost::asio::co_spawn(pool_.get_io_context(), [this, sock]() mutable { return handle_connection(sock); }, boost::asio::detached);
             }
             else
             {
@@ -357,15 +370,14 @@ class remote_server
                 LOG_INFO("[Server] Nonce: {}", reality::CryptoUtil::bytes_to_hex(nonce));
 
                 std::vector<uint8_t> aad = handshake_msg;
+
                 if (info.sid_offset + 32 <= aad.size())
                 {
                     std::fill(aad.begin() + info.sid_offset, aad.begin() + info.sid_offset + 32, 0);
-                    LOG_INFO(
-                        "[Server] AAD Size: {}, First 5: {:02x} {:02x} {:02x} {:02x} {:02x}", aad.size(), aad[0], aad[1], aad[2], aad[3], aad[4]);
                 }
                 else
                 {
-                    LOG_ERROR("Invalid SID Offset");
+                    LOG_ERROR("Invalid SID Offset: {} vs Size: {}", info.sid_offset, aad.size());
                 }
 
                 auto plaintext = reality::CryptoUtil::aes_gcm_decrypt(current_auth_key, nonce, info.session_id, aad);
