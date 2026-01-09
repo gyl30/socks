@@ -155,76 +155,103 @@ class remote_session : public std::enable_shared_from_this<remote_session>
     {
         auto stream = tunnel_->accept_stream(id_);
         if (!stream)
+        {
+            LOG_ERROR("session {} could not accept mux stream", id_);
             co_return;
+        }
 
         mux::SynPayload syn;
         if (!mux::SynPayload::decode(syn_data.data(), syn_data.size(), syn))
         {
-            LOG_WARN("Session {} invalid syn payload", id_);
+            LOG_WARN("session {} received invalid syn payload", id_);
             co_await stream->close();
             co_return;
         }
 
-        LOG_INFO("Session {} connecting to {}:{}", id_, syn.addr, syn.port);
+        LOG_INFO("session {} connecting to {}:{}", id_, syn.addr, syn.port);
 
-        bool connected = false;
-        try
+        auto [ec_resolve, eps] =
+            co_await resolver_.async_resolve(syn.addr, std::to_string(syn.port), boost::asio::as_tuple(boost::asio::use_awaitable));
+        if (ec_resolve)
         {
-            auto eps = co_await resolver_.async_resolve(syn.addr, std::to_string(syn.port), boost::asio::use_awaitable);
-            co_await boost::asio::async_connect(target_socket_, eps, boost::asio::use_awaitable);
-            connected = true;
-        }
-        catch (const std::exception& e)
-        {
-            LOG_ERROR("Session {} connect failed: {}", id_, e.what());
-        }
-
-        if (!connected)
-        {
+            LOG_ERROR("session {} failed to resolve {}:{}: {}", id_, syn.addr, syn.port, ec_resolve.message());
             co_await stream->close();
             co_return;
         }
+
+        auto [ec_connect, ep] = co_await boost::asio::async_connect(target_socket_, eps, boost::asio::as_tuple(boost::asio::use_awaitable));
+        if (ec_connect)
+        {
+            LOG_ERROR("session {} failed to connect to {}:{}: {}", id_, syn.addr, syn.port, ec_connect.message());
+            co_await stream->close();
+            co_return;
+        }
+
+        LOG_INFO("session {} connected to target successfully", id_);
 
         using boost::asio::experimental::awaitable_operators::operator||;
         co_await (upstream(stream) || downstream(stream));
 
-        target_socket_.close();
+        boost::system::error_code ec;
+        target_socket_.close(ec);
+        LOG_INFO("session {} for {}:{} finished", id_, syn.addr, syn.port);
     }
 
    private:
     boost::asio::awaitable<void> upstream(std::shared_ptr<mux_stream> stream)
     {
-        try
+        for (;;)
         {
-            while (true)
+            auto [ec, data] = co_await stream->async_read_some();
+            if (ec)
             {
-                auto [ec, data] = co_await stream->async_read_some();
-                if (ec)
-                    break;
-                if (data.empty())
-                    continue;
-                co_await boost::asio::async_write(target_socket_, boost::asio::buffer(data), boost::asio::use_awaitable);
+                // Ignore channel closed error which is expected, but log others.
+                if (ec != boost::asio::experimental::error::channel_closed)
+                {
+                    LOG_WARN("session {} upstream read from mux error: {}", id_, ec.message());
+                }
+                break;
+            }
+            if (data.empty())
+                continue;
+
+            auto [ec_write, n] =
+                co_await boost::asio::async_write(target_socket_, boost::asio::buffer(data), boost::asio::as_tuple(boost::asio::use_awaitable));
+            if (ec_write)
+            {
+                // Ignore operation aborted on write, as the socket may have been closed by the start() coroutine.
+                if (ec_write != boost::asio::error::operation_aborted)
+                {
+                    LOG_WARN("session {} upstream write to target error: {}", id_, ec_write.message());
+                }
+                break;
             }
         }
-        catch (...)
-        {
-        }
-        target_socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_send);
+        boost::system::error_code ec;
+        target_socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
     }
 
     boost::asio::awaitable<void> downstream(std::shared_ptr<mux_stream> stream)
     {
         std::vector<uint8_t> buf(8192);
-        try
+        for (;;)
         {
-            while (true)
+            auto [ec_read, n] = co_await target_socket_.async_read_some(boost::asio::buffer(buf), boost::asio::as_tuple(boost::asio::use_awaitable));
+            if (ec_read)
             {
-                size_t n = co_await target_socket_.async_read_some(boost::asio::buffer(buf), boost::asio::use_awaitable);
-                co_await stream->async_write_some(buf.data(), n);
+                // Ignore eof and operation aborted, which are expected on close. Log other errors.
+                if (ec_read != boost::asio::error::eof && ec_read != boost::asio::error::operation_aborted)
+                {
+                    LOG_WARN("session {} downstream read from target error: {}", id_, ec_read.message());
+                }
+                break;
             }
-        }
-        catch (...)
-        {
+            auto ec_write = co_await stream->async_write_some(buf.data(), n);
+            if (ec_write)
+            {
+                LOG_WARN("session {} downstream write to mux error: {}", id_, ec_write.message());
+                break;
+            }
         }
         co_await stream->close();
     }
@@ -239,22 +266,34 @@ class remote_session : public std::enable_shared_from_this<remote_session>
 class remote_server
 {
    public:
-    remote_server(io_context_pool& pool, uint16_t port, std::string fb_host, std::string fb_port, std::string auth_key_hex)
+    remote_server(
+        io_context_pool& pool, uint16_t port, std::string fb_host, std::string fb_port, std::string auth_key_hex, boost::system::error_code& ec)
         : pool_(pool),
           acceptor_(pool.get_io_context(), boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v6(), port)),
           fallback_host_(std::move(fb_host)),
           fallback_port_(std::move(fb_port))
     {
-        server_private_key_ = reality::CryptoUtil::hex_to_bytes(auth_key_hex);
+        server_private_key_ = reality::CryptoUtil::hex_to_bytes(auth_key_hex, ec);
+        if (ec)
+        {
+            LOG_ERROR("invalid server private key provided not hex: {}", auth_key_hex);
+            return;
+        }
 
-        std::vector<uint8_t> pub = reality::CryptoUtil::extract_public_key(server_private_key_);
+        std::vector<uint8_t> pub = reality::CryptoUtil::extract_public_key(server_private_key_, ec);
+        if (ec)
+        {
+            LOG_ERROR("could not extract public key from private key: {}", ec.message());
+            return;
+        }
+
         LOG_INFO("============================================================");
-        LOG_INFO("Server Private Key: {}", auth_key_hex);
-        LOG_INFO("Server Public Key : {}", reality::CryptoUtil::bytes_to_hex(pub));
-        LOG_INFO("PLEASE USE THIS PUBLIC KEY FOR THE CLIENT!");
+        LOG_INFO("server private key: {}", auth_key_hex);
+        LOG_INFO("server public key : {}", reality::CryptoUtil::bytes_to_hex(pub));
+        LOG_INFO("please use this public key for the client");
         LOG_INFO("============================================================");
 
-        LOG_INFO("REALITY Certificate Manager Initialized (Synthetic Ed25519).");
+        LOG_INFO("reality certificate manager initialized");
     }
 
     void start() { boost::asio::co_spawn(acceptor_.get_executor(), accept_loop(), boost::asio::detached); }
@@ -291,36 +330,41 @@ class remote_server
             auto [ec] = co_await acceptor_.async_accept(*sock, boost::asio::as_tuple(boost::asio::use_awaitable));
             if (!ec)
             {
-                LOG_INFO("[Server] Accepted connection from {}", sock->remote_endpoint().address().to_string());
+                boost::system::error_code ec_ep;
+                auto remote_ep = sock->remote_endpoint(ec_ep);
+                LOG_INFO("server accepted connection from {}", ec_ep ? "unknown" : remote_ep.address().to_string());
                 boost::asio::co_spawn(pool_.get_io_context(), [this, sock]() mutable { return handle_connection(sock); }, boost::asio::detached);
             }
             else
             {
-                LOG_ERROR("[Server] Accept failed: {}", ec.message());
+                LOG_ERROR("server accept failed: {}", ec.message());
             }
         }
     }
 
     boost::asio::awaitable<void> handle_connection(std::shared_ptr<boost::asio::ip::tcp::socket> socket)
     {
+        boost::system::error_code ec;
+        auto remote_ep_str = socket->remote_endpoint(ec).address().to_string();
+
         std::vector<uint8_t> buffer(4096);
-        auto [ec, n] = co_await socket->async_read_some(boost::asio::buffer(buffer), boost::asio::as_tuple(boost::asio::use_awaitable));
-        if (ec)
+        auto [ec_read, n] = co_await socket->async_read_some(boost::asio::buffer(buffer), boost::asio::as_tuple(boost::asio::use_awaitable));
+        if (ec_read)
         {
-            LOG_ERROR("Read failed: {}", ec.message());
+            LOG_ERROR("server failed to read initial data from client {}: {}", remote_ep_str, ec_read.message());
             co_return;
         }
         buffer.resize(n);
 
         if (n < 5)
         {
-            LOG_ERROR("Packet too short");
+            LOG_WARN("server packet too short from client {}", remote_ep_str);
             co_return;
         }
 
         if (buffer[0] != 0x16)
         {
-            LOG_WARN("[Server] Not a TLS Handshake Record (0x{:02x})", buffer[0]);
+            LOG_WARN("server not a tls handshake record 0x{:02x} from client {}", buffer[0], remote_ep_str);
             co_await handle_fallback(socket, buffer);
             co_return;
         }
@@ -331,16 +375,14 @@ class remote_server
         while (buffer.size() < full_len)
         {
             std::vector<uint8_t> tmp(full_len - buffer.size());
-            auto [ec2, n2] = co_await boost::asio::async_read(*socket, boost::asio::buffer(tmp), boost::asio::as_tuple(boost::asio::use_awaitable));
-            if (ec2)
-                break;
+            auto [ec_read_more, n2] =
+                co_await boost::asio::async_read(*socket, boost::asio::buffer(tmp), boost::asio::as_tuple(boost::asio::use_awaitable));
+            if (ec_read_more)
+            {
+                LOG_ERROR("server failed to read full record from client {}: {}", remote_ep_str, ec_read_more.message());
+                co_return;
+            }
             buffer.insert(buffer.end(), tmp.begin(), tmp.begin() + n2);
-        }
-
-        if (buffer.size() < full_len)
-        {
-            LOG_ERROR("Incomplete record");
-            co_return;
         }
 
         std::vector<uint8_t> handshake_msg(buffer.begin() + 5, buffer.begin() + full_len);
@@ -349,67 +391,78 @@ class remote_server
         bool authorized = false;
         std::vector<uint8_t> current_auth_key;
 
-        LOG_INFO("[Server] IsTLS13={}, HasPub={}, SIDLen={}", info.is_tls13, !info.x25519_pub.empty(), info.session_id.size());
+        LOG_DEBUG("server istls13={}, haspub={}, sidlen={}", info.is_tls13, !info.x25519_pub.empty(), info.session_id.size());
 
         if (info.is_tls13 && !info.x25519_pub.empty() && info.session_id.size() == 32)
         {
-            auto shared = reality::CryptoUtil::x25519_derive(server_private_key_, info.x25519_pub);
-            if (!shared.empty())
+            auto shared = reality::CryptoUtil::x25519_derive(server_private_key_, info.x25519_pub, ec);
+            if (!ec)
             {
-                LOG_INFO("[Server] Shared Secret: {}", reality::CryptoUtil::bytes_to_hex(shared));
+                LOG_DEBUG("server shared secret: {}", reality::CryptoUtil::bytes_to_hex(shared));
 
                 std::vector<uint8_t> salt(info.random.begin(), info.random.begin() + 20);
-                std::vector<uint8_t> info_str = reality::CryptoUtil::hex_to_bytes("5245414c495459");
-                std::vector<uint8_t> prk = reality::CryptoUtil::hkdf_extract(salt, shared);
-                current_auth_key = reality::CryptoUtil::hkdf_expand(prk, info_str, 32);
+                std::vector<uint8_t> info_str = reality::CryptoUtil::hex_to_bytes("5245414c495459", ec);
 
-                LOG_INFO("[Server] Auth Key: {}", reality::CryptoUtil::bytes_to_hex(current_auth_key));
-
-                std::vector<uint8_t> nonce(info.random.begin() + 20, info.random.end());
-                LOG_INFO("[Server] Nonce: {}", reality::CryptoUtil::bytes_to_hex(nonce));
-
-                std::vector<uint8_t> aad = handshake_msg;
-
-                if (info.sid_offset + 32 <= aad.size())
+                std::vector<uint8_t> prk = reality::CryptoUtil::hkdf_extract(salt, shared, ec);
+                if (!ec)
                 {
-                    std::fill(aad.begin() + info.sid_offset, aad.begin() + info.sid_offset + 32, 0);
+                    current_auth_key = reality::CryptoUtil::hkdf_expand(prk, info_str, 32, ec);
+                }
+
+                if (!ec)
+                {
+                    LOG_DEBUG("server auth key: {}", reality::CryptoUtil::bytes_to_hex(current_auth_key));
+
+                    std::vector<uint8_t> nonce(info.random.begin() + 20, info.random.end());
+                    LOG_DEBUG("server nonce: {}", reality::CryptoUtil::bytes_to_hex(nonce));
+
+                    std::vector<uint8_t> aad = handshake_msg;
+                    if (info.sid_offset + 32 <= aad.size())
+                    {
+                        std::fill(aad.begin() + info.sid_offset, aad.begin() + info.sid_offset + 32, 0);
+                    }
+                    else
+                    {
+                        LOG_ERROR("server invalid sid offset: {} vs size: {}", info.sid_offset, aad.size());
+                    }
+
+                    auto plaintext = reality::CryptoUtil::aes_gcm_decrypt(current_auth_key, nonce, info.session_id, aad, ec);
+
+                    if (!ec && plaintext.size() == 16)
+                    {
+                        uint32_t ts = (plaintext[4] << 24) | (plaintext[5] << 16) | (plaintext[6] << 8) | plaintext[7];
+                        uint32_t now = static_cast<uint32_t>(std::time(nullptr));
+                        uint32_t diff = (ts > now) ? (ts - now) : (now - ts);
+                        LOG_INFO("server decrypted ok from client {} timediff={}s", remote_ep_str, diff);
+                        if (diff < 120)
+                            authorized = true;
+                        else
+                            LOG_WARN("server reality auth failed for {}: timestamp out of sync diff={}s", remote_ep_str, diff);
+                    }
+                    else
+                    {
+                        LOG_INFO("server reality payload decryption failed for client {} this is expected for non-proxy clients", remote_ep_str);
+                    }
                 }
                 else
                 {
-                    LOG_ERROR("Invalid SID Offset: {} vs Size: {}", info.sid_offset, aad.size());
-                }
-
-                auto plaintext = reality::CryptoUtil::aes_gcm_decrypt(current_auth_key, nonce, info.session_id, aad);
-
-                if (plaintext.size() == 16)
-                {
-                    uint32_t ts = (plaintext[4] << 24) | (plaintext[5] << 16) | (plaintext[6] << 8) | plaintext[7];
-                    uint32_t now = static_cast<uint32_t>(std::time(nullptr));
-                    uint32_t diff = (ts > now) ? (ts - now) : (now - ts);
-                    LOG_INFO("[Server] Decrypted OK. TimeDiff={}s", diff);
-                    if (diff < 120)
-                        authorized = true;
-                }
-                else
-                {
-                    LOG_WARN("[Server] Decryption Failed.");
+                    LOG_WARN("server failed to derive auth key for client {}: {}", remote_ep_str, ec.message());
                 }
             }
             else
             {
-                LOG_WARN("[Server] ECDH Failed");
+                LOG_WARN("server ecdh failed for client {}: {}", remote_ep_str, ec.message());
             }
         }
 
         if (authorized)
         {
-            LOG_INFO("[Server] Hijacking connection...");
+            LOG_INFO("server identified reality client from {}, starting proxy handshake", remote_ep_str);
             std::vector<uint8_t> exact_record(buffer.begin(), buffer.begin() + full_len);
             co_await handle_reality_handshake(socket, exact_record, info, current_auth_key);
         }
         else
         {
-            LOG_INFO("[Server] Falling back...");
             co_await handle_fallback(socket, buffer);
         }
     }
@@ -419,6 +472,7 @@ class remote_server
                                                           const ClientHelloData& ch_info,
                                                           const std::vector<uint8_t>& auth_key)
     {
+        boost::system::error_code ec;
         Transcript transcript;
         if (client_hello_record.size() > 5)
         {
@@ -433,14 +487,36 @@ class remote_server
         std::vector<uint8_t> srv_random(32);
         RAND_bytes(srv_random.data(), 32);
 
-        std::vector<uint8_t> shared_hs = reality::CryptoUtil::x25519_derive(std::vector<uint8_t>(srv_priv, srv_priv + 32), ch_info.x25519_pub);
+        std::vector<uint8_t> shared_hs = reality::CryptoUtil::x25519_derive(std::vector<uint8_t>(srv_priv, srv_priv + 32), ch_info.x25519_pub, ec);
+        if (ec)
+        {
+            LOG_ERROR("server handshake ecdh failed: {}", ec.message());
+            co_return;
+        }
 
         std::vector<uint8_t> server_hello = reality::construct_server_hello(srv_random, ch_info.session_id, 0x1301, srv_pub_vec);
         transcript.update(server_hello);
 
-        auto hs_keys = reality::TlsKeySchedule::derive_handshake_keys(shared_hs, transcript.finish());
-        auto client_hs_keys = reality::TlsKeySchedule::derive_traffic_keys(hs_keys.client_handshake_traffic_secret);
-        auto server_hs_keys = reality::TlsKeySchedule::derive_traffic_keys(hs_keys.server_handshake_traffic_secret);
+        auto hs_keys = reality::TlsKeySchedule::derive_handshake_keys(shared_hs, transcript.finish(), ec);
+        if (ec)
+        {
+            LOG_ERROR("server failed to derive handshake keys: {}", ec.message());
+            co_return;
+        }
+
+        auto client_hs_keys = reality::TlsKeySchedule::derive_traffic_keys(hs_keys.client_handshake_traffic_secret, ec);
+        if (ec)
+        {
+            LOG_ERROR("server failed to derive client handshake traffic keys: {}", ec.message());
+            co_return;
+        }
+
+        auto server_hs_keys = reality::TlsKeySchedule::derive_traffic_keys(hs_keys.server_handshake_traffic_secret, ec);
+        if (ec)
+        {
+            LOG_ERROR("server failed to derive server handshake traffic keys: {}", ec.message());
+            co_return;
+        }
 
         std::vector<uint8_t> enc_ext = reality::construct_encrypted_extensions();
         transcript.update(enc_ext);
@@ -452,8 +528,14 @@ class remote_server
         std::vector<uint8_t> cert_verify = reality::construct_certificate_verify(cert_manager_.get_key(), transcript.finish());
         transcript.update(cert_verify);
 
-        std::vector<uint8_t> server_finished = reality::construct_finished(
-            reality::TlsKeySchedule::compute_finished_verify_data(hs_keys.server_handshake_traffic_secret, transcript.finish()));
+        auto srv_fin_verify = reality::TlsKeySchedule::compute_finished_verify_data(hs_keys.server_handshake_traffic_secret, transcript.finish(), ec);
+        if (ec)
+        {
+            LOG_ERROR("server failed to compute finished verify data: {}", ec.message());
+            co_return;
+        }
+
+        std::vector<uint8_t> server_finished = reality::construct_finished(srv_fin_verify);
         transcript.update(server_finished);
 
         std::vector<uint8_t> combined_payload;
@@ -463,65 +545,119 @@ class remote_server
         combined_payload.insert(combined_payload.end(), server_finished.begin(), server_finished.end());
 
         std::vector<uint8_t> enc_records = reality::TlsRecordLayer::encrypt_record(
-            server_hs_keys.first, server_hs_keys.second, 0, combined_payload, reality::CONTENT_TYPE_HANDSHAKE);
+            server_hs_keys.first, server_hs_keys.second, 0, combined_payload, reality::CONTENT_TYPE_HANDSHAKE, ec);
+        if (ec)
+        {
+            LOG_ERROR("server failed to encrypt flight 2: {}", ec.message());
+            co_return;
+        }
 
         std::vector<uint8_t> flight;
-
         std::vector<uint8_t> sh_rec = reality::write_record_header(reality::CONTENT_TYPE_HANDSHAKE, server_hello.size());
         flight.insert(flight.end(), sh_rec.begin(), sh_rec.end());
         flight.insert(flight.end(), server_hello.begin(), server_hello.end());
-
         flight.push_back(reality::CONTENT_TYPE_CHANGE_CIPHER_SPEC);
         flight.push_back(0x03);
         flight.push_back(0x03);
         flight.push_back(0x00);
         flight.push_back(0x01);
         flight.push_back(0x01);
-
         flight.insert(flight.end(), enc_records.begin(), enc_records.end());
 
-        co_await boost::asio::async_write(*socket, boost::asio::buffer(flight), boost::asio::use_awaitable);
+        auto [ec_write_flight, n_write_flight] =
+            co_await boost::asio::async_write(*socket, boost::asio::buffer(flight), boost::asio::as_tuple(boost::asio::use_awaitable));
+        if (ec_write_flight)
+        {
+            LOG_ERROR("server failed to write handshake flight: {}", ec_write_flight.message());
+            co_return;
+        }
 
         uint8_t h[5];
-        co_await boost::asio::async_read(*socket, boost::asio::buffer(h, 5), boost::asio::use_awaitable);
+        auto [ec_read_h, n_read_h] =
+            co_await boost::asio::async_read(*socket, boost::asio::buffer(h, 5), boost::asio::as_tuple(boost::asio::use_awaitable));
+        if (ec_read_h)
+        {
+            LOG_ERROR("server failed to read client finished header: {}", ec_read_h.message());
+            co_return;
+        }
 
         if (h[0] == reality::CONTENT_TYPE_CHANGE_CIPHER_SPEC)
         {
             uint8_t dummy;
-            co_await boost::asio::async_read(*socket, boost::asio::buffer(&dummy, 1), boost::asio::use_awaitable);
-            co_await boost::asio::async_read(*socket, boost::asio::buffer(h, 5), boost::asio::use_awaitable);
+            auto [ec_read_ccs, n_read_ccs] =
+                co_await boost::asio::async_read(*socket, boost::asio::buffer(&dummy, 1), boost::asio::as_tuple(boost::asio::use_awaitable));
+            if (ec_read_ccs)
+            {
+                LOG_ERROR("server failed to read client ccs body: {}", ec_read_ccs.message());
+                co_return;
+            }
+
+            auto [ec_read_h2, n_read_h2] =
+                co_await boost::asio::async_read(*socket, boost::asio::buffer(h, 5), boost::asio::as_tuple(boost::asio::use_awaitable));
+            if (ec_read_h2)
+            {
+                LOG_ERROR("server failed to read client finished header after ccs: {}", ec_read_h2.message());
+                co_return;
+            }
         }
 
         if (h[0] != reality::CONTENT_TYPE_APPLICATION_DATA)
         {
-            LOG_ERROR("Exp AppData for Client Fin");
+            LOG_ERROR("server expected application data for client finished but got {}", h[0]);
             co_return;
         }
         uint16_t len = (h[3] << 8) | h[4];
         std::vector<uint8_t> record(len);
-        co_await boost::asio::async_read(*socket, boost::asio::buffer(record), boost::asio::use_awaitable);
+        auto [ec_read_fin_rec, n_read_fin_rec] =
+            co_await boost::asio::async_read(*socket, boost::asio::buffer(record), boost::asio::as_tuple(boost::asio::use_awaitable));
+        if (ec_read_fin_rec)
+        {
+            LOG_ERROR("server failed to read client finished record: {}", ec_read_fin_rec.message());
+            co_return;
+        }
 
         std::vector<uint8_t> ct_with_header(5 + len);
         memcpy(ct_with_header.data(), h, 5);
         memcpy(ct_with_header.data() + 5, record.data(), len);
 
         uint8_t type;
-        std::vector<uint8_t> pt = reality::TlsRecordLayer::decrypt_record(client_hs_keys.first, client_hs_keys.second, 0, ct_with_header, type);
-
-        if (type != reality::CONTENT_TYPE_HANDSHAKE || pt.empty() || pt[0] != 0x14)
+        std::vector<uint8_t> pt = reality::TlsRecordLayer::decrypt_record(client_hs_keys.first, client_hs_keys.second, 0, ct_with_header, type, ec);
+        if (ec)
         {
-            LOG_ERROR("Invalid Client Finished");
+            LOG_ERROR("server failed to decrypt client finished: {}", ec.message());
             co_return;
         }
 
-        auto app_secrets = reality::TlsKeySchedule::derive_application_secrets(hs_keys.master_secret, transcript.finish());
+        if (type != reality::CONTENT_TYPE_HANDSHAKE || pt.empty() || pt[0] != 0x14)
+        {
+            LOG_ERROR("server invalid client finished message");
+            co_return;
+        }
+
+        auto app_secrets = reality::TlsKeySchedule::derive_application_secrets(hs_keys.master_secret, transcript.finish(), ec);
+        if (ec)
+        {
+            LOG_ERROR("server failed to derive application secrets: {}", ec.message());
+            co_return;
+        }
 
         transcript.update(pt);
 
-        auto c_app_keys = reality::TlsKeySchedule::derive_traffic_keys(app_secrets.first);
-        auto s_app_keys = reality::TlsKeySchedule::derive_traffic_keys(app_secrets.second);
+        auto c_app_keys = reality::TlsKeySchedule::derive_traffic_keys(app_secrets.first, ec);
+        if (ec)
+        {
+            LOG_ERROR("server failed to derive client app keys: {}", ec.message());
+            co_return;
+        }
 
-        LOG_INFO("[Server] REALITY Handshake Complete. Tunnel Start.");
+        auto s_app_keys = reality::TlsKeySchedule::derive_traffic_keys(app_secrets.second, ec);
+        if (ec)
+        {
+            LOG_ERROR("server failed to derive server app keys: {}", ec.message());
+            co_return;
+        }
+
+        LOG_INFO("server reality handshake complete tunnel start");
 
         auto reality_socket = std::make_shared<reality::reality_stream<boost::asio::ip::tcp::socket>>(
             std::move(*socket), c_app_keys.first, c_app_keys.second, s_app_keys.first, s_app_keys.second);
@@ -544,38 +680,50 @@ class remote_server
 
     boost::asio::awaitable<void> handle_fallback(std::shared_ptr<boost::asio::ip::tcp::socket> client, std::vector<uint8_t> prefix)
     {
+        boost::system::error_code ec_ep;
+        auto client_ep_str = client->remote_endpoint(ec_ep).address().to_string();
+        LOG_INFO("server forwarding non-proxy request from client {} to fallback {}:{}", client_ep_str, fallback_host_, fallback_port_);
+
         boost::asio::ip::tcp::socket target(client->get_executor());
         boost::asio::ip::tcp::resolver res(client->get_executor());
-        auto [ec, eps] = co_await res.async_resolve(fallback_host_, fallback_port_, boost::asio::as_tuple(boost::asio::use_awaitable));
-        if (!ec)
+        auto [ec_resolve, eps] = co_await res.async_resolve(fallback_host_, fallback_port_, boost::asio::as_tuple(boost::asio::use_awaitable));
+        if (ec_resolve)
         {
-            auto [ec2, ep] = co_await boost::asio::async_connect(target, eps, boost::asio::as_tuple(boost::asio::use_awaitable));
-            if (!ec2)
-            {
-                co_await boost::asio::async_write(target, boost::asio::buffer(prefix), boost::asio::as_tuple(boost::asio::use_awaitable));
-                auto transfer = [](boost::asio::ip::tcp::socket& from, boost::asio::ip::tcp::socket& to) -> boost::asio::awaitable<void>
-                {
-                    std::array<char, 8192> data;
-                    while (true)
-                    {
-                        auto [e, n] = co_await from.async_read_some(boost::asio::buffer(data), boost::asio::as_tuple(boost::asio::use_awaitable));
-                        if (e)
-                            break;
-                        co_await boost::asio::async_write(to, boost::asio::buffer(data, n), boost::asio::as_tuple(boost::asio::use_awaitable));
-                    }
-                };
-                using boost::asio::experimental::awaitable_operators::operator||;
-                co_await (transfer(*client, target) || transfer(target, *client));
-            }
-            else
-            {
-                LOG_ERROR("[Server] Fallback connect failed: {}", ec2.message());
-            }
+            LOG_ERROR("server fallback resolve failed for {}:{}: {}", fallback_host_, fallback_port_, ec_resolve.message());
+            co_return;
         }
-        else
+
+        auto [ec_connect, ep] = co_await boost::asio::async_connect(target, eps, boost::asio::as_tuple(boost::asio::use_awaitable));
+        if (ec_connect)
         {
-            LOG_ERROR("[Server] Fallback resolve failed: {}", ec.message());
+            LOG_ERROR("server fallback connect failed for {}:{}: {}", fallback_host_, fallback_port_, ec_connect.message());
+            co_return;
         }
+
+        auto [ec_write, n_write] =
+            co_await boost::asio::async_write(target, boost::asio::buffer(prefix), boost::asio::as_tuple(boost::asio::use_awaitable));
+        if (ec_write)
+        {
+            LOG_ERROR("server fallback failed to write prefix to target: {}", ec_write.message());
+            co_return;
+        }
+
+        auto transfer = [](boost::asio::ip::tcp::socket& from, boost::asio::ip::tcp::socket& to) -> boost::asio::awaitable<void>
+        {
+            std::array<char, 8192> data;
+            for (;;)
+            {
+                auto [e, n] = co_await from.async_read_some(boost::asio::buffer(data), boost::asio::as_tuple(boost::asio::use_awaitable));
+                if (e)
+                    break;
+                auto [e2, n2] =
+                    co_await boost::asio::async_write(to, boost::asio::buffer(data, n), boost::asio::as_tuple(boost::asio::use_awaitable));
+                if (e2)
+                    break;
+            }
+        };
+        using boost::asio::experimental::awaitable_operators::operator||;
+        co_await (transfer(*client, target) || transfer(target, *client));
     }
 
     io_context_pool& pool_;
