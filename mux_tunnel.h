@@ -5,8 +5,12 @@
 #include <vector>
 #include <array>
 #include <mutex>
+#include <deque>
 #include <functional>
 #include <unordered_map>
+#include <chrono>
+#include <atomic>
+#include <tuple>
 #include <boost/asio.hpp>
 #include <boost/asio/experimental/concurrent_channel.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
@@ -16,6 +20,10 @@
 
 namespace mux
 {
+
+constexpr size_t MAX_STREAM_QUEUE_BYTES = 2L * 1024 * 1024;
+constexpr int STREAM_TIMEOUT_SECONDS = 300;
+constexpr size_t RECV_CHANNEL_SIZE = 128;
 
 class mux_stream;
 
@@ -34,39 +42,183 @@ class mux_stream : public std::enable_shared_from_this<mux_stream>
 {
    public:
     mux_stream(std::uint32_t id, const std::shared_ptr<mux_tunnel_interface>& tunnel, const boost::asio::any_io_executor& ex)
-        : id_(id), tunnel_(tunnel), recv_channel_(ex, 1024)
+        : id_(id), tunnel_(tunnel), recv_channel_(ex, RECV_CHANNEL_SIZE), timer_(ex)
     {
+        touch();
+        boost::asio::co_spawn(ex, check_timeout(), boost::asio::detached);
     }
+
+    ~mux_stream() { close_internal(); }
 
     [[nodiscard]] std::uint32_t id() const { return id_; }
 
     [[nodiscard]] boost::asio::awaitable<std::tuple<boost::system::error_code, std::vector<std::uint8_t>>> async_read_some()
     {
+        touch();
         co_return co_await recv_channel_.async_receive(boost::asio::as_tuple(boost::asio::use_awaitable));
     }
 
-    [[nodiscard]] boost::asio::awaitable<boost::system::error_code> send_data(std::vector<std::uint8_t> payload);
+    [[nodiscard]] boost::asio::awaitable<boost::system::error_code> send_data(std::vector<std::uint8_t> payload)
+    {
+        touch();
 
-    [[nodiscard]] boost::asio::awaitable<boost::system::error_code> async_write_some(const void* data, std::size_t len);
+        if (is_closed_)
+        {
+            co_return boost::asio::error::broken_pipe;
+        }
+
+        size_t payload_size = payload.size();
+        std::unique_lock<std::mutex> lock(send_mutex_);
+
+        if (send_queue_bytes_ + payload_size > MAX_STREAM_QUEUE_BYTES)
+        {
+            LOG_WARN("stream {} send queue full ({} bytes), closing", id_, send_queue_bytes_);
+            lock.unlock();
+            co_await close();
+            co_return boost::asio::error::no_buffer_space;
+        }
+
+        send_queue_.push_back(std::move(payload));
+        send_queue_bytes_ += payload_size;
+
+        if (!is_flushing_)
+        {
+            is_flushing_ = true;
+            boost::asio::co_spawn(timer_.get_executor(), flush_queue(), boost::asio::detached);
+        }
+
+        co_return boost::system::error_code();
+    }
+
+    [[nodiscard]] boost::asio::awaitable<boost::system::error_code> async_write_some(const void* data, std::size_t len)
+    {
+        std::vector<std::uint8_t> payload(static_cast<const std::uint8_t*>(data), static_cast<const std::uint8_t*>(data) + len);
+        co_return co_await send_data(std::move(payload));
+    }
 
     [[nodiscard]] boost::asio::awaitable<void> close();
 
-    [[nodiscard]] boost::asio::awaitable<void> push_data(std::vector<std::uint8_t> payload)
+    [[nodiscard]] bool try_push_data(std::vector<std::uint8_t> payload)
     {
-        boost::system::error_code ec;
-        co_await recv_channel_.async_send(ec, std::move(payload), boost::asio::use_awaitable);
-        if (ec)
+        touch();
+        if (is_closed_)
         {
-            LOG_WARN("stream {} push_data channel error {}", id_, ec.message());
+            return false;
+        }
+
+        bool ok = recv_channel_.try_send(boost::system::error_code(), std::move(payload));
+        if (!ok)
+        {
+            LOG_WARN("stream {} recv channel full, dropping connection", id_);
+        }
+        return ok;
+    }
+
+    void remote_close() { close_internal(); }
+
+   private:
+    void touch() { deadline_ = std::chrono::steady_clock::now() + std::chrono::seconds(STREAM_TIMEOUT_SECONDS); }
+
+    void close_internal()
+    {
+        bool expected = false;
+        if (is_closed_.compare_exchange_strong(expected, true))
+        {
+            recv_channel_.close();
+            boost::system::error_code ec;
+            timer_.cancel(ec);
+
+            std::lock_guard<std::mutex> lock(send_mutex_);
+            send_queue_.clear();
+            send_queue_bytes_ = 0;
         }
     }
 
-    void remote_close() { recv_channel_.close(); }
+    boost::asio::awaitable<void> check_timeout()
+    {
+        auto self = shared_from_this();
 
-   private:
+        while (!is_closed_)
+        {
+            timer_.expires_at(deadline_);
+            auto [ec] = co_await timer_.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
+
+            if (ec)
+            {
+                if (ec != boost::asio::error::operation_aborted)
+                {
+                    LOG_ERROR("stream {} timer error: {}", id_, ec.message());
+                }
+                break;
+            }
+
+            if (std::chrono::steady_clock::now() >= deadline_)
+            {
+                LOG_WARN("stream {} timeout detected, closing", id_);
+                co_await close();
+                break;
+            }
+        }
+    }
+
+    boost::asio::awaitable<void> flush_queue()
+    {
+        auto self = shared_from_this();
+        while (true)
+        {
+            std::vector<uint8_t> payload;
+            {
+                std::lock_guard<std::mutex> lock(send_mutex_);
+                if (is_closed_ || send_queue_.empty())
+                {
+                    is_flushing_ = false;
+                    break;
+                }
+                payload = std::move(send_queue_.front());
+                send_queue_.pop_front();
+                if (send_queue_bytes_ >= payload.size())
+                {
+                    send_queue_bytes_ -= payload.size();
+                }
+                else
+                {
+                    send_queue_bytes_ = 0;
+                }
+            }
+
+            auto t = tunnel_.lock();
+            if (!t)
+            {
+                break;
+            }
+
+            FrameHeader header;
+            header.stream_id = id_;
+            header.length = static_cast<std::uint16_t>(payload.size());
+            header.command = CMD_DAT;
+
+            auto ec = co_await t->send_frame(header, std::move(payload));
+            if (ec)
+            {
+                LOG_ERROR("stream {} flush failed: {}", id_, ec.message());
+                co_await close();
+                break;
+            }
+        }
+    }
+
     std::uint32_t id_ = 0;
     std::weak_ptr<mux_tunnel_interface> tunnel_;
     boost::asio::experimental::concurrent_channel<void(boost::system::error_code, std::vector<std::uint8_t>)> recv_channel_;
+
+    boost::asio::steady_timer timer_;
+    std::chrono::steady_clock::time_point deadline_;
+    std::atomic<bool> is_closed_{false};
+
+    std::mutex send_mutex_;
+    std::deque<std::vector<std::uint8_t>> send_queue_;
+    size_t send_queue_bytes_ = 0;
+    bool is_flushing_ = false;
 };
 
 template <typename StreamLayer>
@@ -184,7 +336,14 @@ class mux_tunnel_impl : public mux_tunnel_interface
             {
                 if (header.command == CMD_DAT || header.command == CMD_ACK)
                 {
-                    co_await stream->push_data(std::move(payload));
+                    if (!stream->try_push_data(std::move(payload)))
+                    {
+                        LOG_WARN("stream {} receive buffer full, resetting", header.stream_id);
+                        FrameHeader h_rst{.stream_id = header.stream_id, .length = 0, .command = CMD_RST};
+                        co_await send_frame(h_rst, {});
+                        stream->remote_close();
+                        remove_stream(header.stream_id);
+                    }
                 }
                 else if (header.command == CMD_FIN || header.command == CMD_RST)
                 {
@@ -240,30 +399,15 @@ class mux_tunnel_impl : public mux_tunnel_interface
     SynHandler syn_handler_;
 };
 
-inline boost::asio::awaitable<boost::system::error_code> mux_stream::send_data(std::vector<std::uint8_t> payload)
-{
-    auto t = tunnel_.lock();
-    if (t == nullptr)
-    {
-        co_return boost::asio::error::broken_pipe;
-    }
-
-    FrameHeader header;
-    header.stream_id = id_;
-    header.length = static_cast<std::uint16_t>(payload.size());
-    header.command = CMD_DAT;
-
-    co_return co_await t->send_frame(header, std::move(payload));
-}
-
-inline boost::asio::awaitable<boost::system::error_code> mux_stream::async_write_some(const void* data, std::size_t len)
-{
-    std::vector<std::uint8_t> payload(static_cast<const std::uint8_t*>(data), static_cast<const std::uint8_t*>(data) + len);
-    co_return co_await send_data(std::move(payload));
-}
-
 inline boost::asio::awaitable<void> mux_stream::close()
 {
+    if (is_closed_)
+    {
+        co_return;
+    }
+
+    close_internal();
+
     auto t = tunnel_.lock();
     if (t != nullptr)
     {
@@ -274,7 +418,6 @@ inline boost::asio::awaitable<void> mux_stream::close()
         co_await t->send_frame(header, {});
         t->remove_stream(id_);
     }
-    recv_channel_.close();
 }
 
 }    // namespace mux

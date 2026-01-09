@@ -1,12 +1,12 @@
 #ifndef REMOTE_SERVER_H
 #define REMOTE_SERVER_H
 
+#include <algorithm>
 #include <boost/asio.hpp>
 #include <memory>
 #include <vector>
 #include <ctime>
 #include <array>
-#include <iomanip>
 
 #include "reality_core.h"
 #include "reality_messages.h"
@@ -24,7 +24,7 @@ struct ClientHelloData
     std::vector<uint8_t> random;
     std::vector<uint8_t> x25519_pub;
     bool is_tls13 = false;
-    size_t sid_offset = 0;
+    uint32_t sid_offset = 0;
 };
 
 class CHParser
@@ -43,7 +43,9 @@ class CHParser
         }
 
         if (len < 6 || p[0] != 0x01)
+        {
             return info;
+        }
 
         p += 6;
         len -= 6;
@@ -60,7 +62,9 @@ class CHParser
         len--;
 
         if (len < sid_len)
+        {
             return info;
+        }
         if (sid_len > 0)
         {
             info.session_id.assign(p, p + sid_len);
@@ -69,34 +73,46 @@ class CHParser
         len -= sid_len;
 
         if (len < 2)
+        {
             return info;
+        }
         uint16_t cs_len = (p[0] << 8) | p[1];
         p += 2;
         len -= 2;
         if (len < cs_len)
+        {
             return info;
+        }
         p += cs_len;
         len -= cs_len;
 
         if (len < 1)
+        {
             return info;
+        }
         uint8_t comp_len = *p;
         p += 1;
         len -= 1;
         if (len < comp_len)
+        {
             return info;
+        }
         p += comp_len;
         len -= comp_len;
 
         if (len < 2)
+        {
             return info;
+        }
         uint16_t ext_len = (p[0] << 8) | p[1];
         p += 2;
         len -= 2;
 
         const uint8_t* ext_end = p + ext_len;
         if (len < ext_len)
+        {
             return info;
+        }
 
         while (p + 4 <= ext_end)
         {
@@ -105,18 +121,18 @@ class CHParser
             p += 4;
 
             if (p + elen > ext_end)
+            {
                 break;
+            }
 
             if (etype == 0x0033)
             {
                 if (elen >= 2)
                 {
-                    uint16_t client_shares_len = (p[0] << 8) | p[1];
                     const uint8_t* share_ptr = p + 2;
                     const uint8_t* share_end = p + elen;
 
-                    if (share_end > ext_end)
-                        share_end = ext_end;
+                    share_end = std::min(share_end, ext_end);
 
                     while (share_ptr + 4 <= share_end)
                     {
@@ -125,7 +141,9 @@ class CHParser
                         share_ptr += 4;
 
                         if (share_ptr + key_len > share_end)
+                        {
                             break;
+                        }
 
                         if (group == 0x001d && key_len == 32)
                         {
@@ -146,7 +164,7 @@ class CHParser
 class remote_session : public std::enable_shared_from_this<remote_session>
 {
    public:
-    remote_session(std::shared_ptr<mux_tunnel_interface> tunnel, uint32_t id, boost::asio::any_io_executor ex)
+    remote_session(std::shared_ptr<mux_tunnel_interface> tunnel, uint32_t id, const boost::asio::any_io_executor& ex)
         : tunnel_(std::move(tunnel)), id_(id), executor_(ex), resolver_(ex), target_socket_(ex)
     {
     }
@@ -193,7 +211,7 @@ class remote_session : public std::enable_shared_from_this<remote_session>
         co_await (upstream(stream) || downstream(stream));
 
         boost::system::error_code ec;
-        target_socket_.close(ec);
+        ec = target_socket_.close(ec);
         LOG_INFO("session {} for {}:{} finished", id_, syn.addr, syn.port);
     }
 
@@ -205,7 +223,6 @@ class remote_session : public std::enable_shared_from_this<remote_session>
             auto [ec, data] = co_await stream->async_read_some();
             if (ec)
             {
-                // Ignore channel closed error which is expected, but log others.
                 if (ec != boost::asio::experimental::error::channel_closed)
                 {
                     LOG_WARN("session {} upstream read from mux error: {}", id_, ec.message());
@@ -213,13 +230,14 @@ class remote_session : public std::enable_shared_from_this<remote_session>
                 break;
             }
             if (data.empty())
+            {
                 continue;
+            }
 
             auto [ec_write, n] =
                 co_await boost::asio::async_write(target_socket_, boost::asio::buffer(data), boost::asio::as_tuple(boost::asio::use_awaitable));
             if (ec_write)
             {
-                // Ignore operation aborted on write, as the socket may have been closed by the start() coroutine.
                 if (ec_write != boost::asio::error::operation_aborted)
                 {
                     LOG_WARN("session {} upstream write to target error: {}", id_, ec_write.message());
@@ -239,7 +257,6 @@ class remote_session : public std::enable_shared_from_this<remote_session>
             auto [ec_read, n] = co_await target_socket_.async_read_some(boost::asio::buffer(buf), boost::asio::as_tuple(boost::asio::use_awaitable));
             if (ec_read)
             {
-                // Ignore eof and operation aborted, which are expected on close. Log other errors.
                 if (ec_read != boost::asio::error::eof && ec_read != boost::asio::error::operation_aborted)
                 {
                     LOG_WARN("session {} downstream read from target error: {}", id_, ec_read.message());
@@ -370,7 +387,7 @@ class remote_server
         }
 
         uint16_t record_len = (buffer[3] << 8) | buffer[4];
-        size_t full_len = 5 + record_len;
+        uint32_t full_len = 5 + record_len;
 
         while (buffer.size() < full_len)
         {
@@ -382,7 +399,7 @@ class remote_server
                 LOG_ERROR("server failed to read full record from client {}: {}", remote_ep_str, ec_read_more.message());
                 co_return;
             }
-            buffer.insert(buffer.end(), tmp.begin(), tmp.begin() + n2);
+            buffer.insert(buffer.end(), tmp.begin(), tmp.begin() + static_cast<uint32_t>(n2));
         }
 
         std::vector<uint8_t> handshake_msg(buffer.begin() + 5, buffer.begin() + full_len);
@@ -431,13 +448,17 @@ class remote_server
                     if (!ec && plaintext.size() == 16)
                     {
                         uint32_t ts = (plaintext[4] << 24) | (plaintext[5] << 16) | (plaintext[6] << 8) | plaintext[7];
-                        uint32_t now = static_cast<uint32_t>(std::time(nullptr));
+                        auto now = static_cast<uint32_t>(std::time(nullptr));
                         uint32_t diff = (ts > now) ? (ts - now) : (now - ts);
                         LOG_INFO("server decrypted ok from client {} timediff={}s", remote_ep_str, diff);
                         if (diff < 120)
+                        {
                             authorized = true;
+                        }
                         else
+                        {
                             LOG_WARN("server reality auth failed for {}: timestamp out of sync diff={}s", remote_ep_str, diff);
+                        }
                     }
                     else
                     {
@@ -480,7 +501,8 @@ class remote_server
             transcript.update(ch_payload);
         }
 
-        uint8_t srv_pub[32], srv_priv[32];
+        uint8_t srv_pub[32];
+        uint8_t srv_priv[32];
         X25519_keypair(srv_pub, srv_priv);
         std::vector<uint8_t> srv_pub_vec(srv_pub, srv_pub + 32);
 
@@ -715,11 +737,15 @@ class remote_server
             {
                 auto [e, n] = co_await from.async_read_some(boost::asio::buffer(data), boost::asio::as_tuple(boost::asio::use_awaitable));
                 if (e)
+                {
                     break;
+                }
                 auto [e2, n2] =
                     co_await boost::asio::async_write(to, boost::asio::buffer(data, n), boost::asio::as_tuple(boost::asio::use_awaitable));
                 if (e2)
+                {
                     break;
+                }
             }
         };
         using boost::asio::experimental::awaitable_operators::operator||;

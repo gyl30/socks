@@ -48,7 +48,6 @@ class socks_session : public std::enable_shared_from_this<socks_session>
 
     boost::asio::awaitable<void> run()
     {
-        // SOCKS5 handshake part 1: Version and method selection
         uint8_t version;
         auto [ec_read_ver, n_read_ver] =
             co_await boost::asio::async_read(socket_, boost::asio::buffer(&version, 1), boost::asio::as_tuple(boost::asio::use_awaitable));
@@ -89,7 +88,6 @@ class socks_session : public std::enable_shared_from_this<socks_session>
             co_return;
         }
 
-        // SOCKS5 handshake part 2: Request
         uint8_t head[4];
         auto [ec_read_head, n_read_head] =
             co_await boost::asio::async_read(socket_, boost::asio::buffer(head), boost::asio::as_tuple(boost::asio::use_awaitable));

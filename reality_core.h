@@ -4,7 +4,7 @@
 #include <vector>
 #include <string>
 #include <cstring>
-#include <stdexcept>
+#include <memory>
 
 #include <openssl/evp.h>
 #include <openssl/curve25519.h>
@@ -21,6 +21,7 @@
 #include <openssl/bytestring.h>
 #include <boost/algorithm/hex.hpp>
 #include <boost/system/error_code.hpp>
+#include "log.h"
 
 namespace reality
 {
@@ -342,7 +343,7 @@ class TlsKeySchedule
         std::vector<uint8_t> derived_secret_2 = CryptoUtil::hkdf_expand_label(handshake_secret, "derived", empty_hash, hash_len, ec);
         if (ec)
             return {};
-        std::vector<uint8_t> master_secret = CryptoUtil::hkdf_extract(derived_secret_2, zero_salt, ec);    // NOLINT
+        std::vector<uint8_t> master_secret = CryptoUtil::hkdf_extract(derived_secret_2, zero_salt, ec);
         if (ec)
             return {};
 
@@ -473,9 +474,20 @@ class CertManager
         EVP_PKEY_CTX* pctx = EVP_PKEY_CTX_new_id(EVP_PKEY_ED25519, nullptr);
         if (pctx != nullptr)
         {
-            EVP_PKEY_keygen_init(pctx);
-            EVP_PKEY_keygen(pctx, &temp_key_);
+            if (EVP_PKEY_keygen_init(pctx) <= 0 || EVP_PKEY_keygen(pctx, &temp_key_) <= 0)
+            {
+                LOG_ERROR("CertManager failed to generate ED25519 key");
+                if (temp_key_)
+                {
+                    EVP_PKEY_free(temp_key_);
+                    temp_key_ = nullptr;
+                }
+            }
             EVP_PKEY_CTX_free(pctx);
+        }
+        else
+        {
+            LOG_ERROR("CertManager failed to create PKEY CTX");
         }
     }
 
@@ -491,88 +503,108 @@ class CertManager
     {
         if (temp_key_ == nullptr)
         {
+            LOG_ERROR("generate_reality_cert: temp_key is null");
             return {};
         }
 
         X509* x509 = X509_new();
         if (x509 == nullptr)
         {
+            LOG_ERROR("generate_reality_cert: X509_new failed");
             return {};
         }
 
-        // 使用 RAII 确保 x509 被释放，防止中间出错导致内存泄漏
-        // (虽然你的原始代码手动释放了，这里为了逻辑清晰先保持手动释放风格，或者你可以封装 unique_ptr)
+        std::unique_ptr<X509, decltype(&X509_free)> x509_guard(x509, X509_free);
 
-        X509_set_version(x509, 2);
-        ASN1_INTEGER_set(X509_get_serialNumber(x509), 0);
-        X509_gmtime_adj(X509_get_notBefore(x509), 0);
-        X509_gmtime_adj(X509_get_notAfter(x509), 315360000L);
-        X509_set_pubkey(x509, temp_key_);
+        if (!X509_set_version(x509, 2))
+        {
+            LOG_ERROR("X509_set_version failed");
+            return {};
+        }
+        if (!ASN1_INTEGER_set(X509_get_serialNumber(x509), 0))
+        {
+            LOG_ERROR("ASN1_INTEGER_set failed");
+            return {};
+        }
+        if (!X509_gmtime_adj(X509_get_notBefore(x509), 0))
+        {
+            LOG_ERROR("X509_gmtime_adj failed");
+            return {};
+        }
+        if (!X509_gmtime_adj(X509_get_notAfter(x509), 315360000L))
+        {
+            LOG_ERROR("X509_gmtime_adj failed");
+            return {};
+        }
+        if (!X509_set_pubkey(x509, temp_key_))
+        {
+            LOG_ERROR("X509_set_pubkey failed");
+            return {};
+        }
 
-        // 1. 先进行一次正常的签名
-        // 这一步是必须的，它会填充 X509 结构体中的 algorithm 和 signature 字段的元数据
         if (X509_sign(x509, temp_key_, nullptr) == 0)
         {
-            X509_free(x509);
+            LOG_ERROR("generate_reality_cert: initial X509_sign failed");
             return {};
         }
 
-        // 计算 HMAC (REALITY 认证逻辑)
         uint8_t pub_raw[32];
         size_t len = 32;
-        EVP_PKEY_get_raw_public_key(temp_key_, pub_raw, &len);
+        if (EVP_PKEY_get_raw_public_key(temp_key_, pub_raw, &len) != 1)
+        {
+            LOG_ERROR("EVP_PKEY_get_raw_public_key failed");
+            return {};
+        }
 
         uint8_t hmac_sig[64];
         unsigned int hmac_len;
-        HMAC(EVP_sha512(), auth_key.data(), auth_key.size(), pub_raw, 32, hmac_sig, &hmac_len);
+        if (!HMAC(EVP_sha512(), auth_key.data(), auth_key.size(), pub_raw, 32, hmac_sig, &hmac_len))
+        {
+            LOG_ERROR("HMAC calculation failed");
+            return {};
+        }
 
-        // 2. 获取 X509 对象内部的签名结构指针
         const ASN1_BIT_STRING* sig = nullptr;
         const X509_ALGOR* alg = nullptr;
         X509_get0_signature(&sig, &alg, x509);
 
         if (sig)
         {
-            // 3. 修改签名内容
-            // X509_get0_signature 返回的是 const 指针，表示该内存归 X509 对象所有
-            // 我们需要 const_cast 去除常量性以修改它
             auto* mutable_sig = const_cast<ASN1_BIT_STRING*>(sig);
-
-            // ASN1_BIT_STRING_set 会自动管理内存并设置数据
-            // 这比 memcpy 安全，因为它会处理长度字段
             if (!ASN1_BIT_STRING_set(mutable_sig, hmac_sig, 64))
             {
-                X509_free(x509);
+                LOG_ERROR("ASN1_BIT_STRING_set failed");
                 return {};
             }
-
-            // 能够确保 unused bits 为 0 (Ed25519 签名是字节对齐的)
-            // 虽然 X509_sign 已经设置好了，但为了严谨性说明：
-            // ASN1_BIT_STRING 内部结构通常包含 flags，OpenSSL 会自动处理
         }
         else
         {
-            X509_free(x509);
+            LOG_ERROR("generate_reality_cert: failed to get signature ptr");
             return {};
         }
 
-        // 4. 正规序列化
-        // 此时 x509 对象内部已经是持有 HMAC 签名的合法结构了
-        // i2d_X509 会自动根据 ASN1_BIT_STRING 的内容生成正确的 Tag, Length 和 UnusedBits
         int len_der = i2d_X509(x509, nullptr);
         if (len_der < 0)
         {
-            X509_free(x509);
+            LOG_ERROR("i2d_X509 calc length failed");
             return {};
         }
 
         auto* der = static_cast<uint8_t*>(OPENSSL_malloc(len_der));
+        if (!der)
+        {
+            LOG_ERROR("OPENSSL_malloc failed");
+            return {};
+        }
+
         uint8_t* p = der;
-        i2d_X509(x509, &p);
+        if (i2d_X509(x509, &p) < 0)
+        {
+            LOG_ERROR("i2d_X509 serialization failed");
+            OPENSSL_free(der);
+            return {};
+        }
 
-        X509_free(x509);
-
-        // 不再需要手动的 memcpy Hack
         std::vector<uint8_t> result(der, der + len_der);
         OPENSSL_free(der);
         return result;
