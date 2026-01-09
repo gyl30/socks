@@ -11,7 +11,7 @@
 void print_usage(const char* prog)
 {
     std::cout << "usage:\n";
-    std::cout << "  run as local client " << prog << " -c <remote_host> <remote_port> <local_port> <auth_key_hex>\n";
+    std::cout << "  run as local client " << prog << " -c <remote_host> <remote_port> <local_port> <auth_key_hex> <sni>\n";
     std::cout << "  run as remote server " << prog << " -s <bind_port> <fallback_host> <fallback_port> <auth_key_hex>\n";
 }
 
@@ -54,7 +54,7 @@ int main(int argc, char** argv)
         }
         else if (mode == "-c")
         {
-            if (argc < 6)
+            if (argc < 7)
             {
                 print_usage(argv[0]);
                 return 1;
@@ -63,8 +63,9 @@ int main(int argc, char** argv)
             std::string r_port = argv[3];
             std::uint16_t l_port = static_cast<std::uint16_t>(std::stoi(argv[4]));
             std::string auth_key = argv[5];
+            std::string sni = argv[6];
 
-            mux::local_client client(pool, r_host, r_port, l_port, auth_key);
+            mux::local_client client(pool, r_host, r_port, l_port, auth_key, sni);
             client.start();
 
             pool.run();
