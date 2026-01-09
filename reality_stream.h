@@ -35,7 +35,7 @@ class reality_stream
     {
         if (ec)
         {
-            LOG_ERROR("Write failed: {}", ec.message());
+            LOG_ERROR("reality stream write failed: {}", ec.message());
         }
     }
     template <typename ConstBufferSequence, typename WriteToken>
@@ -57,10 +57,19 @@ class reality_stream
                 std::vector<uint8_t> plaintext(bytes_to_encrypt);
                 boost::asio::buffer_copy(boost::asio::buffer(plaintext), buffers, bytes_to_encrypt);
 
-                LOG_DEBUG("Encrypting App Data: {} bytes, Seq: {}", bytes_to_encrypt, write_seq_);
+                LOG_DEBUG("encrypting app data: {} bytes, seq: {}", bytes_to_encrypt, write_seq_);
 
+                boost::system::error_code ec;
                 std::vector<uint8_t> ciphertext =
-                    TlsRecordLayer::encrypt_record(write_key_, write_iv_, write_seq_, plaintext, CONTENT_TYPE_APPLICATION_DATA);
+                    TlsRecordLayer::encrypt_record(write_key_, write_iv_, write_seq_, plaintext, CONTENT_TYPE_APPLICATION_DATA, ec);
+
+                if (ec)
+                {
+                    LOG_ERROR("reality stream encryption failed: {}", ec.message());
+                    auto ex = boost::asio::get_associated_executor(handler, get_executor());
+                    boost::asio::post(ex, [handler = std::move(handler), ec]() mutable { handler(ec, 0); });
+                    return;
+                }
 
                 write_seq_++;
 
@@ -138,7 +147,6 @@ class reality_stream
                                     {
                                         if (ec)
                                         {
-                                            LOG_ERROR("Read Header failed: {}", ec.message());
                                             handler(ec, 0);
                                             return;
                                         }
@@ -164,7 +172,6 @@ class reality_stream
                                     {
                                         if (ec)
                                         {
-                                            LOG_ERROR("Read Payload failed: {}", ec.message());
                                             handler(ec, 0);
                                             return;
                                         }
@@ -176,71 +183,69 @@ class reality_stream
             return;
         }
 
-        try
+        uint8_t content_type = 0;
+        boost::system::error_code ec;
+
+        std::vector<uint8_t> record_data(incoming_buffer_.begin(), incoming_buffer_.begin() + total_frame_size);
+
+        if (incoming_buffer_.size() == total_frame_size)
         {
-            uint8_t content_type = 0;
-
-            std::vector<uint8_t> record_data(incoming_buffer_.begin(), incoming_buffer_.begin() + total_frame_size);
-
-            if (incoming_buffer_.size() == total_frame_size)
-            {
-                incoming_buffer_.clear();
-            }
-            else
-            {
-                incoming_buffer_.erase(incoming_buffer_.begin(), incoming_buffer_.begin() + total_frame_size);
-            }
-
-            std::vector<uint8_t> plaintext = TlsRecordLayer::decrypt_record(read_key_, read_iv_, read_seq_, record_data, content_type);
-
-            read_seq_++;
-
-            if (content_type == CONTENT_TYPE_APPLICATION_DATA)
-            {
-                LOG_DEBUG("Decrypted App Data: {} bytes", plaintext.size());
-
-                decrypted_buffer_.insert(decrypted_buffer_.end(), plaintext.begin(), plaintext.end());
-
-                auto bytes_copied = boost::asio::buffer_copy(out_buffers, boost::asio::buffer(decrypted_buffer_));
-
-                if (bytes_copied == decrypted_buffer_.size())
-                {
-                    decrypted_buffer_.clear();
-                }
-                else
-                {
-                    decrypted_buffer_.erase(decrypted_buffer_.begin(), decrypted_buffer_.begin() + bytes_copied);
-                }
-
-                handler(boost::system::error_code(), bytes_copied);
-            }
-            else if (content_type == CONTENT_TYPE_ALERT)
-            {
-                LOG_INFO("Received TLS Alert");
-
-                handler(boost::asio::error::eof, 0);
-            }
-            else if (content_type == CONTENT_TYPE_CHANGE_CIPHER_SPEC)
-            {
-                LOG_DEBUG("Ignored Post-Handshake CCS");
-                read_loop(std::move(handler), out_buffers);
-            }
-            else if (content_type == CONTENT_TYPE_HANDSHAKE)
-            {
-                LOG_DEBUG("Ignored Post-Handshake Handshake Msg (KeyUpdate/NewSessionTicket)");
-
-                read_loop(std::move(handler), out_buffers);
-            }
-            else
-            {
-                LOG_ERROR("Unknown Content Type: {}", content_type);
-                handler(boost::system::error_code(boost::asio::error::invalid_argument), 0);
-            }
+            incoming_buffer_.clear();
         }
-        catch (const std::exception& e)
+        else
         {
-            LOG_ERROR("App Layer Decrypt Failed: {}", e.what());
-            handler(boost::system::error_code(boost::asio::error::no_permission), 0);
+            incoming_buffer_.erase(incoming_buffer_.begin(), incoming_buffer_.begin() + total_frame_size);
+        }
+
+        std::vector<uint8_t> plaintext = TlsRecordLayer::decrypt_record(read_key_, read_iv_, read_seq_, record_data, content_type, ec);
+
+        if (ec)
+        {
+            LOG_ERROR("app layer decrypt failed: {}", ec.message());
+            handler(ec, 0);
+            return;
+        }
+
+        read_seq_++;
+
+        if (content_type == CONTENT_TYPE_APPLICATION_DATA)
+        {
+            LOG_DEBUG("decrypted app data: {} bytes", plaintext.size());
+
+            decrypted_buffer_.insert(decrypted_buffer_.end(), plaintext.begin(), plaintext.end());
+
+            auto bytes_copied = boost::asio::buffer_copy(out_buffers, boost::asio::buffer(decrypted_buffer_));
+
+            if (bytes_copied == decrypted_buffer_.size())
+            {
+                decrypted_buffer_.clear();
+            }
+            else
+            {
+                decrypted_buffer_.erase(decrypted_buffer_.begin(), decrypted_buffer_.begin() + bytes_copied);
+            }
+
+            handler(boost::system::error_code(), bytes_copied);
+        }
+        else if (content_type == CONTENT_TYPE_ALERT)
+        {
+            LOG_INFO("received tls alert");
+            handler(boost::asio::error::eof, 0);
+        }
+        else if (content_type == CONTENT_TYPE_CHANGE_CIPHER_SPEC)
+        {
+            LOG_DEBUG("ignored post-handshake ccs");
+            read_loop(std::move(handler), out_buffers);
+        }
+        else if (content_type == CONTENT_TYPE_HANDSHAKE)
+        {
+            LOG_DEBUG("ignored post-handshake handshake msg");
+            read_loop(std::move(handler), out_buffers);
+        }
+        else
+        {
+            LOG_ERROR("unknown content type: {}", content_type);
+            handler(boost::system::error_code(boost::asio::error::invalid_argument), 0);
         }
     }
 

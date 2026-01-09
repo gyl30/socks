@@ -6,16 +6,19 @@
 #include <thread>
 #include <atomic>
 #include <boost/asio.hpp>
+#include <boost/system/error_code.hpp>
 #include "log.h"
 
 class io_context_pool
 {
    public:
-    explicit io_context_pool(std::size_t pool_size) : next_io_context_(0)
+    explicit io_context_pool(std::size_t pool_size, boost::system::error_code& ec) : next_io_context_(0)
     {
         if (pool_size == 0)
         {
-            throw std::runtime_error("io_context_pool size is 0");
+            ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
+            LOG_ERROR("io context pool size cannot be 0");
+            return;
         }
 
         for (std::size_t i = 0; i < pool_size; ++i)
