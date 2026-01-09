@@ -52,11 +52,14 @@ inline std::vector<uint8_t> write_record_header(uint8_t record_type, uint16_t le
     return header;
 }
 
-inline std::vector<uint8_t> construct_client_hello(const std::vector<uint8_t>& client_random,
-                                                   const std::vector<uint8_t>& session_id,
-                                                   const std::vector<uint8_t>& client_public_key,
-                                                   const std::string& server_name,
-                                                   const std::vector<uint16_t>& cipher_suites = {0x1301, 0x1302, 0x1303})
+inline std::vector<uint8_t> construct_client_hello(
+    const std::vector<uint8_t>& client_random,
+    const std::vector<uint8_t>& session_id,
+    const std::vector<uint8_t>& client_public_key,
+    const std::string& server_name,
+    const std::vector<uint16_t>& cipher_suites = {0x1a1a, 0x1301, 0x1302, 0x1303, 0xc02b, 0xc02f, 0xc02c, 0xc030, 0xcca9, 0xcca8, 0xc013, 0xc014}
+
+)
 {
     std::vector<uint8_t> hello;
 

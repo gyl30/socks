@@ -171,8 +171,8 @@ class socks_session : public std::enable_shared_from_this<socks_session>
 class local_client
 {
    public:
-    local_client(io_context_pool& pool, std::string host, std::string port, uint16_t l_port, std::string key_hex)
-        : pool_(pool), r_host_(std::move(host)), r_port_(std::move(port)), l_port_(l_port)
+    local_client(io_context_pool& pool, std::string host, std::string port, uint16_t l_port, std::string key_hex, std::string sni)
+        : pool_(pool), r_host_(std::move(host)), r_port_(std::move(port)), l_port_(l_port), sni_(std::move(sni))
     {
         server_pub_key_ = reality::CryptoUtil::hex_to_bytes(key_hex);
     }
@@ -213,7 +213,7 @@ class local_client
     {
         try
         {
-            LOG_INFO("[Client] Connecting to {}:{}", r_host_, r_port_);
+            LOG_INFO("[Client] Connecting to {}:{} (SNI: {})", r_host_, r_port_, sni_);
 
             auto socket = std::make_shared<boost::asio::ip::tcp::socket>(pool_.get_io_context());
             boost::asio::ip::tcp::resolver res(pool_.get_io_context());
@@ -268,7 +268,7 @@ class local_client
             RAND_bytes(payload.data() + 8, 8);
 
             std::vector<uint8_t> zero_sid(32, 0);
-            std::vector<uint8_t> aad = reality::construct_client_hello(client_random, zero_sid, client_pub_vec, r_host_);
+            std::vector<uint8_t> aad = reality::construct_client_hello(client_random, zero_sid, client_pub_vec, sni_);
 
             LOG_DEBUG("[Client] AAD Size: {}, Header: {:02x} {:02x} {:02x} {:02x} {:02x}", aad.size(), aad[0], aad[1], aad[2], aad[3], aad[4]);
 
@@ -283,7 +283,7 @@ class local_client
                 co_return;
             }
 
-            std::vector<uint8_t> client_hello = reality::construct_client_hello(client_random, enc_sid, client_pub_vec, r_host_);
+            std::vector<uint8_t> client_hello = reality::construct_client_hello(client_random, enc_sid, client_pub_vec, sni_);
 
             std::vector<uint8_t> ch_record;
             ch_record.reserve(5 + client_hello.size());
@@ -536,6 +536,7 @@ class local_client
     io_context_pool& pool_;
     std::string r_host_, r_port_;
     uint16_t l_port_;
+    std::string sni_;
     std::vector<uint8_t> server_pub_key_;
     std::shared_ptr<mux_tunnel_interface> tunnel_;
 };
