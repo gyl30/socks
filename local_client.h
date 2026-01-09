@@ -268,14 +268,18 @@ class local_client
             RAND_bytes(payload.data() + 8, 8);
 
             std::vector<uint8_t> zero_sid(32, 0);
-            std::vector<uint8_t> aad = reality::construct_client_hello(client_random, zero_sid, client_pub_vec, sni_);
+            std::vector<uint8_t> client_hello_aad = reality::construct_client_hello(client_random, zero_sid, client_pub_vec, sni_);
 
-            LOG_DEBUG("[Client] AAD Size: {}, Header: {:02x} {:02x} {:02x} {:02x} {:02x}", aad.size(), aad[0], aad[1], aad[2], aad[3], aad[4]);
+            if (client_hello_aad.size() < 39 + 32 || client_hello_aad[38] != 32)
+            {
+                LOG_ERROR("Generated ClientHello structure mismatch");
+                co_return;
+            }
 
             std::vector<uint8_t> nonce(client_random.begin() + 20, client_random.end());
             LOG_DEBUG("[Client] Nonce: {}", reality::CryptoUtil::bytes_to_hex(nonce));
 
-            std::vector<uint8_t> enc_sid = reality::CryptoUtil::aes_gcm_encrypt(auth_key, nonce, payload, aad);
+            std::vector<uint8_t> enc_sid = reality::CryptoUtil::aes_gcm_encrypt(auth_key, nonce, payload, client_hello_aad);
 
             if (enc_sid.size() != 32)
             {
@@ -283,10 +287,12 @@ class local_client
                 co_return;
             }
 
-            std::vector<uint8_t> client_hello = reality::construct_client_hello(client_random, enc_sid, client_pub_vec, sni_);
+            std::vector<uint8_t> client_hello = client_hello_aad;
+            std::memcpy(client_hello.data() + 39, enc_sid.data(), 32);
 
             std::vector<uint8_t> ch_record;
             ch_record.reserve(5 + client_hello.size());
+
             std::vector<uint8_t> header = reality::write_record_header(reality::CONTENT_TYPE_HANDSHAKE, client_hello.size());
             ch_record.insert(ch_record.end(), header.begin(), header.end());
             ch_record.insert(ch_record.end(), client_hello.begin(), client_hello.end());

@@ -33,6 +33,7 @@ namespace reality
 static const uint8_t K_REALITY_INFO[] = "REALITY";
 static const uint8_t TLS1_2_VERSION_MAJOR = 0x03;
 static const uint8_t TLS1_2_VERSION_MINOR = 0x03;
+static const uint8_t TLS1_0_VERSION_MINOR = 0x01;
 
 static const uint8_t CONTENT_TYPE_CHANGE_CIPHER_SPEC = 0x14;
 static const uint8_t CONTENT_TYPE_ALERT = 0x15;
@@ -43,6 +44,9 @@ static const size_t TLS_RECORD_HEADER_SIZE = 5;
 static const size_t AEAD_TAG_SIZE = 16;
 static const size_t MAX_TLS_PLAINTEXT_LEN = 16384;
 static const size_t MAX_TLS_CIPHERTEXT_LEN = 16384 + 256;
+
+static const std::vector<uint16_t> GREASE_VALUES = {
+    0x0a0a, 0x1a1a, 0x2a2a, 0x3a3a, 0x4a4a, 0x5a5a, 0x6a6a, 0x7a7a, 0x8a8a, 0x9a9a, 0xaaaa, 0xbaba, 0xcaca, 0xdada, 0xeaea, 0xfafa};
 
 class CryptoUtil
 {
@@ -77,6 +81,13 @@ class CryptoUtil
             bytes.push_back(byte);
         }
         return bytes;
+    }
+
+    static uint16_t get_random_grease()
+    {
+        uint8_t idx;
+        RAND_bytes(&idx, 1);
+        return GREASE_VALUES[idx % GREASE_VALUES.size()];
     }
 
     static std::vector<uint8_t> extract_public_key(const std::vector<uint8_t>& private_key)
