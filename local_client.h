@@ -639,7 +639,7 @@ class local_client
         LOG_INFO("reality handshake success tunnel active");
 
         reality_engine re(s_app_keys.first, s_app_keys.second, c_app_keys.first, c_app_keys.second);
-        tunnel_manager_ = std::make_shared<mux_tunnel_impl<boost::asio::ip::tcp::socket>>(std::move(*socket), std::move(re));
+        tunnel_manager_ = std::make_shared<mux_tunnel_impl<boost::asio::ip::tcp::socket>>(std::move(*socket), std::move(re), true);
         co_await tunnel_manager_->run();
 
         LOG_WARN("local_client tunnel lost reconnecting in 5s");

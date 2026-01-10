@@ -78,8 +78,8 @@ template <typename StreamLayer>
 class mux_tunnel_impl : public std::enable_shared_from_this<mux_tunnel_impl<StreamLayer>>
 {
    public:
-    explicit mux_tunnel_impl(StreamLayer socket, reality_engine engine)
-        : connection_(std::make_shared<mux_connection>(std::move(socket), std::move(engine), streams_, mutex_))
+    explicit mux_tunnel_impl(StreamLayer socket, reality_engine engine, bool is_client)
+        : connection_(std::make_shared<mux_connection>(std::move(socket), std::move(engine), is_client))
     {
     }
 
@@ -87,8 +87,10 @@ class mux_tunnel_impl : public std::enable_shared_from_this<mux_tunnel_impl<Stre
 
     void register_stream(uint32_t id, std::shared_ptr<mux_stream_interface> stream)
     {
-        std::lock_guard<std::mutex> lock(mutex_);
-        streams_[id] = stream;
+        if (connection_)
+        {
+            connection_->register_stream(id, std::move(stream));
+        }
     }
 
     boost::asio::awaitable<void> run()
@@ -101,25 +103,26 @@ class mux_tunnel_impl : public std::enable_shared_from_this<mux_tunnel_impl<Stre
 
     std::shared_ptr<mux_stream> create_stream()
     {
-        std::lock_guard<std::mutex> lock(mutex_);
-        std::uint32_t id = next_local_id_;
-        next_local_id_ += 2;
+        if (!connection_)
+        {
+            return nullptr;
+        }
+        std::uint32_t id = connection_->acquire_next_id();
         auto stream = std::make_shared<mux_stream>(id, connection_, connection_->get_executor());
-        streams_[id] = stream;
+        connection_->register_stream(id, stream);
         return stream;
     }
 
     void remove_stream(std::uint32_t id)
     {
-        std::lock_guard<std::mutex> lock(mutex_);
-        streams_.erase(id);
+        if (connection_)
+        {
+            connection_->remove_stream(id);
+        }
     }
 
    private:
-    mux_connection::stream_map_t streams_;
-    std::mutex mutex_;
     std::shared_ptr<mux_connection> connection_;
-    std::uint32_t next_local_id_ = 1;
 };
 
 inline boost::asio::awaitable<void> mux_stream::close()
