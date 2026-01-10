@@ -597,7 +597,7 @@ class remote_server
         LOG_INFO("remote_server handshake done tunnel start");
 
         reality_engine engine(c_app_keys.first, c_app_keys.second, s_app_keys.first, s_app_keys.second);
-        auto tunnel = std::make_shared<mux_tunnel_impl<boost::asio::ip::tcp::socket>>(std::move(*s), std::move(engine));
+        auto tunnel = std::make_shared<mux_tunnel_impl<boost::asio::ip::tcp::socket>>(std::move(*s), std::move(engine), false);
 
         tunnel->get_connection()->set_syn_callback(
             [this, tunnel](uint32_t id, std::vector<uint8_t> p)

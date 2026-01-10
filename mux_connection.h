@@ -55,13 +55,12 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     using stream_map_t = std::unordered_map<uint32_t, std::shared_ptr<mux_stream_interface>>;
     using syn_callback_t = std::function<void(uint32_t, std::vector<uint8_t>)>;
 
-    mux_connection(tcp::socket socket, reality_engine engine, stream_map_t& streams_ref, std::mutex& streams_mutex)
+    mux_connection(tcp::socket socket, reality_engine engine, bool is_client)
         : socket_(std::move(socket)),
           reality_engine_(std::move(engine)),
           write_channel_(socket_.get_executor(), 1024),
           timer_(socket_.get_executor()),
-          streams_ref_(streams_ref),
-          streams_mutex_(streams_mutex)
+          next_stream_id_(is_client ? 1 : 2)
     {
         mux_dispatcher_.set_callback([this](mux::frame_header h, std::vector<uint8_t> p) { this->on_mux_frame(h, std::move(p)); });
         connection_state_.store(MuxConnectionState::CONNECTED, std::memory_order_release);
@@ -71,6 +70,20 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     auto get_executor() { return socket_.get_executor(); }
 
     void set_syn_callback(syn_callback_t cb) { syn_callback_ = std::move(cb); }
+
+    void register_stream(uint32_t id, std::shared_ptr<mux_stream_interface> stream)
+    {
+        std::lock_guard<std::mutex> lock(streams_mutex_);
+        streams_[id] = std::move(stream);
+    }
+
+    void remove_stream(uint32_t id)
+    {
+        std::lock_guard<std::mutex> lock(streams_mutex_);
+        streams_.erase(id);
+    }
+
+    uint32_t acquire_next_id() { return next_stream_id_.fetch_add(2, std::memory_order_relaxed); }
 
     [[nodiscard]] awaitable<void> start()
     {
@@ -108,6 +121,12 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
         }
 
         LOG_INFO("mux_connection stopping");
+
+        {
+            std::lock_guard<std::mutex> lock(streams_mutex_);
+            streams_.clear();
+        }
+
         boost::system::error_code ec;
         if (socket_.is_open())
         {
@@ -238,8 +257,8 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
         std::shared_ptr<mux_stream_interface> stream;
         {
             std::lock_guard<std::mutex> lock(streams_mutex_);
-            auto it = streams_ref_.find(header.stream_id);
-            if (it != streams_ref_.end())
+            auto it = streams_.find(header.stream_id);
+            if (it != streams_.end())
             {
                 stream = it->second;
             }
@@ -268,8 +287,10 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     boost::asio::experimental::concurrent_channel<void(boost::system::error_code, mux_write_msg)> write_channel_;
     boost::asio::steady_timer timer_;
     std::atomic<MuxConnectionState> connection_state_;
-    stream_map_t& streams_ref_;
-    std::mutex& streams_mutex_;
+
+    stream_map_t streams_;
+    std::mutex streams_mutex_;
+    std::atomic<uint32_t> next_stream_id_;
     syn_callback_t syn_callback_;
 };
 
