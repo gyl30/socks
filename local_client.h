@@ -61,14 +61,6 @@ class socks_session : public std::enable_shared_from_this<socks_session>
         if (e4)
             co_return;
 
-        if (head[1] != socks::CMD_CONNECT)
-        {
-            LOG_WARN("SOCKS unsupported command: {}", (int)head[1]);
-            uint8_t err[] = {socks::VER, socks::REP_CMD_NOT_SUPPORTED, 0, socks::ATYP_IPV4, 0, 0, 0, 0, 0, 0};
-            co_await boost::asio::async_write(socket_, boost::asio::buffer(err), boost::asio::as_tuple(boost::asio::use_awaitable));
-            co_return;
-        }
-
         std::string host;
         if (head[3] == socks::ATYP_IPV4)
         {
@@ -111,27 +103,44 @@ class socks_session : public std::enable_shared_from_this<socks_session>
             co_return;
         uint16_t port = ntohs(port_n);
 
-        LOG_INFO("SOCKS Request: connect to {}:{}", host, port);
+        if (head[1] == socks::CMD_CONNECT)
+        {
+            LOG_INFO("SOCKS TCP Connect to {}:{}", host, port);
+            co_await run_tcp(host, port);
+        }
+        else if (head[1] == socks::CMD_UDP_ASSOCIATE)
+        {
+            LOG_INFO("SOCKS UDP Associate request");
+            co_await run_udp(host, port);
+        }
+        else
+        {
+            LOG_WARN("SOCKS unsupported command: {}", (int)head[1]);
+            uint8_t err[] = {socks::VER, socks::REP_CMD_NOT_SUPPORTED, 0, socks::ATYP_IPV4, 0, 0, 0, 0, 0, 0};
+            co_await boost::asio::async_write(socket_, boost::asio::buffer(err), boost::asio::as_tuple(boost::asio::use_awaitable));
+        }
+    }
 
+    boost::asio::awaitable<void> run_tcp(std::string host, uint16_t port)
+    {
         auto stream = tunnel_manager_->create_stream();
         if (!stream)
         {
-            LOG_ERROR("Failed to create mux stream (tunnel might be closed)");
+            LOG_ERROR("Failed to create mux stream");
             co_return;
         }
 
-        LOG_DEBUG("Stream {} created, initiating SYN...", stream->id());
+        LOG_DEBUG("Stream {} created (TCP), initiating SYN...", stream->id());
 
         SynPayload syn{socks::CMD_CONNECT, host, port};
         if (auto ec = co_await tunnel_manager_->get_connection()->send_async(stream->id(), CMD_SYN, syn.encode()))
         {
-            LOG_ERROR("Stream {} failed to send SYN: {}", stream->id(), ec.message());
+            LOG_ERROR("Stream {} SYN failed: {}", stream->id(), ec.message());
             co_await stream->close();
             co_return;
         }
 
         LOG_DEBUG("Stream {} waiting for ACK...", stream->id());
-
         auto [ack_ec, ack_data] = co_await stream->async_read_some();
         if (ack_ec)
         {
@@ -141,92 +150,186 @@ class socks_session : public std::enable_shared_from_this<socks_session>
         }
 
         AckPayload ack_payload;
-        if (!AckPayload::decode(ack_data.data(), ack_data.size(), ack_payload))
+        if (!AckPayload::decode(ack_data.data(), ack_data.size(), ack_payload) || ack_payload.socks_rep != socks::REP_SUCCESS)
         {
-            LOG_ERROR("Stream {} received invalid ACK payload (len={})", stream->id(), ack_data.size());
-            co_await stream->close();
-            co_return;
-        }
-
-        if (ack_payload.socks_rep != socks::REP_SUCCESS)
-        {
-            LOG_WARN("Stream {} remote connection failed with SOCKS REP: {}", stream->id(), (int)ack_payload.socks_rep);
-
+            LOG_ERROR("Stream {} failed/rejected by remote.", stream->id());
             uint8_t err[] = {socks::VER, ack_payload.socks_rep, 0, socks::ATYP_IPV4, 0, 0, 0, 0, 0, 0};
             co_await boost::asio::async_write(socket_, boost::asio::buffer(err), boost::asio::as_tuple(boost::asio::use_awaitable));
             co_await stream->close();
             co_return;
         }
 
-        LOG_INFO("Stream {} established successfully. Remote bound to {}:{}", stream->id(), ack_payload.bnd_addr, ack_payload.bnd_port);
+        LOG_INFO("Stream {} TCP Established. Remote bound {}:{}", stream->id(), ack_payload.bnd_addr, ack_payload.bnd_port);
 
         uint8_t rep[] = {socks::VER, socks::REP_SUCCESS, 0, socks::ATYP_IPV4, 0, 0, 0, 0, 0, 0};
-        auto [e6, n6] = co_await boost::asio::async_write(socket_, boost::asio::buffer(rep), boost::asio::as_tuple(boost::asio::use_awaitable));
-        if (e6)
+        if (auto [e, n] = co_await boost::asio::async_write(socket_, boost::asio::buffer(rep), boost::asio::as_tuple(boost::asio::use_awaitable)); e)
         {
-            LOG_ERROR("Stream {} failed to send SOCKS success to local: {}", stream->id(), e6.message());
             co_await stream->close();
             co_return;
         }
 
-        LOG_DEBUG("Stream {} SOCKS success sent to local client. Starting data transfer.", stream->id());
-
         using boost::asio::experimental::awaitable_operators::operator||;
-        co_await (upstream(stream) || downstream(stream));
-
-        LOG_DEBUG("Stream {} session finished.", stream->id());
+        co_await (upstream_tcp(stream) || downstream_tcp(stream));
         co_await stream->close();
     }
 
-    boost::asio::awaitable<void> upstream(std::shared_ptr<mux_stream> stream)
+    boost::asio::awaitable<void> run_udp(std::string host, uint16_t port)
+    {
+        auto ex = socket_.get_executor();
+        boost::asio::ip::udp::socket udp_sock(ex);
+        boost::system::error_code ec;
+
+        udp_sock.open(boost::asio::ip::udp::v4(), ec);
+        udp_sock.bind(boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0), ec);
+
+        if (ec)
+        {
+            LOG_ERROR("Failed to bind local UDP socket: {}", ec.message());
+            uint8_t err[] = {socks::VER, socks::REP_GEN_FAIL, 0, socks::ATYP_IPV4, 0, 0, 0, 0, 0, 0};
+            co_await boost::asio::async_write(socket_, boost::asio::buffer(err), boost::asio::as_tuple(boost::asio::use_awaitable));
+            co_return;
+        }
+
+        auto local_ep = udp_sock.local_endpoint(ec);
+        LOG_INFO("Local UDP bound to {}", local_ep.port());
+
+        auto stream = tunnel_manager_->create_stream();
+        if (!stream)
+            co_return;
+
+        SynPayload syn{socks::CMD_UDP_ASSOCIATE, "0.0.0.0", 0};
+        if (auto e = co_await tunnel_manager_->get_connection()->send_async(stream->id(), CMD_SYN, syn.encode()))
+        {
+            LOG_ERROR("Stream {} UDP SYN failed: {}", stream->id(), e.message());
+            co_await stream->close();
+            co_return;
+        }
+
+        LOG_DEBUG("Stream {} (UDP) waiting for ACK...", stream->id());
+        auto [ack_ec, ack_data] = co_await stream->async_read_some();
+        if (ack_ec)
+        {
+            LOG_ERROR("Stream {} UDP wait ACK failed: {}", stream->id(), ack_ec.message());
+            co_await stream->close();
+            co_return;
+        }
+        AckPayload ack_payload;
+        if (!AckPayload::decode(ack_data.data(), ack_data.size(), ack_payload) || ack_payload.socks_rep != socks::REP_SUCCESS)
+        {
+            LOG_ERROR("Stream {} UDP handshake failed.", stream->id());
+            co_await stream->close();
+            co_return;
+        }
+
+        LOG_INFO("Stream {} UDP Tunnel Established.", stream->id());
+
+        uint8_t final_rep[10];
+        final_rep[0] = socks::VER;
+        final_rep[1] = socks::REP_SUCCESS;
+        final_rep[2] = 0x00;
+        final_rep[3] = socks::ATYP_IPV4;
+        auto bytes = boost::asio::ip::make_address_v4("127.0.0.1").to_bytes();
+        std::memcpy(final_rep + 4, bytes.data(), 4);
+        final_rep[8] = (local_ep.port() >> 8) & 0xFF;
+        final_rep[9] = local_ep.port() & 0xFF;
+
+        if (auto [we, wn] =
+                co_await boost::asio::async_write(socket_, boost::asio::buffer(final_rep, 10), boost::asio::as_tuple(boost::asio::use_awaitable));
+            we)
+        {
+            co_await stream->close();
+            co_return;
+        }
+
+        auto client_ep_ptr = std::make_shared<boost::asio::ip::udp::endpoint>();
+
+        using boost::asio::experimental::awaitable_operators::operator||;
+        co_await (udp_sock_to_stream(udp_sock, stream, client_ep_ptr) || stream_to_udp_sock(udp_sock, stream, client_ep_ptr) || keep_tcp_alive());
+
+        LOG_INFO("Stream {} UDP session finished.", stream->id());
+        co_await stream->close();
+    }
+
+    boost::asio::awaitable<void> keep_tcp_alive()
+    {
+        char b[1];
+        co_await socket_.async_read_some(boost::asio::buffer(b), boost::asio::as_tuple(boost::asio::use_awaitable));
+    }
+
+    boost::asio::awaitable<void> udp_sock_to_stream(boost::asio::ip::udp::socket& udp_sock,
+                                                    std::shared_ptr<mux_stream> stream,
+                                                    std::shared_ptr<boost::asio::ip::udp::endpoint> client_ep)
+    {
+        std::vector<uint8_t> buf(65535);
+        boost::asio::ip::udp::endpoint sender;
+        for (;;)
+        {
+            auto [ec, n] = co_await udp_sock.async_receive_from(boost::asio::buffer(buf), sender, boost::asio::as_tuple(boost::asio::use_awaitable));
+            if (ec)
+                break;
+
+            *client_ep = sender;
+
+            LOG_DEBUG("LocalUDP stream {} forward {} bytes to tunnel", stream->id(), n);
+            if (auto e = co_await stream->async_write_some(buf.data(), n))
+                break;
+        }
+    }
+
+    boost::asio::awaitable<void> stream_to_udp_sock(boost::asio::ip::udp::socket& udp_sock,
+                                                    std::shared_ptr<mux_stream> stream,
+                                                    std::shared_ptr<boost::asio::ip::udp::endpoint> client_ep)
+    {
+        for (;;)
+        {
+            auto [ec, data] = co_await stream->async_read_some();
+            if (ec || data.empty())
+                break;
+
+            if (client_ep->port() == 0)
+            {
+                LOG_WARN("LocalUDP stream {} received packet from tunnel but no client known yet.", stream->id());
+                continue;
+            }
+
+            LOG_DEBUG("LocalUDP stream {} received {} bytes from tunnel, sending to client {}:{}",
+                      stream->id(),
+                      data.size(),
+                      client_ep->address().to_string(),
+                      client_ep->port());
+
+            auto [we, wn] = co_await udp_sock.async_send_to(boost::asio::buffer(data), *client_ep, boost::asio::as_tuple(boost::asio::use_awaitable));
+            if (we)
+                break;
+        }
+    }
+
+    boost::asio::awaitable<void> upstream_tcp(std::shared_ptr<mux_stream> stream)
     {
         std::vector<uint8_t> buf(8192);
         for (;;)
         {
             auto [e, n] = co_await socket_.async_read_some(boost::asio::buffer(buf), boost::asio::as_tuple(boost::asio::use_awaitable));
             if (e || n == 0)
-            {
-                if (e != boost::asio::error::eof && e != boost::asio::error::operation_aborted)
-                    LOG_DEBUG("Stream {} upstream local read error: {}", stream->id(), e.message());
                 break;
-            }
-
-            if (auto ec = co_await stream->async_write_some(buf.data(), n))
-            {
-                LOG_DEBUG("Stream {} upstream tunnel write error: {}", stream->id(), ec.message());
+            if (co_await stream->async_write_some(buf.data(), n))
                 break;
-            }
         }
-
-        LOG_DEBUG("Stream {} upstream EOF, sending FIN.", stream->id());
         co_await tunnel_manager_->get_connection()->send_async(stream->id(), CMD_FIN, {});
         boost::system::error_code ec;
         socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
     }
 
-    boost::asio::awaitable<void> downstream(std::shared_ptr<mux_stream> stream)
+    boost::asio::awaitable<void> downstream_tcp(std::shared_ptr<mux_stream> stream)
     {
         for (;;)
         {
             auto [e, data] = co_await stream->async_read_some();
-            if (e)
-            {
-                if (e != boost::asio::error::eof && e != boost::asio::error::operation_aborted)
-                    LOG_DEBUG("Stream {} downstream tunnel read error: {}", stream->id(), e.message());
+            if (e || data.empty())
                 break;
-            }
-            if (data.empty())
-            {
-                LOG_DEBUG("Stream {} downstream received empty/EOF.", stream->id());
-                break;
-            }
-
             auto [we, wn] = co_await boost::asio::async_write(socket_, boost::asio::buffer(data), boost::asio::as_tuple(boost::asio::use_awaitable));
             if (we)
-            {
-                LOG_DEBUG("Stream {} downstream local write error: {}", stream->id(), we.message());
                 break;
-            }
         }
         boost::system::error_code ec;
         socket_.close(ec);
@@ -234,6 +337,10 @@ class socks_session : public std::enable_shared_from_this<socks_session>
 
     boost::asio::ip::tcp::socket socket_;
     std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> tunnel_manager_;
+    std::string r_host_, r_port_;
+    uint16_t l_port_;
+    std::string sni_;
+    std::vector<uint8_t> server_pub_key_;
 };
 
 class local_client
@@ -290,18 +397,10 @@ class local_client
         boost::asio::ip::tcp::resolver res(pool_.get_io_context());
         auto [er, eps] = co_await res.async_resolve(r_host_, r_port_, boost::asio::as_tuple(boost::asio::use_awaitable));
         if (er)
-        {
-            LOG_ERROR("LocalClient resolve error: {}", er.message());
             co_return;
-        }
         auto [ec_conn, ep] = co_await boost::asio::async_connect(*socket, eps, boost::asio::as_tuple(boost::asio::use_awaitable));
         if (ec_conn)
-        {
-            LOG_ERROR("LocalClient connect error: {}", ec_conn.message());
             co_return;
-        }
-
-        LOG_DEBUG("TCP Connected to remote. Starting TLS handshake.");
 
         uint8_t cpub[32], cpriv[32];
         X25519_keypair(cpub, cpriv);
@@ -315,9 +414,8 @@ class local_client
         std::vector<uint8_t> salt(crand.begin(), crand.begin() + 20);
         boost::system::error_code ec_hex;
         std::vector<uint8_t> info = reality::CryptoUtil::hex_to_bytes("5245414c495459", ec_hex);
-        std::vector<uint8_t> auth_key = reality::CryptoUtil::hkdf_expand(reality::CryptoUtil::hkdf_extract(salt, shared, ec), info, 32, ec);
-        if (ec)
-            co_return;
+        auto prk = reality::CryptoUtil::hkdf_extract(salt, shared, ec);
+        std::vector<uint8_t> auth_key = reality::CryptoUtil::hkdf_expand(prk, info, 32, ec);
 
         std::vector<uint8_t> payload(16);
         payload[0] = 1;
@@ -332,7 +430,7 @@ class local_client
         std::vector<uint8_t> hello_aad = reality::construct_client_hello(crand, std::vector<uint8_t>(32, 0), cpub_vec, sni_);
         std::vector<uint8_t> nonce(crand.begin() + 20, crand.end());
         std::vector<uint8_t> sid = reality::CryptoUtil::aes_gcm_encrypt(auth_key, nonce, payload, hello_aad, ec);
-        if (ec || sid.size() != 32)
+        if (ec)
             co_return;
 
         std::vector<uint8_t> ch = hello_aad;
@@ -359,16 +457,7 @@ class local_client
         trans.update(sh);
 
         std::vector<uint8_t> spub = reality::extract_server_public_key(sh);
-        if (spub.size() != 32)
-        {
-            LOG_ERROR("Failed to extract server public key from ServerHello.");
-            co_return;
-        }
-
         std::vector<uint8_t> hs_shared = reality::CryptoUtil::x25519_derive(std::vector<uint8_t>(cpriv, cpriv + 32), spub, ec);
-        if (ec)
-            co_return;
-
         auto hs_keys = reality::TlsKeySchedule::derive_handshake_keys(hs_shared, trans.finish(), ec);
         auto c_hs_keys = reality::TlsKeySchedule::derive_traffic_keys(hs_keys.client_handshake_traffic_secret, ec);
         auto s_hs_keys = reality::TlsKeySchedule::derive_traffic_keys(hs_keys.server_handshake_traffic_secret, ec);
@@ -395,21 +484,15 @@ class local_client
                     co_await boost::asio::async_read(*socket, boost::asio::buffer(rec), boost::asio::as_tuple(boost::asio::use_awaitable));
                 re)
                 co_return;
-
             std::vector<uint8_t> ct_head(5 + rlen);
             memcpy(ct_head.data(), rh, 5);
             memcpy(ct_head.data() + 5, rec.data(), rlen);
             uint8_t type;
             std::vector<uint8_t> pt = reality::TlsRecordLayer::decrypt_record(s_hs_keys.first, s_hs_keys.second, seq++, ct_head, type, ec);
             if (ec)
-            {
-                LOG_ERROR("Handshake decrypt error: {}", ec.message());
                 co_return;
-            }
-
             if (type == reality::CONTENT_TYPE_HANDSHAKE)
                 buf_concat.insert(buf_concat.end(), pt.begin(), pt.end());
-
             size_t off = 0;
             while (off + 4 <= buf_concat.size())
             {
@@ -425,9 +508,6 @@ class local_client
                     trans.update(msg);
                     fin = true;
                 }
-                if (mt == 0x0b)
-                {
-                }
                 off += 4 + ml;
             }
             buf_concat.erase(buf_concat.begin(), buf_concat.begin() + off);
@@ -439,13 +519,7 @@ class local_client
         auto c_fin_rec =
             reality::TlsRecordLayer::encrypt_record(c_hs_keys.first, c_hs_keys.second, 0, c_fin_msg, reality::CONTENT_TYPE_HANDSHAKE, ec);
 
-        std::vector<uint8_t> out;
-        out.push_back(0x14);
-        out.push_back(3);
-        out.push_back(3);
-        out.push_back(0);
-        out.push_back(1);
-        out.push_back(1);
+        std::vector<uint8_t> out = {0x14, 0x03, 0x03, 0x00, 0x01, 0x01};
         out.insert(out.end(), c_fin_rec.begin(), c_fin_rec.end());
         if (auto [we, wn] = co_await boost::asio::async_write(*socket, boost::asio::buffer(out), boost::asio::as_tuple(boost::asio::use_awaitable));
             we)
@@ -464,7 +538,6 @@ class local_client
         boost::asio::steady_timer timer(pool_.get_io_context());
         timer.expires_after(std::chrono::seconds(5));
         co_await timer.async_wait(boost::asio::use_awaitable);
-
         boost::asio::co_spawn(pool_.get_io_context(), connect_remote(), boost::asio::detached);
     }
 
