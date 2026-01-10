@@ -32,14 +32,14 @@ constexpr std::uint8_t REP_CONN_REFUSED = 0x05;
 constexpr std::uint8_t REP_TTL_EXPIRED = 0x06;
 constexpr std::uint8_t REP_CMD_NOT_SUPPORTED = 0x07;
 constexpr std::uint8_t REP_ADDR_TYPE_NOT_SUPPORTED = 0x08;
-}    // namespace socks
+}    
 
 struct socks_udp_header
 {
-    uint8_t frag = 0;
-    std::string addr;
-    uint16_t port = 0;
-    size_t header_len = 0;
+    uint8_t frag_ = 0;
+    std::string addr_;
+    uint16_t port_ = 0;
+    size_t header_len_ = 0;
 
     [[nodiscard]] std::vector<uint8_t> encode() const
     {
@@ -47,10 +47,10 @@ struct socks_udp_header
         buf.reserve(24);
         buf.push_back(0x00);
         buf.push_back(0x00);
-        buf.push_back(frag);
+        buf.push_back(frag_);
 
         boost::system::error_code ec;
-        auto address = boost::asio::ip::make_address(addr, ec);
+        auto address = boost::asio::ip::make_address(addr_, ec);
 
         if (ec == boost::system::error_code{} && address.is_v4())
         {
@@ -67,23 +67,23 @@ struct socks_udp_header
         else
         {
             buf.push_back(socks::ATYP_DOMAIN);
-            buf.push_back(static_cast<uint8_t>(addr.size()));
-            buf.insert(buf.end(), addr.begin(), addr.end());
+            buf.push_back(static_cast<uint8_t>(addr_.size()));
+            buf.insert(buf.end(), addr_.begin(), addr_.end());
         }
 
-        buf.push_back((port >> 8) & 0xFF);
-        buf.push_back(port & 0xFF);
+        buf.push_back(static_cast<uint8_t>((port_ >> 8) & 0xFF));
+        buf.push_back(static_cast<uint8_t>(port_ & 0xFF));
         return buf;
     }
 
-    [[nodiscard]] static bool decode(const uint8_t* data, size_t len, socks_udp_header& out)
+    [[nodiscard]] static bool decode(const uint8_t *data, size_t len, socks_udp_header &out)
     {
         if (len < 4)
         {
             return false;
         }
 
-        out.frag = data[2];
+        out.frag_ = data[2];
         const uint8_t atyp = data[3];
 
         size_t pos = 4;
@@ -95,7 +95,7 @@ struct socks_udp_header
             }
             boost::asio::ip::address_v4::bytes_type b;
             std::memcpy(b.data(), data + pos, 4);
-            out.addr = boost::asio::ip::address_v4(b).to_string();
+            out.addr_ = boost::asio::ip::address_v4(b).to_string();
             pos += 4;
         }
         else if (atyp == socks::ATYP_DOMAIN)
@@ -110,7 +110,7 @@ struct socks_udp_header
             {
                 return false;
             }
-            out.addr = std::string((const char*)data + pos, dlen);
+            out.addr_ = std::string(reinterpret_cast<const char *>(data) + pos, dlen);
             pos += dlen;
         }
         else if (atyp == socks::ATYP_IPV6)
@@ -121,7 +121,7 @@ struct socks_udp_header
             }
             boost::asio::ip::address_v6::bytes_type b;
             std::memcpy(b.data(), data + pos, 16);
-            out.addr = boost::asio::ip::address_v6(b).to_string();
+            out.addr_ = boost::asio::ip::address_v6(b).to_string();
             pos += 16;
         }
         else
@@ -129,11 +129,11 @@ struct socks_udp_header
             return false;
         }
 
-        out.port = (data[pos] << 8) | data[pos + 1];
+        out.port_ = static_cast<uint16_t>((data[pos] << 8) | data[pos + 1]);
         pos += 2;
-        out.header_len = pos;
+        out.header_len_ = pos;
         return true;
     }
 };
 
-#endif
+#endif    
