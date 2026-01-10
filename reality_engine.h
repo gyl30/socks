@@ -20,7 +20,7 @@ class reality_engine
         : read_key_(std::move(r_key)), read_iv_(std::move(r_iv)), write_key_(std::move(w_key)), write_iv_(std::move(w_iv))
     {
         rx_buf_.resize(RX_BUF_SIZE);
-        LOG_DEBUG("reality_engine initialized rx buffer size {} bytes", RX_BUF_SIZE);
+        LOG_DEBUG("reality engine initialized rx buffer size {} bytes", RX_BUF_SIZE);
     }
 
     [[nodiscard]] std::span<uint8_t> get_write_buffer()
@@ -45,7 +45,7 @@ class reality_engine
             }
 
             const uint8_t* p = rx_buf_.data() + rx_pos_;
-            const uint16_t record_len = (static_cast<uint16_t>(p[3]) << 8) | p[4];
+            const uint16_t record_len = static_cast<uint16_t>((static_cast<uint16_t>(p[3]) << 8) | p[4]);
             const size_t frame_size = reality::TLS_RECORD_HEADER_SIZE + record_len;
 
             if (available < frame_size)
@@ -57,33 +57,15 @@ class reality_engine
             rx_pos_ += frame_size;
 
             uint8_t content_type = 0;
-            auto plaintext = reality::TlsRecordLayer::decrypt_record(read_key_, read_iv_, read_seq_, record_data, content_type, ec);
+            auto plaintext = reality::tls_record_layer::decrypt_record(read_key_, read_iv_, read_seq_, record_data, content_type, ec);
 
             if (ec)
             {
-                LOG_ERROR("reality_engine decrypt failed at seq {} error {}", read_seq_, ec.message());
+                LOG_ERROR("reality engine decrypt failed at seq {} error {}", read_seq_, ec.message());
                 return {};
             }
 
-            const char* type_str = "unknown";
-            if (content_type == reality::CONTENT_TYPE_APPLICATION_DATA)
-            {
-                type_str = "app_data";
-            }
-            else if (content_type == reality::CONTENT_TYPE_HANDSHAKE)
-            {
-                type_str = "handshake";
-            }
-            else if (content_type == reality::CONTENT_TYPE_ALERT)
-            {
-                type_str = "alert";
-            }
-            else if (content_type == reality::CONTENT_TYPE_CHANGE_CIPHER_SPEC)
-            {
-                type_str = "ccs";
-            }
-
-            LOG_TRACE("reality_engine decrypted seq {} type {} len {}", read_seq_, type_str, plaintext.size());
+            LOG_TRACE("reality engine decrypted seq {} type {} len {}", read_seq_, static_cast<int>(content_type), plaintext.size());
             read_seq_++;
 
             if (content_type == reality::CONTENT_TYPE_APPLICATION_DATA && !plaintext.empty())
@@ -92,7 +74,7 @@ class reality_engine
             }
             else if (content_type == reality::CONTENT_TYPE_ALERT)
             {
-                LOG_INFO("reality_engine received tls alert closing connection");
+                LOG_INFO("reality engine received tls alert closing connection");
                 ec = boost::asio::error::eof;
                 return {};
             }
@@ -109,15 +91,15 @@ class reality_engine
         }
 
         auto ciphertext =
-            reality::TlsRecordLayer::encrypt_record(write_key_, write_iv_, write_seq_, plaintext, reality::CONTENT_TYPE_APPLICATION_DATA, ec);
+            reality::tls_record_layer::encrypt_record(write_key_, write_iv_, write_seq_, plaintext, reality::CONTENT_TYPE_APPLICATION_DATA, ec);
 
         if (ec)
         {
-            LOG_ERROR("reality_engine encrypt failed at seq {} error {}", write_seq_, ec.message());
+            LOG_ERROR("reality engine encrypt failed at seq {} error {}", write_seq_, ec.message());
             return {};
         }
 
-        LOG_TRACE("reality_engine encrypted seq {} len {} to {}", write_seq_, plaintext.size(), ciphertext.size());
+        LOG_TRACE("reality engine encrypted seq {} len {} to {}", write_seq_, plaintext.size(), ciphertext.size());
         write_seq_++;
         return ciphertext;
     }
