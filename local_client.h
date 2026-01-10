@@ -7,6 +7,7 @@
 #include <iostream>
 #include <ctime>
 #include <iomanip>
+#include <atomic>
 
 #include "reality_core.h"
 #include "reality_messages.h"
@@ -22,8 +23,8 @@ namespace mux
 class socks_session : public std::enable_shared_from_this<socks_session>
 {
    public:
-    socks_session(boost::asio::ip::tcp::socket socket, std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> tunnel_manager)
-        : socket_(std::move(socket)), tunnel_manager_(std::move(tunnel_manager))
+    socks_session(boost::asio::ip::tcp::socket socket, std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> tunnel_manager, uint32_t sid)
+        : socket_(std::move(socket)), tunnel_manager_(std::move(tunnel_manager)), sid_(sid)
     {
     }
 
@@ -37,21 +38,23 @@ class socks_session : public std::enable_shared_from_this<socks_session>
    private:
     boost::asio::awaitable<void> run()
     {
-        LOG_INFO("socks5 session started");
-
         boost::system::error_code ec;
+        auto ep = socket_.remote_endpoint(ec);
+        std::string remote_addr = ec ? "unknown" : ep.address().to_string() + ":" + std::to_string(ep.port());
+        LOG_INFO("[Socks:{}] session started from {}", sid_, remote_addr);
+
         socket_.set_option(boost::asio::ip::tcp::no_delay(true), ec);
 
         if (!co_await handshake_socks5())
         {
-            LOG_WARN("socks5 handshake failed");
+            LOG_WARN("[Socks:{}] handshake failed", sid_);
             co_return;
         }
 
         auto [ok, host, port, cmd] = co_await read_request_header();
         if (!ok)
         {
-            LOG_WARN("socks5 request header invalid");
+            LOG_WARN("[Socks:{}] request header invalid", sid_);
             co_return;
         }
 
@@ -66,7 +69,7 @@ class socks_session : public std::enable_shared_from_this<socks_session>
 
         if (e1 || ver_nmethods[0] != socks::VER)
         {
-            LOG_ERROR("socks5 invalid version or read error {}", e1.message());
+            LOG_ERROR("[Socks:{}] invalid version or read error {}", sid_, e1.message());
             co_return false;
         }
 
@@ -75,7 +78,7 @@ class socks_session : public std::enable_shared_from_this<socks_session>
 
         if (e2)
         {
-            LOG_ERROR("socks5 methods read error {}", e2.message());
+            LOG_ERROR("[Socks:{}] methods read error {}", sid_, e2.message());
             co_return false;
         }
 
@@ -84,7 +87,7 @@ class socks_session : public std::enable_shared_from_this<socks_session>
 
         if (e3)
         {
-            LOG_ERROR("socks5 auth resp write error {}", e3.message());
+            LOG_ERROR("[Socks:{}] auth resp write error {}", sid_, e3.message());
             co_return false;
         }
         co_return true;
@@ -105,7 +108,7 @@ class socks_session : public std::enable_shared_from_this<socks_session>
 
         if (e4)
         {
-            LOG_ERROR("socks5 request header read error {}", e4.message());
+            LOG_ERROR("[Socks:{}] request header read error {}", sid_, e4.message());
             co_return request_info_t{false, "", 0, 0};
         }
 
@@ -147,7 +150,7 @@ class socks_session : public std::enable_shared_from_this<socks_session>
         }
         else
         {
-            LOG_WARN("socks5 address type not supported");
+            LOG_WARN("[Socks:{}] address type not supported", sid_);
             co_return request_info_t{false, "", 0, 0};
         }
 
@@ -166,17 +169,17 @@ class socks_session : public std::enable_shared_from_this<socks_session>
     {
         if (cmd == socks::CMD_CONNECT)
         {
-            LOG_INFO("socks5 cmd connect target {} port {}", host, port);
+            LOG_INFO("[Socks:{}] cmd connect target {} port {}", sid_, host, port);
             co_await run_tcp(host, port);
         }
         else if (cmd == socks::CMD_UDP_ASSOCIATE)
         {
-            LOG_INFO("socks5 cmd udp associate");
+            LOG_INFO("[Socks:{}] cmd udp associate", sid_);
             co_await run_udp(host, port);
         }
         else
         {
-            LOG_WARN("socks5 cmd not supported");
+            LOG_WARN("[Socks:{}] cmd not supported", sid_);
             uint8_t err[] = {socks::VER, socks::REP_CMD_NOT_SUPPORTED, 0, socks::ATYP_IPV4, 0, 0, 0, 0, 0, 0};
             co_await boost::asio::async_write(socket_, boost::asio::buffer(err), boost::asio::as_tuple(boost::asio::use_awaitable));
         }
@@ -187,14 +190,14 @@ class socks_session : public std::enable_shared_from_this<socks_session>
         auto stream = tunnel_manager_->create_stream();
         if (stream == nullptr)
         {
-            LOG_ERROR("failed to create stream tunnel not ready");
+            LOG_ERROR("[Socks:{}] failed to create stream tunnel not ready", sid_);
             co_return;
         }
 
         syn_payload syn{socks::CMD_CONNECT, host, port};
         if (auto ec = co_await tunnel_manager_->get_connection()->send_async(stream->id(), CMD_SYN, syn.encode()))
         {
-            LOG_ERROR("stream syn failed {}", ec.message());
+            LOG_ERROR("[Socks:{}] stream syn failed {}", sid_, ec.message());
             co_await stream->close();
             co_return;
         }
@@ -202,7 +205,7 @@ class socks_session : public std::enable_shared_from_this<socks_session>
         auto [ack_ec, ack_data] = co_await stream->async_read_some();
         if (ack_ec)
         {
-            LOG_ERROR("stream ack read failed {}", ack_ec.message());
+            LOG_ERROR("[Socks:{}] stream ack read failed {}", sid_, ack_ec.message());
             co_await stream->close();
             co_return;
         }
@@ -210,14 +213,14 @@ class socks_session : public std::enable_shared_from_this<socks_session>
         ack_payload ack_pl;
         if (!ack_payload::decode(ack_data.data(), ack_data.size(), ack_pl) || ack_pl.socks_rep_ != socks::REP_SUCCESS)
         {
-            LOG_WARN("stream remote rejected connection");
+            LOG_WARN("[Socks:{}] stream remote rejected connection", sid_);
             uint8_t err[] = {socks::VER, socks::REP_CONN_REFUSED, 0, socks::ATYP_IPV4, 0, 0, 0, 0, 0, 0};
             co_await boost::asio::async_write(socket_, boost::asio::buffer(err), boost::asio::as_tuple(boost::asio::use_awaitable));
             co_await stream->close();
             co_return;
         }
 
-        LOG_INFO("stream established id {}", stream->id());
+        LOG_INFO("[Socks:{}] stream established id {}", sid_, stream->id());
 
         uint8_t rep[] = {socks::VER, socks::REP_SUCCESS, 0, socks::ATYP_IPV4, 0, 0, 0, 0, 0, 0};
         if (auto [e, n] = co_await boost::asio::async_write(socket_, boost::asio::buffer(rep), boost::asio::as_tuple(boost::asio::use_awaitable)); e)
@@ -229,6 +232,7 @@ class socks_session : public std::enable_shared_from_this<socks_session>
         using boost::asio::experimental::awaitable_operators::operator||;
         co_await (upstream_tcp(stream) || downstream_tcp(stream));
         co_await stream->close();
+        LOG_INFO("[Socks:{}] finished", sid_);
     }
 
     boost::asio::awaitable<void> upstream_tcp(std::shared_ptr<mux_stream> stream)
@@ -277,7 +281,7 @@ class socks_session : public std::enable_shared_from_this<socks_session>
 
         if (ec)
         {
-            LOG_ERROR("udp bind failed {}", ec.message());
+            LOG_ERROR("[Socks:{}] udp bind failed {}", sid_, ec.message());
             uint8_t err[] = {socks::VER, socks::REP_GEN_FAIL, 0, socks::ATYP_IPV4, 0, 0, 0, 0, 0, 0};
             co_await boost::asio::async_write(socket_, boost::asio::buffer(err), boost::asio::as_tuple(boost::asio::use_awaitable));
             co_return;
@@ -304,7 +308,7 @@ class socks_session : public std::enable_shared_from_this<socks_session>
             co_return;
         }
 
-        LOG_INFO("stream {} udp associate ready", stream->id());
+        LOG_INFO("[Socks:{}] stream {} udp associate ready", sid_, stream->id());
 
         uint8_t final_rep[10];
         final_rep[0] = socks::VER;
@@ -373,6 +377,7 @@ class socks_session : public std::enable_shared_from_this<socks_session>
 
     boost::asio::ip::tcp::socket socket_;
     std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> tunnel_manager_;
+    uint32_t sid_;
 };
 
 class local_client
@@ -421,7 +426,8 @@ class local_client
     {
         for (;;)
         {
-            LOG_INFO("reality handshake initiating");
+            uint32_t cid = next_conn_id_.fetch_add(1, std::memory_order_relaxed);
+            LOG_INFO("reality handshake initiating conn_id {}", cid);
             boost::system::error_code ec;
             auto socket = std::make_shared<boost::asio::ip::tcp::socket>(pool_.get_io_context());
             boost::asio::ip::tcp::resolver res(pool_.get_io_context());
@@ -595,9 +601,9 @@ class local_client
             auto c_app_keys = reality::tls_key_schedule::derive_traffic_keys(app_sec.first, ec);
             auto s_app_keys = reality::tls_key_schedule::derive_traffic_keys(app_sec.second, ec);
 
-            LOG_INFO("reality handshake success tunnel active");
+            LOG_INFO("reality handshake success tunnel active id {}", cid);
             reality_engine re(s_app_keys.first, s_app_keys.second, c_app_keys.first, c_app_keys.second);
-            tunnel_manager_ = std::make_shared<mux_tunnel_impl<boost::asio::ip::tcp::socket>>(std::move(*socket), std::move(re), true);
+            tunnel_manager_ = std::make_shared<mux_tunnel_impl<boost::asio::ip::tcp::socket>>(std::move(*socket), std::move(re), true, cid);
             co_await tunnel_manager_->run();
 
             LOG_WARN("tunnel lost reconnecting in 5s");
@@ -625,7 +631,8 @@ class local_client
             {
                 if (tunnel_manager_ != nullptr && tunnel_manager_->get_connection()->is_open())
                 {
-                    std::make_shared<socks_session>(std::move(s), tunnel_manager_)->start();
+                    uint32_t sid = next_session_id_.fetch_add(1, std::memory_order_relaxed);
+                    std::make_shared<socks_session>(std::move(s), tunnel_manager_, sid)->start();
                 }
                 else
                 {
@@ -643,6 +650,8 @@ class local_client
     std::string sni_;
     std::vector<uint8_t> server_pub_key_;
     std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> tunnel_manager_;
+    std::atomic<uint32_t> next_conn_id_{1};
+    std::atomic<uint32_t> next_session_id_{1};
 };
 
 }    // namespace mux
