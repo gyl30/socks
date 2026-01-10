@@ -120,15 +120,16 @@ class remote_session : public IMuxStream, public std::enable_shared_from_this<re
         mux::SynPayload syn;
         if (!mux::SynPayload::decode(syn_data.data(), syn_data.size(), syn))
         {
+            LOG_ERROR("[RemoteTCP:{}] Invalid SYN Payload", id_);
             co_await connection_->send_async(id_, mux::CMD_RST, {});
             co_return;
         }
-        LOG_INFO("RemoteTCP stream {} connecting to {}:{}", id_, syn.addr, syn.port);
+        LOG_INFO("[RemoteTCP:{}] Connect target {}:{}", id_, syn.addr, syn.port);
 
         auto [er, eps] = co_await resolver_.async_resolve(syn.addr, std::to_string(syn.port), boost::asio::as_tuple(boost::asio::use_awaitable));
         if (er)
         {
-            LOG_WARN("RemoteTCP stream {} resolve failed: {}", id_, er.message());
+            LOG_WARN("[RemoteTCP:{}] Resolve failed: {}", id_, er.message());
             mux::AckPayload ack{socks::REP_HOST_UNREACH, "", 0};
             co_await connection_->send_async(id_, mux::CMD_ACK, ack.encode());
             co_return;
@@ -136,13 +137,13 @@ class remote_session : public IMuxStream, public std::enable_shared_from_this<re
         auto [ec, ep] = co_await boost::asio::async_connect(target_socket_, eps, boost::asio::as_tuple(boost::asio::use_awaitable));
         if (ec)
         {
-            LOG_WARN("RemoteTCP stream {} connect failed: {}", id_, ec.message());
+            LOG_WARN("[RemoteTCP:{}] Connect failed: {}", id_, ec.message());
             mux::AckPayload ack{socks::REP_CONN_REFUSED, "", 0};
             co_await connection_->send_async(id_, mux::CMD_ACK, ack.encode());
             co_return;
         }
 
-        LOG_INFO("RemoteTCP stream {} connected.", id_);
+        LOG_DEBUG("[RemoteTCP:{}] Connected. Sending ACK.", id_);
         mux::AckPayload ack{socks::REP_SUCCESS, ep.address().to_string(), ep.port()};
         if (co_await connection_->send_async(id_, mux::CMD_ACK, ack.encode()))
             co_return;
@@ -150,6 +151,7 @@ class remote_session : public IMuxStream, public std::enable_shared_from_this<re
         using boost::asio::experimental::awaitable_operators::operator||;
         co_await (upstream() || downstream());
 
+        LOG_INFO("[RemoteTCP:{}] Session finished.", id_);
         boost::system::error_code ce;
         target_socket_.close(ce);
         if (manager_)
@@ -369,13 +371,19 @@ class remote_server
 
     boost::asio::awaitable<void> accept_loop()
     {
+        LOG_INFO("[RemoteServer] Listening on port...");
         for (;;)
         {
             auto s = std::make_shared<boost::asio::ip::tcp::socket>(acceptor_.get_executor());
             auto [e] = co_await acceptor_.async_accept(*s, boost::asio::as_tuple(boost::asio::use_awaitable));
             if (!e)
+            {
+                boost::system::error_code ec;
+                auto ep = s->remote_endpoint(ec);
+                LOG_DEBUG("[RemoteServer] New connection from {}", ec ? "unknown" : ep.address().to_string());
                 boost::asio::co_spawn(
                     pool_.get_io_context(), [this, s]() { return handle(s); }, boost::asio::detached);
+            }
         }
     }
 
@@ -390,6 +398,7 @@ class remote_server
 
         if (n < 5 || buf[0] != 0x16)
         {
+            LOG_WARN("[RemoteServer] Not TLS handshake (byte0={:02x}). Fallback.", buf[0]);
             co_await handle_fallback(s, buf);
             co_return;
         }
@@ -424,12 +433,16 @@ class remote_server
                 std::fill(aad.begin() + info.sid_offset, aad.begin() + info.sid_offset + 32, 0);
                 auto pt = reality::CryptoUtil::aes_gcm_decrypt(auth_key, nonce, info.session_id, aad, ec);
                 if (!ec && pt.size() == 16)
+                {
                     authorized = true;
+                    LOG_INFO("[RemoteServer] Auth Success. REALITY handshake proceeding.");
+                }
             }
         }
 
         if (!authorized)
         {
+            LOG_WARN("[RemoteServer] Auth Failed. Fallback to {}", fb_host);
             co_await handle_fallback(s, buf);
             co_return;
         }
@@ -479,10 +492,13 @@ class remote_server
         flight2.push_back(1);
         flight2.push_back(1);
         flight2.insert(flight2.end(), flight2_enc.begin(), flight2_enc.end());
+
+        LOG_DEBUG("[RemoteServer] Sending ServerHello Flight...");
         if (auto [we, wn] = co_await boost::asio::async_write(*s, boost::asio::buffer(flight2), boost::asio::as_tuple(boost::asio::use_awaitable));
             we)
             co_return;
 
+        LOG_DEBUG("[RemoteServer] Waiting for Client Finished...");
         uint8_t h[5];
         if (auto [re3, rn3] = co_await boost::asio::async_read(*s, boost::asio::buffer(h, 5), boost::asio::as_tuple(boost::asio::use_awaitable)); re3)
             co_return;
@@ -515,6 +531,8 @@ class remote_server
 
         auto c_app_keys = reality::TlsKeySchedule::derive_traffic_keys(app_sec.first, ec);
         auto s_app_keys = reality::TlsKeySchedule::derive_traffic_keys(app_sec.second, ec);
+
+        LOG_INFO("[RemoteServer] Handshake Done. Tunnel Start.");
 
         RealityEngine engine(c_app_keys.first, c_app_keys.second, s_app_keys.first, s_app_keys.second);
         auto tunnel = std::make_shared<mux_tunnel_impl<boost::asio::ip::tcp::socket>>(std::move(*s), std::move(engine));
@@ -551,7 +569,7 @@ class remote_server
                         else
                         {
                             LOG_WARN("Unsupported CMD {} for stream {}", (int)syn.socks_cmd, id);
-                            tunnel->get_connection()->send_async(id, mux::CMD_RST, {});
+                            co_await tunnel->get_connection()->send_async(id, mux::CMD_RST, {});
                         }
                     },
                     boost::asio::detached);

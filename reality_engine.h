@@ -20,7 +20,7 @@ class RealityEngine
         : read_key_(std::move(r_key)), read_iv_(std::move(r_iv)), write_key_(std::move(w_key)), write_iv_(std::move(w_iv))
     {
         rx_buf_.resize(RX_BUF_SIZE);
-        LOG_DEBUG("RealityEngine initialized, RX buffer size: {} bytes", RX_BUF_SIZE);
+        LOG_DEBUG("[RealityEngine] Initialized. RX Buffer: {} bytes", RX_BUF_SIZE);
     }
 
     std::span<uint8_t> get_write_buffer()
@@ -29,11 +29,7 @@ class RealityEngine
         return {rx_buf_.data() + rx_end_, rx_buf_.size() - rx_end_};
     }
 
-    void commit_written(size_t n)
-    {
-        rx_end_ += n;
-        LOG_TRACE("RealityEngine committed {} bytes, rx_end updated to {}", n, rx_end_);
-    }
+    void commit_written(size_t n) { rx_end_ += n; }
 
     std::vector<std::vector<uint8_t>> decrypt_available_records(boost::system::error_code& ec)
     {
@@ -51,7 +47,9 @@ class RealityEngine
             size_t frame_size = reality::TLS_RECORD_HEADER_SIZE + record_len;
 
             if (available < frame_size)
+            {
                 break;
+            }
 
             std::vector<uint8_t> record_data(rx_buf_.begin() + rx_pos_, rx_buf_.begin() + rx_pos_ + frame_size);
             rx_pos_ += frame_size;
@@ -61,12 +59,22 @@ class RealityEngine
 
             if (ec)
             {
-                LOG_ERROR("RealityEngine TLS record decryption failed: {}", ec.message());
+                LOG_ERROR("[RealityEngine] Decrypt failed at seq={}: {}", read_seq_, ec.message());
                 return {};
             }
 
+            const char* type_str = "Unknown";
+            if (content_type == reality::CONTENT_TYPE_APPLICATION_DATA)
+                type_str = "AppData";
+            else if (content_type == reality::CONTENT_TYPE_HANDSHAKE)
+                type_str = "Handshake";
+            else if (content_type == reality::CONTENT_TYPE_ALERT)
+                type_str = "Alert";
+            else if (content_type == reality::CONTENT_TYPE_CHANGE_CIPHER_SPEC)
+                type_str = "CCS";
+
+            LOG_TRACE("[RealityEngine] Decrypted seq={} type={} len={}", read_seq_, type_str, plaintext.size());
             read_seq_++;
-            LOG_TRACE("RealityEngine decrypted seq {} with type {}", read_seq_ - 1, (int)content_type);
 
             if (content_type == reality::CONTENT_TYPE_APPLICATION_DATA && !plaintext.empty())
             {
@@ -74,7 +82,7 @@ class RealityEngine
             }
             else if (content_type == reality::CONTENT_TYPE_ALERT)
             {
-                LOG_INFO("RealityEngine received TLS alert, treating as EOF");
+                LOG_INFO("[RealityEngine] Received TLS Alert. Closing connection.");
                 ec = boost::asio::error::eof;
                 return {};
             }
@@ -93,12 +101,12 @@ class RealityEngine
 
         if (ec)
         {
-            LOG_ERROR("RealityEngine TLS record encryption failed: {}", ec.message());
+            LOG_ERROR("[RealityEngine] Encrypt failed at seq={}: {}", write_seq_, ec.message());
             return {};
         }
+
+        LOG_TRACE("[RealityEngine] Encrypted seq={} len={}->{}", write_seq_, plaintext.size(), ciphertext.size());
         write_seq_++;
-        LOG_DEBUG(
-            "RealityEngine encrypted {} bytes (plaintext) to {} bytes (ciphertext), seq={}", plaintext.size(), ciphertext.size(), write_seq_ - 1);
         return ciphertext;
     }
 
@@ -114,7 +122,6 @@ class RealityEngine
                 if (data_len > 0)
                 {
                     std::memmove(rx_buf_.data(), rx_buf_.data() + rx_pos_, data_len);
-                    LOG_TRACE("RealityEngine buffer compacted: {} bytes moved, rx_pos reset to 0", data_len);
                 }
                 rx_pos_ = 0;
                 rx_end_ = data_len;
