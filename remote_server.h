@@ -2,6 +2,7 @@
 #define REMOTE_SERVER_H
 
 #include "mux_tunnel.h"
+#include "protocol.h"
 
 namespace mux
 {
@@ -122,9 +123,12 @@ class remote_session : public IMuxStream, public std::enable_shared_from_this<re
             co_await connection_->send_async(id_, mux::CMD_RST, {});
             co_return;
         }
+        LOG_INFO("RemoteTCP stream {} connecting to {}:{}", id_, syn.addr, syn.port);
+
         auto [er, eps] = co_await resolver_.async_resolve(syn.addr, std::to_string(syn.port), boost::asio::as_tuple(boost::asio::use_awaitable));
         if (er)
         {
+            LOG_WARN("RemoteTCP stream {} resolve failed: {}", id_, er.message());
             mux::AckPayload ack{socks::REP_HOST_UNREACH, "", 0};
             co_await connection_->send_async(id_, mux::CMD_ACK, ack.encode());
             co_return;
@@ -132,10 +136,13 @@ class remote_session : public IMuxStream, public std::enable_shared_from_this<re
         auto [ec, ep] = co_await boost::asio::async_connect(target_socket_, eps, boost::asio::as_tuple(boost::asio::use_awaitable));
         if (ec)
         {
+            LOG_WARN("RemoteTCP stream {} connect failed: {}", id_, ec.message());
             mux::AckPayload ack{socks::REP_CONN_REFUSED, "", 0};
             co_await connection_->send_async(id_, mux::CMD_ACK, ack.encode());
             co_return;
         }
+
+        LOG_INFO("RemoteTCP stream {} connected.", id_);
         mux::AckPayload ack{socks::REP_SUCCESS, ep.address().to_string(), ep.port()};
         if (co_await connection_->send_async(id_, mux::CMD_ACK, ack.encode()))
             co_return;
@@ -201,6 +208,118 @@ class remote_session : public IMuxStream, public std::enable_shared_from_this<re
     uint32_t id_;
     boost::asio::ip::tcp::resolver resolver_;
     boost::asio::ip::tcp::socket target_socket_;
+    boost::asio::experimental::concurrent_channel<void(boost::system::error_code, std::vector<std::uint8_t>)> recv_channel_;
+    std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> manager_;
+};
+
+class remote_udp_session : public IMuxStream, public std::enable_shared_from_this<remote_udp_session>
+{
+   public:
+    remote_udp_session(std::shared_ptr<MuxConnection> connection, uint32_t id, const boost::asio::any_io_executor& ex)
+        : connection_(std::move(connection)), id_(id), udp_socket_(ex), recv_channel_(ex, 128)
+    {
+    }
+
+    boost::asio::awaitable<void> start()
+    {
+        boost::system::error_code ec;
+        udp_socket_.open(boost::asio::ip::udp::v4(), ec);
+        if (ec)
+        {
+            LOG_ERROR("RemoteUDP stream {} failed open socket: {}", id_, ec.message());
+            mux::AckPayload ack{socks::REP_GEN_FAIL, "", 0};
+            co_await connection_->send_async(id_, mux::CMD_ACK, ack.encode());
+            co_return;
+        }
+
+        LOG_INFO("RemoteUDP stream {} started, socket open.", id_);
+        mux::AckPayload ack{socks::REP_SUCCESS, "0.0.0.0", 0};
+        if (co_await connection_->send_async(id_, mux::CMD_ACK, ack.encode()))
+            co_return;
+
+        using boost::asio::experimental::awaitable_operators::operator||;
+        co_await (mux_to_udp() || udp_to_mux());
+
+        boost::system::error_code ignore;
+        udp_socket_.close(ignore);
+        if (manager_)
+            manager_->remove_stream(id_);
+        LOG_INFO("RemoteUDP stream {} finished.", id_);
+    }
+
+    void on_data(std::vector<uint8_t> data) override { recv_channel_.try_send(boost::system::error_code(), std::move(data)); }
+    void on_close() override
+    {
+        recv_channel_.close();
+        boost::system::error_code ec;
+        udp_socket_.close(ec);
+    }
+    void on_reset() override { on_close(); }
+    void set_manager(std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> m) { manager_ = m; }
+
+   private:
+    boost::asio::awaitable<void> mux_to_udp()
+    {
+        for (;;)
+        {
+            auto [ec, data] = co_await recv_channel_.async_receive(boost::asio::as_tuple(boost::asio::use_awaitable));
+            if (ec || data.empty())
+                break;
+
+            SocksUdpHeader header;
+            if (!SocksUdpHeader::decode(data.data(), data.size(), header))
+            {
+                LOG_WARN("RemoteUDP stream {} invalid SOCKS UDP header", id_);
+                continue;
+            }
+
+            boost::asio::ip::udp::resolver resolver(udp_socket_.get_executor());
+            auto [er, eps] =
+                co_await resolver.async_resolve(header.addr, std::to_string(header.port), boost::asio::as_tuple(boost::asio::use_awaitable));
+            if (er)
+            {
+                LOG_WARN("RemoteUDP stream {} resolve {} failed: {}", id_, header.addr, er.message());
+                continue;
+            }
+
+            LOG_DEBUG("RemoteUDP stream {} sending {} bytes to target {}:{}", id_, data.size() - header.header_len, header.addr, header.port);
+            auto [we, wn] = co_await udp_socket_.async_send_to(boost::asio::buffer(data.data() + header.header_len, data.size() - header.header_len),
+                                                               *eps.begin(),
+                                                               boost::asio::as_tuple(boost::asio::use_awaitable));
+
+            if (we)
+                LOG_WARN("RemoteUDP stream {} send_to error: {}", id_, we.message());
+        }
+    }
+
+    boost::asio::awaitable<void> udp_to_mux()
+    {
+        std::vector<uint8_t> buf(65535);
+        boost::asio::ip::udp::endpoint sender_ep;
+        for (;;)
+        {
+            auto [re, n] =
+                co_await udp_socket_.async_receive_from(boost::asio::buffer(buf), sender_ep, boost::asio::as_tuple(boost::asio::use_awaitable));
+            if (re)
+                break;
+
+            LOG_DEBUG("RemoteUDP stream {} received {} bytes from target {}:{}", id_, n, sender_ep.address().to_string(), sender_ep.port());
+
+            SocksUdpHeader header;
+            header.addr = sender_ep.address().to_string();
+            header.port = sender_ep.port();
+
+            std::vector<uint8_t> packet = header.encode();
+            packet.insert(packet.end(), buf.begin(), buf.begin() + n);
+
+            if (co_await connection_->send_async(id_, mux::CMD_DAT, std::move(packet)))
+                break;
+        }
+    }
+
+    std::shared_ptr<MuxConnection> connection_;
+    uint32_t id_;
+    boost::asio::ip::udp::socket udp_socket_;
     boost::asio::experimental::concurrent_channel<void(boost::system::error_code, std::vector<std::uint8_t>)> recv_channel_;
     std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> manager_;
 };
@@ -392,7 +511,6 @@ class remote_server
         }
 
         auto app_sec = reality::TlsKeySchedule::derive_application_secrets(hs_keys.master_secret, trans.finish(), ec);
-
         trans.update(pt);
 
         auto c_app_keys = reality::TlsKeySchedule::derive_traffic_keys(app_sec.first, ec);
@@ -406,12 +524,35 @@ class remote_server
             {
                 boost::asio::co_spawn(
                     pool_.get_io_context(),
-                    [this, tunnel, id, p]()
+                    [this, tunnel, id, p]() -> boost::asio::awaitable<void>
                     {
-                        auto sess = std::make_shared<remote_session>(tunnel->get_connection(), id, pool_.get_io_context().get_executor());
-                        sess->set_manager(tunnel);
-                        tunnel->register_stream(id, sess);
-                        return sess->start(p);
+                        mux::SynPayload syn;
+                        if (!mux::SynPayload::decode(p.data(), p.size(), syn))
+                        {
+                            LOG_WARN("Invalid SYN payload for stream {}", id);
+                            co_return;
+                        }
+
+                        if (syn.socks_cmd == socks::CMD_CONNECT)
+                        {
+                            auto sess = std::make_shared<remote_session>(tunnel->get_connection(), id, pool_.get_io_context().get_executor());
+                            sess->set_manager(tunnel);
+                            tunnel->register_stream(id, sess);
+                            co_await sess->start(p);
+                        }
+                        else if (syn.socks_cmd == socks::CMD_UDP_ASSOCIATE)
+                        {
+                            LOG_INFO("New UDP Associate request stream {}", id);
+                            auto sess = std::make_shared<remote_udp_session>(tunnel->get_connection(), id, pool_.get_io_context().get_executor());
+                            sess->set_manager(tunnel);
+                            tunnel->register_stream(id, sess);
+                            co_await sess->start();
+                        }
+                        else
+                        {
+                            LOG_WARN("Unsupported CMD {} for stream {}", (int)syn.socks_cmd, id);
+                            tunnel->get_connection()->send_async(id, mux::CMD_RST, {});
+                        }
                     },
                     boost::asio::detached);
             });
