@@ -36,15 +36,30 @@ class mux_stream : public mux_stream_interface, public std::enable_shared_from_t
         {
             co_return boost::asio::error::broken_pipe;
         }
+
         std::vector<uint8_t> payload(static_cast<const uint8_t*>(data), static_cast<const uint8_t*>(data) + len);
-        if (!connection_)
+
+        if (connection_ == nullptr)
         {
             co_return boost::asio::error::operation_aborted;
         }
+
         co_return co_await connection_->send_async(id_, CMD_DAT, std::move(payload));
     }
 
-    boost::asio::awaitable<void> close();
+    boost::asio::awaitable<void> close()
+    {
+        if (is_closed_)
+        {
+            co_return;
+        }
+
+        close_internal();
+        if (connection_ != nullptr)
+        {
+            co_await connection_->send_async(id_, CMD_FIN, {});
+        }
+    }
 
     void on_data(std::vector<uint8_t> data) override
     {
@@ -74,20 +89,20 @@ class mux_stream : public mux_stream_interface, public std::enable_shared_from_t
     std::atomic<bool> is_closed_{false};
 };
 
-template <typename StreamLayer>
-class mux_tunnel_impl : public std::enable_shared_from_this<mux_tunnel_impl<StreamLayer>>
+template <typename stream_layer>
+class mux_tunnel_impl : public std::enable_shared_from_this<mux_tunnel_impl<stream_layer>>
 {
    public:
-    explicit mux_tunnel_impl(StreamLayer socket, reality_engine engine, bool is_client)
+    explicit mux_tunnel_impl(stream_layer socket, reality_engine engine, bool is_client)
         : connection_(std::make_shared<mux_connection>(std::move(socket), std::move(engine), is_client))
     {
     }
 
-    std::shared_ptr<mux_connection> get_connection() const { return connection_; }
+    [[nodiscard]] std::shared_ptr<mux_connection> get_connection() const { return connection_; }
 
     void register_stream(uint32_t id, std::shared_ptr<mux_stream_interface> stream)
     {
-        if (connection_)
+        if (connection_ != nullptr)
         {
             connection_->register_stream(id, std::move(stream));
         }
@@ -95,19 +110,20 @@ class mux_tunnel_impl : public std::enable_shared_from_this<mux_tunnel_impl<Stre
 
     boost::asio::awaitable<void> run()
     {
-        if (connection_)
+        if (connection_ != nullptr)
         {
             co_await connection_->start();
         }
     }
 
-    std::shared_ptr<mux_stream> create_stream()
+    [[nodiscard]] std::shared_ptr<mux_stream> create_stream()
     {
-        if (!connection_)
+        if (connection_ == nullptr)
         {
             return nullptr;
         }
-        std::uint32_t id = connection_->acquire_next_id();
+
+        uint32_t id = connection_->acquire_next_id();
         auto stream = std::make_shared<mux_stream>(id, connection_, connection_->get_executor());
         connection_->register_stream(id, stream);
         return stream;
@@ -115,7 +131,7 @@ class mux_tunnel_impl : public std::enable_shared_from_this<mux_tunnel_impl<Stre
 
     void remove_stream(std::uint32_t id)
     {
-        if (connection_)
+        if (connection_ != nullptr)
         {
             connection_->remove_stream(id);
         }
@@ -125,18 +141,6 @@ class mux_tunnel_impl : public std::enable_shared_from_this<mux_tunnel_impl<Stre
     std::shared_ptr<mux_connection> connection_;
 };
 
-inline boost::asio::awaitable<void> mux_stream::close()
-{
-    if (is_closed_)
-    {
-        co_return;
-    }
-    close_internal();
-    if (connection_)
-    {
-        co_await connection_->send_async(id_, CMD_FIN, {});
-    }
-}
-
 }    // namespace mux
+
 #endif

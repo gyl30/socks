@@ -11,7 +11,7 @@
 
 void print_usage(const char* prog)
 {
-    std::cout << "usage:\n";
+    std::cout << "usage\n";
     std::cout << "  run as local client " << prog << " -c <remote_host> <remote_port> <local_port> <auth_key_hex> <sni>\n";
     std::cout << "  run as remote server " << prog << " -s <bind_port> <fallback_host> <fallback_port> <auth_key_hex>\n";
 }
@@ -28,13 +28,13 @@ int main(int argc, char** argv)
     }
 
     const std::string mode = argv[1];
-
     const auto threads_count = std::thread::hardware_concurrency();
     boost::system::error_code ec;
     io_context_pool pool(threads_count > 0 ? threads_count : 4, ec);
+
     if (ec)
     {
-        LOG_ERROR("Fatal: failed to create io context pool: {}", ec.message());
+        LOG_ERROR("fatal failed to create io context pool error {}", ec.message());
         return 1;
     }
 
@@ -45,19 +45,14 @@ int main(int argc, char** argv)
             print_usage(argv[0]);
             return 1;
         }
-        std::uint16_t port = static_cast<std::uint16_t>(std::stoi(argv[2]));
-        std::string fb_host = argv[3];
-        std::string fb_port = argv[4];
-        std::string auth_key = argv[5];
-
-        mux::remote_server server(pool, port, fb_host, fb_port, auth_key, ec);
+        uint16_t port = static_cast<uint16_t>(std::stoi(argv[2]));
+        mux::remote_server server(pool, port, argv[3], argv[4], argv[5], ec);
         if (ec)
         {
-            LOG_ERROR("Fatal: failed to create remote server: {}", ec.message());
+            LOG_ERROR("fatal failed to create remote server error {}", ec.message());
             return 1;
         }
         server.start();
-
         pool.run();
     }
     else if (mode == "-c")
@@ -67,20 +62,14 @@ int main(int argc, char** argv)
             print_usage(argv[0]);
             return 1;
         }
-        std::string r_host = argv[2];
-        std::string r_port = argv[3];
-        std::uint16_t l_port = static_cast<std::uint16_t>(std::stoi(argv[4]));
-        std::string auth_key = argv[5];
-        std::string sni = argv[6];
-
-        mux::local_client client(pool, r_host, r_port, l_port, auth_key, sni, ec);
+        uint16_t l_port = static_cast<uint16_t>(std::stoi(argv[4]));
+        mux::local_client client(pool, argv[2], argv[3], l_port, argv[5], argv[6], ec);
         if (ec)
         {
-            LOG_ERROR("Fatal: failed to create local client: {}", ec.message());
+            LOG_ERROR("fatal failed to create local client error {}", ec.message());
             return 1;
         }
         client.start();
-
         pool.run();
     }
     else

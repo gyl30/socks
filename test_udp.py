@@ -6,7 +6,7 @@ import threading
 # 配置
 PROXY_HOST = '127.0.0.1'
 PROXY_PORT = 1080
-DNS_SERVER = '8.8.8.8'
+DNS_SERVER = '1.1.1.1'
 DNS_PORT = 53
 
 def test_udp_associate():

@@ -8,57 +8,77 @@
 #include "mux_protocol.h"
 #include "log.h"
 
-class MuxDispatcher
+class mux_dispatcher
 {
    public:
-    using FrameCallback = std::function<void(mux::frame_header, std::vector<uint8_t>)>;
+    using frame_callback_t = std::function<void(mux::frame_header, std::vector<uint8_t>)>;
 
-    MuxDispatcher() { LOG_DEBUG("MuxDispatcher initialized."); }
+    mux_dispatcher() { LOG_DEBUG("mux dispatcher initialized"); }
 
-    void set_callback(FrameCallback cb) { callback_ = std::move(cb); }
+    void set_callback(frame_callback_t cb) { callback_ = std::move(cb); }
 
     void on_plaintext_data(const std::vector<uint8_t>& data)
     {
         if (data.empty())
+        {
             return;
+        }
         buffer_.insert(buffer_.end(), data.begin(), data.end());
 
-        while (buffer_.size() >= mux::HEADER_SIZE)
+        while (buffer_.size() - read_pos_ >= mux::HEADER_SIZE)
         {
-            auto header = mux::frame_header::decode(buffer_.data());
-            size_t total_frame_len = mux::HEADER_SIZE + header.length;
+            const uint8_t* ptr = buffer_.data() + read_pos_;
+            auto header = mux::frame_header::decode(ptr);
+            const size_t total_frame_len = mux::HEADER_SIZE + header.length_;
 
-            if (total_frame_len > mux::MAX_PAYLOAD + mux::HEADER_SIZE)
+            if (header.length_ > mux::MAX_PAYLOAD)
             {
-                LOG_ERROR("MuxDispatcher received oversized frame {}, stream {}", header.length, header.stream_id);
+                LOG_ERROR("mux dispatcher received oversized frame length {} stream {}", header.length_, header.stream_id_);
                 buffer_.clear();
+                read_pos_ = 0;
                 break;
             }
 
-            if (buffer_.size() < total_frame_len)
+            if (buffer_.size() - read_pos_ < total_frame_len)
+            {
                 break;
+            }
 
-            std::vector<uint8_t> payload(buffer_.begin() + mux::HEADER_SIZE, buffer_.begin() + total_frame_len);
-            buffer_.erase(buffer_.begin(), buffer_.begin() + total_frame_len);
-            LOG_DEBUG("MuxDispatcher parsed frame: stream_id={}, cmd={}, length={}", header.stream_id, (int)header.command, header.length);
+            std::vector<uint8_t> payload(buffer_.begin() + read_pos_ + mux::HEADER_SIZE, buffer_.begin() + read_pos_ + total_frame_len);
+
+            read_pos_ += total_frame_len;
+
+            LOG_DEBUG("mux dispatcher parsed frame stream {} cmd {} length {}", header.stream_id_, static_cast<int>(header.command_), header.length_);
 
             if (callback_)
+            {
                 callback_(header, std::move(payload));
+            }
+        }
+
+        if (read_pos_ > 4096)
+        {
+            buffer_.erase(buffer_.begin(), buffer_.begin() + read_pos_);
+            read_pos_ = 0;
         }
     }
 
-    static std::vector<uint8_t> pack(uint32_t stream_id, uint8_t cmd, std::vector<uint8_t> payload)
+    [[nodiscard]] static std::vector<uint8_t> pack(uint32_t stream_id, uint8_t cmd, std::vector<uint8_t> payload)
     {
         std::vector<uint8_t> frame(mux::HEADER_SIZE + payload.size());
         mux::frame_header h{stream_id, static_cast<uint16_t>(payload.size()), cmd};
         h.encode(frame.data());
-        std::memcpy(frame.data() + mux::HEADER_SIZE, payload.data(), payload.size());
+        if (!payload.empty())
+        {
+            std::memcpy(frame.data() + mux::HEADER_SIZE, payload.data(), payload.size());
+        }
         return frame;
     }
 
    private:
     std::vector<uint8_t> buffer_;
-    FrameCallback callback_;
+    size_t read_pos_ = 0;
+    frame_callback_t callback_;
 };
 
 #endif

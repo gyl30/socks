@@ -25,20 +25,24 @@ class io_context_pool
         {
             auto ctx = std::make_shared<boost::asio::io_context>();
             io_contexts_.push_back(ctx);
-            work_.push_back(std::make_shared<boost::asio::executor_work_guard<boost::asio::io_context::executor_type>>(ctx->get_executor()));
+            work_guards_.push_back(std::make_shared<boost::asio::executor_work_guard<boost::asio::io_context::executor_type>>(ctx->get_executor()));
         }
     }
+
+    io_context_pool(const io_context_pool&) = delete;
+    io_context_pool& operator=(const io_context_pool&) = delete;
 
     void run()
     {
         std::vector<std::thread> threads;
         threads.reserve(io_contexts_.size());
+
         for (auto& io_context : io_contexts_)
         {
             threads.emplace_back([&io_context]() { io_context->run(); });
         }
 
-        LOG_INFO("io_context_pool running with {} threads", threads.size());
+        LOG_INFO("io context pool running with {} threads", threads.size());
 
         for (auto& t : threads)
         {
@@ -51,6 +55,7 @@ class io_context_pool
 
     void stop()
     {
+        LOG_INFO("io context pool stopping all contexts");
         for (auto& ctx : io_contexts_)
         {
             ctx->stop();
@@ -66,7 +71,7 @@ class io_context_pool
    private:
     std::atomic<std::size_t> next_io_context_ = {0};
     std::vector<std::shared_ptr<boost::asio::io_context>> io_contexts_;
-    std::vector<std::shared_ptr<boost::asio::executor_work_guard<boost::asio::io_context::executor_type>>> work_;
+    std::vector<std::shared_ptr<boost::asio::executor_work_guard<boost::asio::io_context::executor_type>>> work_guards_;
 };
 
 #endif

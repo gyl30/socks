@@ -26,18 +26,18 @@ using boost::asio::detached;
 namespace this_coro = boost::asio::this_coro;
 using namespace boost::asio::experimental::awaitable_operators;
 
-enum class MuxConnectionState
+enum class mux_connection_state
 {
-    CONNECTED,
-    CLOSING,
-    CLOSED
+    connected,
+    closing,
+    closed
 };
 
 struct mux_write_msg
 {
-    uint32_t stream_id;
-    uint8_t command;
-    std::vector<uint8_t> payload;
+    uint32_t stream_id_ = 0;
+    uint8_t command_ = 0;
+    std::vector<uint8_t> payload_;
 };
 
 class mux_stream_interface
@@ -60,11 +60,11 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
           reality_engine_(std::move(engine)),
           write_channel_(socket_.get_executor(), 1024),
           timer_(socket_.get_executor()),
+          connection_state_(mux_connection_state::connected),
           next_stream_id_(is_client ? 1 : 2)
     {
         mux_dispatcher_.set_callback([this](mux::frame_header h, std::vector<uint8_t> p) { this->on_mux_frame(h, std::move(p)); });
-        connection_state_.store(MuxConnectionState::CONNECTED, std::memory_order_release);
-        LOG_INFO("mux_connection initialized");
+        LOG_INFO("mux connection initialized");
     }
 
     auto get_executor() { return socket_.get_executor(); }
@@ -83,30 +83,30 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
         streams_.erase(id);
     }
 
-    uint32_t acquire_next_id() { return next_stream_id_.fetch_add(2, std::memory_order_relaxed); }
+    [[nodiscard]] uint32_t acquire_next_id() { return next_stream_id_.fetch_add(2, std::memory_order_relaxed); }
 
     [[nodiscard]] awaitable<void> start()
     {
         auto self = shared_from_this();
-        LOG_DEBUG("mux_connection started loops");
-
+        LOG_DEBUG("mux connection started loops");
         co_await (read_loop() || write_loop() || timeout_loop());
-
-        LOG_INFO("mux_connection loops finished stopped");
+        LOG_INFO("mux connection loops finished stopped");
     }
 
     [[nodiscard]] awaitable<boost::system::error_code> send_async(uint32_t stream_id, uint8_t cmd, std::vector<uint8_t> payload)
     {
-        if (connection_state_.load(std::memory_order_acquire) != MuxConnectionState::CONNECTED)
+        if (connection_state_.load(std::memory_order_acquire) != mux_connection_state::connected)
         {
             co_return boost::asio::error::operation_aborted;
         }
+
         mux_write_msg msg{stream_id, cmd, std::move(payload)};
         auto [ec] =
             co_await write_channel_.async_send(boost::system::error_code{}, std::move(msg), boost::asio::as_tuple(boost::asio::use_awaitable));
+
         if (ec)
         {
-            LOG_ERROR("mux_connection send failed error {}", ec.message());
+            LOG_ERROR("mux connection channel send failed error {}", ec.message());
             co_return ec;
         }
         co_return boost::system::error_code();
@@ -114,13 +114,13 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
 
     void stop()
     {
-        MuxConnectionState expected = MuxConnectionState::CONNECTED;
-        if (!connection_state_.compare_exchange_strong(expected, MuxConnectionState::CLOSING, std::memory_order_acq_rel))
+        mux_connection_state expected = mux_connection_state::connected;
+        if (!connection_state_.compare_exchange_strong(expected, mux_connection_state::closing, std::memory_order_acq_rel))
         {
             return;
         }
 
-        LOG_INFO("mux_connection stopping");
+        LOG_INFO("mux connection stopping");
 
         {
             std::lock_guard<std::mutex> lock(streams_mutex_);
@@ -135,19 +135,12 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
         }
         write_channel_.close();
         timer_.cancel();
-        connection_state_.store(MuxConnectionState::CLOSED, std::memory_order_release);
+        connection_state_.store(mux_connection_state::closed, std::memory_order_release);
     }
 
-    [[nodiscard]] bool is_open() const { return connection_state_.load(std::memory_order_acquire) == MuxConnectionState::CONNECTED; }
+    [[nodiscard]] bool is_open() const { return connection_state_.load(std::memory_order_acquire) == mux_connection_state::connected; }
 
    private:
-    std::string get_remote_endpoint_string()
-    {
-        boost::system::error_code ec;
-        auto ep = socket_.remote_endpoint(ec);
-        return ec ? "unknown" : ep.address().to_string();
-    }
-
     awaitable<void> read_loop()
     {
         while (is_open())
@@ -155,20 +148,22 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
             std::span<uint8_t> tls_write_buf = reality_engine_.get_write_buffer();
             if (tls_write_buf.empty())
             {
-                LOG_ERROR("mux_connection buffer full");
+                LOG_ERROR("mux connection engine buffer full");
                 break;
             }
 
             auto [read_ec, n] = co_await socket_.async_read_some(boost::asio::buffer(tls_write_buf.data(), tls_write_buf.size()),
                                                                  boost::asio::as_tuple(boost::asio::use_awaitable));
+
             if (read_ec || n == 0)
             {
                 if (read_ec != boost::asio::error::eof && read_ec != boost::asio::error::operation_aborted)
                 {
-                    LOG_ERROR("mux_connection read error {}", read_ec.message());
+                    LOG_ERROR("mux connection read error {}", read_ec.message());
                 }
                 break;
             }
+
             reality_engine_.commit_written(n);
             update_activity();
 
@@ -176,16 +171,17 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
             auto plaintexts = reality_engine_.decrypt_available_records(decrypt_ec);
             if (decrypt_ec)
             {
-                LOG_ERROR("mux_connection tls decrypt error {}", decrypt_ec.message());
+                LOG_ERROR("mux connection tls decrypt error {}", decrypt_ec.message());
                 break;
             }
+
             for (const auto& pt : plaintexts)
             {
                 mux_dispatcher_.on_plaintext_data(pt);
             }
         }
         stop();
-        LOG_DEBUG("mux_connection read_loop finished");
+        LOG_DEBUG("mux connection read loop finished");
     }
 
     awaitable<void> write_loop()
@@ -198,26 +194,27 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
                 break;
             }
 
-            auto mux_frame = MuxDispatcher::pack(msg.stream_id, msg.command, std::move(msg.payload));
+            auto mux_frame = mux_dispatcher::pack(msg.stream_id_, msg.command_, std::move(msg.payload_));
             boost::system::error_code enc_ec;
             auto ciphertext = reality_engine_.encrypt(mux_frame, enc_ec);
             if (enc_ec)
             {
-                LOG_ERROR("mux_connection encrypt error {}", enc_ec.message());
+                LOG_ERROR("mux connection encrypt error {}", enc_ec.message());
                 break;
             }
 
             auto [wec, n] =
                 co_await boost::asio::async_write(socket_, boost::asio::buffer(ciphertext), boost::asio::as_tuple(boost::asio::use_awaitable));
+
             if (wec)
             {
-                LOG_ERROR("mux_connection write error {}", wec.message());
+                LOG_ERROR("mux connection write error {}", wec.message());
                 break;
             }
             update_activity();
         }
         stop();
-        LOG_DEBUG("mux_connection write_loop finished");
+        LOG_DEBUG("mux connection write loop finished");
     }
 
     awaitable<void> timeout_loop()
@@ -228,7 +225,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
             auto [ec] = co_await timer_.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
             if (!ec)
             {
-                LOG_WARN("mux_connection timeout");
+                LOG_WARN("mux connection activity timeout");
                 break;
             }
         }
@@ -245,11 +242,11 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
 
     void on_mux_frame(mux::frame_header header, std::vector<uint8_t> payload)
     {
-        if (header.command == mux::CMD_SYN)
+        if (header.command_ == mux::CMD_SYN)
         {
             if (syn_callback_)
             {
-                syn_callback_(header.stream_id, std::move(payload));
+                syn_callback_(header.stream_id_, std::move(payload));
             }
             return;
         }
@@ -257,24 +254,24 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
         std::shared_ptr<mux_stream_interface> stream;
         {
             std::lock_guard<std::mutex> lock(streams_mutex_);
-            auto it = streams_.find(header.stream_id);
+            auto it = streams_.find(header.stream_id_);
             if (it != streams_.end())
             {
                 stream = it->second;
             }
         }
 
-        if (stream)
+        if (stream != nullptr)
         {
-            if (header.command == mux::CMD_FIN)
+            if (header.command_ == mux::CMD_FIN)
             {
                 stream->on_close();
             }
-            else if (header.command == mux::CMD_RST)
+            else if (header.command_ == mux::CMD_RST)
             {
                 stream->on_reset();
             }
-            else if (header.command == mux::CMD_DAT || header.command == mux::CMD_ACK)
+            else if (header.command_ == mux::CMD_DAT || header.command_ == mux::CMD_ACK)
             {
                 stream->on_data(std::move(payload));
             }
@@ -283,10 +280,10 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
 
     tcp::socket socket_;
     reality_engine reality_engine_;
-    MuxDispatcher mux_dispatcher_;
+    mux_dispatcher mux_dispatcher_;
     boost::asio::experimental::concurrent_channel<void(boost::system::error_code, mux_write_msg)> write_channel_;
     boost::asio::steady_timer timer_;
-    std::atomic<MuxConnectionState> connection_state_;
+    std::atomic<mux_connection_state> connection_state_;
 
     stream_map_t streams_;
     std::mutex streams_mutex_;
