@@ -66,6 +66,7 @@ class CryptoUtil
             ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
             return {};
         }
+        ec.clear();
         return result;
     }
 
@@ -100,6 +101,7 @@ class CryptoUtil
             return {};
         }
         EVP_PKEY_free(pkey);
+        ec.clear();
         return public_key;
     }
 
@@ -118,6 +120,7 @@ class CryptoUtil
             ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
             return {};
         }
+        ec.clear();
         return shared;
     }
 
@@ -132,6 +135,7 @@ class CryptoUtil
             return {};
         }
         prk.resize(len);
+        ec.clear();
         return prk;
     }
 
@@ -147,6 +151,7 @@ class CryptoUtil
             ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
             return {};
         }
+        ec.clear();
         return okm;
     }
 
@@ -228,6 +233,7 @@ class CryptoUtil
 
         plaintext.resize(out_len);
         EVP_AEAD_CTX_free(ctx);
+        ec.clear();
         return plaintext;
     }
 
@@ -280,6 +286,7 @@ class CryptoUtil
 
         ciphertext.resize(out_len);
         EVP_AEAD_CTX_free(ctx);
+        ec.clear();
         return ciphertext;
     }
 };
@@ -305,6 +312,7 @@ class TlsKeySchedule
         std::vector<uint8_t> iv = CryptoUtil::hkdf_expand_label(secret, "iv", {}, iv_len, ec);
         if (ec)
             return {};
+        ec.clear();
         return {key, iv};
     }
 
@@ -346,7 +354,7 @@ class TlsKeySchedule
         std::vector<uint8_t> master_secret = CryptoUtil::hkdf_extract(derived_secret_2, zero_salt, ec);
         if (ec)
             return {};
-
+        ec.clear();
         return {.client_handshake_traffic_secret = c_hs_secret, .server_handshake_traffic_secret = s_hs_secret, .master_secret = master_secret};
     }
 
@@ -361,6 +369,7 @@ class TlsKeySchedule
         std::vector<uint8_t> s_app_secret = CryptoUtil::hkdf_expand_label(master_secret, "s ap traffic", handshake_hash, hash_len, ec);
         if (ec)
             return {};
+        ec.clear();
         return {c_app_secret, s_app_secret};
     }
 
@@ -377,6 +386,7 @@ class TlsKeySchedule
         unsigned int hmac_len;
         HMAC(EVP_sha256(), finished_key.data(), finished_key.size(), handshake_hash.data(), handshake_hash.size(), hmac_out, &hmac_len);
 
+        ec.clear();
         return {hmac_out, hmac_out + hmac_len};
     }
 };
@@ -417,6 +427,7 @@ class TlsRecordLayer
         record.insert(record.end(), header.begin(), header.end());
         record.insert(record.end(), ciphertext.begin(), ciphertext.end());
 
+        ec.clear();
         return record;
     }
 
@@ -462,6 +473,7 @@ class TlsRecordLayer
         out_content_type = plaintext.back();
         plaintext.pop_back();
 
+        ec.clear();
         return plaintext;
     }
 };
