@@ -5,6 +5,7 @@
 #include <string>
 #include <cstdint>
 #include <cstring>
+#include <random>
 #include "reality_core.h"
 
 namespace reality
@@ -247,11 +248,14 @@ class ChromeClientHelloBuilder
 
     static std::vector<uint8_t> build_padding(size_t current_len)
     {
-        size_t target_len = 517;
+        static std::mt19937 rng(std::random_device{}());
+        std::uniform_int_distribution<int> dist(0, 200);
+
+        size_t target_len = 517 + dist(rng);
 
         if (current_len >= target_len)
         {
-            target_len = current_len + 32;
+            target_len = current_len + 32 + dist(rng);
         }
 
         size_t padding_needed = target_len - current_len;
@@ -262,6 +266,11 @@ class ChromeClientHelloBuilder
         }
 
         size_t data_len = padding_needed - 4;
+        if (data_len > 0xFFFE)
+        {
+            data_len = 0xFFFE;
+            padding_needed = data_len + 4;
+        }
 
         std::vector<uint8_t> ext;
         MessageBuilder::push_u16(ext, 0x0015);

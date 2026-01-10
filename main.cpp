@@ -21,8 +21,6 @@ int main(int argc, char** argv)
     const std::string app_name(argv[0]);
     init_log(app_name + ".log");
 
-    set_level("trace");
-
     if (argc < 2)
     {
         print_usage(argv[0]);
@@ -36,7 +34,7 @@ int main(int argc, char** argv)
     io_context_pool pool(threads_count > 0 ? threads_count : 4, ec);
     if (ec)
     {
-        LOG_ERROR("fatal failed to create io context pool: {}", ec.message());
+        LOG_ERROR("Fatal: failed to create io context pool: {}", ec.message());
         return 1;
     }
 
@@ -55,7 +53,7 @@ int main(int argc, char** argv)
         mux::remote_server server(pool, port, fb_host, fb_port, auth_key, ec);
         if (ec)
         {
-            LOG_ERROR("fatal failed to create remote server: {}", ec.message());
+            LOG_ERROR("Fatal: failed to create remote server: {}", ec.message());
             return 1;
         }
         server.start();
@@ -78,7 +76,7 @@ int main(int argc, char** argv)
         mux::local_client client(pool, r_host, r_port, l_port, auth_key, sni, ec);
         if (ec)
         {
-            LOG_ERROR("fatal failed to create local client: {}", ec.message());
+            LOG_ERROR("Fatal: failed to create local client: {}", ec.message());
             return 1;
         }
         client.start();
@@ -91,5 +89,6 @@ int main(int argc, char** argv)
         return 1;
     }
 
+    shutdown_log();
     return 0;
 }
