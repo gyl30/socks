@@ -11,7 +11,7 @@
 class MuxDispatcher
 {
    public:
-    using FrameCallback = std::function<void(mux::FrameHeader, std::vector<uint8_t>)>;
+    using FrameCallback = std::function<void(mux::frame_header, std::vector<uint8_t>)>;
 
     MuxDispatcher() { LOG_DEBUG("MuxDispatcher initialized."); }
 
@@ -25,7 +25,7 @@ class MuxDispatcher
 
         while (buffer_.size() >= mux::HEADER_SIZE)
         {
-            auto header = mux::FrameHeader::decode(buffer_.data());
+            auto header = mux::frame_header::decode(buffer_.data());
             size_t total_frame_len = mux::HEADER_SIZE + header.length;
 
             if (total_frame_len > mux::MAX_PAYLOAD + mux::HEADER_SIZE)
@@ -50,7 +50,7 @@ class MuxDispatcher
     static std::vector<uint8_t> pack(uint32_t stream_id, uint8_t cmd, std::vector<uint8_t> payload)
     {
         std::vector<uint8_t> frame(mux::HEADER_SIZE + payload.size());
-        mux::FrameHeader h{stream_id, static_cast<uint16_t>(payload.size()), cmd};
+        mux::frame_header h{stream_id, static_cast<uint16_t>(payload.size()), cmd};
         h.encode(frame.data());
         std::memcpy(frame.data() + mux::HEADER_SIZE, payload.data(), payload.size());
         return frame;

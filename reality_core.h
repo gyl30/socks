@@ -291,7 +291,7 @@ class CryptoUtil
     }
 };
 
-struct HandshakeKeys
+struct handshake_keys
 {
     std::vector<uint8_t> client_handshake_traffic_secret;
     std::vector<uint8_t> server_handshake_traffic_secret;
@@ -316,7 +316,7 @@ class TlsKeySchedule
         return {key, iv};
     }
 
-    static HandshakeKeys derive_handshake_keys(const std::vector<uint8_t>& shared_secret,
+    static handshake_keys derive_handshake_keys(const std::vector<uint8_t>& shared_secret,
                                                const std::vector<uint8_t>& server_hello_hash,
                                                boost::system::error_code& ec)
     {
