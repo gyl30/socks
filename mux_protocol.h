@@ -22,7 +22,7 @@ constexpr std::uint8_t CMD_RST = 0x05;
 constexpr std::size_t HEADER_SIZE = 7;
 constexpr std::size_t MAX_PAYLOAD = 16384;
 
-struct FrameHeader
+struct frame_header
 {
     std::uint32_t stream_id;
     std::uint16_t length;
@@ -41,9 +41,9 @@ struct FrameHeader
         buf[6] = command;
     }
 
-    [[nodiscard]] static FrameHeader decode(const std::uint8_t* buf)
+    [[nodiscard]] static frame_header decode(const std::uint8_t* buf)
     {
-        FrameHeader h;
+        frame_header h;
         h.stream_id = (static_cast<std::uint32_t>(buf[0]) << 24) | (static_cast<std::uint32_t>(buf[1]) << 16) |
                       (static_cast<std::uint32_t>(buf[2]) << 8) | (static_cast<std::uint32_t>(buf[3]));
 
@@ -54,7 +54,7 @@ struct FrameHeader
     }
 };
 
-struct SynPayload
+struct syn_payload
 {
     std::uint8_t socks_cmd;
     std::string addr;
@@ -81,7 +81,7 @@ struct SynPayload
         return buf;
     }
 
-    [[nodiscard]] static bool decode(const std::uint8_t* data, std::size_t len, SynPayload& out)
+    [[nodiscard]] static bool decode(const std::uint8_t* data, std::size_t len, syn_payload& out)
     {
         if (len < 4)
         {
@@ -102,7 +102,7 @@ struct SynPayload
     }
 };
 
-struct AckPayload
+struct ack_payload
 {
     std::uint8_t socks_rep;
     std::string bnd_addr;
@@ -126,7 +126,7 @@ struct AckPayload
         return buf;
     }
 
-    [[nodiscard]] static bool decode(const std::uint8_t* data, std::size_t len, AckPayload& out)
+    [[nodiscard]] static bool decode(const std::uint8_t* data, std::size_t len, ack_payload& out)
     {
         if (len < 4)
         {

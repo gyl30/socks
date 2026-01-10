@@ -34,14 +34,14 @@ constexpr std::uint8_t REP_CMD_NOT_SUPPORTED = 0x07;
 constexpr std::uint8_t REP_ADDR_TYPE_NOT_SUPPORTED = 0x08;
 }    // namespace socks
 
-struct SocksUdpHeader
+struct socks_udp_header
 {
     uint8_t frag = 0;
     std::string addr;
     uint16_t port = 0;
     size_t header_len = 0;
 
-    std::vector<uint8_t> encode() const
+    [[nodiscard]] std::vector<uint8_t> encode() const
     {
         std::vector<uint8_t> buf;
         buf.reserve(24);
@@ -52,13 +52,13 @@ struct SocksUdpHeader
         boost::system::error_code ec;
         auto address = boost::asio::ip::make_address(addr, ec);
 
-        if (!ec && address.is_v4())
+        if (ec == boost::system::error_code{} && address.is_v4())
         {
             buf.push_back(socks::ATYP_IPV4);
             auto bytes = address.to_v4().to_bytes();
             buf.insert(buf.end(), bytes.begin(), bytes.end());
         }
-        else if (!ec && address.is_v6())
+        else if (ec == boost::system::error_code{} && address.is_v6())
         {
             buf.push_back(socks::ATYP_IPV6);
             auto bytes = address.to_v6().to_bytes();
@@ -76,18 +76,23 @@ struct SocksUdpHeader
         return buf;
     }
 
-    static bool decode(const uint8_t* data, size_t len, SocksUdpHeader& out)
+    [[nodiscard]] static bool decode(const uint8_t* data, size_t len, socks_udp_header& out)
     {
         if (len < 4)
+        {
             return false;
+        }
+
         out.frag = data[2];
-        uint8_t atyp = data[3];
+        const uint8_t atyp = data[3];
 
         size_t pos = 4;
         if (atyp == socks::ATYP_IPV4)
         {
             if (len < pos + 4 + 2)
+            {
                 return false;
+            }
             boost::asio::ip::address_v4::bytes_type b;
             std::memcpy(b.data(), data + pos, 4);
             out.addr = boost::asio::ip::address_v4(b).to_string();
@@ -96,18 +101,24 @@ struct SocksUdpHeader
         else if (atyp == socks::ATYP_DOMAIN)
         {
             if (len < pos + 1)
+            {
                 return false;
-            uint8_t dlen = data[pos];
+            }
+            const uint8_t dlen = data[pos];
             pos++;
             if (len < pos + dlen + 2)
+            {
                 return false;
+            }
             out.addr = std::string((const char*)data + pos, dlen);
             pos += dlen;
         }
         else if (atyp == socks::ATYP_IPV6)
         {
             if (len < pos + 16 + 2)
+            {
                 return false;
+            }
             boost::asio::ip::address_v6::bytes_type b;
             std::memcpy(b.data(), data + pos, 16);
             out.addr = boost::asio::ip::address_v6(b).to_string();
