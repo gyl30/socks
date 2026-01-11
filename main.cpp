@@ -46,13 +46,13 @@ int main(int argc, char** argv)
             return 1;
         }
         uint16_t port = static_cast<uint16_t>(std::stoi(argv[2]));
-        mux::remote_server server(pool, port, argv[3], argv[4], argv[5], ec);
+        auto server = std::make_shared<mux::remote_server>(pool, port, argv[3], argv[4], argv[5], ec);
         if (ec)
         {
             LOG_ERROR("fatal failed to create remote server error {}", ec.message());
             return 1;
         }
-        server.start();
+        server->start();
         pool.run();
     }
     else if (mode == "-c")
@@ -63,13 +63,13 @@ int main(int argc, char** argv)
             return 1;
         }
         uint16_t l_port = static_cast<uint16_t>(std::stoi(argv[4]));
-        mux::local_client client(pool, argv[2], argv[3], l_port, argv[5], argv[6], ec);
+        auto client = std::make_shared<mux::local_client>(pool, argv[2], argv[3], l_port, argv[5], argv[6], ec);
         if (ec)
         {
             LOG_ERROR("fatal failed to create local client error {}", ec.message());
             return 1;
         }
-        client.start();
+        client->start();
         pool.run();
     }
     else
