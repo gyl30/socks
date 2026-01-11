@@ -51,7 +51,7 @@ class mux_dispatcher
 
             read_pos_ += total_frame_len;
 
-            LOG_DEBUG("mux dispatcher parsed frame stream {} cmd {} length {}", header.stream_id_, static_cast<int>(header.command_), header.length_);
+            LOG_TRACE("mux dispatcher parsed frame stream {} cmd {} length {}", header.stream_id_, static_cast<int>(header.command_), header.length_);
 
             if (callback_)
             {
