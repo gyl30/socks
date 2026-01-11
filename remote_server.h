@@ -168,8 +168,8 @@ class remote_session : public mux_stream_interface, public std::enable_shared_fr
         ack_payload ack_pl{socks::REP_SUCCESS, ep_conn.address().to_string(), ep_conn.port()};
         co_await connection_->send_async(id_, CMD_ACK, ack_pl.encode());
 
-        using boost::asio::experimental::awaitable_operators::operator||;
-        co_await (upstream() || downstream());
+        using boost::asio::experimental::awaitable_operators::operator&&;
+        co_await (upstream() && downstream());
 
         boost::system::error_code ignore;
         target_socket_.close(ignore);
@@ -201,6 +201,8 @@ class remote_session : public mux_stream_interface, public std::enable_shared_fr
             auto [ec, data] = co_await recv_channel_.async_receive(boost::asio::as_tuple(boost::asio::use_awaitable));
             if (ec || data.empty())
             {
+                boost::system::error_code ignore;
+                target_socket_.shutdown(tcp::socket::shutdown_send, ignore);
                 break;
             }
             auto [we, wn] =
@@ -210,9 +212,6 @@ class remote_session : public mux_stream_interface, public std::enable_shared_fr
                 break;
             }
         }
-        boost::system::error_code ignore;
-        target_socket_.shutdown(tcp::socket::shutdown_send, ignore);
-        co_await connection_->send_async(id_, CMD_FIN, {});
     }
 
     boost::asio::awaitable<void> downstream()
@@ -220,7 +219,8 @@ class remote_session : public mux_stream_interface, public std::enable_shared_fr
         std::vector<uint8_t> buf(8192);
         for (;;)
         {
-            auto [re, n] = co_await target_socket_.async_read_some(boost::asio::buffer(buf), boost::asio::as_tuple(boost::asio::use_awaitable));
+            boost::system::error_code re;
+            auto n = co_await target_socket_.async_read_some(boost::asio::buffer(buf), boost::asio::redirect_error(boost::asio::use_awaitable, re));
             if (re || n == 0)
             {
                 break;
@@ -245,7 +245,7 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
 {
    public:
     remote_udp_session(std::shared_ptr<mux_connection> connection, uint32_t id, const boost::asio::any_io_executor& ex)
-        : connection_(std::move(connection)), id_(id), udp_socket_(ex), recv_channel_(ex, 128)
+        : connection_(std::move(connection)), id_(id), udp_socket_(ex), udp_resolver_(ex), recv_channel_(ex, 128)
     {
     }
 
@@ -253,17 +253,27 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
     {
         boost::system::error_code ec;
         udp_socket_.open(boost::asio::ip::udp::v4(), ec);
+        if (!ec)
+        {
+            // Explicitly bind to ensure we can receive responses
+            udp_socket_.bind(boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0), ec);
+        }
+
         if (ec)
         {
+            LOG_ERROR("srv {} udp open/bind failed {}", id_, ec.message());
             ack_payload ack{socks::REP_GEN_FAIL, "", 0};
             co_await connection_->send_async(id_, CMD_ACK, ack.encode());
             co_return;
         }
+
         ack_payload ack_pl{socks::REP_SUCCESS, "0.0.0.0", 0};
         co_await connection_->send_async(id_, CMD_ACK, ack_pl.encode());
 
-        using boost::asio::experimental::awaitable_operators::operator||;
-        co_await (mux_to_udp() || udp_to_mux());
+        // Use operator&& so we don't kill the session if one side blocks or errors slightly
+        // The session ends when either channel is explicitly closed or fatal error
+        using boost::asio::experimental::awaitable_operators::operator&&;
+        co_await (mux_to_udp() && udp_to_mux());
 
         if (manager_)
         {
@@ -275,7 +285,8 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
     void on_close() override
     {
         recv_channel_.close();
-        udp_socket_.close();
+        boost::system::error_code ignore;
+        udp_socket_.close(ignore);
     }
     void on_reset() override { on_close(); }
     void set_manager(std::shared_ptr<mux_tunnel_impl<tcp::socket>> m) { manager_ = m; }
@@ -296,13 +307,21 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
                 continue;
             }
 
-            boost::asio::ip::udp::resolver res(udp_socket_.get_executor());
-            auto [er, eps] = co_await res.async_resolve(h.addr_, std::to_string(h.port_), boost::asio::as_tuple(boost::asio::use_awaitable));
+            auto [er, eps] =
+                co_await udp_resolver_.async_resolve(h.addr_, std::to_string(h.port_), boost::asio::as_tuple(boost::asio::use_awaitable));
             if (!er)
             {
-                co_await udp_socket_.async_send_to(boost::asio::buffer(data.data() + h.header_len_, data.size() - h.header_len_),
-                                                   *eps.begin(),
-                                                   boost::asio::as_tuple(boost::asio::use_awaitable));
+                auto [se, sn] = co_await udp_socket_.async_send_to(boost::asio::buffer(data.data() + h.header_len_, data.size() - h.header_len_),
+                                                                   *eps.begin(),
+                                                                   boost::asio::as_tuple(boost::asio::use_awaitable));
+                if (se)
+                {
+                    LOG_WARN("srv {} udp send error {}", id_, se.message());
+                }
+            }
+            else
+            {
+                LOG_WARN("srv {} udp resolve error {}", id_, er.message());
             }
         }
     }
@@ -316,6 +335,10 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
             auto [re, n] = co_await udp_socket_.async_receive_from(boost::asio::buffer(buf), ep, boost::asio::as_tuple(boost::asio::use_awaitable));
             if (re)
             {
+                if (re != boost::asio::error::operation_aborted)
+                {
+                    LOG_WARN("srv {} udp receive error {}", id_, re.message());
+                }
                 break;
             }
             socks_udp_header h;
@@ -323,13 +346,17 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
             h.port_ = ep.port();
             std::vector<uint8_t> pkt = h.encode();
             pkt.insert(pkt.end(), buf.begin(), buf.begin() + n);
-            co_await connection_->send_async(id_, CMD_DAT, std::move(pkt));
+            if (co_await connection_->send_async(id_, CMD_DAT, std::move(pkt)))
+            {
+                break;
+            }
         }
     }
 
     std::shared_ptr<mux_connection> connection_;
     uint32_t id_;
     boost::asio::ip::udp::socket udp_socket_;
+    boost::asio::ip::udp::resolver udp_resolver_;
     boost::asio::experimental::concurrent_channel<void(boost::system::error_code, std::vector<uint8_t>)> recv_channel_;
     std::shared_ptr<mux_tunnel_impl<tcp::socket>> manager_;
 };
@@ -393,20 +420,20 @@ class remote_server
         boost::system::error_code ec_ep;
         auto ep = s->remote_endpoint(ec_ep);
         std::string remote_ip = ec_ep ? "unknown" : ep.address().to_string();
-        LOG_DEBUG("[Srv:{}] new connection from {}", conn_id, remote_ip);
+        LOG_DEBUG("srv {} new connection from {}", conn_id, remote_ip);
 
         std::vector<uint8_t> buf(4096);
         auto [re, n] = co_await s->async_read_some(boost::asio::buffer(buf), boost::asio::as_tuple(boost::asio::use_awaitable));
         if (re)
         {
-            LOG_ERROR("[Srv:{}] initial read error {}", conn_id, re.message());
+            LOG_ERROR("srv {} initial read error {}", conn_id, re.message());
             co_return;
         }
         buf.resize(n);
 
         if (n < 5 || buf[0] != 0x16)
         {
-            LOG_WARN("[Srv:{}] not a tls handshake fallback no sni ip={}", conn_id, remote_ip);
+            LOG_WARN("srv {} not a tls handshake fallback no sni ip {}", conn_id, remote_ip);
             co_await handle_fallback(s, buf, conn_id);
             co_return;
         }
@@ -445,7 +472,18 @@ class remote_server
                     auth_key, std::vector<uint8_t>(info.random_.begin() + 20, info.random_.end()), info.session_id_, aad, ec);
                 if (!ec && pt.size() == 16)
                 {
-                    authorized = true;
+                    uint32_t timestamp = (static_cast<uint32_t>(pt[4]) << 24) | (static_cast<uint32_t>(pt[5]) << 16) |
+                                         (static_cast<uint32_t>(pt[6]) << 8) | static_cast<uint32_t>(pt[7]);
+                    uint32_t now = static_cast<uint32_t>(time(nullptr));
+                    if (timestamp > now + 120 || timestamp < now - 120)
+                    {
+                        LOG_WARN("srv {} auth failed replay attack detected ts diff", conn_id);
+                        authorized = false;
+                    }
+                    else
+                    {
+                        authorized = true;
+                    }
                 }
             }
         }
@@ -454,17 +492,17 @@ class remote_server
         {
             if (info.sni_.empty())
             {
-                LOG_WARN("[Srv:{}] authorization failed fallback no sni ip={}", conn_id, remote_ip);
+                LOG_WARN("srv {} authorization failed fallback no sni ip {}", conn_id, remote_ip);
             }
             else
             {
-                LOG_WARN("[Srv:{}] authorization failed fallback sni={} ip={}", conn_id, info.sni_, remote_ip);
+                LOG_WARN("srv {} authorization failed fallback sni {} ip {}", conn_id, info.sni_, remote_ip);
             }
             co_await handle_fallback(s, buf, conn_id);
             co_return;
         }
 
-        LOG_INFO("[Srv:{}] authorized proceeding sni={}", conn_id, info.sni_);
+        LOG_INFO("srv {} authorized proceeding sni {}", conn_id, info.sni_);
         transcript_t trans;
         trans.update(ch_msg);
 
@@ -510,14 +548,14 @@ class remote_server
 
         if (auto [we, wn] = co_await boost::asio::async_write(*s, boost::asio::buffer(out_sh), boost::asio::as_tuple(boost::asio::use_awaitable)); we)
         {
-            LOG_ERROR("[Srv:{}] write sh flight error {}", conn_id, we.message());
+            LOG_ERROR("srv {} write sh flight error {}", conn_id, we.message());
             co_return;
         }
 
         uint8_t h[5];
         if (auto [re3, rn3] = co_await boost::asio::async_read(*s, boost::asio::buffer(h, 5), boost::asio::as_tuple(boost::asio::use_awaitable)); re3)
         {
-            LOG_ERROR("[Srv:{}] read client finished header error {}", conn_id, re3.message());
+            LOG_ERROR("srv {} read client finished header error {}", conn_id, re3.message());
             co_return;
         }
 
@@ -532,7 +570,7 @@ class remote_server
         std::vector<uint8_t> frec(flen);
         if (auto [re4, rn4] = co_await boost::asio::async_read(*s, boost::asio::buffer(frec), boost::asio::as_tuple(boost::asio::use_awaitable)); re4)
         {
-            LOG_ERROR("[Srv:{}] read client finished body error {}", conn_id, re4.message());
+            LOG_ERROR("srv {} read client finished body error {}", conn_id, re4.message());
             co_return;
         }
 
@@ -544,7 +582,7 @@ class remote_server
 
         if (ec || ctype != reality::CONTENT_TYPE_HANDSHAKE || pt.empty() || pt[0] != 0x14)
         {
-            LOG_ERROR("[Srv:{}] client finished verification failed type {} len {}", conn_id, (int)ctype, pt.size());
+            LOG_ERROR("srv {} client finished verification failed type {} len {}", conn_id, (int)ctype, pt.size());
             co_return;
         }
 
@@ -552,7 +590,7 @@ class remote_server
             reality::tls_key_schedule::compute_finished_verify_data(hs_keys.client_handshake_traffic_secret, trans.finish(), ec);
         if (pt.size() < expected_fin_verify.size() + 4 || std::memcmp(pt.data() + 4, expected_fin_verify.data(), expected_fin_verify.size()) != 0)
         {
-            LOG_ERROR("[Srv:{}] client finished hmac verification failed", conn_id);
+            LOG_ERROR("srv {} client finished hmac verification failed", conn_id);
             co_return;
         }
 
@@ -560,7 +598,7 @@ class remote_server
         auto c_app_keys = reality::tls_key_schedule::derive_traffic_keys(app_sec.first, ec);
         auto s_app_keys = reality::tls_key_schedule::derive_traffic_keys(app_sec.second, ec);
 
-        LOG_INFO("[Srv:{}] tunnel start", conn_id);
+        LOG_INFO("srv {} tunnel start", conn_id);
         reality_engine engine(c_app_keys.first, c_app_keys.second, s_app_keys.first, s_app_keys.second);
         auto tunnel = std::make_shared<mux_tunnel_impl<tcp::socket>>(std::move(*s), std::move(engine), false, conn_id);
 
@@ -604,14 +642,14 @@ class remote_server
         auto [er, eps] = co_await r.async_resolve(fb_host_, fb_port_, boost::asio::as_tuple(boost::asio::use_awaitable));
         if (er)
         {
-            LOG_ERROR("[Srv:{}] fallback resolve failed {}", conn_id, er.message());
+            LOG_ERROR("srv {} fallback resolve failed {}", conn_id, er.message());
             co_return;
         }
 
         auto [ec_c, ep_c] = co_await boost::asio::async_connect(t, eps, boost::asio::as_tuple(boost::asio::use_awaitable));
         if (ec_c)
         {
-            LOG_ERROR("[Srv:{}] fallback connect failed {}", conn_id, ec_c.message());
+            LOG_ERROR("srv {} fallback connect failed {}", conn_id, ec_c.message());
             co_return;
         }
 
