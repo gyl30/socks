@@ -17,6 +17,7 @@
 
 namespace reality
 {
+
 static const uint8_t K_REALITY_INFO[] = "REALITY";
 static const uint8_t CONTENT_TYPE_CHANGE_CIPHER_SPEC = 0x14;
 static const uint8_t CONTENT_TYPE_ALERT = 0x15;
@@ -30,28 +31,87 @@ static const size_t MAX_TLS_PLAINTEXT_LEN = 16384;
 static const std::vector<uint16_t> GREASE_VALUES = {
     0x0a0a, 0x1a1a, 0x2a2a, 0x3a3a, 0x4a4a, 0x5a5a, 0x6a6a, 0x7a7a, 0x8a8a, 0x9a9a, 0xaaaa, 0xbaba, 0xcaca, 0xdada, 0xeaea, 0xfafa};
 
+// RAII Wrappers for OpenSSL objects
+namespace openssl_ptrs
+{
+struct evp_pkey_deleter
+{
+    void operator()(EVP_PKEY* p) const { EVP_PKEY_free(p); }
+};
+struct evp_pkey_ctx_deleter
+{
+    void operator()(EVP_PKEY_CTX* p) const { EVP_PKEY_CTX_free(p); }
+};
+struct evp_cipher_ctx_deleter
+{
+    void operator()(EVP_CIPHER_CTX* p) const { EVP_CIPHER_CTX_free(p); }
+};
+struct evp_md_ctx_deleter
+{
+    void operator()(EVP_MD_CTX* p) const { EVP_MD_CTX_free(p); }
+};
+struct x509_deleter
+{
+    void operator()(X509* p) const { X509_free(p); }
+};
+
+using evp_pkey_ptr = std::unique_ptr<EVP_PKEY, evp_pkey_deleter>;
+using evp_pkey_ctx_ptr = std::unique_ptr<EVP_PKEY_CTX, evp_pkey_ctx_deleter>;
+using evp_cipher_ctx_ptr = std::unique_ptr<EVP_CIPHER_CTX, evp_cipher_ctx_deleter>;
+using evp_md_ctx_ptr = std::unique_ptr<EVP_MD_CTX, evp_md_ctx_deleter>;
+using x509_ptr = std::unique_ptr<X509, x509_deleter>;
+}    // namespace openssl_ptrs
+
 class crypto_util
 {
    public:
-    [[nodiscard]] static std::string bytes_to_hex(const std::vector<uint8_t> &bytes)
+    [[nodiscard]] static std::string bytes_to_hex(const std::vector<uint8_t>& bytes)
     {
         std::string result;
         boost::algorithm::hex(bytes, std::back_inserter(result));
         return result;
     }
 
-    [[nodiscard]] static std::vector<uint8_t> hex_to_bytes(const std::string &hex, boost::system::error_code &ec)
+    [[nodiscard]] static std::vector<uint8_t> hex_to_bytes(const std::string& hex, boost::system::error_code& ec)
     {
-        std::vector<uint8_t> result;
-        try
-        {
-            boost::algorithm::unhex(hex, std::back_inserter(result));
-        }
-        catch (const std::exception &)
+        if (hex.size() % 2 != 0)
         {
             ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
             return {};
         }
+
+        std::vector<uint8_t> result;
+        result.reserve(hex.size() / 2);
+
+        for (size_t i = 0; i < hex.size(); i += 2)
+        {
+            uint8_t byte = 0;
+            for (size_t j = 0; j < 2; ++j)
+            {
+                const char c = hex[i + j];
+                uint8_t val = 0;
+                if (c >= '0' && c <= '9')
+                {
+                    val = c - '0';
+                }
+                else if (c >= 'a' && c <= 'f')
+                {
+                    val = c - 'a' + 10;
+                }
+                else if (c >= 'A' && c <= 'F')
+                {
+                    val = c - 'A' + 10;
+                }
+                else
+                {
+                    ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
+                    return {};
+                }
+                byte = (byte << 4) | val;
+            }
+            result.push_back(byte);
+        }
+
         ec.clear();
         return result;
     }
@@ -65,26 +125,27 @@ class crypto_util
 
     static void generate_x25519_keypair(uint8_t out_pub[32], uint8_t out_priv[32])
     {
-        EVP_PKEY_CTX *pctx = EVP_PKEY_CTX_new_id(EVP_PKEY_X25519, nullptr);
-        EVP_PKEY *pkey = nullptr;
+        const openssl_ptrs::evp_pkey_ctx_ptr pctx(EVP_PKEY_CTX_new_id(EVP_PKEY_X25519, nullptr));
 
-        if (EVP_PKEY_keygen_init(pctx) > 0 && EVP_PKEY_keygen(pctx, &pkey) > 0)
+        if (pctx && EVP_PKEY_keygen_init(pctx.get()) > 0)
         {
-            size_t len = 32;
-            EVP_PKEY_get_raw_public_key(pkey, out_pub, &len);
-            len = 32;
-            EVP_PKEY_get_raw_private_key(pkey, out_priv, &len);
-            EVP_PKEY_free(pkey);
+            EVP_PKEY* raw_pkey = nullptr;
+            if (EVP_PKEY_keygen(pctx.get(), &raw_pkey) > 0)
+            {
+                const openssl_ptrs::evp_pkey_ptr pkey(raw_pkey);
+                size_t len = 32;
+                EVP_PKEY_get_raw_public_key(pkey.get(), out_pub, &len);
+                len = 32;
+                EVP_PKEY_get_raw_private_key(pkey.get(), out_priv, &len);
+                return;
+            }
         }
-        else
-        {
-            std::memset(out_pub, 0, 32);
-            std::memset(out_priv, 0, 32);
-        }
-        EVP_PKEY_CTX_free(pctx);
+
+        std::memset(out_pub, 0, 32);
+        std::memset(out_priv, 0, 32);
     }
 
-    [[nodiscard]] static std::vector<uint8_t> extract_public_key(const std::vector<uint8_t> &private_key, boost::system::error_code &ec)
+    [[nodiscard]] static std::vector<uint8_t> extract_public_key(const std::vector<uint8_t>& private_key, boost::system::error_code& ec)
     {
         if (private_key.size() != 32)
         {
@@ -92,8 +153,8 @@ class crypto_util
             return {};
         }
 
-        EVP_PKEY *pkey = EVP_PKEY_new_raw_private_key(EVP_PKEY_X25519, nullptr, private_key.data(), 32);
-        if (pkey == nullptr)
+        const openssl_ptrs::evp_pkey_ptr pkey(EVP_PKEY_new_raw_private_key(EVP_PKEY_X25519, nullptr, private_key.data(), 32));
+        if (!pkey)
         {
             ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
             return {};
@@ -101,21 +162,19 @@ class crypto_util
 
         size_t len = 32;
         std::vector<uint8_t> public_key(32);
-        if (EVP_PKEY_get_raw_public_key(pkey, public_key.data(), &len) != 1)
+        if (EVP_PKEY_get_raw_public_key(pkey.get(), public_key.data(), &len) != 1)
         {
             ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
-            EVP_PKEY_free(pkey);
             return {};
         }
 
-        EVP_PKEY_free(pkey);
         ec.clear();
         return public_key;
     }
 
-    [[nodiscard]] static std::vector<uint8_t> x25519_derive(const std::vector<uint8_t> &private_key,
-                                                            const std::vector<uint8_t> &peer_public_key,
-                                                            boost::system::error_code &ec)
+    [[nodiscard]] static std::vector<uint8_t> x25519_derive(const std::vector<uint8_t>& private_key,
+                                                            const std::vector<uint8_t>& peer_public_key,
+                                                            boost::system::error_code& ec)
     {
         if (private_key.size() != 32 || peer_public_key.size() != 32)
         {
@@ -123,109 +182,98 @@ class crypto_util
             return {};
         }
 
-        EVP_PKEY *priv = EVP_PKEY_new_raw_private_key(EVP_PKEY_X25519, nullptr, private_key.data(), 32);
-        EVP_PKEY *pub = EVP_PKEY_new_raw_public_key(EVP_PKEY_X25519, nullptr, peer_public_key.data(), 32);
+        const openssl_ptrs::evp_pkey_ptr priv(EVP_PKEY_new_raw_private_key(EVP_PKEY_X25519, nullptr, private_key.data(), 32));
+        const openssl_ptrs::evp_pkey_ptr pub(EVP_PKEY_new_raw_public_key(EVP_PKEY_X25519, nullptr, peer_public_key.data(), 32));
 
-        if (priv == nullptr || pub == nullptr)
+        if (!priv || !pub)
         {
-            if (priv != nullptr)
-            {
-                EVP_PKEY_free(priv);
-            }
-            if (pub != nullptr)
-            {
-                EVP_PKEY_free(pub);
-            }
             ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
             return {};
         }
 
-        EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new(priv, nullptr);
-        std::vector<uint8_t> shared(32);
-        size_t len = 32;
-
-        if (EVP_PKEY_derive_init(ctx) <= 0 || EVP_PKEY_derive_set_peer(ctx, pub) <= 0 || EVP_PKEY_derive(ctx, shared.data(), &len) <= 0)
-        {
-            ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
-            shared.clear();
-        }
-
-        EVP_PKEY_CTX_free(ctx);
-        EVP_PKEY_free(priv);
-        EVP_PKEY_free(pub);
-
-        if (shared.empty())
-        {
-            return {};
-        }
-        ec.clear();
-        return shared;
-    }
-
-    [[nodiscard]] static std::vector<uint8_t> hkdf_extract(const std::vector<uint8_t> &salt,
-                                                           const std::vector<uint8_t> &ikm,
-                                                           boost::system::error_code &ec)
-    {
-        std::vector<uint8_t> prk(EVP_MAX_MD_SIZE);
-        size_t len = EVP_MAX_MD_SIZE;
-
-        EVP_PKEY_CTX *pctx = EVP_PKEY_CTX_new_id(EVP_PKEY_HKDF, nullptr);
-        if (pctx == nullptr)
+        const openssl_ptrs::evp_pkey_ctx_ptr ctx(EVP_PKEY_CTX_new(priv.get(), nullptr));
+        if (!ctx)
         {
             ec = boost::system::errc::make_error_code(boost::system::errc::not_enough_memory);
             return {};
         }
 
-        if (EVP_PKEY_derive_init(pctx) <= 0 || EVP_PKEY_CTX_set_hkdf_md(pctx, EVP_sha256()) <= 0 ||
-            EVP_PKEY_CTX_set1_hkdf_salt(pctx, salt.data(), static_cast<int>(salt.size())) <= 0 ||
-            EVP_PKEY_CTX_set1_hkdf_key(pctx, ikm.data(), static_cast<int>(ikm.size())) <= 0 || EVP_PKEY_derive(pctx, prk.data(), &len) <= 0)
+        std::vector<uint8_t> shared(32);
+        size_t len = 32;
+
+        if (EVP_PKEY_derive_init(ctx.get()) <= 0 || EVP_PKEY_derive_set_peer(ctx.get(), pub.get()) <= 0 ||
+            EVP_PKEY_derive(ctx.get(), shared.data(), &len) <= 0)
         {
             ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
-            EVP_PKEY_CTX_free(pctx);
             return {};
         }
 
-        EVP_PKEY_CTX_free(pctx);
+        ec.clear();
+        return shared;
+    }
+
+    [[nodiscard]] static std::vector<uint8_t> hkdf_extract(const std::vector<uint8_t>& salt,
+                                                           const std::vector<uint8_t>& ikm,
+                                                           boost::system::error_code& ec)
+    {
+        std::vector<uint8_t> prk(EVP_MAX_MD_SIZE);
+        size_t len = EVP_MAX_MD_SIZE;
+
+        const openssl_ptrs::evp_pkey_ctx_ptr pctx(EVP_PKEY_CTX_new_id(EVP_PKEY_HKDF, nullptr));
+        if (!pctx)
+        {
+            ec = boost::system::errc::make_error_code(boost::system::errc::not_enough_memory);
+            return {};
+        }
+
+        if (EVP_PKEY_derive_init(pctx.get()) <= 0 || EVP_PKEY_CTX_set_hkdf_md(pctx.get(), EVP_sha256()) <= 0 ||
+            EVP_PKEY_CTX_set1_hkdf_salt(pctx.get(), salt.data(), static_cast<int>(salt.size())) <= 0 ||
+            EVP_PKEY_CTX_set1_hkdf_key(pctx.get(), ikm.data(), static_cast<int>(ikm.size())) <= 0 ||
+            EVP_PKEY_derive(pctx.get(), prk.data(), &len) <= 0)
+        {
+            ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+            return {};
+        }
+
         prk.resize(len);
         ec.clear();
         return prk;
     }
 
-    [[nodiscard]] static std::vector<uint8_t> hkdf_expand(const std::vector<uint8_t> &prk,
-                                                          const std::vector<uint8_t> &info,
+    [[nodiscard]] static std::vector<uint8_t> hkdf_expand(const std::vector<uint8_t>& prk,
+                                                          const std::vector<uint8_t>& info,
                                                           size_t len,
-                                                          boost::system::error_code &ec)
+                                                          boost::system::error_code& ec)
     {
         std::vector<uint8_t> okm(len);
         size_t out_len = len;
 
-        EVP_PKEY_CTX *pctx = EVP_PKEY_CTX_new_id(EVP_PKEY_HKDF, nullptr);
-        if (pctx == nullptr)
+        const openssl_ptrs::evp_pkey_ctx_ptr pctx(EVP_PKEY_CTX_new_id(EVP_PKEY_HKDF, nullptr));
+        if (!pctx)
         {
             ec = boost::system::errc::make_error_code(boost::system::errc::not_enough_memory);
             return {};
         }
 
-        if (EVP_PKEY_derive_init(pctx) <= 0 || EVP_PKEY_CTX_set_hkdf_md(pctx, EVP_sha256()) <= 0 ||
-            EVP_PKEY_CTX_set_hkdf_mode(pctx, EVP_PKEY_HKDEF_MODE_EXPAND_ONLY) <= 0 ||
-            EVP_PKEY_CTX_set1_hkdf_key(pctx, prk.data(), static_cast<int>(prk.size())) <= 0 ||
-            EVP_PKEY_CTX_add1_hkdf_info(pctx, info.data(), static_cast<int>(info.size())) <= 0 || EVP_PKEY_derive(pctx, okm.data(), &out_len) <= 0)
+        if (EVP_PKEY_derive_init(pctx.get()) <= 0 || EVP_PKEY_CTX_set_hkdf_md(pctx.get(), EVP_sha256()) <= 0 ||
+            EVP_PKEY_CTX_set_hkdf_mode(pctx.get(), EVP_PKEY_HKDEF_MODE_EXPAND_ONLY) <= 0 ||
+            EVP_PKEY_CTX_set1_hkdf_key(pctx.get(), prk.data(), static_cast<int>(prk.size())) <= 0 ||
+            EVP_PKEY_CTX_add1_hkdf_info(pctx.get(), info.data(), static_cast<int>(info.size())) <= 0 ||
+            EVP_PKEY_derive(pctx.get(), okm.data(), &out_len) <= 0)
         {
             ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
-            EVP_PKEY_CTX_free(pctx);
             return {};
         }
 
-        EVP_PKEY_CTX_free(pctx);
         ec.clear();
         return okm;
     }
 
-    [[nodiscard]] static std::vector<uint8_t> hkdf_expand_label(const std::vector<uint8_t> &secret,
-                                                                const std::string &label,
-                                                                const std::vector<uint8_t> &context,
+    [[nodiscard]] static std::vector<uint8_t> hkdf_expand_label(const std::vector<uint8_t>& secret,
+                                                                const std::string& label,
+                                                                const std::vector<uint8_t>& context,
                                                                 size_t length,
-                                                                boost::system::error_code &ec)
+                                                                boost::system::error_code& ec)
     {
         std::string full_label = "tls13 " + label;
         std::vector<uint8_t> hkdf_label;
@@ -241,11 +289,11 @@ class crypto_util
         return hkdf_expand(secret, hkdf_label, length, ec);
     }
 
-    [[nodiscard]] static std::vector<uint8_t> aes_gcm_decrypt(const std::vector<uint8_t> &key,
-                                                              const std::vector<uint8_t> &nonce,
-                                                              const std::vector<uint8_t> &ciphertext,
-                                                              const std::vector<uint8_t> &aad,
-                                                              boost::system::error_code &ec)
+    [[nodiscard]] static std::vector<uint8_t> aes_gcm_decrypt(const std::vector<uint8_t>& key,
+                                                              const std::vector<uint8_t>& nonce,
+                                                              const std::vector<uint8_t>& ciphertext,
+                                                              const std::vector<uint8_t>& aad,
+                                                              boost::system::error_code& ec)
     {
         if (ciphertext.size() < AEAD_TAG_SIZE)
         {
@@ -253,10 +301,10 @@ class crypto_util
             return {};
         }
 
-        const EVP_CIPHER *cipher = (key.size() == 32) ? EVP_aes_256_gcm() : EVP_aes_128_gcm();
-        EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
+        const EVP_CIPHER* cipher = (key.size() == 32) ? EVP_aes_256_gcm() : EVP_aes_128_gcm();
+        const openssl_ptrs::evp_cipher_ctx_ptr ctx(EVP_CIPHER_CTX_new());
 
-        if (ctx == nullptr)
+        if (!ctx)
         {
             ec = boost::system::errc::make_error_code(boost::system::errc::not_enough_memory);
             return {};
@@ -266,28 +314,25 @@ class crypto_util
         int out_len = 0;
         int ret = 1;
 
-        ret &= EVP_DecryptInit_ex(ctx, cipher, nullptr, nullptr, nullptr);
-        ret &= EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, static_cast<int>(nonce.size()), nullptr);
-        ret &= EVP_DecryptInit_ex(ctx, nullptr, nullptr, key.data(), nonce.data());
+        ret &= EVP_DecryptInit_ex(ctx.get(), cipher, nullptr, nullptr, nullptr);
+        ret &= EVP_CIPHER_CTX_ctrl(ctx.get(), EVP_CTRL_GCM_SET_IVLEN, static_cast<int>(nonce.size()), nullptr);
+        ret &= EVP_DecryptInit_ex(ctx.get(), nullptr, nullptr, key.data(), nonce.data());
 
         int aad_len_dummy;
         if (!aad.empty())
         {
-            ret &= EVP_DecryptUpdate(ctx, nullptr, &aad_len_dummy, aad.data(), static_cast<int>(aad.size()));
+            ret &= EVP_DecryptUpdate(ctx.get(), nullptr, &aad_len_dummy, aad.data(), static_cast<int>(aad.size()));
         }
 
-        const uint8_t *tag = ciphertext.data() + ciphertext.size() - AEAD_TAG_SIZE;
-        const uint8_t *ct_data = ciphertext.data();
+        const uint8_t* tag = ciphertext.data() + ciphertext.size() - AEAD_TAG_SIZE;
+        const uint8_t* ct_data = ciphertext.data();
         const size_t ct_len = ciphertext.size() - AEAD_TAG_SIZE;
 
-        ret &= EVP_DecryptUpdate(ctx, plaintext.data(), &out_len, ct_data, static_cast<int>(ct_len));
-
-        ret &= EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, AEAD_TAG_SIZE, const_cast<void *>(static_cast<const void *>(tag)));
+        ret &= EVP_DecryptUpdate(ctx.get(), plaintext.data(), &out_len, ct_data, static_cast<int>(ct_len));
+        ret &= EVP_CIPHER_CTX_ctrl(ctx.get(), EVP_CTRL_GCM_SET_TAG, AEAD_TAG_SIZE, const_cast<void*>(static_cast<const void*>(tag)));
 
         int final_len = 0;
-        ret &= EVP_DecryptFinal_ex(ctx, plaintext.data() + out_len, &final_len);
-
-        EVP_CIPHER_CTX_free(ctx);
+        ret &= EVP_DecryptFinal_ex(ctx.get(), plaintext.data() + out_len, &final_len);
 
         if (ret <= 0)
         {
@@ -300,16 +345,16 @@ class crypto_util
         return plaintext;
     }
 
-    [[nodiscard]] static std::vector<uint8_t> aes_gcm_encrypt(const std::vector<uint8_t> &key,
-                                                              const std::vector<uint8_t> &nonce,
-                                                              const std::vector<uint8_t> &plaintext,
-                                                              const std::vector<uint8_t> &aad,
-                                                              boost::system::error_code &ec)
+    [[nodiscard]] static std::vector<uint8_t> aes_gcm_encrypt(const std::vector<uint8_t>& key,
+                                                              const std::vector<uint8_t>& nonce,
+                                                              const std::vector<uint8_t>& plaintext,
+                                                              const std::vector<uint8_t>& aad,
+                                                              boost::system::error_code& ec)
     {
-        const EVP_CIPHER *cipher = (key.size() == 32) ? EVP_aes_256_gcm() : EVP_aes_128_gcm();
-        EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
+        const EVP_CIPHER* cipher = (key.size() == 32) ? EVP_aes_256_gcm() : EVP_aes_128_gcm();
+        const openssl_ptrs::evp_cipher_ctx_ptr ctx(EVP_CIPHER_CTX_new());
 
-        if (ctx == nullptr)
+        if (!ctx)
         {
             ec = boost::system::errc::make_error_code(boost::system::errc::not_enough_memory);
             return {};
@@ -320,22 +365,20 @@ class crypto_util
         int final_len = 0;
         int ret = 1;
 
-        ret &= EVP_EncryptInit_ex(ctx, cipher, nullptr, nullptr, nullptr);
-        ret &= EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, static_cast<int>(nonce.size()), nullptr);
-        ret &= EVP_EncryptInit_ex(ctx, nullptr, nullptr, key.data(), nonce.data());
+        ret &= EVP_EncryptInit_ex(ctx.get(), cipher, nullptr, nullptr, nullptr);
+        ret &= EVP_CIPHER_CTX_ctrl(ctx.get(), EVP_CTRL_GCM_SET_IVLEN, static_cast<int>(nonce.size()), nullptr);
+        ret &= EVP_EncryptInit_ex(ctx.get(), nullptr, nullptr, key.data(), nonce.data());
 
         int aad_len_dummy;
         if (!aad.empty())
         {
-            ret &= EVP_EncryptUpdate(ctx, nullptr, &aad_len_dummy, aad.data(), static_cast<int>(aad.size()));
+            ret &= EVP_EncryptUpdate(ctx.get(), nullptr, &aad_len_dummy, aad.data(), static_cast<int>(aad.size()));
         }
 
-        ret &= EVP_EncryptUpdate(ctx, ciphertext.data(), &out_len, plaintext.data(), static_cast<int>(plaintext.size()));
-        ret &= EVP_EncryptFinal_ex(ctx, ciphertext.data() + out_len, &final_len);
+        ret &= EVP_EncryptUpdate(ctx.get(), ciphertext.data(), &out_len, plaintext.data(), static_cast<int>(plaintext.size()));
+        ret &= EVP_EncryptFinal_ex(ctx.get(), ciphertext.data() + out_len, &final_len);
 
-        ret &= EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, AEAD_TAG_SIZE, ciphertext.data() + out_len + final_len);
-
-        EVP_CIPHER_CTX_free(ctx);
+        ret &= EVP_CIPHER_CTX_ctrl(ctx.get(), EVP_CTRL_GCM_GET_TAG, AEAD_TAG_SIZE, ciphertext.data() + out_len + final_len);
 
         if (ret <= 0)
         {
@@ -359,8 +402,8 @@ struct handshake_keys
 class tls_key_schedule
 {
    public:
-    [[nodiscard]] static std::pair<std::vector<uint8_t>, std::vector<uint8_t>> derive_traffic_keys(const std::vector<uint8_t> &secret,
-                                                                                                   boost::system::error_code &ec,
+    [[nodiscard]] static std::pair<std::vector<uint8_t>, std::vector<uint8_t>> derive_traffic_keys(const std::vector<uint8_t>& secret,
+                                                                                                   boost::system::error_code& ec,
                                                                                                    size_t key_len = 16,
                                                                                                    size_t iv_len = 12)
     {
@@ -377,9 +420,9 @@ class tls_key_schedule
         return {key, iv};
     }
 
-    [[nodiscard]] static handshake_keys derive_handshake_keys(const std::vector<uint8_t> &shared_secret,
-                                                              const std::vector<uint8_t> &server_hello_hash,
-                                                              boost::system::error_code &ec)
+    [[nodiscard]] static handshake_keys derive_handshake_keys(const std::vector<uint8_t>& shared_secret,
+                                                              const std::vector<uint8_t>& server_hello_hash,
+                                                              boost::system::error_code& ec)
     {
         const size_t hash_len = 32;
         const std::vector<uint8_t> zero_salt(hash_len, 0);
@@ -428,9 +471,9 @@ class tls_key_schedule
         return {c_hs_secret, s_hs_secret, master_secret};
     }
 
-    [[nodiscard]] static std::pair<std::vector<uint8_t>, std::vector<uint8_t>> derive_application_secrets(const std::vector<uint8_t> &master_secret,
-                                                                                                          const std::vector<uint8_t> &handshake_hash,
-                                                                                                          boost::system::error_code &ec)
+    [[nodiscard]] static std::pair<std::vector<uint8_t>, std::vector<uint8_t>> derive_application_secrets(const std::vector<uint8_t>& master_secret,
+                                                                                                          const std::vector<uint8_t>& handshake_hash,
+                                                                                                          boost::system::error_code& ec)
     {
         const size_t hash_len = 32;
         const std::vector<uint8_t> c_app_secret = crypto_util::hkdf_expand_label(master_secret, "c ap traffic", handshake_hash, hash_len, ec);
@@ -446,9 +489,9 @@ class tls_key_schedule
         return {c_app_secret, s_app_secret};
     }
 
-    [[nodiscard]] static std::vector<uint8_t> compute_finished_verify_data(const std::vector<uint8_t> &base_key,
-                                                                           const std::vector<uint8_t> &handshake_hash,
-                                                                           boost::system::error_code &ec)
+    [[nodiscard]] static std::vector<uint8_t> compute_finished_verify_data(const std::vector<uint8_t>& base_key,
+                                                                           const std::vector<uint8_t>& handshake_hash,
+                                                                           boost::system::error_code& ec)
     {
         const size_t hash_len = 32;
         const std::vector<uint8_t> finished_key = crypto_util::hkdf_expand_label(base_key, "finished", {}, hash_len, ec);
@@ -474,12 +517,12 @@ class tls_key_schedule
 class tls_record_layer
 {
    public:
-    [[nodiscard]] static std::vector<uint8_t> encrypt_record(const std::vector<uint8_t> &key,
-                                                             const std::vector<uint8_t> &iv,
+    [[nodiscard]] static std::vector<uint8_t> encrypt_record(const std::vector<uint8_t>& key,
+                                                             const std::vector<uint8_t>& iv,
                                                              uint64_t seq,
-                                                             const std::vector<uint8_t> &plaintext,
+                                                             const std::vector<uint8_t>& plaintext,
                                                              uint8_t content_type,
-                                                             boost::system::error_code &ec)
+                                                             boost::system::error_code& ec)
     {
         std::vector<uint8_t> inner_plaintext = plaintext;
         inner_plaintext.push_back(content_type);
@@ -511,12 +554,12 @@ class tls_record_layer
         return record;
     }
 
-    [[nodiscard]] static std::vector<uint8_t> decrypt_record(const std::vector<uint8_t> &key,
-                                                             const std::vector<uint8_t> &iv,
+    [[nodiscard]] static std::vector<uint8_t> decrypt_record(const std::vector<uint8_t>& key,
+                                                             const std::vector<uint8_t>& iv,
                                                              uint64_t seq,
-                                                             const std::vector<uint8_t> &ciphertext_with_header,
-                                                             uint8_t &out_content_type,
-                                                             boost::system::error_code &ec)
+                                                             const std::vector<uint8_t>& ciphertext_with_header,
+                                                             uint8_t& out_content_type,
+                                                             boost::system::error_code& ec)
     {
         if (ciphertext_with_header.size() < TLS_RECORD_HEADER_SIZE + AEAD_TAG_SIZE)
         {
@@ -562,71 +605,67 @@ class cert_manager
    public:
     cert_manager()
     {
-        EVP_PKEY_CTX *pctx = EVP_PKEY_CTX_new_id(EVP_PKEY_ED25519, nullptr);
-        if (pctx != nullptr)
+        const openssl_ptrs::evp_pkey_ctx_ptr pctx(EVP_PKEY_CTX_new_id(EVP_PKEY_ED25519, nullptr));
+        if (pctx)
         {
-            if (EVP_PKEY_keygen_init(pctx) <= 0 || EVP_PKEY_keygen(pctx, &temp_key_) <= 0)
+            EVP_PKEY* raw = nullptr;
+            if (EVP_PKEY_keygen_init(pctx.get()) > 0 && EVP_PKEY_keygen(pctx.get(), &raw) > 0)
+            {
+                temp_key_.reset(raw);
+            }
+            else
             {
                 LOG_ERROR("cert manager failed to generate ed25519 key");
             }
-            EVP_PKEY_CTX_free(pctx);
         }
     }
 
-    ~cert_manager()
+    [[nodiscard]] std::vector<uint8_t> generate_reality_cert(const std::vector<uint8_t>& auth_key) const
     {
-        if (temp_key_ != nullptr)
-        {
-            EVP_PKEY_free(temp_key_);
-        }
-    }
-
-    [[nodiscard]] std::vector<uint8_t> generate_reality_cert(const std::vector<uint8_t> &auth_key) const
-    {
-        if (temp_key_ == nullptr)
+        if (!temp_key_)
         {
             return {};
         }
 
-        X509 *x509_raw = X509_new();
-        if (x509_raw == nullptr)
+        const openssl_ptrs::x509_ptr x509(X509_new());
+        if (!x509)
         {
             return {};
         }
-        const std::unique_ptr<X509, decltype(&X509_free)> x509(x509_raw, X509_free);
 
         X509_set_version(x509.get(), 2);
         ASN1_INTEGER_set(X509_get_serialNumber(x509.get()), 0);
         X509_gmtime_adj(X509_get_notBefore(x509.get()), 0);
         X509_gmtime_adj(X509_get_notAfter(x509.get()), 315360000L);
-        X509_set_pubkey(x509.get(), temp_key_);
-        X509_sign(x509.get(), temp_key_, nullptr);
+        X509_set_pubkey(x509.get(), temp_key_.get());
+        X509_sign(x509.get(), temp_key_.get(), nullptr);
 
         uint8_t pub_raw[32];
         size_t len = 32;
-        EVP_PKEY_get_raw_public_key(temp_key_, pub_raw, &len);
+        EVP_PKEY_get_raw_public_key(temp_key_.get(), pub_raw, &len);
 
         uint8_t hmac_sig[64];
         unsigned int hmac_len;
         HMAC(EVP_sha512(), auth_key.data(), static_cast<int>(auth_key.size()), pub_raw, 32, hmac_sig, &hmac_len);
 
-        const ASN1_BIT_STRING *sig = nullptr;
-        const X509_ALGOR *alg = nullptr;
+        const ASN1_BIT_STRING* sig = nullptr;
+        const X509_ALGOR* alg = nullptr;
         X509_get0_signature(&sig, &alg, x509.get());
-        ASN1_BIT_STRING_set(const_cast<ASN1_BIT_STRING *>(sig), hmac_sig, 64);
+        ASN1_BIT_STRING_set(const_cast<ASN1_BIT_STRING*>(sig), hmac_sig, 64);
 
         const int len_der = i2d_X509(x509.get(), nullptr);
         std::vector<uint8_t> der(len_der);
-        uint8_t *p = der.data();
+        uint8_t* p = der.data();
         i2d_X509(x509.get(), &p);
         return der;
     }
 
-    [[nodiscard]] EVP_PKEY *get_key() const { return temp_key_; }
+    [[nodiscard]] EVP_PKEY* get_key() const { return temp_key_.get(); }
 
    private:
-    EVP_PKEY *temp_key_ = nullptr;
+    openssl_ptrs::evp_pkey_ptr temp_key_;
 };
+
 }    // namespace reality
 
 #endif
