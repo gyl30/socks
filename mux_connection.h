@@ -94,6 +94,8 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
         LOG_DEBUG("mux {} started loops", cid_);
         co_await (read_loop() || write_loop() || timeout_loop());
         LOG_INFO("mux {} loops finished stopped", cid_);
+
+        stop();
     }
 
     [[nodiscard]] awaitable<boost::system::error_code> send_async(uint32_t stream_id, uint8_t cmd, std::vector<uint8_t> payload)
@@ -130,10 +132,13 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
 
         LOG_INFO("mux {} stopping", cid_);
 
+        stream_map_t streams_to_clear;
         {
             std::lock_guard<std::mutex> lock(streams_mutex_);
-            streams_.clear();
+            streams_to_clear = std::move(streams_);
         }
+
+        streams_to_clear.clear();
 
         if (socket_.is_open())
         {
@@ -202,7 +207,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
                 break;
             }
 
-            auto mux_frame = mux_dispatcher::pack(msg.stream_id_, msg.command_, std::move(msg.payload_));
+            auto mux_frame = mux_dispatcher::pack(msg.stream_id_, msg.command_, msg.payload_);
             boost::system::error_code enc_ec;
             auto ciphertext = reality_engine_.encrypt(mux_frame, enc_ec);
             if (enc_ec)
