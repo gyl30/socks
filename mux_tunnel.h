@@ -82,6 +82,10 @@ class mux_stream : public mux_stream_interface, public std::enable_shared_from_t
         {
             recv_channel_.close();
             LOG_INFO("mux {} stream {} closed stats tx {} rx {}", cid_, id_, tx_bytes_.load(), rx_bytes_.load());
+            if (auto conn = connection_.lock())
+            {
+                conn->remove_stream(id_);
+            }
         }
     }
 
