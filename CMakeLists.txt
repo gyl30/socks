@@ -21,14 +21,9 @@ find_package(Boost 1.85.0)
 include_directories(${Boost_INCLUDE_DIRS})
 message(STATUS "Found Boost:    V${Boost_VERSION} (in ${Boost_DIR})")
 
-set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
-set(FUZZ OFF CACHE BOOL "" FORCE)
-set(RUST_BINDINGS OFF CACHE BOOL "" FORCE)
-set(INSTALL_ENABLED 0 CACHE BOOL "" FORCE)
-add_subdirectory(third/boringssl EXCLUDE_FROM_ALL)
-
+find_package(OpenSSL REQUIRED)
 add_executable(socks main.cpp log.cpp)
 
-target_include_directories(socks PRIVATE ${Boost_INCLUDE_DIRS} third/spdlog/include)
+target_include_directories(socks PRIVATE ${Boost_INCLUDE_DIRS} ${OPENSSL_INCLUDE_DIR} third/spdlog/include)
 
-target_link_libraries(socks PRIVATE ${Boost_LIBRARIES} ssl crypto)
+target_link_libraries(socks PRIVATE ${Boost_LIBRARIES} OpenSSL::SSL OpenSSL::Crypto pthread)

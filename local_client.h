@@ -458,7 +458,7 @@ class local_client
             LOG_DEBUG("tcp connected sending client hello");
             uint8_t cpub[32];
             uint8_t cpriv[32];
-            X25519_keypair(cpub, cpriv);
+            reality::crypto_util::generate_x25519_keypair(cpub, cpriv);
             auto shared = reality::crypto_util::x25519_derive(std::vector<uint8_t>(cpriv, cpriv + 32), server_pub_key_, ec);
             if (ec)
             {
