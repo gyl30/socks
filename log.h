@@ -1,5 +1,5 @@
-#ifndef TXTREADER_LOG_H
-#define TXTREADER_LOG_H
+#ifndef LOG_H
+#define LOG_H
 
 #define SPDLOG_SHORT_LEVEL_NAMES {"TRC", "DBG", "INF", "WRN", "ERR", "CTL", "OFF"};
 

@@ -4,7 +4,6 @@
 #include <vector>
 #include <string>
 #include <cstdint>
-#include <cstring>
 #include <random>
 #include "reality_core.h"
 
