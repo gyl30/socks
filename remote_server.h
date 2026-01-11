@@ -257,7 +257,6 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
         ec = udp_socket_.open(boost::asio::ip::udp::v4(), ec);
         if (!ec)
         {
-            // Explicitly bind to ensure we can receive responses
             ec = udp_socket_.bind(boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0), ec);
         }
 
@@ -272,8 +271,6 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
         const ack_payload ack_pl{.socks_rep_ = socks::REP_SUCCESS, .bnd_addr_ = "0.0.0.0", .bnd_port_ = 0};
         co_await connection_->send_async(id_, CMD_ACK, ack_pl.encode());
 
-        // Use operator&& so we don't kill the session if one side blocks or errors slightly
-        // The session ends when either channel is explicitly closed or fatal error
         using boost::asio::experimental::awaitable_operators::operator&&;
         co_await (mux_to_udp() && udp_to_mux());
 
