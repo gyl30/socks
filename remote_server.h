@@ -510,7 +510,7 @@ class remote_server
 
         uint8_t spub[32];
         uint8_t spriv[32];
-        X25519_keypair(spub, spriv);
+        reality::crypto_util::generate_x25519_keypair(spub, spriv);
         std::vector<uint8_t> srand(32);
         RAND_bytes(srand.data(), 32);
         auto sh_shared = reality::crypto_util::x25519_derive(std::vector<uint8_t>(spriv, spriv + 32), info.x25519_pub_, ec);
