@@ -6,6 +6,7 @@
 #include <array>
 #include <iomanip>
 #include <atomic>
+#include <memory>
 
 #include "reality_core.h"
 #include "reality_messages.h"
@@ -444,7 +445,7 @@ class socks_session : public std::enable_shared_from_this<socks_session>
     uint32_t sid_;
 };
 
-class local_client
+class local_client : public std::enable_shared_from_this<local_client>
 {
    public:
     local_client(io_context_pool& pool,
@@ -464,9 +465,9 @@ class local_client
         LOG_INFO("client starting target {} port {} listening {}", r_host_, r_port_, l_port_);
         auto& io = pool_.get_io_context();
         boost::asio::co_spawn(
-            io, [this]() { return connect_remote_loop(); }, boost::asio::detached);
+            io, [this, self = shared_from_this()]() { return connect_remote_loop(); }, boost::asio::detached);
         boost::asio::co_spawn(
-            io, [this]() { return accept_local_loop(); }, boost::asio::detached);
+            io, [this, self = shared_from_this()]() { return accept_local_loop(); }, boost::asio::detached);
     }
 
    private:
