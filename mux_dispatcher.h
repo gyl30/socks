@@ -12,7 +12,11 @@ class mux_dispatcher
    public:
     using frame_callback_t = std::function<void(mux::frame_header, std::vector<uint8_t>)>;
 
-    mux_dispatcher() { LOG_DEBUG("mux dispatcher initialized"); }
+    mux_dispatcher()
+    {
+        buffer_.reserve(8192);
+        LOG_DEBUG("mux dispatcher initialized");
+    }
 
     void set_callback(frame_callback_t cb) { callback_ = std::move(cb); }
 
@@ -28,7 +32,7 @@ class mux_dispatcher
         {
             const uint8_t* ptr = buffer_.data() + read_pos_;
             auto header = mux::frame_header::decode(ptr);
-            const size_t total_frame_len = mux::HEADER_SIZE + header.length_;
+            const uint32_t total_frame_len = mux::HEADER_SIZE + header.length_;
 
             if (header.length_ > mux::MAX_PAYLOAD)
             {
@@ -57,7 +61,12 @@ class mux_dispatcher
 
         if (read_pos_ > 4096)
         {
-            buffer_.erase(buffer_.begin(), buffer_.begin() + read_pos_);
+            const size_t remaining = buffer_.size() - read_pos_;
+            if (remaining > 0)
+            {
+                std::memmove(buffer_.data(), buffer_.data() + read_pos_, remaining);
+            }
+            buffer_.resize(remaining);
             read_pos_ = 0;
         }
     }
@@ -65,7 +74,7 @@ class mux_dispatcher
     [[nodiscard]] static std::vector<uint8_t> pack(uint32_t stream_id, uint8_t cmd, const std::vector<uint8_t>& payload)
     {
         std::vector<uint8_t> frame(mux::HEADER_SIZE + payload.size());
-        mux::frame_header h{stream_id, static_cast<uint16_t>(payload.size()), cmd};
+        const mux::frame_header h{stream_id, static_cast<uint16_t>(payload.size()), cmd};
         h.encode(frame.data());
         if (!payload.empty())
         {
@@ -75,9 +84,9 @@ class mux_dispatcher
     }
 
    private:
-    std::vector<uint8_t> buffer_;
-    size_t read_pos_ = 0;
+    uint32_t read_pos_ = 0;
     frame_callback_t callback_;
+    std::vector<uint8_t> buffer_;
 };
 
 #endif
