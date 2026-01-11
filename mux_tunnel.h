@@ -4,7 +4,6 @@
 #include <memory>
 #include <vector>
 #include <mutex>
-#include <unordered_map>
 #include <atomic>
 #include <boost/asio.hpp>
 #include "mux_protocol.h"
@@ -40,13 +39,12 @@ class mux_stream : public mux_stream_interface, public std::enable_shared_from_t
 
         std::vector<uint8_t> payload(static_cast<const uint8_t*>(data), static_cast<const uint8_t*>(data) + len);
         tx_bytes_.fetch_add(len, std::memory_order_relaxed);
-
-        if (connection_ == nullptr)
+        auto conn = connection_.lock();
+        if (!conn)
         {
             co_return boost::asio::error::operation_aborted;
         }
-
-        co_return co_await connection_->send_async(id_, CMD_DAT, std::move(payload));
+        co_return co_await conn->send_async(id_, CMD_DAT, std::move(payload));
     }
 
     boost::asio::awaitable<void> close()
@@ -57,9 +55,9 @@ class mux_stream : public mux_stream_interface, public std::enable_shared_from_t
         }
 
         close_internal();
-        if (connection_ != nullptr)
+        if (auto conn = connection_.lock())
         {
-            co_await connection_->send_async(id_, CMD_FIN, {});
+            co_await conn->send_async(id_, CMD_FIN, {});
         }
     }
 
@@ -89,7 +87,7 @@ class mux_stream : public mux_stream_interface, public std::enable_shared_from_t
 
     std::uint32_t id_ = 0;
     std::uint32_t cid_ = 0;
-    std::shared_ptr<mux_connection> connection_;
+    std::weak_ptr<mux_connection> connection_;
     boost::asio::experimental::concurrent_channel<void(boost::system::error_code, std::vector<std::uint8_t>)> recv_channel_;
     std::atomic<bool> is_closed_{false};
     std::atomic<uint64_t> tx_bytes_{0};
@@ -107,7 +105,7 @@ class mux_tunnel_impl : public std::enable_shared_from_this<mux_tunnel_impl<stre
 
     [[nodiscard]] std::shared_ptr<mux_connection> get_connection() const { return connection_; }
 
-    void register_stream(uint32_t id, std::shared_ptr<mux_stream_interface> stream)
+    void register_stream(uint32_t id, std::shared_ptr<mux_stream_interface> stream) const
     {
         if (connection_ != nullptr)
         {
@@ -115,7 +113,7 @@ class mux_tunnel_impl : public std::enable_shared_from_this<mux_tunnel_impl<stre
         }
     }
 
-    boost::asio::awaitable<void> run()
+    boost::asio::awaitable<void> run() const
     {
         if (connection_ != nullptr)
         {
@@ -136,7 +134,7 @@ class mux_tunnel_impl : public std::enable_shared_from_this<mux_tunnel_impl<stre
         return stream;
     }
 
-    void remove_stream(std::uint32_t id)
+    void remove_stream(std::uint32_t id) const
     {
         if (connection_ != nullptr)
         {

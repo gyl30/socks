@@ -3,6 +3,7 @@
 
 #include "mux_tunnel.h"
 #include "protocol.h"
+#include "context_pool.h"
 #include "reality_messages.h"
 
 namespace mux
@@ -63,31 +64,31 @@ class ch_parser
         {
             return info;
         }
-        const uint16_t cs_len = static_cast<uint16_t>((p[0] << 8) | p[1]);
-        if (len < static_cast<size_t>(2 + cs_len + 1))
+        const size_t cs_len = static_cast<uint16_t>((p[0] << 8) | p[1]);
+        if (len < 2 + cs_len + 1)
         {
             return info;
         }
         p += 2 + cs_len;
         len -= 2 + cs_len;
 
-        const uint8_t comp_len = *p;
-        if (len < static_cast<size_t>(1 + comp_len + 2))
+        const size_t comp_len = *p;
+        if (len < 1 + comp_len + 2)
         {
             return info;
         }
         p += 1 + comp_len;
         len -= 1 + comp_len;
 
-        const uint16_t ext_len = static_cast<uint16_t>((p[0] << 8) | p[1]);
+        const auto ext_len = static_cast<uint16_t>((p[0] << 8) | p[1]);
         p += 2;
         len -= 2;
         const uint8_t* ext_end = p + ext_len;
 
         while (p + 4 <= ext_end)
         {
-            const uint16_t etype = static_cast<uint16_t>((p[0] << 8) | p[1]);
-            const uint16_t elen = static_cast<uint16_t>((p[2] << 8) | p[3]);
+            const auto etype = static_cast<uint16_t>((p[0] << 8) | p[1]);
+            const auto elen = static_cast<uint16_t>((p[2] << 8) | p[3]);
             p += 4;
 
             if (etype == 0x0000 && elen >= 5)
@@ -96,8 +97,8 @@ class ch_parser
 
                 if (sp + 5 <= p + elen)
                 {
-                    uint8_t name_type = sp[2];
-                    uint16_t name_len = static_cast<uint16_t>((sp[3] << 8) | sp[4]);
+                    const uint8_t name_type = sp[2];
+                    auto name_len = static_cast<uint16_t>((sp[3] << 8) | sp[4]);
 
                     if (name_type == 0x00 && sp + 5 + name_len <= p + elen)
                     {
@@ -111,8 +112,8 @@ class ch_parser
                 const uint8_t* sp = p + 2;
                 while (sp + 4 <= p + elen)
                 {
-                    const uint16_t grp = static_cast<uint16_t>((sp[0] << 8) | sp[1]);
-                    const uint16_t klen = static_cast<uint16_t>((sp[2] << 8) | sp[3]);
+                    const auto grp = static_cast<uint16_t>((sp[0] << 8) | sp[1]);
+                    const auto klen = static_cast<uint16_t>((sp[2] << 8) | sp[3]);
                     if (grp == 0x001d && klen == 32)
                     {
                         info.x25519_pub_.assign(sp + 4, sp + 4 + 32);
@@ -149,7 +150,7 @@ class remote_session : public mux_stream_interface, public std::enable_shared_fr
         auto [er, eps] = co_await resolver_.async_resolve(syn.addr_, std::to_string(syn.port_), boost::asio::as_tuple(boost::asio::use_awaitable));
         if (er)
         {
-            ack_payload ack{socks::REP_HOST_UNREACH, "", 0};
+            const ack_payload ack{.socks_rep_ = socks::REP_HOST_UNREACH, .bnd_addr_ = "", .bnd_port_ = 0};
             co_await connection_->send_async(id_, CMD_ACK, ack.encode());
             co_return;
         }
@@ -157,22 +158,22 @@ class remote_session : public mux_stream_interface, public std::enable_shared_fr
         auto [ec_conn, ep_conn] = co_await boost::asio::async_connect(target_socket_, eps, boost::asio::as_tuple(boost::asio::use_awaitable));
         if (ec_conn)
         {
-            ack_payload ack{socks::REP_CONN_REFUSED, "", 0};
+            const ack_payload ack{.socks_rep_ = socks::REP_CONN_REFUSED, .bnd_addr_ = "", .bnd_port_ = 0};
             co_await connection_->send_async(id_, CMD_ACK, ack.encode());
             co_return;
         }
 
         boost::system::error_code ec_sock;
-        target_socket_.set_option(tcp::no_delay(true), ec_sock);
+        ec_sock = target_socket_.set_option(tcp::no_delay(true), ec_sock);
 
-        ack_payload ack_pl{socks::REP_SUCCESS, ep_conn.address().to_string(), ep_conn.port()};
+        const ack_payload ack_pl{.socks_rep_ = socks::REP_SUCCESS, .bnd_addr_ = ep_conn.address().to_string(), .bnd_port_ = ep_conn.port()};
         co_await connection_->send_async(id_, CMD_ACK, ack_pl.encode());
 
         using boost::asio::experimental::awaitable_operators::operator&&;
         co_await (upstream() && downstream());
 
         boost::system::error_code ignore;
-        target_socket_.close(ignore);
+        ignore = target_socket_.close(ignore);
         if (manager_)
         {
             manager_->remove_stream(id_);
@@ -184,14 +185,14 @@ class remote_session : public mux_stream_interface, public std::enable_shared_fr
     {
         recv_channel_.close();
         boost::system::error_code ec;
-        target_socket_.shutdown(tcp::socket::shutdown_send, ec);
+        ec = target_socket_.shutdown(tcp::socket::shutdown_send, ec);
     }
     void on_reset() override
     {
         recv_channel_.close();
         target_socket_.close();
     }
-    void set_manager(std::shared_ptr<mux_tunnel_impl<tcp::socket>> m) { manager_ = m; }
+    void set_manager(const std::shared_ptr<mux_tunnel_impl<tcp::socket>>& m) { manager_ = m; }
 
    private:
     boost::asio::awaitable<void> upstream()
@@ -202,7 +203,7 @@ class remote_session : public mux_stream_interface, public std::enable_shared_fr
             if (ec || data.empty())
             {
                 boost::system::error_code ignore;
-                target_socket_.shutdown(tcp::socket::shutdown_send, ignore);
+                ignore = target_socket_.shutdown(tcp::socket::shutdown_send, ignore);
                 break;
             }
             auto [we, wn] =
@@ -220,7 +221,8 @@ class remote_session : public mux_stream_interface, public std::enable_shared_fr
         for (;;)
         {
             boost::system::error_code re;
-            auto n = co_await target_socket_.async_read_some(boost::asio::buffer(buf), boost::asio::redirect_error(boost::asio::use_awaitable, re));
+            const uint32_t n =
+                co_await target_socket_.async_read_some(boost::asio::buffer(buf), boost::asio::redirect_error(boost::asio::use_awaitable, re));
             if (re || n == 0)
             {
                 break;
@@ -252,22 +254,22 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
     boost::asio::awaitable<void> start()
     {
         boost::system::error_code ec;
-        udp_socket_.open(boost::asio::ip::udp::v4(), ec);
+        ec = udp_socket_.open(boost::asio::ip::udp::v4(), ec);
         if (!ec)
         {
             // Explicitly bind to ensure we can receive responses
-            udp_socket_.bind(boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0), ec);
+            ec = udp_socket_.bind(boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0), ec);
         }
 
         if (ec)
         {
             LOG_ERROR("srv {} udp open/bind failed {}", id_, ec.message());
-            ack_payload ack{socks::REP_GEN_FAIL, "", 0};
+            ack_payload const ack{.socks_rep_ = socks::REP_GEN_FAIL, .bnd_addr_ = "", .bnd_port_ = 0};
             co_await connection_->send_async(id_, CMD_ACK, ack.encode());
             co_return;
         }
 
-        ack_payload ack_pl{socks::REP_SUCCESS, "0.0.0.0", 0};
+        const ack_payload ack_pl{.socks_rep_ = socks::REP_SUCCESS, .bnd_addr_ = "0.0.0.0", .bnd_port_ = 0};
         co_await connection_->send_async(id_, CMD_ACK, ack_pl.encode());
 
         // Use operator&& so we don't kill the session if one side blocks or errors slightly
@@ -286,10 +288,10 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
     {
         recv_channel_.close();
         boost::system::error_code ignore;
-        udp_socket_.close(ignore);
+        ignore = udp_socket_.close(ignore);
     }
     void on_reset() override { on_close(); }
-    void set_manager(std::shared_ptr<mux_tunnel_impl<tcp::socket>> m) { manager_ = m; }
+    void set_manager(const std::shared_ptr<mux_tunnel_impl<tcp::socket>>& m) { manager_ = m; }
 
    private:
     boost::asio::awaitable<void> mux_to_udp()
@@ -345,7 +347,7 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
             h.addr_ = ep.address().to_string();
             h.port_ = ep.port();
             std::vector<uint8_t> pkt = h.encode();
-            pkt.insert(pkt.end(), buf.begin(), buf.begin() + n);
+            pkt.insert(pkt.end(), buf.begin(), buf.begin() + static_cast<uint32_t>(n));
             if (co_await connection_->send_async(id_, CMD_DAT, std::move(pkt)))
             {
                 break;
@@ -364,7 +366,7 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
 class remote_server
 {
    public:
-    remote_server(io_context_pool& pool, uint16_t port, std::string fb_h, std::string fb_p, std::string key, boost::system::error_code& ec)
+    remote_server(io_context_pool& pool, uint16_t port, std::string fb_h, std::string fb_p, const std::string& key, boost::system::error_code& ec)
         : pool_(pool), acceptor_(pool.get_io_context(), tcp::endpoint(tcp::v6(), port)), fb_host_(std::move(fb_h)), fb_port_(std::move(fb_p))
     {
         priv_key_ = reality::crypto_util::hex_to_bytes(key, ec);
@@ -379,14 +381,14 @@ class remote_server
     void start() { boost::asio::co_spawn(acceptor_.get_executor(), accept_loop(), boost::asio::detached); }
 
    private:
-    struct transcript_t
+    class transcript_t
     {
-        std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> ctx_;
+       public:
         transcript_t() : ctx_(EVP_MD_CTX_new(), EVP_MD_CTX_free) { EVP_DigestInit(ctx_.get(), EVP_sha256()); }
-        void update(const std::vector<uint8_t>& data) { EVP_DigestUpdate(ctx_.get(), data.data(), data.size()); }
-        std::vector<uint8_t> finish()
+        void update(const std::vector<uint8_t>& data) const { EVP_DigestUpdate(ctx_.get(), data.data(), data.size()); }
+        [[nodiscard]] std::vector<uint8_t> finish() const
         {
-            std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> c(EVP_MD_CTX_new(), EVP_MD_CTX_free);
+            const std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> c(EVP_MD_CTX_new(), EVP_MD_CTX_free);
             EVP_MD_CTX_copy(c.get(), ctx_.get());
             std::vector<uint8_t> h(EVP_MD_size(EVP_sha256()));
             unsigned int l;
@@ -394,6 +396,9 @@ class remote_server
             h.resize(l);
             return h;
         }
+
+       private:
+        std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> ctx_;
     };
 
     boost::asio::awaitable<void> accept_loop()
@@ -406,11 +411,11 @@ class remote_server
             if (!e)
             {
                 boost::system::error_code ec;
-                s->set_option(tcp::no_delay(true), ec);
-                uint32_t conn_id = next_conn_id_.fetch_add(1, std::memory_order_relaxed);
+                ec = s->set_option(tcp::no_delay(true), ec);
+                const uint32_t conn_id = next_conn_id_.fetch_add(1, std::memory_order_relaxed);
 
                 boost::asio::co_spawn(
-                    pool_.get_io_context(), [this, s, conn_id]() { return handle(s, conn_id); }, boost::asio::detached);
+                    pool_.get_io_context(), [this, s, conn_id = conn_id]() { return handle(s, conn_id); }, boost::asio::detached);
             }
         }
     }
@@ -438,8 +443,8 @@ class remote_server
             co_return;
         }
 
-        uint16_t rlen = static_cast<uint16_t>((buf[3] << 8) | buf[4]);
-        while (buf.size() < static_cast<size_t>(5 + rlen))
+        const size_t rlen = static_cast<uint16_t>((buf[3] << 8) | buf[4]);
+        while (buf.size() < 5 + rlen)
         {
             std::vector<uint8_t> tmp(5 + rlen - buf.size());
             auto [re2, n2] = co_await boost::asio::async_read(*s, boost::asio::buffer(tmp), boost::asio::as_tuple(boost::asio::use_awaitable));
@@ -467,14 +472,14 @@ class remote_server
                 auth_key = reality::crypto_util::hkdf_expand(prk, r_info, 32, ec);
 
                 auto aad = ch_msg;
-                std::fill(aad.begin() + info.sid_offset_, aad.begin() + info.sid_offset_ + 32, 0);
+                std::fill_n(aad.begin() + info.sid_offset_, 32, 0);
                 auto pt = reality::crypto_util::aes_gcm_decrypt(
                     auth_key, std::vector<uint8_t>(info.random_.begin() + 20, info.random_.end()), info.session_id_, aad, ec);
                 if (!ec && pt.size() == 16)
                 {
-                    uint32_t timestamp = (static_cast<uint32_t>(pt[4]) << 24) | (static_cast<uint32_t>(pt[5]) << 16) |
-                                         (static_cast<uint32_t>(pt[6]) << 8) | static_cast<uint32_t>(pt[7]);
-                    uint32_t now = static_cast<uint32_t>(time(nullptr));
+                    const uint32_t timestamp = (static_cast<uint32_t>(pt[4]) << 24) | (static_cast<uint32_t>(pt[5]) << 16) |
+                                               (static_cast<uint32_t>(pt[6]) << 8) | static_cast<uint32_t>(pt[7]);
+                    auto now = static_cast<uint32_t>(time(nullptr));
                     if (timestamp > now + 120 || timestamp < now - 120)
                     {
                         LOG_WARN("srv {} auth failed replay attack detected ts diff", conn_id);
@@ -503,10 +508,11 @@ class remote_server
         }
 
         LOG_INFO("srv {} authorized proceeding sni {}", conn_id, info.sni_);
-        transcript_t trans;
+        transcript_t const trans;
         trans.update(ch_msg);
 
-        uint8_t spub[32], spriv[32];
+        uint8_t spub[32];
+        uint8_t spriv[32];
         X25519_keypair(spub, spriv);
         std::vector<uint8_t> srand(32);
         RAND_bytes(srand.data(), 32);
@@ -566,7 +572,7 @@ class remote_server
             co_await boost::asio::async_read(*s, boost::asio::buffer(h, 5), boost::asio::as_tuple(boost::asio::use_awaitable));
         }
 
-        uint16_t flen = static_cast<uint16_t>((h[3] << 8) | h[4]);
+        auto flen = static_cast<uint16_t>((h[3] << 8) | h[4]);
         std::vector<uint8_t> frec(flen);
         if (auto [re4, rn4] = co_await boost::asio::async_read(*s, boost::asio::buffer(frec), boost::asio::as_tuple(boost::asio::use_awaitable)); re4)
         {
@@ -582,7 +588,7 @@ class remote_server
 
         if (ec || ctype != reality::CONTENT_TYPE_HANDSHAKE || pt.empty() || pt[0] != 0x14)
         {
-            LOG_ERROR("srv {} client finished verification failed type {} len {}", conn_id, (int)ctype, pt.size());
+            LOG_ERROR("srv {} client finished verification failed type {} len {}", conn_id, static_cast<int>(ctype), pt.size());
             co_return;
         }
 
@@ -603,11 +609,11 @@ class remote_server
         auto tunnel = std::make_shared<mux_tunnel_impl<tcp::socket>>(std::move(*s), std::move(engine), false, conn_id);
 
         tunnel->get_connection()->set_syn_callback(
-            [this, tunnel](uint32_t id, std::vector<uint8_t> p)
+            [this, tunnel](uint32_t id, const std::vector<uint8_t>& p)
             {
                 boost::asio::co_spawn(
                     pool_.get_io_context(),
-                    [this, tunnel, id, p]() -> boost::asio::awaitable<void>
+                    [this, tunnel, id, p = p]() -> boost::asio::awaitable<void>
                     {
                         syn_payload syn;
                         if (!syn_payload::decode(p.data(), p.size(), syn))
@@ -635,7 +641,7 @@ class remote_server
         co_await tunnel->run();
     }
 
-    boost::asio::awaitable<void> handle_fallback(std::shared_ptr<tcp::socket> s, std::vector<uint8_t> buf, uint32_t conn_id)
+    boost::asio::awaitable<void> handle_fallback(std::shared_ptr<tcp::socket> s, std::vector<uint8_t> buf, uint32_t conn_id) const
     {
         tcp::socket t(s->get_executor());
         tcp::resolver r(s->get_executor());

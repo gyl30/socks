@@ -4,8 +4,6 @@
 #include <boost/asio.hpp>
 #include <vector>
 #include <array>
-#include <iostream>
-#include <ctime>
 #include <iomanip>
 #include <atomic>
 
@@ -43,7 +41,7 @@ class socks_session : public std::enable_shared_from_this<socks_session>
         std::string remote_addr = ec ? "unknown" : ep.address().to_string() + ":" + std::to_string(ep.port());
         LOG_INFO("socks {} session started from {}", sid_, remote_addr);
 
-        socket_.set_option(boost::asio::ip::tcp::no_delay(true), ec);
+        ec = socket_.set_option(boost::asio::ip::tcp::no_delay(true), ec);
 
         if (!co_await handshake_socks5())
         {
@@ -109,7 +107,7 @@ class socks_session : public std::enable_shared_from_this<socks_session>
         if (e4)
         {
             LOG_ERROR("socks {} request header read error {}", sid_, e4.message());
-            co_return request_info_t{false, "", 0, 0};
+            co_return request_info_t{.ok = false, .host = "", .port = 0, .cmd = 0};
         }
 
         std::string host;
@@ -119,7 +117,7 @@ class socks_session : public std::enable_shared_from_this<socks_session>
             auto [e, n] = co_await boost::asio::async_read(socket_, boost::asio::buffer(b), boost::asio::as_tuple(boost::asio::use_awaitable));
             if (e)
             {
-                co_return request_info_t{false, "", 0, 0};
+                co_return request_info_t{.ok = false, .host = "", .port = 0, .cmd = 0};
             }
             host = boost::asio::ip::address_v4(b).to_string();
         }
@@ -129,13 +127,13 @@ class socks_session : public std::enable_shared_from_this<socks_session>
             auto [e, n] = co_await boost::asio::async_read(socket_, boost::asio::buffer(&len, 1), boost::asio::as_tuple(boost::asio::use_awaitable));
             if (e)
             {
-                co_return request_info_t{false, "", 0, 0};
+                co_return request_info_t{.ok = false, .host = "", .port = 0, .cmd = 0};
             }
             host.resize(len);
             auto [e2, n2] = co_await boost::asio::async_read(socket_, boost::asio::buffer(host), boost::asio::as_tuple(boost::asio::use_awaitable));
             if (e2)
             {
-                co_return request_info_t{false, "", 0, 0};
+                co_return request_info_t{.ok = false, .host = "", .port = 0, .cmd = 0};
             }
         }
         else if (head[3] == socks::ATYP_IPV6)
@@ -144,25 +142,25 @@ class socks_session : public std::enable_shared_from_this<socks_session>
             auto [e, n] = co_await boost::asio::async_read(socket_, boost::asio::buffer(b), boost::asio::as_tuple(boost::asio::use_awaitable));
             if (e)
             {
-                co_return request_info_t{false, "", 0, 0};
+                co_return request_info_t{.ok = false, .host = "", .port = 0, .cmd = 0};
             }
             host = boost::asio::ip::address_v6(b).to_string();
         }
         else
         {
             LOG_WARN("socks {} address type not supported", sid_);
-            co_return request_info_t{false, "", 0, 0};
+            co_return request_info_t{.ok = false, .host = "", .port = 0, .cmd = 0};
         }
 
         uint16_t port_n;
         auto [e5, n5] = co_await boost::asio::async_read(socket_, boost::asio::buffer(&port_n, 2), boost::asio::as_tuple(boost::asio::use_awaitable));
         if (e5)
         {
-            co_return request_info_t{false, "", 0, 0};
+            co_return request_info_t{.ok = false, .host = "", .port = 0, .cmd = 0};
         }
 
         const uint16_t port = ntohs(port_n);
-        co_return request_info_t{true, host, port, head[1]};
+        co_return request_info_t{.ok = true, .host = host, .port = port, .cmd = head[1]};
     }
 
     boost::asio::awaitable<void> dispatch_request(uint8_t cmd, std::string host, uint16_t port)
@@ -194,7 +192,7 @@ class socks_session : public std::enable_shared_from_this<socks_session>
             co_return;
         }
 
-        syn_payload syn{socks::CMD_CONNECT, host, port};
+        const syn_payload syn{.socks_cmd_ = socks::CMD_CONNECT, .addr_ = host, .port_ = port};
         if (auto ec = co_await tunnel_manager_->get_connection()->send_async(stream->id(), CMD_SYN, syn.encode()))
         {
             LOG_ERROR("socks {} stream syn failed {}", sid_, ec.message());
@@ -246,7 +244,8 @@ class socks_session : public std::enable_shared_from_this<socks_session>
             {
                 break;
             }
-            if (auto we = co_await stream->async_write_some(buf.data(), n))
+            e = co_await stream->async_write_some(buf.data(), n);
+            if (e)
             {
                 break;
             }
@@ -262,7 +261,7 @@ class socks_session : public std::enable_shared_from_this<socks_session>
             if (e || data.empty())
             {
                 boost::system::error_code ignore;
-                socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ignore);
+                ignore = socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ignore);
                 break;
             }
             auto [we, wn] = co_await boost::asio::async_write(socket_, boost::asio::buffer(data), boost::asio::as_tuple(boost::asio::use_awaitable));
@@ -279,9 +278,8 @@ class socks_session : public std::enable_shared_from_this<socks_session>
         boost::asio::ip::udp::socket udp_sock(ex);
         boost::system::error_code ec;
 
-        udp_sock.open(boost::asio::ip::udp::v4(), ec);
-        udp_sock.bind(boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0), ec);
-
+        ec = udp_sock.open(boost::asio::ip::udp::v4(), ec);
+        ec = udp_sock.bind(boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0), ec);
         if (ec)
         {
             LOG_ERROR("socks {} udp bind failed {}", sid_, ec.message());
@@ -297,8 +295,9 @@ class socks_session : public std::enable_shared_from_this<socks_session>
             co_return;
         }
 
-        syn_payload syn{socks::CMD_UDP_ASSOCIATE, "0.0.0.0", 0};
-        if (auto e = co_await tunnel_manager_->get_connection()->send_async(stream->id(), CMD_SYN, syn.encode()))
+        const syn_payload syn{.socks_cmd_ = socks::CMD_UDP_ASSOCIATE, .addr_ = "0.0.0.0", .port_ = 0};
+        ec = co_await tunnel_manager_->get_connection()->send_async(stream->id(), CMD_SYN, syn.encode());
+        if (ec)
         {
             co_await stream->close();
             co_return;
@@ -332,9 +331,9 @@ class socks_session : public std::enable_shared_from_this<socks_session>
         co_await stream->close();
     }
 
-    boost::asio::awaitable<void> udp_sock_to_stream(boost::asio::ip::udp::socket& udp_sock,
-                                                    std::shared_ptr<mux_stream> stream,
-                                                    std::shared_ptr<boost::asio::ip::udp::endpoint> client_ep)
+    static boost::asio::awaitable<void> udp_sock_to_stream(boost::asio::ip::udp::socket& udp_sock,
+                                                           std::shared_ptr<mux_stream> stream,
+                                                           std::shared_ptr<boost::asio::ip::udp::endpoint> client_ep)
     {
         std::vector<uint8_t> buf(65535);
         boost::asio::ip::udp::endpoint sender;
@@ -346,16 +345,17 @@ class socks_session : public std::enable_shared_from_this<socks_session>
                 break;
             }
             *client_ep = sender;
-            if (auto e = co_await stream->async_write_some(buf.data(), n))
+            ec = co_await stream->async_write_some(buf.data(), n);
+            if (ec)
             {
                 break;
             }
         }
     }
 
-    boost::asio::awaitable<void> stream_to_udp_sock(boost::asio::ip::udp::socket& udp_sock,
-                                                    std::shared_ptr<mux_stream> stream,
-                                                    std::shared_ptr<boost::asio::ip::udp::endpoint> client_ep)
+    static boost::asio::awaitable<void> stream_to_udp_sock(boost::asio::ip::udp::socket& udp_sock,
+                                                           std::shared_ptr<mux_stream> stream,
+                                                           std::shared_ptr<boost::asio::ip::udp::endpoint> client_ep)
     {
         for (;;)
         {
@@ -390,7 +390,7 @@ class local_client
                  std::string host,
                  std::string port,
                  uint16_t l_port,
-                 std::string key_hex,
+                 const std::string& key_hex,
                  std::string sni,
                  boost::system::error_code& ec)
         : pool_(pool), r_host_(std::move(host)), r_port_(std::move(port)), l_port_(l_port), sni_(std::move(sni))
@@ -408,14 +408,14 @@ class local_client
     }
 
    private:
-    struct transcript_t
+    class transcript_t
     {
-        std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> ctx_;
+       public:
         transcript_t() : ctx_(EVP_MD_CTX_new(), EVP_MD_CTX_free) { EVP_DigestInit(ctx_.get(), EVP_sha256()); }
-        void update(const std::vector<uint8_t>& data) { EVP_DigestUpdate(ctx_.get(), data.data(), data.size()); }
-        std::vector<uint8_t> finish()
+        void update(const std::vector<uint8_t>& data) const { EVP_DigestUpdate(ctx_.get(), data.data(), data.size()); }
+        [[nodiscard]] std::vector<uint8_t> finish() const
         {
-            std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> c(EVP_MD_CTX_new(), EVP_MD_CTX_free);
+            const std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> c(EVP_MD_CTX_new(), EVP_MD_CTX_free);
             EVP_MD_CTX_copy(c.get(), ctx_.get());
             std::vector<uint8_t> h(EVP_MD_size(EVP_sha256()));
             unsigned int l;
@@ -423,6 +423,9 @@ class local_client
             h.resize(l);
             return h;
         }
+
+       private:
+        std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> ctx_;
     };
 
     boost::asio::awaitable<void> connect_remote_loop()
@@ -450,10 +453,11 @@ class local_client
                 continue;
             }
 
-            socket->set_option(boost::asio::ip::tcp::no_delay(true), ec);
+            ec = socket->set_option(boost::asio::ip::tcp::no_delay(true), ec);
 
             LOG_DEBUG("tcp connected sending client hello");
-            uint8_t cpub[32], cpriv[32];
+            uint8_t cpub[32];
+            uint8_t cpriv[32];
             X25519_keypair(cpub, cpriv);
             auto shared = reality::crypto_util::x25519_derive(std::vector<uint8_t>(cpriv, cpriv + 32), server_pub_key_, ec);
             if (ec)
@@ -465,7 +469,7 @@ class local_client
 
             std::vector<uint8_t> crand(32);
             RAND_bytes(crand.data(), 32);
-            std::vector<uint8_t> salt(crand.begin(), crand.begin() + 20);
+            const std::vector<uint8_t> salt(crand.begin(), crand.begin() + 20);
             auto r_info = reality::crypto_util::hex_to_bytes("5245414c495459", ec);
             auto prk = reality::crypto_util::hkdf_extract(salt, shared, ec);
             auto auth_key = reality::crypto_util::hkdf_expand(prk, r_info, 32, ec);
@@ -473,7 +477,7 @@ class local_client
             std::vector<uint8_t> payload(16);
             payload[0] = 1;
             payload[1] = 8;
-            uint32_t now = static_cast<uint32_t>(time(nullptr));
+            auto now = static_cast<uint32_t>(time(nullptr));
             payload[4] = (now >> 24) & 0xFF;
             payload[5] = (now >> 16) & 0xFF;
             payload[6] = (now >> 8) & 0xFF;
@@ -489,7 +493,7 @@ class local_client
             ch_rec.insert(ch_rec.end(), ch.begin(), ch.end());
             co_await boost::asio::async_write(*socket, boost::asio::buffer(ch_rec), boost::asio::as_tuple(boost::asio::use_awaitable));
 
-            transcript_t trans;
+            const transcript_t trans;
             trans.update(ch);
             uint8_t hbuf[5];
             auto [re1, rn1] =
@@ -501,7 +505,7 @@ class local_client
                 continue;
             }
 
-            uint16_t sh_len = static_cast<uint16_t>((hbuf[3] << 8) | hbuf[4]);
+            auto sh_len = static_cast<uint16_t>((hbuf[3] << 8) | hbuf[4]);
             std::vector<uint8_t> sh_data(sh_len);
             auto [re2, rn2] =
                 co_await boost::asio::async_read(*socket, boost::asio::buffer(sh_data), boost::asio::as_tuple(boost::asio::use_awaitable));
@@ -540,7 +544,7 @@ class local_client
                 {
                     break;
                 }
-                uint16_t rlen = static_cast<uint16_t>((rh[3] << 8) | rh[4]);
+                auto rlen = static_cast<uint16_t>((rh[3] << 8) | rh[4]);
                 std::vector<uint8_t> rec(rlen);
                 co_await boost::asio::async_read(*socket, boost::asio::buffer(rec), boost::asio::as_tuple(boost::asio::use_awaitable));
 
@@ -563,7 +567,7 @@ class local_client
                 if (type == reality::CONTENT_TYPE_HANDSHAKE)
                 {
                     handshake_buffer.insert(handshake_buffer.end(), pt.begin(), pt.end());
-                    size_t offset = 0;
+                    uint32_t offset = 0;
                     while (offset + 4 <= handshake_buffer.size())
                     {
                         uint8_t msg_type = handshake_buffer[offset];
@@ -614,11 +618,12 @@ class local_client
         }
     }
 
-    boost::asio::awaitable<void> wait_retry()
+    boost::asio::awaitable<void> wait_retry() const
     {
         boost::asio::steady_timer timer(pool_.get_io_context());
         timer.expires_after(std::chrono::seconds(5));
-        co_await timer.async_wait(boost::asio::use_awaitable);
+        auto [ec] = co_await timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
+        (void)ec;
     }
 
     boost::asio::awaitable<void> accept_local_loop()
@@ -634,14 +639,14 @@ class local_client
             {
                 if (tunnel_manager_ != nullptr && tunnel_manager_->get_connection()->is_open())
                 {
-                    uint32_t sid = next_session_id_.fetch_add(1, std::memory_order_relaxed);
+                    const uint32_t sid = next_session_id_.fetch_add(1, std::memory_order_relaxed);
                     std::make_shared<socks_session>(std::move(s), tunnel_manager_, sid)->start();
                 }
                 else
                 {
                     LOG_WARN("rejecting local connection tunnel not ready");
                     boost::system::error_code ignore_ec;
-                    s.close(ignore_ec);
+                    ignore_ec = s.close(ignore_ec);
                 }
             }
         }

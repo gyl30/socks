@@ -3,7 +3,6 @@
 
 #include <vector>
 #include <cstring>
-#include <memory>
 #include <span>
 #include <algorithm>
 #include <boost/system/error_code.hpp>

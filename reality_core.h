@@ -3,19 +3,15 @@
 
 #include <vector>
 #include <string>
-#include <cstring>
 #include <memory>
 #include <openssl/evp.h>
 #include <openssl/curve25519.h>
 #include <openssl/hkdf.h>
 #include <openssl/aead.h>
 #include <openssl/hmac.h>
-#include <openssl/sha.h>
 #include <openssl/rand.h>
 #include <openssl/x509.h>
-#include <openssl/x509v3.h>
 #include <openssl/ssl.h>
-#include <openssl/mem.h>
 #include <boost/algorithm/hex.hpp>
 #include <boost/system/error_code.hpp>
 #include "log.h"
@@ -453,7 +449,7 @@ class cert_manager
         }
     }
 
-    [[nodiscard]] std::vector<uint8_t> generate_reality_cert(const std::vector<uint8_t> &auth_key)
+    [[nodiscard]] std::vector<uint8_t> generate_reality_cert(const std::vector<uint8_t> &auth_key) const
     {
         if (temp_key_ == nullptr)
         {
