@@ -83,7 +83,7 @@ class mux_stream : public mux_stream_interface, public std::enable_shared_from_t
         if (is_closed_.compare_exchange_strong(expected, true))
         {
             recv_channel_.close();
-            LOG_INFO("[Mux:{}][Str:{}] closed stats tx={} rx={}", cid_, id_, tx_bytes_.load(), rx_bytes_.load());
+            LOG_INFO("mux {} stream {} closed stats tx {} rx {}", cid_, id_, tx_bytes_.load(), rx_bytes_.load());
         }
     }
 

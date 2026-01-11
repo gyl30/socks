@@ -41,20 +41,20 @@ class socks_session : public std::enable_shared_from_this<socks_session>
         boost::system::error_code ec;
         auto ep = socket_.remote_endpoint(ec);
         std::string remote_addr = ec ? "unknown" : ep.address().to_string() + ":" + std::to_string(ep.port());
-        LOG_INFO("[Socks:{}] session started from {}", sid_, remote_addr);
+        LOG_INFO("socks {} session started from {}", sid_, remote_addr);
 
         socket_.set_option(boost::asio::ip::tcp::no_delay(true), ec);
 
         if (!co_await handshake_socks5())
         {
-            LOG_WARN("[Socks:{}] handshake failed", sid_);
+            LOG_WARN("socks {} handshake failed", sid_);
             co_return;
         }
 
         auto [ok, host, port, cmd] = co_await read_request_header();
         if (!ok)
         {
-            LOG_WARN("[Socks:{}] request header invalid", sid_);
+            LOG_WARN("socks {} request header invalid", sid_);
             co_return;
         }
 
@@ -69,7 +69,7 @@ class socks_session : public std::enable_shared_from_this<socks_session>
 
         if (e1 || ver_nmethods[0] != socks::VER)
         {
-            LOG_ERROR("[Socks:{}] invalid version or read error {}", sid_, e1.message());
+            LOG_ERROR("socks {} invalid version or read error {}", sid_, e1.message());
             co_return false;
         }
 
@@ -78,7 +78,7 @@ class socks_session : public std::enable_shared_from_this<socks_session>
 
         if (e2)
         {
-            LOG_ERROR("[Socks:{}] methods read error {}", sid_, e2.message());
+            LOG_ERROR("socks {} methods read error {}", sid_, e2.message());
             co_return false;
         }
 
@@ -87,7 +87,7 @@ class socks_session : public std::enable_shared_from_this<socks_session>
 
         if (e3)
         {
-            LOG_ERROR("[Socks:{}] auth resp write error {}", sid_, e3.message());
+            LOG_ERROR("socks {} auth resp write error {}", sid_, e3.message());
             co_return false;
         }
         co_return true;
@@ -108,7 +108,7 @@ class socks_session : public std::enable_shared_from_this<socks_session>
 
         if (e4)
         {
-            LOG_ERROR("[Socks:{}] request header read error {}", sid_, e4.message());
+            LOG_ERROR("socks {} request header read error {}", sid_, e4.message());
             co_return request_info_t{false, "", 0, 0};
         }
 
@@ -150,7 +150,7 @@ class socks_session : public std::enable_shared_from_this<socks_session>
         }
         else
         {
-            LOG_WARN("[Socks:{}] address type not supported", sid_);
+            LOG_WARN("socks {} address type not supported", sid_);
             co_return request_info_t{false, "", 0, 0};
         }
 
@@ -169,17 +169,17 @@ class socks_session : public std::enable_shared_from_this<socks_session>
     {
         if (cmd == socks::CMD_CONNECT)
         {
-            LOG_INFO("[Socks:{}] cmd connect target {} port {}", sid_, host, port);
+            LOG_INFO("socks {} cmd connect target {} port {}", sid_, host, port);
             co_await run_tcp(host, port);
         }
         else if (cmd == socks::CMD_UDP_ASSOCIATE)
         {
-            LOG_INFO("[Socks:{}] cmd udp associate", sid_);
+            LOG_INFO("socks {} cmd udp associate", sid_);
             co_await run_udp(host, port);
         }
         else
         {
-            LOG_WARN("[Socks:{}] cmd not supported", sid_);
+            LOG_WARN("socks {} cmd not supported", sid_);
             uint8_t err[] = {socks::VER, socks::REP_CMD_NOT_SUPPORTED, 0, socks::ATYP_IPV4, 0, 0, 0, 0, 0, 0};
             co_await boost::asio::async_write(socket_, boost::asio::buffer(err), boost::asio::as_tuple(boost::asio::use_awaitable));
         }
@@ -190,14 +190,14 @@ class socks_session : public std::enable_shared_from_this<socks_session>
         auto stream = tunnel_manager_->create_stream();
         if (stream == nullptr)
         {
-            LOG_ERROR("[Socks:{}] failed to create stream tunnel not ready", sid_);
+            LOG_ERROR("socks {} failed to create stream tunnel not ready", sid_);
             co_return;
         }
 
         syn_payload syn{socks::CMD_CONNECT, host, port};
         if (auto ec = co_await tunnel_manager_->get_connection()->send_async(stream->id(), CMD_SYN, syn.encode()))
         {
-            LOG_ERROR("[Socks:{}] stream syn failed {}", sid_, ec.message());
+            LOG_ERROR("socks {} stream syn failed {}", sid_, ec.message());
             co_await stream->close();
             co_return;
         }
@@ -205,7 +205,7 @@ class socks_session : public std::enable_shared_from_this<socks_session>
         auto [ack_ec, ack_data] = co_await stream->async_read_some();
         if (ack_ec)
         {
-            LOG_ERROR("[Socks:{}] stream ack read failed {}", sid_, ack_ec.message());
+            LOG_ERROR("socks {} stream ack read failed {}", sid_, ack_ec.message());
             co_await stream->close();
             co_return;
         }
@@ -213,14 +213,14 @@ class socks_session : public std::enable_shared_from_this<socks_session>
         ack_payload ack_pl;
         if (!ack_payload::decode(ack_data.data(), ack_data.size(), ack_pl) || ack_pl.socks_rep_ != socks::REP_SUCCESS)
         {
-            LOG_WARN("[Socks:{}] stream remote rejected connection", sid_);
+            LOG_WARN("socks {} stream remote rejected connection", sid_);
             uint8_t err[] = {socks::VER, socks::REP_CONN_REFUSED, 0, socks::ATYP_IPV4, 0, 0, 0, 0, 0, 0};
             co_await boost::asio::async_write(socket_, boost::asio::buffer(err), boost::asio::as_tuple(boost::asio::use_awaitable));
             co_await stream->close();
             co_return;
         }
 
-        LOG_INFO("[Socks:{}] stream established id {}", sid_, stream->id());
+        LOG_INFO("socks {} stream established id {}", sid_, stream->id());
 
         uint8_t rep[] = {socks::VER, socks::REP_SUCCESS, 0, socks::ATYP_IPV4, 0, 0, 0, 0, 0, 0};
         if (auto [e, n] = co_await boost::asio::async_write(socket_, boost::asio::buffer(rep), boost::asio::as_tuple(boost::asio::use_awaitable)); e)
@@ -229,10 +229,10 @@ class socks_session : public std::enable_shared_from_this<socks_session>
             co_return;
         }
 
-        using boost::asio::experimental::awaitable_operators::operator||;
-        co_await (upstream_tcp(stream) || downstream_tcp(stream));
+        using boost::asio::experimental::awaitable_operators::operator&&;
+        co_await (upstream_tcp(stream) && downstream_tcp(stream));
         co_await stream->close();
-        LOG_INFO("[Socks:{}] finished", sid_);
+        LOG_INFO("socks {} finished", sid_);
     }
 
     boost::asio::awaitable<void> upstream_tcp(std::shared_ptr<mux_stream> stream)
@@ -240,7 +240,8 @@ class socks_session : public std::enable_shared_from_this<socks_session>
         std::vector<uint8_t> buf(8192);
         for (;;)
         {
-            auto [e, n] = co_await socket_.async_read_some(boost::asio::buffer(buf), boost::asio::as_tuple(boost::asio::use_awaitable));
+            boost::system::error_code e;
+            auto n = co_await socket_.async_read_some(boost::asio::buffer(buf), boost::asio::redirect_error(boost::asio::use_awaitable, e));
             if (e || n == 0)
             {
                 break;
@@ -260,6 +261,8 @@ class socks_session : public std::enable_shared_from_this<socks_session>
             auto [e, data] = co_await stream->async_read_some();
             if (e || data.empty())
             {
+                boost::system::error_code ignore;
+                socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ignore);
                 break;
             }
             auto [we, wn] = co_await boost::asio::async_write(socket_, boost::asio::buffer(data), boost::asio::as_tuple(boost::asio::use_awaitable));
@@ -281,7 +284,7 @@ class socks_session : public std::enable_shared_from_this<socks_session>
 
         if (ec)
         {
-            LOG_ERROR("[Socks:{}] udp bind failed {}", sid_, ec.message());
+            LOG_ERROR("socks {} udp bind failed {}", sid_, ec.message());
             uint8_t err[] = {socks::VER, socks::REP_GEN_FAIL, 0, socks::ATYP_IPV4, 0, 0, 0, 0, 0, 0};
             co_await boost::asio::async_write(socket_, boost::asio::buffer(err), boost::asio::as_tuple(boost::asio::use_awaitable));
             co_return;
@@ -308,7 +311,7 @@ class socks_session : public std::enable_shared_from_this<socks_session>
             co_return;
         }
 
-        LOG_INFO("[Socks:{}] stream {} udp associate ready", sid_, stream->id());
+        LOG_INFO("socks {} stream {} udp associate ready", sid_, stream->id());
 
         uint8_t final_rep[10];
         final_rep[0] = socks::VER;
