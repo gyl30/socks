@@ -2,12 +2,9 @@
 #define MUX_PROTOCOL_H
 
 #include <cstdint>
-#include <array>
 #include <vector>
 #include <string>
-#include <cstring>
 #include <algorithm>
-#include <boost/asio.hpp>
 #include "log.h"
 
 namespace mux
@@ -64,7 +61,7 @@ struct syn_payload
         std::vector<std::uint8_t> buf;
         buf.push_back(socks_cmd_);
 
-        const std::uint8_t addr_len = static_cast<std::uint8_t>(std::min(addr_.size(), std::size_t(255)));
+        const std::uint8_t addr_len = static_cast<std::uint8_t>(std::min(addr_.size(), static_cast<std::size_t>(255)));
         buf.push_back(addr_len);
         buf.insert(buf.end(), addr_.begin(), addr_.begin() + addr_len);
 
@@ -105,7 +102,7 @@ struct ack_payload
         std::vector<std::uint8_t> buf;
         buf.push_back(socks_rep_);
 
-        const std::uint8_t addr_len = static_cast<std::uint8_t>(std::min(bnd_addr_.size(), std::size_t(255)));
+        const std::uint8_t addr_len = static_cast<std::uint8_t>(std::min(bnd_addr_.size(), static_cast<std::size_t>(255)));
         buf.push_back(addr_len);
         buf.insert(buf.end(), bnd_addr_.begin(), bnd_addr_.begin() + addr_len);
 

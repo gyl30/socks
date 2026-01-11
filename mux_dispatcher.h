@@ -4,7 +4,6 @@
 #include <functional>
 #include <vector>
 #include <cstring>
-#include <boost/system/error_code.hpp>
 #include "mux_protocol.h"
 #include "log.h"
 
@@ -63,7 +62,7 @@ class mux_dispatcher
         }
     }
 
-    [[nodiscard]] static std::vector<uint8_t> pack(uint32_t stream_id, uint8_t cmd, std::vector<uint8_t> payload)
+    [[nodiscard]] static std::vector<uint8_t> pack(uint32_t stream_id, uint8_t cmd, const std::vector<uint8_t>& payload)
     {
         std::vector<uint8_t> frame(mux::HEADER_SIZE + payload.size());
         mux::frame_header h{stream_id, static_cast<uint16_t>(payload.size()), cmd};

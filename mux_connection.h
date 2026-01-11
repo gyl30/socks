@@ -3,7 +3,6 @@
 
 #include <memory>
 #include <vector>
-#include <array>
 #include <chrono>
 #include <unordered_map>
 #include <atomic>
@@ -129,9 +128,9 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
             streams_.clear();
         }
 
-        boost::system::error_code ec;
         if (socket_.is_open())
         {
+            boost::system::error_code ec;
             socket_.shutdown(tcp::socket::shutdown_both, ec);
             socket_.close(ec);
         }
