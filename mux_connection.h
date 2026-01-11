@@ -65,7 +65,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
           cid_(conn_id)
     {
         mux_dispatcher_.set_callback([this](mux::frame_header h, std::vector<uint8_t> p) { this->on_mux_frame(h, std::move(p)); });
-        LOG_INFO("[Mux:{}] initialized", cid_);
+        LOG_INFO("mux {} initialized", cid_);
     }
 
     auto get_executor() { return socket_.get_executor(); }
@@ -90,9 +90,9 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     [[nodiscard]] awaitable<void> start()
     {
         auto self = shared_from_this();
-        LOG_DEBUG("[Mux:{}] started loops", cid_);
+        LOG_DEBUG("mux {} started loops", cid_);
         co_await (read_loop() || write_loop() || timeout_loop());
-        LOG_INFO("[Mux:{}] loops finished stopped", cid_);
+        LOG_INFO("mux {} loops finished stopped", cid_);
     }
 
     [[nodiscard]] awaitable<boost::system::error_code> send_async(uint32_t stream_id, uint8_t cmd, std::vector<uint8_t> payload)
@@ -108,7 +108,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
 
         if (ec)
         {
-            LOG_ERROR("[Mux:{}] send failed error {}", cid_, ec.message());
+            LOG_ERROR("mux {} send failed error {}", cid_, ec.message());
             co_return ec;
         }
         co_return boost::system::error_code();
@@ -122,7 +122,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
             return;
         }
 
-        LOG_INFO("[Mux:{}] stopping", cid_);
+        LOG_INFO("mux {} stopping", cid_);
 
         {
             std::lock_guard<std::mutex> lock(streams_mutex_);
@@ -150,7 +150,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
             std::span<uint8_t> tls_write_buf = reality_engine_.get_write_buffer();
             if (tls_write_buf.empty())
             {
-                LOG_ERROR("[Mux:{}] buffer full", cid_);
+                LOG_ERROR("mux {} buffer full", cid_);
                 break;
             }
 
@@ -161,7 +161,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
             {
                 if (read_ec != boost::asio::error::eof && read_ec != boost::asio::error::operation_aborted)
                 {
-                    LOG_ERROR("[Mux:{}] read error {}", cid_, read_ec.message());
+                    LOG_ERROR("mux {} read error {}", cid_, read_ec.message());
                 }
                 break;
             }
@@ -173,7 +173,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
             auto plaintexts = reality_engine_.decrypt_available_records(decrypt_ec);
             if (decrypt_ec)
             {
-                LOG_ERROR("[Mux:{}] decrypt error {}", cid_, decrypt_ec.message());
+                LOG_ERROR("mux {} decrypt error {}", cid_, decrypt_ec.message());
                 break;
             }
 
@@ -183,7 +183,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
             }
         }
         stop();
-        LOG_DEBUG("[Mux:{}] read loop finished", cid_);
+        LOG_DEBUG("mux {} read loop finished", cid_);
     }
 
     awaitable<void> write_loop()
@@ -201,7 +201,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
             auto ciphertext = reality_engine_.encrypt(mux_frame, enc_ec);
             if (enc_ec)
             {
-                LOG_ERROR("[Mux:{}] encrypt error {}", cid_, enc_ec.message());
+                LOG_ERROR("mux {} encrypt error {}", cid_, enc_ec.message());
                 break;
             }
 
@@ -210,13 +210,13 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
 
             if (wec)
             {
-                LOG_ERROR("[Mux:{}] write error {}", cid_, wec.message());
+                LOG_ERROR("mux {} write error {}", cid_, wec.message());
                 break;
             }
             update_activity();
         }
         stop();
-        LOG_DEBUG("[Mux:{}] write loop finished", cid_);
+        LOG_DEBUG("mux {} write loop finished", cid_);
     }
 
     awaitable<void> timeout_loop()
@@ -227,7 +227,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
             auto [ec] = co_await timer_.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
             if (!ec)
             {
-                LOG_WARN("[Mux:{}] timeout", cid_);
+                LOG_WARN("mux {} timeout", cid_);
                 break;
             }
         }
