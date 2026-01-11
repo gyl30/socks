@@ -386,7 +386,7 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
     std::shared_ptr<mux_tunnel_impl<tcp::socket>> manager_;
 };
 
-class remote_server
+class remote_server : public std::enable_shared_from_this<remote_server>
 {
    public:
     remote_server(io_context_pool& pool, uint16_t port, std::string fb_h, std::string fb_p, const std::string& key, boost::system::error_code& ec)
@@ -438,7 +438,9 @@ class remote_server
                 const uint32_t conn_id = next_conn_id_.fetch_add(1, std::memory_order_relaxed);
 
                 boost::asio::co_spawn(
-                    pool_.get_io_context(), [this, s, conn_id = conn_id]() { return handle(s, conn_id); }, boost::asio::detached);
+                    pool_.get_io_context(),
+                    [this, s, self = shared_from_this(), conn_id = conn_id]() { return handle(s, conn_id); },
+                    boost::asio::detached);
             }
         }
     }
