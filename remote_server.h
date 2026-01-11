@@ -142,6 +142,7 @@ class remote_session : public mux_stream_interface, public std::enable_shared_fr
         syn_payload syn;
         if (!syn_payload::decode(syn_data.data(), syn_data.size(), syn))
         {
+            LOG_WARN("remote tcp {} failed to decode syn", id_);
             co_await connection_->send_async(id_, CMD_RST, {});
             co_return;
         }
@@ -150,6 +151,7 @@ class remote_session : public mux_stream_interface, public std::enable_shared_fr
         auto [er, eps] = co_await resolver_.async_resolve(syn.addr_, std::to_string(syn.port_), boost::asio::as_tuple(boost::asio::use_awaitable));
         if (er)
         {
+            LOG_ERROR("remote tcp {} resolve failed {}", id_, er.message());
             const ack_payload ack{.socks_rep_ = socks::REP_HOST_UNREACH, .bnd_addr_ = "", .bnd_port_ = 0};
             co_await connection_->send_async(id_, CMD_ACK, ack.encode());
             co_return;
@@ -158,6 +160,7 @@ class remote_session : public mux_stream_interface, public std::enable_shared_fr
         auto [ec_conn, ep_conn] = co_await boost::asio::async_connect(target_socket_, eps, boost::asio::as_tuple(boost::asio::use_awaitable));
         if (ec_conn)
         {
+            LOG_ERROR("remote tcp {} connect failed {}", id_, ec_conn.message());
             const ack_payload ack{.socks_rep_ = socks::REP_CONN_REFUSED, .bnd_addr_ = "", .bnd_port_ = 0};
             co_await connection_->send_async(id_, CMD_ACK, ack.encode());
             co_return;
@@ -165,6 +168,11 @@ class remote_session : public mux_stream_interface, public std::enable_shared_fr
 
         boost::system::error_code ec_sock;
         ec_sock = target_socket_.set_option(tcp::no_delay(true), ec_sock);
+
+        LOG_DEBUG("remote tcp {} established local {} remote {}",
+                  id_,
+                  target_socket_.local_endpoint().address().to_string(),
+                  ep_conn.address().to_string());
 
         const ack_payload ack_pl{.socks_rep_ = socks::REP_SUCCESS, .bnd_addr_ = ep_conn.address().to_string(), .bnd_port_ = ep_conn.port()};
         co_await connection_->send_async(id_, CMD_ACK, ack_pl.encode());
@@ -253,6 +261,7 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
 
     boost::asio::awaitable<void> start()
     {
+        uint32_t cid = connection_->id();
         boost::system::error_code ec;
         ec = udp_socket_.open(boost::asio::ip::udp::v4(), ec);
         if (!ec)
@@ -262,11 +271,14 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
 
         if (ec)
         {
-            LOG_ERROR("srv {} udp open/bind failed {}", id_, ec.message());
+            LOG_ERROR("srv {} stream {} udp open/bind failed {}", cid, id_, ec.message());
             ack_payload const ack{.socks_rep_ = socks::REP_GEN_FAIL, .bnd_addr_ = "", .bnd_port_ = 0};
             co_await connection_->send_async(id_, CMD_ACK, ack.encode());
             co_return;
         }
+
+        auto local_ep = udp_socket_.local_endpoint(ec);
+        LOG_INFO("srv {} stream {} udp session started, bound at {}", cid, id_, local_ep.address().to_string());
 
         const ack_payload ack_pl{.socks_rep_ = socks::REP_SUCCESS, .bnd_addr_ = "0.0.0.0", .bnd_port_ = 0};
         co_await connection_->send_async(id_, CMD_ACK, ack_pl.encode());
@@ -278,6 +290,7 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
         {
             manager_->remove_stream(id_);
         }
+        LOG_INFO("srv {} stream {} udp session finished", cid, id_);
     }
 
     void on_data(std::vector<uint8_t> data) override { recv_channel_.try_send(boost::system::error_code(), std::move(data)); }
@@ -293,6 +306,7 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
    private:
     boost::asio::awaitable<void> mux_to_udp()
     {
+        uint32_t cid = connection_->id();
         for (;;)
         {
             auto [ec, data] = co_await recv_channel_.async_receive(boost::asio::as_tuple(boost::asio::use_awaitable));
@@ -303,6 +317,7 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
             socks_udp_header h;
             if (!socks_udp_header::decode(data.data(), data.size(), h))
             {
+                LOG_WARN("srv {} stream {} udp failed to decode header", cid, id_);
                 continue;
             }
 
@@ -310,23 +325,31 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
                 co_await udp_resolver_.async_resolve(h.addr_, std::to_string(h.port_), boost::asio::as_tuple(boost::asio::use_awaitable));
             if (!er)
             {
+                auto target_ep = *eps.begin();
+                LOG_DEBUG("srv {} stream {} udp forwarding {} bytes -> {}",
+                          cid,
+                          id_,
+                          data.size() - h.header_len_,
+                          target_ep.endpoint().address().to_string());
+
                 auto [se, sn] = co_await udp_socket_.async_send_to(boost::asio::buffer(data.data() + h.header_len_, data.size() - h.header_len_),
-                                                                   *eps.begin(),
+                                                                   target_ep,
                                                                    boost::asio::as_tuple(boost::asio::use_awaitable));
                 if (se)
                 {
-                    LOG_WARN("srv {} udp send error {}", id_, se.message());
+                    LOG_WARN("srv {} stream {} udp send error {}", cid, id_, se.message());
                 }
             }
             else
             {
-                LOG_WARN("srv {} udp resolve error {}", id_, er.message());
+                LOG_WARN("srv {} stream {} udp resolve error for {}", cid, id_, h.addr_);
             }
         }
     }
 
     boost::asio::awaitable<void> udp_to_mux()
     {
+        uint32_t cid = connection_->id();
         std::vector<uint8_t> buf(65535);
         boost::asio::ip::udp::endpoint ep;
         for (;;)
@@ -336,10 +359,13 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
             {
                 if (re != boost::asio::error::operation_aborted)
                 {
-                    LOG_WARN("srv {} udp receive error {}", id_, re.message());
+                    LOG_WARN("srv {} stream {} udp receive error {}", cid, id_, re.message());
                 }
                 break;
             }
+
+            LOG_DEBUG("srv {} stream {} udp recv {} bytes from {}", cid, id_, n, ep.address().to_string());
+
             socks_udp_header h;
             h.addr_ = ep.address().to_string();
             h.port_ = ep.port();
@@ -435,7 +461,7 @@ class remote_server
 
         if (n < 5 || buf[0] != 0x16)
         {
-            LOG_WARN("srv {} not a tls handshake fallback no sni ip {}", conn_id, remote_ip);
+            LOG_WARN("srv {} invalid tls header 0x{:02x} fallback ip {}", conn_id, buf[0], remote_ip);
             co_await handle_fallback(s, buf, conn_id);
             co_return;
         }
@@ -451,6 +477,8 @@ class remote_server
             }
             buf.insert(buf.end(), tmp.begin(), tmp.end());
         }
+
+        LOG_DEBUG("srv {} received client hello record size {}", conn_id, buf.size());
 
         auto ch_msg = std::vector<uint8_t>(buf.begin() + 5, buf.end());
         auto info = ch_parser::parse(ch_msg);
@@ -479,7 +507,7 @@ class remote_server
                     auto now = static_cast<uint32_t>(time(nullptr));
                     if (timestamp > now + 120 || timestamp < now - 120)
                     {
-                        LOG_WARN("srv {} auth failed replay attack detected ts diff", conn_id);
+                        LOG_WARN("srv {} auth failed replay check ts {} now {}", conn_id, timestamp, now);
                         authorized = false;
                     }
                     else
@@ -487,18 +515,30 @@ class remote_server
                         authorized = true;
                     }
                 }
+                else
+                {
+                    LOG_WARN("srv {} auth decryption failed or bad size", conn_id);
+                }
             }
+            else
+            {
+                LOG_ERROR("srv {} x25519 derive failed", conn_id);
+            }
+        }
+        else
+        {
+            LOG_WARN("srv {} not tls1.3 or invalid session id len {}", conn_id, info.session_id_.size());
         }
 
         if (!authorized)
         {
             if (info.sni_.empty())
             {
-                LOG_WARN("srv {} authorization failed fallback no sni ip {}", conn_id, remote_ip);
+                LOG_WARN("srv {} fallback reason: unauthorized no sni ip {}", conn_id, remote_ip);
             }
             else
             {
-                LOG_WARN("srv {} authorization failed fallback sni {} ip {}", conn_id, info.sni_, remote_ip);
+                LOG_WARN("srv {} fallback reason: unauthorized sni {} ip {}", conn_id, info.sni_, remote_ip);
             }
             co_await handle_fallback(s, buf, conn_id);
             co_return;
@@ -513,6 +553,9 @@ class remote_server
         reality::crypto_util::generate_x25519_keypair(spub, spriv);
         std::vector<uint8_t> srand(32);
         RAND_bytes(srand.data(), 32);
+
+        LOG_TRACE("srv {} generated ephemeral key {}", conn_id, reality::crypto_util::bytes_to_hex(std::vector<uint8_t>(spub, spub + 32)));
+
         auto sh_shared = reality::crypto_util::x25519_derive(std::vector<uint8_t>(spriv, spriv + 32), info.x25519_pub_, ec);
 
         auto sh_msg = reality::construct_server_hello(srand, info.session_id_, 0x1301, std::vector<uint8_t>(spub, spub + 32));
@@ -549,6 +592,7 @@ class remote_server
         out_sh.insert(out_sh.end(), {0x14, 0x03, 0x03, 0x00, 0x01, 0x01});
         out_sh.insert(out_sh.end(), flight2_enc.begin(), flight2_enc.end());
 
+        LOG_DEBUG("srv {} sending server hello flight size {}", conn_id, out_sh.size());
         if (auto [we, wn] = co_await boost::asio::async_write(*s, boost::asio::buffer(out_sh), boost::asio::as_tuple(boost::asio::use_awaitable)); we)
         {
             LOG_ERROR("srv {} write sh flight error {}", conn_id, we.message());
@@ -606,19 +650,22 @@ class remote_server
         auto tunnel = std::make_shared<mux_tunnel_impl<tcp::socket>>(std::move(*s), std::move(engine), false, conn_id);
 
         tunnel->get_connection()->set_syn_callback(
-            [this, tunnel](uint32_t id, const std::vector<uint8_t>& p)
+            [this, tunnel, conn_id](uint32_t id, const std::vector<uint8_t>& p)
             {
                 boost::asio::co_spawn(
                     pool_.get_io_context(),
-                    [this, tunnel, id, p = p]() -> boost::asio::awaitable<void>
+                    [this, tunnel, conn_id, id, p = p]() -> boost::asio::awaitable<void>
                     {
                         syn_payload syn;
                         if (!syn_payload::decode(p.data(), p.size(), syn))
                         {
+                            LOG_WARN("srv {} stream {} invalid syn", conn_id, id);
                             co_return;
                         }
+
                         if (syn.socks_cmd_ == socks::CMD_CONNECT)
                         {
+                            LOG_INFO("srv {} stream {} type TCP_CONNECT target {}:{}", conn_id, id, syn.addr_, syn.port_);
                             auto sess = std::make_shared<remote_session>(tunnel->get_connection(), id, pool_.get_io_context().get_executor());
                             sess->set_manager(tunnel);
                             tunnel->register_stream(id, sess);
@@ -626,10 +673,15 @@ class remote_server
                         }
                         else if (syn.socks_cmd_ == socks::CMD_UDP_ASSOCIATE)
                         {
+                            LOG_INFO("srv {} stream {} type UDP_ASSOCIATE associated via tcp", conn_id, id);
                             auto sess = std::make_shared<remote_udp_session>(tunnel->get_connection(), id, pool_.get_io_context().get_executor());
                             sess->set_manager(tunnel);
                             tunnel->register_stream(id, sess);
                             co_await sess->start();
+                        }
+                        else
+                        {
+                            LOG_WARN("srv {} stream {} unknown cmd {}", conn_id, id, syn.socks_cmd_);
                         }
                     },
                     boost::asio::detached);
@@ -656,6 +708,7 @@ class remote_server
             co_return;
         }
 
+        LOG_INFO("srv {} fallback proxying to {}:{}", conn_id, fb_host_, fb_port_);
         co_await boost::asio::async_write(t, boost::asio::buffer(buf), boost::asio::as_tuple(boost::asio::use_awaitable));
 
         auto xfer = [](auto& f, auto& t) -> boost::asio::awaitable<void>

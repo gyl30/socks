@@ -75,12 +75,14 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     {
         std::lock_guard<std::mutex> lock(streams_mutex_);
         streams_[id] = std::move(stream);
+        LOG_DEBUG("mux {} stream {} registered", cid_, id);
     }
 
     void remove_stream(uint32_t id)
     {
         std::lock_guard<std::mutex> lock(streams_mutex_);
         streams_.erase(id);
+        LOG_DEBUG("mux {} stream {} removed", cid_, id);
     }
 
     [[nodiscard]] uint32_t acquire_next_id() { return next_stream_id_.fetch_add(2, std::memory_order_relaxed); }
@@ -99,6 +101,11 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
         if (connection_state_.load(std::memory_order_acquire) != mux_connection_state::connected)
         {
             co_return boost::asio::error::operation_aborted;
+        }
+
+        if (cmd != mux::CMD_DAT || payload.size() < 128)
+        {
+            LOG_TRACE("mux {} send frame stream {} cmd {} size {}", cid_, stream_id, cmd, payload.size());
         }
 
         mux_write_msg msg{stream_id, cmd, std::move(payload)};
@@ -243,6 +250,8 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
 
     void on_mux_frame(mux::frame_header header, std::vector<uint8_t> payload)
     {
+        LOG_TRACE("mux {} recv frame stream {} cmd {} len {}", cid_, header.stream_id_, header.command_, header.length_);
+
         if (header.command_ == mux::CMD_SYN)
         {
             if (syn_callback_)
@@ -275,6 +284,13 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
             else if (header.command_ == mux::CMD_DAT || header.command_ == mux::CMD_ACK)
             {
                 stream->on_data(std::move(payload));
+            }
+        }
+        else
+        {
+            if (header.command_ != mux::CMD_RST)
+            {
+                LOG_DEBUG("mux {} recv frame for unknown stream {}", cid_, header.stream_id_);
             }
         }
     }
