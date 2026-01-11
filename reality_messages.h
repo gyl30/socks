@@ -208,7 +208,7 @@ inline std::vector<uint8_t> write_record_header(uint8_t record_type, uint16_t le
     header.reserve(5);
     header.push_back(record_type);
     header.push_back(TLS1_2_VERSION_MAJOR);
-    header.push_back(TLS1_0_VERSION_MINOR);
+    header.push_back(TLS1_VERSION_MINOR);
     message_builder::push_u16(header, length);
     return header;
 }
