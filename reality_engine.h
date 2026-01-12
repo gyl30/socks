@@ -42,7 +42,7 @@ class reality_engine
 
         while (rx_buf_->size() >= reality::TLS_RECORD_HEADER_SIZE)
         {
-            const auto* p = boost::asio::buffer_cast<const uint8_t*>(rx_buf_->data());
+            const auto* p = static_cast<const uint8_t*>(rx_buf_->data().data());
             const auto record_len = static_cast<uint16_t>((static_cast<uint16_t>(p[3]) << 8) | p[4]);
             const uint32_t frame_size = reality::TLS_RECORD_HEADER_SIZE + record_len;
 
