@@ -543,7 +543,7 @@ class local_client : public std::enable_shared_from_this<local_client>
         }
     }
 
-    boost::asio::awaitable<bool> tcp_connect(boost::asio::ip::tcp::socket &socket, boost::system::error_code &ec)
+    boost::asio::awaitable<bool> tcp_connect(boost::asio::ip::tcp::socket &socket, boost::system::error_code &ec) const
     {
         boost::asio::ip::tcp::resolver res(pool_.get_io_context());
         auto [er, eps] = co_await res.async_resolve(r_host_, r_port_, boost::asio::as_tuple(boost::asio::use_awaitable));
@@ -566,7 +566,7 @@ class local_client : public std::enable_shared_from_this<local_client>
     }
 
     boost::asio::awaitable<std::pair<bool, handshake_result>> perform_reality_handshake(boost::asio::ip::tcp::socket &socket,
-                                                                                        boost::system::error_code &ec)
+                                                                                        boost::system::error_code &ec) const
     {
         uint8_t cpub[32];
         uint8_t cpriv[32];
@@ -601,8 +601,11 @@ class local_client : public std::enable_shared_from_this<local_client>
         co_return std::make_pair(true, handshake_result{.c_app_secret = app_sec.first, .s_app_secret = app_sec.second});
     }
 
-    boost::asio::awaitable<bool> generate_and_send_client_hello(
-        boost::asio::ip::tcp::socket &socket, const uint8_t *cpub, const uint8_t *cpriv, const transcript_t &trans, boost::system::error_code &ec)
+    boost::asio::awaitable<bool> generate_and_send_client_hello(boost::asio::ip::tcp::socket &socket,
+                                                                const uint8_t *cpub,
+                                                                const uint8_t *cpriv,
+                                                                const transcript_t &trans,
+                                                                boost::system::error_code &ec) const
     {
         auto shared = reality::crypto_util::x25519_derive(std::vector<uint8_t>(cpriv, cpriv + 32), server_pub_key_, ec);
         if (ec)
@@ -728,8 +731,8 @@ class local_client : public std::enable_shared_from_this<local_client>
                 uint32_t offset = 0;
                 while (offset + 4 <= handshake_buffer.size())
                 {
-                    uint8_t msg_type = handshake_buffer[offset];
-                    uint32_t msg_len = (handshake_buffer[offset + 1] << 16) | (handshake_buffer[offset + 2] << 8) | handshake_buffer[offset + 3];
+                    const uint8_t msg_type = handshake_buffer[offset];
+                    const uint32_t msg_len = (handshake_buffer[offset + 1] << 16) | (handshake_buffer[offset + 2] << 8) | handshake_buffer[offset + 3];
                     if (offset + 4 + msg_len > handshake_buffer.size())
                     {
                         break;

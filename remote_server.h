@@ -47,7 +47,7 @@ class ch_parser
 
         uint8_t sid_len;
 
-        size_t sid_start_offset = r.offset() + 1;
+        const size_t sid_start_offset = r.offset() + 1;
 
         if (!r.read_u8(sid_len))
         {
@@ -207,8 +207,8 @@ class ch_parser
 
         while (r.remaining() >= 3)
         {
-            uint8_t type;
-            uint16_t len;
+            uint8_t type = 0;
+            uint16_t len = 0;
             r.read_u8(type);
             r.read_u16(len);
 
@@ -231,8 +231,8 @@ class ch_parser
 
         while (r.remaining() >= 4)
         {
-            uint16_t group;
-            uint16_t key_len;
+            uint16_t group = 0;
+            uint16_t key_len = 0;
             r.read_u16(group);
             r.read_u16(key_len);
 
@@ -734,7 +734,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         {
             return {false, {}};
         }
-        uint32_t aad_sid_offset = info.sid_offset - 5;
+        const uint32_t aad_sid_offset = info.sid_offset - 5;
 
         if (aad_sid_offset + 32 > aad.size())
         {
