@@ -5,6 +5,7 @@
 #include <string>
 #include <memory>
 #include <cstring>
+#include <span>
 #include <openssl/evp.h>
 #include <openssl/kdf.h>
 #include <openssl/hmac.h>
@@ -288,16 +289,24 @@ class crypto_util
         return hkdf_expand(secret, hkdf_label, length, ec);
     }
 
-    [[nodiscard]] static std::vector<uint8_t> aes_gcm_decrypt(const std::vector<uint8_t>& key,
-                                                              const std::vector<uint8_t>& nonce,
-                                                              const std::vector<uint8_t>& ciphertext,
-                                                              const std::vector<uint8_t>& aad,
-                                                              boost::system::error_code& ec)
+    static size_t aes_gcm_decrypt(const std::vector<uint8_t>& key,
+                                  std::span<const uint8_t> nonce,
+                                  std::span<const uint8_t> ciphertext,
+                                  std::span<const uint8_t> aad,
+                                  std::span<uint8_t> output_buffer,
+                                  boost::system::error_code& ec)
     {
         if (ciphertext.size() < AEAD_TAG_SIZE)
         {
             ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
-            return {};
+            return 0;
+        }
+
+        const size_t pt_len = ciphertext.size() - AEAD_TAG_SIZE;
+        if (output_buffer.size() < pt_len)
+        {
+            ec = boost::system::errc::make_error_code(boost::system::errc::no_buffer_space);
+            return 0;
         }
 
         const EVP_CIPHER* cipher = (key.size() == 32) ? EVP_aes_256_gcm() : EVP_aes_128_gcm();
@@ -306,10 +315,9 @@ class crypto_util
         if (!ctx)
         {
             ec = boost::system::errc::make_error_code(boost::system::errc::not_enough_memory);
-            return {};
+            return 0;
         }
 
-        std::vector<uint8_t> plaintext(ciphertext.size() - AEAD_TAG_SIZE);
         int out_len = 0;
         int ret = 1;
 
@@ -323,25 +331,44 @@ class crypto_util
             ret &= EVP_DecryptUpdate(ctx.get(), nullptr, &aad_len_dummy, aad.data(), static_cast<int>(aad.size()));
         }
 
-        const uint8_t* tag = ciphertext.data() + ciphertext.size() - AEAD_TAG_SIZE;
+        const uint8_t* tag = ciphertext.data() + pt_len;
         const uint8_t* ct_data = ciphertext.data();
-        const size_t ct_len = ciphertext.size() - AEAD_TAG_SIZE;
 
-        ret &= EVP_DecryptUpdate(ctx.get(), plaintext.data(), &out_len, ct_data, static_cast<int>(ct_len));
+        // 直接写入 output_buffer
+        ret &= EVP_DecryptUpdate(ctx.get(), output_buffer.data(), &out_len, ct_data, static_cast<int>(pt_len));
         ret &= EVP_CIPHER_CTX_ctrl(ctx.get(), EVP_CTRL_GCM_SET_TAG, AEAD_TAG_SIZE, const_cast<void*>(static_cast<const void*>(tag)));
 
         int final_len = 0;
-        ret &= EVP_DecryptFinal_ex(ctx.get(), plaintext.data() + out_len, &final_len);
+        ret &= EVP_DecryptFinal_ex(ctx.get(), output_buffer.data() + out_len, &final_len);
 
         if (ret <= 0)
         {
             ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
-            return {};
+            return 0;
         }
 
-        plaintext.resize(out_len + final_len);
         ec.clear();
-        return plaintext;
+        return out_len + final_len;
+    }
+    [[nodiscard]] static std::vector<uint8_t> aes_gcm_decrypt(const std::vector<uint8_t>& key,
+                                                              const std::vector<uint8_t>& nonce,
+                                                              const std::vector<uint8_t>& ciphertext,
+                                                              const std::vector<uint8_t>& aad,
+                                                              boost::system::error_code& ec)
+    {
+        if (ciphertext.size() < AEAD_TAG_SIZE)
+        {
+            ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
+            return {};
+        }
+        std::vector<uint8_t> out(ciphertext.size() - AEAD_TAG_SIZE);
+        size_t n = aes_gcm_decrypt(key, nonce, ciphertext, aad, out, ec);
+        if (ec)
+        {
+            return {};
+        }
+        out.resize(n);
+        return out;
     }
 
     static void aes_gcm_encrypt_append(const std::vector<uint8_t>& key,
@@ -586,7 +613,54 @@ class tls_record_layer
         encrypt_record_append(key, iv, seq, plaintext, content_type, out, ec);
         return out;
     }
+    static size_t decrypt_record(const std::vector<uint8_t>& key,
+                                 const std::vector<uint8_t>& iv,
+                                 uint64_t seq,
+                                 std::span<const uint8_t> record_data,
+                                 std::span<uint8_t> output_buffer,
+                                 uint8_t& out_content_type,
+                                 boost::system::error_code& ec)
+    {
+        if (record_data.size() < TLS_RECORD_HEADER_SIZE + AEAD_TAG_SIZE)
+        {
+            ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
+            return 0;
+        }
 
+        const auto aad = record_data.subspan(0, TLS_RECORD_HEADER_SIZE);
+        const auto ciphertext = record_data.subspan(TLS_RECORD_HEADER_SIZE);
+
+        std::vector<uint8_t> nonce = iv;
+        for (int i = 0; i < 8; ++i)
+        {
+            nonce[nonce.size() - 1 - i] ^= static_cast<uint8_t>((seq >> (8 * i)) & 0xFF);
+        }
+
+        size_t written = crypto_util::aes_gcm_decrypt(key, nonce, ciphertext, aad, output_buffer, ec);
+        if (ec)
+        {
+            return 0;
+        }
+
+        // 去除尾部的 padding 0x00
+        while (written > 0 && output_buffer[written - 1] == 0)
+        {
+            written--;
+        }
+
+        if (written == 0)
+        {
+            ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
+            return 0;
+        }
+
+        // 最后一个非零字节是 ContentType
+        out_content_type = output_buffer[written - 1];
+        written--;
+
+        ec.clear();
+        return written;
+    }
     [[nodiscard]] static std::vector<uint8_t> decrypt_record(const std::vector<uint8_t>& key,
                                                              const std::vector<uint8_t>& iv,
                                                              uint64_t seq,
@@ -599,37 +673,14 @@ class tls_record_layer
             ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
             return {};
         }
-
-        const std::vector<uint8_t> aad(ciphertext_with_header.begin(), ciphertext_with_header.begin() + 5);
-        const std::vector<uint8_t> ciphertext(ciphertext_with_header.begin() + 5, ciphertext_with_header.end());
-
-        std::vector<uint8_t> nonce = iv;
-        for (int i = 0; i < 8; ++i)
-        {
-            nonce[nonce.size() - 1 - i] ^= static_cast<uint8_t>((seq >> (8 * i)) & 0xFF);
-        }
-
-        std::vector<uint8_t> plaintext = crypto_util::aes_gcm_decrypt(key, nonce, ciphertext, aad, ec);
+        std::vector<uint8_t> out(ciphertext_with_header.size() - TLS_RECORD_HEADER_SIZE - AEAD_TAG_SIZE);
+        size_t n = decrypt_record(key, iv, seq, ciphertext_with_header, out, out_content_type, ec);
         if (ec)
         {
             return {};
         }
-
-        while (!plaintext.empty() && plaintext.back() == 0)
-        {
-            plaintext.pop_back();
-        }
-
-        if (plaintext.empty())
-        {
-            ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
-            return {};
-        }
-
-        out_content_type = plaintext.back();
-        plaintext.pop_back();
-        ec.clear();
-        return plaintext;
+        out.resize(n);
+        return out;
     }
 };
 

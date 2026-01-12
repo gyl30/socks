@@ -15,7 +15,7 @@ namespace mux
 class mux_stream : public mux_stream_interface, public std::enable_shared_from_this<mux_stream>
 {
    public:
-    mux_stream(std::uint32_t id, std::uint32_t cid, const std::shared_ptr<mux_connection>& connection, const boost::asio::any_io_executor& ex)
+    mux_stream(std::uint32_t id, std::uint32_t cid, const std::shared_ptr<mux_connection> &connection, const boost::asio::any_io_executor &ex)
         : id_(id), cid_(cid), connection_(connection), recv_channel_(ex, 128)
     {
     }
@@ -29,14 +29,14 @@ class mux_stream : public mux_stream_interface, public std::enable_shared_from_t
         co_return co_await recv_channel_.async_receive(boost::asio::as_tuple(boost::asio::use_awaitable));
     }
 
-    [[nodiscard]] boost::asio::awaitable<boost::system::error_code> async_write_some(const void* data, std::size_t len)
+    [[nodiscard]] boost::asio::awaitable<boost::system::error_code> async_write_some(const void *data, std::size_t len)
     {
         if (is_closed_)
         {
             co_return boost::asio::error::broken_pipe;
         }
 
-        std::vector<uint8_t> payload(static_cast<const uint8_t*>(data), static_cast<const uint8_t*>(data) + len);
+        std::vector<uint8_t> payload(static_cast<const uint8_t *>(data), static_cast<const uint8_t *>(data) + len);
         tx_bytes_.fetch_add(len, std::memory_order_relaxed);
         auto conn = connection_.lock();
         if (!conn)
