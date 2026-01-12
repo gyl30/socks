@@ -18,6 +18,25 @@
 namespace mux
 {
 
+static boost::asio::ip::address normalize_ip_address(const boost::asio::ip::address &addr)
+{
+    if (addr.is_v4())
+    {
+        return addr;
+    }
+
+    if (addr.is_v6())
+    {
+        auto v6 = addr.to_v6();
+        if (v6.is_v4_mapped())
+        {
+            return v6.to_v4();
+        }
+    }
+
+    return addr;
+}
+
 class socks_session : public std::enable_shared_from_this<socks_session>
 {
    public:
@@ -301,11 +320,30 @@ class socks_session : public std::enable_shared_from_this<socks_session>
     boost::asio::awaitable<void> run_udp(std::string host, uint16_t port)
     {
         auto ex = socket_.get_executor();
-        boost::asio::ip::udp::socket udp_sock(ex);
         boost::system::error_code ec;
 
-        ec = udp_sock.open(boost::asio::ip::udp::v4(), ec);
-        ec = udp_sock.bind(boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0), ec);
+        auto tcp_local_ep = socket_.local_endpoint(ec);
+        if (ec)
+        {
+            LOG_ERROR("socks {} failed to get tcp local endpoint {}", sid_, ec.message());
+            co_return;
+        }
+
+        auto local_addr = normalize_ip_address(tcp_local_ep.address());
+
+        boost::asio::ip::udp::socket udp_sock(ex);
+        auto udp_protocol = local_addr.is_v6() ? boost::asio::ip::udp::v6() : boost::asio::ip::udp::v4();
+
+        ec = udp_sock.open(udp_protocol, ec);
+        if (!ec)
+        {
+            if (local_addr.is_v6())
+            {
+                ec = udp_sock.set_option(boost::asio::ip::v6_only(false), ec);
+            }
+            ec = udp_sock.bind(boost::asio::ip::udp::endpoint(local_addr, 0), ec);
+        }
+
         if (ec)
         {
             LOG_ERROR("socks {} tcp-associated udp bind failed {}", sid_, ec.message());
@@ -314,8 +352,9 @@ class socks_session : public std::enable_shared_from_this<socks_session>
             co_return;
         }
 
-        auto local_ep = udp_sock.local_endpoint(ec);
-        LOG_INFO("socks {} tcp-associated udp socket bound at {}", sid_, local_ep.address().to_string());
+        auto udp_local_ep = udp_sock.local_endpoint(ec);
+        uint16_t udp_bind_port = udp_local_ep.port();
+        LOG_INFO("socks {} tcp-associated udp socket bound at {}:{}", sid_, local_addr.to_string(), udp_bind_port);
 
         auto stream = tunnel_manager_->create_stream();
         if (stream == nullptr)
@@ -323,8 +362,6 @@ class socks_session : public std::enable_shared_from_this<socks_session>
             LOG_ERROR("socks {} failed to create stream for udp association", sid_);
             co_return;
         }
-
-        LOG_INFO("socks {} associating tcp control with udp {} via mux stream {}", sid_, local_ep.address().to_string(), stream->id());
 
         const syn_payload syn{.socks_cmd = socks::CMD_UDP_ASSOCIATE, .addr = "0.0.0.0", .port = 0};
         ec = co_await tunnel_manager_->get_connection()->send_async(stream->id(), CMD_SYN, mux_codec::encode_syn(syn));
@@ -345,26 +382,45 @@ class socks_session : public std::enable_shared_from_this<socks_session>
 
         LOG_INFO("socks {} stream {} udp tunnel established", sid_, stream->id());
 
-        uint8_t final_rep[10];
-        final_rep[0] = socks::VER;
-        final_rep[1] = socks::REP_SUCCESS;
-        final_rep[2] = 0x00;
-        final_rep[3] = socks::ATYP_IPV4;
-        auto bytes = boost::asio::ip::make_address_v4("127.0.0.1").to_bytes();
-        std::memcpy(final_rep + 4, bytes.data(), 4);
-        final_rep[8] = static_cast<uint8_t>((local_ep.port() >> 8) & 0xFF);
-        final_rep[9] = static_cast<uint8_t>(local_ep.port() & 0xFF);
+        std::vector<uint8_t> final_rep;
+        final_rep.reserve(22);
+        final_rep.push_back(socks::VER);
+        final_rep.push_back(socks::REP_SUCCESS);
+        final_rep.push_back(0x00);
 
-        co_await boost::asio::async_write(socket_, boost::asio::buffer(final_rep, 10), boost::asio::as_tuple(boost::asio::use_awaitable));
+        if (local_addr.is_v4())
+        {
+            final_rep.push_back(socks::ATYP_IPV4);
+            auto bytes = local_addr.to_v4().to_bytes();
+            final_rep.insert(final_rep.end(), bytes.begin(), bytes.end());
+        }
+        else
+        {
+            final_rep.push_back(socks::ATYP_IPV6);
+            auto bytes = local_addr.to_v6().to_bytes();
+            final_rep.insert(final_rep.end(), bytes.begin(), bytes.end());
+        }
+
+        final_rep.push_back(static_cast<uint8_t>((udp_bind_port >> 8) & 0xFF));
+        final_rep.push_back(static_cast<uint8_t>(udp_bind_port & 0xFF));
+
+        auto [we, wn] = co_await boost::asio::async_write(socket_, boost::asio::buffer(final_rep), boost::asio::as_tuple(boost::asio::use_awaitable));
+        if (we)
+        {
+            LOG_ERROR("socks {} failed to send udp response header", sid_);
+            co_await stream->close();
+            co_return;
+        }
 
         auto client_ep_ptr = std::make_shared<boost::asio::ip::udp::endpoint>();
+
         using boost::asio::experimental::awaitable_operators::operator||;
 
         co_await (udp_sock_to_stream(udp_sock, stream, client_ep_ptr, sid_) || stream_to_udp_sock(udp_sock, stream, client_ep_ptr, sid_) ||
                   keep_tcp_alive());
 
         co_await stream->close();
-        LOG_INFO("socks {} tcp control closed, terminating udp association", sid_);
+        LOG_INFO("socks {} tcp control channel closed, terminating udp association", sid_);
     }
 
     static boost::asio::awaitable<void> udp_sock_to_stream(boost::asio::ip::udp::socket &udp_sock,
@@ -387,13 +443,17 @@ class socks_session : public std::enable_shared_from_this<socks_session>
             socks_udp_header h;
             if (socks_codec::decode_udp_header(buf.data(), n, h))
             {
-                LOG_DEBUG("socks {} [tcp-linked] udp fwd {} bytes target {}:{}", sid, n, h.addr, h.port);
+                LOG_DEBUG("socks {} tcp jinked udp fwd {} bytes target {}:{}", sid, n, h.addr, h.port);
             }
             else
             {
-                LOG_WARN("socks {} [tcp-linked] udp invalid header size {}", sid, n);
+                LOG_WARN("socks {} tcp linked udp invalid header size {}", sid, n);
             }
-
+            if (h.frag != 0x00)
+            {
+                LOG_WARN("socks {} dropping fragmented udp packet as not supported", sid);
+                continue;
+            }
             ec = co_await stream->async_write_some(buf.data(), n);
             if (ec)
             {
@@ -732,7 +792,8 @@ class local_client : public std::enable_shared_from_this<local_client>
                 while (offset + 4 <= handshake_buffer.size())
                 {
                     const uint8_t msg_type = handshake_buffer[offset];
-                    const uint32_t msg_len = (handshake_buffer[offset + 1] << 16) | (handshake_buffer[offset + 2] << 8) | handshake_buffer[offset + 3];
+                    const uint32_t msg_len =
+                        (handshake_buffer[offset + 1] << 16) | (handshake_buffer[offset + 2] << 8) | handshake_buffer[offset + 3];
                     if (offset + 4 + msg_len > handshake_buffer.size())
                     {
                         break;
@@ -798,7 +859,11 @@ class local_client : public std::enable_shared_from_this<local_client>
             {
                 boost::system::error_code ec;
                 ec = s.set_option(boost::asio::ip::tcp::no_delay(true), ec);
-                (void)ec;
+
+                if (ec)
+                {
+                    LOG_WARN("failed to set no_delay on local socket: {}", ec.message());
+                }
 
                 if (tunnel_manager_ != nullptr && tunnel_manager_->get_connection()->is_open())
                 {
@@ -809,8 +874,18 @@ class local_client : public std::enable_shared_from_this<local_client>
                 {
                     LOG_WARN("rejecting local connection tunnel not ready");
                     boost::system::error_code ignore_ec;
-                    ignore_ec = s.close(ignore_ec);
-                    (void)ignore_ec;
+                    s.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ignore_ec);
+                    s.close(ignore_ec);
+                }
+            }
+            else
+            {
+                LOG_ERROR("local accept failed: {}", e.message());
+                if (e == boost::asio::error::no_descriptors)
+                {
+                    boost::asio::steady_timer t(ex);
+                    t.expires_after(std::chrono::milliseconds(500));
+                    co_await t.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
                 }
             }
         }

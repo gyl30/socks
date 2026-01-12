@@ -29,6 +29,34 @@ static constexpr size_t TLS_RECORD_HEADER_SIZE = 5;
 static constexpr size_t AEAD_TAG_SIZE = 16;
 static constexpr size_t MAX_TLS_PLAINTEXT_LEN = 16384;
 
+namespace tls_consts
+{
+constexpr uint16_t VER_1_2 = 0x0303;
+constexpr uint16_t VER_1_3 = 0x0304;
+
+namespace ext
+{
+constexpr uint16_t SNI = 0x0000;
+constexpr uint16_t STATUS_REQUEST = 0x0005;
+constexpr uint16_t SUPPORTED_GROUPS = 0x000a;
+constexpr uint16_t EC_POINT_FORMATS = 0x000b;
+constexpr uint16_t SIGNATURE_ALGS = 0x000d;
+constexpr uint16_t ALPN = 0x0010;
+constexpr uint16_t PADDING = 0x0015;
+constexpr uint16_t EXT_MASTER_SECRET = 0x0017;
+constexpr uint16_t COMPRESS_CERT = 0x001b;
+constexpr uint16_t SUPPORTED_VERSIONS = 0x002b;
+constexpr uint16_t KEY_SHARE = 0x0033;
+constexpr uint16_t PRE_SHARED_KEY = 0x0029;
+constexpr uint16_t RENEGOTIATION_INFO = 0xff01;
+}    // namespace ext
+
+namespace group
+{
+constexpr uint16_t X25519 = 0x001d;
+}
+}    // namespace tls_consts
+
 namespace openssl_ptrs
 {
 struct evp_pkey_deleter
@@ -334,7 +362,6 @@ class crypto_util
         const uint8_t* tag = ciphertext.data() + pt_len;
         const uint8_t* ct_data = ciphertext.data();
 
-        // 直接写入 output_buffer
         ret &= EVP_DecryptUpdate(ctx.get(), output_buffer.data(), &out_len, ct_data, static_cast<int>(pt_len));
         ret &= EVP_CIPHER_CTX_ctrl(ctx.get(), EVP_CTRL_GCM_SET_TAG, AEAD_TAG_SIZE, const_cast<void*>(static_cast<const void*>(tag)));
 
@@ -589,8 +616,8 @@ class tls_record_layer
         uint8_t* header = output_buffer.data() + old_size;
 
         header[0] = CONTENT_TYPE_APPLICATION_DATA;
-        header[1] = TLS1_2_VERSION_MAJOR;
-        header[2] = TLS1_2_VERSION_MINOR;
+        header[1] = static_cast<uint8_t>((tls_consts::VER_1_2 >> 8) & 0xFF);
+        header[2] = static_cast<uint8_t>(tls_consts::VER_1_2 & 0xFF);
         header[3] = static_cast<uint8_t>((ciphertext_len >> 8) & 0xFF);
         header[4] = static_cast<uint8_t>(ciphertext_len & 0xFF);
 
@@ -642,7 +669,6 @@ class tls_record_layer
             return 0;
         }
 
-        // 去除尾部的 padding 0x00
         while (written > 0 && output_buffer[written - 1] == 0)
         {
             written--;
@@ -654,7 +680,6 @@ class tls_record_layer
             return 0;
         }
 
-        // 最后一个非零字节是 ContentType
         out_content_type = output_buffer[written - 1];
         written--;
 

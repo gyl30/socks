@@ -126,7 +126,7 @@ class mux_tunnel_impl : public std::enable_shared_from_this<mux_tunnel_impl<stre
 
     [[nodiscard]] std::shared_ptr<mux_stream> create_stream()
     {
-        if (connection_ == nullptr)
+        if (connection_ == nullptr || !connection_->is_open())
         {
             return nullptr;
         }
