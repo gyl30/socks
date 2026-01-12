@@ -60,7 +60,7 @@ class reality_engine
                 break;
             }
 
-            std::span<const uint8_t> record_data(rx_buf_.data() + rx_pos_, frame_size);
+            const std::span<const uint8_t> record_data(rx_buf_.data() + rx_pos_, frame_size);
             rx_pos_ += frame_size;
 
             uint8_t content_type = 0;
