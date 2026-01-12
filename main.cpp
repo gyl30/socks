@@ -3,13 +3,12 @@
 #include <vector>
 #include <thread>
 #include <boost/asio.hpp>
-#include <boost/system/error_code.hpp>
 #include "log.h"
 #include "local_client.h"
 #include "remote_server.h"
 #include "context_pool.h"
 
-void print_usage(const char* prog)
+static void print_usage(const char* prog)
 {
     std::cout << "usage\n";
     std::cout << "  run as local client " << prog << " -c <remote_host> <remote_port> <local_port> <auth_key_hex> <sni>\n";
@@ -45,7 +44,7 @@ int main(int argc, char** argv)
             print_usage(argv[0]);
             return 1;
         }
-        uint16_t port = static_cast<uint16_t>(std::stoi(argv[2]));
+        const uint16_t port = static_cast<uint16_t>(std::stoi(argv[2]));
         auto server = std::make_shared<mux::remote_server>(pool, port, argv[3], argv[4], argv[5], ec);
         if (ec)
         {
@@ -62,7 +61,7 @@ int main(int argc, char** argv)
             print_usage(argv[0]);
             return 1;
         }
-        uint16_t l_port = static_cast<uint16_t>(std::stoi(argv[4]));
+        const uint16_t l_port = static_cast<uint16_t>(std::stoi(argv[4]));
         auto client = std::make_shared<mux::local_client>(pool, argv[2], argv[3], l_port, argv[5], argv[6], ec);
         if (ec)
         {

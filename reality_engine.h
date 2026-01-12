@@ -4,21 +4,23 @@
 #include <vector>
 #include <cstring>
 #include <span>
-#include <algorithm>
 #include <boost/system/error_code.hpp>
+#include <boost/asio.hpp>
 #include "reality_core.h"
 #include "log.h"
 
 class reality_engine
 {
    public:
-    static constexpr size_t RX_BUF_SIZE = 18 * 1024;
-    static constexpr size_t COMPACT_THRESHOLD = 4 * 1024;
+    static constexpr auto RX_BUF_SIZE = 18 * 1024;
+    static constexpr auto COMPACT_THRESHOLD = 4 * 1024;
+    static constexpr auto TX_BUF_INITIAL_SIZE = 16 * 1024;
 
     reality_engine(std::vector<uint8_t> r_key, std::vector<uint8_t> r_iv, std::vector<uint8_t> w_key, std::vector<uint8_t> w_iv)
         : read_key_(std::move(r_key)), read_iv_(std::move(r_iv)), write_key_(std::move(w_key)), write_iv_(std::move(w_iv))
     {
         rx_buf_.resize(RX_BUF_SIZE);
+        tx_buf_.reserve(TX_BUF_INITIAL_SIZE);
         LOG_DEBUG("reality engine initialized rx buffer size {} bytes", RX_BUF_SIZE);
     }
 
@@ -44,15 +46,15 @@ class reality_engine
             }
 
             const uint8_t* p = rx_buf_.data() + rx_pos_;
-            const uint16_t record_len = static_cast<uint16_t>((static_cast<uint16_t>(p[3]) << 8) | p[4]);
-            const size_t frame_size = reality::TLS_RECORD_HEADER_SIZE + record_len;
+            const auto record_len = static_cast<uint16_t>((static_cast<uint16_t>(p[3]) << 8) | p[4]);
+            const uint32_t frame_size = reality::TLS_RECORD_HEADER_SIZE + record_len;
 
             if (available < frame_size)
             {
                 break;
             }
 
-            std::vector<uint8_t> record_data(rx_buf_.begin() + rx_pos_, rx_buf_.begin() + rx_pos_ + frame_size);
+            const std::vector<uint8_t> record_data(rx_buf_.begin() + rx_pos_, rx_buf_.begin() + rx_pos_ + frame_size);
             rx_pos_ += frame_size;
 
             uint8_t content_type = 0;
@@ -81,16 +83,18 @@ class reality_engine
         return plaintexts;
     }
 
-    [[nodiscard]] std::vector<uint8_t> encrypt(const std::vector<uint8_t>& plaintext, boost::system::error_code& ec)
+    [[nodiscard]] std::span<const uint8_t> encrypt(const std::vector<uint8_t>& plaintext, boost::system::error_code& ec)
     {
         ec.clear();
+        tx_buf_.clear();
+
         if (plaintext.empty())
         {
             return {};
         }
 
-        auto ciphertext =
-            reality::tls_record_layer::encrypt_record(write_key_, write_iv_, write_seq_, plaintext, reality::CONTENT_TYPE_APPLICATION_DATA, ec);
+        reality::tls_record_layer::encrypt_record_append(
+            write_key_, write_iv_, write_seq_, plaintext, reality::CONTENT_TYPE_APPLICATION_DATA, tx_buf_, ec);
 
         if (ec)
         {
@@ -98,9 +102,10 @@ class reality_engine
             return {};
         }
 
-        LOG_TRACE("reality engine encrypted seq {} len {} to {}", write_seq_, plaintext.size(), ciphertext.size());
+        LOG_TRACE("reality engine encrypted seq {} len {} to {}", write_seq_, plaintext.size(), tx_buf_.size());
         write_seq_++;
-        return ciphertext;
+
+        return {tx_buf_.data(), tx_buf_.size()};
     }
 
    private:
@@ -129,8 +134,10 @@ class reality_engine
     uint64_t read_seq_ = 0;
     uint64_t write_seq_ = 0;
     std::vector<uint8_t> rx_buf_;
-    size_t rx_pos_ = 0;
-    size_t rx_end_ = 0;
+    uint32_t rx_pos_ = 0;
+    uint32_t rx_end_ = 0;
+
+    std::vector<uint8_t> tx_buf_;
 };
 
 #endif

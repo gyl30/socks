@@ -3,7 +3,6 @@
 
 #include <memory>
 #include <vector>
-#include <mutex>
 #include <atomic>
 #include <boost/asio.hpp>
 #include "mux_protocol.h"
