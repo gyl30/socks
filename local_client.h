@@ -18,25 +18,6 @@
 namespace mux
 {
 
-static boost::asio::ip::address normalize_ip_address(const boost::asio::ip::address &addr)
-{
-    if (addr.is_v4())
-    {
-        return addr;
-    }
-
-    if (addr.is_v6())
-    {
-        auto v6 = addr.to_v6();
-        if (v6.is_v4_mapped())
-        {
-            return v6.to_v4();
-        }
-    }
-
-    return addr;
-}
-
 class socks_session : public std::enable_shared_from_this<socks_session>
 {
    public:
@@ -329,7 +310,7 @@ class socks_session : public std::enable_shared_from_this<socks_session>
             co_return;
         }
 
-        auto local_addr = normalize_ip_address(tcp_local_ep.address());
+        auto local_addr = socks_codec::normalize_ip_address(tcp_local_ep.address());
 
         boost::asio::ip::udp::socket udp_sock(ex);
         auto udp_protocol = local_addr.is_v6() ? boost::asio::ip::udp::v6() : boost::asio::ip::udp::v4();
@@ -534,8 +515,10 @@ class local_client : public std::enable_shared_from_this<local_client>
     {
         LOG_INFO("client starting target {} port {} listening {}", r_host_, r_port_, l_port_);
         auto &io = pool_.get_io_context();
-        boost::asio::co_spawn(io, [this, self = shared_from_this()]() { return connect_remote_loop(); }, boost::asio::detached);
-        boost::asio::co_spawn(io, [this, self = shared_from_this()]() { return accept_local_loop(); }, boost::asio::detached);
+        boost::asio::co_spawn(
+            io, [this, self = shared_from_this()]() { return connect_remote_loop(); }, boost::asio::detached);
+        boost::asio::co_spawn(
+            io, [this, self = shared_from_this()]() { return accept_local_loop(); }, boost::asio::detached);
     }
 
    private:

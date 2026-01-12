@@ -2,6 +2,7 @@
 #define MUX_DISPATCHER_H
 
 #include <functional>
+#include <span>
 #include <vector>
 #include <cstring>
 #include <boost/asio/streambuf.hpp>
@@ -27,13 +28,13 @@ class mux_dispatcher
         }
 
         auto mutable_bufs = buffer_.prepare(data.size());
-        size_t n = boost::asio::buffer_copy(mutable_bufs, boost::asio::buffer(data.data(), data.size()));
+        const size_t n = boost::asio::buffer_copy(mutable_bufs, boost::asio::buffer(data.data(), data.size()));
         buffer_.commit(n);
 
         process_frames();
     }
 
-    [[nodiscard]] static std::vector<uint8_t> pack(uint32_t stream_id, uint8_t cmd, const std::vector<uint8_t> &payload)
+    [[nodiscard]] static std::vector<uint8_t> pack(uint32_t stream_id, uint8_t cmd, const std::vector<uint8_t>& payload)
     {
         std::vector<uint8_t> frame;
         frame.reserve(mux::HEADER_SIZE + payload.size());
@@ -54,7 +55,7 @@ class mux_dispatcher
     {
         while (buffer_.size() >= mux::HEADER_SIZE)
         {
-            const auto *ptr = boost::asio::buffer_cast<const uint8_t *>(buffer_.data());
+            const auto* ptr = static_cast<const uint8_t*>(buffer_.data().data());
             auto header = mux::mux_codec::decode_header(ptr);
             const uint32_t total_frame_len = mux::HEADER_SIZE + header.length;
 
