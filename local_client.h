@@ -43,7 +43,7 @@ class socks_session : public std::enable_shared_from_this<socks_session>
         LOG_INFO("socks {} session started from {}", sid_, remote_addr);
 
         ec = socket_.set_option(boost::asio::ip::tcp::no_delay(true), ec);
-
+        (void)ec;
         if (!co_await handshake_socks5())
         {
             LOG_WARN("socks {} handshake failed", sid_);
@@ -276,6 +276,7 @@ class socks_session : public std::enable_shared_from_this<socks_session>
             {
                 boost::system::error_code ignore;
                 ignore = socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ignore);
+                (void)ignore;
                 break;
             }
             total += data.size();
@@ -464,10 +465,8 @@ class local_client : public std::enable_shared_from_this<local_client>
     {
         LOG_INFO("client starting target {} port {} listening {}", r_host_, r_port_, l_port_);
         auto& io = pool_.get_io_context();
-        boost::asio::co_spawn(
-            io, [this, self = shared_from_this()]() { return connect_remote_loop(); }, boost::asio::detached);
-        boost::asio::co_spawn(
-            io, [this, self = shared_from_this()]() { return accept_local_loop(); }, boost::asio::detached);
+        boost::asio::co_spawn(io, [this, self = shared_from_this()]() { return connect_remote_loop(); }, boost::asio::detached);
+        boost::asio::co_spawn(io, [this, self = shared_from_this()]() { return accept_local_loop(); }, boost::asio::detached);
     }
 
    private:
@@ -723,6 +722,7 @@ class local_client : public std::enable_shared_from_this<local_client>
                     LOG_WARN("rejecting local connection tunnel not ready");
                     boost::system::error_code ignore_ec;
                     ignore_ec = s.close(ignore_ec);
+                    (void)ignore_ec;
                 }
             }
         }

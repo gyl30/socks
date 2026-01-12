@@ -18,20 +18,16 @@
 namespace reality
 {
 
-static const uint8_t K_REALITY_INFO[] = "REALITY";
-static const uint8_t CONTENT_TYPE_CHANGE_CIPHER_SPEC = 0x14;
-static const uint8_t CONTENT_TYPE_ALERT = 0x15;
-static const uint8_t CONTENT_TYPE_HANDSHAKE = 0x16;
-static const uint8_t CONTENT_TYPE_APPLICATION_DATA = 0x17;
+static constexpr uint8_t K_REALITY_INFO[] = "REALITY";
+static constexpr uint8_t CONTENT_TYPE_CHANGE_CIPHER_SPEC = 0x14;
+static constexpr uint8_t CONTENT_TYPE_ALERT = 0x15;
+static constexpr uint8_t CONTENT_TYPE_HANDSHAKE = 0x16;
+static constexpr uint8_t CONTENT_TYPE_APPLICATION_DATA = 0x17;
 
-static const size_t TLS_RECORD_HEADER_SIZE = 5;
-static const size_t AEAD_TAG_SIZE = 16;
-static const size_t MAX_TLS_PLAINTEXT_LEN = 16384;
+static constexpr size_t TLS_RECORD_HEADER_SIZE = 5;
+static constexpr size_t AEAD_TAG_SIZE = 16;
+static constexpr size_t MAX_TLS_PLAINTEXT_LEN = 16384;
 
-static const std::vector<uint16_t> GREASE_VALUES = {
-    0x0a0a, 0x1a1a, 0x2a2a, 0x3a3a, 0x4a4a, 0x5a5a, 0x6a6a, 0x7a7a, 0x8a8a, 0x9a9a, 0xaaaa, 0xbaba, 0xcaca, 0xdada, 0xeaea, 0xfafa};
-
-// RAII Wrappers for OpenSSL objects
 namespace openssl_ptrs
 {
 struct evp_pkey_deleter
@@ -120,6 +116,9 @@ class crypto_util
     {
         uint8_t idx;
         RAND_bytes(&idx, 1);
+        static std::vector<uint16_t> GREASE_VALUES = {
+            0x0a0a, 0x1a1a, 0x2a2a, 0x3a3a, 0x4a4a, 0x5a5a, 0x6a6a, 0x7a7a, 0x8a8a, 0x9a9a, 0xaaaa, 0xbaba, 0xcaca, 0xdada, 0xeaea, 0xfafa};
+
         return GREASE_VALUES[idx % GREASE_VALUES.size()];
     }
 
@@ -345,11 +344,12 @@ class crypto_util
         return plaintext;
     }
 
-    [[nodiscard]] static std::vector<uint8_t> aes_gcm_encrypt(const std::vector<uint8_t>& key,
-                                                              const std::vector<uint8_t>& nonce,
-                                                              const std::vector<uint8_t>& plaintext,
-                                                              const std::vector<uint8_t>& aad,
-                                                              boost::system::error_code& ec)
+    static void aes_gcm_encrypt_append(const std::vector<uint8_t>& key,
+                                       const std::vector<uint8_t>& nonce,
+                                       const std::vector<uint8_t>& plaintext,
+                                       const std::vector<uint8_t>& aad,
+                                       std::vector<uint8_t>& output_buffer,
+                                       boost::system::error_code& ec)
     {
         const EVP_CIPHER* cipher = (key.size() == 32) ? EVP_aes_256_gcm() : EVP_aes_128_gcm();
         const openssl_ptrs::evp_cipher_ctx_ptr ctx(EVP_CIPHER_CTX_new());
@@ -357,13 +357,21 @@ class crypto_util
         if (!ctx)
         {
             ec = boost::system::errc::make_error_code(boost::system::errc::not_enough_memory);
-            return {};
+            return;
         }
 
-        std::vector<uint8_t> ciphertext(plaintext.size() + AEAD_TAG_SIZE);
         int out_len = 0;
         int final_len = 0;
         int ret = 1;
+
+        const size_t current_size = output_buffer.size();
+        const size_t required_size = current_size + plaintext.size() + AEAD_TAG_SIZE;
+        if (output_buffer.capacity() < required_size)
+        {
+            output_buffer.reserve(std::max(output_buffer.capacity() * 2, required_size));
+        }
+        output_buffer.resize(required_size);
+        uint8_t* out_ptr = output_buffer.data() + current_size;
 
         ret &= EVP_EncryptInit_ex(ctx.get(), cipher, nullptr, nullptr, nullptr);
         ret &= EVP_CIPHER_CTX_ctrl(ctx.get(), EVP_CTRL_GCM_SET_IVLEN, static_cast<int>(nonce.size()), nullptr);
@@ -375,20 +383,31 @@ class crypto_util
             ret &= EVP_EncryptUpdate(ctx.get(), nullptr, &aad_len_dummy, aad.data(), static_cast<int>(aad.size()));
         }
 
-        ret &= EVP_EncryptUpdate(ctx.get(), ciphertext.data(), &out_len, plaintext.data(), static_cast<int>(plaintext.size()));
-        ret &= EVP_EncryptFinal_ex(ctx.get(), ciphertext.data() + out_len, &final_len);
+        ret &= EVP_EncryptUpdate(ctx.get(), out_ptr, &out_len, plaintext.data(), static_cast<int>(plaintext.size()));
+        ret &= EVP_EncryptFinal_ex(ctx.get(), out_ptr + out_len, &final_len);
 
-        ret &= EVP_CIPHER_CTX_ctrl(ctx.get(), EVP_CTRL_GCM_GET_TAG, AEAD_TAG_SIZE, ciphertext.data() + out_len + final_len);
+        ret &= EVP_CIPHER_CTX_ctrl(ctx.get(), EVP_CTRL_GCM_GET_TAG, AEAD_TAG_SIZE, out_ptr + out_len + final_len);
 
         if (ret <= 0)
         {
             ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
-            return {};
+            output_buffer.resize(current_size);
+            return;
         }
 
-        ciphertext.resize(out_len + final_len + AEAD_TAG_SIZE);
+        output_buffer.resize(current_size + out_len + final_len + AEAD_TAG_SIZE);
         ec.clear();
-        return ciphertext;
+    }
+
+    [[nodiscard]] static std::vector<uint8_t> aes_gcm_encrypt(const std::vector<uint8_t>& key,
+                                                              const std::vector<uint8_t>& nonce,
+                                                              const std::vector<uint8_t>& plaintext,
+                                                              const std::vector<uint8_t>& aad,
+                                                              boost::system::error_code& ec)
+    {
+        std::vector<uint8_t> out;
+        aes_gcm_encrypt_append(key, nonce, plaintext, aad, out, ec);
+        return out;
     }
 };
 
@@ -424,7 +443,7 @@ class tls_key_schedule
                                                               const std::vector<uint8_t>& server_hello_hash,
                                                               boost::system::error_code& ec)
     {
-        const size_t hash_len = 32;
+        constexpr size_t hash_len = 32;
         const std::vector<uint8_t> zero_salt(hash_len, 0);
         const std::vector<uint8_t> early_secret = crypto_util::hkdf_extract(zero_salt, zero_salt, ec);
         if (ec)
@@ -468,14 +487,14 @@ class tls_key_schedule
             return {};
         }
 
-        return {c_hs_secret, s_hs_secret, master_secret};
+        return {.client_handshake_traffic_secret = c_hs_secret, .server_handshake_traffic_secret = s_hs_secret, .master_secret = master_secret};
     }
 
     [[nodiscard]] static std::pair<std::vector<uint8_t>, std::vector<uint8_t>> derive_application_secrets(const std::vector<uint8_t>& master_secret,
                                                                                                           const std::vector<uint8_t>& handshake_hash,
                                                                                                           boost::system::error_code& ec)
     {
-        const size_t hash_len = 32;
+        constexpr size_t hash_len = 32;
         const std::vector<uint8_t> c_app_secret = crypto_util::hkdf_expand_label(master_secret, "c ap traffic", handshake_hash, hash_len, ec);
         if (ec)
         {
@@ -493,7 +512,7 @@ class tls_key_schedule
                                                                            const std::vector<uint8_t>& handshake_hash,
                                                                            boost::system::error_code& ec)
     {
-        const size_t hash_len = 32;
+        constexpr size_t hash_len = 32;
         const std::vector<uint8_t> finished_key = crypto_util::hkdf_expand_label(base_key, "finished", {}, hash_len, ec);
         if (ec)
         {
@@ -517,14 +536,17 @@ class tls_key_schedule
 class tls_record_layer
 {
    public:
-    [[nodiscard]] static std::vector<uint8_t> encrypt_record(const std::vector<uint8_t>& key,
-                                                             const std::vector<uint8_t>& iv,
-                                                             uint64_t seq,
-                                                             const std::vector<uint8_t>& plaintext,
-                                                             uint8_t content_type,
-                                                             boost::system::error_code& ec)
+    static void encrypt_record_append(const std::vector<uint8_t>& key,
+                                      const std::vector<uint8_t>& iv,
+                                      uint64_t seq,
+                                      const std::vector<uint8_t>& plaintext,
+                                      uint8_t content_type,
+                                      std::vector<uint8_t>& output_buffer,
+                                      boost::system::error_code& ec)
     {
-        std::vector<uint8_t> inner_plaintext = plaintext;
+        std::vector<uint8_t> inner_plaintext;
+        inner_plaintext.reserve(plaintext.size() + 1);
+        inner_plaintext.insert(inner_plaintext.end(), plaintext.begin(), plaintext.end());
         inner_plaintext.push_back(content_type);
 
         std::vector<uint8_t> nonce = iv;
@@ -534,24 +556,35 @@ class tls_record_layer
         }
 
         const auto ciphertext_len = static_cast<uint16_t>(inner_plaintext.size() + AEAD_TAG_SIZE);
-        std::vector<uint8_t> header(5);
+
+        const size_t old_size = output_buffer.size();
+        output_buffer.resize(old_size + 5);
+        uint8_t* header = output_buffer.data() + old_size;
+
         header[0] = CONTENT_TYPE_APPLICATION_DATA;
         header[1] = TLS1_2_VERSION_MAJOR;
         header[2] = TLS1_2_VERSION_MINOR;
         header[3] = static_cast<uint8_t>((ciphertext_len >> 8) & 0xFF);
         header[4] = static_cast<uint8_t>(ciphertext_len & 0xFF);
 
-        std::vector<uint8_t> ciphertext = crypto_util::aes_gcm_encrypt(key, nonce, inner_plaintext, header, ec);
+        crypto_util::aes_gcm_encrypt_append(key, nonce, inner_plaintext, {header, header + 5}, output_buffer, ec);
+
         if (ec)
         {
-            return {};
+            output_buffer.resize(old_size);
         }
+    }
 
-        std::vector<uint8_t> record;
-        record.reserve(header.size() + ciphertext.size());
-        record.insert(record.end(), header.begin(), header.end());
-        record.insert(record.end(), ciphertext.begin(), ciphertext.end());
-        return record;
+    [[nodiscard]] static std::vector<uint8_t> encrypt_record(const std::vector<uint8_t>& key,
+                                                             const std::vector<uint8_t>& iv,
+                                                             uint64_t seq,
+                                                             const std::vector<uint8_t>& plaintext,
+                                                             uint8_t content_type,
+                                                             boost::system::error_code& ec)
+    {
+        std::vector<uint8_t> out;
+        encrypt_record_append(key, iv, seq, plaintext, content_type, out, ec);
+        return out;
     }
 
     [[nodiscard]] static std::vector<uint8_t> decrypt_record(const std::vector<uint8_t>& key,
