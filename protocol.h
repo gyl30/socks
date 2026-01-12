@@ -45,6 +45,25 @@ struct socks_udp_header
 class socks_codec
 {
    public:
+    static boost::asio::ip::address normalize_ip_address(const boost::asio::ip::address &addr)
+    {
+        if (addr.is_v4())
+        {
+            return addr;
+        }
+
+        if (addr.is_v6())
+        {
+            const auto &v6 = addr.to_v6();
+            if (v6.is_v4_mapped())
+            {
+                return boost::asio::ip::make_address_v4(boost::asio::ip::v4_mapped, v6);
+            }
+        }
+
+        return addr;
+    }
+
     [[nodiscard]] static std::vector<uint8_t> encode_udp_header(const socks_udp_header &h)
     {
         std::vector<uint8_t> buf;
@@ -58,11 +77,7 @@ class socks_codec
 
         if (!ec && address.is_v6())
         {
-            auto v6_addr = address.to_v6();
-            if (v6_addr.is_v4_mapped())
-            {
-                address = v6_addr.to_v4();
-            }
+            address = normalize_ip_address(address);
         }
 
         if (!ec && address.is_v4())
