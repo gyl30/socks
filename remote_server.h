@@ -25,7 +25,7 @@ class ch_parser
         client_hello_info_t info;
         reader r(buf);
 
-        if (r.remaining() >= 5 && r.peek(0) == 0x16 && r.peek(1) == 0x03)
+        if (r.remaining() >= 5 && r.peek(0) == 0x16 && r.peek(1) == static_cast<uint8_t>(reality::tls_consts::VER_1_2 >> 8))
         {
             r.skip(5);
         }
@@ -186,11 +186,11 @@ class ch_parser
                 break;
             }
 
-            if (type == 0x0000)
+            if (type == reality::tls_consts::ext::SNI)
             {
                 parse_sni(val, info);
             }
-            else if (type == 0x0033)
+            else if (type == reality::tls_consts::ext::KEY_SHARE)
             {
                 parse_key_share(val, info);
             }
@@ -236,7 +236,7 @@ class ch_parser
             r.read_u16(group);
             r.read_u16(key_len);
 
-            if (group == 0x001d && key_len == 32)
+            if (group == reality::tls_consts::group::X25519 && key_len == 32)
             {
                 if (r.has(32))
                 {
@@ -379,23 +379,35 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
 {
    public:
     remote_udp_session(std::shared_ptr<mux_connection> connection, uint32_t id, const boost::asio::any_io_executor &ex)
-        : connection_(std::move(connection)), id_(id), udp_socket_(ex), udp_resolver_(ex), recv_channel_(ex, 128)
+        : id_(id), connection_(std::move(connection)), udp_socket_(ex), udp_resolver_(ex), timer_(ex), recv_channel_(ex, 128)
     {
+        last_activity_ = std::chrono::steady_clock::now();
     }
 
     boost::asio::awaitable<void> start()
     {
         uint32_t cid = connection_->id();
         boost::system::error_code ec;
-        ec = udp_socket_.open(boost::asio::ip::udp::v4(), ec);
-        if (!ec)
-        {
-            ec = udp_socket_.bind(boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0), ec);
-        }
-
+        ec = udp_socket_.open(boost::asio::ip::udp::v6(), ec);
         if (ec)
         {
-            LOG_ERROR("srv {} stream {} udp open/bind failed {}", cid, id_, ec.message());
+            LOG_ERROR("srv {} stream {} udp open failed {}", cid, id_, ec.message());
+            ack_payload const ack{.socks_rep = socks::REP_GEN_FAIL, .bnd_addr = "", .bnd_port = 0};
+            co_await connection_->send_async(id_, CMD_ACK, mux_codec::encode_ack(ack));
+            co_return;
+        }
+        ec = udp_socket_.set_option(boost::asio::ip::v6_only(false), ec);
+        if (ec)
+        {
+            LOG_ERROR("srv {} stream {} udp v4 and v6 failed {}", cid, id_, ec.message());
+            ack_payload const ack{.socks_rep = socks::REP_GEN_FAIL, .bnd_addr = "", .bnd_port = 0};
+            co_await connection_->send_async(id_, CMD_ACK, mux_codec::encode_ack(ack));
+            co_return;
+        }
+        ec = udp_socket_.bind(boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v6(), 0), ec);
+        if (ec)
+        {
+            LOG_ERROR("srv {} stream {} udp bind failed {}", cid, id_, ec.message());
             ack_payload const ack{.socks_rep = socks::REP_GEN_FAIL, .bnd_addr = "", .bnd_port = 0};
             co_await connection_->send_async(id_, CMD_ACK, mux_codec::encode_ack(ack));
             co_return;
@@ -408,7 +420,7 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
         co_await connection_->send_async(id_, CMD_ACK, mux_codec::encode_ack(ack_pl));
 
         using boost::asio::experimental::awaitable_operators::operator&&;
-        co_await (mux_to_udp() && udp_to_mux());
+        co_await (mux_to_udp() && udp_to_mux() && watchdog());
 
         if (manager_)
         {
@@ -429,6 +441,31 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
     void set_manager(const std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> &m) { manager_ = m; }
 
    private:
+    void update_activity() { last_activity_ = std::chrono::steady_clock::now(); }
+
+    boost::asio::awaitable<void> watchdog()
+    {
+        const std::chrono::seconds idle_timeout(60);
+        const std::chrono::seconds check_interval(10);
+
+        while (udp_socket_.is_open())
+        {
+            timer_.expires_after(check_interval);
+            auto [ec] = co_await timer_.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
+            if (ec)
+            {
+                LOG_ERROR("srv {} stream {} udp session watchdog failed {}", connection_->id(), id_, ec.message());
+                break;
+            }
+            auto now = std::chrono::steady_clock::now();
+            if (now - last_activity_ > idle_timeout)
+            {
+                LOG_INFO("srv {} stream {} udp session timed out after {}s idle", connection_->id(), id_, idle_timeout.count());
+                on_close();
+                break;
+            }
+        }
+    }
     boost::asio::awaitable<void> mux_to_udp()
     {
         uint32_t cid = connection_->id();
@@ -502,12 +539,15 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
         }
     }
 
-    std::shared_ptr<mux_connection> connection_;
+   private:
     uint32_t id_;
+    std::shared_ptr<mux_connection> connection_;
     boost::asio::ip::udp::socket udp_socket_;
     boost::asio::ip::udp::resolver udp_resolver_;
-    boost::asio::experimental::concurrent_channel<void(boost::system::error_code, std::vector<uint8_t>)> recv_channel_;
+    boost::asio::steady_timer timer_;
+    std::chrono::steady_clock::time_point last_activity_;
     std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> manager_;
+    boost::asio::experimental::concurrent_channel<void(boost::system::error_code, std::vector<uint8_t>)> recv_channel_;
 };
 
 class remote_server : public std::enable_shared_from_this<remote_server>
@@ -893,19 +933,24 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         auto [er, eps] = co_await r.async_resolve(fb_host_, fb_port_, boost::asio::as_tuple(boost::asio::use_awaitable));
         if (er)
         {
-            LOG_ERROR("srv {} fallback resolve failed {}", conn_id, er.message());
+            LOG_WARN("srv {} fallback resolve failed {}", conn_id, er.message());
             co_return;
         }
 
         auto [ec_c, ep_c] = co_await boost::asio::async_connect(t, eps, boost::asio::as_tuple(boost::asio::use_awaitable));
         if (ec_c)
         {
-            LOG_ERROR("srv {} fallback connect failed {}", conn_id, ec_c.message());
+            LOG_WARN("srv {} fallback connect failed {}", conn_id, ec_c.message());
             co_return;
         }
 
         LOG_INFO("srv {} fallback proxying to {}:{}", conn_id, fb_host_, fb_port_);
-        co_await boost::asio::async_write(t, boost::asio::buffer(buf), boost::asio::as_tuple(boost::asio::use_awaitable));
+        auto [we, wn] = co_await boost::asio::async_write(t, boost::asio::buffer(buf), boost::asio::as_tuple(boost::asio::use_awaitable));
+        if (we)
+        {
+            LOG_WARN("srv {} fallback forward initial data failed {}", conn_id, we.message());
+            co_return;
+        }
 
         auto xfer = [](auto &f, auto &t) -> boost::asio::awaitable<void>
         {
