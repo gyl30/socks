@@ -152,15 +152,9 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     {
         while (is_open())
         {
-            const std::span<uint8_t> tls_write_buf = reality_engine_.get_write_buffer();
-            if (tls_write_buf.empty())
-            {
-                LOG_ERROR("mux {} buffer full", cid_);
-                break;
-            }
+            auto buf = reality_engine_.get_read_buffer(8192);
 
-            auto [read_ec, n] = co_await socket_.async_read_some(boost::asio::buffer(tls_write_buf.data(), tls_write_buf.size()),
-                                                                 boost::asio::as_tuple(boost::asio::use_awaitable));
+            auto [read_ec, n] = co_await socket_.async_read_some(buf, boost::asio::as_tuple(boost::asio::use_awaitable));
 
             if (read_ec || n == 0)
             {
@@ -171,7 +165,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
                 break;
             }
 
-            reality_engine_.commit_written(n);
+            reality_engine_.commit_read(n);
             update_activity();
 
             boost::system::error_code decrypt_ec;

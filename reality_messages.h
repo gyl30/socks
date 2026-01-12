@@ -64,7 +64,7 @@ class chrome_client_hello_builder
             return ext;
         }
 
-        message_builder::push_u16(ext, 0x0000);
+        message_builder::push_u16(ext, tls_consts::ext::SNI);
         std::vector<uint8_t> sn_list;
         std::vector<uint8_t> sn_entry;
         sn_entry.push_back(0x00);
@@ -82,7 +82,7 @@ class chrome_client_hello_builder
     [[nodiscard]] static std::vector<uint8_t> build_extended_master_secret()
     {
         std::vector<uint8_t> ext;
-        message_builder::push_u16(ext, 0x0017);
+        message_builder::push_u16(ext, tls_consts::ext::EXT_MASTER_SECRET);
         message_builder::push_u16(ext, 0x0000);
         return ext;
     }
@@ -90,7 +90,7 @@ class chrome_client_hello_builder
     [[nodiscard]] static std::vector<uint8_t> build_renegotiation_info()
     {
         std::vector<uint8_t> ext;
-        message_builder::push_u16(ext, 0xff01);
+        message_builder::push_u16(ext, tls_consts::ext::RENEGOTIATION_INFO);
         message_builder::push_u16(ext, 0x0001);
         ext.push_back(0x00);
         return ext;
@@ -99,10 +99,10 @@ class chrome_client_hello_builder
     [[nodiscard]] static std::vector<uint8_t> build_supported_groups(uint16_t grease_group)
     {
         std::vector<uint8_t> ext;
-        message_builder::push_u16(ext, 0x000a);
+        message_builder::push_u16(ext, tls_consts::ext::SUPPORTED_GROUPS);
         std::vector<uint8_t> groups;
         message_builder::push_u16(groups, grease_group);
-        message_builder::push_u16(groups, 0x001d);
+        message_builder::push_u16(groups, tls_consts::group::X25519);
         message_builder::push_u16(groups, 0x0017);
         message_builder::push_u16(groups, 0x0018);
 
@@ -115,7 +115,7 @@ class chrome_client_hello_builder
     [[nodiscard]] static std::vector<uint8_t> build_ec_point_formats()
     {
         std::vector<uint8_t> ext;
-        message_builder::push_u16(ext, 0x000b);
+        message_builder::push_u16(ext, tls_consts::ext::EC_POINT_FORMATS);
         message_builder::push_u16(ext, 0x0002);
         ext.push_back(0x01);
         ext.push_back(0x00);
@@ -125,7 +125,7 @@ class chrome_client_hello_builder
     [[nodiscard]] static std::vector<uint8_t> build_alpn()
     {
         std::vector<uint8_t> ext;
-        message_builder::push_u16(ext, 0x0010);
+        message_builder::push_u16(ext, tls_consts::ext::ALPN);
         const std::vector<uint8_t> protos = {2, 'h', '2', 8, 'h', 't', 't', 'p', '/', '1', '.', '1'};
         message_builder::push_u16(ext, static_cast<uint16_t>(protos.size() + 2));
         message_builder::push_u16(ext, static_cast<uint16_t>(protos.size()));
@@ -136,7 +136,7 @@ class chrome_client_hello_builder
     [[nodiscard]] static std::vector<uint8_t> build_signature_algorithms()
     {
         std::vector<uint8_t> ext;
-        message_builder::push_u16(ext, 0x000d);
+        message_builder::push_u16(ext, tls_consts::ext::SIGNATURE_ALGS);
         const std::vector<uint16_t> algs = {0x0403, 0x0804, 0x0401, 0x0503, 0x0805, 0x0501, 0x0806, 0x0601};
         message_builder::push_u16(ext, static_cast<uint16_t>((algs.size() * 2) + 2));
         message_builder::push_u16(ext, static_cast<uint16_t>(algs.size() * 2));
@@ -150,12 +150,12 @@ class chrome_client_hello_builder
     [[nodiscard]] static std::vector<uint8_t> build_key_share(uint16_t grease_group, const std::vector<uint8_t> &pub_key)
     {
         std::vector<uint8_t> ext;
-        message_builder::push_u16(ext, 0x0033);
+        message_builder::push_u16(ext, tls_consts::ext::KEY_SHARE);
         std::vector<uint8_t> shares;
         message_builder::push_u16(shares, grease_group);
         message_builder::push_u16(shares, 1);
         shares.push_back(0x00);
-        message_builder::push_u16(shares, 0x001d);
+        message_builder::push_u16(shares, tls_consts::group::X25519);
         message_builder::push_u16(shares, static_cast<uint16_t>(pub_key.size()));
         message_builder::push_bytes(shares, pub_key);
 
@@ -168,11 +168,11 @@ class chrome_client_hello_builder
     [[nodiscard]] static std::vector<uint8_t> build_supported_versions(uint16_t grease_ver)
     {
         std::vector<uint8_t> ext;
-        message_builder::push_u16(ext, 0x002b);
+        message_builder::push_u16(ext, tls_consts::ext::SUPPORTED_VERSIONS);
         std::vector<uint8_t> vers;
         message_builder::push_u16(vers, grease_ver);
-        message_builder::push_u16(vers, 0x0304);
-        message_builder::push_u16(vers, 0x0303);
+        message_builder::push_u16(vers, tls_consts::VER_1_3);
+        message_builder::push_u16(vers, tls_consts::VER_1_2);
         message_builder::push_u16(ext, static_cast<uint16_t>(vers.size() + 1));
         ext.push_back(static_cast<uint8_t>(vers.size()));
         message_builder::push_bytes(ext, vers);
@@ -193,7 +193,7 @@ class chrome_client_hello_builder
         const size_t data_len = padding_needed - 4;
 
         std::vector<uint8_t> ext;
-        message_builder::push_u16(ext, 0x0015);
+        message_builder::push_u16(ext, tls_consts::ext::PADDING);
         message_builder::push_u16(ext, static_cast<uint16_t>(data_len));
         ext.insert(ext.end(), data_len, 0x00);
         return ext;
@@ -205,8 +205,8 @@ inline std::vector<uint8_t> write_record_header(uint8_t record_type, uint16_t le
     std::vector<uint8_t> header;
     header.reserve(5);
     header.push_back(record_type);
-    header.push_back(TLS1_2_VERSION_MAJOR);
-    header.push_back(TLS1_VERSION_MINOR);
+    header.push_back(static_cast<uint8_t>((tls_consts::VER_1_2 >> 8) & 0xFF));
+    header.push_back(static_cast<uint8_t>(tls_consts::VER_1_2 & 0xFF));
     message_builder::push_u16(header, length);
     return header;
 }
@@ -227,7 +227,7 @@ inline std::vector<uint8_t> construct_client_hello(const std::vector<uint8_t> &c
     hello.push_back(0);
     hello.push_back(0);
     hello.push_back(0);
-    message_builder::push_u16(hello, 0x0303);
+    message_builder::push_u16(hello, tls_consts::VER_1_2);
     message_builder::push_bytes(hello, client_random);
     hello.push_back(static_cast<uint8_t>(session_id.size()));
     message_builder::push_bytes(hello, session_id);
@@ -277,7 +277,7 @@ inline std::vector<uint8_t> construct_server_hello(const std::vector<uint8_t> &s
     hello.push_back(0);
     hello.push_back(0);
     hello.push_back(0);
-    message_builder::push_u16(hello, 0x0303);
+    message_builder::push_u16(hello, tls_consts::VER_1_2);
     message_builder::push_bytes(hello, server_random);
     hello.push_back(static_cast<uint8_t>(session_id.size()));
     message_builder::push_bytes(hello, session_id);
@@ -285,14 +285,14 @@ inline std::vector<uint8_t> construct_server_hello(const std::vector<uint8_t> &s
     hello.push_back(0x00);
 
     std::vector<uint8_t> extensions;
-    message_builder::push_u16(extensions, 0x002b);
+    message_builder::push_u16(extensions, tls_consts::ext::SUPPORTED_VERSIONS);
     message_builder::push_u16(extensions, 2);
-    message_builder::push_u16(extensions, 0x0304);
+    message_builder::push_u16(extensions, tls_consts::VER_1_3);
 
-    message_builder::push_u16(extensions, 0x0033);
+    message_builder::push_u16(extensions, tls_consts::ext::KEY_SHARE);
     const auto ext_len = static_cast<uint16_t>(2 + 2 + server_public_key.size());
     message_builder::push_u16(extensions, ext_len);
-    message_builder::push_u16(extensions, 0x001d);
+    message_builder::push_u16(extensions, tls_consts::group::X25519);
     message_builder::push_u16(extensions, static_cast<uint16_t>(server_public_key.size()));
     message_builder::push_bytes(extensions, server_public_key);
 
@@ -395,7 +395,7 @@ inline std::vector<uint8_t> extract_server_public_key(const std::vector<uint8_t>
         const auto etype = static_cast<uint16_t>((server_hello[pos] << 8) | server_hello[pos + 1]);
         const auto elen = static_cast<uint16_t>((server_hello[pos + 2] << 8) | server_hello[pos + 3]);
         pos += 4;
-        if (etype == 51 && elen >= 4)
+        if (etype == tls_consts::ext::KEY_SHARE && elen >= 4)
         {
             const auto klen = static_cast<uint16_t>((server_hello[pos + 2] << 8) | server_hello[pos + 3]);
             if (klen == 32)

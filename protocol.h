@@ -56,6 +56,15 @@ class socks_codec
         boost::system::error_code ec;
         auto address = boost::asio::ip::make_address(h.addr, ec);
 
+        if (!ec && address.is_v6())
+        {
+            auto v6_addr = address.to_v6();
+            if (v6_addr.is_v4_mapped())
+            {
+                address = v6_addr.to_v4();
+            }
+        }
+
         if (!ec && address.is_v4())
         {
             buf.push_back(socks::ATYP_IPV4);

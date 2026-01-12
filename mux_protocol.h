@@ -16,7 +16,7 @@ constexpr std::uint8_t CMD_FIN = 0x04;
 constexpr std::uint8_t CMD_RST = 0x05;
 
 constexpr std::size_t HEADER_SIZE = 7;
-constexpr std::size_t MAX_PAYLOAD = 16384;
+constexpr std::size_t MAX_PAYLOAD = (64L * 1024) - 128;
 
 struct frame_header
 {
