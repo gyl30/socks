@@ -15,12 +15,14 @@ class reality_engine
     static constexpr auto RX_BUF_SIZE = 18 * 1024;
     static constexpr auto COMPACT_THRESHOLD = 4 * 1024;
     static constexpr auto TX_BUF_INITIAL_SIZE = 16 * 1024;
+    static constexpr auto SCRATCH_BUF_SIZE = 18 * 1024;
 
     reality_engine(std::vector<uint8_t> r_key, std::vector<uint8_t> r_iv, std::vector<uint8_t> w_key, std::vector<uint8_t> w_iv)
         : read_key_(std::move(r_key)), read_iv_(std::move(r_iv)), write_key_(std::move(w_key)), write_iv_(std::move(w_iv))
     {
         rx_buf_.resize(RX_BUF_SIZE);
         tx_buf_.reserve(TX_BUF_INITIAL_SIZE);
+        scratch_buf_.resize(SCRATCH_BUF_SIZE);
         LOG_DEBUG("reality engine initialized rx buffer size {} bytes", RX_BUF_SIZE);
     }
 
@@ -32,9 +34,13 @@ class reality_engine
 
     void commit_written(size_t n) { rx_end_ += n; }
 
-    [[nodiscard]] std::vector<std::vector<uint8_t>> decrypt_available_records(boost::system::error_code& ec)
+    /**
+     * @brief 处理缓冲区中的 TLS 记录，解密并通过回调传递数据，避免 vector 拷贝。
+     * @tparam Callback 类型 void(uint8_t type, std::span<const uint8_t> data)
+     */
+    template <typename Callback>
+    void process_available_records(boost::system::error_code& ec, Callback&& callback)
     {
-        std::vector<std::vector<uint8_t>> plaintexts;
         ec.clear();
 
         while (true)
@@ -54,33 +60,37 @@ class reality_engine
                 break;
             }
 
-            const std::vector<uint8_t> record_data(rx_buf_.begin() + rx_pos_, rx_buf_.begin() + rx_pos_ + frame_size);
+            std::span<const uint8_t> record_data(rx_buf_.data() + rx_pos_, frame_size);
             rx_pos_ += frame_size;
 
             uint8_t content_type = 0;
-            auto plaintext = reality::tls_record_layer::decrypt_record(read_key_, read_iv_, read_seq_, record_data, content_type, ec);
+
+            if (scratch_buf_.size() < frame_size)
+            {
+                scratch_buf_.resize(frame_size);
+            }
+
+            size_t decrypted_len = reality::tls_record_layer::decrypt_record(
+                read_key_, read_iv_, read_seq_, record_data, std::span<uint8_t>(scratch_buf_), content_type, ec);
 
             if (ec)
             {
                 LOG_ERROR("reality engine decrypt failed at seq {} error {}", read_seq_, ec.message());
-                return {};
+                return;
             }
 
-            LOG_TRACE("reality engine decrypted seq {} type {} len {}", read_seq_, static_cast<int>(content_type), plaintext.size());
+            LOG_TRACE("reality engine decrypted seq {} type {} len {}", read_seq_, static_cast<int>(content_type), decrypted_len);
             read_seq_++;
 
-            if (content_type == reality::CONTENT_TYPE_APPLICATION_DATA && !plaintext.empty())
-            {
-                plaintexts.push_back(std::move(plaintext));
-            }
-            else if (content_type == reality::CONTENT_TYPE_ALERT)
+            callback(content_type, std::span<const uint8_t>(scratch_buf_.data(), decrypted_len));
+
+            if (content_type == reality::CONTENT_TYPE_ALERT)
             {
                 LOG_INFO("reality engine received tls alert closing connection");
                 ec = boost::asio::error::eof;
-                return {};
+                return;
             }
         }
-        return plaintexts;
     }
 
     [[nodiscard]] std::span<const uint8_t> encrypt(const std::vector<uint8_t>& plaintext, boost::system::error_code& ec)
@@ -138,6 +148,7 @@ class reality_engine
     uint32_t rx_end_ = 0;
 
     std::vector<uint8_t> tx_buf_;
+    std::vector<uint8_t> scratch_buf_;
 };
 
 #endif

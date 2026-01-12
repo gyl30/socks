@@ -32,33 +32,37 @@ constexpr std::uint8_t REP_CONN_REFUSED = 0x05;
 constexpr std::uint8_t REP_TTL_EXPIRED = 0x06;
 constexpr std::uint8_t REP_CMD_NOT_SUPPORTED = 0x07;
 constexpr std::uint8_t REP_ADDR_TYPE_NOT_SUPPORTED = 0x08;
-}    
+}    // namespace socks
 
 struct socks_udp_header
 {
-    uint8_t frag_ = 0;
-    std::string addr_;
-    uint16_t port_ = 0;
-    size_t header_len_ = 0;
+    uint8_t frag = 0;
+    std::string addr;
+    uint16_t port = 0;
+    size_t header_len = 0;
+};
 
-    [[nodiscard]] std::vector<uint8_t> encode() const
+class socks_codec
+{
+   public:
+    [[nodiscard]] static std::vector<uint8_t> encode_udp_header(const socks_udp_header &h)
     {
         std::vector<uint8_t> buf;
         buf.reserve(24);
         buf.push_back(0x00);
         buf.push_back(0x00);
-        buf.push_back(frag_);
+        buf.push_back(h.frag);
 
         boost::system::error_code ec;
-        auto address = boost::asio::ip::make_address(addr_, ec);
+        auto address = boost::asio::ip::make_address(h.addr, ec);
 
-        if (ec == boost::system::error_code{} && address.is_v4())
+        if (!ec && address.is_v4())
         {
             buf.push_back(socks::ATYP_IPV4);
             auto bytes = address.to_v4().to_bytes();
             buf.insert(buf.end(), bytes.begin(), bytes.end());
         }
-        else if (ec == boost::system::error_code{} && address.is_v6())
+        else if (!ec && address.is_v6())
         {
             buf.push_back(socks::ATYP_IPV6);
             auto bytes = address.to_v6().to_bytes();
@@ -67,23 +71,23 @@ struct socks_udp_header
         else
         {
             buf.push_back(socks::ATYP_DOMAIN);
-            buf.push_back(static_cast<uint8_t>(addr_.size()));
-            buf.insert(buf.end(), addr_.begin(), addr_.end());
+            buf.push_back(static_cast<uint8_t>(h.addr.size()));
+            buf.insert(buf.end(), h.addr.begin(), h.addr.end());
         }
 
-        buf.push_back(static_cast<uint8_t>((port_ >> 8) & 0xFF));
-        buf.push_back(static_cast<uint8_t>(port_ & 0xFF));
+        buf.push_back(static_cast<uint8_t>((h.port >> 8) & 0xFF));
+        buf.push_back(static_cast<uint8_t>(h.port & 0xFF));
         return buf;
     }
 
-    [[nodiscard]] static bool decode(const uint8_t *data, size_t len, socks_udp_header &out)
+    [[nodiscard]] static bool decode_udp_header(const uint8_t *data, size_t len, socks_udp_header &out)
     {
         if (len < 4)
         {
             return false;
         }
 
-        out.frag_ = data[2];
+        out.frag = data[2];
         const uint8_t atyp = data[3];
 
         size_t pos = 4;
@@ -95,7 +99,7 @@ struct socks_udp_header
             }
             boost::asio::ip::address_v4::bytes_type b;
             std::memcpy(b.data(), data + pos, 4);
-            out.addr_ = boost::asio::ip::address_v4(b).to_string();
+            out.addr = boost::asio::ip::address_v4(b).to_string();
             pos += 4;
         }
         else if (atyp == socks::ATYP_DOMAIN)
@@ -110,7 +114,7 @@ struct socks_udp_header
             {
                 return false;
             }
-            out.addr_ = std::string(reinterpret_cast<const char *>(data) + pos, dlen);
+            out.addr = std::string(reinterpret_cast<const char *>(data) + pos, dlen);
             pos += dlen;
         }
         else if (atyp == socks::ATYP_IPV6)
@@ -121,7 +125,7 @@ struct socks_udp_header
             }
             boost::asio::ip::address_v6::bytes_type b;
             std::memcpy(b.data(), data + pos, 16);
-            out.addr_ = boost::asio::ip::address_v6(b).to_string();
+            out.addr = boost::asio::ip::address_v6(b).to_string();
             pos += 16;
         }
         else
@@ -129,11 +133,11 @@ struct socks_udp_header
             return false;
         }
 
-        out.port_ = static_cast<uint16_t>((data[pos] << 8) | data[pos + 1]);
+        out.port = static_cast<uint16_t>((data[pos] << 8) | data[pos + 1]);
         pos += 2;
-        out.header_len_ = pos;
+        out.header_len = pos;
         return true;
     }
 };
 
-#endif    
+#endif
