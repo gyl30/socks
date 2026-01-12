@@ -362,7 +362,7 @@ class crypto_util
             return {};
         }
         std::vector<uint8_t> out(ciphertext.size() - AEAD_TAG_SIZE);
-        size_t n = aes_gcm_decrypt(key, nonce, ciphertext, aad, out, ec);
+        const size_t n = aes_gcm_decrypt(key, nonce, ciphertext, aad, out, ec);
         if (ec)
         {
             return {};
@@ -674,7 +674,7 @@ class tls_record_layer
             return {};
         }
         std::vector<uint8_t> out(ciphertext_with_header.size() - TLS_RECORD_HEADER_SIZE - AEAD_TAG_SIZE);
-        size_t n = decrypt_record(key, iv, seq, ciphertext_with_header, out, out_content_type, ec);
+        const size_t n = decrypt_record(key, iv, seq, ciphertext_with_header, out, out_content_type, ec);
         if (ec)
         {
             return {};
