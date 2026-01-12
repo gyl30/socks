@@ -53,7 +53,7 @@ class io_context_pool
         }
     }
 
-    void stop()
+    void stop() const
     {
         LOG_INFO("io context pool stopping all contexts");
         for (auto& ctx : io_contexts_)

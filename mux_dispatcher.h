@@ -14,7 +14,7 @@ class mux_dispatcher
 
     mux_dispatcher()
     {
-        buffer_.reserve(8192);
+        buffer_.reserve(64L * 1024);
         LOG_DEBUG("mux dispatcher initialized");
     }
 
@@ -26,7 +26,30 @@ class mux_dispatcher
         {
             return;
         }
-        buffer_.insert(buffer_.end(), data.begin(), data.end());
+
+        const size_t needed = buffer_.size() + data.size();
+        if (needed > buffer_.capacity())
+        {
+            if (read_pos_ > 0)
+            {
+                const size_t remaining = buffer_.size() - read_pos_;
+                if (remaining > 0)
+                {
+                    std::memmove(buffer_.data(), buffer_.data() + read_pos_, remaining);
+                }
+                buffer_.resize(remaining);
+                read_pos_ = 0;
+            }
+
+            if (buffer_.size() + data.size() > buffer_.capacity())
+            {
+                buffer_.reserve(std::max(buffer_.capacity() * 2, buffer_.size() + data.size()));
+            }
+        }
+
+        const size_t old_size = buffer_.size();
+        buffer_.resize(old_size + data.size());
+        std::memcpy(buffer_.data() + old_size, data.data(), data.size());
 
         while (buffer_.size() - read_pos_ >= mux::HEADER_SIZE)
         {
@@ -59,7 +82,7 @@ class mux_dispatcher
             }
         }
 
-        if (read_pos_ > 4096)
+        if (read_pos_ > 8192)
         {
             const size_t remaining = buffer_.size() - read_pos_;
             if (remaining > 0)
@@ -73,12 +96,16 @@ class mux_dispatcher
 
     [[nodiscard]] static std::vector<uint8_t> pack(uint32_t stream_id, uint8_t cmd, const std::vector<uint8_t>& payload)
     {
-        std::vector<uint8_t> frame(mux::HEADER_SIZE + payload.size());
-        const mux::frame_header h{stream_id, static_cast<uint16_t>(payload.size()), cmd};
+        std::vector<uint8_t> frame;
+        frame.reserve(mux::HEADER_SIZE + payload.size());
+        frame.resize(mux::HEADER_SIZE);
+
+        const mux::frame_header h{.stream_id_ = stream_id, .length_ = static_cast<uint16_t>(payload.size()), .command_ = cmd};
         h.encode(frame.data());
+
         if (!payload.empty())
         {
-            std::memcpy(frame.data() + mux::HEADER_SIZE, payload.data(), payload.size());
+            frame.insert(frame.end(), payload.begin(), payload.end());
         }
         return frame;
     }

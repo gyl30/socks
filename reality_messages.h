@@ -1,6 +1,7 @@
 #ifndef REALITY_MESSAGES_H
 #define REALITY_MESSAGES_H
 
+#include <algorithm>
 #include <vector>
 #include <string>
 #include <cstdint>
@@ -188,10 +189,7 @@ class chrome_client_hello_builder
             target_len = current_len + 32;
         }
         size_t padding_needed = target_len - current_len;
-        if (padding_needed < 4)
-        {
-            padding_needed = 4;
-        }
+        padding_needed = std::max<size_t>(padding_needed, 4);
         const size_t data_len = padding_needed - 4;
 
         std::vector<uint8_t> ext;

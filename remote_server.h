@@ -167,8 +167,8 @@ class remote_session : public mux_stream_interface, public std::enable_shared_fr
         }
 
         boost::system::error_code ec_sock;
-        ec_sock = target_socket_.set_option(tcp::no_delay(true), ec_sock);
-
+        ec_sock = target_socket_.set_option(boost::asio::ip::tcp::no_delay(true), ec_sock);
+        (void)ec_sock;
         LOG_DEBUG("remote tcp {} established local {} remote {}",
                   id_,
                   target_socket_.local_endpoint().address().to_string(),
@@ -182,6 +182,7 @@ class remote_session : public mux_stream_interface, public std::enable_shared_fr
 
         boost::system::error_code ignore;
         ignore = target_socket_.close(ignore);
+        (void)ignore;
         if (manager_)
         {
             manager_->remove_stream(id_);
@@ -193,14 +194,15 @@ class remote_session : public mux_stream_interface, public std::enable_shared_fr
     {
         recv_channel_.close();
         boost::system::error_code ec;
-        ec = target_socket_.shutdown(tcp::socket::shutdown_send, ec);
+        ec = target_socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
+        (void)ec;
     }
     void on_reset() override
     {
         recv_channel_.close();
         target_socket_.close();
     }
-    void set_manager(const std::shared_ptr<mux_tunnel_impl<tcp::socket>>& m) { manager_ = m; }
+    void set_manager(const std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>>& m) { manager_ = m; }
 
    private:
     boost::asio::awaitable<void> upstream()
@@ -211,7 +213,8 @@ class remote_session : public mux_stream_interface, public std::enable_shared_fr
             if (ec || data.empty())
             {
                 boost::system::error_code ignore;
-                ignore = target_socket_.shutdown(tcp::socket::shutdown_send, ignore);
+                ignore = target_socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ignore);
+                (void)ignore;
                 break;
             }
             auto [we, wn] =
@@ -245,10 +248,10 @@ class remote_session : public mux_stream_interface, public std::enable_shared_fr
 
     std::shared_ptr<mux_connection> connection_;
     uint32_t id_;
-    tcp::resolver resolver_;
-    tcp::socket target_socket_;
+    boost::asio::ip::tcp::resolver resolver_;
+    boost::asio::ip::tcp::socket target_socket_;
     boost::asio::experimental::concurrent_channel<void(boost::system::error_code, std::vector<std::uint8_t>)> recv_channel_;
-    std::shared_ptr<mux_tunnel_impl<tcp::socket>> manager_;
+    std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> manager_;
 };
 
 class remote_udp_session : public mux_stream_interface, public std::enable_shared_from_this<remote_udp_session>
@@ -299,9 +302,10 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
         recv_channel_.close();
         boost::system::error_code ignore;
         ignore = udp_socket_.close(ignore);
+        (void)ignore;
     }
     void on_reset() override { on_close(); }
-    void set_manager(const std::shared_ptr<mux_tunnel_impl<tcp::socket>>& m) { manager_ = m; }
+    void set_manager(const std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>>& m) { manager_ = m; }
 
    private:
     boost::asio::awaitable<void> mux_to_udp()
@@ -383,14 +387,17 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
     boost::asio::ip::udp::socket udp_socket_;
     boost::asio::ip::udp::resolver udp_resolver_;
     boost::asio::experimental::concurrent_channel<void(boost::system::error_code, std::vector<uint8_t>)> recv_channel_;
-    std::shared_ptr<mux_tunnel_impl<tcp::socket>> manager_;
+    std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> manager_;
 };
 
 class remote_server : public std::enable_shared_from_this<remote_server>
 {
    public:
     remote_server(io_context_pool& pool, uint16_t port, std::string fb_h, std::string fb_p, const std::string& key, boost::system::error_code& ec)
-        : pool_(pool), acceptor_(pool.get_io_context(), tcp::endpoint(tcp::v6(), port)), fb_host_(std::move(fb_h)), fb_port_(std::move(fb_p))
+        : pool_(pool),
+          acceptor_(pool.get_io_context(), boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v6(), port)),
+          fb_host_(std::move(fb_h)),
+          fb_port_(std::move(fb_p))
     {
         priv_key_ = reality::crypto_util::hex_to_bytes(key, ec);
         if (!ec)
@@ -429,12 +436,13 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         LOG_INFO("remote server listening for connections");
         for (;;)
         {
-            auto s = std::make_shared<tcp::socket>(acceptor_.get_executor());
+            auto s = std::make_shared<boost::asio::ip::tcp::socket>(acceptor_.get_executor());
             auto [e] = co_await acceptor_.async_accept(*s, boost::asio::as_tuple(boost::asio::use_awaitable));
             if (!e)
             {
                 boost::system::error_code ec;
-                ec = s->set_option(tcp::no_delay(true), ec);
+                ec = s->set_option(boost::asio::ip::tcp::no_delay(true), ec);
+                (void)ec;
                 const uint32_t conn_id = next_conn_id_.fetch_add(1, std::memory_order_relaxed);
 
                 boost::asio::co_spawn(
@@ -445,7 +453,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         }
     }
 
-    boost::asio::awaitable<void> handle(std::shared_ptr<tcp::socket> s, uint32_t conn_id)
+    boost::asio::awaitable<void> handle(std::shared_ptr<boost::asio::ip::tcp::socket> s, uint32_t conn_id) const
     {
         boost::system::error_code ec_ep;
         auto ep = s->remote_endpoint(ec_ep);
@@ -649,7 +657,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
 
         LOG_INFO("srv {} tunnel start", conn_id);
         reality_engine engine(c_app_keys.first, c_app_keys.second, s_app_keys.first, s_app_keys.second);
-        auto tunnel = std::make_shared<mux_tunnel_impl<tcp::socket>>(std::move(*s), std::move(engine), false, conn_id);
+        auto tunnel = std::make_shared<mux_tunnel_impl<boost::asio::ip::tcp::socket>>(std::move(*s), std::move(engine), false, conn_id);
 
         tunnel->get_connection()->set_syn_callback(
             [this, tunnel, conn_id](uint32_t id, const std::vector<uint8_t>& p)
@@ -692,10 +700,10 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         co_await tunnel->run();
     }
 
-    boost::asio::awaitable<void> handle_fallback(std::shared_ptr<tcp::socket> s, std::vector<uint8_t> buf, uint32_t conn_id) const
+    boost::asio::awaitable<void> handle_fallback(std::shared_ptr<boost::asio::ip::tcp::socket> s, std::vector<uint8_t> buf, uint32_t conn_id) const
     {
-        tcp::socket t(s->get_executor());
-        tcp::resolver r(s->get_executor());
+        boost::asio::ip::tcp::socket t(s->get_executor());
+        boost::asio::ip::tcp::resolver r(s->get_executor());
         auto [er, eps] = co_await r.async_resolve(fb_host_, fb_port_, boost::asio::as_tuple(boost::asio::use_awaitable));
         if (er)
         {
@@ -730,15 +738,16 @@ class remote_server : public std::enable_shared_from_this<remote_server>
                 }
             }
             boost::system::error_code ignore;
-            f.shutdown(tcp::socket::shutdown_receive, ignore);
-            t.shutdown(tcp::socket::shutdown_send, ignore);
+            f.shutdown(boost::asio::ip::tcp::socket::shutdown_receive, ignore);
+            t.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ignore);
         };
         using boost::asio::experimental::awaitable_operators::operator||;
         co_await (xfer(*s, t) || xfer(t, *s));
     }
 
+   private:
     io_context_pool& pool_;
-    tcp::acceptor acceptor_;
+    boost::asio::ip::tcp::acceptor acceptor_;
     std::string fb_host_, fb_port_;
     std::vector<uint8_t> priv_key_;
     reality::cert_manager cert_manager_;
