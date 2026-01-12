@@ -20,14 +20,44 @@ class mux_dispatcher
 
     void set_callback(frame_callback_t cb) { callback_ = std::move(cb); }
 
-    void on_plaintext_data(const std::vector<uint8_t>& data)
+    void on_plaintext_data(std::span<const uint8_t> data)
+
     {
         if (data.empty())
         {
             return;
         }
 
-        const size_t needed = buffer_.size() + data.size();
+        ensure_capacity(data.size());
+
+        const size_t old_size = buffer_.size();
+        buffer_.resize(old_size + data.size());
+        std::memcpy(buffer_.data() + old_size, data.data(), data.size());
+
+        process_frames();
+        compact_if_needed();
+    }
+
+    [[nodiscard]] static std::vector<uint8_t> pack(uint32_t stream_id, uint8_t cmd, const std::vector<uint8_t> &payload)
+    {
+        std::vector<uint8_t> frame;
+        frame.reserve(mux::HEADER_SIZE + payload.size());
+        frame.resize(mux::HEADER_SIZE);
+
+        const mux::frame_header h{.stream_id = stream_id, .length = static_cast<uint16_t>(payload.size()), .command = cmd};
+        mux::mux_codec::encode_header(h, frame.data());
+
+        if (!payload.empty())
+        {
+            frame.insert(frame.end(), payload.begin(), payload.end());
+        }
+        return frame;
+    }
+
+   private:
+    void ensure_capacity(size_t incoming_size)
+    {
+        const size_t needed = buffer_.size() + incoming_size;
         if (needed > buffer_.capacity())
         {
             if (read_pos_ > 0)
@@ -41,25 +71,24 @@ class mux_dispatcher
                 read_pos_ = 0;
             }
 
-            if (buffer_.size() + data.size() > buffer_.capacity())
+            if (buffer_.size() + incoming_size > buffer_.capacity())
             {
-                buffer_.reserve(std::max(buffer_.capacity() * 2, buffer_.size() + data.size()));
+                buffer_.reserve(std::max(buffer_.capacity() * 2, buffer_.size() + incoming_size));
             }
         }
+    }
 
-        const size_t old_size = buffer_.size();
-        buffer_.resize(old_size + data.size());
-        std::memcpy(buffer_.data() + old_size, data.data(), data.size());
-
+    void process_frames()
+    {
         while (buffer_.size() - read_pos_ >= mux::HEADER_SIZE)
         {
-            const uint8_t* ptr = buffer_.data() + read_pos_;
-            auto header = mux::frame_header::decode(ptr);
-            const uint32_t total_frame_len = mux::HEADER_SIZE + header.length_;
+            const uint8_t *ptr = buffer_.data() + read_pos_;
+            auto header = mux::mux_codec::decode_header(ptr);
+            const uint32_t total_frame_len = mux::HEADER_SIZE + header.length;
 
-            if (header.length_ > mux::MAX_PAYLOAD)
+            if (header.length > mux::MAX_PAYLOAD)
             {
-                LOG_ERROR("mux dispatcher received oversized frame length {} stream {}", header.length_, header.stream_id_);
+                LOG_ERROR("mux dispatcher received oversized frame length {} stream {}", header.length, header.stream_id);
                 buffer_.clear();
                 read_pos_ = 0;
                 break;
@@ -74,14 +103,17 @@ class mux_dispatcher
 
             read_pos_ += total_frame_len;
 
-            LOG_TRACE("mux dispatcher parsed frame stream {} cmd {} length {}", header.stream_id_, static_cast<int>(header.command_), header.length_);
+            LOG_TRACE("mux dispatcher parsed frame stream {} cmd {} length {}", header.stream_id, static_cast<int>(header.command), header.length);
 
             if (callback_)
             {
                 callback_(header, std::move(payload));
             }
         }
+    }
 
+    void compact_if_needed()
+    {
         if (read_pos_ > 8192)
         {
             const size_t remaining = buffer_.size() - read_pos_;
@@ -92,22 +124,6 @@ class mux_dispatcher
             buffer_.resize(remaining);
             read_pos_ = 0;
         }
-    }
-
-    [[nodiscard]] static std::vector<uint8_t> pack(uint32_t stream_id, uint8_t cmd, const std::vector<uint8_t>& payload)
-    {
-        std::vector<uint8_t> frame;
-        frame.reserve(mux::HEADER_SIZE + payload.size());
-        frame.resize(mux::HEADER_SIZE);
-
-        const mux::frame_header h{.stream_id_ = stream_id, .length_ = static_cast<uint16_t>(payload.size()), .command_ = cmd};
-        h.encode(frame.data());
-
-        if (!payload.empty())
-        {
-            frame.insert(frame.end(), payload.begin(), payload.end());
-        }
-        return frame;
     }
 
    private:

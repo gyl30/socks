@@ -27,9 +27,9 @@ enum class mux_connection_state : uint8_t
 
 struct mux_write_msg
 {
-    uint32_t stream_id_ = 0;
     uint8_t command_ = 0;
-    std::vector<uint8_t> payload_;
+    uint32_t stream_id = 0;
+    std::vector<uint8_t> payload;
 };
 
 class mux_stream_interface
@@ -103,7 +103,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
             LOG_TRACE("mux {} send frame stream {} cmd {} size {}", cid_, stream_id, cmd, payload.size());
         }
 
-        mux_write_msg msg{.stream_id_ = stream_id, .command_ = cmd, .payload_ = std::move(payload)};
+        mux_write_msg msg{.command_ = cmd, .stream_id = stream_id, .payload = std::move(payload)};
         auto [ec] =
             co_await write_channel_.async_send(boost::system::error_code{}, std::move(msg), boost::asio::as_tuple(boost::asio::use_awaitable));
 
@@ -175,16 +175,20 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
             update_activity();
 
             boost::system::error_code decrypt_ec;
-            auto plaintexts = reality_engine_.decrypt_available_records(decrypt_ec);
+
+            reality_engine_.process_available_records(decrypt_ec,
+                                                      [this](uint8_t type, std::span<const uint8_t> pt)
+                                                      {
+                                                          if (type == reality::CONTENT_TYPE_APPLICATION_DATA && !pt.empty())
+                                                          {
+                                                              mux_dispatcher_.on_plaintext_data(pt);
+                                                          }
+                                                      });
+
             if (decrypt_ec)
             {
-                LOG_ERROR("mux {} decrypt error {}", cid_, decrypt_ec.message());
+                LOG_ERROR("mux {} decrypt/protocol error {}", cid_, decrypt_ec.message());
                 break;
-            }
-
-            for (const auto& pt : plaintexts)
-            {
-                mux_dispatcher_.on_plaintext_data(pt);
             }
         }
         stop();
@@ -201,7 +205,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
                 break;
             }
 
-            auto mux_frame = mux_dispatcher::pack(msg.stream_id_, msg.command_, msg.payload_);
+            auto mux_frame = mux_dispatcher::pack(msg.stream_id, msg.command_, msg.payload);
             boost::system::error_code enc_ec;
 
             auto ciphertext_span = reality_engine_.encrypt(mux_frame, enc_ec);
@@ -251,13 +255,13 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
 
     void on_mux_frame(mux::frame_header header, std::vector<uint8_t> payload)
     {
-        LOG_TRACE("mux {} recv frame stream {} cmd {} len {}", cid_, header.stream_id_, header.command_, header.length_);
+        LOG_TRACE("mux {} recv frame stream {} cmd {} len {}", cid_, header.stream_id, header.command, header.length);
 
-        if (header.command_ == mux::CMD_SYN)
+        if (header.command == mux::CMD_SYN)
         {
             if (syn_callback_)
             {
-                syn_callback_(header.stream_id_, std::move(payload));
+                syn_callback_(header.stream_id, std::move(payload));
             }
             return;
         }
@@ -265,7 +269,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
         std::shared_ptr<mux_stream_interface> stream;
         {
             const std::scoped_lock lock(streams_mutex_);
-            auto it = streams_.find(header.stream_id_);
+            auto it = streams_.find(header.stream_id);
             if (it != streams_.end())
             {
                 stream = it->second;
@@ -274,24 +278,24 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
 
         if (stream != nullptr)
         {
-            if (header.command_ == mux::CMD_FIN)
+            if (header.command == mux::CMD_FIN)
             {
                 stream->on_close();
             }
-            else if (header.command_ == mux::CMD_RST)
+            else if (header.command == mux::CMD_RST)
             {
                 stream->on_reset();
             }
-            else if (header.command_ == mux::CMD_DAT || header.command_ == mux::CMD_ACK)
+            else if (header.command == mux::CMD_DAT || header.command == mux::CMD_ACK)
             {
                 stream->on_data(std::move(payload));
             }
         }
         else
         {
-            if (header.command_ != mux::CMD_RST)
+            if (header.command != mux::CMD_RST)
             {
-                LOG_DEBUG("mux {} recv frame for unknown stream {}", cid_, header.stream_id_);
+                LOG_DEBUG("mux {} recv frame for unknown stream {}", cid_, header.stream_id);
             }
         }
     }
