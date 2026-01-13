@@ -7,13 +7,13 @@
 #include <cstring>
 #include <span>
 #include <array>
+#include <iomanip>
 #include <openssl/evp.h>
 #include <openssl/kdf.h>
 #include <openssl/hmac.h>
 #include <openssl/rand.h>
 #include <openssl/x509.h>
 #include <openssl/ssl.h>
-#include <boost/algorithm/hex.hpp>
 #include <boost/system/error_code.hpp>
 #include "log.h"
 
@@ -149,46 +149,24 @@ class crypto_util
    public:
     [[nodiscard]] static std::string bytes_to_hex(const std::vector<uint8_t>& bytes)
     {
-        std::string result;
-        boost::algorithm::hex(bytes, std::back_inserter(result));
-        return result;
+        std::ostringstream oss;
+        for (uint8_t c : bytes)
+        {
+            oss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(c);
+        }
+        return oss.str();
     }
 
-    [[nodiscard]] static std::vector<uint8_t> hex_to_bytes(const std::string& hex, boost::system::error_code& ec)
+    [[nodiscard]] static std::vector<uint8_t> hex_to_bytes(const std::string& hex)
     {
-        if (hex.size() % 2 != 0)
+        int64_t len = 0;
+        uint8_t* buf = OPENSSL_hexstr2buf(hex.c_str(), &len);
+        if (buf == nullptr)
         {
-            ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
             return {};
         }
-
-        std::vector<uint8_t> result;
-        result.reserve(hex.size() / 2);
-
-        for (size_t i = 0; i < hex.size(); i += 2)
-        {
-            uint8_t byte = 0;
-            for (size_t j = 0; j < 2; ++j)
-            {
-                const char c = hex[i + j];
-                uint8_t val = 0;
-                if (c >= '0' && c <= '9')
-                    val = c - '0';
-                else if (c >= 'a' && c <= 'f')
-                    val = c - 'a' + 10;
-                else if (c >= 'A' && c <= 'F')
-                    val = c - 'A' + 10;
-                else
-                {
-                    ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
-                    return {};
-                }
-                byte = (byte << 4) | val;
-            }
-            result.push_back(byte);
-        }
-
-        ec.clear();
+        std::vector<uint8_t> result{buf, buf + len};
+        OPENSSL_free(buf);
         return result;
     }
 
