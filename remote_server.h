@@ -643,19 +643,16 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
 class remote_server : public std::enable_shared_from_this<remote_server>
 {
    public:
-    remote_server(io_context_pool &pool, uint16_t port, std::string fb_h, std::string fb_p, const std::string &key, boost::system::error_code &ec)
+    remote_server(io_context_pool &pool, uint16_t port, std::string fb_h, std::string fb_p, const std::string &key)
         : pool_(pool),
           acceptor_(pool.get_io_context(), boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v6(), port)),
           fb_host_(std::move(fb_h)),
           fb_port_(std::move(fb_p))
     {
-        priv_key_ = reality::crypto_util::hex_to_bytes(key, ec);
-        if (!ec)
-        {
-            boost::system::error_code ignore;
-            auto pub = reality::crypto_util::extract_public_key(priv_key_, ignore);
-            LOG_INFO("server public key {}", reality::crypto_util::bytes_to_hex(pub));
-        }
+        priv_key_ = reality::crypto_util::hex_to_bytes(key);
+        boost::system::error_code ignore;
+        auto pub = reality::crypto_util::extract_public_key(priv_key_, ignore);
+        LOG_INFO("server public key {}", reality::crypto_util::bytes_to_hex(pub));
     }
 
     void start() { boost::asio::co_spawn(acceptor_.get_executor(), accept_loop(), boost::asio::detached); }
@@ -873,7 +870,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         }
 
         auto salt = std::vector<uint8_t>(info.random.begin(), info.random.begin() + 20);
-        auto r_info = reality::crypto_util::hex_to_bytes("5245414c495459", ec);
+        auto r_info = reality::crypto_util::hex_to_bytes("5245414c495459");
         auto prk = reality::crypto_util::hkdf_extract(salt, shared, ec);
         auto auth_key = reality::crypto_util::hkdf_expand(prk, r_info, 32, ec);
 
