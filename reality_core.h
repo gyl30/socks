@@ -6,6 +6,7 @@
 #include <memory>
 #include <cstring>
 #include <span>
+#include <array>
 #include <openssl/evp.h>
 #include <openssl/kdf.h>
 #include <openssl/hmac.h>
@@ -87,6 +88,62 @@ using evp_md_ctx_ptr = std::unique_ptr<EVP_MD_CTX, evp_md_ctx_deleter>;
 using x509_ptr = std::unique_ptr<X509, x509_deleter>;
 }    // namespace openssl_ptrs
 
+class cipher_context
+{
+   public:
+    cipher_context() : ctx_(EVP_CIPHER_CTX_new()) {}
+
+    cipher_context(const cipher_context&) = delete;
+    cipher_context& operator=(const cipher_context&) = delete;
+    cipher_context(cipher_context&&) = default;
+
+    [[nodiscard]] EVP_CIPHER_CTX* get() const { return ctx_.get(); }
+    [[nodiscard]] bool valid() const { return ctx_ != nullptr; }
+
+    [[nodiscard]] bool init(bool encrypt, const EVP_CIPHER* cipher, const uint8_t* key, const uint8_t* iv, size_t iv_len)
+    {
+        if (!valid())
+        {
+            return false;
+        }
+
+        int res;
+        if (encrypt)
+        {
+            res = EVP_EncryptInit_ex(ctx_.get(), cipher, nullptr, nullptr, nullptr);
+        }
+        else
+        {
+            res = EVP_DecryptInit_ex(ctx_.get(), cipher, nullptr, nullptr, nullptr);
+        }
+
+        if (res != 1)
+        {
+            return false;
+        }
+
+        res = EVP_CIPHER_CTX_ctrl(ctx_.get(), EVP_CTRL_GCM_SET_IVLEN, static_cast<int>(iv_len), nullptr);
+        if (res != 1)
+        {
+            return false;
+        }
+
+        if (encrypt)
+        {
+            res = EVP_EncryptInit_ex(ctx_.get(), nullptr, nullptr, key, iv);
+        }
+        else
+        {
+            res = EVP_DecryptInit_ex(ctx_.get(), nullptr, nullptr, key, iv);
+        }
+
+        return res == 1;
+    }
+
+   private:
+    openssl_ptrs::evp_cipher_ctx_ptr ctx_;
+};
+
 class crypto_util
 {
    public:
@@ -116,17 +173,11 @@ class crypto_util
                 const char c = hex[i + j];
                 uint8_t val = 0;
                 if (c >= '0' && c <= '9')
-                {
                     val = c - '0';
-                }
                 else if (c >= 'a' && c <= 'f')
-                {
                     val = c - 'a' + 10;
-                }
                 else if (c >= 'A' && c <= 'F')
-                {
                     val = c - 'A' + 10;
-                }
                 else
                 {
                     ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
@@ -317,7 +368,8 @@ class crypto_util
         return hkdf_expand(secret, hkdf_label, length, ec);
     }
 
-    static size_t aes_gcm_decrypt(const std::vector<uint8_t>& key,
+    static size_t aes_gcm_decrypt(cipher_context& ctx,
+                                  const std::vector<uint8_t>& key,
                                   std::span<const uint8_t> nonce,
                                   std::span<const uint8_t> ciphertext,
                                   std::span<const uint8_t> aad,
@@ -338,37 +390,41 @@ class crypto_util
         }
 
         const EVP_CIPHER* cipher = (key.size() == 32) ? EVP_aes_256_gcm() : EVP_aes_128_gcm();
-        const openssl_ptrs::evp_cipher_ctx_ptr ctx(EVP_CIPHER_CTX_new());
 
-        if (!ctx)
+        if (!ctx.init(false, cipher, key.data(), nonce.data(), nonce.size()))
         {
-            ec = boost::system::errc::make_error_code(boost::system::errc::not_enough_memory);
+            ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
             return 0;
         }
 
         int out_len = 0;
-        int ret = 1;
-
-        ret &= EVP_DecryptInit_ex(ctx.get(), cipher, nullptr, nullptr, nullptr);
-        ret &= EVP_CIPHER_CTX_ctrl(ctx.get(), EVP_CTRL_GCM_SET_IVLEN, static_cast<int>(nonce.size()), nullptr);
-        ret &= EVP_DecryptInit_ex(ctx.get(), nullptr, nullptr, key.data(), nonce.data());
-
-        int aad_len_dummy;
-        if (!aad.empty())
-        {
-            ret &= EVP_DecryptUpdate(ctx.get(), nullptr, &aad_len_dummy, aad.data(), static_cast<int>(aad.size()));
-        }
+        int len = 0;
 
         const uint8_t* tag = ciphertext.data() + pt_len;
-        const uint8_t* ct_data = ciphertext.data();
 
-        ret &= EVP_DecryptUpdate(ctx.get(), output_buffer.data(), &out_len, ct_data, static_cast<int>(pt_len));
-        ret &= EVP_CIPHER_CTX_ctrl(ctx.get(), EVP_CTRL_GCM_SET_TAG, AEAD_TAG_SIZE, const_cast<void*>(static_cast<const void*>(tag)));
+        if (EVP_CIPHER_CTX_ctrl(ctx.get(), EVP_CTRL_GCM_SET_TAG, AEAD_TAG_SIZE, const_cast<void*>(static_cast<const void*>(tag))) != 1)
+        {
+            ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
+            return 0;
+        }
+
+        if (!aad.empty())
+        {
+            if (EVP_DecryptUpdate(ctx.get(), nullptr, &len, aad.data(), static_cast<int>(aad.size())) != 1)
+            {
+                ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
+                return 0;
+            }
+        }
+
+        if (EVP_DecryptUpdate(ctx.get(), output_buffer.data(), &out_len, ciphertext.data(), static_cast<int>(pt_len)) != 1)
+        {
+            ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
+            return 0;
+        }
 
         int final_len = 0;
-        ret &= EVP_DecryptFinal_ex(ctx.get(), output_buffer.data() + out_len, &final_len);
-
-        if (ret <= 0)
+        if (EVP_DecryptFinal_ex(ctx.get(), output_buffer.data() + out_len, &final_len) <= 0)
         {
             ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
             return 0;
@@ -377,19 +433,21 @@ class crypto_util
         ec.clear();
         return out_len + final_len;
     }
+
     [[nodiscard]] static std::vector<uint8_t> aes_gcm_decrypt(const std::vector<uint8_t>& key,
                                                               const std::vector<uint8_t>& nonce,
                                                               const std::vector<uint8_t>& ciphertext,
                                                               const std::vector<uint8_t>& aad,
                                                               boost::system::error_code& ec)
     {
+        cipher_context ctx;
         if (ciphertext.size() < AEAD_TAG_SIZE)
         {
             ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
             return {};
         }
         std::vector<uint8_t> out(ciphertext.size() - AEAD_TAG_SIZE);
-        const size_t n = aes_gcm_decrypt(key, nonce, ciphertext, aad, out, ec);
+        const size_t n = aes_gcm_decrypt(ctx, key, nonce, ciphertext, aad, out, ec);
         if (ec)
         {
             return {};
@@ -398,25 +456,24 @@ class crypto_util
         return out;
     }
 
-    static void aes_gcm_encrypt_append(const std::vector<uint8_t>& key,
+    static void aes_gcm_encrypt_append(cipher_context& ctx,
+                                       const std::vector<uint8_t>& key,
                                        const std::vector<uint8_t>& nonce,
                                        const std::vector<uint8_t>& plaintext,
-                                       const std::vector<uint8_t>& aad,
+                                       std::span<const uint8_t> aad,
                                        std::vector<uint8_t>& output_buffer,
                                        boost::system::error_code& ec)
     {
         const EVP_CIPHER* cipher = (key.size() == 32) ? EVP_aes_256_gcm() : EVP_aes_128_gcm();
-        const openssl_ptrs::evp_cipher_ctx_ptr ctx(EVP_CIPHER_CTX_new());
 
-        if (!ctx)
+        if (!ctx.init(true, cipher, key.data(), nonce.data(), nonce.size()))
         {
-            ec = boost::system::errc::make_error_code(boost::system::errc::not_enough_memory);
+            ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
             return;
         }
 
         int out_len = 0;
-        int final_len = 0;
-        int ret = 1;
+        int len = 0;
 
         const size_t current_size = output_buffer.size();
         const size_t required_size = current_size + plaintext.size() + AEAD_TAG_SIZE;
@@ -427,27 +484,17 @@ class crypto_util
         output_buffer.resize(required_size);
         uint8_t* out_ptr = output_buffer.data() + current_size;
 
-        ret &= EVP_EncryptInit_ex(ctx.get(), cipher, nullptr, nullptr, nullptr);
-        ret &= EVP_CIPHER_CTX_ctrl(ctx.get(), EVP_CTRL_GCM_SET_IVLEN, static_cast<int>(nonce.size()), nullptr);
-        ret &= EVP_EncryptInit_ex(ctx.get(), nullptr, nullptr, key.data(), nonce.data());
-
-        int aad_len_dummy;
         if (!aad.empty())
         {
-            ret &= EVP_EncryptUpdate(ctx.get(), nullptr, &aad_len_dummy, aad.data(), static_cast<int>(aad.size()));
+            EVP_EncryptUpdate(ctx.get(), nullptr, &len, aad.data(), static_cast<int>(aad.size()));
         }
 
-        ret &= EVP_EncryptUpdate(ctx.get(), out_ptr, &out_len, plaintext.data(), static_cast<int>(plaintext.size()));
-        ret &= EVP_EncryptFinal_ex(ctx.get(), out_ptr + out_len, &final_len);
+        EVP_EncryptUpdate(ctx.get(), out_ptr, &out_len, plaintext.data(), static_cast<int>(plaintext.size()));
 
-        ret &= EVP_CIPHER_CTX_ctrl(ctx.get(), EVP_CTRL_GCM_GET_TAG, AEAD_TAG_SIZE, out_ptr + out_len + final_len);
+        int final_len = 0;
+        EVP_EncryptFinal_ex(ctx.get(), out_ptr + out_len, &final_len);
 
-        if (ret <= 0)
-        {
-            ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
-            output_buffer.resize(current_size);
-            return;
-        }
+        EVP_CIPHER_CTX_ctrl(ctx.get(), EVP_CTRL_GCM_GET_TAG, AEAD_TAG_SIZE, out_ptr + out_len + final_len);
 
         output_buffer.resize(current_size + out_len + final_len + AEAD_TAG_SIZE);
         ec.clear();
@@ -459,10 +506,30 @@ class crypto_util
                                                               const std::vector<uint8_t>& aad,
                                                               boost::system::error_code& ec)
     {
+        cipher_context ctx;
         std::vector<uint8_t> out;
-        aes_gcm_encrypt_append(key, nonce, plaintext, aad, out, ec);
+        aes_gcm_encrypt_append(ctx, key, nonce, plaintext, aad, out, ec);
         return out;
     }
+};
+class transcript
+{
+   public:
+    transcript() : ctx_(EVP_MD_CTX_new(), EVP_MD_CTX_free) { EVP_DigestInit(ctx_.get(), EVP_sha256()); }
+    void update(const std::vector<uint8_t>& data) const { EVP_DigestUpdate(ctx_.get(), data.data(), data.size()); }
+    [[nodiscard]] std::vector<uint8_t> finish() const
+    {
+        const std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> c(EVP_MD_CTX_new(), EVP_MD_CTX_free);
+        EVP_MD_CTX_copy(c.get(), ctx_.get());
+        std::vector<uint8_t> h(EVP_MD_size(EVP_sha256()));
+        unsigned int l;
+        EVP_DigestFinal(c.get(), h.data(), &l);
+        h.resize(l);
+        return h;
+    }
+
+   private:
+    std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> ctx_;
 };
 
 struct handshake_keys
@@ -498,8 +565,8 @@ class tls_key_schedule
                                                               boost::system::error_code& ec)
     {
         constexpr size_t hash_len = 32;
-        const std::vector<uint8_t> zero_salt(hash_len, 0);
-        const std::vector<uint8_t> early_secret = crypto_util::hkdf_extract(zero_salt, zero_salt, ec);
+        const std::vector<uint8_t> zero_ikm(hash_len, 0);
+        const std::vector<uint8_t> early_secret = crypto_util::hkdf_extract(zero_ikm, zero_ikm, ec);
         if (ec)
         {
             return {};
@@ -535,7 +602,7 @@ class tls_key_schedule
         {
             return {};
         }
-        const std::vector<uint8_t> master_secret = crypto_util::hkdf_extract(derived_secret_2, zero_salt, ec);
+        const std::vector<uint8_t> master_secret = crypto_util::hkdf_extract(derived_secret_2, zero_ikm, ec);
         if (ec)
         {
             return {};
@@ -590,7 +657,8 @@ class tls_key_schedule
 class tls_record_layer
 {
    public:
-    static void encrypt_record_append(const std::vector<uint8_t>& key,
+    static void encrypt_record_append(cipher_context& ctx,
+                                      const std::vector<uint8_t>& key,
                                       const std::vector<uint8_t>& iv,
                                       uint64_t seq,
                                       const std::vector<uint8_t>& plaintext,
@@ -598,35 +666,29 @@ class tls_record_layer
                                       std::vector<uint8_t>& output_buffer,
                                       boost::system::error_code& ec)
     {
-        std::vector<uint8_t> inner_plaintext;
-        inner_plaintext.reserve(plaintext.size() + 1);
-        inner_plaintext.insert(inner_plaintext.end(), plaintext.begin(), plaintext.end());
-        inner_plaintext.push_back(content_type);
-
         std::vector<uint8_t> nonce = iv;
         for (int i = 0; i < 8; ++i)
         {
             nonce[nonce.size() - 1 - i] ^= static_cast<uint8_t>((seq >> (8 * i)) & 0xFF);
         }
 
+        std::vector<uint8_t> inner_plaintext;
+        inner_plaintext.reserve(plaintext.size() + 1);
+        inner_plaintext.insert(inner_plaintext.end(), plaintext.begin(), plaintext.end());
+        inner_plaintext.push_back(content_type);
+
         const auto ciphertext_len = static_cast<uint16_t>(inner_plaintext.size() + AEAD_TAG_SIZE);
 
-        const size_t old_size = output_buffer.size();
-        output_buffer.resize(old_size + 5);
-        uint8_t* header = output_buffer.data() + old_size;
+        std::array<uint8_t, 5> temp_header;
+        temp_header[0] = CONTENT_TYPE_APPLICATION_DATA;
+        temp_header[1] = static_cast<uint8_t>((tls_consts::VER_1_2 >> 8) & 0xFF);
+        temp_header[2] = static_cast<uint8_t>(tls_consts::VER_1_2 & 0xFF);
+        temp_header[3] = static_cast<uint8_t>((ciphertext_len >> 8) & 0xFF);
+        temp_header[4] = static_cast<uint8_t>(ciphertext_len & 0xFF);
 
-        header[0] = CONTENT_TYPE_APPLICATION_DATA;
-        header[1] = static_cast<uint8_t>((tls_consts::VER_1_2 >> 8) & 0xFF);
-        header[2] = static_cast<uint8_t>(tls_consts::VER_1_2 & 0xFF);
-        header[3] = static_cast<uint8_t>((ciphertext_len >> 8) & 0xFF);
-        header[4] = static_cast<uint8_t>(ciphertext_len & 0xFF);
+        output_buffer.insert(output_buffer.end(), temp_header.begin(), temp_header.end());
 
-        crypto_util::aes_gcm_encrypt_append(key, nonce, inner_plaintext, {header, header + 5}, output_buffer, ec);
-
-        if (ec)
-        {
-            output_buffer.resize(old_size);
-        }
+        crypto_util::aes_gcm_encrypt_append(ctx, key, nonce, inner_plaintext, temp_header, output_buffer, ec);
     }
 
     [[nodiscard]] static std::vector<uint8_t> encrypt_record(const std::vector<uint8_t>& key,
@@ -636,11 +698,14 @@ class tls_record_layer
                                                              uint8_t content_type,
                                                              boost::system::error_code& ec)
     {
+        cipher_context ctx;
         std::vector<uint8_t> out;
-        encrypt_record_append(key, iv, seq, plaintext, content_type, out, ec);
+        encrypt_record_append(ctx, key, iv, seq, plaintext, content_type, out, ec);
         return out;
     }
-    static size_t decrypt_record(const std::vector<uint8_t>& key,
+
+    static size_t decrypt_record(cipher_context& ctx,
+                                 const std::vector<uint8_t>& key,
                                  const std::vector<uint8_t>& iv,
                                  uint64_t seq,
                                  std::span<const uint8_t> record_data,
@@ -663,7 +728,7 @@ class tls_record_layer
             nonce[nonce.size() - 1 - i] ^= static_cast<uint8_t>((seq >> (8 * i)) & 0xFF);
         }
 
-        size_t written = crypto_util::aes_gcm_decrypt(key, nonce, ciphertext, aad, output_buffer, ec);
+        size_t written = crypto_util::aes_gcm_decrypt(ctx, key, nonce, ciphertext, aad, output_buffer, ec);
         if (ec)
         {
             return 0;
@@ -686,6 +751,7 @@ class tls_record_layer
         ec.clear();
         return written;
     }
+
     [[nodiscard]] static std::vector<uint8_t> decrypt_record(const std::vector<uint8_t>& key,
                                                              const std::vector<uint8_t>& iv,
                                                              uint64_t seq,
@@ -693,13 +759,14 @@ class tls_record_layer
                                                              uint8_t& out_content_type,
                                                              boost::system::error_code& ec)
     {
+        cipher_context ctx;
         if (ciphertext_with_header.size() < TLS_RECORD_HEADER_SIZE + AEAD_TAG_SIZE)
         {
             ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
             return {};
         }
         std::vector<uint8_t> out(ciphertext_with_header.size() - TLS_RECORD_HEADER_SIZE - AEAD_TAG_SIZE);
-        const size_t n = decrypt_record(key, iv, seq, ciphertext_with_header, out, out_content_type, ec);
+        const size_t n = decrypt_record(ctx, key, iv, seq, ciphertext_with_header, out, out_content_type, ec);
         if (ec)
         {
             return {};

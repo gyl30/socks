@@ -491,6 +491,7 @@ class socks_session : public std::enable_shared_from_this<socks_session>
         }
     }
 
+   private:
     boost::asio::ip::tcp::socket socket_;
     std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> tunnel_manager_;
     uint32_t sid_;
@@ -506,7 +507,13 @@ class local_client : public std::enable_shared_from_this<local_client>
                  const std::string &key_hex,
                  std::string sni,
                  boost::system::error_code &ec)
-        : r_host_(std::move(host)), r_port_(std::move(port)), l_port_(l_port), sni_(std::move(sni)), pool_(pool)
+        : r_host_(std::move(host)),
+          r_port_(std::move(port)),
+          l_port_(l_port),
+          sni_(std::move(sni)),
+          pool_(pool),
+          acceptor_(pool.get_io_context().get_executor(), {boost::asio::ip::tcp::v4(), l_port}),
+          retry_timer_(pool.get_io_context())
     {
         server_pub_key_ = reality::crypto_util::hex_to_bytes(key_hex, ec);
     }
@@ -515,33 +522,29 @@ class local_client : public std::enable_shared_from_this<local_client>
     {
         LOG_INFO("client starting target {} port {} listening {}", r_host_, r_port_, l_port_);
         auto &io = pool_.get_io_context();
-        boost::asio::co_spawn(
-            io, [this, self = shared_from_this()]() { return connect_remote_loop(); }, boost::asio::detached);
-        boost::asio::co_spawn(
-            io, [this, self = shared_from_this()]() { return accept_local_loop(); }, boost::asio::detached);
+        boost::asio::co_spawn(io, [this, self = shared_from_this()]() { return connect_remote_loop(); }, boost::asio::detached);
+        boost::asio::co_spawn(io, [this, self = shared_from_this()]() { return accept_local_loop(); }, boost::asio::detached);
+    }
+
+    void stop()
+    {
+        if (stopped_.exchange(true))
+        {
+            return;
+        }
+        LOG_INFO("client stopping, closing resources");
+
+        boost::system::error_code ignore;
+        ignore = acceptor_.close(ignore);
+        retry_timer_.cancel();
+
+        if (tunnel_manager_ && tunnel_manager_->get_connection())
+        {
+            tunnel_manager_->get_connection()->stop();
+        }
     }
 
    private:
-    class transcript_t
-    {
-       public:
-        transcript_t() : ctx_(EVP_MD_CTX_new(), EVP_MD_CTX_free) { EVP_DigestInit(ctx_.get(), EVP_sha256()); }
-        void update(const std::vector<uint8_t> &data) const { EVP_DigestUpdate(ctx_.get(), data.data(), data.size()); }
-        [[nodiscard]] std::vector<uint8_t> finish() const
-        {
-            const std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> c(EVP_MD_CTX_new(), EVP_MD_CTX_free);
-            EVP_MD_CTX_copy(c.get(), ctx_.get());
-            std::vector<uint8_t> h(EVP_MD_size(EVP_sha256()));
-            unsigned int l;
-            EVP_DigestFinal(c.get(), h.data(), &l);
-            h.resize(l);
-            return h;
-        }
-
-       private:
-        std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> ctx_;
-    };
-
     struct handshake_result
     {
         std::vector<uint8_t> c_app_secret;
@@ -550,7 +553,7 @@ class local_client : public std::enable_shared_from_this<local_client>
 
     boost::asio::awaitable<void> connect_remote_loop()
     {
-        for (;;)
+        while (!stopped_)
         {
             uint32_t cid = next_conn_id_.fetch_add(1, std::memory_order_relaxed);
             LOG_INFO("reality handshake initiating conn_id {}", cid);
@@ -560,6 +563,10 @@ class local_client : public std::enable_shared_from_this<local_client>
 
             if (!co_await tcp_connect(*socket, ec))
             {
+                if (stopped_)
+                {
+                    break;
+                }
                 LOG_ERROR("connect failed {} retry in 5s", ec.message());
                 co_await wait_retry();
                 continue;
@@ -568,6 +575,10 @@ class local_client : public std::enable_shared_from_this<local_client>
             auto [hs_ok, hs_res] = co_await perform_reality_handshake(*socket, ec);
             if (!hs_ok)
             {
+                if (stopped_)
+                {
+                    break;
+                }
                 LOG_ERROR("handshake failed {} retry in 5s", ec.message());
                 co_await wait_retry();
                 continue;
@@ -579,11 +590,18 @@ class local_client : public std::enable_shared_from_this<local_client>
             LOG_INFO("reality handshake success tunnel active id {}", cid);
             reality_engine re(s_app_keys.first, s_app_keys.second, c_app_keys.first, c_app_keys.second);
             tunnel_manager_ = std::make_shared<mux_tunnel_impl<boost::asio::ip::tcp::socket>>(std::move(*socket), std::move(re), true, cid);
+
             co_await tunnel_manager_->run();
+
+            if (stopped_)
+            {
+                break;
+            }
 
             LOG_WARN("tunnel lost reconnecting in 5s");
             co_await wait_retry();
         }
+        LOG_INFO("connect_remote_loop exited");
     }
 
     boost::asio::awaitable<bool> tcp_connect(boost::asio::ip::tcp::socket &socket, boost::system::error_code &ec) const
@@ -615,7 +633,7 @@ class local_client : public std::enable_shared_from_this<local_client>
         uint8_t cpriv[32];
         reality::crypto_util::generate_x25519_keypair(cpub, cpriv);
 
-        const transcript_t trans;
+        const reality::transcript trans;
         if (!co_await generate_and_send_client_hello(socket, cpub, cpriv, trans, ec))
         {
             co_return std::make_pair(false, handshake_result{});
@@ -647,7 +665,7 @@ class local_client : public std::enable_shared_from_this<local_client>
     boost::asio::awaitable<bool> generate_and_send_client_hello(boost::asio::ip::tcp::socket &socket,
                                                                 const uint8_t *cpub,
                                                                 const uint8_t *cpriv,
-                                                                const transcript_t &trans,
+                                                                const reality::transcript &trans,
                                                                 boost::system::error_code &ec) const
     {
         auto shared = reality::crypto_util::x25519_derive(std::vector<uint8_t>(cpriv, cpriv + 32), server_pub_key_, ec);
@@ -695,7 +713,7 @@ class local_client : public std::enable_shared_from_this<local_client>
 
     static boost::asio::awaitable<std::pair<bool, reality::handshake_keys>> process_server_hello(boost::asio::ip::tcp::socket &socket,
                                                                                                  const uint8_t *cpriv,
-                                                                                                 const transcript_t &trans,
+                                                                                                 const reality::transcript &trans,
                                                                                                  boost::system::error_code &ec)
     {
         uint8_t hbuf[5];
@@ -725,6 +743,7 @@ class local_client : public std::enable_shared_from_this<local_client>
         }
 
         auto hs_shared = reality::crypto_util::x25519_derive(std::vector<uint8_t>(cpriv, cpriv + 32), spub, ec);
+
         auto hs_keys = reality::tls_key_schedule::derive_handshake_keys(hs_shared, trans.finish(), ec);
         co_return std::make_pair(true, hs_keys);
     }
@@ -733,7 +752,7 @@ class local_client : public std::enable_shared_from_this<local_client>
         boost::asio::ip::tcp::socket &socket,
         const std::pair<std::vector<uint8_t>, std::vector<uint8_t>> &s_hs_keys,
         const reality::handshake_keys &hs_keys,
-        const transcript_t &trans,
+        const reality::transcript &trans,
         boost::system::error_code &ec)
     {
         bool handshake_fin = false;
@@ -800,7 +819,7 @@ class local_client : public std::enable_shared_from_this<local_client>
     static boost::asio::awaitable<bool> send_client_finished(boost::asio::ip::tcp::socket &socket,
                                                              const std::pair<std::vector<uint8_t>, std::vector<uint8_t>> &c_hs_keys,
                                                              const std::vector<uint8_t> &c_hs_secret,
-                                                             const transcript_t &trans,
+                                                             const reality::transcript &trans,
                                                              boost::system::error_code &ec)
     {
         auto c_fin_verify = reality::tls_key_schedule::compute_finished_verify_data(c_hs_secret, trans.finish(), ec);
@@ -821,23 +840,20 @@ class local_client : public std::enable_shared_from_this<local_client>
         co_return true;
     }
 
-    boost::asio::awaitable<void> wait_retry() const
+    boost::asio::awaitable<void> wait_retry()
     {
-        boost::asio::steady_timer timer(pool_.get_io_context());
-        timer.expires_after(std::chrono::seconds(5));
-        auto [ec] = co_await timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
+        retry_timer_.expires_after(std::chrono::seconds(5));
+        auto [ec] = co_await retry_timer_.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
         (void)ec;
     }
 
     boost::asio::awaitable<void> accept_local_loop()
     {
-        auto ex = pool_.get_io_context().get_executor();
-        boost::asio::ip::tcp::acceptor acceptor(ex, {boost::asio::ip::tcp::v4(), l_port_});
         LOG_INFO("local socks5 listening on {}", l_port_);
-        for (;;)
+        while (!stopped_)
         {
-            boost::asio::ip::tcp::socket s(ex);
-            auto [e] = co_await acceptor.async_accept(s, boost::asio::as_tuple(boost::asio::use_awaitable));
+            boost::asio::ip::tcp::socket s(pool_.get_io_context().get_executor());
+            auto [e] = co_await acceptor_.async_accept(s, boost::asio::as_tuple(boost::asio::use_awaitable));
             if (!e)
             {
                 boost::system::error_code ec;
@@ -857,21 +873,27 @@ class local_client : public std::enable_shared_from_this<local_client>
                 {
                     LOG_WARN("rejecting local connection tunnel not ready");
                     boost::system::error_code ignore_ec;
-                    s.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ignore_ec);
-                    s.close(ignore_ec);
+                    ignore_ec = s.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ignore_ec);
+                    ignore_ec = s.close(ignore_ec);
                 }
             }
             else
             {
+                if (stopped_)
+                {
+                    break;
+                }
+
                 LOG_ERROR("local accept failed: {}", e.message());
                 if (e == boost::asio::error::no_descriptors)
                 {
-                    boost::asio::steady_timer t(ex);
+                    boost::asio::steady_timer t(pool_.get_io_context());
                     t.expires_after(std::chrono::milliseconds(500));
                     co_await t.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
                 }
             }
         }
+        LOG_INFO("accept_local_loop exited");
     }
 
    private:
@@ -884,6 +906,10 @@ class local_client : public std::enable_shared_from_this<local_client>
     std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> tunnel_manager_;
     std::atomic<uint32_t> next_conn_id_{1};
     std::atomic<uint32_t> next_session_id_{1};
+
+    boost::asio::ip::tcp::acceptor acceptor_;
+    boost::asio::steady_timer retry_timer_;
+    std::atomic<bool> stopped_{false};
 };
 
 }    // namespace mux
