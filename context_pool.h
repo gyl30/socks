@@ -66,8 +66,8 @@ class io_context_pool
     }
 
    private:
-    std::atomic<std::size_t> next_io_context_ = {0};
     std::vector<std::shared_ptr<boost::asio::io_context>> io_contexts_;
+    alignas(sizeof(std::size_t)) std::atomic<std::size_t> next_io_context_ = {0};
     std::vector<std::shared_ptr<boost::asio::executor_work_guard<boost::asio::io_context::executor_type>>> work_guards_;
 };
 
