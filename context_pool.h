@@ -53,13 +53,10 @@ class io_context_pool
         }
     }
 
-    void stop() const
+    void stop()
     {
-        LOG_INFO("io context pool stopping all contexts");
-        for (const auto& ctx : io_contexts_)
-        {
-            ctx->stop();
-        }
+        LOG_INFO("io context pool releasing work guards");
+        work_guards_.clear();
     }
 
     [[nodiscard]] boost::asio::io_context& get_io_context()

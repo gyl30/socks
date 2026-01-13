@@ -1,23 +1,16 @@
 #ifndef REALITY_ENGINE_H
 #define REALITY_ENGINE_H
 
-#include <vector>
-#include <cstring>
-#include <span>
-#include <memory>
-#include <boost/system/error_code.hpp>
-#include <boost/asio.hpp>
-#include <boost/asio/streambuf.hpp>
 #include "reality_core.h"
-#include "log.h"
+#include <boost/asio/streambuf.hpp>
+#include <memory>
+#include <span>
 
 class reality_engine
 {
    public:
     static constexpr auto INITIAL_BUF_SIZE = 16 * 1024;
     static constexpr auto MAX_BUF_SIZE = 64 * 1024;
-    static constexpr auto SCRATCH_BUF_SIZE = 18 * 1024;
-    static constexpr auto TX_BUF_INITIAL_SIZE = 16 * 1024;
 
     reality_engine(std::vector<uint8_t> r_key, std::vector<uint8_t> r_iv, std::vector<uint8_t> w_key, std::vector<uint8_t> w_iv)
         : read_key_(std::move(r_key)),
@@ -27,9 +20,12 @@ class reality_engine
           rx_buf_(std::make_unique<boost::asio::streambuf>(MAX_BUF_SIZE))
     {
         rx_buf_->prepare(INITIAL_BUF_SIZE);
-        tx_buf_.reserve(TX_BUF_INITIAL_SIZE);
-        scratch_buf_.resize(SCRATCH_BUF_SIZE);
+        scratch_buf_.resize(MAX_BUF_SIZE);
+        tx_buf_.reserve(MAX_BUF_SIZE);
     }
+
+    reality_engine(reality_engine&&) = default;
+    reality_engine& operator=(reality_engine&&) = default;
 
     auto get_read_buffer(size_t size_hint = 4096) { return rx_buf_->prepare(size_hint); }
 
@@ -55,17 +51,11 @@ class reality_engine
 
             uint8_t content_type = 0;
 
-            if (scratch_buf_.size() < frame_size)
-            {
-                scratch_buf_.resize(frame_size);
-            }
-
             size_t decrypted_len = reality::tls_record_layer::decrypt_record(
-                read_key_, read_iv_, read_seq_, record_data, std::span<uint8_t>(scratch_buf_), content_type, ec);
+                decrypt_ctx_, read_key_, read_iv_, read_seq_, record_data, std::span<uint8_t>(scratch_buf_), content_type, ec);
 
             if (ec)
             {
-                LOG_ERROR("reality engine decrypt failed at seq {} error {}", read_seq_, ec.message());
                 return;
             }
 
@@ -76,7 +66,6 @@ class reality_engine
 
             if (content_type == reality::CONTENT_TYPE_ALERT)
             {
-                LOG_INFO("reality engine received tls alert closing connection");
                 ec = boost::asio::error::eof;
                 return;
             }
@@ -94,11 +83,10 @@ class reality_engine
         }
 
         reality::tls_record_layer::encrypt_record_append(
-            write_key_, write_iv_, write_seq_, plaintext, reality::CONTENT_TYPE_APPLICATION_DATA, tx_buf_, ec);
+            encrypt_ctx_, write_key_, write_iv_, write_seq_, plaintext, reality::CONTENT_TYPE_APPLICATION_DATA, tx_buf_, ec);
 
         if (ec)
         {
-            LOG_ERROR("reality engine encrypt failed at seq {} error {}", write_seq_, ec.message());
             return {};
         }
 
@@ -112,6 +100,8 @@ class reality_engine
     std::vector<uint8_t> read_iv_;
     std::vector<uint8_t> write_key_;
     std::vector<uint8_t> write_iv_;
+    reality::cipher_context decrypt_ctx_;
+    reality::cipher_context encrypt_ctx_;
     uint64_t read_seq_ = 0;
     uint64_t write_seq_ = 0;
     std::unique_ptr<boost::asio::streambuf> rx_buf_;

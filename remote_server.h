@@ -5,9 +5,59 @@
 #include "protocol.h"
 #include "context_pool.h"
 #include "reality_messages.h"
+#include <deque>
+#include <unordered_set>
+#include <vector>
+#include <mutex>
 
 namespace mux
 {
+
+class replay_cache
+{
+   public:
+    bool check_and_insert(const std::vector<uint8_t> &sid)
+    {
+        if (sid.size() != 32)
+        {
+            return false;
+        }
+        std::string key(sid.begin(), sid.end());
+
+        std::lock_guard<std::mutex> lock(mutex_);
+        cleanup();
+
+        if (cache_.contains(key))
+        {
+            return false;
+        }
+
+        cache_.insert(key);
+        history_.push_back({std::chrono::steady_clock::now(), key});
+        return true;
+    }
+
+   private:
+    void cleanup()
+    {
+        auto now = std::chrono::steady_clock::now();
+        while (!history_.empty() && (now - history_.front().time > std::chrono::minutes(5)))
+        {
+            cache_.erase(history_.front().sid);
+            history_.pop_front();
+        }
+    }
+
+    struct entry
+    {
+        std::chrono::steady_clock::time_point time;
+        std::string sid;
+    };
+
+    std::mutex mutex_;
+    std::unordered_set<std::string> cache_;
+    std::deque<entry> history_;
+};
 
 struct client_hello_info_t
 {
@@ -249,6 +299,45 @@ class ch_parser
         }
     }
 };
+struct x25519_keypair
+{
+    uint8_t pub[32];
+    uint8_t priv[32];
+};
+
+class key_rotator
+{
+   public:
+    key_rotator() { rotate(); }
+
+    std::shared_ptr<x25519_keypair> get_current_key()
+    {
+        auto now = std::chrono::steady_clock::now();
+        if (now > next_rotate_time_.load(std::memory_order_relaxed))
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (now > next_rotate_time_.load(std::memory_order_relaxed))
+            {
+                rotate();
+            }
+        }
+        return std::atomic_load_explicit(&current_key_, std::memory_order_acquire);
+    }
+
+   private:
+    void rotate()
+    {
+        auto new_key = std::make_shared<x25519_keypair>();
+        reality::crypto_util::generate_x25519_keypair(new_key->pub, new_key->priv);
+        std::atomic_store_explicit(&current_key_, new_key, std::memory_order_release);
+        next_rotate_time_.store(std::chrono::steady_clock::now() + std::chrono::seconds(60), std::memory_order_relaxed);
+    }
+
+   private:
+    std::shared_ptr<x25519_keypair> current_key_;
+    std::atomic<std::chrono::steady_clock::time_point> next_rotate_time_;
+    std::mutex mutex_;
+};
 
 class remote_session : public mux_stream_interface, public std::enable_shared_from_this<remote_session>
 {
@@ -367,6 +456,7 @@ class remote_session : public mux_stream_interface, public std::enable_shared_fr
         co_await connection_->send_async(id_, CMD_FIN, {});
     }
 
+   private:
     std::shared_ptr<mux_connection> connection_;
     uint32_t id_;
     boost::asio::ip::tcp::resolver resolver_;
@@ -570,27 +660,27 @@ class remote_server : public std::enable_shared_from_this<remote_server>
 
     void start() { boost::asio::co_spawn(acceptor_.get_executor(), accept_loop(), boost::asio::detached); }
 
-   private:
-    class transcript_t
+    void stop()
     {
-       public:
-        transcript_t() : ctx_(EVP_MD_CTX_new(), EVP_MD_CTX_free) { EVP_DigestInit(ctx_.get(), EVP_sha256()); }
-        void update(const std::vector<uint8_t> &data) const { EVP_DigestUpdate(ctx_.get(), data.data(), data.size()); }
-        [[nodiscard]] std::vector<uint8_t> finish() const
+        LOG_INFO("remote server stopping");
+        boost::system::error_code ignore;
+        ignore = acceptor_.close(ignore);
+
+        std::lock_guard<std::mutex> lock(tunnels_mutex_);
+        for (auto &weak_tunnel : active_tunnels_)
         {
-            const std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> c(EVP_MD_CTX_new(), EVP_MD_CTX_free);
-            EVP_MD_CTX_copy(c.get(), ctx_.get());
-            std::vector<uint8_t> h(EVP_MD_size(EVP_sha256()));
-            unsigned int l;
-            EVP_DigestFinal(c.get(), h.data(), &l);
-            h.resize(l);
-            return h;
+            if (auto tunnel = weak_tunnel.lock())
+            {
+                if (tunnel->get_connection())
+                {
+                    tunnel->get_connection()->stop();
+                }
+            }
         }
+        active_tunnels_.clear();
+    }
 
-       private:
-        std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> ctx_;
-    };
-
+   private:
     boost::asio::awaitable<void> accept_loop()
     {
         LOG_INFO("remote server listening for connections");
@@ -610,10 +700,19 @@ class remote_server : public std::enable_shared_from_this<remote_server>
                     [this, s, self = shared_from_this(), conn_id = conn_id]() { return handle(s, conn_id); },
                     boost::asio::detached);
             }
+            else
+            {
+                if (e == boost::asio::error::operation_aborted)
+                {
+                    LOG_INFO("acceptor closed, stopping loop");
+                    break;
+                }
+                LOG_WARN("accept error {}", e.message());
+            }
         }
     }
 
-    boost::asio::awaitable<void> handle(std::shared_ptr<boost::asio::ip::tcp::socket> s, uint32_t conn_id) const
+    boost::asio::awaitable<void> handle(std::shared_ptr<boost::asio::ip::tcp::socket> s, uint32_t conn_id)
     {
         auto [ok, buf] = co_await read_initial_and_validate(s, conn_id);
         if (!ok)
@@ -632,7 +731,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         }
 
         LOG_INFO("srv {} authorized proceeding sni {}", conn_id, info.sni);
-        transcript_t const trans;
+        const reality::transcript trans;
 
         if (buf.size() > 5)
         {
@@ -665,6 +764,12 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         LOG_INFO("srv {} tunnel start", conn_id);
         reality_engine engine(c_app_keys.first, c_app_keys.second, s_app_keys.first, s_app_keys.second);
         auto tunnel = std::make_shared<mux_tunnel_impl<boost::asio::ip::tcp::socket>>(std::move(*s), std::move(engine), false, conn_id);
+
+        {
+            std::lock_guard<std::mutex> lock(tunnels_mutex_);
+            std::erase_if(active_tunnels_, [](const auto &wp) { return wp.expired(); });
+            active_tunnels_.push_back(tunnel);
+        }
 
         tunnel->get_connection()->set_syn_callback(
             [this, tunnel, conn_id](uint32_t id, const std::vector<uint8_t> &p)
@@ -745,13 +850,17 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         co_return std::make_pair(true, buf);
     }
 
-    std::pair<bool, std::vector<uint8_t>> authenticate_client(const client_hello_info_t &info,
-                                                              const std::vector<uint8_t> &buf,
-                                                              uint32_t conn_id) const
+    std::pair<bool, std::vector<uint8_t>> authenticate_client(const client_hello_info_t &info, const std::vector<uint8_t> &buf, uint32_t conn_id)
     {
         if (!info.is_tls13 || info.session_id.size() != 32)
         {
             LOG_WARN("srv {} not tls1.3 or invalid session id len {}", conn_id, info.session_id.size());
+            return {false, {}};
+        }
+
+        if (!replay_cache_.check_and_insert(info.session_id))
+        {
+            LOG_WARN("srv {} replay attack detected for sid", conn_id);
             return {false, {}};
         }
 
@@ -814,14 +923,14 @@ class remote_server : public std::enable_shared_from_this<remote_server>
 
     boost::asio::awaitable<server_handshake_res> perform_handshake_response(std::shared_ptr<boost::asio::ip::tcp::socket> s,
                                                                             const client_hello_info_t &info,
-                                                                            const transcript_t &trans,
+                                                                            const reality::transcript &trans,
                                                                             const std::vector<uint8_t> &auth_key,
                                                                             uint32_t conn_id,
-                                                                            boost::system::error_code &ec) const
+                                                                            boost::system::error_code &ec)
     {
-        uint8_t spub[32];
-        uint8_t spriv[32];
-        reality::crypto_util::generate_x25519_keypair(spub, spriv);
+        auto key_pair = key_rotator_.get_current_key();
+        const uint8_t *spub = key_pair->pub;
+        const uint8_t *spriv = key_pair->priv;
         std::vector<uint8_t> srand(32);
         RAND_bytes(srand.data(), 32);
 
@@ -830,7 +939,6 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         auto sh_shared = reality::crypto_util::x25519_derive(std::vector<uint8_t>(spriv, spriv + 32), info.x25519_pub, ec);
         auto sh_msg = reality::construct_server_hello(srand, info.session_id, 0x1301, std::vector<uint8_t>(spub, spub + 32));
         trans.update(sh_msg);
-
         auto hs_keys = reality::tls_key_schedule::derive_handshake_keys(sh_shared, trans.finish(), ec);
         auto c_hs_keys = reality::tls_key_schedule::derive_traffic_keys(hs_keys.client_handshake_traffic_secret, ec);
         auto s_hs_keys = reality::tls_key_schedule::derive_traffic_keys(hs_keys.server_handshake_traffic_secret, ec);
@@ -876,7 +984,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     static boost::asio::awaitable<bool> verify_client_finished(std::shared_ptr<boost::asio::ip::tcp::socket> s,
                                                                const std::pair<std::vector<uint8_t>, std::vector<uint8_t>> &c_hs_keys,
                                                                const reality::handshake_keys &hs_keys,
-                                                               const transcript_t &trans,
+                                                               const reality::transcript &trans,
                                                                uint32_t conn_id,
                                                                boost::system::error_code &ec)
     {
@@ -983,6 +1091,10 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     std::vector<uint8_t> priv_key_;
     reality::cert_manager cert_manager_;
     std::atomic<uint32_t> next_conn_id_{1};
+    replay_cache replay_cache_;
+    key_rotator key_rotator_;
+    std::mutex tunnels_mutex_;
+    std::vector<std::weak_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>>> active_tunnels_;
 };
 
 }    // namespace mux
