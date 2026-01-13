@@ -1,0 +1,119 @@
+@startuml
+!theme plain
+hide empty members
+
+package "Infrastructure" {
+    class io_context_pool {
+        + run()
+        + get_io_context() : io_context&
+        - work_guards_
+    }
+    class buffer_pool << (S, #FF7700) Singleton >> {
+        + acquire()
+        + release()
+    }
+}
+
+package "Mux Protocol Layer" {
+    interface mux_stream_interface {
+        + {abstract} on_data()
+        + {abstract} on_close()
+    }
+
+    class mux_connection {
+        - socket_ : tcp::socket
+        - streams_ : map<id, stream>
+        + send_async(cmd, payload)
+        + register_stream()
+        - read_loop()
+        - write_loop()
+    }
+
+    class mux_dispatcher {
+        + on_plaintext_data()
+        + pack()
+    }
+
+    class mux_tunnel_impl<StreamLayer> {
+        - connection_ : shared_ptr<mux_connection>
+        + create_stream() : shared_ptr<mux_stream>
+    }
+
+    class mux_stream {
+        - id_ : uint32
+        - recv_channel_
+        + async_read_some()
+        + async_write_some()
+    }
+}
+
+package "Crypto Layer" {
+    class reality_engine {
+        - rx_buf_
+        - tx_buf_
+        + encrypt()
+        + process_available_records()
+    }
+}
+
+package "Client Side" {
+    class local_client {
+        - acceptor_
+        - tunnel_manager_ : shared_ptr<mux_tunnel_impl>
+        + connect_remote_loop()
+        + accept_local_loop()
+    }
+
+    class socks_session {
+        - socket_ : tcp::socket
+        + handshake_socks5()
+        + run_tcp()
+        + run_udp()
+    }
+}
+
+package "Server Side" {
+    class remote_server {
+        - acceptor_
+        - active_tunnels_
+        - key_rotator_
+        + accept_loop()
+        + perform_handshake_response()
+    }
+
+    class remote_session {
+        - target_socket_ : tcp::socket
+        + start()
+        + upstream()
+        + downstream()
+    }
+    
+    class remote_udp_session {
+        - udp_socket_ : udp::socket
+        + start()
+    }
+}
+
+' Relations
+local_client o-- io_context_pool
+local_client *-- mux_tunnel_impl : manages >
+local_client ..> socks_session : creates >
+
+socks_session ..> mux_stream : uses >
+
+remote_server o-- io_context_pool
+remote_server ..> mux_tunnel_impl : creates >
+remote_server ..> remote_session : spawns >
+
+mux_tunnel_impl *-- mux_connection
+mux_connection *-- reality_engine : owns >
+mux_connection *-- mux_dispatcher : uses >
+mux_connection o-- mux_stream_interface : manages >
+
+mux_stream --|> mux_stream_interface
+remote_session --|> mux_stream_interface
+remote_udp_session --|> mux_stream_interface
+
+mux_stream ..> mux_connection : weak_ptr backref >
+
+@enduml
