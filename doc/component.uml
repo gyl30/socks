@@ -1,0 +1,49 @@
+@startuml
+!theme plain
+skinparam componentStyle uml2
+
+package "Local Machine (Client Side)" {
+    [User Application] as App
+    
+    node "Local Client Process" {
+        [Socks5 Listener] as SocksListener
+        [Socks Session Manager] as SocksSession
+        [Mux Tunnel (Client)] as ClientTunnel
+        [Reality Engine (Encrypt)] as ClientCrypto
+    }
+}
+
+cloud "Internet" {
+    [TCP Connection (Obfuscated)] as Network
+}
+
+package "Remote Machine (Server Side)" {
+    node "Remote Server Process" {
+        [Reality Engine (Decrypt)] as ServerCrypto
+        [Mux Tunnel (Server)] as ServerTunnel
+        [Stream Dispatcher] as Dispatcher
+        [Remote Session (TCP/UDP)] as RemoteSession
+    }
+    
+    [Target Website/Service] as Target
+}
+
+' Relationships
+App --> SocksListener : SOCKS5 Protocol
+SocksListener --> SocksSession : Create Session
+SocksSession --> ClientTunnel : Request Stream
+ClientTunnel --> ClientCrypto : Encrypt Frame
+ClientCrypto <--> Network : REALITY Handshake & Data
+Network <--> ServerCrypto
+ServerCrypto --> ServerTunnel : Decrypt Frame
+ServerTunnel --> Dispatcher : Demultiplex
+Dispatcher --> RemoteSession : Create Handler
+RemoteSession --> Target : Raw TCP/UDP
+
+note right of Network
+  **REALITY Protocol**
+  看起来像 TLS 1.3 握手
+  实际上是 Mux 数据流
+end note
+
+@enduml

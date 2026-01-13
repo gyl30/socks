@@ -1,0 +1,75 @@
+@startuml
+!theme plain
+autonumber
+
+participant "User App" as App
+participant "Local Client" as LocalClient
+participant "Socks Session" as Socks
+participant "Mux Tunnel" as Tunnel
+participant "Remote Server" as Server
+participant "Remote Session" as Remote
+participant "Target" as Target
+
+== Phase 1: Local SOCKS5 Handshake ==
+App -> LocalClient: TCP Connect
+LocalClient -> Socks: Create Session
+activate Socks
+Socks -> App: SOCKS5 Handshake (No Auth)
+App -> Socks: CONNECT target.com:80
+Socks -> Socks: Parse Request
+
+== Phase 2: Tunnel Setup (REALITY) ==
+note right of LocalClient: If tunnel not active
+LocalClient -> Server: TCP Connect
+LocalClient -> Server: Client Hello (Simulated Chrome)
+activate Server
+Server -> Server: Validate SessionID (Replay Check)
+Server -> Server: Verify Key (X25519)
+Server -> LocalClient: Server Hello + Cert + Verify
+LocalClient -> LocalClient: Verify Server Cert
+LocalClient -> Server: Client Finished
+LocalClient -> Tunnel: Initialize Mux Connection
+Server -> Tunnel: Initialize Mux Connection
+deactivate Server
+
+== Phase 3: Mux Stream Creation ==
+Socks -> Tunnel: create_stream()
+activate Tunnel
+Tunnel -> Socks: return mux_stream (ID=1)
+deactivate Tunnel
+
+Socks -> Tunnel: send_async(ID=1, CMD_SYN, "target.com:80")
+Tunnel -> Server: Encrypt & Send Frame (CMD_SYN)
+
+Server -> Remote: Create Remote Session
+activate Remote
+Remote -> Target: TCP Connect
+Target --> Remote: Connected
+Remote -> Server: send_async(ID=1, CMD_ACK, BND_ADDR)
+Server -> Tunnel: Encrypt & Send Frame (CMD_ACK)
+Tunnel -> Socks: Receive ACK
+Socks -> App: SOCKS5 Reply (Success)
+
+== Phase 4: Data Transfer ==
+App -> Socks: HTTP GET /
+Socks -> Tunnel: mux_stream::write(Data)
+Tunnel -> Server: Encrypt & Send Frame (CMD_DAT)
+Server -> Remote: Dispatch(ID=1, Data)
+Remote -> Target: Send Raw Data
+
+Target -> Remote: HTTP 200 OK
+Remote -> Server: send_async(ID=1, CMD_DAT)
+Server -> Tunnel: Encrypt & Send Frame (CMD_DAT)
+Tunnel -> Socks: mux_stream::read()
+Socks -> App: Send Raw Data
+
+== Phase 5: Closing ==
+App -> Socks: FIN
+Socks -> Tunnel: Close Stream
+Tunnel -> Server: Send CMD_FIN
+Server -> Remote: Close Target Socket
+Remote -> Target: FIN
+deactivate Remote
+deactivate Socks
+
+@enduml
