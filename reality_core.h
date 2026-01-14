@@ -820,6 +820,46 @@ class cert_manager
     openssl_ptrs::evp_pkey_ptr temp_key_;
 };
 
+struct x25519_keypair
+{
+    uint8_t pub[32];
+    uint8_t priv[32];
+};
+
+class key_rotator
+{
+   public:
+    key_rotator() { rotate(); }
+
+    std::shared_ptr<x25519_keypair> get_current_key()
+    {
+        auto now = std::chrono::steady_clock::now();
+        if (now > next_rotate_time_.load(std::memory_order_relaxed))
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (now > next_rotate_time_.load(std::memory_order_relaxed))
+            {
+                rotate();
+            }
+        }
+        return std::atomic_load_explicit(&current_key_, std::memory_order_acquire);
+    }
+
+   private:
+    void rotate()
+    {
+        auto new_key = std::make_shared<x25519_keypair>();
+        reality::crypto_util::generate_x25519_keypair(new_key->pub, new_key->priv);
+        std::atomic_store_explicit(&current_key_, new_key, std::memory_order_release);
+        next_rotate_time_.store(std::chrono::steady_clock::now() + std::chrono::seconds(60), std::memory_order_relaxed);
+    }
+
+   private:
+    std::shared_ptr<x25519_keypair> current_key_;
+    std::atomic<std::chrono::steady_clock::time_point> next_rotate_time_;
+    std::mutex mutex_;
+};
+
 }    // namespace reality
 
 #endif
