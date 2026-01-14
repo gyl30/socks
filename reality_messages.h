@@ -1,6 +1,8 @@
 #ifndef REALITY_MESSAGES_H
 #define REALITY_MESSAGES_H
 
+#include "crypto_util.h"
+
 #include <algorithm>
 #include <vector>
 #include <string>
@@ -136,11 +138,11 @@ class chrome_client_hello_builder
     [[nodiscard]] static std::vector<uint8_t> build_signature_algorithms()
     {
         std::vector<uint8_t> ext;
-        message_builder::push_u16(ext, tls_consts::ext::SIGNATURE_ALGS);
-        const std::vector<uint16_t> algs = {0x0403, 0x0804, 0x0401, 0x0503, 0x0805, 0x0501, 0x0806, 0x0601};
-        message_builder::push_u16(ext, static_cast<uint16_t>((algs.size() * 2) + 2));
-        message_builder::push_u16(ext, static_cast<uint16_t>(algs.size() * 2));
-        for (auto a : algs)
+        message_builder::push_u16(ext, tls_consts::ext::SIGNATURE_ALG);
+        const std::vector<uint16_t> alg = {0x0403, 0x0804, 0x0401, 0x0503, 0x0805, 0x0501, 0x0806, 0x0601};
+        message_builder::push_u16(ext, static_cast<uint16_t>((alg.size() * 2) + 2));
+        message_builder::push_u16(ext, static_cast<uint16_t>(alg.size() * 2));
+        for (auto a : alg)
         {
             message_builder::push_u16(ext, a);
         }
@@ -392,13 +394,13 @@ inline std::vector<uint8_t> extract_server_public_key(const std::vector<uint8_t>
     const size_t end = pos + ext_len;
     while (pos + 4 <= end)
     {
-        const auto etype = static_cast<uint16_t>((server_hello[pos] << 8) | server_hello[pos + 1]);
+        const auto type = static_cast<uint16_t>((server_hello[pos] << 8) | server_hello[pos + 1]);
         const auto elen = static_cast<uint16_t>((server_hello[pos + 2] << 8) | server_hello[pos + 3]);
         pos += 4;
-        if (etype == tls_consts::ext::KEY_SHARE && elen >= 4)
+        if (type == tls_consts::ext::KEY_SHARE && elen >= 4)
         {
-            const auto klen = static_cast<uint16_t>((server_hello[pos + 2] << 8) | server_hello[pos + 3]);
-            if (klen == 32)
+            const auto len = static_cast<uint16_t>((server_hello[pos + 2] << 8) | server_hello[pos + 3]);
+            if (len == 32)
             {
                 return {server_hello.begin() + pos + 4, server_hello.begin() + pos + 4 + 32};
             }

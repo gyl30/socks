@@ -54,8 +54,7 @@ class socks_codec
 
         if (addr.is_v6())
         {
-            const auto &v6 = addr.to_v6();
-            if (v6.is_v4_mapped())
+            if (const auto &v6 = addr.to_v6(); v6.is_v4_mapped())
             {
                 return boost::asio::ip::make_address_v4(boost::asio::ip::v4_mapped, v6);
             }

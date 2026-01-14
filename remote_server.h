@@ -1,306 +1,24 @@
 #ifndef REMOTE_SERVER_H
 #define REMOTE_SERVER_H
 
-#include <deque>
-#include <unordered_set>
 #include <vector>
 #include <mutex>
-#include "mux_tunnel.h"
+#include <unordered_set>
+
 #include "protocol.h"
+#include "ch_parser.h"
+#include "mux_tunnel.h"
+#include "key_rotator.h"
+#include "replay_cache.h"
+#include "cert_manager.h"
 #include "context_pool.h"
 #include "remote_session.h"
+#include "tls_record_layer.h"
 #include "reality_messages.h"
 #include "remote_udp_session.h"
 
 namespace mux
 {
-
-class replay_cache
-{
-   public:
-    bool check_and_insert(const std::vector<uint8_t> &sid)
-    {
-        if (sid.size() != 32)
-        {
-            return false;
-        }
-        std::string key(sid.begin(), sid.end());
-
-        std::lock_guard<std::mutex> lock(mutex_);
-        cleanup();
-
-        if (cache_.contains(key))
-        {
-            return false;
-        }
-
-        cache_.insert(key);
-        history_.push_back({std::chrono::steady_clock::now(), key});
-        return true;
-    }
-
-   private:
-    void cleanup()
-    {
-        auto now = std::chrono::steady_clock::now();
-        while (!history_.empty() && (now - history_.front().time > std::chrono::minutes(5)))
-        {
-            cache_.erase(history_.front().sid);
-            history_.pop_front();
-        }
-    }
-
-    struct entry
-    {
-        std::chrono::steady_clock::time_point time;
-        std::string sid;
-    };
-
-    std::mutex mutex_;
-    std::unordered_set<std::string> cache_;
-    std::deque<entry> history_;
-};
-
-struct client_hello_info_t
-{
-    std::vector<uint8_t> session_id, random, x25519_pub;
-    std::string sni;
-    bool is_tls13 = false;
-    uint32_t sid_offset = 0;
-};
-
-class ch_parser
-{
-   public:
-    [[nodiscard]] static client_hello_info_t parse(const std::vector<uint8_t> &buf)
-    {
-        client_hello_info_t info;
-        reader r(buf);
-
-        if (r.remaining() >= 5 && r.peek(0) == 0x16 && r.peek(1) == static_cast<uint8_t>(reality::tls_consts::VER_1_2 >> 8))
-        {
-            r.skip(5);
-        }
-
-        uint8_t type;
-        if (!r.read_u8(type) || type != 0x01)
-        {
-            return info;
-        }
-        if (!r.skip(3 + 2))
-        {
-            return info;
-        }
-
-        if (!r.read_vector(info.random, 32))
-        {
-            return info;
-        }
-
-        uint8_t sid_len;
-
-        const size_t sid_start_offset = r.offset() + 1;
-
-        if (!r.read_u8(sid_len))
-        {
-            return info;
-        }
-
-        info.sid_offset = static_cast<uint32_t>(sid_start_offset);
-
-        if (sid_len > 0)
-        {
-            if (!r.read_vector(info.session_id, sid_len))
-            {
-                return info;
-            }
-        }
-
-        uint16_t cs_len;
-        if (!r.read_u16(cs_len))
-        {
-            return info;
-        }
-        if (!r.skip(cs_len))
-        {
-            return info;
-        }
-
-        uint8_t comp_len;
-        if (!r.read_u8(comp_len))
-        {
-            return info;
-        }
-        if (!r.skip(comp_len))
-        {
-            return info;
-        }
-
-        uint16_t ext_len;
-        if (!r.read_u16(ext_len))
-        {
-            return info;
-        }
-
-        reader ext_r = r.slice(ext_len);
-        if (ext_r.valid())
-        {
-            parse_extensions(ext_r, info);
-        }
-
-        return info;
-    }
-
-   private:
-    struct reader
-    {
-        const uint8_t *ptr;
-        const uint8_t *end;
-        const uint8_t *start;
-
-        explicit reader(const std::vector<uint8_t> &buf) : ptr(buf.data()), end(buf.data() + buf.size()), start(buf.data()) {}
-        reader(const uint8_t *p, size_t len, const uint8_t *s) : ptr(p), end(p + len), start(s) {}
-
-        [[nodiscard]] bool valid() const { return ptr != nullptr; }
-        [[nodiscard]] bool has(size_t n) const { return ptr + n <= end; }
-        [[nodiscard]] size_t remaining() const { return end - ptr; }
-        [[nodiscard]] size_t offset() const { return ptr - start; }
-        [[nodiscard]] uint8_t peek(size_t off) const { return ptr[off]; }
-
-        bool skip(size_t n)
-        {
-            if (!has(n))
-            {
-                return false;
-            }
-            ptr += n;
-            return true;
-        }
-
-        bool read_u8(uint8_t &out)
-        {
-            if (!has(1))
-            {
-                return false;
-            }
-            out = *ptr++;
-            return true;
-        }
-
-        bool read_u16(uint16_t &out)
-        {
-            if (!has(2))
-            {
-                return false;
-            }
-            out = static_cast<uint16_t>((ptr[0] << 8) | ptr[1]);
-            ptr += 2;
-            return true;
-        }
-
-        bool read_vector(std::vector<uint8_t> &out, size_t n)
-        {
-            if (!has(n))
-            {
-                return false;
-            }
-            out.assign(ptr, ptr + n);
-            ptr += n;
-            return true;
-        }
-
-        reader slice(size_t n)
-        {
-            if (!has(n))
-            {
-                return {nullptr, 0, nullptr};
-            }
-            reader s(ptr, n, start);
-            ptr += n;
-            return s;
-        }
-    };
-
-    static void parse_extensions(reader &r, client_hello_info_t &info)
-    {
-        while (r.remaining() >= 4)
-        {
-            uint16_t type;
-            uint16_t len;
-            if (!r.read_u16(type) || !r.read_u16(len))
-            {
-                break;
-            }
-
-            reader val = r.slice(len);
-            if (!val.valid())
-            {
-                break;
-            }
-
-            if (type == reality::tls_consts::ext::SNI)
-            {
-                parse_sni(val, info);
-            }
-            else if (type == reality::tls_consts::ext::KEY_SHARE)
-            {
-                parse_key_share(val, info);
-            }
-        }
-    }
-
-    static void parse_sni(reader &r, client_hello_info_t &info)
-    {
-        uint16_t list_len;
-        if (!r.read_u16(list_len) || r.remaining() < list_len)
-        {
-            return;
-        }
-
-        while (r.remaining() >= 3)
-        {
-            uint8_t type = 0;
-            uint16_t len = 0;
-            r.read_u8(type);
-            r.read_u16(len);
-
-            if (type == 0x00 && r.has(len))
-            {
-                info.sni.assign(reinterpret_cast<const char *>(r.ptr), len);
-                return;
-            }
-            r.skip(len);
-        }
-    }
-
-    static void parse_key_share(reader &r, client_hello_info_t &info)
-    {
-        uint16_t share_len;
-        if (!r.read_u16(share_len))
-        {
-            return;
-        }
-
-        while (r.remaining() >= 4)
-        {
-            uint16_t group = 0;
-            uint16_t key_len = 0;
-            r.read_u16(group);
-            r.read_u16(key_len);
-
-            if (group == reality::tls_consts::group::X25519 && key_len == 32)
-            {
-                if (r.has(32))
-                {
-                    info.x25519_pub.assign(r.ptr, r.ptr + 32);
-                    info.is_tls13 = true;
-                }
-                return;
-            }
-            r.skip(key_len);
-        }
-    }
-};
 class remote_server : public std::enable_shared_from_this<remote_server>
 {
    public:
@@ -310,9 +28,9 @@ class remote_server : public std::enable_shared_from_this<remote_server>
           fb_host_(std::move(fb_h)),
           fb_port_(std::move(fb_p))
     {
-        priv_key_ = reality::crypto_util::hex_to_bytes(key);
+        private_key_ = reality::crypto_util::hex_to_bytes(key);
         boost::system::error_code ignore;
-        auto pub = reality::crypto_util::extract_public_key(priv_key_, ignore);
+        auto pub = reality::crypto_util::extract_public_key(private_key_, ignore);
         LOG_INFO("server public key {}", reality::crypto_util::bytes_to_hex(pub));
     }
 
@@ -323,8 +41,9 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         LOG_INFO("remote server stopping");
         boost::system::error_code ignore;
         ignore = acceptor_.close(ignore);
+        (void)ignore;
 
-        std::lock_guard<std::mutex> lock(tunnels_mutex_);
+        const std::scoped_lock lock(tunnels_mutex_);
         for (auto &weak_tunnel : active_tunnels_)
         {
             if (auto tunnel = weak_tunnel.lock())
@@ -424,7 +143,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         auto tunnel = std::make_shared<mux_tunnel_impl<boost::asio::ip::tcp::socket>>(std::move(*s), std::move(engine), false, conn_id);
 
         {
-            std::lock_guard<std::mutex> lock(tunnels_mutex_);
+            const std::scoped_lock lock(tunnels_mutex_);
             std::erase_if(active_tunnels_, [](const auto &wp) { return wp.expired(); });
             active_tunnels_.push_back(tunnel);
         }
@@ -493,10 +212,10 @@ class remote_server : public std::enable_shared_from_this<remote_server>
             co_return std::make_pair(false, buf);
         }
 
-        const size_t rlen = static_cast<uint16_t>((buf[3] << 8) | buf[4]);
-        while (buf.size() < 5 + rlen)
+        const size_t len = static_cast<uint16_t>((buf[3] << 8) | buf[4]);
+        while (buf.size() < 5 + len)
         {
-            std::vector<uint8_t> tmp(5 + rlen - buf.size());
+            std::vector<uint8_t> tmp(5 + len - buf.size());
             auto [re2, n2] = co_await boost::asio::async_read(*s, boost::asio::buffer(tmp), boost::asio::as_tuple(boost::asio::use_awaitable));
             if (re2)
             {
@@ -523,7 +242,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         }
 
         boost::system::error_code ec;
-        auto shared = reality::crypto_util::x25519_derive(priv_key_, info.x25519_pub, ec);
+        auto shared = reality::crypto_util::x25519_derive(private_key_, info.x25519_pub, ec);
         if (ec)
         {
             LOG_ERROR("srv {} x25519 derive failed", conn_id);
@@ -587,15 +306,15 @@ class remote_server : public std::enable_shared_from_this<remote_server>
                                                                             boost::system::error_code &ec)
     {
         auto key_pair = key_rotator_.get_current_key();
-        const uint8_t *spub = key_pair->pub;
-        const uint8_t *spriv = key_pair->priv;
+        const uint8_t *public_key = key_pair->public_key;
+        const uint8_t *private_key = key_pair->private_key;
         std::vector<uint8_t> srand(32);
         RAND_bytes(srand.data(), 32);
 
-        LOG_TRACE("srv {} generated ephemeral key {}", conn_id, reality::crypto_util::bytes_to_hex(std::vector<uint8_t>(spub, spub + 32)));
+        LOG_TRACE("srv {} generated ephemeral key {}", conn_id, reality::crypto_util::bytes_to_hex(std::vector<uint8_t>(public_key, public_key + 32)));
 
-        auto sh_shared = reality::crypto_util::x25519_derive(std::vector<uint8_t>(spriv, spriv + 32), info.x25519_pub, ec);
-        auto sh_msg = reality::construct_server_hello(srand, info.session_id, 0x1301, std::vector<uint8_t>(spub, spub + 32));
+        auto sh_shared = reality::crypto_util::x25519_derive(std::vector<uint8_t>(private_key, private_key + 32), info.x25519_pub, ec);
+        auto sh_msg = reality::construct_server_hello(srand, info.session_id, 0x1301, std::vector<uint8_t>(public_key, public_key + 32));
         trans.update(sh_msg);
         auto hs_keys = reality::tls_key_schedule::derive_handshake_keys(sh_shared, trans.finish(), ec);
         auto c_hs_keys = reality::tls_key_schedule::derive_traffic_keys(hs_keys.client_handshake_traffic_secret, ec);
@@ -662,8 +381,8 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         }
 
         auto flen = static_cast<uint16_t>((h[3] << 8) | h[4]);
-        std::vector<uint8_t> frec(flen);
-        auto [re4, rn4] = co_await boost::asio::async_read(*s, boost::asio::buffer(frec), boost::asio::as_tuple(boost::asio::use_awaitable));
+        std::vector<uint8_t> data(flen);
+        auto [re4, rn4] = co_await boost::asio::async_read(*s, boost::asio::buffer(data), boost::asio::as_tuple(boost::asio::use_awaitable));
         if (re4)
         {
             LOG_ERROR("srv {} read client finished body error {}", conn_id, re4.message());
@@ -672,7 +391,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
 
         std::vector<uint8_t> cth(5 + flen);
         std::memcpy(cth.data(), h, 5);
-        std::memcpy(cth.data() + 5, frec.data(), flen);
+        std::memcpy(cth.data() + 5, data.data(), flen);
         uint8_t ctype;
         auto pt = reality::tls_record_layer::decrypt_record(c_hs_keys.first, c_hs_keys.second, 0, cth, ctype, ec);
 
@@ -746,7 +465,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     io_context_pool &pool_;
     boost::asio::ip::tcp::acceptor acceptor_;
     std::string fb_host_, fb_port_;
-    std::vector<uint8_t> priv_key_;
+    std::vector<uint8_t> private_key_;
     reality::cert_manager cert_manager_;
     std::atomic<uint32_t> next_conn_id_{1};
     replay_cache replay_cache_;

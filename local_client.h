@@ -3,16 +3,17 @@
 
 #include <boost/asio.hpp>
 #include <vector>
-#include <array>
 #include <memory>
 
-#include "reality_core.h"
-#include "reality_messages.h"
-#include "reality_engine.h"
-#include "mux_tunnel.h"
 #include "log.h"
+#include "mux_tunnel.h"
+#include "transcript.h"
 #include "context_pool.h"
+#include "reality_core.h"
 #include "socks_session.h"
+#include "reality_engine.h"
+#include "reality_messages.h"
+#include "tls_key_schedule.h"
 
 namespace mux
 {
@@ -51,6 +52,7 @@ class local_client : public std::enable_shared_from_this<local_client>
         LOG_INFO("client stopping, closing resources");
         boost::system::error_code ignore;
         ignore = acceptor_.close(ignore);
+        (void)ignore;
         stop_channel_.cancel();
         remote_timer_.cancel();
 
@@ -131,17 +133,17 @@ class local_client : public std::enable_shared_from_this<local_client>
     boost::asio::awaitable<std::pair<bool, handshake_result>> perform_reality_handshake(boost::asio::ip::tcp::socket &socket,
                                                                                         boost::system::error_code &ec) const
     {
-        uint8_t cpub[32];
-        uint8_t cpriv[32];
-        reality::crypto_util::generate_x25519_keypair(cpub, cpriv);
+        uint8_t public_key[32];
+        uint8_t private_key[32];
+        reality::crypto_util::generate_x25519_keypair(public_key, private_key);
 
         const reality::transcript trans;
-        if (!co_await generate_and_send_client_hello(socket, cpub, cpriv, trans, ec))
+        if (!co_await generate_and_send_client_hello(socket, public_key, private_key, trans, ec))
         {
             co_return std::make_pair(false, handshake_result{});
         }
 
-        auto [sh_ok, hs_keys] = co_await process_server_hello(socket, cpriv, trans, ec);
+        auto [sh_ok, hs_keys] = co_await process_server_hello(socket, private_key, trans, ec);
         if (!sh_ok)
         {
             co_return std::make_pair(false, handshake_result{});
@@ -165,20 +167,20 @@ class local_client : public std::enable_shared_from_this<local_client>
     }
 
     boost::asio::awaitable<bool> generate_and_send_client_hello(boost::asio::ip::tcp::socket &socket,
-                                                                const uint8_t *cpub,
-                                                                const uint8_t *cpriv,
+                                                                const uint8_t *public_key,
+                                                                const uint8_t *private_key,
                                                                 const reality::transcript &trans,
                                                                 boost::system::error_code &ec) const
     {
-        auto shared = reality::crypto_util::x25519_derive(std::vector<uint8_t>(cpriv, cpriv + 32), server_pub_key_, ec);
+        auto shared = reality::crypto_util::x25519_derive(std::vector<uint8_t>(private_key, private_key + 32), server_pub_key_, ec);
         if (ec)
         {
             co_return false;
         }
 
-        std::vector<uint8_t> crand(32);
-        RAND_bytes(crand.data(), 32);
-        const std::vector<uint8_t> salt(crand.begin(), crand.begin() + 20);
+        std::vector<uint8_t> client_random(32);
+        RAND_bytes(client_random.data(), 32);
+        const std::vector<uint8_t> salt(client_random.begin(), client_random.begin() + 20);
         auto r_info = reality::crypto_util::hex_to_bytes("5245414c495459");
         auto prk = reality::crypto_util::hkdf_extract(salt, shared, ec);
         auto auth_key = reality::crypto_util::hkdf_expand(prk, r_info, 32, ec);
@@ -193,8 +195,8 @@ class local_client : public std::enable_shared_from_this<local_client>
         payload[7] = now & 0xFF;
         RAND_bytes(payload.data() + 8, 8);
 
-        auto hello_aad = reality::construct_client_hello(crand, std::vector<uint8_t>(32, 0), std::vector<uint8_t>(cpub, cpub + 32), sni_);
-        auto sid = reality::crypto_util::aes_gcm_encrypt(auth_key, std::vector<uint8_t>(crand.begin() + 20, crand.end()), payload, hello_aad, ec);
+        auto hello_aad = reality::construct_client_hello(client_random, std::vector<uint8_t>(32, 0), std::vector<uint8_t>(public_key, public_key + 32), sni_);
+        auto sid = reality::crypto_util::aes_gcm_encrypt(auth_key, std::vector<uint8_t>(client_random.begin() + 20, client_random.end()), payload, hello_aad, ec);
 
         std::vector<uint8_t> ch = hello_aad;
         std::memcpy(ch.data() + 39, sid.data(), 32);
@@ -214,19 +216,19 @@ class local_client : public std::enable_shared_from_this<local_client>
     }
 
     static boost::asio::awaitable<std::pair<bool, reality::handshake_keys>> process_server_hello(boost::asio::ip::tcp::socket &socket,
-                                                                                                 const uint8_t *cpriv,
+                                                                                                 const uint8_t *private_key,
                                                                                                  const reality::transcript &trans,
                                                                                                  boost::system::error_code &ec)
     {
-        uint8_t hbuf[5];
-        auto [re1, rn1] = co_await boost::asio::async_read(socket, boost::asio::buffer(hbuf, 5), boost::asio::as_tuple(boost::asio::use_awaitable));
+        uint8_t data[5];
+        auto [re1, rn1] = co_await boost::asio::async_read(socket, boost::asio::buffer(data, 5), boost::asio::as_tuple(boost::asio::use_awaitable));
         if (re1)
         {
             ec = re1;
             co_return std::make_pair(false, reality::handshake_keys{});
         }
 
-        auto sh_len = static_cast<uint16_t>((hbuf[3] << 8) | hbuf[4]);
+        auto sh_len = static_cast<uint16_t>((data[3] << 8) | data[4]);
         std::vector<uint8_t> sh_data(sh_len);
         auto [re2, rn2] = co_await boost::asio::async_read(socket, boost::asio::buffer(sh_data), boost::asio::as_tuple(boost::asio::use_awaitable));
         if (re2)
@@ -237,14 +239,14 @@ class local_client : public std::enable_shared_from_this<local_client>
         LOG_DEBUG("server hello received size {}", sh_len);
 
         trans.update(sh_data);
-        auto spub = reality::extract_server_public_key(sh_data);
-        if (spub.empty())
+        auto public_key = reality::extract_server_public_key(sh_data);
+        if (public_key.empty())
         {
             ec = boost::asio::error::invalid_argument;
             co_return std::make_pair(false, reality::handshake_keys{});
         }
 
-        auto hs_shared = reality::crypto_util::x25519_derive(std::vector<uint8_t>(cpriv, cpriv + 32), spub, ec);
+        auto hs_shared = reality::crypto_util::x25519_derive(std::vector<uint8_t>(private_key, private_key + 32), public_key, ec);
 
         auto hs_keys = reality::tls_key_schedule::derive_handshake_keys(hs_shared, trans.finish(), ec);
         co_return std::make_pair(true, hs_keys);
@@ -270,8 +272,8 @@ class local_client : public std::enable_shared_from_this<local_client>
                 ec = re3;
                 co_return std::make_pair(false, std::pair<std::vector<uint8_t>, std::vector<uint8_t>>{});
             }
-            auto rlen = static_cast<uint16_t>((rh[3] << 8) | rh[4]);
-            std::vector<uint8_t> rec(rlen);
+            const auto n = static_cast<uint16_t>((rh[3] << 8) | rh[4]);
+            std::vector<uint8_t> rec(n);
             co_await boost::asio::async_read(socket, boost::asio::buffer(rec), boost::asio::as_tuple(boost::asio::use_awaitable));
 
             if (rh[0] == reality::CONTENT_TYPE_CHANGE_CIPHER_SPEC)
@@ -279,9 +281,9 @@ class local_client : public std::enable_shared_from_this<local_client>
                 continue;
             }
 
-            std::vector<uint8_t> cth(5 + rlen);
+            std::vector<uint8_t> cth(5 + n);
             std::memcpy(cth.data(), rh, 5);
-            std::memcpy(cth.data() + 5, rec.data(), rlen);
+            std::memcpy(cth.data() + 5, rec.data(), n);
             uint8_t type;
             auto pt = reality::tls_record_layer::decrypt_record(s_hs_keys.first, s_hs_keys.second, seq++, cth, type, ec);
             if (ec)
@@ -423,6 +425,7 @@ class local_client : public std::enable_shared_from_this<local_client>
                 LOG_WARN("rejecting local connection tunnel not ready");
                 boost::system::error_code ignore_ec;
                 ignore_ec = s.close(ignore_ec);
+                (void)ignore_ec;
             }
         }
         LOG_INFO("accept_local_loop exited");
