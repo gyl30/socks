@@ -1,14 +1,16 @@
 #ifndef MUX_DISPATCHER_H
 #define MUX_DISPATCHER_H
 
-#include <functional>
 #include <span>
 #include <vector>
 #include <cstring>
-#include <boost/asio/streambuf.hpp>
+#include <functional>
 #include <boost/asio/buffer.hpp>
-#include "mux_protocol.h"
+#include <boost/asio/streambuf.hpp>
+
 #include "log.h"
+#include "mux_codec.h"
+#include "mux_protocol.h"
 
 class mux_dispatcher
 {
