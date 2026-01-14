@@ -9,14 +9,15 @@
 #include <mutex>
 
 #include <boost/asio.hpp>
+#include <boost/system/error_code.hpp>
 #include <boost/asio/experimental/concurrent_channel.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
-#include <boost/system/error_code.hpp>
 
-#include "reality_engine.h"
-#include "mux_dispatcher.h"
-#include "mux_protocol.h"
 #include "log.h"
+#include "mux_protocol.h"
+#include "mux_dispatcher.h"
+#include "reality_engine.h"
+#include "mux_stream_interface.h"
 
 enum class mux_connection_state : uint8_t
 {
@@ -30,15 +31,6 @@ struct mux_write_msg
     uint8_t command_ = 0;
     uint32_t stream_id = 0;
     std::vector<uint8_t> payload;
-};
-
-class mux_stream_interface
-{
-   public:
-    virtual ~mux_stream_interface() = default;
-    virtual void on_data(std::vector<uint8_t> data) = 0;
-    virtual void on_close() = 0;
-    virtual void on_reset() = 0;
 };
 
 class mux_connection : public std::enable_shared_from_this<mux_connection>

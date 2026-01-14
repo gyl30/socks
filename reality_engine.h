@@ -1,10 +1,12 @@
 #ifndef REALITY_ENGINE_H
 #define REALITY_ENGINE_H
 
-#include "reality_core.h"
-#include <boost/asio/streambuf.hpp>
 #include <memory>
 #include <span>
+#include <boost/asio/streambuf.hpp>
+
+#include "reality_core.h"
+#include "tls_record_layer.h"
 
 class reality_engine
 {
@@ -25,11 +27,11 @@ class reality_engine
     }
 
     reality_engine(reality_engine&&) = default;
-    reality_engine& operator=(reality_engine&&) = default;
+    reality_engine& operator=(reality_engine&&) = delete;
 
-    auto get_read_buffer(size_t size_hint = 4096) { return rx_buf_->prepare(size_hint); }
+    [[nodiscard]] auto get_read_buffer(size_t size_hint = 4096) const { return rx_buf_->prepare(size_hint); }
 
-    void commit_read(size_t n) { rx_buf_->commit(n); }
+    void commit_read(size_t n) const { rx_buf_->commit(n); }
 
     template <typename Callback>
     void process_available_records(boost::system::error_code& ec, Callback&& callback)
@@ -51,9 +53,8 @@ class reality_engine
 
             uint8_t content_type = 0;
 
-            size_t decrypted_len = reality::tls_record_layer::decrypt_record(
+            const size_t decrypted_len = reality::tls_record_layer::decrypt_record(
                 decrypt_ctx_, read_key_, read_iv_, read_seq_, record_data, std::span<uint8_t>(scratch_buf_), content_type, ec);
-
             if (ec)
             {
                 return;
