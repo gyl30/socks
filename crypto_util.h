@@ -6,11 +6,13 @@
 #include <cstring>
 #include <span>
 #include <iomanip>
+#include <sstream>
 #include <openssl/evp.h>
 #include <openssl/kdf.h>
 #include <openssl/rand.h>
 #include <boost/system/error_code.hpp>
 
+#include "log.h"
 #include "cipher_context.h"
 
 namespace reality
@@ -31,7 +33,7 @@ class crypto_util
 
     [[nodiscard]] static std::vector<uint8_t> hex_to_bytes(const std::string& hex)
     {
-        int64_t len = 0;
+        long len = 0;
         uint8_t* buf = OPENSSL_hexstr2buf(hex.c_str(), &len);
         if (buf == nullptr)
         {
@@ -360,6 +362,67 @@ class crypto_util
         std::vector<uint8_t> out;
         aes_gcm_encrypt_append(ctx, key, nonce, plaintext, aad, out, ec);
         return out;
+    }
+
+    [[nodiscard]] static openssl_ptrs::evp_pkey_ptr extract_pubkey_from_cert(const std::vector<uint8_t>& cert_der, boost::system::error_code& ec)
+    {
+        const uint8_t* p = cert_der.data();
+
+        openssl_ptrs::x509_ptr x509(d2i_X509(nullptr, &p, static_cast<long>(cert_der.size())));
+        if (!x509)
+        {
+            ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+            return {nullptr};
+        }
+
+        EVP_PKEY* pkey = X509_get_pubkey(x509.get());
+        if (pkey == nullptr)
+        {
+            ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+            return {nullptr};
+        }
+
+        return openssl_ptrs::evp_pkey_ptr(pkey);
+    }
+
+    static bool verify_tls13_signature(EVP_PKEY* pub_key,
+                                       const std::vector<uint8_t>& transcript_hash,
+                                       const std::vector<uint8_t>& signature,
+                                       boost::system::error_code& ec)
+    {
+        std::vector<uint8_t> to_verify(64, 0x20);
+
+        std::string context_str = "TLS 1.3, server CertificateVerify";
+        to_verify.insert(to_verify.end(), context_str.begin(), context_str.end());
+
+        to_verify.push_back(0x00);
+
+        to_verify.insert(to_verify.end(), transcript_hash.begin(), transcript_hash.end());
+
+        const openssl_ptrs::evp_md_ctx_ptr mctx(EVP_MD_CTX_new());
+        if (!mctx)
+        {
+            ec = boost::system::errc::make_error_code(boost::system::errc::not_enough_memory);
+            return false;
+        }
+
+        if (EVP_DigestVerifyInit(mctx.get(), nullptr, nullptr, nullptr, pub_key) <= 0)
+        {
+            ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+            return false;
+        }
+
+        const int res = EVP_DigestVerify(mctx.get(), signature.data(), signature.size(), to_verify.data(), to_verify.size());
+
+        if (res != 1)
+        {
+            LOG_ERROR("Signature verification failed");
+            ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+            return false;
+        }
+
+        ec.clear();
+        return true;
     }
 };
 }    // namespace reality
