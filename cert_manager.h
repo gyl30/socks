@@ -5,10 +5,12 @@
 #include <string>
 #include <memory>
 #include <cstring>
-
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
 #include <openssl/x509.h>
+
+#include "log.h"
+#include "reality_core.h"
 
 namespace reality
 {
@@ -32,7 +34,7 @@ class cert_manager
         }
     }
 
-    [[nodiscard]] std::vector<uint8_t> generate_reality_cert(const std::vector<uint8_t>& auth_key) const
+    [[nodiscard]] std::vector<uint8_t> generate_reality_cert() const
     {
         if (!temp_key_)
         {
@@ -51,19 +53,6 @@ class cert_manager
         X509_gmtime_adj(X509_get_notAfter(x509.get()), 315360000L);
         X509_set_pubkey(x509.get(), temp_key_.get());
         X509_sign(x509.get(), temp_key_.get(), nullptr);
-
-        uint8_t pub_raw[32];
-        size_t len = 32;
-        EVP_PKEY_get_raw_public_key(temp_key_.get(), pub_raw, &len);
-
-        uint8_t hmac_sig[64];
-        unsigned int hmac_len;
-        HMAC(EVP_sha512(), auth_key.data(), static_cast<int>(auth_key.size()), pub_raw, 32, hmac_sig, &hmac_len);
-
-        const ASN1_BIT_STRING* sig = nullptr;
-        const X509_ALGOR* alg = nullptr;
-        X509_get0_signature(&sig, &alg, x509.get());
-        ASN1_BIT_STRING_set(const_cast<ASN1_BIT_STRING*>(sig), hmac_sig, 64);
 
         const int len_der = i2d_X509(x509.get(), nullptr);
         std::vector<uint8_t> der(len_der);

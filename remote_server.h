@@ -8,12 +8,14 @@
 #include "protocol.h"
 #include "ch_parser.h"
 #include "mux_tunnel.h"
+#include "transcript.h"
 #include "key_rotator.h"
 #include "replay_cache.h"
 #include "cert_manager.h"
 #include "context_pool.h"
 #include "remote_session.h"
 #include "tls_record_layer.h"
+#include "tls_key_schedule.h"
 #include "reality_messages.h"
 #include "remote_udp_session.h"
 
@@ -311,7 +313,8 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         std::vector<uint8_t> srand(32);
         RAND_bytes(srand.data(), 32);
 
-        LOG_TRACE("srv {} generated ephemeral key {}", conn_id, reality::crypto_util::bytes_to_hex(std::vector<uint8_t>(public_key, public_key + 32)));
+        LOG_TRACE(
+            "srv {} generated ephemeral key {}", conn_id, reality::crypto_util::bytes_to_hex(std::vector<uint8_t>(public_key, public_key + 32)));
 
         auto sh_shared = reality::crypto_util::x25519_derive(std::vector<uint8_t>(private_key, private_key + 32), info.x25519_pub, ec);
         auto sh_msg = reality::construct_server_hello(srand, info.session_id, 0x1301, std::vector<uint8_t>(public_key, public_key + 32));
@@ -322,7 +325,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
 
         auto enc_ext = reality::construct_encrypted_extensions();
         trans.update(enc_ext);
-        auto cert_der = cert_manager_.generate_reality_cert(auth_key);
+        auto cert_der = cert_manager_.generate_reality_cert();
         auto cert = reality::construct_certificate(cert_der);
         trans.update(cert);
         auto cv = reality::construct_certificate_verify(cert_manager_.get_key(), trans.finish());
