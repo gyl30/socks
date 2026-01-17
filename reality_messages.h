@@ -1,13 +1,13 @@
 #ifndef REALITY_MESSAGES_H
 #define REALITY_MESSAGES_H
 
-#include "crypto_util.h"
-
 #include <algorithm>
 #include <vector>
 #include <string>
 #include <cstdint>
 #include <random>
+
+#include "crypto_util.h"
 #include "reality_core.h"
 
 namespace reality

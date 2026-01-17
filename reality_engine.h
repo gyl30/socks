@@ -3,7 +3,7 @@
 
 #include <memory>
 #include <span>
-#include <boost/asio/streambuf.hpp>
+#include <asio/streambuf.hpp>
 
 #include "reality_core.h"
 #include "tls_record_layer.h"
@@ -19,7 +19,7 @@ class reality_engine
           read_iv_(std::move(r_iv)),
           write_key_(std::move(w_key)),
           write_iv_(std::move(w_iv)),
-          rx_buf_(std::make_unique<boost::asio::streambuf>(MAX_BUF_SIZE))
+          rx_buf_(std::make_unique<asio::streambuf>(MAX_BUF_SIZE))
     {
         rx_buf_->prepare(INITIAL_BUF_SIZE);
         scratch_buf_.resize(MAX_BUF_SIZE);
@@ -34,7 +34,7 @@ class reality_engine
     void commit_read(size_t n) const { rx_buf_->commit(n); }
 
     template <typename Callback>
-    void process_available_records(boost::system::error_code& ec, Callback&& callback)
+    void process_available_records(std::error_code& ec, Callback&& callback)
     {
         ec.clear();
 
@@ -67,13 +67,13 @@ class reality_engine
 
             if (content_type == reality::CONTENT_TYPE_ALERT)
             {
-                ec = boost::asio::error::eof;
+                ec = asio::error::eof;
                 return;
             }
         }
     }
 
-    [[nodiscard]] std::span<const uint8_t> encrypt(const std::vector<uint8_t>& plaintext, boost::system::error_code& ec)
+    [[nodiscard]] std::span<const uint8_t> encrypt(const std::vector<uint8_t>& plaintext, std::error_code& ec)
     {
         ec.clear();
         tx_buf_.clear();
@@ -105,7 +105,7 @@ class reality_engine
     reality::cipher_context encrypt_ctx_;
     uint64_t read_seq_ = 0;
     uint64_t write_seq_ = 0;
-    std::unique_ptr<boost::asio::streambuf> rx_buf_;
+    std::unique_ptr<asio::streambuf> rx_buf_;
 
     std::vector<uint8_t> tx_buf_;
     std::vector<uint8_t> scratch_buf_;
