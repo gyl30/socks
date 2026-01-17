@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 #include <cstring>
-#include <boost/asio.hpp>
+#include <asio.hpp>
 
 namespace socks
 {
@@ -45,7 +45,7 @@ struct socks_udp_header
 class socks_codec
 {
    public:
-    static boost::asio::ip::address normalize_ip_address(const boost::asio::ip::address &addr)
+    static asio::ip::address normalize_ip_address(const asio::ip::address &addr)
     {
         if (addr.is_v4())
         {
@@ -56,7 +56,7 @@ class socks_codec
         {
             if (const auto &v6 = addr.to_v6(); v6.is_v4_mapped())
             {
-                return boost::asio::ip::make_address_v4(boost::asio::ip::v4_mapped, v6);
+                return asio::ip::make_address_v4(asio::ip::v4_mapped, v6);
             }
         }
 
@@ -71,8 +71,8 @@ class socks_codec
         buf.push_back(0x00);
         buf.push_back(h.frag);
 
-        boost::system::error_code ec;
-        auto address = boost::asio::ip::make_address(h.addr, ec);
+        std::error_code ec;
+        auto address = asio::ip::make_address(h.addr, ec);
 
         if (!ec && address.is_v6())
         {
@@ -120,9 +120,9 @@ class socks_codec
             {
                 return false;
             }
-            boost::asio::ip::address_v4::bytes_type b;
+            asio::ip::address_v4::bytes_type b;
             std::memcpy(b.data(), data + pos, 4);
-            out.addr = boost::asio::ip::address_v4(b).to_string();
+            out.addr = asio::ip::address_v4(b).to_string();
             pos += 4;
         }
         else if (atyp == socks::ATYP_DOMAIN)
@@ -146,9 +146,9 @@ class socks_codec
             {
                 return false;
             }
-            boost::asio::ip::address_v6::bytes_type b;
+            asio::ip::address_v6::bytes_type b;
             std::memcpy(b.data(), data + pos, 16);
-            out.addr = boost::asio::ip::address_v6(b).to_string();
+            out.addr = asio::ip::address_v6(b).to_string();
             pos += 16;
         }
         else
