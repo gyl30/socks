@@ -28,7 +28,7 @@ class mux_tunnel_impl : public std::enable_shared_from_this<mux_tunnel_impl<stre
         }
     }
 
-    boost::asio::awaitable<void> run() const
+    asio::awaitable<void> run() const
     {
         if (connection_ != nullptr)
         {

@@ -7,8 +7,6 @@
 #include <array>
 #include <iomanip>
 
-#include <boost/system/error_code.hpp>
-
 #include "crypto_util.h"
 
 namespace reality
@@ -23,7 +21,7 @@ class tls_record_layer
                                       const std::vector<uint8_t>& plaintext,
                                       uint8_t content_type,
                                       std::vector<uint8_t>& output_buffer,
-                                      boost::system::error_code& ec)
+                                      std::error_code& ec)
     {
         std::vector<uint8_t> nonce = iv;
         for (int i = 0; i < 8; ++i)
@@ -55,7 +53,7 @@ class tls_record_layer
                                                              uint64_t seq,
                                                              const std::vector<uint8_t>& plaintext,
                                                              uint8_t content_type,
-                                                             boost::system::error_code& ec)
+                                                             std::error_code& ec)
     {
         const cipher_context ctx;
         std::vector<uint8_t> out;
@@ -70,11 +68,11 @@ class tls_record_layer
                                  std::span<const uint8_t> record_data,
                                  std::span<uint8_t> output_buffer,
                                  uint8_t& out_content_type,
-                                 boost::system::error_code& ec)
+                                 std::error_code& ec)
     {
         if (record_data.size() < TLS_RECORD_HEADER_SIZE + AEAD_TAG_SIZE)
         {
-            ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
+            ec = std::make_error_code(std::errc::message_size);
             return 0;
         }
 
@@ -100,7 +98,7 @@ class tls_record_layer
 
         if (written == 0)
         {
-            ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
+            ec = std::make_error_code(std::errc::bad_message);
             return 0;
         }
 
@@ -116,12 +114,12 @@ class tls_record_layer
                                                              uint64_t seq,
                                                              const std::vector<uint8_t>& ciphertext_with_header,
                                                              uint8_t& out_content_type,
-                                                             boost::system::error_code& ec)
+                                                             std::error_code& ec)
     {
         const cipher_context ctx;
         if (ciphertext_with_header.size() < TLS_RECORD_HEADER_SIZE + AEAD_TAG_SIZE)
         {
-            ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
+            ec = std::make_error_code(std::errc::message_size);
             return {};
         }
         std::vector<uint8_t> out(ciphertext_with_header.size() - TLS_RECORD_HEADER_SIZE - AEAD_TAG_SIZE);

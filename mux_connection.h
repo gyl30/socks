@@ -8,10 +8,10 @@
 #include <atomic>
 #include <mutex>
 
-#include <boost/asio.hpp>
-#include <boost/system/error_code.hpp>
-#include <boost/asio/experimental/concurrent_channel.hpp>
-#include <boost/asio/experimental/awaitable_operators.hpp>
+#include <asio.hpp>
+#include <asio/experimental/channel.hpp>
+#include <asio/experimental/concurrent_channel.hpp>
+#include <asio/experimental/awaitable_operators.hpp>
 
 #include "log.h"
 #include "mux_protocol.h"
@@ -39,7 +39,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     using stream_map_t = std::unordered_map<uint32_t, std::shared_ptr<mux_stream_interface>>;
     using syn_callback_t = std::function<void(uint32_t, std::vector<uint8_t>)>;
 
-    mux_connection(boost::asio::ip::tcp::socket socket, reality_engine engine, bool is_client, uint32_t conn_id)
+    mux_connection(asio::ip::tcp::socket socket, reality_engine engine, bool is_client, uint32_t conn_id)
         : socket_(std::move(socket)),
           reality_engine_(std::move(engine)),
           write_channel_(socket_.get_executor(), 1024),
@@ -73,21 +73,21 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     [[nodiscard]] uint32_t acquire_next_id() { return next_stream_id_.fetch_add(2, std::memory_order_relaxed); }
     [[nodiscard]] uint32_t id() const { return cid_; }
 
-    [[nodiscard]] boost::asio::awaitable<void> start()
+    [[nodiscard]] asio::awaitable<void> start()
     {
         auto self = shared_from_this();
         LOG_DEBUG("mux {} started loops", cid_);
-        using boost::asio::experimental::awaitable_operators::operator||;
+        using asio::experimental::awaitable_operators::operator||;
         co_await (read_loop() || write_loop() || timeout_loop());
         LOG_INFO("mux {} loops finished stopped", cid_);
         stop();
     }
 
-    [[nodiscard]] boost::asio::awaitable<boost::system::error_code> send_async(uint32_t stream_id, uint8_t cmd, std::vector<uint8_t> payload)
+    [[nodiscard]] asio::awaitable<std::error_code> send_async(uint32_t stream_id, uint8_t cmd, std::vector<uint8_t> payload)
     {
         if (connection_state_.load(std::memory_order_acquire) != mux_connection_state::connected)
         {
-            co_return boost::asio::error::operation_aborted;
+            co_return asio::error::operation_aborted;
         }
 
         if (cmd != mux::CMD_DAT || payload.size() < 128)
@@ -97,14 +97,14 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
 
         mux_write_msg msg{.command_ = cmd, .stream_id = stream_id, .payload = std::move(payload)};
         auto [ec] =
-            co_await write_channel_.async_send(boost::system::error_code{}, std::move(msg), boost::asio::as_tuple(boost::asio::use_awaitable));
+            co_await write_channel_.async_send(std::error_code{}, std::move(msg), asio::as_tuple(asio::use_awaitable));
 
         if (ec)
         {
             LOG_ERROR("mux {} send failed error {}", cid_, ec.message());
             co_return ec;
         }
-        co_return boost::system::error_code();
+        co_return std::error_code();
     }
 
     void stop()
@@ -127,8 +127,8 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
 
         if (socket_.is_open())
         {
-            boost::system::error_code ec;
-            ec = socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
+            std::error_code ec;
+            ec = socket_.shutdown(asio::ip::tcp::socket::shutdown_both, ec);
             ec = socket_.close(ec);
             (void)ec;
         }
@@ -140,17 +140,17 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     [[nodiscard]] bool is_open() const { return connection_state_.load(std::memory_order_acquire) == mux_connection_state::connected; }
 
    private:
-    boost::asio::awaitable<void> read_loop()
+    asio::awaitable<void> read_loop()
     {
         while (is_open())
         {
             auto buf = reality_engine_.get_read_buffer(8192);
 
-            auto [read_ec, n] = co_await socket_.async_read_some(buf, boost::asio::as_tuple(boost::asio::use_awaitable));
+            auto [read_ec, n] = co_await socket_.async_read_some(buf, asio::as_tuple(asio::use_awaitable));
 
             if (read_ec || n == 0)
             {
-                if (read_ec != boost::asio::error::eof && read_ec != boost::asio::error::operation_aborted)
+                if (read_ec != asio::error::eof && read_ec != asio::error::operation_aborted)
                 {
                     LOG_ERROR("mux {} read error {}", cid_, read_ec.message());
                 }
@@ -160,7 +160,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
             reality_engine_.commit_read(n);
             update_activity();
 
-            boost::system::error_code decrypt_ec;
+            std::error_code decrypt_ec;
 
             reality_engine_.process_available_records(decrypt_ec,
                                                       [this](uint8_t type, std::span<const uint8_t> pt)
@@ -181,18 +181,18 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
         LOG_DEBUG("mux {} read loop finished", cid_);
     }
 
-    boost::asio::awaitable<void> write_loop()
+    asio::awaitable<void> write_loop()
     {
         while (is_open())
         {
-            auto [ec, msg] = co_await write_channel_.async_receive(boost::asio::as_tuple(boost::asio::use_awaitable));
+            auto [ec, msg] = co_await write_channel_.async_receive(asio::as_tuple(asio::use_awaitable));
             if (ec)
             {
                 break;
             }
 
             auto mux_frame = mux_dispatcher::pack(msg.stream_id, msg.command_, msg.payload);
-            boost::system::error_code enc_ec;
+            std::error_code enc_ec;
 
             auto ciphertext_span = reality_engine_.encrypt(mux_frame, enc_ec);
 
@@ -202,8 +202,8 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
                 break;
             }
 
-            auto [wec, n] = co_await boost::asio::async_write(
-                socket_, boost::asio::buffer(ciphertext_span.data(), ciphertext_span.size()), boost::asio::as_tuple(boost::asio::use_awaitable));
+            auto [wec, n] = co_await asio::async_write(
+                socket_, asio::buffer(ciphertext_span.data(), ciphertext_span.size()), asio::as_tuple(asio::use_awaitable));
 
             if (wec)
             {
@@ -216,12 +216,12 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
         LOG_DEBUG("mux {} write loop finished", cid_);
     }
 
-    boost::asio::awaitable<void> timeout_loop()
+    asio::awaitable<void> timeout_loop()
     {
         while (is_open())
         {
             timer_.expires_after(std::chrono::seconds(300));
-            auto [ec] = co_await timer_.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
+            auto [ec] = co_await timer_.async_wait(asio::as_tuple(asio::use_awaitable));
             if (!ec)
             {
                 LOG_WARN("mux {} timeout", cid_);
@@ -287,11 +287,11 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     }
 
    private:
-    boost::asio::ip::tcp::socket socket_;
+    asio::ip::tcp::socket socket_;
     reality_engine reality_engine_;
     mux_dispatcher mux_dispatcher_;
-    boost::asio::experimental::concurrent_channel<void(boost::system::error_code, mux_write_msg)> write_channel_;
-    boost::asio::steady_timer timer_;
+    asio::experimental::concurrent_channel<void(std::error_code, mux_write_msg)> write_channel_;
+    asio::steady_timer timer_;
     std::atomic<mux_connection_state> connection_state_;
 
     stream_map_t streams_;

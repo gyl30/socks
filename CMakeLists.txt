@@ -11,19 +11,10 @@ set(CMAKE_BUILD_TYPE Debug)
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -fno-strict-aliasing -fno-omit-frame-pointer -g -O0 -ggdb")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -fno-strict-aliasing -fno-omit-frame-pointer -g -O0 -ggdb")
 
-set(Boost_USE_STATIC_LIBS ON)
-set(Boost_USE_DEBUG_LIBS ON)
-set(Boost_USE_RELEASE_LIBS ON)
-set(Boost_USE_MULTITHREADED ON)
-set(Boost_USE_STATIC_RUNTIME OFF)
-
-find_package(Boost 1.85.0)
-include_directories(${Boost_INCLUDE_DIRS})
-message(STATUS "Found Boost:    V${Boost_VERSION} (in ${Boost_DIR})")
-
 find_package(OpenSSL REQUIRED)
+
 add_executable(socks main.cpp log.cpp)
 
-target_include_directories(socks PRIVATE ${Boost_INCLUDE_DIRS} ${OPENSSL_INCLUDE_DIR} third/spdlog/include)
+target_include_directories(socks PRIVATE ${OPENSSL_INCLUDE_DIR} third/spdlog/include third/asio/include)
 
-target_link_libraries(socks PRIVATE ${Boost_LIBRARIES} OpenSSL::SSL OpenSSL::Crypto pthread)
+target_link_libraries(socks PRIVATE OpenSSL::SSL OpenSSL::Crypto pthread)
