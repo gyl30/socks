@@ -5,8 +5,8 @@
 #include <vector>
 #include <cstring>
 #include <functional>
-#include <boost/asio/buffer.hpp>
-#include <boost/asio/streambuf.hpp>
+#include <asio/buffer.hpp>
+#include <asio/streambuf.hpp>
 
 #include "log.h"
 #include "mux_codec.h"
@@ -30,7 +30,7 @@ class mux_dispatcher
         }
 
         auto mutable_bufs = buffer_.prepare(data.size());
-        const size_t n = boost::asio::buffer_copy(mutable_bufs, boost::asio::buffer(data.data(), data.size()));
+        const size_t n = asio::buffer_copy(mutable_bufs, asio::buffer(data.data(), data.size()));
         buffer_.commit(n);
 
         process_frames();
@@ -86,7 +86,7 @@ class mux_dispatcher
 
    private:
     frame_callback_t callback_;
-    boost::asio::streambuf buffer_;
+    asio::streambuf buffer_;
 };
 
 #endif

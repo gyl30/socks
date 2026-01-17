@@ -27,7 +27,7 @@ int main(int argc, char** argv)
 
     const std::string mode = argv[1];
     const auto threads_count = std::thread::hardware_concurrency();
-    boost::system::error_code ec;
+    std::error_code ec;
     io_context_pool pool(threads_count > 0 ? threads_count : 4, ec);
 
     if (ec)
@@ -67,8 +67,8 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    boost::asio::io_context& signal_ctx = pool.get_io_context();
-    boost::asio::signal_set signals(signal_ctx);
+    asio::io_context& signal_ctx = pool.get_io_context();
+    asio::signal_set signals(signal_ctx);
     ec = signals.add(SIGINT, ec);
     if (ec)
     {
@@ -83,7 +83,7 @@ int main(int argc, char** argv)
     }
 
     signals.async_wait(
-        [&pool, server, client](const boost::system::error_code& error, int signal_number)
+        [&pool, server, client](const std::error_code& error, int signal_number)
         {
             if (!error)
             {

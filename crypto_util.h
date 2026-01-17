@@ -7,10 +7,10 @@
 #include <span>
 #include <iomanip>
 #include <sstream>
+#include <system_error>
 #include <openssl/evp.h>
 #include <openssl/kdf.h>
 #include <openssl/rand.h>
-#include <boost/system/error_code.hpp>
 
 #include "log.h"
 #include "cipher_context.h"
@@ -76,18 +76,18 @@ class crypto_util
         std::memset(out_private, 0, 32);
     }
 
-    [[nodiscard]] static std::vector<uint8_t> extract_public_key(const std::vector<uint8_t>& private_key, boost::system::error_code& ec)
+    [[nodiscard]] static std::vector<uint8_t> extract_public_key(const std::vector<uint8_t>& private_key, std::error_code& ec)
     {
         if (private_key.size() != 32)
         {
-            ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
+            ec = std::make_error_code(std::errc::invalid_argument);
             return {};
         }
 
         const openssl_ptrs::evp_pkey_ptr pkey(EVP_PKEY_new_raw_private_key(EVP_PKEY_X25519, nullptr, private_key.data(), 32));
         if (!pkey)
         {
-            ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+            ec = std::make_error_code(std::errc::protocol_error);
             return {};
         }
 
@@ -95,7 +95,7 @@ class crypto_util
         std::vector<uint8_t> public_key(32);
         if (EVP_PKEY_get_raw_public_key(pkey.get(), public_key.data(), &len) != 1)
         {
-            ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+            ec = std::make_error_code(std::errc::protocol_error);
             return {};
         }
 
@@ -105,11 +105,11 @@ class crypto_util
 
     [[nodiscard]] static std::vector<uint8_t> x25519_derive(const std::vector<uint8_t>& private_key,
                                                             const std::vector<uint8_t>& peer_public_key,
-                                                            boost::system::error_code& ec)
+                                                            std::error_code& ec)
     {
         if (private_key.size() != 32 || peer_public_key.size() != 32)
         {
-            ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
+            ec = std::make_error_code(std::errc::invalid_argument);
             return {};
         }
 
@@ -118,14 +118,14 @@ class crypto_util
 
         if (!pkey || !pub)
         {
-            ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+            ec = std::make_error_code(std::errc::protocol_error);
             return {};
         }
 
         const openssl_ptrs::evp_pkey_ctx_ptr ctx(EVP_PKEY_CTX_new(pkey.get(), nullptr));
         if (!ctx)
         {
-            ec = boost::system::errc::make_error_code(boost::system::errc::not_enough_memory);
+            ec = std::make_error_code(std::errc::not_enough_memory);
             return {};
         }
 
@@ -135,7 +135,7 @@ class crypto_util
         if (EVP_PKEY_derive_init(ctx.get()) <= 0 || EVP_PKEY_derive_set_peer(ctx.get(), pub.get()) <= 0 ||
             EVP_PKEY_derive(ctx.get(), shared.data(), &len) <= 0)
         {
-            ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+            ec = std::make_error_code(std::errc::protocol_error);
             return {};
         }
 
@@ -145,7 +145,7 @@ class crypto_util
 
     [[nodiscard]] static std::vector<uint8_t> hkdf_extract(const std::vector<uint8_t>& salt,
                                                            const std::vector<uint8_t>& ikm,
-                                                           boost::system::error_code& ec)
+                                                           std::error_code& ec)
     {
         std::vector<uint8_t> prk(EVP_MAX_MD_SIZE);
         size_t len = EVP_MAX_MD_SIZE;
@@ -153,7 +153,7 @@ class crypto_util
         const openssl_ptrs::evp_pkey_ctx_ptr evp_pkey_ctx(EVP_PKEY_CTX_new_id(EVP_PKEY_HKDF, nullptr));
         if (!evp_pkey_ctx)
         {
-            ec = boost::system::errc::make_error_code(boost::system::errc::not_enough_memory);
+            ec = std::make_error_code(std::errc::not_enough_memory);
             return {};
         }
 
@@ -162,7 +162,7 @@ class crypto_util
             EVP_PKEY_CTX_set1_hkdf_key(evp_pkey_ctx.get(), ikm.data(), static_cast<int>(ikm.size())) <= 0 ||
             EVP_PKEY_derive(evp_pkey_ctx.get(), prk.data(), &len) <= 0)
         {
-            ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+            ec = std::make_error_code(std::errc::protocol_error);
             return {};
         }
 
@@ -174,7 +174,7 @@ class crypto_util
     [[nodiscard]] static std::vector<uint8_t> hkdf_expand(const std::vector<uint8_t>& prk,
                                                           const std::vector<uint8_t>& info,
                                                           size_t len,
-                                                          boost::system::error_code& ec)
+                                                          std::error_code& ec)
     {
         std::vector<uint8_t> okm(len);
         size_t out_len = len;
@@ -182,7 +182,7 @@ class crypto_util
         const openssl_ptrs::evp_pkey_ctx_ptr evp_pkey_ctx(EVP_PKEY_CTX_new_id(EVP_PKEY_HKDF, nullptr));
         if (!evp_pkey_ctx)
         {
-            ec = boost::system::errc::make_error_code(boost::system::errc::not_enough_memory);
+            ec = std::make_error_code(std::errc::not_enough_memory);
             return {};
         }
 
@@ -192,7 +192,7 @@ class crypto_util
             EVP_PKEY_CTX_add1_hkdf_info(evp_pkey_ctx.get(), info.data(), static_cast<int>(info.size())) <= 0 ||
             EVP_PKEY_derive(evp_pkey_ctx.get(), okm.data(), &out_len) <= 0)
         {
-            ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+            ec = std::make_error_code(std::errc::protocol_error);
             return {};
         }
 
@@ -204,7 +204,7 @@ class crypto_util
                                                                 const std::string& label,
                                                                 const std::vector<uint8_t>& context,
                                                                 size_t length,
-                                                                boost::system::error_code& ec)
+                                                                std::error_code& ec)
     {
         std::string full_label = "tls13 " + label;
         std::vector<uint8_t> hkdf_label;
@@ -226,18 +226,18 @@ class crypto_util
                                   std::span<const uint8_t> ciphertext,
                                   std::span<const uint8_t> aad,
                                   std::span<uint8_t> output_buffer,
-                                  boost::system::error_code& ec)
+                                  std::error_code& ec)
     {
         if (ciphertext.size() < AEAD_TAG_SIZE)
         {
-            ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
+            ec = std::make_error_code(std::errc::message_size);
             return 0;
         }
 
         const size_t pt_len = ciphertext.size() - AEAD_TAG_SIZE;
         if (output_buffer.size() < pt_len)
         {
-            ec = boost::system::errc::make_error_code(boost::system::errc::no_buffer_space);
+            ec = std::make_error_code(std::errc::no_buffer_space);
             return 0;
         }
 
@@ -245,7 +245,7 @@ class crypto_util
 
         if (!ctx.init(false, cipher, key.data(), nonce.data(), nonce.size()))
         {
-            ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+            ec = std::make_error_code(std::errc::protocol_error);
             return 0;
         }
 
@@ -256,7 +256,7 @@ class crypto_util
 
         if (EVP_CIPHER_CTX_ctrl(ctx.get(), EVP_CTRL_GCM_SET_TAG, AEAD_TAG_SIZE, const_cast<void*>(static_cast<const void*>(tag))) != 1)
         {
-            ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
+            ec = std::make_error_code(std::errc::bad_message);
             return 0;
         }
 
@@ -264,21 +264,21 @@ class crypto_util
         {
             if (EVP_DecryptUpdate(ctx.get(), nullptr, &len, aad.data(), static_cast<int>(aad.size())) != 1)
             {
-                ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
+                ec = std::make_error_code(std::errc::bad_message);
                 return 0;
             }
         }
 
         if (EVP_DecryptUpdate(ctx.get(), output_buffer.data(), &out_len, ciphertext.data(), static_cast<int>(pt_len)) != 1)
         {
-            ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
+            ec = std::make_error_code(std::errc::bad_message);
             return 0;
         }
 
         int final_len = 0;
         if (EVP_DecryptFinal_ex(ctx.get(), output_buffer.data() + out_len, &final_len) <= 0)
         {
-            ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
+            ec = std::make_error_code(std::errc::bad_message);
             return 0;
         }
 
@@ -290,12 +290,12 @@ class crypto_util
                                                               const std::vector<uint8_t>& nonce,
                                                               const std::vector<uint8_t>& ciphertext,
                                                               const std::vector<uint8_t>& aad,
-                                                              boost::system::error_code& ec)
+                                                              std::error_code& ec)
     {
         const cipher_context ctx;
         if (ciphertext.size() < AEAD_TAG_SIZE)
         {
-            ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
+            ec = std::make_error_code(std::errc::message_size);
             return {};
         }
         std::vector<uint8_t> out(ciphertext.size() - AEAD_TAG_SIZE);
@@ -314,13 +314,13 @@ class crypto_util
                                        const std::vector<uint8_t>& plaintext,
                                        std::span<const uint8_t> aad,
                                        std::vector<uint8_t>& output_buffer,
-                                       boost::system::error_code& ec)
+                                       std::error_code& ec)
     {
         const EVP_CIPHER* cipher = (key.size() == 32) ? EVP_aes_256_gcm() : EVP_aes_128_gcm();
 
         if (!ctx.init(true, cipher, key.data(), nonce.data(), nonce.size()))
         {
-            ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+            ec = std::make_error_code(std::errc::protocol_error);
             return;
         }
 
@@ -356,7 +356,7 @@ class crypto_util
                                                               const std::vector<uint8_t>& nonce,
                                                               const std::vector<uint8_t>& plaintext,
                                                               const std::vector<uint8_t>& aad,
-                                                              boost::system::error_code& ec)
+                                                              std::error_code& ec)
     {
         const cipher_context ctx;
         std::vector<uint8_t> out;
@@ -364,21 +364,21 @@ class crypto_util
         return out;
     }
 
-    [[nodiscard]] static openssl_ptrs::evp_pkey_ptr extract_pubkey_from_cert(const std::vector<uint8_t>& cert_der, boost::system::error_code& ec)
+    [[nodiscard]] static openssl_ptrs::evp_pkey_ptr extract_pubkey_from_cert(const std::vector<uint8_t>& cert_der, std::error_code& ec)
     {
         const uint8_t* p = cert_der.data();
 
         openssl_ptrs::x509_ptr x509(d2i_X509(nullptr, &p, static_cast<long>(cert_der.size())));
         if (!x509)
         {
-            ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+            ec = std::make_error_code(std::errc::protocol_error);
             return {nullptr};
         }
 
         EVP_PKEY* pkey = X509_get_pubkey(x509.get());
         if (pkey == nullptr)
         {
-            ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+            ec = std::make_error_code(std::errc::protocol_error);
             return {nullptr};
         }
 
@@ -388,7 +388,7 @@ class crypto_util
     static bool verify_tls13_signature(EVP_PKEY* pub_key,
                                        const std::vector<uint8_t>& transcript_hash,
                                        const std::vector<uint8_t>& signature,
-                                       boost::system::error_code& ec)
+                                       std::error_code& ec)
     {
         std::vector<uint8_t> to_verify(64, 0x20);
 
@@ -402,13 +402,13 @@ class crypto_util
         const openssl_ptrs::evp_md_ctx_ptr mctx(EVP_MD_CTX_new());
         if (!mctx)
         {
-            ec = boost::system::errc::make_error_code(boost::system::errc::not_enough_memory);
+            ec = std::make_error_code(std::errc::not_enough_memory);
             return false;
         }
 
         if (EVP_DigestVerifyInit(mctx.get(), nullptr, nullptr, nullptr, pub_key) <= 0)
         {
-            ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+            ec = std::make_error_code(std::errc::protocol_error);
             return false;
         }
 
@@ -417,7 +417,7 @@ class crypto_util
         if (res != 1)
         {
             LOG_ERROR("Signature verification failed");
-            ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+            ec = std::make_error_code(std::errc::protocol_error);
             return false;
         }
 

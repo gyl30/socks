@@ -8,7 +8,6 @@
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
 #include <openssl/x509.h>
-#include <boost/system/error_code.hpp>
 
 #include "crypto_util.h"
 
@@ -18,7 +17,7 @@ class tls_key_schedule
 {
    public:
     [[nodiscard]] static std::pair<std::vector<uint8_t>, std::vector<uint8_t>> derive_traffic_keys(const std::vector<uint8_t>& secret,
-                                                                                                   boost::system::error_code& ec,
+                                                                                                   std::error_code& ec,
                                                                                                    size_t key_len = 16,
                                                                                                    size_t iv_len = 12)
     {
@@ -37,7 +36,7 @@ class tls_key_schedule
 
     [[nodiscard]] static handshake_keys derive_handshake_keys(const std::vector<uint8_t>& shared_secret,
                                                               const std::vector<uint8_t>& server_hello_hash,
-                                                              boost::system::error_code& ec)
+                                                              std::error_code& ec)
     {
         constexpr size_t hash_len = 32;
         const std::vector<uint8_t> zero_ikm(hash_len, 0);
@@ -88,7 +87,7 @@ class tls_key_schedule
 
     [[nodiscard]] static std::pair<std::vector<uint8_t>, std::vector<uint8_t>> derive_application_secrets(const std::vector<uint8_t>& master_secret,
                                                                                                           const std::vector<uint8_t>& handshake_hash,
-                                                                                                          boost::system::error_code& ec)
+                                                                                                          std::error_code& ec)
     {
         constexpr size_t hash_len = 32;
         const std::vector<uint8_t> c_app_secret = crypto_util::hkdf_expand_label(master_secret, "c ap traffic", handshake_hash, hash_len, ec);
@@ -106,7 +105,7 @@ class tls_key_schedule
 
     [[nodiscard]] static std::vector<uint8_t> compute_finished_verify_data(const std::vector<uint8_t>& base_key,
                                                                            const std::vector<uint8_t>& handshake_hash,
-                                                                           boost::system::error_code& ec)
+                                                                           std::error_code& ec)
     {
         constexpr size_t hash_len = 32;
         const std::vector<uint8_t> finished_key = crypto_util::hkdf_expand_label(base_key, "finished", {}, hash_len, ec);

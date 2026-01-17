@@ -26,22 +26,22 @@ class remote_server : public std::enable_shared_from_this<remote_server>
    public:
     remote_server(io_context_pool &pool, uint16_t port, std::string fb_h, std::string fb_p, const std::string &key)
         : pool_(pool),
-          acceptor_(pool.get_io_context(), boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v6(), port)),
+          acceptor_(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v6(), port)),
           fb_host_(std::move(fb_h)),
           fb_port_(std::move(fb_p))
     {
         private_key_ = reality::crypto_util::hex_to_bytes(key);
-        boost::system::error_code ignore;
+        std::error_code ignore;
         auto pub = reality::crypto_util::extract_public_key(private_key_, ignore);
         LOG_INFO("server public key {}", reality::crypto_util::bytes_to_hex(pub));
     }
 
-    void start() { boost::asio::co_spawn(acceptor_.get_executor(), accept_loop(), boost::asio::detached); }
+    void start() { asio::co_spawn(acceptor_.get_executor(), accept_loop(), asio::detached); }
 
     void stop()
     {
         LOG_INFO("remote server stopping");
-        boost::system::error_code ignore;
+        std::error_code ignore;
         ignore = acceptor_.close(ignore);
         (void)ignore;
 
@@ -60,28 +60,28 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     }
 
    private:
-    boost::asio::awaitable<void> accept_loop()
+    asio::awaitable<void> accept_loop()
     {
         LOG_INFO("remote server listening for connections");
         for (;;)
         {
-            auto s = std::make_shared<boost::asio::ip::tcp::socket>(acceptor_.get_executor());
-            auto [e] = co_await acceptor_.async_accept(*s, boost::asio::as_tuple(boost::asio::use_awaitable));
+            auto s = std::make_shared<asio::ip::tcp::socket>(acceptor_.get_executor());
+            auto [e] = co_await acceptor_.async_accept(*s, asio::as_tuple(asio::use_awaitable));
             if (!e)
             {
-                boost::system::error_code ec;
-                ec = s->set_option(boost::asio::ip::tcp::no_delay(true), ec);
+                std::error_code ec;
+                ec = s->set_option(asio::ip::tcp::no_delay(true), ec);
                 (void)ec;
                 const uint32_t conn_id = next_conn_id_.fetch_add(1, std::memory_order_relaxed);
 
-                boost::asio::co_spawn(
+                asio::co_spawn(
                     pool_.get_io_context(),
                     [this, s, self = shared_from_this(), conn_id = conn_id]() { return handle(s, conn_id); },
-                    boost::asio::detached);
+                    asio::detached);
             }
             else
             {
-                if (e == boost::asio::error::operation_aborted)
+                if (e == asio::error::operation_aborted)
                 {
                     LOG_INFO("acceptor closed, stopping loop");
                     break;
@@ -91,7 +91,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         }
     }
 
-    boost::asio::awaitable<void> handle(std::shared_ptr<boost::asio::ip::tcp::socket> s, uint32_t conn_id)
+    asio::awaitable<void> handle(std::shared_ptr<asio::ip::tcp::socket> s, uint32_t conn_id)
     {
         auto [ok, buf] = co_await read_initial_and_validate(s, conn_id);
         if (!ok)
@@ -122,7 +122,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
             co_return;
         }
 
-        boost::system::error_code ec;
+        std::error_code ec;
         auto [handshake_ok, hs_keys, s_hs_keys, c_hs_keys] = co_await perform_handshake_response(s, info, trans, auth_key, conn_id, ec);
 
         if (!handshake_ok)
@@ -142,7 +142,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
 
         LOG_INFO("srv {} tunnel start", conn_id);
         reality_engine engine(c_app_keys.first, c_app_keys.second, s_app_keys.first, s_app_keys.second);
-        auto tunnel = std::make_shared<mux_tunnel_impl<boost::asio::ip::tcp::socket>>(std::move(*s), std::move(engine), false, conn_id);
+        auto tunnel = std::make_shared<mux_tunnel_impl<asio::ip::tcp::socket>>(std::move(*s), std::move(engine), false, conn_id);
 
         {
             const std::scoped_lock lock(tunnels_mutex_);
@@ -153,16 +153,16 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         tunnel->get_connection()->set_syn_callback(
             [this, tunnel, conn_id](uint32_t id, const std::vector<uint8_t> &p)
             {
-                boost::asio::co_spawn(
+                asio::co_spawn(
                     pool_.get_io_context(),
                     [this, tunnel, conn_id, id, p = p]() { return process_stream_request(tunnel, conn_id, id, p); },
-                    boost::asio::detached);
+                    asio::detached);
             });
 
         co_await tunnel->run();
     }
 
-    boost::asio::awaitable<void> process_stream_request(std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> tunnel,
+    asio::awaitable<void> process_stream_request(std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel,
                                                         uint32_t conn_id,
                                                         uint32_t stream_id,
                                                         std::vector<uint8_t> payload) const
@@ -196,11 +196,11 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         }
     }
 
-    static boost::asio::awaitable<std::pair<bool, std::vector<uint8_t>>> read_initial_and_validate(std::shared_ptr<boost::asio::ip::tcp::socket> s,
+    static asio::awaitable<std::pair<bool, std::vector<uint8_t>>> read_initial_and_validate(std::shared_ptr<asio::ip::tcp::socket> s,
                                                                                                    uint32_t conn_id)
     {
         std::vector<uint8_t> buf(4096);
-        auto [re, n] = co_await s->async_read_some(boost::asio::buffer(buf), boost::asio::as_tuple(boost::asio::use_awaitable));
+        auto [re, n] = co_await s->async_read_some(asio::buffer(buf), asio::as_tuple(asio::use_awaitable));
         if (re)
         {
             LOG_ERROR("srv {} initial read error {}", conn_id, re.message());
@@ -218,7 +218,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         while (buf.size() < 5 + len)
         {
             std::vector<uint8_t> tmp(5 + len - buf.size());
-            auto [re2, n2] = co_await boost::asio::async_read(*s, boost::asio::buffer(tmp), boost::asio::as_tuple(boost::asio::use_awaitable));
+            auto [re2, n2] = co_await asio::async_read(*s, asio::buffer(tmp), asio::as_tuple(asio::use_awaitable));
             if (re2)
             {
                 co_return std::make_pair(false, buf);
@@ -243,7 +243,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
             return {false, {}};
         }
 
-        boost::system::error_code ec;
+        std::error_code ec;
         auto shared = reality::crypto_util::x25519_derive(private_key_, info.x25519_pub, ec);
         if (ec)
         {
@@ -300,12 +300,12 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         std::pair<std::vector<uint8_t>, std::vector<uint8_t>> c_hs_keys;
     };
 
-    boost::asio::awaitable<server_handshake_res> perform_handshake_response(std::shared_ptr<boost::asio::ip::tcp::socket> s,
+    asio::awaitable<server_handshake_res> perform_handshake_response(std::shared_ptr<asio::ip::tcp::socket> s,
                                                                             const client_hello_info_t &info,
                                                                             const reality::transcript &trans,
                                                                             const std::vector<uint8_t> &auth_key,
                                                                             uint32_t conn_id,
-                                                                            boost::system::error_code &ec)
+                                                                            std::error_code &ec)
     {
         auto key_pair = key_rotator_.get_current_key();
         const uint8_t *public_key = key_pair->public_key;
@@ -351,7 +351,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         out_sh.insert(out_sh.end(), flight2_enc.begin(), flight2_enc.end());
 
         LOG_DEBUG("srv {} sending server hello flight size {}", conn_id, out_sh.size());
-        auto [we, wn] = co_await boost::asio::async_write(*s, boost::asio::buffer(out_sh), boost::asio::as_tuple(boost::asio::use_awaitable));
+        auto [we, wn] = co_await asio::async_write(*s, asio::buffer(out_sh), asio::as_tuple(asio::use_awaitable));
         if (we)
         {
             ec = we;
@@ -361,15 +361,15 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         co_return server_handshake_res{.ok = true, .hs_keys = hs_keys, .s_hs_keys = s_hs_keys, .c_hs_keys = c_hs_keys};
     }
 
-    static boost::asio::awaitable<bool> verify_client_finished(std::shared_ptr<boost::asio::ip::tcp::socket> s,
+    static asio::awaitable<bool> verify_client_finished(std::shared_ptr<asio::ip::tcp::socket> s,
                                                                const std::pair<std::vector<uint8_t>, std::vector<uint8_t>> &c_hs_keys,
                                                                const reality::handshake_keys &hs_keys,
                                                                const reality::transcript &trans,
                                                                uint32_t conn_id,
-                                                               boost::system::error_code &ec)
+                                                               std::error_code &ec)
     {
         uint8_t h[5];
-        auto [re3, rn3] = co_await boost::asio::async_read(*s, boost::asio::buffer(h, 5), boost::asio::as_tuple(boost::asio::use_awaitable));
+        auto [re3, rn3] = co_await asio::async_read(*s, asio::buffer(h, 5), asio::as_tuple(asio::use_awaitable));
         if (re3)
         {
             LOG_ERROR("srv {} read client finished header error {}", conn_id, re3.message());
@@ -379,13 +379,13 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         if (h[0] == 0x14)
         {
             uint8_t dummy[1];
-            co_await boost::asio::async_read(*s, boost::asio::buffer(dummy, 1), boost::asio::as_tuple(boost::asio::use_awaitable));
-            co_await boost::asio::async_read(*s, boost::asio::buffer(h, 5), boost::asio::as_tuple(boost::asio::use_awaitable));
+            co_await asio::async_read(*s, asio::buffer(dummy, 1), asio::as_tuple(asio::use_awaitable));
+            co_await asio::async_read(*s, asio::buffer(h, 5), asio::as_tuple(asio::use_awaitable));
         }
 
         auto flen = static_cast<uint16_t>((h[3] << 8) | h[4]);
         std::vector<uint8_t> data(flen);
-        auto [re4, rn4] = co_await boost::asio::async_read(*s, boost::asio::buffer(data), boost::asio::as_tuple(boost::asio::use_awaitable));
+        auto [re4, rn4] = co_await asio::async_read(*s, asio::buffer(data), asio::as_tuple(asio::use_awaitable));
         if (re4)
         {
             LOG_ERROR("srv {} read client finished body error {}", conn_id, re4.message());
@@ -414,18 +414,18 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         co_return true;
     }
 
-    boost::asio::awaitable<void> handle_fallback(std::shared_ptr<boost::asio::ip::tcp::socket> s, std::vector<uint8_t> buf, uint32_t conn_id) const
+    asio::awaitable<void> handle_fallback(std::shared_ptr<asio::ip::tcp::socket> s, std::vector<uint8_t> buf, uint32_t conn_id) const
     {
-        boost::asio::ip::tcp::socket t(s->get_executor());
-        boost::asio::ip::tcp::resolver r(s->get_executor());
-        auto [er, eps] = co_await r.async_resolve(fb_host_, fb_port_, boost::asio::as_tuple(boost::asio::use_awaitable));
+        asio::ip::tcp::socket t(s->get_executor());
+        asio::ip::tcp::resolver r(s->get_executor());
+        auto [er, eps] = co_await r.async_resolve(fb_host_, fb_port_, asio::as_tuple(asio::use_awaitable));
         if (er)
         {
             LOG_WARN("srv {} fallback resolve failed {}", conn_id, er.message());
             co_return;
         }
 
-        auto [ec_c, ep_c] = co_await boost::asio::async_connect(t, eps, boost::asio::as_tuple(boost::asio::use_awaitable));
+        auto [ec_c, ep_c] = co_await asio::async_connect(t, eps, asio::as_tuple(asio::use_awaitable));
         if (ec_c)
         {
             LOG_WARN("srv {} fallback connect failed {}", conn_id, ec_c.message());
@@ -433,40 +433,40 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         }
 
         LOG_INFO("srv {} fallback proxying to {}:{}", conn_id, fb_host_, fb_port_);
-        auto [we, wn] = co_await boost::asio::async_write(t, boost::asio::buffer(buf), boost::asio::as_tuple(boost::asio::use_awaitable));
+        auto [we, wn] = co_await asio::async_write(t, asio::buffer(buf), asio::as_tuple(asio::use_awaitable));
         if (we)
         {
             LOG_WARN("srv {} fallback forward initial data failed {}", conn_id, we.message());
             co_return;
         }
 
-        auto xfer = [](auto &f, auto &t) -> boost::asio::awaitable<void>
+        auto xfer = [](auto &f, auto &t) -> asio::awaitable<void>
         {
             char d[4096];
             for (;;)
             {
-                auto [re, n] = co_await f.async_read_some(boost::asio::buffer(d), boost::asio::as_tuple(boost::asio::use_awaitable));
+                auto [re, n] = co_await f.async_read_some(asio::buffer(d), asio::as_tuple(asio::use_awaitable));
                 if (re || n == 0)
                 {
                     break;
                 }
-                auto [we, wn] = co_await boost::asio::async_write(t, boost::asio::buffer(d, n), boost::asio::as_tuple(boost::asio::use_awaitable));
+                auto [we, wn] = co_await asio::async_write(t, asio::buffer(d, n), asio::as_tuple(asio::use_awaitable));
                 if (we)
                 {
                     break;
                 }
             }
-            boost::system::error_code ignore;
-            f.shutdown(boost::asio::ip::tcp::socket::shutdown_receive, ignore);
-            t.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ignore);
+            std::error_code ignore;
+            f.shutdown(asio::ip::tcp::socket::shutdown_receive, ignore);
+            t.shutdown(asio::ip::tcp::socket::shutdown_send, ignore);
         };
-        using boost::asio::experimental::awaitable_operators::operator||;
+        using asio::experimental::awaitable_operators::operator||;
         co_await (xfer(*s, t) || xfer(t, *s));
     }
 
    private:
     io_context_pool &pool_;
-    boost::asio::ip::tcp::acceptor acceptor_;
+    asio::ip::tcp::acceptor acceptor_;
     std::string fb_host_, fb_port_;
     std::vector<uint8_t> private_key_;
     reality::cert_manager cert_manager_;
@@ -474,7 +474,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     replay_cache replay_cache_;
     reality::key_rotator key_rotator_;
     std::mutex tunnels_mutex_;
-    std::vector<std::weak_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>>> active_tunnels_;
+    std::vector<std::weak_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>> active_tunnels_;
 };
 
 }    // namespace mux

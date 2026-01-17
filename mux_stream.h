@@ -4,7 +4,7 @@
 #include <memory>
 #include <vector>
 #include <atomic>
-#include <boost/asio.hpp>
+#include <asio.hpp>
 #include "log.h"
 #include "mux_protocol.h"
 #include "mux_connection.h"
@@ -15,7 +15,7 @@ namespace mux
 class mux_stream : public mux_stream_interface, public std::enable_shared_from_this<mux_stream>
 {
    public:
-    mux_stream(std::uint32_t id, std::uint32_t cid, const std::shared_ptr<mux_connection> &connection, const boost::asio::any_io_executor &ex)
+    mux_stream(std::uint32_t id, std::uint32_t cid, const std::shared_ptr<mux_connection> &connection, const asio::any_io_executor &ex)
         : id_(id), cid_(cid), connection_(connection), recv_channel_(ex, 128)
     {
     }
@@ -24,16 +24,16 @@ class mux_stream : public mux_stream_interface, public std::enable_shared_from_t
 
     [[nodiscard]] std::uint32_t id() const { return id_; }
 
-    [[nodiscard]] boost::asio::awaitable<std::tuple<boost::system::error_code, std::vector<std::uint8_t>>> async_read_some()
+    [[nodiscard]] asio::awaitable<std::tuple<std::error_code, std::vector<std::uint8_t>>> async_read_some()
     {
-        co_return co_await recv_channel_.async_receive(boost::asio::as_tuple(boost::asio::use_awaitable));
+        co_return co_await recv_channel_.async_receive(asio::as_tuple(asio::use_awaitable));
     }
 
-    [[nodiscard]] boost::asio::awaitable<boost::system::error_code> async_write_some(const void *data, std::size_t len)
+    [[nodiscard]] asio::awaitable<std::error_code> async_write_some(const void *data, std::size_t len)
     {
         if (is_closed_)
         {
-            co_return boost::asio::error::broken_pipe;
+            co_return asio::error::broken_pipe;
         }
 
         std::vector<uint8_t> payload(static_cast<const uint8_t *>(data), static_cast<const uint8_t *>(data) + len);
@@ -41,12 +41,12 @@ class mux_stream : public mux_stream_interface, public std::enable_shared_from_t
         auto conn = connection_.lock();
         if (!conn)
         {
-            co_return boost::asio::error::operation_aborted;
+            co_return asio::error::operation_aborted;
         }
         co_return co_await conn->send_async(id_, CMD_DAT, std::move(payload));
     }
 
-    boost::asio::awaitable<void> close()
+    asio::awaitable<void> close()
     {
         if (is_closed_)
         {
@@ -65,7 +65,7 @@ class mux_stream : public mux_stream_interface, public std::enable_shared_from_t
         if (!is_closed_)
         {
             rx_bytes_.fetch_add(data.size(), std::memory_order_relaxed);
-            recv_channel_.try_send(boost::system::error_code(), std::move(data));
+            recv_channel_.try_send(std::error_code(), std::move(data));
         }
     }
 
@@ -91,7 +91,7 @@ class mux_stream : public mux_stream_interface, public std::enable_shared_from_t
     std::uint32_t id_ = 0;
     std::uint32_t cid_ = 0;
     std::weak_ptr<mux_connection> connection_;
-    boost::asio::experimental::concurrent_channel<void(boost::system::error_code, std::vector<std::uint8_t>)> recv_channel_;
+    asio::experimental::concurrent_channel<void(std::error_code, std::vector<std::uint8_t>)> recv_channel_;
     std::atomic<bool> is_closed_{false};
     std::atomic<uint64_t> tx_bytes_{0};
     std::atomic<uint64_t> rx_bytes_{0};
