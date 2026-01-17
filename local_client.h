@@ -195,8 +195,10 @@ class local_client : public std::enable_shared_from_this<local_client>
         payload[7] = now & 0xFF;
         RAND_bytes(payload.data() + 8, 8);
 
-        auto hello_aad = reality::construct_client_hello(client_random, std::vector<uint8_t>(32, 0), std::vector<uint8_t>(public_key, public_key + 32), sni_);
-        auto sid = reality::crypto_util::aes_gcm_encrypt(auth_key, std::vector<uint8_t>(client_random.begin() + 20, client_random.end()), payload, hello_aad, ec);
+        auto hello_aad =
+            reality::construct_client_hello(client_random, std::vector<uint8_t>(32, 0), std::vector<uint8_t>(public_key, public_key + 32), sni_);
+        auto sid = reality::crypto_util::aes_gcm_encrypt(
+            auth_key, std::vector<uint8_t>(client_random.begin() + 20, client_random.end()), payload, hello_aad, ec);
 
         std::vector<uint8_t> ch = hello_aad;
         std::memcpy(ch.data() + 39, sid.data(), 32);
@@ -263,6 +265,8 @@ class local_client : public std::enable_shared_from_this<local_client>
         uint64_t seq = 0;
         std::vector<uint8_t> handshake_buffer;
 
+        reality::openssl_ptrs::evp_pkey_ptr server_pub_key(nullptr);
+
         while (!handshake_fin)
         {
             uint8_t rh[5];
@@ -305,7 +309,79 @@ class local_client : public std::enable_shared_from_this<local_client>
                         break;
                     }
 
-                    trans.update(std::vector<uint8_t>(handshake_buffer.begin() + offset, handshake_buffer.begin() + offset + 4 + msg_len));
+                    std::vector<uint8_t> msg_data(handshake_buffer.begin() + offset, handshake_buffer.begin() + offset + 4 + msg_len);
+
+                    if (msg_type == 0x0b)
+                    {
+                        if (msg_data.size() > 10)
+                        {
+                            uint32_t ptr = 4;
+                            uint8_t ctx_len = msg_data[ptr];
+                            ptr += 1 + ctx_len;
+
+                            if (ptr + 3 <= msg_data.size())
+                            {
+                                ptr += 3;
+                                if (ptr + 3 <= msg_data.size())
+                                {
+                                    uint32_t cert_len = (msg_data[ptr] << 16) | (msg_data[ptr + 1] << 8) | msg_data[ptr + 2];
+                                    ptr += 3;
+                                    if (ptr + cert_len <= msg_data.size())
+                                    {
+                                        std::vector<uint8_t> cert_der(msg_data.begin() + ptr, msg_data.begin() + ptr + cert_len);
+                                        server_pub_key = reality::crypto_util::extract_pubkey_from_cert(cert_der, ec);
+                                        if (ec)
+                                        {
+                                            LOG_ERROR("failed to extract public key from certificate");
+                                            co_return std::make_pair(false, std::pair<std::vector<uint8_t>, std::vector<uint8_t>>{});
+                                        }
+                                        LOG_DEBUG("extracted server public key from certificate message");
+                                    }
+                                }
+                            }
+                        }
+
+                        trans.update(msg_data);
+                    }
+                    else if (msg_type == 0x0f)
+                    {
+                        if (!server_pub_key)
+                        {
+                            LOG_ERROR("received certificate verify but no public key found");
+                            ec = boost::asio::error::no_permission;
+                            co_return std::make_pair(false, std::pair<std::vector<uint8_t>, std::vector<uint8_t>>{});
+                        }
+
+                        if (msg_data.size() > 8)
+                        {
+                            uint16_t sig_len = (msg_data[6] << 8) | msg_data[7];
+                            if (4 + 2 + 2 + sig_len == msg_data.size())
+                            {
+                                std::vector<uint8_t> signature(msg_data.begin() + 8, msg_data.end());
+
+                                auto transcript_hash = trans.finish();
+
+                                if (!reality::crypto_util::verify_tls13_signature(server_pub_key.get(), transcript_hash, signature, ec))
+                                {
+                                    LOG_ERROR("certificateVerify signature verification failed");
+                                    co_return std::make_pair(false, std::pair<std::vector<uint8_t>, std::vector<uint8_t>>{});
+                                }
+                                LOG_INFO("certificateVerify signature verified successfully");
+                            }
+                            else
+                            {
+                                ec = boost::asio::error::message_size;
+                                co_return std::make_pair(false, std::pair<std::vector<uint8_t>, std::vector<uint8_t>>{});
+                            }
+                        }
+
+                        trans.update(msg_data);
+                    }
+                    else
+                    {
+                        trans.update(msg_data);
+                    }
+
                     if (msg_type == 0x14)
                     {
                         handshake_fin = true;
