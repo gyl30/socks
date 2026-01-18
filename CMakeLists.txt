@@ -13,8 +13,13 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -fno-strict-aliasing -fno-omit-fra
 
 find_package(OpenSSL REQUIRED)
 
-add_executable(socks main.cpp log.cpp)
+add_executable(socks main.cpp log.cpp config.cpp)
 
-target_include_directories(socks PRIVATE ${OPENSSL_INCLUDE_DIR} third/spdlog/include third/asio/include)
+target_include_directories(socks PRIVATE 
+    ${OPENSSL_INCLUDE_DIR} 
+    third/asio/include
+    third/spdlog/include 
+    third/rapidjson/include
+)
 
 target_link_libraries(socks PRIVATE OpenSSL::SSL OpenSSL::Crypto pthread)
