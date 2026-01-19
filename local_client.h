@@ -13,6 +13,7 @@
 #include "socks_session.h"
 #include "reality_engine.h"
 #include "reality_messages.h"
+#include "reality_fingerprint.h"
 #include "tls_key_schedule.h"
 
 namespace mux
@@ -194,13 +195,26 @@ class local_client : public std::enable_shared_from_this<local_client>
         payload[7] = now & 0xFF;
         RAND_bytes(payload.data() + 8, 8);
 
-        auto hello_aad =
-            reality::construct_client_hello(client_random, std::vector<uint8_t>(32, 0), std::vector<uint8_t>(public_key, public_key + 32), sni_);
+        auto spec = reality::FingerprintFactory::Get(reality::FingerprintType::Firefox_120);
+
+        std::vector<uint8_t> session_id(32, 0);
+
+        auto hello_aad = reality::ClientHelloBuilder::build(spec, session_id, client_random, std::vector<uint8_t>(public_key, public_key + 32), sni_);
+
         auto sid = reality::crypto_util::aes_gcm_encrypt(
             auth_key, std::vector<uint8_t>(client_random.begin() + 20, client_random.end()), payload, hello_aad, ec);
 
+        if (hello_aad.size() > 39 + 32)
+        {
+            std::memcpy(hello_aad.data() + 39, sid.data(), 32);
+        }
+        else
+        {
+            LOG_ERROR("ClientHello too short to patch SessionID");
+            co_return false;
+        }
+
         std::vector<uint8_t> ch = hello_aad;
-        std::memcpy(ch.data() + 39, sid.data(), 32);
         auto ch_rec = reality::write_record_header(reality::CONTENT_TYPE_HANDSHAKE, static_cast<uint16_t>(ch.size()));
         ch_rec.insert(ch_rec.end(), ch.begin(), ch.end());
 
