@@ -21,8 +21,12 @@ static constexpr size_t TLS_RECORD_HEADER_SIZE = 5;
 static constexpr size_t AEAD_TAG_SIZE = 16;
 static constexpr size_t MAX_TLS_PLAINTEXT_LEN = 16384;
 
+static constexpr uint16_t GREASE_PLACEHOLDER = 0x0A0A;
+
 namespace tls_consts
 {
+constexpr uint16_t VER_1_0 = 0x0301;
+constexpr uint16_t VER_1_1 = 0x0302;
 constexpr uint16_t VER_1_2 = 0x0303;
 constexpr uint16_t VER_1_3 = 0x0304;
 
@@ -34,19 +38,105 @@ constexpr uint16_t SUPPORTED_GROUPS = 0x000a;
 constexpr uint16_t EC_POINT_FORMATS = 0x000b;
 constexpr uint16_t SIGNATURE_ALG = 0x000d;
 constexpr uint16_t ALPN = 0x0010;
+constexpr uint16_t SCT = 0x0012;
 constexpr uint16_t PADDING = 0x0015;
 constexpr uint16_t EXT_MASTER_SECRET = 0x0017;
 constexpr uint16_t COMPRESS_CERT = 0x001b;
-constexpr uint16_t SUPPORTED_VERSIONS = 0x002b;
-constexpr uint16_t KEY_SHARE = 0x0033;
+constexpr uint16_t RECORD_SIZE_LIMIT = 0x001c;
+constexpr uint16_t SESSION_TICKET = 0x0023;
 constexpr uint16_t PRE_SHARED_KEY = 0x0029;
+constexpr uint16_t SUPPORTED_VERSIONS = 0x002b;
+constexpr uint16_t PSK_KEY_EXCHANGE_MODES = 0x002d;
+constexpr uint16_t KEY_SHARE = 0x0033;
+constexpr uint16_t DELEGATED_CREDENTIALS = 0x0022;
+constexpr uint16_t CHANNEL_ID_OLD = 0x3003;
+constexpr uint16_t NPN = 0x3374;
+constexpr uint16_t APPLICATION_SETTINGS = 0x4469;
 constexpr uint16_t RENEGOTIATION_INFO = 0xff01;
+constexpr uint16_t ECH_OUTER_EXTENSIONS = 0xfd00;
+constexpr uint16_t GREASE_ECH = 0xfe0d;
 }    // namespace ext
 
 namespace group
 {
+constexpr uint16_t SECP256R1 = 0x0017;
+constexpr uint16_t SECP384R1 = 0x0018;
+constexpr uint16_t SECP521R1 = 0x0019;
 constexpr uint16_t X25519 = 0x001d;
-}
+constexpr uint16_t FFDHE2048 = 0x0100;
+constexpr uint16_t FFDHE3072 = 0x0101;
+
+constexpr uint16_t X25519_KYBER768_DRAFT00 = 0x6399;
+constexpr uint16_t X25519_MLKEM768 = 0x11EC;
+}    // namespace group
+
+namespace sig_alg
+{
+constexpr uint16_t RSA_PKCS1_SHA1 = 0x0201;
+constexpr uint16_t ECDSA_SHA1 = 0x0203;
+constexpr uint16_t RSA_PKCS1_SHA256 = 0x0401;
+constexpr uint16_t ECDSA_SECP256R1_SHA256 = 0x0403;
+constexpr uint16_t RSA_PKCS1_SHA384 = 0x0501;
+constexpr uint16_t ECDSA_SECP384R1_SHA384 = 0x0503;
+constexpr uint16_t RSA_PKCS1_SHA512 = 0x0601;
+constexpr uint16_t ECDSA_SECP521R1_SHA512 = 0x0603;
+constexpr uint16_t RSA_PSS_RSAE_SHA256 = 0x0804;
+constexpr uint16_t RSA_PSS_RSAE_SHA384 = 0x0805;
+constexpr uint16_t RSA_PSS_RSAE_SHA512 = 0x0806;
+
+constexpr uint16_t FAKE_DSA_SHA1 = 0x0202;
+constexpr uint16_t FAKE_DSA_SHA256 = 0x0402;
+}    // namespace sig_alg
+
+namespace compress
+{
+constexpr uint16_t DEFLATE = 0x0001;
+constexpr uint16_t BROTLI = 0x0002;
+}    // namespace compress
+
+namespace cipher
+{
+
+constexpr uint16_t TLS_AES_128_GCM_SHA256 = 0x1301;
+constexpr uint16_t TLS_AES_256_GCM_SHA384 = 0x1302;
+constexpr uint16_t TLS_CHACHA20_POLY1305_SHA256 = 0x1303;
+
+constexpr uint16_t TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 = 0xc02b;
+constexpr uint16_t TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 = 0xc02f;
+constexpr uint16_t TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384 = 0xc02c;
+constexpr uint16_t TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384 = 0xc030;
+constexpr uint16_t TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305 = 0xcca9;
+constexpr uint16_t TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305 = 0xcca8;
+constexpr uint16_t TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA = 0xc013;
+constexpr uint16_t TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA = 0xc014;
+constexpr uint16_t TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA = 0xc009;
+constexpr uint16_t TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA = 0xc00a;
+constexpr uint16_t TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256 = 0xc027;
+constexpr uint16_t TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384 = 0xc028;
+constexpr uint16_t TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256 = 0xc023;
+constexpr uint16_t TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA384 = 0xc024;
+constexpr uint16_t TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA = 0xc012;
+constexpr uint16_t TLS_ECDHE_ECDSA_WITH_3DES_EDE_CBC_SHA = 0xc008;
+constexpr uint16_t TLS_ECDHE_ECDSA_WITH_RC4_128_SHA = 0xc007;
+constexpr uint16_t TLS_ECDHE_RSA_WITH_RC4_128_SHA = 0xc011;
+
+constexpr uint16_t TLS_RSA_WITH_AES_128_GCM_SHA256 = 0x009c;
+constexpr uint16_t TLS_RSA_WITH_AES_256_GCM_SHA384 = 0x009d;
+constexpr uint16_t TLS_RSA_WITH_AES_128_CBC_SHA = 0x002f;
+constexpr uint16_t TLS_RSA_WITH_AES_256_CBC_SHA = 0x0035;
+constexpr uint16_t TLS_RSA_WITH_AES_128_CBC_SHA256 = 0x003c;
+constexpr uint16_t TLS_RSA_WITH_AES_256_CBC_SHA256 = 0x003d;
+constexpr uint16_t TLS_RSA_WITH_3DES_EDE_CBC_SHA = 0x000a;
+constexpr uint16_t TLS_RSA_WITH_RC4_128_SHA = 0x0005;
+constexpr uint16_t TLS_RSA_WITH_RC4_128_MD5 = 0x0004;
+
+constexpr uint16_t TLS_DHE_RSA_WITH_AES_128_CBC_SHA = 0x0033;
+constexpr uint16_t TLS_DHE_RSA_WITH_AES_256_CBC_SHA = 0x0039;
+constexpr uint16_t TLS_DHE_RSA_WITH_AES_128_CBC_SHA256 = 0x0067;
+constexpr uint16_t TLS_DHE_RSA_WITH_AES_256_CBC_SHA256 = 0x006b;
+constexpr uint16_t TLS_DHE_DSS_WITH_AES_128_CBC_SHA = 0x0032;
+}    // namespace cipher
+
 }    // namespace tls_consts
 
 namespace openssl_ptrs
