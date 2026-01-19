@@ -130,8 +130,7 @@ class local_client : public std::enable_shared_from_this<local_client>
         co_return true;
     }
 
-    asio::awaitable<std::pair<bool, handshake_result>> perform_reality_handshake(asio::ip::tcp::socket &socket,
-                                                                                        std::error_code &ec) const
+    asio::awaitable<std::pair<bool, handshake_result>> perform_reality_handshake(asio::ip::tcp::socket &socket, std::error_code &ec) const
     {
         uint8_t public_key[32];
         uint8_t private_key[32];
@@ -167,10 +166,10 @@ class local_client : public std::enable_shared_from_this<local_client>
     }
 
     asio::awaitable<bool> generate_and_send_client_hello(asio::ip::tcp::socket &socket,
-                                                                const uint8_t *public_key,
-                                                                const uint8_t *private_key,
-                                                                const reality::transcript &trans,
-                                                                std::error_code &ec) const
+                                                         const uint8_t *public_key,
+                                                         const uint8_t *private_key,
+                                                         const reality::transcript &trans,
+                                                         std::error_code &ec) const
     {
         auto shared = reality::crypto_util::x25519_derive(std::vector<uint8_t>(private_key, private_key + 32), server_pub_key_, ec);
         if (ec)
@@ -218,9 +217,9 @@ class local_client : public std::enable_shared_from_this<local_client>
     }
 
     static asio::awaitable<std::pair<bool, reality::handshake_keys>> process_server_hello(asio::ip::tcp::socket &socket,
-                                                                                                 const uint8_t *private_key,
-                                                                                                 const reality::transcript &trans,
-                                                                                                 std::error_code &ec)
+                                                                                          const uint8_t *private_key,
+                                                                                          const reality::transcript &trans,
+                                                                                          std::error_code &ec)
     {
         uint8_t data[5];
         auto [re1, rn1] = co_await asio::async_read(socket, asio::buffer(data, 5), asio::as_tuple(asio::use_awaitable));
@@ -354,7 +353,7 @@ class local_client : public std::enable_shared_from_this<local_client>
 
                         if (msg_data.size() > 8)
                         {
-                            uint16_t sig_len = (msg_data[6] << 8) | msg_data[7];
+                            uint32_t sig_len = (msg_data[6] << 8) | msg_data[7];
                             if (4 + 2 + 2 + sig_len == msg_data.size())
                             {
                                 std::vector<uint8_t> signature(msg_data.begin() + 8, msg_data.end());
@@ -397,10 +396,10 @@ class local_client : public std::enable_shared_from_this<local_client>
     }
 
     static asio::awaitable<bool> send_client_finished(asio::ip::tcp::socket &socket,
-                                                             const std::pair<std::vector<uint8_t>, std::vector<uint8_t>> &c_hs_keys,
-                                                             const std::vector<uint8_t> &c_hs_secret,
-                                                             const reality::transcript &trans,
-                                                             std::error_code &ec)
+                                                      const std::pair<std::vector<uint8_t>, std::vector<uint8_t>> &c_hs_keys,
+                                                      const std::vector<uint8_t> &c_hs_secret,
+                                                      const reality::transcript &trans,
+                                                      std::error_code &ec)
     {
         auto c_fin_verify = reality::tls_key_schedule::compute_finished_verify_data(c_hs_secret, trans.finish(), ec);
         auto c_fin_msg = reality::construct_finished(c_fin_verify);
