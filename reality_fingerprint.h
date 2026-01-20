@@ -7,7 +7,6 @@
 #include <random>
 #include <algorithm>
 #include <cstdint>
-#include <variant>
 #include <array>
 #include <openssl/rand.h>
 
@@ -72,6 +71,7 @@ enum class ExtensionType
     SupportedVersions,
     CompressCertificate,
     ApplicationSettings,
+    ApplicationSettingsNew,
     GreaseECH,
     Padding,
     PreSharedKey,
@@ -85,57 +85,57 @@ enum class ExtensionType
 struct ExtensionBlueprint
 {
     virtual ~ExtensionBlueprint() = default;
-    [[nodiscard]] virtual ExtensionType type() const = 0;
-    [[nodiscard]] virtual bool is_shufflable() const { return true; }
+    virtual ExtensionType type() const = 0;
+    virtual bool is_shufflable() const { return true; }
 };
 
 struct GreaseBlueprint : ExtensionBlueprint
 {
-    [[nodiscard]] ExtensionType type() const override { return ExtensionType::GREASE; }
-    [[nodiscard]] bool is_shufflable() const override { return false; }
+    ExtensionType type() const override { return ExtensionType::GREASE; }
+    bool is_shufflable() const override { return false; }
 };
 
 struct SNIBlueprint : ExtensionBlueprint
 {
-    [[nodiscard]] ExtensionType type() const override { return ExtensionType::SNI; }
+    ExtensionType type() const override { return ExtensionType::SNI; }
 };
 
 struct EMSBlueprint : ExtensionBlueprint
 {
-    [[nodiscard]] ExtensionType type() const override { return ExtensionType::ExtendedMasterSecret; }
+    ExtensionType type() const override { return ExtensionType::ExtendedMasterSecret; }
 };
 
 struct RenegotiationBlueprint : ExtensionBlueprint
 {
-    [[nodiscard]] ExtensionType type() const override { return ExtensionType::RenegotiationInfo; }
+    ExtensionType type() const override { return ExtensionType::RenegotiationInfo; }
 };
 
 struct SupportedGroupsBlueprint : ExtensionBlueprint
 {
     std::vector<uint16_t> groups;
-    [[nodiscard]] ExtensionType type() const override { return ExtensionType::SupportedGroups; }
+    ExtensionType type() const override { return ExtensionType::SupportedGroups; }
 };
 
 struct ECPointFormatsBlueprint : ExtensionBlueprint
 {
     std::vector<uint8_t> formats;
-    [[nodiscard]] ExtensionType type() const override { return ExtensionType::ECPointFormats; }
+    ExtensionType type() const override { return ExtensionType::ECPointFormats; }
 };
 
 struct SessionTicketBlueprint : ExtensionBlueprint
 {
-    [[nodiscard]] ExtensionType type() const override { return ExtensionType::SessionTicket; }
+    ExtensionType type() const override { return ExtensionType::SessionTicket; }
 };
 
 struct ALPNBlueprint : ExtensionBlueprint
 {
     std::vector<std::string> protocols;
-    [[nodiscard]] ExtensionType type() const override { return ExtensionType::ALPN; }
+    ExtensionType type() const override { return ExtensionType::ALPN; }
 };
 
 struct StatusRequestBlueprint : ExtensionBlueprint
 {
-    [[nodiscard]] ExtensionType type() const override { return ExtensionType::StatusRequest; }
+    ExtensionType type() const override { return ExtensionType::StatusRequest; }
 };
 
 struct SignatureAlgorithmsBlueprint : ExtensionBlueprint
@@ -146,7 +146,7 @@ struct SignatureAlgorithmsBlueprint : ExtensionBlueprint
 
 struct SCTBlueprint : ExtensionBlueprint
 {
-    [[nodiscard]] ExtensionType type() const override { return ExtensionType::SCT; }
+    ExtensionType type() const override { return ExtensionType::SCT; }
 };
 
 struct KeyShareBlueprint : ExtensionBlueprint
@@ -182,6 +182,12 @@ struct ApplicationSettingsBlueprint : ExtensionBlueprint
 {
     std::vector<std::string> supported_protocols;
     ExtensionType type() const override { return ExtensionType::ApplicationSettings; }
+};
+
+struct ApplicationSettingsNewBlueprint : ExtensionBlueprint
+{
+    std::vector<std::string> supported_protocols;
+    ExtensionType type() const override { return ExtensionType::ApplicationSettingsNew; }
 };
 
 struct GreaseECHBlueprint : ExtensionBlueprint
@@ -244,23 +250,21 @@ class GreaseContext
         }
     }
 
-    [[nodiscard]] uint16_t get_grease(int index) const
+    uint16_t get_grease(int index) const
     {
         static const std::vector<uint16_t> GREASE_VALUES = {
             0x0a0a, 0x1a1a, 0x2a2a, 0x3a3a, 0x4a4a, 0x5a5a, 0x6a6a, 0x7a7a, 0x8a8a, 0x9a9a, 0xaaaa, 0xbaba, 0xcaca, 0xdada, 0xeaea, 0xfafa};
-        const uint16_t val = seed_[index % seed_.size()];
-        const uint8_t idx = (val >> 8) ^ (val & 0xFF);
+        uint16_t val = seed_[index % seed_.size()];
+        uint8_t idx = (val >> 8) ^ (val & 0xFF);
         return GREASE_VALUES[idx % GREASE_VALUES.size()];
     }
 
-    [[nodiscard]] uint16_t get_extension_grease(int nth_occurrence) const
+    uint16_t get_extension_grease(int nth_occurrence) const
     {
-        const uint16_t val1 = get_grease(2);
+        uint16_t val1 = get_grease(2);
         uint16_t val2 = get_grease(3);
         if (val1 == val2)
-        {
             val2 ^= 0x1010;
-        }
         return (nth_occurrence == 0) ? val1 : val2;
     }
 
@@ -431,7 +435,6 @@ class FingerprintFactory
             case FingerprintType::Chrome_106_Shuffle:
             {
                 auto base = GetChrome120();
-
                 std::erase_if(base.extensions,
                               [](const auto& e) { return e->type() == ExtensionType::ApplicationSettings || e->type() == ExtensionType::GreaseECH; });
                 base.shuffle_extensions = true;
@@ -439,12 +442,40 @@ class FingerprintFactory
             }
 
             case FingerprintType::Chrome_131:
+            {
+                auto s = GetChrome120();
+                for (auto& ext : s.extensions)
+                {
+                    if (ext->type() == ExtensionType::SupportedGroups)
+                    {
+                        auto g = std::static_pointer_cast<SupportedGroupsBlueprint>(ext);
+                        g->groups = {GREASE_PLACEHOLDER,
+                                     tls_consts::group::X25519_MLKEM768,
+                                     tls_consts::group::X25519,
+                                     tls_consts::group::SECP256R1,
+                                     tls_consts::group::SECP384R1};
+                    }
+                    if (ext->type() == ExtensionType::KeyShare)
+                    {
+                        auto k = std::static_pointer_cast<KeyShareBlueprint>(ext);
+                        k->key_shares = {{GREASE_PLACEHOLDER, {}}, {tls_consts::group::X25519_MLKEM768, {}}, {tls_consts::group::X25519, {}}};
+                    }
+                }
+                return s;
+            }
+
             case FingerprintType::Chrome_133:
             {
                 auto s = GetChrome120();
 
                 for (auto& ext : s.extensions)
                 {
+                    if (ext->type() == ExtensionType::ApplicationSettings)
+                    {
+                        auto alps = std::make_shared<ApplicationSettingsNewBlueprint>();
+                        alps->supported_protocols = {"h2"};
+                        ext = alps;
+                    }
                     if (ext->type() == ExtensionType::SupportedGroups)
                     {
                         auto g = std::static_pointer_cast<SupportedGroupsBlueprint>(ext);
@@ -634,7 +665,7 @@ class FingerprintFactory
                 auto ch_id = std::make_shared<ChannelIDBlueprint>();
                 ch_id->old_id = false;
 
-                s.extensions.insert(s.extensions.end() - 4, ch_id);
+                s.extensions.insert(s.extensions.end() - 2, ch_id);
                 return s;
             }
         }

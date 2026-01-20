@@ -75,9 +75,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
                 const uint32_t conn_id = next_conn_id_.fetch_add(1, std::memory_order_relaxed);
 
                 asio::co_spawn(
-                    pool_.get_io_context(),
-                    [this, s, self = shared_from_this(), conn_id = conn_id]() { return handle(s, conn_id); },
-                    asio::detached);
+                    pool_.get_io_context(), [this, s, self = shared_from_this(), conn_id = conn_id]() { return handle(s, conn_id); }, asio::detached);
             }
             else
             {
@@ -163,9 +161,9 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     }
 
     asio::awaitable<void> process_stream_request(std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel,
-                                                        uint32_t conn_id,
-                                                        uint32_t stream_id,
-                                                        std::vector<uint8_t> payload) const
+                                                 uint32_t conn_id,
+                                                 uint32_t stream_id,
+                                                 std::vector<uint8_t> payload) const
     {
         syn_payload syn;
         if (!mux_codec::decode_syn(payload.data(), payload.size(), syn))
@@ -197,7 +195,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     }
 
     static asio::awaitable<std::pair<bool, std::vector<uint8_t>>> read_initial_and_validate(std::shared_ptr<asio::ip::tcp::socket> s,
-                                                                                                   uint32_t conn_id)
+                                                                                            uint32_t conn_id)
     {
         std::vector<uint8_t> buf(4096);
         auto [re, n] = co_await s->async_read_some(asio::buffer(buf), asio::as_tuple(asio::use_awaitable));
@@ -301,11 +299,11 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     };
 
     asio::awaitable<server_handshake_res> perform_handshake_response(std::shared_ptr<asio::ip::tcp::socket> s,
-                                                                            const client_hello_info_t &info,
-                                                                            const reality::transcript &trans,
-                                                                            const std::vector<uint8_t> &auth_key,
-                                                                            uint32_t conn_id,
-                                                                            std::error_code &ec)
+                                                                     const client_hello_info_t &info,
+                                                                     const reality::transcript &trans,
+                                                                     const std::vector<uint8_t> &auth_key,
+                                                                     uint32_t conn_id,
+                                                                     std::error_code &ec)
     {
         auto key_pair = key_rotator_.get_current_key();
         const uint8_t *public_key = key_pair->public_key;
@@ -325,7 +323,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
 
         auto enc_ext = reality::construct_encrypted_extensions();
         trans.update(enc_ext);
-        auto cert_der = cert_manager_.generate_reality_cert();
+        auto cert_der = cert_manager_.generate_reality_cert(info.sni.empty() ? fb_host_ : info.sni);
         auto cert = reality::construct_certificate(cert_der);
         trans.update(cert);
         auto cv = reality::construct_certificate_verify(cert_manager_.get_key(), trans.finish());
@@ -362,11 +360,11 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     }
 
     static asio::awaitable<bool> verify_client_finished(std::shared_ptr<asio::ip::tcp::socket> s,
-                                                               const std::pair<std::vector<uint8_t>, std::vector<uint8_t>> &c_hs_keys,
-                                                               const reality::handshake_keys &hs_keys,
-                                                               const reality::transcript &trans,
-                                                               uint32_t conn_id,
-                                                               std::error_code &ec)
+                                                        const std::pair<std::vector<uint8_t>, std::vector<uint8_t>> &c_hs_keys,
+                                                        const reality::handshake_keys &hs_keys,
+                                                        const reality::transcript &trans,
+                                                        uint32_t conn_id,
+                                                        std::error_code &ec)
     {
         uint8_t h[5];
         auto [re3, rn3] = co_await asio::async_read(*s, asio::buffer(h, 5), asio::as_tuple(asio::use_awaitable));
