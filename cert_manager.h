@@ -34,7 +34,7 @@ class cert_manager
         }
     }
 
-    [[nodiscard]] std::vector<uint8_t> generate_reality_cert() const
+    [[nodiscard]] std::vector<uint8_t> generate_reality_cert(const std::string& sni) const
     {
         if (!temp_key_)
         {
@@ -48,9 +48,19 @@ class cert_manager
         }
 
         X509_set_version(x509.get(), 2);
-        ASN1_INTEGER_set(X509_get_serialNumber(x509.get()), 0);
+        BIGNUM* bn = BN_new();
+        BN_pseudo_rand(bn, 64, 0, 0);
+        ASN1_INTEGER* serial = X509_get_serialNumber(x509.get());
+        BN_to_ASN1_INTEGER(bn, serial);
+        BN_free(bn);
+
         X509_gmtime_adj(X509_get_notBefore(x509.get()), 0);
         X509_gmtime_adj(X509_get_notAfter(x509.get()), 315360000L);
+
+        X509_NAME* name = X509_get_subject_name(x509.get());
+        X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, reinterpret_cast<const unsigned char*>(sni.c_str()), -1, -1, 0);
+        X509_set_issuer_name(x509.get(), name);
+
         X509_set_pubkey(x509.get(), temp_key_.get());
         X509_sign(x509.get(), temp_key_.get(), nullptr);
 
@@ -67,6 +77,6 @@ class cert_manager
     openssl_ptrs::evp_pkey_ptr temp_key_;
 };
 
-}    // namespace reality
+}    
 
 #endif
