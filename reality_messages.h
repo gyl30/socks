@@ -1,14 +1,11 @@
 #ifndef REALITY_MESSAGES_H
 #define REALITY_MESSAGES_H
 
-#include <algorithm>
 #include <vector>
 #include <string>
 #include <cstdint>
-#include <random>
-#include <iterator>
+#include <cstring>
 
-#include "crypto_util.h"
 #include "reality_core.h"
 #include "reality_fingerprint.h"
 
@@ -73,7 +70,7 @@ class ClientHelloBuilder
         int grease_ext_count = 0;
 
         message_builder::push_u8(hello, 0x01);
-        message_builder::push_u24(hello, 0);
+        message_builder::push_u24(hello, 0);    // Length placeholder
         message_builder::push_u16(hello, spec.client_version);
         message_builder::push_bytes(hello, random);
         message_builder::push_vector_u8(hello, session_id);
@@ -82,7 +79,9 @@ class ClientHelloBuilder
         for (auto cs : spec.cipher_suites)
         {
             if (cs == GREASE_PLACEHOLDER)
+            {
                 cs = grease_ctx.get_grease(0);
+            }
             message_builder::push_u16(ciphers_buf, cs);
         }
         message_builder::push_vector_u16(hello, ciphers_buf);
@@ -202,7 +201,9 @@ class ClientHelloBuilder
                     {
                         uint16_t group = ks.group;
                         if (group == GREASE_PLACEHOLDER)
+                        {
                             group = grease_ctx.get_grease(1);
+                        }
                         message_builder::push_u16(share_list, group);
 
                         std::vector<uint8_t> key_data = ks.data;
@@ -216,7 +217,6 @@ class ClientHelloBuilder
                             {
                                 key_data.resize(32 + 1184);
                                 RAND_bytes(key_data.data(), key_data.size());
-
                                 std::memcpy(key_data.data(), x25519_pubkey.data(), 32);
                             }
                             else if (ks.group == GREASE_PLACEHOLDER)
@@ -279,6 +279,18 @@ class ClientHelloBuilder
                     message_builder::push_vector_u16(ext_data, proto_list);
                     break;
                 }
+                case ExtensionType::ApplicationSettingsNew:
+                {
+                    ext_type = tls_consts::ext::APPLICATION_SETTINGS_NEW;
+                    auto bp = std::static_pointer_cast<ApplicationSettingsNewBlueprint>(ext_ptr);
+                    std::vector<uint8_t> proto_list;
+                    for (const auto &p : bp->supported_protocols)
+                    {
+                        message_builder::push_vector_u8(proto_list, std::vector<uint8_t>(p.begin(), p.end()));
+                    }
+                    message_builder::push_vector_u16(ext_data, proto_list);
+                    break;
+                }
                 case ExtensionType::GreaseECH:
                 {
                     ext_type = tls_consts::ext::GREASE_ECH;
@@ -296,8 +308,8 @@ class ClientHelloBuilder
                 case ExtensionType::ChannelID:
                 {
                     auto bp = std::static_pointer_cast<ChannelIDBlueprint>(ext_ptr);
-                    ext_type = bp->old_id ? 0x3003 : 0x3003;
-
+                    // Fixed logic: use LEGACY ID if old_id is true, standard ID otherwise
+                    ext_type = bp->old_id ? tls_consts::ext::CHANNEL_ID_LEGACY : tls_consts::ext::CHANNEL_ID;
                     break;
                 }
                 case ExtensionType::DelegatedCredentials:
@@ -322,13 +334,11 @@ class ClientHelloBuilder
                 case ExtensionType::PreSharedKey:
                 {
                     ext_type = tls_consts::ext::PRE_SHARED_KEY;
-
                     std::vector<uint8_t> identity(32);
                     RAND_bytes(identity.data(), 32);
                     message_builder::push_u16(ext_data, 32 + 2 + 4);
                     message_builder::push_vector_u16(ext_data, identity);
                     message_builder::push_u32(ext_data, 0);
-
                     std::vector<uint8_t> binder(32);
                     RAND_bytes(binder.data(), 32);
                     message_builder::push_u16(ext_data, 33);
@@ -339,19 +349,16 @@ class ClientHelloBuilder
                 {
                     ext_type = tls_consts::ext::PADDING;
                     size_t current_len = hello.size() + 2 + exts_buf.size() + 4;
+                    // Revised padding logic: only pad if len < 512
                     size_t padding_len = 0;
-                    if (current_len <= 512)
+                    if (current_len < 512)
                     {
                         padding_len = 512 - current_len;
                     }
-                    else
-                    {
-                        padding_len = (128 - (current_len % 128)) % 128;
-                        if (padding_len == 0)
-                            padding_len = 128;
-                    }
                     if (padding_len > 0)
+                    {
                         ext_data.resize(padding_len, 0x00);
+                    }
                     break;
                 }
                 default:

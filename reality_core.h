@@ -49,9 +49,11 @@ constexpr uint16_t SUPPORTED_VERSIONS = 0x002b;
 constexpr uint16_t PSK_KEY_EXCHANGE_MODES = 0x002d;
 constexpr uint16_t KEY_SHARE = 0x0033;
 constexpr uint16_t DELEGATED_CREDENTIALS = 0x0022;
-constexpr uint16_t CHANNEL_ID_OLD = 0x3003;
+constexpr uint16_t CHANNEL_ID = 0x3003;
+constexpr uint16_t CHANNEL_ID_LEGACY = 0x7550;
 constexpr uint16_t NPN = 0x3374;
 constexpr uint16_t APPLICATION_SETTINGS = 0x4469;
+constexpr uint16_t APPLICATION_SETTINGS_NEW = 0x44cd;
 constexpr uint16_t RENEGOTIATION_INFO = 0xff01;
 constexpr uint16_t ECH_OUTER_EXTENSIONS = 0xfd00;
 constexpr uint16_t GREASE_ECH = 0xfe0d;
@@ -67,6 +69,7 @@ constexpr uint16_t FFDHE2048 = 0x0100;
 constexpr uint16_t FFDHE3072 = 0x0101;
 
 constexpr uint16_t X25519_KYBER768_DRAFT00 = 0x6399;
+constexpr uint16_t X25519_KYBER512_DRAFT00 = 0xfe30;
 constexpr uint16_t X25519_MLKEM768 = 0x11EC;
 }    // namespace group
 
@@ -107,6 +110,8 @@ constexpr uint16_t TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384 = 0xc02c;
 constexpr uint16_t TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384 = 0xc030;
 constexpr uint16_t TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305 = 0xcca9;
 constexpr uint16_t TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305 = 0xcca8;
+constexpr uint16_t TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_OLD = 0xcc13;
+constexpr uint16_t TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_OLD = 0xcc14;
 constexpr uint16_t TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA = 0xc013;
 constexpr uint16_t TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA = 0xc014;
 constexpr uint16_t TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA = 0xc009;
