@@ -70,7 +70,7 @@ class ClientHelloBuilder
         int grease_ext_count = 0;
 
         message_builder::push_u8(hello, 0x01);
-        message_builder::push_u24(hello, 0);    // Length placeholder
+        message_builder::push_u24(hello, 0);
         message_builder::push_u16(hello, spec.client_version);
         message_builder::push_bytes(hello, random);
         message_builder::push_vector_u8(hello, session_id);
@@ -294,10 +294,20 @@ class ClientHelloBuilder
                 case ExtensionType::GreaseECH:
                 {
                     ext_type = tls_consts::ext::GREASE_ECH;
-                    uint8_t rnd_byte;
-                    RAND_bytes(&rnd_byte, 1);
-                    ext_data.resize(rnd_byte % 16);
-                    RAND_bytes(ext_data.data(), ext_data.size());
+
+                    ext_data.reserve(10);
+                    ext_data.push_back(0x00);
+
+                    ext_data.push_back(0x0a);
+                    ext_data.push_back(0x0a);
+                    ext_data.push_back(0x0a);
+                    ext_data.push_back(0x0a);
+
+                    ext_data.push_back(0x00);
+
+                    message_builder::push_u16(ext_data, 0);
+                    message_builder::push_u16(ext_data, 0);
+
                     break;
                 }
                 case ExtensionType::NPN:
@@ -308,7 +318,7 @@ class ClientHelloBuilder
                 case ExtensionType::ChannelID:
                 {
                     auto bp = std::static_pointer_cast<ChannelIDBlueprint>(ext_ptr);
-                    // Fixed logic: use LEGACY ID if old_id is true, standard ID otherwise
+
                     ext_type = bp->old_id ? tls_consts::ext::CHANNEL_ID_LEGACY : tls_consts::ext::CHANNEL_ID;
                     break;
                 }
@@ -349,7 +359,7 @@ class ClientHelloBuilder
                 {
                     ext_type = tls_consts::ext::PADDING;
                     size_t current_len = hello.size() + 2 + exts_buf.size() + 4;
-                    // Revised padding logic: only pad if len < 512
+
                     size_t padding_len = 0;
                     if (current_len < 512)
                     {
