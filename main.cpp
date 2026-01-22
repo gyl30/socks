@@ -97,7 +97,7 @@ int main(int argc, char** argv)
 
     if (cfg.mode == "server")
     {
-        server = std::make_shared<mux::remote_server>(pool, cfg.inbound.port, cfg.fallback.host, cfg.fallback.port, cfg.reality.private_key);
+        server = std::make_shared<mux::remote_server>(pool, cfg.inbound.port, cfg.fallbacks, cfg.reality.private_key);
         server->start();
     }
     else if (cfg.mode == "client")

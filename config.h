@@ -2,6 +2,7 @@
 #define CONFIG_H
 
 #include <string>
+#include <vector>
 #include <cstdint>
 #include <optional>
 
@@ -33,11 +34,13 @@ struct config
         uint16_t port = 1080;
     } socks;
 
-    struct fallback_t
+    struct fallback_entry
     {
-        std::string host = "apple.com";
+        std::string sni = "www.apple.com";
+        std::string host = "www.apple.com";
         std::string port = "443";
-    } fallback;
+    };
+    std::vector<fallback_entry> fallbacks;
 
     struct reality_t
     {
