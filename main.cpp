@@ -23,11 +23,11 @@ static void dump_x25519()
     reality::crypto_util::generate_x25519_keypair(pub, priv);
     const std::vector<uint8_t> vec_priv(priv, priv + 32);
     const std::vector<uint8_t> vec_pub(pub, pub + 32);
-    std::cout << "Private Key: " << reality::crypto_util::bytes_to_hex(vec_priv) << std::endl;
-    std::cout << "Public Key:  " << reality::crypto_util::bytes_to_hex(vec_pub) << std::endl;
+    std::cout << "Private Key: " << reality::crypto_util::bytes_to_hex(vec_priv) << '\n';
+    std::cout << "Public Key:  " << reality::crypto_util::bytes_to_hex(vec_pub) << '\n';
 }
 
-int parse_config_from_file(const std::string& file, config& cfg)
+static int parse_config_from_file(const std::string& file, config& cfg)
 {
     auto c = parse_config(file);
     if (!c.has_value())
@@ -54,7 +54,7 @@ int main(int argc, char** argv)
     }
     if (mode == "config")
     {
-        std::cout << dump_default_config() << std::endl;
+        std::cout << dump_default_config() << '\n';
         return 0;
     }
     if (mode != "-c")
