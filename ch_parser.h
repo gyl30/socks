@@ -4,6 +4,7 @@
 #include <vector>
 #include <string>
 #include <cstdint>
+#include "reality_core.h"
 
 namespace mux
 {
@@ -194,28 +195,43 @@ class ch_parser
             }
         }
     }
-
     static void parse_sni(reader &r, client_hello_info_t &info)
     {
         uint16_t list_len;
-        if (!r.read_u16(list_len) || r.remaining() < list_len)
+        if (!r.read_u16(list_len))
         {
             return;
         }
 
-        while (r.remaining() >= 3)
+        reader list_r = r.slice(list_len);
+        if (!list_r.valid())
+        {
+            return;
+        }
+
+        while (list_r.remaining() >= 3)
         {
             uint8_t type = 0;
             uint16_t len = 0;
-            r.read_u8(type);
-            r.read_u16(len);
 
-            if (type == 0x00 && r.has(len))
+            if (!list_r.read_u8(type) || !list_r.read_u16(len))
             {
-                info.sni.assign(reinterpret_cast<const char *>(r.ptr), len);
+                break;
+            }
+
+            if (type == 0x00)
+            {
+                if (list_r.has(len))
+                {
+                    info.sni.assign(reinterpret_cast<const char *>(list_r.ptr), len);
+                }
                 return;
             }
-            r.skip(len);
+
+            if (!list_r.skip(len))
+            {
+                break;
+            }
         }
     }
 
