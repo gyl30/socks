@@ -49,7 +49,7 @@ class cert_manager
 
         X509_set_version(x509.get(), 2);
         BIGNUM* bn = BN_new();
-        BN_pseudo_rand(bn, 64, 0, 0);
+        BN_rand(bn, 64, 0, 0);
         ASN1_INTEGER* serial = X509_get_serialNumber(x509.get());
         BN_to_ASN1_INTEGER(bn, serial);
         BN_free(bn);
@@ -77,6 +77,6 @@ class cert_manager
     openssl_ptrs::evp_pkey_ptr temp_key_;
 };
 
-}    
+}    // namespace reality
 
 #endif
