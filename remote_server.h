@@ -114,7 +114,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         }
 
         LOG_INFO("srv {} authorized proceeding sni {}", conn_id, info.sni);
-        const reality::transcript trans;
+        reality::transcript trans;
 
         if (buf.size() > 5)
         {
@@ -140,7 +140,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
             co_return;
         }
 
-        auto app_sec = reality::tls_key_schedule::derive_application_secrets(hs_keys.master_secret, trans.finish(), ec);
+        auto app_sec = reality::tls_key_schedule::derive_application_secrets(hs_keys.master_secret, trans.finish(), EVP_sha256(), ec);
         auto c_app_keys = reality::tls_key_schedule::derive_traffic_keys(app_sec.first, ec);
         auto s_app_keys = reality::tls_key_schedule::derive_traffic_keys(app_sec.second, ec);
 
@@ -246,8 +246,8 @@ class remote_server : public std::enable_shared_from_this<remote_server>
 
         auto salt = std::vector<uint8_t>(info.random.begin(), info.random.begin() + 20);
         auto r_info = reality::crypto_util::hex_to_bytes("5245414c495459");
-        auto prk = reality::crypto_util::hkdf_extract(salt, shared, ec);
-        auto auth_key = reality::crypto_util::hkdf_expand(prk, r_info, 32, ec);
+        auto prk = reality::crypto_util::hkdf_extract(salt, shared, EVP_sha256(), ec);
+        auto auth_key = reality::crypto_util::hkdf_expand(prk, r_info, 32, EVP_sha256(), ec);
 
         auto aad = std::vector<uint8_t>(buf.begin() + 5, buf.end());
         if (info.sid_offset < 5)
@@ -296,7 +296,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     };
     asio::awaitable<server_handshake_res> perform_handshake_response(std::shared_ptr<asio::ip::tcp::socket> s,
                                                                      const client_hello_info_t &info,
-                                                                     const reality::transcript &trans,
+                                                                     reality::transcript &trans,
                                                                      const std::vector<uint8_t> &auth_key,
                                                                      uint32_t conn_id,
                                                                      std::error_code &ec)
@@ -320,7 +320,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         auto sh_msg = reality::construct_server_hello(srand, info.session_id, 0x1301, std::vector<uint8_t>(public_key, public_key + 32));
         trans.update(sh_msg);
 
-        auto hs_keys = reality::tls_key_schedule::derive_handshake_keys(sh_shared, trans.finish(), ec);
+        auto hs_keys = reality::tls_key_schedule::derive_handshake_keys(sh_shared, trans.finish(), EVP_sha256(), ec);
         auto c_hs_keys = reality::tls_key_schedule::derive_traffic_keys(hs_keys.client_handshake_traffic_secret, ec);
         auto s_hs_keys = reality::tls_key_schedule::derive_traffic_keys(hs_keys.server_handshake_traffic_secret, ec);
 
@@ -385,7 +385,8 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         auto cv = reality::construct_certificate_verify(sign_key.get(), trans.finish());
         trans.update(cv);
 
-        auto s_fin_verify = reality::tls_key_schedule::compute_finished_verify_data(hs_keys.server_handshake_traffic_secret, trans.finish(), ec);
+        auto s_fin_verify =
+            reality::tls_key_schedule::compute_finished_verify_data(hs_keys.server_handshake_traffic_secret, trans.finish(), EVP_sha256(), ec);
         auto s_fin = reality::construct_finished(s_fin_verify);
         trans.update(s_fin);
 
@@ -460,7 +461,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         }
 
         auto expected_fin_verify =
-            reality::tls_key_schedule::compute_finished_verify_data(hs_keys.client_handshake_traffic_secret, trans.finish(), ec);
+            reality::tls_key_schedule::compute_finished_verify_data(hs_keys.client_handshake_traffic_secret, trans.finish(), EVP_sha256(), ec);
         if (pt.size() < expected_fin_verify.size() + 4 || std::memcmp(pt.data() + 4, expected_fin_verify.data(), expected_fin_verify.size()) != 0)
         {
             LOG_ERROR("srv {} client finished hmac verification failed", conn_id);
@@ -602,5 +603,5 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     std::vector<config::fallback_entry> fallbacks_;
     std::vector<std::weak_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>> active_tunnels_;
 };
-}    // namespace mux
+}    
 #endif

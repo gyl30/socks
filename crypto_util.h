@@ -142,7 +142,10 @@ class crypto_util
         ec.clear();
         return shared;
     }
-    [[nodiscard]] static std::vector<uint8_t> hkdf_extract(const std::vector<uint8_t>& salt, const std::vector<uint8_t>& ikm, std::error_code& ec)
+    [[nodiscard]] static std::vector<uint8_t> hkdf_extract(const std::vector<uint8_t>& salt,
+                                                           const std::vector<uint8_t>& ikm,
+                                                           const EVP_MD* md,
+                                                           std::error_code& ec)
     {
         const openssl_ptrs::evp_pkey_ctx_ptr evp_pkey_ctx(EVP_PKEY_CTX_new_id(EVP_PKEY_HKDF, nullptr));
         if (!evp_pkey_ctx || EVP_PKEY_derive_init(evp_pkey_ctx.get()) <= 0)
@@ -151,7 +154,7 @@ class crypto_util
             return {};
         }
 
-        if (EVP_PKEY_CTX_set_hkdf_md(evp_pkey_ctx.get(), EVP_sha256()) <= 0 ||
+        if (EVP_PKEY_CTX_set_hkdf_md(evp_pkey_ctx.get(), md) <= 0 ||
             EVP_PKEY_CTX_set_hkdf_mode(evp_pkey_ctx.get(), EVP_PKEY_HKDEF_MODE_EXTRACT_ONLY) <= 0 ||
             EVP_PKEY_CTX_set1_hkdf_salt(evp_pkey_ctx.get(), salt.data(), static_cast<int>(salt.size())) <= 0 ||
             EVP_PKEY_CTX_set1_hkdf_key(evp_pkey_ctx.get(), ikm.data(), static_cast<int>(ikm.size())) <= 0)
@@ -160,7 +163,7 @@ class crypto_util
             return {};
         }
 
-        size_t out_len = 32;    // SHA256
+        size_t out_len = EVP_MD_size(md);
         std::vector<uint8_t> prk(out_len);
         if (EVP_PKEY_derive(evp_pkey_ctx.get(), prk.data(), &out_len) <= 0)
         {
@@ -172,10 +175,8 @@ class crypto_util
         return prk;
     }
 
-    [[nodiscard]] static std::vector<uint8_t> hkdf_expand(const std::vector<uint8_t>& prk,
-                                                          const std::vector<uint8_t>& info,
-                                                          size_t len,
-                                                          std::error_code& ec)
+    [[nodiscard]] static std::vector<uint8_t> hkdf_expand(
+        const std::vector<uint8_t>& prk, const std::vector<uint8_t>& info, size_t len, const EVP_MD* md, std::error_code& ec)
     {
         const openssl_ptrs::evp_pkey_ctx_ptr evp_pkey_ctx(EVP_PKEY_CTX_new_id(EVP_PKEY_HKDF, nullptr));
         if (!evp_pkey_ctx || EVP_PKEY_derive_init(evp_pkey_ctx.get()) <= 0)
@@ -184,7 +185,7 @@ class crypto_util
             return {};
         }
 
-        if (EVP_PKEY_CTX_set_hkdf_md(evp_pkey_ctx.get(), EVP_sha256()) <= 0 ||
+        if (EVP_PKEY_CTX_set_hkdf_md(evp_pkey_ctx.get(), md) <= 0 ||
             EVP_PKEY_CTX_set_hkdf_mode(evp_pkey_ctx.get(), EVP_PKEY_HKDEF_MODE_EXPAND_ONLY) <= 0 ||
             EVP_PKEY_CTX_set1_hkdf_key(evp_pkey_ctx.get(), prk.data(), static_cast<int>(prk.size())) <= 0 ||
             EVP_PKEY_CTX_add1_hkdf_info(evp_pkey_ctx.get(), info.data(), static_cast<int>(info.size())) <= 0)
@@ -205,13 +206,16 @@ class crypto_util
         return okm;
     }
 
-    [[nodiscard]] static std::vector<uint8_t> hkdf_expand_label(
-        const std::vector<uint8_t>& secret, const std::string& label, const std::vector<uint8_t>& context, size_t length, std::error_code& ec)
+    [[nodiscard]] static std::vector<uint8_t> hkdf_expand_label(const std::vector<uint8_t>& secret,
+                                                                const std::string& label,
+                                                                const std::vector<uint8_t>& context,
+                                                                size_t length,
+                                                                const EVP_MD* md,
+                                                                std::error_code& ec)
     {
         std::string full_label = "tls13 " + label;
         std::vector<uint8_t> hkdf_label;
         hkdf_label.reserve(2 + 1 + full_label.size() + 1 + context.size());
-
         hkdf_label.push_back(static_cast<uint8_t>((length >> 8) & 0xFF));
         hkdf_label.push_back(static_cast<uint8_t>(length & 0xFF));
         hkdf_label.push_back(static_cast<uint8_t>(full_label.size()));
@@ -219,7 +223,7 @@ class crypto_util
         hkdf_label.push_back(static_cast<uint8_t>(context.size()));
         hkdf_label.insert(hkdf_label.end(), context.begin(), context.end());
 
-        return hkdf_expand(secret, hkdf_label, length, ec);
+        return hkdf_expand(secret, hkdf_label, length, md, ec);
     }
 
     static size_t aead_decrypt(const cipher_context& ctx,
