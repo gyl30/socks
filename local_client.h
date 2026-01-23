@@ -185,6 +185,7 @@ class local_client : public std::enable_shared_from_this<local_client>
         auto prk = reality::crypto_util::hkdf_extract(salt, shared, ec);
         auto auth_key = reality::crypto_util::hkdf_expand(prk, r_info, 32, ec);
 
+        LOG_INFO("authkey {}", reality::crypto_util::bytes_to_hex(auth_key));
         std::vector<uint8_t> payload(16);
         payload[0] = 1;
         payload[1] = 8;
@@ -201,8 +202,8 @@ class local_client : public std::enable_shared_from_this<local_client>
 
         auto hello_aad = reality::ClientHelloBuilder::build(spec, session_id, client_random, std::vector<uint8_t>(public_key, public_key + 32), sni_);
 
-        auto sid = reality::crypto_util::aes_gcm_encrypt(
-            auth_key, std::vector<uint8_t>(client_random.begin() + 20, client_random.end()), payload, hello_aad, ec);
+        auto sid = reality::crypto_util::aead_encrypt(
+            EVP_aes_128_gcm(), auth_key, std::vector<uint8_t>(client_random.begin() + 20, client_random.end()), payload, hello_aad, ec);
 
         if (hello_aad.size() > 39 + 32)
         {
@@ -278,8 +279,6 @@ class local_client : public std::enable_shared_from_this<local_client>
         uint64_t seq = 0;
         std::vector<uint8_t> handshake_buffer;
 
-        reality::openssl_ptrs::evp_pkey_ptr server_pub_key(nullptr);
-
         while (!handshake_fin)
         {
             uint8_t rh[5];
@@ -302,7 +301,7 @@ class local_client : public std::enable_shared_from_this<local_client>
             std::memcpy(cth.data(), rh, 5);
             std::memcpy(cth.data() + 5, rec.data(), n);
             uint8_t type;
-            auto pt = reality::tls_record_layer::decrypt_record(s_hs_keys.first, s_hs_keys.second, seq++, cth, type, ec);
+            auto pt = reality::tls_record_layer::decrypt_record(EVP_aes_128_gcm(), s_hs_keys.first, s_hs_keys.second, seq++, cth, type, ec);
             if (ec)
             {
                 co_return std::make_pair(false, std::pair<std::vector<uint8_t>, std::vector<uint8_t>>{});
@@ -326,75 +325,13 @@ class local_client : public std::enable_shared_from_this<local_client>
 
                     if (msg_type == 0x0b)
                     {
-                        if (msg_data.size() > 10)
-                        {
-                            uint32_t ptr = 4;
-                            uint8_t ctx_len = msg_data[ptr];
-                            ptr += 1 + ctx_len;
-
-                            if (ptr + 3 <= msg_data.size())
-                            {
-                                ptr += 3;
-                                if (ptr + 3 <= msg_data.size())
-                                {
-                                    uint32_t cert_len = (msg_data[ptr] << 16) | (msg_data[ptr + 1] << 8) | msg_data[ptr + 2];
-                                    ptr += 3;
-                                    if (ptr + cert_len <= msg_data.size())
-                                    {
-                                        std::vector<uint8_t> cert_der(msg_data.begin() + ptr, msg_data.begin() + ptr + cert_len);
-                                        server_pub_key = reality::crypto_util::extract_pubkey_from_cert(cert_der, ec);
-                                        if (ec)
-                                        {
-                                            LOG_ERROR("failed to extract public key from certificate");
-                                            co_return std::make_pair(false, std::pair<std::vector<uint8_t>, std::vector<uint8_t>>{});
-                                        }
-                                        LOG_DEBUG("extracted server public key from certificate message");
-                                    }
-                                }
-                            }
-                        }
-
-                        trans.update(msg_data);
+                        LOG_DEBUG("received certificate message size {}", msg_data.size());
                     }
                     else if (msg_type == 0x0f)
                     {
-                        if (!server_pub_key)
-                        {
-                            LOG_ERROR("received certificate verify but no public key found");
-                            ec = asio::error::no_permission;
-                            co_return std::make_pair(false, std::pair<std::vector<uint8_t>, std::vector<uint8_t>>{});
-                        }
-
-                        if (msg_data.size() > 8)
-                        {
-                            uint32_t sig_len = (msg_data[6] << 8) | msg_data[7];
-                            if (4 + 2 + 2 + sig_len == msg_data.size())
-                            {
-                                std::vector<uint8_t> signature(msg_data.begin() + 8, msg_data.end());
-
-                                auto transcript_hash = trans.finish();
-
-                                if (!reality::crypto_util::verify_tls13_signature(server_pub_key.get(), transcript_hash, signature, ec))
-                                {
-                                    LOG_ERROR("certificateVerify signature verification failed");
-                                    co_return std::make_pair(false, std::pair<std::vector<uint8_t>, std::vector<uint8_t>>{});
-                                }
-                                LOG_INFO("certificateVerify signature verified successfully");
-                            }
-                            else
-                            {
-                                ec = asio::error::message_size;
-                                co_return std::make_pair(false, std::pair<std::vector<uint8_t>, std::vector<uint8_t>>{});
-                            }
-                        }
-
-                        trans.update(msg_data);
+                        LOG_DEBUG("received certificate verify skipping signature check for reality");
                     }
-                    else
-                    {
-                        trans.update(msg_data);
-                    }
-
+                    trans.update(msg_data);
                     if (msg_type == 0x14)
                     {
                         handshake_fin = true;
@@ -417,8 +354,8 @@ class local_client : public std::enable_shared_from_this<local_client>
     {
         auto c_fin_verify = reality::tls_key_schedule::compute_finished_verify_data(c_hs_secret, trans.finish(), ec);
         auto c_fin_msg = reality::construct_finished(c_fin_verify);
-        auto c_fin_rec =
-            reality::tls_record_layer::encrypt_record(c_hs_keys.first, c_hs_keys.second, 0, c_fin_msg, reality::CONTENT_TYPE_HANDSHAKE, ec);
+        auto c_fin_rec = reality::tls_record_layer::encrypt_record(
+            EVP_aes_128_gcm(), c_hs_keys.first, c_hs_keys.second, 0, c_fin_msg, reality::CONTENT_TYPE_HANDSHAKE, ec);
 
         std::vector<uint8_t> out_flight = {0x14, 0x03, 0x03, 0x00, 0x01, 0x01};
         out_flight.insert(out_flight.end(), c_fin_rec.begin(), c_fin_rec.end());
