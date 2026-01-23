@@ -603,5 +603,5 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     std::vector<config::fallback_entry> fallbacks_;
     std::vector<std::weak_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>> active_tunnels_;
 };
-}    
+}    // namespace mux
 #endif
