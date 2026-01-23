@@ -19,7 +19,8 @@ class reality_engine
           read_iv_(std::move(r_iv)),
           write_key_(std::move(w_key)),
           write_iv_(std::move(w_iv)),
-          rx_buf_(std::make_unique<asio::streambuf>(MAX_BUF_SIZE))
+          rx_buf_(std::make_unique<asio::streambuf>(MAX_BUF_SIZE)),
+          cipher_(EVP_aes_128_gcm())
     {
         rx_buf_->prepare(INITIAL_BUF_SIZE);
         scratch_buf_.resize(MAX_BUF_SIZE);
@@ -52,9 +53,8 @@ class reality_engine
             const std::span<const uint8_t> record_data(p, frame_size);
 
             uint8_t content_type = 0;
-
             const size_t decrypted_len = reality::tls_record_layer::decrypt_record(
-                decrypt_ctx_, read_key_, read_iv_, read_seq_, record_data, std::span<uint8_t>(scratch_buf_), content_type, ec);
+                decrypt_ctx_, cipher_, read_key_, read_iv_, read_seq_, record_data, std::span<uint8_t>(scratch_buf_), content_type, ec);
             if (ec)
             {
                 return;
@@ -82,10 +82,8 @@ class reality_engine
         {
             return {};
         }
-
         reality::tls_record_layer::encrypt_record_append(
-            encrypt_ctx_, write_key_, write_iv_, write_seq_, plaintext, reality::CONTENT_TYPE_APPLICATION_DATA, tx_buf_, ec);
-
+            encrypt_ctx_, cipher_, write_key_, write_iv_, write_seq_, plaintext, reality::CONTENT_TYPE_APPLICATION_DATA, tx_buf_, ec);
         if (ec)
         {
             return {};
@@ -106,7 +104,7 @@ class reality_engine
     uint64_t read_seq_ = 0;
     uint64_t write_seq_ = 0;
     std::unique_ptr<asio::streambuf> rx_buf_;
-
+    const EVP_CIPHER* cipher_;
     std::vector<uint8_t> tx_buf_;
     std::vector<uint8_t> scratch_buf_;
 };

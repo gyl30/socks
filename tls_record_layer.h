@@ -15,6 +15,7 @@ class tls_record_layer
 {
    public:
     static void encrypt_record_append(const cipher_context& ctx,
+                                      const EVP_CIPHER* cipher,
                                       const std::vector<uint8_t>& key,
                                       const std::vector<uint8_t>& iv,
                                       uint64_t seq,
@@ -30,25 +31,40 @@ class tls_record_layer
         }
 
         std::vector<uint8_t> inner_plaintext;
-        inner_plaintext.reserve(plaintext.size() + 1);
+        size_t padding_len = 0;
+
+        if (content_type == CONTENT_TYPE_APPLICATION_DATA)
+        {
+            uint8_t r;
+            RAND_bytes(&r, 1);
+
+            padding_len = r % 64;
+        }
+
+        inner_plaintext.reserve(plaintext.size() + 1 + padding_len);
         inner_plaintext.insert(inner_plaintext.end(), plaintext.begin(), plaintext.end());
         inner_plaintext.push_back(content_type);
+
+        if (padding_len > 0)
+        {
+            inner_plaintext.insert(inner_plaintext.end(), padding_len, 0x00);
+        }
 
         const auto ciphertext_len = static_cast<uint16_t>(inner_plaintext.size() + AEAD_TAG_SIZE);
 
         std::array<uint8_t, 5> temp_header;
         temp_header[0] = CONTENT_TYPE_APPLICATION_DATA;
-        temp_header[1] = static_cast<uint8_t>((tls_consts::VER_1_2 >> 8) & 0xFF);
-        temp_header[2] = static_cast<uint8_t>(tls_consts::VER_1_2 & 0xFF);
+        temp_header[1] = 0x03;
+        temp_header[2] = 0x03;
         temp_header[3] = static_cast<uint8_t>((ciphertext_len >> 8) & 0xFF);
         temp_header[4] = static_cast<uint8_t>(ciphertext_len & 0xFF);
 
         output_buffer.insert(output_buffer.end(), temp_header.begin(), temp_header.end());
-
-        crypto_util::aes_gcm_encrypt_append(ctx, key, nonce, inner_plaintext, temp_header, output_buffer, ec);
+        crypto_util::aead_encrypt_append(ctx, cipher, key, nonce, inner_plaintext, temp_header, output_buffer, ec);
     }
 
-    [[nodiscard]] static std::vector<uint8_t> encrypt_record(const std::vector<uint8_t>& key,
+    [[nodiscard]] static std::vector<uint8_t> encrypt_record(const EVP_CIPHER* cipher,
+                                                             const std::vector<uint8_t>& key,
                                                              const std::vector<uint8_t>& iv,
                                                              uint64_t seq,
                                                              const std::vector<uint8_t>& plaintext,
@@ -57,11 +73,12 @@ class tls_record_layer
     {
         const cipher_context ctx;
         std::vector<uint8_t> out;
-        encrypt_record_append(ctx, key, iv, seq, plaintext, content_type, out, ec);
+        encrypt_record_append(ctx, cipher, key, iv, seq, plaintext, content_type, out, ec);
         return out;
     }
 
     static size_t decrypt_record(const cipher_context& ctx,
+                                 const EVP_CIPHER* cipher,
                                  const std::vector<uint8_t>& key,
                                  const std::vector<uint8_t>& iv,
                                  uint64_t seq,
@@ -85,7 +102,7 @@ class tls_record_layer
             nonce[nonce.size() - 1 - i] ^= static_cast<uint8_t>((seq >> (8 * i)) & 0xFF);
         }
 
-        size_t written = crypto_util::aes_gcm_decrypt(ctx, key, nonce, ciphertext, aad, output_buffer, ec);
+        size_t written = crypto_util::aead_decrypt(ctx, cipher, key, nonce, ciphertext, aad, output_buffer, ec);
         if (ec)
         {
             return 0;
@@ -109,7 +126,8 @@ class tls_record_layer
         return written;
     }
 
-    [[nodiscard]] static std::vector<uint8_t> decrypt_record(const std::vector<uint8_t>& key,
+    [[nodiscard]] static std::vector<uint8_t> decrypt_record(const EVP_CIPHER* cipher,
+                                                             const std::vector<uint8_t>& key,
                                                              const std::vector<uint8_t>& iv,
                                                              uint64_t seq,
                                                              const std::vector<uint8_t>& ciphertext_with_header,
@@ -123,7 +141,7 @@ class tls_record_layer
             return {};
         }
         std::vector<uint8_t> out(ciphertext_with_header.size() - TLS_RECORD_HEADER_SIZE - AEAD_TAG_SIZE);
-        const size_t n = decrypt_record(ctx, key, iv, seq, ciphertext_with_header, out, out_content_type, ec);
+        const size_t n = decrypt_record(ctx, cipher, key, iv, seq, ciphertext_with_header, out, out_content_type, ec);
         if (ec)
         {
             return {};

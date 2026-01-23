@@ -17,6 +17,7 @@ constexpr std::size_t MAX_PAYLOAD = (64L * 1024) - 128;
 
 struct frame_header
 {
+    std::uint16_t magic = 0x534b;
     std::uint32_t stream_id = 0;
     std::uint16_t length = 0;
     std::uint8_t command = 0;
