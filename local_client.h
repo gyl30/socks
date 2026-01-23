@@ -137,7 +137,7 @@ class local_client : public std::enable_shared_from_this<local_client>
         uint8_t private_key[32];
         reality::crypto_util::generate_x25519_keypair(public_key, private_key);
 
-        const reality::transcript trans;
+        reality::transcript trans;
         if (!co_await generate_and_send_client_hello(socket, public_key, private_key, trans, ec))
         {
             co_return std::make_pair(false, handshake_result{});
@@ -166,11 +166,8 @@ class local_client : public std::enable_shared_from_this<local_client>
         co_return std::make_pair(true, handshake_result{.c_app_secret = app_sec.first, .s_app_secret = app_sec.second});
     }
 
-    asio::awaitable<bool> generate_and_send_client_hello(asio::ip::tcp::socket &socket,
-                                                         const uint8_t *public_key,
-                                                         const uint8_t *private_key,
-                                                         const reality::transcript &trans,
-                                                         std::error_code &ec) const
+    asio::awaitable<bool> generate_and_send_client_hello(
+        asio::ip::tcp::socket &socket, const uint8_t *public_key, const uint8_t *private_key, reality::transcript &trans, std::error_code &ec) const
     {
         auto shared = reality::crypto_util::x25519_derive(std::vector<uint8_t>(private_key, private_key + 32), server_pub_key_, ec);
         if (ec)
@@ -182,8 +179,8 @@ class local_client : public std::enable_shared_from_this<local_client>
         RAND_bytes(client_random.data(), 32);
         const std::vector<uint8_t> salt(client_random.begin(), client_random.begin() + 20);
         auto r_info = reality::crypto_util::hex_to_bytes("5245414c495459");
-        auto prk = reality::crypto_util::hkdf_extract(salt, shared, ec);
-        auto auth_key = reality::crypto_util::hkdf_expand(prk, r_info, 32, ec);
+        auto prk = reality::crypto_util::hkdf_extract(salt, shared, EVP_sha256(), ec);
+        auto auth_key = reality::crypto_util::hkdf_expand(prk, r_info, 32, EVP_sha256(), ec);
 
         LOG_INFO("authkey {}", reality::crypto_util::bytes_to_hex(auth_key));
         std::vector<uint8_t> payload(16);
@@ -233,7 +230,7 @@ class local_client : public std::enable_shared_from_this<local_client>
 
     static asio::awaitable<std::pair<bool, reality::handshake_keys>> process_server_hello(asio::ip::tcp::socket &socket,
                                                                                           const uint8_t *private_key,
-                                                                                          const reality::transcript &trans,
+                                                                                          reality::transcript &trans,
                                                                                           std::error_code &ec)
     {
         uint8_t data[5];
@@ -264,7 +261,8 @@ class local_client : public std::enable_shared_from_this<local_client>
 
         auto hs_shared = reality::crypto_util::x25519_derive(std::vector<uint8_t>(private_key, private_key + 32), public_key, ec);
 
-        auto hs_keys = reality::tls_key_schedule::derive_handshake_keys(hs_shared, trans.finish(), ec);
+        auto hs_keys = reality::tls_key_schedule::derive_handshake_keys(hs_shared, trans.finish(), EVP_sha256(), ec);
+
         co_return std::make_pair(true, hs_keys);
     }
 
@@ -272,7 +270,7 @@ class local_client : public std::enable_shared_from_this<local_client>
         asio::ip::tcp::socket &socket,
         const std::pair<std::vector<uint8_t>, std::vector<uint8_t>> &s_hs_keys,
         const reality::handshake_keys &hs_keys,
-        const reality::transcript &trans,
+        reality::transcript &trans,
         std::error_code &ec)
     {
         bool handshake_fin = false;
@@ -342,7 +340,7 @@ class local_client : public std::enable_shared_from_this<local_client>
             }
         }
 
-        auto app_sec = reality::tls_key_schedule::derive_application_secrets(hs_keys.master_secret, trans.finish(), ec);
+        auto app_sec = reality::tls_key_schedule::derive_application_secrets(hs_keys.master_secret, trans.finish(), EVP_sha256(), ec);
         co_return std::make_pair(true, app_sec);
     }
 
@@ -352,7 +350,7 @@ class local_client : public std::enable_shared_from_this<local_client>
                                                       const reality::transcript &trans,
                                                       std::error_code &ec)
     {
-        auto c_fin_verify = reality::tls_key_schedule::compute_finished_verify_data(c_hs_secret, trans.finish(), ec);
+        auto c_fin_verify = reality::tls_key_schedule::compute_finished_verify_data(c_hs_secret, trans.finish(), EVP_sha256(), ec);
         auto c_fin_msg = reality::construct_finished(c_fin_verify);
         auto c_fin_rec = reality::tls_record_layer::encrypt_record(
             EVP_aes_128_gcm(), c_hs_keys.first, c_hs_keys.second, 0, c_fin_msg, reality::CONTENT_TYPE_HANDSHAKE, ec);

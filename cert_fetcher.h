@@ -4,7 +4,7 @@
 #include <vector>
 #include <string>
 #include <asio.hpp>
-#include <sstream>
+#include <span>
 #include "log.h"
 #include "transcript.h"
 #include "reality_core.h"
@@ -41,12 +41,6 @@ class cert_fetcher
             LOG_ERROR("connect {}:{} failed {}", host, port, conn_ec.message());
             co_return std::vector<uint8_t>{};
         }
-        LOG_INFO("connected local {}:{} to {}:{} sni {}",
-                 socket.local_endpoint().address().to_string(),
-                 socket.local_endpoint().port(),
-                 ep.address().to_string(),
-                 ep.port(),
-                 sni);
 
         uint8_t client_pub[32];
         uint8_t client_priv[32];
@@ -57,16 +51,6 @@ class cert_fetcher
         RAND_bytes(session_id.data(), 32);
 
         auto spec = FingerprintFactory::Get(FingerprintType::Chrome_120);
-
-        std::erase_if(spec.cipher_suites, [](uint16_t cs) { return cs == 0x1302 || cs == 0x1303; });
-
-        std::ostringstream cs_log;
-        for (auto cs : spec.cipher_suites)
-        {
-            cs_log << " " << std::hex << cs;
-        }
-
-        LOG_INFO("{}:{} sending cipher suites{}", host, port, cs_log.str());
 
         auto ch = ClientHelloBuilder::build(spec, session_id, client_random, std::vector<uint8_t>(client_pub, client_pub + 32), sni);
 
@@ -99,56 +83,41 @@ class cert_fetcher
             LOG_ERROR("{}:{} expected handshake type {}", host, port, head[0]);
             co_return std::vector<uint8_t>{};
         }
-        if (sh_body.size() < 4)
-        {
-            LOG_ERROR("{}:{} server hello body too short", host, port);
-            co_return std::vector<uint8_t>{};
-        }
 
         uint32_t msg_len = (sh_body[1] << 16) | (sh_body[2] << 8) | sh_body[3];
         uint32_t full_msg_len = msg_len + 4;
-
-        if (sh_body.size() < full_msg_len)
-        {
-            LOG_ERROR("{}:{} server hello incomplete", host, port);
-            co_return std::vector<uint8_t>{};
-        }
-
         std::vector<uint8_t> sh_real(sh_body.begin(), sh_body.begin() + full_msg_len);
         trans.update(sh_real);
 
         size_t cipher_offset = 39;
-        if (sh_real.size() <= cipher_offset)
-        {
-            LOG_ERROR("{}:{} sh too short", host, port);
-            co_return std::vector<uint8_t>{};
-        }
-
         uint8_t sid_len_val = sh_real[38];
         cipher_offset += sid_len_val;
-
-        if (sh_real.size() < cipher_offset + 2)
-        {
-            LOG_ERROR("{}:{} sh no cipher", host, port);
-            co_return std::vector<uint8_t>{};
-        }
-
         uint16_t cipher_suite = (sh_real[cipher_offset] << 8) | sh_real[cipher_offset + 1];
 
-        const EVP_CIPHER* negotiated_cipher = EVP_aes_128_gcm();
+        const EVP_CIPHER* negotiated_cipher = nullptr;
+        const EVP_MD* negotiated_md = nullptr;
         size_t key_len = 16;
         size_t iv_len = 12;
 
         if (cipher_suite == 0x1301)
         {
-            LOG_INFO("{}:{} server selected aes 128 gcm perfect", host, port);
+            LOG_INFO("{}:{} server selected TLS_AES_128_GCM_SHA256 0x1301", host, port);
             negotiated_cipher = EVP_aes_128_gcm();
+            negotiated_md = EVP_sha256();
             key_len = 16;
+        }
+        else if (cipher_suite == 0x1302)
+        {
+            LOG_INFO("{}:{} server selected TLS_AES_256_GCM_SHA384 0x1302", host, port);
+            negotiated_cipher = EVP_aes_256_gcm();
+            negotiated_md = EVP_sha384();
+            key_len = 32;
         }
         else if (cipher_suite == 0x1303)
         {
-            LOG_WARN("{}:{} server selected chacha20 unexpected", host, port);
+            LOG_INFO("{}:{} server selected TLS_CHACHA20_POLY1305_SHA256 0x1303", host, port);
             negotiated_cipher = EVP_chacha20_poly1305();
+            negotiated_md = EVP_sha256();
             key_len = 32;
         }
         else
@@ -157,33 +126,31 @@ class cert_fetcher
             co_return std::vector<uint8_t>{};
         }
 
-        auto server_pub = extract_server_public_key(sh_real);
-        if (server_pub.empty())
-        {
-            LOG_ERROR("{}:{} failed to extract server public key", host, port);
-            co_return std::vector<uint8_t>{};
-        }
+        trans.set_protocol_hash(negotiated_md);
 
+        auto server_pub = extract_server_public_key(sh_real);
         std::error_code ec;
         auto shared = crypto_util::x25519_derive(std::vector<uint8_t>(client_priv, client_priv + 32), server_pub, ec);
         if (ec)
         {
-            LOG_ERROR("{}:{} x25519 derive failed {}", host, port, ec.message());
+            LOG_ERROR("{}:{} x25519 derive failed", host, port);
             co_return std::vector<uint8_t>{};
         }
 
-        auto hs_keys = tls_key_schedule::derive_handshake_keys(shared, trans.finish(), ec);
+        auto hs_keys = tls_key_schedule::derive_handshake_keys(shared, trans.finish(), negotiated_md, ec);
         if (ec)
         {
-            LOG_ERROR("{}:{} {}", host, port, ec.message());
+            LOG_ERROR("{}:{} derive handshake keys failed", host, port);
             co_return std::vector<uint8_t>{};
         }
 
-        auto c_hs_keys = tls_key_schedule::derive_traffic_keys(hs_keys.client_handshake_traffic_secret, ec, key_len, iv_len);
-        auto s_hs_keys = tls_key_schedule::derive_traffic_keys(hs_keys.server_handshake_traffic_secret, ec, key_len, iv_len);
+        auto s_hs_keys = tls_key_schedule::derive_traffic_keys(hs_keys.server_handshake_traffic_secret, ec, key_len, iv_len, negotiated_md);
 
         std::vector<uint8_t> handshake_buffer;
         uint64_t seq = 0;
+        const cipher_context decrypt_ctx;
+
+        std::vector<uint8_t> pt_buf(MAX_TLS_PLAINTEXT_LEN + 256);
 
         for (int i = 0; i < 100; ++i)
         {
@@ -205,64 +172,68 @@ class cert_fetcher
             {
                 continue;
             }
-            if (head[0] == CONTENT_TYPE_ALERT)
+            if (head[0] != CONTENT_TYPE_APPLICATION_DATA)
             {
-                LOG_WARN("{}:{} received alert", host, port);
+                continue;
+            }
+
+            std::vector<uint8_t> cth(5 + len);
+            std::memcpy(cth.data(), head, 5);
+            std::memcpy(cth.data() + 5, rec.data(), len);
+
+            uint8_t type;
+
+            uint32_t pt_len = tls_record_layer::decrypt_record(decrypt_ctx,
+                                                               negotiated_cipher,
+                                                               s_hs_keys.first,
+                                                               s_hs_keys.second,
+                                                               seq++,
+                                                               std::span<const uint8_t>(cth),
+                                                               std::span<uint8_t>(pt_buf),
+                                                               type,
+                                                               ec);
+
+            if (ec)
+            {
+                LOG_ERROR("{}:{} decrypt failed at record {} len {}", host, port, i, len);
                 break;
             }
 
-            if (head[0] == CONTENT_TYPE_APPLICATION_DATA)
+            if (type != CONTENT_TYPE_HANDSHAKE)
             {
-                std::vector<uint8_t> cth(5 + len);
-                std::memcpy(cth.data(), head, 5);
-                std::memcpy(cth.data() + 5, rec.data(), len);
+                continue;
+            }
+            handshake_buffer.insert(handshake_buffer.end(), pt_buf.begin(), pt_buf.begin() + pt_len);
 
-                uint8_t type;
-                auto pt = tls_record_layer::decrypt_record(negotiated_cipher, s_hs_keys.first, s_hs_keys.second, seq++, cth, type, ec);
+            uint32_t offset = 0;
+            while (offset + 4 <= handshake_buffer.size())
+            {
+                uint8_t msg_type = handshake_buffer[offset];
+                uint32_t msg_len_val = (handshake_buffer[offset + 1] << 16) | (handshake_buffer[offset + 2] << 8) | handshake_buffer[offset + 3];
 
-                if (ec)
+                if (offset + 4 + msg_len_val > handshake_buffer.size())
                 {
-                    LOG_ERROR("{}:{} decrypt failed at record {} len {} {}", host, port, i, len, ec.message());
                     break;
                 }
 
-                if (type == CONTENT_TYPE_HANDSHAKE)
+                if (msg_type == 0x0b)
                 {
-                    handshake_buffer.insert(handshake_buffer.end(), pt.begin(), pt.end());
-
-                    uint32_t offset = 0;
-                    while (offset + 4 <= handshake_buffer.size())
-                    {
-                        uint8_t msg_type = handshake_buffer[offset];
-                        uint32_t msg_len_val =
-                            (handshake_buffer[offset + 1] << 16) | (handshake_buffer[offset + 2] << 8) | handshake_buffer[offset + 3];
-
-                        if (offset + 4 + msg_len_val > handshake_buffer.size())
-                        {
-                            break;
-                        }
-
-                        if (msg_type == 0x08)
-                        {
-                            std::vector<uint8_t> msg(handshake_buffer.begin() + offset, handshake_buffer.begin() + offset + 4 + msg_len_val);
-                            trans.update(msg);
-                        }
-                        else if (msg_type == 0x0b)
-                        {
-                            LOG_INFO("found certificate message len {}", msg_len_val);
-                            co_return std::vector<uint8_t>(handshake_buffer.begin() + offset, handshake_buffer.begin() + offset + 4 + msg_len_val);
-                        }
-                        offset += 4 + msg_len_val;
-                    }
-                    if (offset > 0)
-                    {
-                        handshake_buffer.erase(handshake_buffer.begin(), handshake_buffer.begin() + offset);
-                    }
+                    LOG_INFO("{}:{} found certificate message len {}", host, port, msg_len_val);
+                    co_return std::vector<uint8_t>(handshake_buffer.begin() + offset, handshake_buffer.begin() + offset + 4 + msg_len_val);
                 }
+
+                std::vector<uint8_t> msg(handshake_buffer.begin() + offset, handshake_buffer.begin() + offset + 4 + msg_len_val);
+                trans.update(msg);
+
+                offset += 4 + msg_len_val;
+            }
+            if (offset > 0)
+            {
+                handshake_buffer.erase(handshake_buffer.begin(), handshake_buffer.begin() + offset);
             }
         }
 
-        LOG_WARN("{}:{} certificate not found after 10 records", host, port);
+        LOG_WARN("{}:{} certificate not found after searching records", host, port);
         co_return std::vector<uint8_t>{};
     }
 };
