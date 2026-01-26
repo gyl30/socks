@@ -13,6 +13,7 @@
 #include "reality_core.h"
 #include "socks_session.h"
 #include "reality_engine.h"
+#include "domain_matcher.h"
 #include "reality_messages.h"
 #include "reality_fingerprint.h"
 #include "tls_key_schedule.h"
@@ -34,8 +35,10 @@ class local_client : public std::enable_shared_from_this<local_client>
           stop_channel_(remote_timer_.get_executor(), 1)
     {
         server_pub_key_ = reality::crypto_util::hex_to_bytes(key_hex);
-        matcher_ = std::make_shared<mux::ip_matcher>();
-        matcher_->load("direct.txt");
+        ip_matcher_ = std::make_shared<mux::ip_matcher>();
+        ip_matcher_->load("direct.txt");
+        domain_matcher_ = std::make_shared<mux::domain_matcher>();
+        domain_matcher_->load("domain.txt");
     }
 
     void start()
@@ -508,7 +511,8 @@ class local_client : public std::enable_shared_from_this<local_client>
             {
                 const uint32_t sid = next_session_id_++;
                 auto session = std::make_shared<socks_session>(std::move(s), tunnel_manager_, sid);
-                session->set_ip_matcher(matcher_);
+                session->set_matchers(ip_matcher_, domain_matcher_);
+
                 session->start();
             }
             else
@@ -535,7 +539,8 @@ class local_client : public std::enable_shared_from_this<local_client>
     uint32_t next_session_id_{1};
     asio::steady_timer remote_timer_;
     asio::ip::tcp::acceptor acceptor_;
-    std::shared_ptr<mux::ip_matcher> matcher_;
+    std::shared_ptr<mux::ip_matcher> ip_matcher_;
+    std::shared_ptr<domain_matcher> domain_matcher_;
     asio::experimental::concurrent_channel<void(std::error_code, int)> stop_channel_;
 };
 
