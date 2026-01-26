@@ -89,6 +89,13 @@ class remote_server : public std::enable_shared_from_this<remote_server>
 
     asio::awaitable<void> handle(std::shared_ptr<asio::ip::tcp::socket> s, uint32_t conn_id)
     {
+        auto local_addr = socks_codec::normalize_ip_address(s->local_endpoint().address());
+        auto remote_addr = socks_codec::normalize_ip_address(s->remote_endpoint().address());
+        std::string local_addr_str = local_addr.to_string() + ":" + std::to_string(s->local_endpoint().port());
+        std::string remote_addr_str = remote_addr.to_string() + ":" + std::to_string(s->remote_endpoint().port());
+
+        LOG_INFO("srv {} accepted connection from {} to {}", conn_id, remote_addr_str, local_addr_str);
+
         auto [ok, buf] = co_await read_initial_and_validate(s, conn_id);
 
         std::string client_sni;
@@ -127,22 +134,23 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         }
 
         std::error_code ec;
-        auto [handshake_ok, hs_keys, s_hs_keys, c_hs_keys] = co_await perform_handshake_response(s, info, trans, auth_key, conn_id, ec);
-
-        if (!handshake_ok)
+        auto sh_res = co_await perform_handshake_response(s, info, trans, auth_key, conn_id, ec);
+        if (!sh_res.ok)
         {
             LOG_ERROR("srv {} handshake response error {}", conn_id, ec.message());
             co_return;
         }
 
-        if (!co_await verify_client_finished(s, c_hs_keys, hs_keys, trans, conn_id, ec))
+        if (!co_await verify_client_finished(s, sh_res.c_hs_keys, sh_res.hs_keys, trans, sh_res.cipher, sh_res.negotiated_md, conn_id, ec))
         {
             co_return;
         }
 
-        auto app_sec = reality::tls_key_schedule::derive_application_secrets(hs_keys.master_secret, trans.finish(), EVP_sha256(), ec);
-        auto c_app_keys = reality::tls_key_schedule::derive_traffic_keys(app_sec.first, ec);
-        auto s_app_keys = reality::tls_key_schedule::derive_traffic_keys(app_sec.second, ec);
+        auto app_sec = reality::tls_key_schedule::derive_application_secrets(sh_res.hs_keys.master_secret, trans.finish(), sh_res.negotiated_md, ec);
+        size_t key_len = EVP_CIPHER_key_length(sh_res.cipher);
+        size_t iv_len = 12;
+        auto c_app_keys = reality::tls_key_schedule::derive_traffic_keys(app_sec.first, ec, key_len, iv_len, sh_res.negotiated_md);
+        auto s_app_keys = reality::tls_key_schedule::derive_traffic_keys(app_sec.second, ec, key_len, iv_len, sh_res.negotiated_md);
 
         LOG_INFO("srv {} tunnel start", conn_id);
         reality_engine engine(c_app_keys.first, c_app_keys.second, s_app_keys.first, s_app_keys.second);
@@ -293,6 +301,8 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         reality::handshake_keys hs_keys;
         std::pair<std::vector<uint8_t>, std::vector<uint8_t>> s_hs_keys;
         std::pair<std::vector<uint8_t>, std::vector<uint8_t>> c_hs_keys;
+        const EVP_CIPHER *cipher;
+        const EVP_MD *negotiated_md;
     };
     asio::awaitable<server_handshake_res> perform_handshake_response(std::shared_ptr<asio::ip::tcp::socket> s,
                                                                      const client_hello_info_t &info,
@@ -432,13 +442,16 @@ class remote_server : public std::enable_shared_from_this<remote_server>
             co_return server_handshake_res{.ok = false};
         }
 
-        co_return server_handshake_res{.ok = true, .hs_keys = hs_keys, .s_hs_keys = s_hs_keys, .c_hs_keys = c_hs_keys};
+        co_return server_handshake_res{
+            .ok = true, .hs_keys = hs_keys, .s_hs_keys = s_hs_keys, .c_hs_keys = c_hs_keys, .cipher = cipher, .negotiated_md = md};
     }
 
     static asio::awaitable<bool> verify_client_finished(std::shared_ptr<asio::ip::tcp::socket> s,
                                                         const std::pair<std::vector<uint8_t>, std::vector<uint8_t>> &c_hs_keys,
                                                         const reality::handshake_keys &hs_keys,
                                                         const reality::transcript &trans,
+                                                        const EVP_CIPHER *cipher,
+                                                        const EVP_MD *md,
                                                         uint32_t conn_id,
                                                         std::error_code &ec)
     {
@@ -470,7 +483,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         std::memcpy(cth.data(), h, 5);
         std::memcpy(cth.data() + 5, data.data(), flen);
         uint8_t ctype;
-        auto pt = reality::tls_record_layer::decrypt_record(EVP_aes_128_gcm(), c_hs_keys.first, c_hs_keys.second, 0, cth, ctype, ec);
+        auto pt = reality::tls_record_layer::decrypt_record(cipher, c_hs_keys.first, c_hs_keys.second, 0, cth, ctype, ec);
 
         if (ec || ctype != reality::CONTENT_TYPE_HANDSHAKE || pt.empty() || pt[0] != 0x14)
         {
@@ -479,7 +492,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         }
 
         auto expected_fin_verify =
-            reality::tls_key_schedule::compute_finished_verify_data(hs_keys.client_handshake_traffic_secret, trans.finish(), EVP_sha256(), ec);
+            reality::tls_key_schedule::compute_finished_verify_data(hs_keys.client_handshake_traffic_secret, trans.finish(), md, ec);
         if (pt.size() < expected_fin_verify.size() + 4 || std::memcmp(pt.data() + 4, expected_fin_verify.data(), expected_fin_verify.size()) != 0)
         {
             LOG_ERROR("srv {} client finished hmac verification failed", conn_id);
