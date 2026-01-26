@@ -6,6 +6,7 @@
 #include <asio.hpp>
 
 #include "log.h"
+#include "ip_matcher.h"
 #include "mux_tunnel.h"
 #include "transcript.h"
 #include "context_pool.h"
@@ -33,6 +34,8 @@ class local_client : public std::enable_shared_from_this<local_client>
           stop_channel_(remote_timer_.get_executor(), 1)
     {
         server_pub_key_ = reality::crypto_util::hex_to_bytes(key_hex);
+        matcher_ = std::make_shared<mux::ip_matcher>();
+        matcher_->load("direct.txt");
     }
 
     void start()
@@ -276,7 +279,6 @@ class local_client : public std::enable_shared_from_this<local_client>
 
         trans.update(sh_data);
 
-        
         size_t pos = 4 + 2 + 32;
         if (pos >= sh_data.size())
         {
@@ -299,12 +301,12 @@ class local_client : public std::enable_shared_from_this<local_client>
         const EVP_CIPHER *cipher = EVP_aes_128_gcm();
 
         if (cipher_suite == 0x1302)
-        {    
+        {
             md = EVP_sha384();
             cipher = EVP_aes_256_gcm();
         }
         else if (cipher_suite == 0x1303)
-        {    
+        {
             md = EVP_sha256();
             cipher = EVP_chacha20_poly1305();
         }
@@ -505,7 +507,9 @@ class local_client : public std::enable_shared_from_this<local_client>
             if (tunnel_manager_ != nullptr && tunnel_manager_->get_connection()->is_open())
             {
                 const uint32_t sid = next_session_id_++;
-                std::make_shared<socks_session>(std::move(s), tunnel_manager_, sid)->start();
+                auto session = std::make_shared<socks_session>(std::move(s), tunnel_manager_, sid);
+                session->set_ip_matcher(matcher_);
+                session->start();
             }
             else
             {
@@ -531,9 +535,10 @@ class local_client : public std::enable_shared_from_this<local_client>
     uint32_t next_session_id_{1};
     asio::steady_timer remote_timer_;
     asio::ip::tcp::acceptor acceptor_;
+    std::shared_ptr<mux::ip_matcher> matcher_;
     asio::experimental::concurrent_channel<void(std::error_code, int)> stop_channel_;
 };
 
-}    
+}    // namespace mux
 
 #endif
