@@ -7,15 +7,23 @@
 #include <string>
 #include <optional>
 #include "log.h"
+#include "reality_messages.h"
 
 namespace reality
 {
+
+struct cert_entry
+{
+    std::vector<uint8_t> cert_msg;
+    server_fingerprint fingerprint;
+};
+
 class cert_manager
 {
    public:
     cert_manager() = default;
 
-    [[nodiscard]] std::optional<std::vector<uint8_t>> get_certificate(const std::string& sni)
+    [[nodiscard]] std::optional<cert_entry> get_certificate(const std::string& sni)
     {
         const std::scoped_lock lock(mutex_);
         if (auto it = cache_.find(sni); it != cache_.end())
@@ -30,7 +38,7 @@ class cert_manager
         return std::nullopt;
     }
 
-    void set_certificate(const std::string& sni, std::vector<uint8_t> cert_msg)
+    void set_certificate(const std::string& sni, std::vector<uint8_t> cert_msg, server_fingerprint fp)
     {
         const std::scoped_lock lock(mutex_);
 
@@ -38,13 +46,20 @@ class cert_manager
         {
             cache_.clear();
         }
-        cache_[sni] = std::move(cert_msg);
-        LOG_INFO("cert manager cached certificate for sni {} size {}", sni, cache_[sni].size());
+
+        cert_entry entry{.cert_msg = std::move(cert_msg), .fingerprint = std::move(fp)};
+        cache_[sni] = std::move(entry);
+
+        LOG_INFO("cert manager cached certificate for sni {} size {} alpn '{}' cipher 0x{:04x}",
+                 sni,
+                 cache_[sni].cert_msg.size(),
+                 cache_[sni].fingerprint.alpn,
+                 cache_[sni].fingerprint.cipher_suite);
     }
 
    private:
     std::mutex mutex_;
-    std::map<std::string, std::vector<uint8_t>> cache_;
+    std::map<std::string, cert_entry> cache_;
 };
 
 }    // namespace reality
