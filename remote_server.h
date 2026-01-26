@@ -106,9 +106,9 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         }
 
         auto [auth_ok, auth_key] = authenticate_client(info, buf, conn_id);
-        LOG_INFO("authkey {}", reality::crypto_util::bytes_to_hex(auth_key));
         if (!auth_ok)
         {
+            LOG_WARN("srv {} auth failed for sni {}", conn_id, client_sni);
             co_await handle_fallback(s, buf, conn_id, client_sni);
             co_return;
         }
@@ -317,16 +317,6 @@ class remote_server : public std::enable_shared_from_this<remote_server>
             co_return server_handshake_res{.ok = false};
         }
 
-        auto sh_msg = reality::construct_server_hello(srand, info.session_id, 0x1301, std::vector<uint8_t>(public_key, public_key + 32));
-        trans.update(sh_msg);
-
-        auto hs_keys = reality::tls_key_schedule::derive_handshake_keys(sh_shared, trans.finish(), EVP_sha256(), ec);
-        auto c_hs_keys = reality::tls_key_schedule::derive_traffic_keys(hs_keys.client_handshake_traffic_secret, ec);
-        auto s_hs_keys = reality::tls_key_schedule::derive_traffic_keys(hs_keys.server_handshake_traffic_secret, ec);
-
-        auto enc_ext = reality::construct_encrypted_extensions();
-        trans.update(enc_ext);
-
         std::string cert_sni = info.sni;
         std::string fetch_host = "www.apple.com";
         uint16_t fetch_port = 443;
@@ -343,34 +333,49 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         }
 
         std::vector<uint8_t> cert_msg;
+        reality::server_fingerprint fingerprint;
 
-        auto cached = cert_manager_.get_certificate(cert_sni);
-        if (cached)
+        auto cached_entry = cert_manager_.get_certificate(cert_sni);
+        if (cached_entry)
         {
-            cert_msg = *cached;
+            cert_msg = cached_entry->cert_msg;
+            fingerprint = cached_entry->fingerprint;
         }
         else
         {
             LOG_INFO("srv {} certificate miss for {}, fetching from {}:{}", conn_id, cert_sni, fetch_host, fetch_port);
-            try
-            {
-                cert_msg = co_await reality::cert_fetcher::fetch(s->get_executor(), fetch_host, fetch_port, cert_sni);
-            }
-            catch (std::exception &e)
-            {
-                LOG_ERROR("srv {} fetch cert exception {}", conn_id, e.what());
-            }
+            auto res = co_await reality::cert_fetcher::fetch(s->get_executor(), fetch_host, fetch_port, cert_sni);
 
-            if (cert_msg.empty())
+            if (!res)
             {
                 LOG_ERROR("srv {} failed to fetch certificate", conn_id);
-
                 ec = asio::error::connection_refused;
                 co_return server_handshake_res{.ok = false};
             }
 
-            cert_manager_.set_certificate(cert_sni, cert_msg);
+            cert_msg = res->cert_msg;
+            fingerprint = res->fingerprint;
+            cert_manager_.set_certificate(cert_sni, cert_msg, fingerprint);
         }
+
+        uint16_t cipher_suite = (fingerprint.cipher_suite != 0) ? fingerprint.cipher_suite : 0x1301;
+
+        auto sh_msg = reality::construct_server_hello(srand, info.session_id, cipher_suite, std::vector<uint8_t>(public_key, public_key + 32));
+        trans.update(sh_msg);
+
+        const EVP_MD *md = (cipher_suite == 0x1302) ? EVP_sha384() : EVP_sha256();
+        trans.set_protocol_hash(md);
+
+        auto hs_keys = reality::tls_key_schedule::derive_handshake_keys(sh_shared, trans.finish(), md, ec);
+
+        size_t key_len = (cipher_suite == 0x1302) ? 32 : 16;
+        size_t iv_len = 12;
+
+        auto c_hs_keys = reality::tls_key_schedule::derive_traffic_keys(hs_keys.client_handshake_traffic_secret, ec, key_len, iv_len, md);
+        auto s_hs_keys = reality::tls_key_schedule::derive_traffic_keys(hs_keys.server_handshake_traffic_secret, ec, key_len, iv_len, md);
+
+        auto enc_ext = reality::construct_encrypted_extensions(fingerprint.alpn);
+        trans.update(enc_ext);
 
         trans.update(cert_msg);
 
@@ -385,8 +390,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         auto cv = reality::construct_certificate_verify(sign_key.get(), trans.finish());
         trans.update(cv);
 
-        auto s_fin_verify =
-            reality::tls_key_schedule::compute_finished_verify_data(hs_keys.server_handshake_traffic_secret, trans.finish(), EVP_sha256(), ec);
+        auto s_fin_verify = reality::tls_key_schedule::compute_finished_verify_data(hs_keys.server_handshake_traffic_secret, trans.finish(), md, ec);
         auto s_fin = reality::construct_finished(s_fin_verify);
         trans.update(s_fin);
 
@@ -396,8 +400,22 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         flight2_plain.insert(flight2_plain.end(), cv.begin(), cv.end());
         flight2_plain.insert(flight2_plain.end(), s_fin.begin(), s_fin.end());
 
+        const EVP_CIPHER *cipher = nullptr;
+        if (cipher_suite == 0x1302)
+        {
+            cipher = EVP_aes_256_gcm();
+        }
+        else if (cipher_suite == 0x1303)
+        {
+            cipher = EVP_chacha20_poly1305();
+        }
+        else
+        {
+            cipher = EVP_aes_128_gcm();    // 0x1301
+        }
+
         auto flight2_enc = reality::tls_record_layer::encrypt_record(
-            EVP_aes_128_gcm(), s_hs_keys.first, s_hs_keys.second, 0, flight2_plain, reality::CONTENT_TYPE_HANDSHAKE, ec);
+            cipher, s_hs_keys.first, s_hs_keys.second, 0, flight2_plain, reality::CONTENT_TYPE_HANDSHAKE, ec);
 
         std::vector<uint8_t> out_sh;
         auto sh_rec = reality::write_record_header(reality::CONTENT_TYPE_HANDSHAKE, static_cast<uint16_t>(sh_msg.size()));
