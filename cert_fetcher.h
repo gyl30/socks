@@ -6,6 +6,7 @@
 #include <asio.hpp>
 #include <span>
 #include <cstring>
+#include <optional>
 #include "log.h"
 #include "transcript.h"
 #include "reality_core.h"
@@ -15,6 +16,12 @@
 
 namespace reality
 {
+
+struct fetch_result
+{
+    std::vector<uint8_t> cert_msg;
+    server_fingerprint fingerprint;
+};
 
 class handshake_reassembler
 {
@@ -60,7 +67,7 @@ class cert_fetcher
     static std::string hex(const std::vector<uint8_t>& data) { return crypto_util::bytes_to_hex(data); }
     static std::string hex(const uint8_t* data, size_t len) { return crypto_util::bytes_to_hex(std::vector<uint8_t>(data, data + len)); }
 
-    static asio::awaitable<std::vector<uint8_t>> fetch(const asio::any_io_executor& ex, std::string host, uint16_t port, std::string sni)
+    static asio::awaitable<std::optional<fetch_result>> fetch(asio::any_io_executor ex, std::string host, uint16_t port, std::string sni)
     {
         fetch_session session(ex, std::move(host), port, std::move(sni));
         co_return co_await session.run();
@@ -75,21 +82,27 @@ class cert_fetcher
         {
         }
 
-        asio::awaitable<std::vector<uint8_t>> run()
+        asio::awaitable<std::optional<fetch_result>> run()
         {
             LOG_INFO("starting fetch for {}:{} sni {}", host_, port_, sni_);
 
             if (auto ec = co_await connect(); ec)
             {
-                co_return std::vector<uint8_t>{};
+                co_return std::nullopt;
             }
 
             if (auto ec = co_await perform_handshake_start(); ec)
             {
-                co_return std::vector<uint8_t>{};
+                co_return std::nullopt;
             }
 
-            co_return co_await find_certificate();
+            auto cert = co_await find_certificate();
+            if (cert.empty())
+            {
+                co_return std::nullopt;
+            }
+
+            co_return fetch_result{.cert_msg = std::move(cert), .fingerprint = fingerprint_};
         }
 
        private:
@@ -158,7 +171,6 @@ class cert_fetcher
             for (int i = 0; i < 100; ++i)
             {
                 std::error_code ec;
-
                 auto [type, pt_data] = co_await read_record(pt_buf, ec);
                 if (ec)
                 {
@@ -184,7 +196,15 @@ class cert_fetcher
 
                     LOG_INFO("{}:{} found handshake message type 0x{:02x} len {}", host_, port_, msg_type, msg_len);
 
-                    if (msg_type == 0x0b)
+                    if (msg_type == 0x08)
+                    {
+                        if (auto alpn = extract_alpn_from_encrypted_extensions(msg); alpn)
+                        {
+                            LOG_INFO("{}:{} learned ALPN: {}", host_, port_, *alpn);
+                            fingerprint_.alpn = *alpn;
+                        }
+                    }
+                    else if (msg_type == 0x0b)
                     {
                         LOG_INFO("{}:{} found certificate message len {}", host_, port_, msg_len);
                         co_return msg;
@@ -211,11 +231,16 @@ class cert_fetcher
 
             if (sh_body.size() < full_msg_len)
             {
-                LOG_ERROR("{}:{} server hello record too short", host_, port_);
                 return asio::error::fault;
             }
 
             std::vector<uint8_t> sh_real(sh_body.begin(), sh_body.begin() + full_msg_len);
+
+            if (auto cs = extract_cipher_suite_from_server_hello(sh_real); cs)
+            {
+                fingerprint_.cipher_suite = *cs;
+            }
+
             trans_.update(sh_real);
 
             size_t cipher_offset = 39;
@@ -388,6 +413,7 @@ class cert_fetcher
         std::string host_;
         uint16_t port_;
         std::string sni_;
+        server_fingerprint fingerprint_;
 
         transcript trans_;
         uint8_t client_pub_[32];

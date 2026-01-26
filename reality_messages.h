@@ -5,12 +5,20 @@
 #include <string>
 #include <cstdint>
 #include <cstring>
+#include <optional>
 
 #include "reality_core.h"
 #include "reality_fingerprint.h"
 
 namespace reality
 {
+
+struct server_fingerprint
+{
+    uint16_t cipher_suite = 0;
+    std::string alpn;
+};
+
 class message_builder
 {
    public:
@@ -92,11 +100,11 @@ class ClientHelloBuilder
             FingerprintFactory::shuffle_extensions(spec.extensions);
         }
 
-        std::vector<uint8_t> exts_buf;
+        std::vector<uint8_t> exts;
 
         for (const auto &ext_ptr : spec.extensions)
         {
-            std::vector<uint8_t> ext_data;
+            std::vector<uint8_t> ext_buffer;
             uint16_t ext_type = 0;
 
             switch (ext_ptr->type())
@@ -105,7 +113,9 @@ class ClientHelloBuilder
                 {
                     ext_type = grease_ctx.get_extension_grease(grease_ext_count++);
                     if (grease_ext_count == 2)
-                        ext_data.push_back(0x00);
+                    {
+                        ext_buffer.push_back(0x00);
+                    }
                     break;
                 }
                 case ExtensionType::SNI:
@@ -115,7 +125,7 @@ class ClientHelloBuilder
                     message_builder::push_u8(server_name_list, 0x00);
                     message_builder::push_u16(server_name_list, static_cast<uint16_t>(hostname.size()));
                     message_builder::push_string(server_name_list, hostname);
-                    message_builder::push_vector_u16(ext_data, server_name_list);
+                    message_builder::push_vector_u16(ext_buffer, server_name_list);
                     break;
                 }
                 case ExtensionType::ExtendedMasterSecret:
@@ -126,28 +136,30 @@ class ClientHelloBuilder
                 case ExtensionType::RenegotiationInfo:
                 {
                     ext_type = tls_consts::ext::RENEGOTIATION_INFO;
-                    message_builder::push_u8(ext_data, 0x00);
+                    message_builder::push_u8(ext_buffer, 0x00);
                     break;
                 }
                 case ExtensionType::SupportedGroups:
                 {
                     ext_type = tls_consts::ext::SUPPORTED_GROUPS;
                     auto bp = std::static_pointer_cast<SupportedGroupsBlueprint>(ext_ptr);
-                    std::vector<uint8_t> list_buf;
+                    std::vector<uint8_t> list_data;
                     for (auto g : bp->groups)
                     {
                         if (g == GREASE_PLACEHOLDER)
+                        {
                             g = grease_ctx.get_grease(1);
-                        message_builder::push_u16(list_buf, g);
+                        }
+                        message_builder::push_u16(list_data, g);
                     }
-                    message_builder::push_vector_u16(ext_data, list_buf);
+                    message_builder::push_vector_u16(ext_buffer, list_data);
                     break;
                 }
                 case ExtensionType::ECPointFormats:
                 {
                     ext_type = tls_consts::ext::EC_POINT_FORMATS;
                     auto bp = std::static_pointer_cast<ECPointFormatsBlueprint>(ext_ptr);
-                    message_builder::push_vector_u8(ext_data, bp->formats);
+                    message_builder::push_vector_u8(ext_buffer, bp->formats);
                     break;
                 }
                 case ExtensionType::SessionTicket:
@@ -164,27 +176,27 @@ class ClientHelloBuilder
                     {
                         message_builder::push_vector_u8(proto_list, std::vector<uint8_t>(p.begin(), p.end()));
                     }
-                    message_builder::push_vector_u16(ext_data, proto_list);
+                    message_builder::push_vector_u16(ext_buffer, proto_list);
                     break;
                 }
                 case ExtensionType::StatusRequest:
                 {
                     ext_type = tls_consts::ext::STATUS_REQUEST;
-                    message_builder::push_u8(ext_data, 0x01);
-                    message_builder::push_u16(ext_data, 0x0000);
-                    message_builder::push_u16(ext_data, 0x0000);
+                    message_builder::push_u8(ext_buffer, 0x01);
+                    message_builder::push_u16(ext_buffer, 0x0000);
+                    message_builder::push_u16(ext_buffer, 0x0000);
                     break;
                 }
                 case ExtensionType::SignatureAlgorithms:
                 {
                     ext_type = tls_consts::ext::SIGNATURE_ALG;
                     auto bp = std::static_pointer_cast<SignatureAlgorithmsBlueprint>(ext_ptr);
-                    std::vector<uint8_t> list_buf;
+                    std::vector<uint8_t> list_data;
                     for (auto a : bp->algorithms)
                     {
-                        message_builder::push_u16(list_buf, a);
+                        message_builder::push_u16(list_data, a);
                     }
-                    message_builder::push_vector_u16(ext_data, list_buf);
+                    message_builder::push_vector_u16(ext_buffer, list_data);
                     break;
                 }
                 case ExtensionType::SCT:
@@ -216,7 +228,7 @@ class ClientHelloBuilder
                             else if (ks.group == tls_consts::group::X25519_KYBER768_DRAFT00 || ks.group == tls_consts::group::X25519_MLKEM768)
                             {
                                 key_data.resize(32 + 1184);
-                                RAND_bytes(key_data.data(), key_data.size());
+                                RAND_bytes(key_data.data(), static_cast<int>(key_data.size()));
                                 std::memcpy(key_data.data(), x25519_pubkey.data(), 32);
                             }
                             else if (ks.group == GREASE_PLACEHOLDER)
@@ -231,14 +243,14 @@ class ClientHelloBuilder
                         }
                         message_builder::push_vector_u16(share_list, key_data);
                     }
-                    message_builder::push_vector_u16(ext_data, share_list);
+                    message_builder::push_vector_u16(ext_buffer, share_list);
                     break;
                 }
                 case ExtensionType::PSKKeyExchangeModes:
                 {
                     ext_type = tls_consts::ext::PSK_KEY_EXCHANGE_MODES;
                     auto bp = std::static_pointer_cast<PSKKeyExchangeModesBlueprint>(ext_ptr);
-                    message_builder::push_vector_u8(ext_data, bp->modes);
+                    message_builder::push_vector_u8(ext_buffer, bp->modes);
                     break;
                 }
                 case ExtensionType::SupportedVersions:
@@ -249,10 +261,12 @@ class ClientHelloBuilder
                     for (auto v : bp->versions)
                     {
                         if (v == GREASE_PLACEHOLDER)
+                        {
                             v = grease_ctx.get_grease(4);
+                        }
                         message_builder::push_u16(ver_list, v);
                     }
-                    message_builder::push_vector_u8(ext_data, ver_list);
+                    message_builder::push_vector_u8(ext_buffer, ver_list);
                     break;
                 }
                 case ExtensionType::CompressCertificate:
@@ -264,7 +278,7 @@ class ClientHelloBuilder
                     {
                         message_builder::push_u16(alg_list, a);
                     }
-                    message_builder::push_vector_u8(ext_data, alg_list);
+                    message_builder::push_vector_u8(ext_buffer, alg_list);
                     break;
                 }
                 case ExtensionType::ApplicationSettings:
@@ -276,7 +290,7 @@ class ClientHelloBuilder
                     {
                         message_builder::push_vector_u8(proto_list, std::vector<uint8_t>(p.begin(), p.end()));
                     }
-                    message_builder::push_vector_u16(ext_data, proto_list);
+                    message_builder::push_vector_u16(ext_buffer, proto_list);
                     break;
                 }
                 case ExtensionType::ApplicationSettingsNew:
@@ -288,25 +302,25 @@ class ClientHelloBuilder
                     {
                         message_builder::push_vector_u8(proto_list, std::vector<uint8_t>(p.begin(), p.end()));
                     }
-                    message_builder::push_vector_u16(ext_data, proto_list);
+                    message_builder::push_vector_u16(ext_buffer, proto_list);
                     break;
                 }
                 case ExtensionType::GreaseECH:
                 {
                     ext_type = tls_consts::ext::GREASE_ECH;
 
-                    ext_data.reserve(10);
-                    ext_data.push_back(0x00);
+                    ext_buffer.reserve(10);
+                    ext_buffer.push_back(0x00);
 
-                    ext_data.push_back(0x0a);
-                    ext_data.push_back(0x0a);
-                    ext_data.push_back(0x0a);
-                    ext_data.push_back(0x0a);
+                    ext_buffer.push_back(0x0a);
+                    ext_buffer.push_back(0x0a);
+                    ext_buffer.push_back(0x0a);
+                    ext_buffer.push_back(0x0a);
 
-                    ext_data.push_back(0x00);
+                    ext_buffer.push_back(0x00);
 
-                    message_builder::push_u16(ext_data, 0);
-                    message_builder::push_u16(ext_data, 0);
+                    message_builder::push_u16(ext_buffer, 0);
+                    message_builder::push_u16(ext_buffer, 0);
 
                     break;
                 }
@@ -331,14 +345,14 @@ class ClientHelloBuilder
                     {
                         message_builder::push_u16(alg_list, a);
                     }
-                    message_builder::push_vector_u16(ext_data, alg_list);
+                    message_builder::push_vector_u16(ext_buffer, alg_list);
                     break;
                 }
                 case ExtensionType::RecordSizeLimit:
                 {
                     ext_type = tls_consts::ext::RECORD_SIZE_LIMIT;
                     auto bp = std::static_pointer_cast<RecordSizeLimitBlueprint>(ext_ptr);
-                    message_builder::push_u16(ext_data, bp->limit);
+                    message_builder::push_u16(ext_buffer, bp->limit);
                     break;
                 }
                 case ExtensionType::PreSharedKey:
@@ -346,19 +360,19 @@ class ClientHelloBuilder
                     ext_type = tls_consts::ext::PRE_SHARED_KEY;
                     std::vector<uint8_t> identity(32);
                     RAND_bytes(identity.data(), 32);
-                    message_builder::push_u16(ext_data, 32 + 2 + 4);
-                    message_builder::push_vector_u16(ext_data, identity);
-                    message_builder::push_u32(ext_data, 0);
+                    message_builder::push_u16(ext_buffer, 32 + 2 + 4);
+                    message_builder::push_vector_u16(ext_buffer, identity);
+                    message_builder::push_u32(ext_buffer, 0);
                     std::vector<uint8_t> binder(32);
                     RAND_bytes(binder.data(), 32);
-                    message_builder::push_u16(ext_data, 33);
-                    message_builder::push_vector_u8(ext_data, binder);
+                    message_builder::push_u16(ext_buffer, 33);
+                    message_builder::push_vector_u8(ext_buffer, binder);
                     break;
                 }
                 case ExtensionType::Padding:
                 {
                     ext_type = tls_consts::ext::PADDING;
-                    size_t current_len = hello.size() + 2 + exts_buf.size() + 4;
+                    size_t current_len = hello.size() + 2 + exts.size() + 4;
 
                     size_t padding_len = 0;
                     if (current_len < 512)
@@ -367,7 +381,7 @@ class ClientHelloBuilder
                     }
                     if (padding_len > 0)
                     {
-                        ext_data.resize(padding_len, 0x00);
+                        ext_buffer.resize(padding_len, 0x00);
                     }
                     break;
                 }
@@ -375,11 +389,11 @@ class ClientHelloBuilder
                     continue;
             }
 
-            message_builder::push_u16(exts_buf, ext_type);
-            message_builder::push_vector_u16(exts_buf, ext_data);
+            message_builder::push_u16(exts, ext_type);
+            message_builder::push_vector_u16(exts, ext_buffer);
         }
 
-        message_builder::push_vector_u16(hello, exts_buf);
+        message_builder::push_vector_u16(hello, exts);
 
         size_t total_len = hello.size() - 4;
         hello[1] = (total_len >> 16) & 0xFF;
@@ -440,7 +454,35 @@ inline std::vector<uint8_t> construct_server_hello(const std::vector<uint8_t> &s
     return hello;
 }
 
-inline std::vector<uint8_t> construct_encrypted_extensions() { return {0x08, 0x00, 0x00, 0x02, 0x00, 0x00}; }
+inline std::vector<uint8_t> construct_encrypted_extensions(const std::string &alpn)
+{
+    std::vector<uint8_t> msg;
+    msg.push_back(0x08);
+    msg.push_back(0x00);
+    msg.push_back(0x00);
+    msg.push_back(0x00);
+
+    std::vector<uint8_t> extensions;
+    if (!alpn.empty())
+    {
+        message_builder::push_u16(extensions, tls_consts::ext::ALPN);
+        std::vector<uint8_t> proto;
+        message_builder::push_vector_u8(proto, std::vector<uint8_t>(alpn.begin(), alpn.end()));
+        std::vector<uint8_t> ext;
+        message_builder::push_vector_u16(ext, proto);
+        message_builder::push_bytes(extensions, ext);
+    }
+
+    message_builder::push_u16(msg, static_cast<uint16_t>(extensions.size()));
+    message_builder::push_bytes(msg, extensions);
+
+    const size_t total_len = msg.size() - 4;
+    msg[1] = static_cast<uint8_t>((total_len >> 16) & 0xFF);
+    msg[2] = static_cast<uint8_t>((total_len >> 8) & 0xFF);
+    msg[3] = static_cast<uint8_t>(total_len & 0xFF);
+
+    return msg;
+}
 
 inline std::vector<uint8_t> construct_certificate(const std::vector<uint8_t> &cert_der)
 {
@@ -495,6 +537,25 @@ inline std::vector<uint8_t> construct_finished(const std::vector<uint8_t> &verif
     return msg;
 }
 
+inline std::optional<uint16_t> extract_cipher_suite_from_server_hello(const std::vector<uint8_t> &server_hello)
+{
+    if (server_hello.size() < 4 + 2 + 32 + 1)
+    {
+        return std::nullopt;
+    }
+
+    uint32_t pos = 4 + 2 + 32;
+    uint8_t sid_len = server_hello[pos];
+    pos += 1 + sid_len;
+
+    if (pos + 2 > server_hello.size())
+    {
+        return std::nullopt;
+    }
+
+    return static_cast<uint16_t>((server_hello[pos] << 8) | server_hello[pos + 1]);
+}
+
 inline std::vector<uint8_t> extract_server_public_key(const std::vector<uint8_t> &server_hello)
 {
     uint32_t pos = 0;
@@ -502,18 +563,31 @@ inline std::vector<uint8_t> extract_server_public_key(const std::vector<uint8_t>
     {
         return {};
     }
+
     if (server_hello[0] == 0x16)
     {
         pos += 5;
     }
-    if (pos + 38 > server_hello.size() || server_hello[pos] != 0x02)
+
+    if (pos + 4 > server_hello.size())
     {
         return {};
     }
 
-    pos += 38;
-    const uint8_t sid_len = server_hello[pos];
+    if (server_hello[pos] != 0x02)
+    {
+        return {};
+    }
+
+    pos += 4 + 2 + 32;
+    if (pos >= server_hello.size())
+    {
+        return {};
+    }
+
+    uint8_t sid_len = server_hello[pos];
     pos += 1 + sid_len;
+
     pos += 3;
 
     if (pos + 2 > server_hello.size())
@@ -531,6 +605,10 @@ inline std::vector<uint8_t> extract_server_public_key(const std::vector<uint8_t>
         pos += 4;
         if (type == tls_consts::ext::KEY_SHARE && elen >= 4)
         {
+            if (pos + 4 > end)
+            {
+                break;
+            }
             const auto len = static_cast<uint16_t>((server_hello[pos + 2] << 8) | server_hello[pos + 3]);
             if (len == 32)
             {
@@ -541,6 +619,57 @@ inline std::vector<uint8_t> extract_server_public_key(const std::vector<uint8_t>
     }
     return {};
 }
+
+inline std::optional<std::string> extract_alpn_from_encrypted_extensions(const std::vector<uint8_t> &ee_msg)
+{
+    if (ee_msg.size() < 6 || ee_msg[0] != 0x08)
+    {
+        return std::nullopt;
+    }
+
+    uint32_t pos = 4;
+    uint16_t total_ext_len = (ee_msg[pos] << 8) | ee_msg[pos + 1];
+    pos += 2;
+
+    size_t end = pos + total_ext_len;
+    if (end > ee_msg.size())
+    {
+        return std::nullopt;
+    }
+
+    while (pos + 4 <= end)
+    {
+        uint16_t type = (ee_msg[pos] << 8) | ee_msg[pos + 1];
+        uint16_t len = (ee_msg[pos + 2] << 8) | ee_msg[pos + 3];
+        pos += 4;
+
+        if (pos + len > end)
+        {
+            break;
+        }
+
+        if (type == tls_consts::ext::ALPN)
+        {
+            if (len < 3)
+            {
+                break;
+            }
+
+            uint16_t list_len = (ee_msg[pos] << 8) | ee_msg[pos + 1];
+            if (list_len > 0 && pos + 2 + 1 <= end)
+            {
+                uint8_t proto_len = ee_msg[pos + 2];
+                if (pos + 3 + proto_len <= end)
+                {
+                    return std::string(reinterpret_cast<const char *>(&ee_msg[pos + 3]), proto_len);
+                }
+            }
+        }
+        pos += len;
+    }
+    return std::nullopt;
+}
+
 }    // namespace reality
 
 #endif
