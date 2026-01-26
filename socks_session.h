@@ -7,8 +7,10 @@
 #include <asio.hpp>
 
 #include "log.h"
+
 #include "protocol.h"
 #include "mux_tunnel.h"
+#include "ip_matcher.h"
 
 namespace mux
 {
@@ -21,11 +23,12 @@ class socks_session : public std::enable_shared_from_this<socks_session>
     {
     }
 
+    void set_ip_matcher(std::shared_ptr<ip_matcher> matcher) { matcher_ = std::move(matcher); }
+
     void start()
     {
         auto self = shared_from_this();
-        asio::co_spawn(
-            socket_.get_executor(), [self]() mutable -> asio::awaitable<void> { co_await self->run(); }, asio::detached);
+        asio::co_spawn(socket_.get_executor(), [self]() mutable -> asio::awaitable<void> { co_await self->run(); }, asio::detached);
     }
 
    private:
@@ -57,8 +60,7 @@ class socks_session : public std::enable_shared_from_this<socks_session>
     [[nodiscard]] asio::awaitable<bool> handshake_socks5()
     {
         uint8_t ver_nmethods[2];
-        auto [e1, n1] =
-            co_await asio::async_read(socket_, asio::buffer(ver_nmethods, 2), asio::as_tuple(asio::use_awaitable));
+        auto [e1, n1] = co_await asio::async_read(socket_, asio::buffer(ver_nmethods, 2), asio::as_tuple(asio::use_awaitable));
 
         if (e1 || ver_nmethods[0] != socks::VER)
         {
@@ -181,7 +183,49 @@ class socks_session : public std::enable_shared_from_this<socks_session>
         if (cmd == socks::CMD_CONNECT)
         {
             LOG_INFO("socks {} cmd connect target {} port {}", sid_, host, port);
-            co_await run_tcp(host, port);
+            bool use_direct = false;
+            std::string target_ip_str = host;
+            if (matcher_)
+            {
+                std::error_code ec;
+                auto addr = asio::ip::make_address(host, ec);
+
+                if (!ec)
+                {
+                    if (matcher_->match(addr))
+                    {
+                        use_direct = true;
+                    }
+                }
+                else
+                {
+                    asio::ip::tcp::resolver resolver(socket_.get_executor());
+                    auto [res_ec, eps] = co_await resolver.async_resolve(host, "", asio::as_tuple(asio::use_awaitable));
+                    if (!res_ec && !eps.empty())
+                    {
+                        for (const auto &ep : eps)
+                        {
+                            if (matcher_->match(ep.endpoint().address()))
+                            {
+                                use_direct = true;
+                                target_ip_str = ep.endpoint().address().to_string();
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (use_direct)
+            {
+                LOG_INFO("socks {} direct connect to {}:{}", sid_, host, port);
+                co_await run_direct_tcp(host, port);
+            }
+            else
+            {
+                LOG_INFO("socks {} proxy connect to {}:{}", sid_, host, port);
+                co_await run_tcp(host, port);
+            }
         }
         else if (cmd == socks::CMD_UDP_ASSOCIATE)
         {
@@ -195,7 +239,62 @@ class socks_session : public std::enable_shared_from_this<socks_session>
             co_await asio::async_write(socket_, asio::buffer(err), asio::as_tuple(asio::use_awaitable));
         }
     }
+    static asio::awaitable<void> transfer(asio::ip::tcp::socket &from, asio::ip::tcp::socket &to)
+    {
+        std::array<char, 8192> buf;
+        for (;;)
+        {
+            auto [ec, n] = co_await from.async_read_some(asio::buffer(buf), asio::as_tuple(asio::use_awaitable));
+            if (ec || n == 0)
+            {
+                break;
+            }
 
+            auto [wec, wn] = co_await asio::async_write(to, asio::buffer(buf, n), asio::as_tuple(asio::use_awaitable));
+            if (wec)
+            {
+                break;
+            }
+        }
+        std::error_code ignore;
+        ignore = from.shutdown(asio::ip::tcp::socket::shutdown_receive, ignore);
+        ignore = to.shutdown(asio::ip::tcp::socket::shutdown_send, ignore);
+    }
+    asio::awaitable<void> run_direct_tcp(std::string host, uint16_t port)
+    {
+        asio::ip::tcp::socket target_socket(socket_.get_executor());
+        asio::ip::tcp::resolver resolver(socket_.get_executor());
+
+        auto [res_ec, eps] = co_await resolver.async_resolve(host, std::to_string(port), asio::as_tuple(asio::use_awaitable));
+        if (res_ec)
+        {
+            LOG_WARN("socks {} direct resolve failed {}", sid_, res_ec.message());
+            uint8_t err[] = {socks::VER, socks::REP_HOST_UNREACH, 0, socks::ATYP_IPV4, 0, 0, 0, 0, 0, 0};
+            co_await asio::async_write(socket_, asio::buffer(err), asio::as_tuple(asio::use_awaitable));
+            co_return;
+        }
+
+        auto [conn_ec, ep] = co_await asio::async_connect(target_socket, eps, asio::as_tuple(asio::use_awaitable));
+        if (conn_ec)
+        {
+            LOG_WARN("socks {} direct connect failed {}", sid_, conn_ec.message());
+            uint8_t err[] = {socks::VER, socks::REP_CONN_REFUSED, 0, socks::ATYP_IPV4, 0, 0, 0, 0, 0, 0};
+            co_await asio::async_write(socket_, asio::buffer(err), asio::as_tuple(asio::use_awaitable));
+            co_return;
+        }
+
+        target_socket.set_option(asio::ip::tcp::no_delay(true));
+
+        uint8_t rep[] = {socks::VER, socks::REP_SUCCESS, 0, socks::ATYP_IPV4, 0, 0, 0, 0, 0, 0};
+        auto [write_ec, n] = co_await asio::async_write(socket_, asio::buffer(rep), asio::as_tuple(asio::use_awaitable));
+        if (write_ec)
+        {
+            co_return;
+        }
+
+        using asio::experimental::awaitable_operators::operator&&;
+        co_await (transfer(socket_, target_socket) && transfer(target_socket, socket_));
+    }
     asio::awaitable<void> run_tcp(std::string host, uint16_t port)
     {
         auto stream = tunnel_manager_->create_stream();
@@ -400,9 +499,9 @@ class socks_session : public std::enable_shared_from_this<socks_session>
     }
 
     static asio::awaitable<void> udp_sock_to_stream(asio::ip::udp::socket &udp_sock,
-                                                           std::shared_ptr<mux_stream> stream,
-                                                           std::shared_ptr<asio::ip::udp::endpoint> client_ep,
-                                                           uint32_t sid)
+                                                    std::shared_ptr<mux_stream> stream,
+                                                    std::shared_ptr<asio::ip::udp::endpoint> client_ep,
+                                                    uint32_t sid)
     {
         std::vector<uint8_t> buf(65535);
         asio::ip::udp::endpoint sender;
@@ -440,9 +539,9 @@ class socks_session : public std::enable_shared_from_this<socks_session>
     }
 
     static asio::awaitable<void> stream_to_udp_sock(asio::ip::udp::socket &udp_sock,
-                                                           std::shared_ptr<mux_stream> stream,
-                                                           std::shared_ptr<asio::ip::udp::endpoint> client_ep,
-                                                           uint32_t sid)
+                                                    std::shared_ptr<mux_stream> stream,
+                                                    std::shared_ptr<asio::ip::udp::endpoint> client_ep,
+                                                    uint32_t sid)
     {
         for (;;)
         {
@@ -489,6 +588,7 @@ class socks_session : public std::enable_shared_from_this<socks_session>
    private:
     uint32_t sid_;
     asio::ip::tcp::socket socket_;
+    std::shared_ptr<ip_matcher> matcher_;
     std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager_;
 };
 
