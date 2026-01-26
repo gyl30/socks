@@ -68,6 +68,8 @@ class local_client : public std::enable_shared_from_this<local_client>
     {
         std::vector<uint8_t> c_app_secret;
         std::vector<uint8_t> s_app_secret;
+        uint16_t cipher_suite;
+        const EVP_MD *md;
     };
 
     asio::awaitable<void> connect_remote_loop()
@@ -95,10 +97,12 @@ class local_client : public std::enable_shared_from_this<local_client>
                 continue;
             }
 
-            auto c_app_keys = reality::tls_key_schedule::derive_traffic_keys(hs_res.c_app_secret, ec);
-            auto s_app_keys = reality::tls_key_schedule::derive_traffic_keys(hs_res.s_app_secret, ec);
+            size_t key_len = (hs_res.cipher_suite == 0x1302 || hs_res.cipher_suite == 0x1303) ? 32 : 16;
 
-            LOG_INFO("reality handshake success tunnel active id {}", cid);
+            auto c_app_keys = reality::tls_key_schedule::derive_traffic_keys(hs_res.c_app_secret, ec, key_len, 12, hs_res.md);
+            auto s_app_keys = reality::tls_key_schedule::derive_traffic_keys(hs_res.s_app_secret, ec, key_len, 12, hs_res.md);
+
+            LOG_INFO("reality handshake success tunnel active id {} cipher 0x{:04x}", cid, hs_res.cipher_suite);
             reality_engine re(s_app_keys.first, s_app_keys.second, c_app_keys.first, c_app_keys.second);
             tunnel_manager_ = std::make_shared<mux_tunnel_impl<asio::ip::tcp::socket>>(std::move(*socket), std::move(re), true, cid);
 
@@ -143,27 +147,37 @@ class local_client : public std::enable_shared_from_this<local_client>
             co_return std::make_pair(false, handshake_result{});
         }
 
-        auto [sh_ok, hs_keys] = co_await process_server_hello(socket, private_key, trans, ec);
-        if (!sh_ok)
+        auto sh_res = co_await process_server_hello(socket, private_key, trans, ec);
+        if (!sh_res.ok)
         {
             co_return std::make_pair(false, handshake_result{});
         }
 
-        auto c_hs_keys = reality::tls_key_schedule::derive_traffic_keys(hs_keys.client_handshake_traffic_secret, ec);
-        auto s_hs_keys = reality::tls_key_schedule::derive_traffic_keys(hs_keys.server_handshake_traffic_secret, ec);
+        size_t key_len = (sh_res.cipher_suite == 0x1302 || sh_res.cipher_suite == 0x1303) ? 32 : 16;
+        size_t iv_len = 12;
 
-        auto [loop_ok, app_sec] = co_await handshake_read_loop(socket, s_hs_keys, hs_keys, trans, ec);
+        auto c_hs_keys =
+            reality::tls_key_schedule::derive_traffic_keys(sh_res.hs_keys.client_handshake_traffic_secret, ec, key_len, iv_len, sh_res.negotiated_md);
+        auto s_hs_keys =
+            reality::tls_key_schedule::derive_traffic_keys(sh_res.hs_keys.server_handshake_traffic_secret, ec, key_len, iv_len, sh_res.negotiated_md);
+
+        auto [loop_ok, app_sec] =
+            co_await handshake_read_loop(socket, s_hs_keys, sh_res.hs_keys, trans, sh_res.negotiated_cipher, sh_res.negotiated_md, ec);
         if (!loop_ok)
         {
             co_return std::make_pair(false, handshake_result{});
         }
 
-        if (!co_await send_client_finished(socket, c_hs_keys, hs_keys.client_handshake_traffic_secret, trans, ec))
+        if (!co_await send_client_finished(
+                socket, c_hs_keys, sh_res.hs_keys.client_handshake_traffic_secret, trans, sh_res.negotiated_cipher, sh_res.negotiated_md, ec))
         {
             co_return std::make_pair(false, handshake_result{});
         }
 
-        co_return std::make_pair(true, handshake_result{.c_app_secret = app_sec.first, .s_app_secret = app_sec.second});
+        co_return std::make_pair(
+            true,
+            handshake_result{
+                .c_app_secret = app_sec.first, .s_app_secret = app_sec.second, .cipher_suite = sh_res.cipher_suite, .md = sh_res.negotiated_md});
     }
 
     asio::awaitable<bool> generate_and_send_client_hello(
@@ -228,17 +242,26 @@ class local_client : public std::enable_shared_from_this<local_client>
         co_return true;
     }
 
-    static asio::awaitable<std::pair<bool, reality::handshake_keys>> process_server_hello(asio::ip::tcp::socket &socket,
-                                                                                          const uint8_t *private_key,
-                                                                                          reality::transcript &trans,
-                                                                                          std::error_code &ec)
+    struct server_hello_res
+    {
+        bool ok;
+        reality::handshake_keys hs_keys;
+        const EVP_MD *negotiated_md;
+        const EVP_CIPHER *negotiated_cipher;
+        uint16_t cipher_suite;
+    };
+
+    static asio::awaitable<server_hello_res> process_server_hello(asio::ip::tcp::socket &socket,
+                                                                  const uint8_t *private_key,
+                                                                  reality::transcript &trans,
+                                                                  std::error_code &ec)
     {
         uint8_t data[5];
         auto [re1, rn1] = co_await asio::async_read(socket, asio::buffer(data, 5), asio::as_tuple(asio::use_awaitable));
         if (re1)
         {
             ec = re1;
-            co_return std::make_pair(false, reality::handshake_keys{});
+            co_return server_hello_res{.ok = false};
         }
 
         auto sh_len = static_cast<uint16_t>((data[3] << 8) | data[4]);
@@ -247,23 +270,59 @@ class local_client : public std::enable_shared_from_this<local_client>
         if (re2)
         {
             ec = re2;
-            co_return std::make_pair(false, reality::handshake_keys{});
+            co_return server_hello_res{.ok = false};
         }
         LOG_DEBUG("server hello received size {}", sh_len);
 
         trans.update(sh_data);
+
+        
+        size_t pos = 4 + 2 + 32;
+        if (pos >= sh_data.size())
+        {
+            ec = asio::error::fault;
+            co_return server_hello_res{.ok = false};
+        }
+
+        uint8_t sid_len = sh_data[pos];
+        pos += 1 + sid_len;
+
+        if (pos + 2 > sh_data.size())
+        {
+            ec = asio::error::fault;
+            co_return server_hello_res{.ok = false};
+        }
+
+        uint16_t cipher_suite = (sh_data[pos] << 8) | sh_data[pos + 1];
+
+        const EVP_MD *md = EVP_sha256();
+        const EVP_CIPHER *cipher = EVP_aes_128_gcm();
+
+        if (cipher_suite == 0x1302)
+        {    
+            md = EVP_sha384();
+            cipher = EVP_aes_256_gcm();
+        }
+        else if (cipher_suite == 0x1303)
+        {    
+            md = EVP_sha256();
+            cipher = EVP_chacha20_poly1305();
+        }
+
+        trans.set_protocol_hash(md);
+
         auto public_key = reality::extract_server_public_key(sh_data);
         if (public_key.empty())
         {
             ec = asio::error::invalid_argument;
-            co_return std::make_pair(false, reality::handshake_keys{});
+            co_return server_hello_res{.ok = false};
         }
 
         auto hs_shared = reality::crypto_util::x25519_derive(std::vector<uint8_t>(private_key, private_key + 32), public_key, ec);
 
-        auto hs_keys = reality::tls_key_schedule::derive_handshake_keys(hs_shared, trans.finish(), EVP_sha256(), ec);
+        auto hs_keys = reality::tls_key_schedule::derive_handshake_keys(hs_shared, trans.finish(), md, ec);
 
-        co_return std::make_pair(true, hs_keys);
+        co_return server_hello_res{.ok = true, .hs_keys = hs_keys, .negotiated_md = md, .negotiated_cipher = cipher, .cipher_suite = cipher_suite};
     }
 
     static asio::awaitable<std::pair<bool, std::pair<std::vector<uint8_t>, std::vector<uint8_t>>>> handshake_read_loop(
@@ -271,6 +330,8 @@ class local_client : public std::enable_shared_from_this<local_client>
         const std::pair<std::vector<uint8_t>, std::vector<uint8_t>> &s_hs_keys,
         const reality::handshake_keys &hs_keys,
         reality::transcript &trans,
+        const EVP_CIPHER *cipher,
+        const EVP_MD *md,
         std::error_code &ec)
     {
         bool handshake_fin = false;
@@ -299,7 +360,7 @@ class local_client : public std::enable_shared_from_this<local_client>
             std::memcpy(cth.data(), rh, 5);
             std::memcpy(cth.data() + 5, rec.data(), n);
             uint8_t type;
-            auto pt = reality::tls_record_layer::decrypt_record(EVP_aes_128_gcm(), s_hs_keys.first, s_hs_keys.second, seq++, cth, type, ec);
+            auto pt = reality::tls_record_layer::decrypt_record(cipher, s_hs_keys.first, s_hs_keys.second, seq++, cth, type, ec);
             if (ec)
             {
                 co_return std::make_pair(false, std::pair<std::vector<uint8_t>, std::vector<uint8_t>>{});
@@ -340,7 +401,7 @@ class local_client : public std::enable_shared_from_this<local_client>
             }
         }
 
-        auto app_sec = reality::tls_key_schedule::derive_application_secrets(hs_keys.master_secret, trans.finish(), EVP_sha256(), ec);
+        auto app_sec = reality::tls_key_schedule::derive_application_secrets(hs_keys.master_secret, trans.finish(), md, ec);
         co_return std::make_pair(true, app_sec);
     }
 
@@ -348,12 +409,14 @@ class local_client : public std::enable_shared_from_this<local_client>
                                                       const std::pair<std::vector<uint8_t>, std::vector<uint8_t>> &c_hs_keys,
                                                       const std::vector<uint8_t> &c_hs_secret,
                                                       const reality::transcript &trans,
+                                                      const EVP_CIPHER *cipher,
+                                                      const EVP_MD *md,
                                                       std::error_code &ec)
     {
-        auto c_fin_verify = reality::tls_key_schedule::compute_finished_verify_data(c_hs_secret, trans.finish(), EVP_sha256(), ec);
+        auto c_fin_verify = reality::tls_key_schedule::compute_finished_verify_data(c_hs_secret, trans.finish(), md, ec);
         auto c_fin_msg = reality::construct_finished(c_fin_verify);
-        auto c_fin_rec = reality::tls_record_layer::encrypt_record(
-            EVP_aes_128_gcm(), c_hs_keys.first, c_hs_keys.second, 0, c_fin_msg, reality::CONTENT_TYPE_HANDSHAKE, ec);
+        auto c_fin_rec =
+            reality::tls_record_layer::encrypt_record(cipher, c_hs_keys.first, c_hs_keys.second, 0, c_fin_msg, reality::CONTENT_TYPE_HANDSHAKE, ec);
 
         std::vector<uint8_t> out_flight = {0x14, 0x03, 0x03, 0x00, 0x01, 0x01};
         out_flight.insert(out_flight.end(), c_fin_rec.begin(), c_fin_rec.end());
@@ -471,6 +534,6 @@ class local_client : public std::enable_shared_from_this<local_client>
     asio::experimental::concurrent_channel<void(std::error_code, int)> stop_channel_;
 };
 
-}    // namespace mux
+}    
 
 #endif
