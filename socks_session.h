@@ -11,6 +11,7 @@
 #include "protocol.h"
 #include "mux_tunnel.h"
 #include "ip_matcher.h"
+#include "domain_matcher.h"
 
 namespace mux
 {
@@ -23,7 +24,11 @@ class socks_session : public std::enable_shared_from_this<socks_session>
     {
     }
 
-    void set_ip_matcher(std::shared_ptr<ip_matcher> matcher) { matcher_ = std::move(matcher); }
+    void set_matchers(std::shared_ptr<ip_matcher> ip_matcher, std::shared_ptr<domain_matcher> domain_matcher)
+    {
+        ip_matcher_ = std::move(ip_matcher);
+        domain_matcher_ = std::move(domain_matcher);
+    }
 
     void start()
     {
@@ -184,31 +189,45 @@ class socks_session : public std::enable_shared_from_this<socks_session>
         {
             LOG_INFO("socks {} cmd connect target {} port {}", sid_, host, port);
             bool use_direct = false;
-            std::string target_ip_str = host;
-            if (matcher_)
-            {
-                std::error_code ec;
-                auto addr = asio::ip::make_address(host, ec);
+            bool force_proxy = false;
 
-                if (!ec)
+            std::error_code ec_ip;
+            auto addr = asio::ip::make_address(host, ec_ip);
+            bool is_domain = ec_ip ? true : false;
+
+            if (is_domain && domain_matcher_)
+            {
+                if (domain_matcher_->match(host))
                 {
-                    if (matcher_->match(addr))
+                    LOG_INFO("socks {} domain rule matched for {} force proxy", sid_, host);
+                    force_proxy = true;
+                }
+            }
+
+            if (!force_proxy && ip_matcher_)
+            {
+                if (!is_domain)
+                {
+                    if (ip_matcher_->match(addr))
                     {
                         use_direct = true;
+                        LOG_INFO("socks {} ip rule matched for {} direct", sid_, host);
                     }
                 }
                 else
                 {
                     asio::ip::tcp::resolver resolver(socket_.get_executor());
                     auto [res_ec, eps] = co_await resolver.async_resolve(host, "", asio::as_tuple(asio::use_awaitable));
-                    if (!res_ec && !eps.empty())
+
+                    if (!res_ec)
                     {
                         for (const auto &ep : eps)
                         {
-                            if (matcher_->match(ep.endpoint().address()))
+                            if (ip_matcher_->match(ep.endpoint().address()))
                             {
                                 use_direct = true;
-                                target_ip_str = ep.endpoint().address().to_string();
+                                LOG_INFO("socks {} domain {} resolved to {} ip rule matched direct", sid_, host, ep.endpoint().address().to_string());
+                                host = ep.endpoint().address().to_string();
                                 break;
                             }
                         }
@@ -218,12 +237,14 @@ class socks_session : public std::enable_shared_from_this<socks_session>
 
             if (use_direct)
             {
-                LOG_INFO("socks {} direct connect to {}:{}", sid_, host, port);
                 co_await run_direct_tcp(host, port);
             }
             else
             {
-                LOG_INFO("socks {} proxy connect to {}:{}", sid_, host, port);
+                if (!force_proxy)
+                {
+                    LOG_INFO("socks {} no rule matched for {}, proxy default", sid_, host);
+                }
                 co_await run_tcp(host, port);
             }
         }
@@ -588,7 +609,8 @@ class socks_session : public std::enable_shared_from_this<socks_session>
    private:
     uint32_t sid_;
     asio::ip::tcp::socket socket_;
-    std::shared_ptr<ip_matcher> matcher_;
+    std::shared_ptr<ip_matcher> ip_matcher_;
+    std::shared_ptr<domain_matcher> domain_matcher_;
     std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager_;
 };
 
