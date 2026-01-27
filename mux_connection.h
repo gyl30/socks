@@ -40,13 +40,13 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     using syn_callback_t = std::function<void(uint32_t, std::vector<uint8_t>)>;
 
     mux_connection(asio::ip::tcp::socket socket, reality_engine engine, bool is_client, uint32_t conn_id)
-        : socket_(std::move(socket)),
+        : cid_(conn_id),
+          timer_(socket.get_executor()),
+          socket_(std::move(socket)),
           reality_engine_(std::move(engine)),
-          write_channel_(socket_.get_executor(), 1024),
-          timer_(socket_.get_executor()),
-          connection_state_(mux_connection_state::connected),
           next_stream_id_(is_client ? 1 : 2),
-          cid_(conn_id)
+          connection_state_(mux_connection_state::connected),
+          write_channel_(socket_.get_executor(), 1024)
     {
         mux_dispatcher_.set_callback([this](mux::frame_header h, std::vector<uint8_t> p) { this->on_mux_frame(h, std::move(p)); });
         LOG_INFO("mux {} initialized", cid_);
@@ -78,6 +78,8 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
         auto self = shared_from_this();
         LOG_DEBUG("mux {} started loops", cid_);
         using asio::experimental::awaitable_operators::operator||;
+        last_read_time = std::chrono::steady_clock::now();
+        last_write_time = std::chrono::steady_clock::now();
         co_await (read_loop() || write_loop() || timeout_loop());
         LOG_INFO("mux {} loops finished stopped", cid_);
         stop();
@@ -96,8 +98,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
         }
 
         mux_write_msg msg{.command_ = cmd, .stream_id = stream_id, .payload = std::move(payload)};
-        auto [ec] =
-            co_await write_channel_.async_send(std::error_code{}, std::move(msg), asio::as_tuple(asio::use_awaitable));
+        auto [ec] = co_await write_channel_.async_send(std::error_code{}, std::move(msg), asio::as_tuple(asio::use_awaitable));
 
         if (ec)
         {
@@ -129,10 +130,19 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
         {
             std::error_code ec;
             ec = socket_.shutdown(asio::ip::tcp::socket::shutdown_both, ec);
+            if (ec)
+            {
+                LOG_WARN("mux {} shutdown failed error {}", cid_, ec.message());
+            }
             ec = socket_.close(ec);
-            (void)ec;
+            if (ec)
+            {
+                LOG_WARN("mux {} close failed error {}", cid_, ec.message());
+            }
         }
+        LOG_INFO("mux write channel {} close", cid_);
         write_channel_.close();
+        LOG_INFO("mux timer {} cancel", cid_);
         timer_.cancel();
         connection_state_.store(mux_connection_state::closed, std::memory_order_release);
     }
@@ -156,9 +166,10 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
                 }
                 break;
             }
+            read_bytes += n;
+            last_read_time = std::chrono::steady_clock::now();
 
             reality_engine_.commit_read(n);
-            update_activity();
 
             std::error_code decrypt_ec;
 
@@ -177,8 +188,8 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
                 break;
             }
         }
-        stop();
         LOG_DEBUG("mux {} read loop finished", cid_);
+        stop();
     }
 
     asio::awaitable<void> write_loop()
@@ -210,33 +221,39 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
                 LOG_ERROR("mux {} write error {}", cid_, wec.message());
                 break;
             }
-            update_activity();
+            write_bytes += n;
+            last_write_time = std::chrono::steady_clock::now();
         }
-        stop();
         LOG_DEBUG("mux {} write loop finished", cid_);
+        stop();
     }
 
     asio::awaitable<void> timeout_loop()
     {
         while (is_open())
         {
-            timer_.expires_after(std::chrono::seconds(300));
+            timer_.expires_after(std::chrono::seconds(1));
             auto [ec] = co_await timer_.async_wait(asio::as_tuple(asio::use_awaitable));
-            if (!ec)
+            if (ec)
             {
-                LOG_WARN("mux {} timeout", cid_);
+                LOG_WARN("mux {} timeout error {}", cid_, ec.message());
                 break;
             }
+            auto now = std::chrono::steady_clock::now();
+            auto read_elapsed = now - last_read_time;
+            auto write_elapsed = now - last_write_time;
+            if (read_elapsed > std::chrono::seconds(100))
+            {
+                LOG_WARN("mux {} timeout read", cid_);
+            }
+            if (write_elapsed > std::chrono::seconds(100))
+            {
+                LOG_WARN("mux {} timeout write", cid_);
+            }
         }
-        stop();
-    }
 
-    void update_activity()
-    {
-        if (is_open())
-        {
-            timer_.cancel_one();
-        }
+        LOG_DEBUG("mux {} timeout loop finished", cid_);
+        stop();
     }
 
     void on_mux_frame(mux::frame_header header, std::vector<uint8_t> payload)
@@ -287,18 +304,21 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     }
 
    private:
+    uint64_t read_bytes = 0;
+    uint64_t write_bytes = 0;
+    std::chrono::steady_clock::time_point last_read_time;
+    std::chrono::steady_clock::time_point last_write_time;
+    uint32_t cid_;
+    stream_map_t streams_;
+    asio::steady_timer timer_;
+    std::mutex streams_mutex_;
+    syn_callback_t syn_callback_;
     asio::ip::tcp::socket socket_;
     reality_engine reality_engine_;
     mux_dispatcher mux_dispatcher_;
-    asio::experimental::concurrent_channel<void(std::error_code, mux_write_msg)> write_channel_;
-    asio::steady_timer timer_;
-    std::atomic<mux_connection_state> connection_state_;
-
-    stream_map_t streams_;
-    std::mutex streams_mutex_;
     std::atomic<uint32_t> next_stream_id_;
-    uint32_t cid_;
-    syn_callback_t syn_callback_;
+    std::atomic<mux_connection_state> connection_state_;
+    asio::experimental::concurrent_channel<void(std::error_code, mux_write_msg)> write_channel_;
 };
 
 #endif

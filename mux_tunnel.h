@@ -18,7 +18,7 @@ class mux_tunnel_impl : public std::enable_shared_from_this<mux_tunnel_impl<stre
     {
     }
 
-    [[nodiscard]] std::shared_ptr<mux_connection> get_connection() const { return connection_; }
+    [[nodiscard]] std::shared_ptr<mux_connection> connection() const { return connection_; }
 
     void register_stream(uint32_t id, std::shared_ptr<mux_stream_interface> stream) const
     {
