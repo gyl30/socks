@@ -109,7 +109,7 @@ class proxy_upstream : public upstream
         }
 
         const syn_payload syn{.socks_cmd = socks::CMD_CONNECT, .addr = host, .port = port};
-        auto ec = co_await tunnel_->get_connection()->send_async(stream_->id(), CMD_SYN, mux_codec::encode_syn(syn));
+        auto ec = co_await tunnel_->connection()->send_async(stream_->id(), CMD_SYN, mux_codec::encode_syn(syn));
         if (ec)
         {
             LOG_ERROR("proxy upstream send syn failed error {}", ec.message());
