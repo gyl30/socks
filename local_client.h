@@ -70,9 +70,9 @@ class local_client : public std::enable_shared_from_this<local_client>
         stop_channel_.cancel();
         remote_timer_.cancel();
 
-        if (tunnel_manager_ && tunnel_manager_->get_connection())
+        if (tunnel_manager_ && tunnel_manager_->connection())
         {
-            tunnel_manager_->get_connection()->stop();
+            tunnel_manager_->connection()->stop();
         }
     }
 
@@ -532,7 +532,7 @@ class local_client : public std::enable_shared_from_this<local_client>
                 LOG_WARN("failed to set no_delay on local socket {}", ec.message());
             }
 
-            if (tunnel_manager_ != nullptr && tunnel_manager_->get_connection()->is_open())
+            if (tunnel_manager_ != nullptr && tunnel_manager_->connection()->is_open())
             {
                 const uint32_t sid = next_session_id_++;
                 auto session = std::make_shared<socks_session>(std::move(s), tunnel_manager_, router_, sid);

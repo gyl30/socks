@@ -75,7 +75,7 @@ class udp_socks_session : public mux_stream_interface, public std::enable_shared
         }
 
         const syn_payload syn{.socks_cmd = socks::CMD_UDP_ASSOCIATE, .addr = "0.0.0.0", .port = 0};
-        ec = co_await tunnel_manager_->get_connection()->send_async(stream->id(), CMD_SYN, mux_codec::encode_syn(syn));
+        ec = co_await tunnel_manager_->connection()->send_async(stream->id(), CMD_SYN, mux_codec::encode_syn(syn));
         if (ec)
         {
             LOG_ERROR("{} syn failed {}", sid_, ec.message());

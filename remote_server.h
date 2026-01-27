@@ -39,18 +39,22 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     void stop()
     {
         LOG_INFO("remote server stopping");
-        std::error_code ignore;
-        ignore = acceptor_.close(ignore);
-        (void)ignore;
+        std::error_code ec;
+        ec = acceptor_.close(ec);
+        if (ec)
+        {
+            LOG_WARN("acceptor close failed {}", ec.message());
+        }
 
+        LOG_INFO("closing {} active tunnels", active_tunnels_.size());
         const std::scoped_lock lock(tunnels_mutex_);
         for (auto &weak_tunnel : active_tunnels_)
         {
             if (auto tunnel = weak_tunnel.lock())
             {
-                if (tunnel->get_connection())
+                if (tunnel->connection())
                 {
-                    tunnel->get_connection()->stop();
+                    tunnel->connection()->stop();
                 }
             }
         }
@@ -162,7 +166,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
             active_tunnels_.push_back(tunnel);
         }
 
-        tunnel->get_connection()->set_syn_callback(
+        tunnel->connection()->set_syn_callback(
             [this, tunnel, conn_id](uint32_t id, const std::vector<uint8_t> &p)
             {
                 asio::co_spawn(
@@ -188,7 +192,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         if (syn.socks_cmd == socks::CMD_CONNECT)
         {
             LOG_INFO("srv {} stream {} type TCP_CONNECT target {}:{}", conn_id, stream_id, syn.addr, syn.port);
-            auto sess = std::make_shared<remote_session>(tunnel->get_connection(), stream_id, pool_.get_io_context().get_executor());
+            auto sess = std::make_shared<remote_session>(tunnel->connection(), stream_id, pool_.get_io_context().get_executor());
             sess->set_manager(tunnel);
             tunnel->register_stream(stream_id, sess);
             co_await sess->start(payload);
@@ -196,7 +200,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         else if (syn.socks_cmd == socks::CMD_UDP_ASSOCIATE)
         {
             LOG_INFO("srv {} stream {} type UDP_ASSOCIATE associated via tcp", conn_id, stream_id);
-            auto sess = std::make_shared<remote_udp_session>(tunnel->get_connection(), stream_id, pool_.get_io_context().get_executor());
+            auto sess = std::make_shared<remote_udp_session>(tunnel->connection(), stream_id, pool_.get_io_context().get_executor());
             sess->set_manager(tunnel);
             tunnel->register_stream(stream_id, sess);
             co_await sess->start();
