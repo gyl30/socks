@@ -6,6 +6,7 @@
 #include <asio.hpp>
 
 #include "log.h"
+#include "router.h"
 #include "ip_matcher.h"
 #include "mux_tunnel.h"
 #include "transcript.h"
@@ -15,8 +16,8 @@
 #include "reality_engine.h"
 #include "domain_matcher.h"
 #include "reality_messages.h"
-#include "reality_fingerprint.h"
 #include "tls_key_schedule.h"
+#include "reality_fingerprint.h"
 
 namespace mux
 {
@@ -35,10 +36,13 @@ class local_client : public std::enable_shared_from_this<local_client>
           stop_channel_(remote_timer_.get_executor(), 1)
     {
         server_pub_key_ = reality::crypto_util::hex_to_bytes(key_hex);
-        ip_matcher_ = std::make_shared<mux::ip_matcher>();
-        ip_matcher_->load("direct.txt");
-        domain_matcher_ = std::make_shared<mux::domain_matcher>();
-        domain_matcher_->load("domain.txt");
+        auto ip_matcher = std::make_shared<mux::ip_matcher>();
+        ip_matcher->load("direct.txt");
+
+        auto domain_matcher = std::make_shared<mux::domain_matcher>();
+        domain_matcher->load("domain.txt");
+
+        router_ = std::make_shared<mux::router>(std::move(ip_matcher), std::move(domain_matcher));
     }
 
     void start()
@@ -57,9 +61,12 @@ class local_client : public std::enable_shared_from_this<local_client>
     void stop()
     {
         LOG_INFO("client stopping, closing resources");
-        std::error_code ignore;
-        ignore = acceptor_.close(ignore);
-        (void)ignore;
+        std::error_code ec;
+        ec = acceptor_.close(ec);
+        if (ec)
+        {
+            LOG_ERROR("acceptor close failed {}", ec.message());
+        }
         stop_channel_.cancel();
         remote_timer_.cancel();
 
@@ -95,20 +102,20 @@ class local_client : public std::enable_shared_from_this<local_client>
                 continue;
             }
 
-            auto [hs_ok, hs_res] = co_await perform_reality_handshake(*socket, ec);
-            if (!hs_ok)
+            auto [handshake_error, handshake_ret] = co_await perform_reality_handshake(*socket, ec);
+            if (!handshake_error)
             {
                 LOG_ERROR("handshake failed {} retry in 5s", ec.message());
                 co_await wait_remote_retry();
                 continue;
             }
 
-            size_t key_len = (hs_res.cipher_suite == 0x1302 || hs_res.cipher_suite == 0x1303) ? 32 : 16;
+            size_t key_len = (handshake_ret.cipher_suite == 0x1302 || handshake_ret.cipher_suite == 0x1303) ? 32 : 16;
 
-            auto c_app_keys = reality::tls_key_schedule::derive_traffic_keys(hs_res.c_app_secret, ec, key_len, 12, hs_res.md);
-            auto s_app_keys = reality::tls_key_schedule::derive_traffic_keys(hs_res.s_app_secret, ec, key_len, 12, hs_res.md);
+            auto c_app_keys = reality::tls_key_schedule::derive_traffic_keys(handshake_ret.c_app_secret, ec, key_len, 12, handshake_ret.md);
+            auto s_app_keys = reality::tls_key_schedule::derive_traffic_keys(handshake_ret.s_app_secret, ec, key_len, 12, handshake_ret.md);
 
-            LOG_INFO("reality handshake success tunnel active id {} cipher 0x{:04x}", cid, hs_res.cipher_suite);
+            LOG_INFO("reality handshake success tunnel active id {} cipher 0x{:04x}", cid, handshake_ret.cipher_suite);
             reality_engine re(s_app_keys.first, s_app_keys.second, c_app_keys.first, c_app_keys.second);
             tunnel_manager_ = std::make_shared<mux_tunnel_impl<asio::ip::tcp::socket>>(std::move(*socket), std::move(re), true, cid);
 
@@ -122,22 +129,24 @@ class local_client : public std::enable_shared_from_this<local_client>
     asio::awaitable<bool> tcp_connect(asio::ip::tcp::socket &socket, std::error_code &ec) const
     {
         asio::ip::tcp::resolver res(pool_.get_io_context());
-        auto [er, eps] = co_await res.async_resolve(remote_host_, remote_port_, asio::as_tuple(asio::use_awaitable));
-        if (er)
+        auto [resolve_error, resolve_endpoints] = co_await res.async_resolve(remote_host_, remote_port_, asio::as_tuple(asio::use_awaitable));
+        if (resolve_error)
         {
-            ec = er;
+            ec = resolve_error;
+            LOG_ERROR("resolve {} failed {}", remote_host_, resolve_error.message());
             co_return false;
         }
 
-        auto [ec_conn, ep] = co_await asio::async_connect(socket, eps, asio::as_tuple(asio::use_awaitable));
-        if (ec_conn)
+        auto [conn_error, endpoint] = co_await asio::async_connect(socket, resolve_endpoints, asio::as_tuple(asio::use_awaitable));
+        if (conn_error)
         {
-            ec = ec_conn;
+            ec = conn_error;
+            LOG_ERROR("connect {} failed {}", endpoint.address().to_string(), conn_error.message());
             co_return false;
         }
 
         ec = socket.set_option(asio::ip::tcp::no_delay(true), ec);
-        LOG_DEBUG("tcp connected {} <-> {}", socket.local_endpoint().address().to_string(), ep.address().to_string());
+        LOG_DEBUG("tcp connected {} <-> {}", socket.local_endpoint().address().to_string(), endpoint.address().to_string());
         co_return true;
     }
 
@@ -236,14 +245,14 @@ class local_client : public std::enable_shared_from_this<local_client>
         auto ch_rec = reality::write_record_header(reality::CONTENT_TYPE_HANDSHAKE, static_cast<uint16_t>(ch.size()));
         ch_rec.insert(ch_rec.end(), ch.begin(), ch.end());
 
-        LOG_DEBUG("sending client hello record size {}", ch_rec.size());
         auto [we, wn] = co_await asio::async_write(socket, asio::buffer(ch_rec), asio::as_tuple(asio::use_awaitable));
         if (we)
         {
             ec = we;
+            LOG_ERROR("error sending client hello {}", ec.message());
             co_return false;
         }
-
+        LOG_DEBUG("sending client hello record size {}", ch_rec.size());
         trans.update(ch);
         co_return true;
     }
@@ -267,6 +276,7 @@ class local_client : public std::enable_shared_from_this<local_client>
         if (re1)
         {
             ec = re1;
+            LOG_ERROR("error reading server hello {}", ec.message());
             co_return server_hello_res{.ok = false};
         }
 
@@ -276,6 +286,7 @@ class local_client : public std::enable_shared_from_this<local_client>
         if (re2)
         {
             ec = re2;
+            LOG_ERROR("error reading server hello {}", ec.message());
             co_return server_hello_res{.ok = false};
         }
         LOG_DEBUG("server hello received size {}", sh_len);
@@ -286,6 +297,7 @@ class local_client : public std::enable_shared_from_this<local_client>
         if (pos >= sh_data.size())
         {
             ec = asio::error::fault;
+            LOG_ERROR("bad server hello {}", ec.message());
             co_return server_hello_res{.ok = false};
         }
 
@@ -295,23 +307,31 @@ class local_client : public std::enable_shared_from_this<local_client>
         if (pos + 2 > sh_data.size())
         {
             ec = asio::error::fault;
+            LOG_ERROR("bad server hello {}", ec.message());
             co_return server_hello_res{.ok = false};
         }
 
         uint16_t cipher_suite = (sh_data[pos] << 8) | sh_data[pos + 1];
 
-        const EVP_MD *md = EVP_sha256();
-        const EVP_CIPHER *cipher = EVP_aes_128_gcm();
-
+        const EVP_MD *md = nullptr;
+        const EVP_CIPHER *cipher = nullptr;
         if (cipher_suite == 0x1302)
         {
             md = EVP_sha384();
             cipher = EVP_aes_256_gcm();
+            LOG_DEBUG("cipher suite 0x{:04x} used sha384 cipher aes-256-gcm", cipher_suite);
         }
         else if (cipher_suite == 0x1303)
         {
             md = EVP_sha256();
             cipher = EVP_chacha20_poly1305();
+            LOG_DEBUG("cipher suite 0x{:04x} used sha256 cipher chacha20-poly1305", cipher_suite);
+        }
+        else
+        {
+            md = EVP_sha256();
+            cipher = EVP_aes_128_gcm();
+            LOG_DEBUG("cipher suite 0x{:04x} not found used sha256 cipher aes-128-gcm", cipher_suite);
         }
 
         trans.set_protocol_hash(md);
@@ -320,6 +340,7 @@ class local_client : public std::enable_shared_from_this<local_client>
         if (public_key.empty())
         {
             ec = asio::error::invalid_argument;
+            LOG_ERROR("bad server hello {}", ec.message());
             co_return server_hello_res{.ok = false};
         }
 
@@ -350,6 +371,7 @@ class local_client : public std::enable_shared_from_this<local_client>
             if (re3)
             {
                 ec = re3;
+                LOG_ERROR("error reading record {}", ec.message());
                 co_return std::make_pair(false, std::pair<std::vector<uint8_t>, std::vector<uint8_t>>{});
             }
             const auto n = static_cast<uint16_t>((rh[3] << 8) | rh[4]);
@@ -358,6 +380,7 @@ class local_client : public std::enable_shared_from_this<local_client>
 
             if (rh[0] == reality::CONTENT_TYPE_CHANGE_CIPHER_SPEC)
             {
+                LOG_DEBUG("received change cipher spec skip");
                 continue;
             }
 
@@ -368,6 +391,7 @@ class local_client : public std::enable_shared_from_this<local_client>
             auto pt = reality::tls_record_layer::decrypt_record(cipher, s_hs_keys.first, s_hs_keys.second, seq++, cth, type, ec);
             if (ec)
             {
+                LOG_ERROR("error decrypting record {}", ec.message());
                 co_return std::make_pair(false, std::pair<std::vector<uint8_t>, std::vector<uint8_t>>{});
             }
 
@@ -418,21 +442,22 @@ class local_client : public std::enable_shared_from_this<local_client>
                                                       const EVP_MD *md,
                                                       std::error_code &ec)
     {
-        auto c_fin_verify = reality::tls_key_schedule::compute_finished_verify_data(c_hs_secret, trans.finish(), md, ec);
-        auto c_fin_msg = reality::construct_finished(c_fin_verify);
-        auto c_fin_rec =
-            reality::tls_record_layer::encrypt_record(cipher, c_hs_keys.first, c_hs_keys.second, 0, c_fin_msg, reality::CONTENT_TYPE_HANDSHAKE, ec);
+        auto fin_verify = reality::tls_key_schedule::compute_finished_verify_data(c_hs_secret, trans.finish(), md, ec);
+        auto fin_msg = reality::construct_finished(fin_verify);
+        auto fin_rec =
+            reality::tls_record_layer::encrypt_record(cipher, c_hs_keys.first, c_hs_keys.second, 0, fin_msg, reality::CONTENT_TYPE_HANDSHAKE, ec);
 
         std::vector<uint8_t> out_flight = {0x14, 0x03, 0x03, 0x00, 0x01, 0x01};
-        out_flight.insert(out_flight.end(), c_fin_rec.begin(), c_fin_rec.end());
+        out_flight.insert(out_flight.end(), fin_rec.begin(), fin_rec.end());
 
-        LOG_DEBUG("sending client finished flight size {}", out_flight.size());
-        auto [we, wn] = co_await asio::async_write(socket, asio::buffer(out_flight), asio::as_tuple(asio::use_awaitable));
-        if (we)
+        auto [write_error, write_len] = co_await asio::async_write(socket, asio::buffer(out_flight), asio::as_tuple(asio::use_awaitable));
+        if (write_error)
         {
-            ec = we;
+            ec = write_error;
+            LOG_ERROR("send client finished flight error {}", ec.message());
             co_return false;
         }
+        LOG_DEBUG("sending client finished flight size {}", out_flight.size());
         co_return true;
     }
 
@@ -510,17 +535,15 @@ class local_client : public std::enable_shared_from_this<local_client>
             if (tunnel_manager_ != nullptr && tunnel_manager_->get_connection()->is_open())
             {
                 const uint32_t sid = next_session_id_++;
-                auto session = std::make_shared<socks_session>(std::move(s), tunnel_manager_, sid);
-                session->set_matchers(ip_matcher_, domain_matcher_);
-
+                auto session = std::make_shared<socks_session>(std::move(s), tunnel_manager_, router_, sid);
                 session->start();
             }
             else
             {
                 LOG_WARN("rejecting local connection tunnel not ready");
-                std::error_code ignore_ec;
-                ignore_ec = s.close(ignore_ec);
-                (void)ignore_ec;
+                std::error_code ec;
+                ec = s.close(ec);
+                LOG_WARN("local connection closed {}", ec.message());
             }
         }
         LOG_INFO("accept_local_loop exited");
@@ -539,8 +562,9 @@ class local_client : public std::enable_shared_from_this<local_client>
     uint32_t next_session_id_{1};
     asio::steady_timer remote_timer_;
     asio::ip::tcp::acceptor acceptor_;
-    std::shared_ptr<mux::ip_matcher> ip_matcher_;
-    std::shared_ptr<domain_matcher> domain_matcher_;
+
+    std::shared_ptr<mux::router> router_;
+
     asio::experimental::concurrent_channel<void(std::error_code, int)> stop_channel_;
 };
 
