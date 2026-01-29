@@ -36,17 +36,16 @@ class local_client : public std::enable_shared_from_this<local_client>
           stop_channel_(remote_timer_.get_executor(), 1)
     {
         server_pub_key_ = reality::crypto_util::hex_to_bytes(key_hex);
-        auto ip_matcher = std::make_shared<mux::ip_matcher>();
-        ip_matcher->load("direct.txt");
-
-        auto domain_matcher = std::make_shared<mux::domain_matcher>();
-        domain_matcher->load("domain.txt");
-
-        router_ = std::make_shared<mux::router>(std::move(ip_matcher), std::move(domain_matcher));
+        router_ = std::make_shared<mux::router>();
     }
 
     void start()
     {
+        if (!router_->load())
+        {
+            LOG_ERROR("failed to load router data");
+            abort();
+        }
         LOG_INFO("client starting target {} port {} listening {}", remote_host_, remote_port_, listen_port_);
         asio::co_spawn(
             remote_timer_.get_executor(),
@@ -522,8 +521,14 @@ class local_client : public std::enable_shared_from_this<local_client>
             auto [e] = co_await acceptor_.async_accept(s, asio::as_tuple(asio::use_awaitable));
             if (e)
             {
+                if (e == asio::error::operation_aborted)
+                {
+                    break;
+                }
                 LOG_ERROR("local accept failed {}", e.message());
-                break;
+                remote_timer_.expires_after(std::chrono::seconds(1));
+                co_await remote_timer_.async_wait(asio::as_tuple(asio::use_awaitable));
+                continue;
             }
 
             ec = s.set_option(asio::ip::tcp::no_delay(true), ec);

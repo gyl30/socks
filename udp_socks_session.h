@@ -166,6 +166,12 @@ class udp_socks_session : public mux_stream_interface, public std::enable_shared
             *client_ep = sender;
 
             socks_udp_header h;
+            if (!socks_codec::decode_udp_header(buf.data(), n, h))
+            {
+                LOG_WARN("{} received invalid udp packet from {}", sid_, sender.address().to_string());
+                continue;
+            }
+
             if (h.frag != 0x00)
             {
                 LOG_WARN("{} received a fragmented packet, ignore it", sid_);

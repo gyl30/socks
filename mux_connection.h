@@ -124,6 +124,14 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
             streams_to_clear = std::move(streams_);
         }
 
+        for (auto& [id, stream] : streams_to_clear)
+        {
+            if (stream)
+            {
+                stream->on_close();
+            }
+        }
+
         streams_to_clear.clear();
 
         if (socket_.is_open())
@@ -304,11 +312,9 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     }
 
    private:
+    uint32_t cid_;
     uint64_t read_bytes = 0;
     uint64_t write_bytes = 0;
-    std::chrono::steady_clock::time_point last_read_time;
-    std::chrono::steady_clock::time_point last_write_time;
-    uint32_t cid_;
     stream_map_t streams_;
     asio::steady_timer timer_;
     std::mutex streams_mutex_;
@@ -318,6 +324,8 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     mux_dispatcher mux_dispatcher_;
     std::atomic<uint32_t> next_stream_id_;
     std::atomic<mux_connection_state> connection_state_;
+    std::chrono::steady_clock::time_point last_read_time;
+    std::chrono::steady_clock::time_point last_write_time;
     asio::experimental::concurrent_channel<void(std::error_code, mux_write_msg)> write_channel_;
 };
 
