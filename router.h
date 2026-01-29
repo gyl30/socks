@@ -21,69 +21,97 @@ enum class route_type : uint8_t
 class router
 {
    public:
-    router(std::shared_ptr<ip_matcher> ip_m, std::shared_ptr<domain_matcher> domain_m)
-        : ip_matcher_(std::move(ip_m)), domain_matcher_(std::move(domain_m))
-    {
-    }
+    router() = default;
 
+   public:
+    bool load()
+    {
+        block_ip_matcher_ = std::make_shared<ip_matcher>();
+        if (!block_ip_matcher_->load("block_ip.txt"))
+        {
+            LOG_WARN("load block ip rule failed");
+        }
+        direct_ip_matcher_ = std::make_shared<ip_matcher>();
+        if (!direct_ip_matcher_->load("direct_ip.txt"))
+        {
+            LOG_WARN("load direct ip rule failed");
+        }
+        proxy_domain_matcher_ = std::make_shared<domain_matcher>();
+        if (!proxy_domain_matcher_->load("proxy_domain.txt"))
+        {
+            LOG_WARN("load proxy domain rule failed");
+        }
+        block_domain_matcher_ = std::make_shared<domain_matcher>();
+        if (!block_domain_matcher_->load("block_domain.txt"))
+        {
+            LOG_WARN("load block domain rule failed");
+        }
+
+        direct_domain_matcher_ = std::make_shared<domain_matcher>();
+        if (!direct_domain_matcher_->load("direct_domain.txt"))
+        {
+            LOG_WARN("load direct domain rule failed");
+        }
+        return true;
+    }
     [[nodiscard]] asio::awaitable<route_type> decide(const std::string& host, const asio::any_io_executor& ex) const
     {
-        bool force_proxy = false;
         std::error_code ec;
         auto addr = asio::ip::make_address(host, ec);
-        bool is_domain = false;
         if (ec)
         {
             LOG_WARN("parse {} to host failed {}", host, ec.message());
-            is_domain = true;
+            co_return co_await decide_domain(host, ex);
         }
+        co_return co_await decide_ip(host, addr, ex);
+    }
 
-        if (is_domain && domain_matcher_)
+    [[nodiscard]] asio::awaitable<route_type> decide_ip(const std::string& host, asio::ip::address& addr, const asio::any_io_executor& ex) const
+    {
+        // step 1 检查是否是 block
+        // step 2 检查是否是 direct
+        // step 3 检查是否是 proxy (未实现)
+        // step 4 全部是不是返回 block
+        if (block_ip_matcher_->match(addr))
         {
-            if (domain_matcher_->match(host))
-            {
-                LOG_INFO("matched domain rule force proxy host {}", host);
-                force_proxy = true;
-            }
+            LOG_DEBUG("matched ip rule block host {}", host);
+            co_return route_type::block;
         }
-
-        if (!force_proxy && ip_matcher_)
+        if (direct_ip_matcher_->match(addr))
         {
-            if (!is_domain)
-            {
-                if (ip_matcher_->match(addr))
-                {
-                    LOG_INFO("matched ip rule direct host {}", host);
-                    co_return route_type::direct;
-                }
-            }
-            else
-            {
-                asio::ip::tcp::resolver resolver(ex);
-                auto [res_ec, eps] = co_await resolver.async_resolve(host, "", asio::as_tuple(asio::use_awaitable));
-                if (res_ec)
-                {
-                    LOG_ERROR("resolve domain {} error {}", host, res_ec.message());
-                    co_return route_type::proxy;
-                }
-
-                for (const auto& ep : eps)
-                {
-                    if (ip_matcher_->match(ep.endpoint().address()))
-                    {
-                        LOG_INFO("matched resolve ip rule direct host {} ip {}", host, ep.endpoint().address().to_string());
-                        co_return route_type::direct;
-                    }
-                }
-            }
+            LOG_DEBUG("matched ip rule direct host {}", host);
+            co_return route_type::direct;
         }
-
+        LOG_DEBUG("not found ip rule block host {}", host);
         co_return route_type::proxy;
+    }
+    [[nodiscard]] asio::awaitable<route_type> decide_domain(const std::string& host, const asio::any_io_executor& ex) const
+    {
+        if (block_domain_matcher_->match(host))
+        {
+            LOG_DEBUG("matched domain rule block host {}", host);
+            co_return route_type::block;
+        }
+        if (direct_domain_matcher_->match(host))
+        {
+            LOG_DEBUG("matched domain rule direct host {}", host);
+            co_return route_type::direct;
+        }
+        if (proxy_domain_matcher_->match(host))
+        {
+            LOG_DEBUG("matched domain rule proxy host {}", host);
+            co_return route_type::proxy;
+        }
+        LOG_DEBUG("not found domain rule direct host {}", host);
+        co_return route_type::direct;
     }
 
    private:
-    std::shared_ptr<ip_matcher> ip_matcher_;
-    std::shared_ptr<domain_matcher> domain_matcher_;
+    std::shared_ptr<ip_matcher> block_ip_matcher_;
+    std::shared_ptr<ip_matcher> direct_ip_matcher_;
+    std::shared_ptr<domain_matcher> proxy_domain_matcher_;
+    std::shared_ptr<domain_matcher> block_domain_matcher_;
+    std::shared_ptr<domain_matcher> direct_domain_matcher_;
 };
 
 }    // namespace mux
