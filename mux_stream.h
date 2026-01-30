@@ -16,8 +16,12 @@ namespace mux
 class mux_stream : public mux_stream_interface, public std::enable_shared_from_this<mux_stream>
 {
    public:
-    mux_stream(std::uint32_t id, std::uint32_t cid, const std::string& trace_id, const std::shared_ptr<mux_connection> &connection, const asio::any_io_executor &ex)
-        : id_(id), cid_(cid), connection_(connection), recv_channel_(ex, 128)
+    mux_stream(std::uint32_t id,
+               std::uint32_t cid,
+               const std::string &trace_id,
+               const std::shared_ptr<mux_connection> &connection,
+               const asio::any_io_executor &ex)
+        : id_(id), connection_(connection), recv_channel_(ex, 128)
     {
         ctx_.trace_id = trace_id;
         ctx_.conn_id = cid;
@@ -35,7 +39,7 @@ class mux_stream : public mux_stream_interface, public std::enable_shared_from_t
 
     [[nodiscard]] asio::awaitable<std::error_code> async_write_some(const void *data, std::size_t len)
     {
-        if (is_closed_)
+        if (fin_sent_)
         {
             co_return asio::error::broken_pipe;
         }
@@ -52,28 +56,49 @@ class mux_stream : public mux_stream_interface, public std::enable_shared_from_t
 
     asio::awaitable<void> close()
     {
-        if (is_closed_)
+        bool expected = false;
+        if (!fin_sent_.compare_exchange_strong(expected, true))
         {
             co_return;
         }
 
-        close_internal();
+        LOG_CTX_DEBUG(ctx_, "{} sending FIN", log_event::MUX);
         if (auto conn = connection_.lock())
         {
             co_await conn->send_async(id_, CMD_FIN, {});
+        }
+
+        if (fin_received_)
+        {
+            close_internal();
         }
     }
 
     void on_data(std::vector<uint8_t> data) override
     {
-        if (!is_closed_)
+        if (!fin_received_)
         {
             rx_bytes_.fetch_add(data.size(), std::memory_order_relaxed);
             recv_channel_.try_send(std::error_code(), std::move(data));
         }
     }
 
-    void on_close() override { close_internal(); }
+    void on_close() override
+    {
+        bool expected = false;
+        if (!fin_received_.compare_exchange_strong(expected, true))
+        {
+            return;
+        }
+
+        LOG_CTX_DEBUG(ctx_, "{} received FIN", log_event::MUX);
+        recv_channel_.close();
+
+        if (fin_sent_)
+        {
+            close_internal();
+        }
+    }
 
     void on_reset() override { close_internal(); }
 
@@ -92,12 +117,14 @@ class mux_stream : public mux_stream_interface, public std::enable_shared_from_t
         }
     }
 
+   private:
     std::uint32_t id_ = 0;
-    std::uint32_t cid_ = 0;
     connection_context ctx_;
     std::weak_ptr<mux_connection> connection_;
     asio::experimental::concurrent_channel<void(std::error_code, std::vector<std::uint8_t>)> recv_channel_;
     std::atomic<bool> is_closed_{false};
+    std::atomic<bool> fin_sent_{false};
+    std::atomic<bool> fin_received_{false};
     std::atomic<uint64_t> tx_bytes_{0};
     std::atomic<uint64_t> rx_bytes_{0};
 };

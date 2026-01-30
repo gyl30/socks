@@ -6,7 +6,7 @@
 #include <cstring>
 
 #include <openssl/x509.h>
-
+#include "log.h"
 #include "mux_protocol.h"
 
 namespace mux
@@ -49,6 +49,14 @@ class mux_codec
 
         buf.push_back(static_cast<std::uint8_t>((p.port >> 8) & 0xFF));
         buf.push_back(static_cast<std::uint8_t>(p.port & 0xFF));
+
+        const std::uint8_t trace_id_len = static_cast<std::uint8_t>(std::min(p.trace_id.size(), static_cast<std::size_t>(255)));
+        buf.push_back(trace_id_len);
+        if (trace_id_len > 0)
+        {
+            buf.insert(buf.end(), p.trace_id.begin(), p.trace_id.begin() + trace_id_len);
+        }
+
         return buf;
     }
 
@@ -69,6 +77,17 @@ class mux_codec
         out.addr = std::string(reinterpret_cast<const char *>(&data[2]), addr_len);
         const std::uint8_t *port_ptr = &data[2 + addr_len];
         out.port = static_cast<uint16_t>((static_cast<std::uint16_t>(port_ptr[0]) << 8) | static_cast<std::uint16_t>(port_ptr[1]));
+
+        std::size_t current_pos = 2 + addr_len + 2;
+        if (len > current_pos)
+        {
+            const std::uint8_t trace_id_len = data[current_pos];
+            current_pos++;
+            if (len >= current_pos + trace_id_len)
+            {
+                out.trace_id = std::string(reinterpret_cast<const char *>(&data[current_pos]), trace_id_len);
+            }
+        }
         return true;
     }
 

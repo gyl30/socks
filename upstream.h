@@ -1,6 +1,7 @@
 #ifndef UPSTREAM_H
 #define UPSTREAM_H
 
+#include <utility>
 #include <vector>
 #include <memory>
 #include <asio.hpp>
@@ -30,7 +31,7 @@ class upstream
 class direct_upstream : public upstream
 {
    public:
-    explicit direct_upstream(const asio::any_io_executor& ex, const connection_context &ctx) : socket_(ex), resolver_(ex), ctx_(ctx) {}
+    explicit direct_upstream(const asio::any_io_executor& ex, connection_context ctx) : socket_(ex), resolver_(ex), ctx_(std::move(ctx)) {}
 
     asio::awaitable<bool> connect(const std::string& host, uint16_t port) override
     {
@@ -99,18 +100,21 @@ class direct_upstream : public upstream
 class proxy_upstream : public upstream
 {
    public:
-    explicit proxy_upstream(std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel, const connection_context &ctx) : tunnel_(std::move(tunnel)), ctx_(ctx) {}
+    explicit proxy_upstream(std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel, connection_context ctx)
+        : ctx_(std::move(ctx)), tunnel_(std::move(tunnel))
+    {
+    }
 
     asio::awaitable<bool> connect(const std::string& host, uint16_t port) override
     {
-        stream_ = tunnel_->create_stream();
+        stream_ = tunnel_->create_stream(ctx_.trace_id);
         if (!stream_)
         {
             LOG_CTX_ERROR(ctx_, "{} create stream failed", log_event::ROUTE);
             co_return false;
         }
 
-        const syn_payload syn{.socks_cmd = socks::CMD_CONNECT, .addr = host, .port = port};
+        const syn_payload syn{.socks_cmd = socks::CMD_CONNECT, .addr = host, .port = port, .trace_id = ctx_.trace_id};
         auto ec = co_await tunnel_->connection()->send_async(stream_->id(), CMD_SYN, mux_codec::encode_syn(syn));
         if (ec)
         {
@@ -170,9 +174,9 @@ class proxy_upstream : public upstream
     }
 
    private:
+    connection_context ctx_;
     std::shared_ptr<mux_stream> stream_;
     std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_;
-    connection_context ctx_;
 };
 
 }    // namespace mux

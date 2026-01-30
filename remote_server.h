@@ -176,9 +176,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
             [this, tunnel, ctx](uint32_t id, const std::vector<uint8_t> &p)
             {
                 asio::co_spawn(
-                    pool_.get_io_context(),
-                    [this, tunnel, ctx, id, p = p]() { return process_stream_request(tunnel, ctx, id, p); },
-                    asio::detached);
+                    pool_.get_io_context(), [this, tunnel, ctx, id, p = p]() { return process_stream_request(tunnel, ctx, id, p); }, asio::detached);
             });
 
         co_await tunnel->run();
@@ -195,25 +193,32 @@ class remote_server : public std::enable_shared_from_this<remote_server>
             LOG_CTX_WARN(ctx, "{} stream {} invalid syn", log_event::MUX, stream_id);
             co_return;
         }
+        connection_context stream_ctx = ctx;
+        if (!syn.trace_id.empty())
+        {
+            stream_ctx.trace_id = syn.trace_id;
+            LOG_CTX_DEBUG(stream_ctx, "{} linked client trace_id {}", log_event::MUX, syn.trace_id);
+        }
+
         if (syn.socks_cmd == socks::CMD_CONNECT)
         {
-            LOG_CTX_INFO(ctx, "{} stream {} type TCP_CONNECT target {} {}", log_event::MUX, stream_id, syn.addr, syn.port);
-            auto sess = std::make_shared<remote_session>(tunnel->connection(), stream_id, pool_.get_io_context().get_executor(), ctx);
+            LOG_CTX_INFO(stream_ctx, "{} stream {} type TCP_CONNECT target {} {}", log_event::MUX, stream_id, syn.addr, syn.port);
+            auto sess = std::make_shared<remote_session>(tunnel->connection(), stream_id, pool_.get_io_context().get_executor(), stream_ctx);
             sess->set_manager(tunnel);
             tunnel->register_stream(stream_id, sess);
-            co_await sess->start(payload);
+            co_await sess->start(syn);
         }
         else if (syn.socks_cmd == socks::CMD_UDP_ASSOCIATE)
         {
-            LOG_CTX_INFO(ctx, "{} stream {} type UDP_ASSOCIATE associated via tcp", log_event::MUX, stream_id);
-            auto sess = std::make_shared<remote_udp_session>(tunnel->connection(), stream_id, pool_.get_io_context().get_executor(), ctx);
+            LOG_CTX_INFO(stream_ctx, "{} stream {} type UDP_ASSOCIATE associated via tcp", log_event::MUX, stream_id);
+            auto sess = std::make_shared<remote_udp_session>(tunnel->connection(), stream_id, pool_.get_io_context().get_executor(), stream_ctx);
             sess->set_manager(tunnel);
             tunnel->register_stream(stream_id, sess);
             co_await sess->start();
         }
         else
         {
-            LOG_CTX_WARN(ctx, "{} stream {} unknown cmd {}", log_event::MUX, stream_id, syn.socks_cmd);
+            LOG_CTX_WARN(stream_ctx, "{} stream {} unknown cmd {}", log_event::MUX, stream_id, syn.socks_cmd);
         }
     }
 
@@ -248,7 +253,9 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         co_return std::make_pair(true, buf);
     }
 
-    std::pair<bool, std::vector<uint8_t>> authenticate_client(const client_hello_info_t &info, const std::vector<uint8_t> &buf, const connection_context &ctx)
+    std::pair<bool, std::vector<uint8_t>> authenticate_client(const client_hello_info_t &info,
+                                                              const std::vector<uint8_t> &buf,
+                                                              const connection_context &ctx)
     {
         if (!info.is_tls13 || info.session_id.size() != 32)
         {
@@ -327,8 +334,10 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         std::vector<uint8_t> srand(32);
         RAND_bytes(srand.data(), 32);
 
-        LOG_CTX_TRACE(
-            ctx, "{} generated ephemeral key {}", log_event::HANDSHAKE, reality::crypto_util::bytes_to_hex(std::vector<uint8_t>(public_key, public_key + 32)));
+        LOG_CTX_TRACE(ctx,
+                      "{} generated ephemeral key {}",
+                      log_event::HANDSHAKE,
+                      reality::crypto_util::bytes_to_hex(std::vector<uint8_t>(public_key, public_key + 32)));
 
         auto sh_shared = reality::crypto_util::x25519_derive(std::vector<uint8_t>(private_key, private_key + 32), info.x25519_pub, ec);
         if (ec)
@@ -634,7 +643,6 @@ class remote_server : public std::enable_shared_from_this<remote_server>
    private:
     io_context_pool &pool_;
     asio::ip::tcp::acceptor acceptor_;
-
     std::vector<uint8_t> private_key_;
     reality::cert_manager cert_manager_;
     std::atomic<uint32_t> next_conn_id_{1};
