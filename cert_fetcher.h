@@ -68,7 +68,8 @@ class cert_fetcher
     static std::string hex(const std::vector<uint8_t>& data) { return crypto_util::bytes_to_hex(data); }
     static std::string hex(const uint8_t* data, size_t len) { return crypto_util::bytes_to_hex(std::vector<uint8_t>(data, data + len)); }
 
-    static asio::awaitable<std::optional<fetch_result>> fetch(asio::any_io_executor ex, std::string host, uint16_t port, std::string sni, const std::string& trace_id = "")
+    static asio::awaitable<std::optional<fetch_result>> fetch(
+        asio::any_io_executor ex, std::string host, uint16_t port, std::string sni, const std::string& trace_id = "")
     {
         fetch_session session(ex, std::move(host), port, std::move(sni), trace_id);
         co_return co_await session.run();
@@ -132,11 +133,20 @@ class cert_fetcher
 
         asio::awaitable<std::error_code> perform_handshake_start()
         {
-            crypto_util::generate_x25519_keypair(client_pub_, client_priv_);
+            if (!crypto_util::generate_x25519_keypair(client_pub_, client_priv_))
+            {
+                co_return asio::error::operation_aborted;
+            }
             std::vector<uint8_t> client_random(32);
-            RAND_bytes(client_random.data(), 32);
+            if (RAND_bytes(client_random.data(), 32) != 1)
+            {
+                co_return asio::error::operation_aborted;
+            }
             std::vector<uint8_t> session_id(32);
-            RAND_bytes(session_id.data(), 32);
+            if (RAND_bytes(session_id.data(), 32) != 1)
+            {
+                co_return asio::error::operation_aborted;
+            }
 
             auto spec = FingerprintFactory::Get(FingerprintType::Chrome_120);
             auto ch = ClientHelloBuilder::build(spec, session_id, client_random, std::vector<uint8_t>(client_pub_, client_pub_ + 32), sni_);
