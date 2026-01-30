@@ -17,7 +17,9 @@
 #include "reality_engine.h"
 #include "reality_messages.h"
 #include "tls_key_schedule.h"
+#include "tls_key_schedule.h"
 #include "reality_fingerprint.h"
+#include "constants.h"
 
 namespace mux
 {
@@ -108,7 +110,7 @@ class local_client : public std::enable_shared_from_this<local_client>
 
             if (!co_await tcp_connect(*socket, ec))
             {
-                LOG_ERROR("connect failed {} retry in 5s", ec.message());
+                LOG_ERROR("connect failed {} retry in {}s", ec.message(), constants::net::RETRY_INTERVAL_SEC);
                 co_await wait_remote_retry();
                 continue;
             }
@@ -116,15 +118,15 @@ class local_client : public std::enable_shared_from_this<local_client>
             auto [handshake_error, handshake_ret] = co_await perform_reality_handshake(*socket, ec);
             if (!handshake_error)
             {
-                LOG_ERROR("handshake failed {} retry in 5s", ec.message());
+                LOG_ERROR("handshake failed {} retry in {}s", ec.message(), constants::net::RETRY_INTERVAL_SEC);
                 co_await wait_remote_retry();
                 continue;
             }
 
-            size_t key_len = (handshake_ret.cipher_suite == 0x1302 || handshake_ret.cipher_suite == 0x1303) ? 32 : 16;
+            size_t key_len = (handshake_ret.cipher_suite == 0x1302 || handshake_ret.cipher_suite == 0x1303) ? constants::crypto::KEY_LEN_256 : constants::crypto::KEY_LEN_128;
 
-            auto c_app_keys = reality::tls_key_schedule::derive_traffic_keys(handshake_ret.c_app_secret, ec, key_len, 12, handshake_ret.md);
-            auto s_app_keys = reality::tls_key_schedule::derive_traffic_keys(handshake_ret.s_app_secret, ec, key_len, 12, handshake_ret.md);
+            auto c_app_keys = reality::tls_key_schedule::derive_traffic_keys(handshake_ret.c_app_secret, ec, key_len, constants::crypto::IV_LEN, handshake_ret.md);
+            auto s_app_keys = reality::tls_key_schedule::derive_traffic_keys(handshake_ret.s_app_secret, ec, key_len, constants::crypto::IV_LEN, handshake_ret.md);
 
             LOG_CTX_INFO(ctx, "{} handshake success cipher 0x{:04x}", log_event::HANDSHAKE, handshake_ret.cipher_suite);
             reality_engine re(s_app_keys.first, s_app_keys.second, c_app_keys.first, c_app_keys.second);
@@ -187,8 +189,8 @@ class local_client : public std::enable_shared_from_this<local_client>
             co_return std::make_pair(false, handshake_result{});
         }
 
-        size_t key_len = (sh_res.cipher_suite == 0x1302 || sh_res.cipher_suite == 0x1303) ? 32 : 16;
-        size_t iv_len = 12;
+        size_t key_len = (sh_res.cipher_suite == 0x1302 || sh_res.cipher_suite == 0x1303) ? constants::crypto::KEY_LEN_256 : constants::crypto::KEY_LEN_128;
+        size_t iv_len = constants::crypto::IV_LEN;
 
         auto c_hs_keys =
             reality::tls_key_schedule::derive_traffic_keys(sh_res.hs_keys.client_handshake_traffic_secret, ec, key_len, iv_len, sh_res.negotiated_md);
@@ -229,7 +231,7 @@ class local_client : public std::enable_shared_from_this<local_client>
             ec = std::make_error_code(std::errc::operation_canceled);
             co_return false;
         }
-        const std::vector<uint8_t> salt(client_random.begin(), client_random.begin() + 20);
+        const std::vector<uint8_t> salt(client_random.begin(), client_random.begin() + constants::auth::SALT_LEN);
         auto r_info = reality::crypto_util::hex_to_bytes("5245414c495459");
         auto prk = reality::crypto_util::hkdf_extract(salt, shared, EVP_sha256(), ec);
         auto auth_key = reality::crypto_util::hkdf_expand(prk, r_info, 32, EVP_sha256(), ec);
@@ -256,7 +258,7 @@ class local_client : public std::enable_shared_from_this<local_client>
         auto hello_aad = reality::ClientHelloBuilder::build(spec, session_id, client_random, std::vector<uint8_t>(public_key, public_key + 32), sni_);
 
         auto sid = reality::crypto_util::aead_encrypt(
-            EVP_aes_128_gcm(), auth_key, std::vector<uint8_t>(client_random.begin() + 20, client_random.end()), payload, hello_aad, ec);
+            EVP_aes_128_gcm(), auth_key, std::vector<uint8_t>(client_random.begin() + constants::auth::SALT_LEN, client_random.end()), payload, hello_aad, ec);
 
         if (hello_aad.size() > 39 + 32)
         {
@@ -494,7 +496,7 @@ class local_client : public std::enable_shared_from_this<local_client>
         {
             co_return;
         }
-        remote_timer_.expires_after(std::chrono::seconds(5));
+        remote_timer_.expires_after(std::chrono::seconds(constants::net::RETRY_INTERVAL_SEC));
         auto [ec] = co_await remote_timer_.async_wait(asio::as_tuple(asio::use_awaitable));
         if (ec)
         {
