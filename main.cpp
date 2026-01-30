@@ -97,13 +97,13 @@ int main(int argc, char** argv)
 
     if (cfg.mode == "server")
     {
-        server = std::make_shared<mux::remote_server>(pool, cfg.inbound.port, cfg.fallbacks, cfg.reality.private_key);
+        server = std::make_shared<mux::remote_server>(pool, cfg.inbound.port, cfg.fallbacks, cfg.reality.private_key, cfg.timeout);
         server->start();
     }
     else if (cfg.mode == "client")
     {
         client = std::make_shared<mux::local_client>(
-            pool, cfg.outbound.host, std::to_string(cfg.outbound.port), cfg.socks.port, cfg.reality.public_key, cfg.reality.sni);
+            pool, cfg.outbound.host, std::to_string(cfg.outbound.port), cfg.socks.port, cfg.reality.public_key, cfg.reality.sni, cfg.timeout);
         client->start();
     }
 
