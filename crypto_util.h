@@ -46,15 +46,18 @@ class crypto_util
 
     [[nodiscard]] static uint16_t get_random_grease()
     {
-        uint8_t idx;
-        RAND_bytes(&idx, 1);
+        uint8_t idx = 0;
+        if (RAND_bytes(&idx, 1) != 1)
+        {
+            idx = 0;
+        }
         static std::vector<uint16_t> GREASE_VALUES = {
             0x0a0a, 0x1a1a, 0x2a2a, 0x3a3a, 0x4a4a, 0x5a5a, 0x6a6a, 0x7a7a, 0x8a8a, 0x9a9a, 0xaaaa, 0xbaba, 0xcaca, 0xdada, 0xeaea, 0xfafa};
 
         return GREASE_VALUES[idx % GREASE_VALUES.size()];
     }
 
-    static void generate_x25519_keypair(uint8_t out_public[32], uint8_t out_private[32])
+    [[nodiscard]] static bool generate_x25519_keypair(uint8_t out_public[32], uint8_t out_private[32])
     {
         const openssl_ptrs::evp_pkey_ctx_ptr pkey_ctx_ptr(EVP_PKEY_CTX_new_id(EVP_PKEY_X25519, nullptr));
 
@@ -68,12 +71,13 @@ class crypto_util
                 EVP_PKEY_get_raw_public_key(pkey.get(), out_public, &len);
                 len = 32;
                 EVP_PKEY_get_raw_private_key(pkey.get(), out_private, &len);
-                return;
+                return true;
             }
         }
 
-        std::memset(out_public, 0, 32);
-        std::memset(out_private, 0, 32);
+        OPENSSL_cleanse(out_public, 32);
+        OPENSSL_cleanse(out_private, 32);
+        return false;
     }
 
     [[nodiscard]] static std::vector<uint8_t> extract_public_key(const std::vector<uint8_t>& private_key, std::error_code& ec)

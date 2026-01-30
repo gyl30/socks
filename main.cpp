@@ -20,7 +20,11 @@ static void dump_x25519()
 {
     uint8_t pub[32];
     uint8_t priv[32];
-    reality::crypto_util::generate_x25519_keypair(pub, priv);
+    if (!reality::crypto_util::generate_x25519_keypair(pub, priv))
+    {
+        fmt::print("Failed to generate keypair\n");
+        return;
+    }
     const std::vector<uint8_t> vec_priv(priv, priv + 32);
     const std::vector<uint8_t> vec_pub(pub, pub + 32);
     std::cout << "Private Key: " << reality::crypto_util::bytes_to_hex(vec_priv) << '\n';
@@ -102,8 +106,14 @@ int main(int argc, char** argv)
     }
     else if (cfg.mode == "client")
     {
-        client = std::make_shared<mux::local_client>(
-            pool, cfg.outbound.host, std::to_string(cfg.outbound.port), cfg.socks.port, cfg.reality.public_key, cfg.reality.sni, cfg.timeout, cfg.socks);
+        client = std::make_shared<mux::local_client>(pool,
+                                                     cfg.outbound.host,
+                                                     std::to_string(cfg.outbound.port),
+                                                     cfg.socks.port,
+                                                     cfg.reality.public_key,
+                                                     cfg.reality.sni,
+                                                     cfg.timeout,
+                                                     cfg.socks);
         client->start();
     }
 

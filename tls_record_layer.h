@@ -35,7 +35,11 @@ class tls_record_layer
         if (content_type == CONTENT_TYPE_APPLICATION_DATA)
         {
             uint8_t r;
-            RAND_bytes(&r, 1);
+            if (RAND_bytes(&r, 1) != 1)
+            {
+                ec = std::make_error_code(std::errc::operation_canceled);
+                return;
+            }
 
             padding_len = r % 64;
         }

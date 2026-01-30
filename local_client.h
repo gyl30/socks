@@ -1,21 +1,20 @@
 #ifndef LOCAL_CLIENT_H
 #define LOCAL_CLIENT_H
 
+#include <utility>
 #include <vector>
 #include <memory>
 #include <asio.hpp>
 
 #include "log.h"
-#include "log_context.h"
 #include "router.h"
-#include "ip_matcher.h"
 #include "mux_tunnel.h"
 #include "transcript.h"
+#include "log_context.h"
 #include "context_pool.h"
 #include "reality_core.h"
 #include "socks_session.h"
 #include "reality_engine.h"
-#include "domain_matcher.h"
 #include "reality_messages.h"
 #include "tls_key_schedule.h"
 #include "reality_fingerprint.h"
@@ -27,13 +26,13 @@ class local_client : public std::enable_shared_from_this<local_client>
 {
    public:
     local_client(io_context_pool &pool,
-                  std::string host,
-                  std::string port,
-                  uint16_t l_port,
-                  const std::string &key_hex,
-                  std::string sni,
-                  const config::timeout_t &timeout_cfg = {},
-                  const config::socks_t &socks_cfg = {})
+                 std::string host,
+                 std::string port,
+                 uint16_t l_port,
+                 const std::string &key_hex,
+                 std::string sni,
+                 const config::timeout_t &timeout_cfg = {},
+                 config::socks_t socks_cfg = {})
         : remote_host_(std::move(host)),
           remote_port_(std::move(port)),
           listen_port_(l_port),
@@ -43,7 +42,7 @@ class local_client : public std::enable_shared_from_this<local_client>
           acceptor_(remote_timer_.get_executor()),
           stop_channel_(remote_timer_.get_executor(), 1),
           timeout_config_(timeout_cfg),
-          socks_config_(socks_cfg)
+          socks_config_(std::move(socks_cfg))
     {
         server_pub_key_ = reality::crypto_util::hex_to_bytes(key_hex);
         router_ = std::make_shared<mux::router>();
@@ -129,7 +128,8 @@ class local_client : public std::enable_shared_from_this<local_client>
 
             LOG_CTX_INFO(ctx, "{} handshake success cipher 0x{:04x}", log_event::HANDSHAKE, handshake_ret.cipher_suite);
             reality_engine re(s_app_keys.first, s_app_keys.second, c_app_keys.first, c_app_keys.second);
-            tunnel_manager_ = std::make_shared<mux_tunnel_impl<asio::ip::tcp::socket>>(std::move(*socket), std::move(re), true, cid, ctx.trace_id, timeout_config_);
+            tunnel_manager_ =
+                std::make_shared<mux_tunnel_impl<asio::ip::tcp::socket>>(std::move(*socket), std::move(re), true, cid, ctx.trace_id, timeout_config_);
 
             co_await tunnel_manager_->run();
 
@@ -166,7 +166,14 @@ class local_client : public std::enable_shared_from_this<local_client>
     {
         uint8_t public_key[32];
         uint8_t private_key[32];
-        reality::crypto_util::generate_x25519_keypair(public_key, private_key);
+
+        if (!reality::crypto_util::generate_x25519_keypair(public_key, private_key))
+        {
+            ec = std::make_error_code(std::errc::operation_canceled);
+            co_return std::make_pair(false, handshake_result{});
+        }
+
+        std::shared_ptr<void> defer_cleanse(nullptr, [&](void *) { OPENSSL_cleanse(private_key, 32); });
 
         reality::transcript trans;
         if (!co_await generate_and_send_client_hello(socket, public_key, private_key, trans, ec))
@@ -217,22 +224,30 @@ class local_client : public std::enable_shared_from_this<local_client>
         }
 
         std::vector<uint8_t> client_random(32);
-        RAND_bytes(client_random.data(), 32);
+        if (RAND_bytes(client_random.data(), 32) != 1)
+        {
+            ec = std::make_error_code(std::errc::operation_canceled);
+            co_return false;
+        }
         const std::vector<uint8_t> salt(client_random.begin(), client_random.begin() + 20);
         auto r_info = reality::crypto_util::hex_to_bytes("5245414c495459");
         auto prk = reality::crypto_util::hkdf_extract(salt, shared, EVP_sha256(), ec);
         auto auth_key = reality::crypto_util::hkdf_expand(prk, r_info, 32, EVP_sha256(), ec);
 
-        LOG_INFO("authkey {}", reality::crypto_util::bytes_to_hex(auth_key));
+        LOG_DEBUG("authkey {}", reality::crypto_util::bytes_to_hex(auth_key));
         std::vector<uint8_t> payload(16);
         payload[0] = 1;
         payload[1] = 8;
-        auto now = static_cast<uint32_t>(time(nullptr));
+        uint32_t now = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
         payload[4] = (now >> 24) & 0xFF;
         payload[5] = (now >> 16) & 0xFF;
         payload[6] = (now >> 8) & 0xFF;
         payload[7] = now & 0xFF;
-        RAND_bytes(payload.data() + 8, 8);
+        if (RAND_bytes(payload.data() + 8, 8) != 1)
+        {
+            ec = std::make_error_code(std::errc::operation_canceled);
+            co_return false;
+        }
 
         auto spec = reality::FingerprintFactory::Get(reality::FingerprintType::Firefox_120);
 
