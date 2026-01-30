@@ -20,7 +20,9 @@
 #include "tls_record_layer.h"
 #include "tls_key_schedule.h"
 #include "reality_messages.h"
+#include "reality_messages.h"
 #include "remote_udp_session.h"
+#include "constants.h"
 
 namespace mux
 {
@@ -242,7 +244,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     static asio::awaitable<std::pair<bool, std::vector<uint8_t>>> read_initial_and_validate(std::shared_ptr<asio::ip::tcp::socket> s,
                                                                                             const connection_context &ctx)
     {
-        std::vector<uint8_t> buf(4096);
+        std::vector<uint8_t> buf(constants::net::BUFFER_SIZE);
         auto [re, n] = co_await s->async_read_some(asio::buffer(buf), asio::as_tuple(asio::use_awaitable));
         if (re)
         {
@@ -297,12 +299,12 @@ class remote_server : public std::enable_shared_from_this<remote_server>
             return {false, {}};
         }
         const uint32_t aad_sid_offset = info.sid_offset - 5;
-        if (aad_sid_offset + 32 > aad.size())
+        if (aad_sid_offset + constants::auth::SESSION_ID_LEN > aad.size())
         {
             return {false, {}};
         }
 
-        std::fill_n(aad.begin() + aad_sid_offset, 32, 0);
+        std::fill_n(aad.begin() + aad_sid_offset, constants::auth::SESSION_ID_LEN, 0);
 
         auto pt = reality::crypto_util::aead_decrypt(
             EVP_aes_128_gcm(), auth_key, std::vector<uint8_t>(info.random.begin() + 20, info.random.end()), info.session_id, aad, ec);
@@ -321,7 +323,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         const uint32_t timestamp = (static_cast<uint32_t>(pt[4]) << 24) | (static_cast<uint32_t>(pt[5]) << 16) | (static_cast<uint32_t>(pt[6]) << 8) |
                                    static_cast<uint32_t>(pt[7]);
         auto now = static_cast<uint32_t>(time(nullptr));
-        if (timestamp > now + 300 || timestamp < now - 300)
+        if (timestamp > now + constants::auth::MAX_CLOCK_SKEW_SEC || timestamp < now - constants::auth::MAX_CLOCK_SKEW_SEC)
         {
             LOG_CTX_WARN(ctx, "{} clock skew too large diff {}s", log_event::AUTH, (int)now - (int)timestamp);
             return {false, {}};
@@ -565,7 +567,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     static asio::awaitable<void> fallback_failed_timer(uint32_t conn_id, asio::any_io_executor ex)
     {
         asio::steady_timer fallback_timer(ex);
-        constexpr auto max_wait_ms = 120 * 1000;
+        constexpr auto max_wait_ms = constants::fallback::MAX_WAIT_MS;
         static thread_local std::mt19937 gen(std::random_device{}());
         std::uniform_int_distribution<uint32_t> dist(0, max_wait_ms - 1);
         auto wait_ms = dist(gen);
@@ -580,7 +582,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
 
     static asio::awaitable<void> fallback_failed(const std::shared_ptr<asio::ip::tcp::socket> &s)
     {
-        char d[4096] = {0};
+        char d[constants::net::BUFFER_SIZE] = {0};
         for (;;)
         {
             auto [re, n] = co_await s->async_read_some(asio::buffer(d), asio::as_tuple(asio::use_awaitable));
@@ -641,7 +643,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
 
         auto xfer = [](auto &f, auto &t) -> asio::awaitable<void>
         {
-            char d[4096];
+            char d[constants::net::BUFFER_SIZE];
             for (;;)
             {
                 auto [re, n] = co_await f.async_read_some(asio::buffer(d), asio::as_tuple(asio::use_awaitable));
