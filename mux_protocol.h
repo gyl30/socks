@@ -28,6 +28,7 @@ struct syn_payload
     std::uint8_t socks_cmd = 0;
     std::string addr;
     std::uint16_t port = 0;
+    std::string trace_id;
 };
 
 struct ack_payload

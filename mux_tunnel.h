@@ -36,7 +36,7 @@ class mux_tunnel_impl : public std::enable_shared_from_this<mux_tunnel_impl<stre
         }
     }
 
-    [[nodiscard]] std::shared_ptr<mux_stream> create_stream()
+    [[nodiscard]] std::shared_ptr<mux_stream> create_stream(const std::string& trace_id = "")
     {
         if (connection_ == nullptr || !connection_->is_open())
         {
@@ -44,7 +44,7 @@ class mux_tunnel_impl : public std::enable_shared_from_this<mux_tunnel_impl<stre
         }
 
         uint32_t id = connection_->acquire_next_id();
-        auto stream = std::make_shared<mux_stream>(id, connection_->id(), connection_->trace_id(), connection_, connection_->get_executor());
+        auto stream = std::make_shared<mux_stream>(id, connection_->id(), trace_id.empty() ? connection_->trace_id() : trace_id, connection_, connection_->get_executor());
         connection_->register_stream(id, stream);
         return stream;
     }
