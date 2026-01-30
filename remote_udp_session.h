@@ -18,7 +18,8 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
     {
         ctx_ = ctx;
         ctx_.stream_id = id;
-        last_activity_ = std::chrono::steady_clock::now();
+        last_read_time_ = std::chrono::steady_clock::now();
+        last_write_time_ = std::chrono::steady_clock::now();
     }
 
     asio::awaitable<void> start()
@@ -77,30 +78,30 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
     void set_manager(const std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> &m) { manager_ = m; }
 
    private:
-    void update_activity() { last_activity_ = std::chrono::steady_clock::now(); }
-
     asio::awaitable<void> watchdog()
     {
-        const std::chrono::seconds idle_timeout(60);
-        const std::chrono::seconds check_interval(10);
-
         while (udp_socket_.is_open())
         {
-            timer_.expires_after(check_interval);
+            timer_.expires_after(std::chrono::seconds(1));
             auto [ec] = co_await timer_.async_wait(asio::as_tuple(asio::use_awaitable));
             if (ec)
             {
-                LOG_CTX_ERROR(ctx_, "{} udp session watchdog failed {}", log_event::MUX, ec.message());
+                LOG_CTX_WARN(ctx_, "{} watchdog error {}", log_event::TIMEOUT, ec.message());
                 break;
             }
             auto now = std::chrono::steady_clock::now();
-            if (now - last_activity_ > idle_timeout)
+            auto read_elapsed = now - last_read_time_;
+            auto write_elapsed = now - last_write_time_;
+            if (read_elapsed > std::chrono::seconds(60))
             {
-                LOG_CTX_INFO(ctx_, "{} udp session timed out after {}s idle", log_event::MUX, idle_timeout.count());
-                on_close();
-                break;
+                LOG_CTX_WARN(ctx_, "{} read idle {}s", log_event::TIMEOUT, std::chrono::duration_cast<std::chrono::seconds>(read_elapsed).count());
+            }
+            if (write_elapsed > std::chrono::seconds(60))
+            {
+                LOG_CTX_WARN(ctx_, "{} write idle {}s", log_event::TIMEOUT, std::chrono::duration_cast<std::chrono::seconds>(write_elapsed).count());
             }
         }
+        LOG_CTX_DEBUG(ctx_, "{} watchdog finished", log_event::MUX);
     }
     asio::awaitable<void> mux_to_udp()
     {
@@ -134,6 +135,11 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
                 {
                     LOG_CTX_WARN(ctx_, "{} udp send error {}", log_event::MUX, se.message());
                 }
+                else
+                {
+                    last_write_time_ = std::chrono::steady_clock::now();
+                    ctx_.tx_bytes += sn;
+                }
             }
             else
             {
@@ -159,6 +165,8 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
             }
 
             LOG_CTX_DEBUG(ctx_, "{} udp recv {} bytes from {}", log_event::MUX, n, ep.address().to_string());
+            last_read_time_ = std::chrono::steady_clock::now();
+            ctx_.rx_bytes += n;
 
             socks_udp_header h;
             h.addr = ep.address().to_string();
@@ -179,7 +187,8 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
     asio::ip::udp::socket udp_socket_;
     asio::ip::udp::resolver udp_resolver_;
     asio::steady_timer timer_;
-    std::chrono::steady_clock::time_point last_activity_;
+    std::chrono::steady_clock::time_point last_read_time_;
+    std::chrono::steady_clock::time_point last_write_time_;
     std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> manager_;
     asio::experimental::concurrent_channel<void(std::error_code, std::vector<uint8_t>)> recv_channel_;
 };
