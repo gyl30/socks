@@ -14,17 +14,17 @@ namespace mux
 class mux_codec
 {
    public:
-    static void encode_header(const frame_header &h, std::uint8_t *buf)
+    static void encode_header(const frame_header &h, std::vector<std::uint8_t> &buf)
     {
-        buf[0] = static_cast<std::uint8_t>((h.stream_id >> 24) & 0xFF);
-        buf[1] = static_cast<std::uint8_t>((h.stream_id >> 16) & 0xFF);
-        buf[2] = static_cast<std::uint8_t>((h.stream_id >> 8) & 0xFF);
-        buf[3] = static_cast<std::uint8_t>(h.stream_id & 0xFF);
+        buf.push_back(static_cast<std::uint8_t>((h.stream_id >> 24) & 0xFF));
+        buf.push_back(static_cast<std::uint8_t>((h.stream_id >> 16) & 0xFF));
+        buf.push_back(static_cast<std::uint8_t>((h.stream_id >> 8) & 0xFF));
+        buf.push_back(static_cast<std::uint8_t>(h.stream_id & 0xFF));
 
-        buf[4] = static_cast<std::uint8_t>((h.length >> 8) & 0xFF);
-        buf[5] = static_cast<std::uint8_t>(h.length & 0xFF);
+        buf.push_back(static_cast<std::uint8_t>((h.length >> 8) & 0xFF));
+        buf.push_back(static_cast<std::uint8_t>(h.length & 0xFF));
 
-        buf[6] = h.command;
+        buf.push_back(h.command);
     }
 
     [[nodiscard]] static frame_header decode_header(const std::uint8_t *buf)
@@ -38,9 +38,8 @@ class mux_codec
         return h;
     }
 
-    [[nodiscard]] static std::vector<std::uint8_t> encode_syn(const syn_payload &p)
+    static void encode_syn(const syn_payload &p, std::vector<std::uint8_t> &buf)
     {
-        std::vector<std::uint8_t> buf;
         buf.push_back(p.socks_cmd);
 
         const std::uint8_t addr_len = static_cast<std::uint8_t>(std::min(p.addr.size(), static_cast<std::size_t>(255)));
@@ -56,8 +55,6 @@ class mux_codec
         {
             buf.insert(buf.end(), p.trace_id.begin(), p.trace_id.begin() + trace_id_len);
         }
-
-        return buf;
     }
 
     [[nodiscard]] static bool decode_syn(const std::uint8_t *data, std::size_t len, syn_payload &out)
@@ -91,9 +88,8 @@ class mux_codec
         return true;
     }
 
-    [[nodiscard]] static std::vector<std::uint8_t> encode_ack(const ack_payload &p)
+    static void encode_ack(const ack_payload &p, std::vector<std::uint8_t> &buf)
     {
-        std::vector<std::uint8_t> buf;
         buf.push_back(p.socks_rep);
 
         const std::uint8_t addr_len = static_cast<std::uint8_t>(std::min(p.bnd_addr.size(), static_cast<std::size_t>(255)));
@@ -102,7 +98,6 @@ class mux_codec
 
         buf.push_back(static_cast<std::uint8_t>((p.bnd_port >> 8) & 0xFF));
         buf.push_back(static_cast<std::uint8_t>(p.bnd_port & 0xFF));
-        return buf;
     }
 
     [[nodiscard]] static bool decode_ack(const std::uint8_t *data, std::size_t len, ack_payload &out)
