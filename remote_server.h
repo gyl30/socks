@@ -26,8 +26,15 @@ namespace mux
 class remote_server : public std::enable_shared_from_this<remote_server>
 {
    public:
-    remote_server(io_context_pool &pool, uint16_t port, std::vector<config::fallback_entry> fbs, const std::string &key)
-        : pool_(pool), acceptor_(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v6(), port)), fallbacks_(std::move(fbs))
+    remote_server(io_context_pool &pool,
+                   uint16_t port,
+                   std::vector<config::fallback_entry> fbs,
+                   const std::string &key,
+                   const config::timeout_t &timeout_cfg = {})
+        : pool_(pool),
+          acceptor_(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v6(), port)),
+          fallbacks_(std::move(fbs)),
+          timeout_config_(timeout_cfg)
     {
         private_key_ = reality::crypto_util::hex_to_bytes(key);
         std::error_code ignore;
@@ -164,7 +171,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
 
         LOG_CTX_INFO(ctx, "{} tunnel starting", log_event::CONN_ESTABLISHED);
         reality_engine engine(c_app_keys.first, c_app_keys.second, s_app_keys.first, s_app_keys.second);
-        auto tunnel = std::make_shared<mux_tunnel_impl<asio::ip::tcp::socket>>(std::move(*s), std::move(engine), false, conn_id, ctx.trace_id);
+        auto tunnel = std::make_shared<mux_tunnel_impl<asio::ip::tcp::socket>>(std::move(*s), std::move(engine), false, conn_id, ctx.trace_id, timeout_config_);
 
         {
             const std::scoped_lock lock(tunnels_mutex_);
@@ -650,6 +657,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     reality::key_rotator key_rotator_;
     std::mutex tunnels_mutex_;
     std::vector<config::fallback_entry> fallbacks_;
+    config::timeout_t timeout_config_;
     std::vector<std::weak_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>> active_tunnels_;
 };
 }    // namespace mux
