@@ -124,7 +124,8 @@ class remote_server : public std::enable_shared_from_this<remote_server>
 
         LOG_CTX_INFO(ctx, "{} accepted {}", log_event::CONN_INIT, ctx.connection_info());
 
-        auto [ok, buf] = co_await read_initial_and_validate(s, ctx);
+        std::vector<uint8_t> buf;
+        auto ok = co_await read_initial_and_validate(s, ctx, buf);
 
         std::string client_sni;
         client_hello_info_t info;
@@ -241,21 +242,22 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         }
     }
 
-    static asio::awaitable<std::pair<bool, std::vector<uint8_t>>> read_initial_and_validate(std::shared_ptr<asio::ip::tcp::socket> s,
-                                                                                            const connection_context &ctx)
+    static asio::awaitable<bool> read_initial_and_validate(std::shared_ptr<asio::ip::tcp::socket> s,
+                                                           const connection_context &ctx,
+                                                           std::vector<uint8_t> &buf)
     {
-        std::vector<uint8_t> buf(constants::net::BUFFER_SIZE);
+        buf.resize(constants::net::BUFFER_SIZE);
         auto [re, n] = co_await s->async_read_some(asio::buffer(buf), asio::as_tuple(asio::use_awaitable));
         if (re)
         {
             LOG_CTX_ERROR(ctx, "{} initial read error {}", log_event::HANDSHAKE, re.message());
-            co_return std::make_pair(false, std::vector<uint8_t>{});
+            co_return false;
         }
         buf.resize(n);
         if (n < 5 || buf[0] != 0x16)
         {
             LOG_CTX_WARN(ctx, "{} invalid tls header 0x{:02x}", log_event::HANDSHAKE, buf[0]);
-            co_return std::make_pair(false, buf);
+            co_return false;
         }
         const size_t len = static_cast<uint16_t>((buf[3] << 8) | buf[4]);
         while (buf.size() < 5 + len)
@@ -264,12 +266,12 @@ class remote_server : public std::enable_shared_from_this<remote_server>
             auto [re2, n2] = co_await asio::async_read(*s, asio::buffer(tmp), asio::as_tuple(asio::use_awaitable));
             if (re2)
             {
-                co_return std::make_pair(false, buf);
+                co_return false;
             }
             buf.insert(buf.end(), tmp.begin(), tmp.end());
         }
         LOG_CTX_DEBUG(ctx, "{} received client hello record size {}", log_event::HANDSHAKE, buf.size());
-        co_return std::make_pair(true, buf);
+        co_return true;
     }
 
     std::pair<bool, std::vector<uint8_t>> authenticate_client(const client_hello_info_t &info,
