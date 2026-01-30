@@ -2,9 +2,9 @@
 #define REMOTE_UDP_SESSION_H
 
 #include <vector>
+#include "log.h"
 #include "protocol.h"
 #include "mux_tunnel.h"
-#include "log.h"
 #include "log_context.h"
 
 namespace mux
@@ -14,7 +14,7 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
 {
    public:
     remote_udp_session(std::shared_ptr<mux_connection> connection, uint32_t id, const asio::any_io_executor &ex, const connection_context &ctx)
-        : id_(id), connection_(std::move(connection)), udp_socket_(ex), udp_resolver_(ex), timer_(ex), recv_channel_(ex, 128)
+        : id_(id), timer_(ex), udp_socket_(ex), udp_resolver_(ex), connection_(std::move(connection)), recv_channel_(ex, 128)
     {
         ctx_ = ctx;
         ctx_.stream_id = id;
@@ -63,7 +63,7 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
         {
             manager_->remove_stream(id_);
         }
-        LOG_CTX_INFO(ctx_, "{} udp session finished", log_event::MUX);
+        LOG_CTX_INFO(ctx_, "{} finished {}", log_event::CONN_CLOSE, ctx_.stats_summary());
     }
 
     void on_data(std::vector<uint8_t> data) override { recv_channel_.try_send(std::error_code(), std::move(data)); }
@@ -123,14 +123,11 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
             if (!er)
             {
                 auto target_ep = *eps.begin();
-                LOG_CTX_DEBUG(ctx_, "{} udp forwarding {} bytes to {}",
-                          log_event::MUX,
-                          data.size() - h.header_len,
-                          target_ep.endpoint().address().to_string());
+                LOG_CTX_DEBUG(
+                    ctx_, "{} udp forwarding {} bytes to {}", log_event::MUX, data.size() - h.header_len, target_ep.endpoint().address().to_string());
 
-                auto [se, sn] = co_await udp_socket_.async_send_to(asio::buffer(data.data() + h.header_len, data.size() - h.header_len),
-                                                                   target_ep,
-                                                                   asio::as_tuple(asio::use_awaitable));
+                auto [se, sn] = co_await udp_socket_.async_send_to(
+                    asio::buffer(data.data() + h.header_len, data.size() - h.header_len), target_ep, asio::as_tuple(asio::use_awaitable));
                 if (se)
                 {
                     LOG_CTX_WARN(ctx_, "{} udp send error {}", log_event::MUX, se.message());
@@ -183,10 +180,10 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
    private:
     uint32_t id_;
     connection_context ctx_;
-    std::shared_ptr<mux_connection> connection_;
+    asio::steady_timer timer_;
     asio::ip::udp::socket udp_socket_;
     asio::ip::udp::resolver udp_resolver_;
-    asio::steady_timer timer_;
+    std::shared_ptr<mux_connection> connection_;
     std::chrono::steady_clock::time_point last_read_time_;
     std::chrono::steady_clock::time_point last_write_time_;
     std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> manager_;
