@@ -5,6 +5,7 @@
 #include <vector>
 #include <asio.hpp>
 #include "log.h"
+#include "log_context.h"
 #include "protocol.h"
 #include "mux_tunnel.h"
 
@@ -22,6 +23,8 @@ class udp_socks_session : public mux_stream_interface, public std::enable_shared
           tunnel_manager_(std::move(tunnel_manager)),
           recv_channel_(socket_.get_executor(), 128)
     {
+        ctx_.new_trace_id();
+        ctx_.conn_id = sid;
     }
 
     void start(const std::string& host, uint16_t port)
@@ -38,7 +41,7 @@ class udp_socks_session : public mux_stream_interface, public std::enable_shared
         auto tcp_local_ep = socket_.local_endpoint(ec);
         if (ec)
         {
-            LOG_ERROR("{} failed to get local endpoint {}", sid_, ec.message());
+            LOG_CTX_ERROR(ctx_, "{} failed to get local endpoint {}", log_event::SOCKS, ec.message());
             co_return;
         }
 
@@ -57,7 +60,7 @@ class udp_socks_session : public mux_stream_interface, public std::enable_shared
 
         if (ec)
         {
-            LOG_ERROR("{} bind failed {}", sid_, ec.message());
+            LOG_CTX_ERROR(ctx_, "{} bind failed {}", log_event::SOCKS, ec.message());
             uint8_t err[] = {socks::VER, socks::REP_GEN_FAIL, 0, socks::ATYP_IPV4, 0, 0, 0, 0, 0, 0};
             co_await asio::async_write(socket_, asio::buffer(err), asio::as_tuple(asio::use_awaitable));
             co_return;
@@ -65,12 +68,12 @@ class udp_socks_session : public mux_stream_interface, public std::enable_shared
 
         auto udp_local_ep = udp_socket_.local_endpoint(ec);
         uint16_t udp_bind_port = udp_local_ep.port();
-        LOG_INFO("{} started bound at {}:{}", sid_, local_addr.to_string(), udp_bind_port);
+        LOG_CTX_INFO(ctx_, "{} started bound at {}:{}", log_event::SOCKS, local_addr.to_string(), udp_bind_port);
 
         auto stream = tunnel_manager_->create_stream();
         if (!stream)
         {
-            LOG_ERROR("{} failed to create stream", sid_);
+            LOG_CTX_ERROR(ctx_, "{} failed to create stream", log_event::SOCKS);
             co_return;
         }
 
@@ -78,7 +81,7 @@ class udp_socks_session : public mux_stream_interface, public std::enable_shared
         ec = co_await tunnel_manager_->connection()->send_async(stream->id(), CMD_SYN, mux_codec::encode_syn(syn));
         if (ec)
         {
-            LOG_ERROR("{} syn failed {}", sid_, ec.message());
+            LOG_CTX_WARN(ctx_, "{} syn failed {}", log_event::SOCKS, ec.message());
             co_await stream->close();
             co_return;
         }
@@ -86,7 +89,7 @@ class udp_socks_session : public mux_stream_interface, public std::enable_shared
         auto [ack_ec, ack_data] = co_await stream->async_read_some();
         if (ack_ec)
         {
-            LOG_ERROR("{} ack failed {}", sid_, ack_ec.message());
+            LOG_CTX_WARN(ctx_, "{} ack failed {}", log_event::SOCKS, ack_ec.message());
             co_await stream->close();
             co_return;
         }
@@ -116,7 +119,7 @@ class udp_socks_session : public mux_stream_interface, public std::enable_shared
         auto [we, wn] = co_await asio::async_write(socket_, asio::buffer(final_rep), asio::as_tuple(asio::use_awaitable));
         if (we)
         {
-            LOG_ERROR("{} write failed {}", sid_, we.message());
+            LOG_CTX_WARN(ctx_, "{} write failed {}", log_event::SOCKS, we.message());
             co_await stream->close();
             co_return;
         }
@@ -130,7 +133,7 @@ class udp_socks_session : public mux_stream_interface, public std::enable_shared
 
         tunnel_manager_->remove_stream(stream->id());
         co_await stream->close();
-        LOG_INFO("{} finished", sid_);
+        LOG_CTX_INFO(ctx_, "{} finished", log_event::SOCKS);
     }
 
    public:
@@ -142,7 +145,7 @@ class udp_socks_session : public mux_stream_interface, public std::enable_shared
         ignore = udp_socket_.close(ignore);
         if (ignore)
         {
-            LOG_WARN("{} close udp socket failed {}", sid_, ignore.message());
+            LOG_CTX_WARN(ctx_, "{} close udp socket failed {}", log_event::SOCKS, ignore.message());
         }
     }
     void on_reset() override { on_close(); }
@@ -159,7 +162,7 @@ class udp_socks_session : public mux_stream_interface, public std::enable_shared
             {
                 if (ec != asio::error::operation_aborted)
                 {
-                    LOG_WARN("{} receive error {}", sid_, ec.message());
+                    LOG_CTX_WARN(ctx_, "{} receive error {}", log_event::SOCKS, ec.message());
                 }
                 break;
             }
@@ -168,20 +171,20 @@ class udp_socks_session : public mux_stream_interface, public std::enable_shared
             socks_udp_header h;
             if (!socks_codec::decode_udp_header(buf.data(), n, h))
             {
-                LOG_WARN("{} received invalid udp packet from {}", sid_, sender.address().to_string());
+                LOG_CTX_WARN(ctx_, "{} received invalid udp packet from {}", log_event::SOCKS, sender.address().to_string());
                 continue;
             }
 
             if (h.frag != 0x00)
             {
-                LOG_WARN("{} received a fragmented packet, ignore it", sid_);
+                LOG_CTX_WARN(ctx_, "{} received a fragmented packet ignore it", log_event::SOCKS);
                 continue;
             }
 
             ec = co_await stream->async_write_some(buf.data(), n);
             if (ec)
             {
-                LOG_ERROR("{} write to stream failed {}", sid_, ec.message());
+                LOG_CTX_ERROR(ctx_, "{} write to stream failed {}", log_event::SOCKS, ec.message());
                 break;
             }
         }
@@ -194,20 +197,20 @@ class udp_socks_session : public mux_stream_interface, public std::enable_shared
             auto [ec, data] = co_await recv_channel_.async_receive(asio::as_tuple(asio::use_awaitable));
             if (ec || data.empty())
             {
-                LOG_ERROR("{} recv error {}", sid_, ec.message());
+                LOG_CTX_ERROR(ctx_, "{} recv error {}", log_event::SOCKS, ec.message());
                 break;
             }
 
             if (client_ep->port() == 0)
             {
-                LOG_WARN("{} client ep port is 0, ignore it", sid_);
+                LOG_CTX_WARN(ctx_, "{} client ep port is 0 ignore it", log_event::SOCKS);
                 continue;
             }
 
             auto [se, sn] = co_await udp_socket_.async_send_to(asio::buffer(data), *client_ep, asio::as_tuple(asio::use_awaitable));
             if (se)
             {
-                LOG_ERROR("{} send error {}", sid_, se.message());
+                LOG_CTX_ERROR(ctx_, "{} send error {}", log_event::SOCKS, se.message());
             }
         }
     }
@@ -218,11 +221,12 @@ class udp_socks_session : public mux_stream_interface, public std::enable_shared
         auto [ec, n] = co_await socket_.async_read_some(asio::buffer(b), asio::as_tuple(asio::use_awaitable));
         if (ec)
         {
-            LOG_ERROR("{} keep tcp alive error {}", sid_, ec.message());
+            LOG_CTX_ERROR(ctx_, "{} keep tcp alive error {}", log_event::SOCKS, ec.message());
         }
     }
 
    private:
+    connection_context ctx_;
     uint32_t sid_;
     asio::steady_timer timer_;
     asio::ip::tcp::socket socket_;

@@ -6,6 +6,7 @@
 #include <atomic>
 #include <asio.hpp>
 #include "log.h"
+#include "log_context.h"
 #include "mux_protocol.h"
 #include "mux_connection.h"
 
@@ -15,9 +16,12 @@ namespace mux
 class mux_stream : public mux_stream_interface, public std::enable_shared_from_this<mux_stream>
 {
    public:
-    mux_stream(std::uint32_t id, std::uint32_t cid, const std::shared_ptr<mux_connection> &connection, const asio::any_io_executor &ex)
+    mux_stream(std::uint32_t id, std::uint32_t cid, const std::string& trace_id, const std::shared_ptr<mux_connection> &connection, const asio::any_io_executor &ex)
         : id_(id), cid_(cid), connection_(connection), recv_channel_(ex, 128)
     {
+        ctx_.trace_id = trace_id;
+        ctx_.conn_id = cid;
+        ctx_.stream_id = id;
     }
 
     ~mux_stream() override { close_internal(); }
@@ -80,7 +84,7 @@ class mux_stream : public mux_stream_interface, public std::enable_shared_from_t
         if (is_closed_.compare_exchange_strong(expected, true))
         {
             recv_channel_.close();
-            LOG_INFO("mux {} stream {} closed stats tx {} rx {}", cid_, id_, tx_bytes_.load(), rx_bytes_.load());
+            LOG_CTX_INFO(ctx_, "{} closed stats tx {} rx {}", log_event::MUX, tx_bytes_.load(), rx_bytes_.load());
             if (auto conn = connection_.lock())
             {
                 conn->remove_stream(id_);
@@ -90,6 +94,7 @@ class mux_stream : public mux_stream_interface, public std::enable_shared_from_t
 
     std::uint32_t id_ = 0;
     std::uint32_t cid_ = 0;
+    connection_context ctx_;
     std::weak_ptr<mux_connection> connection_;
     asio::experimental::concurrent_channel<void(std::error_code, std::vector<std::uint8_t>)> recv_channel_;
     std::atomic<bool> is_closed_{false};

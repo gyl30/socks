@@ -5,6 +5,7 @@
 #include <memory>
 #include <asio.hpp>
 #include "log.h"
+#include "log_context.h"
 #include "protocol.h"
 #include "mux_tunnel.h"
 #include "mux_protocol.h"
@@ -29,21 +30,21 @@ class upstream
 class direct_upstream : public upstream
 {
    public:
-    explicit direct_upstream(const asio::any_io_executor& ex) : socket_(ex), resolver_(ex) {}
+    explicit direct_upstream(const asio::any_io_executor& ex, const connection_context &ctx) : socket_(ex), resolver_(ex), ctx_(ctx) {}
 
     asio::awaitable<bool> connect(const std::string& host, uint16_t port) override
     {
         auto [res_ec, eps] = co_await resolver_.async_resolve(host, std::to_string(port), asio::as_tuple(asio::use_awaitable));
         if (res_ec)
         {
-            LOG_WARN("direct upstream resolve failed error {}", res_ec.message());
+            LOG_CTX_WARN(ctx_, "{} resolve failed {}", log_event::ROUTE, res_ec.message());
             co_return false;
         }
 
         auto [conn_ec, ep] = co_await asio::async_connect(socket_, eps, asio::as_tuple(asio::use_awaitable));
         if (conn_ec)
         {
-            LOG_WARN("direct upstream connect failed error {}", conn_ec.message());
+            LOG_CTX_WARN(ctx_, "{} connect failed {}", log_event::ROUTE, conn_ec.message());
             co_return false;
         }
 
@@ -67,7 +68,7 @@ class direct_upstream : public upstream
         auto [ec, n] = co_await asio::async_write(socket_, asio::buffer(data), asio::as_tuple(asio::use_awaitable));
         if (ec)
         {
-            LOG_ERROR("direct upstream write error {}", ec.message());
+            LOG_CTX_ERROR(ctx_, "{} write error {}", log_event::ROUTE, ec.message());
             co_return 0;
         }
         co_return n;
@@ -92,19 +93,20 @@ class direct_upstream : public upstream
    private:
     asio::ip::tcp::socket socket_;
     asio::ip::tcp::resolver resolver_;
+    connection_context ctx_;
 };
 
 class proxy_upstream : public upstream
 {
    public:
-    explicit proxy_upstream(std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel) : tunnel_(std::move(tunnel)) {}
+    explicit proxy_upstream(std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel, const connection_context &ctx) : tunnel_(std::move(tunnel)), ctx_(ctx) {}
 
     asio::awaitable<bool> connect(const std::string& host, uint16_t port) override
     {
         stream_ = tunnel_->create_stream();
         if (!stream_)
         {
-            LOG_ERROR("proxy upstream failed to create stream");
+            LOG_CTX_ERROR(ctx_, "{} create stream failed", log_event::ROUTE);
             co_return false;
         }
 
@@ -112,21 +114,21 @@ class proxy_upstream : public upstream
         auto ec = co_await tunnel_->connection()->send_async(stream_->id(), CMD_SYN, mux_codec::encode_syn(syn));
         if (ec)
         {
-            LOG_ERROR("proxy upstream send syn failed error {}", ec.message());
+            LOG_CTX_ERROR(ctx_, "{} send syn failed {}", log_event::ROUTE, ec.message());
             co_return false;
         }
 
         auto [ack_ec, ack_data] = co_await stream_->async_read_some();
         if (ack_ec)
         {
-            LOG_ERROR("proxy upstream wait ack failed error {}", ack_ec.message());
+            LOG_CTX_ERROR(ctx_, "{} wait ack failed {}", log_event::ROUTE, ack_ec.message());
             co_return false;
         }
 
         ack_payload ack_pl;
         if (!mux_codec::decode_ack(ack_data.data(), ack_data.size(), ack_pl) || ack_pl.socks_rep != socks::REP_SUCCESS)
         {
-            LOG_WARN("proxy upstream remote rejected rep {}", ack_pl.socks_rep);
+            LOG_CTX_WARN(ctx_, "{} remote rejected {}", log_event::ROUTE, ack_pl.socks_rep);
             co_return false;
         }
 
@@ -153,7 +155,7 @@ class proxy_upstream : public upstream
         auto ec = co_await stream_->async_write_some(data.data(), data.size());
         if (ec)
         {
-            LOG_ERROR("proxy upstream write error {}", ec.message());
+            LOG_CTX_ERROR(ctx_, "{} write error {}", log_event::ROUTE, ec.message());
             co_return 0;
         }
         co_return data.size();
@@ -170,6 +172,7 @@ class proxy_upstream : public upstream
    private:
     std::shared_ptr<mux_stream> stream_;
     std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_;
+    connection_context ctx_;
 };
 
 }    // namespace mux
