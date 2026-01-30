@@ -13,7 +13,7 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -fno-strict-aliasing -fno-omit-fra
 
 find_package(OpenSSL REQUIRED)
 
-add_executable(socks main.cpp log.cpp config.cpp)
+add_executable(socks main.cpp log.cpp config.cpp mux_connection.cpp remote_server.cpp local_client.cpp)
 
 target_include_directories(socks PRIVATE 
     ${OPENSSL_INCLUDE_DIR} 
