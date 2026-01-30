@@ -42,10 +42,9 @@ class mux_dispatcher
     {
         std::vector<uint8_t> frame;
         frame.reserve(mux::HEADER_SIZE + payload.size());
-        frame.resize(mux::HEADER_SIZE);
 
         const mux::frame_header h{.stream_id = stream_id, .length = static_cast<uint16_t>(payload.size()), .command = cmd};
-        mux::mux_codec::encode_header(h, frame.data());
+        mux::mux_codec::encode_header(h, frame);
 
         if (!payload.empty())
         {

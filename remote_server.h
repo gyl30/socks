@@ -192,10 +192,10 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         }
 
         tunnel->connection()->set_syn_callback(
-            [this, tunnel, ctx](uint32_t id, const std::vector<uint8_t> &p)
+            [this, tunnel, ctx](uint32_t id, std::vector<uint8_t> p)
             {
                 asio::co_spawn(
-                    pool_.get_io_context(), [this, tunnel, ctx, id, p = p]() { return process_stream_request(tunnel, ctx, id, p); }, asio::detached);
+                    pool_.get_io_context(), [this, tunnel, ctx, id, p = std::move(p)]() mutable { return process_stream_request(tunnel, ctx, id, std::move(p)); }, asio::detached);
             });
 
         co_await tunnel->run();

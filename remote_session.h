@@ -29,7 +29,9 @@ class remote_session : public mux_stream_interface, public std::enable_shared_fr
         {
             LOG_CTX_ERROR(ctx_, "{} resolve failed {}", log_event::MUX, er.message());
             const ack_payload ack{.socks_rep = socks::REP_HOST_UNREACH, .bnd_addr = "", .bnd_port = 0};
-            co_await connection_->send_async(id_, CMD_ACK, mux_codec::encode_ack(ack));
+            std::vector<uint8_t> ack_data;
+            mux_codec::encode_ack(ack, ack_data);
+            co_await connection_->send_async(id_, CMD_ACK, std::move(ack_data));
             co_return;
         }
 
@@ -38,7 +40,9 @@ class remote_session : public mux_stream_interface, public std::enable_shared_fr
         {
             LOG_CTX_ERROR(ctx_, "{} connect failed {}", log_event::MUX, ec_conn.message());
             const ack_payload ack{.socks_rep = socks::REP_CONN_REFUSED, .bnd_addr = "", .bnd_port = 0};
-            co_await connection_->send_async(id_, CMD_ACK, mux_codec::encode_ack(ack));
+            std::vector<uint8_t> ack_data;
+            mux_codec::encode_ack(ack, ack_data);
+            co_await connection_->send_async(id_, CMD_ACK, std::move(ack_data));
             co_return;
         }
 
@@ -49,7 +53,9 @@ class remote_session : public mux_stream_interface, public std::enable_shared_fr
         LOG_CTX_INFO(ctx_, "{} connected {} {}", log_event::CONN_ESTABLISHED, syn.addr, syn.port);
 
         const ack_payload ack_pl{.socks_rep = socks::REP_SUCCESS, .bnd_addr = ep_conn.address().to_string(), .bnd_port = ep_conn.port()};
-        co_await connection_->send_async(id_, CMD_ACK, mux_codec::encode_ack(ack_pl));
+        std::vector<uint8_t> ack_data;
+        mux_codec::encode_ack(ack_pl, ack_data);
+        co_await connection_->send_async(id_, CMD_ACK, std::move(ack_data));
 
         using asio::experimental::awaitable_operators::operator&&;
         co_await (upstream() && downstream());
