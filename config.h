@@ -32,6 +32,9 @@ struct config
     {
         std::string host = "127.0.0.1";
         uint16_t port = 1080;
+        bool auth = false;
+        std::string username;
+        std::string password;
     } socks;
 
     struct fallback_entry
