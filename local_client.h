@@ -26,7 +26,13 @@ namespace mux
 class local_client : public std::enable_shared_from_this<local_client>
 {
    public:
-    local_client(io_context_pool &pool, std::string host, std::string port, uint16_t l_port, const std::string &key_hex, std::string sni)
+    local_client(io_context_pool &pool,
+                  std::string host,
+                  std::string port,
+                  uint16_t l_port,
+                  const std::string &key_hex,
+                  std::string sni,
+                  const config::timeout_t &timeout_cfg = {})
         : remote_host_(std::move(host)),
           remote_port_(std::move(port)),
           listen_port_(l_port),
@@ -34,7 +40,8 @@ class local_client : public std::enable_shared_from_this<local_client>
           pool_(pool),
           remote_timer_(pool.get_io_context()),
           acceptor_(remote_timer_.get_executor()),
-          stop_channel_(remote_timer_.get_executor(), 1)
+          stop_channel_(remote_timer_.get_executor(), 1),
+          timeout_config_(timeout_cfg)
     {
         server_pub_key_ = reality::crypto_util::hex_to_bytes(key_hex);
         router_ = std::make_shared<mux::router>();
@@ -120,7 +127,7 @@ class local_client : public std::enable_shared_from_this<local_client>
 
             LOG_CTX_INFO(ctx, "{} handshake success cipher 0x{:04x}", log_event::HANDSHAKE, handshake_ret.cipher_suite);
             reality_engine re(s_app_keys.first, s_app_keys.second, c_app_keys.first, c_app_keys.second);
-            tunnel_manager_ = std::make_shared<mux_tunnel_impl<asio::ip::tcp::socket>>(std::move(*socket), std::move(re), true, cid, ctx.trace_id);
+            tunnel_manager_ = std::make_shared<mux_tunnel_impl<asio::ip::tcp::socket>>(std::move(*socket), std::move(re), true, cid, ctx.trace_id, timeout_config_);
 
             co_await tunnel_manager_->run();
 
@@ -575,6 +582,7 @@ class local_client : public std::enable_shared_from_this<local_client>
     std::shared_ptr<mux::router> router_;
 
     asio::experimental::concurrent_channel<void(std::error_code, int)> stop_channel_;
+    config::timeout_t timeout_config_;
 };
 
 }    // namespace mux

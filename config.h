@@ -42,6 +42,13 @@ struct config
     };
     std::vector<fallback_entry> fallbacks;
 
+    struct timeout_t
+    {
+        uint32_t read = 100;
+        uint32_t write = 100;
+        uint32_t idle = 300;
+    } timeout;
+
     struct reality_t
     {
         std::string sni = "www.apple.com";
