@@ -4,6 +4,7 @@
 #include <memory>
 #include <asio.hpp>
 #include "log.h"
+#include "log_context.h"
 #include "router.h"
 #include "protocol.h"
 #include "mux_tunnel.h"
@@ -24,6 +25,8 @@ class socks_session : public std::enable_shared_from_this<socks_session>
                   uint32_t sid)
         : sid_(sid), socket_(std::move(socket)), router_(std::move(router)), tunnel_manager_(std::move(tunnel_manager))
     {
+        ctx_.new_trace_id();
+        ctx_.conn_id = sid;
     }
 
     void start()
@@ -37,14 +40,14 @@ class socks_session : public std::enable_shared_from_this<socks_session>
     {
         if (!co_await handshake())
         {
-            LOG_WARN("socks session {} handshake failed", sid_);
+            LOG_CTX_WARN(ctx_, "{} handshake failed", log_event::SOCKS);
             co_return;
         }
 
         auto [ok, host, port, cmd] = co_await read_request();
         if (!ok)
         {
-            LOG_WARN("socks session {} request invalid", sid_);
+            LOG_CTX_WARN(ctx_, "{} request invalid", log_event::SOCKS);
             co_return;
         }
 
@@ -137,6 +140,7 @@ class socks_session : public std::enable_shared_from_this<socks_session>
     }
 
    private:
+    connection_context ctx_;
     uint32_t sid_;
     asio::ip::tcp::socket socket_;
     std::shared_ptr<router> router_;

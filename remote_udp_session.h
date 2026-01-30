@@ -4,6 +4,8 @@
 #include <vector>
 #include "protocol.h"
 #include "mux_tunnel.h"
+#include "log.h"
+#include "log_context.h"
 
 namespace mux
 {
@@ -11,20 +13,21 @@ namespace mux
 class remote_udp_session : public mux_stream_interface, public std::enable_shared_from_this<remote_udp_session>
 {
    public:
-    remote_udp_session(std::shared_ptr<mux_connection> connection, uint32_t id, const asio::any_io_executor &ex)
+    remote_udp_session(std::shared_ptr<mux_connection> connection, uint32_t id, const asio::any_io_executor &ex, const connection_context &ctx)
         : id_(id), connection_(std::move(connection)), udp_socket_(ex), udp_resolver_(ex), timer_(ex), recv_channel_(ex, 128)
     {
+        ctx_ = ctx;
+        ctx_.stream_id = id;
         last_activity_ = std::chrono::steady_clock::now();
     }
 
     asio::awaitable<void> start()
     {
-        uint32_t cid = connection_->id();
         std::error_code ec;
         ec = udp_socket_.open(asio::ip::udp::v6(), ec);
         if (ec)
         {
-            LOG_ERROR("srv {} stream {} udp open failed {}", cid, id_, ec.message());
+            LOG_CTX_ERROR(ctx_, "{} udp open failed {}", log_event::MUX, ec.message());
             ack_payload const ack{.socks_rep = socks::REP_GEN_FAIL, .bnd_addr = "", .bnd_port = 0};
             co_await connection_->send_async(id_, CMD_ACK, mux_codec::encode_ack(ack));
             co_return;
@@ -32,7 +35,7 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
         ec = udp_socket_.set_option(asio::ip::v6_only(false), ec);
         if (ec)
         {
-            LOG_ERROR("srv {} stream {} udp v4 and v6 failed {}", cid, id_, ec.message());
+            LOG_CTX_ERROR(ctx_, "{} udp v4 and v6 failed {}", log_event::MUX, ec.message());
             ack_payload const ack{.socks_rep = socks::REP_GEN_FAIL, .bnd_addr = "", .bnd_port = 0};
             co_await connection_->send_async(id_, CMD_ACK, mux_codec::encode_ack(ack));
             co_return;
@@ -40,14 +43,14 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
         ec = udp_socket_.bind(asio::ip::udp::endpoint(asio::ip::udp::v6(), 0), ec);
         if (ec)
         {
-            LOG_ERROR("srv {} stream {} udp bind failed {}", cid, id_, ec.message());
+            LOG_CTX_ERROR(ctx_, "{} udp bind failed {}", log_event::MUX, ec.message());
             ack_payload const ack{.socks_rep = socks::REP_GEN_FAIL, .bnd_addr = "", .bnd_port = 0};
             co_await connection_->send_async(id_, CMD_ACK, mux_codec::encode_ack(ack));
             co_return;
         }
 
         auto local_ep = udp_socket_.local_endpoint(ec);
-        LOG_INFO("srv {} stream {} udp session started, bound at {}", cid, id_, local_ep.address().to_string());
+        LOG_CTX_INFO(ctx_, "{} udp session started bound at {}", log_event::MUX, local_ep.address().to_string());
 
         const ack_payload ack_pl{.socks_rep = socks::REP_SUCCESS, .bnd_addr = "0.0.0.0", .bnd_port = 0};
         co_await connection_->send_async(id_, CMD_ACK, mux_codec::encode_ack(ack_pl));
@@ -59,7 +62,7 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
         {
             manager_->remove_stream(id_);
         }
-        LOG_INFO("srv {} stream {} udp session finished", cid, id_);
+        LOG_CTX_INFO(ctx_, "{} udp session finished", log_event::MUX);
     }
 
     void on_data(std::vector<uint8_t> data) override { recv_channel_.try_send(std::error_code(), std::move(data)); }
@@ -87,13 +90,13 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
             auto [ec] = co_await timer_.async_wait(asio::as_tuple(asio::use_awaitable));
             if (ec)
             {
-                LOG_ERROR("srv {} stream {} udp session watchdog failed {}", connection_->id(), id_, ec.message());
+                LOG_CTX_ERROR(ctx_, "{} udp session watchdog failed {}", log_event::MUX, ec.message());
                 break;
             }
             auto now = std::chrono::steady_clock::now();
             if (now - last_activity_ > idle_timeout)
             {
-                LOG_INFO("srv {} stream {} udp session timed out after {}s idle", connection_->id(), id_, idle_timeout.count());
+                LOG_CTX_INFO(ctx_, "{} udp session timed out after {}s idle", log_event::MUX, idle_timeout.count());
                 on_close();
                 break;
             }
@@ -101,7 +104,6 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
     }
     asio::awaitable<void> mux_to_udp()
     {
-        uint32_t cid = connection_->id();
         for (;;)
         {
             auto [ec, data] = co_await recv_channel_.async_receive(asio::as_tuple(asio::use_awaitable));
@@ -112,7 +114,7 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
             socks_udp_header h;
             if (!socks_codec::decode_udp_header(data.data(), data.size(), h))
             {
-                LOG_WARN("srv {} stream {} udp failed to decode header", cid, id_);
+                LOG_CTX_WARN(ctx_, "{} udp failed to decode header", log_event::MUX);
                 continue;
             }
 
@@ -120,9 +122,8 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
             if (!er)
             {
                 auto target_ep = *eps.begin();
-                LOG_DEBUG("srv {} stream {} udp forwarding {} bytes -> {}",
-                          cid,
-                          id_,
+                LOG_CTX_DEBUG(ctx_, "{} udp forwarding {} bytes to {}",
+                          log_event::MUX,
                           data.size() - h.header_len,
                           target_ep.endpoint().address().to_string());
 
@@ -131,19 +132,18 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
                                                                    asio::as_tuple(asio::use_awaitable));
                 if (se)
                 {
-                    LOG_WARN("srv {} stream {} udp send error {}", cid, id_, se.message());
+                    LOG_CTX_WARN(ctx_, "{} udp send error {}", log_event::MUX, se.message());
                 }
             }
             else
             {
-                LOG_WARN("srv {} stream {} udp resolve error for {}", cid, id_, h.addr);
+                LOG_CTX_WARN(ctx_, "{} udp resolve error for {}", log_event::MUX, h.addr);
             }
         }
     }
 
     asio::awaitable<void> udp_to_mux()
     {
-        uint32_t cid = connection_->id();
         std::vector<uint8_t> buf(65535);
         asio::ip::udp::endpoint ep;
         for (;;)
@@ -153,12 +153,12 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
             {
                 if (re != asio::error::operation_aborted)
                 {
-                    LOG_WARN("srv {} stream {} udp receive error {}", cid, id_, re.message());
+                    LOG_CTX_WARN(ctx_, "{} udp receive error {}", log_event::MUX, re.message());
                 }
                 break;
             }
 
-            LOG_DEBUG("srv {} stream {} udp recv {} bytes from {}", cid, id_, n, ep.address().to_string());
+            LOG_CTX_DEBUG(ctx_, "{} udp recv {} bytes from {}", log_event::MUX, n, ep.address().to_string());
 
             socks_udp_header h;
             h.addr = ep.address().to_string();
@@ -174,6 +174,7 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
 
    private:
     uint32_t id_;
+    connection_context ctx_;
     std::shared_ptr<mux_connection> connection_;
     asio::ip::udp::socket udp_socket_;
     asio::ip::udp::resolver udp_resolver_;

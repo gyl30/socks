@@ -4,6 +4,8 @@
 #include <vector>
 #include "protocol.h"
 #include "mux_tunnel.h"
+#include "log.h"
+#include "log_context.h"
 
 namespace mux
 {
@@ -11,9 +13,11 @@ namespace mux
 class remote_session : public mux_stream_interface, public std::enable_shared_from_this<remote_session>
 {
    public:
-    remote_session(std::shared_ptr<mux_connection> connection, uint32_t id, const asio::any_io_executor &ex)
+    remote_session(std::shared_ptr<mux_connection> connection, uint32_t id, const asio::any_io_executor &ex, const connection_context &ctx)
         : connection_(std::move(connection)), id_(id), resolver_(ex), target_socket_(ex), recv_channel_(ex, 128)
     {
+        ctx_ = ctx;
+        ctx_.stream_id = id;
     }
 
     asio::awaitable<void> start(std::vector<uint8_t> syn_data)
@@ -21,16 +25,16 @@ class remote_session : public mux_stream_interface, public std::enable_shared_fr
         syn_payload syn;
         if (!mux_codec::decode_syn(syn_data.data(), syn_data.size(), syn))
         {
-            LOG_WARN("remote tcp {} failed to decode syn", id_);
+            LOG_CTX_WARN(ctx_, "{} decode syn failed", log_event::MUX);
             co_await connection_->send_async(id_, CMD_RST, {});
             co_return;
         }
 
-        LOG_INFO("remote tcp {} connect target {} port {}", id_, syn.addr, syn.port);
+        LOG_CTX_INFO(ctx_, "{} connecting {} {}", log_event::MUX, syn.addr, syn.port);
         auto [er, eps] = co_await resolver_.async_resolve(syn.addr, std::to_string(syn.port), asio::as_tuple(asio::use_awaitable));
         if (er)
         {
-            LOG_ERROR("remote tcp {} resolve failed {}", id_, er.message());
+            LOG_CTX_ERROR(ctx_, "{} resolve failed {}", log_event::MUX, er.message());
             const ack_payload ack{.socks_rep = socks::REP_HOST_UNREACH, .bnd_addr = "", .bnd_port = 0};
             co_await connection_->send_async(id_, CMD_ACK, mux_codec::encode_ack(ack));
             co_return;
@@ -39,7 +43,7 @@ class remote_session : public mux_stream_interface, public std::enable_shared_fr
         auto [ec_conn, ep_conn] = co_await asio::async_connect(target_socket_, eps, asio::as_tuple(asio::use_awaitable));
         if (ec_conn)
         {
-            LOG_ERROR("remote tcp {} connect failed {}", id_, ec_conn.message());
+            LOG_CTX_ERROR(ctx_, "{} connect failed {}", log_event::MUX, ec_conn.message());
             const ack_payload ack{.socks_rep = socks::REP_CONN_REFUSED, .bnd_addr = "", .bnd_port = 0};
             co_await connection_->send_async(id_, CMD_ACK, mux_codec::encode_ack(ack));
             co_return;
@@ -48,8 +52,8 @@ class remote_session : public mux_stream_interface, public std::enable_shared_fr
         std::error_code ec_sock;
         ec_sock = target_socket_.set_option(asio::ip::tcp::no_delay(true), ec_sock);
         (void)ec_sock;
-        LOG_DEBUG("remote tcp {} established local {} remote {}",
-                  id_,
+        LOG_CTX_DEBUG(ctx_, "{} established local {} remote {}",
+                  log_event::MUX,
                   target_socket_.local_endpoint().address().to_string(),
                   ep_conn.address().to_string());
 
@@ -128,6 +132,7 @@ class remote_session : public mux_stream_interface, public std::enable_shared_fr
    private:
     std::shared_ptr<mux_connection> connection_;
     uint32_t id_;
+    connection_context ctx_;
     asio::ip::tcp::resolver resolver_;
     asio::ip::tcp::socket target_socket_;
     asio::experimental::concurrent_channel<void(std::error_code, std::vector<std::uint8_t>)> recv_channel_;

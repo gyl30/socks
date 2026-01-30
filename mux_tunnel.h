@@ -13,8 +13,8 @@ template <typename stream_layer>
 class mux_tunnel_impl : public std::enable_shared_from_this<mux_tunnel_impl<stream_layer>>
 {
    public:
-    explicit mux_tunnel_impl(stream_layer socket, reality_engine engine, bool is_client, uint32_t conn_id)
-        : connection_(std::make_shared<mux_connection>(std::move(socket), std::move(engine), is_client, conn_id))
+    explicit mux_tunnel_impl(stream_layer socket, reality_engine engine, bool is_client, uint32_t conn_id, const std::string& trace_id = "")
+        : connection_(std::make_shared<mux_connection>(std::move(socket), std::move(engine), is_client, conn_id, trace_id))
     {
     }
 
@@ -44,7 +44,7 @@ class mux_tunnel_impl : public std::enable_shared_from_this<mux_tunnel_impl<stre
         }
 
         uint32_t id = connection_->acquire_next_id();
-        auto stream = std::make_shared<mux_stream>(id, connection_->id(), connection_, connection_->get_executor());
+        auto stream = std::make_shared<mux_stream>(id, connection_->id(), connection_->trace_id(), connection_, connection_->get_executor());
         connection_->register_stream(id, stream);
         return stream;
     }
