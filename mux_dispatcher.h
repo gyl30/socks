@@ -9,6 +9,7 @@
 #include <asio/streambuf.hpp>
 
 #include "log.h"
+#include "log_context.h"
 #include "mux_codec.h"
 #include "mux_protocol.h"
 
@@ -20,6 +21,7 @@ class mux_dispatcher
     mux_dispatcher() : buffer_(64L * 1024) { LOG_DEBUG("mux dispatcher initialized"); }
 
     void set_callback(frame_callback_t cb) { callback_ = std::move(cb); }
+    void set_context(connection_context ctx) { ctx_ = std::move(ctx); }
 
     void on_plaintext_data(std::span<const uint8_t> data)
 
@@ -63,7 +65,7 @@ class mux_dispatcher
 
             if (header.length > mux::MAX_PAYLOAD)
             {
-                LOG_ERROR("mux dispatcher received oversized frame length {} stream {}", header.length, header.stream_id);
+                LOG_CTX_ERROR(ctx_, "{} received oversized frame length {} stream {}", log_event::MUX, header.length, header.stream_id);
                 buffer_.consume(buffer_.size());
                 break;
             }
@@ -87,6 +89,7 @@ class mux_dispatcher
    private:
     frame_callback_t callback_;
     asio::streambuf buffer_;
+    connection_context ctx_;
 };
 
 #endif

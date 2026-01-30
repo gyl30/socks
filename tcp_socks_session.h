@@ -5,6 +5,7 @@
 #include <vector>
 #include <asio.hpp>
 #include "log.h"
+#include "log_context.h"
 #include "router.h"
 #include "protocol.h"
 #include "upstream.h"
@@ -22,6 +23,8 @@ class tcp_socks_session : public std::enable_shared_from_this<tcp_socks_session>
                       uint32_t sid)
         : sid_(sid), socket_(std::move(socket)), router_(std::move(router)), tunnel_manager_(std::move(tunnel_manager))
     {
+        ctx_.new_trace_id();
+        ctx_.conn_id = sid;
     }
 
     void start(const std::string& host, uint16_t port)
@@ -34,29 +37,29 @@ class tcp_socks_session : public std::enable_shared_from_this<tcp_socks_session>
    private:
     asio::awaitable<void> run(std::string host, uint16_t port)
     {
-        auto route = co_await router_->decide(host, socket_.get_executor());
+        auto route = co_await router_->decide(ctx_, host, socket_.get_executor());
 
         std::unique_ptr<upstream> backend;
 
         if (route == route_type::direct)
         {
-            backend = std::make_unique<direct_upstream>(socket_.get_executor());
+            backend = std::make_unique<direct_upstream>(socket_.get_executor(), ctx_);
         }
         else if (route == route_type::proxy)
         {
-            backend = std::make_unique<proxy_upstream>(tunnel_manager_);
+            backend = std::make_unique<proxy_upstream>(tunnel_manager_, ctx_);
         }
         else
         {
-            LOG_WARN("{} blocked host {}", sid_, host);
+            LOG_CTX_WARN(ctx_, "{} blocked host {}", log_event::ROUTE, host);
             co_await reply_error(socks::REP_NOT_ALLOWED);
             co_return;
         }
 
-        LOG_INFO("{} connecting to {}:{} via {}", sid_, host, port, (route == route_type::direct ? "direct" : "proxy"));
+        LOG_CTX_INFO(ctx_, "{} connecting {} {} via {}", log_event::CONN_INIT, host, port, (route == route_type::direct ? "direct" : "proxy"));
         if (!co_await backend->connect(host, port))
         {
-            LOG_WARN("{} failed to connect to {}:{} via {}", sid_, host, port, (route == route_type::direct ? "direct" : "proxy"));
+            LOG_CTX_WARN(ctx_, "{} connect failed {} {} via {}", log_event::CONN_INIT, host, port, (route == route_type::direct ? "direct" : "proxy"));
             co_await reply_error(socks::REP_HOST_UNREACH);
             co_return;
         }
@@ -65,16 +68,16 @@ class tcp_socks_session : public std::enable_shared_from_this<tcp_socks_session>
         auto [we, wn] = co_await asio::async_write(socket_, asio::buffer(rep), asio::as_tuple(asio::use_awaitable));
         if (we)
         {
-            LOG_WARN("{} failed to write to client: {}", sid_, we.message());
+            LOG_CTX_WARN(ctx_, "{} write to client failed {}", log_event::DATA_SEND, we.message());
             co_await backend->close();
             co_return;
         }
 
-        LOG_INFO("{} connected to {}:{} via {}", sid_, host, port, (route == route_type::direct ? "direct" : "proxy"));
+        LOG_CTX_INFO(ctx_, "{} connected {} {} via {}", log_event::CONN_ESTABLISHED, host, port, (route == route_type::direct ? "direct" : "proxy"));
         using asio::experimental::awaitable_operators::operator&&;
         co_await (client_to_upstream(backend.get()) && upstream_to_client(backend.get()));
         co_await backend->close();
-        LOG_INFO("{} finished", sid_);
+        LOG_CTX_INFO(ctx_, "{} finished {}", log_event::CONN_CLOSE, ctx_.stats_summary());
     }
 
     asio::awaitable<void> reply_error(uint8_t code)
@@ -92,7 +95,7 @@ class tcp_socks_session : public std::enable_shared_from_this<tcp_socks_session>
             uint32_t n = co_await socket_.async_read_some(asio::buffer(buf), asio::redirect_error(asio::use_awaitable, ec));
             if (ec || n == 0)
             {
-                LOG_WARN("{} failed to read from client {}", sid_, ec.message());
+                LOG_CTX_WARN(ctx_, "{} failed to read from client {}", log_event::SOCKS, ec.message());
                 break;
             }
 
@@ -100,11 +103,11 @@ class tcp_socks_session : public std::enable_shared_from_this<tcp_socks_session>
             auto written = co_await backend->write(chunk);
             if (written == 0)
             {
-                LOG_WARN("{} failed to write to backend", sid_);
+                LOG_CTX_WARN(ctx_, "{} failed to write to backend", log_event::SOCKS);
                 break;
             }
         }
-        LOG_INFO("{} client to upstream finished", sid_);
+        LOG_CTX_INFO(ctx_, "{} client to upstream finished", log_event::SOCKS);
     }
 
     asio::awaitable<void> upstream_to_client(upstream* backend)
@@ -115,27 +118,28 @@ class tcp_socks_session : public std::enable_shared_from_this<tcp_socks_session>
             auto [ec, n] = co_await backend->read(buf);
             if (ec || n == 0)
             {
-                LOG_WARN("{} failed to read from backend {}", sid_, ec.message());
+                LOG_CTX_WARN(ctx_, "{} failed to read from backend {}", log_event::SOCKS, ec.message());
                 break;
             }
 
             auto [we, wn] = co_await asio::async_write(socket_, asio::buffer(buf.data(), n), asio::as_tuple(asio::use_awaitable));
             if (we)
             {
-                LOG_WARN("{} failed to write to client {}", sid_, we.message());
+                LOG_CTX_WARN(ctx_, "{} failed to write to client {}", log_event::SOCKS, we.message());
                 break;
             }
         }
-        LOG_INFO("{} upstream to client finished", sid_);
+        LOG_CTX_INFO(ctx_, "{} upstream to client finished", log_event::SOCKS);
         std::error_code ignore;
         ignore = socket_.shutdown(asio::ip::tcp::socket::shutdown_send, ignore);
         if (ignore)
         {
-            LOG_WARN("{} failed to shutdown client {}", sid_, ignore.message());
+            LOG_CTX_WARN(ctx_, "{} failed to shutdown client {}", log_event::SOCKS, ignore.message());
         }
     }
 
    private:
+    connection_context ctx_;
     uint32_t sid_;
     asio::ip::tcp::socket socket_;
     std::shared_ptr<router> router_;

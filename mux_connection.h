@@ -14,6 +14,7 @@
 #include <asio/experimental/awaitable_operators.hpp>
 
 #include "log.h"
+#include "log_context.h"
 #include "mux_protocol.h"
 #include "mux_dispatcher.h"
 #include "reality_engine.h"
@@ -39,7 +40,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     using stream_map_t = std::unordered_map<uint32_t, std::shared_ptr<mux_stream_interface>>;
     using syn_callback_t = std::function<void(uint32_t, std::vector<uint8_t>)>;
 
-    mux_connection(asio::ip::tcp::socket socket, reality_engine engine, bool is_client, uint32_t conn_id)
+    mux_connection(asio::ip::tcp::socket socket, reality_engine engine, bool is_client, uint32_t conn_id, const std::string& trace_id = "")
         : cid_(conn_id),
           timer_(socket.get_executor()),
           socket_(std::move(socket)),
@@ -48,11 +49,25 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
           connection_state_(mux_connection_state::connected),
           write_channel_(socket_.get_executor(), 1024)
     {
+        ctx_.trace_id = trace_id;
+        ctx_.conn_id = conn_id;
+        std::error_code ec;
+        auto local_ep = socket_.local_endpoint(ec);
+        auto remote_ep = socket_.remote_endpoint(ec);
+        if (!ec)
+        {
+            ctx_.local_addr = local_ep.address().to_string();
+            ctx_.local_port = local_ep.port();
+            ctx_.remote_addr = remote_ep.address().to_string();
+            ctx_.remote_port = remote_ep.port();
+        }
         mux_dispatcher_.set_callback([this](mux::frame_header h, std::vector<uint8_t> p) { this->on_mux_frame(h, std::move(p)); });
-        LOG_INFO("mux {} initialized", cid_);
+        mux_dispatcher_.set_context(ctx_);
+        LOG_CTX_INFO(ctx_, "{} mux initialized {}", log_event::CONN_INIT, ctx_.connection_info());
     }
 
     auto get_executor() { return socket_.get_executor(); }
+    std::string trace_id() const { return ctx_.trace_id; }
 
     void set_syn_callback(syn_callback_t cb) { syn_callback_ = std::move(cb); }
 
@@ -312,6 +327,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     }
 
    private:
+    connection_context ctx_;
     uint32_t cid_;
     uint64_t read_bytes = 0;
     uint64_t write_bytes = 0;
