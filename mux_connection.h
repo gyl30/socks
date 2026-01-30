@@ -14,6 +14,7 @@
 #include <asio/experimental/awaitable_operators.hpp>
 
 #include "log.h"
+#include "config.h"
 #include "log_context.h"
 #include "mux_protocol.h"
 #include "mux_dispatcher.h"
@@ -34,20 +35,28 @@ struct mux_write_msg
     std::vector<uint8_t> payload;
 };
 
+
+
 class mux_connection : public std::enable_shared_from_this<mux_connection>
 {
    public:
     using stream_map_t = std::unordered_map<uint32_t, std::shared_ptr<mux_stream_interface>>;
     using syn_callback_t = std::function<void(uint32_t, std::vector<uint8_t>)>;
 
-    mux_connection(asio::ip::tcp::socket socket, reality_engine engine, bool is_client, uint32_t conn_id, const std::string& trace_id = "")
+    mux_connection(asio::ip::tcp::socket socket,
+                   reality_engine engine,
+                   bool is_client,
+                   uint32_t conn_id,
+                   const std::string& trace_id = "",
+                   const config::timeout_t& timeout_cfg = {})
         : cid_(conn_id),
           timer_(socket.get_executor()),
           socket_(std::move(socket)),
           reality_engine_(std::move(engine)),
           next_stream_id_(is_client ? 1 : 2),
           connection_state_(mux_connection_state::connected),
-          write_channel_(socket_.get_executor(), 1024)
+          write_channel_(socket_.get_executor(), 1024),
+          timeout_config_(timeout_cfg)
     {
         ctx_.trace_id = trace_id;
         ctx_.conn_id = conn_id;
@@ -265,13 +274,13 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
             auto now = std::chrono::steady_clock::now();
             auto read_elapsed = now - last_read_time;
             auto write_elapsed = now - last_write_time;
-            if (read_elapsed > std::chrono::seconds(100))
+            if (read_elapsed > std::chrono::seconds(timeout_config_.read))
             {
-                LOG_WARN("mux {} timeout read", cid_);
+                LOG_WARN("mux {} timeout read after {}s", cid_, timeout_config_.read);
             }
-            if (write_elapsed > std::chrono::seconds(100))
+            if (write_elapsed > std::chrono::seconds(timeout_config_.write))
             {
-                LOG_WARN("mux {} timeout write", cid_);
+                LOG_WARN("mux {} timeout write after {}s", cid_, timeout_config_.write);
             }
         }
 
@@ -343,6 +352,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     std::chrono::steady_clock::time_point last_read_time;
     std::chrono::steady_clock::time_point last_write_time;
     asio::experimental::concurrent_channel<void(std::error_code, mux_write_msg)> write_channel_;
+    config::timeout_t timeout_config_;
 };
 
 #endif
