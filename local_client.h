@@ -6,6 +6,7 @@
 #include <asio.hpp>
 
 #include "log.h"
+#include "log_context.h"
 #include "router.h"
 #include "ip_matcher.h"
 #include "mux_tunnel.h"
@@ -89,7 +90,10 @@ class local_client : public std::enable_shared_from_this<local_client>
         while (!stop_)
         {
             uint32_t cid = next_conn_id_++;
-            LOG_INFO("reality handshake initiating conn_id {}", cid);
+            connection_context ctx;
+            ctx.new_trace_id();
+            ctx.conn_id = cid;
+            LOG_CTX_INFO(ctx, "{} initiating connection to {} {}", log_event::CONN_INIT, remote_host_, remote_port_);
 
             std::error_code ec;
             auto socket = std::make_shared<asio::ip::tcp::socket>(pool_.get_io_context());
@@ -114,15 +118,15 @@ class local_client : public std::enable_shared_from_this<local_client>
             auto c_app_keys = reality::tls_key_schedule::derive_traffic_keys(handshake_ret.c_app_secret, ec, key_len, 12, handshake_ret.md);
             auto s_app_keys = reality::tls_key_schedule::derive_traffic_keys(handshake_ret.s_app_secret, ec, key_len, 12, handshake_ret.md);
 
-            LOG_INFO("reality handshake success tunnel active id {} cipher 0x{:04x}", cid, handshake_ret.cipher_suite);
+            LOG_CTX_INFO(ctx, "{} handshake success cipher 0x{:04x}", log_event::HANDSHAKE, handshake_ret.cipher_suite);
             reality_engine re(s_app_keys.first, s_app_keys.second, c_app_keys.first, c_app_keys.second);
-            tunnel_manager_ = std::make_shared<mux_tunnel_impl<asio::ip::tcp::socket>>(std::move(*socket), std::move(re), true, cid);
+            tunnel_manager_ = std::make_shared<mux_tunnel_impl<asio::ip::tcp::socket>>(std::move(*socket), std::move(re), true, cid, ctx.trace_id);
 
             co_await tunnel_manager_->run();
 
             co_await wait_remote_retry();
         }
-        LOG_INFO("connect_remote_loop exited");
+        LOG_INFO("{} connect_remote_loop exited", log_event::CONN_CLOSE);
     }
 
     asio::awaitable<bool> tcp_connect(asio::ip::tcp::socket &socket, std::error_code &ec) const
