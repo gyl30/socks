@@ -28,10 +28,10 @@ class remote_server : public std::enable_shared_from_this<remote_server>
 {
    public:
     remote_server(io_context_pool &pool,
-                   uint16_t port,
-                   std::vector<config::fallback_entry> fbs,
-                   const std::string &key,
-                   const config::timeout_t &timeout_cfg = {})
+                  uint16_t port,
+                  std::vector<config::fallback_entry> fbs,
+                  const std::string &key,
+                  const config::timeout_t &timeout_cfg = {})
         : pool_(pool),
           acceptor_(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v6(), port)),
           fallbacks_(std::move(fbs)),
@@ -41,6 +41,14 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         std::error_code ignore;
         auto pub = reality::crypto_util::extract_public_key(private_key_, ignore);
         LOG_INFO("server public key {}", reality::crypto_util::bytes_to_hex(pub));
+    }
+
+    ~remote_server()
+    {
+        if (!private_key_.empty())
+        {
+            OPENSSL_cleanse(private_key_.data(), private_key_.size());
+        }
     }
 
     void start() { asio::co_spawn(acceptor_.get_executor(), accept_loop(), asio::detached); }
@@ -172,7 +180,8 @@ class remote_server : public std::enable_shared_from_this<remote_server>
 
         LOG_CTX_INFO(ctx, "{} tunnel starting", log_event::CONN_ESTABLISHED);
         reality_engine engine(c_app_keys.first, c_app_keys.second, s_app_keys.first, s_app_keys.second);
-        auto tunnel = std::make_shared<mux_tunnel_impl<asio::ip::tcp::socket>>(std::move(*s), std::move(engine), false, conn_id, ctx.trace_id, timeout_config_);
+        auto tunnel =
+            std::make_shared<mux_tunnel_impl<asio::ip::tcp::socket>>(std::move(*s), std::move(engine), false, conn_id, ctx.trace_id, timeout_config_);
 
         {
             const std::scoped_lock lock(tunnels_mutex_);
@@ -340,7 +349,11 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         const uint8_t *public_key = key_pair->public_key;
         const uint8_t *private_key = key_pair->private_key;
         std::vector<uint8_t> srand(32);
-        RAND_bytes(srand.data(), 32);
+        if (RAND_bytes(srand.data(), 32) != 1)
+        {
+            ec = std::make_error_code(std::errc::operation_canceled);
+            co_return server_handshake_res{.ok = false};
+        }
 
         LOG_CTX_TRACE(ctx,
                       "{} generated ephemeral key {}",
