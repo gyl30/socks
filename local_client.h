@@ -32,7 +32,8 @@ class local_client : public std::enable_shared_from_this<local_client>
                   uint16_t l_port,
                   const std::string &key_hex,
                   std::string sni,
-                  const config::timeout_t &timeout_cfg = {})
+                  const config::timeout_t &timeout_cfg = {},
+                  const config::socks_t &socks_cfg = {})
         : remote_host_(std::move(host)),
           remote_port_(std::move(port)),
           listen_port_(l_port),
@@ -41,7 +42,8 @@ class local_client : public std::enable_shared_from_this<local_client>
           remote_timer_(pool.get_io_context()),
           acceptor_(remote_timer_.get_executor()),
           stop_channel_(remote_timer_.get_executor(), 1),
-          timeout_config_(timeout_cfg)
+          timeout_config_(timeout_cfg),
+          socks_config_(socks_cfg)
     {
         server_pub_key_ = reality::crypto_util::hex_to_bytes(key_hex);
         router_ = std::make_shared<mux::router>();
@@ -551,7 +553,7 @@ class local_client : public std::enable_shared_from_this<local_client>
             if (tunnel_manager_ != nullptr && tunnel_manager_->connection()->is_open())
             {
                 const uint32_t sid = next_session_id_++;
-                auto session = std::make_shared<socks_session>(std::move(s), tunnel_manager_, router_, sid);
+                auto session = std::make_shared<socks_session>(std::move(s), tunnel_manager_, router_, sid, socks_config_);
                 session->start();
             }
             else
@@ -583,6 +585,7 @@ class local_client : public std::enable_shared_from_this<local_client>
 
     asio::experimental::concurrent_channel<void(std::error_code, int)> stop_channel_;
     config::timeout_t timeout_config_;
+    config::socks_t socks_config_;
 };
 
 }    // namespace mux

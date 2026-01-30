@@ -4,6 +4,7 @@
 #include <memory>
 #include <asio.hpp>
 #include "log.h"
+#include "config.h"
 #include "log_context.h"
 #include "router.h"
 #include "protocol.h"
@@ -22,8 +23,15 @@ class socks_session : public std::enable_shared_from_this<socks_session>
     socks_session(asio::ip::tcp::socket socket,
                   std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager,
                   std::shared_ptr<router> router,
-                  uint32_t sid)
-        : sid_(sid), socket_(std::move(socket)), router_(std::move(router)), tunnel_manager_(std::move(tunnel_manager))
+                  uint32_t sid,
+                  const config::socks_t& socks_cfg = {})
+        : sid_(sid),
+          username_(socks_cfg.username),
+          password_(socks_cfg.password),
+          auth_enabled_(socks_cfg.auth),
+          socket_(std::move(socket)),
+          router_(std::move(router)),
+          tunnel_manager_(std::move(tunnel_manager))
     {
         ctx_.new_trace_id();
         ctx_.conn_id = sid;
@@ -85,13 +93,107 @@ class socks_session : public std::enable_shared_from_this<socks_session>
             co_return false;
         }
 
-        uint8_t resp[] = {socks::VER, socks::METHOD_NO_AUTH};
+        uint8_t selected_method = socks::METHOD_NO_ACCEPTABLE;
+
+        if (auth_enabled_)
+        {
+            if (std::find(methods.begin(), methods.end(), socks::METHOD_PASSWORD) != methods.end())
+            {
+                selected_method = socks::METHOD_PASSWORD;
+            }
+        }
+        else
+        {
+            if (std::find(methods.begin(), methods.end(), socks::METHOD_NO_AUTH) != methods.end())
+            {
+                selected_method = socks::METHOD_NO_AUTH;
+            }
+        }
+
+        uint8_t resp[] = {socks::VER, selected_method};
         auto [response_error, n3] = co_await asio::async_write(socket_, asio::buffer(resp), asio::as_tuple(asio::use_awaitable));
         if (response_error)
         {
             LOG_ERROR("socks session {} handshake failed {}", sid_, response_error.message());
+            co_return false;
         }
-        co_return !response_error;
+
+        if (selected_method == socks::METHOD_NO_ACCEPTABLE)
+        {
+            LOG_WARN("socks session {} no acceptable method", sid_);
+            co_return false;
+        }
+
+        if (selected_method == socks::METHOD_PASSWORD)
+        {
+            co_return co_await do_password_auth();
+        }
+
+        co_return true;
+    }
+
+    asio::awaitable<bool> do_password_auth()
+    {
+        uint8_t ver;
+        auto [ve, vn] = co_await asio::async_read(socket_, asio::buffer(&ver, 1), asio::as_tuple(asio::use_awaitable));
+        if (ve || ver != 0x01)
+        {
+            LOG_ERROR("socks session {} invalid auth version {}", sid_, ver);
+            co_return false;
+        }
+
+        uint8_t ulen;
+        auto [ue, un] = co_await asio::async_read(socket_, asio::buffer(&ulen, 1), asio::as_tuple(asio::use_awaitable));
+        if (ue)
+        {
+            LOG_ERROR("socks session {} read username len failed", sid_);
+            co_return false;
+        }
+
+        std::string username(ulen, '\0');
+        auto [ue2, un2] = co_await asio::async_read(socket_, asio::buffer(username), asio::as_tuple(asio::use_awaitable));
+        if (ue2)
+        {
+            LOG_ERROR("socks session {} read username failed", sid_);
+            co_return false;
+        }
+
+        uint8_t plen;
+        auto [pe, pn] = co_await asio::async_read(socket_, asio::buffer(&plen, 1), asio::as_tuple(asio::use_awaitable));
+        if (pe)
+        {
+            LOG_ERROR("socks session {} read password len failed", sid_);
+            co_return false;
+        }
+
+        std::string password(plen, '\0');
+        auto [pe2, pn2] = co_await asio::async_read(socket_, asio::buffer(password), asio::as_tuple(asio::use_awaitable));
+        if (pe2)
+        {
+            LOG_ERROR("socks session {} read password failed", sid_);
+            co_return false;
+        }
+
+        bool success = (username == username_ && password == password_);
+
+        uint8_t result[] = {0x01, success ? static_cast<uint8_t>(0x00) : static_cast<uint8_t>(0x01)};
+        auto [re, rn] = co_await asio::async_write(socket_, asio::buffer(result), asio::as_tuple(asio::use_awaitable));
+        if (re)
+        {
+            LOG_ERROR("socks session {} write auth result failed", sid_);
+            co_return false;
+        }
+
+        if (!success)
+        {
+            LOG_WARN("socks session {} auth failed for user {}", sid_, username);
+        }
+        else
+        {
+            LOG_INFO("socks session {} auth success for user {}", sid_, username);
+        }
+
+        co_return success;
     }
 
     struct request_info
@@ -140,8 +242,11 @@ class socks_session : public std::enable_shared_from_this<socks_session>
     }
 
    private:
-    connection_context ctx_;
     uint32_t sid_;
+    std::string username_;
+    std::string password_;
+    bool auth_enabled_ = false;
+    connection_context ctx_;
     asio::ip::tcp::socket socket_;
     std::shared_ptr<router> router_;
     std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager_;

@@ -103,7 +103,7 @@ int main(int argc, char** argv)
     else if (cfg.mode == "client")
     {
         client = std::make_shared<mux::local_client>(
-            pool, cfg.outbound.host, std::to_string(cfg.outbound.port), cfg.socks.port, cfg.reality.public_key, cfg.reality.sni, cfg.timeout);
+            pool, cfg.outbound.host, std::to_string(cfg.outbound.port), cfg.socks.port, cfg.reality.public_key, cfg.reality.sni, cfg.timeout, cfg.socks);
         client->start();
     }
 
