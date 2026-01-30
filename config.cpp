@@ -6,7 +6,7 @@ namespace reflect
 REFLECT_STRUCT(config::log_t, level, file);
 REFLECT_STRUCT(config::inbound_t, host, port);
 REFLECT_STRUCT(config::outbound_t, host, port);
-REFLECT_STRUCT(config::socks_t, host, port);
+REFLECT_STRUCT(config::socks_t, host, port, auth, username, password);
 REFLECT_STRUCT(config::fallback_entry, sni, host, port);
 REFLECT_STRUCT(config::timeout_t, read, write, idle);
 REFLECT_STRUCT(config::reality_t, sni, private_key, public_key);
