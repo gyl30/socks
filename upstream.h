@@ -115,7 +115,9 @@ class proxy_upstream : public upstream
         }
 
         const syn_payload syn{.socks_cmd = socks::CMD_CONNECT, .addr = host, .port = port, .trace_id = ctx_.trace_id};
-        auto ec = co_await tunnel_->connection()->send_async(stream_->id(), CMD_SYN, mux_codec::encode_syn(syn));
+        std::vector<uint8_t> syn_data;
+        mux_codec::encode_syn(syn, syn_data);
+        auto ec = co_await tunnel_->connection()->send_async(stream_->id(), CMD_SYN, std::move(syn_data));
         if (ec)
         {
             LOG_CTX_ERROR(ctx_, "{} send syn failed {}", log_event::ROUTE, ec.message());

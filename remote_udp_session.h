@@ -30,7 +30,9 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
         {
             LOG_CTX_ERROR(ctx_, "{} udp open failed {}", log_event::MUX, ec.message());
             ack_payload const ack{.socks_rep = socks::REP_GEN_FAIL, .bnd_addr = "", .bnd_port = 0};
-            co_await connection_->send_async(id_, CMD_ACK, mux_codec::encode_ack(ack));
+            std::vector<uint8_t> ack_data;
+            mux_codec::encode_ack(ack, ack_data);
+            co_await connection_->send_async(id_, CMD_ACK, std::move(ack_data));
             co_return;
         }
         ec = udp_socket_.set_option(asio::ip::v6_only(false), ec);
@@ -38,7 +40,9 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
         {
             LOG_CTX_ERROR(ctx_, "{} udp v4 and v6 failed {}", log_event::MUX, ec.message());
             ack_payload const ack{.socks_rep = socks::REP_GEN_FAIL, .bnd_addr = "", .bnd_port = 0};
-            co_await connection_->send_async(id_, CMD_ACK, mux_codec::encode_ack(ack));
+            std::vector<uint8_t> ack_data;
+            mux_codec::encode_ack(ack, ack_data);
+            co_await connection_->send_async(id_, CMD_ACK, std::move(ack_data));
             co_return;
         }
         ec = udp_socket_.bind(asio::ip::udp::endpoint(asio::ip::udp::v6(), 0), ec);
@@ -46,7 +50,9 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
         {
             LOG_CTX_ERROR(ctx_, "{} udp bind failed {}", log_event::MUX, ec.message());
             ack_payload const ack{.socks_rep = socks::REP_GEN_FAIL, .bnd_addr = "", .bnd_port = 0};
-            co_await connection_->send_async(id_, CMD_ACK, mux_codec::encode_ack(ack));
+            std::vector<uint8_t> ack_data;
+            mux_codec::encode_ack(ack, ack_data);
+            co_await connection_->send_async(id_, CMD_ACK, std::move(ack_data));
             co_return;
         }
 
@@ -54,7 +60,9 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
         LOG_CTX_INFO(ctx_, "{} udp session started bound at {}", log_event::MUX, local_ep.address().to_string());
 
         const ack_payload ack_pl{.socks_rep = socks::REP_SUCCESS, .bnd_addr = "0.0.0.0", .bnd_port = 0};
-        co_await connection_->send_async(id_, CMD_ACK, mux_codec::encode_ack(ack_pl));
+        std::vector<uint8_t> ack_pl_data;
+        mux_codec::encode_ack(ack_pl, ack_pl_data);
+        co_await connection_->send_async(id_, CMD_ACK, std::move(ack_pl_data));
 
         using asio::experimental::awaitable_operators::operator&&;
         co_await (mux_to_udp() && udp_to_mux() && watchdog());
