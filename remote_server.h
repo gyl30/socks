@@ -3,6 +3,7 @@
 
 #include <vector>
 #include <mutex>
+#include <random>
 
 #include "config.h"
 #include "log_context.h"
@@ -552,7 +553,9 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     {
         asio::steady_timer fallback_timer(ex);
         constexpr auto max_wait_ms = 120 * 1000;
-        auto wait_ms = random() % max_wait_ms;
+        static thread_local std::mt19937 gen(std::random_device{}());
+        std::uniform_int_distribution<uint32_t> dist(0, max_wait_ms - 1);
+        auto wait_ms = dist(gen);
         fallback_timer.expires_after(std::chrono::milliseconds(wait_ms));
         auto [ec] = co_await fallback_timer.async_wait(asio::as_tuple(asio::use_awaitable));
         if (ec)
