@@ -14,11 +14,11 @@ REFLECT_STRUCT(config, mode, log, inbound, outbound, socks, fallbacks, timeout, 
 
 }    // namespace reflect
 
-static std::optional<std::string> read_file(const std::string &filename)
+static std::optional<std::string> read_file(const std::string& filename)
 {
     char buf[256 * 1024] = {0};
     std::string result;
-    FILE *f = fopen(filename.c_str(), "rb");
+    FILE* f = fopen(filename.c_str(), "rb");
     if (f == nullptr)
     {
         return {};
@@ -31,7 +31,7 @@ static std::optional<std::string> read_file(const std::string &filename)
     fclose(f);
     return result;
 }
-std::optional<config> parse_config(const std::string &filename)
+std::optional<config> parse_config(const std::string& filename)
 {
     auto file_content = read_file(filename);
     if (!file_content.has_value())
@@ -46,7 +46,7 @@ std::optional<config> parse_config(const std::string &filename)
     return cfg;
 }
 
-std::string dump_config(const config &cfg) { return reflect::serialize_struct(cfg); }
+std::string dump_config(const config& cfg) { return reflect::serialize_struct(cfg); }
 
 std::string dump_default_config()
 {

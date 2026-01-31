@@ -9,7 +9,7 @@ namespace mux
 {
 
 remote_server::remote_server(
-    io_context_pool &pool, uint16_t port, std::vector<config::fallback_entry> fbs, const std::string &key, const config::timeout_t &timeout_cfg)
+    io_context_pool& pool, uint16_t port, std::vector<config::fallback_entry> fbs, const std::string& key, const config::timeout_t& timeout_cfg)
     : pool_(pool),
       acceptor_(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v6(), port)),
       fallbacks_(std::move(fbs)),
@@ -43,7 +43,7 @@ void remote_server::stop()
 
     LOG_INFO("closing {} active tunnels", active_tunnels_.size());
     const std::scoped_lock lock(tunnels_mutex_);
-    for (auto &weak_tunnel : active_tunnels_)
+    for (auto& weak_tunnel : active_tunnels_)
     {
         if (auto tunnel = weak_tunnel.lock())
         {
@@ -163,7 +163,7 @@ asio::awaitable<void> remote_server::handle(std::shared_ptr<asio::ip::tcp::socke
 
     {
         const std::scoped_lock lock(tunnels_mutex_);
-        std::erase_if(active_tunnels_, [](const auto &wp) { return wp.expired(); });
+        std::erase_if(active_tunnels_, [](const auto& wp) { return wp.expired(); });
         active_tunnels_.push_back(tunnel);
     }
 
@@ -180,7 +180,7 @@ asio::awaitable<void> remote_server::handle(std::shared_ptr<asio::ip::tcp::socke
 }
 
 asio::awaitable<void> remote_server::process_stream_request(std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel,
-                                                            const connection_context &ctx,
+                                                            const connection_context& ctx,
                                                             uint32_t stream_id,
                                                             std::vector<uint8_t> payload) const
 {
@@ -220,8 +220,8 @@ asio::awaitable<void> remote_server::process_stream_request(std::shared_ptr<mux_
 }
 
 asio::awaitable<bool> remote_server::read_initial_and_validate(std::shared_ptr<asio::ip::tcp::socket> s,
-                                                               const connection_context &ctx,
-                                                               std::vector<uint8_t> &buf)
+                                                               const connection_context& ctx,
+                                                               std::vector<uint8_t>& buf)
 {
     buf.resize(constants::net::BUFFER_SIZE);
     auto [re, n] = co_await s->async_read_some(asio::buffer(buf), asio::as_tuple(asio::use_awaitable));
@@ -251,9 +251,9 @@ asio::awaitable<bool> remote_server::read_initial_and_validate(std::shared_ptr<a
     co_return true;
 }
 
-std::pair<bool, std::vector<uint8_t>> remote_server::authenticate_client(const client_hello_info_t &info,
-                                                                         const std::vector<uint8_t> &buf,
-                                                                         const connection_context &ctx)
+std::pair<bool, std::vector<uint8_t>> remote_server::authenticate_client(const client_hello_info_t& info,
+                                                                         const std::vector<uint8_t>& buf,
+                                                                         const connection_context& ctx)
 {
     if (!info.is_tls13 || info.session_id.size() != 32)
     {
@@ -311,15 +311,15 @@ std::pair<bool, std::vector<uint8_t>> remote_server::authenticate_client(const c
 }
 
 asio::awaitable<remote_server::server_handshake_res> remote_server::perform_handshake_response(std::shared_ptr<asio::ip::tcp::socket> s,
-                                                                                               const client_hello_info_t &info,
-                                                                                               reality::transcript &trans,
-                                                                                               const std::vector<uint8_t> &auth_key,
-                                                                                               const connection_context &ctx,
-                                                                                               std::error_code &ec)
+                                                                                               const client_hello_info_t& info,
+                                                                                               reality::transcript& trans,
+                                                                                               const std::vector<uint8_t>& auth_key,
+                                                                                               const connection_context& ctx,
+                                                                                               std::error_code& ec)
 {
     auto key_pair = key_rotator_.get_current_key();
-    const uint8_t *public_key = key_pair->public_key;
-    const uint8_t *private_key = key_pair->private_key;
+    const uint8_t* public_key = key_pair->public_key;
+    const uint8_t* private_key = key_pair->private_key;
     std::vector<uint8_t> srand(32);
     if (RAND_bytes(srand.data(), 32) != 1)
     {
@@ -390,7 +390,7 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::perform_hand
     auto sh_msg = reality::construct_server_hello(srand, info.session_id, cipher_suite, std::vector<uint8_t>(public_key, public_key + 32));
     trans.update(sh_msg);
 
-    const EVP_MD *md = (cipher_suite == 0x1302) ? EVP_sha384() : EVP_sha256();
+    const EVP_MD* md = (cipher_suite == 0x1302) ? EVP_sha384() : EVP_sha256();
     trans.set_protocol_hash(md);
 
     auto hs_keys = reality::tls_key_schedule::derive_handshake_keys(sh_shared, trans.finish(), md, ec);
@@ -427,7 +427,7 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::perform_hand
     flight2_plain.insert(flight2_plain.end(), cv.begin(), cv.end());
     flight2_plain.insert(flight2_plain.end(), s_fin.begin(), s_fin.end());
 
-    const EVP_CIPHER *cipher = nullptr;
+    const EVP_CIPHER* cipher = nullptr;
     if (cipher_suite == 0x1302)
     {
         cipher = EVP_aes_256_gcm();
@@ -464,13 +464,13 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::perform_hand
 }
 
 asio::awaitable<bool> remote_server::verify_client_finished(std::shared_ptr<asio::ip::tcp::socket> s,
-                                                            const std::pair<std::vector<uint8_t>, std::vector<uint8_t>> &c_hs_keys,
-                                                            const reality::handshake_keys &hs_keys,
-                                                            const reality::transcript &trans,
-                                                            const EVP_CIPHER *cipher,
-                                                            const EVP_MD *md,
-                                                            const connection_context &ctx,
-                                                            std::error_code &ec)
+                                                            const std::pair<std::vector<uint8_t>, std::vector<uint8_t>>& c_hs_keys,
+                                                            const reality::handshake_keys& hs_keys,
+                                                            const reality::transcript& trans,
+                                                            const EVP_CIPHER* cipher,
+                                                            const EVP_MD* md,
+                                                            const connection_context& ctx,
+                                                            std::error_code& ec)
 {
     uint8_t h[5];
     auto [re3, rn3] = co_await asio::async_read(*s, asio::buffer(h, 5), asio::as_tuple(asio::use_awaitable));
@@ -518,11 +518,11 @@ asio::awaitable<bool> remote_server::verify_client_finished(std::shared_ptr<asio
     co_return true;
 }
 
-std::pair<std::string, std::string> remote_server::find_fallback_target_by_sni(const std::string &sni) const
+std::pair<std::string, std::string> remote_server::find_fallback_target_by_sni(const std::string& sni) const
 {
     if (!sni.empty())
     {
-        for (const auto &fb : fallbacks_)
+        for (const auto& fb : fallbacks_)
         {
             if (fb.sni == sni)
             {
@@ -531,7 +531,7 @@ std::pair<std::string, std::string> remote_server::find_fallback_target_by_sni(c
         }
     }
 
-    for (const auto &fb : fallbacks_)
+    for (const auto& fb : fallbacks_)
     {
         if (fb.sni.empty() || fb.sni == "*")
         {
@@ -557,7 +557,7 @@ asio::awaitable<void> remote_server::fallback_failed_timer(uint32_t conn_id, asi
     LOG_DEBUG("{} fallback failed timer {} ms ", conn_id, wait_ms);
 }
 
-asio::awaitable<void> remote_server::fallback_failed(const std::shared_ptr<asio::ip::tcp::socket> &s)
+asio::awaitable<void> remote_server::fallback_failed(const std::shared_ptr<asio::ip::tcp::socket>& s)
 {
     char d[constants::net::BUFFER_SIZE] = {0};
     for (;;)
@@ -573,10 +573,10 @@ asio::awaitable<void> remote_server::fallback_failed(const std::shared_ptr<asio:
     ignore = s->shutdown(asio::ip::tcp::socket::shutdown_receive, ignore);
 }
 
-asio::awaitable<void> remote_server::handle_fallback(const std::shared_ptr<asio::ip::tcp::socket> &s,
+asio::awaitable<void> remote_server::handle_fallback(const std::shared_ptr<asio::ip::tcp::socket>& s,
                                                      std::vector<uint8_t> buf,
-                                                     const connection_context &ctx,
-                                                     const std::string &sni)
+                                                     const connection_context& ctx,
+                                                     const std::string& sni)
 {
     auto fallback_target = find_fallback_target_by_sni(sni);
     if (fallback_target.first.empty())
@@ -618,7 +618,7 @@ asio::awaitable<void> remote_server::handle_fallback(const std::shared_ptr<asio:
         }
     }
 
-    auto xfer = [](auto &f, auto &t) -> asio::awaitable<void>
+    auto xfer = [](auto& f, auto& t) -> asio::awaitable<void>
     {
         char d[constants::net::BUFFER_SIZE];
         for (;;)

@@ -41,7 +41,8 @@ class key_rotator
    private:
     bool rotate()
     {
-        auto deleter = [](x25519_keypair *kp) {
+        auto deleter = [](x25519_keypair* kp)
+        {
             if (kp)
             {
                 OPENSSL_cleanse(kp->private_key, 32);

@@ -35,8 +35,6 @@ struct mux_write_msg
     std::vector<uint8_t> payload;
 };
 
-
-
 class mux_connection : public std::enable_shared_from_this<mux_connection>
 {
    public:

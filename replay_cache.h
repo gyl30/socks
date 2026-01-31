@@ -13,7 +13,7 @@ namespace mux
 class replay_cache
 {
    public:
-    bool check_and_insert(const std::vector<uint8_t> &sid)
+    bool check_and_insert(const std::vector<uint8_t>& sid)
     {
         if (sid.size() != 32)
         {

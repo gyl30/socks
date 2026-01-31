@@ -7,26 +7,22 @@
 namespace reality
 {
 
-// message_builder implementation
-void message_builder::push_u8(std::vector<uint8_t> &buf, uint8_t val)
-{
-    buf.push_back(val);
-}
+void message_builder::push_u8(std::vector<uint8_t>& buf, uint8_t val) { buf.push_back(val); }
 
-void message_builder::push_u16(std::vector<uint8_t> &buf, uint16_t val)
+void message_builder::push_u16(std::vector<uint8_t>& buf, uint16_t val)
 {
     buf.push_back(static_cast<uint8_t>((val >> 8) & 0xFF));
     buf.push_back(static_cast<uint8_t>(val & 0xFF));
 }
 
-void message_builder::push_u24(std::vector<uint8_t> &buf, uint32_t val)
+void message_builder::push_u24(std::vector<uint8_t>& buf, uint32_t val)
 {
     buf.push_back(static_cast<uint8_t>((val >> 16) & 0xFF));
     buf.push_back(static_cast<uint8_t>((val >> 8) & 0xFF));
     buf.push_back(static_cast<uint8_t>(val & 0xFF));
 }
 
-void message_builder::push_u32(std::vector<uint8_t> &buf, uint32_t val)
+void message_builder::push_u32(std::vector<uint8_t>& buf, uint32_t val)
 {
     buf.push_back(static_cast<uint8_t>((val >> 24) & 0xFF));
     buf.push_back(static_cast<uint8_t>((val >> 16) & 0xFF));
@@ -34,42 +30,32 @@ void message_builder::push_u32(std::vector<uint8_t> &buf, uint32_t val)
     buf.push_back(static_cast<uint8_t>(val & 0xFF));
 }
 
-void message_builder::push_bytes(std::vector<uint8_t> &buf, const std::vector<uint8_t> &data)
-{
-    buf.insert(buf.end(), data.begin(), data.end());
-}
+void message_builder::push_bytes(std::vector<uint8_t>& buf, const std::vector<uint8_t>& data) { buf.insert(buf.end(), data.begin(), data.end()); }
 
-void message_builder::push_bytes(std::vector<uint8_t> &buf, const uint8_t *data, size_t len)
-{
-    buf.insert(buf.end(), data, data + len);
-}
+void message_builder::push_bytes(std::vector<uint8_t>& buf, const uint8_t* data, size_t len) { buf.insert(buf.end(), data, data + len); }
 
-void message_builder::push_string(std::vector<uint8_t> &buf, const std::string &str)
-{
-    buf.insert(buf.end(), str.begin(), str.end());
-}
+void message_builder::push_string(std::vector<uint8_t>& buf, const std::string& str) { buf.insert(buf.end(), str.begin(), str.end()); }
 
-void message_builder::push_vector_u8(std::vector<uint8_t> &buf, const std::vector<uint8_t> &data)
+void message_builder::push_vector_u8(std::vector<uint8_t>& buf, const std::vector<uint8_t>& data)
 {
     push_u8(buf, static_cast<uint8_t>(data.size()));
     push_bytes(buf, data);
 }
 
-void message_builder::push_vector_u16(std::vector<uint8_t> &buf, const std::vector<uint8_t> &data)
+void message_builder::push_vector_u16(std::vector<uint8_t>& buf, const std::vector<uint8_t>& data)
 {
     push_u16(buf, static_cast<uint16_t>(data.size()));
     push_bytes(buf, data);
 }
 
-// ClientHelloBuilder implementation
 std::vector<uint8_t> ClientHelloBuilder::build(FingerprintSpec spec,
-                                  const std::vector<uint8_t> &session_id,
-                                  const std::vector<uint8_t> &random,
-                                  const std::vector<uint8_t> &x25519_pubkey,
-                                  const std::string &hostname)
+                                               const std::vector<uint8_t>& session_id,
+                                               const std::vector<uint8_t>& random,
+                                               const std::vector<uint8_t>& x25519_pubkey,
+                                               const std::string& hostname)
 {
     std::vector<uint8_t> hello;
-    GreaseContext grease_ctx;
+    const GreaseContext grease_ctx;
     int grease_ext_count = 0;
 
     message_builder::push_u8(hello, 0x01);
@@ -97,7 +83,7 @@ std::vector<uint8_t> ClientHelloBuilder::build(FingerprintSpec spec,
 
     std::vector<uint8_t> exts;
 
-    for (const auto &ext_ptr : spec.extensions)
+    for (const auto& ext_ptr : spec.extensions)
     {
         std::vector<uint8_t> ext_buffer;
         uint16_t ext_type = 0;
@@ -167,7 +153,7 @@ std::vector<uint8_t> ClientHelloBuilder::build(FingerprintSpec spec,
                 ext_type = tls_consts::ext::ALPN;
                 auto bp = std::static_pointer_cast<ALPNBlueprint>(ext_ptr);
                 std::vector<uint8_t> proto_list;
-                for (const auto &p : bp->protocols)
+                for (const auto& p : bp->protocols)
                 {
                     message_builder::push_vector_u8(proto_list, std::vector<uint8_t>(p.begin(), p.end()));
                 }
@@ -204,7 +190,7 @@ std::vector<uint8_t> ClientHelloBuilder::build(FingerprintSpec spec,
                 ext_type = tls_consts::ext::KEY_SHARE;
                 auto bp = std::static_pointer_cast<KeyShareBlueprint>(ext_ptr);
                 std::vector<uint8_t> share_list;
-                for (const auto &ks : bp->key_shares)
+                for (const auto& ks : bp->key_shares)
                 {
                     uint16_t group = ks.group;
                     if (group == GREASE_PLACEHOLDER)
@@ -281,7 +267,7 @@ std::vector<uint8_t> ClientHelloBuilder::build(FingerprintSpec spec,
                 ext_type = tls_consts::ext::APPLICATION_SETTINGS;
                 auto bp = std::static_pointer_cast<ApplicationSettingsBlueprint>(ext_ptr);
                 std::vector<uint8_t> proto_list;
-                for (const auto &p : bp->supported_protocols)
+                for (const auto& p : bp->supported_protocols)
                 {
                     message_builder::push_vector_u8(proto_list, std::vector<uint8_t>(p.begin(), p.end()));
                 }
@@ -293,7 +279,7 @@ std::vector<uint8_t> ClientHelloBuilder::build(FingerprintSpec spec,
                 ext_type = tls_consts::ext::APPLICATION_SETTINGS_NEW;
                 auto bp = std::static_pointer_cast<ApplicationSettingsNewBlueprint>(ext_ptr);
                 std::vector<uint8_t> proto_list;
-                for (const auto &p : bp->supported_protocols)
+                for (const auto& p : bp->supported_protocols)
                 {
                     message_builder::push_vector_u8(proto_list, std::vector<uint8_t>(p.begin(), p.end()));
                 }
@@ -367,7 +353,7 @@ std::vector<uint8_t> ClientHelloBuilder::build(FingerprintSpec spec,
             case ExtensionType::Padding:
             {
                 ext_type = tls_consts::ext::PADDING;
-                size_t current_len = hello.size() + 2 + exts.size() + 4;
+                auto current_len = hello.size() + 2 + exts.size() + 4;
 
                 size_t padding_len = 0;
                 if (current_len < 512)
@@ -390,7 +376,7 @@ std::vector<uint8_t> ClientHelloBuilder::build(FingerprintSpec spec,
 
     message_builder::push_vector_u16(hello, exts);
 
-    size_t total_len = hello.size() - 4;
+    auto total_len = hello.size() - 4;
     hello[1] = (total_len >> 16) & 0xFF;
     hello[2] = (total_len >> 8) & 0xFF;
     hello[3] = total_len & 0xFF;
@@ -409,10 +395,10 @@ std::vector<uint8_t> write_record_header(uint8_t record_type, uint16_t length)
     return header;
 }
 
-std::vector<uint8_t> construct_server_hello(const std::vector<uint8_t> &server_random,
-                                                   const std::vector<uint8_t> &session_id,
-                                                   uint16_t cipher_suite,
-                                                   const std::vector<uint8_t> &server_public_key)
+std::vector<uint8_t> construct_server_hello(const std::vector<uint8_t>& server_random,
+                                            const std::vector<uint8_t>& session_id,
+                                            uint16_t cipher_suite,
+                                            const std::vector<uint8_t>& server_public_key)
 {
     std::vector<uint8_t> hello;
     hello.push_back(0x02);
@@ -448,7 +434,7 @@ std::vector<uint8_t> construct_server_hello(const std::vector<uint8_t> &server_r
     return hello;
 }
 
-std::vector<uint8_t> construct_encrypted_extensions(const std::string &alpn)
+std::vector<uint8_t> construct_encrypted_extensions(const std::string& alpn)
 {
     std::vector<uint8_t> msg;
     msg.push_back(0x08);
@@ -478,7 +464,7 @@ std::vector<uint8_t> construct_encrypted_extensions(const std::string &alpn)
     return msg;
 }
 
-std::vector<uint8_t> construct_certificate(const std::vector<uint8_t> &cert_der)
+std::vector<uint8_t> construct_certificate(const std::vector<uint8_t>& cert_der)
 {
     std::vector<uint8_t> msg;
     msg.push_back(0x0b);
@@ -495,7 +481,7 @@ std::vector<uint8_t> construct_certificate(const std::vector<uint8_t> &cert_der)
     return msg;
 }
 
-std::vector<uint8_t> construct_certificate_verify(EVP_PKEY *signing_key, const std::vector<uint8_t> &handshake_hash)
+std::vector<uint8_t> construct_certificate_verify(EVP_PKEY* signing_key, const std::vector<uint8_t>& handshake_hash)
 {
     std::vector<uint8_t> msg;
     msg.push_back(0x0f);
@@ -505,7 +491,7 @@ std::vector<uint8_t> construct_certificate_verify(EVP_PKEY *signing_key, const s
     to_sign.push_back(0x00);
     to_sign.insert(to_sign.end(), handshake_hash.begin(), handshake_hash.end());
 
-    EVP_MD_CTX *mctx = EVP_MD_CTX_new();
+    EVP_MD_CTX* mctx = EVP_MD_CTX_new();
     EVP_DigestSignInit(mctx, nullptr, nullptr, nullptr, signing_key);
     size_t sig_len = 0;
     EVP_DigestSign(mctx, nullptr, &sig_len, to_sign.data(), to_sign.size());
@@ -522,7 +508,7 @@ std::vector<uint8_t> construct_certificate_verify(EVP_PKEY *signing_key, const s
     return msg;
 }
 
-std::vector<uint8_t> construct_finished(const std::vector<uint8_t> &verify_data)
+std::vector<uint8_t> construct_finished(const std::vector<uint8_t>& verify_data)
 {
     std::vector<uint8_t> msg;
     msg.push_back(0x14);
@@ -531,7 +517,7 @@ std::vector<uint8_t> construct_finished(const std::vector<uint8_t> &verify_data)
     return msg;
 }
 
-std::optional<uint16_t> extract_cipher_suite_from_server_hello(const std::vector<uint8_t> &server_hello)
+std::optional<uint16_t> extract_cipher_suite_from_server_hello(const std::vector<uint8_t>& server_hello)
 {
     if (server_hello.size() < 4 + 2 + 32 + 1)
     {
@@ -539,7 +525,7 @@ std::optional<uint16_t> extract_cipher_suite_from_server_hello(const std::vector
     }
 
     uint32_t pos = 4 + 2 + 32;
-    uint8_t sid_len = server_hello[pos];
+    const uint8_t sid_len = server_hello[pos];
     pos += 1 + sid_len;
 
     if (pos + 2 > server_hello.size())
@@ -550,7 +536,7 @@ std::optional<uint16_t> extract_cipher_suite_from_server_hello(const std::vector
     return static_cast<uint16_t>((server_hello[pos] << 8) | server_hello[pos + 1]);
 }
 
-std::vector<uint8_t> extract_server_public_key(const std::vector<uint8_t> &server_hello)
+std::vector<uint8_t> extract_server_public_key(const std::vector<uint8_t>& server_hello)
 {
     uint32_t pos = 0;
     if (server_hello.size() < 4)
@@ -579,7 +565,7 @@ std::vector<uint8_t> extract_server_public_key(const std::vector<uint8_t> &serve
         return {};
     }
 
-    uint8_t sid_len = server_hello[pos];
+    const uint8_t sid_len = server_hello[pos];
     pos += 1 + sid_len;
 
     pos += 3;
@@ -614,7 +600,7 @@ std::vector<uint8_t> extract_server_public_key(const std::vector<uint8_t> &serve
     return {};
 }
 
-std::optional<std::string> extract_alpn_from_encrypted_extensions(const std::vector<uint8_t> &ee_msg)
+std::optional<std::string> extract_alpn_from_encrypted_extensions(const std::vector<uint8_t>& ee_msg)
 {
     if (ee_msg.size() < 6 || ee_msg[0] != 0x08)
     {
@@ -622,10 +608,10 @@ std::optional<std::string> extract_alpn_from_encrypted_extensions(const std::vec
     }
 
     uint32_t pos = 4;
-    uint16_t total_ext_len = (ee_msg[pos] << 8) | ee_msg[pos + 1];
+    const uint16_t total_ext_len = (ee_msg[pos] << 8) | ee_msg[pos + 1];
     pos += 2;
 
-    size_t end = pos + total_ext_len;
+    const size_t end = pos + total_ext_len;
     if (end > ee_msg.size())
     {
         return std::nullopt;
@@ -633,8 +619,8 @@ std::optional<std::string> extract_alpn_from_encrypted_extensions(const std::vec
 
     while (pos + 4 <= end)
     {
-        uint16_t type = (ee_msg[pos] << 8) | ee_msg[pos + 1];
-        uint16_t len = (ee_msg[pos + 2] << 8) | ee_msg[pos + 3];
+        const uint16_t type = (ee_msg[pos] << 8) | ee_msg[pos + 1];
+        const uint16_t len = (ee_msg[pos + 2] << 8) | ee_msg[pos + 3];
         pos += 4;
 
         if (pos + len > end)
@@ -649,13 +635,13 @@ std::optional<std::string> extract_alpn_from_encrypted_extensions(const std::vec
                 break;
             }
 
-            uint16_t list_len = (ee_msg[pos] << 8) | ee_msg[pos + 1];
+            const uint16_t list_len = (ee_msg[pos] << 8) | ee_msg[pos + 1];
             if (list_len > 0 && pos + 2 + 1 <= end)
             {
-                uint8_t proto_len = ee_msg[pos + 2];
+                const uint8_t proto_len = ee_msg[pos + 2];
                 if (pos + 3 + proto_len <= end)
                 {
-                    return std::string(reinterpret_cast<const char *>(&ee_msg[pos + 3]), proto_len);
+                    return std::string(reinterpret_cast<const char*>(&ee_msg[pos + 3]), proto_len);
                 }
             }
         }
@@ -664,4 +650,4 @@ std::optional<std::string> extract_alpn_from_encrypted_extensions(const std::vec
     return std::nullopt;
 }
 
-} // namespace reality
+}    // namespace reality

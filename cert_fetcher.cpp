@@ -5,16 +5,12 @@
 namespace reality
 {
 
-namespace 
+namespace
 {
-    constexpr size_t MAX_MSG_SIZE = 64L * 1024;
+constexpr size_t MAX_MSG_SIZE = 64L * 1024;
 }
 
-// handshake_reassembler
-void handshake_reassembler::append(std::span<const uint8_t> data)
-{
-    buffer_.insert(buffer_.end(), data.begin(), data.end());
-}
+void handshake_reassembler::append(std::span<const uint8_t> data) { buffer_.insert(buffer_.end(), data.begin(), data.end()); }
 
 bool handshake_reassembler::next(std::vector<uint8_t>& out, std::error_code& ec)
 {
@@ -43,16 +39,9 @@ bool handshake_reassembler::next(std::vector<uint8_t>& out, std::error_code& ec)
     return true;
 }
 
-// cert_fetcher
-std::string cert_fetcher::hex(const std::vector<uint8_t>& data)
-{
-    return crypto_util::bytes_to_hex(data);
-}
+std::string cert_fetcher::hex(const std::vector<uint8_t>& data) { return crypto_util::bytes_to_hex(data); }
 
-std::string cert_fetcher::hex(const uint8_t* data, size_t len)
-{
-    return crypto_util::bytes_to_hex(std::vector<uint8_t>(data, data + len));
-}
+std::string cert_fetcher::hex(const uint8_t* data, size_t len) { return crypto_util::bytes_to_hex(std::vector<uint8_t>(data, data + len)); }
 
 asio::awaitable<std::optional<fetch_result>> cert_fetcher::fetch(
     asio::any_io_executor ex, std::string host, uint16_t port, std::string sni, const std::string& trace_id)
@@ -61,8 +50,8 @@ asio::awaitable<std::optional<fetch_result>> cert_fetcher::fetch(
     co_return co_await session.run();
 }
 
-// fetch_session
-cert_fetcher::fetch_session::fetch_session(const asio::any_io_executor& ex, std::string host, uint16_t port, std::string sni, const std::string& trace_id)
+cert_fetcher::fetch_session::fetch_session(
+    const asio::any_io_executor& ex, std::string host, uint16_t port, std::string sni, const std::string& trace_id)
     : socket_(ex), host_(std::move(host)), port_(port), sni_(std::move(sni))
 {
     ctx_.trace_id = trace_id;
@@ -341,7 +330,8 @@ asio::awaitable<std::pair<std::error_code, std::vector<uint8_t>>> cert_fetcher::
     co_return std::make_pair(std::error_code{}, std::move(body));
 }
 
-asio::awaitable<std::pair<uint8_t, std::span<uint8_t>>> cert_fetcher::fetch_session::read_record(std::vector<uint8_t>& pt_buf, std::error_code& out_ec)
+asio::awaitable<std::pair<uint8_t, std::span<uint8_t>>> cert_fetcher::fetch_session::read_record(std::vector<uint8_t>& pt_buf,
+                                                                                                 std::error_code& out_ec)
 {
     uint8_t head[5];
     auto [ec, n] = co_await asio::async_read(socket_, asio::buffer(head), asio::as_tuple(asio::use_awaitable));
@@ -384,8 +374,7 @@ asio::awaitable<std::pair<uint8_t, std::span<uint8_t>>> cert_fetcher::fetch_sess
         std::memcpy(cth.data() + 5, rec.data(), len);
 
         uint8_t type;
-        uint32_t pt_len =
-            tls_record_layer::decrypt_record(decrypt_ctx_, negotiated_cipher_, dec_key_, dec_iv_, seq_++, cth, pt_buf, type, out_ec);
+        uint32_t pt_len = tls_record_layer::decrypt_record(decrypt_ctx_, negotiated_cipher_, dec_key_, dec_iv_, seq_++, cth, pt_buf, type, out_ec);
 
         if (out_ec)
         {
@@ -405,4 +394,4 @@ asio::awaitable<std::pair<uint8_t, std::span<uint8_t>>> cert_fetcher::fetch_sess
     co_return std::make_pair(0, std::span<uint8_t>{});
 }
 
-} // namespace reality
+}    // namespace reality

@@ -13,7 +13,7 @@ namespace mux
 class remote_udp_session : public mux_stream_interface, public std::enable_shared_from_this<remote_udp_session>
 {
    public:
-    remote_udp_session(std::shared_ptr<mux_connection> connection, uint32_t id, const asio::any_io_executor &ex, const connection_context &ctx)
+    remote_udp_session(std::shared_ptr<mux_connection> connection, uint32_t id, const asio::any_io_executor& ex, const connection_context& ctx)
         : id_(id), timer_(ex), udp_socket_(ex), udp_resolver_(ex), connection_(std::move(connection)), recv_channel_(ex, 128)
     {
         ctx_ = ctx;
@@ -83,7 +83,7 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
         (void)ignore;
     }
     void on_reset() override { on_close(); }
-    void set_manager(const std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> &m) { manager_ = m; }
+    void set_manager(const std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>& m) { manager_ = m; }
 
    private:
     asio::awaitable<void> watchdog()

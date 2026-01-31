@@ -45,7 +45,7 @@ struct socks_udp_header
 class socks_codec
 {
    public:
-    static asio::ip::address normalize_ip_address(const asio::ip::address &addr)
+    static asio::ip::address normalize_ip_address(const asio::ip::address& addr)
     {
         if (addr.is_v4())
         {
@@ -54,7 +54,7 @@ class socks_codec
 
         if (addr.is_v6())
         {
-            if (const auto &v6 = addr.to_v6(); v6.is_v4_mapped())
+            if (const auto& v6 = addr.to_v6(); v6.is_v4_mapped())
             {
                 return asio::ip::make_address_v4(asio::ip::v4_mapped, v6);
             }
@@ -63,7 +63,7 @@ class socks_codec
         return addr;
     }
 
-    [[nodiscard]] static std::vector<uint8_t> encode_udp_header(const socks_udp_header &h)
+    [[nodiscard]] static std::vector<uint8_t> encode_udp_header(const socks_udp_header& h)
     {
         std::vector<uint8_t> buf;
         buf.reserve(24);
@@ -103,7 +103,7 @@ class socks_codec
         return buf;
     }
 
-    [[nodiscard]] static bool decode_udp_header(const uint8_t *data, size_t len, socks_udp_header &out)
+    [[nodiscard]] static bool decode_udp_header(const uint8_t* data, size_t len, socks_udp_header& out)
     {
         if (len < 4)
         {
@@ -137,7 +137,7 @@ class socks_codec
             {
                 return false;
             }
-            out.addr = std::string(reinterpret_cast<const char *>(data) + pos, dlen);
+            out.addr = std::string(reinterpret_cast<const char*>(data) + pos, dlen);
             pos += dlen;
         }
         else if (atyp == socks::ATYP_IPV6)

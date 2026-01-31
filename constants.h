@@ -9,32 +9,32 @@ namespace constants
 
 namespace net
 {
-    constexpr std::size_t BUFFER_SIZE = 4096;
-    constexpr int RETRY_INTERVAL_SEC = 5;
-    constexpr int MAX_LISTEN_CONNECTIONS = 1024; // Implicit in asio::socket_base::max_listen_connections usually, but good to have if we need explicit
-}
+constexpr std::size_t BUFFER_SIZE = 4096;
+constexpr int RETRY_INTERVAL_SEC = 5;
+constexpr int MAX_LISTEN_CONNECTIONS = 1024;    // Implicit in asio::socket_base::max_listen_connections usually, but good to have if we need explicit
+}    // namespace net
 
 namespace auth
 {
-    constexpr int MAX_CLOCK_SKEW_SEC = 300;
-    constexpr std::size_t SESSION_ID_LEN = 32;
-    constexpr std::size_t AUTH_KEY_LEN = 32;
-    constexpr std::size_t SALT_LEN = 20;
-}
+constexpr int MAX_CLOCK_SKEW_SEC = 300;
+constexpr std::size_t SESSION_ID_LEN = 32;
+constexpr std::size_t AUTH_KEY_LEN = 32;
+constexpr std::size_t SALT_LEN = 20;
+}    // namespace auth
 
 namespace crypto
 {
-    constexpr std::size_t KEY_LEN_128 = 16;
-    constexpr std::size_t KEY_LEN_256 = 32;
-    constexpr std::size_t IV_LEN = 12;
-    constexpr std::size_t TAG_LEN = 16;
-}
+constexpr std::size_t KEY_LEN_128 = 16;
+constexpr std::size_t KEY_LEN_256 = 32;
+constexpr std::size_t IV_LEN = 12;
+constexpr std::size_t TAG_LEN = 16;
+}    // namespace crypto
 
 namespace fallback
 {
-    constexpr int MAX_WAIT_MS = 120 * 1000;
+constexpr int MAX_WAIT_MS = 120 * 1000;
 }
 
-} // namespace constants
+}    // namespace constants
 
-#endif // CONSTANTS_H
+#endif    // CONSTANTS_H

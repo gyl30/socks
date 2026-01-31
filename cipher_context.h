@@ -19,9 +19,10 @@ class cipher_context
 
     [[nodiscard]] bool init(bool encrypt, const EVP_CIPHER* cipher, const uint8_t* key, const uint8_t* iv, size_t iv_len) const
     {
-        if (!valid()) {
+        if (!valid())
+        {
             return false;
-}
+        }
 
         if (EVP_CIPHER_mode(cipher) == EVP_CIPH_GCM_MODE)
         {
