@@ -64,10 +64,11 @@ class ip_matcher
 
     [[nodiscard]] bool match(const asio::ip::address& addr) const;
 
-   private:
     void add_rule(const std::string& cidr);
 
     void optimize();
+
+   private:
 
     void optimize_v4();
 
