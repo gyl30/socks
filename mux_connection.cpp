@@ -214,7 +214,14 @@ asio::awaitable<void> mux_connection::timeout_loop()
         auto [ec] = co_await timer_.async_wait(asio::as_tuple(asio::use_awaitable));
         if (ec)
         {
-            LOG_WARN("mux {} timeout error {}", cid_, ec.message());
+            if (ec == asio::error::operation_aborted)
+            {
+                LOG_DEBUG("mux {} timeout timer cancelled", cid_);
+            }
+            else
+            {
+                LOG_WARN("mux {} timeout error {}", cid_, ec.message());
+            }
             break;
         }
         auto now = std::chrono::steady_clock::now();
@@ -223,10 +230,12 @@ asio::awaitable<void> mux_connection::timeout_loop()
         if (read_elapsed > std::chrono::seconds(timeout_config_.read))
         {
             LOG_WARN("mux {} timeout read after {}s", cid_, timeout_config_.read);
+            break; 
         }
         if (write_elapsed > std::chrono::seconds(timeout_config_.write))
         {
             LOG_WARN("mux {} timeout write after {}s", cid_, timeout_config_.write);
+            break;
         }
     }
 
