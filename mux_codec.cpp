@@ -73,6 +73,11 @@ bool mux_codec::decode_syn(const std::uint8_t* data, std::size_t len, syn_payloa
         {
             out.trace_id = std::string(reinterpret_cast<const char*>(&data[current_pos]), trace_id_len);
         }
+        else
+        {
+            LOG_WARN("syn payload length invalid for trace len {}", trace_id_len);
+            return false;
+        }
     }
     return true;
 }
