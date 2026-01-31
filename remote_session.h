@@ -48,7 +48,10 @@ class remote_session : public mux_stream_interface, public std::enable_shared_fr
 
         std::error_code ec_sock;
         ec_sock = target_socket_.set_option(asio::ip::tcp::no_delay(true), ec_sock);
-        (void)ec_sock;
+        if (ec_sock)
+        {
+            LOG_CTX_WARN(ctx_, "set_option no_delay failed {}", ec_sock.message());
+        }
 
         LOG_CTX_INFO(ctx_, "{} connected {} {}", log_event::CONN_ESTABLISHED, syn.addr, syn.port);
 

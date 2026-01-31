@@ -6,6 +6,7 @@
 #include <fstream>
 #include <array>
 #include <algorithm>
+#include <charconv>
 #include <asio.hpp>
 #include "log.h"
 
@@ -161,7 +162,14 @@ class ip_matcher
             return;
         }
         std::string ip_part = cidr.substr(0, slash_pos);
-        int prefix_len = std::stoi(cidr.substr(slash_pos + 1));
+        int prefix_len = 0;
+        auto len_str = cidr.substr(slash_pos + 1);
+        auto [ptr, from_ec] = std::from_chars(len_str.data(), len_str.data() + len_str.size(), prefix_len);
+        if (from_ec != std::errc() || ptr != len_str.data() + len_str.size())
+        {
+            LOG_WARN("invalid prefix length {}", len_str);
+            return;
+        }
         std::error_code ec;
         auto addr = asio::ip::make_address(ip_part, ec);
         if (ec)
