@@ -98,24 +98,38 @@ bool ip_matcher::match(const asio::ip::address& addr) const
     return false;
 }
 
+static std::string_view trim(std::string_view sv)
+{
+    auto start = sv.find_first_not_of(" \t\r\n");
+    if (start == std::string_view::npos)
+        return {};
+    auto end = sv.find_last_not_of(" \t\r\n");
+    return sv.substr(start, end - start + 1);
+}
+
 void ip_matcher::add_rule(const std::string& cidr)
 {
-    auto slash_pos = cidr.find('/');
-    if (slash_pos == std::string::npos)
+    std::string_view line_sv = cidr;
+    auto slash_pos = line_sv.find('/');
+    if (slash_pos == std::string_view::npos)
     {
         return;
     }
-    std::string ip_part = cidr.substr(0, slash_pos);
+    auto ip_part = trim(line_sv.substr(0, slash_pos));
+    auto len_part = trim(line_sv.substr(slash_pos + 1));
+
     int prefix_len = 0;
-    auto len_str = cidr.substr(slash_pos + 1);
-    auto [ptr, from_ec] = std::from_chars(len_str.data(), len_str.data() + len_str.size(), prefix_len);
-    if (from_ec != std::errc() || ptr != len_str.data() + len_str.size())
+    auto [ptr, from_ec] = std::from_chars(len_part.data(), len_part.data() + len_part.size(), prefix_len);
+    if (from_ec != std::errc() || ptr != len_part.data() + len_part.size())
     {
-        LOG_WARN("invalid prefix length {}", len_str);
+        LOG_WARN("invalid prefix length {}", len_part);
         return;
     }
     std::error_code ec;
-    auto addr = asio::ip::make_address(ip_part, ec);
+    // make_address might require null-terminated string depending on version, 
+    // safer to construct string for now or ensure Asio supports string_view.
+    // Given Asio usage usually supports string_view in newer versions, but std::string is safest.
+    auto addr = asio::ip::make_address(std::string(ip_part), ec);
     if (ec)
     {
         LOG_ERROR("{} parse address failed {}", ip_part, ec.message());
@@ -126,6 +140,7 @@ void ip_matcher::add_rule(const std::string& cidr)
     {
         if (prefix_len < 0 || prefix_len > 32)
         {
+            LOG_WARN("invalid ipv4 prefix length {}", prefix_len);
             return;
         }
         uint32_t mask = make_mask_v4(prefix_len);
@@ -137,6 +152,7 @@ void ip_matcher::add_rule(const std::string& cidr)
     {
         if (prefix_len < 0 || prefix_len > 128)
         {
+            LOG_WARN("invalid ipv6 prefix length {}", prefix_len);
             return;
         }
         u128_ip mask = make_mask_v6(prefix_len);
