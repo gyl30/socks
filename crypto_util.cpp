@@ -92,8 +92,8 @@ std::vector<uint8_t> crypto_util::extract_public_key(const std::vector<uint8_t>&
 }
 
 std::vector<uint8_t> crypto_util::x25519_derive(const std::vector<uint8_t>& private_key,
-                                                        const std::vector<uint8_t>& peer_public_key,
-                                                        std::error_code& ec)
+                                                const std::vector<uint8_t>& peer_public_key,
+                                                std::error_code& ec)
 {
     if (private_key.size() != 32 || peer_public_key.size() != 32)
     {
@@ -132,9 +132,9 @@ std::vector<uint8_t> crypto_util::x25519_derive(const std::vector<uint8_t>& priv
 }
 
 std::vector<uint8_t> crypto_util::hkdf_extract(const std::vector<uint8_t>& salt,
-                                                       const std::vector<uint8_t>& ikm,
-                                                       const EVP_MD* md,
-                                                       std::error_code& ec)
+                                               const std::vector<uint8_t>& ikm,
+                                               const EVP_MD* md,
+                                               std::error_code& ec)
 {
     const openssl_ptrs::evp_pkey_ctx_ptr evp_pkey_ctx(EVP_PKEY_CTX_new_id(EVP_PKEY_HKDF, nullptr));
     if (!evp_pkey_ctx || EVP_PKEY_derive_init(evp_pkey_ctx.get()) <= 0)
@@ -196,11 +196,11 @@ std::vector<uint8_t> crypto_util::hkdf_expand(
 }
 
 std::vector<uint8_t> crypto_util::hkdf_expand_label(const std::vector<uint8_t>& secret,
-                                                            const std::string& label,
-                                                            const std::vector<uint8_t>& context,
-                                                            size_t length,
-                                                            const EVP_MD* md,
-                                                            std::error_code& ec)
+                                                    const std::string& label,
+                                                    const std::vector<uint8_t>& context,
+                                                    size_t length,
+                                                    const EVP_MD* md,
+                                                    std::error_code& ec)
 {
     std::string full_label = "tls13 " + label;
     std::vector<uint8_t> hkdf_label;
@@ -216,13 +216,13 @@ std::vector<uint8_t> crypto_util::hkdf_expand_label(const std::vector<uint8_t>& 
 }
 
 size_t crypto_util::aead_decrypt(const cipher_context& ctx,
-                           const EVP_CIPHER* cipher,
-                           const std::vector<uint8_t>& key,
-                           std::span<const uint8_t> nonce,
-                           std::span<const uint8_t> ciphertext,
-                           std::span<const uint8_t> aad,
-                           std::span<uint8_t> output_buffer,
-                           std::error_code& ec)
+                                 const EVP_CIPHER* cipher,
+                                 const std::vector<uint8_t>& key,
+                                 std::span<const uint8_t> nonce,
+                                 std::span<const uint8_t> ciphertext,
+                                 std::span<const uint8_t> aad,
+                                 std::span<uint8_t> output_buffer,
+                                 std::error_code& ec)
 {
     if (ciphertext.size() < AEAD_TAG_SIZE)
     {
@@ -281,11 +281,11 @@ size_t crypto_util::aead_decrypt(const cipher_context& ctx,
 }
 
 std::vector<uint8_t> crypto_util::aead_decrypt(const EVP_CIPHER* cipher,
-                                                       const std::vector<uint8_t>& key,
-                                                       const std::vector<uint8_t>& nonce,
-                                                       const std::vector<uint8_t>& ciphertext,
-                                                       const std::vector<uint8_t>& aad,
-                                                       std::error_code& ec)
+                                               const std::vector<uint8_t>& key,
+                                               const std::vector<uint8_t>& nonce,
+                                               const std::vector<uint8_t>& ciphertext,
+                                               const std::vector<uint8_t>& aad,
+                                               std::error_code& ec)
 {
     const cipher_context ctx;
     if (ciphertext.size() < AEAD_TAG_SIZE)
@@ -304,13 +304,13 @@ std::vector<uint8_t> crypto_util::aead_decrypt(const EVP_CIPHER* cipher,
 }
 
 void crypto_util::aead_encrypt_append(const cipher_context& ctx,
-                                const EVP_CIPHER* cipher,
-                                const std::vector<uint8_t>& key,
-                                const std::vector<uint8_t>& nonce,
-                                const std::vector<uint8_t>& plaintext,
-                                std::span<const uint8_t> aad,
-                                std::vector<uint8_t>& output_buffer,
-                                std::error_code& ec)
+                                      const EVP_CIPHER* cipher,
+                                      const std::vector<uint8_t>& key,
+                                      const std::vector<uint8_t>& nonce,
+                                      const std::vector<uint8_t>& plaintext,
+                                      std::span<const uint8_t> aad,
+                                      std::vector<uint8_t>& output_buffer,
+                                      std::error_code& ec)
 {
     if (!ctx.init(true, cipher, key.data(), nonce.data(), nonce.size()))
     {
@@ -347,11 +347,11 @@ void crypto_util::aead_encrypt_append(const cipher_context& ctx,
 }
 
 std::vector<uint8_t> crypto_util::aead_encrypt(const EVP_CIPHER* cipher,
-                                                       const std::vector<uint8_t>& key,
-                                                       const std::vector<uint8_t>& nonce,
-                                                       const std::vector<uint8_t>& plaintext,
-                                                       const std::vector<uint8_t>& aad,
-                                                       std::error_code& ec)
+                                               const std::vector<uint8_t>& key,
+                                               const std::vector<uint8_t>& nonce,
+                                               const std::vector<uint8_t>& plaintext,
+                                               const std::vector<uint8_t>& aad,
+                                               std::error_code& ec)
 {
     const cipher_context ctx;
     std::vector<uint8_t> out;
@@ -381,9 +381,9 @@ openssl_ptrs::evp_pkey_ptr crypto_util::extract_pubkey_from_cert(const std::vect
 }
 
 bool crypto_util::verify_tls13_signature(EVP_PKEY* pub_key,
-                                   const std::vector<uint8_t>& transcript_hash,
-                                   const std::vector<uint8_t>& signature,
-                                   std::error_code& ec)
+                                         const std::vector<uint8_t>& transcript_hash,
+                                         const std::vector<uint8_t>& signature,
+                                         std::error_code& ec)
 {
     std::vector<uint8_t> to_verify(64, 0x20);
 
@@ -420,4 +420,4 @@ bool crypto_util::verify_tls13_signature(EVP_PKEY* pub_key,
     return true;
 }
 
-} // namespace reality
+}    // namespace reality

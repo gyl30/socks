@@ -8,11 +8,10 @@ namespace reality
 
 namespace
 {
-    const std::vector<uint16_t> GREASE_VALUES = {
-        0x0a0a, 0x1a1a, 0x2a2a, 0x3a3a, 0x4a4a, 0x5a5a, 0x6a6a, 0x7a7a, 0x8a8a, 0x9a9a, 0xaaaa, 0xbaba, 0xcaca, 0xdada, 0xeaea, 0xfafa};
+const std::vector<uint16_t> GREASE_VALUES = {
+    0x0a0a, 0x1a1a, 0x2a2a, 0x3a3a, 0x4a4a, 0x5a5a, 0x6a6a, 0x7a7a, 0x8a8a, 0x9a9a, 0xaaaa, 0xbaba, 0xcaca, 0xdada, 0xeaea, 0xfafa};
 }
 
-// GreaseContext Implementation
 GreaseContext::GreaseContext()
 {
     if (RAND_bytes(reinterpret_cast<uint8_t*>(seed_.data()), seed_.size() * 2) != 1)
@@ -37,7 +36,6 @@ uint16_t GreaseContext::get_extension_grease(int nth_occurrence) const
     return (nth_occurrence == 0) ? val1 : val2;
 }
 
-// FingerprintFactory Implementation
 FingerprintSpec FingerprintFactory::Get(FingerprintType type)
 {
     FingerprintSpec spec;
@@ -85,14 +83,14 @@ FingerprintSpec FingerprintFactory::Get(FingerprintType type)
 
             auto sig = std::make_shared<SignatureAlgorithmsBlueprint>();
             sig->algorithms = {tls_consts::sig_alg::ECDSA_SECP256R1_SHA256,
-                                tls_consts::sig_alg::RSA_PSS_RSAE_SHA256,
-                                tls_consts::sig_alg::RSA_PKCS1_SHA256,
-                                tls_consts::sig_alg::ECDSA_SECP384R1_SHA384,
-                                tls_consts::sig_alg::RSA_PSS_RSAE_SHA384,
-                                tls_consts::sig_alg::RSA_PKCS1_SHA384,
-                                tls_consts::sig_alg::RSA_PSS_RSAE_SHA512,
-                                tls_consts::sig_alg::RSA_PKCS1_SHA512,
-                                tls_consts::sig_alg::RSA_PKCS1_SHA1};
+                               tls_consts::sig_alg::RSA_PSS_RSAE_SHA256,
+                               tls_consts::sig_alg::RSA_PKCS1_SHA256,
+                               tls_consts::sig_alg::ECDSA_SECP384R1_SHA384,
+                               tls_consts::sig_alg::RSA_PSS_RSAE_SHA384,
+                               tls_consts::sig_alg::RSA_PKCS1_SHA384,
+                               tls_consts::sig_alg::RSA_PSS_RSAE_SHA512,
+                               tls_consts::sig_alg::RSA_PKCS1_SHA512,
+                               tls_consts::sig_alg::RSA_PKCS1_SHA1};
             spec.extensions.push_back(sig);
             spec.extensions.push_back(status_req);
             spec.extensions.push_back(sct);
@@ -164,13 +162,13 @@ FingerprintSpec FingerprintFactory::Get(FingerprintType type)
 
             auto sig = std::make_shared<SignatureAlgorithmsBlueprint>();
             sig->algorithms = {tls_consts::sig_alg::ECDSA_SECP256R1_SHA256,
-                                tls_consts::sig_alg::RSA_PSS_RSAE_SHA256,
-                                tls_consts::sig_alg::RSA_PKCS1_SHA256,
-                                tls_consts::sig_alg::ECDSA_SECP384R1_SHA384,
-                                tls_consts::sig_alg::RSA_PSS_RSAE_SHA384,
-                                tls_consts::sig_alg::RSA_PKCS1_SHA384,
-                                tls_consts::sig_alg::RSA_PSS_RSAE_SHA512,
-                                tls_consts::sig_alg::RSA_PKCS1_SHA512};
+                               tls_consts::sig_alg::RSA_PSS_RSAE_SHA256,
+                               tls_consts::sig_alg::RSA_PKCS1_SHA256,
+                               tls_consts::sig_alg::ECDSA_SECP384R1_SHA384,
+                               tls_consts::sig_alg::RSA_PSS_RSAE_SHA384,
+                               tls_consts::sig_alg::RSA_PKCS1_SHA384,
+                               tls_consts::sig_alg::RSA_PSS_RSAE_SHA512,
+                               tls_consts::sig_alg::RSA_PKCS1_SHA512};
             spec.extensions.push_back(sig);
             spec.extensions.push_back(sct);
 
@@ -213,10 +211,10 @@ FingerprintSpec FingerprintFactory::Get(FingerprintType type)
                 {
                     auto g = std::static_pointer_cast<SupportedGroupsBlueprint>(ext);
                     g->groups = {GREASE_PLACEHOLDER,
-                                    tls_consts::group::X25519_MLKEM768,
-                                    tls_consts::group::X25519,
-                                    tls_consts::group::SECP256R1,
-                                    tls_consts::group::SECP384R1};
+                                 tls_consts::group::X25519_MLKEM768,
+                                 tls_consts::group::X25519,
+                                 tls_consts::group::SECP256R1,
+                                 tls_consts::group::SECP384R1};
                 }
                 if (ext->type() == ExtensionType::KeyShare)
                 {
@@ -243,10 +241,10 @@ FingerprintSpec FingerprintFactory::Get(FingerprintType type)
                 {
                     auto g = std::static_pointer_cast<SupportedGroupsBlueprint>(ext);
                     g->groups = {GREASE_PLACEHOLDER,
-                                    tls_consts::group::X25519_MLKEM768,
-                                    tls_consts::group::X25519,
-                                    tls_consts::group::SECP256R1,
-                                    tls_consts::group::SECP384R1};
+                                 tls_consts::group::X25519_MLKEM768,
+                                 tls_consts::group::X25519,
+                                 tls_consts::group::SECP256R1,
+                                 tls_consts::group::SECP384R1};
                 }
                 if (ext->type() == ExtensionType::KeyShare)
                 {
@@ -303,9 +301,9 @@ FingerprintSpec FingerprintFactory::Get(FingerprintType type)
 
             auto dc = std::make_shared<DelegatedCredentialsBlueprint>();
             dc->algorithms = {tls_consts::sig_alg::ECDSA_SECP256R1_SHA256,
-                                tls_consts::sig_alg::ECDSA_SECP384R1_SHA384,
-                                tls_consts::sig_alg::ECDSA_SECP521R1_SHA512,
-                                tls_consts::sig_alg::ECDSA_SHA1};
+                              tls_consts::sig_alg::ECDSA_SECP384R1_SHA384,
+                              tls_consts::sig_alg::ECDSA_SECP521R1_SHA512,
+                              tls_consts::sig_alg::ECDSA_SHA1};
             spec.extensions.push_back(dc);
 
             auto ks = std::make_shared<KeyShareBlueprint>();
@@ -318,16 +316,16 @@ FingerprintSpec FingerprintFactory::Get(FingerprintType type)
 
             auto sig = std::make_shared<SignatureAlgorithmsBlueprint>();
             sig->algorithms = {tls_consts::sig_alg::ECDSA_SECP256R1_SHA256,
-                                tls_consts::sig_alg::ECDSA_SECP384R1_SHA384,
-                                tls_consts::sig_alg::ECDSA_SECP521R1_SHA512,
-                                tls_consts::sig_alg::RSA_PSS_RSAE_SHA256,
-                                tls_consts::sig_alg::RSA_PSS_RSAE_SHA384,
-                                tls_consts::sig_alg::RSA_PSS_RSAE_SHA512,
-                                tls_consts::sig_alg::RSA_PKCS1_SHA256,
-                                tls_consts::sig_alg::RSA_PKCS1_SHA384,
-                                tls_consts::sig_alg::RSA_PKCS1_SHA512,
-                                tls_consts::sig_alg::ECDSA_SHA1,
-                                tls_consts::sig_alg::RSA_PKCS1_SHA1};
+                               tls_consts::sig_alg::ECDSA_SECP384R1_SHA384,
+                               tls_consts::sig_alg::ECDSA_SECP521R1_SHA512,
+                               tls_consts::sig_alg::RSA_PSS_RSAE_SHA256,
+                               tls_consts::sig_alg::RSA_PSS_RSAE_SHA384,
+                               tls_consts::sig_alg::RSA_PSS_RSAE_SHA512,
+                               tls_consts::sig_alg::RSA_PKCS1_SHA256,
+                               tls_consts::sig_alg::RSA_PKCS1_SHA384,
+                               tls_consts::sig_alg::RSA_PKCS1_SHA512,
+                               tls_consts::sig_alg::ECDSA_SHA1,
+                               tls_consts::sig_alg::RSA_PKCS1_SHA1};
             spec.extensions.push_back(sig);
 
             auto pskm = std::make_shared<PSKKeyExchangeModesBlueprint>();
@@ -375,10 +373,10 @@ FingerprintSpec FingerprintFactory::Get(FingerprintType type)
 
             auto groups = std::make_shared<SupportedGroupsBlueprint>();
             groups->groups = {GREASE_PLACEHOLDER,
-                                tls_consts::group::X25519,
-                                tls_consts::group::SECP256R1,
-                                tls_consts::group::SECP384R1,
-                                tls_consts::group::SECP521R1};
+                              tls_consts::group::X25519,
+                              tls_consts::group::SECP256R1,
+                              tls_consts::group::SECP384R1,
+                              tls_consts::group::SECP521R1};
             spec.extensions.push_back(groups);
 
             auto points = std::make_shared<ECPointFormatsBlueprint>();
@@ -393,15 +391,15 @@ FingerprintSpec FingerprintFactory::Get(FingerprintType type)
 
             auto sig = std::make_shared<SignatureAlgorithmsBlueprint>();
             sig->algorithms = {tls_consts::sig_alg::ECDSA_SECP256R1_SHA256,
-                                tls_consts::sig_alg::RSA_PSS_RSAE_SHA256,
-                                tls_consts::sig_alg::RSA_PKCS1_SHA256,
-                                tls_consts::sig_alg::ECDSA_SECP384R1_SHA384,
-                                tls_consts::sig_alg::ECDSA_SHA1,
-                                tls_consts::sig_alg::RSA_PSS_RSAE_SHA384,
-                                tls_consts::sig_alg::RSA_PKCS1_SHA384,
-                                tls_consts::sig_alg::RSA_PSS_RSAE_SHA512,
-                                tls_consts::sig_alg::RSA_PKCS1_SHA512,
-                                tls_consts::sig_alg::RSA_PKCS1_SHA1};
+                               tls_consts::sig_alg::RSA_PSS_RSAE_SHA256,
+                               tls_consts::sig_alg::RSA_PKCS1_SHA256,
+                               tls_consts::sig_alg::ECDSA_SECP384R1_SHA384,
+                               tls_consts::sig_alg::ECDSA_SHA1,
+                               tls_consts::sig_alg::RSA_PSS_RSAE_SHA384,
+                               tls_consts::sig_alg::RSA_PKCS1_SHA384,
+                               tls_consts::sig_alg::RSA_PSS_RSAE_SHA512,
+                               tls_consts::sig_alg::RSA_PKCS1_SHA512,
+                               tls_consts::sig_alg::RSA_PKCS1_SHA1};
             spec.extensions.push_back(sig);
             spec.extensions.push_back(sct);
 
@@ -439,22 +437,8 @@ FingerprintSpec FingerprintFactory::GetChrome120()
 {
     FingerprintSpec spec;
     spec.client_version = tls_consts::VER_1_2;
-    spec.cipher_suites = {GREASE_PLACEHOLDER,
-                            0x1301,
-                            0x1302,
-                            0x1303,
-                            0xc02b,
-                            0xc02f,
-                            0xc02c,
-                            0xc030,
-                            0xcca9,
-                            0xcca8,
-                            0xc013,
-                            0xc014,
-                            0x009c,
-                            0x009d,
-                            0x002f,
-                            0x0035};
+    spec.cipher_suites = {
+        GREASE_PLACEHOLDER, 0x1301, 0x1302, 0x1303, 0xc02b, 0xc02f, 0xc02c, 0xc030, 0xcca9, 0xcca8, 0xc013, 0xc014, 0x009c, 0x009d, 0x002f, 0x0035};
     spec.extensions.push_back(std::make_shared<GreaseBlueprint>());
     spec.extensions.push_back(std::make_shared<SNIBlueprint>());
     spec.extensions.push_back(std::make_shared<EMSBlueprint>());
@@ -544,4 +528,4 @@ void FingerprintFactory::shuffle_extensions(std::vector<std::shared_ptr<Extensio
     }
 }
 
-} // namespace reality
+}    // namespace reality

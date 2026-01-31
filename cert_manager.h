@@ -55,7 +55,8 @@ class cert_manager
         ctx.trace_id = trace_id;
         ctx.sni = sni;
 
-        LOG_CTX_INFO(ctx, "{} cached cert size {} alpn '{}' cipher 0x{:04x}",
+        LOG_CTX_INFO(ctx,
+                     "{} cached cert size {} alpn '{}' cipher 0x{:04x}",
                      log_event::CERT,
                      cache_[sni].cert_msg.size(),
                      cache_[sni].fingerprint.alpn,

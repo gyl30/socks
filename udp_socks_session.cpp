@@ -3,7 +3,9 @@
 namespace mux
 {
 
-udp_socks_session::udp_socks_session(asio::ip::tcp::socket socket, std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager, uint32_t sid)
+udp_socks_session::udp_socks_session(asio::ip::tcp::socket socket,
+                                     std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager,
+                                     uint32_t sid)
     : sid_(sid),
       timer_(socket.get_executor()),
       socket_(std::move(socket)),
@@ -18,14 +20,10 @@ udp_socks_session::udp_socks_session(asio::ip::tcp::socket socket, std::shared_p
 void udp_socks_session::start(const std::string& host, uint16_t port)
 {
     auto self = shared_from_this();
-    asio::co_spawn(
-        socket_.get_executor(), [self, host, port]() mutable -> asio::awaitable<void> { co_await self->run(host, port); }, asio::detached);
+    asio::co_spawn(socket_.get_executor(), [self, host, port]() mutable -> asio::awaitable<void> { co_await self->run(host, port); }, asio::detached);
 }
 
-void udp_socks_session::on_data(std::vector<uint8_t> data)
-{
-    recv_channel_.try_send(std::error_code(), std::move(data));
-}
+void udp_socks_session::on_data(std::vector<uint8_t> data) { recv_channel_.try_send(std::error_code(), std::move(data)); }
 
 void udp_socks_session::on_close()
 {
@@ -38,10 +36,7 @@ void udp_socks_session::on_close()
     }
 }
 
-void udp_socks_session::on_reset()
-{
-    on_close();
-}
+void udp_socks_session::on_reset() { on_close(); }
 
 asio::awaitable<void> udp_socks_session::run(std::string host, uint16_t port)
 {
@@ -220,4 +215,4 @@ asio::awaitable<void> udp_socks_session::keep_tcp_alive()
     }
 }
 
-}
+}    // namespace mux

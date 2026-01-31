@@ -19,17 +19,17 @@ struct client_hello_info_t
 class ch_parser
 {
    public:
-    [[nodiscard]] static client_hello_info_t parse(const std::vector<uint8_t> &buf);
+    [[nodiscard]] static client_hello_info_t parse(const std::vector<uint8_t>& buf);
 
    private:
     struct reader
     {
-        const uint8_t *ptr;
-        const uint8_t *end;
-        const uint8_t *start;
+        const uint8_t* ptr;
+        const uint8_t* end;
+        const uint8_t* start;
 
-        explicit reader(const std::vector<uint8_t> &buf) : ptr(buf.data()), end(buf.data() + buf.size()), start(buf.data()) {}
-        reader(const uint8_t *p, size_t len, const uint8_t *s) : ptr(p), end(p + len), start(s) {}
+        explicit reader(const std::vector<uint8_t>& buf) : ptr(buf.data()), end(buf.data() + buf.size()), start(buf.data()) {}
+        reader(const uint8_t* p, size_t len, const uint8_t* s) : ptr(p), end(p + len), start(s) {}
 
         [[nodiscard]] bool valid() const { return ptr != nullptr; }
         [[nodiscard]] bool has(size_t n) const { return ptr + n <= end; }
@@ -47,7 +47,7 @@ class ch_parser
             return true;
         }
 
-        bool read_u8(uint8_t &out)
+        bool read_u8(uint8_t& out)
         {
             if (!has(1))
             {
@@ -57,7 +57,7 @@ class ch_parser
             return true;
         }
 
-        bool read_u16(uint16_t &out)
+        bool read_u16(uint16_t& out)
         {
             if (!has(2))
             {
@@ -68,7 +68,7 @@ class ch_parser
             return true;
         }
 
-        bool read_vector(std::vector<uint8_t> &out, size_t n)
+        bool read_vector(std::vector<uint8_t>& out, size_t n)
         {
             if (!has(n))
             {
@@ -91,9 +91,9 @@ class ch_parser
         }
     };
 
-    static void parse_extensions(reader &r, client_hello_info_t &info);
-    static void parse_sni(reader &r, client_hello_info_t &info);
-    static void parse_key_share(reader &r, client_hello_info_t &info);
+    static void parse_extensions(reader& r, client_hello_info_t& info);
+    static void parse_sni(reader& r, client_hello_info_t& info);
+    static void parse_key_share(reader& r, client_hello_info_t& info);
 };
 
 }    // namespace mux

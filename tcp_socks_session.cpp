@@ -4,9 +4,9 @@ namespace mux
 {
 
 tcp_socks_session::tcp_socks_session(asio::ip::tcp::socket socket,
-                  std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager,
-                  std::shared_ptr<router> router,
-                  uint32_t sid)
+                                     std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager,
+                                     std::shared_ptr<router> router,
+                                     uint32_t sid)
     : sid_(sid), socket_(std::move(socket)), router_(std::move(router)), tunnel_manager_(std::move(tunnel_manager))
 {
     ctx_.new_trace_id();
@@ -16,8 +16,7 @@ tcp_socks_session::tcp_socks_session(asio::ip::tcp::socket socket,
 void tcp_socks_session::start(const std::string& host, uint16_t port)
 {
     auto self = shared_from_this();
-    asio::co_spawn(
-        socket_.get_executor(), [self, host, port]() mutable -> asio::awaitable<void> { co_await self->run(host, port); }, asio::detached);
+    asio::co_spawn(socket_.get_executor(), [self, host, port]() mutable -> asio::awaitable<void> { co_await self->run(host, port); }, asio::detached);
 }
 
 asio::awaitable<void> tcp_socks_session::run(std::string host, uint16_t port)
@@ -123,4 +122,4 @@ asio::awaitable<void> tcp_socks_session::upstream_to_client(upstream* backend)
     }
 }
 
-}
+}    // namespace mux

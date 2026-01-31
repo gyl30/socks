@@ -3,7 +3,7 @@
 namespace mux
 {
 
-client_hello_info_t ch_parser::parse(const std::vector<uint8_t> &buf)
+client_hello_info_t ch_parser::parse(const std::vector<uint8_t>& buf)
 {
     client_hello_info_t info;
     reader r(buf);
@@ -82,7 +82,7 @@ client_hello_info_t ch_parser::parse(const std::vector<uint8_t> &buf)
     return info;
 }
 
-void ch_parser::parse_extensions(reader &r, client_hello_info_t &info)
+void ch_parser::parse_extensions(reader& r, client_hello_info_t& info)
 {
     while (r.remaining() >= 4)
     {
@@ -110,7 +110,7 @@ void ch_parser::parse_extensions(reader &r, client_hello_info_t &info)
     }
 }
 
-void ch_parser::parse_sni(reader &r, client_hello_info_t &info)
+void ch_parser::parse_sni(reader& r, client_hello_info_t& info)
 {
     uint16_t list_len;
     if (!r.read_u16(list_len))
@@ -138,7 +138,7 @@ void ch_parser::parse_sni(reader &r, client_hello_info_t &info)
         {
             if (list_r.has(len))
             {
-                info.sni.assign(reinterpret_cast<const char *>(list_r.ptr), len);
+                info.sni.assign(reinterpret_cast<const char*>(list_r.ptr), len);
             }
             return;
         }
@@ -150,7 +150,7 @@ void ch_parser::parse_sni(reader &r, client_hello_info_t &info)
     }
 }
 
-void ch_parser::parse_key_share(reader &r, client_hello_info_t &info)
+void ch_parser::parse_key_share(reader& r, client_hello_info_t& info)
 {
     uint16_t share_len;
     if (!r.read_u16(share_len))
@@ -178,4 +178,4 @@ void ch_parser::parse_key_share(reader &r, client_hello_info_t &info)
     }
 }
 
-} // namespace mux
+}    // namespace mux
