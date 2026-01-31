@@ -36,7 +36,7 @@ class router
                                                             const std::string& host,
                                                             const asio::any_io_executor& ex) const;
 
-   private:
+   protected:
     std::shared_ptr<ip_matcher> block_ip_matcher_;
     std::shared_ptr<ip_matcher> direct_ip_matcher_;
     std::shared_ptr<domain_matcher> proxy_domain_matcher_;
