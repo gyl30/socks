@@ -48,6 +48,20 @@ class domain_matcher
         return true;
     }
 
+    void add(std::string domain)
+    {
+        if (domain.empty())
+        {
+            return;
+        }
+        if (domain.back() == '.')
+        {
+            domain.pop_back();
+        }
+        std::transform(domain.begin(), domain.end(), domain.begin(), ::tolower);
+        domains_.insert(domain);
+    }
+
     bool match(std::string domain) const
     {
         if (domain.empty())
