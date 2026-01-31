@@ -191,8 +191,8 @@ asio::awaitable<void> mux_connection::write_loop()
             break;
         }
 
-        auto [wec, n] = co_await asio::async_write(
-            socket_, asio::buffer(ciphertext_span.data(), ciphertext_span.size()), asio::as_tuple(asio::use_awaitable));
+        auto [wec, n] =
+            co_await asio::async_write(socket_, asio::buffer(ciphertext_span.data(), ciphertext_span.size()), asio::as_tuple(asio::use_awaitable));
 
         if (wec)
         {
@@ -230,7 +230,7 @@ asio::awaitable<void> mux_connection::timeout_loop()
         if (read_elapsed > std::chrono::seconds(timeout_config_.read))
         {
             LOG_WARN("mux {} timeout read after {}s", cid_, timeout_config_.read);
-            break; 
+            break;
         }
         if (write_elapsed > std::chrono::seconds(timeout_config_.write))
         {

@@ -4,10 +4,10 @@ namespace mux
 {
 
 socks_session::socks_session(asio::ip::tcp::socket socket,
-              std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager,
-              std::shared_ptr<router> router,
-              uint32_t sid,
-              const config::socks_t& socks_cfg)
+                             std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager,
+                             std::shared_ptr<router> router,
+                             uint32_t sid,
+                             const config::socks_t& socks_cfg)
     : sid_(sid),
       username_(socks_cfg.username),
       password_(socks_cfg.password),
@@ -215,4 +215,4 @@ asio::awaitable<socks_session::request_info> socks_session::read_request()
     co_return request_info{.ok = true, .host = host, .port = ntohs(port_n), .cmd = head[1]};
 }
 
-}
+}    // namespace mux

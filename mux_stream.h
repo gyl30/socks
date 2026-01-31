@@ -18,9 +18,9 @@ class mux_stream : public mux_stream_interface, public std::enable_shared_from_t
    public:
     mux_stream(std::uint32_t id,
                std::uint32_t cid,
-               const std::string &trace_id,
-               const std::shared_ptr<mux_connection> &connection,
-               const asio::any_io_executor &ex)
+               const std::string& trace_id,
+               const std::shared_ptr<mux_connection>& connection,
+               const asio::any_io_executor& ex)
         : id_(id), connection_(connection), recv_channel_(ex, 128)
     {
         ctx_.trace_id = trace_id;
@@ -37,14 +37,14 @@ class mux_stream : public mux_stream_interface, public std::enable_shared_from_t
         co_return co_await recv_channel_.async_receive(asio::as_tuple(asio::use_awaitable));
     }
 
-    [[nodiscard]] asio::awaitable<std::error_code> async_write_some(const void *data, std::size_t len)
+    [[nodiscard]] asio::awaitable<std::error_code> async_write_some(const void* data, std::size_t len)
     {
         if (fin_sent_)
         {
             co_return asio::error::broken_pipe;
         }
 
-        std::vector<uint8_t> payload(static_cast<const uint8_t *>(data), static_cast<const uint8_t *>(data) + len);
+        std::vector<uint8_t> payload(static_cast<const uint8_t*>(data), static_cast<const uint8_t*>(data) + len);
         tx_bytes_.fetch_add(len, std::memory_order_relaxed);
         auto conn = connection_.lock();
         if (!conn)

@@ -23,14 +23,14 @@ struct JsonNull
 
 struct JsonReader
 {
-    rapidjson::Value *m;
-    std::vector<const char *> path_;
+    rapidjson::Value* m;
+    std::vector<const char*> path_;
 
-    JsonReader(rapidjson::Value *m) : m(m) {}
+    JsonReader(rapidjson::Value* m) : m(m) {}
     void startObject() {}
     void endObject() {}
-    void iterArray(const std::function<void()> &fn);
-    void member(const char *name, const std::function<void()> &fn);
+    void iterArray(const std::function<void()>& fn);
+    void member(const char* name, const std::function<void()>& fn);
     bool isNull();
     std::string getString();
     std::string getPath() const;
@@ -40,18 +40,18 @@ struct JsonWriter
 {
     using W = rapidjson::Writer<rapidjson::StringBuffer, rapidjson::UTF8<char>, rapidjson::UTF8<char>, rapidjson::CrtAllocator, 0>;
 
-    W *m;
+    W* m;
 
-    JsonWriter(W *m) : m(m) {}
+    JsonWriter(W* m) : m(m) {}
     void startArray();
     void endArray();
     void startObject();
     void endObject();
-    void key(const char *name);
+    void key(const char* name);
     void null_();
     void int64(int64_t v);
-    void string(const char *s);
-    void string(const char *s, size_t len);
+    void string(const char* s);
+    void string(const char* s, size_t len);
 };
 
 // clang-format off
@@ -98,7 +98,7 @@ inline     void reflect(JsonWriter& vis, JsonNull& v) { vis.m->Null(); }
 // clang-format on
 // std optional
 template <typename T>
-void reflect(JsonReader &vis, std::optional<T> &v)
+void reflect(JsonReader& vis, std::optional<T>& v)
 {
     if (!vis.isNull())
     {
@@ -107,7 +107,7 @@ void reflect(JsonReader &vis, std::optional<T> &v)
     }
 }
 template <typename T>
-void reflect(JsonWriter &vis, std::string_view &data)
+void reflect(JsonWriter& vis, std::string_view& data)
 {
     if (data.empty())
     {
@@ -119,10 +119,10 @@ void reflect(JsonWriter &vis, std::string_view &data)
     }
 }
 template <typename T>
-void reflect(JsonWriter &vis, std::map<std::string, T> &v)
+void reflect(JsonWriter& vis, std::map<std::string, T>& v)
 {
     vis.startObject();
-    for (auto &pair : v)
+    for (auto& pair : v)
     {
         vis.key(pair.first.data());
         reflect(vis, pair.second);
@@ -130,7 +130,7 @@ void reflect(JsonWriter &vis, std::map<std::string, T> &v)
     vis.endObject();
 }
 template <typename T>
-void reflect(JsonWriter &vis, std::optional<T> &v)
+void reflect(JsonWriter& vis, std::optional<T>& v)
 {
     if (v)
     {
@@ -143,7 +143,7 @@ void reflect(JsonWriter &vis, std::optional<T> &v)
 }
 // std::vector
 template <typename T>
-inline void reflect(JsonReader &vis, std::vector<T> &v)
+inline void reflect(JsonReader& vis, std::vector<T>& v)
 {
     vis.iterArray(
         [&]()
@@ -153,17 +153,17 @@ inline void reflect(JsonReader &vis, std::vector<T> &v)
         });
 }
 template <typename T>
-inline void reflect(JsonWriter &vis, std::vector<T> &v)
+inline void reflect(JsonWriter& vis, std::vector<T>& v)
 {
     vis.startArray();
-    for (auto &it : v)
+    for (auto& it : v)
     {
         reflect(vis, it);
     }
     vis.endArray();
 }
 
-inline void reflectMemberStart(JsonReader &vis)
+inline void reflectMemberStart(JsonReader& vis)
 {
     if (!vis.m->IsObject())
     {
@@ -172,31 +172,31 @@ inline void reflectMemberStart(JsonReader &vis)
 }
 
 template <typename T>
-inline void reflectMemberStart(T & /*unused*/)
+inline void reflectMemberStart(T& /*unused*/)
 {
 }
-inline void reflectMemberStart(JsonWriter &vis) { vis.startObject(); }
+inline void reflectMemberStart(JsonWriter& vis) { vis.startObject(); }
 
 template <typename T>
-inline void reflectMemberEnd(T & /*unused*/)
+inline void reflectMemberEnd(T& /*unused*/)
 {
 }
-inline void reflectMemberEnd(JsonWriter &vis) { vis.endObject(); }
+inline void reflectMemberEnd(JsonWriter& vis) { vis.endObject(); }
 
 template <typename T>
-inline void reflectMember(JsonReader &vis, const char *name, T &v)
+inline void reflectMember(JsonReader& vis, const char* name, T& v)
 {
     vis.member(name, [&]() { reflect(vis, v); });
 }
 template <typename T>
-inline void reflectMember(JsonWriter &vis, const char *name, T &v)
+inline void reflectMember(JsonWriter& vis, const char* name, T& v)
 {
     vis.key(name);
     reflect(vis, v);
 }
 
 template <typename T>
-inline void reflectMember(JsonWriter &vis, const char *name, std::optional<T> &v)
+inline void reflectMember(JsonWriter& vis, const char* name, std::optional<T>& v)
 {
     if (v.has_value())
     {
@@ -205,29 +205,29 @@ inline void reflectMember(JsonWriter &vis, const char *name, std::optional<T> &v
     }
 }
 
-inline void JsonReader::iterArray(const std::function<void()> &fn)
+inline void JsonReader::iterArray(const std::function<void()>& fn)
 {
     if (!m->IsArray())
     {
         throw std::invalid_argument("array");
     }
     path_.push_back("0");
-    for (auto &entry : m->GetArray())
+    for (auto& entry : m->GetArray())
     {
-        auto *saved = m;
+        auto* saved = m;
         m = &entry;
         fn();
         m = saved;
     }
     path_.pop_back();
 }
-inline void JsonReader::member(const char *name, const std::function<void()> &fn)
+inline void JsonReader::member(const char* name, const std::function<void()>& fn)
 {
     path_.push_back(name);
     auto it = m->FindMember(name);
     if (it != m->MemberEnd())
     {
-        auto *saved = m;
+        auto* saved = m;
         m = &it->value;
         fn();
         m = saved;
@@ -241,7 +241,7 @@ inline void JsonReader::member(const char *name, const std::function<void()> &fn
 
 #define REFLECT_STRUCT(type, ...)                        \
     template <typename Vis>                              \
-    void reflect(Vis &vis, type &v)                      \
+    void reflect(Vis& vis, type& v)                      \
     {                                                    \
         reflectMemberStart(vis);                         \
         MACRO_MAP(_MAPPABLE_REFLECT_MEMBER, __VA_ARGS__) \
@@ -249,7 +249,7 @@ inline void JsonReader::member(const char *name, const std::function<void()> &fn
     }
 
 template <typename T>
-inline bool deserialize_struct(T &t, const std::string &msg)
+inline bool deserialize_struct(T& t, const std::string& msg)
 {
     try
     {
@@ -271,7 +271,7 @@ inline bool deserialize_struct(T &t, const std::string &msg)
 }
 
 template <typename T>
-inline bool deserialize_struct(T &t, const char *msg, std::size_t lenght)
+inline bool deserialize_struct(T& t, const char* msg, std::size_t lenght)
 {
     try
     {
@@ -292,10 +292,10 @@ inline bool deserialize_struct(T &t, const char *msg, std::size_t lenght)
 }
 
 template <typename T>
-inline std::string serialize_struct(const T &t)
+inline std::string serialize_struct(const T& t)
 {
     using non_const_t = typename std::remove_const<T>::type;
-    auto &nt = const_cast<non_const_t &>(t);
+    auto& nt = const_cast<non_const_t&>(t);
     rapidjson::StringBuffer sb;
     rapidjson::Writer<rapidjson::StringBuffer> writer(sb);
     JsonWriter json_writer(&writer);
