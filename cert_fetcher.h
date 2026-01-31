@@ -27,36 +27,8 @@ struct fetch_result
 class handshake_reassembler
 {
    public:
-    static constexpr size_t MAX_MSG_SIZE = 64L * 1024;
-
-    void append(std::span<const uint8_t> data) { buffer_.insert(buffer_.end(), data.begin(), data.end()); }
-
-    bool next(std::vector<uint8_t>& out, std::error_code& ec)
-    {
-        ec.clear();
-        if (buffer_.size() < 4)
-        {
-            return false;
-        }
-
-        uint32_t msg_len = (static_cast<uint32_t>(buffer_[1]) << 16) | (static_cast<uint32_t>(buffer_[2]) << 8) | static_cast<uint32_t>(buffer_[3]);
-
-        if (msg_len > MAX_MSG_SIZE)
-        {
-            ec = std::make_error_code(std::errc::message_size);
-            return false;
-        }
-
-        uint32_t full_len = 4 + msg_len;
-        if (buffer_.size() < full_len)
-        {
-            return false;
-        }
-
-        out.assign(buffer_.begin(), buffer_.begin() + full_len);
-        buffer_.erase(buffer_.begin(), buffer_.begin() + full_len);
-        return true;
-    }
+    void append(std::span<const uint8_t> data);
+    bool next(std::vector<uint8_t>& out, std::error_code& ec);
 
    private:
     std::vector<uint8_t> buffer_;
@@ -65,363 +37,32 @@ class handshake_reassembler
 class cert_fetcher
 {
    public:
-    static std::string hex(const std::vector<uint8_t>& data) { return crypto_util::bytes_to_hex(data); }
-    static std::string hex(const uint8_t* data, size_t len) { return crypto_util::bytes_to_hex(std::vector<uint8_t>(data, data + len)); }
+    static std::string hex(const std::vector<uint8_t>& data);
+    static std::string hex(const uint8_t* data, size_t len);
 
     static asio::awaitable<std::optional<fetch_result>> fetch(
-        asio::any_io_executor ex, std::string host, uint16_t port, std::string sni, const std::string& trace_id = "")
-    {
-        fetch_session session(ex, std::move(host), port, std::move(sni), trace_id);
-        co_return co_await session.run();
-    }
+        asio::any_io_executor ex, std::string host, uint16_t port, std::string sni, const std::string& trace_id = "");
 
    private:
     class fetch_session
     {
        public:
-        fetch_session(const asio::any_io_executor& ex, std::string host, uint16_t port, std::string sni, const std::string& trace_id)
-            : socket_(ex), host_(std::move(host)), port_(port), sni_(std::move(sni))
-        {
-            ctx_.trace_id = trace_id;
-            ctx_.target_host = host_;
-            ctx_.target_port = port;
-            ctx_.sni = sni_;
-        }
+        fetch_session(const asio::any_io_executor& ex, std::string host, uint16_t port, std::string sni, const std::string& trace_id);
 
-        asio::awaitable<std::optional<fetch_result>> run()
-        {
-            LOG_CTX_INFO(ctx_, "{} starting fetch", log_event::CERT);
-
-            if (auto ec = co_await connect(); ec)
-            {
-                co_return std::nullopt;
-            }
-
-            if (auto ec = co_await perform_handshake_start(); ec)
-            {
-                co_return std::nullopt;
-            }
-
-            auto cert = co_await find_certificate();
-            if (cert.empty())
-            {
-                co_return std::nullopt;
-            }
-
-            co_return fetch_result{.cert_msg = std::move(cert), .fingerprint = fingerprint_};
-        }
+        asio::awaitable<std::optional<fetch_result>> run();
 
        private:
-        asio::awaitable<std::error_code> connect()
-        {
-            asio::ip::tcp::resolver resolver(socket_.get_executor());
-            auto [res_ec, eps] = co_await resolver.async_resolve(host_, std::to_string(port_), asio::as_tuple(asio::use_awaitable));
-            if (res_ec)
-            {
-                LOG_CTX_ERROR(ctx_, "{} resolve failed {}", log_event::CERT, res_ec.message());
-                co_return res_ec;
-            }
+        asio::awaitable<std::error_code> connect();
 
-            auto [conn_ec, ep] = co_await asio::async_connect(socket_, eps, asio::as_tuple(asio::use_awaitable));
-            if (conn_ec)
-            {
-                LOG_CTX_ERROR(ctx_, "{} connect failed {}", log_event::CERT, conn_ec.message());
-                co_return conn_ec;
-            }
-            co_return std::error_code{};
-        }
+        asio::awaitable<std::error_code> perform_handshake_start();
 
-        asio::awaitable<std::error_code> perform_handshake_start()
-        {
-            if (!crypto_util::generate_x25519_keypair(client_pub_, client_priv_))
-            {
-                co_return asio::error::operation_aborted;
-            }
-            std::vector<uint8_t> client_random(32);
-            if (RAND_bytes(client_random.data(), 32) != 1)
-            {
-                co_return asio::error::operation_aborted;
-            }
-            std::vector<uint8_t> session_id(32);
-            if (RAND_bytes(session_id.data(), 32) != 1)
-            {
-                co_return asio::error::operation_aborted;
-            }
+        asio::awaitable<std::vector<uint8_t>> find_certificate();
 
-            auto spec = FingerprintFactory::Get(FingerprintType::Chrome_120);
-            auto ch = ClientHelloBuilder::build(spec, session_id, client_random, std::vector<uint8_t>(client_pub_, client_pub_ + 32), sni_);
+        std::error_code process_server_hello(const std::vector<uint8_t>& sh_body);
 
-            auto ch_rec = write_record_header(CONTENT_TYPE_HANDSHAKE, static_cast<uint16_t>(ch.size()));
-            ch_rec.insert(ch_rec.end(), ch.begin(), ch.end());
+        asio::awaitable<std::pair<std::error_code, std::vector<uint8_t>>> read_record_plaintext();
 
-            auto [write_ec, wn] = co_await asio::async_write(socket_, asio::buffer(ch_rec), asio::as_tuple(asio::use_awaitable));
-            if (write_ec)
-            {
-                LOG_CTX_ERROR(ctx_, "{} write ch failed {}", log_event::CERT, write_ec.message());
-                co_return write_ec;
-            }
-
-            trans_.update(ch);
-
-            auto [read_ec, sh_body] = co_await read_record_plaintext();
-            if (read_ec)
-            {
-                co_return read_ec;
-            }
-            if (sh_body.empty())
-            {
-                LOG_CTX_ERROR(ctx_, "{} server hello empty", log_event::CERT);
-                co_return asio::error::fault;
-            }
-
-            co_return process_server_hello(sh_body);
-        }
-
-        asio::awaitable<std::vector<uint8_t>> find_certificate()
-        {
-            handshake_reassembler assembler;
-            std::vector<uint8_t> pt_buf(MAX_TLS_PLAINTEXT_LEN + 256);
-            std::vector<uint8_t> msg;
-
-            for (int i = 0; i < 100; ++i)
-            {
-                std::error_code ec;
-                auto [type, pt_data] = co_await read_record(pt_buf, ec);
-                if (ec)
-                {
-                    LOG_CTX_ERROR(ctx_, "{} read record {} failed {}", log_event::CERT, i, ec.message());
-                    break;
-                }
-
-                if (type == CONTENT_TYPE_CHANGE_CIPHER_SPEC)
-                {
-                    continue;
-                }
-                if (type != CONTENT_TYPE_HANDSHAKE)
-                {
-                    continue;
-                }
-
-                assembler.append(pt_data);
-
-                while (assembler.next(msg, ec))
-                {
-                    uint8_t msg_type = msg[0];
-                    uint32_t msg_len = (msg[1] << 16) | (msg[2] << 8) | msg[3];
-
-                    LOG_CTX_INFO(ctx_, "{} found handshake 0x{:02x} len {}", log_event::CERT, msg_type, msg_len);
-
-                    if (msg_type == 0x08)
-                    {
-                        if (auto alpn = extract_alpn_from_encrypted_extensions(msg); alpn)
-                        {
-                            LOG_CTX_INFO(ctx_, "{} learned ALPN {}", log_event::CERT, *alpn);
-                            fingerprint_.alpn = *alpn;
-                        }
-                    }
-                    else if (msg_type == 0x0b)
-                    {
-                        LOG_CTX_INFO(ctx_, "{} found certificate len {}", log_event::CERT, msg_len);
-                        co_return msg;
-                    }
-
-                    trans_.update(msg);
-                }
-
-                if (ec)
-                {
-                    LOG_CTX_ERROR(ctx_, "{} assembler error {}", log_event::CERT, ec.message());
-                    break;
-                }
-            }
-
-            LOG_CTX_WARN(ctx_, "{} certificate not found", log_event::CERT);
-            co_return std::vector<uint8_t>{};
-        }
-
-        std::error_code process_server_hello(const std::vector<uint8_t>& sh_body)
-        {
-            uint32_t msg_len = (sh_body[1] << 16) | (sh_body[2] << 8) | sh_body[3];
-            uint32_t full_msg_len = msg_len + 4;
-
-            if (sh_body.size() < full_msg_len)
-            {
-                return asio::error::fault;
-            }
-
-            std::vector<uint8_t> sh_real(sh_body.begin(), sh_body.begin() + full_msg_len);
-
-            if (auto cs = extract_cipher_suite_from_server_hello(sh_real); cs)
-            {
-                fingerprint_.cipher_suite = *cs;
-            }
-
-            trans_.update(sh_real);
-
-            size_t cipher_offset = 39;
-            if (sh_real.size() <= 38)
-            {
-                return asio::error::fault;
-            }
-            uint8_t sid_len_val = sh_real[38];
-            cipher_offset += sid_len_val;
-
-            if (sh_real.size() < cipher_offset + 2)
-            {
-                return asio::error::fault;
-            }
-            uint16_t cipher_suite = (sh_real[cipher_offset] << 8) | sh_real[cipher_offset + 1];
-
-            const EVP_CIPHER* negotiated_cipher = nullptr;
-            const EVP_MD* negotiated_md = nullptr;
-            size_t key_len = 16;
-            size_t iv_len = 12;
-
-            if (cipher_suite == 0x1301)
-            {
-                LOG_CTX_INFO(ctx_, "{} selected TLS_AES_128_GCM_SHA256 0x1301", log_event::CERT);
-                negotiated_cipher = EVP_aes_128_gcm();
-                negotiated_md = EVP_sha256();
-                key_len = 16;
-            }
-            else if (cipher_suite == 0x1302)
-            {
-                LOG_CTX_INFO(ctx_, "{} selected TLS_AES_256_GCM_SHA384 0x1302", log_event::CERT);
-                negotiated_cipher = EVP_aes_256_gcm();
-                negotiated_md = EVP_sha384();
-                key_len = 32;
-            }
-            else if (cipher_suite == 0x1303)
-            {
-                LOG_CTX_INFO(ctx_, "{} selected TLS_CHACHA20_POLY1305_SHA256 0x1303", log_event::CERT);
-                negotiated_cipher = EVP_chacha20_poly1305();
-                negotiated_md = EVP_sha256();
-                key_len = 32;
-            }
-            else
-            {
-                LOG_CTX_ERROR(ctx_, "{} unsupported cipher suite 0x{:04x}", log_event::CERT, cipher_suite);
-                return asio::error::no_protocol_option;
-            }
-
-            trans_.set_protocol_hash(negotiated_md);
-
-            auto server_pub = extract_server_public_key(sh_real);
-            std::error_code ec;
-            auto shared = crypto_util::x25519_derive(std::vector<uint8_t>(client_priv_, client_priv_ + 32), server_pub, ec);
-            if (ec)
-            {
-                LOG_CTX_ERROR(ctx_, "{} x25519 derive failed", log_event::CERT);
-                return ec;
-            }
-
-            auto hs_keys = tls_key_schedule::derive_handshake_keys(shared, trans_.finish(), negotiated_md, ec);
-            if (ec)
-            {
-                LOG_CTX_ERROR(ctx_, "{} derive keys failed", log_event::CERT);
-                return ec;
-            }
-
-            auto s_hs_keys = tls_key_schedule::derive_traffic_keys(hs_keys.server_handshake_traffic_secret, ec, key_len, iv_len, negotiated_md);
-
-            negotiated_cipher_ = negotiated_cipher;
-            dec_key_ = s_hs_keys.first;
-            dec_iv_ = s_hs_keys.second;
-
-            return std::error_code{};
-        }
-
-        asio::awaitable<std::pair<std::error_code, std::vector<uint8_t>>> read_record_plaintext()
-        {
-            uint8_t head[5];
-            auto [ec, n] = co_await asio::async_read(socket_, asio::buffer(head), asio::as_tuple(asio::use_awaitable));
-            if (ec)
-            {
-                LOG_CTX_ERROR(ctx_, "{} read header failed {}", log_event::CERT, ec.message());
-                co_return std::make_pair(ec, std::vector<uint8_t>{});
-            }
-
-            if (head[0] != CONTENT_TYPE_HANDSHAKE)
-            {
-                LOG_CTX_ERROR(ctx_, "{} expected handshake type {}", log_event::CERT, head[0]);
-                co_return std::make_pair(asio::error::fault, std::vector<uint8_t>{});
-            }
-
-            uint16_t len = (head[3] << 8) | head[4];
-            std::vector<uint8_t> body(len);
-            auto [ec2, n2] = co_await asio::async_read(socket_, asio::buffer(body), asio::as_tuple(asio::use_awaitable));
-            if (ec2)
-            {
-                LOG_CTX_ERROR(ctx_, "{} read body failed {}", log_event::CERT, ec2.message());
-                co_return std::make_pair(ec2, std::vector<uint8_t>{});
-            }
-
-            co_return std::make_pair(std::error_code{}, std::move(body));
-        }
-
-        asio::awaitable<std::pair<uint8_t, std::span<uint8_t>>> read_record(std::vector<uint8_t>& pt_buf, std::error_code& out_ec)
-        {
-            uint8_t head[5];
-            auto [ec, n] = co_await asio::async_read(socket_, asio::buffer(head), asio::as_tuple(asio::use_awaitable));
-            if (ec)
-            {
-                out_ec = ec;
-                co_return std::make_pair(0, std::span<uint8_t>{});
-            }
-
-            uint16_t len = (head[3] << 8) | head[4];
-
-            if (len > 18432)
-            {
-                out_ec = std::make_error_code(std::errc::message_size);
-                co_return std::make_pair(0, std::span<uint8_t>{});
-            }
-
-            std::vector<uint8_t> rec(len);
-            auto [ec2, n2] = co_await asio::async_read(socket_, asio::buffer(rec), asio::as_tuple(asio::use_awaitable));
-            if (ec2)
-            {
-                out_ec = ec2;
-                co_return std::make_pair(0, std::span<uint8_t>{});
-            }
-
-            if (head[0] == CONTENT_TYPE_CHANGE_CIPHER_SPEC)
-            {
-                if (pt_buf.size() < len)
-                {
-                    pt_buf.resize(len);
-                }
-                std::memcpy(pt_buf.data(), rec.data(), len);
-                co_return std::make_pair(CONTENT_TYPE_CHANGE_CIPHER_SPEC, std::span<uint8_t>(pt_buf.data(), len));
-            }
-
-            if (head[0] == CONTENT_TYPE_APPLICATION_DATA)
-            {
-                std::vector<uint8_t> cth(5 + len);
-                std::memcpy(cth.data(), head, 5);
-                std::memcpy(cth.data() + 5, rec.data(), len);
-
-                uint8_t type;
-                uint32_t pt_len =
-                    tls_record_layer::decrypt_record(decrypt_ctx_, negotiated_cipher_, dec_key_, dec_iv_, seq_++, cth, pt_buf, type, out_ec);
-
-                if (out_ec)
-                {
-                    co_return std::make_pair(0, std::span<uint8_t>{});
-                }
-                co_return std::make_pair(type, std::span<uint8_t>(pt_buf.data(), pt_len));
-            }
-
-            if (head[0] == CONTENT_TYPE_ALERT)
-            {
-                LOG_CTX_WARN(ctx_, "{} received plaintext alert", log_event::CERT);
-                out_ec = asio::error::connection_reset;
-                co_return std::make_pair(0, std::span<uint8_t>{});
-            }
-
-            out_ec = asio::error::invalid_argument;
-            co_return std::make_pair(0, std::span<uint8_t>{});
-        }
+        asio::awaitable<std::pair<uint8_t, std::span<uint8_t>>> read_record(std::vector<uint8_t>& pt_buf, std::error_code& out_ec);
 
        private:
         connection_context ctx_;
