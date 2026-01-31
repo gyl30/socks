@@ -450,6 +450,7 @@ std::vector<uint8_t> construct_encrypted_extensions(const std::string& alpn)
         message_builder::push_vector_u8(proto, std::vector<uint8_t>(alpn.begin(), alpn.end()));
         std::vector<uint8_t> ext;
         message_builder::push_vector_u16(ext, proto);
+        message_builder::push_u16(extensions, static_cast<uint16_t>(ext.size()));
         message_builder::push_bytes(extensions, ext);
     }
 
