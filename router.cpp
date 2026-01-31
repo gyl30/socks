@@ -34,7 +34,7 @@ bool router::load()
     return true;
 }
 
-asio::awaitable<route_type> router::decide(const connection_context &ctx, const std::string& host, const asio::any_io_executor& ex) const
+asio::awaitable<route_type> router::decide(const connection_context& ctx, const std::string& host, const asio::any_io_executor& ex) const
 {
     std::error_code ec;
     auto addr = asio::ip::make_address(host, ec);
@@ -46,7 +46,10 @@ asio::awaitable<route_type> router::decide(const connection_context &ctx, const 
     co_return co_await decide_ip(ctx, host, addr, ex);
 }
 
-asio::awaitable<route_type> router::decide_ip(const connection_context &ctx, const std::string& host, asio::ip::address& addr, const asio::any_io_executor& ex) const
+asio::awaitable<route_type> router::decide_ip(const connection_context& ctx,
+                                              const std::string& host,
+                                              asio::ip::address& addr,
+                                              const asio::any_io_executor& ex) const
 {
     // step 1 检查是否是 block
     // step 2 检查是否是 direct
@@ -66,7 +69,7 @@ asio::awaitable<route_type> router::decide_ip(const connection_context &ctx, con
     co_return route_type::proxy;
 }
 
-asio::awaitable<route_type> router::decide_domain(const connection_context &ctx, const std::string& host, const asio::any_io_executor& ex) const
+asio::awaitable<route_type> router::decide_domain(const connection_context& ctx, const std::string& host, const asio::any_io_executor& ex) const
 {
     if (block_domain_matcher_->match(host))
     {
@@ -87,4 +90,4 @@ asio::awaitable<route_type> router::decide_domain(const connection_context &ctx,
     co_return route_type::direct;
 }
 
-}
+}    // namespace mux

@@ -3,13 +3,13 @@
 namespace mux
 {
 
-local_client::local_client(io_context_pool &pool,
+local_client::local_client(io_context_pool& pool,
                            std::string host,
                            std::string port,
                            uint16_t l_port,
-                           const std::string &key_hex,
+                           const std::string& key_hex,
                            std::string sni,
-                           const config::timeout_t &timeout_cfg,
+                           const config::timeout_t& timeout_cfg,
                            config::socks_t socks_cfg)
     : remote_host_(std::move(host)),
       remote_port_(std::move(port)),
@@ -90,10 +90,13 @@ asio::awaitable<void> local_client::connect_remote_loop()
             continue;
         }
 
-        size_t key_len = (handshake_ret.cipher_suite == 0x1302 || handshake_ret.cipher_suite == 0x1303) ? constants::crypto::KEY_LEN_256 : constants::crypto::KEY_LEN_128;
+        size_t key_len = (handshake_ret.cipher_suite == 0x1302 || handshake_ret.cipher_suite == 0x1303) ? constants::crypto::KEY_LEN_256
+                                                                                                        : constants::crypto::KEY_LEN_128;
 
-        auto c_app_keys = reality::tls_key_schedule::derive_traffic_keys(handshake_ret.c_app_secret, ec, key_len, constants::crypto::IV_LEN, handshake_ret.md);
-        auto s_app_keys = reality::tls_key_schedule::derive_traffic_keys(handshake_ret.s_app_secret, ec, key_len, constants::crypto::IV_LEN, handshake_ret.md);
+        auto c_app_keys =
+            reality::tls_key_schedule::derive_traffic_keys(handshake_ret.c_app_secret, ec, key_len, constants::crypto::IV_LEN, handshake_ret.md);
+        auto s_app_keys =
+            reality::tls_key_schedule::derive_traffic_keys(handshake_ret.s_app_secret, ec, key_len, constants::crypto::IV_LEN, handshake_ret.md);
 
         LOG_CTX_INFO(ctx, "{} handshake success cipher 0x{:04x}", log_event::HANDSHAKE, handshake_ret.cipher_suite);
         reality_engine re(s_app_keys.first, s_app_keys.second, c_app_keys.first, c_app_keys.second);
@@ -107,7 +110,7 @@ asio::awaitable<void> local_client::connect_remote_loop()
     LOG_INFO("{} connect_remote_loop exited", log_event::CONN_CLOSE);
 }
 
-asio::awaitable<bool> local_client::tcp_connect(asio::ip::tcp::socket &socket, std::error_code &ec) const
+asio::awaitable<bool> local_client::tcp_connect(asio::ip::tcp::socket& socket, std::error_code& ec) const
 {
     asio::ip::tcp::resolver res(pool_.get_io_context());
     auto [resolve_error, resolve_endpoints] = co_await res.async_resolve(remote_host_, remote_port_, asio::as_tuple(asio::use_awaitable));
@@ -131,7 +134,8 @@ asio::awaitable<bool> local_client::tcp_connect(asio::ip::tcp::socket &socket, s
     co_return true;
 }
 
-asio::awaitable<std::pair<bool, local_client::handshake_result>> local_client::perform_reality_handshake(asio::ip::tcp::socket &socket, std::error_code &ec) const
+asio::awaitable<std::pair<bool, local_client::handshake_result>> local_client::perform_reality_handshake(asio::ip::tcp::socket& socket,
+                                                                                                         std::error_code& ec) const
 {
     uint8_t public_key[32];
     uint8_t private_key[32];
@@ -142,7 +146,7 @@ asio::awaitable<std::pair<bool, local_client::handshake_result>> local_client::p
         co_return std::make_pair(false, handshake_result{});
     }
 
-    std::shared_ptr<void> defer_cleanse(nullptr, [&](void *) { OPENSSL_cleanse(private_key, 32); });
+    std::shared_ptr<void> defer_cleanse(nullptr, [&](void*) { OPENSSL_cleanse(private_key, 32); });
 
     reality::transcript trans;
     if (!co_await generate_and_send_client_hello(socket, public_key, private_key, trans, ec))
@@ -156,7 +160,8 @@ asio::awaitable<std::pair<bool, local_client::handshake_result>> local_client::p
         co_return std::make_pair(false, handshake_result{});
     }
 
-    size_t key_len = (sh_res.cipher_suite == 0x1302 || sh_res.cipher_suite == 0x1303) ? constants::crypto::KEY_LEN_256 : constants::crypto::KEY_LEN_128;
+    size_t key_len =
+        (sh_res.cipher_suite == 0x1302 || sh_res.cipher_suite == 0x1303) ? constants::crypto::KEY_LEN_256 : constants::crypto::KEY_LEN_128;
     size_t iv_len = constants::crypto::IV_LEN;
 
     auto c_hs_keys =
@@ -184,7 +189,7 @@ asio::awaitable<std::pair<bool, local_client::handshake_result>> local_client::p
 }
 
 asio::awaitable<bool> local_client::generate_and_send_client_hello(
-    asio::ip::tcp::socket &socket, const uint8_t *public_key, const uint8_t *private_key, reality::transcript &trans, std::error_code &ec) const
+    asio::ip::tcp::socket& socket, const uint8_t* public_key, const uint8_t* private_key, reality::transcript& trans, std::error_code& ec) const
 {
     auto shared = reality::crypto_util::x25519_derive(std::vector<uint8_t>(private_key, private_key + 32), server_pub_key_, ec);
     if (ec)
@@ -224,8 +229,12 @@ asio::awaitable<bool> local_client::generate_and_send_client_hello(
 
     auto hello_aad = reality::ClientHelloBuilder::build(spec, session_id, client_random, std::vector<uint8_t>(public_key, public_key + 32), sni_);
 
-    auto sid = reality::crypto_util::aead_encrypt(
-        EVP_aes_128_gcm(), auth_key, std::vector<uint8_t>(client_random.begin() + constants::auth::SALT_LEN, client_random.end()), payload, hello_aad, ec);
+    auto sid = reality::crypto_util::aead_encrypt(EVP_aes_128_gcm(),
+                                                  auth_key,
+                                                  std::vector<uint8_t>(client_random.begin() + constants::auth::SALT_LEN, client_random.end()),
+                                                  payload,
+                                                  hello_aad,
+                                                  ec);
 
     if (hello_aad.size() > 39 + 32)
     {
@@ -253,10 +262,10 @@ asio::awaitable<bool> local_client::generate_and_send_client_hello(
     co_return true;
 }
 
-asio::awaitable<local_client::server_hello_res> local_client::process_server_hello(asio::ip::tcp::socket &socket,
-                                                              const uint8_t *private_key,
-                                                              reality::transcript &trans,
-                                                              std::error_code &ec)
+asio::awaitable<local_client::server_hello_res> local_client::process_server_hello(asio::ip::tcp::socket& socket,
+                                                                                   const uint8_t* private_key,
+                                                                                   reality::transcript& trans,
+                                                                                   std::error_code& ec)
 {
     uint8_t data[5];
     auto [re1, rn1] = co_await asio::async_read(socket, asio::buffer(data, 5), asio::as_tuple(asio::use_awaitable));
@@ -300,8 +309,8 @@ asio::awaitable<local_client::server_hello_res> local_client::process_server_hel
 
     uint16_t cipher_suite = (sh_data[pos] << 8) | sh_data[pos + 1];
 
-    const EVP_MD *md = nullptr;
-    const EVP_CIPHER *cipher = nullptr;
+    const EVP_MD* md = nullptr;
+    const EVP_CIPHER* cipher = nullptr;
     if (cipher_suite == 0x1302)
     {
         md = EVP_sha384();
@@ -339,13 +348,13 @@ asio::awaitable<local_client::server_hello_res> local_client::process_server_hel
 }
 
 asio::awaitable<std::pair<bool, std::pair<std::vector<uint8_t>, std::vector<uint8_t>>>> local_client::handshake_read_loop(
-    asio::ip::tcp::socket &socket,
-    const std::pair<std::vector<uint8_t>, std::vector<uint8_t>> &s_hs_keys,
-    const reality::handshake_keys &hs_keys,
-    reality::transcript &trans,
-    const EVP_CIPHER *cipher,
-    const EVP_MD *md,
-    std::error_code &ec)
+    asio::ip::tcp::socket& socket,
+    const std::pair<std::vector<uint8_t>, std::vector<uint8_t>>& s_hs_keys,
+    const reality::handshake_keys& hs_keys,
+    reality::transcript& trans,
+    const EVP_CIPHER* cipher,
+    const EVP_MD* md,
+    std::error_code& ec)
 {
     bool handshake_fin = false;
     uint64_t seq = 0;
@@ -389,8 +398,7 @@ asio::awaitable<std::pair<bool, std::pair<std::vector<uint8_t>, std::vector<uint
             while (offset + 4 <= handshake_buffer.size())
             {
                 const uint8_t msg_type = handshake_buffer[offset];
-                const uint32_t msg_len =
-                    (handshake_buffer[offset + 1] << 16) | (handshake_buffer[offset + 2] << 8) | handshake_buffer[offset + 3];
+                const uint32_t msg_len = (handshake_buffer[offset + 1] << 16) | (handshake_buffer[offset + 2] << 8) | handshake_buffer[offset + 3];
                 if (offset + 4 + msg_len > handshake_buffer.size())
                 {
                     break;
@@ -421,13 +429,13 @@ asio::awaitable<std::pair<bool, std::pair<std::vector<uint8_t>, std::vector<uint
     co_return std::make_pair(true, app_sec);
 }
 
-asio::awaitable<bool> local_client::send_client_finished(asio::ip::tcp::socket &socket,
-                                                  const std::pair<std::vector<uint8_t>, std::vector<uint8_t>> &c_hs_keys,
-                                                  const std::vector<uint8_t> &c_hs_secret,
-                                                  const reality::transcript &trans,
-                                                  const EVP_CIPHER *cipher,
-                                                  const EVP_MD *md,
-                                                  std::error_code &ec)
+asio::awaitable<bool> local_client::send_client_finished(asio::ip::tcp::socket& socket,
+                                                         const std::pair<std::vector<uint8_t>, std::vector<uint8_t>>& c_hs_keys,
+                                                         const std::vector<uint8_t>& c_hs_secret,
+                                                         const reality::transcript& trans,
+                                                         const EVP_CIPHER* cipher,
+                                                         const EVP_MD* md,
+                                                         std::error_code& ec)
 {
     auto fin_verify = reality::tls_key_schedule::compute_finished_verify_data(c_hs_secret, trans.finish(), md, ec);
     auto fin_msg = reality::construct_finished(fin_verify);
@@ -542,4 +550,4 @@ asio::awaitable<void> local_client::accept_local_loop()
     LOG_INFO("accept_local_loop exited");
 }
 
-}
+}    // namespace mux
