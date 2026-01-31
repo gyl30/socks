@@ -2,16 +2,19 @@
 #define MUX_STREAM_H
 
 #include <memory>
+#include "mux_connection.h"
 #include <vector>
 #include <atomic>
 #include <asio.hpp>
 #include "log.h"
 #include "log_context.h"
 #include "mux_protocol.h"
-#include "mux_connection.h"
+#include "mux_stream_interface.h"
 
 namespace mux
 {
+
+
 
 class mux_stream : public mux_stream_interface, public std::enable_shared_from_this<mux_stream>
 {
@@ -20,102 +23,26 @@ class mux_stream : public mux_stream_interface, public std::enable_shared_from_t
                std::uint32_t cid,
                const std::string& trace_id,
                const std::shared_ptr<mux_connection>& connection,
-               const asio::any_io_executor& ex)
-        : id_(id), connection_(connection), recv_channel_(ex, 128)
-    {
-        ctx_.trace_id = trace_id;
-        ctx_.conn_id = cid;
-        ctx_.stream_id = id;
-    }
+               const asio::any_io_executor& ex);
 
-    ~mux_stream() override { close_internal(); }
+    ~mux_stream() override;
 
-    [[nodiscard]] std::uint32_t id() const { return id_; }
+    [[nodiscard]] std::uint32_t id() const;
 
-    [[nodiscard]] asio::awaitable<std::tuple<std::error_code, std::vector<std::uint8_t>>> async_read_some()
-    {
-        co_return co_await recv_channel_.async_receive(asio::as_tuple(asio::use_awaitable));
-    }
+    [[nodiscard]] asio::awaitable<std::tuple<std::error_code, std::vector<std::uint8_t>>> async_read_some();
 
-    [[nodiscard]] asio::awaitable<std::error_code> async_write_some(const void* data, std::size_t len)
-    {
-        if (fin_sent_)
-        {
-            co_return asio::error::broken_pipe;
-        }
+    [[nodiscard]] asio::awaitable<std::error_code> async_write_some(const void* data, std::size_t len);
 
-        std::vector<uint8_t> payload(static_cast<const uint8_t*>(data), static_cast<const uint8_t*>(data) + len);
-        tx_bytes_.fetch_add(len, std::memory_order_relaxed);
-        auto conn = connection_.lock();
-        if (!conn)
-        {
-            co_return asio::error::operation_aborted;
-        }
-        co_return co_await conn->send_async(id_, CMD_DAT, std::move(payload));
-    }
+    asio::awaitable<void> close();
 
-    asio::awaitable<void> close()
-    {
-        bool expected = false;
-        if (!fin_sent_.compare_exchange_strong(expected, true))
-        {
-            co_return;
-        }
+    void on_data(std::vector<uint8_t> data) override;
 
-        LOG_CTX_DEBUG(ctx_, "{} sending FIN", log_event::MUX);
-        if (auto conn = connection_.lock())
-        {
-            co_await conn->send_async(id_, CMD_FIN, {});
-        }
+    void on_close() override;
 
-        if (fin_received_)
-        {
-            close_internal();
-        }
-    }
-
-    void on_data(std::vector<uint8_t> data) override
-    {
-        if (!fin_received_)
-        {
-            rx_bytes_.fetch_add(data.size(), std::memory_order_relaxed);
-            recv_channel_.try_send(std::error_code(), std::move(data));
-        }
-    }
-
-    void on_close() override
-    {
-        bool expected = false;
-        if (!fin_received_.compare_exchange_strong(expected, true))
-        {
-            return;
-        }
-
-        LOG_CTX_DEBUG(ctx_, "{} received FIN", log_event::MUX);
-        recv_channel_.close();
-
-        if (fin_sent_)
-        {
-            close_internal();
-        }
-    }
-
-    void on_reset() override { close_internal(); }
+    void on_reset() override;
 
    private:
-    void close_internal()
-    {
-        bool expected = false;
-        if (is_closed_.compare_exchange_strong(expected, true))
-        {
-            recv_channel_.close();
-            LOG_CTX_INFO(ctx_, "{} closed stats tx {} rx {}", log_event::MUX, tx_bytes_.load(), rx_bytes_.load());
-            if (auto conn = connection_.lock())
-            {
-                conn->remove_stream(id_);
-            }
-        }
-    }
+    void close_internal();
 
    private:
     std::uint32_t id_ = 0;
