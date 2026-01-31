@@ -29,3 +29,39 @@ target_include_directories(ip_matcher_test PRIVATE
 
 include(GoogleTest)
 gtest_discover_tests(ip_matcher_test)
+
+add_executable(mux_codec_test mux_codec_test.cpp)
+target_link_libraries(mux_codec_test
+    GTest::gtest_main
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    pthread
+)
+target_sources(mux_codec_test PRIVATE
+    ../mux_codec.cpp
+    ../log.cpp
+)
+target_include_directories(mux_codec_test PRIVATE
+    ../
+    ../third/asio/include
+    ../third/spdlog/include
+)
+gtest_discover_tests(mux_codec_test)
+
+add_executable(socks_codec_test socks_codec_test.cpp)
+target_link_libraries(socks_codec_test
+    GTest::gtest_main
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    pthread
+)
+target_sources(socks_codec_test PRIVATE
+    ../protocol.cpp
+    ../log.cpp
+)
+target_include_directories(socks_codec_test PRIVATE
+    ../
+    ../third/asio/include
+    ../third/spdlog/include
+)
+gtest_discover_tests(socks_codec_test)
