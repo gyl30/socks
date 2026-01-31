@@ -23,3 +23,18 @@ target_include_directories(socks PRIVATE
 )
 
 target_link_libraries(socks PRIVATE OpenSSL::SSL OpenSSL::Crypto pthread)
+
+find_package(GTest)
+if(NOT GTest_FOUND)
+    include(FetchContent)
+    FetchContent_Declare(
+      googletest
+      URL https://github.com/google/googletest/archive/refs/heads/main.zip
+    )
+    set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(googletest)
+endif()
+
+enable_testing()
+add_subdirectory(tests)
+
