@@ -51,10 +51,6 @@ asio::awaitable<route_type> router::decide_ip(const connection_context& ctx,
                                               asio::ip::address& addr,
                                               const asio::any_io_executor& ex) const
 {
-    // step 1 检查是否是 block
-    // step 2 检查是否是 direct
-    // step 3 检查是否是 proxy (未实现)
-    // step 4 全部是不是返回 block
     if (block_ip_matcher_->match(addr))
     {
         LOG_CTX_DEBUG(ctx, "{} matched ip rule block", log_event::ROUTE);
