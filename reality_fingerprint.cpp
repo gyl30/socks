@@ -438,7 +438,7 @@ FingerprintSpec FingerprintFactory::GetChrome120()
     FingerprintSpec spec;
     spec.client_version = tls_consts::VER_1_2;
     spec.cipher_suites = {
-        GREASE_PLACEHOLDER, 0x1301, 0x1302, 0x1303, 0xc02b, 0xc02f, 0xc02c, 0xc030, 0xcca9, 0xcca8, 0xc013, 0xc014, 0x009c, 0x009d, 0x002f, 0x0035};
+        GREASE_PLACEHOLDER, 0x1301, 0x1302, 0x1303};
     spec.extensions.push_back(std::make_shared<GreaseBlueprint>());
     spec.extensions.push_back(std::make_shared<SNIBlueprint>());
     spec.extensions.push_back(std::make_shared<EMSBlueprint>());
@@ -481,7 +481,7 @@ FingerprintSpec FingerprintFactory::GetChrome120()
     spec.extensions.push_back(psk_modes);
 
     auto vers = std::make_shared<SupportedVersionsBlueprint>();
-    vers->versions = {GREASE_PLACEHOLDER, tls_consts::VER_1_3, tls_consts::VER_1_2};
+    vers->versions = {GREASE_PLACEHOLDER, tls_consts::VER_1_3};
     spec.extensions.push_back(vers);
 
     auto comp = std::make_shared<CompressCertBlueprint>();

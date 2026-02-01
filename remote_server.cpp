@@ -199,7 +199,7 @@ asio::awaitable<void> remote_server::process_stream_request(std::shared_ptr<mux_
 
     if (syn.socks_cmd == socks::CMD_CONNECT)
     {
-        LOG_CTX_INFO(stream_ctx, "{} stream {} type TCP_CONNECT target {} {}", log_event::MUX, stream_id, syn.addr, syn.port);
+        LOG_CTX_INFO(stream_ctx, "{} stream {} type tcp_connect target {} {}", log_event::MUX, stream_id, syn.addr, syn.port);
         auto sess = std::make_shared<remote_session>(tunnel->connection(), stream_id, pool_.get_io_context().get_executor(), stream_ctx);
         sess->set_manager(tunnel);
         tunnel->register_stream(stream_id, sess);
@@ -207,7 +207,7 @@ asio::awaitable<void> remote_server::process_stream_request(std::shared_ptr<mux_
     }
     else if (syn.socks_cmd == socks::CMD_UDP_ASSOCIATE)
     {
-        LOG_CTX_INFO(stream_ctx, "{} stream {} type UDP_ASSOCIATE associated via tcp", log_event::MUX, stream_id);
+        LOG_CTX_INFO(stream_ctx, "{} stream {} type udp_associate associated via tcp", log_event::MUX, stream_id);
         auto sess = std::make_shared<remote_udp_session>(tunnel->connection(), stream_id, pool_.get_io_context().get_executor(), stream_ctx);
         sess->set_manager(tunnel);
         tunnel->register_stream(stream_id, sess);
@@ -257,13 +257,18 @@ std::pair<bool, std::vector<uint8_t>> remote_server::authenticate_client(const c
 {
     if (!info.is_tls13 || info.session_id.size() != 32)
     {
+        LOG_CTX_ERROR(ctx, "{} auth fail is_tls13 {} sid_len {}", log_event::AUTH, info.is_tls13, info.session_id.size());
         return {false, {}};
     }
 
     std::error_code ec;
+    LOG_INFO("using server private key: {} size: {}", reality::crypto_util::bytes_to_hex(private_key_), private_key_.size());
     auto shared = reality::crypto_util::x25519_derive(private_key_, info.x25519_pub, ec);
+    LOG_CTX_INFO(ctx, "server shared secret {}", reality::crypto_util::bytes_to_hex(shared));
+    LOG_INFO("using server private key {} size {}", reality::crypto_util::bytes_to_hex(private_key_), private_key_.size());
     if (ec)
     {
+        LOG_CTX_ERROR(ctx, "{} auth fail: x25519 derive failed {}", log_event::AUTH, ec.message());
         return {false, {}};
     }
 
@@ -271,25 +276,33 @@ std::pair<bool, std::vector<uint8_t>> remote_server::authenticate_client(const c
     auto r_info = reality::crypto_util::hex_to_bytes("5245414c495459");
     auto prk = reality::crypto_util::hkdf_extract(salt, shared, EVP_sha256(), ec);
     auto auth_key = reality::crypto_util::hkdf_expand(prk, r_info, 32, EVP_sha256(), ec);
+    LOG_CTX_ERROR(ctx, "server auth key {}", reality::crypto_util::bytes_to_hex(auth_key));
+    LOG_CTX_ERROR(ctx, "server random {}", reality::crypto_util::bytes_to_hex(info.random));
+    LOG_CTX_ERROR(ctx, "server extracted pub key {}", reality::crypto_util::bytes_to_hex(info.x25519_pub));
 
     auto aad = std::vector<uint8_t>(buf.begin() + 5, buf.end());
     if (info.sid_offset < 5)
     {
+        LOG_CTX_ERROR(ctx, "{} auth fail: invalid sid_offset {}", log_event::AUTH, info.sid_offset);
         return {false, {}};
     }
     const uint32_t aad_sid_offset = info.sid_offset - 5;
     if (aad_sid_offset + constants::auth::SESSION_ID_LEN > aad.size())
     {
+        LOG_CTX_ERROR(ctx, "{} auth fail: aad size mismatch", log_event::AUTH);
         return {false, {}};
     }
 
     std::fill_n(aad.begin() + aad_sid_offset, constants::auth::SESSION_ID_LEN, 0);
+    LOG_CTX_ERROR(ctx, "server aad {}", reality::crypto_util::bytes_to_hex(aad));
+    LOG_CTX_ERROR(ctx, "server sid offset aad rel {}", aad_sid_offset);
 
     auto pt = reality::crypto_util::aead_decrypt(
         EVP_aes_128_gcm(), auth_key, std::vector<uint8_t>(info.random.begin() + 20, info.random.end()), info.session_id, aad, ec);
 
     if (ec || pt.size() != 16)
     {
+        LOG_CTX_ERROR(ctx, "{} auth fail decrypt failed tag mismatch ec {} pt_size {}", log_event::AUTH, ec.message(), pt.size());
         return {false, {}};
     }
 
@@ -386,6 +399,10 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::perform_hand
     }
 
     uint16_t cipher_suite = (fingerprint.cipher_suite != 0) ? fingerprint.cipher_suite : 0x1301;
+    if (cipher_suite != 0x1301 && cipher_suite != 0x1302 && cipher_suite != 0x1303)
+    {
+        cipher_suite = 0x1301;
+    }
 
     auto sh_msg = reality::construct_server_hello(srand, info.session_id, cipher_suite, std::vector<uint8_t>(public_key, public_key + 32));
     trans.update(sh_msg);
@@ -441,8 +458,14 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::perform_hand
         cipher = EVP_aes_128_gcm();    // 0x1301
     }
 
-    auto flight2_enc =
-        reality::tls_record_layer::encrypt_record(cipher, s_hs_keys.first, s_hs_keys.second, 0, flight2_plain, reality::CONTENT_TYPE_HANDSHAKE, ec);
+    LOG_CTX_INFO(ctx, "generated sh_msg hex: {}", reality::crypto_util::bytes_to_hex(sh_msg));
+    auto flight2_enc = reality::tls_record_layer::encrypt_record(
+        cipher, s_hs_keys.first, s_hs_keys.second, 0, flight2_plain, reality::CONTENT_TYPE_HANDSHAKE, ec);
+    if (ec)
+    {
+        LOG_CTX_ERROR(ctx, "{} auth fail: flight2 encrypt failed {}", log_event::AUTH, ec.message());
+        co_return server_handshake_res{.ok = false};
+    }
 
     std::vector<uint8_t> out_sh;
     auto sh_rec = reality::write_record_header(reality::CONTENT_TYPE_HANDSHAKE, static_cast<uint16_t>(sh_msg.size()));
@@ -451,6 +474,7 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::perform_hand
     out_sh.insert(out_sh.end(), {0x14, 0x03, 0x03, 0x00, 0x01, 0x01});
     out_sh.insert(out_sh.end(), flight2_enc.begin(), flight2_enc.end());
 
+    LOG_CTX_INFO(ctx, "total out_sh hex: {}", reality::crypto_util::bytes_to_hex(out_sh));
     LOG_CTX_DEBUG(ctx, "{} sending server hello flight size {}", log_event::HANDSHAKE, out_sh.size());
     auto [we, wn] = co_await asio::async_write(*s, asio::buffer(out_sh), asio::as_tuple(asio::use_awaitable));
     if (we)
