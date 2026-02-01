@@ -55,9 +55,9 @@ struct config
     struct reality_t
     {
         std::string sni = "www.apple.com";
-        // WARNING: This is a default private key for demonstration/development.
-        // In production, ANY hardcoded PRIVATE KEY is a SECURITY RISK.
-        // Please generate a new key and load it from environment variables or a secure vault.
+        // 警告：这是用于演示/开发的默认私钥。
+        // 在生产环境中，任何硬编码的私钥都是安全风险。
+        // 请生成一个新的密钥并从环境变量或安全保管库加载它。
         std::string private_key = "b0c338c6353fab820a0e5d16b6fcf41ee4166940795f89d0cde8902675ce9456";
         std::string public_key = "8d4e6ddf1479f2305b6645f045e02f9f5e400005884a8f1663ee9c51915bcc6d";
     } reality;

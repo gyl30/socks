@@ -186,7 +186,7 @@ asio::awaitable<std::vector<uint8_t>> cert_fetcher::fetch_session::find_certific
             {
                 if (auto alpn = extract_alpn_from_encrypted_extensions(msg); alpn)
                 {
-                    LOG_CTX_INFO(ctx_, "{} learned ALPN {}", log_event::CERT, *alpn);
+                    LOG_CTX_INFO(ctx_, "{} learned alpn {}", log_event::CERT, *alpn);
                     fingerprint_.alpn = *alpn;
                 }
             }
@@ -250,21 +250,21 @@ std::error_code cert_fetcher::fetch_session::process_server_hello(const std::vec
 
     if (cipher_suite == 0x1301)
     {
-        LOG_CTX_INFO(ctx_, "{} selected TLS_AES_128_GCM_SHA256 0x1301", log_event::CERT);
+        LOG_CTX_INFO(ctx_, "{} selected tls_aes_128_gcm_sha256 0x1301", log_event::CERT);
         negotiated_cipher = EVP_aes_128_gcm();
         negotiated_md = EVP_sha256();
         key_len = 16;
     }
     else if (cipher_suite == 0x1302)
     {
-        LOG_CTX_INFO(ctx_, "{} selected TLS_AES_256_GCM_SHA384 0x1302", log_event::CERT);
+        LOG_CTX_INFO(ctx_, "{} selected tls_aes_256_gcm_sha384 0x1302", log_event::CERT);
         negotiated_cipher = EVP_aes_256_gcm();
         negotiated_md = EVP_sha384();
         key_len = 32;
     }
     else if (cipher_suite == 0x1303)
     {
-        LOG_CTX_INFO(ctx_, "{} selected TLS_CHACHA20_POLY1305_SHA256 0x1303", log_event::CERT);
+        LOG_CTX_INFO(ctx_, "{} selected tls_chacha20_poly1305_sha256 0x1303", log_event::CERT);
         negotiated_cipher = EVP_chacha20_poly1305();
         negotiated_md = EVP_sha256();
         key_len = 32;

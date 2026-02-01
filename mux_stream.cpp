@@ -55,7 +55,7 @@ asio::awaitable<void> mux_stream::close()
         co_return;
     }
 
-    LOG_CTX_DEBUG(ctx_, "{} sending FIN", log_event::MUX);
+    LOG_CTX_DEBUG(ctx_, "{} sending fin", log_event::MUX);
     if (auto conn = connection_.lock())
     {
         co_await conn->send_async(id_, CMD_FIN, {});
@@ -84,7 +84,7 @@ void mux_stream::on_close()
         return;
     }
 
-    LOG_CTX_DEBUG(ctx_, "{} received FIN", log_event::MUX);
+    LOG_CTX_DEBUG(ctx_, "{} received fin", log_event::MUX);
     recv_channel_.close();
 
     if (fin_sent_)
