@@ -15,15 +15,9 @@ mux_stream::mux_stream(std::uint32_t id,
     ctx_.stream_id = id;
 }
 
-mux_stream::~mux_stream()
-{
-    close_internal();
-}
+mux_stream::~mux_stream() { close_internal(); }
 
-std::uint32_t mux_stream::id() const
-{
-    return id_;
-}
+std::uint32_t mux_stream::id() const { return id_; }
 
 asio::awaitable<std::tuple<std::error_code, std::vector<std::uint8_t>>> mux_stream::async_read_some()
 {
@@ -93,10 +87,7 @@ void mux_stream::on_close()
     }
 }
 
-void mux_stream::on_reset()
-{
-    close_internal();
-}
+void mux_stream::on_reset() { close_internal(); }
 
 void mux_stream::close_internal()
 {

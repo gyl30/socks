@@ -6,8 +6,7 @@ namespace mux
 udp_socks_session::udp_socks_session(asio::ip::tcp::socket socket,
                                      std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager,
                                      uint32_t sid)
-    : sid_(sid),
-      timer_(socket.get_executor()),
+    : timer_(socket.get_executor()),
       socket_(std::move(socket)),
       udp_socket_(socket_.get_executor()),
       tunnel_manager_(std::move(tunnel_manager)),

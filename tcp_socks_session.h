@@ -35,7 +35,6 @@ class tcp_socks_session : public std::enable_shared_from_this<tcp_socks_session>
 
    private:
     connection_context ctx_;
-    uint32_t sid_;
     asio::ip::tcp::socket socket_;
     std::shared_ptr<router> router_;
     std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager_;

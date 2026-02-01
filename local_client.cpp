@@ -1,4 +1,5 @@
 #include "local_client.h"
+#include "tls_record_layer.h"
 
 namespace mux
 {
