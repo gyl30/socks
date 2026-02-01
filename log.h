@@ -16,7 +16,6 @@ void shutdown_log();
 #define LOG_WARN(...) SPDLOG_LOGGER_CALL(spdlog::default_logger_raw(), spdlog::level::warn, __VA_ARGS__)
 #define LOG_ERROR(...) SPDLOG_LOGGER_CALL(spdlog::default_logger_raw(), spdlog::level::err, __VA_ARGS__)
 
-// 带上下文前缀的日志宏
 #define LOG_CTX_TRACE(ctx, fmt, ...) LOG_TRACE("{} " fmt, (ctx).prefix(), ##__VA_ARGS__)
 #define LOG_CTX_DEBUG(ctx, fmt, ...) LOG_DEBUG("{} " fmt, (ctx).prefix(), ##__VA_ARGS__)
 #define LOG_CTX_INFO(ctx, fmt, ...) LOG_INFO("{} " fmt, (ctx).prefix(), ##__VA_ARGS__)

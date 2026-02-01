@@ -25,12 +25,12 @@ TEST_F(TLSRecordLayerTest, RoundTrip)
 {
     std::vector<uint8_t> plaintext = {0xAA, 0xBB, 0xCC, 0xDD};
     uint64_t seq = 1;
-    uint8_t type = 0x17;    // Application Data
+    uint8_t type = 0x17;
     std::error_code ec;
 
     auto encrypted = tls_record_layer::encrypt_record(cipher, key, iv, seq, plaintext, type, ec);
     ASSERT_FALSE(ec);
-    ASSERT_GT(encrypted.size(), plaintext.size() + 16);    // Header + Tag + Padding + etc
+    ASSERT_GT(encrypted.size(), plaintext.size() + 16);
 
     uint8_t out_type = 0;
     auto decrypted = tls_record_layer::decrypt_record(cipher, key, iv, seq, encrypted, out_type, ec);
@@ -49,10 +49,9 @@ TEST_F(TLSRecordLayerTest, SequenceNumberMatters)
     ASSERT_FALSE(ec);
 
     uint8_t out_type;
-    // Decrypt with wrong sequence number
+
     auto dec = tls_record_layer::decrypt_record(cipher, key, iv, 101, enc1, out_type, ec);
 
-    // Should fail (Bad Tag)
     EXPECT_TRUE(ec);
     EXPECT_TRUE(dec.empty());
 }
@@ -66,7 +65,6 @@ TEST_F(TLSRecordLayerTest, TamperedCiphertext)
     auto enc = tls_record_layer::encrypt_record(cipher, key, iv, seq, plaintext, 0x17, ec);
     ASSERT_FALSE(ec);
 
-    // Corrupt last byte (Tag)
     enc.back() ^= 0xFF;
 
     uint8_t out_type;
@@ -77,7 +75,6 @@ TEST_F(TLSRecordLayerTest, TamperedCiphertext)
 
 TEST_F(TLSRecordLayerTest, ShortMessage)
 {
-    // Message too short to contain header + tag
     std::vector<uint8_t> short_msg(10, 0x00);
     uint8_t out_type;
     std::error_code ec;

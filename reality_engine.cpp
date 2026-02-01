@@ -58,7 +58,7 @@ bool reality_engine::try_decrypt_next_record(uint8_t& content_type, size_t& payl
 
     if (ec)
     {
-        return true;    // Return true because we processed a record (even if failed) so the caller checks ec
+        return true;
     }
 
     read_seq_++;

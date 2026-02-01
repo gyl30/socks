@@ -17,7 +17,7 @@ TEST(RealityFingerprintTest, GreaseValues)
     GreaseContext ctx;
     uint16_t g1 = ctx.get_grease(0);
     uint16_t g2 = ctx.get_grease(1);
-    // They should be from the GREASE_VALUES set (ending in 0x?a?a)
+
     EXPECT_EQ(g1 & 0x0f0f, 0x0a0a);
     EXPECT_EQ(g2 & 0x0f0f, 0x0a0a);
 }
@@ -27,7 +27,6 @@ TEST(RealityFingerprintTest, ShuffleExtensions)
     auto spec = FingerprintFactory::Get(FingerprintType::Chrome_120);
     auto original_exts = spec.extensions;
 
-    // Multiple shuffles to check for changes (statistically likely to change)
     bool changed = false;
     for (int i = 0; i < 10; ++i)
     {
@@ -39,7 +38,7 @@ TEST(RealityFingerprintTest, ShuffleExtensions)
             break;
         }
     }
-    // Note: Some extensions aren't shufflable, but Chrome 120 has many that are.
+
     EXPECT_TRUE(changed);
 }
 

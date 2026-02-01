@@ -26,7 +26,6 @@ TEST(MuxDispatcherTest, PackAndOnData)
 
     auto packed = mux_dispatcher::pack(stream_id, cmd, original_payload);
 
-    // 模拟分块接收
     dispatcher.on_plaintext_data(std::span<const uint8_t>(packed.data(), 5));
     dispatcher.on_plaintext_data(std::span<const uint8_t>(packed.data() + 5, packed.size() - 5));
 
