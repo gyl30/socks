@@ -69,10 +69,7 @@ asio::awaitable<void> remote_udp_session::start()
     LOG_CTX_INFO(ctx_, "{} finished {}", log_event::CONN_CLOSE, ctx_.stats_summary());
 }
 
-void remote_udp_session::on_data(std::vector<uint8_t> data)
-{
-    recv_channel_.try_send(std::error_code(), std::move(data));
-}
+void remote_udp_session::on_data(std::vector<uint8_t> data) { recv_channel_.try_send(std::error_code(), std::move(data)); }
 
 void remote_udp_session::on_close()
 {
@@ -82,10 +79,7 @@ void remote_udp_session::on_close()
     (void)ignore;
 }
 
-void remote_udp_session::on_reset()
-{
-    on_close();
-}
+void remote_udp_session::on_reset() { on_close(); }
 
 asio::awaitable<void> remote_udp_session::watchdog()
 {
@@ -148,8 +142,7 @@ asio::awaitable<void> remote_udp_session::mux_to_udp()
                 target_ep = asio::ip::udp::endpoint(v6, target_ep.port());
             }
 
-            LOG_CTX_DEBUG(
-                ctx_, "{} udp forwarding {} bytes to {}", log_event::MUX, data.size() - h.header_len, target_ep.address().to_string());
+            LOG_CTX_DEBUG(ctx_, "{} udp forwarding {} bytes to {}", log_event::MUX, data.size() - h.header_len, target_ep.address().to_string());
 
             auto [se, sn] = co_await udp_socket_.async_send_to(
                 asio::buffer(data.data() + h.header_len, data.size() - h.header_len), target_ep, asio::as_tuple(asio::use_awaitable));

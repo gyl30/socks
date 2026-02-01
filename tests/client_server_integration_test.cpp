@@ -7,12 +7,14 @@
 
 using namespace mux;
 
-class IntegrationTest : public ::testing::Test {
-protected:
-    void SetUp() override {
+class IntegrationTest : public ::testing::Test
+{
+   protected:
+    void SetUp() override
+    {
         // Generate Keys
         uint8_t pub[32], priv[32];
-        reality::crypto_util::generate_x25519_keypair(pub, priv);
+        ASSERT_TRUE(reality::crypto_util::generate_x25519_keypair(pub, priv));
         server_priv_key = reality::crypto_util::bytes_to_hex(std::vector<uint8_t>(priv, priv + 32));
         client_pub_key = reality::crypto_util::bytes_to_hex(std::vector<uint8_t>(pub, pub + 32));
     }
@@ -21,7 +23,8 @@ protected:
     std::string client_pub_key;
 };
 
-TEST_F(IntegrationTest, FullHandshakeAndMux) {
+TEST_F(IntegrationTest, FullHandshakeAndMux)
+{
     std::error_code ec;
     io_context_pool pool(2, ec);
     ASSERT_FALSE(ec);
@@ -43,7 +46,7 @@ TEST_F(IntegrationTest, FullHandshakeAndMux) {
 
     // In a real test, we would now connect to local_socks_port and send data.
     // Given the complexity of SOCKS5 handshake, we'll verify the client and server at least started.
-    
+
     client->stop();
     server->stop();
     pool.stop();

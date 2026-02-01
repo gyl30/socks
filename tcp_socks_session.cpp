@@ -7,7 +7,7 @@ tcp_socks_session::tcp_socks_session(asio::ip::tcp::socket socket,
                                      std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager,
                                      std::shared_ptr<router> router,
                                      uint32_t sid)
-    : sid_(sid), socket_(std::move(socket)), router_(std::move(router)), tunnel_manager_(std::move(tunnel_manager))
+    : socket_(std::move(socket)), router_(std::move(router)), tunnel_manager_(std::move(tunnel_manager))
 {
     ctx_.new_trace_id();
     ctx_.conn_id = sid;
