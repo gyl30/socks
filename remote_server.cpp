@@ -459,8 +459,8 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::perform_hand
     }
 
     LOG_CTX_INFO(ctx, "generated sh_msg hex: {}", reality::crypto_util::bytes_to_hex(sh_msg));
-    auto flight2_enc = reality::tls_record_layer::encrypt_record(
-        cipher, s_hs_keys.first, s_hs_keys.second, 0, flight2_plain, reality::CONTENT_TYPE_HANDSHAKE, ec);
+    auto flight2_enc =
+        reality::tls_record_layer::encrypt_record(cipher, s_hs_keys.first, s_hs_keys.second, 0, flight2_plain, reality::CONTENT_TYPE_HANDSHAKE, ec);
     if (ec)
     {
         LOG_CTX_ERROR(ctx, "{} auth fail: flight2 encrypt failed {}", log_event::AUTH, ec.message());
