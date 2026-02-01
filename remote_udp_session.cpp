@@ -1,5 +1,6 @@
 #include "remote_udp_session.h"
 #include "mux_codec.h"
+#include <asio/ip/address.hpp>
 
 namespace mux
 {
@@ -131,9 +132,24 @@ asio::awaitable<void> remote_udp_session::mux_to_udp()
         auto [er, eps] = co_await udp_resolver_.async_resolve(h.addr, std::to_string(h.port), asio::as_tuple(asio::use_awaitable));
         if (!er)
         {
-            auto target_ep = *eps.begin();
+            auto target_ep = eps.begin()->endpoint();
+            if (target_ep.address().is_v4())
+            {
+                auto v4 = target_ep.address().to_v4();
+                auto v4_bytes = v4.to_bytes();
+                asio::ip::address_v6::bytes_type v6_bytes = {0};
+                v6_bytes[10] = 0xFF;
+                v6_bytes[11] = 0xFF;
+                v6_bytes[12] = v4_bytes[0];
+                v6_bytes[13] = v4_bytes[1];
+                v6_bytes[14] = v4_bytes[2];
+                v6_bytes[15] = v4_bytes[3];
+                auto v6 = asio::ip::address_v6(v6_bytes);
+                target_ep = asio::ip::udp::endpoint(v6, target_ep.port());
+            }
+
             LOG_CTX_DEBUG(
-                ctx_, "{} udp forwarding {} bytes to {}", log_event::MUX, data.size() - h.header_len, target_ep.endpoint().address().to_string());
+                ctx_, "{} udp forwarding {} bytes to {}", log_event::MUX, data.size() - h.header_len, target_ep.address().to_string());
 
             auto [se, sn] = co_await udp_socket_.async_send_to(
                 asio::buffer(data.data() + h.header_len, data.size() - h.header_len), target_ep, asio::as_tuple(asio::use_awaitable));
