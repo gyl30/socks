@@ -122,13 +122,13 @@ int main(int argc, char** argv)
     ec = signals.add(SIGINT, ec);
     if (ec)
     {
-        LOG_ERROR("fatal failed to register SIGINT error {}", ec.message());
+        LOG_ERROR("fatal failed to register sigint error {}", ec.message());
         return 1;
     }
     ec = signals.add(SIGTERM, ec);
     if (ec)
     {
-        LOG_ERROR("fatal failed to register SIGTERM error {}", ec.message());
+        LOG_ERROR("fatal failed to register sigterm error {}", ec.message());
         return 1;
     }
 

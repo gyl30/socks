@@ -74,7 +74,7 @@ void remote_session::on_data(std::vector<uint8_t> data)
 
 void remote_session::on_close()
 {
-    LOG_CTX_DEBUG(ctx_, "{} received FIN from client", log_event::MUX);
+    LOG_CTX_DEBUG(ctx_, "{} received fin from client", log_event::MUX);
     recv_channel_.close();
     std::error_code ec;
     ec = target_socket_.shutdown(asio::ip::tcp::socket::shutdown_send, ec);

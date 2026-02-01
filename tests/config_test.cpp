@@ -25,7 +25,7 @@ protected:
 TEST_F(ConfigTest, DefaultConfigValid) {
     auto json = dump_default_config();
     ASSERT_FALSE(json.empty());
-    // Basic check for expected keys
+    // 检查预期键的基本检查
     EXPECT_NE(json.find("\"mode\""), std::string::npos);
     EXPECT_NE(json.find("\"inbound\""), std::string::npos);
 }

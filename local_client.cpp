@@ -192,6 +192,9 @@ asio::awaitable<bool> local_client::generate_and_send_client_hello(
     asio::ip::tcp::socket& socket, const uint8_t* public_key, const uint8_t* private_key, reality::transcript& trans, std::error_code& ec) const
 {
     auto shared = reality::crypto_util::x25519_derive(std::vector<uint8_t>(private_key, private_key + 32), server_pub_key_, ec);
+    LOG_INFO("client shared secret: {}", reality::crypto_util::bytes_to_hex(shared));
+    LOG_INFO("using server pub key: {} size: {}", reality::crypto_util::bytes_to_hex(server_pub_key_), server_pub_key_.size());
+    LOG_INFO("using client derived private key: {}", reality::crypto_util::bytes_to_hex(std::vector<uint8_t>(private_key, private_key + 32)));
     if (ec)
     {
         co_return false;
@@ -209,6 +212,8 @@ asio::awaitable<bool> local_client::generate_and_send_client_hello(
     auto auth_key = reality::crypto_util::hkdf_expand(prk, r_info, 32, EVP_sha256(), ec);
 
     LOG_DEBUG("authkey {}", reality::crypto_util::bytes_to_hex(auth_key));
+    LOG_DEBUG("client random: {}", reality::crypto_util::bytes_to_hex(client_random));
+    LOG_DEBUG("client ephemeral pub key: {}", reality::crypto_util::bytes_to_hex(std::vector<uint8_t>(public_key, public_key + 32)));
     std::vector<uint8_t> payload(16);
     payload[0] = 1;
     payload[1] = 8;
@@ -228,6 +233,7 @@ asio::awaitable<bool> local_client::generate_and_send_client_hello(
     std::vector<uint8_t> session_id(32, 0);
 
     auto hello_aad = reality::ClientHelloBuilder::build(spec, session_id, client_random, std::vector<uint8_t>(public_key, public_key + 32), sni_);
+    LOG_DEBUG("client aad: {}", reality::crypto_util::bytes_to_hex(hello_aad));
 
     auto sid = reality::crypto_util::aead_encrypt(EVP_aes_128_gcm(),
                                                   auth_key,
@@ -242,7 +248,7 @@ asio::awaitable<bool> local_client::generate_and_send_client_hello(
     }
     else
     {
-        LOG_ERROR("ClientHello too short to patch SessionID");
+        LOG_ERROR("client hello too short to patch session id");
         co_return false;
     }
 
@@ -333,6 +339,7 @@ asio::awaitable<local_client::server_hello_res> local_client::process_server_hel
     trans.set_protocol_hash(md);
 
     auto public_key = reality::extract_server_public_key(sh_data);
+    LOG_DEBUG("rx server hello: {}", reality::crypto_util::bytes_to_hex(sh_data));
     if (public_key.empty())
     {
         ec = asio::error::invalid_argument;

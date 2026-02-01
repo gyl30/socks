@@ -411,7 +411,7 @@ bool crypto_util::verify_tls13_signature(EVP_PKEY* pub_key,
 
     if (res != 1)
     {
-        LOG_ERROR("Signature verification failed");
+        LOG_ERROR("signature verification failed");
         ec = std::make_error_code(std::errc::protocol_error);
         return false;
     }
