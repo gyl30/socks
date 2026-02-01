@@ -6,7 +6,7 @@
 namespace mux
 {
 
-// Helper functions that can be internal to translation unit if not used elsewhere
+// 如果在别处未使用，可以作为翻译单元内部的辅助函数
 static uint32_t make_mask_v4(int prefix_len)
 {
     if (prefix_len == 0)
@@ -126,9 +126,9 @@ void ip_matcher::add_rule(const std::string& cidr)
         return;
     }
     std::error_code ec;
-    // make_address might require null-terminated string depending on version, 
-    // safer to construct string for now or ensure Asio supports string_view.
-    // Given Asio usage usually supports string_view in newer versions, but std::string is safest.
+    // make_address 可能需要以 null 结尾的字符串（取决于版本），
+    // 为了安全起见，目前构建 string 或确保 Asio 支持 string_view。
+    // 尽管新版本的 Asio 通常支持 string_view，但在目前 std::string 是最安全的。
     auto addr = asio::ip::make_address(std::string(ip_part), ec);
     if (ec)
     {
