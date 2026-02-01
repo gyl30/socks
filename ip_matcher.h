@@ -69,7 +69,6 @@ class ip_matcher
     void optimize();
 
    private:
-
     void optimize_v4();
 
     void optimize_v6();

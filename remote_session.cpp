@@ -67,10 +67,7 @@ asio::awaitable<void> remote_session::start(const syn_payload& syn)
     LOG_CTX_INFO(ctx_, "{} finished {}", log_event::CONN_CLOSE, ctx_.stats_summary());
 }
 
-void remote_session::on_data(std::vector<uint8_t> data)
-{
-    recv_channel_.try_send(std::error_code(), std::move(data));
-}
+void remote_session::on_data(std::vector<uint8_t> data) { recv_channel_.try_send(std::error_code(), std::move(data)); }
 
 void remote_session::on_close()
 {

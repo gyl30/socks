@@ -14,8 +14,6 @@
 namespace mux
 {
 
-
-
 class mux_stream : public mux_stream_interface, public std::enable_shared_from_this<mux_stream>
 {
    public:

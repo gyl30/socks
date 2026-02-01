@@ -3,17 +3,15 @@
 #include <cstdio>
 #include "config.h"
 
-class ConfigTest : public ::testing::Test {
-protected:
-    void SetUp() override {
-        tmp_file = "test_config.json";
-    }
+class ConfigTest : public ::testing::Test
+{
+   protected:
+    void SetUp() override { tmp_file = "test_config.json"; }
 
-    void TearDown() override {
-        std::remove(tmp_file.c_str());
-    }
+    void TearDown() override { std::remove(tmp_file.c_str()); }
 
-    void write_file(const std::string& content) {
+    void write_file(const std::string& content)
+    {
         std::ofstream out(tmp_file);
         out << content;
         out.close();
@@ -22,7 +20,8 @@ protected:
     std::string tmp_file;
 };
 
-TEST_F(ConfigTest, DefaultConfigValid) {
+TEST_F(ConfigTest, DefaultConfigValid)
+{
     auto json = dump_default_config();
     ASSERT_FALSE(json.empty());
     // 检查预期键的基本检查
@@ -30,7 +29,8 @@ TEST_F(ConfigTest, DefaultConfigValid) {
     EXPECT_NE(json.find("\"inbound\""), std::string::npos);
 }
 
-TEST_F(ConfigTest, ParseValues) {
+TEST_F(ConfigTest, ParseValues)
+{
     std::string content = R"({
         "mode": "client",
         "inbound": {
@@ -61,12 +61,14 @@ TEST_F(ConfigTest, ParseValues) {
     EXPECT_EQ(cfg.reality.sni, "google.com");
 }
 
-TEST_F(ConfigTest, MissingFile) {
+TEST_F(ConfigTest, MissingFile)
+{
     auto cfg = parse_config("non_existent_file.json");
     EXPECT_FALSE(cfg.has_value());
 }
 
-TEST_F(ConfigTest, InvalidJson) {
+TEST_F(ConfigTest, InvalidJson)
+{
     write_file("{ invalid_json }");
     auto cfg = parse_config(tmp_file);
     EXPECT_FALSE(cfg.has_value());
