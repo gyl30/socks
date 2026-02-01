@@ -48,21 +48,23 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
                    const std::string& trace_id = "",
                    const config::timeout_t& timeout_cfg = {});
 
+    virtual ~mux_connection() = default;
+
     auto get_executor() { return socket_.get_executor(); }
     std::string trace_id() const { return ctx_.trace_id; }
 
     void set_syn_callback(syn_callback_t cb) { syn_callback_ = std::move(cb); }
 
-    void register_stream(uint32_t id, std::shared_ptr<mux_stream_interface> stream);
+    virtual void register_stream(uint32_t id, std::shared_ptr<mux_stream_interface> stream);
 
-    void remove_stream(uint32_t id);
+    virtual void remove_stream(uint32_t id);
 
     [[nodiscard]] uint32_t acquire_next_id() { return next_stream_id_.fetch_add(2, std::memory_order_relaxed); }
-    [[nodiscard]] uint32_t id() const { return cid_; }
+    [[nodiscard]] virtual uint32_t id() const { return cid_; }
 
     [[nodiscard]] asio::awaitable<void> start();
 
-    [[nodiscard]] asio::awaitable<std::error_code> send_async(uint32_t stream_id, uint8_t cmd, std::vector<uint8_t> payload);
+    [[nodiscard]] virtual asio::awaitable<std::error_code> send_async(uint32_t stream_id, uint8_t cmd, std::vector<uint8_t> payload);
 
     void stop();
 
