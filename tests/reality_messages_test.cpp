@@ -12,7 +12,7 @@ TEST(RealityMessagesTest, RecordHeader)
     ASSERT_EQ(header.size(), 5);
     EXPECT_EQ(header[0], 0x16);
     EXPECT_EQ(header[1], 0x03);
-    EXPECT_EQ(header[2], 0x03);    // VER_1_2 is 0x0303
+    EXPECT_EQ(header[2], 0x03);
     EXPECT_EQ(header[3], 0x12);
     EXPECT_EQ(header[4], 0x34);
 }
@@ -26,7 +26,6 @@ TEST(RealityMessagesTest, ServerHello_RoundTrip)
 
     auto sh = construct_server_hello(random, session_id, cipher, pubkey);
 
-    // Test extraction
     auto extracted_cipher = extract_cipher_suite_from_server_hello(sh);
     ASSERT_TRUE(extracted_cipher.has_value());
     EXPECT_EQ(*extracted_cipher, cipher);
@@ -55,9 +54,7 @@ TEST(RealityMessagesTest, EncryptedExtensions_NoALPN)
 {
     auto msg = construct_encrypted_extensions("");
     auto extracted_alpn = extract_alpn_from_encrypted_extensions(msg);
-    // Should be nullopt or empty?
-    // construct_encrypted_extensions with empty ALPN adds no ALPN extension.
-    // extract_alpn... returns nullopt if not found.
+
     EXPECT_FALSE(extracted_alpn.has_value());
 }
 

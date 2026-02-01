@@ -11,7 +11,7 @@ namespace net
 {
 constexpr std::size_t BUFFER_SIZE = 4096;
 constexpr int RETRY_INTERVAL_SEC = 5;
-constexpr int MAX_LISTEN_CONNECTIONS = 1024;    // Implicit in asio::socket_base::max_listen_connections usually, but good to have if we need explicit
+constexpr int MAX_LISTEN_CONNECTIONS = 1024;
 }    // namespace net
 
 namespace auth
@@ -37,4 +37,4 @@ constexpr int MAX_WAIT_MS = 120 * 1000;
 
 }    // namespace constants
 
-#endif    // CONSTANTS_H
+#endif

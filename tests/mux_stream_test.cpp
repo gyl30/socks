@@ -59,6 +59,6 @@ TEST_F(MuxStreamTest, OnClose_UnblocksReader)
     stream->on_close();
 
     auto [ec, read_data] = run_awaitable(ctx, stream->async_read_some());
-    // In asio concurrent_channel, closing it causes receive to return error
+
     EXPECT_TRUE(ec);
 }
