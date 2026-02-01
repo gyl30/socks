@@ -455,7 +455,7 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::perform_hand
     }
     else
     {
-        cipher = EVP_aes_128_gcm();    // 0x1301
+        cipher = EVP_aes_128_gcm();
     }
 
     LOG_CTX_INFO(ctx, "generated sh_msg hex: {}", reality::crypto_util::bytes_to_hex(sh_msg));

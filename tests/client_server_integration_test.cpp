@@ -12,7 +12,6 @@ class IntegrationTest : public ::testing::Test
    protected:
     void SetUp() override
     {
-        // Generate Keys
         uint8_t pub[32], priv[32];
         ASSERT_TRUE(reality::crypto_util::generate_x25519_keypair(pub, priv));
         server_priv_key = reality::crypto_util::bytes_to_hex(std::vector<uint8_t>(priv, priv + 32));
@@ -33,19 +32,13 @@ TEST_F(IntegrationTest, FullHandshakeAndMux)
     uint16_t local_socks_port = 11080;
     std::string sni = "www.google.com";
 
-    // Start Server
     auto server = std::make_shared<remote_server>(pool, server_port, std::vector<config::fallback_entry>{}, server_priv_key);
     server->start();
 
-    // Start Client
     auto client = std::make_shared<local_client>(pool, "127.0.0.1", std::to_string(server_port), local_socks_port, client_pub_key, sni);
     client->start();
 
-    // Wait a bit for components to initialize
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
-
-    // In a real test, we would now connect to local_socks_port and send data.
-    // Given the complexity of SOCKS5 handshake, we'll verify the client and server at least started.
 
     client->stop();
     server->stop();

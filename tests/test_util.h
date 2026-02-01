@@ -8,7 +8,6 @@
 namespace mux::test
 {
 
-// Helper to run an awaitable and return its result, or throw on error
 template <typename T>
 T run_awaitable(asio::io_context& ctx, asio::awaitable<T> awaitable)
 {
@@ -45,4 +44,4 @@ inline void run_awaitable_void(asio::io_context& ctx, asio::awaitable<void> awai
 
 }    // namespace mux::test
 
-#endif    // SOCKS_TEST_UTIL_H
+#endif

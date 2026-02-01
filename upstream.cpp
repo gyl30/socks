@@ -5,8 +5,6 @@
 namespace mux
 {
 
-// direct_upstream implementation
-
 asio::awaitable<bool> direct_upstream::connect(const std::string& host, uint16_t port)
 {
     auto [res_ec, eps] = co_await resolver_.async_resolve(host, std::to_string(port), asio::as_tuple(asio::use_awaitable));
@@ -64,8 +62,6 @@ asio::awaitable<void> direct_upstream::close()
     }
     co_return;
 }
-
-// proxy_upstream implementation
 
 proxy_upstream::proxy_upstream(std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel, connection_context ctx)
     : ctx_(std::move(ctx)), tunnel_(std::move(tunnel))

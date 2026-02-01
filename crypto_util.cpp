@@ -4,7 +4,6 @@
 namespace reality
 {
 
-// crypto_util
 std::string crypto_util::bytes_to_hex(const std::vector<uint8_t>& bytes)
 {
     std::ostringstream oss;

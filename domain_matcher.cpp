@@ -31,7 +31,6 @@ bool domain_matcher::load(const std::string& filename)
         }
         else
         {
-            // Line was all whitespace
             line.clear();
         }
 
