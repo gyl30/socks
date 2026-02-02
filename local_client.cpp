@@ -11,7 +11,8 @@ local_client::local_client(io_context_pool& pool,
                            const std::string& key_hex,
                            std::string sni,
                            const config::timeout_t& timeout_cfg,
-                           config::socks_t socks_cfg)
+                           config::socks_t socks_cfg,
+                           const config::limits_t& limits_cfg)
     : remote_host_(std::move(host)),
       remote_port_(std::move(port)),
       listen_port_(l_port),
@@ -21,7 +22,8 @@ local_client::local_client(io_context_pool& pool,
       acceptor_(remote_timer_.get_executor()),
       stop_channel_(remote_timer_.get_executor(), 1),
       timeout_config_(timeout_cfg),
-      socks_config_(std::move(socks_cfg))
+      socks_config_(std::move(socks_cfg)),
+      limits_config_(limits_cfg)
 {
     server_pub_key_ = reality::crypto_util::hex_to_bytes(key_hex);
     router_ = std::make_shared<mux::router>();
@@ -34,13 +36,26 @@ void local_client::start()
         LOG_ERROR("failed to load router data");
         abort();
     }
-    LOG_INFO("client starting target {} port {} listening {}", remote_host_, remote_port_, listen_port_);
+    LOG_INFO("client starting target {} port {} with {} connections", remote_host_, remote_port_, limits_config_.max_connections);
+
+    if (limits_config_.max_connections == 0)
+        limits_config_.max_connections = 1;
+    tunnel_pool_.resize(limits_config_.max_connections);
+
+    for (uint32_t i = 0; i < limits_config_.max_connections; ++i)
+    {
+        asio::co_spawn(
+            pool_.get_io_context(),
+            [this, i, self = shared_from_this()]() -> asio::awaitable<void> { co_await connect_remote_loop(i); },
+            asio::detached);
+    }
+
     asio::co_spawn(
-        remote_timer_.get_executor(),
+        pool_.get_io_context(),
         [this, self = shared_from_this()]() -> asio::awaitable<void>
         {
             using asio::experimental::awaitable_operators::operator||;
-            co_await (connect_remote_loop() || accept_local_loop() || wait_stop());
+            co_await (accept_local_loop() || wait_stop());
         },
         asio::detached);
 }
@@ -57,13 +72,17 @@ void local_client::stop()
     stop_channel_.cancel();
     remote_timer_.cancel();
 
-    if (tunnel_manager_ && tunnel_manager_->connection())
+    std::lock_guard<std::mutex> lock(pool_mutex_);
+    for (auto& tunnel : tunnel_pool_)
     {
-        tunnel_manager_->connection()->stop();
+        if (tunnel && tunnel->connection())
+        {
+            tunnel->connection()->stop();
+        }
     }
 }
 
-asio::awaitable<void> local_client::connect_remote_loop()
+asio::awaitable<void> local_client::connect_remote_loop(uint32_t index)
 {
     while (!stop_)
     {
@@ -71,7 +90,13 @@ asio::awaitable<void> local_client::connect_remote_loop()
         connection_context ctx;
         ctx.new_trace_id();
         ctx.conn_id = cid;
-        LOG_CTX_INFO(ctx, "{} initiating connection to {} {}", log_event::CONN_INIT, remote_host_, remote_port_);
+        LOG_CTX_INFO(ctx,
+                     "{} initiating connection {}/{} to {} {}",
+                     log_event::CONN_INIT,
+                     index + 1,
+                     limits_config_.max_connections,
+                     remote_host_,
+                     remote_port_);
 
         std::error_code ec;
         auto socket = std::make_shared<asio::ip::tcp::socket>(pool_.get_io_context());
@@ -101,14 +126,25 @@ asio::awaitable<void> local_client::connect_remote_loop()
 
         LOG_CTX_INFO(ctx, "{} handshake success cipher 0x{:04x}", log_event::HANDSHAKE, handshake_ret.cipher_suite);
         reality_engine re(s_app_keys.first, s_app_keys.second, c_app_keys.first, c_app_keys.second);
-        tunnel_manager_ =
-            std::make_shared<mux_tunnel_impl<asio::ip::tcp::socket>>(std::move(*socket), std::move(re), true, cid, ctx.trace_id, timeout_config_);
 
-        co_await tunnel_manager_->run();
+        auto tunnel = std::make_shared<mux_tunnel_impl<asio::ip::tcp::socket>>(
+            std::move(*socket), std::move(re), true, cid, ctx.trace_id, timeout_config_, limits_config_);
+
+        {
+            std::lock_guard<std::mutex> lock(pool_mutex_);
+            tunnel_pool_[index] = tunnel;
+        }
+
+        co_await tunnel->run();
+
+        {
+            std::lock_guard<std::mutex> lock(pool_mutex_);
+            tunnel_pool_[index] = nullptr;
+        }
 
         co_await wait_remote_retry();
     }
-    LOG_INFO("{} connect_remote_loop exited", log_event::CONN_CLOSE);
+    LOG_INFO("{} connect_remote_loop {} exited", log_event::CONN_CLOSE, index);
 }
 
 asio::awaitable<bool> local_client::tcp_connect(asio::ip::tcp::socket& socket, std::error_code& ec) const
@@ -541,15 +577,33 @@ asio::awaitable<void> local_client::accept_local_loop()
             LOG_WARN("failed to set no_delay on local socket {}", ec.message());
         }
 
-        if (tunnel_manager_ != nullptr && tunnel_manager_->connection()->is_open())
+        std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> selected_tunnel;
+
+        {
+            std::lock_guard<std::mutex> lock(pool_mutex_);
+            for (size_t i = 0; i < tunnel_pool_.size(); ++i)
+            {
+                uint32_t idx = (next_tunnel_index_ + i) % tunnel_pool_.size();
+                auto tunnel = tunnel_pool_[idx];
+                if (tunnel && tunnel->connection() && tunnel->connection()->is_open())
+                {
+                    selected_tunnel = tunnel;
+                    next_tunnel_index_ = (idx + 1) % tunnel_pool_.size();
+                    break;
+                }
+            }
+        }
+
+        if (selected_tunnel)
         {
             const uint32_t sid = next_session_id_++;
-            auto session = std::make_shared<socks_session>(std::move(s), tunnel_manager_, router_, sid, socks_config_);
+            LOG_INFO("client session {} selected tunnel index {}", sid, next_tunnel_index_);
+            auto session = std::make_shared<socks_session>(std::move(s), selected_tunnel, router_, sid, socks_config_);
             session->start();
         }
         else
         {
-            LOG_WARN("rejecting local connection tunnel not ready");
+            LOG_WARN("rejecting local connection no active tunnel");
             std::error_code ec;
             ec = s.close(ec);
             LOG_WARN("local connection closed {}", ec.message());

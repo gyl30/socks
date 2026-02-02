@@ -5,7 +5,8 @@ mux_connection::mux_connection(asio::ip::tcp::socket socket,
                                bool is_client,
                                uint32_t conn_id,
                                const std::string& trace_id,
-                               const config::timeout_t& timeout_cfg)
+                               const config::timeout_t& timeout_cfg,
+                               const config::limits_t& limits_cfg)
     : cid_(conn_id),
       timer_(socket.get_executor()),
       socket_(std::move(socket)),
@@ -13,7 +14,8 @@ mux_connection::mux_connection(asio::ip::tcp::socket socket,
       next_stream_id_(is_client ? 1 : 2),
       connection_state_(mux_connection_state::connected),
       write_channel_(socket_.get_executor(), 1024),
-      timeout_config_(timeout_cfg)
+      timeout_config_(timeout_cfg),
+      limits_config_(limits_cfg)
 {
     ctx_.trace_id = trace_id;
     ctx_.conn_id = conn_id;
@@ -245,7 +247,7 @@ asio::awaitable<void> mux_connection::timeout_loop()
 
 void mux_connection::on_mux_frame(mux::frame_header header, std::vector<uint8_t> payload)
 {
-    LOG_TRACE("mux {} recv frame stream {} cmd {} len {}", cid_, header.stream_id, header.command, header.length);
+    LOG_TRACE("mux {} recv frame stream {} cmd {} len {} payload size {}", cid_, header.stream_id, header.command, header.length, payload.size());
 
     if (header.command == mux::CMD_SYN)
     {

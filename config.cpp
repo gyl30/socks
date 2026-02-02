@@ -10,7 +10,8 @@ REFLECT_STRUCT(config::socks_t, host, port, auth, username, password);
 REFLECT_STRUCT(config::fallback_entry, sni, host, port);
 REFLECT_STRUCT(config::timeout_t, read, write, idle);
 REFLECT_STRUCT(config::reality_t, sni, private_key, public_key);
-REFLECT_STRUCT(config, mode, log, inbound, outbound, socks, fallbacks, timeout, reality);
+REFLECT_STRUCT(config::limits_t, max_connections, max_buffer);
+REFLECT_STRUCT(config, mode, log, inbound, outbound, socks, fallbacks, timeout, reality, limits);
 
 }    // namespace reflect
 

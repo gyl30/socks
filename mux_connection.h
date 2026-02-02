@@ -46,7 +46,8 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
                    bool is_client,
                    uint32_t conn_id,
                    const std::string& trace_id = "",
-                   const config::timeout_t& timeout_cfg = {});
+                   const config::timeout_t& timeout_cfg = {},
+                   const config::limits_t& limits_cfg = {});
 
     virtual ~mux_connection() = default;
 
@@ -97,6 +98,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     std::chrono::steady_clock::time_point last_write_time;
     asio::experimental::concurrent_channel<void(std::error_code, mux_write_msg)> write_channel_;
     config::timeout_t timeout_config_;
+    config::limits_t limits_config_;
 };
 
 #endif
