@@ -162,13 +162,24 @@ asio::awaitable<void> remote_server::handle(std::shared_ptr<asio::ip::tcp::socke
     auto s_app_keys = reality::tls_key_schedule::derive_traffic_keys(app_sec.second, ec, key_len, iv_len, sh_res.negotiated_md);
 
     LOG_CTX_INFO(ctx, "{} tunnel starting", log_event::CONN_ESTABLISHED);
+
+    {
+        const std::scoped_lock lock(tunnels_mutex_);
+        std::erase_if(active_tunnels_, [](const auto& wp) { return wp.expired(); });
+        if (active_tunnels_.size() >= limits_config_.max_connections)
+        {
+            LOG_CTX_WARN(ctx, "{} connection limit reached {}, rejecting", log_event::CONN_CLOSE, limits_config_.max_connections);
+            co_await handle_fallback(s, {}, ctx, info.sni);
+            co_return;
+        }
+    }
+
     reality_engine engine(c_app_keys.first, c_app_keys.second, s_app_keys.first, s_app_keys.second);
     auto tunnel = std::make_shared<mux_tunnel_impl<asio::ip::tcp::socket>>(
         std::move(*s), std::move(engine), false, conn_id, ctx.trace_id, timeout_config_, limits_config_);
 
     {
         const std::scoped_lock lock(tunnels_mutex_);
-        std::erase_if(active_tunnels_, [](const auto& wp) { return wp.expired(); });
         active_tunnels_.push_back(tunnel);
     }
 
