@@ -39,10 +39,12 @@ TEST_F(LimitsTest, ConnectionPoolCapacity)
     config::limits_t limits;
     limits.max_connections = 2;
 
-    set_level("debug");
+    config::timeout_t timeouts;
+    timeouts.read = 10;
+    timeouts.write = 10;
 
     auto server =
-        std::make_shared<remote_server>(pool, server_port, std::vector<config::fallback_entry>{}, server_priv_key, config::timeout_t{}, limits);
+        std::make_shared<remote_server>(pool, server_port, std::vector<config::fallback_entry>{}, server_priv_key, timeouts, limits);
     server->start();
 
     uint16_t target_port = 30080;
@@ -65,10 +67,10 @@ TEST_F(LimitsTest, ConnectionPoolCapacity)
     accept_target();
 
     auto client = std::make_shared<local_client>(
-        pool, "::1", std::to_string(server_port), local_socks_port, client_pub_key, sni, config::timeout_t{}, config::socks_t{}, limits);
+        pool, "::1", std::to_string(server_port), local_socks_port, client_pub_key, sni, timeouts, config::socks_t{}, limits);
     client->start();
 
-    std::this_thread::sleep_for(std::chrono::seconds(2));
+    std::this_thread::sleep_for(std::chrono::seconds(1));
 
     auto connect_socks = [&](int id) -> bool
     {
@@ -102,17 +104,17 @@ TEST_F(LimitsTest, ConnectionPoolCapacity)
 
         if (!cec && reply[1] == 0x00)
         {
-            std::this_thread::sleep_for(std::chrono::seconds(1));
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
             return true;
         }
         return false;
     };
 
     std::thread t1([&] { EXPECT_TRUE(connect_socks(1)); });
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
     std::thread t2([&] { EXPECT_TRUE(connect_socks(2)); });
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
     std::thread t3([&] { EXPECT_TRUE(connect_socks(3)); });
 

@@ -82,10 +82,14 @@ TEST_F(UdpIntegrationTest, UdpAssociateAndEcho)
     local_socks_port = local_acceptor.local_endpoint().port();
     local_acceptor.close();
 
-    auto server = std::make_shared<remote_server>(pool, server_port, std::vector<config::fallback_entry>{}, server_priv_key);
+    config::timeout_t timeouts;
+    timeouts.read = 10;
+    timeouts.write = 10;
+
+    auto server = std::make_shared<remote_server>(pool, server_port, std::vector<config::fallback_entry>{}, server_priv_key, timeouts);
     server->start();
 
-    auto client = std::make_shared<local_client>(pool, "127.0.0.1", std::to_string(server_port), local_socks_port, client_pub_key, sni);
+    auto client = std::make_shared<local_client>(pool, "127.0.0.1", std::to_string(server_port), local_socks_port, client_pub_key, sni, timeouts);
     client->start();
 
     asio::ip::udp::socket echo_socket(pool.get_io_context());
@@ -100,7 +104,7 @@ TEST_F(UdpIntegrationTest, UdpAssociateAndEcho)
     std::thread pool_thread([&pool]() { pool.run(); });
 
     bool tunnel_ready = false;
-    for (int i = 0; i < 100; ++i)
+    for (int i = 0; i < 20; ++i)
     {
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
@@ -184,7 +188,7 @@ TEST_F(UdpIntegrationTest, UdpAssociateAndEcho)
         },
         asio::detached);
 
-    for (int i = 0; i < 200; ++i)
+    for (int i = 0; i < 100; ++i)
     {
         if (test_passed || test_failed)
             break;

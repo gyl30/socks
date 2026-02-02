@@ -58,3 +58,41 @@ TEST(RealityFingerprintTest, IOS14_Identification)
     }
     EXPECT_TRUE(found_alpn);
 }
+
+TEST(RealityFingerprintTest, Firefox120_Basic)
+{
+    auto spec = FingerprintFactory::Get(FingerprintType::Firefox_120);
+    EXPECT_EQ(spec.client_version, tls_consts::VER_1_2);
+    EXPECT_FALSE(spec.cipher_suites.empty());
+    EXPECT_FALSE(spec.extensions.empty());
+}
+
+TEST(RealityFingerprintTest, Android11_Basic)
+{
+    auto spec = FingerprintFactory::Get(FingerprintType::Android_11_OkHttp);
+    EXPECT_EQ(spec.client_version, tls_consts::VER_1_2);
+    EXPECT_FALSE(spec.cipher_suites.empty());
+    EXPECT_FALSE(spec.extensions.empty());
+}
+
+TEST(RealityFingerprintTest, Chrome131_Basic)
+{
+    auto spec = FingerprintFactory::Get(FingerprintType::Chrome_131);
+    EXPECT_EQ(spec.client_version, tls_consts::VER_1_2);
+    EXPECT_FALSE(spec.cipher_suites.empty());
+    EXPECT_TRUE(spec.shuffle_extensions);
+}
+
+TEST(RealityFingerprintTest, GetChrome120_Direct)
+{
+    auto spec = FingerprintFactory::GetChrome120();
+    EXPECT_EQ(spec.client_version, tls_consts::VER_1_2);
+    EXPECT_TRUE(spec.shuffle_extensions);
+}
+
+TEST(RealityFingerprintTest, CompressionMethods)
+{
+    auto spec = FingerprintFactory::Get(FingerprintType::Chrome_120);
+    ASSERT_EQ(spec.compression_methods.size(), 1);
+    EXPECT_EQ(spec.compression_methods[0], 0x00);
+}
