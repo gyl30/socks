@@ -2,47 +2,19 @@
 #include <fstream>
 #include <algorithm>
 #include <charconv>
+#include <bit>
 
 namespace mux
 {
 
-static uint32_t make_mask_v4(int prefix_len)
+struct ip_matcher::TrieNode
 {
-    if (prefix_len == 0)
-    {
-        return 0;
-    }
-    if (prefix_len == 32)
-    {
-        return 0xFFFFFFFFU;
-    }
-    return 0xFFFFFFFFU << (32 - prefix_len);
-}
+    std::array<std::unique_ptr<TrieNode>, 2> children;
+    bool is_match = false;
+};
 
-static u128_ip make_mask_v6(int prefix_len)
-{
-    if (prefix_len <= 0)
-    {
-        return {.hi = 0, .lo = 0};
-    }
-    if (prefix_len >= 128)
-    {
-        return {.hi = ~0ULL, .lo = ~0ULL};
-    }
-
-    u128_ip mask{.hi = 0, .lo = 0};
-    if (prefix_len >= 64)
-    {
-        mask.hi = ~0ULL;
-        mask.lo = (prefix_len == 64) ? 0 : (~0ULL << (128 - prefix_len));
-    }
-    else
-    {
-        mask.hi = ~0ULL << (64 - prefix_len);
-        mask.lo = 0;
-    }
-    return mask;
-}
+ip_matcher::ip_matcher() = default;
+ip_matcher::~ip_matcher() = default;
 
 bool ip_matcher::load(const std::string& filename)
 {
@@ -66,31 +38,73 @@ bool ip_matcher::load(const std::string& filename)
         add_rule(line);
     }
     optimize();
-    LOG_INFO("loaded and optimized ip rules {} v4 ranges {} v6 ranges", rules_v4_.size(), rules_v6_.size());
     return true;
+}
+
+static bool get_bit_v4(uint32_t val, int index) { return (val >> (31 - index)) & 1; }
+
+static bool get_bit_v6(const std::array<uint8_t, 16>& bytes, int index)
+{
+    int byte_index = index / 8;
+    int bit_index = 7 - (index % 8);
+    return (bytes[byte_index] >> bit_index) & 1;
 }
 
 bool ip_matcher::match(const asio::ip::address& addr) const
 {
     if (addr.is_v4())
     {
-        uint32_t val = addr.to_v4().to_uint();
-        auto it = std::ranges::upper_bound(rules_v4_, val, {}, &range_v4::start);
-        if (it != rules_v4_.begin())
+        if (!root_v4_)
         {
-            --it;
-            return val <= it->end;
+            return false;
+        }
+        TrieNode* curr = root_v4_.get();
+        if (curr->is_match)
+        {
+            return true;
+        }
+
+        uint32_t val = addr.to_v4().to_uint();
+        for (int i = 0; i < 32; ++i)
+        {
+            bool bit = get_bit_v4(val, i);
+            curr = curr->children[bit].get();
+            if (!curr)
+            {
+                return false;
+            }
+            if (curr->is_match)
+            {
+                return true;
+            }
         }
         return false;
     }
     if (addr.is_v6())
     {
-        u128_ip val = make_u128_from_bytes(addr.to_v6().to_bytes());
-        auto it = std::ranges::upper_bound(rules_v6_, val, u128_less, &range_v6::start);
-        if (it != rules_v6_.begin())
+        if (!root_v6_)
         {
-            --it;
-            return u128_less_equal(val, it->end);
+            return false;
+        }
+        TrieNode* curr = root_v6_.get();
+        if (curr->is_match)
+        {
+            return true;
+        }
+
+        auto bytes = addr.to_v6().to_bytes();
+        for (int i = 0; i < 128; ++i)
+        {
+            bool bit = get_bit_v6(bytes, i);
+            curr = curr->children[bit].get();
+            if (!curr)
+            {
+                return false;
+            }
+            if (curr->is_match)
+            {
+                return true;
+            }
         }
         return false;
     }
@@ -101,7 +115,9 @@ static std::string_view trim(std::string_view sv)
 {
     auto start = sv.find_first_not_of(" \t\r\n");
     if (start == std::string_view::npos)
+    {
         return {};
+    }
     auto end = sv.find_last_not_of(" \t\r\n");
     return sv.substr(start, end - start + 1);
 }
@@ -125,7 +141,6 @@ void ip_matcher::add_rule(const std::string& cidr)
         return;
     }
     std::error_code ec;
-
     auto addr = asio::ip::make_address(std::string(ip_part), ec);
     if (ec)
     {
@@ -137,90 +152,110 @@ void ip_matcher::add_rule(const std::string& cidr)
     {
         if (prefix_len < 0 || prefix_len > 32)
         {
-            LOG_WARN("invalid ipv4 prefix length {}", prefix_len);
             return;
         }
-        uint32_t mask = make_mask_v4(prefix_len);
-        uint32_t start = addr.to_v4().to_uint() & mask;
-        uint32_t end = start | (~mask);
-        rules_v4_.push_back({start, end});
+        if (!root_v4_)
+        {
+            root_v4_ = std::make_unique<TrieNode>();
+        }
+        TrieNode* curr = root_v4_.get();
+
+        if (curr->is_match)
+        {
+            return;
+        }
+
+        uint32_t val = addr.to_v4().to_uint();
+        for (int i = 0; i < prefix_len; ++i)
+        {
+            bool bit = get_bit_v4(val, i);
+            if (!curr->children[bit])
+            {
+                curr->children[bit] = std::make_unique<TrieNode>();
+            }
+            curr = curr->children[bit].get();
+            if (curr->is_match)
+            {
+                return;
+            }
+        }
+        curr->is_match = true;
+
+        curr->children[0].reset();
+        curr->children[1].reset();
     }
     else if (addr.is_v6())
     {
         if (prefix_len < 0 || prefix_len > 128)
         {
-            LOG_WARN("invalid ipv6 prefix length {}", prefix_len);
             return;
         }
-        u128_ip mask = make_mask_v6(prefix_len);
-        u128_ip start = make_u128_from_bytes(addr.to_v6().to_bytes());
-        start.hi &= mask.hi;
-        start.lo &= mask.lo;
-        u128_ip end = start;
-        end.hi |= ~mask.hi;
-        end.lo |= ~mask.lo;
-        rules_v6_.push_back({start, end});
+        if (!root_v6_)
+        {
+            root_v6_ = std::make_unique<TrieNode>();
+        }
+        TrieNode* curr = root_v6_.get();
+
+        if (curr->is_match)
+        {
+            return;
+        }
+
+        auto bytes = addr.to_v6().to_bytes();
+        for (int i = 0; i < prefix_len; ++i)
+        {
+            bool bit = get_bit_v6(bytes, i);
+            if (!curr->children[bit])
+            {
+                curr->children[bit] = std::make_unique<TrieNode>();
+            }
+            curr = curr->children[bit].get();
+            if (curr->is_match)
+            {
+                return;
+            }
+        }
+        curr->is_match = true;
+        curr->children[0].reset();
+        curr->children[1].reset();
     }
 }
 
 void ip_matcher::optimize()
 {
-    if (!rules_v4_.empty())
+    if (root_v4_)
     {
-        optimize_v4();
+        optimize_node(root_v4_);
     }
-    if (!rules_v6_.empty())
+    if (root_v6_)
     {
-        optimize_v6();
+        optimize_node(root_v6_);
     }
 }
 
-void ip_matcher::optimize_v4()
+void ip_matcher::optimize_node(std::unique_ptr<TrieNode>& node)
 {
-    std::ranges::sort(rules_v4_, {}, &range_v4::start);
-    std::vector<range_v4> merged;
-    merged.reserve(rules_v4_.size());
-    merged.push_back(rules_v4_[0]);
-    for (size_t i = 1; i < rules_v4_.size(); ++i)
+    if (!node)
     {
-        auto& last = merged.back();
-        auto& curr = rules_v4_[i];
-        bool connected = (curr.start <= last.end) || (last.end != 0xFFFFFFFF && curr.start == last.end + 1);
-        if (connected)
-        {
-            last.end = std::max(last.end, curr.end);
-        }
-        else
-        {
-            merged.push_back(curr);
-        }
+        return;
     }
-    rules_v4_ = std::move(merged);
-}
 
-void ip_matcher::optimize_v6()
-{
-    std::ranges::sort(rules_v6_, u128_less, &range_v6::start);
-    std::vector<range_v6> merged;
-    merged.reserve(rules_v6_.size());
-    merged.push_back(rules_v6_[0]);
-    for (size_t i = 1; i < rules_v6_.size(); ++i)
+    optimize_node(node->children[0]);
+    optimize_node(node->children[1]);
+
+    if (node->is_match)
     {
-        auto& last = merged.back();
-        auto& curr = rules_v6_[i];
-
-        bool overlap = u128_less_equal(curr.start, last.end);
-        bool adjacent = !overlap && !u128_is_max(last.end) && u128_equal(u128_next(last.end), curr.start);
-        if (overlap || adjacent)
-        {
-            last.end = u128_less(last.end, curr.end) ? curr.end : last.end;
-        }
-        else
-        {
-            merged.push_back(curr);
-        }
+        node->children[0].reset();
+        node->children[1].reset();
+        return;
     }
-    rules_v6_ = std::move(merged);
+
+    if (node->children[0] && node->children[0]->is_match && node->children[1] && node->children[1]->is_match)
+    {
+        node->is_match = true;
+        node->children[0].reset();
+        node->children[1].reset();
+    }
 }
 
 }    // namespace mux
