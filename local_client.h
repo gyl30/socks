@@ -34,7 +34,8 @@ class local_client : public std::enable_shared_from_this<local_client>
                  const std::string& key_hex,
                  std::string sni,
                  const config::timeout_t& timeout_cfg = {},
-                 config::socks_t socks_cfg = {});
+                 config::socks_t socks_cfg = {},
+                 const config::limits_t& limits_cfg = {});
 
     void start();
 
@@ -49,7 +50,7 @@ class local_client : public std::enable_shared_from_this<local_client>
         const EVP_MD* md;
     };
 
-    asio::awaitable<void> connect_remote_loop();
+    asio::awaitable<void> connect_remote_loop(uint32_t index);
 
     asio::awaitable<bool> tcp_connect(asio::ip::tcp::socket& socket, std::error_code& ec) const;
 
@@ -103,7 +104,9 @@ class local_client : public std::enable_shared_from_this<local_client>
     std::string sni_;
     io_context_pool& pool_;
     std::vector<uint8_t> server_pub_key_;
-    std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager_;
+    std::vector<std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>> tunnel_pool_;
+    std::mutex pool_mutex_;
+    uint32_t next_tunnel_index_{0};
     uint32_t next_conn_id_{1};
     uint32_t next_session_id_{1};
     asio::steady_timer remote_timer_;
@@ -114,6 +117,7 @@ class local_client : public std::enable_shared_from_this<local_client>
     asio::experimental::concurrent_channel<void(std::error_code, int)> stop_channel_;
     config::timeout_t timeout_config_;
     config::socks_t socks_config_;
+    config::limits_t limits_config_;
 };
 
 }    // namespace mux

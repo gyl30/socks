@@ -52,6 +52,12 @@ struct config
         uint32_t idle = 300;
     } timeout;
 
+    struct limits_t
+    {
+        uint32_t max_connections = 5;
+        uint64_t max_buffer = 10 * 1024 * 1024;
+    } limits;
+
     struct reality_t
     {
         std::string sni = "www.apple.com";

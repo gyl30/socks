@@ -101,7 +101,7 @@ int main(int argc, char** argv)
 
     if (cfg.mode == "server")
     {
-        server = std::make_shared<mux::remote_server>(pool, cfg.inbound.port, cfg.fallbacks, cfg.reality.private_key, cfg.timeout);
+        server = std::make_shared<mux::remote_server>(pool, cfg.inbound.port, cfg.fallbacks, cfg.reality.private_key, cfg.timeout, cfg.limits);
         server->start();
     }
     else if (cfg.mode == "client")
@@ -113,7 +113,8 @@ int main(int argc, char** argv)
                                                      cfg.reality.public_key,
                                                      cfg.reality.sni,
                                                      cfg.timeout,
-                                                     cfg.socks);
+                                                     cfg.socks,
+                                                     cfg.limits);
         client->start();
     }
 
