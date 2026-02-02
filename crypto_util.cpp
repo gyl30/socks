@@ -1,5 +1,6 @@
 #include "crypto_util.h"
 #include <openssl/rand.h>
+#include <array>
 
 namespace reality
 {
@@ -34,7 +35,7 @@ uint16_t crypto_util::get_random_grease()
     {
         idx = 0;
     }
-    static std::vector<uint16_t> GREASE_VALUES = {
+    static constexpr std::array<uint16_t, 16> GREASE_VALUES = {
         0x0a0a, 0x1a1a, 0x2a2a, 0x3a3a, 0x4a4a, 0x5a5a, 0x6a6a, 0x7a7a, 0x8a8a, 0x9a9a, 0xaaaa, 0xbaba, 0xcaca, 0xdada, 0xeaea, 0xfafa};
 
     return GREASE_VALUES[idx % GREASE_VALUES.size()];
