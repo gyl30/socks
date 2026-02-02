@@ -59,8 +59,8 @@ asio::awaitable<void> remote_udp_session::start()
     mux_codec::encode_ack(ack_pl, ack_pl_data);
     co_await connection_->send_async(id_, CMD_ACK, std::move(ack_pl_data));
 
-    using asio::experimental::awaitable_operators::operator&&;
-    co_await (mux_to_udp() && udp_to_mux() && watchdog());
+    using asio::experimental::awaitable_operators::operator||;
+    co_await (mux_to_udp() || udp_to_mux() || watchdog());
 
     if (manager_)
     {
