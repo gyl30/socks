@@ -32,10 +32,14 @@ TEST_F(IntegrationTest, FullHandshakeAndMux)
     uint16_t local_socks_port = 11080;
     std::string sni = "www.google.com";
 
-    auto server = std::make_shared<remote_server>(pool, server_port, std::vector<config::fallback_entry>{}, server_priv_key);
+    config::timeout_t timeouts;
+    timeouts.read = 5;
+    timeouts.write = 5;
+
+    auto server = std::make_shared<remote_server>(pool, server_port, std::vector<config::fallback_entry>{}, server_priv_key, timeouts);
     server->start();
 
-    auto client = std::make_shared<local_client>(pool, "127.0.0.1", std::to_string(server_port), local_socks_port, client_pub_key, sni);
+    auto client = std::make_shared<local_client>(pool, "127.0.0.1", std::to_string(server_port), local_socks_port, client_pub_key, sni, timeouts);
     client->start();
 
     std::this_thread::sleep_for(std::chrono::milliseconds(500));

@@ -287,7 +287,7 @@ def test_routing_rules():
     # 3. 启动进程
     sp = start_socks_process(f"server_route.json", f"{BUILD_DIR}/server_route.log")
     cp = start_socks_process(f"client_route.json", f"{BUILD_DIR}/client_route.log")
-    time.sleep(3) # Wait longer
+    time.sleep(1) # Wait longer
     
     try:
         # Case 1: Block Rule
@@ -367,7 +367,7 @@ def test_authentication():
     
     sp = start_socks_process(f"server_auth.json", f"{BUILD_DIR}/server_auth.log")
     cp = start_socks_process(f"client_auth.json", f"{BUILD_DIR}/client_auth.log")
-    time.sleep(3)
+    time.sleep(1)
     
     try:
         # Case 1: Auth Fail
@@ -439,7 +439,7 @@ def test_udp_function():
     
     sp = start_socks_process(f"server_udp.json", f"{BUILD_DIR}/server_udp.log")
     cp = start_socks_process(f"client_udp.json", f"{BUILD_DIR}/client_udp.log")
-    time.sleep(3)
+    time.sleep(1)
     
     try:
         # TCP Control Channel
