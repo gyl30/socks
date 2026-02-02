@@ -42,3 +42,6 @@ add_socks_test(replay_cache_test "../replay_cache.cpp;${COMMON_SOURCES}")
 
 add_socks_test(client_server_integration_test 
     "../local_client.cpp;../remote_server.cpp;../router.cpp;../socks_session.cpp;../tcp_socks_session.cpp;../udp_socks_session.cpp;../cert_fetcher.cpp;../ch_parser.cpp;../ip_matcher.cpp;../remote_session.cpp;../remote_udp_session.cpp;../upstream.cpp;../protocol.cpp;../config.cpp;../context_pool.cpp;../replay_cache.cpp;../domain_matcher.cpp;../cert_manager.cpp;../key_rotator.cpp;${MUX_SOURCES};${COMMON_SOURCES}")
+
+add_socks_test(limits_test 
+    "../local_client.cpp;../remote_server.cpp;../router.cpp;../socks_session.cpp;../tcp_socks_session.cpp;../udp_socks_session.cpp;../cert_fetcher.cpp;../ch_parser.cpp;../ip_matcher.cpp;../remote_session.cpp;../remote_udp_session.cpp;../upstream.cpp;../protocol.cpp;../config.cpp;../context_pool.cpp;../replay_cache.cpp;../domain_matcher.cpp;../cert_manager.cpp;../key_rotator.cpp;${MUX_SOURCES};${COMMON_SOURCES}")

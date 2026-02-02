@@ -8,12 +8,17 @@
 namespace mux
 {
 
-remote_server::remote_server(
-    io_context_pool& pool, uint16_t port, std::vector<config::fallback_entry> fbs, const std::string& key, const config::timeout_t& timeout_cfg)
+remote_server::remote_server(io_context_pool& pool,
+                             uint16_t port,
+                             std::vector<config::fallback_entry> fbs,
+                             const std::string& key,
+                             const config::timeout_t& timeout_cfg,
+                             const config::limits_t& limits_cfg)
     : pool_(pool),
       acceptor_(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v6(), port)),
       fallbacks_(std::move(fbs)),
-      timeout_config_(timeout_cfg)
+      timeout_config_(timeout_cfg),
+      limits_config_(limits_cfg)
 {
     private_key_ = reality::crypto_util::hex_to_bytes(key);
     std::error_code ignore;
@@ -29,7 +34,7 @@ remote_server::~remote_server()
     }
 }
 
-void remote_server::start() { asio::co_spawn(acceptor_.get_executor(), accept_loop(), asio::detached); }
+void remote_server::start() { asio::co_spawn(pool_.get_io_context(), accept_loop(), asio::detached); }
 
 void remote_server::stop()
 {
@@ -58,7 +63,7 @@ void remote_server::stop()
 
 asio::awaitable<void> remote_server::accept_loop()
 {
-    LOG_INFO("remote server listening for connections");
+    LOG_INFO("remote_server listening for connections");
     for (;;)
     {
         auto s = std::make_shared<asio::ip::tcp::socket>(acceptor_.get_executor());
@@ -158,8 +163,8 @@ asio::awaitable<void> remote_server::handle(std::shared_ptr<asio::ip::tcp::socke
 
     LOG_CTX_INFO(ctx, "{} tunnel starting", log_event::CONN_ESTABLISHED);
     reality_engine engine(c_app_keys.first, c_app_keys.second, s_app_keys.first, s_app_keys.second);
-    auto tunnel =
-        std::make_shared<mux_tunnel_impl<asio::ip::tcp::socket>>(std::move(*s), std::move(engine), false, conn_id, ctx.trace_id, timeout_config_);
+    auto tunnel = std::make_shared<mux_tunnel_impl<asio::ip::tcp::socket>>(
+        std::move(*s), std::move(engine), false, conn_id, ctx.trace_id, timeout_config_, limits_config_);
 
     {
         const std::scoped_lock lock(tunnels_mutex_);
@@ -199,7 +204,8 @@ asio::awaitable<void> remote_server::process_stream_request(std::shared_ptr<mux_
 
     if (syn.socks_cmd == socks::CMD_CONNECT)
     {
-        LOG_CTX_INFO(stream_ctx, "{} stream {} type tcp_connect target {} {}", log_event::MUX, stream_id, syn.addr, syn.port);
+        LOG_CTX_INFO(
+            stream_ctx, "{} stream {} type tcp_connect target {} {} payload size {}", log_event::MUX, stream_id, syn.addr, syn.port, payload.size());
         auto sess = std::make_shared<remote_session>(tunnel->connection(), stream_id, pool_.get_io_context().get_executor(), stream_ctx);
         sess->set_manager(tunnel);
         tunnel->register_stream(stream_id, sess);
