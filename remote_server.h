@@ -33,7 +33,9 @@ class remote_server : public std::enable_shared_from_this<remote_server>
                   uint16_t port,
                   std::vector<config::fallback_entry> fbs,
                   const std::string& key,
-                  const config::timeout_t& timeout_cfg = {});
+
+                  const config::timeout_t& timeout_cfg = {},
+                  const config::limits_t& limits_cfg = {});
 
     ~remote_server();
 
@@ -105,6 +107,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     std::vector<config::fallback_entry> fallbacks_;
     config::timeout_t timeout_config_;
     std::vector<std::weak_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>> active_tunnels_;
+    config::limits_t limits_config_;
 };
 }    // namespace mux
 #endif
