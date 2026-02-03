@@ -19,10 +19,17 @@ class UdpIntegrationTest : public ::testing::Test
         ASSERT_TRUE(reality::crypto_util::generate_x25519_keypair(pub, priv));
         server_priv_key = reality::crypto_util::bytes_to_hex(std::vector<uint8_t>(priv, priv + 32));
         client_pub_key = reality::crypto_util::bytes_to_hex(std::vector<uint8_t>(pub, pub + 32));
+        std::error_code ec;
+        auto verify_pub = reality::crypto_util::extract_ed25519_public_key(std::vector<uint8_t>(priv, priv + 32), ec);
+        ASSERT_FALSE(ec);
+        verify_pub_key = reality::crypto_util::bytes_to_hex(verify_pub);
+        short_id = "0102030405060708";
     }
 
     std::string server_priv_key;
     std::string client_pub_key;
+    std::string verify_pub_key;
+    std::string short_id;
 };
 
 asio::awaitable<void> run_udp_echo_server(asio::ip::udp::socket& socket, uint16_t port)
@@ -86,10 +93,14 @@ TEST_F(UdpIntegrationTest, UdpAssociateAndEcho)
     timeouts.read = 10;
     timeouts.write = 10;
 
-    auto server = std::make_shared<remote_server>(pool, server_port, std::vector<config::fallback_entry>{}, server_priv_key, timeouts);
+    auto server = std::make_shared<remote_server>(pool, server_port, std::vector<config::fallback_entry>{}, server_priv_key, short_id, timeouts);
+    std::vector<uint8_t> dummy_cert = {0x0b, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00};
+    reality::server_fingerprint dummy_fp;
+    server->get_cert_manager().set_certificate(sni, dummy_cert, dummy_fp);
     server->start();
 
-    auto client = std::make_shared<local_client>(pool, "127.0.0.1", std::to_string(server_port), local_socks_port, client_pub_key, sni, timeouts);
+    auto client = std::make_shared<local_client>(
+        pool, "127.0.0.1", std::to_string(server_port), local_socks_port, client_pub_key, sni, short_id, verify_pub_key, timeouts);
     client->start();
 
     asio::ip::udp::socket echo_socket(pool.get_io_context());
@@ -103,50 +114,100 @@ TEST_F(UdpIntegrationTest, UdpAssociateAndEcho)
 
     std::thread pool_thread([&pool]() { pool.run(); });
 
-    bool tunnel_ready = false;
-    for (int i = 0; i < 20; ++i)
-    {
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    }
-
     std::atomic<bool> test_passed{false};
     std::atomic<bool> test_failed{false};
-    auto client_tcp = std::make_shared<asio::ip::tcp::socket>(pool.get_io_context());
-    auto client_udp = std::make_shared<asio::ip::udp::socket>(pool.get_io_context());
+    std::shared_ptr<asio::ip::tcp::socket> client_tcp;
+    std::shared_ptr<asio::ip::udp::socket> client_udp;
 
     asio::co_spawn(
         pool.get_io_context(),
         [&]() -> asio::awaitable<void>
         {
-            std::error_code ecc;
+            auto exec = co_await asio::this_coro::executor;
+            asio::steady_timer retry_timer(exec);
 
-            co_await client_tcp->async_connect({asio::ip::make_address("127.0.0.1"), local_socks_port}, asio::use_awaitable);
+            uint16_t proxy_bind_port = 0;
+            bool socks_ready = false;
+            for (int attempt = 0; attempt < 60; ++attempt)
+            {
+                auto sock = std::make_shared<asio::ip::tcp::socket>(exec);
+                auto [connect_ec] =
+                    co_await sock->async_connect({asio::ip::make_address("127.0.0.1"), local_socks_port}, asio::as_tuple(asio::use_awaitable));
+                if (connect_ec)
+                {
+                    retry_timer.expires_after(std::chrono::milliseconds(50));
+                    co_await retry_timer.async_wait(asio::as_tuple(asio::use_awaitable));
+                    continue;
+                }
 
-            uint8_t method_req[] = {0x05, 0x01, 0x00};
-            co_await asio::async_write(*client_tcp, asio::buffer(method_req), asio::use_awaitable);
+                uint8_t method_req[] = {0x05, 0x01, 0x00};
+                auto [write_ec, write_n] = co_await asio::async_write(*sock, asio::buffer(method_req), asio::as_tuple(asio::use_awaitable));
+                (void)write_n;
+                if (write_ec)
+                {
+                    std::error_code ignore;
+                    sock->close(ignore);
+                    retry_timer.expires_after(std::chrono::milliseconds(50));
+                    co_await retry_timer.async_wait(asio::as_tuple(asio::use_awaitable));
+                    continue;
+                }
 
-            uint8_t method_res[2];
-            co_await asio::async_read(*client_tcp, asio::buffer(method_res), asio::use_awaitable);
-            if (method_res[0] != 0x05 || method_res[1] != 0x00)
+                uint8_t method_res[2];
+                auto [read_ec, read_n] = co_await asio::async_read(*sock, asio::buffer(method_res), asio::as_tuple(asio::use_awaitable));
+                if (read_ec || read_n != sizeof(method_res) || method_res[0] != 0x05 || method_res[1] != 0x00)
+                {
+                    std::error_code ignore;
+                    sock->close(ignore);
+                    retry_timer.expires_after(std::chrono::milliseconds(50));
+                    co_await retry_timer.async_wait(asio::as_tuple(asio::use_awaitable));
+                    continue;
+                }
+
+                uint8_t associate_req[] = {0x05, 0x03, 0x00, 0x01, 0, 0, 0, 0, 0, 0};
+                auto [assoc_write_ec, assoc_write_n] =
+                    co_await asio::async_write(*sock, asio::buffer(associate_req), asio::as_tuple(asio::use_awaitable));
+                (void)assoc_write_n;
+                if (assoc_write_ec)
+                {
+                    std::error_code ignore;
+                    sock->close(ignore);
+                    retry_timer.expires_after(std::chrono::milliseconds(50));
+                    co_await retry_timer.async_wait(asio::as_tuple(asio::use_awaitable));
+                    continue;
+                }
+
+                uint8_t associate_res[10];
+                auto [assoc_read_ec, assoc_read_n] =
+                    co_await asio::async_read(*sock, asio::buffer(associate_res), asio::as_tuple(asio::use_awaitable));
+                if (assoc_read_ec || assoc_read_n != sizeof(associate_res) || associate_res[1] != 0x00)
+                {
+                    std::error_code ignore;
+                    sock->close(ignore);
+                    retry_timer.expires_after(std::chrono::milliseconds(50));
+                    co_await retry_timer.async_wait(asio::as_tuple(asio::use_awaitable));
+                    continue;
+                }
+
+                proxy_bind_port = (associate_res[8] << 8) | associate_res[9];
+                client_tcp = sock;
+                socks_ready = true;
+                break;
+            }
+
+            if (!socks_ready)
             {
                 test_failed = true;
                 co_return;
             }
 
-            uint8_t associate_req[] = {0x05, 0x03, 0x00, 0x01, 0, 0, 0, 0, 0, 0};
-            co_await asio::async_write(*client_tcp, asio::buffer(associate_req), asio::use_awaitable);
-
-            uint8_t associate_res[10];
-            co_await asio::async_read(*client_tcp, asio::buffer(associate_res), asio::use_awaitable);
-            if (associate_res[1] != 0x00)
+            client_udp = std::make_shared<asio::ip::udp::socket>(exec);
+            std::error_code udp_ec;
+            client_udp->open(asio::ip::udp::v4(), udp_ec);
+            if (udp_ec)
             {
                 test_failed = true;
                 co_return;
             }
-
-            uint16_t proxy_bind_port = (associate_res[8] << 8) | associate_res[9];
-
-            client_udp->open(asio::ip::udp::v4());
 
             std::string payload_data = "Hello UDP Multi-Stage Handshake";
             std::vector<uint8_t> packet;
@@ -163,7 +224,13 @@ TEST_F(UdpIntegrationTest, UdpAssociateAndEcho)
             packet.insert(packet.end(), payload_data.begin(), payload_data.end());
 
             asio::ip::udp::endpoint proxy_ep(asio::ip::make_address("127.0.0.1"), proxy_bind_port);
-            co_await client_udp->async_send_to(asio::buffer(packet), proxy_ep, asio::use_awaitable);
+            auto [send_ec, send_n] = co_await client_udp->async_send_to(asio::buffer(packet), proxy_ep, asio::as_tuple(asio::use_awaitable));
+            (void)send_n;
+            if (send_ec)
+            {
+                test_failed = true;
+                co_return;
+            }
 
             std::vector<uint8_t> recv_buf(4096);
             asio::ip::udp::endpoint sender_ep;
@@ -188,7 +255,7 @@ TEST_F(UdpIntegrationTest, UdpAssociateAndEcho)
         },
         asio::detached);
 
-    for (int i = 0; i < 100; ++i)
+    for (int i = 0; i < 200; ++i)
     {
         if (test_passed || test_failed)
             break;
@@ -199,8 +266,14 @@ TEST_F(UdpIntegrationTest, UdpAssociateAndEcho)
     server->stop();
 
     std::error_code ignore;
-    client_tcp->close(ignore);
-    client_udp->close(ignore);
+    if (client_tcp)
+    {
+        client_tcp->close(ignore);
+    }
+    if (client_udp)
+    {
+        client_udp->close(ignore);
+    }
     echo_socket.close(ignore);
 
     pool.stop();

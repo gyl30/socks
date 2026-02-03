@@ -1,4 +1,18 @@
 #include "socks_session.h"
+#include "log.h"
+#include "log_context.h"
+#include "mux_tunnel.h"
+#include "tcp_socks_session.h"
+#include "udp_socks_session.h"
+#include <algorithm>
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <ranges>
+#include <utility>
+#include <vector>
+#include <asio.hpp>
+#include <arpa/inet.h>
 
 namespace mux
 {
@@ -22,7 +36,7 @@ socks_session::socks_session(asio::ip::tcp::socket socket,
 
 void socks_session::start()
 {
-    auto self = shared_from_this();
+    const auto self = shared_from_this();
     asio::co_spawn(socket_.get_executor(), [self]() mutable -> asio::awaitable<void> { co_await self->run(); }, asio::detached);
 }
 
@@ -79,14 +93,14 @@ asio::awaitable<bool> socks_session::handshake()
 
     if (auth_enabled_)
     {
-        if (std::find(methods.begin(), methods.end(), socks::METHOD_PASSWORD) != methods.end())
+        if (std::ranges::find(methods, socks::METHOD_PASSWORD) != methods.end())
         {
             selected_method = socks::METHOD_PASSWORD;
         }
     }
     else
     {
-        if (std::find(methods.begin(), methods.end(), socks::METHOD_NO_AUTH) != methods.end())
+        if (std::ranges::find(methods, socks::METHOD_NO_AUTH) != methods.end())
         {
             selected_method = socks::METHOD_NO_AUTH;
         }
@@ -156,7 +170,7 @@ asio::awaitable<bool> socks_session::do_password_auth()
         co_return false;
     }
 
-    bool success = (username == username_ && password == password_);
+    const bool success = (username == username_ && password == password_);
 
     uint8_t result[] = {0x01, success ? static_cast<uint8_t>(0x00) : static_cast<uint8_t>(0x01)};
     auto [re, rn] = co_await asio::async_write(socket_, asio::buffer(result), asio::as_tuple(asio::use_awaitable));

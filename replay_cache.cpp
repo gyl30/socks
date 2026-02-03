@@ -1,5 +1,11 @@
 #include "replay_cache.h"
 
+#include <chrono>
+#include <cstdint>
+#include <mutex>
+#include <string>
+#include <vector>
+
 namespace mux
 {
 
