@@ -19,7 +19,7 @@ macro(add_socks_test NAME SOURCES)
     gtest_discover_tests(${NAME} DISCOVERY_TIMEOUT 60)
 endmacro()
 
-set(COMMON_SOURCES ../log.cpp ../log_context.cpp)
+set(COMMON_SOURCES ../log.cpp ../log_context.cpp ../reality_auth.cpp)
 set(CRYPTO_SOURCES ../crypto_util.cpp)
 set(REALITY_SOURCES ../tls_record_layer.cpp ../reality_fingerprint.cpp ../reality_messages.cpp ../transcript.cpp ../reality_engine.cpp ${CRYPTO_SOURCES})
 set(MUX_SOURCES ../mux_connection.cpp ../mux_stream.cpp ../mux_dispatcher.cpp ../mux_codec.cpp ${REALITY_SOURCES})
@@ -35,7 +35,11 @@ add_socks_test(reality_messages_test "../reality_messages.cpp;${REALITY_SOURCES}
 add_socks_test(tls_record_layer_test "../tls_record_layer.cpp;${CRYPTO_SOURCES};${COMMON_SOURCES}")
 add_socks_test(config_test "../config.cpp;${COMMON_SOURCES}")
 
+add_socks_test(local_client_test 
+    "../local_client.cpp;../remote_server.cpp;../router.cpp;../socks_session.cpp;../tcp_socks_session.cpp;../udp_socks_session.cpp;../cert_fetcher.cpp;../ch_parser.cpp;../ip_matcher.cpp;../remote_session.cpp;../remote_udp_session.cpp;../upstream.cpp;../protocol.cpp;../config.cpp;../context_pool.cpp;../replay_cache.cpp;../domain_matcher.cpp;../cert_manager.cpp;../key_rotator.cpp;${MUX_SOURCES};${COMMON_SOURCES}")
+
 add_socks_test(reality_fingerprint_test "${REALITY_SOURCES};${COMMON_SOURCES}")
+add_socks_test(reality_auth_test "../reality_auth.cpp;${COMMON_SOURCES}")
 add_socks_test(mux_stream_test "${MUX_SOURCES};${COMMON_SOURCES}")
 add_socks_test(mux_connection_test "${MUX_SOURCES};${COMMON_SOURCES}")
 add_socks_test(mux_dispatcher_test "../mux_dispatcher.cpp;../mux_codec.cpp;${COMMON_SOURCES}")

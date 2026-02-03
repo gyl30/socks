@@ -1,8 +1,10 @@
 #ifndef REALITY_CORE_H
 #define REALITY_CORE_H
 
-#include <vector>
+#include <cstddef>
+#include <cstdint>
 #include <memory>
+#include <vector>
 #include <openssl/evp.h>
 #include <openssl/kdf.h>
 #include <openssl/rand.h>
