@@ -1,7 +1,9 @@
-#include <gtest/gtest.h>
 #include <vector>
-#include <cstdint>
 #include <string>
+#include <cstdint>
+
+#include <gtest/gtest.h>
+
 #include "ch_parser.h"
 
 using mux::ch_parser;

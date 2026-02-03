@@ -1,11 +1,12 @@
 #ifndef SOCKS_TEST_UTIL_H
 #define SOCKS_TEST_UTIL_H
 
-#include <asio.hpp>
+#include <vector>
+#include <utility>
 #include <exception>
 #include <stdexcept>
-#include <utility>
-#include <vector>
+
+#include <asio.hpp>
 
 namespace mux::test
 {

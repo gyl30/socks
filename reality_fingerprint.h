@@ -1,13 +1,14 @@
 #ifndef REALITY_FINGERPRINT_H
 #define REALITY_FINGERPRINT_H
 
+#include <array>
 #include <vector>
 #include <string>
 #include <memory>
 #include <random>
-#include <algorithm>
 #include <cstdint>
-#include <array>
+#include <algorithm>
+
 #include <openssl/rand.h>
 
 #include "reality_core.h"
