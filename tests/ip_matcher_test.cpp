@@ -1,6 +1,9 @@
 #include <gtest/gtest.h>
 #include <fstream>
 #include <cstdio>
+#include <vector>
+#include <string>
+#include <asio.hpp>
 #include "ip_matcher.h"
 
 class IpMatcherTest : public ::testing::Test
@@ -23,7 +26,7 @@ class IpMatcherTest : public ::testing::Test
     std::string rule_file_;
 };
 
-TEST_F(IpMatcherTest, MatchIPv4_Basic)
+TEST_F(IpMatcherTest, MatchIPv4Basic)
 {
     WriteRules({"192.168.1.0/24", "10.0.0.0/8"});
 
@@ -41,7 +44,7 @@ TEST_F(IpMatcherTest, MatchIPv4_Basic)
     EXPECT_FALSE(matcher.match(asio::ip::make_address("11.0.0.1", ec)));
 }
 
-TEST_F(IpMatcherTest, MatchIPv6_Basic)
+TEST_F(IpMatcherTest, MatchIPv6Basic)
 {
     WriteRules({"2001:db8::/32", "fe80::/10", "::1/128"});
 
@@ -62,7 +65,7 @@ TEST_F(IpMatcherTest, MatchIPv6_Basic)
     EXPECT_FALSE(matcher.match(asio::ip::make_address("::2", ec)));
 }
 
-TEST_F(IpMatcherTest, MatchIPv6_ComplexMasks)
+TEST_F(IpMatcherTest, MatchIPv6ComplexMasks)
 {
     WriteRules({"2400:cb00::/32", "2606:4700:4700::/96"});
 
@@ -75,7 +78,7 @@ TEST_F(IpMatcherTest, MatchIPv6_ComplexMasks)
     EXPECT_FALSE(matcher.match(asio::ip::make_address("2606:4700:4700:1::1", ec)));
 }
 
-TEST_F(IpMatcherTest, EdgeCases_Optimization)
+TEST_F(IpMatcherTest, EdgeCasesOptimization)
 {
     WriteRules({"192.168.1.0/24", "192.168.1.0/25", "192.168.2.0/24", "2001:db8::/32", "2001:db8:8000::/33"});
 
@@ -93,7 +96,7 @@ TEST_F(IpMatcherTest, EdgeCases_Optimization)
     EXPECT_TRUE(matcher.match(asio::ip::make_address("2001:db8::1", ec)));
 }
 
-TEST_F(IpMatcherTest, EdgeCases_InvalidInputs)
+TEST_F(IpMatcherTest, EdgeCasesInvalidInputs)
 {
     WriteRules({"1.2.3.4/24", "invalid_ip", "999.999.999.999/24", "10.0.0.1/33", "fe80::1/129", "# Comments should be ignored", "   ", "8.8.8.8/32"});
 
@@ -108,7 +111,7 @@ TEST_F(IpMatcherTest, EdgeCases_InvalidInputs)
     EXPECT_FALSE(matcher.match(asio::ip::make_address("10.0.0.1", ec)));
 }
 
-TEST_F(IpMatcherTest, MatchIPv4_MatchAll)
+TEST_F(IpMatcherTest, MatchIPv4MatchAll)
 {
     WriteRules({"0.0.0.0/0"});
     mux::ip_matcher matcher;
@@ -119,7 +122,7 @@ TEST_F(IpMatcherTest, MatchIPv4_MatchAll)
     EXPECT_TRUE(matcher.match(asio::ip::make_address("255.255.255.255", ec)));
 }
 
-TEST_F(IpMatcherTest, MatchIPv6_MatchAll)
+TEST_F(IpMatcherTest, MatchIPv6MatchAll)
 {
     WriteRules({"::/0"});
     mux::ip_matcher matcher;
@@ -162,7 +165,7 @@ TEST_F(IpMatcherTest, PrefixOutOfRange)
     EXPECT_FALSE(matcher.match(asio::ip::make_address("192.168.1.1", ec)));
 }
 
-TEST_F(IpMatcherTest, IPv6_Exact128BitBoundary)
+TEST_F(IpMatcherTest, IPv6Exact128BitBoundary)
 {
     WriteRules({"2001:db8::1/128"});
     mux::ip_matcher matcher;
@@ -179,11 +182,11 @@ TEST_F(IpMatcherTest, LargeRuleSet)
 
     for (int i = 0; i < 1000; ++i)
     {
-        int b2 = (i / 256) % 256;
-        int b3 = i % 256;
+        const int b2 = (i / 256) % 256;
+        const int b3 = i % 256;
         char buf[64];
         snprintf(buf, sizeof(buf), "10.%d.%d.0/24", b2, b3);
-        rules.push_back(std::string(buf));
+        rules.emplace_back(buf);
     }
     WriteRules(rules);
 
@@ -199,7 +202,7 @@ TEST_F(IpMatcherTest, LargeRuleSet)
     EXPECT_FALSE(matcher.match(asio::ip::make_address("10.5.0.1", ec)));
 }
 
-TEST_F(IpMatcherTest, IPv6_OddBitPrefix)
+TEST_F(IpMatcherTest, IPv6OddBitPrefix)
 {
     WriteRules({"2001:db8::/65"});
     mux::ip_matcher matcher;
@@ -210,7 +213,7 @@ TEST_F(IpMatcherTest, IPv6_OddBitPrefix)
     EXPECT_FALSE(matcher.match(asio::ip::make_address("2001:db8:0:0:8000::1", ec)));
 }
 
-TEST_F(IpMatcherTest, IPv6_NonCanonicalNetwork)
+TEST_F(IpMatcherTest, IPv6NonCanonicalNetwork)
 {
     WriteRules({"2001:db8::8000/65"});
     mux::ip_matcher matcher;
@@ -221,7 +224,7 @@ TEST_F(IpMatcherTest, IPv6_NonCanonicalNetwork)
     EXPECT_TRUE(matcher.match(asio::ip::make_address("2001:db8::1", ec)));
 }
 
-TEST_F(IpMatcherTest, Attack_MixedIPv4IPv6Massive)
+TEST_F(IpMatcherTest, AttackMixedIPv4IPv6Massive)
 {
     std::vector<std::string> rules;
 
@@ -231,7 +234,7 @@ TEST_F(IpMatcherTest, Attack_MixedIPv4IPv6Massive)
 
         char v6buf[100];
         snprintf(v6buf, sizeof(v6buf), "2001:db8:%x::/48", i % 65536);
-        rules.push_back(std::string(v6buf));
+        rules.emplace_back(v6buf);
     }
 
     WriteRules(rules);
@@ -247,7 +250,7 @@ TEST_F(IpMatcherTest, Attack_MixedIPv4IPv6Massive)
     EXPECT_FALSE(matcher.match(asio::ip::make_address("10.255.1.1", ec)));
 }
 
-TEST_F(IpMatcherTest, DoS_NestedSubnets)
+TEST_F(IpMatcherTest, DoSNestedSubnets)
 {
     std::vector<std::string> rules;
 
