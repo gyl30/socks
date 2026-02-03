@@ -8,9 +8,11 @@
 
 using namespace mux;
 
-class RemoteServerTest : public ::testing::Test {
-protected:
-    void SetUp() override {
+class RemoteServerTest : public ::testing::Test
+{
+   protected:
+    void SetUp() override
+    {
         uint8_t pub[32], priv[32];
         (void)reality::crypto_util::generate_x25519_keypair(pub, priv);
         server_priv_key = reality::crypto_util::bytes_to_hex(std::vector<uint8_t>(priv, priv + 32));
@@ -20,8 +22,8 @@ protected:
     std::string server_pub_key;
 };
 
-// Test that an invalid authentication key leads to fallback
-TEST_F(RemoteServerTest, AuthFailureTriggersFallback) {
+TEST_F(RemoteServerTest, AuthFailureTriggersFallback)
+{
     std::error_code ec;
     io_context_pool pool(1, ec);
     ASSERT_FALSE(ec);
@@ -31,26 +33,28 @@ TEST_F(RemoteServerTest, AuthFailureTriggersFallback) {
     uint16_t fallback_port = 29912;
     std::string sni = "www.google.com";
 
-    // Start a fake fallback server
     asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), fallback_port));
     bool fallback_triggered = false;
-    fallback_acceptor.async_accept([&] (std::error_code ec, asio::ip::tcp::socket peer) {
-        if (!ec) fallback_triggered = true;
-    });
+    fallback_acceptor.async_accept(
+        [&](std::error_code ec, asio::ip::tcp::socket peer)
+        {
+            if (!ec)
+                fallback_triggered = true;
+        });
 
     config::fallback_entry fb;
     fb.sni = sni;
     fb.host = "127.0.0.1";
     fb.port = std::to_string(fallback_port);
 
-    auto server = std::make_shared<remote_server>(pool, server_port, std::vector<config::fallback_entry>{fb}, server_priv_key, config::timeout_t{}, config::limits_t{});
+    auto server = std::make_shared<remote_server>(
+        pool, server_port, std::vector<config::fallback_entry>{fb}, server_priv_key, config::timeout_t{}, config::limits_t{});
     server->start();
 
-    // Connect and send invalid reality handshake
     {
         asio::ip::tcp::socket sock(pool.get_io_context());
         sock.connect({asio::ip::make_address("127.0.0.1"), server_port});
-        
+
         auto spec = reality::FingerprintFactory::Get(reality::FingerprintType::Chrome_120);
         std::vector<uint8_t> session_id(32, 0x01);
         std::vector<uint8_t> random(32, 0x02);
@@ -59,23 +63,21 @@ TEST_F(RemoteServerTest, AuthFailureTriggersFallback) {
         auto ch_msg = reality::ClientHelloBuilder::build(spec, session_id, random, x25519_pubkey, sni);
         auto record = reality::write_record_header(reality::CONTENT_TYPE_HANDSHAKE, ch_msg.size());
         record.insert(record.end(), ch_msg.begin(), ch_msg.end());
-        
+
         asio::write(sock, asio::buffer(record));
-        
-        // Wait a bit for fallback to trigger
+
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
     server->stop();
     pool.stop();
     pool_thread.join();
-    
-    // Fallback should have been triggered as authentication failed
+
     EXPECT_TRUE(fallback_triggered);
 }
 
-// Test that an SNI mismatch (no configured fallback for SNI) leads to fallback to first entry or rejection
-TEST_F(RemoteServerTest, SNIMismatchTriggersFallback) {
+TEST_F(RemoteServerTest, SNIMismatchTriggersFallback)
+{
     std::error_code ec;
     io_context_pool pool(1, ec);
     ASSERT_FALSE(ec);
@@ -88,27 +90,32 @@ TEST_F(RemoteServerTest, SNIMismatchTriggersFallback) {
 
     asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), default_fallback_port));
     bool fallback_triggered = false;
-    fallback_acceptor.async_accept([&] (std::error_code ec, asio::ip::tcp::socket peer) {
-        if (!ec) fallback_triggered = true;
-    });
+    fallback_acceptor.async_accept(
+        [&](std::error_code ec, asio::ip::tcp::socket peer)
+        {
+            if (!ec)
+                fallback_triggered = true;
+        });
 
     config::fallback_entry fb;
-    fb.sni = ""; // Default fallback
+    fb.sni = "";
     fb.host = "127.0.0.1";
     fb.port = std::to_string(default_fallback_port);
 
-    auto server = std::make_shared<remote_server>(pool, server_port, std::vector<config::fallback_entry>{fb}, server_priv_key, config::timeout_t{}, config::limits_t{});
+    auto server = std::make_shared<remote_server>(
+        pool, server_port, std::vector<config::fallback_entry>{fb}, server_priv_key, config::timeout_t{}, config::limits_t{});
     server->start();
 
     {
         asio::ip::tcp::socket sock(pool.get_io_context());
         sock.connect({asio::ip::make_address("127.0.0.1"), server_port});
-        
+
         auto spec = reality::FingerprintFactory::Get(reality::FingerprintType::Chrome_120);
-        auto ch_msg = reality::ClientHelloBuilder::build(spec, std::vector<uint8_t>(32, 0), std::vector<uint8_t>(32, 0), std::vector<uint8_t>(32, 0), client_sni);
+        auto ch_msg = reality::ClientHelloBuilder::build(
+            spec, std::vector<uint8_t>(32, 0), std::vector<uint8_t>(32, 0), std::vector<uint8_t>(32, 0), client_sni);
         auto record = reality::write_record_header(reality::CONTENT_TYPE_HANDSHAKE, ch_msg.size());
         record.insert(record.end(), ch_msg.begin(), ch_msg.end());
-        
+
         asio::write(sock, asio::buffer(record));
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
@@ -119,7 +126,8 @@ TEST_F(RemoteServerTest, SNIMismatchTriggersFallback) {
     EXPECT_TRUE(fallback_triggered);
 }
 
-TEST_F(RemoteServerTest, InvalidHandshakeTriggersFallback) {
+TEST_F(RemoteServerTest, InvalidHandshakeTriggersFallback)
+{
     std::error_code ec;
     io_context_pool pool(1, ec);
     ASSERT_FALSE(ec);
@@ -130,16 +138,20 @@ TEST_F(RemoteServerTest, InvalidHandshakeTriggersFallback) {
 
     asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), default_fallback_port));
     bool fallback_triggered = false;
-    fallback_acceptor.async_accept([&] (std::error_code ec, asio::ip::tcp::socket peer) {
-        if (!ec) fallback_triggered = true;
-    });
+    fallback_acceptor.async_accept(
+        [&](std::error_code ec, asio::ip::tcp::socket peer)
+        {
+            if (!ec)
+                fallback_triggered = true;
+        });
 
     config::fallback_entry fb;
-    fb.sni = ""; 
+    fb.sni = "";
     fb.host = "127.0.0.1";
     fb.port = std::to_string(default_fallback_port);
 
-    auto server = std::make_shared<remote_server>(pool, server_port, std::vector<config::fallback_entry>{fb}, server_priv_key, config::timeout_t{}, config::limits_t{});
+    auto server = std::make_shared<remote_server>(
+        pool, server_port, std::vector<config::fallback_entry>{fb}, server_priv_key, config::timeout_t{}, config::limits_t{});
     server->start();
 
     {
