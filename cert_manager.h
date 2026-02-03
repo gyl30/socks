@@ -1,11 +1,12 @@
 #ifndef CERT_MANAGER_H
 #define CERT_MANAGER_H
 
+#include <optional>
+#include <cstdint>
 #include <map>
 #include <mutex>
-#include <vector>
 #include <string>
-#include <optional>
+#include <vector>
 #include "reality_messages.h"
 
 namespace reality

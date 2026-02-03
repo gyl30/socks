@@ -1,9 +1,10 @@
 #ifndef CH_PARSER_H
 #define CH_PARSER_H
 
-#include <vector>
-#include <string>
+#include <cstddef>
 #include <cstdint>
+#include <string>
+#include <vector>
 #include "reality_core.h"
 
 namespace mux

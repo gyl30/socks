@@ -1,10 +1,11 @@
 #ifndef MUX_CODEC_H
 #define MUX_CODEC_H
 
-#include <vector>
-#include <string>
+#include <cstddef>
 #include <cstdint>
-#include "log.h"
+#include <string>
+#include <vector>
+
 #include "mux_protocol.h"
 
 namespace mux

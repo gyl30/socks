@@ -1,11 +1,12 @@
 #ifndef REALITY_MESSAGES_H
 #define REALITY_MESSAGES_H
 
-#include <vector>
-#include <string>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <optional>
+#include <string>
+#include <vector>
 #include <openssl/evp.h>
 
 #include "reality_core.h"
@@ -66,6 +67,16 @@ std::vector<uint8_t> construct_certificate(const std::vector<uint8_t>& cert_der)
 std::vector<uint8_t> construct_certificate_verify(EVP_PKEY* signing_key, const std::vector<uint8_t>& handshake_hash);
 
 std::vector<uint8_t> construct_finished(const std::vector<uint8_t>& verify_data);
+
+struct certificate_verify_info
+{
+    uint16_t scheme = 0;
+    std::vector<uint8_t> signature;
+};
+
+std::optional<certificate_verify_info> parse_certificate_verify(const std::vector<uint8_t>& msg);
+
+[[nodiscard]] bool is_supported_certificate_verify_scheme(uint16_t scheme);
 
 std::optional<uint16_t> extract_cipher_suite_from_server_hello(const std::vector<uint8_t>& server_hello);
 

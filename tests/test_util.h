@@ -2,7 +2,9 @@
 #define SOCKS_TEST_UTIL_H
 
 #include <asio.hpp>
-#include <gmock/gmock.h>
+#include <exception>
+#include <stdexcept>
+#include <utility>
 #include <vector>
 
 namespace mux::test

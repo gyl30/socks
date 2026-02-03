@@ -1,5 +1,21 @@
 #include "tcp_socks_session.h"
 
+#include <asio/experimental/awaitable_operators.hpp>
+#include <asio.hpp>
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <system_error>
+#include <utility>
+#include <vector>
+
+#include "log.h"
+#include "log_context.h"
+#include "mux_tunnel.h"
+#include "protocol.h"
+#include "router.h"
+#include "upstream.h"
+
 namespace mux
 {
 
@@ -15,8 +31,8 @@ tcp_socks_session::tcp_socks_session(asio::ip::tcp::socket socket,
 
 void tcp_socks_session::start(const std::string& host, uint16_t port)
 {
-    auto self = shared_from_this();
-    asio::co_spawn(socket_.get_executor(), [self, host, port]() mutable -> asio::awaitable<void> { co_await self->run(host, port); }, asio::detached);
+    const auto self = shared_from_this();
+    asio::co_spawn(socket_.get_executor(), [self, host, port]() -> asio::awaitable<void> { co_await self->run(host, port); }, asio::detached);
 }
 
 asio::awaitable<void> tcp_socks_session::run(std::string host, uint16_t port)
@@ -76,15 +92,15 @@ asio::awaitable<void> tcp_socks_session::client_to_upstream(upstream* backend)
     for (;;)
     {
         std::error_code ec;
-        uint32_t n = co_await socket_.async_read_some(asio::buffer(buf), asio::redirect_error(asio::use_awaitable, ec));
+        const uint32_t n = co_await socket_.async_read_some(asio::buffer(buf), asio::redirect_error(asio::use_awaitable, ec));
         if (ec || n == 0)
         {
             LOG_CTX_WARN(ctx_, "{} failed to read from client {}", log_event::SOCKS, ec.message());
             break;
         }
 
-        std::vector<uint8_t> chunk(buf.begin(), buf.begin() + n);
-        auto written = co_await backend->write(chunk);
+        const std::vector<uint8_t> chunk(buf.begin(), buf.begin() + n);
+        const auto written = co_await backend->write(chunk);
         if (written == 0)
         {
             LOG_CTX_WARN(ctx_, "{} failed to write to backend", log_event::SOCKS);
@@ -99,7 +115,7 @@ asio::awaitable<void> tcp_socks_session::upstream_to_client(upstream* backend)
     std::vector<uint8_t> buf(8192);
     for (;;)
     {
-        auto [ec, n] = co_await backend->read(buf);
+        const auto [ec, n] = co_await backend->read(buf);
         if (ec || n == 0)
         {
             LOG_CTX_WARN(ctx_, "{} failed to read from backend {}", log_event::SOCKS, ec.message());

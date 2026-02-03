@@ -1,5 +1,13 @@
 #include "protocol.h"
 
+#include <asio.hpp>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <string>
+#include <system_error>
+#include <vector>
+
 asio::ip::address socks_codec::normalize_ip_address(const asio::ip::address& addr)
 {
     if (addr.is_v4())

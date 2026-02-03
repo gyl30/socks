@@ -1,8 +1,12 @@
 #include <gtest/gtest.h>
 #include <vector>
+#include <array>
 #include <cstdint>
 #include <string>
 #include "reality_messages.h"
+#include "crypto_util.h"
+#include <openssl/evp.h>
+#include <openssl/rand.h>
 
 using namespace reality;
 
@@ -182,4 +186,36 @@ TEST(RealityMessagesTest, ExtractALPN_Malformed)
     bad_msg.push_back(50);
 
     EXPECT_FALSE(extract_alpn_from_encrypted_extensions(bad_msg).has_value());
+}
+
+TEST(RealityMessagesTest, CertificateVerify_ParseAndVerify)
+{
+    std::array<uint8_t, 32> priv{};
+    ASSERT_EQ(RAND_bytes(priv.data(), static_cast<int>(priv.size())), 1);
+
+    reality::openssl_ptrs::evp_pkey_ptr priv_key(EVP_PKEY_new_raw_private_key(EVP_PKEY_ED25519, nullptr, priv.data(), priv.size()));
+    ASSERT_TRUE(priv_key);
+
+    size_t pub_len = 32;
+    std::vector<uint8_t> pub(pub_len);
+    ASSERT_EQ(EVP_PKEY_get_raw_public_key(priv_key.get(), pub.data(), &pub_len), 1);
+
+    reality::openssl_ptrs::evp_pkey_ptr pub_key(EVP_PKEY_new_raw_public_key(EVP_PKEY_ED25519, nullptr, pub.data(), pub_len));
+    ASSERT_TRUE(pub_key);
+
+    std::vector<uint8_t> handshake_hash(32, 0x11);
+    auto cv = construct_certificate_verify(priv_key.get(), handshake_hash);
+    auto info = parse_certificate_verify(cv);
+    ASSERT_TRUE(info.has_value());
+    EXPECT_EQ(info->scheme, 0x0807);
+
+    std::error_code ec;
+    EXPECT_TRUE(reality::crypto_util::verify_tls13_signature(pub_key.get(), handshake_hash, info->signature, ec));
+    EXPECT_FALSE(ec);
+}
+
+TEST(RealityMessagesTest, CertificateVerify_SchemeSupport)
+{
+    EXPECT_TRUE(is_supported_certificate_verify_scheme(0x0807));
+    EXPECT_FALSE(is_supported_certificate_verify_scheme(0x0804));
 }

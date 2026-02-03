@@ -1,8 +1,18 @@
 #include "ip_matcher.h"
-#include <fstream>
-#include <algorithm>
+
+#include <asio.hpp>
+#include <array>
 #include <charconv>
-#include <bit>
+#include <cstdint>
+#include <fstream>
+#include <memory>
+#include <string>
+#include <string_view>
+#include <system_error>
+#include <utility>
+#include <vector>
+
+#include "log.h"
 
 namespace mux
 {
@@ -12,6 +22,156 @@ struct ip_matcher::TrieNode
     std::array<std::unique_ptr<TrieNode>, 2> children;
     bool is_match = false;
 };
+
+namespace
+{
+constexpr size_t to_index(bool bit)
+{
+    return bit ? 1U : 0U;
+}
+
+bool get_bit_v4(uint32_t val, int index)
+{
+    return ((val >> (31 - index)) & 1U) != 0U;
+}
+
+bool get_bit_v6(const std::array<uint8_t, 16>& bytes, int index)
+{
+    const int byte_index = index / 8;
+    const int bit_index = 7 - (index % 8);
+    return ((bytes[static_cast<size_t>(byte_index)] >> bit_index) & 1U) != 0U;
+}
+
+bool match_v4(const asio::ip::address_v4& addr, const std::unique_ptr<ip_matcher::TrieNode>& root)
+{
+    if (!root)
+    {
+        return false;
+    }
+    ip_matcher::TrieNode* curr = root.get();
+    if (curr->is_match)
+    {
+        return true;
+    }
+
+    const uint32_t val = addr.to_uint();
+    for (int i = 0; i < 32; ++i)
+    {
+        const bool bit = get_bit_v4(val, i);
+        curr = curr->children[to_index(bit)].get();
+        if (curr == nullptr)
+        {
+            return false;
+        }
+        if (curr->is_match)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool match_v6(const asio::ip::address_v6& addr, const std::unique_ptr<ip_matcher::TrieNode>& root)
+{
+    if (!root)
+    {
+        return false;
+    }
+    ip_matcher::TrieNode* curr = root.get();
+    if (curr->is_match)
+    {
+        return true;
+    }
+
+    const auto bytes = addr.to_bytes();
+    for (int i = 0; i < 128; ++i)
+    {
+        const bool bit = get_bit_v6(bytes, i);
+        curr = curr->children[to_index(bit)].get();
+        if (curr == nullptr)
+        {
+            return false;
+        }
+        if (curr->is_match)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+void add_rule_v4(int prefix_len, const asio::ip::address_v4& addr, std::unique_ptr<ip_matcher::TrieNode>& root)
+{
+    if (prefix_len < 0 || prefix_len > 32)
+    {
+        return;
+    }
+    if (!root)
+    {
+        root = std::make_unique<ip_matcher::TrieNode>();
+    }
+    ip_matcher::TrieNode* curr = root.get();
+    if (curr->is_match)
+    {
+        return;
+    }
+
+    const uint32_t val = addr.to_uint();
+    for (int i = 0; i < prefix_len; ++i)
+    {
+        const bool bit = get_bit_v4(val, i);
+        const size_t idx = to_index(bit);
+        if (!curr->children[idx])
+        {
+            curr->children[idx] = std::make_unique<ip_matcher::TrieNode>();
+        }
+        curr = curr->children[idx].get();
+        if (curr->is_match)
+        {
+            return;
+        }
+    }
+    curr->is_match = true;
+    curr->children[0].reset();
+    curr->children[1].reset();
+}
+
+void add_rule_v6(int prefix_len, const asio::ip::address_v6& addr, std::unique_ptr<ip_matcher::TrieNode>& root)
+{
+    if (prefix_len < 0 || prefix_len > 128)
+    {
+        return;
+    }
+    if (!root)
+    {
+        root = std::make_unique<ip_matcher::TrieNode>();
+    }
+    ip_matcher::TrieNode* curr = root.get();
+    if (curr->is_match)
+    {
+        return;
+    }
+
+    const auto bytes = addr.to_bytes();
+    for (int i = 0; i < prefix_len; ++i)
+    {
+        const bool bit = get_bit_v6(bytes, i);
+        const size_t idx = to_index(bit);
+        if (!curr->children[idx])
+        {
+            curr->children[idx] = std::make_unique<ip_matcher::TrieNode>();
+        }
+        curr = curr->children[idx].get();
+        if (curr->is_match)
+        {
+            return;
+        }
+    }
+    curr->is_match = true;
+    curr->children[0].reset();
+    curr->children[1].reset();
+}
+}    // namespace
 
 ip_matcher::ip_matcher() = default;
 ip_matcher::~ip_matcher() = default;
@@ -41,72 +201,15 @@ bool ip_matcher::load(const std::string& filename)
     return true;
 }
 
-static bool get_bit_v4(uint32_t val, int index) { return (val >> (31 - index)) & 1; }
-
-static bool get_bit_v6(const std::array<uint8_t, 16>& bytes, int index)
-{
-    int byte_index = index / 8;
-    int bit_index = 7 - (index % 8);
-    return (bytes[byte_index] >> bit_index) & 1;
-}
-
 bool ip_matcher::match(const asio::ip::address& addr) const
 {
     if (addr.is_v4())
     {
-        if (!root_v4_)
-        {
-            return false;
-        }
-        TrieNode* curr = root_v4_.get();
-        if (curr->is_match)
-        {
-            return true;
-        }
-
-        uint32_t val = addr.to_v4().to_uint();
-        for (int i = 0; i < 32; ++i)
-        {
-            bool bit = get_bit_v4(val, i);
-            curr = curr->children[bit].get();
-            if (!curr)
-            {
-                return false;
-            }
-            if (curr->is_match)
-            {
-                return true;
-            }
-        }
-        return false;
+        return match_v4(addr.to_v4(), root_v4_);
     }
     if (addr.is_v6())
     {
-        if (!root_v6_)
-        {
-            return false;
-        }
-        TrieNode* curr = root_v6_.get();
-        if (curr->is_match)
-        {
-            return true;
-        }
-
-        auto bytes = addr.to_v6().to_bytes();
-        for (int i = 0; i < 128; ++i)
-        {
-            bool bit = get_bit_v6(bytes, i);
-            curr = curr->children[bit].get();
-            if (!curr)
-            {
-                return false;
-            }
-            if (curr->is_match)
-            {
-                return true;
-            }
-        }
-        return false;
+        return match_v6(addr.to_v6(), root_v6_);
     }
     return false;
 }
@@ -124,7 +227,7 @@ static std::string_view trim(std::string_view sv)
 
 void ip_matcher::add_rule(const std::string& cidr)
 {
-    std::string_view line_sv = cidr;
+    const std::string_view line_sv = cidr;
     auto slash_pos = line_sv.find('/');
     if (slash_pos == std::string_view::npos)
     {
@@ -150,74 +253,11 @@ void ip_matcher::add_rule(const std::string& cidr)
 
     if (addr.is_v4())
     {
-        if (prefix_len < 0 || prefix_len > 32)
-        {
-            return;
-        }
-        if (!root_v4_)
-        {
-            root_v4_ = std::make_unique<TrieNode>();
-        }
-        TrieNode* curr = root_v4_.get();
-
-        if (curr->is_match)
-        {
-            return;
-        }
-
-        uint32_t val = addr.to_v4().to_uint();
-        for (int i = 0; i < prefix_len; ++i)
-        {
-            bool bit = get_bit_v4(val, i);
-            if (!curr->children[bit])
-            {
-                curr->children[bit] = std::make_unique<TrieNode>();
-            }
-            curr = curr->children[bit].get();
-            if (curr->is_match)
-            {
-                return;
-            }
-        }
-        curr->is_match = true;
-
-        curr->children[0].reset();
-        curr->children[1].reset();
+        add_rule_v4(prefix_len, addr.to_v4(), root_v4_);
     }
     else if (addr.is_v6())
     {
-        if (prefix_len < 0 || prefix_len > 128)
-        {
-            return;
-        }
-        if (!root_v6_)
-        {
-            root_v6_ = std::make_unique<TrieNode>();
-        }
-        TrieNode* curr = root_v6_.get();
-
-        if (curr->is_match)
-        {
-            return;
-        }
-
-        auto bytes = addr.to_v6().to_bytes();
-        for (int i = 0; i < prefix_len; ++i)
-        {
-            bool bit = get_bit_v6(bytes, i);
-            if (!curr->children[bit])
-            {
-                curr->children[bit] = std::make_unique<TrieNode>();
-            }
-            curr = curr->children[bit].get();
-            if (curr->is_match)
-            {
-                return;
-            }
-        }
-        curr->is_match = true;
-        curr->children[0].reset();
-        curr->children[1].reset();
+        add_rule_v6(prefix_len, addr.to_v6(), root_v6_);
     }
 }
 
@@ -240,21 +280,38 @@ void ip_matcher::optimize_node(std::unique_ptr<TrieNode>& node)
         return;
     }
 
-    optimize_node(node->children[0]);
-    optimize_node(node->children[1]);
+    std::vector<std::pair<TrieNode*, bool>> stack;
+    stack.emplace_back(node.get(), false);
 
-    if (node->is_match)
+    while (!stack.empty())
     {
-        node->children[0].reset();
-        node->children[1].reset();
-        return;
-    }
+        auto [curr, visited] = stack.back();
+        stack.pop_back();
+        if (curr == nullptr)
+        {
+            continue;
+        }
+        if (!visited)
+        {
+            stack.emplace_back(curr, true);
+            stack.emplace_back(curr->children[1].get(), false);
+            stack.emplace_back(curr->children[0].get(), false);
+            continue;
+        }
 
-    if (node->children[0] && node->children[0]->is_match && node->children[1] && node->children[1]->is_match)
-    {
-        node->is_match = true;
-        node->children[0].reset();
-        node->children[1].reset();
+        if (curr->is_match)
+        {
+            curr->children[0].reset();
+            curr->children[1].reset();
+            continue;
+        }
+
+        if (curr->children[0] && curr->children[0]->is_match && curr->children[1] && curr->children[1]->is_match)
+        {
+            curr->is_match = true;
+            curr->children[0].reset();
+            curr->children[1].reset();
+        }
     }
 }
 

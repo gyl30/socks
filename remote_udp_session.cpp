@@ -1,6 +1,20 @@
 #include "remote_udp_session.h"
-#include "mux_codec.h"
+
+#include <asio/experimental/awaitable_operators.hpp>
 #include <asio/ip/address.hpp>
+#include <asio.hpp>
+#include <chrono>
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <system_error>
+#include <utility>
+#include <vector>
+
+#include "log.h"
+#include "log_context.h"
+#include "mux_codec.h"
+#include "protocol.h"
 
 namespace mux
 {
@@ -51,7 +65,7 @@ asio::awaitable<void> remote_udp_session::start()
         co_return;
     }
 
-    auto local_ep = udp_socket_.local_endpoint(ec);
+    const auto local_ep = udp_socket_.local_endpoint(ec);
     LOG_CTX_INFO(ctx_, "{} udp session started bound at {}", log_event::MUX, local_ep.address().to_string());
 
     const ack_payload ack_pl{.socks_rep = socks::REP_SUCCESS, .bnd_addr = "0.0.0.0", .bnd_port = 0};
@@ -86,15 +100,15 @@ asio::awaitable<void> remote_udp_session::watchdog()
     while (udp_socket_.is_open())
     {
         timer_.expires_after(std::chrono::seconds(1));
-        auto [ec] = co_await timer_.async_wait(asio::as_tuple(asio::use_awaitable));
-        if (ec)
+        const auto [wait_ec] = co_await timer_.async_wait(asio::as_tuple(asio::use_awaitable));
+        if (wait_ec)
         {
-            LOG_CTX_WARN(ctx_, "{} watchdog error {}", log_event::TIMEOUT, ec.message());
+            LOG_CTX_WARN(ctx_, "{} watchdog error {}", log_event::TIMEOUT, wait_ec.message());
             break;
         }
-        auto now = std::chrono::steady_clock::now();
-        auto read_elapsed = now - last_read_time_;
-        auto write_elapsed = now - last_write_time_;
+        const auto now = std::chrono::steady_clock::now();
+        const auto read_elapsed = now - last_read_time_;
+        const auto write_elapsed = now - last_write_time_;
         if (read_elapsed > std::chrono::seconds(60))
         {
             LOG_CTX_WARN(ctx_, "{} read idle {}s", log_event::TIMEOUT, std::chrono::duration_cast<std::chrono::seconds>(read_elapsed).count());
@@ -111,8 +125,8 @@ asio::awaitable<void> remote_udp_session::mux_to_udp()
 {
     for (;;)
     {
-        auto [ec, data] = co_await recv_channel_.async_receive(asio::as_tuple(asio::use_awaitable));
-        if (ec || data.empty())
+        const auto [recv_ec, data] = co_await recv_channel_.async_receive(asio::as_tuple(asio::use_awaitable));
+        if (recv_ec || data.empty())
         {
             break;
         }
@@ -123,14 +137,14 @@ asio::awaitable<void> remote_udp_session::mux_to_udp()
             continue;
         }
 
-        auto [er, eps] = co_await udp_resolver_.async_resolve(h.addr, std::to_string(h.port), asio::as_tuple(asio::use_awaitable));
-        if (!er)
+        const auto [resolve_ec, eps] = co_await udp_resolver_.async_resolve(h.addr, std::to_string(h.port), asio::as_tuple(asio::use_awaitable));
+        if (!resolve_ec)
         {
             auto target_ep = eps.begin()->endpoint();
             if (target_ep.address().is_v4())
             {
-                auto v4 = target_ep.address().to_v4();
-                auto v4_bytes = v4.to_bytes();
+                const auto v4 = target_ep.address().to_v4();
+                const auto v4_bytes = v4.to_bytes();
                 asio::ip::address_v6::bytes_type v6_bytes = {0};
                 v6_bytes[10] = 0xFF;
                 v6_bytes[11] = 0xFF;
@@ -144,7 +158,7 @@ asio::awaitable<void> remote_udp_session::mux_to_udp()
 
             LOG_CTX_DEBUG(ctx_, "{} udp forwarding {} bytes to {}", log_event::MUX, data.size() - h.header_len, target_ep.address().to_string());
 
-            auto [se, sn] = co_await udp_socket_.async_send_to(
+            const auto [se, sn] = co_await udp_socket_.async_send_to(
                 asio::buffer(data.data() + h.header_len, data.size() - h.header_len), target_ep, asio::as_tuple(asio::use_awaitable));
             if (se)
             {
@@ -169,12 +183,12 @@ asio::awaitable<void> remote_udp_session::udp_to_mux()
     asio::ip::udp::endpoint ep;
     for (;;)
     {
-        auto [re, n] = co_await udp_socket_.async_receive_from(asio::buffer(buf), ep, asio::as_tuple(asio::use_awaitable));
-        if (re)
+        const auto [recv_ec, n] = co_await udp_socket_.async_receive_from(asio::buffer(buf), ep, asio::as_tuple(asio::use_awaitable));
+        if (recv_ec)
         {
-            if (re != asio::error::operation_aborted)
+            if (recv_ec != asio::error::operation_aborted)
             {
-                LOG_CTX_WARN(ctx_, "{} udp receive error {}", log_event::MUX, re.message());
+                LOG_CTX_WARN(ctx_, "{} udp receive error {}", log_event::MUX, recv_ec.message());
             }
             break;
         }

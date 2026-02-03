@@ -1,11 +1,13 @@
 #ifndef IP_MATCHER_H
 #define IP_MATCHER_H
 
-#include <vector>
-#include <string>
-#include <array>
 #include <algorithm>
+#include <array>
 #include <asio.hpp>
+#include <memory>
+#include <string>
+#include <vector>
+
 #include "log.h"
 
 namespace mux
@@ -29,6 +31,11 @@ class ip_matcher
     struct TrieNode;
     std::unique_ptr<TrieNode> root_v4_;
     std::unique_ptr<TrieNode> root_v6_;
+
+    static bool match_v4(const asio::ip::address_v4& addr, const std::unique_ptr<TrieNode>& root);
+    static bool match_v6(const asio::ip::address_v6& addr, const std::unique_ptr<TrieNode>& root);
+    static void add_rule_v4(int prefix_len, const asio::ip::address_v4& addr, std::unique_ptr<TrieNode>& root);
+    static void add_rule_v6(int prefix_len, const asio::ip::address_v6& addr, std::unique_ptr<TrieNode>& root);
 
     void optimize_node(std::unique_ptr<TrieNode>& node);
 };

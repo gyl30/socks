@@ -1,5 +1,7 @@
 #include "mux_connection.h"
 
+#include "log.h"
+
 mux_connection::mux_connection(asio::ip::tcp::socket socket,
                                reality_engine engine,
                                bool is_client,

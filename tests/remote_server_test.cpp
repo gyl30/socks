@@ -48,7 +48,7 @@ TEST_F(RemoteServerTest, AuthFailureTriggersFallback)
     fb.port = std::to_string(fallback_port);
 
     auto server = std::make_shared<remote_server>(
-        pool, server_port, std::vector<config::fallback_entry>{fb}, server_priv_key, config::timeout_t{}, config::limits_t{});
+        pool, server_port, std::vector<config::fallback_entry>{fb}, server_priv_key, "", config::timeout_t{}, config::limits_t{});
     server->start();
 
     {
@@ -103,7 +103,7 @@ TEST_F(RemoteServerTest, SNIMismatchTriggersFallback)
     fb.port = std::to_string(default_fallback_port);
 
     auto server = std::make_shared<remote_server>(
-        pool, server_port, std::vector<config::fallback_entry>{fb}, server_priv_key, config::timeout_t{}, config::limits_t{});
+        pool, server_port, std::vector<config::fallback_entry>{fb}, server_priv_key, "", config::timeout_t{}, config::limits_t{});
     server->start();
 
     {
@@ -151,7 +151,7 @@ TEST_F(RemoteServerTest, InvalidHandshakeTriggersFallback)
     fb.port = std::to_string(default_fallback_port);
 
     auto server = std::make_shared<remote_server>(
-        pool, server_port, std::vector<config::fallback_entry>{fb}, server_priv_key, config::timeout_t{}, config::limits_t{});
+        pool, server_port, std::vector<config::fallback_entry>{fb}, server_priv_key, "", config::timeout_t{}, config::limits_t{});
     server->start();
 
     {

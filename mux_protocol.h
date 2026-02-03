@@ -1,6 +1,7 @@
 #ifndef MUX_PROTOCOL_H
 #define MUX_PROTOCOL_H
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 

@@ -1,5 +1,18 @@
 #include "remote_session.h"
+
+#include <asio/experimental/awaitable_operators.hpp>
+#include <asio.hpp>
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <system_error>
+#include <utility>
+#include <vector>
+
+#include "log.h"
+#include "log_context.h"
 #include "mux_codec.h"
+#include "protocol.h"
 
 namespace mux
 {
@@ -18,10 +31,10 @@ asio::awaitable<void> remote_session::start(const syn_payload& syn)
 {
     ctx_.set_target(syn.addr, syn.port);
     LOG_CTX_INFO(ctx_, "{} connecting {} {}", log_event::MUX, syn.addr, syn.port);
-    auto [er, eps] = co_await resolver_.async_resolve(syn.addr, std::to_string(syn.port), asio::as_tuple(asio::use_awaitable));
-    if (er)
+    const auto [resolve_ec, eps] = co_await resolver_.async_resolve(syn.addr, std::to_string(syn.port), asio::as_tuple(asio::use_awaitable));
+    if (resolve_ec)
     {
-        LOG_CTX_ERROR(ctx_, "{} resolve failed {}", log_event::MUX, er.message());
+        LOG_CTX_ERROR(ctx_, "{} resolve failed {}", log_event::MUX, resolve_ec.message());
         const ack_payload ack{.socks_rep = socks::REP_HOST_UNREACH, .bnd_addr = "", .bnd_port = 0};
         std::vector<uint8_t> ack_data;
         mux_codec::encode_ack(ack, ack_data);
@@ -29,10 +42,10 @@ asio::awaitable<void> remote_session::start(const syn_payload& syn)
         co_return;
     }
 
-    auto [ec_conn, ep_conn] = co_await asio::async_connect(target_socket_, eps, asio::as_tuple(asio::use_awaitable));
-    if (ec_conn)
+    const auto [connect_ec, ep_conn] = co_await asio::async_connect(target_socket_, eps, asio::as_tuple(asio::use_awaitable));
+    if (connect_ec)
     {
-        LOG_CTX_ERROR(ctx_, "{} connect failed {}", log_event::MUX, ec_conn.message());
+        LOG_CTX_ERROR(ctx_, "{} connect failed {}", log_event::MUX, connect_ec.message());
         const ack_payload ack{.socks_rep = socks::REP_CONN_REFUSED, .bnd_addr = "", .bnd_port = 0};
         std::vector<uint8_t> ack_data;
         mux_codec::encode_ack(ack, ack_data);
@@ -88,19 +101,19 @@ asio::awaitable<void> remote_session::upstream()
 {
     for (;;)
     {
-        auto [ec, data] = co_await recv_channel_.async_receive(asio::as_tuple(asio::use_awaitable));
-        if (ec || data.empty())
+        const auto [recv_ec, data] = co_await recv_channel_.async_receive(asio::as_tuple(asio::use_awaitable));
+        if (recv_ec || data.empty())
         {
-            if (ec)
+            if (recv_ec)
             {
-                LOG_CTX_DEBUG(ctx_, "{} mux channel closed {}", log_event::DATA_RECV, ec.message());
+                LOG_CTX_DEBUG(ctx_, "{} mux channel closed {}", log_event::DATA_RECV, recv_ec.message());
             }
             std::error_code ignore;
             ignore = target_socket_.shutdown(asio::ip::tcp::socket::shutdown_send, ignore);
             (void)ignore;
             break;
         }
-        auto [we, wn] = co_await asio::async_write(target_socket_, asio::buffer(data), asio::as_tuple(asio::use_awaitable));
+        const auto [we, wn] = co_await asio::async_write(target_socket_, asio::buffer(data), asio::as_tuple(asio::use_awaitable));
         if (we)
         {
             LOG_CTX_WARN(ctx_, "{} failed to write to target {}", log_event::DATA_SEND, we.message());

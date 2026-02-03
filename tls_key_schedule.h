@@ -1,15 +1,20 @@
 #ifndef TLS_KEY_SCHEDULE_H_
 #define TLS_KEY_SCHEDULE_H_
 
-#include <vector>
-#include <string>
+#include <cstddef>
+#include <cstdint>
 #include <cstring>
+#include <string>
+#include <system_error>
+#include <utility>
+#include <vector>
 
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
 #include <openssl/x509.h>
 
 #include "crypto_util.h"
+#include "reality_core.h"
 
 namespace reality
 {

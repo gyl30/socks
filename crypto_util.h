@@ -1,17 +1,18 @@
 #ifndef CRYPTO_UTIL_H
 #define CRYPTO_UTIL_H
 
-#include <vector>
-#include <string>
+#include <cstddef>
+#include <cstdint>
 #include <cstring>
-#include <span>
 #include <iomanip>
+#include <span>
 #include <sstream>
+#include <string>
 #include <system_error>
+#include <vector>
 #include <openssl/evp.h>
 #include <openssl/kdf.h>
 
-#include "log.h"
 #include "cipher_context.h"
 #include "reality_core.h"
 
@@ -30,6 +31,8 @@ class crypto_util
     [[nodiscard]] static bool generate_x25519_keypair(uint8_t out_public[32], uint8_t out_private[32]);
 
     [[nodiscard]] static std::vector<uint8_t> extract_public_key(const std::vector<uint8_t>& private_key, std::error_code& ec);
+
+    [[nodiscard]] static std::vector<uint8_t> extract_ed25519_public_key(const std::vector<uint8_t>& private_key, std::error_code& ec);
 
     [[nodiscard]] static std::vector<uint8_t> x25519_derive(const std::vector<uint8_t>& private_key,
                                                             const std::vector<uint8_t>& peer_public_key,

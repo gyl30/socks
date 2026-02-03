@@ -1,14 +1,14 @@
 #ifndef MUX_DISPATCHER_H
 #define MUX_DISPATCHER_H
 
+#include <cstring>
+#include <cstdint>
+#include <functional>
 #include <span>
 #include <vector>
-#include <cstring>
-#include <functional>
 #include <asio/buffer.hpp>
 #include <asio/streambuf.hpp>
 
-#include "log.h"
 #include "log_context.h"
 #include "mux_codec.h"
 #include "mux_protocol.h"

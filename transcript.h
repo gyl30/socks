@@ -1,8 +1,9 @@
 #ifndef TRANSCRIPT_H
 #define TRANSCRIPT_H
 
-#include <vector>
+#include <cstdint>
 #include <memory>
+#include <vector>
 #include <openssl/evp.h>
 #include <openssl/ssl.h>
 

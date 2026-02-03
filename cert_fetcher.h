@@ -1,19 +1,22 @@
 #ifndef CERT_FETCHER_H
 #define CERT_FETCHER_H
 
-#include <vector>
-#include <string>
 #include <asio.hpp>
-#include <span>
+#include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <optional>
-#include "log.h"
+#include <span>
+#include <string>
+#include <system_error>
+#include <vector>
+
 #include "log_context.h"
-#include "transcript.h"
 #include "reality_core.h"
 #include "reality_messages.h"
 #include "tls_key_schedule.h"
 #include "tls_record_layer.h"
+#include "transcript.h"
 
 namespace reality
 {

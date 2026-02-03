@@ -1,6 +1,10 @@
 #include "config.h"
 #include "reflect.h"
 
+#include <cstdio>
+#include <optional>
+#include <string>
+
 namespace reflect
 {
 REFLECT_STRUCT(config::log_t, level, file);
@@ -9,7 +13,7 @@ REFLECT_STRUCT(config::outbound_t, host, port);
 REFLECT_STRUCT(config::socks_t, host, port, auth, username, password);
 REFLECT_STRUCT(config::fallback_entry, sni, host, port);
 REFLECT_STRUCT(config::timeout_t, read, write, idle);
-REFLECT_STRUCT(config::reality_t, sni, private_key, public_key);
+REFLECT_STRUCT(config::reality_t, sni, private_key, public_key, short_id, verify_public_key);
 REFLECT_STRUCT(config::limits_t, max_connections, max_buffer);
 REFLECT_STRUCT(config, mode, log, inbound, outbound, socks, fallbacks, timeout, reality, limits);
 
@@ -24,10 +28,22 @@ static std::optional<std::string> read_file(const std::string& filename)
     {
         return {};
     }
-    size_t n = 0;
-    while ((n = fread(buf, 1, sizeof buf, f)) > 0)
+    for (;;)
     {
-        result.append(buf, n);
+        const size_t n = fread(buf, 1, sizeof buf, f);
+        if (n > 0)
+        {
+            result.append(buf, n);
+        }
+        if (n < sizeof buf)
+        {
+            if (ferror(f))
+            {
+                fclose(f);
+                return {};
+            }
+            break;
+        }
     }
     fclose(f);
     return result;

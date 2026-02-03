@@ -1,19 +1,23 @@
 #ifndef MUX_CONNECTION_H
 #define MUX_CONNECTION_H
 
-#include <memory>
-#include <vector>
-#include <chrono>
-#include <unordered_map>
 #include <atomic>
+#include <chrono>
+#include <cstdint>
+#include <functional>
+#include <memory>
 #include <mutex>
+#include <string>
+#include <system_error>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
 #include <asio.hpp>
 #include <asio/experimental/channel.hpp>
 #include <asio/experimental/concurrent_channel.hpp>
 #include <asio/experimental/awaitable_operators.hpp>
 
-#include "log.h"
 #include "config.h"
 #include "log_context.h"
 #include "mux_protocol.h"

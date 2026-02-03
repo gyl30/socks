@@ -10,7 +10,7 @@ import json
 import signal
 
 # --- 全局配置 ---
-SOCKS_BIN = "./socks"  # 假设在 build 目录或同级
+SOCKS_BIN = "./socks"  # build 目录下生成
 BUILD_DIR = "./build"
 SERVER_CONFIG_FILE = "server_test.json"
 CLIENT_CONFIG_FILE = "client_test.json"
@@ -200,10 +200,17 @@ def socks5_handshake(sock, username=None, password=None):
         raise Exception(f"服务端请求不支持的认证方法: {method}")
 
 def generate_keys():
-    # Hardcoded known valid pair (Confirmed by test_crypto)
-    sk = "0044286aa923f9f05cc9e33f299c221e9cd446b963e6ebfbef9b24dd4edab169"
-    pk = "7de33da743d60ec55838d7173351662eead6004b9fb164bd19d1f3e6e9da742e"
-    return {"private_key": sk, "public_key": pk}
+    try:
+        output = subprocess.check_output([SOCKS_BIN, "x25519"], cwd=BUILD_DIR).decode()
+        lines = output.strip().split('\n')
+        sk = lines[0].split(': ')[1].strip()
+        pk = lines[1].split(': ')[1].strip()
+        verify = lines[2].split(': ')[1].strip() if len(lines) > 2 and "Verify Key" in lines[2] else ""
+        return {"private_key": sk, "public_key": pk, "verify_public_key": verify}
+    except Exception as e:
+        raise Exception(f"Failed to generate keys via socks: {e}")
+
+SHORT_ID = "0102030405060708"
 
 def socks5_connect_tcp(proxy_host, proxy_port, target_host, target_port, username=None, password=None):
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -242,6 +249,7 @@ def test_routing_rules():
     keys = generate_keys()
     pk = keys["public_key"]
     sk = keys["private_key"]
+    vk = keys["verify_public_key"]
 
     server_cfg = {
         "mode": "server",
@@ -250,7 +258,8 @@ def test_routing_rules():
         "reality": {
             "sni": "www.example.com",
             "private_key": sk,
-            "public_key": pk
+            "public_key": pk,
+            "short_id": SHORT_ID
         },
         "fallbacks": [
             {"sni": "www.example.com", "host": "127.0.0.1", "port": "14443"}
@@ -270,7 +279,9 @@ def test_routing_rules():
         "reality": {
             "sni": "www.example.com",
             "public_key": pk,
-            "private_key": sk
+            "private_key": sk,
+            "short_id": SHORT_ID,
+            "verify_public_key": vk
         },
          "timeout": {"idle": 60}
     }
@@ -335,12 +346,13 @@ def test_authentication():
     keys = generate_keys()
     pk = keys["public_key"]
     sk = keys["private_key"]
+    vk = keys["verify_public_key"]
 
     server_cfg = {
         "mode": "server",
         "log": {"level": "debug", "file": "server_auth_internal.log"},
         "inbound": {"host": "127.0.0.1", "port": 20002}, # 不同端口避免冲突
-        "reality": { "sni": "www.microsoft.com", "private_key": sk, "public_key": pk },
+        "reality": { "sni": "www.microsoft.com", "private_key": sk, "public_key": pk, "short_id": SHORT_ID },
         "fallbacks": [
             {"sni": "www.microsoft.com", "host": "127.0.0.1", "port": "14444"}
         ],
@@ -358,7 +370,7 @@ def test_authentication():
             "password": pwd
         },
         "outbound": {"host": "127.0.0.1", "port": 20002},
-        "reality": { "sni": "www.microsoft.com", "public_key": pk, "private_key": sk },
+        "reality": { "sni": "www.microsoft.com", "public_key": pk, "private_key": sk, "short_id": SHORT_ID, "verify_public_key": vk },
         "timeout": {"idle": 60}
     }
     
@@ -411,11 +423,12 @@ def test_udp_function():
     keys = generate_keys()
     pk = keys["public_key"]
     sk = keys["private_key"]
+    vk = keys["verify_public_key"]
     
     server_cfg = {
         "mode": "server", "log": {"level": "debug", "file": "server_udp_internal.log"},
         "inbound": {"host": "127.0.0.1", "port": 20003},
-        "reality": { "sni": "www.google.com", "private_key": sk, "public_key": pk },
+        "reality": { "sni": "www.google.com", "private_key": sk, "public_key": pk, "short_id": SHORT_ID },
         "fallbacks": [
             {"sni": "www.google.com", "host": "127.0.0.1", "port": "14445"}
         ],
@@ -430,7 +443,7 @@ def test_udp_function():
             "port": 1087,
             "auth": False
         },
-        "reality": { "sni": "www.google.com", "public_key": pk, "private_key": sk },
+        "reality": { "sni": "www.google.com", "public_key": pk, "private_key": sk, "short_id": SHORT_ID, "verify_public_key": vk },
         "timeout": {"idle": 60}
     }
     

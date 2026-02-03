@@ -1,6 +1,9 @@
 #include "domain_matcher.h"
+
+#include <cctype>
 #include <fstream>
-#include <algorithm>
+#include <ranges>
+
 #include "log.h"
 
 namespace mux
@@ -55,7 +58,7 @@ void domain_matcher::add(std::string domain)
     {
         domain.pop_back();
     }
-    std::transform(domain.begin(), domain.end(), domain.begin(), ::tolower);
+    std::ranges::transform(domain, domain.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     domains_.insert(domain);
 }
 
@@ -71,7 +74,7 @@ bool domain_matcher::match(std::string domain) const
         domain.pop_back();
     }
 
-    std::transform(domain.begin(), domain.end(), domain.begin(), ::tolower);
+    std::ranges::transform(domain, domain.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
 
     if (domains_.contains(domain))
     {
@@ -81,7 +84,7 @@ bool domain_matcher::match(std::string domain) const
     size_t pos = 0;
     while ((pos = domain.find('.', pos)) != std::string::npos)
     {
-        std::string suffix = domain.substr(pos + 1);
+        const std::string suffix = domain.substr(pos + 1);
         if (domains_.contains(suffix))
         {
             return true;
