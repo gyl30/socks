@@ -1,15 +1,16 @@
 #ifndef MUX_TUNNEL_H
 #define MUX_TUNNEL_H
 
-#include <asio.hpp>
-#include <cstdint>
 #include <memory>
 #include <string>
+#include <cstdint>
 #include <utility>
 
+#include <asio.hpp>
+
 #include "config.h"
-#include "mux_connection.h"
 #include "mux_stream.h"
+#include "mux_connection.h"
 #include "reality_engine.h"
 
 namespace mux

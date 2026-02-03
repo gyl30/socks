@@ -1,7 +1,8 @@
-#include "key_rotator.h"
-#include "log.h"
-#include "crypto_util.h"
 #include <openssl/crypto.h>
+
+#include "log.h"
+#include "key_rotator.h"
+#include "crypto_util.h"
 
 namespace reality
 {

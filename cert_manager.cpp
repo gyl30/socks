@@ -1,13 +1,13 @@
-#include "cert_manager.h"
+#include <mutex>
+#include <string>
+#include <vector>
+#include <utility>
+#include <optional>
+
 #include "log.h"
 #include "log_context.h"
+#include "cert_manager.h"
 #include "reality_messages.h"
-
-#include <mutex>
-#include <optional>
-#include <string>
-#include <utility>
-#include <vector>
 
 namespace reality
 {

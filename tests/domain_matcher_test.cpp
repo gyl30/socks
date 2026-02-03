@@ -1,7 +1,9 @@
-#include <gtest/gtest.h>
+#include <string>
 #include <fstream>
 #include <filesystem>
-#include <string>
+
+#include <gtest/gtest.h>
+
 #include "domain_matcher.h"
 
 using mux::domain_matcher;

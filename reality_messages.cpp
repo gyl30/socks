@@ -1,16 +1,18 @@
-#include "reality_messages.h"
-#include "reality_core.h"
-#include "reality_fingerprint.h"
+#include <memory>
+#include <string>
+#include <vector>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <iterator>
-#include <memory>
 #include <optional>
-#include <string>
-#include <vector>
+
 #include <openssl/evp.h>
 #include <openssl/rand.h>
+
+#include "reality_core.h"
+#include "reality_messages.h"
+#include "reality_fingerprint.h"
 
 namespace reality
 {

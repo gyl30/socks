@@ -1,8 +1,9 @@
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
+
+#include "test_util.h"
 #include "mux_stream.h"
 #include "mock_mux_connection.h"
-#include "test_util.h"
 
 class MuxStreamTest : public ::testing::Test
 {

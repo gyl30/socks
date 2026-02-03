@@ -1,10 +1,12 @@
-#include <gtest/gtest.h>
 #include <vector>
 #include <cstdint>
 #include <system_error>
+
+#include <gtest/gtest.h>
 #include <openssl/evp.h>
-#include "tls_record_layer.h"
+
 #include "reality_core.h"
+#include "tls_record_layer.h"
 
 using reality::tls_record_layer;
 

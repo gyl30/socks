@@ -1,7 +1,9 @@
-#include <gtest/gtest.h>
-#include <asio.hpp>
 #include <memory>
 #include <string>
+
+#include <asio.hpp>
+#include <gtest/gtest.h>
+
 #include "router.h"
 #include "log_context.h"
 

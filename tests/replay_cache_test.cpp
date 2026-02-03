@@ -1,6 +1,8 @@
-#include <gtest/gtest.h>
 #include <thread>
 #include <vector>
+
+#include <gtest/gtest.h>
+
 #include "replay_cache.h"
 
 TEST(ReplayCacheTest, Basic)

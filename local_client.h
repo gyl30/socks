@@ -1,17 +1,19 @@
 #ifndef LOCAL_CLIENT_H
 #define LOCAL_CLIENT_H
 
-#include <cstdint>
-#include <memory>
 #include <mutex>
+#include <memory>
 #include <string>
-#include <utility>
 #include <vector>
+#include <cstdint>
+#include <utility>
+
 #include <asio.hpp>
 
-#include "config.h"
 #include "log.h"
+#include "config.h"
 #include "router.h"
+#include "constants.h"
 #include "mux_tunnel.h"
 #include "transcript.h"
 #include "log_context.h"
@@ -22,7 +24,6 @@
 #include "reality_messages.h"
 #include "tls_key_schedule.h"
 #include "reality_fingerprint.h"
-#include "constants.h"
 
 namespace mux
 {

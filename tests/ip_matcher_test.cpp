@@ -1,9 +1,11 @@
-#include <gtest/gtest.h>
-#include <fstream>
 #include <cstdio>
 #include <vector>
 #include <string>
+#include <fstream>
+
 #include <asio.hpp>
+#include <gtest/gtest.h>
+
 #include "ip_matcher.h"
 
 class IpMatcherTest : public ::testing::Test

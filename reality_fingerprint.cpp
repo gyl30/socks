@@ -1,12 +1,14 @@
-#include "reality_fingerprint.h"
-#include "reality_core.h"
-#include <algorithm>
-#include <cstdint>
 #include <limits>
 #include <memory>
 #include <random>
 #include <vector>
+#include <cstdint>
+#include <algorithm>
+
 #include <openssl/rand.h>
+
+#include "reality_core.h"
+#include "reality_fingerprint.h"
 
 namespace reality
 {

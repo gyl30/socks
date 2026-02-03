@@ -1,7 +1,8 @@
-#include "context_pool.h"
-#include "log.h"
 #include <thread>
 #include <iostream>
+
+#include "log.h"
+#include "context_pool.h"
 
 namespace mux
 {

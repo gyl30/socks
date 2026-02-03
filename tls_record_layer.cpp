@@ -1,5 +1,6 @@
-#include "tls_record_layer.h"
 #include <openssl/rand.h>
+
+#include "tls_record_layer.h"
 
 namespace reality
 {

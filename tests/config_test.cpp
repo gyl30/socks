@@ -1,7 +1,9 @@
-#include <gtest/gtest.h>
-#include <fstream>
 #include <cstdio>
 #include <string>
+#include <fstream>
+
+#include <gtest/gtest.h>
+
 #include "config.h"
 
 class ConfigTest : public ::testing::Test

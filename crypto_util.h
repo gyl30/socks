@@ -1,20 +1,21 @@
 #ifndef CRYPTO_UTIL_H
 #define CRYPTO_UTIL_H
 
+#include <span>
+#include <string>
+#include <vector>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <iomanip>
-#include <span>
 #include <sstream>
-#include <string>
 #include <system_error>
-#include <vector>
+
 #include <openssl/evp.h>
 #include <openssl/kdf.h>
 
-#include "cipher_context.h"
 #include "reality_core.h"
+#include "cipher_context.h"
 
 namespace reality
 {

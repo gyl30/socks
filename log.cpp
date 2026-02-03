@@ -1,11 +1,13 @@
-#include <cstdlib>
 #include <string>
 #include <vector>
 #include <memory>
-#include "log.h"
+#include <cstdlib>
+
+#include <spdlog/spdlog.h>
 #include <spdlog/sinks/rotating_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
-#include <spdlog/spdlog.h>
+
+#include "log.h"
 
 static void init_default_log(const std::string& filename);
 static void set_log_level();
