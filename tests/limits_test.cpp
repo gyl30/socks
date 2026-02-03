@@ -43,8 +43,12 @@ TEST_F(LimitsTest, ConnectionPoolCapacity)
     timeouts.read = 10;
     timeouts.write = 10;
 
-    auto server =
-        std::make_shared<remote_server>(pool, server_port, std::vector<config::fallback_entry>{}, server_priv_key, timeouts, limits);
+    auto server = std::make_shared<remote_server>(pool, server_port, std::vector<config::fallback_entry>{}, server_priv_key, timeouts, limits);
+
+    std::vector<uint8_t> dummy_cert = {0x0b, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00};
+    reality::server_fingerprint dummy_fp;
+    server->get_cert_manager().set_certificate(sni, dummy_cert, dummy_fp);
+
     server->start();
 
     uint16_t target_port = 30080;

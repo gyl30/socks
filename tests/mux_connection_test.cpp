@@ -24,7 +24,7 @@ class MuxConnectionTest : public ::testing::Test
 TEST_F(MuxConnectionTest, StreamManagement)
 {
     asio::ip::tcp::socket socket(ctx);
-    mux_connection conn(std::move(socket), reality_engine{{}, {}, {}, {}}, true, 123);
+    mux_connection conn(std::move(socket), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 123);
 
     auto stream = std::make_shared<MockStream>();
     conn.register_stream(10, stream);
@@ -38,6 +38,6 @@ TEST_F(MuxConnectionTest, StreamManagement)
 TEST_F(MuxConnectionTest, InitialState)
 {
     asio::ip::tcp::socket socket(ctx);
-    mux_connection conn(std::move(socket), reality_engine{{}, {}, {}, {}}, true, 1);
+    mux_connection conn(std::move(socket), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 1);
     EXPECT_TRUE(conn.is_open());
 }
