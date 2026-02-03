@@ -5,11 +5,9 @@
 #include <cstdint>
 #include "mux_dispatcher.h"
 
-using mux::mux_dispatcher;
-
 TEST(MuxDispatcherTest, PackAndOnData)
 {
-    mux_dispatcher dispatcher;
+    mux::mux_dispatcher dispatcher;
 
     mux::frame_header received_header;
     std::vector<uint8_t> received_payload;
@@ -25,7 +23,7 @@ TEST(MuxDispatcherTest, PackAndOnData)
     const uint32_t stream_id = 0x12345678;
     const uint8_t cmd = mux::CMD_DAT;
 
-    auto packed = mux_dispatcher::pack(stream_id, cmd, original_payload);
+    auto packed = mux::mux_dispatcher::pack(stream_id, cmd, original_payload);
 
     dispatcher.on_plaintext_data(std::span<const uint8_t>(packed.data(), 5));
     dispatcher.on_plaintext_data(std::span<const uint8_t>(packed.data() + 5, packed.size() - 5));

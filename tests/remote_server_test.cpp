@@ -1,12 +1,11 @@
 #include <gtest/gtest.h>
+#include <asio.hpp>
+#include <thread>
+#include <vector>
 #include "remote_server.h"
 #include "context_pool.h"
 #include "crypto_util.h"
 #include "reality_messages.h"
-#include <asio.hpp>
-#include <thread>
-
-using namespace mux;
 
 class RemoteServerTest : public ::testing::Test
 {
@@ -25,7 +24,7 @@ class RemoteServerTest : public ::testing::Test
 TEST_F(RemoteServerTest, AuthFailureTriggersFallback)
 {
     std::error_code ec;
-    io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1, ec);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
 
@@ -42,13 +41,13 @@ TEST_F(RemoteServerTest, AuthFailureTriggersFallback)
                 fallback_triggered = true;
         });
 
-    config::fallback_entry fb;
+    mux::config::fallback_entry fb;
     fb.sni = sni;
     fb.host = "127.0.0.1";
     fb.port = std::to_string(fallback_port);
 
-    auto server = std::make_shared<remote_server>(
-        pool, server_port, std::vector<config::fallback_entry>{fb}, server_priv_key, "", config::timeout_t{}, config::limits_t{});
+    auto server = std::make_shared<mux::remote_server>(
+        pool, server_port, std::vector<mux::config::fallback_entry>{fb}, server_priv_key, "", mux::config::timeout_t{}, mux::config::limits_t{});
     server->start();
 
     {
@@ -79,7 +78,7 @@ TEST_F(RemoteServerTest, AuthFailureTriggersFallback)
 TEST_F(RemoteServerTest, SNIMismatchTriggersFallback)
 {
     std::error_code ec;
-    io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1, ec);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
 
@@ -97,13 +96,13 @@ TEST_F(RemoteServerTest, SNIMismatchTriggersFallback)
                 fallback_triggered = true;
         });
 
-    config::fallback_entry fb;
+    mux::config::fallback_entry fb;
     fb.sni = "";
     fb.host = "127.0.0.1";
     fb.port = std::to_string(default_fallback_port);
 
-    auto server = std::make_shared<remote_server>(
-        pool, server_port, std::vector<config::fallback_entry>{fb}, server_priv_key, "", config::timeout_t{}, config::limits_t{});
+    auto server = std::make_shared<mux::remote_server>(
+        pool, server_port, std::vector<mux::config::fallback_entry>{fb}, server_priv_key, "", mux::config::timeout_t{}, mux::config::limits_t{});
     server->start();
 
     {
@@ -129,7 +128,7 @@ TEST_F(RemoteServerTest, SNIMismatchTriggersFallback)
 TEST_F(RemoteServerTest, InvalidHandshakeTriggersFallback)
 {
     std::error_code ec;
-    io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1, ec);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
 
@@ -145,13 +144,13 @@ TEST_F(RemoteServerTest, InvalidHandshakeTriggersFallback)
                 fallback_triggered = true;
         });
 
-    config::fallback_entry fb;
+    mux::config::fallback_entry fb;
     fb.sni = "";
     fb.host = "127.0.0.1";
     fb.port = std::to_string(default_fallback_port);
 
-    auto server = std::make_shared<remote_server>(
-        pool, server_port, std::vector<config::fallback_entry>{fb}, server_priv_key, "", config::timeout_t{}, config::limits_t{});
+    auto server = std::make_shared<mux::remote_server>(
+        pool, server_port, std::vector<mux::config::fallback_entry>{fb}, server_priv_key, "", mux::config::timeout_t{}, mux::config::limits_t{});
     server->start();
 
     {

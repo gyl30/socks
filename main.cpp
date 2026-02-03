@@ -4,18 +4,17 @@
 #include <vector>
 #include <cstdint>
 #include <system_error>
+#include <memory>
+#include <csignal>
+#include <chrono>
 #include <asio.hpp>
+#include <asio/signal_set.hpp>
 #include "log.h"
 #include "config.h"
 #include "crypto_util.h"
 #include "local_client.h"
 #include "context_pool.h"
 #include "remote_server.h"
-
-using mux::config;
-using mux::io_context_pool;
-using mux::local_client;
-using mux::remote_server;
 
 static void print_usage(const char* prog)
 {
@@ -44,7 +43,7 @@ static void dump_x25519()
     }
 }
 
-static int parse_config_from_file(const std::string& file, config& cfg)
+static int parse_config_from_file(const std::string& file, mux::config& cfg)
 {
     auto c = mux::parse_config(file);
     if (!c.has_value())
@@ -84,7 +83,7 @@ int main(int argc, char** argv)
         print_usage(argv[0]);
         return -1;
     }
-    config cfg;
+    mux::config cfg;
     if (parse_config_from_file(argv[2], cfg) != 0)
     {
         print_usage(argv[0]);
@@ -96,7 +95,7 @@ int main(int argc, char** argv)
 
     const auto threads_count = std::thread::hardware_concurrency();
     std::error_code ec;
-    io_context_pool pool(threads_count > 0 ? threads_count : 4, ec);
+    mux::io_context_pool pool(threads_count > 0 ? threads_count : 4, ec);
     if (ec)
     {
         LOG_ERROR("fatal failed to create io context pool error {}", ec.message());
@@ -109,28 +108,28 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    std::shared_ptr<remote_server> server;
-    std::shared_ptr<local_client> client;
+    std::shared_ptr<mux::remote_server> server;
+    std::shared_ptr<mux::local_client> client;
 
     if (cfg.mode == "server")
     {
-        server = std::make_shared<remote_server>(
+        server = std::make_shared<mux::remote_server>(
             pool, cfg.inbound.port, cfg.fallbacks, cfg.reality.private_key, cfg.reality.short_id, cfg.timeout, cfg.limits);
         server->start();
     }
     else if (cfg.mode == "client")
     {
-        client = std::make_shared<local_client>(pool,
-                                                cfg.outbound.host,
-                                                std::to_string(cfg.outbound.port),
-                                                cfg.socks.port,
-                                                cfg.reality.public_key,
-                                                cfg.reality.sni,
-                                                cfg.reality.short_id,
-                                                cfg.reality.verify_public_key,
-                                                cfg.timeout,
-                                                cfg.socks,
-                                                cfg.limits);
+        client = std::make_shared<mux::local_client>(pool,
+                                                     cfg.outbound.host,
+                                                     std::to_string(cfg.outbound.port),
+                                                     cfg.socks.port,
+                                                     cfg.reality.public_key,
+                                                     cfg.reality.sni,
+                                                     cfg.reality.short_id,
+                                                     cfg.reality.verify_public_key,
+                                                     cfg.timeout,
+                                                     cfg.socks,
+                                                     cfg.limits);
         client->start();
     }
 

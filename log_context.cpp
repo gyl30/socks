@@ -4,6 +4,9 @@
 #include <random>
 #include <limits>
 
+namespace mux
+{
+
 std::string generate_trace_id()
 {
     static thread_local std::mt19937_64 gen(std::random_device{}());
@@ -106,3 +109,5 @@ std::string format_latency_ms(int64_t ms)
     oss << ms << "ms";
     return oss.str();
 }
+
+}    // namespace mux
