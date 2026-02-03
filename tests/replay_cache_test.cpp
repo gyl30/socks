@@ -1,12 +1,11 @@
 #include <gtest/gtest.h>
-#include "replay_cache.h"
 #include <thread>
-
-using namespace mux;
+#include <vector>
+#include "replay_cache.h"
 
 TEST(ReplayCacheTest, Basic)
 {
-    replay_cache cache;
+    mux::replay_cache cache;
     std::vector<uint8_t> sid(32, 0x01);
 
     EXPECT_TRUE(cache.check_and_insert(sid));
@@ -18,7 +17,7 @@ TEST(ReplayCacheTest, Basic)
 
 TEST(ReplayCacheTest, InvalidSize)
 {
-    replay_cache cache;
+    mux::replay_cache cache;
     std::vector<uint8_t> sid(31, 0x01);
     EXPECT_FALSE(cache.check_and_insert(sid));
 }

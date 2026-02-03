@@ -68,7 +68,7 @@ class cert_fetcher
         asio::awaitable<std::pair<uint8_t, std::span<uint8_t>>> read_record(std::vector<uint8_t>& pt_buf, std::error_code& out_ec);
 
        private:
-        connection_context ctx_;
+        mux::connection_context ctx_;
         asio::ip::tcp::socket socket_;
         std::string host_;
         uint16_t port_;

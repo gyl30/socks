@@ -13,6 +13,9 @@
 #include "mux_codec.h"
 #include "mux_protocol.h"
 
+namespace mux
+{
+
 class mux_dispatcher
 {
    public:
@@ -35,5 +38,7 @@ class mux_dispatcher
     asio::streambuf buffer_;
     connection_context ctx_;
 };
+
+}    // namespace mux
 
 #endif

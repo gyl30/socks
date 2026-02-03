@@ -11,7 +11,7 @@
 #include <openssl/rand.h>
 
 using reality::message_builder;
-using reality::tls_consts;
+namespace tls_consts = reality::tls_consts;
 
 TEST(RealityMessagesTest, RecordHeader)
 {
