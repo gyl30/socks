@@ -25,15 +25,9 @@ struct ip_matcher::TrieNode
 
 namespace
 {
-constexpr size_t to_index(bool bit)
-{
-    return bit ? 1U : 0U;
-}
+constexpr size_t to_index(bool bit) { return bit ? 1U : 0U; }
 
-bool get_bit_v4(uint32_t val, int index)
-{
-    return ((val >> (31 - index)) & 1U) != 0U;
-}
+bool get_bit_v4(uint32_t val, int index) { return ((val >> (31 - index)) & 1U) != 0U; }
 
 bool get_bit_v6(const std::array<uint8_t, 16>& bytes, int index)
 {
@@ -172,7 +166,6 @@ void ip_matcher::add_rule_v6(int prefix_len, const asio::ip::address_v6& addr, s
     curr->children[0].reset();
     curr->children[1].reset();
 }
-
 
 ip_matcher::ip_matcher() = default;
 ip_matcher::~ip_matcher() = default;

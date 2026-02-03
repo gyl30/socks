@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include <fstream>
 #include <cstdio>
+#include <string>
 #include "config.h"
 
 class ConfigTest : public ::testing::Test
@@ -31,7 +32,7 @@ TEST_F(ConfigTest, DefaultConfigValid)
 
 TEST_F(ConfigTest, ParseValues)
 {
-    std::string content = R"({
+    const std::string content = R"({
         "mode": "client",
         "inbound": {
             "host": "127.0.0.1",

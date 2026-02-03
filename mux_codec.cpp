@@ -18,15 +18,18 @@ void mux_codec::encode_header(const frame_header& h, std::vector<std::uint8_t>& 
     buf.push_back(h.command);
 }
 
-frame_header mux_codec::decode_header(const std::uint8_t* buf)
+bool mux_codec::decode_header(const std::uint8_t* buf, std::size_t len, frame_header& out)
 {
-    frame_header h;
-    h.stream_id = (static_cast<std::uint32_t>(buf[0]) << 24) | (static_cast<std::uint32_t>(buf[1]) << 16) |
-                  (static_cast<std::uint32_t>(buf[2]) << 8) | (static_cast<std::uint32_t>(buf[3]));
+    if (len < 7)
+    {
+        return false;
+    }
+    out.stream_id = (static_cast<std::uint32_t>(buf[0]) << 24) | (static_cast<std::uint32_t>(buf[1]) << 16) |
+                    (static_cast<std::uint32_t>(buf[2]) << 8) | (static_cast<std::uint32_t>(buf[3]));
 
-    h.length = static_cast<uint16_t>((static_cast<std::uint16_t>(buf[4]) << 8) | static_cast<std::uint16_t>(buf[5]));
-    h.command = buf[6];
-    return h;
+    out.length = static_cast<uint16_t>((static_cast<std::uint16_t>(buf[4]) << 8) | static_cast<std::uint16_t>(buf[5]));
+    out.command = buf[6];
+    return true;
 }
 
 void mux_codec::encode_syn(const syn_payload& p, std::vector<std::uint8_t>& buf)

@@ -1,11 +1,16 @@
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
+#include <vector>
+#include <cstdint>
+#include <memory>
+#include <asio.hpp>
 #include "mux_connection.h"
 #include "mux_stream_interface.h"
 #include "test_util.h"
 
-using namespace mux;
-using namespace mux::test;
+using mux::mux_connection;
+using mux::mux_stream_interface;
+using mux::reality_engine;
 
 class MockStream : public mux_stream_interface
 {
@@ -29,8 +34,8 @@ TEST_F(MuxConnectionTest, StreamManagement)
     auto stream = std::make_shared<MockStream>();
     conn.register_stream(10, stream);
 
-    uint32_t id1 = conn.acquire_next_id();
-    uint32_t id2 = conn.acquire_next_id();
+    const uint32_t id1 = conn.acquire_next_id();
+    const uint32_t id2 = conn.acquire_next_id();
     EXPECT_NE(id1, id2);
     EXPECT_EQ(conn.id(), 123);
 }
@@ -38,6 +43,6 @@ TEST_F(MuxConnectionTest, StreamManagement)
 TEST_F(MuxConnectionTest, InitialState)
 {
     asio::ip::tcp::socket socket(ctx);
-    mux_connection conn(std::move(socket), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 1);
+    const mux_connection conn(std::move(socket), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 1);
     EXPECT_TRUE(conn.is_open());
 }

@@ -1,21 +1,29 @@
 #include <gtest/gtest.h>
 #include <asio.hpp>
+#include <vector>
+#include <string>
+#include <cstdint>
+#include <memory>
+#include <thread>
+#include <atomic>
+#include <chrono>
 #include "local_client.h"
 #include "remote_server.h"
 #include "context_pool.h"
 #include "crypto_util.h"
 #include "mux_codec.h"
-#include <thread>
-#include <atomic>
 
-using namespace mux;
+using mux::io_context_pool;
+using mux::local_client;
+using mux::remote_server;
 
 class UdpIntegrationTest : public ::testing::Test
 {
    protected:
     void SetUp() override
     {
-        uint8_t pub[32], priv[32];
+        uint8_t pub[32];
+        uint8_t priv[32];
         ASSERT_TRUE(reality::crypto_util::generate_x25519_keypair(pub, priv));
         server_priv_key = reality::crypto_util::bytes_to_hex(std::vector<uint8_t>(priv, priv + 32));
         client_pub_key = reality::crypto_util::bytes_to_hex(std::vector<uint8_t>(pub, pub + 32));
@@ -32,7 +40,7 @@ class UdpIntegrationTest : public ::testing::Test
     std::string short_id;
 };
 
-asio::awaitable<void> run_udp_echo_server(asio::ip::udp::socket& socket, uint16_t port)
+static asio::awaitable<void> run_udp_echo_server(asio::ip::udp::socket& socket, uint16_t port)
 {
     std::error_code ec;
     socket.open(asio::ip::udp::v4(), ec);
@@ -57,7 +65,9 @@ asio::awaitable<void> run_udp_echo_server(asio::ip::udp::socket& socket, uint16_
         if (receive_ec)
         {
             if (receive_ec != asio::error::operation_aborted)
+            {
                 LOG_ERROR("echo server receive error: {}", receive_ec.message());
+            }
             break;
         }
 
@@ -79,7 +89,7 @@ TEST_F(UdpIntegrationTest, UdpAssociateAndEcho)
     uint16_t server_port = 0;
     uint16_t local_socks_port = 0;
     uint16_t echo_server_port = 0;
-    std::string sni = "www.google.com";
+    const std::string sni = "www.google.com";
 
     asio::ip::tcp::acceptor server_acceptor(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
     server_port = server_acceptor.local_endpoint().port();
@@ -94,7 +104,7 @@ TEST_F(UdpIntegrationTest, UdpAssociateAndEcho)
     timeouts.write = 10;
 
     auto server = std::make_shared<remote_server>(pool, server_port, std::vector<config::fallback_entry>{}, server_priv_key, short_id, timeouts);
-    std::vector<uint8_t> dummy_cert = {0x0b, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00};
+    const std::vector<uint8_t> dummy_cert = {0x0b, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00};
     reality::server_fingerprint dummy_fp;
     server->get_cert_manager().set_certificate(sni, dummy_cert, dummy_fp);
     server->start();
@@ -209,7 +219,7 @@ TEST_F(UdpIntegrationTest, UdpAssociateAndEcho)
                 co_return;
             }
 
-            std::string payload_data = "Hello UDP Multi-Stage Handshake";
+            const std::string payload_data = "Hello UDP Multi-Stage Handshake";
             std::vector<uint8_t> packet;
             packet.push_back(0x00);
             packet.push_back(0x00);
@@ -223,7 +233,7 @@ TEST_F(UdpIntegrationTest, UdpAssociateAndEcho)
             packet.push_back(echo_server_port & 0xFF);
             packet.insert(packet.end(), payload_data.begin(), payload_data.end());
 
-            asio::ip::udp::endpoint proxy_ep(asio::ip::make_address("127.0.0.1"), proxy_bind_port);
+            const asio::ip::udp::endpoint proxy_ep(asio::ip::make_address("127.0.0.1"), proxy_bind_port);
             auto [send_ec, send_n] = co_await client_udp->async_send_to(asio::buffer(packet), proxy_ep, asio::as_tuple(asio::use_awaitable));
             (void)send_n;
             if (send_ec)
@@ -238,7 +248,7 @@ TEST_F(UdpIntegrationTest, UdpAssociateAndEcho)
 
             if (!re && n > 10)
             {
-                std::string recv_payload(recv_buf.begin() + 10, recv_buf.begin() + n);
+                const std::string recv_payload(recv_buf.begin() + 10, recv_buf.begin() + n);
                 if (recv_payload == payload_data)
                 {
                     test_passed = true;
@@ -258,7 +268,9 @@ TEST_F(UdpIntegrationTest, UdpAssociateAndEcho)
     for (int i = 0; i < 200; ++i)
     {
         if (test_passed || test_failed)
+        {
             break;
+        }
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
 
@@ -278,7 +290,9 @@ TEST_F(UdpIntegrationTest, UdpAssociateAndEcho)
 
     pool.stop();
     if (pool_thread.joinable())
+    {
         pool_thread.join();
+    }
 
     EXPECT_TRUE(test_passed.load());
     EXPECT_FALSE(test_failed.load());

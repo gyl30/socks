@@ -2,6 +2,8 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <cstdint>
+#include <system_error>
 #include <asio.hpp>
 #include "log.h"
 #include "config.h"
@@ -9,6 +11,11 @@
 #include "local_client.h"
 #include "context_pool.h"
 #include "remote_server.h"
+
+using mux::config;
+using mux::io_context_pool;
+using mux::local_client;
+using mux::remote_server;
 
 static void print_usage(const char* prog)
 {
@@ -22,7 +29,7 @@ static void dump_x25519()
     uint8_t priv[32];
     if (!reality::crypto_util::generate_x25519_keypair(pub, priv))
     {
-        fmt::print("Failed to generate keypair\n");
+        std::cout << "Failed to generate keypair\n";
         return;
     }
     const std::vector<uint8_t> vec_priv(priv, priv + 32);
@@ -39,7 +46,7 @@ static void dump_x25519()
 
 static int parse_config_from_file(const std::string& file, config& cfg)
 {
-    auto c = parse_config(file);
+    auto c = mux::parse_config(file);
     if (!c.has_value())
     {
         return -1;
@@ -64,7 +71,7 @@ int main(int argc, char** argv)
     }
     if (mode == "config")
     {
-        std::cout << dump_default_config() << '\n';
+        std::cout << mux::dump_default_config() << '\n';
         return 0;
     }
     if (mode != "-c")
@@ -102,40 +109,40 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    std::shared_ptr<mux::remote_server> server;
-    std::shared_ptr<mux::local_client> client;
+    std::shared_ptr<remote_server> server;
+    std::shared_ptr<local_client> client;
 
     if (cfg.mode == "server")
     {
-        server = std::make_shared<mux::remote_server>(
+        server = std::make_shared<remote_server>(
             pool, cfg.inbound.port, cfg.fallbacks, cfg.reality.private_key, cfg.reality.short_id, cfg.timeout, cfg.limits);
         server->start();
     }
     else if (cfg.mode == "client")
     {
-        client = std::make_shared<mux::local_client>(pool,
-                                                     cfg.outbound.host,
-                                                     std::to_string(cfg.outbound.port),
-                                                     cfg.socks.port,
-                                                     cfg.reality.public_key,
-                                                     cfg.reality.sni,
-                                                     cfg.reality.short_id,
-                                                     cfg.reality.verify_public_key,
-                                                     cfg.timeout,
-                                                     cfg.socks,
-                                                     cfg.limits);
+        client = std::make_shared<local_client>(pool,
+                                                cfg.outbound.host,
+                                                std::to_string(cfg.outbound.port),
+                                                cfg.socks.port,
+                                                cfg.reality.public_key,
+                                                cfg.reality.sni,
+                                                cfg.reality.short_id,
+                                                cfg.reality.verify_public_key,
+                                                cfg.timeout,
+                                                cfg.socks,
+                                                cfg.limits);
         client->start();
     }
 
     asio::io_context& signal_ctx = pool.get_io_context();
     asio::signal_set signals(signal_ctx);
-    ec = signals.add(SIGINT, ec);
+    signals.add(SIGINT, ec);
     if (ec)
     {
         LOG_ERROR("fatal failed to register sigint error {}", ec.message());
         return 1;
     }
-    ec = signals.add(SIGTERM, ec);
+    signals.add(SIGTERM, ec);
     if (ec)
     {
         LOG_ERROR("fatal failed to register sigterm error {}", ec.message());
