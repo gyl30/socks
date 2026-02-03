@@ -1,11 +1,13 @@
-#include <gtest/gtest.h>
 #include <thread>
 #include <string>
 #include <vector>
-#include "local_client.h"
-#include "remote_server.h"
-#include "context_pool.h"
+
+#include <gtest/gtest.h>
+
 #include "crypto_util.h"
+#include "local_client.h"
+#include "context_pool.h"
+#include "remote_server.h"
 
 class IntegrationTest : public ::testing::Test
 {

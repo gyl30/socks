@@ -1,17 +1,17 @@
 #ifndef MUX_CONNECTION_H
 #define MUX_CONNECTION_H
 
+#include <mutex>
 #include <atomic>
 #include <chrono>
-#include <cstdint>
-#include <functional>
 #include <memory>
-#include <mutex>
 #include <string>
+#include <vector>
+#include <cstdint>
+#include <utility>
+#include <functional>
 #include <system_error>
 #include <unordered_map>
-#include <utility>
-#include <vector>
 
 #include <asio.hpp>
 #include <asio/experimental/channel.hpp>

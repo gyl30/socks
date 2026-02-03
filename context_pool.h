@@ -1,12 +1,13 @@
 #ifndef CONTEXT_POOL_H
 #define CONTEXT_POOL_H
 
-#include <asio.hpp>
 #include <atomic>
-#include <cstddef>
 #include <memory>
-#include <system_error>
 #include <vector>
+#include <cstddef>
+#include <system_error>
+
+#include <asio.hpp>
 
 namespace mux
 {

@@ -1,6 +1,8 @@
-#include <gtest/gtest.h>
 #include <memory>
 #include <cstdint>
+
+#include <gtest/gtest.h>
+
 #include "reality_fingerprint.h"
 
 using reality::FingerprintFactory;

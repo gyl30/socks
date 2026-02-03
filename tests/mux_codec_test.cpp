@@ -1,6 +1,8 @@
-#include <gtest/gtest.h>
 #include <vector>
 #include <cstdint>
+
+#include <gtest/gtest.h>
+
 #include "mux_codec.h"
 
 TEST(MuxCodecTest, FrameHeader_RoundTrip)

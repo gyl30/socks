@@ -1,10 +1,9 @@
-#include "domain_matcher.h"
-
 #include <cctype>
-#include <fstream>
 #include <ranges>
+#include <fstream>
 
 #include "log.h"
+#include "domain_matcher.h"
 
 namespace mux
 {

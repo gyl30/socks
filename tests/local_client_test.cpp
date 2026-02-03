@@ -1,6 +1,8 @@
-#include <gtest/gtest.h>
 #include <memory>
 #include <system_error>
+
+#include <gtest/gtest.h>
+
 #include "local_client.h"
 #include "context_pool.h"
 
