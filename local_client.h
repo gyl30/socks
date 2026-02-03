@@ -48,6 +48,7 @@ class local_client : public std::enable_shared_from_this<local_client>
         std::vector<uint8_t> s_app_secret;
         uint16_t cipher_suite;
         const EVP_MD* md;
+        const EVP_CIPHER* cipher;
     };
 
     asio::awaitable<void> connect_remote_loop(uint32_t index);

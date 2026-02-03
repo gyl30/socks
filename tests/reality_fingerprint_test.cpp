@@ -96,3 +96,79 @@ TEST(RealityFingerprintTest, CompressionMethods)
     ASSERT_EQ(spec.compression_methods.size(), 1);
     EXPECT_EQ(spec.compression_methods[0], 0x00);
 }
+
+TEST(RealityFingerprintTest, Chrome58_Basic)
+{
+    auto spec = FingerprintFactory::Get(FingerprintType::Chrome_58);
+    EXPECT_FALSE(spec.extensions.empty());
+
+    bool found_cbc = false;
+    for (auto c : spec.cipher_suites)
+    {
+        if (c == tls_consts::cipher::TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA)
+            found_cbc = true;
+    }
+    EXPECT_TRUE(found_cbc);
+}
+
+TEST(RealityFingerprintTest, Chrome70_Basic)
+{
+    auto spec = FingerprintFactory::Get(FingerprintType::Chrome_70);
+    EXPECT_FALSE(spec.extensions.empty());
+
+    bool found_ver = false;
+    for (const auto& ext : spec.extensions)
+    {
+        if (ext->type() == ExtensionType::SupportedVersions)
+            found_ver = true;
+    }
+    EXPECT_TRUE(found_ver);
+}
+
+TEST(RealityFingerprintTest, Chrome106_Shuffle)
+{
+    auto spec = FingerprintFactory::Get(FingerprintType::Chrome_106_Shuffle);
+    EXPECT_TRUE(spec.shuffle_extensions);
+
+    bool has_app_settings = false;
+    for (const auto& ext : spec.extensions)
+    {
+        if (ext->type() == ExtensionType::ApplicationSettings)
+            has_app_settings = true;
+        if (ext->type() == ExtensionType::GreaseECH)
+            has_app_settings = true;
+    }
+    EXPECT_FALSE(has_app_settings);
+}
+
+TEST(RealityFingerprintTest, Chrome133_Basic)
+{
+    auto spec = FingerprintFactory::Get(FingerprintType::Chrome_133);
+    bool found_mlkem = false;
+
+    for (const auto& ext : spec.extensions)
+    {
+        if (ext->type() == ExtensionType::KeyShare)
+        {
+            auto k = std::dynamic_pointer_cast<KeyShareBlueprint>(ext);
+            for (auto& ks : k->key_shares)
+            {
+                if (ks.group == tls_consts::group::X25519_MLKEM768)
+                    found_mlkem = true;
+            }
+        }
+    }
+    EXPECT_TRUE(found_mlkem);
+}
+
+TEST(RealityFingerprintTest, Browser360_Basic)
+{
+    auto spec = FingerprintFactory::Get(FingerprintType::Browser360_11_0);
+    bool found_chid = false;
+    for (const auto& ext : spec.extensions)
+    {
+        if (ext->type() == ExtensionType::ChannelID)
+            found_chid = true;
+    }
+    EXPECT_TRUE(found_chid);
+}

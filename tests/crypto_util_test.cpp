@@ -104,3 +104,76 @@ TEST(CryptoUtilTest, X25519_KeyExchange)
     ASSERT_FALSE(alice_shared.empty());
     EXPECT_EQ(alice_shared, bob_shared);
 }
+
+TEST(CryptoUtilTest, AEAD_Decrypt_Fail_BadNonce)
+{
+    std::vector<uint8_t> key(32, 0x11);
+    std::vector<uint8_t> nonce(12, 0x22);
+    std::vector<uint8_t> plaintext = {0x48, 0x65, 0x6c, 0x6c, 0x6f};
+    std::vector<uint8_t> aad = {0xAA, 0xBB};
+    std::error_code ec;
+
+    auto ciphertext = crypto_util::aead_encrypt(EVP_aes_256_gcm(), key, nonce, plaintext, aad, ec);
+    ASSERT_FALSE(ec);
+
+    nonce[0] ^= 0x01;
+    auto decrypted = crypto_util::aead_decrypt(EVP_aes_256_gcm(), key, nonce, ciphertext, aad, ec);
+    EXPECT_TRUE(ec);
+}
+
+TEST(CryptoUtilTest, AEAD_Decrypt_Fail_BadAAD)
+{
+    std::vector<uint8_t> key(32, 0x11);
+    std::vector<uint8_t> nonce(12, 0x22);
+    std::vector<uint8_t> plaintext = {0x48, 0x65, 0x6c, 0x6c, 0x6f};
+    std::vector<uint8_t> aad = {0xAA, 0xBB};
+    std::error_code ec;
+
+    auto ciphertext = crypto_util::aead_encrypt(EVP_aes_256_gcm(), key, nonce, plaintext, aad, ec);
+    ASSERT_FALSE(ec);
+
+    aad[0] ^= 0x01;
+    auto decrypted = crypto_util::aead_decrypt(EVP_aes_256_gcm(), key, nonce, ciphertext, aad, ec);
+    EXPECT_TRUE(ec);
+}
+
+TEST(CryptoUtilTest, HKDF_EmptySalt)
+{
+    std::vector<uint8_t> ikm(22, 0x0b);
+    std::vector<uint8_t> salt;
+    std::error_code ec;
+    auto prk = crypto_util::hkdf_extract(salt, ikm, EVP_sha256(), ec);
+    ASSERT_FALSE(ec);
+    ASSERT_FALSE(prk.empty());
+}
+
+TEST(CryptoUtilTest, InvalidKeyLength)
+{
+    std::vector<uint8_t> short_key(16, 0x11);
+    std::vector<uint8_t> nonce(12, 0x22);
+    std::vector<uint8_t> plaintext = {0x48, 0x65, 0x6c, 0x6c, 0x6f};
+    std::vector<uint8_t> aad;
+    std::error_code ec;
+
+    auto ciphertext = crypto_util::aead_encrypt(EVP_aes_256_gcm(), short_key, nonce, plaintext, aad, ec);
+
+    EXPECT_TRUE(ec);
+}
+
+TEST(CryptoUtilTest, ZeroLengthPlaintext)
+{
+    std::vector<uint8_t> key(32, 0x11);
+    std::vector<uint8_t> nonce(12, 0x22);
+    std::vector<uint8_t> plaintext;
+    std::vector<uint8_t> aad;
+    std::error_code ec;
+
+    auto ciphertext = crypto_util::aead_encrypt(EVP_aes_256_gcm(), key, nonce, plaintext, aad, ec);
+    ASSERT_FALSE(ec);
+
+    EXPECT_EQ(ciphertext.size(), 16);
+
+    auto decrypted = crypto_util::aead_decrypt(EVP_aes_256_gcm(), key, nonce, ciphertext, aad, ec);
+    ASSERT_FALSE(ec);
+    EXPECT_TRUE(decrypted.empty());
+}

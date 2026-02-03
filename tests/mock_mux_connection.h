@@ -10,7 +10,9 @@ namespace mux
 class MockMuxConnection : public mux_connection
 {
    public:
-    MockMuxConnection(asio::io_context& ctx) : mux_connection(asio::ip::tcp::socket(ctx), reality_engine{{}, {}, {}, {}}, true, 0) {}
+    MockMuxConnection(asio::io_context& ctx) : mux_connection(asio::ip::tcp::socket(ctx), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 0)
+    {
+    }
 
     MOCK_METHOD(void, register_stream, (uint32_t id, std::shared_ptr<mux_stream_interface> stream), (override));
     MOCK_METHOD(void, remove_stream, (uint32_t id), (override));

@@ -39,8 +39,7 @@ bool domain_matcher::load(const std::string& filename)
             continue;
         }
 
-        std::transform(line.begin(), line.end(), line.begin(), ::tolower);
-        domains_.insert(line);
+        add(line);
     }
     LOG_INFO("loaded {} proxy domain rules", domains_.size());
     return true;

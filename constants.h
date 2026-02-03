@@ -10,7 +10,7 @@ namespace constants
 namespace net
 {
 constexpr std::size_t BUFFER_SIZE = 4096;
-constexpr int RETRY_INTERVAL_SEC = 1; // Adjusted from 5 to 1
+constexpr int RETRY_INTERVAL_SEC = 1;
 constexpr int MAX_LISTEN_CONNECTIONS = 1024;
 }    // namespace net
 

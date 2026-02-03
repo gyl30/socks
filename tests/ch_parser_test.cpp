@@ -175,3 +175,115 @@ TEST(CHParserTest, Malformed_NotClientHello)
     auto info = ch_parser::parse(buf);
     EXPECT_TRUE(info.sni.empty());
 }
+
+TEST(CHParserTest, Malformed_TruncatedSessionID)
+{
+    ClientHelloBuilder builder;
+    builder.start_handshake();
+
+    std::vector<uint8_t> buf;
+    buf.push_back(0x01);
+    buf.push_back(0);
+    buf.push_back(0);
+    buf.push_back(100);
+    buf.push_back(0x03);
+    buf.push_back(0x03);
+    for (int i = 0; i < 32; ++i) buf.push_back(0);
+    buf.push_back(32);
+    buf.push_back(0xAA);
+
+    auto info = ch_parser::parse(buf);
+    EXPECT_TRUE(info.session_id.empty());
+}
+
+TEST(CHParserTest, Malformed_ExtensionsLen)
+{
+    ClientHelloBuilder builder;
+    builder.start_handshake();
+
+    builder.buffer.pop_back();
+    builder.buffer.pop_back();
+
+    auto info = ch_parser::parse(builder.buffer);
+    EXPECT_TRUE(info.sni.empty());
+}
+
+TEST(CHParserTest, Malformed_ExtensionTruncated)
+{
+    ClientHelloBuilder builder;
+    builder.start_handshake();
+
+    size_t pos = builder.buffer.size();
+    builder.buffer.push_back(0);
+    builder.buffer.push_back(0);
+
+    builder.buffer.push_back(0);
+    builder.buffer.push_back(0);
+
+    builder.buffer.push_back(0);
+    builder.buffer.push_back(10);
+
+    uint16_t total = builder.buffer.size() - pos - 2;
+    builder.buffer[pos] = (total >> 8);
+    builder.buffer[pos + 1] = total & 0xFF;
+
+    auto info = ch_parser::parse(builder.buffer);
+
+    EXPECT_TRUE(info.sni.empty());
+}
+
+TEST(CHParserTest, SNI_MalformedList)
+{
+    ClientHelloBuilder builder;
+    builder.start_handshake();
+
+    size_t pos = builder.buffer.size();
+    builder.buffer.push_back(0);
+    builder.buffer.push_back(0);
+
+    builder.buffer.push_back(0);
+    builder.buffer.push_back(0);
+    builder.buffer.push_back(0);
+    builder.buffer.push_back(5);
+
+    builder.buffer.push_back(0);
+    builder.buffer.push_back(10);
+    builder.buffer.push_back(0);
+
+    uint16_t total = builder.buffer.size() - pos - 2;
+    builder.buffer[pos] = (total >> 8);
+    builder.buffer[pos + 1] = total & 0xFF;
+
+    auto info = ch_parser::parse(builder.buffer);
+    EXPECT_TRUE(info.sni.empty());
+}
+
+TEST(CHParserTest, KeyShare_WrongGroup)
+{
+    ClientHelloBuilder builder;
+    builder.start_handshake();
+
+    size_t pos = builder.buffer.size();
+    builder.buffer.push_back(0);
+    builder.buffer.push_back(0);
+
+    builder.buffer.push_back(0x00);
+    builder.buffer.push_back(0x33);
+    builder.buffer.push_back(0);
+    builder.buffer.push_back(6);
+
+    builder.buffer.push_back(0);
+    builder.buffer.push_back(4);
+
+    builder.buffer.push_back(0x00);
+    builder.buffer.push_back(0x11);
+    builder.buffer.push_back(0);
+    builder.buffer.push_back(0);
+
+    uint16_t total = builder.buffer.size() - pos - 2;
+    builder.buffer[pos] = (total >> 8);
+    builder.buffer[pos + 1] = total & 0xFF;
+
+    auto info = ch_parser::parse(builder.buffer);
+    EXPECT_FALSE(info.is_tls13);
+}

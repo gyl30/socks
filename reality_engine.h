@@ -14,7 +14,8 @@ class reality_engine
     static constexpr auto INITIAL_BUF_SIZE = 16 * 1024;
     static constexpr auto MAX_BUF_SIZE = 64 * 1024;
 
-    reality_engine(std::vector<uint8_t> r_key, std::vector<uint8_t> r_iv, std::vector<uint8_t> w_key, std::vector<uint8_t> w_iv);
+    reality_engine(
+        std::vector<uint8_t> r_key, std::vector<uint8_t> r_iv, std::vector<uint8_t> w_key, std::vector<uint8_t> w_iv, const EVP_CIPHER* cipher);
 
     reality_engine(reality_engine&&) = default;
     reality_engine& operator=(reality_engine&&) = delete;

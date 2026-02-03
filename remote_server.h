@@ -43,6 +43,8 @@ class remote_server : public std::enable_shared_from_this<remote_server>
 
     void stop();
 
+    reality::cert_manager& get_cert_manager() { return cert_manager_; }
+
    private:
     asio::awaitable<void> accept_loop();
 

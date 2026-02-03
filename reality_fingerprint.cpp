@@ -430,7 +430,7 @@ FingerprintSpec FingerprintFactory::Get(FingerprintType type)
             return s;
         }
     }
-    return GetChrome120();
+    return spec;
 }
 
 FingerprintSpec FingerprintFactory::GetChrome120()
