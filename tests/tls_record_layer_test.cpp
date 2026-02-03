@@ -1,11 +1,12 @@
 #include <gtest/gtest.h>
 #include <vector>
-#include <string>
+#include <cstdint>
+#include <system_error>
 #include <openssl/evp.h>
 #include "tls_record_layer.h"
 #include "reality_core.h"
 
-using namespace reality;
+using reality::tls_record_layer;
 
 class TLSRecordLayerTest : public ::testing::Test
 {
@@ -23,9 +24,9 @@ class TLSRecordLayerTest : public ::testing::Test
 
 TEST_F(TLSRecordLayerTest, RoundTrip)
 {
-    std::vector<uint8_t> plaintext = {0xAA, 0xBB, 0xCC, 0xDD};
-    uint64_t seq = 1;
-    uint8_t type = 0x17;
+    const std::vector<uint8_t> plaintext = {0xAA, 0xBB, 0xCC, 0xDD};
+    const uint64_t seq = 1;
+    const uint8_t type = 0x17;
     std::error_code ec;
 
     auto encrypted = tls_record_layer::encrypt_record(cipher, key, iv, seq, plaintext, type, ec);
@@ -42,7 +43,7 @@ TEST_F(TLSRecordLayerTest, RoundTrip)
 
 TEST_F(TLSRecordLayerTest, SequenceNumberMatters)
 {
-    std::vector<uint8_t> plaintext = {0x12, 0x34};
+    const std::vector<uint8_t> plaintext = {0x12, 0x34};
     std::error_code ec;
 
     auto enc1 = tls_record_layer::encrypt_record(cipher, key, iv, 100, plaintext, 0x17, ec);
@@ -58,8 +59,8 @@ TEST_F(TLSRecordLayerTest, SequenceNumberMatters)
 
 TEST_F(TLSRecordLayerTest, TamperedCiphertext)
 {
-    std::vector<uint8_t> plaintext = {0x00, 0x01};
-    uint64_t seq = 50;
+    const std::vector<uint8_t> plaintext = {0x00, 0x01};
+    const uint64_t seq = 50;
     std::error_code ec;
 
     auto enc = tls_record_layer::encrypt_record(cipher, key, iv, seq, plaintext, 0x17, ec);
@@ -75,7 +76,7 @@ TEST_F(TLSRecordLayerTest, TamperedCiphertext)
 
 TEST_F(TLSRecordLayerTest, ShortMessage)
 {
-    std::vector<uint8_t> short_msg(10, 0x00);
+    const std::vector<uint8_t> short_msg(10, 0x00);
     uint8_t out_type;
     std::error_code ec;
 

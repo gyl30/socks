@@ -25,7 +25,9 @@ TEST(MuxCodecTest, FrameHeader_RoundTrip)
 
     EXPECT_EQ(buffer[6], 0xCC);
 
-    mux::frame_header output = mux::mux_codec::decode_header(buffer.data());
+    mux::frame_header output;
+    bool success = mux::mux_codec::decode_header(buffer.data(), buffer.size(), output);
+    ASSERT_TRUE(success);
 
     EXPECT_EQ(output.stream_id, input.stream_id);
     EXPECT_EQ(output.length, input.length);
@@ -167,7 +169,9 @@ TEST(MuxCodecTest, FrameHeader_Limits)
     std::vector<std::uint8_t> buffer;
     mux::mux_codec::encode_header(input, buffer);
 
-    mux::frame_header output = mux::mux_codec::decode_header(buffer.data());
+    mux::frame_header output;
+    bool success = mux::mux_codec::decode_header(buffer.data(), buffer.size(), output);
+    ASSERT_TRUE(success);
     EXPECT_EQ(output.stream_id, 0xFFFFFFFF);
     EXPECT_EQ(output.length, 0xFFFF);
     EXPECT_EQ(output.command, 0xFF);
