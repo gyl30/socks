@@ -1,13 +1,13 @@
 #ifndef REPLAY_CACHE_H
 #define REPLAY_CACHE_H
 
-#include <chrono>
-#include <cstdint>
 #include <deque>
 #include <mutex>
+#include <chrono>
 #include <string>
-#include <unordered_set>
 #include <vector>
+#include <cstdint>
+#include <unordered_set>
 
 namespace mux
 {

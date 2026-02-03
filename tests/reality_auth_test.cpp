@@ -1,8 +1,10 @@
-#include <gtest/gtest.h>
-#include <array>
 #include <span>
+#include <array>
 #include <vector>
 #include <cstdint>
+
+#include <gtest/gtest.h>
+
 #include "reality_auth.h"
 
 TEST(RealityAuthTest, BuildAndParseRoundTrip)

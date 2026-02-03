@@ -1,17 +1,19 @@
-#include <gtest/gtest.h>
-#include <asio.hpp>
 #include <vector>
 #include <string>
-#include <cstdint>
 #include <memory>
 #include <thread>
 #include <atomic>
 #include <chrono>
-#include "local_client.h"
-#include "remote_server.h"
-#include "context_pool.h"
-#include "crypto_util.h"
+#include <cstdint>
+
+#include <asio.hpp>
+#include <gtest/gtest.h>
+
 #include "mux_codec.h"
+#include "crypto_util.h"
+#include "local_client.h"
+#include "context_pool.h"
+#include "remote_server.h"
 
 using mux::io_context_pool;
 using mux::local_client;

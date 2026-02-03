@@ -1,16 +1,17 @@
 #ifndef MUX_DISPATCHER_H
 #define MUX_DISPATCHER_H
 
+#include <span>
+#include <vector>
 #include <cstring>
 #include <cstdint>
 #include <functional>
-#include <span>
-#include <vector>
+
 #include <asio/buffer.hpp>
 #include <asio/streambuf.hpp>
 
-#include "log_context.h"
 #include "mux_codec.h"
+#include "log_context.h"
 #include "mux_protocol.h"
 
 namespace mux

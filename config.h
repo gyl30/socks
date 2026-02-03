@@ -1,10 +1,10 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-#include <cstdint>
-#include <optional>
 #include <string>
 #include <vector>
+#include <cstdint>
+#include <optional>
 
 namespace mux
 {

@@ -1,6 +1,5 @@
-#include "mux_dispatcher.h"
-
 #include "log.h"
+#include "mux_dispatcher.h"
 
 namespace mux
 {

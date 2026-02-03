@@ -1,16 +1,18 @@
 #ifndef REALITY_ENGINE_H
 #define REALITY_ENGINE_H
 
-#include <asio.hpp>
+#include <span>
+#include <memory>
+#include <vector>
 #include <cstddef>
 #include <cstdint>
-#include <memory>
-#include <span>
 #include <system_error>
-#include <vector>
+
+#include <asio.hpp>
 #include <asio/streambuf.hpp>
-#include "cipher_context.h"
+
 #include "reality_core.h"
+#include "cipher_context.h"
 
 namespace mux
 {
