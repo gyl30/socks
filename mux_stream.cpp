@@ -1,5 +1,7 @@
 #include "mux_stream.h"
 
+#include "log.h"
+
 namespace mux
 {
 

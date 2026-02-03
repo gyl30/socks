@@ -1,28 +1,34 @@
 #ifndef REMOTE_SERVER_H
 #define REMOTE_SERVER_H
 
-#include <vector>
+#include <asio.hpp>
+#include <atomic>
+#include <cstdint>
+#include <memory>
 #include <mutex>
 #include <random>
+#include <string>
+#include <system_error>
+#include <utility>
+#include <vector>
 
-#include "config.h"
-#include "log_context.h"
-#include "protocol.h"
+#include <openssl/evp.h>
+
 #include "ch_parser.h"
-#include "mux_tunnel.h"
-#include "transcript.h"
-#include "key_rotator.h"
-#include "replay_cache.h"
-#include "cert_fetcher.h"
-#include "cert_manager.h"
-#include "context_pool.h"
-#include "remote_session.h"
-#include "tls_record_layer.h"
-#include "tls_key_schedule.h"
-#include "reality_messages.h"
-#include "reality_messages.h"
-#include "remote_udp_session.h"
+#include "config.h"
 #include "constants.h"
+#include "cert_manager.h"
+#include "cert_fetcher.h"
+#include "context_pool.h"
+#include "key_rotator.h"
+#include "log_context.h"
+#include "mux_tunnel.h"
+#include "protocol.h"
+#include "replay_cache.h"
+#include "reality_messages.h"
+#include "tls_key_schedule.h"
+#include "tls_record_layer.h"
+#include "transcript.h"
 
 namespace mux
 {
@@ -33,6 +39,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
                   uint16_t port,
                   std::vector<config::fallback_entry> fbs,
                   const std::string& key,
+                  const std::string& short_id_hex = std::string(),
 
                   const config::timeout_t& timeout_cfg = {},
                   const config::limits_t& limits_cfg = {});
@@ -93,7 +100,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     static asio::awaitable<void> fallback_failed(const std::shared_ptr<asio::ip::tcp::socket>& s);
 
     asio::awaitable<void> handle_fallback(const std::shared_ptr<asio::ip::tcp::socket>& s,
-                                          std::vector<uint8_t> buf,
+                                          const std::vector<uint8_t>& buf,
                                           const connection_context& ctx,
                                           const std::string& sni);
 
@@ -101,6 +108,8 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     io_context_pool& pool_;
     asio::ip::tcp::acceptor acceptor_;
     std::vector<uint8_t> private_key_;
+    std::vector<uint8_t> short_id_bytes_;
+    bool auth_config_valid_ = true;
     reality::cert_manager cert_manager_;
     std::atomic<uint32_t> next_conn_id_{1};
     replay_cache replay_cache_;

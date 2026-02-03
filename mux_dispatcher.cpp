@@ -1,5 +1,7 @@
 #include "mux_dispatcher.h"
 
+#include "log.h"
+
 mux_dispatcher::mux_dispatcher() : buffer_(64L * 1024) { LOG_DEBUG("mux dispatcher initialized"); }
 
 void mux_dispatcher::set_callback(frame_callback_t cb) { callback_ = std::move(cb); }

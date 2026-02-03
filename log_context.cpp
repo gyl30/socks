@@ -43,9 +43,9 @@ std::string connection_context::target_info() const
 
 double connection_context::duration_seconds() const
 {
-    auto now = std::chrono::steady_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - start_time);
-    return duration.count() / 1000.0;
+    const auto now = std::chrono::steady_clock::now();
+    const auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - start_time);
+    return static_cast<double>(duration.count()) / 1000.0;
 }
 
 std::string connection_context::stats_summary() const
@@ -75,18 +75,22 @@ void connection_context::new_trace_id() { trace_id = generate_trace_id(); }
 
 std::string format_bytes(uint64_t bytes)
 {
+    constexpr uint64_t k_kib = 1024ULL;
+    constexpr uint64_t k_mib = k_kib * 1024ULL;
+    constexpr uint64_t k_gib = k_mib * 1024ULL;
+    const double bytes_d = static_cast<double>(bytes);
     std::ostringstream oss;
-    if (bytes >= 1024 * 1024 * 1024)
+    if (bytes >= k_gib)
     {
-        oss << std::fixed << std::setprecision(2) << (bytes / (1024.0 * 1024.0 * 1024.0)) << "GB";
+        oss << std::fixed << std::setprecision(2) << (bytes_d / static_cast<double>(k_gib)) << "GB";
     }
-    else if (bytes >= 1024 * 1024)
+    else if (bytes >= k_mib)
     {
-        oss << std::fixed << std::setprecision(2) << (bytes / (1024.0 * 1024.0)) << "MB";
+        oss << std::fixed << std::setprecision(2) << (bytes_d / static_cast<double>(k_mib)) << "MB";
     }
-    else if (bytes >= 1024)
+    else if (bytes >= k_kib)
     {
-        oss << std::fixed << std::setprecision(2) << (bytes / 1024.0) << "KB";
+        oss << std::fixed << std::setprecision(2) << (bytes_d / static_cast<double>(k_kib)) << "KB";
     }
     else
     {

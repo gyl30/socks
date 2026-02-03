@@ -1,15 +1,17 @@
 #ifndef REFLECT_H
 #define REFLECT_H
 
-#include <map>
-#include <memory>
-#include <vector>
-#include <string>
 #include <cassert>
+#include <cstdint>
 #include <optional>
 #include <functional>
+#include <map>
+#include <memory>
+#include <string>
+#include <string_view>
 #include <stdexcept>
 #include <type_traits>
+#include <vector>
 #include "rapidjson/fwd.h"
 #include "third/macro_map.h"
 #include "rapidjson/document.h"

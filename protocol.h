@@ -1,11 +1,11 @@
 #ifndef PROTOCOL_H
 #define PROTOCOL_H
 
+#include <asio.hpp>
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <vector>
-#include <cstring>
-#include <asio.hpp>
 
 namespace socks
 {

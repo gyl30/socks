@@ -1,6 +1,9 @@
 #ifndef CIPHER_CONTEXT_H
 #define CIPHER_CONTEXT_H
 
+#include <cstddef>
+#include <cstdint>
+
 #include "reality_core.h"
 
 namespace reality

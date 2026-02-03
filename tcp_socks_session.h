@@ -1,15 +1,17 @@
 #ifndef TCP_SOCKS_SESSION_H
 #define TCP_SOCKS_SESSION_H
 
-#include <memory>
-#include <vector>
 #include <asio.hpp>
-#include "log.h"
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <vector>
+
 #include "log_context.h"
-#include "router.h"
-#include "protocol.h"
-#include "upstream.h"
 #include "mux_tunnel.h"
+#include "protocol.h"
+#include "router.h"
+#include "upstream.h"
 
 namespace mux
 {

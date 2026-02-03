@@ -1,9 +1,9 @@
 #ifndef LOG_CONTEXT_H
 #define LOG_CONTEXT_H
 
-#include <string>
-#include <cstdint>
 #include <chrono>
+#include <cstdint>
+#include <string>
 
 namespace log_event
 {

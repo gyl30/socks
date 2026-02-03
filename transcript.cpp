@@ -25,7 +25,7 @@ void transcript::update(const std::vector<uint8_t>& data)
 
 std::vector<uint8_t> transcript::finish() const
 {
-    std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> c(EVP_MD_CTX_new(), EVP_MD_CTX_free);
+    const std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> c(EVP_MD_CTX_new(), EVP_MD_CTX_free);
     EVP_MD_CTX_copy(c.get(), ctx_.get());
     std::vector<uint8_t> h(EVP_MD_size(md_));
     unsigned int l;

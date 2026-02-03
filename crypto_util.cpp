@@ -1,6 +1,21 @@
 #include "crypto_util.h"
-#include <openssl/rand.h>
+#include "cipher_context.h"
+#include "log.h"
+#include <algorithm>
 #include <array>
+#include <cstddef>
+#include <cstdint>
+#include <iomanip>
+#include <span>
+#include <sstream>
+#include <string>
+#include <system_error>
+#include <vector>
+#include <openssl/crypto.h>
+#include <openssl/evp.h>
+#include <openssl/kdf.h>
+#include <openssl/rand.h>
+#include <openssl/x509.h>
 
 namespace reality
 {
@@ -73,6 +88,33 @@ std::vector<uint8_t> crypto_util::extract_public_key(const std::vector<uint8_t>&
     }
 
     const openssl_ptrs::evp_pkey_ptr pkey(EVP_PKEY_new_raw_private_key(EVP_PKEY_X25519, nullptr, private_key.data(), 32));
+    if (!pkey)
+    {
+        ec = std::make_error_code(std::errc::protocol_error);
+        return {};
+    }
+
+    size_t len = 32;
+    std::vector<uint8_t> public_key(32);
+    if (EVP_PKEY_get_raw_public_key(pkey.get(), public_key.data(), &len) != 1)
+    {
+        ec = std::make_error_code(std::errc::protocol_error);
+        return {};
+    }
+
+    ec.clear();
+    return public_key;
+}
+
+std::vector<uint8_t> crypto_util::extract_ed25519_public_key(const std::vector<uint8_t>& private_key, std::error_code& ec)
+{
+    if (private_key.size() != 32)
+    {
+        ec = std::make_error_code(std::errc::invalid_argument);
+        return {};
+    }
+
+    const openssl_ptrs::evp_pkey_ptr pkey(EVP_PKEY_new_raw_private_key(EVP_PKEY_ED25519, nullptr, private_key.data(), 32));
     if (!pkey)
     {
         ec = std::make_error_code(std::errc::protocol_error);
@@ -373,7 +415,7 @@ openssl_ptrs::evp_pkey_ptr crypto_util::extract_pubkey_from_cert(const std::vect
 {
     const uint8_t* p = cert_der.data();
 
-    openssl_ptrs::x509_ptr x509(d2i_X509(nullptr, &p, static_cast<long>(cert_der.size())));
+    const openssl_ptrs::x509_ptr x509(d2i_X509(nullptr, &p, static_cast<long>(cert_der.size())));
     if (!x509)
     {
         ec = std::make_error_code(std::errc::protocol_error);

@@ -1,13 +1,14 @@
 #ifndef ROUTER_H
 #define ROUTER_H
 
+#include <asio.hpp>
+#include <cstdint>
 #include <memory>
 #include <string>
-#include <asio.hpp>
-#include "log.h"
+
+#include "domain_matcher.h"
 #include "log_context.h"
 #include "ip_matcher.h"
-#include "domain_matcher.h"
 
 namespace mux
 {

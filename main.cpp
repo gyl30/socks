@@ -27,8 +27,14 @@ static void dump_x25519()
     }
     const std::vector<uint8_t> vec_priv(priv, priv + 32);
     const std::vector<uint8_t> vec_pub(pub, pub + 32);
+    std::error_code ec;
+    auto verify_pub = reality::crypto_util::extract_ed25519_public_key(vec_priv, ec);
     std::cout << "Private Key: " << reality::crypto_util::bytes_to_hex(vec_priv) << '\n';
     std::cout << "Public Key:  " << reality::crypto_util::bytes_to_hex(vec_pub) << '\n';
+    if (!ec && !verify_pub.empty())
+    {
+        std::cout << "Verify Key:  " << reality::crypto_util::bytes_to_hex(verify_pub) << '\n';
+    }
 }
 
 static int parse_config_from_file(const std::string& file, config& cfg)
@@ -101,7 +107,8 @@ int main(int argc, char** argv)
 
     if (cfg.mode == "server")
     {
-        server = std::make_shared<mux::remote_server>(pool, cfg.inbound.port, cfg.fallbacks, cfg.reality.private_key, cfg.timeout, cfg.limits);
+        server = std::make_shared<mux::remote_server>(
+            pool, cfg.inbound.port, cfg.fallbacks, cfg.reality.private_key, cfg.reality.short_id, cfg.timeout, cfg.limits);
         server->start();
     }
     else if (cfg.mode == "client")
@@ -112,6 +119,8 @@ int main(int argc, char** argv)
                                                      cfg.socks.port,
                                                      cfg.reality.public_key,
                                                      cfg.reality.sni,
+                                                     cfg.reality.short_id,
+                                                     cfg.reality.verify_public_key,
                                                      cfg.timeout,
                                                      cfg.socks,
                                                      cfg.limits);

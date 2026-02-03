@@ -1,17 +1,68 @@
 #include "remote_server.h"
+
+#include <asio/experimental/awaitable_operators.hpp>
+#include <asio.hpp>
+#include <algorithm>
+#include <atomic>
+#include <charconv>
+#include <chrono>
+#include <cstdint>
+#include <cstring>
+#include <ctime>
+#include <memory>
+#include <mutex>
+#include <random>
+#include <string>
+#include <system_error>
+#include <utility>
+#include <vector>
+
+#include "ch_parser.h"
+#include "log.h"
+#include "log_context.h"
+#include "mux_tunnel.h"
+#include "protocol.h"
+#include "reality_auth.h"
 #include "remote_session.h"
 #include "remote_udp_session.h"
-#include "ch_parser.h"
-#include <charconv>
-#include <system_error>
 
 namespace mux
 {
+
+namespace
+{
+bool parse_hex_to_bytes(const std::string& hex, std::vector<uint8_t>& out, size_t max_len, const char* label)
+{
+    out.clear();
+    if (hex.empty())
+    {
+        return true;
+    }
+    if (hex.size() % 2 != 0)
+    {
+        LOG_ERROR("{} hex length invalid", label);
+        return false;
+    }
+    out = reality::crypto_util::hex_to_bytes(hex);
+    if (out.empty())
+    {
+        LOG_ERROR("{} hex decode failed", label);
+        return false;
+    }
+    if (max_len > 0 && out.size() > max_len)
+    {
+        LOG_ERROR("{} length {} exceeds max {}", label, out.size(), max_len);
+        return false;
+    }
+    return true;
+}
+}    // namespace
 
 remote_server::remote_server(io_context_pool& pool,
                              uint16_t port,
                              std::vector<config::fallback_entry> fbs,
                              const std::string& key,
+                             const std::string& short_id_hex,
                              const config::timeout_t& timeout_cfg,
                              const config::limits_t& limits_cfg)
     : pool_(pool),
@@ -21,6 +72,7 @@ remote_server::remote_server(io_context_pool& pool,
       limits_config_(limits_cfg)
 {
     private_key_ = reality::crypto_util::hex_to_bytes(key);
+    auth_config_valid_ = parse_hex_to_bytes(short_id_hex, short_id_bytes_, reality::SHORT_ID_MAX_LEN, "short_id");
     std::error_code ignore;
     auto pub = reality::crypto_util::extract_public_key(private_key_, ignore);
     LOG_INFO("server public key {}", reality::crypto_util::bytes_to_hex(pub));
@@ -66,9 +118,9 @@ asio::awaitable<void> remote_server::accept_loop()
     LOG_INFO("remote_server listening for connections");
     for (;;)
     {
-        auto s = std::make_shared<asio::ip::tcp::socket>(acceptor_.get_executor());
-        auto [e] = co_await acceptor_.async_accept(*s, asio::as_tuple(asio::use_awaitable));
-        if (!e)
+        const auto s = std::make_shared<asio::ip::tcp::socket>(acceptor_.get_executor());
+        const auto [accept_ec] = co_await acceptor_.async_accept(*s, asio::as_tuple(asio::use_awaitable));
+        if (!accept_ec)
         {
             std::error_code ec;
             ec = s->set_option(asio::ip::tcp::no_delay(true), ec);
@@ -80,12 +132,12 @@ asio::awaitable<void> remote_server::accept_loop()
         }
         else
         {
-            if (e == asio::error::operation_aborted)
+            if (accept_ec == asio::error::operation_aborted)
             {
                 LOG_INFO("acceptor closed, stopping loop");
                 break;
             }
-            LOG_WARN("accept error {}", e.message());
+            LOG_WARN("accept error {}", accept_ec.message());
         }
     }
 }
@@ -95,8 +147,8 @@ asio::awaitable<void> remote_server::handle(std::shared_ptr<asio::ip::tcp::socke
     connection_context ctx;
     ctx.new_trace_id();
     ctx.conn_id = conn_id;
-    auto local_addr = socks_codec::normalize_ip_address(s->local_endpoint().address());
-    auto remote_addr = socks_codec::normalize_ip_address(s->remote_endpoint().address());
+    const auto local_addr = socks_codec::normalize_ip_address(s->local_endpoint().address());
+    const auto remote_addr = socks_codec::normalize_ip_address(s->remote_endpoint().address());
     ctx.local_addr = local_addr.to_string();
     ctx.local_port = s->local_endpoint().port();
     ctx.remote_addr = remote_addr.to_string();
@@ -105,7 +157,7 @@ asio::awaitable<void> remote_server::handle(std::shared_ptr<asio::ip::tcp::socke
     LOG_CTX_INFO(ctx, "{} accepted {}", log_event::CONN_INIT, ctx.connection_info());
 
     std::vector<uint8_t> buf;
-    auto ok = co_await read_initial_and_validate(s, ctx, buf);
+    const auto ok = co_await read_initial_and_validate(s, ctx, buf);
 
     std::string client_sni;
     client_hello_info_t info;
@@ -121,7 +173,7 @@ asio::awaitable<void> remote_server::handle(std::shared_ptr<asio::ip::tcp::socke
         co_return;
     }
 
-    auto [auth_ok, auth_key] = authenticate_client(info, buf, ctx);
+    const auto [auth_ok, auth_key] = authenticate_client(info, buf, ctx);
     if (!auth_ok)
     {
         LOG_CTX_WARN(ctx, "{} auth failed sni {}", log_event::AUTH, client_sni);
@@ -143,7 +195,7 @@ asio::awaitable<void> remote_server::handle(std::shared_ptr<asio::ip::tcp::socke
     }
 
     std::error_code ec;
-    auto sh_res = co_await perform_handshake_response(s, info, trans, auth_key, ctx, ec);
+    const auto sh_res = co_await perform_handshake_response(s, info, trans, auth_key, ctx, ec);
     if (!sh_res.ok)
     {
         LOG_CTX_ERROR(ctx, "{} response error {}", log_event::HANDSHAKE, ec.message());
@@ -155,23 +207,26 @@ asio::awaitable<void> remote_server::handle(std::shared_ptr<asio::ip::tcp::socke
         co_return;
     }
 
-    auto app_sec = reality::tls_key_schedule::derive_application_secrets(sh_res.hs_keys.master_secret, trans.finish(), sh_res.negotiated_md, ec);
-    size_t key_len = EVP_CIPHER_key_length(sh_res.cipher);
-    size_t iv_len = 12;
-    auto c_app_keys = reality::tls_key_schedule::derive_traffic_keys(app_sec.first, ec, key_len, iv_len, sh_res.negotiated_md);
-    auto s_app_keys = reality::tls_key_schedule::derive_traffic_keys(app_sec.second, ec, key_len, iv_len, sh_res.negotiated_md);
+    const auto app_sec =
+        reality::tls_key_schedule::derive_application_secrets(sh_res.hs_keys.master_secret, trans.finish(), sh_res.negotiated_md, ec);
+    const size_t key_len = EVP_CIPHER_key_length(sh_res.cipher);
+    const size_t iv_len = 12;
+    const auto c_app_keys = reality::tls_key_schedule::derive_traffic_keys(app_sec.first, ec, key_len, iv_len, sh_res.negotiated_md);
+    const auto s_app_keys = reality::tls_key_schedule::derive_traffic_keys(app_sec.second, ec, key_len, iv_len, sh_res.negotiated_md);
 
     LOG_CTX_INFO(ctx, "{} tunnel starting", log_event::CONN_ESTABLISHED);
 
+    bool over_limit = false;
     {
         const std::scoped_lock lock(tunnels_mutex_);
         std::erase_if(active_tunnels_, [](const auto& wp) { return wp.expired(); });
-        if (active_tunnels_.size() >= limits_config_.max_connections)
-        {
-            LOG_CTX_WARN(ctx, "{} connection limit reached {}, rejecting", log_event::CONN_CLOSE, limits_config_.max_connections);
-            co_await handle_fallback(s, {}, ctx, info.sni);
-            co_return;
-        }
+        over_limit = active_tunnels_.size() >= limits_config_.max_connections;
+    }
+    if (over_limit)
+    {
+        LOG_CTX_WARN(ctx, "{} connection limit reached {}, rejecting", log_event::CONN_CLOSE, limits_config_.max_connections);
+        co_await handle_fallback(s, {}, ctx, info.sni);
+        co_return;
     }
 
     reality_engine engine(c_app_keys.first, c_app_keys.second, s_app_keys.first, s_app_keys.second, sh_res.cipher);
@@ -241,10 +296,10 @@ asio::awaitable<bool> remote_server::read_initial_and_validate(std::shared_ptr<a
                                                                std::vector<uint8_t>& buf)
 {
     buf.resize(constants::net::BUFFER_SIZE);
-    auto [re, n] = co_await s->async_read_some(asio::buffer(buf), asio::as_tuple(asio::use_awaitable));
-    if (re)
+    const auto [read_ec, n] = co_await s->async_read_some(asio::buffer(buf), asio::as_tuple(asio::use_awaitable));
+    if (read_ec)
     {
-        LOG_CTX_ERROR(ctx, "{} initial read error {}", log_event::HANDSHAKE, re.message());
+        LOG_CTX_ERROR(ctx, "{} initial read error {}", log_event::HANDSHAKE, read_ec.message());
         co_return false;
     }
     buf.resize(n);
@@ -257,8 +312,8 @@ asio::awaitable<bool> remote_server::read_initial_and_validate(std::shared_ptr<a
     while (buf.size() < 5 + len)
     {
         std::vector<uint8_t> tmp(5 + len - buf.size());
-        auto [re2, n2] = co_await asio::async_read(*s, asio::buffer(tmp), asio::as_tuple(asio::use_awaitable));
-        if (re2)
+        const auto [read_ec2, n2] = co_await asio::async_read(*s, asio::buffer(tmp), asio::as_tuple(asio::use_awaitable));
+        if (read_ec2)
         {
             co_return false;
         }
@@ -272,6 +327,11 @@ std::pair<bool, std::vector<uint8_t>> remote_server::authenticate_client(const c
                                                                          const std::vector<uint8_t>& buf,
                                                                          const connection_context& ctx)
 {
+    if (!auth_config_valid_)
+    {
+        LOG_CTX_ERROR(ctx, "{} invalid auth config", log_event::AUTH);
+        return {false, {}};
+    }
     if (!info.is_tls13 || info.session_id.size() != 32)
     {
         LOG_CTX_ERROR(ctx, "{} auth fail is_tls13 {} sid_len {}", log_event::AUTH, info.is_tls13, info.session_id.size());
@@ -279,23 +339,18 @@ std::pair<bool, std::vector<uint8_t>> remote_server::authenticate_client(const c
     }
 
     std::error_code ec;
-    LOG_INFO("using server private key: {} size: {}", reality::crypto_util::bytes_to_hex(private_key_), private_key_.size());
-    auto shared = reality::crypto_util::x25519_derive(private_key_, info.x25519_pub, ec);
-    LOG_CTX_INFO(ctx, "server shared secret {}", reality::crypto_util::bytes_to_hex(shared));
-    LOG_INFO("using server private key {} size {}", reality::crypto_util::bytes_to_hex(private_key_), private_key_.size());
+    const auto shared = reality::crypto_util::x25519_derive(private_key_, info.x25519_pub, ec);
     if (ec)
     {
         LOG_CTX_ERROR(ctx, "{} auth fail: x25519 derive failed {}", log_event::AUTH, ec.message());
         return {false, {}};
     }
 
-    auto salt = std::vector<uint8_t>(info.random.begin(), info.random.begin() + 20);
-    auto r_info = reality::crypto_util::hex_to_bytes("5245414c495459");
-    auto prk = reality::crypto_util::hkdf_extract(salt, shared, EVP_sha256(), ec);
-    auto auth_key = reality::crypto_util::hkdf_expand(prk, r_info, 16, EVP_sha256(), ec);
-    LOG_CTX_ERROR(ctx, "server auth key {}", reality::crypto_util::bytes_to_hex(auth_key));
-    LOG_CTX_ERROR(ctx, "server random {}", reality::crypto_util::bytes_to_hex(info.random));
-    LOG_CTX_ERROR(ctx, "server extracted pub key {}", reality::crypto_util::bytes_to_hex(info.x25519_pub));
+    const auto salt = std::vector<uint8_t>(info.random.begin(), info.random.begin() + 20);
+    const auto r_info = reality::crypto_util::hex_to_bytes("5245414c495459");
+    const auto prk = reality::crypto_util::hkdf_extract(salt, shared, EVP_sha256(), ec);
+    const auto auth_key = reality::crypto_util::hkdf_expand(prk, r_info, 16, EVP_sha256(), ec);
+    LOG_CTX_DEBUG(ctx, "auth key derived");
 
     auto aad = std::vector<uint8_t>(buf.begin() + 5, buf.end());
     if (info.sid_offset < 5)
@@ -311,10 +366,8 @@ std::pair<bool, std::vector<uint8_t>> remote_server::authenticate_client(const c
     }
 
     std::fill_n(aad.begin() + aad_sid_offset, constants::auth::SESSION_ID_LEN, 0);
-    LOG_CTX_ERROR(ctx, "server aad {}", reality::crypto_util::bytes_to_hex(aad));
-    LOG_CTX_ERROR(ctx, "server sid offset aad rel {}", aad_sid_offset);
 
-    auto pt = reality::crypto_util::aead_decrypt(
+    const auto pt = reality::crypto_util::aead_decrypt(
         EVP_aes_128_gcm(), auth_key, std::vector<uint8_t>(info.random.begin() + 20, info.random.end()), info.session_id, aad, ec);
 
     if (ec || pt.size() != 16)
@@ -323,15 +376,30 @@ std::pair<bool, std::vector<uint8_t>> remote_server::authenticate_client(const c
         return {false, {}};
     }
 
+    const auto auth = reality::parse_auth_payload(pt);
+    if (!auth.has_value())
+    {
+        LOG_CTX_ERROR(ctx, "{} auth fail invalid payload", log_event::AUTH);
+        return {false, {}};
+    }
+
+    if (!short_id_bytes_.empty())
+    {
+        if (auth->short_id != short_id_bytes_)
+        {
+            LOG_CTX_WARN(ctx, "{} auth fail short_id mismatch", log_event::AUTH);
+            return {false, {}};
+        }
+    }
+
     if (!replay_cache_.check_and_insert(info.session_id))
     {
         LOG_CTX_WARN(ctx, "{} replay attack detected", log_event::AUTH);
         return {false, {}};
     }
 
-    const uint32_t timestamp = (static_cast<uint32_t>(pt[4]) << 24) | (static_cast<uint32_t>(pt[5]) << 16) | (static_cast<uint32_t>(pt[6]) << 8) |
-                               static_cast<uint32_t>(pt[7]);
-    auto now = static_cast<uint32_t>(time(nullptr));
+    const uint32_t timestamp = auth->timestamp;
+    const auto now = static_cast<uint32_t>(time(nullptr));
     if (timestamp > now + constants::auth::MAX_CLOCK_SKEW_SEC || timestamp < now - constants::auth::MAX_CLOCK_SKEW_SEC)
     {
         LOG_CTX_WARN(ctx, "{} clock skew too large diff {}s", log_event::AUTH, (int)now - (int)timestamp);
@@ -347,7 +415,7 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::perform_hand
                                                                                                const connection_context& ctx,
                                                                                                std::error_code& ec)
 {
-    auto key_pair = key_rotator_.get_current_key();
+    const auto key_pair = key_rotator_.get_current_key();
     const uint8_t* public_key = key_pair->public_key;
     const uint8_t* private_key = key_pair->private_key;
     std::vector<uint8_t> srand(32);
@@ -362,7 +430,7 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::perform_hand
                   log_event::HANDSHAKE,
                   reality::crypto_util::bytes_to_hex(std::vector<uint8_t>(public_key, public_key + 32)));
 
-    auto sh_shared = reality::crypto_util::x25519_derive(std::vector<uint8_t>(private_key, private_key + 32), info.x25519_pub, ec);
+    const auto sh_shared = reality::crypto_util::x25519_derive(std::vector<uint8_t>(private_key, private_key + 32), info.x25519_pub, ec);
     if (ec)
     {
         LOG_CTX_ERROR(ctx, "{} x25519 derive failed", log_event::HANDSHAKE);
@@ -373,7 +441,7 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::perform_hand
     std::string fetch_host = "www.apple.com";
     uint16_t fetch_port = 443;
 
-    auto fb = find_fallback_target_by_sni(info.sni);
+    const auto fb = find_fallback_target_by_sni(info.sni);
     if (!fb.first.empty())
     {
         fetch_host = fb.first;
@@ -392,7 +460,7 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::perform_hand
     std::vector<uint8_t> cert_msg;
     reality::server_fingerprint fingerprint;
 
-    auto cached_entry = cert_manager_.get_certificate(cert_sni);
+    const auto cached_entry = cert_manager_.get_certificate(cert_sni);
     if (cached_entry)
     {
         cert_msg = cached_entry->cert_msg;
@@ -401,7 +469,7 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::perform_hand
     else
     {
         LOG_CTX_INFO(ctx, "{} certificate miss fetching {}:{}", log_event::CERT, fetch_host, fetch_port);
-        auto res = co_await reality::cert_fetcher::fetch(s->get_executor(), fetch_host, fetch_port, cert_sni, ctx.trace_id);
+        const auto res = co_await reality::cert_fetcher::fetch(s->get_executor(), fetch_host, fetch_port, cert_sni, ctx.trace_id);
 
         if (!res)
         {
@@ -421,21 +489,21 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::perform_hand
         cipher_suite = 0x1301;
     }
 
-    auto sh_msg = reality::construct_server_hello(srand, info.session_id, cipher_suite, std::vector<uint8_t>(public_key, public_key + 32));
+    const auto sh_msg = reality::construct_server_hello(srand, info.session_id, cipher_suite, std::vector<uint8_t>(public_key, public_key + 32));
     trans.update(sh_msg);
 
     const EVP_MD* md = (cipher_suite == 0x1302) ? EVP_sha384() : EVP_sha256();
     trans.set_protocol_hash(md);
 
-    auto hs_keys = reality::tls_key_schedule::derive_handshake_keys(sh_shared, trans.finish(), md, ec);
+    const auto hs_keys = reality::tls_key_schedule::derive_handshake_keys(sh_shared, trans.finish(), md, ec);
 
-    size_t key_len = (cipher_suite == 0x1302) ? 32 : 16;
-    size_t iv_len = 12;
+    const size_t key_len = (cipher_suite == 0x1302) ? 32 : 16;
+    const size_t iv_len = 12;
 
-    auto c_hs_keys = reality::tls_key_schedule::derive_traffic_keys(hs_keys.client_handshake_traffic_secret, ec, key_len, iv_len, md);
-    auto s_hs_keys = reality::tls_key_schedule::derive_traffic_keys(hs_keys.server_handshake_traffic_secret, ec, key_len, iv_len, md);
+    const auto c_hs_keys = reality::tls_key_schedule::derive_traffic_keys(hs_keys.client_handshake_traffic_secret, ec, key_len, iv_len, md);
+    const auto s_hs_keys = reality::tls_key_schedule::derive_traffic_keys(hs_keys.server_handshake_traffic_secret, ec, key_len, iv_len, md);
 
-    auto enc_ext = reality::construct_encrypted_extensions(fingerprint.alpn);
+    const auto enc_ext = reality::construct_encrypted_extensions(fingerprint.alpn);
     trans.update(enc_ext);
 
     trans.update(cert_msg);
@@ -448,11 +516,12 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::perform_hand
         co_return server_handshake_res{.ok = false};
     }
 
-    auto cv = reality::construct_certificate_verify(sign_key.get(), trans.finish());
+    const auto cv = reality::construct_certificate_verify(sign_key.get(), trans.finish());
     trans.update(cv);
 
-    auto s_fin_verify = reality::tls_key_schedule::compute_finished_verify_data(hs_keys.server_handshake_traffic_secret, trans.finish(), md, ec);
-    auto s_fin = reality::construct_finished(s_fin_verify);
+    const auto s_fin_verify =
+        reality::tls_key_schedule::compute_finished_verify_data(hs_keys.server_handshake_traffic_secret, trans.finish(), md, ec);
+    const auto s_fin = reality::construct_finished(s_fin_verify);
     trans.update(s_fin);
 
     std::vector<uint8_t> flight2_plain;
@@ -476,7 +545,7 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::perform_hand
     }
 
     LOG_CTX_INFO(ctx, "generated sh_msg hex: {}", reality::crypto_util::bytes_to_hex(sh_msg));
-    auto flight2_enc =
+    const auto flight2_enc =
         reality::tls_record_layer::encrypt_record(cipher, s_hs_keys.first, s_hs_keys.second, 0, flight2_plain, reality::CONTENT_TYPE_HANDSHAKE, ec);
     if (ec)
     {
@@ -485,7 +554,7 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::perform_hand
     }
 
     std::vector<uint8_t> out_sh;
-    auto sh_rec = reality::write_record_header(reality::CONTENT_TYPE_HANDSHAKE, static_cast<uint16_t>(sh_msg.size()));
+    const auto sh_rec = reality::write_record_header(reality::CONTENT_TYPE_HANDSHAKE, static_cast<uint16_t>(sh_msg.size()));
     out_sh.insert(out_sh.end(), sh_rec.begin(), sh_rec.end());
     out_sh.insert(out_sh.end(), sh_msg.begin(), sh_msg.end());
     out_sh.insert(out_sh.end(), {0x14, 0x03, 0x03, 0x00, 0x01, 0x01});
@@ -493,7 +562,7 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::perform_hand
 
     LOG_CTX_INFO(ctx, "total out_sh hex: {}", reality::crypto_util::bytes_to_hex(out_sh));
     LOG_CTX_DEBUG(ctx, "{} sending server hello flight size {}", log_event::HANDSHAKE, out_sh.size());
-    auto [we, wn] = co_await asio::async_write(*s, asio::buffer(out_sh), asio::as_tuple(asio::use_awaitable));
+    const auto [we, wn] = co_await asio::async_write(*s, asio::buffer(out_sh), asio::as_tuple(asio::use_awaitable));
     if (we)
     {
         ec = we;
@@ -514,10 +583,10 @@ asio::awaitable<bool> remote_server::verify_client_finished(std::shared_ptr<asio
                                                             std::error_code& ec)
 {
     uint8_t h[5];
-    auto [re3, rn3] = co_await asio::async_read(*s, asio::buffer(h, 5), asio::as_tuple(asio::use_awaitable));
-    if (re3)
+    const auto [read_ec3, rn3] = co_await asio::async_read(*s, asio::buffer(h, 5), asio::as_tuple(asio::use_awaitable));
+    if (read_ec3)
     {
-        LOG_CTX_ERROR(ctx, "{} read client finished header error {}", log_event::HANDSHAKE, re3.message());
+        LOG_CTX_ERROR(ctx, "{} read client finished header error {}", log_event::HANDSHAKE, read_ec3.message());
         co_return false;
     }
 
@@ -528,12 +597,12 @@ asio::awaitable<bool> remote_server::verify_client_finished(std::shared_ptr<asio
         co_await asio::async_read(*s, asio::buffer(h, 5), asio::as_tuple(asio::use_awaitable));
     }
 
-    auto flen = static_cast<uint16_t>((h[3] << 8) | h[4]);
+    const auto flen = static_cast<uint16_t>((h[3] << 8) | h[4]);
     std::vector<uint8_t> data(flen);
-    auto [re4, rn4] = co_await asio::async_read(*s, asio::buffer(data), asio::as_tuple(asio::use_awaitable));
-    if (re4)
+    const auto [read_ec4, rn4] = co_await asio::async_read(*s, asio::buffer(data), asio::as_tuple(asio::use_awaitable));
+    if (read_ec4)
     {
-        LOG_CTX_ERROR(ctx, "{} read client finished body error {}", log_event::HANDSHAKE, re4.message());
+        LOG_CTX_ERROR(ctx, "{} read client finished body error {}", log_event::HANDSHAKE, read_ec4.message());
         co_return false;
     }
 
@@ -541,7 +610,7 @@ asio::awaitable<bool> remote_server::verify_client_finished(std::shared_ptr<asio
     std::memcpy(cth.data(), h, 5);
     std::memcpy(cth.data() + 5, data.data(), flen);
     uint8_t ctype;
-    auto pt = reality::tls_record_layer::decrypt_record(cipher, c_hs_keys.first, c_hs_keys.second, 0, cth, ctype, ec);
+    const auto pt = reality::tls_record_layer::decrypt_record(cipher, c_hs_keys.first, c_hs_keys.second, 0, cth, ctype, ec);
 
     if (ec || ctype != reality::CONTENT_TYPE_HANDSHAKE || pt.empty() || pt[0] != 0x14)
     {
@@ -549,7 +618,7 @@ asio::awaitable<bool> remote_server::verify_client_finished(std::shared_ptr<asio
         co_return false;
     }
 
-    auto expected_fin_verify =
+    const auto expected_fin_verify =
         reality::tls_key_schedule::compute_finished_verify_data(hs_keys.client_handshake_traffic_secret, trans.finish(), md, ec);
     if (pt.size() < expected_fin_verify.size() + 4 || std::memcmp(pt.data() + 4, expected_fin_verify.data(), expected_fin_verify.size()) != 0)
     {
@@ -588,12 +657,12 @@ asio::awaitable<void> remote_server::fallback_failed_timer(uint32_t conn_id, asi
     constexpr auto max_wait_ms = constants::fallback::MAX_WAIT_MS;
     static thread_local std::mt19937 gen(std::random_device{}());
     std::uniform_int_distribution<uint32_t> dist(0, max_wait_ms - 1);
-    auto wait_ms = dist(gen);
+    const auto wait_ms = dist(gen);
     fallback_timer.expires_after(std::chrono::milliseconds(wait_ms));
-    auto [ec] = co_await fallback_timer.async_wait(asio::as_tuple(asio::use_awaitable));
-    if (ec)
+    const auto [wait_ec] = co_await fallback_timer.async_wait(asio::as_tuple(asio::use_awaitable));
+    if (wait_ec)
     {
-        LOG_ERROR("{} fallback failed timer {} ms error {}", conn_id, wait_ms, ec.message());
+        LOG_ERROR("{} fallback failed timer {} ms error {}", conn_id, wait_ms, wait_ec.message());
     }
     LOG_DEBUG("{} fallback failed timer {} ms ", conn_id, wait_ms);
 }
@@ -603,8 +672,8 @@ asio::awaitable<void> remote_server::fallback_failed(const std::shared_ptr<asio:
     char d[constants::net::BUFFER_SIZE] = {0};
     for (;;)
     {
-        auto [re, n] = co_await s->async_read_some(asio::buffer(d), asio::as_tuple(asio::use_awaitable));
-        if (re || n == 0)
+        const auto [read_ec, n] = co_await s->async_read_some(asio::buffer(d), asio::as_tuple(asio::use_awaitable));
+        if (read_ec || n == 0)
         {
             break;
         }
@@ -615,11 +684,11 @@ asio::awaitable<void> remote_server::fallback_failed(const std::shared_ptr<asio:
 }
 
 asio::awaitable<void> remote_server::handle_fallback(const std::shared_ptr<asio::ip::tcp::socket>& s,
-                                                     std::vector<uint8_t> buf,
+                                                     const std::vector<uint8_t>& buf,
                                                      const connection_context& ctx,
                                                      const std::string& sni)
 {
-    auto fallback_target = find_fallback_target_by_sni(sni);
+    const auto fallback_target = find_fallback_target_by_sni(sni);
     if (fallback_target.first.empty())
     {
         LOG_CTX_INFO(ctx, "{} no target sni {}", log_event::FALLBACK, sni.empty() ? "empty" : sni);
@@ -628,30 +697,30 @@ asio::awaitable<void> remote_server::handle_fallback(const std::shared_ptr<asio:
         LOG_CTX_INFO(ctx, "{} done", log_event::FALLBACK);
         co_return;
     }
-    auto target_host = fallback_target.first;
-    auto target_port = fallback_target.second;
+    const auto target_host = fallback_target.first;
+    const auto target_port = fallback_target.second;
     asio::ip::tcp::socket t(s->get_executor());
     asio::ip::tcp::resolver r(s->get_executor());
 
     LOG_CTX_INFO(ctx, "{} proxying sni {} to {} {}", log_event::FALLBACK, sni, target_host, target_port);
 
-    auto [er, eps] = co_await r.async_resolve(target_host, target_port, asio::as_tuple(asio::use_awaitable));
-    if (er)
+    const auto [resolve_ec, eps] = co_await r.async_resolve(target_host, target_port, asio::as_tuple(asio::use_awaitable));
+    if (resolve_ec)
     {
-        LOG_CTX_WARN(ctx, "{} resolve failed {}", log_event::FALLBACK, er.message());
+        LOG_CTX_WARN(ctx, "{} resolve failed {}", log_event::FALLBACK, resolve_ec.message());
         co_return;
     }
 
-    auto [ec_c, ep_c] = co_await asio::async_connect(t, eps, asio::as_tuple(asio::use_awaitable));
-    if (ec_c)
+    const auto [connect_ec, ep_c] = co_await asio::async_connect(t, eps, asio::as_tuple(asio::use_awaitable));
+    if (connect_ec)
     {
-        LOG_CTX_WARN(ctx, "{} connect failed {}", log_event::FALLBACK, ec_c.message());
+        LOG_CTX_WARN(ctx, "{} connect failed {}", log_event::FALLBACK, connect_ec.message());
         co_return;
     }
 
     if (!buf.empty())
     {
-        auto [we, wn] = co_await asio::async_write(t, asio::buffer(buf), asio::as_tuple(asio::use_awaitable));
+        const auto [we, wn] = co_await asio::async_write(t, asio::buffer(buf), asio::as_tuple(asio::use_awaitable));
         if (we)
         {
             LOG_CTX_WARN(ctx, "{} forward initial data failed {}", log_event::FALLBACK, we.message());
@@ -664,13 +733,13 @@ asio::awaitable<void> remote_server::handle_fallback(const std::shared_ptr<asio:
         char d[constants::net::BUFFER_SIZE];
         for (;;)
         {
-            auto [re, n] = co_await f.async_read_some(asio::buffer(d), asio::as_tuple(asio::use_awaitable));
-            if (re || n == 0)
+            const auto [read_ec, n] = co_await f.async_read_some(asio::buffer(d), asio::as_tuple(asio::use_awaitable));
+            if (read_ec || n == 0)
             {
                 break;
             }
-            auto [we, wn] = co_await asio::async_write(t, asio::buffer(d, n), asio::as_tuple(asio::use_awaitable));
-            if (we)
+            const auto [write_ec, wn] = co_await asio::async_write(t, asio::buffer(d, n), asio::as_tuple(asio::use_awaitable));
+            if (write_ec)
             {
                 break;
             }

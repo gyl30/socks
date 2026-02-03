@@ -1,9 +1,12 @@
 #ifndef LOCAL_CLIENT_H
 #define LOCAL_CLIENT_H
 
+#include <cstdint>
+#include <memory>
+#include <mutex>
+#include <string>
 #include <utility>
 #include <vector>
-#include <memory>
 #include <asio.hpp>
 
 #include "log.h"
@@ -16,7 +19,6 @@
 #include "socks_session.h"
 #include "reality_engine.h"
 #include "reality_messages.h"
-#include "tls_key_schedule.h"
 #include "tls_key_schedule.h"
 #include "reality_fingerprint.h"
 #include "constants.h"
@@ -33,6 +35,8 @@ class local_client : public std::enable_shared_from_this<local_client>
                  uint16_t l_port,
                  const std::string& key_hex,
                  std::string sni,
+                 const std::string& short_id_hex = "",
+                 const std::string& verify_key_hex = "",
                  const config::timeout_t& timeout_cfg = {},
                  config::socks_t socks_cfg = {},
                  const config::limits_t& limits_cfg = {});
@@ -81,6 +85,7 @@ class local_client : public std::enable_shared_from_this<local_client>
         reality::transcript& trans,
         const EVP_CIPHER* cipher,
         const EVP_MD* md,
+        const std::vector<uint8_t>& verify_pub_key,
         std::error_code& ec);
 
     static asio::awaitable<bool> send_client_finished(asio::ip::tcp::socket& socket,
@@ -103,6 +108,9 @@ class local_client : public std::enable_shared_from_this<local_client>
     std::string remote_port_;
     uint16_t listen_port_;
     std::string sni_;
+    std::vector<uint8_t> short_id_bytes_;
+    std::vector<uint8_t> verify_pub_key_;
+    bool auth_config_valid_ = true;
     io_context_pool& pool_;
     std::vector<uint8_t> server_pub_key_;
     std::vector<std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>> tunnel_pool_;

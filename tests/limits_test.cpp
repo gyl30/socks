@@ -17,10 +17,17 @@ class LimitsTest : public ::testing::Test
         (void)reality::crypto_util::generate_x25519_keypair(pub, priv);
         server_priv_key = reality::crypto_util::bytes_to_hex(std::vector<uint8_t>(priv, priv + 32));
         client_pub_key = reality::crypto_util::bytes_to_hex(std::vector<uint8_t>(pub, pub + 32));
+        std::error_code ec;
+        auto verify_pub = reality::crypto_util::extract_ed25519_public_key(std::vector<uint8_t>(priv, priv + 32), ec);
+        ASSERT_FALSE(ec);
+        verify_pub_key = reality::crypto_util::bytes_to_hex(verify_pub);
+        short_id = "0102030405060708";
     }
 
     std::string server_priv_key;
     std::string client_pub_key;
+    std::string verify_pub_key;
+    std::string short_id;
 };
 
 TEST_F(LimitsTest, ConnectionPoolCapacity)
@@ -43,7 +50,8 @@ TEST_F(LimitsTest, ConnectionPoolCapacity)
     timeouts.read = 10;
     timeouts.write = 10;
 
-    auto server = std::make_shared<remote_server>(pool, server_port, std::vector<config::fallback_entry>{}, server_priv_key, timeouts, limits);
+    auto server =
+        std::make_shared<remote_server>(pool, server_port, std::vector<config::fallback_entry>{}, server_priv_key, short_id, timeouts, limits);
 
     std::vector<uint8_t> dummy_cert = {0x0b, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00};
     reality::server_fingerprint dummy_fp;
@@ -70,8 +78,17 @@ TEST_F(LimitsTest, ConnectionPoolCapacity)
     };
     accept_target();
 
-    auto client = std::make_shared<local_client>(
-        pool, "::1", std::to_string(server_port), local_socks_port, client_pub_key, sni, timeouts, config::socks_t{}, limits);
+    auto client = std::make_shared<local_client>(pool,
+                                                 "::1",
+                                                 std::to_string(server_port),
+                                                 local_socks_port,
+                                                 client_pub_key,
+                                                 sni,
+                                                 short_id,
+                                                 verify_pub_key,
+                                                 timeouts,
+                                                 config::socks_t{},
+                                                 limits);
     client->start();
 
     std::this_thread::sleep_for(std::chrono::seconds(1));

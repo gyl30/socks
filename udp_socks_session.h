@@ -1,13 +1,14 @@
 #ifndef UDP_SOCKS_SESSION_H
 #define UDP_SOCKS_SESSION_H
 
+#include <asio.hpp>
+#include <cstdint>
 #include <memory>
 #include <vector>
-#include <asio.hpp>
-#include "log.h"
+
 #include "log_context.h"
-#include "protocol.h"
 #include "mux_tunnel.h"
+#include "protocol.h"
 
 namespace mux
 {

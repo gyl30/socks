@@ -1,12 +1,16 @@
 #ifndef REALITY_ENGINE_H
 #define REALITY_ENGINE_H
 
+#include <asio.hpp>
+#include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <span>
-#include "asio.hpp"
+#include <system_error>
+#include <vector>
 #include <asio/streambuf.hpp>
-#include "reality_core.h"
 #include "cipher_context.h"
+#include "reality_core.h"
 
 class reality_engine
 {

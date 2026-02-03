@@ -16,6 +16,7 @@ try:
     lines = output.strip().split('\n')
     SERVER_KEY = lines[0].split(': ')[1].strip()
     SERVER_PUB = lines[1].split(': ')[1].strip()
+    VERIFY_PUB = lines[2].split(': ')[1].strip() if len(lines) > 2 and 'Verify Key' in lines[2] else ""
     print(f"Generated Keys:\nPriv: {SERVER_KEY}\nPub:  {SERVER_PUB}")
 except Exception as e:
     print(f"Failed to generate keys: {e}")
@@ -25,6 +26,7 @@ except Exception as e:
 SERVER_PORT = 30446
 CLIENT_SOCKS_PORT = 10803
 ECHO_PORT = 30083
+SHORT_ID = "0102030405060708"
 
 def start_echo_server():
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -53,7 +55,8 @@ def write_configs():
     "reality": {{
         "sni": "www.google.com",
         "private_key": "{SERVER_KEY}",
-        "public_key": ""
+        "public_key": "",
+        "short_id": "{SHORT_ID}"
     }},
     "log": {{
         "level": "debug"
@@ -78,7 +81,9 @@ def write_configs():
     }},
     "reality": {{
         "sni": "www.google.com",
-        "public_key": "{SERVER_PUB}"
+        "public_key": "{SERVER_PUB}",
+        "short_id": "{SHORT_ID}",
+        "verify_public_key": "{VERIFY_PUB}"
     }},
     "limits": {{
         "max_connections": 2
