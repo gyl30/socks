@@ -12,6 +12,9 @@
 #include "cipher_context.h"
 #include "reality_core.h"
 
+namespace mux
+{
+
 class reality_engine
 {
    public:
@@ -70,5 +73,7 @@ class reality_engine
     std::vector<uint8_t> tx_buf_;
     std::vector<uint8_t> scratch_buf_;
 };
+
+}    // namespace mux
 
 #endif

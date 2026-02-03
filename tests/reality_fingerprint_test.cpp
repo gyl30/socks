@@ -1,10 +1,11 @@
 #include <gtest/gtest.h>
 #include <memory>
+#include <cstdint>
 #include "reality_fingerprint.h"
 
 using reality::FingerprintFactory;
 using reality::FingerprintType;
-using reality::tls_consts;
+namespace tls_consts = reality::tls_consts;
 using reality::ExtensionType;
 
 TEST(RealityFingerprintTest, Chrome120Basic)

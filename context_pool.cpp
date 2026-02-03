@@ -3,6 +3,9 @@
 #include <thread>
 #include <iostream>
 
+namespace mux
+{
+
 io_context_pool::io_context_pool(std::size_t pool_size, std::error_code& ec) : next_io_context_(0)
 {
     if (pool_size == 0)
@@ -56,3 +59,5 @@ asio::io_context& io_context_pool::get_io_context()
     const std::size_t index = next_io_context_.fetch_add(1, std::memory_order_relaxed) % io_contexts_.size();
     return *io_contexts_[index];
 }
+
+}    // namespace mux

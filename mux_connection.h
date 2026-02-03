@@ -25,6 +25,9 @@
 #include "reality_engine.h"
 #include "mux_stream_interface.h"
 
+namespace mux
+{
+
 enum class mux_connection_state : uint8_t
 {
     connected,
@@ -104,5 +107,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     config::timeout_t timeout_config_;
     config::limits_t limits_config_;
 };
+
+}    // namespace mux
 
 #endif

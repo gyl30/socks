@@ -1,9 +1,8 @@
 #include <gtest/gtest.h>
 #include <asio.hpp>
 #include "upstream.h"
+#include "log_context.h"
 #include "test_util.h"
-
-using namespace mux;
 
 class UpstreamTest : public ::testing::Test
 {
@@ -86,7 +85,7 @@ TEST_F(UpstreamTest, DirectUpstream_Connect_Success)
     EchoServer server;
     uint16_t port = server.port();
 
-    direct_upstream upstream(ctx.get_executor(), connection_context{});
+    mux::direct_upstream upstream(ctx.get_executor(), mux::connection_context{});
 
     auto success = mux::test::run_awaitable(ctx, upstream.connect("127.0.0.1", port));
     EXPECT_TRUE(success);
@@ -107,7 +106,7 @@ TEST_F(UpstreamTest, DirectUpstream_Connect_Success)
 
 TEST_F(UpstreamTest, DirectUpstream_Connect_Fail)
 {
-    direct_upstream upstream(ctx.get_executor(), connection_context{});
+    mux::direct_upstream upstream(ctx.get_executor(), mux::connection_context{});
 
     auto success = mux::test::run_awaitable(ctx, upstream.connect("127.0.0.1", 1));
     EXPECT_FALSE(success);
@@ -115,7 +114,7 @@ TEST_F(UpstreamTest, DirectUpstream_Connect_Fail)
 
 TEST_F(UpstreamTest, DirectUpstream_Resolve_Fail)
 {
-    direct_upstream upstream(ctx.get_executor(), connection_context{});
+    mux::direct_upstream upstream(ctx.get_executor(), mux::connection_context{});
     auto success = mux::test::run_awaitable(ctx, upstream.connect("invalid.host.name.local", 80));
     EXPECT_FALSE(success);
 }

@@ -2,6 +2,9 @@
 
 #include "log.h"
 
+namespace mux
+{
+
 mux_connection::mux_connection(asio::ip::tcp::socket socket,
                                reality_engine engine,
                                bool is_client,
@@ -293,3 +296,5 @@ void mux_connection::on_mux_frame(mux::frame_header header, std::vector<uint8_t>
         }
     }
 }
+
+}    // namespace mux

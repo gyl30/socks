@@ -4,6 +4,9 @@
 #include <cstdint>
 #include <vector>
 
+namespace mux
+{
+
 class mux_stream_interface
 {
    public:
@@ -12,5 +15,7 @@ class mux_stream_interface
     virtual void on_close() = 0;
     virtual void on_reset() = 0;
 };
+
+}    // namespace mux
 
 #endif

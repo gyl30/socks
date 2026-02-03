@@ -80,7 +80,7 @@ cert_fetcher::fetch_session::fetch_session(
 
 asio::awaitable<std::optional<fetch_result>> cert_fetcher::fetch_session::run()
 {
-    LOG_CTX_INFO(ctx_, "{} starting fetch", log_event::CERT);
+    LOG_CTX_INFO(ctx_, "{} starting fetch", mux::log_event::CERT);
 
     if (auto ec = co_await connect(); ec)
     {
@@ -107,14 +107,14 @@ asio::awaitable<std::error_code> cert_fetcher::fetch_session::connect()
     auto [res_ec, eps] = co_await resolver.async_resolve(host_, std::to_string(port_), asio::as_tuple(asio::use_awaitable));
     if (res_ec)
     {
-        LOG_CTX_ERROR(ctx_, "{} resolve failed {}", log_event::CERT, res_ec.message());
+        LOG_CTX_ERROR(ctx_, "{} resolve failed {}", mux::log_event::CERT, res_ec.message());
         co_return res_ec;
     }
 
     auto [conn_ec, ep] = co_await asio::async_connect(socket_, eps, asio::as_tuple(asio::use_awaitable));
     if (conn_ec)
     {
-        LOG_CTX_ERROR(ctx_, "{} connect failed {}", log_event::CERT, conn_ec.message());
+        LOG_CTX_ERROR(ctx_, "{} connect failed {}", mux::log_event::CERT, conn_ec.message());
         co_return conn_ec;
     }
     co_return std::error_code{};
@@ -146,7 +146,7 @@ asio::awaitable<std::error_code> cert_fetcher::fetch_session::perform_handshake_
     auto [write_ec, wn] = co_await asio::async_write(socket_, asio::buffer(ch_rec), asio::as_tuple(asio::use_awaitable));
     if (write_ec)
     {
-        LOG_CTX_ERROR(ctx_, "{} write ch failed {}", log_event::CERT, write_ec.message());
+        LOG_CTX_ERROR(ctx_, "{} write ch failed {}", mux::log_event::CERT, write_ec.message());
         co_return write_ec;
     }
 
@@ -159,7 +159,7 @@ asio::awaitable<std::error_code> cert_fetcher::fetch_session::perform_handshake_
     }
     if (sh_body.empty())
     {
-        LOG_CTX_ERROR(ctx_, "{} server hello empty", log_event::CERT);
+        LOG_CTX_ERROR(ctx_, "{} server hello empty", mux::log_event::CERT);
         co_return asio::error::fault;
     }
 
@@ -178,7 +178,7 @@ asio::awaitable<std::vector<uint8_t>> cert_fetcher::fetch_session::find_certific
         auto [type, pt_data] = co_await read_record(pt_buf, ec);
         if (ec)
         {
-            LOG_CTX_ERROR(ctx_, "{} read record {} failed {}", log_event::CERT, i, ec.message());
+            LOG_CTX_ERROR(ctx_, "{} read record {} failed {}", mux::log_event::CERT, i, ec.message());
             break;
         }
 
@@ -198,19 +198,19 @@ asio::awaitable<std::vector<uint8_t>> cert_fetcher::fetch_session::find_certific
             uint8_t msg_type = msg[0];
             uint32_t msg_len = (msg[1] << 16) | (msg[2] << 8) | msg[3];
 
-            LOG_CTX_INFO(ctx_, "{} found handshake 0x{:02x} len {}", log_event::CERT, msg_type, msg_len);
+            LOG_CTX_INFO(ctx_, "{} found handshake 0x{:02x} len {}", mux::log_event::CERT, msg_type, msg_len);
 
             if (msg_type == 0x08)
             {
                 if (auto alpn = extract_alpn_from_encrypted_extensions(msg); alpn)
                 {
-                    LOG_CTX_INFO(ctx_, "{} learned alpn {}", log_event::CERT, *alpn);
+                    LOG_CTX_INFO(ctx_, "{} learned alpn {}", mux::log_event::CERT, *alpn);
                     fingerprint_.alpn = *alpn;
                 }
             }
             else if (msg_type == 0x0b)
             {
-                LOG_CTX_INFO(ctx_, "{} found certificate len {}", log_event::CERT, msg_len);
+                LOG_CTX_INFO(ctx_, "{} found certificate len {}", mux::log_event::CERT, msg_len);
                 co_return msg;
             }
 
@@ -219,12 +219,12 @@ asio::awaitable<std::vector<uint8_t>> cert_fetcher::fetch_session::find_certific
 
         if (ec)
         {
-            LOG_CTX_ERROR(ctx_, "{} assembler error {}", log_event::CERT, ec.message());
+            LOG_CTX_ERROR(ctx_, "{} assembler error {}", mux::log_event::CERT, ec.message());
             break;
         }
     }
 
-    LOG_CTX_WARN(ctx_, "{} certificate not found", log_event::CERT);
+    LOG_CTX_WARN(ctx_, "{} certificate not found", mux::log_event::CERT);
     co_return std::vector<uint8_t>{};
 }
 
@@ -268,28 +268,28 @@ std::error_code cert_fetcher::fetch_session::process_server_hello(const std::vec
 
     if (cipher_suite == 0x1301)
     {
-        LOG_CTX_INFO(ctx_, "{} selected tls_aes_128_gcm_sha256 0x1301", log_event::CERT);
+        LOG_CTX_INFO(ctx_, "{} selected tls_aes_128_gcm_sha256 0x1301", mux::log_event::CERT);
         negotiated_cipher = EVP_aes_128_gcm();
         negotiated_md = EVP_sha256();
         key_len = 16;
     }
     else if (cipher_suite == 0x1302)
     {
-        LOG_CTX_INFO(ctx_, "{} selected tls_aes_256_gcm_sha384 0x1302", log_event::CERT);
+        LOG_CTX_INFO(ctx_, "{} selected tls_aes_256_gcm_sha384 0x1302", mux::log_event::CERT);
         negotiated_cipher = EVP_aes_256_gcm();
         negotiated_md = EVP_sha384();
         key_len = 32;
     }
     else if (cipher_suite == 0x1303)
     {
-        LOG_CTX_INFO(ctx_, "{} selected tls_chacha20_poly1305_sha256 0x1303", log_event::CERT);
+        LOG_CTX_INFO(ctx_, "{} selected tls_chacha20_poly1305_sha256 0x1303", mux::log_event::CERT);
         negotiated_cipher = EVP_chacha20_poly1305();
         negotiated_md = EVP_sha256();
         key_len = 32;
     }
     else
     {
-        LOG_CTX_ERROR(ctx_, "{} unsupported cipher suite 0x{:04x}", log_event::CERT, cipher_suite);
+        LOG_CTX_ERROR(ctx_, "{} unsupported cipher suite 0x{:04x}", mux::log_event::CERT, cipher_suite);
         return asio::error::no_protocol_option;
     }
 
@@ -300,14 +300,14 @@ std::error_code cert_fetcher::fetch_session::process_server_hello(const std::vec
     auto shared = crypto_util::x25519_derive(std::vector<uint8_t>(client_priv_, client_priv_ + 32), server_pub, ec);
     if (ec)
     {
-        LOG_CTX_ERROR(ctx_, "{} x25519 derive failed", log_event::CERT);
+        LOG_CTX_ERROR(ctx_, "{} x25519 derive failed", mux::log_event::CERT);
         return ec;
     }
 
     auto hs_keys = tls_key_schedule::derive_handshake_keys(shared, trans_.finish(), negotiated_md, ec);
     if (ec)
     {
-        LOG_CTX_ERROR(ctx_, "{} derive keys failed", log_event::CERT);
+        LOG_CTX_ERROR(ctx_, "{} derive keys failed", mux::log_event::CERT);
         return ec;
     }
 
@@ -326,13 +326,13 @@ asio::awaitable<std::pair<std::error_code, std::vector<uint8_t>>> cert_fetcher::
     auto [ec, n] = co_await asio::async_read(socket_, asio::buffer(head), asio::as_tuple(asio::use_awaitable));
     if (ec)
     {
-        LOG_CTX_ERROR(ctx_, "{} read header failed {}", log_event::CERT, ec.message());
+        LOG_CTX_ERROR(ctx_, "{} read header failed {}", mux::log_event::CERT, ec.message());
         co_return std::make_pair(ec, std::vector<uint8_t>{});
     }
 
     if (head[0] != CONTENT_TYPE_HANDSHAKE)
     {
-        LOG_CTX_ERROR(ctx_, "{} expected handshake type {}", log_event::CERT, head[0]);
+        LOG_CTX_ERROR(ctx_, "{} expected handshake type {}", mux::log_event::CERT, head[0]);
         co_return std::make_pair(asio::error::fault, std::vector<uint8_t>{});
     }
 
@@ -341,7 +341,7 @@ asio::awaitable<std::pair<std::error_code, std::vector<uint8_t>>> cert_fetcher::
     auto [ec2, n2] = co_await asio::async_read(socket_, asio::buffer(body), asio::as_tuple(asio::use_awaitable));
     if (ec2)
     {
-        LOG_CTX_ERROR(ctx_, "{} read body failed {}", log_event::CERT, ec2.message());
+        LOG_CTX_ERROR(ctx_, "{} read body failed {}", mux::log_event::CERT, ec2.message());
         co_return std::make_pair(ec2, std::vector<uint8_t>{});
     }
 
@@ -404,7 +404,7 @@ asio::awaitable<std::pair<uint8_t, std::span<uint8_t>>> cert_fetcher::fetch_sess
 
     if (head[0] == CONTENT_TYPE_ALERT)
     {
-        LOG_CTX_WARN(ctx_, "{} received plaintext alert", log_event::CERT);
+        LOG_CTX_WARN(ctx_, "{} received plaintext alert", mux::log_event::CERT);
         out_ec = asio::error::connection_reset;
         co_return std::make_pair(0, std::span<uint8_t>{});
     }
