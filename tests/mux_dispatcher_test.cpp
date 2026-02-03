@@ -1,8 +1,10 @@
+#include <span>
+#include <vector>
+#include <cstdint>
+
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
-#include <vector>
-#include <span>
-#include <cstdint>
+
 #include "mux_dispatcher.h"
 
 TEST(MuxDispatcherTest, PackAndOnData)

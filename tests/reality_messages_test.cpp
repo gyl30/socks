@@ -1,14 +1,16 @@
-#include <gtest/gtest.h>
-#include <vector>
 #include <array>
-#include <cstdint>
+#include <vector>
 #include <string>
-#include <iostream>
 #include <cstdio>
-#include "reality_messages.h"
-#include "crypto_util.h"
+#include <cstdint>
+#include <iostream>
+
+#include <gtest/gtest.h>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
+
+#include "crypto_util.h"
+#include "reality_messages.h"
 
 using reality::message_builder;
 namespace tls_consts = reality::tls_consts;

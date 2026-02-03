@@ -1,12 +1,13 @@
 #ifndef IP_MATCHER_H
 #define IP_MATCHER_H
 
-#include <algorithm>
 #include <array>
-#include <asio.hpp>
 #include <memory>
 #include <string>
 #include <vector>
+#include <algorithm>
+
+#include <asio.hpp>
 
 #include "log.h"
 

@@ -1,14 +1,16 @@
-#include <iostream>
 #include <string>
 #include <thread>
 #include <vector>
-#include <cstdint>
-#include <system_error>
 #include <memory>
-#include <csignal>
 #include <chrono>
+#include <cstdint>
+#include <csignal>
+#include <iostream>
+#include <system_error>
+
 #include <asio.hpp>
 #include <asio/signal_set.hpp>
+
 #include "log.h"
 #include "config.h"
 #include "crypto_util.h"

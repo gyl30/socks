@@ -1,10 +1,12 @@
-#include <gtest/gtest.h>
-#include <asio.hpp>
 #include <thread>
 #include <vector>
-#include "remote_server.h"
-#include "context_pool.h"
+
+#include <asio.hpp>
+#include <gtest/gtest.h>
+
 #include "crypto_util.h"
+#include "context_pool.h"
+#include "remote_server.h"
 #include "reality_messages.h"
 
 class RemoteServerTest : public ::testing::Test

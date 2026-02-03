@@ -1,12 +1,12 @@
 #ifndef SOCKS_MOCK_MUX_CONNECTION_H
 #define SOCKS_MOCK_MUX_CONNECTION_H
 
-#include <asio.hpp>
-#include <cstdint>
 #include <memory>
-#include <system_error>
 #include <vector>
+#include <cstdint>
+#include <system_error>
 
+#include <asio.hpp>
 #include <gmock/gmock.h>
 
 #include "mux_connection.h"

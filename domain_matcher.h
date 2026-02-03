@@ -1,8 +1,8 @@
 #ifndef DOMAIN_MATCHER_H
 #define DOMAIN_MATCHER_H
 
-#include <algorithm>
 #include <string>
+#include <algorithm>
 #include <unordered_set>
 
 namespace mux

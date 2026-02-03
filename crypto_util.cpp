@@ -1,21 +1,23 @@
-#include "crypto_util.h"
-#include "cipher_context.h"
-#include "log.h"
-#include <algorithm>
+#include <span>
 #include <array>
+#include <string>
+#include <vector>
 #include <cstddef>
 #include <cstdint>
 #include <iomanip>
-#include <span>
 #include <sstream>
-#include <string>
+#include <algorithm>
 #include <system_error>
-#include <vector>
-#include <openssl/crypto.h>
+
 #include <openssl/evp.h>
 #include <openssl/kdf.h>
 #include <openssl/rand.h>
 #include <openssl/x509.h>
+#include <openssl/crypto.h>
+
+#include "log.h"
+#include "crypto_util.h"
+#include "cipher_context.h"
 
 namespace reality
 {

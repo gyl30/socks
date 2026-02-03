@@ -1,8 +1,9 @@
-#include <gtest/gtest.h>
 #include <asio.hpp>
+#include <gtest/gtest.h>
+
 #include "upstream.h"
-#include "log_context.h"
 #include "test_util.h"
+#include "log_context.h"
 
 class UpstreamTest : public ::testing::Test
 {

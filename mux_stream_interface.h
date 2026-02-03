@@ -1,8 +1,8 @@
 #ifndef MUX_STREAM_INTERFACE_H
 #define MUX_STREAM_INTERFACE_H
 
-#include <cstdint>
 #include <vector>
+#include <cstdint>
 
 namespace mux
 {

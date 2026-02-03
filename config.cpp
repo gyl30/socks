@@ -1,9 +1,9 @@
+#include <cstdio>
+#include <string>
+#include <optional>
+
 #include "config.h"
 #include "reflect.h"
-
-#include <cstdio>
-#include <optional>
-#include <string>
 
 namespace reflect
 {

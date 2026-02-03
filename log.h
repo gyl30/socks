@@ -4,6 +4,7 @@
 #define SPDLOG_SHORT_LEVEL_NAMES {"TRC", "DBG", "INF", "WRN", "ERR", "CTL", "OFF"};
 
 #include <string>
+
 #include <spdlog/spdlog.h>
 
 void init_log(const std::string& filename);

@@ -1,12 +1,14 @@
+#include <vector>
+#include <memory>
+#include <cstdint>
+
+#include <asio.hpp>
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
-#include <vector>
-#include <cstdint>
-#include <memory>
-#include <asio.hpp>
+
+#include "test_util.h"
 #include "mux_connection.h"
 #include "mux_stream_interface.h"
-#include "test_util.h"
 
 class MockStream : public mux::mux_stream_interface
 {

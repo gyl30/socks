@@ -1,12 +1,13 @@
-#include "protocol.h"
-
-#include <asio.hpp>
+#include <string>
+#include <vector>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <string>
 #include <system_error>
-#include <vector>
+
+#include <asio.hpp>
+
+#include "protocol.h"
 
 asio::ip::address socks_codec::normalize_ip_address(const asio::ip::address& addr)
 {

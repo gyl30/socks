@@ -1,19 +1,20 @@
 #ifndef MUX_STREAM_H
 #define MUX_STREAM_H
 
-#include <asio.hpp>
+#include <tuple>
 #include <atomic>
-#include <cstddef>
-#include <cstdint>
 #include <memory>
 #include <string>
-#include <system_error>
-#include <tuple>
 #include <vector>
+#include <cstddef>
+#include <cstdint>
+#include <system_error>
+
+#include <asio.hpp>
 
 #include "log_context.h"
-#include "mux_connection.h"
 #include "mux_protocol.h"
+#include "mux_connection.h"
 #include "mux_stream_interface.h"
 
 namespace mux

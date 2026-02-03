@@ -1,5 +1,6 @@
-#include "upstream.h"
 #include <cstring>
+
+#include "upstream.h"
 #include "mux_codec.h"
 
 namespace mux

@@ -1,10 +1,12 @@
-#include <iostream>
 #include <vector>
 #include <iomanip>
 #include <sstream>
+#include <iostream>
 #include <algorithm>
-#include "../crypto_util.h"
+
 #include <openssl/ssl.h>
+
+#include "../crypto_util.h"
 
 std::string to_hex(const std::vector<uint8_t>& bytes)
 {

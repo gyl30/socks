@@ -1,9 +1,11 @@
-#include <gtest/gtest.h>
 #include <vector>
 #include <string>
 #include <cstdint>
 #include <system_error>
+
+#include <gtest/gtest.h>
 #include <openssl/evp.h>
+
 #include "crypto_util.h"
 
 using reality::crypto_util;

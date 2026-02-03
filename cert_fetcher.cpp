@@ -1,24 +1,26 @@
-#include "cert_fetcher.h"
-#include "reality_messages.h"
-#include "constants.h"
-#include "crypto_util.h"
-#include "log.h"
-#include "log_context.h"
-#include "reality_fingerprint.h"
-#include "tls_key_schedule.h"
-#include "tls_record_layer.h"
+#include <span>
+#include <string>
+#include <vector>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <optional>
-#include <span>
-#include <string>
-#include <system_error>
 #include <utility>
-#include <vector>
+#include <optional>
+#include <system_error>
+
 #include <asio.hpp>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
+
+#include "log.h"
+#include "constants.h"
+#include "crypto_util.h"
+#include "log_context.h"
+#include "cert_fetcher.h"
+#include "reality_messages.h"
+#include "tls_key_schedule.h"
+#include "tls_record_layer.h"
+#include "reality_fingerprint.h"
 
 namespace reality
 {

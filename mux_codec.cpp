@@ -1,6 +1,5 @@
-#include "mux_codec.h"
-
 #include "log.h"
+#include "mux_codec.h"
 
 namespace mux
 {

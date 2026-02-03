@@ -1,8 +1,10 @@
-#include <gtest/gtest.h>
 #include <vector>
 #include <cstdint>
-#include "protocol.h"
+
 #include <asio.hpp>
+#include <gtest/gtest.h>
+
+#include "protocol.h"
 
 TEST(SocksCodecTest, NormalizeIP)
 {
