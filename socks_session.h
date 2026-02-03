@@ -1,14 +1,16 @@
 #ifndef SOCKS_SESSION_H
 #define SOCKS_SESSION_H
 
-#include <memory>
 #include <asio.hpp>
-#include "log.h"
+#include <cstdint>
+#include <memory>
+#include <string>
+
 #include "config.h"
 #include "log_context.h"
-#include "router.h"
-#include "protocol.h"
 #include "mux_tunnel.h"
+#include "protocol.h"
+#include "router.h"
 #include "tcp_socks_session.h"
 #include "udp_socks_session.h"
 

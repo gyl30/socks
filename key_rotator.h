@@ -1,10 +1,11 @@
 #ifndef KEY_ROTATOR_H
 #define KEY_ROTATOR_H
 
+#include <chrono>
+#include <atomic>
+#include <cstdint>
 #include <memory>
 #include <mutex>
-#include <atomic>
-#include <chrono>
 
 namespace reality
 {

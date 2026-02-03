@@ -1,10 +1,12 @@
 #ifndef CONTEXT_POOL_H
 #define CONTEXT_POOL_H
 
-#include <vector>
-#include <memory>
-#include <atomic>
 #include <asio.hpp>
+#include <atomic>
+#include <cstddef>
+#include <memory>
+#include <system_error>
+#include <vector>
 
 class io_context_pool
 {
