@@ -1,9 +1,10 @@
 #include <gtest/gtest.h>
-#include "domain_matcher.h"
 #include <fstream>
 #include <filesystem>
+#include <string>
+#include "domain_matcher.h"
 
-using namespace mux;
+using mux::domain_matcher;
 
 class DomainMatcherTest : public ::testing::Test
 {
@@ -55,14 +56,14 @@ TEST_F(DomainMatcherTest, SuffixMatch)
 
 TEST_F(DomainMatcherTest, LoadFromFile)
 {
-    std::string filename = "test_domains.txt";
+    const std::string filename = "test_domains.txt";
     {
         std::ofstream of(filename);
-        of << "  # comment line  " << std::endl;
-        of << "google.com  " << std::endl;
-        of << "  NETFLIX.COM # another comment" << std::endl;
-        of << "  " << std::endl;
-        of << "apple.com.  " << std::endl;
+        of << "  # comment line  \n";
+        of << "google.com  \n";
+        of << "  NETFLIX.COM # another comment\n";
+        of << "  \n";
+        of << "apple.com.  \n";
     }
 
     EXPECT_TRUE(matcher_.load(filename));

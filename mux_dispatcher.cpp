@@ -42,7 +42,11 @@ void mux_dispatcher::process_frames()
     while (buffer_.size() >= mux::HEADER_SIZE)
     {
         const auto* ptr = static_cast<const uint8_t*>(buffer_.data().data());
-        auto header = mux::mux_codec::decode_header(ptr);
+        mux::frame_header header;
+        if (!mux::mux_codec::decode_header(ptr, buffer_.size(), header))
+        {
+            break;
+        }
         const uint32_t total_frame_len = mux::HEADER_SIZE + header.length;
 
         if (header.length > mux::MAX_PAYLOAD)
