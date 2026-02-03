@@ -1,7 +1,10 @@
 #include <gtest/gtest.h>
 #include <memory>
+#include <system_error>
 #include "local_client.h"
 #include "context_pool.h"
+
+using mux::io_context_pool;
 
 namespace
 {

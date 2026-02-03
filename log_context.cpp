@@ -2,6 +2,7 @@
 #include <sstream>
 #include <iomanip>
 #include <random>
+#include <limits>
 
 std::string generate_trace_id()
 {

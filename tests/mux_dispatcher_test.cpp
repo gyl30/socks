@@ -1,10 +1,11 @@
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
+#include <vector>
+#include <span>
+#include <cstdint>
 #include "mux_dispatcher.h"
 
-using namespace mux;
-using testing::_;
-using testing::SaveArg;
+using mux::mux_dispatcher;
 
 TEST(MuxDispatcherTest, PackAndOnData)
 {
@@ -20,9 +21,9 @@ TEST(MuxDispatcherTest, PackAndOnData)
             received_payload = std::move(p);
         });
 
-    std::vector<uint8_t> original_payload = {0xAA, 0xBB, 0xCC};
-    uint32_t stream_id = 0x12345678;
-    uint8_t cmd = CMD_DAT;
+    const std::vector<uint8_t> original_payload = {0xAA, 0xBB, 0xCC};
+    const uint32_t stream_id = 0x12345678;
+    const uint8_t cmd = mux::CMD_DAT;
 
     auto packed = mux_dispatcher::pack(stream_id, cmd, original_payload);
 

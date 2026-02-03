@@ -1,14 +1,16 @@
 #include <gtest/gtest.h>
 #include <vector>
 #include <cstdint>
+#include <string>
 #include "ch_parser.h"
 
-using namespace mux;
+using mux::ch_parser;
 
 class ClientHelloBuilder
 {
    public:
-    std::vector<uint8_t> buffer;
+    const std::vector<uint8_t>& get_buffer() const { return buffer; }
+    std::vector<uint8_t>& get_mutable_buffer() { return buffer; }
 
     ClientHelloBuilder()
     {
@@ -28,7 +30,10 @@ class ClientHelloBuilder
 
         add_u16(0x0303);
 
-        for (int i = 0; i < 32; ++i) add_u8(0xAA);
+        for (int i = 0; i < 32; ++i)
+        {
+            add_u8(0xAA);
+        }
 
         add_u8(0);
 
@@ -45,40 +50,46 @@ class ClientHelloBuilder
     void add_sni(const std::string& hostname)
     {
         add_u16(0x0000);
-        size_t len_pos = buffer.size();
+        const size_t len_pos = buffer.size();
         add_u16(0);
 
-        size_t list_len_pos = buffer.size();
+        const size_t list_len_pos = buffer.size();
         add_u16(0);
 
         add_u8(0);
         add_u16(hostname.size());
-        for (char c : hostname) add_u8(c);
+        for (const char c : hostname)
+        {
+            add_u8(c);
+        }
 
-        uint16_t total_len = buffer.size() - list_len_pos - 2;
+        const uint16_t total_len = buffer.size() - list_len_pos - 2;
         poke_u16(list_len_pos, total_len);
 
-        uint16_t ext_len = buffer.size() - len_pos - 2;
+        const uint16_t ext_len = buffer.size() - len_pos - 2;
         poke_u16(len_pos, ext_len);
     }
 
     void add_key_share()
     {
         add_u16(0x0033);
-        size_t len_pos = buffer.size();
+        const size_t len_pos = buffer.size();
         add_u16(0);
 
-        size_t share_len_pos = buffer.size();
+        const size_t share_len_pos = buffer.size();
         add_u16(0);
 
         add_u16(0x001d);
         add_u16(32);
-        for (int i = 0; i < 32; ++i) add_u8(0xBB);
+        for (int i = 0; i < 32; ++i)
+        {
+            add_u8(0xBB);
+        }
 
-        uint16_t list_len = buffer.size() - share_len_pos - 2;
+        const uint16_t list_len = buffer.size() - share_len_pos - 2;
         poke_u16(share_len_pos, list_len);
 
-        uint16_t ext_len = buffer.size() - len_pos - 2;
+        const uint16_t ext_len = buffer.size() - len_pos - 2;
         poke_u16(len_pos, ext_len);
     }
 
@@ -86,20 +97,21 @@ class ClientHelloBuilder
     {
         if (ext_len_pos > 0)
         {
-            uint16_t ext_len = buffer.size() - ext_len_pos - 2;
+            const uint16_t ext_len = buffer.size() - ext_len_pos - 2;
             poke_u16(ext_len_pos, ext_len);
         }
 
-        size_t handshake_len = buffer.size() - 5 - 4;
+        const size_t handshake_len = buffer.size() - 5 - 4;
         buffer[6] = (handshake_len >> 16) & 0xFF;
         buffer[7] = (handshake_len >> 8) & 0xFF;
         buffer[8] = handshake_len & 0xFF;
 
-        size_t record_len = buffer.size() - 5;
+        const size_t record_len = buffer.size() - 5;
         poke_u16(3, record_len);
     }
 
    private:
+    std::vector<uint8_t> buffer;
     size_t ext_len_pos = 0;
 
     void add_u8(uint8_t v) { buffer.push_back(v); }
@@ -123,7 +135,7 @@ TEST(CHParserTest, ValidTLS13)
     builder.add_key_share();
     builder.finish();
 
-    auto info = ch_parser::parse(builder.buffer);
+    auto info = ch_parser::parse(builder.get_buffer());
 
     EXPECT_EQ(info.sni, "example.com");
     EXPECT_TRUE(info.is_tls13);
@@ -143,7 +155,7 @@ TEST(CHParserTest, ValidTLS12)
 
     builder.finish();
 
-    auto info = ch_parser::parse(builder.buffer);
+    auto info = ch_parser::parse(builder.get_buffer());
 
     EXPECT_EQ(info.sni, "legacy.com");
     EXPECT_FALSE(info.is_tls13);
@@ -156,27 +168,27 @@ TEST(CHParserTest, NoSNI)
     builder.add_key_share();
     builder.finish();
 
-    auto info = ch_parser::parse(builder.buffer);
+    auto info = ch_parser::parse(builder.get_buffer());
 
     EXPECT_TRUE(info.sni.empty());
     EXPECT_TRUE(info.is_tls13);
 }
 
-TEST(CHParserTest, Malformed_TooShort)
+TEST(CHParserTest, MalformedTooShort)
 {
-    std::vector<uint8_t> buf = {0x16, 0x03, 0x01};
+    const std::vector<uint8_t> buf = {0x16, 0x03, 0x01};
     auto info = ch_parser::parse(buf);
     EXPECT_TRUE(info.sni.empty());
 }
 
-TEST(CHParserTest, Malformed_NotClientHello)
+TEST(CHParserTest, MalformedNotClientHello)
 {
-    std::vector<uint8_t> buf = {0x16, 0x03, 0x01, 0x00, 0x05, 0x02, 0x00, 0x00, 0x01, 0x03};
+    const std::vector<uint8_t> buf = {0x16, 0x03, 0x01, 0x00, 0x05, 0x02, 0x00, 0x00, 0x01, 0x03};
     auto info = ch_parser::parse(buf);
     EXPECT_TRUE(info.sni.empty());
 }
 
-TEST(CHParserTest, Malformed_TruncatedSessionID)
+TEST(CHParserTest, MalformedTruncatedSessionID)
 {
     ClientHelloBuilder builder;
     builder.start_handshake();
@@ -188,7 +200,10 @@ TEST(CHParserTest, Malformed_TruncatedSessionID)
     buf.push_back(100);
     buf.push_back(0x03);
     buf.push_back(0x03);
-    for (int i = 0; i < 32; ++i) buf.push_back(0);
+    for (int i = 0; i < 32; ++i)
+    {
+        buf.push_back(0);
+    }
     buf.push_back(32);
     buf.push_back(0xAA);
 
@@ -196,94 +211,94 @@ TEST(CHParserTest, Malformed_TruncatedSessionID)
     EXPECT_TRUE(info.session_id.empty());
 }
 
-TEST(CHParserTest, Malformed_ExtensionsLen)
+TEST(CHParserTest, MalformedExtensionsLen)
 {
     ClientHelloBuilder builder;
     builder.start_handshake();
 
-    builder.buffer.pop_back();
-    builder.buffer.pop_back();
+    builder.get_mutable_buffer().pop_back();
+    builder.get_mutable_buffer().pop_back();
 
-    auto info = ch_parser::parse(builder.buffer);
+    auto info = ch_parser::parse(builder.get_buffer());
     EXPECT_TRUE(info.sni.empty());
 }
 
-TEST(CHParserTest, Malformed_ExtensionTruncated)
+TEST(CHParserTest, MalformedExtensionTruncated)
 {
     ClientHelloBuilder builder;
     builder.start_handshake();
 
-    size_t pos = builder.buffer.size();
-    builder.buffer.push_back(0);
-    builder.buffer.push_back(0);
+    const size_t pos = builder.get_buffer().size();
+    builder.get_mutable_buffer().push_back(0);
+    builder.get_mutable_buffer().push_back(0);
 
-    builder.buffer.push_back(0);
-    builder.buffer.push_back(0);
+    builder.get_mutable_buffer().push_back(0);
+    builder.get_mutable_buffer().push_back(0);
 
-    builder.buffer.push_back(0);
-    builder.buffer.push_back(10);
+    builder.get_mutable_buffer().push_back(0);
+    builder.get_mutable_buffer().push_back(10);
 
-    uint16_t total = builder.buffer.size() - pos - 2;
-    builder.buffer[pos] = (total >> 8);
-    builder.buffer[pos + 1] = total & 0xFF;
+    const uint16_t total = builder.get_buffer().size() - pos - 2;
+    builder.get_mutable_buffer()[pos] = (total >> 8);
+    builder.get_mutable_buffer()[pos + 1] = total & 0xFF;
 
-    auto info = ch_parser::parse(builder.buffer);
+    auto info = ch_parser::parse(builder.get_buffer());
 
     EXPECT_TRUE(info.sni.empty());
 }
 
-TEST(CHParserTest, SNI_MalformedList)
+TEST(CHParserTest, SNIMalformedList)
 {
     ClientHelloBuilder builder;
     builder.start_handshake();
 
-    size_t pos = builder.buffer.size();
-    builder.buffer.push_back(0);
-    builder.buffer.push_back(0);
+    const size_t pos = builder.get_buffer().size();
+    builder.get_mutable_buffer().push_back(0);
+    builder.get_mutable_buffer().push_back(0);
 
-    builder.buffer.push_back(0);
-    builder.buffer.push_back(0);
-    builder.buffer.push_back(0);
-    builder.buffer.push_back(5);
+    builder.get_mutable_buffer().push_back(0);
+    builder.get_mutable_buffer().push_back(0);
+    builder.get_mutable_buffer().push_back(0);
+    builder.get_mutable_buffer().push_back(5);
 
-    builder.buffer.push_back(0);
-    builder.buffer.push_back(10);
-    builder.buffer.push_back(0);
+    builder.get_mutable_buffer().push_back(0);
+    builder.get_mutable_buffer().push_back(10);
+    builder.get_mutable_buffer().push_back(0);
 
-    uint16_t total = builder.buffer.size() - pos - 2;
-    builder.buffer[pos] = (total >> 8);
-    builder.buffer[pos + 1] = total & 0xFF;
+    const uint16_t total = builder.get_buffer().size() - pos - 2;
+    builder.get_mutable_buffer()[pos] = (total >> 8);
+    builder.get_mutable_buffer()[pos + 1] = total & 0xFF;
 
-    auto info = ch_parser::parse(builder.buffer);
+    auto info = ch_parser::parse(builder.get_buffer());
     EXPECT_TRUE(info.sni.empty());
 }
 
-TEST(CHParserTest, KeyShare_WrongGroup)
+TEST(CHParserTest, KeyShareWrongGroup)
 {
     ClientHelloBuilder builder;
     builder.start_handshake();
 
-    size_t pos = builder.buffer.size();
-    builder.buffer.push_back(0);
-    builder.buffer.push_back(0);
+    const size_t pos = builder.get_buffer().size();
+    builder.get_mutable_buffer().push_back(0);
+    builder.get_mutable_buffer().push_back(0);
 
-    builder.buffer.push_back(0x00);
-    builder.buffer.push_back(0x33);
-    builder.buffer.push_back(0);
-    builder.buffer.push_back(6);
+    builder.get_mutable_buffer().push_back(0x00);
+    builder.get_mutable_buffer().push_back(0x33);
+    builder.get_mutable_buffer().push_back(0);
+    builder.get_mutable_buffer().push_back(6);
 
-    builder.buffer.push_back(0);
-    builder.buffer.push_back(4);
+    builder.get_mutable_buffer().push_back(0);
+    builder.get_mutable_buffer().push_back(4);
 
-    builder.buffer.push_back(0x00);
-    builder.buffer.push_back(0x11);
-    builder.buffer.push_back(0);
-    builder.buffer.push_back(0);
+    builder.get_mutable_buffer().push_back(0x00);
+    builder.get_mutable_buffer().push_back(0x11);
+    builder.get_mutable_buffer().push_back(0);
+    builder.get_mutable_buffer().push_back(0);
 
-    uint16_t total = builder.buffer.size() - pos - 2;
-    builder.buffer[pos] = (total >> 8);
-    builder.buffer[pos + 1] = total & 0xFF;
+    const uint16_t total = builder.get_buffer().size() - pos - 2;
+    builder.get_mutable_buffer()[pos] = (total >> 8);
+    builder.get_mutable_buffer()[pos + 1] = total & 0xFF;
 
-    auto info = ch_parser::parse(builder.buffer);
+    auto info = ch_parser::parse(builder.get_buffer());
     EXPECT_FALSE(info.is_tls13);
 }
