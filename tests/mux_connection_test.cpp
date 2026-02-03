@@ -8,11 +8,7 @@
 #include "mux_stream_interface.h"
 #include "test_util.h"
 
-using mux::mux_connection;
-using mux::mux_stream_interface;
-using mux::reality_engine;
-
-class MockStream : public mux_stream_interface
+class MockStream : public mux::mux_stream_interface
 {
    public:
     MOCK_METHOD(void, on_data, (std::vector<uint8_t> data), (override));
@@ -29,7 +25,7 @@ class MuxConnectionTest : public ::testing::Test
 TEST_F(MuxConnectionTest, StreamManagement)
 {
     asio::ip::tcp::socket socket(ctx);
-    mux_connection conn(std::move(socket), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 123);
+    mux::mux_connection conn(std::move(socket), mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 123);
 
     auto stream = std::make_shared<MockStream>();
     conn.register_stream(10, stream);
@@ -43,6 +39,6 @@ TEST_F(MuxConnectionTest, StreamManagement)
 TEST_F(MuxConnectionTest, InitialState)
 {
     asio::ip::tcp::socket socket(ctx);
-    const mux_connection conn(std::move(socket), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 1);
+    const mux::mux_connection conn(std::move(socket), mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 1);
     EXPECT_TRUE(conn.is_open());
 }

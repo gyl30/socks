@@ -3,21 +3,18 @@
 #include <memory>
 #include <string>
 #include "router.h"
+#include "log_context.h"
 
-using mux::router;
-using mux::ip_matcher;
-using mux::domain_matcher;
-
-class TestRouter : public router
+class TestRouter : public mux::router
 {
    public:
     TestRouter()
     {
-        block_ip_matcher_ = std::make_shared<ip_matcher>();
-        direct_ip_matcher_ = std::make_shared<ip_matcher>();
-        proxy_domain_matcher_ = std::make_shared<domain_matcher>();
-        block_domain_matcher_ = std::make_shared<domain_matcher>();
-        direct_domain_matcher_ = std::make_shared<domain_matcher>();
+        block_ip_matcher_ = std::make_shared<mux::ip_matcher>();
+        direct_ip_matcher_ = std::make_shared<mux::ip_matcher>();
+        proxy_domain_matcher_ = std::make_shared<mux::domain_matcher>();
+        block_domain_matcher_ = std::make_shared<mux::domain_matcher>();
+        direct_domain_matcher_ = std::make_shared<mux::domain_matcher>();
     }
 
     void add_block_ip(const std::string& cidr)

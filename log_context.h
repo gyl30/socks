@@ -5,6 +5,9 @@
 #include <cstdint>
 #include <string>
 
+namespace mux
+{
+
 namespace log_event
 {
 constexpr const char* CONN_INIT = "conn_init";
@@ -65,5 +68,7 @@ struct connection_context
 std::string format_bytes(uint64_t bytes);
 
 std::string format_latency_ms(int64_t ms);
+
+}    // namespace mux
 
 #endif

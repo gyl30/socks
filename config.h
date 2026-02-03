@@ -6,6 +6,9 @@
 #include <string>
 #include <vector>
 
+namespace mux
+{
+
 struct config
 {
     std::string mode = "server";
@@ -72,5 +75,7 @@ struct config
 std::optional<config> parse_config(const std::string& filename);
 std::string dump_config(const config& cfg);
 std::string dump_default_config();
+
+}    // namespace mux
 
 #endif

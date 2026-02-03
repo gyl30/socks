@@ -9,6 +9,7 @@
 #include <vector>
 #include <asio.hpp>
 
+#include "config.h"
 #include "log.h"
 #include "router.h"
 #include "mux_tunnel.h"
