@@ -125,7 +125,7 @@ asio::awaitable<void> local_client::connect_remote_loop(uint32_t index)
             reality::tls_key_schedule::derive_traffic_keys(handshake_ret.s_app_secret, ec, key_len, constants::crypto::IV_LEN, handshake_ret.md);
 
         LOG_CTX_INFO(ctx, "{} handshake success cipher 0x{:04x}", log_event::HANDSHAKE, handshake_ret.cipher_suite);
-        reality_engine re(s_app_keys.first, s_app_keys.second, c_app_keys.first, c_app_keys.second);
+        reality_engine re(s_app_keys.first, s_app_keys.second, c_app_keys.first, c_app_keys.second, handshake_ret.cipher);
 
         auto tunnel = std::make_shared<mux_tunnel_impl<asio::ip::tcp::socket>>(
             std::move(*socket), std::move(re), true, cid, ctx.trace_id, timeout_config_, limits_config_);
@@ -219,10 +219,12 @@ asio::awaitable<std::pair<bool, local_client::handshake_result>> local_client::p
         co_return std::make_pair(false, handshake_result{});
     }
 
-    co_return std::make_pair(
-        true,
-        handshake_result{
-            .c_app_secret = app_sec.first, .s_app_secret = app_sec.second, .cipher_suite = sh_res.cipher_suite, .md = sh_res.negotiated_md});
+    co_return std::make_pair(true,
+                             handshake_result{.c_app_secret = app_sec.first,
+                                              .s_app_secret = app_sec.second,
+                                              .cipher_suite = sh_res.cipher_suite,
+                                              .md = sh_res.negotiated_md,
+                                              .cipher = sh_res.negotiated_cipher});
 }
 
 asio::awaitable<bool> local_client::generate_and_send_client_hello(
@@ -246,7 +248,7 @@ asio::awaitable<bool> local_client::generate_and_send_client_hello(
     const std::vector<uint8_t> salt(client_random.begin(), client_random.begin() + constants::auth::SALT_LEN);
     auto r_info = reality::crypto_util::hex_to_bytes("5245414c495459");
     auto prk = reality::crypto_util::hkdf_extract(salt, shared, EVP_sha256(), ec);
-    auto auth_key = reality::crypto_util::hkdf_expand(prk, r_info, 32, EVP_sha256(), ec);
+    auto auth_key = reality::crypto_util::hkdf_expand(prk, r_info, 16, EVP_sha256(), ec);
 
     LOG_DEBUG("authkey {}", reality::crypto_util::bytes_to_hex(auth_key));
     LOG_DEBUG("client random: {}", reality::crypto_util::bytes_to_hex(client_random));

@@ -1,13 +1,14 @@
 #include "reality_engine.h"
 #include "tls_record_layer.h"
 
-reality_engine::reality_engine(std::vector<uint8_t> r_key, std::vector<uint8_t> r_iv, std::vector<uint8_t> w_key, std::vector<uint8_t> w_iv)
+reality_engine::reality_engine(
+    std::vector<uint8_t> r_key, std::vector<uint8_t> r_iv, std::vector<uint8_t> w_key, std::vector<uint8_t> w_iv, const EVP_CIPHER* cipher)
     : read_key_(std::move(r_key)),
       read_iv_(std::move(r_iv)),
       write_key_(std::move(w_key)),
       write_iv_(std::move(w_iv)),
       rx_buf_(std::make_unique<asio::streambuf>(MAX_BUF_SIZE)),
-      cipher_(EVP_aes_128_gcm())
+      cipher_(cipher)
 {
     rx_buf_->prepare(INITIAL_BUF_SIZE);
     scratch_buf_.resize(MAX_BUF_SIZE);

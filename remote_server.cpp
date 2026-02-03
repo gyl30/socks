@@ -174,7 +174,7 @@ asio::awaitable<void> remote_server::handle(std::shared_ptr<asio::ip::tcp::socke
         }
     }
 
-    reality_engine engine(c_app_keys.first, c_app_keys.second, s_app_keys.first, s_app_keys.second);
+    reality_engine engine(c_app_keys.first, c_app_keys.second, s_app_keys.first, s_app_keys.second, sh_res.cipher);
     auto tunnel = std::make_shared<mux_tunnel_impl<asio::ip::tcp::socket>>(
         std::move(*s), std::move(engine), false, conn_id, ctx.trace_id, timeout_config_, limits_config_);
 
@@ -292,7 +292,7 @@ std::pair<bool, std::vector<uint8_t>> remote_server::authenticate_client(const c
     auto salt = std::vector<uint8_t>(info.random.begin(), info.random.begin() + 20);
     auto r_info = reality::crypto_util::hex_to_bytes("5245414c495459");
     auto prk = reality::crypto_util::hkdf_extract(salt, shared, EVP_sha256(), ec);
-    auto auth_key = reality::crypto_util::hkdf_expand(prk, r_info, 32, EVP_sha256(), ec);
+    auto auth_key = reality::crypto_util::hkdf_expand(prk, r_info, 16, EVP_sha256(), ec);
     LOG_CTX_ERROR(ctx, "server auth key {}", reality::crypto_util::bytes_to_hex(auth_key));
     LOG_CTX_ERROR(ctx, "server random {}", reality::crypto_util::bytes_to_hex(info.random));
     LOG_CTX_ERROR(ctx, "server extracted pub key {}", reality::crypto_util::bytes_to_hex(info.x25519_pub));
