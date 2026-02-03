@@ -1,6 +1,9 @@
 #include "reality_engine.h"
 #include "tls_record_layer.h"
 
+namespace mux
+{
+
 reality_engine::reality_engine(
     std::vector<uint8_t> r_key, std::vector<uint8_t> r_iv, std::vector<uint8_t> w_key, std::vector<uint8_t> w_iv, const EVP_CIPHER* cipher)
     : read_key_(std::move(r_key)),
@@ -67,3 +70,5 @@ bool reality_engine::try_decrypt_next_record(uint8_t& content_type, size_t& payl
     payload_len = decrypted_len;
     return true;
 }
+
+}    // namespace mux

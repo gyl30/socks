@@ -8,6 +8,9 @@
 #include <system_error>
 #include <vector>
 
+namespace mux
+{
+
 class io_context_pool
 {
    public:
@@ -27,5 +30,7 @@ class io_context_pool
     alignas(sizeof(std::size_t)) std::atomic<std::size_t> next_io_context_ = {0};
     std::vector<std::shared_ptr<asio::executor_work_guard<asio::io_context::executor_type>>> work_guards_;
 };
+
+}    // namespace mux
 
 #endif

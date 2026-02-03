@@ -99,11 +99,11 @@ TEST_F(UdpIntegrationTest, UdpAssociateAndEcho)
     local_socks_port = local_acceptor.local_endpoint().port();
     local_acceptor.close();
 
-    config::timeout_t timeouts;
+    mux::config::timeout_t timeouts;
     timeouts.read = 10;
     timeouts.write = 10;
 
-    auto server = std::make_shared<remote_server>(pool, server_port, std::vector<config::fallback_entry>{}, server_priv_key, short_id, timeouts);
+    auto server = std::make_shared<remote_server>(pool, server_port, std::vector<mux::config::fallback_entry>{}, server_priv_key, short_id, timeouts);
     const std::vector<uint8_t> dummy_cert = {0x0b, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00};
     reality::server_fingerprint dummy_fp;
     server->get_cert_manager().set_certificate(sni, dummy_cert, dummy_fp);

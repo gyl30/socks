@@ -1,11 +1,11 @@
 #include <gtest/gtest.h>
+#include <thread>
+#include <string>
+#include <vector>
 #include "local_client.h"
 #include "remote_server.h"
 #include "context_pool.h"
 #include "crypto_util.h"
-#include <thread>
-
-using namespace mux;
 
 class IntegrationTest : public ::testing::Test
 {
@@ -32,21 +32,22 @@ class IntegrationTest : public ::testing::Test
 TEST_F(IntegrationTest, FullHandshakeAndMux)
 {
     std::error_code ec;
-    io_context_pool pool(2, ec);
+    mux::io_context_pool pool(2, ec);
     ASSERT_FALSE(ec);
 
     uint16_t server_port = 18844;
     uint16_t local_socks_port = 11080;
     std::string sni = "www.google.com";
 
-    config::timeout_t timeouts;
+    mux::config::timeout_t timeouts;
     timeouts.read = 5;
     timeouts.write = 5;
 
-    auto server = std::make_shared<remote_server>(pool, server_port, std::vector<config::fallback_entry>{}, server_priv_key, short_id, timeouts);
+    auto server =
+        std::make_shared<mux::remote_server>(pool, server_port, std::vector<mux::config::fallback_entry>{}, server_priv_key, short_id, timeouts);
     server->start();
 
-    auto client = std::make_shared<local_client>(
+    auto client = std::make_shared<mux::local_client>(
         pool, "127.0.0.1", std::to_string(server_port), local_socks_port, client_pub_key, sni, short_id, verify_pub_key, timeouts);
     client->start();
 

@@ -39,13 +39,13 @@ void cert_manager::set_certificate(const std::string& sni, std::vector<uint8_t> 
     cert_entry entry{.cert_msg = std::move(cert_msg), .fingerprint = std::move(fp)};
     cache_[sni] = std::move(entry);
 
-    connection_context ctx;
+    mux::connection_context ctx;
     ctx.trace_id = trace_id;
     ctx.sni = sni;
 
     LOG_CTX_INFO(ctx,
                  "{} cached cert size {} alpn '{}' cipher 0x{:04x}",
-                 log_event::CERT,
+                 mux::log_event::CERT,
                  cache_[sni].cert_msg.size(),
                  cache_[sni].fingerprint.alpn,
                  cache_[sni].fingerprint.cipher_suite);

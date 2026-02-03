@@ -7,17 +7,20 @@
 
 namespace reflect
 {
-REFLECT_STRUCT(config::log_t, level, file);
-REFLECT_STRUCT(config::inbound_t, host, port);
-REFLECT_STRUCT(config::outbound_t, host, port);
-REFLECT_STRUCT(config::socks_t, host, port, auth, username, password);
-REFLECT_STRUCT(config::fallback_entry, sni, host, port);
-REFLECT_STRUCT(config::timeout_t, read, write, idle);
-REFLECT_STRUCT(config::reality_t, sni, private_key, public_key, short_id, verify_public_key);
-REFLECT_STRUCT(config::limits_t, max_connections, max_buffer);
-REFLECT_STRUCT(config, mode, log, inbound, outbound, socks, fallbacks, timeout, reality, limits);
+REFLECT_STRUCT(mux::config::log_t, level, file);
+REFLECT_STRUCT(mux::config::inbound_t, host, port);
+REFLECT_STRUCT(mux::config::outbound_t, host, port);
+REFLECT_STRUCT(mux::config::socks_t, host, port, auth, username, password);
+REFLECT_STRUCT(mux::config::fallback_entry, sni, host, port);
+REFLECT_STRUCT(mux::config::timeout_t, read, write, idle);
+REFLECT_STRUCT(mux::config::reality_t, sni, private_key, public_key, short_id, verify_public_key);
+REFLECT_STRUCT(mux::config::limits_t, max_connections, max_buffer);
+REFLECT_STRUCT(mux::config, mode, log, inbound, outbound, socks, fallbacks, timeout, reality, limits);
 
 }    // namespace reflect
+
+namespace mux
+{
 
 static std::optional<std::string> read_file(const std::string& filename)
 {
@@ -48,6 +51,7 @@ static std::optional<std::string> read_file(const std::string& filename)
     fclose(f);
     return result;
 }
+
 std::optional<config> parse_config(const std::string& filename)
 {
     auto file_content = read_file(filename);
@@ -71,3 +75,5 @@ std::string dump_default_config()
     cfg.fallbacks.push_back({});
     return dump_config(cfg);
 }
+
+}    // namespace mux

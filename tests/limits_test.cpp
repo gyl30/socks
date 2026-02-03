@@ -1,12 +1,12 @@
 #include <gtest/gtest.h>
+#include <thread>
+#include <vector>
+#include <string>
+#include <functional>
 #include "local_client.h"
 #include "remote_server.h"
 #include "context_pool.h"
 #include "crypto_util.h"
-#include <thread>
-#include <vector>
-
-using namespace mux;
 
 class LimitsTest : public ::testing::Test
 {
@@ -34,7 +34,7 @@ TEST_F(LimitsTest, ConnectionPoolCapacity)
 {
     std::error_code ec;
 
-    io_context_pool pool(4, ec);
+    mux::io_context_pool pool(4, ec);
     ASSERT_FALSE(ec);
 
     std::thread pool_thread([&pool] { pool.run(); });
@@ -43,15 +43,15 @@ TEST_F(LimitsTest, ConnectionPoolCapacity)
     uint16_t local_socks_port = 21080;
     std::string sni = "www.google.com";
 
-    config::limits_t limits;
+    mux::config::limits_t limits;
     limits.max_connections = 2;
 
-    config::timeout_t timeouts;
+    mux::config::timeout_t timeouts;
     timeouts.read = 10;
     timeouts.write = 10;
 
-    auto server =
-        std::make_shared<remote_server>(pool, server_port, std::vector<config::fallback_entry>{}, server_priv_key, short_id, timeouts, limits);
+    auto server = std::make_shared<mux::remote_server>(
+        pool, server_port, std::vector<mux::config::fallback_entry>{}, server_priv_key, short_id, timeouts, limits);
 
     std::vector<uint8_t> dummy_cert = {0x0b, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00};
     reality::server_fingerprint dummy_fp;
@@ -78,17 +78,17 @@ TEST_F(LimitsTest, ConnectionPoolCapacity)
     };
     accept_target();
 
-    auto client = std::make_shared<local_client>(pool,
-                                                 "::1",
-                                                 std::to_string(server_port),
-                                                 local_socks_port,
-                                                 client_pub_key,
-                                                 sni,
-                                                 short_id,
-                                                 verify_pub_key,
-                                                 timeouts,
-                                                 config::socks_t{},
-                                                 limits);
+    auto client = std::make_shared<mux::local_client>(pool,
+                                                      "::1",
+                                                      std::to_string(server_port),
+                                                      local_socks_port,
+                                                      client_pub_key,
+                                                      sni,
+                                                      short_id,
+                                                      verify_pub_key,
+                                                      timeouts,
+                                                      mux::config::socks_t{},
+                                                      limits);
     client->start();
 
     std::this_thread::sleep_for(std::chrono::seconds(1));

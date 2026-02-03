@@ -23,7 +23,7 @@ class ConfigTest : public ::testing::Test
 
 TEST_F(ConfigTest, DefaultConfigValid)
 {
-    auto json = dump_default_config();
+    auto json = mux::dump_default_config();
     ASSERT_FALSE(json.empty());
 
     EXPECT_NE(json.find("\"mode\""), std::string::npos);
@@ -49,7 +49,7 @@ TEST_F(ConfigTest, ParseValues)
     })";
     write_file(content);
 
-    auto cfg_opt = parse_config(tmp_file);
+    auto cfg_opt = mux::parse_config(tmp_file);
     ASSERT_TRUE(cfg_opt.has_value());
     const auto& cfg = cfg_opt.value();
 
@@ -64,13 +64,13 @@ TEST_F(ConfigTest, ParseValues)
 
 TEST_F(ConfigTest, MissingFile)
 {
-    auto cfg = parse_config("non_existent_file.json");
+    auto cfg = mux::parse_config("non_existent_file.json");
     EXPECT_FALSE(cfg.has_value());
 }
 
 TEST_F(ConfigTest, InvalidJson)
 {
     write_file("{ invalid_json }");
-    auto cfg = parse_config(tmp_file);
+    auto cfg = mux::parse_config(tmp_file);
     EXPECT_FALSE(cfg.has_value());
 }
