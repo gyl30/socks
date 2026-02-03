@@ -41,8 +41,9 @@ bool get_bit_v6(const std::array<uint8_t, 16>& bytes, int index)
     const int bit_index = 7 - (index % 8);
     return ((bytes[static_cast<size_t>(byte_index)] >> bit_index) & 1U) != 0U;
 }
+}    // namespace
 
-bool match_v4(const asio::ip::address_v4& addr, const std::unique_ptr<ip_matcher::TrieNode>& root)
+bool ip_matcher::match_v4(const asio::ip::address_v4& addr, const std::unique_ptr<TrieNode>& root)
 {
     if (!root)
     {
@@ -71,7 +72,7 @@ bool match_v4(const asio::ip::address_v4& addr, const std::unique_ptr<ip_matcher
     return false;
 }
 
-bool match_v6(const asio::ip::address_v6& addr, const std::unique_ptr<ip_matcher::TrieNode>& root)
+bool ip_matcher::match_v6(const asio::ip::address_v6& addr, const std::unique_ptr<TrieNode>& root)
 {
     if (!root)
     {
@@ -100,7 +101,7 @@ bool match_v6(const asio::ip::address_v6& addr, const std::unique_ptr<ip_matcher
     return false;
 }
 
-void add_rule_v4(int prefix_len, const asio::ip::address_v4& addr, std::unique_ptr<ip_matcher::TrieNode>& root)
+void ip_matcher::add_rule_v4(int prefix_len, const asio::ip::address_v4& addr, std::unique_ptr<TrieNode>& root)
 {
     if (prefix_len < 0 || prefix_len > 32)
     {
@@ -136,7 +137,7 @@ void add_rule_v4(int prefix_len, const asio::ip::address_v4& addr, std::unique_p
     curr->children[1].reset();
 }
 
-void add_rule_v6(int prefix_len, const asio::ip::address_v6& addr, std::unique_ptr<ip_matcher::TrieNode>& root)
+void ip_matcher::add_rule_v6(int prefix_len, const asio::ip::address_v6& addr, std::unique_ptr<TrieNode>& root)
 {
     if (prefix_len < 0 || prefix_len > 128)
     {
@@ -171,7 +172,7 @@ void add_rule_v6(int prefix_len, const asio::ip::address_v6& addr, std::unique_p
     curr->children[0].reset();
     curr->children[1].reset();
 }
-}    // namespace
+
 
 ip_matcher::ip_matcher() = default;
 ip_matcher::~ip_matcher() = default;
