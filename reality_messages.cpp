@@ -448,7 +448,7 @@ std::vector<uint8_t> ClientHelloBuilder::build(FingerprintSpec spec,
     {
         std::vector<uint8_t> ext_buffer;
         uint16_t ext_type = 0;
-        ExtensionBuildContext ctx{
+        const ExtensionBuildContext ctx{
             .grease_ctx = grease_ctx,
             .grease_ext_count = grease_ext_count,
             .x25519_pubkey = x25519_pubkey,
@@ -632,7 +632,7 @@ std::optional<certificate_verify_info> parse_certificate_verify(const std::vecto
         return std::nullopt;
     }
 
-    const uint16_t scheme = static_cast<uint16_t>((msg[pos] << 8) | msg[pos + 1]);
+    const auto scheme = static_cast<uint16_t>((msg[pos] << 8) | msg[pos + 1]);
     pos += 2;
 
     if (pos + 2 > msg.size())
@@ -640,7 +640,7 @@ std::optional<certificate_verify_info> parse_certificate_verify(const std::vecto
         return std::nullopt;
     }
 
-    const uint16_t sig_len = static_cast<uint16_t>((msg[pos] << 8) | msg[pos + 1]);
+    const auto sig_len = static_cast<uint16_t>((msg[pos] << 8) | msg[pos + 1]);
     pos += 2;
 
     if (pos + sig_len > msg.size())

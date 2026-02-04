@@ -79,8 +79,8 @@ class cert_fetcher
         server_fingerprint fingerprint_;
 
         transcript trans_;
-        uint8_t client_pub_[32];
-        uint8_t client_priv_[32];
+        uint8_t client_public_[32] = {0};
+        uint8_t client_private_[32] = {0};
 
         const EVP_CIPHER* negotiated_cipher_ = nullptr;
         std::vector<uint8_t> dec_key_;

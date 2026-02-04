@@ -1,6 +1,8 @@
 #include <cctype>
-#include <ranges>
+#include <string>
+#include <cstddef>
 #include <fstream>
+#include <algorithm>
 
 #include "log.h"
 #include "domain_matcher.h"
@@ -59,7 +61,7 @@ void domain_matcher::add(std::string domain)
         domain.pop_back();
     }
     std::ranges::transform(domain, domain.begin(), [](const unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-    domains_.insert(domain);
+    (void)domains_.insert(domain);
 }
 
 bool domain_matcher::match(std::string domain) const

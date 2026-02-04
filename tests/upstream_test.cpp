@@ -1,15 +1,17 @@
 #include <memory>
-#include <vector>
 #include <thread>
+#include <vector>
+#include <cstddef>
 #include <cstdint>
 #include <system_error>
 
-#include <asio/io_context.hpp>
-#include <asio/ip/tcp.hpp>
+#include <gtest/gtest.h>
 #include <asio/write.hpp>
 #include <asio/buffer.hpp>
-#include <gtest/gtest.h>
+#include <asio/ip/tcp.hpp>
+#include <asio/io_context.hpp>
 
+#include "log.h"
 #include "upstream.h"
 #include "test_util.h"
 #include "log_context.h"
@@ -45,8 +47,13 @@ class EchoServer
                 thread_.join();
             }
         }
+        catch (const std::exception& e)
+        {
+            LOG_ERROR("echo server destructor exception {}", e.what());
+        }
         catch (...)
         {
+            LOG_ERROR("echo server destructor unknown exception");
         }
     }
 
@@ -61,7 +68,7 @@ class EchoServer
     {
         auto socket = std::make_shared<asio::ip::tcp::socket>(acceptor_.get_executor());
         acceptor_.async_accept(*socket,
-                               [this, socket](std::error_code ec)
+                               [this, socket](const std::error_code ec)
                                {
                                    if (!ec)
                                    {
@@ -78,15 +85,15 @@ class EchoServer
     {
         auto buf = std::make_shared<std::vector<uint8_t>>(1024);
         socket->async_read_some(asio::buffer(*buf),
-                                [this, socket, buf](std::error_code ec, size_t n)
+                                [this, socket, buf](const std::error_code ec, const size_t n)
                                 {
                                     if (!ec)
                                     {
                                         asio::async_write(*socket,
                                                           asio::buffer(*buf, n),
-                                                          [this, socket, buf](std::error_code ec, size_t)
+                                                          [this, socket, buf](const std::error_code ec_write, size_t)
                                                           {
-                                                              if (!ec)
+                                                              if (!ec_write)
                                                               {
                                                                   do_echo(socket);
                                                               }
@@ -107,15 +114,15 @@ TEST_F(UpstreamTest, DirectUpstreamConnectSuccess)
 
     mux::direct_upstream upstream(ctx().get_executor(), mux::connection_context{});
 
-    auto success = mux::test::run_awaitable(ctx(), upstream.connect("127.0.0.1", port));
+    const auto success = mux::test::run_awaitable(ctx(), upstream.connect("127.0.0.1", port));
     EXPECT_TRUE(success);
 
     const std::vector<uint8_t> data = {0x01, 0x02, 0x03};
-    auto write_n = mux::test::run_awaitable(ctx(), upstream.write(data));
+    const auto write_n = mux::test::run_awaitable(ctx(), upstream.write(data));
     EXPECT_EQ(write_n, 3);
 
     std::vector<uint8_t> buf(1024);
-    auto [read_ec, read_n] = mux::test::run_awaitable(ctx(), upstream.read(buf));
+    const auto [read_ec, read_n] = mux::test::run_awaitable(ctx(), upstream.read(buf));
     EXPECT_FALSE(read_ec);
     EXPECT_EQ(read_n, 3);
     EXPECT_EQ(buf[0], 0x01);
@@ -128,13 +135,13 @@ TEST_F(UpstreamTest, DirectUpstreamConnectFail)
 {
     mux::direct_upstream upstream(ctx().get_executor(), mux::connection_context{});
 
-    auto success = mux::test::run_awaitable(ctx(), upstream.connect("127.0.0.1", 1));
+    const auto success = mux::test::run_awaitable(ctx(), upstream.connect("127.0.0.1", 1));
     EXPECT_FALSE(success);
 }
 
 TEST_F(UpstreamTest, DirectUpstreamResolveFail)
 {
     mux::direct_upstream upstream(ctx().get_executor(), mux::connection_context{});
-    auto success = mux::test::run_awaitable(ctx(), upstream.connect("invalid.host.name.local", 80));
+    const auto success = mux::test::run_awaitable(ctx(), upstream.connect("invalid.host.name.local", 80));
     EXPECT_FALSE(success);
 }
