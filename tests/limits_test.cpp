@@ -32,6 +32,13 @@ class LimitsTest : public ::testing::Test
     std::string short_id;
 };
 
+TEST_F(LimitsTest, ContextPoolInvalidSize)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(0, ec);
+    EXPECT_EQ(ec, std::errc::invalid_argument);
+}
+
 TEST_F(LimitsTest, ConnectionPoolCapacity)
 {
     std::error_code ec;
