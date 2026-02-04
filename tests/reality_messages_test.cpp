@@ -4,12 +4,14 @@
 #include <cstdio>
 #include <cstdint>
 #include <iostream>
+#include <system_error>
 
 #include <gtest/gtest.h>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
 
 #include "crypto_util.h"
+#include "reality_core.h"
 #include "reality_messages.h"
 
 using reality::message_builder;
@@ -215,11 +217,11 @@ TEST(RealityMessagesTest, CertificateVerifyParseAndVerify)
     auto cv = reality::construct_certificate_verify(priv_key.get(), handshake_hash);
     auto info = reality::parse_certificate_verify(cv);
     ASSERT_TRUE(info.has_value());
-    EXPECT_EQ(info->scheme, 0x0807);
 
     std::error_code ec;
     if (info)
     {
+        EXPECT_EQ(info->scheme, 0x0807);
         EXPECT_TRUE(reality::crypto_util::verify_tls13_signature(pub_key.get(), handshake_hash, info->signature, ec));
     }
     EXPECT_FALSE(ec);

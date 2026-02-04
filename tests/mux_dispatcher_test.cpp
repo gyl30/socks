@@ -2,10 +2,11 @@
 #include <vector>
 #include <cstdint>
 
+#include <utility>
 #include <gtest/gtest.h>
-#include <gmock/gmock.h>
 
 #include "mux_dispatcher.h"
+#include "mux_protocol.h"
 
 TEST(MuxDispatcherTest, PackAndOnData)
 {

@@ -221,14 +221,14 @@ TEST(CryptoUtilTest, HKDFExpandLabel)
 TEST(CryptoUtilTest, InvalidInputs)
 {
     std::error_code ec;
-    crypto_util::extract_public_key(std::vector<uint8_t>(31), ec);
+    (void)crypto_util::extract_public_key(std::vector<uint8_t>(31), ec);
     EXPECT_TRUE(ec);
 
-    crypto_util::x25519_derive(std::vector<uint8_t>(32), std::vector<uint8_t>(31), ec);
+    (void)crypto_util::x25519_derive(std::vector<uint8_t>(32), std::vector<uint8_t>(31), ec);
     EXPECT_TRUE(ec);
 
     std::vector<uint8_t> key(32, 0);
     std::vector<uint8_t> nonce(12, 0);
-    crypto_util::aead_decrypt(EVP_aes_256_gcm(), key, nonce, std::vector<uint8_t>(15), {}, ec);
+    (void)crypto_util::aead_decrypt(EVP_aes_256_gcm(), key, nonce, std::vector<uint8_t>(15), {}, ec);
     EXPECT_TRUE(ec);
 }
