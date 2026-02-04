@@ -1,32 +1,30 @@
-#include <span>
-#include <string>
-#include <vector>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <utility>
 #include <optional>
+#include <span>
+#include <string>
 #include <system_error>
+#include <utility>
+#include <vector>
 
-#include <asio/read.hpp>
-#include <openssl/evp.h>
-#include <asio/error.hpp>
-#include <asio/write.hpp>
-#include <openssl/rand.h>
-#include <asio/buffer.hpp>
-#include <asio/ip/tcp.hpp>
 #include <asio/as_tuple.hpp>
-#include <asio/connect.hpp>
 #include <asio/awaitable.hpp>
-#include <openssl/ossl_typ.h>
-#include <asio/async_result.hpp>
+#include <asio/buffer.hpp>
+#include <asio/connect.hpp>
+#include <asio/error.hpp>
+#include <asio/ip/tcp.hpp>
+#include <asio/read.hpp>
 #include <asio/use_awaitable.hpp>
-#include <asio/any_io_executor.hpp>
+#include <asio/write.hpp>
+
+#include <openssl/evp.h>
+#include <openssl/rand.h>
 
 #include "log.h"
+#include "cert_fetcher.h"
 #include "crypto_util.h"
 #include "log_context.h"
-#include "cert_fetcher.h"
 #include "reality_core.h"
 #include "reality_messages.h"
 #include "tls_key_schedule.h"
@@ -51,7 +49,8 @@ bool handshake_reassembler::next(std::vector<uint8_t>& out, std::error_code& ec)
         return false;
     }
 
-    const uint32_t msg_len = (static_cast<uint32_t>(buffer_[1]) << 16) | (static_cast<uint32_t>(buffer_[2]) << 8) | static_cast<uint32_t>(buffer_[3]);
+    const std::uint32_t msg_len =
+        (static_cast<std::uint32_t>(buffer_[1]) << 16) | (static_cast<std::uint32_t>(buffer_[2]) << 8) | static_cast<std::uint32_t>(buffer_[3]);
 
     if (msg_len > MAX_MSG_SIZE)
     {
@@ -59,7 +58,7 @@ bool handshake_reassembler::next(std::vector<uint8_t>& out, std::error_code& ec)
         return false;
     }
 
-    const uint32_t full_len = 4 + msg_len;
+    const std::uint32_t full_len = 4 + msg_len;
     if (buffer_.size() < full_len)
     {
         return false;
@@ -75,15 +74,15 @@ std::string cert_fetcher::hex(const std::vector<uint8_t>& data) { return crypto_
 std::string cert_fetcher::hex(const uint8_t* data, size_t len) { return crypto_util::bytes_to_hex(std::vector<uint8_t>(data, data + len)); }
 
 asio::awaitable<std::optional<fetch_result>> cert_fetcher::fetch(
-    asio::any_io_executor ex, std::string host, uint16_t port, std::string sni, const std::string& trace_id)
+    asio::any_io_executor ex, std::string host, std::uint16_t port, std::string sni, const std::string& trace_id)
 {
     fetch_session session(ex, std::move(host), port, std::move(sni), trace_id);
     co_return co_await session.run();
 }
 
 cert_fetcher::fetch_session::fetch_session(
-    const asio::any_io_executor& ex, std::string host, const uint16_t port, std::string sni, const std::string& trace_id)
-    : socket_(ex), host_(std::move(host)), port_(port), sni_(std::move(sni)), client_public_{}, client_private_{}
+    const asio::any_io_executor& ex, std::string host, const std::uint16_t port, std::string sni, const std::string& trace_id)
+    : socket_(ex), host_(std::move(host)), port_(port), sni_(std::move(sni))
 {
     ctx_.trace_id(trace_id);
     ctx_.target_host(host_);
@@ -153,7 +152,7 @@ asio::awaitable<std::error_code> cert_fetcher::fetch_session::perform_handshake_
     auto spec = FingerprintFactory::Get(FingerprintType::Chrome_120);
     auto ch = ClientHelloBuilder::build(spec, session_id, client_random, std::vector<uint8_t>(client_public_, client_public_ + 32), sni_);
 
-    auto ch_rec = write_record_header(CONTENT_TYPE_HANDSHAKE, static_cast<uint16_t>(ch.size()));
+    auto ch_rec = write_record_header(CONTENT_TYPE_HANDSHAKE, static_cast<std::uint16_t>(ch.size()));
     ch_rec.insert(ch_rec.end(), ch.begin(), ch.end());
 
     auto [write_ec, wn] = co_await asio::async_write(socket_, asio::buffer(ch_rec), asio::as_tuple(asio::use_awaitable));
@@ -209,7 +208,7 @@ asio::awaitable<std::vector<uint8_t>> cert_fetcher::fetch_session::find_certific
         while (assembler.next(msg, ec))
         {
             uint8_t msg_type = msg[0];
-            uint32_t msg_len = (msg[1] << 16) | (msg[2] << 8) | msg[3];
+            std::uint32_t msg_len = (msg[1] << 16) | (msg[2] << 8) | msg[3];
 
             LOG_CTX_INFO(ctx_, "{} found handshake 0x{:02x} len {}", mux::log_event::CERT, msg_type, msg_len);
 
@@ -243,8 +242,8 @@ asio::awaitable<std::vector<uint8_t>> cert_fetcher::fetch_session::find_certific
 
 std::error_code cert_fetcher::fetch_session::process_server_hello(const std::vector<uint8_t>& sh_body)
 {
-    const uint32_t msg_len = (sh_body[1] << 16) | (sh_body[2] << 8) | sh_body[3];
-    const uint32_t full_msg_len = msg_len + 4;
+    const std::uint32_t msg_len = (sh_body[1] << 16) | (sh_body[2] << 8) | sh_body[3];
+    const std::uint32_t full_msg_len = msg_len + 4;
 
     if (sh_body.size() < full_msg_len)
     {
@@ -272,7 +271,7 @@ std::error_code cert_fetcher::fetch_session::process_server_hello(const std::vec
     {
         return asio::error::fault;
     }
-    uint16_t cipher_suite = (sh_real[cipher_offset] << 8) | sh_real[cipher_offset + 1];
+    std::uint16_t cipher_suite = (sh_real[cipher_offset] << 8) | sh_real[cipher_offset + 1];
 
     const EVP_CIPHER* negotiated_cipher = nullptr;
     const EVP_MD* negotiated_md = nullptr;
@@ -349,7 +348,7 @@ asio::awaitable<std::pair<std::error_code, std::vector<uint8_t>>> cert_fetcher::
         co_return std::make_pair(asio::error::fault, std::vector<uint8_t>{});
     }
 
-    const uint16_t len = (head[3] << 8) | head[4];
+    const std::uint16_t len = (head[3] << 8) | head[4];
     std::vector<uint8_t> body(len);
     auto [ec2, n2] = co_await asio::async_read(socket_, asio::buffer(body), asio::as_tuple(asio::use_awaitable));
     if (ec2)
@@ -361,8 +360,8 @@ asio::awaitable<std::pair<std::error_code, std::vector<uint8_t>>> cert_fetcher::
     co_return std::make_pair(std::error_code{}, std::move(body));
 }
 
-asio::awaitable<std::pair<uint8_t, std::span<uint8_t>>> cert_fetcher::fetch_session::read_record(std::vector<uint8_t>& pt_buf,
-                                                                                                 std::error_code& out_ec)
+asio::awaitable<std::pair<std::uint8_t, std::span<uint8_t>>> cert_fetcher::fetch_session::read_record(std::vector<uint8_t>& pt_buf,
+                                                                                                      std::error_code& out_ec)
 {
     uint8_t head[5];
     auto [ec, n] = co_await asio::async_read(socket_, asio::buffer(head), asio::as_tuple(asio::use_awaitable));
@@ -372,7 +371,7 @@ asio::awaitable<std::pair<uint8_t, std::span<uint8_t>>> cert_fetcher::fetch_sess
         co_return std::make_pair(0, std::span<uint8_t>{});
     }
 
-    const uint16_t len = (head[3] << 8) | head[4];
+    const std::uint16_t len = (head[3] << 8) | head[4];
 
     if (len > 18432)
     {
@@ -405,7 +404,7 @@ asio::awaitable<std::pair<uint8_t, std::span<uint8_t>>> cert_fetcher::fetch_sess
         std::memcpy(cth.data() + 5, rec.data(), len);
 
         uint8_t type;
-        const uint32_t pt_len =
+        const std::uint32_t pt_len =
             tls_record_layer::decrypt_record(decrypt_ctx_, negotiated_cipher_, dec_key_, dec_iv_, seq_++, cth, pt_buf, type, out_ec);
 
         if (out_ec)

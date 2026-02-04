@@ -1,12 +1,28 @@
 #include <cstring>
+#include <string>
+#include <system_error>
+#include <utility>
+#include <vector>
 
-#include "upstream.h"
+#include <asio/as_tuple.hpp>
+#include <asio/buffer.hpp>
+#include <asio/connect.hpp>
+#include <asio/ip/tcp.hpp>
+#include <asio/use_awaitable.hpp>
+#include <asio/write.hpp>
+
+#include "log.h"
+#include "protocol.h"
 #include "mux_codec.h"
+#include "mux_stream.h"
+#include "log_context.h"
+#include "mux_protocol.h"
+#include "upstream.h"
 
 namespace mux
 {
 
-asio::awaitable<bool> direct_upstream::connect(const std::string& host, uint16_t port)
+asio::awaitable<bool> direct_upstream::connect(const std::string& host, const uint16_t port)
 {
     auto [res_ec, eps] = co_await resolver_.async_resolve(host, std::to_string(port), asio::as_tuple(asio::use_awaitable));
     if (res_ec)

@@ -1,13 +1,13 @@
 #ifndef REPLAY_CACHE_H
 #define REPLAY_CACHE_H
 
+#include <chrono>
+#include <cstdint>
 #include <deque>
 #include <mutex>
-#include <chrono>
 #include <string>
-#include <vector>
-#include <cstdint>
 #include <unordered_set>
+#include <vector>
 
 namespace mux
 {
@@ -15,7 +15,7 @@ namespace mux
 class replay_cache
 {
    public:
-    bool check_and_insert(const std::vector<uint8_t>& sid);
+    bool check_and_insert(const std::vector<std::uint8_t>& sid);
 
    private:
     void cleanup();

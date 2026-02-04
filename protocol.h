@@ -1,15 +1,17 @@
 #ifndef PROTOCOL_H
 #define PROTOCOL_H
 
-#include <string>
-#include <vector>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <string>
+#include <vector>
 
-#include <asio.hpp>
+#include <asio/ip/address.hpp>
 
 namespace socks
 {
+
 constexpr std::uint8_t VER = 0x05;
 constexpr std::uint8_t METHOD_NO_AUTH = 0x00;
 constexpr std::uint8_t METHOD_GSSAPI = 0x01;
@@ -33,24 +35,25 @@ constexpr std::uint8_t REP_CONN_REFUSED = 0x05;
 constexpr std::uint8_t REP_TTL_EXPIRED = 0x06;
 constexpr std::uint8_t REP_CMD_NOT_SUPPORTED = 0x07;
 constexpr std::uint8_t REP_ADDR_TYPE_NOT_SUPPORTED = 0x08;
+
 }    // namespace socks
 
 struct socks_udp_header
 {
-    uint8_t frag = 0;
+    std::uint8_t frag = 0;
     std::string addr;
-    uint16_t port = 0;
-    size_t header_len = 0;
+    std::uint16_t port = 0;
+    std::size_t header_len = 0;
 };
 
 class socks_codec
 {
    public:
-    static asio::ip::address normalize_ip_address(const asio::ip::address& addr);
+    [[nodiscard]] static asio::ip::address normalize_ip_address(const asio::ip::address& addr);
 
-    [[nodiscard]] static std::vector<uint8_t> encode_udp_header(const socks_udp_header& h);
+    [[nodiscard]] static std::vector<std::uint8_t> encode_udp_header(const socks_udp_header& h);
 
-    [[nodiscard]] static bool decode_udp_header(const uint8_t* data, size_t len, socks_udp_header& out);
+    [[nodiscard]] static bool decode_udp_header(const std::uint8_t* data, std::size_t len, socks_udp_header& out);
 };
 
 #endif
