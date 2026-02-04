@@ -1,15 +1,16 @@
 #ifndef MUX_CODEC_H
 #define MUX_CODEC_H
 
-#include <string>
-#include <vector>
 #include <cstddef>
 #include <cstdint>
+#include <string>
+#include <vector>
 
 #include "mux_protocol.h"
 
 namespace mux
 {
+
 class mux_codec
 {
    public:

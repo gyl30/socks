@@ -1,7 +1,9 @@
-#include <random>
-#include <limits>
-#include <sstream>
+#include <chrono>
+#include <cstdint>
 #include <iomanip>
+#include <random>
+#include <sstream>
+#include <string>
 
 #include "log_context.h"
 
@@ -11,7 +13,7 @@ namespace mux
 std::string generate_trace_id()
 {
     static thread_local std::mt19937_64 gen(std::random_device{}());
-    std::uniform_int_distribution<uint64_t> dist;
+    std::uniform_int_distribution<std::uint64_t> dist;
     std::ostringstream oss;
     oss << std::hex << std::setfill('0') << std::setw(16) << dist(gen);
     return oss.str();
@@ -60,7 +62,7 @@ std::string connection_context::stats_summary() const
     return oss.str();
 }
 
-connection_context connection_context::with_stream(const uint32_t sid) const
+connection_context connection_context::with_stream(const std::uint32_t sid) const
 {
     connection_context ctx = *this;
     ctx.stream_id_ = sid;
@@ -70,7 +72,7 @@ connection_context connection_context::with_stream(const uint32_t sid) const
     return ctx;
 }
 
-void connection_context::set_target(const std::string& host, const uint16_t port)
+void connection_context::set_target(const std::string& host, const std::uint16_t port)
 {
     target_host_ = host;
     target_port_ = port;
@@ -78,11 +80,11 @@ void connection_context::set_target(const std::string& host, const uint16_t port
 
 void connection_context::new_trace_id() { trace_id_ = generate_trace_id(); }
 
-std::string format_bytes(uint64_t bytes)
+std::string format_bytes(std::uint64_t bytes)
 {
-    constexpr uint64_t k_kib = 1024ULL;
-    constexpr uint64_t k_mib = k_kib * 1024ULL;
-    constexpr uint64_t k_gib = k_mib * 1024ULL;
+    constexpr std::uint64_t k_kib = 1024ULL;
+    constexpr std::uint64_t k_mib = k_kib * 1024ULL;
+    constexpr std::uint64_t k_gib = k_mib * 1024ULL;
     const auto bytes_d = static_cast<double>(bytes);
     std::ostringstream oss;
     if (bytes >= k_gib)
@@ -104,7 +106,7 @@ std::string format_bytes(uint64_t bytes)
     return oss.str();
 }
 
-std::string format_latency_ms(int64_t ms)
+std::string format_latency_ms(std::int64_t ms)
 {
     std::ostringstream oss;
     oss << ms << "ms";

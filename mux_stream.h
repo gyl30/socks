@@ -1,24 +1,26 @@
 #ifndef MUX_STREAM_H
 #define MUX_STREAM_H
 
-#include <tuple>
 #include <atomic>
-#include <memory>
-#include <string>
-#include <vector>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
+#include <string>
 #include <system_error>
+#include <tuple>
+#include <vector>
 
-#include <asio.hpp>
+#include <asio/any_io_executor.hpp>
+#include <asio/awaitable.hpp>
+#include <asio/experimental/concurrent_channel.hpp>
 
 #include "log_context.h"
-#include "mux_protocol.h"
-#include "mux_connection.h"
 #include "mux_stream_interface.h"
 
 namespace mux
 {
+
+class mux_connection;
 
 class mux_stream : public mux_stream_interface, public std::enable_shared_from_this<mux_stream>
 {
