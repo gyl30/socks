@@ -49,6 +49,8 @@ class local_client : public std::enable_shared_from_this<local_client>
 
     void stop();
 
+    [[nodiscard]] std::uint16_t listen_port() const { return listen_port_; }
+
    private:
     struct handshake_result
     {
