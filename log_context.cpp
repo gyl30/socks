@@ -20,14 +20,14 @@ std::string generate_trace_id()
 std::string connection_context::prefix() const
 {
     std::ostringstream oss;
-    if (!trace_id.empty())
+    if (!trace_id_.empty())
     {
-        oss << "t" << trace_id << " ";
+        oss << "t" << trace_id_ << " ";
     }
-    oss << "c" << conn_id;
-    if (stream_id > 0)
+    oss << "c" << conn_id_;
+    if (stream_id_ > 0)
     {
-        oss << "_s" << stream_id;
+        oss << "_s" << stream_id_;
     }
     return oss.str();
 }
@@ -35,48 +35,48 @@ std::string connection_context::prefix() const
 std::string connection_context::connection_info() const
 {
     std::ostringstream oss;
-    oss << local_addr << "_" << local_port << "_" << remote_addr << "_" << remote_port;
+    oss << local_addr_ << "_" << local_port_ << "_" << remote_addr_ << "_" << remote_port_;
     return oss.str();
 }
 
 std::string connection_context::target_info() const
 {
     std::ostringstream oss;
-    oss << target_host << "_" << target_port;
+    oss << target_host_ << "_" << target_port_;
     return oss.str();
 }
 
 double connection_context::duration_seconds() const
 {
     const auto now = std::chrono::steady_clock::now();
-    const auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - start_time);
+    const auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - start_time_);
     return static_cast<double>(duration.count()) / 1000.0;
 }
 
 std::string connection_context::stats_summary() const
 {
     std::ostringstream oss;
-    oss << "tx " << tx_bytes << " rx " << rx_bytes << " duration " << std::fixed << std::setprecision(2) << duration_seconds() << "s";
+    oss << "tx " << tx_bytes_ << " rx " << rx_bytes_ << " duration " << std::fixed << std::setprecision(2) << duration_seconds() << "s";
     return oss.str();
 }
 
-connection_context connection_context::with_stream(uint32_t sid) const
+connection_context connection_context::with_stream(const uint32_t sid) const
 {
     connection_context ctx = *this;
-    ctx.stream_id = sid;
-    ctx.tx_bytes = 0;
-    ctx.rx_bytes = 0;
-    ctx.start_time = std::chrono::steady_clock::now();
+    ctx.stream_id_ = sid;
+    ctx.tx_bytes_ = 0;
+    ctx.rx_bytes_ = 0;
+    ctx.start_time_ = std::chrono::steady_clock::now();
     return ctx;
 }
 
-void connection_context::set_target(const std::string& host, uint16_t port)
+void connection_context::set_target(const std::string& host, const uint16_t port)
 {
-    target_host = host;
-    target_port = port;
+    target_host_ = host;
+    target_port_ = port;
 }
 
-void connection_context::new_trace_id() { trace_id = generate_trace_id(); }
+void connection_context::new_trace_id() { trace_id_ = generate_trace_id(); }
 
 std::string format_bytes(uint64_t bytes)
 {

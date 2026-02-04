@@ -17,9 +17,9 @@
 namespace mux
 {
 
-struct ip_matcher::TrieNode
+struct ip_matcher::trie_node
 {
-    std::array<std::unique_ptr<TrieNode>, 2> children;
+    std::array<std::unique_ptr<trie_node>, 2> children;
     bool is_match = false;
 };
 
@@ -37,13 +37,13 @@ bool get_bit_v6(const std::array<uint8_t, 16>& bytes, int index)
 }
 }    // namespace
 
-bool ip_matcher::match_v4(const asio::ip::address_v4& addr, const std::unique_ptr<TrieNode>& root)
+bool ip_matcher::match_v4(const asio::ip::address_v4& addr, const std::unique_ptr<trie_node>& root)
 {
-    if (!root)
+    if (root == nullptr)
     {
         return false;
     }
-    ip_matcher::TrieNode* curr = root.get();
+    ip_matcher::trie_node* curr = root.get();
     if (curr->is_match)
     {
         return true;
@@ -66,13 +66,13 @@ bool ip_matcher::match_v4(const asio::ip::address_v4& addr, const std::unique_pt
     return false;
 }
 
-bool ip_matcher::match_v6(const asio::ip::address_v6& addr, const std::unique_ptr<TrieNode>& root)
+bool ip_matcher::match_v6(const asio::ip::address_v6& addr, const std::unique_ptr<trie_node>& root)
 {
-    if (!root)
+    if (root == nullptr)
     {
         return false;
     }
-    ip_matcher::TrieNode* curr = root.get();
+    ip_matcher::trie_node* curr = root.get();
     if (curr->is_match)
     {
         return true;
@@ -95,17 +95,17 @@ bool ip_matcher::match_v6(const asio::ip::address_v6& addr, const std::unique_pt
     return false;
 }
 
-void ip_matcher::add_rule_v4(int prefix_len, const asio::ip::address_v4& addr, std::unique_ptr<TrieNode>& root)
+void ip_matcher::add_rule_v4(const int prefix_len, const asio::ip::address_v4& addr, std::unique_ptr<trie_node>& root)
 {
     if (prefix_len < 0 || prefix_len > 32)
     {
         return;
     }
-    if (!root)
+    if (root == nullptr)
     {
-        root = std::make_unique<ip_matcher::TrieNode>();
+        root = std::make_unique<ip_matcher::trie_node>();
     }
-    ip_matcher::TrieNode* curr = root.get();
+    ip_matcher::trie_node* curr = root.get();
     if (curr->is_match)
     {
         return;
@@ -116,9 +116,9 @@ void ip_matcher::add_rule_v4(int prefix_len, const asio::ip::address_v4& addr, s
     {
         const bool bit = get_bit_v4(val, i);
         const size_t idx = to_index(bit);
-        if (!curr->children[idx])
+        if (curr->children[idx] == nullptr)
         {
-            curr->children[idx] = std::make_unique<ip_matcher::TrieNode>();
+            curr->children[idx] = std::make_unique<ip_matcher::trie_node>();
         }
         curr = curr->children[idx].get();
         if (curr->is_match)
@@ -131,17 +131,17 @@ void ip_matcher::add_rule_v4(int prefix_len, const asio::ip::address_v4& addr, s
     curr->children[1].reset();
 }
 
-void ip_matcher::add_rule_v6(int prefix_len, const asio::ip::address_v6& addr, std::unique_ptr<TrieNode>& root)
+void ip_matcher::add_rule_v6(const int prefix_len, const asio::ip::address_v6& addr, std::unique_ptr<trie_node>& root)
 {
     if (prefix_len < 0 || prefix_len > 128)
     {
         return;
     }
-    if (!root)
+    if (root == nullptr)
     {
-        root = std::make_unique<ip_matcher::TrieNode>();
+        root = std::make_unique<ip_matcher::trie_node>();
     }
-    ip_matcher::TrieNode* curr = root.get();
+    ip_matcher::trie_node* curr = root.get();
     if (curr->is_match)
     {
         return;
@@ -152,9 +152,9 @@ void ip_matcher::add_rule_v6(int prefix_len, const asio::ip::address_v6& addr, s
     {
         const bool bit = get_bit_v6(bytes, i);
         const size_t idx = to_index(bit);
-        if (!curr->children[idx])
+        if (curr->children[idx] == nullptr)
         {
-            curr->children[idx] = std::make_unique<ip_matcher::TrieNode>();
+            curr->children[idx] = std::make_unique<ip_matcher::trie_node>();
         }
         curr = curr->children[idx].get();
         if (curr->is_match)
@@ -208,37 +208,37 @@ bool ip_matcher::match(const asio::ip::address& addr) const
     return false;
 }
 
-static std::string_view trim(std::string_view sv)
+static std::string_view trim(const std::string_view sv)
 {
-    auto start = sv.find_first_not_of(" \t\r\n");
+    const auto start = sv.find_first_not_of(" \t\r\n");
     if (start == std::string_view::npos)
     {
         return {};
     }
-    auto end = sv.find_last_not_of(" \t\r\n");
+    const auto end = sv.find_last_not_of(" \t\r\n");
     return sv.substr(start, end - start + 1);
 }
 
 void ip_matcher::add_rule(const std::string& cidr)
 {
     const std::string_view line_sv = cidr;
-    auto slash_pos = line_sv.find('/');
+    const auto slash_pos = line_sv.find('/');
     if (slash_pos == std::string_view::npos)
     {
         return;
     }
-    auto ip_part = trim(line_sv.substr(0, slash_pos));
-    auto len_part = trim(line_sv.substr(slash_pos + 1));
+    const auto ip_part = trim(line_sv.substr(0, slash_pos));
+    const auto len_part = trim(line_sv.substr(slash_pos + 1));
 
     int prefix_len = 0;
-    auto [ptr, from_ec] = std::from_chars(len_part.data(), len_part.data() + len_part.size(), prefix_len);
+    const auto [ptr, from_ec] = std::from_chars(len_part.data(), len_part.data() + len_part.size(), prefix_len);
     if (from_ec != std::errc() || ptr != len_part.data() + len_part.size())
     {
         LOG_WARN("invalid prefix length {}", len_part);
         return;
     }
     std::error_code ec;
-    auto addr = asio::ip::make_address(std::string(ip_part), ec);
+    const auto addr = asio::ip::make_address(ip_part, ec);
     if (ec)
     {
         LOG_ERROR("{} parse address failed {}", ip_part, ec.message());
@@ -257,29 +257,29 @@ void ip_matcher::add_rule(const std::string& cidr)
 
 void ip_matcher::optimize()
 {
-    if (root_v4_)
+    if (root_v4_ != nullptr)
     {
         optimize_node(root_v4_);
     }
-    if (root_v6_)
+    if (root_v6_ != nullptr)
     {
         optimize_node(root_v6_);
     }
 }
 
-void ip_matcher::optimize_node(std::unique_ptr<TrieNode>& node)
+void ip_matcher::optimize_node(std::unique_ptr<trie_node>& node)
 {
-    if (!node)
+    if (node == nullptr)
     {
         return;
     }
 
-    std::vector<std::pair<TrieNode*, bool>> stack;
+    std::vector<std::pair<trie_node*, bool>> stack;
     stack.emplace_back(node.get(), false);
 
     while (!stack.empty())
     {
-        auto [curr, visited] = stack.back();
+        const auto [curr, visited] = stack.back();
         stack.pop_back();
         if (curr == nullptr)
         {
@@ -300,7 +300,7 @@ void ip_matcher::optimize_node(std::unique_ptr<TrieNode>& node)
             continue;
         }
 
-        if (curr->children[0] && curr->children[0]->is_match && curr->children[1] && curr->children[1]->is_match)
+        if (curr->children[0] != nullptr && curr->children[0]->is_match && curr->children[1] != nullptr && curr->children[1]->is_match)
         {
             curr->is_match = true;
             curr->children[0].reset();

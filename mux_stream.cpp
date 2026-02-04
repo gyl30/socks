@@ -4,16 +4,16 @@
 namespace mux
 {
 
-mux_stream::mux_stream(std::uint32_t id,
-                       std::uint32_t cid,
+mux_stream::mux_stream(const std::uint32_t id,
+                       const std::uint32_t cid,
                        const std::string& trace_id,
                        const std::shared_ptr<mux_connection>& connection,
                        const asio::any_io_executor& ex)
     : id_(id), connection_(connection), recv_channel_(ex, 128)
 {
-    ctx_.trace_id = trace_id;
-    ctx_.conn_id = cid;
-    ctx_.stream_id = id;
+    ctx_.trace_id(trace_id);
+    ctx_.conn_id(cid);
+    ctx_.stream_id(id);
 }
 
 mux_stream::~mux_stream() { close_internal(); }

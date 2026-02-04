@@ -22,24 +22,24 @@ namespace mux
 tcp_socks_session::tcp_socks_session(asio::ip::tcp::socket socket,
                                      std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager,
                                      std::shared_ptr<router> router,
-                                     uint32_t sid)
+                                     const uint32_t sid)
     : socket_(std::move(socket)), router_(std::move(router)), tunnel_manager_(std::move(tunnel_manager))
 {
     ctx_.new_trace_id();
-    ctx_.conn_id = sid;
+    ctx_.conn_id(sid);
 }
 
-void tcp_socks_session::start(const std::string& host, uint16_t port)
+void tcp_socks_session::start(const std::string& host, const uint16_t port)
 {
     const auto self = shared_from_this();
     asio::co_spawn(socket_.get_executor(), [self, host, port]() -> asio::awaitable<void> { co_await self->run(host, port); }, asio::detached);
 }
 
-asio::awaitable<void> tcp_socks_session::run(std::string host, uint16_t port)
+asio::awaitable<void> tcp_socks_session::run(const std::string host, const uint16_t port)
 {
-    auto route = co_await router_->decide(ctx_, host, socket_.get_executor());
+    const auto route = co_await router_->decide(ctx_, host, socket_.get_executor());
 
-    std::unique_ptr<upstream> backend;
+    std::unique_ptr<upstream> backend = nullptr;
 
     if (route == route_type::direct)
     {
@@ -65,7 +65,7 @@ asio::awaitable<void> tcp_socks_session::run(std::string host, uint16_t port)
     }
 
     uint8_t rep[] = {socks::VER, socks::REP_SUCCESS, 0, socks::ATYP_IPV4, 0, 0, 0, 0, 0, 0};
-    auto [we, wn] = co_await asio::async_write(socket_, asio::buffer(rep), asio::as_tuple(asio::use_awaitable));
+    const auto [we, wn] = co_await asio::async_write(socket_, asio::buffer(rep), asio::as_tuple(asio::use_awaitable));
     if (we)
     {
         LOG_CTX_WARN(ctx_, "{} write to client failed {}", log_event::DATA_SEND, we.message());

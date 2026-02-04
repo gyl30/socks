@@ -69,19 +69,19 @@ proxy_upstream::proxy_upstream(std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::so
 {
 }
 
-asio::awaitable<bool> proxy_upstream::connect(const std::string& host, uint16_t port)
+asio::awaitable<bool> proxy_upstream::connect(const std::string& host, const uint16_t port)
 {
-    stream_ = tunnel_->create_stream(ctx_.trace_id);
-    if (!stream_)
+    stream_ = tunnel_->create_stream(ctx_.trace_id());
+    if (stream_ == nullptr)
     {
         LOG_CTX_ERROR(ctx_, "{} create stream failed", log_event::ROUTE);
         co_return false;
     }
 
-    const syn_payload syn{.socks_cmd = socks::CMD_CONNECT, .addr = host, .port = port, .trace_id = ctx_.trace_id};
+    const syn_payload syn{.socks_cmd = socks::CMD_CONNECT, .addr = host, .port = port, .trace_id = ctx_.trace_id()};
     std::vector<uint8_t> syn_data;
     mux_codec::encode_syn(syn, syn_data);
-    auto ec = co_await tunnel_->connection()->send_async(stream_->id(), CMD_SYN, std::move(syn_data));
+    const auto ec = co_await tunnel_->connection()->send_async(stream_->id(), CMD_SYN, std::move(syn_data));
     if (ec)
     {
         LOG_CTX_ERROR(ctx_, "{} send syn failed {}", log_event::ROUTE, ec.message());

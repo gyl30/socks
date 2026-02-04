@@ -52,35 +52,36 @@ class local_client : public std::enable_shared_from_this<local_client>
     {
         std::vector<uint8_t> c_app_secret;
         std::vector<uint8_t> s_app_secret;
-        uint16_t cipher_suite;
-        const EVP_MD* md;
-        const EVP_CIPHER* cipher;
+        uint16_t cipher_suite = 0;
+        const EVP_MD* md = nullptr;
+        const EVP_CIPHER* cipher = nullptr;
     };
 
     asio::awaitable<void> connect_remote_loop(uint32_t index);
 
-    asio::awaitable<bool> tcp_connect(asio::ip::tcp::socket& socket, std::error_code& ec) const;
+    [[nodiscard]] asio::awaitable<bool> tcp_connect(asio::ip::tcp::socket& socket, std::error_code& ec) const;
 
-    asio::awaitable<std::pair<bool, handshake_result>> perform_reality_handshake(asio::ip::tcp::socket& socket, std::error_code& ec) const;
+    [[nodiscard]] asio::awaitable<std::pair<bool, handshake_result>> perform_reality_handshake(asio::ip::tcp::socket& socket,
+                                                                                               std::error_code& ec) const;
 
-    asio::awaitable<bool> generate_and_send_client_hello(
+    [[nodiscard]] asio::awaitable<bool> generate_and_send_client_hello(
         asio::ip::tcp::socket& socket, const uint8_t* public_key, const uint8_t* private_key, reality::transcript& trans, std::error_code& ec) const;
 
     struct server_hello_res
     {
-        bool ok;
+        bool ok = false;
         reality::handshake_keys hs_keys;
-        const EVP_MD* negotiated_md;
-        const EVP_CIPHER* negotiated_cipher;
-        uint16_t cipher_suite;
+        const EVP_MD* negotiated_md = nullptr;
+        const EVP_CIPHER* negotiated_cipher = nullptr;
+        uint16_t cipher_suite = 0;
     };
 
-    static asio::awaitable<server_hello_res> process_server_hello(asio::ip::tcp::socket& socket,
-                                                                  const uint8_t* private_key,
-                                                                  reality::transcript& trans,
-                                                                  std::error_code& ec);
+    [[nodiscard]] static asio::awaitable<server_hello_res> process_server_hello(asio::ip::tcp::socket& socket,
+                                                                                const uint8_t* private_key,
+                                                                                reality::transcript& trans,
+                                                                                std::error_code& ec);
 
-    static asio::awaitable<std::pair<bool, std::pair<std::vector<uint8_t>, std::vector<uint8_t>>>> handshake_read_loop(
+    [[nodiscard]] static asio::awaitable<std::pair<bool, std::pair<std::vector<uint8_t>, std::vector<uint8_t>>>> handshake_read_loop(
         asio::ip::tcp::socket& socket,
         const std::pair<std::vector<uint8_t>, std::vector<uint8_t>>& s_hs_keys,
         const reality::handshake_keys& hs_keys,
@@ -90,13 +91,13 @@ class local_client : public std::enable_shared_from_this<local_client>
         const std::vector<uint8_t>& verify_pub_key,
         std::error_code& ec);
 
-    static asio::awaitable<bool> send_client_finished(asio::ip::tcp::socket& socket,
-                                                      const std::pair<std::vector<uint8_t>, std::vector<uint8_t>>& c_hs_keys,
-                                                      const std::vector<uint8_t>& c_hs_secret,
-                                                      const reality::transcript& trans,
-                                                      const EVP_CIPHER* cipher,
-                                                      const EVP_MD* md,
-                                                      std::error_code& ec);
+    [[nodiscard]] static asio::awaitable<bool> send_client_finished(asio::ip::tcp::socket& socket,
+                                                                    const std::pair<std::vector<uint8_t>, std::vector<uint8_t>>& c_hs_keys,
+                                                                    const std::vector<uint8_t>& c_hs_secret,
+                                                                    const reality::transcript& trans,
+                                                                    const EVP_CIPHER* cipher,
+                                                                    const EVP_MD* md,
+                                                                    std::error_code& ec);
 
     asio::awaitable<void> wait_remote_retry();
 

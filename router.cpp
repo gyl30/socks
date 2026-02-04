@@ -37,7 +37,7 @@ bool router::load()
 asio::awaitable<route_type> router::decide(const connection_context& ctx, const std::string& host, const asio::any_io_executor& ex) const
 {
     std::error_code ec;
-    auto addr = asio::ip::make_address(host, ec);
+    const auto addr = asio::ip::make_address(host, ec);
     if (ec)
     {
         LOG_CTX_WARN(ctx, "{} parse host failed {}", log_event::ROUTE, ec.message());
@@ -48,7 +48,7 @@ asio::awaitable<route_type> router::decide(const connection_context& ctx, const 
 
 asio::awaitable<route_type> router::decide_ip(const connection_context& ctx,
                                               const std::string& host,
-                                              asio::ip::address& addr,
+                                              const asio::ip::address& addr,
                                               const asio::any_io_executor& ex) const
 {
     if (block_ip_matcher_->match(addr))

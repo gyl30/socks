@@ -50,7 +50,7 @@ void mux_codec::encode_syn(const syn_payload& p, std::vector<std::uint8_t>& buf)
     }
 }
 
-bool mux_codec::decode_syn(const std::uint8_t* data, std::size_t len, syn_payload& out)
+bool mux_codec::decode_syn(const std::uint8_t* data, const std::size_t len, syn_payload& out)
 {
     if (len < 4)
     {
@@ -98,7 +98,7 @@ void mux_codec::encode_ack(const ack_payload& p, std::vector<std::uint8_t>& buf)
     buf.push_back(static_cast<std::uint8_t>(p.bnd_port & 0xFF));
 }
 
-bool mux_codec::decode_ack(const std::uint8_t* data, std::size_t len, ack_payload& out)
+bool mux_codec::decode_ack(const std::uint8_t* data, const std::size_t len, ack_payload& out)
 {
     if (len < 4)
     {

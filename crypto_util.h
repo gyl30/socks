@@ -11,8 +11,11 @@
 #include <sstream>
 #include <system_error>
 
+extern "C"
+{
 #include <openssl/evp.h>
 #include <openssl/kdf.h>
+}
 
 #include "reality_core.h"
 #include "cipher_context.h"
@@ -27,7 +30,7 @@ class crypto_util
 
     [[nodiscard]] static std::vector<uint8_t> hex_to_bytes(const std::string& hex);
 
-    [[nodiscard]] static uint16_t get_random_grease();
+    [[nodiscard]] static uint16_t random_grease();
 
     [[nodiscard]] static bool generate_x25519_keypair(uint8_t out_public[32], uint8_t out_private[32]);
 
@@ -54,14 +57,14 @@ class crypto_util
                                                                 const EVP_MD* md,
                                                                 std::error_code& ec);
 
-    static size_t aead_decrypt(const cipher_context& ctx,
-                               const EVP_CIPHER* cipher,
-                               const std::vector<uint8_t>& key,
-                               std::span<const uint8_t> nonce,
-                               std::span<const uint8_t> ciphertext,
-                               std::span<const uint8_t> aad,
-                               std::span<uint8_t> output_buffer,
-                               std::error_code& ec);
+    [[nodiscard]] static size_t aead_decrypt(const cipher_context& ctx,
+                                             const EVP_CIPHER* cipher,
+                                             const std::vector<uint8_t>& key,
+                                             std::span<const uint8_t> nonce,
+                                             std::span<const uint8_t> ciphertext,
+                                             std::span<const uint8_t> aad,
+                                             std::span<uint8_t> output_buffer,
+                                             std::error_code& ec);
 
     [[nodiscard]] static std::vector<uint8_t> aead_decrypt(const EVP_CIPHER* cipher,
                                                            const std::vector<uint8_t>& key,
@@ -88,10 +91,10 @@ class crypto_util
 
     [[nodiscard]] static openssl_ptrs::evp_pkey_ptr extract_pubkey_from_cert(const std::vector<uint8_t>& cert_der, std::error_code& ec);
 
-    static bool verify_tls13_signature(EVP_PKEY* pub_key,
-                                       const std::vector<uint8_t>& transcript_hash,
-                                       const std::vector<uint8_t>& signature,
-                                       std::error_code& ec);
+    [[nodiscard]] static bool verify_tls13_signature(EVP_PKEY* pub_key,
+                                                     const std::vector<uint8_t>& transcript_hash,
+                                                     const std::vector<uint8_t>& signature,
+                                                     std::error_code& ec);
 };
 }    // namespace reality
 #endif

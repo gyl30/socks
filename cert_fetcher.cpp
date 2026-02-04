@@ -82,25 +82,25 @@ asio::awaitable<std::optional<fetch_result>> cert_fetcher::fetch(
 }
 
 cert_fetcher::fetch_session::fetch_session(
-    const asio::any_io_executor& ex, std::string host, uint16_t port, std::string sni, const std::string& trace_id)
+    const asio::any_io_executor& ex, std::string host, const uint16_t port, std::string sni, const std::string& trace_id)
     : socket_(ex), host_(std::move(host)), port_(port), sni_(std::move(sni))
 {
-    ctx_.trace_id = trace_id;
-    ctx_.target_host = host_;
-    ctx_.target_port = port;
-    ctx_.sni = sni_;
+    ctx_.trace_id(trace_id);
+    ctx_.target_host(host_);
+    ctx_.target_port(port);
+    ctx_.sni(sni_);
 }
 
 asio::awaitable<std::optional<fetch_result>> cert_fetcher::fetch_session::run()
 {
     LOG_CTX_INFO(ctx_, "{} starting fetch", mux::log_event::CERT);
 
-    if (auto ec = co_await connect(); ec)
+    if (const auto ec = co_await connect(); ec)
     {
         co_return std::nullopt;
     }
 
-    if (auto ec = co_await perform_handshake_start(); ec)
+    if (const auto ec = co_await perform_handshake_start(); ec)
     {
         co_return std::nullopt;
     }
