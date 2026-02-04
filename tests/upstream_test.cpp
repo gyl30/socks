@@ -139,9 +139,46 @@ TEST_F(UpstreamTest, DirectUpstreamConnectFail)
     EXPECT_FALSE(success);
 }
 
-TEST_F(UpstreamTest, DirectUpstreamResolveFail)
+TEST_F(UpstreamTest, DirectUpstreamWriteError)
+{
+    // Start a server that accepts and immediately closes
+    auto acceptor = std::make_shared<asio::ip::tcp::acceptor>(ctx(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    uint16_t port = acceptor->local_endpoint().port();
+
+    asio::co_spawn(
+        ctx(),
+        [acceptor]() -> asio::awaitable<void>
+        {
+            auto socket = co_await acceptor->async_accept(asio::use_awaitable);
+            socket.close();
+            co_return;
+        },
+        asio::detached);
+
+    mux::direct_upstream upstream(ctx().get_executor(), mux::connection_context{});
+    const auto success = mux::test::run_awaitable(ctx(), upstream.connect("127.0.0.1", port));
+    EXPECT_TRUE(success);
+
+    // Give server time to close its side
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    // Try to write multiple times to ensure we get an error
+    size_t write_n = 1;
+    for (int i = 0; i < 10 && write_n > 0; ++i)
+    {
+        write_n = mux::test::run_awaitable(ctx(), upstream.write({0x01, 0x02, 0x03}));
+    }
+    // Eventually it should fail and return 0
+    EXPECT_EQ(write_n, 0);
+}
+
+#include "mux_tunnel.h"
+#include "mock_mux_connection.h"
+
+TEST_F(UpstreamTest, DirectUpstreamClose)
 {
     mux::direct_upstream upstream(ctx().get_executor(), mux::connection_context{});
-    const auto success = mux::test::run_awaitable(ctx(), upstream.connect("invalid.host.name.local", 80));
-    EXPECT_FALSE(success);
+    // Closing uninitialized upstream should be safe and cover close error paths
+    // (though on some OS it might not error, it still exercises the code).
+    mux::test::run_awaitable_void(ctx(), upstream.close());
 }

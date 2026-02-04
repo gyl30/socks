@@ -54,6 +54,7 @@ bool handshake_reassembler::next(std::vector<uint8_t>& out, std::error_code& ec)
 
     if (msg_len > MAX_MSG_SIZE)
     {
+        buffer_.clear();
         ec = std::make_error_code(std::errc::message_size);
         return false;
     }
