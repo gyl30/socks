@@ -1,29 +1,31 @@
 #ifndef LOCAL_CLIENT_H
 #define LOCAL_CLIENT_H
 
-#include <mutex>
-#include <memory>
-#include <string>
-#include <vector>
 #include <cstdint>
+#include <memory>
+#include <mutex>
+#include <string>
 #include <utility>
+#include <vector>
 
-#include <asio.hpp>
+#include <asio/awaitable.hpp>
+#include <asio/experimental/concurrent_channel.hpp>
+#include <asio/ip/tcp.hpp>
+#include <asio/steady_timer.hpp>
 
-#include "log.h"
+extern "C"
+{
+#include <openssl/evp.h>
+}
+
 #include "config.h"
 #include "router.h"
-#include "constants.h"
 #include "mux_tunnel.h"
 #include "transcript.h"
 #include "log_context.h"
 #include "context_pool.h"
 #include "reality_core.h"
-#include "socks_session.h"
-#include "reality_engine.h"
 #include "reality_messages.h"
-#include "tls_key_schedule.h"
-#include "reality_fingerprint.h"
 
 namespace mux
 {

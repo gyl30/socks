@@ -1,18 +1,27 @@
 #ifndef UDP_SOCKS_SESSION_H
 #define UDP_SOCKS_SESSION_H
 
+#include <string>
 #include <memory>
 #include <vector>
 #include <cstdint>
 
-#include <asio.hpp>
+#include <asio/ip/tcp.hpp>
+#include <asio/ip/udp.hpp>
+#include <asio/awaitable.hpp>
+#include <asio/steady_timer.hpp>
+#include <asio/experimental/concurrent_channel.hpp>
 
+#include "router.h"
 #include "protocol.h"
 #include "mux_tunnel.h"
 #include "log_context.h"
+#include "mux_stream_interface.h"
 
 namespace mux
 {
+
+class mux_stream;
 
 class udp_socks_session : public mux_stream_interface, public std::enable_shared_from_this<udp_socks_session>
 {
@@ -22,7 +31,7 @@ class udp_socks_session : public mux_stream_interface, public std::enable_shared
     void start(const std::string& host, uint16_t port);
 
    private:
-    asio::awaitable<void> run(std::string host, uint16_t port);
+    asio::awaitable<void> run(const std::string& host, uint16_t port);
 
    public:
     void on_data(std::vector<uint8_t> data) override;

@@ -1,17 +1,17 @@
 #ifndef CERT_FETCHER_H
 #define CERT_FETCHER_H
 
-#include <span>
-#include <string>
-#include <vector>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <optional>
+#include <span>
+#include <string>
 #include <system_error>
+#include <vector>
 
-#include <asio/awaitable.hpp>
 #include <asio/any_io_executor.hpp>
+#include <asio/awaitable.hpp>
 #include <asio/ip/tcp.hpp>
 
 #include "transcript.h"
@@ -47,13 +47,13 @@ class cert_fetcher
     static std::string hex(const uint8_t* data, size_t len);
 
     static asio::awaitable<std::optional<fetch_result>> fetch(
-        asio::any_io_executor ex, std::string host, uint16_t port, std::string sni, const std::string& trace_id = "");
+        asio::any_io_executor ex, std::string host, std::uint16_t port, std::string sni, const std::string& trace_id = "");
 
    private:
     class fetch_session
     {
        public:
-        fetch_session(const asio::any_io_executor& ex, std::string host, uint16_t port, std::string sni, const std::string& trace_id);
+        fetch_session(const asio::any_io_executor& ex, std::string host, std::uint16_t port, std::string sni, const std::string& trace_id);
 
         asio::awaitable<std::optional<fetch_result>> run();
 
@@ -68,24 +68,24 @@ class cert_fetcher
 
         asio::awaitable<std::pair<std::error_code, std::vector<uint8_t>>> read_record_plaintext();
 
-        asio::awaitable<std::pair<uint8_t, std::span<uint8_t>>> read_record(std::vector<uint8_t>& pt_buf, std::error_code& out_ec);
+        asio::awaitable<std::pair<std::uint8_t, std::span<uint8_t>>> read_record(std::vector<uint8_t>& pt_buf, std::error_code& out_ec);
 
        private:
         mux::connection_context ctx_;
         asio::ip::tcp::socket socket_;
         std::string host_;
-        uint16_t port_;
+        std::uint16_t port_;
         std::string sni_;
         server_fingerprint fingerprint_;
 
         transcript trans_;
-        uint8_t client_public_[32] = {0};
-        uint8_t client_private_[32] = {0};
+        std::uint8_t client_public_[32] = {0};
+        std::uint8_t client_private_[32] = {0};
 
         const EVP_CIPHER* negotiated_cipher_ = nullptr;
-        std::vector<uint8_t> dec_key_;
-        std::vector<uint8_t> dec_iv_;
-        uint64_t seq_ = 0;
+        std::vector<std::uint8_t> dec_key_;
+        std::vector<std::uint8_t> dec_iv_;
+        std::uint64_t seq_ = 0;
         const cipher_context decrypt_ctx_;
     };
 };

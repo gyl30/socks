@@ -1,5 +1,12 @@
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <string>
+#include <vector>
+
 #include "log.h"
 #include "mux_codec.h"
+#include "mux_protocol.h"
 
 namespace mux
 {
@@ -26,7 +33,7 @@ bool mux_codec::decode_header(const std::uint8_t* buf, std::size_t len, frame_he
     out.stream_id = (static_cast<std::uint32_t>(buf[0]) << 24) | (static_cast<std::uint32_t>(buf[1]) << 16) |
                     (static_cast<std::uint32_t>(buf[2]) << 8) | (static_cast<std::uint32_t>(buf[3]));
 
-    out.length = static_cast<uint16_t>((static_cast<std::uint16_t>(buf[4]) << 8) | static_cast<std::uint16_t>(buf[5]));
+    out.length = static_cast<std::uint16_t>((static_cast<std::uint16_t>(buf[4]) << 8) | static_cast<std::uint16_t>(buf[5]));
     out.command = buf[6];
     return true;
 }
@@ -66,7 +73,7 @@ bool mux_codec::decode_syn(const std::uint8_t* data, const std::size_t len, syn_
     }
     out.addr = std::string(reinterpret_cast<const char*>(&data[2]), addr_len);
     const std::uint8_t* port_ptr = &data[2 + addr_len];
-    out.port = static_cast<uint16_t>((static_cast<std::uint16_t>(port_ptr[0]) << 8) | static_cast<std::uint16_t>(port_ptr[1]));
+    out.port = static_cast<std::uint16_t>((static_cast<std::uint16_t>(port_ptr[0]) << 8) | static_cast<std::uint16_t>(port_ptr[1]));
 
     std::size_t current_pos = 2 + addr_len + 2;
     if (len > current_pos)
@@ -114,7 +121,7 @@ bool mux_codec::decode_ack(const std::uint8_t* data, const std::size_t len, ack_
     }
     out.bnd_addr = std::string(reinterpret_cast<const char*>(&data[2]), addr_len);
     const std::uint8_t* port_ptr = &data[2 + addr_len];
-    out.bnd_port = static_cast<uint16_t>((static_cast<std::uint16_t>(port_ptr[0]) << 8) | static_cast<std::uint16_t>(port_ptr[1]));
+    out.bnd_port = static_cast<std::uint16_t>((static_cast<std::uint16_t>(port_ptr[0]) << 8) | static_cast<std::uint16_t>(port_ptr[1]));
     return true;
 }
 

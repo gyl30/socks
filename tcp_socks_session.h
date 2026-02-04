@@ -1,12 +1,12 @@
 #ifndef TCP_SOCKS_SESSION_H
 #define TCP_SOCKS_SESSION_H
 
+#include <cstdint>
 #include <memory>
 #include <string>
-#include <vector>
-#include <cstdint>
 
-#include <asio.hpp>
+#include <asio/awaitable.hpp>
+#include <asio/ip/tcp.hpp>
 
 #include "router.h"
 #include "protocol.h"
@@ -23,18 +23,18 @@ class tcp_socks_session : public std::enable_shared_from_this<tcp_socks_session>
     tcp_socks_session(asio::ip::tcp::socket socket,
                       std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager,
                       std::shared_ptr<router> router,
-                      uint32_t sid);
+                      const uint32_t sid);
 
-    void start(const std::string& host, uint16_t port);
+    void start(const std::string& host, const uint16_t port);
 
    private:
-    asio::awaitable<void> run(std::string host, uint16_t port);
+    [[nodiscard]] asio::awaitable<void> run(const std::string& host, const uint16_t port);
 
-    asio::awaitable<void> reply_error(uint8_t code);
+    [[nodiscard]] asio::awaitable<void> reply_error(const uint8_t code);
 
-    asio::awaitable<void> client_to_upstream(upstream* backend);
+    [[nodiscard]] asio::awaitable<void> client_to_upstream(upstream* backend);
 
-    asio::awaitable<void> upstream_to_client(upstream* backend);
+    [[nodiscard]] asio::awaitable<void> upstream_to_client(upstream* backend);
 
    private:
     connection_context ctx_;

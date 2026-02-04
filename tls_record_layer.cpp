@@ -1,9 +1,11 @@
 #include <array>
-#include <vector>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <span>
 #include <system_error>
+#include <utility>
+#include <vector>
 
 #include <openssl/evp.h>
 #include <openssl/rand.h>
@@ -20,16 +22,16 @@ void tls_record_layer::encrypt_record_append(const cipher_context& ctx,
                                              const EVP_CIPHER* cipher,
                                              const std::vector<uint8_t>& key,
                                              const std::vector<uint8_t>& iv,
-                                             const uint64_t seq,
+                                             const std::uint64_t seq,
                                              const std::vector<uint8_t>& plaintext,
-                                             const uint8_t content_type,
+                                             const std::uint8_t content_type,
                                              std::vector<uint8_t>& output_buffer,
                                              std::error_code& ec)
 {
     std::vector<uint8_t> nonce = iv;
     for (int i = 0; i < 8; ++i)
     {
-        nonce[nonce.size() - 1 - i] ^= static_cast<uint8_t>((seq >> (8 * i)) & 0xFF);
+        nonce[nonce.size() - 1 - i] ^= static_cast<std::uint8_t>((seq >> (8 * i)) & 0xFF);
     }
 
     std::vector<uint8_t> inner_plaintext;
@@ -37,7 +39,7 @@ void tls_record_layer::encrypt_record_append(const cipher_context& ctx,
 
     if (content_type == CONTENT_TYPE_APPLICATION_DATA)
     {
-        uint8_t r;
+        std::uint8_t r;
         if (RAND_bytes(&r, 1) != 1)
         {
             ec = std::make_error_code(std::errc::operation_canceled);
@@ -56,14 +58,14 @@ void tls_record_layer::encrypt_record_append(const cipher_context& ctx,
         inner_plaintext.insert(inner_plaintext.end(), padding_len, 0x00);
     }
 
-    const auto ciphertext_len = static_cast<uint16_t>(inner_plaintext.size() + AEAD_TAG_SIZE);
+    const auto ciphertext_len = static_cast<std::uint16_t>(inner_plaintext.size() + AEAD_TAG_SIZE);
 
-    std::array<uint8_t, 5> temp_header;
+    std::array<std::uint8_t, 5> temp_header;
     temp_header[0] = CONTENT_TYPE_APPLICATION_DATA;
     temp_header[1] = 0x03;
     temp_header[2] = 0x03;
-    temp_header[3] = static_cast<uint8_t>((ciphertext_len >> 8) & 0xFF);
-    temp_header[4] = static_cast<uint8_t>(ciphertext_len & 0xFF);
+    temp_header[3] = static_cast<std::uint8_t>((ciphertext_len >> 8) & 0xFF);
+    temp_header[4] = static_cast<std::uint8_t>(ciphertext_len & 0xFF);
 
     output_buffer.insert(output_buffer.end(), temp_header.begin(), temp_header.end());
     crypto_util::aead_encrypt_append(ctx, cipher, key, nonce, inner_plaintext, temp_header, output_buffer, ec);
@@ -72,9 +74,9 @@ void tls_record_layer::encrypt_record_append(const cipher_context& ctx,
 std::vector<uint8_t> tls_record_layer::encrypt_record(const EVP_CIPHER* cipher,
                                                       const std::vector<uint8_t>& key,
                                                       const std::vector<uint8_t>& iv,
-                                                      const uint64_t seq,
+                                                      const std::uint64_t seq,
                                                       const std::vector<uint8_t>& plaintext,
-                                                      const uint8_t content_type,
+                                                      const std::uint8_t content_type,
                                                       std::error_code& ec)
 {
     const cipher_context ctx;
@@ -87,10 +89,10 @@ size_t tls_record_layer::decrypt_record(const cipher_context& ctx,
                                         const EVP_CIPHER* cipher,
                                         const std::vector<uint8_t>& key,
                                         const std::vector<uint8_t>& iv,
-                                        const uint64_t seq,
+                                        const std::uint64_t seq,
                                         const std::span<const uint8_t> record_data,
                                         const std::span<uint8_t> output_buffer,
-                                        uint8_t& out_content_type,
+                                        std::uint8_t& out_content_type,
                                         std::error_code& ec)
 {
     if (record_data.size() < TLS_RECORD_HEADER_SIZE + AEAD_TAG_SIZE)
@@ -105,7 +107,7 @@ size_t tls_record_layer::decrypt_record(const cipher_context& ctx,
     std::vector<uint8_t> nonce = iv;
     for (int i = 0; i < 8; ++i)
     {
-        nonce[nonce.size() - 1 - i] ^= static_cast<uint8_t>((seq >> (8 * i)) & 0xFF);
+        nonce[nonce.size() - 1 - i] ^= static_cast<std::uint8_t>((seq >> (8 * i)) & 0xFF);
     }
 
     size_t written = crypto_util::aead_decrypt(ctx, cipher, key, nonce, ciphertext, aad, output_buffer, ec);
@@ -135,9 +137,9 @@ size_t tls_record_layer::decrypt_record(const cipher_context& ctx,
 std::vector<uint8_t> tls_record_layer::decrypt_record(const EVP_CIPHER* cipher,
                                                       const std::vector<uint8_t>& key,
                                                       const std::vector<uint8_t>& iv,
-                                                      const uint64_t seq,
+                                                      const std::uint64_t seq,
                                                       const std::vector<uint8_t>& ciphertext_with_header,
-                                                      uint8_t& out_content_type,
+                                                      std::uint8_t& out_content_type,
                                                       std::error_code& ec)
 {
     const cipher_context ctx;

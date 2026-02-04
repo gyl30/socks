@@ -1,15 +1,15 @@
 #ifndef CRYPTO_UTIL_H
 #define CRYPTO_UTIL_H
 
-#include <span>
-#include <string>
-#include <vector>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <iomanip>
+#include <span>
 #include <sstream>
+#include <string>
 #include <system_error>
+#include <vector>
 
 extern "C"
 {
@@ -30,7 +30,7 @@ class crypto_util
 
     [[nodiscard]] static std::vector<uint8_t> hex_to_bytes(const std::string& hex);
 
-    [[nodiscard]] static uint16_t random_grease();
+    [[nodiscard]] static std::uint16_t random_grease();
 
     [[nodiscard]] static bool generate_x25519_keypair(uint8_t out_public[32], uint8_t out_private[32]);
 
@@ -96,5 +96,7 @@ class crypto_util
                                                      const std::vector<uint8_t>& signature,
                                                      std::error_code& ec);
 };
+
 }    // namespace reality
+
 #endif

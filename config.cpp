@@ -1,12 +1,13 @@
 #include <cstdio>
-#include <string>
 #include <optional>
+#include <string>
 
 #include "config.h"
 #include "reflect.h"
 
 namespace reflect
 {
+
 REFLECT_STRUCT(mux::config::log_t, level, file);
 REFLECT_STRUCT(mux::config::inbound_t, host, port);
 REFLECT_STRUCT(mux::config::outbound_t, host, port);

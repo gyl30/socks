@@ -1,15 +1,33 @@
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <system_error>
+#include <tuple>
+#include <utility>
+#include <vector>
+
+#include <asio/any_io_executor.hpp>
+#include <asio/as_tuple.hpp>
+#include <asio/awaitable.hpp>
+#include <asio/error.hpp>
+#include <asio/use_awaitable.hpp>
+
 #include "log.h"
+#include "log_context.h"
+#include "mux_protocol.h"
+#include "mux_connection.h"
 #include "mux_stream.h"
 
 namespace mux
 {
 
-mux_stream::mux_stream(const std::uint32_t id,
-                       const std::uint32_t cid,
+mux_stream::mux_stream(std::uint32_t id,
+                       std::uint32_t cid,
                        const std::string& trace_id,
                        const std::shared_ptr<mux_connection>& connection,
                        const asio::any_io_executor& ex)
-    : id_(id), connection_(connection), recv_channel_(ex, 128)
+    : id_(id), connection_(connection), recv_channel_(ex, 1024)
 {
     ctx_.trace_id(trace_id);
     ctx_.conn_id(cid);
@@ -22,86 +40,88 @@ std::uint32_t mux_stream::id() const { return id_; }
 
 asio::awaitable<std::tuple<std::error_code, std::vector<std::uint8_t>>> mux_stream::async_read_some()
 {
-    co_return co_await recv_channel_.async_receive(asio::as_tuple(asio::use_awaitable));
+    const auto [ec, data] = co_await recv_channel_.async_receive(asio::as_tuple(asio::use_awaitable));
+    if (ec)
+    {
+        co_return std::make_tuple(ec, std::vector<std::uint8_t>{});
+    }
+    if (data.empty())
+    {
+        co_return std::make_tuple(asio::error::eof, std::vector<std::uint8_t>{});
+    }
+    rx_bytes_ += data.size();
+    co_return std::make_tuple(std::error_code{}, std::move(data));
 }
 
 asio::awaitable<std::error_code> mux_stream::async_write_some(const void* data, std::size_t len)
 {
-    if (fin_sent_)
-    {
-        co_return asio::error::broken_pipe;
-    }
-
-    std::vector<uint8_t> payload(static_cast<const uint8_t*>(data), static_cast<const uint8_t*>(data) + len);
-    tx_bytes_.fetch_add(len, std::memory_order_relaxed);
-    const auto conn = connection_.lock();
-    if (!conn)
+    if (is_closed_)
     {
         co_return asio::error::operation_aborted;
     }
-    co_return co_await conn->send_async(id_, CMD_DAT, std::move(payload));
+
+    const auto connection = connection_.lock();
+    if (!connection)
+    {
+        co_return asio::error::connection_aborted;
+    }
+
+    std::vector<uint8_t> payload(static_cast<const uint8_t*>(data), static_cast<const uint8_t*>(data) + len);
+    const auto ec = co_await connection->send_async(id_, CMD_DAT, std::move(payload));
+    if (!ec)
+    {
+        tx_bytes_ += len;
+    }
+    co_return ec;
 }
 
 asio::awaitable<void> mux_stream::close()
 {
-    bool expected = false;
-    if (!fin_sent_.compare_exchange_strong(expected, true))
+    if (is_closed_.exchange(true))
     {
         co_return;
     }
 
-    LOG_CTX_DEBUG(ctx_, "{} sending fin", log_event::MUX);
-    if (auto conn = connection_.lock())
+    const auto connection = connection_.lock();
+    if (connection)
     {
-        co_await conn->send_async(id_, CMD_FIN, {});
+        if (!fin_sent_.exchange(true))
+        {
+            LOG_CTX_DEBUG(ctx_, "{} stream {} sending FIN", log_event::MUX, id_);
+            (void)co_await connection->send_async(id_, CMD_FIN, {});
+        }
     }
 
-    if (fin_received_)
-    {
-        close_internal();
-    }
+    close_internal();
 }
 
 void mux_stream::on_data(std::vector<uint8_t> data)
 {
-    if (!fin_received_)
+    if (!is_closed_)
     {
-        rx_bytes_.fetch_add(data.size(), std::memory_order_relaxed);
-        recv_channel_.try_send(std::error_code(), std::move(data));
+        recv_channel_.try_send(std::error_code{}, std::move(data));
     }
 }
 
 void mux_stream::on_close()
 {
-    bool expected = false;
-    if (!fin_received_.compare_exchange_strong(expected, true))
+    if (!fin_received_.exchange(true))
     {
-        return;
-    }
-
-    LOG_CTX_DEBUG(ctx_, "{} received fin", log_event::MUX);
-    recv_channel_.close();
-
-    if (fin_sent_)
-    {
-        close_internal();
+        LOG_CTX_DEBUG(ctx_, "{} stream {} received FIN", log_event::MUX, id_);
+        recv_channel_.try_send(std::error_code{}, std::vector<uint8_t>{});
     }
 }
 
-void mux_stream::on_reset() { close_internal(); }
+void mux_stream::on_reset()
+{
+    is_closed_ = true;
+    recv_channel_.close();
+}
 
 void mux_stream::close_internal()
 {
-    bool expected = false;
-    if (is_closed_.compare_exchange_strong(expected, true))
-    {
-        recv_channel_.close();
-        LOG_CTX_INFO(ctx_, "{} closed stats tx {} rx {}", log_event::MUX, tx_bytes_.load(), rx_bytes_.load());
-        if (auto conn = connection_.lock())
-        {
-            conn->remove_stream(id_);
-        }
-    }
+    is_closed_ = true;
+    recv_channel_.close();
 }
 
 }    // namespace mux

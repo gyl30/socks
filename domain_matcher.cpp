@@ -1,8 +1,8 @@
+#include <algorithm>
 #include <cctype>
-#include <string>
 #include <cstddef>
 #include <fstream>
-#include <algorithm>
+#include <string>
 
 #include "log.h"
 #include "domain_matcher.h"

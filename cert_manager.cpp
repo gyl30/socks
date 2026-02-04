@@ -1,8 +1,8 @@
 #include <mutex>
-#include <string>
-#include <vector>
-#include <utility>
 #include <optional>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "log.h"
 #include "log_context.h"
@@ -27,7 +27,7 @@ std::optional<cert_entry> cert_manager::get_certificate(const std::string& sni)
     return std::nullopt;
 }
 
-void cert_manager::set_certificate(const std::string& sni, std::vector<uint8_t> cert_msg, server_fingerprint fp, const std::string& trace_id)
+void cert_manager::set_certificate(const std::string& sni, std::vector<std::uint8_t> cert_msg, server_fingerprint fp, const std::string& trace_id)
 {
     const std::scoped_lock lock(mutex_);
 

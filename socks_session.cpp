@@ -1,15 +1,20 @@
+#include <cstdint>
 #include <memory>
 #include <string>
-#include <ranges>
-#include <vector>
-#include <cstdint>
 #include <utility>
+#include <vector>
 #include <algorithm>
 
-#include <asio.hpp>
-#include <arpa/inet.h>
+#include <asio/as_tuple.hpp>
+#include <asio/co_spawn.hpp>
+#include <asio/detached.hpp>
+#include <asio/read.hpp>
+#include <asio/use_awaitable.hpp>
+#include <asio/write.hpp>
+#include <asio/ip/tcp.hpp>
 
 #include "log.h"
+#include "protocol.h"
 #include "mux_tunnel.h"
 #include "log_context.h"
 #include "socks_session.h"
@@ -50,7 +55,7 @@ asio::awaitable<void> socks_session::run()
         co_return;
     }
 
-    auto [ok, host, port, cmd] = co_await read_request();
+    const auto [ok, host, port, cmd] = co_await read_request();
     if (!ok)
     {
         LOG_CTX_WARN(ctx_, "{} request invalid", log_event::SOCKS);
@@ -95,14 +100,14 @@ asio::awaitable<bool> socks_session::handshake()
 
     if (auth_enabled_)
     {
-        if (std::ranges::find(methods, socks::METHOD_PASSWORD) != methods.end())
+        if (std::find(methods.begin(), methods.end(), socks::METHOD_PASSWORD) != methods.end())
         {
             selected_method = socks::METHOD_PASSWORD;
         }
     }
     else
     {
-        if (std::ranges::find(methods, socks::METHOD_NO_AUTH) != methods.end())
+        if (std::find(methods.begin(), methods.end(), socks::METHOD_NO_AUTH) != methods.end())
         {
             selected_method = socks::METHOD_NO_AUTH;
         }
@@ -227,8 +232,9 @@ asio::awaitable<socks_session::request_info> socks_session::read_request()
 
     uint16_t port_n = 0;
     co_await asio::async_read(socket_, asio::buffer(&port_n, 2), asio::as_tuple(asio::use_awaitable));
-    LOG_INFO("socks session {} request {} {}", sid_, host, ntohs(port_n));
-    co_return request_info{.ok = true, .host = host, .port = ntohs(port_n), .cmd = head[1]};
+    const uint16_t port = ntohs(port_n);
+    LOG_INFO("socks session {} request {} {}", sid_, host, port);
+    co_return request_info{.ok = true, .host = host, .port = port, .cmd = head[1]};
 }
 
 }    // namespace mux

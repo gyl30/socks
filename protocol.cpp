@@ -1,9 +1,9 @@
-#include <string>
-#include <vector>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <string>
 #include <system_error>
+#include <vector>
 
 #include <asio/ip/address.hpp>
 #include <asio/ip/address_v4.hpp>
@@ -29,9 +29,9 @@ asio::ip::address socks_codec::normalize_ip_address(const asio::ip::address& add
     return addr;
 }
 
-std::vector<uint8_t> socks_codec::encode_udp_header(const socks_udp_header& h)
+std::vector<std::uint8_t> socks_codec::encode_udp_header(const socks_udp_header& h)
 {
-    std::vector<uint8_t> buf;
+    std::vector<std::uint8_t> buf;
     buf.reserve(24);
     buf.push_back(0x00);
     buf.push_back(0x00);
@@ -48,28 +48,28 @@ std::vector<uint8_t> socks_codec::encode_udp_header(const socks_udp_header& h)
     if (!ec && address.is_v4())
     {
         buf.push_back(socks::ATYP_IPV4);
-        auto bytes = address.to_v4().to_bytes();
+        const auto bytes = address.to_v4().to_bytes();
         buf.insert(buf.end(), bytes.begin(), bytes.end());
     }
     else if (!ec && address.is_v6())
     {
         buf.push_back(socks::ATYP_IPV6);
-        auto bytes = address.to_v6().to_bytes();
+        const auto bytes = address.to_v6().to_bytes();
         buf.insert(buf.end(), bytes.begin(), bytes.end());
     }
     else
     {
         buf.push_back(socks::ATYP_DOMAIN);
-        buf.push_back(static_cast<uint8_t>(h.addr.size()));
+        buf.push_back(static_cast<std::uint8_t>(h.addr.size()));
         buf.insert(buf.end(), h.addr.begin(), h.addr.end());
     }
 
-    buf.push_back(static_cast<uint8_t>((h.port >> 8) & 0xFF));
-    buf.push_back(static_cast<uint8_t>(h.port & 0xFF));
+    buf.push_back(static_cast<std::uint8_t>((h.port >> 8) & 0xFF));
+    buf.push_back(static_cast<std::uint8_t>(h.port & 0xFF));
     return buf;
 }
 
-bool socks_codec::decode_udp_header(const uint8_t* data, size_t len, socks_udp_header& out)
+bool socks_codec::decode_udp_header(const std::uint8_t* data, std::size_t len, socks_udp_header& out)
 {
     if (len < 4)
     {
@@ -77,9 +77,9 @@ bool socks_codec::decode_udp_header(const uint8_t* data, size_t len, socks_udp_h
     }
 
     out.frag = data[2];
-    const uint8_t atyp = data[3];
+    const std::uint8_t atyp = data[3];
 
-    size_t pos = 4;
+    std::size_t pos = 4;
     if (atyp == socks::ATYP_IPV4)
     {
         if (len < pos + 4 + 2)
@@ -97,7 +97,7 @@ bool socks_codec::decode_udp_header(const uint8_t* data, size_t len, socks_udp_h
         {
             return false;
         }
-        const uint8_t dlen = data[pos];
+        const std::uint8_t dlen = data[pos];
         pos++;
         if (len < pos + dlen + 2)
         {
@@ -122,7 +122,7 @@ bool socks_codec::decode_udp_header(const uint8_t* data, size_t len, socks_udp_h
         return false;
     }
 
-    out.port = static_cast<uint16_t>((data[pos] << 8) | data[pos + 1]);
+    out.port = static_cast<std::uint16_t>((data[pos] << 8) | data[pos + 1]);
     pos += 2;
     out.header_len = pos;
     return true;

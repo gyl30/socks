@@ -1,9 +1,10 @@
+#include <algorithm>
+#include <array>
+#include <cstdint>
 #include <limits>
 #include <memory>
 #include <random>
 #include <vector>
-#include <cstdint>
-#include <algorithm>
 
 #include <openssl/rand.h>
 
@@ -16,8 +17,9 @@ namespace reality
 namespace
 {
 
-constexpr auto GREASE_VALUES = std::to_array<uint16_t>(
+constexpr auto GREASE_VALUES = std::to_array<std::uint16_t>(
     {0x0a0a, 0x1a1a, 0x2a2a, 0x3a3a, 0x4a4a, 0x5a5a, 0x6a6a, 0x7a7a, 0x8a8a, 0x9a9a, 0xaaaa, 0xbaba, 0xcaca, 0xdada, 0xeaea, 0xfafa});
+
 }    // namespace
 
 static FingerprintSpec BuildChrome70To87Spec()
@@ -109,9 +111,9 @@ static FingerprintSpec BuildChrome70To87Spec()
 
 GreaseContext::GreaseContext()
 {
-    const size_t seed_len = seed_.size() * sizeof(seed_[0]);
-    if (seed_len > static_cast<size_t>(std::numeric_limits<int>::max()) ||
-        RAND_bytes(reinterpret_cast<uint8_t*>(seed_.data()), static_cast<int>(seed_len)) != 1)
+    const std::size_t seed_len = seed_.size() * sizeof(seed_[0]);
+    if (seed_len > static_cast<std::size_t>(std::numeric_limits<int>::max()) ||
+        RAND_bytes(reinterpret_cast<std::uint8_t*>(seed_.data()), static_cast<int>(seed_len)) != 1)
     {
         for (auto& s : seed_)
         {
@@ -120,17 +122,17 @@ GreaseContext::GreaseContext()
     }
 }
 
-uint16_t GreaseContext::get_grease(int index) const
+std::uint16_t GreaseContext::get_grease(int index) const
 {
-    const uint16_t val = seed_[static_cast<size_t>(index) % seed_.size()];
-    const auto idx = static_cast<uint8_t>((val >> 8) ^ (val & 0xFF));
+    const std::uint16_t val = seed_[static_cast<std::size_t>(index) % seed_.size()];
+    const auto idx = static_cast<std::uint8_t>((val >> 8) ^ (val & 0xFF));
     return GREASE_VALUES[idx % GREASE_VALUES.size()];
 }
 
-uint16_t GreaseContext::get_extension_grease(int nth_occurrence) const
+std::uint16_t GreaseContext::get_extension_grease(int nth_occurrence) const
 {
-    const uint16_t val1 = get_grease(2);
-    uint16_t val2 = get_grease(3);
+    const std::uint16_t val1 = get_grease(2);
+    std::uint16_t val2 = get_grease(3);
     if (val1 == val2)
     {
         val2 ^= 0x1010;
@@ -537,10 +539,10 @@ FingerprintSpec FingerprintFactory::GetChrome120()
 
 void FingerprintFactory::shuffle_extensions(std::vector<std::shared_ptr<ExtensionBlueprint>>& exts)
 {
-    std::vector<size_t> indices;
+    std::vector<std::size_t> indices;
     std::vector<std::shared_ptr<ExtensionBlueprint>> shufflable_exts;
 
-    for (size_t i = 0; i < exts.size(); ++i)
+    for (std::size_t i = 0; i < exts.size(); ++i)
     {
         if (exts[i]->is_shufflable())
         {
@@ -557,7 +559,7 @@ void FingerprintFactory::shuffle_extensions(std::vector<std::shared_ptr<Extensio
     std::mt19937 g(rd());
     std::ranges::shuffle(shufflable_exts, g);
 
-    for (size_t i = 0; i < indices.size(); ++i)
+    for (std::size_t i = 0; i < indices.size(); ++i)
     {
         exts[indices[i]] = shufflable_exts[i];
     }

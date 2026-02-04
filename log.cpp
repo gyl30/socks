@@ -1,18 +1,20 @@
+#include <chrono>
+#include <cstdint>
+#include <cstdlib>
+#include <memory>
 #include <string>
 #include <vector>
-#include <memory>
-#include <cstdlib>
 
-#include <spdlog/spdlog.h>
 #include <spdlog/sinks/rotating_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
+#include <spdlog/spdlog.h>
 
 #include "log.h"
 
 static void init_default_log(const std::string& filename);
 static void set_log_level();
-static uint32_t get_log_file_size();
-static uint32_t get_log_file_count();
+static std::uint32_t get_log_file_size();
+static std::uint32_t get_log_file_count();
 
 void init_log(const std::string& filename)
 {
@@ -20,6 +22,7 @@ void init_log(const std::string& filename)
 
     set_log_level();
 }
+
 void set_level(const std::string& level)
 {
     spdlog::set_level(spdlog::level::info);
@@ -40,6 +43,7 @@ void set_level(const std::string& level)
         spdlog::set_level(spdlog::level::trace);
     }
 }
+
 void shutdown_log()
 {
     spdlog::default_logger()->flush();
@@ -48,8 +52,8 @@ void shutdown_log()
 
 static void init_default_log(const std::string& filename)
 {
-    uint32_t file_size = get_log_file_size();
-    uint32_t file_count = get_log_file_count();
+    std::uint32_t file_size = get_log_file_size();
+    std::uint32_t file_count = get_log_file_count();
     std::vector<spdlog::sink_ptr> sinks;
     sinks.push_back(std::make_shared<spdlog::sinks::stdout_color_sink_mt>());
     sinks.push_back(std::make_shared<spdlog::sinks::rotating_file_sink_mt>(filename, file_size, file_count));
@@ -72,23 +76,25 @@ static void set_log_level()
         spdlog::set_level(spdlog::level::debug);
     }
 }
-static uint32_t get_log_file_size()
+
+static std::uint32_t get_log_file_size()
 {
     constexpr auto kFileSize = 50 * 1024 * 1024;
     char* file_size = getenv("LOG_FILE_SIZE");
     if (file_size != nullptr)
     {
-        return atoi(file_size);
+        return static_cast<std::uint32_t>(atoi(file_size));
     }
     return kFileSize;
 }
-static uint32_t get_log_file_count()
+
+static std::uint32_t get_log_file_count()
 {
     constexpr auto kFileCount = 5;
     char* file_count = getenv("LOG_FILE_COUNT");
     if (file_count != nullptr)
     {
-        return atoi(file_count);
+        return static_cast<std::uint32_t>(atoi(file_count));
     }
     return kFileCount;
 }

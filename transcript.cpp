@@ -1,6 +1,6 @@
+#include <cstdint>
 #include <memory>
 #include <vector>
-#include <cstdint>
 
 #include <openssl/evp.h>
 
@@ -9,7 +9,7 @@
 namespace reality
 {
 
-transcript::transcript() : md_(EVP_sha256()), ctx_(EVP_MD_CTX_new(), EVP_MD_CTX_free) { EVP_DigestInit_ex(ctx_.get(), md_, nullptr); }
+transcript::transcript() : md_(EVP_sha256()), ctx_(EVP_MD_CTX_new(), EVP_MD_CTX_free) { (void)EVP_DigestInit_ex(ctx_.get(), md_, nullptr); }
 
 void transcript::set_protocol_hash(const EVP_MD* new_md)
 {
@@ -19,23 +19,23 @@ void transcript::set_protocol_hash(const EVP_MD* new_md)
     }
     md_ = new_md;
     ctx_ = {EVP_MD_CTX_new(), EVP_MD_CTX_free};
-    EVP_DigestInit_ex(ctx_.get(), md_, nullptr);
-    EVP_DigestUpdate(ctx_.get(), buffer_.data(), buffer_.size());
+    (void)EVP_DigestInit_ex(ctx_.get(), md_, nullptr);
+    (void)EVP_DigestUpdate(ctx_.get(), buffer_.data(), buffer_.size());
 }
 
-void transcript::update(const std::vector<uint8_t>& data)
+void transcript::update(const std::vector<std::uint8_t>& data)
 {
-    EVP_DigestUpdate(ctx_.get(), data.data(), data.size());
+    (void)EVP_DigestUpdate(ctx_.get(), data.data(), data.size());
     buffer_.insert(buffer_.end(), data.begin(), data.end());
 }
 
-std::vector<uint8_t> transcript::finish() const
+std::vector<std::uint8_t> transcript::finish() const
 {
     const std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> c(EVP_MD_CTX_new(), EVP_MD_CTX_free);
-    EVP_MD_CTX_copy(c.get(), ctx_.get());
-    std::vector<uint8_t> h(EVP_MD_size(md_));
+    (void)EVP_MD_CTX_copy(c.get(), ctx_.get());
+    std::vector<std::uint8_t> h(EVP_MD_size(md_));
     unsigned int l;
-    EVP_DigestFinal_ex(c.get(), h.data(), &l);
+    (void)EVP_DigestFinal_ex(c.get(), h.data(), &l);
     return h;
 }
 
