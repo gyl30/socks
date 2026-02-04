@@ -18,13 +18,13 @@ namespace mux
 {
 
 remote_session::remote_session(std::shared_ptr<mux_connection> connection,
-                               uint32_t id,
+                               const uint32_t id,
                                const asio::any_io_executor& ex,
                                const connection_context& ctx)
     : id_(id), resolver_(ex), target_socket_(ex), connection_(std::move(connection)), recv_channel_(ex, 128)
 {
     ctx_ = ctx;
-    ctx_.stream_id = id;
+    ctx_.stream_id(id);
 }
 
 asio::awaitable<void> remote_session::start(const syn_payload& syn)
@@ -119,7 +119,7 @@ asio::awaitable<void> remote_session::upstream()
             LOG_CTX_WARN(ctx_, "{} failed to write to target {}", log_event::DATA_SEND, we.message());
             break;
         }
-        ctx_.rx_bytes += wn;
+        ctx_.add_rx_bytes(wn);
     }
     LOG_CTX_INFO(ctx_, "{} mux to target finished", log_event::DATA_SEND);
 }
@@ -144,7 +144,7 @@ asio::awaitable<void> remote_session::downstream()
             LOG_CTX_WARN(ctx_, "{} failed to write to mux", log_event::DATA_SEND);
             break;
         }
-        ctx_.tx_bytes += n;
+        ctx_.add_tx_bytes(n);
     }
     LOG_CTX_INFO(ctx_, "{} target to mux finished", log_event::DATA_RECV);
     co_await connection_->send_async(id_, CMD_FIN, {});
