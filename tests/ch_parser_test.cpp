@@ -1,5 +1,6 @@
-#include <vector>
 #include <string>
+#include <vector>
+#include <cstddef>
 #include <cstdint>
 
 #include <gtest/gtest.h>
@@ -11,8 +12,8 @@ using mux::ch_parser;
 class ClientHelloBuilder
 {
    public:
-    const std::vector<uint8_t>& get_buffer() const { return buffer; }
-    std::vector<uint8_t>& get_mutable_buffer() { return buffer; }
+    [[nodiscard]] const std::vector<uint8_t>& get_buffer() const { return buffer; }
+    [[nodiscard]] std::vector<uint8_t>& get_mutable_buffer() { return buffer; }
 
     ClientHelloBuilder()
     {

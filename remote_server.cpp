@@ -211,7 +211,7 @@ asio::awaitable<void> remote_server::handle(std::shared_ptr<asio::ip::tcp::socke
     const auto app_sec =
         reality::tls_key_schedule::derive_application_secrets(sh_res.hs_keys.master_secret, trans.finish(), sh_res.negotiated_md, ec);
     const size_t key_len = EVP_CIPHER_key_length(sh_res.cipher);
-    const size_t iv_len = 12;
+    constexpr size_t iv_len = 12;
     const auto c_app_keys = reality::tls_key_schedule::derive_traffic_keys(app_sec.first, ec, key_len, iv_len, sh_res.negotiated_md);
     const auto s_app_keys = reality::tls_key_schedule::derive_traffic_keys(app_sec.second, ec, key_len, iv_len, sh_res.negotiated_md);
 
@@ -499,7 +499,7 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::perform_hand
     const auto hs_keys = reality::tls_key_schedule::derive_handshake_keys(sh_shared, trans.finish(), md, ec);
 
     const size_t key_len = (cipher_suite == 0x1302) ? 32 : 16;
-    const size_t iv_len = 12;
+    constexpr size_t iv_len = 12;
 
     const auto c_hs_keys = reality::tls_key_schedule::derive_traffic_keys(hs_keys.client_handshake_traffic_secret, ec, key_len, iv_len, md);
     const auto s_hs_keys = reality::tls_key_schedule::derive_traffic_keys(hs_keys.server_handshake_traffic_secret, ec, key_len, iv_len, md);
@@ -687,7 +687,7 @@ asio::awaitable<void> remote_server::fallback_failed(const std::shared_ptr<asio:
 asio::awaitable<void> remote_server::handle_fallback(const std::shared_ptr<asio::ip::tcp::socket>& s,
                                                      const std::vector<uint8_t>& buf,
                                                      const connection_context& ctx,
-                                                     const std::string& sni)
+                                                     const std::string& sni) const
 {
     const auto fallback_target = find_fallback_target_by_sni(sni);
     if (fallback_target.first.empty())

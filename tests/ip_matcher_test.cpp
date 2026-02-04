@@ -1,10 +1,12 @@
 #include <cstdio>
-#include <vector>
 #include <string>
+#include <vector>
 #include <fstream>
 
 #include <asio.hpp>
 #include <gtest/gtest.h>
+#include <asio/error_code.hpp>
+#include <asio/ip/address.hpp>
 
 #include "ip_matcher.h"
 
@@ -25,6 +27,7 @@ class IpMatcherTest : public ::testing::Test
         f.close();
     }
 
+   protected:
     std::string rule_file_;
 };
 

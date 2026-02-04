@@ -141,13 +141,13 @@ int main(int argc, char** argv)
 
     asio::io_context& signal_ctx = pool.get_io_context();
     asio::signal_set signals(signal_ctx);
-    signals.add(SIGINT, ec);
+    (void)signals.add(SIGINT, ec);
     if (ec)
     {
         LOG_ERROR("fatal failed to register sigint error {}", ec.message());
         return 1;
     }
-    signals.add(SIGTERM, ec);
+    (void)signals.add(SIGTERM, ec);
     if (ec)
     {
         LOG_ERROR("fatal failed to register sigterm error {}", ec.message());

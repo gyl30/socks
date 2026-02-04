@@ -106,7 +106,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     asio::awaitable<void> handle_fallback(const std::shared_ptr<asio::ip::tcp::socket>& s,
                                           const std::vector<uint8_t>& buf,
                                           const connection_context& ctx,
-                                          const std::string& sni);
+                                          const std::string& sni) const;
 
    private:
     io_context_pool& pool_;

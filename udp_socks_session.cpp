@@ -184,8 +184,7 @@ asio::awaitable<void> udp_socks_session::udp_sock_to_stream(std::shared_ptr<mux_
             continue;
         }
 
-        const auto write_ec = co_await stream->async_write_some(buf.data(), n);
-        if (write_ec)
+        if (const auto write_ec = co_await stream->async_write_some(buf.data(), n))
         {
             LOG_CTX_ERROR(ctx_, "{} write to stream failed {}", log_event::SOCKS, write_ec.message());
             break;

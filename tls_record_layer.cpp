@@ -1,5 +1,16 @@
+#include <array>
+#include <vector>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <system_error>
+
+#include <openssl/evp.h>
 #include <openssl/rand.h>
 
+#include "crypto_util.h"
+#include "reality_core.h"
+#include "cipher_context.h"
 #include "tls_record_layer.h"
 
 namespace reality
@@ -9,9 +20,9 @@ void tls_record_layer::encrypt_record_append(const cipher_context& ctx,
                                              const EVP_CIPHER* cipher,
                                              const std::vector<uint8_t>& key,
                                              const std::vector<uint8_t>& iv,
-                                             uint64_t seq,
+                                             const uint64_t seq,
                                              const std::vector<uint8_t>& plaintext,
-                                             uint8_t content_type,
+                                             const uint8_t content_type,
                                              std::vector<uint8_t>& output_buffer,
                                              std::error_code& ec)
 {
@@ -33,7 +44,7 @@ void tls_record_layer::encrypt_record_append(const cipher_context& ctx,
             return;
         }
 
-        padding_len = r % 64;
+        padding_len = static_cast<size_t>(r % 64);
     }
 
     inner_plaintext.reserve(plaintext.size() + 1 + padding_len);
@@ -61,9 +72,9 @@ void tls_record_layer::encrypt_record_append(const cipher_context& ctx,
 std::vector<uint8_t> tls_record_layer::encrypt_record(const EVP_CIPHER* cipher,
                                                       const std::vector<uint8_t>& key,
                                                       const std::vector<uint8_t>& iv,
-                                                      uint64_t seq,
+                                                      const uint64_t seq,
                                                       const std::vector<uint8_t>& plaintext,
-                                                      uint8_t content_type,
+                                                      const uint8_t content_type,
                                                       std::error_code& ec)
 {
     const cipher_context ctx;
@@ -76,9 +87,9 @@ size_t tls_record_layer::decrypt_record(const cipher_context& ctx,
                                         const EVP_CIPHER* cipher,
                                         const std::vector<uint8_t>& key,
                                         const std::vector<uint8_t>& iv,
-                                        uint64_t seq,
-                                        std::span<const uint8_t> record_data,
-                                        std::span<uint8_t> output_buffer,
+                                        const uint64_t seq,
+                                        const std::span<const uint8_t> record_data,
+                                        const std::span<uint8_t> output_buffer,
                                         uint8_t& out_content_type,
                                         std::error_code& ec)
 {
@@ -124,7 +135,7 @@ size_t tls_record_layer::decrypt_record(const cipher_context& ctx,
 std::vector<uint8_t> tls_record_layer::decrypt_record(const EVP_CIPHER* cipher,
                                                       const std::vector<uint8_t>& key,
                                                       const std::vector<uint8_t>& iv,
-                                                      uint64_t seq,
+                                                      const uint64_t seq,
                                                       const std::vector<uint8_t>& ciphertext_with_header,
                                                       uint8_t& out_content_type,
                                                       std::error_code& ec)

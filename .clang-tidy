@@ -19,3 +19,5 @@ Checks: '-*,
   -concurrency-mt-unsafe,
   -misc-use-anonymous-namespace,
   '
+
+HeaderFilterRegex: '^(?!.*(third|build)/).*'

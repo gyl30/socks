@@ -1,12 +1,12 @@
 #include <span>
 #include <vector>
 #include <cstdint>
-
 #include <utility>
+
 #include <gtest/gtest.h>
 
-#include "mux_dispatcher.h"
 #include "mux_protocol.h"
+#include "mux_dispatcher.h"
 
 TEST(MuxDispatcherTest, PackAndOnData)
 {
@@ -16,7 +16,7 @@ TEST(MuxDispatcherTest, PackAndOnData)
     std::vector<uint8_t> received_payload;
 
     dispatcher.set_callback(
-        [&](mux::frame_header h, std::vector<uint8_t> p)
+        [&](const mux::frame_header h, std::vector<uint8_t> p)
         {
             received_header = h;
             received_payload = std::move(p);
@@ -26,7 +26,7 @@ TEST(MuxDispatcherTest, PackAndOnData)
     const uint32_t stream_id = 0x12345678;
     const uint8_t cmd = mux::CMD_DAT;
 
-    auto packed = mux::mux_dispatcher::pack(stream_id, cmd, original_payload);
+    const auto packed = mux::mux_dispatcher::pack(stream_id, cmd, original_payload);
 
     dispatcher.on_plaintext_data(std::span<const uint8_t>(packed.data(), 5));
     dispatcher.on_plaintext_data(std::span<const uint8_t>(packed.data() + 5, packed.size() - 5));

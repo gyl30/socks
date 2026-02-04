@@ -91,6 +91,11 @@ class local_client : public std::enable_shared_from_this<local_client>
         const std::vector<uint8_t>& verify_pub_key,
         std::error_code& ec);
 
+    [[nodiscard]] static bool process_certificate_verify(const std::vector<uint8_t>& msg_data,
+                                                         const std::vector<uint8_t>& verify_pub_key,
+                                                         const std::vector<uint8_t>& handshake_hash,
+                                                         std::error_code& ec);
+
     [[nodiscard]] static asio::awaitable<bool> send_client_finished(asio::ip::tcp::socket& socket,
                                                                     const std::pair<std::vector<uint8_t>, std::vector<uint8_t>>& c_hs_keys,
                                                                     const std::vector<uint8_t>& c_hs_secret,

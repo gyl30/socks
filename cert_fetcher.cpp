@@ -83,7 +83,7 @@ asio::awaitable<std::optional<fetch_result>> cert_fetcher::fetch(
 
 cert_fetcher::fetch_session::fetch_session(
     const asio::any_io_executor& ex, std::string host, const uint16_t port, std::string sni, const std::string& trace_id)
-    : socket_(ex), host_(std::move(host)), port_(port), sni_(std::move(sni))
+    : socket_(ex), host_(std::move(host)), port_(port), sni_(std::move(sni)), client_public_{}, client_private_{}
 {
     ctx_.trace_id(trace_id);
     ctx_.target_host(host_);
@@ -135,7 +135,7 @@ asio::awaitable<std::error_code> cert_fetcher::fetch_session::connect()
 
 asio::awaitable<std::error_code> cert_fetcher::fetch_session::perform_handshake_start()
 {
-    if (!crypto_util::generate_x25519_keypair(client_pub_, client_priv_))
+    if (!crypto_util::generate_x25519_keypair(client_public_, client_private_))
     {
         co_return asio::error::operation_aborted;
     }
@@ -151,7 +151,7 @@ asio::awaitable<std::error_code> cert_fetcher::fetch_session::perform_handshake_
     }
 
     auto spec = FingerprintFactory::Get(FingerprintType::Chrome_120);
-    auto ch = ClientHelloBuilder::build(spec, session_id, client_random, std::vector<uint8_t>(client_pub_, client_pub_ + 32), sni_);
+    auto ch = ClientHelloBuilder::build(spec, session_id, client_random, std::vector<uint8_t>(client_public_, client_public_ + 32), sni_);
 
     auto ch_rec = write_record_header(CONTENT_TYPE_HANDSHAKE, static_cast<uint16_t>(ch.size()));
     ch_rec.insert(ch_rec.end(), ch.begin(), ch.end());
@@ -310,7 +310,7 @@ std::error_code cert_fetcher::fetch_session::process_server_hello(const std::vec
 
     auto server_pub = extract_server_public_key(sh_real);
     std::error_code ec;
-    auto shared = crypto_util::x25519_derive(std::vector<uint8_t>(client_priv_, client_priv_ + 32), server_pub, ec);
+    auto shared = crypto_util::x25519_derive(std::vector<uint8_t>(client_private_, client_private_ + 32), server_pub, ec);
     if (ec)
     {
         LOG_CTX_ERROR(ctx_, "{} x25519 derive failed", mux::log_event::CERT);

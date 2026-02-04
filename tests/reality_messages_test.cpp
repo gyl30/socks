@@ -1,7 +1,7 @@
 #include <array>
-#include <vector>
-#include <string>
 #include <cstdio>
+#include <string>
+#include <vector>
 #include <cstdint>
 #include <iostream>
 #include <system_error>
@@ -13,6 +13,7 @@
 #include "crypto_util.h"
 #include "reality_core.h"
 #include "reality_messages.h"
+#include "reality_fingerprint.h"
 
 using reality::message_builder;
 namespace tls_consts = reality::tls_consts;
@@ -35,22 +36,22 @@ TEST(RealityMessagesTest, ServerHelloRoundTrip)
     const uint16_t cipher = 0x1301;
     const std::vector<uint8_t> pubkey(32, 0xCC);
 
-    auto sh = reality::construct_server_hello(random, session_id, cipher, pubkey);
+    const auto sh = reality::construct_server_hello(random, session_id, cipher, pubkey);
 
-    auto extracted_cipher = reality::extract_cipher_suite_from_server_hello(sh);
+    const auto extracted_cipher = reality::extract_cipher_suite_from_server_hello(sh);
     ASSERT_TRUE(extracted_cipher.has_value());
     EXPECT_EQ(*extracted_cipher, cipher);
 
-    auto extracted_pub = reality::extract_server_public_key(sh);
+    const auto extracted_pub = reality::extract_server_public_key(sh);
     EXPECT_EQ(extracted_pub, pubkey);
 }
 
 TEST(RealityMessagesTest, EncryptedExtensionsALPN)
 {
     const std::string alpn = "h2";
-    auto msg = reality::construct_encrypted_extensions(alpn);
+    const auto msg = reality::construct_encrypted_extensions(alpn);
 
-    auto extracted_alpn = reality::extract_alpn_from_encrypted_extensions(msg);
+    const auto extracted_alpn = reality::extract_alpn_from_encrypted_extensions(msg);
     if (!extracted_alpn.has_value())
     {
         std::cout << "Msg Hex: ";
@@ -66,8 +67,8 @@ TEST(RealityMessagesTest, EncryptedExtensionsALPN)
 
 TEST(RealityMessagesTest, EncryptedExtensionsNoALPN)
 {
-    auto msg = reality::construct_encrypted_extensions("");
-    auto extracted_alpn = reality::extract_alpn_from_encrypted_extensions(msg);
+    const auto msg = reality::construct_encrypted_extensions("");
+    const auto extracted_alpn = reality::extract_alpn_from_encrypted_extensions(msg);
 
     EXPECT_FALSE(extracted_alpn.has_value());
 }
@@ -81,13 +82,13 @@ TEST(RealityMessagesTest, ServerHelloInvalid)
 
 TEST(RealityMessagesTest, ClientHelloBuilderFirefox)
 {
-    auto spec = reality::FingerprintFactory::Get(reality::FingerprintType::Firefox_120);
+    const auto spec = reality::FingerprintFactory::Get(reality::FingerprintType::Firefox_120);
     const std::vector<uint8_t> session_id(32, 0xEE);
     const std::vector<uint8_t> random(32, 0xAA);
     const std::vector<uint8_t> pubkey(32, 0xBB);
     const std::string host = "example.com";
 
-    auto ch = reality::ClientHelloBuilder::build(spec, session_id, random, pubkey, host);
+    const auto ch = reality::ClientHelloBuilder::build(spec, session_id, random, pubkey, host);
     ASSERT_GT(ch.size(), 100);
 
     EXPECT_EQ(ch[0], 0x01);
@@ -95,13 +96,13 @@ TEST(RealityMessagesTest, ClientHelloBuilderFirefox)
 
 TEST(RealityMessagesTest, ClientHelloBuilderChrome)
 {
-    auto spec = reality::FingerprintFactory::Get(reality::FingerprintType::Chrome_120);
+    const auto spec = reality::FingerprintFactory::Get(reality::FingerprintType::Chrome_120);
     const std::vector<uint8_t> session_id(32, 0xEE);
     const std::vector<uint8_t> random(32, 0xAA);
     const std::vector<uint8_t> pubkey(32, 0xBB);
     const std::string host = "google.com";
 
-    auto ch = reality::ClientHelloBuilder::build(spec, session_id, random, pubkey, host);
+    const auto ch = reality::ClientHelloBuilder::build(spec, session_id, random, pubkey, host);
     ASSERT_GT(ch.size(), 100);
     EXPECT_EQ(ch[0], 0x01);
 }
@@ -131,10 +132,10 @@ TEST(RealityMessagesTest, ExtractServerPublicKeyNoKeyShare)
     record.push_back(0x16);
     record.push_back(0x03);
     record.push_back(0x03);
-    message_builder::push_u16(record, hello.size());
+    message_builder::push_u16(record, static_cast<uint16_t>(hello.size()));
     message_builder::push_bytes(record, hello);
 
-    auto key = reality::extract_server_public_key(record);
+    const auto key = reality::extract_server_public_key(record);
     EXPECT_TRUE(key.empty());
 }
 
@@ -157,7 +158,7 @@ TEST(RealityMessagesTest, ExtractServerPublicKeyMalformedKeyShare)
     message_builder::push_u16(extensions, 2);
     message_builder::push_u16(extensions, 0x001d);
 
-    message_builder::push_u16(hello, extensions.size());
+    message_builder::push_u16(hello, static_cast<uint16_t>(extensions.size()));
     message_builder::push_bytes(hello, extensions);
 
     const size_t total_len = hello.size() - 4;
@@ -169,10 +170,10 @@ TEST(RealityMessagesTest, ExtractServerPublicKeyMalformedKeyShare)
     record.push_back(0x16);
     record.push_back(0x03);
     record.push_back(0x03);
-    message_builder::push_u16(record, hello.size());
+    message_builder::push_u16(record, static_cast<uint16_t>(hello.size()));
     message_builder::push_bytes(record, hello);
 
-    auto key = reality::extract_server_public_key(record);
+    const auto key = reality::extract_server_public_key(record);
     EXPECT_TRUE(key.empty());
 }
 
@@ -214,12 +215,12 @@ TEST(RealityMessagesTest, CertificateVerifyParseAndVerify)
     ASSERT_TRUE(pub_key);
 
     const std::vector<uint8_t> handshake_hash(32, 0x11);
-    auto cv = reality::construct_certificate_verify(priv_key.get(), handshake_hash);
-    auto info = reality::parse_certificate_verify(cv);
+    const auto cv = reality::construct_certificate_verify(priv_key.get(), handshake_hash);
+    const auto info = reality::parse_certificate_verify(cv);
     ASSERT_TRUE(info.has_value());
 
     std::error_code ec;
-    if (info)
+    if (info.has_value())
     {
         EXPECT_EQ(info->scheme, 0x0807);
         EXPECT_TRUE(reality::crypto_util::verify_tls13_signature(pub_key.get(), handshake_hash, info->signature, ec));

@@ -22,6 +22,8 @@
 #include "reality_core.h"
 #include "mux_connection.h"
 
+#include <ranges>
+
 namespace mux
 {
 
@@ -124,7 +126,7 @@ void mux_connection::stop()
         streams_to_clear = std::move(streams_);
     }
 
-    for (auto& [id, stream] : streams_to_clear)
+    for (auto& stream : streams_to_clear | std::views::values)
     {
         if (stream != nullptr)
         {
