@@ -1,13 +1,24 @@
+#include <chrono>
+#include <memory>
+#include <string>
 #include <thread>
 #include <vector>
-#include <string>
+#include <cstdint>
+#include <cstring>
 #include <functional>
+#include <system_error>
 
+#include <asio/read.hpp>
 #include <gtest/gtest.h>
+#include <asio/write.hpp>
+#include <asio/buffer.hpp>
+#include <asio/ip/tcp.hpp>
 
+#include "config.h"
 #include "crypto_util.h"
-#include "local_client.h"
 #include "context_pool.h"
+#include "local_client.h"
+#include "reality_core.h"
 #include "remote_server.h"
 
 class LimitsTest : public ::testing::Test
@@ -15,27 +26,28 @@ class LimitsTest : public ::testing::Test
    protected:
     void SetUp() override
     {
-        uint8_t pub[32], priv[32];
+        uint8_t pub[32];
+        uint8_t priv[32];
         (void)reality::crypto_util::generate_x25519_keypair(pub, priv);
-        server_priv_key = reality::crypto_util::bytes_to_hex(std::vector<uint8_t>(priv, priv + 32));
-        client_pub_key = reality::crypto_util::bytes_to_hex(std::vector<uint8_t>(pub, pub + 32));
+        server_priv_key_ = reality::crypto_util::bytes_to_hex(std::vector<uint8_t>(priv, priv + 32));
+        client_pub_key_ = reality::crypto_util::bytes_to_hex(std::vector<uint8_t>(pub, pub + 32));
         std::error_code ec;
-        auto verify_pub = reality::crypto_util::extract_ed25519_public_key(std::vector<uint8_t>(priv, priv + 32), ec);
+        const auto verify_pub = reality::crypto_util::extract_ed25519_public_key(std::vector<uint8_t>(priv, priv + 32), ec);
         ASSERT_FALSE(ec);
-        verify_pub_key = reality::crypto_util::bytes_to_hex(verify_pub);
-        short_id = "0102030405060708";
+        verify_pub_key_ = reality::crypto_util::bytes_to_hex(verify_pub);
+        short_id_ = "0102030405060708";
     }
 
-    std::string server_priv_key;
-    std::string client_pub_key;
-    std::string verify_pub_key;
-    std::string short_id;
+    std::string server_priv_key_;
+    std::string client_pub_key_;
+    std::string verify_pub_key_;
+    std::string short_id_;
 };
 
 TEST_F(LimitsTest, ContextPoolInvalidSize)
 {
     std::error_code ec;
-    mux::io_context_pool pool(0, ec);
+    const mux::io_context_pool pool(0, ec);
     EXPECT_EQ(ec, std::errc::invalid_argument);
 }
 
@@ -48,9 +60,9 @@ TEST_F(LimitsTest, ConnectionPoolCapacity)
 
     std::thread pool_thread([&pool] { pool.run(); });
 
-    uint16_t server_port = 28844;
-    uint16_t local_socks_port = 21080;
-    std::string sni = "www.google.com";
+    const uint16_t server_port = 28844;
+    const uint16_t local_socks_port = 21080;
+    const std::string sni = "www.google.com";
 
     mux::config::limits_t limits;
     limits.max_connections = 2;
@@ -60,15 +72,15 @@ TEST_F(LimitsTest, ConnectionPoolCapacity)
     timeouts.write = 10;
 
     auto server = std::make_shared<mux::remote_server>(
-        pool, server_port, std::vector<mux::config::fallback_entry>{}, server_priv_key, short_id, timeouts, limits);
+        pool, server_port, std::vector<mux::config::fallback_entry>{}, server_priv_key_, short_id_, timeouts, limits);
 
-    std::vector<uint8_t> dummy_cert = {0x0b, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00};
-    reality::server_fingerprint dummy_fp;
+    const std::vector<uint8_t> dummy_cert = {0x0b, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00};
+    const reality::server_fingerprint dummy_fp{};
     server->cert_manager().set_certificate(sni, dummy_cert, dummy_fp);
 
     server->start();
 
-    uint16_t target_port = 30080;
+    const uint16_t target_port = 30080;
     asio::ip::tcp::acceptor target_acceptor(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), target_port));
     std::vector<std::shared_ptr<asio::ip::tcp::socket>> target_sockets;
 
@@ -76,9 +88,9 @@ TEST_F(LimitsTest, ConnectionPoolCapacity)
     {
         auto sock = std::make_shared<asio::ip::tcp::socket>(pool.get_io_context());
         target_acceptor.async_accept(*sock,
-                                     [&](std::error_code ec)
+                                     [&, sock](const std::error_code ec_accept)
                                      {
-                                         if (!ec)
+                                         if (!ec_accept)
                                          {
                                              target_sockets.push_back(sock);
                                              accept_target();
@@ -91,10 +103,10 @@ TEST_F(LimitsTest, ConnectionPoolCapacity)
                                                       "::1",
                                                       std::to_string(server_port),
                                                       local_socks_port,
-                                                      client_pub_key,
+                                                      client_pub_key_,
                                                       sni,
-                                                      short_id,
-                                                      verify_pub_key,
+                                                      short_id_,
+                                                      verify_pub_key_,
                                                       timeouts,
                                                       mux::config::socks_t{},
                                                       limits);
@@ -102,35 +114,43 @@ TEST_F(LimitsTest, ConnectionPoolCapacity)
 
     std::this_thread::sleep_for(std::chrono::seconds(1));
 
-    auto connect_socks = [&](int id) -> bool
+    auto connect_socks = [&]([[maybe_unused]] int id) -> bool
     {
         asio::ip::tcp::socket sock(pool.get_io_context());
-        asio::ip::tcp::endpoint ep(asio::ip::make_address("127.0.0.1"), local_socks_port);
+        const asio::ip::tcp::endpoint ep(asio::ip::make_address("127.0.0.1"), local_socks_port);
         std::error_code cec;
         sock.connect(ep, cec);
         if (cec)
+        {
             return false;
+        }
 
-        uint8_t ver_method[] = {0x05, 0x01, 0x00};
-        asio::write(sock, asio::buffer(ver_method), cec);
+        const uint8_t ver_method[] = {0x05, 0x01, 0x00};
+        (void)asio::write(sock, asio::buffer(ver_method), cec);
         if (cec)
+        {
             return false;
+        }
 
         uint8_t resp[2];
-        asio::read(sock, asio::buffer(resp), cec);
+        (void)asio::read(sock, asio::buffer(resp), cec);
         if (cec || resp[1] != 0x00)
+        {
             return false;
+        }
 
-        uint16_t port_n = htons(target_port);
+        const uint16_t port_n = htons(target_port);
         uint8_t req[10] = {0x05, 0x01, 0x00, 0x01, 127, 0, 0, 1};
-        memcpy(req + 8, &port_n, 2);
+        std::memcpy(req + 8, &port_n, 2);
 
-        asio::write(sock, asio::buffer(req, 10), cec);
+        (void)asio::write(sock, asio::buffer(req, 10), cec);
         if (cec)
+        {
             return false;
+        }
 
         uint8_t reply[10];
-        asio::read(sock, asio::buffer(reply), cec);
+        (void)asio::read(sock, asio::buffer(reply), cec);
 
         if (!cec && reply[1] == 0x00)
         {

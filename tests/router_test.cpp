@@ -3,9 +3,16 @@
 
 #include <asio.hpp>
 #include <gtest/gtest.h>
+#include <asio/co_spawn.hpp>
+#include <asio/detached.hpp>
+#include <asio/awaitable.hpp>
+#include <asio/this_coro.hpp>
+#include <asio/io_context.hpp>
 
 #include "router.h"
+#include "ip_matcher.h"
 #include "log_context.h"
+#include "domain_matcher.h"
 
 class TestRouter : public mux::router
 {
@@ -45,7 +52,7 @@ class RouterTest : public ::testing::Test
 
     mux::route_type run_decision(const std::string& host)
     {
-        mux::route_type result;
+        mux::route_type result = mux::route_type::direct;
         asio::io_context ctx;
         mux::connection_context conn_ctx;
 
@@ -58,6 +65,7 @@ class RouterTest : public ::testing::Test
         return result;
     }
 
+   protected:
     std::shared_ptr<TestRouter> test_router_;
 };
 

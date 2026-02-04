@@ -1,3 +1,9 @@
+#include <memory>
+#include <vector>
+#include <cstdint>
+
+#include <openssl/evp.h>
+
 #include "transcript.h"
 
 namespace reality

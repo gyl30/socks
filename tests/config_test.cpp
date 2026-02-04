@@ -9,24 +9,26 @@
 class ConfigTest : public ::testing::Test
 {
    protected:
-    void SetUp() override { tmp_file = "test_config.json"; }
+    void SetUp() override { tmp_file_ = "test_config.json"; }
 
-    void TearDown() override { std::remove(tmp_file.c_str()); }
+    void TearDown() override { std::remove(tmp_file_.c_str()); }
 
-    void write_file(const std::string& content)
+    void write_config_file(const std::string& content)
     {
-        std::ofstream out(tmp_file);
+        std::ofstream out(tmp_file_);
         out << content;
         out.close();
     }
 
-   protected:
-    std::string tmp_file;
+    const std::string& tmp_file() const { return tmp_file_; }
+
+   private:
+    std::string tmp_file_;
 };
 
 TEST_F(ConfigTest, DefaultConfigValid)
 {
-    auto json = mux::dump_default_config();
+    const auto json = mux::dump_default_config();
     ASSERT_FALSE(json.empty());
 
     EXPECT_NE(json.find("\"mode\""), std::string::npos);
@@ -50,11 +52,11 @@ TEST_F(ConfigTest, ParseValues)
             "sni": "google.com"
         }
     })";
-    write_file(content);
+    write_config_file(content);
 
-    auto cfg_opt = mux::parse_config(tmp_file);
+    const auto cfg_opt = mux::parse_config(tmp_file());
     ASSERT_TRUE(cfg_opt.has_value());
-    if (cfg_opt)
+    if (cfg_opt.has_value())
     {
         const auto& cfg = *cfg_opt;
 
@@ -70,13 +72,13 @@ TEST_F(ConfigTest, ParseValues)
 
 TEST_F(ConfigTest, MissingFile)
 {
-    auto cfg = mux::parse_config("non_existent_file.json");
+    const auto cfg = mux::parse_config("non_existent_file.json");
     EXPECT_FALSE(cfg.has_value());
 }
 
 TEST_F(ConfigTest, InvalidJson)
 {
-    write_file("{ invalid_json }");
-    auto cfg = mux::parse_config(tmp_file);
+    write_config_file("{ invalid_json }");
+    const auto cfg = mux::parse_config(tmp_file());
     EXPECT_FALSE(cfg.has_value());
 }
