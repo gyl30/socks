@@ -2,18 +2,26 @@
 #define REMOTE_UDP_SESSION_H
 
 #include <chrono>
+#include <cstdint>
 #include <memory>
 #include <vector>
-#include <cstdint>
 
-#include <asio.hpp>
+#include <asio/any_io_executor.hpp>
+#include <asio/awaitable.hpp>
+#include <asio/experimental/concurrent_channel.hpp>
+#include <asio/ip/tcp.hpp>
+#include <asio/ip/udp.hpp>
+#include <asio/steady_timer.hpp>
 
 #include "protocol.h"
 #include "mux_tunnel.h"
 #include "log_context.h"
+#include "mux_stream_interface.h"
 
 namespace mux
 {
+
+class mux_connection;
 
 class remote_udp_session : public mux_stream_interface, public std::enable_shared_from_this<remote_udp_session>
 {

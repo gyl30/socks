@@ -1,19 +1,20 @@
-#include <span>
+#include <algorithm>
 #include <array>
-#include <string>
-#include <vector>
 #include <cstddef>
 #include <cstdint>
 #include <iomanip>
+#include <span>
 #include <sstream>
-#include <algorithm>
+#include <string>
 #include <system_error>
+#include <utility>
+#include <vector>
 
+#include <openssl/crypto.h>
 #include <openssl/evp.h>
 #include <openssl/kdf.h>
 #include <openssl/rand.h>
 #include <openssl/x509.h>
-#include <openssl/crypto.h>
 
 #include "log.h"
 #include "crypto_util.h"
@@ -45,14 +46,14 @@ std::vector<uint8_t> crypto_util::hex_to_bytes(const std::string& hex)
     return result;
 }
 
-uint16_t crypto_util::random_grease()
+std::uint16_t crypto_util::random_grease()
 {
     uint8_t idx = 0;
     if (RAND_bytes(&idx, 1) != 1)
     {
         idx = 0;
     }
-    static constexpr std::array<uint16_t, 16> GREASE_VALUES = {
+    static constexpr std::array<std::uint16_t, 16> GREASE_VALUES = {
         0x0a0a, 0x1a1a, 0x2a2a, 0x3a3a, 0x4a4a, 0x5a5a, 0x6a6a, 0x7a7a, 0x8a8a, 0x9a9a, 0xaaaa, 0xbaba, 0xcaca, 0xdada, 0xeaea, 0xfafa};
 
     return GREASE_VALUES[idx % GREASE_VALUES.size()];
@@ -357,7 +358,7 @@ void crypto_util::aead_encrypt_append(const cipher_context& ctx,
                                       const std::vector<uint8_t>& key,
                                       const std::vector<uint8_t>& nonce,
                                       const std::vector<uint8_t>& plaintext,
-                                      const std::span<const uint8_t> aad,
+                                      std::span<const uint8_t> aad,
                                       std::vector<uint8_t>& output_buffer,
                                       std::error_code& ec)
 {
@@ -375,13 +376,8 @@ void crypto_util::aead_encrypt_append(const cipher_context& ctx,
     int out_len = 0;
     int len = 0;
 
-    const size_t current_size = output_buffer.size();
-    const size_t required_size = current_size + plaintext.size() + AEAD_TAG_SIZE;
-    if (output_buffer.capacity() < required_size)
-    {
-        output_buffer.reserve(std::max(output_buffer.capacity() * 2, required_size));
-    }
-    output_buffer.resize(required_size);
+    size_t current_size = output_buffer.size();
+    output_buffer.resize(current_size + plaintext.size() + AEAD_TAG_SIZE);
     uint8_t* out_ptr = output_buffer.data() + current_size;
 
     if (!aad.empty())
@@ -396,7 +392,7 @@ void crypto_util::aead_encrypt_append(const cipher_context& ctx,
 
     EVP_CIPHER_CTX_ctrl(ctx.get(), EVP_CTRL_GCM_GET_TAG, AEAD_TAG_SIZE, out_ptr + out_len + final_len);
 
-    output_buffer.resize(current_size + static_cast<size_t>(out_len) + static_cast<size_t>(final_len) + AEAD_TAG_SIZE);
+    output_buffer.resize(current_size + out_len + final_len + AEAD_TAG_SIZE);
     ec.clear();
 }
 

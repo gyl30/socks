@@ -2,7 +2,6 @@
 #define DOMAIN_MATCHER_H
 
 #include <string>
-#include <algorithm>
 #include <unordered_set>
 
 namespace mux
@@ -17,7 +16,7 @@ class domain_matcher
 
     void add(std::string domain);
 
-    bool match(std::string domain) const;
+    [[nodiscard]] bool match(std::string domain) const;
 
    private:
     std::unordered_set<std::string> domains_;

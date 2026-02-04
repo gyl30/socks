@@ -1,10 +1,10 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-#include <string>
-#include <vector>
 #include <cstdint>
 #include <optional>
+#include <string>
+#include <vector>
 
 namespace mux
 {
@@ -22,19 +22,19 @@ struct config
     struct inbound_t
     {
         std::string host = "0.0.0.0";
-        uint16_t port = 8844;
+        std::uint16_t port = 8844;
     } inbound;
 
     struct outbound_t
     {
         std::string host = "0.0.0.0";
-        uint16_t port = 8844;
+        std::uint16_t port = 8844;
     } outbound;
 
     struct socks_t
     {
         std::string host = "127.0.0.1";
-        uint16_t port = 1080;
+        std::uint16_t port = 1080;
         bool auth = false;
         std::string username;
         std::string password;
@@ -50,15 +50,15 @@ struct config
 
     struct timeout_t
     {
-        uint32_t read = 100;
-        uint32_t write = 100;
-        uint32_t idle = 300;
+        std::uint32_t read = 100;
+        std::uint32_t write = 100;
+        std::uint32_t idle = 300;
     } timeout;
 
     struct limits_t
     {
-        uint32_t max_connections = 5;
-        uint64_t max_buffer = 10 * 1024 * 1024;
+        std::uint32_t max_connections = 5;
+        std::uint64_t max_buffer = 10 * 1024 * 1024;
     } limits;
 
     struct reality_t

@@ -1,20 +1,19 @@
 #ifndef UPSTREAM_H
 #define UPSTREAM_H
 
+#include <cstdint>
 #include <memory>
 #include <string>
-#include <vector>
-#include <cstddef>
-#include <utility>
 #include <system_error>
+#include <utility>
+#include <vector>
 
-#include <asio.hpp>
+#include <asio/any_io_executor.hpp>
+#include <asio/awaitable.hpp>
+#include <asio/ip/tcp.hpp>
 
-#include "log.h"
-#include "protocol.h"
-#include "mux_tunnel.h"
 #include "log_context.h"
-#include "mux_protocol.h"
+#include "mux_tunnel.h"
 
 namespace mux
 {

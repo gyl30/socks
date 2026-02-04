@@ -1,29 +1,44 @@
-#include <ctime>
-#include <mutex>
+#include <algorithm>
 #include <atomic>
+#include <charconv>
 #include <chrono>
-#include <memory>
-#include <random>
-#include <string>
-#include <vector>
 #include <cstdint>
 #include <cstring>
-#include <utility>
-#include <charconv>
-#include <algorithm>
+#include <ctime>
+#include <memory>
+#include <mutex>
+#include <random>
+#include <string>
 #include <system_error>
+#include <utility>
+#include <vector>
 
-#include <asio.hpp>
+#include <asio/as_tuple.hpp>
+#include <asio/buffer.hpp>
+#include <asio/co_spawn.hpp>
+#include <asio/detached.hpp>
+#include <asio/error.hpp>
 #include <asio/experimental/awaitable_operators.hpp>
+#include <asio/read.hpp>
+#include <asio/use_awaitable.hpp>
+#include <asio/write.hpp>
+
+#include <openssl/rand.h>
 
 #include "log.h"
+#include "config.h"
 #include "protocol.h"
 #include "ch_parser.h"
+#include "constants.h"
+#include "mux_codec.h"
 #include "mux_tunnel.h"
+#include "crypto_util.h"
 #include "log_context.h"
+#include "mux_protocol.h"
 #include "reality_auth.h"
 #include "remote_server.h"
 #include "remote_session.h"
+#include "reality_engine.h"
 #include "remote_udp_session.h"
 
 namespace mux
@@ -31,6 +46,7 @@ namespace mux
 
 namespace
 {
+
 bool parse_hex_to_bytes(const std::string& hex, std::vector<uint8_t>& out, const size_t max_len, const char* label)
 {
     out.clear();
@@ -56,6 +72,7 @@ bool parse_hex_to_bytes(const std::string& hex, std::vector<uint8_t>& out, const
     }
     return true;
 }
+
 }    // namespace
 
 remote_server::remote_server(io_context_pool& pool,
@@ -143,6 +160,64 @@ asio::awaitable<void> remote_server::accept_loop()
     }
 }
 
+asio::awaitable<remote_server::server_handshake_res> remote_server::negotiate_reality(std::shared_ptr<asio::ip::tcp::socket> s,
+                                                                                      const connection_context& ctx,
+                                                                                      std::vector<uint8_t>& initial_buf)
+{
+    const auto ok = co_await read_initial_and_validate(s, ctx, initial_buf);
+
+    std::string client_sni;
+    client_hello_info info;
+    if (!initial_buf.empty())
+    {
+        info = ch_parser::parse(initial_buf);
+        client_sni = info.sni;
+    }
+
+    if (!ok)
+    {
+        co_await handle_fallback(s, initial_buf, ctx, client_sni);
+        co_return server_handshake_res{.ok = false};
+    }
+
+    const auto [auth_ok, auth_key] = authenticate_client(info, initial_buf, ctx);
+    if (!auth_ok)
+    {
+        LOG_CTX_WARN(ctx, "{} auth failed sni {}", log_event::AUTH, client_sni);
+        co_await handle_fallback(s, initial_buf, ctx, client_sni);
+        co_return server_handshake_res{.ok = false};
+    }
+
+    LOG_CTX_INFO(ctx, "{} authorized sni {}", log_event::AUTH, info.sni);
+    reality::transcript trans;
+
+    if (initial_buf.size() > 5)
+    {
+        trans.update(std::vector<uint8_t>(initial_buf.begin() + 5, initial_buf.end()));
+    }
+    else
+    {
+        LOG_CTX_ERROR(ctx, "{} buffer too short", log_event::HANDSHAKE);
+        co_return server_handshake_res{.ok = false};
+    }
+
+    std::error_code ec;
+    auto sh_res = co_await perform_handshake_response(s, info, trans, auth_key, ctx, ec);
+    if (!sh_res.ok)
+    {
+        LOG_CTX_ERROR(ctx, "{} response error {}", log_event::HANDSHAKE, ec.message());
+        co_return server_handshake_res{.ok = false};
+    }
+
+    if (!co_await verify_client_finished(s, sh_res.c_hs_keys, sh_res.hs_keys, trans, sh_res.cipher, sh_res.negotiated_md, ctx, ec))
+    {
+        co_return server_handshake_res{.ok = false};
+    }
+
+    sh_res.handshake_hash = trans.finish();
+    co_return sh_res;
+}
+
 asio::awaitable<void> remote_server::handle(std::shared_ptr<asio::ip::tcp::socket> s, const uint32_t conn_id)
 {
     connection_context ctx;
@@ -157,59 +232,16 @@ asio::awaitable<void> remote_server::handle(std::shared_ptr<asio::ip::tcp::socke
 
     LOG_CTX_INFO(ctx, "{} accepted {}", log_event::CONN_INIT, ctx.connection_info());
 
-    std::vector<uint8_t> buf;
-    const auto ok = co_await read_initial_and_validate(s, ctx, buf);
-
-    std::string client_sni;
-    client_hello_info info;
-    if (!buf.empty())
+    std::vector<uint8_t> initial_buf;
+    auto sh_res = co_await negotiate_reality(s, ctx, initial_buf);
+    if (!sh_res.ok)
     {
-        info = ch_parser::parse(buf);
-        client_sni = info.sni;
-    }
-
-    if (!ok)
-    {
-        co_await handle_fallback(s, buf, ctx, client_sni);
-        co_return;
-    }
-
-    const auto [auth_ok, auth_key] = authenticate_client(info, buf, ctx);
-    if (!auth_ok)
-    {
-        LOG_CTX_WARN(ctx, "{} auth failed sni {}", log_event::AUTH, client_sni);
-        co_await handle_fallback(s, buf, ctx, client_sni);
-        co_return;
-    }
-
-    LOG_CTX_INFO(ctx, "{} authorized sni {}", log_event::AUTH, info.sni);
-    reality::transcript trans;
-
-    if (buf.size() > 5)
-    {
-        trans.update(std::vector<uint8_t>(buf.begin() + 5, buf.end()));
-    }
-    else
-    {
-        LOG_CTX_ERROR(ctx, "{} buffer too short", log_event::HANDSHAKE);
         co_return;
     }
 
     std::error_code ec;
-    const auto sh_res = co_await perform_handshake_response(s, info, trans, auth_key, ctx, ec);
-    if (!sh_res.ok)
-    {
-        LOG_CTX_ERROR(ctx, "{} response error {}", log_event::HANDSHAKE, ec.message());
-        co_return;
-    }
-
-    if (!co_await verify_client_finished(s, sh_res.c_hs_keys, sh_res.hs_keys, trans, sh_res.cipher, sh_res.negotiated_md, ctx, ec))
-    {
-        co_return;
-    }
-
     const auto app_sec =
-        reality::tls_key_schedule::derive_application_secrets(sh_res.hs_keys.master_secret, trans.finish(), sh_res.negotiated_md, ec);
+        reality::tls_key_schedule::derive_application_secrets(sh_res.hs_keys.master_secret, sh_res.handshake_hash, sh_res.negotiated_md, ec);
     const size_t key_len = EVP_CIPHER_key_length(sh_res.cipher);
     constexpr size_t iv_len = 12;
     const auto c_app_keys = reality::tls_key_schedule::derive_traffic_keys(app_sec.first, ec, key_len, iv_len, sh_res.negotiated_md);
@@ -226,6 +258,7 @@ asio::awaitable<void> remote_server::handle(std::shared_ptr<asio::ip::tcp::socke
     if (over_limit)
     {
         LOG_CTX_WARN(ctx, "{} connection limit reached {} rejecting", log_event::CONN_CLOSE, limits_config_.max_connections);
+        client_hello_info info = ch_parser::parse(initial_buf);
         co_await handle_fallback(s, {}, ctx, info.sni);
         co_return;
     }

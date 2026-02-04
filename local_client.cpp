@@ -1,36 +1,43 @@
+#include <algorithm>
 #include <array>
-#include <mutex>
 #include <chrono>
-#include <memory>
-#include <string>
-#include <vector>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
-#include <cstdint>
-#include <utility>
+#include <memory>
+#include <mutex>
+#include <string>
 #include <system_error>
+#include <utility>
+#include <vector>
 
-#include <asio.hpp>
-#include <asio/read.hpp>
-#include <openssl/evp.h>
-#include <asio/write.hpp>
-#include <openssl/rand.h>
-#include <openssl/crypto.h>
 #include <asio/as_tuple.hpp>
+#include <asio/buffer.hpp>
 #include <asio/co_spawn.hpp>
+#include <asio/connect.hpp>
 #include <asio/detached.hpp>
+#include <asio/error.hpp>
+#include <asio/experimental/awaitable_operators.hpp>
+#include <asio/ip/tcp.hpp>
+#include <asio/read.hpp>
 #include <asio/steady_timer.hpp>
 #include <asio/use_awaitable.hpp>
-#include <asio/experimental/awaitable_operators.hpp>
+#include <asio/write.hpp>
+
+#include <openssl/crypto.h>
+#include <openssl/evp.h>
+#include <openssl/rand.h>
 
 #include "log.h"
 #include "router.h"
+#include "config.h"
 #include "constants.h"
 #include "mux_tunnel.h"
 #include "log_context.h"
 #include "context_pool.h"
 #include "local_client.h"
 #include "reality_auth.h"
+#include "socks_session.h"
 #include "reality_engine.h"
 #include "reality_messages.h"
 #include "tls_key_schedule.h"
@@ -42,6 +49,7 @@ namespace mux
 
 namespace
 {
+
 bool parse_hex_to_bytes(const std::string& hex, std::vector<uint8_t>& out, const size_t max_len, const char* label)
 {
     out.clear();
@@ -67,6 +75,7 @@ bool parse_hex_to_bytes(const std::string& hex, std::vector<uint8_t>& out, const
     }
     return true;
 }
+
 }    // namespace
 
 local_client::local_client(io_context_pool& pool,
@@ -189,8 +198,8 @@ asio::awaitable<void> local_client::connect_remote_loop(const uint32_t index)
             continue;
         }
 
-        auto [handshake_error, handshake_ret] = co_await perform_reality_handshake(*socket, ec);
-        if (!handshake_error)
+        auto [handshake_success, handshake_ret] = co_await perform_reality_handshake(*socket, ec);
+        if (!handshake_success)
         {
             LOG_ERROR("handshake failed {} retry in {}s", ec.message(), constants::net::RETRY_INTERVAL_SEC);
             co_await wait_remote_retry();

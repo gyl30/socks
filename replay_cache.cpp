@@ -1,15 +1,15 @@
-#include <mutex>
 #include <chrono>
+#include <cstdint>
+#include <mutex>
 #include <string>
 #include <vector>
-#include <cstdint>
 
 #include "replay_cache.h"
 
 namespace mux
 {
 
-bool replay_cache::check_and_insert(const std::vector<uint8_t>& sid)
+bool replay_cache::check_and_insert(const std::vector<std::uint8_t>& sid)
 {
     if (sid.size() != 32)
     {
@@ -32,7 +32,7 @@ bool replay_cache::check_and_insert(const std::vector<uint8_t>& sid)
 
 void replay_cache::cleanup()
 {
-    auto now = std::chrono::steady_clock::now();
+    const auto now = std::chrono::steady_clock::now();
     while (!history_.empty() && (now - history_.front().time > std::chrono::minutes(5)))
     {
         cache_.erase(history_.front().sid);

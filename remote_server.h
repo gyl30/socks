@@ -1,17 +1,20 @@
 #ifndef REMOTE_SERVER_H
 #define REMOTE_SERVER_H
 
-#include <mutex>
 #include <atomic>
+#include <cstdint>
 #include <memory>
+#include <mutex>
 #include <random>
 #include <string>
-#include <vector>
-#include <cstdint>
-#include <utility>
 #include <system_error>
+#include <utility>
+#include <vector>
 
-#include <asio.hpp>
+#include <asio/any_io_executor.hpp>
+#include <asio/awaitable.hpp>
+#include <asio/ip/tcp.hpp>
+#include <asio/steady_timer.hpp>
 
 extern "C"
 {
@@ -36,6 +39,7 @@ extern "C"
 
 namespace mux
 {
+
 class remote_server : public std::enable_shared_from_this<remote_server>
 {
    public:
@@ -44,7 +48,6 @@ class remote_server : public std::enable_shared_from_this<remote_server>
                   std::vector<config::fallback_entry> fbs,
                   const std::string& key,
                   const std::string& short_id_hex = std::string(),
-
                   const config::timeout_t& timeout_cfg = {},
                   const config::limits_t& limits_cfg = {});
 
@@ -82,7 +85,13 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         std::pair<std::vector<uint8_t>, std::vector<uint8_t>> c_hs_keys;
         const EVP_CIPHER* cipher = nullptr;
         const EVP_MD* negotiated_md = nullptr;
+        std::vector<uint8_t> handshake_hash;
     };
+
+    asio::awaitable<server_handshake_res> negotiate_reality(std::shared_ptr<asio::ip::tcp::socket> s,
+                                                            const connection_context& ctx,
+                                                            std::vector<uint8_t>& initial_buf);
+
     asio::awaitable<server_handshake_res> perform_handshake_response(std::shared_ptr<asio::ip::tcp::socket> s,
                                                                      const client_hello_info& info,
                                                                      reality::transcript& trans,
@@ -98,7 +107,9 @@ class remote_server : public std::enable_shared_from_this<remote_server>
                                                                       const EVP_MD* md,
                                                                       const connection_context& ctx,
                                                                       std::error_code& ec);
+
     [[nodiscard]] std::pair<std::string, std::string> find_fallback_target_by_sni(const std::string& sni) const;
+
     static asio::awaitable<void> fallback_failed_timer(uint32_t conn_id, asio::any_io_executor ex);
 
     static asio::awaitable<void> fallback_failed(const std::shared_ptr<asio::ip::tcp::socket>& s);
@@ -124,5 +135,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     std::vector<std::weak_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>> active_tunnels_;
     config::limits_t limits_config_;
 };
+
 }    // namespace mux
+
 #endif

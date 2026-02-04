@@ -1,11 +1,17 @@
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 #include <cstdint>
-#include <utility>
 #include <system_error>
 
-#include <asio.hpp>
+#include <asio/as_tuple.hpp>
+#include <asio/buffer.hpp>
+#include <asio/co_spawn.hpp>
+#include <asio/detached.hpp>
+#include <asio/use_awaitable.hpp>
+#include <asio/write.hpp>
+#include <asio/ip/tcp.hpp>
 #include <asio/experimental/awaitable_operators.hpp>
 
 #include "log.h"
@@ -35,7 +41,7 @@ void tcp_socks_session::start(const std::string& host, const uint16_t port)
     asio::co_spawn(socket_.get_executor(), [self, host, port]() -> asio::awaitable<void> { co_await self->run(host, port); }, asio::detached);
 }
 
-asio::awaitable<void> tcp_socks_session::run(const std::string host, const uint16_t port)
+asio::awaitable<void> tcp_socks_session::run(const std::string& host, const uint16_t port)
 {
     const auto route = co_await router_->decide(ctx_, host, socket_.get_executor());
 
@@ -80,10 +86,10 @@ asio::awaitable<void> tcp_socks_session::run(const std::string host, const uint1
     LOG_CTX_INFO(ctx_, "{} finished {}", log_event::CONN_CLOSE, ctx_.stats_summary());
 }
 
-asio::awaitable<void> tcp_socks_session::reply_error(uint8_t code)
+asio::awaitable<void> tcp_socks_session::reply_error(const uint8_t code)
 {
     uint8_t err[] = {socks::VER, code, 0, socks::ATYP_IPV4, 0, 0, 0, 0, 0, 0};
-    co_await asio::async_write(socket_, asio::buffer(err), asio::as_tuple(asio::use_awaitable));
+    (void)co_await asio::async_write(socket_, asio::buffer(err), asio::as_tuple(asio::use_awaitable));
 }
 
 asio::awaitable<void> tcp_socks_session::client_to_upstream(upstream* backend)
@@ -122,7 +128,7 @@ asio::awaitable<void> tcp_socks_session::upstream_to_client(upstream* backend)
             break;
         }
 
-        auto [we, wn] = co_await asio::async_write(socket_, asio::buffer(buf.data(), n), asio::as_tuple(asio::use_awaitable));
+        const auto [we, wn] = co_await asio::async_write(socket_, asio::buffer(buf.data(), n), asio::as_tuple(asio::use_awaitable));
         if (we)
         {
             LOG_CTX_WARN(ctx_, "{} failed to write to client {}", log_event::SOCKS, we.message());
