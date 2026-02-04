@@ -72,9 +72,9 @@ struct config
     } reality;
 };
 
-std::optional<config> parse_config(const std::string& filename);
-std::string dump_config(const config& cfg);
-std::string dump_default_config();
+[[nodiscard]] std::optional<config> parse_config(const std::string& filename);
+[[nodiscard]] std::string dump_config(const config& cfg);
+[[nodiscard]] std::string dump_default_config();
 
 }    // namespace mux
 

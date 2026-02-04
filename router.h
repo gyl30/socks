@@ -32,7 +32,7 @@ class router
 
     [[nodiscard]] asio::awaitable<route_type> decide_ip(const connection_context& ctx,
                                                         const std::string& host,
-                                                        asio::ip::address& addr,
+                                                        const asio::ip::address& addr,
                                                         const asio::any_io_executor& ex) const;
     [[nodiscard]] asio::awaitable<route_type> decide_domain(const connection_context& ctx,
                                                             const std::string& host,

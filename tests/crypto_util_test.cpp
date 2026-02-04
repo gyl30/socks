@@ -201,7 +201,7 @@ TEST(CryptoUtilTest, GetRandomGrease)
 {
     for (int i = 0; i < 100; ++i)
     {
-        uint16_t g = crypto_util::get_random_grease();
+        uint16_t g = crypto_util::random_grease();
         EXPECT_NE(g, 0);
     }
 }

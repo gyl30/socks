@@ -1,29 +1,42 @@
-#include <vector>
-#include <cstdint>
-#include <cstddef>
-
 #include "ch_parser.h"
 #include "reality_core.h"
 
 namespace mux
 {
 
-client_hello_info_t ch_parser::parse(const std::vector<uint8_t>& buf)
+client_hello_info ch_parser::parse(const std::vector<uint8_t>& buf)
 {
-    client_hello_info_t info;
+    client_hello_info info;
     reader r(buf);
 
-    if (r.remaining() >= 5 && r.peek(0) == 0x16 && r.peek(1) == static_cast<uint8_t>(reality::tls_consts::VER_1_2 >> 8))
-    {
-        r.skip(5);
-    }
-
-    uint8_t type;
-    if (!r.read_u8(type) || type != 0x01)
+    if (r.remaining() < 5)
     {
         return info;
     }
-    if (!r.skip(3 + 2))
+
+    uint8_t record_type = 0;
+    if (!r.read_u8(record_type) || record_type != 0x16)
+    {
+        return info;
+    }
+
+    if (!r.skip(2 + 2))    // Skip version and length
+    {
+        return info;
+    }
+
+    uint8_t handshake_type = 0;
+    if (!r.read_u8(handshake_type) || handshake_type != 0x01)
+    {
+        return info;
+    }
+
+    if (!r.skip(3))    // Skip handshake length
+    {
+        return info;
+    }
+
+    if (!r.skip(2))    // Skip version (0x0303)
     {
         return info;
     }
@@ -33,17 +46,13 @@ client_hello_info_t ch_parser::parse(const std::vector<uint8_t>& buf)
         return info;
     }
 
-    uint8_t sid_len;
-
-    const size_t sid_start_offset = r.offset() + 1;
-
+    uint8_t sid_len = 0;
     if (!r.read_u8(sid_len))
     {
         return info;
     }
 
-    info.sid_offset = static_cast<uint32_t>(sid_start_offset);
-
+    info.sid_offset = static_cast<uint32_t>(r.offset());
     if (sid_len > 0)
     {
         if (!r.read_vector(info.session_id, sid_len))
@@ -52,7 +61,7 @@ client_hello_info_t ch_parser::parse(const std::vector<uint8_t>& buf)
         }
     }
 
-    uint16_t cs_len;
+    uint16_t cs_len = 0;
     if (!r.read_u16(cs_len))
     {
         return info;
@@ -62,7 +71,7 @@ client_hello_info_t ch_parser::parse(const std::vector<uint8_t>& buf)
         return info;
     }
 
-    uint8_t comp_len;
+    uint8_t comp_len = 0;
     if (!r.read_u8(comp_len))
     {
         return info;
@@ -72,7 +81,7 @@ client_hello_info_t ch_parser::parse(const std::vector<uint8_t>& buf)
         return info;
     }
 
-    uint16_t ext_len;
+    uint16_t ext_len = 0;
     if (!r.read_u16(ext_len))
     {
         return info;
@@ -87,12 +96,12 @@ client_hello_info_t ch_parser::parse(const std::vector<uint8_t>& buf)
     return info;
 }
 
-void ch_parser::parse_extensions(reader& r, client_hello_info_t& info)
+void ch_parser::parse_extensions(reader& r, client_hello_info& info)
 {
     while (r.remaining() >= 4)
     {
-        uint16_t type;
-        uint16_t len;
+        uint16_t type = 0;
+        uint16_t len = 0;
         if (!r.read_u16(type) || !r.read_u16(len))
         {
             break;
@@ -115,9 +124,9 @@ void ch_parser::parse_extensions(reader& r, client_hello_info_t& info)
     }
 }
 
-void ch_parser::parse_sni(reader& r, client_hello_info_t& info)
+void ch_parser::parse_sni(reader& r, client_hello_info& info)
 {
-    uint16_t list_len;
+    uint16_t list_len = 0;
     if (!r.read_u16(list_len))
     {
         return;
@@ -139,11 +148,11 @@ void ch_parser::parse_sni(reader& r, client_hello_info_t& info)
             break;
         }
 
-        if (type == 0x00)
+        if (type == 0x00)    // host_name
         {
             if (list_r.has(len))
             {
-                info.sni.assign(reinterpret_cast<const char*>(list_r.ptr), len);
+                info.sni.assign(reinterpret_cast<const char*>(list_r.data()), len);
             }
             return;
         }
@@ -155,9 +164,9 @@ void ch_parser::parse_sni(reader& r, client_hello_info_t& info)
     }
 }
 
-void ch_parser::parse_key_share(reader& r, client_hello_info_t& info)
+void ch_parser::parse_key_share(reader& r, client_hello_info& info)
 {
-    uint16_t share_len;
+    uint16_t share_len = 0;
     if (!r.read_u16(share_len))
     {
         return;
@@ -166,20 +175,29 @@ void ch_parser::parse_key_share(reader& r, client_hello_info_t& info)
     while (r.remaining() >= 4)
     {
         uint16_t group = 0;
-        uint16_t key_len = 0;
-        r.read_u16(group);
-        r.read_u16(key_len);
-
-        if (group == reality::tls_consts::group::X25519 && key_len == 32)
+        uint16_t len = 0;
+        if (!r.read_u16(group) || !r.read_u16(len))
         {
-            if (r.has(32))
+            break;
+        }
+
+        if (group == 0x001d)    // X25519
+        {
+            if (len == 32)
             {
-                info.x25519_pub.assign(r.ptr, r.ptr + 32);
-                info.is_tls13 = true;
+                if (r.has(32))
+                {
+                    info.x25519_pub.assign(r.data(), r.data() + 32);
+                    info.is_tls13 = true;
+                }
             }
             return;
         }
-        r.skip(key_len);
+
+        if (!r.skip(len))
+        {
+            break;
+        }
     }
 }
 

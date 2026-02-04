@@ -47,7 +47,7 @@ static void dump_x25519()
 
 static int parse_config_from_file(const std::string& file, mux::config& cfg)
 {
-    auto c = mux::parse_config(file);
+    const auto c = mux::parse_config(file);
     if (!c.has_value())
     {
         return -1;
@@ -70,21 +70,25 @@ int main(int argc, char** argv)
         dump_x25519();
         return 0;
     }
+
     if (mode == "config")
     {
         std::cout << mux::dump_default_config() << '\n';
         return 0;
     }
+
     if (mode != "-c")
     {
         print_usage(argv[0]);
         return -1;
     }
+
     if (argc <= 2)
     {
         print_usage(argv[0]);
         return -1;
     }
+
     mux::config cfg;
     if (parse_config_from_file(argv[2], cfg) != 0)
     {
@@ -110,8 +114,8 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    std::shared_ptr<mux::remote_server> server;
-    std::shared_ptr<mux::local_client> client;
+    std::shared_ptr<mux::remote_server> server = nullptr;
+    std::shared_ptr<mux::local_client> client = nullptr;
 
     if (cfg.mode == "server")
     {
@@ -155,11 +159,11 @@ int main(int argc, char** argv)
         {
             if (!error)
             {
-                if (client)
+                if (client != nullptr)
                 {
                     client->stop();
                 }
-                if (server)
+                if (server != nullptr)
                 {
                     server->stop();
                 }

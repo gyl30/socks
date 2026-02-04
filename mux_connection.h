@@ -37,7 +37,7 @@ enum class mux_connection_state : uint8_t
 
 struct mux_write_msg
 {
-    uint8_t command_ = 0;
+    uint8_t command = 0;
     uint32_t stream_id = 0;
     std::vector<uint8_t> payload;
 };
@@ -58,21 +58,21 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
 
     virtual ~mux_connection() = default;
 
-    auto get_executor() { return socket_.get_executor(); }
-    std::string trace_id() const { return ctx_.trace_id; }
+    auto executor() { return socket_.get_executor(); }
+    [[nodiscard]] std::string trace_id() const { return ctx_.trace_id(); }
 
     void set_syn_callback(syn_callback_t cb) { syn_callback_ = std::move(cb); }
 
-    virtual void register_stream(uint32_t id, std::shared_ptr<mux_stream_interface> stream);
+    virtual void register_stream(const uint32_t id, std::shared_ptr<mux_stream_interface> stream);
 
-    virtual void remove_stream(uint32_t id);
+    virtual void remove_stream(const uint32_t id);
 
     [[nodiscard]] uint32_t acquire_next_id() { return next_stream_id_.fetch_add(2, std::memory_order_relaxed); }
     [[nodiscard]] virtual uint32_t id() const { return cid_; }
 
     [[nodiscard]] asio::awaitable<void> start();
 
-    [[nodiscard]] virtual asio::awaitable<std::error_code> send_async(uint32_t stream_id, uint8_t cmd, std::vector<uint8_t> payload);
+    [[nodiscard]] virtual asio::awaitable<std::error_code> send_async(const uint32_t stream_id, const uint8_t cmd, std::vector<uint8_t> payload);
 
     void stop();
 
@@ -90,8 +90,8 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
    private:
     connection_context ctx_;
     uint32_t cid_;
-    uint64_t read_bytes = 0;
-    uint64_t write_bytes = 0;
+    uint64_t read_bytes_ = 0;
+    uint64_t write_bytes_ = 0;
     stream_map_t streams_;
     asio::steady_timer timer_;
     std::mutex streams_mutex_;
@@ -101,8 +101,8 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     mux_dispatcher mux_dispatcher_;
     std::atomic<uint32_t> next_stream_id_;
     std::atomic<mux_connection_state> connection_state_;
-    std::chrono::steady_clock::time_point last_read_time;
-    std::chrono::steady_clock::time_point last_write_time;
+    std::chrono::steady_clock::time_point last_read_time_;
+    std::chrono::steady_clock::time_point last_write_time_;
     asio::experimental::concurrent_channel<void(std::error_code, mux_write_msg)> write_channel_;
     config::timeout_t timeout_config_;
     config::limits_t limits_config_;

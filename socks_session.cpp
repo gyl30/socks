@@ -22,7 +22,7 @@ namespace mux
 socks_session::socks_session(asio::ip::tcp::socket socket,
                              std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager,
                              std::shared_ptr<router> router,
-                             uint32_t sid,
+                             const uint32_t sid,
                              const config::socks_t& socks_cfg)
     : sid_(sid),
       username_(socks_cfg.username),
@@ -33,7 +33,7 @@ socks_session::socks_session(asio::ip::tcp::socket socket,
       tunnel_manager_(std::move(tunnel_manager))
 {
     ctx_.new_trace_id();
-    ctx_.conn_id = sid;
+    ctx_.conn_id(sid);
 }
 
 void socks_session::start()
@@ -59,12 +59,12 @@ asio::awaitable<void> socks_session::run()
 
     if (cmd == socks::CMD_CONNECT)
     {
-        auto tcp_sess = std::make_shared<tcp_socks_session>(std::move(socket_), tunnel_manager_, router_, sid_);
+        const auto tcp_sess = std::make_shared<tcp_socks_session>(std::move(socket_), tunnel_manager_, router_, sid_);
         tcp_sess->start(host, port);
     }
     else if (cmd == socks::CMD_UDP_ASSOCIATE)
     {
-        auto udp_sess = std::make_shared<udp_socks_session>(std::move(socket_), tunnel_manager_, sid_);
+        const auto udp_sess = std::make_shared<udp_socks_session>(std::move(socket_), tunnel_manager_, sid_);
         udp_sess->start(host, port);
     }
     else
@@ -132,7 +132,7 @@ asio::awaitable<bool> socks_session::handshake()
 
 asio::awaitable<bool> socks_session::do_password_auth()
 {
-    uint8_t ver;
+    uint8_t ver = 0;
     auto [ve, vn] = co_await asio::async_read(socket_, asio::buffer(&ver, 1), asio::as_tuple(asio::use_awaitable));
     if (ve || ver != 0x01)
     {
@@ -140,7 +140,7 @@ asio::awaitable<bool> socks_session::do_password_auth()
         co_return false;
     }
 
-    uint8_t ulen;
+    uint8_t ulen = 0;
     auto [ue, un] = co_await asio::async_read(socket_, asio::buffer(&ulen, 1), asio::as_tuple(asio::use_awaitable));
     if (ue)
     {
@@ -156,7 +156,7 @@ asio::awaitable<bool> socks_session::do_password_auth()
         co_return false;
     }
 
-    uint8_t plen;
+    uint8_t plen = 0;
     auto [pe, pn] = co_await asio::async_read(socket_, asio::buffer(&plen, 1), asio::as_tuple(asio::use_awaitable));
     if (pe)
     {
@@ -213,7 +213,7 @@ asio::awaitable<socks_session::request_info> socks_session::read_request()
     }
     else if (head[3] == socks::ATYP_DOMAIN)
     {
-        uint8_t len;
+        uint8_t len = 0;
         co_await asio::async_read(socket_, asio::buffer(&len, 1), asio::as_tuple(asio::use_awaitable));
         host.resize(len);
         co_await asio::async_read(socket_, asio::buffer(host), asio::as_tuple(asio::use_awaitable));
@@ -225,7 +225,7 @@ asio::awaitable<socks_session::request_info> socks_session::read_request()
         host = asio::ip::address_v6(b).to_string();
     }
 
-    uint16_t port_n;
+    uint16_t port_n = 0;
     co_await asio::async_read(socket_, asio::buffer(&port_n, 2), asio::as_tuple(asio::use_awaitable));
     LOG_INFO("socks session {} request {} {}", sid_, host, ntohs(port_n));
     co_return request_info{.ok = true, .host = host, .port = ntohs(port_n), .cmd = head[1]};

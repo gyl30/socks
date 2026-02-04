@@ -12,7 +12,11 @@
 #include <system_error>
 
 #include <asio.hpp>
+
+extern "C"
+{
 #include <openssl/evp.h>
+}
 
 #include "config.h"
 #include "protocol.h"
@@ -44,57 +48,57 @@ class remote_server : public std::enable_shared_from_this<remote_server>
                   const config::timeout_t& timeout_cfg = {},
                   const config::limits_t& limits_cfg = {});
 
-    ~remote_server();
+    virtual ~remote_server();
 
     void start();
 
     void stop();
 
-    reality::cert_manager& get_cert_manager() { return cert_manager_; }
+    [[nodiscard]] reality::cert_manager& cert_manager() { return cert_manager_; }
 
    private:
     asio::awaitable<void> accept_loop();
 
-    asio::awaitable<void> handle(std::shared_ptr<asio::ip::tcp::socket> s, uint32_t conn_id);
+    asio::awaitable<void> handle(std::shared_ptr<asio::ip::tcp::socket> s, const uint32_t conn_id);
 
     asio::awaitable<void> process_stream_request(std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel,
                                                  const connection_context& ctx,
-                                                 uint32_t stream_id,
+                                                 const uint32_t stream_id,
                                                  std::vector<uint8_t> payload) const;
 
-    static asio::awaitable<bool> read_initial_and_validate(std::shared_ptr<asio::ip::tcp::socket> s,
-                                                           const connection_context& ctx,
-                                                           std::vector<uint8_t>& buf);
+    [[nodiscard]] static asio::awaitable<bool> read_initial_and_validate(std::shared_ptr<asio::ip::tcp::socket> s,
+                                                                         const connection_context& ctx,
+                                                                         std::vector<uint8_t>& buf);
 
-    std::pair<bool, std::vector<uint8_t>> authenticate_client(const client_hello_info_t& info,
-                                                              const std::vector<uint8_t>& buf,
-                                                              const connection_context& ctx);
+    [[nodiscard]] std::pair<bool, std::vector<uint8_t>> authenticate_client(const client_hello_info& info,
+                                                                            const std::vector<uint8_t>& buf,
+                                                                            const connection_context& ctx);
 
     struct server_handshake_res
     {
-        bool ok;
+        bool ok = false;
         reality::handshake_keys hs_keys;
         std::pair<std::vector<uint8_t>, std::vector<uint8_t>> s_hs_keys;
         std::pair<std::vector<uint8_t>, std::vector<uint8_t>> c_hs_keys;
-        const EVP_CIPHER* cipher;
-        const EVP_MD* negotiated_md;
+        const EVP_CIPHER* cipher = nullptr;
+        const EVP_MD* negotiated_md = nullptr;
     };
     asio::awaitable<server_handshake_res> perform_handshake_response(std::shared_ptr<asio::ip::tcp::socket> s,
-                                                                     const client_hello_info_t& info,
+                                                                     const client_hello_info& info,
                                                                      reality::transcript& trans,
                                                                      const std::vector<uint8_t>& auth_key,
                                                                      const connection_context& ctx,
                                                                      std::error_code& ec);
 
-    static asio::awaitable<bool> verify_client_finished(std::shared_ptr<asio::ip::tcp::socket> s,
-                                                        const std::pair<std::vector<uint8_t>, std::vector<uint8_t>>& c_hs_keys,
-                                                        const reality::handshake_keys& hs_keys,
-                                                        const reality::transcript& trans,
-                                                        const EVP_CIPHER* cipher,
-                                                        const EVP_MD* md,
-                                                        const connection_context& ctx,
-                                                        std::error_code& ec);
-    std::pair<std::string, std::string> find_fallback_target_by_sni(const std::string& sni) const;
+    [[nodiscard]] static asio::awaitable<bool> verify_client_finished(std::shared_ptr<asio::ip::tcp::socket> s,
+                                                                      const std::pair<std::vector<uint8_t>, std::vector<uint8_t>>& c_hs_keys,
+                                                                      const reality::handshake_keys& hs_keys,
+                                                                      const reality::transcript& trans,
+                                                                      const EVP_CIPHER* cipher,
+                                                                      const EVP_MD* md,
+                                                                      const connection_context& ctx,
+                                                                      std::error_code& ec);
+    [[nodiscard]] std::pair<std::string, std::string> find_fallback_target_by_sni(const std::string& sni) const;
     static asio::awaitable<void> fallback_failed_timer(uint32_t conn_id, asio::any_io_executor ex);
 
     static asio::awaitable<void> fallback_failed(const std::shared_ptr<asio::ip::tcp::socket>& s);

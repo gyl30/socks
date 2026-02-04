@@ -20,13 +20,13 @@ namespace mux
 {
 
 remote_udp_session::remote_udp_session(std::shared_ptr<mux_connection> connection,
-                                       uint32_t id,
+                                       const uint32_t id,
                                        const asio::any_io_executor& ex,
                                        const connection_context& ctx)
     : id_(id), timer_(ex), udp_socket_(ex), udp_resolver_(ex), connection_(std::move(connection)), recv_channel_(ex, 128)
 {
     ctx_ = ctx;
-    ctx_.stream_id = id;
+    ctx_.stream_id(id);
     last_read_time_ = std::chrono::steady_clock::now();
     last_write_time_ = std::chrono::steady_clock::now();
 }
@@ -76,7 +76,7 @@ asio::awaitable<void> remote_udp_session::start()
     using asio::experimental::awaitable_operators::operator||;
     co_await (mux_to_udp() || udp_to_mux() || watchdog());
 
-    if (manager_)
+    if (manager_ != nullptr)
     {
         manager_->remove_stream(id_);
     }
@@ -152,7 +152,7 @@ asio::awaitable<void> remote_udp_session::mux_to_udp()
                 v6_bytes[13] = v4_bytes[1];
                 v6_bytes[14] = v4_bytes[2];
                 v6_bytes[15] = v4_bytes[3];
-                auto v6 = asio::ip::address_v6(v6_bytes);
+                const auto v6 = asio::ip::address_v6(v6_bytes);
                 target_ep = asio::ip::udp::endpoint(v6, target_ep.port());
             }
 
@@ -167,7 +167,7 @@ asio::awaitable<void> remote_udp_session::mux_to_udp()
             else
             {
                 last_write_time_ = std::chrono::steady_clock::now();
-                ctx_.tx_bytes += sn;
+                ctx_.add_tx_bytes(sn);
             }
         }
         else
@@ -195,7 +195,7 @@ asio::awaitable<void> remote_udp_session::udp_to_mux()
 
         LOG_CTX_DEBUG(ctx_, "{} udp recv {} bytes from {}", log_event::MUX, n, ep.address().to_string());
         last_read_time_ = std::chrono::steady_clock::now();
-        ctx_.rx_bytes += n;
+        ctx_.add_rx_bytes(n);
 
         socks_udp_header h;
         h.addr = ep.address().to_string();
