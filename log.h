@@ -1,8 +1,6 @@
 #ifndef LOG_H
 #define LOG_H
 
-#define SPDLOG_SHORT_LEVEL_NAMES {"TRC", "DBG", "INF", "WRN", "ERR", "CTL", "OFF"};
-
 #include <string>
 
 #include <spdlog/spdlog.h>
