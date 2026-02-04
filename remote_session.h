@@ -19,7 +19,7 @@ class remote_session : public mux_stream_interface, public std::enable_shared_fr
    public:
     remote_session(std::shared_ptr<mux_connection> connection, uint32_t id, const asio::any_io_executor& ex, const connection_context& ctx);
 
-    asio::awaitable<void> start(const syn_payload& syn);
+    [[nodiscard]] asio::awaitable<void> start(const syn_payload& syn);
 
     void on_data(std::vector<uint8_t> data) override;
     void on_close() override;
@@ -27,8 +27,8 @@ class remote_session : public mux_stream_interface, public std::enable_shared_fr
     void set_manager(const std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>& m) { manager_ = m; }
 
    private:
-    asio::awaitable<void> upstream();
-    asio::awaitable<void> downstream();
+    [[nodiscard]] asio::awaitable<void> upstream();
+    [[nodiscard]] asio::awaitable<void> downstream();
 
    private:
     uint32_t id_;

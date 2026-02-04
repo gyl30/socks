@@ -1,8 +1,13 @@
+#include <mutex>
+#include <atomic>
+#include <chrono>
+#include <memory>
+
 #include <openssl/crypto.h>
 
 #include "log.h"
-#include "key_rotator.h"
 #include "crypto_util.h"
+#include "key_rotator.h"
 
 namespace reality
 {
@@ -22,7 +27,7 @@ std::shared_ptr<x25519_keypair> key_rotator::get_current_key()
         const std::scoped_lock lock(mutex_);
         if (now > next_rotate_time_.load(std::memory_order_relaxed))
         {
-            rotate();
+            (void)rotate();
         }
     }
     return std::atomic_load_explicit(&current_key_, std::memory_order_acquire);
@@ -32,13 +37,13 @@ bool key_rotator::rotate()
 {
     auto deleter = [](x25519_keypair* kp)
     {
-        if (kp)
+        if (kp != nullptr)
         {
             OPENSSL_cleanse(kp->private_key, 32);
             delete kp;
         }
     };
-    auto new_key = std::shared_ptr<x25519_keypair>(new x25519_keypair(), deleter);
+    const auto new_key = std::shared_ptr<x25519_keypair>(new x25519_keypair(), deleter);
     if (!reality::crypto_util::generate_x25519_keypair(new_key->public_key, new_key->private_key))
     {
         LOG_ERROR("key_rotator generate key failed");

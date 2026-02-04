@@ -15,9 +15,10 @@ namespace reality
 
 namespace
 {
-const std::vector<uint16_t> GREASE_VALUES = {
-    0x0a0a, 0x1a1a, 0x2a2a, 0x3a3a, 0x4a4a, 0x5a5a, 0x6a6a, 0x7a7a, 0x8a8a, 0x9a9a, 0xaaaa, 0xbaba, 0xcaca, 0xdada, 0xeaea, 0xfafa};
-}
+
+constexpr auto GREASE_VALUES = std::to_array<uint16_t>(
+    {0x0a0a, 0x1a1a, 0x2a2a, 0x3a3a, 0x4a4a, 0x5a5a, 0x6a6a, 0x7a7a, 0x8a8a, 0x9a9a, 0xaaaa, 0xbaba, 0xcaca, 0xdada, 0xeaea, 0xfafa});
+}    // namespace
 
 static FingerprintSpec BuildChrome70To87Spec()
 {
@@ -122,7 +123,7 @@ GreaseContext::GreaseContext()
 uint16_t GreaseContext::get_grease(int index) const
 {
     const uint16_t val = seed_[static_cast<size_t>(index) % seed_.size()];
-    const uint8_t idx = static_cast<uint8_t>((val >> 8) ^ (val & 0xFF));
+    const auto idx = static_cast<uint8_t>((val >> 8) ^ (val & 0xFF));
     return GREASE_VALUES[idx % GREASE_VALUES.size()];
 }
 
@@ -554,7 +555,7 @@ void FingerprintFactory::shuffle_extensions(std::vector<std::shared_ptr<Extensio
 
     std::random_device rd;
     std::mt19937 g(rd());
-    std::shuffle(shufflable_exts.begin(), shufflable_exts.end(), g);
+    std::ranges::shuffle(shufflable_exts, g);
 
     for (size_t i = 0; i < indices.size(); ++i)
     {

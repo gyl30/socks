@@ -10,6 +10,9 @@
 #include <system_error>
 
 #include <asio.hpp>
+#include <asio/ip/address.hpp>
+#include <asio/ip/address_v4.hpp>
+#include <asio/ip/address_v6.hpp>
 
 #include "log.h"
 #include "ip_matcher.h"
@@ -208,7 +211,9 @@ bool ip_matcher::match(const asio::ip::address& addr) const
     return false;
 }
 
-static std::string_view trim(const std::string_view sv)
+namespace
+{
+std::string_view trim(const std::string_view sv)
 {
     const auto start = sv.find_first_not_of(" \t\r\n");
     if (start == std::string_view::npos)
@@ -218,6 +223,7 @@ static std::string_view trim(const std::string_view sv)
     const auto end = sv.find_last_not_of(" \t\r\n");
     return sv.substr(start, end - start + 1);
 }
+}    // namespace
 
 void ip_matcher::add_rule(const std::string& cidr)
 {
@@ -232,7 +238,7 @@ void ip_matcher::add_rule(const std::string& cidr)
 
     int prefix_len = 0;
     const auto [ptr, from_ec] = std::from_chars(len_part.data(), len_part.data() + len_part.size(), prefix_len);
-    if (from_ec != std::errc() || ptr != len_part.data() + len_part.size())
+    if (from_ec != std::errc{} || ptr != len_part.data() + len_part.size())
     {
         LOG_WARN("invalid prefix length {}", len_part);
         return;
@@ -255,7 +261,7 @@ void ip_matcher::add_rule(const std::string& cidr)
     }
 }
 
-void ip_matcher::optimize()
+void ip_matcher::optimize() const
 {
     if (root_v4_ != nullptr)
     {
@@ -267,7 +273,7 @@ void ip_matcher::optimize()
     }
 }
 
-void ip_matcher::optimize_node(std::unique_ptr<trie_node>& node)
+void ip_matcher::optimize_node(const std::unique_ptr<trie_node>& node)
 {
     if (node == nullptr)
     {

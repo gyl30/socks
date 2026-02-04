@@ -1,3 +1,6 @@
+#include <vector>
+#include <cstdint>
+
 #include "ch_parser.h"
 #include "reality_core.h"
 
