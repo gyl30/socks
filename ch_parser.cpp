@@ -1,5 +1,5 @@
-#include <vector>
 #include <cstdint>
+#include <vector>
 
 #include "ch_parser.h"
 #include "reality_core.h"
@@ -7,7 +7,7 @@
 namespace mux
 {
 
-client_hello_info ch_parser::parse(const std::vector<uint8_t>& buf)
+client_hello_info ch_parser::parse(const std::vector<std::uint8_t>& buf)
 {
     client_hello_info info;
     reader r(buf);
@@ -17,7 +17,7 @@ client_hello_info ch_parser::parse(const std::vector<uint8_t>& buf)
         return info;
     }
 
-    uint8_t record_type = 0;
+    std::uint8_t record_type = 0;
     if (!r.read_u8(record_type) || record_type != 0x16)
     {
         return info;
@@ -28,7 +28,7 @@ client_hello_info ch_parser::parse(const std::vector<uint8_t>& buf)
         return info;
     }
 
-    uint8_t handshake_type = 0;
+    std::uint8_t handshake_type = 0;
     if (!r.read_u8(handshake_type) || handshake_type != 0x01)
     {
         return info;
@@ -49,13 +49,13 @@ client_hello_info ch_parser::parse(const std::vector<uint8_t>& buf)
         return info;
     }
 
-    uint8_t sid_len = 0;
+    std::uint8_t sid_len = 0;
     if (!r.read_u8(sid_len))
     {
         return info;
     }
 
-    info.sid_offset = static_cast<uint32_t>(r.offset());
+    info.sid_offset = static_cast<std::uint32_t>(r.offset());
     if (sid_len > 0)
     {
         if (!r.read_vector(info.session_id, sid_len))
@@ -64,7 +64,7 @@ client_hello_info ch_parser::parse(const std::vector<uint8_t>& buf)
         }
     }
 
-    uint16_t cs_len = 0;
+    std::uint16_t cs_len = 0;
     if (!r.read_u16(cs_len))
     {
         return info;
@@ -74,7 +74,7 @@ client_hello_info ch_parser::parse(const std::vector<uint8_t>& buf)
         return info;
     }
 
-    uint8_t comp_len = 0;
+    std::uint8_t comp_len = 0;
     if (!r.read_u8(comp_len))
     {
         return info;
@@ -84,7 +84,7 @@ client_hello_info ch_parser::parse(const std::vector<uint8_t>& buf)
         return info;
     }
 
-    uint16_t ext_len = 0;
+    std::uint16_t ext_len = 0;
     if (!r.read_u16(ext_len))
     {
         return info;
@@ -103,8 +103,8 @@ void ch_parser::parse_extensions(reader& r, client_hello_info& info)
 {
     while (r.remaining() >= 4)
     {
-        uint16_t type = 0;
-        uint16_t len = 0;
+        std::uint16_t type = 0;
+        std::uint16_t len = 0;
         if (!r.read_u16(type) || !r.read_u16(len))
         {
             break;
@@ -129,7 +129,7 @@ void ch_parser::parse_extensions(reader& r, client_hello_info& info)
 
 void ch_parser::parse_sni(reader& r, client_hello_info& info)
 {
-    uint16_t list_len = 0;
+    std::uint16_t list_len = 0;
     if (!r.read_u16(list_len))
     {
         return;
@@ -143,8 +143,8 @@ void ch_parser::parse_sni(reader& r, client_hello_info& info)
 
     while (list_r.remaining() >= 3)
     {
-        uint8_t type = 0;
-        uint16_t len = 0;
+        std::uint8_t type = 0;
+        std::uint16_t len = 0;
 
         if (!list_r.read_u8(type) || !list_r.read_u16(len))
         {
@@ -169,7 +169,7 @@ void ch_parser::parse_sni(reader& r, client_hello_info& info)
 
 void ch_parser::parse_key_share(reader& r, client_hello_info& info)
 {
-    uint16_t share_len = 0;
+    std::uint16_t share_len = 0;
     if (!r.read_u16(share_len))
     {
         return;
@@ -177,8 +177,8 @@ void ch_parser::parse_key_share(reader& r, client_hello_info& info)
 
     while (r.remaining() >= 4)
     {
-        uint16_t group = 0;
-        uint16_t len = 0;
+        std::uint16_t group = 0;
+        std::uint16_t len = 0;
         if (!r.read_u16(group) || !r.read_u16(len))
         {
             break;
