@@ -83,7 +83,7 @@ std::string format_bytes(uint64_t bytes)
     constexpr uint64_t k_kib = 1024ULL;
     constexpr uint64_t k_mib = k_kib * 1024ULL;
     constexpr uint64_t k_gib = k_mib * 1024ULL;
-    const double bytes_d = static_cast<double>(bytes);
+    const auto bytes_d = static_cast<double>(bytes);
     std::ostringstream oss;
     if (bytes >= k_gib)
     {

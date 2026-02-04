@@ -1,15 +1,27 @@
-#include <gtest/gtest.h>
-#include <asio.hpp>
+#include <chrono>
+#include <string>
 #include <thread>
 #include <cstdlib>
-#include <fstream>
+#include <system_error>
+
+#include <gtest/gtest.h>
+#include <asio/co_spawn.hpp>
+#include <asio/detached.hpp>
+#include <asio/awaitable.hpp>
+#include <asio/this_coro.hpp>
+#include <asio/io_context.hpp>
+#include <asio/steady_timer.hpp>
+
 #include "cert_fetcher.h"
 
-void run_cmd(const char* cmd)
+namespace
 {
-    int ret = std::system(cmd);
+static void run_cmd(const char* cmd)
+{
+    const int ret = std::system(cmd);
     (void)ret;
 }
+}    // namespace
 
 TEST(CertFetcherTest, BasicFetch)
 {
@@ -28,9 +40,9 @@ TEST(CertFetcherTest, BasicFetch)
         ctx,
         [&]() -> asio::awaitable<void>
         {
-            auto ex = co_await asio::this_coro::executor;
-            std::string dummy_pub_key(64, 'a');
-            auto res = co_await reality::cert_fetcher::fetch(ex, "127.0.0.1", 33445, "localhost", dummy_pub_key);
+            const auto ex = co_await asio::this_coro::executor;
+            const std::string dummy_pub_key(64, 'a');
+            (void)co_await reality::cert_fetcher::fetch(ex, "127.0.0.1", 33445, "localhost", dummy_pub_key);
             finished = true;
             co_return;
         },
@@ -39,10 +51,12 @@ TEST(CertFetcherTest, BasicFetch)
     asio::steady_timer timer(ctx);
     timer.expires_after(std::chrono::seconds(5));
     timer.async_wait(
-        [&](std::error_code ec)
+        [&](const std::error_code ec)
         {
             if (!ec)
+            {
                 ctx.stop();
+            }
         });
 
     ctx.run();
@@ -60,9 +74,9 @@ TEST(CertFetcherTest, ConnectFail)
         ctx,
         [&]() -> asio::awaitable<void>
         {
-            auto ex = co_await asio::this_coro::executor;
-            std::string dummy_pub_key(64, 'a');
-            auto res = co_await reality::cert_fetcher::fetch(ex, "127.0.0.1", 33446, "localhost", dummy_pub_key);
+            const auto ex = co_await asio::this_coro::executor;
+            const std::string dummy_pub_key(64, 'a');
+            const auto res = co_await reality::cert_fetcher::fetch(ex, "127.0.0.1", 33446, "localhost", dummy_pub_key);
             EXPECT_FALSE(res.has_value());
             finished = true;
             co_return;
@@ -72,10 +86,12 @@ TEST(CertFetcherTest, ConnectFail)
     asio::steady_timer timer(ctx);
     timer.expires_after(std::chrono::seconds(2));
     timer.async_wait(
-        [&](std::error_code ec)
+        [&](const std::error_code ec)
         {
             if (!ec)
+            {
                 ctx.stop();
+            }
         });
 
     ctx.run();

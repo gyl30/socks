@@ -18,10 +18,11 @@ TEST(RealityAuthTest, BuildAndParseRoundTrip)
 
     auto parsed = reality::parse_auth_payload(std::span<const uint8_t>(payload.data(), payload.size()));
     ASSERT_TRUE(parsed.has_value());
-    EXPECT_EQ(parsed->version, 1);
-    EXPECT_EQ(parsed->short_id, short_id);
-    EXPECT_EQ(parsed->timestamp, ts);
-    EXPECT_EQ(parsed->nonce, nonce);
+    const auto& p = *parsed;
+    EXPECT_EQ(p.version, 1);
+    EXPECT_EQ(p.short_id, short_id);
+    EXPECT_EQ(p.timestamp, ts);
+    EXPECT_EQ(p.nonce, nonce);
 }
 
 TEST(RealityAuthTest, RejectTooLongShortId)

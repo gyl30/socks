@@ -1,14 +1,15 @@
-#include <utility>
-#include <vector>
 #include <memory>
+#include <vector>
 #include <cstdint>
+#include <utility>
 
-#include <asio/io_context.hpp>
-#include <asio/ip/tcp.hpp>
 #include <openssl/evp.h>
-
-#include <gtest/gtest.h>
 #include <gmock/gmock.h>
+#include <gtest/gtest.h>
+#include <asio/ip/tcp.hpp>
+#include <asio/io_context.hpp>
+#include <gmock/gmock-spec-builders.h>
+#include <gmock/gmock-function-mocker.h>
 
 #include "mux_connection.h"
 #include "mux_stream_interface.h"
@@ -24,12 +25,12 @@ class MockStream : public mux::mux_stream_interface
 class MuxConnectionTest : public ::testing::Test
 {
    protected:
-    asio::io_context ctx;
+    asio::io_context ctx_;
 };
 
 TEST_F(MuxConnectionTest, StreamManagement)
 {
-    asio::ip::tcp::socket socket(ctx);
+    asio::ip::tcp::socket socket(ctx_);
     mux::mux_connection conn(std::move(socket), mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 123);
 
     auto stream = std::make_shared<MockStream>();
@@ -43,7 +44,7 @@ TEST_F(MuxConnectionTest, StreamManagement)
 
 TEST_F(MuxConnectionTest, InitialState)
 {
-    asio::ip::tcp::socket socket(ctx);
+    asio::ip::tcp::socket socket(ctx_);
     const mux::mux_connection conn(std::move(socket), mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 1);
     EXPECT_TRUE(conn.is_open());
 }

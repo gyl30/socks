@@ -26,7 +26,7 @@ class ip_matcher
 
     void add_rule(const std::string& cidr);
 
-    void optimize();
+    void optimize() const;
 
    private:
     struct trie_node;
@@ -38,7 +38,7 @@ class ip_matcher
     static void add_rule_v4(int prefix_len, const asio::ip::address_v4& addr, std::unique_ptr<trie_node>& root);
     static void add_rule_v6(int prefix_len, const asio::ip::address_v6& addr, std::unique_ptr<trie_node>& root);
 
-    void optimize_node(std::unique_ptr<trie_node>& node);
+    static void optimize_node(const std::unique_ptr<trie_node>& node);
 };
 
 }    // namespace mux

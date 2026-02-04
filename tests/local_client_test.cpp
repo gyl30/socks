@@ -1,10 +1,12 @@
 #include <memory>
+#include <string>
 #include <system_error>
 
 #include <gtest/gtest.h>
+#include <gtest/gtest-death-test.h>
 
-#include "local_client.h"
 #include "context_pool.h"
+#include "local_client.h"
 
 using mux::io_context_pool;
 
@@ -25,9 +27,9 @@ TEST(LocalClientTest, MissingVerifyPublicKeyAborts)
     EXPECT_DEATH(
         {
             std::error_code ec;
-            io_context_pool pool(1, ec);
+            const io_context_pool pool(1, ec);
             ASSERT_FALSE(ec);
-            auto client = make_client(pool, "");
+            const auto client = make_client(const_cast<io_context_pool&>(pool), "");
             client->start();
         },
         ".*");
@@ -39,9 +41,9 @@ TEST(LocalClientTest, InvalidVerifyPublicKeyLengthAborts)
     EXPECT_DEATH(
         {
             std::error_code ec;
-            io_context_pool pool(1, ec);
+            const io_context_pool pool(1, ec);
             ASSERT_FALSE(ec);
-            auto client = make_client(pool, "aa");
+            const auto client = make_client(const_cast<io_context_pool&>(pool), "aa");
             client->start();
         },
         ".*");

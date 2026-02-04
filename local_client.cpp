@@ -11,9 +11,17 @@
 #include <system_error>
 
 #include <asio.hpp>
+#include <asio/read.hpp>
 #include <openssl/evp.h>
+#include <asio/write.hpp>
 #include <openssl/rand.h>
 #include <openssl/crypto.h>
+#include <asio/as_tuple.hpp>
+#include <asio/co_spawn.hpp>
+#include <asio/detached.hpp>
+#include <asio/steady_timer.hpp>
+#include <asio/use_awaitable.hpp>
+#include <asio/experimental/awaitable_operators.hpp>
 
 #include "log.h"
 #include "router.h"
@@ -272,7 +280,7 @@ asio::awaitable<std::pair<bool, local_client::handshake_result>> local_client::p
 
     const size_t key_len =
         (sh_res.cipher_suite == 0x1302 || sh_res.cipher_suite == 0x1303) ? constants::crypto::KEY_LEN_256 : constants::crypto::KEY_LEN_128;
-    const size_t iv_len = constants::crypto::IV_LEN;
+    constexpr size_t iv_len = constants::crypto::IV_LEN;
 
     const auto c_hs_keys =
         reality::tls_key_schedule::derive_traffic_keys(sh_res.hs_keys.client_handshake_traffic_secret, ec, key_len, iv_len, sh_res.negotiated_md);
@@ -462,6 +470,53 @@ asio::awaitable<local_client::server_hello_res> local_client::process_server_hel
     co_return server_hello_res{.ok = true, .hs_keys = hs_keys, .negotiated_md = md, .negotiated_cipher = cipher, .cipher_suite = cipher_suite};
 }
 
+bool local_client::process_certificate_verify(const std::vector<uint8_t>& msg_data,
+                                              const std::vector<uint8_t>& verify_pub_key,
+                                              const std::vector<uint8_t>& handshake_hash,
+                                              std::error_code& ec)
+{
+    const auto cv_info = reality::parse_certificate_verify(msg_data);
+    if (!cv_info.has_value())
+    {
+        ec = asio::error::invalid_argument;
+        LOG_ERROR("invalid certificate verify message");
+        return false;
+    }
+
+    if (!reality::is_supported_certificate_verify_scheme(cv_info->scheme))
+    {
+        ec = asio::error::no_protocol_option;
+        LOG_ERROR("unsupported certificate verify scheme {}", cv_info->scheme);
+        return false;
+    }
+
+    if (verify_pub_key.size() != 32)
+    {
+        ec = asio::error::invalid_argument;
+        LOG_ERROR("verify public key not configured");
+        return false;
+    }
+
+    const reality::openssl_ptrs::evp_pkey_ptr pub_key(
+        EVP_PKEY_new_raw_public_key(EVP_PKEY_ED25519, nullptr, verify_pub_key.data(), verify_pub_key.size()));
+    if (pub_key == nullptr)
+    {
+        ec = asio::error::invalid_argument;
+        LOG_ERROR("failed to create verify public key");
+        return false;
+    }
+
+    std::error_code verify_ec;
+    if (!reality::crypto_util::verify_tls13_signature(pub_key.get(), handshake_hash, cv_info->signature, verify_ec))
+    {
+        ec = verify_ec;
+        LOG_ERROR("certificate verify signature invalid");
+        return false;
+    }
+    LOG_DEBUG("certificate verify signature valid");
+    return true;
+}
+
 asio::awaitable<std::pair<bool, std::pair<std::vector<uint8_t>, std::vector<uint8_t>>>> local_client::handshake_read_loop(
     asio::ip::tcp::socket& socket,
     const std::pair<std::vector<uint8_t>, std::vector<uint8_t>>& s_hs_keys,
@@ -540,46 +595,10 @@ asio::awaitable<std::pair<bool, std::pair<std::vector<uint8_t>, std::vector<uint
                 }
                 else if (msg_type == 0x0f)
                 {
-                    const auto cv_info = reality::parse_certificate_verify(msg_data);
-                    if (!cv_info.has_value())
+                    if (!process_certificate_verify(msg_data, verify_pub_key, trans.finish(), ec))
                     {
-                        ec = asio::error::invalid_argument;
-                        LOG_ERROR("invalid certificate verify message");
                         co_return std::make_pair(false, std::pair<std::vector<uint8_t>, std::vector<uint8_t>>{});
                     }
-
-                    if (!reality::is_supported_certificate_verify_scheme(cv_info->scheme))
-                    {
-                        ec = asio::error::no_protocol_option;
-                        LOG_ERROR("unsupported certificate verify scheme {}", cv_info->scheme);
-                        co_return std::make_pair(false, std::pair<std::vector<uint8_t>, std::vector<uint8_t>>{});
-                    }
-
-                    if (verify_pub_key.size() != 32)
-                    {
-                        ec = asio::error::invalid_argument;
-                        LOG_ERROR("verify public key not configured");
-                        co_return std::make_pair(false, std::pair<std::vector<uint8_t>, std::vector<uint8_t>>{});
-                    }
-
-                    const reality::openssl_ptrs::evp_pkey_ptr pub_key(
-                        EVP_PKEY_new_raw_public_key(EVP_PKEY_ED25519, nullptr, verify_pub_key.data(), verify_pub_key.size()));
-                    if (pub_key == nullptr)
-                    {
-                        ec = asio::error::invalid_argument;
-                        LOG_ERROR("failed to create verify public key");
-                        co_return std::make_pair(false, std::pair<std::vector<uint8_t>, std::vector<uint8_t>>{});
-                    }
-
-                    std::error_code verify_ec;
-                    const auto th = trans.finish();
-                    if (!reality::crypto_util::verify_tls13_signature(pub_key.get(), th, cv_info->signature, verify_ec))
-                    {
-                        ec = verify_ec;
-                        LOG_ERROR("certificate verify signature invalid");
-                        co_return std::make_pair(false, std::pair<std::vector<uint8_t>, std::vector<uint8_t>>{});
-                    }
-                    LOG_DEBUG("certificate verify signature valid");
                 }
                 trans.update(msg_data);
                 if (msg_type == 0x14)
