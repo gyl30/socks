@@ -19,7 +19,7 @@ const std::vector<uint16_t> GREASE_VALUES = {
     0x0a0a, 0x1a1a, 0x2a2a, 0x3a3a, 0x4a4a, 0x5a5a, 0x6a6a, 0x7a7a, 0x8a8a, 0x9a9a, 0xaaaa, 0xbaba, 0xcaca, 0xdada, 0xeaea, 0xfafa};
 }
 
-FingerprintSpec BuildChrome70To87Spec()
+static FingerprintSpec BuildChrome70To87Spec()
 {
     FingerprintSpec spec;
     spec.client_version = tls_consts::VER_1_2;

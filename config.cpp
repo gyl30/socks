@@ -40,7 +40,7 @@ static std::optional<std::string> read_file(const std::string& filename)
         }
         if (n < sizeof buf)
         {
-            if (ferror(f))
+            if (ferror(f) != 0)
             {
                 fclose(f);
                 return {};

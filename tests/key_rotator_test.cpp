@@ -1,5 +1,4 @@
 #include <gtest/gtest.h>
-#include <thread>
 #include "key_rotator.h"
 
 TEST(KeyRotatorTest, InitialKeyGenerated)
