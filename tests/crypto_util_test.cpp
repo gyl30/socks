@@ -183,3 +183,52 @@ TEST(CryptoUtilTest, ZeroLengthPlaintext)
     ASSERT_FALSE(ec);
     EXPECT_TRUE(decrypted.empty());
 }
+
+TEST(CryptoUtilTest, ExtractPublicKey)
+{
+    uint8_t pub[32], priv[32];
+    ASSERT_TRUE(crypto_util::generate_x25519_keypair(pub, priv));
+    std::vector<uint8_t> v_priv(priv, priv + 32);
+    std::vector<uint8_t> v_pub(pub, pub + 32);
+
+    std::error_code ec;
+    auto extracted_pub = crypto_util::extract_public_key(v_priv, ec);
+    ASSERT_FALSE(ec);
+    EXPECT_EQ(extracted_pub, v_pub);
+}
+
+TEST(CryptoUtilTest, GetRandomGrease)
+{
+    for (int i = 0; i < 100; ++i)
+    {
+        uint16_t g = crypto_util::get_random_grease();
+        EXPECT_NE(g, 0);
+    }
+}
+
+TEST(CryptoUtilTest, HKDFExpandLabel)
+{
+    std::vector<uint8_t> secret(32, 0x01);
+    std::vector<uint8_t> context = {0x0a, 0x0b};
+    std::string label = "test";
+    std::error_code ec;
+
+    auto out = crypto_util::hkdf_expand_label(secret, label, context, 16, EVP_sha256(), ec);
+    ASSERT_FALSE(ec);
+    EXPECT_EQ(out.size(), 16);
+}
+
+TEST(CryptoUtilTest, InvalidInputs)
+{
+    std::error_code ec;
+    crypto_util::extract_public_key(std::vector<uint8_t>(31), ec);
+    EXPECT_TRUE(ec);
+
+    crypto_util::x25519_derive(std::vector<uint8_t>(32), std::vector<uint8_t>(31), ec);
+    EXPECT_TRUE(ec);
+
+    std::vector<uint8_t> key(32, 0);
+    std::vector<uint8_t> nonce(12, 0);
+    crypto_util::aead_decrypt(EVP_aes_256_gcm(), key, nonce, std::vector<uint8_t>(15), {}, ec);
+    EXPECT_TRUE(ec);
+}
