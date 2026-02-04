@@ -1,4 +1,25 @@
+#include <span>
+#include <mutex>
+#include <atomic>
+#include <chrono>
+#include <memory>
+#include <string>
+#include <vector>
+#include <utility>
+#include <system_error>
+
+#include <asio/error.hpp>
+#include <asio/write.hpp>
+#include <asio/buffer.hpp>
+#include <asio/ip/tcp.hpp>
+#include <asio/as_tuple.hpp>
+#include <asio/steady_timer.hpp>
+#include <asio/use_awaitable.hpp>
+#include <asio/experimental/awaitable_operators.hpp>
+
 #include "log.h"
+#include "mux_protocol.h"
+#include "reality_core.h"
 #include "mux_connection.h"
 
 namespace mux
@@ -24,8 +45,8 @@ mux_connection::mux_connection(asio::ip::tcp::socket socket,
     ctx_.trace_id = trace_id;
     ctx_.conn_id = conn_id;
     std::error_code ec;
-    auto local_ep = socket_.local_endpoint(ec);
-    auto remote_ep = socket_.remote_endpoint(ec);
+    const auto local_ep = socket_.local_endpoint(ec);
+    const auto remote_ep = socket_.remote_endpoint(ec);
     if (!ec)
     {
         ctx_.local_addr = local_ep.address().to_string();
@@ -54,7 +75,7 @@ void mux_connection::remove_stream(uint32_t id)
 
 asio::awaitable<void> mux_connection::start()
 {
-    auto self = shared_from_this();
+    const auto self = shared_from_this();
     LOG_DEBUG("mux {} started loops", cid_);
     using asio::experimental::awaitable_operators::operator||;
     last_read_time = std::chrono::steady_clock::now();
@@ -140,7 +161,7 @@ asio::awaitable<void> mux_connection::read_loop()
     {
         auto buf = reality_engine_.get_read_buffer(8192);
 
-        auto [read_ec, n] = co_await socket_.async_read_some(buf, asio::as_tuple(asio::use_awaitable));
+        const auto [read_ec, n] = co_await socket_.async_read_some(buf, asio::as_tuple(asio::use_awaitable));
 
         if (read_ec || n == 0)
         {
@@ -186,10 +207,10 @@ asio::awaitable<void> mux_connection::write_loop()
             break;
         }
 
-        auto mux_frame = mux_dispatcher::pack(msg.stream_id, msg.command_, msg.payload);
+        const auto mux_frame = mux_dispatcher::pack(msg.stream_id, msg.command_, msg.payload);
         std::error_code enc_ec;
 
-        auto ciphertext_span = reality_engine_.encrypt(mux_frame, enc_ec);
+        const auto ciphertext_span = reality_engine_.encrypt(mux_frame, enc_ec);
 
         if (enc_ec)
         {
@@ -230,9 +251,9 @@ asio::awaitable<void> mux_connection::timeout_loop()
             }
             break;
         }
-        auto now = std::chrono::steady_clock::now();
-        auto read_elapsed = now - last_read_time;
-        auto write_elapsed = now - last_write_time;
+        const auto now = std::chrono::steady_clock::now();
+        const auto read_elapsed = now - last_read_time;
+        const auto write_elapsed = now - last_write_time;
         if (read_elapsed > std::chrono::seconds(timeout_config_.read))
         {
             LOG_WARN("mux {} timeout read after {}s", cid_, timeout_config_.read);

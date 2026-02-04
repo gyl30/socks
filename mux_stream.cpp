@@ -34,7 +34,7 @@ asio::awaitable<std::error_code> mux_stream::async_write_some(const void* data, 
 
     std::vector<uint8_t> payload(static_cast<const uint8_t*>(data), static_cast<const uint8_t*>(data) + len);
     tx_bytes_.fetch_add(len, std::memory_order_relaxed);
-    auto conn = connection_.lock();
+    const auto conn = connection_.lock();
     if (!conn)
     {
         co_return asio::error::operation_aborted;

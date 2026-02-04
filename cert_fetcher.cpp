@@ -8,15 +8,26 @@
 #include <optional>
 #include <system_error>
 
-#include <asio.hpp>
+#include <asio/read.hpp>
 #include <openssl/evp.h>
+#include <asio/error.hpp>
+#include <asio/write.hpp>
 #include <openssl/rand.h>
+#include <asio/buffer.hpp>
+#include <asio/ip/tcp.hpp>
+#include <asio/as_tuple.hpp>
+#include <asio/connect.hpp>
+#include <asio/awaitable.hpp>
+#include <openssl/ossl_typ.h>
+#include <asio/async_result.hpp>
+#include <asio/use_awaitable.hpp>
+#include <asio/any_io_executor.hpp>
 
 #include "log.h"
-#include "constants.h"
 #include "crypto_util.h"
 #include "log_context.h"
 #include "cert_fetcher.h"
+#include "reality_core.h"
 #include "reality_messages.h"
 #include "tls_key_schedule.h"
 #include "tls_record_layer.h"

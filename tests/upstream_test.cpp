@@ -1,4 +1,13 @@
-#include <asio.hpp>
+#include <memory>
+#include <vector>
+#include <thread>
+#include <cstdint>
+#include <system_error>
+
+#include <asio/io_context.hpp>
+#include <asio/ip/tcp.hpp>
+#include <asio/write.hpp>
+#include <asio/buffer.hpp>
 #include <gtest/gtest.h>
 
 #include "upstream.h"
@@ -8,9 +17,11 @@
 class UpstreamTest : public ::testing::Test
 {
    protected:
-    asio::io_context ctx;
+    void TearDown() override { ctx_.stop(); }
+    asio::io_context& ctx() { return ctx_; }
 
-    void TearDown() override { ctx.stop(); }
+   private:
+    asio::io_context ctx_;
 };
 
 class EchoServer
@@ -22,13 +33,21 @@ class EchoServer
         thread_ = std::thread([this] { ctx_.run(); });
     }
 
-    uint16_t port() const { return acceptor_.local_endpoint().port(); }
+    [[nodiscard]] uint16_t port() const { return acceptor_.local_endpoint().port(); }
 
-    ~EchoServer()
+    ~EchoServer() noexcept
     {
-        stop();
-        if (thread_.joinable())
-            thread_.join();
+        try
+        {
+            stop();
+            if (thread_.joinable())
+            {
+                thread_.join();
+            }
+        }
+        catch (...)
+        {
+        }
     }
 
     void stop()
@@ -55,7 +74,7 @@ class EchoServer
                                });
     }
 
-    void do_echo(std::shared_ptr<asio::ip::tcp::socket> socket)
+    void do_echo(const std::shared_ptr<asio::ip::tcp::socket>& socket)
     {
         auto buf = std::make_shared<std::vector<uint8_t>>(1024);
         socket->async_read_some(asio::buffer(*buf),
@@ -81,41 +100,41 @@ class EchoServer
     std::thread thread_;
 };
 
-TEST_F(UpstreamTest, DirectUpstream_Connect_Success)
+TEST_F(UpstreamTest, DirectUpstreamConnectSuccess)
 {
     EchoServer server;
-    uint16_t port = server.port();
+    const uint16_t port = server.port();
 
-    mux::direct_upstream upstream(ctx.get_executor(), mux::connection_context{});
+    mux::direct_upstream upstream(ctx().get_executor(), mux::connection_context{});
 
-    auto success = mux::test::run_awaitable(ctx, upstream.connect("127.0.0.1", port));
+    auto success = mux::test::run_awaitable(ctx(), upstream.connect("127.0.0.1", port));
     EXPECT_TRUE(success);
 
-    std::vector<uint8_t> data = {0x01, 0x02, 0x03};
-    auto write_n = mux::test::run_awaitable(ctx, upstream.write(data));
+    const std::vector<uint8_t> data = {0x01, 0x02, 0x03};
+    auto write_n = mux::test::run_awaitable(ctx(), upstream.write(data));
     EXPECT_EQ(write_n, 3);
 
     std::vector<uint8_t> buf(1024);
-    auto [read_ec, read_n] = mux::test::run_awaitable(ctx, upstream.read(buf));
+    auto [read_ec, read_n] = mux::test::run_awaitable(ctx(), upstream.read(buf));
     EXPECT_FALSE(read_ec);
     EXPECT_EQ(read_n, 3);
     EXPECT_EQ(buf[0], 0x01);
 
-    mux::test::run_awaitable_void(ctx, upstream.close());
+    mux::test::run_awaitable_void(ctx(), upstream.close());
     server.stop();
 }
 
-TEST_F(UpstreamTest, DirectUpstream_Connect_Fail)
+TEST_F(UpstreamTest, DirectUpstreamConnectFail)
 {
-    mux::direct_upstream upstream(ctx.get_executor(), mux::connection_context{});
+    mux::direct_upstream upstream(ctx().get_executor(), mux::connection_context{});
 
-    auto success = mux::test::run_awaitable(ctx, upstream.connect("127.0.0.1", 1));
+    auto success = mux::test::run_awaitable(ctx(), upstream.connect("127.0.0.1", 1));
     EXPECT_FALSE(success);
 }
 
-TEST_F(UpstreamTest, DirectUpstream_Resolve_Fail)
+TEST_F(UpstreamTest, DirectUpstreamResolveFail)
 {
-    mux::direct_upstream upstream(ctx.get_executor(), mux::connection_context{});
-    auto success = mux::test::run_awaitable(ctx, upstream.connect("invalid.host.name.local", 80));
+    mux::direct_upstream upstream(ctx().get_executor(), mux::connection_context{});
+    auto success = mux::test::run_awaitable(ctx(), upstream.connect("invalid.host.name.local", 80));
     EXPECT_FALSE(success);
 }

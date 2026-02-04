@@ -10,7 +10,9 @@
 #include <optional>
 #include <system_error>
 
-#include <asio.hpp>
+#include <asio/awaitable.hpp>
+#include <asio/any_io_executor.hpp>
+#include <asio/ip/tcp.hpp>
 
 #include "transcript.h"
 #include "log_context.h"
