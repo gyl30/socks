@@ -3,6 +3,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <system_error>
+#include <fstream>
+#include <iterator>
 
 #include <gtest/gtest.h>
 #include <openssl/evp.h>
@@ -233,4 +235,153 @@ TEST(CryptoUtilTest, InvalidInputs)
     const std::vector<uint8_t> nonce(12, 0);
     (void)crypto_util::aead_decrypt(EVP_aes_256_gcm(), key, nonce, std::vector<uint8_t>(15), {}, ec);
     EXPECT_TRUE(ec);
+
+    // Test hex_to_bytes with invalid hex
+    const auto invalid_hex = crypto_util::hex_to_bytes("invalid hex");
+    EXPECT_TRUE(invalid_hex.empty());
+}
+
+TEST(CryptoUtilTest, ED25519PublicKey)
+{
+    const std::vector<uint8_t> priv(32, 0x42);
+    std::error_code ec;
+    const auto pub = crypto_util::extract_ed25519_public_key(priv, ec);
+    ASSERT_FALSE(ec);
+    EXPECT_EQ(pub.size(), 32);
+
+    (void)crypto_util::extract_ed25519_public_key(std::vector<uint8_t>(31), ec);
+    EXPECT_TRUE(ec);
+}
+
+TEST(CryptoUtilTest, AEADAppendAndBuffer)
+{
+    const std::vector<uint8_t> key(32, 0x11);
+    const std::vector<uint8_t> nonce(12, 0x22);
+    const std::vector<uint8_t> plaintext = {0x01, 0x02, 0x03, 0x04};
+    const std::vector<uint8_t> aad = {0xAA};
+    std::error_code ec;
+
+    const reality::cipher_context ctx;
+    std::vector<uint8_t> ciphertext;
+    crypto_util::aead_encrypt_append(ctx, EVP_aes_256_gcm(), key, nonce, plaintext, aad, ciphertext, ec);
+    ASSERT_FALSE(ec);
+    EXPECT_EQ(ciphertext.size(), plaintext.size() + 16);
+
+    std::vector<uint8_t> decrypted(plaintext.size());
+    const size_t n = crypto_util::aead_decrypt(ctx, EVP_aes_256_gcm(), key, nonce, ciphertext, aad, decrypted, ec);
+    ASSERT_FALSE(ec);
+    EXPECT_EQ(n, plaintext.size());
+    EXPECT_EQ(decrypted, plaintext);
+
+    // Test buffer too small
+    std::vector<uint8_t> small_buffer(plaintext.size() - 1);
+    (void)crypto_util::aead_decrypt(ctx, EVP_aes_256_gcm(), key, nonce, ciphertext, aad, small_buffer, ec);
+    EXPECT_EQ(ec, std::errc::no_buffer_space);
+}
+
+TEST(CryptoUtilTest, TLS13SignatureVerification)
+{
+    // Generate a temporary key for signing
+    EVP_PKEY* pkey = nullptr;
+    EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_ED25519, nullptr);
+    EVP_PKEY_keygen_init(ctx);
+    EVP_PKEY_keygen(ctx, &pkey);
+    EVP_PKEY_CTX_free(ctx);
+
+    const std::vector<uint8_t> transcript_hash(32, 0x55);
+    std::vector<uint8_t> to_sign(64, 0x20);
+    const std::string context_str = "TLS 1.3, server CertificateVerify";
+    to_sign.insert(to_sign.end(), context_str.begin(), context_str.end());
+    to_sign.push_back(0x00);
+    to_sign.insert(to_sign.end(), transcript_hash.begin(), transcript_hash.end());
+
+    size_t sig_len = 0;
+    EVP_MD_CTX* mctx = EVP_MD_CTX_new();
+    EVP_DigestSignInit(mctx, nullptr, nullptr, nullptr, pkey);
+    EVP_DigestSign(mctx, nullptr, &sig_len, to_sign.data(), to_sign.size());
+    std::vector<uint8_t> signature(sig_len);
+    EVP_DigestSign(mctx, signature.data(), &sig_len, to_sign.data(), to_sign.size());
+    EVP_MD_CTX_free(mctx);
+
+    std::error_code ec;
+    bool ok = crypto_util::verify_tls13_signature(pkey, transcript_hash, signature, ec);
+    EXPECT_TRUE(ok);
+    EXPECT_FALSE(ec);
+
+    // Tamper with signature
+    signature[0] ^= 0xFF;
+    ok = crypto_util::verify_tls13_signature(pkey, transcript_hash, signature, ec);
+    EXPECT_FALSE(ok);
+    EXPECT_TRUE(ec);
+
+    EVP_PKEY_free(pkey);
+}
+
+TEST(CryptoUtilTest, ExtractPubkeyFromCertInvalid)
+{
+    std::error_code ec;
+    auto pkey = crypto_util::extract_pubkey_from_cert({0x01, 0x02, 0x03}, ec);
+    EXPECT_TRUE(ec);
+    EXPECT_EQ(pkey.get(), nullptr);
+}
+
+TEST(CryptoUtilTest, ExtractPubkeyFromCertValid)
+{
+    // Generate a temporary self-signed certificate using openssl CLI
+    const char* gen_cmd = "openssl req -x509 -newkey rsa:2048 -keyout key_tmp.pem -out cert_tmp.pem -days 1 -nodes -subj '/CN=test' 2>/dev/null";
+    const char* der_cmd = "openssl x509 -in cert_tmp.pem -outform DER -out cert_tmp.der";
+
+    if (std::system(gen_cmd) == 0 && std::system(der_cmd) == 0)
+    {
+        std::ifstream file("cert_tmp.der", std::ios::binary);
+        std::vector<uint8_t> cert_der((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        file.close();
+
+        if (!cert_der.empty())
+        {
+            std::error_code ec;
+            auto pkey = crypto_util::extract_pubkey_from_cert(cert_der, ec);
+            EXPECT_FALSE(ec);
+            EXPECT_NE(pkey.get(), nullptr);
+        }
+    }
+    (void)std::system("rm -f key_tmp.pem cert_tmp.pem cert_tmp.der");
+}
+
+TEST(CryptoUtilTest, HKDFErrorPaths)
+{
+    std::error_code ec;
+    // HKDF extract with empty ikm should fail with invalid_argument
+    (void)crypto_util::hkdf_extract({}, {}, EVP_sha256(), ec);
+    EXPECT_EQ(ec, std::errc::invalid_argument);
+
+    // HKDF expand with empty prk should fail with invalid_argument
+    (void)crypto_util::hkdf_expand({}, {}, 16, EVP_sha256(), ec);
+    EXPECT_EQ(ec, std::errc::invalid_argument);
+
+    // HKDF expand with zero length should return empty and success
+    const auto okm = crypto_util::hkdf_expand({0x01}, {}, 0, EVP_sha256(), ec);
+    EXPECT_FALSE(ec);
+    EXPECT_TRUE(okm.empty());
+}
+
+TEST(CryptoUtilTest, AEADErrorPaths)
+{
+    const std::vector<uint8_t> key(32, 0x11);
+    const std::vector<uint8_t> nonce(12, 0x22);
+    std::error_code ec;
+
+    // AEAD decrypt too short ciphertext
+    (void)crypto_util::aead_decrypt(EVP_aes_256_gcm(), key, nonce, {0x01, 0x02}, {}, ec);
+    EXPECT_EQ(ec, std::errc::message_size);
+
+    // AEAD encrypt with wrong key size
+    const std::vector<uint8_t> wrong_key(16, 0x11);
+    (void)crypto_util::aead_encrypt(EVP_aes_256_gcm(), wrong_key, nonce, {0x01}, {}, ec);
+    EXPECT_EQ(ec, std::errc::invalid_argument);
+
+    std::vector<uint8_t> out;
+    const reality::cipher_context ctx;
+    crypto_util::aead_encrypt_append(ctx, EVP_aes_256_gcm(), wrong_key, nonce, {0x01}, {}, out, ec);
+    EXPECT_EQ(ec, std::errc::invalid_argument);
 }
