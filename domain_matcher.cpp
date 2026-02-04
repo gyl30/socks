@@ -13,21 +13,22 @@ bool domain_matcher::load(const std::string& filename)
     std::ifstream file(filename);
     if (!file.is_open())
     {
-        LOG_WARN("failed to open domain file: {}", filename);
+        LOG_WARN("failed to open domain file {}", filename);
         return false;
     }
 
     std::string line;
     while (std::getline(file, line))
     {
-        auto comment_pos = line.find('#');
+        const auto comment_pos = line.find('#');
         if (comment_pos != std::string::npos)
         {
             line = line.substr(0, comment_pos);
         }
 
         line.erase(0, line.find_first_not_of(" \t\r\n"));
-        if (auto last = line.find_last_not_of(" \t\r\n"); last != std::string::npos)
+        const auto last = line.find_last_not_of(" \t\r\n");
+        if (last != std::string::npos)
         {
             line.erase(last + 1);
         }
@@ -57,7 +58,7 @@ void domain_matcher::add(std::string domain)
     {
         domain.pop_back();
     }
-    std::ranges::transform(domain, domain.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    std::ranges::transform(domain, domain.begin(), [](const unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     domains_.insert(domain);
 }
 
@@ -73,7 +74,7 @@ bool domain_matcher::match(std::string domain) const
         domain.pop_back();
     }
 
-    std::ranges::transform(domain, domain.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    std::ranges::transform(domain, domain.begin(), [](const unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
 
     if (domains_.contains(domain))
     {
