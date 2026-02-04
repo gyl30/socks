@@ -189,9 +189,28 @@ std::vector<uint8_t> crypto_util::hkdf_extract(const std::vector<uint8_t>& salt,
     }
 
     if (EVP_PKEY_CTX_set_hkdf_md(evp_pkey_ctx.get(), md) <= 0 ||
-        EVP_PKEY_CTX_set_hkdf_mode(evp_pkey_ctx.get(), EVP_PKEY_HKDEF_MODE_EXTRACT_ONLY) <= 0 ||
-        EVP_PKEY_CTX_set1_hkdf_salt(evp_pkey_ctx.get(), salt.data(), static_cast<int>(salt.size())) <= 0 ||
-        EVP_PKEY_CTX_set1_hkdf_key(evp_pkey_ctx.get(), ikm.data(), static_cast<int>(ikm.size())) <= 0)
+        EVP_PKEY_CTX_set_hkdf_mode(evp_pkey_ctx.get(), EVP_PKEY_HKDEF_MODE_EXTRACT_ONLY) <= 0)
+    {
+        ec = std::make_error_code(std::errc::protocol_error);
+        return {};
+    }
+
+    if (!salt.empty())
+    {
+        if (EVP_PKEY_CTX_set1_hkdf_salt(evp_pkey_ctx.get(), salt.data(), static_cast<int>(salt.size())) <= 0)
+        {
+            ec = std::make_error_code(std::errc::protocol_error);
+            return {};
+        }
+    }
+
+    if (ikm.empty())
+    {
+        ec = std::make_error_code(std::errc::invalid_argument);
+        return {};
+    }
+
+    if (EVP_PKEY_CTX_set1_hkdf_key(evp_pkey_ctx.get(), ikm.data(), static_cast<int>(ikm.size())) <= 0)
     {
         ec = std::make_error_code(std::errc::protocol_error);
         return {};
@@ -219,12 +238,28 @@ std::vector<uint8_t> crypto_util::hkdf_expand(
         return {};
     }
 
-    if (EVP_PKEY_CTX_set_hkdf_md(evp_pkey_ctx.get(), md) <= 0 ||
-        EVP_PKEY_CTX_set_hkdf_mode(evp_pkey_ctx.get(), EVP_PKEY_HKDEF_MODE_EXPAND_ONLY) <= 0 ||
-        EVP_PKEY_CTX_set1_hkdf_key(evp_pkey_ctx.get(), prk.data(), static_cast<int>(prk.size())) <= 0 ||
+    if (EVP_PKEY_CTX_set_hkdf_md(evp_pkey_ctx.get(), md) <= 0 || EVP_PKEY_CTX_set_hkdf_mode(evp_pkey_ctx.get(), EVP_PKEY_HKDEF_MODE_EXPAND_ONLY) <= 0)
+    {
+        ec = std::make_error_code(std::errc::protocol_error);
+        return {};
+    }
+
+    if (prk.empty())
+    {
+        ec = std::make_error_code(std::errc::invalid_argument);
+        return {};
+    }
+
+    if (EVP_PKEY_CTX_set1_hkdf_key(evp_pkey_ctx.get(), prk.data(), static_cast<int>(prk.size())) <= 0 ||
         EVP_PKEY_CTX_add1_hkdf_info(evp_pkey_ctx.get(), info.data(), static_cast<int>(info.size())) <= 0)
     {
         ec = std::make_error_code(std::errc::protocol_error);
+        return {};
+    }
+
+    if (len == 0)
+    {
+        ec.clear();
         return {};
     }
 

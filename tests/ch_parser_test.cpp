@@ -305,3 +305,96 @@ TEST(CHParserTest, KeyShareWrongGroup)
     auto info = ch_parser::parse(builder.get_buffer());
     EXPECT_FALSE(info.is_tls13);
 }
+
+TEST(CHParserTest, WrongRecordType)
+{
+    ClientHelloBuilder builder;
+    builder.start_handshake();
+    builder.finish();
+    auto buf = builder.get_buffer();
+    buf[0] = 0x17;    // Not handshake
+    auto info = ch_parser::parse(buf);
+    EXPECT_TRUE(info.random.empty());
+}
+
+TEST(CHParserTest, WrongHandshakeType)
+{
+    ClientHelloBuilder builder;
+    builder.start_handshake();
+    builder.finish();
+    auto buf = builder.get_buffer();
+    buf[5] = 0x02;    // ServerHello instead of ClientHello
+    auto info = ch_parser::parse(buf);
+    EXPECT_TRUE(info.random.empty());
+}
+
+TEST(CHParserTest, TruncatedRandom)
+{
+    ClientHelloBuilder builder;
+    builder.start_handshake();
+    auto buf = builder.get_buffer();
+    buf.resize(10);
+    auto info = ch_parser::parse(buf);
+    EXPECT_TRUE(info.random.empty());
+}
+
+TEST(CHParserTest, SNINonHostName)
+{
+    ClientHelloBuilder builder;
+    builder.start_handshake();
+    const size_t pos = builder.get_buffer().size();
+    builder.get_mutable_buffer().push_back(0);
+    builder.get_mutable_buffer().push_back(0);
+
+    builder.get_mutable_buffer().push_back(0x00);
+    builder.get_mutable_buffer().push_back(0x00);    // SNI type
+    builder.get_mutable_buffer().push_back(0x00);
+    builder.get_mutable_buffer().push_back(8);
+
+    builder.get_mutable_buffer().push_back(0x00);
+    builder.get_mutable_buffer().push_back(6);
+
+    builder.get_mutable_buffer().push_back(0x01);    // type 1 (not hostname)
+    builder.get_mutable_buffer().push_back(0x00);
+    builder.get_mutable_buffer().push_back(3);
+    builder.get_mutable_buffer().push_back('a');
+    builder.get_mutable_buffer().push_back('b');
+    builder.get_mutable_buffer().push_back('c');
+
+    const uint16_t total = builder.get_buffer().size() - pos - 2;
+    builder.get_mutable_buffer()[pos] = (total >> 8);
+    builder.get_mutable_buffer()[pos + 1] = total & 0xFF;
+
+    auto info = ch_parser::parse(builder.get_buffer());
+    EXPECT_TRUE(info.sni.empty());
+}
+
+TEST(CHParserTest, KeyShareWrongLength)
+{
+    ClientHelloBuilder builder;
+    builder.start_handshake();
+    const size_t pos = builder.get_buffer().size();
+    builder.get_mutable_buffer().push_back(0);
+    builder.get_mutable_buffer().push_back(0);
+
+    builder.get_mutable_buffer().push_back(0x00);
+    builder.get_mutable_buffer().push_back(0x33);
+    builder.get_mutable_buffer().push_back(0);
+    builder.get_mutable_buffer().push_back(10);
+
+    builder.get_mutable_buffer().push_back(0);
+    builder.get_mutable_buffer().push_back(8);
+
+    builder.get_mutable_buffer().push_back(0x00);
+    builder.get_mutable_buffer().push_back(0x1d);    // X25519
+    builder.get_mutable_buffer().push_back(0);
+    builder.get_mutable_buffer().push_back(31);    // Wrong length (not 32)
+    for (int i = 0; i < 4; ++i) builder.get_mutable_buffer().push_back(0xEE);
+
+    const uint16_t total = builder.get_buffer().size() - pos - 2;
+    builder.get_mutable_buffer()[pos] = (total >> 8);
+    builder.get_mutable_buffer()[pos + 1] = total & 0xFF;
+
+    auto info = ch_parser::parse(builder.get_buffer());
+    EXPECT_TRUE(info.x25519_pub.empty());
+}
