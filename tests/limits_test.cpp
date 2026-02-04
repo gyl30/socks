@@ -64,7 +64,7 @@ TEST_F(LimitsTest, ConnectionPoolCapacity)
 
     std::vector<uint8_t> dummy_cert = {0x0b, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00};
     reality::server_fingerprint dummy_fp;
-    server->get_cert_manager().set_certificate(sni, dummy_cert, dummy_fp);
+    server->cert_manager().set_certificate(sni, dummy_cert, dummy_fp);
 
     server->start();
 

@@ -27,8 +27,8 @@ namespace mux
 
 mux_connection::mux_connection(asio::ip::tcp::socket socket,
                                reality_engine engine,
-                               bool is_client,
-                               uint32_t conn_id,
+                               const bool is_client,
+                               const uint32_t conn_id,
                                const std::string& trace_id,
                                const config::timeout_t& timeout_cfg,
                                const config::limits_t& limits_cfg)
@@ -42,31 +42,31 @@ mux_connection::mux_connection(asio::ip::tcp::socket socket,
       timeout_config_(timeout_cfg),
       limits_config_(limits_cfg)
 {
-    ctx_.trace_id = trace_id;
-    ctx_.conn_id = conn_id;
+    ctx_.trace_id(trace_id);
+    ctx_.conn_id(conn_id);
     std::error_code ec;
     const auto local_ep = socket_.local_endpoint(ec);
     const auto remote_ep = socket_.remote_endpoint(ec);
     if (!ec)
     {
-        ctx_.local_addr = local_ep.address().to_string();
-        ctx_.local_port = local_ep.port();
-        ctx_.remote_addr = remote_ep.address().to_string();
-        ctx_.remote_port = remote_ep.port();
+        ctx_.local_addr(local_ep.address().to_string());
+        ctx_.local_port(local_ep.port());
+        ctx_.remote_addr(remote_ep.address().to_string());
+        ctx_.remote_port(remote_ep.port());
     }
-    mux_dispatcher_.set_callback([this](mux::frame_header h, std::vector<uint8_t> p) { this->on_mux_frame(h, std::move(p)); });
+    mux_dispatcher_.set_callback([this](const mux::frame_header h, std::vector<uint8_t> p) { this->on_mux_frame(h, std::move(p)); });
     mux_dispatcher_.set_context(ctx_);
     LOG_CTX_INFO(ctx_, "{} mux initialized {}", log_event::CONN_INIT, ctx_.connection_info());
 }
 
-void mux_connection::register_stream(uint32_t id, std::shared_ptr<mux_stream_interface> stream)
+void mux_connection::register_stream(const uint32_t id, std::shared_ptr<mux_stream_interface> stream)
 {
     const std::scoped_lock lock(streams_mutex_);
     streams_[id] = std::move(stream);
     LOG_DEBUG("mux {} stream {} registered", cid_, id);
 }
 
-void mux_connection::remove_stream(uint32_t id)
+void mux_connection::remove_stream(const uint32_t id)
 {
     const std::scoped_lock lock(streams_mutex_);
     streams_.erase(id);
@@ -78,14 +78,14 @@ asio::awaitable<void> mux_connection::start()
     const auto self = shared_from_this();
     LOG_DEBUG("mux {} started loops", cid_);
     using asio::experimental::awaitable_operators::operator||;
-    last_read_time = std::chrono::steady_clock::now();
-    last_write_time = std::chrono::steady_clock::now();
+    last_read_time_ = std::chrono::steady_clock::now();
+    last_write_time_ = std::chrono::steady_clock::now();
     co_await (read_loop() || write_loop() || timeout_loop());
     LOG_INFO("mux {} loops finished stopped", cid_);
     stop();
 }
 
-asio::awaitable<std::error_code> mux_connection::send_async(uint32_t stream_id, uint8_t cmd, std::vector<uint8_t> payload)
+asio::awaitable<std::error_code> mux_connection::send_async(const uint32_t stream_id, const uint8_t cmd, std::vector<uint8_t> payload)
 {
     if (connection_state_.load(std::memory_order_acquire) != mux_connection_state::connected)
     {
@@ -97,8 +97,8 @@ asio::awaitable<std::error_code> mux_connection::send_async(uint32_t stream_id, 
         LOG_TRACE("mux {} send frame stream {} cmd {} size {}", cid_, stream_id, cmd, payload.size());
     }
 
-    mux_write_msg msg{.command_ = cmd, .stream_id = stream_id, .payload = std::move(payload)};
-    auto [ec] = co_await write_channel_.async_send(std::error_code{}, std::move(msg), asio::as_tuple(asio::use_awaitable));
+    mux_write_msg msg{.command = cmd, .stream_id = stream_id, .payload = std::move(payload)};
+    const auto [ec] = co_await write_channel_.async_send(std::error_code{}, std::move(msg), asio::as_tuple(asio::use_awaitable));
 
     if (ec)
     {
@@ -126,7 +126,7 @@ void mux_connection::stop()
 
     for (auto& [id, stream] : streams_to_clear)
     {
-        if (stream)
+        if (stream != nullptr)
         {
             stream->on_close();
         }
@@ -159,7 +159,7 @@ asio::awaitable<void> mux_connection::read_loop()
 {
     while (is_open())
     {
-        auto buf = reality_engine_.get_read_buffer(8192);
+        const auto buf = reality_engine_.read_buffer(8192);
 
         const auto [read_ec, n] = co_await socket_.async_read_some(buf, asio::as_tuple(asio::use_awaitable));
 
@@ -171,15 +171,15 @@ asio::awaitable<void> mux_connection::read_loop()
             }
             break;
         }
-        read_bytes += n;
-        last_read_time = std::chrono::steady_clock::now();
+        read_bytes_ += n;
+        last_read_time_ = std::chrono::steady_clock::now();
 
         reality_engine_.commit_read(n);
 
         std::error_code decrypt_ec;
 
         reality_engine_.process_available_records(decrypt_ec,
-                                                  [this](uint8_t type, std::span<const uint8_t> pt)
+                                                  [this](const uint8_t type, const std::span<const uint8_t> pt)
                                                   {
                                                       if (type == reality::CONTENT_TYPE_APPLICATION_DATA && !pt.empty())
                                                       {
@@ -189,7 +189,7 @@ asio::awaitable<void> mux_connection::read_loop()
 
         if (decrypt_ec)
         {
-            LOG_ERROR("mux {} decrypt/protocol error {}", cid_, decrypt_ec.message());
+            LOG_ERROR("mux {} decrypt protocol error {}", cid_, decrypt_ec.message());
             break;
         }
     }
@@ -201,13 +201,13 @@ asio::awaitable<void> mux_connection::write_loop()
 {
     while (is_open())
     {
-        auto [ec, msg] = co_await write_channel_.async_receive(asio::as_tuple(asio::use_awaitable));
+        const auto [ec, msg] = co_await write_channel_.async_receive(asio::as_tuple(asio::use_awaitable));
         if (ec)
         {
             break;
         }
 
-        const auto mux_frame = mux_dispatcher::pack(msg.stream_id, msg.command_, msg.payload);
+        const auto mux_frame = mux_dispatcher::pack(msg.stream_id, msg.command, msg.payload);
         std::error_code enc_ec;
 
         const auto ciphertext_span = reality_engine_.encrypt(mux_frame, enc_ec);
@@ -218,7 +218,7 @@ asio::awaitable<void> mux_connection::write_loop()
             break;
         }
 
-        auto [wec, n] =
+        const auto [wec, n] =
             co_await asio::async_write(socket_, asio::buffer(ciphertext_span.data(), ciphertext_span.size()), asio::as_tuple(asio::use_awaitable));
 
         if (wec)
@@ -226,8 +226,8 @@ asio::awaitable<void> mux_connection::write_loop()
             LOG_ERROR("mux {} write error {}", cid_, wec.message());
             break;
         }
-        write_bytes += n;
-        last_write_time = std::chrono::steady_clock::now();
+        write_bytes_ += n;
+        last_write_time_ = std::chrono::steady_clock::now();
     }
     LOG_DEBUG("mux {} write loop finished", cid_);
     stop();
@@ -238,7 +238,7 @@ asio::awaitable<void> mux_connection::timeout_loop()
     while (is_open())
     {
         timer_.expires_after(std::chrono::seconds(1));
-        auto [ec] = co_await timer_.async_wait(asio::as_tuple(asio::use_awaitable));
+        const auto [ec] = co_await timer_.async_wait(asio::as_tuple(asio::use_awaitable));
         if (ec)
         {
             if (ec == asio::error::operation_aborted)
@@ -252,8 +252,8 @@ asio::awaitable<void> mux_connection::timeout_loop()
             break;
         }
         const auto now = std::chrono::steady_clock::now();
-        const auto read_elapsed = now - last_read_time;
-        const auto write_elapsed = now - last_write_time;
+        const auto read_elapsed = now - last_read_time_;
+        const auto write_elapsed = now - last_write_time_;
         if (read_elapsed > std::chrono::seconds(timeout_config_.read))
         {
             LOG_WARN("mux {} timeout read after {}s", cid_, timeout_config_.read);
@@ -270,23 +270,23 @@ asio::awaitable<void> mux_connection::timeout_loop()
     stop();
 }
 
-void mux_connection::on_mux_frame(mux::frame_header header, std::vector<uint8_t> payload)
+void mux_connection::on_mux_frame(const mux::frame_header header, std::vector<uint8_t> payload)
 {
     LOG_TRACE("mux {} recv frame stream {} cmd {} len {} payload size {}", cid_, header.stream_id, header.command, header.length, payload.size());
 
     if (header.command == mux::CMD_SYN)
     {
-        if (syn_callback_)
+        if (syn_callback_ != nullptr)
         {
             syn_callback_(header.stream_id, std::move(payload));
         }
         return;
     }
 
-    std::shared_ptr<mux_stream_interface> stream;
+    std::shared_ptr<mux_stream_interface> stream = nullptr;
     {
         const std::scoped_lock lock(streams_mutex_);
-        auto it = streams_.find(header.stream_id);
+        const auto it = streams_.find(header.stream_id);
         if (it != streams_.end())
         {
             stream = it->second;

@@ -54,7 +54,7 @@ static std::optional<std::string> read_file(const std::string& filename)
 
 std::optional<config> parse_config(const std::string& filename)
 {
-    auto file_content = read_file(filename);
+    const auto file_content = read_file(filename);
     if (!file_content.has_value())
     {
         return {};

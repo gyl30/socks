@@ -19,7 +19,7 @@ namespace mux
 
 udp_socks_session::udp_socks_session(asio::ip::tcp::socket socket,
                                      std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager,
-                                     uint32_t sid)
+                                     const uint32_t sid)
     : timer_(socket.get_executor()),
       socket_(std::move(socket)),
       udp_socket_(socket_.get_executor()),
@@ -27,10 +27,10 @@ udp_socks_session::udp_socks_session(asio::ip::tcp::socket socket,
       recv_channel_(socket_.get_executor(), 128)
 {
     ctx_.new_trace_id();
-    ctx_.conn_id = sid;
+    ctx_.conn_id(sid);
 }
 
-void udp_socks_session::start(const std::string& host, uint16_t port)
+void udp_socks_session::start(const std::string& host, const uint16_t port)
 {
     const auto self = shared_from_this();
     asio::co_spawn(socket_.get_executor(), [self, host, port]() -> asio::awaitable<void> { co_await self->run(host, port); }, asio::detached);
@@ -51,18 +51,18 @@ void udp_socks_session::on_close()
 
 void udp_socks_session::on_reset() { on_close(); }
 
-asio::awaitable<void> udp_socks_session::run(std::string host, uint16_t port)
+asio::awaitable<void> udp_socks_session::run(const std::string host, const uint16_t port)
 {
     std::error_code ec;
-    auto tcp_local_ep = socket_.local_endpoint(ec);
+    const auto tcp_local_ep = socket_.local_endpoint(ec);
     if (ec)
     {
         LOG_CTX_ERROR(ctx_, "{} failed to get local endpoint {}", log_event::SOCKS, ec.message());
         co_return;
     }
 
-    auto local_addr = socks_codec::normalize_ip_address(tcp_local_ep.address());
-    auto udp_protocol = local_addr.is_v6() ? asio::ip::udp::v6() : asio::ip::udp::v4();
+    const auto local_addr = socks_codec::normalize_ip_address(tcp_local_ep.address());
+    const auto udp_protocol = local_addr.is_v6() ? asio::ip::udp::v6() : asio::ip::udp::v4();
 
     ec = udp_socket_.open(udp_protocol, ec);
     if (!ec)
@@ -82,12 +82,12 @@ asio::awaitable<void> udp_socks_session::run(std::string host, uint16_t port)
         co_return;
     }
 
-    auto udp_local_ep = udp_socket_.local_endpoint(ec);
+    const auto udp_local_ep = udp_socket_.local_endpoint(ec);
     const uint16_t udp_bind_port = udp_local_ep.port();
-    LOG_CTX_INFO(ctx_, "{} started bound at {}:{}", log_event::SOCKS, local_addr.to_string(), udp_bind_port);
+    LOG_CTX_INFO(ctx_, "{} started bound at {} {}", log_event::SOCKS, local_addr.to_string(), udp_bind_port);
 
-    auto stream = tunnel_manager_->create_stream();
-    if (!stream)
+    const auto stream = tunnel_manager_->create_stream();
+    if (stream == nullptr)
     {
         LOG_CTX_ERROR(ctx_, "{} failed to create stream", log_event::SOCKS);
         co_return;
@@ -121,13 +121,13 @@ asio::awaitable<void> udp_socks_session::run(std::string host, uint16_t port)
     if (local_addr.is_v4())
     {
         final_rep.push_back(socks::ATYP_IPV4);
-        auto bytes = local_addr.to_v4().to_bytes();
+        const auto bytes = local_addr.to_v4().to_bytes();
         final_rep.insert(final_rep.end(), bytes.begin(), bytes.end());
     }
     else
     {
         final_rep.push_back(socks::ATYP_IPV6);
-        auto bytes = local_addr.to_v6().to_bytes();
+        const auto bytes = local_addr.to_v6().to_bytes();
         final_rep.insert(final_rep.end(), bytes.begin(), bytes.end());
     }
 
@@ -142,7 +142,7 @@ asio::awaitable<void> udp_socks_session::run(std::string host, uint16_t port)
         co_return;
     }
 
-    auto client_ep_ptr = std::make_shared<asio::ip::udp::endpoint>();
+    const auto client_ep_ptr = std::make_shared<asio::ip::udp::endpoint>();
 
     tunnel_manager_->register_stream(stream->id(), shared_from_this());
 
