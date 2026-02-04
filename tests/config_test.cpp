@@ -20,6 +20,7 @@ class ConfigTest : public ::testing::Test
         out.close();
     }
 
+   protected:
     std::string tmp_file;
 };
 
@@ -53,15 +54,18 @@ TEST_F(ConfigTest, ParseValues)
 
     auto cfg_opt = mux::parse_config(tmp_file);
     ASSERT_TRUE(cfg_opt.has_value());
-    const auto& cfg = cfg_opt.value();
+    if (cfg_opt)
+    {
+        const auto& cfg = *cfg_opt;
 
-    EXPECT_EQ(cfg.mode, "client");
-    EXPECT_EQ(cfg.inbound.host, "127.0.0.1");
-    EXPECT_EQ(cfg.inbound.port, 1080);
-    EXPECT_TRUE(cfg.socks.auth);
-    EXPECT_EQ(cfg.socks.username, "user");
-    EXPECT_EQ(cfg.socks.password, "pass");
-    EXPECT_EQ(cfg.reality.sni, "google.com");
+        EXPECT_EQ(cfg.mode, "client");
+        EXPECT_EQ(cfg.inbound.host, "127.0.0.1");
+        EXPECT_EQ(cfg.inbound.port, 1080);
+        EXPECT_TRUE(cfg.socks.auth);
+        EXPECT_EQ(cfg.socks.username, "user");
+        EXPECT_EQ(cfg.socks.password, "pass");
+        EXPECT_EQ(cfg.reality.sni, "google.com");
+    }
 }
 
 TEST_F(ConfigTest, MissingFile)
