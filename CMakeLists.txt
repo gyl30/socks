@@ -22,6 +22,9 @@ if(ENABLE_COVERAGE)
     endif()
 endif()
 
+add_compile_definitions(
+    SPDLOG_SHORT_LEVEL_NAMES={"TRC","DBG","INF","WRN","ERR","CTL","OFF"}
+)
 
 find_package(OpenSSL REQUIRED)
 
