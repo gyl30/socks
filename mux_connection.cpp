@@ -7,8 +7,11 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <random>
 #include <utility>
 #include <system_error>
+
+#include <openssl/rand.h>
 
 #include <asio/write.hpp>
 #include <asio/error.hpp>
@@ -33,7 +36,8 @@ mux_connection::mux_connection(asio::ip::tcp::socket socket,
                                const std::uint32_t conn_id,
                                const std::string& trace_id,
                                const config::timeout_t& timeout_cfg,
-                               const config::limits_t& limits_cfg)
+                               const config::limits_t& limits_cfg,
+                               const config::heartbeat_t& heartbeat_cfg)
     : cid_(conn_id),
       timer_(socket.get_executor()),
       socket_(std::move(socket)),
@@ -42,7 +46,8 @@ mux_connection::mux_connection(asio::ip::tcp::socket socket,
       connection_state_(mux_connection_state::connected),
       write_channel_(socket_.get_executor(), 1024),
       timeout_config_(timeout_cfg),
-      limits_config_(limits_cfg)
+      limits_config_(limits_cfg),
+      heartbeat_config_(heartbeat_cfg)
 {
     ctx_.trace_id(trace_id);
     ctx_.conn_id(conn_id);
@@ -82,7 +87,7 @@ asio::awaitable<void> mux_connection::start()
     using asio::experimental::awaitable_operators::operator||;
     last_read_time_ = std::chrono::steady_clock::now();
     last_write_time_ = std::chrono::steady_clock::now();
-    co_await (read_loop() || write_loop() || timeout_loop());
+    co_await (read_loop() || write_loop() || timeout_loop() || heartbeat_loop());
     LOG_INFO("mux {} loops finished stopped", cid_);
     stop();
 }
@@ -272,9 +277,55 @@ asio::awaitable<void> mux_connection::timeout_loop()
     stop();
 }
 
+asio::awaitable<void> mux_connection::heartbeat_loop()
+{
+    if (!heartbeat_config_.enabled)
+    {
+        co_return;
+    }
+
+    static thread_local std::mt19937 rng(std::random_device{}());
+    asio::steady_timer heartbeat_timer(socket_.get_executor());
+
+    while (is_open())
+    {
+        std::uniform_int_distribution<std::uint32_t> interval_dist(heartbeat_config_.min_interval, heartbeat_config_.max_interval);
+        const auto interval = interval_dist(rng);
+        heartbeat_timer.expires_after(std::chrono::seconds(interval));
+
+        const auto [ec] = co_await heartbeat_timer.async_wait(asio::as_tuple(asio::use_awaitable));
+        if (ec)
+        {
+            break;
+        }
+
+        const auto now = std::chrono::steady_clock::now();
+        if (now - last_write_time_ < std::chrono::seconds(10))
+        {
+            continue;
+        }
+
+        std::uniform_int_distribution<std::uint32_t> padding_dist(heartbeat_config_.min_padding, heartbeat_config_.max_padding);
+        const auto padding_len = padding_dist(rng);
+        std::vector<std::uint8_t> padding(padding_len);
+        RAND_bytes(padding.data(), static_cast<int>(padding_len));
+
+        LOG_TRACE("mux {} sending heartbeat size {}", cid_, padding_len);
+        (void)co_await send_async(mux::STREAM_ID_HEARTBEAT, mux::CMD_DAT, std::move(padding));
+    }
+
+    LOG_DEBUG("mux {} heartbeat loop finished", cid_);
+}
+
 void mux_connection::on_mux_frame(const mux::frame_header header, std::vector<std::uint8_t> payload)
 {
     LOG_TRACE("mux {} recv frame stream {} cmd {} len {} payload size {}", cid_, header.stream_id, header.command, header.length, payload.size());
+
+    if (header.stream_id == mux::STREAM_ID_HEARTBEAT)
+    {
+        LOG_TRACE("mux {} heartbeat received size {}", cid_, payload.size());
+        return;
+    }
 
     if (header.command == mux::CMD_SYN)
     {
