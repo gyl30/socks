@@ -1,5 +1,5 @@
-#include <string>
 #include <thread>
+#include <string>
 #include <vector>
 #include <chrono>
 #include <memory>
@@ -8,8 +8,8 @@
 #include <iostream>
 #include <system_error>
 
-#include <asio/signal_set.hpp>
 #include <asio/io_context.hpp>
+#include <asio/signal_set.hpp>
 
 #include "log.h"
 #include "config.h"
@@ -21,7 +21,7 @@
 static void print_usage(const char* prog)
 {
     std::cout << "Usage:\n";
-    std::cout << prog << "x25519        Generate key pair for X25519 key exchange\n";
+    std::cout << prog << "x25519        Generate key pair for kX25519 key exchange\n";
 }
 
 static void dump_x25519()
@@ -30,18 +30,18 @@ static void dump_x25519()
     std::uint8_t priv[32];
     if (!reality::crypto_util::generate_x25519_keypair(pub, priv))
     {
-        std::cout << "Failed to generate keypair\n";
+        std::cout << "failed to generate keypair\n";
         return;
     }
     const std::vector<std::uint8_t> vec_priv(priv, priv + 32);
     const std::vector<std::uint8_t> vec_pub(pub, pub + 32);
     std::error_code ec;
     auto verify_pub = reality::crypto_util::extract_ed25519_public_key(vec_priv, ec);
-    std::cout << "Private Key: " << reality::crypto_util::bytes_to_hex(vec_priv) << '\n';
-    std::cout << "Public Key:  " << reality::crypto_util::bytes_to_hex(vec_pub) << '\n';
+    std::cout << "private key: " << reality::crypto_util::bytes_to_hex(vec_priv) << '\n';
+    std::cout << "public key:  " << reality::crypto_util::bytes_to_hex(vec_pub) << '\n';
     if (!ec && !verify_pub.empty())
     {
-        std::cout << "Verify Key:  " << reality::crypto_util::bytes_to_hex(verify_pub) << '\n';
+        std::cout << "verify key:  " << reality::crypto_util::bytes_to_hex(verify_pub) << '\n';
     }
 }
 

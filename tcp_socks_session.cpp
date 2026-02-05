@@ -57,38 +57,38 @@ asio::awaitable<void> tcp_socks_session::run(const std::string& host, const std:
     }
     else
     {
-        LOG_CTX_WARN(ctx_, "{} blocked host {}", log_event::ROUTE, host);
-        co_await reply_error(socks::REP_NOT_ALLOWED);
+        LOG_CTX_WARN(ctx_, "{} blocked host {}", log_event::kRoute, host);
+        co_await reply_error(socks::kRepNotAllowed);
         co_return;
     }
 
-    LOG_CTX_INFO(ctx_, "{} connecting {} {} via {}", log_event::CONN_INIT, host, port, (route == route_type::direct ? "direct" : "proxy"));
+    LOG_CTX_INFO(ctx_, "{} connecting {} {} via {}", log_event::kConnInit, host, port, (route == route_type::direct ? "direct" : "proxy"));
     if (!co_await backend->connect(host, port))
     {
-        LOG_CTX_WARN(ctx_, "{} connect failed {} {} via {}", log_event::CONN_INIT, host, port, (route == route_type::direct ? "direct" : "proxy"));
-        co_await reply_error(socks::REP_HOST_UNREACH);
+        LOG_CTX_WARN(ctx_, "{} connect failed {} {} via {}", log_event::kConnInit, host, port, (route == route_type::direct ? "direct" : "proxy"));
+        co_await reply_error(socks::kRepHostUnreach);
         co_return;
     }
 
-    std::uint8_t rep[] = {socks::VER, socks::REP_SUCCESS, 0, socks::ATYP_IPV4, 0, 0, 0, 0, 0, 0};
+    std::uint8_t rep[] = {socks::kVer, socks::kRepSuccess, 0, socks::kAtypIpv4, 0, 0, 0, 0, 0, 0};
     const auto [we, wn] = co_await asio::async_write(socket_, asio::buffer(rep), asio::as_tuple(asio::use_awaitable));
     if (we)
     {
-        LOG_CTX_WARN(ctx_, "{} write to client failed {}", log_event::DATA_SEND, we.message());
+        LOG_CTX_WARN(ctx_, "{} write to client failed {}", log_event::kDataSend, we.message());
         co_await backend->close();
         co_return;
     }
 
-    LOG_CTX_INFO(ctx_, "{} connected {} {} via {}", log_event::CONN_ESTABLISHED, host, port, (route == route_type::direct ? "direct" : "proxy"));
+    LOG_CTX_INFO(ctx_, "{} connected {} {} via {}", log_event::kConnEstablished, host, port, (route == route_type::direct ? "direct" : "proxy"));
     using asio::experimental::awaitable_operators::operator&&;
     co_await (client_to_upstream(backend.get()) && upstream_to_client(backend.get()));
     co_await backend->close();
-    LOG_CTX_INFO(ctx_, "{} finished {}", log_event::CONN_CLOSE, ctx_.stats_summary());
+    LOG_CTX_INFO(ctx_, "{} finished {}", log_event::kConnClose, ctx_.stats_summary());
 }
 
 asio::awaitable<void> tcp_socks_session::reply_error(const std::uint8_t code)
 {
-    std::uint8_t err[] = {socks::VER, code, 0, socks::ATYP_IPV4, 0, 0, 0, 0, 0, 0};
+    std::uint8_t err[] = {socks::kVer, code, 0, socks::kAtypIpv4, 0, 0, 0, 0, 0, 0};
     (void)co_await asio::async_write(socket_, asio::buffer(err), asio::as_tuple(asio::use_awaitable));
 }
 
@@ -101,7 +101,7 @@ asio::awaitable<void> tcp_socks_session::client_to_upstream(upstream* backend)
         const std::uint32_t n = co_await socket_.async_read_some(asio::buffer(buf), asio::redirect_error(asio::use_awaitable, ec));
         if (ec || n == 0)
         {
-            LOG_CTX_WARN(ctx_, "{} failed to read from client {}", log_event::SOCKS, ec.message());
+            LOG_CTX_WARN(ctx_, "{} failed to read from client {}", log_event::kSocks, ec.message());
             break;
         }
 
@@ -109,11 +109,11 @@ asio::awaitable<void> tcp_socks_session::client_to_upstream(upstream* backend)
         const auto written = co_await backend->write(chunk);
         if (written == 0)
         {
-            LOG_CTX_WARN(ctx_, "{} failed to write to backend", log_event::SOCKS);
+            LOG_CTX_WARN(ctx_, "{} failed to write to backend", log_event::kSocks);
             break;
         }
     }
-    LOG_CTX_INFO(ctx_, "{} client to upstream finished", log_event::SOCKS);
+    LOG_CTX_INFO(ctx_, "{} client to upstream finished", log_event::kSocks);
 }
 
 asio::awaitable<void> tcp_socks_session::upstream_to_client(upstream* backend)
@@ -124,23 +124,23 @@ asio::awaitable<void> tcp_socks_session::upstream_to_client(upstream* backend)
         const auto [ec, n] = co_await backend->read(buf);
         if (ec || n == 0)
         {
-            LOG_CTX_WARN(ctx_, "{} failed to read from backend {}", log_event::SOCKS, ec.message());
+            LOG_CTX_WARN(ctx_, "{} failed to read from backend {}", log_event::kSocks, ec.message());
             break;
         }
 
         const auto [we, wn] = co_await asio::async_write(socket_, asio::buffer(buf.data(), n), asio::as_tuple(asio::use_awaitable));
         if (we)
         {
-            LOG_CTX_WARN(ctx_, "{} failed to write to client {}", log_event::SOCKS, we.message());
+            LOG_CTX_WARN(ctx_, "{} failed to write to client {}", log_event::kSocks, we.message());
             break;
         }
     }
-    LOG_CTX_INFO(ctx_, "{} upstream to client finished", log_event::SOCKS);
+    LOG_CTX_INFO(ctx_, "{} upstream to client finished", log_event::kSocks);
     std::error_code ignore;
     ignore = socket_.shutdown(asio::ip::tcp::socket::shutdown_send, ignore);
     if (ignore)
     {
-        LOG_CTX_WARN(ctx_, "{} failed to shutdown client {}", log_event::SOCKS, ignore.message());
+        LOG_CTX_WARN(ctx_, "{} failed to shutdown client {}", log_event::kSocks, ignore.message());
     }
 }
 

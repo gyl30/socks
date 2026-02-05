@@ -1,13 +1,13 @@
 #include <chrono>
-#include <cstdint>
-#include <cstdlib>
 #include <memory>
 #include <string>
 #include <vector>
+#include <cstdint>
+#include <cstdlib>
 
-#include <spdlog/sinks/rotating_file_sink.h>
-#include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
+#include <spdlog/sinks/stdout_color_sinks.h>
+#include <spdlog/sinks/rotating_file_sink.h>
 
 #include "log.h"
 
@@ -80,7 +80,7 @@ static void set_log_level()
 static std::uint32_t get_log_file_size()
 {
     constexpr auto kFileSize = 50 * 1024 * 1024;
-    char* file_size = getenv("LOG_FILE_SIZE");
+    char* file_size = getenv("kLogFileSize");
     if (file_size != nullptr)
     {
         return static_cast<std::uint32_t>(atoi(file_size));
@@ -91,7 +91,7 @@ static std::uint32_t get_log_file_size()
 static std::uint32_t get_log_file_count()
 {
     constexpr auto kFileCount = 5;
-    char* file_count = getenv("LOG_FILE_COUNT");
+    char* file_count = getenv("kLogFileCount");
     if (file_count != nullptr)
     {
         return static_cast<std::uint32_t>(atoi(file_count));

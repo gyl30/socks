@@ -13,7 +13,7 @@ namespace tls_consts = reality::tls_consts;
 TEST(RealityFingerprintTest, Chrome120Basic)
 {
     auto spec = FingerprintFactory::Get(FingerprintType::Chrome_120);
-    EXPECT_EQ(spec.client_version, tls_consts::VER_1_2);
+    EXPECT_EQ(spec.client_version, tls_consts::kVer12);
     EXPECT_FALSE(spec.cipher_suites.empty());
     EXPECT_FALSE(spec.extensions.empty());
     EXPECT_TRUE(spec.shuffle_extensions);
@@ -55,7 +55,7 @@ TEST(RealityFingerprintTest, IOS14Identification)
     bool found_alpn = false;
     for (const auto& ext : spec.extensions)
     {
-        if (ext->type() == ExtensionType::ALPN)
+        if (ext->type() == ExtensionType::kAlpn)
         {
             found_alpn = true;
             auto alpn = std::dynamic_pointer_cast<reality::ALPNBlueprint>(ext);
@@ -69,7 +69,7 @@ TEST(RealityFingerprintTest, IOS14Identification)
 TEST(RealityFingerprintTest, Firefox120Basic)
 {
     auto spec = FingerprintFactory::Get(FingerprintType::Firefox_120);
-    EXPECT_EQ(spec.client_version, tls_consts::VER_1_2);
+    EXPECT_EQ(spec.client_version, tls_consts::kVer12);
     EXPECT_FALSE(spec.cipher_suites.empty());
     EXPECT_FALSE(spec.extensions.empty());
 }
@@ -77,7 +77,7 @@ TEST(RealityFingerprintTest, Firefox120Basic)
 TEST(RealityFingerprintTest, Android11Basic)
 {
     auto spec = FingerprintFactory::Get(FingerprintType::Android_11_OkHttp);
-    EXPECT_EQ(spec.client_version, tls_consts::VER_1_2);
+    EXPECT_EQ(spec.client_version, tls_consts::kVer12);
     EXPECT_FALSE(spec.cipher_suites.empty());
     EXPECT_FALSE(spec.extensions.empty());
 }
@@ -85,7 +85,7 @@ TEST(RealityFingerprintTest, Android11Basic)
 TEST(RealityFingerprintTest, Chrome131Basic)
 {
     auto spec = FingerprintFactory::Get(FingerprintType::Chrome_131);
-    EXPECT_EQ(spec.client_version, tls_consts::VER_1_2);
+    EXPECT_EQ(spec.client_version, tls_consts::kVer12);
     EXPECT_FALSE(spec.cipher_suites.empty());
     EXPECT_TRUE(spec.shuffle_extensions);
 }
@@ -93,7 +93,7 @@ TEST(RealityFingerprintTest, Chrome131Basic)
 TEST(RealityFingerprintTest, GetChrome120Direct)
 {
     auto spec = FingerprintFactory::GetChrome120();
-    EXPECT_EQ(spec.client_version, tls_consts::VER_1_2);
+    EXPECT_EQ(spec.client_version, tls_consts::kVer12);
     EXPECT_TRUE(spec.shuffle_extensions);
 }
 
@@ -112,7 +112,7 @@ TEST(RealityFingerprintTest, Chrome58Basic)
     bool found_cbc = false;
     for (auto c : spec.cipher_suites)
     {
-        if (c == tls_consts::cipher::TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA)
+        if (c == tls_consts::cipher::kTlsEcdheRsaWithAes128CbcSha)
         {
             found_cbc = true;
         }
@@ -128,7 +128,7 @@ TEST(RealityFingerprintTest, Chrome70Basic)
     bool found_ver = false;
     for (const auto& ext : spec.extensions)
     {
-        if (ext->type() == ExtensionType::SupportedVersions)
+        if (ext->type() == ExtensionType::kSupportedVersions)
         {
             found_ver = true;
         }
@@ -144,11 +144,11 @@ TEST(RealityFingerprintTest, Chrome106Shuffle)
     bool has_app_settings = false;
     for (const auto& ext : spec.extensions)
     {
-        if (ext->type() == ExtensionType::ApplicationSettings)
+        if (ext->type() == ExtensionType::kApplicationSettings)
         {
             has_app_settings = true;
         }
-        if (ext->type() == ExtensionType::GreaseECH)
+        if (ext->type() == ExtensionType::kGreaseECH)
         {
             has_app_settings = true;
         }
@@ -163,12 +163,12 @@ TEST(RealityFingerprintTest, Chrome133Basic)
 
     for (const auto& ext : spec.extensions)
     {
-        if (ext->type() == ExtensionType::KeyShare)
+        if (ext->type() == ExtensionType::kKeyShare)
         {
             auto k = std::dynamic_pointer_cast<reality::KeyShareBlueprint>(ext);
             for (auto& ks : k->key_shares)
             {
-                if (ks.group == tls_consts::group::X25519_MLKEM768)
+                if (ks.group == tls_consts::group::kX25519Mlkem768)
                 {
                     found_mlkem = true;
                 }
@@ -184,7 +184,7 @@ TEST(RealityFingerprintTest, Browser360Basic)
     bool found_chid = false;
     for (const auto& ext : spec.extensions)
     {
-        if (ext->type() == ExtensionType::ChannelID)
+        if (ext->type() == ExtensionType::kChannelID)
         {
             found_chid = true;
         }
