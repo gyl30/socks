@@ -5,6 +5,8 @@
 #include <cstdint>
 #include <algorithm>
 
+#include <openssl/crypto.h>
+
 #include <asio/read.hpp>
 #include <asio/write.hpp>
 #include <asio/ip/tcp.hpp>
@@ -177,7 +179,9 @@ asio::awaitable<bool> socks_session::do_password_auth()
         co_return false;
     }
 
-    const bool success = (username == username_ && password == password_);
+    const bool user_match = (username.size() == username_.size()) && (CRYPTO_memcmp(username.data(), username_.data(), username.size()) == 0);
+    const bool pass_match = (password.size() == password_.size()) && (CRYPTO_memcmp(password.data(), password_.data(), password.size()) == 0);
+    const bool success = user_match && pass_match;
 
     std::uint8_t result[] = {0x01, success ? static_cast<std::uint8_t>(0x00) : static_cast<std::uint8_t>(0x01)};
     auto [re, rn] = co_await asio::async_write(socket_, asio::buffer(result), asio::as_tuple(asio::use_awaitable));
