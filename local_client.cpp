@@ -8,7 +8,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <utility>
-#include <algorithm>
 #include <system_error>
 
 #include <asio/read.hpp>
@@ -31,6 +30,7 @@
 #include "log.h"
 #include "config.h"
 #include "router.h"
+#include "ch_parser.h"
 #include "constants.h"
 #include "mux_tunnel.h"
 #include "log_context.h"
@@ -356,20 +356,45 @@ asio::awaitable<bool> local_client::generate_and_send_client_hello(asio::ip::tcp
         co_return false;
     }
 
-    const auto spec = reality::FingerprintFactory::Get(reality::FingerprintType::Firefox_120);
+    static const std::vector<reality::FingerprintType> fp_types = {reality::FingerprintType::Chrome_120,
+                                                                   reality::FingerprintType::Firefox_120,
+                                                                   reality::FingerprintType::iOS_14,
+                                                                   reality::FingerprintType::Android_11_OkHttp,
+                                                                   reality::FingerprintType::Chrome_131,
+                                                                   reality::FingerprintType::Chrome_133};
 
-    const std::vector<std::uint8_t> session_id(32, 0);
+    static thread_local std::mt19937 fp_gen(std::random_device{}());
+    std::uniform_int_distribution<std::size_t> fp_dist(0, fp_types.size() - 1);
+    const auto spec = reality::FingerprintFactory::Get(fp_types[fp_dist(fp_gen)]);
 
-    auto hello_aad =
-        reality::ClientHelloBuilder::build(spec, session_id, client_random, std::vector<std::uint8_t>(public_key, public_key + 32), sni_);
-    LOG_DEBUG("client aad {}", reality::crypto_util::bytes_to_hex(hello_aad));
+    const std::vector<std::uint8_t> placeholder_session_id(32, 0);
+    auto hello_body =
+        reality::ClientHelloBuilder::build(spec, placeholder_session_id, client_random, std::vector<std::uint8_t>(public_key, public_key + 32), sni_);
+
+    std::vector<std::uint8_t> dummy_record =
+        reality::write_record_header(reality::CONTENT_TYPE_HANDSHAKE, static_cast<std::uint16_t>(hello_body.size()));
+    dummy_record.insert(dummy_record.end(), hello_body.begin(), hello_body.end());
+
+    client_hello_info ch_info = ch_parser::parse(dummy_record);
+    if (ch_info.sid_offset < 5)
+    {
+        LOG_ERROR("generated client hello session id offset is invalid: {}", ch_info.sid_offset);
+        co_return false;
+    }
+
+    const std::uint32_t absolute_sid_offset = ch_info.sid_offset - 5;
+    if (absolute_sid_offset + 32 > hello_body.size())
+    {
+        LOG_ERROR("session id offset out of bounds: {} / {}", absolute_sid_offset, hello_body.size());
+        co_return false;
+    }
 
     const auto sid =
         reality::crypto_util::aead_encrypt(EVP_aes_128_gcm(),
                                            auth_key,
                                            std::vector<std::uint8_t>(client_random.begin() + constants::auth::SALT_LEN, client_random.end()),
                                            std::vector<std::uint8_t>(payload.begin(), payload.end()),
-                                           hello_aad,
+                                           hello_body,
                                            ec);
 
     if (ec || sid.size() != 32)
@@ -378,17 +403,9 @@ asio::awaitable<bool> local_client::generate_and_send_client_hello(asio::ip::tcp
         co_return false;
     }
 
-    if (hello_aad.size() > 39 + 32)
-    {
-        std::memcpy(hello_aad.data() + 39, sid.data(), 32);
-    }
-    else
-    {
-        LOG_ERROR("client hello too short to patch session id");
-        co_return false;
-    }
+    std::memcpy(hello_body.data() + absolute_sid_offset, sid.data(), 32);
 
-    const std::vector<std::uint8_t> ch = hello_aad;
+    const std::vector<std::uint8_t> ch = hello_body;
     auto ch_rec = reality::write_record_header(reality::CONTENT_TYPE_HANDSHAKE, static_cast<std::uint16_t>(ch.size()));
     ch_rec.insert(ch_rec.end(), ch.begin(), ch.end());
 
