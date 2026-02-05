@@ -58,8 +58,17 @@ struct config
     struct limits_t
     {
         std::uint32_t max_connections = 5;
-        std::uint64_t max_buffer = 10 * 1024 * 1024;
+        std::uint64_t max_buffer = 10L * 1024 * 1024;
     } limits;
+
+    struct heartbeat_t
+    {
+        bool enabled = true;
+        std::uint32_t min_interval = 15;
+        std::uint32_t max_interval = 45;
+        std::uint32_t min_padding = 32;
+        std::uint32_t max_padding = 1024;
+    } heartbeat;
 
     struct reality_t
     {

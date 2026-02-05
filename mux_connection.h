@@ -13,10 +13,10 @@
 #include <utility>
 #include <vector>
 
-#include <asio/awaitable.hpp>
-#include <asio/experimental/concurrent_channel.hpp>
 #include <asio/ip/tcp.hpp>
+#include <asio/awaitable.hpp>
 #include <asio/steady_timer.hpp>
+#include <asio/experimental/concurrent_channel.hpp>
 
 #include "config.h"
 #include "log_context.h"
@@ -54,7 +54,8 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
                    std::uint32_t conn_id,
                    const std::string& trace_id = "",
                    const config::timeout_t& timeout_cfg = {},
-                   const config::limits_t& limits_cfg = {});
+                   const config::limits_t& limits_cfg = {},
+                   const config::heartbeat_t& heartbeat_cfg = {});
 
     virtual ~mux_connection() = default;
 
@@ -87,6 +88,8 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
 
     asio::awaitable<void> timeout_loop();
 
+    asio::awaitable<void> heartbeat_loop();
+
     void on_mux_frame(mux::frame_header header, std::vector<std::uint8_t> payload);
 
    private:
@@ -108,6 +111,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     asio::experimental::concurrent_channel<void(std::error_code, mux_write_msg)> write_channel_;
     config::timeout_t timeout_config_;
     config::limits_t limits_config_;
+    config::heartbeat_t heartbeat_config_;
 };
 
 }    // namespace mux
