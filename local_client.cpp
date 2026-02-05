@@ -342,15 +342,9 @@ asio::awaitable<bool> local_client::generate_and_send_client_hello(asio::ip::tcp
     const auto auth_key = reality::crypto_util::hkdf_expand(prk, r_info, 16, EVP_sha256(), ec);
 
     LOG_DEBUG("client auth material ready random {} bytes eph pub {} bytes", client_random.size(), 32);
-    std::array<std::uint8_t, 2> nonce{};
-    if (RAND_bytes(nonce.data(), static_cast<int>(nonce.size())) != 1)
-    {
-        ec = std::make_error_code(std::errc::operation_canceled);
-        co_return false;
-    }
     const std::uint32_t now = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
     std::array<std::uint8_t, reality::AUTH_PAYLOAD_LEN> payload{};
-    if (!reality::build_auth_payload(short_id_bytes_, now, nonce, payload))
+    if (!reality::build_auth_payload(short_id_bytes_, now, payload))
     {
         ec = std::make_error_code(std::errc::invalid_argument);
         co_return false;
