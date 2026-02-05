@@ -31,6 +31,7 @@ namespace mux
 enum class mux_connection_state : std::uint8_t
 {
     connected,
+    draining,
     closing,
     closed
 };
@@ -79,7 +80,11 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
 
     void stop();
 
-    [[nodiscard]] bool is_open() const { return connection_state_.load(std::memory_order_acquire) == mux_connection_state::connected; }
+    [[nodiscard]] bool is_open() const
+    {
+        const auto s = connection_state_.load(std::memory_order_acquire);
+        return s == mux_connection_state::connected || s == mux_connection_state::draining;
+    }
 
    private:
     asio::awaitable<void> read_loop();
