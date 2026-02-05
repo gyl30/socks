@@ -1,12 +1,18 @@
+#include <chrono>
+#include <memory>
+#include <string>
 #include <thread>
 #include <vector>
+#include <cstdint>
 
-#include <asio.hpp>
 #include <gtest/gtest.h>
+#include <asio/write.hpp>
+#include <asio/buffer.hpp>
+#include <asio/ip/tcp.hpp>
 
-#include "crypto_util.h"
-#include "context_pool.h"
 #include "remote_server.h"
+#include "context_pool.h"
+#include "crypto_util.h"
 #include "reality_messages.h"
 
 class RemoteServerTest : public ::testing::Test
@@ -14,10 +20,10 @@ class RemoteServerTest : public ::testing::Test
    protected:
     void SetUp() override
     {
-        uint8_t pub[32], priv[32];
+        std::uint8_t pub[32], priv[32];
         (void)reality::crypto_util::generate_x25519_keypair(pub, priv);
-        server_priv_key = reality::crypto_util::bytes_to_hex(std::vector<uint8_t>(priv, priv + 32));
-        server_pub_key = reality::crypto_util::bytes_to_hex(std::vector<uint8_t>(pub, pub + 32));
+        server_priv_key = reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(priv, priv + 32));
+        server_pub_key = reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(pub, pub + 32));
     }
     std::string server_priv_key;
     std::string server_pub_key;
@@ -30,8 +36,8 @@ TEST_F(RemoteServerTest, AuthFailureTriggersFallback)
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
 
-    uint16_t server_port = 29911;
-    uint16_t fallback_port = 29912;
+    std::uint16_t server_port = 29911;
+    std::uint16_t fallback_port = 29912;
     std::string sni = "www.google.com";
 
     asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), fallback_port));
@@ -57,12 +63,12 @@ TEST_F(RemoteServerTest, AuthFailureTriggersFallback)
         sock.connect({asio::ip::make_address("127.0.0.1"), server_port});
 
         auto spec = reality::FingerprintFactory::Get(reality::FingerprintType::Chrome_120);
-        std::vector<uint8_t> session_id(32, 0x01);
-        std::vector<uint8_t> random(32, 0x02);
-        std::vector<uint8_t> x25519_pubkey(32, 0x03);
+        std::vector<std::uint8_t> session_id(32, 0x01);
+        std::vector<std::uint8_t> random(32, 0x02);
+        std::vector<std::uint8_t> x25519_pubkey(32, 0x03);
 
         auto ch_msg = reality::ClientHelloBuilder::build(spec, session_id, random, x25519_pubkey, sni);
-        auto record = reality::write_record_header(reality::CONTENT_TYPE_HANDSHAKE, ch_msg.size());
+        auto record = reality::write_record_header(reality::CONTENT_TYPE_HANDSHAKE, static_cast<std::uint16_t>(ch_msg.size()));
         record.insert(record.end(), ch_msg.begin(), ch_msg.end());
 
         asio::write(sock, asio::buffer(record));
@@ -84,8 +90,8 @@ TEST_F(RemoteServerTest, SNIMismatchTriggersFallback)
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
 
-    uint16_t server_port = 29913;
-    uint16_t default_fallback_port = 29914;
+    std::uint16_t server_port = 29913;
+    std::uint16_t default_fallback_port = 29914;
     std::string config_sni = "www.google.com";
     std::string client_sni = "www.bing.com";
 
@@ -113,8 +119,8 @@ TEST_F(RemoteServerTest, SNIMismatchTriggersFallback)
 
         auto spec = reality::FingerprintFactory::Get(reality::FingerprintType::Chrome_120);
         auto ch_msg = reality::ClientHelloBuilder::build(
-            spec, std::vector<uint8_t>(32, 0), std::vector<uint8_t>(32, 0), std::vector<uint8_t>(32, 0), client_sni);
-        auto record = reality::write_record_header(reality::CONTENT_TYPE_HANDSHAKE, ch_msg.size());
+            spec, std::vector<std::uint8_t>(32, 0), std::vector<std::uint8_t>(32, 0), std::vector<std::uint8_t>(32, 0), client_sni);
+        auto record = reality::write_record_header(reality::CONTENT_TYPE_HANDSHAKE, static_cast<std::uint16_t>(ch_msg.size()));
         record.insert(record.end(), ch_msg.begin(), ch_msg.end());
 
         asio::write(sock, asio::buffer(record));
@@ -134,8 +140,8 @@ TEST_F(RemoteServerTest, InvalidHandshakeTriggersFallback)
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
 
-    uint16_t server_port = 29915;
-    uint16_t default_fallback_port = 29916;
+    std::uint16_t server_port = 29915;
+    std::uint16_t default_fallback_port = 29916;
 
     asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), default_fallback_port));
     bool fallback_triggered = false;

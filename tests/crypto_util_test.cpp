@@ -1,13 +1,13 @@
 #include <string>
 #include <vector>
+#include <fstream>
 #include <cstddef>
 #include <cstdint>
-#include <system_error>
-#include <fstream>
 #include <iterator>
+#include <system_error>
 
-#include <gtest/gtest.h>
 #include <openssl/evp.h>
+#include <gtest/gtest.h>
 
 #include "crypto_util.h"
 
@@ -236,7 +236,6 @@ TEST(CryptoUtilTest, InvalidInputs)
     (void)crypto_util::aead_decrypt(EVP_aes_256_gcm(), key, nonce, std::vector<uint8_t>(15), {}, ec);
     EXPECT_TRUE(ec);
 
-    // Test hex_to_bytes with invalid hex
     const auto invalid_hex = crypto_util::hex_to_bytes("invalid hex");
     EXPECT_TRUE(invalid_hex.empty());
 }
@@ -273,7 +272,6 @@ TEST(CryptoUtilTest, AEADAppendAndBuffer)
     EXPECT_EQ(n, plaintext.size());
     EXPECT_EQ(decrypted, plaintext);
 
-    // Test buffer too small
     std::vector<uint8_t> small_buffer(plaintext.size() - 1);
     (void)crypto_util::aead_decrypt(ctx, EVP_aes_256_gcm(), key, nonce, ciphertext, aad, small_buffer, ec);
     EXPECT_EQ(ec, std::errc::no_buffer_space);
@@ -281,7 +279,6 @@ TEST(CryptoUtilTest, AEADAppendAndBuffer)
 
 TEST(CryptoUtilTest, TLS13SignatureVerification)
 {
-    // Generate a temporary key for signing
     EVP_PKEY* pkey = nullptr;
     EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_ED25519, nullptr);
     EVP_PKEY_keygen_init(ctx);
@@ -308,7 +305,6 @@ TEST(CryptoUtilTest, TLS13SignatureVerification)
     EXPECT_TRUE(ok);
     EXPECT_FALSE(ec);
 
-    // Tamper with signature
     signature[0] ^= 0xFF;
     ok = crypto_util::verify_tls13_signature(pkey, transcript_hash, signature, ec);
     EXPECT_FALSE(ok);
@@ -327,7 +323,6 @@ TEST(CryptoUtilTest, ExtractPubkeyFromCertInvalid)
 
 TEST(CryptoUtilTest, ExtractPubkeyFromCertValid)
 {
-    // Generate a temporary self-signed certificate using openssl CLI
     const char* gen_cmd = "openssl req -x509 -newkey rsa:2048 -keyout key_tmp.pem -out cert_tmp.pem -days 1 -nodes -subj '/CN=test' 2>/dev/null";
     const char* der_cmd = "openssl x509 -in cert_tmp.pem -outform DER -out cert_tmp.der";
 
@@ -351,15 +346,13 @@ TEST(CryptoUtilTest, ExtractPubkeyFromCertValid)
 TEST(CryptoUtilTest, HKDFErrorPaths)
 {
     std::error_code ec;
-    // HKDF extract with empty ikm should fail with invalid_argument
+
     (void)crypto_util::hkdf_extract({}, {}, EVP_sha256(), ec);
     EXPECT_EQ(ec, std::errc::invalid_argument);
 
-    // HKDF expand with empty prk should fail with invalid_argument
     (void)crypto_util::hkdf_expand({}, {}, 16, EVP_sha256(), ec);
     EXPECT_EQ(ec, std::errc::invalid_argument);
 
-    // HKDF expand with zero length should return empty and success
     const auto okm = crypto_util::hkdf_expand({0x01}, {}, 0, EVP_sha256(), ec);
     EXPECT_FALSE(ec);
     EXPECT_TRUE(okm.empty());
@@ -371,11 +364,9 @@ TEST(CryptoUtilTest, AEADErrorPaths)
     const std::vector<uint8_t> nonce(12, 0x22);
     std::error_code ec;
 
-    // AEAD decrypt too short ciphertext
     (void)crypto_util::aead_decrypt(EVP_aes_256_gcm(), key, nonce, {0x01, 0x02}, {}, ec);
     EXPECT_EQ(ec, std::errc::message_size);
 
-    // AEAD encrypt with wrong key size
     const std::vector<uint8_t> wrong_key(16, 0x11);
     (void)crypto_util::aead_encrypt(EVP_aes_256_gcm(), wrong_key, nonce, {0x01}, {}, ec);
     EXPECT_EQ(ec, std::errc::invalid_argument);

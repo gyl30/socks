@@ -1,13 +1,21 @@
+#include <thread>
 #include <vector>
 #include <string>
-#include <memory>
-#include <thread>
 #include <atomic>
 #include <chrono>
+#include <memory>
 #include <cstdint>
 
-#include <asio.hpp>
 #include <gtest/gtest.h>
+#include <asio/write.hpp>
+#include <asio/co_spawn.hpp>
+#include <asio/as_tuple.hpp>
+#include <asio/detached.hpp>
+#include <asio/ip/tcp.hpp>
+#include <asio/ip/udp.hpp>
+#include <asio/this_coro.hpp>
+#include <asio/steady_timer.hpp>
+#include <asio/use_awaitable.hpp>
 
 #include "mux_codec.h"
 #include "crypto_util.h"
@@ -24,13 +32,13 @@ class UdpIntegrationTest : public ::testing::Test
    protected:
     void SetUp() override
     {
-        uint8_t pub[32];
-        uint8_t priv[32];
+        std::uint8_t pub[32];
+        std::uint8_t priv[32];
         ASSERT_TRUE(reality::crypto_util::generate_x25519_keypair(pub, priv));
-        server_priv_key = reality::crypto_util::bytes_to_hex(std::vector<uint8_t>(priv, priv + 32));
-        client_pub_key = reality::crypto_util::bytes_to_hex(std::vector<uint8_t>(pub, pub + 32));
+        server_priv_key = reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(priv, priv + 32));
+        client_pub_key = reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(pub, pub + 32));
         std::error_code ec;
-        auto verify_pub = reality::crypto_util::extract_ed25519_public_key(std::vector<uint8_t>(priv, priv + 32), ec);
+        auto verify_pub = reality::crypto_util::extract_ed25519_public_key(std::vector<std::uint8_t>(priv, priv + 32), ec);
         ASSERT_FALSE(ec);
         verify_pub_key = reality::crypto_util::bytes_to_hex(verify_pub);
         short_id = "0102030405060708";
@@ -42,7 +50,7 @@ class UdpIntegrationTest : public ::testing::Test
     std::string short_id;
 };
 
-static asio::awaitable<void> run_udp_echo_server(asio::ip::udp::socket& socket, uint16_t port)
+static asio::awaitable<void> run_udp_echo_server(asio::ip::udp::socket& socket, std::uint16_t port)
 {
     std::error_code ec;
     socket.open(asio::ip::udp::v4(), ec);
@@ -88,9 +96,9 @@ TEST_F(UdpIntegrationTest, UdpAssociateAndEcho)
     io_context_pool pool(4, ec);
     ASSERT_FALSE(ec);
 
-    uint16_t server_port = 0;
-    uint16_t local_socks_port = 0;
-    uint16_t echo_server_port = 0;
+    std::uint16_t server_port = 0;
+    std::uint16_t local_socks_port = 0;
+    std::uint16_t echo_server_port = 0;
     const std::string sni = "www.google.com";
 
     asio::ip::tcp::acceptor server_acceptor(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
@@ -106,7 +114,7 @@ TEST_F(UdpIntegrationTest, UdpAssociateAndEcho)
     timeouts.write = 10;
 
     auto server = std::make_shared<remote_server>(pool, server_port, std::vector<mux::config::fallback_entry>{}, server_priv_key, short_id, timeouts);
-    const std::vector<uint8_t> dummy_cert = {0x0b, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00};
+    const std::vector<std::uint8_t> dummy_cert = {0x0b, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00};
     reality::server_fingerprint dummy_fp;
     server->cert_manager().set_certificate(sni, dummy_cert, dummy_fp);
     server->start();
@@ -138,7 +146,7 @@ TEST_F(UdpIntegrationTest, UdpAssociateAndEcho)
             auto exec = co_await asio::this_coro::executor;
             asio::steady_timer retry_timer(exec);
 
-            uint16_t proxy_bind_port = 0;
+            std::uint16_t proxy_bind_port = 0;
             bool socks_ready = false;
             for (int attempt = 0; attempt < 60; ++attempt)
             {
@@ -152,7 +160,7 @@ TEST_F(UdpIntegrationTest, UdpAssociateAndEcho)
                     continue;
                 }
 
-                uint8_t method_req[] = {0x05, 0x01, 0x00};
+                std::uint8_t method_req[] = {0x05, 0x01, 0x00};
                 auto [write_ec, write_n] = co_await asio::async_write(*sock, asio::buffer(method_req), asio::as_tuple(asio::use_awaitable));
                 (void)write_n;
                 if (write_ec)
@@ -164,7 +172,7 @@ TEST_F(UdpIntegrationTest, UdpAssociateAndEcho)
                     continue;
                 }
 
-                uint8_t method_res[2];
+                std::uint8_t method_res[2];
                 auto [read_ec, read_n] = co_await asio::async_read(*sock, asio::buffer(method_res), asio::as_tuple(asio::use_awaitable));
                 if (read_ec || read_n != sizeof(method_res) || method_res[0] != 0x05 || method_res[1] != 0x00)
                 {
@@ -175,7 +183,7 @@ TEST_F(UdpIntegrationTest, UdpAssociateAndEcho)
                     continue;
                 }
 
-                uint8_t associate_req[] = {0x05, 0x03, 0x00, 0x01, 0, 0, 0, 0, 0, 0};
+                std::uint8_t associate_req[] = {0x05, 0x03, 0x00, 0x01, 0, 0, 0, 0, 0, 0};
                 auto [assoc_write_ec, assoc_write_n] =
                     co_await asio::async_write(*sock, asio::buffer(associate_req), asio::as_tuple(asio::use_awaitable));
                 (void)assoc_write_n;
@@ -188,7 +196,7 @@ TEST_F(UdpIntegrationTest, UdpAssociateAndEcho)
                     continue;
                 }
 
-                uint8_t associate_res[10];
+                std::uint8_t associate_res[10];
                 auto [assoc_read_ec, assoc_read_n] =
                     co_await asio::async_read(*sock, asio::buffer(associate_res), asio::as_tuple(asio::use_awaitable));
                 if (assoc_read_ec || assoc_read_n != sizeof(associate_res) || associate_res[1] != 0x00)

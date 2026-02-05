@@ -46,16 +46,12 @@ TEST(LocalClientTest, BasicStartStop)
     const std::string server_pub_key(64, 'a');
     const std::string verify_key_hex(64, 'b');
 
-    // We use a port that's likely free
     auto client = std::make_shared<mux::local_client>(pool, "127.0.0.1", "12345", 10081, server_pub_key, "example.com", "", verify_key_hex);
 
-    // Start the client in a separate thread/context
     client->start();
 
-    // Give it a moment to initialize
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-    // Stop the client
     client->stop();
 }
 

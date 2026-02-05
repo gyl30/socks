@@ -20,16 +20,16 @@ namespace mux
 class mux_dispatcher
 {
    public:
-    using frame_callback_t = std::function<void(mux::frame_header, std::vector<uint8_t>)>;
+    using frame_callback_t = std::function<void(mux::frame_header, std::vector<std::uint8_t>)>;
 
     mux_dispatcher();
 
     void set_callback(frame_callback_t cb);
     void set_context(connection_context ctx);
 
-    void on_plaintext_data(std::span<const uint8_t> data);
+    void on_plaintext_data(std::span<const std::uint8_t> data);
 
-    [[nodiscard]] static std::vector<uint8_t> pack(uint32_t stream_id, uint8_t cmd, const std::vector<uint8_t>& payload);
+    [[nodiscard]] static std::vector<std::uint8_t> pack(std::uint32_t stream_id, std::uint8_t cmd, const std::vector<std::uint8_t>& payload);
 
    private:
     void process_frames();
