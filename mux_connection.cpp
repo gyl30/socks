@@ -242,6 +242,8 @@ asio::awaitable<void> mux_connection::write_loop()
 
 asio::awaitable<void> mux_connection::timeout_loop()
 {
+    static thread_local std::mt19937 rng(std::random_device{}());
+
     while (is_open())
     {
         timer_.expires_after(std::chrono::seconds(1));
@@ -258,17 +260,31 @@ asio::awaitable<void> mux_connection::timeout_loop()
             }
             break;
         }
+
+        const auto state = connection_state_.load(std::memory_order_acquire);
+        if (state == mux_connection_state::draining)
+        {
+            continue;
+        }
+
         const auto now = std::chrono::steady_clock::now();
         const auto read_elapsed = now - last_read_time_;
         const auto write_elapsed = now - last_write_time_;
-        if (read_elapsed > std::chrono::seconds(timeout_config_.read))
+
+        if (read_elapsed > std::chrono::seconds(timeout_config_.read) || write_elapsed > std::chrono::seconds(timeout_config_.write))
         {
-            LOG_WARN("mux {} timeout read after {}s", cid_, timeout_config_.read);
-            break;
-        }
-        if (write_elapsed > std::chrono::seconds(timeout_config_.write))
-        {
-            LOG_WARN("mux {} timeout write after {}s", cid_, timeout_config_.write);
+            LOG_DEBUG("mux {} entering draining mode", cid_);
+            connection_state_.store(mux_connection_state::draining, std::memory_order_release);
+
+            std::uniform_int_distribution<std::uint32_t> delay_dist(5, 30);
+            const auto delay = delay_dist(rng);
+            timer_.expires_after(std::chrono::seconds(delay));
+
+            const auto [wait_ec] = co_await timer_.async_wait(asio::as_tuple(asio::use_awaitable));
+            if (!wait_ec)
+            {
+                LOG_DEBUG("mux {} draining complete after {}s", cid_, delay);
+            }
             break;
         }
     }
