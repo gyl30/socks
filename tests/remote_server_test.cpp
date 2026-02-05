@@ -68,7 +68,7 @@ TEST_F(RemoteServerTest, AuthFailureTriggersFallback)
         std::vector<std::uint8_t> x25519_pubkey(32, 0x03);
 
         auto ch_msg = reality::ClientHelloBuilder::build(spec, session_id, random, x25519_pubkey, sni);
-        auto record = reality::write_record_header(reality::CONTENT_TYPE_HANDSHAKE, static_cast<std::uint16_t>(ch_msg.size()));
+        auto record = reality::write_record_header(reality::kContentTypeHandshake, static_cast<std::uint16_t>(ch_msg.size()));
         record.insert(record.end(), ch_msg.begin(), ch_msg.end());
 
         asio::write(sock, asio::buffer(record));
@@ -120,7 +120,7 @@ TEST_F(RemoteServerTest, SNIMismatchTriggersFallback)
         auto spec = reality::FingerprintFactory::Get(reality::FingerprintType::Chrome_120);
         auto ch_msg = reality::ClientHelloBuilder::build(
             spec, std::vector<std::uint8_t>(32, 0), std::vector<std::uint8_t>(32, 0), std::vector<std::uint8_t>(32, 0), client_sni);
-        auto record = reality::write_record_header(reality::CONTENT_TYPE_HANDSHAKE, static_cast<std::uint16_t>(ch_msg.size()));
+        auto record = reality::write_record_header(reality::kContentTypeHandshake, static_cast<std::uint16_t>(ch_msg.size()));
         record.insert(record.end(), ch_msg.begin(), ch_msg.end());
 
         asio::write(sock, asio::buffer(record));

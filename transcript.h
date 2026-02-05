@@ -5,8 +5,11 @@
 #include <memory>
 #include <vector>
 
+extern "C"
+{
 #include <openssl/evp.h>
 #include <openssl/ssl.h>
+}
 
 namespace reality
 {

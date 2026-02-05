@@ -8,7 +8,10 @@
 #include <string>
 #include <vector>
 
+extern "C"
+{
 #include <openssl/evp.h>
+}
 
 #include "reality_core.h"
 #include "reality_fingerprint.h"

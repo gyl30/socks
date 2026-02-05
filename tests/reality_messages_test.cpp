@@ -153,7 +153,7 @@ TEST(RealityMessagesTest, ExtractServerPublicKeyMalformedKeyShare)
     hello.push_back(0);
 
     std::vector<std::uint8_t> extensions;
-    message_builder::push_u16(extensions, tls_consts::ext::KEY_SHARE);
+    message_builder::push_u16(extensions, tls_consts::ext::kKeyShare);
     message_builder::push_u16(extensions, 2);
     message_builder::push_u16(extensions, 0x001d);
 

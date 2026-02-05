@@ -1,5 +1,5 @@
-#ifndef TLS_KEY_SCHEDULE_H_
-#define TLS_KEY_SCHEDULE_H_
+#ifndef TLS_KEY_SCHEDULE_H
+#define TLS_KEY_SCHEDULE_H
 
 #include <string>
 #include <vector>
@@ -9,9 +9,12 @@
 #include <utility>
 #include <system_error>
 
+extern "C"
+{
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
 #include <openssl/x509.h>
+}
 
 #include "crypto_util.h"
 #include "reality_core.h"

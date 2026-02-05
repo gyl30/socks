@@ -11,23 +11,23 @@ namespace mux
 namespace log_event
 {
 
-constexpr const char* CONN_INIT = "conn_init";
-constexpr const char* CONN_ESTABLISHED = "conn_established";
-constexpr const char* CONN_CLOSE = "conn_close";
-constexpr const char* HANDSHAKE = "handshake";
-constexpr const char* DATA_SEND = "data_send";
-constexpr const char* DATA_RECV = "data_recv";
-constexpr const char* STREAM_OPEN = "stream_open";
-constexpr const char* STREAM_CLOSE = "stream_close";
-constexpr const char* ROUTE = "route";
-constexpr const char* FALLBACK = "fallback";
-constexpr const char* AUTH = "auth";
-constexpr const char* MUX = "mux";
-constexpr const char* MUX_FRAME = "mux_frame";
-constexpr const char* SOCKS = "socks";
-constexpr const char* DNS = "dns";
-constexpr const char* TIMEOUT = "timeout";
-constexpr const char* CERT = "cert";
+constexpr const char* kConnInit = "conn_init";
+constexpr const char* kConnEstablished = "conn_established";
+constexpr const char* kConnClose = "conn_close";
+constexpr const char* kHandshake = "handshake";
+constexpr const char* kDataSend = "data_send";
+constexpr const char* kDataRecv = "data_recv";
+constexpr const char* kStreamOpen = "stream_open";
+constexpr const char* kStreamClose = "stream_close";
+constexpr const char* kRoute = "route";
+constexpr const char* kFallback = "fallback";
+constexpr const char* kAuth = "auth";
+constexpr const char* kMux = "mux";
+constexpr const char* kMuxFrame = "mux_frame";
+constexpr const char* kSocks = "socks";
+constexpr const char* kDns = "dns";
+constexpr const char* kTimeout = "timeout";
+constexpr const char* kCert = "cert";
 
 }    // namespace log_event
 

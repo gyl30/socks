@@ -7,8 +7,11 @@
 #include <utility>
 #include <vector>
 
+extern "C"
+{
 #include <openssl/evp.h>
 #include <openssl/rand.h>
+}
 
 #include "crypto_util.h"
 #include "reality_core.h"
@@ -37,7 +40,7 @@ void tls_record_layer::encrypt_record_append(const cipher_context& ctx,
     std::vector<std::uint8_t> inner_plaintext;
     std::size_t padding_len = 0;
 
-    if (content_type == CONTENT_TYPE_APPLICATION_DATA)
+    if (content_type == kContentTypeApplicationData)
     {
         std::uint8_t r;
         if (RAND_bytes(&r, 1) != 1)
@@ -58,10 +61,10 @@ void tls_record_layer::encrypt_record_append(const cipher_context& ctx,
         inner_plaintext.insert(inner_plaintext.end(), padding_len, 0x00);
     }
 
-    const auto ciphertext_len = static_cast<std::uint16_t>(inner_plaintext.size() + AEAD_TAG_SIZE);
+    const auto ciphertext_len = static_cast<std::uint16_t>(inner_plaintext.size() + kAeadTagSize);
 
     std::array<std::uint8_t, 5> temp_header;
-    temp_header[0] = CONTENT_TYPE_APPLICATION_DATA;
+    temp_header[0] = kContentTypeApplicationData;
     temp_header[1] = 0x03;
     temp_header[2] = 0x03;
     temp_header[3] = static_cast<std::uint8_t>((ciphertext_len >> 8) & 0xFF);
@@ -95,14 +98,14 @@ std::size_t tls_record_layer::decrypt_record(const cipher_context& ctx,
                                              std::uint8_t& out_content_type,
                                              std::error_code& ec)
 {
-    if (record_data.size() < TLS_RECORD_HEADER_SIZE + AEAD_TAG_SIZE)
+    if (record_data.size() < kTlsRecordHeaderSize + kAeadTagSize)
     {
         ec = std::make_error_code(std::errc::message_size);
         return 0;
     }
 
-    const auto aad = record_data.subspan(0, TLS_RECORD_HEADER_SIZE);
-    const auto ciphertext = record_data.subspan(TLS_RECORD_HEADER_SIZE);
+    const auto aad = record_data.subspan(0, kTlsRecordHeaderSize);
+    const auto ciphertext = record_data.subspan(kTlsRecordHeaderSize);
 
     std::vector<std::uint8_t> nonce = iv;
     for (int i = 0; i < 8; ++i)
@@ -143,12 +146,12 @@ std::vector<std::uint8_t> tls_record_layer::decrypt_record(const EVP_CIPHER* cip
                                                            std::error_code& ec)
 {
     const cipher_context ctx;
-    if (ciphertext_with_header.size() < TLS_RECORD_HEADER_SIZE + AEAD_TAG_SIZE)
+    if (ciphertext_with_header.size() < kTlsRecordHeaderSize + kAeadTagSize)
     {
         ec = std::make_error_code(std::errc::message_size);
         return {};
     }
-    std::vector<std::uint8_t> out(ciphertext_with_header.size() - TLS_RECORD_HEADER_SIZE - AEAD_TAG_SIZE);
+    std::vector<std::uint8_t> out(ciphertext_with_header.size() - kTlsRecordHeaderSize - kAeadTagSize);
     const std::size_t n = decrypt_record(ctx, cipher, key, iv, seq, ciphertext_with_header, out, out_content_type, ec);
     if (ec)
     {
@@ -157,5 +160,4 @@ std::vector<std::uint8_t> tls_record_layer::decrypt_record(const EVP_CIPHER* cip
     out.resize(n);
     return out;
 }
-
 }    // namespace reality

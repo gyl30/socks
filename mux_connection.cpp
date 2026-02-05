@@ -11,7 +11,10 @@
 #include <utility>
 #include <system_error>
 
+extern "C"
+{
 #include <openssl/rand.h>
+}
 
 #include <asio/write.hpp>
 #include <asio/error.hpp>
@@ -63,7 +66,7 @@ mux_connection::mux_connection(asio::ip::tcp::socket socket,
     }
     mux_dispatcher_.set_callback([this](const mux::frame_header h, std::vector<std::uint8_t> p) { this->on_mux_frame(h, std::move(p)); });
     mux_dispatcher_.set_context(ctx_);
-    LOG_CTX_INFO(ctx_, "{} mux initialized {}", log_event::CONN_INIT, ctx_.connection_info());
+    LOG_CTX_INFO(ctx_, "{} mux initialized {}", log_event::kConnInit, ctx_.connection_info());
 }
 
 void mux_connection::register_stream(const std::uint32_t id, std::shared_ptr<mux_stream_interface> stream)
@@ -99,7 +102,7 @@ asio::awaitable<std::error_code> mux_connection::send_async(const std::uint32_t 
         co_return asio::error::operation_aborted;
     }
 
-    if (cmd != mux::CMD_DAT || payload.size() < 128)
+    if (cmd != mux::kCmdDat || payload.size() < 128)
     {
         LOG_TRACE("mux {} send frame stream {} cmd {} size {}", cid_, stream_id, cmd, payload.size());
     }
@@ -188,7 +191,7 @@ asio::awaitable<void> mux_connection::read_loop()
         reality_engine_.process_available_records(decrypt_ec,
                                                   [this](const std::uint8_t type, const std::span<const std::uint8_t> pt)
                                                   {
-                                                      if (type == reality::CONTENT_TYPE_APPLICATION_DATA && !pt.empty())
+                                                      if (type == reality::kContentTypeApplicationData && !pt.empty())
                                                       {
                                                           mux_dispatcher_.on_plaintext_data(pt);
                                                       }
@@ -327,7 +330,7 @@ asio::awaitable<void> mux_connection::heartbeat_loop()
         RAND_bytes(padding.data(), static_cast<int>(padding_len));
 
         LOG_TRACE("mux {} sending heartbeat size {}", cid_, padding_len);
-        (void)co_await send_async(mux::STREAM_ID_HEARTBEAT, mux::CMD_DAT, std::move(padding));
+        (void)co_await send_async(mux::kStreamIdHeartbeat, mux::kCmdDat, std::move(padding));
     }
 
     LOG_DEBUG("mux {} heartbeat loop finished", cid_);
@@ -337,13 +340,13 @@ void mux_connection::on_mux_frame(const mux::frame_header header, std::vector<st
 {
     LOG_TRACE("mux {} recv frame stream {} cmd {} len {} payload size {}", cid_, header.stream_id, header.command, header.length, payload.size());
 
-    if (header.stream_id == mux::STREAM_ID_HEARTBEAT)
+    if (header.stream_id == mux::kStreamIdHeartbeat)
     {
         LOG_TRACE("mux {} heartbeat received size {}", cid_, payload.size());
         return;
     }
 
-    if (header.command == mux::CMD_SYN)
+    if (header.command == mux::kCmdSyn)
     {
         if (syn_callback_ != nullptr)
         {
@@ -364,22 +367,22 @@ void mux_connection::on_mux_frame(const mux::frame_header header, std::vector<st
 
     if (stream != nullptr)
     {
-        if (header.command == mux::CMD_FIN)
+        if (header.command == mux::kCmdFin)
         {
             stream->on_close();
         }
-        else if (header.command == mux::CMD_RST)
+        else if (header.command == mux::kCmdRst)
         {
             stream->on_reset();
         }
-        else if (header.command == mux::CMD_DAT || header.command == mux::CMD_ACK)
+        else if (header.command == mux::kCmdDat || header.command == mux::kCmdAck)
         {
             stream->on_data(std::move(payload));
         }
     }
     else
     {
-        if (header.command != mux::CMD_RST)
+        if (header.command != mux::kCmdRst)
         {
             LOG_DEBUG("mux {} recv frame for unknown stream {}", cid_, header.stream_id);
         }

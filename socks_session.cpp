@@ -5,7 +5,10 @@
 #include <cstdint>
 #include <algorithm>
 
+extern "C"
+{
 #include <openssl/crypto.h>
+}
 
 #include <asio/read.hpp>
 #include <asio/write.hpp>
@@ -53,23 +56,23 @@ asio::awaitable<void> socks_session::run()
 {
     if (!co_await handshake())
     {
-        LOG_CTX_WARN(ctx_, "{} handshake failed", log_event::SOCKS);
+        LOG_CTX_WARN(ctx_, "{} handshake failed", log_event::kSocks);
         co_return;
     }
 
     const auto [ok, host, port, cmd] = co_await read_request();
     if (!ok)
     {
-        LOG_CTX_WARN(ctx_, "{} request invalid", log_event::SOCKS);
+        LOG_CTX_WARN(ctx_, "{} request invalid", log_event::kSocks);
         co_return;
     }
 
-    if (cmd == socks::CMD_CONNECT)
+    if (cmd == socks::kCmdConnect)
     {
         const auto tcp_sess = std::make_shared<tcp_socks_session>(std::move(socket_), tunnel_manager_, router_, sid_);
         tcp_sess->start(host, port);
     }
-    else if (cmd == socks::CMD_UDP_ASSOCIATE)
+    else if (cmd == socks::kCmdUdpAssociate)
     {
         const auto udp_sess = std::make_shared<udp_socks_session>(std::move(socket_), tunnel_manager_, sid_);
         udp_sess->start(host, port);
@@ -84,7 +87,7 @@ asio::awaitable<bool> socks_session::handshake()
 {
     std::uint8_t ver_nmethods[2];
     auto [e, n] = co_await asio::async_read(socket_, asio::buffer(ver_nmethods, 2), asio::as_tuple(asio::use_awaitable));
-    if (e || ver_nmethods[0] != socks::VER)
+    if (e || ver_nmethods[0] != socks::kVer)
     {
         LOG_ERROR("socks session {} handshake failed", sid_);
         co_return false;
@@ -98,24 +101,24 @@ asio::awaitable<bool> socks_session::handshake()
         co_return false;
     }
 
-    std::uint8_t selected_method = socks::METHOD_NO_ACCEPTABLE;
+    std::uint8_t selected_method = socks::kMethodNoAcceptable;
 
     if (auth_enabled_)
     {
-        if (std::find(methods.begin(), methods.end(), socks::METHOD_PASSWORD) != methods.end())
+        if (std::find(methods.begin(), methods.end(), socks::kMethodPassword) != methods.end())
         {
-            selected_method = socks::METHOD_PASSWORD;
+            selected_method = socks::kMethodPassword;
         }
     }
     else
     {
-        if (std::find(methods.begin(), methods.end(), socks::METHOD_NO_AUTH) != methods.end())
+        if (std::find(methods.begin(), methods.end(), socks::kMethodNoAuth) != methods.end())
         {
-            selected_method = socks::METHOD_NO_AUTH;
+            selected_method = socks::kMethodNoAuth;
         }
     }
 
-    std::uint8_t resp[] = {socks::VER, selected_method};
+    std::uint8_t resp[] = {socks::kVer, selected_method};
     auto [response_error, n3] = co_await asio::async_write(socket_, asio::buffer(resp), asio::as_tuple(asio::use_awaitable));
     if (response_error)
     {
@@ -123,13 +126,13 @@ asio::awaitable<bool> socks_session::handshake()
         co_return false;
     }
 
-    if (selected_method == socks::METHOD_NO_ACCEPTABLE)
+    if (selected_method == socks::kMethodNoAcceptable)
     {
         LOG_WARN("socks session {} no acceptable method", sid_);
         co_return false;
     }
 
-    if (selected_method == socks::METHOD_PASSWORD)
+    if (selected_method == socks::kMethodPassword)
     {
         co_return co_await do_password_auth();
     }
@@ -214,20 +217,20 @@ asio::awaitable<socks_session::request_info> socks_session::read_request()
     }
 
     std::string host;
-    if (head[3] == socks::ATYP_IPV4)
+    if (head[3] == socks::kAtypIpv4)
     {
         asio::ip::address_v4::bytes_type b;
         co_await asio::async_read(socket_, asio::buffer(b), asio::as_tuple(asio::use_awaitable));
         host = asio::ip::address_v4(b).to_string();
     }
-    else if (head[3] == socks::ATYP_DOMAIN)
+    else if (head[3] == socks::kAtypDomain)
     {
         std::uint8_t len = 0;
         co_await asio::async_read(socket_, asio::buffer(&len, 1), asio::as_tuple(asio::use_awaitable));
         host.resize(len);
         co_await asio::async_read(socket_, asio::buffer(host), asio::as_tuple(asio::use_awaitable));
     }
-    else if (head[3] == socks::ATYP_IPV6)
+    else if (head[3] == socks::kAtypIpv6)
     {
         asio::ip::address_v6::bytes_type b;
         co_await asio::async_read(socket_, asio::buffer(b), asio::as_tuple(asio::use_awaitable));

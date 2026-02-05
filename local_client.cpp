@@ -11,21 +11,24 @@
 #include <system_error>
 
 #include <asio/read.hpp>
-#include <asio/write.hpp>
 #include <asio/error.hpp>
+#include <asio/write.hpp>
 #include <asio/buffer.hpp>
-#include <asio/connect.hpp>
 #include <asio/ip/tcp.hpp>
+#include <asio/connect.hpp>
 #include <asio/co_spawn.hpp>
-#include <asio/detached.hpp>
 #include <asio/as_tuple.hpp>
+#include <asio/detached.hpp>
 #include <asio/steady_timer.hpp>
 #include <asio/use_awaitable.hpp>
 #include <asio/experimental/awaitable_operators.hpp>
 
+extern "C"
+{
 #include <openssl/evp.h>
 #include <openssl/rand.h>
 #include <openssl/crypto.h>
+}
 
 #include "log.h"
 #include "config.h"
@@ -102,7 +105,7 @@ local_client::local_client(io_context_pool& pool,
       limits_config_(limits_cfg)
 {
     server_pub_key_ = reality::crypto_util::hex_to_bytes(key_hex);
-    auth_config_valid_ = parse_hex_to_bytes(short_id_hex, short_id_bytes_, reality::SHORT_ID_MAX_LEN, "short id");
+    auth_config_valid_ = parse_hex_to_bytes(short_id_hex, short_id_bytes_, reality::kShortIdMaxLen, "short id");
     auth_config_valid_ = parse_hex_to_bytes(verify_key_hex, verify_pub_key_, 32, "verify public key") && auth_config_valid_;
     if (!verify_pub_key_.empty() && verify_pub_key_.size() != 32)
     {
@@ -182,7 +185,7 @@ asio::awaitable<void> local_client::connect_remote_loop(const std::uint32_t inde
         ctx.conn_id(cid);
         LOG_CTX_INFO(ctx,
                      "{} initiating connection {}/{} to {} {}",
-                     log_event::CONN_INIT,
+                     log_event::kConnInit,
                      index + 1,
                      limits_config_.max_connections,
                      remote_host_,
@@ -193,7 +196,7 @@ asio::awaitable<void> local_client::connect_remote_loop(const std::uint32_t inde
 
         if (!co_await tcp_connect(*socket, ec))
         {
-            LOG_ERROR("connect failed {} retry in {}s", ec.message(), constants::net::RETRY_INTERVAL_SEC);
+            LOG_ERROR("connect failed {} retry in {}s", ec.message(), constants::net::kRetryIntervalSec);
             co_await wait_remote_retry();
             continue;
         }
@@ -201,20 +204,20 @@ asio::awaitable<void> local_client::connect_remote_loop(const std::uint32_t inde
         auto [handshake_success, handshake_ret] = co_await perform_reality_handshake(*socket, ec);
         if (!handshake_success)
         {
-            LOG_ERROR("handshake failed {} retry in {}s", ec.message(), constants::net::RETRY_INTERVAL_SEC);
+            LOG_ERROR("handshake failed {} retry in {}s", ec.message(), constants::net::kRetryIntervalSec);
             co_await wait_remote_retry();
             continue;
         }
 
-        const std::size_t key_len = (handshake_ret.cipher_suite == 0x1302 || handshake_ret.cipher_suite == 0x1303) ? constants::crypto::KEY_LEN_256
-                                                                                                                   : constants::crypto::KEY_LEN_128;
+        const std::size_t key_len = (handshake_ret.cipher_suite == 0x1302 || handshake_ret.cipher_suite == 0x1303) ? constants::crypto::kKeyLen256
+                                                                                                                   : constants::crypto::kKeyLen128;
 
         const auto c_app_keys =
-            reality::tls_key_schedule::derive_traffic_keys(handshake_ret.c_app_secret, ec, key_len, constants::crypto::IV_LEN, handshake_ret.md);
+            reality::tls_key_schedule::derive_traffic_keys(handshake_ret.c_app_secret, ec, key_len, constants::crypto::kIvLen, handshake_ret.md);
         const auto s_app_keys =
-            reality::tls_key_schedule::derive_traffic_keys(handshake_ret.s_app_secret, ec, key_len, constants::crypto::IV_LEN, handshake_ret.md);
+            reality::tls_key_schedule::derive_traffic_keys(handshake_ret.s_app_secret, ec, key_len, constants::crypto::kIvLen, handshake_ret.md);
 
-        LOG_CTX_INFO(ctx, "{} handshake success cipher 0x{:04x}", log_event::HANDSHAKE, handshake_ret.cipher_suite);
+        LOG_CTX_INFO(ctx, "{} handshake success cipher 0x{:04x}", log_event::kHandshake, handshake_ret.cipher_suite);
         reality_engine re(s_app_keys.first, s_app_keys.second, c_app_keys.first, c_app_keys.second, handshake_ret.cipher);
 
         auto tunnel = std::make_shared<mux_tunnel_impl<asio::ip::tcp::socket>>(
@@ -234,7 +237,7 @@ asio::awaitable<void> local_client::connect_remote_loop(const std::uint32_t inde
 
         co_await wait_remote_retry();
     }
-    LOG_INFO("{} connect remote loop {} exited", log_event::CONN_CLOSE, index);
+    LOG_INFO("{} connect remote loop {} exited", log_event::kConnClose, index);
 }
 
 asio::awaitable<bool> local_client::tcp_connect(asio::ip::tcp::socket& socket, std::error_code& ec) const
@@ -288,8 +291,8 @@ asio::awaitable<std::pair<bool, local_client::handshake_result>> local_client::p
     }
 
     const std::size_t key_len =
-        (sh_res.cipher_suite == 0x1302 || sh_res.cipher_suite == 0x1303) ? constants::crypto::KEY_LEN_256 : constants::crypto::KEY_LEN_128;
-    constexpr std::size_t iv_len = constants::crypto::IV_LEN;
+        (sh_res.cipher_suite == 0x1302 || sh_res.cipher_suite == 0x1303) ? constants::crypto::kKeyLen256 : constants::crypto::kKeyLen128;
+    constexpr std::size_t iv_len = constants::crypto::kIvLen;
 
     const auto c_hs_keys =
         reality::tls_key_schedule::derive_traffic_keys(sh_res.hs_keys.client_handshake_traffic_secret, ec, key_len, iv_len, sh_res.negotiated_md);
@@ -336,14 +339,14 @@ asio::awaitable<bool> local_client::generate_and_send_client_hello(asio::ip::tcp
         ec = std::make_error_code(std::errc::operation_canceled);
         co_return false;
     }
-    const std::vector<std::uint8_t> salt(client_random.begin(), client_random.begin() + constants::auth::SALT_LEN);
+    const std::vector<std::uint8_t> salt(client_random.begin(), client_random.begin() + constants::auth::kSaltLen);
     const auto r_info = reality::crypto_util::hex_to_bytes("5245414c495459");
     const auto prk = reality::crypto_util::hkdf_extract(salt, shared, EVP_sha256(), ec);
     const auto auth_key = reality::crypto_util::hkdf_expand(prk, r_info, 16, EVP_sha256(), ec);
 
     LOG_DEBUG("client auth material ready random {} bytes eph pub {} bytes", client_random.size(), 32);
     const std::uint32_t now = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-    std::array<std::uint8_t, reality::AUTH_PAYLOAD_LEN> payload{};
+    std::array<std::uint8_t, reality::kAuthPayloadLen> payload{};
     if (!reality::build_auth_payload(short_id_bytes_, now, payload))
     {
         ec = std::make_error_code(std::errc::invalid_argument);
@@ -366,7 +369,7 @@ asio::awaitable<bool> local_client::generate_and_send_client_hello(asio::ip::tcp
         reality::ClientHelloBuilder::build(spec, placeholder_session_id, client_random, std::vector<std::uint8_t>(public_key, public_key + 32), sni_);
 
     std::vector<std::uint8_t> dummy_record =
-        reality::write_record_header(reality::CONTENT_TYPE_HANDSHAKE, static_cast<std::uint16_t>(hello_body.size()));
+        reality::write_record_header(reality::kContentTypeHandshake, static_cast<std::uint16_t>(hello_body.size()));
     dummy_record.insert(dummy_record.end(), hello_body.begin(), hello_body.end());
 
     client_hello_info ch_info = ch_parser::parse(dummy_record);
@@ -386,7 +389,7 @@ asio::awaitable<bool> local_client::generate_and_send_client_hello(asio::ip::tcp
     const auto sid =
         reality::crypto_util::aead_encrypt(EVP_aes_128_gcm(),
                                            auth_key,
-                                           std::vector<std::uint8_t>(client_random.begin() + constants::auth::SALT_LEN, client_random.end()),
+                                           std::vector<std::uint8_t>(client_random.begin() + constants::auth::kSaltLen, client_random.end()),
                                            std::vector<std::uint8_t>(payload.begin(), payload.end()),
                                            hello_body,
                                            ec);
@@ -400,7 +403,7 @@ asio::awaitable<bool> local_client::generate_and_send_client_hello(asio::ip::tcp
     std::memcpy(hello_body.data() + absolute_sid_offset, sid.data(), 32);
 
     const std::vector<std::uint8_t> ch = hello_body;
-    auto ch_rec = reality::write_record_header(reality::CONTENT_TYPE_HANDSHAKE, static_cast<std::uint16_t>(ch.size()));
+    auto ch_rec = reality::write_record_header(reality::kContentTypeHandshake, static_cast<std::uint16_t>(ch.size()));
     ch_rec.insert(ch_rec.end(), ch.begin(), ch.end());
 
     auto [we, wn] = co_await asio::async_write(socket, asio::buffer(ch_rec), asio::as_tuple(asio::use_awaitable));
@@ -588,7 +591,7 @@ asio::awaitable<std::pair<bool, std::pair<std::vector<std::uint8_t>, std::vector
             co_return std::make_pair(false, std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>{});
         }
 
-        if (rh[0] == reality::CONTENT_TYPE_CHANGE_CIPHER_SPEC)
+        if (rh[0] == reality::kContentTypeChangeCipherSpec)
         {
             LOG_DEBUG("received change cipher spec skip");
             continue;
@@ -605,7 +608,7 @@ asio::awaitable<std::pair<bool, std::pair<std::vector<std::uint8_t>, std::vector
             co_return std::make_pair(false, std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>{});
         }
 
-        if (type == reality::CONTENT_TYPE_HANDSHAKE)
+        if (type == reality::kContentTypeHandshake)
         {
             handshake_buffer.insert(handshake_buffer.end(), pt.begin(), pt.end());
             std::uint32_t offset = 0;
@@ -658,7 +661,7 @@ asio::awaitable<bool> local_client::send_client_finished(asio::ip::tcp::socket& 
     const auto fin_verify = reality::tls_key_schedule::compute_finished_verify_data(c_hs_secret, trans.finish(), md, ec);
     const auto fin_msg = reality::construct_finished(fin_verify);
     const auto fin_rec =
-        reality::tls_record_layer::encrypt_record(cipher, c_hs_keys.first, c_hs_keys.second, 0, fin_msg, reality::CONTENT_TYPE_HANDSHAKE, ec);
+        reality::tls_record_layer::encrypt_record(cipher, c_hs_keys.first, c_hs_keys.second, 0, fin_msg, reality::kContentTypeHandshake, ec);
 
     std::vector<std::uint8_t> out_flight = {0x14, 0x03, 0x03, 0x00, 0x01, 0x01};
     out_flight.insert(out_flight.end(), fin_rec.begin(), fin_rec.end());
@@ -680,7 +683,7 @@ asio::awaitable<void> local_client::wait_remote_retry()
     {
         co_return;
     }
-    remote_timer_.expires_after(std::chrono::seconds(constants::net::RETRY_INTERVAL_SEC));
+    remote_timer_.expires_after(std::chrono::seconds(constants::net::kRetryIntervalSec));
     const auto [ec] = co_await remote_timer_.async_wait(asio::as_tuple(asio::use_awaitable));
     if (ec)
     {

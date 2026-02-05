@@ -24,7 +24,7 @@ TEST(MuxDispatcherTest, PackAndOnData)
 
     const std::vector<std::uint8_t> original_payload = {0xAA, 0xBB, 0xCC};
     const std::uint32_t stream_id = 0x12345678;
-    const std::uint8_t cmd = mux::CMD_DAT;
+    const std::uint8_t cmd = mux::kCmdDat;
 
     const auto packed = mux::mux_dispatcher::pack(stream_id, cmd, original_payload);
 

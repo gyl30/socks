@@ -1,6 +1,6 @@
+#include <string>
 #include <cstdio>
 #include <optional>
-#include <string>
 
 #include "config.h"
 #include "reflect.h"
