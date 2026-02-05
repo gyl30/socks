@@ -1,8 +1,7 @@
-#include <array>
-#include <cstdio>
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <cstdio>
 #include <iostream>
 #include <system_error>
 
@@ -31,10 +30,10 @@ TEST(RealityMessagesTest, RecordHeader)
 
 TEST(RealityMessagesTest, ServerHelloRoundTrip)
 {
-    const std::vector<uint8_t> random(32, 0xAA);
-    const std::vector<uint8_t> session_id(32, 0xBB);
-    const uint16_t cipher = 0x1301;
-    const std::vector<uint8_t> pubkey(32, 0xCC);
+    const std::vector<std::uint8_t> random(32, 0xAA);
+    const std::vector<std::uint8_t> session_id(32, 0xBB);
+    const std::uint16_t cipher = 0x1301;
+    const std::vector<std::uint8_t> pubkey(32, 0xCC);
 
     const auto sh = reality::construct_server_hello(random, session_id, cipher, pubkey);
 
@@ -57,7 +56,7 @@ TEST(RealityMessagesTest, EncryptedExtensionsALPN)
         std::cout << "Msg Hex: ";
         for (const auto b : msg)
         {
-            printf("%02X ", b);
+            std::printf("%02X ", b);
         }
         std::cout << "\n";
     }
@@ -75,7 +74,7 @@ TEST(RealityMessagesTest, EncryptedExtensionsNoALPN)
 
 TEST(RealityMessagesTest, ServerHelloInvalid)
 {
-    const std::vector<uint8_t> short_buf(10, 0x00);
+    const std::vector<std::uint8_t> short_buf(10, 0x00);
     EXPECT_FALSE(reality::extract_cipher_suite_from_server_hello(short_buf).has_value());
     EXPECT_TRUE(reality::extract_server_public_key(short_buf).empty());
 }
@@ -83,9 +82,9 @@ TEST(RealityMessagesTest, ServerHelloInvalid)
 TEST(RealityMessagesTest, ClientHelloBuilderFirefox)
 {
     const auto spec = reality::FingerprintFactory::Get(reality::FingerprintType::Firefox_120);
-    const std::vector<uint8_t> session_id(32, 0xEE);
-    const std::vector<uint8_t> random(32, 0xAA);
-    const std::vector<uint8_t> pubkey(32, 0xBB);
+    const std::vector<std::uint8_t> session_id(32, 0xEE);
+    const std::vector<std::uint8_t> random(32, 0xAA);
+    const std::vector<std::uint8_t> pubkey(32, 0xBB);
     const std::string host = "example.com";
 
     const auto ch = reality::ClientHelloBuilder::build(spec, session_id, random, pubkey, host);
@@ -97,9 +96,9 @@ TEST(RealityMessagesTest, ClientHelloBuilderFirefox)
 TEST(RealityMessagesTest, ClientHelloBuilderChrome)
 {
     const auto spec = reality::FingerprintFactory::Get(reality::FingerprintType::Chrome_120);
-    const std::vector<uint8_t> session_id(32, 0xEE);
-    const std::vector<uint8_t> random(32, 0xAA);
-    const std::vector<uint8_t> pubkey(32, 0xBB);
+    const std::vector<std::uint8_t> session_id(32, 0xEE);
+    const std::vector<std::uint8_t> random(32, 0xAA);
+    const std::vector<std::uint8_t> pubkey(32, 0xBB);
     const std::string host = "google.com";
 
     const auto ch = reality::ClientHelloBuilder::build(spec, session_id, random, pubkey, host);
@@ -109,13 +108,13 @@ TEST(RealityMessagesTest, ClientHelloBuilderChrome)
 
 TEST(RealityMessagesTest, ExtractServerPublicKeyNoKeyShare)
 {
-    std::vector<uint8_t> hello;
+    std::vector<std::uint8_t> hello;
     hello.push_back(0x02);
     hello.push_back(0);
     hello.push_back(0);
     hello.push_back(0);
     message_builder::push_u16(hello, 0x0303);
-    const std::vector<uint8_t> random(32, 0xAA);
+    const std::vector<std::uint8_t> random(32, 0xAA);
     message_builder::push_bytes(hello, random);
     hello.push_back(0);
     message_builder::push_u16(hello, 0x1301);
@@ -123,16 +122,16 @@ TEST(RealityMessagesTest, ExtractServerPublicKeyNoKeyShare)
 
     message_builder::push_u16(hello, 0);
 
-    const size_t total_len = hello.size() - 4;
+    const std::size_t total_len = hello.size() - 4;
     hello[1] = (total_len >> 16) & 0xFF;
     hello[2] = (total_len >> 8) & 0xFF;
     hello[3] = total_len & 0xFF;
 
-    std::vector<uint8_t> record;
+    std::vector<std::uint8_t> record;
     record.push_back(0x16);
     record.push_back(0x03);
     record.push_back(0x03);
-    message_builder::push_u16(record, static_cast<uint16_t>(hello.size()));
+    message_builder::push_u16(record, static_cast<std::uint16_t>(hello.size()));
     message_builder::push_bytes(record, hello);
 
     const auto key = reality::extract_server_public_key(record);
@@ -141,36 +140,36 @@ TEST(RealityMessagesTest, ExtractServerPublicKeyNoKeyShare)
 
 TEST(RealityMessagesTest, ExtractServerPublicKeyMalformedKeyShare)
 {
-    std::vector<uint8_t> hello;
+    std::vector<std::uint8_t> hello;
     hello.push_back(0x02);
     hello.push_back(0);
     hello.push_back(0);
     hello.push_back(0);
     message_builder::push_u16(hello, 0x0303);
-    const std::vector<uint8_t> random(32, 0xAA);
+    const std::vector<std::uint8_t> random(32, 0xAA);
     message_builder::push_bytes(hello, random);
     hello.push_back(0);
     message_builder::push_u16(hello, 0x1301);
     hello.push_back(0);
 
-    std::vector<uint8_t> extensions;
+    std::vector<std::uint8_t> extensions;
     message_builder::push_u16(extensions, tls_consts::ext::KEY_SHARE);
     message_builder::push_u16(extensions, 2);
     message_builder::push_u16(extensions, 0x001d);
 
-    message_builder::push_u16(hello, static_cast<uint16_t>(extensions.size()));
+    message_builder::push_u16(hello, static_cast<std::uint16_t>(extensions.size()));
     message_builder::push_bytes(hello, extensions);
 
-    const size_t total_len = hello.size() - 4;
+    const std::size_t total_len = hello.size() - 4;
     hello[1] = (total_len >> 16) & 0xFF;
     hello[2] = (total_len >> 8) & 0xFF;
     hello[3] = total_len & 0xFF;
 
-    std::vector<uint8_t> record;
+    std::vector<std::uint8_t> record;
     record.push_back(0x16);
     record.push_back(0x03);
     record.push_back(0x03);
-    message_builder::push_u16(record, static_cast<uint16_t>(hello.size()));
+    message_builder::push_u16(record, static_cast<std::uint16_t>(hello.size()));
     message_builder::push_bytes(record, hello);
 
     const auto key = reality::extract_server_public_key(record);
@@ -179,16 +178,16 @@ TEST(RealityMessagesTest, ExtractServerPublicKeyMalformedKeyShare)
 
 TEST(RealityMessagesTest, CipherSuiteShort)
 {
-    const std::vector<uint8_t> buf = {0x16, 0x03, 0x03, 0x00, 0x10, 0x02, 0x00, 0x00, 0x0C, 0x03, 0x03};
+    const std::vector<std::uint8_t> buf = {0x16, 0x03, 0x03, 0x00, 0x10, 0x02, 0x00, 0x00, 0x0C, 0x03, 0x03};
 
     EXPECT_FALSE(reality::extract_cipher_suite_from_server_hello(buf).has_value());
 }
 
 TEST(RealityMessagesTest, ExtractALPNMalformed)
 {
-    const std::vector<uint8_t> msg = {0x08, 0x00, 0x00, 0x05, 0x00, 0x03, 0x02, 0x68, 0x32};
+    const std::vector<std::uint8_t> msg = {0x08, 0x00, 0x00, 0x05, 0x00, 0x03, 0x02, 0x68, 0x32};
 
-    std::vector<uint8_t> bad_msg;
+    std::vector<std::uint8_t> bad_msg;
     bad_msg.push_back(0x08);
     bad_msg.push_back(0);
     bad_msg.push_back(0);
@@ -201,20 +200,20 @@ TEST(RealityMessagesTest, ExtractALPNMalformed)
 
 TEST(RealityMessagesTest, CertificateVerifyParseAndVerify)
 {
-    std::array<uint8_t, 32> priv{};
+    std::array<std::uint8_t, 32> priv{};
     ASSERT_EQ(RAND_bytes(priv.data(), static_cast<int>(priv.size())), 1);
 
     const reality::openssl_ptrs::evp_pkey_ptr priv_key(EVP_PKEY_new_raw_private_key(EVP_PKEY_ED25519, nullptr, priv.data(), priv.size()));
     ASSERT_TRUE(priv_key);
 
-    size_t pub_len = 32;
-    std::vector<uint8_t> pub(pub_len);
+    std::size_t pub_len = 32;
+    std::vector<std::uint8_t> pub(pub_len);
     ASSERT_EQ(EVP_PKEY_get_raw_public_key(priv_key.get(), pub.data(), &pub_len), 1);
 
     const reality::openssl_ptrs::evp_pkey_ptr pub_key(EVP_PKEY_new_raw_public_key(EVP_PKEY_ED25519, nullptr, pub.data(), pub_len));
     ASSERT_TRUE(pub_key);
 
-    const std::vector<uint8_t> handshake_hash(32, 0x11);
+    const std::vector<std::uint8_t> handshake_hash(32, 0x11);
     const auto cv = reality::construct_certificate_verify(priv_key.get(), handshake_hash);
     const auto info = reality::parse_certificate_verify(cv);
     ASSERT_TRUE(info.has_value());

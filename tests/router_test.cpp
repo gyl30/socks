@@ -1,7 +1,6 @@
 #include <memory>
 #include <string>
 
-#include <asio.hpp>
 #include <gtest/gtest.h>
 #include <asio/co_spawn.hpp>
 #include <asio/detached.hpp>

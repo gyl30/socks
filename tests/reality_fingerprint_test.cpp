@@ -5,10 +5,10 @@
 
 #include "reality_fingerprint.h"
 
+using reality::ExtensionType;
 using reality::FingerprintFactory;
 using reality::FingerprintType;
 namespace tls_consts = reality::tls_consts;
-using reality::ExtensionType;
 
 TEST(RealityFingerprintTest, Chrome120Basic)
 {
@@ -22,8 +22,8 @@ TEST(RealityFingerprintTest, Chrome120Basic)
 TEST(RealityFingerprintTest, GreaseValues)
 {
     const reality::GreaseContext ctx;
-    const uint16_t g1 = ctx.get_grease(0);
-    const uint16_t g2 = ctx.get_grease(1);
+    const std::uint16_t g1 = ctx.get_grease(0);
+    const std::uint16_t g2 = ctx.get_grease(1);
 
     EXPECT_EQ(g1 & 0x0f0f, 0x0a0a);
     EXPECT_EQ(g2 & 0x0f0f, 0x0a0a);

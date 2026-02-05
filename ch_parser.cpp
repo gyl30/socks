@@ -23,7 +23,7 @@ client_hello_info ch_parser::parse(const std::vector<std::uint8_t>& buf)
         return info;
     }
 
-    if (!r.skip(2 + 2))    // Skip version and length
+    if (!r.skip(2 + 2))
     {
         return info;
     }
@@ -34,12 +34,12 @@ client_hello_info ch_parser::parse(const std::vector<std::uint8_t>& buf)
         return info;
     }
 
-    if (!r.skip(3))    // Skip handshake length
+    if (!r.skip(3))
     {
         return info;
     }
 
-    if (!r.skip(2))    // Skip version (0x0303)
+    if (!r.skip(2))
     {
         return info;
     }
@@ -151,7 +151,7 @@ void ch_parser::parse_sni(reader& r, client_hello_info& info)
             break;
         }
 
-        if (type == 0x00)    // host_name
+        if (type == 0x00)
         {
             if (list_r.has(len))
             {
@@ -184,7 +184,7 @@ void ch_parser::parse_key_share(reader& r, client_hello_info& info)
             break;
         }
 
-        if (group == 0x001d)    // X25519
+        if (group == 0x001d)
         {
             if (len == 32)
             {

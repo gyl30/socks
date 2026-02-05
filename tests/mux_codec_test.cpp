@@ -1,3 +1,4 @@
+#include <string>
 #include <vector>
 #include <cstdint>
 
@@ -241,13 +242,13 @@ TEST(MuxCodecTest, SynPayload_Fuzz_Truncation)
     std::vector<std::uint8_t> valid_buffer;
     mux::mux_codec::encode_syn(input, valid_buffer);
 
-    for (size_t len = 0; len < valid_buffer.size(); ++len)
+    for (std::size_t len = 0; len < valid_buffer.size(); ++len)
     {
         mux::syn_payload output;
 
         bool result = mux::mux_codec::decode_syn(valid_buffer.data(), len, output);
 
-        size_t pos_after_port = 1 + 1 + 9 + 2;
+        std::size_t pos_after_port = 1 + 1 + 9 + 2;
 
         if (len == pos_after_port)
         {

@@ -83,7 +83,7 @@ bool domain_matcher::match(std::string domain) const
         return true;
     }
 
-    size_t pos = 0;
+    std::size_t pos = 0;
     while ((pos = domain.find('.', pos)) != std::string::npos)
     {
         const std::string suffix = domain.substr(pos + 1);

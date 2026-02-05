@@ -1,8 +1,9 @@
-#include <memory>
 #include <thread>
 #include <vector>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <system_error>
 
 #include <gtest/gtest.h>
@@ -14,7 +15,9 @@
 #include "log.h"
 #include "upstream.h"
 #include "test_util.h"
+#include "mux_tunnel.h"
 #include "log_context.h"
+#include "mock_mux_connection.h"
 
 class UpstreamTest : public ::testing::Test
 {
@@ -35,7 +38,7 @@ class EchoServer
         thread_ = std::thread([this] { ctx_.run(); });
     }
 
-    [[nodiscard]] uint16_t port() const { return acceptor_.local_endpoint().port(); }
+    [[nodiscard]] std::uint16_t port() const { return acceptor_.local_endpoint().port(); }
 
     ~EchoServer() noexcept
     {
@@ -83,15 +86,15 @@ class EchoServer
 
     void do_echo(const std::shared_ptr<asio::ip::tcp::socket>& socket)
     {
-        auto buf = std::make_shared<std::vector<uint8_t>>(1024);
+        auto buf = std::make_shared<std::vector<std::uint8_t>>(1024);
         socket->async_read_some(asio::buffer(*buf),
-                                [this, socket, buf](const std::error_code ec, const size_t n)
+                                [this, socket, buf](const std::error_code ec, const std::size_t n)
                                 {
                                     if (!ec)
                                     {
                                         asio::async_write(*socket,
                                                           asio::buffer(*buf, n),
-                                                          [this, socket, buf](const std::error_code ec_write, size_t)
+                                                          [this, socket, buf](const std::error_code ec_write, std::size_t)
                                                           {
                                                               if (!ec_write)
                                                               {
@@ -110,18 +113,18 @@ class EchoServer
 TEST_F(UpstreamTest, DirectUpstreamConnectSuccess)
 {
     EchoServer server;
-    const uint16_t port = server.port();
+    const std::uint16_t port = server.port();
 
     mux::direct_upstream upstream(ctx().get_executor(), mux::connection_context{});
 
     const auto success = mux::test::run_awaitable(ctx(), upstream.connect("127.0.0.1", port));
     EXPECT_TRUE(success);
 
-    const std::vector<uint8_t> data = {0x01, 0x02, 0x03};
+    const std::vector<std::uint8_t> data = {0x01, 0x02, 0x03};
     const auto write_n = mux::test::run_awaitable(ctx(), upstream.write(data));
     EXPECT_EQ(write_n, 3);
 
-    std::vector<uint8_t> buf(1024);
+    std::vector<std::uint8_t> buf(1024);
     const auto [read_ec, read_n] = mux::test::run_awaitable(ctx(), upstream.read(buf));
     EXPECT_FALSE(read_ec);
     EXPECT_EQ(read_n, 3);
@@ -141,9 +144,8 @@ TEST_F(UpstreamTest, DirectUpstreamConnectFail)
 
 TEST_F(UpstreamTest, DirectUpstreamWriteError)
 {
-    // Start a server that accepts and immediately closes
     auto acceptor = std::make_shared<asio::ip::tcp::acceptor>(ctx(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
-    uint16_t port = acceptor->local_endpoint().port();
+    std::uint16_t port = acceptor->local_endpoint().port();
 
     asio::co_spawn(
         ctx(),
@@ -159,26 +161,20 @@ TEST_F(UpstreamTest, DirectUpstreamWriteError)
     const auto success = mux::test::run_awaitable(ctx(), upstream.connect("127.0.0.1", port));
     EXPECT_TRUE(success);
 
-    // Give server time to close its side
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
-    // Try to write multiple times to ensure we get an error
-    size_t write_n = 1;
+    std::size_t write_n = 1;
     for (int i = 0; i < 10 && write_n > 0; ++i)
     {
         write_n = mux::test::run_awaitable(ctx(), upstream.write({0x01, 0x02, 0x03}));
     }
-    // Eventually it should fail and return 0
+
     EXPECT_EQ(write_n, 0);
 }
-
-#include "mux_tunnel.h"
-#include "mock_mux_connection.h"
 
 TEST_F(UpstreamTest, DirectUpstreamClose)
 {
     mux::direct_upstream upstream(ctx().get_executor(), mux::connection_context{});
-    // Closing uninitialized upstream should be safe and cover close error paths
-    // (though on some OS it might not error, it still exercises the code).
+
     mux::test::run_awaitable_void(ctx(), upstream.close());
 }

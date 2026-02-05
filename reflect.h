@@ -52,9 +52,9 @@ struct JsonWriter
     void endObject();
     void key(const char* name);
     void null_();
-    void int64(int64_t v);
+    void int64(std::int64_t v);
     void string(const char* s);
-    void string(const char* s, size_t len);
+    void string(const char* s, std::size_t len);
 };
 
 inline std::string JsonReader::getString() { return m->GetString(); }
@@ -65,9 +65,9 @@ inline void JsonWriter::startObject() { m->StartObject(); }
 inline void JsonWriter::endObject() { m->EndObject(); }
 inline void JsonWriter::key(const char* name) { m->Key(name); }
 inline void JsonWriter::null_() { m->Null(); }
-inline void JsonWriter::int64(int64_t v) { m->Int64(v); }
+inline void JsonWriter::int64(std::int64_t v) { m->Int64(v); }
 inline void JsonWriter::string(const char* s) { m->String(s); }
-inline void JsonWriter::string(const char* s, size_t len) { m->String(s, len); }
+inline void JsonWriter::string(const char* s, std::size_t len) { m->String(s, len); }
 inline void reflect(JsonReader& vis, bool& v)
 {
     if (!vis.m->IsBool())
@@ -77,8 +77,8 @@ inline void reflect(JsonReader& vis, bool& v)
 inline void reflect(JsonReader& vis, unsigned char& v)
 {
     if (!vis.m->IsInt())
-        throw std::invalid_argument("uint8_t");
-    v = (uint8_t)vis.m->GetInt();
+        throw std::invalid_argument("std::uint8_t");
+    v = (std::uint8_t)vis.m->GetInt();
 }
 inline void reflect(JsonReader& vis, short& v)
 {

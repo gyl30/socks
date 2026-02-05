@@ -1,23 +1,23 @@
+#include <span>
+#include <mutex>
 #include <atomic>
 #include <chrono>
-#include <cstdint>
 #include <memory>
-#include <mutex>
 #include <ranges>
-#include <span>
 #include <string>
-#include <system_error>
-#include <utility>
 #include <vector>
+#include <cstdint>
+#include <utility>
+#include <system_error>
 
-#include <asio/as_tuple.hpp>
-#include <asio/buffer.hpp>
+#include <asio/write.hpp>
 #include <asio/error.hpp>
-#include <asio/experimental/awaitable_operators.hpp>
+#include <asio/buffer.hpp>
 #include <asio/ip/tcp.hpp>
+#include <asio/as_tuple.hpp>
 #include <asio/steady_timer.hpp>
 #include <asio/use_awaitable.hpp>
-#include <asio/write.hpp>
+#include <asio/experimental/awaitable_operators.hpp>
 
 #include "log.h"
 #include "mux_protocol.h"
@@ -30,7 +30,7 @@ namespace mux
 mux_connection::mux_connection(asio::ip::tcp::socket socket,
                                reality_engine engine,
                                const bool is_client,
-                               const uint32_t conn_id,
+                               const std::uint32_t conn_id,
                                const std::string& trace_id,
                                const config::timeout_t& timeout_cfg,
                                const config::limits_t& limits_cfg)
@@ -56,19 +56,19 @@ mux_connection::mux_connection(asio::ip::tcp::socket socket,
         ctx_.remote_addr(remote_ep.address().to_string());
         ctx_.remote_port(remote_ep.port());
     }
-    mux_dispatcher_.set_callback([this](const mux::frame_header h, std::vector<uint8_t> p) { this->on_mux_frame(h, std::move(p)); });
+    mux_dispatcher_.set_callback([this](const mux::frame_header h, std::vector<std::uint8_t> p) { this->on_mux_frame(h, std::move(p)); });
     mux_dispatcher_.set_context(ctx_);
     LOG_CTX_INFO(ctx_, "{} mux initialized {}", log_event::CONN_INIT, ctx_.connection_info());
 }
 
-void mux_connection::register_stream(const uint32_t id, std::shared_ptr<mux_stream_interface> stream)
+void mux_connection::register_stream(const std::uint32_t id, std::shared_ptr<mux_stream_interface> stream)
 {
     const std::scoped_lock lock(streams_mutex_);
     streams_[id] = std::move(stream);
     LOG_DEBUG("mux {} stream {} registered", cid_, id);
 }
 
-void mux_connection::remove_stream(const uint32_t id)
+void mux_connection::remove_stream(const std::uint32_t id)
 {
     const std::scoped_lock lock(streams_mutex_);
     streams_.erase(id);
@@ -87,7 +87,7 @@ asio::awaitable<void> mux_connection::start()
     stop();
 }
 
-asio::awaitable<std::error_code> mux_connection::send_async(const uint32_t stream_id, const uint8_t cmd, std::vector<uint8_t> payload)
+asio::awaitable<std::error_code> mux_connection::send_async(const std::uint32_t stream_id, const std::uint8_t cmd, std::vector<std::uint8_t> payload)
 {
     if (connection_state_.load(std::memory_order_acquire) != mux_connection_state::connected)
     {
@@ -181,7 +181,7 @@ asio::awaitable<void> mux_connection::read_loop()
         std::error_code decrypt_ec;
 
         reality_engine_.process_available_records(decrypt_ec,
-                                                  [this](const uint8_t type, const std::span<const uint8_t> pt)
+                                                  [this](const std::uint8_t type, const std::span<const std::uint8_t> pt)
                                                   {
                                                       if (type == reality::CONTENT_TYPE_APPLICATION_DATA && !pt.empty())
                                                       {
@@ -272,7 +272,7 @@ asio::awaitable<void> mux_connection::timeout_loop()
     stop();
 }
 
-void mux_connection::on_mux_frame(const mux::frame_header header, std::vector<uint8_t> payload)
+void mux_connection::on_mux_frame(const mux::frame_header header, std::vector<std::uint8_t> payload)
 {
     LOG_TRACE("mux {} recv frame stream {} cmd {} len {} payload size {}", cid_, header.stream_id, header.command, header.length, payload.size());
 

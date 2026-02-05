@@ -312,7 +312,7 @@ TEST(CHParserTest, WrongRecordType)
     builder.start_handshake();
     builder.finish();
     auto buf = builder.get_buffer();
-    buf[0] = 0x17;    // Not handshake
+    buf[0] = 0x17;
     auto info = ch_parser::parse(buf);
     EXPECT_TRUE(info.random.empty());
 }
@@ -323,7 +323,7 @@ TEST(CHParserTest, WrongHandshakeType)
     builder.start_handshake();
     builder.finish();
     auto buf = builder.get_buffer();
-    buf[5] = 0x02;    // ServerHello instead of ClientHello
+    buf[5] = 0x02;
     auto info = ch_parser::parse(buf);
     EXPECT_TRUE(info.random.empty());
 }
@@ -347,14 +347,14 @@ TEST(CHParserTest, SNINonHostName)
     builder.get_mutable_buffer().push_back(0);
 
     builder.get_mutable_buffer().push_back(0x00);
-    builder.get_mutable_buffer().push_back(0x00);    // SNI type
+    builder.get_mutable_buffer().push_back(0x00);
     builder.get_mutable_buffer().push_back(0x00);
     builder.get_mutable_buffer().push_back(8);
 
     builder.get_mutable_buffer().push_back(0x00);
     builder.get_mutable_buffer().push_back(6);
 
-    builder.get_mutable_buffer().push_back(0x01);    // type 1 (not hostname)
+    builder.get_mutable_buffer().push_back(0x01);
     builder.get_mutable_buffer().push_back(0x00);
     builder.get_mutable_buffer().push_back(3);
     builder.get_mutable_buffer().push_back('a');
@@ -386,9 +386,9 @@ TEST(CHParserTest, KeyShareWrongLength)
     builder.get_mutable_buffer().push_back(8);
 
     builder.get_mutable_buffer().push_back(0x00);
-    builder.get_mutable_buffer().push_back(0x1d);    // X25519
+    builder.get_mutable_buffer().push_back(0x1d);
     builder.get_mutable_buffer().push_back(0);
-    builder.get_mutable_buffer().push_back(31);    // Wrong length (not 32)
+    builder.get_mutable_buffer().push_back(31);
     for (int i = 0; i < 4; ++i) builder.get_mutable_buffer().push_back(0xEE);
 
     const uint16_t total = builder.get_buffer().size() - pos - 2;

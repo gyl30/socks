@@ -66,7 +66,7 @@ asio::awaitable<std::error_code> mux_stream::async_write_some(const void* data, 
         co_return asio::error::connection_aborted;
     }
 
-    std::vector<uint8_t> payload(static_cast<const uint8_t*>(data), static_cast<const uint8_t*>(data) + len);
+    std::vector<std::uint8_t> payload(static_cast<const std::uint8_t*>(data), static_cast<const std::uint8_t*>(data) + len);
     const auto ec = co_await connection->send_async(id_, CMD_DAT, std::move(payload));
     if (!ec)
     {
@@ -95,7 +95,7 @@ asio::awaitable<void> mux_stream::close()
     close_internal();
 }
 
-void mux_stream::on_data(std::vector<uint8_t> data)
+void mux_stream::on_data(std::vector<std::uint8_t> data)
 {
     if (!is_closed_)
     {
@@ -108,7 +108,7 @@ void mux_stream::on_close()
     if (!fin_received_.exchange(true))
     {
         LOG_CTX_DEBUG(ctx_, "{} stream {} received FIN", log_event::MUX, id_);
-        recv_channel_.try_send(std::error_code{}, std::vector<uint8_t>{});
+        recv_channel_.try_send(std::error_code{}, std::vector<std::uint8_t>{});
     }
 }
 

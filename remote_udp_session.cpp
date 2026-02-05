@@ -1,17 +1,17 @@
 #include <chrono>
-#include <cstdint>
-#include <memory>
 #include <string>
-#include <system_error>
-#include <utility>
 #include <vector>
+#include <memory>
+#include <utility>
+#include <cstdint>
+#include <system_error>
 
-#include <asio/as_tuple.hpp>
-#include <asio/buffer.hpp>
 #include <asio/error.hpp>
-#include <asio/experimental/awaitable_operators.hpp>
-#include <asio/ip/address_v6.hpp>
+#include <asio/buffer.hpp>
+#include <asio/as_tuple.hpp>
 #include <asio/use_awaitable.hpp>
+#include <asio/ip/address_v6.hpp>
+#include <asio/experimental/awaitable_operators.hpp>
 
 #include "log.h"
 #include "protocol.h"
@@ -24,7 +24,7 @@ namespace mux
 {
 
 remote_udp_session::remote_udp_session(std::shared_ptr<mux_connection> connection,
-                                       const uint32_t id,
+                                       const std::uint32_t id,
                                        const asio::any_io_executor& ex,
                                        const connection_context& ctx)
     : id_(id), timer_(ex), udp_socket_(ex), udp_resolver_(ex), connection_(std::move(connection)), recv_channel_(ex, 128)
@@ -43,7 +43,7 @@ asio::awaitable<void> remote_udp_session::start()
     {
         LOG_CTX_ERROR(ctx_, "{} udp open failed {}", log_event::MUX, ec.message());
         ack_payload const ack{.socks_rep = socks::REP_GEN_FAIL, .bnd_addr = "", .bnd_port = 0};
-        std::vector<uint8_t> ack_data;
+        std::vector<std::uint8_t> ack_data;
         mux_codec::encode_ack(ack, ack_data);
         co_await connection_->send_async(id_, CMD_ACK, std::move(ack_data));
         co_return;
@@ -53,7 +53,7 @@ asio::awaitable<void> remote_udp_session::start()
     {
         LOG_CTX_ERROR(ctx_, "{} udp v4 and v6 failed {}", log_event::MUX, ec.message());
         ack_payload const ack{.socks_rep = socks::REP_GEN_FAIL, .bnd_addr = "", .bnd_port = 0};
-        std::vector<uint8_t> ack_data;
+        std::vector<std::uint8_t> ack_data;
         mux_codec::encode_ack(ack, ack_data);
         co_await connection_->send_async(id_, CMD_ACK, std::move(ack_data));
         co_return;
@@ -63,7 +63,7 @@ asio::awaitable<void> remote_udp_session::start()
     {
         LOG_CTX_ERROR(ctx_, "{} udp bind failed {}", log_event::MUX, ec.message());
         ack_payload const ack{.socks_rep = socks::REP_GEN_FAIL, .bnd_addr = "", .bnd_port = 0};
-        std::vector<uint8_t> ack_data;
+        std::vector<std::uint8_t> ack_data;
         mux_codec::encode_ack(ack, ack_data);
         co_await connection_->send_async(id_, CMD_ACK, std::move(ack_data));
         co_return;
@@ -73,7 +73,7 @@ asio::awaitable<void> remote_udp_session::start()
     LOG_CTX_INFO(ctx_, "{} udp session started bound at {}", log_event::MUX, local_ep.address().to_string());
 
     const ack_payload ack_pl{.socks_rep = socks::REP_SUCCESS, .bnd_addr = "0.0.0.0", .bnd_port = 0};
-    std::vector<uint8_t> ack_pl_data;
+    std::vector<std::uint8_t> ack_pl_data;
     mux_codec::encode_ack(ack_pl, ack_pl_data);
     co_await connection_->send_async(id_, CMD_ACK, std::move(ack_pl_data));
 
@@ -87,7 +87,7 @@ asio::awaitable<void> remote_udp_session::start()
     LOG_CTX_INFO(ctx_, "{} finished {}", log_event::CONN_CLOSE, ctx_.stats_summary());
 }
 
-void remote_udp_session::on_data(std::vector<uint8_t> data) { recv_channel_.try_send(std::error_code(), std::move(data)); }
+void remote_udp_session::on_data(std::vector<std::uint8_t> data) { recv_channel_.try_send(std::error_code(), std::move(data)); }
 
 void remote_udp_session::on_close()
 {
@@ -183,7 +183,7 @@ asio::awaitable<void> remote_udp_session::mux_to_udp()
 
 asio::awaitable<void> remote_udp_session::udp_to_mux()
 {
-    std::vector<uint8_t> buf(65535);
+    std::vector<std::uint8_t> buf(65535);
     asio::ip::udp::endpoint ep;
     for (;;)
     {
@@ -204,8 +204,8 @@ asio::awaitable<void> remote_udp_session::udp_to_mux()
         socks_udp_header h;
         h.addr = ep.address().to_string();
         h.port = ep.port();
-        std::vector<uint8_t> pkt = socks_codec::encode_udp_header(h);
-        pkt.insert(pkt.end(), buf.begin(), buf.begin() + static_cast<uint32_t>(n));
+        std::vector<std::uint8_t> pkt = socks_codec::encode_udp_header(h);
+        pkt.insert(pkt.end(), buf.begin(), buf.begin() + static_cast<std::uint32_t>(n));
         if (co_await connection_->send_async(id_, CMD_DAT, std::move(pkt)))
         {
             break;

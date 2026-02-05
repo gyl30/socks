@@ -26,15 +26,15 @@ class mux_stream;
 class udp_socks_session : public mux_stream_interface, public std::enable_shared_from_this<udp_socks_session>
 {
    public:
-    udp_socks_session(asio::ip::tcp::socket socket, std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager, uint32_t sid);
+    udp_socks_session(asio::ip::tcp::socket socket, std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager, std::uint32_t sid);
 
-    void start(const std::string& host, uint16_t port);
+    void start(const std::string& host, std::uint16_t port);
 
    private:
-    asio::awaitable<void> run(const std::string& host, uint16_t port);
+    asio::awaitable<void> run(const std::string& host, std::uint16_t port);
 
    public:
-    void on_data(std::vector<uint8_t> data) override;
+    void on_data(std::vector<std::uint8_t> data) override;
     void on_close() override;
     void on_reset() override;
 
@@ -51,7 +51,7 @@ class udp_socks_session : public mux_stream_interface, public std::enable_shared
     asio::ip::tcp::socket socket_;
     asio::ip::udp::socket udp_socket_;
     std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager_;
-    asio::experimental::concurrent_channel<void(std::error_code, std::vector<uint8_t>)> recv_channel_;
+    asio::experimental::concurrent_channel<void(std::error_code, std::vector<std::uint8_t>)> recv_channel_;
 };
 
 }    // namespace mux

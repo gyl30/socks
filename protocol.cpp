@@ -1,15 +1,19 @@
+#include <string>
+#include <vector>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <string>
 #include <system_error>
-#include <vector>
 
 #include <asio/ip/address.hpp>
 #include <asio/ip/address_v4.hpp>
 #include <asio/ip/address_v6.hpp>
 
 #include "protocol.h"
+
+namespace
+{
+}
 
 asio::ip::address socks_codec::normalize_ip_address(const asio::ip::address& addr)
 {
