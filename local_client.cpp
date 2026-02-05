@@ -1,36 +1,36 @@
-#include <algorithm>
 #include <array>
+#include <mutex>
 #include <chrono>
+#include <memory>
+#include <string>
+#include <vector>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-#include <memory>
-#include <mutex>
-#include <string>
-#include <system_error>
 #include <utility>
-#include <vector>
+#include <algorithm>
+#include <system_error>
 
-#include <asio/as_tuple.hpp>
-#include <asio/buffer.hpp>
-#include <asio/co_spawn.hpp>
-#include <asio/connect.hpp>
-#include <asio/detached.hpp>
-#include <asio/error.hpp>
-#include <asio/experimental/awaitable_operators.hpp>
-#include <asio/ip/tcp.hpp>
 #include <asio/read.hpp>
+#include <asio/write.hpp>
+#include <asio/error.hpp>
+#include <asio/buffer.hpp>
+#include <asio/connect.hpp>
+#include <asio/ip/tcp.hpp>
+#include <asio/co_spawn.hpp>
+#include <asio/detached.hpp>
+#include <asio/as_tuple.hpp>
 #include <asio/steady_timer.hpp>
 #include <asio/use_awaitable.hpp>
-#include <asio/write.hpp>
+#include <asio/experimental/awaitable_operators.hpp>
 
-#include <openssl/crypto.h>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
+#include <openssl/crypto.h>
 
 #include "log.h"
-#include "router.h"
 #include "config.h"
+#include "router.h"
 #include "constants.h"
 #include "mux_tunnel.h"
 #include "log_context.h"
@@ -50,7 +50,7 @@ namespace mux
 namespace
 {
 
-bool parse_hex_to_bytes(const std::string& hex, std::vector<uint8_t>& out, const size_t max_len, const char* label)
+bool parse_hex_to_bytes(const std::string& hex, std::vector<std::uint8_t>& out, const std::size_t max_len, const char* label)
 {
     out.clear();
     if (hex.empty())
@@ -81,7 +81,7 @@ bool parse_hex_to_bytes(const std::string& hex, std::vector<uint8_t>& out, const
 local_client::local_client(io_context_pool& pool,
                            std::string host,
                            std::string port,
-                           const uint16_t l_port,
+                           const std::uint16_t l_port,
                            const std::string& key_hex,
                            std::string sni,
                            const std::string& short_id_hex,
@@ -132,7 +132,7 @@ void local_client::start()
     }
     tunnel_pool_.resize(limits_config_.max_connections);
 
-    for (uint32_t i = 0; i < limits_config_.max_connections; ++i)
+    for (std::uint32_t i = 0; i < limits_config_.max_connections; ++i)
     {
         asio::co_spawn(
             pool_.get_io_context(),
@@ -172,11 +172,11 @@ void local_client::stop()
     }
 }
 
-asio::awaitable<void> local_client::connect_remote_loop(const uint32_t index)
+asio::awaitable<void> local_client::connect_remote_loop(const std::uint32_t index)
 {
     while (!stop_)
     {
-        const uint32_t cid = next_conn_id_++;
+        const std::uint32_t cid = next_conn_id_++;
         connection_context ctx;
         ctx.new_trace_id();
         ctx.conn_id(cid);
@@ -206,8 +206,8 @@ asio::awaitable<void> local_client::connect_remote_loop(const uint32_t index)
             continue;
         }
 
-        const size_t key_len = (handshake_ret.cipher_suite == 0x1302 || handshake_ret.cipher_suite == 0x1303) ? constants::crypto::KEY_LEN_256
-                                                                                                              : constants::crypto::KEY_LEN_128;
+        const std::size_t key_len = (handshake_ret.cipher_suite == 0x1302 || handshake_ret.cipher_suite == 0x1303) ? constants::crypto::KEY_LEN_256
+                                                                                                                   : constants::crypto::KEY_LEN_128;
 
         const auto c_app_keys =
             reality::tls_key_schedule::derive_traffic_keys(handshake_ret.c_app_secret, ec, key_len, constants::crypto::IV_LEN, handshake_ret.md);
@@ -264,8 +264,8 @@ asio::awaitable<bool> local_client::tcp_connect(asio::ip::tcp::socket& socket, s
 asio::awaitable<std::pair<bool, local_client::handshake_result>> local_client::perform_reality_handshake(asio::ip::tcp::socket& socket,
                                                                                                          std::error_code& ec) const
 {
-    uint8_t public_key[32];
-    uint8_t private_key[32];
+    std::uint8_t public_key[32];
+    std::uint8_t private_key[32];
 
     if (!reality::crypto_util::generate_x25519_keypair(public_key, private_key))
     {
@@ -287,9 +287,9 @@ asio::awaitable<std::pair<bool, local_client::handshake_result>> local_client::p
         co_return std::make_pair(false, handshake_result{});
     }
 
-    const size_t key_len =
+    const std::size_t key_len =
         (sh_res.cipher_suite == 0x1302 || sh_res.cipher_suite == 0x1303) ? constants::crypto::KEY_LEN_256 : constants::crypto::KEY_LEN_128;
-    constexpr size_t iv_len = constants::crypto::IV_LEN;
+    constexpr std::size_t iv_len = constants::crypto::IV_LEN;
 
     const auto c_hs_keys =
         reality::tls_key_schedule::derive_traffic_keys(sh_res.hs_keys.client_handshake_traffic_secret, ec, key_len, iv_len, sh_res.negotiated_md);
@@ -317,36 +317,39 @@ asio::awaitable<std::pair<bool, local_client::handshake_result>> local_client::p
                                               .cipher = sh_res.negotiated_cipher});
 }
 
-asio::awaitable<bool> local_client::generate_and_send_client_hello(
-    asio::ip::tcp::socket& socket, const uint8_t* public_key, const uint8_t* private_key, reality::transcript& trans, std::error_code& ec) const
+asio::awaitable<bool> local_client::generate_and_send_client_hello(asio::ip::tcp::socket& socket,
+                                                                   const std::uint8_t* public_key,
+                                                                   const std::uint8_t* private_key,
+                                                                   reality::transcript& trans,
+                                                                   std::error_code& ec) const
 {
-    const auto shared = reality::crypto_util::x25519_derive(std::vector<uint8_t>(private_key, private_key + 32), server_pub_key_, ec);
+    const auto shared = reality::crypto_util::x25519_derive(std::vector<std::uint8_t>(private_key, private_key + 32), server_pub_key_, ec);
     LOG_DEBUG("using server pub key size {}", server_pub_key_.size());
     if (ec)
     {
         co_return false;
     }
 
-    std::vector<uint8_t> client_random(32);
+    std::vector<std::uint8_t> client_random(32);
     if (RAND_bytes(client_random.data(), 32) != 1)
     {
         ec = std::make_error_code(std::errc::operation_canceled);
         co_return false;
     }
-    const std::vector<uint8_t> salt(client_random.begin(), client_random.begin() + constants::auth::SALT_LEN);
+    const std::vector<std::uint8_t> salt(client_random.begin(), client_random.begin() + constants::auth::SALT_LEN);
     const auto r_info = reality::crypto_util::hex_to_bytes("5245414c495459");
     const auto prk = reality::crypto_util::hkdf_extract(salt, shared, EVP_sha256(), ec);
     const auto auth_key = reality::crypto_util::hkdf_expand(prk, r_info, 16, EVP_sha256(), ec);
 
     LOG_DEBUG("client auth material ready random {} bytes eph pub {} bytes", client_random.size(), 32);
-    std::array<uint8_t, 2> nonce{};
+    std::array<std::uint8_t, 2> nonce{};
     if (RAND_bytes(nonce.data(), static_cast<int>(nonce.size())) != 1)
     {
         ec = std::make_error_code(std::errc::operation_canceled);
         co_return false;
     }
-    const uint32_t now = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-    std::array<uint8_t, reality::AUTH_PAYLOAD_LEN> payload{};
+    const std::uint32_t now = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    std::array<std::uint8_t, reality::AUTH_PAYLOAD_LEN> payload{};
     if (!reality::build_auth_payload(short_id_bytes_, now, nonce, payload))
     {
         ec = std::make_error_code(std::errc::invalid_argument);
@@ -355,17 +358,19 @@ asio::awaitable<bool> local_client::generate_and_send_client_hello(
 
     const auto spec = reality::FingerprintFactory::Get(reality::FingerprintType::Firefox_120);
 
-    const std::vector<uint8_t> session_id(32, 0);
+    const std::vector<std::uint8_t> session_id(32, 0);
 
-    auto hello_aad = reality::ClientHelloBuilder::build(spec, session_id, client_random, std::vector<uint8_t>(public_key, public_key + 32), sni_);
+    auto hello_aad =
+        reality::ClientHelloBuilder::build(spec, session_id, client_random, std::vector<std::uint8_t>(public_key, public_key + 32), sni_);
     LOG_DEBUG("client aad {}", reality::crypto_util::bytes_to_hex(hello_aad));
 
-    const auto sid = reality::crypto_util::aead_encrypt(EVP_aes_128_gcm(),
-                                                        auth_key,
-                                                        std::vector<uint8_t>(client_random.begin() + constants::auth::SALT_LEN, client_random.end()),
-                                                        std::vector<uint8_t>(payload.begin(), payload.end()),
-                                                        hello_aad,
-                                                        ec);
+    const auto sid =
+        reality::crypto_util::aead_encrypt(EVP_aes_128_gcm(),
+                                           auth_key,
+                                           std::vector<std::uint8_t>(client_random.begin() + constants::auth::SALT_LEN, client_random.end()),
+                                           std::vector<std::uint8_t>(payload.begin(), payload.end()),
+                                           hello_aad,
+                                           ec);
 
     if (hello_aad.size() > 39 + 32)
     {
@@ -377,8 +382,8 @@ asio::awaitable<bool> local_client::generate_and_send_client_hello(
         co_return false;
     }
 
-    const std::vector<uint8_t> ch = hello_aad;
-    auto ch_rec = reality::write_record_header(reality::CONTENT_TYPE_HANDSHAKE, static_cast<uint16_t>(ch.size()));
+    const std::vector<std::uint8_t> ch = hello_aad;
+    auto ch_rec = reality::write_record_header(reality::CONTENT_TYPE_HANDSHAKE, static_cast<std::uint16_t>(ch.size()));
     ch_rec.insert(ch_rec.end(), ch.begin(), ch.end());
 
     auto [we, wn] = co_await asio::async_write(socket, asio::buffer(ch_rec), asio::as_tuple(asio::use_awaitable));
@@ -394,11 +399,11 @@ asio::awaitable<bool> local_client::generate_and_send_client_hello(
 }
 
 asio::awaitable<local_client::server_hello_res> local_client::process_server_hello(asio::ip::tcp::socket& socket,
-                                                                                   const uint8_t* private_key,
+                                                                                   const std::uint8_t* private_key,
                                                                                    reality::transcript& trans,
                                                                                    std::error_code& ec)
 {
-    uint8_t data[5];
+    std::uint8_t data[5];
     auto [re1, rn1] = co_await asio::async_read(socket, asio::buffer(data, 5), asio::as_tuple(asio::use_awaitable));
     if (re1)
     {
@@ -407,8 +412,8 @@ asio::awaitable<local_client::server_hello_res> local_client::process_server_hel
         co_return server_hello_res{.ok = false};
     }
 
-    const auto sh_len = static_cast<uint16_t>((data[3] << 8) | data[4]);
-    std::vector<uint8_t> sh_data(sh_len);
+    const auto sh_len = static_cast<std::uint16_t>((data[3] << 8) | data[4]);
+    std::vector<std::uint8_t> sh_data(sh_len);
     auto [re2, rn2] = co_await asio::async_read(socket, asio::buffer(sh_data), asio::as_tuple(asio::use_awaitable));
     if (re2)
     {
@@ -420,7 +425,7 @@ asio::awaitable<local_client::server_hello_res> local_client::process_server_hel
 
     trans.update(sh_data);
 
-    size_t pos = 4 + 2 + 32;
+    std::size_t pos = 4 + 2 + 32;
     if (pos >= sh_data.size())
     {
         ec = asio::error::fault;
@@ -428,7 +433,7 @@ asio::awaitable<local_client::server_hello_res> local_client::process_server_hel
         co_return server_hello_res{.ok = false};
     }
 
-    const uint8_t sid_len = sh_data[pos];
+    const std::uint8_t sid_len = sh_data[pos];
     pos += 1 + sid_len;
 
     if (pos + 2 > sh_data.size())
@@ -438,7 +443,7 @@ asio::awaitable<local_client::server_hello_res> local_client::process_server_hel
         co_return server_hello_res{.ok = false};
     }
 
-    const uint16_t cipher_suite = (sh_data[pos] << 8) | sh_data[pos + 1];
+    const std::uint16_t cipher_suite = (sh_data[pos] << 8) | sh_data[pos + 1];
 
     const EVP_MD* md = nullptr;
     const EVP_CIPHER* cipher = nullptr;
@@ -472,16 +477,16 @@ asio::awaitable<local_client::server_hello_res> local_client::process_server_hel
         co_return server_hello_res{.ok = false};
     }
 
-    const auto hs_shared = reality::crypto_util::x25519_derive(std::vector<uint8_t>(private_key, private_key + 32), public_key, ec);
+    const auto hs_shared = reality::crypto_util::x25519_derive(std::vector<std::uint8_t>(private_key, private_key + 32), public_key, ec);
 
     auto hs_keys = reality::tls_key_schedule::derive_handshake_keys(hs_shared, trans.finish(), md, ec);
 
     co_return server_hello_res{.ok = true, .hs_keys = hs_keys, .negotiated_md = md, .negotiated_cipher = cipher, .cipher_suite = cipher_suite};
 }
 
-bool local_client::process_certificate_verify(const std::vector<uint8_t>& msg_data,
-                                              const std::vector<uint8_t>& verify_pub_key,
-                                              const std::vector<uint8_t>& handshake_hash,
+bool local_client::process_certificate_verify(const std::vector<std::uint8_t>& msg_data,
+                                              const std::vector<std::uint8_t>& verify_pub_key,
+                                              const std::vector<std::uint8_t>& handshake_hash,
                                               std::error_code& ec)
 {
     const auto cv_info = reality::parse_certificate_verify(msg_data);
@@ -526,44 +531,44 @@ bool local_client::process_certificate_verify(const std::vector<uint8_t>& msg_da
     return true;
 }
 
-asio::awaitable<std::pair<bool, std::pair<std::vector<uint8_t>, std::vector<uint8_t>>>> local_client::handshake_read_loop(
+asio::awaitable<std::pair<bool, std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>>> local_client::handshake_read_loop(
     asio::ip::tcp::socket& socket,
-    const std::pair<std::vector<uint8_t>, std::vector<uint8_t>>& s_hs_keys,
+    const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& s_hs_keys,
     const reality::handshake_keys& hs_keys,
     reality::transcript& trans,
     const EVP_CIPHER* cipher,
     const EVP_MD* md,
-    const std::vector<uint8_t>& verify_pub_key,
+    const std::vector<std::uint8_t>& verify_pub_key,
     std::error_code& ec)
 {
     bool handshake_fin = false;
-    uint64_t seq = 0;
-    std::vector<uint8_t> handshake_buffer;
+    std::uint64_t seq = 0;
+    std::vector<std::uint8_t> handshake_buffer;
 
     while (!handshake_fin)
     {
-        uint8_t rh[5];
+        std::uint8_t rh[5];
         auto [re3, rn3] = co_await asio::async_read(socket, asio::buffer(rh, 5), asio::as_tuple(asio::use_awaitable));
         if (re3)
         {
             ec = re3;
             LOG_ERROR("error reading record header {}", ec.message());
-            co_return std::make_pair(false, std::pair<std::vector<uint8_t>, std::vector<uint8_t>>{});
+            co_return std::make_pair(false, std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>{});
         }
-        const auto n = static_cast<uint16_t>((rh[3] << 8) | rh[4]);
-        std::vector<uint8_t> rec(n);
+        const auto n = static_cast<std::uint16_t>((rh[3] << 8) | rh[4]);
+        std::vector<std::uint8_t> rec(n);
         auto [re4, rn4] = co_await asio::async_read(socket, asio::buffer(rec), asio::as_tuple(asio::use_awaitable));
         if (re4)
         {
             ec = re4;
             LOG_ERROR("error reading record payload {}", ec.message());
-            co_return std::make_pair(false, std::pair<std::vector<uint8_t>, std::vector<uint8_t>>{});
+            co_return std::make_pair(false, std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>{});
         }
         if (rn4 != n)
         {
             ec = asio::error::fault;
             LOG_ERROR("short read record payload {} of {}", rn4, n);
-            co_return std::make_pair(false, std::pair<std::vector<uint8_t>, std::vector<uint8_t>>{});
+            co_return std::make_pair(false, std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>{});
         }
 
         if (rh[0] == reality::CONTENT_TYPE_CHANGE_CIPHER_SPEC)
@@ -572,31 +577,32 @@ asio::awaitable<std::pair<bool, std::pair<std::vector<uint8_t>, std::vector<uint
             continue;
         }
 
-        std::vector<uint8_t> cth(5 + n);
+        std::vector<std::uint8_t> cth(5 + n);
         std::memcpy(cth.data(), rh, 5);
         std::memcpy(cth.data() + 5, rec.data(), n);
-        uint8_t type = 0;
+        std::uint8_t type = 0;
         const auto pt = reality::tls_record_layer::decrypt_record(cipher, s_hs_keys.first, s_hs_keys.second, seq++, cth, type, ec);
         if (ec)
         {
             LOG_ERROR("error decrypting record {}", ec.message());
-            co_return std::make_pair(false, std::pair<std::vector<uint8_t>, std::vector<uint8_t>>{});
+            co_return std::make_pair(false, std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>{});
         }
 
         if (type == reality::CONTENT_TYPE_HANDSHAKE)
         {
             handshake_buffer.insert(handshake_buffer.end(), pt.begin(), pt.end());
-            uint32_t offset = 0;
+            std::uint32_t offset = 0;
             while (offset + 4 <= handshake_buffer.size())
             {
-                const uint8_t msg_type = handshake_buffer[offset];
-                const uint32_t msg_len = (handshake_buffer[offset + 1] << 16) | (handshake_buffer[offset + 2] << 8) | handshake_buffer[offset + 3];
+                const std::uint8_t msg_type = handshake_buffer[offset];
+                const std::uint32_t msg_len =
+                    (handshake_buffer[offset + 1] << 16) | (handshake_buffer[offset + 2] << 8) | handshake_buffer[offset + 3];
                 if (offset + 4 + msg_len > handshake_buffer.size())
                 {
                     break;
                 }
 
-                const std::vector<uint8_t> msg_data(handshake_buffer.begin() + offset, handshake_buffer.begin() + offset + 4 + msg_len);
+                const std::vector<std::uint8_t> msg_data(handshake_buffer.begin() + offset, handshake_buffer.begin() + offset + 4 + msg_len);
 
                 if (msg_type == 0x0b)
                 {
@@ -606,7 +612,7 @@ asio::awaitable<std::pair<bool, std::pair<std::vector<uint8_t>, std::vector<uint
                 {
                     if (!process_certificate_verify(msg_data, verify_pub_key, trans.finish(), ec))
                     {
-                        co_return std::make_pair(false, std::pair<std::vector<uint8_t>, std::vector<uint8_t>>{});
+                        co_return std::make_pair(false, std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>{});
                     }
                 }
                 trans.update(msg_data);
@@ -625,8 +631,8 @@ asio::awaitable<std::pair<bool, std::pair<std::vector<uint8_t>, std::vector<uint
 }
 
 asio::awaitable<bool> local_client::send_client_finished(asio::ip::tcp::socket& socket,
-                                                         const std::pair<std::vector<uint8_t>, std::vector<uint8_t>>& c_hs_keys,
-                                                         const std::vector<uint8_t>& c_hs_secret,
+                                                         const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& c_hs_keys,
+                                                         const std::vector<std::uint8_t>& c_hs_secret,
                                                          const reality::transcript& trans,
                                                          const EVP_CIPHER* cipher,
                                                          const EVP_MD* md,
@@ -637,7 +643,7 @@ asio::awaitable<bool> local_client::send_client_finished(asio::ip::tcp::socket& 
     const auto fin_rec =
         reality::tls_record_layer::encrypt_record(cipher, c_hs_keys.first, c_hs_keys.second, 0, fin_msg, reality::CONTENT_TYPE_HANDSHAKE, ec);
 
-    std::vector<uint8_t> out_flight = {0x14, 0x03, 0x03, 0x00, 0x01, 0x01};
+    std::vector<std::uint8_t> out_flight = {0x14, 0x03, 0x03, 0x00, 0x01, 0x01};
     out_flight.insert(out_flight.end(), fin_rec.begin(), fin_rec.end());
 
     auto [write_error, write_len] = co_await asio::async_write(socket, asio::buffer(out_flight), asio::as_tuple(asio::use_awaitable));
@@ -732,9 +738,9 @@ asio::awaitable<void> local_client::accept_local_loop()
 
         {
             const std::lock_guard<std::mutex> lock(pool_mutex_);
-            for (size_t i = 0; i < tunnel_pool_.size(); ++i)
+            for (std::size_t i = 0; i < tunnel_pool_.size(); ++i)
             {
-                const uint32_t idx = (next_tunnel_index_ + i) % tunnel_pool_.size();
+                const std::uint32_t idx = (next_tunnel_index_ + i) % tunnel_pool_.size();
                 const auto tunnel = tunnel_pool_[idx];
                 if (tunnel != nullptr && tunnel->connection() != nullptr && tunnel->connection()->is_open())
                 {
@@ -747,7 +753,7 @@ asio::awaitable<void> local_client::accept_local_loop()
 
         if (selected_tunnel != nullptr)
         {
-            const uint32_t sid = next_session_id_++;
+            const std::uint32_t sid = next_session_id_++;
             LOG_INFO("client session {} selected tunnel index {}", sid, next_tunnel_index_);
             const auto session = std::make_shared<socks_session>(std::move(s), selected_tunnel, router_, sid, socks_config_);
             session->start();

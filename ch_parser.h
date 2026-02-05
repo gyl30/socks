@@ -32,16 +32,16 @@ class ch_parser
     {
        public:
         explicit reader(const std::vector<std::uint8_t>& buf) : ptr_(buf.data()), end_(buf.data() + buf.size()), start_(buf.data()) {}
-        reader(const std::uint8_t* p, const size_t len, const std::uint8_t* s) : ptr_(p), end_(p + len), start_(s) {}
+        reader(const std::uint8_t* p, const std::size_t len, const std::uint8_t* s) : ptr_(p), end_(p + len), start_(s) {}
 
         [[nodiscard]] bool valid() const { return ptr_ != nullptr; }
-        [[nodiscard]] bool has(const size_t n) const { return valid() && (ptr_ + n <= end_); }
-        [[nodiscard]] size_t remaining() const { return valid() ? static_cast<size_t>(end_ - ptr_) : 0; }
-        [[nodiscard]] size_t offset() const { return valid() ? static_cast<size_t>(ptr_ - start_) : 0; }
-        [[nodiscard]] std::uint8_t peek(const size_t off) const { return has(off + 1) ? ptr_[off] : static_cast<std::uint8_t>(0); }
+        [[nodiscard]] bool has(const std::size_t n) const { return valid() && (ptr_ + n <= end_); }
+        [[nodiscard]] std::size_t remaining() const { return valid() ? static_cast<std::size_t>(end_ - ptr_) : 0; }
+        [[nodiscard]] std::size_t offset() const { return valid() ? static_cast<std::size_t>(ptr_ - start_) : 0; }
+        [[nodiscard]] std::uint8_t peek(const std::size_t off) const { return has(off + 1) ? ptr_[off] : static_cast<std::uint8_t>(0); }
         [[nodiscard]] const std::uint8_t* data() const { return ptr_; }
 
-        bool skip(const size_t n)
+        bool skip(const std::size_t n)
         {
             if (!has(n))
             {
@@ -72,7 +72,7 @@ class ch_parser
             return true;
         }
 
-        bool read_vector(std::vector<std::uint8_t>& out, const size_t n)
+        bool read_vector(std::vector<std::uint8_t>& out, const std::size_t n)
         {
             if (!has(n))
             {
@@ -83,7 +83,7 @@ class ch_parser
             return true;
         }
 
-        reader slice(const size_t n)
+        reader slice(const std::size_t n)
         {
             if (!has(n))
             {

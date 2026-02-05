@@ -26,25 +26,25 @@ namespace reality
 
 struct fetch_result
 {
-    std::vector<uint8_t> cert_msg;
+    std::vector<std::uint8_t> cert_msg;
     server_fingerprint fingerprint;
 };
 
 class handshake_reassembler
 {
    public:
-    void append(std::span<const uint8_t> data);
-    bool next(std::vector<uint8_t>& out, std::error_code& ec);
+    void append(std::span<const std::uint8_t> data);
+    bool next(std::vector<std::uint8_t>& out, std::error_code& ec);
 
    private:
-    std::vector<uint8_t> buffer_;
+    std::vector<std::uint8_t> buffer_;
 };
 
 class cert_fetcher
 {
    public:
-    static std::string hex(const std::vector<uint8_t>& data);
-    static std::string hex(const uint8_t* data, size_t len);
+    static std::string hex(const std::vector<std::uint8_t>& data);
+    static std::string hex(const std::uint8_t* data, std::size_t len);
 
     static asio::awaitable<std::optional<fetch_result>> fetch(
         asio::any_io_executor ex, std::string host, std::uint16_t port, std::string sni, const std::string& trace_id = "");
@@ -62,13 +62,13 @@ class cert_fetcher
 
         asio::awaitable<std::error_code> perform_handshake_start();
 
-        asio::awaitable<std::vector<uint8_t>> find_certificate();
+        asio::awaitable<std::vector<std::uint8_t>> find_certificate();
 
-        std::error_code process_server_hello(const std::vector<uint8_t>& sh_body);
+        std::error_code process_server_hello(const std::vector<std::uint8_t>& sh_body);
 
-        asio::awaitable<std::pair<std::error_code, std::vector<uint8_t>>> read_record_plaintext();
+        asio::awaitable<std::pair<std::error_code, std::vector<std::uint8_t>>> read_record_plaintext();
 
-        asio::awaitable<std::pair<std::uint8_t, std::span<uint8_t>>> read_record(std::vector<uint8_t>& pt_buf, std::error_code& out_ec);
+        asio::awaitable<std::pair<std::uint8_t, std::span<std::uint8_t>>> read_record(std::vector<std::uint8_t>& pt_buf, std::error_code& out_ec);
 
        private:
         mux::connection_context ctx_;

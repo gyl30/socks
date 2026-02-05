@@ -44,7 +44,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
 {
    public:
     remote_server(io_context_pool& pool,
-                  uint16_t port,
+                  std::uint16_t port,
                   std::vector<config::fallback_entry> fbs,
                   const std::string& key,
                   const std::string& short_id_hex = std::string(),
@@ -62,71 +62,72 @@ class remote_server : public std::enable_shared_from_this<remote_server>
    private:
     asio::awaitable<void> accept_loop();
 
-    asio::awaitable<void> handle(std::shared_ptr<asio::ip::tcp::socket> s, const uint32_t conn_id);
+    asio::awaitable<void> handle(std::shared_ptr<asio::ip::tcp::socket> s, const std::uint32_t conn_id);
 
     asio::awaitable<void> process_stream_request(std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel,
                                                  const connection_context& ctx,
-                                                 const uint32_t stream_id,
-                                                 std::vector<uint8_t> payload) const;
+                                                 const std::uint32_t stream_id,
+                                                 std::vector<std::uint8_t> payload) const;
 
     [[nodiscard]] static asio::awaitable<bool> read_initial_and_validate(std::shared_ptr<asio::ip::tcp::socket> s,
                                                                          const connection_context& ctx,
-                                                                         std::vector<uint8_t>& buf);
+                                                                         std::vector<std::uint8_t>& buf);
 
-    [[nodiscard]] std::pair<bool, std::vector<uint8_t>> authenticate_client(const client_hello_info& info,
-                                                                            const std::vector<uint8_t>& buf,
-                                                                            const connection_context& ctx);
+    [[nodiscard]] std::pair<bool, std::vector<std::uint8_t>> authenticate_client(const client_hello_info& info,
+                                                                                 const std::vector<std::uint8_t>& buf,
+                                                                                 const connection_context& ctx);
 
     struct server_handshake_res
     {
         bool ok = false;
         reality::handshake_keys hs_keys;
-        std::pair<std::vector<uint8_t>, std::vector<uint8_t>> s_hs_keys;
-        std::pair<std::vector<uint8_t>, std::vector<uint8_t>> c_hs_keys;
+        std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> s_hs_keys;
+        std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> c_hs_keys;
         const EVP_CIPHER* cipher = nullptr;
         const EVP_MD* negotiated_md = nullptr;
-        std::vector<uint8_t> handshake_hash;
+        std::vector<std::uint8_t> handshake_hash;
     };
 
     asio::awaitable<server_handshake_res> negotiate_reality(std::shared_ptr<asio::ip::tcp::socket> s,
                                                             const connection_context& ctx,
-                                                            std::vector<uint8_t>& initial_buf);
+                                                            std::vector<std::uint8_t>& initial_buf);
 
     asio::awaitable<server_handshake_res> perform_handshake_response(std::shared_ptr<asio::ip::tcp::socket> s,
                                                                      const client_hello_info& info,
                                                                      reality::transcript& trans,
-                                                                     const std::vector<uint8_t>& auth_key,
+                                                                     const std::vector<std::uint8_t>& auth_key,
                                                                      const connection_context& ctx,
                                                                      std::error_code& ec);
 
-    [[nodiscard]] static asio::awaitable<bool> verify_client_finished(std::shared_ptr<asio::ip::tcp::socket> s,
-                                                                      const std::pair<std::vector<uint8_t>, std::vector<uint8_t>>& c_hs_keys,
-                                                                      const reality::handshake_keys& hs_keys,
-                                                                      const reality::transcript& trans,
-                                                                      const EVP_CIPHER* cipher,
-                                                                      const EVP_MD* md,
-                                                                      const connection_context& ctx,
-                                                                      std::error_code& ec);
+    [[nodiscard]] static asio::awaitable<bool> verify_client_finished(
+        std::shared_ptr<asio::ip::tcp::socket> s,
+        const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& c_hs_keys,
+        const reality::handshake_keys& hs_keys,
+        const reality::transcript& trans,
+        const EVP_CIPHER* cipher,
+        const EVP_MD* md,
+        const connection_context& ctx,
+        std::error_code& ec);
 
     [[nodiscard]] std::pair<std::string, std::string> find_fallback_target_by_sni(const std::string& sni) const;
 
-    static asio::awaitable<void> fallback_failed_timer(uint32_t conn_id, asio::any_io_executor ex);
+    static asio::awaitable<void> fallback_failed_timer(std::uint32_t conn_id, asio::any_io_executor ex);
 
     static asio::awaitable<void> fallback_failed(const std::shared_ptr<asio::ip::tcp::socket>& s);
 
     asio::awaitable<void> handle_fallback(const std::shared_ptr<asio::ip::tcp::socket>& s,
-                                          const std::vector<uint8_t>& buf,
+                                          const std::vector<std::uint8_t>& buf,
                                           const connection_context& ctx,
                                           const std::string& sni) const;
 
    private:
     io_context_pool& pool_;
     asio::ip::tcp::acceptor acceptor_;
-    std::vector<uint8_t> private_key_;
-    std::vector<uint8_t> short_id_bytes_;
+    std::vector<std::uint8_t> private_key_;
+    std::vector<std::uint8_t> short_id_bytes_;
     bool auth_config_valid_ = true;
     reality::cert_manager cert_manager_;
-    std::atomic<uint32_t> next_conn_id_{1};
+    std::atomic<std::uint32_t> next_conn_id_{1};
     replay_cache replay_cache_;
     reality::key_rotator key_rotator_;
     std::mutex tunnels_mutex_;

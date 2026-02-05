@@ -1,9 +1,9 @@
-#include <chrono>
-#include <memory>
 #include <string>
 #include <thread>
 #include <vector>
+#include <chrono>
 #include <cstdint>
+#include <memory>
 #include <system_error>
 
 #include <gtest/gtest.h>
@@ -19,13 +19,13 @@ class IntegrationTest : public ::testing::Test
    protected:
     void SetUp() override
     {
-        uint8_t pub[32];
-        uint8_t priv[32];
+        std::uint8_t pub[32];
+        std::uint8_t priv[32];
         ASSERT_TRUE(reality::crypto_util::generate_x25519_keypair(pub, priv));
-        server_priv_key_ = reality::crypto_util::bytes_to_hex(std::vector<uint8_t>(priv, priv + 32));
-        client_pub_key_ = reality::crypto_util::bytes_to_hex(std::vector<uint8_t>(pub, pub + 32));
+        server_priv_key_ = reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(priv, priv + 32));
+        client_pub_key_ = reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(pub, pub + 32));
         std::error_code ec;
-        const auto verify_pub = reality::crypto_util::extract_ed25519_public_key(std::vector<uint8_t>(priv, priv + 32), ec);
+        const auto verify_pub = reality::crypto_util::extract_ed25519_public_key(std::vector<std::uint8_t>(priv, priv + 32), ec);
         ASSERT_FALSE(ec);
         verify_pub_key_ = reality::crypto_util::bytes_to_hex(verify_pub);
         short_id_ = "0102030405060708";
@@ -49,8 +49,8 @@ TEST_F(IntegrationTest, FullHandshakeAndMux)
     mux::io_context_pool pool(2, ec);
     ASSERT_FALSE(ec);
 
-    const uint16_t server_port = 18844;
-    const uint16_t local_socks_port = 11080;
+    const std::uint16_t server_port = 18844;
+    const std::uint16_t local_socks_port = 11080;
     const std::string sni = "www.google.com";
 
     mux::config::timeout_t timeouts;

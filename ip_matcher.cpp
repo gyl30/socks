@@ -28,15 +28,15 @@ struct ip_matcher::trie_node
 
 namespace
 {
-constexpr size_t to_index(bool bit) { return bit ? 1U : 0U; }
+constexpr std::size_t to_index(bool bit) { return bit ? 1U : 0U; }
 
-bool get_bit_v4(uint32_t val, int index) { return ((val >> (31 - index)) & 1U) != 0U; }
+bool get_bit_v4(std::uint32_t val, int index) { return ((val >> (31 - index)) & 1U) != 0U; }
 
-bool get_bit_v6(const std::array<uint8_t, 16>& bytes, int index)
+bool get_bit_v6(const std::array<std::uint8_t, 16>& bytes, int index)
 {
     const int byte_index = index / 8;
     const int bit_index = 7 - (index % 8);
-    return ((bytes[static_cast<size_t>(byte_index)] >> bit_index) & 1U) != 0U;
+    return ((bytes[static_cast<std::size_t>(byte_index)] >> bit_index) & 1U) != 0U;
 }
 }    // namespace
 
@@ -52,7 +52,7 @@ bool ip_matcher::match_v4(const asio::ip::address_v4& addr, const std::unique_pt
         return true;
     }
 
-    const uint32_t val = addr.to_uint();
+    const std::uint32_t val = addr.to_uint();
     for (int i = 0; i < 32; ++i)
     {
         const bool bit = get_bit_v4(val, i);
@@ -114,11 +114,11 @@ void ip_matcher::add_rule_v4(const int prefix_len, const asio::ip::address_v4& a
         return;
     }
 
-    const uint32_t val = addr.to_uint();
+    const std::uint32_t val = addr.to_uint();
     for (int i = 0; i < prefix_len; ++i)
     {
         const bool bit = get_bit_v4(val, i);
-        const size_t idx = to_index(bit);
+        const std::size_t idx = to_index(bit);
         if (curr->children[idx] == nullptr)
         {
             curr->children[idx] = std::make_unique<ip_matcher::trie_node>();
@@ -154,7 +154,7 @@ void ip_matcher::add_rule_v6(const int prefix_len, const asio::ip::address_v6& a
     for (int i = 0; i < prefix_len; ++i)
     {
         const bool bit = get_bit_v6(bytes, i);
-        const size_t idx = to_index(bit);
+        const std::size_t idx = to_index(bit);
         if (curr->children[idx] == nullptr)
         {
             curr->children[idx] = std::make_unique<ip_matcher::trie_node>();

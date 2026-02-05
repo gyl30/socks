@@ -1,27 +1,27 @@
-#include <algorithm>
-#include <atomic>
-#include <charconv>
-#include <chrono>
-#include <cstdint>
-#include <cstring>
 #include <ctime>
+#include <atomic>
+#include <chrono>
 #include <memory>
 #include <mutex>
 #include <random>
 #include <string>
-#include <system_error>
-#include <utility>
 #include <vector>
+#include <cstdint>
+#include <cstring>
+#include <utility>
+#include <charconv>
+#include <algorithm>
+#include <system_error>
 
-#include <asio/as_tuple.hpp>
+#include <asio/read.hpp>
+#include <asio/write.hpp>
+#include <asio/error.hpp>
 #include <asio/buffer.hpp>
 #include <asio/co_spawn.hpp>
 #include <asio/detached.hpp>
-#include <asio/error.hpp>
-#include <asio/experimental/awaitable_operators.hpp>
-#include <asio/read.hpp>
+#include <asio/as_tuple.hpp>
 #include <asio/use_awaitable.hpp>
-#include <asio/write.hpp>
+#include <asio/experimental/awaitable_operators.hpp>
 
 #include <openssl/rand.h>
 
@@ -47,7 +47,7 @@ namespace mux
 namespace
 {
 
-bool parse_hex_to_bytes(const std::string& hex, std::vector<uint8_t>& out, const size_t max_len, const char* label)
+bool parse_hex_to_bytes(const std::string& hex, std::vector<std::uint8_t>& out, const std::size_t max_len, const char* label)
 {
     out.clear();
     if (hex.empty())
@@ -76,7 +76,7 @@ bool parse_hex_to_bytes(const std::string& hex, std::vector<uint8_t>& out, const
 }    // namespace
 
 remote_server::remote_server(io_context_pool& pool,
-                             const uint16_t port,
+                             const std::uint16_t port,
                              std::vector<config::fallback_entry> fbs,
                              const std::string& key,
                              const std::string& short_id_hex,
@@ -143,7 +143,7 @@ asio::awaitable<void> remote_server::accept_loop()
             std::error_code ec;
             ec = s->set_option(asio::ip::tcp::no_delay(true), ec);
             (void)ec;
-            const uint32_t conn_id = next_conn_id_.fetch_add(1, std::memory_order_relaxed);
+            const std::uint32_t conn_id = next_conn_id_.fetch_add(1, std::memory_order_relaxed);
 
             asio::co_spawn(
                 pool_.get_io_context(), [this, s, self = shared_from_this(), conn_id = conn_id]() { return handle(s, conn_id); }, asio::detached);
@@ -162,7 +162,7 @@ asio::awaitable<void> remote_server::accept_loop()
 
 asio::awaitable<remote_server::server_handshake_res> remote_server::negotiate_reality(std::shared_ptr<asio::ip::tcp::socket> s,
                                                                                       const connection_context& ctx,
-                                                                                      std::vector<uint8_t>& initial_buf)
+                                                                                      std::vector<std::uint8_t>& initial_buf)
 {
     const auto ok = co_await read_initial_and_validate(s, ctx, initial_buf);
 
@@ -193,7 +193,7 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::negotiate_re
 
     if (initial_buf.size() > 5)
     {
-        trans.update(std::vector<uint8_t>(initial_buf.begin() + 5, initial_buf.end()));
+        trans.update(std::vector<std::uint8_t>(initial_buf.begin() + 5, initial_buf.end()));
     }
     else
     {
@@ -218,7 +218,7 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::negotiate_re
     co_return sh_res;
 }
 
-asio::awaitable<void> remote_server::handle(std::shared_ptr<asio::ip::tcp::socket> s, const uint32_t conn_id)
+asio::awaitable<void> remote_server::handle(std::shared_ptr<asio::ip::tcp::socket> s, const std::uint32_t conn_id)
 {
     connection_context ctx;
     ctx.new_trace_id();
@@ -232,7 +232,7 @@ asio::awaitable<void> remote_server::handle(std::shared_ptr<asio::ip::tcp::socke
 
     LOG_CTX_INFO(ctx, "{} accepted {}", log_event::CONN_INIT, ctx.connection_info());
 
-    std::vector<uint8_t> initial_buf;
+    std::vector<std::uint8_t> initial_buf;
     auto sh_res = co_await negotiate_reality(s, ctx, initial_buf);
     if (!sh_res.ok)
     {
@@ -242,8 +242,8 @@ asio::awaitable<void> remote_server::handle(std::shared_ptr<asio::ip::tcp::socke
     std::error_code ec;
     const auto app_sec =
         reality::tls_key_schedule::derive_application_secrets(sh_res.hs_keys.master_secret, sh_res.handshake_hash, sh_res.negotiated_md, ec);
-    const size_t key_len = EVP_CIPHER_key_length(sh_res.cipher);
-    constexpr size_t iv_len = 12;
+    const std::size_t key_len = EVP_CIPHER_key_length(sh_res.cipher);
+    constexpr std::size_t iv_len = 12;
     const auto c_app_keys = reality::tls_key_schedule::derive_traffic_keys(app_sec.first, ec, key_len, iv_len, sh_res.negotiated_md);
     const auto s_app_keys = reality::tls_key_schedule::derive_traffic_keys(app_sec.second, ec, key_len, iv_len, sh_res.negotiated_md);
 
@@ -273,7 +273,7 @@ asio::awaitable<void> remote_server::handle(std::shared_ptr<asio::ip::tcp::socke
     }
 
     tunnel->connection()->set_syn_callback(
-        [this, tunnel, ctx](const uint32_t id, std::vector<uint8_t> p)
+        [this, tunnel, ctx](const std::uint32_t id, std::vector<std::uint8_t> p)
         {
             asio::co_spawn(
                 pool_.get_io_context(),
@@ -286,8 +286,8 @@ asio::awaitable<void> remote_server::handle(std::shared_ptr<asio::ip::tcp::socke
 
 asio::awaitable<void> remote_server::process_stream_request(std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel,
                                                             const connection_context& ctx,
-                                                            const uint32_t stream_id,
-                                                            std::vector<uint8_t> payload) const
+                                                            const std::uint32_t stream_id,
+                                                            std::vector<std::uint8_t> payload) const
 {
     syn_payload syn;
     if (!mux_codec::decode_syn(payload.data(), payload.size(), syn))
@@ -327,7 +327,7 @@ asio::awaitable<void> remote_server::process_stream_request(std::shared_ptr<mux_
 
 asio::awaitable<bool> remote_server::read_initial_and_validate(std::shared_ptr<asio::ip::tcp::socket> s,
                                                                const connection_context& ctx,
-                                                               std::vector<uint8_t>& buf)
+                                                               std::vector<std::uint8_t>& buf)
 {
     buf.resize(constants::net::BUFFER_SIZE);
     const auto [read_ec, n] = co_await s->async_read_some(asio::buffer(buf), asio::as_tuple(asio::use_awaitable));
@@ -342,10 +342,10 @@ asio::awaitable<bool> remote_server::read_initial_and_validate(std::shared_ptr<a
         LOG_CTX_WARN(ctx, "{} invalid tls header 0x{:02x}", log_event::HANDSHAKE, buf[0]);
         co_return false;
     }
-    const size_t len = static_cast<uint16_t>((buf[3] << 8) | buf[4]);
+    const std::size_t len = static_cast<std::uint16_t>((buf[3] << 8) | buf[4]);
     while (buf.size() < 5 + len)
     {
-        std::vector<uint8_t> tmp(5 + len - buf.size());
+        std::vector<std::uint8_t> tmp(5 + len - buf.size());
         const auto [read_ec2, n2] = co_await asio::async_read(*s, asio::buffer(tmp), asio::as_tuple(asio::use_awaitable));
         if (read_ec2)
         {
@@ -357,9 +357,9 @@ asio::awaitable<bool> remote_server::read_initial_and_validate(std::shared_ptr<a
     co_return true;
 }
 
-std::pair<bool, std::vector<uint8_t>> remote_server::authenticate_client(const client_hello_info& info,
-                                                                         const std::vector<uint8_t>& buf,
-                                                                         const connection_context& ctx)
+std::pair<bool, std::vector<std::uint8_t>> remote_server::authenticate_client(const client_hello_info& info,
+                                                                              const std::vector<std::uint8_t>& buf,
+                                                                              const connection_context& ctx)
 {
     if (!auth_config_valid_)
     {
@@ -380,19 +380,19 @@ std::pair<bool, std::vector<uint8_t>> remote_server::authenticate_client(const c
         return {false, {}};
     }
 
-    const auto salt = std::vector<uint8_t>(info.random.begin(), info.random.begin() + 20);
+    const auto salt = std::vector<std::uint8_t>(info.random.begin(), info.random.begin() + 20);
     const auto r_info = reality::crypto_util::hex_to_bytes("5245414c495459");
     const auto prk = reality::crypto_util::hkdf_extract(salt, shared, EVP_sha256(), ec);
     const auto auth_key = reality::crypto_util::hkdf_expand(prk, r_info, 16, EVP_sha256(), ec);
     LOG_CTX_DEBUG(ctx, "auth key derived");
 
-    std::vector<uint8_t> aad(buf.begin() + 5, buf.end());
+    std::vector<std::uint8_t> aad(buf.begin() + 5, buf.end());
     if (info.sid_offset < 5)
     {
         LOG_CTX_ERROR(ctx, "{} auth fail invalid sid offset {}", log_event::AUTH, info.sid_offset);
         return {false, {}};
     }
-    const uint32_t aad_sid_offset = info.sid_offset - 5;
+    const std::uint32_t aad_sid_offset = info.sid_offset - 5;
     if (aad_sid_offset + constants::auth::SESSION_ID_LEN > aad.size())
     {
         LOG_CTX_ERROR(ctx, "{} auth fail aad size mismatch", log_event::AUTH);
@@ -402,7 +402,7 @@ std::pair<bool, std::vector<uint8_t>> remote_server::authenticate_client(const c
     std::fill_n(aad.begin() + aad_sid_offset, constants::auth::SESSION_ID_LEN, 0);
 
     const auto pt = reality::crypto_util::aead_decrypt(
-        EVP_aes_128_gcm(), auth_key, std::vector<uint8_t>(info.random.begin() + 20, info.random.end()), info.session_id, aad, ec);
+        EVP_aes_128_gcm(), auth_key, std::vector<std::uint8_t>(info.random.begin() + 20, info.random.end()), info.session_id, aad, ec);
 
     if (ec || pt.size() != 16)
     {
@@ -432,8 +432,8 @@ std::pair<bool, std::vector<uint8_t>> remote_server::authenticate_client(const c
         return {false, {}};
     }
 
-    const uint32_t timestamp = auth->timestamp;
-    const auto now = static_cast<uint32_t>(time(nullptr));
+    const std::uint32_t timestamp = auth->timestamp;
+    const auto now = static_cast<std::uint32_t>(time(nullptr));
     if (timestamp > now + constants::auth::MAX_CLOCK_SKEW_SEC || timestamp < now - constants::auth::MAX_CLOCK_SKEW_SEC)
     {
         LOG_CTX_WARN(ctx, "{} clock skew too large diff {}s", log_event::AUTH, static_cast<int>(now) - static_cast<int>(timestamp));
@@ -445,14 +445,14 @@ std::pair<bool, std::vector<uint8_t>> remote_server::authenticate_client(const c
 asio::awaitable<remote_server::server_handshake_res> remote_server::perform_handshake_response(std::shared_ptr<asio::ip::tcp::socket> s,
                                                                                                const client_hello_info& info,
                                                                                                reality::transcript& trans,
-                                                                                               const std::vector<uint8_t>& auth_key,
+                                                                                               const std::vector<std::uint8_t>& auth_key,
                                                                                                const connection_context& ctx,
                                                                                                std::error_code& ec)
 {
     const auto key_pair = key_rotator_.get_current_key();
-    const uint8_t* public_key = key_pair->public_key;
-    const uint8_t* private_key = key_pair->private_key;
-    std::vector<uint8_t> srand(32);
+    const std::uint8_t* public_key = key_pair->public_key;
+    const std::uint8_t* private_key = key_pair->private_key;
+    std::vector<std::uint8_t> srand(32);
     if (RAND_bytes(srand.data(), 32) != 1)
     {
         ec = std::make_error_code(std::errc::operation_canceled);
@@ -462,9 +462,9 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::perform_hand
     LOG_CTX_TRACE(ctx,
                   "{} generated ephemeral key {}",
                   log_event::HANDSHAKE,
-                  reality::crypto_util::bytes_to_hex(std::vector<uint8_t>(public_key, public_key + 32)));
+                  reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(public_key, public_key + 32)));
 
-    const auto sh_shared = reality::crypto_util::x25519_derive(std::vector<uint8_t>(private_key, private_key + 32), info.x25519_pub, ec);
+    const auto sh_shared = reality::crypto_util::x25519_derive(std::vector<std::uint8_t>(private_key, private_key + 32), info.x25519_pub, ec);
     if (ec)
     {
         LOG_CTX_ERROR(ctx, "{} x25519 derive failed", log_event::HANDSHAKE);
@@ -473,7 +473,7 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::perform_hand
 
     std::string cert_sni = info.sni;
     std::string fetch_host = "www.apple.com";
-    uint16_t fetch_port = 443;
+    std::uint16_t fetch_port = 443;
 
     const auto fb = find_fallback_target_by_sni(info.sni);
     if (!fb.first.empty())
@@ -491,7 +491,7 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::perform_hand
         }
     }
 
-    std::vector<uint8_t> cert_msg;
+    std::vector<std::uint8_t> cert_msg;
     reality::server_fingerprint fingerprint;
 
     const auto cached_entry = cert_manager_.get_certificate(cert_sni);
@@ -517,13 +517,13 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::perform_hand
         cert_manager_.set_certificate(cert_sni, cert_msg, fingerprint, ctx.trace_id());
     }
 
-    uint16_t cipher_suite = (fingerprint.cipher_suite != 0) ? fingerprint.cipher_suite : 0x1301;
+    std::uint16_t cipher_suite = (fingerprint.cipher_suite != 0) ? fingerprint.cipher_suite : 0x1301;
     if (cipher_suite != 0x1301 && cipher_suite != 0x1302 && cipher_suite != 0x1303)
     {
         cipher_suite = 0x1301;
     }
 
-    const auto sh_msg = reality::construct_server_hello(srand, info.session_id, cipher_suite, std::vector<uint8_t>(public_key, public_key + 32));
+    const auto sh_msg = reality::construct_server_hello(srand, info.session_id, cipher_suite, std::vector<std::uint8_t>(public_key, public_key + 32));
     trans.update(sh_msg);
 
     const EVP_MD* md = (cipher_suite == 0x1302) ? EVP_sha384() : EVP_sha256();
@@ -531,8 +531,8 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::perform_hand
 
     const auto hs_keys = reality::tls_key_schedule::derive_handshake_keys(sh_shared, trans.finish(), md, ec);
 
-    const size_t key_len = (cipher_suite == 0x1302) ? 32 : 16;
-    constexpr size_t iv_len = 12;
+    const std::size_t key_len = (cipher_suite == 0x1302) ? 32 : 16;
+    constexpr std::size_t iv_len = 12;
 
     const auto c_hs_keys = reality::tls_key_schedule::derive_traffic_keys(hs_keys.client_handshake_traffic_secret, ec, key_len, iv_len, md);
     const auto s_hs_keys = reality::tls_key_schedule::derive_traffic_keys(hs_keys.server_handshake_traffic_secret, ec, key_len, iv_len, md);
@@ -558,7 +558,7 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::perform_hand
     const auto s_fin = reality::construct_finished(s_fin_verify);
     trans.update(s_fin);
 
-    std::vector<uint8_t> flight2_plain;
+    std::vector<std::uint8_t> flight2_plain;
     flight2_plain.insert(flight2_plain.end(), enc_ext.begin(), enc_ext.end());
     flight2_plain.insert(flight2_plain.end(), cert_msg.begin(), cert_msg.end());
     flight2_plain.insert(flight2_plain.end(), cv.begin(), cv.end());
@@ -587,8 +587,8 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::perform_hand
         co_return server_handshake_res{.ok = false};
     }
 
-    std::vector<uint8_t> out_sh;
-    const auto sh_rec = reality::write_record_header(reality::CONTENT_TYPE_HANDSHAKE, static_cast<uint16_t>(sh_msg.size()));
+    std::vector<std::uint8_t> out_sh;
+    const auto sh_rec = reality::write_record_header(reality::CONTENT_TYPE_HANDSHAKE, static_cast<std::uint16_t>(sh_msg.size()));
     out_sh.insert(out_sh.end(), sh_rec.begin(), sh_rec.end());
     out_sh.insert(out_sh.end(), sh_msg.begin(), sh_msg.end());
     out_sh.insert(out_sh.end(), {0x14, 0x03, 0x03, 0x00, 0x01, 0x01});
@@ -608,7 +608,7 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::perform_hand
 }
 
 asio::awaitable<bool> remote_server::verify_client_finished(std::shared_ptr<asio::ip::tcp::socket> s,
-                                                            const std::pair<std::vector<uint8_t>, std::vector<uint8_t>>& c_hs_keys,
+                                                            const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& c_hs_keys,
                                                             const reality::handshake_keys& hs_keys,
                                                             const reality::transcript& trans,
                                                             const EVP_CIPHER* cipher,
@@ -616,7 +616,7 @@ asio::awaitable<bool> remote_server::verify_client_finished(std::shared_ptr<asio
                                                             const connection_context& ctx,
                                                             std::error_code& ec)
 {
-    uint8_t h[5];
+    std::uint8_t h[5];
     const auto [read_ec3, rn3] = co_await asio::async_read(*s, asio::buffer(h, 5), asio::as_tuple(asio::use_awaitable));
     if (read_ec3)
     {
@@ -626,13 +626,13 @@ asio::awaitable<bool> remote_server::verify_client_finished(std::shared_ptr<asio
 
     if (h[0] == 0x14)
     {
-        uint8_t dummy[1];
+        std::uint8_t dummy[1];
         co_await asio::async_read(*s, asio::buffer(dummy, 1), asio::as_tuple(asio::use_awaitable));
         co_await asio::async_read(*s, asio::buffer(h, 5), asio::as_tuple(asio::use_awaitable));
     }
 
-    const auto flen = static_cast<uint16_t>((h[3] << 8) | h[4]);
-    std::vector<uint8_t> data(flen);
+    const auto flen = static_cast<std::uint16_t>((h[3] << 8) | h[4]);
+    std::vector<std::uint8_t> data(flen);
     const auto [read_ec4, rn4] = co_await asio::async_read(*s, asio::buffer(data), asio::as_tuple(asio::use_awaitable));
     if (read_ec4)
     {
@@ -640,10 +640,10 @@ asio::awaitable<bool> remote_server::verify_client_finished(std::shared_ptr<asio
         co_return false;
     }
 
-    std::vector<uint8_t> cth(5 + flen);
+    std::vector<std::uint8_t> cth(5 + flen);
     std::memcpy(cth.data(), h, 5);
     std::memcpy(cth.data() + 5, data.data(), flen);
-    uint8_t ctype = 0;
+    std::uint8_t ctype = 0;
     const auto pt = reality::tls_record_layer::decrypt_record(cipher, c_hs_keys.first, c_hs_keys.second, 0, cth, ctype, ec);
 
     if (ec || ctype != reality::CONTENT_TYPE_HANDSHAKE || pt.empty() || pt[0] != 0x14)
@@ -685,13 +685,13 @@ std::pair<std::string, std::string> remote_server::find_fallback_target_by_sni(c
     return {};
 }
 
-asio::awaitable<void> remote_server::fallback_failed_timer(const uint32_t conn_id, asio::any_io_executor ex)
+asio::awaitable<void> remote_server::fallback_failed_timer(const std::uint32_t conn_id, asio::any_io_executor ex)
 {
     asio::steady_timer fallback_timer(ex);
-    constexpr uint32_t max_wait_ms = constants::fallback::MAX_WAIT_MS;
+    constexpr std::uint32_t max_wait_ms = constants::fallback::MAX_WAIT_MS;
     static thread_local std::mt19937 gen(std::random_device{}());
-    std::uniform_int_distribution<uint32_t> dist(0, max_wait_ms - 1);
-    const uint32_t wait_ms = dist(gen);
+    std::uniform_int_distribution<std::uint32_t> dist(0, max_wait_ms - 1);
+    const std::uint32_t wait_ms = dist(gen);
     fallback_timer.expires_after(std::chrono::milliseconds(wait_ms));
     const auto [wait_ec] = co_await fallback_timer.async_wait(asio::as_tuple(asio::use_awaitable));
     if (wait_ec)
@@ -718,7 +718,7 @@ asio::awaitable<void> remote_server::fallback_failed(const std::shared_ptr<asio:
 }
 
 asio::awaitable<void> remote_server::handle_fallback(const std::shared_ptr<asio::ip::tcp::socket>& s,
-                                                     const std::vector<uint8_t>& buf,
+                                                     const std::vector<std::uint8_t>& buf,
                                                      const connection_context& ctx,
                                                      const std::string& sni) const
 {

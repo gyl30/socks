@@ -6,11 +6,9 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <asio/io_context.hpp>
-#include <gmock/gmock-actions.h>
-#include <gmock/gmock-spec-builders.h>
 
-#include "test_util.h"
 #include "mux_stream.h"
+#include "test_util.h"
 #include "mux_protocol.h"
 #include "mock_mux_connection.h"
 
@@ -25,7 +23,7 @@ TEST_F(MuxStreamTest, WriteSomeSuccess)
     auto mock_conn = std::make_shared<mux::MockMuxConnection>(ctx_);
     auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx_.get_executor());
 
-    const std::vector<uint8_t> data = {1, 2, 3, 4};
+    const std::vector<std::uint8_t> data = {1, 2, 3, 4};
 
     EXPECT_CALL(*mock_conn, mock_send_async(1, mux::CMD_DAT, data)).WillOnce(::testing::Return(std::error_code()));
 
@@ -38,7 +36,7 @@ TEST_F(MuxStreamTest, ReadSomeSuccess)
     auto mock_conn = std::make_shared<mux::MockMuxConnection>(ctx_);
     auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx_.get_executor());
 
-    const std::vector<uint8_t> data = {10, 20, 30};
+    const std::vector<std::uint8_t> data = {10, 20, 30};
     stream->on_data(data);
 
     const auto [ec, read_data] = mux::test::run_awaitable(ctx_, stream->async_read_some());
@@ -51,7 +49,7 @@ TEST_F(MuxStreamTest, CloseSendsFin)
     auto mock_conn = std::make_shared<mux::MockMuxConnection>(ctx_);
     auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx_.get_executor());
 
-    EXPECT_CALL(*mock_conn, mock_send_async(1, mux::CMD_FIN, std::vector<uint8_t>())).WillOnce(::testing::Return(std::error_code()));
+    EXPECT_CALL(*mock_conn, mock_send_async(1, mux::CMD_FIN, std::vector<std::uint8_t>())).WillOnce(::testing::Return(std::error_code()));
 
     mux::test::run_awaitable_void(ctx_, stream->close());
 }

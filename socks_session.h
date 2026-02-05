@@ -26,7 +26,7 @@ class socks_session : public std::enable_shared_from_this<socks_session>
     socks_session(asio::ip::tcp::socket socket,
                   std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager,
                   std::shared_ptr<router> router,
-                  uint32_t sid,
+                  std::uint32_t sid,
                   const config::socks_t& socks_cfg = {});
 
     void start();
@@ -42,14 +42,14 @@ class socks_session : public std::enable_shared_from_this<socks_session>
     {
         bool ok;
         std::string host;
-        uint16_t port;
-        uint8_t cmd;
+        std::uint16_t port;
+        std::uint8_t cmd;
     };
 
     asio::awaitable<request_info> read_request();
 
    private:
-    uint32_t sid_;
+    std::uint32_t sid_;
     std::string username_;
     std::string password_;
     bool auth_enabled_ = false;

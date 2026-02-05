@@ -23,7 +23,7 @@ class mux_tunnel_impl : public std::enable_shared_from_this<mux_tunnel_impl<stre
     explicit mux_tunnel_impl(stream_layer socket,
                              reality_engine engine,
                              bool is_client,
-                             uint32_t conn_id,
+                             std::uint32_t conn_id,
                              const std::string& trace_id = "",
                              const config::timeout_t& timeout_cfg = {},
                              const config::limits_t& limits_cfg = {})
@@ -33,7 +33,7 @@ class mux_tunnel_impl : public std::enable_shared_from_this<mux_tunnel_impl<stre
 
     [[nodiscard]] std::shared_ptr<mux_connection> connection() const { return connection_; }
 
-    void register_stream(uint32_t id, std::shared_ptr<mux_stream_interface> stream) const
+    void register_stream(std::uint32_t id, std::shared_ptr<mux_stream_interface> stream) const
     {
         if (connection_ != nullptr)
         {
@@ -56,7 +56,7 @@ class mux_tunnel_impl : public std::enable_shared_from_this<mux_tunnel_impl<stre
             return nullptr;
         }
 
-        uint32_t id = connection_->acquire_next_id();
+        std::uint32_t id = connection_->acquire_next_id();
         auto stream = std::make_shared<mux_stream>(
             id, connection_->id(), trace_id.empty() ? connection_->trace_id() : trace_id, connection_, connection_->executor());
         connection_->register_stream(id, stream);

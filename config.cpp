@@ -34,7 +34,7 @@ static std::optional<std::string> read_file(const std::string& filename)
     }
     for (;;)
     {
-        const size_t n = fread(buf, 1, sizeof buf, f);
+        const std::size_t n = fread(buf, 1, sizeof buf, f);
         if (n > 0)
         {
             result.append(buf, n);

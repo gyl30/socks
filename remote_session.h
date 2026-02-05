@@ -17,11 +17,11 @@ namespace mux
 class remote_session : public mux_stream_interface, public std::enable_shared_from_this<remote_session>
 {
    public:
-    remote_session(std::shared_ptr<mux_connection> connection, uint32_t id, const asio::any_io_executor& ex, const connection_context& ctx);
+    remote_session(std::shared_ptr<mux_connection> connection, std::uint32_t id, const asio::any_io_executor& ex, const connection_context& ctx);
 
     [[nodiscard]] asio::awaitable<void> start(const syn_payload& syn);
 
-    void on_data(std::vector<uint8_t> data) override;
+    void on_data(std::vector<std::uint8_t> data) override;
     void on_close() override;
     void on_reset() override;
     void set_manager(const std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>& m) { manager_ = m; }
@@ -31,7 +31,7 @@ class remote_session : public mux_stream_interface, public std::enable_shared_fr
     [[nodiscard]] asio::awaitable<void> downstream();
 
    private:
-    uint32_t id_;
+    std::uint32_t id_;
     connection_context ctx_;
     asio::ip::tcp::resolver resolver_;
     asio::ip::tcp::socket target_socket_;

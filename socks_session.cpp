@@ -1,17 +1,17 @@
-#include <cstdint>
-#include <memory>
 #include <string>
-#include <utility>
 #include <vector>
+#include <memory>
+#include <utility>
+#include <cstdint>
 #include <algorithm>
 
-#include <asio/as_tuple.hpp>
-#include <asio/co_spawn.hpp>
-#include <asio/detached.hpp>
 #include <asio/read.hpp>
-#include <asio/use_awaitable.hpp>
 #include <asio/write.hpp>
 #include <asio/ip/tcp.hpp>
+#include <asio/co_spawn.hpp>
+#include <asio/detached.hpp>
+#include <asio/as_tuple.hpp>
+#include <asio/use_awaitable.hpp>
 
 #include "log.h"
 #include "protocol.h"
@@ -27,7 +27,7 @@ namespace mux
 socks_session::socks_session(asio::ip::tcp::socket socket,
                              std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager,
                              std::shared_ptr<router> router,
-                             const uint32_t sid,
+                             const std::uint32_t sid,
                              const config::socks_t& socks_cfg)
     : sid_(sid),
       username_(socks_cfg.username),
@@ -80,7 +80,7 @@ asio::awaitable<void> socks_session::run()
 
 asio::awaitable<bool> socks_session::handshake()
 {
-    uint8_t ver_nmethods[2];
+    std::uint8_t ver_nmethods[2];
     auto [e, n] = co_await asio::async_read(socket_, asio::buffer(ver_nmethods, 2), asio::as_tuple(asio::use_awaitable));
     if (e || ver_nmethods[0] != socks::VER)
     {
@@ -88,7 +88,7 @@ asio::awaitable<bool> socks_session::handshake()
         co_return false;
     }
 
-    std::vector<uint8_t> methods(ver_nmethods[1]);
+    std::vector<std::uint8_t> methods(ver_nmethods[1]);
     auto [method_error, n2] = co_await asio::async_read(socket_, asio::buffer(methods), asio::as_tuple(asio::use_awaitable));
     if (method_error)
     {
@@ -96,7 +96,7 @@ asio::awaitable<bool> socks_session::handshake()
         co_return false;
     }
 
-    uint8_t selected_method = socks::METHOD_NO_ACCEPTABLE;
+    std::uint8_t selected_method = socks::METHOD_NO_ACCEPTABLE;
 
     if (auth_enabled_)
     {
@@ -113,7 +113,7 @@ asio::awaitable<bool> socks_session::handshake()
         }
     }
 
-    uint8_t resp[] = {socks::VER, selected_method};
+    std::uint8_t resp[] = {socks::VER, selected_method};
     auto [response_error, n3] = co_await asio::async_write(socket_, asio::buffer(resp), asio::as_tuple(asio::use_awaitable));
     if (response_error)
     {
@@ -137,7 +137,7 @@ asio::awaitable<bool> socks_session::handshake()
 
 asio::awaitable<bool> socks_session::do_password_auth()
 {
-    uint8_t ver = 0;
+    std::uint8_t ver = 0;
     auto [ve, vn] = co_await asio::async_read(socket_, asio::buffer(&ver, 1), asio::as_tuple(asio::use_awaitable));
     if (ve || ver != 0x01)
     {
@@ -145,7 +145,7 @@ asio::awaitable<bool> socks_session::do_password_auth()
         co_return false;
     }
 
-    uint8_t ulen = 0;
+    std::uint8_t ulen = 0;
     auto [ue, un] = co_await asio::async_read(socket_, asio::buffer(&ulen, 1), asio::as_tuple(asio::use_awaitable));
     if (ue)
     {
@@ -161,7 +161,7 @@ asio::awaitable<bool> socks_session::do_password_auth()
         co_return false;
     }
 
-    uint8_t plen = 0;
+    std::uint8_t plen = 0;
     auto [pe, pn] = co_await asio::async_read(socket_, asio::buffer(&plen, 1), asio::as_tuple(asio::use_awaitable));
     if (pe)
     {
@@ -179,7 +179,7 @@ asio::awaitable<bool> socks_session::do_password_auth()
 
     const bool success = (username == username_ && password == password_);
 
-    uint8_t result[] = {0x01, success ? static_cast<uint8_t>(0x00) : static_cast<uint8_t>(0x01)};
+    std::uint8_t result[] = {0x01, success ? static_cast<std::uint8_t>(0x00) : static_cast<std::uint8_t>(0x01)};
     auto [re, rn] = co_await asio::async_write(socket_, asio::buffer(result), asio::as_tuple(asio::use_awaitable));
     if (re)
     {
@@ -201,7 +201,7 @@ asio::awaitable<bool> socks_session::do_password_auth()
 
 asio::awaitable<socks_session::request_info> socks_session::read_request()
 {
-    uint8_t head[4];
+    std::uint8_t head[4];
     auto [e, n] = co_await asio::async_read(socket_, asio::buffer(head), asio::as_tuple(asio::use_awaitable));
     if (e)
     {
@@ -218,7 +218,7 @@ asio::awaitable<socks_session::request_info> socks_session::read_request()
     }
     else if (head[3] == socks::ATYP_DOMAIN)
     {
-        uint8_t len = 0;
+        std::uint8_t len = 0;
         co_await asio::async_read(socket_, asio::buffer(&len, 1), asio::as_tuple(asio::use_awaitable));
         host.resize(len);
         co_await asio::async_read(socket_, asio::buffer(host), asio::as_tuple(asio::use_awaitable));
@@ -230,9 +230,9 @@ asio::awaitable<socks_session::request_info> socks_session::read_request()
         host = asio::ip::address_v6(b).to_string();
     }
 
-    uint16_t port_n = 0;
+    std::uint16_t port_n = 0;
     co_await asio::async_read(socket_, asio::buffer(&port_n, 2), asio::as_tuple(asio::use_awaitable));
-    const uint16_t port = ntohs(port_n);
+    const std::uint16_t port = ntohs(port_n);
     LOG_INFO("socks session {} request {} {}", sid_, host, port);
     co_return request_info{.ok = true, .host = host, .port = port, .cmd = head[1]};
 }
