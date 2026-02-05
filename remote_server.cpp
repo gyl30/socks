@@ -424,7 +424,7 @@ std::pair<bool, std::vector<std::uint8_t>> remote_server::authenticate_client(co
 
     if (!short_id_bytes_.empty())
     {
-        if (auth->short_id != short_id_bytes_)
+        if (std::vector<std::uint8_t>(auth->short_id.begin(), auth->short_id.begin() + short_id_bytes_.size()) != short_id_bytes_)
         {
             LOG_CTX_WARN(ctx, "{} auth fail short id mismatch", log_event::AUTH);
             return {false, {}};
