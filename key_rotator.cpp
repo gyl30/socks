@@ -3,7 +3,10 @@
 #include <memory>
 #include <mutex>
 
+extern "C"
+{
 #include <openssl/crypto.h>
+}
 
 #include "log.h"
 #include "crypto_util.h"

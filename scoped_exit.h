@@ -45,9 +45,9 @@ scoped_exit<Callback> make_scoped_exit(Callback&& c)
 {
     return scoped_exit<Callback>(std::forward<Callback>(c));
 }
-#define SCOPED_CONCAT_(x, y) x##y
-#define SCOPED_CONCAT(x, y) SCOPED_CONCAT_(x, y)
-#define SCOPED_UNIQUE_NAME(prefix) SCOPED_CONCAT(prefix, __LINE__)
-#define DEFER(code) auto SCOPED_UNIQUE_NAME(scoped) = make_scoped_exit([&]() { code; })
+#define kScopedConcat(x, y) x##y
+#define kScopedConcat(x, y) kScopedConcat(x, y)
+#define kScopedUniqueName(prefix) kScopedConcat(prefix, __LINE__)
+#define DEFER(code) auto kScopedUniqueName(scoped) = make_scoped_exit([&]() { code; })
 
 #endif

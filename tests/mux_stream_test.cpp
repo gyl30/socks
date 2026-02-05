@@ -25,7 +25,7 @@ TEST_F(MuxStreamTest, WriteSomeSuccess)
 
     const std::vector<std::uint8_t> data = {1, 2, 3, 4};
 
-    EXPECT_CALL(*mock_conn, mock_send_async(1, mux::CMD_DAT, data)).WillOnce(::testing::Return(std::error_code()));
+    EXPECT_CALL(*mock_conn, mock_send_async(1, mux::kCmdDat, data)).WillOnce(::testing::Return(std::error_code()));
 
     const auto ec = mux::test::run_awaitable(ctx_, stream->async_write_some(data.data(), data.size()));
     EXPECT_FALSE(ec);
@@ -49,7 +49,7 @@ TEST_F(MuxStreamTest, CloseSendsFin)
     auto mock_conn = std::make_shared<mux::MockMuxConnection>(ctx_);
     auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx_.get_executor());
 
-    EXPECT_CALL(*mock_conn, mock_send_async(1, mux::CMD_FIN, std::vector<std::uint8_t>())).WillOnce(::testing::Return(std::error_code()));
+    EXPECT_CALL(*mock_conn, mock_send_async(1, mux::kCmdFin, std::vector<std::uint8_t>())).WillOnce(::testing::Return(std::error_code()));
 
     mux::test::run_awaitable_void(ctx_, stream->close());
 }
