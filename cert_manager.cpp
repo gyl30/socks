@@ -45,7 +45,7 @@ void cert_manager::set_certificate(const std::string& sni, std::vector<std::uint
 
     LOG_CTX_INFO(ctx,
                  "{} cached cert size {} alpn '{}' cipher 0x{:04x}",
-                 mux::log_event::CERT,
+                 mux::log_event::kCert,
                  cache_[sni].cert_msg.size(),
                  cache_[sni].fingerprint.alpn,
                  cache_[sni].fingerprint.cipher_suite);

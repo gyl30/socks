@@ -10,9 +10,9 @@
 namespace reality
 {
 
-bool build_auth_payload(const std::vector<std::uint8_t>& short_id, std::uint32_t timestamp, std::array<std::uint8_t, AUTH_PAYLOAD_LEN>& out)
+bool build_auth_payload(const std::vector<std::uint8_t>& short_id, std::uint32_t timestamp, std::array<std::uint8_t, kAuthPayloadLen>& out)
 {
-    if (short_id.size() > SHORT_ID_MAX_LEN)
+    if (short_id.size() > kShortIdMaxLen)
     {
         return false;
     }
@@ -39,7 +39,7 @@ bool build_auth_payload(const std::vector<std::uint8_t>& short_id, std::uint32_t
 
 std::optional<auth_payload> parse_auth_payload(std::span<const std::uint8_t> payload)
 {
-    if (payload.size() != AUTH_PAYLOAD_LEN)
+    if (payload.size() != kAuthPayloadLen)
     {
         return std::nullopt;
     }

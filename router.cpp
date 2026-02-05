@@ -40,7 +40,7 @@ asio::awaitable<route_type> router::decide(const connection_context& ctx, const 
     const auto addr = asio::ip::make_address(host, ec);
     if (ec)
     {
-        LOG_CTX_WARN(ctx, "{} parse host failed {}", log_event::ROUTE, ec.message());
+        LOG_CTX_WARN(ctx, "{} parse host failed {}", log_event::kRoute, ec.message());
         co_return co_await decide_domain(ctx, host, ex);
     }
     co_return co_await decide_ip(ctx, host, addr, ex);
@@ -53,15 +53,15 @@ asio::awaitable<route_type> router::decide_ip(const connection_context& ctx,
 {
     if (block_ip_matcher_->match(addr))
     {
-        LOG_CTX_DEBUG(ctx, "{} matched ip rule block", log_event::ROUTE);
+        LOG_CTX_DEBUG(ctx, "{} matched ip rule block", log_event::kRoute);
         co_return route_type::block;
     }
     if (direct_ip_matcher_->match(addr))
     {
-        LOG_CTX_DEBUG(ctx, "{} matched ip rule direct", log_event::ROUTE);
+        LOG_CTX_DEBUG(ctx, "{} matched ip rule direct", log_event::kRoute);
         co_return route_type::direct;
     }
-    LOG_CTX_DEBUG(ctx, "{} ip rule not found default proxy", log_event::ROUTE);
+    LOG_CTX_DEBUG(ctx, "{} ip rule not found default proxy", log_event::kRoute);
     co_return route_type::proxy;
 }
 
@@ -69,20 +69,20 @@ asio::awaitable<route_type> router::decide_domain(const connection_context& ctx,
 {
     if (block_domain_matcher_->match(host))
     {
-        LOG_CTX_DEBUG(ctx, "{} matched domain rule block", log_event::ROUTE);
+        LOG_CTX_DEBUG(ctx, "{} matched domain rule block", log_event::kRoute);
         co_return route_type::block;
     }
     if (direct_domain_matcher_->match(host))
     {
-        LOG_CTX_DEBUG(ctx, "{} matched domain rule direct", log_event::ROUTE);
+        LOG_CTX_DEBUG(ctx, "{} matched domain rule direct", log_event::kRoute);
         co_return route_type::direct;
     }
     if (proxy_domain_matcher_->match(host))
     {
-        LOG_CTX_DEBUG(ctx, "{} matched domain rule proxy", log_event::ROUTE);
+        LOG_CTX_DEBUG(ctx, "{} matched domain rule proxy", log_event::kRoute);
         co_return route_type::proxy;
     }
-    LOG_CTX_DEBUG(ctx, "{} domain rule not found default direct", log_event::ROUTE);
+    LOG_CTX_DEBUG(ctx, "{} domain rule not found default direct", log_event::kRoute);
     co_return route_type::direct;
 }
 

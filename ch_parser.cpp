@@ -116,11 +116,11 @@ void ch_parser::parse_extensions(reader& r, client_hello_info& info)
             break;
         }
 
-        if (type == reality::tls_consts::ext::SNI)
+        if (type == reality::tls_consts::ext::kSni)
         {
             parse_sni(val, info);
         }
-        else if (type == reality::tls_consts::ext::KEY_SHARE)
+        else if (type == reality::tls_consts::ext::kKeyShare)
         {
             parse_key_share(val, info);
         }

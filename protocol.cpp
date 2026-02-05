@@ -51,19 +51,19 @@ std::vector<std::uint8_t> socks_codec::encode_udp_header(const socks_udp_header&
 
     if (!ec && address.is_v4())
     {
-        buf.push_back(socks::ATYP_IPV4);
+        buf.push_back(socks::kAtypIpv4);
         const auto bytes = address.to_v4().to_bytes();
         buf.insert(buf.end(), bytes.begin(), bytes.end());
     }
     else if (!ec && address.is_v6())
     {
-        buf.push_back(socks::ATYP_IPV6);
+        buf.push_back(socks::kAtypIpv6);
         const auto bytes = address.to_v6().to_bytes();
         buf.insert(buf.end(), bytes.begin(), bytes.end());
     }
     else
     {
-        buf.push_back(socks::ATYP_DOMAIN);
+        buf.push_back(socks::kAtypDomain);
         buf.push_back(static_cast<std::uint8_t>(h.addr.size()));
         buf.insert(buf.end(), h.addr.begin(), h.addr.end());
     }
@@ -84,7 +84,7 @@ bool socks_codec::decode_udp_header(const std::uint8_t* data, std::size_t len, s
     const std::uint8_t atyp = data[3];
 
     std::size_t pos = 4;
-    if (atyp == socks::ATYP_IPV4)
+    if (atyp == socks::kAtypIpv4)
     {
         if (len < pos + 4 + 2)
         {
@@ -95,7 +95,7 @@ bool socks_codec::decode_udp_header(const std::uint8_t* data, std::size_t len, s
         out.addr = asio::ip::address_v4(b).to_string();
         pos += 4;
     }
-    else if (atyp == socks::ATYP_DOMAIN)
+    else if (atyp == socks::kAtypDomain)
     {
         if (len < pos + 1)
         {
@@ -110,7 +110,7 @@ bool socks_codec::decode_udp_header(const std::uint8_t* data, std::size_t len, s
         out.addr = std::string(reinterpret_cast<const char*>(data) + pos, dlen);
         pos += dlen;
     }
-    else if (atyp == socks::ATYP_IPV6)
+    else if (atyp == socks::kAtypIpv6)
     {
         if (len < pos + 16 + 2)
         {

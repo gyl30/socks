@@ -1,40 +1,40 @@
 #ifndef PROTOCOL_H
 #define PROTOCOL_H
 
+#include <string>
+#include <vector>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <string>
-#include <vector>
 
 #include <asio/ip/address.hpp>
 
 namespace socks
 {
 
-constexpr std::uint8_t VER = 0x05;
-constexpr std::uint8_t METHOD_NO_AUTH = 0x00;
-constexpr std::uint8_t METHOD_GSSAPI = 0x01;
-constexpr std::uint8_t METHOD_PASSWORD = 0x02;
-constexpr std::uint8_t METHOD_NO_ACCEPTABLE = 0xFF;
+constexpr std::uint8_t kVer = 0x05;
+constexpr std::uint8_t kMethodNoAuth = 0x00;
+constexpr std::uint8_t kMethodGssapi = 0x01;
+constexpr std::uint8_t kMethodPassword = 0x02;
+constexpr std::uint8_t kMethodNoAcceptable = 0xFF;
 
-constexpr std::uint8_t CMD_CONNECT = 0x01;
-constexpr std::uint8_t CMD_BIND = 0x02;
-constexpr std::uint8_t CMD_UDP_ASSOCIATE = 0x03;
+constexpr std::uint8_t kCmdConnect = 0x01;
+constexpr std::uint8_t kCmdBind = 0x02;
+constexpr std::uint8_t kCmdUdpAssociate = 0x03;
 
-constexpr std::uint8_t ATYP_IPV4 = 0x01;
-constexpr std::uint8_t ATYP_DOMAIN = 0x03;
-constexpr std::uint8_t ATYP_IPV6 = 0x04;
+constexpr std::uint8_t kAtypIpv4 = 0x01;
+constexpr std::uint8_t kAtypDomain = 0x03;
+constexpr std::uint8_t kAtypIpv6 = 0x04;
 
-constexpr std::uint8_t REP_SUCCESS = 0x00;
-constexpr std::uint8_t REP_GEN_FAIL = 0x01;
-constexpr std::uint8_t REP_NOT_ALLOWED = 0x02;
-constexpr std::uint8_t REP_NET_UNREACH = 0x03;
-constexpr std::uint8_t REP_HOST_UNREACH = 0x04;
-constexpr std::uint8_t REP_CONN_REFUSED = 0x05;
-constexpr std::uint8_t REP_TTL_EXPIRED = 0x06;
-constexpr std::uint8_t REP_CMD_NOT_SUPPORTED = 0x07;
-constexpr std::uint8_t REP_ADDR_TYPE_NOT_SUPPORTED = 0x08;
+constexpr std::uint8_t kRepSuccess = 0x00;
+constexpr std::uint8_t kRepGenFail = 0x01;
+constexpr std::uint8_t kRepNotAllowed = 0x02;
+constexpr std::uint8_t kRepNetUnreach = 0x03;
+constexpr std::uint8_t kRepHostUnreach = 0x04;
+constexpr std::uint8_t kRepConnRefused = 0x05;
+constexpr std::uint8_t kRepTtlExpired = 0x06;
+constexpr std::uint8_t kRepCmdNotSupported = 0x07;
+constexpr std::uint8_t kRepAddrTypeNotSupported = 0x08;
 
 }    // namespace socks
 

@@ -9,7 +9,10 @@
 #include <string>
 #include <vector>
 
+extern "C"
+{
 #include <openssl/rand.h>
+}
 
 #include "reality_core.h"
 
@@ -51,35 +54,35 @@ enum class FingerprintType
     Safari_16_0,
     Browser360_7_5,
     Browser360_11_0,
-    QQ_11_1
+    kQq111
 };
 
 enum class ExtensionType
 {
-    GREASE,
-    SNI,
-    ExtendedMasterSecret,
-    RenegotiationInfo,
-    SupportedGroups,
-    ECPointFormats,
-    SessionTicket,
-    ALPN,
-    StatusRequest,
-    SignatureAlgorithms,
-    SCT,
-    KeyShare,
-    PSKKeyExchangeModes,
-    SupportedVersions,
-    CompressCertificate,
-    ApplicationSettings,
-    ApplicationSettingsNew,
-    GreaseECH,
-    Padding,
-    PreSharedKey,
-    NPN,
-    ChannelID,
-    DelegatedCredentials,
-    RecordSizeLimit,
+    kGrease,
+    kSni,
+    kExtendedMasterSecret,
+    kRenegotiationInfo,
+    kSupportedGroups,
+    kECPointFormats,
+    kSessionTicket,
+    kAlpn,
+    kStatusRequest,
+    kSignatureAlgorithms,
+    kSct,
+    kKeyShare,
+    kPSKKeyExchangeModes,
+    kSupportedVersions,
+    kCompressCertificate,
+    kApplicationSettings,
+    kApplicationSettingsNew,
+    kGreaseECH,
+    kPadding,
+    kPreSharedKey,
+    kNpn,
+    kChannelID,
+    kDelegatedCredentials,
+    kRecordSizeLimit,
     Generic
 };
 
@@ -92,62 +95,62 @@ struct ExtensionBlueprint
 
 struct GreaseBlueprint : ExtensionBlueprint
 {
-    [[nodiscard]] ExtensionType type() const override { return ExtensionType::GREASE; }
+    [[nodiscard]] ExtensionType type() const override { return ExtensionType::kGrease; }
     [[nodiscard]] bool is_shufflable() const override { return false; }
 };
 
 struct SNIBlueprint : ExtensionBlueprint
 {
-    [[nodiscard]] ExtensionType type() const override { return ExtensionType::SNI; }
+    [[nodiscard]] ExtensionType type() const override { return ExtensionType::kSni; }
 };
 
 struct EMSBlueprint : ExtensionBlueprint
 {
-    [[nodiscard]] ExtensionType type() const override { return ExtensionType::ExtendedMasterSecret; }
+    [[nodiscard]] ExtensionType type() const override { return ExtensionType::kExtendedMasterSecret; }
 };
 
 struct RenegotiationBlueprint : ExtensionBlueprint
 {
-    [[nodiscard]] ExtensionType type() const override { return ExtensionType::RenegotiationInfo; }
+    [[nodiscard]] ExtensionType type() const override { return ExtensionType::kRenegotiationInfo; }
 };
 
 struct SupportedGroupsBlueprint : ExtensionBlueprint
 {
     std::vector<std::uint16_t> groups;
-    [[nodiscard]] ExtensionType type() const override { return ExtensionType::SupportedGroups; }
+    [[nodiscard]] ExtensionType type() const override { return ExtensionType::kSupportedGroups; }
 };
 
 struct ECPointFormatsBlueprint : ExtensionBlueprint
 {
     std::vector<std::uint8_t> formats;
-    [[nodiscard]] ExtensionType type() const override { return ExtensionType::ECPointFormats; }
+    [[nodiscard]] ExtensionType type() const override { return ExtensionType::kECPointFormats; }
 };
 
 struct SessionTicketBlueprint : ExtensionBlueprint
 {
-    [[nodiscard]] ExtensionType type() const override { return ExtensionType::SessionTicket; }
+    [[nodiscard]] ExtensionType type() const override { return ExtensionType::kSessionTicket; }
 };
 
 struct ALPNBlueprint : ExtensionBlueprint
 {
     std::vector<std::string> protocols;
-    [[nodiscard]] ExtensionType type() const override { return ExtensionType::ALPN; }
+    [[nodiscard]] ExtensionType type() const override { return ExtensionType::kAlpn; }
 };
 
 struct StatusRequestBlueprint : ExtensionBlueprint
 {
-    [[nodiscard]] ExtensionType type() const override { return ExtensionType::StatusRequest; }
+    [[nodiscard]] ExtensionType type() const override { return ExtensionType::kStatusRequest; }
 };
 
 struct SignatureAlgorithmsBlueprint : ExtensionBlueprint
 {
     std::vector<std::uint16_t> algorithms;
-    [[nodiscard]] ExtensionType type() const override { return ExtensionType::SignatureAlgorithms; }
+    [[nodiscard]] ExtensionType type() const override { return ExtensionType::kSignatureAlgorithms; }
 };
 
 struct SCTBlueprint : ExtensionBlueprint
 {
-    [[nodiscard]] ExtensionType type() const override { return ExtensionType::SCT; }
+    [[nodiscard]] ExtensionType type() const override { return ExtensionType::kSct; }
 };
 
 struct KeyShareBlueprint : ExtensionBlueprint
@@ -158,82 +161,82 @@ struct KeyShareBlueprint : ExtensionBlueprint
         std::vector<std::uint8_t> data;
     };
     std::vector<Entry> key_shares;
-    [[nodiscard]] ExtensionType type() const override { return ExtensionType::KeyShare; }
+    [[nodiscard]] ExtensionType type() const override { return ExtensionType::kKeyShare; }
 };
 
 struct PSKKeyExchangeModesBlueprint : ExtensionBlueprint
 {
     std::vector<std::uint8_t> modes;
-    [[nodiscard]] ExtensionType type() const override { return ExtensionType::PSKKeyExchangeModes; }
+    [[nodiscard]] ExtensionType type() const override { return ExtensionType::kPSKKeyExchangeModes; }
 };
 
 struct SupportedVersionsBlueprint : ExtensionBlueprint
 {
     std::vector<std::uint16_t> versions;
-    [[nodiscard]] ExtensionType type() const override { return ExtensionType::SupportedVersions; }
+    [[nodiscard]] ExtensionType type() const override { return ExtensionType::kSupportedVersions; }
 };
 
 struct CompressCertBlueprint : ExtensionBlueprint
 {
     std::vector<std::uint16_t> algorithms;
-    [[nodiscard]] ExtensionType type() const override { return ExtensionType::CompressCertificate; }
+    [[nodiscard]] ExtensionType type() const override { return ExtensionType::kCompressCertificate; }
 };
 
 struct ApplicationSettingsBlueprint : ExtensionBlueprint
 {
     std::vector<std::string> supported_protocols;
-    [[nodiscard]] ExtensionType type() const override { return ExtensionType::ApplicationSettings; }
+    [[nodiscard]] ExtensionType type() const override { return ExtensionType::kApplicationSettings; }
 };
 
 struct ApplicationSettingsNewBlueprint : ExtensionBlueprint
 {
     std::vector<std::string> supported_protocols;
-    [[nodiscard]] ExtensionType type() const override { return ExtensionType::ApplicationSettingsNew; }
+    [[nodiscard]] ExtensionType type() const override { return ExtensionType::kApplicationSettingsNew; }
 };
 
 struct GreaseECHBlueprint : ExtensionBlueprint
 {
-    [[nodiscard]] ExtensionType type() const override { return ExtensionType::GreaseECH; }
+    [[nodiscard]] ExtensionType type() const override { return ExtensionType::kGreaseECH; }
 };
 
 struct PaddingBlueprint : ExtensionBlueprint
 {
-    [[nodiscard]] ExtensionType type() const override { return ExtensionType::Padding; }
+    [[nodiscard]] ExtensionType type() const override { return ExtensionType::kPadding; }
     [[nodiscard]] bool is_shufflable() const override { return false; }
 };
 
 struct PreSharedKeyBlueprint : ExtensionBlueprint
 {
-    [[nodiscard]] ExtensionType type() const override { return ExtensionType::PreSharedKey; }
+    [[nodiscard]] ExtensionType type() const override { return ExtensionType::kPreSharedKey; }
     [[nodiscard]] bool is_shufflable() const override { return false; }
 };
 
 struct NPNBlueprint : ExtensionBlueprint
 {
-    [[nodiscard]] ExtensionType type() const override { return ExtensionType::NPN; }
+    [[nodiscard]] ExtensionType type() const override { return ExtensionType::kNpn; }
 };
 
 struct ChannelIDBlueprint : ExtensionBlueprint
 {
     bool old_id = false;
-    [[nodiscard]] ExtensionType type() const override { return ExtensionType::ChannelID; }
+    [[nodiscard]] ExtensionType type() const override { return ExtensionType::kChannelID; }
 };
 
 struct DelegatedCredentialsBlueprint : ExtensionBlueprint
 {
     std::vector<std::uint16_t> algorithms;
-    [[nodiscard]] ExtensionType type() const override { return ExtensionType::DelegatedCredentials; }
+    [[nodiscard]] ExtensionType type() const override { return ExtensionType::kDelegatedCredentials; }
 };
 
 struct RecordSizeLimitBlueprint : ExtensionBlueprint
 {
     std::uint16_t limit;
-    [[nodiscard]] ExtensionType type() const override { return ExtensionType::RecordSizeLimit; }
+    [[nodiscard]] ExtensionType type() const override { return ExtensionType::kRecordSizeLimit; }
 };
 
 struct FingerprintSpec
 {
-    std::uint16_t client_version = tls_consts::VER_1_2;
+    std::uint16_t client_version = tls_consts::kVer12;
     std::vector<std::uint16_t> cipher_suites;
     std::vector<std::uint8_t> compression_methods = {0x00};
     std::vector<std::shared_ptr<ExtensionBlueprint>> extensions;

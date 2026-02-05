@@ -9,30 +9,30 @@ namespace constants
 
 namespace net
 {
-constexpr std::size_t BUFFER_SIZE = 4096;
-constexpr int RETRY_INTERVAL_SEC = 1;
-constexpr int MAX_LISTEN_CONNECTIONS = 1024;
+constexpr std::size_t kBufferSize = 4096;
+constexpr int kRetryIntervalSec = 1;
+constexpr int kMaxListenConnections = 1024;
 }    // namespace net
 
 namespace auth
 {
-constexpr int MAX_CLOCK_SKEW_SEC = 300;
-constexpr std::size_t SESSION_ID_LEN = 32;
-constexpr std::size_t AUTH_KEY_LEN = 32;
-constexpr std::size_t SALT_LEN = 20;
+constexpr int kMaxClockSkewSec = 300;
+constexpr std::size_t kSessionIdLen = 32;
+constexpr std::size_t kAuthKeyLen = 32;
+constexpr std::size_t kSaltLen = 20;
 }    // namespace auth
 
 namespace crypto
 {
-constexpr std::size_t KEY_LEN_128 = 16;
-constexpr std::size_t KEY_LEN_256 = 32;
-constexpr std::size_t IV_LEN = 12;
-constexpr std::size_t TAG_LEN = 16;
+constexpr std::size_t kKeyLen128 = 16;
+constexpr std::size_t kKeyLen256 = 32;
+constexpr std::size_t kIvLen = 12;
+constexpr std::size_t kTagLen = 16;
 }    // namespace crypto
 
 namespace fallback
 {
-constexpr int MAX_WAIT_MS = 2000;
+constexpr int kMaxWaitMs = 2000;
 }
 
 }    // namespace constants

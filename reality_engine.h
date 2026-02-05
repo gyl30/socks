@@ -20,8 +20,8 @@ namespace mux
 class reality_engine
 {
    public:
-    static constexpr auto INITIAL_BUF_SIZE = 16 * 1024;
-    static constexpr auto MAX_BUF_SIZE = 64 * 1024;
+    static constexpr auto kInitialBufSize = 16 * 1024;
+    static constexpr auto kMaxBufSize = 64 * 1024;
 
     reality_engine(std::vector<std::uint8_t> r_key,
                    std::vector<std::uint8_t> r_iv,
@@ -52,7 +52,7 @@ class reality_engine
 
             callback(content_type, std::span<const std::uint8_t>(scratch_buf_.data(), payload_len));
 
-            if (content_type == reality::CONTENT_TYPE_ALERT)
+            if (content_type == reality::kContentTypeAlert)
             {
                 ec = asio::error::eof;
                 return;

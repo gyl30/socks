@@ -39,7 +39,7 @@ void mux_dispatcher::on_plaintext_data(std::span<const std::uint8_t> data)
 std::vector<std::uint8_t> mux_dispatcher::pack(std::uint32_t stream_id, std::uint8_t cmd, const std::vector<std::uint8_t>& payload)
 {
     std::vector<std::uint8_t> frame;
-    frame.reserve(mux::HEADER_SIZE + payload.size());
+    frame.reserve(mux::kHeaderSize + payload.size());
 
     const mux::frame_header h{.stream_id = stream_id, .length = static_cast<std::uint16_t>(payload.size()), .command = cmd};
     mux::mux_codec::encode_header(h, frame);
@@ -53,7 +53,7 @@ std::vector<std::uint8_t> mux_dispatcher::pack(std::uint32_t stream_id, std::uin
 
 void mux_dispatcher::process_frames()
 {
-    while (buffer_.size() >= mux::HEADER_SIZE)
+    while (buffer_.size() >= mux::kHeaderSize)
     {
         const auto* ptr = static_cast<const std::uint8_t*>(buffer_.data().data());
         mux::frame_header header;
@@ -61,11 +61,11 @@ void mux_dispatcher::process_frames()
         {
             break;
         }
-        const std::uint32_t total_frame_len = mux::HEADER_SIZE + header.length;
+        const std::uint32_t total_frame_len = mux::kHeaderSize + header.length;
 
-        if (header.length > mux::MAX_PAYLOAD)
+        if (header.length > mux::kMaxPayload)
         {
-            LOG_CTX_ERROR(ctx_, "{} received oversized frame length {} stream {}", log_event::MUX, header.length, header.stream_id);
+            LOG_CTX_ERROR(ctx_, "{} received oversized frame length {} stream {}", log_event::kMux, header.length, header.stream_id);
             buffer_.consume(buffer_.size());
             break;
         }
@@ -75,7 +75,7 @@ void mux_dispatcher::process_frames()
             break;
         }
 
-        std::vector<std::uint8_t> payload(ptr + mux::HEADER_SIZE, ptr + total_frame_len);
+        std::vector<std::uint8_t> payload(ptr + mux::kHeaderSize, ptr + total_frame_len);
 
         buffer_.consume(total_frame_len);
 

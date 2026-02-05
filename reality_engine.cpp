@@ -13,12 +13,12 @@ reality_engine::reality_engine(std::vector<std::uint8_t> r_key,
       read_iv_(std::move(r_iv)),
       write_key_(std::move(w_key)),
       write_iv_(std::move(w_iv)),
-      rx_buf_(std::make_unique<asio::streambuf>(MAX_BUF_SIZE)),
+      rx_buf_(std::make_unique<asio::streambuf>(kMaxBufSize)),
       cipher_(cipher)
 {
-    rx_buf_->prepare(INITIAL_BUF_SIZE);
-    scratch_buf_.resize(MAX_BUF_SIZE);
-    tx_buf_.reserve(MAX_BUF_SIZE);
+    rx_buf_->prepare(kInitialBufSize);
+    scratch_buf_.resize(kMaxBufSize);
+    tx_buf_.reserve(kMaxBufSize);
 }
 
 std::span<const std::uint8_t> reality_engine::encrypt(const std::vector<std::uint8_t>& plaintext, std::error_code& ec)
@@ -31,7 +31,7 @@ std::span<const std::uint8_t> reality_engine::encrypt(const std::vector<std::uin
         return {};
     }
     reality::tls_record_layer::encrypt_record_append(
-        encrypt_ctx_, cipher_, write_key_, write_iv_, write_seq_, plaintext, reality::CONTENT_TYPE_APPLICATION_DATA, tx_buf_, ec);
+        encrypt_ctx_, cipher_, write_key_, write_iv_, write_seq_, plaintext, reality::kContentTypeApplicationData, tx_buf_, ec);
     if (ec)
     {
         return {};
@@ -44,14 +44,14 @@ std::span<const std::uint8_t> reality_engine::encrypt(const std::vector<std::uin
 
 bool reality_engine::try_decrypt_next_record(std::uint8_t& content_type, std::size_t& payload_len, std::error_code& ec)
 {
-    if (rx_buf_->size() < reality::TLS_RECORD_HEADER_SIZE)
+    if (rx_buf_->size() < reality::kTlsRecordHeaderSize)
     {
         return false;
     }
 
     const auto* p = static_cast<const std::uint8_t*>(rx_buf_->data().data());
     const auto record_len = static_cast<std::uint16_t>((static_cast<std::uint16_t>(p[3]) << 8) | p[4]);
-    const std::uint32_t frame_size = reality::TLS_RECORD_HEADER_SIZE + record_len;
+    const std::uint32_t frame_size = reality::kTlsRecordHeaderSize + record_len;
 
     if (rx_buf_->size() < frame_size)
     {

@@ -2,7 +2,10 @@
 #include <memory>
 #include <vector>
 
+extern "C"
+{
 #include <openssl/evp.h>
+}
 
 #include "transcript.h"
 
