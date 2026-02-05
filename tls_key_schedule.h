@@ -69,9 +69,9 @@ class tls_key_schedule
         }
 
         const std::vector<std::uint8_t> c_hs_secret =
-            crypto_util::hkdf_expand_label(handshake_secret, "reality hello client", server_hello_hash, hash_len, md, ec);
+            crypto_util::hkdf_expand_label(handshake_secret, "c hs traffic", server_hello_hash, hash_len, md, ec);
         const std::vector<std::uint8_t> s_hs_secret =
-            crypto_util::hkdf_expand_label(handshake_secret, "reality hello server", server_hello_hash, hash_len, md, ec);
+            crypto_util::hkdf_expand_label(handshake_secret, "s hs traffic", server_hello_hash, hash_len, md, ec);
 
         const std::vector<std::uint8_t> derived_secret_2 = crypto_util::hkdf_expand_label(handshake_secret, "derived", empty_hash, hash_len, md, ec);
         const std::vector<std::uint8_t> master_secret = crypto_util::hkdf_extract(derived_secret_2, zero_ikm, md, ec);
@@ -85,9 +85,9 @@ class tls_key_schedule
     {
         const std::size_t hash_len = EVP_MD_size(md);
         const std::vector<std::uint8_t> c_app_secret =
-            crypto_util::hkdf_expand_label(master_secret, "reality application client", handshake_hash, hash_len, md, ec);
+            crypto_util::hkdf_expand_label(master_secret, "c ap traffic", handshake_hash, hash_len, md, ec);
         const std::vector<std::uint8_t> s_app_secret =
-            crypto_util::hkdf_expand_label(master_secret, "reality application server", handshake_hash, hash_len, md, ec);
+            crypto_util::hkdf_expand_label(master_secret, "s ap traffic", handshake_hash, hash_len, md, ec);
         return {c_app_secret, s_app_secret};
     }
 
@@ -97,7 +97,7 @@ class tls_key_schedule
                                                                                 std::error_code& ec)
     {
         const std::size_t hash_len = EVP_MD_size(md);
-        const std::vector<std::uint8_t> finished_key = crypto_util::hkdf_expand_label(base_key, "reality finished", {}, hash_len, md, ec);
+        const std::vector<std::uint8_t> finished_key = crypto_util::hkdf_expand_label(base_key, "finished", {}, hash_len, md, ec);
         if (ec)
         {
             return {};

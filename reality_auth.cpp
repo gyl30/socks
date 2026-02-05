@@ -10,10 +10,7 @@
 namespace reality
 {
 
-bool build_auth_payload(const std::vector<std::uint8_t>& short_id,
-                        std::uint32_t timestamp,
-                        const std::array<std::uint8_t, 2>& nonce,
-                        std::array<std::uint8_t, AUTH_PAYLOAD_LEN>& out)
+bool build_auth_payload(const std::vector<std::uint8_t>& short_id, std::uint32_t timestamp, std::array<std::uint8_t, AUTH_PAYLOAD_LEN>& out)
 {
     if (short_id.size() > SHORT_ID_MAX_LEN)
     {
@@ -21,21 +18,21 @@ bool build_auth_payload(const std::vector<std::uint8_t>& short_id,
     }
 
     out.fill(0);
+
     out[0] = 1;
-    out[1] = static_cast<std::uint8_t>(short_id.size());
+    out[1] = 0;
+    out[2] = 0;
+    out[3] = 0;
+
+    out[4] = static_cast<std::uint8_t>((timestamp >> 24) & 0xFF);
+    out[5] = static_cast<std::uint8_t>((timestamp >> 16) & 0xFF);
+    out[6] = static_cast<std::uint8_t>((timestamp >> 8) & 0xFF);
+    out[7] = static_cast<std::uint8_t>(timestamp & 0xFF);
 
     for (std::size_t i = 0; i < short_id.size(); ++i)
     {
-        out[2 + i] = short_id[i];
+        out[8 + i] = short_id[i];
     }
-
-    out[10] = static_cast<std::uint8_t>((timestamp >> 24) & 0xFF);
-    out[11] = static_cast<std::uint8_t>((timestamp >> 16) & 0xFF);
-    out[12] = static_cast<std::uint8_t>((timestamp >> 8) & 0xFF);
-    out[13] = static_cast<std::uint8_t>(timestamp & 0xFF);
-
-    out[14] = nonce[0];
-    out[15] = nonce[1];
 
     return true;
 }
@@ -48,24 +45,16 @@ std::optional<auth_payload> parse_auth_payload(std::span<const std::uint8_t> pay
     }
 
     auth_payload out;
-    out.version = payload[0];
-    if (out.version != 1)
-    {
-        return std::nullopt;
-    }
 
-    const std::uint8_t short_len = payload[1];
-    if (short_len > SHORT_ID_MAX_LEN)
-    {
-        return std::nullopt;
-    }
+    out.version_x = payload[0];
+    out.version_y = payload[1];
+    out.version_z = payload[2];
 
-    out.short_id.assign(payload.begin() + 2, payload.begin() + 2 + short_len);
+    out.timestamp = (static_cast<std::uint32_t>(payload[4]) << 24) | (static_cast<std::uint32_t>(payload[5]) << 16) |
+                    (static_cast<std::uint32_t>(payload[6]) << 8) | static_cast<std::uint32_t>(payload[7]);
 
-    out.timestamp = (static_cast<std::uint32_t>(payload[10]) << 24) | (static_cast<std::uint32_t>(payload[11]) << 16) |
-                    (static_cast<std::uint32_t>(payload[12]) << 8) | static_cast<std::uint32_t>(payload[13]);
+    std::copy(payload.begin() + 8, payload.begin() + 16, out.short_id.begin());
 
-    out.nonce = {payload[14], payload[15]};
     return out;
 }
 
