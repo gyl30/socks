@@ -205,7 +205,7 @@ def generate_keys():
         lines = output.strip().split('\n')
         sk = lines[0].split(': ')[1].strip()
         pk = lines[1].split(': ')[1].strip()
-        verify = lines[2].split(': ')[1].strip() if len(lines) > 2 and "Verify Key" in lines[2] else ""
+        verify = lines[2].split(': ')[1].strip() if len(lines) > 2 and "verify key" in lines[2] else ""
         return {"private_key": sk, "public_key": pk, "verify_public_key": verify}
     except Exception as e:
         raise Exception(f"Failed to generate keys via socks: {e}")
