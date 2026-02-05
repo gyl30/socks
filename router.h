@@ -14,7 +14,7 @@
 namespace mux
 {
 
-enum class route_type : uint8_t
+enum class route_type : std::uint8_t
 {
     direct,
     proxy,

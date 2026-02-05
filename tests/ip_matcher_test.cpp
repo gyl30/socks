@@ -3,7 +3,6 @@
 #include <vector>
 #include <fstream>
 
-#include <asio.hpp>
 #include <gtest/gtest.h>
 #include <asio/error_code.hpp>
 #include <asio/ip/address.hpp>
@@ -190,7 +189,7 @@ TEST_F(IpMatcherTest, LargeRuleSet)
         const int b2 = (i / 256) % 256;
         const int b3 = i % 256;
         char buf[64];
-        snprintf(buf, sizeof(buf), "10.%d.%d.0/24", b2, b3);
+        std::snprintf(buf, sizeof(buf), "10.%d.%d.0/24", b2, b3);
         rules.emplace_back(buf);
     }
     WriteRules(rules);
@@ -238,7 +237,7 @@ TEST_F(IpMatcherTest, AttackMixedIPv4IPv6Massive)
         rules.push_back("10." + std::to_string(i % 255) + ".0.0/16");
 
         char v6buf[100];
-        snprintf(v6buf, sizeof(v6buf), "2001:db8:%x::/48", i % 65536);
+        std::snprintf(v6buf, sizeof(v6buf), "2001:db8:%x::/48", i % 65536);
         rules.emplace_back(v6buf);
     }
 

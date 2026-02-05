@@ -20,7 +20,7 @@ class cipher_context
     [[nodiscard]] EVP_CIPHER_CTX* get() const { return ctx_.get(); }
     [[nodiscard]] bool valid() const { return ctx_ != nullptr; }
 
-    [[nodiscard]] bool init(bool encrypt, const EVP_CIPHER* cipher, const uint8_t* key, const uint8_t* iv, size_t iv_len) const
+    [[nodiscard]] bool init(bool encrypt, const EVP_CIPHER* cipher, const std::uint8_t* key, const std::uint8_t* iv, std::size_t iv_len) const
     {
         if (!valid())
         {

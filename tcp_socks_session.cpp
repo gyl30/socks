@@ -1,17 +1,17 @@
-#include <memory>
 #include <string>
-#include <utility>
 #include <vector>
+#include <memory>
+#include <utility>
 #include <cstdint>
 #include <system_error>
 
-#include <asio/as_tuple.hpp>
+#include <asio/write.hpp>
 #include <asio/buffer.hpp>
+#include <asio/ip/tcp.hpp>
 #include <asio/co_spawn.hpp>
 #include <asio/detached.hpp>
+#include <asio/as_tuple.hpp>
 #include <asio/use_awaitable.hpp>
-#include <asio/write.hpp>
-#include <asio/ip/tcp.hpp>
 #include <asio/experimental/awaitable_operators.hpp>
 
 #include "log.h"
@@ -28,20 +28,20 @@ namespace mux
 tcp_socks_session::tcp_socks_session(asio::ip::tcp::socket socket,
                                      std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager,
                                      std::shared_ptr<router> router,
-                                     const uint32_t sid)
+                                     const std::uint32_t sid)
     : socket_(std::move(socket)), router_(std::move(router)), tunnel_manager_(std::move(tunnel_manager))
 {
     ctx_.new_trace_id();
     ctx_.conn_id(sid);
 }
 
-void tcp_socks_session::start(const std::string& host, const uint16_t port)
+void tcp_socks_session::start(const std::string& host, const std::uint16_t port)
 {
     const auto self = shared_from_this();
     asio::co_spawn(socket_.get_executor(), [self, host, port]() -> asio::awaitable<void> { co_await self->run(host, port); }, asio::detached);
 }
 
-asio::awaitable<void> tcp_socks_session::run(const std::string& host, const uint16_t port)
+asio::awaitable<void> tcp_socks_session::run(const std::string& host, const std::uint16_t port)
 {
     const auto route = co_await router_->decide(ctx_, host, socket_.get_executor());
 
@@ -70,7 +70,7 @@ asio::awaitable<void> tcp_socks_session::run(const std::string& host, const uint
         co_return;
     }
 
-    uint8_t rep[] = {socks::VER, socks::REP_SUCCESS, 0, socks::ATYP_IPV4, 0, 0, 0, 0, 0, 0};
+    std::uint8_t rep[] = {socks::VER, socks::REP_SUCCESS, 0, socks::ATYP_IPV4, 0, 0, 0, 0, 0, 0};
     const auto [we, wn] = co_await asio::async_write(socket_, asio::buffer(rep), asio::as_tuple(asio::use_awaitable));
     if (we)
     {
@@ -86,26 +86,26 @@ asio::awaitable<void> tcp_socks_session::run(const std::string& host, const uint
     LOG_CTX_INFO(ctx_, "{} finished {}", log_event::CONN_CLOSE, ctx_.stats_summary());
 }
 
-asio::awaitable<void> tcp_socks_session::reply_error(const uint8_t code)
+asio::awaitable<void> tcp_socks_session::reply_error(const std::uint8_t code)
 {
-    uint8_t err[] = {socks::VER, code, 0, socks::ATYP_IPV4, 0, 0, 0, 0, 0, 0};
+    std::uint8_t err[] = {socks::VER, code, 0, socks::ATYP_IPV4, 0, 0, 0, 0, 0, 0};
     (void)co_await asio::async_write(socket_, asio::buffer(err), asio::as_tuple(asio::use_awaitable));
 }
 
 asio::awaitable<void> tcp_socks_session::client_to_upstream(upstream* backend)
 {
-    std::vector<uint8_t> buf(8192);
+    std::vector<std::uint8_t> buf(8192);
     for (;;)
     {
         std::error_code ec;
-        const uint32_t n = co_await socket_.async_read_some(asio::buffer(buf), asio::redirect_error(asio::use_awaitable, ec));
+        const std::uint32_t n = co_await socket_.async_read_some(asio::buffer(buf), asio::redirect_error(asio::use_awaitable, ec));
         if (ec || n == 0)
         {
             LOG_CTX_WARN(ctx_, "{} failed to read from client {}", log_event::SOCKS, ec.message());
             break;
         }
 
-        const std::vector<uint8_t> chunk(buf.begin(), buf.begin() + n);
+        const std::vector<std::uint8_t> chunk(buf.begin(), buf.begin() + n);
         const auto written = co_await backend->write(chunk);
         if (written == 0)
         {
@@ -118,7 +118,7 @@ asio::awaitable<void> tcp_socks_session::client_to_upstream(upstream* backend)
 
 asio::awaitable<void> tcp_socks_session::upstream_to_client(upstream* backend)
 {
-    std::vector<uint8_t> buf(8192);
+    std::vector<std::uint8_t> buf(8192);
     for (;;)
     {
         const auto [ec, n] = co_await backend->read(buf);

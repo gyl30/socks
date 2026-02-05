@@ -1,17 +1,17 @@
-#include <cstdint>
-#include <memory>
 #include <string>
-#include <system_error>
-#include <utility>
 #include <vector>
+#include <memory>
+#include <utility>
+#include <cstdint>
+#include <system_error>
 
-#include <asio/as_tuple.hpp>
+#include <asio/write.hpp>
 #include <asio/buffer.hpp>
 #include <asio/co_spawn.hpp>
 #include <asio/detached.hpp>
-#include <asio/experimental/awaitable_operators.hpp>
+#include <asio/as_tuple.hpp>
 #include <asio/use_awaitable.hpp>
-#include <asio/write.hpp>
+#include <asio/experimental/awaitable_operators.hpp>
 
 #include "log.h"
 #include "protocol.h"
@@ -27,7 +27,7 @@ namespace mux
 
 udp_socks_session::udp_socks_session(asio::ip::tcp::socket socket,
                                      std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager,
-                                     const uint32_t sid)
+                                     const std::uint32_t sid)
     : timer_(socket.get_executor()),
       socket_(std::move(socket)),
       udp_socket_(socket_.get_executor()),
@@ -38,13 +38,13 @@ udp_socks_session::udp_socks_session(asio::ip::tcp::socket socket,
     ctx_.conn_id(sid);
 }
 
-void udp_socks_session::start(const std::string& host, const uint16_t port)
+void udp_socks_session::start(const std::string& host, const std::uint16_t port)
 {
     const auto self = shared_from_this();
     asio::co_spawn(socket_.get_executor(), [self, host, port]() -> asio::awaitable<void> { co_await self->run(host, port); }, asio::detached);
 }
 
-void udp_socks_session::on_data(std::vector<uint8_t> data) { recv_channel_.try_send(std::error_code(), std::move(data)); }
+void udp_socks_session::on_data(std::vector<std::uint8_t> data) { recv_channel_.try_send(std::error_code(), std::move(data)); }
 
 void udp_socks_session::on_close()
 {
@@ -59,7 +59,7 @@ void udp_socks_session::on_close()
 
 void udp_socks_session::on_reset() { on_close(); }
 
-asio::awaitable<void> udp_socks_session::run(const std::string& host, const uint16_t port)
+asio::awaitable<void> udp_socks_session::run(const std::string& host, const std::uint16_t port)
 {
     std::error_code ec;
     const auto tcp_local_ep = socket_.local_endpoint(ec);
@@ -85,13 +85,13 @@ asio::awaitable<void> udp_socks_session::run(const std::string& host, const uint
     if (ec)
     {
         LOG_CTX_ERROR(ctx_, "{} bind failed {}", log_event::SOCKS, ec.message());
-        uint8_t err[] = {socks::VER, socks::REP_GEN_FAIL, 0, socks::ATYP_IPV4, 0, 0, 0, 0, 0, 0};
+        std::uint8_t err[] = {socks::VER, socks::REP_GEN_FAIL, 0, socks::ATYP_IPV4, 0, 0, 0, 0, 0, 0};
         co_await asio::async_write(socket_, asio::buffer(err), asio::as_tuple(asio::use_awaitable));
         co_return;
     }
 
     const auto udp_local_ep = udp_socket_.local_endpoint(ec);
-    const uint16_t udp_bind_port = udp_local_ep.port();
+    const std::uint16_t udp_bind_port = udp_local_ep.port();
     LOG_CTX_INFO(ctx_, "{} started bound at {} {}", log_event::SOCKS, local_addr.to_string(), udp_bind_port);
 
     const auto stream = tunnel_manager_->create_stream();
@@ -102,7 +102,7 @@ asio::awaitable<void> udp_socks_session::run(const std::string& host, const uint
     }
 
     const syn_payload syn{.socks_cmd = socks::CMD_UDP_ASSOCIATE, .addr = "0.0.0.0", .port = 0};
-    std::vector<uint8_t> syn_data;
+    std::vector<std::uint8_t> syn_data;
     mux_codec::encode_syn(syn, syn_data);
     ec = co_await tunnel_manager_->connection()->send_async(stream->id(), CMD_SYN, std::move(syn_data));
     if (ec)
@@ -120,7 +120,7 @@ asio::awaitable<void> udp_socks_session::run(const std::string& host, const uint
         co_return;
     }
 
-    std::vector<uint8_t> final_rep;
+    std::vector<std::uint8_t> final_rep;
     final_rep.reserve(22);
     final_rep.push_back(socks::VER);
     final_rep.push_back(socks::REP_SUCCESS);
@@ -139,8 +139,8 @@ asio::awaitable<void> udp_socks_session::run(const std::string& host, const uint
         final_rep.insert(final_rep.end(), bytes.begin(), bytes.end());
     }
 
-    final_rep.push_back(static_cast<uint8_t>((udp_bind_port >> 8) & 0xFF));
-    final_rep.push_back(static_cast<uint8_t>(udp_bind_port & 0xFF));
+    final_rep.push_back(static_cast<std::uint8_t>((udp_bind_port >> 8) & 0xFF));
+    final_rep.push_back(static_cast<std::uint8_t>(udp_bind_port & 0xFF));
 
     const auto [we, wn] = co_await asio::async_write(socket_, asio::buffer(final_rep), asio::as_tuple(asio::use_awaitable));
     if (we)
@@ -164,7 +164,7 @@ asio::awaitable<void> udp_socks_session::run(const std::string& host, const uint
 
 asio::awaitable<void> udp_socks_session::udp_sock_to_stream(std::shared_ptr<mux_stream> stream, std::shared_ptr<asio::ip::udp::endpoint> client_ep)
 {
-    std::vector<uint8_t> buf(65535);
+    std::vector<std::uint8_t> buf(65535);
     asio::ip::udp::endpoint sender;
     for (;;)
     {

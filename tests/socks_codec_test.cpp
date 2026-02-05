@@ -1,7 +1,6 @@
 #include <vector>
 #include <cstdint>
 
-#include <asio.hpp>
 #include <gtest/gtest.h>
 #include <asio/ip/address.hpp>
 
@@ -80,28 +79,28 @@ TEST(SocksCodecTest, UDPHeaderRoundTripDomain)
 
 TEST(SocksCodecTest, DecodeTooShort)
 {
-    const std::vector<uint8_t> data = {0x00, 0x00, 0x00};
+    const std::vector<std::uint8_t> data = {0x00, 0x00, 0x00};
     socks_udp_header out;
     EXPECT_FALSE(socks_codec::decode_udp_header(data.data(), data.size(), out));
 }
 
 TEST(SocksCodecTest, DecodeInvalidATYP)
 {
-    const std::vector<uint8_t> data = {0x00, 0x00, 0x00, 0xFF, 0x00, 0x00};
+    const std::vector<std::uint8_t> data = {0x00, 0x00, 0x00, 0xFF, 0x00, 0x00};
     socks_udp_header out;
     EXPECT_FALSE(socks_codec::decode_udp_header(data.data(), data.size(), out));
 }
 
 TEST(SocksCodecTest, DecodeTruncatedIPv4)
 {
-    const std::vector<uint8_t> data = {0x00, 0x00, 0x00, 0x01, 0x7F, 0x00};
+    const std::vector<std::uint8_t> data = {0x00, 0x00, 0x00, 0x01, 0x7F, 0x00};
     socks_udp_header out;
     EXPECT_FALSE(socks_codec::decode_udp_header(data.data(), data.size(), out));
 }
 
 TEST(SocksCodecTest, DecodeTruncatedIPv6)
 {
-    std::vector<uint8_t> data = {0x00, 0x00, 0x00, 0x04};
+    std::vector<std::uint8_t> data = {0x00, 0x00, 0x00, 0x04};
     data.insert(data.end(), 10, 0x00);
     socks_udp_header out;
     EXPECT_FALSE(socks_codec::decode_udp_header(data.data(), data.size(), out));
@@ -109,21 +108,21 @@ TEST(SocksCodecTest, DecodeTruncatedIPv6)
 
 TEST(SocksCodecTest, DecodeTruncatedDomainLen)
 {
-    const std::vector<uint8_t> data = {0x00, 0x00, 0x00, 0x03};
+    const std::vector<std::uint8_t> data = {0x00, 0x00, 0x00, 0x03};
     socks_udp_header out;
     EXPECT_FALSE(socks_codec::decode_udp_header(data.data(), data.size(), out));
 }
 
 TEST(SocksCodecTest, DecodeTruncatedDomainBody)
 {
-    const std::vector<uint8_t> data = {0x00, 0x00, 0x00, 0x03, 0x05, 'a', 'b', 'c'};
+    const std::vector<std::uint8_t> data = {0x00, 0x00, 0x00, 0x03, 0x05, 'a', 'b', 'c'};
     socks_udp_header out;
     EXPECT_FALSE(socks_codec::decode_udp_header(data.data(), data.size(), out));
 }
 
 TEST(SocksCodecTest, DecodeDomainEmpty)
 {
-    const std::vector<uint8_t> data = {0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x50};
+    const std::vector<std::uint8_t> data = {0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x50};
     socks_udp_header out;
     EXPECT_TRUE(socks_codec::decode_udp_header(data.data(), data.size(), out));
     EXPECT_EQ(out.addr, "");
