@@ -1,7 +1,8 @@
+#include <ctime>
+#include <random>
 #include <string>
 #include <vector>
 #include <memory>
-#include <utility>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -564,6 +565,16 @@ std::vector<std::uint8_t> construct_encrypted_extensions(const std::string& alpn
         message_builder::push_vector_u16(ext, proto);
         message_builder::push_u16(extensions, static_cast<std::uint16_t>(ext.size()));
         message_builder::push_bytes(extensions, ext);
+    }
+
+    static thread_local std::mt19937 gen(std::random_device{}());
+    std::uniform_int_distribution<std::size_t> dist(10, 100);
+    const std::size_t padding_len = dist(gen);
+    message_builder::push_u16(extensions, tls_consts::ext::PADDING);
+    message_builder::push_u16(extensions, static_cast<std::uint16_t>(padding_len));
+    for (std::size_t i = 0; i < padding_len; ++i)
+    {
+        extensions.push_back(0x00);
     }
 
     message_builder::push_u16(msg, static_cast<std::uint16_t>(extensions.size()));
