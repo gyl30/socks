@@ -50,6 +50,11 @@ std::optional<auth_payload> parse_auth_payload(std::span<const std::uint8_t> pay
     out.version_y = payload[1];
     out.version_z = payload[2];
 
+    if (out.version_x != 1)
+    {
+        return std::nullopt;
+    }
+
     out.timestamp = (static_cast<std::uint32_t>(payload[4]) << 24) | (static_cast<std::uint32_t>(payload[5]) << 16) |
                     (static_cast<std::uint32_t>(payload[6]) << 8) | static_cast<std::uint32_t>(payload[7]);
 
