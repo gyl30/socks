@@ -372,6 +372,12 @@ asio::awaitable<bool> local_client::generate_and_send_client_hello(asio::ip::tcp
                                            hello_aad,
                                            ec);
 
+    if (ec || sid.size() != 32)
+    {
+        LOG_ERROR("auth encryption failed ct size {}", sid.size());
+        co_return false;
+    }
+
     if (hello_aad.size() > 39 + 32)
     {
         std::memcpy(hello_aad.data() + 39, sid.data(), 32);
