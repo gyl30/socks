@@ -184,6 +184,11 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::negotiate_re
     if (!auth_ok)
     {
         LOG_CTX_WARN(ctx, "{} auth failed sni {}", log_event::AUTH, client_sni);
+        static thread_local std::mt19937 delay_gen(std::random_device{}());
+        std::uniform_int_distribution<std::uint32_t> delay_dist(10, 50);
+        asio::steady_timer delay_timer(s->get_executor());
+        delay_timer.expires_after(std::chrono::milliseconds(delay_dist(delay_gen)));
+        co_await delay_timer.async_wait(asio::as_tuple(asio::use_awaitable));
         co_await handle_fallback(s, initial_buf, ctx, client_sni);
         co_return server_handshake_res{.ok = false};
     }
@@ -731,9 +736,10 @@ asio::awaitable<void> remote_server::handle_fallback(const std::shared_ptr<asio:
         LOG_CTX_INFO(ctx, "{} done", log_event::FALLBACK);
         co_return;
     }
+
     const auto target_host = fallback_target.first;
     const auto target_port = fallback_target.second;
-    asio::ip::tcp::socket t(s->get_executor());
+    auto t = std::make_shared<asio::ip::tcp::socket>(s->get_executor());
     asio::ip::tcp::resolver r(s->get_executor());
 
     LOG_CTX_INFO(ctx, "{} proxying sni {} to {} {}", log_event::FALLBACK, sni, target_host, target_port);
@@ -745,45 +751,46 @@ asio::awaitable<void> remote_server::handle_fallback(const std::shared_ptr<asio:
         co_return;
     }
 
-    const auto [connect_ec, ep_c] = co_await asio::async_connect(t, eps, asio::as_tuple(asio::use_awaitable));
+    const auto [connect_ec, ep_c] = co_await asio::async_connect(*t, eps, asio::as_tuple(asio::use_awaitable));
     if (connect_ec)
     {
-        LOG_CTX_WARN(ctx, "{} connect failed {}", log_event::FALLBACK, connect_ec.message());
+        LOG_CTX_WARN(ctx, "{} connect target failed {}", log_event::FALLBACK, connect_ec.message());
         co_return;
     }
 
     if (!buf.empty())
     {
-        const auto [we, wn] = co_await asio::async_write(t, asio::buffer(buf), asio::as_tuple(asio::use_awaitable));
-        if (we)
+        const auto [write_ec, n] = co_await asio::async_write(*t, asio::buffer(buf), asio::as_tuple(asio::use_awaitable));
+        if (write_ec)
         {
-            LOG_CTX_WARN(ctx, "{} forward initial data failed {}", log_event::FALLBACK, we.message());
+            LOG_CTX_WARN(ctx, "{} write initial buf failed", log_event::FALLBACK);
             co_return;
         }
     }
 
-    auto xfer = [](auto& f, auto& t) -> asio::awaitable<void>
+    auto proxy_half = [](std::shared_ptr<asio::ip::tcp::socket> from, std::shared_ptr<asio::ip::tcp::socket> to) -> asio::awaitable<void>
     {
-        char d[constants::net::BUFFER_SIZE];
+        std::vector<std::uint8_t> data(constants::net::BUFFER_SIZE);
         for (;;)
         {
-            const auto [read_ec, n] = co_await f.async_read_some(asio::buffer(d), asio::as_tuple(asio::use_awaitable));
-            if (read_ec || n == 0)
+            auto [read_ec, n] = co_await from->async_read_some(asio::buffer(data), asio::as_tuple(asio::use_awaitable));
+            if (read_ec)
             {
                 break;
             }
-            const auto [write_ec, wn] = co_await asio::async_write(t, asio::buffer(d, n), asio::as_tuple(asio::use_awaitable));
+            auto [write_ec, wn] = co_await asio::async_write(*to, asio::buffer(data, n), asio::as_tuple(asio::use_awaitable));
             if (write_ec)
             {
                 break;
             }
         }
-        std::error_code ignore;
-        ignore = f.shutdown(asio::ip::tcp::socket::shutdown_receive, ignore);
-        ignore = t.shutdown(asio::ip::tcp::socket::shutdown_send, ignore);
+        std::error_code ec;
+        ec = to->shutdown(asio::ip::tcp::socket::shutdown_send, ec);
     };
-    using asio::experimental::awaitable_operators::operator||;
-    co_await (xfer(*s, t) || xfer(t, *s));
+
+    using asio::experimental::awaitable_operators::operator&&;
+    co_await (proxy_half(s, t) && proxy_half(t, s));
+    LOG_CTX_INFO(ctx, "{} session finished", log_event::FALLBACK);
 }
 
 }    // namespace mux
