@@ -7,16 +7,16 @@
 
 namespace mux
 {
-constexpr std::uint8_t CMD_SYN = 0x01;
-constexpr std::uint8_t CMD_ACK = 0x02;
-constexpr std::uint8_t CMD_DAT = 0x03;
-constexpr std::uint8_t CMD_FIN = 0x04;
-constexpr std::uint8_t CMD_RST = 0x05;
+constexpr std::uint8_t kCmdSyn = 0x01;
+constexpr std::uint8_t kCmdAck = 0x02;
+constexpr std::uint8_t kCmdDat = 0x03;
+constexpr std::uint8_t kCmdFin = 0x04;
+constexpr std::uint8_t kCmdRst = 0x05;
 
-constexpr std::uint32_t STREAM_ID_HEARTBEAT = 0;
+constexpr std::uint32_t kStreamIdHeartbeat = 0;
 
-constexpr std::size_t HEADER_SIZE = 7;
-constexpr std::size_t MAX_PAYLOAD = (64L * 1024) - 128;
+constexpr std::size_t kHeaderSize = 7;
+constexpr std::size_t kMaxPayload = (64L * 1024) - 128;
 
 struct frame_header
 {

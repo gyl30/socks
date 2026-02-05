@@ -10,11 +10,14 @@
 #include <algorithm>
 #include <system_error>
 
+extern "C"
+{
 #include <openssl/evp.h>
 #include <openssl/kdf.h>
 #include <openssl/rand.h>
 #include <openssl/x509.h>
 #include <openssl/crypto.h>
+}
 
 #include "log.h"
 #include "crypto_util.h"
@@ -53,10 +56,10 @@ std::uint16_t crypto_util::random_grease()
     {
         idx = 0;
     }
-    static constexpr std::array<std::uint16_t, 16> GREASE_VALUES = {
+    static constexpr std::array<std::uint16_t, 16> kGreaseValues = {
         0x0a0a, 0x1a1a, 0x2a2a, 0x3a3a, 0x4a4a, 0x5a5a, 0x6a6a, 0x7a7a, 0x8a8a, 0x9a9a, 0xaaaa, 0xbaba, 0xcaca, 0xdada, 0xeaea, 0xfafa};
 
-    return GREASE_VALUES[idx % GREASE_VALUES.size()];
+    return kGreaseValues[idx % kGreaseValues.size()];
 }
 
 bool crypto_util::generate_x25519_keypair(std::uint8_t out_public[32], std::uint8_t out_private[32])
@@ -309,13 +312,13 @@ std::size_t crypto_util::aead_decrypt(const cipher_context& ctx,
         ec = std::make_error_code(std::errc::invalid_argument);
         return 0;
     }
-    if (ciphertext.size() < AEAD_TAG_SIZE)
+    if (ciphertext.size() < kAeadTagSize)
     {
         ec = std::make_error_code(std::errc::message_size);
         return 0;
     }
 
-    const std::size_t pt_len = ciphertext.size() - AEAD_TAG_SIZE;
+    const std::size_t pt_len = ciphertext.size() - kAeadTagSize;
     if (output_buffer.size() < pt_len)
     {
         ec = std::make_error_code(std::errc::no_buffer_space);
@@ -333,7 +336,7 @@ std::size_t crypto_util::aead_decrypt(const cipher_context& ctx,
 
     const std::uint8_t* tag = ciphertext.data() + pt_len;
 
-    if (EVP_CIPHER_CTX_ctrl(ctx.get(), EVP_CTRL_GCM_SET_TAG, AEAD_TAG_SIZE, const_cast<void*>(static_cast<const void*>(tag))) != 1)
+    if (EVP_CIPHER_CTX_ctrl(ctx.get(), EVP_CTRL_GCM_SET_TAG, kAeadTagSize, const_cast<void*>(static_cast<const void*>(tag))) != 1)
     {
         ec = std::make_error_code(std::errc::bad_message);
         return 0;
@@ -373,12 +376,12 @@ std::vector<std::uint8_t> crypto_util::aead_decrypt(const EVP_CIPHER* cipher,
                                                     std::error_code& ec)
 {
     const cipher_context ctx;
-    if (ciphertext.size() < AEAD_TAG_SIZE)
+    if (ciphertext.size() < kAeadTagSize)
     {
         ec = std::make_error_code(std::errc::message_size);
         return {};
     }
-    std::vector<std::uint8_t> out(ciphertext.size() - AEAD_TAG_SIZE);
+    std::vector<std::uint8_t> out(ciphertext.size() - kAeadTagSize);
     const std::size_t n = aead_decrypt(ctx, cipher, key, nonce, ciphertext, aad, out, ec);
     if (ec)
     {
@@ -412,7 +415,7 @@ void crypto_util::aead_encrypt_append(const cipher_context& ctx,
     int len = 0;
 
     std::size_t current_size = output_buffer.size();
-    output_buffer.resize(current_size + plaintext.size() + AEAD_TAG_SIZE);
+    output_buffer.resize(current_size + plaintext.size() + kAeadTagSize);
     std::uint8_t* out_ptr = output_buffer.data() + current_size;
 
     if (!aad.empty())
@@ -425,9 +428,9 @@ void crypto_util::aead_encrypt_append(const cipher_context& ctx,
     int final_len = 0;
     EVP_EncryptFinal_ex(ctx.get(), out_ptr + out_len, &final_len);
 
-    EVP_CIPHER_CTX_ctrl(ctx.get(), EVP_CTRL_GCM_GET_TAG, AEAD_TAG_SIZE, out_ptr + out_len + final_len);
+    EVP_CIPHER_CTX_ctrl(ctx.get(), EVP_CTRL_GCM_GET_TAG, kAeadTagSize, out_ptr + out_len + final_len);
 
-    output_buffer.resize(current_size + out_len + final_len + AEAD_TAG_SIZE);
+    output_buffer.resize(current_size + out_len + final_len + kAeadTagSize);
     ec.clear();
 }
 
