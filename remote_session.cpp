@@ -1,4 +1,3 @@
-#include <asio.hpp>
 #include <asio/write.hpp>
 #include <asio/ip/tcp.hpp>
 #include <asio/as_tuple.hpp>
@@ -15,7 +14,7 @@ namespace mux
 {
 
 remote_session::remote_session(std::shared_ptr<mux_connection> connection,
-                               const uint32_t id,
+                               const std::uint32_t id,
                                const asio::any_io_executor& ex,
                                const connection_context& ctx)
     : id_(id), resolver_(ex), target_socket_(ex), connection_(std::move(connection)), recv_channel_(ex, 128)
@@ -33,7 +32,7 @@ asio::awaitable<void> remote_session::start(const syn_payload& syn)
     {
         LOG_CTX_ERROR(ctx_, "{} resolve failed {}", log_event::MUX, resolve_ec.message());
         const ack_payload ack{.socks_rep = socks::REP_HOST_UNREACH, .bnd_addr = "", .bnd_port = 0};
-        std::vector<uint8_t> ack_data;
+        std::vector<std::uint8_t> ack_data;
         mux_codec::encode_ack(ack, ack_data);
         co_await connection_->send_async(id_, CMD_ACK, std::move(ack_data));
         co_return;
@@ -44,7 +43,7 @@ asio::awaitable<void> remote_session::start(const syn_payload& syn)
     {
         LOG_CTX_ERROR(ctx_, "{} connect failed {}", log_event::MUX, connect_ec.message());
         const ack_payload ack{.socks_rep = socks::REP_CONN_REFUSED, .bnd_addr = "", .bnd_port = 0};
-        std::vector<uint8_t> ack_data;
+        std::vector<std::uint8_t> ack_data;
         mux_codec::encode_ack(ack, ack_data);
         co_await connection_->send_async(id_, CMD_ACK, std::move(ack_data));
         co_return;
@@ -60,7 +59,7 @@ asio::awaitable<void> remote_session::start(const syn_payload& syn)
     LOG_CTX_INFO(ctx_, "{} connected {} {}", log_event::CONN_ESTABLISHED, syn.addr, syn.port);
 
     const ack_payload ack_pl{.socks_rep = socks::REP_SUCCESS, .bnd_addr = ep_conn.address().to_string(), .bnd_port = ep_conn.port()};
-    std::vector<uint8_t> ack_data;
+    std::vector<std::uint8_t> ack_data;
     mux_codec::encode_ack(ack_pl, ack_data);
     co_await connection_->send_async(id_, CMD_ACK, std::move(ack_data));
 
@@ -77,7 +76,7 @@ asio::awaitable<void> remote_session::start(const syn_payload& syn)
     LOG_CTX_INFO(ctx_, "{} finished {}", log_event::CONN_CLOSE, ctx_.stats_summary());
 }
 
-void remote_session::on_data(std::vector<uint8_t> data) { recv_channel_.try_send(std::error_code(), std::move(data)); }
+void remote_session::on_data(std::vector<std::uint8_t> data) { recv_channel_.try_send(std::error_code(), std::move(data)); }
 
 void remote_session::on_close()
 {
@@ -123,11 +122,11 @@ asio::awaitable<void> remote_session::upstream()
 
 asio::awaitable<void> remote_session::downstream()
 {
-    std::vector<uint8_t> buf(8192);
+    std::vector<std::uint8_t> buf(8192);
     for (;;)
     {
         std::error_code re;
-        const uint32_t n = co_await target_socket_.async_read_some(asio::buffer(buf), asio::redirect_error(asio::use_awaitable, re));
+        const std::uint32_t n = co_await target_socket_.async_read_some(asio::buffer(buf), asio::redirect_error(asio::use_awaitable, re));
         if (re || n == 0)
         {
             if (re && re != asio::error::eof && re != asio::error::operation_aborted)
@@ -136,7 +135,7 @@ asio::awaitable<void> remote_session::downstream()
             }
             break;
         }
-        if (co_await connection_->send_async(id_, CMD_DAT, std::vector<uint8_t>(buf.begin(), buf.begin() + n)))
+        if (co_await connection_->send_async(id_, CMD_DAT, std::vector<std::uint8_t>(buf.begin(), buf.begin() + n)))
         {
             LOG_CTX_WARN(ctx_, "{} failed to write to mux", log_event::DATA_SEND);
             break;

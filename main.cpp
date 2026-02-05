@@ -1,15 +1,15 @@
-#include <chrono>
-#include <memory>
 #include <string>
 #include <thread>
 #include <vector>
+#include <chrono>
+#include <memory>
 #include <csignal>
 #include <cstdint>
 #include <iostream>
 #include <system_error>
 
-#include <asio/io_context.hpp>
 #include <asio/signal_set.hpp>
+#include <asio/io_context.hpp>
 
 #include "log.h"
 #include "config.h"
@@ -26,15 +26,15 @@ static void print_usage(const char* prog)
 
 static void dump_x25519()
 {
-    uint8_t pub[32];
-    uint8_t priv[32];
+    std::uint8_t pub[32];
+    std::uint8_t priv[32];
     if (!reality::crypto_util::generate_x25519_keypair(pub, priv))
     {
         std::cout << "Failed to generate keypair\n";
         return;
     }
-    const std::vector<uint8_t> vec_priv(priv, priv + 32);
-    const std::vector<uint8_t> vec_pub(pub, pub + 32);
+    const std::vector<std::uint8_t> vec_priv(priv, priv + 32);
+    const std::vector<std::uint8_t> vec_pub(pub, pub + 32);
     std::error_code ec;
     auto verify_pub = reality::crypto_util::extract_ed25519_public_key(vec_priv, ec);
     std::cout << "Private Key: " << reality::crypto_util::bytes_to_hex(vec_priv) << '\n';

@@ -28,7 +28,7 @@
 namespace mux
 {
 
-enum class mux_connection_state : uint8_t
+enum class mux_connection_state : std::uint8_t
 {
     connected,
     closing,
@@ -37,21 +37,21 @@ enum class mux_connection_state : uint8_t
 
 struct mux_write_msg
 {
-    uint8_t command = 0;
-    uint32_t stream_id = 0;
-    std::vector<uint8_t> payload;
+    std::uint8_t command = 0;
+    std::uint32_t stream_id = 0;
+    std::vector<std::uint8_t> payload;
 };
 
 class mux_connection : public std::enable_shared_from_this<mux_connection>
 {
    public:
-    using stream_map_t = std::unordered_map<uint32_t, std::shared_ptr<mux_stream_interface>>;
-    using syn_callback_t = std::function<void(uint32_t, std::vector<uint8_t>)>;
+    using stream_map_t = std::unordered_map<std::uint32_t, std::shared_ptr<mux_stream_interface>>;
+    using syn_callback_t = std::function<void(std::uint32_t, std::vector<std::uint8_t>)>;
 
     mux_connection(asio::ip::tcp::socket socket,
                    reality_engine engine,
                    bool is_client,
-                   uint32_t conn_id,
+                   std::uint32_t conn_id,
                    const std::string& trace_id = "",
                    const config::timeout_t& timeout_cfg = {},
                    const config::limits_t& limits_cfg = {});
@@ -63,16 +63,18 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
 
     void set_syn_callback(syn_callback_t cb) { syn_callback_ = std::move(cb); }
 
-    virtual void register_stream(const uint32_t id, std::shared_ptr<mux_stream_interface> stream);
+    virtual void register_stream(const std::uint32_t id, std::shared_ptr<mux_stream_interface> stream);
 
-    virtual void remove_stream(const uint32_t id);
+    virtual void remove_stream(const std::uint32_t id);
 
-    [[nodiscard]] uint32_t acquire_next_id() { return next_stream_id_.fetch_add(2, std::memory_order_relaxed); }
-    [[nodiscard]] virtual uint32_t id() const { return cid_; }
+    [[nodiscard]] std::uint32_t acquire_next_id() { return next_stream_id_.fetch_add(2, std::memory_order_relaxed); }
+    [[nodiscard]] virtual std::uint32_t id() const { return cid_; }
 
     [[nodiscard]] asio::awaitable<void> start();
 
-    [[nodiscard]] virtual asio::awaitable<std::error_code> send_async(const uint32_t stream_id, const uint8_t cmd, std::vector<uint8_t> payload);
+    [[nodiscard]] virtual asio::awaitable<std::error_code> send_async(const std::uint32_t stream_id,
+                                                                      const std::uint8_t cmd,
+                                                                      std::vector<std::uint8_t> payload);
 
     void stop();
 
@@ -85,13 +87,13 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
 
     asio::awaitable<void> timeout_loop();
 
-    void on_mux_frame(mux::frame_header header, std::vector<uint8_t> payload);
+    void on_mux_frame(mux::frame_header header, std::vector<std::uint8_t> payload);
 
    private:
     connection_context ctx_;
-    uint32_t cid_;
-    uint64_t read_bytes_ = 0;
-    uint64_t write_bytes_ = 0;
+    std::uint32_t cid_;
+    std::uint64_t read_bytes_ = 0;
+    std::uint64_t write_bytes_ = 0;
     stream_map_t streams_;
     asio::steady_timer timer_;
     std::mutex streams_mutex_;
@@ -99,7 +101,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     asio::ip::tcp::socket socket_;
     reality_engine reality_engine_;
     mux_dispatcher mux_dispatcher_;
-    std::atomic<uint32_t> next_stream_id_;
+    std::atomic<std::uint32_t> next_stream_id_;
     std::atomic<mux_connection_state> connection_state_;
     std::chrono::steady_clock::time_point last_read_time_;
     std::chrono::steady_clock::time_point last_write_time_;

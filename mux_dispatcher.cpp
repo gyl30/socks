@@ -22,7 +22,7 @@ void mux_dispatcher::set_callback(frame_callback_t cb) { callback_ = std::move(c
 
 void mux_dispatcher::set_context(connection_context ctx) { ctx_ = std::move(ctx); }
 
-void mux_dispatcher::on_plaintext_data(std::span<const uint8_t> data)
+void mux_dispatcher::on_plaintext_data(std::span<const std::uint8_t> data)
 {
     if (data.empty())
     {
@@ -30,18 +30,18 @@ void mux_dispatcher::on_plaintext_data(std::span<const uint8_t> data)
     }
 
     auto mutable_bufs = buffer_.prepare(data.size());
-    const size_t n = asio::buffer_copy(mutable_bufs, asio::buffer(data.data(), data.size()));
+    const std::size_t n = asio::buffer_copy(mutable_bufs, asio::buffer(data.data(), data.size()));
     buffer_.commit(n);
 
     process_frames();
 }
 
-std::vector<uint8_t> mux_dispatcher::pack(uint32_t stream_id, uint8_t cmd, const std::vector<uint8_t>& payload)
+std::vector<std::uint8_t> mux_dispatcher::pack(std::uint32_t stream_id, std::uint8_t cmd, const std::vector<std::uint8_t>& payload)
 {
-    std::vector<uint8_t> frame;
+    std::vector<std::uint8_t> frame;
     frame.reserve(mux::HEADER_SIZE + payload.size());
 
-    const mux::frame_header h{.stream_id = stream_id, .length = static_cast<uint16_t>(payload.size()), .command = cmd};
+    const mux::frame_header h{.stream_id = stream_id, .length = static_cast<std::uint16_t>(payload.size()), .command = cmd};
     mux::mux_codec::encode_header(h, frame);
 
     if (!payload.empty())
@@ -55,13 +55,13 @@ void mux_dispatcher::process_frames()
 {
     while (buffer_.size() >= mux::HEADER_SIZE)
     {
-        const auto* ptr = static_cast<const uint8_t*>(buffer_.data().data());
+        const auto* ptr = static_cast<const std::uint8_t*>(buffer_.data().data());
         mux::frame_header header;
         if (!mux::mux_codec::decode_header(ptr, buffer_.size(), header))
         {
             break;
         }
-        const uint32_t total_frame_len = mux::HEADER_SIZE + header.length;
+        const std::uint32_t total_frame_len = mux::HEADER_SIZE + header.length;
 
         if (header.length > mux::MAX_PAYLOAD)
         {
@@ -75,7 +75,7 @@ void mux_dispatcher::process_frames()
             break;
         }
 
-        std::vector<uint8_t> payload(ptr + mux::HEADER_SIZE, ptr + total_frame_len);
+        std::vector<std::uint8_t> payload(ptr + mux::HEADER_SIZE, ptr + total_frame_len);
 
         buffer_.consume(total_frame_len);
 

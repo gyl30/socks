@@ -41,7 +41,7 @@ class mux_stream : public mux_stream_interface, public std::enable_shared_from_t
 
     asio::awaitable<void> close();
 
-    void on_data(std::vector<uint8_t> data) override;
+    void on_data(std::vector<std::uint8_t> data) override;
 
     void on_close() override;
 
@@ -58,8 +58,8 @@ class mux_stream : public mux_stream_interface, public std::enable_shared_from_t
     std::atomic<bool> is_closed_{false};
     std::atomic<bool> fin_sent_{false};
     std::atomic<bool> fin_received_{false};
-    std::atomic<uint64_t> tx_bytes_{0};
-    std::atomic<uint64_t> rx_bytes_{0};
+    std::atomic<std::uint64_t> tx_bytes_{0};
+    std::atomic<std::uint64_t> rx_bytes_{0};
 };
 
 }    // namespace mux

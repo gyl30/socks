@@ -1,15 +1,15 @@
-#include <cstring>
 #include <string>
-#include <system_error>
-#include <utility>
 #include <vector>
+#include <cstring>
+#include <utility>
+#include <system_error>
 
-#include <asio/as_tuple.hpp>
-#include <asio/buffer.hpp>
-#include <asio/connect.hpp>
-#include <asio/ip/tcp.hpp>
-#include <asio/use_awaitable.hpp>
 #include <asio/write.hpp>
+#include <asio/buffer.hpp>
+#include <asio/ip/tcp.hpp>
+#include <asio/connect.hpp>
+#include <asio/as_tuple.hpp>
+#include <asio/use_awaitable.hpp>
 
 #include "log.h"
 #include "protocol.h"
@@ -22,7 +22,7 @@
 namespace mux
 {
 
-asio::awaitable<bool> direct_upstream::connect(const std::string& host, const uint16_t port)
+asio::awaitable<bool> direct_upstream::connect(const std::string& host, const std::uint16_t port)
 {
     auto [res_ec, eps] = co_await resolver_.async_resolve(host, std::to_string(port), asio::as_tuple(asio::use_awaitable));
     if (res_ec)
@@ -47,13 +47,13 @@ asio::awaitable<bool> direct_upstream::connect(const std::string& host, const ui
     co_return true;
 }
 
-asio::awaitable<std::pair<std::error_code, size_t>> direct_upstream::read(std::vector<uint8_t>& buf)
+asio::awaitable<std::pair<std::error_code, std::size_t>> direct_upstream::read(std::vector<std::uint8_t>& buf)
 {
     auto [ec, n] = co_await socket_.async_read_some(asio::buffer(buf), asio::as_tuple(asio::use_awaitable));
     co_return std::make_pair(ec, n);
 }
 
-asio::awaitable<size_t> direct_upstream::write(const std::vector<uint8_t>& data)
+asio::awaitable<std::size_t> direct_upstream::write(const std::vector<std::uint8_t>& data)
 {
     auto [ec, n] = co_await asio::async_write(socket_, asio::buffer(data), asio::as_tuple(asio::use_awaitable));
     if (ec)
@@ -85,7 +85,7 @@ proxy_upstream::proxy_upstream(std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::so
 {
 }
 
-asio::awaitable<bool> proxy_upstream::connect(const std::string& host, const uint16_t port)
+asio::awaitable<bool> proxy_upstream::connect(const std::string& host, const std::uint16_t port)
 {
     stream_ = tunnel_->create_stream(ctx_.trace_id());
     if (stream_ == nullptr)
@@ -95,7 +95,7 @@ asio::awaitable<bool> proxy_upstream::connect(const std::string& host, const uin
     }
 
     const syn_payload syn{.socks_cmd = socks::CMD_CONNECT, .addr = host, .port = port, .trace_id = ctx_.trace_id()};
-    std::vector<uint8_t> syn_data;
+    std::vector<std::uint8_t> syn_data;
     mux_codec::encode_syn(syn, syn_data);
     const auto ec = co_await tunnel_->connection()->send_async(stream_->id(), CMD_SYN, std::move(syn_data));
     if (ec)
@@ -121,7 +121,7 @@ asio::awaitable<bool> proxy_upstream::connect(const std::string& host, const uin
     co_return true;
 }
 
-asio::awaitable<std::pair<std::error_code, size_t>> proxy_upstream::read(std::vector<uint8_t>& buf)
+asio::awaitable<std::pair<std::error_code, std::size_t>> proxy_upstream::read(std::vector<std::uint8_t>& buf)
 {
     auto [ec, data] = co_await stream_->async_read_some();
     if (!ec && !data.empty())
@@ -136,7 +136,7 @@ asio::awaitable<std::pair<std::error_code, size_t>> proxy_upstream::read(std::ve
     co_return std::make_pair(ec, 0);
 }
 
-asio::awaitable<size_t> proxy_upstream::write(const std::vector<uint8_t>& data)
+asio::awaitable<std::size_t> proxy_upstream::write(const std::vector<std::uint8_t>& data)
 {
     auto ec = co_await stream_->async_write_some(data.data(), data.size());
     if (ec)
