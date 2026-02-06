@@ -36,3 +36,21 @@ TEST(MuxDispatcherTest, PackAndOnData)
     EXPECT_EQ(received_header.length, original_payload.size());
     EXPECT_EQ(received_payload, original_payload);
 }
+
+TEST(MuxDispatcherTest, OversizedFrame)
+{
+    mux::mux_dispatcher dispatcher;
+    int call_count = 0;
+    dispatcher.set_callback([&](const mux::frame_header, std::vector<std::uint8_t>) { call_count++; });
+
+    std::vector<std::uint8_t> bad_packed = {0x12, 0x34, 0x56, 0x78, 0xFF, 0xFF, mux::kCmdDat};
+
+    dispatcher.on_plaintext_data(bad_packed);
+    EXPECT_EQ(call_count, 0);
+}
+
+TEST(MuxDispatcherTest, EmptyData)
+{
+    mux::mux_dispatcher dispatcher;
+    dispatcher.on_plaintext_data({});
+}

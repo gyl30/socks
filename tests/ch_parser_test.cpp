@@ -369,6 +369,67 @@ TEST(CHParserTest, SNINonHostName)
     EXPECT_TRUE(info.sni.empty());
 }
 
+TEST(CHParserTest, TruncatedHandshakeType)
+{
+    std::vector<uint8_t> buf = {0x16, 0x03, 0x03, 0x00, 0x01};
+    auto info = ch_parser::parse(buf);
+    EXPECT_TRUE(info.random.empty());
+}
+
+TEST(CHParserTest, TruncatedVersion)
+{
+    std::vector<uint8_t> buf = {0x16, 0x03, 0x03, 0x00, 0x05, 0x01, 0x00, 0x00};
+    auto info = ch_parser::parse(buf);
+    EXPECT_TRUE(info.random.empty());
+}
+
+TEST(CHParserTest, TruncatedCipherSuitesLen)
+{
+    ClientHelloBuilder builder;
+    builder.start_handshake();
+    auto buf = builder.get_buffer();
+
+    buf.resize(44 + 1);
+    auto info = ch_parser::parse(buf);
+    EXPECT_TRUE(info.random.size() == 32);
+}
+
+TEST(CHParserTest, TruncatedCompressionLen)
+{
+    ClientHelloBuilder builder;
+    builder.start_handshake();
+    auto buf = builder.get_buffer();
+    buf.resize(buf.size() - 5);
+    auto info = ch_parser::parse(buf);
+    EXPECT_TRUE(info.sni.empty());
+}
+
+TEST(CHParserTest, TruncatedExtensionsLen)
+{
+    ClientHelloBuilder builder;
+    builder.start_handshake();
+    auto buf = builder.get_buffer();
+
+    buf.resize(50);
+    auto info = ch_parser::parse(buf);
+    EXPECT_TRUE(info.sni.empty());
+}
+
+TEST(CHParserTest, TruncatedHandshakeHeader)
+{
+    std::vector<uint8_t> buf = {0x16, 0x03, 0x03, 0x00, 0x01, 0x01};
+    auto info = ch_parser::parse(buf);
+    EXPECT_TRUE(info.random.empty());
+}
+
+TEST(CHParserTest, TruncatedRandomField)
+{
+    std::vector<uint8_t> buf = {0x16, 0x03, 0x03, 0x00, 0x20, 0x01, 0x00, 0x00, 0x1c};
+    buf.insert(buf.end(), 10, 0xAA);
+    auto info = ch_parser::parse(buf);
+    EXPECT_TRUE(info.random.empty());
+}
+
 TEST(CHParserTest, KeyShareWrongLength)
 {
     ClientHelloBuilder builder;

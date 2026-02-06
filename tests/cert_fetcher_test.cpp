@@ -59,6 +59,14 @@ TEST(CertFetcherTest, ReassemblerLimits)
     std::vector<std::uint8_t> msg;
     std::error_code ec;
 
+    std::vector<std::uint8_t> tiny = {0x01, 0x01};
+    assembler.append(tiny);
+    EXPECT_FALSE(assembler.next(msg, ec));
+
+    std::vector<std::uint8_t> header_only = {0x01, 0x00, 0x00, 0x10};
+    assembler.append(header_only);
+    EXPECT_FALSE(assembler.next(msg, ec));
+
     std::vector<std::uint8_t> huge_header = {0x01, 0x01, 0x00, 0x01};
     assembler.append(huge_header);
     EXPECT_FALSE(assembler.next(msg, ec));
@@ -106,6 +114,23 @@ TEST(CertFetcherTest, MockServerScenarios)
     }
 
     {
+        std::vector<std::uint8_t> unexpected_type = {0x17, 0x03, 0x03, 0x00, 0x05, 0x01, 0x02, 0x03, 0x04, 0x05};
+        std::uint16_t port = run_mock_server(unexpected_type);
+
+        asio::co_spawn(
+            ctx,
+            [&]() -> asio::awaitable<void>
+            {
+                auto res = co_await reality::cert_fetcher::fetch(co_await asio::this_coro::executor, "127.0.0.1", port, "localhost", "test");
+                EXPECT_FALSE(res.has_value());
+                co_return;
+            },
+            asio::detached);
+        ctx.run();
+        ctx.restart();
+    }
+
+    {
         std::vector<std::uint8_t> short_sh = {0x16, 0x03, 0x03, 0x00, 0x05, 0x02, 0x00, 0x00, 0x00, 0x01};
         std::uint16_t port = run_mock_server(short_sh);
 
@@ -138,4 +163,134 @@ TEST(CertFetcherTest, MockServerScenarios)
         ctx.run();
         ctx.restart();
     }
+
+    {
+        std::vector<uint8_t> bad_cs_sh = {0x16, 0x03, 0x03, 0x00, 0x30, 0x02, 0x00, 0x00, 0x2c, 0x03, 0x03, 0,    0,    0,    0,   0,
+                                          0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,   0,
+                                          0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0x00, 0x00, 0x00, 0x00};
+        uint16_t port = run_mock_server(bad_cs_sh);
+
+        asio::co_spawn(
+            ctx,
+            [&]() -> asio::awaitable<void>
+            {
+                auto res = co_await reality::cert_fetcher::fetch(co_await asio::this_coro::executor, "127.0.0.1", port, "localhost", "test");
+                EXPECT_FALSE(res.has_value());
+                co_return;
+            },
+            asio::detached);
+        ctx.run();
+        ctx.restart();
+    }
+
+    {
+        std::vector<uint8_t> short_sid_sh = {0x16, 0x03, 0x03, 0x00, 0x26, 0x02, 0x00, 0x00, 0x22, 0x03, 0x03, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                                             0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+
+        };
+        uint16_t port = run_mock_server(short_sid_sh);
+
+        asio::co_spawn(
+            ctx,
+            [&]() -> asio::awaitable<void>
+            {
+                auto res = co_await reality::cert_fetcher::fetch(co_await asio::this_coro::executor, "127.0.0.1", port, "localhost", "test");
+                EXPECT_FALSE(res.has_value());
+                co_return;
+            },
+            asio::detached);
+        ctx.run();
+        ctx.restart();
+    }
+
+    {
+        std::vector<uint8_t> sh_1302 = {0x16, 0x03, 0x03, 0x00, 0x2a, 0x02, 0x00, 0x00, 0x26, 0x03, 0x03, 0,    0,    0,    0,   0,
+                                        0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,   0,
+                                        0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0x00, 0x13, 0x02, 0x00};
+        uint16_t port = run_mock_server(sh_1302);
+
+        asio::co_spawn(
+            ctx,
+            [&]() -> asio::awaitable<void>
+            {
+                auto res = co_await reality::cert_fetcher::fetch(co_await asio::this_coro::executor, "127.0.0.1", port, "localhost", "test");
+                EXPECT_FALSE(res.has_value());
+                co_return;
+            },
+            asio::detached);
+        ctx.run();
+        ctx.restart();
+    }
+
+    {
+        std::vector<uint8_t> sh_1303 = {0x16, 0x03, 0x03, 0x00, 0x2a, 0x02, 0x00, 0x00, 0x26, 0x03, 0x03, 0,    0,    0,    0,   0,
+                                        0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,   0,
+                                        0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0x00, 0x13, 0x03, 0x00};
+        uint16_t port = run_mock_server(sh_1303);
+
+        asio::co_spawn(
+            ctx,
+            [&]() -> asio::awaitable<void>
+            {
+                auto res = co_await reality::cert_fetcher::fetch(co_await asio::this_coro::executor, "127.0.0.1", port, "localhost", "test");
+                EXPECT_FALSE(res.has_value());
+                co_return;
+            },
+            asio::detached);
+        ctx.run();
+        ctx.restart();
+    }
+
+    {
+        std::vector<uint8_t> short_sh_for_cs = {0x16, 0x03, 0x03, 0x00, 0x27, 0x02, 0x00, 0x00, 0x23, 0x03, 0x03, 0, 0, 0,   0,
+                                                0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0, 0, 0,   0,
+                                                0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0, 0, 0x00
+
+        };
+        uint16_t port = run_mock_server(short_sh_for_cs);
+
+        asio::co_spawn(
+            ctx,
+            [&]() -> asio::awaitable<void>
+            {
+                auto res = co_await reality::cert_fetcher::fetch(co_await asio::this_coro::executor, "127.0.0.1", port, "localhost", "test");
+                EXPECT_FALSE(res.has_value());
+                co_return;
+            },
+            asio::detached);
+        ctx.run();
+        ctx.restart();
+    }
+
+    {
+        std::vector<std::uint8_t> invalid_type = {0x99, 0x03, 0x03, 0x00, 0x01, 0x00};
+        uint16_t port = run_mock_server(invalid_type);
+
+        asio::co_spawn(
+            ctx,
+            [&]() -> asio::awaitable<void>
+            {
+                auto res = co_await reality::cert_fetcher::fetch(co_await asio::this_coro::executor, "127.0.0.1", port, "localhost", "test");
+                EXPECT_FALSE(res.has_value());
+                co_return;
+            },
+            asio::detached);
+        ctx.run();
+        ctx.restart();
+    }
+}
+
+TEST(CertFetcherTest, ConnectFailure)
+{
+    asio::io_context ctx;
+    asio::co_spawn(
+        ctx,
+        [&]() -> asio::awaitable<void>
+        {
+            auto res = co_await reality::cert_fetcher::fetch(co_await asio::this_coro::executor, "127.0.0.1", 1, "localhost", "test");
+            EXPECT_FALSE(res.has_value());
+            co_return;
+        },
+        asio::detached);
+    ctx.run();
 }
