@@ -5,7 +5,6 @@
 #include <string>
 #include <cstdint>
 #include <utility>
-
 #include <asio.hpp>
 
 #include "config.h"

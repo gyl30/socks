@@ -8,8 +8,8 @@
 #include <cstdint>
 #include <system_error>
 
-#include <asio/streambuf.hpp>
 #include <asio/error.hpp>
+#include <asio/streambuf.hpp>
 
 #include "reality_core.h"
 #include "cipher_context.h"
