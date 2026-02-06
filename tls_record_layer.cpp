@@ -11,7 +11,6 @@ extern "C"
 {
 #include <openssl/evp.h>
 #include <openssl/rand.h>
-
 }
 
 #include "crypto_util.h"

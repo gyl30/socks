@@ -49,7 +49,7 @@ class RemoteServerMuxTest : public ::testing::Test
     void SetUp() override
     {
         std::uint8_t pub[32], priv[32];
-        (void)reality::crypto_util::generate_x25519_keypair(pub, priv);
+        ASSERT_TRUE(reality::crypto_util::generate_x25519_keypair(pub, priv));
         server_priv_key = reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(priv, priv + 32));
         server_pub_key = reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(pub, pub + 32));
         short_id = "0102030405060708";

@@ -28,6 +28,8 @@ add_socks_test(cert_manager_test "../cert_manager.cpp;${REALITY_SOURCES};${COMMO
 add_socks_test(log_test "${COMMON_SOURCES}")
 add_socks_test(transcript_test "${REALITY_SOURCES};${COMMON_SOURCES}")
 add_socks_test(log_context_test "${COMMON_SOURCES}")
+add_socks_test(context_pool_test "../context_pool.cpp;${COMMON_SOURCES}")
+add_socks_test(reality_engine_test "${REALITY_SOURCES};${COMMON_SOURCES}")
 add_socks_test(ip_matcher_test "../ip_matcher.cpp;${COMMON_SOURCES}")
 add_socks_test(mux_codec_test "../mux_codec.cpp;${COMMON_SOURCES}")
 add_socks_test(socks_codec_test "../protocol.cpp;${COMMON_SOURCES}")

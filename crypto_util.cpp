@@ -17,7 +17,6 @@ extern "C"
 #include <openssl/rand.h>
 #include <openssl/x509.h>
 #include <openssl/crypto.h>
-
 }
 
 #include "log.h"
