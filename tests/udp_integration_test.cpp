@@ -8,11 +8,11 @@
 
 #include <gtest/gtest.h>
 #include <asio/write.hpp>
+#include <asio/ip/tcp.hpp>
+#include <asio/ip/udp.hpp>
 #include <asio/co_spawn.hpp>
 #include <asio/as_tuple.hpp>
 #include <asio/detached.hpp>
-#include <asio/ip/tcp.hpp>
-#include <asio/ip/udp.hpp>
 #include <asio/this_coro.hpp>
 #include <asio/steady_timer.hpp>
 #include <asio/use_awaitable.hpp>

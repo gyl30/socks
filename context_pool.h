@@ -2,13 +2,13 @@
 #define CONTEXT_POOL_H
 
 #include <atomic>
-#include <cstddef>
 #include <memory>
-#include <system_error>
 #include <vector>
+#include <cstddef>
+#include <system_error>
 
-#include <asio/executor_work_guard.hpp>
 #include <asio/io_context.hpp>
+#include <asio/executor_work_guard.hpp>
 
 namespace mux
 {

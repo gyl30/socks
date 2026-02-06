@@ -22,12 +22,13 @@ extern "C"
 {
 #include <openssl/evp.h>
 #include <openssl/rand.h>
+
 }
 
 #include "log.h"
-#include "cert_fetcher.h"
 #include "crypto_util.h"
 #include "log_context.h"
+#include "cert_fetcher.h"
 #include "reality_core.h"
 #include "reality_messages.h"
 #include "tls_key_schedule.h"

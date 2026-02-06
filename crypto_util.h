@@ -1,20 +1,21 @@
 #ifndef CRYPTO_UTIL_H
 #define CRYPTO_UTIL_H
 
+#include <span>
+#include <string>
+#include <vector>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <iomanip>
-#include <span>
 #include <sstream>
-#include <string>
 #include <system_error>
-#include <vector>
 
 extern "C"
 {
 #include <openssl/evp.h>
 #include <openssl/kdf.h>
+
 }
 
 #include "reality_core.h"

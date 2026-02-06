@@ -7,8 +7,8 @@
 #include <gtest/gtest.h>
 #include <asio/io_context.hpp>
 
-#include "mux_stream.h"
 #include "test_util.h"
+#include "mux_stream.h"
 #include "mux_protocol.h"
 #include "mock_mux_connection.h"
 

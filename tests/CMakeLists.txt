@@ -38,6 +38,7 @@ add_socks_test(ch_parser_test "../ch_parser.cpp;${COMMON_SOURCES}")
 add_socks_test(reality_messages_test "../reality_messages.cpp;${REALITY_SOURCES};${COMMON_SOURCES}")
 add_socks_test(tls_record_layer_test "../tls_record_layer.cpp;${CRYPTO_SOURCES};${COMMON_SOURCES}")
 add_socks_test(config_test "../config.cpp;${COMMON_SOURCES}")
+add_socks_test(reflect_test "${COMMON_SOURCES}")
 
 add_socks_test(local_client_test 
     "../local_client.cpp;../remote_server.cpp;../router.cpp;../socks_session.cpp;../tcp_socks_session.cpp;../udp_socks_session.cpp;../cert_fetcher.cpp;../ch_parser.cpp;../ip_matcher.cpp;../remote_session.cpp;../remote_udp_session.cpp;../upstream.cpp;../protocol.cpp;../config.cpp;../context_pool.cpp;../replay_cache.cpp;../domain_matcher.cpp;../cert_manager.cpp;../key_rotator.cpp;${MUX_SOURCES};${COMMON_SOURCES}")

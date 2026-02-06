@@ -28,6 +28,7 @@ extern "C"
 #include <openssl/evp.h>
 #include <openssl/rand.h>
 #include <openssl/crypto.h>
+
 }
 
 #include "log.h"
@@ -724,6 +725,7 @@ asio::awaitable<void> local_client::accept_local_loop()
         LOG_ERROR("local acceptor bind failed {}", ec.message());
         co_return;
     }
+    listen_port_ = acceptor_.local_endpoint().port();
     ec = acceptor_.listen(asio::socket_base::max_listen_connections, ec);
     if (ec)
     {

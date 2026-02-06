@@ -13,6 +13,7 @@ extern "C"
 {
 #include <openssl/evp.h>
 #include <openssl/rand.h>
+
 }
 
 #include "reality_core.h"

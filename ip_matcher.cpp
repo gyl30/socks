@@ -6,10 +6,10 @@
 #include <fstream>
 #include <utility>
 #include <charconv>
+#include <asio.hpp>
 #include <string_view>
 #include <system_error>
 
-#include <asio.hpp>
 #include <asio/ip/address.hpp>
 #include <asio/ip/address_v4.hpp>
 #include <asio/ip/address_v6.hpp>

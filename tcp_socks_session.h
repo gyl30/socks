@@ -1,12 +1,12 @@
 #ifndef TCP_SOCKS_SESSION_H
 #define TCP_SOCKS_SESSION_H
 
-#include <cstdint>
 #include <memory>
 #include <string>
+#include <cstdint>
 
-#include <asio/awaitable.hpp>
 #include <asio/ip/tcp.hpp>
+#include <asio/awaitable.hpp>
 
 #include "router.h"
 #include "protocol.h"

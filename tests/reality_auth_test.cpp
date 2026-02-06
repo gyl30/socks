@@ -1,7 +1,7 @@
+#include <span>
 #include <array>
 #include <vector>
 #include <cstdint>
-#include <span>
 
 #include <gtest/gtest.h>
 
