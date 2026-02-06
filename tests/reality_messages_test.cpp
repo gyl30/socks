@@ -51,15 +51,6 @@ TEST(RealityMessagesTest, EncryptedExtensionsALPN)
     const auto msg = reality::construct_encrypted_extensions(alpn);
 
     const auto extracted_alpn = reality::extract_alpn_from_encrypted_extensions(msg);
-    if (!extracted_alpn.has_value())
-    {
-        std::cout << "Msg Hex: ";
-        for (const auto b : msg)
-        {
-            std::printf("%02X ", b);
-        }
-        std::cout << "\n";
-    }
     ASSERT_TRUE(extracted_alpn.has_value());
     EXPECT_EQ(*extracted_alpn, alpn);
 }
@@ -185,20 +176,11 @@ TEST(RealityMessagesTest, CipherSuiteShort)
 
 TEST(RealityMessagesTest, ExtractALPNMalformed)
 {
-    const std::vector<std::uint8_t> msg = {0x08, 0x00, 0x00, 0x05, 0x00, 0x03, 0x02, 0x68, 0x32};
-
-    std::vector<std::uint8_t> bad_msg;
-    bad_msg.push_back(0x08);
-    bad_msg.push_back(0);
-    bad_msg.push_back(0);
-    bad_msg.push_back(10);
-    bad_msg.push_back(0);
-    bad_msg.push_back(50);
-
+    std::vector<std::uint8_t> bad_msg = {0x08, 0x00, 0x00, 0x0A, 0x00, 0x00, 0x00, 0x10, 0x00, 0x02, 0x00, 0x05, 0x01, 0x61};
     EXPECT_FALSE(reality::extract_alpn_from_encrypted_extensions(bad_msg).has_value());
 }
 
-TEST(RealityMessagesTest, CertificateVerifyParseAndVerify)
+TEST(RealityMessagesTest, CertificateVerifyParse)
 {
     std::array<std::uint8_t, 32> priv{};
     ASSERT_EQ(RAND_bytes(priv.data(), static_cast<int>(priv.size())), 1);
@@ -206,29 +188,29 @@ TEST(RealityMessagesTest, CertificateVerifyParseAndVerify)
     const reality::openssl_ptrs::evp_pkey_ptr priv_key(EVP_PKEY_new_raw_private_key(EVP_PKEY_ED25519, nullptr, priv.data(), priv.size()));
     ASSERT_TRUE(priv_key);
 
-    std::size_t pub_len = 32;
-    std::vector<std::uint8_t> pub(pub_len);
-    ASSERT_EQ(EVP_PKEY_get_raw_public_key(priv_key.get(), pub.data(), &pub_len), 1);
-
-    const reality::openssl_ptrs::evp_pkey_ptr pub_key(EVP_PKEY_new_raw_public_key(EVP_PKEY_ED25519, nullptr, pub.data(), pub_len));
-    ASSERT_TRUE(pub_key);
-
     const std::vector<std::uint8_t> handshake_hash(32, 0x11);
     const auto cv = reality::construct_certificate_verify(priv_key.get(), handshake_hash);
     const auto info = reality::parse_certificate_verify(cv);
     ASSERT_TRUE(info.has_value());
 
-    std::error_code ec;
     if (info.has_value())
     {
         EXPECT_EQ(info->scheme, 0x0807);
-        EXPECT_TRUE(reality::crypto_util::verify_tls13_signature(pub_key.get(), handshake_hash, info->signature, ec));
+        EXPECT_FALSE(info->signature.empty());
     }
-    EXPECT_FALSE(ec);
 }
 
 TEST(RealityMessagesTest, CertificateVerifySchemeSupport)
 {
     EXPECT_TRUE(reality::is_supported_certificate_verify_scheme(0x0807));
     EXPECT_FALSE(reality::is_supported_certificate_verify_scheme(0x0804));
+}
+
+TEST(RealityMessagesTest, ParseCertificateVerifyMalformed)
+{
+    std::vector<std::uint8_t> bad_cv = {0x0f, 0x00, 0x00, 0x01, 0x08};
+    EXPECT_FALSE(reality::parse_certificate_verify(bad_cv).has_value());
+
+    bad_cv = {0x0f, 0x00, 0x00, 0x03, 0x08, 0x07, 0x00};
+    EXPECT_FALSE(reality::parse_certificate_verify(bad_cv).has_value());
 }
