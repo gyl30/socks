@@ -1,7 +1,7 @@
+#include <mutex>
 #include <atomic>
 #include <chrono>
 #include <memory>
-#include <mutex>
 
 extern "C"
 {
@@ -15,7 +15,7 @@ extern "C"
 namespace reality
 {
 
-key_rotator::key_rotator()
+key_rotator::key_rotator(std::chrono::seconds interval) : interval_(interval)
 {
     if (!rotate())
     {
@@ -53,7 +53,7 @@ bool key_rotator::rotate()
         return false;
     }
     std::atomic_store_explicit(&current_key_, new_key, std::memory_order_release);
-    next_rotate_time_.store(std::chrono::steady_clock::now() + std::chrono::seconds(60), std::memory_order_relaxed);
+    next_rotate_time_.store(std::chrono::steady_clock::now() + interval_, std::memory_order_relaxed);
     return true;
 }
 

@@ -1,8 +1,10 @@
-#include <gtest/gtest.h>
-#include "transcript.h"
-#include <openssl/evp.h>
 #include <vector>
 #include <cstdint>
+
+#include <gtest/gtest.h>
+#include <openssl/evp.h>
+
+#include "transcript.h"
 
 namespace reality
 {

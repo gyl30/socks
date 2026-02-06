@@ -57,6 +57,8 @@ class remote_server : public std::enable_shared_from_this<remote_server>
 
     void stop();
 
+    [[nodiscard]] std::uint16_t listen_port() const { return acceptor_.local_endpoint().port(); }
+
     [[nodiscard]] reality::cert_manager& cert_manager() { return cert_manager_; }
 
    private:

@@ -1,12 +1,12 @@
 #ifndef TLS_RECORD_LAYER_H
 #define TLS_RECORD_LAYER_H
 
+#include <span>
+#include <vector>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <span>
 #include <system_error>
-#include <vector>
 
 #include "crypto_util.h"
 

@@ -358,3 +358,32 @@ TEST(CryptoUtilTest, AEADInvalidArguments)
     (void)crypto_util::aead_encrypt(EVP_aes_256_gcm(), key, std::vector<uint8_t>(11, 0), {1}, {}, ec);
     EXPECT_EQ(ec, std::errc::invalid_argument);
 }
+
+TEST(CryptoUtilTest, NonGCMCipherContext)
+{
+    const std::vector<uint8_t> key(16, 0x11);
+    const std::vector<uint8_t> iv(16, 0x22);
+    const std::vector<uint8_t> plaintext = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10};
+
+    const reality::cipher_context ctx;
+
+    ASSERT_TRUE(ctx.init(true, EVP_aes_128_cbc(), key.data(), iv.data(), 16));
+
+    std::vector<uint8_t> ciphertext(32);
+    int out_len = 0;
+    ASSERT_EQ(EVP_EncryptUpdate(ctx.get(), ciphertext.data(), &out_len, plaintext.data(), static_cast<int>(plaintext.size())), 1);
+
+    int final_len = 0;
+    ASSERT_EQ(EVP_EncryptFinal_ex(ctx.get(), ciphertext.data() + out_len, &final_len), 1);
+    ciphertext.resize(out_len + final_len);
+
+    const reality::cipher_context ctx_dec;
+    ASSERT_TRUE(ctx_dec.init(false, EVP_aes_128_cbc(), key.data(), iv.data(), 16));
+
+    std::vector<uint8_t> decrypted(32);
+    ASSERT_EQ(EVP_DecryptUpdate(ctx_dec.get(), decrypted.data(), &out_len, ciphertext.data(), static_cast<int>(ciphertext.size())), 1);
+    ASSERT_EQ(EVP_DecryptFinal_ex(ctx_dec.get(), decrypted.data() + out_len, &final_len), 1);
+    decrypted.resize(out_len + final_len);
+
+    EXPECT_EQ(decrypted, plaintext);
+}

@@ -1,12 +1,12 @@
 #ifndef REALITY_AUTH_H
 #define REALITY_AUTH_H
 
+#include <span>
 #include <array>
+#include <vector>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
-#include <span>
-#include <vector>
 
 namespace reality
 {

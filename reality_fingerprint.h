@@ -1,13 +1,13 @@
 #ifndef REALITY_FINGERPRINT_H
 #define REALITY_FINGERPRINT_H
 
-#include <algorithm>
 #include <array>
-#include <cstdint>
 #include <memory>
 #include <random>
 #include <string>
 #include <vector>
+#include <cstdint>
+#include <algorithm>
 
 extern "C"
 {

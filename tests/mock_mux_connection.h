@@ -4,9 +4,9 @@
 #include <memory>
 #include <vector>
 #include <cstdint>
+#include <asio.hpp>
 #include <system_error>
 
-#include <asio.hpp>
 #include <gmock/gmock.h>
 
 #include "mux_connection.h"

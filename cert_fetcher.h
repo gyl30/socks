@@ -1,18 +1,18 @@
 #ifndef CERT_FETCHER_H
 #define CERT_FETCHER_H
 
+#include <span>
+#include <string>
+#include <vector>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <optional>
-#include <span>
-#include <string>
 #include <system_error>
-#include <vector>
 
-#include <asio/any_io_executor.hpp>
-#include <asio/awaitable.hpp>
 #include <asio/ip/tcp.hpp>
+#include <asio/awaitable.hpp>
+#include <asio/any_io_executor.hpp>
 
 #include "transcript.h"
 #include "log_context.h"

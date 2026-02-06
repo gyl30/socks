@@ -1,8 +1,10 @@
-#include <gtest/gtest.h>
-#include "cert_manager.h"
-#include "reality_messages.h"
 #include <vector>
 #include <string>
+
+#include <gtest/gtest.h>
+
+#include "cert_manager.h"
+#include "reality_messages.h"
 
 namespace reality
 {

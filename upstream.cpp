@@ -13,11 +13,11 @@
 
 #include "log.h"
 #include "protocol.h"
+#include "upstream.h"
 #include "mux_codec.h"
 #include "mux_stream.h"
 #include "log_context.h"
 #include "mux_protocol.h"
-#include "upstream.h"
 
 namespace mux
 {

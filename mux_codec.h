@@ -1,10 +1,10 @@
 #ifndef MUX_CODEC_H
 #define MUX_CODEC_H
 
-#include <cstddef>
-#include <cstdint>
 #include <string>
 #include <vector>
+#include <cstddef>
+#include <cstdint>
 
 #include "mux_protocol.h"
 

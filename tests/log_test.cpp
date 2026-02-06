@@ -1,7 +1,9 @@
-#include <gtest/gtest.h>
-#include "log.h"
 #include <cstdlib>
 #include <fstream>
+
+#include <gtest/gtest.h>
+
+#include "log.h"
 
 namespace mux
 {
