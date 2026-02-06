@@ -1,11 +1,11 @@
 #ifndef KEY_ROTATOR_H
 #define KEY_ROTATOR_H
 
+#include <mutex>
 #include <atomic>
 #include <chrono>
-#include <cstdint>
 #include <memory>
-#include <mutex>
+#include <cstdint>
 
 namespace reality
 {
@@ -19,7 +19,7 @@ struct x25519_keypair
 class key_rotator
 {
    public:
-    key_rotator();
+    explicit key_rotator(std::chrono::seconds interval = std::chrono::seconds(60));
 
     [[nodiscard]] std::shared_ptr<x25519_keypair> get_current_key();
 
@@ -28,6 +28,7 @@ class key_rotator
 
    private:
     std::mutex mutex_;
+    std::chrono::seconds interval_;
     std::shared_ptr<x25519_keypair> current_key_;
     std::atomic<std::chrono::steady_clock::time_point> next_rotate_time_;
 };

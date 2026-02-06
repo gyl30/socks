@@ -165,14 +165,17 @@ inline void reflect(JsonWriter& vis, JsonNull& v) { vis.m->Null(); }
 template <typename T>
 void reflect(JsonReader& vis, std::optional<T>& v)
 {
-    if (!vis.isNull())
+    if (vis.isNull())
+    {
+        v = std::nullopt;
+    }
+    else
     {
         v.emplace();
         reflect(vis, *v);
     }
 }
-template <typename T>
-void reflect(JsonWriter& vis, std::string_view& data)
+inline void reflect(JsonWriter& vis, std::string_view& data)
 {
     if (data.empty())
     {

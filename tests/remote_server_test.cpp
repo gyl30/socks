@@ -6,15 +6,15 @@
 #include <cstdint>
 
 #include <gtest/gtest.h>
-#include <asio/ip/tcp.hpp>
 #include <asio/write.hpp>
+#include <asio/ip/tcp.hpp>
 #include <asio/buffer.hpp>
 
 #include "ch_parser.h"
 #include "crypto_util.h"
 #include "context_pool.h"
-#include "remote_server.h"
 #include "reality_auth.h"
+#include "remote_server.h"
 #include "reality_messages.h"
 
 class RemoteServerTest : public ::testing::Test

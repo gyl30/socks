@@ -1,8 +1,8 @@
-#include <algorithm>
-#include <cstddef>
-#include <cstdint>
 #include <string>
 #include <vector>
+#include <cstddef>
+#include <cstdint>
+#include <algorithm>
 
 #include "log.h"
 #include "mux_codec.h"
