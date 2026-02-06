@@ -1,0 +1,92 @@
+#include <string>
+#include <vector>
+#include <memory>
+#include <thread>
+#include <chrono>
+#include <cstdint>
+#include <system_error>
+
+#include <gtest/gtest.h>
+#include <asio/write.hpp>
+#include <asio/ip/tcp.hpp>
+#include <asio/co_spawn.hpp>
+#include <asio/detached.hpp>
+#include <asio/awaitable.hpp>
+#include <asio/this_coro.hpp>
+#include <asio/io_context.hpp>
+#include <asio/steady_timer.hpp>
+#include <asio/use_awaitable.hpp>
+
+#include "crypto_util.h"
+#include "local_client.h"
+#include "context_pool.h"
+
+using asio::ip::tcp;
+
+TEST(LocalClientMockTest, HandshakeFailurePaths)
+{
+    mux::config::timeout_t timeouts;
+    timeouts.read = 1;
+    timeouts.write = 1;
+
+    std::uint8_t pub[32], priv[32];
+    reality::crypto_util::generate_x25519_keypair(pub, priv);
+    std::string server_pub_hex = reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(pub, pub + 32));
+    std::string verify_key_hex(64, 'b');
+
+    mux::config::limits_t limits;
+    limits.max_connections = 1;
+
+    auto run_mock_server_and_test = [&](std::vector<std::uint8_t> data_to_send)
+    {
+        std::error_code ec;
+        mux::io_context_pool pool(1, ec);
+        ASSERT_FALSE(ec);
+
+        asio::io_context server_ctx;
+        tcp::acceptor acceptor(server_ctx, tcp::endpoint(tcp::v4(), 0));
+        std::uint16_t port = acceptor.local_endpoint().port();
+
+        std::thread server_thread(
+            [&]()
+            {
+                try
+                {
+                    tcp::socket socket = acceptor.accept();
+                    asio::write(socket, asio::buffer(data_to_send));
+
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                }
+                catch (...)
+                {
+                }
+            });
+
+        auto client = std::make_shared<mux::local_client>(
+            pool, "127.0.0.1", std::to_string(port), 0, server_pub_hex, "example.com", "", verify_key_hex, timeouts, mux::config::socks_t{}, limits);
+
+        std::thread pool_thread([&pool]() { pool.run(); });
+
+        client->start();
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+        client->stop();
+        pool.stop();
+        if (pool_thread.joinable())
+            pool_thread.join();
+        if (server_thread.joinable())
+            server_thread.join();
+    };
+
+    {
+        std::vector<std::uint8_t> short_sh = {0x16, 0x03, 0x03, 0x00, 0x01};
+        run_mock_server_and_test(short_sh);
+    }
+
+    {
+        std::vector<uint8_t> short_sid_sh = {0x16, 0x03, 0x03, 0x00, 0x26, 0x02, 0x00, 0x00, 0x22, 0x03, 0x03, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                                             0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+        run_mock_server_and_test(short_sid_sh);
+    }
+}

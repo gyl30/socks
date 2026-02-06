@@ -50,7 +50,7 @@ TEST_F(IntegrationTest, FullHandshakeAndMux)
     ASSERT_FALSE(ec);
 
     const std::uint16_t server_port = 18844;
-    const std::uint16_t local_socks_port = 11080;
+    const std::uint16_t local_socks_port = 11081;
     const std::string sni = "www.google.com";
 
     mux::config::timeout_t timeouts;
@@ -63,11 +63,36 @@ TEST_F(IntegrationTest, FullHandshakeAndMux)
 
     const auto client = std::make_shared<mux::local_client>(
         pool, "127.0.0.1", std::to_string(server_port), local_socks_port, client_pub_key(), sni, short_id(), verify_pub_key(), timeouts);
+
+    std::thread pool_thread([&pool]() { pool.run(); });
+
+    server->start();
     client->start();
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    std::this_thread::sleep_for(std::chrono::seconds(5));
+
+    asio::io_context proxy_ctx;
+    asio::ip::tcp::socket proxy_socket(proxy_ctx);
+    proxy_socket.connect(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), local_socks_port), ec);
+    EXPECT_FALSE(ec) << "Connect failed: " << ec.message();
+    if (!ec)
+    {
+        std::uint8_t handshake[] = {0x05, 0x01, 0x00};
+        asio::write(proxy_socket, asio::buffer(handshake), ec);
+        EXPECT_FALSE(ec);
+
+        std::uint8_t response[2];
+        asio::read(proxy_socket, asio::buffer(response), ec);
+        EXPECT_FALSE(ec);
+        EXPECT_EQ(response[0], 0x05);
+        EXPECT_EQ(response[1], 0x00);
+    }
 
     client->stop();
     server->stop();
     pool.stop();
+    if (pool_thread.joinable())
+    {
+        pool_thread.join();
+    }
 }
