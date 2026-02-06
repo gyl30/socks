@@ -1,7 +1,9 @@
-#include <gtest/gtest.h>
-#include "log_context.h"
 #include <chrono>
 #include <thread>
+
+#include <gtest/gtest.h>
+
+#include "log_context.h"
 
 namespace mux
 {

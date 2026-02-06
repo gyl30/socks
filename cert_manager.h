@@ -1,12 +1,12 @@
 #ifndef CERT_MANAGER_H
 #define CERT_MANAGER_H
 
-#include <cstdint>
 #include <map>
 #include <mutex>
-#include <optional>
 #include <string>
 #include <vector>
+#include <cstdint>
+#include <optional>
 
 #include "reality_messages.h"
 

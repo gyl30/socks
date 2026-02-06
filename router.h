@@ -4,7 +4,6 @@
 #include <memory>
 #include <string>
 #include <cstdint>
-
 #include <asio.hpp>
 
 #include "ip_matcher.h"

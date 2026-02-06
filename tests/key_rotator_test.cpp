@@ -1,6 +1,8 @@
-#include <gtest/gtest.h>
 #include <thread>
 #include <vector>
+
+#include <gtest/gtest.h>
+
 #include "key_rotator.h"
 
 TEST(KeyRotatorTest, InitialKeyGenerated)
@@ -41,4 +43,18 @@ TEST(KeyRotatorTest, ThreadSafety)
     {
         EXPECT_EQ(keys[0], keys[i]);
     }
+}
+
+TEST(KeyRotatorTest, KeyRotation)
+{
+    reality::key_rotator rotator(std::chrono::seconds(1));
+    const auto key1 = rotator.get_current_key();
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+
+    const auto key2 = rotator.get_current_key();
+    EXPECT_NE(key1, key2);
+
+    const auto key3 = rotator.get_current_key();
+    EXPECT_EQ(key2, key3);
 }
