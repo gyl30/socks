@@ -100,7 +100,7 @@ TEST_F(LimitsTest, ConnectionPoolCapacity)
     accept_target();
 
     auto client = std::make_shared<mux::local_client>(pool,
-                                                      "::1",
+                                                      "127.0.0.1",
                                                       std::to_string(server_port),
                                                       local_socks_port,
                                                       client_pub_key_,
