@@ -28,7 +28,7 @@ class LimitsTest : public ::testing::Test
     {
         uint8_t pub[32];
         uint8_t priv[32];
-        (void)reality::crypto_util::generate_x25519_keypair(pub, priv);
+        ASSERT_TRUE(reality::crypto_util::generate_x25519_keypair(pub, priv));
         server_priv_key_ = reality::crypto_util::bytes_to_hex(std::vector<uint8_t>(priv, priv + 32));
         client_pub_key_ = reality::crypto_util::bytes_to_hex(std::vector<uint8_t>(pub, pub + 32));
         std::error_code ec;
