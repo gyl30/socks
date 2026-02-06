@@ -30,7 +30,7 @@ TEST(LocalClientMockTest, HandshakeFailurePaths)
     timeouts.write = 1;
 
     std::uint8_t pub[32], priv[32];
-    reality::crypto_util::generate_x25519_keypair(pub, priv);
+    ASSERT_TRUE(reality::crypto_util::generate_x25519_keypair(pub, priv));
     std::string server_pub_hex = reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(pub, pub + 32));
     std::string verify_key_hex(64, 'b');
 
