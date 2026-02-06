@@ -14,7 +14,6 @@ extern "C"
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
 #include <openssl/x509.h>
-
 }
 
 #include "crypto_util.h"

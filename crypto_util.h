@@ -15,7 +15,6 @@ extern "C"
 {
 #include <openssl/evp.h>
 #include <openssl/kdf.h>
-
 }
 
 #include "reality_core.h"
