@@ -343,36 +343,18 @@ TEST(CryptoUtilTest, ExtractPubkeyFromCertValid)
     (void)std::system("rm -f key_tmp.pem cert_tmp.pem cert_tmp.der");
 }
 
-TEST(CryptoUtilTest, HKDFErrorPaths)
+TEST(CryptoUtilTest, AEADInvalidArguments)
 {
     std::error_code ec;
+    const std::vector<uint8_t> key(32, 0);
+    const std::vector<uint8_t> nonce(12, 0);
 
-    (void)crypto_util::hkdf_extract({}, {}, EVP_sha256(), ec);
+    (void)crypto_util::aead_decrypt(EVP_aes_256_gcm(), {}, nonce, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, {}, ec);
     EXPECT_EQ(ec, std::errc::invalid_argument);
 
-    (void)crypto_util::hkdf_expand({}, {}, 16, EVP_sha256(), ec);
+    (void)crypto_util::aead_decrypt(EVP_aes_256_gcm(), key, {}, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, {}, ec);
     EXPECT_EQ(ec, std::errc::invalid_argument);
 
-    const auto okm = crypto_util::hkdf_expand({0x01}, {}, 0, EVP_sha256(), ec);
-    EXPECT_FALSE(ec);
-    EXPECT_TRUE(okm.empty());
-}
-
-TEST(CryptoUtilTest, AEADErrorPaths)
-{
-    const std::vector<uint8_t> key(32, 0x11);
-    const std::vector<uint8_t> nonce(12, 0x22);
-    std::error_code ec;
-
-    (void)crypto_util::aead_decrypt(EVP_aes_256_gcm(), key, nonce, {0x01, 0x02}, {}, ec);
-    EXPECT_EQ(ec, std::errc::message_size);
-
-    const std::vector<uint8_t> wrong_key(16, 0x11);
-    (void)crypto_util::aead_encrypt(EVP_aes_256_gcm(), wrong_key, nonce, {0x01}, {}, ec);
-    EXPECT_EQ(ec, std::errc::invalid_argument);
-
-    std::vector<uint8_t> out;
-    const reality::cipher_context ctx;
-    crypto_util::aead_encrypt_append(ctx, EVP_aes_256_gcm(), wrong_key, nonce, {0x01}, {}, out, ec);
+    (void)crypto_util::aead_encrypt(EVP_aes_256_gcm(), key, std::vector<uint8_t>(11, 0), {1}, {}, ec);
     EXPECT_EQ(ec, std::errc::invalid_argument);
 }

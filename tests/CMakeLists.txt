@@ -24,6 +24,10 @@ set(CRYPTO_SOURCES ../crypto_util.cpp)
 set(REALITY_SOURCES ../tls_record_layer.cpp ../reality_fingerprint.cpp ../reality_messages.cpp ../transcript.cpp ../reality_engine.cpp ${CRYPTO_SOURCES})
 set(MUX_SOURCES ../mux_connection.cpp ../mux_stream.cpp ../mux_dispatcher.cpp ../mux_codec.cpp ${REALITY_SOURCES})
 
+add_socks_test(cert_manager_test "../cert_manager.cpp;${REALITY_SOURCES};${COMMON_SOURCES}")
+add_socks_test(log_test "${COMMON_SOURCES}")
+add_socks_test(transcript_test "${REALITY_SOURCES};${COMMON_SOURCES}")
+add_socks_test(log_context_test "${COMMON_SOURCES}")
 add_socks_test(ip_matcher_test "../ip_matcher.cpp;${COMMON_SOURCES}")
 add_socks_test(mux_codec_test "../mux_codec.cpp;${COMMON_SOURCES}")
 add_socks_test(socks_codec_test "../protocol.cpp;${COMMON_SOURCES}")
@@ -50,6 +54,9 @@ add_socks_test(cert_fetcher_test "../cert_fetcher.cpp;../tls_record_layer.cpp;..
 
 add_socks_test(key_rotator_test "../key_rotator.cpp;${CRYPTO_SOURCES};${COMMON_SOURCES}")
 
+add_socks_test(local_client_mock_test 
+    "../local_client.cpp;../remote_server.cpp;../router.cpp;../socks_session.cpp;../tcp_socks_session.cpp;../udp_socks_session.cpp;../cert_fetcher.cpp;../ch_parser.cpp;../ip_matcher.cpp;../remote_session.cpp;../remote_udp_session.cpp;../upstream.cpp;../protocol.cpp;../config.cpp;../context_pool.cpp;../replay_cache.cpp;../domain_matcher.cpp;../cert_manager.cpp;../key_rotator.cpp;${MUX_SOURCES};${COMMON_SOURCES}")
+
 add_socks_test(client_server_integration_test 
     "../local_client.cpp;../remote_server.cpp;../router.cpp;../socks_session.cpp;../tcp_socks_session.cpp;../udp_socks_session.cpp;../cert_fetcher.cpp;../ch_parser.cpp;../ip_matcher.cpp;../remote_session.cpp;../remote_udp_session.cpp;../upstream.cpp;../protocol.cpp;../config.cpp;../context_pool.cpp;../replay_cache.cpp;../domain_matcher.cpp;../cert_manager.cpp;../key_rotator.cpp;${MUX_SOURCES};${COMMON_SOURCES}")
 
@@ -60,3 +67,6 @@ add_socks_test(udp_integration_test
     "../local_client.cpp;../remote_server.cpp;../router.cpp;../socks_session.cpp;../tcp_socks_session.cpp;../udp_socks_session.cpp;../cert_fetcher.cpp;../ch_parser.cpp;../ip_matcher.cpp;../remote_session.cpp;../remote_udp_session.cpp;../upstream.cpp;../protocol.cpp;../config.cpp;../context_pool.cpp;../replay_cache.cpp;../domain_matcher.cpp;../cert_manager.cpp;../key_rotator.cpp;${MUX_SOURCES};${COMMON_SOURCES}")
 add_socks_test(remote_server_test 
     "../remote_server.cpp;../router.cpp;../socks_session.cpp;../tcp_socks_session.cpp;../udp_socks_session.cpp;../cert_fetcher.cpp;../ch_parser.cpp;../ip_matcher.cpp;../remote_session.cpp;../remote_udp_session.cpp;../upstream.cpp;../protocol.cpp;../config.cpp;../context_pool.cpp;../replay_cache.cpp;../domain_matcher.cpp;../cert_manager.cpp;../key_rotator.cpp;${MUX_SOURCES};${COMMON_SOURCES}")
+
+add_socks_test(remote_server_mux_test 
+    "../local_client.cpp;../remote_server.cpp;../router.cpp;../socks_session.cpp;../tcp_socks_session.cpp;../udp_socks_session.cpp;../cert_fetcher.cpp;../ch_parser.cpp;../ip_matcher.cpp;../remote_session.cpp;../remote_udp_session.cpp;../upstream.cpp;../protocol.cpp;../config.cpp;../context_pool.cpp;../replay_cache.cpp;../domain_matcher.cpp;../cert_manager.cpp;../key_rotator.cpp;${MUX_SOURCES};${COMMON_SOURCES}")
