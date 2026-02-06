@@ -312,6 +312,11 @@ std::size_t crypto_util::aead_decrypt(const cipher_context& ctx,
         ec = std::make_error_code(std::errc::invalid_argument);
         return 0;
     }
+    if (nonce.size() != 12)
+    {
+        ec = std::make_error_code(std::errc::invalid_argument);
+        return 0;
+    }
     if (ciphertext.size() < kAeadTagSize)
     {
         ec = std::make_error_code(std::errc::message_size);
@@ -401,6 +406,11 @@ void crypto_util::aead_encrypt_append(const cipher_context& ctx,
                                       std::error_code& ec)
 {
     if (key.size() != static_cast<std::size_t>(EVP_CIPHER_key_length(cipher)))
+    {
+        ec = std::make_error_code(std::errc::invalid_argument);
+        return;
+    }
+    if (nonce.size() != 12)
     {
         ec = std::make_error_code(std::errc::invalid_argument);
         return;
