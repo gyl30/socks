@@ -1,10 +1,10 @@
 #include <chrono>
 #include <memory>
-#include <vector>
-#include <thread>
 #include <string>
-#include <utility>
+#include <thread>
+#include <vector>
 #include <cstdint>
+#include <utility>
 #include <system_error>
 
 #include <asio/read.hpp>
@@ -12,14 +12,14 @@
 #include <asio/write.hpp>
 #include <asio/buffer.hpp>
 #include <asio/ip/tcp.hpp>
-#include <asio/detached.hpp>
-#include <asio/co_spawn.hpp>
 #include <asio/as_tuple.hpp>
+#include <asio/co_spawn.hpp>
+#include <asio/detached.hpp>
 #include <asio/use_awaitable.hpp>
 
 #include "crypto_util.h"
-#include "local_client.h"
 #include "context_pool.h"
+#include "local_client.h"
 #include "reality_messages.h"
 #include "tls_record_layer.h"
 

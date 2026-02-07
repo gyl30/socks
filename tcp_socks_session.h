@@ -9,8 +9,8 @@
 #include <asio/awaitable.hpp>
 
 #include "router.h"
-#include "upstream.h"
 #include "protocol.h"
+#include "upstream.h"
 #include "mux_tunnel.h"
 #include "log_context.h"
 

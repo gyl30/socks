@@ -1,11 +1,11 @@
 #ifndef REALITY_MESSAGES_H
 #define REALITY_MESSAGES_H
 
-#include <vector>
 #include <string>
-#include <cstring>
-#include <cstdint>
+#include <vector>
 #include <cstddef>
+#include <cstdint>
+#include <cstring>
 #include <optional>
 
 extern "C"

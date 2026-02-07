@@ -1,8 +1,8 @@
 #ifndef REALITY_CORE_H
 #define REALITY_CORE_H
 
-#include <vector>
 #include <memory>
+#include <vector>
 #include <cstddef>
 #include <cstdint>
 

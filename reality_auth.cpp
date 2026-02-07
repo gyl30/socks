@@ -1,8 +1,8 @@
 #include <span>
 #include <array>
 #include <vector>
-#include <cstdint>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 
 #include "reality_auth.h"

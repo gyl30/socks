@@ -2,10 +2,10 @@
 #define UPSTREAM_H
 
 #include <memory>
-#include <vector>
 #include <string>
-#include <utility>
+#include <vector>
 #include <cstdint>
+#include <utility>
 #include <system_error>
 
 #include <asio/ip/tcp.hpp>

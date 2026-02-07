@@ -1,8 +1,8 @@
+#include <atomic>
 #include <chrono>
 #include <memory>
-#include <vector>
-#include <atomic>
 #include <string>
+#include <vector>
 #include <cstdint>
 
 #include <gtest/gtest.h>
@@ -10,8 +10,8 @@
 #include <asio/io_context.hpp>
 
 #include "crypto_util.h"
-#include "local_client.h"
 #include "context_pool.h"
+#include "local_client.h"
 #include "remote_server.h"
 
 namespace

@@ -1,14 +1,14 @@
 #include <span>
 #include <mutex>
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include <random>
-#include <chrono>
 #include <ranges>
-#include <vector>
 #include <string>
-#include <utility>
+#include <vector>
 #include <cstdint>
+#include <utility>
 #include <system_error>
 
 #include <asio/error.hpp>
@@ -27,8 +27,8 @@ extern "C"
 }
 
 #include "log.h"
-#include "reality_core.h"
 #include "mux_protocol.h"
+#include "reality_core.h"
 #include "mux_connection.h"
 
 namespace mux

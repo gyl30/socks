@@ -1,8 +1,8 @@
 #ifndef CIPHER_CONTEXT_H
 #define CIPHER_CONTEXT_H
 
-#include <cstdint>
 #include <cstddef>
+#include <cstdint>
 
 #include "reality_core.h"
 
