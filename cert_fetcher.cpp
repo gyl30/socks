@@ -1,16 +1,16 @@
 #include <span>
-#include <string>
 #include <vector>
-#include <utility>
+#include <string>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <utility>
 #include <optional>
 #include <system_error>
 
 #include <asio/read.hpp>
-#include <asio/write.hpp>
 #include <asio/error.hpp>
+#include <asio/write.hpp>
 #include <asio/buffer.hpp>
 #include <asio/ip/tcp.hpp>
 #include <asio/connect.hpp>
@@ -27,11 +27,11 @@ extern "C"
 #include "log.h"
 #include "crypto_util.h"
 #include "log_context.h"
-#include "cert_fetcher.h"
 #include "reality_core.h"
-#include "reality_messages.h"
-#include "tls_key_schedule.h"
+#include "cert_fetcher.h"
 #include "tls_record_layer.h"
+#include "tls_key_schedule.h"
+#include "reality_messages.h"
 #include "reality_fingerprint.h"
 
 namespace reality

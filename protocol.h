@@ -1,8 +1,8 @@
 #ifndef PROTOCOL_H
 #define PROTOCOL_H
 
-#include <string>
 #include <vector>
+#include <string>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>

@@ -1,17 +1,17 @@
-#include <string>
 #include <vector>
-#include <chrono>
+#include <string>
 #include <memory>
+#include <chrono>
 #include <cstdint>
 #include <system_error>
 
 #include <gtest/gtest.h>
 #include <asio/write.hpp>
 #include <asio/ip/tcp.hpp>
-#include <asio/co_spawn.hpp>
 #include <asio/detached.hpp>
-#include <asio/awaitable.hpp>
+#include <asio/co_spawn.hpp>
 #include <asio/this_coro.hpp>
+#include <asio/awaitable.hpp>
 #include <asio/io_context.hpp>
 #include <asio/steady_timer.hpp>
 #include <asio/use_awaitable.hpp>

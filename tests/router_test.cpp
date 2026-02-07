@@ -1,11 +1,11 @@
-#include <memory>
 #include <string>
+#include <memory>
 
 #include <gtest/gtest.h>
-#include <asio/co_spawn.hpp>
 #include <asio/detached.hpp>
-#include <asio/awaitable.hpp>
+#include <asio/co_spawn.hpp>
 #include <asio/this_coro.hpp>
+#include <asio/awaitable.hpp>
 #include <asio/io_context.hpp>
 
 #include "router.h"

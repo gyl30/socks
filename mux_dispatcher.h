@@ -3,8 +3,8 @@
 
 #include <span>
 #include <vector>
-#include <cstring>
 #include <cstdint>
+#include <cstring>
 #include <functional>
 
 #include <asio/buffer.hpp>

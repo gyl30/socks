@@ -2,8 +2,8 @@
 #define REALITY_ENGINE_H
 
 #include <span>
-#include <memory>
 #include <vector>
+#include <memory>
 #include <cstddef>
 #include <cstdint>
 #include <system_error>

@@ -2,8 +2,8 @@
 #define CERT_FETCHER_H
 
 #include <span>
-#include <string>
 #include <vector>
+#include <string>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -17,9 +17,9 @@
 #include "transcript.h"
 #include "log_context.h"
 #include "reality_core.h"
-#include "reality_messages.h"
-#include "tls_key_schedule.h"
 #include "tls_record_layer.h"
+#include "tls_key_schedule.h"
+#include "reality_messages.h"
 
 namespace reality
 {

@@ -2,8 +2,8 @@
 #include <cstdint>
 #include <system_error>
 
-#include <gtest/gtest.h>
 #include <openssl/evp.h>
+#include <gtest/gtest.h>
 
 #include "tls_record_layer.h"
 
@@ -78,6 +78,47 @@ TEST_F(TLSRecordLayerTest, TamperedCiphertext)
     const auto dec = tls_record_layer::decrypt_record(cipher(), key(), iv(), seq, enc, out_type, ec);
 
     EXPECT_TRUE(ec);
+}
+
+TEST_F(TLSRecordLayerTest, DecryptAllZeros)
+{
+    // Record where the whole decrypted content is zeros
+    // (This would be an invalid record in TLS 1.3 because it must end with a content type)
+    std::vector<uint8_t> zeros(20, 0);
+    const uint64_t seq = 0;
+    std::error_code ec;
+
+    // We manually encrypt it to bypass the padding logic in encrypt_record
+    const std::vector<uint8_t> aad = {0x17, 0x03, 0x03, 0x00, static_cast<uint8_t>(zeros.size() + 16)};
+    auto encrypted = reality::crypto_util::aead_encrypt(cipher(), key(), iv(), zeros, aad, ec);
+    ASSERT_FALSE(ec);
+
+    std::vector<uint8_t> record;
+    record.insert(record.end(), aad.begin(), aad.end());
+    record.insert(record.end(), encrypted.begin(), encrypted.end());
+
+    uint8_t out_type = 0;
+    (void)tls_record_layer::decrypt_record(cipher(), key(), iv(), seq, record, out_type, ec);
+
+    EXPECT_EQ(ec, std::errc::bad_message);
+}
+
+TEST_F(TLSRecordLayerTest, EncryptAppDataWithPadding)
+{
+    const std::vector<uint8_t> plaintext = {0x01, 0x02, 0x03};
+    const uint64_t seq = 10;
+    const uint8_t type = reality::kContentTypeApplicationData;
+    std::error_code ec;
+
+    const auto encrypted = tls_record_layer::encrypt_record(cipher(), key(), iv(), seq, plaintext, type, ec);
+    ASSERT_FALSE(ec);
+
+    uint8_t out_type = 0;
+    const auto decrypted = tls_record_layer::decrypt_record(cipher(), key(), iv(), seq, encrypted, out_type, ec);
+
+    ASSERT_FALSE(ec);
+    EXPECT_EQ(out_type, type);
+    EXPECT_EQ(decrypted, plaintext);
 }
 
 TEST_F(TLSRecordLayerTest, ShortMessage)

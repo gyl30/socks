@@ -1,19 +1,19 @@
-#include <string>
 #include <vector>
-#include <memory>
+#include <string>
 #include <thread>
+#include <memory>
 #include <chrono>
 #include <cstdint>
 
 #include <gtest/gtest.h>
 #include <asio/write.hpp>
-#include <asio/ip/tcp.hpp>
 #include <asio/buffer.hpp>
+#include <asio/ip/tcp.hpp>
 
 #include "ch_parser.h"
 #include "crypto_util.h"
-#include "context_pool.h"
 #include "reality_auth.h"
+#include "context_pool.h"
 #include "remote_server.h"
 #include "reality_messages.h"
 
@@ -36,7 +36,10 @@ class RemoteServerTest : public ::testing::Test
                                             std::vector<uint8_t>& out_sid)
     {
         std::uint8_t c_pub[32], c_priv[32];
-        ASSERT_TRUE(reality::crypto_util::generate_x25519_keypair(c_pub, c_priv));
+        if (!reality::crypto_util::generate_x25519_keypair(c_pub, c_priv))
+        {
+            return {};
+        }
         std::error_code ec;
         auto shared =
             reality::crypto_util::x25519_derive(reality::crypto_util::hex_to_bytes(server_priv_key), std::vector<uint8_t>(c_pub, c_pub + 32), ec);
@@ -204,6 +207,155 @@ TEST_F(RemoteServerTest, ClockSkewDetected)
     pool.stop();
     pool_thread.join();
     EXPECT_TRUE(fallback_triggered.load());
+}
+
+TEST_F(RemoteServerTest, AuthFailInvalidTLSHeader)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+    std::thread pool_thread([&pool] { pool.run(); });
+
+    std::uint16_t server_port = 29951;
+    std::uint16_t fallback_port = 29952;
+
+    asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), fallback_port));
+    std::atomic<bool> fallback_triggered{false};
+    fallback_acceptor.async_accept(
+        [&](std::error_code ec, asio::ip::tcp::socket peer)
+        {
+            if (!ec)
+                fallback_triggered = true;
+        });
+
+    auto server = std::make_shared<mux::remote_server>(pool,
+                                                       server_port,
+                                                       std::vector<mux::config::fallback_entry>{{"", "127.0.0.1", std::to_string(fallback_port)}},
+                                                       server_priv_key,
+                                                       "0102030405060708",
+                                                       mux::config::timeout_t{},
+                                                       mux::config::limits_t{});
+    server->start();
+
+    {
+        asio::ip::tcp::socket sock(pool.get_io_context());
+        sock.connect({asio::ip::make_address("127.0.0.1"), server_port});
+        // 0x17 is not 0x16 (Handshake)
+        std::vector<uint8_t> invalid_header = {0x17, 0x03, 0x03, 0x00, 0x05, 0x01, 0x02, 0x03, 0x04, 0x05};
+        asio::write(sock, asio::buffer(invalid_header));
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
+
+    server->stop();
+    pool.stop();
+    pool_thread.join();
+    EXPECT_TRUE(fallback_triggered.load());
+}
+
+TEST_F(RemoteServerTest, AuthFailBufferTooShort)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+    std::thread pool_thread([&pool] { pool.run(); });
+
+    std::uint16_t server_port = 29961;
+    std::uint16_t fallback_port = 29962;
+
+    asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), fallback_port));
+    std::atomic<bool> fallback_triggered{false};
+    fallback_acceptor.async_accept(
+        [&](std::error_code ec, asio::ip::tcp::socket peer)
+        {
+            if (!ec)
+                fallback_triggered = true;
+        });
+
+    auto server = std::make_shared<mux::remote_server>(pool,
+                                                       server_port,
+                                                       std::vector<mux::config::fallback_entry>{{"", "127.0.0.1", std::to_string(fallback_port)}},
+                                                       server_priv_key,
+                                                       "0102030405060708",
+                                                       mux::config::timeout_t{},
+                                                       mux::config::limits_t{});
+    server->start();
+
+    {
+        asio::ip::tcp::socket sock(pool.get_io_context());
+        sock.connect({asio::ip::make_address("127.0.0.1"), server_port});
+        // Only 4 bytes, less than 5 required for header
+        std::vector<uint8_t> short_buf = {0x16, 0x03, 0x03, 0x00};
+        asio::write(sock, asio::buffer(short_buf));
+        // Shutdown send to trigger EOF on server side
+        sock.shutdown(asio::ip::tcp::socket::shutdown_send);
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
+
+    server->stop();
+    pool.stop();
+    pool_thread.join();
+    EXPECT_TRUE(fallback_triggered.load());
+}
+
+TEST_F(RemoteServerTest, FallbackResolveFail)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+    std::thread pool_thread([&pool] { pool.run(); });
+
+    std::uint16_t server_port = 29971;
+
+    // Use an unresolvable hostname
+    auto server = std::make_shared<mux::remote_server>(pool,
+                                                       server_port,
+                                                       std::vector<mux::config::fallback_entry>{{"", "invalid.hostname.test", "80"}},
+                                                       server_priv_key,
+                                                       "0102030405060708",
+                                                       mux::config::timeout_t{},
+                                                       mux::config::limits_t{});
+    server->start();
+
+    {
+        asio::ip::tcp::socket sock(pool.get_io_context());
+        sock.connect({asio::ip::make_address("127.0.0.1"), server_port});
+        asio::write(sock, asio::buffer("TRIGGER FALLBACK"));
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    }
+
+    server->stop();
+    pool.stop();
+    pool_thread.join();
+}
+
+TEST_F(RemoteServerTest, FallbackConnectFail)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+    std::thread pool_thread([&pool] { pool.run(); });
+
+    std::uint16_t server_port = 29981;
+    // Port 1 is usually not listening
+    auto server = std::make_shared<mux::remote_server>(pool,
+                                                       server_port,
+                                                       std::vector<mux::config::fallback_entry>{{"", "127.0.0.1", "1"}},
+                                                       server_priv_key,
+                                                       "0102030405060708",
+                                                       mux::config::timeout_t{},
+                                                       mux::config::limits_t{});
+    server->start();
+
+    {
+        asio::ip::tcp::socket sock(pool.get_io_context());
+        sock.connect({asio::ip::make_address("127.0.0.1"), server_port});
+        asio::write(sock, asio::buffer("TRIGGER FALLBACK"));
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    }
+
+    server->stop();
+    pool.stop();
+    pool_thread.join();
 }
 
 TEST_F(RemoteServerTest, InvalidAuthConfigPath)

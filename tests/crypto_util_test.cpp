@@ -1,8 +1,8 @@
-#include <string>
 #include <vector>
-#include <fstream>
+#include <string>
 #include <cstddef>
 #include <cstdint>
+#include <fstream>
 #include <iterator>
 #include <system_error>
 
@@ -357,6 +357,24 @@ TEST(CryptoUtilTest, AEADInvalidArguments)
 
     (void)crypto_util::aead_encrypt(EVP_aes_256_gcm(), key, std::vector<uint8_t>(11, 0), {1}, {}, ec);
     EXPECT_EQ(ec, std::errc::invalid_argument);
+}
+
+TEST(CryptoUtilTest, HKDFInvalidInputs)
+{
+    std::error_code ec;
+    const std::vector<uint8_t> ikm(22, 0x0b);
+    const std::vector<uint8_t> salt = {0x00, 0x01};
+    const std::vector<uint8_t> prk(32, 0x01);
+
+    (void)crypto_util::hkdf_extract(salt, {}, EVP_sha256(), ec);
+    EXPECT_EQ(ec, std::errc::invalid_argument);
+
+    (void)crypto_util::hkdf_expand({}, {0x01}, 16, EVP_sha256(), ec);
+    EXPECT_EQ(ec, std::errc::invalid_argument);
+
+    const auto okm_empty = crypto_util::hkdf_expand(prk, {0x01}, 0, EVP_sha256(), ec);
+    EXPECT_FALSE(ec);
+    EXPECT_TRUE(okm_empty.empty());
 }
 
 TEST(CryptoUtilTest, NonGCMCipherContext)

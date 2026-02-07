@@ -1,5 +1,5 @@
-#include <cstdio>
 #include <string>
+#include <cstdio>
 #include <fstream>
 
 #include <gtest/gtest.h>

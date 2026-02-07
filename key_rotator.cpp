@@ -1,7 +1,7 @@
 #include <mutex>
 #include <atomic>
-#include <chrono>
 #include <memory>
+#include <chrono>
 
 extern "C"
 {
@@ -9,8 +9,8 @@ extern "C"
 }
 
 #include "log.h"
-#include "crypto_util.h"
 #include "key_rotator.h"
+#include "crypto_util.h"
 
 namespace reality
 {

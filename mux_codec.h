@@ -1,8 +1,8 @@
 #ifndef MUX_CODEC_H
 #define MUX_CODEC_H
 
-#include <string>
 #include <vector>
+#include <string>
 #include <cstddef>
 #include <cstdint>
 

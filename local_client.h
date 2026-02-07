@@ -2,11 +2,11 @@
 #define LOCAL_CLIENT_H
 
 #include <mutex>
-#include <string>
 #include <vector>
+#include <string>
 #include <memory>
-#include <utility>
 #include <cstdint>
+#include <utility>
 
 #include <asio/ip/tcp.hpp>
 #include <asio/awaitable.hpp>
@@ -18,8 +18,8 @@ extern "C"
 #include <openssl/evp.h>
 }
 
-#include "config.h"
 #include "router.h"
+#include "config.h"
 #include "mux_tunnel.h"
 #include "transcript.h"
 #include "log_context.h"
