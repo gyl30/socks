@@ -1,7 +1,7 @@
-#include <cctype>
 #include <string>
-#include <cstddef>
+#include <cctype>
 #include <fstream>
+#include <cstddef>
 #include <algorithm>
 
 #include "log.h"

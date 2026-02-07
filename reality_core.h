@@ -1,10 +1,10 @@
 #ifndef REALITY_CORE_H
 #define REALITY_CORE_H
 
-#include <vector>
 #include <memory>
-#include <cstddef>
+#include <vector>
 #include <cstdint>
+#include <cstddef>
 
 extern "C"
 {
