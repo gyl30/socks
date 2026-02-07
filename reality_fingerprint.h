@@ -2,10 +2,10 @@
 #define REALITY_FINGERPRINT_H
 
 #include <array>
-#include <memory>
 #include <random>
-#include <string>
 #include <vector>
+#include <string>
+#include <memory>
 #include <cstdint>
 #include <algorithm>
 
