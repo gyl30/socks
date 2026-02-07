@@ -65,12 +65,19 @@ set(SOCKS_SOURCES
 
 add_library(socks_core STATIC ${SOCKS_SOURCES})
 
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR CMAKE_CXX_COMPILER_ID MATCHES "AppleClang")
+    target_compile_options(socks_core PRIVATE -Wno-unknown-warning-option)
+endif()
+
 target_include_directories(socks_core PUBLIC
     ${OPENSSL_INCLUDE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+target_include_directories(socks_core SYSTEM PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/third/asio/include
     ${CMAKE_CURRENT_SOURCE_DIR}/third/spdlog/include
     ${CMAKE_CURRENT_SOURCE_DIR}/third/rapidjson/include
-    ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
 target_link_libraries(socks_core PUBLIC OpenSSL::SSL OpenSSL::Crypto pthread)
