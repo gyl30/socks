@@ -1,6 +1,6 @@
 #include <span>
-#include <memory>
 #include <vector>
+#include <memory>
 #include <cstdint>
 #include <cstring>
 #include <utility>

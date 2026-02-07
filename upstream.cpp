@@ -1,5 +1,5 @@
-#include <string>
 #include <vector>
+#include <string>
 #include <cstring>
 #include <utility>
 #include <system_error>
@@ -12,8 +12,8 @@
 #include <asio/use_awaitable.hpp>
 
 #include "log.h"
-#include "protocol.h"
 #include "upstream.h"
+#include "protocol.h"
 #include "mux_codec.h"
 #include "mux_stream.h"
 #include "log_context.h"

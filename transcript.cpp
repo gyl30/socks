@@ -1,5 +1,5 @@
-#include <memory>
 #include <vector>
+#include <memory>
 #include <cstdint>
 
 extern "C"

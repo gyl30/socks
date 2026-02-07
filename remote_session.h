@@ -1,8 +1,8 @@
 #ifndef REMOTE_SESSION_H
 #define REMOTE_SESSION_H
 
-#include <memory>
 #include <vector>
+#include <memory>
 #include <cstdint>
 #include <asio.hpp>
 
