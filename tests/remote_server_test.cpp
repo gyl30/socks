@@ -404,3 +404,65 @@ TEST_F(RemoteServerTest, InvalidAuthConfigPath)
     pool_thread.join();
     EXPECT_TRUE(fallback_triggered.load());
 }
+
+TEST_F(RemoteServerTest, MultiSNIFallback)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+    std::thread pool_thread([&pool] { pool.run(); });
+
+    std::uint16_t server_port = 29991;
+    std::uint16_t fallback_port_a = 29992;
+    std::uint16_t fallback_port_b = 29993;
+
+    asio::ip::tcp::acceptor acceptor_a(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), fallback_port_a));
+    asio::ip::tcp::acceptor acceptor_b(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), fallback_port_b));
+
+    std::atomic<int> fallback_a_count{0};
+    std::atomic<int> fallback_b_count{0};
+
+    acceptor_a.async_accept(
+        [&](std::error_code ec, asio::ip::tcp::socket peer)
+        {
+            if (!ec)
+                fallback_a_count++;
+        });
+    acceptor_b.async_accept(
+        [&](std::error_code ec, asio::ip::tcp::socket peer)
+        {
+            if (!ec)
+                fallback_b_count++;
+        });
+
+    std::vector<mux::config::fallback_entry> fallbacks = {{"www.a.com", "127.0.0.1", std::to_string(fallback_port_a)},
+                                                          {"www.b.com", "127.0.0.1", std::to_string(fallback_port_b)}};
+
+    auto server =
+        std::make_shared<mux::remote_server>(pool, server_port, fallbacks, server_priv_key, "", mux::config::timeout_t{}, mux::config::limits_t{});
+    server->start();
+
+    auto trigger_fallback = [&](const std::string& sni)
+    {
+        asio::ip::tcp::socket sock(pool.get_io_context());
+        sock.connect({asio::ip::make_address("127.0.0.1"), server_port});
+        auto spec = reality::FingerprintFactory::Get(reality::FingerprintType::Chrome_120);
+        auto ch_body = reality::ClientHelloBuilder::build(spec, std::vector<uint8_t>(32, 0), info_random, std::vector<uint8_t>(32, 0), sni);
+        auto record = reality::write_record_header(reality::kContentTypeHandshake, static_cast<uint16_t>(ch_body.size()));
+        record.insert(record.end(), ch_body.begin(), ch_body.end());
+        asio::write(sock, asio::buffer(record));
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    };
+
+    trigger_fallback("www.a.com");
+    trigger_fallback("www.b.com");
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    server->stop();
+    pool.stop();
+    pool_thread.join();
+
+    EXPECT_EQ(fallback_a_count.load(), 1);
+    EXPECT_EQ(fallback_b_count.load(), 1);
+}
