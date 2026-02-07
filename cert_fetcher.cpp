@@ -1,18 +1,18 @@
 #include <span>
-#include <vector>
 #include <string>
-#include <cstddef>
+#include <vector>
 #include <cstdint>
-#include <cstring>
 #include <utility>
+#include <cstring>
+#include <cstddef>
 #include <optional>
 #include <system_error>
 
 #include <asio/read.hpp>
-#include <asio/error.hpp>
 #include <asio/write.hpp>
-#include <asio/buffer.hpp>
+#include <asio/error.hpp>
 #include <asio/ip/tcp.hpp>
+#include <asio/buffer.hpp>
 #include <asio/connect.hpp>
 #include <asio/as_tuple.hpp>
 #include <asio/awaitable.hpp>
@@ -25,13 +25,13 @@ extern "C"
 }
 
 #include "log.h"
-#include "crypto_util.h"
 #include "log_context.h"
-#include "reality_core.h"
+#include "crypto_util.h"
 #include "cert_fetcher.h"
+#include "reality_core.h"
 #include "tls_record_layer.h"
-#include "tls_key_schedule.h"
 #include "reality_messages.h"
+#include "tls_key_schedule.h"
 #include "reality_fingerprint.h"
 
 namespace reality
