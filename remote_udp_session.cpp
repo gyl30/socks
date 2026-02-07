@@ -1,9 +1,9 @@
-#include <string>
-#include <chrono>
 #include <memory>
+#include <chrono>
 #include <vector>
-#include <cstdint>
+#include <string>
 #include <utility>
+#include <cstdint>
 #include <system_error>
 
 #include <asio/error.hpp>
@@ -80,9 +80,9 @@ asio::awaitable<void> remote_udp_session::start()
     using asio::experimental::awaitable_operators::operator||;
     co_await (mux_to_udp() || udp_to_mux() || watchdog());
 
-    if (manager_ != nullptr)
+    if (auto m = manager_.lock())
     {
-        manager_->remove_stream(id_);
+        m->remove_stream(id_);
     }
     LOG_CTX_INFO(ctx_, "{} finished {}", log_event::kConnClose, ctx_.stats_summary());
 }

@@ -1,10 +1,10 @@
-#include <vector>
 #include <memory>
+#include <vector>
 #include <cstdint>
 #include <system_error>
 
-#include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include <gmock/gmock.h>
 #include <asio/io_context.hpp>
 
 #include "test_util.h"
