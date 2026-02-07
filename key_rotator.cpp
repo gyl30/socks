@@ -1,6 +1,6 @@
 #include <mutex>
-#include <atomic>
 #include <memory>
+#include <atomic>
 #include <chrono>
 
 extern "C"
@@ -9,8 +9,8 @@ extern "C"
 }
 
 #include "log.h"
-#include "key_rotator.h"
 #include "crypto_util.h"
+#include "key_rotator.h"
 
 namespace reality
 {

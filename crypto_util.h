@@ -2,12 +2,12 @@
 #define CRYPTO_UTIL_H
 
 #include <span>
-#include <vector>
 #include <string>
-#include <cstddef>
+#include <vector>
 #include <cstdint>
-#include <cstring>
 #include <iomanip>
+#include <cstring>
+#include <cstddef>
 #include <sstream>
 #include <system_error>
 

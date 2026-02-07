@@ -2,10 +2,10 @@
 #define REALITY_ENGINE_H
 
 #include <span>
-#include <vector>
 #include <memory>
-#include <cstddef>
+#include <vector>
 #include <cstdint>
+#include <cstddef>
 #include <system_error>
 
 #include <asio/error.hpp>

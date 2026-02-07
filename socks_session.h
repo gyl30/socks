@@ -1,8 +1,8 @@
 #ifndef SOCKS_SESSION_H
 #define SOCKS_SESSION_H
 
-#include <string>
 #include <memory>
+#include <string>
 #include <cstdint>
 #include <asio.hpp>
 
@@ -11,8 +11,8 @@
 #include "protocol.h"
 #include "mux_tunnel.h"
 #include "log_context.h"
-#include "udp_socks_session.h"
 #include "tcp_socks_session.h"
+#include "udp_socks_session.h"
 
 namespace mux
 {
