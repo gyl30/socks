@@ -1,6 +1,6 @@
 #include <mutex>
-#include <memory>
 #include <atomic>
+#include <memory>
 #include <chrono>
 
 extern "C"

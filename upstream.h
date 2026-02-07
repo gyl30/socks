@@ -1,11 +1,11 @@
 #ifndef UPSTREAM_H
 #define UPSTREAM_H
 
-#include <string>
 #include <memory>
 #include <vector>
-#include <cstdint>
+#include <string>
 #include <utility>
+#include <cstdint>
 #include <system_error>
 
 #include <asio/ip/tcp.hpp>

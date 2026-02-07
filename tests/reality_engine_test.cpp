@@ -134,8 +134,8 @@ TEST_F(RealityEngineTest, AlertContentType)
     reality_engine decrypt_engine(read_key_, read_iv_, write_key_, write_iv_, cipher_);
 
     std::error_code ec;
-    // We need to manually construct a record with Alert content type
-    std::vector<uint8_t> alert_plaintext = {0x02, 0x32};    // Fatal, Illegal Parameter
+
+    std::vector<uint8_t> alert_plaintext = {0x02, 0x32};
     auto alert_rec = reality::tls_record_layer::encrypt_record(cipher_, read_key_, read_iv_, 0, alert_plaintext, reality::kContentTypeAlert, ec);
     ASSERT_FALSE(ec);
 
@@ -164,7 +164,6 @@ TEST_F(RealityEngineTest, DecryptError)
     auto rec = reality::tls_record_layer::encrypt_record(cipher_, read_key_, read_iv_, 0, data, reality::kContentTypeApplicationData, ec);
     ASSERT_FALSE(ec);
 
-    // Tamper with ciphertext
     rec.back() ^= 0xFF;
 
     auto buf = decrypt_engine.read_buffer(rec.size());

@@ -1,8 +1,8 @@
-#include <vector>
-#include <string>
-#include <thread>
-#include <memory>
 #include <chrono>
+#include <memory>
+#include <vector>
+#include <thread>
+#include <string>
 #include <cstdint>
 
 #include <gtest/gtest.h>
@@ -12,8 +12,8 @@
 
 #include "ch_parser.h"
 #include "crypto_util.h"
-#include "reality_auth.h"
 #include "context_pool.h"
+#include "reality_auth.h"
 #include "remote_server.h"
 #include "reality_messages.h"
 
@@ -240,7 +240,7 @@ TEST_F(RemoteServerTest, AuthFailInvalidTLSHeader)
     {
         asio::ip::tcp::socket sock(pool.get_io_context());
         sock.connect({asio::ip::make_address("127.0.0.1"), server_port});
-        // 0x17 is not 0x16 (Handshake)
+
         std::vector<uint8_t> invalid_header = {0x17, 0x03, 0x03, 0x00, 0x05, 0x01, 0x02, 0x03, 0x04, 0x05};
         asio::write(sock, asio::buffer(invalid_header));
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
@@ -283,10 +283,10 @@ TEST_F(RemoteServerTest, AuthFailBufferTooShort)
     {
         asio::ip::tcp::socket sock(pool.get_io_context());
         sock.connect({asio::ip::make_address("127.0.0.1"), server_port});
-        // Only 4 bytes, less than 5 required for header
+
         std::vector<uint8_t> short_buf = {0x16, 0x03, 0x03, 0x00};
         asio::write(sock, asio::buffer(short_buf));
-        // Shutdown send to trigger EOF on server side
+
         sock.shutdown(asio::ip::tcp::socket::shutdown_send);
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
@@ -306,7 +306,6 @@ TEST_F(RemoteServerTest, FallbackResolveFail)
 
     std::uint16_t server_port = 29971;
 
-    // Use an unresolvable hostname
     auto server = std::make_shared<mux::remote_server>(pool,
                                                        server_port,
                                                        std::vector<mux::config::fallback_entry>{{"", "invalid.hostname.test", "80"}},
@@ -336,7 +335,7 @@ TEST_F(RemoteServerTest, FallbackConnectFail)
     std::thread pool_thread([&pool] { pool.run(); });
 
     std::uint16_t server_port = 29981;
-    // Port 1 is usually not listening
+
     auto server = std::make_shared<mux::remote_server>(pool,
                                                        server_port,
                                                        std::vector<mux::config::fallback_entry>{{"", "127.0.0.1", "1"}},

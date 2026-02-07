@@ -2,8 +2,8 @@
 #include <cstdint>
 #include <system_error>
 
-#include <openssl/evp.h>
 #include <gtest/gtest.h>
+#include <openssl/evp.h>
 
 #include "tls_record_layer.h"
 
@@ -82,13 +82,10 @@ TEST_F(TLSRecordLayerTest, TamperedCiphertext)
 
 TEST_F(TLSRecordLayerTest, DecryptAllZeros)
 {
-    // Record where the whole decrypted content is zeros
-    // (This would be an invalid record in TLS 1.3 because it must end with a content type)
     std::vector<uint8_t> zeros(20, 0);
     const uint64_t seq = 0;
     std::error_code ec;
 
-    // We manually encrypt it to bypass the padding logic in encrypt_record
     const std::vector<uint8_t> aad = {0x17, 0x03, 0x03, 0x00, static_cast<uint8_t>(zeros.size() + 16)};
     auto encrypted = reality::crypto_util::aead_encrypt(cipher(), key(), iv(), zeros, aad, ec);
     ASSERT_FALSE(ec);
