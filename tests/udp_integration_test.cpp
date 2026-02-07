@@ -1,18 +1,18 @@
-#include <vector>
-#include <atomic>
-#include <string>
-#include <thread>
-#include <memory>
 #include <chrono>
+#include <atomic>
+#include <vector>
+#include <memory>
+#include <thread>
+#include <string>
 #include <cstdint>
 
 #include <gtest/gtest.h>
 #include <asio/write.hpp>
-#include <asio/ip/tcp.hpp>
 #include <asio/ip/udp.hpp>
-#include <asio/detached.hpp>
-#include <asio/as_tuple.hpp>
+#include <asio/ip/tcp.hpp>
 #include <asio/co_spawn.hpp>
+#include <asio/as_tuple.hpp>
+#include <asio/detached.hpp>
 #include <asio/this_coro.hpp>
 #include <asio/steady_timer.hpp>
 #include <asio/use_awaitable.hpp>
@@ -50,28 +50,28 @@ class UdpIntegrationTest : public ::testing::Test
     std::string short_id;
 };
 
-static asio::awaitable<void> run_udp_echo_server(asio::ip::udp::socket& socket, std::uint16_t port)
+static asio::awaitable<void> run_udp_echo_server(std::shared_ptr<asio::ip::udp::socket> socket, std::uint16_t port)
 {
     std::error_code ec;
-    socket.open(asio::ip::udp::v4(), ec);
+    socket->open(asio::ip::udp::v4(), ec);
     if (ec)
     {
         LOG_ERROR("echo server open failed: {}", ec.message());
         co_return;
     }
-    socket.bind(asio::ip::udp::endpoint(asio::ip::udp::v4(), port), ec);
+    socket->bind(asio::ip::udp::endpoint(asio::ip::udp::v4(), port), ec);
     if (ec)
     {
         LOG_ERROR("echo server bind failed on port {}: {}", port, ec.message());
         co_return;
     }
 
-    char data[4096];
+    std::vector<char> data(65535);
     asio::ip::udp::endpoint sender_ep;
 
     for (;;)
     {
-        auto [receive_ec, n] = co_await socket.async_receive_from(asio::buffer(data), sender_ep, asio::as_tuple(asio::use_awaitable));
+        auto [receive_ec, n] = co_await socket->async_receive_from(asio::buffer(data), sender_ep, asio::as_tuple(asio::use_awaitable));
         if (receive_ec)
         {
             if (receive_ec != asio::error::operation_aborted)
@@ -81,7 +81,7 @@ static asio::awaitable<void> run_udp_echo_server(asio::ip::udp::socket& socket, 
             break;
         }
 
-        auto [send_ec, sn] = co_await socket.async_send_to(asio::buffer(data, n), sender_ep, asio::as_tuple(asio::use_awaitable));
+        auto [send_ec, sn] = co_await socket->async_send_to(asio::buffer(data, n), sender_ep, asio::as_tuple(asio::use_awaitable));
         if (send_ec)
         {
             LOG_ERROR("echo server send error: {}", send_ec.message());
@@ -123,12 +123,12 @@ TEST_F(UdpIntegrationTest, UdpAssociateAndEcho)
         pool, "127.0.0.1", std::to_string(server_port), local_socks_port, client_pub_key, sni, short_id, verify_pub_key, timeouts);
     client->start();
 
-    asio::ip::udp::socket echo_socket(pool.get_io_context());
+    auto echo_socket = std::make_shared<asio::ip::udp::socket>(pool.get_io_context());
 
-    echo_socket.open(asio::ip::udp::v4(), ec);
-    echo_socket.bind(asio::ip::udp::endpoint(asio::ip::udp::v4(), 0), ec);
-    echo_server_port = echo_socket.local_endpoint().port();
-    echo_socket.close();
+    echo_socket->open(asio::ip::udp::v4(), ec);
+    echo_socket->bind(asio::ip::udp::endpoint(asio::ip::udp::v4(), 0), ec);
+    echo_server_port = echo_socket->local_endpoint().port();
+    echo_socket->close();
 
     asio::co_spawn(pool.get_io_context(), run_udp_echo_server(echo_socket, echo_server_port), asio::detached);
 
@@ -296,7 +296,7 @@ TEST_F(UdpIntegrationTest, UdpAssociateAndEcho)
     {
         client_udp->close(ignore);
     }
-    echo_socket.close(ignore);
+    echo_socket->close(ignore);
 
     pool.stop();
     if (pool_thread.joinable())

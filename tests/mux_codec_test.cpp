@@ -280,3 +280,26 @@ TEST(MuxCodecTest, AckPayload_EmptyAddr_MaxPort)
     EXPECT_EQ(output.bnd_addr, "");
     EXPECT_EQ(output.bnd_port, 65535);
 }
+
+TEST(MuxCodecTest, FrameHeader_ZeroLength)
+{
+    mux::frame_header input;
+    input.stream_id = 1;
+    input.length = 0;
+    input.command = mux::kCmdDat;
+
+    std::vector<std::uint8_t> buffer;
+    mux::mux_codec::encode_header(input, buffer);
+    ASSERT_EQ(buffer.size(), 7);
+
+    mux::frame_header output;
+    ASSERT_TRUE(mux::mux_codec::decode_header(buffer.data(), buffer.size(), output));
+    EXPECT_EQ(output.length, 0);
+}
+
+TEST(MuxCodecTest, FrameHeader_DecodeShortBuffer)
+{
+    std::vector<std::uint8_t> buffer = {0x00, 0x00, 0x00, 0x01, 0x00, 0x00};
+    mux::frame_header output;
+    EXPECT_FALSE(mux::mux_codec::decode_header(buffer.data(), buffer.size(), output));
+}

@@ -6,8 +6,8 @@
 #include <cstdint>
 #include <asio.hpp>
 
-#include "router.h"
 #include "config.h"
+#include "router.h"
 #include "protocol.h"
 #include "mux_tunnel.h"
 #include "log_context.h"
@@ -21,6 +21,8 @@ class router;
 
 class socks_session : public std::enable_shared_from_this<socks_session>
 {
+    friend class SocksSessionTester;
+
    public:
     socks_session(asio::ip::tcp::socket socket,
                   std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager,

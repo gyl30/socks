@@ -1,5 +1,5 @@
-#include <string>
 #include <cctype>
+#include <string>
 #include <fstream>
 #include <cstddef>
 #include <algorithm>

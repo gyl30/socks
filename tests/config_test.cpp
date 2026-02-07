@@ -1,5 +1,5 @@
-#include <string>
 #include <cstdio>
+#include <string>
 #include <fstream>
 
 #include <gtest/gtest.h>
@@ -81,4 +81,40 @@ TEST_F(ConfigTest, InvalidJson)
     write_config_file("{ invalid_json }");
     const auto cfg = mux::parse_config(tmp_file());
     EXPECT_FALSE(cfg.has_value());
+}
+
+TEST_F(ConfigTest, MissingFieldsUseDefaults)
+{
+    const std::string content = R"({})";
+    write_config_file(content);
+
+    const auto cfg_opt = mux::parse_config(tmp_file());
+    ASSERT_TRUE(cfg_opt.has_value());
+    EXPECT_EQ(cfg_opt->mode, "server");
+}
+
+TEST_F(ConfigTest, InvalidPortRange)
+{
+    const std::string content = R"({
+        "inbound": {
+            "port": 70000
+        }
+    })";
+    write_config_file(content);
+
+    const auto cfg_opt = mux::parse_config(tmp_file());
+}
+
+TEST_F(ConfigTest, EmptyHostAddress)
+{
+    const std::string content = R"({
+        "inbound": {
+            "host": ""
+        }
+    })";
+    write_config_file(content);
+
+    const auto cfg_opt = mux::parse_config(tmp_file());
+    ASSERT_TRUE(cfg_opt.has_value());
+    EXPECT_TRUE(cfg_opt->inbound.host.empty());
 }

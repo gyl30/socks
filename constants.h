@@ -1,8 +1,8 @@
 #ifndef CONSTANTS_H
 #define CONSTANTS_H
 
-#include <cstddef>
 #include <cstdint>
+#include <cstddef>
 
 namespace constants
 {

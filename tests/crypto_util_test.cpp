@@ -6,8 +6,8 @@
 #include <iterator>
 #include <system_error>
 
-#include <openssl/evp.h>
 #include <gtest/gtest.h>
+#include <openssl/evp.h>
 
 #include "crypto_util.h"
 

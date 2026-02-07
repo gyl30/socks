@@ -1,8 +1,8 @@
 #ifndef REMOTE_UDP_SESSION_H
 #define REMOTE_UDP_SESSION_H
 
-#include <memory>
 #include <vector>
+#include <memory>
 #include <chrono>
 #include <cstdint>
 
@@ -49,7 +49,7 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
     std::shared_ptr<mux_connection> connection_;
     std::chrono::steady_clock::time_point last_read_time_;
     std::chrono::steady_clock::time_point last_write_time_;
-    std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> manager_;
+    std::weak_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> manager_;
     asio::experimental::concurrent_channel<void(std::error_code, std::vector<std::uint8_t>)> recv_channel_;
 };
 

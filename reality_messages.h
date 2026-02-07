@@ -1,10 +1,10 @@
 #ifndef REALITY_MESSAGES_H
 #define REALITY_MESSAGES_H
 
-#include <string>
 #include <vector>
-#include <cstdint>
+#include <string>
 #include <cstring>
+#include <cstdint>
 #include <cstddef>
 #include <optional>
 

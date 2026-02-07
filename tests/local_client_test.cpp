@@ -1,14 +1,14 @@
-#include <string>
-#include <thread>
-#include <memory>
 #include <chrono>
+#include <memory>
+#include <thread>
+#include <string>
 #include <system_error>
 
 #include <gtest/gtest.h>
 #include <gtest/gtest-death-test.h>
 
-#include "context_pool.h"
 #include "local_client.h"
+#include "context_pool.h"
 
 using mux::io_context_pool;
 
@@ -142,7 +142,7 @@ TEST(LocalClientTest, HandshakeFailInvalidServerPubKey)
 {
     std::error_code ec;
     io_context_pool pool(1, ec);
-    const std::string bad_pub(31, 'a');    // Wrong size
+    const std::string bad_pub(31, 'a');
     const std::string verify(64, 'b');
 
     auto client = std::make_shared<mux::local_client>(pool, "127.0.0.1", "12345", 10090, bad_pub, "example.com", "", verify);

@@ -3,12 +3,12 @@
 
 #include <mutex>
 #include <atomic>
-#include <string>
 #include <memory>
 #include <random>
 #include <vector>
-#include <cstdint>
+#include <string>
 #include <utility>
+#include <cstdint>
 #include <system_error>
 
 #include <asio/ip/tcp.hpp>
@@ -25,17 +25,17 @@ extern "C"
 #include "protocol.h"
 #include "constants.h"
 #include "ch_parser.h"
-#include "transcript.h"
 #include "mux_tunnel.h"
-#include "log_context.h"
+#include "transcript.h"
 #include "key_rotator.h"
-#include "context_pool.h"
+#include "log_context.h"
 #include "cert_fetcher.h"
-#include "cert_manager.h"
 #include "replay_cache.h"
-#include "tls_record_layer.h"
+#include "context_pool.h"
+#include "cert_manager.h"
 #include "reality_messages.h"
 #include "tls_key_schedule.h"
+#include "tls_record_layer.h"
 
 namespace mux
 {
