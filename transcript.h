@@ -1,8 +1,8 @@
 #ifndef TRANSCRIPT_H
 #define TRANSCRIPT_H
 
-#include <memory>
 #include <vector>
+#include <memory>
 #include <cstdint>
 
 extern "C"

@@ -1,9 +1,9 @@
-#include <string>
 #include <memory>
+#include <string>
 
 #include <gtest/gtest.h>
-#include <asio/detached.hpp>
 #include <asio/co_spawn.hpp>
+#include <asio/detached.hpp>
 #include <asio/this_coro.hpp>
 #include <asio/awaitable.hpp>
 #include <asio/io_context.hpp>

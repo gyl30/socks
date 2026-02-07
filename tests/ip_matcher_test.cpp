@@ -1,11 +1,11 @@
 #include <vector>
-#include <string>
 #include <cstdio>
+#include <string>
 #include <fstream>
 
 #include <gtest/gtest.h>
-#include <asio/ip/address.hpp>
 #include <asio/error_code.hpp>
+#include <asio/ip/address.hpp>
 
 #include "ip_matcher.h"
 
