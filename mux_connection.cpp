@@ -1,23 +1,24 @@
 #include <span>
 #include <mutex>
 #include <atomic>
-#include <string>
-#include <chrono>
 #include <memory>
-#include <ranges>
 #include <random>
+#include <chrono>
+#include <ranges>
 #include <vector>
-#include <cstdint>
+#include <string>
 #include <utility>
+#include <cstdint>
 #include <system_error>
 
-#include <asio/write.hpp>
 #include <asio/error.hpp>
-#include <asio/ip/tcp.hpp>
+#include <asio/write.hpp>
 #include <asio/buffer.hpp>
+#include <asio/ip/tcp.hpp>
 #include <asio/as_tuple.hpp>
 #include <asio/steady_timer.hpp>
 #include <asio/use_awaitable.hpp>
+#include <asio/redirect_error.hpp>
 #include <asio/experimental/awaitable_operators.hpp>
 
 extern "C"
@@ -26,8 +27,8 @@ extern "C"
 }
 
 #include "log.h"
-#include "mux_protocol.h"
 #include "reality_core.h"
+#include "mux_protocol.h"
 #include "mux_connection.h"
 
 namespace mux
@@ -300,6 +301,10 @@ asio::awaitable<void> mux_connection::heartbeat_loop()
 {
     if (!heartbeat_config_.enabled)
     {
+        asio::steady_timer timer(socket_.get_executor());
+        timer.expires_at(std::chrono::steady_clock::time_point::max());
+        std::error_code ec;
+        co_await timer.async_wait(asio::redirect_error(asio::use_awaitable, ec));
         co_return;
     }
 
@@ -319,7 +324,7 @@ asio::awaitable<void> mux_connection::heartbeat_loop()
         }
 
         const auto now = std::chrono::steady_clock::now();
-        if (now - last_write_time_ < std::chrono::seconds(10))
+        if (now - last_write_time_ < std::chrono::seconds(heartbeat_config_.idle_timeout))
         {
             continue;
         }
@@ -329,7 +334,7 @@ asio::awaitable<void> mux_connection::heartbeat_loop()
         std::vector<std::uint8_t> padding(padding_len);
         RAND_bytes(padding.data(), static_cast<int>(padding_len));
 
-        LOG_TRACE("mux {} sending heartbeat size {}", cid_, padding_len);
+        LOG_DEBUG("mux {} sending heartbeat size {}", cid_, padding_len);
         (void)co_await send_async(mux::kStreamIdHeartbeat, mux::kCmdDat, std::move(padding));
     }
 
@@ -342,7 +347,7 @@ void mux_connection::on_mux_frame(const mux::frame_header header, std::vector<st
 
     if (header.stream_id == mux::kStreamIdHeartbeat)
     {
-        LOG_TRACE("mux {} heartbeat received size {}", cid_, payload.size());
+        LOG_DEBUG("mux {} heartbeat received size {}", cid_, payload.size());
         return;
     }
 

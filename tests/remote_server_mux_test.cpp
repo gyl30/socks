@@ -1,12 +1,12 @@
-#include <vector>
-#include <string>
-#include <thread>
-#include <memory>
 #include <chrono>
+#include <memory>
+#include <vector>
+#include <thread>
+#include <string>
 #include <cstdint>
 
-#include <gtest/gtest.h>
 #include <asio/read.hpp>
+#include <gtest/gtest.h>
 #include <asio/write.hpp>
 #include <asio/buffer.hpp>
 #include <asio/ip/tcp.hpp>
