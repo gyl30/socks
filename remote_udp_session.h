@@ -1,9 +1,9 @@
 #ifndef REMOTE_UDP_SESSION_H
 #define REMOTE_UDP_SESSION_H
 
+#include <memory>
 #include <vector>
 #include <chrono>
-#include <memory>
 #include <cstdint>
 
 #include <asio/ip/tcp.hpp>

@@ -1,11 +1,11 @@
 #ifndef REPLAY_CACHE_H
 #define REPLAY_CACHE_H
 
-#include <mutex>
 #include <deque>
-#include <vector>
+#include <mutex>
 #include <string>
 #include <chrono>
+#include <vector>
 #include <cstdint>
 #include <unordered_set>
 

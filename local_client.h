@@ -2,9 +2,9 @@
 #define LOCAL_CLIENT_H
 
 #include <mutex>
-#include <vector>
 #include <string>
 #include <memory>
+#include <vector>
 #include <cstdint>
 #include <utility>
 
@@ -20,8 +20,8 @@ extern "C"
 
 #include "router.h"
 #include "config.h"
-#include "mux_tunnel.h"
 #include "transcript.h"
+#include "mux_tunnel.h"
 #include "log_context.h"
 #include "context_pool.h"
 #include "reality_core.h"

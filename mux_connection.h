@@ -2,11 +2,11 @@
 #define MUX_CONNECTION_H
 
 #include <mutex>
-#include <vector>
 #include <atomic>
 #include <string>
-#include <memory>
 #include <chrono>
+#include <memory>
+#include <vector>
 #include <cstdint>
 #include <utility>
 #include <functional>

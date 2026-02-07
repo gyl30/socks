@@ -2,12 +2,12 @@
 #define MUX_STREAM_H
 
 #include <tuple>
-#include <vector>
 #include <atomic>
 #include <string>
 #include <memory>
-#include <cstddef>
+#include <vector>
 #include <cstdint>
+#include <cstddef>
 #include <system_error>
 
 #include <asio/awaitable.hpp>

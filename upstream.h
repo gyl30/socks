@@ -1,9 +1,9 @@
 #ifndef UPSTREAM_H
 #define UPSTREAM_H
 
-#include <vector>
 #include <string>
 #include <memory>
+#include <vector>
 #include <cstdint>
 #include <utility>
 #include <system_error>

@@ -1,13 +1,13 @@
-#include <vector>
 #include <string>
-#include <memory>
 #include <chrono>
+#include <memory>
+#include <vector>
 #include <cstdint>
 #include <cstdlib>
 
 #include <spdlog/spdlog.h>
-#include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/sinks/rotating_file_sink.h>
+#include <spdlog/sinks/stdout_color_sinks.h>
 
 #include "log.h"
 

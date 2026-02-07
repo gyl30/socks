@@ -1,11 +1,11 @@
 #ifndef PROTOCOL_H
 #define PROTOCOL_H
 
-#include <vector>
 #include <string>
-#include <cstddef>
+#include <vector>
 #include <cstdint>
 #include <cstring>
+#include <cstddef>
 
 #include <asio/ip/address.hpp>
 

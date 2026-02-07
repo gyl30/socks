@@ -1,7 +1,7 @@
-#include <vector>
 #include <string>
-#include <cstddef>
+#include <vector>
 #include <cstdint>
+#include <cstddef>
 #include <algorithm>
 
 #include "log.h"
