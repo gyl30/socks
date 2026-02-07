@@ -2,11 +2,11 @@
 #define CERT_FETCHER_H
 
 #include <span>
-#include <vector>
 #include <string>
-#include <cstring>
-#include <cstdint>
+#include <vector>
 #include <cstddef>
+#include <cstdint>
+#include <cstring>
 #include <optional>
 #include <system_error>
 

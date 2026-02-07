@@ -1,8 +1,8 @@
 #ifndef LOG_CONTEXT_H
 #define LOG_CONTEXT_H
 
-#include <string>
 #include <chrono>
+#include <string>
 #include <cstdint>
 
 namespace mux
