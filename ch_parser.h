@@ -2,10 +2,10 @@
 #define CH_PARSER_H
 
 #include <span>
-#include <vector>
 #include <string>
-#include <cstddef>
+#include <vector>
 #include <cstdint>
+#include <cstddef>
 
 #include "reality_core.h"
 
