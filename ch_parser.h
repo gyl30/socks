@@ -2,8 +2,8 @@
 #define CH_PARSER_H
 
 #include <span>
-#include <string>
 #include <vector>
+#include <string>
 #include <cstddef>
 #include <cstdint>
 

@@ -28,16 +28,55 @@ add_compile_definitions(
 
 find_package(OpenSSL REQUIRED)
 
-add_executable(socks main.cpp log.cpp config.cpp mux_connection.cpp remote_server.cpp local_client.cpp router.cpp socks_session.cpp tcp_socks_session.cpp udp_socks_session.cpp mux_dispatcher.cpp reality_messages.cpp cert_fetcher.cpp crypto_util.cpp reality_fingerprint.cpp ch_parser.cpp tls_record_layer.cpp ip_matcher.cpp remote_session.cpp remote_udp_session.cpp upstream.cpp mux_codec.cpp mux_stream.cpp protocol.cpp log_context.cpp context_pool.cpp transcript.cpp replay_cache.cpp reality_engine.cpp domain_matcher.cpp cert_manager.cpp key_rotator.cpp reality_auth.cpp)
-
-target_include_directories(socks PRIVATE 
-    ${OPENSSL_INCLUDE_DIR} 
-    third/asio/include
-    third/spdlog/include 
-    third/rapidjson/include
+set(SOCKS_SOURCES
+    log.cpp
+    config.cpp
+    mux_connection.cpp
+    remote_server.cpp
+    local_client.cpp
+    router.cpp
+    socks_session.cpp
+    tcp_socks_session.cpp
+    udp_socks_session.cpp
+    mux_dispatcher.cpp
+    reality_messages.cpp
+    cert_fetcher.cpp
+    crypto_util.cpp
+    reality_fingerprint.cpp
+    ch_parser.cpp
+    tls_record_layer.cpp
+    ip_matcher.cpp
+    remote_session.cpp
+    remote_udp_session.cpp
+    upstream.cpp
+    mux_codec.cpp
+    mux_stream.cpp
+    protocol.cpp
+    log_context.cpp
+    context_pool.cpp
+    transcript.cpp
+    replay_cache.cpp
+    reality_engine.cpp
+    domain_matcher.cpp
+    cert_manager.cpp
+    key_rotator.cpp
+    reality_auth.cpp
 )
 
-target_link_libraries(socks PRIVATE OpenSSL::SSL OpenSSL::Crypto pthread)
+add_library(socks_core STATIC ${SOCKS_SOURCES})
+
+target_include_directories(socks_core PUBLIC
+    ${OPENSSL_INCLUDE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/third/asio/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/third/spdlog/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/third/rapidjson/include
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+target_link_libraries(socks_core PUBLIC OpenSSL::SSL OpenSSL::Crypto pthread)
+
+add_executable(socks main.cpp)
+target_link_libraries(socks PRIVATE socks_core)
 
 find_package(GTest)
 if(NOT GTest_FOUND)

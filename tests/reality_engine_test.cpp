@@ -129,4 +129,53 @@ TEST_F(RealityEngineTest, MultipleEncryptions)
     EXPECT_NE(encrypted1, encrypted2);
 }
 
+TEST_F(RealityEngineTest, AlertContentType)
+{
+    reality_engine decrypt_engine(read_key_, read_iv_, write_key_, write_iv_, cipher_);
+
+    std::error_code ec;
+    // We need to manually construct a record with Alert content type
+    std::vector<uint8_t> alert_plaintext = {0x02, 0x32};    // Fatal, Illegal Parameter
+    auto alert_rec = reality::tls_record_layer::encrypt_record(cipher_, read_key_, read_iv_, 0, alert_plaintext, reality::kContentTypeAlert, ec);
+    ASSERT_FALSE(ec);
+
+    auto buf = decrypt_engine.read_buffer(alert_rec.size());
+    std::memcpy(buf.data(), alert_rec.data(), alert_rec.size());
+    decrypt_engine.commit_read(alert_rec.size());
+
+    bool called = false;
+    decrypt_engine.process_available_records(ec,
+                                             [&called](std::uint8_t type, std::span<const std::uint8_t>)
+                                             {
+                                                 if (type == reality::kContentTypeAlert)
+                                                     called = true;
+                                             });
+
+    EXPECT_EQ(ec, asio::error::eof);
+    EXPECT_TRUE(called);
+}
+
+TEST_F(RealityEngineTest, DecryptError)
+{
+    reality_engine decrypt_engine(read_key_, read_iv_, write_key_, write_iv_, cipher_);
+
+    std::error_code ec;
+    std::vector<uint8_t> data = {0x01, 0x02};
+    auto rec = reality::tls_record_layer::encrypt_record(cipher_, read_key_, read_iv_, 0, data, reality::kContentTypeApplicationData, ec);
+    ASSERT_FALSE(ec);
+
+    // Tamper with ciphertext
+    rec.back() ^= 0xFF;
+
+    auto buf = decrypt_engine.read_buffer(rec.size());
+    std::memcpy(buf.data(), rec.data(), rec.size());
+    decrypt_engine.commit_read(rec.size());
+
+    bool called = false;
+    decrypt_engine.process_available_records(ec, [&called](std::uint8_t, std::span<const std::uint8_t>) { called = true; });
+
+    EXPECT_TRUE(ec);
+    EXPECT_FALSE(called);
+}
+
 }    // namespace mux

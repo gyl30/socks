@@ -2,10 +2,10 @@
 #define MUX_STREAM_H
 
 #include <tuple>
-#include <atomic>
-#include <memory>
-#include <string>
 #include <vector>
+#include <atomic>
+#include <string>
+#include <memory>
 #include <cstddef>
 #include <cstdint>
 #include <system_error>

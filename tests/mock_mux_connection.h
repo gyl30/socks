@@ -1,8 +1,8 @@
 #ifndef SOCKS_MOCK_MUX_CONNECTION_H
 #define SOCKS_MOCK_MUX_CONNECTION_H
 
-#include <memory>
 #include <vector>
+#include <memory>
 #include <cstdint>
 #include <asio.hpp>
 #include <system_error>

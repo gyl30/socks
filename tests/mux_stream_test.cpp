@@ -1,5 +1,5 @@
-#include <memory>
 #include <vector>
+#include <memory>
 #include <cstdint>
 #include <system_error>
 
@@ -63,5 +63,41 @@ TEST_F(MuxStreamTest, OnCloseUnblocksReader)
 
     const auto [ec, read_data] = mux::test::run_awaitable(ctx_, stream->async_read_some());
 
+    EXPECT_EQ(ec, asio::error::eof);
+}
+
+TEST_F(MuxStreamTest, WriteAfterClose)
+{
+    auto mock_conn = std::make_shared<mux::MockMuxConnection>(ctx_);
+    auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx_.get_executor());
+
+    EXPECT_CALL(*mock_conn, mock_send_async(1, mux::kCmdFin, ::testing::_)).WillOnce(::testing::Return(std::error_code()));
+    mux::test::run_awaitable_void(ctx_, stream->close());
+
+    const std::vector<std::uint8_t> data = {1, 2, 3, 4};
+    const auto ec = mux::test::run_awaitable(ctx_, stream->async_write_some(data.data(), data.size()));
+    EXPECT_EQ(ec, asio::error::operation_aborted);
+}
+
+TEST_F(MuxStreamTest, WriteAfterConnectionDestroyed)
+{
+    auto mock_conn = std::make_shared<mux::MockMuxConnection>(ctx_);
+    auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx_.get_executor());
+
+    mock_conn.reset();
+
+    const std::vector<std::uint8_t> data = {1, 2, 3, 4};
+    const auto ec = mux::test::run_awaitable(ctx_, stream->async_write_some(data.data(), data.size()));
+    EXPECT_EQ(ec, asio::error::connection_aborted);
+}
+
+TEST_F(MuxStreamTest, OnReset)
+{
+    auto mock_conn = std::make_shared<mux::MockMuxConnection>(ctx_);
+    auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx_.get_executor());
+
+    stream->on_reset();
+
+    const auto [ec, read_data] = mux::test::run_awaitable(ctx_, stream->async_read_some());
     EXPECT_TRUE(ec);
 }

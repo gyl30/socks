@@ -1,8 +1,8 @@
 #ifndef REALITY_MESSAGES_H
 #define REALITY_MESSAGES_H
 
-#include <string>
 #include <vector>
+#include <string>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
