@@ -1,12 +1,12 @@
-#include <string>
 #include <vector>
+#include <string>
 #include <cstdio>
 #include <cstdint>
 #include <iostream>
 #include <system_error>
 
-#include <gtest/gtest.h>
 #include <openssl/evp.h>
+#include <gtest/gtest.h>
 #include <openssl/rand.h>
 
 #include "crypto_util.h"

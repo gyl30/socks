@@ -64,8 +64,7 @@ int main()
 {
     uint8_t pubA_raw[32], privA_raw[32];
     uint8_t pubB_raw[32], privB_raw[32];
-    if (!reality::crypto_util::generate_x25519_keypair(pubA_raw, privA_raw) ||
-        !reality::crypto_util::generate_x25519_keypair(pubB_raw, privB_raw))
+    if (!reality::crypto_util::generate_x25519_keypair(pubA_raw, privA_raw) || !reality::crypto_util::generate_x25519_keypair(pubB_raw, privB_raw))
     {
         std::cerr << "Failed to generate keypairs" << std::endl;
         return 1;

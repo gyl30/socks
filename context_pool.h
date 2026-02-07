@@ -1,9 +1,9 @@
 #ifndef CONTEXT_POOL_H
 #define CONTEXT_POOL_H
 
+#include <vector>
 #include <atomic>
 #include <memory>
-#include <vector>
 #include <cstddef>
 #include <system_error>
 

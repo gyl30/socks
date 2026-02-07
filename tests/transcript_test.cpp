@@ -1,8 +1,8 @@
 #include <vector>
 #include <cstdint>
 
-#include <gtest/gtest.h>
 #include <openssl/evp.h>
+#include <gtest/gtest.h>
 
 #include "transcript.h"
 

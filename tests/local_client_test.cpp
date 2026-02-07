@@ -1,7 +1,7 @@
-#include <memory>
 #include <string>
-#include <chrono>
 #include <thread>
+#include <memory>
+#include <chrono>
 #include <system_error>
 
 #include <gtest/gtest.h>
@@ -135,6 +135,19 @@ TEST(LocalClientTest, DoubleStop)
     client->start();
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     client->stop();
+    client->stop();
+}
+
+TEST(LocalClientTest, HandshakeFailInvalidServerPubKey)
+{
+    std::error_code ec;
+    io_context_pool pool(1, ec);
+    const std::string bad_pub(31, 'a');    // Wrong size
+    const std::string verify(64, 'b');
+
+    auto client = std::make_shared<mux::local_client>(pool, "127.0.0.1", "12345", 10090, bad_pub, "example.com", "", verify);
+    client->start();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
     client->stop();
 }
 

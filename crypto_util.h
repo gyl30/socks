@@ -2,8 +2,8 @@
 #define CRYPTO_UTIL_H
 
 #include <span>
-#include <string>
 #include <vector>
+#include <string>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>

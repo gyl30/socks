@@ -2,9 +2,9 @@
 #define IP_MATCHER_H
 
 #include <array>
-#include <memory>
-#include <string>
 #include <vector>
+#include <string>
+#include <memory>
 #include <asio.hpp>
 #include <algorithm>
 
