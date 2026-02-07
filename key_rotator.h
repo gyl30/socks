@@ -3,8 +3,8 @@
 
 #include <mutex>
 #include <atomic>
-#include <memory>
 #include <chrono>
+#include <memory>
 #include <cstdint>
 
 namespace reality
