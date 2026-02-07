@@ -4,8 +4,8 @@
 #include <vector>
 #include <utility>
 #include <asio.hpp>
-#include <stdexcept>
 #include <exception>
+#include <stdexcept>
 
 namespace mux::test
 {

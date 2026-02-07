@@ -1,14 +1,14 @@
 #include <chrono>
 #include <memory>
-#include <thread>
 #include <string>
+#include <thread>
 #include <system_error>
 
 #include <gtest/gtest.h>
 #include <gtest/gtest-death-test.h>
 
-#include "local_client.h"
 #include "context_pool.h"
+#include "local_client.h"
 
 using mux::io_context_pool;
 

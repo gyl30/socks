@@ -1,15 +1,15 @@
+#include <atomic>
 #include <chrono>
 #include <memory>
-#include <vector>
-#include <atomic>
-#include <thread>
 #include <string>
+#include <thread>
+#include <vector>
 
 #include <gtest/gtest.h>
-#include <spdlog/spdlog.h>
 #include <asio/ip/tcp.hpp>
-#include <asio/detached.hpp>
+#include <spdlog/spdlog.h>
 #include <asio/co_spawn.hpp>
+#include <asio/detached.hpp>
 #include <asio/io_context.hpp>
 #include <spdlog/sinks/base_sink.h>
 #include <asio/executor_work_guard.hpp>
