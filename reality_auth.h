@@ -4,8 +4,8 @@
 #include <span>
 #include <array>
 #include <vector>
-#include <cstdint>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 
 namespace reality

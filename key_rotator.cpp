@@ -1,7 +1,7 @@
 #include <mutex>
 #include <atomic>
-#include <memory>
 #include <chrono>
+#include <memory>
 
 extern "C"
 {

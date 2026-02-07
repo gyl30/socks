@@ -2,8 +2,8 @@
 #define MUX_PROTOCOL_H
 
 #include <string>
-#include <cstdint>
 #include <cstddef>
+#include <cstdint>
 
 namespace mux
 {

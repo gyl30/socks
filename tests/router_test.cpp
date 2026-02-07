@@ -4,8 +4,8 @@
 #include <gtest/gtest.h>
 #include <asio/co_spawn.hpp>
 #include <asio/detached.hpp>
-#include <asio/this_coro.hpp>
 #include <asio/awaitable.hpp>
+#include <asio/this_coro.hpp>
 #include <asio/io_context.hpp>
 
 #include "router.h"
