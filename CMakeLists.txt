@@ -22,10 +22,6 @@ if(ENABLE_COVERAGE)
     endif()
 endif()
 
-add_compile_definitions(
-    SPDLOG_SHORT_LEVEL_NAMES={"TRC","DBG","INF","WRN","ERR","CTL","OFF"}
-)
-
 find_package(OpenSSL REQUIRED)
 
 set(SOCKS_SOURCES
@@ -98,3 +94,26 @@ endif()
 
 enable_testing()
 add_subdirectory(tests)
+
+option(ENABLE_FUZZING "Enable fuzz testing" OFF)
+if(ENABLE_FUZZING)
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        message(FATAL_ERROR "Fuzzing requires Clang compiler")
+    endif()
+
+    add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
+
+    macro(add_fuzz_test NAME)
+        add_executable(${NAME} fuzz/${NAME}.cpp)
+        target_compile_options(${NAME} PRIVATE -fsanitize=fuzzer)
+        target_link_options(${NAME} PRIVATE -fsanitize=fuzzer)
+        target_link_libraries(${NAME} PRIVATE socks_core)
+    endmacro()
+
+    add_fuzz_test(fuzz_mux_codec)
+    add_fuzz_test(fuzz_ch_parser)
+    add_fuzz_test(fuzz_socks_codec)
+    add_fuzz_test(fuzz_config)
+    add_fuzz_test(fuzz_reality_auth)
+endif()
