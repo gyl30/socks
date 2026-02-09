@@ -1,7 +1,6 @@
 #ifndef MONITOR_SERVER_H
 #define MONITOR_SERVER_H
 
-#include <string>
 #include <memory>
 #include <asio.hpp>
 
@@ -18,7 +17,6 @@ class monitor_server : public std::enable_shared_from_this<monitor_server>
     void do_accept();
 
     asio::ip::tcp::acceptor acceptor_;
-    asio::io_context& ioc_;
 };
 
 }    // namespace mux
