@@ -131,3 +131,94 @@ bool socks_codec::decode_udp_header(const std::uint8_t* data, std::size_t len, s
     out.header_len = pos;
     return true;
 }
+
+bool socks_codec::decode_socks5_request(const std::uint8_t* data, std::size_t len, socks5_request& out)
+{
+    if (len < 4)
+    {
+        return false;
+    }
+
+    out.ver = data[0];
+    out.cmd = data[1];
+    out.rsv = data[2];
+    out.atyp = data[3];
+
+    std::size_t pos = 4;
+    if (out.atyp == socks::kAtypIpv4)
+    {
+        if (len < pos + 4 + 2)
+        {
+            return false;
+        }
+        asio::ip::address_v4::bytes_type b;
+        std::memcpy(b.data(), data + pos, 4);
+        out.addr = asio::ip::address_v4(b).to_string();
+        pos += 4;
+    }
+    else if (out.atyp == socks::kAtypDomain)
+    {
+        if (len < pos + 1)
+        {
+            return false;
+        }
+        const std::uint8_t dlen = data[pos];
+        pos++;
+        if (len < pos + dlen + 2)
+        {
+            return false;
+        }
+        out.addr = std::string(reinterpret_cast<const char*>(data) + pos, dlen);
+        pos += dlen;
+    }
+    else if (out.atyp == socks::kAtypIpv6)
+    {
+        if (len < pos + 16 + 2)
+        {
+            return false;
+        }
+        asio::ip::address_v6::bytes_type b;
+        std::memcpy(b.data(), data + pos, 16);
+        out.addr = asio::ip::address_v6(b).to_string();
+        pos += 16;
+    }
+    else
+    {
+        return false;
+    }
+
+    out.port = static_cast<std::uint16_t>((data[pos] << 8) | data[pos + 1]);
+    pos += 2;
+    out.header_len = pos;
+    return true;
+}
+
+bool socks_codec::decode_socks5_auth_request(const std::uint8_t* data, std::size_t len, socks5_auth_request& out)
+{
+    std::size_t pos = 0;
+    if (len < pos + 2)
+    {
+        return false;
+    }
+
+    out.ver = data[pos++];
+    const std::uint8_t ulen = data[pos++];
+
+    if (len < pos + ulen + 1)
+    {
+        return false;
+    }
+
+    out.username = std::string(reinterpret_cast<const char*>(data) + pos, ulen);
+    pos += ulen;
+
+    const std::uint8_t plen = data[pos++];
+
+    if (len < pos + plen)
+    {
+        return false;
+    }
+
+    out.password = std::string(reinterpret_cast<const char*>(data) + pos, plen);
+    return true;
+}
