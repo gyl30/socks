@@ -1,11 +1,15 @@
 ---
 Language:        Cpp
 BasedOnStyle:  Google
+InsertBraces: true
+FixNamespaceComments: true
 AllowShortBlocksOnASingleLine: false
 AllowShortIfStatementsOnASingleLine: false
-BreakBeforeBraces: Allman
-IndentWidth:     4
 SortIncludes:    false
+IndentWidth:     4
+PointerAlignment: Left
+DerivePointerAlignment: false
+BreakBeforeBraces: Allman
 SortUsingDeclarations: false
 AllowAllArgumentsOnNextLine: true
 SpacesBeforeTrailingComments: 4
