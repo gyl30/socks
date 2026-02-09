@@ -57,6 +57,7 @@ set(SOCKS_SOURCES
     cert_manager.cpp
     key_rotator.cpp
     reality_auth.cpp
+    monitor_server.cpp
 )
 
 add_library(socks_core STATIC ${SOCKS_SOURCES})

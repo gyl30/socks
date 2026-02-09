@@ -13,10 +13,12 @@
 
 #include "log.h"
 #include "config.h"
+#include "statistics.h"
 #include "crypto_util.h"
 #include "context_pool.h"
 #include "local_client.h"
 #include "remote_server.h"
+#include "monitor_server.h"
 
 static void print_usage(const char* prog)
 {
@@ -101,6 +103,8 @@ int main(int argc, char** argv)
     init_log(cfg.log.file);
     set_level(cfg.log.level);
 
+    mux::statistics::instance().start_time();
+
     const auto threads_count = std::thread::hardware_concurrency();
     std::error_code ec;
     mux::io_context_pool pool(threads_count > 0 ? threads_count : 4, ec);
@@ -118,6 +122,13 @@ int main(int argc, char** argv)
 
     std::shared_ptr<mux::remote_server> server = nullptr;
     std::shared_ptr<mux::local_client> client = nullptr;
+    std::shared_ptr<mux::monitor_server> monitor = nullptr;
+
+    if (cfg.monitor.enabled)
+    {
+        monitor = std::make_shared<mux::monitor_server>(pool.get_io_context(), cfg.monitor.port);
+        monitor->start();
+    }
 
     if (cfg.mode == "server")
     {

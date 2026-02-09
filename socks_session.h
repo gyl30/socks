@@ -30,6 +30,8 @@ class socks_session : public std::enable_shared_from_this<socks_session>
                   std::uint32_t sid,
                   const config::socks_t& socks_cfg = {});
 
+    ~socks_session();
+
     void start();
 
    private:
