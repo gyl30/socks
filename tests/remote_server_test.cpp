@@ -94,7 +94,9 @@ TEST_F(RemoteServerTest, AuthFailureTriggersFallback)
         [&](std::error_code ec, asio::ip::tcp::socket peer)
         {
             if (!ec)
+            {
                 fallback_triggered = true;
+            }
         });
 
     auto server = std::make_shared<mux::remote_server>(pool,
@@ -135,7 +137,9 @@ TEST_F(RemoteServerTest, AuthFailShortIdMismatch)
         [&](std::error_code ec, asio::ip::tcp::socket peer)
         {
             if (!ec)
+            {
                 fallback_triggered = true;
+            }
         });
 
     auto server = std::make_shared<mux::remote_server>(pool,
@@ -180,7 +184,9 @@ TEST_F(RemoteServerTest, ClockSkewDetected)
         [&](std::error_code ec, asio::ip::tcp::socket peer)
         {
             if (!ec)
+            {
                 fallback_triggered = true;
+            }
         });
 
     auto server = std::make_shared<mux::remote_server>(pool,
@@ -225,7 +231,9 @@ TEST_F(RemoteServerTest, AuthFailInvalidTLSHeader)
         [&](std::error_code ec, asio::ip::tcp::socket peer)
         {
             if (!ec)
+            {
                 fallback_triggered = true;
+            }
         });
 
     auto server = std::make_shared<mux::remote_server>(pool,
@@ -268,7 +276,9 @@ TEST_F(RemoteServerTest, AuthFailBufferTooShort)
         [&](std::error_code ec, asio::ip::tcp::socket peer)
         {
             if (!ec)
+            {
                 fallback_triggered = true;
+            }
         });
 
     auto server = std::make_shared<mux::remote_server>(pool,
@@ -373,7 +383,9 @@ TEST_F(RemoteServerTest, InvalidAuthConfigPath)
         [&](std::error_code ec, asio::ip::tcp::socket peer)
         {
             if (!ec)
+            {
                 fallback_triggered = true;
+            }
         });
 
     auto server = std::make_shared<mux::remote_server>(pool,
@@ -425,13 +437,17 @@ TEST_F(RemoteServerTest, MultiSNIFallback)
         [&](std::error_code ec, asio::ip::tcp::socket peer)
         {
             if (!ec)
+            {
                 fallback_a_count++;
+            }
         });
     acceptor_b.async_accept(
         [&](std::error_code ec, asio::ip::tcp::socket peer)
         {
             if (!ec)
+            {
                 fallback_b_count++;
+            }
         });
 
     std::vector<mux::config::fallback_entry> fallbacks = {{"www.a.com", "127.0.0.1", std::to_string(fallback_port_a)},
