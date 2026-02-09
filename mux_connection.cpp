@@ -27,6 +27,7 @@ extern "C"
 }
 
 #include "log.h"
+#include "statistics.h"
 #include "mux_protocol.h"
 #include "reality_core.h"
 #include "mux_connection.h"
@@ -67,8 +68,11 @@ mux_connection::mux_connection(asio::ip::tcp::socket socket,
     }
     mux_dispatcher_.set_callback([this](const mux::frame_header h, std::vector<std::uint8_t> p) { this->on_mux_frame(h, std::move(p)); });
     mux_dispatcher_.set_context(ctx_);
+    statistics::instance().active_mux_sessions++;
     LOG_CTX_INFO(ctx_, "{} mux initialized {}", log_event::kConnInit, ctx_.connection_info());
 }
+
+mux_connection::~mux_connection() { statistics::instance().active_mux_sessions--; }
 
 void mux_connection::register_stream(const std::uint32_t id, std::shared_ptr<mux_stream_interface> stream)
 {
@@ -183,6 +187,7 @@ asio::awaitable<void> mux_connection::read_loop()
             break;
         }
         read_bytes_ += n;
+        statistics::instance().bytes_read += n;
         last_read_time_ = std::chrono::steady_clock::now();
 
         reality_engine_.commit_read(n);
@@ -238,6 +243,7 @@ asio::awaitable<void> mux_connection::write_loop()
             break;
         }
         write_bytes_ += n;
+        statistics::instance().bytes_written += n;
         last_write_time_ = std::chrono::steady_clock::now();
     }
     LOG_DEBUG("mux {} write loop finished", cid_);
