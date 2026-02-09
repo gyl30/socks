@@ -12,11 +12,11 @@
 
 extern "C"
 {
+#include <openssl/crypto.h>
 #include <openssl/evp.h>
 #include <openssl/kdf.h>
 #include <openssl/rand.h>
 #include <openssl/x509.h>
-#include <openssl/crypto.h>
 }
 
 #include "log.h"
