@@ -18,8 +18,12 @@
 *.exe
 *.out
 build
+build_fuzz
+build_coverage
 compile_commands.json
 .cache
+Testing/
+*.info
 .idea
 .ccls-cache
 .vscode
