@@ -1,11 +1,11 @@
 #include <vector>
+#include <cstddef>
 #include <cstdint>
-#include <stddef.h>
 
-extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
-{
 #include "mux_codec.h"
 
+extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
+{
     if (size < 7)
     {
         return 0;
@@ -19,10 +19,14 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     }
 
     mux::syn_payload syn;
-    mux::mux_codec::decode_syn(data, size, syn);
+    if (mux::mux_codec::decode_syn(data, size, syn))
+    {
+    }
 
     mux::ack_payload ack;
-    mux::mux_codec::decode_ack(data, size, ack);
+    if (mux::mux_codec::decode_ack(data, size, ack))
+    {
+    }
 
     return 0;
 }

@@ -1,6 +1,6 @@
 #include <string>
 #include <cstdint>
-#include <stddef.h>
+#include <cstddef>
 
 #include "config.h"
 #include "reflect.h"
@@ -19,14 +19,14 @@ REFLECT_STRUCT(mux::config::heartbeat_t, enabled, min_interval, max_interval, mi
 REFLECT_STRUCT(mux::config, mode, log, inbound, outbound, socks, fallbacks, timeout, reality, limits, heartbeat);
 }    // namespace reflect
 
-extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
+extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
 {
     if (size == 0)
     {
         return 0;
     }
 
-    std::string input(reinterpret_cast<const char *>(data), size);
+    std::string input(reinterpret_cast<const char*>(data), size);
 
     mux::config cfg;
     reflect::deserialize_struct(cfg, input);
