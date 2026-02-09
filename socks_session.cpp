@@ -21,6 +21,7 @@ extern "C"
 #include "log.h"
 #include "protocol.h"
 #include "mux_tunnel.h"
+#include "statistics.h"
 #include "log_context.h"
 #include "socks_session.h"
 #include "tcp_socks_session.h"
@@ -44,6 +45,13 @@ socks_session::socks_session(asio::ip::tcp::socket socket,
 {
     ctx_.new_trace_id();
     ctx_.conn_id(sid);
+    statistics::instance().total_connections++;
+    statistics::instance().active_connections++;
+}
+
+socks_session::~socks_session()
+{
+    statistics::instance().active_connections--;
 }
 
 void socks_session::start()
@@ -197,6 +205,7 @@ asio::awaitable<bool> socks_session::do_password_auth()
     if (!success)
     {
         LOG_WARN("socks session {} auth failed for user {}", sid_, username);
+        statistics::instance().auth_failures++;
     }
     else
     {

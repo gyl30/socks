@@ -58,7 +58,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
                    const config::limits_t& limits_cfg = {},
                    const config::heartbeat_t& heartbeat_cfg = {});
 
-    virtual ~mux_connection() = default;
+    virtual ~mux_connection();
 
     auto executor() { return socket_.get_executor(); }
     [[nodiscard]] std::string trace_id() const { return ctx_.trace_id(); }
