@@ -33,13 +33,13 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
         std::stringstream ss;
 
         ss << "socks_uptime_seconds " << stats.uptime_seconds() << "\n";
-        ss << "socks_active_connections " << stats.active_connections.load() << "\n";
-        ss << "socks_total_connections " << stats.total_connections.load() << "\n";
-        ss << "socks_active_mux_tunnels " << stats.active_mux_sessions.load() << "\n";
-        ss << "socks_bytes_read_total " << stats.bytes_read.load() << "\n";
-        ss << "socks_bytes_written_total " << stats.bytes_written.load() << "\n";
-        ss << "socks_auth_failures_total " << stats.auth_failures.load() << "\n";
-        ss << "socks_routing_blocked_total " << stats.routing_blocked.load() << "\n";
+        ss << "socks_active_connections " << stats.active_connections() << "\n";
+        ss << "socks_total_connections " << stats.total_connections() << "\n";
+        ss << "socks_active_mux_tunnels " << stats.active_mux_sessions() << "\n";
+        ss << "socks_bytes_read_total " << stats.bytes_read() << "\n";
+        ss << "socks_bytes_written_total " << stats.bytes_written() << "\n";
+        ss << "socks_auth_failures_total " << stats.auth_failures() << "\n";
+        ss << "socks_routing_blocked_total " << stats.routing_blocked() << "\n";
 
         response_ = ss.str();
 
@@ -60,21 +60,38 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
     asio::ip::tcp::socket socket_;
 };
 
-monitor_server::monitor_server(asio::io_context& ioc, std::uint16_t port) : acceptor_(ioc), ioc_(ioc)
+monitor_server::monitor_server(asio::io_context& ioc, std::uint16_t port) : acceptor_(ioc)
 {
-    try
+    asio::ip::tcp::endpoint endpoint;
+    asio::error_code ec;
+    endpoint.address(asio::ip::make_address("127.0.0.1", ec));
+    if (ec)
     {
-        asio::ip::tcp::endpoint endpoint(asio::ip::make_address("127.0.0.1"), port);
-        acceptor_.open(endpoint.protocol());
-        acceptor_.set_option(asio::socket_base::reuse_address(true));
-        acceptor_.bind(endpoint);
-        acceptor_.listen();
-        LOG_INFO("monitor server listening on 127.0.0.1:{}", port);
+        LOG_ERROR("failed to parse address: {}", ec.message());
+        return;
     }
-    catch (const std::exception& e)
+    endpoint.port(port);
+    if (acceptor_.open(endpoint.protocol(), ec); ec)
     {
-        LOG_ERROR("failed to start monitor server: {}", e.what());
+        LOG_ERROR("failed to open acceptor: {}", ec.message());
+        return;
     }
+    if (acceptor_.set_option(asio::socket_base::reuse_address(true), ec); ec)
+    {
+        LOG_ERROR("failed to set reuse_address: {}", ec.message());
+        return;
+    }
+    if (acceptor_.bind(endpoint, ec); ec)
+    {
+        LOG_ERROR("failed to bind: {}", ec.message());
+        return;
+    }
+    if (acceptor_.listen(asio::socket_base::max_listen_connections, ec); ec)
+    {
+        LOG_ERROR("failed to listen: {}", ec.message());
+        return;
+    }
+    LOG_INFO("monitor server listening on 127.0.0.1:{}", port);
 }
 
 void monitor_server::start() { do_accept(); }
