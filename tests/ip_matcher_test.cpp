@@ -12,7 +12,11 @@
 class IpMatcherTest : public ::testing::Test
 {
    protected:
-    void SetUp() override { rule_file_ = "/tmp/temp_test_rules.txt"; }
+    void SetUp() override
+    {
+        const testing::TestInfo* const test_info = testing::UnitTest::GetInstance()->current_test_info();
+        rule_file_ = std::string("/tmp/temp_test_rules_") + test_info->name() + ".txt";
+    }
 
     void TearDown() override { std::remove(rule_file_.c_str()); }
 

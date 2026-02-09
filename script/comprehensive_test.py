@@ -9,8 +9,7 @@ import sys
 import json
 import signal
 
-# --- 全局配置 ---
-SOCKS_BIN = "./socks"  # build 目录下生成
+SOCKS_BIN = "./socks"
 BUILD_DIR = "./build"
 SERVER_CONFIG_FILE = "server_test.json"
 CLIENT_CONFIG_FILE = "client_test.json"
@@ -22,7 +21,6 @@ SOCKS_PORT = 1080
 ECHO_PORT = 9999
 UDP_ECHO_PORT = 9999
 
-# ANSI 颜色
 class Colors:
     HEADER = '\033[95m'
     OKBLUE = '\033[94m'
@@ -42,7 +40,6 @@ def log_pass(msg):
 def log_fail(msg):
     print(f"{Colors.FAIL}[FAIL] {msg}{Colors.ENDC}")
 
-# --- Echo Server (TCP & UDP) ---
 class EchoServer:
     def __init__(self, port):
         self.port = port
@@ -60,7 +57,6 @@ class EchoServer:
         self.thread.daemon = True
         self.thread.start()
         
-        # Start UDP Echo
         self.udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.udp_sock.bind(('127.0.0.1', self.port))
         self.udp_thread = threading.Thread(target=self.run_udp)
@@ -113,17 +109,14 @@ class FakeTLSServer:
         self.generate_cert()
 
     def generate_cert(self):
-        # Generate generic self-signed cert
         cmd = [
             "openssl", "req", "-x509", "-newkey", "rsa:2048",
             "-keyout", self.key_file, "-out", self.cert_file,
             "-days", "365", "-nodes", "-subj", f"/CN={self.sni}"
         ]
-        # Ignore output
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def start(self):
-        # Use openssl s_server to support TLS 1.3
         cmd = [
             "openssl", "s_server",
             "-accept", str(self.port),
@@ -131,7 +124,7 @@ class FakeTLSServer:
             "-key", self.key_file,
             "-tls1_3",
             "-quiet",
-            "-www"  # Send a basic HTML page after handshake
+            "-www"
         ]
         self.process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         log_info(f"Fake TLS Server ({self.sni}) started on {self.port} (via openssl)")
@@ -144,8 +137,6 @@ class FakeTLSServer:
             except:
                 self.process.kill()
 
-# --- 辅助函数 ---
-
 def write_json(path, data):
     with open(path, 'w') as f:
         json.dump(data, f, indent=4)
@@ -155,24 +146,16 @@ def write_file(path, content):
         f.write(content)
 
 def start_socks_process(config_file, log_file):
-    # binary is in cur dir (since we switch cwd to BUILD_DIR)
-    # config_file is filename only, existing in BUILD_DIR
     cmd = ["./socks", "-c", config_file]
     
     with open(log_file, "w") as out:
-         # Log file path is absolute or relative to CWD?
-         # log_file provided as "build/server.log". 
-         # If cwd is build, we should pass "server.log" or open the file in python then pass fd.
-         # Actually opening file in Python behaves based on Script CWD logic unless we change it.
-         # But simpler: open fd here (in script CWD), pass fd to subprocess. subprocess doesn't reopen.
          proc = subprocess.Popen(cmd, stdout=out, stderr=out, cwd=BUILD_DIR)
     return proc
 
 def socks5_handshake(sock, username=None, password=None):
-    # 1. 协商版本和认证方法
-    methods = [0x00] # No Auth
+    methods = [0x00]
     if username and password:
-        methods.append(0x02) # Username/Password
+        methods.append(0x02)
 
     sock.sendall(struct.pack('BB', 0x05, len(methods)) + bytes(methods))
     ver, method = struct.unpack('BB', sock.recv(2))
@@ -181,10 +164,8 @@ def socks5_handshake(sock, username=None, password=None):
         raise Exception("无效的 SOCKS 版本")
 
     if method == 0x00:
-        # No Auth needed
         pass
     elif method == 0x02:
-        # Password Auth
         if not username or not password:
             raise Exception("服务端请求认证，但未提供凭据")
         
@@ -219,9 +200,6 @@ def socks5_connect_tcp(proxy_host, proxy_port, target_host, target_port, usernam
         s.connect((proxy_host, proxy_port))
         socks5_handshake(s, username, password)
         
-        # 2. 发送连接请求
-        # CMD=0x01 (Connect), ATYP=0x01 (IPv4)
-        # 简化处理，只支持 IPv4 目标
         req = b'\x05\x01\x00\x01' + socket.inet_aton(target_host) + struct.pack('!H', target_port)
         s.sendall(req)
         
@@ -231,21 +209,34 @@ def socks5_connect_tcp(proxy_host, proxy_port, target_host, target_port, usernam
         
         ver, rep, rsv, atyp = struct.unpack('BBBB', resp[:4])
         if rep != 0x00:
-            return s, rep # 返回 socket 和 错误码
+            return s, rep
             
-        return s, 0 # Success
+        return s, 0
     except Exception as e:
         s.close()
         raise e
 
-# --- 测试用例 ---
+def stop_process(proc):
+    if not proc:
+        return
+    if proc.poll() is not None:
+        return
+    try:
+        os.kill(proc.pid, signal.SIGTERM)
+        proc.wait(timeout=2)
+    except Exception:
+        pass
+    
+    if proc.poll() is None:
+        try:
+            os.kill(proc.pid, signal.SIGKILL)
+            proc.wait()
+        except:
+            pass
 
 def test_routing_rules():
     log_info(">>> 开始测试: 路由规则 (Routing Rules) <<<")
     
-    # 1. 准备配置: 无认证
-    # 获取真实 Key
-    # 动态生成 Key
     keys = generate_keys()
     pk = keys["public_key"]
     sk = keys["private_key"]
@@ -289,34 +280,25 @@ def test_routing_rules():
     write_json(f"{BUILD_DIR}/server_route.json", server_cfg)
     write_json(f"{BUILD_DIR}/client_route.json", client_cfg)
     
-    # 2. 准备规则文件
-    # Block 1.2.3.4
     write_file(f"{BUILD_DIR}/{BLOCK_IP_FILE}", "1.2.3.4/32\n")
-    # Direct 127.0.0.1
     write_file(f"{BUILD_DIR}/{DIRECT_IP_FILE}", "127.0.0.1/32\n")
     
-    # 3. 启动进程
     sp = start_socks_process(f"server_route.json", f"{BUILD_DIR}/server_route.log")
     cp = start_socks_process(f"client_route.json", f"{BUILD_DIR}/client_route.log")
-    time.sleep(1) # Wait longer
+    time.sleep(1)
     
     try:
-        # Case 1: Block Rule
         log_info("测试: 阻止规则 (Block Rule: 1.2.3.4)")
         try:
             sock, rep = socks5_connect_tcp(SOCKS_HOST, 1085, "1.2.3.4", 80)
-            if rep == 0x02: # 0x02 = Connection not allowed by ruleset
+            if rep == 0x02:
                 log_pass("连接被正确阻止 (REP=0x02)")
             else:
                 log_fail(f"连接未被正确阻止，返回码: {rep}")
             sock.close()
         except Exception as e:
-            # 某些实现可能会直接断开连接
             log_pass(f"连接被阻止 (异常: {e})")
 
-        # Case 2: Direct Rule & Normal Proxy
-        # 由于我们设置 127.0.0.1 为 Direct，我们需要连 Echo Server
-        # 如果能连通，说明直连或者代理都工作了，但我们要验证"能够连通"
         log_info("测试: 直连规则 (Direct Rule: 127.0.0.1)")
         sock, rep = socks5_connect_tcp(SOCKS_HOST, 1085, "127.0.0.1", ECHO_PORT)
         if rep == 0:
@@ -331,15 +313,11 @@ def test_routing_rules():
             log_fail(f"连接失败，返回码: {rep}")
 
     finally:
-        os.kill(sp.pid, signal.SIGTERM)
-        os.kill(cp.pid, signal.SIGTERM)
-        sp.wait()
-        cp.wait()
+        stop_process(sp)
+        stop_process(cp)
 
 def test_authentication():
     log_info("\n>>> 开始测试: 身份认证 (Authentication) <<<")
-    
-    # 1. 准备配置: 开启认证
     user = "testuser"
     pwd = "password123"
     
@@ -382,7 +360,6 @@ def test_authentication():
     time.sleep(1)
     
     try:
-        # Case 1: Auth Fail
         log_info("测试: 认证失败 (Wrong Credentials)")
         try:
             sock, rep = socks5_connect_tcp("127.0.0.1", 1086, "127.0.0.1", ECHO_PORT, "wrong", "pass")
@@ -392,10 +369,8 @@ def test_authentication():
             if "认证失败" in str(e):
                 log_pass("认证失败被正确拦截")
             else:
-                 # 可能是连接断开等
                  log_pass(f"认证流程中断 ({e})")
 
-        # Case 2: Auth Success
         log_info("测试: 认证成功 (Correct Credentials)")
         try:
             sock, rep = socks5_connect_tcp("127.0.0.1", 1086, "127.0.0.1", ECHO_PORT, user, pwd)
@@ -412,10 +387,8 @@ def test_authentication():
             log_fail(f"认证过程异常: {e}")
             
     finally:
-        os.kill(sp.pid, signal.SIGTERM)
-        os.kill(cp.pid, signal.SIGTERM)
-        sp.wait()
-        cp.wait()
+        stop_process(sp)
+        stop_process(cp)
 
 def test_udp_function():
     log_info("\n>>> 开始测试: UDP 功能 (UDP Functionality) <<<")
@@ -463,8 +436,6 @@ def test_udp_function():
         tcp_sock.sendall(b'\x05\x01\x00')
         tcp_sock.recv(2)
         
-        # UDP ASSOCIATE
-        # IP=0.0.0.0 Port=0
         req = b'\x05\x03\x00\x01' + socket.inet_aton('0.0.0.0') + struct.pack('!H', 0)
         tcp_sock.sendall(req)
         resp = tcp_sock.recv(1024)
@@ -473,16 +444,12 @@ def test_udp_function():
             log_fail(f"UDP Associate 拒绝: {resp[1]}")
             return
         
-        # Parse Relay Addr
         bnd_ip = socket.inet_ntoa(resp[4:8])
         bnd_port = struct.unpack('!H', resp[8:10])[0]
         log_info(f"UDP Relay 分配地址: {bnd_ip}:{bnd_port}")
         
-        # Prepare UDP Packet
         udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         
-        # SOCKS5 UDP Header: RSV(2) FRAG(1) ATYP(1) DST.IP(4) DST.PORT(2)
-        # Target: 127.0.0.1:UDP_ECHO_PORT
         header = b'\x00\x00\x00\x01' + socket.inet_aton('127.0.0.1') + struct.pack('!H', UDP_ECHO_PORT)
         payload = b"UDP_TEST_DATA"
         packet = header + payload
@@ -492,8 +459,6 @@ def test_udp_function():
         
         try:
             data, _ = udp_sock.recvfrom(4096)
-            # Parse Header
-            # Header length 10 bytes (IPv4)
             if len(data) > 10:
                 recv_payload = data[10:]
                 if recv_payload == payload:
@@ -510,13 +475,10 @@ def test_udp_function():
         tcp_sock.close()
         
     finally:
-        os.kill(sp.pid, signal.SIGTERM)
-        os.kill(cp.pid, signal.SIGTERM)
-        sp.wait()
-        cp.wait()
+        stop_process(sp)
+        stop_process(cp)
 
 def clean_up():
-    # Remove temp files if needed
     pass
 
 if __name__ == "__main__":
@@ -524,11 +486,9 @@ if __name__ == "__main__":
         print(f"Build 目录不存在: {BUILD_DIR}")
         sys.exit(1)
         
-    # Start Echo Server
     echo = EchoServer(ECHO_PORT)
     echo.start()
 
-    # Start Fake TLS Servers
     tls_example = FakeTLSServer(14443, "www.example.com")
     tls_example.start()
     

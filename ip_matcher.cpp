@@ -261,7 +261,7 @@ void ip_matcher::add_rule(const std::string& cidr)
     }
 }
 
-void ip_matcher::optimize() const
+void ip_matcher::optimize()
 {
     if (root_v4_ != nullptr)
     {
