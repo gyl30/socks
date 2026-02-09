@@ -36,7 +36,9 @@ TEST(KeyRotatorTest, ThreadSafety)
     for (auto& t : threads)
     {
         if (t.joinable())
+        {
             t.join();
+        }
     }
 
     for (int i = 1; i < 100; ++i)

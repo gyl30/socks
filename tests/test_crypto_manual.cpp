@@ -41,11 +41,15 @@ void test_ecdh_set(const std::string& label,
 
     auto shared1 = reality::crypto_util::x25519_derive(priv1, pub2, ec);
     if (ec)
+    {
         std::cout << "  [1] Derive Error: " << ec.message() << std::endl;
+    }
 
     auto shared2 = reality::crypto_util::x25519_derive(priv2, pub1, ec);
     if (ec)
+    {
         std::cout << "  [2] Derive Error: " << ec.message() << std::endl;
+    }
 
     std::cout << "  Shared1: " << to_hex(shared1) << std::endl;
     std::cout << "  Shared2: " << to_hex(shared2) << std::endl;

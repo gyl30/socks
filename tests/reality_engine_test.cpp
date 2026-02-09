@@ -148,7 +148,9 @@ TEST_F(RealityEngineTest, AlertContentType)
                                              [&called](std::uint8_t type, std::span<const std::uint8_t>)
                                              {
                                                  if (type == reality::kContentTypeAlert)
+                                                 {
                                                      called = true;
+                                                 }
                                              });
 
     EXPECT_EQ(ec, asio::error::eof);

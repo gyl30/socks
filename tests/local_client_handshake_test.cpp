@@ -47,7 +47,9 @@ asio::awaitable<void> mock_server_silent(tcp::acceptor& acceptor)
 {
     auto [ec, socket] = co_await acceptor.async_accept(asio::as_tuple(asio::use_awaitable));
     if (ec)
+    {
         co_return;
+    }
 
     std::vector<uint8_t> buf(1024);
     co_await socket.async_read_some(asio::buffer(buf), asio::as_tuple(asio::use_awaitable));
@@ -87,14 +89,18 @@ TEST_F(LocalClientHandshakeTest, HandshakeTimeout)
     client->stop();
     pool.stop();
     if (pool_thread.joinable())
+    {
         pool_thread.join();
+    }
 }
 
 asio::awaitable<void> mock_server_invalid_sh(tcp::acceptor& acceptor)
 {
     auto [ec, socket] = co_await acceptor.async_accept(asio::as_tuple(asio::use_awaitable));
     if (ec)
+    {
         co_return;
+    }
 
     std::vector<uint8_t> buf(1024);
     co_await socket.async_read_some(asio::buffer(buf), asio::as_tuple(asio::use_awaitable));
@@ -123,19 +129,25 @@ TEST_F(LocalClientHandshakeTest, InvalidServerHello)
     client->stop();
     pool.stop();
     if (pool_thread.joinable())
+    {
         pool_thread.join();
+    }
 }
 
 asio::awaitable<void> mock_server_unsupported_scheme(tcp::acceptor& acceptor, const std::string& server_priv_hex)
 {
     auto [ec, socket] = co_await acceptor.async_accept(asio::as_tuple(asio::use_awaitable));
     if (ec)
+    {
         co_return;
+    }
 
     std::vector<uint8_t> ch_buf(2048);
     auto [re1, n1] = co_await socket.async_read_some(asio::buffer(ch_buf), asio::as_tuple(asio::use_awaitable));
     if (re1)
+    {
         co_return;
+    }
 
     std::vector<uint8_t> srand(32, 0x55);
     std::vector<uint8_t> sid(32, 0);
@@ -181,7 +193,9 @@ TEST_F(LocalClientHandshakeTest, UnsupportedVerifyScheme)
     client->stop();
     pool.stop();
     if (pool_thread.joinable())
+    {
         pool_thread.join();
+    }
 }
 
 }    // namespace

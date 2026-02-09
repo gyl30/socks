@@ -450,7 +450,10 @@ TEST(CHParserTest, KeyShareWrongLength)
     builder.get_mutable_buffer().push_back(0x1d);
     builder.get_mutable_buffer().push_back(0);
     builder.get_mutable_buffer().push_back(31);
-    for (int i = 0; i < 4; ++i) builder.get_mutable_buffer().push_back(0xEE);
+    for (int i = 0; i < 4; ++i)
+    {
+        builder.get_mutable_buffer().push_back(0xEE);
+    }
 
     const uint16_t total = builder.get_buffer().size() - pos - 2;
     builder.get_mutable_buffer()[pos] = (total >> 8);

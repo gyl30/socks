@@ -19,7 +19,9 @@ T run_awaitable(asio::io_context& ctx, asio::awaitable<T> awaitable)
                    [&](std::exception_ptr e, T res)
                    {
                        if (e)
+                       {
                            std::rethrow_exception(e);
+                       }
                        result = std::move(res);
                    });
     ctx.run();
@@ -35,13 +37,17 @@ inline void run_awaitable_void(asio::io_context& ctx, asio::awaitable<void> awai
                    [&](std::exception_ptr e)
                    {
                        if (e)
+                       {
                            std::rethrow_exception(e);
+                       }
                        done = true;
                    });
     ctx.run();
     ctx.restart();
     if (!done)
+    {
         throw std::runtime_error("awaitable did not complete");
+    }
 }
 
 }    // namespace mux::test
