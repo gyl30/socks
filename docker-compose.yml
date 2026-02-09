@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  server:
+    build: .
+    image: socks:latest
+    container_name: socks-server
+    command: ["-c", "/etc/socks/server.json"]
+    volumes:
+      - ./docker/config/server.json:/etc/socks/server.json:ro
+    networks:
+      - socks-net
+
+  client:
+    build: .
+    image: socks:latest
+    container_name: socks-client
+    command: ["-c", "/etc/socks/client.json"]
+    volumes:
+      - ./docker/config/client.json:/etc/socks/client.json:ro
+    ports:
+      - "10800:1080"
+    depends_on:
+      - server
+    networks:
+      - socks-net
+
+networks:
+  socks-net:
+    driver: bridge
