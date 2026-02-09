@@ -45,14 +45,11 @@ socks_session::socks_session(asio::ip::tcp::socket socket,
 {
     ctx_.new_trace_id();
     ctx_.conn_id(sid);
-    statistics::instance().total_connections++;
-    statistics::instance().active_connections++;
+    statistics::instance().inc_total_connections();
+    statistics::instance().inc_active_connections();
 }
 
-socks_session::~socks_session()
-{
-    statistics::instance().active_connections--;
-}
+socks_session::~socks_session() { statistics::instance().dec_active_connections(); }
 
 void socks_session::start()
 {
@@ -205,7 +202,7 @@ asio::awaitable<bool> socks_session::do_password_auth()
     if (!success)
     {
         LOG_WARN("socks session {} auth failed for user {}", sid_, username);
-        statistics::instance().auth_failures++;
+        statistics::instance().inc_auth_failures();
     }
     else
     {
