@@ -9,6 +9,7 @@ import sys
 import json
 import signal
 import resource
+import argparse
 
 SOCKS_BIN = "./socks"
 BUILD_DIR = "./build"
@@ -240,6 +241,14 @@ async def run_stress_test():
     await echo_server.wait_closed()
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="SOCKS5 Stress Test")
+    parser.add_argument("--duration", type=int, default=30, help="Duration to hold connections in seconds")
+    parser.add_argument("--concurrency", type=int, default=1000, help="Number of concurrent connections")
+
+    args = parser.parse_args()
+    DURATION = args.duration
+    TARGET_CONCURRENCY = args.concurrency
+
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     try:
         resource.setrlimit(resource.RLIMIT_NOFILE, (hard, hard))
