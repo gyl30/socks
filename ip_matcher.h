@@ -25,7 +25,7 @@ class ip_matcher
 
     void add_rule(const std::string& cidr);
 
-    void optimize() const;
+    void optimize();
 
    private:
     struct trie_node;
