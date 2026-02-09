@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build-and-test:
+    name: Build and Test (GCC)
+    runs-on: ubuntu-22.04
+    
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update && sudo apt-get install -y cmake ninja-build libssl-dev python3 python3-pip net-tools
+
+    - name: Configure CMake (Release)
+      run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -GNinja
+
+    - name: Build
+      run: cmake --build build
+
+    - name: Run Unit Tests (CTest)
+      run: ctest --test-dir build --output-on-failure
+
+    - name: Run Integration Tests
+      run: |
+        python3 script/comprehensive_test.py
+        python3 script/stress_test.py
+
+    - name: Run Chaos Test (Simulation Mode)
+      run: |
+        python3 script/network_chaos_test.py
+
+  fuzzing-smoke:
+    name: Fuzzing Smoke Test (Clang)
+    runs-on: ubuntu-22.04
+    
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake ninja-build libssl-dev clang
+
+    - name: Configure CMake (Fuzzing)
+      run: cmake -S . -B build_fuzz -DENABLE_FUZZING=ON -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_COMPILER=clang -GNinja
+
+    - name: Build Fuzzers
+      run: cmake --build build_fuzz
+
+    - name: Smoke Test Fuzzers
+      run: |
+        ./build_fuzz/fuzz_socks_handshake -max_total_time=10
+        ./build_fuzz/fuzz_reality_decrypt -max_total_time=10
+        ./build_fuzz/fuzz_mux_codec -max_total_time=5
+        ./build_fuzz/fuzz_ch_parser -max_total_time=5
