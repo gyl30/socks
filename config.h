@@ -71,6 +71,12 @@ struct config
         std::uint32_t max_padding = 1024;
     } heartbeat;
 
+    struct monitor_t
+    {
+        bool enabled = false;
+        std::uint16_t port = 9090;
+    } monitor;
+
     struct reality_t
     {
         std::string sni = "www.apple.com";
