@@ -21,7 +21,9 @@
 static void print_usage(const char* prog)
 {
     std::cout << "Usage:\n";
-    std::cout << prog << "x25519        Generate key pair for kX25519 key exchange\n";
+    std::cout << prog << " -c <config>  Run with configuration file\n";
+    std::cout << prog << " x25519       Generate key pair for kX25519 key exchange\n";
+    std::cout << prog << " config       Dump default configuration\n";
 }
 
 static void dump_x25519()
@@ -141,13 +143,13 @@ int main(int argc, char** argv)
 
     asio::io_context& signal_ctx = pool.get_io_context();
     asio::signal_set signals(signal_ctx);
-    (void)signals.add(SIGINT, ec);
+    ec = signals.add(SIGINT, ec);
     if (ec)
     {
         LOG_ERROR("fatal failed to register sigint error {}", ec.message());
         return 1;
     }
-    (void)signals.add(SIGTERM, ec);
+    ec = signals.add(SIGTERM, ec);
     if (ec)
     {
         LOG_ERROR("fatal failed to register sigterm error {}", ec.message());
