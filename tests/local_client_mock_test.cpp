@@ -74,9 +74,13 @@ TEST(LocalClientMockTest, HandshakeFailurePaths)
         client->stop();
         pool.stop();
         if (pool_thread.joinable())
+        {
             pool_thread.join();
+        }
         if (server_thread.joinable())
+        {
             server_thread.join();
+        }
     };
 
     {

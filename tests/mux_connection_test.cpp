@@ -60,7 +60,10 @@ TEST_F(MuxConnectionIntegrationTest, StreamDataExchange)
 
     socket_client->connect(acceptor.local_endpoint());
 
-    while (!accepted) io_ctx.poll();
+    while (!accepted)
+    {
+        io_ctx.poll();
+    }
 
     reality_engine engine_c{{}, {}, {}, {}, EVP_aes_128_gcm()};
 
@@ -88,7 +91,9 @@ TEST_F(MuxConnectionIntegrationTest, StreamDataExchange)
             for (int i = 0; i < 10; ++i)
             {
                 if (stream_s->received_data.size() == test_data.size())
+                {
                     break;
+                }
                 timer.expires_after(std::chrono::milliseconds(50));
                 co_await timer.async_wait(asio::as_tuple(asio::use_awaitable));
             }
@@ -99,7 +104,9 @@ TEST_F(MuxConnectionIntegrationTest, StreamDataExchange)
             for (int i = 0; i < 10; ++i)
             {
                 if (stream_s->closed)
+                {
                     break;
+                }
                 timer.expires_after(std::chrono::milliseconds(50));
                 co_await timer.async_wait(asio::as_tuple(asio::use_awaitable));
             }
