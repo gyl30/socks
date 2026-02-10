@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <system_error>
 
+#include <asio/ssl.hpp>
 #include <gtest/gtest.h>
 #include <asio/write.hpp>
 #include <asio/ip/tcp.hpp>
@@ -13,11 +14,13 @@
 #include <asio/awaitable.hpp>
 #include <asio/this_coro.hpp>
 #include <asio/io_context.hpp>
-#include <asio/ssl.hpp>
 #include <asio/steady_timer.hpp>
 #include <asio/use_awaitable.hpp>
 
+extern "C"
+{
 #include <openssl/ssl.h>
+}
 
 #include "cert_fetcher.h"
 
@@ -75,11 +78,10 @@ constexpr char kTestKeyPem[] =
     "0p5ijORI4ZnFfGABG11xtyQ=\n"
     "-----END PRIVATE KEY-----\n";
 
-class LocalTlsServer
+class local_tls_server
 {
    public:
-    explicit LocalTlsServer(asio::io_context& ctx)
-        : ssl_ctx_(asio::ssl::context::tls_server), acceptor_(ctx)
+    explicit local_tls_server(asio::io_context& ctx) : ssl_ctx_(asio::ssl::context::tls_server), acceptor_(ctx)
     {
         ssl_ctx_.set_options(asio::ssl::context::default_workarounds);
         ssl_ctx_.use_certificate_chain(asio::buffer(kTestCertPem, sizeof(kTestCertPem) - 1));
@@ -124,7 +126,7 @@ class LocalTlsServer
 TEST(CertFetcherTest, BasicFetch)
 {
     asio::io_context ctx;
-    LocalTlsServer server(ctx);
+    local_tls_server server(ctx);
     server.start();
     bool finished = false;
 
