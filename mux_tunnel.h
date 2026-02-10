@@ -25,8 +25,10 @@ class mux_tunnel_impl : public std::enable_shared_from_this<mux_tunnel_impl<stre
                              std::uint32_t conn_id,
                              const std::string& trace_id = "",
                              const config::timeout_t& timeout_cfg = {},
-                             const config::limits_t& limits_cfg = {})
-        : connection_(std::make_shared<mux_connection>(std::move(socket), std::move(engine), is_client, conn_id, trace_id, timeout_cfg, limits_cfg))
+                             const config::limits_t& limits_cfg = {},
+                             const config::heartbeat_t& heartbeat_cfg = {})
+        : connection_(std::make_shared<mux_connection>(
+              std::move(socket), std::move(engine), is_client, conn_id, trace_id, timeout_cfg, limits_cfg, heartbeat_cfg))
     {
     }
 
@@ -50,7 +52,7 @@ class mux_tunnel_impl : public std::enable_shared_from_this<mux_tunnel_impl<stre
 
     [[nodiscard]] std::shared_ptr<mux_stream> create_stream(const std::string& trace_id = "")
     {
-        if (connection_ == nullptr || !connection_->is_open())
+        if (connection_ == nullptr || !connection_->is_open() || !connection_->can_accept_stream())
         {
             return nullptr;
         }

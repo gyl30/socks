@@ -94,6 +94,19 @@ asio::awaitable<bool> proxy_upstream::connect(const std::string& host, const std
         co_return false;
     }
 
+    auto cleanup_stream = [&]() -> asio::awaitable<void>
+    {
+        if (stream_ != nullptr)
+        {
+            co_await stream_->close();
+            if (tunnel_ != nullptr)
+            {
+                tunnel_->remove_stream(stream_->id());
+            }
+            stream_.reset();
+        }
+    };
+
     const syn_payload syn{.socks_cmd = socks::kCmdConnect, .addr = host, .port = port, .trace_id = ctx_.trace_id()};
     std::vector<std::uint8_t> syn_data;
     mux_codec::encode_syn(syn, syn_data);
@@ -101,6 +114,7 @@ asio::awaitable<bool> proxy_upstream::connect(const std::string& host, const std
     if (ec)
     {
         LOG_CTX_ERROR(ctx_, "{} send syn failed {}", log_event::kRoute, ec.message());
+        co_await cleanup_stream();
         co_return false;
     }
 
@@ -108,6 +122,7 @@ asio::awaitable<bool> proxy_upstream::connect(const std::string& host, const std
     if (ack_ec)
     {
         LOG_CTX_ERROR(ctx_, "{} wait ack failed {}", log_event::kRoute, ack_ec.message());
+        co_await cleanup_stream();
         co_return false;
     }
 
@@ -115,6 +130,7 @@ asio::awaitable<bool> proxy_upstream::connect(const std::string& host, const std
     if (!mux_codec::decode_ack(ack_data.data(), ack_data.size(), ack_pl) || ack_pl.socks_rep != socks::kRepSuccess)
     {
         LOG_CTX_WARN(ctx_, "{} remote rejected {}", log_event::kRoute, ack_pl.socks_rep);
+        co_await cleanup_stream();
         co_return false;
     }
 
@@ -152,6 +168,11 @@ asio::awaitable<void> proxy_upstream::close()
     if (stream_)
     {
         co_await stream_->close();
+        if (tunnel_ != nullptr)
+        {
+            tunnel_->remove_stream(stream_->id());
+        }
+        stream_.reset();
     }
 }
 

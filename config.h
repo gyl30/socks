@@ -59,6 +59,7 @@ struct config
     {
         std::uint32_t max_connections = 5;
         std::uint64_t max_buffer = 10L * 1024 * 1024;
+        std::uint32_t max_streams = 1024;
     } limits;
 
     struct heartbeat_t
@@ -75,12 +76,26 @@ struct config
     {
         bool enabled = false;
         std::uint16_t port = 9090;
+        std::string token;
+        std::uint32_t min_interval_ms = 50;
     } monitor;
 
     struct reality_t
     {
         std::string sni = "www.apple.com";
+        std::string fingerprint = "random";
+        std::string dest;
+        std::string type = "tcp";
+        std::uint8_t xver = 0;
 
+        struct limit_fallback_t
+        {
+            std::uint64_t after_bytes = 0;
+            std::uint64_t bytes_per_sec = 0;
+            std::uint64_t burst_bytes_per_sec = 0;
+        };
+        limit_fallback_t limit_fallback_upload;
+        limit_fallback_t limit_fallback_download;
         std::string private_key = "b0c338c6353fab820a0e5d16b6fcf41ee4166940795f89d0cde8902675ce9456";
         std::string public_key = "8d4e6ddf1479f2305b6645f045e02f9f5e400005884a8f1663ee9c51915bcc6d";
         std::string short_id;

@@ -4,9 +4,11 @@
 #include <memory>
 #include <string>
 #include <cstdint>
+#include <chrono>
 
 #include <asio/ip/tcp.hpp>
 #include <asio/awaitable.hpp>
+#include <asio/steady_timer.hpp>
 
 #include "router.h"
 #include "protocol.h"
@@ -23,7 +25,8 @@ class tcp_socks_session : public std::enable_shared_from_this<tcp_socks_session>
     tcp_socks_session(asio::ip::tcp::socket socket,
                       std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager,
                       std::shared_ptr<router> router,
-                      const std::uint32_t sid);
+                      const std::uint32_t sid,
+                      const config::timeout_t& timeout_cfg);
 
     void start(const std::string& host, const std::uint16_t port);
 
@@ -35,12 +38,16 @@ class tcp_socks_session : public std::enable_shared_from_this<tcp_socks_session>
     [[nodiscard]] asio::awaitable<void> client_to_upstream(upstream* backend);
 
     [[nodiscard]] asio::awaitable<void> upstream_to_client(upstream* backend);
+    [[nodiscard]] asio::awaitable<void> idle_watchdog(upstream* backend);
 
    private:
     connection_context ctx_;
     asio::ip::tcp::socket socket_;
+    asio::steady_timer idle_timer_;
+    std::chrono::steady_clock::time_point last_activity_time_;
     std::shared_ptr<router> router_;
     std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager_;
+    config::timeout_t timeout_config_;
 };
 
 }    // namespace mux

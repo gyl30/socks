@@ -22,10 +22,20 @@ void mux_dispatcher::set_callback(frame_callback_t cb) { callback_ = std::move(c
 
 void mux_dispatcher::set_context(connection_context ctx) { ctx_ = std::move(ctx); }
 
+void mux_dispatcher::set_max_buffer(const std::size_t max_buffer) { max_buffer_ = max_buffer; }
+
 void mux_dispatcher::on_plaintext_data(std::span<const std::uint8_t> data)
 {
     if (data.empty())
     {
+        return;
+    }
+
+    if (max_buffer_ > 0 && buffer_.size() + data.size() > max_buffer_)
+    {
+        LOG_CTX_ERROR(ctx_, "{} mux dispatcher buffer overflow", log_event::kMux);
+        buffer_.consume(buffer_.size());
+        overflowed_.store(true, std::memory_order_release);
         return;
     }
 

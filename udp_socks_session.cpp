@@ -27,15 +27,19 @@ namespace mux
 
 udp_socks_session::udp_socks_session(asio::ip::tcp::socket socket,
                                      std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager,
-                                     const std::uint32_t sid)
+                                     const std::uint32_t sid,
+                                     const config::timeout_t& timeout_cfg)
     : timer_(socket.get_executor()),
+      idle_timer_(socket.get_executor()),
       socket_(std::move(socket)),
       udp_socket_(socket_.get_executor()),
       tunnel_manager_(std::move(tunnel_manager)),
-      recv_channel_(socket_.get_executor(), 128)
+      recv_channel_(socket_.get_executor(), 128),
+      timeout_config_(timeout_cfg)
 {
     ctx_.new_trace_id();
     ctx_.conn_id(sid);
+    last_activity_time_ = std::chrono::steady_clock::now();
 }
 
 void udp_socks_session::start(const std::string& host, const std::uint16_t port)
@@ -98,6 +102,9 @@ asio::awaitable<void> udp_socks_session::run(const std::string& host, const std:
     if (stream == nullptr)
     {
         LOG_CTX_ERROR(ctx_, "{} failed to create stream", log_event::kSocks);
+        std::uint8_t err[] = {socks::kVer, socks::kRepGenFail, 0, socks::kAtypIpv4, 0, 0, 0, 0, 0, 0};
+        co_await asio::async_write(socket_, asio::buffer(err), asio::as_tuple(asio::use_awaitable));
+        on_close();
         co_return;
     }
 
@@ -117,6 +124,16 @@ asio::awaitable<void> udp_socks_session::run(const std::string& host, const std:
     {
         LOG_CTX_WARN(ctx_, "{} ack failed {}", log_event::kSocks, ack_ec.message());
         co_await stream->close();
+        co_return;
+    }
+    ack_payload ack_pl;
+    if (!mux_codec::decode_ack(ack_data.data(), ack_data.size(), ack_pl) || ack_pl.socks_rep != socks::kRepSuccess)
+    {
+        LOG_CTX_WARN(ctx_, "{} ack rejected {}", log_event::kSocks, ack_pl.socks_rep);
+        std::uint8_t err[] = {socks::kVer, socks::kRepGenFail, 0, socks::kAtypIpv4, 0, 0, 0, 0, 0, 0};
+        co_await asio::async_write(socket_, asio::buffer(err), asio::as_tuple(asio::use_awaitable));
+        co_await stream->close();
+        on_close();
         co_return;
     }
 
@@ -155,7 +172,7 @@ asio::awaitable<void> udp_socks_session::run(const std::string& host, const std:
     tunnel_manager_->register_stream(stream->id(), shared_from_this());
 
     using asio::experimental::awaitable_operators::operator||;
-    co_await (udp_sock_to_stream(stream, client_ep_ptr) || stream_to_udp_sock(stream, client_ep_ptr) || keep_tcp_alive());
+    co_await (udp_sock_to_stream(stream, client_ep_ptr) || stream_to_udp_sock(stream, client_ep_ptr) || keep_tcp_alive() || idle_watchdog());
 
     tunnel_manager_->remove_stream(stream->id());
     co_await stream->close();
@@ -177,8 +194,6 @@ asio::awaitable<void> udp_socks_session::udp_sock_to_stream(std::shared_ptr<mux_
             }
             break;
         }
-        *client_ep = sender;
-
         socks_udp_header h;
         if (!socks_codec::decode_udp_header(buf.data(), n, h))
         {
@@ -192,11 +207,33 @@ asio::awaitable<void> udp_socks_session::udp_sock_to_stream(std::shared_ptr<mux_
             continue;
         }
 
+        if (n > mux::kMaxPayload)
+        {
+            LOG_CTX_WARN(ctx_, "{} udp packet too large {}", log_event::kSocks, n);
+            continue;
+        }
+
+        {
+            const std::scoped_lock lock(client_ep_mutex_);
+            if (!has_client_ep_)
+            {
+                client_ep_ = sender;
+                has_client_ep_ = true;
+            }
+            else if (sender.address() != client_ep_.address() || sender.port() != client_ep_.port())
+            {
+                LOG_CTX_WARN(ctx_, "{} udp client endpoint mismatch ignore", log_event::kSocks);
+                continue;
+            }
+        }
+
+        // 透传完整 socks udp 包由远端剥离头部
         if (const auto write_ec = co_await stream->async_write_some(buf.data(), n))
         {
             LOG_CTX_ERROR(ctx_, "{} write to stream failed {}", log_event::kSocks, write_ec.message());
             break;
         }
+        last_activity_time_ = std::chrono::steady_clock::now();
     }
 }
 
@@ -211,16 +248,31 @@ asio::awaitable<void> udp_socks_session::stream_to_udp_sock(std::shared_ptr<mux_
             break;
         }
 
-        if (client_ep->port() == 0)
+        asio::ip::udp::endpoint ep;
+        {
+            const std::scoped_lock lock(client_ep_mutex_);
+            if (!has_client_ep_)
+            {
+                LOG_CTX_WARN(ctx_, "{} client ep port is 0 ignore it", log_event::kSocks);
+                continue;
+            }
+            ep = client_ep_;
+        }
+
+        if (ep.port() == 0)
         {
             LOG_CTX_WARN(ctx_, "{} client ep port is 0 ignore it", log_event::kSocks);
             continue;
         }
 
-        const auto [se, sn] = co_await udp_socket_.async_send_to(asio::buffer(data), *client_ep, asio::as_tuple(asio::use_awaitable));
+        const auto [se, sn] = co_await udp_socket_.async_send_to(asio::buffer(data), ep, asio::as_tuple(asio::use_awaitable));
         if (se)
         {
             LOG_CTX_ERROR(ctx_, "{} send error {}", log_event::kSocks, se.message());
+        }
+        else
+        {
+            last_activity_time_ = std::chrono::steady_clock::now();
         }
     }
 }
@@ -232,6 +284,26 @@ asio::awaitable<void> udp_socks_session::keep_tcp_alive()
     if (ec)
     {
         LOG_CTX_ERROR(ctx_, "{} keep tcp alive error {}", log_event::kSocks, ec.message());
+    }
+}
+
+asio::awaitable<void> udp_socks_session::idle_watchdog()
+{
+    while (udp_socket_.is_open())
+    {
+        idle_timer_.expires_after(std::chrono::seconds(1));
+        const auto [wait_ec] = co_await idle_timer_.async_wait(asio::as_tuple(asio::use_awaitable));
+        if (wait_ec)
+        {
+            break;
+        }
+        const auto now = std::chrono::steady_clock::now();
+        if (now - last_activity_time_ > std::chrono::seconds(timeout_config_.idle))
+        {
+            LOG_CTX_WARN(ctx_, "{} udp session idle closing", log_event::kSocks);
+            on_close();
+            break;
+        }
     }
 }
 

@@ -86,6 +86,9 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
         return s == mux_connection_state::connected || s == mux_connection_state::draining;
     }
 
+    [[nodiscard]] bool can_accept_stream();
+    [[nodiscard]] bool has_stream(std::uint32_t id);
+
    private:
     asio::awaitable<void> read_loop();
 
