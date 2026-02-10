@@ -11,7 +11,10 @@ namespace mux
 class monitor_session : public std::enable_shared_from_this<monitor_session>
 {
    public:
-    monitor_session(asio::ip::tcp::socket socket, std::string token, std::chrono::steady_clock::time_point* last_request_time, std::mutex* mutex,
+    monitor_session(asio::ip::tcp::socket socket,
+                    std::string token,
+                    std::chrono::steady_clock::time_point* last_request_time,
+                    std::mutex* mutex,
                     std::uint32_t min_interval_ms)
         : socket_(std::move(socket)),
           token_(std::move(token)),
@@ -91,12 +94,7 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
         response_ = ss.str();
 
         auto self = shared_from_this();
-        asio::async_write(socket_,
-                          asio::buffer(response_),
-                          [this, self](std::error_code, std::size_t)
-                          {
-                              close_socket();
-                          });
+        asio::async_write(socket_, asio::buffer(response_), [this, self](std::error_code, std::size_t) { close_socket(); });
     }
 
    private:
@@ -109,8 +107,7 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
     std::uint32_t min_interval_ms_ = 0;
 };
 
-monitor_server::monitor_server(asio::io_context& ioc, std::uint16_t port, std::string token)
-    : acceptor_(ioc), token_(std::move(token))
+monitor_server::monitor_server(asio::io_context& ioc, std::uint16_t port, std::string token) : acceptor_(ioc), token_(std::move(token))
 {
     asio::ip::tcp::endpoint endpoint;
     asio::error_code ec;

@@ -2,7 +2,11 @@
 #include <system_error>
 
 #include <gtest/gtest.h>
+
+extern "C"
+{
 #include <openssl/evp.h>
+}
 
 #include "tls_key_schedule.h"
 

@@ -17,12 +17,12 @@
 #include "config.h"
 #include "crypto_util.h"
 #include "context_pool.h"
-#include "socks_client.h"
 #include "reality_core.h"
-#include "reality_messages.h"
+#include "socks_client.h"
 #include "remote_server.h"
+#include "reality_messages.h"
 
-class LimitsTest : public ::testing::Test
+class limits_test : public ::testing::Test
 {
    protected:
     void SetUp() override
@@ -35,19 +35,24 @@ class LimitsTest : public ::testing::Test
         short_id_ = "0102030405060708";
     }
 
+    [[nodiscard]] const std::string& server_priv_key() const { return server_priv_key_; }
+    [[nodiscard]] const std::string& client_pub_key() const { return client_pub_key_; }
+    [[nodiscard]] const std::string& short_id() const { return short_id_; }
+
+   private:
     std::string server_priv_key_;
     std::string client_pub_key_;
     std::string short_id_;
 };
 
-TEST_F(LimitsTest, ContextPoolInvalidSize)
+TEST_F(limits_test, ContextPoolInvalidSize)
 {
     std::error_code ec;
     const mux::io_context_pool pool(0, ec);
     EXPECT_EQ(ec, std::errc::invalid_argument);
 }
 
-TEST_F(LimitsTest, ConnectionPoolCapacity)
+TEST_F(limits_test, ConnectionPoolCapacity)
 {
     std::error_code ec;
 
@@ -70,8 +75,8 @@ TEST_F(LimitsTest, ConnectionPoolCapacity)
     mux::config server_cfg;
     server_cfg.inbound.host = "127.0.0.1";
     server_cfg.inbound.port = server_port;
-    server_cfg.reality.private_key = server_priv_key_;
-    server_cfg.reality.short_id = short_id_;
+    server_cfg.reality.private_key = server_priv_key();
+    server_cfg.reality.short_id = short_id();
     server_cfg.timeout = timeouts;
     server_cfg.limits = limits;
     auto server = std::make_shared<mux::remote_server>(pool, server_cfg);
@@ -105,9 +110,9 @@ TEST_F(LimitsTest, ConnectionPoolCapacity)
     client_cfg.outbound.host = "127.0.0.1";
     client_cfg.outbound.port = server_port;
     client_cfg.socks.port = local_socks_port;
-    client_cfg.reality.public_key = client_pub_key_;
+    client_cfg.reality.public_key = client_pub_key();
     client_cfg.reality.sni = sni;
-    client_cfg.reality.short_id = short_id_;
+    client_cfg.reality.short_id = short_id();
     client_cfg.timeout = timeouts;
     client_cfg.limits = limits;
     auto client = std::make_shared<mux::socks_client>(pool, client_cfg);
