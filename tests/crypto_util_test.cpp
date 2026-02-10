@@ -7,7 +7,11 @@
 #include <system_error>
 
 #include <gtest/gtest.h>
+
+extern "C"
+{
 #include <openssl/evp.h>
+}
 
 #include "crypto_util.h"
 

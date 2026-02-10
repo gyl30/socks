@@ -7,14 +7,13 @@
 
 #include "config.h"
 
-class ConfigTest : public ::testing::Test
+class config_test : public ::testing::Test
 {
    protected:
     void SetUp() override
     {
         const auto* info = ::testing::UnitTest::GetInstance()->current_test_info();
-        tmp_file_ = std::string("test_config_") + info->test_suite_name() + "_" + info->name() + "_" + std::to_string(::getpid()) +
-                    ".json";
+        tmp_file_ = std::string("test_config_") + info->test_suite_name() + "_" + info->name() + "_" + std::to_string(::getpid()) + ".json";
     }
 
     void TearDown() override { std::remove(tmp_file_.c_str()); }
@@ -32,7 +31,7 @@ class ConfigTest : public ::testing::Test
     std::string tmp_file_;
 };
 
-TEST_F(ConfigTest, DefaultConfigValid)
+TEST_F(config_test, DefaultConfigValid)
 {
     const auto json = mux::dump_default_config();
     ASSERT_FALSE(json.empty());
@@ -41,7 +40,7 @@ TEST_F(ConfigTest, DefaultConfigValid)
     EXPECT_NE(json.find("\"inbound\""), std::string::npos);
 }
 
-TEST_F(ConfigTest, ParseValues)
+TEST_F(config_test, ParseValues)
 {
     const std::string content = R"({
         "mode": "client",
@@ -89,20 +88,20 @@ TEST_F(ConfigTest, ParseValues)
     }
 }
 
-TEST_F(ConfigTest, MissingFile)
+TEST_F(config_test, MissingFile)
 {
     const auto cfg = mux::parse_config("non_existent_file.json");
     EXPECT_FALSE(cfg.has_value());
 }
 
-TEST_F(ConfigTest, InvalidJson)
+TEST_F(config_test, InvalidJson)
 {
     write_config_file("{ invalid_json }");
     const auto cfg = mux::parse_config(tmp_file());
     EXPECT_FALSE(cfg.has_value());
 }
 
-TEST_F(ConfigTest, MissingFieldsUseDefaults)
+TEST_F(config_test, MissingFieldsUseDefaults)
 {
     const std::string content = R"({})";
     write_config_file(content);
@@ -112,7 +111,7 @@ TEST_F(ConfigTest, MissingFieldsUseDefaults)
     EXPECT_EQ(cfg_opt->mode, "server");
 }
 
-TEST_F(ConfigTest, InvalidPortRange)
+TEST_F(config_test, InvalidPortRange)
 {
     const std::string content = R"({
         "inbound": {
@@ -124,7 +123,7 @@ TEST_F(ConfigTest, InvalidPortRange)
     const auto cfg_opt = mux::parse_config(tmp_file());
 }
 
-TEST_F(ConfigTest, EmptyHostAddress)
+TEST_F(config_test, EmptyHostAddress)
 {
     const std::string content = R"({
         "inbound": {

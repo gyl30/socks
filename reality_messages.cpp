@@ -25,9 +25,9 @@ namespace reality
 namespace
 {
 
-struct ExtensionBuildContext
+struct extension_build_context
 {
-    const GreaseContext& grease_ctx;
+    const grease_context& grease_ctx;
     int& grease_ext_count;
     const std::vector<std::uint8_t>& x25519_pubkey;
     const std::string& hostname;
@@ -35,7 +35,7 @@ struct ExtensionBuildContext
     std::size_t exts_size;
 };
 
-bool build_grease_ext(std::vector<std::uint8_t>& ext_buffer, std::uint16_t& ext_type, const ExtensionBuildContext& ctx)
+bool build_grease_ext(std::vector<std::uint8_t>& ext_buffer, std::uint16_t& ext_type, const extension_build_context& ctx)
 {
     ext_type = ctx.grease_ctx.get_extension_grease(ctx.grease_ext_count++);
     if (ctx.grease_ext_count == 2)
@@ -45,7 +45,7 @@ bool build_grease_ext(std::vector<std::uint8_t>& ext_buffer, std::uint16_t& ext_
     return true;
 }
 
-bool build_sni_ext(std::vector<std::uint8_t>& ext_buffer, std::uint16_t& ext_type, const ExtensionBuildContext& ctx)
+bool build_sni_ext(std::vector<std::uint8_t>& ext_buffer, std::uint16_t& ext_type, const extension_build_context& ctx)
 {
     ext_type = tls_consts::ext::kSni;
     std::vector<std::uint8_t> server_name_list;
@@ -56,15 +56,15 @@ bool build_sni_ext(std::vector<std::uint8_t>& ext_buffer, std::uint16_t& ext_typ
     return true;
 }
 
-bool build_supported_groups_ext(const std::shared_ptr<ExtensionBlueprint>& ext_ptr,
+bool build_supported_groups_ext(const std::shared_ptr<extension_blueprint>& ext_ptr,
                                 std::vector<std::uint8_t>& ext_buffer,
                                 std::uint16_t& ext_type,
-                                const ExtensionBuildContext& ctx)
+                                const extension_build_context& ctx)
 {
     ext_type = tls_consts::ext::kSupportedGroups;
-    auto bp = std::static_pointer_cast<SupportedGroupsBlueprint>(ext_ptr);
+    auto bp = std::static_pointer_cast<supported_groups_blueprint>(ext_ptr);
     std::vector<std::uint8_t> list_data;
-    for (auto g : bp->groups)
+    for (auto g : bp->groups())
     {
         if (g == kGreasePlaceholder)
         {
@@ -76,20 +76,20 @@ bool build_supported_groups_ext(const std::shared_ptr<ExtensionBlueprint>& ext_p
     return true;
 }
 
-bool build_ec_point_formats_ext(const std::shared_ptr<ExtensionBlueprint>& ext_ptr, std::vector<std::uint8_t>& ext_buffer, std::uint16_t& ext_type)
+bool build_ec_point_formats_ext(const std::shared_ptr<extension_blueprint>& ext_ptr, std::vector<std::uint8_t>& ext_buffer, std::uint16_t& ext_type)
 {
     ext_type = tls_consts::ext::kEcPointFormats;
-    auto bp = std::static_pointer_cast<ECPointFormatsBlueprint>(ext_ptr);
-    message_builder::push_vector_u8(ext_buffer, bp->formats);
+    auto bp = std::static_pointer_cast<ec_point_formats_blueprint>(ext_ptr);
+    message_builder::push_vector_u8(ext_buffer, bp->formats());
     return true;
 }
 
-bool build_alpn_ext(const std::shared_ptr<ExtensionBlueprint>& ext_ptr, std::vector<std::uint8_t>& ext_buffer, std::uint16_t& ext_type)
+bool build_alpn_ext(const std::shared_ptr<extension_blueprint>& ext_ptr, std::vector<std::uint8_t>& ext_buffer, std::uint16_t& ext_type)
 {
     ext_type = tls_consts::ext::kAlpn;
-    auto bp = std::static_pointer_cast<ALPNBlueprint>(ext_ptr);
+    auto bp = std::static_pointer_cast<alpn_blueprint>(ext_ptr);
     std::vector<std::uint8_t> proto_list;
-    for (const auto& p : bp->protocols)
+    for (const auto& p : bp->protocols())
     {
         message_builder::push_vector_u8(proto_list, std::vector<std::uint8_t>(p.begin(), p.end()));
     }
@@ -106,14 +106,14 @@ bool build_status_request_ext(std::vector<std::uint8_t>& ext_buffer, std::uint16
     return true;
 }
 
-bool build_signature_algorithms_ext(const std::shared_ptr<ExtensionBlueprint>& ext_ptr,
+bool build_signature_algorithms_ext(const std::shared_ptr<extension_blueprint>& ext_ptr,
                                     std::vector<std::uint8_t>& ext_buffer,
                                     std::uint16_t& ext_type)
 {
     ext_type = tls_consts::ext::kSignatureAlg;
-    auto bp = std::static_pointer_cast<SignatureAlgorithmsBlueprint>(ext_ptr);
+    auto bp = std::static_pointer_cast<signature_algorithms_blueprint>(ext_ptr);
     std::vector<std::uint8_t> list_data;
-    for (auto a : bp->algorithms)
+    for (auto a : bp->algorithms())
     {
         message_builder::push_u16(list_data, a);
     }
@@ -121,15 +121,15 @@ bool build_signature_algorithms_ext(const std::shared_ptr<ExtensionBlueprint>& e
     return true;
 }
 
-bool build_key_share_ext(const std::shared_ptr<ExtensionBlueprint>& ext_ptr,
+bool build_key_share_ext(const std::shared_ptr<extension_blueprint>& ext_ptr,
                          std::vector<std::uint8_t>& ext_buffer,
                          std::uint16_t& ext_type,
-                         const ExtensionBuildContext& ctx)
+                         const extension_build_context& ctx)
 {
     ext_type = tls_consts::ext::kKeyShare;
-    auto bp = std::static_pointer_cast<KeyShareBlueprint>(ext_ptr);
+    auto bp = std::static_pointer_cast<key_share_blueprint>(ext_ptr);
     std::vector<std::uint8_t> share_list;
-    for (const auto& ks : bp->key_shares)
+    for (const auto& ks : bp->key_shares())
     {
         std::uint16_t group = ks.group;
         if (group == kGreasePlaceholder)
@@ -161,25 +161,25 @@ bool build_key_share_ext(const std::shared_ptr<ExtensionBlueprint>& ext_ptr,
     return true;
 }
 
-bool build_psk_key_exchange_modes_ext(const std::shared_ptr<ExtensionBlueprint>& ext_ptr,
+bool build_psk_key_exchange_modes_ext(const std::shared_ptr<extension_blueprint>& ext_ptr,
                                       std::vector<std::uint8_t>& ext_buffer,
                                       std::uint16_t& ext_type)
 {
     ext_type = tls_consts::ext::kPskKeyExchangeModes;
-    auto bp = std::static_pointer_cast<PSKKeyExchangeModesBlueprint>(ext_ptr);
-    message_builder::push_vector_u8(ext_buffer, bp->modes);
+    auto bp = std::static_pointer_cast<psk_key_exchange_modes_blueprint>(ext_ptr);
+    message_builder::push_vector_u8(ext_buffer, bp->modes());
     return true;
 }
 
-bool build_supported_versions_ext(const std::shared_ptr<ExtensionBlueprint>& ext_ptr,
+bool build_supported_versions_ext(const std::shared_ptr<extension_blueprint>& ext_ptr,
                                   std::vector<std::uint8_t>& ext_buffer,
                                   std::uint16_t& ext_type,
-                                  const ExtensionBuildContext& ctx)
+                                  const extension_build_context& ctx)
 {
     ext_type = tls_consts::ext::kSupportedVersions;
-    auto bp = std::static_pointer_cast<SupportedVersionsBlueprint>(ext_ptr);
+    auto bp = std::static_pointer_cast<supported_versions_blueprint>(ext_ptr);
     std::vector<std::uint8_t> ver_list;
-    for (auto v : bp->versions)
+    for (auto v : bp->versions())
     {
         if (v == kGreasePlaceholder)
         {
@@ -191,14 +191,14 @@ bool build_supported_versions_ext(const std::shared_ptr<ExtensionBlueprint>& ext
     return true;
 }
 
-bool build_compress_certificate_ext(const std::shared_ptr<ExtensionBlueprint>& ext_ptr,
+bool build_compress_certificate_ext(const std::shared_ptr<extension_blueprint>& ext_ptr,
                                     std::vector<std::uint8_t>& ext_buffer,
                                     std::uint16_t& ext_type)
 {
     ext_type = tls_consts::ext::kCompressCert;
-    auto bp = std::static_pointer_cast<CompressCertBlueprint>(ext_ptr);
+    auto bp = std::static_pointer_cast<compress_cert_blueprint>(ext_ptr);
     std::vector<std::uint8_t> alg_list;
-    for (auto a : bp->algorithms)
+    for (auto a : bp->algorithms())
     {
         message_builder::push_u16(alg_list, a);
     }
@@ -206,14 +206,14 @@ bool build_compress_certificate_ext(const std::shared_ptr<ExtensionBlueprint>& e
     return true;
 }
 
-bool build_application_settings_ext(const std::shared_ptr<ExtensionBlueprint>& ext_ptr,
+bool build_application_settings_ext(const std::shared_ptr<extension_blueprint>& ext_ptr,
                                     std::vector<std::uint8_t>& ext_buffer,
                                     std::uint16_t& ext_type)
 {
     ext_type = tls_consts::ext::kApplicationSettings;
-    auto bp = std::static_pointer_cast<ApplicationSettingsBlueprint>(ext_ptr);
+    auto bp = std::static_pointer_cast<application_settings_blueprint>(ext_ptr);
     std::vector<std::uint8_t> proto_list;
-    for (const auto& p : bp->supported_protocols)
+    for (const auto& p : bp->supported_protocols())
     {
         message_builder::push_vector_u8(proto_list, std::vector<std::uint8_t>(p.begin(), p.end()));
     }
@@ -221,14 +221,14 @@ bool build_application_settings_ext(const std::shared_ptr<ExtensionBlueprint>& e
     return true;
 }
 
-bool build_application_settings_new_ext(const std::shared_ptr<ExtensionBlueprint>& ext_ptr,
+bool build_application_settings_new_ext(const std::shared_ptr<extension_blueprint>& ext_ptr,
                                         std::vector<std::uint8_t>& ext_buffer,
                                         std::uint16_t& ext_type)
 {
     ext_type = tls_consts::ext::kApplicationSettingsNew;
-    auto bp = std::static_pointer_cast<ApplicationSettingsNewBlueprint>(ext_ptr);
+    auto bp = std::static_pointer_cast<application_settings_new_blueprint>(ext_ptr);
     std::vector<std::uint8_t> proto_list;
-    for (const auto& p : bp->supported_protocols)
+    for (const auto& p : bp->supported_protocols())
     {
         message_builder::push_vector_u8(proto_list, std::vector<std::uint8_t>(p.begin(), p.end()));
     }
@@ -251,21 +251,21 @@ bool build_grease_ech_ext(std::vector<std::uint8_t>& ext_buffer, std::uint16_t& 
     return true;
 }
 
-bool build_channel_id_ext(const std::shared_ptr<ExtensionBlueprint>& ext_ptr, std::uint16_t& ext_type)
+bool build_channel_id_ext(const std::shared_ptr<extension_blueprint>& ext_ptr, std::uint16_t& ext_type)
 {
-    auto bp = std::static_pointer_cast<ChannelIDBlueprint>(ext_ptr);
-    ext_type = bp->old_id ? tls_consts::ext::kChannelIdLegacy : tls_consts::ext::kChannelId;
+    auto bp = std::static_pointer_cast<channel_id_blueprint>(ext_ptr);
+    ext_type = bp->old_id() ? tls_consts::ext::kChannelIdLegacy : tls_consts::ext::kChannelId;
     return true;
 }
 
-bool build_delegated_credentials_ext(const std::shared_ptr<ExtensionBlueprint>& ext_ptr,
+bool build_delegated_credentials_ext(const std::shared_ptr<extension_blueprint>& ext_ptr,
                                      std::vector<std::uint8_t>& ext_buffer,
                                      std::uint16_t& ext_type)
 {
     ext_type = tls_consts::ext::kDelegatedCredentials;
-    auto bp = std::static_pointer_cast<DelegatedCredentialsBlueprint>(ext_ptr);
+    auto bp = std::static_pointer_cast<delegated_credentials_blueprint>(ext_ptr);
     std::vector<std::uint8_t> alg_list;
-    for (auto a : bp->algorithms)
+    for (auto a : bp->algorithms())
     {
         message_builder::push_u16(alg_list, a);
     }
@@ -273,11 +273,11 @@ bool build_delegated_credentials_ext(const std::shared_ptr<ExtensionBlueprint>& 
     return true;
 }
 
-bool build_record_size_limit_ext(const std::shared_ptr<ExtensionBlueprint>& ext_ptr, std::vector<std::uint8_t>& ext_buffer, std::uint16_t& ext_type)
+bool build_record_size_limit_ext(const std::shared_ptr<extension_blueprint>& ext_ptr, std::vector<std::uint8_t>& ext_buffer, std::uint16_t& ext_type)
 {
     ext_type = tls_consts::ext::kRecordSizeLimit;
-    auto bp = std::static_pointer_cast<RecordSizeLimitBlueprint>(ext_ptr);
-    message_builder::push_u16(ext_buffer, bp->limit);
+    auto bp = std::static_pointer_cast<record_size_limit_blueprint>(ext_ptr);
+    message_builder::push_u16(ext_buffer, bp->limit());
     return true;
 }
 
@@ -296,7 +296,7 @@ bool build_pre_shared_key_ext(std::vector<std::uint8_t>& ext_buffer, std::uint16
     return true;
 }
 
-bool build_padding_ext(std::vector<std::uint8_t>& ext_buffer, std::uint16_t& ext_type, const ExtensionBuildContext& ctx)
+bool build_padding_ext(std::vector<std::uint8_t>& ext_buffer, std::uint16_t& ext_type, const extension_build_context& ctx)
 {
     ext_type = tls_consts::ext::kPadding;
     const auto current_len = ctx.hello_size + 2 + ctx.exts_size + 4;
@@ -312,66 +312,66 @@ bool build_padding_ext(std::vector<std::uint8_t>& ext_buffer, std::uint16_t& ext
     return true;
 }
 
-bool build_extension(const std::shared_ptr<ExtensionBlueprint>& ext_ptr,
+bool build_extension(const std::shared_ptr<extension_blueprint>& ext_ptr,
                      std::vector<std::uint8_t>& ext_buffer,
                      std::uint16_t& ext_type,
-                     const ExtensionBuildContext& ctx)
+                     const extension_build_context& ctx)
 {
     switch (ext_ptr->type())
     {
-        case ExtensionType::kGrease:
+        case extension_type::kGrease:
             return build_grease_ext(ext_buffer, ext_type, ctx);
-        case ExtensionType::kSni:
+        case extension_type::kSni:
             return build_sni_ext(ext_buffer, ext_type, ctx);
-        case ExtensionType::kExtendedMasterSecret:
+        case extension_type::kExtendedMasterSecret:
             ext_type = tls_consts::ext::kExtMasterSecret;
             return true;
-        case ExtensionType::kRenegotiationInfo:
+        case extension_type::kRenegotiationInfo:
             ext_type = tls_consts::ext::kRenegotiationInfo;
             message_builder::push_u8(ext_buffer, 0x00);
             return true;
-        case ExtensionType::kSupportedGroups:
+        case extension_type::kSupportedGroups:
             return build_supported_groups_ext(ext_ptr, ext_buffer, ext_type, ctx);
-        case ExtensionType::kECPointFormats:
+        case extension_type::kECPointFormats:
             return build_ec_point_formats_ext(ext_ptr, ext_buffer, ext_type);
-        case ExtensionType::kSessionTicket:
+        case extension_type::kSessionTicket:
             ext_type = tls_consts::ext::kSessionTicket;
             return true;
-        case ExtensionType::kAlpn:
+        case extension_type::kAlpn:
             return build_alpn_ext(ext_ptr, ext_buffer, ext_type);
-        case ExtensionType::kStatusRequest:
+        case extension_type::kStatusRequest:
             return build_status_request_ext(ext_buffer, ext_type);
-        case ExtensionType::kSignatureAlgorithms:
+        case extension_type::kSignatureAlgorithms:
             return build_signature_algorithms_ext(ext_ptr, ext_buffer, ext_type);
-        case ExtensionType::kSct:
+        case extension_type::kSct:
             ext_type = tls_consts::ext::kSct;
             return true;
-        case ExtensionType::kKeyShare:
+        case extension_type::kKeyShare:
             return build_key_share_ext(ext_ptr, ext_buffer, ext_type, ctx);
-        case ExtensionType::kPSKKeyExchangeModes:
+        case extension_type::kPSKKeyExchangeModes:
             return build_psk_key_exchange_modes_ext(ext_ptr, ext_buffer, ext_type);
-        case ExtensionType::kSupportedVersions:
+        case extension_type::kSupportedVersions:
             return build_supported_versions_ext(ext_ptr, ext_buffer, ext_type, ctx);
-        case ExtensionType::kCompressCertificate:
+        case extension_type::kCompressCertificate:
             return build_compress_certificate_ext(ext_ptr, ext_buffer, ext_type);
-        case ExtensionType::kApplicationSettings:
+        case extension_type::kApplicationSettings:
             return build_application_settings_ext(ext_ptr, ext_buffer, ext_type);
-        case ExtensionType::kApplicationSettingsNew:
+        case extension_type::kApplicationSettingsNew:
             return build_application_settings_new_ext(ext_ptr, ext_buffer, ext_type);
-        case ExtensionType::kGreaseECH:
+        case extension_type::kGreaseECH:
             return build_grease_ech_ext(ext_buffer, ext_type);
-        case ExtensionType::kNpn:
+        case extension_type::kNpn:
             ext_type = tls_consts::ext::kNpn;
             return true;
-        case ExtensionType::kChannelID:
+        case extension_type::kChannelID:
             return build_channel_id_ext(ext_ptr, ext_type);
-        case ExtensionType::kDelegatedCredentials:
+        case extension_type::kDelegatedCredentials:
             return build_delegated_credentials_ext(ext_ptr, ext_buffer, ext_type);
-        case ExtensionType::kRecordSizeLimit:
+        case extension_type::kRecordSizeLimit:
             return build_record_size_limit_ext(ext_ptr, ext_buffer, ext_type);
-        case ExtensionType::kPreSharedKey:
+        case extension_type::kPreSharedKey:
             return build_pre_shared_key_ext(ext_buffer, ext_type);
-        case ExtensionType::kPadding:
+        case extension_type::kPadding:
             return build_padding_ext(ext_buffer, ext_type, ctx);
         default:
             return false;
@@ -427,14 +427,14 @@ void message_builder::push_vector_u16(std::vector<std::uint8_t>& buf, const std:
     push_bytes(buf, data);
 }
 
-std::vector<std::uint8_t> ClientHelloBuilder::build(const FingerprintSpec& spec,
-                                                    const std::vector<std::uint8_t>& session_id,
-                                                    const std::vector<std::uint8_t>& random,
-                                                    const std::vector<std::uint8_t>& x25519_pubkey,
-                                                    const std::string& hostname)
+std::vector<std::uint8_t> client_hello_builder::build(const fingerprint_spec& spec,
+                                                      const std::vector<std::uint8_t>& session_id,
+                                                      const std::vector<std::uint8_t>& random,
+                                                      const std::vector<std::uint8_t>& x25519_pubkey,
+                                                      const std::string& hostname)
 {
     std::vector<std::uint8_t> hello;
-    const GreaseContext grease_ctx;
+    const grease_context grease_ctx;
     int grease_ext_count = 0;
 
     message_builder::push_u8(hello, 0x01);
@@ -455,10 +455,10 @@ std::vector<std::uint8_t> ClientHelloBuilder::build(const FingerprintSpec& spec,
     message_builder::push_vector_u16(hello, ciphers_buf);
     message_builder::push_vector_u8(hello, spec.compression_methods);
 
-    FingerprintSpec spec_copy = spec;
+    fingerprint_spec spec_copy = spec;
     if (spec_copy.shuffle_extensions)
     {
-        FingerprintFactory::shuffle_extensions(spec_copy.extensions);
+        fingerprint_factory::shuffle_extensions(spec_copy.extensions);
     }
 
     std::vector<std::uint8_t> exts;
@@ -467,7 +467,7 @@ std::vector<std::uint8_t> ClientHelloBuilder::build(const FingerprintSpec& spec,
     {
         std::vector<std::uint8_t> ext_buffer;
         std::uint16_t ext_type = 0;
-        const ExtensionBuildContext ctx{
+        const extension_build_context ctx{
             .grease_ctx = grease_ctx,
             .grease_ext_count = grease_ext_count,
             .x25519_pubkey = x25519_pubkey,
@@ -700,9 +700,9 @@ bool is_supported_certificate_verify_scheme(std::uint16_t scheme)
     using reality::tls_consts::sig_alg::kRsaPssRsaeSha384;
     using reality::tls_consts::sig_alg::kRsaPssRsaeSha512;
 
-    return scheme == kEd25519 || scheme == kEcdsaSecp256r1Sha256 || scheme == kEcdsaSecp384r1Sha384 ||
-           scheme == kEcdsaSecp521r1Sha512 || scheme == kRsaPkcs1Sha256 || scheme == kRsaPkcs1Sha384 || scheme == kRsaPkcs1Sha512 ||
-           scheme == kRsaPssRsaeSha256 || scheme == kRsaPssRsaeSha384 || scheme == kRsaPssRsaeSha512;
+    return scheme == kEd25519 || scheme == kEcdsaSecp256r1Sha256 || scheme == kEcdsaSecp384r1Sha384 || scheme == kEcdsaSecp521r1Sha512 ||
+           scheme == kRsaPkcs1Sha256 || scheme == kRsaPkcs1Sha384 || scheme == kRsaPkcs1Sha512 || scheme == kRsaPssRsaeSha256 ||
+           scheme == kRsaPssRsaeSha384 || scheme == kRsaPssRsaeSha512;
 }
 
 std::optional<std::uint16_t> extract_cipher_suite_from_server_hello(const std::vector<std::uint8_t>& server_hello)
