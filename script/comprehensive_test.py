@@ -476,6 +476,23 @@ def test_udp_function():
 def clean_up():
     pass
 
+def run_tproxy_test():
+    if os.environ.get("RUN_TPROXY") != "1":
+        log_info("TPROXY 测试未启用，设置 RUN_TPROXY=1 可开启")
+        return
+    if os.geteuid() != 0:
+        log_fail("TPROXY 测试需要 root 或 CAP_NET_ADMIN，已跳过")
+        return
+
+    root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    cmd = ["bash", "script/ci_tproxy_test.sh", "--full"]
+    log_info("开始执行 TPROXY 全链路测试")
+    result = subprocess.run(cmd, cwd=root_dir)
+    if result.returncode == 0:
+        log_pass("TPROXY 全链路测试通过")
+    else:
+        log_fail(f"TPROXY 全链路测试失败 code={result.returncode}")
+
 if __name__ == "__main__":
     if not os.path.exists(BUILD_DIR):
         print(f"Build 目录不存在: {BUILD_DIR}")
@@ -508,6 +525,11 @@ if __name__ == "__main__":
             test_udp_function()
         except Exception as e:
             log_fail(f"UDP 测试异常: {e}")
+
+        try:
+            run_tproxy_test()
+        except Exception as e:
+            log_fail(f"TPROXY 测试异常: {e}")
             
     except KeyboardInterrupt:
         pass
