@@ -17,9 +17,9 @@
 #include "mux_codec.h"
 #include "crypto_util.h"
 #include "context_pool.h"
-#include "socks_client.h"
 #include "mux_protocol.h"
 #include "reality_auth.h"
+#include "socks_client.h"
 #include "remote_server.h"
 #include "reality_messages.h"
 
@@ -43,28 +43,29 @@ class scoped_pool
     std::thread thread_;
 };
 
-class RemoteServerMuxTest : public ::testing::Test
+class remote_server_mux_test : public ::testing::Test
 {
    protected:
     void SetUp() override
     {
         std::uint8_t pub[32], priv[32];
         ASSERT_TRUE(reality::crypto_util::generate_x25519_keypair(pub, priv));
-        server_priv_key = reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(priv, priv + 32));
-        server_pub_key = reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(pub, pub + 32));
-        short_id = "0102030405060708";
+        server_priv_key_ = reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(priv, priv + 32));
+        server_pub_key_ = reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(pub, pub + 32));
+        short_id_ = "0102030405060708";
     }
-    std::string server_priv_key;
-    std::string server_pub_key;
-    std::string short_id;
+
+    [[nodiscard]] const std::string& server_priv_key() const { return server_priv_key_; }
+    [[nodiscard]] const std::string& server_pub_key() const { return server_pub_key_; }
+    [[nodiscard]] const std::string& short_id() const { return short_id_; }
 
     mux::config make_server_cfg(std::uint16_t port) const
     {
         mux::config cfg;
         cfg.inbound.host = "127.0.0.1";
         cfg.inbound.port = port;
-        cfg.reality.private_key = server_priv_key;
-        cfg.reality.short_id = short_id;
+        cfg.reality.private_key = server_priv_key();
+        cfg.reality.short_id = short_id();
         return cfg;
     }
 
@@ -74,15 +75,20 @@ class RemoteServerMuxTest : public ::testing::Test
         cfg.outbound.host = "127.0.0.1";
         cfg.outbound.port = server_port;
         cfg.socks.port = 0;
-        cfg.reality.public_key = server_pub_key;
+        cfg.reality.public_key = server_pub_key();
         cfg.reality.sni = sni;
-        cfg.reality.short_id = short_id;
+        cfg.reality.short_id = short_id();
         cfg.timeout = timeouts;
         return cfg;
     }
+
+   private:
+    std::string server_priv_key_;
+    std::string server_pub_key_;
+    std::string short_id_;
 };
 
-TEST_F(RemoteServerMuxTest, ProcessTcpConnectRequest)
+TEST_F(remote_server_mux_test, ProcessTcpConnectRequest)
 {
     std::error_code ec;
     mux::io_context_pool pool(2, ec);
@@ -142,7 +148,7 @@ TEST_F(RemoteServerMuxTest, ProcessTcpConnectRequest)
     server->stop();
 }
 
-TEST_F(RemoteServerMuxTest, ProcessUdpAssociateRequest)
+TEST_F(remote_server_mux_test, ProcessUdpAssociateRequest)
 {
     std::error_code ec;
     mux::io_context_pool pool(2, ec);
@@ -200,7 +206,7 @@ TEST_F(RemoteServerMuxTest, ProcessUdpAssociateRequest)
     server->stop();
 }
 
-TEST_F(RemoteServerMuxTest, TargetConnectFail)
+TEST_F(remote_server_mux_test, TargetConnectFail)
 {
     std::error_code ec;
     mux::io_context_pool pool(2, ec);
@@ -256,7 +262,7 @@ TEST_F(RemoteServerMuxTest, TargetConnectFail)
     server->stop();
 }
 
-TEST_F(RemoteServerMuxTest, TargetResolveFail)
+TEST_F(remote_server_mux_test, TargetResolveFail)
 {
     std::error_code ec;
     mux::io_context_pool pool(2, ec);

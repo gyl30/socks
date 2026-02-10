@@ -60,7 +60,7 @@ class statistics
    private:
     statistics() = default;
     ~statistics() = default;
-    std::chrono::steady_clock::time_point start_time_;
+    std::chrono::steady_clock::time_point start_time_ = std::chrono::steady_clock::now();
 };
 
 }    // namespace mux

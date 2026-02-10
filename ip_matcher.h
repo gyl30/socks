@@ -5,8 +5,9 @@
 #include <memory>
 #include <string>
 #include <vector>
-#include <asio.hpp>
 #include <algorithm>
+
+#include <asio.hpp>
 
 #include "log.h"
 

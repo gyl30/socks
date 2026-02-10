@@ -13,45 +13,45 @@
 #include "log_context.h"
 #include "domain_matcher.h"
 
-class TestRouter : public mux::router
+class test_router : public mux::router
 {
    public:
-    TestRouter()
+    test_router()
     {
-        block_ip_matcher_ = std::make_shared<mux::ip_matcher>();
-        direct_ip_matcher_ = std::make_shared<mux::ip_matcher>();
-        proxy_domain_matcher_ = std::make_shared<mux::domain_matcher>();
-        block_domain_matcher_ = std::make_shared<mux::domain_matcher>();
-        direct_domain_matcher_ = std::make_shared<mux::domain_matcher>();
+        block_ip_matcher() = std::make_shared<mux::ip_matcher>();
+        direct_ip_matcher() = std::make_shared<mux::ip_matcher>();
+        proxy_domain_matcher() = std::make_shared<mux::domain_matcher>();
+        block_domain_matcher() = std::make_shared<mux::domain_matcher>();
+        direct_domain_matcher() = std::make_shared<mux::domain_matcher>();
     }
 
     void add_block_ip(const std::string& cidr)
     {
-        block_ip_matcher_->add_rule(cidr);
-        block_ip_matcher_->optimize();
+        block_ip_matcher()->add_rule(cidr);
+        block_ip_matcher()->optimize();
     }
 
     void add_direct_ip(const std::string& cidr)
     {
-        direct_ip_matcher_->add_rule(cidr);
-        direct_ip_matcher_->optimize();
+        direct_ip_matcher()->add_rule(cidr);
+        direct_ip_matcher()->optimize();
     }
 
-    void add_proxy_domain(const std::string& domain) { proxy_domain_matcher_->add(domain); }
+    void add_proxy_domain(const std::string& domain) { proxy_domain_matcher()->add(domain); }
 
-    void add_block_domain(const std::string& domain) { block_domain_matcher_->add(domain); }
+    void add_block_domain(const std::string& domain) { block_domain_matcher()->add(domain); }
 
-    void add_direct_domain(const std::string& domain) { direct_domain_matcher_->add(domain); }
+    void add_direct_domain(const std::string& domain) { direct_domain_matcher()->add(domain); }
 };
 
-class RouterTest : public ::testing::Test
+class router_test : public ::testing::Test
 {
    protected:
-    void SetUp() override { test_router_ = std::make_shared<TestRouter>(); }
+    void SetUp() override { test_router_ = std::make_shared<test_router>(); }
 
     mux::route_type run_decision(const std::string& host)
     {
-        mux::route_type result = mux::route_type::direct;
+        mux::route_type result = mux::route_type::kDirect;
         asio::io_context ctx;
         mux::connection_context conn_ctx;
 
@@ -65,59 +65,62 @@ class RouterTest : public ::testing::Test
     }
 
    protected:
-    std::shared_ptr<TestRouter> test_router_;
+    std::shared_ptr<test_router>& router_instance() { return test_router_; }
+
+   private:
+    std::shared_ptr<test_router> test_router_;
 };
 
-TEST_F(RouterTest, BlockIP)
+TEST_F(router_test, BlockIP)
 {
-    test_router_->add_block_ip("10.0.0.0/8");
-    EXPECT_EQ(run_decision("10.1.2.3"), mux::route_type::block);
+    router_instance()->add_block_ip("10.0.0.0/8");
+    EXPECT_EQ(run_decision("10.1.2.3"), mux::route_type::kBlock);
 
-    EXPECT_EQ(run_decision("192.168.1.1"), mux::route_type::proxy);
+    EXPECT_EQ(run_decision("192.168.1.1"), mux::route_type::kProxy);
 }
 
-TEST_F(RouterTest, DirectIP)
+TEST_F(router_test, DirectIP)
 {
-    test_router_->add_direct_ip("192.168.0.0/16");
-    EXPECT_EQ(run_decision("192.168.1.100"), mux::route_type::direct);
+    router_instance()->add_direct_ip("192.168.0.0/16");
+    EXPECT_EQ(run_decision("192.168.1.100"), mux::route_type::kDirect);
 }
 
-TEST_F(RouterTest, BlockPrioritizesOverDirect)
+TEST_F(router_test, BlockPrioritizesOverDirect)
 {
-    test_router_->add_block_ip("1.1.1.1/32");
-    test_router_->add_direct_ip("1.1.1.0/24");
+    router_instance()->add_block_ip("1.1.1.1/32");
+    router_instance()->add_direct_ip("1.1.1.0/24");
 
-    EXPECT_EQ(run_decision("1.1.1.1"), mux::route_type::block);
-    EXPECT_EQ(run_decision("1.1.1.2"), mux::route_type::direct);
+    EXPECT_EQ(run_decision("1.1.1.1"), mux::route_type::kBlock);
+    EXPECT_EQ(run_decision("1.1.1.2"), mux::route_type::kDirect);
 }
 
-TEST_F(RouterTest, BlockDomain)
+TEST_F(router_test, BlockDomain)
 {
-    test_router_->add_block_domain("ad.com");
-    EXPECT_EQ(run_decision("ad.com"), mux::route_type::block);
-    EXPECT_EQ(run_decision("sub.ad.com"), mux::route_type::block);
+    router_instance()->add_block_domain("ad.com");
+    EXPECT_EQ(run_decision("ad.com"), mux::route_type::kBlock);
+    EXPECT_EQ(run_decision("sub.ad.com"), mux::route_type::kBlock);
 }
 
-TEST_F(RouterTest, DirectDomain)
+TEST_F(router_test, DirectDomain)
 {
-    test_router_->add_direct_domain("google.com");
-    EXPECT_EQ(run_decision("google.com"), mux::route_type::direct);
-    EXPECT_EQ(run_decision("www.google.com"), mux::route_type::direct);
+    router_instance()->add_direct_domain("google.com");
+    EXPECT_EQ(run_decision("google.com"), mux::route_type::kDirect);
+    EXPECT_EQ(run_decision("www.google.com"), mux::route_type::kDirect);
 }
 
-TEST_F(RouterTest, ProxyDomain)
+TEST_F(router_test, ProxyDomain)
 {
-    test_router_->add_proxy_domain("netflix.com");
-    EXPECT_EQ(run_decision("netflix.com"), mux::route_type::proxy);
+    router_instance()->add_proxy_domain("netflix.com");
+    EXPECT_EQ(run_decision("netflix.com"), mux::route_type::kProxy);
 }
 
-TEST_F(RouterTest, DomainPriority)
+TEST_F(router_test, DomainPriority)
 {
-    test_router_->add_block_domain("bad.example.com");
-    test_router_->add_direct_domain("example.com");
+    router_instance()->add_block_domain("bad.example.com");
+    router_instance()->add_direct_domain("example.com");
 
-    EXPECT_EQ(run_decision("bad.example.com"), mux::route_type::block);
-    EXPECT_EQ(run_decision("good.example.com"), mux::route_type::direct);
+    EXPECT_EQ(run_decision("bad.example.com"), mux::route_type::kBlock);
+    EXPECT_EQ(run_decision("good.example.com"), mux::route_type::kDirect);
 
-    EXPECT_EQ(run_decision("unknown.com"), mux::route_type::direct);
+    EXPECT_EQ(run_decision("unknown.com"), mux::route_type::kDirect);
 }

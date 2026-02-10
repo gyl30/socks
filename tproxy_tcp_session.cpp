@@ -5,13 +5,13 @@
 #include <utility>
 #include <system_error>
 
-#include <asio/buffer.hpp>
 #include <asio/write.hpp>
+#include <asio/buffer.hpp>
 #include <asio/as_tuple.hpp>
 #include <asio/co_spawn.hpp>
 #include <asio/detached.hpp>
-#include <asio/redirect_error.hpp>
 #include <asio/use_awaitable.hpp>
+#include <asio/redirect_error.hpp>
 #include <asio/experimental/awaitable_operators.hpp>
 
 #include "log.h"
@@ -57,11 +57,11 @@ asio::awaitable<void> tproxy_tcp_session::run()
 
     std::unique_ptr<upstream> backend = nullptr;
 
-    if (route == route_type::direct)
+    if (route == route_type::kDirect)
     {
         backend = std::make_unique<direct_upstream>(socket_.get_executor(), ctx_, mark_);
     }
-    else if (route == route_type::proxy)
+    else if (route == route_type::kProxy)
     {
         const auto tunnel = tunnel_pool_->select_tunnel();
         if (tunnel == nullptr)
@@ -78,18 +78,19 @@ asio::awaitable<void> tproxy_tcp_session::run()
         co_return;
     }
 
-    LOG_CTX_INFO(ctx_, "{} connecting {} {} via {}", log_event::kConnInit, host, port, (route == route_type::direct ? "direct" : "proxy"));
+    LOG_CTX_INFO(ctx_, "{} connecting {} {} via {}", log_event::kConnInit, host, port, (route == route_type::kDirect ? "direct" : "proxy"));
     if (!co_await backend->connect(host, port))
     {
-        LOG_CTX_WARN(ctx_, "{} connect failed {} {} via {}", log_event::kConnInit, host, port, (route == route_type::direct ? "direct" : "proxy"));
+        LOG_CTX_WARN(ctx_, "{} connect failed {} {} via {}", log_event::kConnInit, host, port, (route == route_type::kDirect ? "direct" : "proxy"));
         co_return;
     }
 
-    LOG_CTX_INFO(ctx_, "{} connected {} {} via {}", log_event::kConnEstablished, host, port, (route == route_type::direct ? "direct" : "proxy"));
+    LOG_CTX_INFO(ctx_, "{} connected {} {} via {}", log_event::kConnEstablished, host, port, (route == route_type::kDirect ? "direct" : "proxy"));
 
-    asio::co_spawn(socket_.get_executor(),
-                   [self = shared_from_this(), backend = backend.get()]() -> asio::awaitable<void> { co_await self->idle_watchdog(backend); },
-                   asio::detached);
+    asio::co_spawn(
+        socket_.get_executor(),
+        [self = shared_from_this(), backend = backend.get()]() -> asio::awaitable<void> { co_await self->idle_watchdog(backend); },
+        asio::detached);
 
     using asio::experimental::awaitable_operators::operator&&;
     co_await (client_to_upstream(backend.get()) && upstream_to_client(backend.get()));

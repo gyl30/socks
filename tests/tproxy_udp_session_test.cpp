@@ -16,20 +16,20 @@
 namespace
 {
 
-class DirectRouter : public mux::router
+class direct_router : public mux::router
 {
    public:
-    DirectRouter()
+    direct_router()
     {
-        block_ip_matcher_ = std::make_shared<mux::ip_matcher>();
-        direct_ip_matcher_ = std::make_shared<mux::ip_matcher>();
-        proxy_domain_matcher_ = std::make_shared<mux::domain_matcher>();
-        block_domain_matcher_ = std::make_shared<mux::domain_matcher>();
-        direct_domain_matcher_ = std::make_shared<mux::domain_matcher>();
+        block_ip_matcher() = std::make_shared<mux::ip_matcher>();
+        direct_ip_matcher() = std::make_shared<mux::ip_matcher>();
+        proxy_domain_matcher() = std::make_shared<mux::domain_matcher>();
+        block_domain_matcher() = std::make_shared<mux::domain_matcher>();
+        direct_domain_matcher() = std::make_shared<mux::domain_matcher>();
 
-        direct_ip_matcher_->add_rule("0.0.0.0/0");
-        direct_ip_matcher_->add_rule("::/0");
-        direct_ip_matcher_->optimize();
+        direct_ip_matcher()->add_rule("0.0.0.0/0");
+        direct_ip_matcher()->add_rule("::/0");
+        direct_ip_matcher()->optimize();
     }
 };
 
@@ -44,7 +44,7 @@ std::uint64_t now_ms()
 TEST(TproxyUdpSessionTest, IdleDetection)
 {
     asio::io_context ctx;
-    auto router = std::make_shared<DirectRouter>();
+    auto router = std::make_shared<direct_router>();
 
     mux::config cfg;
     cfg.tproxy.mark = 0;
@@ -58,10 +58,7 @@ TEST(TproxyUdpSessionTest, IdleDetection)
     std::array<std::uint8_t, 1> data = {0};
     asio::co_spawn(
         ctx,
-        [session, dst_ep, data]() -> asio::awaitable<void>
-        {
-            co_await session->handle_packet(dst_ep, data.data(), data.size());
-        },
+        [session, dst_ep, data]() -> asio::awaitable<void> { co_await session->handle_packet(dst_ep, data.data(), data.size()); },
         asio::detached);
 
     for (int i = 0; i < 5; ++i)

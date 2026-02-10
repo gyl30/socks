@@ -7,9 +7,9 @@
 #include <cstdint>
 #include <unordered_map>
 
+#include <asio/ip/udp.hpp>
 #include <asio/awaitable.hpp>
 #include <asio/any_io_executor.hpp>
-#include <asio/ip/udp.hpp>
 
 namespace mux
 {
@@ -28,12 +28,17 @@ class tproxy_udp_sender
     {
         asio::ip::address addr;
         std::uint16_t port = 0;
-
-        bool operator==(const endpoint_key& other) const { return addr == other.addr && port == other.port; }
     };
 
-    struct endpoint_hash
+    class endpoint_key_equal
     {
+       public:
+        bool operator()(const endpoint_key& lhs, const endpoint_key& rhs) const { return lhs.addr == rhs.addr && lhs.port == rhs.port; }
+    };
+
+    class endpoint_hash
+    {
+       public:
         std::size_t operator()(const endpoint_key& key) const;
     };
 
@@ -43,7 +48,7 @@ class tproxy_udp_sender
     asio::any_io_executor ex_;
     std::uint32_t mark_ = 0;
     std::mutex socket_mutex_;
-    std::unordered_map<endpoint_key, std::shared_ptr<asio::ip::udp::socket>, endpoint_hash> sockets_;
+    std::unordered_map<endpoint_key, std::shared_ptr<asio::ip::udp::socket>, endpoint_hash, endpoint_key_equal> sockets_;
 };
 
 }    // namespace mux

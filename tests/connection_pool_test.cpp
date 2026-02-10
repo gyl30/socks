@@ -12,28 +12,33 @@
 #include "crypto_util.h"
 #include "context_pool.h"
 #include "socks_client.h"
-#include "reality_messages.h"
 #include "remote_server.h"
+#include "reality_messages.h"
 
 namespace
 {
 
-class ConnectionPoolTest : public ::testing::Test
+class connection_pool_test : public ::testing::Test
 {
    protected:
     void SetUp() override
     {
         std::uint8_t pub[32], priv[32];
         ASSERT_TRUE(reality::crypto_util::generate_x25519_keypair(pub, priv));
-        server_priv_key = reality::crypto_util::bytes_to_hex(std::vector<uint8_t>(priv, priv + 32));
+        server_priv_key_ = reality::crypto_util::bytes_to_hex(std::vector<uint8_t>(priv, priv + 32));
 
-        client_pub_key = reality::crypto_util::bytes_to_hex(std::vector<uint8_t>(pub, pub + 32));
+        client_pub_key_ = reality::crypto_util::bytes_to_hex(std::vector<uint8_t>(pub, pub + 32));
     }
-    std::string server_priv_key;
-    std::string client_pub_key;
+
+    [[nodiscard]] const std::string& server_priv_key() const { return server_priv_key_; }
+    [[nodiscard]] const std::string& client_pub_key() const { return client_pub_key_; }
+
+   private:
+    std::string server_priv_key_;
+    std::string client_pub_key_;
 };
 
-TEST_F(ConnectionPoolTest, TunnelReuse)
+TEST_F(connection_pool_test, TunnelReuse)
 {
     std::error_code ec;
     mux::io_context_pool pool(2, ec);
@@ -46,7 +51,7 @@ TEST_F(ConnectionPoolTest, TunnelReuse)
     mux::config server_cfg;
     server_cfg.inbound.host = "127.0.0.1";
     server_cfg.inbound.port = server_port;
-    server_cfg.reality.private_key = server_priv_key;
+    server_cfg.reality.private_key = server_priv_key();
     server_cfg.reality.short_id = "0102030405060708";
     auto server = std::make_shared<mux::remote_server>(pool, server_cfg);
     reality::server_fingerprint fp;
@@ -60,7 +65,7 @@ TEST_F(ConnectionPoolTest, TunnelReuse)
     client_cfg.outbound.host = "127.0.0.1";
     client_cfg.outbound.port = server_port;
     client_cfg.socks.port = local_socks_port;
-    client_cfg.reality.public_key = client_pub_key;
+    client_cfg.reality.public_key = client_pub_key();
     client_cfg.reality.sni = sni;
     client_cfg.reality.short_id = "0102030405060708";
     client_cfg.limits = limits;

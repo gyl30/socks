@@ -7,8 +7,12 @@
 #include <system_error>
 
 #include <gtest/gtest.h>
+
+extern "C"
+{
 #include <openssl/evp.h>
 #include <openssl/rand.h>
+}
 
 #include "crypto_util.h"
 #include "reality_core.h"
@@ -71,29 +75,29 @@ TEST(RealityMessagesTest, ServerHelloInvalid)
     EXPECT_TRUE(reality::extract_server_public_key(short_buf).empty());
 }
 
-TEST(RealityMessagesTest, ClientHelloBuilderFirefox)
+TEST(RealityMessagesTest, client_hello_builderFirefox)
 {
-    const auto spec = reality::FingerprintFactory::Get(reality::FingerprintType::Firefox_120);
+    const auto spec = reality::fingerprint_factory::get(reality::fingerprint_type::kFirefox120);
     const std::vector<std::uint8_t> session_id(32, 0xEE);
     const std::vector<std::uint8_t> random(32, 0xAA);
     const std::vector<std::uint8_t> pubkey(32, 0xBB);
     const std::string host = "example.com";
 
-    const auto ch = reality::ClientHelloBuilder::build(spec, session_id, random, pubkey, host);
+    const auto ch = reality::client_hello_builder::build(spec, session_id, random, pubkey, host);
     ASSERT_GT(ch.size(), 100);
 
     EXPECT_EQ(ch[0], 0x01);
 }
 
-TEST(RealityMessagesTest, ClientHelloBuilderChrome)
+TEST(RealityMessagesTest, client_hello_builderChrome)
 {
-    const auto spec = reality::FingerprintFactory::Get(reality::FingerprintType::Chrome_120);
+    const auto spec = reality::fingerprint_factory::get(reality::fingerprint_type::kChrome120);
     const std::vector<std::uint8_t> session_id(32, 0xEE);
     const std::vector<std::uint8_t> random(32, 0xAA);
     const std::vector<std::uint8_t> pubkey(32, 0xBB);
     const std::string host = "google.com";
 
-    const auto ch = reality::ClientHelloBuilder::build(spec, session_id, random, pubkey, host);
+    const auto ch = reality::client_hello_builder::build(spec, session_id, random, pubkey, host);
     ASSERT_GT(ch.size(), 100);
     EXPECT_EQ(ch[0], 0x01);
 }
@@ -219,85 +223,85 @@ TEST(RealityMessagesTest, ParseCertificateVerifyMalformed)
 
 TEST(RealityMessagesTest, ComprehensiveClientHello)
 {
-    reality::FingerprintSpec spec;
+    reality::fingerprint_spec spec;
     spec.client_version = 0x0303;
     spec.cipher_suites = {0x1301, 0x1302, 0x1303, reality::kGreasePlaceholder};
     spec.compression_methods = {0x00};
 
-    spec.extensions.push_back(std::make_shared<reality::GreaseBlueprint>());
-    spec.extensions.push_back(std::make_shared<reality::SNIBlueprint>());
-    spec.extensions.push_back(std::make_shared<reality::EMSBlueprint>());
-    spec.extensions.push_back(std::make_shared<reality::RenegotiationBlueprint>());
+    spec.extensions.push_back(std::make_shared<reality::grease_blueprint>());
+    spec.extensions.push_back(std::make_shared<reality::sni_blueprint>());
+    spec.extensions.push_back(std::make_shared<reality::ems_blueprint>());
+    spec.extensions.push_back(std::make_shared<reality::renegotiation_blueprint>());
 
-    auto groups = std::make_shared<reality::SupportedGroupsBlueprint>();
-    groups->groups = {0x001d, reality::kGreasePlaceholder};
+    auto groups = std::make_shared<reality::supported_groups_blueprint>();
+    groups->groups() = {0x001d, reality::kGreasePlaceholder};
     spec.extensions.push_back(groups);
 
-    auto ec_points = std::make_shared<reality::ECPointFormatsBlueprint>();
-    ec_points->formats = {0x00};
+    auto ec_points = std::make_shared<reality::ec_point_formats_blueprint>();
+    ec_points->formats() = {0x00};
     spec.extensions.push_back(ec_points);
 
-    spec.extensions.push_back(std::make_shared<reality::SessionTicketBlueprint>());
+    spec.extensions.push_back(std::make_shared<reality::session_ticket_blueprint>());
 
-    auto alpn = std::make_shared<reality::ALPNBlueprint>();
-    alpn->protocols = {"h2", "http/1.1"};
+    auto alpn = std::make_shared<reality::alpn_blueprint>();
+    alpn->protocols() = {"h2", "http/1.1"};
     spec.extensions.push_back(alpn);
 
-    spec.extensions.push_back(std::make_shared<reality::StatusRequestBlueprint>());
+    spec.extensions.push_back(std::make_shared<reality::status_request_blueprint>());
 
-    auto sig_algs = std::make_shared<reality::SignatureAlgorithmsBlueprint>();
-    sig_algs->algorithms = {0x0403, 0x0804};
+    auto sig_algs = std::make_shared<reality::signature_algorithms_blueprint>();
+    sig_algs->algorithms() = {0x0403, 0x0804};
     spec.extensions.push_back(sig_algs);
 
-    spec.extensions.push_back(std::make_shared<reality::SCTBlueprint>());
+    spec.extensions.push_back(std::make_shared<reality::sct_blueprint>());
 
-    auto key_share = std::make_shared<reality::KeyShareBlueprint>();
-    key_share->key_shares.push_back({0x001d, std::vector<uint8_t>(32, 0x01)});
-    key_share->key_shares.push_back({reality::kGreasePlaceholder, {}});
-    key_share->key_shares.push_back({reality::tls_consts::group::kSecp256r1, {}});
+    auto key_share = std::make_shared<reality::key_share_blueprint>();
+    key_share->key_shares().push_back({0x001d, std::vector<uint8_t>(32, 0x01)});
+    key_share->key_shares().push_back({reality::kGreasePlaceholder, {}});
+    key_share->key_shares().push_back({reality::tls_consts::group::kSecp256r1, {}});
     spec.extensions.push_back(key_share);
 
-    auto psk_modes = std::make_shared<reality::PSKKeyExchangeModesBlueprint>();
-    psk_modes->modes = {0x01};
+    auto psk_modes = std::make_shared<reality::psk_key_exchange_modes_blueprint>();
+    psk_modes->modes() = {0x01};
     spec.extensions.push_back(psk_modes);
 
-    auto versions = std::make_shared<reality::SupportedVersionsBlueprint>();
-    versions->versions = {0x0304, reality::kGreasePlaceholder};
+    auto versions = std::make_shared<reality::supported_versions_blueprint>();
+    versions->versions() = {0x0304, reality::kGreasePlaceholder};
     spec.extensions.push_back(versions);
 
-    auto compress_cert = std::make_shared<reality::CompressCertBlueprint>();
-    compress_cert->algorithms = {0x0002};
+    auto compress_cert = std::make_shared<reality::compress_cert_blueprint>();
+    compress_cert->algorithms() = {0x0002};
     spec.extensions.push_back(compress_cert);
 
-    auto app_settings = std::make_shared<reality::ApplicationSettingsBlueprint>();
-    app_settings->supported_protocols = {"h2"};
+    auto app_settings = std::make_shared<reality::application_settings_blueprint>();
+    app_settings->supported_protocols() = {"h2"};
     spec.extensions.push_back(app_settings);
 
-    auto app_settings_new = std::make_shared<reality::ApplicationSettingsNewBlueprint>();
-    app_settings_new->supported_protocols = {"h3"};
+    auto app_settings_new = std::make_shared<reality::application_settings_new_blueprint>();
+    app_settings_new->supported_protocols() = {"h3"};
     spec.extensions.push_back(app_settings_new);
 
-    spec.extensions.push_back(std::make_shared<reality::GreaseECHBlueprint>());
-    spec.extensions.push_back(std::make_shared<reality::NPNBlueprint>());
-    spec.extensions.push_back(std::make_shared<reality::ChannelIDBlueprint>());
+    spec.extensions.push_back(std::make_shared<reality::grease_ech_blueprint>());
+    spec.extensions.push_back(std::make_shared<reality::npn_blueprint>());
+    spec.extensions.push_back(std::make_shared<reality::channel_id_blueprint>());
 
-    auto delegated_creds = std::make_shared<reality::DelegatedCredentialsBlueprint>();
-    delegated_creds->algorithms = {0x0403};
+    auto delegated_creds = std::make_shared<reality::delegated_credentials_blueprint>();
+    delegated_creds->algorithms() = {0x0403};
     spec.extensions.push_back(delegated_creds);
 
-    auto record_limit = std::make_shared<reality::RecordSizeLimitBlueprint>();
-    record_limit->limit = 16384;
+    auto record_limit = std::make_shared<reality::record_size_limit_blueprint>();
+    record_limit->limit() = 16384;
     spec.extensions.push_back(record_limit);
 
-    spec.extensions.push_back(std::make_shared<reality::PreSharedKeyBlueprint>());
-    spec.extensions.push_back(std::make_shared<reality::PaddingBlueprint>());
+    spec.extensions.push_back(std::make_shared<reality::pre_shared_key_blueprint>());
+    spec.extensions.push_back(std::make_shared<reality::padding_blueprint>());
 
     const std::vector<std::uint8_t> session_id(32, 0xEE);
     const std::vector<std::uint8_t> random(32, 0xAA);
     const std::vector<std::uint8_t> pubkey(32, 0xBB);
     const std::string host = "example.com";
 
-    const auto ch = reality::ClientHelloBuilder::build(spec, session_id, random, pubkey, host);
+    const auto ch = reality::client_hello_builder::build(spec, session_id, random, pubkey, host);
     ASSERT_GT(ch.size(), 100);
     EXPECT_EQ(ch[0], 0x01);
 }

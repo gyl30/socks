@@ -16,8 +16,8 @@
 
 #include "log.h"
 #include "router.h"
-#include "upstream.h"
 #include "protocol.h"
+#include "upstream.h"
 #include "mux_tunnel.h"
 #include "statistics.h"
 #include "log_context.h"
@@ -54,11 +54,11 @@ asio::awaitable<void> tcp_socks_session::run(const std::string& host, const std:
 
     std::unique_ptr<upstream> backend = nullptr;
 
-    if (route == route_type::direct)
+    if (route == route_type::kDirect)
     {
         backend = std::make_unique<direct_upstream>(socket_.get_executor(), ctx_, 0);
     }
-    else if (route == route_type::proxy)
+    else if (route == route_type::kProxy)
     {
         backend = std::make_unique<proxy_upstream>(tunnel_manager_, ctx_);
     }
@@ -70,10 +70,10 @@ asio::awaitable<void> tcp_socks_session::run(const std::string& host, const std:
         co_return;
     }
 
-    LOG_CTX_INFO(ctx_, "{} connecting {} {} via {}", log_event::kConnInit, host, port, (route == route_type::direct ? "direct" : "proxy"));
+    LOG_CTX_INFO(ctx_, "{} connecting {} {} via {}", log_event::kConnInit, host, port, (route == route_type::kDirect ? "direct" : "proxy"));
     if (!co_await backend->connect(host, port))
     {
-        LOG_CTX_WARN(ctx_, "{} connect failed {} {} via {}", log_event::kConnInit, host, port, (route == route_type::direct ? "direct" : "proxy"));
+        LOG_CTX_WARN(ctx_, "{} connect failed {} {} via {}", log_event::kConnInit, host, port, (route == route_type::kDirect ? "direct" : "proxy"));
         co_await reply_error(socks::kRepHostUnreach);
         co_return;
     }
@@ -87,10 +87,11 @@ asio::awaitable<void> tcp_socks_session::run(const std::string& host, const std:
         co_return;
     }
 
-    LOG_CTX_INFO(ctx_, "{} connected {} {} via {}", log_event::kConnEstablished, host, port, (route == route_type::direct ? "direct" : "proxy"));
-    asio::co_spawn(socket_.get_executor(),
-                   [self = shared_from_this(), backend = backend.get()]() -> asio::awaitable<void> { co_await self->idle_watchdog(backend); },
-                   asio::detached);
+    LOG_CTX_INFO(ctx_, "{} connected {} {} via {}", log_event::kConnEstablished, host, port, (route == route_type::kDirect ? "direct" : "proxy"));
+    asio::co_spawn(
+        socket_.get_executor(),
+        [self = shared_from_this(), backend = backend.get()]() -> asio::awaitable<void> { co_await self->idle_watchdog(backend); },
+        asio::detached);
     using asio::experimental::awaitable_operators::operator&&;
     co_await (client_to_upstream(backend.get()) && upstream_to_client(backend.get()));
     co_await backend->close();

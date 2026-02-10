@@ -118,7 +118,6 @@ bool parse_dest_target(const std::string& input, std::string& host, std::string&
     return true;
 }
 
-
 }    // namespace
 
 remote_server::remote_server(io_context_pool& pool, const config& cfg)
@@ -476,8 +475,7 @@ asio::awaitable<bool> remote_server::read_initial_and_validate(std::shared_ptr<a
     co_return true;
 }
 
-std::optional<remote_server::selected_key_share> remote_server::select_key_share(const client_hello_info& info,
-                                                                                 const connection_context& ctx) const
+std::optional<remote_server::selected_key_share> remote_server::select_key_share(const client_hello_info& info, const connection_context& ctx) const
 {
     if (info.has_x25519_share && info.x25519_pub.size() == 32)
     {
@@ -491,9 +489,7 @@ std::optional<remote_server::selected_key_share> remote_server::select_key_share
     return std::nullopt;
 }
 
-bool remote_server::authenticate_client(const client_hello_info& info,
-                                        const std::vector<std::uint8_t>& buf,
-                                        const connection_context& ctx)
+bool remote_server::authenticate_client(const client_hello_info& info, const std::vector<std::uint8_t>& buf, const connection_context& ctx)
 {
     if (!auth_config_valid_)
     {
@@ -699,8 +695,7 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::perform_hand
     trans.update(cert_msg);
 
     const std::vector<std::uint8_t>& sign_key_bytes = private_key_;
-    const reality::openssl_ptrs::evp_pkey_ptr sign_key(
-        EVP_PKEY_new_raw_private_key(EVP_PKEY_ED25519, nullptr, sign_key_bytes.data(), 32));
+    const reality::openssl_ptrs::evp_pkey_ptr sign_key(EVP_PKEY_new_raw_private_key(EVP_PKEY_ED25519, nullptr, sign_key_bytes.data(), 32));
     if (sign_key == nullptr)
     {
         LOG_CTX_ERROR(ctx, "{} failed to load private key", log_event::kHandshake);
@@ -925,8 +920,7 @@ asio::awaitable<void> remote_server::handle_fallback(const std::shared_ptr<asio:
         }
     }
 
-    auto proxy_half = [](std::shared_ptr<asio::ip::tcp::socket> from,
-                         std::shared_ptr<asio::ip::tcp::socket> to) -> asio::awaitable<void>
+    auto proxy_half = [](std::shared_ptr<asio::ip::tcp::socket> from, std::shared_ptr<asio::ip::tcp::socket> to) -> asio::awaitable<void>
     {
         std::vector<std::uint8_t> data(constants::net::kBufferSize);
         for (;;)

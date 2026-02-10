@@ -13,9 +13,9 @@
 
 #include "log.h"
 #include "protocol.h"
-#include "net_utils.h"
 #include "upstream.h"
 #include "mux_codec.h"
+#include "net_utils.h"
 #include "mux_stream.h"
 #include "log_context.h"
 #include "mux_protocol.h"

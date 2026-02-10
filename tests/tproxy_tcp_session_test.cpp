@@ -6,40 +6,40 @@
 #include <cstdint>
 
 #include <gtest/gtest.h>
-#include <asio/as_tuple.hpp>
-#include <asio/awaitable.hpp>
+#include <asio/write.hpp>
 #include <asio/buffer.hpp>
+#include <asio/ip/tcp.hpp>
+#include <asio/as_tuple.hpp>
 #include <asio/co_spawn.hpp>
 #include <asio/detached.hpp>
+#include <asio/awaitable.hpp>
 #include <asio/io_context.hpp>
-#include <asio/ip/tcp.hpp>
-#include <asio/redirect_error.hpp>
 #include <asio/steady_timer.hpp>
 #include <asio/use_awaitable.hpp>
-#include <asio/write.hpp>
+#include <asio/redirect_error.hpp>
 
-#include "domain_matcher.h"
-#include "ip_matcher.h"
 #include "router.h"
+#include "ip_matcher.h"
+#include "domain_matcher.h"
 #include "tproxy_tcp_session.h"
 
 namespace
 {
 
-class DirectRouter : public mux::router
+class direct_router : public mux::router
 {
    public:
-    DirectRouter()
+    direct_router()
     {
-        block_ip_matcher_ = std::make_shared<mux::ip_matcher>();
-        direct_ip_matcher_ = std::make_shared<mux::ip_matcher>();
-        proxy_domain_matcher_ = std::make_shared<mux::domain_matcher>();
-        block_domain_matcher_ = std::make_shared<mux::domain_matcher>();
-        direct_domain_matcher_ = std::make_shared<mux::domain_matcher>();
+        block_ip_matcher() = std::make_shared<mux::ip_matcher>();
+        direct_ip_matcher() = std::make_shared<mux::ip_matcher>();
+        proxy_domain_matcher() = std::make_shared<mux::domain_matcher>();
+        block_domain_matcher() = std::make_shared<mux::domain_matcher>();
+        direct_domain_matcher() = std::make_shared<mux::domain_matcher>();
 
-        direct_ip_matcher_->add_rule("0.0.0.0/0");
-        direct_ip_matcher_->add_rule("::/0");
-        direct_ip_matcher_->optimize();
+        direct_ip_matcher()->add_rule("0.0.0.0/0");
+        direct_ip_matcher()->add_rule("::/0");
+        direct_ip_matcher()->optimize();
     }
 };
 
@@ -48,7 +48,7 @@ class DirectRouter : public mux::router
 TEST(TproxyTcpSessionTest, DirectEcho)
 {
     asio::io_context ctx;
-    auto router = std::make_shared<DirectRouter>();
+    auto router = std::make_shared<direct_router>();
 
     asio::ip::tcp::acceptor echo_acceptor(ctx, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
     const auto echo_port = echo_acceptor.local_endpoint().port();
@@ -59,8 +59,7 @@ TEST(TproxyTcpSessionTest, DirectEcho)
         {
             asio::ip::tcp::socket echo_socket = co_await echo_acceptor.async_accept(asio::use_awaitable);
             std::array<char, 64> buf = {};
-            const auto [read_ec, n] =
-                co_await echo_socket.async_read_some(asio::buffer(buf), asio::as_tuple(asio::use_awaitable));
+            const auto [read_ec, n] = co_await echo_socket.async_read_some(asio::buffer(buf), asio::as_tuple(asio::use_awaitable));
             if (!read_ec && n > 0)
             {
                 co_await asio::async_write(echo_socket, asio::buffer(buf.data(), n), asio::use_awaitable);
@@ -98,8 +97,7 @@ TEST(TproxyTcpSessionTest, DirectEcho)
         {
             asio::ip::tcp::socket client(ctx);
             std::error_code ec;
-            co_await client.async_connect({asio::ip::make_address("127.0.0.1"), tproxy_port},
-                                          asio::redirect_error(asio::use_awaitable, ec));
+            co_await client.async_connect({asio::ip::make_address("127.0.0.1"), tproxy_port}, asio::redirect_error(asio::use_awaitable, ec));
             if (ec)
             {
                 done = true;
@@ -117,8 +115,7 @@ TEST(TproxyTcpSessionTest, DirectEcho)
             }
 
             std::array<char, 32> buf = {};
-            const auto [read_ec, n] =
-                co_await client.async_read_some(asio::buffer(buf), asio::as_tuple(asio::use_awaitable));
+            const auto [read_ec, n] = co_await client.async_read_some(asio::buffer(buf), asio::as_tuple(asio::use_awaitable));
             if (!read_ec && n == msg.size() && std::string(buf.data(), n) == msg)
             {
                 ok = true;

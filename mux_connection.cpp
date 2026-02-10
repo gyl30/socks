@@ -17,8 +17,8 @@
 #include <asio/ip/tcp.hpp>
 #include <asio/as_tuple.hpp>
 #include <asio/co_spawn.hpp>
-#include <asio/steady_timer.hpp>
 #include <asio/detached.hpp>
+#include <asio/steady_timer.hpp>
 #include <asio/use_awaitable.hpp>
 #include <asio/redirect_error.hpp>
 #include <asio/experimental/awaitable_operators.hpp>
@@ -50,7 +50,7 @@ mux_connection::mux_connection(asio::ip::tcp::socket socket,
       socket_(std::move(socket)),
       reality_engine_(std::move(engine)),
       next_stream_id_(is_client ? 1 : 2),
-      connection_state_(mux_connection_state::connected),
+      connection_state_(mux_connection_state::kConnected),
       write_channel_(socket_.get_executor(), 1024),
       timeout_config_(timeout_cfg),
       limits_config_(limits_cfg),
@@ -105,7 +105,7 @@ asio::awaitable<void> mux_connection::start()
 
 asio::awaitable<std::error_code> mux_connection::send_async(const std::uint32_t stream_id, const std::uint8_t cmd, std::vector<std::uint8_t> payload)
 {
-    if (connection_state_.load(std::memory_order_acquire) != mux_connection_state::connected)
+    if (connection_state_.load(std::memory_order_acquire) != mux_connection_state::kConnected)
     {
         co_return asio::error::operation_aborted;
     }
@@ -135,15 +135,15 @@ asio::awaitable<std::error_code> mux_connection::send_async(const std::uint32_t 
 
 void mux_connection::stop()
 {
-    mux_connection_state expected = mux_connection_state::connected;
-    if (!connection_state_.compare_exchange_strong(expected, mux_connection_state::closing, std::memory_order_acq_rel))
+    mux_connection_state expected = mux_connection_state::kConnected;
+    if (!connection_state_.compare_exchange_strong(expected, mux_connection_state::kClosing, std::memory_order_acq_rel))
     {
-        if (expected != mux_connection_state::draining)
+        if (expected != mux_connection_state::kDraining)
         {
             return;
         }
-        expected = mux_connection_state::draining;
-        if (!connection_state_.compare_exchange_strong(expected, mux_connection_state::closing, std::memory_order_acq_rel))
+        expected = mux_connection_state::kDraining;
+        if (!connection_state_.compare_exchange_strong(expected, mux_connection_state::kClosing, std::memory_order_acq_rel))
         {
             return;
         }
@@ -185,7 +185,7 @@ void mux_connection::stop()
     write_channel_.close();
     LOG_INFO("mux timer {} cancel", cid_);
     timer_.cancel();
-    connection_state_.store(mux_connection_state::closed, std::memory_order_release);
+    connection_state_.store(mux_connection_state::kClosed, std::memory_order_release);
 }
 
 asio::awaitable<void> mux_connection::read_loop()
@@ -296,7 +296,7 @@ asio::awaitable<void> mux_connection::timeout_loop()
         }
 
         const auto state = connection_state_.load(std::memory_order_acquire);
-        if (state == mux_connection_state::draining)
+        if (state == mux_connection_state::kDraining)
         {
             continue;
         }
@@ -317,7 +317,7 @@ asio::awaitable<void> mux_connection::timeout_loop()
             }
 
             LOG_DEBUG("mux {} entering draining mode", cid_);
-            connection_state_.store(mux_connection_state::draining, std::memory_order_release);
+            connection_state_.store(mux_connection_state::kDraining, std::memory_order_release);
 
             std::uniform_int_distribution<std::uint32_t> delay_dist(5, 30);
             const auto delay = delay_dist(rng);
@@ -434,10 +434,7 @@ void mux_connection::on_mux_frame(const mux::frame_header header, std::vector<st
             const auto self = shared_from_this();
             asio::co_spawn(
                 socket_.get_executor(),
-                [self, stream_id = header.stream_id]() -> asio::awaitable<void>
-                {
-                    (void)co_await self->send_async(stream_id, kCmdRst, {});
-                },
+                [self, stream_id = header.stream_id]() -> asio::awaitable<void> { (void)co_await self->send_async(stream_id, kCmdRst, {}); },
                 asio::detached);
         }
     }

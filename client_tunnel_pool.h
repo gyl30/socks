@@ -66,7 +66,7 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
     [[nodiscard]] asio::awaitable<bool> generate_and_send_client_hello(asio::ip::tcp::socket& socket,
                                                                        const std::uint8_t* public_key,
                                                                        const std::uint8_t* private_key,
-                                                                       const reality::FingerprintSpec& spec,
+                                                                       const reality::fingerprint_spec& spec,
                                                                        reality::transcript& trans,
                                                                        std::error_code& ec) const;
 
@@ -112,7 +112,7 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
     std::vector<std::uint8_t> short_id_bytes_;
     std::array<std::uint8_t, 3> client_ver_{1, 0, 0};
     bool auth_config_valid_ = true;
-    std::optional<reality::FingerprintType> fingerprint_type_;
+    std::optional<reality::fingerprint_type> fingerprint_type_;
     io_context_pool& pool_;
     std::vector<std::uint8_t> server_pub_key_;
     std::vector<std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>> tunnel_pool_;

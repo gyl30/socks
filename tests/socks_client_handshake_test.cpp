@@ -28,7 +28,7 @@ namespace
 
 using asio::ip::tcp;
 
-class LocalClientHandshakeTest : public ::testing::Test
+class local_client_handshake_test : public ::testing::Test
 {
    protected:
     void SetUp() override
@@ -38,6 +38,9 @@ class LocalClientHandshakeTest : public ::testing::Test
         server_pub_hex_ = reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(pub, pub + 32));
     }
 
+    [[nodiscard]] const std::string& server_pub_hex() const { return server_pub_hex_; }
+
+   private:
     std::string server_pub_hex_;
 };
 
@@ -57,7 +60,7 @@ asio::awaitable<void> mock_server_silent(tcp::acceptor& acceptor)
     co_await timer.async_wait(asio::as_tuple(asio::use_awaitable));
 }
 
-TEST_F(LocalClientHandshakeTest, HandshakeTimeout)
+TEST_F(local_client_handshake_test, HandshakeTimeout)
 {
     std::error_code ec;
     mux::io_context_pool pool(1, ec);
@@ -79,7 +82,7 @@ TEST_F(LocalClientHandshakeTest, HandshakeTimeout)
     client_cfg.outbound.host = "127.0.0.1";
     client_cfg.outbound.port = port;
     client_cfg.socks.port = 0;
-    client_cfg.reality.public_key = server_pub_hex_;
+    client_cfg.reality.public_key = server_pub_hex();
     client_cfg.reality.sni = "example.com";
     client_cfg.timeout = timeouts;
     client_cfg.limits = limits;
@@ -114,7 +117,7 @@ asio::awaitable<void> mock_server_invalid_sh(tcp::acceptor& acceptor)
     co_await asio::async_write(socket, asio::buffer(garbage), asio::as_tuple(asio::use_awaitable));
 }
 
-TEST_F(LocalClientHandshakeTest, InvalidServerHello)
+TEST_F(local_client_handshake_test, InvalidServerHello)
 {
     std::error_code ec;
     mux::io_context_pool pool(1, ec);
@@ -129,7 +132,7 @@ TEST_F(LocalClientHandshakeTest, InvalidServerHello)
     client_cfg.outbound.host = "127.0.0.1";
     client_cfg.outbound.port = port;
     client_cfg.socks.port = 0;
-    client_cfg.reality.public_key = server_pub_hex_;
+    client_cfg.reality.public_key = server_pub_hex();
     client_cfg.reality.sni = "example.com";
     auto client = std::make_shared<mux::socks_client>(pool, client_cfg);
 
@@ -183,7 +186,7 @@ asio::awaitable<void> mock_server_unsupported_scheme(tcp::acceptor& acceptor, co
     co_await asio::async_write(socket, asio::buffer(enc), asio::as_tuple(asio::use_awaitable));
 }
 
-TEST_F(LocalClientHandshakeTest, UnsupportedVerifyScheme)
+TEST_F(local_client_handshake_test, UnsupportedVerifyScheme)
 {
     std::error_code ec;
     mux::io_context_pool pool(1, ec);
@@ -192,13 +195,13 @@ TEST_F(LocalClientHandshakeTest, UnsupportedVerifyScheme)
     tcp::acceptor acceptor(pool.get_io_context(), tcp::endpoint(tcp::v4(), 0));
     std::uint16_t port = acceptor.local_endpoint().port();
 
-    asio::co_spawn(pool.get_io_context(), mock_server_unsupported_scheme(acceptor, server_pub_hex_), asio::detached);
+    asio::co_spawn(pool.get_io_context(), mock_server_unsupported_scheme(acceptor, server_pub_hex()), asio::detached);
 
     mux::config client_cfg;
     client_cfg.outbound.host = "127.0.0.1";
     client_cfg.outbound.port = port;
     client_cfg.socks.port = 0;
-    client_cfg.reality.public_key = server_pub_hex_;
+    client_cfg.reality.public_key = server_pub_hex();
     client_cfg.reality.sni = "example.com";
     auto client = std::make_shared<mux::socks_client>(pool, client_cfg);
 

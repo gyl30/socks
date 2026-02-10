@@ -6,17 +6,17 @@
 #include <cstdint>
 #include <system_error>
 
+#include <asio/error.hpp>
 #include <asio/buffer.hpp>
 #include <asio/as_tuple.hpp>
 #include <asio/co_spawn.hpp>
 #include <asio/detached.hpp>
-#include <asio/error.hpp>
 #include <asio/ip/v6_only.hpp>
 #include <asio/use_awaitable.hpp>
 
 #include "log.h"
-#include "net_utils.h"
 #include "mux_codec.h"
+#include "net_utils.h"
 #include "mux_stream.h"
 #include "mux_protocol.h"
 #include "tproxy_udp_session.h"
@@ -96,9 +96,8 @@ void tproxy_udp_session::start()
         return;
     }
 
-    asio::co_spawn(direct_socket_.get_executor(),
-                   [self = shared_from_this()]() -> asio::awaitable<void> { co_await self->direct_read_loop(); },
-                   asio::detached);
+    asio::co_spawn(
+        direct_socket_.get_executor(), [self = shared_from_this()]() -> asio::awaitable<void> { co_await self->direct_read_loop(); }, asio::detached);
 }
 
 asio::awaitable<void> tproxy_udp_session::handle_packet(const asio::ip::udp::endpoint& dst_ep, const std::uint8_t* data, const std::size_t len)
@@ -107,13 +106,13 @@ asio::awaitable<void> tproxy_udp_session::handle_packet(const asio::ip::udp::end
     const auto host = dst_ep.address().to_string();
     const auto route = co_await router_->decide_ip(ctx_, host, dst_ep.address(), direct_socket_.get_executor());
 
-    if (route == route_type::block)
+    if (route == route_type::kBlock)
     {
         LOG_CTX_WARN(ctx_, "{} blocked udp {}", log_event::kRoute, host);
         co_return;
     }
 
-    if (route == route_type::direct)
+    if (route == route_type::kDirect)
     {
         co_await send_direct(dst_ep, data, len);
         co_return;
@@ -222,9 +221,10 @@ asio::awaitable<bool> tproxy_udp_session::ensure_proxy_stream()
     if (!proxy_reader_started_)
     {
         proxy_reader_started_ = true;
-        asio::co_spawn(direct_socket_.get_executor(),
-                       [self = shared_from_this()]() -> asio::awaitable<void> { co_await self->proxy_read_loop(); },
-                       asio::detached);
+        asio::co_spawn(
+            direct_socket_.get_executor(),
+            [self = shared_from_this()]() -> asio::awaitable<void> { co_await self->proxy_read_loop(); },
+            asio::detached);
     }
 
     co_return true;

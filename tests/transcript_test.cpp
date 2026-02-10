@@ -2,7 +2,11 @@
 #include <cstdint>
 
 #include <gtest/gtest.h>
+
+extern "C"
+{
 #include <openssl/evp.h>
+}
 
 #include "transcript.h"
 

@@ -36,16 +36,16 @@ extern "C"
 #include "ch_parser.h"
 #include "constants.h"
 #include "net_utils.h"
-#include "crypto_util.h"
-#include "reality_auth.h"
 #include "transcript.h"
+#include "crypto_util.h"
 #include "log_context.h"
+#include "reality_auth.h"
 #include "reality_engine.h"
 #include "reality_messages.h"
 #include "tls_key_schedule.h"
 #include "tls_record_layer.h"
-#include "reality_fingerprint.h"
 #include "client_tunnel_pool.h"
+#include "reality_fingerprint.h"
 
 namespace mux
 {
@@ -95,7 +95,7 @@ std::string normalize_fingerprint_name(const std::string& input)
     return out;
 }
 
-bool parse_fingerprint_type(const std::string& input, std::optional<reality::FingerprintType>& out)
+bool parse_fingerprint_type(const std::string& input, std::optional<reality::fingerprint_type>& out)
 {
     out.reset();
     if (input.empty())
@@ -112,18 +112,18 @@ bool parse_fingerprint_type(const std::string& input, std::optional<reality::Fin
     struct fp_entry
     {
         const char* name;
-        reality::FingerprintType type;
+        reality::fingerprint_type type;
     };
 
     static const fp_entry kFps[] = {
-        {"chrome", reality::FingerprintType::Chrome_120},
-        {"chrome_120", reality::FingerprintType::Chrome_120},
-        {"firefox", reality::FingerprintType::Firefox_120},
-        {"firefox_120", reality::FingerprintType::Firefox_120},
-        {"ios", reality::FingerprintType::iOS_14},
-        {"ios_14", reality::FingerprintType::iOS_14},
-        {"android", reality::FingerprintType::Android_11_OkHttp},
-        {"android_11_okhttp", reality::FingerprintType::Android_11_OkHttp},
+        {"chrome", reality::fingerprint_type::kChrome120},
+        {"chrome_120", reality::fingerprint_type::kChrome120},
+        {"firefox", reality::fingerprint_type::kFirefox120},
+        {"firefox_120", reality::fingerprint_type::kFirefox120},
+        {"ios", reality::fingerprint_type::kIOS14},
+        {"ios_14", reality::fingerprint_type::kIOS14},
+        {"android", reality::fingerprint_type::kAndroid11OkHttp},
+        {"android_11_okhttp", reality::fingerprint_type::kAndroid11OkHttp},
     };
 
     for (const auto& entry : kFps)
@@ -296,9 +296,8 @@ asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::uint32_
             continue;
         }
 
-        const std::size_t key_len = (handshake_ret.cipher_suite == 0x1302 || handshake_ret.cipher_suite == 0x1303)
-                                        ? constants::crypto::kKeyLen256
-                                        : constants::crypto::kKeyLen128;
+        const std::size_t key_len = (handshake_ret.cipher_suite == 0x1302 || handshake_ret.cipher_suite == 0x1303) ? constants::crypto::kKeyLen256
+                                                                                                                   : constants::crypto::kKeyLen128;
 
         const auto c_app_keys =
             reality::tls_key_schedule::derive_traffic_keys(handshake_ret.c_app_secret, ec, key_len, constants::crypto::kIvLen, handshake_ret.md);
@@ -399,23 +398,23 @@ asio::awaitable<std::pair<bool, client_tunnel_pool::handshake_result>> client_tu
 
     const std::shared_ptr<void> defer_cleanse(nullptr, [&](void*) { OPENSSL_cleanse(private_key, 32); });
 
-    reality::FingerprintSpec spec;
+    reality::fingerprint_spec spec;
     if (fingerprint_type_.has_value())
     {
-        spec = reality::FingerprintFactory::Get(*fingerprint_type_);
+        spec = reality::fingerprint_factory::get(*fingerprint_type_);
     }
     else
     {
-        static const std::vector<reality::FingerprintType> fp_types = {
-            reality::FingerprintType::Chrome_120,
-            reality::FingerprintType::Firefox_120,
-            reality::FingerprintType::iOS_14,
-            reality::FingerprintType::Android_11_OkHttp,
+        static const std::vector<reality::fingerprint_type> fp_types = {
+            reality::fingerprint_type::kChrome120,
+            reality::fingerprint_type::kFirefox120,
+            reality::fingerprint_type::kIOS14,
+            reality::fingerprint_type::kAndroid11OkHttp,
         };
         const auto& candidates = fp_types;
         static thread_local std::mt19937 fp_gen(std::random_device{}());
         std::uniform_int_distribution<std::size_t> fp_dist(0, candidates.size() - 1);
-        spec = reality::FingerprintFactory::Get(candidates[fp_dist(fp_gen)]);
+        spec = reality::fingerprint_factory::get(candidates[fp_dist(fp_gen)]);
     }
 
     reality::transcript trans;
@@ -439,13 +438,8 @@ asio::awaitable<std::pair<bool, client_tunnel_pool::handshake_result>> client_tu
     const auto s_hs_keys =
         reality::tls_key_schedule::derive_traffic_keys(sh_res.hs_keys.server_handshake_traffic_secret, ec, key_len, iv_len, sh_res.negotiated_md);
 
-    auto [loop_ok, app_sec] = co_await handshake_read_loop(socket,
-                                                           s_hs_keys,
-                                                           sh_res.hs_keys,
-                                                           trans,
-                                                           sh_res.negotiated_cipher,
-                                                           sh_res.negotiated_md,
-                                                           ec);
+    auto [loop_ok, app_sec] =
+        co_await handshake_read_loop(socket, s_hs_keys, sh_res.hs_keys, trans, sh_res.negotiated_cipher, sh_res.negotiated_md, ec);
     if (!loop_ok)
     {
         co_return std::make_pair(false, handshake_result{});
@@ -468,7 +462,7 @@ asio::awaitable<std::pair<bool, client_tunnel_pool::handshake_result>> client_tu
 asio::awaitable<bool> client_tunnel_pool::generate_and_send_client_hello(asio::ip::tcp::socket& socket,
                                                                          const std::uint8_t* public_key,
                                                                          const std::uint8_t* private_key,
-                                                                         const reality::FingerprintSpec& spec,
+                                                                         const reality::fingerprint_spec& spec,
                                                                          reality::transcript& trans,
                                                                          std::error_code& ec) const
 {
@@ -501,11 +495,8 @@ asio::awaitable<bool> client_tunnel_pool::generate_and_send_client_hello(asio::i
     }
 
     const std::vector<std::uint8_t> placeholder_session_id(32, 0);
-    auto hello_body = reality::ClientHelloBuilder::build(spec,
-                                                         placeholder_session_id,
-                                                         client_random,
-                                                         std::vector<std::uint8_t>(public_key, public_key + 32),
-                                                         sni_);
+    auto hello_body = reality::client_hello_builder::build(
+        spec, placeholder_session_id, client_random, std::vector<std::uint8_t>(public_key, public_key + 32), sni_);
 
     std::vector<std::uint8_t> dummy_record =
         reality::write_record_header(reality::kContentTypeHandshake, static_cast<std::uint16_t>(hello_body.size()));
@@ -646,8 +637,7 @@ asio::awaitable<client_tunnel_pool::server_hello_res> client_tunnel_pool::proces
             LOG_ERROR("invalid x25519 key share length {}", key_share->data.size());
             co_return server_hello_res{.ok = false};
         }
-        hs_shared =
-            reality::crypto_util::x25519_derive(std::vector<std::uint8_t>(private_key, private_key + 32), key_share->data, ec);
+        hs_shared = reality::crypto_util::x25519_derive(std::vector<std::uint8_t>(private_key, private_key + 32), key_share->data, ec);
     }
     else
     {
@@ -664,11 +654,7 @@ asio::awaitable<client_tunnel_pool::server_hello_res> client_tunnel_pool::proces
 
     auto hs_keys = reality::tls_key_schedule::derive_handshake_keys(hs_shared, trans.finish(), md, ec);
 
-    co_return server_hello_res{.ok = true,
-                               .hs_keys = hs_keys,
-                               .negotiated_md = md,
-                               .negotiated_cipher = cipher,
-                               .cipher_suite = cipher_suite};
+    co_return server_hello_res{.ok = true, .hs_keys = hs_keys, .negotiated_md = md, .negotiated_cipher = cipher, .cipher_suite = cipher_suite};
 }
 
 asio::awaitable<std::pair<bool, std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>>> client_tunnel_pool::handshake_read_loop(

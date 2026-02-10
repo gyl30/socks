@@ -54,15 +54,15 @@ asio::awaitable<route_type> router::decide_ip(const connection_context& ctx,
     if (block_ip_matcher_->match(addr))
     {
         LOG_CTX_DEBUG(ctx, "{} matched ip rule block", log_event::kRoute);
-        co_return route_type::block;
+        co_return route_type::kBlock;
     }
     if (direct_ip_matcher_->match(addr))
     {
         LOG_CTX_DEBUG(ctx, "{} matched ip rule direct", log_event::kRoute);
-        co_return route_type::direct;
+        co_return route_type::kDirect;
     }
     LOG_CTX_DEBUG(ctx, "{} ip rule not found default proxy", log_event::kRoute);
-    co_return route_type::proxy;
+    co_return route_type::kProxy;
 }
 
 asio::awaitable<route_type> router::decide_domain(const connection_context& ctx, const std::string& host, const asio::any_io_executor& ex) const
@@ -70,20 +70,20 @@ asio::awaitable<route_type> router::decide_domain(const connection_context& ctx,
     if (block_domain_matcher_->match(host))
     {
         LOG_CTX_DEBUG(ctx, "{} matched domain rule block", log_event::kRoute);
-        co_return route_type::block;
+        co_return route_type::kBlock;
     }
     if (direct_domain_matcher_->match(host))
     {
         LOG_CTX_DEBUG(ctx, "{} matched domain rule direct", log_event::kRoute);
-        co_return route_type::direct;
+        co_return route_type::kDirect;
     }
     if (proxy_domain_matcher_->match(host))
     {
         LOG_CTX_DEBUG(ctx, "{} matched domain rule proxy", log_event::kRoute);
-        co_return route_type::proxy;
+        co_return route_type::kProxy;
     }
     LOG_CTX_DEBUG(ctx, "{} domain rule not found default direct", log_event::kRoute);
-    co_return route_type::direct;
+    co_return route_type::kDirect;
 }
 
 }    // namespace mux

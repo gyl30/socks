@@ -3,9 +3,10 @@
 
 #include <vector>
 #include <utility>
-#include <asio.hpp>
 #include <exception>
 #include <stdexcept>
+
+#include <asio.hpp>
 
 namespace mux::test
 {

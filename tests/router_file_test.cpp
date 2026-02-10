@@ -1,12 +1,12 @@
 #include <string>
-#include <fstream>
 #include <cstdint>
+#include <fstream>
 #include <unistd.h>
 #include <filesystem>
 
 #include <gtest/gtest.h>
-#include <asio/ip/address.hpp>
 #include <asio/io_context.hpp>
+#include <asio/ip/address.hpp>
 
 #include "router.h"
 #include "test_util.h"
@@ -14,7 +14,7 @@
 namespace
 {
 
-class RouterFileTest : public ::testing::Test
+class router_file_test : public ::testing::Test
 {
    protected:
     void SetUp() override
@@ -51,7 +51,7 @@ class RouterFileTest : public ::testing::Test
 
 }    // namespace
 
-TEST_F(RouterFileTest, EmptyDirectIpDefaultsProxy)
+TEST_F(router_file_test, EmptyDirectIpDefaultsProxy)
 {
     mux::router router;
     ASSERT_TRUE(router.load());
@@ -59,8 +59,7 @@ TEST_F(RouterFileTest, EmptyDirectIpDefaultsProxy)
     asio::io_context ctx;
     mux::connection_context conn_ctx;
     const auto addr = asio::ip::make_address("8.8.8.8");
-    const auto result = mux::test::run_awaitable(
-        ctx, router.decide_ip(conn_ctx, "8.8.8.8", addr, ctx.get_executor()));
+    const auto result = mux::test::run_awaitable(ctx, router.decide_ip(conn_ctx, "8.8.8.8", addr, ctx.get_executor()));
 
-    EXPECT_EQ(result, mux::route_type::proxy);
+    EXPECT_EQ(result, mux::route_type::kProxy);
 }

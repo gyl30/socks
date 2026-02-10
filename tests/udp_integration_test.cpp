@@ -21,14 +21,14 @@
 #include "crypto_util.h"
 #include "context_pool.h"
 #include "socks_client.h"
-#include "reality_messages.h"
 #include "remote_server.h"
+#include "reality_messages.h"
 
 using mux::io_context_pool;
 using mux::socks_client;
 using mux::remote_server;
 
-class UdpIntegrationTest : public ::testing::Test
+class udp_integration_test : public ::testing::Test
 {
    protected:
     void SetUp() override
@@ -36,14 +36,19 @@ class UdpIntegrationTest : public ::testing::Test
         std::uint8_t pub[32];
         std::uint8_t priv[32];
         ASSERT_TRUE(reality::crypto_util::generate_x25519_keypair(pub, priv));
-        server_priv_key = reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(priv, priv + 32));
-        client_pub_key = reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(pub, pub + 32));
-        short_id = "0102030405060708";
+        server_priv_key_ = reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(priv, priv + 32));
+        client_pub_key_ = reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(pub, pub + 32));
+        short_id_ = "0102030405060708";
     }
 
-    std::string server_priv_key;
-    std::string client_pub_key;
-    std::string short_id;
+    [[nodiscard]] const std::string& server_priv_key() const { return server_priv_key_; }
+    [[nodiscard]] const std::string& client_pub_key() const { return client_pub_key_; }
+    [[nodiscard]] const std::string& short_id() const { return short_id_; }
+
+   private:
+    std::string server_priv_key_;
+    std::string client_pub_key_;
+    std::string short_id_;
 };
 
 static asio::awaitable<void> run_udp_echo_server(std::shared_ptr<asio::ip::udp::socket> socket, std::uint16_t port)
@@ -86,7 +91,7 @@ static asio::awaitable<void> run_udp_echo_server(std::shared_ptr<asio::ip::udp::
     }
 }
 
-TEST_F(UdpIntegrationTest, UdpAssociateAndEcho)
+TEST_F(udp_integration_test, UdpAssociateAndEcho)
 {
     std::error_code ec;
     io_context_pool pool(4, ec);
@@ -108,8 +113,8 @@ TEST_F(UdpIntegrationTest, UdpAssociateAndEcho)
     mux::config cfg;
     cfg.inbound.host = "127.0.0.1";
     cfg.inbound.port = server_port;
-    cfg.reality.private_key = server_priv_key;
-    cfg.reality.short_id = short_id;
+    cfg.reality.private_key = server_priv_key();
+    cfg.reality.short_id = short_id();
     cfg.timeout.read = 10;
     cfg.timeout.write = 10;
 
@@ -123,9 +128,9 @@ TEST_F(UdpIntegrationTest, UdpAssociateAndEcho)
     client_cfg.outbound.host = "127.0.0.1";
     client_cfg.outbound.port = server_port;
     client_cfg.socks.port = local_socks_port;
-    client_cfg.reality.public_key = client_pub_key;
+    client_cfg.reality.public_key = client_pub_key();
     client_cfg.reality.sni = sni;
-    client_cfg.reality.short_id = short_id;
+    client_cfg.reality.short_id = short_id();
     client_cfg.timeout.read = 10;
     client_cfg.timeout.write = 10;
     auto client = std::make_shared<socks_client>(pool, client_cfg);

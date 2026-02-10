@@ -150,24 +150,29 @@ constexpr std::uint16_t kTlsDheDssWithAes128CbcSha = 0x0032;
 
 namespace openssl_ptrs
 {
-struct evp_pkey_deleter
+class evp_pkey_deleter
 {
+   public:
     void operator()(EVP_PKEY* p) const { EVP_PKEY_free(p); }
 };
-struct evp_pkey_ctx_deleter
+class evp_pkey_ctx_deleter
 {
+   public:
     void operator()(EVP_PKEY_CTX* p) const { EVP_PKEY_CTX_free(p); }
 };
-struct evp_cipher_ctx_deleter
+class evp_cipher_ctx_deleter
 {
+   public:
     void operator()(EVP_CIPHER_CTX* p) const { EVP_CIPHER_CTX_free(p); }
 };
-struct evp_md_ctx_deleter
+class evp_md_ctx_deleter
 {
+   public:
     void operator()(EVP_MD_CTX* p) const { EVP_MD_CTX_free(p); }
 };
-struct x509_deleter
+class x509_deleter
 {
+   public:
     void operator()(X509* p) const { X509_free(p); }
 };
 

@@ -22,7 +22,7 @@
 namespace mux
 {
 
-class SocksSessionTester
+class socks_session_tester
 {
    public:
     static asio::awaitable<bool> handshake(socks_session& session) { return session.handshake(); }
@@ -36,17 +36,20 @@ namespace
 
 using namespace mux;
 
-class SocksSessionTest : public ::testing::Test
+class socks_session_test : public ::testing::Test
 {
    protected:
-    asio::io_context io_ctx;
+    asio::io_context& io_ctx() { return io_ctx_; }
+
+   private:
+    asio::io_context io_ctx_;
 };
 
-TEST_F(SocksSessionTest, HandshakeNoAuthSuccess)
+TEST_F(socks_session_test, HandshakeNoAuthSuccess)
 {
-    asio::ip::tcp::socket client_sock(io_ctx);
-    asio::ip::tcp::socket server_sock(io_ctx);
-    asio::ip::tcp::acceptor acceptor(io_ctx, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    asio::ip::tcp::socket client_sock(io_ctx());
+    asio::ip::tcp::socket server_sock(io_ctx());
+    asio::ip::tcp::acceptor acceptor(io_ctx(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
 
     client_sock.connect(acceptor.local_endpoint());
     acceptor.accept(server_sock);
@@ -58,10 +61,10 @@ TEST_F(SocksSessionTest, HandshakeNoAuthSuccess)
     std::uint8_t req[] = {0x05, 0x01, 0x00};
     asio::write(client_sock, asio::buffer(req));
 
-    auto work = asio::make_work_guard(io_ctx);
-    std::thread t([&io_ctx = this->io_ctx] { io_ctx.run(); });
+    auto work = asio::make_work_guard(io_ctx());
+    std::thread t([&io_ctx = this->io_ctx()] { io_ctx.run(); });
 
-    auto handshake_future = asio::co_spawn(io_ctx, SocksSessionTester::handshake(*session), asio::use_future);
+    auto handshake_future = asio::co_spawn(io_ctx(), socks_session_tester::handshake(*session), asio::use_future);
     EXPECT_TRUE(handshake_future.get());
 
     std::uint8_t res[2];
@@ -73,11 +76,11 @@ TEST_F(SocksSessionTest, HandshakeNoAuthSuccess)
     t.join();
 }
 
-TEST_F(SocksSessionTest, HandshakePasswordAuthSuccess)
+TEST_F(socks_session_test, HandshakePasswordAuthSuccess)
 {
-    asio::ip::tcp::socket client_sock(io_ctx);
-    asio::ip::tcp::socket server_sock(io_ctx);
-    asio::ip::tcp::acceptor acceptor(io_ctx, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    asio::ip::tcp::socket client_sock(io_ctx());
+    asio::ip::tcp::socket server_sock(io_ctx());
+    asio::ip::tcp::acceptor acceptor(io_ctx(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
 
     client_sock.connect(acceptor.local_endpoint());
     acceptor.accept(server_sock);
@@ -91,10 +94,10 @@ TEST_F(SocksSessionTest, HandshakePasswordAuthSuccess)
     std::uint8_t req[] = {0x05, 0x01, 0x02};
     asio::write(client_sock, asio::buffer(req));
 
-    auto work = asio::make_work_guard(io_ctx);
-    std::thread t([&io_ctx = this->io_ctx] { io_ctx.run(); });
+    auto work = asio::make_work_guard(io_ctx());
+    std::thread t([&io_ctx = this->io_ctx()] { io_ctx.run(); });
 
-    auto handshake_future = asio::co_spawn(io_ctx, SocksSessionTester::handshake(*session), asio::use_future);
+    auto handshake_future = asio::co_spawn(io_ctx(), socks_session_tester::handshake(*session), asio::use_future);
 
     std::uint8_t res[2];
     asio::read(client_sock, asio::buffer(res));
@@ -115,11 +118,11 @@ TEST_F(SocksSessionTest, HandshakePasswordAuthSuccess)
     t.join();
 }
 
-TEST_F(SocksSessionTest, ReadConnectRequestDomain)
+TEST_F(socks_session_test, ReadConnectRequestDomain)
 {
-    asio::ip::tcp::socket client_sock(io_ctx);
-    asio::ip::tcp::socket server_sock(io_ctx);
-    asio::ip::tcp::acceptor acceptor(io_ctx, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    asio::ip::tcp::socket client_sock(io_ctx());
+    asio::ip::tcp::socket server_sock(io_ctx());
+    asio::ip::tcp::acceptor acceptor(io_ctx(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
 
     client_sock.connect(acceptor.local_endpoint());
     acceptor.accept(server_sock);
@@ -129,10 +132,10 @@ TEST_F(SocksSessionTest, ReadConnectRequestDomain)
     std::uint8_t req[] = {0x05, 0x01, 0x00, 0x03, 0x0a, 'g', 'o', 'o', 'g', 'l', 'e', '.', 'c', 'o', 'm', 0x01, 0xbb};
     asio::write(client_sock, asio::buffer(req));
 
-    auto work = asio::make_work_guard(io_ctx);
-    std::thread t([&io_ctx = this->io_ctx] { io_ctx.run(); });
+    auto work = asio::make_work_guard(io_ctx());
+    std::thread t([&io_ctx = this->io_ctx()] { io_ctx.run(); });
 
-    auto req_future = asio::co_spawn(io_ctx, SocksSessionTester::read_request(*session), asio::use_future);
+    auto req_future = asio::co_spawn(io_ctx(), socks_session_tester::read_request(*session), asio::use_future);
 
     auto info = req_future.get();
     EXPECT_TRUE(info.ok);

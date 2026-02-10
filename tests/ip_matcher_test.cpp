@@ -9,7 +9,7 @@
 
 #include "ip_matcher.h"
 
-class IpMatcherTest : public ::testing::Test
+class ip_matcher_test : public ::testing::Test
 {
    protected:
     void SetUp() override
@@ -30,16 +30,18 @@ class IpMatcherTest : public ::testing::Test
         f.close();
     }
 
-   protected:
+    [[nodiscard]] const std::string& rule_file() const { return rule_file_; }
+
+   private:
     std::string rule_file_;
 };
 
-TEST_F(IpMatcherTest, MatchIPv4Basic)
+TEST_F(ip_matcher_test, MatchIPv4Basic)
 {
     WriteRules({"192.168.1.0/24", "10.0.0.0/8"});
 
     mux::ip_matcher matcher;
-    ASSERT_TRUE(matcher.load(rule_file_));
+    ASSERT_TRUE(matcher.load(rule_file()));
 
     asio::error_code ec;
 
@@ -52,12 +54,12 @@ TEST_F(IpMatcherTest, MatchIPv4Basic)
     EXPECT_FALSE(matcher.match(asio::ip::make_address("11.0.0.1", ec)));
 }
 
-TEST_F(IpMatcherTest, MatchIPv6Basic)
+TEST_F(ip_matcher_test, MatchIPv6Basic)
 {
     WriteRules({"2001:db8::/32", "fe80::/10", "::1/128"});
 
     mux::ip_matcher matcher;
-    ASSERT_TRUE(matcher.load(rule_file_));
+    ASSERT_TRUE(matcher.load(rule_file()));
 
     asio::error_code ec;
 
@@ -73,12 +75,12 @@ TEST_F(IpMatcherTest, MatchIPv6Basic)
     EXPECT_FALSE(matcher.match(asio::ip::make_address("::2", ec)));
 }
 
-TEST_F(IpMatcherTest, MatchIPv6ComplexMasks)
+TEST_F(ip_matcher_test, MatchIPv6ComplexMasks)
 {
     WriteRules({"2400:cb00::/32", "2606:4700:4700::/96"});
 
     mux::ip_matcher matcher;
-    ASSERT_TRUE(matcher.load(rule_file_));
+    ASSERT_TRUE(matcher.load(rule_file()));
 
     asio::error_code ec;
     EXPECT_TRUE(matcher.match(asio::ip::make_address("2400:cb00:1234::1", ec)));
@@ -86,12 +88,12 @@ TEST_F(IpMatcherTest, MatchIPv6ComplexMasks)
     EXPECT_FALSE(matcher.match(asio::ip::make_address("2606:4700:4700:1::1", ec)));
 }
 
-TEST_F(IpMatcherTest, EdgeCasesOptimization)
+TEST_F(ip_matcher_test, EdgeCasesOptimization)
 {
     WriteRules({"192.168.1.0/24", "192.168.1.0/25", "192.168.2.0/24", "2001:db8::/32", "2001:db8:8000::/33"});
 
     mux::ip_matcher matcher;
-    ASSERT_TRUE(matcher.load(rule_file_));
+    ASSERT_TRUE(matcher.load(rule_file()));
 
     asio::error_code ec;
 
@@ -104,13 +106,13 @@ TEST_F(IpMatcherTest, EdgeCasesOptimization)
     EXPECT_TRUE(matcher.match(asio::ip::make_address("2001:db8::1", ec)));
 }
 
-TEST_F(IpMatcherTest, EdgeCasesInvalidInputs)
+TEST_F(ip_matcher_test, EdgeCasesInvalidInputs)
 {
     WriteRules({"1.2.3.4/24", "invalid_ip", "999.999.999.999/24", "10.0.0.1/33", "fe80::1/129", "# Comments should be ignored", "   ", "8.8.8.8/32"});
 
     mux::ip_matcher matcher;
 
-    ASSERT_TRUE(matcher.load(rule_file_));
+    ASSERT_TRUE(matcher.load(rule_file()));
 
     asio::error_code ec;
     EXPECT_TRUE(matcher.match(asio::ip::make_address("1.2.3.10", ec)));
@@ -119,33 +121,33 @@ TEST_F(IpMatcherTest, EdgeCasesInvalidInputs)
     EXPECT_FALSE(matcher.match(asio::ip::make_address("10.0.0.1", ec)));
 }
 
-TEST_F(IpMatcherTest, MatchIPv4MatchAll)
+TEST_F(ip_matcher_test, MatchIPv4MatchAll)
 {
     WriteRules({"0.0.0.0/0"});
     mux::ip_matcher matcher;
-    ASSERT_TRUE(matcher.load(rule_file_));
+    ASSERT_TRUE(matcher.load(rule_file()));
 
     asio::error_code ec;
     EXPECT_TRUE(matcher.match(asio::ip::make_address("1.1.1.1", ec)));
     EXPECT_TRUE(matcher.match(asio::ip::make_address("255.255.255.255", ec)));
 }
 
-TEST_F(IpMatcherTest, MatchIPv6MatchAll)
+TEST_F(ip_matcher_test, MatchIPv6MatchAll)
 {
     WriteRules({"::/0"});
     mux::ip_matcher matcher;
-    ASSERT_TRUE(matcher.load(rule_file_));
+    ASSERT_TRUE(matcher.load(rule_file()));
 
     asio::error_code ec;
     EXPECT_TRUE(matcher.match(asio::ip::make_address("fe80::1", ec)));
     EXPECT_TRUE(matcher.match(asio::ip::make_address("::1", ec)));
 }
 
-TEST_F(IpMatcherTest, PrefixWithSpaces)
+TEST_F(ip_matcher_test, PrefixWithSpaces)
 {
     WriteRules({"192.168.1.0/24 ", "192.168.2.0/ 24"});
     mux::ip_matcher matcher;
-    ASSERT_TRUE(matcher.load(rule_file_));
+    ASSERT_TRUE(matcher.load(rule_file()));
 
     asio::error_code ec;
 
@@ -153,38 +155,38 @@ TEST_F(IpMatcherTest, PrefixWithSpaces)
     EXPECT_TRUE(matcher.match(asio::ip::make_address("192.168.2.1", ec)));
 }
 
-TEST_F(IpMatcherTest, PrefixLeadingZero)
+TEST_F(ip_matcher_test, PrefixLeadingZero)
 {
     WriteRules({"10.0.0.0/08"});
     mux::ip_matcher matcher;
-    ASSERT_TRUE(matcher.load(rule_file_));
+    ASSERT_TRUE(matcher.load(rule_file()));
 
     asio::error_code ec;
     EXPECT_TRUE(matcher.match(asio::ip::make_address("10.1.1.1", ec)));
 }
 
-TEST_F(IpMatcherTest, PrefixOutOfRange)
+TEST_F(ip_matcher_test, PrefixOutOfRange)
 {
     WriteRules({"192.168.1.0/999"});
     mux::ip_matcher matcher;
-    ASSERT_TRUE(matcher.load(rule_file_));
+    ASSERT_TRUE(matcher.load(rule_file()));
 
     asio::error_code ec;
     EXPECT_FALSE(matcher.match(asio::ip::make_address("192.168.1.1", ec)));
 }
 
-TEST_F(IpMatcherTest, IPv6Exact128BitBoundary)
+TEST_F(ip_matcher_test, IPv6Exact128BitBoundary)
 {
     WriteRules({"2001:db8::1/128"});
     mux::ip_matcher matcher;
-    ASSERT_TRUE(matcher.load(rule_file_));
+    ASSERT_TRUE(matcher.load(rule_file()));
 
     asio::error_code ec;
     EXPECT_TRUE(matcher.match(asio::ip::make_address("2001:db8::1", ec)));
     EXPECT_FALSE(matcher.match(asio::ip::make_address("2001:db8::2", ec)));
 }
 
-TEST_F(IpMatcherTest, LargeRuleSet)
+TEST_F(ip_matcher_test, LargeRuleSet)
 {
     std::vector<std::string> rules;
 
@@ -199,7 +201,7 @@ TEST_F(IpMatcherTest, LargeRuleSet)
     WriteRules(rules);
 
     mux::ip_matcher matcher;
-    ASSERT_TRUE(matcher.load(rule_file_));
+    ASSERT_TRUE(matcher.load(rule_file()));
 
     asio::error_code ec;
 
@@ -210,29 +212,29 @@ TEST_F(IpMatcherTest, LargeRuleSet)
     EXPECT_FALSE(matcher.match(asio::ip::make_address("10.5.0.1", ec)));
 }
 
-TEST_F(IpMatcherTest, IPv6OddBitPrefix)
+TEST_F(ip_matcher_test, IPv6OddBitPrefix)
 {
     WriteRules({"2001:db8::/65"});
     mux::ip_matcher matcher;
-    ASSERT_TRUE(matcher.load(rule_file_));
+    ASSERT_TRUE(matcher.load(rule_file()));
 
     asio::error_code ec;
     EXPECT_TRUE(matcher.match(asio::ip::make_address("2001:db8::1", ec)));
     EXPECT_FALSE(matcher.match(asio::ip::make_address("2001:db8:0:0:8000::1", ec)));
 }
 
-TEST_F(IpMatcherTest, IPv6NonCanonicalNetwork)
+TEST_F(ip_matcher_test, IPv6NonCanonicalNetwork)
 {
     WriteRules({"2001:db8::8000/65"});
     mux::ip_matcher matcher;
-    ASSERT_TRUE(matcher.load(rule_file_));
+    ASSERT_TRUE(matcher.load(rule_file()));
 
     asio::error_code ec;
 
     EXPECT_TRUE(matcher.match(asio::ip::make_address("2001:db8::1", ec)));
 }
 
-TEST_F(IpMatcherTest, AttackMixedIPv4IPv6Massive)
+TEST_F(ip_matcher_test, AttackMixedIPv4IPv6Massive)
 {
     std::vector<std::string> rules;
 
@@ -248,7 +250,7 @@ TEST_F(IpMatcherTest, AttackMixedIPv4IPv6Massive)
     WriteRules(rules);
 
     mux::ip_matcher matcher;
-    ASSERT_TRUE(matcher.load(rule_file_));
+    ASSERT_TRUE(matcher.load(rule_file()));
 
     asio::error_code ec;
 
@@ -258,7 +260,7 @@ TEST_F(IpMatcherTest, AttackMixedIPv4IPv6Massive)
     EXPECT_FALSE(matcher.match(asio::ip::make_address("10.255.1.1", ec)));
 }
 
-TEST_F(IpMatcherTest, DoSNestedSubnets)
+TEST_F(ip_matcher_test, DoSNestedSubnets)
 {
     std::vector<std::string> rules;
 
@@ -269,7 +271,7 @@ TEST_F(IpMatcherTest, DoSNestedSubnets)
     WriteRules(rules);
 
     mux::ip_matcher matcher;
-    ASSERT_TRUE(matcher.load(rule_file_));
+    ASSERT_TRUE(matcher.load(rule_file()));
 
     asio::error_code ec;
 
