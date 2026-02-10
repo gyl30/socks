@@ -184,23 +184,24 @@ void ch_parser::parse_key_share(reader& r, client_hello_info& info)
             break;
         }
 
-        if (group == 0x001d)
+        if (group == reality::tls_consts::group::kX25519)
         {
-            if (len == 32)
+            if (len == 32 && r.has(32))
             {
-                if (r.has(32))
-                {
-                    info.x25519_pub.assign(r.data(), r.data() + 32);
-                    info.is_tls13 = true;
-                }
+                info.x25519_pub.assign(r.data(), r.data() + 32);
+                info.has_x25519_share = true;
             }
-            return;
         }
-
         if (!r.skip(len))
         {
             break;
         }
+    }
+
+    if (info.has_x25519_share)
+    {
+        info.is_tls13 = true;
+        info.key_share_group = reality::tls_consts::group::kX25519;
     }
 }
 

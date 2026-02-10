@@ -57,6 +57,29 @@ class RemoteServerMuxTest : public ::testing::Test
     std::string server_priv_key;
     std::string server_pub_key;
     std::string short_id;
+
+    mux::config make_server_cfg(std::uint16_t port) const
+    {
+        mux::config cfg;
+        cfg.inbound.host = "127.0.0.1";
+        cfg.inbound.port = port;
+        cfg.reality.private_key = server_priv_key;
+        cfg.reality.short_id = short_id;
+        return cfg;
+    }
+
+    mux::config make_client_cfg(std::uint16_t server_port, const std::string& sni, const mux::config::timeout_t& timeouts) const
+    {
+        mux::config cfg;
+        cfg.outbound.host = "127.0.0.1";
+        cfg.outbound.port = server_port;
+        cfg.socks.port = 0;
+        cfg.reality.public_key = server_pub_key;
+        cfg.reality.sni = sni;
+        cfg.reality.short_id = short_id;
+        cfg.timeout = timeouts;
+        return cfg;
+    }
 };
 
 TEST_F(RemoteServerMuxTest, ProcessTcpConnectRequest)
@@ -66,8 +89,7 @@ TEST_F(RemoteServerMuxTest, ProcessTcpConnectRequest)
     ASSERT_FALSE(ec);
     scoped_pool sp(pool);
 
-    auto server = std::make_shared<mux::remote_server>(
-        pool, 0, std::vector<mux::config::fallback_entry>{}, server_priv_key, short_id, mux::config::timeout_t{}, mux::config::limits_t{});
+    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(0));
 
     reality::server_fingerprint fp;
     fp.cipher_suite = 0x1301;
@@ -80,16 +102,7 @@ TEST_F(RemoteServerMuxTest, ProcessTcpConnectRequest)
     mux::config::timeout_t timeouts;
     timeouts.read = 10;
     timeouts.write = 10;
-    auto client = std::make_shared<mux::local_client>(
-        pool,
-        "127.0.0.1",
-        std::to_string(server_port),
-        0,
-        server_pub_key,
-        "www.google.com",
-        short_id,
-        reality::crypto_util::bytes_to_hex(reality::crypto_util::extract_ed25519_public_key(reality::crypto_util::hex_to_bytes(server_priv_key), ec)),
-        timeouts);
+    auto client = std::make_shared<mux::local_client>(pool, make_client_cfg(server_port, "www.google.com", timeouts));
     client->start();
 
     std::uint16_t local_socks_port = 0;
@@ -136,8 +149,7 @@ TEST_F(RemoteServerMuxTest, ProcessUdpAssociateRequest)
     ASSERT_FALSE(ec);
     scoped_pool sp(pool);
 
-    auto server = std::make_shared<mux::remote_server>(
-        pool, 0, std::vector<mux::config::fallback_entry>{}, server_priv_key, short_id, mux::config::timeout_t{}, mux::config::limits_t{});
+    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(0));
 
     reality::server_fingerprint fp;
     fp.cipher_suite = 0x1301;
@@ -150,16 +162,7 @@ TEST_F(RemoteServerMuxTest, ProcessUdpAssociateRequest)
     mux::config::timeout_t timeouts;
     timeouts.read = 10;
     timeouts.write = 10;
-    auto client = std::make_shared<mux::local_client>(
-        pool,
-        "127.0.0.1",
-        std::to_string(server_port),
-        0,
-        server_pub_key,
-        "www.google.com",
-        short_id,
-        reality::crypto_util::bytes_to_hex(reality::crypto_util::extract_ed25519_public_key(reality::crypto_util::hex_to_bytes(server_priv_key), ec)),
-        timeouts);
+    auto client = std::make_shared<mux::local_client>(pool, make_client_cfg(server_port, "www.google.com", timeouts));
     client->start();
 
     std::uint16_t local_socks_port = 0;
@@ -204,8 +207,7 @@ TEST_F(RemoteServerMuxTest, TargetConnectFail)
     ASSERT_FALSE(ec);
     scoped_pool sp(pool);
 
-    auto server = std::make_shared<mux::remote_server>(
-        pool, 0, std::vector<mux::config::fallback_entry>{}, server_priv_key, short_id, mux::config::timeout_t{}, mux::config::limits_t{});
+    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(0));
 
     reality::server_fingerprint fp;
     fp.cipher_suite = 0x1301;
@@ -215,16 +217,7 @@ TEST_F(RemoteServerMuxTest, TargetConnectFail)
     server->start();
     const std::uint16_t server_port = server->listen_port();
 
-    auto client = std::make_shared<mux::local_client>(
-        pool,
-        "127.0.0.1",
-        std::to_string(server_port),
-        0,
-        server_pub_key,
-        "www.google.com",
-        short_id,
-        reality::crypto_util::bytes_to_hex(reality::crypto_util::extract_ed25519_public_key(reality::crypto_util::hex_to_bytes(server_priv_key), ec)),
-        mux::config::timeout_t{});
+    auto client = std::make_shared<mux::local_client>(pool, make_client_cfg(server_port, "www.google.com", mux::config::timeout_t{}));
     client->start();
 
     std::uint16_t local_socks_port = 0;
@@ -270,8 +263,7 @@ TEST_F(RemoteServerMuxTest, TargetResolveFail)
     ASSERT_FALSE(ec);
     scoped_pool sp(pool);
 
-    auto server = std::make_shared<mux::remote_server>(
-        pool, 0, std::vector<mux::config::fallback_entry>{}, server_priv_key, short_id, mux::config::timeout_t{}, mux::config::limits_t{});
+    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(0));
 
     reality::server_fingerprint fp;
     fp.cipher_suite = 0x1301;
@@ -281,16 +273,7 @@ TEST_F(RemoteServerMuxTest, TargetResolveFail)
     server->start();
     const std::uint16_t server_port = server->listen_port();
 
-    auto client = std::make_shared<mux::local_client>(
-        pool,
-        "127.0.0.1",
-        std::to_string(server_port),
-        0,
-        server_pub_key,
-        "www.google.com",
-        short_id,
-        reality::crypto_util::bytes_to_hex(reality::crypto_util::extract_ed25519_public_key(reality::crypto_util::hex_to_bytes(server_priv_key), ec)),
-        mux::config::timeout_t{});
+    auto client = std::make_shared<mux::local_client>(pool, make_client_cfg(server_port, "www.google.com", mux::config::timeout_t{}));
     client->start();
 
     std::uint16_t local_socks_port = 0;

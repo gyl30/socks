@@ -74,9 +74,6 @@ constexpr std::uint16_t kX25519 = 0x001d;
 constexpr std::uint16_t kFfdhe2048 = 0x0100;
 constexpr std::uint16_t kFfdhe3072 = 0x0101;
 
-constexpr std::uint16_t kX25519Kyber768Draft00 = 0x6399;
-constexpr std::uint16_t kX25519Kyber512Draft00 = 0xfe30;
-constexpr std::uint16_t kX25519Mlkem768 = 0x11EC;
 }    // namespace group
 
 namespace sig_alg
@@ -92,6 +89,7 @@ constexpr std::uint16_t kEcdsaSecp521r1Sha512 = 0x0603;
 constexpr std::uint16_t kRsaPssRsaeSha256 = 0x0804;
 constexpr std::uint16_t kRsaPssRsaeSha384 = 0x0805;
 constexpr std::uint16_t kRsaPssRsaeSha512 = 0x0806;
+constexpr std::uint16_t kEd25519 = 0x0807;
 
 constexpr std::uint16_t kFakeDsaSha1 = 0x0202;
 constexpr std::uint16_t kFakeDsaSha256 = 0x0402;

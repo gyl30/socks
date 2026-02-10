@@ -30,6 +30,8 @@ class crypto_util
 
     [[nodiscard]] static std::vector<std::uint8_t> hex_to_bytes(const std::string& hex);
 
+    [[nodiscard]] static bool base64_url_decode(const std::string& input, std::vector<std::uint8_t>& out);
+
     [[nodiscard]] static std::uint16_t random_grease();
 
     [[nodiscard]] static bool generate_x25519_keypair(std::uint8_t out_public[32], std::uint8_t out_private[32]);

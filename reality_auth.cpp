@@ -10,7 +10,10 @@
 namespace reality
 {
 
-bool build_auth_payload(const std::vector<std::uint8_t>& short_id, std::uint32_t timestamp, std::array<std::uint8_t, kAuthPayloadLen>& out)
+bool build_auth_payload(const std::vector<std::uint8_t>& short_id,
+                        const std::array<std::uint8_t, 3>& version,
+                        std::uint32_t timestamp,
+                        std::array<std::uint8_t, kAuthPayloadLen>& out)
 {
     if (short_id.size() > kShortIdMaxLen)
     {
@@ -19,9 +22,9 @@ bool build_auth_payload(const std::vector<std::uint8_t>& short_id, std::uint32_t
 
     out.fill(0);
 
-    out[0] = 1;
-    out[1] = 0;
-    out[2] = 0;
+    out[0] = version[0];
+    out[1] = version[1];
+    out[2] = version[2];
     out[3] = 0;
 
     out[4] = static_cast<std::uint8_t>((timestamp >> 24) & 0xFF);
@@ -49,11 +52,6 @@ std::optional<auth_payload> parse_auth_payload(std::span<const std::uint8_t> pay
     out.version_x = payload[0];
     out.version_y = payload[1];
     out.version_z = payload[2];
-
-    if (out.version_x != 1)
-    {
-        return std::nullopt;
-    }
 
     out.timestamp = (static_cast<std::uint32_t>(payload[4]) << 24) | (static_cast<std::uint32_t>(payload[5]) << 16) |
                     (static_cast<std::uint32_t>(payload[6]) << 8) | static_cast<std::uint32_t>(payload[7]);

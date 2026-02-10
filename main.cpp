@@ -39,14 +39,8 @@ static void dump_x25519()
     }
     const std::vector<std::uint8_t> vec_priv(priv, priv + 32);
     const std::vector<std::uint8_t> vec_pub(pub, pub + 32);
-    std::error_code ec;
-    auto verify_pub = reality::crypto_util::extract_ed25519_public_key(vec_priv, ec);
     std::cout << "private key: " << reality::crypto_util::bytes_to_hex(vec_priv) << '\n';
     std::cout << "public key:  " << reality::crypto_util::bytes_to_hex(vec_pub) << '\n';
-    if (!ec && !verify_pub.empty())
-    {
-        std::cout << "verify key:  " << reality::crypto_util::bytes_to_hex(verify_pub) << '\n';
-    }
 }
 
 static int parse_config_from_file(const std::string& file, mux::config& cfg)

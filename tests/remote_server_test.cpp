@@ -29,6 +29,18 @@ class RemoteServerTest : public ::testing::Test
     }
     std::string server_priv_key;
     std::string server_pub_key;
+    [[nodiscard]] mux::config make_server_cfg(std::uint16_t port,
+                                              const std::vector<mux::config::fallback_entry>& fallbacks,
+                                              const std::string& short_id) const
+    {
+        mux::config cfg;
+        cfg.inbound.host = "127.0.0.1";
+        cfg.inbound.port = port;
+        cfg.fallbacks = fallbacks;
+        cfg.reality.private_key = server_priv_key;
+        cfg.reality.short_id = short_id;
+        return cfg;
+    }
 
     std::vector<uint8_t> build_valid_sid_ch(const std::string& sni,
                                             const std::string& short_id_hex,
@@ -48,11 +60,15 @@ class RemoteServerTest : public ::testing::Test
         auto auth_key = reality::crypto_util::hkdf_expand(prk, reality::crypto_util::hex_to_bytes("5245414c495459"), 16, EVP_sha256(), ec);
 
         std::array<uint8_t, 16> payload;
-        (void)reality::build_auth_payload(reality::crypto_util::hex_to_bytes(short_id_hex), timestamp, payload);
+        const std::array<std::uint8_t, 3> ver{1, 0, 0};
+        (void)reality::build_auth_payload(reality::crypto_util::hex_to_bytes(short_id_hex), ver, timestamp, payload);
 
         auto spec = reality::FingerprintFactory::Get(reality::FingerprintType::Chrome_120);
-        auto ch_body =
-            reality::ClientHelloBuilder::build(spec, std::vector<uint8_t>(32, 0), info_random, std::vector<uint8_t>(c_pub, c_pub + 32), sni);
+        auto ch_body = reality::ClientHelloBuilder::build(spec,
+                                                          std::vector<uint8_t>(32, 0),
+                                                          info_random,
+                                                          std::vector<uint8_t>(c_pub, c_pub + 32),
+                                                          sni);
 
         auto record_tmp = reality::write_record_header(reality::kContentTypeHandshake, static_cast<uint16_t>(ch_body.size()));
         record_tmp.insert(record_tmp.end(), ch_body.begin(), ch_body.end());
@@ -70,7 +86,8 @@ class RemoteServerTest : public ::testing::Test
                                                      aad,
                                                      ec);
 
-        auto ch_final = reality::ClientHelloBuilder::build(spec, out_sid, info_random, std::vector<uint8_t>(c_pub, c_pub + 32), sni);
+        auto ch_final = reality::ClientHelloBuilder::build(
+            spec, out_sid, info_random, std::vector<uint8_t>(c_pub, c_pub + 32), sni);
         auto record = reality::write_record_header(reality::kContentTypeHandshake, static_cast<uint16_t>(ch_final.size()));
         record.insert(record.end(), ch_final.begin(), ch_final.end());
         return record;
@@ -99,13 +116,12 @@ TEST_F(RemoteServerTest, AuthFailureTriggersFallback)
             }
         });
 
-    auto server = std::make_shared<mux::remote_server>(pool,
-                                                       server_port,
-                                                       std::vector<mux::config::fallback_entry>{{"", "127.0.0.1", std::to_string(fallback_port)}},
-                                                       server_priv_key,
-                                                       "",
-                                                       mux::config::timeout_t{},
-                                                       mux::config::limits_t{});
+    mux::config cfg;
+    cfg.inbound.host = "127.0.0.1";
+    cfg.inbound.port = server_port;
+    cfg.fallbacks = {{"", "127.0.0.1", std::to_string(fallback_port)}};
+    cfg.reality.private_key = server_priv_key;
+    auto server = std::make_shared<mux::remote_server>(pool, cfg);
     server->start();
 
     {
@@ -142,13 +158,9 @@ TEST_F(RemoteServerTest, AuthFailShortIdMismatch)
             }
         });
 
-    auto server = std::make_shared<mux::remote_server>(pool,
-                                                       server_port,
-                                                       std::vector<mux::config::fallback_entry>{{"", "127.0.0.1", std::to_string(fallback_port)}},
-                                                       server_priv_key,
-                                                       "0102030405060708",
-                                                       mux::config::timeout_t{},
-                                                       mux::config::limits_t{});
+    auto server = std::make_shared<mux::remote_server>(
+        pool,
+        make_server_cfg(server_port, {{"", "127.0.0.1", std::to_string(fallback_port)}}, "0102030405060708"));
     server->start();
 
     std::vector<uint8_t> sid;
@@ -189,13 +201,9 @@ TEST_F(RemoteServerTest, ClockSkewDetected)
             }
         });
 
-    auto server = std::make_shared<mux::remote_server>(pool,
-                                                       server_port,
-                                                       std::vector<mux::config::fallback_entry>{{"", "127.0.0.1", std::to_string(fallback_port)}},
-                                                       server_priv_key,
-                                                       "0102030405060708",
-                                                       mux::config::timeout_t{},
-                                                       mux::config::limits_t{});
+    auto server = std::make_shared<mux::remote_server>(
+        pool,
+        make_server_cfg(server_port, {{"", "127.0.0.1", std::to_string(fallback_port)}}, "0102030405060708"));
     server->start();
 
     std::vector<uint8_t> sid;
@@ -236,13 +244,9 @@ TEST_F(RemoteServerTest, AuthFailInvalidTLSHeader)
             }
         });
 
-    auto server = std::make_shared<mux::remote_server>(pool,
-                                                       server_port,
-                                                       std::vector<mux::config::fallback_entry>{{"", "127.0.0.1", std::to_string(fallback_port)}},
-                                                       server_priv_key,
-                                                       "0102030405060708",
-                                                       mux::config::timeout_t{},
-                                                       mux::config::limits_t{});
+    auto server = std::make_shared<mux::remote_server>(
+        pool,
+        make_server_cfg(server_port, {{"", "127.0.0.1", std::to_string(fallback_port)}}, "0102030405060708"));
     server->start();
 
     {
@@ -281,13 +285,9 @@ TEST_F(RemoteServerTest, AuthFailBufferTooShort)
             }
         });
 
-    auto server = std::make_shared<mux::remote_server>(pool,
-                                                       server_port,
-                                                       std::vector<mux::config::fallback_entry>{{"", "127.0.0.1", std::to_string(fallback_port)}},
-                                                       server_priv_key,
-                                                       "0102030405060708",
-                                                       mux::config::timeout_t{},
-                                                       mux::config::limits_t{});
+    auto server = std::make_shared<mux::remote_server>(
+        pool,
+        make_server_cfg(server_port, {{"", "127.0.0.1", std::to_string(fallback_port)}}, "0102030405060708"));
     server->start();
 
     {
@@ -316,13 +316,9 @@ TEST_F(RemoteServerTest, FallbackResolveFail)
 
     std::uint16_t server_port = 29971;
 
-    auto server = std::make_shared<mux::remote_server>(pool,
-                                                       server_port,
-                                                       std::vector<mux::config::fallback_entry>{{"", "invalid.hostname.test", "80"}},
-                                                       server_priv_key,
-                                                       "0102030405060708",
-                                                       mux::config::timeout_t{},
-                                                       mux::config::limits_t{});
+    auto server = std::make_shared<mux::remote_server>(
+        pool,
+        make_server_cfg(server_port, {{"", "invalid.hostname.test", "80"}}, "0102030405060708"));
     server->start();
 
     {
@@ -346,13 +342,7 @@ TEST_F(RemoteServerTest, FallbackConnectFail)
 
     std::uint16_t server_port = 29981;
 
-    auto server = std::make_shared<mux::remote_server>(pool,
-                                                       server_port,
-                                                       std::vector<mux::config::fallback_entry>{{"", "127.0.0.1", "1"}},
-                                                       server_priv_key,
-                                                       "0102030405060708",
-                                                       mux::config::timeout_t{},
-                                                       mux::config::limits_t{});
+    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(server_port, {{"", "127.0.0.1", "1"}}, "0102030405060708"));
     server->start();
 
     {
@@ -388,13 +378,8 @@ TEST_F(RemoteServerTest, InvalidAuthConfigPath)
             }
         });
 
-    auto server = std::make_shared<mux::remote_server>(pool,
-                                                       server_port,
-                                                       std::vector<mux::config::fallback_entry>{{"", "127.0.0.1", std::to_string(fallback_port)}},
-                                                       server_priv_key,
-                                                       "abc",
-                                                       mux::config::timeout_t{},
-                                                       mux::config::limits_t{});
+    auto server =
+        std::make_shared<mux::remote_server>(pool, make_server_cfg(server_port, {{"", "127.0.0.1", std::to_string(fallback_port)}}, "abc"));
     server->start();
 
     {
@@ -402,8 +387,11 @@ TEST_F(RemoteServerTest, InvalidAuthConfigPath)
         sock.connect({asio::ip::make_address("127.0.0.1"), server_port});
 
         auto spec = reality::FingerprintFactory::Get(reality::FingerprintType::Chrome_120);
-        auto ch_msg = reality::ClientHelloBuilder::build(
-            spec, std::vector<uint8_t>(32, 0), std::vector<uint8_t>(32, 0), std::vector<uint8_t>(32, 0), "www.google.com");
+        auto ch_msg = reality::ClientHelloBuilder::build(spec,
+                                                         std::vector<uint8_t>(32, 0),
+                                                         std::vector<uint8_t>(32, 0),
+                                                         std::vector<uint8_t>(32, 0),
+                                                         "www.google.com");
         auto record = reality::write_record_header(reality::kContentTypeHandshake, static_cast<uint16_t>(ch_msg.size()));
         record.insert(record.end(), ch_msg.begin(), ch_msg.end());
         asio::write(sock, asio::buffer(record));
@@ -453,8 +441,7 @@ TEST_F(RemoteServerTest, MultiSNIFallback)
     std::vector<mux::config::fallback_entry> fallbacks = {{"www.a.com", "127.0.0.1", std::to_string(fallback_port_a)},
                                                           {"www.b.com", "127.0.0.1", std::to_string(fallback_port_b)}};
 
-    auto server =
-        std::make_shared<mux::remote_server>(pool, server_port, fallbacks, server_priv_key, "", mux::config::timeout_t{}, mux::config::limits_t{});
+    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(server_port, fallbacks, ""));
     server->start();
 
     auto trigger_fallback = [&](const std::string& sni)
@@ -462,7 +449,8 @@ TEST_F(RemoteServerTest, MultiSNIFallback)
         asio::ip::tcp::socket sock(pool.get_io_context());
         sock.connect({asio::ip::make_address("127.0.0.1"), server_port});
         auto spec = reality::FingerprintFactory::Get(reality::FingerprintType::Chrome_120);
-        auto ch_body = reality::ClientHelloBuilder::build(spec, std::vector<uint8_t>(32, 0), info_random, std::vector<uint8_t>(32, 0), sni);
+        auto ch_body = reality::ClientHelloBuilder::build(
+            spec, std::vector<uint8_t>(32, 0), info_random, std::vector<uint8_t>(32, 0), sni);
         auto record = reality::write_record_header(reality::kContentTypeHandshake, static_cast<uint16_t>(ch_body.size()));
         record.insert(record.end(), ch_body.begin(), ch_body.end());
         asio::write(sock, asio::buffer(record));
