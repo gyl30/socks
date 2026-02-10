@@ -21,24 +21,27 @@ namespace
 {
 
 template <typename Mutex>
-class HeartbeatLogSink : public spdlog::sinks::base_sink<Mutex>
+class heartbeat_log_sink : public spdlog::sinks::base_sink<Mutex>
 {
    public:
-    std::atomic<bool> found{false};
+    [[nodiscard]] bool found() const { return found_.load(std::memory_order_acquire); }
 
    protected:
     void sink_it_(const spdlog::details::log_msg& msg) override
     {
         if (std::string_view(msg.payload.data(), msg.payload.size()).find("heartbeat received") != std::string_view::npos)
         {
-            found = true;
+            found_.store(true, std::memory_order_release);
         }
     }
 
     void flush_() override {}
+
+   private:
+    std::atomic<bool> found_{false};
 };
 
-using custom_sink_t = HeartbeatLogSink<std::mutex>;
+using custom_sink_t = heartbeat_log_sink<std::mutex>;
 
 TEST(HeartbeatTest, HeartbeatSendReceive)
 {
@@ -94,12 +97,12 @@ TEST(HeartbeatTest, HeartbeatSendReceive)
     std::thread t([&io_ctx] { io_ctx.run(); });
 
     auto start_time = std::chrono::steady_clock::now();
-    while (!sink->found && (std::chrono::steady_clock::now() - start_time < std::chrono::seconds(5)))
+    while (!sink->found() && (std::chrono::steady_clock::now() - start_time < std::chrono::seconds(5)))
     {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
-    EXPECT_TRUE(sink->found);
+    EXPECT_TRUE(sink->found());
 
     conn_c->stop();
     conn_s->stop();

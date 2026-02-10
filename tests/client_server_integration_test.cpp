@@ -37,7 +37,7 @@ class scoped_pool
     std::thread thread_;
 };
 
-class IntegrationTest : public ::testing::Test
+class integration_test : public ::testing::Test
 {
    protected:
     void SetUp() override
@@ -60,7 +60,7 @@ class IntegrationTest : public ::testing::Test
     std::string short_id_;
 };
 
-TEST_F(IntegrationTest, FullHandshakeAndMux)
+TEST_F(integration_test, FullHandshakeAndMux)
 {
     std::error_code ec;
     mux::io_context_pool pool(2, ec);
@@ -126,7 +126,7 @@ TEST_F(IntegrationTest, FullHandshakeAndMux)
     server->stop();
 }
 
-TEST_F(IntegrationTest, FullDataTransfer)
+TEST_F(integration_test, FullDataTransfer)
 {
     std::error_code ec;
     mux::io_context_pool pool(2, ec);
