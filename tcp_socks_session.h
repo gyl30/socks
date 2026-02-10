@@ -1,10 +1,10 @@
 #ifndef TCP_SOCKS_SESSION_H
 #define TCP_SOCKS_SESSION_H
 
+#include <chrono>
 #include <memory>
 #include <string>
 #include <cstdint>
-#include <chrono>
 
 #include <asio/ip/tcp.hpp>
 #include <asio/awaitable.hpp>
