@@ -1,9 +1,9 @@
 #include <cstdio>
-#include <algorithm>
 #include <string>
 #include <vector>
 #include <cstdint>
 #include <iostream>
+#include <algorithm>
 #include <system_error>
 
 #include <gtest/gtest.h>
