@@ -34,7 +34,16 @@ asio::awaitable<void> remote_session::start(const syn_payload& syn)
         const ack_payload ack{.socks_rep = socks::kRepHostUnreach, .bnd_addr = "", .bnd_port = 0};
         std::vector<std::uint8_t> ack_data;
         mux_codec::encode_ack(ack, ack_data);
-        co_await connection_->send_async(id_, kCmdAck, std::move(ack_data));
+        const auto ack_ec = co_await connection_->send_async(id_, kCmdAck, std::move(ack_data));
+        if (ack_ec)
+        {
+            LOG_CTX_WARN(ctx_, "{} send ack failed {}", log_event::kMux, ack_ec.message());
+        }
+        if (manager_)
+        {
+            manager_->remove_stream(id_);
+        }
+        (void)co_await connection_->send_async(id_, kCmdRst, {});
         co_return;
     }
 
@@ -45,7 +54,16 @@ asio::awaitable<void> remote_session::start(const syn_payload& syn)
         const ack_payload ack{.socks_rep = socks::kRepConnRefused, .bnd_addr = "", .bnd_port = 0};
         std::vector<std::uint8_t> ack_data;
         mux_codec::encode_ack(ack, ack_data);
-        co_await connection_->send_async(id_, kCmdAck, std::move(ack_data));
+        const auto ack_ec = co_await connection_->send_async(id_, kCmdAck, std::move(ack_data));
+        if (ack_ec)
+        {
+            LOG_CTX_WARN(ctx_, "{} send ack failed {}", log_event::kMux, ack_ec.message());
+        }
+        if (manager_)
+        {
+            manager_->remove_stream(id_);
+        }
+        (void)co_await connection_->send_async(id_, kCmdRst, {});
         co_return;
     }
 
@@ -61,7 +79,16 @@ asio::awaitable<void> remote_session::start(const syn_payload& syn)
     const ack_payload ack_pl{.socks_rep = socks::kRepSuccess, .bnd_addr = ep_conn.address().to_string(), .bnd_port = ep_conn.port()};
     std::vector<std::uint8_t> ack_data;
     mux_codec::encode_ack(ack_pl, ack_data);
-    co_await connection_->send_async(id_, kCmdAck, std::move(ack_data));
+    const auto ack_ec = co_await connection_->send_async(id_, kCmdAck, std::move(ack_data));
+    if (ack_ec)
+    {
+        LOG_CTX_WARN(ctx_, "{} send ack failed {}", log_event::kMux, ack_ec.message());
+        if (manager_)
+        {
+            manager_->remove_stream(id_);
+        }
+        co_return;
+    }
 
     using asio::experimental::awaitable_operators::operator&&;
     co_await (upstream() && downstream());
