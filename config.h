@@ -33,12 +33,22 @@ struct config
 
     struct socks_t
     {
+        bool enabled = true;
         std::string host = "127.0.0.1";
         std::uint16_t port = 1080;
         bool auth = false;
         std::string username;
         std::string password;
     } socks;
+
+    struct tproxy_t
+    {
+        bool enabled = false;
+        std::string listen_host = "::";
+        std::uint16_t tcp_port = 1081;
+        std::uint16_t udp_port = 0;
+        std::uint32_t mark = 0x11;
+    } tproxy;
 
     struct fallback_entry
     {

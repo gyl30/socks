@@ -19,7 +19,7 @@
 
 #include "crypto_util.h"
 #include "context_pool.h"
-#include "local_client.h"
+#include "socks_client.h"
 
 using asio::ip::tcp;
 
@@ -69,7 +69,7 @@ TEST(LocalClientMockTest, HandshakeFailurePaths)
         client_cfg.reality.sni = "example.com";
         client_cfg.timeout = timeouts;
         client_cfg.limits = limits;
-        auto client = std::make_shared<mux::local_client>(pool, client_cfg);
+        auto client = std::make_shared<mux::socks_client>(pool, client_cfg);
 
         std::thread pool_thread([&pool]() { pool.run(); });
 

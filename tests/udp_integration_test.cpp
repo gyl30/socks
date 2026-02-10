@@ -20,12 +20,12 @@
 #include "mux_codec.h"
 #include "crypto_util.h"
 #include "context_pool.h"
-#include "local_client.h"
+#include "socks_client.h"
 #include "reality_messages.h"
 #include "remote_server.h"
 
 using mux::io_context_pool;
-using mux::local_client;
+using mux::socks_client;
 using mux::remote_server;
 
 class UdpIntegrationTest : public ::testing::Test
@@ -128,7 +128,7 @@ TEST_F(UdpIntegrationTest, UdpAssociateAndEcho)
     client_cfg.reality.short_id = short_id;
     client_cfg.timeout.read = 10;
     client_cfg.timeout.write = 10;
-    auto client = std::make_shared<local_client>(pool, client_cfg);
+    auto client = std::make_shared<socks_client>(pool, client_cfg);
     client->start();
 
     auto echo_socket = std::make_shared<asio::ip::udp::socket>(pool.get_io_context());

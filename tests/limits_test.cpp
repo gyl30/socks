@@ -17,7 +17,7 @@
 #include "config.h"
 #include "crypto_util.h"
 #include "context_pool.h"
-#include "local_client.h"
+#include "socks_client.h"
 #include "reality_core.h"
 #include "reality_messages.h"
 #include "remote_server.h"
@@ -110,7 +110,7 @@ TEST_F(LimitsTest, ConnectionPoolCapacity)
     client_cfg.reality.short_id = short_id_;
     client_cfg.timeout = timeouts;
     client_cfg.limits = limits;
-    auto client = std::make_shared<mux::local_client>(pool, client_cfg);
+    auto client = std::make_shared<mux::socks_client>(pool, client_cfg);
     client->start();
 
     std::this_thread::sleep_for(std::chrono::seconds(1));

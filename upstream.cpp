@@ -13,6 +13,7 @@
 
 #include "log.h"
 #include "protocol.h"
+#include "net_utils.h"
 #include "upstream.h"
 #include "mux_codec.h"
 #include "mux_stream.h"
@@ -31,20 +32,48 @@ asio::awaitable<bool> direct_upstream::connect(const std::string& host, const st
         co_return false;
     }
 
-    auto [conn_ec, ep] = co_await asio::async_connect(socket_, eps, asio::as_tuple(asio::use_awaitable));
-    if (conn_ec)
+    std::error_code last_ec;
+    for (const auto& entry : eps)
     {
-        LOG_CTX_WARN(ctx_, "{} connect failed {}", log_event::kRoute, conn_ec.message());
-        co_return false;
+        std::error_code open_ec;
+        if (socket_.is_open())
+        {
+            socket_.close(open_ec);
+        }
+        open_ec = socket_.open(entry.endpoint().protocol(), open_ec);
+        if (open_ec)
+        {
+            last_ec = open_ec;
+            continue;
+        }
+        if (mark_ != 0)
+        {
+            std::error_code mark_ec;
+            if (!net::set_socket_mark(socket_.native_handle(), mark_, mark_ec))
+            {
+                LOG_WARN("direct upstream set mark failed {}", mark_ec.message());
+            }
+        }
+
+        auto [conn_ec] = co_await socket_.async_connect(entry.endpoint(), asio::as_tuple(asio::use_awaitable));
+        if (conn_ec)
+        {
+            last_ec = conn_ec;
+            continue;
+        }
+
+        std::error_code ec;
+        ec = socket_.set_option(asio::ip::tcp::no_delay(true), ec);
+        if (ec)
+        {
+            LOG_WARN("direct upstream set no delay failed error {}", ec.message());
+        }
+        co_return true;
     }
 
-    std::error_code ec;
-    ec = socket_.set_option(asio::ip::tcp::no_delay(true), ec);
-    if (ec)
-    {
-        LOG_WARN("direct upstream set no delay failed error {}", ec.message());
-    }
-    co_return true;
+    const auto err = last_ec ? last_ec : std::make_error_code(std::errc::host_unreachable);
+    LOG_CTX_WARN(ctx_, "{} connect failed {}", log_event::kRoute, err.message());
+    co_return false;
 }
 
 asio::awaitable<std::pair<std::error_code, std::size_t>> direct_upstream::read(std::vector<std::uint8_t>& buf)

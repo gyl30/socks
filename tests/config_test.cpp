@@ -50,9 +50,17 @@ TEST_F(ConfigTest, ParseValues)
             "port": 1080
         },
         "socks": {
+            "enabled": true,
             "auth": true,
             "username": "user",
             "password": "pass"
+        },
+        "tproxy": {
+            "enabled": true,
+            "listen_host": "::1",
+            "tcp_port": 18080,
+            "udp_port": 18081,
+            "mark": 17
         },
         "reality": {
             "sni": "google.com"
@@ -72,6 +80,11 @@ TEST_F(ConfigTest, ParseValues)
         EXPECT_TRUE(cfg.socks.auth);
         EXPECT_EQ(cfg.socks.username, "user");
         EXPECT_EQ(cfg.socks.password, "pass");
+        EXPECT_TRUE(cfg.tproxy.enabled);
+        EXPECT_EQ(cfg.tproxy.listen_host, "::1");
+        EXPECT_EQ(cfg.tproxy.tcp_port, 18080);
+        EXPECT_EQ(cfg.tproxy.udp_port, 18081);
+        EXPECT_EQ(cfg.tproxy.mark, 17);
         EXPECT_EQ(cfg.reality.sni, "google.com");
     }
 }

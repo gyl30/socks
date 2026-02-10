@@ -11,8 +11,13 @@
 
 - `inbound.host` / `inbound.port`：服务端监听地址与端口。
 - `outbound.host` / `outbound.port`：客户端连接地址与端口。
+- `socks.enabled`：是否启用 SOCKS5 入站（默认 `true`）。
 - `socks.host` / `socks.port`：本地 SOCKS5 监听地址与端口。
 - `socks.auth` / `socks.username` / `socks.password`：SOCKS5 认证配置。
+- `tproxy.enabled`：是否启用 TPROXY 入站（默认 `false`）。
+- `tproxy.listen_host`：TPROXY 监听地址（默认 `::`）。
+- `tproxy.tcp_port` / `tproxy.udp_port`：TPROXY TCP/UDP 端口。`udp_port = 0` 表示跟随 `tcp_port`。
+- `tproxy.mark`：TPROXY `SO_MARK`，用于路由/回避回环（默认 `0x11`）。
 
 ## 传输与超时
 

@@ -1,5 +1,5 @@
-#ifndef LOCAL_CLIENT_H
-#define LOCAL_CLIENT_H
+#ifndef CLIENT_TUNNEL_POOL_H
+#define CLIENT_TUNNEL_POOL_H
 
 #include <array>
 #include <mutex>
@@ -7,13 +7,10 @@
 #include <string>
 #include <vector>
 #include <cstdint>
-#include <utility>
 #include <optional>
 
 #include <asio/ip/tcp.hpp>
 #include <asio/awaitable.hpp>
-#include <asio/steady_timer.hpp>
-#include <asio/experimental/concurrent_channel.hpp>
 
 extern "C"
 {
@@ -21,27 +18,33 @@ extern "C"
 }
 
 #include "config.h"
-#include "router.h"
 #include "mux_tunnel.h"
-#include "transcript.h"
-#include "log_context.h"
 #include "context_pool.h"
 #include "reality_core.h"
 #include "reality_messages.h"
 
+namespace reality
+{
+class transcript;
+}
+
 namespace mux
 {
 
-class local_client : public std::enable_shared_from_this<local_client>
+class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_pool>
 {
    public:
-    local_client(io_context_pool& pool, const config& cfg);
+    client_tunnel_pool(io_context_pool& pool, const config& cfg, std::uint32_t mark);
 
     void start();
 
     void stop();
 
-    [[nodiscard]] std::uint16_t listen_port() const { return listen_port_; }
+    [[nodiscard]] bool valid() const { return auth_config_valid_; }
+
+    [[nodiscard]] std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> select_tunnel();
+
+    [[nodiscard]] std::uint32_t next_session_id();
 
    private:
     struct handshake_result
@@ -100,15 +103,11 @@ class local_client : public std::enable_shared_from_this<local_client>
 
     asio::awaitable<void> wait_remote_retry();
 
-    asio::awaitable<void> wait_stop();
-
-    asio::awaitable<void> accept_local_loop();
-
    private:
     bool stop_ = false;
+    std::uint32_t mark_ = 0;
     std::string remote_host_;
     std::string remote_port_;
-    std::uint16_t listen_port_;
     std::string sni_;
     std::vector<std::uint8_t> short_id_bytes_;
     std::array<std::uint8_t, 3> client_ver_{1, 0, 0};
@@ -121,13 +120,7 @@ class local_client : public std::enable_shared_from_this<local_client>
     std::uint32_t next_tunnel_index_{0};
     std::uint32_t next_conn_id_{1};
     std::uint32_t next_session_id_{1};
-    asio::ip::tcp::acceptor acceptor_;
-
-    std::shared_ptr<mux::router> router_;
-
-    asio::experimental::concurrent_channel<void(std::error_code, int)> stop_channel_;
     config::timeout_t timeout_config_;
-    config::socks_t socks_config_;
     config::limits_t limits_config_;
     config::heartbeat_t heartbeat_config_;
 };
