@@ -1,5 +1,6 @@
 #include <array>
 #include <mutex>
+#include <cctype>
 #include <chrono>
 #include <memory>
 #include <string>
@@ -8,6 +9,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <utility>
+#include <optional>
 #include <system_error>
 
 #include <asio/read.hpp>
@@ -27,7 +29,6 @@ extern "C"
 {
 #include <openssl/evp.h>
 #include <openssl/rand.h>
-#include <openssl/crypto.h>
 }
 
 #include "log.h"
@@ -41,6 +42,7 @@ extern "C"
 #include "local_client.h"
 #include "reality_auth.h"
 #include "socks_session.h"
+#include "crypto_util.h"
 #include "reality_engine.h"
 #include "reality_messages.h"
 #include "tls_key_schedule.h"
@@ -79,37 +81,123 @@ bool parse_hex_to_bytes(const std::string& hex, std::vector<std::uint8_t>& out, 
     return true;
 }
 
+std::string normalize_fingerprint_name(const std::string& input)
+{
+    std::string out;
+    out.reserve(input.size());
+    for (const char c : input)
+    {
+        if (c == '-' || c == ' ')
+        {
+            out.push_back('_');
+            continue;
+        }
+        out.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    }
+    return out;
+}
+
+bool parse_fingerprint_type(const std::string& input, std::optional<reality::FingerprintType>& out)
+{
+    out.reset();
+    if (input.empty())
+    {
+        return true;
+    }
+
+    const auto name = normalize_fingerprint_name(input);
+    if (name == "random")
+    {
+        return true;
+    }
+
+    struct fp_entry
+    {
+        const char* name;
+        reality::FingerprintType type;
+    };
+
+    static const fp_entry kFps[] = {
+        {"chrome", reality::FingerprintType::Chrome_120},
+        {"chrome_120", reality::FingerprintType::Chrome_120},
+        {"firefox", reality::FingerprintType::Firefox_120},
+        {"firefox_120", reality::FingerprintType::Firefox_120},
+        {"ios", reality::FingerprintType::iOS_14},
+        {"ios_14", reality::FingerprintType::iOS_14},
+        {"android", reality::FingerprintType::Android_11_OkHttp},
+        {"android_11_okhttp", reality::FingerprintType::Android_11_OkHttp},
+    };
+
+    for (const auto& entry : kFps)
+    {
+        if (name == entry.name)
+        {
+            out = entry.type;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+std::optional<std::vector<std::uint8_t>> extract_first_cert_der(const std::vector<std::uint8_t>& cert_msg)
+{
+    if (cert_msg.size() < 4 + 1 + 3 + 3)
+    {
+        return std::nullopt;
+    }
+    if (cert_msg[0] != 0x0b)
+    {
+        return std::nullopt;
+    }
+
+    std::size_t pos = 4;
+    pos += 1;
+    if (pos + 3 > cert_msg.size())
+    {
+        return std::nullopt;
+    }
+    const std::uint32_t list_len = (cert_msg[pos] << 16) | (cert_msg[pos + 1] << 8) | cert_msg[pos + 2];
+    pos += 3;
+    if (pos + list_len > cert_msg.size())
+    {
+        return std::nullopt;
+    }
+    if (pos + 3 > cert_msg.size())
+    {
+        return std::nullopt;
+    }
+    const std::uint32_t cert_len = (cert_msg[pos] << 16) | (cert_msg[pos + 1] << 8) | cert_msg[pos + 2];
+    pos += 3;
+    if (pos + cert_len > cert_msg.size())
+    {
+        return std::nullopt;
+    }
+    std::vector<std::uint8_t> cert(cert_msg.begin() + static_cast<std::ptrdiff_t>(pos),
+                                   cert_msg.begin() + static_cast<std::ptrdiff_t>(pos + cert_len));
+    return cert;
+}
+
 }    // namespace
 
-local_client::local_client(io_context_pool& pool,
-                           std::string host,
-                           std::string port,
-                           const std::uint16_t l_port,
-                           const std::string& key_hex,
-                           std::string sni,
-                           const std::string& short_id_hex,
-                           const std::string& verify_key_hex,
-                           const config::timeout_t& timeout_cfg,
-                           config::socks_t socks_cfg,
-                           const config::limits_t& limits_cfg)
-    : remote_host_(std::move(host)),
-      remote_port_(std::move(port)),
-      listen_port_(l_port),
-      sni_(std::move(sni)),
+local_client::local_client(io_context_pool& pool, const config& cfg)
+    : remote_host_(cfg.outbound.host),
+      remote_port_(std::to_string(cfg.outbound.port)),
+      listen_port_(cfg.socks.port),
+      sni_(cfg.reality.sni),
       pool_(pool),
-      remote_timer_(pool.get_io_context()),
-      acceptor_(remote_timer_.get_executor()),
-      stop_channel_(remote_timer_.get_executor(), 1),
-      timeout_config_(timeout_cfg),
-      socks_config_(std::move(socks_cfg)),
-      limits_config_(limits_cfg)
+      acceptor_(pool.get_io_context()),
+      stop_channel_(pool.get_io_context(), 1),
+      timeout_config_(cfg.timeout),
+      socks_config_(cfg.socks),
+      limits_config_(cfg.limits),
+      heartbeat_config_(cfg.heartbeat)
 {
-    server_pub_key_ = reality::crypto_util::hex_to_bytes(key_hex);
-    auth_config_valid_ = parse_hex_to_bytes(short_id_hex, short_id_bytes_, reality::kShortIdMaxLen, "short id");
-    auth_config_valid_ = parse_hex_to_bytes(verify_key_hex, verify_pub_key_, 32, "verify public key") && auth_config_valid_;
-    if (!verify_pub_key_.empty() && verify_pub_key_.size() != 32)
+    server_pub_key_ = reality::crypto_util::hex_to_bytes(cfg.reality.public_key);
+    auth_config_valid_ = parse_hex_to_bytes(cfg.reality.short_id, short_id_bytes_, reality::kShortIdMaxLen, "short id");
+    if (!parse_fingerprint_type(cfg.reality.fingerprint, fingerprint_type_))
     {
-        LOG_ERROR("verify public key size {} invalid", verify_pub_key_.size());
+        LOG_ERROR("fingerprint invalid");
         auth_config_valid_ = false;
     }
     router_ = std::make_shared<mux::router>();
@@ -117,15 +205,17 @@ local_client::local_client(io_context_pool& pool,
 
 void local_client::start()
 {
-    if (!auth_config_valid_ || verify_pub_key_.empty())
+    if (!auth_config_valid_)
     {
-        LOG_ERROR("invalid reality auth config verify public key required");
-        abort();
+        LOG_ERROR("invalid reality auth config");
+        stop_ = true;
+        return;
     }
     if (!router_->load())
     {
         LOG_ERROR("failed to load router data");
-        abort();
+        stop_ = true;
+        return;
     }
     LOG_INFO("client starting target {} port {} with {} connections", remote_host_, remote_port_, limits_config_.max_connections);
 
@@ -163,7 +253,6 @@ void local_client::stop()
         LOG_ERROR("acceptor close failed {}", ec.message());
     }
     stop_channel_.cancel();
-    remote_timer_.cancel();
 
     const std::lock_guard<std::mutex> lock(pool_mutex_);
     for (auto& tunnel : tunnel_pool_)
@@ -221,7 +310,7 @@ asio::awaitable<void> local_client::connect_remote_loop(const std::uint32_t inde
         reality_engine re(s_app_keys.first, s_app_keys.second, c_app_keys.first, c_app_keys.second, handshake_ret.cipher);
 
         auto tunnel = std::make_shared<mux_tunnel_impl<asio::ip::tcp::socket>>(
-            std::move(*socket), std::move(re), true, cid, ctx.trace_id(), timeout_config_, limits_config_);
+            std::move(*socket), std::move(re), true, cid, ctx.trace_id(), timeout_config_, limits_config_, heartbeat_config_);
 
         {
             const std::lock_guard<std::mutex> lock(pool_mutex_);
@@ -278,8 +367,27 @@ asio::awaitable<std::pair<bool, local_client::handshake_result>> local_client::p
 
     const std::shared_ptr<void> defer_cleanse(nullptr, [&](void*) { OPENSSL_cleanse(private_key, 32); });
 
+    reality::FingerprintSpec spec;
+    if (fingerprint_type_.has_value())
+    {
+        spec = reality::FingerprintFactory::Get(*fingerprint_type_);
+    }
+    else
+    {
+        static const std::vector<reality::FingerprintType> fp_types = {
+            reality::FingerprintType::Chrome_120,
+            reality::FingerprintType::Firefox_120,
+            reality::FingerprintType::iOS_14,
+            reality::FingerprintType::Android_11_OkHttp,
+        };
+        const auto& candidates = fp_types;
+        static thread_local std::mt19937 fp_gen(std::random_device{}());
+        std::uniform_int_distribution<std::size_t> fp_dist(0, candidates.size() - 1);
+        spec = reality::FingerprintFactory::Get(candidates[fp_dist(fp_gen)]);
+    }
+
     reality::transcript trans;
-    if (!co_await generate_and_send_client_hello(socket, public_key, private_key, trans, ec))
+    if (!co_await generate_and_send_client_hello(socket, public_key, private_key, spec, trans, ec))
     {
         co_return std::make_pair(false, handshake_result{});
     }
@@ -299,8 +407,13 @@ asio::awaitable<std::pair<bool, local_client::handshake_result>> local_client::p
     const auto s_hs_keys =
         reality::tls_key_schedule::derive_traffic_keys(sh_res.hs_keys.server_handshake_traffic_secret, ec, key_len, iv_len, sh_res.negotiated_md);
 
-    auto [loop_ok, app_sec] =
-        co_await handshake_read_loop(socket, s_hs_keys, sh_res.hs_keys, trans, sh_res.negotiated_cipher, sh_res.negotiated_md, verify_pub_key_, ec);
+    auto [loop_ok, app_sec] = co_await handshake_read_loop(socket,
+                                                           s_hs_keys,
+                                                           sh_res.hs_keys,
+                                                           trans,
+                                                           sh_res.negotiated_cipher,
+                                                           sh_res.negotiated_md,
+                                                           ec);
     if (!loop_ok)
     {
         co_return std::make_pair(false, handshake_result{});
@@ -323,6 +436,7 @@ asio::awaitable<std::pair<bool, local_client::handshake_result>> local_client::p
 asio::awaitable<bool> local_client::generate_and_send_client_hello(asio::ip::tcp::socket& socket,
                                                                    const std::uint8_t* public_key,
                                                                    const std::uint8_t* private_key,
+                                                                   const reality::FingerprintSpec& spec,
                                                                    reality::transcript& trans,
                                                                    std::error_code& ec) const
 {
@@ -342,31 +456,24 @@ asio::awaitable<bool> local_client::generate_and_send_client_hello(asio::ip::tcp
     const std::vector<std::uint8_t> salt(client_random.begin(), client_random.begin() + constants::auth::kSaltLen);
     const auto r_info = reality::crypto_util::hex_to_bytes("5245414c495459");
     const auto prk = reality::crypto_util::hkdf_extract(salt, shared, EVP_sha256(), ec);
-    const auto auth_key = reality::crypto_util::hkdf_expand(prk, r_info, 16, EVP_sha256(), ec);
+    const std::size_t auth_key_len = 16;
+    const auto auth_key = reality::crypto_util::hkdf_expand(prk, r_info, auth_key_len, EVP_sha256(), ec);
 
     LOG_DEBUG("client auth material ready random {} bytes eph pub {} bytes", client_random.size(), 32);
     const std::uint32_t now = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
     std::array<std::uint8_t, reality::kAuthPayloadLen> payload{};
-    if (!reality::build_auth_payload(short_id_bytes_, now, payload))
+    if (!reality::build_auth_payload(short_id_bytes_, client_ver_, now, payload))
     {
         ec = std::make_error_code(std::errc::invalid_argument);
         co_return false;
     }
 
-    static const std::vector<reality::FingerprintType> fp_types = {reality::FingerprintType::Chrome_120,
-                                                                   reality::FingerprintType::Firefox_120,
-                                                                   reality::FingerprintType::iOS_14,
-                                                                   reality::FingerprintType::Android_11_OkHttp,
-                                                                   reality::FingerprintType::Chrome_131,
-                                                                   reality::FingerprintType::Chrome_133};
-
-    static thread_local std::mt19937 fp_gen(std::random_device{}());
-    std::uniform_int_distribution<std::size_t> fp_dist(0, fp_types.size() - 1);
-    const auto spec = reality::FingerprintFactory::Get(fp_types[fp_dist(fp_gen)]);
-
     const std::vector<std::uint8_t> placeholder_session_id(32, 0);
-    auto hello_body =
-        reality::ClientHelloBuilder::build(spec, placeholder_session_id, client_random, std::vector<std::uint8_t>(public_key, public_key + 32), sni_);
+    auto hello_body = reality::ClientHelloBuilder::build(spec,
+                                                         placeholder_session_id,
+                                                         client_random,
+                                                         std::vector<std::uint8_t>(public_key, public_key + 32),
+                                                         sni_);
 
     std::vector<std::uint8_t> dummy_record =
         reality::write_record_header(reality::kContentTypeHandshake, static_cast<std::uint16_t>(hello_body.size()));
@@ -386,8 +493,9 @@ asio::awaitable<bool> local_client::generate_and_send_client_hello(asio::ip::tcp
         co_return false;
     }
 
+    const EVP_CIPHER* auth_cipher = EVP_aes_128_gcm();
     const auto sid =
-        reality::crypto_util::aead_encrypt(EVP_aes_128_gcm(),
+        reality::crypto_util::aead_encrypt(auth_cipher,
                                            auth_key,
                                            std::vector<std::uint8_t>(client_random.begin() + constants::auth::kSaltLen, client_random.end()),
                                            std::vector<std::uint8_t>(payload.begin(), payload.end()),
@@ -488,67 +596,47 @@ asio::awaitable<local_client::server_hello_res> local_client::process_server_hel
 
     trans.set_protocol_hash(md);
 
-    const auto public_key = reality::extract_server_public_key(sh_data);
-    LOG_DEBUG("rx server hello {}", reality::crypto_util::bytes_to_hex(sh_data));
-    if (public_key.empty())
+    const auto key_share = reality::extract_server_key_share(sh_data);
+    LOG_DEBUG("rx server hello size {}", sh_data.size());
+    if (!key_share.has_value())
     {
         ec = asio::error::invalid_argument;
-        LOG_ERROR("bad server hello public key {}", ec.message());
+        LOG_ERROR("bad server hello key share {}", ec.message());
         co_return server_hello_res{.ok = false};
     }
 
-    const auto hs_shared = reality::crypto_util::x25519_derive(std::vector<std::uint8_t>(private_key, private_key + 32), public_key, ec);
+    std::vector<std::uint8_t> hs_shared;
+    if (key_share->group == reality::tls_consts::group::kX25519)
+    {
+        if (key_share->data.size() != 32)
+        {
+            ec = asio::error::invalid_argument;
+            LOG_ERROR("invalid x25519 key share length {}", key_share->data.size());
+            co_return server_hello_res{.ok = false};
+        }
+        hs_shared =
+            reality::crypto_util::x25519_derive(std::vector<std::uint8_t>(private_key, private_key + 32), key_share->data, ec);
+    }
+    else
+    {
+        ec = asio::error::no_protocol_option;
+        LOG_ERROR("unsupported key share group {}", key_share->group);
+        co_return server_hello_res{.ok = false};
+    }
+
+    if (ec)
+    {
+        LOG_ERROR("handshake shared secret failed {}", ec.message());
+        co_return server_hello_res{.ok = false};
+    }
 
     auto hs_keys = reality::tls_key_schedule::derive_handshake_keys(hs_shared, trans.finish(), md, ec);
 
-    co_return server_hello_res{.ok = true, .hs_keys = hs_keys, .negotiated_md = md, .negotiated_cipher = cipher, .cipher_suite = cipher_suite};
-}
-
-bool local_client::process_certificate_verify(const std::vector<std::uint8_t>& msg_data,
-                                              const std::vector<std::uint8_t>& verify_pub_key,
-                                              const std::vector<std::uint8_t>& handshake_hash,
-                                              std::error_code& ec)
-{
-    const auto cv_info = reality::parse_certificate_verify(msg_data);
-    if (!cv_info.has_value())
-    {
-        ec = asio::error::invalid_argument;
-        LOG_ERROR("invalid certificate verify message");
-        return false;
-    }
-
-    if (!reality::is_supported_certificate_verify_scheme(cv_info->scheme))
-    {
-        ec = asio::error::no_protocol_option;
-        LOG_ERROR("unsupported certificate verify scheme {}", cv_info->scheme);
-        return false;
-    }
-
-    if (verify_pub_key.size() != 32)
-    {
-        ec = asio::error::invalid_argument;
-        LOG_ERROR("verify public key not configured");
-        return false;
-    }
-
-    const reality::openssl_ptrs::evp_pkey_ptr pub_key(
-        EVP_PKEY_new_raw_public_key(EVP_PKEY_ED25519, nullptr, verify_pub_key.data(), verify_pub_key.size()));
-    if (pub_key == nullptr)
-    {
-        ec = asio::error::invalid_argument;
-        LOG_ERROR("failed to create verify public key");
-        return false;
-    }
-
-    std::error_code verify_ec;
-    if (!reality::crypto_util::verify_tls13_signature(pub_key.get(), handshake_hash, cv_info->signature, verify_ec))
-    {
-        ec = verify_ec;
-        LOG_ERROR("certificate verify signature invalid");
-        return false;
-    }
-    LOG_DEBUG("certificate verify signature valid");
-    return true;
+    co_return server_hello_res{.ok = true,
+                               .hs_keys = hs_keys,
+                               .negotiated_md = md,
+                               .negotiated_cipher = cipher,
+                               .cipher_suite = cipher_suite};
 }
 
 asio::awaitable<std::pair<bool, std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>>> local_client::handshake_read_loop(
@@ -558,10 +646,10 @@ asio::awaitable<std::pair<bool, std::pair<std::vector<std::uint8_t>, std::vector
     reality::transcript& trans,
     const EVP_CIPHER* cipher,
     const EVP_MD* md,
-    const std::vector<std::uint8_t>& verify_pub_key,
     std::error_code& ec)
 {
     bool handshake_fin = false;
+    bool cert_checked = false;
     std::uint64_t seq = 0;
     std::vector<std::uint8_t> handshake_buffer;
 
@@ -627,12 +715,16 @@ asio::awaitable<std::pair<bool, std::pair<std::vector<std::uint8_t>, std::vector
                 if (msg_type == 0x0b)
                 {
                     LOG_DEBUG("received certificate message size {}", msg_data.size());
-                }
-                else if (msg_type == 0x0f)
-                {
-                    if (!process_certificate_verify(msg_data, verify_pub_key, trans.finish(), ec))
+                    if (!cert_checked)
                     {
-                        co_return std::make_pair(false, std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>{});
+                        cert_checked = true;
+                        auto cert_der = extract_first_cert_der(msg_data);
+                        if (!cert_der.has_value())
+                        {
+                            ec = asio::error::invalid_argument;
+                            LOG_ERROR("certificate message parse failed");
+                            co_return std::make_pair(false, std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>{});
+                        }
                     }
                 }
                 trans.update(msg_data);
@@ -683,8 +775,9 @@ asio::awaitable<void> local_client::wait_remote_retry()
     {
         co_return;
     }
-    remote_timer_.expires_after(std::chrono::seconds(constants::net::kRetryIntervalSec));
-    const auto [ec] = co_await remote_timer_.async_wait(asio::as_tuple(asio::use_awaitable));
+    asio::steady_timer retry_timer(pool_.get_io_context());
+    retry_timer.expires_after(std::chrono::seconds(constants::net::kRetryIntervalSec));
+    const auto [ec] = co_await retry_timer.async_wait(asio::as_tuple(asio::use_awaitable));
     if (ec)
     {
         LOG_ERROR("remote retry timer error {}", ec.message());
@@ -704,7 +797,14 @@ asio::awaitable<void> local_client::wait_stop()
 
 asio::awaitable<void> local_client::accept_local_loop()
 {
-    const asio::ip::tcp::endpoint ep{asio::ip::tcp::v4(), listen_port_};
+    std::error_code addr_ec;
+    const auto listen_addr = asio::ip::make_address(socks_config_.host, addr_ec);
+    if (addr_ec)
+    {
+        LOG_ERROR("local acceptor parse address failed {}", addr_ec.message());
+        co_return;
+    }
+    const asio::ip::tcp::endpoint ep{listen_addr, listen_port_};
     std::error_code ec;
     ec = acceptor_.open(ep.protocol(), ec);
     if (ec)
@@ -732,7 +832,7 @@ asio::awaitable<void> local_client::accept_local_loop()
         co_return;
     }
 
-    LOG_INFO("local socks5 listening on {}", listen_port_);
+    LOG_INFO("local socks5 listening on {}:{}", socks_config_.host, listen_port_);
     while (!stop_)
     {
         asio::ip::tcp::socket s(pool_.get_io_context().get_executor());
@@ -744,8 +844,9 @@ asio::awaitable<void> local_client::accept_local_loop()
                 break;
             }
             LOG_ERROR("local accept failed {}", e.message());
-            remote_timer_.expires_after(std::chrono::seconds(1));
-            co_await remote_timer_.async_wait(asio::as_tuple(asio::use_awaitable));
+            asio::steady_timer accept_retry_timer(pool_.get_io_context());
+            accept_retry_timer.expires_after(std::chrono::seconds(1));
+            co_await accept_retry_timer.async_wait(asio::as_tuple(asio::use_awaitable));
             continue;
         }
 
@@ -776,7 +877,7 @@ asio::awaitable<void> local_client::accept_local_loop()
         {
             const std::uint32_t sid = next_session_id_++;
             LOG_INFO("client session {} selected tunnel index {}", sid, next_tunnel_index_);
-            const auto session = std::make_shared<socks_session>(std::move(s), selected_tunnel, router_, sid, socks_config_);
+            const auto session = std::make_shared<socks_session>(std::move(s), selected_tunnel, router_, sid, socks_config_, timeout_config_);
             session->start();
         }
         else

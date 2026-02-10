@@ -24,6 +24,7 @@ struct auth_payload
 };
 
 [[nodiscard]] bool build_auth_payload(const std::vector<std::uint8_t>& short_id,
+                                      const std::array<std::uint8_t, 3>& version,
                                       std::uint32_t timestamp,
                                       std::array<std::uint8_t, kAuthPayloadLen>& out);
 

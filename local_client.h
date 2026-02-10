@@ -1,12 +1,14 @@
 #ifndef LOCAL_CLIENT_H
 #define LOCAL_CLIENT_H
 
+#include <array>
 #include <mutex>
 #include <memory>
 #include <string>
 #include <vector>
 #include <cstdint>
 #include <utility>
+#include <optional>
 
 #include <asio/ip/tcp.hpp>
 #include <asio/awaitable.hpp>
@@ -33,17 +35,7 @@ namespace mux
 class local_client : public std::enable_shared_from_this<local_client>
 {
    public:
-    local_client(io_context_pool& pool,
-                 std::string host,
-                 std::string port,
-                 std::uint16_t l_port,
-                 const std::string& key_hex,
-                 std::string sni,
-                 const std::string& short_id_hex = "",
-                 const std::string& verify_key_hex = "",
-                 const config::timeout_t& timeout_cfg = {},
-                 config::socks_t socks_cfg = {},
-                 const config::limits_t& limits_cfg = {});
+    local_client(io_context_pool& pool, const config& cfg);
 
     void start();
 
@@ -71,6 +63,7 @@ class local_client : public std::enable_shared_from_this<local_client>
     [[nodiscard]] asio::awaitable<bool> generate_and_send_client_hello(asio::ip::tcp::socket& socket,
                                                                        const std::uint8_t* public_key,
                                                                        const std::uint8_t* private_key,
+                                                                       const reality::FingerprintSpec& spec,
                                                                        reality::transcript& trans,
                                                                        std::error_code& ec) const;
 
@@ -95,13 +88,7 @@ class local_client : public std::enable_shared_from_this<local_client>
         reality::transcript& trans,
         const EVP_CIPHER* cipher,
         const EVP_MD* md,
-        const std::vector<std::uint8_t>& verify_pub_key,
         std::error_code& ec);
-
-    [[nodiscard]] static bool process_certificate_verify(const std::vector<std::uint8_t>& msg_data,
-                                                         const std::vector<std::uint8_t>& verify_pub_key,
-                                                         const std::vector<std::uint8_t>& handshake_hash,
-                                                         std::error_code& ec);
 
     [[nodiscard]] static asio::awaitable<bool> send_client_finished(asio::ip::tcp::socket& socket,
                                                                     const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& c_hs_keys,
@@ -124,8 +111,9 @@ class local_client : public std::enable_shared_from_this<local_client>
     std::uint16_t listen_port_;
     std::string sni_;
     std::vector<std::uint8_t> short_id_bytes_;
-    std::vector<std::uint8_t> verify_pub_key_;
+    std::array<std::uint8_t, 3> client_ver_{1, 0, 0};
     bool auth_config_valid_ = true;
+    std::optional<reality::FingerprintType> fingerprint_type_;
     io_context_pool& pool_;
     std::vector<std::uint8_t> server_pub_key_;
     std::vector<std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>> tunnel_pool_;
@@ -133,7 +121,6 @@ class local_client : public std::enable_shared_from_this<local_client>
     std::uint32_t next_tunnel_index_{0};
     std::uint32_t next_conn_id_{1};
     std::uint32_t next_session_id_{1};
-    asio::steady_timer remote_timer_;
     asio::ip::tcp::acceptor acceptor_;
 
     std::shared_ptr<mux::router> router_;
@@ -142,6 +129,7 @@ class local_client : public std::enable_shared_from_this<local_client>
     config::timeout_t timeout_config_;
     config::socks_t socks_config_;
     config::limits_t limits_config_;
+    config::heartbeat_t heartbeat_config_;
 };
 
 }    // namespace mux
