@@ -19,7 +19,7 @@
 
 #include "crypto_util.h"
 #include "context_pool.h"
-#include "local_client.h"
+#include "socks_client.h"
 #include "reality_messages.h"
 #include "tls_record_layer.h"
 
@@ -83,7 +83,7 @@ TEST_F(LocalClientHandshakeTest, HandshakeTimeout)
     client_cfg.reality.sni = "example.com";
     client_cfg.timeout = timeouts;
     client_cfg.limits = limits;
-    auto client = std::make_shared<mux::local_client>(pool, client_cfg);
+    auto client = std::make_shared<mux::socks_client>(pool, client_cfg);
 
     std::thread pool_thread([&pool]() { pool.run(); });
 
@@ -131,7 +131,7 @@ TEST_F(LocalClientHandshakeTest, InvalidServerHello)
     client_cfg.socks.port = 0;
     client_cfg.reality.public_key = server_pub_hex_;
     client_cfg.reality.sni = "example.com";
-    auto client = std::make_shared<mux::local_client>(pool, client_cfg);
+    auto client = std::make_shared<mux::socks_client>(pool, client_cfg);
 
     std::thread pool_thread([&pool]() { pool.run(); });
     client->start();
@@ -200,7 +200,7 @@ TEST_F(LocalClientHandshakeTest, UnsupportedVerifyScheme)
     client_cfg.socks.port = 0;
     client_cfg.reality.public_key = server_pub_hex_;
     client_cfg.reality.sni = "example.com";
-    auto client = std::make_shared<mux::local_client>(pool, client_cfg);
+    auto client = std::make_shared<mux::socks_client>(pool, client_cfg);
 
     std::thread pool_thread([&pool]() { pool.run(); });
     client->start();

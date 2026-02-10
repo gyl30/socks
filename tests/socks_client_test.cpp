@@ -7,7 +7,7 @@
 #include <gtest/gtest.h>
 
 #include "context_pool.h"
-#include "local_client.h"
+#include "socks_client.h"
 
 using mux::io_context_pool;
 
@@ -24,7 +24,7 @@ TEST(LocalClientTest, BasicStartStop)
     cfg.reality.public_key = std::string(64, 'a');
     cfg.reality.sni = "example.com";
 
-    auto client = std::make_shared<mux::local_client>(pool, cfg);
+    auto client = std::make_shared<mux::socks_client>(pool, cfg);
 
     client->start();
 
@@ -48,7 +48,7 @@ TEST(LocalClientTest, InvalidHexConfig)
     cfg1.reality.public_key = server_pub_key;
     cfg1.reality.sni = "example.com";
     cfg1.reality.short_id = bad_hex_odd;
-    auto client1 = std::make_shared<mux::local_client>(pool, cfg1);
+    auto client1 = std::make_shared<mux::socks_client>(pool, cfg1);
 
     mux::config cfg2;
     cfg2.outbound.host = "127.0.0.1";
@@ -57,7 +57,7 @@ TEST(LocalClientTest, InvalidHexConfig)
     cfg2.reality.public_key = server_pub_key;
     cfg2.reality.sni = "example.com";
     cfg2.reality.short_id = bad_hex_chars;
-    auto client2 = std::make_shared<mux::local_client>(pool, cfg2);
+    auto client2 = std::make_shared<mux::socks_client>(pool, cfg2);
 
     mux::config cfg3;
     cfg3.outbound.host = "127.0.0.1";
@@ -66,7 +66,7 @@ TEST(LocalClientTest, InvalidHexConfig)
     cfg3.reality.public_key = server_pub_key;
     cfg3.reality.sni = "example.com";
     cfg3.reality.short_id = "0102";
-    auto client3 = std::make_shared<mux::local_client>(pool, cfg3);
+    auto client3 = std::make_shared<mux::socks_client>(pool, cfg3);
 }
 
 TEST(LocalClientTest, InvalidMaxConnectionsFallback)
@@ -80,7 +80,7 @@ TEST(LocalClientTest, InvalidMaxConnectionsFallback)
     cfg.reality.public_key = std::string(64, 'a');
     cfg.reality.sni = "example.com";
     cfg.limits.max_connections = 0;
-    const auto client = std::make_shared<mux::local_client>(pool, cfg);
+    const auto client = std::make_shared<mux::socks_client>(pool, cfg);
     client->start();
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     client->stop();
@@ -98,7 +98,7 @@ TEST(LocalClientTest, InvalidAuthConfigAborts)
     cfg.reality.public_key = std::string(64, 'a');
     cfg.reality.sni = "example.com";
     cfg.reality.short_id = bad_hex_odd;
-    const auto client = std::make_shared<mux::local_client>(pool, cfg);
+    const auto client = std::make_shared<mux::socks_client>(pool, cfg);
     client->start();
     client->stop();
 }
@@ -114,7 +114,7 @@ TEST(LocalClientTest, Getters)
     cfg.reality.public_key = std::string(64, 'a');
     cfg.reality.sni = "example.com";
 
-    auto client = std::make_shared<mux::local_client>(pool, cfg);
+    auto client = std::make_shared<mux::socks_client>(pool, cfg);
 
     EXPECT_EQ(client->listen_port(), 10082);
 }
@@ -130,7 +130,7 @@ TEST(LocalClientTest, StopWhenNotStarted)
     cfg.reality.public_key = std::string(64, 'a');
     cfg.reality.sni = "example.com";
 
-    auto client = std::make_shared<mux::local_client>(pool, cfg);
+    auto client = std::make_shared<mux::socks_client>(pool, cfg);
     client->stop();
 }
 
@@ -145,7 +145,7 @@ TEST(LocalClientTest, DoubleStop)
     cfg.reality.public_key = std::string(64, 'a');
     cfg.reality.sni = "example.com";
 
-    auto client = std::make_shared<mux::local_client>(pool, cfg);
+    auto client = std::make_shared<mux::socks_client>(pool, cfg);
     client->start();
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     client->stop();
@@ -164,7 +164,7 @@ TEST(LocalClientTest, HandshakeFailInvalidServerPubKey)
     cfg.reality.public_key = bad_pub;
     cfg.reality.sni = "example.com";
 
-    auto client = std::make_shared<mux::local_client>(pool, cfg);
+    auto client = std::make_shared<mux::socks_client>(pool, cfg);
     client->start();
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     client->stop();
@@ -181,7 +181,7 @@ TEST(LocalClientTest, ConnectFailureLoop)
     cfg.reality.public_key = std::string(64, 'a');
     cfg.reality.sni = "example.com";
 
-    auto client = std::make_shared<mux::local_client>(pool, cfg);
+    auto client = std::make_shared<mux::socks_client>(pool, cfg);
 
     client->start();
     std::this_thread::sleep_for(std::chrono::milliseconds(100));

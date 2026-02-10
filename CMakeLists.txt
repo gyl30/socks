@@ -27,13 +27,18 @@ find_package(OpenSSL REQUIRED)
 set(SOCKS_SOURCES
     log.cpp
     config.cpp
+    net_utils.cpp
     mux_connection.cpp
     remote_server.cpp
-    local_client.cpp
+    socks_client.cpp
+    tproxy_client.cpp
     router.cpp
     socks_session.cpp
     tcp_socks_session.cpp
     udp_socks_session.cpp
+    tproxy_tcp_session.cpp
+    tproxy_udp_session.cpp
+    tproxy_udp_sender.cpp
     mux_dispatcher.cpp
     reality_messages.cpp
     cert_fetcher.cpp
@@ -50,6 +55,7 @@ set(SOCKS_SOURCES
     protocol.cpp
     log_context.cpp
     context_pool.cpp
+    client_tunnel_pool.cpp
     transcript.cpp
     replay_cache.cpp
     reality_engine.cpp
