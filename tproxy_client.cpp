@@ -1,14 +1,14 @@
 #include <array>
 #include <cerrno>
 #include <chrono>
-#include <cstdint>
-#include <cstring>
 #include <memory>
 #include <string>
 #include <vector>
+#include <cstdint>
+#include <cstring>
 #include <netinet/in.h>
-#include <system_error>
 #include <sys/socket.h>
+#include <system_error>
 
 #include <asio/error.hpp>
 #include <asio/as_tuple.hpp>
@@ -74,17 +74,13 @@ void tproxy_client::start()
 
     tunnel_pool_->start();
 
-    asio::co_spawn(pool_.get_io_context(),
-                   [this, self = shared_from_this()]() -> asio::awaitable<void> { co_await accept_tcp_loop(); },
-                   asio::detached);
+    asio::co_spawn(
+        pool_.get_io_context(), [this, self = shared_from_this()]() -> asio::awaitable<void> { co_await accept_tcp_loop(); }, asio::detached);
 
-    asio::co_spawn(pool_.get_io_context(),
-                   [this, self = shared_from_this()]() -> asio::awaitable<void> { co_await udp_loop(); },
-                   asio::detached);
+    asio::co_spawn(pool_.get_io_context(), [this, self = shared_from_this()]() -> asio::awaitable<void> { co_await udp_loop(); }, asio::detached);
 
-    asio::co_spawn(pool_.get_io_context(),
-                   [this, self = shared_from_this()]() -> asio::awaitable<void> { co_await udp_cleanup_loop(); },
-                   asio::detached);
+    asio::co_spawn(
+        pool_.get_io_context(), [this, self = shared_from_this()]() -> asio::awaitable<void> { co_await udp_cleanup_loop(); }, asio::detached);
 }
 
 void tproxy_client::stop()
@@ -218,8 +214,7 @@ asio::awaitable<void> tproxy_client::accept_tcp_loop()
 
         const asio::ip::tcp::endpoint dst_ep(net::normalize_address(local_ep.address()), local_ep.port());
         const std::uint32_t sid = tunnel_pool_->next_session_id();
-        const auto session =
-            std::make_shared<tproxy_tcp_session>(std::move(s), tunnel_pool_, router_, sid, cfg_, dst_ep);
+        const auto session = std::make_shared<tproxy_tcp_session>(std::move(s), tunnel_pool_, router_, sid, cfg_, dst_ep);
         session->start();
     }
 

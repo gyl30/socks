@@ -6,8 +6,8 @@
 #include <optional>
 #include <system_error>
 
-#include <asio/ip/address.hpp>
 #include <asio/ip/udp.hpp>
+#include <asio/ip/address.hpp>
 
 struct msghdr;
 struct sockaddr_storage;

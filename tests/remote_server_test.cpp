@@ -17,18 +17,20 @@
 #include "remote_server.h"
 #include "reality_messages.h"
 
-class RemoteServerTest : public ::testing::Test
+class remote_server_test : public ::testing::Test
 {
    protected:
     void SetUp() override
     {
         std::uint8_t pub[32], priv[32];
         ASSERT_TRUE(reality::crypto_util::generate_x25519_keypair(pub, priv));
-        server_priv_key = reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(priv, priv + 32));
-        server_pub_key = reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(pub, pub + 32));
+        server_priv_key_ = reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(priv, priv + 32));
+        server_pub_key_ = reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(pub, pub + 32));
     }
-    std::string server_priv_key;
-    std::string server_pub_key;
+
+    [[nodiscard]] const std::string& server_priv_key() const { return server_priv_key_; }
+    [[nodiscard]] const std::string& server_pub_key() const { return server_pub_key_; }
+    [[nodiscard]] const std::vector<uint8_t>& info_random() const { return info_random_; }
     [[nodiscard]] mux::config make_server_cfg(std::uint16_t port,
                                               const std::vector<mux::config::fallback_entry>& fallbacks,
                                               const std::string& short_id) const
@@ -37,7 +39,7 @@ class RemoteServerTest : public ::testing::Test
         cfg.inbound.host = "127.0.0.1";
         cfg.inbound.port = port;
         cfg.fallbacks = fallbacks;
-        cfg.reality.private_key = server_priv_key;
+        cfg.reality.private_key = server_priv_key();
         cfg.reality.short_id = short_id;
         return cfg;
     }
@@ -54,8 +56,8 @@ class RemoteServerTest : public ::testing::Test
         }
         std::error_code ec;
         auto shared =
-            reality::crypto_util::x25519_derive(reality::crypto_util::hex_to_bytes(server_priv_key), std::vector<uint8_t>(c_pub, c_pub + 32), ec);
-        auto salt = std::vector<uint8_t>(info_random.begin(), info_random.begin() + 20);
+            reality::crypto_util::x25519_derive(reality::crypto_util::hex_to_bytes(server_priv_key()), std::vector<uint8_t>(c_pub, c_pub + 32), ec);
+        auto salt = std::vector<uint8_t>(info_random_.begin(), info_random_.begin() + 20);
         auto prk = reality::crypto_util::hkdf_extract(salt, shared, EVP_sha256(), ec);
         auto auth_key = reality::crypto_util::hkdf_expand(prk, reality::crypto_util::hex_to_bytes("5245414c495459"), 16, EVP_sha256(), ec);
 
@@ -63,12 +65,9 @@ class RemoteServerTest : public ::testing::Test
         const std::array<std::uint8_t, 3> ver{1, 0, 0};
         (void)reality::build_auth_payload(reality::crypto_util::hex_to_bytes(short_id_hex), ver, timestamp, payload);
 
-        auto spec = reality::FingerprintFactory::Get(reality::FingerprintType::Chrome_120);
-        auto ch_body = reality::ClientHelloBuilder::build(spec,
-                                                          std::vector<uint8_t>(32, 0),
-                                                          info_random,
-                                                          std::vector<uint8_t>(c_pub, c_pub + 32),
-                                                          sni);
+        auto spec = reality::fingerprint_factory::get(reality::fingerprint_type::kChrome120);
+        auto ch_body =
+            reality::client_hello_builder::build(spec, std::vector<uint8_t>(32, 0), info_random_, std::vector<uint8_t>(c_pub, c_pub + 32), sni);
 
         auto record_tmp = reality::write_record_header(reality::kContentTypeHandshake, static_cast<uint16_t>(ch_body.size()));
         record_tmp.insert(record_tmp.end(), ch_body.begin(), ch_body.end());
@@ -81,21 +80,24 @@ class RemoteServerTest : public ::testing::Test
 
         out_sid = reality::crypto_util::aead_encrypt(EVP_aes_128_gcm(),
                                                      auth_key,
-                                                     std::vector<uint8_t>(info_random.begin() + 20, info_random.end()),
+                                                     std::vector<uint8_t>(info_random_.begin() + 20, info_random_.end()),
                                                      std::vector<uint8_t>(payload.begin(), payload.end()),
                                                      aad,
                                                      ec);
 
-        auto ch_final = reality::ClientHelloBuilder::build(
-            spec, out_sid, info_random, std::vector<uint8_t>(c_pub, c_pub + 32), sni);
+        auto ch_final = reality::client_hello_builder::build(spec, out_sid, info_random_, std::vector<uint8_t>(c_pub, c_pub + 32), sni);
         auto record = reality::write_record_header(reality::kContentTypeHandshake, static_cast<uint16_t>(ch_final.size()));
         record.insert(record.end(), ch_final.begin(), ch_final.end());
         return record;
     }
-    std::vector<uint8_t> info_random = std::vector<uint8_t>(32, 0x42);
+
+   private:
+    std::vector<uint8_t> info_random_ = std::vector<uint8_t>(32, 0x42);
+    std::string server_priv_key_;
+    std::string server_pub_key_;
 };
 
-TEST_F(RemoteServerTest, AuthFailureTriggersFallback)
+TEST_F(remote_server_test, AuthFailureTriggersFallback)
 {
     std::error_code ec;
     mux::io_context_pool pool(1, ec);
@@ -120,7 +122,7 @@ TEST_F(RemoteServerTest, AuthFailureTriggersFallback)
     cfg.inbound.host = "127.0.0.1";
     cfg.inbound.port = server_port;
     cfg.fallbacks = {{"", "127.0.0.1", std::to_string(fallback_port)}};
-    cfg.reality.private_key = server_priv_key;
+    cfg.reality.private_key = server_priv_key();
     auto server = std::make_shared<mux::remote_server>(pool, cfg);
     server->start();
 
@@ -137,7 +139,7 @@ TEST_F(RemoteServerTest, AuthFailureTriggersFallback)
     EXPECT_TRUE(fallback_triggered.load());
 }
 
-TEST_F(RemoteServerTest, AuthFailShortIdMismatch)
+TEST_F(remote_server_test, AuthFailShortIdMismatch)
 {
     std::error_code ec;
     mux::io_context_pool pool(1, ec);
@@ -159,8 +161,7 @@ TEST_F(RemoteServerTest, AuthFailShortIdMismatch)
         });
 
     auto server = std::make_shared<mux::remote_server>(
-        pool,
-        make_server_cfg(server_port, {{"", "127.0.0.1", std::to_string(fallback_port)}}, "0102030405060708"));
+        pool, make_server_cfg(server_port, {{"", "127.0.0.1", std::to_string(fallback_port)}}, "0102030405060708"));
     server->start();
 
     std::vector<uint8_t> sid;
@@ -180,7 +181,7 @@ TEST_F(RemoteServerTest, AuthFailShortIdMismatch)
     EXPECT_TRUE(fallback_triggered.load());
 }
 
-TEST_F(RemoteServerTest, ClockSkewDetected)
+TEST_F(remote_server_test, ClockSkewDetected)
 {
     std::error_code ec;
     mux::io_context_pool pool(1, ec);
@@ -202,8 +203,7 @@ TEST_F(RemoteServerTest, ClockSkewDetected)
         });
 
     auto server = std::make_shared<mux::remote_server>(
-        pool,
-        make_server_cfg(server_port, {{"", "127.0.0.1", std::to_string(fallback_port)}}, "0102030405060708"));
+        pool, make_server_cfg(server_port, {{"", "127.0.0.1", std::to_string(fallback_port)}}, "0102030405060708"));
     server->start();
 
     std::vector<uint8_t> sid;
@@ -223,7 +223,7 @@ TEST_F(RemoteServerTest, ClockSkewDetected)
     EXPECT_TRUE(fallback_triggered.load());
 }
 
-TEST_F(RemoteServerTest, AuthFailInvalidTLSHeader)
+TEST_F(remote_server_test, AuthFailInvalidTLSHeader)
 {
     std::error_code ec;
     mux::io_context_pool pool(1, ec);
@@ -245,8 +245,7 @@ TEST_F(RemoteServerTest, AuthFailInvalidTLSHeader)
         });
 
     auto server = std::make_shared<mux::remote_server>(
-        pool,
-        make_server_cfg(server_port, {{"", "127.0.0.1", std::to_string(fallback_port)}}, "0102030405060708"));
+        pool, make_server_cfg(server_port, {{"", "127.0.0.1", std::to_string(fallback_port)}}, "0102030405060708"));
     server->start();
 
     {
@@ -264,7 +263,7 @@ TEST_F(RemoteServerTest, AuthFailInvalidTLSHeader)
     EXPECT_TRUE(fallback_triggered.load());
 }
 
-TEST_F(RemoteServerTest, AuthFailBufferTooShort)
+TEST_F(remote_server_test, AuthFailBufferTooShort)
 {
     std::error_code ec;
     mux::io_context_pool pool(1, ec);
@@ -286,8 +285,7 @@ TEST_F(RemoteServerTest, AuthFailBufferTooShort)
         });
 
     auto server = std::make_shared<mux::remote_server>(
-        pool,
-        make_server_cfg(server_port, {{"", "127.0.0.1", std::to_string(fallback_port)}}, "0102030405060708"));
+        pool, make_server_cfg(server_port, {{"", "127.0.0.1", std::to_string(fallback_port)}}, "0102030405060708"));
     server->start();
 
     {
@@ -307,7 +305,7 @@ TEST_F(RemoteServerTest, AuthFailBufferTooShort)
     EXPECT_TRUE(fallback_triggered.load());
 }
 
-TEST_F(RemoteServerTest, FallbackResolveFail)
+TEST_F(remote_server_test, FallbackResolveFail)
 {
     std::error_code ec;
     mux::io_context_pool pool(1, ec);
@@ -316,9 +314,7 @@ TEST_F(RemoteServerTest, FallbackResolveFail)
 
     std::uint16_t server_port = 29971;
 
-    auto server = std::make_shared<mux::remote_server>(
-        pool,
-        make_server_cfg(server_port, {{"", "invalid.hostname.test", "80"}}, "0102030405060708"));
+    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(server_port, {{"", "invalid.hostname.test", "80"}}, "0102030405060708"));
     server->start();
 
     {
@@ -333,7 +329,7 @@ TEST_F(RemoteServerTest, FallbackResolveFail)
     pool_thread.join();
 }
 
-TEST_F(RemoteServerTest, FallbackConnectFail)
+TEST_F(remote_server_test, FallbackConnectFail)
 {
     std::error_code ec;
     mux::io_context_pool pool(1, ec);
@@ -357,7 +353,7 @@ TEST_F(RemoteServerTest, FallbackConnectFail)
     pool_thread.join();
 }
 
-TEST_F(RemoteServerTest, InvalidAuthConfigPath)
+TEST_F(remote_server_test, InvalidAuthConfigPath)
 {
     std::error_code ec;
     mux::io_context_pool pool(1, ec);
@@ -378,20 +374,16 @@ TEST_F(RemoteServerTest, InvalidAuthConfigPath)
             }
         });
 
-    auto server =
-        std::make_shared<mux::remote_server>(pool, make_server_cfg(server_port, {{"", "127.0.0.1", std::to_string(fallback_port)}}, "abc"));
+    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(server_port, {{"", "127.0.0.1", std::to_string(fallback_port)}}, "abc"));
     server->start();
 
     {
         asio::ip::tcp::socket sock(pool.get_io_context());
         sock.connect({asio::ip::make_address("127.0.0.1"), server_port});
 
-        auto spec = reality::FingerprintFactory::Get(reality::FingerprintType::Chrome_120);
-        auto ch_msg = reality::ClientHelloBuilder::build(spec,
-                                                         std::vector<uint8_t>(32, 0),
-                                                         std::vector<uint8_t>(32, 0),
-                                                         std::vector<uint8_t>(32, 0),
-                                                         "www.google.com");
+        auto spec = reality::fingerprint_factory::get(reality::fingerprint_type::kChrome120);
+        auto ch_msg = reality::client_hello_builder::build(
+            spec, std::vector<uint8_t>(32, 0), std::vector<uint8_t>(32, 0), std::vector<uint8_t>(32, 0), "www.google.com");
         auto record = reality::write_record_header(reality::kContentTypeHandshake, static_cast<uint16_t>(ch_msg.size()));
         record.insert(record.end(), ch_msg.begin(), ch_msg.end());
         asio::write(sock, asio::buffer(record));
@@ -404,7 +396,7 @@ TEST_F(RemoteServerTest, InvalidAuthConfigPath)
     EXPECT_TRUE(fallback_triggered.load());
 }
 
-TEST_F(RemoteServerTest, MultiSNIFallback)
+TEST_F(remote_server_test, MultiSNIFallback)
 {
     std::error_code ec;
     mux::io_context_pool pool(1, ec);
@@ -448,9 +440,8 @@ TEST_F(RemoteServerTest, MultiSNIFallback)
     {
         asio::ip::tcp::socket sock(pool.get_io_context());
         sock.connect({asio::ip::make_address("127.0.0.1"), server_port});
-        auto spec = reality::FingerprintFactory::Get(reality::FingerprintType::Chrome_120);
-        auto ch_body = reality::ClientHelloBuilder::build(
-            spec, std::vector<uint8_t>(32, 0), info_random, std::vector<uint8_t>(32, 0), sni);
+        auto spec = reality::fingerprint_factory::get(reality::fingerprint_type::kChrome120);
+        auto ch_body = reality::client_hello_builder::build(spec, std::vector<uint8_t>(32, 0), info_random(), std::vector<uint8_t>(32, 0), sni);
         auto record = reality::write_record_header(reality::kContentTypeHandshake, static_cast<uint16_t>(ch_body.size()));
         record.insert(record.end(), ch_body.begin(), ch_body.end());
         asio::write(sock, asio::buffer(record));

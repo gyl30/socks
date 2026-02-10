@@ -51,7 +51,7 @@ class udp_socks_session : public mux_stream_interface, public std::enable_shared
 
    private:
     connection_context ctx_;
-   asio::steady_timer timer_;
+    asio::steady_timer timer_;
     asio::steady_timer idle_timer_;
     asio::ip::tcp::socket socket_;
     asio::ip::udp::socket udp_socket_;

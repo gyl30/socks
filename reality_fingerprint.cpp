@@ -25,7 +25,7 @@ constexpr auto kGreaseValues = std::to_array<std::uint16_t>(
 
 }
 
-GreaseContext::GreaseContext()
+grease_context::grease_context()
 {
     const std::size_t seed_len = seed_.size() * sizeof(seed_[0]);
     if (seed_len > static_cast<std::size_t>(std::numeric_limits<int>::max()) ||
@@ -38,14 +38,14 @@ GreaseContext::GreaseContext()
     }
 }
 
-std::uint16_t GreaseContext::get_grease(int index) const
+std::uint16_t grease_context::get_grease(int index) const
 {
     const std::uint16_t val = seed_[static_cast<std::size_t>(index) % seed_.size()];
     const auto idx = static_cast<std::uint8_t>((val >> 8) ^ (val & 0xFF));
     return kGreaseValues[idx % kGreaseValues.size()];
 }
 
-std::uint16_t GreaseContext::get_extension_grease(int nth_occurrence) const
+std::uint16_t grease_context::get_extension_grease(int nth_occurrence) const
 {
     const std::uint16_t val1 = get_grease(2);
     std::uint16_t val2 = get_grease(3);
@@ -56,29 +56,29 @@ std::uint16_t GreaseContext::get_extension_grease(int nth_occurrence) const
     return (nth_occurrence == 0) ? val1 : val2;
 }
 
-FingerprintSpec FingerprintFactory::Get(FingerprintType type)
+fingerprint_spec fingerprint_factory::get(fingerprint_type type)
 {
-    if (type == FingerprintType::Chrome_120)
+    if (type == fingerprint_type::kChrome120)
     {
-        return GetChrome120();
+        return get_chrome120();
     }
 
-    FingerprintSpec spec;
+    fingerprint_spec spec;
     spec.client_version = tls_consts::kVer12;
 
-    auto grease = std::make_shared<GreaseBlueprint>();
-    auto sni = std::make_shared<SNIBlueprint>();
-    auto ems = std::make_shared<EMSBlueprint>();
-    auto reneg = std::make_shared<RenegotiationBlueprint>();
-    auto session_ticket = std::make_shared<SessionTicketBlueprint>();
-    auto status_req = std::make_shared<StatusRequestBlueprint>();
-    auto sct = std::make_shared<SCTBlueprint>();
-    auto grease_ech = std::make_shared<GreaseECHBlueprint>();
-    auto padding = std::make_shared<PaddingBlueprint>();
+    auto grease = std::make_shared<grease_blueprint>();
+    auto sni = std::make_shared<sni_blueprint>();
+    auto ems = std::make_shared<ems_blueprint>();
+    auto reneg = std::make_shared<renegotiation_blueprint>();
+    auto session_ticket = std::make_shared<session_ticket_blueprint>();
+    auto status_req = std::make_shared<status_request_blueprint>();
+    auto sct = std::make_shared<sct_blueprint>();
+    auto grease_ech = std::make_shared<grease_ech_blueprint>();
+    auto padding = std::make_shared<padding_blueprint>();
 
     switch (type)
     {
-        case FingerprintType::Firefox_120:
+        case fingerprint_type::kFirefox120:
         {
             spec.cipher_suites = {
                 tls_consts::cipher::kTlsAes128GcmSha256,
@@ -104,65 +104,65 @@ FingerprintSpec FingerprintFactory::Get(FingerprintType type)
             spec.extensions.push_back(ems);
             spec.extensions.push_back(reneg);
 
-            auto groups = std::make_shared<SupportedGroupsBlueprint>();
-            groups->groups = {
+            auto groups = std::make_shared<supported_groups_blueprint>();
+            groups->groups() = {
                 tls_consts::group::kX25519, tls_consts::group::kSecp256r1, tls_consts::group::kSecp384r1, tls_consts::group::kSecp521r1, 256, 257};
             spec.extensions.push_back(groups);
 
-            auto points = std::make_shared<ECPointFormatsBlueprint>();
-            points->formats = {0x00};
+            auto points = std::make_shared<ec_point_formats_blueprint>();
+            points->formats() = {0x00};
             spec.extensions.push_back(points);
 
             spec.extensions.push_back(session_ticket);
 
-            auto alpn = std::make_shared<ALPNBlueprint>();
-            alpn->protocols = {"h2", "http/1.1"};
+            auto alpn = std::make_shared<alpn_blueprint>();
+            alpn->protocols() = {"h2", "http/1.1"};
             spec.extensions.push_back(alpn);
 
             spec.extensions.push_back(status_req);
 
-            auto dc = std::make_shared<DelegatedCredentialsBlueprint>();
-            dc->algorithms = {tls_consts::sig_alg::kEcdsaSecp256r1Sha256,
-                              tls_consts::sig_alg::kEcdsaSecp384r1Sha384,
-                              tls_consts::sig_alg::kEcdsaSecp521r1Sha512,
-                              tls_consts::sig_alg::kEcdsaSha1};
+            auto dc = std::make_shared<delegated_credentials_blueprint>();
+            dc->algorithms() = {tls_consts::sig_alg::kEcdsaSecp256r1Sha256,
+                                tls_consts::sig_alg::kEcdsaSecp384r1Sha384,
+                                tls_consts::sig_alg::kEcdsaSecp521r1Sha512,
+                                tls_consts::sig_alg::kEcdsaSha1};
             spec.extensions.push_back(dc);
 
-            auto ks = std::make_shared<KeyShareBlueprint>();
-            ks->key_shares = {{.group = tls_consts::group::kX25519, .data = {}}, {.group = tls_consts::group::kSecp256r1, .data = {}}};
+            auto ks = std::make_shared<key_share_blueprint>();
+            ks->key_shares() = {{.group = tls_consts::group::kX25519, .data = {}}, {.group = tls_consts::group::kSecp256r1, .data = {}}};
             spec.extensions.push_back(ks);
 
-            auto vers = std::make_shared<SupportedVersionsBlueprint>();
-            vers->versions = {tls_consts::kVer13, tls_consts::kVer12};
+            auto vers = std::make_shared<supported_versions_blueprint>();
+            vers->versions() = {tls_consts::kVer13, tls_consts::kVer12};
             spec.extensions.push_back(vers);
 
-            auto sig = std::make_shared<SignatureAlgorithmsBlueprint>();
-            sig->algorithms = {tls_consts::sig_alg::kEcdsaSecp256r1Sha256,
-                               tls_consts::sig_alg::kEcdsaSecp384r1Sha384,
-                               tls_consts::sig_alg::kEcdsaSecp521r1Sha512,
-                               tls_consts::sig_alg::kRsaPssRsaeSha256,
-                               tls_consts::sig_alg::kRsaPssRsaeSha384,
-                               tls_consts::sig_alg::kRsaPssRsaeSha512,
-                               tls_consts::sig_alg::kRsaPkcs1Sha256,
-                               tls_consts::sig_alg::kRsaPkcs1Sha384,
-                               tls_consts::sig_alg::kRsaPkcs1Sha512,
-                               tls_consts::sig_alg::kEcdsaSha1,
-                               tls_consts::sig_alg::kRsaPkcs1Sha1};
+            auto sig = std::make_shared<signature_algorithms_blueprint>();
+            sig->algorithms() = {tls_consts::sig_alg::kEcdsaSecp256r1Sha256,
+                                 tls_consts::sig_alg::kEcdsaSecp384r1Sha384,
+                                 tls_consts::sig_alg::kEcdsaSecp521r1Sha512,
+                                 tls_consts::sig_alg::kRsaPssRsaeSha256,
+                                 tls_consts::sig_alg::kRsaPssRsaeSha384,
+                                 tls_consts::sig_alg::kRsaPssRsaeSha512,
+                                 tls_consts::sig_alg::kRsaPkcs1Sha256,
+                                 tls_consts::sig_alg::kRsaPkcs1Sha384,
+                                 tls_consts::sig_alg::kRsaPkcs1Sha512,
+                                 tls_consts::sig_alg::kEcdsaSha1,
+                                 tls_consts::sig_alg::kRsaPkcs1Sha1};
             spec.extensions.push_back(sig);
 
-            auto pskm = std::make_shared<PSKKeyExchangeModesBlueprint>();
-            pskm->modes = {0x01};
+            auto pskm = std::make_shared<psk_key_exchange_modes_blueprint>();
+            pskm->modes() = {0x01};
             spec.extensions.push_back(pskm);
 
-            auto rsl = std::make_shared<RecordSizeLimitBlueprint>();
-            rsl->limit = 0x4001;
+            auto rsl = std::make_shared<record_size_limit_blueprint>();
+            rsl->limit() = 0x4001;
             spec.extensions.push_back(rsl);
 
             spec.extensions.push_back(grease_ech);
             break;
         }
 
-        case FingerprintType::iOS_14:
+        case fingerprint_type::kIOS14:
         {
             spec.cipher_suites = {
                 kGreasePlaceholder,
@@ -199,57 +199,57 @@ FingerprintSpec FingerprintFactory::Get(FingerprintType type)
             spec.extensions.push_back(ems);
             spec.extensions.push_back(reneg);
 
-            auto groups = std::make_shared<SupportedGroupsBlueprint>();
-            groups->groups = {kGreasePlaceholder,
-                              tls_consts::group::kX25519,
-                              tls_consts::group::kSecp256r1,
-                              tls_consts::group::kSecp384r1,
-                              tls_consts::group::kSecp521r1};
+            auto groups = std::make_shared<supported_groups_blueprint>();
+            groups->groups() = {kGreasePlaceholder,
+                                tls_consts::group::kX25519,
+                                tls_consts::group::kSecp256r1,
+                                tls_consts::group::kSecp384r1,
+                                tls_consts::group::kSecp521r1};
             spec.extensions.push_back(groups);
 
-            auto points = std::make_shared<ECPointFormatsBlueprint>();
-            points->formats = {0x00};
+            auto points = std::make_shared<ec_point_formats_blueprint>();
+            points->formats() = {0x00};
             spec.extensions.push_back(points);
 
-            auto alpn = std::make_shared<ALPNBlueprint>();
-            alpn->protocols = {"h2", "http/1.1"};
+            auto alpn = std::make_shared<alpn_blueprint>();
+            alpn->protocols() = {"h2", "http/1.1"};
             spec.extensions.push_back(alpn);
 
             spec.extensions.push_back(status_req);
 
-            auto sig = std::make_shared<SignatureAlgorithmsBlueprint>();
-            sig->algorithms = {tls_consts::sig_alg::kEcdsaSecp256r1Sha256,
-                               tls_consts::sig_alg::kRsaPssRsaeSha256,
-                               tls_consts::sig_alg::kRsaPkcs1Sha256,
-                               tls_consts::sig_alg::kEcdsaSecp384r1Sha384,
-                               tls_consts::sig_alg::kEcdsaSha1,
-                               tls_consts::sig_alg::kRsaPssRsaeSha384,
-                               tls_consts::sig_alg::kRsaPssRsaeSha384,
-                               tls_consts::sig_alg::kRsaPkcs1Sha384,
-                               tls_consts::sig_alg::kRsaPssRsaeSha512,
-                               tls_consts::sig_alg::kRsaPkcs1Sha512,
-                               tls_consts::sig_alg::kRsaPkcs1Sha1};
+            auto sig = std::make_shared<signature_algorithms_blueprint>();
+            sig->algorithms() = {tls_consts::sig_alg::kEcdsaSecp256r1Sha256,
+                                 tls_consts::sig_alg::kRsaPssRsaeSha256,
+                                 tls_consts::sig_alg::kRsaPkcs1Sha256,
+                                 tls_consts::sig_alg::kEcdsaSecp384r1Sha384,
+                                 tls_consts::sig_alg::kEcdsaSha1,
+                                 tls_consts::sig_alg::kRsaPssRsaeSha384,
+                                 tls_consts::sig_alg::kRsaPssRsaeSha384,
+                                 tls_consts::sig_alg::kRsaPkcs1Sha384,
+                                 tls_consts::sig_alg::kRsaPssRsaeSha512,
+                                 tls_consts::sig_alg::kRsaPkcs1Sha512,
+                                 tls_consts::sig_alg::kRsaPkcs1Sha1};
             spec.extensions.push_back(sig);
             spec.extensions.push_back(sct);
 
-            auto ks = std::make_shared<KeyShareBlueprint>();
-            ks->key_shares = {{.group = kGreasePlaceholder, .data = {}}, {.group = tls_consts::group::kX25519, .data = {}}};
+            auto ks = std::make_shared<key_share_blueprint>();
+            ks->key_shares() = {{.group = kGreasePlaceholder, .data = {}}, {.group = tls_consts::group::kX25519, .data = {}}};
             spec.extensions.push_back(ks);
 
-            auto pskm = std::make_shared<PSKKeyExchangeModesBlueprint>();
-            pskm->modes = {0x01};
+            auto pskm = std::make_shared<psk_key_exchange_modes_blueprint>();
+            pskm->modes() = {0x01};
             spec.extensions.push_back(pskm);
 
-            auto vers = std::make_shared<SupportedVersionsBlueprint>();
-            vers->versions = {kGreasePlaceholder, tls_consts::kVer13, tls_consts::kVer12, tls_consts::kVer11, tls_consts::kVer10};
+            auto vers = std::make_shared<supported_versions_blueprint>();
+            vers->versions() = {kGreasePlaceholder, tls_consts::kVer13, tls_consts::kVer12, tls_consts::kVer11, tls_consts::kVer10};
             spec.extensions.push_back(vers);
 
-            spec.extensions.push_back(std::make_shared<GreaseBlueprint>());
+            spec.extensions.push_back(std::make_shared<grease_blueprint>());
             spec.extensions.push_back(padding);
             break;
         }
 
-        case FingerprintType::Android_11_OkHttp:
+        case fingerprint_type::kAndroid11OkHttp:
         {
             spec.cipher_suites = {
                 tls_consts::cipher::kTlsAes128GcmSha256,
@@ -273,47 +273,47 @@ FingerprintSpec FingerprintFactory::Get(FingerprintType type)
             spec.extensions.push_back(ems);
             spec.extensions.push_back(reneg);
 
-            auto groups = std::make_shared<SupportedGroupsBlueprint>();
-            groups->groups = {tls_consts::group::kX25519, tls_consts::group::kSecp256r1, tls_consts::group::kSecp384r1};
+            auto groups = std::make_shared<supported_groups_blueprint>();
+            groups->groups() = {tls_consts::group::kX25519, tls_consts::group::kSecp256r1, tls_consts::group::kSecp384r1};
             spec.extensions.push_back(groups);
 
-            auto points = std::make_shared<ECPointFormatsBlueprint>();
-            points->formats = {0x00};
+            auto points = std::make_shared<ec_point_formats_blueprint>();
+            points->formats() = {0x00};
             spec.extensions.push_back(points);
 
             spec.extensions.push_back(status_req);
 
-            auto sig = std::make_shared<SignatureAlgorithmsBlueprint>();
-            sig->algorithms = {tls_consts::sig_alg::kEcdsaSecp256r1Sha256,
-                               tls_consts::sig_alg::kRsaPssRsaeSha256,
-                               tls_consts::sig_alg::kRsaPkcs1Sha256,
-                               tls_consts::sig_alg::kEcdsaSecp384r1Sha384,
-                               tls_consts::sig_alg::kRsaPssRsaeSha384,
-                               tls_consts::sig_alg::kRsaPkcs1Sha384,
-                               tls_consts::sig_alg::kRsaPssRsaeSha512,
-                               tls_consts::sig_alg::kRsaPkcs1Sha512,
-                               tls_consts::sig_alg::kRsaPkcs1Sha1};
+            auto sig = std::make_shared<signature_algorithms_blueprint>();
+            sig->algorithms() = {tls_consts::sig_alg::kEcdsaSecp256r1Sha256,
+                                 tls_consts::sig_alg::kRsaPssRsaeSha256,
+                                 tls_consts::sig_alg::kRsaPkcs1Sha256,
+                                 tls_consts::sig_alg::kEcdsaSecp384r1Sha384,
+                                 tls_consts::sig_alg::kRsaPssRsaeSha384,
+                                 tls_consts::sig_alg::kRsaPkcs1Sha384,
+                                 tls_consts::sig_alg::kRsaPssRsaeSha512,
+                                 tls_consts::sig_alg::kRsaPkcs1Sha512,
+                                 tls_consts::sig_alg::kRsaPkcs1Sha1};
             spec.extensions.push_back(sig);
 
-            auto ks = std::make_shared<KeyShareBlueprint>();
-            ks->key_shares = {{.group = tls_consts::group::kX25519, .data = {}}};
+            auto ks = std::make_shared<key_share_blueprint>();
+            ks->key_shares() = {{.group = tls_consts::group::kX25519, .data = {}}};
             spec.extensions.push_back(ks);
 
-            auto vers = std::make_shared<SupportedVersionsBlueprint>();
-            vers->versions = {tls_consts::kVer13, tls_consts::kVer12};
+            auto vers = std::make_shared<supported_versions_blueprint>();
+            vers->versions() = {tls_consts::kVer13, tls_consts::kVer12};
             spec.extensions.push_back(vers);
             break;
         }
 
         default:
-            return GetChrome120();
+            return get_chrome120();
     }
     return spec;
 }
 
-FingerprintSpec FingerprintFactory::GetChrome120()
+fingerprint_spec fingerprint_factory::get_chrome120()
 {
-    FingerprintSpec spec;
+    fingerprint_spec spec;
     spec.client_version = tls_consts::kVer12;
     spec.cipher_suites = {
         kGreasePlaceholder,
@@ -333,71 +333,71 @@ FingerprintSpec FingerprintFactory::GetChrome120()
         tls_consts::cipher::kTlsRsaWithAes128CbcSha,
         tls_consts::cipher::kTlsRsaWithAes256CbcSha,
     };
-    spec.extensions.push_back(std::make_shared<GreaseBlueprint>());
-    spec.extensions.push_back(std::make_shared<SNIBlueprint>());
-    spec.extensions.push_back(std::make_shared<EMSBlueprint>());
-    spec.extensions.push_back(std::make_shared<RenegotiationBlueprint>());
+    spec.extensions.push_back(std::make_shared<grease_blueprint>());
+    spec.extensions.push_back(std::make_shared<sni_blueprint>());
+    spec.extensions.push_back(std::make_shared<ems_blueprint>());
+    spec.extensions.push_back(std::make_shared<renegotiation_blueprint>());
 
-    auto curves = std::make_shared<SupportedGroupsBlueprint>();
-    curves->groups = {kGreasePlaceholder, tls_consts::group::kX25519, tls_consts::group::kSecp256r1, tls_consts::group::kSecp384r1};
+    auto curves = std::make_shared<supported_groups_blueprint>();
+    curves->groups() = {kGreasePlaceholder, tls_consts::group::kX25519, tls_consts::group::kSecp256r1, tls_consts::group::kSecp384r1};
     spec.extensions.push_back(curves);
 
-    auto points = std::make_shared<ECPointFormatsBlueprint>();
-    points->formats = {0x00};
+    auto points = std::make_shared<ec_point_formats_blueprint>();
+    points->formats() = {0x00};
     spec.extensions.push_back(points);
-    spec.extensions.push_back(std::make_shared<SessionTicketBlueprint>());
+    spec.extensions.push_back(std::make_shared<session_ticket_blueprint>());
 
-    auto alpn = std::make_shared<ALPNBlueprint>();
-    alpn->protocols = {"h2", "http/1.1"};
+    auto alpn = std::make_shared<alpn_blueprint>();
+    alpn->protocols() = {"h2", "http/1.1"};
     spec.extensions.push_back(alpn);
 
-    spec.extensions.push_back(std::make_shared<StatusRequestBlueprint>());
+    spec.extensions.push_back(std::make_shared<status_request_blueprint>());
 
-    auto sigs = std::make_shared<SignatureAlgorithmsBlueprint>();
-    sigs->algorithms = {tls_consts::sig_alg::kEcdsaSecp256r1Sha256,
-                        tls_consts::sig_alg::kRsaPssRsaeSha256,
-                        tls_consts::sig_alg::kRsaPkcs1Sha256,
-                        tls_consts::sig_alg::kEcdsaSecp384r1Sha384,
-                        tls_consts::sig_alg::kRsaPssRsaeSha384,
-                        tls_consts::sig_alg::kRsaPkcs1Sha384,
-                        tls_consts::sig_alg::kRsaPssRsaeSha512,
-                        tls_consts::sig_alg::kRsaPkcs1Sha512};
+    auto sigs = std::make_shared<signature_algorithms_blueprint>();
+    sigs->algorithms() = {tls_consts::sig_alg::kEcdsaSecp256r1Sha256,
+                          tls_consts::sig_alg::kRsaPssRsaeSha256,
+                          tls_consts::sig_alg::kRsaPkcs1Sha256,
+                          tls_consts::sig_alg::kEcdsaSecp384r1Sha384,
+                          tls_consts::sig_alg::kRsaPssRsaeSha384,
+                          tls_consts::sig_alg::kRsaPkcs1Sha384,
+                          tls_consts::sig_alg::kRsaPssRsaeSha512,
+                          tls_consts::sig_alg::kRsaPkcs1Sha512};
     spec.extensions.push_back(sigs);
-    spec.extensions.push_back(std::make_shared<SCTBlueprint>());
+    spec.extensions.push_back(std::make_shared<sct_blueprint>());
 
-    auto ks = std::make_shared<KeyShareBlueprint>();
-    ks->key_shares.push_back({.group = kGreasePlaceholder, .data = {}});
-    ks->key_shares.push_back({.group = tls_consts::group::kX25519, .data = {}});
+    auto ks = std::make_shared<key_share_blueprint>();
+    ks->key_shares().push_back({.group = kGreasePlaceholder, .data = {}});
+    ks->key_shares().push_back({.group = tls_consts::group::kX25519, .data = {}});
     spec.extensions.push_back(ks);
 
-    auto psk_modes = std::make_shared<PSKKeyExchangeModesBlueprint>();
-    psk_modes->modes = {0x01};
+    auto psk_modes = std::make_shared<psk_key_exchange_modes_blueprint>();
+    psk_modes->modes() = {0x01};
     spec.extensions.push_back(psk_modes);
 
-    auto vers = std::make_shared<SupportedVersionsBlueprint>();
-    vers->versions = {kGreasePlaceholder, tls_consts::kVer13, tls_consts::kVer12};
+    auto vers = std::make_shared<supported_versions_blueprint>();
+    vers->versions() = {kGreasePlaceholder, tls_consts::kVer13, tls_consts::kVer12};
     spec.extensions.push_back(vers);
 
-    auto comp = std::make_shared<CompressCertBlueprint>();
-    comp->algorithms = {tls_consts::compress::kBrotli};
+    auto comp = std::make_shared<compress_cert_blueprint>();
+    comp->algorithms() = {tls_consts::compress::kBrotli};
     spec.extensions.push_back(comp);
 
-    auto alps = std::make_shared<ApplicationSettingsBlueprint>();
-    alps->supported_protocols = {"h2"};
+    auto alps = std::make_shared<application_settings_blueprint>();
+    alps->supported_protocols() = {"h2"};
     spec.extensions.push_back(alps);
 
-    spec.extensions.push_back(std::make_shared<GreaseECHBlueprint>());
-    spec.extensions.push_back(std::make_shared<GreaseBlueprint>());
-    spec.extensions.push_back(std::make_shared<PaddingBlueprint>());
+    spec.extensions.push_back(std::make_shared<grease_ech_blueprint>());
+    spec.extensions.push_back(std::make_shared<grease_blueprint>());
+    spec.extensions.push_back(std::make_shared<padding_blueprint>());
 
     spec.shuffle_extensions = true;
     return spec;
 }
 
-void FingerprintFactory::shuffle_extensions(std::vector<std::shared_ptr<ExtensionBlueprint>>& exts)
+void fingerprint_factory::shuffle_extensions(std::vector<std::shared_ptr<extension_blueprint>>& exts)
 {
     std::vector<std::size_t> indices;
-    std::vector<std::shared_ptr<ExtensionBlueprint>> shufflable_exts;
+    std::vector<std::shared_ptr<extension_blueprint>> shufflable_exts;
 
     for (std::size_t i = 0; i < exts.size(); ++i)
     {

@@ -4,9 +4,9 @@
 #include <memory>
 #include <vector>
 #include <cstdint>
-#include <asio.hpp>
 #include <system_error>
 
+#include <asio.hpp>
 #include <gmock/gmock.h>
 
 #include "mux_connection.h"
@@ -14,10 +14,11 @@
 namespace mux
 {
 
-class MockMuxConnection : public mux_connection
+class mock_mux_connection : public mux_connection
 {
    public:
-    MockMuxConnection(asio::io_context& ctx) : mux_connection(asio::ip::tcp::socket(ctx), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 0)
+    mock_mux_connection(asio::io_context& ctx)
+        : mux_connection(asio::ip::tcp::socket(ctx), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 0)
     {
     }
 
