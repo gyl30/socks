@@ -36,11 +36,9 @@ class LocalClientHandshakeTest : public ::testing::Test
         std::uint8_t pub[32], priv[32];
         ASSERT_TRUE(reality::crypto_util::generate_x25519_keypair(pub, priv));
         server_pub_hex_ = reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(pub, pub + 32));
-        verify_key_hex_ = std::string(64, 'b');
     }
 
     std::string server_pub_hex_;
-    std::string verify_key_hex_;
 };
 
 asio::awaitable<void> mock_server_silent(tcp::acceptor& acceptor)
@@ -77,8 +75,15 @@ TEST_F(LocalClientHandshakeTest, HandshakeTimeout)
     mux::config::limits_t limits;
     limits.max_connections = 1;
 
-    auto client = std::make_shared<mux::local_client>(
-        pool, "127.0.0.1", std::to_string(port), 0, server_pub_hex_, "example.com", "", verify_key_hex_, timeouts, mux::config::socks_t{}, limits);
+    mux::config client_cfg;
+    client_cfg.outbound.host = "127.0.0.1";
+    client_cfg.outbound.port = port;
+    client_cfg.socks.port = 0;
+    client_cfg.reality.public_key = server_pub_hex_;
+    client_cfg.reality.sni = "example.com";
+    client_cfg.timeout = timeouts;
+    client_cfg.limits = limits;
+    auto client = std::make_shared<mux::local_client>(pool, client_cfg);
 
     std::thread pool_thread([&pool]() { pool.run(); });
 
@@ -120,8 +125,13 @@ TEST_F(LocalClientHandshakeTest, InvalidServerHello)
 
     asio::co_spawn(pool.get_io_context(), mock_server_invalid_sh(acceptor), asio::detached);
 
-    auto client =
-        std::make_shared<mux::local_client>(pool, "127.0.0.1", std::to_string(port), 0, server_pub_hex_, "example.com", "", verify_key_hex_);
+    mux::config client_cfg;
+    client_cfg.outbound.host = "127.0.0.1";
+    client_cfg.outbound.port = port;
+    client_cfg.socks.port = 0;
+    client_cfg.reality.public_key = server_pub_hex_;
+    client_cfg.reality.sni = "example.com";
+    auto client = std::make_shared<mux::local_client>(pool, client_cfg);
 
     std::thread pool_thread([&pool]() { pool.run(); });
     client->start();
@@ -151,7 +161,7 @@ asio::awaitable<void> mock_server_unsupported_scheme(tcp::acceptor& acceptor, co
 
     std::vector<uint8_t> srand(32, 0x55);
     std::vector<uint8_t> sid(32, 0);
-    auto sh = reality::construct_server_hello(srand, sid, 0x1301, std::vector<uint8_t>(32, 0x66));
+    auto sh = reality::construct_server_hello(srand, sid, 0x1301, reality::tls_consts::group::kX25519, std::vector<uint8_t>(32, 0x66));
     auto sh_rec = reality::write_record_header(reality::kContentTypeHandshake, static_cast<uint16_t>(sh.size()));
     sh_rec.insert(sh_rec.end(), sh.begin(), sh.end());
     co_await asio::async_write(socket, asio::buffer(sh_rec), asio::as_tuple(asio::use_awaitable));
@@ -159,7 +169,7 @@ asio::awaitable<void> mock_server_unsupported_scheme(tcp::acceptor& acceptor, co
     std::vector<uint8_t> enc_ext = reality::construct_encrypted_extensions("");
     std::vector<uint8_t> cert = reality::construct_certificate({0x01, 0x02, 0x03});
 
-    std::vector<uint8_t> cv = {0x0f, 0x00, 0x00, 0x08, 0x04, 0x03, 0x00, 0x04, 0xaa, 0xbb, 0xcc, 0xdd};
+    std::vector<uint8_t> cv = {0x0f, 0x00, 0x00, 0x08, 0x08, 0x08, 0x00, 0x04, 0xaa, 0xbb, 0xcc, 0xdd};
 
     std::vector<uint8_t> plain;
     plain.insert(plain.end(), enc_ext.begin(), enc_ext.end());
@@ -184,8 +194,13 @@ TEST_F(LocalClientHandshakeTest, UnsupportedVerifyScheme)
 
     asio::co_spawn(pool.get_io_context(), mock_server_unsupported_scheme(acceptor, server_pub_hex_), asio::detached);
 
-    auto client =
-        std::make_shared<mux::local_client>(pool, "127.0.0.1", std::to_string(port), 0, server_pub_hex_, "example.com", "", verify_key_hex_);
+    mux::config client_cfg;
+    client_cfg.outbound.host = "127.0.0.1";
+    client_cfg.outbound.port = port;
+    client_cfg.socks.port = 0;
+    client_cfg.reality.public_key = server_pub_hex_;
+    client_cfg.reality.sni = "example.com";
+    auto client = std::make_shared<mux::local_client>(pool, client_cfg);
 
     std::thread pool_thread([&pool]() { pool.run(); });
     client->start();

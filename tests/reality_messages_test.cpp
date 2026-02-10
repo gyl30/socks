@@ -1,4 +1,5 @@
 #include <cstdio>
+#include <algorithm>
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -35,7 +36,7 @@ TEST(RealityMessagesTest, ServerHelloRoundTrip)
     const std::uint16_t cipher = 0x1301;
     const std::vector<std::uint8_t> pubkey(32, 0xCC);
 
-    const auto sh = reality::construct_server_hello(random, session_id, cipher, pubkey);
+    const auto sh = reality::construct_server_hello(random, session_id, cipher, tls_consts::group::kX25519, pubkey);
 
     const auto extracted_cipher = reality::extract_cipher_suite_from_server_hello(sh);
     ASSERT_TRUE(extracted_cipher.has_value());
@@ -203,7 +204,8 @@ TEST(RealityMessagesTest, CertificateVerifyParse)
 TEST(RealityMessagesTest, CertificateVerifySchemeSupport)
 {
     EXPECT_TRUE(reality::is_supported_certificate_verify_scheme(0x0807));
-    EXPECT_FALSE(reality::is_supported_certificate_verify_scheme(0x0804));
+    EXPECT_TRUE(reality::is_supported_certificate_verify_scheme(0x0804));
+    EXPECT_FALSE(reality::is_supported_certificate_verify_scheme(0x0808));
 }
 
 TEST(RealityMessagesTest, ParseCertificateVerifyMalformed)
@@ -251,7 +253,6 @@ TEST(RealityMessagesTest, ComprehensiveClientHello)
 
     auto key_share = std::make_shared<reality::KeyShareBlueprint>();
     key_share->key_shares.push_back({0x001d, std::vector<uint8_t>(32, 0x01)});
-    key_share->key_shares.push_back({reality::tls_consts::group::kX25519Kyber768Draft00, {}});
     key_share->key_shares.push_back({reality::kGreasePlaceholder, {}});
     key_share->key_shares.push_back({reality::tls_consts::group::kSecp256r1, {}});
     spec.extensions.push_back(key_share);

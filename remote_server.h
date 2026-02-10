@@ -4,12 +4,15 @@
 #include <mutex>
 #include <atomic>
 #include <memory>
+#include <optional>
 #include <random>
 #include <string>
 #include <vector>
+#include <array>
 #include <cstdint>
 #include <utility>
 #include <system_error>
+#include <unordered_set>
 
 #include <asio/ip/tcp.hpp>
 #include <asio/awaitable.hpp>
@@ -43,13 +46,7 @@ namespace mux
 class remote_server : public std::enable_shared_from_this<remote_server>
 {
    public:
-    remote_server(io_context_pool& pool,
-                  std::uint16_t port,
-                  std::vector<config::fallback_entry> fbs,
-                  const std::string& key,
-                  const std::string& short_id_hex = std::string(),
-                  const config::timeout_t& timeout_cfg = {},
-                  const config::limits_t& limits_cfg = {});
+    remote_server(io_context_pool& pool, const config& cfg);
 
     virtual ~remote_server();
 
@@ -75,9 +72,17 @@ class remote_server : public std::enable_shared_from_this<remote_server>
                                                                          const connection_context& ctx,
                                                                          std::vector<std::uint8_t>& buf);
 
-    [[nodiscard]] std::pair<bool, std::vector<std::uint8_t>> authenticate_client(const client_hello_info& info,
-                                                                                 const std::vector<std::uint8_t>& buf,
-                                                                                 const connection_context& ctx);
+    [[nodiscard]] bool authenticate_client(const client_hello_info& info,
+                                           const std::vector<std::uint8_t>& buf,
+                                           const connection_context& ctx);
+
+    struct selected_key_share
+    {
+        std::uint16_t group = 0;
+        std::vector<std::uint8_t> x25519_pub;
+    };
+
+    [[nodiscard]] std::optional<selected_key_share> select_key_share(const client_hello_info& info, const connection_context& ctx) const;
 
     struct server_handshake_res
     {
@@ -97,7 +102,6 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     asio::awaitable<server_handshake_res> perform_handshake_response(std::shared_ptr<asio::ip::tcp::socket> s,
                                                                      const client_hello_info& info,
                                                                      reality::transcript& trans,
-                                                                     const std::vector<std::uint8_t>& auth_key,
                                                                      const connection_context& ctx,
                                                                      std::error_code& ec);
 
@@ -134,9 +138,14 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     reality::key_rotator key_rotator_;
     std::mutex tunnels_mutex_;
     std::vector<config::fallback_entry> fallbacks_;
+    std::string fallback_dest_host_;
+    std::string fallback_dest_port_;
+    std::string fallback_type_;
+    bool fallback_dest_valid_ = false;
     config::timeout_t timeout_config_;
     std::vector<std::weak_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>> active_tunnels_;
     config::limits_t limits_config_;
+    config::heartbeat_t heartbeat_config_;
 };
 
 }    // namespace mux
