@@ -16,7 +16,9 @@
 #include <asio/buffer.hpp>
 #include <asio/ip/tcp.hpp>
 #include <asio/as_tuple.hpp>
+#include <asio/co_spawn.hpp>
 #include <asio/steady_timer.hpp>
+#include <asio/detached.hpp>
 #include <asio/use_awaitable.hpp>
 #include <asio/redirect_error.hpp>
 #include <asio/experimental/awaitable_operators.hpp>
@@ -68,6 +70,7 @@ mux_connection::mux_connection(asio::ip::tcp::socket socket,
     }
     mux_dispatcher_.set_callback([this](const mux::frame_header h, std::vector<std::uint8_t> p) { this->on_mux_frame(h, std::move(p)); });
     mux_dispatcher_.set_context(ctx_);
+    mux_dispatcher_.set_max_buffer(limits_config_.max_buffer);
     statistics::instance().inc_active_mux_sessions();
     LOG_CTX_INFO(ctx_, "{} mux initialized {}", log_event::kConnInit, ctx_.connection_info());
 }
@@ -107,6 +110,12 @@ asio::awaitable<std::error_code> mux_connection::send_async(const std::uint32_t 
         co_return asio::error::operation_aborted;
     }
 
+    if (payload.size() > mux::kMaxPayload)
+    {
+        LOG_ERROR("mux {} payload too large {}", cid_, payload.size());
+        co_return asio::error::message_size;
+    }
+
     if (cmd != mux::kCmdDat || payload.size() < 128)
     {
         LOG_TRACE("mux {} send frame stream {} cmd {} size {}", cid_, stream_id, cmd, payload.size());
@@ -118,6 +127,7 @@ asio::awaitable<std::error_code> mux_connection::send_async(const std::uint32_t 
     if (ec)
     {
         LOG_ERROR("mux {} send failed error {}", cid_, ec.message());
+        stop();
         co_return ec;
     }
     co_return std::error_code();
@@ -128,7 +138,15 @@ void mux_connection::stop()
     mux_connection_state expected = mux_connection_state::connected;
     if (!connection_state_.compare_exchange_strong(expected, mux_connection_state::closing, std::memory_order_acq_rel))
     {
-        return;
+        if (expected != mux_connection_state::draining)
+        {
+            return;
+        }
+        expected = mux_connection_state::draining;
+        if (!connection_state_.compare_exchange_strong(expected, mux_connection_state::closing, std::memory_order_acq_rel))
+        {
+            return;
+        }
     }
 
     LOG_INFO("mux {} stopping", cid_);
@@ -202,6 +220,12 @@ asio::awaitable<void> mux_connection::read_loop()
                                                           mux_dispatcher_.on_plaintext_data(pt);
                                                       }
                                                   });
+
+        if (mux_dispatcher_.overflowed())
+        {
+            LOG_ERROR("mux {} dispatcher overflow stopping", cid_);
+            break;
+        }
 
         if (decrypt_ec)
         {
@@ -283,6 +307,15 @@ asio::awaitable<void> mux_connection::timeout_loop()
 
         if (read_elapsed > std::chrono::seconds(timeout_config_.read) || write_elapsed > std::chrono::seconds(timeout_config_.write))
         {
+            {
+                const std::scoped_lock lock(streams_mutex_);
+                if (streams_.empty())
+                {
+                    LOG_DEBUG("mux {} timeout without streams, closing", cid_);
+                    break;
+                }
+            }
+
             LOG_DEBUG("mux {} entering draining mode", cid_);
             connection_state_.store(mux_connection_state::draining, std::memory_order_release);
 
@@ -381,10 +414,12 @@ void mux_connection::on_mux_frame(const mux::frame_header header, std::vector<st
         if (header.command == mux::kCmdFin)
         {
             stream->on_close();
+            remove_stream(header.stream_id);
         }
         else if (header.command == mux::kCmdRst)
         {
             stream->on_reset();
+            remove_stream(header.stream_id);
         }
         else if (header.command == mux::kCmdDat || header.command == mux::kCmdAck)
         {
@@ -396,8 +431,32 @@ void mux_connection::on_mux_frame(const mux::frame_header header, std::vector<st
         if (header.command != mux::kCmdRst)
         {
             LOG_DEBUG("mux {} recv frame for unknown stream {}", cid_, header.stream_id);
+            const auto self = shared_from_this();
+            asio::co_spawn(
+                socket_.get_executor(),
+                [self, stream_id = header.stream_id]() -> asio::awaitable<void>
+                {
+                    (void)co_await self->send_async(stream_id, kCmdRst, {});
+                },
+                asio::detached);
         }
     }
+}
+
+bool mux_connection::can_accept_stream()
+{
+    if (limits_config_.max_streams == 0)
+    {
+        return true;
+    }
+    const std::scoped_lock lock(streams_mutex_);
+    return streams_.size() < limits_config_.max_streams;
+}
+
+bool mux_connection::has_stream(const std::uint32_t id)
+{
+    const std::scoped_lock lock(streams_mutex_);
+    return streams_.find(id) != streams_.end();
 }
 
 }    // namespace mux
