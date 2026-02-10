@@ -28,7 +28,8 @@ class socks_session : public std::enable_shared_from_this<socks_session>
                   std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager,
                   std::shared_ptr<router> router,
                   std::uint32_t sid,
-                  const config::socks_t& socks_cfg = {});
+                  const config::socks_t& socks_cfg = {},
+                  const config::timeout_t& timeout_cfg = {});
 
     ~socks_session();
 
@@ -51,6 +52,8 @@ class socks_session : public std::enable_shared_from_this<socks_session>
 
     asio::awaitable<request_info> read_request();
 
+    asio::awaitable<void> reply_error(std::uint8_t code);
+
    private:
     std::uint32_t sid_;
     std::string username_;
@@ -60,6 +63,7 @@ class socks_session : public std::enable_shared_from_this<socks_session>
     asio::ip::tcp::socket socket_;
     std::shared_ptr<router> router_;
     std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager_;
+    config::timeout_t timeout_config_;
 };
 
 }    // namespace mux

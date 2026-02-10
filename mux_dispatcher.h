@@ -3,6 +3,7 @@
 
 #include <span>
 #include <vector>
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <functional>
@@ -26,10 +27,12 @@ class mux_dispatcher
 
     void set_callback(frame_callback_t cb);
     void set_context(connection_context ctx);
+    void set_max_buffer(std::size_t max_buffer);
 
     void on_plaintext_data(std::span<const std::uint8_t> data);
 
     [[nodiscard]] static std::vector<std::uint8_t> pack(std::uint32_t stream_id, std::uint8_t cmd, const std::vector<std::uint8_t>& payload);
+    [[nodiscard]] bool overflowed() const { return overflowed_.load(std::memory_order_acquire); }
 
    private:
     void process_frames();
@@ -38,6 +41,8 @@ class mux_dispatcher
     frame_callback_t callback_;
     asio::streambuf buffer_;
     connection_context ctx_;
+    std::size_t max_buffer_ = 0;
+    std::atomic<bool> overflowed_{false};
 };
 
 }    // namespace mux

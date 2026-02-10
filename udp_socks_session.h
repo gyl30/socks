@@ -26,7 +26,10 @@ class mux_stream;
 class udp_socks_session : public mux_stream_interface, public std::enable_shared_from_this<udp_socks_session>
 {
    public:
-    udp_socks_session(asio::ip::tcp::socket socket, std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager, std::uint32_t sid);
+    udp_socks_session(asio::ip::tcp::socket socket,
+                      std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager,
+                      std::uint32_t sid,
+                      const config::timeout_t& timeout_cfg);
 
     void start(const std::string& host, std::uint16_t port);
 
@@ -44,14 +47,21 @@ class udp_socks_session : public mux_stream_interface, public std::enable_shared
     asio::awaitable<void> stream_to_udp_sock(std::shared_ptr<mux_stream> stream, std::shared_ptr<asio::ip::udp::endpoint> client_ep);
 
     asio::awaitable<void> keep_tcp_alive();
+    asio::awaitable<void> idle_watchdog();
 
    private:
     connection_context ctx_;
-    asio::steady_timer timer_;
+   asio::steady_timer timer_;
+    asio::steady_timer idle_timer_;
     asio::ip::tcp::socket socket_;
     asio::ip::udp::socket udp_socket_;
     std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager_;
     asio::experimental::concurrent_channel<void(std::error_code, std::vector<std::uint8_t>)> recv_channel_;
+    std::chrono::steady_clock::time_point last_activity_time_;
+    std::mutex client_ep_mutex_;
+    asio::ip::udp::endpoint client_ep_;
+    bool has_client_ep_ = false;
+    config::timeout_t timeout_config_;
 };
 
 }    // namespace mux

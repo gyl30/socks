@@ -16,9 +16,10 @@
 
 #include "log.h"
 #include "router.h"
-#include "protocol.h"
 #include "upstream.h"
+#include "protocol.h"
 #include "mux_tunnel.h"
+#include "statistics.h"
 #include "log_context.h"
 #include "tcp_socks_session.h"
 
@@ -28,11 +29,17 @@ namespace mux
 tcp_socks_session::tcp_socks_session(asio::ip::tcp::socket socket,
                                      std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager,
                                      std::shared_ptr<router> router,
-                                     const std::uint32_t sid)
-    : socket_(std::move(socket)), router_(std::move(router)), tunnel_manager_(std::move(tunnel_manager))
+                                     const std::uint32_t sid,
+                                     const config::timeout_t& timeout_cfg)
+    : socket_(std::move(socket)),
+      idle_timer_(socket_.get_executor()),
+      router_(std::move(router)),
+      tunnel_manager_(std::move(tunnel_manager)),
+      timeout_config_(timeout_cfg)
 {
     ctx_.new_trace_id();
     ctx_.conn_id(sid);
+    last_activity_time_ = std::chrono::steady_clock::now();
 }
 
 void tcp_socks_session::start(const std::string& host, const std::uint16_t port)
@@ -58,6 +65,7 @@ asio::awaitable<void> tcp_socks_session::run(const std::string& host, const std:
     else
     {
         LOG_CTX_WARN(ctx_, "{} blocked host {}", log_event::kRoute, host);
+        statistics::instance().inc_routing_blocked();
         co_await reply_error(socks::kRepNotAllowed);
         co_return;
     }
@@ -80,6 +88,9 @@ asio::awaitable<void> tcp_socks_session::run(const std::string& host, const std:
     }
 
     LOG_CTX_INFO(ctx_, "{} connected {} {} via {}", log_event::kConnEstablished, host, port, (route == route_type::direct ? "direct" : "proxy"));
+    asio::co_spawn(socket_.get_executor(),
+                   [self = shared_from_this(), backend = backend.get()]() -> asio::awaitable<void> { co_await self->idle_watchdog(backend); },
+                   asio::detached);
     using asio::experimental::awaitable_operators::operator&&;
     co_await (client_to_upstream(backend.get()) && upstream_to_client(backend.get()));
     co_await backend->close();
@@ -112,6 +123,7 @@ asio::awaitable<void> tcp_socks_session::client_to_upstream(upstream* backend)
             LOG_CTX_WARN(ctx_, "{} failed to write to backend", log_event::kSocks);
             break;
         }
+        last_activity_time_ = std::chrono::steady_clock::now();
     }
     LOG_CTX_INFO(ctx_, "{} client to upstream finished", log_event::kSocks);
 }
@@ -134,6 +146,7 @@ asio::awaitable<void> tcp_socks_session::upstream_to_client(upstream* backend)
             LOG_CTX_WARN(ctx_, "{} failed to write to client {}", log_event::kSocks, we.message());
             break;
         }
+        last_activity_time_ = std::chrono::steady_clock::now();
     }
     LOG_CTX_INFO(ctx_, "{} upstream to client finished", log_event::kSocks);
     std::error_code ignore;
@@ -141,6 +154,31 @@ asio::awaitable<void> tcp_socks_session::upstream_to_client(upstream* backend)
     if (ignore)
     {
         LOG_CTX_WARN(ctx_, "{} failed to shutdown client {}", log_event::kSocks, ignore.message());
+    }
+}
+
+asio::awaitable<void> tcp_socks_session::idle_watchdog(upstream* backend)
+{
+    while (socket_.is_open())
+    {
+        idle_timer_.expires_after(std::chrono::seconds(1));
+        const auto [wait_ec] = co_await idle_timer_.async_wait(asio::as_tuple(asio::use_awaitable));
+        if (wait_ec)
+        {
+            break;
+        }
+        const auto now = std::chrono::steady_clock::now();
+        if (now - last_activity_time_ > std::chrono::seconds(timeout_config_.idle))
+        {
+            LOG_CTX_WARN(ctx_, "{} tcp session idle closing", log_event::kSocks);
+            if (backend != nullptr)
+            {
+                co_await backend->close();
+            }
+            std::error_code ignore;
+            ignore = socket_.close(ignore);
+            break;
+        }
     }
 }
 

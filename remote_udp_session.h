@@ -39,16 +39,19 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
     asio::awaitable<void> watchdog();
     asio::awaitable<void> mux_to_udp();
     asio::awaitable<void> udp_to_mux();
+    asio::awaitable<void> idle_watchdog();
 
    private:
     std::uint32_t id_;
     connection_context ctx_;
     asio::steady_timer timer_;
+    asio::steady_timer idle_timer_;
     asio::ip::udp::socket udp_socket_;
     asio::ip::udp::resolver udp_resolver_;
     std::shared_ptr<mux_connection> connection_;
     std::chrono::steady_clock::time_point last_read_time_;
     std::chrono::steady_clock::time_point last_write_time_;
+    std::chrono::steady_clock::time_point last_activity_time_;
     std::weak_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> manager_;
     asio::experimental::concurrent_channel<void(std::error_code, std::vector<std::uint8_t>)> recv_channel_;
 };
