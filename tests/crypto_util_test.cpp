@@ -26,6 +26,27 @@ TEST(CryptoUtilTest, HexConversion)
     EXPECT_EQ(crypto_util::hex_to_bytes(""), std::vector<uint8_t>{});
 }
 
+TEST(CryptoUtilTest, Base64UrlDecode)
+{
+    std::vector<uint8_t> out;
+    EXPECT_TRUE(crypto_util::base64_url_decode("", out));
+    EXPECT_TRUE(out.empty());
+
+    EXPECT_TRUE(crypto_util::base64_url_decode("Zg", out));
+    EXPECT_EQ(out, std::vector<uint8_t>({'f'}));
+
+    EXPECT_TRUE(crypto_util::base64_url_decode("aGVsbG8", out));
+    EXPECT_EQ(out, std::vector<uint8_t>({'h', 'e', 'l', 'l', 'o'}));
+
+    EXPECT_TRUE(crypto_util::base64_url_decode("_w", out));
+    EXPECT_EQ(out, std::vector<uint8_t>({0xff}));
+
+    EXPECT_TRUE(crypto_util::base64_url_decode("-w", out));
+    EXPECT_EQ(out, std::vector<uint8_t>({0xfb}));
+
+    EXPECT_FALSE(crypto_util::base64_url_decode("Zg@", out));
+}
+
 TEST(CryptoUtilTest, HKDFRFC5869Test1)
 {
     const std::vector<uint8_t> ikm(22, 0x0b);

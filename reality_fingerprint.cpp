@@ -25,93 +25,6 @@ constexpr auto kGreaseValues = std::to_array<std::uint16_t>(
 
 }
 
-static FingerprintSpec BuildChrome70To87Spec()
-{
-    FingerprintSpec spec;
-    spec.client_version = tls_consts::kVer12;
-    spec.cipher_suites = {
-        kGreasePlaceholder,
-        tls_consts::cipher::kTlsAes128GcmSha256,
-        tls_consts::cipher::kTlsAes256GcmSha384,
-        tls_consts::cipher::kTlsChacha20Poly1305Sha256,
-        tls_consts::cipher::kTlsEcdheEcdsaWithAes128GcmSha256,
-        tls_consts::cipher::kTlsEcdheRsaWithAes128GcmSha256,
-        tls_consts::cipher::kTlsEcdheEcdsaWithAes256GcmSha384,
-        tls_consts::cipher::kTlsEcdheRsaWithAes256GcmSha384,
-        tls_consts::cipher::kTlsEcdheEcdsaWithChacha20Poly1305,
-        tls_consts::cipher::kTlsEcdheRsaWithChacha20Poly1305,
-        tls_consts::cipher::kTlsEcdheRsaWithAes128CbcSha,
-        tls_consts::cipher::kTlsEcdheRsaWithAes256CbcSha,
-        tls_consts::cipher::kTlsRsaWithAes128GcmSha256,
-        tls_consts::cipher::kTlsRsaWithAes256GcmSha384,
-        tls_consts::cipher::kTlsRsaWithAes128CbcSha,
-        tls_consts::cipher::kTlsRsaWithAes256CbcSha,
-    };
-
-    const auto grease = std::make_shared<GreaseBlueprint>();
-    const auto sni = std::make_shared<SNIBlueprint>();
-    const auto ems = std::make_shared<EMSBlueprint>();
-    const auto reneg = std::make_shared<RenegotiationBlueprint>();
-    const auto session_ticket = std::make_shared<SessionTicketBlueprint>();
-    const auto status_req = std::make_shared<StatusRequestBlueprint>();
-    const auto sct = std::make_shared<SCTBlueprint>();
-    const auto padding = std::make_shared<PaddingBlueprint>();
-
-    spec.extensions.push_back(grease);
-    spec.extensions.push_back(sni);
-    spec.extensions.push_back(ems);
-    spec.extensions.push_back(reneg);
-
-    auto groups = std::make_shared<SupportedGroupsBlueprint>();
-    groups->groups = {kGreasePlaceholder, tls_consts::group::kX25519, tls_consts::group::kSecp256r1, tls_consts::group::kSecp384r1};
-    spec.extensions.push_back(groups);
-
-    auto points = std::make_shared<ECPointFormatsBlueprint>();
-    points->formats = {0x00};
-    spec.extensions.push_back(points);
-
-    spec.extensions.push_back(session_ticket);
-
-    auto alpn = std::make_shared<ALPNBlueprint>();
-    alpn->protocols = {"h2", "http/1.1"};
-    spec.extensions.push_back(alpn);
-
-    spec.extensions.push_back(status_req);
-
-    auto sig = std::make_shared<SignatureAlgorithmsBlueprint>();
-    sig->algorithms = {tls_consts::sig_alg::kEcdsaSecp256r1Sha256,
-                       tls_consts::sig_alg::kRsaPssRsaeSha256,
-                       tls_consts::sig_alg::kRsaPkcs1Sha256,
-                       tls_consts::sig_alg::kEcdsaSecp384r1Sha384,
-                       tls_consts::sig_alg::kRsaPssRsaeSha384,
-                       tls_consts::sig_alg::kRsaPkcs1Sha384,
-                       tls_consts::sig_alg::kRsaPssRsaeSha512,
-                       tls_consts::sig_alg::kRsaPkcs1Sha512};
-    spec.extensions.push_back(sig);
-    spec.extensions.push_back(sct);
-
-    auto ks = std::make_shared<KeyShareBlueprint>();
-    ks->key_shares = {{.group = kGreasePlaceholder, .data = {}}, {.group = tls_consts::group::kX25519, .data = {}}};
-    spec.extensions.push_back(ks);
-
-    auto pskm = std::make_shared<PSKKeyExchangeModesBlueprint>();
-    pskm->modes = {0x01};
-    spec.extensions.push_back(pskm);
-
-    auto vers = std::make_shared<SupportedVersionsBlueprint>();
-    vers->versions = {kGreasePlaceholder, tls_consts::kVer13, tls_consts::kVer12, tls_consts::kVer11, tls_consts::kVer10};
-    spec.extensions.push_back(vers);
-
-    auto comp = std::make_shared<CompressCertBlueprint>();
-    comp->algorithms = {tls_consts::compress::kBrotli};
-    spec.extensions.push_back(comp);
-
-    spec.extensions.push_back(std::make_shared<GreaseBlueprint>());
-    spec.extensions.push_back(padding);
-
-    return spec;
-}
-
 GreaseContext::GreaseContext()
 {
     const std::size_t seed_len = seed_.size() * sizeof(seed_[0]);
@@ -145,6 +58,11 @@ std::uint16_t GreaseContext::get_extension_grease(int nth_occurrence) const
 
 FingerprintSpec FingerprintFactory::Get(FingerprintType type)
 {
+    if (type == FingerprintType::Chrome_120)
+    {
+        return GetChrome120();
+    }
+
     FingerprintSpec spec;
     spec.client_version = tls_consts::kVer12;
 
@@ -155,148 +73,11 @@ FingerprintSpec FingerprintFactory::Get(FingerprintType type)
     auto session_ticket = std::make_shared<SessionTicketBlueprint>();
     auto status_req = std::make_shared<StatusRequestBlueprint>();
     auto sct = std::make_shared<SCTBlueprint>();
+    auto grease_ech = std::make_shared<GreaseECHBlueprint>();
     auto padding = std::make_shared<PaddingBlueprint>();
 
     switch (type)
     {
-        case FingerprintType::Chrome_120:
-        default:
-            return GetChrome120();
-
-        case FingerprintType::Chrome_58:
-        case FingerprintType::Chrome_62:
-        {
-            spec.cipher_suites = {
-                kGreasePlaceholder,
-                tls_consts::cipher::kTlsEcdheEcdsaWithAes128GcmSha256,
-                tls_consts::cipher::kTlsEcdheRsaWithAes128GcmSha256,
-                tls_consts::cipher::kTlsEcdheEcdsaWithAes256GcmSha384,
-                tls_consts::cipher::kTlsEcdheRsaWithAes256GcmSha384,
-                tls_consts::cipher::kTlsEcdheEcdsaWithChacha20Poly1305,
-                tls_consts::cipher::kTlsEcdheRsaWithChacha20Poly1305,
-                tls_consts::cipher::kTlsEcdheRsaWithAes128CbcSha,
-                tls_consts::cipher::kTlsEcdheRsaWithAes256CbcSha,
-                tls_consts::cipher::kTlsRsaWithAes128GcmSha256,
-                tls_consts::cipher::kTlsRsaWithAes256GcmSha384,
-                tls_consts::cipher::kTlsRsaWithAes128CbcSha,
-                tls_consts::cipher::kTlsRsaWithAes256CbcSha,
-                tls_consts::cipher::kTlsRsaWith3desEdeCbcSha,
-            };
-            spec.extensions.push_back(grease);
-            spec.extensions.push_back(reneg);
-            spec.extensions.push_back(sni);
-            spec.extensions.push_back(ems);
-            spec.extensions.push_back(session_ticket);
-
-            auto sig = std::make_shared<SignatureAlgorithmsBlueprint>();
-            sig->algorithms = {tls_consts::sig_alg::kEcdsaSecp256r1Sha256,
-                               tls_consts::sig_alg::kRsaPssRsaeSha256,
-                               tls_consts::sig_alg::kRsaPkcs1Sha256,
-                               tls_consts::sig_alg::kEcdsaSecp384r1Sha384,
-                               tls_consts::sig_alg::kRsaPssRsaeSha384,
-                               tls_consts::sig_alg::kRsaPkcs1Sha384,
-                               tls_consts::sig_alg::kRsaPssRsaeSha512,
-                               tls_consts::sig_alg::kRsaPkcs1Sha512,
-                               tls_consts::sig_alg::kRsaPkcs1Sha1};
-            spec.extensions.push_back(sig);
-            spec.extensions.push_back(status_req);
-            spec.extensions.push_back(sct);
-
-            auto alpn = std::make_shared<ALPNBlueprint>();
-            alpn->protocols = {"h2", "http/1.1"};
-            spec.extensions.push_back(alpn);
-
-            auto ch_id = std::make_shared<ChannelIDBlueprint>();
-            spec.extensions.push_back(ch_id);
-
-            auto points = std::make_shared<ECPointFormatsBlueprint>();
-            points->formats = {0x00};
-            spec.extensions.push_back(points);
-
-            auto groups = std::make_shared<SupportedGroupsBlueprint>();
-            groups->groups = {kGreasePlaceholder, tls_consts::group::kX25519, tls_consts::group::kSecp256r1, tls_consts::group::kSecp384r1};
-            spec.extensions.push_back(groups);
-
-            spec.extensions.push_back(std::make_shared<GreaseBlueprint>());
-            spec.extensions.push_back(padding);
-            break;
-        }
-
-        case FingerprintType::Chrome_70:
-        case FingerprintType::Chrome_72:
-        case FingerprintType::Chrome_83:
-        case FingerprintType::Chrome_87:
-        {
-            return BuildChrome70To87Spec();
-        }
-
-        case FingerprintType::Chrome_106_Shuffle:
-        {
-            auto base = GetChrome120();
-            std::erase_if(base.extensions,
-                          [](const auto& e) { return e->type() == ExtensionType::kApplicationSettings || e->type() == ExtensionType::kGreaseECH; });
-            base.shuffle_extensions = true;
-            return base;
-        }
-
-        case FingerprintType::Chrome_131:
-        {
-            auto s = GetChrome120();
-            for (auto& ext : s.extensions)
-            {
-                if (ext->type() == ExtensionType::kSupportedGroups)
-                {
-                    auto g = std::static_pointer_cast<SupportedGroupsBlueprint>(ext);
-                    g->groups = {kGreasePlaceholder,
-                                 tls_consts::group::kX25519Mlkem768,
-                                 tls_consts::group::kX25519,
-                                 tls_consts::group::kSecp256r1,
-                                 tls_consts::group::kSecp384r1};
-                }
-                if (ext->type() == ExtensionType::kKeyShare)
-                {
-                    auto k = std::static_pointer_cast<KeyShareBlueprint>(ext);
-                    k->key_shares = {{.group = kGreasePlaceholder, .data = {}},
-                                     {.group = tls_consts::group::kX25519Mlkem768, .data = {}},
-                                     {.group = tls_consts::group::kX25519, .data = {}}};
-                }
-            }
-            return s;
-        }
-
-        case FingerprintType::Chrome_133:
-        {
-            auto s = GetChrome120();
-
-            for (auto& ext : s.extensions)
-            {
-                if (ext->type() == ExtensionType::kApplicationSettings)
-                {
-                    auto alps = std::make_shared<ApplicationSettingsNewBlueprint>();
-                    alps->supported_protocols = {"h2"};
-                    ext = alps;
-                }
-                if (ext->type() == ExtensionType::kSupportedGroups)
-                {
-                    auto g = std::static_pointer_cast<SupportedGroupsBlueprint>(ext);
-                    g->groups = {kGreasePlaceholder,
-                                 tls_consts::group::kX25519Mlkem768,
-                                 tls_consts::group::kX25519,
-                                 tls_consts::group::kSecp256r1,
-                                 tls_consts::group::kSecp384r1};
-                }
-                if (ext->type() == ExtensionType::kKeyShare)
-                {
-                    auto k = std::static_pointer_cast<KeyShareBlueprint>(ext);
-                    k->key_shares = {{.group = kGreasePlaceholder, .data = {}},
-                                     {.group = tls_consts::group::kX25519Mlkem768, .data = {}},
-                                     {.group = tls_consts::group::kX25519, .data = {}}};
-                }
-            }
-            return s;
-        }
-
-        case FingerprintType::Firefox_102:
         case FingerprintType::Firefox_120:
         {
             spec.cipher_suites = {
@@ -377,7 +158,7 @@ FingerprintSpec FingerprintFactory::Get(FingerprintType type)
             rsl->limit = 0x4001;
             spec.extensions.push_back(rsl);
 
-            spec.extensions.push_back(padding);
+            spec.extensions.push_back(grease_ech);
             break;
         }
 
@@ -394,17 +175,23 @@ FingerprintSpec FingerprintFactory::Get(FingerprintType type)
                 tls_consts::cipher::kTlsEcdheRsaWithAes256GcmSha384,
                 tls_consts::cipher::kTlsEcdheRsaWithAes128GcmSha256,
                 tls_consts::cipher::kTlsEcdheRsaWithChacha20Poly1305,
+                tls_consts::cipher::kTlsEcdheEcdsaWithAes256CbcSha384,
                 tls_consts::cipher::kTlsEcdheEcdsaWithAes128CbcSha256,
                 tls_consts::cipher::kTlsEcdheEcdsaWithAes256CbcSha,
                 tls_consts::cipher::kTlsEcdheEcdsaWithAes128CbcSha,
+                tls_consts::cipher::kTlsEcdheRsaWithAes256CbcSha384,
                 tls_consts::cipher::kTlsEcdheRsaWithAes128CbcSha256,
                 tls_consts::cipher::kTlsEcdheRsaWithAes256CbcSha,
                 tls_consts::cipher::kTlsEcdheRsaWithAes128CbcSha,
                 tls_consts::cipher::kTlsRsaWithAes256GcmSha384,
                 tls_consts::cipher::kTlsRsaWithAes128GcmSha256,
+                tls_consts::cipher::kTlsRsaWithAes256CbcSha256,
                 tls_consts::cipher::kTlsRsaWithAes128CbcSha256,
                 tls_consts::cipher::kTlsRsaWithAes256CbcSha,
                 tls_consts::cipher::kTlsRsaWithAes128CbcSha,
+                tls_consts::cipher::kTlsEcdheEcdsaWith3desEdeCbcSha,
+                tls_consts::cipher::kTlsEcdheRsaWith3desEdeCbcSha,
+                tls_consts::cipher::kTlsRsaWith3desEdeCbcSha,
             };
 
             spec.extensions.push_back(grease);
@@ -437,6 +224,7 @@ FingerprintSpec FingerprintFactory::Get(FingerprintType type)
                                tls_consts::sig_alg::kEcdsaSecp384r1Sha384,
                                tls_consts::sig_alg::kEcdsaSha1,
                                tls_consts::sig_alg::kRsaPssRsaeSha384,
+                               tls_consts::sig_alg::kRsaPssRsaeSha384,
                                tls_consts::sig_alg::kRsaPkcs1Sha384,
                                tls_consts::sig_alg::kRsaPssRsaeSha512,
                                tls_consts::sig_alg::kRsaPkcs1Sha512,
@@ -461,15 +249,64 @@ FingerprintSpec FingerprintFactory::Get(FingerprintType type)
             break;
         }
 
-        case FingerprintType::Browser360_11_0:
+        case FingerprintType::Android_11_OkHttp:
         {
-            auto s = BuildChrome70To87Spec();
-            auto ch_id = std::make_shared<ChannelIDBlueprint>();
-            ch_id->old_id = false;
+            spec.cipher_suites = {
+                tls_consts::cipher::kTlsAes128GcmSha256,
+                tls_consts::cipher::kTlsAes256GcmSha384,
+                tls_consts::cipher::kTlsChacha20Poly1305Sha256,
+                tls_consts::cipher::kTlsEcdheEcdsaWithAes128GcmSha256,
+                tls_consts::cipher::kTlsEcdheEcdsaWithAes256GcmSha384,
+                tls_consts::cipher::kTlsEcdheEcdsaWithChacha20Poly1305,
+                tls_consts::cipher::kTlsEcdheRsaWithAes128GcmSha256,
+                tls_consts::cipher::kTlsEcdheRsaWithAes256GcmSha384,
+                tls_consts::cipher::kTlsEcdheRsaWithChacha20Poly1305,
+                tls_consts::cipher::kTlsEcdheRsaWithAes128CbcSha,
+                tls_consts::cipher::kTlsEcdheRsaWithAes256CbcSha,
+                tls_consts::cipher::kTlsRsaWithAes128GcmSha256,
+                tls_consts::cipher::kTlsRsaWithAes256GcmSha384,
+                tls_consts::cipher::kTlsRsaWithAes128CbcSha,
+                tls_consts::cipher::kTlsRsaWithAes256CbcSha,
+            };
 
-            s.extensions.insert(s.extensions.end() - 2, ch_id);
-            return s;
+            spec.extensions.push_back(sni);
+            spec.extensions.push_back(ems);
+            spec.extensions.push_back(reneg);
+
+            auto groups = std::make_shared<SupportedGroupsBlueprint>();
+            groups->groups = {tls_consts::group::kX25519, tls_consts::group::kSecp256r1, tls_consts::group::kSecp384r1};
+            spec.extensions.push_back(groups);
+
+            auto points = std::make_shared<ECPointFormatsBlueprint>();
+            points->formats = {0x00};
+            spec.extensions.push_back(points);
+
+            spec.extensions.push_back(status_req);
+
+            auto sig = std::make_shared<SignatureAlgorithmsBlueprint>();
+            sig->algorithms = {tls_consts::sig_alg::kEcdsaSecp256r1Sha256,
+                               tls_consts::sig_alg::kRsaPssRsaeSha256,
+                               tls_consts::sig_alg::kRsaPkcs1Sha256,
+                               tls_consts::sig_alg::kEcdsaSecp384r1Sha384,
+                               tls_consts::sig_alg::kRsaPssRsaeSha384,
+                               tls_consts::sig_alg::kRsaPkcs1Sha384,
+                               tls_consts::sig_alg::kRsaPssRsaeSha512,
+                               tls_consts::sig_alg::kRsaPkcs1Sha512,
+                               tls_consts::sig_alg::kRsaPkcs1Sha1};
+            spec.extensions.push_back(sig);
+
+            auto ks = std::make_shared<KeyShareBlueprint>();
+            ks->key_shares = {{.group = tls_consts::group::kX25519, .data = {}}};
+            spec.extensions.push_back(ks);
+
+            auto vers = std::make_shared<SupportedVersionsBlueprint>();
+            vers->versions = {tls_consts::kVer13, tls_consts::kVer12};
+            spec.extensions.push_back(vers);
+            break;
         }
+
+        default:
+            return GetChrome120();
     }
     return spec;
 }
@@ -478,7 +315,24 @@ FingerprintSpec FingerprintFactory::GetChrome120()
 {
     FingerprintSpec spec;
     spec.client_version = tls_consts::kVer12;
-    spec.cipher_suites = {kGreasePlaceholder, 0x1301, 0x1302, 0x1303};
+    spec.cipher_suites = {
+        kGreasePlaceholder,
+        tls_consts::cipher::kTlsAes128GcmSha256,
+        tls_consts::cipher::kTlsAes256GcmSha384,
+        tls_consts::cipher::kTlsChacha20Poly1305Sha256,
+        tls_consts::cipher::kTlsEcdheEcdsaWithAes128GcmSha256,
+        tls_consts::cipher::kTlsEcdheRsaWithAes128GcmSha256,
+        tls_consts::cipher::kTlsEcdheEcdsaWithAes256GcmSha384,
+        tls_consts::cipher::kTlsEcdheRsaWithAes256GcmSha384,
+        tls_consts::cipher::kTlsEcdheEcdsaWithChacha20Poly1305,
+        tls_consts::cipher::kTlsEcdheRsaWithChacha20Poly1305,
+        tls_consts::cipher::kTlsEcdheRsaWithAes128CbcSha,
+        tls_consts::cipher::kTlsEcdheRsaWithAes256CbcSha,
+        tls_consts::cipher::kTlsRsaWithAes128GcmSha256,
+        tls_consts::cipher::kTlsRsaWithAes256GcmSha384,
+        tls_consts::cipher::kTlsRsaWithAes128CbcSha,
+        tls_consts::cipher::kTlsRsaWithAes256CbcSha,
+    };
     spec.extensions.push_back(std::make_shared<GreaseBlueprint>());
     spec.extensions.push_back(std::make_shared<SNIBlueprint>());
     spec.extensions.push_back(std::make_shared<EMSBlueprint>());
@@ -521,7 +375,7 @@ FingerprintSpec FingerprintFactory::GetChrome120()
     spec.extensions.push_back(psk_modes);
 
     auto vers = std::make_shared<SupportedVersionsBlueprint>();
-    vers->versions = {kGreasePlaceholder, tls_consts::kVer13};
+    vers->versions = {kGreasePlaceholder, tls_consts::kVer13, tls_consts::kVer12};
     spec.extensions.push_back(vers);
 
     auto comp = std::make_shared<CompressCertBlueprint>();

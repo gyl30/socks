@@ -107,8 +107,7 @@ def generate_keys():
         lines = output.strip().split('\n')
         sk = lines[0].split(': ')[1].strip()
         pk = lines[1].split(': ')[1].strip()
-        verify = lines[2].split(': ')[1].strip() if len(lines) > 2 else ""
-        return {"private_key": sk, "public_key": pk, "verify_public_key": verify}
+        return {"private_key": sk, "public_key": pk}
     except Exception as e:
         raise Exception(f"Failed to generate keys: {e}")
 
@@ -163,7 +162,7 @@ def run_valgrind_test():
         "inbound": {"host": "127.0.0.1", "port": 1098},
         "outbound": {"host": "127.0.0.1", "port": 20008},
         "socks": {"host": "127.0.0.1", "port": 1098, "auth": False},
-        "reality": { "sni": "valgrind.test.com", "public_key": keys["public_key"], "private_key": keys["private_key"], "short_id": SHORT_ID, "verify_public_key": keys["verify_public_key"] },
+        "reality": { "sni": "valgrind.test.com", "public_key": keys["public_key"], "private_key": keys["private_key"], "short_id": SHORT_ID },
         "timeout": {"idle": 10}
     }
     

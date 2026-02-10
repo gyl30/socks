@@ -18,13 +18,17 @@ package "Mux Protocol Layer" {
     interface mux_stream_interface {
         + {abstract} on_data()
         + {abstract} on_close()
+        + {abstract} on_reset()
     }
 
     class mux_connection {
         - socket_ : tcp::socket
         - streams_ : map<id, stream>
+        - limits_config_
         + send_async(cmd, payload)
         + register_stream()
+        + can_accept_stream()
+        + has_stream()
         - read_loop()
         - write_loop()
     }
@@ -32,6 +36,7 @@ package "Mux Protocol Layer" {
     class mux_dispatcher {
         + on_plaintext_data()
         + pack()
+        - max_buffer_
     }
 
     class mux_tunnel_impl<StreamLayer> {
@@ -70,6 +75,16 @@ package "Client Side" {
         + run_tcp()
         + run_udp()
     }
+
+    class tcp_socks_session {
+        - idle_timer_
+        + idle_watchdog()
+    }
+
+    class udp_socks_session {
+        - idle_timer_
+        + idle_watchdog()
+    }
 }
 
 package "Server Side" {
@@ -91,6 +106,7 @@ package "Server Side" {
     class remote_udp_session {
         - udp_socket_ : udp::socket
         + start()
+        + idle_watchdog()
     }
 }
 
@@ -100,6 +116,8 @@ local_client *-- mux_tunnel_impl : manages >
 local_client ..> socks_session : creates >
 
 socks_session ..> mux_stream : uses >
+tcp_socks_session ..> upstream : uses >
+udp_socks_session ..> mux_stream : uses >
 
 remote_server o-- io_context_pool
 remote_server ..> mux_tunnel_impl : creates >

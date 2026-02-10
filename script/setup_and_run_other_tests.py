@@ -14,8 +14,7 @@ def generate_keys():
         lines = output.strip().split('\n')
         sk = lines[0].split(': ')[1].strip()
         pk = lines[1].split(': ')[1].strip()
-        vk = lines[2].split(': ')[1].strip()
-        return sk, pk, vk
+        return sk, pk
     except Exception as e:
         print(f"Key gen failed: {e}")
         sys.exit(1)
@@ -45,7 +44,7 @@ def start_fake_tls_server(port, sni):
     return subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 def main():
-    sk, pk, vk = generate_keys()
+    sk, pk = generate_keys()
     short_id = "0123456789abcdef"
     sni = "www.example.com"
     fallback_port = 14443
@@ -79,8 +78,7 @@ def main():
             "sni": sni,
             "public_key": pk,
             "private_key": sk,
-            "short_id": short_id,
-            "verify_public_key": vk
+            "short_id": short_id
         }
     }
 

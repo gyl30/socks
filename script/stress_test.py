@@ -42,8 +42,7 @@ def generate_keys():
         lines = output.strip().split('\n')
         sk = lines[0].split(': ')[1].strip()
         pk = lines[1].split(': ')[1].strip()
-        verify = lines[2].split(': ')[1].strip() if len(lines) > 2 and "verify key" in lines[2] else ""
-        return {"private_key": sk, "public_key": pk, "verify_public_key": verify}
+        return {"private_key": sk, "public_key": pk}
     except Exception as e:
         raise Exception(f"Failed to generate keys via socks: {e}")
 
@@ -177,7 +176,7 @@ async def run_stress_test():
     echo_server = await start_echo_server(ECHO_PORT)
     
     keys = generate_keys()
-    pk, sk, vk = keys["public_key"], keys["private_key"], keys["verify_public_key"]
+    pk, sk = keys["public_key"], keys["private_key"]
     sid = "0102030405060708"
     
     server_cfg = {
@@ -193,7 +192,7 @@ async def run_stress_test():
         "inbound": {"host": "127.0.0.1", "port": SOCKS_PORT},
         "outbound": {"host": "127.0.0.1", "port": 20006},
         "socks": {"host": "127.0.0.1", "port": SOCKS_PORT, "auth": False},
-        "reality": { "sni": "stress.test.com", "public_key": pk, "private_key": sk, "short_id": sid, "verify_public_key": vk },
+        "reality": { "sni": "stress.test.com", "public_key": pk, "private_key": sk, "short_id": sid },
         "timeout": {"idle": 120},
         "limits": {"max_connections": 20000}
     }
