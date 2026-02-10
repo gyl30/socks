@@ -1,12 +1,12 @@
-#include <filesystem>
-#include <fstream>
 #include <string>
+#include <fstream>
 #include <cstdint>
 #include <unistd.h>
+#include <filesystem>
 
 #include <gtest/gtest.h>
-#include <asio/io_context.hpp>
 #include <asio/ip/address.hpp>
+#include <asio/io_context.hpp>
 
 #include "router.h"
 #include "test_util.h"

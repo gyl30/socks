@@ -1,8 +1,9 @@
 #ifndef MONITOR_SERVER_H
 #define MONITOR_SERVER_H
 
-#include <memory>
 #include <mutex>
+#include <memory>
+
 #include <asio.hpp>
 
 namespace mux
