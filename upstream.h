@@ -35,7 +35,10 @@ class upstream
 class direct_upstream : public upstream
 {
    public:
-    explicit direct_upstream(const asio::any_io_executor& ex, connection_context ctx) : socket_(ex), resolver_(ex), ctx_(std::move(ctx)) {}
+    explicit direct_upstream(const asio::any_io_executor& ex, connection_context ctx, std::uint32_t mark = 0)
+        : socket_(ex), resolver_(ex), ctx_(std::move(ctx)), mark_(mark)
+    {
+    }
 
     asio::awaitable<bool> connect(const std::string& host, std::uint16_t port) override;
 
@@ -49,6 +52,7 @@ class direct_upstream : public upstream
     asio::ip::tcp::socket socket_;
     asio::ip::tcp::resolver resolver_;
     connection_context ctx_;
+    std::uint32_t mark_ = 0;
 };
 
 class proxy_upstream : public upstream

@@ -16,7 +16,8 @@
 #include "statistics.h"
 #include "crypto_util.h"
 #include "context_pool.h"
-#include "local_client.h"
+#include "socks_client.h"
+#include "tproxy_client.h"
 #include "remote_server.h"
 #include "monitor_server.h"
 
@@ -115,7 +116,8 @@ int main(int argc, char** argv)
     }
 
     std::shared_ptr<mux::remote_server> server = nullptr;
-    std::shared_ptr<mux::local_client> client = nullptr;
+    std::shared_ptr<mux::socks_client> socks = nullptr;
+    std::shared_ptr<mux::tproxy_client> tproxy = nullptr;
     std::shared_ptr<mux::monitor_server> monitor = nullptr;
 
     if (cfg.monitor.enabled)
@@ -134,8 +136,16 @@ int main(int argc, char** argv)
     }
     else if (cfg.mode == "client")
     {
-        client = std::make_shared<mux::local_client>(pool, cfg);
-        client->start();
+        if (cfg.socks.enabled)
+        {
+            socks = std::make_shared<mux::socks_client>(pool, cfg);
+            socks->start();
+        }
+        if (cfg.tproxy.enabled)
+        {
+            tproxy = std::make_shared<mux::tproxy_client>(pool, cfg);
+            tproxy->start();
+        }
     }
 
     asio::io_context& signal_ctx = pool.get_io_context();
@@ -154,13 +164,17 @@ int main(int argc, char** argv)
     }
 
     signals.async_wait(
-        [&pool, server, client](const std::error_code& error, int)
+        [&pool, server, socks, tproxy](const std::error_code& error, int)
         {
             if (!error)
             {
-                if (client != nullptr)
+                if (socks != nullptr)
                 {
-                    client->stop();
+                    socks->stop();
+                }
+                if (tproxy != nullptr)
+                {
+                    tproxy->stop();
                 }
                 if (server != nullptr)
                 {

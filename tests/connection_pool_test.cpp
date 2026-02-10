@@ -11,7 +11,7 @@
 
 #include "crypto_util.h"
 #include "context_pool.h"
-#include "local_client.h"
+#include "socks_client.h"
 #include "reality_messages.h"
 #include "remote_server.h"
 
@@ -64,7 +64,7 @@ TEST_F(ConnectionPoolTest, TunnelReuse)
     client_cfg.reality.sni = sni;
     client_cfg.reality.short_id = "0102030405060708";
     client_cfg.limits = limits;
-    auto client = std::make_shared<mux::local_client>(pool, client_cfg);
+    auto client = std::make_shared<mux::socks_client>(pool, client_cfg);
     client->start();
 
     std::thread t([&pool] { pool.run(); });

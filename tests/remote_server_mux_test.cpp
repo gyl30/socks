@@ -17,7 +17,7 @@
 #include "mux_codec.h"
 #include "crypto_util.h"
 #include "context_pool.h"
-#include "local_client.h"
+#include "socks_client.h"
 #include "mux_protocol.h"
 #include "reality_auth.h"
 #include "remote_server.h"
@@ -102,7 +102,7 @@ TEST_F(RemoteServerMuxTest, ProcessTcpConnectRequest)
     mux::config::timeout_t timeouts;
     timeouts.read = 10;
     timeouts.write = 10;
-    auto client = std::make_shared<mux::local_client>(pool, make_client_cfg(server_port, "www.google.com", timeouts));
+    auto client = std::make_shared<mux::socks_client>(pool, make_client_cfg(server_port, "www.google.com", timeouts));
     client->start();
 
     std::uint16_t local_socks_port = 0;
@@ -162,7 +162,7 @@ TEST_F(RemoteServerMuxTest, ProcessUdpAssociateRequest)
     mux::config::timeout_t timeouts;
     timeouts.read = 10;
     timeouts.write = 10;
-    auto client = std::make_shared<mux::local_client>(pool, make_client_cfg(server_port, "www.google.com", timeouts));
+    auto client = std::make_shared<mux::socks_client>(pool, make_client_cfg(server_port, "www.google.com", timeouts));
     client->start();
 
     std::uint16_t local_socks_port = 0;
@@ -217,7 +217,7 @@ TEST_F(RemoteServerMuxTest, TargetConnectFail)
     server->start();
     const std::uint16_t server_port = server->listen_port();
 
-    auto client = std::make_shared<mux::local_client>(pool, make_client_cfg(server_port, "www.google.com", mux::config::timeout_t{}));
+    auto client = std::make_shared<mux::socks_client>(pool, make_client_cfg(server_port, "www.google.com", mux::config::timeout_t{}));
     client->start();
 
     std::uint16_t local_socks_port = 0;
@@ -273,7 +273,7 @@ TEST_F(RemoteServerMuxTest, TargetResolveFail)
     server->start();
     const std::uint16_t server_port = server->listen_port();
 
-    auto client = std::make_shared<mux::local_client>(pool, make_client_cfg(server_port, "www.google.com", mux::config::timeout_t{}));
+    auto client = std::make_shared<mux::socks_client>(pool, make_client_cfg(server_port, "www.google.com", mux::config::timeout_t{}));
     client->start();
 
     std::uint16_t local_socks_port = 0;
