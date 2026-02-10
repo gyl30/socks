@@ -16,7 +16,6 @@ try:
     lines = output.strip().split('\n')
     SERVER_KEY = lines[0].split(': ')[1].strip()
     SERVER_PUB = lines[1].split(': ')[1].strip()
-    VERIFY_PUB = lines[2].split(': ')[1].strip() if len(lines) > 2 and 'Verify Key' in lines[2] else ""
     print(f"Generated Keys:\nPriv: {SERVER_KEY}\nPub:  {SERVER_PUB}")
 except Exception as e:
     print(f"Failed to generate keys: {e}")
@@ -82,8 +81,7 @@ def write_configs():
     "reality": {{
         "sni": "www.google.com",
         "public_key": "{SERVER_PUB}",
-        "short_id": "{SHORT_ID}",
-        "verify_public_key": "{VERIFY_PUB}"
+        "short_id": "{SHORT_ID}"
     }},
     "limits": {{
         "max_connections": 2

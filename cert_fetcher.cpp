@@ -157,7 +157,11 @@ asio::awaitable<std::error_code> cert_fetcher::fetch_session::perform_handshake_
     }
 
     auto spec = FingerprintFactory::Get(FingerprintType::Chrome_120);
-    auto ch = ClientHelloBuilder::build(spec, session_id, client_random, std::vector<std::uint8_t>(client_public_, client_public_ + 32), sni_);
+    auto ch = ClientHelloBuilder::build(spec,
+                                        session_id,
+                                        client_random,
+                                        std::vector<std::uint8_t>(client_public_, client_public_ + 32),
+                                        sni_);
 
     auto ch_rec = write_record_header(kContentTypeHandshake, static_cast<std::uint16_t>(ch.size()));
     ch_rec.insert(ch_rec.end(), ch.begin(), ch.end());
