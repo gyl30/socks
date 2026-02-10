@@ -17,8 +17,8 @@
 #include "crypto_util.h"
 #include "context_pool.h"
 #include "socks_client.h"
-#include "tproxy_client.h"
 #include "remote_server.h"
+#include "tproxy_client.h"
 #include "monitor_server.h"
 
 static void print_usage(const char* prog)
@@ -122,10 +122,7 @@ int main(int argc, char** argv)
 
     if (cfg.monitor.enabled)
     {
-        monitor = std::make_shared<mux::monitor_server>(pool.get_io_context(),
-                                                        cfg.monitor.port,
-                                                        cfg.monitor.token,
-                                                        cfg.monitor.min_interval_ms);
+        monitor = std::make_shared<mux::monitor_server>(pool.get_io_context(), cfg.monitor.port, cfg.monitor.token, cfg.monitor.min_interval_ms);
         monitor->start();
     }
 

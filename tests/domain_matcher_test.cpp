@@ -8,55 +8,58 @@
 
 using mux::domain_matcher;
 
-class DomainMatcherTest : public ::testing::Test
+class domain_matcher_test : public ::testing::Test
 {
    protected:
+    domain_matcher& matcher() { return matcher_; }
+
+   private:
     domain_matcher matcher_;
 };
 
-TEST_F(DomainMatcherTest, BasicMatch)
+TEST_F(domain_matcher_test, BasicMatch)
 {
-    matcher_.add("google.com");
-    EXPECT_TRUE(matcher_.match("google.com"));
-    EXPECT_TRUE(matcher_.match("www.google.com"));
-    EXPECT_TRUE(matcher_.match("mail.google.com"));
-    EXPECT_FALSE(matcher_.match("google.com.cn"));
-    EXPECT_FALSE(matcher_.match("agoogle.com"));
+    matcher().add("google.com");
+    EXPECT_TRUE(matcher().match("google.com"));
+    EXPECT_TRUE(matcher().match("www.google.com"));
+    EXPECT_TRUE(matcher().match("mail.google.com"));
+    EXPECT_FALSE(matcher().match("google.com.cn"));
+    EXPECT_FALSE(matcher().match("agoogle.com"));
 }
 
-TEST_F(DomainMatcherTest, CaseInsensitive)
+TEST_F(domain_matcher_test, CaseInsensitive)
 {
-    matcher_.add("Google.Com");
-    EXPECT_TRUE(matcher_.match("GOOGLE.COM"));
-    EXPECT_TRUE(matcher_.match("www.google.com"));
+    matcher().add("Google.Com");
+    EXPECT_TRUE(matcher().match("GOOGLE.COM"));
+    EXPECT_TRUE(matcher().match("www.google.com"));
 }
 
-TEST_F(DomainMatcherTest, TrailingDot)
+TEST_F(domain_matcher_test, TrailingDot)
 {
-    matcher_.add("example.com.");
-    EXPECT_TRUE(matcher_.match("example.com"));
-    EXPECT_TRUE(matcher_.match("example.com."));
+    matcher().add("example.com.");
+    EXPECT_TRUE(matcher().match("example.com"));
+    EXPECT_TRUE(matcher().match("example.com."));
 
-    matcher_.add("another.com");
-    EXPECT_TRUE(matcher_.match("another.com."));
+    matcher().add("another.com");
+    EXPECT_TRUE(matcher().match("another.com."));
 }
 
-TEST_F(DomainMatcherTest, EmptyDomain)
+TEST_F(domain_matcher_test, EmptyDomain)
 {
-    matcher_.add("");
-    EXPECT_FALSE(matcher_.match(""));
-    EXPECT_FALSE(matcher_.match("any.com"));
+    matcher().add("");
+    EXPECT_FALSE(matcher().match(""));
+    EXPECT_FALSE(matcher().match("any.com"));
 }
 
-TEST_F(DomainMatcherTest, SuffixMatch)
+TEST_F(domain_matcher_test, SuffixMatch)
 {
-    matcher_.add("com.cn");
-    EXPECT_TRUE(matcher_.match("test.com.cn"));
-    EXPECT_TRUE(matcher_.match("sub.test.com.cn"));
-    EXPECT_FALSE(matcher_.match("mycom.cn"));
+    matcher().add("com.cn");
+    EXPECT_TRUE(matcher().match("test.com.cn"));
+    EXPECT_TRUE(matcher().match("sub.test.com.cn"));
+    EXPECT_FALSE(matcher().match("mycom.cn"));
 }
 
-TEST_F(DomainMatcherTest, LoadFromFile)
+TEST_F(domain_matcher_test, LoadFromFile)
 {
     const std::string filename = "test_domains.txt";
     {
@@ -68,19 +71,19 @@ TEST_F(DomainMatcherTest, LoadFromFile)
         of << "apple.com.  \n";
     }
 
-    EXPECT_TRUE(matcher_.load(filename));
-    EXPECT_TRUE(matcher_.match("google.com"));
-    EXPECT_TRUE(matcher_.match("www.netflix.com"));
-    EXPECT_TRUE(matcher_.match("apple.com"));
+    EXPECT_TRUE(matcher().load(filename));
+    EXPECT_TRUE(matcher().match("google.com"));
+    EXPECT_TRUE(matcher().match("www.netflix.com"));
+    EXPECT_TRUE(matcher().match("apple.com"));
 
     std::filesystem::remove(filename);
 }
 
-TEST_F(DomainMatcherTest, LoadNonExistentFile) { EXPECT_FALSE(matcher_.load("non_existent_file.txt")); }
+TEST_F(domain_matcher_test, LoadNonExistentFile) { EXPECT_FALSE(matcher().load("non_existent_file.txt")); }
 
-TEST_F(DomainMatcherTest, MatchWithEmptyOrDotOnly)
+TEST_F(domain_matcher_test, MatchWithEmptyOrDotOnly)
 {
-    EXPECT_FALSE(matcher_.match(""));
+    EXPECT_FALSE(matcher().match(""));
 
-    EXPECT_FALSE(matcher_.match("."));
+    EXPECT_FALSE(matcher().match("."));
 }

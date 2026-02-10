@@ -2,18 +2,18 @@
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
-#include <system_error>
-
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <system_error>
 
 #ifdef __linux__
 #include <linux/netfilter_ipv4.h>
 #include <linux/netfilter_ipv6.h>
+
 #endif
 
-#include <asio/ip/address.hpp>
 #include <asio/ip/udp.hpp>
+#include <asio/ip/address.hpp>
 
 #include "net_utils.h"
 

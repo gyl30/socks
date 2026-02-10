@@ -2,8 +2,8 @@
 #define MUX_DISPATCHER_H
 
 #include <span>
-#include <vector>
 #include <atomic>
+#include <vector>
 #include <cstdint>
 #include <cstring>
 #include <functional>

@@ -82,22 +82,22 @@ void connection_context::new_trace_id() { trace_id_ = generate_trace_id(); }
 
 std::string format_bytes(std::uint64_t bytes)
 {
-    constexpr std::uint64_t k_kib = 1024ULL;
-    constexpr std::uint64_t k_mib = k_kib * 1024ULL;
-    constexpr std::uint64_t k_gib = k_mib * 1024ULL;
+    constexpr std::uint64_t kKib = 1024ULL;
+    constexpr std::uint64_t kMib = kKib * 1024ULL;
+    constexpr std::uint64_t kGib = kMib * 1024ULL;
     const auto bytes_d = static_cast<double>(bytes);
     std::ostringstream oss;
-    if (bytes >= k_gib)
+    if (bytes >= kGib)
     {
-        oss << std::fixed << std::setprecision(2) << (bytes_d / static_cast<double>(k_gib)) << "GB";
+        oss << std::fixed << std::setprecision(2) << (bytes_d / static_cast<double>(kGib)) << "GB";
     }
-    else if (bytes >= k_mib)
+    else if (bytes >= kMib)
     {
-        oss << std::fixed << std::setprecision(2) << (bytes_d / static_cast<double>(k_mib)) << "MB";
+        oss << std::fixed << std::setprecision(2) << (bytes_d / static_cast<double>(kMib)) << "MB";
     }
-    else if (bytes >= k_kib)
+    else if (bytes >= kKib)
     {
-        oss << std::fixed << std::setprecision(2) << (bytes_d / static_cast<double>(k_kib)) << "KB";
+        oss << std::fixed << std::setprecision(2) << (bytes_d / static_cast<double>(kKib)) << "KB";
     }
     else
     {

@@ -4,6 +4,7 @@
 #include <memory>
 #include <string>
 #include <cstdint>
+
 #include <asio.hpp>
 
 #include "config.h"
@@ -21,7 +22,7 @@ class router;
 
 class socks_session : public std::enable_shared_from_this<socks_session>
 {
-    friend class SocksSessionTester;
+    friend class socks_session_tester;
 
    public:
     socks_session(asio::ip::tcp::socket socket,

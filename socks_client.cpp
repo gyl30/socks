@@ -15,8 +15,8 @@
 #include "log.h"
 #include "config.h"
 #include "router.h"
-#include "socks_session.h"
 #include "socks_client.h"
+#include "socks_session.h"
 
 namespace mux
 {
@@ -157,8 +157,7 @@ asio::awaitable<void> socks_client::accept_local_loop()
         {
             const std::uint32_t sid = tunnel_pool_->next_session_id();
             LOG_INFO("client session {} selected tunnel", sid);
-            const auto session =
-                std::make_shared<socks_session>(std::move(s), selected_tunnel, router_, sid, socks_config_, timeout_config_);
+            const auto session = std::make_shared<socks_session>(std::move(s), selected_tunnel, router_, sid, socks_config_, timeout_config_);
             session->start();
         }
         else

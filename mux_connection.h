@@ -30,10 +30,10 @@ namespace mux
 
 enum class mux_connection_state : std::uint8_t
 {
-    connected,
-    draining,
-    closing,
-    closed
+    kConnected,
+    kDraining,
+    kClosing,
+    kClosed
 };
 
 struct mux_write_msg
@@ -83,7 +83,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     [[nodiscard]] bool is_open() const
     {
         const auto s = connection_state_.load(std::memory_order_acquire);
-        return s == mux_connection_state::connected || s == mux_connection_state::draining;
+        return s == mux_connection_state::kConnected || s == mux_connection_state::kDraining;
     }
 
     [[nodiscard]] bool can_accept_stream();

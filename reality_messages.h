@@ -47,10 +47,10 @@ class message_builder
     static void push_vector_u16(std::vector<std::uint8_t>& buf, const std::vector<std::uint8_t>& data);
 };
 
-class ClientHelloBuilder
+class client_hello_builder
 {
    public:
-    static std::vector<std::uint8_t> build(const FingerprintSpec& spec,
+    static std::vector<std::uint8_t> build(const fingerprint_spec& spec,
                                            const std::vector<std::uint8_t>& session_id,
                                            const std::vector<std::uint8_t>& random,
                                            const std::vector<std::uint8_t>& x25519_pubkey,

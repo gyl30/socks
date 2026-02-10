@@ -19,7 +19,7 @@
 #include "log_context.h"
 #include "mock_mux_connection.h"
 
-class UpstreamTest : public ::testing::Test
+class upstream_test : public ::testing::Test
 {
    protected:
     void TearDown() override { ctx_.stop(); }
@@ -29,10 +29,10 @@ class UpstreamTest : public ::testing::Test
     asio::io_context ctx_;
 };
 
-class EchoServer
+class echo_server
 {
    public:
-    EchoServer() : acceptor_(ctx_, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0))
+    echo_server() : acceptor_(ctx_, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0))
     {
         do_accept();
         thread_ = std::thread([this] { ctx_.run(); });
@@ -40,7 +40,7 @@ class EchoServer
 
     [[nodiscard]] std::uint16_t port() const { return acceptor_.local_endpoint().port(); }
 
-    ~EchoServer() noexcept
+    ~echo_server() noexcept
     {
         try
         {
@@ -110,9 +110,9 @@ class EchoServer
     std::thread thread_;
 };
 
-TEST_F(UpstreamTest, DirectUpstreamConnectSuccess)
+TEST_F(upstream_test, DirectUpstreamConnectSuccess)
 {
-    EchoServer server;
+    echo_server server;
     const std::uint16_t port = server.port();
 
     mux::direct_upstream upstream(ctx().get_executor(), mux::connection_context{});
@@ -134,7 +134,7 @@ TEST_F(UpstreamTest, DirectUpstreamConnectSuccess)
     server.stop();
 }
 
-TEST_F(UpstreamTest, DirectUpstreamConnectFail)
+TEST_F(upstream_test, DirectUpstreamConnectFail)
 {
     mux::direct_upstream upstream(ctx().get_executor(), mux::connection_context{});
 
@@ -142,7 +142,7 @@ TEST_F(UpstreamTest, DirectUpstreamConnectFail)
     EXPECT_FALSE(success);
 }
 
-TEST_F(UpstreamTest, DirectUpstreamWriteError)
+TEST_F(upstream_test, DirectUpstreamWriteError)
 {
     auto acceptor = std::make_shared<asio::ip::tcp::acceptor>(ctx(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
     std::uint16_t port = acceptor->local_endpoint().port();
@@ -172,7 +172,7 @@ TEST_F(UpstreamTest, DirectUpstreamWriteError)
     EXPECT_EQ(write_n, 0);
 }
 
-TEST_F(UpstreamTest, DirectUpstreamClose)
+TEST_F(upstream_test, DirectUpstreamClose)
 {
     mux::direct_upstream upstream(ctx().get_executor(), mux::connection_context{});
 
