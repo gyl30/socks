@@ -16,7 +16,7 @@
 #include "config.h"
 #include "crypto_util.h"
 #include "context_pool.h"
-#include "local_client.h"
+#include "socks_client.h"
 #include "remote_server.h"
 
 class scoped_pool
@@ -97,7 +97,7 @@ TEST_F(IntegrationTest, FullHandshakeAndMux)
     client_cfg.reality.sni = sni;
     client_cfg.reality.short_id = short_id();
     client_cfg.timeout = timeouts;
-    const auto client = std::make_shared<mux::local_client>(pool, client_cfg);
+    const auto client = std::make_shared<mux::socks_client>(pool, client_cfg);
 
     scoped_pool sp(pool);
 
@@ -211,7 +211,7 @@ TEST_F(IntegrationTest, FullDataTransfer)
     client_cfg.reality.sni = sni;
     client_cfg.reality.short_id = short_id();
     client_cfg.timeout = timeouts;
-    const auto client = std::make_shared<mux::local_client>(pool, client_cfg);
+    const auto client = std::make_shared<mux::socks_client>(pool, client_cfg);
     client->start();
 
     scoped_pool sp(pool);
