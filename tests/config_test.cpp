@@ -1,6 +1,7 @@
 #include <cstdio>
 #include <string>
 #include <fstream>
+#include <unistd.h>
 
 #include <gtest/gtest.h>
 
@@ -9,7 +10,12 @@
 class ConfigTest : public ::testing::Test
 {
    protected:
-    void SetUp() override { tmp_file_ = "test_config.json"; }
+    void SetUp() override
+    {
+        const auto* info = ::testing::UnitTest::GetInstance()->current_test_info();
+        tmp_file_ = std::string("test_config_") + info->test_suite_name() + "_" + info->name() + "_" + std::to_string(::getpid()) +
+                    ".json";
+    }
 
     void TearDown() override { std::remove(tmp_file_.c_str()); }
 

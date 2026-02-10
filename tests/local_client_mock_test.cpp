@@ -32,7 +32,6 @@ TEST(LocalClientMockTest, HandshakeFailurePaths)
     std::uint8_t pub[32], priv[32];
     ASSERT_TRUE(reality::crypto_util::generate_x25519_keypair(pub, priv));
     std::string server_pub_hex = reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(pub, pub + 32));
-    std::string verify_key_hex(64, 'b');
 
     mux::config::limits_t limits;
     limits.max_connections = 1;
@@ -62,8 +61,15 @@ TEST(LocalClientMockTest, HandshakeFailurePaths)
                 }
             });
 
-        auto client = std::make_shared<mux::local_client>(
-            pool, "127.0.0.1", std::to_string(port), 0, server_pub_hex, "example.com", "", verify_key_hex, timeouts, mux::config::socks_t{}, limits);
+        mux::config client_cfg;
+        client_cfg.outbound.host = "127.0.0.1";
+        client_cfg.outbound.port = port;
+        client_cfg.socks.port = 0;
+        client_cfg.reality.public_key = server_pub_hex;
+        client_cfg.reality.sni = "example.com";
+        client_cfg.timeout = timeouts;
+        client_cfg.limits = limits;
+        auto client = std::make_shared<mux::local_client>(pool, client_cfg);
 
         std::thread pool_thread([&pool]() { pool.run(); });
 

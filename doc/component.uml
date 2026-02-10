@@ -8,6 +8,8 @@ package "Local Machine (Client Side)" {
     node "Local Client Process" {
         [Socks5 Listener] as SocksListener
         [Socks Session Manager] as SocksSession
+        [Router] as Router
+        [Upstream Selector] as Upstream
         [Mux Tunnel (Client)] as ClientTunnel
         [Reality Engine (Encrypt)] as ClientCrypto
     }
@@ -31,7 +33,9 @@ package "Remote Machine (Server Side)" {
 ' Relationships
 App --> SocksListener : SOCKS5 Protocol
 SocksListener --> SocksSession : Create Session
-SocksSession --> ClientTunnel : Request Stream
+SocksSession --> Router : Decide Route
+Router --> Upstream : Direct / Proxy
+Upstream --> ClientTunnel : Request Stream
 ClientTunnel --> ClientCrypto : Encrypt Frame
 ClientCrypto <--> Network : REALITY Handshake & Data
 Network <--> ServerCrypto
@@ -44,6 +48,11 @@ note right of Network
   **REALITY Protocol**
   看起来像 TLS 1.3 握手
   实际上是 Mux 数据流
+end note
+
+note bottom of Dispatcher
+  stream 数量与缓冲区受限
+  非法请求回 reset
 end note
 
 @enduml

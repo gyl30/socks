@@ -6,6 +6,7 @@
 #include <gtest/gtest.h>
 
 #include "ch_parser.h"
+#include "reality_core.h"
 
 using mux::ch_parser;
 

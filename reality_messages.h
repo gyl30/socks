@@ -62,7 +62,8 @@ std::vector<std::uint8_t> write_record_header(std::uint8_t record_type, std::uin
 std::vector<std::uint8_t> construct_server_hello(const std::vector<std::uint8_t>& server_random,
                                                  const std::vector<std::uint8_t>& session_id,
                                                  std::uint16_t cipher_suite,
-                                                 const std::vector<std::uint8_t>& server_public_key);
+                                                 std::uint16_t key_share_group,
+                                                 const std::vector<std::uint8_t>& key_share_data);
 
 std::vector<std::uint8_t> construct_encrypted_extensions(const std::string& alpn);
 
@@ -78,11 +79,19 @@ struct certificate_verify_info
     std::vector<std::uint8_t> signature;
 };
 
+struct server_key_share_info
+{
+    std::uint16_t group = 0;
+    std::vector<std::uint8_t> data;
+};
+
 std::optional<certificate_verify_info> parse_certificate_verify(const std::vector<std::uint8_t>& msg);
 
 [[nodiscard]] bool is_supported_certificate_verify_scheme(std::uint16_t scheme);
 
 std::optional<std::uint16_t> extract_cipher_suite_from_server_hello(const std::vector<std::uint8_t>& server_hello);
+
+std::optional<server_key_share_info> extract_server_key_share(const std::vector<std::uint8_t>& server_hello);
 
 std::vector<std::uint8_t> extract_server_public_key(const std::vector<std::uint8_t>& server_hello);
 

@@ -186,8 +186,7 @@ def generate_keys():
         lines = output.strip().split('\n')
         sk = lines[0].split(': ')[1].strip()
         pk = lines[1].split(': ')[1].strip()
-        verify = lines[2].split(': ')[1].strip() if len(lines) > 2 and "verify key" in lines[2] else ""
-        return {"private_key": sk, "public_key": pk, "verify_public_key": verify}
+        return {"private_key": sk, "public_key": pk}
     except Exception as e:
         raise Exception(f"Failed to generate keys via socks: {e}")
 
@@ -240,7 +239,6 @@ def test_routing_rules():
     keys = generate_keys()
     pk = keys["public_key"]
     sk = keys["private_key"]
-    vk = keys["verify_public_key"]
 
     server_cfg = {
         "mode": "server",
@@ -272,7 +270,6 @@ def test_routing_rules():
             "public_key": pk,
             "private_key": sk,
             "short_id": SHORT_ID,
-            "verify_public_key": vk
         },
          "timeout": {"idle": 60}
     }
@@ -324,7 +321,6 @@ def test_authentication():
     keys = generate_keys()
     pk = keys["public_key"]
     sk = keys["private_key"]
-    vk = keys["verify_public_key"]
 
     server_cfg = {
         "mode": "server",
@@ -348,7 +344,7 @@ def test_authentication():
             "password": pwd
         },
         "outbound": {"host": "127.0.0.1", "port": 20002},
-        "reality": { "sni": "www.microsoft.com", "public_key": pk, "private_key": sk, "short_id": SHORT_ID, "verify_public_key": vk },
+        "reality": { "sni": "www.microsoft.com", "public_key": pk, "private_key": sk, "short_id": SHORT_ID },
         "timeout": {"idle": 60}
     }
     
@@ -396,7 +392,6 @@ def test_udp_function():
     keys = generate_keys()
     pk = keys["public_key"]
     sk = keys["private_key"]
-    vk = keys["verify_public_key"]
     
     server_cfg = {
         "mode": "server", "log": {"level": "debug", "file": "server_udp_internal.log"},
@@ -416,7 +411,7 @@ def test_udp_function():
             "port": 1087,
             "auth": False
         },
-        "reality": { "sni": "www.google.com", "public_key": pk, "private_key": sk, "short_id": SHORT_ID, "verify_public_key": vk },
+        "reality": { "sni": "www.google.com", "public_key": pk, "private_key": sk, "short_id": SHORT_ID },
         "timeout": {"idle": 60}
     }
     

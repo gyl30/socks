@@ -50,6 +50,11 @@ Server -> Tunnel: Encrypt & Send Frame (CMD_ACK)
 Tunnel -> Socks: Receive ACK
 Socks -> App: SOCKS5 Reply (Success)
 
+note right of Server
+  stream 超限或非法
+  回 ACK 失败并 reset
+end note
+
 == Phase 4: Data Transfer ==
 App -> Socks: HTTP GET /
 Socks -> Tunnel: mux_stream::write(Data)
@@ -71,5 +76,9 @@ Server -> Remote: Close Target Socket
 Remote -> Target: FIN
 deactivate Remote
 deactivate Socks
+
+note over Socks, Remote
+  空闲超时会主动关闭会话
+end note
 
 @enduml

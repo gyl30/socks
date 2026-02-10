@@ -145,12 +145,6 @@ bool build_key_share_ext(const std::shared_ptr<ExtensionBlueprint>& ext_ptr,
             {
                 key_data = ctx.x25519_pubkey;
             }
-            else if (ks.group == tls_consts::group::kX25519Kyber768Draft00 || ks.group == tls_consts::group::kX25519Mlkem768)
-            {
-                key_data.resize(32 + 1184);
-                (void)RAND_bytes(key_data.data(), static_cast<int>(key_data.size()));
-                std::memcpy(key_data.data(), ctx.x25519_pubkey.data(), 32);
-            }
             else if (ks.group == kGreasePlaceholder)
             {
                 key_data.push_back(0x00);
@@ -514,7 +508,8 @@ std::vector<std::uint8_t> write_record_header(std::uint8_t record_type, std::uin
 std::vector<std::uint8_t> construct_server_hello(const std::vector<std::uint8_t>& server_random,
                                                  const std::vector<std::uint8_t>& session_id,
                                                  std::uint16_t cipher_suite,
-                                                 const std::vector<std::uint8_t>& server_public_key)
+                                                 std::uint16_t key_share_group,
+                                                 const std::vector<std::uint8_t>& key_share_data)
 {
     std::vector<std::uint8_t> hello;
     hello.push_back(0x02);
@@ -534,11 +529,11 @@ std::vector<std::uint8_t> construct_server_hello(const std::vector<std::uint8_t>
     message_builder::push_u16(extensions, tls_consts::kVer13);
 
     message_builder::push_u16(extensions, tls_consts::ext::kKeyShare);
-    const auto ext_len = static_cast<std::uint16_t>(2 + 2 + server_public_key.size());
+    const auto ext_len = static_cast<std::uint16_t>(2 + 2 + key_share_data.size());
     message_builder::push_u16(extensions, ext_len);
-    message_builder::push_u16(extensions, tls_consts::group::kX25519);
-    message_builder::push_u16(extensions, static_cast<std::uint16_t>(server_public_key.size()));
-    message_builder::push_bytes(extensions, server_public_key);
+    message_builder::push_u16(extensions, key_share_group);
+    message_builder::push_u16(extensions, static_cast<std::uint16_t>(key_share_data.size()));
+    message_builder::push_bytes(extensions, key_share_data);
 
     message_builder::push_u16(hello, static_cast<std::uint16_t>(extensions.size()));
     message_builder::push_bytes(hello, extensions);
@@ -692,7 +687,23 @@ std::optional<certificate_verify_info> parse_certificate_verify(const std::vecto
     return info;
 }
 
-bool is_supported_certificate_verify_scheme(std::uint16_t scheme) { return scheme == 0x0807; }
+bool is_supported_certificate_verify_scheme(std::uint16_t scheme)
+{
+    using reality::tls_consts::sig_alg::kEcdsaSecp256r1Sha256;
+    using reality::tls_consts::sig_alg::kEcdsaSecp384r1Sha384;
+    using reality::tls_consts::sig_alg::kEcdsaSecp521r1Sha512;
+    using reality::tls_consts::sig_alg::kEd25519;
+    using reality::tls_consts::sig_alg::kRsaPkcs1Sha256;
+    using reality::tls_consts::sig_alg::kRsaPkcs1Sha384;
+    using reality::tls_consts::sig_alg::kRsaPkcs1Sha512;
+    using reality::tls_consts::sig_alg::kRsaPssRsaeSha256;
+    using reality::tls_consts::sig_alg::kRsaPssRsaeSha384;
+    using reality::tls_consts::sig_alg::kRsaPssRsaeSha512;
+
+    return scheme == kEd25519 || scheme == kEcdsaSecp256r1Sha256 || scheme == kEcdsaSecp384r1Sha384 ||
+           scheme == kEcdsaSecp521r1Sha512 || scheme == kRsaPkcs1Sha256 || scheme == kRsaPkcs1Sha384 || scheme == kRsaPkcs1Sha512 ||
+           scheme == kRsaPssRsaeSha256 || scheme == kRsaPssRsaeSha384 || scheme == kRsaPssRsaeSha512;
+}
 
 std::optional<std::uint16_t> extract_cipher_suite_from_server_hello(const std::vector<std::uint8_t>& server_hello)
 {
@@ -713,12 +724,12 @@ std::optional<std::uint16_t> extract_cipher_suite_from_server_hello(const std::v
     return static_cast<std::uint16_t>((server_hello[pos] << 8) | server_hello[pos + 1]);
 }
 
-std::vector<std::uint8_t> extract_server_public_key(const std::vector<std::uint8_t>& server_hello)
+std::optional<server_key_share_info> extract_server_key_share(const std::vector<std::uint8_t>& server_hello)
 {
     std::uint32_t pos = 0;
     if (server_hello.size() < 4)
     {
-        return {};
+        return std::nullopt;
     }
 
     if (server_hello[0] == 0x16)
@@ -728,18 +739,18 @@ std::vector<std::uint8_t> extract_server_public_key(const std::vector<std::uint8
 
     if (pos + 4 > server_hello.size())
     {
-        return {};
+        return std::nullopt;
     }
 
     if (server_hello[pos] != 0x02)
     {
-        return {};
+        return std::nullopt;
     }
 
     pos += 4 + 2 + 32;
     if (pos >= server_hello.size())
     {
-        return {};
+        return std::nullopt;
     }
 
     const std::uint8_t sid_len = server_hello[pos];
@@ -749,7 +760,7 @@ std::vector<std::uint8_t> extract_server_public_key(const std::vector<std::uint8
 
     if (pos + 2 > server_hello.size())
     {
-        return {};
+        return std::nullopt;
     }
     const auto ext_len = static_cast<std::uint16_t>((server_hello[pos] << 8) | server_hello[pos + 1]);
     pos += 2;
@@ -766,13 +777,38 @@ std::vector<std::uint8_t> extract_server_public_key(const std::vector<std::uint8
             {
                 break;
             }
+            const auto group = static_cast<std::uint16_t>((server_hello[pos] << 8) | server_hello[pos + 1]);
             const auto len = static_cast<std::uint16_t>((server_hello[pos + 2] << 8) | server_hello[pos + 3]);
-            if (len == 32)
+            const auto data_start = pos + 4;
+            if (data_start + len > end)
             {
-                return {server_hello.begin() + pos + 4, server_hello.begin() + pos + 4 + 32};
+                break;
             }
+            server_key_share_info info;
+            info.group = group;
+            info.data.assign(server_hello.begin() + static_cast<std::ptrdiff_t>(data_start),
+                             server_hello.begin() + static_cast<std::ptrdiff_t>(data_start + len));
+            return info;
         }
         pos += elen;
+    }
+    return std::nullopt;
+}
+
+std::vector<std::uint8_t> extract_server_public_key(const std::vector<std::uint8_t>& server_hello)
+{
+    const auto info = extract_server_key_share(server_hello);
+    if (!info.has_value())
+    {
+        return {};
+    }
+    if (info->group == tls_consts::group::kX25519)
+    {
+        if (info->data.size() == 32)
+        {
+            return info->data;
+        }
+        return {};
     }
     return {};
 }

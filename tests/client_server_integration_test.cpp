@@ -47,22 +47,16 @@ class IntegrationTest : public ::testing::Test
         ASSERT_TRUE(reality::crypto_util::generate_x25519_keypair(pub, priv));
         server_priv_key_ = reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(priv, priv + 32));
         client_pub_key_ = reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(pub, pub + 32));
-        std::error_code ec;
-        const auto verify_pub = reality::crypto_util::extract_ed25519_public_key(std::vector<std::uint8_t>(priv, priv + 32), ec);
-        ASSERT_FALSE(ec);
-        verify_pub_key_ = reality::crypto_util::bytes_to_hex(verify_pub);
         short_id_ = "0102030405060708";
     }
 
     [[nodiscard]] const std::string& server_priv_key() const { return server_priv_key_; }
     [[nodiscard]] const std::string& client_pub_key() const { return client_pub_key_; }
-    [[nodiscard]] const std::string& verify_pub_key() const { return verify_pub_key_; }
     [[nodiscard]] const std::string& short_id() const { return short_id_; }
 
    private:
     std::string server_priv_key_;
     std::string client_pub_key_;
-    std::string verify_pub_key_;
     std::string short_id_;
 };
 
@@ -80,8 +74,13 @@ TEST_F(IntegrationTest, FullHandshakeAndMux)
     timeouts.read = 5;
     timeouts.write = 5;
 
-    const auto server =
-        std::make_shared<mux::remote_server>(pool, server_port, std::vector<mux::config::fallback_entry>{}, server_priv_key(), short_id(), timeouts);
+    mux::config server_cfg;
+    server_cfg.inbound.host = "127.0.0.1";
+    server_cfg.inbound.port = server_port;
+    server_cfg.reality.private_key = server_priv_key();
+    server_cfg.reality.short_id = short_id();
+    server_cfg.timeout = timeouts;
+    const auto server = std::make_shared<mux::remote_server>(pool, server_cfg);
 
     reality::server_fingerprint fp;
     fp.cipher_suite = 0x1301;
@@ -90,8 +89,15 @@ TEST_F(IntegrationTest, FullHandshakeAndMux)
 
     server->start();
 
-    const auto client = std::make_shared<mux::local_client>(
-        pool, "127.0.0.1", std::to_string(server_port), local_socks_port, client_pub_key(), sni, short_id(), verify_pub_key(), timeouts);
+    mux::config client_cfg;
+    client_cfg.outbound.host = "127.0.0.1";
+    client_cfg.outbound.port = server_port;
+    client_cfg.socks.port = local_socks_port;
+    client_cfg.reality.public_key = client_pub_key();
+    client_cfg.reality.sni = sni;
+    client_cfg.reality.short_id = short_id();
+    client_cfg.timeout = timeouts;
+    const auto client = std::make_shared<mux::local_client>(pool, client_cfg);
 
     scoped_pool sp(pool);
 
@@ -182,8 +188,13 @@ TEST_F(IntegrationTest, FullDataTransfer)
     timeouts.read = 10;
     timeouts.write = 10;
 
-    const auto server =
-        std::make_shared<mux::remote_server>(pool, server_port, std::vector<mux::config::fallback_entry>{}, server_priv_key(), short_id(), timeouts);
+    mux::config server_cfg;
+    server_cfg.inbound.host = "127.0.0.1";
+    server_cfg.inbound.port = server_port;
+    server_cfg.reality.private_key = server_priv_key();
+    server_cfg.reality.short_id = short_id();
+    server_cfg.timeout = timeouts;
+    const auto server = std::make_shared<mux::remote_server>(pool, server_cfg);
 
     reality::server_fingerprint fp;
     fp.cipher_suite = 0x1301;
@@ -192,8 +203,15 @@ TEST_F(IntegrationTest, FullDataTransfer)
 
     server->start();
 
-    const auto client = std::make_shared<mux::local_client>(
-        pool, "127.0.0.1", std::to_string(server_port), local_socks_port, client_pub_key(), sni, short_id(), verify_pub_key(), timeouts);
+    mux::config client_cfg;
+    client_cfg.outbound.host = "127.0.0.1";
+    client_cfg.outbound.port = server_port;
+    client_cfg.socks.port = local_socks_port;
+    client_cfg.reality.public_key = client_pub_key();
+    client_cfg.reality.sni = sni;
+    client_cfg.reality.short_id = short_id();
+    client_cfg.timeout = timeouts;
+    const auto client = std::make_shared<mux::local_client>(pool, client_cfg);
     client->start();
 
     scoped_pool sp(pool);
