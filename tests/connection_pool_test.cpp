@@ -12,6 +12,7 @@
 #include "crypto_util.h"
 #include "context_pool.h"
 #include "local_client.h"
+#include "reality_messages.h"
 #include "remote_server.h"
 
 namespace
@@ -27,13 +28,9 @@ class ConnectionPoolTest : public ::testing::Test
         server_priv_key = reality::crypto_util::bytes_to_hex(std::vector<uint8_t>(priv, priv + 32));
 
         client_pub_key = reality::crypto_util::bytes_to_hex(std::vector<uint8_t>(pub, pub + 32));
-        std::error_code ec;
-        auto verify_pub = reality::crypto_util::extract_ed25519_public_key(std::vector<uint8_t>(priv, priv + 32), ec);
-        verify_pub_key = reality::crypto_util::bytes_to_hex(verify_pub);
     }
     std::string server_priv_key;
     std::string client_pub_key;
-    std::string verify_pub_key;
 };
 
 TEST_F(ConnectionPoolTest, TunnelReuse)
@@ -46,26 +43,28 @@ TEST_F(ConnectionPoolTest, TunnelReuse)
     uint16_t local_socks_port = 31082;
     std::string sni = "www.google.com";
 
-    auto server =
-        std::make_shared<mux::remote_server>(pool, server_port, std::vector<mux::config::fallback_entry>{}, server_priv_key, "0102030405060708");
+    mux::config server_cfg;
+    server_cfg.inbound.host = "127.0.0.1";
+    server_cfg.inbound.port = server_port;
+    server_cfg.reality.private_key = server_priv_key;
+    server_cfg.reality.short_id = "0102030405060708";
+    auto server = std::make_shared<mux::remote_server>(pool, server_cfg);
     reality::server_fingerprint fp;
-    server->cert_manager().set_certificate(sni, {0x01, 0x02}, fp);
+    server->cert_manager().set_certificate(sni, reality::construct_certificate({0x01, 0x02, 0x03}), fp);
     server->start();
 
     mux::config::limits_t limits;
     limits.max_connections = 1;
 
-    auto client = std::make_shared<mux::local_client>(pool,
-                                                      "127.0.0.1",
-                                                      std::to_string(server_port),
-                                                      local_socks_port,
-                                                      client_pub_key,
-                                                      sni,
-                                                      "0102030405060708",
-                                                      verify_pub_key,
-                                                      mux::config::timeout_t{},
-                                                      mux::config::socks_t{},
-                                                      limits);
+    mux::config client_cfg;
+    client_cfg.outbound.host = "127.0.0.1";
+    client_cfg.outbound.port = server_port;
+    client_cfg.socks.port = local_socks_port;
+    client_cfg.reality.public_key = client_pub_key;
+    client_cfg.reality.sni = sni;
+    client_cfg.reality.short_id = "0102030405060708";
+    client_cfg.limits = limits;
+    auto client = std::make_shared<mux::local_client>(pool, client_cfg);
     client->start();
 
     std::thread t([&pool] { pool.run(); });

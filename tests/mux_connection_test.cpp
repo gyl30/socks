@@ -144,6 +144,7 @@ TEST_F(MuxConnectionIntegrationTest, ReadTimeoutHandling)
         io_ctx.poll();
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
+    EXPECT_FALSE(conn_s->is_open());
 }
 
 TEST_F(MuxConnectionIntegrationTest, WriteTimeoutHandling) {}

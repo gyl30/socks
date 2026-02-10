@@ -49,6 +49,60 @@ std::vector<std::uint8_t> crypto_util::hex_to_bytes(const std::string& hex)
     return result;
 }
 
+bool crypto_util::base64_url_decode(const std::string& input, std::vector<std::uint8_t>& out)
+{
+    out.clear();
+    if (input.empty())
+    {
+        return true;
+    }
+
+    std::string tmp = input;
+    for (char& c : tmp)
+    {
+        if (c == '-')
+        {
+            c = '+';
+        }
+        else if (c == '_')
+        {
+            c = '/';
+        }
+    }
+
+    const std::size_t rem = tmp.size() % 4;
+    if (rem != 0)
+    {
+        tmp.append(4 - rem, '=');
+    }
+
+    out.resize((tmp.size() / 4) * 3);
+    const int len = EVP_DecodeBlock(out.data(), reinterpret_cast<const unsigned char*>(tmp.data()), static_cast<int>(tmp.size()));
+    if (len < 0)
+    {
+        out.clear();
+        return false;
+    }
+
+    std::size_t real_len = static_cast<std::size_t>(len);
+    if (!tmp.empty() && tmp.back() == '=')
+    {
+        real_len--;
+    }
+    if (tmp.size() >= 2 && tmp[tmp.size() - 2] == '=')
+    {
+        real_len--;
+    }
+
+    if (real_len > out.size())
+    {
+        out.clear();
+        return false;
+    }
+    out.resize(real_len);
+    return true;
+}
+
 std::uint16_t crypto_util::random_grease()
 {
     std::uint8_t idx = 0;

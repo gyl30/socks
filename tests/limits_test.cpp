@@ -19,6 +19,7 @@
 #include "context_pool.h"
 #include "local_client.h"
 #include "reality_core.h"
+#include "reality_messages.h"
 #include "remote_server.h"
 
 class LimitsTest : public ::testing::Test
@@ -31,16 +32,11 @@ class LimitsTest : public ::testing::Test
         ASSERT_TRUE(reality::crypto_util::generate_x25519_keypair(pub, priv));
         server_priv_key_ = reality::crypto_util::bytes_to_hex(std::vector<uint8_t>(priv, priv + 32));
         client_pub_key_ = reality::crypto_util::bytes_to_hex(std::vector<uint8_t>(pub, pub + 32));
-        std::error_code ec;
-        const auto verify_pub = reality::crypto_util::extract_ed25519_public_key(std::vector<uint8_t>(priv, priv + 32), ec);
-        ASSERT_FALSE(ec);
-        verify_pub_key_ = reality::crypto_util::bytes_to_hex(verify_pub);
         short_id_ = "0102030405060708";
     }
 
     std::string server_priv_key_;
     std::string client_pub_key_;
-    std::string verify_pub_key_;
     std::string short_id_;
 };
 
@@ -71,10 +67,16 @@ TEST_F(LimitsTest, ConnectionPoolCapacity)
     timeouts.read = 10;
     timeouts.write = 10;
 
-    auto server = std::make_shared<mux::remote_server>(
-        pool, server_port, std::vector<mux::config::fallback_entry>{}, server_priv_key_, short_id_, timeouts, limits);
+    mux::config server_cfg;
+    server_cfg.inbound.host = "127.0.0.1";
+    server_cfg.inbound.port = server_port;
+    server_cfg.reality.private_key = server_priv_key_;
+    server_cfg.reality.short_id = short_id_;
+    server_cfg.timeout = timeouts;
+    server_cfg.limits = limits;
+    auto server = std::make_shared<mux::remote_server>(pool, server_cfg);
 
-    const std::vector<uint8_t> dummy_cert = {0x0b, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00};
+    const auto dummy_cert = reality::construct_certificate({0x01, 0x02, 0x03});
     const reality::server_fingerprint dummy_fp{};
     server->cert_manager().set_certificate(sni, dummy_cert, dummy_fp);
 
@@ -99,17 +101,16 @@ TEST_F(LimitsTest, ConnectionPoolCapacity)
     };
     accept_target();
 
-    auto client = std::make_shared<mux::local_client>(pool,
-                                                      "127.0.0.1",
-                                                      std::to_string(server_port),
-                                                      local_socks_port,
-                                                      client_pub_key_,
-                                                      sni,
-                                                      short_id_,
-                                                      verify_pub_key_,
-                                                      timeouts,
-                                                      mux::config::socks_t{},
-                                                      limits);
+    mux::config client_cfg;
+    client_cfg.outbound.host = "127.0.0.1";
+    client_cfg.outbound.port = server_port;
+    client_cfg.socks.port = local_socks_port;
+    client_cfg.reality.public_key = client_pub_key_;
+    client_cfg.reality.sni = sni;
+    client_cfg.reality.short_id = short_id_;
+    client_cfg.timeout = timeouts;
+    client_cfg.limits = limits;
+    auto client = std::make_shared<mux::local_client>(pool, client_cfg);
     client->start();
 
     std::this_thread::sleep_for(std::chrono::seconds(1));
@@ -160,17 +161,24 @@ TEST_F(LimitsTest, ConnectionPoolCapacity)
         return false;
     };
 
-    std::thread t1([&] { EXPECT_TRUE(connect_socks(1)); });
+    bool ok1 = false;
+    bool ok2 = false;
+    bool ok3 = false;
+    std::thread t1([&] { ok1 = connect_socks(1); });
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
-    std::thread t2([&] { EXPECT_TRUE(connect_socks(2)); });
+    std::thread t2([&] { ok2 = connect_socks(2); });
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
-    std::thread t3([&] { EXPECT_TRUE(connect_socks(3)); });
+    std::thread t3([&] { ok3 = connect_socks(3); });
 
     t1.join();
     t2.join();
     t3.join();
+
+    EXPECT_TRUE(ok1);
+    EXPECT_TRUE(ok2);
+    EXPECT_TRUE(ok3);
 
     client->stop();
     server->stop();

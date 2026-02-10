@@ -21,6 +21,7 @@
 #include "crypto_util.h"
 #include "context_pool.h"
 #include "local_client.h"
+#include "reality_messages.h"
 #include "remote_server.h"
 
 using mux::io_context_pool;
@@ -37,16 +38,11 @@ class UdpIntegrationTest : public ::testing::Test
         ASSERT_TRUE(reality::crypto_util::generate_x25519_keypair(pub, priv));
         server_priv_key = reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(priv, priv + 32));
         client_pub_key = reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(pub, pub + 32));
-        std::error_code ec;
-        auto verify_pub = reality::crypto_util::extract_ed25519_public_key(std::vector<std::uint8_t>(priv, priv + 32), ec);
-        ASSERT_FALSE(ec);
-        verify_pub_key = reality::crypto_util::bytes_to_hex(verify_pub);
         short_id = "0102030405060708";
     }
 
     std::string server_priv_key;
     std::string client_pub_key;
-    std::string verify_pub_key;
     std::string short_id;
 };
 
@@ -109,18 +105,30 @@ TEST_F(UdpIntegrationTest, UdpAssociateAndEcho)
     local_socks_port = local_acceptor.local_endpoint().port();
     local_acceptor.close();
 
-    mux::config::timeout_t timeouts;
-    timeouts.read = 10;
-    timeouts.write = 10;
+    mux::config cfg;
+    cfg.inbound.host = "127.0.0.1";
+    cfg.inbound.port = server_port;
+    cfg.reality.private_key = server_priv_key;
+    cfg.reality.short_id = short_id;
+    cfg.timeout.read = 10;
+    cfg.timeout.write = 10;
 
-    auto server = std::make_shared<remote_server>(pool, server_port, std::vector<mux::config::fallback_entry>{}, server_priv_key, short_id, timeouts);
-    const std::vector<std::uint8_t> dummy_cert = {0x0b, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00};
+    auto server = std::make_shared<remote_server>(pool, cfg);
+    const auto dummy_cert = reality::construct_certificate({0x01, 0x02, 0x03});
     reality::server_fingerprint dummy_fp;
     server->cert_manager().set_certificate(sni, dummy_cert, dummy_fp);
     server->start();
 
-    auto client = std::make_shared<local_client>(
-        pool, "127.0.0.1", std::to_string(server_port), local_socks_port, client_pub_key, sni, short_id, verify_pub_key, timeouts);
+    mux::config client_cfg;
+    client_cfg.outbound.host = "127.0.0.1";
+    client_cfg.outbound.port = server_port;
+    client_cfg.socks.port = local_socks_port;
+    client_cfg.reality.public_key = client_pub_key;
+    client_cfg.reality.sni = sni;
+    client_cfg.reality.short_id = short_id;
+    client_cfg.timeout.read = 10;
+    client_cfg.timeout.write = 10;
+    auto client = std::make_shared<local_client>(pool, client_cfg);
     client->start();
 
     auto echo_socket = std::make_shared<asio::ip::udp::socket>(pool.get_io_context());

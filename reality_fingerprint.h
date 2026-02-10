@@ -21,40 +21,10 @@ namespace reality
 
 enum class FingerprintType
 {
-    Chrome_58,
-    Chrome_62,
-    Chrome_70,
-    Chrome_72,
-    Chrome_83,
-    Chrome_87,
-    Chrome_96,
-    Chrome_100,
-    Chrome_102,
-    Chrome_106_Shuffle,
-    Chrome_115_PQ,
     Chrome_120,
-    Chrome_120_PQ,
-    Chrome_131,
-    Chrome_133,
-    Firefox_55,
-    Firefox_56,
-    Firefox_63,
-    Firefox_65,
-    Firefox_99,
-    Firefox_102,
-    Firefox_105,
     Firefox_120,
-    iOS_11_1,
-    iOS_12_1,
-    iOS_13,
     iOS_14,
-    Android_11_OkHttp,
-    Edge_85,
-    Edge_106,
-    Safari_16_0,
-    Browser360_7_5,
-    Browser360_11_0,
-    kQq111
+    Android_11_OkHttp
 };
 
 enum class ExtensionType
