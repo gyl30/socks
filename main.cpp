@@ -126,29 +126,21 @@ int main(int argc, char** argv)
 
     if (cfg.monitor.enabled)
     {
-        monitor = std::make_shared<mux::monitor_server>(pool.get_io_context(), cfg.monitor.port);
+        monitor = std::make_shared<mux::monitor_server>(pool.get_io_context(),
+                                                        cfg.monitor.port,
+                                                        cfg.monitor.token,
+                                                        cfg.monitor.min_interval_ms);
         monitor->start();
     }
 
     if (cfg.mode == "server")
     {
-        server = std::make_shared<mux::remote_server>(
-            pool, cfg.inbound.port, cfg.fallbacks, cfg.reality.private_key, cfg.reality.short_id, cfg.timeout, cfg.limits);
+        server = std::make_shared<mux::remote_server>(pool, cfg);
         server->start();
     }
     else if (cfg.mode == "client")
     {
-        client = std::make_shared<mux::local_client>(pool,
-                                                     cfg.outbound.host,
-                                                     std::to_string(cfg.outbound.port),
-                                                     cfg.socks.port,
-                                                     cfg.reality.public_key,
-                                                     cfg.reality.sni,
-                                                     cfg.reality.short_id,
-                                                     cfg.reality.verify_public_key,
-                                                     cfg.timeout,
-                                                     cfg.socks,
-                                                     cfg.limits);
+        client = std::make_shared<mux::local_client>(pool, cfg);
         client->start();
     }
 

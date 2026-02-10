@@ -1,6 +1,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <random>
 #include <cstdint>
 #include <utility>
 #include <algorithm>
@@ -34,14 +35,16 @@ socks_session::socks_session(asio::ip::tcp::socket socket,
                              std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager,
                              std::shared_ptr<router> router,
                              const std::uint32_t sid,
-                             const config::socks_t& socks_cfg)
+                             const config::socks_t& socks_cfg,
+                             const config::timeout_t& timeout_cfg)
     : sid_(sid),
       username_(socks_cfg.username),
       password_(socks_cfg.password),
       auth_enabled_(socks_cfg.auth),
       socket_(std::move(socket)),
       router_(std::move(router)),
-      tunnel_manager_(std::move(tunnel_manager))
+      tunnel_manager_(std::move(tunnel_manager)),
+      timeout_config_(timeout_cfg)
 {
     ctx_.new_trace_id();
     ctx_.conn_id(sid);
@@ -74,17 +77,19 @@ asio::awaitable<void> socks_session::run()
 
     if (cmd == socks::kCmdConnect)
     {
-        const auto tcp_sess = std::make_shared<tcp_socks_session>(std::move(socket_), tunnel_manager_, router_, sid_);
+        const auto tcp_sess = std::make_shared<tcp_socks_session>(std::move(socket_), tunnel_manager_, router_, sid_, timeout_config_);
         tcp_sess->start(host, port);
     }
     else if (cmd == socks::kCmdUdpAssociate)
     {
-        const auto udp_sess = std::make_shared<udp_socks_session>(std::move(socket_), tunnel_manager_, sid_);
+        const auto udp_sess = std::make_shared<udp_socks_session>(std::move(socket_), tunnel_manager_, sid_, timeout_config_);
         udp_sess->start(host, port);
     }
     else
     {
         LOG_WARN("socks session {} cmd {} unsupported", sid_, cmd);
+        co_await reply_error(socks::kRepCmdNotSupported);
+        co_return;
     }
 }
 
@@ -201,12 +206,12 @@ asio::awaitable<bool> socks_session::do_password_auth()
 
     if (!success)
     {
-        LOG_WARN("socks session {} auth failed for user {}", sid_, username);
+        LOG_WARN("socks session {} auth failed", sid_);
         statistics::instance().inc_auth_failures();
     }
     else
     {
-        LOG_INFO("socks session {} auth success for user {}", sid_, username);
+        LOG_INFO("socks session {} auth success", sid_);
     }
 
     co_return success;
@@ -219,35 +224,109 @@ asio::awaitable<socks_session::request_info> socks_session::read_request()
     if (e)
     {
         LOG_ERROR("socks session {} request read failed {}", sid_, e.message());
+        co_await reply_error(socks::kRepGenFail);
         co_return request_info{.ok = false, .host = "", .port = 0, .cmd = 0};
+    }
+
+    static thread_local std::mt19937 delay_gen(std::random_device{}());
+    auto delay_if_invalid = [&]() -> asio::awaitable<void>
+    {
+        std::uniform_int_distribution<std::uint32_t> delay_dist(10, 50);
+        asio::steady_timer delay_timer(socket_.get_executor());
+        delay_timer.expires_after(std::chrono::milliseconds(delay_dist(delay_gen)));
+        co_await delay_timer.async_wait(asio::as_tuple(asio::use_awaitable));
+    };
+
+    if (head[0] != socks::kVer || head[2] != 0)
+    {
+        LOG_WARN("socks session {} request invalid header", sid_);
+        co_await delay_if_invalid();
+        co_await reply_error(socks::kRepGenFail);
+        co_return request_info{.ok = false, .host = "", .port = 0, .cmd = 0};
+    }
+
+    if (head[1] != socks::kCmdConnect && head[1] != socks::kCmdUdpAssociate)
+    {
+        LOG_WARN("socks session {} request unsupported cmd {}", sid_, head[1]);
+        co_await delay_if_invalid();
+        co_await reply_error(socks::kRepCmdNotSupported);
+        co_return request_info{.ok = false, .host = "", .port = 0, .cmd = head[1]};
+    }
+
+    if (head[3] != socks::kAtypIpv4 && head[3] != socks::kAtypDomain && head[3] != socks::kAtypIpv6)
+    {
+        LOG_WARN("socks session {} request unsupported atyp {}", sid_, head[3]);
+        co_await delay_if_invalid();
+        co_await reply_error(socks::kRepAddrTypeNotSupported);
+        co_return request_info{.ok = false, .host = "", .port = 0, .cmd = head[1]};
     }
 
     std::string host;
     if (head[3] == socks::kAtypIpv4)
     {
         asio::ip::address_v4::bytes_type b;
-        co_await asio::async_read(socket_, asio::buffer(b), asio::as_tuple(asio::use_awaitable));
+        auto [re, rn] = co_await asio::async_read(socket_, asio::buffer(b), asio::as_tuple(asio::use_awaitable));
+        if (re)
+        {
+            LOG_ERROR("socks session {} request read ipv4 failed {}", sid_, re.message());
+            co_await reply_error(socks::kRepGenFail);
+            co_return request_info{.ok = false, .host = "", .port = 0, .cmd = head[1]};
+        }
         host = asio::ip::address_v4(b).to_string();
     }
     else if (head[3] == socks::kAtypDomain)
     {
         std::uint8_t len = 0;
-        co_await asio::async_read(socket_, asio::buffer(&len, 1), asio::as_tuple(asio::use_awaitable));
+        auto [le, ln] = co_await asio::async_read(socket_, asio::buffer(&len, 1), asio::as_tuple(asio::use_awaitable));
+        if (le)
+        {
+            LOG_ERROR("socks session {} request read domain len failed {}", sid_, le.message());
+            co_await reply_error(socks::kRepGenFail);
+            co_return request_info{.ok = false, .host = "", .port = 0, .cmd = head[1]};
+        }
         host.resize(len);
-        co_await asio::async_read(socket_, asio::buffer(host), asio::as_tuple(asio::use_awaitable));
+        auto [he, hn] = co_await asio::async_read(socket_, asio::buffer(host), asio::as_tuple(asio::use_awaitable));
+        if (he)
+        {
+            LOG_ERROR("socks session {} request read domain failed {}", sid_, he.message());
+            co_await reply_error(socks::kRepGenFail);
+            co_return request_info{.ok = false, .host = "", .port = 0, .cmd = head[1]};
+        }
     }
     else if (head[3] == socks::kAtypIpv6)
     {
         asio::ip::address_v6::bytes_type b;
-        co_await asio::async_read(socket_, asio::buffer(b), asio::as_tuple(asio::use_awaitable));
+        auto [re, rn] = co_await asio::async_read(socket_, asio::buffer(b), asio::as_tuple(asio::use_awaitable));
+        if (re)
+        {
+            LOG_ERROR("socks session {} request read ipv6 failed {}", sid_, re.message());
+            co_await reply_error(socks::kRepGenFail);
+            co_return request_info{.ok = false, .host = "", .port = 0, .cmd = head[1]};
+        }
         host = asio::ip::address_v6(b).to_string();
     }
 
     std::uint16_t port_n = 0;
-    co_await asio::async_read(socket_, asio::buffer(&port_n, 2), asio::as_tuple(asio::use_awaitable));
+    auto [pe, pn] = co_await asio::async_read(socket_, asio::buffer(&port_n, 2), asio::as_tuple(asio::use_awaitable));
+    if (pe)
+    {
+        LOG_ERROR("socks session {} request read port failed {}", sid_, pe.message());
+        co_await reply_error(socks::kRepGenFail);
+        co_return request_info{.ok = false, .host = "", .port = 0, .cmd = head[1]};
+    }
     const std::uint16_t port = ntohs(port_n);
     LOG_INFO("socks session {} request {} {}", sid_, host, port);
     co_return request_info{.ok = true, .host = host, .port = port, .cmd = head[1]};
+}
+
+asio::awaitable<void> socks_session::reply_error(std::uint8_t code)
+{
+    std::uint8_t err[] = {socks::kVer, code, 0, socks::kAtypIpv4, 0, 0, 0, 0, 0, 0};
+    const auto [we, wn] = co_await asio::async_write(socket_, asio::buffer(err), asio::as_tuple(asio::use_awaitable));
+    if (we)
+    {
+        LOG_ERROR("socks session {} write error response failed {}", sid_, we.message());
+    }
 }
 
 }    // namespace mux
