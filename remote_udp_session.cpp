@@ -27,12 +27,13 @@ remote_udp_session::remote_udp_session(std::shared_ptr<mux_connection> connectio
                                        const std::uint32_t id,
                                        const asio::any_io_executor& ex,
                                        const connection_context& ctx)
-    : id_(id), timer_(ex), udp_socket_(ex), udp_resolver_(ex), connection_(std::move(connection)), recv_channel_(ex, 128)
+    : id_(id), timer_(ex), idle_timer_(ex), udp_socket_(ex), udp_resolver_(ex), connection_(std::move(connection)), recv_channel_(ex, 128)
 {
     ctx_ = ctx;
     ctx_.stream_id(id);
     last_read_time_ = std::chrono::steady_clock::now();
     last_write_time_ = std::chrono::steady_clock::now();
+    last_activity_time_ = std::chrono::steady_clock::now();
 }
 
 asio::awaitable<void> remote_udp_session::start()
@@ -46,6 +47,11 @@ asio::awaitable<void> remote_udp_session::start()
         std::vector<std::uint8_t> ack_data;
         mux_codec::encode_ack(ack, ack_data);
         co_await connection_->send_async(id_, kCmdAck, std::move(ack_data));
+        if (auto m = manager_.lock())
+        {
+            m->remove_stream(id_);
+        }
+        (void)co_await connection_->send_async(id_, kCmdRst, {});
         co_return;
     }
     ec = udp_socket_.set_option(asio::ip::v6_only(false), ec);
@@ -56,6 +62,11 @@ asio::awaitable<void> remote_udp_session::start()
         std::vector<std::uint8_t> ack_data;
         mux_codec::encode_ack(ack, ack_data);
         co_await connection_->send_async(id_, kCmdAck, std::move(ack_data));
+        if (auto m = manager_.lock())
+        {
+            m->remove_stream(id_);
+        }
+        (void)co_await connection_->send_async(id_, kCmdRst, {});
         co_return;
     }
     ec = udp_socket_.bind(asio::ip::udp::endpoint(asio::ip::udp::v6(), 0), ec);
@@ -66,6 +77,11 @@ asio::awaitable<void> remote_udp_session::start()
         std::vector<std::uint8_t> ack_data;
         mux_codec::encode_ack(ack, ack_data);
         co_await connection_->send_async(id_, kCmdAck, std::move(ack_data));
+        if (auto m = manager_.lock())
+        {
+            m->remove_stream(id_);
+        }
+        (void)co_await connection_->send_async(id_, kCmdRst, {});
         co_return;
     }
 
@@ -78,7 +94,7 @@ asio::awaitable<void> remote_udp_session::start()
     co_await connection_->send_async(id_, kCmdAck, std::move(ack_pl_data));
 
     using asio::experimental::awaitable_operators::operator||;
-    co_await (mux_to_udp() || udp_to_mux() || watchdog());
+    co_await (mux_to_udp() || udp_to_mux() || watchdog() || idle_watchdog());
 
     if (auto m = manager_.lock())
     {
@@ -134,6 +150,7 @@ asio::awaitable<void> remote_udp_session::mux_to_udp()
         {
             break;
         }
+        // 期望来自客户端的 socks udp 头
         socks_udp_header h;
         if (!socks_codec::decode_udp_header(data.data(), data.size(), h))
         {
@@ -172,6 +189,7 @@ asio::awaitable<void> remote_udp_session::mux_to_udp()
             {
                 last_write_time_ = std::chrono::steady_clock::now();
                 ctx_.add_tx_bytes(sn);
+                last_activity_time_ = std::chrono::steady_clock::now();
             }
         }
         else
@@ -200,6 +218,7 @@ asio::awaitable<void> remote_udp_session::udp_to_mux()
         LOG_CTX_DEBUG(ctx_, "{} udp recv {} bytes from {}", log_event::kMux, n, ep.address().to_string());
         last_read_time_ = std::chrono::steady_clock::now();
         ctx_.add_rx_bytes(n);
+        last_activity_time_ = std::chrono::steady_clock::now();
 
         socks_udp_header h;
         h.addr = ep.address().to_string();
@@ -208,6 +227,26 @@ asio::awaitable<void> remote_udp_session::udp_to_mux()
         pkt.insert(pkt.end(), buf.begin(), buf.begin() + static_cast<std::uint32_t>(n));
         if (co_await connection_->send_async(id_, kCmdDat, std::move(pkt)))
         {
+            break;
+        }
+    }
+}
+
+asio::awaitable<void> remote_udp_session::idle_watchdog()
+{
+    while (udp_socket_.is_open())
+    {
+        idle_timer_.expires_after(std::chrono::seconds(1));
+        const auto [wait_ec] = co_await idle_timer_.async_wait(asio::as_tuple(asio::use_awaitable));
+        if (wait_ec)
+        {
+            break;
+        }
+        const auto now = std::chrono::steady_clock::now();
+        if (now - last_activity_time_ > std::chrono::seconds(60))
+        {
+            LOG_CTX_WARN(ctx_, "{} udp session idle closing", log_event::kMux);
+            on_close();
             break;
         }
     }
