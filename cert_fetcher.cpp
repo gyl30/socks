@@ -249,6 +249,12 @@ asio::awaitable<std::vector<std::uint8_t>> cert_fetcher::fetch_session::find_cer
 
 std::error_code cert_fetcher::fetch_session::process_server_hello(const std::vector<std::uint8_t>& sh_body)
 {
+    if (sh_body.size() < 4)
+    {
+        LOG_CTX_ERROR(ctx_, "{} server hello too short {}", mux::log_event::kCert, sh_body.size());
+        return asio::error::fault;
+    }
+
     const std::uint32_t msg_len = (sh_body[1] << 16) | (sh_body[2] << 8) | sh_body[3];
     const std::uint32_t full_msg_len = msg_len + 4;
 

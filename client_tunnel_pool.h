@@ -3,6 +3,7 @@
 
 #include <array>
 #include <mutex>
+#include <atomic>
 #include <memory>
 #include <string>
 #include <vector>
@@ -104,7 +105,7 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
     asio::awaitable<void> wait_remote_retry();
 
    private:
-    bool stop_ = false;
+    std::atomic<bool> stop_{false};
     std::uint32_t mark_ = 0;
     std::string remote_host_;
     std::string remote_port_;
@@ -116,10 +117,11 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
     io_context_pool& pool_;
     std::vector<std::uint8_t> server_pub_key_;
     std::vector<std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>> tunnel_pool_;
+    std::vector<std::shared_ptr<asio::ip::tcp::socket>> pending_sockets_;
     std::mutex pool_mutex_;
     std::uint32_t next_tunnel_index_{0};
-    std::uint32_t next_conn_id_{1};
-    std::uint32_t next_session_id_{1};
+    std::atomic<std::uint32_t> next_conn_id_{1};
+    std::atomic<std::uint32_t> next_session_id_{1};
     config::timeout_t timeout_config_;
     config::limits_t limits_config_;
     config::heartbeat_t heartbeat_config_;

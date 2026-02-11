@@ -178,3 +178,18 @@ TEST_F(upstream_test, DirectUpstreamClose)
 
     mux::test::run_awaitable_void(ctx(), upstream.close());
 }
+
+TEST_F(upstream_test, ProxyUpstreamReadWriteWithoutConnect)
+{
+    mux::proxy_upstream upstream(nullptr, mux::connection_context{});
+
+    std::vector<std::uint8_t> buf(16);
+    const auto [read_ec, read_n] = mux::test::run_awaitable(ctx(), upstream.read(buf));
+    EXPECT_EQ(read_ec, asio::error::operation_aborted);
+    EXPECT_EQ(read_n, 0);
+
+    const auto write_n = mux::test::run_awaitable(ctx(), upstream.write({0x01, 0x02, 0x03}));
+    EXPECT_EQ(write_n, 0);
+
+    mux::test::run_awaitable_void(ctx(), upstream.close());
+}

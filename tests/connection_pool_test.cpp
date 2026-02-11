@@ -87,6 +87,7 @@ TEST_F(connection_pool_test, TunnelReuse)
 
     client->stop();
     server->stop();
+    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
     pool.stop();
     t.join();
 }

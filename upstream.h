@@ -1,6 +1,7 @@
 #ifndef UPSTREAM_H
 #define UPSTREAM_H
 
+#include <mutex>
 #include <memory>
 #include <string>
 #include <vector>
@@ -70,6 +71,7 @@ class proxy_upstream : public upstream
 
    private:
     connection_context ctx_;
+    std::mutex stream_mutex_;
     std::shared_ptr<mux_stream> stream_;
     std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_;
 };

@@ -75,6 +75,25 @@ TEST(RealityMessagesTest, ServerHelloInvalid)
     EXPECT_TRUE(reality::extract_server_public_key(short_buf).empty());
 }
 
+TEST(RealityMessagesTest, ExtractServerKeyShareRejectsOversizedExtensionsLength)
+{
+    std::vector<std::uint8_t> hello;
+    hello.push_back(0x02);
+    hello.push_back(0x00);
+    hello.push_back(0x00);
+    hello.push_back(0x00);
+    message_builder::push_u16(hello, 0x0303);
+    const std::vector<std::uint8_t> random(32, 0x11);
+    message_builder::push_bytes(hello, random);
+    hello.push_back(0x00);
+    message_builder::push_u16(hello, 0x1301);
+    hello.push_back(0x00);
+    message_builder::push_u16(hello, 0x0010);
+
+    EXPECT_FALSE(reality::extract_server_key_share(hello).has_value());
+    EXPECT_TRUE(reality::extract_server_public_key(hello).empty());
+}
+
 TEST(RealityMessagesTest, client_hello_builderFirefox)
 {
     const auto spec = reality::fingerprint_factory::get(reality::fingerprint_type::kFirefox120);

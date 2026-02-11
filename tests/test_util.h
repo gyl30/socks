@@ -51,6 +51,6 @@ inline void run_awaitable_void(asio::io_context& ctx, asio::awaitable<void> awai
     }
 }
 
-}    // namespace mux::test
+}                          
 
 #endif
