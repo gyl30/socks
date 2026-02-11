@@ -2,7 +2,6 @@
 #define REPLAY_CACHE_H
 
 #include <deque>
-#include <mutex>
 #include <chrono>
 #include <string>
 #include <vector>
@@ -26,7 +25,6 @@ class replay_cache
         std::string sid;
     };
 
-    std::mutex mutex_;
     std::unordered_set<std::string> cache_;
     std::deque<entry> history_;
 };
