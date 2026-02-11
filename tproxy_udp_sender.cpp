@@ -34,7 +34,7 @@ constexpr std::uint64_t kSocketIdleTimeoutMs = 300000;
 
 }    // namespace
 
-tproxy_udp_sender::tproxy_udp_sender(const asio::io_context::executor_type& ex, const std::uint32_t mark) : ex_(ex), mark_(mark) {}
+tproxy_udp_sender::tproxy_udp_sender(asio::io_context& io_context, const std::uint32_t mark) : io_context_(io_context), mark_(mark) {}
 
 std::size_t tproxy_udp_sender::endpoint_hash::operator()(const endpoint_key& key) const
 {
@@ -63,7 +63,7 @@ std::shared_ptr<asio::ip::udp::socket> tproxy_udp_sender::get_socket(const asio:
         evict_oldest_socket();
     }
 
-    auto socket = std::make_shared<asio::ip::udp::socket>(ex_);
+    auto socket = std::make_shared<asio::ip::udp::socket>(io_context_);
     std::error_code ec;
     const bool ipv6 = src_ep.address().is_v6();
     socket->open(ipv6 ? asio::ip::udp::v6() : asio::ip::udp::v4(), ec);
@@ -163,7 +163,7 @@ asio::awaitable<void> tproxy_udp_sender::send_to_client(const asio::ip::udp::end
                                                         const asio::ip::udp::endpoint& src_ep,
                                                         const std::vector<std::uint8_t>& payload)
 {
-    co_await asio::dispatch(ex_, asio::use_awaitable);
+    co_await asio::dispatch(io_context_, asio::use_awaitable);
 
     const auto norm_src = net::normalize_endpoint(src_ep);
     const auto norm_client = net::normalize_endpoint(client_ep);

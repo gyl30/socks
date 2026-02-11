@@ -22,7 +22,7 @@ class remote_session : public mux_stream_interface, public std::enable_shared_fr
    public:
     remote_session(std::shared_ptr<mux_connection> connection,
                    std::uint32_t id,
-                   const asio::io_context::executor_type& ex,
+                   asio::io_context& io_context,
                    const connection_context& ctx);
 
     [[nodiscard]] asio::awaitable<void> start(const syn_payload& syn);
@@ -42,7 +42,7 @@ class remote_session : public mux_stream_interface, public std::enable_shared_fr
    private:
     std::uint32_t id_;
     connection_context ctx_;
-    asio::io_context::executor_type ex_;
+    asio::io_context& io_context_;
     asio::ip::tcp::resolver resolver_;
     asio::ip::tcp::socket target_socket_;
     std::weak_ptr<mux_connection> connection_;

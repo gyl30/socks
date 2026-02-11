@@ -2,7 +2,6 @@
 #define CERT_MANAGER_H
 
 #include <map>
-#include <mutex>
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -29,7 +28,6 @@ class cert_manager
     void set_certificate(const std::string& sni, std::vector<std::uint8_t> cert_msg, server_fingerprint fp, const std::string& trace_id = "");
 
    private:
-    std::mutex mutex_;
     std::map<std::string, cert_entry> cache_;
 };
 

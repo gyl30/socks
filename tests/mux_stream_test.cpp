@@ -24,7 +24,7 @@ class mux_stream_test : public ::testing::Test
 TEST_F(mux_stream_test, WriteSomeSuccess)
 {
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
-    auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx().get_executor());
+    auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx());
 
     const std::vector<std::uint8_t> data = {1, 2, 3, 4};
 
@@ -37,7 +37,7 @@ TEST_F(mux_stream_test, WriteSomeSuccess)
 TEST_F(mux_stream_test, ReadSomeSuccess)
 {
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
-    auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx().get_executor());
+    auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx());
 
     const std::vector<std::uint8_t> data = {10, 20, 30};
     stream->on_data(data);
@@ -50,7 +50,7 @@ TEST_F(mux_stream_test, ReadSomeSuccess)
 TEST_F(mux_stream_test, CloseSendsFin)
 {
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
-    auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx().get_executor());
+    auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx());
 
     EXPECT_CALL(*mock_conn, mock_send_async(1, mux::kCmdFin, std::vector<std::uint8_t>())).WillOnce(::testing::Return(std::error_code()));
 
@@ -60,7 +60,7 @@ TEST_F(mux_stream_test, CloseSendsFin)
 TEST_F(mux_stream_test, OnCloseUnblocksReader)
 {
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
-    auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx().get_executor());
+    auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx());
 
     stream->on_close();
 
@@ -72,7 +72,7 @@ TEST_F(mux_stream_test, OnCloseUnblocksReader)
 TEST_F(mux_stream_test, WriteAfterClose)
 {
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
-    auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx().get_executor());
+    auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx());
 
     EXPECT_CALL(*mock_conn, mock_send_async(1, mux::kCmdFin, ::testing::_)).WillOnce(::testing::Return(std::error_code()));
     mux::test::run_awaitable_void(ctx(), stream->close());
@@ -85,7 +85,7 @@ TEST_F(mux_stream_test, WriteAfterClose)
 TEST_F(mux_stream_test, WriteAfterConnectionDestroyed)
 {
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
-    auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx().get_executor());
+    auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx());
 
     mock_conn.reset();
 
@@ -97,7 +97,7 @@ TEST_F(mux_stream_test, WriteAfterConnectionDestroyed)
 TEST_F(mux_stream_test, OnReset)
 {
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
-    auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx().get_executor());
+    auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx());
 
     stream->on_reset();
 

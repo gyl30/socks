@@ -81,15 +81,15 @@ std::string cert_fetcher::hex(const std::uint8_t* data, std::size_t len)
 }
 
 asio::awaitable<std::optional<fetch_result>> cert_fetcher::fetch(
-    asio::io_context::executor_type ex, std::string host, std::uint16_t port, std::string sni, const std::string& trace_id)
+    asio::io_context& io_context, std::string host, std::uint16_t port, std::string sni, const std::string& trace_id)
 {
-    fetch_session session(ex, std::move(host), port, std::move(sni), trace_id);
+    fetch_session session(io_context, std::move(host), port, std::move(sni), trace_id);
     co_return co_await session.run();
 }
 
 cert_fetcher::fetch_session::fetch_session(
-    const asio::io_context::executor_type& ex, std::string host, const std::uint16_t port, std::string sni, const std::string& trace_id)
-    : socket_(ex), host_(std::move(host)), port_(port), sni_(std::move(sni))
+    asio::io_context& io_context, std::string host, const std::uint16_t port, std::string sni, const std::string& trace_id)
+    : io_context_(io_context), socket_(io_context_), host_(std::move(host)), port_(port), sni_(std::move(sni))
 {
     ctx_.trace_id(trace_id);
     ctx_.target_host(host_);
@@ -122,7 +122,7 @@ asio::awaitable<std::optional<fetch_result>> cert_fetcher::fetch_session::run()
 
 asio::awaitable<std::error_code> cert_fetcher::fetch_session::connect()
 {
-    asio::ip::tcp::resolver resolver(socket_.get_executor());
+    asio::ip::tcp::resolver resolver(io_context_);
     auto [res_ec, eps] = co_await resolver.async_resolve(host_, std::to_string(port_), asio::as_tuple(asio::use_awaitable));
     if (res_ec)
     {

@@ -29,7 +29,7 @@ class mux_stream;
 class tproxy_udp_session : public mux_stream_interface, public std::enable_shared_from_this<tproxy_udp_session>
 {
    public:
-    tproxy_udp_session(const asio::io_context::executor_type& ex,
+    tproxy_udp_session(asio::io_context& io_context,
                        std::shared_ptr<client_tunnel_pool> tunnel_pool,
                        std::shared_ptr<router> router,
                        std::shared_ptr<tproxy_udp_sender> sender,
@@ -67,7 +67,7 @@ class tproxy_udp_session : public mux_stream_interface, public std::enable_share
 
    private:
     connection_context ctx_;
-    asio::io_context::executor_type ex_;
+    asio::io_context& io_context_;
     asio::ip::udp::socket direct_socket_;
     std::shared_ptr<client_tunnel_pool> tunnel_pool_;
     std::shared_ptr<router> router_;

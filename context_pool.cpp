@@ -23,7 +23,7 @@ io_context_pool::io_context_pool(std::size_t pool_size, std::error_code& ec) : n
     {
         auto ctx = std::make_shared<asio::io_context>();
         io_contexts_.push_back(ctx);
-        work_guards_.push_back(std::make_shared<asio::executor_work_guard<asio::io_context::executor_type>>(ctx->get_executor()));
+        work_guards_.push_back(asio::make_work_guard(*ctx));
     }
 }
 

@@ -56,7 +56,7 @@ TEST_F(socks_session_test, HandshakeNoAuthSuccess)
 
     config::socks_t cfg;
     cfg.auth = false;
-    auto session = std::make_shared<socks_session>(std::move(server_sock), nullptr, nullptr, 1, cfg);
+    auto session = std::make_shared<socks_session>(std::move(server_sock), io_ctx(), nullptr, nullptr, 1, cfg);
 
     std::uint8_t req[] = {0x05, 0x01, 0x00};
     asio::write(client_sock, asio::buffer(req));
@@ -89,7 +89,7 @@ TEST_F(socks_session_test, HandshakePasswordAuthSuccess)
     cfg.auth = true;
     cfg.username = "user";
     cfg.password = "pass";
-    auto session = std::make_shared<socks_session>(std::move(server_sock), nullptr, nullptr, 1, cfg);
+    auto session = std::make_shared<socks_session>(std::move(server_sock), io_ctx(), nullptr, nullptr, 1, cfg);
 
     std::uint8_t req[] = {0x05, 0x01, 0x02};
     asio::write(client_sock, asio::buffer(req));
@@ -127,7 +127,7 @@ TEST_F(socks_session_test, ReadConnectRequestDomain)
     client_sock.connect(acceptor.local_endpoint());
     acceptor.accept(server_sock);
 
-    auto session = std::make_shared<socks_session>(std::move(server_sock), nullptr, nullptr, 1);
+    auto session = std::make_shared<socks_session>(std::move(server_sock), io_ctx(), nullptr, nullptr, 1);
 
     std::uint8_t req[] = {0x05, 0x01, 0x00, 0x03, 0x0a, 'g', 'o', 'o', 'g', 'l', 'e', '.', 'c', 'o', 'm', 0x01, 0xbb};
     asio::write(client_sock, asio::buffer(req));

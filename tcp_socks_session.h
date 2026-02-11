@@ -8,6 +8,7 @@
 #include <cstdint>
 
 #include <asio/ip/tcp.hpp>
+#include <asio/io_context.hpp>
 #include <asio/awaitable.hpp>
 #include <asio/steady_timer.hpp>
 
@@ -24,6 +25,7 @@ class tcp_socks_session : public std::enable_shared_from_this<tcp_socks_session>
 {
    public:
     tcp_socks_session(asio::ip::tcp::socket socket,
+                      asio::io_context& io_context,
                       std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager,
                       std::shared_ptr<router> router,
                       const std::uint32_t sid,
@@ -44,6 +46,7 @@ class tcp_socks_session : public std::enable_shared_from_this<tcp_socks_session>
 
    private:
     connection_context ctx_;
+    asio::io_context& io_context_;
     asio::ip::tcp::socket socket_;
     asio::steady_timer idle_timer_;
     std::atomic<std::uint64_t> last_activity_time_ms_{0};

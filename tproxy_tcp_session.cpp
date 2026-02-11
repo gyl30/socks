@@ -53,13 +53,15 @@ namespace
 }    // namespace
 
 tproxy_tcp_session::tproxy_tcp_session(asio::ip::tcp::socket socket,
+                                       asio::io_context& io_context,
                                        std::shared_ptr<client_tunnel_pool> tunnel_pool,
                                        std::shared_ptr<router> router,
                                        const std::uint32_t sid,
                                        const config& cfg,
                                        const asio::ip::tcp::endpoint& dst_ep)
-    : socket_(std::move(socket)),
-      idle_timer_(socket_.get_executor()),
+    : io_context_(io_context),
+      socket_(std::move(socket)),
+      idle_timer_(io_context_),
       tunnel_pool_(std::move(tunnel_pool)),
       router_(std::move(router)),
       dst_ep_(dst_ep),
@@ -74,7 +76,7 @@ tproxy_tcp_session::tproxy_tcp_session(asio::ip::tcp::socket socket,
 void tproxy_tcp_session::start()
 {
     const auto self = shared_from_this();
-    asio::co_spawn(socket_.get_executor(), [self]() -> asio::awaitable<void> { co_await self->run(); }, asio::detached);
+    asio::co_spawn(io_context_, [self]() -> asio::awaitable<void> { co_await self->run(); }, asio::detached);
 }
 
 asio::awaitable<void> tproxy_tcp_session::run()
@@ -87,7 +89,7 @@ asio::awaitable<void> tproxy_tcp_session::run()
 
     if (route == route_type::kDirect)
     {
-        backend = std::make_shared<direct_upstream>(socket_.get_executor(), ctx_, mark_);
+        backend = std::make_shared<direct_upstream>(io_context_, ctx_, mark_);
     }
     else if (route == route_type::kProxy)
     {
@@ -116,7 +118,7 @@ asio::awaitable<void> tproxy_tcp_session::run()
     LOG_CTX_INFO(ctx_, "{} connected {} {} via {}", log_event::kConnEstablished, host, port, (route == route_type::kDirect ? "direct" : "proxy"));
 
     asio::co_spawn(
-        socket_.get_executor(),
+        io_context_,
         [self = shared_from_this(), backend]() -> asio::awaitable<void> { co_await self->idle_watchdog(backend); },
         asio::detached);
 

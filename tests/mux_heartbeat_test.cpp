@@ -75,6 +75,7 @@ TEST(HeartbeatTest, HeartbeatSendReceive)
     std::vector<std::uint8_t> iv(12, 0);
 
     auto conn_c = std::make_shared<mux::mux_connection>(std::move(*socket_client),
+                                                        io_ctx,
                                                         mux::reality_engine{key, iv, key, iv, EVP_aes_128_gcm()},
                                                         true,
                                                         1,
@@ -83,6 +84,7 @@ TEST(HeartbeatTest, HeartbeatSendReceive)
                                                         mux::config::limits_t{},
                                                         hb_c);
     auto conn_s = std::make_shared<mux::mux_connection>(std::move(*socket_server),
+                                                        io_ctx,
                                                         mux::reality_engine{key, iv, key, iv, EVP_aes_128_gcm()},
                                                         false,
                                                         1,

@@ -82,7 +82,7 @@ TEST(TproxyTcpSessionTest, DirectEcho)
         [&]() -> asio::awaitable<void>
         {
             asio::ip::tcp::socket sock = co_await tproxy_acceptor.async_accept(asio::use_awaitable);
-            auto session = std::make_shared<mux::tproxy_tcp_session>(std::move(sock), nullptr, router, 1, cfg, dst_ep);
+            auto session = std::make_shared<mux::tproxy_tcp_session>(std::move(sock), ctx, nullptr, router, 1, cfg, dst_ep);
             session->start();
             co_return;
         },

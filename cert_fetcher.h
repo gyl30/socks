@@ -47,13 +47,13 @@ class cert_fetcher
     static std::string hex(const std::uint8_t* data, std::size_t len);
 
     static asio::awaitable<std::optional<fetch_result>> fetch(
-        asio::io_context::executor_type ex, std::string host, std::uint16_t port, std::string sni, const std::string& trace_id = "");
+        asio::io_context& io_context, std::string host, std::uint16_t port, std::string sni, const std::string& trace_id = "");
 
    private:
     class fetch_session
     {
        public:
-        fetch_session(const asio::io_context::executor_type& ex,
+        fetch_session(asio::io_context& io_context,
                       std::string host,
                       std::uint16_t port,
                       std::string sni,
@@ -76,6 +76,7 @@ class cert_fetcher
 
        private:
         mux::connection_context ctx_;
+        asio::io_context& io_context_;
         asio::ip::tcp::socket socket_;
         std::string host_;
         std::uint16_t port_;
