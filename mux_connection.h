@@ -1,7 +1,6 @@
 #ifndef MUX_CONNECTION_H
 #define MUX_CONNECTION_H
 
-#include <mutex>
 #include <atomic>
 #include <chrono>
 #include <memory>
@@ -14,10 +13,9 @@
 #include <unordered_map>
 
 #include <asio/ip/tcp.hpp>
-#include <asio/strand.hpp>
+#include <asio/io_context.hpp>
 #include <asio/awaitable.hpp>
 #include <asio/steady_timer.hpp>
-#include <asio/any_io_executor.hpp>
 #include <asio/experimental/concurrent_channel.hpp>
 
 #include "config.h"
@@ -112,14 +110,14 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     std::uint64_t read_bytes_ = 0;
     std::uint64_t write_bytes_ = 0;
     stream_map_t streams_;
-    asio::strand<asio::any_io_executor> strand_;
+    asio::io_context::executor_type ex_;
     asio::steady_timer timer_;
-    std::mutex streams_mutex_;
     syn_callback_t syn_callback_;
     asio::ip::tcp::socket socket_;
     reality_engine reality_engine_;
     mux_dispatcher mux_dispatcher_;
     std::atomic<std::uint32_t> next_stream_id_;
+    std::atomic<bool> started_{false};
     std::atomic<mux_connection_state> connection_state_;
     std::atomic<std::uint64_t> last_read_time_ms_{0};
     std::atomic<std::uint64_t> last_write_time_ms_{0};
