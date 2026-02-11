@@ -61,7 +61,6 @@ class udp_socks_session : public mux_stream_interface, public std::enable_shared
     asio::experimental::concurrent_channel<void(std::error_code, std::vector<std::uint8_t>)> recv_channel_;
     std::atomic<std::uint64_t> last_activity_time_ms_{0};
     std::atomic<bool> closed_{false};
-    std::mutex client_ep_mutex_;
     asio::ip::udp::endpoint client_ep_;
     bool has_client_ep_ = false;
     config::timeout_t timeout_config_;

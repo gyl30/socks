@@ -5,7 +5,6 @@
 #include <asio/co_spawn.hpp>
 #include <asio/detached.hpp>
 #include <asio/awaitable.hpp>
-#include <asio/this_coro.hpp>
 #include <asio/io_context.hpp>
 
 #include "router.h"
@@ -57,7 +56,7 @@ class router_test : public ::testing::Test
 
         asio::co_spawn(
             ctx,
-            [&]() -> asio::awaitable<void> { result = co_await test_router_->decide(conn_ctx, host, co_await asio::this_coro::executor); },
+            [&]() -> asio::awaitable<void> { result = co_await test_router_->decide(conn_ctx, host); },
             asio::detached);
 
         ctx.run();

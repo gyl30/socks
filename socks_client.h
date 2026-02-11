@@ -1,7 +1,6 @@
 #ifndef SOCKS_CLIENT_H
 #define SOCKS_CLIENT_H
 
-#include <mutex>
 #include <atomic>
 #include <memory>
 #include <string>
@@ -9,6 +8,7 @@
 #include <cstdint>
 
 #include <asio/ip/tcp.hpp>
+#include <asio/io_context.hpp>
 #include <asio/awaitable.hpp>
 
 #include "config.h"
@@ -37,12 +37,11 @@ class socks_client : public std::enable_shared_from_this<socks_client>
 
    private:
     std::atomic<bool> stop_{false};
-    io_context_pool& pool_;
     std::atomic<std::uint16_t> listen_port_{0};
+    asio::io_context::executor_type ex_;
     asio::ip::tcp::acceptor acceptor_;
     std::shared_ptr<mux::router> router_;
     std::shared_ptr<client_tunnel_pool> tunnel_pool_;
-    std::mutex sessions_mutex_;
     std::vector<std::weak_ptr<socks_session>> sessions_;
     config::timeout_t timeout_config_;
     config::socks_t socks_config_;

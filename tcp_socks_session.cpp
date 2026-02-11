@@ -62,7 +62,7 @@ void tcp_socks_session::start(const std::string& host, const std::uint16_t port)
 
 asio::awaitable<void> tcp_socks_session::run(const std::string& host, const std::uint16_t port)
 {
-    const auto route = co_await router_->decide(ctx_, host, socket_.get_executor());
+    const auto route = co_await router_->decide(ctx_, host);
 
     std::shared_ptr<upstream> backend = nullptr;
 

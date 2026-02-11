@@ -1,7 +1,6 @@
 #ifndef TPROXY_UDP_SESSION_H
 #define TPROXY_UDP_SESSION_H
 
-#include <mutex>
 #include <atomic>
 #include <memory>
 #include <vector>
@@ -9,9 +8,8 @@
 #include <cstdint>
 
 #include <asio/ip/udp.hpp>
-#include <asio/strand.hpp>
+#include <asio/io_context.hpp>
 #include <asio/awaitable.hpp>
-#include <asio/any_io_executor.hpp>
 #include <asio/experimental/concurrent_channel.hpp>
 
 #include "config.h"
@@ -31,7 +29,7 @@ class mux_stream;
 class tproxy_udp_session : public mux_stream_interface, public std::enable_shared_from_this<tproxy_udp_session>
 {
    public:
-    tproxy_udp_session(const asio::any_io_executor& ex,
+    tproxy_udp_session(const asio::io_context::executor_type& ex,
                        std::shared_ptr<client_tunnel_pool> tunnel_pool,
                        std::shared_ptr<router> router,
                        std::shared_ptr<tproxy_udp_sender> sender,
@@ -69,14 +67,13 @@ class tproxy_udp_session : public mux_stream_interface, public std::enable_share
 
    private:
     connection_context ctx_;
-    asio::strand<asio::any_io_executor> strand_;
+    asio::io_context::executor_type ex_;
     asio::ip::udp::socket direct_socket_;
     std::shared_ptr<client_tunnel_pool> tunnel_pool_;
     std::shared_ptr<router> router_;
     std::shared_ptr<tproxy_udp_sender> sender_;
     std::weak_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_;
     std::shared_ptr<mux_stream> stream_;
-    std::mutex stream_mutex_;
     asio::experimental::concurrent_channel<void(std::error_code, std::vector<std::uint8_t>)> recv_channel_;
     asio::ip::udp::endpoint client_ep_;
     std::uint32_t mark_ = 0;

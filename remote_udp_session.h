@@ -9,10 +9,9 @@
 
 #include <asio/ip/tcp.hpp>
 #include <asio/ip/udp.hpp>
-#include <asio/strand.hpp>
+#include <asio/io_context.hpp>
 #include <asio/awaitable.hpp>
 #include <asio/steady_timer.hpp>
-#include <asio/any_io_executor.hpp>
 #include <asio/experimental/concurrent_channel.hpp>
 
 #include "protocol.h"
@@ -28,7 +27,10 @@ class mux_connection;
 class remote_udp_session : public mux_stream_interface, public std::enable_shared_from_this<remote_udp_session>
 {
    public:
-    remote_udp_session(std::shared_ptr<mux_connection> connection, std::uint32_t id, const asio::any_io_executor& ex, const connection_context& ctx);
+    remote_udp_session(std::shared_ptr<mux_connection> connection,
+                       std::uint32_t id,
+                       const asio::io_context::executor_type& ex,
+                       const connection_context& ctx);
 
     asio::awaitable<void> start();
 
@@ -49,7 +51,7 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
    private:
     std::uint32_t id_;
     connection_context ctx_;
-    asio::strand<asio::any_io_executor> strand_;
+    asio::io_context::executor_type ex_;
     asio::steady_timer timer_;
     asio::steady_timer idle_timer_;
     asio::ip::udp::socket udp_socket_;

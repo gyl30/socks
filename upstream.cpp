@@ -169,21 +169,14 @@ asio::awaitable<bool> proxy_upstream::connect(const std::string& host, const std
         co_return false;
     }
 
-    {
-        const std::lock_guard<std::mutex> lock(stream_mutex_);
-        stream_ = std::move(stream);
-    }
+    stream_ = std::move(stream);
 
     co_return true;
 }
 
 asio::awaitable<std::pair<std::error_code, std::size_t>> proxy_upstream::read(std::vector<std::uint8_t>& buf)
 {
-    std::shared_ptr<mux_stream> stream = nullptr;
-    {
-        const std::lock_guard<std::mutex> lock(stream_mutex_);
-        stream = stream_;
-    }
+    auto stream = stream_;
     if (stream == nullptr)
     {
         co_return std::make_pair(asio::error::operation_aborted, 0);
@@ -204,11 +197,7 @@ asio::awaitable<std::pair<std::error_code, std::size_t>> proxy_upstream::read(st
 
 asio::awaitable<std::size_t> proxy_upstream::write(const std::vector<std::uint8_t>& data)
 {
-    std::shared_ptr<mux_stream> stream = nullptr;
-    {
-        const std::lock_guard<std::mutex> lock(stream_mutex_);
-        stream = stream_;
-    }
+    auto stream = stream_;
     if (stream == nullptr)
     {
         co_return 0;
@@ -225,12 +214,8 @@ asio::awaitable<std::size_t> proxy_upstream::write(const std::vector<std::uint8_
 
 asio::awaitable<void> proxy_upstream::close()
 {
-    std::shared_ptr<mux_stream> stream = nullptr;
-    {
-        const std::lock_guard<std::mutex> lock(stream_mutex_);
-        stream = stream_;
-        stream_.reset();
-    }
+    auto stream = stream_;
+    stream_.reset();
 
     if (stream != nullptr)
     {

@@ -23,9 +23,9 @@ namespace mux
 {
 
 socks_client::socks_client(io_context_pool& pool, const config& cfg)
-    : pool_(pool),
-      listen_port_(cfg.socks.port),
-      acceptor_(pool.get_io_context()),
+    : listen_port_(cfg.socks.port),
+      ex_(pool.get_io_context().get_executor()),
+      acceptor_(ex_),
       router_(std::make_shared<mux::router>()),
       tunnel_pool_(std::make_shared<client_tunnel_pool>(pool, cfg, 0)),
       timeout_config_(cfg.timeout),
@@ -56,8 +56,7 @@ void socks_client::start()
 
     tunnel_pool_->start();
 
-    asio::co_spawn(
-        pool_.get_io_context(), [this, self = shared_from_this()]() -> asio::awaitable<void> { co_await accept_local_loop(); }, asio::detached);
+    asio::co_spawn(ex_, [self = shared_from_this()]() -> asio::awaitable<void> { co_await self->accept_local_loop(); }, asio::detached);
 }
 
 void socks_client::stop()
@@ -65,41 +64,41 @@ void socks_client::stop()
     LOG_INFO("client stopping closing resources");
     stop_.store(true, std::memory_order_release);
 
-    auto close_acceptor = [this]()
-    {
-        std::error_code close_ec;
-        close_ec = acceptor_.close(close_ec);
-        if (close_ec && close_ec != asio::error::bad_descriptor)
-        {
-            LOG_ERROR("acceptor close failed {}", close_ec.message());
-        }
-    };
-    asio::dispatch(acceptor_.get_executor(), close_acceptor);
+    asio::dispatch(ex_,
+                   [self = shared_from_this()]()
+                   {
+                       std::error_code close_ec;
+                       close_ec = self->acceptor_.close(close_ec);
+                       if (close_ec && close_ec != asio::error::bad_descriptor)
+                       {
+                           LOG_ERROR("acceptor close failed {}", close_ec.message());
+                       }
 
-    std::vector<std::shared_ptr<socks_session>> sessions_to_stop;
-    {
-        const std::scoped_lock lock(sessions_mutex_);
-        for (auto it = sessions_.begin(); it != sessions_.end();)
-        {
-            if (auto session = it->lock())
-            {
-                sessions_to_stop.push_back(std::move(session));
-                ++it;
-            }
-            else
-            {
-                it = sessions_.erase(it);
-            }
-        }
-        sessions_.clear();
-    }
-    for (const auto& session : sessions_to_stop)
-    {
-        if (session != nullptr)
-        {
-            session->stop();
-        }
-    }
+                       std::vector<std::shared_ptr<socks_session>> sessions_to_stop;
+                       sessions_to_stop.reserve(self->sessions_.size());
+                       for (auto it = self->sessions_.begin(); it != self->sessions_.end();)
+                       {
+                           if (auto session = it->lock())
+                           {
+                               sessions_to_stop.push_back(std::move(session));
+                               ++it;
+                           }
+                           else
+                           {
+                               it = self->sessions_.erase(it);
+                           }
+                       }
+                       self->sessions_.clear();
+
+                       for (const auto& session : sessions_to_stop)
+                       {
+                           if (session != nullptr)
+                           {
+                               session->stop();
+                           }
+                       }
+                   });
+
     tunnel_pool_->stop();
 }
 
@@ -143,7 +142,7 @@ asio::awaitable<void> socks_client::accept_local_loop()
     LOG_INFO("local socks5 listening on {}:{}", socks_config_.host, listen_port_.load(std::memory_order_acquire));
     while (!stop_.load(std::memory_order_acquire))
     {
-        asio::ip::tcp::socket s(pool_.get_io_context().get_executor());
+        asio::ip::tcp::socket s(ex_);
         const auto [e] = co_await acceptor_.async_accept(s, asio::as_tuple(asio::use_awaitable));
         if (e)
         {
@@ -152,7 +151,7 @@ asio::awaitable<void> socks_client::accept_local_loop()
                 break;
             }
             LOG_ERROR("local accept failed {}", e.message());
-            asio::steady_timer accept_retry_timer(pool_.get_io_context());
+            asio::steady_timer accept_retry_timer(ex_);
             accept_retry_timer.expires_after(std::chrono::seconds(1));
             co_await accept_retry_timer.async_wait(asio::as_tuple(asio::use_awaitable));
             continue;
@@ -207,34 +206,24 @@ asio::awaitable<void> socks_client::accept_local_loop()
             LOG_INFO("client session {} running without tunnel", sid);
         }
         const auto session = std::make_shared<socks_session>(std::move(s), selected_tunnel, router_, sid, socks_config_, timeout_config_);
-        bool discard_session = false;
-        {
-            const std::scoped_lock lock(sessions_mutex_);
-            if (stop_.load(std::memory_order_acquire))
-            {
-                discard_session = true;
-            }
-            else
-            {
-                for (auto it = sessions_.begin(); it != sessions_.end();)
-                {
-                    if (it->expired())
-                    {
-                        it = sessions_.erase(it);
-                    }
-                    else
-                    {
-                        ++it;
-                    }
-                }
-                sessions_.push_back(session);
-            }
-        }
-        if (discard_session)
+        if (stop_.load(std::memory_order_acquire))
         {
             session->stop();
             break;
         }
+
+        for (auto it = sessions_.begin(); it != sessions_.end();)
+        {
+            if (it->expired())
+            {
+                it = sessions_.erase(it);
+            }
+            else
+            {
+                ++it;
+            }
+        }
+        sessions_.push_back(session);
         session->start();
     }
     LOG_INFO("accept local loop exited");

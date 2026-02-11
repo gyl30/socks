@@ -11,8 +11,8 @@
 #include <system_error>
 
 #include <asio/ip/tcp.hpp>
+#include <asio/io_context.hpp>
 #include <asio/awaitable.hpp>
-#include <asio/any_io_executor.hpp>
 
 #include "transcript.h"
 #include "log_context.h"
@@ -47,13 +47,17 @@ class cert_fetcher
     static std::string hex(const std::uint8_t* data, std::size_t len);
 
     static asio::awaitable<std::optional<fetch_result>> fetch(
-        asio::any_io_executor ex, std::string host, std::uint16_t port, std::string sni, const std::string& trace_id = "");
+        asio::io_context::executor_type ex, std::string host, std::uint16_t port, std::string sni, const std::string& trace_id = "");
 
    private:
     class fetch_session
     {
        public:
-        fetch_session(const asio::any_io_executor& ex, std::string host, std::uint16_t port, std::string sni, const std::string& trace_id);
+        fetch_session(const asio::io_context::executor_type& ex,
+                      std::string host,
+                      std::uint16_t port,
+                      std::string sni,
+                      const std::string& trace_id);
 
         asio::awaitable<std::optional<fetch_result>> run();
 

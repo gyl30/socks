@@ -1,5 +1,4 @@
 #include <ctime>
-#include <mutex>
 #include <atomic>
 #include <chrono>
 #include <memory>
@@ -122,8 +121,8 @@ bool parse_dest_target(const std::string& input, std::string& host, std::string&
 }    // namespace
 
 remote_server::remote_server(io_context_pool& pool, const config& cfg)
-    : pool_(pool),
-      acceptor_(pool.get_io_context()),
+    : ex_(pool.get_io_context().get_executor()),
+      acceptor_(ex_),
       fallbacks_(cfg.fallbacks),
       timeout_config_(cfg.timeout),
       limits_config_(cfg.limits),
@@ -204,36 +203,29 @@ void remote_server::stop()
     stop_.store(true, std::memory_order_release);
     LOG_INFO("remote server stopping");
 
-    auto close_acceptor = [this]()
-    {
-        std::error_code close_ec;
-        close_ec = acceptor_.close(close_ec);
-        if (close_ec && close_ec != asio::error::bad_descriptor)
-        {
-            LOG_WARN("acceptor close failed {}", close_ec.message());
-        }
-    };
-    asio::dispatch(acceptor_.get_executor(), close_acceptor);
+    asio::dispatch(ex_,
+                   [self = shared_from_this()]()
+                   {
+                       std::error_code close_ec;
+                       close_ec = self->acceptor_.close(close_ec);
+                       if (close_ec && close_ec != asio::error::bad_descriptor)
+                       {
+                           LOG_WARN("acceptor close failed {}", close_ec.message());
+                       }
 
-    std::vector<std::weak_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>> tunnels_to_close;
-    {
-        const std::scoped_lock lock(tunnels_mutex_);
-        LOG_INFO("closing {} active tunnels", active_tunnels_.size());
-        tunnels_to_close = active_tunnels_;
-        active_tunnels_.clear();
-    }
+                       LOG_INFO("closing {} active tunnels", self->active_tunnels_.size());
+                       auto tunnels_to_close = std::move(self->active_tunnels_);
+                       self->active_tunnels_.clear();
 
-    for (auto& weak_tunnel : tunnels_to_close)
-    {
-        const auto tunnel = weak_tunnel.lock();
-        if (tunnel != nullptr)
-        {
-            if (tunnel->connection() != nullptr)
-            {
-                tunnel->connection()->stop();
-            }
-        }
-    }
+                       for (auto& weak_tunnel : tunnels_to_close)
+                       {
+                           const auto tunnel = weak_tunnel.lock();
+                           if (tunnel != nullptr && tunnel->connection() != nullptr)
+                           {
+                               tunnel->connection()->stop();
+                           }
+                       }
+                   });
 }
 
 asio::awaitable<void> remote_server::accept_loop()
@@ -241,8 +233,7 @@ asio::awaitable<void> remote_server::accept_loop()
     LOG_INFO("remote server listening for connections");
     while (!stop_.load(std::memory_order_acquire))
     {
-        auto& ctx = pool_.get_io_context();
-        const auto s = std::make_shared<asio::ip::tcp::socket>(ctx);
+        const auto s = std::make_shared<asio::ip::tcp::socket>(ex_);
         const auto [accept_ec] = co_await acceptor_.async_accept(*s, asio::as_tuple(asio::use_awaitable));
         if (!accept_ec)
         {
@@ -251,7 +242,7 @@ asio::awaitable<void> remote_server::accept_loop()
             (void)ec;
             const std::uint32_t conn_id = next_conn_id_.fetch_add(1, std::memory_order_relaxed);
 
-            asio::co_spawn(ctx, [this, s, self = shared_from_this(), conn_id = conn_id]() { return handle(s, conn_id); }, asio::detached);
+            asio::co_spawn(ex_, [self = shared_from_this(), s, conn_id]() { return self->handle(s, conn_id); }, asio::detached);
         }
         else
         {
@@ -368,11 +359,8 @@ asio::awaitable<void> remote_server::handle(std::shared_ptr<asio::ip::tcp::socke
     LOG_CTX_INFO(ctx, "{} tunnel starting", log_event::kConnEstablished);
 
     bool over_limit = false;
-    {
-        const std::scoped_lock lock(tunnels_mutex_);
-        std::erase_if(active_tunnels_, [](const auto& wp) { return wp.expired(); });
-        over_limit = active_tunnels_.size() >= limits_config_.max_connections;
-    }
+    std::erase_if(active_tunnels_, [](const auto& wp) { return wp.expired(); });
+    over_limit = active_tunnels_.size() >= limits_config_.max_connections;
     if (over_limit)
     {
         LOG_CTX_WARN(ctx, "{} connection limit reached {} rejecting", log_event::kConnClose, limits_config_.max_connections);
@@ -385,10 +373,7 @@ asio::awaitable<void> remote_server::handle(std::shared_ptr<asio::ip::tcp::socke
     auto tunnel = std::make_shared<mux_tunnel_impl<asio::ip::tcp::socket>>(
         std::move(*s), std::move(engine), false, conn_id, ctx.trace_id(), timeout_config_, limits_config_, heartbeat_config_);
 
-    {
-        const std::scoped_lock lock(tunnels_mutex_);
-        active_tunnels_.push_back(tunnel);
-    }
+    active_tunnels_.push_back(tunnel);
 
     std::weak_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> weak_tunnel = tunnel;
     tunnel->connection()->set_syn_callback(
@@ -415,7 +400,7 @@ asio::awaitable<void> remote_server::process_stream_request(std::shared_ptr<mux_
                                                             const connection_context& ctx,
                                                             const std::uint32_t stream_id,
                                                             std::vector<std::uint8_t> payload,
-                                                            asio::any_io_executor ex) const
+                                                            asio::io_context::executor_type ex) const
 {
     if (!tunnel->connection()->can_accept_stream())
     {
@@ -880,7 +865,7 @@ std::pair<std::string, std::string> remote_server::find_fallback_target_by_sni(c
     return {};
 }
 
-asio::awaitable<void> remote_server::fallback_failed_timer(const std::uint32_t conn_id, asio::any_io_executor ex)
+asio::awaitable<void> remote_server::fallback_failed_timer(const std::uint32_t conn_id, asio::io_context::executor_type ex)
 {
     asio::steady_timer fallback_timer(ex);
     constexpr std::uint32_t max_wait_ms = constants::fallback::kMaxWaitMs;

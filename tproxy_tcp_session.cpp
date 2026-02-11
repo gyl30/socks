@@ -81,7 +81,7 @@ asio::awaitable<void> tproxy_tcp_session::run()
 {
     const auto host = dst_ep_.address().to_string();
     const auto port = dst_ep_.port();
-    const auto route = co_await router_->decide_ip(ctx_, host, dst_ep_.address(), socket_.get_executor());
+    const auto route = co_await router_->decide_ip(ctx_, host, dst_ep_.address());
 
     std::shared_ptr<upstream> backend = nullptr;
 

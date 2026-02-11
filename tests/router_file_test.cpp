@@ -59,7 +59,7 @@ TEST_F(router_file_test, EmptyDirectIpDefaultsProxy)
     asio::io_context ctx;
     mux::connection_context conn_ctx;
     const auto addr = asio::ip::make_address("8.8.8.8");
-    const auto result = mux::test::run_awaitable(ctx, router.decide_ip(conn_ctx, "8.8.8.8", addr, ctx.get_executor()));
+    const auto result = mux::test::run_awaitable(ctx, router.decide_ip(conn_ctx, "8.8.8.8", addr));
 
     EXPECT_EQ(result, mux::route_type::kProxy);
 }
