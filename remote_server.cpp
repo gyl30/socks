@@ -427,13 +427,6 @@ asio::awaitable<void> remote_server::process_stream_request(std::shared_ptr<mux_
         (void)co_await tunnel->connection()->send_async(stream_id, kCmdRst, {});
         co_return;
     }
-    if (tunnel->connection()->has_stream(stream_id))
-    {
-        LOG_CTX_WARN(ctx, "{} stream id conflict {}", log_event::kMux, stream_id);
-        (void)co_await tunnel->connection()->send_async(stream_id, kCmdRst, {});
-        co_return;
-    }
-
     syn_payload syn;
     if (!mux_codec::decode_syn(payload.data(), payload.size(), syn))
     {
@@ -454,7 +447,12 @@ asio::awaitable<void> remote_server::process_stream_request(std::shared_ptr<mux_
             stream_ctx, "{} stream {} type tcp connect target {} {} payload size {}", log_event::kMux, stream_id, syn.addr, syn.port, payload.size());
         const auto sess = std::make_shared<remote_session>(tunnel->connection(), stream_id, ex, stream_ctx);
         sess->set_manager(tunnel);
-        tunnel->register_stream(stream_id, sess);
+        if (!tunnel->try_register_stream(stream_id, sess))
+        {
+            LOG_CTX_WARN(stream_ctx, "{} stream id conflict {}", log_event::kMux, stream_id);
+            (void)co_await tunnel->connection()->send_async(stream_id, kCmdRst, {});
+            co_return;
+        }
         co_await sess->start(syn);
     }
     else if (syn.socks_cmd == socks::kCmdUdpAssociate)
@@ -462,7 +460,12 @@ asio::awaitable<void> remote_server::process_stream_request(std::shared_ptr<mux_
         LOG_CTX_INFO(stream_ctx, "{} stream {} type udp associate associated via tcp", log_event::kMux, stream_id);
         const auto sess = std::make_shared<remote_udp_session>(tunnel->connection(), stream_id, ex, stream_ctx);
         sess->set_manager(tunnel);
-        tunnel->register_stream(stream_id, sess);
+        if (!tunnel->try_register_stream(stream_id, sess))
+        {
+            LOG_CTX_WARN(stream_ctx, "{} stream id conflict {}", log_event::kMux, stream_id);
+            (void)co_await tunnel->connection()->send_async(stream_id, kCmdRst, {});
+            co_return;
+        }
         co_await sess->start();
     }
     else

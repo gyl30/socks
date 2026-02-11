@@ -43,6 +43,15 @@ class mux_tunnel_impl : public std::enable_shared_from_this<mux_tunnel_impl<stre
         }
     }
 
+    [[nodiscard]] bool try_register_stream(std::uint32_t id, std::shared_ptr<mux_stream_interface> stream) const
+    {
+        if (connection_ == nullptr)
+        {
+            return false;
+        }
+        return connection_->try_register_stream(id, std::move(stream));
+    }
+
     asio::awaitable<void> run() const
     {
         if (connection_ != nullptr)

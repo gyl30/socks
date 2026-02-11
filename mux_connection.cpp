@@ -97,6 +97,18 @@ void mux_connection::register_stream(const std::uint32_t id, std::shared_ptr<mux
     LOG_DEBUG("mux {} stream {} registered", cid_, id);
 }
 
+bool mux_connection::try_register_stream(const std::uint32_t id, std::shared_ptr<mux_stream_interface> stream)
+{
+    const std::scoped_lock lock(streams_mutex_);
+    const auto [it, inserted] = streams_.try_emplace(id, std::move(stream));
+    if (!inserted)
+    {
+        return false;
+    }
+    LOG_DEBUG("mux {} stream {} registered", cid_, id);
+    return true;
+}
+
 void mux_connection::remove_stream(const std::uint32_t id)
 {
     const std::scoped_lock lock(streams_mutex_);
