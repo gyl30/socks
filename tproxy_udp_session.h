@@ -9,6 +9,7 @@
 #include <cstdint>
 
 #include <asio/ip/udp.hpp>
+#include <asio/strand.hpp>
 #include <asio/awaitable.hpp>
 #include <asio/any_io_executor.hpp>
 #include <asio/experimental/concurrent_channel.hpp>
@@ -54,6 +55,7 @@ class tproxy_udp_session : public mux_stream_interface, public std::enable_share
     static std::uint64_t now_ms();
 
     void touch();
+    asio::awaitable<void> handle_packet_inner(asio::ip::udp::endpoint dst_ep, std::vector<std::uint8_t> data);
 
     asio::awaitable<bool> ensure_proxy_stream();
 
@@ -67,11 +69,12 @@ class tproxy_udp_session : public mux_stream_interface, public std::enable_share
 
    private:
     connection_context ctx_;
+    asio::strand<asio::any_io_executor> strand_;
     asio::ip::udp::socket direct_socket_;
     std::shared_ptr<client_tunnel_pool> tunnel_pool_;
     std::shared_ptr<router> router_;
     std::shared_ptr<tproxy_udp_sender> sender_;
-    std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_;
+    std::weak_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_;
     std::shared_ptr<mux_stream> stream_;
     std::mutex stream_mutex_;
     asio::experimental::concurrent_channel<void(std::error_code, std::vector<std::uint8_t>)> recv_channel_;
