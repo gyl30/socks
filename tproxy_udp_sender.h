@@ -42,13 +42,21 @@ class tproxy_udp_sender
         std::size_t operator()(const endpoint_key& key) const;
     };
 
+    struct cached_socket
+    {
+        std::shared_ptr<asio::ip::udp::socket> socket;
+        std::uint64_t last_used_ms = 0;
+    };
+
     std::shared_ptr<asio::ip::udp::socket> get_socket(const asio::ip::udp::endpoint& src_ep);
+    void prune_sockets_locked(std::uint64_t now_ms);
+    void evict_oldest_socket_locked();
 
    private:
     asio::any_io_executor ex_;
     std::uint32_t mark_ = 0;
     std::mutex socket_mutex_;
-    std::unordered_map<endpoint_key, std::shared_ptr<asio::ip::udp::socket>, endpoint_hash, endpoint_key_equal> sockets_;
+    std::unordered_map<endpoint_key, cached_socket, endpoint_hash, endpoint_key_equal> sockets_;
 };
 
 }    // namespace mux

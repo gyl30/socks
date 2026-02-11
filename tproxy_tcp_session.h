@@ -1,6 +1,7 @@
 #ifndef TPROXY_TCP_SESSION_H
 #define TPROXY_TCP_SESSION_H
 
+#include <atomic>
 #include <chrono>
 #include <memory>
 #include <string>
@@ -34,11 +35,12 @@ class tproxy_tcp_session : public std::enable_shared_from_this<tproxy_tcp_sessio
    private:
     [[nodiscard]] asio::awaitable<void> run();
 
-    [[nodiscard]] asio::awaitable<void> client_to_upstream(upstream* backend);
+    [[nodiscard]] asio::awaitable<void> client_to_upstream(std::shared_ptr<upstream> backend);
 
-    [[nodiscard]] asio::awaitable<void> upstream_to_client(upstream* backend);
+    [[nodiscard]] asio::awaitable<void> upstream_to_client(std::shared_ptr<upstream> backend);
 
-    [[nodiscard]] asio::awaitable<void> idle_watchdog(upstream* backend);
+    [[nodiscard]] asio::awaitable<void> idle_watchdog(std::shared_ptr<upstream> backend);
+    [[nodiscard]] asio::awaitable<void> close_backend_once(const std::shared_ptr<upstream>& backend);
 
    private:
     connection_context ctx_;
@@ -49,7 +51,8 @@ class tproxy_tcp_session : public std::enable_shared_from_this<tproxy_tcp_sessio
     asio::ip::tcp::endpoint dst_ep_;
     config::timeout_t timeout_config_;
     std::uint32_t mark_ = 0;
-    std::chrono::steady_clock::time_point last_activity_time_;
+    std::atomic<std::uint64_t> last_activity_time_ms_{0};
+    std::atomic<bool> backend_closed_{false};
 };
 
 }    // namespace mux
