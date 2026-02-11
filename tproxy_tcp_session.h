@@ -8,6 +8,7 @@
 #include <cstdint>
 
 #include <asio/ip/tcp.hpp>
+#include <asio/io_context.hpp>
 #include <asio/awaitable.hpp>
 #include <asio/steady_timer.hpp>
 
@@ -24,6 +25,7 @@ class tproxy_tcp_session : public std::enable_shared_from_this<tproxy_tcp_sessio
 {
    public:
     tproxy_tcp_session(asio::ip::tcp::socket socket,
+                       asio::io_context& io_context,
                        std::shared_ptr<client_tunnel_pool> tunnel_pool,
                        std::shared_ptr<router> router,
                        std::uint32_t sid,
@@ -44,6 +46,7 @@ class tproxy_tcp_session : public std::enable_shared_from_this<tproxy_tcp_sessio
 
    private:
     connection_context ctx_;
+    asio::io_context& io_context_;
     asio::ip::tcp::socket socket_;
     asio::steady_timer idle_timer_;
     std::shared_ptr<client_tunnel_pool> tunnel_pool_;
