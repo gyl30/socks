@@ -63,6 +63,13 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
     [[nodiscard]] asio::awaitable<std::pair<bool, handshake_result>> perform_reality_handshake(asio::ip::tcp::socket& socket,
                                                                                                std::error_code& ec) const;
 
+    [[nodiscard]] std::shared_ptr<asio::ip::tcp::socket> create_pending_socket(asio::io_context& io_context, std::uint32_t index);
+    void clear_pending_socket_if_match(std::uint32_t index, const std::shared_ptr<asio::ip::tcp::socket>& socket);
+    void publish_tunnel(std::uint32_t index, const std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>& tunnel);
+    void clear_tunnel_if_match(std::uint32_t index, const std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>& tunnel);
+    [[nodiscard]] std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> build_tunnel(
+        asio::ip::tcp::socket socket, asio::io_context& io_context, std::uint32_t cid, const handshake_result& handshake_ret, const std::string& trace_id) const;
+
     [[nodiscard]] asio::awaitable<bool> generate_and_send_client_hello(asio::ip::tcp::socket& socket,
                                                                        const std::uint8_t* public_key,
                                                                        const std::uint8_t* private_key,
