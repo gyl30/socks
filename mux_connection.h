@@ -50,6 +50,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     using syn_callback_t = std::function<void(std::uint32_t, std::vector<std::uint8_t>)>;
 
     mux_connection(asio::ip::tcp::socket socket,
+                   asio::io_context& io_context,
                    reality_engine engine,
                    bool is_client,
                    std::uint32_t conn_id,
@@ -60,7 +61,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
 
     virtual ~mux_connection();
 
-    auto executor() { return socket_.get_executor(); }
+    [[nodiscard]] asio::io_context& io_context() const { return io_context_; }
     [[nodiscard]] std::string trace_id() const { return ctx_.trace_id(); }
 
     void set_syn_callback(syn_callback_t cb) { syn_callback_ = std::move(cb); }
@@ -110,7 +111,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     std::uint64_t read_bytes_ = 0;
     std::uint64_t write_bytes_ = 0;
     stream_map_t streams_;
-    asio::io_context::executor_type ex_;
+    asio::io_context& io_context_;
     asio::steady_timer timer_;
     syn_callback_t syn_callback_;
     asio::ip::tcp::socket socket_;

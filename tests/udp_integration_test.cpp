@@ -122,7 +122,7 @@ TEST_F(udp_integration_test, UdpAssociateAndEcho)
     auto server = std::make_shared<remote_server>(pool, cfg);
     const auto dummy_cert = reality::construct_certificate({0x01, 0x02, 0x03});
     reality::server_fingerprint dummy_fp;
-    server->cert_manager().set_certificate(sni, dummy_cert, dummy_fp);
+    server->set_certificate(sni, dummy_cert, dummy_fp);
     server->start();
 
     mux::config client_cfg;
