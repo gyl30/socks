@@ -83,7 +83,7 @@ TEST_F(limits_test, ConnectionPoolCapacity)
 
     const auto dummy_cert = reality::construct_certificate({0x01, 0x02, 0x03});
     const reality::server_fingerprint dummy_fp{};
-    server->cert_manager().set_certificate(sni, dummy_cert, dummy_fp);
+    server->set_certificate(sni, dummy_cert, dummy_fp);
 
     server->start();
 

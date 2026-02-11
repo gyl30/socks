@@ -18,7 +18,7 @@ class mock_mux_connection : public mux_connection
 {
    public:
     mock_mux_connection(asio::io_context& ctx)
-        : mux_connection(asio::ip::tcp::socket(ctx), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 0)
+        : mux_connection(asio::ip::tcp::socket(ctx), ctx, reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 0)
     {
     }
 

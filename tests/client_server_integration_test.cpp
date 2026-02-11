@@ -85,7 +85,7 @@ TEST_F(integration_test, FullHandshakeAndMux)
     reality::server_fingerprint fp;
     fp.cipher_suite = 0x1301;
     fp.alpn = "h2";
-    server->cert_manager().set_certificate(sni, reality::construct_certificate({0x01, 0x02, 0x03}), fp);
+    server->set_certificate(sni, reality::construct_certificate({0x01, 0x02, 0x03}), fp);
 
     server->start();
 
@@ -204,7 +204,7 @@ TEST_F(integration_test, FullDataTransfer)
     reality::server_fingerprint fp;
     fp.cipher_suite = 0x1301;
     fp.alpn = "h2";
-    server->cert_manager().set_certificate(sni, reality::construct_certificate({0x01, 0x02, 0x03}), fp);
+    server->set_certificate(sni, reality::construct_certificate({0x01, 0x02, 0x03}), fp);
 
     server->start();
 

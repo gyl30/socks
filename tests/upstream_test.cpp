@@ -115,7 +115,7 @@ TEST_F(upstream_test, DirectUpstreamConnectSuccess)
     echo_server server;
     const std::uint16_t port = server.port();
 
-    mux::direct_upstream upstream(ctx().get_executor(), mux::connection_context{});
+    mux::direct_upstream upstream(ctx(), mux::connection_context{});
 
     const auto success = mux::test::run_awaitable(ctx(), upstream.connect("127.0.0.1", port));
     EXPECT_TRUE(success);
@@ -136,7 +136,7 @@ TEST_F(upstream_test, DirectUpstreamConnectSuccess)
 
 TEST_F(upstream_test, DirectUpstreamConnectFail)
 {
-    mux::direct_upstream upstream(ctx().get_executor(), mux::connection_context{});
+    mux::direct_upstream upstream(ctx(), mux::connection_context{});
 
     const auto success = mux::test::run_awaitable(ctx(), upstream.connect("127.0.0.1", 1));
     EXPECT_FALSE(success);
@@ -157,7 +157,7 @@ TEST_F(upstream_test, DirectUpstreamWriteError)
         },
         asio::detached);
 
-    mux::direct_upstream upstream(ctx().get_executor(), mux::connection_context{});
+    mux::direct_upstream upstream(ctx(), mux::connection_context{});
     const auto success = mux::test::run_awaitable(ctx(), upstream.connect("127.0.0.1", port));
     EXPECT_TRUE(success);
 
@@ -174,7 +174,7 @@ TEST_F(upstream_test, DirectUpstreamWriteError)
 
 TEST_F(upstream_test, DirectUpstreamClose)
 {
-    mux::direct_upstream upstream(ctx().get_executor(), mux::connection_context{});
+    mux::direct_upstream upstream(ctx(), mux::connection_context{});
 
     mux::test::run_awaitable_void(ctx(), upstream.close());
 }

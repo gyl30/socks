@@ -16,7 +16,7 @@ namespace mux
 class tproxy_udp_sender
 {
    public:
-    tproxy_udp_sender(const asio::io_context::executor_type& ex, std::uint32_t mark);
+    tproxy_udp_sender(asio::io_context& io_context, std::uint32_t mark);
 
     asio::awaitable<void> send_to_client(const asio::ip::udp::endpoint& client_ep,
                                          const asio::ip::udp::endpoint& src_ep,
@@ -52,7 +52,7 @@ class tproxy_udp_sender
     void evict_oldest_socket();
 
    private:
-    asio::io_context::executor_type ex_;
+    asio::io_context& io_context_;
     std::uint32_t mark_ = 0;
     std::unordered_map<endpoint_key, cached_socket, endpoint_hash, endpoint_key_equal> sockets_;
 };

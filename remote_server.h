@@ -55,7 +55,10 @@ class remote_server : public std::enable_shared_from_this<remote_server>
 
     [[nodiscard]] std::uint16_t listen_port() const { return acceptor_.local_endpoint().port(); }
 
-    [[nodiscard]] reality::cert_manager& cert_manager() { return cert_manager_; }
+    void set_certificate(std::string sni,
+                         std::vector<std::uint8_t> cert_msg,
+                         reality::server_fingerprint fp,
+                         const std::string& trace_id = "");
 
    private:
     asio::awaitable<void> accept_loop();
@@ -66,7 +69,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
                                                  const connection_context& ctx,
                                                  const std::uint32_t stream_id,
                                                  std::vector<std::uint8_t> payload,
-                                                 asio::io_context::executor_type ex) const;
+                                                 asio::io_context& io_context) const;
 
     [[nodiscard]] static asio::awaitable<bool> read_initial_and_validate(std::shared_ptr<asio::ip::tcp::socket> s,
                                                                          const connection_context& ctx,
@@ -115,7 +118,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
 
     [[nodiscard]] std::pair<std::string, std::string> find_fallback_target_by_sni(const std::string& sni) const;
 
-    static asio::awaitable<void> fallback_failed_timer(std::uint32_t conn_id, asio::io_context::executor_type ex);
+    static asio::awaitable<void> fallback_failed_timer(std::uint32_t conn_id, asio::io_context& io_context);
 
     static asio::awaitable<void> fallback_failed(const std::shared_ptr<asio::ip::tcp::socket>& s);
 
@@ -125,7 +128,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
                                           const std::string& sni) const;
 
    private:
-    asio::io_context::executor_type ex_;
+    asio::io_context& io_context_;
     asio::ip::tcp::acceptor acceptor_;
     std::vector<std::uint8_t> private_key_;
     std::vector<std::uint8_t> short_id_bytes_;
@@ -143,6 +146,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     std::vector<std::weak_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>> active_tunnels_;
     config::limits_t limits_config_;
     config::heartbeat_t heartbeat_config_;
+    std::atomic<bool> started_{false};
     std::atomic<bool> stop_{false};
 };
 

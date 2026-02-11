@@ -27,12 +27,12 @@ namespace mux
 {
 
 tproxy_client::tproxy_client(io_context_pool& pool, const config& cfg)
-    : ex_(pool.get_io_context().get_executor()),
-      tcp_acceptor_(ex_),
-      udp_socket_(ex_),
+    : io_context_(pool.get_io_context()),
+      tcp_acceptor_(io_context_),
+      udp_socket_(io_context_),
       tunnel_pool_(std::make_shared<client_tunnel_pool>(pool, cfg, cfg.tproxy.mark)),
       router_(std::make_shared<router>()),
-      sender_(std::make_shared<tproxy_udp_sender>(ex_, cfg.tproxy.mark)),
+      sender_(std::make_shared<tproxy_udp_sender>(io_context_, cfg.tproxy.mark)),
       cfg_(cfg),
       tproxy_config_(cfg.tproxy),
       tcp_port_(cfg.tproxy.tcp_port),
@@ -75,11 +75,11 @@ void tproxy_client::start()
 
     tunnel_pool_->start();
 
-    asio::co_spawn(ex_, [self = shared_from_this()]() -> asio::awaitable<void> { co_await self->accept_tcp_loop(); }, asio::detached);
+    asio::co_spawn(io_context_, [self = shared_from_this()]() -> asio::awaitable<void> { co_await self->accept_tcp_loop(); }, asio::detached);
 
-    asio::co_spawn(ex_, [self = shared_from_this()]() -> asio::awaitable<void> { co_await self->udp_loop(); }, asio::detached);
+    asio::co_spawn(io_context_, [self = shared_from_this()]() -> asio::awaitable<void> { co_await self->udp_loop(); }, asio::detached);
 
-    asio::co_spawn(ex_, [self = shared_from_this()]() -> asio::awaitable<void> { co_await self->udp_cleanup_loop(); }, asio::detached);
+    asio::co_spawn(io_context_, [self = shared_from_this()]() -> asio::awaitable<void> { co_await self->udp_cleanup_loop(); }, asio::detached);
 }
 
 void tproxy_client::stop()
@@ -87,7 +87,7 @@ void tproxy_client::stop()
     LOG_INFO("tproxy client stopping closing resources");
     stop_.store(true, std::memory_order_release);
 
-    asio::dispatch(ex_,
+    asio::dispatch(io_context_,
                    [self = shared_from_this()]()
                    {
                        std::error_code close_ec;
@@ -189,7 +189,7 @@ asio::awaitable<void> tproxy_client::accept_tcp_loop()
 
     while (!stop_.load(std::memory_order_acquire))
     {
-        asio::ip::tcp::socket s(ex_);
+        asio::ip::tcp::socket s(io_context_);
         const auto [e] = co_await tcp_acceptor_.async_accept(s, asio::as_tuple(asio::use_awaitable));
         if (e)
         {
@@ -198,7 +198,7 @@ asio::awaitable<void> tproxy_client::accept_tcp_loop()
                 break;
             }
             LOG_ERROR("tproxy tcp accept failed {}", e.message());
-            asio::steady_timer accept_retry_timer(ex_);
+            asio::steady_timer accept_retry_timer(io_context_);
             accept_retry_timer.expires_after(std::chrono::seconds(1));
             co_await accept_retry_timer.async_wait(asio::as_tuple(asio::use_awaitable));
             continue;
@@ -228,7 +228,7 @@ asio::awaitable<void> tproxy_client::accept_tcp_loop()
 
         const asio::ip::tcp::endpoint dst_ep(net::normalize_address(local_ep.address()), local_ep.port());
         const std::uint32_t sid = tunnel_pool_->next_session_id();
-        const auto session = std::make_shared<tproxy_tcp_session>(std::move(s), tunnel_pool_, router_, sid, cfg_, dst_ep);
+        const auto session = std::make_shared<tproxy_tcp_session>(std::move(s), io_context_, tunnel_pool_, router_, sid, cfg_, dst_ep);
         session->start();
     }
 
@@ -365,7 +365,7 @@ asio::awaitable<void> tproxy_client::udp_loop()
         if (it == udp_sessions_.end())
         {
             const std::uint32_t sid = tunnel_pool_->next_session_id();
-            session = std::make_shared<tproxy_udp_session>(ex_, tunnel_pool_, router_, sender_, sid, cfg_, src_ep);
+            session = std::make_shared<tproxy_udp_session>(io_context_, tunnel_pool_, router_, sender_, sid, cfg_, src_ep);
             session->start();
             udp_sessions_.emplace(key, session);
         }
@@ -385,7 +385,7 @@ asio::awaitable<void> tproxy_client::udp_loop()
 
 asio::awaitable<void> tproxy_client::udp_cleanup_loop()
 {
-    asio::steady_timer cleanup_timer(ex_);
+    asio::steady_timer cleanup_timer(io_context_);
     while (!stop_.load(std::memory_order_acquire))
     {
         cleanup_timer.expires_after(std::chrono::seconds(1));

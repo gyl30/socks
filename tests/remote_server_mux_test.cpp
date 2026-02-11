@@ -100,7 +100,7 @@ TEST_F(remote_server_mux_test, ProcessTcpConnectRequest)
     reality::server_fingerprint fp;
     fp.cipher_suite = 0x1301;
     fp.alpn = "h2";
-    server->cert_manager().set_certificate("www.google.com", reality::construct_certificate({0x01, 0x02, 0x03}), fp);
+    server->set_certificate("www.google.com", reality::construct_certificate({0x01, 0x02, 0x03}), fp);
 
     server->start();
     const std::uint16_t server_port = server->listen_port();
@@ -161,7 +161,7 @@ TEST_F(remote_server_mux_test, ProcessUdpAssociateRequest)
     reality::server_fingerprint fp;
     fp.cipher_suite = 0x1301;
     fp.alpn = "h2";
-    server->cert_manager().set_certificate("www.google.com", reality::construct_certificate({0x01, 0x02, 0x03}), fp);
+    server->set_certificate("www.google.com", reality::construct_certificate({0x01, 0x02, 0x03}), fp);
 
     server->start();
     const std::uint16_t server_port = server->listen_port();
@@ -220,7 +220,7 @@ TEST_F(remote_server_mux_test, TargetConnectFail)
     reality::server_fingerprint fp;
     fp.cipher_suite = 0x1301;
     fp.alpn = "h2";
-    server->cert_manager().set_certificate("www.google.com", reality::construct_certificate({0x01, 0x02, 0x03}), fp);
+    server->set_certificate("www.google.com", reality::construct_certificate({0x01, 0x02, 0x03}), fp);
 
     server->start();
     const std::uint16_t server_port = server->listen_port();
@@ -277,7 +277,7 @@ TEST_F(remote_server_mux_test, TargetResolveFail)
     reality::server_fingerprint fp;
     fp.cipher_suite = 0x1301;
     fp.alpn = "h2";
-    server->cert_manager().set_certificate("www.google.com", reality::construct_certificate({0x01, 0x02, 0x03}), fp);
+    server->set_certificate("www.google.com", reality::construct_certificate({0x01, 0x02, 0x03}), fp);
 
     server->start();
     const std::uint16_t server_port = server->listen_port();

@@ -45,9 +45,9 @@ class tproxy_client : public std::enable_shared_from_this<tproxy_client>
 
     [[nodiscard]] std::string endpoint_key(const asio::ip::udp::endpoint& ep) const;
 
-   private:
+  private:
     std::atomic<bool> stop_{false};
-    asio::io_context::executor_type ex_;
+    asio::io_context& io_context_;
     asio::ip::tcp::acceptor tcp_acceptor_;
     asio::ip::udp::socket udp_socket_;
     std::shared_ptr<client_tunnel_pool> tunnel_pool_;

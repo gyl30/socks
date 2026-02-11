@@ -56,9 +56,9 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
         const EVP_CIPHER* cipher = nullptr;
     };
 
-    asio::awaitable<void> connect_remote_loop(std::uint32_t index);
+    asio::awaitable<void> connect_remote_loop(std::uint32_t index, asio::io_context& io_context);
 
-    [[nodiscard]] asio::awaitable<bool> tcp_connect(asio::ip::tcp::socket& socket, std::error_code& ec) const;
+    [[nodiscard]] asio::awaitable<bool> tcp_connect(asio::io_context& io_context, asio::ip::tcp::socket& socket, std::error_code& ec) const;
 
     [[nodiscard]] asio::awaitable<std::pair<bool, handshake_result>> perform_reality_handshake(asio::ip::tcp::socket& socket,
                                                                                                std::error_code& ec) const;
@@ -101,7 +101,7 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
                                                                     const EVP_MD* md,
                                                                     std::error_code& ec);
 
-    asio::awaitable<void> wait_remote_retry();
+    asio::awaitable<void> wait_remote_retry(asio::io_context& io_context);
 
    private:
     std::atomic<bool> stop_{false};
@@ -117,6 +117,7 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
     std::vector<std::uint8_t> server_pub_key_;
     std::vector<std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>> tunnel_pool_;
     std::vector<std::shared_ptr<asio::ip::tcp::socket>> pending_sockets_;
+    std::vector<asio::io_context*> tunnel_io_contexts_;
     std::atomic<std::uint32_t> next_tunnel_index_{0};
     std::atomic<std::uint32_t> next_conn_id_{1};
     std::atomic<std::uint32_t> next_session_id_{1};

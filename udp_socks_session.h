@@ -9,6 +9,7 @@
 
 #include <asio/ip/tcp.hpp>
 #include <asio/ip/udp.hpp>
+#include <asio/io_context.hpp>
 #include <asio/awaitable.hpp>
 #include <asio/steady_timer.hpp>
 #include <asio/experimental/concurrent_channel.hpp>
@@ -28,6 +29,7 @@ class udp_socks_session : public mux_stream_interface, public std::enable_shared
 {
    public:
     udp_socks_session(asio::ip::tcp::socket socket,
+                      asio::io_context& io_context,
                       std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager,
                       std::uint32_t sid,
                       const config::timeout_t& timeout_cfg);
@@ -53,6 +55,7 @@ class udp_socks_session : public mux_stream_interface, public std::enable_shared
 
    private:
     connection_context ctx_;
+    asio::io_context& io_context_;
     asio::steady_timer timer_;
     asio::steady_timer idle_timer_;
     asio::ip::tcp::socket socket_;

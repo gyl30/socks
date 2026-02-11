@@ -35,10 +35,10 @@ class socks_client : public std::enable_shared_from_this<socks_client>
    private:
     asio::awaitable<void> accept_local_loop();
 
-   private:
+  private:
     std::atomic<bool> stop_{false};
     std::atomic<std::uint16_t> listen_port_{0};
-    asio::io_context::executor_type ex_;
+    asio::io_context& io_context_;
     asio::ip::tcp::acceptor acceptor_;
     std::shared_ptr<mux::router> router_;
     std::shared_ptr<client_tunnel_pool> tunnel_pool_;

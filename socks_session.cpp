@@ -33,6 +33,7 @@ namespace mux
 {
 
 socks_session::socks_session(asio::ip::tcp::socket socket,
+                             asio::io_context& io_context,
                              std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager,
                              std::shared_ptr<router> router,
                              const std::uint32_t sid,
@@ -42,6 +43,7 @@ socks_session::socks_session(asio::ip::tcp::socket socket,
       username_(socks_cfg.username),
       password_(socks_cfg.password),
       auth_enabled_(socks_cfg.auth),
+      io_context_(io_context),
       socket_(std::move(socket)),
       router_(std::move(router)),
       tunnel_manager_(std::move(tunnel_manager)),
@@ -58,7 +60,7 @@ socks_session::~socks_session() { statistics::instance().dec_active_connections(
 void socks_session::start()
 {
     const auto self = shared_from_this();
-    asio::co_spawn(socket_.get_executor(), [self]() mutable -> asio::awaitable<void> { co_await self->run(); }, asio::detached);
+    asio::co_spawn(io_context_, [self]() mutable -> asio::awaitable<void> { co_await self->run(); }, asio::detached);
 }
 
 void socks_session::stop()
@@ -93,12 +95,13 @@ asio::awaitable<void> socks_session::run()
 
     if (cmd == socks::kCmdConnect)
     {
-        const auto tcp_sess = std::make_shared<tcp_socks_session>(std::move(socket_), tunnel_manager_, router_, sid_, timeout_config_);
+        const auto tcp_sess =
+            std::make_shared<tcp_socks_session>(std::move(socket_), io_context_, tunnel_manager_, router_, sid_, timeout_config_);
         tcp_sess->start(host, port);
     }
     else if (cmd == socks::kCmdUdpAssociate)
     {
-        const auto udp_sess = std::make_shared<udp_socks_session>(std::move(socket_), tunnel_manager_, sid_, timeout_config_);
+        const auto udp_sess = std::make_shared<udp_socks_session>(std::move(socket_), io_context_, tunnel_manager_, sid_, timeout_config_);
         udp_sess->start(host, port);
     }
     else
@@ -248,7 +251,7 @@ asio::awaitable<socks_session::request_info> socks_session::read_request()
     auto delay_if_invalid = [&]() -> asio::awaitable<void>
     {
         std::uniform_int_distribution<std::uint32_t> delay_dist(10, 50);
-        asio::steady_timer delay_timer(socket_.get_executor());
+        asio::steady_timer delay_timer(io_context_);
         delay_timer.expires_after(std::chrono::milliseconds(delay_dist(delay_gen)));
         co_await delay_timer.async_wait(asio::as_tuple(asio::use_awaitable));
     };

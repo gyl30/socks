@@ -35,8 +35,8 @@ class upstream
 class direct_upstream : public upstream
 {
    public:
-    explicit direct_upstream(const asio::io_context::executor_type& ex, connection_context ctx, std::uint32_t mark = 0)
-        : socket_(ex), resolver_(ex), ctx_(std::move(ctx)), mark_(mark)
+    explicit direct_upstream(asio::io_context& io_context, connection_context ctx, std::uint32_t mark = 0)
+        : socket_(io_context), resolver_(io_context), ctx_(std::move(ctx)), mark_(mark)
     {
     }
 

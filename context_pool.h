@@ -5,6 +5,7 @@
 #include <memory>
 #include <vector>
 #include <cstddef>
+#include <utility>
 #include <system_error>
 
 #include <asio/io_context.hpp>
@@ -28,9 +29,11 @@ class io_context_pool
     [[nodiscard]] asio::io_context& get_io_context();
 
    private:
+    using work_guard_t = decltype(asio::make_work_guard(std::declval<asio::io_context&>()));
+
     std::vector<std::shared_ptr<asio::io_context>> io_contexts_;
     alignas(sizeof(std::size_t)) std::atomic<std::size_t> next_io_context_ = {0};
-    std::vector<std::shared_ptr<asio::executor_work_guard<asio::io_context::executor_type>>> work_guards_;
+    std::vector<work_guard_t> work_guards_;
 };
 
 }    // namespace mux

@@ -77,9 +77,9 @@ TEST_F(mux_connection_integration_test, StreamDataExchange)
 
     reality_engine engine_s{{}, {}, {}, {}, EVP_aes_128_gcm()};
 
-    auto conn_c = std::make_shared<mux_connection>(std::move(*socket_client), std::move(engine_c), true, 1);
+    auto conn_c = std::make_shared<mux_connection>(std::move(*socket_client), io_ctx(), std::move(engine_c), true, 1);
 
-    auto conn_s = std::make_shared<mux_connection>(std::move(*socket_server), std::move(engine_s), false, 1);
+    auto conn_s = std::make_shared<mux_connection>(std::move(*socket_server), io_ctx(), std::move(engine_s), false, 1);
 
     auto stream_s = std::make_shared<simple_mock_stream>();
     conn_s->register_stream(100, stream_s);
@@ -142,7 +142,8 @@ TEST_F(mux_connection_integration_test, ReadTimeoutHandling)
     timeout_cfg.write = 100;
 
     auto conn_s =
-        std::make_shared<mux_connection>(std::move(*socket_server), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, false, 1, "test", timeout_cfg);
+        std::make_shared<mux_connection>(
+            std::move(*socket_server), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, false, 1, "test", timeout_cfg);
 
     asio::co_spawn(io_ctx(), [conn_s]() -> asio::awaitable<void> { co_await conn_s->start(); }, asio::detached);
 
@@ -161,7 +162,7 @@ TEST_F(mux_connection_integration_test, TryRegisterStreamRejectsDuplicateId)
 {
     asio::ip::tcp::socket socket(io_ctx());
     reality_engine engine{{}, {}, {}, {}, EVP_aes_128_gcm()};
-    auto conn = std::make_shared<mux_connection>(std::move(socket), std::move(engine), true, 1);
+    auto conn = std::make_shared<mux_connection>(std::move(socket), io_ctx(), std::move(engine), true, 1);
 
     auto stream_a = std::make_shared<simple_mock_stream>();
     auto stream_b = std::make_shared<simple_mock_stream>();

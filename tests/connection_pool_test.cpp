@@ -55,7 +55,7 @@ TEST_F(connection_pool_test, TunnelReuse)
     server_cfg.reality.short_id = "0102030405060708";
     auto server = std::make_shared<mux::remote_server>(pool, server_cfg);
     reality::server_fingerprint fp;
-    server->cert_manager().set_certificate(sni, reality::construct_certificate({0x01, 0x02, 0x03}), fp);
+    server->set_certificate(sni, reality::construct_certificate({0x01, 0x02, 0x03}), fp);
     server->start();
 
     mux::config::limits_t limits;

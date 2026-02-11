@@ -48,19 +48,19 @@ asio::ip::udp::endpoint map_v4_to_v6(const asio::ip::udp::endpoint& ep)
 
 }    // namespace
 
-tproxy_udp_session::tproxy_udp_session(const asio::io_context::executor_type& ex,
+tproxy_udp_session::tproxy_udp_session(asio::io_context& io_context,
                                        std::shared_ptr<client_tunnel_pool> tunnel_pool,
                                        std::shared_ptr<router> router,
                                        std::shared_ptr<tproxy_udp_sender> sender,
                                        const std::uint32_t sid,
                                        const config& cfg,
                                        asio::ip::udp::endpoint client_ep)
-    : ex_(ex),
-      direct_socket_(ex_),
+    : io_context_(io_context),
+      direct_socket_(io_context_),
       tunnel_pool_(std::move(tunnel_pool)),
       router_(std::move(router)),
       sender_(std::move(sender)),
-      recv_channel_(ex_, 128),
+      recv_channel_(io_context_, 128),
       client_ep_(net::normalize_endpoint(client_ep)),
       mark_(cfg.tproxy.mark)
 {
@@ -98,13 +98,13 @@ void tproxy_udp_session::start()
         return;
     }
 
-    asio::co_spawn(ex_, [self = shared_from_this()]() -> asio::awaitable<void> { co_await self->direct_read_loop(); }, asio::detached);
+    asio::co_spawn(io_context_, [self = shared_from_this()]() -> asio::awaitable<void> { co_await self->direct_read_loop(); }, asio::detached);
 }
 
 asio::awaitable<void> tproxy_udp_session::handle_packet(const asio::ip::udp::endpoint& dst_ep, const std::uint8_t* data, const std::size_t len)
 {
     auto payload = std::vector<std::uint8_t>(data, data + len);
-    co_await asio::dispatch(ex_, asio::use_awaitable);
+    co_await asio::dispatch(io_context_, asio::use_awaitable);
     co_await handle_packet_inner(dst_ep, std::move(payload));
 }
 
@@ -131,7 +131,7 @@ asio::awaitable<void> tproxy_udp_session::handle_packet_inner(asio::ip::udp::end
 
 void tproxy_udp_session::stop()
 {
-    asio::dispatch(ex_,
+    asio::dispatch(io_context_,
                    [self = shared_from_this()]()
                    {
                        self->recv_channel_.close();
@@ -152,12 +152,14 @@ void tproxy_udp_session::stop()
 
 void tproxy_udp_session::on_data(std::vector<std::uint8_t> data)
 {
-    asio::dispatch(ex_, [self = shared_from_this(), data = std::move(data)]() mutable { self->recv_channel_.try_send(std::error_code(), std::move(data)); });
+    asio::dispatch(io_context_,
+                   [self = shared_from_this(), data = std::move(data)]() mutable
+                   { self->recv_channel_.try_send(std::error_code(), std::move(data)); });
 }
 
 void tproxy_udp_session::on_close()
 {
-    asio::dispatch(ex_,
+    asio::dispatch(io_context_,
                    [self = shared_from_this()]()
                    {
                        auto stream = self->stream_;
@@ -268,7 +270,9 @@ asio::awaitable<bool> tproxy_udp_session::ensure_proxy_stream()
 
     if (should_start_reader)
     {
-        asio::co_spawn(ex_, [self = shared_from_this()]() -> asio::awaitable<void> { co_await self->proxy_read_loop(); }, asio::detached);
+        asio::co_spawn(io_context_,
+                       [self = shared_from_this()]() -> asio::awaitable<void> { co_await self->proxy_read_loop(); },
+                       asio::detached);
     }
 
     co_return true;
