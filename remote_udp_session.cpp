@@ -38,16 +38,16 @@ namespace
 
 remote_udp_session::remote_udp_session(std::shared_ptr<mux_connection> connection,
                                        const std::uint32_t id,
-                                       const asio::io_context::executor_type& ex,
+                                       asio::io_context& io_context,
                                        const connection_context& ctx)
     : id_(id),
-      ex_(ex),
-      timer_(ex_),
-      idle_timer_(ex_),
-      udp_socket_(ex_),
-      udp_resolver_(ex_),
+      io_context_(io_context),
+      timer_(io_context_),
+      idle_timer_(io_context_),
+      udp_socket_(io_context_),
+      udp_resolver_(io_context_),
       connection_(std::move(connection)),
-      recv_channel_(ex_, 128)
+      recv_channel_(io_context_, 128)
 {
     ctx_ = ctx;
     ctx_.stream_id(id);
@@ -59,7 +59,7 @@ remote_udp_session::remote_udp_session(std::shared_ptr<mux_connection> connectio
 
 asio::awaitable<void> remote_udp_session::start()
 {
-    co_await asio::dispatch(ex_, asio::use_awaitable);
+    co_await asio::dispatch(io_context_, asio::use_awaitable);
     co_await start_impl(shared_from_this());
 }
 
@@ -139,7 +139,9 @@ asio::awaitable<void> remote_udp_session::start_impl(std::shared_ptr<remote_udp_
 
 void remote_udp_session::on_data(std::vector<std::uint8_t> data)
 {
-    asio::dispatch(ex_, [self = shared_from_this(), data = std::move(data)]() mutable { self->recv_channel_.try_send(std::error_code(), std::move(data)); });
+    asio::dispatch(io_context_,
+                   [self = shared_from_this(), data = std::move(data)]() mutable
+                   { self->recv_channel_.try_send(std::error_code(), std::move(data)); });
 }
 
 void remote_udp_session::request_stop()
@@ -164,7 +166,7 @@ void remote_udp_session::close_socket()
 
 void remote_udp_session::on_close()
 {
-    asio::dispatch(ex_, [self = shared_from_this()]() { self->request_stop(); });
+    asio::dispatch(io_context_, [self = shared_from_this()]() { self->request_stop(); });
 }
 
 void remote_udp_session::on_reset() { on_close(); }

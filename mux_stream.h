@@ -29,7 +29,7 @@ class mux_stream : public mux_stream_interface, public std::enable_shared_from_t
                std::uint32_t cid,
                const std::string& trace_id,
                const std::shared_ptr<mux_connection>& connection,
-               const asio::io_context::executor_type& ex);
+               asio::io_context& io_context);
 
     ~mux_stream() override;
 

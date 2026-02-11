@@ -51,7 +51,7 @@ TEST(TproxyUdpSessionTest, IdleDetection)
     cfg.timeout.idle = 1;
 
     const asio::ip::udp::endpoint client_ep(asio::ip::make_address("127.0.0.1"), 12345);
-    const auto session = std::make_shared<mux::tproxy_udp_session>(ctx.get_executor(), nullptr, router, nullptr, 1, cfg, client_ep);
+    const auto session = std::make_shared<mux::tproxy_udp_session>(ctx, nullptr, router, nullptr, 1, cfg, client_ep);
     session->start();
 
     const asio::ip::udp::endpoint dst_ep(asio::ip::make_address("127.0.0.1"), 53);

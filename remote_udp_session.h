@@ -29,7 +29,7 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
    public:
     remote_udp_session(std::shared_ptr<mux_connection> connection,
                        std::uint32_t id,
-                       const asio::io_context::executor_type& ex,
+                       asio::io_context& io_context,
                        const connection_context& ctx);
 
     asio::awaitable<void> start();
@@ -51,7 +51,7 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
    private:
     std::uint32_t id_;
     connection_context ctx_;
-    asio::io_context::executor_type ex_;
+    asio::io_context& io_context_;
     asio::steady_timer timer_;
     asio::steady_timer idle_timer_;
     asio::ip::udp::socket udp_socket_;
