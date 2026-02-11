@@ -68,6 +68,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     void set_syn_callback(syn_callback_t cb) { syn_callback_ = std::move(cb); }
 
     virtual void register_stream(const std::uint32_t id, std::shared_ptr<mux_stream_interface> stream);
+    [[nodiscard]] bool try_register_stream(const std::uint32_t id, std::shared_ptr<mux_stream_interface> stream);
 
     virtual void remove_stream(const std::uint32_t id);
 
