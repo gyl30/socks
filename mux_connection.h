@@ -14,8 +14,10 @@
 #include <unordered_map>
 
 #include <asio/ip/tcp.hpp>
+#include <asio/strand.hpp>
 #include <asio/awaitable.hpp>
 #include <asio/steady_timer.hpp>
+#include <asio/any_io_executor.hpp>
 #include <asio/experimental/concurrent_channel.hpp>
 
 #include "config.h"
@@ -79,6 +81,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
                                                                       std::vector<std::uint8_t> payload);
 
     void stop();
+    void release_resources();
 
     [[nodiscard]] bool is_open() const
     {
@@ -90,6 +93,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     [[nodiscard]] bool has_stream(std::uint32_t id);
 
    private:
+    asio::awaitable<void> start_impl();
     asio::awaitable<void> read_loop();
 
     asio::awaitable<void> write_loop();
@@ -99,6 +103,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     asio::awaitable<void> heartbeat_loop();
 
     void on_mux_frame(mux::frame_header header, std::vector<std::uint8_t> payload);
+    void stop_impl();
 
    private:
     connection_context ctx_;
@@ -106,6 +111,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     std::uint64_t read_bytes_ = 0;
     std::uint64_t write_bytes_ = 0;
     stream_map_t streams_;
+    asio::strand<asio::any_io_executor> strand_;
     asio::steady_timer timer_;
     std::mutex streams_mutex_;
     syn_callback_t syn_callback_;
@@ -114,12 +120,14 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     mux_dispatcher mux_dispatcher_;
     std::atomic<std::uint32_t> next_stream_id_;
     std::atomic<mux_connection_state> connection_state_;
-    std::chrono::steady_clock::time_point last_read_time_;
-    std::chrono::steady_clock::time_point last_write_time_;
-    asio::experimental::concurrent_channel<void(std::error_code, mux_write_msg)> write_channel_;
+    std::atomic<std::uint64_t> last_read_time_ms_{0};
+    std::atomic<std::uint64_t> last_write_time_ms_{0};
     config::timeout_t timeout_config_;
     config::limits_t limits_config_;
     config::heartbeat_t heartbeat_config_;
+
+    using channel_type = asio::experimental::concurrent_channel<void(std::error_code, mux_write_msg)>;
+    std::unique_ptr<channel_type> write_channel_;
 };
 
 }    // namespace mux

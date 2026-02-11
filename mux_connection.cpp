@@ -18,6 +18,7 @@
 #include <asio/as_tuple.hpp>
 #include <asio/co_spawn.hpp>
 #include <asio/detached.hpp>
+#include <asio/dispatch.hpp>
 #include <asio/steady_timer.hpp>
 #include <asio/use_awaitable.hpp>
 #include <asio/redirect_error.hpp>
@@ -37,6 +38,17 @@ extern "C"
 namespace mux
 {
 
+namespace
+{
+
+[[nodiscard]] std::uint64_t now_ms()
+{
+    return static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
+}    // namespace
+
 mux_connection::mux_connection(asio::ip::tcp::socket socket,
                                reality_engine engine,
                                const bool is_client,
@@ -46,15 +58,16 @@ mux_connection::mux_connection(asio::ip::tcp::socket socket,
                                const config::limits_t& limits_cfg,
                                const config::heartbeat_t& heartbeat_cfg)
     : cid_(conn_id),
-      timer_(socket.get_executor()),
+      strand_(asio::make_strand(socket.get_executor())),
+      timer_(strand_),
       socket_(std::move(socket)),
       reality_engine_(std::move(engine)),
       next_stream_id_(is_client ? 1 : 2),
       connection_state_(mux_connection_state::kConnected),
-      write_channel_(socket_.get_executor(), 1024),
       timeout_config_(timeout_cfg),
       limits_config_(limits_cfg),
-      heartbeat_config_(heartbeat_cfg)
+      heartbeat_config_(heartbeat_cfg),
+      write_channel_(std::make_unique<channel_type>(strand_, 1024))
 {
     ctx_.trace_id(trace_id);
     ctx_.conn_id(conn_id);
@@ -93,11 +106,17 @@ void mux_connection::remove_stream(const std::uint32_t id)
 
 asio::awaitable<void> mux_connection::start()
 {
-    const auto self = shared_from_this();
+    co_await asio::dispatch(strand_, asio::use_awaitable);
+    co_await start_impl();
+}
+
+asio::awaitable<void> mux_connection::start_impl()
+{
     LOG_DEBUG("mux {} started loops", cid_);
     using asio::experimental::awaitable_operators::operator||;
-    last_read_time_ = std::chrono::steady_clock::now();
-    last_write_time_ = std::chrono::steady_clock::now();
+    const auto ts = now_ms();
+    last_read_time_ms_.store(ts, std::memory_order_release);
+    last_write_time_ms_.store(ts, std::memory_order_release);
     co_await (read_loop() || write_loop() || timeout_loop() || heartbeat_loop());
     LOG_INFO("mux {} loops finished stopped", cid_);
     stop();
@@ -122,7 +141,7 @@ asio::awaitable<std::error_code> mux_connection::send_async(const std::uint32_t 
     }
 
     mux_write_msg msg{.command = cmd, .stream_id = stream_id, .payload = std::move(payload)};
-    const auto [ec] = co_await write_channel_.async_send(std::error_code{}, std::move(msg), asio::as_tuple(asio::use_awaitable));
+    const auto [ec] = co_await write_channel_->async_send(std::error_code{}, std::move(msg), asio::as_tuple(asio::use_awaitable));
 
     if (ec)
     {
@@ -149,8 +168,16 @@ void mux_connection::stop()
         }
     }
 
-    LOG_INFO("mux {} stopping", cid_);
+    asio::dispatch(strand_, [self = shared_from_this()]() { self->stop_impl(); });
+}
 
+void mux_connection::stop_impl()
+{
+    if (connection_state_.load(std::memory_order_acquire) == mux_connection_state::kClosed)
+    {
+        return;
+    }
+    LOG_INFO("mux {} stopping", cid_);
     stream_map_t streams_to_clear;
     {
         const std::scoped_lock lock(streams_mutex_);
@@ -161,7 +188,7 @@ void mux_connection::stop()
     {
         if (stream != nullptr)
         {
-            stream->on_close();
+            stream->on_reset();
         }
     }
 
@@ -182,11 +209,16 @@ void mux_connection::stop()
         }
     }
     LOG_INFO("mux write channel {} close", cid_);
-    write_channel_.close();
+    if (write_channel_)
+    {
+        write_channel_->close();
+    }
     LOG_INFO("mux timer {} cancel", cid_);
     timer_.cancel();
     connection_state_.store(mux_connection_state::kClosed, std::memory_order_release);
 }
+
+void mux_connection::release_resources() { stop(); }
 
 asio::awaitable<void> mux_connection::read_loop()
 {
@@ -206,7 +238,7 @@ asio::awaitable<void> mux_connection::read_loop()
         }
         read_bytes_ += n;
         statistics::instance().add_bytes_read(n);
-        last_read_time_ = std::chrono::steady_clock::now();
+        last_read_time_ms_.store(now_ms(), std::memory_order_release);
 
         reality_engine_.commit_read(n);
 
@@ -241,7 +273,7 @@ asio::awaitable<void> mux_connection::write_loop()
 {
     while (is_open())
     {
-        const auto [ec, msg] = co_await write_channel_.async_receive(asio::as_tuple(asio::use_awaitable));
+        const auto [ec, msg] = co_await write_channel_->async_receive(asio::as_tuple(asio::use_awaitable));
         if (ec)
         {
             break;
@@ -268,7 +300,7 @@ asio::awaitable<void> mux_connection::write_loop()
         }
         write_bytes_ += n;
         statistics::instance().add_bytes_written(n);
-        last_write_time_ = std::chrono::steady_clock::now();
+        last_write_time_ms_.store(now_ms(), std::memory_order_release);
     }
     LOG_DEBUG("mux {} write loop finished", cid_);
     stop();
@@ -301,11 +333,13 @@ asio::awaitable<void> mux_connection::timeout_loop()
             continue;
         }
 
-        const auto now = std::chrono::steady_clock::now();
-        const auto read_elapsed = now - last_read_time_;
-        const auto write_elapsed = now - last_write_time_;
+        const auto current_ms = now_ms();
+        const auto read_elapsed_ms = current_ms - last_read_time_ms_.load(std::memory_order_acquire);
+        const auto write_elapsed_ms = current_ms - last_write_time_ms_.load(std::memory_order_acquire);
+        const auto read_timeout_ms = static_cast<std::uint64_t>(timeout_config_.read) * 1000ULL;
+        const auto write_timeout_ms = static_cast<std::uint64_t>(timeout_config_.write) * 1000ULL;
 
-        if (read_elapsed > std::chrono::seconds(timeout_config_.read) || write_elapsed > std::chrono::seconds(timeout_config_.write))
+        if (read_elapsed_ms > read_timeout_ms || write_elapsed_ms > write_timeout_ms)
         {
             {
                 const std::scoped_lock lock(streams_mutex_);
@@ -340,7 +374,7 @@ asio::awaitable<void> mux_connection::heartbeat_loop()
 {
     if (!heartbeat_config_.enabled)
     {
-        asio::steady_timer timer(socket_.get_executor());
+        asio::steady_timer timer(strand_);
         timer.expires_at(std::chrono::steady_clock::time_point::max());
         std::error_code ec;
         co_await timer.async_wait(asio::redirect_error(asio::use_awaitable, ec));
@@ -348,7 +382,7 @@ asio::awaitable<void> mux_connection::heartbeat_loop()
     }
 
     static thread_local std::mt19937 rng(std::random_device{}());
-    asio::steady_timer heartbeat_timer(socket_.get_executor());
+    asio::steady_timer heartbeat_timer(strand_);
 
     while (is_open())
     {
@@ -362,8 +396,10 @@ asio::awaitable<void> mux_connection::heartbeat_loop()
             break;
         }
 
-        const auto now = std::chrono::steady_clock::now();
-        if (now - last_write_time_ < std::chrono::seconds(heartbeat_config_.idle_timeout))
+        const auto current_ms = now_ms();
+        const auto write_elapsed_ms = current_ms - last_write_time_ms_.load(std::memory_order_acquire);
+        const auto idle_timeout_ms = static_cast<std::uint64_t>(heartbeat_config_.idle_timeout) * 1000ULL;
+        if (write_elapsed_ms < idle_timeout_ms)
         {
             continue;
         }
@@ -433,7 +469,7 @@ void mux_connection::on_mux_frame(const mux::frame_header header, std::vector<st
             LOG_DEBUG("mux {} recv frame for unknown stream {}", cid_, header.stream_id);
             const auto self = shared_from_this();
             asio::co_spawn(
-                socket_.get_executor(),
+                strand_,
                 [self, stream_id = header.stream_id]() -> asio::awaitable<void> { (void)co_await self->send_async(stream_id, kCmdRst, {}); },
                 asio::detached);
         }
