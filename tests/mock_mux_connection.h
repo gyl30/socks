@@ -33,6 +33,6 @@ class mock_mux_connection : public mux_connection
     MOCK_METHOD(std::error_code, mock_send_async, (uint32_t stream_id, uint8_t cmd, const std::vector<uint8_t>& payload));
 };
 
-}    // namespace mux
+}                    
 
 #endif
