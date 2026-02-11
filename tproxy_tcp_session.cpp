@@ -5,6 +5,7 @@
 #include <utility>
 #include <system_error>
 
+#include <asio/error.hpp>
 #include <asio/write.hpp>
 #include <asio/buffer.hpp>
 #include <asio/as_tuple.hpp>
@@ -12,6 +13,7 @@
 #include <asio/detached.hpp>
 #include <asio/use_awaitable.hpp>
 #include <asio/redirect_error.hpp>
+#include <asio/experimental/channel_error.hpp>
 #include <asio/experimental/awaitable_operators.hpp>
 
 #include "log.h"
@@ -23,6 +25,32 @@
 
 namespace mux
 {
+
+namespace
+{
+
+[[nodiscard]] std::uint64_t now_ms()
+{
+    return static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
+[[nodiscard]] bool is_expected_shutdown_error(const std::error_code& ec)
+{
+    return ec == asio::error::not_connected || ec == asio::error::bad_descriptor;
+}
+
+[[nodiscard]] bool is_expected_client_read_error(const std::error_code& ec)
+{
+    return ec == asio::error::eof || ec == asio::error::operation_aborted || ec == asio::error::bad_descriptor;
+}
+
+[[nodiscard]] bool is_expected_backend_read_error(const std::error_code& ec)
+{
+    return ec == asio::error::eof || ec == asio::error::operation_aborted || ec == asio::experimental::error::channel_closed;
+}
+
+}    // namespace
 
 tproxy_tcp_session::tproxy_tcp_session(asio::ip::tcp::socket socket,
                                        std::shared_ptr<client_tunnel_pool> tunnel_pool,
@@ -40,7 +68,7 @@ tproxy_tcp_session::tproxy_tcp_session(asio::ip::tcp::socket socket,
 {
     ctx_.new_trace_id();
     ctx_.conn_id(sid);
-    last_activity_time_ = std::chrono::steady_clock::now();
+    last_activity_time_ms_.store(now_ms(), std::memory_order_release);
 }
 
 void tproxy_tcp_session::start()
@@ -55,11 +83,11 @@ asio::awaitable<void> tproxy_tcp_session::run()
     const auto port = dst_ep_.port();
     const auto route = co_await router_->decide_ip(ctx_, host, dst_ep_.address(), socket_.get_executor());
 
-    std::unique_ptr<upstream> backend = nullptr;
+    std::shared_ptr<upstream> backend = nullptr;
 
     if (route == route_type::kDirect)
     {
-        backend = std::make_unique<direct_upstream>(socket_.get_executor(), ctx_, mark_);
+        backend = std::make_shared<direct_upstream>(socket_.get_executor(), ctx_, mark_);
     }
     else if (route == route_type::kProxy)
     {
@@ -69,7 +97,7 @@ asio::awaitable<void> tproxy_tcp_session::run()
             LOG_CTX_WARN(ctx_, "{} no active tunnel", log_event::kRoute);
             co_return;
         }
-        backend = std::make_unique<proxy_upstream>(tunnel, ctx_);
+        backend = std::make_shared<proxy_upstream>(tunnel, ctx_);
     }
     else
     {
@@ -89,16 +117,28 @@ asio::awaitable<void> tproxy_tcp_session::run()
 
     asio::co_spawn(
         socket_.get_executor(),
-        [self = shared_from_this(), backend = backend.get()]() -> asio::awaitable<void> { co_await self->idle_watchdog(backend); },
+        [self = shared_from_this(), backend]() -> asio::awaitable<void> { co_await self->idle_watchdog(backend); },
         asio::detached);
 
     using asio::experimental::awaitable_operators::operator&&;
-    co_await (client_to_upstream(backend.get()) && upstream_to_client(backend.get()));
-    co_await backend->close();
+    co_await (client_to_upstream(backend) && upstream_to_client(backend));
+    co_await close_backend_once(backend);
+    std::error_code ec;
+    idle_timer_.cancel();
+    ec = socket_.shutdown(asio::ip::tcp::socket::shutdown_both, ec);
+    if (ec && !is_expected_shutdown_error(ec))
+    {
+        LOG_CTX_WARN(ctx_, "{} shutdown client failed {}", log_event::kSocks, ec.message());
+    }
+    ec = socket_.close(ec);
+    if (ec && ec != asio::error::bad_descriptor)
+    {
+        LOG_CTX_WARN(ctx_, "{} close client failed {}", log_event::kSocks, ec.message());
+    }
     LOG_CTX_INFO(ctx_, "{} finished {}", log_event::kConnClose, ctx_.stats_summary());
 }
 
-asio::awaitable<void> tproxy_tcp_session::client_to_upstream(upstream* backend)
+asio::awaitable<void> tproxy_tcp_session::client_to_upstream(std::shared_ptr<upstream> backend)
 {
     std::vector<std::uint8_t> buf(8192);
     for (;;)
@@ -107,7 +147,18 @@ asio::awaitable<void> tproxy_tcp_session::client_to_upstream(upstream* backend)
         const std::uint32_t n = co_await socket_.async_read_some(asio::buffer(buf), asio::redirect_error(asio::use_awaitable, ec));
         if (ec || n == 0)
         {
-            LOG_CTX_WARN(ctx_, "{} failed to read from client {}", log_event::kSocks, ec.message());
+            if (!ec)
+            {
+                LOG_CTX_DEBUG(ctx_, "{} client closed connection", log_event::kSocks);
+            }
+            else if (is_expected_client_read_error(ec))
+            {
+                LOG_CTX_DEBUG(ctx_, "{} read from client stopped {}", log_event::kSocks, ec.message());
+            }
+            else
+            {
+                LOG_CTX_WARN(ctx_, "{} failed to read from client {}", log_event::kSocks, ec.message());
+            }
             break;
         }
 
@@ -118,12 +169,12 @@ asio::awaitable<void> tproxy_tcp_session::client_to_upstream(upstream* backend)
             LOG_CTX_WARN(ctx_, "{} failed to write to backend", log_event::kSocks);
             break;
         }
-        last_activity_time_ = std::chrono::steady_clock::now();
+        last_activity_time_ms_.store(now_ms(), std::memory_order_release);
     }
     LOG_CTX_INFO(ctx_, "{} client to upstream finished", log_event::kSocks);
 }
 
-asio::awaitable<void> tproxy_tcp_session::upstream_to_client(upstream* backend)
+asio::awaitable<void> tproxy_tcp_session::upstream_to_client(std::shared_ptr<upstream> backend)
 {
     std::vector<std::uint8_t> buf(8192);
     for (;;)
@@ -131,7 +182,18 @@ asio::awaitable<void> tproxy_tcp_session::upstream_to_client(upstream* backend)
         const auto [ec, n] = co_await backend->read(buf);
         if (ec || n == 0)
         {
-            LOG_CTX_WARN(ctx_, "{} failed to read from backend {}", log_event::kSocks, ec.message());
+            if (!ec)
+            {
+                LOG_CTX_DEBUG(ctx_, "{} backend closed connection", log_event::kSocks);
+            }
+            else if (is_expected_backend_read_error(ec))
+            {
+                LOG_CTX_DEBUG(ctx_, "{} read from backend stopped {}", log_event::kSocks, ec.message());
+            }
+            else
+            {
+                LOG_CTX_WARN(ctx_, "{} failed to read from backend {}", log_event::kSocks, ec.message());
+            }
             break;
         }
 
@@ -141,18 +203,34 @@ asio::awaitable<void> tproxy_tcp_session::upstream_to_client(upstream* backend)
             LOG_CTX_WARN(ctx_, "{} failed to write to client {}", log_event::kSocks, we.message());
             break;
         }
-        last_activity_time_ = std::chrono::steady_clock::now();
+        last_activity_time_ms_.store(now_ms(), std::memory_order_release);
     }
     LOG_CTX_INFO(ctx_, "{} upstream to client finished", log_event::kSocks);
     std::error_code ignore;
     ignore = socket_.shutdown(asio::ip::tcp::socket::shutdown_send, ignore);
-    if (ignore)
+    if (ignore && !is_expected_shutdown_error(ignore))
     {
         LOG_CTX_WARN(ctx_, "{} failed to shutdown client {}", log_event::kSocks, ignore.message());
     }
 }
 
-asio::awaitable<void> tproxy_tcp_session::idle_watchdog(upstream* backend)
+asio::awaitable<void> tproxy_tcp_session::close_backend_once(const std::shared_ptr<upstream>& backend)
+{
+    if (backend == nullptr)
+    {
+        co_return;
+    }
+
+    bool expected = false;
+    if (!backend_closed_.compare_exchange_strong(expected, true, std::memory_order_acq_rel))
+    {
+        co_return;
+    }
+
+    co_await backend->close();
+}
+
+asio::awaitable<void> tproxy_tcp_session::idle_watchdog(std::shared_ptr<upstream> backend)
 {
     while (socket_.is_open())
     {
@@ -162,14 +240,13 @@ asio::awaitable<void> tproxy_tcp_session::idle_watchdog(upstream* backend)
         {
             break;
         }
-        const auto now = std::chrono::steady_clock::now();
-        if (now - last_activity_time_ > std::chrono::seconds(timeout_config_.idle))
+        const auto current_ms = now_ms();
+        const auto elapsed_ms = current_ms - last_activity_time_ms_.load(std::memory_order_acquire);
+        const auto idle_timeout_ms = static_cast<std::uint64_t>(timeout_config_.idle) * 1000ULL;
+        if (elapsed_ms > idle_timeout_ms)
         {
             LOG_CTX_WARN(ctx_, "{} tcp session idle closing", log_event::kSocks);
-            if (backend != nullptr)
-            {
-                co_await backend->close();
-            }
+            co_await close_backend_once(backend);
             std::error_code ignore;
             ignore = socket_.close(ignore);
             break;

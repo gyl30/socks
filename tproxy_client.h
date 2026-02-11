@@ -2,6 +2,7 @@
 #define TPROXY_CLIENT_H
 
 #include <mutex>
+#include <atomic>
 #include <memory>
 #include <string>
 #include <cstdint>
@@ -9,8 +10,8 @@
 
 #include <asio/ip/tcp.hpp>
 #include <asio/ip/udp.hpp>
+#include <asio/strand.hpp>
 #include <asio/awaitable.hpp>
-#include <asio/steady_timer.hpp>
 
 #include "config.h"
 #include "router.h"
@@ -46,11 +47,10 @@ class tproxy_client : public std::enable_shared_from_this<tproxy_client>
     [[nodiscard]] std::string endpoint_key(const asio::ip::udp::endpoint& ep) const;
 
    private:
-    bool stop_ = false;
-    io_context_pool& pool_;
+    std::atomic<bool> stop_{false};
+    asio::strand<asio::any_io_executor> strand_;
     asio::ip::tcp::acceptor tcp_acceptor_;
     asio::ip::udp::socket udp_socket_;
-    asio::steady_timer udp_cleanup_timer_;
     std::shared_ptr<client_tunnel_pool> tunnel_pool_;
     std::shared_ptr<router> router_;
     std::shared_ptr<tproxy_udp_sender> sender_;

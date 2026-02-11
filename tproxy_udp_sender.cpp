@@ -1,7 +1,9 @@
+#include <chrono>
 #include <memory>
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <iterator>
 #include <system_error>
 
 #include <asio/buffer.hpp>
@@ -18,6 +20,20 @@
 namespace mux
 {
 
+namespace
+{
+
+constexpr std::size_t kMaxCachedSockets = 1024;
+constexpr std::uint64_t kSocketIdleTimeoutMs = 300000;
+
+[[nodiscard]] std::uint64_t now_ms()
+{
+    return static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
+}    // namespace
+
 tproxy_udp_sender::tproxy_udp_sender(const asio::any_io_executor& ex, const std::uint32_t mark) : ex_(ex), mark_(mark) {}
 
 std::size_t tproxy_udp_sender::endpoint_hash::operator()(const endpoint_key& key) const
@@ -30,12 +46,22 @@ std::size_t tproxy_udp_sender::endpoint_hash::operator()(const endpoint_key& key
 
 std::shared_ptr<asio::ip::udp::socket> tproxy_udp_sender::get_socket(const asio::ip::udp::endpoint& src_ep)
 {
+    const auto now = now_ms();
     const endpoint_key key{src_ep.address(), src_ep.port()};
+
     const std::lock_guard<std::mutex> lock(socket_mutex_);
+    prune_sockets_locked(now);
+
     auto it = sockets_.find(key);
     if (it != sockets_.end())
     {
-        return it->second;
+        it->second.last_used_ms = now;
+        return it->second.socket;
+    }
+
+    if (sockets_.size() >= kMaxCachedSockets)
+    {
+        evict_oldest_socket_locked();
     }
 
     auto socket = std::make_shared<asio::ip::udp::socket>(asio::make_strand(ex_));
@@ -86,8 +112,52 @@ std::shared_ptr<asio::ip::udp::socket> tproxy_udp_sender::get_socket(const asio:
         return nullptr;
     }
 
-    sockets_[key] = socket;
+    sockets_[key] = cached_socket{.socket = socket, .last_used_ms = now};
     return socket;
+}
+
+void tproxy_udp_sender::prune_sockets_locked(const std::uint64_t now_ms)
+{
+    for (auto it = sockets_.begin(); it != sockets_.end();)
+    {
+        const bool expired = now_ms > (it->second.last_used_ms + kSocketIdleTimeoutMs);
+        const bool invalid = (it->second.socket == nullptr) || !it->second.socket->is_open();
+        if (expired || invalid)
+        {
+            if (it->second.socket != nullptr)
+            {
+                std::error_code ignore;
+                ignore = it->second.socket->close(ignore);
+            }
+            it = sockets_.erase(it);
+            continue;
+        }
+        ++it;
+    }
+}
+
+void tproxy_udp_sender::evict_oldest_socket_locked()
+{
+    if (sockets_.empty())
+    {
+        return;
+    }
+
+    auto oldest_it = sockets_.begin();
+    for (auto it = std::next(sockets_.begin()); it != sockets_.end(); ++it)
+    {
+        if (it->second.last_used_ms < oldest_it->second.last_used_ms)
+        {
+            oldest_it = it;
+        }
+    }
+
+    if (oldest_it->second.socket != nullptr)
+    {
+        std::error_code ignore;
+        ignore = oldest_it->second.socket->close(ignore);
+    }
+    sockets_.erase(oldest_it);
 }
 
 asio::awaitable<void> tproxy_udp_sender::send_to_client(const asio::ip::udp::endpoint& client_ep,
@@ -106,6 +176,24 @@ asio::awaitable<void> tproxy_udp_sender::send_to_client(const asio::ip::udp::end
     if (ec)
     {
         LOG_WARN("tproxy udp send to client failed {}", ec.message());
+        const endpoint_key key{norm_src.address(), norm_src.port()};
+        const std::lock_guard<std::mutex> lock(socket_mutex_);
+        auto it = sockets_.find(key);
+        if (it != sockets_.end() && it->second.socket == socket)
+        {
+            std::error_code ignore;
+            ignore = it->second.socket->close(ignore);
+            sockets_.erase(it);
+        }
+        co_return;
+    }
+
+    const endpoint_key key{norm_src.address(), norm_src.port()};
+    const std::lock_guard<std::mutex> lock(socket_mutex_);
+    auto it = sockets_.find(key);
+    if (it != sockets_.end() && it->second.socket == socket)
+    {
+        it->second.last_used_ms = now_ms();
     }
 }
 
