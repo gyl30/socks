@@ -310,6 +310,74 @@ std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> client_tunnel_pool::sele
 
 std::uint32_t client_tunnel_pool::next_session_id() { return next_session_id_++; }
 
+std::shared_ptr<asio::ip::tcp::socket> client_tunnel_pool::create_pending_socket(asio::io_context& io_context, const std::uint32_t index)
+{
+    const auto socket = std::make_shared<asio::ip::tcp::socket>(io_context);
+    if (index < pending_sockets_.size())
+    {
+        atomic_store_shared(pending_sockets_[index], socket);
+    }
+    return socket;
+}
+
+void client_tunnel_pool::clear_pending_socket_if_match(const std::uint32_t index, const std::shared_ptr<asio::ip::tcp::socket>& socket)
+{
+    if (index >= pending_sockets_.size())
+    {
+        return;
+    }
+
+    if (atomic_load_shared(pending_sockets_[index]) == socket)
+    {
+        atomic_store_shared(pending_sockets_[index], std::shared_ptr<asio::ip::tcp::socket>{});
+    }
+}
+
+void client_tunnel_pool::publish_tunnel(const std::uint32_t index, const std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>& tunnel)
+{
+    if (index < tunnel_pool_.size())
+    {
+        atomic_store_shared(tunnel_pool_[index], tunnel);
+    }
+}
+
+void client_tunnel_pool::clear_tunnel_if_match(const std::uint32_t index,
+                                               const std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>& tunnel)
+{
+    if (index >= tunnel_pool_.size())
+    {
+        return;
+    }
+
+    if (atomic_load_shared(tunnel_pool_[index]) == tunnel)
+    {
+        atomic_store_shared(tunnel_pool_[index], std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>{});
+    }
+}
+
+std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> client_tunnel_pool::build_tunnel(asio::ip::tcp::socket socket,
+                                                                                           asio::io_context& io_context,
+                                                                                           const std::uint32_t cid,
+                                                                                           const handshake_result& handshake_ret,
+                                                                                           const std::string& trace_id) const
+{
+    const std::size_t key_len = (handshake_ret.cipher_suite == 0x1302 || handshake_ret.cipher_suite == 0x1303) ? constants::crypto::kKeyLen256
+                                                                                                                   : constants::crypto::kKeyLen128;
+    std::error_code ec;
+    const auto c_app_keys =
+        reality::tls_key_schedule::derive_traffic_keys(handshake_ret.c_app_secret, ec, key_len, constants::crypto::kIvLen, handshake_ret.md);
+    const auto s_app_keys =
+        reality::tls_key_schedule::derive_traffic_keys(handshake_ret.s_app_secret, ec, key_len, constants::crypto::kIvLen, handshake_ret.md);
+    if (ec)
+    {
+        LOG_WARN("derive app traffic keys failed {}", ec.message());
+    }
+
+    reality_engine re(s_app_keys.first, s_app_keys.second, c_app_keys.first, c_app_keys.second, handshake_ret.cipher);
+    return std::make_shared<mux_tunnel_impl<asio::ip::tcp::socket>>(
+        std::move(socket), io_context, std::move(re), true, cid, trace_id, timeout_config_, limits_config_, heartbeat_config_);
+}
+
 asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::uint32_t index, asio::io_context& io_context)
 {
     while (!stop_.load(std::memory_order_acquire))
@@ -327,29 +395,11 @@ asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::uint32_
                      remote_port_);
 
         std::error_code ec;
-        const auto socket = std::make_shared<asio::ip::tcp::socket>(io_context);
-
-        const auto clear_pending_socket = [this, index, socket]()
-        {
-            if (index >= pending_sockets_.size())
-            {
-                return;
-            }
-
-            if (atomic_load_shared(pending_sockets_[index]) == socket)
-            {
-                atomic_store_shared(pending_sockets_[index], std::shared_ptr<asio::ip::tcp::socket>{});
-            }
-        };
-
-        if (index < pending_sockets_.size())
-        {
-            atomic_store_shared(pending_sockets_[index], socket);
-        }
+        const auto socket = create_pending_socket(io_context, index);
 
         if (!co_await tcp_connect(io_context, *socket, ec))
         {
-            clear_pending_socket();
+            clear_pending_socket_if_match(index, socket);
             LOG_ERROR("connect failed {} retry in {}s", ec.message(), constants::net::kRetryIntervalSec);
             co_await wait_remote_retry(io_context);
             continue;
@@ -358,45 +408,28 @@ asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::uint32_
         auto [handshake_success, handshake_ret] = co_await perform_reality_handshake(*socket, ec);
         if (!handshake_success)
         {
-            clear_pending_socket();
+            clear_pending_socket_if_match(index, socket);
             LOG_ERROR("handshake failed {} retry in {}s", ec.message(), constants::net::kRetryIntervalSec);
             co_await wait_remote_retry(io_context);
             continue;
         }
 
-        const std::size_t key_len = (handshake_ret.cipher_suite == 0x1302 || handshake_ret.cipher_suite == 0x1303) ? constants::crypto::kKeyLen256
-                                                                                                                   : constants::crypto::kKeyLen128;
-
-        const auto c_app_keys =
-            reality::tls_key_schedule::derive_traffic_keys(handshake_ret.c_app_secret, ec, key_len, constants::crypto::kIvLen, handshake_ret.md);
-        const auto s_app_keys =
-            reality::tls_key_schedule::derive_traffic_keys(handshake_ret.s_app_secret, ec, key_len, constants::crypto::kIvLen, handshake_ret.md);
-
         LOG_CTX_INFO(ctx, "{} handshake success cipher 0x{:04x}", log_event::kHandshake, handshake_ret.cipher_suite);
-        reality_engine re(s_app_keys.first, s_app_keys.second, c_app_keys.first, c_app_keys.second, handshake_ret.cipher);
-
-        auto tunnel = std::make_shared<mux_tunnel_impl<asio::ip::tcp::socket>>(
-            std::move(*socket), io_context, std::move(re), true, cid, ctx.trace_id(), timeout_config_, limits_config_, heartbeat_config_);
+        auto tunnel = build_tunnel(std::move(*socket), io_context, cid, handshake_ret, ctx.trace_id());
 
         if (stop_.load(std::memory_order_acquire))
         {
-            clear_pending_socket();
+            clear_pending_socket_if_match(index, socket);
             break;
         }
 
-        if (index < tunnel_pool_.size())
-        {
-            atomic_store_shared(tunnel_pool_[index], tunnel);
-        }
-        clear_pending_socket();
+        publish_tunnel(index, tunnel);
+        clear_pending_socket_if_match(index, socket);
 
         co_await tunnel->run();
 
-        if (index < tunnel_pool_.size() && atomic_load_shared(tunnel_pool_[index]) == tunnel)
-        {
-            atomic_store_shared(tunnel_pool_[index], std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>{});
-        }
-        clear_pending_socket();
+        clear_tunnel_if_match(index, tunnel);
+        clear_pending_socket_if_match(index, socket);
 
         co_await wait_remote_retry(io_context);
     }
