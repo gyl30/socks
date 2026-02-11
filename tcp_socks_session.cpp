@@ -39,12 +39,14 @@ namespace
 }    // namespace
 
 tcp_socks_session::tcp_socks_session(asio::ip::tcp::socket socket,
+                                     asio::io_context& io_context,
                                      std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager,
                                      std::shared_ptr<router> router,
                                      const std::uint32_t sid,
                                      const config::timeout_t& timeout_cfg)
-    : socket_(std::move(socket)),
-      idle_timer_(socket_.get_executor()),
+    : io_context_(io_context),
+      socket_(std::move(socket)),
+      idle_timer_(io_context_),
       router_(std::move(router)),
       tunnel_manager_(std::move(tunnel_manager)),
       timeout_config_(timeout_cfg)
@@ -57,7 +59,7 @@ tcp_socks_session::tcp_socks_session(asio::ip::tcp::socket socket,
 void tcp_socks_session::start(const std::string& host, const std::uint16_t port)
 {
     const auto self = shared_from_this();
-    asio::co_spawn(socket_.get_executor(), [self, host, port]() -> asio::awaitable<void> { co_await self->run(host, port); }, asio::detached);
+    asio::co_spawn(io_context_, [self, host, port]() -> asio::awaitable<void> { co_await self->run(host, port); }, asio::detached);
 }
 
 asio::awaitable<void> tcp_socks_session::run(const std::string& host, const std::uint16_t port)
@@ -68,7 +70,7 @@ asio::awaitable<void> tcp_socks_session::run(const std::string& host, const std:
 
     if (route == route_type::kDirect)
     {
-        backend = std::make_shared<direct_upstream>(socket_.get_executor(), ctx_, 0);
+        backend = std::make_shared<direct_upstream>(io_context_, ctx_, 0);
     }
     else if (route == route_type::kProxy)
     {
@@ -101,7 +103,7 @@ asio::awaitable<void> tcp_socks_session::run(const std::string& host, const std:
 
     LOG_CTX_INFO(ctx_, "{} connected {} {} via {}", log_event::kConnEstablished, host, port, (route == route_type::kDirect ? "direct" : "proxy"));
     asio::co_spawn(
-        socket_.get_executor(),
+        io_context_,
         [self = shared_from_this(), backend]() -> asio::awaitable<void> { co_await self->idle_watchdog(backend); },
         asio::detached);
     using asio::experimental::awaitable_operators::operator&&;

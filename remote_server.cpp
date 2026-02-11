@@ -4,6 +4,7 @@
 #include <memory>
 #include <random>
 #include <string>
+#include <future>
 #include <vector>
 #include <cstdint>
 #include <cstring>
@@ -19,6 +20,7 @@
 #include <asio/co_spawn.hpp>
 #include <asio/detached.hpp>
 #include <asio/dispatch.hpp>
+#include <asio/post.hpp>
 #include <asio/steady_timer.hpp>
 #include <asio/use_awaitable.hpp>
 #include <asio/experimental/awaitable_operators.hpp>
@@ -121,8 +123,8 @@ bool parse_dest_target(const std::string& input, std::string& host, std::string&
 }    // namespace
 
 remote_server::remote_server(io_context_pool& pool, const config& cfg)
-    : ex_(pool.get_io_context().get_executor()),
-      acceptor_(ex_),
+    : io_context_(pool.get_io_context()),
+      acceptor_(io_context_),
       fallbacks_(cfg.fallbacks),
       timeout_config_(cfg.timeout),
       limits_config_(cfg.limits),
@@ -195,7 +197,30 @@ remote_server::~remote_server()
 void remote_server::start()
 {
     stop_.store(false, std::memory_order_release);
-    asio::co_spawn(acceptor_.get_executor(), [self = shared_from_this()] { return self->accept_loop(); }, asio::detached);
+    started_.store(true, std::memory_order_release);
+    asio::co_spawn(io_context_, [self = shared_from_this()] { return self->accept_loop(); }, asio::detached);
+}
+
+void remote_server::set_certificate(std::string sni,
+                                    std::vector<std::uint8_t> cert_msg,
+                                    reality::server_fingerprint fp,
+                                    const std::string& trace_id)
+{
+    if (!started_.load(std::memory_order_acquire) || io_context_.get_executor().running_in_this_thread())
+    {
+        cert_manager_.set_certificate(sni, std::move(cert_msg), std::move(fp), trace_id);
+        return;
+    }
+
+    auto done = std::make_shared<std::promise<void>>();
+    auto done_future = done->get_future();
+    asio::post(io_context_,
+               [this, sni = std::move(sni), cert_msg = std::move(cert_msg), fp = std::move(fp), trace_id, done]() mutable
+               {
+                   cert_manager_.set_certificate(sni, std::move(cert_msg), std::move(fp), trace_id);
+                   done->set_value();
+               });
+    done_future.wait();
 }
 
 void remote_server::stop()
@@ -203,7 +228,7 @@ void remote_server::stop()
     stop_.store(true, std::memory_order_release);
     LOG_INFO("remote server stopping");
 
-    asio::dispatch(ex_,
+    asio::dispatch(io_context_,
                    [self = shared_from_this()]()
                    {
                        std::error_code close_ec;
@@ -233,7 +258,7 @@ asio::awaitable<void> remote_server::accept_loop()
     LOG_INFO("remote server listening for connections");
     while (!stop_.load(std::memory_order_acquire))
     {
-        const auto s = std::make_shared<asio::ip::tcp::socket>(ex_);
+        const auto s = std::make_shared<asio::ip::tcp::socket>(io_context_);
         const auto [accept_ec] = co_await acceptor_.async_accept(*s, asio::as_tuple(asio::use_awaitable));
         if (!accept_ec)
         {
@@ -242,7 +267,7 @@ asio::awaitable<void> remote_server::accept_loop()
             (void)ec;
             const std::uint32_t conn_id = next_conn_id_.fetch_add(1, std::memory_order_relaxed);
 
-            asio::co_spawn(ex_, [self = shared_from_this(), s, conn_id]() { return self->handle(s, conn_id); }, asio::detached);
+            asio::co_spawn(io_context_, [self = shared_from_this(), s, conn_id]() { return self->handle(s, conn_id); }, asio::detached);
         }
         else
         {
@@ -275,7 +300,7 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::negotiate_re
     {
         static thread_local std::mt19937 delay_gen(std::random_device{}());
         std::uniform_int_distribution<std::uint32_t> delay_dist(10, 50);
-        asio::steady_timer delay_timer(s->get_executor());
+        asio::steady_timer delay_timer(io_context_);
         delay_timer.expires_after(std::chrono::milliseconds(delay_dist(delay_gen)));
         co_await delay_timer.async_wait(asio::as_tuple(asio::use_awaitable));
         co_await handle_fallback(s, initial_buf, ctx, client_sni);
@@ -288,7 +313,7 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::negotiate_re
         LOG_CTX_WARN(ctx, "{} auth failed sni {}", log_event::kAuth, client_sni);
         static thread_local std::mt19937 delay_gen(std::random_device{}());
         std::uniform_int_distribution<std::uint32_t> delay_dist(10, 50);
-        asio::steady_timer delay_timer(s->get_executor());
+        asio::steady_timer delay_timer(io_context_);
         delay_timer.expires_after(std::chrono::milliseconds(delay_dist(delay_gen)));
         co_await delay_timer.async_wait(asio::as_tuple(asio::use_awaitable));
         co_await handle_fallback(s, initial_buf, ctx, client_sni);
@@ -371,7 +396,7 @@ asio::awaitable<void> remote_server::handle(std::shared_ptr<asio::ip::tcp::socke
 
     reality_engine engine(c_app_keys.first, c_app_keys.second, s_app_keys.first, s_app_keys.second, sh_res.cipher);
     auto tunnel = std::make_shared<mux_tunnel_impl<asio::ip::tcp::socket>>(
-        std::move(*s), std::move(engine), false, conn_id, ctx.trace_id(), timeout_config_, limits_config_, heartbeat_config_);
+        std::move(*s), io_context_, std::move(engine), false, conn_id, ctx.trace_id(), timeout_config_, limits_config_, heartbeat_config_);
 
     active_tunnels_.push_back(tunnel);
 
@@ -383,11 +408,11 @@ asio::awaitable<void> remote_server::handle(std::shared_ptr<asio::ip::tcp::socke
             {
                 if (auto tunnel = weak_tunnel.lock())
                 {
-                    auto ex = tunnel->connection()->executor();
+                    auto* stream_io_context = &tunnel->connection()->io_context();
                     asio::co_spawn(
-                        ex,
-                        [self, tunnel, ctx, id, p = std::move(p), ex]() mutable
-                        { return self->process_stream_request(tunnel, ctx, id, std::move(p), ex); },
+                        *stream_io_context,
+                        [self, tunnel, ctx, id, p = std::move(p), stream_io_context]() mutable
+                        { return self->process_stream_request(tunnel, ctx, id, std::move(p), *stream_io_context); },
                         asio::detached);
                 }
             }
@@ -400,7 +425,7 @@ asio::awaitable<void> remote_server::process_stream_request(std::shared_ptr<mux_
                                                             const connection_context& ctx,
                                                             const std::uint32_t stream_id,
                                                             std::vector<std::uint8_t> payload,
-                                                            asio::io_context::executor_type ex) const
+                                                            asio::io_context& io_context) const
 {
     if (!tunnel->connection()->can_accept_stream())
     {
@@ -430,7 +455,7 @@ asio::awaitable<void> remote_server::process_stream_request(std::shared_ptr<mux_
     {
         LOG_CTX_INFO(
             stream_ctx, "{} stream {} type tcp connect target {} {} payload size {}", log_event::kMux, stream_id, syn.addr, syn.port, payload.size());
-        const auto sess = std::make_shared<remote_session>(tunnel->connection(), stream_id, ex, stream_ctx);
+        const auto sess = std::make_shared<remote_session>(tunnel->connection(), stream_id, io_context, stream_ctx);
         sess->set_manager(tunnel);
         if (!tunnel->try_register_stream(stream_id, sess))
         {
@@ -443,7 +468,7 @@ asio::awaitable<void> remote_server::process_stream_request(std::shared_ptr<mux_
     else if (syn.socks_cmd == socks::kCmdUdpAssociate)
     {
         LOG_CTX_INFO(stream_ctx, "{} stream {} type udp associate associated via tcp", log_event::kMux, stream_id);
-        const auto sess = std::make_shared<remote_udp_session>(tunnel->connection(), stream_id, ex, stream_ctx);
+        const auto sess = std::make_shared<remote_udp_session>(tunnel->connection(), stream_id, io_context, stream_ctx);
         sess->set_manager(tunnel);
         if (!tunnel->try_register_stream(stream_id, sess))
         {
@@ -678,7 +703,7 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::perform_hand
     else
     {
         LOG_CTX_INFO(ctx, "{} certificate miss fetching {} {}", log_event::kCert, fetch_host, fetch_port);
-        const auto res = co_await reality::cert_fetcher::fetch(s->get_executor(), fetch_host, fetch_port, cert_sni, ctx.trace_id());
+        const auto res = co_await reality::cert_fetcher::fetch(io_context_, fetch_host, fetch_port, cert_sni, ctx.trace_id());
 
         if (!res.has_value())
         {
@@ -689,7 +714,7 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::perform_hand
 
         cert_msg = res->cert_msg;
         fingerprint = res->fingerprint;
-        cert_manager_.set_certificate(cert_sni, cert_msg, fingerprint, ctx.trace_id());
+        set_certificate(cert_sni, cert_msg, fingerprint, ctx.trace_id());
     }
 
     std::uint16_t cipher_suite = (fingerprint.cipher_suite != 0) ? fingerprint.cipher_suite : 0x1301;
@@ -865,9 +890,9 @@ std::pair<std::string, std::string> remote_server::find_fallback_target_by_sni(c
     return {};
 }
 
-asio::awaitable<void> remote_server::fallback_failed_timer(const std::uint32_t conn_id, asio::io_context::executor_type ex)
+asio::awaitable<void> remote_server::fallback_failed_timer(const std::uint32_t conn_id, asio::io_context& io_context)
 {
-    asio::steady_timer fallback_timer(ex);
+    asio::steady_timer fallback_timer(io_context);
     constexpr std::uint32_t max_wait_ms = constants::fallback::kMaxWaitMs;
     static thread_local std::mt19937 gen(std::random_device{}());
     std::uniform_int_distribution<std::uint32_t> dist(0, max_wait_ms - 1);
@@ -907,7 +932,7 @@ asio::awaitable<void> remote_server::handle_fallback(const std::shared_ptr<asio:
     {
         LOG_CTX_INFO(ctx, "{} no target sni {}", log_event::kFallback, sni.empty() ? "empty" : sni);
         using asio::experimental::awaitable_operators::operator||;
-        co_await (fallback_failed(s) || fallback_failed_timer(ctx.conn_id(), s->get_executor()));
+        co_await (fallback_failed(s) || fallback_failed_timer(ctx.conn_id(), io_context_));
         std::error_code close_ec;
         close_ec = s->shutdown(asio::ip::tcp::socket::shutdown_both, close_ec);
         if (close_ec && close_ec != asio::error::not_connected)
@@ -925,8 +950,8 @@ asio::awaitable<void> remote_server::handle_fallback(const std::shared_ptr<asio:
 
     const auto target_host = fallback_target.first;
     const auto target_port = fallback_target.second;
-    auto t = std::make_shared<asio::ip::tcp::socket>(s->get_executor());
-    asio::ip::tcp::resolver r(s->get_executor());
+    auto t = std::make_shared<asio::ip::tcp::socket>(io_context_);
+    asio::ip::tcp::resolver r(io_context_);
 
     LOG_CTX_INFO(ctx, "{} proxying sni {} to {} {}", log_event::kFallback, sni, target_host, target_port);
 

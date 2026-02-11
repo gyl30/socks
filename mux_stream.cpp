@@ -26,8 +26,8 @@ mux_stream::mux_stream(std::uint32_t id,
                        std::uint32_t cid,
                        const std::string& trace_id,
                        const std::shared_ptr<mux_connection>& connection,
-                       const asio::io_context::executor_type& ex)
-    : id_(id), connection_(connection), recv_channel_(ex, 1024)
+                       asio::io_context& io_context)
+    : id_(id), connection_(connection), recv_channel_(io_context, 1024)
 {
     ctx_.trace_id(trace_id);
     ctx_.conn_id(cid);
