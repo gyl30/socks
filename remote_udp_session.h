@@ -1,6 +1,7 @@
 #ifndef REMOTE_UDP_SESSION_H
 #define REMOTE_UDP_SESSION_H
 
+#include <atomic>
 #include <chrono>
 #include <memory>
 #include <vector>
@@ -8,6 +9,7 @@
 
 #include <asio/ip/tcp.hpp>
 #include <asio/ip/udp.hpp>
+#include <asio/strand.hpp>
 #include <asio/awaitable.hpp>
 #include <asio/steady_timer.hpp>
 #include <asio/any_io_executor.hpp>
@@ -36,22 +38,26 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
     void set_manager(const std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>& m) { manager_ = m; }
 
    private:
+    asio::awaitable<void> start_impl(std::shared_ptr<remote_udp_session> self);
     asio::awaitable<void> watchdog();
     asio::awaitable<void> mux_to_udp();
     asio::awaitable<void> udp_to_mux();
     asio::awaitable<void> idle_watchdog();
+    void request_stop();
+    void close_socket();
 
    private:
     std::uint32_t id_;
     connection_context ctx_;
+    asio::strand<asio::any_io_executor> strand_;
     asio::steady_timer timer_;
     asio::steady_timer idle_timer_;
     asio::ip::udp::socket udp_socket_;
     asio::ip::udp::resolver udp_resolver_;
-    std::shared_ptr<mux_connection> connection_;
-    std::chrono::steady_clock::time_point last_read_time_;
-    std::chrono::steady_clock::time_point last_write_time_;
-    std::chrono::steady_clock::time_point last_activity_time_;
+    std::weak_ptr<mux_connection> connection_;
+    std::atomic<std::uint64_t> last_read_time_ms_{0};
+    std::atomic<std::uint64_t> last_write_time_ms_{0};
+    std::atomic<std::uint64_t> last_activity_time_ms_{0};
     std::weak_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> manager_;
     asio::experimental::concurrent_channel<void(std::error_code, std::vector<std::uint8_t>)> recv_channel_;
 };

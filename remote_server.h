@@ -66,7 +66,8 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     asio::awaitable<void> process_stream_request(std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel,
                                                  const connection_context& ctx,
                                                  const std::uint32_t stream_id,
-                                                 std::vector<std::uint8_t> payload) const;
+                                                 std::vector<std::uint8_t> payload,
+                                                 asio::any_io_executor ex) const;
 
     [[nodiscard]] static asio::awaitable<bool> read_initial_and_validate(std::shared_ptr<asio::ip::tcp::socket> s,
                                                                          const connection_context& ctx,
@@ -144,6 +145,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     std::vector<std::weak_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>> active_tunnels_;
     config::limits_t limits_config_;
     config::heartbeat_t heartbeat_config_;
+    std::atomic<bool> stop_{false};
 };
 
 }    // namespace mux
