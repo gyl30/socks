@@ -1,4 +1,3 @@
-#include <mutex>
 #include <string>
 #include <vector>
 #include <utility>
@@ -14,7 +13,6 @@ namespace reality
 
 std::optional<cert_entry> cert_manager::get_certificate(const std::string& sni)
 {
-    const std::scoped_lock lock(mutex_);
     if (auto it = cache_.find(sni); it != cache_.end())
     {
         return it->second;
@@ -29,8 +27,6 @@ std::optional<cert_entry> cert_manager::get_certificate(const std::string& sni)
 
 void cert_manager::set_certificate(const std::string& sni, std::vector<std::uint8_t> cert_msg, server_fingerprint fp, const std::string& trace_id)
 {
-    const std::scoped_lock lock(mutex_);
-
     if (cache_.size() > 100)
     {
         cache_.clear();
