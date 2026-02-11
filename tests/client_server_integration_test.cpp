@@ -124,6 +124,7 @@ TEST_F(integration_test, FullHandshakeAndMux)
 
     client->stop();
     server->stop();
+    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
 }
 
 TEST_F(integration_test, FullDataTransfer)
@@ -163,18 +164,22 @@ TEST_F(integration_test, FullDataTransfer)
     };
 
     auto acceptor_handler = std::make_shared<std::function<void()>>();
-    *acceptor_handler = [echo_acceptor, acceptor_handler]()
+    std::weak_ptr<std::function<void()>> weak_handler = acceptor_handler;
+    *acceptor_handler = [echo_acceptor, weak_handler]()
     {
         echo_acceptor->async_accept(
-            [echo_acceptor, acceptor_handler](std::error_code ec, asio::ip::tcp::socket socket)
+            [echo_acceptor, weak_handler](std::error_code ec, asio::ip::tcp::socket socket)
             {
                 if (!ec)
                 {
                     std::make_shared<echo_session>(std::move(socket))->start();
                 }
-                if (!ec || ec != asio::error::operation_aborted)
+                if (auto handler = weak_handler.lock())
                 {
-                    (*acceptor_handler)();
+                    if (!ec || ec != asio::error::operation_aborted)
+                    {
+                        (*handler)();
+                    }
                 }
             });
     };
@@ -252,4 +257,5 @@ TEST_F(integration_test, FullDataTransfer)
     client->stop();
     server->stop();
     echo_acceptor->close();
+    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
 }
