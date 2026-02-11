@@ -157,4 +157,18 @@ TEST_F(mux_connection_integration_test, ReadTimeoutHandling)
 
 TEST_F(mux_connection_integration_test, WriteTimeoutHandling) {}
 
+TEST_F(mux_connection_integration_test, TryRegisterStreamRejectsDuplicateId)
+{
+    asio::ip::tcp::socket socket(io_ctx());
+    reality_engine engine{{}, {}, {}, {}, EVP_aes_128_gcm()};
+    auto conn = std::make_shared<mux_connection>(std::move(socket), std::move(engine), true, 1);
+
+    auto stream_a = std::make_shared<simple_mock_stream>();
+    auto stream_b = std::make_shared<simple_mock_stream>();
+
+    EXPECT_TRUE(conn->try_register_stream(100, stream_a));
+    EXPECT_FALSE(conn->try_register_stream(100, stream_b));
+    EXPECT_TRUE(conn->has_stream(100));
+}
+
 }    // namespace
