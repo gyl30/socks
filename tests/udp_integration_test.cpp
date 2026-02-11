@@ -16,6 +16,7 @@
 #include <asio/this_coro.hpp>
 #include <asio/steady_timer.hpp>
 #include <asio/use_awaitable.hpp>
+#include <asio/cancellation_signal.hpp>
 
 #include "mux_codec.h"
 #include "crypto_util.h"
@@ -152,6 +153,7 @@ TEST_F(udp_integration_test, UdpAssociateAndEcho)
     std::shared_ptr<asio::ip::tcp::socket> client_tcp;
     std::shared_ptr<asio::ip::udp::socket> client_udp;
 
+    asio::cancellation_signal cancel_sig;
     asio::co_spawn(
         pool.get_io_context(),
         [&]() -> asio::awaitable<void>
@@ -286,7 +288,7 @@ TEST_F(udp_integration_test, UdpAssociateAndEcho)
                 test_failed = true;
             }
         },
-        asio::detached);
+        asio::bind_cancellation_slot(cancel_sig.slot(), asio::detached));
 
     for (int i = 0; i < 200; ++i)
     {
@@ -299,6 +301,8 @@ TEST_F(udp_integration_test, UdpAssociateAndEcho)
 
     client->stop();
     server->stop();
+    cancel_sig.emit(asio::cancellation_type::all);
+    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
 
     std::error_code ignore;
     if (client_tcp)
