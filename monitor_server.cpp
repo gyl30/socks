@@ -11,16 +11,8 @@ namespace mux
 class monitor_session : public std::enable_shared_from_this<monitor_session>
 {
    public:
-    monitor_session(asio::ip::tcp::socket socket,
-                    std::string token,
-                    std::chrono::steady_clock::time_point* last_request_time,
-                    std::mutex* mutex,
-                    std::uint32_t min_interval_ms)
-        : socket_(std::move(socket)),
-          token_(std::move(token)),
-          last_request_time_(last_request_time),
-          mutex_(mutex),
-          min_interval_ms_(min_interval_ms)
+    monitor_session(asio::ip::tcp::socket socket, std::string token, std::shared_ptr<monitor_rate_state> rate_state, std::uint32_t min_interval_ms)
+        : socket_(std::move(socket)), token_(std::move(token)), rate_state_(std::move(rate_state)), min_interval_ms_(min_interval_ms)
     {
     }
 
@@ -63,17 +55,17 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
 
     bool check_rate_limit()
     {
-        if (min_interval_ms_ == 0 || last_request_time_ == nullptr || mutex_ == nullptr)
+        if (min_interval_ms_ == 0 || rate_state_ == nullptr)
         {
             return true;
         }
         const auto now = std::chrono::steady_clock::now();
-        const std::scoped_lock lock(*mutex_);
-        if (now - *last_request_time_ < std::chrono::milliseconds(min_interval_ms_))
+        const std::scoped_lock lock(rate_state_->mutex);
+        if (now - rate_state_->last_request_time < std::chrono::milliseconds(min_interval_ms_))
         {
             return false;
         }
-        *last_request_time_ = now;
+        rate_state_->last_request_time = now;
         return true;
     }
 
@@ -102,8 +94,7 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
     std::array<char, 128> buffer_;
     asio::ip::tcp::socket socket_;
     std::string token_;
-    std::chrono::steady_clock::time_point* last_request_time_ = nullptr;
-    std::mutex* mutex_ = nullptr;
+    std::shared_ptr<monitor_rate_state> rate_state_;
     std::uint32_t min_interval_ms_ = 0;
 };
 
@@ -180,14 +171,15 @@ void monitor_server::start() { do_accept(); }
 
 void monitor_server::do_accept()
 {
+    const auto self = shared_from_this();
     acceptor_.async_accept(
-        [this](std::error_code ec, asio::ip::tcp::socket socket)
+        [self](std::error_code ec, asio::ip::tcp::socket socket)
         {
             if (!ec)
             {
-                std::make_shared<monitor_session>(std::move(socket), token_, &last_request_time_, &rate_mutex_, min_interval_ms_)->start();
+                std::make_shared<monitor_session>(std::move(socket), self->token_, self->rate_state_, self->min_interval_ms_)->start();
             }
-            do_accept();
+            self->do_accept();
         });
 }
 

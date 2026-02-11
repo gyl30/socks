@@ -13,6 +13,7 @@
 #include <optional>
 #include <system_error>
 
+#include <asio/post.hpp>
 #include <asio/read.hpp>
 #include <asio/error.hpp>
 #include <asio/write.hpp>
@@ -199,10 +200,11 @@ client_tunnel_pool::client_tunnel_pool(io_context_pool& pool, const config& cfg,
 
 void client_tunnel_pool::start()
 {
+    stop_.store(false, std::memory_order_release);
     if (!auth_config_valid_)
     {
         LOG_ERROR("invalid reality auth config");
-        stop_ = true;
+        stop_.store(true, std::memory_order_release);
         return;
     }
 
@@ -213,6 +215,7 @@ void client_tunnel_pool::start()
         limits_config_.max_connections = 1;
     }
     tunnel_pool_.resize(limits_config_.max_connections);
+    pending_sockets_.resize(limits_config_.max_connections);
 
     for (std::uint32_t i = 0; i < limits_config_.max_connections; ++i)
     {
@@ -226,15 +229,43 @@ void client_tunnel_pool::start()
 void client_tunnel_pool::stop()
 {
     LOG_INFO("client pool stopping closing resources");
-    stop_ = true;
+    stop_.store(true, std::memory_order_release);
 
-    const std::lock_guard<std::mutex> lock(pool_mutex_);
-    for (auto& tunnel : tunnel_pool_)
+    std::vector<std::shared_ptr<asio::ip::tcp::socket>> sockets_to_close;
     {
-        if (tunnel != nullptr && tunnel->connection() != nullptr)
+        const std::lock_guard<std::mutex> lock(pool_mutex_);
+        for (auto& socket : pending_sockets_)
         {
-            tunnel->connection()->stop();
+            if (socket != nullptr)
+            {
+                sockets_to_close.push_back(socket);
+                socket = nullptr;
+            }
         }
+        for (auto& tunnel : tunnel_pool_)
+        {
+            if (tunnel != nullptr && tunnel->connection() != nullptr)
+            {
+                tunnel->connection()->release_resources();
+            }
+            tunnel = nullptr;
+        }
+    }
+
+    for (const auto& socket : sockets_to_close)
+    {
+        if (socket == nullptr)
+        {
+            continue;
+        }
+        const auto pending_socket = socket;
+        asio::post(pending_socket->get_executor(),
+                   [pending_socket]()
+                   {
+                       std::error_code ec;
+                       pending_socket->cancel(ec);
+                       pending_socket->close(ec);
+                   });
     }
 }
 
@@ -264,7 +295,7 @@ std::uint32_t client_tunnel_pool::next_session_id() { return next_session_id_++;
 
 asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::uint32_t index)
 {
-    while (!stop_)
+    while (!stop_.load(std::memory_order_acquire))
     {
         const std::uint32_t cid = next_conn_id_++;
         connection_context ctx;
@@ -280,9 +311,23 @@ asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::uint32_
 
         std::error_code ec;
         const auto socket = std::make_shared<asio::ip::tcp::socket>(pool_.get_io_context());
+        {
+            const std::lock_guard<std::mutex> lock(pool_mutex_);
+            if (index < pending_sockets_.size())
+            {
+                pending_sockets_[index] = socket;
+            }
+        }
 
         if (!co_await tcp_connect(*socket, ec))
         {
+            {
+                const std::lock_guard<std::mutex> lock(pool_mutex_);
+                if (index < pending_sockets_.size() && pending_sockets_[index] == socket)
+                {
+                    pending_sockets_[index] = nullptr;
+                }
+            }
             LOG_ERROR("connect failed {} retry in {}s", ec.message(), constants::net::kRetryIntervalSec);
             co_await wait_remote_retry();
             continue;
@@ -291,6 +336,13 @@ asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::uint32_
         auto [handshake_success, handshake_ret] = co_await perform_reality_handshake(*socket, ec);
         if (!handshake_success)
         {
+            {
+                const std::lock_guard<std::mutex> lock(pool_mutex_);
+                if (index < pending_sockets_.size() && pending_sockets_[index] == socket)
+                {
+                    pending_sockets_[index] = nullptr;
+                }
+            }
             LOG_ERROR("handshake failed {} retry in {}s", ec.message(), constants::net::kRetryIntervalSec);
             co_await wait_remote_retry();
             continue;
@@ -312,14 +364,36 @@ asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::uint32_
 
         {
             const std::lock_guard<std::mutex> lock(pool_mutex_);
-            tunnel_pool_[index] = tunnel;
+            if (stop_.load(std::memory_order_acquire))
+            {
+                if (index < pending_sockets_.size() && pending_sockets_[index] == socket)
+                {
+                    pending_sockets_[index] = nullptr;
+                }
+                break;
+            }
+            if (index < tunnel_pool_.size())
+            {
+                tunnel_pool_[index] = tunnel;
+            }
+            if (index < pending_sockets_.size() && pending_sockets_[index] == socket)
+            {
+                pending_sockets_[index] = nullptr;
+            }
         }
 
         co_await tunnel->run();
 
         {
             const std::lock_guard<std::mutex> lock(pool_mutex_);
-            tunnel_pool_[index] = nullptr;
+            if (index < tunnel_pool_.size())
+            {
+                tunnel_pool_[index] = nullptr;
+            }
+            if (index < pending_sockets_.size() && pending_sockets_[index] == socket)
+            {
+                pending_sockets_[index] = nullptr;
+            }
         }
 
         co_await wait_remote_retry();
@@ -789,7 +863,7 @@ asio::awaitable<bool> client_tunnel_pool::send_client_finished(asio::ip::tcp::so
 
 asio::awaitable<void> client_tunnel_pool::wait_remote_retry()
 {
-    if (stop_)
+    if (stop_.load(std::memory_order_acquire))
     {
         co_return;
     }

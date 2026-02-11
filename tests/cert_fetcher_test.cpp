@@ -255,6 +255,23 @@ TEST(CertFetcherTest, MockServerScenarios)
     }
 
     {
+        std::vector<std::uint8_t> too_short_sh = {0x16, 0x03, 0x03, 0x00, 0x03, 0x02, 0x00, 0x00};
+        std::uint16_t port = run_mock_server(too_short_sh);
+
+        asio::co_spawn(
+            ctx,
+            [&]() -> asio::awaitable<void>
+            {
+                auto res = co_await reality::cert_fetcher::fetch(co_await asio::this_coro::executor, "127.0.0.1", port, "localhost", "test");
+                EXPECT_FALSE(res.has_value());
+                co_return;
+            },
+            asio::detached);
+        ctx.run();
+        ctx.restart();
+    }
+
+    {
         std::vector<std::uint8_t> long_rec = {0x16, 0x03, 0x03, 0x48, 0x01};
         std::uint16_t port = run_mock_server(long_rec);
 

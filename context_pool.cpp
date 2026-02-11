@@ -34,7 +34,7 @@ void io_context_pool::run()
 
     for (auto& io_context : io_contexts_)
     {
-        threads.emplace_back([&io_context]() { io_context->run(); });
+        threads.emplace_back([ctx = io_context]() { ctx->run(); });
     }
 
     LOG_INFO("io context pool running with {} threads", threads.size());
@@ -52,10 +52,6 @@ void io_context_pool::stop()
 {
     LOG_INFO("io context pool stopping all contexts");
     work_guards_.clear();
-    for (auto& io_context : io_contexts_)
-    {
-        io_context->stop();
-    }
 }
 
 asio::io_context& io_context_pool::get_io_context()

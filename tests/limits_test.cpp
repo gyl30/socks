@@ -187,6 +187,7 @@ TEST_F(limits_test, ConnectionPoolCapacity)
 
     client->stop();
     server->stop();
+    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
     pool.stop();
 
     target_acceptor.close();
