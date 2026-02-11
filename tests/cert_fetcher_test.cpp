@@ -12,7 +12,6 @@
 #include <asio/co_spawn.hpp>
 #include <asio/detached.hpp>
 #include <asio/awaitable.hpp>
-#include <asio/this_coro.hpp>
 #include <asio/io_context.hpp>
 #include <asio/steady_timer.hpp>
 #include <asio/use_awaitable.hpp>
@@ -134,7 +133,7 @@ TEST(CertFetcherTest, BasicFetch)
         ctx,
         [&]() -> asio::awaitable<void>
         {
-            const auto ex = co_await asio::this_coro::executor;
+            const auto ex = ctx.get_executor();
             const auto res = co_await reality::cert_fetcher::fetch(ex, "127.0.0.1", server.port(), "example.com");
             if (res.has_value())
             {
@@ -211,7 +210,7 @@ TEST(CertFetcherTest, MockServerScenarios)
             ctx,
             [&]() -> asio::awaitable<void>
             {
-                auto res = co_await reality::cert_fetcher::fetch(co_await asio::this_coro::executor, "127.0.0.1", port, "localhost", "test");
+                auto res = co_await reality::cert_fetcher::fetch(ctx.get_executor(), "127.0.0.1", port, "localhost", "test");
                 EXPECT_FALSE(res.has_value());
                 co_return;
             },
@@ -228,7 +227,7 @@ TEST(CertFetcherTest, MockServerScenarios)
             ctx,
             [&]() -> asio::awaitable<void>
             {
-                auto res = co_await reality::cert_fetcher::fetch(co_await asio::this_coro::executor, "127.0.0.1", port, "localhost", "test");
+                auto res = co_await reality::cert_fetcher::fetch(ctx.get_executor(), "127.0.0.1", port, "localhost", "test");
                 EXPECT_FALSE(res.has_value());
                 co_return;
             },
@@ -245,7 +244,7 @@ TEST(CertFetcherTest, MockServerScenarios)
             ctx,
             [&]() -> asio::awaitable<void>
             {
-                auto res = co_await reality::cert_fetcher::fetch(co_await asio::this_coro::executor, "127.0.0.1", port, "localhost", "test");
+                auto res = co_await reality::cert_fetcher::fetch(ctx.get_executor(), "127.0.0.1", port, "localhost", "test");
                 EXPECT_FALSE(res.has_value());
                 co_return;
             },
@@ -262,7 +261,7 @@ TEST(CertFetcherTest, MockServerScenarios)
             ctx,
             [&]() -> asio::awaitable<void>
             {
-                auto res = co_await reality::cert_fetcher::fetch(co_await asio::this_coro::executor, "127.0.0.1", port, "localhost", "test");
+                auto res = co_await reality::cert_fetcher::fetch(ctx.get_executor(), "127.0.0.1", port, "localhost", "test");
                 EXPECT_FALSE(res.has_value());
                 co_return;
             },
@@ -279,7 +278,7 @@ TEST(CertFetcherTest, MockServerScenarios)
             ctx,
             [&]() -> asio::awaitable<void>
             {
-                auto res = co_await reality::cert_fetcher::fetch(co_await asio::this_coro::executor, "127.0.0.1", port, "localhost", "test");
+                auto res = co_await reality::cert_fetcher::fetch(ctx.get_executor(), "127.0.0.1", port, "localhost", "test");
                 EXPECT_FALSE(res.has_value());
                 co_return;
             },
@@ -298,7 +297,7 @@ TEST(CertFetcherTest, MockServerScenarios)
             ctx,
             [&]() -> asio::awaitable<void>
             {
-                auto res = co_await reality::cert_fetcher::fetch(co_await asio::this_coro::executor, "127.0.0.1", port, "localhost", "test");
+                auto res = co_await reality::cert_fetcher::fetch(ctx.get_executor(), "127.0.0.1", port, "localhost", "test");
                 EXPECT_FALSE(res.has_value());
                 co_return;
             },
@@ -318,7 +317,7 @@ TEST(CertFetcherTest, MockServerScenarios)
             ctx,
             [&]() -> asio::awaitable<void>
             {
-                auto res = co_await reality::cert_fetcher::fetch(co_await asio::this_coro::executor, "127.0.0.1", port, "localhost", "test");
+                auto res = co_await reality::cert_fetcher::fetch(ctx.get_executor(), "127.0.0.1", port, "localhost", "test");
                 EXPECT_FALSE(res.has_value());
                 co_return;
             },
@@ -337,7 +336,7 @@ TEST(CertFetcherTest, MockServerScenarios)
             ctx,
             [&]() -> asio::awaitable<void>
             {
-                auto res = co_await reality::cert_fetcher::fetch(co_await asio::this_coro::executor, "127.0.0.1", port, "localhost", "test");
+                auto res = co_await reality::cert_fetcher::fetch(ctx.get_executor(), "127.0.0.1", port, "localhost", "test");
                 EXPECT_FALSE(res.has_value());
                 co_return;
             },
@@ -356,7 +355,7 @@ TEST(CertFetcherTest, MockServerScenarios)
             ctx,
             [&]() -> asio::awaitable<void>
             {
-                auto res = co_await reality::cert_fetcher::fetch(co_await asio::this_coro::executor, "127.0.0.1", port, "localhost", "test");
+                auto res = co_await reality::cert_fetcher::fetch(ctx.get_executor(), "127.0.0.1", port, "localhost", "test");
                 EXPECT_FALSE(res.has_value());
                 co_return;
             },
@@ -377,7 +376,7 @@ TEST(CertFetcherTest, MockServerScenarios)
             ctx,
             [&]() -> asio::awaitable<void>
             {
-                auto res = co_await reality::cert_fetcher::fetch(co_await asio::this_coro::executor, "127.0.0.1", port, "localhost", "test");
+                auto res = co_await reality::cert_fetcher::fetch(ctx.get_executor(), "127.0.0.1", port, "localhost", "test");
                 EXPECT_FALSE(res.has_value());
                 co_return;
             },
@@ -394,7 +393,7 @@ TEST(CertFetcherTest, MockServerScenarios)
             ctx,
             [&]() -> asio::awaitable<void>
             {
-                auto res = co_await reality::cert_fetcher::fetch(co_await asio::this_coro::executor, "127.0.0.1", port, "localhost", "test");
+                auto res = co_await reality::cert_fetcher::fetch(ctx.get_executor(), "127.0.0.1", port, "localhost", "test");
                 EXPECT_FALSE(res.has_value());
                 co_return;
             },
@@ -411,7 +410,7 @@ TEST(CertFetcherTest, ConnectFailure)
         ctx,
         [&]() -> asio::awaitable<void>
         {
-            auto res = co_await reality::cert_fetcher::fetch(co_await asio::this_coro::executor, "127.0.0.1", 1, "localhost", "test");
+            auto res = co_await reality::cert_fetcher::fetch(ctx.get_executor(), "127.0.0.1", 1, "localhost", "test");
             EXPECT_FALSE(res.has_value());
             co_return;
         },

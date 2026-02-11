@@ -262,18 +262,15 @@ asio::awaitable<void> udp_socks_session::udp_sock_to_stream(std::shared_ptr<mux_
             continue;
         }
 
+        if (!has_client_ep_)
         {
-            const std::scoped_lock lock(client_ep_mutex_);
-            if (!has_client_ep_)
-            {
-                client_ep_ = sender;
-                has_client_ep_ = true;
-            }
-            else if (sender.address() != client_ep_.address() || sender.port() != client_ep_.port())
-            {
-                LOG_CTX_WARN(ctx_, "{} udp client endpoint mismatch ignore", log_event::kSocks);
-                continue;
-            }
+            client_ep_ = sender;
+            has_client_ep_ = true;
+        }
+        else if (sender.address() != client_ep_.address() || sender.port() != client_ep_.port())
+        {
+            LOG_CTX_WARN(ctx_, "{} udp client endpoint mismatch ignore", log_event::kSocks);
+            continue;
         }
 
         const auto write_ec = co_await stream->async_write_some(buf.data(), n);
@@ -304,16 +301,12 @@ asio::awaitable<void> udp_socks_session::stream_to_udp_sock(std::shared_ptr<mux_
             break;
         }
 
-        asio::ip::udp::endpoint ep;
+        if (!has_client_ep_)
         {
-            const std::scoped_lock lock(client_ep_mutex_);
-            if (!has_client_ep_)
-            {
-                LOG_CTX_WARN(ctx_, "{} client ep port is 0 ignore it", log_event::kSocks);
-                continue;
-            }
-            ep = client_ep_;
+            LOG_CTX_WARN(ctx_, "{} client ep port is 0 ignore it", log_event::kSocks);
+            continue;
         }
+        const auto ep = client_ep_;
 
         if (ep.port() == 0)
         {

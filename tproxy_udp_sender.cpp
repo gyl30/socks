@@ -7,9 +7,9 @@
 #include <system_error>
 
 #include <asio/buffer.hpp>
-#include <asio/strand.hpp>
 #include <asio/as_tuple.hpp>
 #include <asio/awaitable.hpp>
+#include <asio/dispatch.hpp>
 #include <asio/ip/v6_only.hpp>
 #include <asio/use_awaitable.hpp>
 
@@ -34,7 +34,7 @@ constexpr std::uint64_t kSocketIdleTimeoutMs = 300000;
 
 }    // namespace
 
-tproxy_udp_sender::tproxy_udp_sender(const asio::any_io_executor& ex, const std::uint32_t mark) : ex_(ex), mark_(mark) {}
+tproxy_udp_sender::tproxy_udp_sender(const asio::io_context::executor_type& ex, const std::uint32_t mark) : ex_(ex), mark_(mark) {}
 
 std::size_t tproxy_udp_sender::endpoint_hash::operator()(const endpoint_key& key) const
 {
@@ -49,8 +49,7 @@ std::shared_ptr<asio::ip::udp::socket> tproxy_udp_sender::get_socket(const asio:
     const auto now = now_ms();
     const endpoint_key key{src_ep.address(), src_ep.port()};
 
-    const std::lock_guard<std::mutex> lock(socket_mutex_);
-    prune_sockets_locked(now);
+    prune_sockets(now);
 
     auto it = sockets_.find(key);
     if (it != sockets_.end())
@@ -61,10 +60,10 @@ std::shared_ptr<asio::ip::udp::socket> tproxy_udp_sender::get_socket(const asio:
 
     if (sockets_.size() >= kMaxCachedSockets)
     {
-        evict_oldest_socket_locked();
+        evict_oldest_socket();
     }
 
-    auto socket = std::make_shared<asio::ip::udp::socket>(asio::make_strand(ex_));
+    auto socket = std::make_shared<asio::ip::udp::socket>(ex_);
     std::error_code ec;
     const bool ipv6 = src_ep.address().is_v6();
     socket->open(ipv6 ? asio::ip::udp::v6() : asio::ip::udp::v4(), ec);
@@ -116,7 +115,7 @@ std::shared_ptr<asio::ip::udp::socket> tproxy_udp_sender::get_socket(const asio:
     return socket;
 }
 
-void tproxy_udp_sender::prune_sockets_locked(const std::uint64_t now_ms)
+void tproxy_udp_sender::prune_sockets(const std::uint64_t now_ms)
 {
     for (auto it = sockets_.begin(); it != sockets_.end();)
     {
@@ -136,7 +135,7 @@ void tproxy_udp_sender::prune_sockets_locked(const std::uint64_t now_ms)
     }
 }
 
-void tproxy_udp_sender::evict_oldest_socket_locked()
+void tproxy_udp_sender::evict_oldest_socket()
 {
     if (sockets_.empty())
     {
@@ -164,6 +163,8 @@ asio::awaitable<void> tproxy_udp_sender::send_to_client(const asio::ip::udp::end
                                                         const asio::ip::udp::endpoint& src_ep,
                                                         const std::vector<std::uint8_t>& payload)
 {
+    co_await asio::dispatch(ex_, asio::use_awaitable);
+
     const auto norm_src = net::normalize_endpoint(src_ep);
     const auto norm_client = net::normalize_endpoint(client_ep);
     auto socket = get_socket(norm_src);
@@ -177,7 +178,6 @@ asio::awaitable<void> tproxy_udp_sender::send_to_client(const asio::ip::udp::end
     {
         LOG_WARN("tproxy udp send to client failed {}", ec.message());
         const endpoint_key key{norm_src.address(), norm_src.port()};
-        const std::lock_guard<std::mutex> lock(socket_mutex_);
         auto it = sockets_.find(key);
         if (it != sockets_.end() && it->second.socket == socket)
         {
@@ -189,7 +189,6 @@ asio::awaitable<void> tproxy_udp_sender::send_to_client(const asio::ip::udp::end
     }
 
     const endpoint_key key{norm_src.address(), norm_src.port()};
-    const std::lock_guard<std::mutex> lock(socket_mutex_);
     auto it = sockets_.find(key);
     if (it != sockets_.end() && it->second.socket == socket)
     {

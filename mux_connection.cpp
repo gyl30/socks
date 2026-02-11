@@ -1,5 +1,5 @@
 #include <span>
-#include <mutex>
+#include <future>
 #include <atomic>
 #include <chrono>
 #include <memory>
@@ -18,6 +18,7 @@
 #include <asio/as_tuple.hpp>
 #include <asio/co_spawn.hpp>
 #include <asio/detached.hpp>
+#include <asio/post.hpp>
 #include <asio/dispatch.hpp>
 #include <asio/steady_timer.hpp>
 #include <asio/use_awaitable.hpp>
@@ -58,8 +59,8 @@ mux_connection::mux_connection(asio::ip::tcp::socket socket,
                                const config::limits_t& limits_cfg,
                                const config::heartbeat_t& heartbeat_cfg)
     : cid_(conn_id),
-      strand_(asio::make_strand(socket.get_executor())),
-      timer_(strand_),
+      ex_(socket.get_executor()),
+      timer_(ex_),
       socket_(std::move(socket)),
       reality_engine_(std::move(engine)),
       next_stream_id_(is_client ? 1 : 2),
@@ -67,7 +68,7 @@ mux_connection::mux_connection(asio::ip::tcp::socket socket,
       timeout_config_(timeout_cfg),
       limits_config_(limits_cfg),
       heartbeat_config_(heartbeat_cfg),
-      write_channel_(std::make_unique<channel_type>(strand_, 1024))
+      write_channel_(std::make_unique<channel_type>(ex_, 1024))
 {
     ctx_.trace_id(trace_id);
     ctx_.conn_id(conn_id);
@@ -92,38 +93,97 @@ mux_connection::~mux_connection() { statistics::instance().dec_active_mux_sessio
 
 void mux_connection::register_stream(const std::uint32_t id, std::shared_ptr<mux_stream_interface> stream)
 {
-    const std::scoped_lock lock(streams_mutex_);
-    streams_[id] = std::move(stream);
-    LOG_DEBUG("mux {} stream {} registered", cid_, id);
+    if (stream == nullptr)
+    {
+        return;
+    }
+    if (!is_open())
+    {
+        return;
+    }
+
+    if (!started_.load(std::memory_order_acquire) || ex_.running_in_this_thread())
+    {
+        streams_[id] = std::move(stream);
+        LOG_DEBUG("mux {} stream {} registered", cid_, id);
+        return;
+    }
+
+    auto done = std::make_shared<std::promise<void>>();
+    auto done_future = done->get_future();
+    asio::post(ex_,
+               [self = shared_from_this(), id, stream = std::move(stream), done]() mutable
+               {
+                   self->streams_[id] = std::move(stream);
+                   LOG_DEBUG("mux {} stream {} registered", self->cid_, id);
+                   done->set_value();
+               });
+    done_future.wait();
 }
 
 bool mux_connection::try_register_stream(const std::uint32_t id, std::shared_ptr<mux_stream_interface> stream)
 {
-    const std::scoped_lock lock(streams_mutex_);
-    const auto [it, inserted] = streams_.try_emplace(id, std::move(stream));
-    if (!inserted)
+    if (stream == nullptr)
     {
         return false;
     }
-    LOG_DEBUG("mux {} stream {} registered", cid_, id);
-    return true;
+    if (!is_open())
+    {
+        return false;
+    }
+
+    if (!started_.load(std::memory_order_acquire) || ex_.running_in_this_thread())
+    {
+        const auto [it, inserted] = streams_.try_emplace(id, std::move(stream));
+        if (!inserted)
+        {
+            return false;
+        }
+        LOG_DEBUG("mux {} stream {} registered", cid_, id);
+        return true;
+    }
+
+    auto registered = std::make_shared<std::promise<bool>>();
+    auto registered_future = registered->get_future();
+    asio::post(ex_,
+               [self = shared_from_this(), id, stream = std::move(stream), registered]() mutable
+               {
+                   const auto [it, inserted] = self->streams_.try_emplace(id, std::move(stream));
+                   if (inserted)
+                   {
+                       LOG_DEBUG("mux {} stream {} registered", self->cid_, id);
+                   }
+                   registered->set_value(inserted);
+               });
+    return registered_future.get();
 }
 
 void mux_connection::remove_stream(const std::uint32_t id)
 {
-    const std::scoped_lock lock(streams_mutex_);
-    streams_.erase(id);
-    LOG_DEBUG("mux {} stream {} removed", cid_, id);
+    if (!started_.load(std::memory_order_acquire) || ex_.running_in_this_thread())
+    {
+        streams_.erase(id);
+        LOG_DEBUG("mux {} stream {} removed", cid_, id);
+        return;
+    }
+
+    asio::post(ex_,
+               [self = shared_from_this(), id]()
+               {
+                   self->streams_.erase(id);
+                   LOG_DEBUG("mux {} stream {} removed", self->cid_, id);
+               });
 }
 
 asio::awaitable<void> mux_connection::start()
 {
-    co_await asio::dispatch(strand_, asio::use_awaitable);
+    co_await asio::dispatch(ex_, asio::use_awaitable);
     co_await start_impl();
 }
 
 asio::awaitable<void> mux_connection::start_impl()
 {
+    started_.store(true, std::memory_order_release);
     LOG_DEBUG("mux {} started loops", cid_);
     using asio::experimental::awaitable_operators::operator||;
     const auto ts = now_ms();
@@ -180,7 +240,7 @@ void mux_connection::stop()
         }
     }
 
-    asio::dispatch(strand_, [self = shared_from_this()]() { self->stop_impl(); });
+    asio::dispatch(ex_, [self = shared_from_this()]() { self->stop_impl(); });
 }
 
 void mux_connection::stop_impl()
@@ -190,11 +250,7 @@ void mux_connection::stop_impl()
         return;
     }
     LOG_INFO("mux {} stopping", cid_);
-    stream_map_t streams_to_clear;
-    {
-        const std::scoped_lock lock(streams_mutex_);
-        streams_to_clear = std::move(streams_);
-    }
+    stream_map_t streams_to_clear = std::move(streams_);
 
     for (auto& stream : streams_to_clear | std::views::values)
     {
@@ -353,13 +409,10 @@ asio::awaitable<void> mux_connection::timeout_loop()
 
         if (read_elapsed_ms > read_timeout_ms || write_elapsed_ms > write_timeout_ms)
         {
+            if (streams_.empty())
             {
-                const std::scoped_lock lock(streams_mutex_);
-                if (streams_.empty())
-                {
-                    LOG_DEBUG("mux {} timeout without streams, closing", cid_);
-                    break;
-                }
+                LOG_DEBUG("mux {} timeout without streams, closing", cid_);
+                break;
             }
 
             LOG_DEBUG("mux {} entering draining mode", cid_);
@@ -386,7 +439,7 @@ asio::awaitable<void> mux_connection::heartbeat_loop()
 {
     if (!heartbeat_config_.enabled)
     {
-        asio::steady_timer timer(strand_);
+        asio::steady_timer timer(ex_);
         timer.expires_at(std::chrono::steady_clock::time_point::max());
         std::error_code ec;
         co_await timer.async_wait(asio::redirect_error(asio::use_awaitable, ec));
@@ -394,7 +447,7 @@ asio::awaitable<void> mux_connection::heartbeat_loop()
     }
 
     static thread_local std::mt19937 rng(std::random_device{}());
-    asio::steady_timer heartbeat_timer(strand_);
+    asio::steady_timer heartbeat_timer(ex_);
 
     while (is_open())
     {
@@ -448,13 +501,10 @@ void mux_connection::on_mux_frame(const mux::frame_header header, std::vector<st
     }
 
     std::shared_ptr<mux_stream_interface> stream = nullptr;
+    const auto it = streams_.find(header.stream_id);
+    if (it != streams_.end())
     {
-        const std::scoped_lock lock(streams_mutex_);
-        const auto it = streams_.find(header.stream_id);
-        if (it != streams_.end())
-        {
-            stream = it->second;
-        }
+        stream = it->second;
     }
 
     if (stream != nullptr)
@@ -481,7 +531,7 @@ void mux_connection::on_mux_frame(const mux::frame_header header, std::vector<st
             LOG_DEBUG("mux {} recv frame for unknown stream {}", cid_, header.stream_id);
             const auto self = shared_from_this();
             asio::co_spawn(
-                strand_,
+                ex_,
                 [self, stream_id = header.stream_id]() -> asio::awaitable<void> { (void)co_await self->send_async(stream_id, kCmdRst, {}); },
                 asio::detached);
         }
@@ -494,14 +544,46 @@ bool mux_connection::can_accept_stream()
     {
         return true;
     }
-    const std::scoped_lock lock(streams_mutex_);
-    return streams_.size() < limits_config_.max_streams;
+    if (!is_open())
+    {
+        return false;
+    }
+
+    if (!started_.load(std::memory_order_acquire) || ex_.running_in_this_thread())
+    {
+        return streams_.size() < limits_config_.max_streams;
+    }
+
+    auto accepted = std::make_shared<std::promise<bool>>();
+    auto accepted_future = accepted->get_future();
+    asio::post(ex_,
+               [self = shared_from_this(), accepted]()
+               {
+                   accepted->set_value(self->streams_.size() < self->limits_config_.max_streams);
+               });
+    return accepted_future.get();
 }
 
 bool mux_connection::has_stream(const std::uint32_t id)
 {
-    const std::scoped_lock lock(streams_mutex_);
-    return streams_.find(id) != streams_.end();
+    if (!is_open())
+    {
+        return false;
+    }
+
+    if (!started_.load(std::memory_order_acquire) || ex_.running_in_this_thread())
+    {
+        return streams_.find(id) != streams_.end();
+    }
+
+    auto has = std::make_shared<std::promise<bool>>();
+    auto has_future = has->get_future();
+    asio::post(ex_,
+               [self = shared_from_this(), id, has]()
+               {
+                   has->set_value(self->streams_.find(id) != self->streams_.end());
+               });
+    return has_future.get();
 }
 
 }    // namespace mux

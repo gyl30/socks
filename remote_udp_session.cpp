@@ -38,16 +38,16 @@ namespace
 
 remote_udp_session::remote_udp_session(std::shared_ptr<mux_connection> connection,
                                        const std::uint32_t id,
-                                       const asio::any_io_executor& ex,
+                                       const asio::io_context::executor_type& ex,
                                        const connection_context& ctx)
     : id_(id),
-      strand_(asio::make_strand(ex)),
-      timer_(strand_),
-      idle_timer_(strand_),
-      udp_socket_(strand_),
-      udp_resolver_(strand_),
+      ex_(ex),
+      timer_(ex_),
+      idle_timer_(ex_),
+      udp_socket_(ex_),
+      udp_resolver_(ex_),
       connection_(std::move(connection)),
-      recv_channel_(strand_, 128)
+      recv_channel_(ex_, 128)
 {
     ctx_ = ctx;
     ctx_.stream_id(id);
@@ -59,7 +59,7 @@ remote_udp_session::remote_udp_session(std::shared_ptr<mux_connection> connectio
 
 asio::awaitable<void> remote_udp_session::start()
 {
-    co_await asio::dispatch(strand_, asio::use_awaitable);
+    co_await asio::dispatch(ex_, asio::use_awaitable);
     co_await start_impl(shared_from_this());
 }
 
@@ -139,8 +139,7 @@ asio::awaitable<void> remote_udp_session::start_impl(std::shared_ptr<remote_udp_
 
 void remote_udp_session::on_data(std::vector<std::uint8_t> data)
 {
-    asio::dispatch(
-        strand_, [self = shared_from_this(), data = std::move(data)]() mutable { self->recv_channel_.try_send(std::error_code(), std::move(data)); });
+    asio::dispatch(ex_, [self = shared_from_this(), data = std::move(data)]() mutable { self->recv_channel_.try_send(std::error_code(), std::move(data)); });
 }
 
 void remote_udp_session::request_stop()
@@ -165,7 +164,7 @@ void remote_udp_session::close_socket()
 
 void remote_udp_session::on_close()
 {
-    asio::dispatch(strand_, [self = shared_from_this()]() { self->request_stop(); });
+    asio::dispatch(ex_, [self = shared_from_this()]() { self->request_stop(); });
 }
 
 void remote_udp_session::on_reset() { on_close(); }

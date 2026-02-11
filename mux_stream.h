@@ -11,7 +11,7 @@
 #include <system_error>
 
 #include <asio/awaitable.hpp>
-#include <asio/any_io_executor.hpp>
+#include <asio/io_context.hpp>
 #include <asio/experimental/concurrent_channel.hpp>
 
 #include "log_context.h"
@@ -29,7 +29,7 @@ class mux_stream : public mux_stream_interface, public std::enable_shared_from_t
                std::uint32_t cid,
                const std::string& trace_id,
                const std::shared_ptr<mux_connection>& connection,
-               const asio::any_io_executor& ex);
+               const asio::io_context::executor_type& ex);
 
     ~mux_stream() override;
 

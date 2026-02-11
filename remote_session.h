@@ -5,7 +5,10 @@
 #include <vector>
 #include <cstdint>
 
-#include <asio.hpp>
+#include <asio/io_context.hpp>
+#include <asio/awaitable.hpp>
+#include <asio/ip/tcp.hpp>
+#include <asio/experimental/concurrent_channel.hpp>
 
 #include "protocol.h"
 #include "mux_tunnel.h"
@@ -17,7 +20,10 @@ namespace mux
 class remote_session : public mux_stream_interface, public std::enable_shared_from_this<remote_session>
 {
    public:
-    remote_session(std::shared_ptr<mux_connection> connection, std::uint32_t id, const asio::any_io_executor& ex, const connection_context& ctx);
+    remote_session(std::shared_ptr<mux_connection> connection,
+                   std::uint32_t id,
+                   const asio::io_context::executor_type& ex,
+                   const connection_context& ctx);
 
     [[nodiscard]] asio::awaitable<void> start(const syn_payload& syn);
 
@@ -36,7 +42,7 @@ class remote_session : public mux_stream_interface, public std::enable_shared_fr
    private:
     std::uint32_t id_;
     connection_context ctx_;
-    asio::strand<asio::any_io_executor> strand_;
+    asio::io_context::executor_type ex_;
     asio::ip::tcp::resolver resolver_;
     asio::ip::tcp::socket target_socket_;
     std::weak_ptr<mux_connection> connection_;

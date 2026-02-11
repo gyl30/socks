@@ -1,7 +1,6 @@
 #ifndef UPSTREAM_H
 #define UPSTREAM_H
 
-#include <mutex>
 #include <memory>
 #include <string>
 #include <vector>
@@ -10,8 +9,8 @@
 #include <system_error>
 
 #include <asio/ip/tcp.hpp>
+#include <asio/io_context.hpp>
 #include <asio/awaitable.hpp>
-#include <asio/any_io_executor.hpp>
 
 #include "mux_tunnel.h"
 #include "log_context.h"
@@ -36,7 +35,7 @@ class upstream
 class direct_upstream : public upstream
 {
    public:
-    explicit direct_upstream(const asio::any_io_executor& ex, connection_context ctx, std::uint32_t mark = 0)
+    explicit direct_upstream(const asio::io_context::executor_type& ex, connection_context ctx, std::uint32_t mark = 0)
         : socket_(ex), resolver_(ex), ctx_(std::move(ctx)), mark_(mark)
     {
     }
@@ -69,9 +68,8 @@ class proxy_upstream : public upstream
 
     asio::awaitable<void> close() override;
 
-   private:
+  private:
     connection_context ctx_;
-    std::mutex stream_mutex_;
     std::shared_ptr<mux_stream> stream_;
     std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_;
 };

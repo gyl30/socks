@@ -81,14 +81,14 @@ std::string cert_fetcher::hex(const std::uint8_t* data, std::size_t len)
 }
 
 asio::awaitable<std::optional<fetch_result>> cert_fetcher::fetch(
-    asio::any_io_executor ex, std::string host, std::uint16_t port, std::string sni, const std::string& trace_id)
+    asio::io_context::executor_type ex, std::string host, std::uint16_t port, std::string sni, const std::string& trace_id)
 {
     fetch_session session(ex, std::move(host), port, std::move(sni), trace_id);
     co_return co_await session.run();
 }
 
 cert_fetcher::fetch_session::fetch_session(
-    const asio::any_io_executor& ex, std::string host, const std::uint16_t port, std::string sni, const std::string& trace_id)
+    const asio::io_context::executor_type& ex, std::string host, const std::uint16_t port, std::string sni, const std::string& trace_id)
     : socket_(ex), host_(std::move(host)), port_(port), sni_(std::move(sni))
 {
     ctx_.trace_id(trace_id);

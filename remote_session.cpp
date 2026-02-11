@@ -17,14 +17,14 @@ namespace mux
 
 remote_session::remote_session(std::shared_ptr<mux_connection> connection,
                                const std::uint32_t id,
-                               const asio::any_io_executor& ex,
+                               const asio::io_context::executor_type& ex,
                                const connection_context& ctx)
     : id_(id),
-      strand_(asio::make_strand(ex)),
-      resolver_(strand_),
-      target_socket_(strand_),
+      ex_(ex),
+      resolver_(ex_),
+      target_socket_(ex_),
       connection_(std::move(connection)),
-      recv_channel_(strand_, 128)
+      recv_channel_(ex_, 128)
 {
     ctx_ = ctx;
     ctx_.stream_id(id);
@@ -32,7 +32,7 @@ remote_session::remote_session(std::shared_ptr<mux_connection> connection,
 
 asio::awaitable<void> remote_session::start(const syn_payload& syn)
 {
-    co_await asio::dispatch(strand_, asio::use_awaitable);
+    co_await asio::dispatch(ex_, asio::use_awaitable);
     co_await run(syn);
 }
 
@@ -122,16 +122,19 @@ asio::awaitable<void> remote_session::run(const syn_payload& syn)
     LOG_CTX_INFO(ctx_, "{} finished {}", log_event::kConnClose, ctx_.stats_summary());
 }
 
-void remote_session::on_data(std::vector<std::uint8_t> data) { recv_channel_.try_send(std::error_code(), std::move(data)); }
+void remote_session::on_data(std::vector<std::uint8_t> data)
+{
+    asio::dispatch(ex_, [self = shared_from_this(), data = std::move(data)]() mutable { self->recv_channel_.try_send(std::error_code(), std::move(data)); });
+}
 
 void remote_session::on_close()
 {
-    asio::dispatch(strand_, [self = shared_from_this()]() { self->close_from_fin(); });
+    asio::dispatch(ex_, [self = shared_from_this()]() { self->close_from_fin(); });
 }
 
 void remote_session::on_reset()
 {
-    asio::dispatch(strand_, [self = shared_from_this()]() { self->close_from_reset(); });
+    asio::dispatch(ex_, [self = shared_from_this()]() { self->close_from_reset(); });
 }
 
 void remote_session::close_from_fin()
