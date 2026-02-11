@@ -19,6 +19,7 @@
 #include <asio/as_tuple.hpp>
 #include <asio/co_spawn.hpp>
 #include <asio/detached.hpp>
+#include <asio/dispatch.hpp>
 #include <asio/steady_timer.hpp>
 #include <asio/use_awaitable.hpp>
 #include <asio/experimental/awaitable_operators.hpp>
@@ -192,21 +193,37 @@ remote_server::~remote_server()
     }
 }
 
-void remote_server::start() { asio::co_spawn(pool_.get_io_context(), accept_loop(), asio::detached); }
+void remote_server::start()
+{
+    stop_.store(false, std::memory_order_release);
+    asio::co_spawn(acceptor_.get_executor(), [self = shared_from_this()] { return self->accept_loop(); }, asio::detached);
+}
 
 void remote_server::stop()
 {
+    stop_.store(true, std::memory_order_release);
     LOG_INFO("remote server stopping");
-    std::error_code ec;
-    ec = acceptor_.close(ec);
-    if (ec)
+
+    auto close_acceptor = [this]()
     {
-        LOG_WARN("acceptor close failed {}", ec.message());
+        std::error_code close_ec;
+        close_ec = acceptor_.close(close_ec);
+        if (close_ec && close_ec != asio::error::bad_descriptor)
+        {
+            LOG_WARN("acceptor close failed {}", close_ec.message());
+        }
+    };
+    asio::dispatch(acceptor_.get_executor(), close_acceptor);
+
+    std::vector<std::weak_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>> tunnels_to_close;
+    {
+        const std::scoped_lock lock(tunnels_mutex_);
+        LOG_INFO("closing {} active tunnels", active_tunnels_.size());
+        tunnels_to_close = active_tunnels_;
+        active_tunnels_.clear();
     }
 
-    LOG_INFO("closing {} active tunnels", active_tunnels_.size());
-    const std::scoped_lock lock(tunnels_mutex_);
-    for (auto& weak_tunnel : active_tunnels_)
+    for (auto& weak_tunnel : tunnels_to_close)
     {
         const auto tunnel = weak_tunnel.lock();
         if (tunnel != nullptr)
@@ -217,15 +234,15 @@ void remote_server::stop()
             }
         }
     }
-    active_tunnels_.clear();
 }
 
 asio::awaitable<void> remote_server::accept_loop()
 {
     LOG_INFO("remote server listening for connections");
-    for (;;)
+    while (!stop_.load(std::memory_order_acquire))
     {
-        const auto s = std::make_shared<asio::ip::tcp::socket>(acceptor_.get_executor());
+        auto& ctx = pool_.get_io_context();
+        const auto s = std::make_shared<asio::ip::tcp::socket>(ctx);
         const auto [accept_ec] = co_await acceptor_.async_accept(*s, asio::as_tuple(asio::use_awaitable));
         if (!accept_ec)
         {
@@ -234,12 +251,12 @@ asio::awaitable<void> remote_server::accept_loop()
             (void)ec;
             const std::uint32_t conn_id = next_conn_id_.fetch_add(1, std::memory_order_relaxed);
 
-            asio::co_spawn(
-                pool_.get_io_context(), [this, s, self = shared_from_this(), conn_id = conn_id]() { return handle(s, conn_id); }, asio::detached);
+            asio::co_spawn(ctx, [this, s, self = shared_from_this(), conn_id = conn_id]() { return handle(s, conn_id); }, asio::detached);
         }
         else
         {
-            if (accept_ec == asio::error::operation_aborted)
+            if (accept_ec == asio::error::operation_aborted || accept_ec == asio::error::bad_descriptor || stop_.load(std::memory_order_acquire) ||
+                !acceptor_.is_open())
             {
                 LOG_INFO("acceptor closed stopping loop");
                 break;
@@ -319,6 +336,7 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::negotiate_re
 
 asio::awaitable<void> remote_server::handle(std::shared_ptr<asio::ip::tcp::socket> s, const std::uint32_t conn_id)
 {
+    auto self = shared_from_this();
     connection_context ctx;
     ctx.new_trace_id();
     ctx.conn_id(conn_id);
@@ -343,6 +361,7 @@ asio::awaitable<void> remote_server::handle(std::shared_ptr<asio::ip::tcp::socke
         reality::tls_key_schedule::derive_application_secrets(sh_res.hs_keys.master_secret, sh_res.handshake_hash, sh_res.negotiated_md, ec);
     const std::size_t key_len = EVP_CIPHER_key_length(sh_res.cipher);
     constexpr std::size_t iv_len = 12;
+
     const auto c_app_keys = reality::tls_key_schedule::derive_traffic_keys(app_sec.first, ec, key_len, iv_len, sh_res.negotiated_md);
     const auto s_app_keys = reality::tls_key_schedule::derive_traffic_keys(app_sec.second, ec, key_len, iv_len, sh_res.negotiated_md);
 
@@ -371,13 +390,22 @@ asio::awaitable<void> remote_server::handle(std::shared_ptr<asio::ip::tcp::socke
         active_tunnels_.push_back(tunnel);
     }
 
+    std::weak_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> weak_tunnel = tunnel;
     tunnel->connection()->set_syn_callback(
-        [this, tunnel, ctx](const std::uint32_t id, std::vector<std::uint8_t> p)
+        [weak_self = std::weak_ptr<remote_server>(shared_from_this()), weak_tunnel, ctx](const std::uint32_t id, std::vector<std::uint8_t> p)
         {
-            asio::co_spawn(
-                pool_.get_io_context(),
-                [this, tunnel, ctx, id, p = std::move(p)]() mutable { return process_stream_request(tunnel, ctx, id, std::move(p)); },
-                asio::detached);
+            if (auto self = weak_self.lock())
+            {
+                if (auto tunnel = weak_tunnel.lock())
+                {
+                    auto ex = tunnel->connection()->executor();
+                    asio::co_spawn(
+                        ex,
+                        [self, tunnel, ctx, id, p = std::move(p), ex]() mutable
+                        { return self->process_stream_request(tunnel, ctx, id, std::move(p), ex); },
+                        asio::detached);
+                }
+            }
         });
 
     co_await tunnel->run();
@@ -386,7 +414,8 @@ asio::awaitable<void> remote_server::handle(std::shared_ptr<asio::ip::tcp::socke
 asio::awaitable<void> remote_server::process_stream_request(std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel,
                                                             const connection_context& ctx,
                                                             const std::uint32_t stream_id,
-                                                            std::vector<std::uint8_t> payload) const
+                                                            std::vector<std::uint8_t> payload,
+                                                            asio::any_io_executor ex) const
 {
     if (!tunnel->connection()->can_accept_stream())
     {
@@ -423,7 +452,7 @@ asio::awaitable<void> remote_server::process_stream_request(std::shared_ptr<mux_
     {
         LOG_CTX_INFO(
             stream_ctx, "{} stream {} type tcp connect target {} {} payload size {}", log_event::kMux, stream_id, syn.addr, syn.port, payload.size());
-        const auto sess = std::make_shared<remote_session>(tunnel->connection(), stream_id, pool_.get_io_context().get_executor(), stream_ctx);
+        const auto sess = std::make_shared<remote_session>(tunnel->connection(), stream_id, ex, stream_ctx);
         sess->set_manager(tunnel);
         tunnel->register_stream(stream_id, sess);
         co_await sess->start(syn);
@@ -431,7 +460,7 @@ asio::awaitable<void> remote_server::process_stream_request(std::shared_ptr<mux_
     else if (syn.socks_cmd == socks::kCmdUdpAssociate)
     {
         LOG_CTX_INFO(stream_ctx, "{} stream {} type udp associate associated via tcp", log_event::kMux, stream_id);
-        const auto sess = std::make_shared<remote_udp_session>(tunnel->connection(), stream_id, pool_.get_io_context().get_executor(), stream_ctx);
+        const auto sess = std::make_shared<remote_udp_session>(tunnel->connection(), stream_id, ex, stream_ctx);
         sess->set_manager(tunnel);
         tunnel->register_stream(stream_id, sess);
         co_await sess->start();
@@ -455,7 +484,13 @@ asio::awaitable<bool> remote_server::read_initial_and_validate(std::shared_ptr<a
         co_return false;
     }
     buf.resize(n);
-    if (n < 5 || buf[0] != 0x16)
+    if (n < 5)
+    {
+        LOG_CTX_WARN(ctx, "{} invalid tls header short read {}", log_event::kHandshake, n);
+        co_return false;
+    }
+
+    if (buf[0] != 0x16)
     {
         LOG_CTX_WARN(ctx, "{} invalid tls header 0x{:02x}", log_event::kHandshake, buf[0]);
         co_return false;
@@ -885,6 +920,17 @@ asio::awaitable<void> remote_server::handle_fallback(const std::shared_ptr<asio:
         LOG_CTX_INFO(ctx, "{} no target sni {}", log_event::kFallback, sni.empty() ? "empty" : sni);
         using asio::experimental::awaitable_operators::operator||;
         co_await (fallback_failed(s) || fallback_failed_timer(ctx.conn_id(), s->get_executor()));
+        std::error_code close_ec;
+        close_ec = s->shutdown(asio::ip::tcp::socket::shutdown_both, close_ec);
+        if (close_ec && close_ec != asio::error::not_connected)
+        {
+            LOG_CTX_WARN(ctx, "{} shutdown failed {}", log_event::kFallback, close_ec.message());
+        }
+        close_ec = s->close(close_ec);
+        if (close_ec && close_ec != asio::error::bad_descriptor)
+        {
+            LOG_CTX_WARN(ctx, "{} close failed {}", log_event::kFallback, close_ec.message());
+        }
         LOG_CTX_INFO(ctx, "{} done", log_event::kFallback);
         co_return;
     }
