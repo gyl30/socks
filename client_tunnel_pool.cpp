@@ -1,5 +1,4 @@
 #include <array>
-#include <mutex>
 #include <cctype>
 #include <chrono>
 #include <memory>
@@ -23,6 +22,7 @@
 #include <asio/as_tuple.hpp>
 #include <asio/co_spawn.hpp>
 #include <asio/detached.hpp>
+#include <asio/this_coro.hpp>
 #include <asio/steady_timer.hpp>
 #include <asio/use_awaitable.hpp>
 
@@ -53,6 +53,24 @@ namespace mux
 
 namespace
 {
+
+template <typename t>
+[[nodiscard]] std::shared_ptr<t> atomic_load_shared(const std::shared_ptr<t>& slot)
+{
+    return std::atomic_load_explicit(&slot, std::memory_order_acquire);
+}
+
+template <typename t>
+void atomic_store_shared(std::shared_ptr<t>& slot, std::shared_ptr<t> value)
+{
+    std::atomic_store_explicit(&slot, std::move(value), std::memory_order_release);
+}
+
+template <typename t>
+[[nodiscard]] std::shared_ptr<t> atomic_exchange_shared(std::shared_ptr<t>& slot)
+{
+    return std::atomic_exchange_explicit(&slot, std::shared_ptr<t>{}, std::memory_order_acq_rel);
+}
 
 bool parse_hex_to_bytes(const std::string& hex, std::vector<std::uint8_t>& out, const std::size_t max_len, const char* label)
 {
@@ -232,23 +250,21 @@ void client_tunnel_pool::stop()
     stop_.store(true, std::memory_order_release);
 
     std::vector<std::shared_ptr<asio::ip::tcp::socket>> sockets_to_close;
+    for (auto& socket : pending_sockets_)
     {
-        const std::lock_guard<std::mutex> lock(pool_mutex_);
-        for (auto& socket : pending_sockets_)
+        auto pending_socket = atomic_exchange_shared(socket);
+        if (pending_socket != nullptr)
         {
-            if (socket != nullptr)
-            {
-                sockets_to_close.push_back(socket);
-                socket = nullptr;
-            }
+            sockets_to_close.push_back(std::move(pending_socket));
         }
-        for (auto& tunnel : tunnel_pool_)
+    }
+
+    for (auto& tunnel : tunnel_pool_)
+    {
+        auto current_tunnel = atomic_exchange_shared(tunnel);
+        if (current_tunnel != nullptr && current_tunnel->connection() != nullptr)
         {
-            if (tunnel != nullptr && tunnel->connection() != nullptr)
-            {
-                tunnel->connection()->release_resources();
-            }
-            tunnel = nullptr;
+            current_tunnel->connection()->release_resources();
         }
     }
 
@@ -271,30 +287,30 @@ void client_tunnel_pool::stop()
 
 std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> client_tunnel_pool::select_tunnel()
 {
-    std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> selected_tunnel = nullptr;
-    const std::lock_guard<std::mutex> lock(pool_mutex_);
     if (tunnel_pool_.empty())
     {
         return nullptr;
     }
+
+    const auto start_index = next_tunnel_index_.fetch_add(1, std::memory_order_relaxed);
     for (std::size_t i = 0; i < tunnel_pool_.size(); ++i)
     {
-        const std::uint32_t idx = (next_tunnel_index_ + i) % tunnel_pool_.size();
-        const auto tunnel = tunnel_pool_[idx];
+        const std::size_t idx = (start_index + i) % tunnel_pool_.size();
+        const auto tunnel = atomic_load_shared(tunnel_pool_[idx]);
         if (tunnel != nullptr && tunnel->connection() != nullptr && tunnel->connection()->is_open())
         {
-            selected_tunnel = tunnel;
-            next_tunnel_index_ = (idx + 1) % tunnel_pool_.size();
-            break;
+            return tunnel;
         }
     }
-    return selected_tunnel;
+
+    return nullptr;
 }
 
 std::uint32_t client_tunnel_pool::next_session_id() { return next_session_id_++; }
 
 asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::uint32_t index)
 {
+    const auto ex = co_await asio::this_coro::executor;
     while (!stop_.load(std::memory_order_acquire))
     {
         const std::uint32_t cid = next_conn_id_++;
@@ -310,24 +326,29 @@ asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::uint32_
                      remote_port_);
 
         std::error_code ec;
-        const auto socket = std::make_shared<asio::ip::tcp::socket>(pool_.get_io_context());
+        const auto socket = std::make_shared<asio::ip::tcp::socket>(ex);
+
+        const auto clear_pending_socket = [this, index, socket]()
         {
-            const std::lock_guard<std::mutex> lock(pool_mutex_);
-            if (index < pending_sockets_.size())
+            if (index >= pending_sockets_.size())
             {
-                pending_sockets_[index] = socket;
+                return;
             }
+
+            if (atomic_load_shared(pending_sockets_[index]) == socket)
+            {
+                atomic_store_shared(pending_sockets_[index], nullptr);
+            }
+        };
+
+        if (index < pending_sockets_.size())
+        {
+            atomic_store_shared(pending_sockets_[index], socket);
         }
 
         if (!co_await tcp_connect(*socket, ec))
         {
-            {
-                const std::lock_guard<std::mutex> lock(pool_mutex_);
-                if (index < pending_sockets_.size() && pending_sockets_[index] == socket)
-                {
-                    pending_sockets_[index] = nullptr;
-                }
-            }
+            clear_pending_socket();
             LOG_ERROR("connect failed {} retry in {}s", ec.message(), constants::net::kRetryIntervalSec);
             co_await wait_remote_retry();
             continue;
@@ -336,13 +357,7 @@ asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::uint32_
         auto [handshake_success, handshake_ret] = co_await perform_reality_handshake(*socket, ec);
         if (!handshake_success)
         {
-            {
-                const std::lock_guard<std::mutex> lock(pool_mutex_);
-                if (index < pending_sockets_.size() && pending_sockets_[index] == socket)
-                {
-                    pending_sockets_[index] = nullptr;
-                }
-            }
+            clear_pending_socket();
             LOG_ERROR("handshake failed {} retry in {}s", ec.message(), constants::net::kRetryIntervalSec);
             co_await wait_remote_retry();
             continue;
@@ -362,39 +377,25 @@ asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::uint32_
         auto tunnel = std::make_shared<mux_tunnel_impl<asio::ip::tcp::socket>>(
             std::move(*socket), std::move(re), true, cid, ctx.trace_id(), timeout_config_, limits_config_, heartbeat_config_);
 
+        if (stop_.load(std::memory_order_acquire))
         {
-            const std::lock_guard<std::mutex> lock(pool_mutex_);
-            if (stop_.load(std::memory_order_acquire))
-            {
-                if (index < pending_sockets_.size() && pending_sockets_[index] == socket)
-                {
-                    pending_sockets_[index] = nullptr;
-                }
-                break;
-            }
-            if (index < tunnel_pool_.size())
-            {
-                tunnel_pool_[index] = tunnel;
-            }
-            if (index < pending_sockets_.size() && pending_sockets_[index] == socket)
-            {
-                pending_sockets_[index] = nullptr;
-            }
+            clear_pending_socket();
+            break;
         }
+
+        if (index < tunnel_pool_.size())
+        {
+            atomic_store_shared(tunnel_pool_[index], tunnel);
+        }
+        clear_pending_socket();
 
         co_await tunnel->run();
 
+        if (index < tunnel_pool_.size() && atomic_load_shared(tunnel_pool_[index]) == tunnel)
         {
-            const std::lock_guard<std::mutex> lock(pool_mutex_);
-            if (index < tunnel_pool_.size())
-            {
-                tunnel_pool_[index] = nullptr;
-            }
-            if (index < pending_sockets_.size() && pending_sockets_[index] == socket)
-            {
-                pending_sockets_[index] = nullptr;
-            }
+            atomic_store_shared(tunnel_pool_[index], nullptr);
         }
+        clear_pending_socket();
 
         co_await wait_remote_retry();
     }
@@ -403,7 +404,7 @@ asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::uint32_
 
 asio::awaitable<bool> client_tunnel_pool::tcp_connect(asio::ip::tcp::socket& socket, std::error_code& ec) const
 {
-    asio::ip::tcp::resolver res(pool_.get_io_context());
+    asio::ip::tcp::resolver res(socket.get_executor());
     auto [resolve_error, resolve_endpoints] = co_await res.async_resolve(remote_host_, remote_port_, asio::as_tuple(asio::use_awaitable));
     if (resolve_error)
     {

@@ -28,15 +28,12 @@ class router
 
    public:
     bool load();
-    [[nodiscard]] asio::awaitable<route_type> decide(const connection_context& ctx, const std::string& host, const asio::any_io_executor& ex) const;
+    [[nodiscard]] asio::awaitable<route_type> decide(const connection_context& ctx, const std::string& host) const;
 
     [[nodiscard]] asio::awaitable<route_type> decide_ip(const connection_context& ctx,
                                                         const std::string& host,
-                                                        const asio::ip::address& addr,
-                                                        const asio::any_io_executor& ex) const;
-    [[nodiscard]] asio::awaitable<route_type> decide_domain(const connection_context& ctx,
-                                                            const std::string& host,
-                                                            const asio::any_io_executor& ex) const;
+                                                        const asio::ip::address& addr) const;
+    [[nodiscard]] asio::awaitable<route_type> decide_domain(const connection_context& ctx, const std::string& host) const;
 
    protected:
     std::shared_ptr<ip_matcher>& block_ip_matcher() { return block_ip_matcher_; }
