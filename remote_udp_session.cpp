@@ -213,7 +213,7 @@ asio::awaitable<void> remote_udp_session::mux_to_udp()
             break;
         }
 
-        _header h;
+        socks_udp_header h;
         if (!socks_codec::decode_udp_header(data.data(), data.size(), h))
         {
             LOG_CTX_WARN(ctx_, "{} udp failed to decode header", log_event::kMux);
