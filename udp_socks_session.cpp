@@ -276,12 +276,13 @@ asio::awaitable<void> udp_socks_session::udp_sock_to_stream(std::shared_ptr<mux_
             }
         }
 
-                       write_ec = co_await stream->async_write_some(buf.data(), n))
-                       {
-                           LOG_CTX_ERROR(ctx_, "{} write to stream failed {}", log_event::kSocks, write_ec.message());
-                           break;
-                       }
-                       last_activity_time_ms_.store(now_ms(), std::memory_order_release);
+        const auto write_ec = co_await stream->async_write_some(buf.data(), n);
+        if (write_ec)
+        {
+            LOG_CTX_ERROR(ctx_, "{} write to stream failed {}", log_event::kSocks, write_ec.message());
+            break;
+        }
+        last_activity_time_ms_.store(now_ms(), std::memory_order_release);
     }
 }
 
