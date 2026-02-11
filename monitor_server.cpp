@@ -60,7 +60,6 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
             return true;
         }
         const auto now = std::chrono::steady_clock::now();
-        const std::scoped_lock lock(rate_state_->mutex);
         if (now - rate_state_->last_request_time < std::chrono::milliseconds(min_interval_ms_))
         {
             return false;
