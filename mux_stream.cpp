@@ -11,7 +11,7 @@
 #include <asio/as_tuple.hpp>
 #include <asio/awaitable.hpp>
 #include <asio/use_awaitable.hpp>
-#include <asio/any_io_executor.hpp>
+#include <asio/io_context.hpp>
 
 #include "log.h"
 #include "mux_stream.h"
@@ -26,7 +26,7 @@ mux_stream::mux_stream(std::uint32_t id,
                        std::uint32_t cid,
                        const std::string& trace_id,
                        const std::shared_ptr<mux_connection>& connection,
-                       const asio::any_io_executor& ex)
+                       const asio::io_context::executor_type& ex)
     : id_(id), connection_(connection), recv_channel_(ex, 1024)
 {
     ctx_.trace_id(trace_id);

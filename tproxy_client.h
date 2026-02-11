@@ -1,7 +1,6 @@
 #ifndef TPROXY_CLIENT_H
 #define TPROXY_CLIENT_H
 
-#include <mutex>
 #include <atomic>
 #include <memory>
 #include <string>
@@ -10,7 +9,7 @@
 
 #include <asio/ip/tcp.hpp>
 #include <asio/ip/udp.hpp>
-#include <asio/strand.hpp>
+#include <asio/io_context.hpp>
 #include <asio/awaitable.hpp>
 
 #include "config.h"
@@ -48,14 +47,13 @@ class tproxy_client : public std::enable_shared_from_this<tproxy_client>
 
    private:
     std::atomic<bool> stop_{false};
-    asio::strand<asio::any_io_executor> strand_;
+    asio::io_context::executor_type ex_;
     asio::ip::tcp::acceptor tcp_acceptor_;
     asio::ip::udp::socket udp_socket_;
     std::shared_ptr<client_tunnel_pool> tunnel_pool_;
     std::shared_ptr<router> router_;
     std::shared_ptr<tproxy_udp_sender> sender_;
     std::unordered_map<std::string, std::shared_ptr<tproxy_udp_session>> udp_sessions_;
-    std::mutex udp_mutex_;
     config cfg_;
     config::tproxy_t tproxy_config_;
     std::uint16_t tcp_port_ = 0;
