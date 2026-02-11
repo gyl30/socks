@@ -726,7 +726,7 @@ std::optional<std::uint16_t> extract_cipher_suite_from_server_hello(const std::v
 
 std::optional<server_key_share_info> extract_server_key_share(const std::vector<std::uint8_t>& server_hello)
 {
-    std::uint32_t pos = 0;
+    std::size_t pos = 0;
     if (server_hello.size() < 4)
     {
         return std::nullopt;
@@ -766,6 +766,11 @@ std::optional<server_key_share_info> extract_server_key_share(const std::vector<
     pos += 2;
 
     const std::size_t end = pos + ext_len;
+    if (end < pos || end > server_hello.size())
+    {
+        return std::nullopt;
+    }
+
     while (pos + 4 <= end)
     {
         const auto type = static_cast<std::uint16_t>((server_hello[pos] << 8) | server_hello[pos + 1]);
@@ -790,6 +795,12 @@ std::optional<server_key_share_info> extract_server_key_share(const std::vector<
                              server_hello.begin() + static_cast<std::ptrdiff_t>(data_start + len));
             return info;
         }
+
+        if (pos + elen > end)
+        {
+            break;
+        }
+
         pos += elen;
     }
     return std::nullopt;

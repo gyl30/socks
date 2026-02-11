@@ -4,6 +4,7 @@
 #include <utility>
 #include <system_error>
 
+#include <asio/error.hpp>
 #include <asio/write.hpp>
 #include <asio/buffer.hpp>
 #include <asio/ip/tcp.hpp>
@@ -116,30 +117,35 @@ proxy_upstream::proxy_upstream(std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::so
 
 asio::awaitable<bool> proxy_upstream::connect(const std::string& host, const std::uint16_t port)
 {
-    stream_ = tunnel_->create_stream(ctx_.trace_id());
-    if (stream_ == nullptr)
+    if (tunnel_ == nullptr || tunnel_->connection() == nullptr || !tunnel_->connection()->is_open())
+    {
+        LOG_CTX_WARN(ctx_, "{} proxy tunnel unavailable", log_event::kRoute);
+        co_return false;
+    }
+
+    auto stream = tunnel_->create_stream(ctx_.trace_id());
+    if (stream == nullptr)
     {
         LOG_CTX_ERROR(ctx_, "{} create stream failed", log_event::kRoute);
         co_return false;
     }
 
-    auto cleanup_stream = [&]() -> asio::awaitable<void>
+    auto cleanup_stream = [this, stream]() -> asio::awaitable<void>
     {
-        if (stream_ != nullptr)
+        if (stream != nullptr)
         {
-            co_await stream_->close();
+            co_await stream->close();
             if (tunnel_ != nullptr)
             {
-                tunnel_->remove_stream(stream_->id());
+                tunnel_->remove_stream(stream->id());
             }
-            stream_.reset();
         }
     };
 
     const syn_payload syn{.socks_cmd = socks::kCmdConnect, .addr = host, .port = port, .trace_id = ctx_.trace_id()};
     std::vector<std::uint8_t> syn_data;
     mux_codec::encode_syn(syn, syn_data);
-    const auto ec = co_await tunnel_->connection()->send_async(stream_->id(), kCmdSyn, std::move(syn_data));
+    const auto ec = co_await tunnel_->connection()->send_async(stream->id(), kCmdSyn, std::move(syn_data));
     if (ec)
     {
         LOG_CTX_ERROR(ctx_, "{} send syn failed {}", log_event::kRoute, ec.message());
@@ -147,7 +153,7 @@ asio::awaitable<bool> proxy_upstream::connect(const std::string& host, const std
         co_return false;
     }
 
-    auto [ack_ec, ack_data] = co_await stream_->async_read_some();
+    auto [ack_ec, ack_data] = co_await stream->async_read_some();
     if (ack_ec)
     {
         LOG_CTX_ERROR(ctx_, "{} wait ack failed {}", log_event::kRoute, ack_ec.message());
@@ -163,12 +169,27 @@ asio::awaitable<bool> proxy_upstream::connect(const std::string& host, const std
         co_return false;
     }
 
+    {
+        const std::lock_guard<std::mutex> lock(stream_mutex_);
+        stream_ = std::move(stream);
+    }
+
     co_return true;
 }
 
 asio::awaitable<std::pair<std::error_code, std::size_t>> proxy_upstream::read(std::vector<std::uint8_t>& buf)
 {
-    auto [ec, data] = co_await stream_->async_read_some();
+    std::shared_ptr<mux_stream> stream = nullptr;
+    {
+        const std::lock_guard<std::mutex> lock(stream_mutex_);
+        stream = stream_;
+    }
+    if (stream == nullptr)
+    {
+        co_return std::make_pair(asio::error::operation_aborted, 0);
+    }
+
+    auto [ec, data] = co_await stream->async_read_some();
     if (!ec && !data.empty())
     {
         if (buf.size() < data.size())
@@ -183,7 +204,17 @@ asio::awaitable<std::pair<std::error_code, std::size_t>> proxy_upstream::read(st
 
 asio::awaitable<std::size_t> proxy_upstream::write(const std::vector<std::uint8_t>& data)
 {
-    auto ec = co_await stream_->async_write_some(data.data(), data.size());
+    std::shared_ptr<mux_stream> stream = nullptr;
+    {
+        const std::lock_guard<std::mutex> lock(stream_mutex_);
+        stream = stream_;
+    }
+    if (stream == nullptr)
+    {
+        co_return 0;
+    }
+
+    auto ec = co_await stream->async_write_some(data.data(), data.size());
     if (ec)
     {
         LOG_CTX_ERROR(ctx_, "{} write error {}", log_event::kRoute, ec.message());
@@ -194,14 +225,20 @@ asio::awaitable<std::size_t> proxy_upstream::write(const std::vector<std::uint8_
 
 asio::awaitable<void> proxy_upstream::close()
 {
-    if (stream_)
+    std::shared_ptr<mux_stream> stream = nullptr;
     {
-        co_await stream_->close();
+        const std::lock_guard<std::mutex> lock(stream_mutex_);
+        stream = stream_;
+        stream_.reset();
+    }
+
+    if (stream != nullptr)
+    {
+        co_await stream->close();
         if (tunnel_ != nullptr)
         {
-            tunnel_->remove_stream(stream_->id());
+            tunnel_->remove_stream(stream->id());
         }
-        stream_.reset();
     }
 }
 
