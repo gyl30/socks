@@ -1,7 +1,6 @@
 #ifndef MONITOR_SERVER_H
 #define MONITOR_SERVER_H
 
-#include <mutex>
 #include <chrono>
 #include <memory>
 #include <string>
@@ -14,7 +13,6 @@ namespace mux
 
 struct monitor_rate_state
 {
-    std::mutex mutex;
     std::chrono::steady_clock::time_point last_request_time;
 };
 

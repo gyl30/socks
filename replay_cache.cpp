@@ -1,4 +1,3 @@
-#include <mutex>
 #include <chrono>
 #include <string>
 #include <vector>
@@ -17,7 +16,6 @@ bool replay_cache::check_and_insert(const std::vector<std::uint8_t>& sid)
     }
     const std::string key(sid.begin(), sid.end());
 
-    const std::scoped_lock lock(mutex_);
     cleanup();
 
     if (cache_.contains(key))
