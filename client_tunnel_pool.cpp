@@ -280,6 +280,78 @@ bool consume_handshake_plaintext(const std::vector<std::uint8_t>& plaintext,
     return true;
 }
 
+asio::awaitable<std::optional<std::vector<std::uint8_t>>> read_handshake_record_body(asio::ip::tcp::socket& socket,
+                                                                                      const char* step,
+                                                                                      std::error_code& ec)
+{
+    std::uint8_t header[5];
+    auto [read_header_ec, read_header_n] = co_await asio::async_read(socket, asio::buffer(header, 5), asio::as_tuple(asio::use_awaitable));
+    if (read_header_ec)
+    {
+        ec = read_header_ec;
+        LOG_ERROR("error reading {} header {}", step, ec.message());
+        co_return std::nullopt;
+    }
+
+    const auto body_len = static_cast<std::uint16_t>((header[3] << 8) | header[4]);
+    std::vector<std::uint8_t> body(body_len);
+    auto [read_body_ec, read_body_n] = co_await asio::async_read(socket, asio::buffer(body), asio::as_tuple(asio::use_awaitable));
+    if (read_body_ec)
+    {
+        ec = read_body_ec;
+        LOG_ERROR("error reading {} body {}", step, ec.message());
+        co_return std::nullopt;
+    }
+    if (read_body_n != body_len)
+    {
+        ec = asio::error::fault;
+        LOG_ERROR("short read {} body {} of {}", step, read_body_n, body_len);
+        co_return std::nullopt;
+    }
+
+    co_return body;
+}
+
+bool parse_server_hello_cipher_suite(const std::vector<std::uint8_t>& sh_data, std::uint16_t& cipher_suite, std::error_code& ec)
+{
+    std::size_t pos = 4 + 2 + 32;
+    if (pos >= sh_data.size())
+    {
+        ec = asio::error::fault;
+        LOG_ERROR("bad server hello {}", ec.message());
+        return false;
+    }
+
+    const std::uint8_t sid_len = sh_data[pos];
+    pos += 1 + sid_len;
+    if (pos + 2 > sh_data.size())
+    {
+        ec = asio::error::fault;
+        LOG_ERROR("bad server hello session data {}", ec.message());
+        return false;
+    }
+
+    cipher_suite = static_cast<std::uint16_t>((sh_data[pos] << 8) | sh_data[pos + 1]);
+    return true;
+}
+
+std::pair<const EVP_MD*, const EVP_CIPHER*> select_negotiated_suite(const std::uint16_t cipher_suite)
+{
+    if (cipher_suite == 0x1302)
+    {
+        LOG_DEBUG("cipher suite 1302 used sha384 cipher aes 256 gcm");
+        return std::make_pair(EVP_sha384(), EVP_aes_256_gcm());
+    }
+    if (cipher_suite == 0x1303)
+    {
+        LOG_DEBUG("cipher suite 1303 used sha256 cipher chacha20 poly1305");
+        return std::make_pair(EVP_sha256(), EVP_chacha20_poly1305());
+    }
+
+    LOG_DEBUG("cipher suite not found used sha256 cipher aes 128 gcm");
+    return std::make_pair(EVP_sha256(), EVP_aes_128_gcm());
+}
+
 }    // namespace
 
 client_tunnel_pool::client_tunnel_pool(io_context_pool& pool, const config& cfg, const std::uint32_t mark)
@@ -749,68 +821,23 @@ asio::awaitable<client_tunnel_pool::server_hello_res> client_tunnel_pool::proces
                                                                                                reality::transcript& trans,
                                                                                                std::error_code& ec)
 {
-    std::uint8_t data[5];
-    auto [re1, rn1] = co_await asio::async_read(socket, asio::buffer(data, 5), asio::as_tuple(asio::use_awaitable));
-    if (re1)
+    const auto sh_data_opt = co_await read_handshake_record_body(socket, "server hello", ec);
+    if (!sh_data_opt.has_value())
     {
-        ec = re1;
-        LOG_ERROR("error reading server hello {}", ec.message());
         co_return server_hello_res{.ok = false};
     }
-
-    const auto sh_len = static_cast<std::uint16_t>((data[3] << 8) | data[4]);
-    std::vector<std::uint8_t> sh_data(sh_len);
-    auto [re2, rn2] = co_await asio::async_read(socket, asio::buffer(sh_data), asio::as_tuple(asio::use_awaitable));
-    if (re2)
-    {
-        ec = re2;
-        LOG_ERROR("error reading server hello data {}", ec.message());
-        co_return server_hello_res{.ok = false};
-    }
-    LOG_DEBUG("server hello received size {}", sh_len);
+    const auto& sh_data = *sh_data_opt;
+    LOG_DEBUG("server hello received size {}", sh_data.size());
 
     trans.update(sh_data);
 
-    std::size_t pos = 4 + 2 + 32;
-    if (pos >= sh_data.size())
+    std::uint16_t cipher_suite = 0;
+    if (!parse_server_hello_cipher_suite(sh_data, cipher_suite, ec))
     {
-        ec = asio::error::fault;
-        LOG_ERROR("bad server hello {}", ec.message());
         co_return server_hello_res{.ok = false};
     }
 
-    const std::uint8_t sid_len = sh_data[pos];
-    pos += 1 + sid_len;
-
-    if (pos + 2 > sh_data.size())
-    {
-        ec = asio::error::fault;
-        LOG_ERROR("bad server hello session data {}", ec.message());
-        co_return server_hello_res{.ok = false};
-    }
-
-    const std::uint16_t cipher_suite = (sh_data[pos] << 8) | sh_data[pos + 1];
-
-    const EVP_MD* md = nullptr;
-    const EVP_CIPHER* cipher = nullptr;
-    if (cipher_suite == 0x1302)
-    {
-        md = EVP_sha384();
-        cipher = EVP_aes_256_gcm();
-        LOG_DEBUG("cipher suite 1302 used sha384 cipher aes 256 gcm");
-    }
-    else if (cipher_suite == 0x1303)
-    {
-        md = EVP_sha256();
-        cipher = EVP_chacha20_poly1305();
-        LOG_DEBUG("cipher suite 1303 used sha256 cipher chacha20 poly1305");
-    }
-    else
-    {
-        md = EVP_sha256();
-        cipher = EVP_aes_128_gcm();
-        LOG_DEBUG("cipher suite not found used sha256 cipher aes 128 gcm");
-    }
+    const auto [md, cipher] = select_negotiated_suite(cipher_suite);
 
     trans.set_protocol_hash(md);
 
