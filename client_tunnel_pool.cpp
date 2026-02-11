@@ -194,6 +194,92 @@ std::optional<std::vector<std::uint8_t>> extract_first_cert_der(const std::vecto
     return cert;
 }
 
+struct encrypted_record
+{
+    std::uint8_t content_type = 0;
+    std::vector<std::uint8_t> ciphertext;
+};
+
+asio::awaitable<std::optional<encrypted_record>> read_encrypted_record(asio::ip::tcp::socket& socket, std::error_code& ec)
+{
+    std::uint8_t rh[5];
+    auto [re3, rn3] = co_await asio::async_read(socket, asio::buffer(rh, 5), asio::as_tuple(asio::use_awaitable));
+    if (re3)
+    {
+        ec = re3;
+        LOG_ERROR("error reading record header {}", ec.message());
+        co_return std::nullopt;
+    }
+
+    const auto n = static_cast<std::uint16_t>((rh[3] << 8) | rh[4]);
+    std::vector<std::uint8_t> rec(n);
+    auto [re4, rn4] = co_await asio::async_read(socket, asio::buffer(rec), asio::as_tuple(asio::use_awaitable));
+    if (re4)
+    {
+        ec = re4;
+        LOG_ERROR("error reading record payload {}", ec.message());
+        co_return std::nullopt;
+    }
+    if (rn4 != n)
+    {
+        ec = asio::error::fault;
+        LOG_ERROR("short read record payload {} of {}", rn4, n);
+        co_return std::nullopt;
+    }
+
+    std::vector<std::uint8_t> ciphertext(5 + n);
+    std::memcpy(ciphertext.data(), rh, 5);
+    std::memcpy(ciphertext.data() + 5, rec.data(), n);
+    co_return encrypted_record{.content_type = rh[0], .ciphertext = std::move(ciphertext)};
+}
+
+bool consume_handshake_plaintext(const std::vector<std::uint8_t>& plaintext,
+                                 std::vector<std::uint8_t>& handshake_buffer,
+                                 bool& cert_checked,
+                                 bool& handshake_fin,
+                                 reality::transcript& trans,
+                                 std::error_code& ec)
+{
+    handshake_buffer.insert(handshake_buffer.end(), plaintext.begin(), plaintext.end());
+    std::uint32_t offset = 0;
+    while (offset + 4 <= handshake_buffer.size())
+    {
+        const std::uint8_t msg_type = handshake_buffer[offset];
+        const std::uint32_t msg_len = (handshake_buffer[offset + 1] << 16) | (handshake_buffer[offset + 2] << 8) | handshake_buffer[offset + 3];
+        if (offset + 4 + msg_len > handshake_buffer.size())
+        {
+            break;
+        }
+
+        const std::vector<std::uint8_t> msg_data(handshake_buffer.begin() + offset, handshake_buffer.begin() + offset + 4 + msg_len);
+        if (msg_type == 0x0b)
+        {
+            LOG_DEBUG("received certificate message size {}", msg_data.size());
+            if (!cert_checked)
+            {
+                cert_checked = true;
+                auto cert_der = extract_first_cert_der(msg_data);
+                if (!cert_der.has_value())
+                {
+                    ec = asio::error::invalid_argument;
+                    LOG_ERROR("certificate message parse failed");
+                    return false;
+                }
+            }
+        }
+
+        trans.update(msg_data);
+        if (msg_type == 0x14)
+        {
+            handshake_fin = true;
+        }
+        offset += 4 + msg_len;
+    }
+
+    handshake_buffer.erase(handshake_buffer.begin(), handshake_buffer.begin() + offset);
+    return true;
+}
+
 }    // namespace
 
 client_tunnel_pool::client_tunnel_pool(io_context_pool& pool, const config& cfg, const std::uint32_t mark)
@@ -782,41 +868,21 @@ asio::awaitable<std::pair<bool, std::pair<std::vector<std::uint8_t>, std::vector
 
     while (!handshake_fin)
     {
-        std::uint8_t rh[5];
-        auto [re3, rn3] = co_await asio::async_read(socket, asio::buffer(rh, 5), asio::as_tuple(asio::use_awaitable));
-        if (re3)
+        const auto record = co_await read_encrypted_record(socket, ec);
+        if (!record.has_value())
         {
-            ec = re3;
-            LOG_ERROR("error reading record header {}", ec.message());
-            co_return std::make_pair(false, std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>{});
-        }
-        const auto n = static_cast<std::uint16_t>((rh[3] << 8) | rh[4]);
-        std::vector<std::uint8_t> rec(n);
-        auto [re4, rn4] = co_await asio::async_read(socket, asio::buffer(rec), asio::as_tuple(asio::use_awaitable));
-        if (re4)
-        {
-            ec = re4;
-            LOG_ERROR("error reading record payload {}", ec.message());
-            co_return std::make_pair(false, std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>{});
-        }
-        if (rn4 != n)
-        {
-            ec = asio::error::fault;
-            LOG_ERROR("short read record payload {} of {}", rn4, n);
             co_return std::make_pair(false, std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>{});
         }
 
-        if (rh[0] == reality::kContentTypeChangeCipherSpec)
+        if (record->content_type == reality::kContentTypeChangeCipherSpec)
         {
             LOG_DEBUG("received change cipher spec skip");
             continue;
         }
 
-        std::vector<std::uint8_t> cth(5 + n);
-        std::memcpy(cth.data(), rh, 5);
-        std::memcpy(cth.data() + 5, rec.data(), n);
         std::uint8_t type = 0;
-        const auto pt = reality::tls_record_layer::decrypt_record(cipher, s_hs_keys.first, s_hs_keys.second, seq++, cth, type, ec);
+        const auto pt =
+            reality::tls_record_layer::decrypt_record(cipher, s_hs_keys.first, s_hs_keys.second, seq++, record->ciphertext, type, ec);
         if (ec)
         {
             LOG_ERROR("error decrypting record {}", ec.message());
@@ -825,43 +891,10 @@ asio::awaitable<std::pair<bool, std::pair<std::vector<std::uint8_t>, std::vector
 
         if (type == reality::kContentTypeHandshake)
         {
-            handshake_buffer.insert(handshake_buffer.end(), pt.begin(), pt.end());
-            std::uint32_t offset = 0;
-            while (offset + 4 <= handshake_buffer.size())
+            if (!consume_handshake_plaintext(pt, handshake_buffer, cert_checked, handshake_fin, trans, ec))
             {
-                const std::uint8_t msg_type = handshake_buffer[offset];
-                const std::uint32_t msg_len =
-                    (handshake_buffer[offset + 1] << 16) | (handshake_buffer[offset + 2] << 8) | handshake_buffer[offset + 3];
-                if (offset + 4 + msg_len > handshake_buffer.size())
-                {
-                    break;
-                }
-
-                const std::vector<std::uint8_t> msg_data(handshake_buffer.begin() + offset, handshake_buffer.begin() + offset + 4 + msg_len);
-
-                if (msg_type == 0x0b)
-                {
-                    LOG_DEBUG("received certificate message size {}", msg_data.size());
-                    if (!cert_checked)
-                    {
-                        cert_checked = true;
-                        auto cert_der = extract_first_cert_der(msg_data);
-                        if (!cert_der.has_value())
-                        {
-                            ec = asio::error::invalid_argument;
-                            LOG_ERROR("certificate message parse failed");
-                            co_return std::make_pair(false, std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>{});
-                        }
-                    }
-                }
-                trans.update(msg_data);
-                if (msg_type == 0x14)
-                {
-                    handshake_fin = true;
-                }
-                offset += 4 + msg_len;
+                co_return std::make_pair(false, std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>{});
             }
-            handshake_buffer.erase(handshake_buffer.begin(), handshake_buffer.begin() + offset);
         }
     }
 
