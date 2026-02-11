@@ -227,13 +227,19 @@ asio::awaitable<bool> tproxy_udp_session::ensure_proxy_stream()
         co_return false;
     }
 
+    auto cleanup_stream = [stream, tunnel]() -> asio::awaitable<void>
+    {
+        co_await stream->close();
+        tunnel->remove_stream(stream->id());
+    };
+
     const syn_payload syn{.socks_cmd = socks::kCmdUdpAssociate, .addr = "0.0.0.0", .port = 0};
     std::vector<std::uint8_t> syn_data;
     mux_codec::encode_syn(syn, syn_data);
     if (const auto ec = co_await tunnel->connection()->send_async(stream->id(), kCmdSyn, std::move(syn_data)))
     {
         LOG_CTX_WARN(ctx_, "{} udp syn failed {}", log_event::kSocks, ec.message());
-        co_await stream->close();
+        co_await cleanup_stream();
         co_return false;
     }
 
@@ -241,7 +247,7 @@ asio::awaitable<bool> tproxy_udp_session::ensure_proxy_stream()
     if (ack_ec)
     {
         LOG_CTX_WARN(ctx_, "{} udp ack failed {}", log_event::kSocks, ack_ec.message());
-        co_await stream->close();
+        co_await cleanup_stream();
         co_return false;
     }
 
@@ -249,7 +255,7 @@ asio::awaitable<bool> tproxy_udp_session::ensure_proxy_stream()
     if (!mux_codec::decode_ack(ack_data.data(), ack_data.size(), ack_pl) || ack_pl.socks_rep != socks::kRepSuccess)
     {
         LOG_CTX_WARN(ctx_, "{} udp ack rejected {}", log_event::kSocks, ack_pl.socks_rep);
-        co_await stream->close();
+        co_await cleanup_stream();
         co_return false;
     }
 
@@ -273,7 +279,7 @@ asio::awaitable<bool> tproxy_udp_session::ensure_proxy_stream()
 
     if (!installed)
     {
-        co_await stream->close();
+        co_await cleanup_stream();
         co_return true;
     }
 
