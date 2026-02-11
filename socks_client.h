@@ -1,13 +1,15 @@
 #ifndef SOCKS_CLIENT_H
 #define SOCKS_CLIENT_H
 
+#include <mutex>
+#include <atomic>
 #include <memory>
 #include <string>
+#include <vector>
 #include <cstdint>
 
 #include <asio/ip/tcp.hpp>
 #include <asio/awaitable.hpp>
-#include <asio/experimental/concurrent_channel.hpp>
 
 #include "config.h"
 #include "router.h"
@@ -16,6 +18,8 @@
 
 namespace mux
 {
+
+class socks_session;
 
 class socks_client : public std::enable_shared_from_this<socks_client>
 {
@@ -26,21 +30,20 @@ class socks_client : public std::enable_shared_from_this<socks_client>
 
     void stop();
 
-    [[nodiscard]] std::uint16_t listen_port() const { return listen_port_; }
+    [[nodiscard]] std::uint16_t listen_port() const { return listen_port_.load(std::memory_order_acquire); }
 
    private:
     asio::awaitable<void> accept_local_loop();
 
-    asio::awaitable<void> wait_stop();
-
    private:
-    bool stop_ = false;
+    std::atomic<bool> stop_{false};
     io_context_pool& pool_;
-    std::uint16_t listen_port_;
+    std::atomic<std::uint16_t> listen_port_{0};
     asio::ip::tcp::acceptor acceptor_;
     std::shared_ptr<mux::router> router_;
     std::shared_ptr<client_tunnel_pool> tunnel_pool_;
-    asio::experimental::concurrent_channel<void(std::error_code, int)> stop_channel_;
+    std::mutex sessions_mutex_;
+    std::vector<std::weak_ptr<socks_session>> sessions_;
     config::timeout_t timeout_config_;
     config::socks_t socks_config_;
 };
