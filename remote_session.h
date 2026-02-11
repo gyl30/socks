@@ -27,17 +27,21 @@ class remote_session : public mux_stream_interface, public std::enable_shared_fr
     void set_manager(const std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>& m) { manager_ = m; }
 
    private:
+    [[nodiscard]] asio::awaitable<void> run(const syn_payload& syn);
     [[nodiscard]] asio::awaitable<void> upstream();
     [[nodiscard]] asio::awaitable<void> downstream();
+    void close_from_fin();
+    void close_from_reset();
 
    private:
     std::uint32_t id_;
     connection_context ctx_;
+    asio::strand<asio::any_io_executor> strand_;
     asio::ip::tcp::resolver resolver_;
     asio::ip::tcp::socket target_socket_;
-    std::shared_ptr<mux_connection> connection_;
+    std::weak_ptr<mux_connection> connection_;
     asio::experimental::concurrent_channel<void(std::error_code, std::vector<std::uint8_t>)> recv_channel_;
-    std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> manager_;
+    std::weak_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> manager_;
 };
 
 }    // namespace mux

@@ -28,7 +28,7 @@ using namespace mux;
 class scoped_pool
 {
    public:
-    explicit scoped_pool(mux::io_context_pool& pool) : pool_(pool), thread_([&pool]() { pool.run(); }) {}
+    explicit scoped_pool(mux::io_context_pool& pool) : pool_(pool), thread_([this]() { pool_.run(); }) {}
     ~scoped_pool()
     {
         pool_.stop();
@@ -146,6 +146,7 @@ TEST_F(remote_server_mux_test, ProcessTcpConnectRequest)
 
     client->stop();
     server->stop();
+    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
 }
 
 TEST_F(remote_server_mux_test, ProcessUdpAssociateRequest)
@@ -204,6 +205,7 @@ TEST_F(remote_server_mux_test, ProcessUdpAssociateRequest)
 
     client->stop();
     server->stop();
+    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
 }
 
 TEST_F(remote_server_mux_test, TargetConnectFail)
@@ -260,6 +262,7 @@ TEST_F(remote_server_mux_test, TargetConnectFail)
 
     client->stop();
     server->stop();
+    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
 }
 
 TEST_F(remote_server_mux_test, TargetResolveFail)
@@ -321,4 +324,5 @@ TEST_F(remote_server_mux_test, TargetResolveFail)
 
     client->stop();
     server->stop();
+    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
 }
