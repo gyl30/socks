@@ -1,6 +1,8 @@
 #include <asio/write.hpp>
 #include <asio/ip/tcp.hpp>
 #include <asio/as_tuple.hpp>
+#include <asio/co_spawn.hpp>
+#include <asio/dispatch.hpp>
 #include <asio/use_awaitable.hpp>
 #include <asio/experimental/awaitable_operators.hpp>
 
@@ -17,7 +19,12 @@ remote_session::remote_session(std::shared_ptr<mux_connection> connection,
                                const std::uint32_t id,
                                const asio::any_io_executor& ex,
                                const connection_context& ctx)
-    : id_(id), resolver_(ex), target_socket_(ex), connection_(std::move(connection)), recv_channel_(ex, 128)
+    : id_(id),
+      strand_(asio::make_strand(ex)),
+      resolver_(strand_),
+      target_socket_(strand_),
+      connection_(std::move(connection)),
+      recv_channel_(strand_, 128)
 {
     ctx_ = ctx;
     ctx_.stream_id(id);
@@ -25,6 +32,18 @@ remote_session::remote_session(std::shared_ptr<mux_connection> connection,
 
 asio::awaitable<void> remote_session::start(const syn_payload& syn)
 {
+    co_await asio::dispatch(strand_, asio::use_awaitable);
+    co_await run(syn);
+}
+
+asio::awaitable<void> remote_session::run(const syn_payload& syn)
+{
+    auto conn = connection_.lock();
+    if (!conn)
+    {
+        co_return;
+    }
+
     ctx_.set_target(syn.addr, syn.port);
     LOG_CTX_INFO(ctx_, "{} connecting {} {}", log_event::kMux, syn.addr, syn.port);
     const auto [resolve_ec, eps] = co_await resolver_.async_resolve(syn.addr, std::to_string(syn.port), asio::as_tuple(asio::use_awaitable));
@@ -34,16 +53,16 @@ asio::awaitable<void> remote_session::start(const syn_payload& syn)
         const ack_payload ack{.socks_rep = socks::kRepHostUnreach, .bnd_addr = "", .bnd_port = 0};
         std::vector<std::uint8_t> ack_data;
         mux_codec::encode_ack(ack, ack_data);
-        const auto ack_ec = co_await connection_->send_async(id_, kCmdAck, std::move(ack_data));
+        const auto ack_ec = co_await conn->send_async(id_, kCmdAck, std::move(ack_data));
         if (ack_ec)
         {
             LOG_CTX_WARN(ctx_, "{} send ack failed {}", log_event::kMux, ack_ec.message());
         }
-        if (manager_)
+        if (auto mgr = manager_.lock())
         {
-            manager_->remove_stream(id_);
+            mgr->remove_stream(id_);
         }
-        (void)co_await connection_->send_async(id_, kCmdRst, {});
+        (void)co_await conn->send_async(id_, kCmdRst, {});
         co_return;
     }
 
@@ -54,16 +73,16 @@ asio::awaitable<void> remote_session::start(const syn_payload& syn)
         const ack_payload ack{.socks_rep = socks::kRepConnRefused, .bnd_addr = "", .bnd_port = 0};
         std::vector<std::uint8_t> ack_data;
         mux_codec::encode_ack(ack, ack_data);
-        const auto ack_ec = co_await connection_->send_async(id_, kCmdAck, std::move(ack_data));
+        const auto ack_ec = co_await conn->send_async(id_, kCmdAck, std::move(ack_data));
         if (ack_ec)
         {
             LOG_CTX_WARN(ctx_, "{} send ack failed {}", log_event::kMux, ack_ec.message());
         }
-        if (manager_)
+        if (auto mgr = manager_.lock())
         {
-            manager_->remove_stream(id_);
+            mgr->remove_stream(id_);
         }
-        (void)co_await connection_->send_async(id_, kCmdRst, {});
+        (void)co_await conn->send_async(id_, kCmdRst, {});
         co_return;
     }
 
@@ -79,13 +98,13 @@ asio::awaitable<void> remote_session::start(const syn_payload& syn)
     const ack_payload ack_pl{.socks_rep = socks::kRepSuccess, .bnd_addr = ep_conn.address().to_string(), .bnd_port = ep_conn.port()};
     std::vector<std::uint8_t> ack_data;
     mux_codec::encode_ack(ack_pl, ack_data);
-    const auto ack_ec = co_await connection_->send_async(id_, kCmdAck, std::move(ack_data));
+    const auto ack_ec = co_await conn->send_async(id_, kCmdAck, std::move(ack_data));
     if (ack_ec)
     {
         LOG_CTX_WARN(ctx_, "{} send ack failed {}", log_event::kMux, ack_ec.message());
-        if (manager_)
+        if (auto mgr = manager_.lock())
         {
-            manager_->remove_stream(id_);
+            mgr->remove_stream(id_);
         }
         co_return;
     }
@@ -96,9 +115,9 @@ asio::awaitable<void> remote_session::start(const syn_payload& syn)
     std::error_code ignore;
     ignore = target_socket_.close(ignore);
     (void)ignore;
-    if (manager_)
+    if (auto mgr = manager_.lock())
     {
-        manager_->remove_stream(id_);
+        mgr->remove_stream(id_);
     }
     LOG_CTX_INFO(ctx_, "{} finished {}", log_event::kConnClose, ctx_.stats_summary());
 }
@@ -107,17 +126,27 @@ void remote_session::on_data(std::vector<std::uint8_t> data) { recv_channel_.try
 
 void remote_session::on_close()
 {
-    LOG_CTX_DEBUG(ctx_, "{} received fin from client", log_event::kMux);
-    recv_channel_.close();
-    std::error_code ec;
-    ec = target_socket_.shutdown(asio::ip::tcp::socket::shutdown_send, ec);
-    (void)ec;
+    asio::dispatch(strand_, [self = shared_from_this()]() { self->close_from_fin(); });
 }
 
 void remote_session::on_reset()
 {
+    asio::dispatch(strand_, [self = shared_from_this()]() { self->close_from_reset(); });
+}
+
+void remote_session::close_from_fin()
+{
+    LOG_CTX_DEBUG(ctx_, "{} received fin from client", log_event::kMux);
     recv_channel_.close();
-    target_socket_.close();
+    std::error_code ec;
+    ec = target_socket_.shutdown(asio::ip::tcp::socket::shutdown_send, ec);
+}
+
+void remote_session::close_from_reset()
+{
+    recv_channel_.close();
+    std::error_code ec;
+    ec = target_socket_.close(ec);
 }
 
 asio::awaitable<void> remote_session::upstream()
@@ -162,15 +191,26 @@ asio::awaitable<void> remote_session::downstream()
             }
             break;
         }
-        if (co_await connection_->send_async(id_, kCmdDat, std::vector<std::uint8_t>(buf.begin(), buf.begin() + n)))
+
+        auto conn = connection_.lock();
+        if (!conn)
         {
-            LOG_CTX_WARN(ctx_, "{} failed to write to mux", log_event::kDataSend);
+            break;
+        }
+
+        if (const auto ec = co_await conn->send_async(id_, kCmdDat, std::vector<std::uint8_t>(buf.begin(), buf.begin() + n)))
+        {
+            LOG_CTX_WARN(ctx_, "{} failed to write to mux {}", log_event::kDataSend, ec.message());
             break;
         }
         ctx_.add_tx_bytes(n);
     }
     LOG_CTX_INFO(ctx_, "{} target to mux finished", log_event::kDataRecv);
-    co_await connection_->send_async(id_, kCmdFin, {});
+
+    if (auto conn = connection_.lock())
+    {
+        (void)co_await conn->send_async(id_, kCmdFin, {});
+    }
 }
 
 }    // namespace mux
