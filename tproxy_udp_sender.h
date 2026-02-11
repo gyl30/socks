@@ -1,15 +1,14 @@
 #ifndef TPROXY_UDP_SENDER_H
 #define TPROXY_UDP_SENDER_H
 
-#include <mutex>
 #include <memory>
 #include <vector>
 #include <cstdint>
 #include <unordered_map>
 
 #include <asio/ip/udp.hpp>
+#include <asio/io_context.hpp>
 #include <asio/awaitable.hpp>
-#include <asio/any_io_executor.hpp>
 
 namespace mux
 {
@@ -17,7 +16,7 @@ namespace mux
 class tproxy_udp_sender
 {
    public:
-    tproxy_udp_sender(const asio::any_io_executor& ex, std::uint32_t mark);
+    tproxy_udp_sender(const asio::io_context::executor_type& ex, std::uint32_t mark);
 
     asio::awaitable<void> send_to_client(const asio::ip::udp::endpoint& client_ep,
                                          const asio::ip::udp::endpoint& src_ep,
@@ -49,13 +48,12 @@ class tproxy_udp_sender
     };
 
     std::shared_ptr<asio::ip::udp::socket> get_socket(const asio::ip::udp::endpoint& src_ep);
-    void prune_sockets_locked(std::uint64_t now_ms);
-    void evict_oldest_socket_locked();
+    void prune_sockets(std::uint64_t now_ms);
+    void evict_oldest_socket();
 
    private:
-    asio::any_io_executor ex_;
+    asio::io_context::executor_type ex_;
     std::uint32_t mark_ = 0;
-    std::mutex socket_mutex_;
     std::unordered_map<endpoint_key, cached_socket, endpoint_hash, endpoint_key_equal> sockets_;
 };
 

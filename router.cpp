@@ -34,22 +34,21 @@ bool router::load()
     return true;
 }
 
-asio::awaitable<route_type> router::decide(const connection_context& ctx, const std::string& host, const asio::any_io_executor& ex) const
+asio::awaitable<route_type> router::decide(const connection_context& ctx, const std::string& host) const
 {
     std::error_code ec;
     const auto addr = asio::ip::make_address(host, ec);
     if (ec)
     {
         LOG_CTX_WARN(ctx, "{} parse host failed {}", log_event::kRoute, ec.message());
-        co_return co_await decide_domain(ctx, host, ex);
+        co_return co_await decide_domain(ctx, host);
     }
-    co_return co_await decide_ip(ctx, host, addr, ex);
+    co_return co_await decide_ip(ctx, host, addr);
 }
 
 asio::awaitable<route_type> router::decide_ip(const connection_context& ctx,
                                               const std::string& host,
-                                              const asio::ip::address& addr,
-                                              const asio::any_io_executor& ex) const
+                                              const asio::ip::address& addr) const
 {
     if (block_ip_matcher_->match(addr))
     {
@@ -65,7 +64,7 @@ asio::awaitable<route_type> router::decide_ip(const connection_context& ctx,
     co_return route_type::kProxy;
 }
 
-asio::awaitable<route_type> router::decide_domain(const connection_context& ctx, const std::string& host, const asio::any_io_executor& ex) const
+asio::awaitable<route_type> router::decide_domain(const connection_context& ctx, const std::string& host) const
 {
     if (block_domain_matcher_->match(host))
     {
