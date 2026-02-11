@@ -36,6 +36,8 @@ class socks_session : public std::enable_shared_from_this<socks_session>
 
     void start();
 
+    void stop();
+
    private:
     asio::awaitable<void> run();
 

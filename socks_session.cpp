@@ -7,6 +7,7 @@
 #include <algorithm>
 
 #include <asio/read.hpp>
+#include <asio/error.hpp>
 #include <asio/write.hpp>
 #include <asio/ip/tcp.hpp>
 #include <asio/as_tuple.hpp>
@@ -58,6 +59,21 @@ void socks_session::start()
 {
     const auto self = shared_from_this();
     asio::co_spawn(socket_.get_executor(), [self]() mutable -> asio::awaitable<void> { co_await self->run(); }, asio::detached);
+}
+
+void socks_session::stop()
+{
+    std::error_code ec;
+    ec = socket_.shutdown(asio::ip::tcp::socket::shutdown_both, ec);
+    if (ec && ec != asio::error::not_connected)
+    {
+        LOG_WARN("socks session {} shutdown failed {}", sid_, ec.message());
+    }
+    ec = socket_.close(ec);
+    if (ec && ec != asio::error::bad_descriptor)
+    {
+        LOG_WARN("socks session {} close failed {}", sid_, ec.message());
+    }
 }
 
 asio::awaitable<void> socks_session::run()
