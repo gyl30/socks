@@ -2,7 +2,6 @@
 #define REMOTE_SERVER_H
 
 #include <array>
-#include <mutex>
 #include <atomic>
 #include <memory>
 #include <random>
@@ -15,9 +14,9 @@
 #include <unordered_set>
 
 #include <asio/ip/tcp.hpp>
+#include <asio/io_context.hpp>
 #include <asio/awaitable.hpp>
 #include <asio/steady_timer.hpp>
-#include <asio/any_io_executor.hpp>
 
 extern "C"
 {
@@ -67,7 +66,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
                                                  const connection_context& ctx,
                                                  const std::uint32_t stream_id,
                                                  std::vector<std::uint8_t> payload,
-                                                 asio::any_io_executor ex) const;
+                                                 asio::io_context::executor_type ex) const;
 
     [[nodiscard]] static asio::awaitable<bool> read_initial_and_validate(std::shared_ptr<asio::ip::tcp::socket> s,
                                                                          const connection_context& ctx,
@@ -116,7 +115,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
 
     [[nodiscard]] std::pair<std::string, std::string> find_fallback_target_by_sni(const std::string& sni) const;
 
-    static asio::awaitable<void> fallback_failed_timer(std::uint32_t conn_id, asio::any_io_executor ex);
+    static asio::awaitable<void> fallback_failed_timer(std::uint32_t conn_id, asio::io_context::executor_type ex);
 
     static asio::awaitable<void> fallback_failed(const std::shared_ptr<asio::ip::tcp::socket>& s);
 
@@ -126,7 +125,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
                                           const std::string& sni) const;
 
    private:
-    io_context_pool& pool_;
+    asio::io_context::executor_type ex_;
     asio::ip::tcp::acceptor acceptor_;
     std::vector<std::uint8_t> private_key_;
     std::vector<std::uint8_t> short_id_bytes_;
@@ -135,7 +134,6 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     std::atomic<std::uint32_t> next_conn_id_{1};
     replay_cache replay_cache_;
     reality::key_rotator key_rotator_;
-    std::mutex tunnels_mutex_;
     std::vector<config::fallback_entry> fallbacks_;
     std::string fallback_dest_host_;
     std::string fallback_dest_port_;
