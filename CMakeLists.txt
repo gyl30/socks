@@ -8,8 +8,18 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_VERBOSE_MAKEFILE ON)
 
 set(CMAKE_BUILD_TYPE Debug)
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -fno-strict-aliasing -fno-omit-frame-pointer")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -fno-strict-aliasing -fno-omit-frame-pointer")
+
+option(ENABLE_TSAN "Enable ThreadSanitizer" OFF)
+if(ENABLE_TSAN)
+    if(NOT (CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR CMAKE_CXX_COMPILER_ID MATCHES "AppleClang"))
+        message(FATAL_ERROR "ENABLE_TSAN requires clang toolchain please reconfigure with -DENABLE_TSAN=ON -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++")
+    endif()
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -fno-strict-aliasing -fno-omit-frame-pointer -fsanitize=thread")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -fno-strict-aliasing -fno-omit-frame-pointer -fsanitize=thread -g")
+else()
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -fno-strict-aliasing -fno-omit-frame-pointer -fsanitize=address")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -fno-strict-aliasing -fno-omit-frame-pointer -fsanitize=address -g")
+endif()
 
 option(ENABLE_COVERAGE "Enable code coverage" OFF)
 if(ENABLE_COVERAGE)
@@ -77,7 +87,7 @@ target_include_directories(socks_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-target_include_directories(socks_core SYSTEM PUBLIC
+target_include_directories(socks_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/third/asio/include
     ${CMAKE_CURRENT_SOURCE_DIR}/third/spdlog/include
     ${CMAKE_CURRENT_SOURCE_DIR}/third/rapidjson/include
