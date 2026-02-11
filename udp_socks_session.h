@@ -1,6 +1,7 @@
 #ifndef UDP_SOCKS_SESSION_H
 #define UDP_SOCKS_SESSION_H
 
+#include <atomic>
 #include <memory>
 #include <string>
 #include <vector>
@@ -48,6 +49,7 @@ class udp_socks_session : public mux_stream_interface, public std::enable_shared
 
     asio::awaitable<void> keep_tcp_alive();
     asio::awaitable<void> idle_watchdog();
+    void close_impl();
 
    private:
     connection_context ctx_;
@@ -57,7 +59,8 @@ class udp_socks_session : public mux_stream_interface, public std::enable_shared
     asio::ip::udp::socket udp_socket_;
     std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager_;
     asio::experimental::concurrent_channel<void(std::error_code, std::vector<std::uint8_t>)> recv_channel_;
-    std::chrono::steady_clock::time_point last_activity_time_;
+    std::atomic<std::uint64_t> last_activity_time_ms_{0};
+    std::atomic<bool> closed_{false};
     std::mutex client_ep_mutex_;
     asio::ip::udp::endpoint client_ep_;
     bool has_client_ep_ = false;

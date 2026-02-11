@@ -1,6 +1,7 @@
 #ifndef TCP_SOCKS_SESSION_H
 #define TCP_SOCKS_SESSION_H
 
+#include <atomic>
 #include <chrono>
 #include <memory>
 #include <string>
@@ -35,16 +36,18 @@ class tcp_socks_session : public std::enable_shared_from_this<tcp_socks_session>
 
     [[nodiscard]] asio::awaitable<void> reply_error(const std::uint8_t code);
 
-    [[nodiscard]] asio::awaitable<void> client_to_upstream(upstream* backend);
+    [[nodiscard]] asio::awaitable<void> client_to_upstream(std::shared_ptr<upstream> backend);
 
-    [[nodiscard]] asio::awaitable<void> upstream_to_client(upstream* backend);
-    [[nodiscard]] asio::awaitable<void> idle_watchdog(upstream* backend);
+    [[nodiscard]] asio::awaitable<void> upstream_to_client(std::shared_ptr<upstream> backend);
+    [[nodiscard]] asio::awaitable<void> idle_watchdog(std::shared_ptr<upstream> backend);
+    [[nodiscard]] asio::awaitable<void> close_backend_once(const std::shared_ptr<upstream>& backend);
 
    private:
     connection_context ctx_;
     asio::ip::tcp::socket socket_;
     asio::steady_timer idle_timer_;
-    std::chrono::steady_clock::time_point last_activity_time_;
+    std::atomic<std::uint64_t> last_activity_time_ms_{0};
+    std::atomic<bool> backend_closed_{false};
     std::shared_ptr<router> router_;
     std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager_;
     config::timeout_t timeout_config_;
