@@ -516,6 +516,113 @@ TEST_F(remote_server_test, WildcardStarFallback)
     EXPECT_TRUE(fallback_triggered.load());
 }
 
+TEST_F(remote_server_test, RealityDestFallbackUsedWhenNoFallbackEntries)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+    std::thread pool_thread([&pool] { pool.run(); });
+
+    const std::uint16_t server_port = pick_free_port();
+    const std::uint16_t dest_port = pick_free_port();
+
+    asio::ip::tcp::acceptor dest_acceptor(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), dest_port));
+    std::atomic<bool> dest_triggered{false};
+    dest_acceptor.async_accept(
+        [&](std::error_code accept_ec, asio::ip::tcp::socket peer)
+        {
+            if (!accept_ec)
+            {
+                dest_triggered = true;
+            }
+        });
+
+    auto cfg = make_server_cfg(server_port, {}, "0102030405060708");
+    cfg.reality.dest = std::string("127.0.0.1:") + std::to_string(dest_port);
+    auto server = std::make_shared<mux::remote_server>(pool, cfg);
+    server->start();
+
+    {
+        asio::ip::tcp::socket sock(pool.get_io_context());
+        sock.connect({asio::ip::make_address("127.0.0.1"), server_port});
+        asio::write(sock, asio::buffer("INVALID DATA"));
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    }
+
+    std::error_code close_ec;
+    dest_acceptor.cancel(close_ec);
+    dest_acceptor.close(close_ec);
+    server->stop();
+    pool.stop();
+    pool_thread.join();
+
+    EXPECT_TRUE(dest_triggered.load());
+}
+
+TEST_F(remote_server_test, ExactSniFallbackPreferredOverRealityDest)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+    std::thread pool_thread([&pool] { pool.run(); });
+
+    const std::uint16_t server_port = pick_free_port();
+    const std::uint16_t exact_port = pick_free_port();
+    const std::uint16_t dest_port = pick_free_port();
+
+    asio::ip::tcp::acceptor exact_acceptor(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), exact_port));
+    asio::ip::tcp::acceptor dest_acceptor(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), dest_port));
+    std::atomic<int> exact_count{0};
+    std::atomic<int> dest_count{0};
+    exact_acceptor.async_accept(
+        [&](std::error_code accept_ec, asio::ip::tcp::socket peer)
+        {
+            if (!accept_ec)
+            {
+                exact_count++;
+            }
+        });
+    dest_acceptor.async_accept(
+        [&](std::error_code accept_ec, asio::ip::tcp::socket peer)
+        {
+            if (!accept_ec)
+            {
+                dest_count++;
+            }
+        });
+
+    std::vector<mux::config::fallback_entry> fallbacks = {{"www.exact.test", "127.0.0.1", std::to_string(exact_port)}};
+    auto cfg = make_server_cfg(server_port, fallbacks, "0102030405060708");
+    cfg.reality.dest = std::string("127.0.0.1:") + std::to_string(dest_port);
+    auto server = std::make_shared<mux::remote_server>(pool, cfg);
+    server->start();
+
+    {
+        asio::ip::tcp::socket sock(pool.get_io_context());
+        sock.connect({asio::ip::make_address("127.0.0.1"), server_port});
+
+        auto spec = reality::fingerprint_factory::get(reality::fingerprint_type::kChrome120);
+        auto ch_body =
+            reality::client_hello_builder::build(spec, std::vector<uint8_t>(32, 0), info_random(), std::vector<uint8_t>(32, 0), "www.exact.test");
+        auto record = reality::write_record_header(reality::kContentTypeHandshake, static_cast<uint16_t>(ch_body.size()));
+        record.insert(record.end(), ch_body.begin(), ch_body.end());
+        asio::write(sock, asio::buffer(record));
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    }
+
+    std::error_code close_ec;
+    exact_acceptor.cancel(close_ec);
+    exact_acceptor.close(close_ec);
+    dest_acceptor.cancel(close_ec);
+    dest_acceptor.close(close_ec);
+    server->stop();
+    pool.stop();
+    pool_thread.join();
+
+    EXPECT_EQ(exact_count.load(), 1);
+    EXPECT_EQ(dest_count.load(), 0);
+}
+
 TEST_F(remote_server_test, FallbackGuardRateLimitBlocksFallbackDial)
 {
     std::error_code ec;
