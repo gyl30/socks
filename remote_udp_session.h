@@ -3,9 +3,11 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <memory>
 #include <vector>
 #include <cstdint>
+#include <system_error>
 
 #include <asio/ip/tcp.hpp>
 #include <asio/ip/udp.hpp>
@@ -41,6 +43,11 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
 
    private:
     asio::awaitable<void> start_impl(std::shared_ptr<remote_udp_session> self);
+    asio::awaitable<bool> setup_udp_socket(const std::shared_ptr<mux_connection>& conn);
+    asio::awaitable<void> send_ack_payload(const std::shared_ptr<mux_connection>& conn, const ack_payload& ack);
+    asio::awaitable<void> handle_start_failure(const std::shared_ptr<mux_connection>& conn, const char* step, const std::error_code& ec);
+    asio::awaitable<void> forward_mux_payload(const std::vector<std::uint8_t>& data);
+    void record_udp_write(std::size_t bytes);
     asio::awaitable<void> watchdog();
     asio::awaitable<void> mux_to_udp();
     asio::awaitable<void> udp_to_mux();
