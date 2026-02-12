@@ -1,3 +1,5 @@
+#include <optional>
+
 #include <asio/write.hpp>
 #include <asio/ip/tcp.hpp>
 #include <asio/as_tuple.hpp>
@@ -17,6 +19,8 @@ namespace mux
 
 namespace
 {
+
+using resolve_results = asio::ip::tcp::resolver::results_type;
 
 asio::awaitable<bool> send_ack(std::shared_ptr<mux_connection> conn,
                                const std::uint32_t stream_id,
@@ -46,6 +50,57 @@ asio::awaitable<void> remove_stream_and_reset(std::weak_ptr<mux_tunnel_impl<asio
         mgr->remove_stream(stream_id);
     }
     (void)co_await conn->send_async(stream_id, kCmdRst, {});
+}
+
+void remove_stream(std::weak_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> manager, const std::uint32_t stream_id)
+{
+    if (auto mgr = manager.lock())
+    {
+        mgr->remove_stream(stream_id);
+    }
+}
+
+asio::awaitable<void> send_failure_ack_and_reset(std::weak_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> manager,
+                                                 std::shared_ptr<mux_connection> conn,
+                                                 const std::uint32_t stream_id,
+                                                 const std::uint8_t rep,
+                                                 const connection_context& ctx)
+{
+    (void)co_await send_ack(conn, stream_id, rep, "", 0, ctx);
+    co_await remove_stream_and_reset(manager, conn, stream_id);
+}
+
+asio::awaitable<std::optional<resolve_results>> resolve_target_endpoints(asio::ip::tcp::resolver& resolver,
+                                                                          const syn_payload& syn,
+                                                                          const connection_context& ctx)
+{
+    const auto [resolve_ec, eps] = co_await resolver.async_resolve(syn.addr, std::to_string(syn.port), asio::as_tuple(asio::use_awaitable));
+    if (resolve_ec)
+    {
+        LOG_CTX_ERROR(ctx, "{} resolve failed {}", log_event::kMux, resolve_ec.message());
+        co_return std::nullopt;
+    }
+    co_return eps;
+}
+
+asio::awaitable<std::optional<asio::ip::tcp::endpoint>> connect_target_endpoint(asio::ip::tcp::socket& target_socket,
+                                                                                  const resolve_results& eps,
+                                                                                  const connection_context& ctx)
+{
+    const auto [connect_ec, ep_conn] = co_await asio::async_connect(target_socket, eps, asio::as_tuple(asio::use_awaitable));
+    if (connect_ec)
+    {
+        LOG_CTX_ERROR(ctx, "{} connect failed {}", log_event::kMux, connect_ec.message());
+        co_return std::nullopt;
+    }
+    co_return ep_conn;
+}
+
+void close_target_socket(asio::ip::tcp::socket& target_socket)
+{
+    std::error_code ignore;
+    ignore = target_socket.close(ignore);
+    (void)ignore;
 }
 
 }    // namespace
@@ -81,21 +136,17 @@ asio::awaitable<void> remote_session::run(const syn_payload& syn)
 
     ctx_.set_target(syn.addr, syn.port);
     LOG_CTX_INFO(ctx_, "{} connecting {} {}", log_event::kMux, syn.addr, syn.port);
-    const auto [resolve_ec, eps] = co_await resolver_.async_resolve(syn.addr, std::to_string(syn.port), asio::as_tuple(asio::use_awaitable));
-    if (resolve_ec)
+    const auto eps = co_await resolve_target_endpoints(resolver_, syn, ctx_);
+    if (!eps.has_value())
     {
-        LOG_CTX_ERROR(ctx_, "{} resolve failed {}", log_event::kMux, resolve_ec.message());
-        (void)co_await send_ack(conn, id_, socks::kRepHostUnreach, "", 0, ctx_);
-        co_await remove_stream_and_reset(manager_, conn, id_);
+        co_await send_failure_ack_and_reset(manager_, conn, id_, socks::kRepHostUnreach, ctx_);
         co_return;
     }
 
-    const auto [connect_ec, ep_conn] = co_await asio::async_connect(target_socket_, eps, asio::as_tuple(asio::use_awaitable));
-    if (connect_ec)
+    const auto ep_conn = co_await connect_target_endpoint(target_socket_, eps.value(), ctx_);
+    if (!ep_conn.has_value())
     {
-        LOG_CTX_ERROR(ctx_, "{} connect failed {}", log_event::kMux, connect_ec.message());
-        (void)co_await send_ack(conn, id_, socks::kRepConnRefused, "", 0, ctx_);
-        co_await remove_stream_and_reset(manager_, conn, id_);
+        co_await send_failure_ack_and_reset(manager_, conn, id_, socks::kRepConnRefused, ctx_);
         co_return;
     }
 
@@ -108,25 +159,17 @@ asio::awaitable<void> remote_session::run(const syn_payload& syn)
 
     LOG_CTX_INFO(ctx_, "{} connected {} {}", log_event::kConnEstablished, syn.addr, syn.port);
 
-    if (!co_await send_ack(conn, id_, socks::kRepSuccess, ep_conn.address().to_string(), ep_conn.port(), ctx_))
+    if (!co_await send_ack(conn, id_, socks::kRepSuccess, ep_conn.value().address().to_string(), ep_conn.value().port(), ctx_))
     {
-        if (auto mgr = manager_.lock())
-        {
-            mgr->remove_stream(id_);
-        }
+        remove_stream(manager_, id_);
         co_return;
     }
 
     using asio::experimental::awaitable_operators::operator&&;
     co_await (upstream() && downstream());
 
-    std::error_code ignore;
-    ignore = target_socket_.close(ignore);
-    (void)ignore;
-    if (auto mgr = manager_.lock())
-    {
-        mgr->remove_stream(id_);
-    }
+    close_target_socket(target_socket_);
+    remove_stream(manager_, id_);
     LOG_CTX_INFO(ctx_, "{} finished {}", log_event::kConnClose, ctx_.stats_summary());
 }
 
