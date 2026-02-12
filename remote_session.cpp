@@ -96,6 +96,88 @@ asio::awaitable<std::optional<asio::ip::tcp::endpoint>> connect_target_endpoint(
     co_return ep_conn;
 }
 
+void set_target_socket_no_delay(asio::ip::tcp::socket& target_socket, const connection_context& ctx)
+{
+    std::error_code ec_sock;
+    ec_sock = target_socket.set_option(asio::ip::tcp::no_delay(true), ec_sock);
+    if (ec_sock)
+    {
+        LOG_CTX_WARN(ctx, "set_option no_delay failed {}", ec_sock.message());
+    }
+}
+
+bool should_stop_upstream(const std::error_code& recv_ec,
+                          const std::vector<std::uint8_t>& data,
+                          asio::ip::tcp::socket& target_socket,
+                          const connection_context& ctx)
+{
+    if (!recv_ec && !data.empty())
+    {
+        return false;
+    }
+    if (recv_ec)
+    {
+        LOG_CTX_DEBUG(ctx, "{} mux channel closed {}", log_event::kDataRecv, recv_ec.message());
+    }
+    std::error_code ignore;
+    ignore = target_socket.shutdown(asio::ip::tcp::socket::shutdown_send, ignore);
+    (void)ignore;
+    return true;
+}
+
+asio::awaitable<bool> write_to_target(asio::ip::tcp::socket& target_socket, const std::vector<std::uint8_t>& data, connection_context& ctx)
+{
+    const auto [write_ec, write_size] = co_await asio::async_write(target_socket, asio::buffer(data), asio::as_tuple(asio::use_awaitable));
+    if (write_ec)
+    {
+        LOG_CTX_WARN(ctx, "{} failed to write to target {}", log_event::kDataSend, write_ec.message());
+        co_return false;
+    }
+    ctx.add_rx_bytes(write_size);
+    co_return true;
+}
+
+bool should_stop_downstream(const std::error_code& read_ec, const std::uint32_t read_size, const connection_context& ctx)
+{
+    if (!read_ec && read_size > 0)
+    {
+        return false;
+    }
+    if (read_ec && read_ec != asio::error::eof && read_ec != asio::error::operation_aborted)
+    {
+        LOG_CTX_WARN(ctx, "{} failed to read from target {}", log_event::kDataRecv, read_ec.message());
+    }
+    return true;
+}
+
+asio::awaitable<bool> send_downstream_payload(const std::weak_ptr<mux_connection>& connection,
+                                              const std::uint32_t stream_id,
+                                              const std::vector<std::uint8_t>& buf,
+                                              const std::uint32_t size,
+                                              connection_context& ctx)
+{
+    auto conn = connection.lock();
+    if (!conn)
+    {
+        co_return false;
+    }
+    if (const auto ec = co_await conn->send_async(stream_id, kCmdDat, std::vector<std::uint8_t>(buf.begin(), buf.begin() + size)))
+    {
+        LOG_CTX_WARN(ctx, "{} failed to write to mux {}", log_event::kDataSend, ec.message());
+        co_return false;
+    }
+    ctx.add_tx_bytes(size);
+    co_return true;
+}
+
+asio::awaitable<void> send_fin_to_connection(const std::weak_ptr<mux_connection>& connection, const std::uint32_t stream_id)
+{
+    if (auto conn = connection.lock())
+    {
+        (void)co_await conn->send_async(stream_id, kCmdFin, {});
+    }
+}
+
 void close_target_socket(asio::ip::tcp::socket& target_socket)
 {
     std::error_code ignore;
@@ -150,12 +232,7 @@ asio::awaitable<void> remote_session::run(const syn_payload& syn)
         co_return;
     }
 
-    std::error_code ec_sock;
-    ec_sock = target_socket_.set_option(asio::ip::tcp::no_delay(true), ec_sock);
-    if (ec_sock)
-    {
-        LOG_CTX_WARN(ctx_, "set_option no_delay failed {}", ec_sock.message());
-    }
+    set_target_socket_no_delay(target_socket_, ctx_);
 
     LOG_CTX_INFO(ctx_, "{} connected {} {}", log_event::kConnEstablished, syn.addr, syn.port);
 
@@ -210,24 +287,14 @@ asio::awaitable<void> remote_session::upstream()
     for (;;)
     {
         const auto [recv_ec, data] = co_await recv_channel_.async_receive(asio::as_tuple(asio::use_awaitable));
-        if (recv_ec || data.empty())
+        if (should_stop_upstream(recv_ec, data, target_socket_, ctx_))
         {
-            if (recv_ec)
-            {
-                LOG_CTX_DEBUG(ctx_, "{} mux channel closed {}", log_event::kDataRecv, recv_ec.message());
-            }
-            std::error_code ignore;
-            ignore = target_socket_.shutdown(asio::ip::tcp::socket::shutdown_send, ignore);
-            (void)ignore;
             break;
         }
-        const auto [we, wn] = co_await asio::async_write(target_socket_, asio::buffer(data), asio::as_tuple(asio::use_awaitable));
-        if (we)
+        if (!co_await write_to_target(target_socket_, data, ctx_))
         {
-            LOG_CTX_WARN(ctx_, "{} failed to write to target {}", log_event::kDataSend, we.message());
             break;
         }
-        ctx_.add_rx_bytes(wn);
     }
     LOG_CTX_INFO(ctx_, "{} mux to target finished", log_event::kDataSend);
 }
@@ -239,34 +306,17 @@ asio::awaitable<void> remote_session::downstream()
     {
         std::error_code re;
         const std::uint32_t n = co_await target_socket_.async_read_some(asio::buffer(buf), asio::redirect_error(asio::use_awaitable, re));
-        if (re || n == 0)
-        {
-            if (re && re != asio::error::eof && re != asio::error::operation_aborted)
-            {
-                LOG_CTX_WARN(ctx_, "{} failed to read from target {}", log_event::kDataRecv, re.message());
-            }
-            break;
-        }
-
-        auto conn = connection_.lock();
-        if (!conn)
+        if (should_stop_downstream(re, n, ctx_))
         {
             break;
         }
-
-        if (const auto ec = co_await conn->send_async(id_, kCmdDat, std::vector<std::uint8_t>(buf.begin(), buf.begin() + n)))
+        if (!co_await send_downstream_payload(connection_, id_, buf, n, ctx_))
         {
-            LOG_CTX_WARN(ctx_, "{} failed to write to mux {}", log_event::kDataSend, ec.message());
             break;
         }
-        ctx_.add_tx_bytes(n);
     }
     LOG_CTX_INFO(ctx_, "{} target to mux finished", log_event::kDataRecv);
-
-    if (auto conn = connection_.lock())
-    {
-        (void)co_await conn->send_async(id_, kCmdFin, {});
-    }
+    co_await send_fin_to_connection(connection_, id_);
 }
 
 }    // namespace mux
