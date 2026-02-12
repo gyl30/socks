@@ -861,82 +861,42 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::perform_hand
                   log_event::kHandshake,
                   reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(public_key, public_key + 32)));
 
-    const auto selected = select_key_share(info, ctx);
-    if (!selected.has_value())
+    std::vector<std::uint8_t> sh_shared;
+    std::vector<std::uint8_t> key_share_data;
+    std::uint16_t key_share_group = 0;
+    if (!derive_server_key_share(info, public_key, private_key, ctx, sh_shared, key_share_data, key_share_group, ec))
     {
-        ec = asio::error::invalid_argument;
         co_return server_handshake_res{.ok = false};
     }
 
-    const auto x25519_shared =
-        reality::crypto_util::x25519_derive(std::vector<std::uint8_t>(private_key, private_key + 32), selected->x25519_pub, ec);
-    if (ec)
+    const auto target = resolve_certificate_target(info);
+    const auto cert = co_await load_certificate_material(target, ctx);
+    if (!cert.has_value())
     {
-        LOG_CTX_ERROR(ctx, "{} x25519 derive failed", log_event::kHandshake);
+        ec = asio::error::connection_refused;
         co_return server_handshake_res{.ok = false};
     }
 
-    std::vector<std::uint8_t> sh_shared = x25519_shared;
-    std::vector<std::uint8_t> key_share_data(public_key, public_key + 32);
-    std::uint16_t key_share_group = selected->group;
-
-    std::string cert_sni = info.sni;
-    std::string fetch_host = "www.apple.com";
-    std::uint16_t fetch_port = 443;
-
-    const auto fb = find_fallback_target_by_sni(info.sni);
-    if (!fb.first.empty())
-    {
-        fetch_host = fb.first;
-        fetch_port = parse_fallback_port(fb.second);
-        if (cert_sni.empty())
-        {
-            cert_sni = fb.first;
-        }
-    }
-
-    std::vector<std::uint8_t> cert_msg;
-    reality::server_fingerprint fingerprint;
-
-    const auto cached_entry = cert_manager_.get_certificate(cert_sni);
-    if (cached_entry.has_value())
-    {
-        cert_msg = cached_entry->cert_msg;
-        fingerprint = cached_entry->fingerprint;
-    }
-    else
-    {
-        LOG_CTX_INFO(ctx, "{} certificate miss fetching {} {}", log_event::kCert, fetch_host, fetch_port);
-        const auto res = co_await reality::cert_fetcher::fetch(io_context_, fetch_host, fetch_port, cert_sni, ctx.trace_id());
-
-        if (!res.has_value())
-        {
-            LOG_CTX_ERROR(ctx, "{} fetch certificate failed", log_event::kCert);
-            ec = asio::error::connection_refused;
-            co_return server_handshake_res{.ok = false};
-        }
-
-        cert_msg = res->cert_msg;
-        fingerprint = res->fingerprint;
-        set_certificate(cert_sni, cert_msg, fingerprint, ctx.trace_id());
-    }
-
-    const std::uint16_t cipher_suite = normalize_cipher_suite(fingerprint.cipher_suite != 0 ? fingerprint.cipher_suite : 0x1301);
-    const auto crypto =
-        build_handshake_crypto(server_random, info.session_id, cipher_suite, key_share_group, key_share_data, sh_shared, cert_msg, fingerprint.alpn, private_key_, trans, ec, ctx);
+    const std::uint16_t cipher_suite = normalize_cipher_suite(cert->fingerprint.cipher_suite != 0 ? cert->fingerprint.cipher_suite : 0x1301);
+    const auto crypto = build_handshake_crypto(server_random,
+                                               info.session_id,
+                                               cipher_suite,
+                                               key_share_group,
+                                               key_share_data,
+                                               sh_shared,
+                                               cert->cert_msg,
+                                               cert->fingerprint.alpn,
+                                               private_key_,
+                                               trans,
+                                               ec,
+                                               ctx);
     if (!crypto.ok)
     {
         co_return server_handshake_res{.ok = false};
     }
 
-    LOG_CTX_INFO(ctx, "generated sh msg size {}", crypto.sh_msg.size());
-    const auto out_sh = compose_server_hello_flight(crypto.sh_msg, crypto.flight2_enc);
-    LOG_CTX_INFO(ctx, "total out sh size {}", out_sh.size());
-    LOG_CTX_DEBUG(ctx, "{} sending server hello flight size {}", log_event::kHandshake, out_sh.size());
-    const auto [we, wn] = co_await asio::async_write(*s, asio::buffer(out_sh), asio::as_tuple(asio::use_awaitable));
-    if (we)
+    if (!co_await send_server_hello_flight(s, crypto.sh_msg, crypto.flight2_enc, ctx, ec))
     {
-        ec = we;
         co_return server_handshake_res{.ok = false};
     }
 
@@ -947,6 +907,100 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::perform_hand
         .c_hs_keys = crypto.c_hs_keys,
         .cipher = crypto.cipher,
         .negotiated_md = crypto.md};
+}
+
+bool remote_server::derive_server_key_share(const client_hello_info& info,
+                                            const std::uint8_t* public_key,
+                                            const std::uint8_t* private_key,
+                                            const connection_context& ctx,
+                                            std::vector<std::uint8_t>& sh_shared,
+                                            std::vector<std::uint8_t>& key_share_data,
+                                            std::uint16_t& key_share_group,
+                                            std::error_code& ec) const
+{
+    const auto selected = select_key_share(info, ctx);
+    if (!selected.has_value())
+    {
+        ec = asio::error::invalid_argument;
+        return false;
+    }
+
+    sh_shared = reality::crypto_util::x25519_derive(std::vector<std::uint8_t>(private_key, private_key + 32), selected->x25519_pub, ec);
+    if (ec)
+    {
+        LOG_CTX_ERROR(ctx, "{} x25519 derive failed", log_event::kHandshake);
+        return false;
+    }
+
+    key_share_data.assign(public_key, public_key + 32);
+    key_share_group = selected->group;
+    return true;
+}
+
+remote_server::certificate_target remote_server::resolve_certificate_target(const client_hello_info& info) const
+{
+    certificate_target target;
+    target.cert_sni = info.sni;
+    target.fetch_host = "www.apple.com";
+    target.fetch_port = 443;
+
+    const auto fb = find_fallback_target_by_sni(info.sni);
+    if (!fb.first.empty())
+    {
+        target.fetch_host = fb.first;
+        target.fetch_port = parse_fallback_port(fb.second);
+        if (target.cert_sni.empty())
+        {
+            target.cert_sni = fb.first;
+        }
+    }
+    return target;
+}
+
+asio::awaitable<std::optional<remote_server::certificate_material>> remote_server::load_certificate_material(const certificate_target& target,
+                                                                                                              const connection_context& ctx)
+{
+    const auto cached_entry = cert_manager_.get_certificate(target.cert_sni);
+    if (cached_entry.has_value())
+    {
+        co_return certificate_material{
+            .cert_msg = cached_entry->cert_msg,
+            .fingerprint = cached_entry->fingerprint};
+    }
+
+    LOG_CTX_INFO(ctx, "{} certificate miss fetching {} {}", log_event::kCert, target.fetch_host, target.fetch_port);
+    const auto res = co_await reality::cert_fetcher::fetch(io_context_, target.fetch_host, target.fetch_port, target.cert_sni, ctx.trace_id());
+    if (!res.has_value())
+    {
+        LOG_CTX_ERROR(ctx, "{} fetch certificate failed", log_event::kCert);
+        co_return std::nullopt;
+    }
+
+    certificate_material material{
+        .cert_msg = res->cert_msg,
+        .fingerprint = res->fingerprint};
+    set_certificate(target.cert_sni, material.cert_msg, material.fingerprint, ctx.trace_id());
+    co_return material;
+}
+
+asio::awaitable<bool> remote_server::send_server_hello_flight(const std::shared_ptr<asio::ip::tcp::socket>& s,
+                                                              const std::vector<std::uint8_t>& sh_msg,
+                                                              const std::vector<std::uint8_t>& flight2_enc,
+                                                              const connection_context& ctx,
+                                                              std::error_code& ec) const
+{
+    LOG_CTX_INFO(ctx, "generated sh msg size {}", sh_msg.size());
+    const auto out_sh = compose_server_hello_flight(sh_msg, flight2_enc);
+    LOG_CTX_INFO(ctx, "total out sh size {}", out_sh.size());
+    LOG_CTX_DEBUG(ctx, "{} sending server hello flight size {}", log_event::kHandshake, out_sh.size());
+    const auto [we, wn] = co_await asio::async_write(*s, asio::buffer(out_sh), asio::as_tuple(asio::use_awaitable));
+    (void)wn;
+    if (we)
+    {
+        ec = we;
+        co_return false;
+    }
+    co_return true;
 }
 
 asio::awaitable<bool> remote_server::verify_client_finished(std::shared_ptr<asio::ip::tcp::socket> s,
