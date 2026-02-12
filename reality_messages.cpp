@@ -724,6 +724,58 @@ std::optional<std::uint16_t> extract_cipher_suite_from_server_hello(const std::v
     return static_cast<std::uint16_t>((server_hello[pos] << 8) | server_hello[pos + 1]);
 }
 
+bool locate_server_hello_extensions(const std::vector<std::uint8_t>& server_hello, std::size_t& pos, std::size_t& end)
+{
+    if (server_hello[pos] != 0x02)
+    {
+        return false;
+    }
+
+    pos += 4 + 2 + 32;
+    if (pos >= server_hello.size())
+    {
+        return false;
+    }
+
+    const std::uint8_t sid_len = server_hello[pos];
+    pos += 1 + sid_len;
+    pos += 3;
+
+    if (pos + 2 > server_hello.size())
+    {
+        return false;
+    }
+    const auto ext_len = static_cast<std::uint16_t>((server_hello[pos] << 8) | server_hello[pos + 1]);
+    pos += 2;
+
+    end = pos + ext_len;
+    if (end < pos || end > server_hello.size())
+    {
+        return false;
+    }
+    return true;
+}
+
+std::optional<server_key_share_info> parse_server_key_share_entry(const std::vector<std::uint8_t>& server_hello, const std::size_t pos, const std::size_t end)
+{
+    if (pos + 4 > end)
+    {
+        return std::nullopt;
+    }
+    const auto group = static_cast<std::uint16_t>((server_hello[pos] << 8) | server_hello[pos + 1]);
+    const auto len = static_cast<std::uint16_t>((server_hello[pos + 2] << 8) | server_hello[pos + 3]);
+    const auto data_start = pos + 4;
+    if (data_start + len > end)
+    {
+        return std::nullopt;
+    }
+    server_key_share_info info;
+    info.group = group;
+    info.data.assign(server_hello.begin() + static_cast<std::ptrdiff_t>(data_start),
+                     server_hello.begin() + static_cast<std::ptrdiff_t>(data_start + len));
+    return info;
+}
+
 std::optional<server_key_share_info> extract_server_key_share(const std::vector<std::uint8_t>& server_hello)
 {
     std::size_t pos = 0;
@@ -742,31 +794,8 @@ std::optional<server_key_share_info> extract_server_key_share(const std::vector<
         return std::nullopt;
     }
 
-    if (server_hello[pos] != 0x02)
-    {
-        return std::nullopt;
-    }
-
-    pos += 4 + 2 + 32;
-    if (pos >= server_hello.size())
-    {
-        return std::nullopt;
-    }
-
-    const std::uint8_t sid_len = server_hello[pos];
-    pos += 1 + sid_len;
-
-    pos += 3;
-
-    if (pos + 2 > server_hello.size())
-    {
-        return std::nullopt;
-    }
-    const auto ext_len = static_cast<std::uint16_t>((server_hello[pos] << 8) | server_hello[pos + 1]);
-    pos += 2;
-
-    const std::size_t end = pos + ext_len;
-    if (end < pos || end > server_hello.size())
+    std::size_t end = 0;
+    if (!locate_server_hello_extensions(server_hello, pos, end))
     {
         return std::nullopt;
     }
@@ -778,22 +807,7 @@ std::optional<server_key_share_info> extract_server_key_share(const std::vector<
         pos += 4;
         if (type == tls_consts::ext::kKeyShare && elen >= 4)
         {
-            if (pos + 4 > end)
-            {
-                break;
-            }
-            const auto group = static_cast<std::uint16_t>((server_hello[pos] << 8) | server_hello[pos + 1]);
-            const auto len = static_cast<std::uint16_t>((server_hello[pos + 2] << 8) | server_hello[pos + 3]);
-            const auto data_start = pos + 4;
-            if (data_start + len > end)
-            {
-                break;
-            }
-            server_key_share_info info;
-            info.group = group;
-            info.data.assign(server_hello.begin() + static_cast<std::ptrdiff_t>(data_start),
-                             server_hello.begin() + static_cast<std::ptrdiff_t>(data_start + len));
-            return info;
+            return parse_server_key_share_entry(server_hello, pos, end);
         }
 
         if (pos + elen > end)
