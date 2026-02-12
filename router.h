@@ -25,9 +25,10 @@ class router
 {
    public:
     router() = default;
+    virtual ~router() = default;
 
    public:
-    bool load();
+    virtual bool load();
     [[nodiscard]] asio::awaitable<route_type> decide(const connection_context& ctx, const std::string& host) const;
 
     [[nodiscard]] asio::awaitable<route_type> decide_ip(const connection_context& ctx,

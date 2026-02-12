@@ -18,6 +18,13 @@ add_socks_test(log_context_test)
 add_socks_test(context_pool_test)
 add_socks_test(statistics_test)
 add_socks_test(monitor_server_test)
+target_link_options(
+    monitor_server_test
+    PRIVATE
+        -Wl,--wrap=socket
+        -Wl,--wrap=setsockopt
+        -Wl,--wrap=listen
+)
 add_socks_test(net_utils_test)
 target_link_options(
     net_utils_test
@@ -89,6 +96,7 @@ add_socks_test(tproxy_udp_session_test)
 target_link_options(
     tproxy_udp_session_test
     PRIVATE
+        -Wl,--wrap=socket
         -Wl,--wrap=setsockopt
         -Wl,--wrap=recvmsg
 )
