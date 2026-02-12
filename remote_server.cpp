@@ -120,6 +120,50 @@ bool parse_dest_target(const std::string& input, std::string& host, std::string&
     return parsed && !host.empty() && !port.empty();
 }
 
+bool should_stop_accept_loop_on_error(const std::error_code& accept_ec,
+                                      const std::atomic<bool>& stop_flag,
+                                      const asio::ip::tcp::acceptor& acceptor)
+{
+    if (accept_ec == asio::error::operation_aborted || accept_ec == asio::error::bad_descriptor)
+    {
+        return true;
+    }
+    if (stop_flag.load(std::memory_order_acquire))
+    {
+        return true;
+    }
+    return !acceptor.is_open();
+}
+
+std::optional<std::pair<std::string, std::string>> find_exact_sni_fallback(const std::vector<config::fallback_entry>& fallbacks,
+                                                                            const std::string& sni)
+{
+    if (sni.empty())
+    {
+        return std::nullopt;
+    }
+    for (const auto& fb : fallbacks)
+    {
+        if (fb.sni == sni)
+        {
+            return std::make_pair(fb.host, fb.port);
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<std::pair<std::string, std::string>> find_wildcard_fallback(const std::vector<config::fallback_entry>& fallbacks)
+{
+    for (const auto& fb : fallbacks)
+    {
+        if (fb.sni.empty() || fb.sni == "*")
+        {
+            return std::make_pair(fb.host, fb.port);
+        }
+    }
+    return std::nullopt;
+}
+
 asio::ip::tcp::endpoint resolve_inbound_endpoint(const config::inbound_t& inbound)
 {
     std::error_code ec;
@@ -773,25 +817,22 @@ asio::awaitable<void> remote_server::accept_loop()
     {
         const auto s = std::make_shared<asio::ip::tcp::socket>(io_context_);
         const auto [accept_ec] = co_await acceptor_.async_accept(*s, asio::as_tuple(asio::use_awaitable));
-        if (!accept_ec)
+        if (accept_ec)
         {
-            std::error_code ec;
-            ec = s->set_option(asio::ip::tcp::no_delay(true), ec);
-            (void)ec;
-            const std::uint32_t conn_id = next_conn_id_.fetch_add(1, std::memory_order_relaxed);
-
-            asio::co_spawn(io_context_, [self = shared_from_this(), s, conn_id]() { return self->handle(s, conn_id); }, asio::detached);
-        }
-        else
-        {
-            if (accept_ec == asio::error::operation_aborted || accept_ec == asio::error::bad_descriptor || stop_.load(std::memory_order_acquire) ||
-                !acceptor_.is_open())
+            if (should_stop_accept_loop_on_error(accept_ec, stop_, acceptor_))
             {
                 LOG_INFO("acceptor closed stopping loop");
                 break;
             }
             LOG_WARN("accept error {}", accept_ec.message());
+            continue;
         }
+
+        std::error_code ec;
+        ec = s->set_option(asio::ip::tcp::no_delay(true), ec);
+        (void)ec;
+        const std::uint32_t conn_id = next_conn_id_.fetch_add(1, std::memory_order_relaxed);
+        asio::co_spawn(io_context_, [self = shared_from_this(), s, conn_id]() { return self->handle(s, conn_id); }, asio::detached);
     }
 }
 
@@ -1403,23 +1444,13 @@ asio::awaitable<bool> remote_server::verify_client_finished(std::shared_ptr<asio
 
 std::pair<std::string, std::string> remote_server::find_fallback_target_by_sni(const std::string& sni) const
 {
-    if (!sni.empty())
+    if (const auto exact = find_exact_sni_fallback(fallbacks_, sni); exact.has_value())
     {
-        for (const auto& fb : fallbacks_)
-        {
-            if (fb.sni == sni)
-            {
-                return std::make_pair(fb.host, fb.port);
-            }
-        }
+        return *exact;
     }
-
-    for (const auto& fb : fallbacks_)
+    if (const auto wildcard = find_wildcard_fallback(fallbacks_); wildcard.has_value())
     {
-        if (fb.sni.empty() || fb.sni == "*")
-        {
-            return std::make_pair(fb.host, fb.port);
-        }
+        return *wildcard;
     }
     if (fallback_dest_valid_)
     {
