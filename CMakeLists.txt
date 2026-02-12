@@ -52,6 +52,7 @@ set(SOCKS_SOURCES
     mux_dispatcher.cpp
     reality_messages.cpp
     tls_cipher_suite.cpp
+    tls_record_validation.cpp
     cert_fetcher.cpp
     crypto_util.cpp
     reality_fingerprint.cpp

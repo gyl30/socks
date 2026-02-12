@@ -46,6 +46,7 @@ extern "C"
 #include "log_context.h"
 #include "mux_protocol.h"
 #include "reality_auth.h"
+#include "tls_record_validation.h"
 #include "remote_server.h"
 #include "reality_engine.h"
 #include "remote_session.h"
@@ -582,12 +583,24 @@ asio::awaitable<bool> read_tls_record_header_allow_ccs(const std::shared_ptr<asi
         co_return true;
     }
 
-    std::array<std::uint8_t, 1> dummy = {0};
-    const auto [dummy_ec, dummy_n] = co_await asio::async_read(*socket, asio::buffer(dummy), asio::as_tuple(asio::use_awaitable));
-    (void)dummy_n;
-    if (dummy_ec)
+    const auto ccs_len = static_cast<std::uint16_t>((header[3] << 8) | header[4]);
+    if (ccs_len != 1)
     {
-        LOG_CTX_ERROR(ctx, "{} read ccs error {}", log_event::kHandshake, dummy_ec.message());
+        LOG_CTX_ERROR(ctx, "{} invalid ccs length {}", log_event::kHandshake, ccs_len);
+        co_return false;
+    }
+
+    std::array<std::uint8_t, 1> ccs_body = {0};
+    const auto [read_ccs_ec, read_ccs_n] = co_await asio::async_read(*socket, asio::buffer(ccs_body), asio::as_tuple(asio::use_awaitable));
+    (void)read_ccs_n;
+    if (read_ccs_ec)
+    {
+        LOG_CTX_ERROR(ctx, "{} read ccs error {}", log_event::kHandshake, read_ccs_ec.message());
+        co_return false;
+    }
+    if (!reality::is_valid_tls13_compat_ccs(header, ccs_body[0]))
+    {
+        LOG_CTX_ERROR(ctx, "{} invalid ccs body {}", log_event::kHandshake, ccs_body[0]);
         co_return false;
     }
 
