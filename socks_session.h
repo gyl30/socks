@@ -88,6 +88,8 @@ class socks_session : public std::enable_shared_from_this<socks_session>
 
     [[nodiscard]] static request_info make_invalid_request(std::uint8_t cmd = 0);
 
+    asio::awaitable<request_info> reject_request(std::uint8_t cmd, std::uint8_t rep);
+
     asio::awaitable<bool> read_request_header(std::array<std::uint8_t, 4>& head);
 
     asio::awaitable<bool> read_request_port(std::uint16_t& port);
