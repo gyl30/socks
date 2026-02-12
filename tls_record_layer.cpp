@@ -21,6 +21,48 @@ extern "C"
 namespace reality
 {
 
+namespace
+{
+
+bool validate_record_for_decrypt(const std::span<const std::uint8_t> record_data, std::error_code& ec)
+{
+    if (record_data.size() >= kTlsRecordHeaderSize + kAeadTagSize)
+    {
+        return true;
+    }
+    ec = std::make_error_code(std::errc::message_size);
+    return false;
+}
+
+std::vector<std::uint8_t> make_record_nonce(const std::vector<std::uint8_t>& iv, const std::uint64_t seq)
+{
+    std::vector<std::uint8_t> nonce = iv;
+    for (int i = 0; i < 8; ++i)
+    {
+        nonce[nonce.size() - 1 - i] ^= static_cast<std::uint8_t>((seq >> (8 * i)) & 0xFF);
+    }
+    return nonce;
+}
+
+std::size_t trim_padding_and_read_content_type(const std::span<std::uint8_t> output_buffer, std::uint8_t& out_content_type, std::error_code& ec)
+{
+    std::size_t written = output_buffer.size();
+    while (written > 0 && output_buffer[written - 1] == 0)
+    {
+        --written;
+    }
+    if (written == 0)
+    {
+        ec = std::make_error_code(std::errc::bad_message);
+        return 0;
+    }
+    out_content_type = output_buffer[written - 1];
+    ec.clear();
+    return written - 1;
+}
+
+}    // namespace
+
 void tls_record_layer::encrypt_record_append(const cipher_context& ctx,
                                              const EVP_CIPHER* cipher,
                                              const std::vector<std::uint8_t>& key,
@@ -98,43 +140,21 @@ std::size_t tls_record_layer::decrypt_record(const cipher_context& ctx,
                                              std::uint8_t& out_content_type,
                                              std::error_code& ec)
 {
-    if (record_data.size() < kTlsRecordHeaderSize + kAeadTagSize)
+    if (!validate_record_for_decrypt(record_data, ec))
     {
-        ec = std::make_error_code(std::errc::message_size);
         return 0;
     }
 
     const auto aad = record_data.subspan(0, kTlsRecordHeaderSize);
     const auto ciphertext = record_data.subspan(kTlsRecordHeaderSize);
-
-    std::vector<std::uint8_t> nonce = iv;
-    for (int i = 0; i < 8; ++i)
-    {
-        nonce[nonce.size() - 1 - i] ^= static_cast<std::uint8_t>((seq >> (8 * i)) & 0xFF);
-    }
+    auto nonce = make_record_nonce(iv, seq);
 
     std::size_t written = crypto_util::aead_decrypt(ctx, cipher, key, nonce, ciphertext, aad, output_buffer, ec);
     if (ec)
     {
         return 0;
     }
-
-    while (written > 0 && output_buffer[written - 1] == 0)
-    {
-        written--;
-    }
-
-    if (written == 0)
-    {
-        ec = std::make_error_code(std::errc::bad_message);
-        return 0;
-    }
-
-    out_content_type = output_buffer[written - 1];
-    written--;
-
-    ec.clear();
-    return written;
+    return trim_padding_and_read_content_type(output_buffer.subspan(0, written), out_content_type, ec);
 }
 
 std::vector<std::uint8_t> tls_record_layer::decrypt_record(const EVP_CIPHER* cipher,

@@ -65,6 +65,9 @@ class cert_fetcher
         asio::awaitable<std::error_code> connect();
 
         asio::awaitable<std::error_code> perform_handshake_start();
+        bool init_handshake_material(std::vector<std::uint8_t>& client_random, std::vector<std::uint8_t>& session_id);
+        asio::awaitable<std::error_code> send_client_hello_record(const std::vector<std::uint8_t>& client_hello);
+        bool validate_server_hello_body(const std::vector<std::uint8_t>& sh_body) const;
 
         asio::awaitable<std::vector<std::uint8_t>> find_certificate();
         asio::awaitable<bool> append_next_handshake_record(handshake_reassembler& assembler,
@@ -80,6 +83,17 @@ class cert_fetcher
         std::error_code process_server_hello(const std::vector<std::uint8_t>& sh_body);
 
         asio::awaitable<std::pair<std::error_code, std::vector<std::uint8_t>>> read_record_plaintext();
+
+        bool validate_record_length(std::uint16_t len, std::error_code& out_ec) const;
+        asio::awaitable<bool> read_record_body(std::uint16_t len, std::vector<std::uint8_t>& rec, std::error_code& out_ec);
+        std::pair<std::uint8_t, std::span<std::uint8_t>> decrypt_application_record(const std::uint8_t head[5],
+                                                                                      const std::vector<std::uint8_t>& rec,
+                                                                                      std::vector<std::uint8_t>& pt_buf,
+                                                                                      std::error_code& out_ec);
+        std::pair<std::uint8_t, std::span<std::uint8_t>> handle_record_by_content_type(const std::uint8_t head[5],
+                                                                                         const std::vector<std::uint8_t>& rec,
+                                                                                         std::vector<std::uint8_t>& pt_buf,
+                                                                                         std::error_code& out_ec);
 
         asio::awaitable<std::pair<std::uint8_t, std::span<std::uint8_t>>> read_record(std::vector<std::uint8_t>& pt_buf, std::error_code& out_ec);
 

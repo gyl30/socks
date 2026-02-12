@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <utility>
 
 #include <asio.hpp>
 
@@ -44,6 +45,7 @@ class ip_matcher
     static void prune_children(trie_node* node);
     static void mark_node_match(trie_node* node);
     static bool can_merge_match_children(const trie_node* node);
+    static void process_optimize_stack_entry(trie_node* curr, bool visited, std::vector<std::pair<trie_node*, bool>>& stack);
 
     static void optimize_node(const std::unique_ptr<trie_node>& node);
 };

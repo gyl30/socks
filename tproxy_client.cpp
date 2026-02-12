@@ -39,6 +39,30 @@ bool resolve_listen_address(const std::string& configured_host,
     return !ec;
 }
 
+bool setup_tcp_listener_options(asio::ip::tcp::acceptor& acceptor, const bool is_v6, std::error_code& ec)
+{
+    ec = acceptor.set_option(asio::ip::tcp::acceptor::reuse_address(true), ec);
+    if (ec)
+    {
+        return false;
+    }
+    if (is_v6)
+    {
+        ec = acceptor.set_option(asio::ip::v6_only(false), ec);
+        if (ec)
+        {
+            return false;
+        }
+    }
+    std::error_code trans_ec;
+    if (!net::set_socket_transparent(acceptor.native_handle(), is_v6, trans_ec))
+    {
+        ec = trans_ec;
+        return false;
+    }
+    return true;
+}
+
 bool setup_tcp_listener(asio::ip::tcp::acceptor& acceptor, const asio::ip::address& listen_addr, const std::uint16_t port, std::error_code& ec)
 {
     const asio::ip::tcp::endpoint ep{listen_addr, port};
@@ -47,27 +71,10 @@ bool setup_tcp_listener(asio::ip::tcp::acceptor& acceptor, const asio::ip::addre
     {
         return false;
     }
-    ec = acceptor.set_option(asio::ip::tcp::acceptor::reuse_address(true), ec);
-    if (ec)
+    if (!setup_tcp_listener_options(acceptor, listen_addr.is_v6(), ec))
     {
         return false;
     }
-    if (listen_addr.is_v6())
-    {
-        ec = acceptor.set_option(asio::ip::v6_only(false), ec);
-        if (ec)
-        {
-            return false;
-        }
-    }
-
-    std::error_code trans_ec;
-    if (!net::set_socket_transparent(acceptor.native_handle(), listen_addr.is_v6(), trans_ec))
-    {
-        ec = trans_ec;
-        return false;
-    }
-
     ec = acceptor.bind(ep, ec);
     if (ec)
     {
@@ -475,6 +482,83 @@ asio::awaitable<udp_packet_action> handle_udp_packet_once(
     co_return udp_packet_action::kContinue;
 }
 
+bool setup_tproxy_tcp_runtime(asio::ip::tcp::acceptor& tcp_acceptor,
+                              const config::tproxy_t& tproxy_config,
+                              const std::uint16_t tcp_port,
+                              std::string& listen_host,
+                              std::error_code& out_ec)
+{
+    asio::ip::address listen_addr;
+    if (!resolve_listen_address(tproxy_config.listen_host, listen_host, listen_addr, out_ec))
+    {
+        return false;
+    }
+    return setup_tcp_listener(tcp_acceptor, listen_addr, tcp_port, out_ec);
+}
+
+asio::awaitable<bool> run_tcp_accept_iteration(asio::ip::tcp::acceptor& tcp_acceptor,
+                                               asio::io_context& io_context,
+                                               std::atomic<bool>& stop_flag,
+                                               const std::shared_ptr<client_tunnel_pool>& tunnel_pool,
+                                               const std::shared_ptr<router>& router,
+                                               const config& cfg)
+{
+    asio::ip::tcp::socket socket(io_context);
+    const auto accept_status = co_await accept_tcp_connection(tcp_acceptor, socket, io_context);
+    if (accept_status == tcp_accept_status::kStop)
+    {
+        co_return false;
+    }
+    if (accept_status == tcp_accept_status::kRetry)
+    {
+        co_return true;
+    }
+
+    const auto socket_action = handle_accepted_tcp_socket(socket, stop_flag, io_context, tunnel_pool, router, cfg);
+    co_return socket_action != tcp_socket_action::kBreak;
+}
+
+bool setup_tproxy_udp_runtime(asio::ip::udp::socket& udp_socket,
+                              const config::tproxy_t& tproxy_config,
+                              const std::uint16_t udp_port,
+                              std::string& listen_host,
+                              std::error_code& out_ec)
+{
+    asio::ip::address listen_addr;
+    if (!resolve_listen_address(tproxy_config.listen_host, listen_host, listen_addr, out_ec))
+    {
+        return false;
+    }
+    return setup_udp_listener(udp_socket, listen_addr, udp_port, tproxy_config.mark, out_ec);
+}
+
+asio::awaitable<udp_loop_action> run_udp_iteration(asio::ip::udp::socket& udp_socket,
+                                                   std::unordered_map<std::string, std::shared_ptr<tproxy_udp_session>>& udp_sessions,
+                                                   std::atomic<bool>& stop_flag,
+                                                   std::vector<std::uint8_t>& buffer,
+                                                   std::array<char, 512>& control,
+                                                   asio::io_context& io_context,
+                                                   const std::shared_ptr<client_tunnel_pool>& tunnel_pool,
+                                                   const std::shared_ptr<router>& router,
+                                                   const std::shared_ptr<tproxy_udp_sender>& sender,
+                                                   const config& cfg)
+{
+    const auto wait_status = co_await wait_udp_readable(udp_socket);
+    const auto loop_action = evaluate_udp_wait_status(wait_status, stop_flag);
+    if (loop_action != udp_loop_action::kHandlePacket)
+    {
+        co_return loop_action;
+    }
+
+    const auto packet_action =
+        co_await handle_udp_packet_once(udp_socket, udp_sessions, stop_flag, buffer, control, io_context, tunnel_pool, router, sender, cfg);
+    if (packet_action == udp_packet_action::kBreak)
+    {
+        co_return udp_loop_action::kBreak;
+    }
+    co_return udp_loop_action::kContinue;
+}
+
 std::uint64_t now_steady_ms()
 {
     const auto now = std::chrono::steady_clock::now().time_since_epoch();
@@ -625,16 +709,9 @@ std::string tproxy_client::endpoint_key(const asio::ip::udp::endpoint& ep) const
 
 asio::awaitable<void> tproxy_client::accept_tcp_loop()
 {
-    std::error_code addr_ec;
     std::string listen_host;
-    asio::ip::address listen_addr;
-    if (!resolve_listen_address(tproxy_config_.listen_host, listen_host, listen_addr, addr_ec))
-    {
-        LOG_ERROR("tproxy tcp parse address failed {}", addr_ec.message());
-        co_return;
-    }
     std::error_code setup_ec;
-    if (!setup_tcp_listener(tcp_acceptor_, listen_addr, tcp_port_, setup_ec))
+    if (!setup_tproxy_tcp_runtime(tcp_acceptor_, tproxy_config_, tcp_port_, listen_host, setup_ec))
     {
         LOG_ERROR("tproxy tcp setup failed {}", setup_ec.message());
         co_return;
@@ -644,18 +721,7 @@ asio::awaitable<void> tproxy_client::accept_tcp_loop()
 
     while (!stop_.load(std::memory_order_acquire))
     {
-        asio::ip::tcp::socket s(io_context_);
-        const auto accept_status = co_await accept_tcp_connection(tcp_acceptor_, s, io_context_);
-        if (accept_status == tcp_accept_status::kStop)
-        {
-            break;
-        }
-        if (accept_status == tcp_accept_status::kRetry)
-        {
-            continue;
-        }
-        const auto socket_action = handle_accepted_tcp_socket(s, stop_, io_context_, tunnel_pool_, router_, cfg_);
-        if (socket_action == tcp_socket_action::kBreak)
+        if (!co_await run_tcp_accept_iteration(tcp_acceptor_, io_context_, stop_, tunnel_pool_, router_, cfg_))
         {
             break;
         }
@@ -666,16 +732,9 @@ asio::awaitable<void> tproxy_client::accept_tcp_loop()
 
 asio::awaitable<void> tproxy_client::udp_loop()
 {
-    std::error_code addr_ec;
     std::string listen_host;
-    asio::ip::address listen_addr;
-    if (!resolve_listen_address(tproxy_config_.listen_host, listen_host, listen_addr, addr_ec))
-    {
-        LOG_ERROR("tproxy udp parse address failed {}", addr_ec.message());
-        co_return;
-    }
     std::error_code setup_ec;
-    if (!setup_udp_listener(udp_socket_, listen_addr, udp_port_, tproxy_config_.mark, setup_ec))
+    if (!setup_tproxy_udp_runtime(udp_socket_, tproxy_config_, udp_port_, listen_host, setup_ec))
     {
         LOG_ERROR("tproxy udp setup failed {}", setup_ec.message());
         co_return;
@@ -688,20 +747,9 @@ asio::awaitable<void> tproxy_client::udp_loop()
 
     while (!stop_.load(std::memory_order_acquire))
     {
-        const auto wait_status = co_await wait_udp_readable(udp_socket_);
-        const auto loop_action = evaluate_udp_wait_status(wait_status, stop_);
-        if (loop_action == udp_loop_action::kBreak)
-        {
-            break;
-        }
-        if (loop_action == udp_loop_action::kContinue)
-        {
-            continue;
-        }
-
-        const auto packet_action =
-            co_await handle_udp_packet_once(udp_socket_, udp_sessions_, stop_, buf, control, io_context_, tunnel_pool_, router_, sender_, cfg_);
-        if (packet_action == udp_packet_action::kBreak)
+        const auto action = co_await run_udp_iteration(
+            udp_socket_, udp_sessions_, stop_, buf, control, io_context_, tunnel_pool_, router_, sender_, cfg_);
+        if (action == udp_loop_action::kBreak)
         {
             break;
         }

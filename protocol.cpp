@@ -112,6 +112,50 @@ bool parse_address_and_port(const std::uint8_t* data,
     return true;
 }
 
+void append_udp_ipv4_address(std::vector<std::uint8_t>& buf, const asio::ip::address_v4& address)
+{
+    buf.push_back(socks::kAtypIpv4);
+    const auto bytes = address.to_bytes();
+    buf.insert(buf.end(), bytes.begin(), bytes.end());
+}
+
+void append_udp_ipv6_address(std::vector<std::uint8_t>& buf, const asio::ip::address_v6& address)
+{
+    buf.push_back(socks::kAtypIpv6);
+    const auto bytes = address.to_bytes();
+    buf.insert(buf.end(), bytes.begin(), bytes.end());
+}
+
+void append_udp_domain_address(std::vector<std::uint8_t>& buf, const std::string& host)
+{
+    buf.push_back(socks::kAtypDomain);
+    buf.push_back(static_cast<std::uint8_t>(host.size()));
+    buf.insert(buf.end(), host.begin(), host.end());
+}
+
+void append_udp_target_address(std::vector<std::uint8_t>& buf, const std::string& host)
+{
+    std::error_code ec;
+    auto address = asio::ip::make_address(host, ec);
+    if (ec)
+    {
+        append_udp_domain_address(buf, host);
+        return;
+    }
+    address = socks_codec::normalize_ip_address(address);
+    if (address.is_v4())
+    {
+        append_udp_ipv4_address(buf, address.to_v4());
+        return;
+    }
+    if (address.is_v6())
+    {
+        append_udp_ipv6_address(buf, address.to_v6());
+        return;
+    }
+    append_udp_domain_address(buf, host);
+}
+
 }
 
 asio::ip::address socks_codec::normalize_ip_address(const asio::ip::address& addr)
@@ -139,33 +183,7 @@ std::vector<std::uint8_t> socks_codec::encode_udp_header(const socks_udp_header&
     buf.push_back(0x00);
     buf.push_back(0x00);
     buf.push_back(h.frag);
-
-    std::error_code ec;
-    auto address = asio::ip::make_address(h.addr, ec);
-
-    if (!ec && address.is_v6())
-    {
-        address = normalize_ip_address(address);
-    }
-
-    if (!ec && address.is_v4())
-    {
-        buf.push_back(socks::kAtypIpv4);
-        const auto bytes = address.to_v4().to_bytes();
-        buf.insert(buf.end(), bytes.begin(), bytes.end());
-    }
-    else if (!ec && address.is_v6())
-    {
-        buf.push_back(socks::kAtypIpv6);
-        const auto bytes = address.to_v6().to_bytes();
-        buf.insert(buf.end(), bytes.begin(), bytes.end());
-    }
-    else
-    {
-        buf.push_back(socks::kAtypDomain);
-        buf.push_back(static_cast<std::uint8_t>(h.addr.size()));
-        buf.insert(buf.end(), h.addr.begin(), h.addr.end());
-    }
+    append_udp_target_address(buf, h.addr);
 
     buf.push_back(static_cast<std::uint8_t>((h.port >> 8) & 0xFF));
     buf.push_back(static_cast<std::uint8_t>(h.port & 0xFF));

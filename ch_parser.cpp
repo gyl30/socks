@@ -150,43 +150,48 @@ void ch_parser::finalize_key_share_info(client_hello_info& info)
     info.key_share_group = reality::tls_consts::group::kX25519;
 }
 
+bool ch_parser::parse_before_extensions(reader& r, client_hello_info& info)
+{
+    if (!read_tls_record_header(r))
+    {
+        return false;
+    }
+    if (!read_client_hello_prefix(r, info))
+    {
+        return false;
+    }
+    if (!read_session_id(r, info))
+    {
+        return false;
+    }
+    return skip_cipher_suites_and_compression(r);
+}
+
+void ch_parser::parse_extension_block(reader& r, client_hello_info& info)
+{
+    std::uint16_t ext_len = 0;
+    if (!r.read_u16(ext_len))
+    {
+        return;
+    }
+
+    reader ext_r = r.slice(ext_len);
+    if (!ext_r.valid())
+    {
+        return;
+    }
+    parse_extensions(ext_r, info);
+}
+
 client_hello_info ch_parser::parse(const std::vector<std::uint8_t>& buf)
 {
     client_hello_info info;
     reader r(buf);
-
-    if (!read_tls_record_header(r))
+    if (!parse_before_extensions(r, info))
     {
         return info;
     }
-
-    if (!read_client_hello_prefix(r, info))
-    {
-        return info;
-    }
-
-    if (!read_session_id(r, info))
-    {
-        return info;
-    }
-
-    if (!skip_cipher_suites_and_compression(r))
-    {
-        return info;
-    }
-
-    std::uint16_t ext_len = 0;
-    if (!r.read_u16(ext_len))
-    {
-        return info;
-    }
-
-    reader ext_r = r.slice(ext_len);
-    if (ext_r.valid())
-    {
-        parse_extensions(ext_r, info);
-    }
-
+    parse_extension_block(r, info);
     return info;
 }
 

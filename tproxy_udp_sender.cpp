@@ -106,39 +106,63 @@ std::shared_ptr<asio::ip::udp::socket> tproxy_udp_sender::create_bound_socket(co
 
 bool tproxy_udp_sender::prepare_socket_options(const std::shared_ptr<asio::ip::udp::socket>& socket, const bool ipv6)
 {
-    std::error_code ec;
     if (ipv6)
     {
-        ec = socket->set_option(asio::ip::v6_only(false), ec);
-        if (ec)
-        {
-            LOG_WARN("tproxy udp v6 only failed {}", ec.message());
-        }
+        (void)set_ipv6_dual_stack_option(socket);
     }
+    set_reuse_address_option(socket);
+    if (!set_transparent_option(socket, ipv6))
+    {
+        return false;
+    }
+    apply_socket_mark(socket);
+    return true;
+}
 
+bool tproxy_udp_sender::set_ipv6_dual_stack_option(const std::shared_ptr<asio::ip::udp::socket>& socket)
+{
+    std::error_code ec;
+    ec = socket->set_option(asio::ip::v6_only(false), ec);
+    if (!ec)
+    {
+        return true;
+    }
+    LOG_WARN("tproxy udp v6 only failed {}", ec.message());
+    return false;
+}
+
+void tproxy_udp_sender::set_reuse_address_option(const std::shared_ptr<asio::ip::udp::socket>& socket)
+{
+    std::error_code ec;
     ec = socket->set_option(asio::socket_base::reuse_address(true), ec);
     if (ec)
     {
         LOG_WARN("tproxy udp reuse addr failed {}", ec.message());
     }
+}
 
+bool tproxy_udp_sender::set_transparent_option(const std::shared_ptr<asio::ip::udp::socket>& socket, const bool ipv6)
+{
     std::error_code trans_ec;
     if (!net::set_socket_transparent(socket->native_handle(), ipv6, trans_ec))
     {
         LOG_WARN("tproxy udp transparent failed {}", trans_ec.message());
         return false;
     }
-
-    if (mark_ != 0)
-    {
-        std::error_code mark_ec;
-        if (!net::set_socket_mark(socket->native_handle(), mark_, mark_ec))
-        {
-            LOG_WARN("tproxy udp set mark failed {}", mark_ec.message());
-        }
-    }
-
     return true;
+}
+
+void tproxy_udp_sender::apply_socket_mark(const std::shared_ptr<asio::ip::udp::socket>& socket) const
+{
+    if (mark_ == 0)
+    {
+        return;
+    }
+    std::error_code mark_ec;
+    if (!net::set_socket_mark(socket->native_handle(), mark_, mark_ec))
+    {
+        LOG_WARN("tproxy udp set mark failed {}", mark_ec.message());
+    }
 }
 
 bool tproxy_udp_sender::bind_socket_to_source(const std::shared_ptr<asio::ip::udp::socket>& socket, const asio::ip::udp::endpoint& src_ep)
@@ -205,6 +229,27 @@ void tproxy_udp_sender::evict_oldest_socket()
     sockets_.erase(oldest_it);
 }
 
+void tproxy_udp_sender::drop_cached_socket_if_match(const endpoint_key& key, const std::shared_ptr<asio::ip::udp::socket>& socket)
+{
+    auto it = sockets_.find(key);
+    if (it == sockets_.end() || it->second.socket != socket)
+    {
+        return;
+    }
+    std::error_code ignore;
+    ignore = it->second.socket->close(ignore);
+    sockets_.erase(it);
+}
+
+void tproxy_udp_sender::refresh_cached_socket_timestamp(const endpoint_key& key, const std::shared_ptr<asio::ip::udp::socket>& socket)
+{
+    auto it = sockets_.find(key);
+    if (it != sockets_.end() && it->second.socket == socket)
+    {
+        it->second.last_used_ms = now_ms();
+    }
+}
+
 asio::awaitable<void> tproxy_udp_sender::send_to_client(const asio::ip::udp::endpoint& client_ep,
                                                         const asio::ip::udp::endpoint& src_ep,
                                                         const std::vector<std::uint8_t>& payload)
@@ -223,23 +268,10 @@ asio::awaitable<void> tproxy_udp_sender::send_to_client(const asio::ip::udp::end
     if (ec)
     {
         LOG_WARN("tproxy udp send to client failed {}", ec.message());
-        const endpoint_key key{norm_src.address(), norm_src.port()};
-        auto it = sockets_.find(key);
-        if (it != sockets_.end() && it->second.socket == socket)
-        {
-            std::error_code ignore;
-            ignore = it->second.socket->close(ignore);
-            sockets_.erase(it);
-        }
+        drop_cached_socket_if_match(endpoint_key{norm_src.address(), norm_src.port()}, socket);
         co_return;
     }
-
-    const endpoint_key key{norm_src.address(), norm_src.port()};
-    auto it = sockets_.find(key);
-    if (it != sockets_.end() && it->second.socket == socket)
-    {
-        it->second.last_used_ms = now_ms();
-    }
+    refresh_cached_socket_timestamp(endpoint_key{norm_src.address(), norm_src.port()}, socket);
 }
 
 }    // namespace mux

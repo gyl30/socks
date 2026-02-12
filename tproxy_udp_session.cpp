@@ -249,6 +249,46 @@ bool tproxy_udp_session::install_proxy_stream(const std::shared_ptr<mux_tunnel_i
     return true;
 }
 
+asio::awaitable<std::optional<bool>> tproxy_udp_session::open_proxy_stream()
+{
+    const auto tunnel = tunnel_pool_->select_tunnel();
+    if (tunnel == nullptr)
+    {
+        LOG_CTX_WARN(ctx_, "{} udp proxy no active tunnel", log_event::kSocks);
+        co_return std::nullopt;
+    }
+
+    const auto stream = tunnel->create_stream(ctx_.trace_id());
+    if (stream == nullptr)
+    {
+        LOG_CTX_WARN(ctx_, "{} udp proxy create stream failed", log_event::kSocks);
+        co_return std::nullopt;
+    }
+
+    if (!co_await negotiate_proxy_stream(tunnel, stream))
+    {
+        co_await cleanup_proxy_stream(tunnel, stream);
+        co_return std::nullopt;
+    }
+
+    bool should_start_reader = false;
+    if (!install_proxy_stream(tunnel, stream, should_start_reader))
+    {
+        co_await cleanup_proxy_stream(tunnel, stream);
+        co_return false;
+    }
+    co_return should_start_reader;
+}
+
+void tproxy_udp_session::maybe_start_proxy_reader(const bool should_start_reader)
+{
+    if (!should_start_reader)
+    {
+        return;
+    }
+    asio::co_spawn(io_context_, [self = shared_from_this()]() -> asio::awaitable<void> { co_await self->proxy_read_loop(); }, asio::detached);
+}
+
 asio::awaitable<bool> tproxy_udp_session::ensure_proxy_stream()
 {
     if (stream_ != nullptr)
@@ -256,42 +296,12 @@ asio::awaitable<bool> tproxy_udp_session::ensure_proxy_stream()
         co_return true;
     }
 
-    const auto tunnel = tunnel_pool_->select_tunnel();
-    if (tunnel == nullptr)
+    const auto open_result = co_await open_proxy_stream();
+    if (!open_result.has_value())
     {
-        LOG_CTX_WARN(ctx_, "{} udp proxy no active tunnel", log_event::kSocks);
         co_return false;
     }
-
-    const auto stream = tunnel->create_stream(ctx_.trace_id());
-    if (stream == nullptr)
-    {
-        LOG_CTX_WARN(ctx_, "{} udp proxy create stream failed", log_event::kSocks);
-        co_return false;
-    }
-
-    if (!co_await negotiate_proxy_stream(tunnel, stream))
-    {
-        co_await cleanup_proxy_stream(tunnel, stream);
-        co_return false;
-    }
-
-    bool should_start_reader = false;
-    const bool installed = install_proxy_stream(tunnel, stream, should_start_reader);
-
-    if (!installed)
-    {
-        co_await cleanup_proxy_stream(tunnel, stream);
-        co_return true;
-    }
-
-    if (should_start_reader)
-    {
-        asio::co_spawn(io_context_,
-                       [self = shared_from_this()]() -> asio::awaitable<void> { co_await self->proxy_read_loop(); },
-                       asio::detached);
-    }
-
+    maybe_start_proxy_reader(*open_result);
     co_return true;
 }
 
@@ -369,30 +379,42 @@ asio::awaitable<void> tproxy_udp_session::proxy_read_loop()
         }
 
         touch();
-        socks_udp_header h;
-        if (!socks_codec::decode_udp_header(data.data(), data.size(), h))
+        asio::ip::udp::endpoint src_ep;
+        std::vector<std::uint8_t> payload;
+        if (!decode_proxy_packet(data, src_ep, payload))
         {
-            LOG_CTX_WARN(ctx_, "{} udp decode header failed", log_event::kSocks);
             continue;
         }
-
-        if (h.header_len > data.size())
-        {
-            LOG_CTX_WARN(ctx_, "{} udp header len invalid", log_event::kSocks);
-            continue;
-        }
-
-        std::error_code addr_ec;
-        const auto addr = asio::ip::make_address(h.addr, addr_ec);
-        if (addr_ec)
-        {
-            LOG_CTX_WARN(ctx_, "{} udp parse addr failed {}", log_event::kSocks, addr_ec.message());
-            continue;
-        }
-        asio::ip::udp::endpoint src_ep(addr, h.port);
-        std::vector<std::uint8_t> payload(data.begin() + static_cast<std::ptrdiff_t>(h.header_len), data.end());
         co_await sender_->send_to_client(client_ep_, src_ep, payload);
     }
+}
+
+bool tproxy_udp_session::decode_proxy_packet(const std::vector<std::uint8_t>& data,
+                                             asio::ip::udp::endpoint& src_ep,
+                                             std::vector<std::uint8_t>& payload) const
+{
+    socks_udp_header h;
+    if (!socks_codec::decode_udp_header(data.data(), data.size(), h))
+    {
+        LOG_CTX_WARN(ctx_, "{} udp decode header failed", log_event::kSocks);
+        return false;
+    }
+    if (h.header_len > data.size())
+    {
+        LOG_CTX_WARN(ctx_, "{} udp header len invalid", log_event::kSocks);
+        return false;
+    }
+
+    std::error_code addr_ec;
+    const auto addr = asio::ip::make_address(h.addr, addr_ec);
+    if (addr_ec)
+    {
+        LOG_CTX_WARN(ctx_, "{} udp parse addr failed {}", log_event::kSocks, addr_ec.message());
+        return false;
+    }
+    src_ep = asio::ip::udp::endpoint(addr, h.port);
+    payload.assign(data.begin() + static_cast<std::ptrdiff_t>(h.header_len), data.end());
+    return true;
 }
 
 }    // namespace mux
