@@ -62,7 +62,8 @@ TEST_F(config_test, ParseValues)
             "mark": 17
         },
         "reality": {
-            "sni": "google.com"
+            "sni": "google.com",
+            "strict_cert_verify": true
         }
     })";
     write_config_file(content);
@@ -85,6 +86,7 @@ TEST_F(config_test, ParseValues)
         EXPECT_EQ(cfg.tproxy.udp_port, 18081);
         EXPECT_EQ(cfg.tproxy.mark, 17);
         EXPECT_EQ(cfg.reality.sni, "google.com");
+        EXPECT_TRUE(cfg.reality.strict_cert_verify);
     }
 }
 

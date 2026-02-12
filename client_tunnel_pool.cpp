@@ -863,6 +863,7 @@ client_tunnel_pool::client_tunnel_pool(io_context_pool& pool, const config& cfg,
       remote_host_(cfg.outbound.host),
       remote_port_(std::to_string(cfg.outbound.port)),
       sni_(cfg.reality.sni),
+      strict_cert_verify_(cfg.reality.strict_cert_verify),
       pool_(pool),
       timeout_config_(cfg.timeout),
       limits_config_(cfg.limits),
@@ -1218,7 +1219,8 @@ asio::awaitable<std::pair<bool, client_tunnel_pool::handshake_result>> client_tu
     const auto hs_keys = derive_handshake_traffic_keys(sh_res.hs_keys, sh_res.cipher_suite, sh_res.negotiated_md, ec);
 
     auto [loop_ok, app_sec] =
-        co_await handshake_read_loop(socket, hs_keys.s_hs_keys, sh_res.hs_keys, trans, sh_res.negotiated_cipher, sh_res.negotiated_md, ec);
+        co_await handshake_read_loop(
+            socket, hs_keys.s_hs_keys, sh_res.hs_keys, strict_cert_verify_, trans, sh_res.negotiated_cipher, sh_res.negotiated_md, ec);
     if (!loop_ok)
     {
         co_return fail();
@@ -1318,6 +1320,7 @@ asio::awaitable<std::pair<bool, std::pair<std::vector<std::uint8_t>, std::vector
     asio::ip::tcp::socket& socket,
     const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& s_hs_keys,
     const reality::handshake_keys& hs_keys,
+    const bool strict_cert_verify,
     reality::transcript& trans,
     const EVP_CIPHER* cipher,
     const EVP_MD* md,
@@ -1343,7 +1346,13 @@ asio::awaitable<std::pair<bool, std::pair<std::vector<std::uint8_t>, std::vector
         LOG_ERROR("server auth chain incomplete");
         co_return make_handshake_loop_fail_result();
     }
-    if (!validation_state.cert_verify_signature_checked)
+    if (strict_cert_verify && !validation_state.cert_verify_signature_checked)
+    {
+        ec = std::make_error_code(std::errc::permission_denied);
+        LOG_ERROR("server certificate verify signature required");
+        co_return make_handshake_loop_fail_result();
+    }
+    if (!strict_cert_verify && !validation_state.cert_verify_signature_checked)
     {
         LOG_DEBUG("server certificate verify signature unchecked");
     }
