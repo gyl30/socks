@@ -69,3 +69,11 @@ TEST(RealityAuthTest, ParseAllowsNonOneVersion)
     EXPECT_EQ(p.version_y, 0x02);
     EXPECT_EQ(p.version_z, 0x06);
 }
+
+TEST(RealityAuthTest, ParseRejectsInvalidLength)
+{
+    std::array<std::uint8_t, reality::kAuthPayloadLen - 1> short_payload{};
+    const auto parsed = reality::parse_auth_payload(
+        std::span<const std::uint8_t>(short_payload.data(), short_payload.size()));
+    EXPECT_FALSE(parsed.has_value());
+}

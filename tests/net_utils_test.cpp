@@ -1,5 +1,6 @@
 #include <cerrno>
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -14,6 +15,63 @@
 #include <gtest/gtest.h>
 
 #include "net_utils.h"
+
+extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);
+
+namespace
+{
+
+std::atomic<bool> g_force_linux_first_opt_success{false};
+std::atomic<bool> g_fail_setsockopt_once{false};
+std::atomic<int> g_fail_level{-1};
+std::atomic<int> g_fail_optname{-1};
+std::atomic<int> g_fail_errno{EPERM};
+
+void reset_setsockopt_hooks()
+{
+    g_force_linux_first_opt_success.store(false, std::memory_order_release);
+    g_fail_setsockopt_once.store(false, std::memory_order_release);
+    g_fail_level.store(-1, std::memory_order_release);
+    g_fail_optname.store(-1, std::memory_order_release);
+    g_fail_errno.store(EPERM, std::memory_order_release);
+}
+
+void fail_setsockopt_once(const int level, const int optname, const int err)
+{
+    g_fail_level.store(level, std::memory_order_release);
+    g_fail_optname.store(optname, std::memory_order_release);
+    g_fail_errno.store(err, std::memory_order_release);
+    g_fail_setsockopt_once.store(true, std::memory_order_release);
+}
+
+bool is_force_success_option(const int level, const int optname)
+{
+#ifdef __linux__
+    return level == SOL_IP && (optname == IP_TRANSPARENT || optname == IP_RECVORIGDSTADDR);
+#else
+    (void)level;
+    (void)optname;
+    return false;
+#endif
+}
+
+}    // namespace
+
+extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)
+{
+    if (g_fail_setsockopt_once.load(std::memory_order_acquire) && g_fail_level.load(std::memory_order_acquire) == level
+        && g_fail_optname.load(std::memory_order_acquire) == optname)
+    {
+        g_fail_setsockopt_once.store(false, std::memory_order_release);
+        errno = g_fail_errno.load(std::memory_order_acquire);
+        return -1;
+    }
+    if (g_force_linux_first_opt_success.load(std::memory_order_acquire) && is_force_success_option(level, optname))
+    {
+        return 0;
+    }
+    return __real_setsockopt(sockfd, level, optname, optval, optlen);
+}
 
 namespace mux::net
 {
@@ -222,6 +280,51 @@ TEST(net_utils_test, parse_original_dst_truncated_control_payload)
 
     const auto parsed = parse_original_dst(msg);
     EXPECT_FALSE(parsed.has_value());
+}
+
+TEST(net_utils_test, parse_original_dst_ipv4_truncated_control_payload)
+{
+    std::array<std::byte, CMSG_SPACE(sizeof(sockaddr_in))> control{};
+    msghdr msg{};
+    msg.msg_control = control.data();
+    msg.msg_controllen = control.size();
+
+    auto* cm = CMSG_FIRSTHDR(&msg);
+    ASSERT_NE(cm, nullptr);
+    cm->cmsg_level = SOL_IP;
+    cm->cmsg_type = IP_ORIGDSTADDR;
+    cm->cmsg_len = CMSG_LEN(sizeof(sockaddr_in) - 1U);
+
+    const auto parsed = parse_original_dst(msg);
+    EXPECT_FALSE(parsed.has_value());
+}
+
+TEST(net_utils_test, set_socket_transparent_ipv6_second_setsockopt_failure)
+{
+    reset_setsockopt_hooks();
+    g_force_linux_first_opt_success.store(true, std::memory_order_release);
+    fail_setsockopt_once(SOL_IPV6, IPV6_TRANSPARENT, EACCES);
+
+    std::error_code ec;
+    const bool ok = set_socket_transparent(-1, true, ec);
+    EXPECT_FALSE(ok);
+    EXPECT_EQ(ec.value(), EACCES);
+
+    reset_setsockopt_hooks();
+}
+
+TEST(net_utils_test, set_socket_recv_origdst_ipv6_second_setsockopt_failure)
+{
+    reset_setsockopt_hooks();
+    g_force_linux_first_opt_success.store(true, std::memory_order_release);
+    fail_setsockopt_once(SOL_IPV6, IPV6_RECVORIGDSTADDR, EACCES);
+
+    std::error_code ec;
+    const bool ok = set_socket_recv_origdst(-1, true, ec);
+    EXPECT_FALSE(ok);
+    EXPECT_EQ(ec.value(), EACCES);
+
+    reset_setsockopt_hooks();
 }
 
 TEST(net_utils_test, parse_original_dst_unknown_control_message)
