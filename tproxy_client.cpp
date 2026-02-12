@@ -26,6 +26,219 @@
 namespace mux
 {
 
+namespace
+{
+
+bool resolve_listen_address(const std::string& configured_host,
+                            std::string& listen_host,
+                            asio::ip::address& listen_addr,
+                            std::error_code& ec)
+{
+    listen_host = configured_host.empty() ? "::" : configured_host;
+    listen_addr = asio::ip::make_address(listen_host, ec);
+    return !ec;
+}
+
+bool setup_tcp_listener(asio::ip::tcp::acceptor& acceptor, const asio::ip::address& listen_addr, const std::uint16_t port, std::error_code& ec)
+{
+    const asio::ip::tcp::endpoint ep{listen_addr, port};
+    ec = acceptor.open(ep.protocol(), ec);
+    if (ec)
+    {
+        return false;
+    }
+    ec = acceptor.set_option(asio::ip::tcp::acceptor::reuse_address(true), ec);
+    if (ec)
+    {
+        return false;
+    }
+    if (listen_addr.is_v6())
+    {
+        ec = acceptor.set_option(asio::ip::v6_only(false), ec);
+        if (ec)
+        {
+            return false;
+        }
+    }
+
+    std::error_code trans_ec;
+    if (!net::set_socket_transparent(acceptor.native_handle(), listen_addr.is_v6(), trans_ec))
+    {
+        ec = trans_ec;
+        return false;
+    }
+
+    ec = acceptor.bind(ep, ec);
+    if (ec)
+    {
+        return false;
+    }
+    ec = acceptor.listen(asio::socket_base::max_listen_connections, ec);
+    return !ec;
+}
+
+bool setup_udp_listener(asio::ip::udp::socket& socket,
+                        const asio::ip::address& listen_addr,
+                        const std::uint16_t port,
+                        const std::uint32_t mark,
+                        std::error_code& ec)
+{
+    const asio::ip::udp::endpoint ep{listen_addr, port};
+    ec = socket.open(ep.protocol(), ec);
+    if (ec)
+    {
+        return false;
+    }
+    ec = socket.set_option(asio::socket_base::reuse_address(true), ec);
+    if (ec)
+    {
+        LOG_WARN("tproxy udp reuse addr failed {}", ec.message());
+        ec.clear();
+    }
+    if (listen_addr.is_v6())
+    {
+        ec = socket.set_option(asio::ip::v6_only(false), ec);
+        if (ec)
+        {
+            return false;
+        }
+    }
+
+    std::error_code trans_ec;
+    if (!net::set_socket_transparent(socket.native_handle(), listen_addr.is_v6(), trans_ec))
+    {
+        ec = trans_ec;
+        return false;
+    }
+
+    std::error_code recv_ec;
+    if (!net::set_socket_recv_origdst(socket.native_handle(), listen_addr.is_v6(), recv_ec))
+    {
+        ec = recv_ec;
+        return false;
+    }
+
+    if (mark != 0)
+    {
+        std::error_code mark_ec;
+        if (!net::set_socket_mark(socket.native_handle(), mark, mark_ec))
+        {
+            LOG_WARN("tproxy udp set mark failed {}", mark_ec.message());
+        }
+    }
+
+    ec = socket.bind(ep, ec);
+    return !ec;
+}
+
+void close_accepted_socket(asio::ip::tcp::socket& socket)
+{
+    std::error_code close_ec;
+    close_ec = socket.shutdown(asio::ip::tcp::socket::shutdown_both, close_ec);
+    close_ec = socket.close(close_ec);
+}
+
+void start_tcp_session(asio::ip::tcp::socket s,
+                       asio::io_context& io_context,
+                       const std::shared_ptr<client_tunnel_pool>& tunnel_pool,
+                       const std::shared_ptr<router>& router,
+                       const std::uint32_t sid,
+                       const config& cfg,
+                       const asio::ip::tcp::endpoint& dst_ep)
+{
+    auto session = std::make_shared<tproxy_tcp_session>(std::move(s), io_context, tunnel_pool, router, sid, cfg, dst_ep);
+    session->start();
+}
+
+void log_udp_recv_error(const std::string& error_text)
+{
+    if (error_text == "missing origdst")
+    {
+        LOG_WARN("tproxy udp missing origdst");
+        return;
+    }
+    LOG_ERROR("tproxy udp recvmsg failed {}", error_text);
+}
+
+std::shared_ptr<tproxy_udp_session> get_or_create_udp_session(
+    std::unordered_map<std::string, std::shared_ptr<tproxy_udp_session>>& sessions,
+    const std::string& key,
+    const asio::ip::udp::endpoint& src_ep,
+    asio::io_context& io_context,
+    const std::shared_ptr<client_tunnel_pool>& tunnel_pool,
+    const std::shared_ptr<router>& router,
+    const std::shared_ptr<tproxy_udp_sender>& sender,
+    const config& cfg)
+{
+    auto it = sessions.find(key);
+    if (it != sessions.end())
+    {
+        return it->second;
+    }
+
+    const std::uint32_t sid = tunnel_pool->next_session_id();
+    auto session = std::make_shared<tproxy_udp_session>(io_context, tunnel_pool, router, sender, sid, cfg, src_ep);
+    session->start();
+    sessions.emplace(key, session);
+    return session;
+}
+
+enum class udp_recv_status
+{
+    kOk,
+    kTryAgain,
+    kError,
+};
+
+udp_recv_status recv_udp_packet(asio::ip::udp::socket& socket,
+                                std::vector<std::uint8_t>& buffer,
+                                std::array<char, 512>& control,
+                                asio::ip::udp::endpoint& src_ep,
+                                asio::ip::udp::endpoint& dst_ep,
+                                std::size_t& packet_len,
+                                std::string& error_text)
+{
+    sockaddr_storage src_addr{};
+    iovec iov{};
+    iov.iov_base = buffer.data();
+    iov.iov_len = buffer.size();
+
+    msghdr msg{};
+    msg.msg_name = &src_addr;
+    msg.msg_namelen = sizeof(src_addr);
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+    msg.msg_control = control.data();
+    msg.msg_controllen = control.size();
+
+    const auto n = ::recvmsg(socket.native_handle(), &msg, 0);
+    if (n < 0)
+    {
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+        {
+            return udp_recv_status::kTryAgain;
+        }
+        error_text = std::strerror(errno);
+        return udp_recv_status::kError;
+    }
+
+    auto parsed_src = net::endpoint_from_sockaddr(src_addr, msg.msg_namelen);
+    parsed_src = net::normalize_endpoint(parsed_src);
+    const auto parsed_dst = net::parse_original_dst(msg);
+    if (!parsed_dst.has_value())
+    {
+        error_text = "missing origdst";
+        return udp_recv_status::kError;
+    }
+
+    src_ep = parsed_src;
+    dst_ep = net::normalize_endpoint(*parsed_dst);
+    packet_len = static_cast<std::size_t>(n);
+    return udp_recv_status::kOk;
+}
+
+}    // namespace
+
 tproxy_client::tproxy_client(io_context_pool& pool, const config& cfg)
     : io_context_(pool.get_io_context()),
       tcp_acceptor_(io_context_),
@@ -132,56 +345,18 @@ std::string tproxy_client::endpoint_key(const asio::ip::udp::endpoint& ep) const
 
 asio::awaitable<void> tproxy_client::accept_tcp_loop()
 {
-    const std::string listen_host = tproxy_config_.listen_host.empty() ? "::" : tproxy_config_.listen_host;
     std::error_code addr_ec;
-    const auto listen_addr = asio::ip::make_address(listen_host, addr_ec);
-    if (addr_ec)
+    std::string listen_host;
+    asio::ip::address listen_addr;
+    if (!resolve_listen_address(tproxy_config_.listen_host, listen_host, listen_addr, addr_ec))
     {
         LOG_ERROR("tproxy tcp parse address failed {}", addr_ec.message());
         co_return;
     }
-
-    const asio::ip::tcp::endpoint ep{listen_addr, tcp_port_};
     std::error_code ec;
-    ec = tcp_acceptor_.open(ep.protocol(), ec);
-    if (ec)
+    if (!setup_tcp_listener(tcp_acceptor_, listen_addr, tcp_port_, ec))
     {
-        LOG_ERROR("tproxy tcp open failed {}", ec.message());
-        co_return;
-    }
-    ec = tcp_acceptor_.set_option(asio::ip::tcp::acceptor::reuse_address(true), ec);
-    if (ec)
-    {
-        LOG_ERROR("tproxy tcp reuse addr failed {}", ec.message());
-        co_return;
-    }
-    if (listen_addr.is_v6())
-    {
-        ec = tcp_acceptor_.set_option(asio::ip::v6_only(false), ec);
-        if (ec)
-        {
-            LOG_ERROR("tproxy tcp v6 only failed {}", ec.message());
-            co_return;
-        }
-    }
-
-    std::error_code trans_ec;
-    if (!net::set_socket_transparent(tcp_acceptor_.native_handle(), listen_addr.is_v6(), trans_ec))
-    {
-        LOG_ERROR("tproxy tcp transparent failed {}", trans_ec.message());
-        co_return;
-    }
-
-    ec = tcp_acceptor_.bind(ep, ec);
-    if (ec)
-    {
-        LOG_ERROR("tproxy tcp bind failed {}", ec.message());
-        co_return;
-    }
-    ec = tcp_acceptor_.listen(asio::socket_base::max_listen_connections, ec);
-    if (ec)
-    {
-        LOG_ERROR("tproxy tcp listen failed {}", ec.message());
+        LOG_ERROR("tproxy tcp setup failed {}", ec.message());
         co_return;
     }
 
@@ -205,9 +380,7 @@ asio::awaitable<void> tproxy_client::accept_tcp_loop()
         }
         if (stop_.load(std::memory_order_acquire))
         {
-            std::error_code close_ec;
-            close_ec = s.shutdown(asio::ip::tcp::socket::shutdown_both, close_ec);
-            close_ec = s.close(close_ec);
+            close_accepted_socket(s);
             break;
         }
 
@@ -221,15 +394,13 @@ asio::awaitable<void> tproxy_client::accept_tcp_loop()
         if (ec)
         {
             LOG_ERROR("tproxy tcp local endpoint failed {}", ec.message());
-            std::error_code close_ec;
-            close_ec = s.close(close_ec);
+            close_accepted_socket(s);
             continue;
         }
 
         const asio::ip::tcp::endpoint dst_ep(net::normalize_address(local_ep.address()), local_ep.port());
         const std::uint32_t sid = tunnel_pool_->next_session_id();
-        const auto session = std::make_shared<tproxy_tcp_session>(std::move(s), io_context_, tunnel_pool_, router_, sid, cfg_, dst_ep);
-        session->start();
+        start_tcp_session(std::move(s), io_context_, tunnel_pool_, router_, sid, cfg_, dst_ep);
     }
 
     LOG_INFO("tproxy tcp accept loop exited");
@@ -237,65 +408,18 @@ asio::awaitable<void> tproxy_client::accept_tcp_loop()
 
 asio::awaitable<void> tproxy_client::udp_loop()
 {
-    const std::string listen_host = tproxy_config_.listen_host.empty() ? "::" : tproxy_config_.listen_host;
     std::error_code addr_ec;
-    const auto listen_addr = asio::ip::make_address(listen_host, addr_ec);
-    if (addr_ec)
+    std::string listen_host;
+    asio::ip::address listen_addr;
+    if (!resolve_listen_address(tproxy_config_.listen_host, listen_host, listen_addr, addr_ec))
     {
         LOG_ERROR("tproxy udp parse address failed {}", addr_ec.message());
         co_return;
     }
-
-    const asio::ip::udp::endpoint ep{listen_addr, udp_port_};
     std::error_code ec;
-    ec = udp_socket_.open(ep.protocol(), ec);
-    if (ec)
+    if (!setup_udp_listener(udp_socket_, listen_addr, udp_port_, tproxy_config_.mark, ec))
     {
-        LOG_ERROR("tproxy udp open failed {}", ec.message());
-        co_return;
-    }
-    ec = udp_socket_.set_option(asio::socket_base::reuse_address(true), ec);
-    if (ec)
-    {
-        LOG_WARN("tproxy udp reuse addr failed {}", ec.message());
-    }
-    if (listen_addr.is_v6())
-    {
-        ec = udp_socket_.set_option(asio::ip::v6_only(false), ec);
-        if (ec)
-        {
-            LOG_ERROR("tproxy udp v6 only failed {}", ec.message());
-            co_return;
-        }
-    }
-
-    std::error_code trans_ec;
-    if (!net::set_socket_transparent(udp_socket_.native_handle(), listen_addr.is_v6(), trans_ec))
-    {
-        LOG_ERROR("tproxy udp transparent failed {}", trans_ec.message());
-        co_return;
-    }
-
-    std::error_code recv_ec;
-    if (!net::set_socket_recv_origdst(udp_socket_.native_handle(), listen_addr.is_v6(), recv_ec))
-    {
-        LOG_ERROR("tproxy udp recv origdst failed {}", recv_ec.message());
-        co_return;
-    }
-
-    if (tproxy_config_.mark != 0)
-    {
-        std::error_code mark_ec;
-        if (!net::set_socket_mark(udp_socket_.native_handle(), tproxy_config_.mark, mark_ec))
-        {
-            LOG_WARN("tproxy udp set mark failed {}", mark_ec.message());
-        }
-    }
-
-    ec = udp_socket_.bind(ep, ec);
-    if (ec)
-    {
-        LOG_ERROR("tproxy udp bind failed {}", ec.message());
+        LOG_ERROR("tproxy udp setup failed {}", ec.message());
         co_return;
     }
 
@@ -321,62 +445,31 @@ asio::awaitable<void> tproxy_client::udp_loop()
             break;
         }
 
-        sockaddr_storage src_addr{};
-        iovec iov{};
-        iov.iov_base = buf.data();
-        iov.iov_len = buf.size();
-
-        msghdr msg{};
-        msg.msg_name = &src_addr;
-        msg.msg_namelen = sizeof(src_addr);
-        msg.msg_iov = &iov;
-        msg.msg_iovlen = 1;
-        msg.msg_control = control.data();
-        msg.msg_controllen = control.size();
-
-        const auto n = ::recvmsg(udp_socket_.native_handle(), &msg, 0);
-        if (n < 0)
+        asio::ip::udp::endpoint src_ep;
+        asio::ip::udp::endpoint dst_ep;
+        std::size_t packet_len = 0;
+        std::string recv_error;
+        const auto recv_status = recv_udp_packet(udp_socket_, buf, control, src_ep, dst_ep, packet_len, recv_error);
+        if (recv_status == udp_recv_status::kTryAgain)
         {
-            if (errno == EAGAIN || errno == EWOULDBLOCK)
-            {
-                continue;
-            }
-            LOG_ERROR("tproxy udp recvmsg failed {}", std::strerror(errno));
+            continue;
+        }
+        if (recv_status == udp_recv_status::kError)
+        {
+            log_udp_recv_error(recv_error);
             continue;
         }
 
-        auto src_ep = net::endpoint_from_sockaddr(src_addr, msg.msg_namelen);
-        src_ep = net::normalize_endpoint(src_ep);
-        const auto dst_ep_opt = net::parse_original_dst(msg);
-        if (!dst_ep_opt.has_value())
-        {
-            LOG_WARN("tproxy udp missing origdst");
-            continue;
-        }
-        const auto dst_ep = net::normalize_endpoint(*dst_ep_opt);
-
-        std::shared_ptr<tproxy_udp_session> session;
         const auto key = endpoint_key(src_ep);
         if (stop_.load(std::memory_order_acquire))
         {
             break;
         }
-        auto it = udp_sessions_.find(key);
-        if (it == udp_sessions_.end())
-        {
-            const std::uint32_t sid = tunnel_pool_->next_session_id();
-            session = std::make_shared<tproxy_udp_session>(io_context_, tunnel_pool_, router_, sender_, sid, cfg_, src_ep);
-            session->start();
-            udp_sessions_.emplace(key, session);
-        }
-        else
-        {
-            session = it->second;
-        }
+        auto session = get_or_create_udp_session(udp_sessions_, key, src_ep, io_context_, tunnel_pool_, router_, sender_, cfg_);
 
         if (session != nullptr)
         {
-            co_await session->handle_packet(dst_ep, buf.data(), static_cast<std::size_t>(n));
+            co_await session->handle_packet(dst_ep, buf.data(), packet_len);
         }
     }
 

@@ -194,6 +194,61 @@ std::uint64_t tproxy_udp_session::now_ms()
 
 void tproxy_udp_session::touch() { last_activity_ms_.store(now_ms(), std::memory_order_relaxed); }
 
+asio::awaitable<bool> tproxy_udp_session::negotiate_proxy_stream(
+    const std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>& tunnel, const std::shared_ptr<mux_stream>& stream) const
+{
+    const syn_payload syn{.socks_cmd = socks::kCmdUdpAssociate, .addr = "0.0.0.0", .port = 0};
+    std::vector<std::uint8_t> syn_data;
+    mux_codec::encode_syn(syn, syn_data);
+    if (const auto ec = co_await tunnel->connection()->send_async(stream->id(), kCmdSyn, std::move(syn_data)))
+    {
+        LOG_CTX_WARN(ctx_, "{} udp syn failed {}", log_event::kSocks, ec.message());
+        co_return false;
+    }
+
+    auto [ack_ec, ack_data] = co_await stream->async_read_some();
+    if (ack_ec)
+    {
+        LOG_CTX_WARN(ctx_, "{} udp ack failed {}", log_event::kSocks, ack_ec.message());
+        co_return false;
+    }
+
+    ack_payload ack_pl;
+    if (!mux_codec::decode_ack(ack_data.data(), ack_data.size(), ack_pl) || ack_pl.socks_rep != socks::kRepSuccess)
+    {
+        LOG_CTX_WARN(ctx_, "{} udp ack rejected {}", log_event::kSocks, ack_pl.socks_rep);
+        co_return false;
+    }
+    co_return true;
+}
+
+asio::awaitable<void> tproxy_udp_session::cleanup_proxy_stream(
+    const std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>& tunnel, const std::shared_ptr<mux_stream>& stream) const
+{
+    co_await stream->close();
+    tunnel->remove_stream(stream->id());
+}
+
+bool tproxy_udp_session::install_proxy_stream(const std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>& tunnel,
+                                              const std::shared_ptr<mux_stream>& stream,
+                                              bool& should_start_reader)
+{
+    if (stream_ != nullptr)
+    {
+        return false;
+    }
+
+    tunnel->register_stream(stream->id(), shared_from_this());
+    stream_ = stream;
+    tunnel_ = tunnel;
+    if (!proxy_reader_started_)
+    {
+        proxy_reader_started_ = true;
+        should_start_reader = true;
+    }
+    return true;
+}
+
 asio::awaitable<bool> tproxy_udp_session::ensure_proxy_stream()
 {
     if (stream_ != nullptr)
@@ -215,56 +270,18 @@ asio::awaitable<bool> tproxy_udp_session::ensure_proxy_stream()
         co_return false;
     }
 
-    auto cleanup_stream = [stream, tunnel]() -> asio::awaitable<void>
+    if (!co_await negotiate_proxy_stream(tunnel, stream))
     {
-        co_await stream->close();
-        tunnel->remove_stream(stream->id());
-    };
-
-    const syn_payload syn{.socks_cmd = socks::kCmdUdpAssociate, .addr = "0.0.0.0", .port = 0};
-    std::vector<std::uint8_t> syn_data;
-    mux_codec::encode_syn(syn, syn_data);
-    if (const auto ec = co_await tunnel->connection()->send_async(stream->id(), kCmdSyn, std::move(syn_data)))
-    {
-        LOG_CTX_WARN(ctx_, "{} udp syn failed {}", log_event::kSocks, ec.message());
-        co_await cleanup_stream();
+        co_await cleanup_proxy_stream(tunnel, stream);
         co_return false;
     }
 
-    auto [ack_ec, ack_data] = co_await stream->async_read_some();
-    if (ack_ec)
-    {
-        LOG_CTX_WARN(ctx_, "{} udp ack failed {}", log_event::kSocks, ack_ec.message());
-        co_await cleanup_stream();
-        co_return false;
-    }
-
-    ack_payload ack_pl;
-    if (!mux_codec::decode_ack(ack_data.data(), ack_data.size(), ack_pl) || ack_pl.socks_rep != socks::kRepSuccess)
-    {
-        LOG_CTX_WARN(ctx_, "{} udp ack rejected {}", log_event::kSocks, ack_pl.socks_rep);
-        co_await cleanup_stream();
-        co_return false;
-    }
-
-    bool installed = false;
     bool should_start_reader = false;
-    if (stream_ == nullptr)
-    {
-        tunnel->register_stream(stream->id(), shared_from_this());
-        stream_ = stream;
-        tunnel_ = tunnel;
-        installed = true;
-        if (!proxy_reader_started_)
-        {
-            proxy_reader_started_ = true;
-            should_start_reader = true;
-        }
-    }
+    const bool installed = install_proxy_stream(tunnel, stream, should_start_reader);
 
     if (!installed)
     {
-        co_await cleanup_stream();
+        co_await cleanup_proxy_stream(tunnel, stream);
         co_return true;
     }
 
