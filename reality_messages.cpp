@@ -123,6 +123,38 @@ bool build_signature_algorithms_ext(const std::shared_ptr<extension_blueprint>& 
     return true;
 }
 
+std::uint16_t resolve_key_share_group(const key_share_blueprint::key_share_entry& key_share, const extension_build_context& ctx)
+{
+    if (key_share.group == kGreasePlaceholder)
+    {
+        return ctx.grease_ctx.get_grease(1);
+    }
+    return key_share.group;
+}
+
+std::vector<std::uint8_t> resolve_key_share_data(const key_share_blueprint::key_share_entry& key_share, const extension_build_context& ctx)
+{
+    if (!key_share.data.empty())
+    {
+        return key_share.data;
+    }
+    if (key_share.group == tls_consts::group::kX25519)
+    {
+        return ctx.x25519_pubkey;
+    }
+    if (key_share.group == kGreasePlaceholder)
+    {
+        return {0x00};
+    }
+    if (key_share.group == tls_consts::group::kSecp256r1)
+    {
+        std::vector<std::uint8_t> key_data(65);
+        (void)RAND_bytes(key_data.data(), 65);
+        return key_data;
+    }
+    return {};
+}
+
 bool build_key_share_ext(const std::shared_ptr<extension_blueprint>& ext_ptr,
                          std::vector<std::uint8_t>& ext_buffer,
                          std::uint16_t& ext_type,
@@ -133,30 +165,8 @@ bool build_key_share_ext(const std::shared_ptr<extension_blueprint>& ext_ptr,
     std::vector<std::uint8_t> share_list;
     for (const auto& ks : bp->key_shares())
     {
-        std::uint16_t group = ks.group;
-        if (group == kGreasePlaceholder)
-        {
-            group = ctx.grease_ctx.get_grease(1);
-        }
-        message_builder::push_u16(share_list, group);
-
-        std::vector<std::uint8_t> key_data = ks.data;
-        if (key_data.empty())
-        {
-            if (ks.group == tls_consts::group::kX25519)
-            {
-                key_data = ctx.x25519_pubkey;
-            }
-            else if (ks.group == kGreasePlaceholder)
-            {
-                key_data.push_back(0x00);
-            }
-            else if (ks.group == tls_consts::group::kSecp256r1)
-            {
-                key_data.resize(65);
-                (void)RAND_bytes(key_data.data(), 65);
-            }
-        }
+        message_builder::push_u16(share_list, resolve_key_share_group(ks, ctx));
+        auto key_data = resolve_key_share_data(ks, ctx);
         message_builder::push_vector_u16(share_list, key_data);
     }
     message_builder::push_vector_u16(ext_buffer, share_list);
@@ -339,28 +349,95 @@ bool build_simple_extension(extension_type type, std::vector<std::uint8_t>& ext_
     }
 }
 
+using contextual_extension_builder =
+    bool (*)(const std::shared_ptr<extension_blueprint>&, std::vector<std::uint8_t>&, std::uint16_t&, const extension_build_context&);
+
+bool build_contextual_grease(const std::shared_ptr<extension_blueprint>&,
+                             std::vector<std::uint8_t>& ext_buffer,
+                             std::uint16_t& ext_type,
+                             const extension_build_context& ctx)
+{
+    return build_grease_ext(ext_buffer, ext_type, ctx);
+}
+
+bool build_contextual_sni(const std::shared_ptr<extension_blueprint>&,
+                          std::vector<std::uint8_t>& ext_buffer,
+                          std::uint16_t& ext_type,
+                          const extension_build_context& ctx)
+{
+    return build_sni_ext(ext_buffer, ext_type, ctx);
+}
+
+bool build_contextual_supported_groups(const std::shared_ptr<extension_blueprint>& ext_ptr,
+                                       std::vector<std::uint8_t>& ext_buffer,
+                                       std::uint16_t& ext_type,
+                                       const extension_build_context& ctx)
+{
+    return build_supported_groups_ext(ext_ptr, ext_buffer, ext_type, ctx);
+}
+
+bool build_contextual_key_share(const std::shared_ptr<extension_blueprint>& ext_ptr,
+                                std::vector<std::uint8_t>& ext_buffer,
+                                std::uint16_t& ext_type,
+                                const extension_build_context& ctx)
+{
+    return build_key_share_ext(ext_ptr, ext_buffer, ext_type, ctx);
+}
+
+bool build_contextual_supported_versions(const std::shared_ptr<extension_blueprint>& ext_ptr,
+                                         std::vector<std::uint8_t>& ext_buffer,
+                                         std::uint16_t& ext_type,
+                                         const extension_build_context& ctx)
+{
+    return build_supported_versions_ext(ext_ptr, ext_buffer, ext_type, ctx);
+}
+
+bool build_contextual_padding(const std::shared_ptr<extension_blueprint>&,
+                              std::vector<std::uint8_t>& ext_buffer,
+                              std::uint16_t& ext_type,
+                              const extension_build_context& ctx)
+{
+    return build_padding_ext(ext_buffer, ext_type, ctx);
+}
+
+std::optional<contextual_extension_builder> find_contextual_extension_builder(const extension_type type)
+{
+    struct builder_entry
+    {
+        extension_type type;
+        contextual_extension_builder fn;
+    };
+
+    static constexpr std::array<builder_entry, 6> entries = {{
+        {extension_type::kGrease, build_contextual_grease},
+        {extension_type::kSni, build_contextual_sni},
+        {extension_type::kSupportedGroups, build_contextual_supported_groups},
+        {extension_type::kKeyShare, build_contextual_key_share},
+        {extension_type::kSupportedVersions, build_contextual_supported_versions},
+        {extension_type::kPadding, build_contextual_padding},
+    }};
+
+    for (const auto& entry : entries)
+    {
+        if (entry.type == type)
+        {
+            return entry.fn;
+        }
+    }
+    return std::nullopt;
+}
+
 bool build_extension_with_context(const std::shared_ptr<extension_blueprint>& ext_ptr,
                                   std::vector<std::uint8_t>& ext_buffer,
                                   std::uint16_t& ext_type,
                                   const extension_build_context& ctx)
 {
-    switch (ext_ptr->type())
+    const auto builder = find_contextual_extension_builder(ext_ptr->type());
+    if (!builder.has_value())
     {
-        case extension_type::kGrease:
-            return build_grease_ext(ext_buffer, ext_type, ctx);
-        case extension_type::kSni:
-            return build_sni_ext(ext_buffer, ext_type, ctx);
-        case extension_type::kSupportedGroups:
-            return build_supported_groups_ext(ext_ptr, ext_buffer, ext_type, ctx);
-        case extension_type::kKeyShare:
-            return build_key_share_ext(ext_ptr, ext_buffer, ext_type, ctx);
-        case extension_type::kSupportedVersions:
-            return build_supported_versions_ext(ext_ptr, ext_buffer, ext_type, ctx);
-        case extension_type::kPadding:
-            return build_padding_ext(ext_buffer, ext_type, ctx);
-        default:
-            return false;
+        return false;
     }
+    return (*builder)(ext_ptr, ext_buffer, ext_type, ctx);
 }
 
 bool build_extension_without_blueprint(const extension_type type, std::vector<std::uint8_t>& ext_buffer, std::uint16_t& ext_type)
@@ -716,40 +793,47 @@ std::vector<std::uint8_t> construct_finished(const std::vector<std::uint8_t>& ve
     return msg;
 }
 
+bool parse_certificate_verify_payload_length(const std::vector<std::uint8_t>& msg, std::uint32_t& payload_len)
+{
+    if (msg.size() < 8 || msg[0] != 0x0f)
+    {
+        return false;
+    }
+    payload_len =
+        (static_cast<std::uint32_t>(msg[1]) << 16) | (static_cast<std::uint32_t>(msg[2]) << 8) | static_cast<std::uint32_t>(msg[3]);
+    return msg.size() >= 4 + payload_len;
+}
+
+bool read_certificate_verify_u16(const std::vector<std::uint8_t>& msg, std::size_t& pos, std::uint16_t& value)
+{
+    if (pos + 2 > msg.size())
+    {
+        return false;
+    }
+    value = static_cast<std::uint16_t>((msg[pos] << 8) | msg[pos + 1]);
+    pos += 2;
+    return true;
+}
+
 std::optional<certificate_verify_info> parse_certificate_verify(const std::vector<std::uint8_t>& msg)
 {
-    if (msg.size() < 4 + 2 + 2)
-    {
-        return std::nullopt;
-    }
-    if (msg[0] != 0x0f)
-    {
-        return std::nullopt;
-    }
-
-    const std::uint32_t len =
-        (static_cast<std::uint32_t>(msg[1]) << 16) | (static_cast<std::uint32_t>(msg[2]) << 8) | static_cast<std::uint32_t>(msg[3]);
-    if (msg.size() < 4 + len)
+    std::uint32_t payload_len = 0;
+    if (!parse_certificate_verify_payload_length(msg, payload_len))
     {
         return std::nullopt;
     }
 
     std::size_t pos = 4;
-    if (pos + 2 > msg.size())
+    std::uint16_t scheme = 0;
+    if (!read_certificate_verify_u16(msg, pos, scheme))
     {
         return std::nullopt;
     }
-
-    const auto scheme = static_cast<std::uint16_t>((msg[pos] << 8) | msg[pos + 1]);
-    pos += 2;
-
-    if (pos + 2 > msg.size())
+    std::uint16_t sig_len = 0;
+    if (!read_certificate_verify_u16(msg, pos, sig_len))
     {
         return std::nullopt;
     }
-
-    const auto sig_len = static_cast<std::uint16_t>((msg[pos] << 8) | msg[pos + 1]);
-    pos += 2;
 
     if (pos + sig_len > msg.size())
     {
@@ -900,6 +984,30 @@ bool advance_extension_payload(std::size_t& pos, const std::size_t end, const st
     return true;
 }
 
+std::optional<server_key_share_info> find_server_key_share_in_extensions(const std::vector<std::uint8_t>& server_hello,
+                                                                         std::size_t pos,
+                                                                         const std::size_t end)
+{
+    while (pos + 4 <= end)
+    {
+        std::uint16_t type = 0;
+        std::uint16_t ext_len = 0;
+        if (!parse_extension_header(server_hello, end, pos, type, ext_len))
+        {
+            return std::nullopt;
+        }
+        if (type == tls_consts::ext::kKeyShare && ext_len >= 4)
+        {
+            return parse_server_key_share_entry(server_hello, pos, end);
+        }
+        if (!advance_extension_payload(pos, end, ext_len))
+        {
+            return std::nullopt;
+        }
+    }
+    return std::nullopt;
+}
+
 std::optional<server_key_share_info> extract_server_key_share(const std::vector<std::uint8_t>& server_hello)
 {
     std::size_t pos = 0;
@@ -913,25 +1021,7 @@ std::optional<server_key_share_info> extract_server_key_share(const std::vector<
     {
         return std::nullopt;
     }
-
-    while (pos + 4 <= end)
-    {
-        std::uint16_t type = 0;
-        std::uint16_t ext_len = 0;
-        if (!parse_extension_header(server_hello, end, pos, type, ext_len))
-        {
-            break;
-        }
-        if (type == tls_consts::ext::kKeyShare && ext_len >= 4)
-        {
-            return parse_server_key_share_entry(server_hello, pos, end);
-        }
-        if (!advance_extension_payload(pos, end, ext_len))
-        {
-            break;
-        }
-    }
-    return std::nullopt;
+    return find_server_key_share_in_extensions(server_hello, pos, end);
 }
 
 struct encrypted_extensions_range

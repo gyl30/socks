@@ -96,19 +96,58 @@ runtime_services start_runtime_services(mux::io_context_pool& pool, const mux::c
     return services;
 }
 
-bool register_shutdown_signals(asio::signal_set& signals, mux::io_context_pool& pool, const runtime_services& services)
+bool register_signal(asio::signal_set& signals, const int signal, const char* signal_name)
 {
     std::error_code ec;
-    ec = signals.add(SIGINT, ec);
-    if (ec)
+    ec = signals.add(signal, ec);
+    if (!ec)
     {
-        LOG_ERROR("fatal failed to register sigint error {}", ec.message());
+        return true;
+    }
+    LOG_ERROR("fatal failed to register {} error {}", signal_name, ec.message());
+    return false;
+}
+
+void stop_runtime_services(mux::io_context_pool& pool, const runtime_services& services)
+{
+    if (services.socks != nullptr)
+    {
+        services.socks->stop();
+    }
+    if (services.tproxy != nullptr)
+    {
+        services.tproxy->stop();
+    }
+    if (services.server != nullptr)
+    {
+        services.server->stop();
+    }
+    pool.stop();
+}
+
+std::uint32_t resolve_worker_threads()
+{
+    const auto threads_count = std::thread::hardware_concurrency();
+    if (threads_count > 0)
+    {
+        return threads_count;
+    }
+    return 4;
+}
+
+bool is_supported_runtime_mode(const std::string& mode)
+{
+    return mode == "client" || mode == "server";
+}
+
+bool register_shutdown_signals(asio::signal_set& signals, mux::io_context_pool& pool, const runtime_services& services)
+{
+    if (!register_signal(signals, SIGINT, "sigint"))
+    {
         return false;
     }
-    ec = signals.add(SIGTERM, ec);
-    if (ec)
+    if (!register_signal(signals, SIGTERM, "sigterm"))
     {
-        LOG_ERROR("fatal failed to register sigterm error {}", ec.message());
         return false;
     }
 
@@ -119,20 +158,7 @@ bool register_shutdown_signals(asio::signal_set& signals, mux::io_context_pool& 
             {
                 return;
             }
-
-            if (services.socks != nullptr)
-            {
-                services.socks->stop();
-            }
-            if (services.tproxy != nullptr)
-            {
-                services.tproxy->stop();
-            }
-            if (services.server != nullptr)
-            {
-                services.server->stop();
-            }
-            pool.stop();
+            stop_runtime_services(pool, services);
         });
     return true;
 }
@@ -150,16 +176,15 @@ int run_with_config(const char* prog, const std::string& config_path)
     set_level(cfg.log.level);
     mux::statistics::instance().start_time();
 
-    const auto threads_count = std::thread::hardware_concurrency();
     std::error_code ec;
-    mux::io_context_pool pool(threads_count > 0 ? threads_count : 4, ec);
+    mux::io_context_pool pool(resolve_worker_threads(), ec);
     if (ec)
     {
         LOG_ERROR("fatal failed to create io context pool error {}", ec.message());
         return 1;
     }
 
-    if (cfg.mode != "client" && cfg.mode != "server")
+    if (!is_supported_runtime_mode(cfg.mode))
     {
         print_usage(prog);
         return 1;

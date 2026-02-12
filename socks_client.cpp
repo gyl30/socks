@@ -249,6 +249,45 @@ asio::awaitable<bool> run_accept_iteration(asio::ip::tcp::acceptor& acceptor,
     co_return true;
 }
 
+void close_acceptor_on_stop(asio::ip::tcp::acceptor& acceptor)
+{
+    std::error_code close_ec;
+    close_ec = acceptor.close(close_ec);
+    if (close_ec && close_ec != asio::error::bad_descriptor)
+    {
+        LOG_ERROR("acceptor close failed {}", close_ec.message());
+    }
+}
+
+std::vector<std::shared_ptr<socks_session>> collect_sessions_to_stop(std::vector<std::weak_ptr<socks_session>>& sessions)
+{
+    std::vector<std::shared_ptr<socks_session>> sessions_to_stop;
+    sessions_to_stop.reserve(sessions.size());
+    for (auto it = sessions.begin(); it != sessions.end();)
+    {
+        if (auto session = it->lock())
+        {
+            sessions_to_stop.push_back(std::move(session));
+            ++it;
+            continue;
+        }
+        it = sessions.erase(it);
+    }
+    sessions.clear();
+    return sessions_to_stop;
+}
+
+void stop_sessions(const std::vector<std::shared_ptr<socks_session>>& sessions)
+{
+    for (const auto& session : sessions)
+    {
+        if (session != nullptr)
+        {
+            session->stop();
+        }
+    }
+}
+
 }    // namespace
 
 socks_client::socks_client(io_context_pool& pool, const config& cfg)
@@ -296,36 +335,9 @@ void socks_client::stop()
     asio::dispatch(io_context_,
                    [self = shared_from_this()]()
                    {
-                       std::error_code close_ec;
-                       close_ec = self->acceptor_.close(close_ec);
-                       if (close_ec && close_ec != asio::error::bad_descriptor)
-                       {
-                           LOG_ERROR("acceptor close failed {}", close_ec.message());
-                       }
-
-                       std::vector<std::shared_ptr<socks_session>> sessions_to_stop;
-                       sessions_to_stop.reserve(self->sessions_.size());
-                       for (auto it = self->sessions_.begin(); it != self->sessions_.end();)
-                       {
-                           if (auto session = it->lock())
-                           {
-                               sessions_to_stop.push_back(std::move(session));
-                               ++it;
-                           }
-                           else
-                           {
-                               it = self->sessions_.erase(it);
-                           }
-                       }
-                       self->sessions_.clear();
-
-                       for (const auto& session : sessions_to_stop)
-                       {
-                           if (session != nullptr)
-                           {
-                               session->stop();
-                           }
-                       }
+                       close_acceptor_on_stop(self->acceptor_);
+                       auto sessions_to_stop = collect_sessions_to_stop(self->sessions_);
+                       stop_sessions(sessions_to_stop);
                    });
 
     tunnel_pool_->stop();
