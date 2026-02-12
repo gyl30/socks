@@ -105,6 +105,19 @@ TEST_F(config_test, InvalidJson)
     EXPECT_FALSE(cfg.has_value());
 }
 
+TEST_F(config_test, ReplayCacheMaxEntriesWrongTypeRejected)
+{
+    const std::string content = R"({
+        "reality": {
+            "replay_cache_max_entries": "bad"
+        }
+    })";
+    write_config_file(content);
+
+    const auto cfg_opt = mux::parse_config(tmp_file());
+    EXPECT_FALSE(cfg_opt.has_value());
+}
+
 TEST_F(config_test, MissingFieldsUseDefaults)
 {
     const std::string content = R"({})";
