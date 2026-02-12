@@ -51,6 +51,7 @@ set(SOCKS_SOURCES
     tproxy_udp_sender.cpp
     mux_dispatcher.cpp
     reality_messages.cpp
+    tls_cipher_suite.cpp
     cert_fetcher.cpp
     crypto_util.cpp
     reality_fingerprint.cpp
