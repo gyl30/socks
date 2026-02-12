@@ -63,7 +63,8 @@ TEST_F(config_test, ParseValues)
         },
         "reality": {
             "sni": "google.com",
-            "strict_cert_verify": true
+            "strict_cert_verify": true,
+            "replay_cache_max_entries": 4096
         }
     })";
     write_config_file(content);
@@ -87,6 +88,7 @@ TEST_F(config_test, ParseValues)
         EXPECT_EQ(cfg.tproxy.mark, 17);
         EXPECT_EQ(cfg.reality.sni, "google.com");
         EXPECT_TRUE(cfg.reality.strict_cert_verify);
+        EXPECT_EQ(cfg.reality.replay_cache_max_entries, 4096);
     }
 }
 
@@ -112,6 +114,7 @@ TEST_F(config_test, MissingFieldsUseDefaults)
     ASSERT_TRUE(cfg_opt.has_value());
     EXPECT_EQ(cfg_opt->mode, "server");
     EXPECT_TRUE(cfg_opt->reality.strict_cert_verify);
+    EXPECT_EQ(cfg_opt->reality.replay_cache_max_entries, 100000);
     EXPECT_TRUE(cfg_opt->reality.fallback_guard.enabled);
 }
 

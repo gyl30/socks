@@ -743,6 +743,7 @@ asio::awaitable<bool> write_fallback_initial_buffer(const std::shared_ptr<asio::
 remote_server::remote_server(io_context_pool& pool, const config& cfg)
     : io_context_(pool.get_io_context()),
       acceptor_(io_context_),
+      replay_cache_(static_cast<std::size_t>(cfg.reality.replay_cache_max_entries)),
       fallbacks_(cfg.fallbacks),
       fallback_guard_config_(cfg.reality.fallback_guard),
       timeout_config_(cfg.timeout),
