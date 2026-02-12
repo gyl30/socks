@@ -115,6 +115,7 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
         asio::ip::tcp::socket& socket,
         const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& s_hs_keys,
         const reality::handshake_keys& hs_keys,
+        const bool strict_cert_verify,
         reality::transcript& trans,
         const EVP_CIPHER* cipher,
         const EVP_MD* md,
@@ -139,6 +140,7 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
     std::vector<std::uint8_t> short_id_bytes_;
     std::array<std::uint8_t, 3> client_ver_{1, 0, 0};
     bool auth_config_valid_ = true;
+    bool strict_cert_verify_ = false;
     std::optional<reality::fingerprint_type> fingerprint_type_;
     io_context_pool& pool_;
     std::vector<std::uint8_t> server_pub_key_;
