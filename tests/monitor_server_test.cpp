@@ -149,4 +149,25 @@ TEST(MonitorServerTest, EscapesPrometheusLabels)
     EXPECT_NE(resp.find("sni=\"line1\\\"x\\\\y\\nline2\""), std::string::npos);
 }
 
+TEST(MonitorServerTest, ConstructWhenPortAlreadyInUse)
+{
+    const auto port = pick_free_port();
+
+    asio::io_context guard_ioc;
+    asio::ip::tcp::acceptor guard(guard_ioc);
+    asio::error_code ec;
+    guard.open(asio::ip::tcp::v4(), ec);
+    ASSERT_FALSE(ec);
+    guard.set_option(asio::socket_base::reuse_address(true), ec);
+    ASSERT_FALSE(ec);
+    guard.bind(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), port), ec);
+    ASSERT_FALSE(ec);
+    guard.listen(asio::socket_base::max_listen_connections, ec);
+    ASSERT_FALSE(ec);
+
+    asio::io_context ioc;
+    auto server = std::make_shared<monitor_server>(ioc, port, std::string("token"), 10);
+    ASSERT_NE(server, nullptr);
+}
+
 }    // namespace mux
