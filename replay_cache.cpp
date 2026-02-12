@@ -3,10 +3,16 @@
 #include <vector>
 #include <cstdint>
 
+#include "constants.h"
 #include "replay_cache.h"
 
 namespace mux
 {
+
+namespace
+{
+constexpr auto kReplayCacheWindow = std::chrono::seconds(constants::auth::kMaxClockSkewSec * 2);
+}
 
 bool replay_cache::check_and_insert(const std::vector<std::uint8_t>& sid)
 {
@@ -31,7 +37,7 @@ bool replay_cache::check_and_insert(const std::vector<std::uint8_t>& sid)
 void replay_cache::cleanup()
 {
     const auto now = std::chrono::steady_clock::now();
-    while (!history_.empty() && (now - history_.front().time > std::chrono::minutes(5)))
+    while (!history_.empty() && (now - history_.front().time > kReplayCacheWindow))
     {
         cache_.erase(history_.front().sid);
         history_.pop_front();
