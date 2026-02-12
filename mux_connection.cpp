@@ -48,6 +48,65 @@ namespace
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
 }
 
+struct timeout_snapshot
+{
+    std::uint64_t read_elapsed_ms = 0;
+    std::uint64_t write_elapsed_ms = 0;
+    std::uint64_t read_timeout_ms = 0;
+    std::uint64_t write_timeout_ms = 0;
+};
+
+bool handle_timeout_wait_error(const std::error_code& ec, const std::uint32_t cid)
+{
+    if (!ec)
+    {
+        return false;
+    }
+    if (ec == asio::error::operation_aborted)
+    {
+        LOG_DEBUG("mux {} timeout timer cancelled", cid);
+    }
+    else
+    {
+        LOG_WARN("mux {} timeout error {}", cid, ec.message());
+    }
+    return true;
+}
+
+timeout_snapshot collect_timeout_snapshot(const std::atomic<std::uint64_t>& last_read_time_ms,
+                                          const std::atomic<std::uint64_t>& last_write_time_ms,
+                                          const config::timeout_t& timeout_config)
+{
+    const auto current_ms = now_ms();
+    return timeout_snapshot{
+        .read_elapsed_ms = current_ms - last_read_time_ms.load(std::memory_order_acquire),
+        .write_elapsed_ms = current_ms - last_write_time_ms.load(std::memory_order_acquire),
+        .read_timeout_ms = static_cast<std::uint64_t>(timeout_config.read) * 1000ULL,
+        .write_timeout_ms = static_cast<std::uint64_t>(timeout_config.write) * 1000ULL,
+    };
+}
+
+[[nodiscard]] bool is_timeout_exceeded(const timeout_snapshot& snapshot)
+{
+    return snapshot.read_elapsed_ms > snapshot.read_timeout_ms || snapshot.write_elapsed_ms > snapshot.write_timeout_ms;
+}
+
+[[nodiscard]] std::uint32_t pick_draining_delay_seconds(std::mt19937& rng)
+{
+    std::uniform_int_distribution<std::uint32_t> delay_dist(5, 30);
+    return delay_dist(rng);
+}
+
+asio::awaitable<void> wait_draining_delay(asio::steady_timer& timer, const std::uint32_t delay_seconds, const std::uint32_t cid)
+{
+    timer.expires_after(std::chrono::seconds(delay_seconds));
+    const auto [wait_ec] = co_await timer.async_wait(asio::as_tuple(asio::use_awaitable));
+    if (!wait_ec)
+    {
+        LOG_DEBUG("mux {} draining complete after {}s", cid, delay_seconds);
+    }
+}
+
 }    // namespace
 
 mux_connection::mux_connection(asio::ip::tcp::socket socket,
@@ -460,16 +519,8 @@ asio::awaitable<void> mux_connection::timeout_loop()
     {
         timer_.expires_after(std::chrono::seconds(1));
         const auto [ec] = co_await timer_.async_wait(asio::as_tuple(asio::use_awaitable));
-        if (ec)
+        if (handle_timeout_wait_error(ec, cid_))
         {
-            if (ec == asio::error::operation_aborted)
-            {
-                LOG_DEBUG("mux {} timeout timer cancelled", cid_);
-            }
-            else
-            {
-                LOG_WARN("mux {} timeout error {}", cid_, ec.message());
-            }
             break;
         }
 
@@ -479,13 +530,8 @@ asio::awaitable<void> mux_connection::timeout_loop()
             continue;
         }
 
-        const auto current_ms = now_ms();
-        const auto read_elapsed_ms = current_ms - last_read_time_ms_.load(std::memory_order_acquire);
-        const auto write_elapsed_ms = current_ms - last_write_time_ms_.load(std::memory_order_acquire);
-        const auto read_timeout_ms = static_cast<std::uint64_t>(timeout_config_.read) * 1000ULL;
-        const auto write_timeout_ms = static_cast<std::uint64_t>(timeout_config_.write) * 1000ULL;
-
-        if (read_elapsed_ms > read_timeout_ms || write_elapsed_ms > write_timeout_ms)
+        const auto snapshot = collect_timeout_snapshot(last_read_time_ms_, last_write_time_ms_, timeout_config_);
+        if (is_timeout_exceeded(snapshot))
         {
             if (streams_.empty())
             {
@@ -495,16 +541,8 @@ asio::awaitable<void> mux_connection::timeout_loop()
 
             LOG_DEBUG("mux {} entering draining mode", cid_);
             connection_state_.store(mux_connection_state::kDraining, std::memory_order_release);
-
-            std::uniform_int_distribution<std::uint32_t> delay_dist(5, 30);
-            const auto delay = delay_dist(rng);
-            timer_.expires_after(std::chrono::seconds(delay));
-
-            const auto [wait_ec] = co_await timer_.async_wait(asio::as_tuple(asio::use_awaitable));
-            if (!wait_ec)
-            {
-                LOG_DEBUG("mux {} draining complete after {}s", cid_, delay);
-            }
+            const auto delay_seconds = pick_draining_delay_seconds(rng);
+            co_await wait_draining_delay(timer_, delay_seconds, cid_);
             break;
         }
     }
