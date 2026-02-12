@@ -78,6 +78,7 @@ class remote_server_mux_test : public ::testing::Test
         cfg.reality.public_key = server_pub_key();
         cfg.reality.sni = sni;
         cfg.reality.short_id = short_id();
+        cfg.reality.strict_cert_verify = false;
         cfg.timeout = timeouts;
         return cfg;
     }

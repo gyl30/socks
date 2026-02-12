@@ -96,6 +96,7 @@ TEST_F(integration_test, FullHandshakeAndMux)
     client_cfg.reality.public_key = client_pub_key();
     client_cfg.reality.sni = sni;
     client_cfg.reality.short_id = short_id();
+    client_cfg.reality.strict_cert_verify = false;
     client_cfg.timeout = timeouts;
     const auto client = std::make_shared<mux::socks_client>(pool, client_cfg);
 
@@ -215,6 +216,7 @@ TEST_F(integration_test, FullDataTransfer)
     client_cfg.reality.public_key = client_pub_key();
     client_cfg.reality.sni = sni;
     client_cfg.reality.short_id = short_id();
+    client_cfg.reality.strict_cert_verify = false;
     client_cfg.timeout = timeouts;
     const auto client = std::make_shared<mux::socks_client>(pool, client_cfg);
     client->start();

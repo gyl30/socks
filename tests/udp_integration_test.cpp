@@ -132,6 +132,7 @@ TEST_F(udp_integration_test, UdpAssociateAndEcho)
     client_cfg.reality.public_key = client_pub_key();
     client_cfg.reality.sni = sni;
     client_cfg.reality.short_id = short_id();
+    client_cfg.reality.strict_cert_verify = false;
     client_cfg.timeout.read = 10;
     client_cfg.timeout.write = 10;
     auto client = std::make_shared<socks_client>(pool, client_cfg);

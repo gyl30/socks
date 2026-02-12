@@ -84,6 +84,7 @@ TEST_F(local_client_handshake_test, HandshakeTimeout)
     client_cfg.socks.port = 0;
     client_cfg.reality.public_key = server_pub_hex();
     client_cfg.reality.sni = "example.com";
+    client_cfg.reality.strict_cert_verify = false;
     client_cfg.timeout = timeouts;
     client_cfg.limits = limits;
     auto client = std::make_shared<mux::socks_client>(pool, client_cfg);
@@ -134,6 +135,7 @@ TEST_F(local_client_handshake_test, InvalidServerHello)
     client_cfg.socks.port = 0;
     client_cfg.reality.public_key = server_pub_hex();
     client_cfg.reality.sni = "example.com";
+    client_cfg.reality.strict_cert_verify = false;
     auto client = std::make_shared<mux::socks_client>(pool, client_cfg);
 
     std::thread pool_thread([&pool]() { pool.run(); });
@@ -203,6 +205,7 @@ TEST_F(local_client_handshake_test, UnsupportedVerifyScheme)
     client_cfg.socks.port = 0;
     client_cfg.reality.public_key = server_pub_hex();
     client_cfg.reality.sni = "example.com";
+    client_cfg.reality.strict_cert_verify = false;
     auto client = std::make_shared<mux::socks_client>(pool, client_cfg);
 
     std::thread pool_thread([&pool]() { pool.run(); });
