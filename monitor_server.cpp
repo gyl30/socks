@@ -139,39 +139,7 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
     std::uint32_t min_interval_ms_ = 0;
 };
 
-monitor_server::monitor_server(asio::io_context& ioc, std::uint16_t port, std::string token) : acceptor_(ioc), token_(std::move(token))
-{
-    asio::ip::tcp::endpoint endpoint;
-    asio::error_code ec;
-    endpoint.address(asio::ip::make_address("127.0.0.1", ec));
-    if (ec)
-    {
-        LOG_ERROR("failed to parse address: {}", ec.message());
-        return;
-    }
-    endpoint.port(port);
-    if (acceptor_.open(endpoint.protocol(), ec); ec)
-    {
-        LOG_ERROR("failed to open acceptor: {}", ec.message());
-        return;
-    }
-    if (acceptor_.set_option(asio::socket_base::reuse_address(true), ec); ec)
-    {
-        LOG_ERROR("failed to set reuse_address: {}", ec.message());
-        return;
-    }
-    if (acceptor_.bind(endpoint, ec); ec)
-    {
-        LOG_ERROR("failed to bind: {}", ec.message());
-        return;
-    }
-    if (acceptor_.listen(asio::socket_base::max_listen_connections, ec); ec)
-    {
-        LOG_ERROR("failed to listen: {}", ec.message());
-        return;
-    }
-    LOG_INFO("monitor server listening on 127.0.0.1:{}", port);
-}
+monitor_server::monitor_server(asio::io_context& ioc, std::uint16_t port, std::string token) : monitor_server(ioc, port, std::move(token), 0) {}
 
 monitor_server::monitor_server(asio::io_context& ioc, std::uint16_t port, std::string token, const std::uint32_t min_interval_ms)
     : acceptor_(ioc), token_(std::move(token)), min_interval_ms_(min_interval_ms)
