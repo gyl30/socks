@@ -61,6 +61,7 @@ add_socks_test(remote_server_mux_test)
 add_socks_test(tproxy_udp_session_test)
 add_socks_test(tproxy_tcp_session_test)
 add_socks_test(tproxy_udp_sender_test)
+add_socks_test(udp_socks_session_test)
 add_socks_test(router_file_test)
 
 add_test(NAME tproxy_integration_test COMMAND ${CMAKE_SOURCE_DIR}/tests/tproxy_integration_test.sh)
