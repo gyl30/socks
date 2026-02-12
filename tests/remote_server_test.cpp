@@ -1,10 +1,12 @@
 #include <chrono>
+#include <future>
 #include <memory>
 #include <string>
 #include <thread>
 #include <vector>
 #include <cstdint>
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <asio/write.hpp>
 #include <asio/buffer.hpp>
@@ -13,6 +15,8 @@
 #include "ch_parser.h"
 #include "crypto_util.h"
 #include "context_pool.h"
+#include "mux_codec.h"
+#include "mock_mux_connection.h"
 #include "reality_auth.h"
 #define private public
 #include "remote_server.h"
@@ -1005,4 +1009,187 @@ TEST_F(remote_server_test, DeriveShareAndFallbackHelperBranches)
 
     mux::connection_context ctx;
     server->record_fallback_result(ctx, false);
+}
+
+TEST_F(remote_server_test, RejectStreamForLimitSendsAckAndReset)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+
+    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
+    auto conn = std::make_shared<mux::mock_mux_connection>(pool.get_io_context());
+
+    mux::connection_context ctx;
+    ctx.conn_id(7);
+    ctx.trace_id("reject-limit");
+
+    EXPECT_CALL(*conn, mock_send_async(42, mux::kCmdAck, testing::_))
+        .WillOnce(
+            [](std::uint32_t, std::uint8_t, const std::vector<std::uint8_t>& payload)
+            {
+                mux::ack_payload ack{};
+                EXPECT_TRUE(mux::mux_codec::decode_ack(payload.data(), payload.size(), ack));
+                EXPECT_EQ(ack.socks_rep, socks::kRepGenFail);
+                return std::error_code{};
+            });
+    EXPECT_CALL(*conn, mock_send_async(42, mux::kCmdRst, testing::_)).WillOnce(testing::Return(std::error_code{}));
+
+    std::promise<void> done;
+    auto done_future = done.get_future();
+    asio::co_spawn(pool.get_io_context(),
+                   [server, conn, ctx, &done]() mutable -> asio::awaitable<void>
+                   {
+                       co_await server->reject_stream_for_limit(conn, ctx, 42);
+                       done.set_value();
+                       co_return;
+                   },
+                   asio::detached);
+
+    std::thread runner([&pool]() { pool.run(); });
+    EXPECT_EQ(done_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    pool.stop();
+    runner.join();
+}
+
+TEST_F(remote_server_test, FallbackFailedAndGuardDisabledBranches)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+
+    auto cfg = make_server_cfg(pick_free_port(), {}, "0102030405060708");
+    cfg.reality.fallback_guard.enabled = false;
+    auto server = std::make_shared<mux::remote_server>(pool, cfg);
+
+    mux::connection_context guard_ctx;
+    guard_ctx.remote_addr("127.0.0.8");
+    EXPECT_TRUE(server->consume_fallback_token(guard_ctx));
+    server->record_fallback_result(guard_ctx, false);
+
+    asio::io_context io_context;
+    asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+
+    asio::ip::tcp::socket client_socket(io_context);
+    client_socket.connect(acceptor.local_endpoint(), ec);
+    ASSERT_FALSE(ec);
+
+    asio::ip::tcp::socket peer_socket(io_context);
+    acceptor.accept(peer_socket, ec);
+    ASSERT_FALSE(ec);
+
+    auto fallback_socket = std::make_shared<asio::ip::tcp::socket>(std::move(client_socket));
+
+    bool drain_done = false;
+    asio::co_spawn(io_context,
+                   [fallback_socket, &drain_done]() -> asio::awaitable<void>
+                   {
+                       co_await mux::remote_server::fallback_failed(fallback_socket);
+                       drain_done = true;
+                       co_return;
+                   },
+                   asio::detached);
+
+    const std::string payload = "fallback-data";
+    asio::write(peer_socket, asio::buffer(payload), ec);
+    ASSERT_FALSE(ec);
+    peer_socket.shutdown(asio::ip::tcp::socket::shutdown_send, ec);
+    peer_socket.close(ec);
+
+    io_context.run();
+    EXPECT_TRUE(drain_done);
+
+    io_context.restart();
+    bool timer_done = false;
+    asio::co_spawn(io_context,
+                   [&io_context, &timer_done]() -> asio::awaitable<void>
+                   {
+                       co_await mux::remote_server::fallback_failed_timer(123, io_context);
+                       timer_done = true;
+                       co_return;
+                   },
+                   asio::detached);
+    io_context.run();
+    EXPECT_TRUE(timer_done);
+}
+
+TEST_F(remote_server_test, PerformHandshakeResponseCoversCipherSuiteSelectionBranches)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+    std::thread runner([&pool]() { pool.run(); });
+
+    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
+
+    reality::server_fingerprint invalid_fp;
+    invalid_fp.cipher_suite = 0x9999;
+    invalid_fp.alpn = "h2";
+    server->set_certificate("cipher.invalid", reality::construct_certificate({0x01, 0x02, 0x03}), invalid_fp, "trace-invalid");
+
+    reality::server_fingerprint chacha_fp;
+    chacha_fp.cipher_suite = 0x1303;
+    chacha_fp.alpn = "h2";
+    server->set_certificate("cipher.chacha", reality::construct_certificate({0x01, 0x02, 0x03}), chacha_fp, "trace-chacha");
+
+    auto run_once = [&](const std::string& sni, const std::uint32_t conn_id, const bool expect_ok) -> mux::remote_server::server_handshake_res
+    {
+        asio::ip::tcp::acceptor acceptor(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+        asio::ip::tcp::socket client_socket(pool.get_io_context());
+        client_socket.connect(acceptor.local_endpoint(), ec);
+        EXPECT_FALSE(ec);
+
+        auto server_socket = std::make_shared<asio::ip::tcp::socket>(pool.get_io_context());
+        acceptor.accept(*server_socket, ec);
+        EXPECT_FALSE(ec);
+
+        std::uint8_t peer_pub[32];
+        std::uint8_t peer_priv[32];
+        EXPECT_TRUE(reality::crypto_util::generate_x25519_keypair(peer_pub, peer_priv));
+
+        mux::client_hello_info info{};
+        info.sni = sni;
+        info.session_id.assign(32, 0x11);
+        info.has_x25519_share = true;
+        info.x25519_pub.assign(peer_pub, peer_pub + 32);
+
+        mux::connection_context ctx;
+        ctx.conn_id(conn_id);
+        ctx.trace_id(sni);
+
+        std::promise<std::pair<mux::remote_server::server_handshake_res, std::error_code>> done;
+        auto done_future = done.get_future();
+        asio::co_spawn(pool.get_io_context(),
+                       [server, server_socket, info, ctx, &done]() mutable -> asio::awaitable<void>
+                       {
+                           std::error_code hs_ec;
+                           reality::transcript trans;
+                           auto res = co_await server->perform_handshake_response(server_socket, info, trans, ctx, hs_ec);
+                           done.set_value({std::move(res), hs_ec});
+                           co_return;
+                       },
+                       asio::detached);
+
+        EXPECT_EQ(done_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+        auto [result, hs_ec] = done_future.get();
+        if (expect_ok)
+        {
+            EXPECT_FALSE(hs_ec);
+            EXPECT_TRUE(result.ok);
+        }
+        else
+        {
+            EXPECT_TRUE(hs_ec);
+            EXPECT_FALSE(result.ok);
+        }
+        return result;
+    };
+
+    const auto invalid_res = run_once("cipher.invalid", 71, true);
+    EXPECT_EQ(invalid_res.cipher, EVP_aes_128_gcm());
+
+    (void)run_once("cipher.chacha", 72, false);
+
+    pool.stop();
+    runner.join();
 }
