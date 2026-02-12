@@ -427,6 +427,45 @@ bool build_authenticated_client_hello(const std::uint8_t* public_key,
     return true;
 }
 
+reality::fingerprint_spec select_fingerprint_spec(const std::optional<reality::fingerprint_type>& fingerprint_type)
+{
+    if (fingerprint_type.has_value())
+    {
+        return reality::fingerprint_factory::get(*fingerprint_type);
+    }
+
+    static const std::array<reality::fingerprint_type, 4> kFingerprintCandidates = {
+        reality::fingerprint_type::kChrome120,
+        reality::fingerprint_type::kFirefox120,
+        reality::fingerprint_type::kIOS14,
+        reality::fingerprint_type::kAndroid11OkHttp,
+    };
+    static thread_local std::mt19937 fp_gen(std::random_device{}());
+    std::uniform_int_distribution<std::size_t> fp_dist(0, kFingerprintCandidates.size() - 1);
+    return reality::fingerprint_factory::get(kFingerprintCandidates[fp_dist(fp_gen)]);
+}
+
+struct handshake_traffic_keys
+{
+    std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> c_hs_keys;
+    std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> s_hs_keys;
+};
+
+handshake_traffic_keys derive_handshake_traffic_keys(const reality::handshake_keys& hs_keys,
+                                                     const std::uint16_t cipher_suite,
+                                                     const EVP_MD* negotiated_md,
+                                                     std::error_code& ec)
+{
+    const std::size_t key_len =
+        (cipher_suite == 0x1302 || cipher_suite == 0x1303) ? constants::crypto::kKeyLen256 : constants::crypto::kKeyLen128;
+    constexpr std::size_t iv_len = constants::crypto::kIvLen;
+    return handshake_traffic_keys{
+        .c_hs_keys =
+            reality::tls_key_schedule::derive_traffic_keys(hs_keys.client_handshake_traffic_secret, ec, key_len, iv_len, negotiated_md),
+        .s_hs_keys =
+            reality::tls_key_schedule::derive_traffic_keys(hs_keys.server_handshake_traffic_secret, ec, key_len, iv_len, negotiated_md)};
+}
+
 }    // namespace
 
 client_tunnel_pool::client_tunnel_pool(io_context_pool& pool, const config& cfg, const std::uint32_t mark)
@@ -729,76 +768,54 @@ asio::awaitable<bool> client_tunnel_pool::tcp_connect(asio::io_context& io_conte
 asio::awaitable<std::pair<bool, client_tunnel_pool::handshake_result>> client_tunnel_pool::perform_reality_handshake(asio::ip::tcp::socket& socket,
                                                                                                                      std::error_code& ec) const
 {
+    const auto fail = []() { return std::make_pair(false, handshake_result{}); };
+
     std::uint8_t public_key[32];
     std::uint8_t private_key[32];
 
     if (!reality::crypto_util::generate_x25519_keypair(public_key, private_key))
     {
         ec = std::make_error_code(std::errc::operation_canceled);
-        co_return std::make_pair(false, handshake_result{});
+        co_return fail();
     }
 
     const std::shared_ptr<void> defer_cleanse(nullptr, [&](void*) { OPENSSL_cleanse(private_key, 32); });
 
-    reality::fingerprint_spec spec;
-    if (fingerprint_type_.has_value())
-    {
-        spec = reality::fingerprint_factory::get(*fingerprint_type_);
-    }
-    else
-    {
-        static const std::vector<reality::fingerprint_type> fp_types = {
-            reality::fingerprint_type::kChrome120,
-            reality::fingerprint_type::kFirefox120,
-            reality::fingerprint_type::kIOS14,
-            reality::fingerprint_type::kAndroid11OkHttp,
-        };
-        const auto& candidates = fp_types;
-        static thread_local std::mt19937 fp_gen(std::random_device{}());
-        std::uniform_int_distribution<std::size_t> fp_dist(0, candidates.size() - 1);
-        spec = reality::fingerprint_factory::get(candidates[fp_dist(fp_gen)]);
-    }
-
+    const auto spec = select_fingerprint_spec(fingerprint_type_);
     reality::transcript trans;
     if (!co_await generate_and_send_client_hello(socket, public_key, private_key, spec, trans, ec))
     {
-        co_return std::make_pair(false, handshake_result{});
+        co_return fail();
     }
 
     const auto sh_res = co_await process_server_hello(socket, private_key, trans, ec);
     if (!sh_res.ok)
     {
-        co_return std::make_pair(false, handshake_result{});
+        co_return fail();
     }
 
-    const std::size_t key_len =
-        (sh_res.cipher_suite == 0x1302 || sh_res.cipher_suite == 0x1303) ? constants::crypto::kKeyLen256 : constants::crypto::kKeyLen128;
-    constexpr std::size_t iv_len = constants::crypto::kIvLen;
-
-    const auto c_hs_keys =
-        reality::tls_key_schedule::derive_traffic_keys(sh_res.hs_keys.client_handshake_traffic_secret, ec, key_len, iv_len, sh_res.negotiated_md);
-    const auto s_hs_keys =
-        reality::tls_key_schedule::derive_traffic_keys(sh_res.hs_keys.server_handshake_traffic_secret, ec, key_len, iv_len, sh_res.negotiated_md);
+    const auto hs_keys = derive_handshake_traffic_keys(sh_res.hs_keys, sh_res.cipher_suite, sh_res.negotiated_md, ec);
 
     auto [loop_ok, app_sec] =
-        co_await handshake_read_loop(socket, s_hs_keys, sh_res.hs_keys, trans, sh_res.negotiated_cipher, sh_res.negotiated_md, ec);
+        co_await handshake_read_loop(socket, hs_keys.s_hs_keys, sh_res.hs_keys, trans, sh_res.negotiated_cipher, sh_res.negotiated_md, ec);
     if (!loop_ok)
     {
-        co_return std::make_pair(false, handshake_result{});
+        co_return fail();
     }
 
     if (!co_await send_client_finished(
-            socket, c_hs_keys, sh_res.hs_keys.client_handshake_traffic_secret, trans, sh_res.negotiated_cipher, sh_res.negotiated_md, ec))
+            socket, hs_keys.c_hs_keys, sh_res.hs_keys.client_handshake_traffic_secret, trans, sh_res.negotiated_cipher, sh_res.negotiated_md, ec))
     {
-        co_return std::make_pair(false, handshake_result{});
+        co_return fail();
     }
 
-    co_return std::make_pair(true,
-                             handshake_result{.c_app_secret = app_sec.first,
-                                              .s_app_secret = app_sec.second,
-                                              .cipher_suite = sh_res.cipher_suite,
-                                              .md = sh_res.negotiated_md,
-                                              .cipher = sh_res.negotiated_cipher});
+    handshake_result result{
+        .c_app_secret = std::move(app_sec.first),
+        .s_app_secret = std::move(app_sec.second),
+        .cipher_suite = sh_res.cipher_suite,
+        .md = sh_res.negotiated_md,
+        .cipher = sh_res.negotiated_cipher};
+    co_return std::make_pair(true, std::move(result));
 }
 
 asio::awaitable<bool> client_tunnel_pool::generate_and_send_client_hello(asio::ip::tcp::socket& socket,
