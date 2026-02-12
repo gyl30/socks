@@ -5,11 +5,32 @@
 #include <system_error>
 
 #include <gtest/gtest.h>
+#include <asio/ip/tcp.hpp>
 
 #include "context_pool.h"
+#define private public
 #include "socks_client.h"
+#undef private
 
 using mux::io_context_pool;
+
+namespace
+{
+
+bool wait_for_listen_port(const std::shared_ptr<mux::socks_client>& client)
+{
+    for (int i = 0; i < 40; ++i)
+    {
+        if (client->listen_port() != 0)
+        {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    }
+    return false;
+}
+
+}    // namespace
 
 TEST(LocalClientTest, BasicStartStop)
 {
@@ -186,4 +207,122 @@ TEST(LocalClientTest, ConnectFailureLoop)
     client->start();
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     client->stop();
+}
+
+TEST(LocalClientTest, DisabledSocksStopsImmediately)
+{
+    std::error_code ec;
+    io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+
+    mux::config cfg;
+    cfg.outbound.host = "127.0.0.1";
+    cfg.outbound.port = 12345;
+    cfg.socks.port = 0;
+    cfg.socks.enabled = false;
+    cfg.reality.public_key = std::string(64, 'a');
+    cfg.reality.sni = "example.com";
+
+    const auto client = std::make_shared<mux::socks_client>(pool, cfg);
+    client->start();
+    EXPECT_TRUE(client->stop_.load(std::memory_order_acquire));
+    client->stop();
+}
+
+TEST(LocalClientTest, InvalidListenHostAbortsAcceptLoop)
+{
+    std::error_code ec;
+    io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+
+    mux::config cfg;
+    cfg.outbound.host = "127.0.0.1";
+    cfg.outbound.port = 1;
+    cfg.socks.host = "not-an-ip";
+    cfg.socks.port = 0;
+    cfg.reality.public_key = std::string(64, 'a');
+    cfg.reality.sni = "example.com";
+
+    const auto client = std::make_shared<mux::socks_client>(pool, cfg);
+    std::thread pool_thread([&pool]() { pool.run(); });
+
+    client->start();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    client->stop();
+    pool.stop();
+    if (pool_thread.joinable())
+    {
+        pool_thread.join();
+    }
+}
+
+TEST(LocalClientTest, ListenPortConflictTriggersSetupFailure)
+{
+    std::error_code ec;
+    io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+
+    asio::io_context blocker_ctx;
+    asio::ip::tcp::acceptor blocker(blocker_ctx, {asio::ip::make_address("127.0.0.1"), 0});
+    const auto blocked_port = blocker.local_endpoint().port();
+
+    mux::config cfg;
+    cfg.outbound.host = "127.0.0.1";
+    cfg.outbound.port = 1;
+    cfg.socks.host = "127.0.0.1";
+    cfg.socks.port = blocked_port;
+    cfg.reality.public_key = std::string(64, 'a');
+    cfg.reality.sni = "example.com";
+
+    const auto client = std::make_shared<mux::socks_client>(pool, cfg);
+    std::thread pool_thread([&pool]() { pool.run(); });
+
+    client->start();
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    client->stop();
+    pool.stop();
+    if (pool_thread.joinable())
+    {
+        pool_thread.join();
+    }
+}
+
+TEST(LocalClientTest, NoTunnelSelectionAndSessionPrunePath)
+{
+    std::error_code ec;
+    io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+
+    mux::config cfg;
+    cfg.outbound.host = "127.0.0.1";
+    cfg.outbound.port = 1;
+    cfg.socks.host = "127.0.0.1";
+    cfg.socks.port = 0;
+    cfg.reality.public_key = std::string(64, 'a');
+    cfg.reality.sni = "example.com";
+
+    const auto client = std::make_shared<mux::socks_client>(pool, cfg);
+    std::thread pool_thread([&pool]() { pool.run(); });
+
+    client->start();
+    ASSERT_TRUE(wait_for_listen_port(client));
+
+    asio::io_context connect_ctx;
+    asio::ip::tcp::socket first(connect_ctx);
+    asio::ip::tcp::socket second(connect_ctx);
+    const asio::ip::tcp::endpoint ep(asio::ip::make_address("127.0.0.1"), client->listen_port());
+    first.connect(ep, ec);
+    ASSERT_FALSE(ec);
+    second.connect(ep, ec);
+    ASSERT_FALSE(ec);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(2800));
+    EXPECT_FALSE(client->sessions_.empty());
+
+    client->stop();
+    pool.stop();
+    if (pool_thread.joinable())
+    {
+        pool_thread.join();
+    }
 }
