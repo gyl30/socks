@@ -13,6 +13,105 @@
 
 namespace
 {
+
+[[nodiscard]] bool has_remaining(const std::size_t len, const std::size_t pos, const std::size_t need)
+{
+    if (pos > len)
+    {
+        return false;
+    }
+    return len - pos >= need;
+}
+
+bool parse_ipv4_address(const std::uint8_t* data, const std::size_t len, std::size_t& pos, std::string& addr)
+{
+    if (!has_remaining(len, pos, 4))
+    {
+        return false;
+    }
+    asio::ip::address_v4::bytes_type bytes;
+    std::memcpy(bytes.data(), data + pos, 4);
+    addr = asio::ip::address_v4(bytes).to_string();
+    pos += 4;
+    return true;
+}
+
+bool parse_domain_address(const std::uint8_t* data, const std::size_t len, std::size_t& pos, std::string& addr)
+{
+    if (!has_remaining(len, pos, 1))
+    {
+        return false;
+    }
+    const std::uint8_t domain_len = data[pos];
+    ++pos;
+    if (!has_remaining(len, pos, domain_len))
+    {
+        return false;
+    }
+    addr = std::string(reinterpret_cast<const char*>(data) + pos, domain_len);
+    pos += domain_len;
+    return true;
+}
+
+bool parse_ipv6_address(const std::uint8_t* data, const std::size_t len, std::size_t& pos, std::string& addr)
+{
+    if (!has_remaining(len, pos, 16))
+    {
+        return false;
+    }
+    asio::ip::address_v6::bytes_type bytes;
+    std::memcpy(bytes.data(), data + pos, 16);
+    addr = asio::ip::address_v6(bytes).to_string();
+    pos += 16;
+    return true;
+}
+
+bool parse_port(const std::uint8_t* data, const std::size_t len, std::size_t& pos, std::uint16_t& port)
+{
+    if (!has_remaining(len, pos, 2))
+    {
+        return false;
+    }
+    port = static_cast<std::uint16_t>((data[pos] << 8) | data[pos + 1]);
+    pos += 2;
+    return true;
+}
+
+bool parse_address_and_port(const std::uint8_t* data,
+                            const std::size_t len,
+                            const std::uint8_t atyp,
+                            const std::size_t start_pos,
+                            std::string& addr,
+                            std::uint16_t& port,
+                            std::size_t& next_pos)
+{
+    std::size_t pos = start_pos;
+    bool ok = false;
+    if (atyp == socks::kAtypIpv4)
+    {
+        ok = parse_ipv4_address(data, len, pos, addr);
+    }
+    else if (atyp == socks::kAtypDomain)
+    {
+        ok = parse_domain_address(data, len, pos, addr);
+    }
+    else if (atyp == socks::kAtypIpv6)
+    {
+        ok = parse_ipv6_address(data, len, pos, addr);
+    }
+
+    if (!ok)
+    {
+        return false;
+    }
+    if (!parse_port(data, len, pos, port))
+    {
+        return false;
+    }
+    next_pos = pos;
+    return true;
+}
+
 }
 
 asio::ip::address socks_codec::normalize_ip_address(const asio::ip::address& addr)
@@ -82,54 +181,7 @@ bool socks_codec::decode_udp_header(const std::uint8_t* data, std::size_t len, s
 
     out.frag = data[2];
     const std::uint8_t atyp = data[3];
-
-    std::size_t pos = 4;
-    if (atyp == socks::kAtypIpv4)
-    {
-        if (len < pos + 4 + 2)
-        {
-            return false;
-        }
-        asio::ip::address_v4::bytes_type b;
-        std::memcpy(b.data(), data + pos, 4);
-        out.addr = asio::ip::address_v4(b).to_string();
-        pos += 4;
-    }
-    else if (atyp == socks::kAtypDomain)
-    {
-        if (len < pos + 1)
-        {
-            return false;
-        }
-        const std::uint8_t dlen = data[pos];
-        pos++;
-        if (len < pos + dlen + 2)
-        {
-            return false;
-        }
-        out.addr = std::string(reinterpret_cast<const char*>(data) + pos, dlen);
-        pos += dlen;
-    }
-    else if (atyp == socks::kAtypIpv6)
-    {
-        if (len < pos + 16 + 2)
-        {
-            return false;
-        }
-        asio::ip::address_v6::bytes_type b;
-        std::memcpy(b.data(), data + pos, 16);
-        out.addr = asio::ip::address_v6(b).to_string();
-        pos += 16;
-    }
-    else
-    {
-        return false;
-    }
-
-    out.port = static_cast<std::uint16_t>((data[pos] << 8) | data[pos + 1]);
-    pos += 2;
-    out.header_len = pos;
-    return true;
+    return parse_address_and_port(data, len, atyp, 4, out.addr, out.port, out.header_len);
 }
 
 bool socks_codec::decode_socks5_request(const std::uint8_t* data, std::size_t len, socks5_request& out)
@@ -143,54 +195,7 @@ bool socks_codec::decode_socks5_request(const std::uint8_t* data, std::size_t le
     out.cmd = data[1];
     out.rsv = data[2];
     out.atyp = data[3];
-
-    std::size_t pos = 4;
-    if (out.atyp == socks::kAtypIpv4)
-    {
-        if (len < pos + 4 + 2)
-        {
-            return false;
-        }
-        asio::ip::address_v4::bytes_type b;
-        std::memcpy(b.data(), data + pos, 4);
-        out.addr = asio::ip::address_v4(b).to_string();
-        pos += 4;
-    }
-    else if (out.atyp == socks::kAtypDomain)
-    {
-        if (len < pos + 1)
-        {
-            return false;
-        }
-        const std::uint8_t dlen = data[pos];
-        pos++;
-        if (len < pos + dlen + 2)
-        {
-            return false;
-        }
-        out.addr = std::string(reinterpret_cast<const char*>(data) + pos, dlen);
-        pos += dlen;
-    }
-    else if (out.atyp == socks::kAtypIpv6)
-    {
-        if (len < pos + 16 + 2)
-        {
-            return false;
-        }
-        asio::ip::address_v6::bytes_type b;
-        std::memcpy(b.data(), data + pos, 16);
-        out.addr = asio::ip::address_v6(b).to_string();
-        pos += 16;
-    }
-    else
-    {
-        return false;
-    }
-
-    out.port = static_cast<std::uint16_t>((data[pos] << 8) | data[pos + 1]);
-    pos += 2;
-    out.header_len = pos;
-    return true;
+    return parse_address_and_port(data, len, out.atyp, 4, out.addr, out.port, out.header_len);
 }
 
 bool socks_codec::decode_socks5_auth_request(const std::uint8_t* data, std::size_t len, socks5_auth_request& out)
