@@ -20,6 +20,70 @@
 namespace mux::net
 {
 
+namespace
+{
+
+bool has_valid_cmsg_payload(const cmsghdr* cm, const std::size_t payload_len)
+{
+    return cm->cmsg_len >= CMSG_LEN(payload_len);
+}
+
+asio::ip::udp::endpoint make_v4_endpoint(const in_addr& addr, const in_port_t port)
+{
+    asio::ip::address_v4::bytes_type bytes{};
+    std::memcpy(bytes.data(), &addr, bytes.size());
+    return asio::ip::udp::endpoint(asio::ip::address_v4(bytes), ntohs(port));
+}
+
+asio::ip::udp::endpoint make_v6_endpoint(const in6_addr& addr, const in_port_t port)
+{
+    asio::ip::address_v6::bytes_type bytes{};
+    std::memcpy(bytes.data(), &addr, bytes.size());
+    return asio::ip::udp::endpoint(asio::ip::address_v6(bytes), ntohs(port));
+}
+
+std::optional<asio::ip::udp::endpoint> parse_ipv4_original_dst(const cmsghdr* cm)
+{
+    if (!has_valid_cmsg_payload(cm, sizeof(sockaddr_in)))
+    {
+        return std::nullopt;
+    }
+    const auto* addr = reinterpret_cast<const sockaddr_in*>(CMSG_DATA(cm));
+    return make_v4_endpoint(addr->sin_addr, addr->sin_port);
+}
+
+std::optional<asio::ip::udp::endpoint> parse_ipv6_original_dst(const cmsghdr* cm)
+{
+    if (!has_valid_cmsg_payload(cm, sizeof(sockaddr_in6)))
+    {
+        return std::nullopt;
+    }
+    const auto* addr = reinterpret_cast<const sockaddr_in6*>(CMSG_DATA(cm));
+    return make_v6_endpoint(addr->sin6_addr, addr->sin6_port);
+}
+
+asio::ip::udp::endpoint endpoint_from_sockaddr_v4(const sockaddr_storage& addr, const std::size_t len)
+{
+    if (len < sizeof(sockaddr_in))
+    {
+        return asio::ip::udp::endpoint();
+    }
+    const auto* v4 = reinterpret_cast<const sockaddr_in*>(&addr);
+    return make_v4_endpoint(v4->sin_addr, v4->sin_port);
+}
+
+asio::ip::udp::endpoint endpoint_from_sockaddr_v6(const sockaddr_storage& addr, const std::size_t len)
+{
+    if (len < sizeof(sockaddr_in6))
+    {
+        return asio::ip::udp::endpoint();
+    }
+    const auto* v6 = reinterpret_cast<const sockaddr_in6*>(&addr);
+    return make_v6_endpoint(v6->sin6_addr, v6->sin6_port);
+}
+
+}    // namespace
+
 bool set_socket_mark(int fd, const std::uint32_t mark, std::error_code& ec)
 {
 #ifdef __linux__
@@ -124,25 +188,21 @@ std::optional<asio::ip::udp::endpoint> parse_original_dst(const msghdr& msg)
     {
         if (cm->cmsg_level == SOL_IP && cm->cmsg_type == IP_ORIGDSTADDR)
         {
-            if (cm->cmsg_len < CMSG_LEN(sizeof(sockaddr_in)))
+            const auto ep = parse_ipv4_original_dst(cm);
+            if (!ep.has_value())
             {
                 continue;
             }
-            const auto* addr = reinterpret_cast<const sockaddr_in*>(CMSG_DATA(cm));
-            asio::ip::address_v4::bytes_type bytes{};
-            std::memcpy(bytes.data(), &addr->sin_addr, bytes.size());
-            return asio::ip::udp::endpoint(asio::ip::address_v4(bytes), ntohs(addr->sin_port));
+            return ep;
         }
         if (cm->cmsg_level == SOL_IPV6 && cm->cmsg_type == IPV6_ORIGDSTADDR)
         {
-            if (cm->cmsg_len < CMSG_LEN(sizeof(sockaddr_in6)))
+            const auto ep = parse_ipv6_original_dst(cm);
+            if (!ep.has_value())
             {
                 continue;
             }
-            const auto* addr = reinterpret_cast<const sockaddr_in6*>(CMSG_DATA(cm));
-            asio::ip::address_v6::bytes_type bytes{};
-            std::memcpy(bytes.data(), &addr->sin6_addr, bytes.size());
-            return asio::ip::udp::endpoint(asio::ip::address_v6(bytes), ntohs(addr->sin6_port));
+            return ep;
         }
     }
     return std::nullopt;
@@ -156,25 +216,11 @@ asio::ip::udp::endpoint endpoint_from_sockaddr(const sockaddr_storage& addr, con
 {
     if (addr.ss_family == AF_INET)
     {
-        if (len < sizeof(sockaddr_in))
-        {
-            return asio::ip::udp::endpoint();
-        }
-        const auto* v4 = reinterpret_cast<const sockaddr_in*>(&addr);
-        asio::ip::address_v4::bytes_type bytes{};
-        std::memcpy(bytes.data(), &v4->sin_addr, bytes.size());
-        return asio::ip::udp::endpoint(asio::ip::address_v4(bytes), ntohs(v4->sin_port));
+        return endpoint_from_sockaddr_v4(addr, len);
     }
     if (addr.ss_family == AF_INET6)
     {
-        if (len < sizeof(sockaddr_in6))
-        {
-            return asio::ip::udp::endpoint();
-        }
-        const auto* v6 = reinterpret_cast<const sockaddr_in6*>(&addr);
-        asio::ip::address_v6::bytes_type bytes{};
-        std::memcpy(bytes.data(), &v6->sin6_addr, bytes.size());
-        return asio::ip::udp::endpoint(asio::ip::address_v6(bytes), ntohs(v6->sin6_port));
+        return endpoint_from_sockaddr_v6(addr, len);
     }
     return asio::ip::udp::endpoint();
 }
