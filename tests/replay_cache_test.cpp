@@ -1,3 +1,5 @@
+#include <chrono>
+#include <thread>
 #include <vector>
 #include <cstdint>
 
@@ -55,6 +57,18 @@ TEST(ReplayCacheTest, ZeroCapacityClampedToOne)
     const std::vector<std::uint8_t> sid2(32, 0x02);
 
     EXPECT_TRUE(cache.check_and_insert(sid1));
+    EXPECT_TRUE(cache.check_and_insert(sid2));
+    EXPECT_TRUE(cache.check_and_insert(sid1));
+}
+
+TEST(ReplayCacheTest, ExpiredEntryIsCleanedUp)
+{
+    mux::replay_cache cache(4, std::chrono::milliseconds(1));
+    const std::vector<std::uint8_t> sid1(32, 0x01);
+    const std::vector<std::uint8_t> sid2(32, 0x02);
+
+    EXPECT_TRUE(cache.check_and_insert(sid1));
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
     EXPECT_TRUE(cache.check_and_insert(sid2));
     EXPECT_TRUE(cache.check_and_insert(sid1));
 }
