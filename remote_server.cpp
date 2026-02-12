@@ -30,6 +30,7 @@ extern "C"
 {
 #include <openssl/evp.h>
 #include <openssl/rand.h>
+#include <openssl/crypto.h>
 }
 
 #include "log.h"
@@ -328,7 +329,7 @@ bool verify_auth_payload_fields(const std::optional<reality::auth_payload>& auth
         return true;
     }
 
-    if (std::vector<std::uint8_t>(auth->short_id.begin(), auth->short_id.begin() + short_id_bytes.size()) != short_id_bytes)
+    if (CRYPTO_memcmp(auth->short_id.data(), short_id_bytes.data(), short_id_bytes.size()) != 0)
     {
         LOG_CTX_WARN(ctx, "{} auth fail short id mismatch", log_event::kAuth);
         return false;
@@ -614,14 +615,19 @@ bool verify_client_finished_plaintext(const std::vector<std::uint8_t>& plaintext
                                       const std::vector<std::uint8_t>& expected_verify,
                                       const connection_context& ctx)
 {
-    if (content_type != reality::kContentTypeHandshake || plaintext.empty() || plaintext[0] != 0x14)
+    if (content_type != reality::kContentTypeHandshake || plaintext.size() < 4 || plaintext[0] != 0x14)
     {
         LOG_CTX_ERROR(ctx, "{} client finished verification failed type {}", log_event::kHandshake, static_cast<int>(content_type));
         return false;
     }
 
-    if (plaintext.size() < expected_verify.size() + 4 ||
-        std::memcmp(plaintext.data() + 4, expected_verify.data(), expected_verify.size()) != 0)
+    const std::uint32_t msg_len = (plaintext[1] << 16) | (plaintext[2] << 8) | plaintext[3];
+    if (msg_len != expected_verify.size() || plaintext.size() != 4 + msg_len)
+    {
+        LOG_CTX_ERROR(ctx, "{} client finished length invalid {}", log_event::kHandshake, plaintext.size());
+        return false;
+    }
+    if (CRYPTO_memcmp(plaintext.data() + 4, expected_verify.data(), expected_verify.size()) != 0)
     {
         LOG_CTX_ERROR(ctx, "{} client finished hmac verification failed", log_event::kHandshake);
         return false;
