@@ -92,11 +92,21 @@ struct config
 
     struct reality_t
     {
+        struct fallback_guard_t
+        {
+            bool enabled = true;
+            std::uint32_t rate_per_sec = 2;
+            std::uint32_t burst = 10;
+            std::uint32_t circuit_fail_threshold = 5;
+            std::uint32_t circuit_open_sec = 30;
+            std::uint32_t state_ttl_sec = 600;
+        } fallback_guard;
+
         std::string sni = "www.apple.com";
         std::string fingerprint = "random";
         std::string dest;
         std::string type = "tcp";
-        bool strict_cert_verify = false;
+        bool strict_cert_verify = true;
         std::string private_key = "b0c338c6353fab820a0e5d16b6fcf41ee4166940795f89d0cde8902675ce9456";
         std::string public_key = "8d4e6ddf1479f2305b6645f045e02f9f5e400005884a8f1663ee9c51915bcc6d";
         std::string short_id;
