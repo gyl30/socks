@@ -45,9 +45,9 @@ class udp_socks_session : public mux_stream_interface, public std::enable_shared
     void on_reset() override;
 
    private:
-    asio::awaitable<void> udp_sock_to_stream(std::shared_ptr<mux_stream> stream, std::shared_ptr<asio::ip::udp::endpoint> client_ep);
+    asio::awaitable<void> udp_sock_to_stream(std::shared_ptr<mux_stream> stream);
 
-    asio::awaitable<void> stream_to_udp_sock(std::shared_ptr<mux_stream> stream, std::shared_ptr<asio::ip::udp::endpoint> client_ep);
+    asio::awaitable<void> stream_to_udp_sock(std::shared_ptr<mux_stream> stream);
 
     asio::awaitable<void> keep_tcp_alive();
     asio::awaitable<void> idle_watchdog();

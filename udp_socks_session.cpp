@@ -164,6 +164,92 @@ std::vector<std::uint8_t> build_udp_associate_reply(const asio::ip::address& loc
     return final_rep;
 }
 
+[[nodiscard]] bool is_tunnel_available(const std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>& tunnel_manager,
+                                       const connection_context& ctx)
+{
+    if (tunnel_manager == nullptr || tunnel_manager->connection() == nullptr || !tunnel_manager->connection()->is_open())
+    {
+        LOG_CTX_WARN(ctx, "{} tunnel unavailable", log_event::kSocks);
+        return false;
+    }
+    return true;
+}
+
+asio::awaitable<bool> send_udp_associate_success_reply(asio::ip::tcp::socket& socket,
+                                                       const asio::ip::address& local_addr,
+                                                       const std::uint16_t udp_bind_port,
+                                                       const connection_context& ctx)
+{
+    const auto final_rep = build_udp_associate_reply(local_addr, udp_bind_port);
+    const auto [write_ec, write_n] = co_await asio::async_write(socket, asio::buffer(final_rep), asio::as_tuple(asio::use_awaitable));
+    (void)write_n;
+    if (write_ec)
+    {
+        LOG_CTX_WARN(ctx, "{} write failed {}", log_event::kSocks, write_ec.message());
+        co_return false;
+    }
+    co_return true;
+}
+
+[[nodiscard]] bool validate_and_track_client_endpoint(const asio::ip::udp::endpoint& sender,
+                                                      asio::ip::udp::endpoint& client_ep,
+                                                      bool& has_client_ep,
+                                                      const connection_context& ctx)
+{
+    if (!has_client_ep)
+    {
+        client_ep = sender;
+        has_client_ep = true;
+        return true;
+    }
+
+    if (sender.address() != client_ep.address() || sender.port() != client_ep.port())
+    {
+        LOG_CTX_WARN(ctx, "{} udp client endpoint mismatch ignore", log_event::kSocks);
+        return false;
+    }
+    return true;
+}
+
+[[nodiscard]] bool validate_udp_client_packet(const std::vector<std::uint8_t>& buf,
+                                              const std::size_t packet_len,
+                                              const asio::ip::udp::endpoint& sender,
+                                              asio::ip::udp::endpoint& client_ep,
+                                              bool& has_client_ep,
+                                              const connection_context& ctx)
+{
+    socks_udp_header udp_header;
+    if (!socks_codec::decode_udp_header(buf.data(), packet_len, udp_header))
+    {
+        LOG_CTX_WARN(ctx, "{} received invalid udp packet from {}", log_event::kSocks, sender.address().to_string());
+        return false;
+    }
+
+    if (udp_header.frag != 0x00)
+    {
+        LOG_CTX_WARN(ctx, "{} received a fragmented packet ignore it", log_event::kSocks);
+        return false;
+    }
+
+    if (packet_len > mux::kMaxPayload)
+    {
+        LOG_CTX_WARN(ctx, "{} udp packet too large {}", log_event::kSocks, packet_len);
+        return false;
+    }
+
+    return validate_and_track_client_endpoint(sender, client_ep, has_client_ep, ctx);
+}
+
+[[nodiscard]] bool has_valid_client_endpoint(const bool has_client_ep, const asio::ip::udp::endpoint& client_ep, const connection_context& ctx)
+{
+    if (!has_client_ep || client_ep.port() == 0)
+    {
+        LOG_CTX_WARN(ctx, "{} client ep port is 0 ignore it", log_event::kSocks);
+        return false;
+    }
+    return true;
+}
+
 }    // namespace
 
 udp_socks_session::udp_socks_session(asio::ip::tcp::socket socket,
@@ -233,9 +319,8 @@ asio::awaitable<void> udp_socks_session::run(const std::string& host, const std:
         co_return;
     }
 
-    if (tunnel_manager_ == nullptr || tunnel_manager_->connection() == nullptr || !tunnel_manager_->connection()->is_open())
+    if (!is_tunnel_available(tunnel_manager_, ctx_))
     {
-        LOG_CTX_WARN(ctx_, "{} tunnel unavailable", log_event::kSocks);
         co_await write_socks_error_reply(socket_, socks::kRepHostUnreach);
         on_close();
         co_return;
@@ -249,21 +334,16 @@ asio::awaitable<void> udp_socks_session::run(const std::string& host, const std:
         co_return;
     }
 
-    const auto final_rep = build_udp_associate_reply(local_addr, udp_bind_port);
-    const auto [we, wn] = co_await asio::async_write(socket_, asio::buffer(final_rep), asio::as_tuple(asio::use_awaitable));
-    if (we)
+    if (!co_await send_udp_associate_success_reply(socket_, local_addr, udp_bind_port, ctx_))
     {
-        LOG_CTX_WARN(ctx_, "{} write failed {}", log_event::kSocks, we.message());
         co_await stream->close();
         co_return;
     }
 
-    const auto client_ep_ptr = std::make_shared<asio::ip::udp::endpoint>();
-
     tunnel_manager_->register_stream(stream->id(), shared_from_this());
 
     using asio::experimental::awaitable_operators::operator||;
-    co_await (udp_sock_to_stream(stream, client_ep_ptr) || stream_to_udp_sock(stream, client_ep_ptr) || keep_tcp_alive() || idle_watchdog());
+    co_await (udp_sock_to_stream(stream) || stream_to_udp_sock(stream) || keep_tcp_alive() || idle_watchdog());
 
     on_close();
     tunnel_manager_->remove_stream(stream->id());
@@ -271,7 +351,7 @@ asio::awaitable<void> udp_socks_session::run(const std::string& host, const std:
     LOG_CTX_INFO(ctx_, "{} finished", log_event::kSocks);
 }
 
-asio::awaitable<void> udp_socks_session::udp_sock_to_stream(std::shared_ptr<mux_stream> stream, std::shared_ptr<asio::ip::udp::endpoint> client_ep)
+asio::awaitable<void> udp_socks_session::udp_sock_to_stream(std::shared_ptr<mux_stream> stream)
 {
     std::vector<std::uint8_t> buf(65535);
     asio::ip::udp::endpoint sender;
@@ -286,33 +366,8 @@ asio::awaitable<void> udp_socks_session::udp_sock_to_stream(std::shared_ptr<mux_
             }
             break;
         }
-        socks_udp_header h;
-        if (!socks_codec::decode_udp_header(buf.data(), n, h))
+        if (!validate_udp_client_packet(buf, n, sender, client_ep_, has_client_ep_, ctx_))
         {
-            LOG_CTX_WARN(ctx_, "{} received invalid udp packet from {}", log_event::kSocks, sender.address().to_string());
-            continue;
-        }
-
-        if (h.frag != 0x00)
-        {
-            LOG_CTX_WARN(ctx_, "{} received a fragmented packet ignore it", log_event::kSocks);
-            continue;
-        }
-
-        if (n > mux::kMaxPayload)
-        {
-            LOG_CTX_WARN(ctx_, "{} udp packet too large {}", log_event::kSocks, n);
-            continue;
-        }
-
-        if (!has_client_ep_)
-        {
-            client_ep_ = sender;
-            has_client_ep_ = true;
-        }
-        else if (sender.address() != client_ep_.address() || sender.port() != client_ep_.port())
-        {
-            LOG_CTX_WARN(ctx_, "{} udp client endpoint mismatch ignore", log_event::kSocks);
             continue;
         }
 
@@ -326,8 +381,9 @@ asio::awaitable<void> udp_socks_session::udp_sock_to_stream(std::shared_ptr<mux_
     }
 }
 
-asio::awaitable<void> udp_socks_session::stream_to_udp_sock(std::shared_ptr<mux_stream> stream, std::shared_ptr<asio::ip::udp::endpoint> client_ep)
+asio::awaitable<void> udp_socks_session::stream_to_udp_sock(std::shared_ptr<mux_stream> stream)
 {
+    (void)stream;
     while (!closed_.load(std::memory_order_acquire))
     {
         const auto [ec, data] = co_await recv_channel_.async_receive(asio::as_tuple(asio::use_awaitable));
@@ -344,18 +400,11 @@ asio::awaitable<void> udp_socks_session::stream_to_udp_sock(std::shared_ptr<mux_
             break;
         }
 
-        if (!has_client_ep_)
+        if (!has_valid_client_endpoint(has_client_ep_, client_ep_, ctx_))
         {
-            LOG_CTX_WARN(ctx_, "{} client ep port is 0 ignore it", log_event::kSocks);
             continue;
         }
         const auto ep = client_ep_;
-
-        if (ep.port() == 0)
-        {
-            LOG_CTX_WARN(ctx_, "{} client ep port is 0 ignore it", log_event::kSocks);
-            continue;
-        }
 
         const auto [se, sn] = co_await udp_socket_.async_send_to(asio::buffer(data), ep, asio::as_tuple(asio::use_awaitable));
         if (se)
