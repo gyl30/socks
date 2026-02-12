@@ -81,6 +81,75 @@ bool ch_parser::skip_cipher_suites_and_compression(reader& r)
     return r.skip(comp_len);
 }
 
+bool ch_parser::read_extension_header(reader& r, std::uint16_t& type, std::uint16_t& len)
+{
+    if (!r.read_u16(type) || !r.read_u16(len))
+    {
+        return false;
+    }
+    return true;
+}
+
+bool ch_parser::read_sni_item_header(reader& r, std::uint8_t& type, std::uint16_t& len)
+{
+    if (!r.read_u8(type) || !r.read_u16(len))
+    {
+        return false;
+    }
+    return true;
+}
+
+bool ch_parser::handle_sni_item(reader& r, const std::uint8_t type, const std::uint16_t len, client_hello_info& info)
+{
+    if (type == 0x00)
+    {
+        if (r.has(len))
+        {
+            info.sni.assign(reinterpret_cast<const char*>(r.data()), len);
+        }
+        return true;
+    }
+
+    if (!r.skip(len))
+    {
+        return true;
+    }
+    return false;
+}
+
+bool ch_parser::read_key_share_item_header(reader& r, std::uint16_t& group, std::uint16_t& len)
+{
+    if (!r.read_u16(group) || !r.read_u16(len))
+    {
+        return false;
+    }
+    return true;
+}
+
+void ch_parser::handle_key_share_item(reader& r, const std::uint16_t group, const std::uint16_t len, client_hello_info& info)
+{
+    if (group != reality::tls_consts::group::kX25519)
+    {
+        return;
+    }
+    if (len != 32 || !r.has(32))
+    {
+        return;
+    }
+    info.x25519_pub.assign(r.data(), r.data() + 32);
+    info.has_x25519_share = true;
+}
+
+void ch_parser::finalize_key_share_info(client_hello_info& info)
+{
+    if (!info.has_x25519_share)
+    {
+        return;
+    }
+    info.is_tls13 = true;
+    info.key_share_group = reality::tls_consts::group::kX25519;
+}
+
 client_hello_info ch_parser::parse(const std::vector<std::uint8_t>& buf)
 {
     client_hello_info info;
@@ -126,13 +195,13 @@ void ch_parser::parse_extensions(reader& r, client_hello_info& info)
     while (r.remaining() >= 4)
     {
         std::uint16_t type = 0;
-        std::uint16_t len = 0;
-        if (!r.read_u16(type) || !r.read_u16(len))
+        std::uint16_t ext_len = 0;
+        if (!read_extension_header(r, type, ext_len))
         {
             break;
         }
 
-        reader val = r.slice(len);
+        reader val = r.slice(ext_len);
         if (!val.valid())
         {
             break;
@@ -167,24 +236,13 @@ void ch_parser::parse_sni(reader& r, client_hello_info& info)
     {
         std::uint8_t type = 0;
         std::uint16_t len = 0;
-
-        if (!list_r.read_u8(type) || !list_r.read_u16(len))
+        if (!read_sni_item_header(list_r, type, len))
         {
             break;
         }
-
-        if (type == 0x00)
+        if (handle_sni_item(list_r, type, len, info))
         {
-            if (list_r.has(len))
-            {
-                info.sni.assign(reinterpret_cast<const char*>(list_r.data()), len);
-            }
             return;
-        }
-
-        if (!list_r.skip(len))
-        {
-            break;
         }
     }
 }
@@ -196,35 +254,27 @@ void ch_parser::parse_key_share(reader& r, client_hello_info& info)
     {
         return;
     }
+    reader shares_r = r.slice(share_len);
+    if (!shares_r.valid())
+    {
+        return;
+    }
 
-    while (r.remaining() >= 4)
+    while (shares_r.remaining() >= 4)
     {
         std::uint16_t group = 0;
         std::uint16_t len = 0;
-        if (!r.read_u16(group) || !r.read_u16(len))
+        if (!read_key_share_item_header(shares_r, group, len))
         {
             break;
         }
-
-        if (group == reality::tls_consts::group::kX25519)
-        {
-            if (len == 32 && r.has(32))
-            {
-                info.x25519_pub.assign(r.data(), r.data() + 32);
-                info.has_x25519_share = true;
-            }
-        }
-        if (!r.skip(len))
+        handle_key_share_item(shares_r, group, len, info);
+        if (!shares_r.skip(len))
         {
             break;
         }
     }
-
-    if (info.has_x25519_share)
-    {
-        info.is_tls13 = true;
-        info.key_share_group = reality::tls_consts::group::kX25519;
-    }
+    finalize_key_share_info(info);
 }
 
 }    // namespace mux
