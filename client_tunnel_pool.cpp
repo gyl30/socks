@@ -156,41 +156,112 @@ bool parse_fingerprint_type(const std::string& input, std::optional<reality::fin
     return false;
 }
 
-std::optional<std::vector<std::uint8_t>> extract_first_cert_der(const std::vector<std::uint8_t>& cert_msg)
+bool read_u24_field(const std::vector<std::uint8_t>& data, const std::size_t pos, std::uint32_t& value)
 {
-    if (cert_msg.size() < 4 + 1 + 3 + 3)
+    if (pos + 3 > data.size())
     {
-        return std::nullopt;
+        return false;
     }
-    if (cert_msg[0] != 0x0b)
+    value = (data[pos] << 16) | (data[pos + 1] << 8) | data[pos + 2];
+    return true;
+}
+
+std::optional<std::vector<std::uint8_t>> extract_first_cert_der(const std::vector<std::uint8_t>& cert_msg);
+
+bool is_certificate_message_header_valid(const std::vector<std::uint8_t>& cert_msg)
+{
+    if (cert_msg.size() < 11)
     {
-        return std::nullopt;
+        return false;
+    }
+    return cert_msg[0] == 0x0b;
+}
+
+bool read_u24_and_advance(const std::vector<std::uint8_t>& data, std::size_t& pos, std::uint32_t& value)
+{
+    if (!read_u24_field(data, pos, value))
+    {
+        return false;
+    }
+    pos += 3;
+    return true;
+}
+
+bool parse_first_certificate_range(const std::vector<std::uint8_t>& cert_msg, std::size_t& cert_start, std::size_t& cert_len)
+{
+    if (!is_certificate_message_header_valid(cert_msg))
+    {
+        return false;
     }
 
-    std::size_t pos = 4;
-    pos += 1;
-    if (pos + 3 > cert_msg.size())
+    std::size_t pos = 5;
+    std::uint32_t list_len = 0;
+    if (!read_u24_and_advance(cert_msg, pos, list_len))
     {
-        return std::nullopt;
+        return false;
     }
-    const std::uint32_t list_len = (cert_msg[pos] << 16) | (cert_msg[pos + 1] << 8) | cert_msg[pos + 2];
-    pos += 3;
     if (pos + list_len > cert_msg.size())
     {
-        return std::nullopt;
+        return false;
     }
-    if (pos + 3 > cert_msg.size())
+
+    std::uint32_t parsed_cert_len = 0;
+    if (!read_u24_and_advance(cert_msg, pos, parsed_cert_len))
+    {
+        return false;
+    }
+    if (pos + parsed_cert_len > cert_msg.size())
+    {
+        return false;
+    }
+
+    cert_start = pos;
+    cert_len = static_cast<std::size_t>(parsed_cert_len);
+    return true;
+}
+
+bool read_handshake_message_bounds(const std::vector<std::uint8_t>& handshake_buffer,
+                                   const std::uint32_t offset,
+                                   std::uint8_t& msg_type,
+                                   std::uint32_t& msg_len)
+{
+    if (offset + 4 > handshake_buffer.size())
+    {
+        return false;
+    }
+    msg_type = handshake_buffer[offset];
+    msg_len = (handshake_buffer[offset + 1] << 16) | (handshake_buffer[offset + 2] << 8) | handshake_buffer[offset + 3];
+    return offset + 4 + msg_len <= handshake_buffer.size();
+}
+
+bool validate_certificate_message_once(const std::vector<std::uint8_t>& msg_data, bool& cert_checked, std::error_code& ec)
+{
+    LOG_DEBUG("received certificate message size {}", msg_data.size());
+    if (cert_checked)
+    {
+        return true;
+    }
+
+    cert_checked = true;
+    if (extract_first_cert_der(msg_data).has_value())
+    {
+        return true;
+    }
+    ec = asio::error::invalid_argument;
+    LOG_ERROR("certificate message parse failed");
+    return false;
+}
+
+std::optional<std::vector<std::uint8_t>> extract_first_cert_der(const std::vector<std::uint8_t>& cert_msg)
+{
+    std::size_t cert_start = 0;
+    std::size_t cert_len = 0;
+    if (!parse_first_certificate_range(cert_msg, cert_start, cert_len))
     {
         return std::nullopt;
     }
-    const std::uint32_t cert_len = (cert_msg[pos] << 16) | (cert_msg[pos + 1] << 8) | cert_msg[pos + 2];
-    pos += 3;
-    if (pos + cert_len > cert_msg.size())
-    {
-        return std::nullopt;
-    }
-    std::vector<std::uint8_t> cert(cert_msg.begin() + static_cast<std::ptrdiff_t>(pos),
-                                   cert_msg.begin() + static_cast<std::ptrdiff_t>(pos + cert_len));
+    std::vector<std::uint8_t> cert(cert_msg.begin() + static_cast<std::ptrdiff_t>(cert_start),
+                                   cert_msg.begin() + static_cast<std::ptrdiff_t>(cert_start + cert_len));
     return cert;
 }
 
@@ -244,28 +315,17 @@ bool consume_handshake_plaintext(const std::vector<std::uint8_t>& plaintext,
     std::uint32_t offset = 0;
     while (offset + 4 <= handshake_buffer.size())
     {
-        const std::uint8_t msg_type = handshake_buffer[offset];
-        const std::uint32_t msg_len = (handshake_buffer[offset + 1] << 16) | (handshake_buffer[offset + 2] << 8) | handshake_buffer[offset + 3];
-        if (offset + 4 + msg_len > handshake_buffer.size())
+        std::uint8_t msg_type = 0;
+        std::uint32_t msg_len = 0;
+        if (!read_handshake_message_bounds(handshake_buffer, offset, msg_type, msg_len))
         {
             break;
         }
 
         const std::vector<std::uint8_t> msg_data(handshake_buffer.begin() + offset, handshake_buffer.begin() + offset + 4 + msg_len);
-        if (msg_type == 0x0b)
+        if (msg_type == 0x0b && !validate_certificate_message_once(msg_data, cert_checked, ec))
         {
-            LOG_DEBUG("received certificate message size {}", msg_data.size());
-            if (!cert_checked)
-            {
-                cert_checked = true;
-                auto cert_der = extract_first_cert_der(msg_data);
-                if (!cert_der.has_value())
-                {
-                    ec = asio::error::invalid_argument;
-                    LOG_ERROR("certificate message parse failed");
-                    return false;
-                }
-            }
+            return false;
         }
 
         trans.update(msg_data);
@@ -959,21 +1019,10 @@ asio::awaitable<bool> client_tunnel_pool::tcp_connect(asio::io_context& io_conte
         {
             continue;
         }
-
-        auto [conn_error] = co_await socket.async_connect(endpoint, asio::as_tuple(asio::use_awaitable));
-        if (conn_error)
+        if (co_await try_connect_endpoint(socket, endpoint, ec))
         {
-            ec = conn_error;
-            continue;
+            co_return true;
         }
-
-        ec = socket.set_option(asio::ip::tcp::no_delay(true), ec);
-        if (ec)
-        {
-            LOG_WARN("set no delay failed {}", ec.message());
-        }
-        log_tcp_connect_success(socket, endpoint);
-        co_return true;
     }
 
     if (!ec)
@@ -982,6 +1031,26 @@ asio::awaitable<bool> client_tunnel_pool::tcp_connect(asio::io_context& io_conte
     }
     LOG_ERROR("connect {} failed {}", remote_host_, ec.message());
     co_return false;
+}
+
+asio::awaitable<bool> client_tunnel_pool::try_connect_endpoint(asio::ip::tcp::socket& socket,
+                                                               const asio::ip::tcp::endpoint& endpoint,
+                                                               std::error_code& ec) const
+{
+    auto [conn_error] = co_await socket.async_connect(endpoint, asio::as_tuple(asio::use_awaitable));
+    if (conn_error)
+    {
+        ec = conn_error;
+        co_return false;
+    }
+
+    ec = socket.set_option(asio::ip::tcp::no_delay(true), ec);
+    if (ec)
+    {
+        LOG_WARN("set no delay failed {}", ec.message());
+    }
+    log_tcp_connect_success(socket, endpoint);
+    co_return true;
 }
 
 asio::awaitable<std::pair<bool, client_tunnel_pool::handshake_result>> client_tunnel_pool::perform_reality_handshake(asio::ip::tcp::socket& socket,
