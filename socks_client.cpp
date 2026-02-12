@@ -64,6 +64,38 @@ void log_accept_error(const std::error_code& ec)
     LOG_ERROR("local accept failed {}", ec.message());
 }
 
+asio::awaitable<void> wait_retry_delay(asio::io_context& io_context)
+{
+    asio::steady_timer retry_timer(io_context);
+    retry_timer.expires_after(std::chrono::seconds(1));
+    (void)co_await retry_timer.async_wait(asio::as_tuple(asio::use_awaitable));
+}
+
+enum class local_accept_status
+{
+    kAccepted,
+    kRetry,
+    kStop,
+};
+
+asio::awaitable<local_accept_status> accept_local_socket(asio::ip::tcp::acceptor& acceptor,
+                                                         asio::ip::tcp::socket& socket,
+                                                         asio::io_context& io_context)
+{
+    const auto [accept_ec] = co_await acceptor.async_accept(socket, asio::as_tuple(asio::use_awaitable));
+    if (!accept_ec)
+    {
+        co_return local_accept_status::kAccepted;
+    }
+    if (accept_ec == asio::error::operation_aborted)
+    {
+        co_return local_accept_status::kStop;
+    }
+    log_accept_error(accept_ec);
+    co_await wait_retry_delay(io_context);
+    co_return local_accept_status::kRetry;
+}
+
 void set_no_delay_or_log(asio::ip::tcp::socket& socket)
 {
     std::error_code ec;
@@ -112,6 +144,57 @@ asio::awaitable<std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>> wait_fo
     }
 
     co_return selected_tunnel;
+}
+
+void log_tunnel_selection(const std::uint32_t sid, const std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>& selected_tunnel)
+{
+    if (selected_tunnel == nullptr)
+    {
+        LOG_WARN("accepting local connection without active tunnel");
+        LOG_INFO("client session {} running without tunnel", sid);
+        return;
+    }
+    LOG_INFO("client session {} selected tunnel", sid);
+}
+
+asio::awaitable<bool> start_local_session(asio::ip::tcp::socket socket,
+                                          asio::io_context& io_context,
+                                          const std::shared_ptr<client_tunnel_pool>& tunnel_pool,
+                                          const std::shared_ptr<router>& router,
+                                          std::vector<std::weak_ptr<socks_session>>& sessions,
+                                          const config::socks_t& socks_config,
+                                          const config::timeout_t& timeout_config,
+                                          const std::atomic<bool>& stop)
+{
+    if (stop.load(std::memory_order_acquire))
+    {
+        close_local_socket(socket);
+        co_return false;
+    }
+
+    set_no_delay_or_log(socket);
+
+    auto selected_tunnel = co_await wait_for_tunnel_ready(io_context, tunnel_pool, stop);
+    if (stop.load(std::memory_order_acquire))
+    {
+        close_local_socket(socket);
+        co_return false;
+    }
+
+    const std::uint32_t sid = tunnel_pool->next_session_id();
+    log_tunnel_selection(sid, selected_tunnel);
+
+    auto session = std::make_shared<socks_session>(std::move(socket), io_context, selected_tunnel, router, sid, socks_config, timeout_config);
+    if (stop.load(std::memory_order_acquire))
+    {
+        session->stop();
+        co_return false;
+    }
+
+    prune_expired_sessions(sessions);
+    sessions.push_back(session);
+    session->start();
+    co_return true;
 }
 
 }    // namespace
@@ -218,17 +301,13 @@ asio::awaitable<void> socks_client::accept_local_loop()
     while (!stop_.load(std::memory_order_acquire))
     {
         asio::ip::tcp::socket s(io_context_);
-        const auto [e] = co_await acceptor_.async_accept(s, asio::as_tuple(asio::use_awaitable));
-        if (e)
+        const auto accept_status = co_await accept_local_socket(acceptor_, s, io_context_);
+        if (accept_status == local_accept_status::kStop)
         {
-            if (e == asio::error::operation_aborted)
-            {
-                break;
-            }
-            log_accept_error(e);
-            asio::steady_timer accept_retry_timer(io_context_);
-            accept_retry_timer.expires_after(std::chrono::seconds(1));
-            co_await accept_retry_timer.async_wait(asio::as_tuple(asio::use_awaitable));
+            break;
+        }
+        if (accept_status == local_accept_status::kRetry)
+        {
             continue;
         }
         if (stop_.load(std::memory_order_acquire))
@@ -236,39 +315,10 @@ asio::awaitable<void> socks_client::accept_local_loop()
             close_local_socket(s);
             break;
         }
-
-        set_no_delay_or_log(s);
-
-        auto selected_tunnel = co_await wait_for_tunnel_ready(io_context_, tunnel_pool_, stop_);
-        if (stop_.load(std::memory_order_acquire))
+        if (!(co_await start_local_session(std::move(s), io_context_, tunnel_pool_, router_, sessions_, socks_config_, timeout_config_, stop_)))
         {
-            close_local_socket(s);
             break;
         }
-        if (selected_tunnel == nullptr)
-        {
-            LOG_WARN("accepting local connection without active tunnel");
-        }
-        const std::uint32_t sid = tunnel_pool_->next_session_id();
-        if (selected_tunnel != nullptr)
-        {
-            LOG_INFO("client session {} selected tunnel", sid);
-        }
-        else
-        {
-            LOG_INFO("client session {} running without tunnel", sid);
-        }
-        const auto session =
-            std::make_shared<socks_session>(std::move(s), io_context_, selected_tunnel, router_, sid, socks_config_, timeout_config_);
-        if (stop_.load(std::memory_order_acquire))
-        {
-            session->stop();
-            break;
-        }
-
-        prune_expired_sessions(sessions_);
-        sessions_.push_back(session);
-        session->start();
     }
     LOG_INFO("accept local loop exited");
 }
