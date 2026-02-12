@@ -20,6 +20,11 @@
 #include <asio/io_context.hpp>
 #include <asio/ip/udp.hpp>
 
+extern "C"
+{
+#include <openssl/evp.h>
+}
+
 #include "router.h"
 #include "ip_matcher.h"
 #include "domain_matcher.h"
@@ -321,6 +326,110 @@ TEST(TproxyUdpSessionTest, InternalGuardBranches)
     session->stream_ =
         std::make_shared<mux::mux_stream>(1, 1, "trace", std::shared_ptr<mux::mux_connection>{}, ctx);
     EXPECT_FALSE(session->install_proxy_stream(nullptr, nullptr, should_start_reader));
+}
+
+TEST(TproxyUdpSessionTest, StartHandlesAlreadyOpenedSocket)
+{
+    asio::io_context ctx;
+    auto router = std::make_shared<direct_router>();
+
+    mux::config cfg;
+    cfg.tproxy.mark = 0;
+    const asio::ip::udp::endpoint client_ep(asio::ip::make_address("127.0.0.1"), 12401);
+    auto session = std::make_shared<mux::tproxy_udp_session>(ctx, nullptr, router, nullptr, 5, cfg, client_ep);
+
+    std::error_code ec;
+    session->direct_socket_.open(asio::ip::udp::v6(), ec);
+    ASSERT_FALSE(ec);
+
+    session->start();
+    EXPECT_TRUE(session->direct_socket_.is_open());
+    session->stop();
+    ctx.poll();
+}
+
+TEST(TproxyUdpSessionTest, StartCoversV6OnlyAndMarkFailure)
+{
+    auto run_once = [](const mux::config& cfg)
+    {
+        asio::io_context ctx;
+        auto router = std::make_shared<direct_router>();
+        const asio::ip::udp::endpoint client_ep(asio::ip::make_address("127.0.0.1"), 12402);
+        auto session = std::make_shared<mux::tproxy_udp_session>(ctx, nullptr, router, nullptr, 6, cfg, client_ep);
+        session->start();
+        session->stop();
+        ctx.poll();
+    };
+
+    reset_socket_wrappers();
+#ifdef IPV6_V6ONLY
+    mux::config v6_cfg;
+    v6_cfg.tproxy.mark = 0;
+    fail_setsockopt_once(SOL_IPV6, IPV6_V6ONLY, EPERM);
+    run_once(v6_cfg);
+#endif
+
+    reset_socket_wrappers();
+    mux::config mark_cfg;
+    mark_cfg.tproxy.mark = 123;
+#ifdef SO_MARK
+    fail_setsockopt_once(SOL_SOCKET, SO_MARK, EPERM);
+#endif
+    run_once(mark_cfg);
+    reset_socket_wrappers();
+}
+
+TEST(TproxyUdpSessionTest, SendDirectIPv6AndCloseResetBranches)
+{
+    asio::io_context ctx;
+    auto router = std::make_shared<direct_router>();
+
+    mux::config cfg;
+    cfg.tproxy.mark = 0;
+    const asio::ip::udp::endpoint client_ep(asio::ip::make_address("127.0.0.1"), 12403);
+    auto session = std::make_shared<mux::tproxy_udp_session>(ctx, nullptr, router, nullptr, 7, cfg, client_ep);
+    session->start();
+
+    bool done = false;
+    const std::array<std::uint8_t, 2> payload = {0x41, 0x42};
+    const asio::ip::udp::endpoint dst_ep(asio::ip::make_address("::1"), 5353);
+    asio::co_spawn(
+        ctx,
+        [&]() -> asio::awaitable<void>
+        {
+            co_await session->send_direct(dst_ep, payload.data(), payload.size());
+            done = true;
+            co_return;
+        },
+        asio::detached);
+    for (int i = 0; i < 50 && !done; ++i)
+    {
+        ctx.poll();
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    EXPECT_TRUE(done);
+    ctx.restart();
+
+    auto tunnel = std::make_shared<mux::mux_tunnel_impl<asio::ip::tcp::socket>>(
+        asio::ip::tcp::socket(ctx), ctx, mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 100);
+    auto stream = std::make_shared<mux::mux_stream>(9, tunnel->connection()->id(), "trace", tunnel->connection(), ctx);
+
+    session->stream_ = stream;
+    session->tunnel_ = tunnel;
+    session->on_close();
+    ctx.poll();
+    EXPECT_EQ(session->stream_, nullptr);
+    EXPECT_TRUE(session->tunnel_.expired());
+
+    session->stream_ = stream;
+    session->tunnel_ = tunnel;
+    session->on_reset();
+    ctx.poll();
+    EXPECT_EQ(session->stream_, nullptr);
+    EXPECT_TRUE(session->tunnel_.expired());
+
+    session->stop();
+    ctx.poll();
 }
 
 TEST(TproxyClientTest, DisabledStartSetsStopFlag)
