@@ -48,6 +48,11 @@ class tproxy_udp_sender
     };
 
     std::shared_ptr<asio::ip::udp::socket> get_socket(const asio::ip::udp::endpoint& src_ep);
+    std::shared_ptr<asio::ip::udp::socket> get_cached_socket(const endpoint_key& key, std::uint64_t now_ms);
+    std::shared_ptr<asio::ip::udp::socket> create_bound_socket(const asio::ip::udp::endpoint& src_ep, bool ipv6);
+    bool prepare_socket_options(const std::shared_ptr<asio::ip::udp::socket>& socket, bool ipv6);
+    bool bind_socket_to_source(const std::shared_ptr<asio::ip::udp::socket>& socket, const asio::ip::udp::endpoint& src_ep);
+    void update_cached_socket(const endpoint_key& key, const std::shared_ptr<asio::ip::udp::socket>& socket, std::uint64_t now_ms);
     void prune_sockets(std::uint64_t now_ms);
     void evict_oldest_socket();
 
