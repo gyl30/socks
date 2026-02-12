@@ -112,6 +112,8 @@ class ch_parser
     static bool read_key_share_item_header(reader& r, std::uint16_t& group, std::uint16_t& len);
     static void handle_key_share_item(reader& r, std::uint16_t group, std::uint16_t len, client_hello_info& info);
     static void finalize_key_share_info(client_hello_info& info);
+    static bool parse_before_extensions(reader& r, client_hello_info& info);
+    static void parse_extension_block(reader& r, client_hello_info& info);
 
     static void parse_extensions(reader& r, client_hello_info& info);
     static void parse_sni(reader& r, client_hello_info& info);

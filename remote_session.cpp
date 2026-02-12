@@ -185,6 +185,41 @@ void close_target_socket(asio::ip::tcp::socket& target_socket)
     (void)ignore;
 }
 
+asio::awaitable<bool> prepare_remote_target_connection(asio::ip::tcp::resolver& resolver,
+                                                       asio::ip::tcp::socket& target_socket,
+                                                       const syn_payload& syn,
+                                                       std::shared_ptr<mux_connection> conn,
+                                                       std::weak_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> manager,
+                                                       const std::uint32_t stream_id,
+                                                       connection_context& ctx)
+{
+    ctx.set_target(syn.addr, syn.port);
+    LOG_CTX_INFO(ctx, "{} connecting {} {}", log_event::kMux, syn.addr, syn.port);
+
+    const auto eps = co_await resolve_target_endpoints(resolver, syn, ctx);
+    if (!eps.has_value())
+    {
+        co_await send_failure_ack_and_reset(manager, conn, stream_id, socks::kRepHostUnreach, ctx);
+        co_return false;
+    }
+
+    const auto ep_conn = co_await connect_target_endpoint(target_socket, eps.value(), ctx);
+    if (!ep_conn.has_value())
+    {
+        co_await send_failure_ack_and_reset(manager, conn, stream_id, socks::kRepConnRefused, ctx);
+        co_return false;
+    }
+
+    set_target_socket_no_delay(target_socket, ctx);
+    LOG_CTX_INFO(ctx, "{} connected {} {}", log_event::kConnEstablished, syn.addr, syn.port);
+    if (!co_await send_ack(conn, stream_id, socks::kRepSuccess, ep_conn->address().to_string(), ep_conn->port(), ctx))
+    {
+        remove_stream(manager, stream_id);
+        co_return false;
+    }
+    co_return true;
+}
+
 }    // namespace
 
 remote_session::remote_session(std::shared_ptr<mux_connection> connection,
@@ -215,30 +250,8 @@ asio::awaitable<void> remote_session::run(const syn_payload& syn)
     {
         co_return;
     }
-
-    ctx_.set_target(syn.addr, syn.port);
-    LOG_CTX_INFO(ctx_, "{} connecting {} {}", log_event::kMux, syn.addr, syn.port);
-    const auto eps = co_await resolve_target_endpoints(resolver_, syn, ctx_);
-    if (!eps.has_value())
+    if (!co_await prepare_remote_target_connection(resolver_, target_socket_, syn, conn, manager_, id_, ctx_))
     {
-        co_await send_failure_ack_and_reset(manager_, conn, id_, socks::kRepHostUnreach, ctx_);
-        co_return;
-    }
-
-    const auto ep_conn = co_await connect_target_endpoint(target_socket_, eps.value(), ctx_);
-    if (!ep_conn.has_value())
-    {
-        co_await send_failure_ack_and_reset(manager_, conn, id_, socks::kRepConnRefused, ctx_);
-        co_return;
-    }
-
-    set_target_socket_no_delay(target_socket_, ctx_);
-
-    LOG_CTX_INFO(ctx_, "{} connected {} {}", log_event::kConnEstablished, syn.addr, syn.port);
-
-    if (!co_await send_ack(conn, id_, socks::kRepSuccess, ep_conn.value().address().to_string(), ep_conn.value().port(), ctx_))
-    {
-        remove_stream(manager_, id_);
         co_return;
     }
 

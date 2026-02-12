@@ -73,6 +73,9 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
                                                     asio::io_context& io_context);
 
     [[nodiscard]] asio::awaitable<bool> tcp_connect(asio::io_context& io_context, asio::ip::tcp::socket& socket, std::error_code& ec) const;
+    [[nodiscard]] asio::awaitable<bool> try_connect_endpoint(asio::ip::tcp::socket& socket,
+                                                             const asio::ip::tcp::endpoint& endpoint,
+                                                             std::error_code& ec) const;
 
     [[nodiscard]] asio::awaitable<std::pair<bool, handshake_result>> perform_reality_handshake(asio::ip::tcp::socket& socket,
                                                                                                std::error_code& ec) const;

@@ -51,10 +51,16 @@ class tproxy_udp_sender
     std::shared_ptr<asio::ip::udp::socket> get_cached_socket(const endpoint_key& key, std::uint64_t now_ms);
     std::shared_ptr<asio::ip::udp::socket> create_bound_socket(const asio::ip::udp::endpoint& src_ep, bool ipv6);
     bool prepare_socket_options(const std::shared_ptr<asio::ip::udp::socket>& socket, bool ipv6);
+    bool set_ipv6_dual_stack_option(const std::shared_ptr<asio::ip::udp::socket>& socket);
+    void set_reuse_address_option(const std::shared_ptr<asio::ip::udp::socket>& socket);
+    bool set_transparent_option(const std::shared_ptr<asio::ip::udp::socket>& socket, bool ipv6);
+    void apply_socket_mark(const std::shared_ptr<asio::ip::udp::socket>& socket) const;
     bool bind_socket_to_source(const std::shared_ptr<asio::ip::udp::socket>& socket, const asio::ip::udp::endpoint& src_ep);
     void update_cached_socket(const endpoint_key& key, const std::shared_ptr<asio::ip::udp::socket>& socket, std::uint64_t now_ms);
     void prune_sockets(std::uint64_t now_ms);
     void evict_oldest_socket();
+    void drop_cached_socket_if_match(const endpoint_key& key, const std::shared_ptr<asio::ip::udp::socket>& socket);
+    void refresh_cached_socket_timestamp(const endpoint_key& key, const std::shared_ptr<asio::ip::udp::socket>& socket);
 
    private:
     asio::io_context& io_context_;

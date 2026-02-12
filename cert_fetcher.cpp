@@ -269,17 +269,9 @@ asio::awaitable<std::error_code> cert_fetcher::fetch_session::connect()
 
 asio::awaitable<std::error_code> cert_fetcher::fetch_session::perform_handshake_start()
 {
-    if (!crypto_util::generate_x25519_keypair(client_public_, client_private_))
-    {
-        co_return asio::error::operation_aborted;
-    }
     std::vector<std::uint8_t> client_random(32);
-    if (RAND_bytes(client_random.data(), 32) != 1)
-    {
-        co_return asio::error::operation_aborted;
-    }
     std::vector<std::uint8_t> session_id(32);
-    if (RAND_bytes(session_id.data(), 32) != 1)
+    if (!init_handshake_material(client_random, session_id))
     {
         co_return asio::error::operation_aborted;
     }
@@ -287,13 +279,8 @@ asio::awaitable<std::error_code> cert_fetcher::fetch_session::perform_handshake_
     auto spec = fingerprint_factory::get(fingerprint_type::kChrome120);
     auto ch = client_hello_builder::build(spec, session_id, client_random, std::vector<std::uint8_t>(client_public_, client_public_ + 32), sni_);
 
-    auto ch_rec = write_record_header(kContentTypeHandshake, static_cast<std::uint16_t>(ch.size()));
-    ch_rec.insert(ch_rec.end(), ch.begin(), ch.end());
-
-    auto [write_ec, wn] = co_await asio::async_write(socket_, asio::buffer(ch_rec), asio::as_tuple(asio::use_awaitable));
-    if (write_ec)
+    if (const auto write_ec = co_await send_client_hello_record(ch); write_ec)
     {
-        LOG_CTX_ERROR(ctx_, "{} write ch failed {}", mux::log_event::kCert, write_ec.message());
         co_return write_ec;
     }
 
@@ -304,13 +291,54 @@ asio::awaitable<std::error_code> cert_fetcher::fetch_session::perform_handshake_
     {
         co_return read_ec;
     }
-    if (sh_body.empty())
+    if (!validate_server_hello_body(sh_body))
     {
-        LOG_CTX_ERROR(ctx_, "{} server hello empty", mux::log_event::kCert);
         co_return asio::error::fault;
     }
 
     co_return process_server_hello(sh_body);
+}
+
+bool cert_fetcher::fetch_session::init_handshake_material(std::vector<std::uint8_t>& client_random, std::vector<std::uint8_t>& session_id)
+{
+    if (!crypto_util::generate_x25519_keypair(client_public_, client_private_))
+    {
+        return false;
+    }
+    if (RAND_bytes(client_random.data(), static_cast<int>(client_random.size())) != 1)
+    {
+        return false;
+    }
+    if (RAND_bytes(session_id.data(), static_cast<int>(session_id.size())) != 1)
+    {
+        return false;
+    }
+    return true;
+}
+
+asio::awaitable<std::error_code> cert_fetcher::fetch_session::send_client_hello_record(const std::vector<std::uint8_t>& client_hello)
+{
+    auto ch_record = write_record_header(kContentTypeHandshake, static_cast<std::uint16_t>(client_hello.size()));
+    ch_record.insert(ch_record.end(), client_hello.begin(), client_hello.end());
+
+    const auto [write_ec, write_n] = co_await asio::async_write(socket_, asio::buffer(ch_record), asio::as_tuple(asio::use_awaitable));
+    (void)write_n;
+    if (write_ec)
+    {
+        LOG_CTX_ERROR(ctx_, "{} write ch failed {}", mux::log_event::kCert, write_ec.message());
+        co_return write_ec;
+    }
+    co_return std::error_code{};
+}
+
+bool cert_fetcher::fetch_session::validate_server_hello_body(const std::vector<std::uint8_t>& sh_body) const
+{
+    if (!sh_body.empty())
+    {
+        return true;
+    }
+    LOG_CTX_ERROR(ctx_, "{} server hello empty", mux::log_event::kCert);
+    return false;
 }
 
 asio::awaitable<std::vector<std::uint8_t>> cert_fetcher::fetch_session::find_certificate()
@@ -464,6 +492,71 @@ asio::awaitable<std::pair<std::error_code, std::vector<std::uint8_t>>> cert_fetc
     co_return std::make_pair(std::error_code{}, std::move(body));
 }
 
+bool cert_fetcher::fetch_session::validate_record_length(const std::uint16_t len, std::error_code& out_ec) const
+{
+    if (len <= kMaxEncryptedRecordLen)
+    {
+        return true;
+    }
+    out_ec = std::make_error_code(std::errc::message_size);
+    return false;
+}
+
+asio::awaitable<bool> cert_fetcher::fetch_session::read_record_body(const std::uint16_t len,
+                                                                     std::vector<std::uint8_t>& rec,
+                                                                     std::error_code& out_ec)
+{
+    rec.assign(len, 0);
+    auto [body_ec, body_n] = co_await asio::async_read(socket_, asio::buffer(rec), asio::as_tuple(asio::use_awaitable));
+    (void)body_n;
+    if (body_ec)
+    {
+        out_ec = body_ec;
+        co_return false;
+    }
+    co_return true;
+}
+
+std::pair<std::uint8_t, std::span<std::uint8_t>> cert_fetcher::fetch_session::decrypt_application_record(const std::uint8_t head[5],
+                                                                                                           const std::vector<std::uint8_t>& rec,
+                                                                                                           std::vector<std::uint8_t>& pt_buf,
+                                                                                                           std::error_code& out_ec)
+{
+    auto ciphertext_record = build_encrypted_record_bytes(head, rec);
+    std::uint8_t type = 0;
+    const std::uint32_t pt_len =
+        tls_record_layer::decrypt_record(decrypt_ctx_, negotiated_cipher_, dec_key_, dec_iv_, seq_++, ciphertext_record, pt_buf, type, out_ec);
+    if (out_ec)
+    {
+        return empty_record_result();
+    }
+    return std::make_pair(type, std::span<std::uint8_t>(pt_buf.data(), pt_len));
+}
+
+std::pair<std::uint8_t, std::span<std::uint8_t>> cert_fetcher::fetch_session::handle_record_by_content_type(const std::uint8_t head[5],
+                                                                                                              const std::vector<std::uint8_t>& rec,
+                                                                                                              std::vector<std::uint8_t>& pt_buf,
+                                                                                                              std::error_code& out_ec)
+{
+    switch (head[0])
+    {
+        case kContentTypeChangeCipherSpec:
+            return copy_plaintext_record(pt_buf, rec);
+
+        case kContentTypeApplicationData:
+            return decrypt_application_record(head, rec, pt_buf, out_ec);
+
+        case kContentTypeAlert:
+            LOG_CTX_WARN(ctx_, "{} received plaintext alert", mux::log_event::kCert);
+            out_ec = asio::error::connection_reset;
+            return empty_record_result();
+
+        default:
+            out_ec = asio::error::invalid_argument;
+            return empty_record_result();
+    }
+}
+
 asio::awaitable<std::pair<std::uint8_t, std::span<std::uint8_t>>> cert_fetcher::fetch_session::read_record(std::vector<std::uint8_t>& pt_buf,
                                                                                                            std::error_code& out_ec)
 {
@@ -477,50 +570,17 @@ asio::awaitable<std::pair<std::uint8_t, std::span<std::uint8_t>>> cert_fetcher::
     }
 
     const std::uint16_t len = (head[3] << 8) | head[4];
-
-    if (len > kMaxEncryptedRecordLen)
+    if (!validate_record_length(len, out_ec))
     {
-        out_ec = std::make_error_code(std::errc::message_size);
         co_return empty_record_result();
     }
 
-    std::vector<std::uint8_t> rec(len);
-    auto [ec2, n2] = co_await asio::async_read(socket_, asio::buffer(rec), asio::as_tuple(asio::use_awaitable));
-    if (ec2)
+    std::vector<std::uint8_t> rec;
+    if (!co_await read_record_body(len, rec, out_ec))
     {
-        out_ec = ec2;
         co_return empty_record_result();
     }
-
-    switch (head[0])
-    {
-        case kContentTypeChangeCipherSpec:
-            co_return copy_plaintext_record(pt_buf, rec);
-
-        case kContentTypeApplicationData:
-        {
-            auto ciphertext_record = build_encrypted_record_bytes(head, rec);
-
-            std::uint8_t type = 0;
-            const std::uint32_t pt_len = tls_record_layer::decrypt_record(
-                decrypt_ctx_, negotiated_cipher_, dec_key_, dec_iv_, seq_++, ciphertext_record, pt_buf, type, out_ec);
-
-            if (out_ec)
-            {
-                co_return empty_record_result();
-            }
-            co_return std::make_pair(type, std::span<std::uint8_t>(pt_buf.data(), pt_len));
-        }
-
-        case kContentTypeAlert:
-            LOG_CTX_WARN(ctx_, "{} received plaintext alert", mux::log_event::kCert);
-            out_ec = asio::error::connection_reset;
-            co_return empty_record_result();
-
-        default:
-            out_ec = asio::error::invalid_argument;
-            co_return empty_record_result();
-    }
+    co_return handle_record_by_content_type(head, rec, pt_buf, out_ec);
 }
 
 }    // namespace reality

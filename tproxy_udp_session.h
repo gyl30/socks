@@ -4,6 +4,7 @@
 #include <atomic>
 #include <memory>
 #include <vector>
+#include <optional>
 #include <cstddef>
 #include <cstdint>
 
@@ -64,6 +65,9 @@ class tproxy_udp_session : public mux_stream_interface, public std::enable_share
     bool install_proxy_stream(const std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>& tunnel,
                               const std::shared_ptr<mux_stream>& stream,
                               bool& should_start_reader);
+    asio::awaitable<std::optional<bool>> open_proxy_stream();
+    void maybe_start_proxy_reader(bool should_start_reader);
+    bool decode_proxy_packet(const std::vector<std::uint8_t>& data, asio::ip::udp::endpoint& src_ep, std::vector<std::uint8_t>& payload) const;
 
     asio::awaitable<bool> ensure_proxy_stream();
 
