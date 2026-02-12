@@ -16,6 +16,7 @@ class replay_cache
 {
    public:
     explicit replay_cache(std::size_t max_entries = 100000);
+    replay_cache(std::size_t max_entries, std::chrono::steady_clock::duration window);
 
     bool check_and_insert(const std::vector<std::uint8_t>& sid);
 
@@ -30,6 +31,7 @@ class replay_cache
     };
 
     std::size_t max_entries_ = 100000;
+    std::chrono::steady_clock::duration window_;
     std::unordered_set<std::string> cache_;
     std::deque<entry> history_;
 };
