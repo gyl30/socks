@@ -98,17 +98,54 @@ bool ip_matcher::match_v6(const asio::ip::address_v6& addr, const std::unique_pt
     return false;
 }
 
+bool ip_matcher::is_valid_prefix_length(const int prefix_len, const int max_prefix_len)
+{
+    return prefix_len >= 0 && prefix_len <= max_prefix_len;
+}
+
+ip_matcher::trie_node* ip_matcher::ensure_root(std::unique_ptr<trie_node>& root)
+{
+    if (root == nullptr)
+    {
+        root = std::make_unique<trie_node>();
+    }
+    return root.get();
+}
+
+ip_matcher::trie_node* ip_matcher::advance_or_create_child(trie_node* node, const bool bit)
+{
+    const std::size_t idx = to_index(bit);
+    if (node->children[idx] == nullptr)
+    {
+        node->children[idx] = std::make_unique<trie_node>();
+    }
+    return node->children[idx].get();
+}
+
+void ip_matcher::prune_children(trie_node* node)
+{
+    node->children[0].reset();
+    node->children[1].reset();
+}
+
+void ip_matcher::mark_node_match(trie_node* node)
+{
+    node->is_match = true;
+    prune_children(node);
+}
+
+bool ip_matcher::can_merge_match_children(const trie_node* node)
+{
+    return node->children[0] != nullptr && node->children[0]->is_match && node->children[1] != nullptr && node->children[1]->is_match;
+}
+
 void ip_matcher::add_rule_v4(const int prefix_len, const asio::ip::address_v4& addr, std::unique_ptr<trie_node>& root)
 {
-    if (prefix_len < 0 || prefix_len > 32)
+    if (!is_valid_prefix_length(prefix_len, 32))
     {
         return;
     }
-    if (root == nullptr)
-    {
-        root = std::make_unique<ip_matcher::trie_node>();
-    }
-    ip_matcher::trie_node* curr = root.get();
+    ip_matcher::trie_node* curr = ensure_root(root);
     if (curr->is_match)
     {
         return;
@@ -117,34 +154,22 @@ void ip_matcher::add_rule_v4(const int prefix_len, const asio::ip::address_v4& a
     const std::uint32_t val = addr.to_uint();
     for (int i = 0; i < prefix_len; ++i)
     {
-        const bool bit = get_bit_v4(val, i);
-        const std::size_t idx = to_index(bit);
-        if (curr->children[idx] == nullptr)
-        {
-            curr->children[idx] = std::make_unique<ip_matcher::trie_node>();
-        }
-        curr = curr->children[idx].get();
+        curr = advance_or_create_child(curr, get_bit_v4(val, i));
         if (curr->is_match)
         {
             return;
         }
     }
-    curr->is_match = true;
-    curr->children[0].reset();
-    curr->children[1].reset();
+    mark_node_match(curr);
 }
 
 void ip_matcher::add_rule_v6(const int prefix_len, const asio::ip::address_v6& addr, std::unique_ptr<trie_node>& root)
 {
-    if (prefix_len < 0 || prefix_len > 128)
+    if (!is_valid_prefix_length(prefix_len, 128))
     {
         return;
     }
-    if (root == nullptr)
-    {
-        root = std::make_unique<ip_matcher::trie_node>();
-    }
-    ip_matcher::trie_node* curr = root.get();
+    ip_matcher::trie_node* curr = ensure_root(root);
     if (curr->is_match)
     {
         return;
@@ -153,21 +178,13 @@ void ip_matcher::add_rule_v6(const int prefix_len, const asio::ip::address_v6& a
     const auto bytes = addr.to_bytes();
     for (int i = 0; i < prefix_len; ++i)
     {
-        const bool bit = get_bit_v6(bytes, i);
-        const std::size_t idx = to_index(bit);
-        if (curr->children[idx] == nullptr)
-        {
-            curr->children[idx] = std::make_unique<ip_matcher::trie_node>();
-        }
-        curr = curr->children[idx].get();
+        curr = advance_or_create_child(curr, get_bit_v6(bytes, i));
         if (curr->is_match)
         {
             return;
         }
     }
-    curr->is_match = true;
-    curr->children[0].reset();
-    curr->children[1].reset();
+    mark_node_match(curr);
 }
 
 ip_matcher::ip_matcher() = default;
@@ -301,16 +318,13 @@ void ip_matcher::optimize_node(const std::unique_ptr<trie_node>& node)
 
         if (curr->is_match)
         {
-            curr->children[0].reset();
-            curr->children[1].reset();
+            prune_children(curr);
             continue;
         }
 
-        if (curr->children[0] != nullptr && curr->children[0]->is_match && curr->children[1] != nullptr && curr->children[1]->is_match)
+        if (can_merge_match_children(curr))
         {
-            curr->is_match = true;
-            curr->children[0].reset();
-            curr->children[1].reset();
+            mark_node_match(curr);
         }
     }
 }
