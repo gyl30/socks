@@ -394,6 +394,13 @@ socks_session::request_info socks_session::make_invalid_request(const std::uint8
     return request_info{.ok = false, .host = "", .port = 0, .cmd = cmd};
 }
 
+asio::awaitable<socks_session::request_info> socks_session::reject_request(const std::uint8_t cmd, const std::uint8_t rep)
+{
+    co_await delay_invalid_request();
+    co_await reply_error(rep);
+    co_return make_invalid_request(cmd);
+}
+
 asio::awaitable<bool> socks_session::read_request_header(std::array<std::uint8_t, 4>& head)
 {
     const auto [read_ec, read_n] = co_await asio::async_read(socket_, asio::buffer(head), asio::as_tuple(asio::use_awaitable));
@@ -433,25 +440,19 @@ asio::awaitable<socks_session::request_info> socks_session::read_request()
     if (head[0] != socks::kVer || head[2] != 0)
     {
         LOG_WARN("socks session {} request invalid header", sid_);
-        co_await delay_invalid_request();
-        co_await reply_error(socks::kRepGenFail);
-        co_return make_invalid_request();
+        co_return co_await reject_request(0, socks::kRepGenFail);
     }
 
     if (!is_supported_cmd(head[1]))
     {
         LOG_WARN("socks session {} request unsupported cmd {}", sid_, head[1]);
-        co_await delay_invalid_request();
-        co_await reply_error(socks::kRepCmdNotSupported);
-        co_return make_invalid_request(head[1]);
+        co_return co_await reject_request(head[1], socks::kRepCmdNotSupported);
     }
 
     if (!is_supported_atyp(head[3]))
     {
         LOG_WARN("socks session {} request unsupported atyp {}", sid_, head[3]);
-        co_await delay_invalid_request();
-        co_await reply_error(socks::kRepAddrTypeNotSupported);
-        co_return make_invalid_request(head[1]);
+        co_return co_await reject_request(head[1], socks::kRepAddrTypeNotSupported);
     }
 
     std::string host;
