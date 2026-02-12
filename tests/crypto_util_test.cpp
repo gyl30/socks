@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <system_error>
 
 #include <gtest/gtest.h>
@@ -429,4 +430,26 @@ TEST(CryptoUtilTest, NonGCMCipherContext)
     decrypted.resize(out_len + final_len);
 
     EXPECT_EQ(decrypted, plaintext);
+}
+
+TEST(CryptoUtilTest, CipherContextMovedFromBecomesInvalid)
+{
+    reality::cipher_context ctx;
+    reality::cipher_context moved(std::move(ctx));
+    EXPECT_TRUE(moved.valid());
+    EXPECT_FALSE(ctx.valid());
+
+    const std::vector<std::uint8_t> key(32, 0x11);
+    const std::vector<std::uint8_t> iv(12, 0x22);
+    EXPECT_FALSE(ctx.init(true, EVP_aes_256_gcm(), key.data(), iv.data(), iv.size()));
+}
+
+TEST(CryptoUtilTest, CipherContextRejectsInvalidGcmIvLength)
+{
+    reality::cipher_context ctx;
+    const std::vector<std::uint8_t> key(32, 0x11);
+    const std::vector<std::uint8_t> iv(12, 0x22);
+
+    const auto huge_iv_len = std::numeric_limits<std::size_t>::max();
+    EXPECT_FALSE(ctx.init(true, EVP_aes_256_gcm(), key.data(), iv.data(), huge_iv_len));
 }
