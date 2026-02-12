@@ -102,6 +102,11 @@ class ch_parser
         const std::uint8_t* start_;
     };
 
+    static bool read_tls_record_header(reader& r);
+    static bool read_client_hello_prefix(reader& r, client_hello_info& info);
+    static bool read_session_id(reader& r, client_hello_info& info);
+    static bool skip_cipher_suites_and_compression(reader& r);
+
     static void parse_extensions(reader& r, client_hello_info& info);
     static void parse_sni(reader& r, client_hello_info& info);
     static void parse_key_share(reader& r, client_hello_info& info);

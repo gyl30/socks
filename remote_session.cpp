@@ -15,6 +15,41 @@
 namespace mux
 {
 
+namespace
+{
+
+asio::awaitable<bool> send_ack(std::shared_ptr<mux_connection> conn,
+                               const std::uint32_t stream_id,
+                               const std::uint8_t rep,
+                               const std::string& addr,
+                               const std::uint16_t port,
+                               const connection_context& ctx)
+{
+    const ack_payload ack{.socks_rep = rep, .bnd_addr = addr, .bnd_port = port};
+    std::vector<std::uint8_t> ack_data;
+    mux_codec::encode_ack(ack, ack_data);
+    const auto ack_ec = co_await conn->send_async(stream_id, kCmdAck, std::move(ack_data));
+    if (ack_ec)
+    {
+        LOG_CTX_WARN(ctx, "{} send ack failed {}", log_event::kMux, ack_ec.message());
+        co_return false;
+    }
+    co_return true;
+}
+
+asio::awaitable<void> remove_stream_and_reset(std::weak_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> manager,
+                                              std::shared_ptr<mux_connection> conn,
+                                              const std::uint32_t stream_id)
+{
+    if (auto mgr = manager.lock())
+    {
+        mgr->remove_stream(stream_id);
+    }
+    (void)co_await conn->send_async(stream_id, kCmdRst, {});
+}
+
+}    // namespace
+
 remote_session::remote_session(std::shared_ptr<mux_connection> connection,
                                const std::uint32_t id,
                                asio::io_context& io_context,
@@ -50,19 +85,8 @@ asio::awaitable<void> remote_session::run(const syn_payload& syn)
     if (resolve_ec)
     {
         LOG_CTX_ERROR(ctx_, "{} resolve failed {}", log_event::kMux, resolve_ec.message());
-        const ack_payload ack{.socks_rep = socks::kRepHostUnreach, .bnd_addr = "", .bnd_port = 0};
-        std::vector<std::uint8_t> ack_data;
-        mux_codec::encode_ack(ack, ack_data);
-        const auto ack_ec = co_await conn->send_async(id_, kCmdAck, std::move(ack_data));
-        if (ack_ec)
-        {
-            LOG_CTX_WARN(ctx_, "{} send ack failed {}", log_event::kMux, ack_ec.message());
-        }
-        if (auto mgr = manager_.lock())
-        {
-            mgr->remove_stream(id_);
-        }
-        (void)co_await conn->send_async(id_, kCmdRst, {});
+        (void)co_await send_ack(conn, id_, socks::kRepHostUnreach, "", 0, ctx_);
+        co_await remove_stream_and_reset(manager_, conn, id_);
         co_return;
     }
 
@@ -70,19 +94,8 @@ asio::awaitable<void> remote_session::run(const syn_payload& syn)
     if (connect_ec)
     {
         LOG_CTX_ERROR(ctx_, "{} connect failed {}", log_event::kMux, connect_ec.message());
-        const ack_payload ack{.socks_rep = socks::kRepConnRefused, .bnd_addr = "", .bnd_port = 0};
-        std::vector<std::uint8_t> ack_data;
-        mux_codec::encode_ack(ack, ack_data);
-        const auto ack_ec = co_await conn->send_async(id_, kCmdAck, std::move(ack_data));
-        if (ack_ec)
-        {
-            LOG_CTX_WARN(ctx_, "{} send ack failed {}", log_event::kMux, ack_ec.message());
-        }
-        if (auto mgr = manager_.lock())
-        {
-            mgr->remove_stream(id_);
-        }
-        (void)co_await conn->send_async(id_, kCmdRst, {});
+        (void)co_await send_ack(conn, id_, socks::kRepConnRefused, "", 0, ctx_);
+        co_await remove_stream_and_reset(manager_, conn, id_);
         co_return;
     }
 
@@ -95,13 +108,8 @@ asio::awaitable<void> remote_session::run(const syn_payload& syn)
 
     LOG_CTX_INFO(ctx_, "{} connected {} {}", log_event::kConnEstablished, syn.addr, syn.port);
 
-    const ack_payload ack_pl{.socks_rep = socks::kRepSuccess, .bnd_addr = ep_conn.address().to_string(), .bnd_port = ep_conn.port()};
-    std::vector<std::uint8_t> ack_data;
-    mux_codec::encode_ack(ack_pl, ack_data);
-    const auto ack_ec = co_await conn->send_async(id_, kCmdAck, std::move(ack_data));
-    if (ack_ec)
+    if (!co_await send_ack(conn, id_, socks::kRepSuccess, ep_conn.address().to_string(), ep_conn.port(), ctx_))
     {
-        LOG_CTX_WARN(ctx_, "{} send ack failed {}", log_event::kMux, ack_ec.message());
         if (auto mgr = manager_.lock())
         {
             mgr->remove_stream(id_);

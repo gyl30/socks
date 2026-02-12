@@ -46,6 +46,16 @@ class socks_session : public std::enable_shared_from_this<socks_session>
 
     asio::awaitable<bool> do_password_auth();
 
+    asio::awaitable<bool> read_auth_field(std::string& out, const char* field_name);
+
+    asio::awaitable<void> delay_invalid_request() const;
+
+    [[nodiscard]] static bool is_supported_cmd(std::uint8_t cmd);
+
+    [[nodiscard]] static bool is_supported_atyp(std::uint8_t atyp);
+
+    asio::awaitable<bool> read_request_host(std::uint8_t atyp, std::uint8_t cmd, std::string& host);
+
     struct request_info
     {
         bool ok;

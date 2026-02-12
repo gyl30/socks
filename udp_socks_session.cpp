@@ -48,6 +48,122 @@ namespace
     return ec == asio::error::eof || ec == asio::error::operation_aborted || ec == asio::error::bad_descriptor || ec == asio::error::not_connected;
 }
 
+asio::awaitable<void> write_socks_error_reply(asio::ip::tcp::socket& socket, const std::uint8_t rep)
+{
+    std::uint8_t err[] = {socks::kVer, rep, 0, socks::kAtypIpv4, 0, 0, 0, 0, 0, 0};
+    co_await asio::async_write(socket, asio::buffer(err), asio::as_tuple(asio::use_awaitable));
+}
+
+bool bind_udp_socket_for_associate(asio::ip::tcp::socket& tcp_socket,
+                                   asio::ip::udp::socket& udp_socket,
+                                   const connection_context& ctx,
+                                   asio::ip::address& local_addr,
+                                   std::uint16_t& udp_bind_port)
+{
+    std::error_code ec;
+    const auto tcp_local_ep = tcp_socket.local_endpoint(ec);
+    if (ec)
+    {
+        LOG_CTX_ERROR(ctx, "{} failed to get local endpoint {}", log_event::kSocks, ec.message());
+        return false;
+    }
+
+    local_addr = socks_codec::normalize_ip_address(tcp_local_ep.address());
+    const auto udp_protocol = local_addr.is_v6() ? asio::ip::udp::v6() : asio::ip::udp::v4();
+
+    ec = udp_socket.open(udp_protocol, ec);
+    if (!ec)
+    {
+        if (local_addr.is_v6())
+        {
+            ec = udp_socket.set_option(asio::ip::v6_only(false), ec);
+        }
+        ec = udp_socket.bind(asio::ip::udp::endpoint(local_addr, 0), ec);
+    }
+
+    if (ec)
+    {
+        LOG_CTX_ERROR(ctx, "{} bind failed {}", log_event::kSocks, ec.message());
+        return false;
+    }
+
+    const auto udp_local_ep = udp_socket.local_endpoint(ec);
+    if (ec)
+    {
+        LOG_CTX_ERROR(ctx, "{} query udp endpoint failed {}", log_event::kSocks, ec.message());
+        return false;
+    }
+    udp_bind_port = udp_local_ep.port();
+    LOG_CTX_INFO(ctx, "{} started bound at {} {}", log_event::kSocks, local_addr.to_string(), udp_bind_port);
+    return true;
+}
+
+asio::awaitable<std::shared_ptr<mux_stream>> establish_udp_associate_stream(std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager,
+                                                                            const connection_context& ctx)
+{
+    const auto stream = tunnel_manager->create_stream();
+    if (stream == nullptr)
+    {
+        LOG_CTX_ERROR(ctx, "{} failed to create stream", log_event::kSocks);
+        co_return nullptr;
+    }
+
+    const syn_payload syn{.socks_cmd = socks::kCmdUdpAssociate, .addr = "0.0.0.0", .port = 0};
+    std::vector<std::uint8_t> syn_data;
+    mux_codec::encode_syn(syn, syn_data);
+    auto ec = co_await tunnel_manager->connection()->send_async(stream->id(), kCmdSyn, std::move(syn_data));
+    if (ec)
+    {
+        LOG_CTX_WARN(ctx, "{} syn failed {}", log_event::kSocks, ec.message());
+        co_await stream->close();
+        co_return nullptr;
+    }
+
+    auto [ack_ec, ack_data] = co_await stream->async_read_some();
+    if (ack_ec)
+    {
+        LOG_CTX_WARN(ctx, "{} ack failed {}", log_event::kSocks, ack_ec.message());
+        co_await stream->close();
+        co_return nullptr;
+    }
+
+    ack_payload ack_pl;
+    if (!mux_codec::decode_ack(ack_data.data(), ack_data.size(), ack_pl) || ack_pl.socks_rep != socks::kRepSuccess)
+    {
+        LOG_CTX_WARN(ctx, "{} ack rejected {}", log_event::kSocks, ack_pl.socks_rep);
+        co_await stream->close();
+        co_return nullptr;
+    }
+
+    co_return stream;
+}
+
+std::vector<std::uint8_t> build_udp_associate_reply(const asio::ip::address& local_addr, const std::uint16_t udp_bind_port)
+{
+    std::vector<std::uint8_t> final_rep;
+    final_rep.reserve(22);
+    final_rep.push_back(socks::kVer);
+    final_rep.push_back(socks::kRepSuccess);
+    final_rep.push_back(0x00);
+
+    if (local_addr.is_v4())
+    {
+        final_rep.push_back(socks::kAtypIpv4);
+        const auto bytes = local_addr.to_v4().to_bytes();
+        final_rep.insert(final_rep.end(), bytes.begin(), bytes.end());
+    }
+    else
+    {
+        final_rep.push_back(socks::kAtypIpv6);
+        const auto bytes = local_addr.to_v6().to_bytes();
+        final_rep.insert(final_rep.end(), bytes.begin(), bytes.end());
+    }
+
+    final_rep.push_back(static_cast<std::uint8_t>((udp_bind_port >> 8) & 0xFF));
+    final_rep.push_back(static_cast<std::uint8_t>(udp_bind_port & 0xFF));
+    return final_rep;
+}
+
 }    // namespace
 
 udp_socks_session::udp_socks_session(asio::ip::tcp::socket socket,
@@ -106,109 +222,34 @@ void udp_socks_session::on_reset() { on_close(); }
 
 asio::awaitable<void> udp_socks_session::run(const std::string& host, const std::uint16_t port)
 {
-    std::error_code ec;
-    const auto tcp_local_ep = socket_.local_endpoint(ec);
-    if (ec)
+    (void)host;
+    (void)port;
+
+    asio::ip::address local_addr;
+    std::uint16_t udp_bind_port = 0;
+    if (!bind_udp_socket_for_associate(socket_, udp_socket_, ctx_, local_addr, udp_bind_port))
     {
-        LOG_CTX_ERROR(ctx_, "{} failed to get local endpoint {}", log_event::kSocks, ec.message());
+        co_await write_socks_error_reply(socket_, socks::kRepGenFail);
         co_return;
     }
-
-    const auto local_addr = socks_codec::normalize_ip_address(tcp_local_ep.address());
-    const auto udp_protocol = local_addr.is_v6() ? asio::ip::udp::v6() : asio::ip::udp::v4();
-
-    ec = udp_socket_.open(udp_protocol, ec);
-    if (!ec)
-    {
-        if (local_addr.is_v6())
-        {
-            ec = udp_socket_.set_option(asio::ip::v6_only(false), ec);
-        }
-        ec = udp_socket_.bind(asio::ip::udp::endpoint(local_addr, 0), ec);
-    }
-
-    if (ec)
-    {
-        LOG_CTX_ERROR(ctx_, "{} bind failed {}", log_event::kSocks, ec.message());
-        std::uint8_t err[] = {socks::kVer, socks::kRepGenFail, 0, socks::kAtypIpv4, 0, 0, 0, 0, 0, 0};
-        co_await asio::async_write(socket_, asio::buffer(err), asio::as_tuple(asio::use_awaitable));
-        co_return;
-    }
-
-    const auto udp_local_ep = udp_socket_.local_endpoint(ec);
-    const std::uint16_t udp_bind_port = udp_local_ep.port();
-    LOG_CTX_INFO(ctx_, "{} started bound at {} {}", log_event::kSocks, local_addr.to_string(), udp_bind_port);
 
     if (tunnel_manager_ == nullptr || tunnel_manager_->connection() == nullptr || !tunnel_manager_->connection()->is_open())
     {
         LOG_CTX_WARN(ctx_, "{} tunnel unavailable", log_event::kSocks);
-        std::uint8_t err[] = {socks::kVer, socks::kRepHostUnreach, 0, socks::kAtypIpv4, 0, 0, 0, 0, 0, 0};
-        co_await asio::async_write(socket_, asio::buffer(err), asio::as_tuple(asio::use_awaitable));
+        co_await write_socks_error_reply(socket_, socks::kRepHostUnreach);
         on_close();
         co_return;
     }
 
-    const auto stream = tunnel_manager_->create_stream();
+    const auto stream = co_await establish_udp_associate_stream(tunnel_manager_, ctx_);
     if (stream == nullptr)
     {
-        LOG_CTX_ERROR(ctx_, "{} failed to create stream", log_event::kSocks);
-        std::uint8_t err[] = {socks::kVer, socks::kRepGenFail, 0, socks::kAtypIpv4, 0, 0, 0, 0, 0, 0};
-        co_await asio::async_write(socket_, asio::buffer(err), asio::as_tuple(asio::use_awaitable));
+        co_await write_socks_error_reply(socket_, socks::kRepGenFail);
         on_close();
         co_return;
     }
 
-    const syn_payload syn{.socks_cmd = socks::kCmdUdpAssociate, .addr = "0.0.0.0", .port = 0};
-    std::vector<std::uint8_t> syn_data;
-    mux_codec::encode_syn(syn, syn_data);
-    ec = co_await tunnel_manager_->connection()->send_async(stream->id(), kCmdSyn, std::move(syn_data));
-    if (ec)
-    {
-        LOG_CTX_WARN(ctx_, "{} syn failed {}", log_event::kSocks, ec.message());
-        co_await stream->close();
-        co_return;
-    }
-
-    auto [ack_ec, ack_data] = co_await stream->async_read_some();
-    if (ack_ec)
-    {
-        LOG_CTX_WARN(ctx_, "{} ack failed {}", log_event::kSocks, ack_ec.message());
-        co_await stream->close();
-        co_return;
-    }
-    ack_payload ack_pl;
-    if (!mux_codec::decode_ack(ack_data.data(), ack_data.size(), ack_pl) || ack_pl.socks_rep != socks::kRepSuccess)
-    {
-        LOG_CTX_WARN(ctx_, "{} ack rejected {}", log_event::kSocks, ack_pl.socks_rep);
-        std::uint8_t err[] = {socks::kVer, socks::kRepGenFail, 0, socks::kAtypIpv4, 0, 0, 0, 0, 0, 0};
-        co_await asio::async_write(socket_, asio::buffer(err), asio::as_tuple(asio::use_awaitable));
-        co_await stream->close();
-        on_close();
-        co_return;
-    }
-
-    std::vector<std::uint8_t> final_rep;
-    final_rep.reserve(22);
-    final_rep.push_back(socks::kVer);
-    final_rep.push_back(socks::kRepSuccess);
-    final_rep.push_back(0x00);
-
-    if (local_addr.is_v4())
-    {
-        final_rep.push_back(socks::kAtypIpv4);
-        const auto bytes = local_addr.to_v4().to_bytes();
-        final_rep.insert(final_rep.end(), bytes.begin(), bytes.end());
-    }
-    else
-    {
-        final_rep.push_back(socks::kAtypIpv6);
-        const auto bytes = local_addr.to_v6().to_bytes();
-        final_rep.insert(final_rep.end(), bytes.begin(), bytes.end());
-    }
-
-    final_rep.push_back(static_cast<std::uint8_t>((udp_bind_port >> 8) & 0xFF));
-    final_rep.push_back(static_cast<std::uint8_t>(udp_bind_port & 0xFF));
-
+    const auto final_rep = build_udp_associate_reply(local_addr, udp_bind_port);
     const auto [we, wn] = co_await asio::async_write(socket_, asio::buffer(final_rep), asio::as_tuple(asio::use_awaitable));
     if (we)
     {

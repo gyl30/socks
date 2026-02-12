@@ -7,79 +7,101 @@
 namespace mux
 {
 
-client_hello_info ch_parser::parse(const std::vector<std::uint8_t>& buf)
+bool ch_parser::read_tls_record_header(reader& r)
 {
-    client_hello_info info;
-    reader r(buf);
-
     if (r.remaining() < 5)
     {
-        return info;
+        return false;
     }
 
     std::uint8_t record_type = 0;
     if (!r.read_u8(record_type) || record_type != 0x16)
     {
-        return info;
+        return false;
     }
 
-    if (!r.skip(2 + 2))
-    {
-        return info;
-    }
+    return r.skip(2 + 2);
+}
 
+bool ch_parser::read_client_hello_prefix(reader& r, client_hello_info& info)
+{
     std::uint8_t handshake_type = 0;
     if (!r.read_u8(handshake_type) || handshake_type != 0x01)
     {
-        return info;
+        return false;
     }
 
     if (!r.skip(3))
     {
-        return info;
+        return false;
     }
 
     if (!r.skip(2))
     {
-        return info;
+        return false;
     }
 
-    if (!r.read_vector(info.random, 32))
-    {
-        return info;
-    }
+    return r.read_vector(info.random, 32);
+}
 
+bool ch_parser::read_session_id(reader& r, client_hello_info& info)
+{
     std::uint8_t sid_len = 0;
     if (!r.read_u8(sid_len))
     {
-        return info;
+        return false;
     }
 
     info.sid_offset = static_cast<std::uint32_t>(r.offset());
-    if (sid_len > 0)
+    if (sid_len == 0)
     {
-        if (!r.read_vector(info.session_id, sid_len))
-        {
-            return info;
-        }
+        return true;
     }
 
+    return r.read_vector(info.session_id, sid_len);
+}
+
+bool ch_parser::skip_cipher_suites_and_compression(reader& r)
+{
     std::uint16_t cs_len = 0;
     if (!r.read_u16(cs_len))
     {
-        return info;
+        return false;
     }
     if (!r.skip(cs_len))
     {
-        return info;
+        return false;
     }
 
     std::uint8_t comp_len = 0;
     if (!r.read_u8(comp_len))
     {
+        return false;
+    }
+    return r.skip(comp_len);
+}
+
+client_hello_info ch_parser::parse(const std::vector<std::uint8_t>& buf)
+{
+    client_hello_info info;
+    reader r(buf);
+
+    if (!read_tls_record_header(r))
+    {
         return info;
     }
-    if (!r.skip(comp_len))
+
+    if (!read_client_hello_prefix(r, info))
+    {
+        return info;
+    }
+
+    if (!read_session_id(r, info))
+    {
+        return info;
+    }
+
+    if (!skip_cipher_suites_and_compression(r))
     {
         return info;
     }

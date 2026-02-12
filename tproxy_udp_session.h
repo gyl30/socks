@@ -55,6 +55,16 @@ class tproxy_udp_session : public mux_stream_interface, public std::enable_share
     void touch();
     asio::awaitable<void> handle_packet_inner(asio::ip::udp::endpoint dst_ep, std::vector<std::uint8_t> data);
 
+    [[nodiscard]] asio::awaitable<bool> negotiate_proxy_stream(
+        const std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>& tunnel, const std::shared_ptr<mux_stream>& stream) const;
+
+    [[nodiscard]] asio::awaitable<void> cleanup_proxy_stream(
+        const std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>& tunnel, const std::shared_ptr<mux_stream>& stream) const;
+
+    bool install_proxy_stream(const std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>& tunnel,
+                              const std::shared_ptr<mux_stream>& stream,
+                              bool& should_start_reader);
+
     asio::awaitable<bool> ensure_proxy_stream();
 
     asio::awaitable<void> send_proxy(const asio::ip::udp::endpoint& dst_ep, const std::uint8_t* data, std::size_t len);
