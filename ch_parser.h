@@ -106,6 +106,12 @@ class ch_parser
     static bool read_client_hello_prefix(reader& r, client_hello_info& info);
     static bool read_session_id(reader& r, client_hello_info& info);
     static bool skip_cipher_suites_and_compression(reader& r);
+    static bool read_extension_header(reader& r, std::uint16_t& type, std::uint16_t& len);
+    static bool read_sni_item_header(reader& r, std::uint8_t& type, std::uint16_t& len);
+    static bool handle_sni_item(reader& r, std::uint8_t type, std::uint16_t len, client_hello_info& info);
+    static bool read_key_share_item_header(reader& r, std::uint16_t& group, std::uint16_t& len);
+    static void handle_key_share_item(reader& r, std::uint16_t group, std::uint16_t len, client_hello_info& info);
+    static void finalize_key_share_info(client_hello_info& info);
 
     static void parse_extensions(reader& r, client_hello_info& info);
     static void parse_sni(reader& r, client_hello_info& info);
