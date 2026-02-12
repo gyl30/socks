@@ -13,6 +13,7 @@
 extern "C"
 {
 #include <openssl/evp.h>
+#include <openssl/rsa.h>
 #include <openssl/x509.h>
 }
 
@@ -27,6 +28,7 @@ namespace
 std::atomic<bool> g_fail_hkdf_set_key{false};
 std::atomic<bool> g_fail_hkdf_set_salt{false};
 std::atomic<bool> g_fail_set_gcm_tag{false};
+std::atomic<bool> g_fail_x509_get_pubkey{false};
 
 void fail_next_hkdf_set_key() { g_fail_hkdf_set_key.store(true, std::memory_order_release); }
 
@@ -34,11 +36,83 @@ void fail_next_hkdf_set_salt() { g_fail_hkdf_set_salt.store(true, std::memory_or
 
 void fail_next_set_gcm_tag() { g_fail_set_gcm_tag.store(true, std::memory_order_release); }
 
+void fail_next_x509_get_pubkey() { g_fail_x509_get_pubkey.store(true, std::memory_order_release); }
+
+std::vector<std::uint8_t> build_self_signed_cert_der()
+{
+    EVP_PKEY* raw_key = nullptr;
+    EVP_PKEY_CTX* key_ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, nullptr);
+    if (key_ctx == nullptr)
+    {
+        return {};
+    }
+    if (EVP_PKEY_keygen_init(key_ctx) != 1 || EVP_PKEY_CTX_set_rsa_keygen_bits(key_ctx, 1024) != 1 || EVP_PKEY_keygen(key_ctx, &raw_key) != 1
+        || raw_key == nullptr)
+    {
+        EVP_PKEY_CTX_free(key_ctx);
+        if (raw_key != nullptr)
+        {
+            EVP_PKEY_free(raw_key);
+        }
+        return {};
+    }
+    EVP_PKEY_CTX_free(key_ctx);
+
+    X509* cert = X509_new();
+    if (cert == nullptr)
+    {
+        EVP_PKEY_free(raw_key);
+        return {};
+    }
+
+    const bool setup_ok = X509_set_version(cert, 2) == 1 && ASN1_INTEGER_set(X509_get_serialNumber(cert), 1) == 1
+                          && X509_gmtime_adj(X509_get_notBefore(cert), 0) != nullptr && X509_gmtime_adj(X509_get_notAfter(cert), 60) != nullptr
+                          && X509_set_pubkey(cert, raw_key) == 1;
+
+    X509_NAME* name = X509_get_subject_name(cert);
+    const bool name_ok = name != nullptr
+                         && X509_NAME_add_entry_by_txt(name,
+                                                       "CN",
+                                                       MBSTRING_ASC,
+                                                       reinterpret_cast<const unsigned char*>("with-key"),
+                                                       -1,
+                                                       -1,
+                                                       0)
+                                == 1
+                         && X509_set_issuer_name(cert, name) == 1;
+
+    const bool sign_ok = X509_sign(cert, raw_key, EVP_sha256()) > 0;
+    EVP_PKEY_free(raw_key);
+    if (!setup_ok || !name_ok || !sign_ok)
+    {
+        X509_free(cert);
+        return {};
+    }
+
+    const int der_len = i2d_X509(cert, nullptr);
+    if (der_len <= 0)
+    {
+        X509_free(cert);
+        return {};
+    }
+
+    std::vector<std::uint8_t> der(static_cast<std::size_t>(der_len));
+    unsigned char* p = der.data();
+    const int encoded_len = i2d_X509(cert, &p);
+    X509_free(cert);
+    if (encoded_len != der_len)
+    {
+        return {};
+    }
+    return der;
+}
+
 }    // namespace
 
 extern "C" int __real_EVP_PKEY_CTX_set1_hkdf_key(EVP_PKEY_CTX* ctx, const unsigned char* key, int keylen);
 extern "C" int __real_EVP_PKEY_CTX_set1_hkdf_salt(EVP_PKEY_CTX* ctx, const unsigned char* salt, int saltlen);
 extern "C" int __real_EVP_CIPHER_CTX_ctrl(EVP_CIPHER_CTX* ctx, int type, int arg, void* ptr);
+extern "C" EVP_PKEY* __real_X509_get_pubkey(X509* x);
 
 extern "C" int __wrap_EVP_PKEY_CTX_set1_hkdf_key(EVP_PKEY_CTX* ctx, const unsigned char* key, int keylen)
 {
@@ -65,6 +139,15 @@ extern "C" int __wrap_EVP_CIPHER_CTX_ctrl(EVP_CIPHER_CTX* ctx, int type, int arg
         return 0;
     }
     return __real_EVP_CIPHER_CTX_ctrl(ctx, type, arg, ptr);
+}
+
+extern "C" EVP_PKEY* __wrap_X509_get_pubkey(X509* x)
+{
+    if (g_fail_x509_get_pubkey.exchange(false, std::memory_order_acq_rel))
+    {
+        return nullptr;
+    }
+    return __real_X509_get_pubkey(x);
 }
 
 TEST(CryptoUtilTest, HexConversion)
@@ -598,51 +681,11 @@ TEST(CryptoUtilTest, HKDFExpandOversizedOutputRejected)
 
 TEST(CryptoUtilTest, ExtractPubkeyFromCertWithoutPublicKeyInfo)
 {
-    X509* cert = X509_new();
-    ASSERT_NE(cert, nullptr);
-
-    if (X509_set_version(cert, 2) != 1
-        || ASN1_INTEGER_set(X509_get_serialNumber(cert), 1) != 1
-        || X509_gmtime_adj(X509_get_notBefore(cert), 0) == nullptr
-        || X509_gmtime_adj(X509_get_notAfter(cert), 60) == nullptr)
-    {
-        X509_free(cert);
-        GTEST_SKIP() << "x509 minimal cert setup unavailable";
-    }
-
-    X509_NAME* name = X509_get_subject_name(cert);
-    if (name == nullptr
-        || X509_NAME_add_entry_by_txt(name,
-                                      "CN",
-                                      MBSTRING_ASC,
-                                      reinterpret_cast<const unsigned char*>("no-key"),
-                                      -1,
-                                      -1,
-                                      0)
-               != 1
-        || X509_set_issuer_name(cert, name) != 1)
-    {
-        X509_free(cert);
-        GTEST_SKIP() << "x509 subject/issuer setup unavailable";
-    }
-
-    const int der_len = i2d_X509(cert, nullptr);
-    if (der_len <= 0)
-    {
-        X509_free(cert);
-        GTEST_SKIP() << "x509 encode without public key unsupported";
-    }
-
-    std::vector<std::uint8_t> der(static_cast<std::size_t>(der_len));
-    unsigned char* p = der.data();
-    const int encoded_len = i2d_X509(cert, &p);
-    X509_free(cert);
-    if (encoded_len != der_len)
-    {
-        GTEST_SKIP() << "x509 encode size mismatch";
-    }
+    const auto der = build_self_signed_cert_der();
+    ASSERT_FALSE(der.empty());
 
     std::error_code ec;
+    fail_next_x509_get_pubkey();
     auto pub = crypto_util::extract_pubkey_from_cert(der, ec);
     EXPECT_TRUE(ec);
     EXPECT_EQ(pub.get(), nullptr);
