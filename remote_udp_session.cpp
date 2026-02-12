@@ -176,6 +176,34 @@ asio::awaitable<void> remote_udp_session::forward_mux_payload(const std::vector<
     record_udp_write(sent_len);
 }
 
+void remote_udp_session::log_udp_local_endpoint()
+{
+    std::error_code local_ep_ec;
+    const auto local_ep = udp_socket_.local_endpoint(local_ep_ec);
+    if (local_ep_ec)
+    {
+        LOG_CTX_WARN(ctx_, "{} udp local endpoint failed {}", log_event::kMux, local_ep_ec.message());
+        return;
+    }
+    LOG_CTX_INFO(ctx_, "{} udp session started bound at {}", log_event::kMux, local_ep.address().to_string());
+}
+
+asio::awaitable<void> remote_udp_session::run_udp_session_loops()
+{
+    using asio::experimental::awaitable_operators::operator||;
+    co_await (mux_to_udp() || udp_to_mux() || watchdog() || idle_watchdog());
+}
+
+void remote_udp_session::cleanup_after_stop()
+{
+    request_stop();
+    close_socket();
+    if (auto manager = manager_.lock())
+    {
+        manager->remove_stream(id_);
+    }
+}
+
 asio::awaitable<void> remote_udp_session::start_impl(std::shared_ptr<remote_udp_session> self)
 {
     auto conn = connection_.lock();
@@ -187,30 +215,13 @@ asio::awaitable<void> remote_udp_session::start_impl(std::shared_ptr<remote_udp_
     {
         co_return;
     }
-
-    std::error_code local_ep_ec;
-    const auto local_ep = udp_socket_.local_endpoint(local_ep_ec);
-    if (local_ep_ec)
-    {
-        LOG_CTX_WARN(ctx_, "{} udp local endpoint failed {}", log_event::kMux, local_ep_ec.message());
-    }
-    else
-    {
-        LOG_CTX_INFO(ctx_, "{} udp session started bound at {}", log_event::kMux, local_ep.address().to_string());
-    }
+    log_udp_local_endpoint();
 
     const ack_payload ack{.socks_rep = socks::kRepSuccess, .bnd_addr = "0.0.0.0", .bnd_port = 0};
     co_await send_ack_payload(conn, ack);
 
-    using asio::experimental::awaitable_operators::operator||;
-    co_await (mux_to_udp() || udp_to_mux() || watchdog() || idle_watchdog());
-    request_stop();
-    close_socket();
-
-    if (auto m = manager_.lock())
-    {
-        m->remove_stream(id_);
-    }
+    co_await run_udp_session_loops();
+    cleanup_after_stop();
     LOG_CTX_INFO(ctx_, "{} finished {}", log_event::kConnClose, ctx_.stats_summary());
 }
 
