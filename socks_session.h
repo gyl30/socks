@@ -1,8 +1,10 @@
 #ifndef SOCKS_SESSION_H
 #define SOCKS_SESSION_H
 
+#include <array>
 #include <memory>
 #include <string>
+#include <vector>
 #include <cstdint>
 
 #include <asio.hpp>
@@ -44,15 +46,35 @@ class socks_session : public std::enable_shared_from_this<socks_session>
 
     asio::awaitable<bool> handshake();
 
+    asio::awaitable<bool> read_socks_greeting(std::uint8_t& method_count);
+
+    asio::awaitable<bool> read_auth_methods(std::uint8_t method_count, std::vector<std::uint8_t>& methods);
+
+    [[nodiscard]] std::uint8_t select_auth_method(const std::vector<std::uint8_t>& methods) const;
+
+    asio::awaitable<bool> write_selected_method(std::uint8_t method);
+
     asio::awaitable<bool> do_password_auth();
 
+    asio::awaitable<bool> read_auth_version();
+
     asio::awaitable<bool> read_auth_field(std::string& out, const char* field_name);
+
+    [[nodiscard]] bool verify_credentials(const std::string& username, const std::string& password) const;
+
+    asio::awaitable<bool> write_auth_result(bool success);
 
     asio::awaitable<void> delay_invalid_request() const;
 
     [[nodiscard]] static bool is_supported_cmd(std::uint8_t cmd);
 
     [[nodiscard]] static bool is_supported_atyp(std::uint8_t atyp);
+
+    asio::awaitable<bool> read_request_ipv4(std::string& host);
+
+    asio::awaitable<bool> read_request_domain(std::string& host);
+
+    asio::awaitable<bool> read_request_ipv6(std::string& host);
 
     asio::awaitable<bool> read_request_host(std::uint8_t atyp, std::uint8_t cmd, std::string& host);
 
@@ -63,6 +85,12 @@ class socks_session : public std::enable_shared_from_this<socks_session>
         std::uint16_t port;
         std::uint8_t cmd;
     };
+
+    [[nodiscard]] static request_info make_invalid_request(std::uint8_t cmd = 0);
+
+    asio::awaitable<bool> read_request_header(std::array<std::uint8_t, 4>& head);
+
+    asio::awaitable<bool> read_request_port(std::uint16_t& port);
 
     asio::awaitable<request_info> read_request();
 
