@@ -1,6 +1,7 @@
 #include <array>
 #include <chrono>
 #include <memory>
+#include <vector>
 
 #include <gtest/gtest.h>
 #include <asio/co_spawn.hpp>
@@ -11,7 +12,10 @@
 #include "router.h"
 #include "ip_matcher.h"
 #include "domain_matcher.h"
+#include "mux_stream.h"
+#define private public
 #include "tproxy_udp_session.h"
+#undef private
 
 namespace
 {
@@ -72,4 +76,45 @@ TEST(TproxyUdpSessionTest, IdleDetection)
 
     session->stop();
     ctx.poll();
+}
+
+TEST(TproxyUdpSessionTest, IdleTimeoutZeroNeverExpires)
+{
+    asio::io_context ctx;
+    auto router = std::make_shared<direct_router>();
+
+    mux::config cfg;
+    cfg.timeout.idle = 1;
+    const asio::ip::udp::endpoint client_ep(asio::ip::make_address("127.0.0.1"), 12345);
+    const auto session = std::make_shared<mux::tproxy_udp_session>(ctx, nullptr, router, nullptr, 2, cfg, client_ep);
+
+    EXPECT_FALSE(session->is_idle(now_ms(), 0));
+}
+
+TEST(TproxyUdpSessionTest, InternalGuardBranches)
+{
+    asio::io_context ctx;
+    auto router = std::make_shared<direct_router>();
+
+    mux::config cfg;
+    const asio::ip::udp::endpoint client_ep(asio::ip::make_address("127.0.0.1"), 12346);
+    const auto session = std::make_shared<mux::tproxy_udp_session>(ctx, nullptr, router, nullptr, 3, cfg, client_ep);
+
+    asio::ip::udp::endpoint src_ep;
+    std::vector<std::uint8_t> payload;
+    EXPECT_FALSE(session->decode_proxy_packet({0x00, 0x01}, src_ep, payload));
+
+    socks_udp_header h;
+    h.addr = "not-an-ip";
+    h.port = 5353;
+    auto pkt = socks_codec::encode_udp_header(h);
+    pkt.push_back(0x42);
+    EXPECT_FALSE(session->decode_proxy_packet(pkt, src_ep, payload));
+
+    session->maybe_start_proxy_reader(false);
+
+    bool should_start_reader = false;
+    session->stream_ =
+        std::make_shared<mux::mux_stream>(1, 1, "trace", std::shared_ptr<mux::mux_connection>{}, ctx);
+    EXPECT_FALSE(session->install_proxy_stream(nullptr, nullptr, should_start_reader));
 }

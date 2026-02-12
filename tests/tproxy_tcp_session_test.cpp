@@ -4,6 +4,7 @@
 #include <memory>
 #include <string>
 #include <cstdint>
+#include <system_error>
 
 #include <gtest/gtest.h>
 #include <asio/write.hpp>
@@ -21,7 +22,9 @@
 #include "router.h"
 #include "ip_matcher.h"
 #include "domain_matcher.h"
+#define private public
 #include "tproxy_tcp_session.h"
+#undef private
 
 namespace
 {
@@ -142,4 +145,24 @@ TEST(TproxyTcpSessionTest, DirectEcho)
 
     EXPECT_TRUE(done);
     EXPECT_TRUE(ok);
+}
+
+TEST(TproxyTcpSessionTest, StopReadDecisionBranches)
+{
+    asio::io_context ctx;
+    auto router = std::make_shared<direct_router>();
+
+    mux::config cfg;
+    const asio::ip::tcp::endpoint dst_ep(asio::ip::make_address("127.0.0.1"), 80);
+
+    auto session =
+        std::make_shared<mux::tproxy_tcp_session>(asio::ip::tcp::socket(ctx), ctx, nullptr, std::move(router), 2, cfg, dst_ep);
+
+    EXPECT_FALSE(session->should_stop_client_read(std::error_code(), 1));
+    EXPECT_TRUE(session->should_stop_client_read(std::error_code(), 0));
+    EXPECT_TRUE(session->should_stop_client_read(std::make_error_code(std::errc::invalid_argument), 0));
+
+    EXPECT_FALSE(session->should_stop_backend_read(std::error_code(), 1));
+    EXPECT_TRUE(session->should_stop_backend_read(std::error_code(), 0));
+    EXPECT_TRUE(session->should_stop_backend_read(std::make_error_code(std::errc::invalid_argument), 0));
 }
