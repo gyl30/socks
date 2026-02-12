@@ -37,12 +37,21 @@ class tcp_socks_session : public std::enable_shared_from_this<tcp_socks_session>
     [[nodiscard]] asio::awaitable<void> run(const std::string& host, const std::uint16_t port);
 
     [[nodiscard]] asio::awaitable<void> reply_error(const std::uint8_t code);
+    [[nodiscard]] asio::awaitable<bool> connect_backend(const std::shared_ptr<upstream>& backend,
+                                                        const std::string& host,
+                                                        std::uint16_t port,
+                                                        route_type route);
+    [[nodiscard]] asio::awaitable<bool> reply_success();
 
     [[nodiscard]] asio::awaitable<void> client_to_upstream(std::shared_ptr<upstream> backend);
 
     [[nodiscard]] asio::awaitable<void> upstream_to_client(std::shared_ptr<upstream> backend);
     [[nodiscard]] asio::awaitable<void> idle_watchdog(std::shared_ptr<upstream> backend);
     [[nodiscard]] asio::awaitable<void> close_backend_once(const std::shared_ptr<upstream>& backend);
+    [[nodiscard]] std::shared_ptr<upstream> create_backend(route_type route) const;
+
+    void start_idle_watchdog(const std::shared_ptr<upstream>& backend);
+    void close_client_socket();
 
    private:
     connection_context ctx_;
