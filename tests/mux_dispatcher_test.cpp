@@ -70,3 +70,21 @@ TEST(MuxDispatcherTest, BufferOverflowSetsFlagAndDropsFrame)
     EXPECT_TRUE(dispatcher.overflowed());
     EXPECT_EQ(call_count, 0);
 }
+
+TEST(MuxDispatcherTest, PartialPayloadWaitsForCompletion)
+{
+    mux::mux_dispatcher dispatcher;
+    int call_count = 0;
+    dispatcher.set_callback([&](const mux::frame_header, std::vector<std::uint8_t>) { call_count++; });
+
+    const std::vector<std::uint8_t> payload = {0x10, 0x20, 0x30};
+    const auto packed = mux::mux_dispatcher::pack(0x23, mux::kCmdDat, payload);
+
+    ASSERT_GT(packed.size(), mux::kHeaderSize + 1);
+    dispatcher.on_plaintext_data(std::span<const std::uint8_t>(packed.data(), mux::kHeaderSize + 1));
+    EXPECT_EQ(call_count, 0);
+
+    dispatcher.on_plaintext_data(std::span<const std::uint8_t>(packed.data() + mux::kHeaderSize + 1,
+                                                               packed.size() - (mux::kHeaderSize + 1)));
+    EXPECT_EQ(call_count, 1);
+}
