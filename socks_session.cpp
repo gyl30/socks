@@ -429,14 +429,8 @@ asio::awaitable<bool> socks_session::read_request_port(std::uint16_t& port)
     co_return true;
 }
 
-asio::awaitable<socks_session::request_info> socks_session::read_request()
+asio::awaitable<std::optional<socks_session::request_info>> socks_session::validate_request_head(const std::array<std::uint8_t, 4>& head)
 {
-    std::array<std::uint8_t, 4> head = {0};
-    if (!(co_await read_request_header(head)))
-    {
-        co_return make_invalid_request();
-    }
-
     if (head[0] != socks::kVer || head[2] != 0)
     {
         LOG_WARN("socks session {} request invalid header", sid_);
@@ -455,20 +449,42 @@ asio::awaitable<socks_session::request_info> socks_session::read_request()
         co_return co_await reject_request(head[1], socks::kRepAddrTypeNotSupported);
     }
 
+    co_return std::nullopt;
+}
+
+asio::awaitable<socks_session::request_info> socks_session::read_request_target(const std::uint8_t cmd, const std::uint8_t atyp)
+{
     std::string host;
-    if (!co_await read_request_host(head[3], head[1], host))
+    if (!co_await read_request_host(atyp, cmd, host))
     {
-        co_return make_invalid_request(head[1]);
+        co_return make_invalid_request(cmd);
     }
 
     std::uint16_t port = 0;
     if (!(co_await read_request_port(port)))
     {
-        co_return make_invalid_request(head[1]);
+        co_return make_invalid_request(cmd);
     }
 
     LOG_INFO("socks session {} request {} {}", sid_, host, port);
-    co_return request_info{.ok = true, .host = host, .port = port, .cmd = head[1]};
+    co_return request_info{.ok = true, .host = host, .port = port, .cmd = cmd};
+}
+
+asio::awaitable<socks_session::request_info> socks_session::read_request()
+{
+    std::array<std::uint8_t, 4> head = {0};
+    if (!(co_await read_request_header(head)))
+    {
+        co_return make_invalid_request();
+    }
+
+    const auto invalid_result = co_await validate_request_head(head);
+    if (invalid_result.has_value())
+    {
+        co_return invalid_result.value();
+    }
+
+    co_return co_await read_request_target(head[1], head[3]);
 }
 
 asio::awaitable<void> socks_session::reply_error(std::uint8_t code)
