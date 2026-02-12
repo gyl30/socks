@@ -1,13 +1,13 @@
 #include <array>
 #include <chrono>
+#include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include <string>
 #include <string_view>
 #include <thread>
 #include <utility>
-#include <dirent.h>
-#include <unistd.h>
-#include <sys/resource.h>
+#include <sys/socket.h>
 
 #include <asio.hpp>
 #include <gtest/gtest.h>
@@ -17,6 +17,39 @@
 
 namespace
 {
+
+enum class monitor_fail_mode
+{
+    kNone = 0,
+    kSocket,
+    kReuseAddr,
+    kListen,
+};
+
+std::atomic<int> g_monitor_fail_mode{static_cast<int>(monitor_fail_mode::kNone)};
+
+class monitor_fail_guard
+{
+   public:
+    explicit monitor_fail_guard(const monitor_fail_mode mode)
+    {
+        g_monitor_fail_mode.store(static_cast<int>(mode), std::memory_order_release);
+    }
+
+    ~monitor_fail_guard() { g_monitor_fail_mode.store(static_cast<int>(monitor_fail_mode::kNone), std::memory_order_release); }
+};
+
+monitor_fail_mode consume_monitor_fail_mode(const monitor_fail_mode expected)
+{
+    const auto exp = static_cast<int>(expected);
+    const auto old = g_monitor_fail_mode.load(std::memory_order_acquire);
+    if (old != exp)
+    {
+        return monitor_fail_mode::kNone;
+    }
+    g_monitor_fail_mode.store(static_cast<int>(monitor_fail_mode::kNone), std::memory_order_release);
+    return expected;
+}
 
 std::uint16_t pick_free_port()
 {
@@ -77,26 +110,6 @@ std::string request_with_retry(std::uint16_t port, const std::string& request)
     return read_response(port, request);
 }
 
-std::size_t count_open_fds()
-{
-    std::size_t count = 0;
-    DIR* dir = opendir("/proc/self/fd");
-    if (dir == nullptr)
-    {
-        return 0;
-    }
-    while (readdir(dir) != nullptr)
-    {
-        ++count;
-    }
-    closedir(dir);
-    if (count >= 2)
-    {
-        count -= 2;
-    }
-    return count;
-}
-
 class monitor_server_env
 {
    public:
@@ -123,6 +136,41 @@ class monitor_server_env
 };
 
 }    // namespace
+
+extern "C" int __real_socket(int domain, int type, int protocol);
+extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);
+extern "C" int __real_listen(int sockfd, int backlog);
+
+extern "C" int __wrap_socket(int domain, int type, int protocol)
+{
+    if (consume_monitor_fail_mode(monitor_fail_mode::kSocket) == monitor_fail_mode::kSocket)
+    {
+        errno = EMFILE;
+        return -1;
+    }
+    return __real_socket(domain, type, protocol);
+}
+
+extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)
+{
+    if (level == SOL_SOCKET && optname == SO_REUSEADDR
+        && consume_monitor_fail_mode(monitor_fail_mode::kReuseAddr) == monitor_fail_mode::kReuseAddr)
+    {
+        errno = EPERM;
+        return -1;
+    }
+    return __real_setsockopt(sockfd, level, optname, optval, optlen);
+}
+
+extern "C" int __wrap_listen(int sockfd, int backlog)
+{
+    if (consume_monitor_fail_mode(monitor_fail_mode::kListen) == monitor_fail_mode::kListen)
+    {
+        errno = EACCES;
+        return -1;
+    }
+    return __real_listen(sockfd, backlog);
+}
 
 namespace mux
 {
@@ -206,42 +254,24 @@ TEST(MonitorServerTest, ConstructorHandlesInvalidBindHost)
 TEST(MonitorServerTest, ConstructorHandlesOpenFailure)
 {
     asio::io_context ioc;
+    monitor_fail_guard guard(monitor_fail_mode::kSocket);
+    auto server = std::make_shared<monitor_server>(ioc, 0, std::string("token"), 10);
+    ASSERT_NE(server, nullptr);
+}
 
-    asio::ip::tcp::acceptor primer(ioc);
-    asio::error_code ec;
-    primer.open(asio::ip::tcp::v4(), ec);
-    ASSERT_FALSE(ec);
-    primer.close(ec);
-    ASSERT_FALSE(ec);
+TEST(MonitorServerTest, ConstructorHandlesReuseAddressFailure)
+{
+    asio::io_context ioc;
+    monitor_fail_guard guard(monitor_fail_mode::kReuseAddr);
+    auto server = std::make_shared<monitor_server>(ioc, 0, std::string("token"), 10);
+    ASSERT_NE(server, nullptr);
+}
 
-    struct limit_guard
-    {
-        rlimit old_limit{};
-        bool restore = false;
-        ~limit_guard()
-        {
-            if (restore)
-            {
-                (void)setrlimit(RLIMIT_NOFILE, &old_limit);
-            }
-        }
-    } guard;
-
-    ASSERT_EQ(getrlimit(RLIMIT_NOFILE, &guard.old_limit), 0);
-    const auto open_fds = count_open_fds();
-    ASSERT_GT(open_fds, 0U);
-    if (open_fds <= 8)
-    {
-        GTEST_SKIP() << "open fds too small for deterministic RLIMIT test";
-    }
-
-    rlimit reduced = guard.old_limit;
-    reduced.rlim_cur = static_cast<rlim_t>(open_fds);
-    ASSERT_EQ(setrlimit(RLIMIT_NOFILE, &reduced), 0);
-    guard.restore = true;
-
-    const auto port = pick_free_port();
-    auto server = std::make_shared<monitor_server>(ioc, port, std::string("token"), 10);
+TEST(MonitorServerTest, ConstructorHandlesListenFailure)
+{
+    asio::io_context ioc;
+    monitor_fail_guard guard(monitor_fail_mode::kListen);
+    auto server = std::make_shared<monitor_server>(ioc, 0, std::string("token"), 10);
     ASSERT_NE(server, nullptr);
 }
 
