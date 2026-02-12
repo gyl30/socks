@@ -1,9 +1,16 @@
 #ifndef STATISTICS_H
 #define STATISTICS_H
 
+#include <array>
 #include <atomic>
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <mutex>
+#include <string>
+#include <string_view>
+#include <unordered_map>
+#include <vector>
 
 namespace mux
 {
@@ -11,6 +18,22 @@ namespace mux
 class statistics
 {
    public:
+    enum class handshake_failure_reason : std::uint8_t
+    {
+        kShortId = 0,
+        kClockSkew = 1,
+        kReplay = 2,
+        kCertVerify = 3,
+        kCount
+    };
+
+    struct handshake_failure_sni_metric
+    {
+        std::string reason;
+        std::string sni;
+        std::uint64_t count = 0;
+    };
+
     static statistics& instance()
     {
         static statistics s;
@@ -45,17 +68,136 @@ class statistics
     void inc_auth_failures() { auth_failures_++; }
     std::uint64_t auth_failures() const { return auth_failures_.load(); }
 
+    void inc_auth_short_id_failures() { auth_short_id_failures_++; }
+    std::uint64_t auth_short_id_failures() const { return auth_short_id_failures_.load(); }
+
+    void inc_auth_clock_skew_failures() { auth_clock_skew_failures_++; }
+    std::uint64_t auth_clock_skew_failures() const { return auth_clock_skew_failures_.load(); }
+
+    void inc_auth_replay_failures() { auth_replay_failures_++; }
+    std::uint64_t auth_replay_failures() const { return auth_replay_failures_.load(); }
+
+    void inc_cert_verify_failures() { cert_verify_failures_++; }
+    std::uint64_t cert_verify_failures() const { return cert_verify_failures_.load(); }
+
+    void inc_client_finished_failures() { client_finished_failures_++; }
+    std::uint64_t client_finished_failures() const { return client_finished_failures_.load(); }
+
+    void inc_fallback_rate_limited() { fallback_rate_limited_++; }
+    std::uint64_t fallback_rate_limited() const { return fallback_rate_limited_.load(); }
+
     void inc_routing_blocked() { routing_blocked_++; }
     std::uint64_t routing_blocked() const { return routing_blocked_.load(); }
 
+    void inc_handshake_failure_by_sni(const handshake_failure_reason reason, const std::string_view sni)
+    {
+        const auto reason_index = static_cast<std::size_t>(reason);
+        if (reason_index >= static_cast<std::size_t>(handshake_failure_reason::kCount))
+        {
+            return;
+        }
+
+        const auto key = normalize_sni_metric_key(sni);
+        std::lock_guard<std::mutex> lock(handshake_failure_sni_mu_);
+        auto& counters = handshake_failure_sni_counters_[reason_index];
+        const auto it = counters.by_sni.find(key);
+        if (it != counters.by_sni.end())
+        {
+            it->second++;
+            return;
+        }
+        if (counters.by_sni.size() < kMaxTrackedSniPerReason)
+        {
+            counters.by_sni.emplace(key, 1);
+            return;
+        }
+        counters.others++;
+    }
+
+    std::vector<handshake_failure_sni_metric> handshake_failure_sni_metrics() const
+    {
+        std::vector<handshake_failure_sni_metric> out;
+        std::lock_guard<std::mutex> lock(handshake_failure_sni_mu_);
+        for (std::size_t i = 0; i < static_cast<std::size_t>(handshake_failure_reason::kCount); ++i)
+        {
+            const auto reason = static_cast<handshake_failure_reason>(i);
+            const auto& counters = handshake_failure_sni_counters_[i];
+            for (const auto& [sni, count] : counters.by_sni)
+            {
+                out.push_back({.reason = std::string(handshake_failure_reason_label(reason)), .sni = sni, .count = count});
+            }
+            if (counters.others > 0)
+            {
+                out.push_back({.reason = std::string(handshake_failure_reason_label(reason)), .sni = "others", .count = counters.others});
+            }
+        }
+        std::sort(out.begin(),
+                  out.end(),
+                  [](const handshake_failure_sni_metric& a, const handshake_failure_sni_metric& b)
+                  {
+                      if (a.reason != b.reason)
+                      {
+                          return a.reason < b.reason;
+                      }
+                      if (a.count != b.count)
+                      {
+                          return a.count > b.count;
+                      }
+                      return a.sni < b.sni;
+                  });
+        return out;
+    }
+
+    static const char* handshake_failure_reason_label(const handshake_failure_reason reason)
+    {
+        switch (reason)
+        {
+            case handshake_failure_reason::kShortId:
+                return "short_id";
+            case handshake_failure_reason::kClockSkew:
+                return "clock_skew";
+            case handshake_failure_reason::kReplay:
+                return "replay";
+            case handshake_failure_reason::kCertVerify:
+                return "cert_verify";
+            default:
+                return "unknown";
+        }
+    }
+
    private:
+    static std::string normalize_sni_metric_key(const std::string_view sni)
+    {
+        if (sni.empty())
+        {
+            return "empty";
+        }
+        return std::string(sni);
+    }
+
+    struct handshake_failure_sni_counter
+    {
+        std::unordered_map<std::string, std::uint64_t> by_sni;
+        std::uint64_t others = 0;
+    };
+
+    static constexpr std::size_t kMaxTrackedSniPerReason = 100;
+
     std::atomic<std::uint64_t> active_connections_{0};
     std::atomic<std::uint64_t> total_connections_{0};
     std::atomic<std::uint64_t> active_mux_sessions_{0};
     std::atomic<std::uint64_t> bytes_read_{0};
     std::atomic<std::uint64_t> bytes_written_{0};
     std::atomic<std::uint64_t> auth_failures_{0};
+    std::atomic<std::uint64_t> auth_short_id_failures_{0};
+    std::atomic<std::uint64_t> auth_clock_skew_failures_{0};
+    std::atomic<std::uint64_t> auth_replay_failures_{0};
+    std::atomic<std::uint64_t> cert_verify_failures_{0};
+    std::atomic<std::uint64_t> client_finished_failures_{0};
+    std::atomic<std::uint64_t> fallback_rate_limited_{0};
     std::atomic<std::uint64_t> routing_blocked_{0};
+    mutable std::mutex handshake_failure_sni_mu_;
+    std::array<handshake_failure_sni_counter, static_cast<std::size_t>(handshake_failure_reason::kCount)> handshake_failure_sni_counters_{};
 
    private:
     statistics() = default;

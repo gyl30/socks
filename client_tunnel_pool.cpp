@@ -36,6 +36,7 @@ extern "C"
 #include "config.h"
 #include "ch_parser.h"
 #include "constants.h"
+#include "statistics.h"
 #include "net_utils.h"
 #include "transcript.h"
 #include "crypto_util.h"
@@ -1220,7 +1221,7 @@ asio::awaitable<std::pair<bool, client_tunnel_pool::handshake_result>> client_tu
 
     auto [loop_ok, app_sec] =
         co_await handshake_read_loop(
-            socket, hs_keys.s_hs_keys, sh_res.hs_keys, strict_cert_verify_, trans, sh_res.negotiated_cipher, sh_res.negotiated_md, ec);
+            socket, hs_keys.s_hs_keys, sh_res.hs_keys, strict_cert_verify_, sni_, trans, sh_res.negotiated_cipher, sh_res.negotiated_md, ec);
     if (!loop_ok)
     {
         co_return fail();
@@ -1321,6 +1322,7 @@ asio::awaitable<std::pair<bool, std::pair<std::vector<std::uint8_t>, std::vector
     const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& s_hs_keys,
     const reality::handshake_keys& hs_keys,
     const bool strict_cert_verify,
+    const std::string& sni,
     reality::transcript& trans,
     const EVP_CIPHER* cipher,
     const EVP_MD* md,
@@ -1348,6 +1350,9 @@ asio::awaitable<std::pair<bool, std::pair<std::vector<std::uint8_t>, std::vector
     }
     if (strict_cert_verify && !validation_state.cert_verify_signature_checked)
     {
+        auto& stats = statistics::instance();
+        stats.inc_cert_verify_failures();
+        stats.inc_handshake_failure_by_sni(statistics::handshake_failure_reason::kCertVerify, sni);
         ec = std::make_error_code(std::errc::permission_denied);
         LOG_ERROR("server certificate verify signature required");
         co_return make_handshake_loop_fail_result();
