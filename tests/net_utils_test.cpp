@@ -1,3 +1,4 @@
+#include <cerrno>
 #include <cstdint>
 #include <cstring>
 #include <netinet/in.h>
@@ -68,6 +69,84 @@ TEST(net_utils_test, endpoint_from_sockaddr_ipv6_truncated_len)
     const auto endpoint = endpoint_from_sockaddr(storage, sizeof(addr6) - 1U);
     EXPECT_TRUE(endpoint.address().is_unspecified());
     EXPECT_EQ(endpoint.port(), 0);
+}
+
+TEST(net_utils_test, endpoint_from_sockaddr_unknown_family)
+{
+    sockaddr_storage storage{};
+    storage.ss_family = AF_UNSPEC;
+
+    const auto endpoint = endpoint_from_sockaddr(storage, sizeof(storage));
+    EXPECT_TRUE(endpoint.address().is_unspecified());
+    EXPECT_EQ(endpoint.port(), 0);
+}
+
+TEST(net_utils_test, set_socket_mark_zero_short_circuit)
+{
+    std::error_code ec = std::make_error_code(std::errc::invalid_argument);
+    const bool ok = set_socket_mark(-1, 0, ec);
+#ifdef __linux__
+    EXPECT_TRUE(ok);
+    EXPECT_FALSE(ec);
+#else
+    EXPECT_FALSE(ok);
+    EXPECT_EQ(ec, std::make_error_code(std::errc::not_supported));
+#endif
+}
+
+TEST(net_utils_test, set_socket_mark_invalid_fd)
+{
+    std::error_code ec;
+    const bool ok = set_socket_mark(-1, 1, ec);
+    EXPECT_FALSE(ok);
+#ifdef __linux__
+    EXPECT_EQ(ec.value(), EBADF);
+#else
+    EXPECT_EQ(ec, std::make_error_code(std::errc::not_supported));
+#endif
+}
+
+TEST(net_utils_test, set_socket_transparent_invalid_fd)
+{
+    std::error_code ec;
+    const bool ok = set_socket_transparent(-1, true, ec);
+    EXPECT_FALSE(ok);
+#ifdef __linux__
+    EXPECT_EQ(ec.value(), EBADF);
+#else
+    EXPECT_EQ(ec, std::make_error_code(std::errc::not_supported));
+#endif
+}
+
+TEST(net_utils_test, set_socket_recv_origdst_invalid_fd)
+{
+    std::error_code ec;
+    const bool ok = set_socket_recv_origdst(-1, true, ec);
+    EXPECT_FALSE(ok);
+#ifdef __linux__
+    EXPECT_EQ(ec.value(), EBADF);
+#else
+    EXPECT_EQ(ec, std::make_error_code(std::errc::not_supported));
+#endif
+}
+
+TEST(net_utils_test, normalize_address_v4_mapped_v6)
+{
+    const auto mapped = asio::ip::make_address("::ffff:127.0.0.1");
+    const auto normalized = normalize_address(mapped);
+
+    EXPECT_TRUE(normalized.is_v4());
+    EXPECT_EQ(normalized.to_string(), "127.0.0.1");
+}
+
+TEST(net_utils_test, parse_original_dst_no_control_message)
+{
+    msghdr msg{};
+    msg.msg_control = nullptr;
+    msg.msg_controllen = 0;
+
+    const auto parsed = parse_original_dst(msg);
+    EXPECT_FALSE(parsed.has_value());
 }
 
 }    // namespace mux::net
