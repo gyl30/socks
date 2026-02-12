@@ -44,6 +44,7 @@ extern "C"
 #include "reality_auth.h"
 #include "reality_engine.h"
 #include "reality_messages.h"
+#include "tls_cipher_suite.h"
 #include "tls_key_schedule.h"
 #include "tls_record_layer.h"
 #include "client_tunnel_pool.h"
@@ -527,23 +528,6 @@ bool parse_server_hello_cipher_suite(const std::vector<std::uint8_t>& sh_data, s
     return true;
 }
 
-std::pair<const EVP_MD*, const EVP_CIPHER*> select_negotiated_suite(const std::uint16_t cipher_suite)
-{
-    if (cipher_suite == 0x1302)
-    {
-        LOG_DEBUG("cipher suite 1302 used sha384 cipher aes 256 gcm");
-        return std::make_pair(EVP_sha384(), EVP_aes_256_gcm());
-    }
-    if (cipher_suite == 0x1303)
-    {
-        LOG_DEBUG("cipher suite 1303 used sha256 cipher chacha20 poly1305");
-        return std::make_pair(EVP_sha256(), EVP_chacha20_poly1305());
-    }
-
-    LOG_DEBUG("cipher suite not found used sha256 cipher aes 128 gcm");
-    return std::make_pair(EVP_sha256(), EVP_aes_128_gcm());
-}
-
 bool derive_client_auth_key_material(const std::uint8_t* private_key,
                                      const std::vector<std::uint8_t>& server_pub_key,
                                      std::vector<std::uint8_t>& client_random,
@@ -720,9 +704,16 @@ bool prepare_server_hello_crypto(const std::vector<std::uint8_t>& sh_data,
     {
         return false;
     }
-    const auto [selected_md, selected_cipher] = select_negotiated_suite(cipher_suite);
-    md = selected_md;
-    cipher = selected_cipher;
+    const auto suite = reality::select_tls13_suite(cipher_suite);
+    if (!suite.has_value())
+    {
+        ec = asio::error::no_protocol_option;
+        LOG_ERROR("unsupported server hello cipher suite {:x}", cipher_suite);
+        return false;
+    }
+
+    md = suite->md;
+    cipher = suite->cipher;
     trans.set_protocol_hash(md);
     return true;
 }
