@@ -388,7 +388,18 @@ void mux_connection::stop_impl()
     }
     LOG_INFO("mux {} stopping", cid_);
     stream_map_t streams_to_clear = std::move(streams_);
+    reset_streams_on_stop(streams_to_clear);
+    close_socket_on_stop();
+    finalize_stop_state();
+}
 
+void mux_connection::release_resources()
+{
+    stop();
+}
+
+void mux_connection::reset_streams_on_stop(stream_map_t& streams_to_clear)
+{
     for (auto& stream : streams_to_clear | std::views::values)
     {
         if (stream != nullptr)
@@ -396,23 +407,31 @@ void mux_connection::stop_impl()
             stream->on_reset();
         }
     }
-
     streams_to_clear.clear();
+}
 
-    if (socket_.is_open())
+void mux_connection::close_socket_on_stop()
+{
+    if (!socket_.is_open())
     {
-        std::error_code ec;
-        ec = socket_.shutdown(asio::ip::tcp::socket::shutdown_both, ec);
-        if (ec)
-        {
-            LOG_WARN("mux {} shutdown failed error {}", cid_, ec.message());
-        }
-        ec = socket_.close(ec);
-        if (ec)
-        {
-            LOG_WARN("mux {} close failed error {}", cid_, ec.message());
-        }
+        return;
     }
+
+    std::error_code ec;
+    ec = socket_.shutdown(asio::ip::tcp::socket::shutdown_both, ec);
+    if (ec)
+    {
+        LOG_WARN("mux {} shutdown failed error {}", cid_, ec.message());
+    }
+    ec = socket_.close(ec);
+    if (ec)
+    {
+        LOG_WARN("mux {} close failed error {}", cid_, ec.message());
+    }
+}
+
+void mux_connection::finalize_stop_state()
+{
     LOG_INFO("mux write channel {} close", cid_);
     if (write_channel_)
     {
@@ -423,50 +442,53 @@ void mux_connection::stop_impl()
     connection_state_.store(mux_connection_state::kClosed, std::memory_order_release);
 }
 
-void mux_connection::release_resources() { stop(); }
+asio::awaitable<bool> mux_connection::read_and_dispatch_once()
+{
+    const auto buf = reality_engine_.read_buffer(8192);
+    const auto [read_ec, n] = co_await socket_.async_read_some(buf, asio::as_tuple(asio::use_awaitable));
+    if (read_ec || n == 0)
+    {
+        if (read_ec != asio::error::eof && read_ec != asio::error::operation_aborted)
+        {
+            LOG_ERROR("mux {} read error {}", cid_, read_ec.message());
+        }
+        co_return false;
+    }
+
+    read_bytes_ += n;
+    statistics::instance().add_bytes_read(n);
+    last_read_time_ms_.store(now_ms(), std::memory_order_release);
+    reality_engine_.commit_read(n);
+
+    std::error_code decrypt_ec;
+    reality_engine_.process_available_records(decrypt_ec,
+                                              [this](const std::uint8_t type, const std::span<const std::uint8_t> plaintext)
+                                              {
+                                                  if (type == reality::kContentTypeApplicationData && !plaintext.empty())
+                                                  {
+                                                      mux_dispatcher_.on_plaintext_data(plaintext);
+                                                  }
+                                              });
+
+    if (mux_dispatcher_.overflowed())
+    {
+        LOG_ERROR("mux {} dispatcher overflow stopping", cid_);
+        co_return false;
+    }
+    if (decrypt_ec)
+    {
+        LOG_ERROR("mux {} decrypt protocol error {}", cid_, decrypt_ec.message());
+        co_return false;
+    }
+    co_return true;
+}
 
 asio::awaitable<void> mux_connection::read_loop()
 {
     while (is_open())
     {
-        const auto buf = reality_engine_.read_buffer(8192);
-
-        const auto [read_ec, n] = co_await socket_.async_read_some(buf, asio::as_tuple(asio::use_awaitable));
-
-        if (read_ec || n == 0)
+        if (!co_await read_and_dispatch_once())
         {
-            if (read_ec != asio::error::eof && read_ec != asio::error::operation_aborted)
-            {
-                LOG_ERROR("mux {} read error {}", cid_, read_ec.message());
-            }
-            break;
-        }
-        read_bytes_ += n;
-        statistics::instance().add_bytes_read(n);
-        last_read_time_ms_.store(now_ms(), std::memory_order_release);
-
-        reality_engine_.commit_read(n);
-
-        std::error_code decrypt_ec;
-
-        reality_engine_.process_available_records(decrypt_ec,
-                                                  [this](const std::uint8_t type, const std::span<const std::uint8_t> pt)
-                                                  {
-                                                      if (type == reality::kContentTypeApplicationData && !pt.empty())
-                                                      {
-                                                          mux_dispatcher_.on_plaintext_data(pt);
-                                                      }
-                                                  });
-
-        if (mux_dispatcher_.overflowed())
-        {
-            LOG_ERROR("mux {} dispatcher overflow stopping", cid_);
-            break;
-        }
-
-        if (decrypt_ec)
-        {
-            LOG_ERROR("mux {} decrypt protocol error {}", cid_, decrypt_ec.message());
             break;
         }
     }
