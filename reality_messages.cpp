@@ -376,11 +376,12 @@ bool build_extension_without_blueprint(const extension_type type, std::vector<st
     }
 }
 
-bool build_extension_from_blueprint(const std::shared_ptr<extension_blueprint>& ext_ptr,
-                                    std::vector<std::uint8_t>& ext_buffer,
-                                    std::uint16_t& ext_type)
+bool build_extension_from_blueprint_group_a(const extension_type type,
+                                            const std::shared_ptr<extension_blueprint>& ext_ptr,
+                                            std::vector<std::uint8_t>& ext_buffer,
+                                            std::uint16_t& ext_type)
 {
-    switch (ext_ptr->type())
+    switch (type)
     {
         case extension_type::kECPointFormats:
             return build_ec_point_formats_ext(ext_ptr, ext_buffer, ext_type);
@@ -392,6 +393,18 @@ bool build_extension_from_blueprint(const std::shared_ptr<extension_blueprint>& 
             return build_psk_key_exchange_modes_ext(ext_ptr, ext_buffer, ext_type);
         case extension_type::kCompressCertificate:
             return build_compress_certificate_ext(ext_ptr, ext_buffer, ext_type);
+        default:
+            return false;
+    }
+}
+
+bool build_extension_from_blueprint_group_b(const extension_type type,
+                                            const std::shared_ptr<extension_blueprint>& ext_ptr,
+                                            std::vector<std::uint8_t>& ext_buffer,
+                                            std::uint16_t& ext_type)
+{
+    switch (type)
+    {
         case extension_type::kApplicationSettings:
             return build_application_settings_ext(ext_ptr, ext_buffer, ext_type);
         case extension_type::kApplicationSettingsNew:
@@ -405,6 +418,18 @@ bool build_extension_from_blueprint(const std::shared_ptr<extension_blueprint>& 
         default:
             return false;
     }
+}
+
+bool build_extension_from_blueprint(const std::shared_ptr<extension_blueprint>& ext_ptr,
+                                    std::vector<std::uint8_t>& ext_buffer,
+                                    std::uint16_t& ext_type)
+{
+    const auto type = ext_ptr->type();
+    if (build_extension_from_blueprint_group_a(type, ext_ptr, ext_buffer, ext_type))
+    {
+        return true;
+    }
+    return build_extension_from_blueprint_group_b(type, ext_ptr, ext_buffer, ext_type);
 }
 
 bool build_extension(const std::shared_ptr<extension_blueprint>& ext_ptr,
