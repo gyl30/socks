@@ -12,9 +12,11 @@
 extern "C"
 {
 #include <openssl/evp.h>
+#include <openssl/x509.h>
 }
 
 #include "crypto_util.h"
+#include "cipher_context.h"
 
 using reality::crypto_util;
 
@@ -452,4 +454,149 @@ TEST(CryptoUtilTest, CipherContextRejectsInvalidGcmIvLength)
 
     const auto huge_iv_len = std::numeric_limits<std::size_t>::max();
     EXPECT_FALSE(ctx.init(true, EVP_aes_256_gcm(), key.data(), iv.data(), huge_iv_len));
+}
+
+TEST(CryptoUtilTest, HKDFNullDigestFails)
+{
+    std::error_code ec;
+    const auto prk = crypto_util::hkdf_extract({0x01}, {0x02}, nullptr, ec);
+    EXPECT_TRUE(ec);
+    EXPECT_TRUE(prk.empty());
+
+    ec.clear();
+    const auto okm = crypto_util::hkdf_expand({0x01}, {0x02}, 16, nullptr, ec);
+    EXPECT_TRUE(ec);
+    EXPECT_TRUE(okm.empty());
+}
+
+TEST(CryptoUtilTest, AEADDecryptLowLevelFailureBranches)
+{
+    std::error_code ec;
+    const std::vector<std::uint8_t> key(32, 0x11);
+    const std::vector<std::uint8_t> nonce(12, 0x22);
+    const std::vector<std::uint8_t> plaintext = {0x01, 0x02, 0x03, 0x04};
+    const auto ciphertext = crypto_util::aead_encrypt(EVP_aes_256_gcm(), key, nonce, plaintext, {}, ec);
+    ASSERT_FALSE(ec);
+
+    reality::cipher_context moved_from_ctx;
+    reality::cipher_context valid_ctx(std::move(moved_from_ctx));
+    (void)valid_ctx;
+    std::vector<std::uint8_t> out(plaintext.size());
+    const auto n1 = crypto_util::aead_decrypt(moved_from_ctx, EVP_aes_256_gcm(), key, nonce, ciphertext, {}, out, ec);
+    EXPECT_EQ(n1, 0U);
+    EXPECT_EQ(ec, std::errc::protocol_error);
+
+    reality::cipher_context cbc_ctx;
+    const std::vector<std::uint8_t> long_nonce(16, 0x33);
+    const std::vector<std::uint8_t> fake_ciphertext(32, 0x44);
+    out.assign(32, 0);
+    const auto n2 =
+        crypto_util::aead_decrypt(cbc_ctx,
+                                  EVP_aes_256_cbc(),
+                                  key,
+                                  std::span<const std::uint8_t>(long_nonce.data(), 12),
+                                  fake_ciphertext,
+                                  std::vector<std::uint8_t>{0xaa},
+                                  out,
+                                  ec);
+    EXPECT_EQ(n2, 0U);
+    EXPECT_EQ(ec, std::errc::bad_message);
+}
+
+TEST(CryptoUtilTest, AEADEncryptAppendMovedFromContextFails)
+{
+    std::error_code ec;
+    const std::vector<std::uint8_t> key(32, 0x11);
+    const std::vector<std::uint8_t> nonce(12, 0x22);
+    const std::vector<std::uint8_t> plaintext = {0x01, 0x02, 0x03};
+
+    reality::cipher_context moved_from_ctx;
+    reality::cipher_context valid_ctx(std::move(moved_from_ctx));
+    (void)valid_ctx;
+
+    std::vector<std::uint8_t> out;
+    crypto_util::aead_encrypt_append(moved_from_ctx, EVP_aes_256_gcm(), key, nonce, plaintext, {}, out, ec);
+    EXPECT_EQ(ec, std::errc::protocol_error);
+    EXPECT_TRUE(out.empty());
+}
+
+TEST(CryptoUtilTest, VerifySignatureNullKeyFails)
+{
+    std::error_code ec;
+    const bool ok = crypto_util::verify_tls13_signature(nullptr, std::vector<std::uint8_t>(32, 0x55), std::vector<std::uint8_t>(64, 0x11), ec);
+    EXPECT_FALSE(ok);
+    EXPECT_EQ(ec, std::errc::protocol_error);
+}
+
+TEST(CryptoUtilTest, AEADDecryptLowLevelRejectsTooShortCiphertext)
+{
+    std::error_code ec;
+    reality::cipher_context ctx;
+    const std::vector<std::uint8_t> key(32, 0x11);
+    const std::vector<std::uint8_t> nonce(12, 0x22);
+    std::vector<std::uint8_t> out(16, 0);
+
+    const auto n = crypto_util::aead_decrypt(ctx, EVP_aes_256_gcm(), key, nonce, std::vector<std::uint8_t>(15, 0), {}, out, ec);
+    EXPECT_EQ(n, 0U);
+    EXPECT_EQ(ec, std::errc::message_size);
+}
+
+TEST(CryptoUtilTest, HKDFExpandOversizedOutputRejected)
+{
+    std::error_code ec;
+    const auto okm = crypto_util::hkdf_expand(std::vector<std::uint8_t>(32, 0x01), std::vector<std::uint8_t>{0x02}, 9000, EVP_sha256(), ec);
+    EXPECT_TRUE(ec);
+    EXPECT_TRUE(okm.empty());
+}
+
+TEST(CryptoUtilTest, ExtractPubkeyFromCertWithoutPublicKeyInfo)
+{
+    X509* cert = X509_new();
+    ASSERT_NE(cert, nullptr);
+
+    if (X509_set_version(cert, 2) != 1
+        || ASN1_INTEGER_set(X509_get_serialNumber(cert), 1) != 1
+        || X509_gmtime_adj(X509_get_notBefore(cert), 0) == nullptr
+        || X509_gmtime_adj(X509_get_notAfter(cert), 60) == nullptr)
+    {
+        X509_free(cert);
+        GTEST_SKIP() << "x509 minimal cert setup unavailable";
+    }
+
+    X509_NAME* name = X509_get_subject_name(cert);
+    if (name == nullptr
+        || X509_NAME_add_entry_by_txt(name,
+                                      "CN",
+                                      MBSTRING_ASC,
+                                      reinterpret_cast<const unsigned char*>("no-key"),
+                                      -1,
+                                      -1,
+                                      0)
+               != 1
+        || X509_set_issuer_name(cert, name) != 1)
+    {
+        X509_free(cert);
+        GTEST_SKIP() << "x509 subject/issuer setup unavailable";
+    }
+
+    const int der_len = i2d_X509(cert, nullptr);
+    if (der_len <= 0)
+    {
+        X509_free(cert);
+        GTEST_SKIP() << "x509 encode without public key unsupported";
+    }
+
+    std::vector<std::uint8_t> der(static_cast<std::size_t>(der_len));
+    unsigned char* p = der.data();
+    const int encoded_len = i2d_X509(cert, &p);
+    X509_free(cert);
+    if (encoded_len != der_len)
+    {
+        GTEST_SKIP() << "x509 encode size mismatch";
+    }
+
+    std::error_code ec;
+    auto pub = crypto_util::extract_pubkey_from_cert(der, ec);
+    EXPECT_TRUE(ec);
+    EXPECT_EQ(pub.get(), nullptr);
 }

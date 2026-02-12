@@ -14,7 +14,9 @@
 #include "crypto_util.h"
 #include "context_pool.h"
 #include "reality_auth.h"
+#define private public
 #include "remote_server.h"
+#undef private
 #include "reality_messages.h"
 #include "statistics.h"
 
@@ -713,4 +715,294 @@ TEST_F(remote_server_test, FallbackGuardCircuitBreakerBlocksSubsequentAttempt)
     pool_thread.join();
 
     EXPECT_GT(mux::statistics::instance().fallback_rate_limited(), before);
+}
+
+TEST_F(remote_server_test, ConstructorHandlesInvalidInboundHostAndUnsupportedFallbackType)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+
+    auto cfg = make_server_cfg(pick_free_port(), {}, "0102030405060708");
+    cfg.inbound.host = "not-a-valid-ip";
+    cfg.reality.type = "udp";
+    auto server = std::make_shared<mux::remote_server>(pool, cfg);
+
+    EXPECT_EQ(server->fallback_type_, "udp");
+    EXPECT_TRUE(server->auth_config_valid_);
+}
+
+TEST_F(remote_server_test, ConstructorRejectsInvalidRealityDest)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+
+    auto cfg = make_server_cfg(pick_free_port(), {}, "0102030405060708");
+    cfg.reality.dest = "invalid-dest-without-port";
+    auto server = std::make_shared<mux::remote_server>(pool, cfg);
+
+    EXPECT_FALSE(server->fallback_dest_valid_);
+    EXPECT_FALSE(server->auth_config_valid_);
+}
+
+TEST_F(remote_server_test, ConstructorReturnsEarlyWhenBindFails)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+
+    asio::ip::tcp::acceptor occupied(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    const auto used_port = occupied.local_endpoint().port();
+
+    auto cfg = make_server_cfg(used_port, {}, "0102030405060708");
+    cfg.inbound.host = "127.0.0.1";
+    auto server = std::make_shared<mux::remote_server>(pool, cfg);
+
+    EXPECT_TRUE(server->private_key_.empty());
+}
+
+TEST_F(remote_server_test, FallbackSelectionAndCertificateTargetBranches)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+
+    const std::uint16_t exact_port = pick_free_port();
+    const std::uint16_t wildcard_port = pick_free_port();
+    const std::uint16_t dest_port = pick_free_port();
+    std::vector<mux::config::fallback_entry> fallbacks = {
+        {"www.exact.test", "127.0.0.1", std::to_string(exact_port)},
+        {"*", "127.0.0.1", std::to_string(wildcard_port)},
+    };
+
+    auto cfg = make_server_cfg(pick_free_port(), fallbacks, "0102030405060708");
+    cfg.reality.dest = std::string("127.0.0.1:") + std::to_string(dest_port);
+    auto server = std::make_shared<mux::remote_server>(pool, cfg);
+
+    const auto exact = server->find_fallback_target_by_sni("www.exact.test");
+    EXPECT_EQ(exact.first, "127.0.0.1");
+    EXPECT_EQ(exact.second, std::to_string(exact_port));
+
+    const auto wildcard = server->find_fallback_target_by_sni("other.domain");
+    EXPECT_EQ(wildcard.first, "127.0.0.1");
+    EXPECT_EQ(wildcard.second, std::to_string(wildcard_port));
+
+    server->fallbacks_.clear();
+    const auto dest = server->find_fallback_target_by_sni("none");
+    EXPECT_EQ(dest.first, "127.0.0.1");
+    EXPECT_EQ(dest.second, std::to_string(dest_port));
+
+    mux::client_hello_info info{};
+    info.sni.clear();
+    const auto target = server->resolve_certificate_target(info);
+    EXPECT_EQ(target.fetch_host, "127.0.0.1");
+    EXPECT_EQ(target.fetch_port, static_cast<std::uint16_t>(dest_port));
+    EXPECT_EQ(target.cert_sni, "127.0.0.1");
+}
+
+TEST_F(remote_server_test, FallbackGuardStateMachineBranches)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+
+    auto cfg = make_server_cfg(pick_free_port(), {}, "0102030405060708");
+    cfg.reality.fallback_guard.enabled = true;
+    cfg.reality.fallback_guard.rate_per_sec = 0;
+    cfg.reality.fallback_guard.burst = 1;
+    cfg.reality.fallback_guard.circuit_fail_threshold = 1;
+    cfg.reality.fallback_guard.circuit_open_sec = 1;
+    cfg.reality.fallback_guard.state_ttl_sec = 1;
+    auto server = std::make_shared<mux::remote_server>(pool, cfg);
+
+    mux::connection_context ctx;
+    EXPECT_EQ(server->fallback_guard_key(ctx), "unknown");
+    ctx.remote_addr("127.0.0.2");
+    EXPECT_EQ(server->fallback_guard_key(ctx), "127.0.0.2");
+
+    EXPECT_TRUE(server->consume_fallback_token(ctx));
+    EXPECT_FALSE(server->consume_fallback_token(ctx));
+
+    server->record_fallback_result(ctx, false);
+    EXPECT_FALSE(server->consume_fallback_token(ctx));
+    server->record_fallback_result(ctx, true);
+
+    {
+        std::lock_guard<std::mutex> lock(server->fallback_guard_mu_);
+        ASSERT_FALSE(server->fallback_guard_states_.empty());
+        const auto future = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+        server->cleanup_fallback_guard_state_locked(future);
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(server->fallback_guard_mu_);
+        EXPECT_TRUE(server->fallback_guard_states_.empty());
+    }
+
+    mux::connection_context unknown_ctx;
+    unknown_ctx.remote_addr("127.0.0.9");
+    server->record_fallback_result(unknown_ctx, false);
+}
+
+TEST_F(remote_server_test, SetCertificateAsyncPathAfterStart)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+    std::thread pool_thread([&pool] { pool.run(); });
+
+    auto cfg = make_server_cfg(pick_free_port(), {}, "0102030405060708");
+    auto server = std::make_shared<mux::remote_server>(pool, cfg);
+    server->start();
+
+    reality::server_fingerprint fingerprint;
+    fingerprint.cipher_suite = 0x1301;
+    fingerprint.alpn = "h2";
+    const std::string sni = "post.start.test";
+    server->set_certificate(sni, reality::construct_certificate({0x01, 0x02, 0x03}), fingerprint, "trace-1");
+
+    const auto cert_opt = server->cert_manager_.get_certificate(sni);
+    EXPECT_TRUE(cert_opt.has_value());
+
+    server->stop();
+    pool.stop();
+    pool_thread.join();
+}
+
+TEST_F(remote_server_test, ConstructorCoversShortIdAndDestParsingBranches)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+
+    auto cfg_invalid_hex = make_server_cfg(pick_free_port(), {}, "zz");
+    auto server_invalid_hex = std::make_shared<mux::remote_server>(pool, cfg_invalid_hex);
+    EXPECT_FALSE(server_invalid_hex->auth_config_valid_);
+
+    auto cfg_long_short_id = make_server_cfg(pick_free_port(), {}, "010203040506070809");
+    auto server_long_short_id = std::make_shared<mux::remote_server>(pool, cfg_long_short_id);
+    EXPECT_FALSE(server_long_short_id->auth_config_valid_);
+
+    auto cfg_ipv6_dest = make_server_cfg(pick_free_port(), {{"www.example.test", "127.0.0.1", "not-a-port"}}, "0102030405060708");
+    cfg_ipv6_dest.reality.dest = "[::1]:8443";
+    auto server_ipv6_dest = std::make_shared<mux::remote_server>(pool, cfg_ipv6_dest);
+    EXPECT_TRUE(server_ipv6_dest->fallback_dest_valid_);
+    EXPECT_EQ(server_ipv6_dest->fallback_dest_host_, "::1");
+    EXPECT_EQ(server_ipv6_dest->fallback_dest_port_, "8443");
+
+    mux::client_hello_info info{};
+    info.sni = "www.example.test";
+    const auto target = server_ipv6_dest->resolve_certificate_target(info);
+    EXPECT_EQ(target.fetch_host, "127.0.0.1");
+    EXPECT_EQ(target.fetch_port, static_cast<std::uint16_t>(443));
+}
+
+TEST_F(remote_server_test, ParseClientHelloAndTranscriptGuardBranches)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+
+    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
+
+    std::string client_sni = "seed";
+    const auto empty_info = mux::remote_server::parse_client_hello({}, client_sni);
+    EXPECT_FALSE(empty_info.is_tls13);
+    EXPECT_TRUE(client_sni.empty());
+
+    reality::transcript trans;
+    mux::connection_context ctx;
+    EXPECT_FALSE(server->init_handshake_transcript({0x16, 0x03, 0x03, 0x00, 0x00}, trans, ctx));
+    EXPECT_TRUE(server->init_handshake_transcript({0x16, 0x03, 0x03, 0x00, 0x01, 0x01}, trans, ctx));
+}
+
+TEST_F(remote_server_test, AuthenticateClientFailureBranches)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+
+    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
+    mux::connection_context ctx;
+
+    mux::client_hello_info invalid_tls_info{};
+    invalid_tls_info.is_tls13 = false;
+    invalid_tls_info.session_id.assign(32, 0x01);
+    EXPECT_FALSE(server->authenticate_client(invalid_tls_info, std::vector<std::uint8_t>(64, 0x00), ctx));
+
+    mux::client_hello_info missing_share_info{};
+    missing_share_info.is_tls13 = true;
+    missing_share_info.session_id.assign(32, 0x02);
+    missing_share_info.random.assign(32, 0x03);
+    EXPECT_FALSE(server->authenticate_client(missing_share_info, std::vector<std::uint8_t>(64, 0x00), ctx));
+
+    std::uint8_t peer_pub[32];
+    std::uint8_t peer_priv[32];
+    ASSERT_TRUE(reality::crypto_util::generate_x25519_keypair(peer_pub, peer_priv));
+
+    mux::client_hello_info sid_offset_info{};
+    sid_offset_info.is_tls13 = true;
+    sid_offset_info.has_x25519_share = true;
+    sid_offset_info.x25519_pub.assign(peer_pub, peer_pub + 32);
+    sid_offset_info.session_id.assign(32, 0x11);
+    sid_offset_info.random.assign(32, 0x22);
+    sid_offset_info.sid_offset = 3;
+    EXPECT_FALSE(server->authenticate_client(sid_offset_info, std::vector<std::uint8_t>(64, 0x33), ctx));
+
+    mux::client_hello_info aad_mismatch_info = sid_offset_info;
+    aad_mismatch_info.sid_offset = 200;
+    EXPECT_FALSE(server->authenticate_client(aad_mismatch_info, std::vector<std::uint8_t>(40, 0x44), ctx));
+}
+
+TEST_F(remote_server_test, AuthenticateClientShortIdAndTimestampFailureBranches)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+
+    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
+    mux::connection_context ctx;
+
+    std::vector<std::uint8_t> sid_mismatch;
+    const auto record_mismatch = build_valid_sid_ch("www.google.com", "ffffffffffffffff", static_cast<std::uint32_t>(time(nullptr)), sid_mismatch);
+    const auto info_mismatch = mux::ch_parser::parse(record_mismatch);
+    EXPECT_FALSE(server->authenticate_client(info_mismatch, record_mismatch, ctx));
+
+    std::vector<std::uint8_t> sid_skew;
+    const auto record_skew = build_valid_sid_ch("www.google.com", "0102030405060708", static_cast<std::uint32_t>(time(nullptr) - 1000), sid_skew);
+    const auto info_skew = mux::ch_parser::parse(record_skew);
+    EXPECT_FALSE(server->authenticate_client(info_skew, record_skew, ctx));
+}
+
+TEST_F(remote_server_test, DeriveShareAndFallbackHelperBranches)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+
+    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
+
+    mux::client_hello_info no_share_info{};
+    std::array<std::uint8_t, 32> pub_key{};
+    std::array<std::uint8_t, 32> priv_key{};
+    std::vector<std::uint8_t> shared;
+    std::vector<std::uint8_t> key_share_data;
+    std::uint16_t key_share_group = 0;
+    EXPECT_FALSE(server->derive_server_key_share(
+        no_share_info, pub_key.data(), priv_key.data(), mux::connection_context{}, shared, key_share_data, key_share_group, ec));
+    EXPECT_EQ(ec, asio::error::invalid_argument);
+
+    mux::remote_server::server_handshake_res bad_handshake{};
+    bad_handshake.cipher = EVP_aes_128_gcm();
+    bad_handshake.negotiated_md = EVP_sha256();
+    bad_handshake.handshake_hash.assign(32, 0x55);
+    bad_handshake.hs_keys.master_secret.clear();
+    std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> c_app_keys;
+    std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> s_app_keys;
+    EXPECT_FALSE(server->derive_application_traffic_keys(bad_handshake, c_app_keys, s_app_keys, ec));
+    EXPECT_TRUE(ec);
+
+    mux::connection_context ctx;
+    server->record_fallback_result(ctx, false);
 }
