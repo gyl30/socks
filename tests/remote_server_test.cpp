@@ -16,6 +16,19 @@
 #include "reality_auth.h"
 #include "remote_server.h"
 #include "reality_messages.h"
+#include "statistics.h"
+
+namespace
+{
+
+std::uint16_t pick_free_port()
+{
+    asio::io_context io_context;
+    asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    return acceptor.local_endpoint().port();
+}
+
+}    // namespace
 
 class remote_server_test : public ::testing::Test
 {
@@ -459,4 +472,96 @@ TEST_F(remote_server_test, MultiSNIFallback)
 
     EXPECT_EQ(fallback_a_count.load(), 1);
     EXPECT_EQ(fallback_b_count.load(), 1);
+}
+
+TEST_F(remote_server_test, FallbackGuardRateLimitBlocksFallbackDial)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+    std::thread pool_thread([&pool] { pool.run(); });
+
+    const std::uint16_t server_port = pick_free_port();
+    const std::uint16_t fallback_port = pick_free_port();
+
+    asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), fallback_port));
+    std::atomic<bool> fallback_triggered{false};
+    fallback_acceptor.async_accept(
+        [&](std::error_code accept_ec, asio::ip::tcp::socket peer)
+        {
+            if (!accept_ec)
+            {
+                fallback_triggered = true;
+            }
+        });
+
+    auto cfg = make_server_cfg(server_port, {{"", "127.0.0.1", std::to_string(fallback_port)}}, "0102030405060708");
+    cfg.reality.fallback_guard.enabled = true;
+    cfg.reality.fallback_guard.rate_per_sec = 0;
+    cfg.reality.fallback_guard.burst = 0;
+    auto server = std::make_shared<mux::remote_server>(pool, cfg);
+    server->start();
+
+    const auto before = mux::statistics::instance().fallback_rate_limited();
+    {
+        asio::ip::tcp::socket sock(pool.get_io_context());
+        std::error_code connect_ec;
+        sock.connect({asio::ip::make_address("127.0.0.1"), server_port}, connect_ec);
+        ASSERT_FALSE(connect_ec);
+        asio::write(sock, asio::buffer("INVALID DATA"));
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    }
+
+    std::error_code close_ec;
+    fallback_acceptor.cancel(close_ec);
+    fallback_acceptor.close(close_ec);
+    server->stop();
+    pool.stop();
+    pool_thread.join();
+
+    EXPECT_FALSE(fallback_triggered.load());
+    EXPECT_GT(mux::statistics::instance().fallback_rate_limited(), before);
+}
+
+TEST_F(remote_server_test, FallbackGuardCircuitBreakerBlocksSubsequentAttempt)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+    std::thread pool_thread([&pool] { pool.run(); });
+
+    const std::uint16_t server_port = pick_free_port();
+    auto cfg = make_server_cfg(server_port, {{"", "127.0.0.1", "1"}}, "0102030405060708");
+    cfg.reality.fallback_guard.enabled = true;
+    cfg.reality.fallback_guard.rate_per_sec = 0;
+    cfg.reality.fallback_guard.burst = 1;
+    cfg.reality.fallback_guard.circuit_fail_threshold = 1;
+    cfg.reality.fallback_guard.circuit_open_sec = 2;
+    auto server = std::make_shared<mux::remote_server>(pool, cfg);
+    server->start();
+
+    const auto before = mux::statistics::instance().fallback_rate_limited();
+
+    auto trigger_invalid = [&]()
+    {
+        asio::ip::tcp::socket sock(pool.get_io_context());
+        std::error_code connect_ec;
+        sock.connect({asio::ip::make_address("127.0.0.1"), server_port}, connect_ec);
+        EXPECT_FALSE(connect_ec);
+        if (connect_ec)
+        {
+            return;
+        }
+        asio::write(sock, asio::buffer("TRIGGER FALLBACK"));
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    };
+
+    trigger_invalid();
+    trigger_invalid();
+
+    server->stop();
+    pool.stop();
+    pool_thread.join();
+
+    EXPECT_GT(mux::statistics::instance().fallback_rate_limited(), before);
 }
