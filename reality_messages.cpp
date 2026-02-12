@@ -851,20 +851,49 @@ std::optional<server_key_share_info> parse_server_key_share_entry(const std::vec
     return info;
 }
 
-std::optional<server_key_share_info> extract_server_key_share(const std::vector<std::uint8_t>& server_hello)
+bool skip_server_hello_prefix(const std::vector<std::uint8_t>& server_hello, std::size_t& pos)
 {
-    std::size_t pos = 0;
     if (server_hello.size() < 4)
     {
-        return std::nullopt;
+        return false;
     }
-
     if (server_hello[0] == 0x16)
     {
         pos += 5;
     }
+    return pos + 4 <= server_hello.size();
+}
 
-    if (pos + 4 > server_hello.size())
+bool parse_extension_header(const std::vector<std::uint8_t>& server_hello,
+                            const std::size_t end,
+                            std::size_t& pos,
+                            std::uint16_t& type,
+                            std::uint16_t& ext_len)
+{
+    if (pos + 4 > end)
+    {
+        return false;
+    }
+    type = static_cast<std::uint16_t>((server_hello[pos] << 8) | server_hello[pos + 1]);
+    ext_len = static_cast<std::uint16_t>((server_hello[pos + 2] << 8) | server_hello[pos + 3]);
+    pos += 4;
+    return true;
+}
+
+bool advance_extension_payload(std::size_t& pos, const std::size_t end, const std::uint16_t ext_len)
+{
+    if (pos + ext_len > end)
+    {
+        return false;
+    }
+    pos += ext_len;
+    return true;
+}
+
+std::optional<server_key_share_info> extract_server_key_share(const std::vector<std::uint8_t>& server_hello)
+{
+    std::size_t pos = 0;
+    if (!skip_server_hello_prefix(server_hello, pos))
     {
         return std::nullopt;
     }
@@ -877,20 +906,20 @@ std::optional<server_key_share_info> extract_server_key_share(const std::vector<
 
     while (pos + 4 <= end)
     {
-        const auto type = static_cast<std::uint16_t>((server_hello[pos] << 8) | server_hello[pos + 1]);
-        const auto elen = static_cast<std::uint16_t>((server_hello[pos + 2] << 8) | server_hello[pos + 3]);
-        pos += 4;
-        if (type == tls_consts::ext::kKeyShare && elen >= 4)
-        {
-            return parse_server_key_share_entry(server_hello, pos, end);
-        }
-
-        if (pos + elen > end)
+        std::uint16_t type = 0;
+        std::uint16_t ext_len = 0;
+        if (!parse_extension_header(server_hello, end, pos, type, ext_len))
         {
             break;
         }
-
-        pos += elen;
+        if (type == tls_consts::ext::kKeyShare && ext_len >= 4)
+        {
+            return parse_server_key_share_entry(server_hello, pos, end);
+        }
+        if (!advance_extension_payload(pos, end, ext_len))
+        {
+            break;
+        }
     }
     return std::nullopt;
 }
