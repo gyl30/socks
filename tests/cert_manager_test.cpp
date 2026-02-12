@@ -38,6 +38,35 @@ TEST(CertManagerTest, DefaultSNI)
     EXPECT_EQ(entry->cert_msg, cert);
 }
 
+TEST(CertManagerTest, ExactSniPreferredOverDefault)
+{
+    cert_manager manager;
+
+    server_fingerprint default_fp;
+    default_fp.alpn = "h2";
+    default_fp.cipher_suite = 0x1301;
+    const std::vector<uint8_t> default_cert = {0x01};
+    manager.set_certificate("", default_cert, default_fp, "trace-default");
+
+    server_fingerprint exact_fp;
+    exact_fp.alpn = "http/1.1";
+    exact_fp.cipher_suite = 0x1302;
+    const std::vector<uint8_t> exact_cert = {0xAA, 0xBB};
+    manager.set_certificate("api.example.com", exact_cert, exact_fp, "trace-exact");
+
+    const auto exact_entry = manager.get_certificate("api.example.com");
+    ASSERT_TRUE(exact_entry.has_value());
+    EXPECT_EQ(exact_entry->cert_msg, exact_cert);
+    EXPECT_EQ(exact_entry->fingerprint.alpn, "http/1.1");
+    EXPECT_EQ(exact_entry->fingerprint.cipher_suite, 0x1302);
+
+    const auto fallback_entry = manager.get_certificate("other.example.com");
+    ASSERT_TRUE(fallback_entry.has_value());
+    EXPECT_EQ(fallback_entry->cert_msg, default_cert);
+    EXPECT_EQ(fallback_entry->fingerprint.alpn, "h2");
+    EXPECT_EQ(fallback_entry->fingerprint.cipher_suite, 0x1301);
+}
+
 TEST(CertManagerTest, CacheEviction)
 {
     cert_manager manager;
