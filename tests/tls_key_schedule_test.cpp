@@ -38,3 +38,13 @@ TEST(TlsKeyScheduleTest, ComputeFinishedVerifyDataInvalidBaseKey)
     EXPECT_TRUE(ec);
     EXPECT_TRUE(data.empty());
 }
+
+TEST(TlsKeyScheduleTest, DeriveTrafficKeysIvLengthTooLarge)
+{
+    std::error_code ec;
+    const std::vector<std::uint8_t> secret(32, 0x11);
+    auto keys = tls_key_schedule::derive_traffic_keys(secret, ec, 16, 9000, EVP_sha256());
+    EXPECT_TRUE(ec);
+    EXPECT_TRUE(keys.first.empty());
+    EXPECT_TRUE(keys.second.empty());
+}
