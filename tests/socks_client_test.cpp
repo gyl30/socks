@@ -3,6 +3,7 @@
 #include <string>
 #include <thread>
 #include <system_error>
+#include <future>
 
 #include <gtest/gtest.h>
 #include <asio/ip/tcp.hpp>
@@ -28,6 +29,25 @@ bool wait_for_listen_port(const std::shared_ptr<mux::socks_client>& client)
         std::this_thread::sleep_for(std::chrono::milliseconds(25));
     }
     return false;
+}
+
+template <typename Func>
+auto run_on_io_context(asio::io_context& io_context, Func&& fn) -> decltype(fn())
+{
+    using result_type = decltype(fn());
+    std::promise<result_type> promise;
+    auto future = promise.get_future();
+    asio::post(io_context,
+               [func = std::forward<Func>(fn), promise = std::move(promise)]() mutable
+               {
+                   promise.set_value(func());
+               });
+    return future.get();
+}
+
+std::size_t session_count(asio::io_context& io_context, const std::shared_ptr<mux::socks_client>& client)
+{
+    return run_on_io_context(io_context, [client]() { return client->sessions_.size(); });
 }
 
 }    // namespace
@@ -317,7 +337,7 @@ TEST(LocalClientTest, NoTunnelSelectionAndSessionPrunePath)
     ASSERT_FALSE(ec);
 
     std::this_thread::sleep_for(std::chrono::milliseconds(2800));
-    EXPECT_FALSE(client->sessions_.empty());
+    EXPECT_GT(session_count(pool.get_io_context(), client), 0U);
 
     client->stop();
     pool.stop();
