@@ -254,52 +254,19 @@ asio::awaitable<std::vector<std::uint8_t>> cert_fetcher::fetch_session::find_cer
     handshake_reassembler assembler;
     std::vector<std::uint8_t> pt_buf(kMaxTlsPlaintextLen + 256);
     std::vector<std::uint8_t> msg;
+    std::vector<std::uint8_t> cert_msg;
 
     for (int i = 0; i < 100; ++i)
     {
         std::error_code ec;
-        auto [type, pt_data] = co_await read_record(pt_buf, ec);
-        if (ec)
+        if (!(co_await append_next_handshake_record(assembler, pt_buf, i, ec)))
         {
-            LOG_CTX_ERROR(ctx_, "{} read record {} failed {}", mux::log_event::kCert, i, ec.message());
             break;
         }
-
-        if (type == kContentTypeChangeCipherSpec)
+        if (consume_handshake_messages(assembler, msg, cert_msg, ec))
         {
-            continue;
+            co_return cert_msg;
         }
-        if (type != kContentTypeHandshake)
-        {
-            continue;
-        }
-
-        assembler.append(pt_data);
-
-        while (assembler.next(msg, ec))
-        {
-            std::uint8_t msg_type = msg[0];
-            std::uint32_t msg_len = (msg[1] << 16) | (msg[2] << 8) | msg[3];
-
-            LOG_CTX_INFO(ctx_, "{} found handshake 0x{:02x} len {}", mux::log_event::kCert, msg_type, msg_len);
-
-            if (msg_type == 0x08)
-            {
-                if (auto alpn = extract_alpn_from_encrypted_extensions(msg); alpn)
-                {
-                    LOG_CTX_INFO(ctx_, "{} learned alpn {}", mux::log_event::kCert, *alpn);
-                    fingerprint_.alpn = *alpn;
-                }
-            }
-            else if (msg_type == 0x0b)
-            {
-                LOG_CTX_INFO(ctx_, "{} found certificate len {}", mux::log_event::kCert, msg_len);
-                co_return msg;
-            }
-
-            trans_.update(msg);
-        }
-
         if (ec)
         {
             LOG_CTX_ERROR(ctx_, "{} assembler error {}", mux::log_event::kCert, ec.message());
@@ -309,6 +276,67 @@ asio::awaitable<std::vector<std::uint8_t>> cert_fetcher::fetch_session::find_cer
 
     LOG_CTX_WARN(ctx_, "{} certificate not found", mux::log_event::kCert);
     co_return std::vector<std::uint8_t>{};
+}
+
+asio::awaitable<bool> cert_fetcher::fetch_session::append_next_handshake_record(handshake_reassembler& assembler,
+                                                                                 std::vector<std::uint8_t>& pt_buf,
+                                                                                 const int record_index,
+                                                                                 std::error_code& ec)
+{
+    auto [type, pt_data] = co_await read_record(pt_buf, ec);
+    if (ec)
+    {
+        LOG_CTX_ERROR(ctx_, "{} read record {} failed {}", mux::log_event::kCert, record_index, ec.message());
+        co_return false;
+    }
+
+    if (type == kContentTypeChangeCipherSpec || type != kContentTypeHandshake)
+    {
+        co_return true;
+    }
+
+    assembler.append(pt_data);
+    co_return true;
+}
+
+bool cert_fetcher::fetch_session::consume_handshake_messages(handshake_reassembler& assembler,
+                                                             std::vector<std::uint8_t>& msg,
+                                                             std::vector<std::uint8_t>& cert_msg,
+                                                             std::error_code& ec)
+{
+    while (assembler.next(msg, ec))
+    {
+        if (process_handshake_message(msg, cert_msg))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool cert_fetcher::fetch_session::process_handshake_message(const std::vector<std::uint8_t>& msg, std::vector<std::uint8_t>& cert_msg)
+{
+    const std::uint8_t msg_type = msg[0];
+    const std::uint32_t msg_len = (msg[1] << 16) | (msg[2] << 8) | msg[3];
+    LOG_CTX_INFO(ctx_, "{} found handshake 0x{:02x} len {}", mux::log_event::kCert, msg_type, msg_len);
+
+    if (msg_type == 0x08)
+    {
+        if (auto alpn = extract_alpn_from_encrypted_extensions(msg); alpn)
+        {
+            LOG_CTX_INFO(ctx_, "{} learned alpn {}", mux::log_event::kCert, *alpn);
+            fingerprint_.alpn = *alpn;
+        }
+    }
+    else if (msg_type == 0x0b)
+    {
+        LOG_CTX_INFO(ctx_, "{} found certificate len {}", mux::log_event::kCert, msg_len);
+        cert_msg = msg;
+        return true;
+    }
+
+    trans_.update(msg);
+    return false;
 }
 
 std::error_code cert_fetcher::fetch_session::process_server_hello(const std::vector<std::uint8_t>& sh_body)

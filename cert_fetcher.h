@@ -67,6 +67,15 @@ class cert_fetcher
         asio::awaitable<std::error_code> perform_handshake_start();
 
         asio::awaitable<std::vector<std::uint8_t>> find_certificate();
+        asio::awaitable<bool> append_next_handshake_record(handshake_reassembler& assembler,
+                                                           std::vector<std::uint8_t>& pt_buf,
+                                                           int record_index,
+                                                           std::error_code& ec);
+        bool consume_handshake_messages(handshake_reassembler& assembler,
+                                        std::vector<std::uint8_t>& msg,
+                                        std::vector<std::uint8_t>& cert_msg,
+                                        std::error_code& ec);
+        bool process_handshake_message(const std::vector<std::uint8_t>& msg, std::vector<std::uint8_t>& cert_msg);
 
         std::error_code process_server_hello(const std::vector<std::uint8_t>& sh_body);
 
