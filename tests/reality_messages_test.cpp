@@ -1,4 +1,5 @@
 #include <cstdio>
+#include <array>
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -29,7 +30,7 @@ namespace tls_consts = reality::tls_consts;
 namespace
 {
 
-std::optional<std::vector<std::uint8_t>> extract_key_share_data_by_group(const std::vector<std::uint8_t>& ch, const std::uint16_t target_group)
+std::optional<std::vector<std::uint8_t>> extract_extension_data_by_type(const std::vector<std::uint8_t>& ch, const std::uint16_t target_ext_type)
 {
     if (ch.size() < 4 + 2 + 32 + 1 + 2 + 1 + 2)
     {
@@ -89,43 +90,70 @@ std::optional<std::vector<std::uint8_t>> extract_key_share_data_by_group(const s
             return std::nullopt;
         }
 
-        if (ext_type == tls_consts::ext::kKeyShare)
+        if (ext_type == target_ext_type)
         {
-            if (ext_len < 2)
-            {
-                return std::nullopt;
-            }
-            std::size_t share_pos = pos;
-            const std::uint16_t share_list_len = static_cast<std::uint16_t>((ch[share_pos] << 8) | ch[share_pos + 1]);
-            share_pos += 2;
-            if (share_pos + share_list_len > pos + ext_len)
-            {
-                return std::nullopt;
-            }
-
-            const std::size_t share_end = share_pos + share_list_len;
-            while (share_pos + 4 <= share_end)
-            {
-                const std::uint16_t group = static_cast<std::uint16_t>((ch[share_pos] << 8) | ch[share_pos + 1]);
-                const std::uint16_t key_len = static_cast<std::uint16_t>((ch[share_pos + 2] << 8) | ch[share_pos + 3]);
-                share_pos += 4;
-                if (share_pos + key_len > share_end)
-                {
-                    return std::nullopt;
-                }
-                if (group == target_group)
-                {
-                    return std::vector<std::uint8_t>(ch.begin() + static_cast<std::ptrdiff_t>(share_pos),
-                                                     ch.begin() + static_cast<std::ptrdiff_t>(share_pos + key_len));
-                }
-                share_pos += key_len;
-            }
-            return std::nullopt;
+            return std::vector<std::uint8_t>(ch.begin() + static_cast<std::ptrdiff_t>(pos),
+                                             ch.begin() + static_cast<std::ptrdiff_t>(pos + ext_len));
         }
 
         pos += ext_len;
     }
     return std::nullopt;
+}
+
+std::optional<std::vector<std::uint8_t>> extract_key_share_data_by_group(const std::vector<std::uint8_t>& ch, const std::uint16_t target_group)
+{
+    const auto key_share_ext = extract_extension_data_by_type(ch, tls_consts::ext::kKeyShare);
+    if (!key_share_ext.has_value() || key_share_ext->size() < 2)
+    {
+        return std::nullopt;
+    }
+
+    const auto& ext = *key_share_ext;
+    const std::uint16_t share_list_len = static_cast<std::uint16_t>((ext[0] << 8) | ext[1]);
+    if (2 + share_list_len > ext.size())
+    {
+        return std::nullopt;
+    }
+
+    std::size_t share_pos = 2;
+    const std::size_t share_end = 2 + share_list_len;
+    while (share_pos + 4 <= share_end)
+    {
+        const std::uint16_t group = static_cast<std::uint16_t>((ext[share_pos] << 8) | ext[share_pos + 1]);
+        const std::uint16_t key_len = static_cast<std::uint16_t>((ext[share_pos + 2] << 8) | ext[share_pos + 3]);
+        share_pos += 4;
+        if (share_pos + key_len > share_end)
+        {
+            return std::nullopt;
+        }
+        if (group == target_group)
+        {
+            return std::vector<std::uint8_t>(ext.begin() + static_cast<std::ptrdiff_t>(share_pos),
+                                             ext.begin() + static_cast<std::ptrdiff_t>(share_pos + key_len));
+        }
+        share_pos += key_len;
+    }
+    return std::nullopt;
+}
+
+std::size_t expected_boring_padding_len(const std::size_t unpadded_len)
+{
+    if (unpadded_len <= 0xff || unpadded_len >= 0x200)
+    {
+        return 0;
+    }
+
+    std::size_t padding_len = 0x200 - unpadded_len;
+    if (padding_len >= 5)
+    {
+        padding_len -= 4;
+    }
+    else
+    {
+        padding_len = 1;
+    }
+    return padding_len;
 }
 
 }    // namespace
@@ -451,4 +479,60 @@ TEST(RealityMessagesTest, FirefoxSecp256r1KeyShareIsValidPoint)
     const std::unique_ptr<EC_POINT, decltype(&EC_POINT_free)> point(EC_POINT_new(group.get()), &EC_POINT_free);
     ASSERT_NE(point.get(), nullptr);
     EXPECT_EQ(EC_POINT_oct2point(group.get(), point.get(), key_share->data(), key_share->size(), nullptr), 1);
+}
+
+TEST(RealityMessagesTest, ChromeGreaseEchMatchesBoringShape)
+{
+    const auto spec = reality::fingerprint_factory::get(reality::fingerprint_type::kChrome120);
+    const std::vector<std::uint8_t> session_id(32, 0x41);
+    const std::vector<std::uint8_t> random(32, 0x42);
+    const std::vector<std::uint8_t> pubkey(32, 0x43);
+    const auto ch = reality::client_hello_builder::build(spec, session_id, random, pubkey, "example.com");
+
+    const auto ech = extract_extension_data_by_type(ch, tls_consts::ext::kGreaseEch);
+    ASSERT_TRUE(ech.has_value());
+    ASSERT_GE(ech->size(), 1 + 2 + 2 + 1 + 2 + 32 + 2 + 144);
+    const auto& data = *ech;
+
+    EXPECT_EQ(data[0], 0x00);
+    EXPECT_EQ(static_cast<std::uint16_t>((data[1] << 8) | data[2]), 0x0001);
+    EXPECT_EQ(static_cast<std::uint16_t>((data[3] << 8) | data[4]), 0x0001);
+
+    std::size_t pos = 6;
+    ASSERT_GE(data.size(), pos + 2);
+    const std::uint16_t enc_len = static_cast<std::uint16_t>((data[pos] << 8) | data[pos + 1]);
+    EXPECT_EQ(enc_len, 32);
+    pos += 2;
+
+    ASSERT_GE(data.size(), pos + enc_len + 2);
+    pos += enc_len;
+    const std::uint16_t payload_len = static_cast<std::uint16_t>((data[pos] << 8) | data[pos + 1]);
+    pos += 2;
+    ASSERT_EQ(data.size(), pos + payload_len);
+    EXPECT_TRUE(payload_len == 144 || payload_len == 176 || payload_len == 208 || payload_len == 240);
+}
+
+TEST(RealityMessagesTest, PaddingUsesBoringStyleFormula)
+{
+    auto spec_no_padding = reality::fingerprint_factory::get(reality::fingerprint_type::kFirefox120);
+    std::erase_if(spec_no_padding.extensions,
+                  [](const std::shared_ptr<reality::extension_blueprint>& ext)
+                  {
+                      return ext->type() == reality::extension_type::kPadding;
+                  });
+
+    auto spec_with_padding = spec_no_padding;
+    spec_with_padding.extensions.push_back(std::make_shared<reality::padding_blueprint>());
+
+    const std::vector<std::uint8_t> session_id(32, 0x21);
+    const std::vector<std::uint8_t> random(32, 0x22);
+    const std::vector<std::uint8_t> pubkey(32, 0x23);
+    const auto no_pad = reality::client_hello_builder::build(spec_no_padding, session_id, random, pubkey, "example.com");
+    const auto with_pad = reality::client_hello_builder::build(spec_with_padding, session_id, random, pubkey, "example.com");
+
+    const auto padding = extract_extension_data_by_type(with_pad, tls_consts::ext::kPadding);
+    ASSERT_TRUE(padding.has_value());
+
+    const std::size_t unpadded_len = no_pad.size() + 4;
+    EXPECT_EQ(padding->size(), expected_boring_padding_len(unpadded_len));
 }
