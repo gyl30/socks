@@ -755,6 +755,48 @@ std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> client_tunnel_pool::buil
         std::move(socket), io_context, std::move(re), true, cid, trace_id, timeout_config_, limits_config_, heartbeat_config_);
 }
 
+asio::awaitable<void> client_tunnel_pool::handle_connection_failure(const std::uint32_t index,
+                                                                    const std::shared_ptr<asio::ip::tcp::socket>& socket,
+                                                                    const std::error_code& ec,
+                                                                    const char* stage,
+                                                                    asio::io_context& io_context)
+{
+    clear_pending_socket_if_match(index, socket);
+    LOG_ERROR("{} failed {} retry in {}s", stage, ec.message(), constants::net::kRetryIntervalSec);
+    co_await wait_remote_retry(io_context);
+}
+
+asio::awaitable<bool> client_tunnel_pool::establish_tunnel_for_connection(
+    const std::uint32_t index,
+    asio::io_context& io_context,
+    const std::uint32_t cid,
+    const std::string& trace_id,
+    const std::shared_ptr<asio::ip::tcp::socket>& socket,
+    std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>& tunnel)
+{
+    std::error_code ec;
+    if (!co_await tcp_connect(io_context, *socket, ec))
+    {
+        co_await handle_connection_failure(index, socket, ec, "connect", io_context);
+        co_return false;
+    }
+
+    auto [handshake_success, handshake_ret] = co_await perform_reality_handshake(*socket, ec);
+    if (!handshake_success)
+    {
+        co_await handle_connection_failure(index, socket, ec, "handshake", io_context);
+        co_return false;
+    }
+
+    connection_context ctx;
+    ctx.trace_id(trace_id);
+    ctx.conn_id(cid);
+    LOG_CTX_INFO(ctx, "{} handshake success cipher 0x{:04x}", log_event::kHandshake, handshake_ret.cipher_suite);
+
+    tunnel = build_tunnel(std::move(*socket), io_context, cid, handshake_ret, trace_id);
+    co_return true;
+}
+
 asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::uint32_t index, asio::io_context& io_context)
 {
     while (!stop_.load(std::memory_order_acquire))
@@ -771,28 +813,12 @@ asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::uint32_
                      remote_host_,
                      remote_port_);
 
-        std::error_code ec;
         const auto socket = create_pending_socket(io_context, index);
-
-        if (!co_await tcp_connect(io_context, *socket, ec))
+        std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel;
+        if (!co_await establish_tunnel_for_connection(index, io_context, cid, ctx.trace_id(), socket, tunnel))
         {
-            clear_pending_socket_if_match(index, socket);
-            LOG_ERROR("connect failed {} retry in {}s", ec.message(), constants::net::kRetryIntervalSec);
-            co_await wait_remote_retry(io_context);
             continue;
         }
-
-        auto [handshake_success, handshake_ret] = co_await perform_reality_handshake(*socket, ec);
-        if (!handshake_success)
-        {
-            clear_pending_socket_if_match(index, socket);
-            LOG_ERROR("handshake failed {} retry in {}s", ec.message(), constants::net::kRetryIntervalSec);
-            co_await wait_remote_retry(io_context);
-            continue;
-        }
-
-        LOG_CTX_INFO(ctx, "{} handshake success cipher 0x{:04x}", log_event::kHandshake, handshake_ret.cipher_suite);
-        auto tunnel = build_tunnel(std::move(*socket), io_context, cid, handshake_ret, ctx.trace_id());
 
         if (stop_.load(std::memory_order_acquire))
         {
