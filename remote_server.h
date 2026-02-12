@@ -3,6 +3,7 @@
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include <random>
 #include <string>
@@ -12,7 +13,9 @@
 #include <utility>
 #include <optional>
 #include <system_error>
+#include <unordered_map>
 #include <unordered_set>
+#include <mutex>
 
 #include <asio/ip/tcp.hpp>
 #include <asio/io_context.hpp>
@@ -147,7 +150,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     asio::awaitable<server_handshake_res> delay_and_fallback(std::shared_ptr<asio::ip::tcp::socket> s,
                                                              const std::vector<std::uint8_t>& initial_buf,
                                                              const connection_context& ctx,
-                                                             const std::string& client_sni) const;
+                                                             const std::string& client_sni);
     asio::awaitable<void> send_stream_reset(const std::shared_ptr<mux_connection>& connection, std::uint32_t stream_id) const;
     asio::awaitable<void> reject_stream_for_limit(const std::shared_ptr<mux_connection>& connection,
                                                   const connection_context& ctx,
@@ -198,9 +201,23 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     asio::awaitable<void> handle_fallback(const std::shared_ptr<asio::ip::tcp::socket>& s,
                                           const std::vector<std::uint8_t>& buf,
                                           const connection_context& ctx,
-                                          const std::string& sni) const;
+                                          const std::string& sni);
+
+    [[nodiscard]] bool consume_fallback_token(const connection_context& ctx);
+    void record_fallback_result(const connection_context& ctx, bool success);
+    void cleanup_fallback_guard_state_locked(const std::chrono::steady_clock::time_point& now);
+    [[nodiscard]] std::string fallback_guard_key(const connection_context& ctx) const;
 
    private:
+    struct fallback_guard_state
+    {
+        double tokens = 0;
+        std::uint32_t consecutive_failures = 0;
+        std::chrono::steady_clock::time_point last_refill{};
+        std::chrono::steady_clock::time_point last_seen{};
+        std::chrono::steady_clock::time_point circuit_open_until{};
+    };
+
     asio::io_context& io_context_;
     asio::ip::tcp::acceptor acceptor_;
     std::vector<std::uint8_t> private_key_;
@@ -215,6 +232,9 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     std::string fallback_dest_port_;
     std::string fallback_type_;
     bool fallback_dest_valid_ = false;
+    config::reality_t::fallback_guard_t fallback_guard_config_;
+    std::mutex fallback_guard_mu_;
+    std::unordered_map<std::string, fallback_guard_state> fallback_guard_states_;
     config::timeout_t timeout_config_;
     std::vector<std::weak_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>> active_tunnels_;
     config::limits_t limits_config_;
