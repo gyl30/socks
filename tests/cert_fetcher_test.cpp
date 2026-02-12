@@ -1,4 +1,5 @@
 #include <chrono>
+#include <array>
 #include <memory>
 #include <string>
 #include <vector>
@@ -21,7 +22,9 @@ extern "C"
 #include <openssl/ssl.h>
 }
 
+#define private public
 #include "cert_fetcher.h"
+#undef private
 
 namespace
 {
@@ -415,4 +418,63 @@ TEST(CertFetcherTest, ConnectFailure)
         },
         asio::detached);
     ctx.run();
+}
+
+TEST(CertFetcherTest, WhiteBoxHelpersAndRecordTypeBranches)
+{
+    std::array<std::uint8_t, 3> raw = {0x01, 0xab, 0xff};
+    EXPECT_EQ(reality::cert_fetcher::hex(std::vector<std::uint8_t>{0x0f}), "0f");
+    EXPECT_EQ(reality::cert_fetcher::hex(raw.data(), raw.size()), "01abff");
+
+    asio::io_context ctx;
+    reality::cert_fetcher::fetch_session session(ctx, "127.0.0.1", 443, "example.com", "trace");
+
+    EXPECT_FALSE(session.validate_server_hello_body({}));
+    EXPECT_TRUE(session.validate_server_hello_body({0x01}));
+
+    std::error_code ec;
+    EXPECT_FALSE(session.validate_record_length(20000, ec));
+    EXPECT_EQ(ec, std::errc::message_size);
+
+    std::vector<std::uint8_t> rec = {0xaa, 0xbb, 0xcc};
+    std::vector<std::uint8_t> pt_buf(1, 0);
+
+    std::uint8_t alert_head[5] = {reality::kContentTypeAlert, 0x03, 0x03, 0x00, 0x03};
+    auto alert_ret = session.handle_record_by_content_type(alert_head, rec, pt_buf, ec);
+    EXPECT_EQ(alert_ret.first, 0);
+    EXPECT_TRUE(alert_ret.second.empty());
+    EXPECT_EQ(ec, asio::error::connection_reset);
+
+    std::uint8_t bad_head[5] = {0x99, 0x03, 0x03, 0x00, 0x03};
+    auto bad_ret = session.handle_record_by_content_type(bad_head, rec, pt_buf, ec);
+    EXPECT_EQ(bad_ret.first, 0);
+    EXPECT_TRUE(bad_ret.second.empty());
+    EXPECT_EQ(ec, asio::error::invalid_argument);
+
+    std::uint8_t ccs_head[5] = {reality::kContentTypeChangeCipherSpec, 0x03, 0x03, 0x00, 0x03};
+    auto ccs_ret = session.handle_record_by_content_type(ccs_head, rec, pt_buf, ec);
+    EXPECT_EQ(ccs_ret.first, reality::kContentTypeChangeCipherSpec);
+    EXPECT_EQ(ccs_ret.second.size(), rec.size());
+    EXPECT_GE(pt_buf.size(), rec.size());
+}
+
+TEST(CertFetcherTest, WhiteBoxProcessServerHelloAndHandshakeMessage)
+{
+    asio::io_context ctx;
+    reality::cert_fetcher::fetch_session session(ctx, "127.0.0.1", 443, "example.com", "trace");
+
+    std::vector<std::uint8_t> server_hello(43, 0);
+    server_hello[0] = 0x02;
+    server_hello[3] = 39;
+    server_hello[38] = 0x00;
+    server_hello[39] = 0x12;
+    server_hello[40] = 0x34;
+
+    const auto ec = session.process_server_hello(server_hello);
+    EXPECT_EQ(ec, asio::error::no_protocol_option);
+
+    auto encrypted_extensions = reality::construct_encrypted_extensions("h2");
+    std::vector<std::uint8_t> cert_msg;
+    EXPECT_FALSE(session.process_handshake_message(encrypted_extensions, cert_msg));
+    EXPECT_EQ(session.fingerprint_.alpn, "h2");
 }
