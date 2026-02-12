@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <cstddef>
 #include <utility>
 #include <optional>
 #include <system_error>
@@ -118,6 +119,30 @@ class remote_server : public std::enable_shared_from_this<remote_server>
                                                                      reality::transcript& trans,
                                                                      const connection_context& ctx,
                                                                      std::error_code& ec);
+    [[nodiscard]] static connection_context build_connection_context(const std::shared_ptr<asio::ip::tcp::socket>& s, std::uint32_t conn_id);
+    [[nodiscard]] static connection_context build_stream_context(const connection_context& ctx, const syn_payload& syn);
+    [[nodiscard]] static client_hello_info parse_client_hello(const std::vector<std::uint8_t>& initial_buf, std::string& client_sni);
+    [[nodiscard]] bool init_handshake_transcript(const std::vector<std::uint8_t>& initial_buf,
+                                                 reality::transcript& trans,
+                                                 const connection_context& ctx) const;
+    asio::awaitable<server_handshake_res> delay_and_fallback(std::shared_ptr<asio::ip::tcp::socket> s,
+                                                             const std::vector<std::uint8_t>& initial_buf,
+                                                             const connection_context& ctx,
+                                                             const std::string& client_sni) const;
+    asio::awaitable<void> send_stream_reset(const std::shared_ptr<mux_connection>& connection, std::uint32_t stream_id) const;
+    asio::awaitable<void> reject_stream_for_limit(const std::shared_ptr<mux_connection>& connection,
+                                                  const connection_context& ctx,
+                                                  std::uint32_t stream_id) const;
+    asio::awaitable<void> handle_tcp_connect_stream(const std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>& tunnel,
+                                                    const connection_context& stream_ctx,
+                                                    std::uint32_t stream_id,
+                                                    const syn_payload& syn,
+                                                    std::size_t payload_size,
+                                                    asio::io_context& io_context) const;
+    asio::awaitable<void> handle_udp_associate_stream(const std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>& tunnel,
+                                                      const connection_context& stream_ctx,
+                                                      std::uint32_t stream_id,
+                                                      asio::io_context& io_context) const;
     [[nodiscard]] bool derive_server_key_share(const client_hello_info& info,
                                                const std::uint8_t* public_key,
                                                const std::uint8_t* private_key,

@@ -531,54 +531,85 @@ asio::awaitable<void> remote_server::accept_loop()
     }
 }
 
+connection_context remote_server::build_connection_context(const std::shared_ptr<asio::ip::tcp::socket>& s, const std::uint32_t conn_id)
+{
+    connection_context ctx;
+    ctx.new_trace_id();
+    ctx.conn_id(conn_id);
+
+    const auto local_ep = s->local_endpoint();
+    const auto remote_ep = s->remote_endpoint();
+    const auto local_addr = socks_codec::normalize_ip_address(local_ep.address());
+    const auto remote_addr = socks_codec::normalize_ip_address(remote_ep.address());
+    ctx.local_addr(local_addr.to_string());
+    ctx.local_port(local_ep.port());
+    ctx.remote_addr(remote_addr.to_string());
+    ctx.remote_port(remote_ep.port());
+    return ctx;
+}
+
+client_hello_info remote_server::parse_client_hello(const std::vector<std::uint8_t>& initial_buf, std::string& client_sni)
+{
+    client_sni.clear();
+    if (initial_buf.empty())
+    {
+        return {};
+    }
+    auto info = ch_parser::parse(initial_buf);
+    client_sni = info.sni;
+    return info;
+}
+
+bool remote_server::init_handshake_transcript(const std::vector<std::uint8_t>& initial_buf,
+                                              reality::transcript& trans,
+                                              const connection_context& ctx) const
+{
+    if (initial_buf.size() <= 5)
+    {
+        LOG_CTX_ERROR(ctx, "{} buffer too short", log_event::kHandshake);
+        return false;
+    }
+    trans.update(std::vector<std::uint8_t>(initial_buf.begin() + 5, initial_buf.end()));
+    return true;
+}
+
+asio::awaitable<remote_server::server_handshake_res> remote_server::delay_and_fallback(std::shared_ptr<asio::ip::tcp::socket> s,
+                                                                                        const std::vector<std::uint8_t>& initial_buf,
+                                                                                        const connection_context& ctx,
+                                                                                        const std::string& client_sni) const
+{
+    static thread_local std::mt19937 delay_gen(std::random_device{}());
+    std::uniform_int_distribution<std::uint32_t> delay_dist(10, 50);
+    asio::steady_timer delay_timer(io_context_);
+    delay_timer.expires_after(std::chrono::milliseconds(delay_dist(delay_gen)));
+    co_await delay_timer.async_wait(asio::as_tuple(asio::use_awaitable));
+    co_await handle_fallback(s, initial_buf, ctx, client_sni);
+    co_return server_handshake_res{.ok = false};
+}
+
 asio::awaitable<remote_server::server_handshake_res> remote_server::negotiate_reality(std::shared_ptr<asio::ip::tcp::socket> s,
                                                                                       const connection_context& ctx,
                                                                                       std::vector<std::uint8_t>& initial_buf)
 {
-    const auto ok = co_await read_initial_and_validate(s, ctx, initial_buf);
-
+    const auto read_ok = co_await read_initial_and_validate(s, ctx, initial_buf);
     std::string client_sni;
-    client_hello_info info;
-    if (!initial_buf.empty())
+    auto info = parse_client_hello(initial_buf, client_sni);
+
+    if (!read_ok)
     {
-        info = ch_parser::parse(initial_buf);
-        client_sni = info.sni;
+        co_return co_await delay_and_fallback(s, initial_buf, ctx, client_sni);
     }
 
-    if (!ok)
-    {
-        static thread_local std::mt19937 delay_gen(std::random_device{}());
-        std::uniform_int_distribution<std::uint32_t> delay_dist(10, 50);
-        asio::steady_timer delay_timer(io_context_);
-        delay_timer.expires_after(std::chrono::milliseconds(delay_dist(delay_gen)));
-        co_await delay_timer.async_wait(asio::as_tuple(asio::use_awaitable));
-        co_await handle_fallback(s, initial_buf, ctx, client_sni);
-        co_return server_handshake_res{.ok = false};
-    }
-
-    const auto auth_ok = authenticate_client(info, initial_buf, ctx);
-    if (!auth_ok)
+    if (!authenticate_client(info, initial_buf, ctx))
     {
         LOG_CTX_WARN(ctx, "{} auth failed sni {}", log_event::kAuth, client_sni);
-        static thread_local std::mt19937 delay_gen(std::random_device{}());
-        std::uniform_int_distribution<std::uint32_t> delay_dist(10, 50);
-        asio::steady_timer delay_timer(io_context_);
-        delay_timer.expires_after(std::chrono::milliseconds(delay_dist(delay_gen)));
-        co_await delay_timer.async_wait(asio::as_tuple(asio::use_awaitable));
-        co_await handle_fallback(s, initial_buf, ctx, client_sni);
-        co_return server_handshake_res{.ok = false};
+        co_return co_await delay_and_fallback(s, initial_buf, ctx, client_sni);
     }
 
     LOG_CTX_INFO(ctx, "{} authorized sni {}", log_event::kAuth, info.sni);
     reality::transcript trans;
-
-    if (initial_buf.size() > 5)
+    if (!init_handshake_transcript(initial_buf, trans, ctx))
     {
-        trans.update(std::vector<std::uint8_t>(initial_buf.begin() + 5, initial_buf.end()));
-    }
-    else
-    {
-        LOG_CTX_ERROR(ctx, "{} buffer too short", log_event::kHandshake);
         co_return server_handshake_res{.ok = false};
     }
 
@@ -601,17 +632,7 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::negotiate_re
 
 asio::awaitable<void> remote_server::handle(std::shared_ptr<asio::ip::tcp::socket> s, const std::uint32_t conn_id)
 {
-    auto self = shared_from_this();
-    connection_context ctx;
-    ctx.new_trace_id();
-    ctx.conn_id(conn_id);
-    const auto local_addr = socks_codec::normalize_ip_address(s->local_endpoint().address());
-    const auto remote_addr = socks_codec::normalize_ip_address(s->remote_endpoint().address());
-    ctx.local_addr(local_addr.to_string());
-    ctx.local_port(s->local_endpoint().port());
-    ctx.remote_addr(remote_addr.to_string());
-    ctx.remote_port(s->remote_endpoint().port());
-
+    auto ctx = build_connection_context(s, conn_id);
     LOG_CTX_INFO(ctx, "{} accepted {}", log_event::kConnInit, ctx.connection_info());
 
     std::vector<std::uint8_t> initial_buf;
@@ -632,13 +653,12 @@ asio::awaitable<void> remote_server::handle(std::shared_ptr<asio::ip::tcp::socke
 
     LOG_CTX_INFO(ctx, "{} tunnel starting", log_event::kConnEstablished);
 
-    bool over_limit = false;
     std::erase_if(active_tunnels_, [](const auto& wp) { return wp.expired(); });
-    over_limit = active_tunnels_.size() >= limits_config_.max_connections;
+    const bool over_limit = active_tunnels_.size() >= limits_config_.max_connections;
     if (over_limit)
     {
         LOG_CTX_WARN(ctx, "{} connection limit reached {} rejecting", log_event::kConnClose, limits_config_.max_connections);
-        client_hello_info info = ch_parser::parse(initial_buf);
+        const auto info = ch_parser::parse(initial_buf);
         co_await handle_fallback(s, initial_buf, ctx, info.sni);
         co_return;
     }
@@ -670,68 +690,111 @@ asio::awaitable<void> remote_server::handle(std::shared_ptr<asio::ip::tcp::socke
     co_await tunnel->run();
 }
 
+connection_context remote_server::build_stream_context(const connection_context& ctx, const syn_payload& syn)
+{
+    connection_context stream_ctx = ctx;
+    if (!syn.trace_id.empty())
+    {
+        stream_ctx.trace_id(syn.trace_id);
+    }
+    return stream_ctx;
+}
+
+asio::awaitable<void> remote_server::send_stream_reset(const std::shared_ptr<mux_connection>& connection, const std::uint32_t stream_id) const
+{
+    (void)co_await connection->send_async(stream_id, kCmdRst, {});
+}
+
+asio::awaitable<void> remote_server::reject_stream_for_limit(const std::shared_ptr<mux_connection>& connection,
+                                                             const connection_context& ctx,
+                                                             const std::uint32_t stream_id) const
+{
+    LOG_CTX_WARN(ctx, "{} stream limit reached", log_event::kMux);
+    const ack_payload ack{.socks_rep = socks::kRepGenFail, .bnd_addr = "", .bnd_port = 0};
+    std::vector<std::uint8_t> ack_data;
+    mux_codec::encode_ack(ack, ack_data);
+    (void)co_await connection->send_async(stream_id, kCmdAck, std::move(ack_data));
+    co_await send_stream_reset(connection, stream_id);
+}
+
+asio::awaitable<void> remote_server::handle_tcp_connect_stream(const std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>& tunnel,
+                                                               const connection_context& stream_ctx,
+                                                               const std::uint32_t stream_id,
+                                                               const syn_payload& syn,
+                                                               const std::size_t payload_size,
+                                                               asio::io_context& io_context) const
+{
+    LOG_CTX_INFO(stream_ctx, "{} stream {} type tcp connect target {} {} payload size {}", log_event::kMux, stream_id, syn.addr, syn.port, payload_size);
+    const auto connection = tunnel->connection();
+    const auto sess = std::make_shared<remote_session>(connection, stream_id, io_context, stream_ctx);
+    sess->set_manager(tunnel);
+    if (!tunnel->try_register_stream(stream_id, sess))
+    {
+        LOG_CTX_WARN(stream_ctx, "{} stream id conflict {}", log_event::kMux, stream_id);
+        co_await send_stream_reset(connection, stream_id);
+        co_return;
+    }
+    co_await sess->start(syn);
+}
+
+asio::awaitable<void> remote_server::handle_udp_associate_stream(const std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>& tunnel,
+                                                                 const connection_context& stream_ctx,
+                                                                 const std::uint32_t stream_id,
+                                                                 asio::io_context& io_context) const
+{
+    LOG_CTX_INFO(stream_ctx, "{} stream {} type udp associate associated via tcp", log_event::kMux, stream_id);
+    const auto connection = tunnel->connection();
+    const auto sess = std::make_shared<remote_udp_session>(connection, stream_id, io_context, stream_ctx);
+    sess->set_manager(tunnel);
+    if (!tunnel->try_register_stream(stream_id, sess))
+    {
+        LOG_CTX_WARN(stream_ctx, "{} stream id conflict {}", log_event::kMux, stream_id);
+        co_await send_stream_reset(connection, stream_id);
+        co_return;
+    }
+    co_await sess->start();
+}
+
 asio::awaitable<void> remote_server::process_stream_request(std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel,
                                                             const connection_context& ctx,
                                                             const std::uint32_t stream_id,
                                                             std::vector<std::uint8_t> payload,
                                                             asio::io_context& io_context) const
 {
-    if (!tunnel->connection()->can_accept_stream())
+    const auto connection = tunnel->connection();
+    if (!connection->can_accept_stream())
     {
-        LOG_CTX_WARN(ctx, "{} stream limit reached", log_event::kMux);
-        const ack_payload ack{.socks_rep = socks::kRepGenFail, .bnd_addr = "", .bnd_port = 0};
-        std::vector<std::uint8_t> ack_data;
-        mux_codec::encode_ack(ack, ack_data);
-        (void)co_await tunnel->connection()->send_async(stream_id, kCmdAck, std::move(ack_data));
-        (void)co_await tunnel->connection()->send_async(stream_id, kCmdRst, {});
+        co_await reject_stream_for_limit(connection, ctx, stream_id);
         co_return;
     }
+
     syn_payload syn;
     if (!mux_codec::decode_syn(payload.data(), payload.size(), syn))
     {
         LOG_CTX_WARN(ctx, "{} stream {} invalid syn", log_event::kMux, stream_id);
-        (void)co_await tunnel->connection()->send_async(stream_id, kCmdRst, {});
+        co_await send_stream_reset(connection, stream_id);
         co_return;
     }
-    connection_context stream_ctx = ctx;
+
+    auto stream_ctx = build_stream_context(ctx, syn);
     if (!syn.trace_id.empty())
     {
-        stream_ctx.trace_id(syn.trace_id);
         LOG_CTX_DEBUG(stream_ctx, "{} linked client trace id {}", log_event::kMux, syn.trace_id);
     }
 
     if (syn.socks_cmd == socks::kCmdConnect)
     {
-        LOG_CTX_INFO(
-            stream_ctx, "{} stream {} type tcp connect target {} {} payload size {}", log_event::kMux, stream_id, syn.addr, syn.port, payload.size());
-        const auto sess = std::make_shared<remote_session>(tunnel->connection(), stream_id, io_context, stream_ctx);
-        sess->set_manager(tunnel);
-        if (!tunnel->try_register_stream(stream_id, sess))
-        {
-            LOG_CTX_WARN(stream_ctx, "{} stream id conflict {}", log_event::kMux, stream_id);
-            (void)co_await tunnel->connection()->send_async(stream_id, kCmdRst, {});
-            co_return;
-        }
-        co_await sess->start(syn);
+        co_await handle_tcp_connect_stream(tunnel, stream_ctx, stream_id, syn, payload.size(), io_context);
+        co_return;
     }
-    else if (syn.socks_cmd == socks::kCmdUdpAssociate)
+    if (syn.socks_cmd == socks::kCmdUdpAssociate)
     {
-        LOG_CTX_INFO(stream_ctx, "{} stream {} type udp associate associated via tcp", log_event::kMux, stream_id);
-        const auto sess = std::make_shared<remote_udp_session>(tunnel->connection(), stream_id, io_context, stream_ctx);
-        sess->set_manager(tunnel);
-        if (!tunnel->try_register_stream(stream_id, sess))
-        {
-            LOG_CTX_WARN(stream_ctx, "{} stream id conflict {}", log_event::kMux, stream_id);
-            (void)co_await tunnel->connection()->send_async(stream_id, kCmdRst, {});
-            co_return;
-        }
-        co_await sess->start();
+        co_await handle_udp_associate_stream(tunnel, stream_ctx, stream_id, io_context);
+        co_return;
     }
-    else
-    {
-        LOG_CTX_WARN(stream_ctx, "{} stream {} unknown cmd {}", log_event::kMux, stream_id, syn.socks_cmd);
-        (void)co_await tunnel->connection()->send_async(stream_id, kCmdRst, {});
-    }
+
+    LOG_CTX_WARN(stream_ctx, "{} stream {} unknown cmd {}", log_event::kMux, stream_id, syn.socks_cmd);
+    co_await send_stream_reset(connection, stream_id);
 }
 
 asio::awaitable<bool> remote_server::read_initial_and_validate(std::shared_ptr<asio::ip::tcp::socket> s,
