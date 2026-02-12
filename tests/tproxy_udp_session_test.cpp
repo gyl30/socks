@@ -3,6 +3,14 @@
 #include <memory>
 #include <vector>
 #include <thread>
+#include <atomic>
+#include <cstring>
+#include <cerrno>
+#include <algorithm>
+
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <sys/types.h>
 
 #include <gtest/gtest.h>
 #include <asio/co_spawn.hpp>
@@ -21,8 +29,92 @@
 #include "tproxy_client.h"
 #undef private
 
+extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);
+extern "C" ssize_t __real_recvmsg(int sockfd, msghdr* msg, int flags);
+
 namespace
 {
+
+enum class wrapped_recvmsg_mode
+{
+    kReal = 0,
+    kEagain,
+    kError,
+    kMissingOrigdst
+};
+
+std::atomic<bool> g_force_tproxy_sockopt_success{false};
+std::atomic<bool> g_fail_setsockopt_once{false};
+std::atomic<int> g_fail_setsockopt_level{-1};
+std::atomic<int> g_fail_setsockopt_optname{-1};
+std::atomic<int> g_fail_setsockopt_errno{EPERM};
+std::atomic<int> g_recvmsg_mode{static_cast<int>(wrapped_recvmsg_mode::kReal)};
+
+void reset_socket_wrappers()
+{
+    g_force_tproxy_sockopt_success.store(false, std::memory_order_release);
+    g_fail_setsockopt_once.store(false, std::memory_order_release);
+    g_fail_setsockopt_level.store(-1, std::memory_order_release);
+    g_fail_setsockopt_optname.store(-1, std::memory_order_release);
+    g_fail_setsockopt_errno.store(EPERM, std::memory_order_release);
+    g_recvmsg_mode.store(static_cast<int>(wrapped_recvmsg_mode::kReal), std::memory_order_release);
+}
+
+void force_tproxy_setsockopt_success(const bool enable) { g_force_tproxy_sockopt_success.store(enable, std::memory_order_release); }
+
+void fail_setsockopt_once(const int level, const int optname, const int err = EPERM)
+{
+    g_fail_setsockopt_level.store(level, std::memory_order_release);
+    g_fail_setsockopt_optname.store(optname, std::memory_order_release);
+    g_fail_setsockopt_errno.store(err, std::memory_order_release);
+    g_fail_setsockopt_once.store(true, std::memory_order_release);
+}
+
+void set_recvmsg_mode_once(const wrapped_recvmsg_mode mode) { g_recvmsg_mode.store(static_cast<int>(mode), std::memory_order_release); }
+
+bool is_tproxy_setsockopt(const int level, const int optname)
+{
+    if (level == SOL_IP)
+    {
+#ifdef IP_TRANSPARENT
+        if (optname == IP_TRANSPARENT)
+        {
+            return true;
+        }
+#endif
+#ifdef IP_RECVORIGDSTADDR
+        if (optname == IP_RECVORIGDSTADDR)
+        {
+            return true;
+        }
+#endif
+    }
+    if (level == SOL_IPV6)
+    {
+#ifdef IPV6_TRANSPARENT
+        if (optname == IPV6_TRANSPARENT)
+        {
+            return true;
+        }
+#endif
+#ifdef IPV6_RECVORIGDSTADDR
+        if (optname == IPV6_RECVORIGDSTADDR)
+        {
+            return true;
+        }
+#endif
+    }
+    if (level == SOL_SOCKET)
+    {
+#ifdef SO_MARK
+        if (optname == SO_MARK)
+        {
+            return true;
+        }
+#endif
+    }
+    return false;
+}
 
 class direct_router : public mux::router
 {
@@ -55,6 +147,64 @@ std::uint16_t pick_free_tcp_port()
 }
 
 }    // namespace
+
+extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)
+{
+    if (g_fail_setsockopt_once.exchange(false, std::memory_order_acq_rel) && g_fail_setsockopt_level.load(std::memory_order_acquire) == level
+        && g_fail_setsockopt_optname.load(std::memory_order_acquire) == optname)
+    {
+        errno = g_fail_setsockopt_errno.load(std::memory_order_acquire);
+        return -1;
+    }
+
+    if (g_force_tproxy_sockopt_success.load(std::memory_order_acquire) && is_tproxy_setsockopt(level, optname))
+    {
+        return 0;
+    }
+
+    return __real_setsockopt(sockfd, level, optname, optval, optlen);
+}
+
+extern "C" ssize_t __wrap_recvmsg(int sockfd, msghdr* msg, int flags)
+{
+    const auto mode = static_cast<wrapped_recvmsg_mode>(g_recvmsg_mode.exchange(static_cast<int>(wrapped_recvmsg_mode::kReal), std::memory_order_acq_rel));
+    if (mode == wrapped_recvmsg_mode::kReal)
+    {
+        return __real_recvmsg(sockfd, msg, flags);
+    }
+    if (mode == wrapped_recvmsg_mode::kEagain)
+    {
+        errno = EAGAIN;
+        return -1;
+    }
+    if (mode == wrapped_recvmsg_mode::kError)
+    {
+        errno = EIO;
+        return -1;
+    }
+
+    if (msg == nullptr || msg->msg_iov == nullptr || msg->msg_iovlen == 0 || msg->msg_iov[0].iov_base == nullptr || msg->msg_iov[0].iov_len == 0)
+    {
+        errno = EFAULT;
+        return -1;
+    }
+
+    static const std::array<std::uint8_t, 4> payload = {0xde, 0xad, 0xbe, 0xef};
+    const auto n = std::min<std::size_t>(msg->msg_iov[0].iov_len, payload.size());
+    std::memcpy(msg->msg_iov[0].iov_base, payload.data(), n);
+
+    if (msg->msg_name != nullptr && msg->msg_namelen >= sizeof(sockaddr_in))
+    {
+        auto* src = reinterpret_cast<sockaddr_in*>(msg->msg_name);
+        std::memset(src, 0, sizeof(sockaddr_in));
+        src->sin_family = AF_INET;
+        src->sin_port = htons(46000);
+        src->sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        msg->msg_namelen = sizeof(sockaddr_in);
+    }
+    msg->msg_controllen = 0;
+    return static_cast<ssize_t>(n);
+}
 
 TEST(TproxyUdpSessionTest, IdleDetection)
 {
@@ -236,6 +386,9 @@ TEST(TproxyClientTest, AcceptAndUdpLoopReturnOnInvalidListenHost)
 
 TEST(TproxyClientTest, AcceptLoopSetupFailsWhenPortInUse)
 {
+    reset_socket_wrappers();
+    force_tproxy_setsockopt_success(true);
+
     std::error_code ec;
     mux::io_context_pool pool(1, ec);
     ASSERT_FALSE(ec);
@@ -262,10 +415,15 @@ TEST(TproxyClientTest, AcceptLoopSetupFailsWhenPortInUse)
     std::this_thread::sleep_for(std::chrono::milliseconds(120));
     pool.stop();
     runner.join();
+
+    reset_socket_wrappers();
 }
 
 TEST(TproxyClientTest, UdpLoopHandlesPacketAndCleanupPrunesIdleSessions)
 {
+    reset_socket_wrappers();
+    force_tproxy_setsockopt_success(true);
+
     std::error_code ec;
     mux::io_context_pool pool(1, ec);
     ASSERT_FALSE(ec);
@@ -328,6 +486,8 @@ TEST(TproxyClientTest, UdpLoopHandlesPacketAndCleanupPrunesIdleSessions)
     client->stop();
     pool.stop();
     runner.join();
+
+    reset_socket_wrappers();
 }
 
 TEST(TproxyClientTest, StartMutatedUdpPortFallsBackToTcpPort)
@@ -357,4 +517,353 @@ TEST(TproxyClientTest, StartMutatedUdpPortFallsBackToTcpPort)
     client->stop();
     pool.stop();
     runner.join();
+}
+
+TEST(TproxyClientTest, AcceptLoopStopsWhenStopFlagSetAfterPendingAccept)
+{
+    reset_socket_wrappers();
+    force_tproxy_setsockopt_success(true);
+
+    std::error_code ec;
+    mux::io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+
+    const auto tcp_port = pick_free_tcp_port();
+    const auto udp_port = pick_free_tcp_port();
+
+    mux::config cfg;
+    cfg.tproxy.enabled = true;
+    cfg.tproxy.listen_host = "127.0.0.1";
+    cfg.tproxy.mark = 0;
+    cfg.tproxy.tcp_port = tcp_port;
+    cfg.tproxy.udp_port = udp_port;
+    auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
+
+    asio::co_spawn(pool.get_io_context(),
+                   [client]() -> asio::awaitable<void>
+                   {
+                       co_await client->accept_tcp_loop();
+                       co_return;
+                   },
+                   asio::detached);
+
+    std::thread runner([&pool]() { pool.run(); });
+    for (int i = 0; i < 50 && !client->tcp_acceptor_.is_open(); ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    if (!client->tcp_acceptor_.is_open())
+    {
+        client->stop();
+        pool.stop();
+        runner.join();
+        GTEST_SKIP() << "tcp transparent socket unavailable in current environment";
+    }
+
+    client->stop_.store(true, std::memory_order_release);
+
+    asio::io_context dial_ctx;
+    asio::ip::tcp::socket dial_socket(dial_ctx);
+    dial_socket.connect(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), tcp_port), ec);
+    if (ec)
+    {
+        client->stop();
+        pool.stop();
+        runner.join();
+        GTEST_SKIP() << "tcp listener not reachable in current environment";
+    }
+    dial_socket.shutdown(asio::ip::tcp::socket::shutdown_both, ec);
+    dial_socket.close(ec);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(80));
+
+    client->stop();
+    pool.stop();
+    runner.join();
+
+    reset_socket_wrappers();
+}
+
+TEST(TproxyClientTest, UdpLoopBreaksWhenReadableAndStopFlagAlreadySet)
+{
+    reset_socket_wrappers();
+    force_tproxy_setsockopt_success(true);
+
+    std::error_code ec;
+    mux::io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+
+    const auto tcp_port = pick_free_tcp_port();
+    const auto udp_port = pick_free_tcp_port();
+
+    mux::config cfg;
+    cfg.tproxy.enabled = true;
+    cfg.tproxy.listen_host = "127.0.0.1";
+    cfg.tproxy.mark = 0;
+    cfg.tproxy.tcp_port = tcp_port;
+    cfg.tproxy.udp_port = udp_port;
+    auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
+
+    asio::co_spawn(pool.get_io_context(),
+                   [client]() -> asio::awaitable<void>
+                   {
+                       co_await client->udp_loop();
+                       co_return;
+                   },
+                   asio::detached);
+
+    std::thread runner([&pool]() { pool.run(); });
+    for (int i = 0; i < 50 && !client->udp_socket_.is_open(); ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    if (!client->udp_socket_.is_open())
+    {
+        client->stop();
+        pool.stop();
+        runner.join();
+        GTEST_SKIP() << "udp transparent socket unavailable in current environment";
+    }
+
+    client->stop_.store(true, std::memory_order_release);
+
+    asio::io_context sender_ctx;
+    asio::ip::udp::socket sender(sender_ctx);
+    sender.open(asio::ip::udp::v4(), ec);
+    ASSERT_FALSE(ec);
+    const std::array<std::uint8_t, 1> payload = {0x7f};
+    sender.send_to(asio::buffer(payload), asio::ip::udp::endpoint(asio::ip::make_address("127.0.0.1"), udp_port), 0, ec);
+    ASSERT_FALSE(ec);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(120));
+
+    client->stop();
+    pool.stop();
+    runner.join();
+
+    reset_socket_wrappers();
+}
+
+TEST(TproxyClientTest, UdpLoopRetriesWhenSocketClosedUnexpectedly)
+{
+    reset_socket_wrappers();
+    force_tproxy_setsockopt_success(true);
+
+    std::error_code ec;
+    mux::io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+
+    const auto tcp_port = pick_free_tcp_port();
+    const auto udp_port = pick_free_tcp_port();
+
+    mux::config cfg;
+    cfg.tproxy.enabled = true;
+    cfg.tproxy.listen_host = "127.0.0.1";
+    cfg.tproxy.mark = 0;
+    cfg.tproxy.tcp_port = tcp_port;
+    cfg.tproxy.udp_port = udp_port;
+    auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
+
+    asio::co_spawn(pool.get_io_context(),
+                   [client]() -> asio::awaitable<void>
+                   {
+                       co_await client->udp_loop();
+                       co_return;
+                   },
+                   asio::detached);
+
+    std::thread runner([&pool]() { pool.run(); });
+    for (int i = 0; i < 50 && !client->udp_socket_.is_open(); ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    if (!client->udp_socket_.is_open())
+    {
+        client->stop();
+        pool.stop();
+        runner.join();
+        GTEST_SKIP() << "udp transparent socket unavailable in current environment";
+    }
+
+    asio::post(pool.get_io_context(),
+               [client]()
+               {
+                   std::error_code close_ec;
+                   client->udp_socket_.close(close_ec);
+               });
+    std::this_thread::sleep_for(std::chrono::milliseconds(120));
+
+    client->stop();
+    pool.stop();
+    runner.join();
+
+    reset_socket_wrappers();
+}
+
+TEST(TproxyClientTest, WrappedSetsockoptCoversSetupFailureBranches)
+{
+    auto run_accept_loop_once = [](const mux::config& cfg)
+    {
+        std::error_code ec;
+        mux::io_context_pool pool(1, ec);
+        ASSERT_FALSE(ec);
+        auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
+
+        asio::co_spawn(pool.get_io_context(),
+                       [client]() -> asio::awaitable<void>
+                       {
+                           co_await client->accept_tcp_loop();
+                           co_return;
+                       },
+                       asio::detached);
+
+        std::thread runner([&pool]() { pool.run(); });
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        client->stop();
+        pool.stop();
+        runner.join();
+    };
+
+    auto run_udp_loop_once = [](const mux::config& cfg)
+    {
+        std::error_code ec;
+        mux::io_context_pool pool(1, ec);
+        ASSERT_FALSE(ec);
+        auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
+
+        asio::co_spawn(pool.get_io_context(),
+                       [client]() -> asio::awaitable<void>
+                       {
+                           co_await client->udp_loop();
+                           co_return;
+                       },
+                       asio::detached);
+
+        std::thread runner([&pool]() { pool.run(); });
+        std::this_thread::sleep_for(std::chrono::milliseconds(120));
+        client->stop();
+        pool.stop();
+        runner.join();
+    };
+
+    mux::config cfg;
+    cfg.tproxy.enabled = true;
+    cfg.tproxy.listen_host = "127.0.0.1";
+    cfg.tproxy.tcp_port = pick_free_tcp_port();
+    cfg.tproxy.udp_port = pick_free_tcp_port();
+    cfg.tproxy.mark = 0;
+
+    reset_socket_wrappers();
+    fail_setsockopt_once(SOL_SOCKET, SO_REUSEADDR, EPERM);
+    run_accept_loop_once(cfg);
+
+    reset_socket_wrappers();
+#ifdef IPV6_V6ONLY
+    cfg.tproxy.listen_host = "::1";
+    fail_setsockopt_once(SOL_IPV6, IPV6_V6ONLY, EPERM);
+    run_accept_loop_once(cfg);
+#endif
+
+    reset_socket_wrappers();
+    cfg.tproxy.listen_host = "127.0.0.1";
+    cfg.tproxy.udp_port = pick_free_tcp_port();
+    fail_setsockopt_once(SOL_SOCKET, SO_REUSEADDR, EPERM);
+    run_udp_loop_once(cfg);
+
+    reset_socket_wrappers();
+    force_tproxy_setsockopt_success(true);
+#ifdef IP_RECVORIGDSTADDR
+    fail_setsockopt_once(SOL_IP, IP_RECVORIGDSTADDR, EPERM);
+#endif
+    cfg.tproxy.udp_port = pick_free_tcp_port();
+    run_udp_loop_once(cfg);
+
+    reset_socket_wrappers();
+    force_tproxy_setsockopt_success(true);
+#ifdef IPV6_V6ONLY
+    cfg.tproxy.listen_host = "::1";
+    cfg.tproxy.udp_port = pick_free_tcp_port();
+    fail_setsockopt_once(SOL_IPV6, IPV6_V6ONLY, EPERM);
+    run_udp_loop_once(cfg);
+#endif
+
+    reset_socket_wrappers();
+    force_tproxy_setsockopt_success(true);
+    cfg.tproxy.listen_host = "127.0.0.1";
+    cfg.tproxy.mark = 123;
+#ifdef SO_MARK
+    fail_setsockopt_once(SOL_SOCKET, SO_MARK, EPERM);
+#endif
+    cfg.tproxy.udp_port = pick_free_tcp_port();
+    run_udp_loop_once(cfg);
+
+    reset_socket_wrappers();
+    force_tproxy_setsockopt_success(true);
+    cfg.tproxy.mark = 0;
+    cfg.tproxy.udp_port = pick_free_tcp_port();
+    run_udp_loop_once(cfg);
+
+    reset_socket_wrappers();
+}
+
+TEST(TproxyClientTest, WrappedRecvmsgCoversUdpReadErrorBranches)
+{
+    reset_socket_wrappers();
+    force_tproxy_setsockopt_success(true);
+
+    std::error_code ec;
+    mux::io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+
+    mux::config cfg;
+    cfg.tproxy.enabled = true;
+    cfg.tproxy.listen_host = "127.0.0.1";
+    cfg.tproxy.mark = 0;
+    cfg.tproxy.tcp_port = pick_free_tcp_port();
+    cfg.tproxy.udp_port = pick_free_tcp_port();
+    auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
+
+    asio::co_spawn(pool.get_io_context(),
+                   [client]() -> asio::awaitable<void>
+                   {
+                       co_await client->udp_loop();
+                       co_return;
+                   },
+                   asio::detached);
+
+    std::thread runner([&pool]() { pool.run(); });
+    for (int i = 0; i < 50 && !client->udp_socket_.is_open(); ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_TRUE(client->udp_socket_.is_open());
+
+    asio::io_context sender_ctx;
+    asio::ip::udp::socket sender(sender_ctx);
+    sender.open(asio::ip::udp::v4(), ec);
+    ASSERT_FALSE(ec);
+
+    const std::array<std::uint8_t, 3> payload = {0x01, 0x02, 0x03};
+    const asio::ip::udp::endpoint dst(asio::ip::make_address("127.0.0.1"), cfg.tproxy.udp_port);
+
+    set_recvmsg_mode_once(wrapped_recvmsg_mode::kEagain);
+    sender.send_to(asio::buffer(payload), dst, 0, ec);
+    ASSERT_FALSE(ec);
+    std::this_thread::sleep_for(std::chrono::milliseconds(60));
+
+    set_recvmsg_mode_once(wrapped_recvmsg_mode::kMissingOrigdst);
+    sender.send_to(asio::buffer(payload), dst, 0, ec);
+    ASSERT_FALSE(ec);
+    std::this_thread::sleep_for(std::chrono::milliseconds(60));
+
+    set_recvmsg_mode_once(wrapped_recvmsg_mode::kError);
+    sender.send_to(asio::buffer(payload), dst, 0, ec);
+    ASSERT_FALSE(ec);
+    std::this_thread::sleep_for(std::chrono::milliseconds(60));
+
+    client->stop();
+    pool.stop();
+    runner.join();
+
+    reset_socket_wrappers();
 }
