@@ -1,3 +1,5 @@
+#include <array>
+#include <atomic>
 #include <vector>
 #include <cstdint>
 #include <system_error>
@@ -12,6 +14,30 @@ extern "C"
 #include "tls_record_layer.h"
 
 using reality::tls_record_layer;
+
+extern "C" int __real_RAND_bytes(unsigned char* buf, int num);
+
+namespace
+{
+
+std::atomic<bool> g_force_rand_bytes_fail_once{false};
+
+void fail_rand_bytes_once() { g_force_rand_bytes_fail_once.store(true, std::memory_order_release); }
+
+void reset_rand_bytes_hook() { g_force_rand_bytes_fail_once.store(false, std::memory_order_release); }
+
+}    // namespace
+
+extern "C" int __wrap_RAND_bytes(unsigned char* buf, int num)
+{
+    if (g_force_rand_bytes_fail_once.exchange(false, std::memory_order_acq_rel))
+    {
+        (void)buf;
+        (void)num;
+        return 0;
+    }
+    return __real_RAND_bytes(buf, num);
+}
 
 class tls_record_layer_test : public ::testing::Test
 {
@@ -120,6 +146,34 @@ TEST_F(tls_record_layer_test, EncryptAppDataWithPadding)
     ASSERT_FALSE(ec);
     EXPECT_EQ(out_type, type);
     EXPECT_EQ(decrypted, plaintext);
+}
+
+TEST_F(tls_record_layer_test, EncryptAppDataRandFailure)
+{
+    fail_rand_bytes_once();
+    const std::vector<uint8_t> plaintext = {0x01, 0x02, 0x03};
+    std::error_code ec;
+
+    const auto encrypted = tls_record_layer::encrypt_record(
+        cipher(), key(), iv(), 10, plaintext, reality::kContentTypeApplicationData, ec);
+    EXPECT_TRUE(ec);
+    EXPECT_TRUE(encrypted.empty());
+
+    reset_rand_bytes_hook();
+}
+
+TEST_F(tls_record_layer_test, DecryptSpanShortRecordRejected)
+{
+    const reality::cipher_context ctx;
+    std::array<uint8_t, 10> short_record{};
+    std::array<uint8_t, 32> output{};
+    std::uint8_t out_type = 0;
+    std::error_code ec;
+
+    const std::size_t n = tls_record_layer::decrypt_record(
+        ctx, cipher(), key(), iv(), 0, std::span<const uint8_t>(short_record), std::span<uint8_t>(output), out_type, ec);
+    EXPECT_EQ(n, 0U);
+    EXPECT_EQ(ec, std::errc::message_size);
 }
 
 TEST_F(tls_record_layer_test, ShortMessage)

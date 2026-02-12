@@ -70,6 +70,17 @@ TEST_F(reality_engine_test, EncryptProducesOutput)
     EXPECT_GE(result.size(), plaintext.size() + 5 + 16 + 1);
 }
 
+TEST_F(reality_engine_test, EncryptReturnsErrorOnInvalidWriteKeyLength)
+{
+    reality_engine engine(read_key(), read_iv(), std::vector<std::uint8_t>{0x01}, write_iv(), cipher());
+    std::error_code ec;
+
+    const std::vector<std::uint8_t> plaintext = {'x'};
+    const auto result = engine.encrypt(plaintext, ec);
+    EXPECT_TRUE(ec);
+    EXPECT_TRUE(result.empty());
+}
+
 TEST_F(reality_engine_test, DecryptInsufficientData)
 {
     reality_engine engine(read_key(), read_iv(), write_key(), write_iv(), cipher());
@@ -78,6 +89,23 @@ TEST_F(reality_engine_test, DecryptInsufficientData)
     std::uint8_t small_data[] = {0x17, 0x03, 0x03};
     std::memcpy(buf.data(), small_data, 3);
     engine.commit_read(3);
+
+    std::error_code ec;
+    bool called = false;
+    engine.process_available_records(ec, [&called](std::uint8_t, std::span<const std::uint8_t>) { called = true; });
+
+    EXPECT_FALSE(ec);
+    EXPECT_FALSE(called);
+}
+
+TEST_F(reality_engine_test, DecryptWaitsForCompleteFrame)
+{
+    reality_engine engine(read_key(), read_iv(), write_key(), write_iv(), cipher());
+
+    auto buf = engine.read_buffer(5);
+    const std::uint8_t header_only[] = {0x17, 0x03, 0x03, 0x00, 0x10};
+    std::memcpy(buf.data(), header_only, sizeof(header_only));
+    engine.commit_read(sizeof(header_only));
 
     std::error_code ec;
     bool called = false;
