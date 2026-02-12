@@ -170,4 +170,14 @@ TEST(MonitorServerTest, ConstructWhenPortAlreadyInUse)
     ASSERT_NE(server, nullptr);
 }
 
+TEST(MonitorServerTest, ConstructorHandlesInvalidBindHost)
+{
+    const auto port = pick_free_port();
+    asio::io_context ioc;
+    auto server = std::make_shared<monitor_server>(ioc, port, std::string("token"), 10);
+    auto bad_server = std::make_shared<monitor_server>(ioc, std::string("bad host"), port, std::string("token"), 10);
+    ASSERT_NE(server, nullptr);
+    ASSERT_NE(bad_server, nullptr);
+}
+
 }    // namespace mux
