@@ -25,6 +25,13 @@ add_socks_test(mux_codec_test)
 add_socks_test(socks_codec_test)
 add_socks_test(socks_session_test)
 add_socks_test(crypto_util_test)
+target_link_options(
+    crypto_util_test
+    PRIVATE
+        -Wl,--wrap=EVP_PKEY_CTX_set1_hkdf_key
+        -Wl,--wrap=EVP_PKEY_CTX_set1_hkdf_salt
+        -Wl,--wrap=EVP_CIPHER_CTX_ctrl
+)
 add_socks_test(router_test)
 add_socks_test(domain_matcher_test)
 add_socks_test(ch_parser_test)
@@ -60,6 +67,12 @@ add_socks_test(socks_protocol_test)
 add_socks_test(remote_server_test)
 add_socks_test(remote_server_mux_test)
 add_socks_test(tproxy_udp_session_test)
+target_link_options(
+    tproxy_udp_session_test
+    PRIVATE
+        -Wl,--wrap=setsockopt
+        -Wl,--wrap=recvmsg
+)
 add_socks_test(tproxy_tcp_session_test)
 add_socks_test(tproxy_udp_sender_test)
 add_socks_test(udp_socks_session_test)
