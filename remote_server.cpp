@@ -80,45 +80,105 @@ bool parse_hex_to_bytes(const std::string& hex, std::vector<std::uint8_t>& out, 
     return true;
 }
 
+bool parse_bracket_dest_target(const std::string& text, std::string& host, std::string& port)
+{
+    const auto end = text.find(']');
+    if (end == std::string::npos)
+    {
+        return false;
+    }
+    host = text.substr(1, end - 1);
+    if (end + 1 >= text.size() || text[end + 1] != ':')
+    {
+        return false;
+    }
+    port = text.substr(end + 2);
+    return true;
+}
+
+bool parse_plain_dest_target(const std::string& text, std::string& host, std::string& port)
+{
+    const auto pos = text.rfind(':');
+    if (pos == std::string::npos)
+    {
+        return false;
+    }
+    host = text.substr(0, pos);
+    port = text.substr(pos + 1);
+    return true;
+}
+
 bool parse_dest_target(const std::string& input, std::string& host, std::string& port)
 {
-    host = "";
-    port = "";
     if (input.empty())
     {
         return false;
     }
-
-    auto parse_bracket_form = [&](const std::string& text) -> bool
-    {
-        const auto end = text.find(']');
-        if (end == std::string::npos)
-        {
-            return false;
-        }
-        host = text.substr(1, end - 1);
-        if (end + 1 >= text.size() || text[end + 1] != ':')
-        {
-            return false;
-        }
-        port = text.substr(end + 2);
-        return true;
-    };
-
-    auto parse_plain_form = [&](const std::string& text) -> bool
-    {
-        const auto pos = text.rfind(':');
-        if (pos == std::string::npos)
-        {
-            return false;
-        }
-        host = text.substr(0, pos);
-        port = text.substr(pos + 1);
-        return true;
-    };
-
-    const bool parsed = (input.front() == '[') ? parse_bracket_form(input) : parse_plain_form(input);
+    host.clear();
+    port.clear();
+    const bool parsed = (input.front() == '[') ? parse_bracket_dest_target(input, host, port) : parse_plain_dest_target(input, host, port);
     return parsed && !host.empty() && !port.empty();
+}
+
+asio::ip::tcp::endpoint resolve_inbound_endpoint(const config::inbound_t& inbound)
+{
+    std::error_code ec;
+    auto addr = asio::ip::make_address(inbound.host, ec);
+    if (ec)
+    {
+        LOG_ERROR("parse inbound host {} failed {}", inbound.host, ec.message());
+        addr = asio::ip::address_v6::any();
+    }
+    return asio::ip::tcp::endpoint(addr, inbound.port);
+}
+
+bool setup_server_acceptor(asio::ip::tcp::acceptor& acceptor, const asio::ip::tcp::endpoint& ep)
+{
+    std::error_code ec;
+    ec = acceptor.open(ep.protocol(), ec);
+    if (ec)
+    {
+        LOG_ERROR("acceptor open failed {}", ec.message());
+        return false;
+    }
+    ec = acceptor.set_option(asio::ip::tcp::acceptor::reuse_address(true), ec);
+    if (ec)
+    {
+        LOG_ERROR("acceptor set reuse address failed {}", ec.message());
+        return false;
+    }
+    ec = acceptor.bind(ep, ec);
+    if (ec)
+    {
+        LOG_ERROR("acceptor bind failed {}", ec.message());
+        return false;
+    }
+    ec = acceptor.listen(asio::socket_base::max_listen_connections, ec);
+    if (ec)
+    {
+        LOG_ERROR("acceptor listen failed {}", ec.message());
+        return false;
+    }
+    return true;
+}
+
+void apply_reality_dest_config(const config::reality_t& reality_cfg,
+                               std::string& fallback_dest_host,
+                               std::string& fallback_dest_port,
+                               bool& fallback_dest_valid,
+                               bool& auth_config_valid)
+{
+    if (reality_cfg.dest.empty())
+    {
+        return;
+    }
+    if (!parse_dest_target(reality_cfg.dest, fallback_dest_host, fallback_dest_port))
+    {
+        LOG_ERROR("reality dest invalid {}", reality_cfg.dest);
+        auth_config_valid = false;
+        return;
+    }
+    fallback_dest_valid = true;
 }
 
 std::uint16_t parse_fallback_port(const std::string& port_text)
@@ -621,36 +681,9 @@ remote_server::remote_server(io_context_pool& pool, const config& cfg)
       limits_config_(cfg.limits),
       heartbeat_config_(cfg.heartbeat)
 {
-    std::error_code ec;
-    auto addr = asio::ip::make_address(cfg.inbound.host, ec);
-    if (ec)
+    const auto ep = resolve_inbound_endpoint(cfg.inbound);
+    if (!setup_server_acceptor(acceptor_, ep))
     {
-        LOG_ERROR("parse inbound host {} failed {}", cfg.inbound.host, ec.message());
-        addr = asio::ip::address_v6::any();
-    }
-    asio::ip::tcp::endpoint ep(addr, cfg.inbound.port);
-    ec = acceptor_.open(ep.protocol(), ec);
-    if (ec)
-    {
-        LOG_ERROR("acceptor open failed {}", ec.message());
-        return;
-    }
-    ec = acceptor_.set_option(asio::ip::tcp::acceptor::reuse_address(true), ec);
-    if (ec)
-    {
-        LOG_ERROR("acceptor set reuse address failed {}", ec.message());
-        return;
-    }
-    ec = acceptor_.bind(ep, ec);
-    if (ec)
-    {
-        LOG_ERROR("acceptor bind failed {}", ec.message());
-        return;
-    }
-    ec = acceptor_.listen(asio::socket_base::max_listen_connections, ec);
-    if (ec)
-    {
-        LOG_ERROR("acceptor listen failed {}", ec.message());
         return;
     }
     private_key_ = reality::crypto_util::hex_to_bytes(cfg.reality.private_key);
@@ -660,18 +693,7 @@ remote_server::remote_server(io_context_pool& pool, const config& cfg)
     {
         LOG_WARN("reality fallback type not supported {}", fallback_type_);
     }
-    if (!cfg.reality.dest.empty())
-    {
-        if (!parse_dest_target(cfg.reality.dest, fallback_dest_host_, fallback_dest_port_))
-        {
-            LOG_ERROR("reality dest invalid {}", cfg.reality.dest);
-            auth_config_valid_ = false;
-        }
-        else
-        {
-            fallback_dest_valid_ = true;
-        }
-    }
+    apply_reality_dest_config(cfg.reality, fallback_dest_host_, fallback_dest_port_, fallback_dest_valid_, auth_config_valid_);
     std::error_code ignore;
     const auto pub = reality::crypto_util::extract_public_key(private_key_, ignore);
     LOG_INFO("server public key size {}", pub.size());

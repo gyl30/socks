@@ -48,6 +48,10 @@ class udp_socks_session : public mux_stream_interface, public std::enable_shared
     asio::awaitable<void> udp_sock_to_stream(std::shared_ptr<mux_stream> stream);
 
     asio::awaitable<void> stream_to_udp_sock(std::shared_ptr<mux_stream> stream);
+    asio::awaitable<std::shared_ptr<mux_stream>> prepare_udp_associate(asio::ip::address& local_addr, std::uint16_t& udp_bind_port);
+    asio::awaitable<void> finalize_udp_associate(const std::shared_ptr<mux_stream>& stream);
+    [[nodiscard]] bool should_stop_stream_to_udp(const std::error_code& ec, const std::vector<std::uint8_t>& data) const;
+    asio::awaitable<void> forward_stream_data_to_client(const std::vector<std::uint8_t>& data);
 
     asio::awaitable<void> keep_tcp_alive();
     asio::awaitable<void> idle_watchdog();

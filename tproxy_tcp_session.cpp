@@ -176,6 +176,41 @@ void tproxy_tcp_session::close_client_socket()
     }
 }
 
+bool tproxy_tcp_session::should_stop_client_read(const std::error_code& ec, const std::uint32_t n) const
+{
+    if (!ec && n > 0)
+    {
+        return false;
+    }
+    if (!ec)
+    {
+        LOG_CTX_DEBUG(ctx_, "{} client closed connection", log_event::kSocks);
+        return true;
+    }
+    if (is_expected_client_read_error(ec))
+    {
+        LOG_CTX_DEBUG(ctx_, "{} read from client stopped {}", log_event::kSocks, ec.message());
+        return true;
+    }
+    LOG_CTX_WARN(ctx_, "{} failed to read from client {}", log_event::kSocks, ec.message());
+    return true;
+}
+
+asio::awaitable<bool> tproxy_tcp_session::write_client_chunk_to_backend(const std::shared_ptr<upstream>& backend,
+                                                                         const std::vector<std::uint8_t>& buf,
+                                                                         const std::uint32_t n)
+{
+    const std::vector<std::uint8_t> chunk(buf.begin(), buf.begin() + n);
+    const auto written = co_await backend->write(chunk);
+    if (written == 0)
+    {
+        LOG_CTX_WARN(ctx_, "{} failed to write to backend", log_event::kSocks);
+        co_return false;
+    }
+    last_activity_time_ms_.store(now_ms(), std::memory_order_release);
+    co_return true;
+}
+
 asio::awaitable<void> tproxy_tcp_session::client_to_upstream(std::shared_ptr<upstream> backend)
 {
     std::vector<std::uint8_t> buf(8192);
@@ -183,31 +218,14 @@ asio::awaitable<void> tproxy_tcp_session::client_to_upstream(std::shared_ptr<ups
     {
         std::error_code ec;
         const std::uint32_t n = co_await socket_.async_read_some(asio::buffer(buf), asio::redirect_error(asio::use_awaitable, ec));
-        if (ec || n == 0)
+        if (should_stop_client_read(ec, n))
         {
-            if (!ec)
-            {
-                LOG_CTX_DEBUG(ctx_, "{} client closed connection", log_event::kSocks);
-            }
-            else if (is_expected_client_read_error(ec))
-            {
-                LOG_CTX_DEBUG(ctx_, "{} read from client stopped {}", log_event::kSocks, ec.message());
-            }
-            else
-            {
-                LOG_CTX_WARN(ctx_, "{} failed to read from client {}", log_event::kSocks, ec.message());
-            }
             break;
         }
-
-        const std::vector<std::uint8_t> chunk(buf.begin(), buf.begin() + n);
-        const auto written = co_await backend->write(chunk);
-        if (written == 0)
+        if (!co_await write_client_chunk_to_backend(backend, buf, n))
         {
-            LOG_CTX_WARN(ctx_, "{} failed to write to backend", log_event::kSocks);
             break;
         }
-        last_activity_time_ms_.store(now_ms(), std::memory_order_release);
     }
     LOG_CTX_INFO(ctx_, "{} client to upstream finished", log_event::kSocks);
 }
@@ -218,32 +236,54 @@ asio::awaitable<void> tproxy_tcp_session::upstream_to_client(std::shared_ptr<ups
     for (;;)
     {
         const auto [ec, n] = co_await backend->read(buf);
-        if (ec || n == 0)
+        if (should_stop_backend_read(ec, n))
         {
-            if (!ec)
-            {
-                LOG_CTX_DEBUG(ctx_, "{} backend closed connection", log_event::kSocks);
-            }
-            else if (is_expected_backend_read_error(ec))
-            {
-                LOG_CTX_DEBUG(ctx_, "{} read from backend stopped {}", log_event::kSocks, ec.message());
-            }
-            else
-            {
-                LOG_CTX_WARN(ctx_, "{} failed to read from backend {}", log_event::kSocks, ec.message());
-            }
             break;
         }
-
-        const auto [we, wn] = co_await asio::async_write(socket_, asio::buffer(buf.data(), n), asio::as_tuple(asio::use_awaitable));
-        if (we)
+        if (!co_await write_backend_chunk_to_client(buf, n))
         {
-            LOG_CTX_WARN(ctx_, "{} failed to write to client {}", log_event::kSocks, we.message());
             break;
         }
-        last_activity_time_ms_.store(now_ms(), std::memory_order_release);
     }
     LOG_CTX_INFO(ctx_, "{} upstream to client finished", log_event::kSocks);
+    shutdown_client_send();
+}
+
+bool tproxy_tcp_session::should_stop_backend_read(const std::error_code& ec, const std::uint32_t n) const
+{
+    if (!ec && n > 0)
+    {
+        return false;
+    }
+    if (!ec)
+    {
+        LOG_CTX_DEBUG(ctx_, "{} backend closed connection", log_event::kSocks);
+        return true;
+    }
+    if (is_expected_backend_read_error(ec))
+    {
+        LOG_CTX_DEBUG(ctx_, "{} read from backend stopped {}", log_event::kSocks, ec.message());
+        return true;
+    }
+    LOG_CTX_WARN(ctx_, "{} failed to read from backend {}", log_event::kSocks, ec.message());
+    return true;
+}
+
+asio::awaitable<bool> tproxy_tcp_session::write_backend_chunk_to_client(const std::vector<std::uint8_t>& buf, const std::uint32_t n)
+{
+    const auto [write_ec, write_n] = co_await asio::async_write(socket_, asio::buffer(buf.data(), n), asio::as_tuple(asio::use_awaitable));
+    (void)write_n;
+    if (write_ec)
+    {
+        LOG_CTX_WARN(ctx_, "{} failed to write to client {}", log_event::kSocks, write_ec.message());
+        co_return false;
+    }
+    last_activity_time_ms_.store(now_ms(), std::memory_order_release);
+    co_return true;
+}
+
+void tproxy_tcp_session::shutdown_client_send()
+{
     std::error_code ignore;
     ignore = socket_.shutdown(asio::ip::tcp::socket::shutdown_send, ignore);
     if (ignore && !is_expected_shutdown_error(ignore))

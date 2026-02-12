@@ -6,7 +6,9 @@
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 #include <cstdint>
+#include <system_error>
 
 #include <asio/ip/tcp.hpp>
 #include <asio/io_context.hpp>
@@ -44,8 +46,15 @@ class tproxy_tcp_session : public std::enable_shared_from_this<tproxy_tcp_sessio
                                                         route_type route);
 
     [[nodiscard]] asio::awaitable<void> client_to_upstream(std::shared_ptr<upstream> backend);
+    [[nodiscard]] bool should_stop_client_read(const std::error_code& ec, std::uint32_t n) const;
+    [[nodiscard]] asio::awaitable<bool> write_client_chunk_to_backend(const std::shared_ptr<upstream>& backend,
+                                                                      const std::vector<std::uint8_t>& buf,
+                                                                      std::uint32_t n);
 
     [[nodiscard]] asio::awaitable<void> upstream_to_client(std::shared_ptr<upstream> backend);
+    [[nodiscard]] bool should_stop_backend_read(const std::error_code& ec, std::uint32_t n) const;
+    [[nodiscard]] asio::awaitable<bool> write_backend_chunk_to_client(const std::vector<std::uint8_t>& buf, std::uint32_t n);
+    void shutdown_client_send();
 
     [[nodiscard]] asio::awaitable<void> idle_watchdog(std::shared_ptr<upstream> backend);
     [[nodiscard]] asio::awaitable<void> close_backend_once(const std::shared_ptr<upstream>& backend);

@@ -62,6 +62,19 @@ std::optional<asio::ip::udp::endpoint> parse_ipv6_original_dst(const cmsghdr* cm
     return make_v6_endpoint(addr->sin6_addr, addr->sin6_port);
 }
 
+std::optional<asio::ip::udp::endpoint> parse_original_dst_control_message(const cmsghdr* cm)
+{
+    if (cm->cmsg_level == SOL_IP && cm->cmsg_type == IP_ORIGDSTADDR)
+    {
+        return parse_ipv4_original_dst(cm);
+    }
+    if (cm->cmsg_level == SOL_IPV6 && cm->cmsg_type == IPV6_ORIGDSTADDR)
+    {
+        return parse_ipv6_original_dst(cm);
+    }
+    return std::nullopt;
+}
+
 asio::ip::udp::endpoint endpoint_from_sockaddr_v4(const sockaddr_storage& addr, const std::size_t len)
 {
     if (len < sizeof(sockaddr_in))
@@ -186,22 +199,9 @@ std::optional<asio::ip::udp::endpoint> parse_original_dst(const msghdr& msg)
 #ifdef __linux__
     for (auto* cm = CMSG_FIRSTHDR(&msg); cm != nullptr; cm = CMSG_NXTHDR(const_cast<msghdr*>(&msg), cm))
     {
-        if (cm->cmsg_level == SOL_IP && cm->cmsg_type == IP_ORIGDSTADDR)
+        const auto ep = parse_original_dst_control_message(cm);
+        if (ep.has_value())
         {
-            const auto ep = parse_ipv4_original_dst(cm);
-            if (!ep.has_value())
-            {
-                continue;
-            }
-            return ep;
-        }
-        if (cm->cmsg_level == SOL_IPV6 && cm->cmsg_type == IPV6_ORIGDSTADDR)
-        {
-            const auto ep = parse_ipv6_original_dst(cm);
-            if (!ep.has_value())
-            {
-                continue;
-            }
             return ep;
         }
     }
