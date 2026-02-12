@@ -38,6 +38,13 @@ class ip_matcher
     static void add_rule_v4(int prefix_len, const asio::ip::address_v4& addr, std::unique_ptr<trie_node>& root);
     static void add_rule_v6(int prefix_len, const asio::ip::address_v6& addr, std::unique_ptr<trie_node>& root);
 
+    static bool is_valid_prefix_length(int prefix_len, int max_prefix_len);
+    static trie_node* ensure_root(std::unique_ptr<trie_node>& root);
+    static trie_node* advance_or_create_child(trie_node* node, bool bit);
+    static void prune_children(trie_node* node);
+    static void mark_node_match(trie_node* node);
+    static bool can_merge_match_children(const trie_node* node);
+
     static void optimize_node(const std::unique_ptr<trie_node>& node);
 };
 
