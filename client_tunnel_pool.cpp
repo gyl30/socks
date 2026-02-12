@@ -516,6 +516,61 @@ handshake_traffic_keys derive_handshake_traffic_keys(const reality::handshake_ke
             reality::tls_key_schedule::derive_traffic_keys(hs_keys.server_handshake_traffic_secret, ec, key_len, iv_len, negotiated_md)};
 }
 
+asio::awaitable<std::optional<asio::ip::tcp::resolver::results_type>> resolve_remote_endpoints(asio::io_context& io_context,
+                                                                                                 const std::string& remote_host,
+                                                                                                 const std::string& remote_port,
+                                                                                                 std::error_code& ec)
+{
+    asio::ip::tcp::resolver resolver(io_context);
+    auto [resolve_error, resolve_endpoints] = co_await resolver.async_resolve(remote_host, remote_port, asio::as_tuple(asio::use_awaitable));
+    if (resolve_error)
+    {
+        ec = resolve_error;
+        LOG_ERROR("resolve {} failed {}", remote_host, resolve_error.message());
+        co_return std::nullopt;
+    }
+    co_return resolve_endpoints;
+}
+
+bool prepare_socket_for_connect(asio::ip::tcp::socket& socket,
+                                const asio::ip::tcp::endpoint& endpoint,
+                                const std::uint32_t mark,
+                                std::error_code& ec)
+{
+    std::error_code socket_ec;
+    if (socket.is_open())
+    {
+        socket.close(socket_ec);
+    }
+    socket_ec = socket.open(endpoint.protocol(), socket_ec);
+    if (socket_ec)
+    {
+        ec = socket_ec;
+        return false;
+    }
+    if (mark != 0)
+    {
+        std::error_code mark_ec;
+        if (!net::set_socket_mark(socket.native_handle(), mark, mark_ec))
+        {
+            LOG_WARN("set mark failed {}", mark_ec.message());
+        }
+    }
+    return true;
+}
+
+void log_tcp_connect_success(const asio::ip::tcp::socket& socket, const asio::ip::tcp::endpoint& endpoint)
+{
+    std::error_code local_ep_ec;
+    const auto local_ep = socket.local_endpoint(local_ep_ec);
+    if (local_ep_ec)
+    {
+        LOG_DEBUG("tcp connected endpoint {}", endpoint.address().to_string());
+        return;
+    }
+    LOG_DEBUG("tcp connected {} <-> {}", local_ep.address().to_string(), endpoint.address().to_string());
+}
+
 }    // namespace
 
 client_tunnel_pool::client_tunnel_pool(io_context_pool& pool, const config& cfg, const std::uint32_t mark)
@@ -760,38 +815,22 @@ asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::uint32_
 
 asio::awaitable<bool> client_tunnel_pool::tcp_connect(asio::io_context& io_context, asio::ip::tcp::socket& socket, std::error_code& ec) const
 {
-    asio::ip::tcp::resolver res(io_context);
-    auto [resolve_error, resolve_endpoints] = co_await res.async_resolve(remote_host_, remote_port_, asio::as_tuple(asio::use_awaitable));
-    if (resolve_error)
+    const auto resolve_endpoints = co_await resolve_remote_endpoints(io_context, remote_host_, remote_port_, ec);
+    if (!resolve_endpoints.has_value())
     {
-        ec = resolve_error;
-        LOG_ERROR("resolve {} failed {}", remote_host_, resolve_error.message());
         co_return false;
     }
 
-    for (const auto& entry : resolve_endpoints)
+    for (const auto& entry : resolve_endpoints.value())
     {
-        std::error_code open_ec;
-        if (socket.is_open())
+        const auto endpoint = entry.endpoint();
+
+        if (!prepare_socket_for_connect(socket, endpoint, mark_, ec))
         {
-            socket.close(open_ec);
-        }
-        open_ec = socket.open(entry.endpoint().protocol(), open_ec);
-        if (open_ec)
-        {
-            ec = open_ec;
             continue;
         }
-        if (mark_ != 0)
-        {
-            std::error_code mark_ec;
-            if (!net::set_socket_mark(socket.native_handle(), mark_, mark_ec))
-            {
-                LOG_WARN("set mark failed {}", mark_ec.message());
-            }
-        }
 
-        auto [conn_error] = co_await socket.async_connect(entry.endpoint(), asio::as_tuple(asio::use_awaitable));
+        auto [conn_error] = co_await socket.async_connect(endpoint, asio::as_tuple(asio::use_awaitable));
         if (conn_error)
         {
             ec = conn_error;
@@ -803,7 +842,7 @@ asio::awaitable<bool> client_tunnel_pool::tcp_connect(asio::io_context& io_conte
         {
             LOG_WARN("set no delay failed {}", ec.message());
         }
-        LOG_DEBUG("tcp connected {} <-> {}", socket.local_endpoint().address().to_string(), entry.endpoint().address().to_string());
+        log_tcp_connect_success(socket, endpoint);
         co_return true;
     }
 
