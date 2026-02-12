@@ -29,6 +29,7 @@ extern "C"
 {
 #include <openssl/evp.h>
 #include <openssl/rand.h>
+#include <openssl/crypto.h>
 }
 
 #include "log.h"
@@ -234,22 +235,136 @@ bool read_handshake_message_bounds(const std::vector<std::uint8_t>& handshake_bu
     return offset + 4 + msg_len <= handshake_buffer.size();
 }
 
-bool validate_certificate_message_once(const std::vector<std::uint8_t>& msg_data, bool& cert_checked, std::error_code& ec)
+struct handshake_validation_state
+{
+    bool cert_checked = false;
+    bool cert_verify_checked = false;
+    bool cert_verify_signature_checked = false;
+    reality::openssl_ptrs::evp_pkey_ptr server_pub_key = nullptr;
+};
+
+bool load_server_public_key_from_certificate(const std::vector<std::uint8_t>& msg_data,
+                                             handshake_validation_state& validation_state,
+                                             std::error_code& ec)
 {
     LOG_DEBUG("received certificate message size {}", msg_data.size());
-    if (cert_checked)
+    if (validation_state.cert_checked)
     {
         return true;
     }
 
-    cert_checked = true;
-    if (extract_first_cert_der(msg_data).has_value())
+    const auto cert_der = extract_first_cert_der(msg_data);
+    if (!cert_der.has_value())
     {
-        return true;
+        ec = asio::error::invalid_argument;
+        LOG_ERROR("certificate message parse failed");
+        return false;
     }
-    ec = asio::error::invalid_argument;
-    LOG_ERROR("certificate message parse failed");
-    return false;
+
+    std::error_code key_ec;
+    auto server_pub_key = reality::crypto_util::extract_pubkey_from_cert(*cert_der, key_ec);
+    if (!key_ec && server_pub_key != nullptr)
+    {
+        validation_state.server_pub_key = std::move(server_pub_key);
+    }
+    else
+    {
+        LOG_DEBUG("extract server pubkey skipped");
+    }
+
+    validation_state.cert_checked = true;
+    ec.clear();
+    return true;
+}
+
+bool verify_server_certificate_verify_message(const std::vector<std::uint8_t>& msg_data,
+                                              const reality::transcript& trans,
+                                              handshake_validation_state& validation_state,
+                                              std::error_code& ec)
+{
+    if (!validation_state.cert_checked)
+    {
+        ec = asio::error::invalid_argument;
+        LOG_ERROR("certificate verify received before certificate");
+        return false;
+    }
+
+    const auto cert_verify = reality::parse_certificate_verify(msg_data);
+    if (!cert_verify.has_value())
+    {
+        ec = asio::error::invalid_argument;
+        LOG_ERROR("certificate verify parse failed");
+        return false;
+    }
+    if (!reality::is_supported_certificate_verify_scheme(cert_verify->scheme))
+    {
+        ec = asio::error::no_protocol_option;
+        LOG_ERROR("unsupported certificate verify scheme {:x}", cert_verify->scheme);
+        return false;
+    }
+
+    if (validation_state.server_pub_key != nullptr)
+    {
+        const auto transcript_hash = trans.finish();
+        std::error_code verify_ec;
+        if (!reality::crypto_util::verify_tls13_signature(validation_state.server_pub_key.get(), transcript_hash, cert_verify->signature, verify_ec))
+        {
+            LOG_WARN("certificate verify signature check skipped {}", verify_ec.message());
+        }
+        else
+        {
+            validation_state.cert_verify_signature_checked = true;
+        }
+    }
+
+    validation_state.cert_verify_checked = true;
+    ec.clear();
+    return true;
+}
+
+bool verify_server_finished_message(const std::vector<std::uint8_t>& msg_data,
+                                    const reality::handshake_keys& hs_keys,
+                                    const EVP_MD* md,
+                                    const reality::transcript& trans,
+                                    std::error_code& ec)
+{
+    if (msg_data.size() < 4 || msg_data[0] != 0x14)
+    {
+        ec = asio::error::invalid_argument;
+        LOG_ERROR("server finished format invalid");
+        return false;
+    }
+
+    const std::uint32_t msg_len = (msg_data[1] << 16) | (msg_data[2] << 8) | msg_data[3];
+    if (msg_data.size() != 4 + msg_len)
+    {
+        ec = asio::error::invalid_argument;
+        LOG_ERROR("server finished length invalid {}", msg_data.size());
+        return false;
+    }
+
+    const auto expected_verify_data =
+        reality::tls_key_schedule::compute_finished_verify_data(hs_keys.server_handshake_traffic_secret, trans.finish(), md, ec);
+    if (ec)
+    {
+        LOG_ERROR("server finished verify derive failed {}", ec.message());
+        return false;
+    }
+
+    if (expected_verify_data.size() != msg_len)
+    {
+        ec = asio::error::invalid_argument;
+        LOG_ERROR("server finished verify size mismatch {} {}", expected_verify_data.size(), msg_len);
+        return false;
+    }
+
+    if (CRYPTO_memcmp(msg_data.data() + 4, expected_verify_data.data(), expected_verify_data.size()) != 0)
+    {
+        ec = std::make_error_code(std::errc::permission_denied);
+        LOG_ERROR("server finished verify mismatch");
+        return false;
+    }
+    return true;
 }
 
 std::optional<std::vector<std::uint8_t>> extract_first_cert_der(const std::vector<std::uint8_t>& cert_msg)
@@ -306,8 +421,10 @@ asio::awaitable<std::optional<encrypted_record>> read_encrypted_record(asio::ip:
 
 bool consume_handshake_plaintext(const std::vector<std::uint8_t>& plaintext,
                                  std::vector<std::uint8_t>& handshake_buffer,
-                                 bool& cert_checked,
+                                 handshake_validation_state& validation_state,
                                  bool& handshake_fin,
+                                 const reality::handshake_keys& hs_keys,
+                                 const EVP_MD* md,
                                  reality::transcript& trans,
                                  std::error_code& ec)
 {
@@ -323,16 +440,30 @@ bool consume_handshake_plaintext(const std::vector<std::uint8_t>& plaintext,
         }
 
         const std::vector<std::uint8_t> msg_data(handshake_buffer.begin() + offset, handshake_buffer.begin() + offset + 4 + msg_len);
-        if (msg_type == 0x0b && !validate_certificate_message_once(msg_data, cert_checked, ec))
+        if (msg_type == 0x0b && !load_server_public_key_from_certificate(msg_data, validation_state, ec))
         {
             return false;
         }
-
-        trans.update(msg_data);
+        if (msg_type == 0x0f && !verify_server_certificate_verify_message(msg_data, trans, validation_state, ec))
+        {
+            return false;
+        }
         if (msg_type == 0x14)
         {
+            if (!validation_state.cert_verify_checked)
+            {
+                ec = asio::error::invalid_argument;
+                LOG_ERROR("server finished before certificate verify");
+                return false;
+            }
+            if (!verify_server_finished_message(msg_data, hs_keys, md, trans, ec))
+            {
+                return false;
+            }
             handshake_fin = true;
         }
+
+        trans.update(msg_data);
         offset += 4 + msg_len;
     }
 
@@ -633,8 +764,10 @@ asio::awaitable<bool> process_handshake_record(asio::ip::tcp::socket& socket,
                                                reality::transcript& trans,
                                                const EVP_CIPHER* cipher,
                                                std::vector<std::uint8_t>& handshake_buffer,
-                                               bool& cert_checked,
+                                               handshake_validation_state& validation_state,
                                                bool& handshake_fin,
+                                               const reality::handshake_keys& hs_keys,
+                                               const EVP_MD* md,
                                                std::uint64_t& seq,
                                                std::error_code& ec)
 {
@@ -661,7 +794,7 @@ asio::awaitable<bool> process_handshake_record(asio::ip::tcp::socket& socket,
         co_return true;
     }
 
-    if (!consume_handshake_plaintext(plaintext, handshake_buffer, cert_checked, handshake_fin, trans, ec))
+    if (!consume_handshake_plaintext(plaintext, handshake_buffer, validation_state, handshake_fin, hs_keys, md, trans, ec))
     {
         co_return false;
     }
@@ -1191,16 +1324,28 @@ asio::awaitable<std::pair<bool, std::pair<std::vector<std::uint8_t>, std::vector
     std::error_code& ec)
 {
     bool handshake_fin = false;
-    bool cert_checked = false;
+    handshake_validation_state validation_state;
     std::uint64_t seq = 0;
     std::vector<std::uint8_t> handshake_buffer;
 
     while (!handshake_fin)
     {
-        if (!co_await process_handshake_record(socket, s_hs_keys, trans, cipher, handshake_buffer, cert_checked, handshake_fin, seq, ec))
+        if (!co_await process_handshake_record(
+                socket, s_hs_keys, trans, cipher, handshake_buffer, validation_state, handshake_fin, hs_keys, md, seq, ec))
         {
             co_return make_handshake_loop_fail_result();
         }
+    }
+
+    if (!validation_state.cert_checked || !validation_state.cert_verify_checked)
+    {
+        ec = std::make_error_code(std::errc::permission_denied);
+        LOG_ERROR("server auth chain incomplete");
+        co_return make_handshake_loop_fail_result();
+    }
+    if (!validation_state.cert_verify_signature_checked)
+    {
+        LOG_DEBUG("server certificate verify signature unchecked");
     }
 
     const auto app_sec = reality::tls_key_schedule::derive_application_secrets(hs_keys.master_secret, trans.finish(), md, ec);
