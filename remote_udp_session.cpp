@@ -34,6 +34,25 @@ namespace
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
 }
 
+[[nodiscard]] asio::ip::udp::endpoint normalize_target_endpoint(const asio::ip::udp::endpoint& endpoint)
+{
+    if (!endpoint.address().is_v4())
+    {
+        return endpoint;
+    }
+
+    const auto v4 = endpoint.address().to_v4();
+    const auto v4_bytes = v4.to_bytes();
+    asio::ip::address_v6::bytes_type v6_bytes = {0};
+    v6_bytes[10] = 0xFF;
+    v6_bytes[11] = 0xFF;
+    v6_bytes[12] = v4_bytes[0];
+    v6_bytes[13] = v4_bytes[1];
+    v6_bytes[14] = v4_bytes[2];
+    v6_bytes[15] = v4_bytes[3];
+    return asio::ip::udp::endpoint(asio::ip::address_v6(v6_bytes), endpoint.port());
+}
+
 }    // namespace
 
 remote_udp_session::remote_udp_session(std::shared_ptr<mux_connection> connection,
@@ -63,6 +82,100 @@ asio::awaitable<void> remote_udp_session::start()
     co_await start_impl(shared_from_this());
 }
 
+asio::awaitable<void> remote_udp_session::send_ack_payload(const std::shared_ptr<mux_connection>& conn, const ack_payload& ack)
+{
+    std::vector<std::uint8_t> ack_data;
+    mux_codec::encode_ack(ack, ack_data);
+    (void)co_await conn->send_async(id_, kCmdAck, std::move(ack_data));
+}
+
+asio::awaitable<void> remote_udp_session::handle_start_failure(const std::shared_ptr<mux_connection>& conn,
+                                                               const char* step,
+                                                               const std::error_code& ec)
+{
+    LOG_CTX_ERROR(ctx_, "{} {} failed {}", log_event::kMux, step, ec.message());
+    const ack_payload ack{.socks_rep = socks::kRepGenFail, .bnd_addr = "", .bnd_port = 0};
+    co_await send_ack_payload(conn, ack);
+    if (auto manager = manager_.lock())
+    {
+        manager->remove_stream(id_);
+    }
+    (void)co_await conn->send_async(id_, kCmdRst, {});
+}
+
+asio::awaitable<bool> remote_udp_session::setup_udp_socket(const std::shared_ptr<mux_connection>& conn)
+{
+    std::error_code ec;
+    ec = udp_socket_.open(asio::ip::udp::v6(), ec);
+    if (ec)
+    {
+        co_await handle_start_failure(conn, "udp open", ec);
+        co_return false;
+    }
+
+    ec = udp_socket_.set_option(asio::ip::v6_only(false), ec);
+    if (ec)
+    {
+        co_await handle_start_failure(conn, "udp v4 and v6", ec);
+        co_return false;
+    }
+
+    ec = udp_socket_.bind(asio::ip::udp::endpoint(asio::ip::udp::v6(), 0), ec);
+    if (ec)
+    {
+        co_await handle_start_failure(conn, "udp bind", ec);
+        co_return false;
+    }
+
+    co_return true;
+}
+
+void remote_udp_session::record_udp_write(const std::size_t bytes)
+{
+    const auto ts = now_ms();
+    last_write_time_ms_.store(ts, std::memory_order_release);
+    ctx_.add_tx_bytes(bytes);
+    last_activity_time_ms_.store(ts, std::memory_order_release);
+}
+
+asio::awaitable<void> remote_udp_session::forward_mux_payload(const std::vector<std::uint8_t>& data)
+{
+    socks_udp_header header;
+    if (!socks_codec::decode_udp_header(data.data(), data.size(), header))
+    {
+        LOG_CTX_WARN(ctx_, "{} udp failed to decode header", log_event::kMux);
+        co_return;
+    }
+
+    if (header.header_len >= data.size())
+    {
+        LOG_CTX_WARN(ctx_, "{} udp invalid header len", log_event::kMux);
+        co_return;
+    }
+
+    const auto [resolve_ec, endpoints] =
+        co_await udp_resolver_.async_resolve(header.addr, std::to_string(header.port), asio::as_tuple(asio::use_awaitable));
+    if (resolve_ec)
+    {
+        LOG_CTX_WARN(ctx_, "{} udp resolve error for {}", log_event::kMux, header.addr);
+        co_return;
+    }
+
+    const auto target_ep = normalize_target_endpoint(endpoints.begin()->endpoint());
+    const auto payload_len = data.size() - header.header_len;
+    LOG_CTX_DEBUG(ctx_, "{} udp forwarding {} bytes to {}", log_event::kMux, payload_len, target_ep.address().to_string());
+
+    const auto [send_ec, sent_len] = co_await udp_socket_.async_send_to(
+        asio::buffer(data.data() + header.header_len, payload_len), target_ep, asio::as_tuple(asio::use_awaitable));
+    if (send_ec)
+    {
+        LOG_CTX_WARN(ctx_, "{} udp send error {}", log_event::kMux, send_ec.message());
+        co_return;
+    }
+
+    record_udp_write(sent_len);
+}
+
 asio::awaitable<void> remote_udp_session::start_impl(std::shared_ptr<remote_udp_session> self)
 {
     auto conn = connection_.lock();
@@ -70,60 +183,24 @@ asio::awaitable<void> remote_udp_session::start_impl(std::shared_ptr<remote_udp_
     {
         co_return;
     }
-    std::error_code ec;
-    ec = udp_socket_.open(asio::ip::udp::v6(), ec);
-    if (ec)
+    if (!(co_await setup_udp_socket(conn)))
     {
-        LOG_CTX_ERROR(ctx_, "{} udp open failed {}", log_event::kMux, ec.message());
-        ack_payload const ack{.socks_rep = socks::kRepGenFail, .bnd_addr = "", .bnd_port = 0};
-        std::vector<std::uint8_t> ack_data;
-        mux_codec::encode_ack(ack, ack_data);
-        co_await conn->send_async(id_, kCmdAck, std::move(ack_data));
-        if (auto m = manager_.lock())
-        {
-            m->remove_stream(id_);
-        }
-        (void)co_await conn->send_async(id_, kCmdRst, {});
-        co_return;
-    }
-    ec = udp_socket_.set_option(asio::ip::v6_only(false), ec);
-    if (ec)
-    {
-        LOG_CTX_ERROR(ctx_, "{} udp v4 and v6 failed {}", log_event::kMux, ec.message());
-        ack_payload const ack{.socks_rep = socks::kRepGenFail, .bnd_addr = "", .bnd_port = 0};
-        std::vector<std::uint8_t> ack_data;
-        mux_codec::encode_ack(ack, ack_data);
-        co_await conn->send_async(id_, kCmdAck, std::move(ack_data));
-        if (auto m = manager_.lock())
-        {
-            m->remove_stream(id_);
-        }
-        (void)co_await conn->send_async(id_, kCmdRst, {});
-        co_return;
-    }
-    ec = udp_socket_.bind(asio::ip::udp::endpoint(asio::ip::udp::v6(), 0), ec);
-    if (ec)
-    {
-        LOG_CTX_ERROR(ctx_, "{} udp bind failed {}", log_event::kMux, ec.message());
-        ack_payload const ack{.socks_rep = socks::kRepGenFail, .bnd_addr = "", .bnd_port = 0};
-        std::vector<std::uint8_t> ack_data;
-        mux_codec::encode_ack(ack, ack_data);
-        co_await conn->send_async(id_, kCmdAck, std::move(ack_data));
-        if (auto m = manager_.lock())
-        {
-            m->remove_stream(id_);
-        }
-        (void)co_await conn->send_async(id_, kCmdRst, {});
         co_return;
     }
 
-    const auto local_ep = udp_socket_.local_endpoint(ec);
-    LOG_CTX_INFO(ctx_, "{} udp session started bound at {}", log_event::kMux, local_ep.address().to_string());
+    std::error_code local_ep_ec;
+    const auto local_ep = udp_socket_.local_endpoint(local_ep_ec);
+    if (local_ep_ec)
+    {
+        LOG_CTX_WARN(ctx_, "{} udp local endpoint failed {}", log_event::kMux, local_ep_ec.message());
+    }
+    else
+    {
+        LOG_CTX_INFO(ctx_, "{} udp session started bound at {}", log_event::kMux, local_ep.address().to_string());
+    }
 
-    const ack_payload ack_pl{.socks_rep = socks::kRepSuccess, .bnd_addr = "0.0.0.0", .bnd_port = 0};
-    std::vector<std::uint8_t> ack_pl_data;
-    mux_codec::encode_ack(ack_pl, ack_pl_data);
-    co_await conn->send_async(id_, kCmdAck, std::move(ack_pl_data));
+    const ack_payload ack{.socks_rep = socks::kRepSuccess, .bnd_addr = "0.0.0.0", .bnd_port = 0};
+    co_await send_ack_payload(conn, ack);
 
     using asio::experimental::awaitable_operators::operator||;
     co_await (mux_to_udp() || udp_to_mux() || watchdog() || idle_watchdog());
@@ -214,52 +291,7 @@ asio::awaitable<void> remote_udp_session::mux_to_udp()
             break;
         }
 
-        socks_udp_header h;
-        if (!socks_codec::decode_udp_header(data.data(), data.size(), h))
-        {
-            LOG_CTX_WARN(ctx_, "{} udp failed to decode header", log_event::kMux);
-            continue;
-        }
-
-        const auto [resolve_ec, eps] = co_await udp_resolver_.async_resolve(h.addr, std::to_string(h.port), asio::as_tuple(asio::use_awaitable));
-        if (!resolve_ec)
-        {
-            auto target_ep = eps.begin()->endpoint();
-            if (target_ep.address().is_v4())
-            {
-                const auto v4 = target_ep.address().to_v4();
-                const auto v4_bytes = v4.to_bytes();
-                asio::ip::address_v6::bytes_type v6_bytes = {0};
-                v6_bytes[10] = 0xFF;
-                v6_bytes[11] = 0xFF;
-                v6_bytes[12] = v4_bytes[0];
-                v6_bytes[13] = v4_bytes[1];
-                v6_bytes[14] = v4_bytes[2];
-                v6_bytes[15] = v4_bytes[3];
-                const auto v6 = asio::ip::address_v6(v6_bytes);
-                target_ep = asio::ip::udp::endpoint(v6, target_ep.port());
-            }
-
-            LOG_CTX_DEBUG(ctx_, "{} udp forwarding {} bytes to {}", log_event::kMux, data.size() - h.header_len, target_ep.address().to_string());
-
-            const auto [se, sn] = co_await udp_socket_.async_send_to(
-                asio::buffer(data.data() + h.header_len, data.size() - h.header_len), target_ep, asio::as_tuple(asio::use_awaitable));
-            if (se)
-            {
-                LOG_CTX_WARN(ctx_, "{} udp send error {}", log_event::kMux, se.message());
-            }
-            else
-            {
-                const auto ts = now_ms();
-                last_write_time_ms_.store(ts, std::memory_order_release);
-                ctx_.add_tx_bytes(sn);
-                last_activity_time_ms_.store(ts, std::memory_order_release);
-            }
-        }
-        else
-        {
-            LOG_CTX_WARN(ctx_, "{} udp resolve error for {}", log_event::kMux, h.addr);
-        }
+        co_await forward_mux_payload(data);
     }
 }
 
