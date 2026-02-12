@@ -54,6 +54,45 @@ TEST(CertManagerTest, CacheEviction)
 
     auto entry_recent = manager.get_certificate("sni104");
     EXPECT_TRUE(entry_recent.has_value());
+
+    auto entry_survived = manager.get_certificate("sni5");
+    EXPECT_TRUE(entry_survived.has_value());
+}
+
+TEST(CertManagerTest, LruEvictionRespectsRecentUse)
+{
+    cert_manager manager(3);
+    server_fingerprint fp;
+    std::vector<uint8_t> cert = {0x01};
+
+    manager.set_certificate("sni0", cert, fp, "trace");
+    manager.set_certificate("sni1", cert, fp, "trace");
+    manager.set_certificate("sni2", cert, fp, "trace");
+
+    ASSERT_TRUE(manager.get_certificate("sni0").has_value());
+    manager.set_certificate("sni3", cert, fp, "trace");
+
+    EXPECT_FALSE(manager.get_certificate("sni1").has_value());
+    EXPECT_TRUE(manager.get_certificate("sni0").has_value());
+    EXPECT_TRUE(manager.get_certificate("sni2").has_value());
+    EXPECT_TRUE(manager.get_certificate("sni3").has_value());
+}
+
+TEST(CertManagerTest, UpdateExistingEntryDoesNotEvictOthers)
+{
+    cert_manager manager(2);
+    server_fingerprint fp;
+    std::vector<uint8_t> cert1 = {0x01};
+    std::vector<uint8_t> cert2 = {0x02};
+
+    manager.set_certificate("a", cert1, fp, "trace");
+    manager.set_certificate("b", cert1, fp, "trace");
+    manager.set_certificate("a", cert2, fp, "trace");
+
+    auto entry_a = manager.get_certificate("a");
+    ASSERT_TRUE(entry_a.has_value());
+    EXPECT_EQ(entry_a->cert_msg, cert2);
+    EXPECT_TRUE(manager.get_certificate("b").has_value());
 }
 
 }    // namespace reality
