@@ -24,6 +24,41 @@
 namespace mux
 {
 
+bool direct_upstream::open_socket_for_endpoint(const asio::ip::tcp::endpoint& endpoint, std::error_code& ec)
+{
+    if (socket_.is_open())
+    {
+        std::error_code close_ec;
+        socket_.close(close_ec);
+    }
+    ec = socket_.open(endpoint.protocol(), ec);
+    return !ec;
+}
+
+void direct_upstream::apply_socket_mark()
+{
+    if (mark_ == 0)
+    {
+        return;
+    }
+
+    std::error_code mark_ec;
+    if (!net::set_socket_mark(socket_.native_handle(), mark_, mark_ec))
+    {
+        LOG_WARN("direct upstream set mark failed {}", mark_ec.message());
+    }
+}
+
+void direct_upstream::apply_no_delay()
+{
+    std::error_code ec;
+    ec = socket_.set_option(asio::ip::tcp::no_delay(true), ec);
+    if (ec)
+    {
+        LOG_WARN("direct upstream set no delay failed error {}", ec.message());
+    }
+}
+
 asio::awaitable<bool> direct_upstream::connect(const std::string& host, const std::uint16_t port)
 {
     auto [res_ec, eps] = co_await resolver_.async_resolve(host, std::to_string(port), asio::as_tuple(asio::use_awaitable));
@@ -37,24 +72,13 @@ asio::awaitable<bool> direct_upstream::connect(const std::string& host, const st
     for (const auto& entry : eps)
     {
         std::error_code open_ec;
-        if (socket_.is_open())
-        {
-            socket_.close(open_ec);
-        }
-        open_ec = socket_.open(entry.endpoint().protocol(), open_ec);
-        if (open_ec)
+        if (!open_socket_for_endpoint(entry.endpoint(), open_ec))
         {
             last_ec = open_ec;
             continue;
         }
-        if (mark_ != 0)
-        {
-            std::error_code mark_ec;
-            if (!net::set_socket_mark(socket_.native_handle(), mark_, mark_ec))
-            {
-                LOG_WARN("direct upstream set mark failed {}", mark_ec.message());
-            }
-        }
+
+        apply_socket_mark();
 
         auto [conn_ec] = co_await socket_.async_connect(entry.endpoint(), asio::as_tuple(asio::use_awaitable));
         if (conn_ec)
@@ -63,12 +87,7 @@ asio::awaitable<bool> direct_upstream::connect(const std::string& host, const st
             continue;
         }
 
-        std::error_code ec;
-        ec = socket_.set_option(asio::ip::tcp::no_delay(true), ec);
-        if (ec)
-        {
-            LOG_WARN("direct upstream set no delay failed error {}", ec.message());
-        }
+        apply_no_delay();
         co_return true;
     }
 
@@ -115,9 +134,62 @@ proxy_upstream::proxy_upstream(std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::so
 {
 }
 
+bool proxy_upstream::is_tunnel_ready() const
+{
+    return tunnel_ != nullptr && tunnel_->connection() != nullptr && tunnel_->connection()->is_open();
+}
+
+asio::awaitable<bool> proxy_upstream::send_syn_request(const std::shared_ptr<mux_stream>& stream,
+                                                       const std::string& host,
+                                                       const std::uint16_t port)
+{
+    const syn_payload syn{.socks_cmd = socks::kCmdConnect, .addr = host, .port = port, .trace_id = ctx_.trace_id()};
+    std::vector<std::uint8_t> syn_data;
+    mux_codec::encode_syn(syn, syn_data);
+    const auto ec = co_await tunnel_->connection()->send_async(stream->id(), kCmdSyn, std::move(syn_data));
+    if (ec)
+    {
+        LOG_CTX_ERROR(ctx_, "{} send syn failed {}", log_event::kRoute, ec.message());
+        co_return false;
+    }
+    co_return true;
+}
+
+asio::awaitable<bool> proxy_upstream::wait_connect_ack(const std::shared_ptr<mux_stream>& stream)
+{
+    auto [ack_ec, ack_data] = co_await stream->async_read_some();
+    if (ack_ec)
+    {
+        LOG_CTX_ERROR(ctx_, "{} wait ack failed {}", log_event::kRoute, ack_ec.message());
+        co_return false;
+    }
+
+    ack_payload ack;
+    if (!mux_codec::decode_ack(ack_data.data(), ack_data.size(), ack) || ack.socks_rep != socks::kRepSuccess)
+    {
+        LOG_CTX_WARN(ctx_, "{} remote rejected {}", log_event::kRoute, ack.socks_rep);
+        co_return false;
+    }
+    co_return true;
+}
+
+asio::awaitable<void> proxy_upstream::cleanup_stream(const std::shared_ptr<mux_stream>& stream)
+{
+    if (stream == nullptr)
+    {
+        co_return;
+    }
+
+    co_await stream->close();
+    if (tunnel_ != nullptr)
+    {
+        tunnel_->remove_stream(stream->id());
+    }
+}
+
 asio::awaitable<bool> proxy_upstream::connect(const std::string& host, const std::uint16_t port)
 {
-    if (tunnel_ == nullptr || tunnel_->connection() == nullptr || !tunnel_->connection()->is_open())
+    if (!is_tunnel_ready())
     {
         LOG_CTX_WARN(ctx_, "{} proxy tunnel unavailable", log_event::kRoute);
         co_return false;
@@ -130,42 +202,15 @@ asio::awaitable<bool> proxy_upstream::connect(const std::string& host, const std
         co_return false;
     }
 
-    auto cleanup_stream = [this, stream]() -> asio::awaitable<void>
+    if (!(co_await send_syn_request(stream, host, port)))
     {
-        if (stream != nullptr)
-        {
-            co_await stream->close();
-            if (tunnel_ != nullptr)
-            {
-                tunnel_->remove_stream(stream->id());
-            }
-        }
-    };
-
-    const syn_payload syn{.socks_cmd = socks::kCmdConnect, .addr = host, .port = port, .trace_id = ctx_.trace_id()};
-    std::vector<std::uint8_t> syn_data;
-    mux_codec::encode_syn(syn, syn_data);
-    const auto ec = co_await tunnel_->connection()->send_async(stream->id(), kCmdSyn, std::move(syn_data));
-    if (ec)
-    {
-        LOG_CTX_ERROR(ctx_, "{} send syn failed {}", log_event::kRoute, ec.message());
-        co_await cleanup_stream();
+        co_await cleanup_stream(stream);
         co_return false;
     }
 
-    auto [ack_ec, ack_data] = co_await stream->async_read_some();
-    if (ack_ec)
+    if (!(co_await wait_connect_ack(stream)))
     {
-        LOG_CTX_ERROR(ctx_, "{} wait ack failed {}", log_event::kRoute, ack_ec.message());
-        co_await cleanup_stream();
-        co_return false;
-    }
-
-    ack_payload ack_pl;
-    if (!mux_codec::decode_ack(ack_data.data(), ack_data.size(), ack_pl) || ack_pl.socks_rep != socks::kRepSuccess)
-    {
-        LOG_CTX_WARN(ctx_, "{} remote rejected {}", log_event::kRoute, ack_pl.socks_rep);
-        co_await cleanup_stream();
+        co_await cleanup_stream(stream);
         co_return false;
     }
 
