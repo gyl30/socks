@@ -24,6 +24,13 @@ TEST(ReplayCacheTest, InvalidSize)
     EXPECT_FALSE(cache.check_and_insert(sid));
 }
 
+TEST(ReplayCacheTest, InvalidSizeTooLong)
+{
+    mux::replay_cache cache;
+    const std::vector<std::uint8_t> sid(33, 0x01);
+    EXPECT_FALSE(cache.check_and_insert(sid));
+}
+
 TEST(ReplayCacheTest, CapacityEviction)
 {
     mux::replay_cache cache(3);
