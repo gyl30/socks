@@ -7,38 +7,51 @@ on:
     branches: [ "main" ]
 
 jobs:
-  build-and-test:
-    name: Build and Test (GCC)
+  quality-gates:
+    name: Quality Gates
     runs-on: ubuntu-22.04
     
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
     - name: Install Dependencies
       run: |
-        sudo apt-get update && sudo apt-get install -y cmake ninja-build libssl-dev python3 python3-pip net-tools iproute2 iptables
+        sudo apt-get update
+        sudo apt-get install -y cmake ninja-build libssl-dev clang python3 python3-pip valgrind gcovr iproute2 iptables net-tools
 
-    - name: Configure CMake (Release)
-      run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -GNinja
-
-    - name: Build
-      run: cmake --build build
-
-    - name: Run Unit Tests (CTest)
-      run: ctest --test-dir build --output-on-failure
-
-    - name: Run Integration Tests
+    - name: Configure TSAN Build
       run: |
-        python3 script/comprehensive_test.py
-        python3 script/stress_test.py
+        cmake -S . -B build_tsan -GNinja \
+          -DCMAKE_BUILD_TYPE=Debug \
+          -DCMAKE_C_COMPILER=clang \
+          -DCMAKE_CXX_COMPILER=clang++ \
+          -DENABLE_TSAN=ON \
+          -DENABLE_ASAN=OFF
 
-    - name: Run TPROXY Integration Tests (Optional)
-      if: ${{ vars.RUN_TPROXY == '1' }}
-      run: sudo script/ci_tproxy_test.sh --full
+    - name: Build TSAN
+      run: cmake --build build_tsan -j15
 
-    - name: Run Chaos Test (Simulation Mode)
+    - name: Run TSAN Full Test Suite
+      run: ctest --test-dir build_tsan -j20 --output-on-failure
+
+    - name: Run TSAN Integration Tests
+      run: ctest --test-dir build_tsan -j20 --output-on-failure -R 'integration|tproxy_integration|udp_integration|mux_connection_integration_test'
+
+    - name: Configure Valgrind Build
       run: |
-        python3 script/network_chaos_test.py
+        cmake -S . -B build_valgrind -GNinja \
+          -DCMAKE_BUILD_TYPE=Debug \
+          -DENABLE_TSAN=OFF \
+          -DENABLE_ASAN=OFF
+
+    - name: Build Valgrind
+      run: cmake --build build_valgrind -j15
+
+    - name: Run Valgrind Memory Safety Test
+      run: python3 script/valgrind_test.py --build-dir build_valgrind --socks-bin ./socks
+
+    - name: Enforce Coverage >= 95% (overall)
+      run: BUILD_DIR=build_coverage BUILD_JOBS=15 TEST_JOBS=20 COVERAGE_THRESHOLD=95 PER_FILE_GATE=0 script/run_coverage.sh
 
   fuzzing-smoke:
     name: Fuzzing Smoke Test (Clang)
