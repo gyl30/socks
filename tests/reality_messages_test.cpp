@@ -3,13 +3,17 @@
 #include <vector>
 #include <cstdint>
 #include <iostream>
+#include <memory>
+#include <cstddef>
 #include <algorithm>
+#include <optional>
 #include <system_error>
 
 #include <gtest/gtest.h>
 
 extern "C"
 {
+#include <openssl/ec.h>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
 }
@@ -21,6 +25,110 @@ extern "C"
 
 using reality::message_builder;
 namespace tls_consts = reality::tls_consts;
+
+namespace
+{
+
+std::optional<std::vector<std::uint8_t>> extract_key_share_data_by_group(const std::vector<std::uint8_t>& ch, const std::uint16_t target_group)
+{
+    if (ch.size() < 4 + 2 + 32 + 1 + 2 + 1 + 2)
+    {
+        return std::nullopt;
+    }
+
+    std::size_t pos = 4 + 2 + 32;
+    const std::uint8_t sid_len = ch[pos++];
+    if (pos + sid_len > ch.size())
+    {
+        return std::nullopt;
+    }
+    pos += sid_len;
+
+    if (pos + 2 > ch.size())
+    {
+        return std::nullopt;
+    }
+    const std::uint16_t cipher_len = static_cast<std::uint16_t>((ch[pos] << 8) | ch[pos + 1]);
+    pos += 2;
+    if (pos + cipher_len > ch.size())
+    {
+        return std::nullopt;
+    }
+    pos += cipher_len;
+
+    if (pos + 1 > ch.size())
+    {
+        return std::nullopt;
+    }
+    const std::uint8_t comp_len = ch[pos++];
+    if (pos + comp_len > ch.size())
+    {
+        return std::nullopt;
+    }
+    pos += comp_len;
+
+    if (pos + 2 > ch.size())
+    {
+        return std::nullopt;
+    }
+    const std::uint16_t exts_len = static_cast<std::uint16_t>((ch[pos] << 8) | ch[pos + 1]);
+    pos += 2;
+    if (pos + exts_len > ch.size())
+    {
+        return std::nullopt;
+    }
+
+    const std::size_t exts_end = pos + exts_len;
+    while (pos + 4 <= exts_end)
+    {
+        const std::uint16_t ext_type = static_cast<std::uint16_t>((ch[pos] << 8) | ch[pos + 1]);
+        const std::uint16_t ext_len = static_cast<std::uint16_t>((ch[pos + 2] << 8) | ch[pos + 3]);
+        pos += 4;
+        if (pos + ext_len > exts_end)
+        {
+            return std::nullopt;
+        }
+
+        if (ext_type == tls_consts::ext::kKeyShare)
+        {
+            if (ext_len < 2)
+            {
+                return std::nullopt;
+            }
+            std::size_t share_pos = pos;
+            const std::uint16_t share_list_len = static_cast<std::uint16_t>((ch[share_pos] << 8) | ch[share_pos + 1]);
+            share_pos += 2;
+            if (share_pos + share_list_len > pos + ext_len)
+            {
+                return std::nullopt;
+            }
+
+            const std::size_t share_end = share_pos + share_list_len;
+            while (share_pos + 4 <= share_end)
+            {
+                const std::uint16_t group = static_cast<std::uint16_t>((ch[share_pos] << 8) | ch[share_pos + 1]);
+                const std::uint16_t key_len = static_cast<std::uint16_t>((ch[share_pos + 2] << 8) | ch[share_pos + 3]);
+                share_pos += 4;
+                if (share_pos + key_len > share_end)
+                {
+                    return std::nullopt;
+                }
+                if (group == target_group)
+                {
+                    return std::vector<std::uint8_t>(ch.begin() + static_cast<std::ptrdiff_t>(share_pos),
+                                                     ch.begin() + static_cast<std::ptrdiff_t>(share_pos + key_len));
+                }
+                share_pos += key_len;
+            }
+            return std::nullopt;
+        }
+
+        pos += ext_len;
+    }
+    return std::nullopt;
+}
+
+}    // namespace
 
 TEST(RealityMessagesTest, RecordHeader)
 {
@@ -323,4 +431,24 @@ TEST(RealityMessagesTest, ComprehensiveClientHello)
     const auto ch = reality::client_hello_builder::build(spec, session_id, random, pubkey, host);
     ASSERT_GT(ch.size(), 100);
     EXPECT_EQ(ch[0], 0x01);
+}
+
+TEST(RealityMessagesTest, FirefoxSecp256r1KeyShareIsValidPoint)
+{
+    const auto spec = reality::fingerprint_factory::get(reality::fingerprint_type::kFirefox120);
+    const std::vector<std::uint8_t> session_id(32, 0x11);
+    const std::vector<std::uint8_t> random(32, 0x22);
+    const std::vector<std::uint8_t> pubkey(32, 0x33);
+    const auto ch = reality::client_hello_builder::build(spec, session_id, random, pubkey, "example.com");
+
+    const auto key_share = extract_key_share_data_by_group(ch, tls_consts::group::kSecp256r1);
+    ASSERT_TRUE(key_share.has_value());
+    ASSERT_EQ(key_share->size(), 65);
+    EXPECT_EQ((*key_share)[0], 0x04);
+
+    const std::unique_ptr<EC_GROUP, decltype(&EC_GROUP_free)> group(EC_GROUP_new_by_curve_name(NID_X9_62_prime256v1), &EC_GROUP_free);
+    ASSERT_NE(group.get(), nullptr);
+    const std::unique_ptr<EC_POINT, decltype(&EC_POINT_free)> point(EC_POINT_new(group.get()), &EC_POINT_free);
+    ASSERT_NE(point.get(), nullptr);
+    EXPECT_EQ(EC_POINT_oct2point(group.get(), point.get(), key_share->data(), key_share->size(), nullptr), 1);
 }
