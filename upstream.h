@@ -49,6 +49,11 @@ class direct_upstream : public upstream
     asio::awaitable<void> close() override;
 
    private:
+    bool open_socket_for_endpoint(const asio::ip::tcp::endpoint& endpoint, std::error_code& ec);
+    void apply_socket_mark();
+    void apply_no_delay();
+
+   private:
     asio::ip::tcp::socket socket_;
     asio::ip::tcp::resolver resolver_;
     connection_context ctx_;
@@ -69,6 +74,12 @@ class proxy_upstream : public upstream
     asio::awaitable<void> close() override;
 
   private:
+    [[nodiscard]] bool is_tunnel_ready() const;
+    asio::awaitable<bool> send_syn_request(const std::shared_ptr<mux_stream>& stream, const std::string& host, std::uint16_t port);
+    asio::awaitable<bool> wait_connect_ack(const std::shared_ptr<mux_stream>& stream);
+    asio::awaitable<void> cleanup_stream(const std::shared_ptr<mux_stream>& stream);
+
+   private:
     connection_context ctx_;
     std::shared_ptr<mux_stream> stream_;
     std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_;
