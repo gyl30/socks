@@ -19,6 +19,11 @@ add_socks_test(context_pool_test)
 add_socks_test(statistics_test)
 add_socks_test(monitor_server_test)
 add_socks_test(net_utils_test)
+target_link_options(
+    net_utils_test
+    PRIVATE
+        -Wl,--wrap=setsockopt
+)
 add_socks_test(reality_engine_test)
 add_socks_test(ip_matcher_test)
 add_socks_test(mux_codec_test)
@@ -36,9 +41,22 @@ add_socks_test(router_test)
 add_socks_test(domain_matcher_test)
 add_socks_test(ch_parser_test)
 add_socks_test(reality_messages_test)
+target_link_options(
+    reality_messages_test
+    PRIVATE
+        -Wl,--wrap=RAND_bytes
+        -Wl,--wrap=EVP_PKEY_CTX_new_id
+        -Wl,--wrap=EVP_PKEY_keygen
+        -Wl,--wrap=EVP_PKEY_get_octet_string_param
+)
 add_socks_test(tls_cipher_suite_test)
 add_socks_test(tls_record_validation_test)
 add_socks_test(tls_record_layer_test)
+target_link_options(
+    tls_record_layer_test
+    PRIVATE
+        -Wl,--wrap=RAND_bytes
+)
 add_socks_test(config_test)
 add_socks_test(reflect_test)
 add_socks_test(tls_key_schedule_test)
