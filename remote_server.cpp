@@ -643,32 +643,90 @@ asio::awaitable<void> remote_server::handle(std::shared_ptr<asio::ip::tcp::socke
     }
 
     std::error_code ec;
-    const auto app_sec =
-        reality::tls_key_schedule::derive_application_secrets(sh_res.hs_keys.master_secret, sh_res.handshake_hash, sh_res.negotiated_md, ec);
-    const std::size_t key_len = EVP_CIPHER_key_length(sh_res.cipher);
-    constexpr std::size_t iv_len = 12;
-
-    const auto c_app_keys = reality::tls_key_schedule::derive_traffic_keys(app_sec.first, ec, key_len, iv_len, sh_res.negotiated_md);
-    const auto s_app_keys = reality::tls_key_schedule::derive_traffic_keys(app_sec.second, ec, key_len, iv_len, sh_res.negotiated_md);
-
-    LOG_CTX_INFO(ctx, "{} tunnel starting", log_event::kConnEstablished);
-
-    std::erase_if(active_tunnels_, [](const auto& wp) { return wp.expired(); });
-    const bool over_limit = active_tunnels_.size() >= limits_config_.max_connections;
-    if (over_limit)
+    std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> c_app_keys;
+    std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> s_app_keys;
+    if (!derive_application_traffic_keys(sh_res, c_app_keys, s_app_keys, ec))
     {
-        LOG_CTX_WARN(ctx, "{} connection limit reached {} rejecting", log_event::kConnClose, limits_config_.max_connections);
-        const auto info = ch_parser::parse(initial_buf);
-        co_await handle_fallback(s, initial_buf, ctx, info.sni);
+        LOG_CTX_ERROR(ctx, "{} derive app keys failed {}", log_event::kHandshake, ec.message());
         co_return;
     }
 
+    LOG_CTX_INFO(ctx, "{} tunnel starting", log_event::kConnEstablished);
+
+    if (co_await reject_connection_if_over_limit(s, initial_buf, ctx))
+    {
+        co_return;
+    }
+
+    auto tunnel = create_tunnel(s, sh_res, c_app_keys, s_app_keys, conn_id, ctx);
+    install_syn_callback(tunnel, ctx);
+
+    co_await tunnel->run();
+}
+
+bool remote_server::derive_application_traffic_keys(const server_handshake_res& sh_res,
+                                                    std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& c_app_keys,
+                                                    std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& s_app_keys,
+                                                    std::error_code& ec) const
+{
+    const auto app_sec =
+        reality::tls_key_schedule::derive_application_secrets(sh_res.hs_keys.master_secret, sh_res.handshake_hash, sh_res.negotiated_md, ec);
+    if (ec)
+    {
+        return false;
+    }
+
+    const std::size_t key_len = EVP_CIPHER_key_length(sh_res.cipher);
+    constexpr std::size_t iv_len = 12;
+    c_app_keys = reality::tls_key_schedule::derive_traffic_keys(app_sec.first, ec, key_len, iv_len, sh_res.negotiated_md);
+    if (ec)
+    {
+        return false;
+    }
+
+    s_app_keys = reality::tls_key_schedule::derive_traffic_keys(app_sec.second, ec, key_len, iv_len, sh_res.negotiated_md);
+    if (ec)
+    {
+        return false;
+    }
+
+    return true;
+}
+
+asio::awaitable<bool> remote_server::reject_connection_if_over_limit(const std::shared_ptr<asio::ip::tcp::socket>& s,
+                                                                     const std::vector<std::uint8_t>& initial_buf,
+                                                                     const connection_context& ctx)
+{
+    std::erase_if(active_tunnels_, [](const auto& wp) { return wp.expired(); });
+    const bool over_limit = active_tunnels_.size() >= limits_config_.max_connections;
+    if (!over_limit)
+    {
+        co_return false;
+    }
+
+    LOG_CTX_WARN(ctx, "{} connection limit reached {} rejecting", log_event::kConnClose, limits_config_.max_connections);
+    const auto info = ch_parser::parse(initial_buf);
+    co_await handle_fallback(s, initial_buf, ctx, info.sni);
+    co_return true;
+}
+
+std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> remote_server::create_tunnel(
+    const std::shared_ptr<asio::ip::tcp::socket>& s,
+    const server_handshake_res& sh_res,
+    const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& c_app_keys,
+    const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& s_app_keys,
+    const std::uint32_t conn_id,
+    const connection_context& ctx)
+{
     reality_engine engine(c_app_keys.first, c_app_keys.second, s_app_keys.first, s_app_keys.second, sh_res.cipher);
     auto tunnel = std::make_shared<mux_tunnel_impl<asio::ip::tcp::socket>>(
         std::move(*s), io_context_, std::move(engine), false, conn_id, ctx.trace_id(), timeout_config_, limits_config_, heartbeat_config_);
-
     active_tunnels_.push_back(tunnel);
+    return tunnel;
+}
 
+void remote_server::install_syn_callback(const std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>& tunnel, const connection_context& ctx)
+{
     std::weak_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> weak_tunnel = tunnel;
     tunnel->connection()->set_syn_callback(
         [weak_self = std::weak_ptr<remote_server>(shared_from_this()), weak_tunnel, ctx](const std::uint32_t id, std::vector<std::uint8_t> p)
@@ -686,8 +744,6 @@ asio::awaitable<void> remote_server::handle(std::shared_ptr<asio::ip::tcp::socke
                 }
             }
         });
-
-    co_await tunnel->run();
 }
 
 connection_context remote_server::build_stream_context(const connection_context& ctx, const syn_payload& syn)
