@@ -96,6 +96,19 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         std::vector<std::uint8_t> handshake_hash;
     };
 
+    struct certificate_target
+    {
+        std::string cert_sni;
+        std::string fetch_host;
+        std::uint16_t fetch_port = 443;
+    };
+
+    struct certificate_material
+    {
+        std::vector<std::uint8_t> cert_msg;
+        reality::server_fingerprint fingerprint;
+    };
+
     asio::awaitable<server_handshake_res> negotiate_reality(std::shared_ptr<asio::ip::tcp::socket> s,
                                                             const connection_context& ctx,
                                                             std::vector<std::uint8_t>& initial_buf);
@@ -105,6 +118,22 @@ class remote_server : public std::enable_shared_from_this<remote_server>
                                                                      reality::transcript& trans,
                                                                      const connection_context& ctx,
                                                                      std::error_code& ec);
+    [[nodiscard]] bool derive_server_key_share(const client_hello_info& info,
+                                               const std::uint8_t* public_key,
+                                               const std::uint8_t* private_key,
+                                               const connection_context& ctx,
+                                               std::vector<std::uint8_t>& sh_shared,
+                                               std::vector<std::uint8_t>& key_share_data,
+                                               std::uint16_t& key_share_group,
+                                               std::error_code& ec) const;
+    [[nodiscard]] certificate_target resolve_certificate_target(const client_hello_info& info) const;
+    asio::awaitable<std::optional<certificate_material>> load_certificate_material(const certificate_target& target,
+                                                                                   const connection_context& ctx);
+    asio::awaitable<bool> send_server_hello_flight(const std::shared_ptr<asio::ip::tcp::socket>& s,
+                                                   const std::vector<std::uint8_t>& sh_msg,
+                                                   const std::vector<std::uint8_t>& flight2_enc,
+                                                   const connection_context& ctx,
+                                                   std::error_code& ec) const;
 
     [[nodiscard]] static asio::awaitable<bool> verify_client_finished(
         std::shared_ptr<asio::ip::tcp::socket> s,
