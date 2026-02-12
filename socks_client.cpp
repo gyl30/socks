@@ -22,6 +22,100 @@
 namespace mux
 {
 
+namespace
+{
+
+void close_local_socket(asio::ip::tcp::socket& socket)
+{
+    std::error_code close_ec;
+    close_ec = socket.shutdown(asio::ip::tcp::socket::shutdown_both, close_ec);
+    close_ec = socket.close(close_ec);
+}
+
+bool setup_local_acceptor(asio::ip::tcp::acceptor& acceptor,
+                          const asio::ip::address& listen_addr,
+                          const std::uint16_t port,
+                          std::uint16_t& bound_port,
+                          std::error_code& ec)
+{
+    const asio::ip::tcp::endpoint ep{listen_addr, port};
+    ec = acceptor.open(ep.protocol(), ec);
+    if (ec)
+    {
+        return false;
+    }
+    ec = acceptor.set_option(asio::ip::tcp::acceptor::reuse_address(true), ec);
+    if (ec)
+    {
+        return false;
+    }
+    ec = acceptor.bind(ep, ec);
+    if (ec)
+    {
+        return false;
+    }
+    bound_port = acceptor.local_endpoint().port();
+    ec = acceptor.listen(asio::socket_base::max_listen_connections, ec);
+    return !ec;
+}
+
+void log_accept_error(const std::error_code& ec)
+{
+    LOG_ERROR("local accept failed {}", ec.message());
+}
+
+void set_no_delay_or_log(asio::ip::tcp::socket& socket)
+{
+    std::error_code ec;
+    ec = socket.set_option(asio::ip::tcp::no_delay(true), ec);
+    if (ec)
+    {
+        LOG_WARN("failed to set no delay on local socket {}", ec.message());
+    }
+}
+
+void prune_expired_sessions(std::vector<std::weak_ptr<socks_session>>& sessions)
+{
+    for (auto it = sessions.begin(); it != sessions.end();)
+    {
+        if (it->expired())
+        {
+            it = sessions.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
+}
+
+asio::awaitable<std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>> wait_for_tunnel_ready(asio::io_context& io_context,
+                                                                                                std::shared_ptr<client_tunnel_pool> pool,
+                                                                                                const std::atomic<bool>& stop)
+{
+    auto selected_tunnel = pool->select_tunnel();
+    if (selected_tunnel != nullptr)
+    {
+        co_return selected_tunnel;
+    }
+
+    asio::steady_timer tunnel_wait_timer(io_context);
+    for (std::uint32_t attempt = 0; attempt < 6 && !stop.load(std::memory_order_acquire) && selected_tunnel == nullptr; ++attempt)
+    {
+        tunnel_wait_timer.expires_after(std::chrono::milliseconds(200));
+        const auto [wait_ec] = co_await tunnel_wait_timer.async_wait(asio::as_tuple(asio::use_awaitable));
+        if (wait_ec)
+        {
+            break;
+        }
+        selected_tunnel = pool->select_tunnel();
+    }
+
+    co_return selected_tunnel;
+}
+
+}    // namespace
+
 socks_client::socks_client(io_context_pool& pool, const config& cfg)
     : listen_port_(cfg.socks.port),
       io_context_(pool.get_io_context()),
@@ -111,33 +205,14 @@ asio::awaitable<void> socks_client::accept_local_loop()
         LOG_ERROR("local acceptor parse address failed {}", addr_ec.message());
         co_return;
     }
-    const asio::ip::tcp::endpoint ep{listen_addr, listen_port_};
     std::error_code ec;
-    ec = acceptor_.open(ep.protocol(), ec);
-    if (ec)
+    std::uint16_t bound_port = 0;
+    if (!setup_local_acceptor(acceptor_, listen_addr, listen_port_, bound_port, ec))
     {
-        LOG_ERROR("local acceptor open failed {}", ec.message());
+        LOG_ERROR("local acceptor setup failed {}", ec.message());
         co_return;
     }
-    ec = acceptor_.set_option(asio::ip::tcp::acceptor::reuse_address(true), ec);
-    if (ec)
-    {
-        LOG_ERROR("local acceptor set reuse address failed {}", ec.message());
-        co_return;
-    }
-    ec = acceptor_.bind(ep, ec);
-    if (ec)
-    {
-        LOG_ERROR("local acceptor bind failed {}", ec.message());
-        co_return;
-    }
-    listen_port_.store(acceptor_.local_endpoint().port(), std::memory_order_release);
-    ec = acceptor_.listen(asio::socket_base::max_listen_connections, ec);
-    if (ec)
-    {
-        LOG_ERROR("local acceptor listen failed {}", ec.message());
-        co_return;
-    }
+    listen_port_.store(bound_port, std::memory_order_release);
 
     LOG_INFO("local socks5 listening on {}:{}", socks_config_.host, listen_port_.load(std::memory_order_acquire));
     while (!stop_.load(std::memory_order_acquire))
@@ -150,7 +225,7 @@ asio::awaitable<void> socks_client::accept_local_loop()
             {
                 break;
             }
-            LOG_ERROR("local accept failed {}", e.message());
+            log_accept_error(e);
             asio::steady_timer accept_retry_timer(io_context_);
             accept_retry_timer.expires_after(std::chrono::seconds(1));
             co_await accept_retry_timer.async_wait(asio::as_tuple(asio::use_awaitable));
@@ -158,38 +233,16 @@ asio::awaitable<void> socks_client::accept_local_loop()
         }
         if (stop_.load(std::memory_order_acquire))
         {
-            std::error_code close_ec;
-            close_ec = s.shutdown(asio::ip::tcp::socket::shutdown_both, close_ec);
-            close_ec = s.close(close_ec);
+            close_local_socket(s);
             break;
         }
 
-        ec = s.set_option(asio::ip::tcp::no_delay(true), ec);
-        if (ec)
-        {
-            LOG_WARN("failed to set no delay on local socket {}", ec.message());
-        }
+        set_no_delay_or_log(s);
 
-        auto selected_tunnel = tunnel_pool_->select_tunnel();
-        if (selected_tunnel == nullptr)
-        {
-            asio::steady_timer tunnel_wait_timer(io_context_);
-            for (std::uint32_t attempt = 0; attempt < 6 && !stop_.load(std::memory_order_acquire) && selected_tunnel == nullptr; ++attempt)
-            {
-                tunnel_wait_timer.expires_after(std::chrono::milliseconds(200));
-                const auto [wait_ec] = co_await tunnel_wait_timer.async_wait(asio::as_tuple(asio::use_awaitable));
-                if (wait_ec)
-                {
-                    break;
-                }
-                selected_tunnel = tunnel_pool_->select_tunnel();
-            }
-        }
+        auto selected_tunnel = co_await wait_for_tunnel_ready(io_context_, tunnel_pool_, stop_);
         if (stop_.load(std::memory_order_acquire))
         {
-            std::error_code close_ec;
-            close_ec = s.shutdown(asio::ip::tcp::socket::shutdown_both, close_ec);
-            close_ec = s.close(close_ec);
+            close_local_socket(s);
             break;
         }
         if (selected_tunnel == nullptr)
@@ -213,17 +266,7 @@ asio::awaitable<void> socks_client::accept_local_loop()
             break;
         }
 
-        for (auto it = sessions_.begin(); it != sessions_.end();)
-        {
-            if (it->expired())
-            {
-                it = sessions_.erase(it);
-            }
-            else
-            {
-                ++it;
-            }
-        }
+        prune_expired_sessions(sessions_);
         sessions_.push_back(session);
         session->start();
     }
