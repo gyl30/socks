@@ -48,14 +48,10 @@ std::shared_ptr<asio::ip::udp::socket> tproxy_udp_sender::get_socket(const asio:
 {
     const auto now = now_ms();
     const endpoint_key key{src_ep.address(), src_ep.port()};
-
     prune_sockets(now);
-
-    auto it = sockets_.find(key);
-    if (it != sockets_.end())
+    if (const auto cached = get_cached_socket(key, now); cached != nullptr)
     {
-        it->second.last_used_ms = now;
-        return it->second.socket;
+        return cached;
     }
 
     if (sockets_.size() >= kMaxCachedSockets)
@@ -63,9 +59,31 @@ std::shared_ptr<asio::ip::udp::socket> tproxy_udp_sender::get_socket(const asio:
         evict_oldest_socket();
     }
 
+    const bool ipv6 = src_ep.address().is_v6();
+    const auto socket = create_bound_socket(src_ep, ipv6);
+    if (socket == nullptr)
+    {
+        return nullptr;
+    }
+    update_cached_socket(key, socket, now);
+    return socket;
+}
+
+std::shared_ptr<asio::ip::udp::socket> tproxy_udp_sender::get_cached_socket(const endpoint_key& key, const std::uint64_t now_ms)
+{
+    auto it = sockets_.find(key);
+    if (it == sockets_.end())
+    {
+        return nullptr;
+    }
+    it->second.last_used_ms = now_ms;
+    return it->second.socket;
+}
+
+std::shared_ptr<asio::ip::udp::socket> tproxy_udp_sender::create_bound_socket(const asio::ip::udp::endpoint& src_ep, const bool ipv6)
+{
     auto socket = std::make_shared<asio::ip::udp::socket>(io_context_);
     std::error_code ec;
-    const bool ipv6 = src_ep.address().is_v6();
     socket->open(ipv6 ? asio::ip::udp::v6() : asio::ip::udp::v4(), ec);
     if (ec)
     {
@@ -73,6 +91,22 @@ std::shared_ptr<asio::ip::udp::socket> tproxy_udp_sender::get_socket(const asio:
         return nullptr;
     }
 
+    if (!prepare_socket_options(socket, ipv6))
+    {
+        return nullptr;
+    }
+
+    if (!bind_socket_to_source(socket, src_ep))
+    {
+        return nullptr;
+    }
+
+    return socket;
+}
+
+bool tproxy_udp_sender::prepare_socket_options(const std::shared_ptr<asio::ip::udp::socket>& socket, const bool ipv6)
+{
+    std::error_code ec;
     if (ipv6)
     {
         ec = socket->set_option(asio::ip::v6_only(false), ec);
@@ -92,7 +126,7 @@ std::shared_ptr<asio::ip::udp::socket> tproxy_udp_sender::get_socket(const asio:
     if (!net::set_socket_transparent(socket->native_handle(), ipv6, trans_ec))
     {
         LOG_WARN("tproxy udp transparent failed {}", trans_ec.message());
-        return nullptr;
+        return false;
     }
 
     if (mark_ != 0)
@@ -104,15 +138,27 @@ std::shared_ptr<asio::ip::udp::socket> tproxy_udp_sender::get_socket(const asio:
         }
     }
 
+    return true;
+}
+
+bool tproxy_udp_sender::bind_socket_to_source(const std::shared_ptr<asio::ip::udp::socket>& socket, const asio::ip::udp::endpoint& src_ep)
+{
+    std::error_code ec;
     ec = socket->bind(src_ep, ec);
-    if (ec)
+    if (!ec)
     {
-        LOG_WARN("tproxy udp bind failed {}", ec.message());
-        return nullptr;
+        return true;
     }
 
-    sockets_[key] = cached_socket{.socket = socket, .last_used_ms = now};
-    return socket;
+    LOG_WARN("tproxy udp bind failed {}", ec.message());
+    return false;
+}
+
+void tproxy_udp_sender::update_cached_socket(const endpoint_key& key,
+                                             const std::shared_ptr<asio::ip::udp::socket>& socket,
+                                             const std::uint64_t now_ms)
+{
+    sockets_[key] = cached_socket{.socket = socket, .last_used_ms = now_ms};
 }
 
 void tproxy_udp_sender::prune_sockets(const std::uint64_t now_ms)
