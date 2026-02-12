@@ -3,6 +3,7 @@
 
 #include <array>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -93,6 +94,10 @@ class socks_session : public std::enable_shared_from_this<socks_session>
     asio::awaitable<bool> read_request_header(std::array<std::uint8_t, 4>& head);
 
     asio::awaitable<bool> read_request_port(std::uint16_t& port);
+
+    asio::awaitable<std::optional<request_info>> validate_request_head(const std::array<std::uint8_t, 4>& head);
+
+    asio::awaitable<request_info> read_request_target(std::uint8_t cmd, std::uint8_t atyp);
 
     asio::awaitable<request_info> read_request();
 
