@@ -1,4 +1,5 @@
 #include <ctime>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <memory>
@@ -367,6 +368,247 @@ asio::awaitable<void> proxy_half(const std::shared_ptr<asio::ip::tcp::socket>& f
     }
     std::error_code ec;
     ec = to->shutdown(asio::ip::tcp::socket::shutdown_send, ec);
+}
+
+bool validate_auth_inputs(const client_hello_info& info, const bool auth_config_valid, const connection_context& ctx)
+{
+    if (!auth_config_valid)
+    {
+        LOG_CTX_ERROR(ctx, "{} invalid auth config", log_event::kAuth);
+        return false;
+    }
+    if (!info.is_tls13 || info.session_id.size() != 32)
+    {
+        LOG_CTX_ERROR(ctx, "{} auth fail is tls13 {} sid len {}", log_event::kAuth, info.is_tls13, info.session_id.size());
+        return false;
+    }
+    return true;
+}
+
+std::optional<reality::auth_payload> decrypt_auth_payload(const client_hello_info& info,
+                                                          const std::vector<std::uint8_t>& buf,
+                                                          const std::vector<std::uint8_t>& private_key,
+                                                          const std::vector<std::uint8_t>& peer_pub_key,
+                                                          std::error_code& ec,
+                                                          const connection_context& ctx)
+{
+    std::vector<std::uint8_t> auth_key;
+    std::vector<std::uint8_t> nonce;
+    std::vector<std::uint8_t> aad;
+    if (!build_auth_decrypt_inputs(info, buf, private_key, peer_pub_key, auth_key, nonce, aad, ec, ctx))
+    {
+        return std::nullopt;
+    }
+
+    const EVP_CIPHER* auth_cipher = EVP_aes_128_gcm();
+    const auto pt = reality::crypto_util::aead_decrypt(auth_cipher, auth_key, nonce, info.session_id, aad, ec);
+    if (ec || pt.size() != 16)
+    {
+        LOG_CTX_ERROR(ctx, "{} auth fail decrypt failed tag mismatch ec {} pt size {}", log_event::kAuth, ec.message(), pt.size());
+        return std::nullopt;
+    }
+
+    return reality::parse_auth_payload(pt);
+}
+
+bool verify_replay_guard(replay_cache& replay_cache, const std::vector<std::uint8_t>& session_id, const connection_context& ctx)
+{
+    if (!replay_cache.check_and_insert(session_id))
+    {
+        LOG_CTX_WARN(ctx, "{} replay attack detected", log_event::kAuth);
+        return false;
+    }
+    return true;
+}
+
+bool generate_server_random(std::vector<std::uint8_t>& server_random, std::error_code& ec)
+{
+    server_random.assign(32, 0);
+    if (RAND_bytes(server_random.data(), 32) != 1)
+    {
+        ec = std::make_error_code(std::errc::operation_canceled);
+        return false;
+    }
+    return true;
+}
+
+void log_ephemeral_public_key(const std::uint8_t* public_key, const connection_context& ctx)
+{
+    LOG_CTX_TRACE(ctx,
+                  "{} generated ephemeral key {}",
+                  log_event::kHandshake,
+                  reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(public_key, public_key + 32)));
+}
+
+std::uint16_t select_cipher_suite_from_fingerprint(const reality::server_fingerprint& fingerprint)
+{
+    return normalize_cipher_suite(fingerprint.cipher_suite != 0 ? fingerprint.cipher_suite : 0x1301);
+}
+
+asio::awaitable<bool> read_tls_record_header_allow_ccs(const std::shared_ptr<asio::ip::tcp::socket>& socket,
+                                                       std::array<std::uint8_t, 5>& header,
+                                                       const connection_context& ctx)
+{
+    const auto [read_ec, read_n] = co_await asio::async_read(*socket, asio::buffer(header), asio::as_tuple(asio::use_awaitable));
+    (void)read_n;
+    if (read_ec)
+    {
+        LOG_CTX_ERROR(ctx, "{} read client finished header error {}", log_event::kHandshake, read_ec.message());
+        co_return false;
+    }
+
+    if (header[0] != 0x14)
+    {
+        co_return true;
+    }
+
+    std::array<std::uint8_t, 1> dummy = {0};
+    const auto [dummy_ec, dummy_n] = co_await asio::async_read(*socket, asio::buffer(dummy), asio::as_tuple(asio::use_awaitable));
+    (void)dummy_n;
+    if (dummy_ec)
+    {
+        LOG_CTX_ERROR(ctx, "{} read ccs error {}", log_event::kHandshake, dummy_ec.message());
+        co_return false;
+    }
+
+    const auto [read_ec2, read_n2] = co_await asio::async_read(*socket, asio::buffer(header), asio::as_tuple(asio::use_awaitable));
+    (void)read_n2;
+    if (read_ec2)
+    {
+        LOG_CTX_ERROR(ctx, "{} read client finished header after ccs error {}", log_event::kHandshake, read_ec2.message());
+        co_return false;
+    }
+    co_return true;
+}
+
+asio::awaitable<bool> read_tls_record_body(const std::shared_ptr<asio::ip::tcp::socket>& socket,
+                                           const std::uint16_t body_len,
+                                           std::vector<std::uint8_t>& body,
+                                           const connection_context& ctx)
+{
+    body.assign(body_len, 0);
+    const auto [read_ec, read_n] = co_await asio::async_read(*socket, asio::buffer(body), asio::as_tuple(asio::use_awaitable));
+    (void)read_n;
+    if (read_ec)
+    {
+        LOG_CTX_ERROR(ctx, "{} read client finished body error {}", log_event::kHandshake, read_ec.message());
+        co_return false;
+    }
+    co_return true;
+}
+
+std::vector<std::uint8_t> compose_tls_record(const std::array<std::uint8_t, 5>& header, const std::vector<std::uint8_t>& body)
+{
+    std::vector<std::uint8_t> out(header.size() + body.size());
+    std::memcpy(out.data(), header.data(), header.size());
+    std::memcpy(out.data() + header.size(), body.data(), body.size());
+    return out;
+}
+
+bool verify_client_finished_plaintext(const std::vector<std::uint8_t>& plaintext,
+                                      const std::uint8_t content_type,
+                                      const std::vector<std::uint8_t>& expected_verify,
+                                      const connection_context& ctx)
+{
+    if (content_type != reality::kContentTypeHandshake || plaintext.empty() || plaintext[0] != 0x14)
+    {
+        LOG_CTX_ERROR(ctx, "{} client finished verification failed type {}", log_event::kHandshake, static_cast<int>(content_type));
+        return false;
+    }
+
+    if (plaintext.size() < expected_verify.size() + 4 ||
+        std::memcmp(plaintext.data() + 4, expected_verify.data(), expected_verify.size()) != 0)
+    {
+        LOG_CTX_ERROR(ctx, "{} client finished hmac verification failed", log_event::kHandshake);
+        return false;
+    }
+    return true;
+}
+
+asio::awaitable<void> fallback_failed_drain(const std::shared_ptr<asio::ip::tcp::socket>& socket)
+{
+    char data[constants::net::kBufferSize] = {0};
+    for (;;)
+    {
+        const auto [read_ec, read_n] = co_await socket->async_read_some(asio::buffer(data), asio::as_tuple(asio::use_awaitable));
+        if (read_ec || read_n == 0)
+        {
+            break;
+        }
+    }
+    std::error_code ignore;
+    ignore = socket->shutdown(asio::ip::tcp::socket::shutdown_receive, ignore);
+}
+
+asio::awaitable<void> fallback_wait_random_timer(const std::uint32_t conn_id, asio::io_context& io_context)
+{
+    asio::steady_timer fallback_timer(io_context);
+    constexpr std::uint32_t max_wait_ms = constants::fallback::kMaxWaitMs;
+    static thread_local std::mt19937 gen(std::random_device{}());
+    std::uniform_int_distribution<std::uint32_t> dist(0, max_wait_ms - 1);
+    const std::uint32_t wait_ms = dist(gen);
+    fallback_timer.expires_after(std::chrono::milliseconds(wait_ms));
+    const auto [wait_ec] = co_await fallback_timer.async_wait(asio::as_tuple(asio::use_awaitable));
+    if (wait_ec)
+    {
+        LOG_ERROR("{} fallback failed timer {} ms error {}", conn_id, wait_ms, wait_ec.message());
+    }
+    LOG_DEBUG("{} fallback failed timer {} ms", conn_id, wait_ms);
+}
+
+asio::awaitable<void> handle_fallback_without_target(const std::shared_ptr<asio::ip::tcp::socket>& socket,
+                                                     const connection_context& ctx,
+                                                     const std::string& sni,
+                                                     asio::io_context& io_context)
+{
+    LOG_CTX_INFO(ctx, "{} no target sni {}", log_event::kFallback, sni.empty() ? "empty" : sni);
+    using asio::experimental::awaitable_operators::operator||;
+    co_await (fallback_failed_drain(socket) || fallback_wait_random_timer(ctx.conn_id(), io_context));
+    close_fallback_socket(socket, ctx);
+    LOG_CTX_INFO(ctx, "{} done", log_event::kFallback);
+}
+
+asio::awaitable<bool> resolve_and_connect_fallback_target(const std::shared_ptr<asio::ip::tcp::socket>& target_socket,
+                                                          asio::io_context& io_context,
+                                                          const std::string& target_host,
+                                                          const std::string& target_port,
+                                                          const connection_context& ctx)
+{
+    asio::ip::tcp::resolver resolver(io_context);
+    const auto [resolve_ec, endpoints] = co_await resolver.async_resolve(target_host, target_port, asio::as_tuple(asio::use_awaitable));
+    if (resolve_ec)
+    {
+        LOG_CTX_WARN(ctx, "{} resolve failed {}", log_event::kFallback, resolve_ec.message());
+        co_return false;
+    }
+
+    const auto [connect_ec, endpoint] = co_await asio::async_connect(*target_socket, endpoints, asio::as_tuple(asio::use_awaitable));
+    (void)endpoint;
+    if (connect_ec)
+    {
+        LOG_CTX_WARN(ctx, "{} connect target failed {}", log_event::kFallback, connect_ec.message());
+        co_return false;
+    }
+    co_return true;
+}
+
+asio::awaitable<bool> write_fallback_initial_buffer(const std::shared_ptr<asio::ip::tcp::socket>& target_socket,
+                                                    const std::vector<std::uint8_t>& buf,
+                                                    const connection_context& ctx)
+{
+    if (buf.empty())
+    {
+        co_return true;
+    }
+
+    const auto [write_ec, write_n] = co_await asio::async_write(*target_socket, asio::buffer(buf), asio::as_tuple(asio::use_awaitable));
+    (void)write_n;
+    if (write_ec)
+    {
+        LOG_CTX_WARN(ctx, "{} write initial buf failed", log_event::kFallback);
+        co_return false;
+    }
+    co_return true;
 }
 
 }    // namespace
@@ -907,14 +1149,8 @@ std::optional<remote_server::selected_key_share> remote_server::select_key_share
 
 bool remote_server::authenticate_client(const client_hello_info& info, const std::vector<std::uint8_t>& buf, const connection_context& ctx)
 {
-    if (!auth_config_valid_)
+    if (!validate_auth_inputs(info, auth_config_valid_, ctx))
     {
-        LOG_CTX_ERROR(ctx, "{} invalid auth config", log_event::kAuth);
-        return false;
-    }
-    if (!info.is_tls13 || info.session_id.size() != 32)
-    {
-        LOG_CTX_ERROR(ctx, "{} auth fail is tls13 {} sid len {}", log_event::kAuth, info.is_tls13, info.session_id.size());
         return false;
     }
 
@@ -925,23 +1161,12 @@ bool remote_server::authenticate_client(const client_hello_info& info, const std
     }
 
     std::error_code ec;
-    std::vector<std::uint8_t> auth_key;
-    std::vector<std::uint8_t> nonce;
-    std::vector<std::uint8_t> aad;
-    if (!build_auth_decrypt_inputs(info, buf, private_key_, selected->x25519_pub, auth_key, nonce, aad, ec, ctx))
+    const auto auth = decrypt_auth_payload(info, buf, private_key_, selected->x25519_pub, ec, ctx);
+    if (!auth.has_value())
     {
         return false;
     }
 
-    const EVP_CIPHER* auth_cipher = EVP_aes_128_gcm();
-    const auto pt = reality::crypto_util::aead_decrypt(auth_cipher, auth_key, nonce, info.session_id, aad, ec);
-    if (ec || pt.size() != 16)
-    {
-        LOG_CTX_ERROR(ctx, "{} auth fail decrypt failed tag mismatch ec {} pt size {}", log_event::kAuth, ec.message(), pt.size());
-        return false;
-    }
-
-    const auto auth = reality::parse_auth_payload(pt);
     if (!verify_auth_payload_fields(auth, short_id_bytes_, ctx))
     {
         return false;
@@ -951,12 +1176,7 @@ bool remote_server::authenticate_client(const client_hello_info& info, const std
         return false;
     }
 
-    if (!replay_cache_.check_and_insert(info.session_id))
-    {
-        LOG_CTX_WARN(ctx, "{} replay attack detected", log_event::kAuth);
-        return false;
-    }
-    return true;
+    return verify_replay_guard(replay_cache_, info.session_id, ctx);
 }
 
 asio::awaitable<remote_server::server_handshake_res> remote_server::perform_handshake_response(std::shared_ptr<asio::ip::tcp::socket> s,
@@ -968,17 +1188,13 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::perform_hand
     const auto key_pair = key_rotator_.get_current_key();
     const std::uint8_t* public_key = key_pair->public_key;
     const std::uint8_t* private_key = key_pair->private_key;
-    std::vector<std::uint8_t> server_random(32);
-    if (RAND_bytes(server_random.data(), 32) != 1)
+    std::vector<std::uint8_t> server_random;
+    if (!generate_server_random(server_random, ec))
     {
-        ec = std::make_error_code(std::errc::operation_canceled);
         co_return server_handshake_res{.ok = false};
     }
 
-    LOG_CTX_TRACE(ctx,
-                  "{} generated ephemeral key {}",
-                  log_event::kHandshake,
-                  reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(public_key, public_key + 32)));
+    log_ephemeral_public_key(public_key, ctx);
 
     std::vector<std::uint8_t> sh_shared;
     std::vector<std::uint8_t> key_share_data;
@@ -996,7 +1212,7 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::perform_hand
         co_return server_handshake_res{.ok = false};
     }
 
-    const std::uint16_t cipher_suite = normalize_cipher_suite(cert->fingerprint.cipher_suite != 0 ? cert->fingerprint.cipher_suite : 0x1301);
+    const std::uint16_t cipher_suite = select_cipher_suite_from_fingerprint(cert->fingerprint);
     const auto crypto = build_handshake_crypto(server_random,
                                                info.session_id,
                                                cipher_suite,
@@ -1131,50 +1347,36 @@ asio::awaitable<bool> remote_server::verify_client_finished(std::shared_ptr<asio
                                                             const connection_context& ctx,
                                                             std::error_code& ec)
 {
-    std::uint8_t h[5];
-    const auto [read_ec3, rn3] = co_await asio::async_read(*s, asio::buffer(h, 5), asio::as_tuple(asio::use_awaitable));
-    if (read_ec3)
+    std::array<std::uint8_t, 5> header = {0};
+    if (!co_await read_tls_record_header_allow_ccs(s, header, ctx))
     {
-        LOG_CTX_ERROR(ctx, "{} read client finished header error {}", log_event::kHandshake, read_ec3.message());
         co_return false;
     }
 
-    if (h[0] == 0x14)
+    const auto body_len = static_cast<std::uint16_t>((header[3] << 8) | header[4]);
+    std::vector<std::uint8_t> body;
+    if (!co_await read_tls_record_body(s, body_len, body, ctx))
     {
-        std::uint8_t dummy[1];
-        co_await asio::async_read(*s, asio::buffer(dummy, 1), asio::as_tuple(asio::use_awaitable));
-        co_await asio::async_read(*s, asio::buffer(h, 5), asio::as_tuple(asio::use_awaitable));
-    }
-
-    const auto flen = static_cast<std::uint16_t>((h[3] << 8) | h[4]);
-    std::vector<std::uint8_t> data(flen);
-    const auto [read_ec4, rn4] = co_await asio::async_read(*s, asio::buffer(data), asio::as_tuple(asio::use_awaitable));
-    if (read_ec4)
-    {
-        LOG_CTX_ERROR(ctx, "{} read client finished body error {}", log_event::kHandshake, read_ec4.message());
         co_return false;
     }
 
-    std::vector<std::uint8_t> cth(5 + flen);
-    std::memcpy(cth.data(), h, 5);
-    std::memcpy(cth.data() + 5, data.data(), flen);
+    const auto record = compose_tls_record(header, body);
     std::uint8_t ctype = 0;
-    const auto pt = reality::tls_record_layer::decrypt_record(cipher, c_hs_keys.first, c_hs_keys.second, 0, cth, ctype, ec);
-
-    if (ec || ctype != reality::kContentTypeHandshake || pt.empty() || pt[0] != 0x14)
+    const auto plaintext = reality::tls_record_layer::decrypt_record(cipher, c_hs_keys.first, c_hs_keys.second, 0, record, ctype, ec);
+    if (ec)
     {
-        LOG_CTX_ERROR(ctx, "{} client finished verification failed type {}", log_event::kHandshake, static_cast<int>(ctype));
+        LOG_CTX_ERROR(ctx, "{} client finished decrypt failed {}", log_event::kHandshake, ec.message());
         co_return false;
     }
 
     const auto expected_fin_verify =
         reality::tls_key_schedule::compute_finished_verify_data(hs_keys.client_handshake_traffic_secret, trans.finish(), md, ec);
-    if (pt.size() < expected_fin_verify.size() + 4 || std::memcmp(pt.data() + 4, expected_fin_verify.data(), expected_fin_verify.size()) != 0)
+    if (ec)
     {
-        LOG_CTX_ERROR(ctx, "{} client finished hmac verification failed", log_event::kHandshake);
+        LOG_CTX_ERROR(ctx, "{} client finished verify data failed {}", log_event::kHandshake, ec.message());
         co_return false;
     }
-    co_return true;
+    co_return verify_client_finished_plaintext(plaintext, ctype, expected_fin_verify, ctx);
 }
 
 std::pair<std::string, std::string> remote_server::find_fallback_target_by_sni(const std::string& sni) const
@@ -1244,43 +1446,21 @@ asio::awaitable<void> remote_server::handle_fallback(const std::shared_ptr<asio:
     const auto fallback_target = find_fallback_target_by_sni(sni);
     if (fallback_target.first.empty())
     {
-        LOG_CTX_INFO(ctx, "{} no target sni {}", log_event::kFallback, sni.empty() ? "empty" : sni);
-        using asio::experimental::awaitable_operators::operator||;
-        co_await (fallback_failed(s) || fallback_failed_timer(ctx.conn_id(), io_context_));
-        close_fallback_socket(s, ctx);
-        LOG_CTX_INFO(ctx, "{} done", log_event::kFallback);
+        co_await handle_fallback_without_target(s, ctx, sni, io_context_);
         co_return;
     }
 
     const auto target_host = fallback_target.first;
     const auto target_port = fallback_target.second;
     auto t = std::make_shared<asio::ip::tcp::socket>(io_context_);
-    asio::ip::tcp::resolver r(io_context_);
-
     LOG_CTX_INFO(ctx, "{} proxying sni {} to {} {}", log_event::kFallback, sni, target_host, target_port);
-
-    const auto [resolve_ec, eps] = co_await r.async_resolve(target_host, target_port, asio::as_tuple(asio::use_awaitable));
-    if (resolve_ec)
+    if (!co_await resolve_and_connect_fallback_target(t, io_context_, target_host, target_port, ctx))
     {
-        LOG_CTX_WARN(ctx, "{} resolve failed {}", log_event::kFallback, resolve_ec.message());
         co_return;
     }
-
-    const auto [connect_ec, ep_c] = co_await asio::async_connect(*t, eps, asio::as_tuple(asio::use_awaitable));
-    if (connect_ec)
+    if (!co_await write_fallback_initial_buffer(t, buf, ctx))
     {
-        LOG_CTX_WARN(ctx, "{} connect target failed {}", log_event::kFallback, connect_ec.message());
         co_return;
-    }
-
-    if (!buf.empty())
-    {
-        const auto [write_ec, n] = co_await asio::async_write(*t, asio::buffer(buf), asio::as_tuple(asio::use_awaitable));
-        if (write_ec)
-        {
-            LOG_CTX_WARN(ctx, "{} write initial buf failed", log_event::kFallback);
-            co_return;
-        }
     }
 
     using asio::experimental::awaitable_operators::operator&&;
