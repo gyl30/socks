@@ -62,9 +62,28 @@ class remote_server : public std::enable_shared_from_this<remote_server>
                          const std::string& trace_id = "");
 
    private:
+    struct server_handshake_res;
+
     asio::awaitable<void> accept_loop();
 
     asio::awaitable<void> handle(std::shared_ptr<asio::ip::tcp::socket> s, const std::uint32_t conn_id);
+
+    [[nodiscard]] bool derive_application_traffic_keys(
+        const server_handshake_res& sh_res,
+        std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& c_app_keys,
+        std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& s_app_keys,
+        std::error_code& ec) const;
+    asio::awaitable<bool> reject_connection_if_over_limit(const std::shared_ptr<asio::ip::tcp::socket>& s,
+                                                          const std::vector<std::uint8_t>& initial_buf,
+                                                          const connection_context& ctx);
+    std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> create_tunnel(
+        const std::shared_ptr<asio::ip::tcp::socket>& s,
+        const server_handshake_res& sh_res,
+        const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& c_app_keys,
+        const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& s_app_keys,
+        std::uint32_t conn_id,
+        const connection_context& ctx);
+    void install_syn_callback(const std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>& tunnel, const connection_context& ctx);
 
     asio::awaitable<void> process_stream_request(std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel,
                                                  const connection_context& ctx,
