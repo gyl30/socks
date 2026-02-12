@@ -111,6 +111,8 @@ TEST_F(config_test, MissingFieldsUseDefaults)
     const auto cfg_opt = mux::parse_config(tmp_file());
     ASSERT_TRUE(cfg_opt.has_value());
     EXPECT_EQ(cfg_opt->mode, "server");
+    EXPECT_TRUE(cfg_opt->reality.strict_cert_verify);
+    EXPECT_TRUE(cfg_opt->reality.fallback_guard.enabled);
 }
 
 TEST_F(config_test, InvalidPortRange)
