@@ -110,6 +110,53 @@ bool set_optional_hkdf_salt(const openssl_ptrs::evp_pkey_ctx_ptr& ctx, const std
     return true;
 }
 
+bool validate_x25519_keys(const std::vector<std::uint8_t>& private_key, const std::vector<std::uint8_t>& peer_public_key, std::error_code& ec)
+{
+    if (private_key.size() != 32 || peer_public_key.size() != 32)
+    {
+        ec = std::make_error_code(std::errc::invalid_argument);
+        return false;
+    }
+    return true;
+}
+
+bool create_x25519_key_objects(const std::vector<std::uint8_t>& private_key,
+                               const std::vector<std::uint8_t>& peer_public_key,
+                               openssl_ptrs::evp_pkey_ptr& pkey,
+                               openssl_ptrs::evp_pkey_ptr& pub,
+                               std::error_code& ec)
+{
+    pkey = openssl_ptrs::evp_pkey_ptr(EVP_PKEY_new_raw_private_key(EVP_PKEY_X25519, nullptr, private_key.data(), 32));
+    pub = openssl_ptrs::evp_pkey_ptr(EVP_PKEY_new_raw_public_key(EVP_PKEY_X25519, nullptr, peer_public_key.data(), 32));
+    if (pkey == nullptr || pub == nullptr)
+    {
+        ec = std::make_error_code(std::errc::protocol_error);
+        return false;
+    }
+    return true;
+}
+
+bool derive_x25519_shared_secret(const openssl_ptrs::evp_pkey_ptr& pkey,
+                                 const openssl_ptrs::evp_pkey_ptr& pub,
+                                 std::vector<std::uint8_t>& shared,
+                                 std::error_code& ec)
+{
+    const openssl_ptrs::evp_pkey_ctx_ptr ctx(EVP_PKEY_CTX_new(pkey.get(), nullptr));
+    if (ctx == nullptr)
+    {
+        ec = std::make_error_code(std::errc::not_enough_memory);
+        return false;
+    }
+    std::size_t len = 32;
+    shared.assign(32, 0);
+    if (EVP_PKEY_derive_init(ctx.get()) <= 0 || EVP_PKEY_derive_set_peer(ctx.get(), pub.get()) <= 0 || EVP_PKEY_derive(ctx.get(), shared.data(), &len) <= 0)
+    {
+        ec = std::make_error_code(std::errc::protocol_error);
+        return false;
+    }
+    return true;
+}
+
 bool validate_aead_decrypt_inputs(const EVP_CIPHER* cipher,
                                   const std::vector<std::uint8_t>& key,
                                   const std::span<const std::uint8_t> nonce,
@@ -336,38 +383,21 @@ std::vector<std::uint8_t> crypto_util::x25519_derive(const std::vector<std::uint
                                                      const std::vector<std::uint8_t>& peer_public_key,
                                                      std::error_code& ec)
 {
-    if (private_key.size() != 32 || peer_public_key.size() != 32)
+    if (!validate_x25519_keys(private_key, peer_public_key, ec))
     {
-        ec = std::make_error_code(std::errc::invalid_argument);
         return {};
     }
-
-    const openssl_ptrs::evp_pkey_ptr pkey(EVP_PKEY_new_raw_private_key(EVP_PKEY_X25519, nullptr, private_key.data(), 32));
-    const openssl_ptrs::evp_pkey_ptr pub(EVP_PKEY_new_raw_public_key(EVP_PKEY_X25519, nullptr, peer_public_key.data(), 32));
-
-    if (pkey == nullptr || pub == nullptr)
+    openssl_ptrs::evp_pkey_ptr pkey;
+    openssl_ptrs::evp_pkey_ptr pub;
+    if (!create_x25519_key_objects(private_key, peer_public_key, pkey, pub, ec))
     {
-        ec = std::make_error_code(std::errc::protocol_error);
         return {};
     }
-
-    const openssl_ptrs::evp_pkey_ctx_ptr ctx(EVP_PKEY_CTX_new(pkey.get(), nullptr));
-    if (ctx == nullptr)
+    std::vector<std::uint8_t> shared;
+    if (!derive_x25519_shared_secret(pkey, pub, shared, ec))
     {
-        ec = std::make_error_code(std::errc::not_enough_memory);
         return {};
     }
-
-    std::vector<std::uint8_t> shared(32);
-    std::size_t len = 32;
-
-    if (EVP_PKEY_derive_init(ctx.get()) <= 0 || EVP_PKEY_derive_set_peer(ctx.get(), pub.get()) <= 0 ||
-        EVP_PKEY_derive(ctx.get(), shared.data(), &len) <= 0)
-    {
-        ec = std::make_error_code(std::errc::protocol_error);
-        return {};
-    }
-
     ec.clear();
     return shared;
 }
