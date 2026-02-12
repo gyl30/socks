@@ -12,6 +12,11 @@
 #include <asio/ip/tcp.hpp>
 #include <asio/io_context.hpp>
 
+extern "C"
+{
+#include <openssl/evp.h>
+}
+
 #include "log.h"
 #include "upstream.h"
 #include "test_util.h"
@@ -244,4 +249,15 @@ TEST_F(upstream_test, ProxyUpstreamReadWriteWithoutConnect)
     EXPECT_EQ(write_n, 0);
 
     mux::test::run_awaitable_void(ctx(), upstream.close());
+}
+
+TEST_F(upstream_test, MovedFromTunnelReturnsNullAndRejectsRegister)
+{
+    mux::mux_tunnel_impl<asio::ip::tcp::socket> tunnel(
+        asio::ip::tcp::socket(ctx()), ctx(), mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 7);
+    auto moved = std::move(tunnel);
+    (void)moved;
+
+    EXPECT_FALSE(tunnel.try_register_stream(1, nullptr));
+    EXPECT_EQ(tunnel.create_stream("moved"), nullptr);
 }

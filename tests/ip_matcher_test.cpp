@@ -279,3 +279,25 @@ TEST_F(ip_matcher_test, DoSNestedSubnets)
 
     EXPECT_TRUE(matcher.match(asio::ip::make_address("10.128.0.1", ec)));
 }
+
+TEST_F(ip_matcher_test, CarriageReturnAndPrefixParsingBranches)
+{
+    {
+        std::ofstream f(rule_file(), std::ios::binary);
+        f << "10.10.0.0/16\r\n";
+        f << "10.20.0.0/abc\r\n";
+        f << "   /24\r\n";
+        f << "0.0.0.0/0\r\n";
+        f << "10.30.0.0/8\r\n";
+        f << "::/0\r\n";
+        f << "2001:db8::/32\r\n";
+    }
+
+    mux::ip_matcher matcher;
+    ASSERT_TRUE(matcher.load(rule_file()));
+
+    asio::error_code ec;
+    EXPECT_TRUE(matcher.match(asio::ip::make_address("10.10.1.1", ec)));
+    EXPECT_TRUE(matcher.match(asio::ip::make_address("11.1.1.1", ec)));
+    EXPECT_TRUE(matcher.match(asio::ip::make_address("2001:db8::1", ec)));
+}
