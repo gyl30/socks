@@ -82,43 +82,43 @@ bool parse_hex_to_bytes(const std::string& hex, std::vector<std::uint8_t>& out, 
 
 bool parse_dest_target(const std::string& input, std::string& host, std::string& port)
 {
-    host.clear();
-    port.clear();
+    host = "";
+    port = "";
     if (input.empty())
     {
         return false;
     }
 
-    if (input.front() == '[')
+    auto parse_bracket_form = [&](const std::string& text) -> bool
     {
-        const auto end = input.find(']');
+        const auto end = text.find(']');
         if (end == std::string::npos)
         {
             return false;
         }
-        host = input.substr(1, end - 1);
-        if (end + 1 >= input.size() || input[end + 1] != ':')
+        host = text.substr(1, end - 1);
+        if (end + 1 >= text.size() || text[end + 1] != ':')
         {
             return false;
         }
-        port = input.substr(end + 2);
-    }
-    else
+        port = text.substr(end + 2);
+        return true;
+    };
+
+    auto parse_plain_form = [&](const std::string& text) -> bool
     {
-        const auto pos = input.rfind(':');
+        const auto pos = text.rfind(':');
         if (pos == std::string::npos)
         {
             return false;
         }
-        host = input.substr(0, pos);
-        port = input.substr(pos + 1);
-    }
+        host = text.substr(0, pos);
+        port = text.substr(pos + 1);
+        return true;
+    };
 
-    if (host.empty() || port.empty())
-    {
-        return false;
-    }
-    return true;
+    const bool parsed = (input.front() == '[') ? parse_bracket_form(input) : parse_plain_form(input);
+    return parsed && !host.empty() && !port.empty();
 }
 
 std::uint16_t parse_fallback_port(const std::string& port_text)
