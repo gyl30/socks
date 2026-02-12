@@ -54,3 +54,19 @@ TEST(MuxDispatcherTest, EmptyData)
     mux::mux_dispatcher dispatcher;
     dispatcher.on_plaintext_data({});
 }
+
+TEST(MuxDispatcherTest, BufferOverflowSetsFlagAndDropsFrame)
+{
+    mux::mux_dispatcher dispatcher;
+    dispatcher.set_max_buffer(4);
+
+    int call_count = 0;
+    dispatcher.set_callback([&](const mux::frame_header, std::vector<std::uint8_t>) { call_count++; });
+
+    const auto packed = mux::mux_dispatcher::pack(0x42, mux::kCmdDat, {0x01});
+    ASSERT_GT(packed.size(), 4);
+
+    dispatcher.on_plaintext_data(packed);
+    EXPECT_TRUE(dispatcher.overflowed());
+    EXPECT_EQ(call_count, 0);
+}
