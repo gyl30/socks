@@ -59,6 +59,25 @@ bool setup_local_acceptor(asio::ip::tcp::acceptor& acceptor,
     return !ec;
 }
 
+bool prepare_local_listener(asio::ip::tcp::acceptor& acceptor, const std::string& host, const std::uint16_t port, std::uint16_t& bound_port)
+{
+    std::error_code addr_ec;
+    const auto listen_addr = asio::ip::make_address(host, addr_ec);
+    if (addr_ec)
+    {
+        LOG_ERROR("local acceptor parse address failed {}", addr_ec.message());
+        return false;
+    }
+
+    std::error_code setup_ec;
+    if (!setup_local_acceptor(acceptor, listen_addr, port, bound_port, setup_ec))
+    {
+        LOG_ERROR("local acceptor setup failed {}", setup_ec.message());
+        return false;
+    }
+    return true;
+}
+
 void log_accept_error(const std::error_code& ec)
 {
     LOG_ERROR("local accept failed {}", ec.message());
@@ -197,6 +216,39 @@ asio::awaitable<bool> start_local_session(asio::ip::tcp::socket socket,
     co_return true;
 }
 
+asio::awaitable<bool> run_accept_iteration(asio::ip::tcp::acceptor& acceptor,
+                                           asio::io_context& io_context,
+                                           const std::shared_ptr<client_tunnel_pool>& tunnel_pool,
+                                           const std::shared_ptr<router>& router,
+                                           std::vector<std::weak_ptr<socks_session>>& sessions,
+                                           const config::socks_t& socks_config,
+                                           const config::timeout_t& timeout_config,
+                                           const std::atomic<bool>& stop)
+{
+    asio::ip::tcp::socket socket(io_context);
+    const auto accept_status = co_await accept_local_socket(acceptor, socket, io_context);
+    if (accept_status == local_accept_status::kStop)
+    {
+        co_return false;
+    }
+    if (accept_status == local_accept_status::kRetry)
+    {
+        co_return true;
+    }
+
+    if (stop.load(std::memory_order_acquire))
+    {
+        close_local_socket(socket);
+        co_return false;
+    }
+
+    if (!(co_await start_local_session(std::move(socket), io_context, tunnel_pool, router, sessions, socks_config, timeout_config, stop)))
+    {
+        co_return false;
+    }
+    co_return true;
+}
+
 }    // namespace
 
 socks_client::socks_client(io_context_pool& pool, const config& cfg)
@@ -281,18 +333,10 @@ void socks_client::stop()
 
 asio::awaitable<void> socks_client::accept_local_loop()
 {
-    std::error_code addr_ec;
-    const auto listen_addr = asio::ip::make_address(socks_config_.host, addr_ec);
-    if (addr_ec)
-    {
-        LOG_ERROR("local acceptor parse address failed {}", addr_ec.message());
-        co_return;
-    }
-    std::error_code ec;
+    const std::uint16_t configured_port = listen_port_.load(std::memory_order_acquire);
     std::uint16_t bound_port = 0;
-    if (!setup_local_acceptor(acceptor_, listen_addr, listen_port_, bound_port, ec))
+    if (!prepare_local_listener(acceptor_, socks_config_.host, configured_port, bound_port))
     {
-        LOG_ERROR("local acceptor setup failed {}", ec.message());
         co_return;
     }
     listen_port_.store(bound_port, std::memory_order_release);
@@ -300,22 +344,8 @@ asio::awaitable<void> socks_client::accept_local_loop()
     LOG_INFO("local socks5 listening on {}:{}", socks_config_.host, listen_port_.load(std::memory_order_acquire));
     while (!stop_.load(std::memory_order_acquire))
     {
-        asio::ip::tcp::socket s(io_context_);
-        const auto accept_status = co_await accept_local_socket(acceptor_, s, io_context_);
-        if (accept_status == local_accept_status::kStop)
-        {
-            break;
-        }
-        if (accept_status == local_accept_status::kRetry)
-        {
-            continue;
-        }
-        if (stop_.load(std::memory_order_acquire))
-        {
-            close_local_socket(s);
-            break;
-        }
-        if (!(co_await start_local_session(std::move(s), io_context_, tunnel_pool_, router_, sessions_, socks_config_, timeout_config_, stop_)))
+        if (!(co_await run_accept_iteration(
+                  acceptor_, io_context_, tunnel_pool_, router_, sessions_, socks_config_, timeout_config_, stop_)))
         {
             break;
         }
