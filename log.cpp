@@ -15,6 +15,7 @@ static void init_default_log(const std::string& filename);
 static void set_log_level();
 static std::uint32_t get_log_file_size();
 static std::uint32_t get_log_file_count();
+static spdlog::level::level_enum parse_level_name(const std::string& level);
 
 void init_log(const std::string& filename)
 {
@@ -25,23 +26,7 @@ void init_log(const std::string& filename)
 
 void set_level(const std::string& level)
 {
-    spdlog::set_level(spdlog::level::info);
-    if (level == "debug")
-    {
-        spdlog::set_level(spdlog::level::debug);
-    }
-    else if (level == "warn" || level == "warning")
-    {
-        spdlog::set_level(spdlog::level::warn);
-    }
-    else if (level == "err" || level == "error")
-    {
-        spdlog::set_level(spdlog::level::err);
-    }
-    else if (level == "trace")
-    {
-        spdlog::set_level(spdlog::level::trace);
-    }
+    spdlog::set_level(parse_level_name(level));
 }
 
 void shutdown_log()
@@ -75,6 +60,33 @@ static void set_log_level()
     {
         spdlog::set_level(spdlog::level::debug);
     }
+}
+
+static spdlog::level::level_enum parse_level_name(const std::string& level)
+{
+    struct level_alias
+    {
+        const char* name;
+        spdlog::level::level_enum value;
+    };
+
+    static constexpr level_alias kLevels[] = {
+        {"debug", spdlog::level::debug},
+        {"warn", spdlog::level::warn},
+        {"warning", spdlog::level::warn},
+        {"err", spdlog::level::err},
+        {"error", spdlog::level::err},
+        {"trace", spdlog::level::trace},
+    };
+
+    for (const auto& entry : kLevels)
+    {
+        if (level == entry.name)
+        {
+            return entry.value;
+        }
+    }
+    return spdlog::level::info;
 }
 
 static std::uint32_t get_log_file_size()
