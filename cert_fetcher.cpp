@@ -40,6 +40,7 @@ namespace reality
 namespace
 {
 constexpr std::size_t kMaxMsgSize = 64L * 1024;
+constexpr std::size_t kMaxEncryptedRecordLen = 18432;
 
 struct negotiated_suite
 {
@@ -103,6 +104,69 @@ std::optional<negotiated_suite> select_negotiated_suite(const std::uint16_t ciph
         return negotiated_suite{.cipher = EVP_chacha20_poly1305(), .md = EVP_sha256(), .key_len = 32};
     }
     return std::nullopt;
+}
+
+std::pair<std::uint8_t, std::span<std::uint8_t>> empty_record_result()
+{
+    return std::make_pair(0, std::span<std::uint8_t>{});
+}
+
+std::pair<std::uint8_t, std::span<std::uint8_t>> copy_plaintext_record(std::vector<std::uint8_t>& pt_buf, const std::vector<std::uint8_t>& rec)
+{
+    if (pt_buf.size() < rec.size())
+    {
+        pt_buf.resize(rec.size());
+    }
+    std::memcpy(pt_buf.data(), rec.data(), rec.size());
+    return std::make_pair(kContentTypeChangeCipherSpec, std::span<std::uint8_t>(pt_buf.data(), rec.size()));
+}
+
+std::vector<std::uint8_t> build_encrypted_record_bytes(const std::uint8_t* head, const std::vector<std::uint8_t>& rec)
+{
+    std::vector<std::uint8_t> ciphertext_record(5 + rec.size());
+    std::memcpy(ciphertext_record.data(), head, 5);
+    std::memcpy(ciphertext_record.data() + 5, rec.data(), rec.size());
+    return ciphertext_record;
+}
+
+std::error_code derive_server_record_protection(const std::vector<std::uint8_t>& sh_real,
+                                                const negotiated_suite& suite,
+                                                transcript& trans,
+                                                const std::uint8_t* client_private,
+                                                const mux::connection_context& ctx,
+                                                const EVP_CIPHER*& negotiated_cipher,
+                                                std::vector<std::uint8_t>& dec_key,
+                                                std::vector<std::uint8_t>& dec_iv)
+{
+    constexpr std::size_t iv_len = 12;
+
+    const auto server_pub = extract_server_public_key(sh_real);
+    std::error_code ec;
+    auto shared = crypto_util::x25519_derive(std::vector<std::uint8_t>(client_private, client_private + 32), server_pub, ec);
+    if (ec)
+    {
+        LOG_CTX_ERROR(ctx, "{} x25519 derive failed", mux::log_event::kCert);
+        return ec;
+    }
+
+    auto hs_keys = tls_key_schedule::derive_handshake_keys(shared, trans.finish(), suite.md, ec);
+    if (ec)
+    {
+        LOG_CTX_ERROR(ctx, "{} derive keys failed", mux::log_event::kCert);
+        return ec;
+    }
+
+    auto s_hs_keys = tls_key_schedule::derive_traffic_keys(hs_keys.server_handshake_traffic_secret, ec, suite.key_len, iv_len, suite.md);
+    if (ec)
+    {
+        LOG_CTX_ERROR(ctx, "{} derive traffic keys failed", mux::log_event::kCert);
+        return ec;
+    }
+
+    negotiated_cipher = suite.cipher;
+    dec_key = std::move(s_hs_keys.first);
+    dec_iv = std::move(s_hs_keys.second);
+    return std::error_code{};
 }
 }
 
@@ -368,32 +432,8 @@ std::error_code cert_fetcher::fetch_session::process_server_hello(const std::vec
         return asio::error::no_protocol_option;
     }
 
-    constexpr std::size_t iv_len = 12;
     trans_.set_protocol_hash(suite->md);
-
-    auto server_pub = extract_server_public_key(sh_real);
-    std::error_code ec;
-    auto shared = crypto_util::x25519_derive(std::vector<std::uint8_t>(client_private_, client_private_ + 32), server_pub, ec);
-    if (ec)
-    {
-        LOG_CTX_ERROR(ctx_, "{} x25519 derive failed", mux::log_event::kCert);
-        return ec;
-    }
-
-    auto hs_keys = tls_key_schedule::derive_handshake_keys(shared, trans_.finish(), suite->md, ec);
-    if (ec)
-    {
-        LOG_CTX_ERROR(ctx_, "{} derive keys failed", mux::log_event::kCert);
-        return ec;
-    }
-
-    auto s_hs_keys = tls_key_schedule::derive_traffic_keys(hs_keys.server_handshake_traffic_secret, ec, suite->key_len, iv_len, suite->md);
-
-    negotiated_cipher_ = suite->cipher;
-    dec_key_ = s_hs_keys.first;
-    dec_iv_ = s_hs_keys.second;
-
-    return std::error_code{};
+    return derive_server_record_protection(sh_real, *suite, trans_, client_private_, ctx_, negotiated_cipher_, dec_key_, dec_iv_);
 }
 
 asio::awaitable<std::pair<std::error_code, std::vector<std::uint8_t>>> cert_fetcher::fetch_session::read_record_plaintext()
@@ -427,20 +467,21 @@ asio::awaitable<std::pair<std::error_code, std::vector<std::uint8_t>>> cert_fetc
 asio::awaitable<std::pair<std::uint8_t, std::span<std::uint8_t>>> cert_fetcher::fetch_session::read_record(std::vector<std::uint8_t>& pt_buf,
                                                                                                            std::error_code& out_ec)
 {
+    out_ec.clear();
     std::uint8_t head[5];
     auto [ec, n] = co_await asio::async_read(socket_, asio::buffer(head), asio::as_tuple(asio::use_awaitable));
     if (ec)
     {
         out_ec = ec;
-        co_return std::make_pair(0, std::span<std::uint8_t>{});
+        co_return empty_record_result();
     }
 
     const std::uint16_t len = (head[3] << 8) | head[4];
 
-    if (len > 18432)
+    if (len > kMaxEncryptedRecordLen)
     {
         out_ec = std::make_error_code(std::errc::message_size);
-        co_return std::make_pair(0, std::span<std::uint8_t>{});
+        co_return empty_record_result();
     }
 
     std::vector<std::uint8_t> rec(len);
@@ -448,45 +489,38 @@ asio::awaitable<std::pair<std::uint8_t, std::span<std::uint8_t>>> cert_fetcher::
     if (ec2)
     {
         out_ec = ec2;
-        co_return std::make_pair(0, std::span<std::uint8_t>{});
+        co_return empty_record_result();
     }
 
-    if (head[0] == kContentTypeChangeCipherSpec)
+    switch (head[0])
     {
-        if (pt_buf.size() < len)
+        case kContentTypeChangeCipherSpec:
+            co_return copy_plaintext_record(pt_buf, rec);
+
+        case kContentTypeApplicationData:
         {
-            pt_buf.resize(len);
+            auto ciphertext_record = build_encrypted_record_bytes(head, rec);
+
+            std::uint8_t type = 0;
+            const std::uint32_t pt_len = tls_record_layer::decrypt_record(
+                decrypt_ctx_, negotiated_cipher_, dec_key_, dec_iv_, seq_++, ciphertext_record, pt_buf, type, out_ec);
+
+            if (out_ec)
+            {
+                co_return empty_record_result();
+            }
+            co_return std::make_pair(type, std::span<std::uint8_t>(pt_buf.data(), pt_len));
         }
-        std::memcpy(pt_buf.data(), rec.data(), len);
-        co_return std::make_pair(kContentTypeChangeCipherSpec, std::span<std::uint8_t>(pt_buf.data(), len));
+
+        case kContentTypeAlert:
+            LOG_CTX_WARN(ctx_, "{} received plaintext alert", mux::log_event::kCert);
+            out_ec = asio::error::connection_reset;
+            co_return empty_record_result();
+
+        default:
+            out_ec = asio::error::invalid_argument;
+            co_return empty_record_result();
     }
-
-    if (head[0] == kContentTypeApplicationData)
-    {
-        std::vector<std::uint8_t> cth(5 + len);
-        std::memcpy(cth.data(), head, 5);
-        std::memcpy(cth.data() + 5, rec.data(), len);
-
-        std::uint8_t type;
-        const std::uint32_t pt_len =
-            tls_record_layer::decrypt_record(decrypt_ctx_, negotiated_cipher_, dec_key_, dec_iv_, seq_++, cth, pt_buf, type, out_ec);
-
-        if (out_ec)
-        {
-            co_return std::make_pair(0, std::span<std::uint8_t>{});
-        }
-        co_return std::make_pair(type, std::span<std::uint8_t>(pt_buf.data(), pt_len));
-    }
-
-    if (head[0] == kContentTypeAlert)
-    {
-        LOG_CTX_WARN(ctx_, "{} received plaintext alert", mux::log_event::kCert);
-        out_ec = asio::error::connection_reset;
-        co_return std::make_pair(0, std::span<std::uint8_t>{});
-    }
-
-    out_ec = asio::error::invalid_argument;
-    co_return std::make_pair(0, std::span<std::uint8_t>{});
 }
 
 }    // namespace reality
