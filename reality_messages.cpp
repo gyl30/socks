@@ -312,17 +312,10 @@ bool build_padding_ext(std::vector<std::uint8_t>& ext_buffer, std::uint16_t& ext
     return true;
 }
 
-bool build_extension(const std::shared_ptr<extension_blueprint>& ext_ptr,
-                     std::vector<std::uint8_t>& ext_buffer,
-                     std::uint16_t& ext_type,
-                     const extension_build_context& ctx)
+bool build_simple_extension(extension_type type, std::vector<std::uint8_t>& ext_buffer, std::uint16_t& ext_type)
 {
-    switch (ext_ptr->type())
+    switch (type)
     {
-        case extension_type::kGrease:
-            return build_grease_ext(ext_buffer, ext_type, ctx);
-        case extension_type::kSni:
-            return build_sni_ext(ext_buffer, ext_type, ctx);
         case extension_type::kExtendedMasterSecret:
             ext_type = tls_consts::ext::kExtMasterSecret;
             return true;
@@ -330,52 +323,109 @@ bool build_extension(const std::shared_ptr<extension_blueprint>& ext_ptr,
             ext_type = tls_consts::ext::kRenegotiationInfo;
             message_builder::push_u8(ext_buffer, 0x00);
             return true;
-        case extension_type::kSupportedGroups:
-            return build_supported_groups_ext(ext_ptr, ext_buffer, ext_type, ctx);
-        case extension_type::kECPointFormats:
-            return build_ec_point_formats_ext(ext_ptr, ext_buffer, ext_type);
         case extension_type::kSessionTicket:
             ext_type = tls_consts::ext::kSessionTicket;
             return true;
-        case extension_type::kAlpn:
-            return build_alpn_ext(ext_ptr, ext_buffer, ext_type);
-        case extension_type::kStatusRequest:
-            return build_status_request_ext(ext_buffer, ext_type);
-        case extension_type::kSignatureAlgorithms:
-            return build_signature_algorithms_ext(ext_ptr, ext_buffer, ext_type);
         case extension_type::kSct:
             ext_type = tls_consts::ext::kSct;
             return true;
+        case extension_type::kNpn:
+            ext_type = tls_consts::ext::kNpn;
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool build_extension_with_context(const std::shared_ptr<extension_blueprint>& ext_ptr,
+                                  std::vector<std::uint8_t>& ext_buffer,
+                                  std::uint16_t& ext_type,
+                                  const extension_build_context& ctx)
+{
+    switch (ext_ptr->type())
+    {
+        case extension_type::kGrease:
+            return build_grease_ext(ext_buffer, ext_type, ctx);
+        case extension_type::kSni:
+            return build_sni_ext(ext_buffer, ext_type, ctx);
+        case extension_type::kSupportedGroups:
+            return build_supported_groups_ext(ext_ptr, ext_buffer, ext_type, ctx);
         case extension_type::kKeyShare:
             return build_key_share_ext(ext_ptr, ext_buffer, ext_type, ctx);
-        case extension_type::kPSKKeyExchangeModes:
-            return build_psk_key_exchange_modes_ext(ext_ptr, ext_buffer, ext_type);
         case extension_type::kSupportedVersions:
             return build_supported_versions_ext(ext_ptr, ext_buffer, ext_type, ctx);
+        case extension_type::kPadding:
+            return build_padding_ext(ext_buffer, ext_type, ctx);
+        default:
+            return false;
+    }
+}
+
+bool build_extension_without_blueprint(const extension_type type, std::vector<std::uint8_t>& ext_buffer, std::uint16_t& ext_type)
+{
+    switch (type)
+    {
+        case extension_type::kStatusRequest:
+            return build_status_request_ext(ext_buffer, ext_type);
+        case extension_type::kGreaseECH:
+            return build_grease_ech_ext(ext_buffer, ext_type);
+        case extension_type::kPreSharedKey:
+            return build_pre_shared_key_ext(ext_buffer, ext_type);
+        default:
+            return false;
+    }
+}
+
+bool build_extension_from_blueprint(const std::shared_ptr<extension_blueprint>& ext_ptr,
+                                    std::vector<std::uint8_t>& ext_buffer,
+                                    std::uint16_t& ext_type)
+{
+    switch (ext_ptr->type())
+    {
+        case extension_type::kECPointFormats:
+            return build_ec_point_formats_ext(ext_ptr, ext_buffer, ext_type);
+        case extension_type::kAlpn:
+            return build_alpn_ext(ext_ptr, ext_buffer, ext_type);
+        case extension_type::kSignatureAlgorithms:
+            return build_signature_algorithms_ext(ext_ptr, ext_buffer, ext_type);
+        case extension_type::kPSKKeyExchangeModes:
+            return build_psk_key_exchange_modes_ext(ext_ptr, ext_buffer, ext_type);
         case extension_type::kCompressCertificate:
             return build_compress_certificate_ext(ext_ptr, ext_buffer, ext_type);
         case extension_type::kApplicationSettings:
             return build_application_settings_ext(ext_ptr, ext_buffer, ext_type);
         case extension_type::kApplicationSettingsNew:
             return build_application_settings_new_ext(ext_ptr, ext_buffer, ext_type);
-        case extension_type::kGreaseECH:
-            return build_grease_ech_ext(ext_buffer, ext_type);
-        case extension_type::kNpn:
-            ext_type = tls_consts::ext::kNpn;
-            return true;
         case extension_type::kChannelID:
             return build_channel_id_ext(ext_ptr, ext_type);
         case extension_type::kDelegatedCredentials:
             return build_delegated_credentials_ext(ext_ptr, ext_buffer, ext_type);
         case extension_type::kRecordSizeLimit:
             return build_record_size_limit_ext(ext_ptr, ext_buffer, ext_type);
-        case extension_type::kPreSharedKey:
-            return build_pre_shared_key_ext(ext_buffer, ext_type);
-        case extension_type::kPadding:
-            return build_padding_ext(ext_buffer, ext_type, ctx);
         default:
             return false;
     }
+}
+
+bool build_extension(const std::shared_ptr<extension_blueprint>& ext_ptr,
+                     std::vector<std::uint8_t>& ext_buffer,
+                     std::uint16_t& ext_type,
+                     const extension_build_context& ctx)
+{
+    const auto type = ext_ptr->type();
+    if (build_simple_extension(type, ext_buffer, ext_type))
+    {
+        return true;
+    }
+    if (build_extension_without_blueprint(type, ext_buffer, ext_type))
+    {
+        return true;
+    }
+    if (build_extension_with_context(ext_ptr, ext_buffer, ext_type, ctx))
+    {
+        return true;
+    }
+    return build_extension_from_blueprint(ext_ptr, ext_buffer, ext_type);
 }
 
 }    // namespace
@@ -820,6 +870,69 @@ std::optional<server_key_share_info> extract_server_key_share(const std::vector<
     return std::nullopt;
 }
 
+struct encrypted_extensions_range
+{
+    std::size_t pos = 0;
+    std::size_t end = 0;
+};
+
+std::optional<encrypted_extensions_range> parse_encrypted_extensions_range(const std::vector<std::uint8_t>& ee_msg)
+{
+    if (ee_msg.size() < 6 || ee_msg[0] != 0x08)
+    {
+        return std::nullopt;
+    }
+
+    const std::size_t ext_len_pos = 4;
+    const std::uint16_t total_ext_len = static_cast<std::uint16_t>((ee_msg[ext_len_pos] << 8) | ee_msg[ext_len_pos + 1]);
+    const std::size_t ext_start = ext_len_pos + 2;
+    const std::size_t ext_end = ext_start + total_ext_len;
+    if (ext_end > ee_msg.size())
+    {
+        return std::nullopt;
+    }
+
+    return encrypted_extensions_range{.pos = ext_start, .end = ext_end};
+}
+
+bool read_extension_header(const std::vector<std::uint8_t>& msg, std::size_t& pos, const std::size_t end, std::uint16_t& type, std::uint16_t& len)
+{
+    if (pos + 4 > end)
+    {
+        return false;
+    }
+    type = static_cast<std::uint16_t>((msg[pos] << 8) | msg[pos + 1]);
+    len = static_cast<std::uint16_t>((msg[pos + 2] << 8) | msg[pos + 3]);
+    pos += 4;
+    if (pos + len > end)
+    {
+        return false;
+    }
+    return true;
+}
+
+std::optional<std::string> parse_alpn_extension_body(const std::vector<std::uint8_t>& ee_msg, const std::size_t pos, const std::uint16_t len)
+{
+    if (len < 3)
+    {
+        return std::nullopt;
+    }
+
+    const std::size_t ext_end = pos + len;
+    const std::uint16_t list_len = static_cast<std::uint16_t>((ee_msg[pos] << 8) | ee_msg[pos + 1]);
+    if (list_len == 0 || pos + 3 > ext_end)
+    {
+        return std::nullopt;
+    }
+
+    const std::uint8_t proto_len = ee_msg[pos + 2];
+    if (pos + 3 + proto_len > ext_end)
+    {
+        return std::nullopt;
+    }
+    return std::string(reinterpret_cast<const char*>(&ee_msg[pos + 3]), proto_len);
+}
+
 std::vector<std::uint8_t> extract_server_public_key(const std::vector<std::uint8_t>& server_hello)
 {
     const auto info = extract_server_key_share(server_hello);
@@ -840,47 +953,29 @@ std::vector<std::uint8_t> extract_server_public_key(const std::vector<std::uint8
 
 std::optional<std::string> extract_alpn_from_encrypted_extensions(const std::vector<std::uint8_t>& ee_msg)
 {
-    if (ee_msg.size() < 6 || ee_msg[0] != 0x08)
+    const auto range = parse_encrypted_extensions_range(ee_msg);
+    if (!range.has_value())
     {
         return std::nullopt;
     }
 
-    std::uint32_t pos = 4;
-    const std::uint16_t total_ext_len = (ee_msg[pos] << 8) | ee_msg[pos + 1];
-    pos += 2;
-
-    const std::size_t end = pos + total_ext_len;
-    if (end > ee_msg.size())
-    {
-        return std::nullopt;
-    }
+    auto pos = range->pos;
+    const auto end = range->end;
 
     while (pos + 4 <= end)
     {
-        const std::uint16_t type = (ee_msg[pos] << 8) | ee_msg[pos + 1];
-        const std::uint16_t len = (ee_msg[pos + 2] << 8) | ee_msg[pos + 3];
-        pos += 4;
-
-        if (pos + len > end)
+        std::uint16_t type = 0;
+        std::uint16_t len = 0;
+        if (!read_extension_header(ee_msg, pos, end, type, len))
         {
             break;
         }
-
         if (type == tls_consts::ext::kAlpn)
         {
-            if (len < 3)
+            const auto alpn = parse_alpn_extension_body(ee_msg, pos, len);
+            if (alpn.has_value())
             {
-                break;
-            }
-
-            const std::uint16_t list_len = (ee_msg[pos] << 8) | ee_msg[pos + 1];
-            if (list_len > 0 && pos + 2 + 1 <= end)
-            {
-                const std::uint8_t proto_len = ee_msg[pos + 2];
-                if (pos + 3 + proto_len <= end)
-                {
-                    return std::string(reinterpret_cast<const char*>(&ee_msg[pos + 3]), proto_len);
-                }
+                return alpn;
             }
         }
         pos += len;
