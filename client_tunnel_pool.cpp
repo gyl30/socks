@@ -516,6 +516,98 @@ handshake_traffic_keys derive_handshake_traffic_keys(const reality::handshake_ke
             reality::tls_key_schedule::derive_traffic_keys(hs_keys.server_handshake_traffic_secret, ec, key_len, iv_len, negotiated_md)};
 }
 
+bool prepare_server_hello_crypto(const std::vector<std::uint8_t>& sh_data,
+                                 reality::transcript& trans,
+                                 std::uint16_t& cipher_suite,
+                                 const EVP_MD*& md,
+                                 const EVP_CIPHER*& cipher,
+                                 std::error_code& ec)
+{
+    trans.update(sh_data);
+    if (!parse_server_hello_cipher_suite(sh_data, cipher_suite, ec))
+    {
+        return false;
+    }
+    const auto [selected_md, selected_cipher] = select_negotiated_suite(cipher_suite);
+    md = selected_md;
+    cipher = selected_cipher;
+    trans.set_protocol_hash(md);
+    return true;
+}
+
+bool derive_server_hello_shared_secret(const std::uint8_t* private_key,
+                                       const std::uint16_t key_share_group,
+                                       const std::vector<std::uint8_t>& key_share_data,
+                                       std::vector<std::uint8_t>& hs_shared,
+                                       std::error_code& ec)
+{
+    if (key_share_group != reality::tls_consts::group::kX25519)
+    {
+        ec = asio::error::no_protocol_option;
+        LOG_ERROR("unsupported key share group {}", key_share_group);
+        return false;
+    }
+    if (key_share_data.size() != 32)
+    {
+        ec = asio::error::invalid_argument;
+        LOG_ERROR("invalid x25519 key share length {}", key_share_data.size());
+        return false;
+    }
+
+    hs_shared = reality::crypto_util::x25519_derive(std::vector<std::uint8_t>(private_key, private_key + 32), key_share_data, ec);
+    if (ec)
+    {
+        LOG_ERROR("handshake shared secret failed {}", ec.message());
+        return false;
+    }
+    return true;
+}
+
+std::pair<bool, std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>> make_handshake_loop_fail_result()
+{
+    return std::make_pair(false, std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>{});
+}
+
+asio::awaitable<bool> process_handshake_record(asio::ip::tcp::socket& socket,
+                                               const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& s_hs_keys,
+                                               reality::transcript& trans,
+                                               const EVP_CIPHER* cipher,
+                                               std::vector<std::uint8_t>& handshake_buffer,
+                                               bool& cert_checked,
+                                               bool& handshake_fin,
+                                               std::uint64_t& seq,
+                                               std::error_code& ec)
+{
+    const auto record = co_await read_encrypted_record(socket, ec);
+    if (!record.has_value())
+    {
+        co_return false;
+    }
+    if (record->content_type == reality::kContentTypeChangeCipherSpec)
+    {
+        LOG_DEBUG("received change cipher spec skip");
+        co_return true;
+    }
+
+    std::uint8_t type = 0;
+    const auto plaintext = reality::tls_record_layer::decrypt_record(cipher, s_hs_keys.first, s_hs_keys.second, seq++, record->ciphertext, type, ec);
+    if (ec)
+    {
+        LOG_ERROR("error decrypting record {}", ec.message());
+        co_return false;
+    }
+    if (type != reality::kContentTypeHandshake)
+    {
+        co_return true;
+    }
+
+    if (!consume_handshake_plaintext(plaintext, handshake_buffer, cert_checked, handshake_fin, trans, ec))
+    {
+        co_return false;
+    }
+    co_return true;
+}
+
 asio::awaitable<std::optional<asio::ip::tcp::resolver::results_type>> resolve_remote_endpoints(asio::io_context& io_context,
                                                                                                  const std::string& remote_host,
                                                                                                  const std::string& remote_port,
@@ -975,17 +1067,13 @@ asio::awaitable<client_tunnel_pool::server_hello_res> client_tunnel_pool::proces
     const auto& sh_data = *sh_data_opt;
     LOG_DEBUG("server hello received size {}", sh_data.size());
 
-    trans.update(sh_data);
-
     std::uint16_t cipher_suite = 0;
-    if (!parse_server_hello_cipher_suite(sh_data, cipher_suite, ec))
+    const EVP_MD* md = nullptr;
+    const EVP_CIPHER* cipher = nullptr;
+    if (!prepare_server_hello_crypto(sh_data, trans, cipher_suite, md, cipher, ec))
     {
         co_return server_hello_res{.ok = false};
     }
-
-    const auto [md, cipher] = select_negotiated_suite(cipher_suite);
-
-    trans.set_protocol_hash(md);
 
     const auto key_share = reality::extract_server_key_share(sh_data);
     LOG_DEBUG("rx server hello size {}", sh_data.size());
@@ -997,30 +1085,17 @@ asio::awaitable<client_tunnel_pool::server_hello_res> client_tunnel_pool::proces
     }
 
     std::vector<std::uint8_t> hs_shared;
-    if (key_share->group == reality::tls_consts::group::kX25519)
+    if (!derive_server_hello_shared_secret(private_key, key_share->group, key_share->data, hs_shared, ec))
     {
-        if (key_share->data.size() != 32)
-        {
-            ec = asio::error::invalid_argument;
-            LOG_ERROR("invalid x25519 key share length {}", key_share->data.size());
-            co_return server_hello_res{.ok = false};
-        }
-        hs_shared = reality::crypto_util::x25519_derive(std::vector<std::uint8_t>(private_key, private_key + 32), key_share->data, ec);
-    }
-    else
-    {
-        ec = asio::error::no_protocol_option;
-        LOG_ERROR("unsupported key share group {}", key_share->group);
-        co_return server_hello_res{.ok = false};
-    }
-
-    if (ec)
-    {
-        LOG_ERROR("handshake shared secret failed {}", ec.message());
         co_return server_hello_res{.ok = false};
     }
 
     auto hs_keys = reality::tls_key_schedule::derive_handshake_keys(hs_shared, trans.finish(), md, ec);
+    if (ec)
+    {
+        LOG_ERROR("derive handshake keys failed {}", ec.message());
+        co_return server_hello_res{.ok = false};
+    }
 
     co_return server_hello_res{.ok = true, .hs_keys = hs_keys, .negotiated_md = md, .negotiated_cipher = cipher, .cipher_suite = cipher_suite};
 }
@@ -1041,37 +1116,18 @@ asio::awaitable<std::pair<bool, std::pair<std::vector<std::uint8_t>, std::vector
 
     while (!handshake_fin)
     {
-        const auto record = co_await read_encrypted_record(socket, ec);
-        if (!record.has_value())
+        if (!co_await process_handshake_record(socket, s_hs_keys, trans, cipher, handshake_buffer, cert_checked, handshake_fin, seq, ec))
         {
-            co_return std::make_pair(false, std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>{});
-        }
-
-        if (record->content_type == reality::kContentTypeChangeCipherSpec)
-        {
-            LOG_DEBUG("received change cipher spec skip");
-            continue;
-        }
-
-        std::uint8_t type = 0;
-        const auto pt =
-            reality::tls_record_layer::decrypt_record(cipher, s_hs_keys.first, s_hs_keys.second, seq++, record->ciphertext, type, ec);
-        if (ec)
-        {
-            LOG_ERROR("error decrypting record {}", ec.message());
-            co_return std::make_pair(false, std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>{});
-        }
-
-        if (type == reality::kContentTypeHandshake)
-        {
-            if (!consume_handshake_plaintext(pt, handshake_buffer, cert_checked, handshake_fin, trans, ec))
-            {
-                co_return std::make_pair(false, std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>{});
-            }
+            co_return make_handshake_loop_fail_result();
         }
     }
 
     const auto app_sec = reality::tls_key_schedule::derive_application_secrets(hs_keys.master_secret, trans.finish(), md, ec);
+    if (ec)
+    {
+        LOG_ERROR("derive app secrets failed {}", ec.message());
+        co_return make_handshake_loop_fail_result();
+    }
     co_return std::make_pair(true, app_sec);
 }
 
