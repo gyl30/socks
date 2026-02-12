@@ -5,6 +5,7 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <atomic>
 #include <system_error>
 
 #include <gtest/gtest.h>
@@ -19,6 +20,52 @@ extern "C"
 #include "cipher_context.h"
 
 using reality::crypto_util;
+
+namespace
+{
+
+std::atomic<bool> g_fail_hkdf_set_key{false};
+std::atomic<bool> g_fail_hkdf_set_salt{false};
+std::atomic<bool> g_fail_set_gcm_tag{false};
+
+void fail_next_hkdf_set_key() { g_fail_hkdf_set_key.store(true, std::memory_order_release); }
+
+void fail_next_hkdf_set_salt() { g_fail_hkdf_set_salt.store(true, std::memory_order_release); }
+
+void fail_next_set_gcm_tag() { g_fail_set_gcm_tag.store(true, std::memory_order_release); }
+
+}    // namespace
+
+extern "C" int __real_EVP_PKEY_CTX_set1_hkdf_key(EVP_PKEY_CTX* ctx, const unsigned char* key, int keylen);
+extern "C" int __real_EVP_PKEY_CTX_set1_hkdf_salt(EVP_PKEY_CTX* ctx, const unsigned char* salt, int saltlen);
+extern "C" int __real_EVP_CIPHER_CTX_ctrl(EVP_CIPHER_CTX* ctx, int type, int arg, void* ptr);
+
+extern "C" int __wrap_EVP_PKEY_CTX_set1_hkdf_key(EVP_PKEY_CTX* ctx, const unsigned char* key, int keylen)
+{
+    if (g_fail_hkdf_set_key.exchange(false, std::memory_order_acq_rel))
+    {
+        return 0;
+    }
+    return __real_EVP_PKEY_CTX_set1_hkdf_key(ctx, key, keylen);
+}
+
+extern "C" int __wrap_EVP_PKEY_CTX_set1_hkdf_salt(EVP_PKEY_CTX* ctx, const unsigned char* salt, int saltlen)
+{
+    if (g_fail_hkdf_set_salt.exchange(false, std::memory_order_acq_rel))
+    {
+        return 0;
+    }
+    return __real_EVP_PKEY_CTX_set1_hkdf_salt(ctx, salt, saltlen);
+}
+
+extern "C" int __wrap_EVP_CIPHER_CTX_ctrl(EVP_CIPHER_CTX* ctx, int type, int arg, void* ptr)
+{
+    if (type == EVP_CTRL_GCM_SET_TAG && g_fail_set_gcm_tag.exchange(false, std::memory_order_acq_rel))
+    {
+        return 0;
+    }
+    return __real_EVP_CIPHER_CTX_ctrl(ctx, type, arg, ptr);
+}
 
 TEST(CryptoUtilTest, HexConversion)
 {
@@ -599,4 +646,42 @@ TEST(CryptoUtilTest, ExtractPubkeyFromCertWithoutPublicKeyInfo)
     auto pub = crypto_util::extract_pubkey_from_cert(der, ec);
     EXPECT_TRUE(ec);
     EXPECT_EQ(pub.get(), nullptr);
+}
+
+TEST(CryptoUtilTest, HKDFExtractSetSaltFailureBranch)
+{
+    std::error_code ec;
+    fail_next_hkdf_set_salt();
+    const auto prk = crypto_util::hkdf_extract(std::vector<std::uint8_t>{0x01}, std::vector<std::uint8_t>{0x02}, EVP_sha256(), ec);
+    EXPECT_EQ(ec, std::errc::protocol_error);
+    EXPECT_TRUE(prk.empty());
+}
+
+TEST(CryptoUtilTest, HKDFExpandSetKeyFailureBranch)
+{
+    std::error_code ec;
+    fail_next_hkdf_set_key();
+    const auto okm = crypto_util::hkdf_expand(std::vector<std::uint8_t>(32, 0x11), std::vector<std::uint8_t>{0x01}, 16, EVP_sha256(), ec);
+    EXPECT_EQ(ec, std::errc::protocol_error);
+    EXPECT_TRUE(okm.empty());
+}
+
+TEST(CryptoUtilTest, AEADDecryptSetTagFailureBranch)
+{
+    std::error_code ec;
+    const std::vector<std::uint8_t> key(32, 0x11);
+    const std::vector<std::uint8_t> nonce(12, 0x22);
+    const std::vector<std::uint8_t> plaintext = {0x41, 0x42, 0x43, 0x44};
+    const std::vector<std::uint8_t> aad = {0x01, 0x02};
+
+    const auto ciphertext = crypto_util::aead_encrypt(EVP_aes_256_gcm(), key, nonce, plaintext, aad, ec);
+    ASSERT_FALSE(ec);
+    ASSERT_EQ(ciphertext.size(), plaintext.size() + 16);
+
+    reality::cipher_context ctx;
+    std::vector<std::uint8_t> out(plaintext.size(), 0);
+    fail_next_set_gcm_tag();
+    const auto n = crypto_util::aead_decrypt(ctx, EVP_aes_256_gcm(), key, nonce, ciphertext, aad, out, ec);
+    EXPECT_EQ(n, 0U);
+    EXPECT_EQ(ec, std::errc::bad_message);
 }
