@@ -26,6 +26,170 @@ extern "C"
 namespace reality
 {
 
+namespace
+{
+
+void normalize_base64_url(std::string& text)
+{
+    for (char& c : text)
+    {
+        if (c == '-')
+        {
+            c = '+';
+        }
+        else if (c == '_')
+        {
+            c = '/';
+        }
+    }
+
+    const std::size_t rem = text.size() % 4;
+    if (rem != 0)
+    {
+        text.append(4 - rem, '=');
+    }
+}
+
+std::size_t base64_real_length(const std::string& padded_input, const std::size_t decoded_len)
+{
+    std::size_t real_len = decoded_len;
+    if (!padded_input.empty() && padded_input.back() == '=')
+    {
+        real_len--;
+    }
+    if (padded_input.size() >= 2 && padded_input[padded_input.size() - 2] == '=')
+    {
+        real_len--;
+    }
+    return real_len;
+}
+
+openssl_ptrs::evp_pkey_ctx_ptr create_hkdf_context(const EVP_MD* md, const int mode, std::error_code& ec)
+{
+    openssl_ptrs::evp_pkey_ctx_ptr ctx(EVP_PKEY_CTX_new_id(EVP_PKEY_HKDF, nullptr));
+    if (ctx == nullptr || EVP_PKEY_derive_init(ctx.get()) <= 0)
+    {
+        ec = std::make_error_code(std::errc::not_enough_memory);
+        return nullptr;
+    }
+
+    if (EVP_PKEY_CTX_set_hkdf_md(ctx.get(), md) <= 0 || EVP_PKEY_CTX_set_hkdf_mode(ctx.get(), mode) <= 0)
+    {
+        ec = std::make_error_code(std::errc::protocol_error);
+        return nullptr;
+    }
+    return ctx;
+}
+
+bool set_hkdf_key_material(const openssl_ptrs::evp_pkey_ctx_ptr& ctx, const std::vector<std::uint8_t>& key, std::error_code& ec)
+{
+    if (key.empty())
+    {
+        ec = std::make_error_code(std::errc::invalid_argument);
+        return false;
+    }
+    if (EVP_PKEY_CTX_set1_hkdf_key(ctx.get(), key.data(), static_cast<int>(key.size())) <= 0)
+    {
+        ec = std::make_error_code(std::errc::protocol_error);
+        return false;
+    }
+    return true;
+}
+
+bool set_optional_hkdf_salt(const openssl_ptrs::evp_pkey_ctx_ptr& ctx, const std::vector<std::uint8_t>& salt, std::error_code& ec)
+{
+    if (salt.empty())
+    {
+        return true;
+    }
+    if (EVP_PKEY_CTX_set1_hkdf_salt(ctx.get(), salt.data(), static_cast<int>(salt.size())) <= 0)
+    {
+        ec = std::make_error_code(std::errc::protocol_error);
+        return false;
+    }
+    return true;
+}
+
+bool validate_aead_decrypt_inputs(const EVP_CIPHER* cipher,
+                                  const std::vector<std::uint8_t>& key,
+                                  const std::span<const std::uint8_t> nonce,
+                                  const std::span<const std::uint8_t> ciphertext,
+                                  const std::span<std::uint8_t> output_buffer,
+                                  std::size_t& plaintext_len,
+                                  std::error_code& ec)
+{
+    if (key.size() != static_cast<std::size_t>(EVP_CIPHER_key_length(cipher)))
+    {
+        ec = std::make_error_code(std::errc::invalid_argument);
+        return false;
+    }
+    if (nonce.size() != 12)
+    {
+        ec = std::make_error_code(std::errc::invalid_argument);
+        return false;
+    }
+    if (ciphertext.size() < kAeadTagSize)
+    {
+        ec = std::make_error_code(std::errc::message_size);
+        return false;
+    }
+
+    plaintext_len = ciphertext.size() - kAeadTagSize;
+    if (output_buffer.size() < plaintext_len)
+    {
+        ec = std::make_error_code(std::errc::no_buffer_space);
+        return false;
+    }
+    return true;
+}
+
+bool apply_aead_tag(const cipher_context& ctx, const std::span<const std::uint8_t> ciphertext, const std::size_t plaintext_len, std::error_code& ec)
+{
+    const std::uint8_t* tag = ciphertext.data() + plaintext_len;
+    if (EVP_CIPHER_CTX_ctrl(ctx.get(), EVP_CTRL_GCM_SET_TAG, kAeadTagSize, const_cast<void*>(static_cast<const void*>(tag))) != 1)
+    {
+        ec = std::make_error_code(std::errc::bad_message);
+        return false;
+    }
+    return true;
+}
+
+bool decrypt_aead_payload(const cipher_context& ctx,
+                          const std::span<const std::uint8_t> aad,
+                          const std::span<const std::uint8_t> ciphertext,
+                          const std::size_t plaintext_len,
+                          const std::span<std::uint8_t> output_buffer,
+                          std::size_t& out_len,
+                          std::error_code& ec)
+{
+    int update_len = 0;
+    int plaintext_update_len = 0;
+
+    if (!aad.empty() && EVP_DecryptUpdate(ctx.get(), nullptr, &update_len, aad.data(), static_cast<int>(aad.size())) != 1)
+    {
+        ec = std::make_error_code(std::errc::bad_message);
+        return false;
+    }
+
+    if (EVP_DecryptUpdate(ctx.get(), output_buffer.data(), &plaintext_update_len, ciphertext.data(), static_cast<int>(plaintext_len)) != 1)
+    {
+        ec = std::make_error_code(std::errc::bad_message);
+        return false;
+    }
+
+    int final_len = 0;
+    if (EVP_DecryptFinal_ex(ctx.get(), output_buffer.data() + plaintext_update_len, &final_len) <= 0)
+    {
+        ec = std::make_error_code(std::errc::bad_message);
+        return false;
+    }
+
+    out_len = static_cast<std::size_t>(plaintext_update_len) + static_cast<std::size_t>(final_len);
+    return true;
+}
+
+}    // namespace
+
 std::string crypto_util::bytes_to_hex(const std::vector<std::uint8_t>& bytes)
 {
     std::ostringstream oss;
@@ -58,23 +222,7 @@ bool crypto_util::base64_url_decode(const std::string& input, std::vector<std::u
     }
 
     std::string tmp = input;
-    for (char& c : tmp)
-    {
-        if (c == '-')
-        {
-            c = '+';
-        }
-        else if (c == '_')
-        {
-            c = '/';
-        }
-    }
-
-    const std::size_t rem = tmp.size() % 4;
-    if (rem != 0)
-    {
-        tmp.append(4 - rem, '=');
-    }
+    normalize_base64_url(tmp);
 
     out.resize((tmp.size() / 4) * 3);
     const int len = EVP_DecodeBlock(out.data(), reinterpret_cast<const unsigned char*>(tmp.data()), static_cast<int>(tmp.size()));
@@ -84,16 +232,7 @@ bool crypto_util::base64_url_decode(const std::string& input, std::vector<std::u
         return false;
     }
 
-    std::size_t real_len = static_cast<std::size_t>(len);
-    if (!tmp.empty() && tmp.back() == '=')
-    {
-        real_len--;
-    }
-    if (tmp.size() >= 2 && tmp[tmp.size() - 2] == '=')
-    {
-        real_len--;
-    }
-
+    const std::size_t real_len = base64_real_length(tmp, static_cast<std::size_t>(len));
     if (real_len > out.size())
     {
         out.clear();
@@ -238,38 +377,19 @@ std::vector<std::uint8_t> crypto_util::hkdf_extract(const std::vector<std::uint8
                                                     const EVP_MD* md,
                                                     std::error_code& ec)
 {
-    const openssl_ptrs::evp_pkey_ctx_ptr evp_pkey_ctx(EVP_PKEY_CTX_new_id(EVP_PKEY_HKDF, nullptr));
-    if (evp_pkey_ctx == nullptr || EVP_PKEY_derive_init(evp_pkey_ctx.get()) <= 0)
+    const auto evp_pkey_ctx = create_hkdf_context(md, EVP_PKEY_HKDEF_MODE_EXTRACT_ONLY, ec);
+    if (evp_pkey_ctx == nullptr)
     {
-        ec = std::make_error_code(std::errc::not_enough_memory);
         return {};
     }
 
-    if (EVP_PKEY_CTX_set_hkdf_md(evp_pkey_ctx.get(), md) <= 0 ||
-        EVP_PKEY_CTX_set_hkdf_mode(evp_pkey_ctx.get(), EVP_PKEY_HKDEF_MODE_EXTRACT_ONLY) <= 0)
+    if (!set_optional_hkdf_salt(evp_pkey_ctx, salt, ec))
     {
-        ec = std::make_error_code(std::errc::protocol_error);
         return {};
     }
 
-    if (!salt.empty())
+    if (!set_hkdf_key_material(evp_pkey_ctx, ikm, ec))
     {
-        if (EVP_PKEY_CTX_set1_hkdf_salt(evp_pkey_ctx.get(), salt.data(), static_cast<int>(salt.size())) <= 0)
-        {
-            ec = std::make_error_code(std::errc::protocol_error);
-            return {};
-        }
-    }
-
-    if (ikm.empty())
-    {
-        ec = std::make_error_code(std::errc::invalid_argument);
-        return {};
-    }
-
-    if (EVP_PKEY_CTX_set1_hkdf_key(evp_pkey_ctx.get(), ikm.data(), static_cast<int>(ikm.size())) <= 0)
-    {
-        ec = std::make_error_code(std::errc::protocol_error);
         return {};
     }
 
@@ -288,35 +408,26 @@ std::vector<std::uint8_t> crypto_util::hkdf_extract(const std::vector<std::uint8
 std::vector<std::uint8_t> crypto_util::hkdf_expand(
     const std::vector<std::uint8_t>& prk, const std::vector<std::uint8_t>& info, const std::size_t len, const EVP_MD* md, std::error_code& ec)
 {
-    const openssl_ptrs::evp_pkey_ctx_ptr evp_pkey_ctx(EVP_PKEY_CTX_new_id(EVP_PKEY_HKDF, nullptr));
-    if (evp_pkey_ctx == nullptr || EVP_PKEY_derive_init(evp_pkey_ctx.get()) <= 0)
-    {
-        ec = std::make_error_code(std::errc::not_enough_memory);
-        return {};
-    }
-
-    if (EVP_PKEY_CTX_set_hkdf_md(evp_pkey_ctx.get(), md) <= 0 || EVP_PKEY_CTX_set_hkdf_mode(evp_pkey_ctx.get(), EVP_PKEY_HKDEF_MODE_EXPAND_ONLY) <= 0)
-    {
-        ec = std::make_error_code(std::errc::protocol_error);
-        return {};
-    }
-
-    if (prk.empty())
-    {
-        ec = std::make_error_code(std::errc::invalid_argument);
-        return {};
-    }
-
-    if (EVP_PKEY_CTX_set1_hkdf_key(evp_pkey_ctx.get(), prk.data(), static_cast<int>(prk.size())) <= 0 ||
-        EVP_PKEY_CTX_add1_hkdf_info(evp_pkey_ctx.get(), info.data(), static_cast<int>(info.size())) <= 0)
-    {
-        ec = std::make_error_code(std::errc::protocol_error);
-        return {};
-    }
-
     if (len == 0)
     {
         ec.clear();
+        return {};
+    }
+
+    const auto evp_pkey_ctx = create_hkdf_context(md, EVP_PKEY_HKDEF_MODE_EXPAND_ONLY, ec);
+    if (evp_pkey_ctx == nullptr)
+    {
+        return {};
+    }
+
+    if (!set_hkdf_key_material(evp_pkey_ctx, prk, ec))
+    {
+        return {};
+    }
+
+    if (EVP_PKEY_CTX_add1_hkdf_info(evp_pkey_ctx.get(), info.data(), static_cast<int>(info.size())) <= 0)
+    {
+        ec = std::make_error_code(std::errc::protocol_error);
         return {};
     }
 
@@ -361,26 +472,9 @@ std::size_t crypto_util::aead_decrypt(const cipher_context& ctx,
                                       const std::span<std::uint8_t> output_buffer,
                                       std::error_code& ec)
 {
-    if (key.size() != static_cast<std::size_t>(EVP_CIPHER_key_length(cipher)))
+    std::size_t pt_len = 0;
+    if (!validate_aead_decrypt_inputs(cipher, key, nonce, ciphertext, output_buffer, pt_len, ec))
     {
-        ec = std::make_error_code(std::errc::invalid_argument);
-        return 0;
-    }
-    if (nonce.size() != 12)
-    {
-        ec = std::make_error_code(std::errc::invalid_argument);
-        return 0;
-    }
-    if (ciphertext.size() < kAeadTagSize)
-    {
-        ec = std::make_error_code(std::errc::message_size);
-        return 0;
-    }
-
-    const std::size_t pt_len = ciphertext.size() - kAeadTagSize;
-    if (output_buffer.size() < pt_len)
-    {
-        ec = std::make_error_code(std::errc::no_buffer_space);
         return 0;
     }
 
@@ -390,41 +484,19 @@ std::size_t crypto_util::aead_decrypt(const cipher_context& ctx,
         return 0;
     }
 
-    int out_len = 0;
-    int len = 0;
-
-    const std::uint8_t* tag = ciphertext.data() + pt_len;
-
-    if (EVP_CIPHER_CTX_ctrl(ctx.get(), EVP_CTRL_GCM_SET_TAG, kAeadTagSize, const_cast<void*>(static_cast<const void*>(tag))) != 1)
+    if (!apply_aead_tag(ctx, ciphertext, pt_len, ec))
     {
-        ec = std::make_error_code(std::errc::bad_message);
         return 0;
     }
 
-    if (!aad.empty())
+    std::size_t out_len = 0;
+    if (!decrypt_aead_payload(ctx, aad, ciphertext, pt_len, output_buffer, out_len, ec))
     {
-        if (EVP_DecryptUpdate(ctx.get(), nullptr, &len, aad.data(), static_cast<int>(aad.size())) != 1)
-        {
-            ec = std::make_error_code(std::errc::bad_message);
-            return 0;
-        }
-    }
-
-    if (EVP_DecryptUpdate(ctx.get(), output_buffer.data(), &out_len, ciphertext.data(), static_cast<int>(pt_len)) != 1)
-    {
-        ec = std::make_error_code(std::errc::bad_message);
-        return 0;
-    }
-
-    int final_len = 0;
-    if (EVP_DecryptFinal_ex(ctx.get(), output_buffer.data() + out_len, &final_len) <= 0)
-    {
-        ec = std::make_error_code(std::errc::bad_message);
         return 0;
     }
 
     ec.clear();
-    return static_cast<std::size_t>(out_len) + static_cast<std::size_t>(final_len);
+    return out_len;
 }
 
 std::vector<std::uint8_t> crypto_util::aead_decrypt(const EVP_CIPHER* cipher,
