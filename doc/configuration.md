@@ -40,8 +40,15 @@
   - 可选值：`random`、`chrome`、`firefox`、`ios`、`android`（分别映射到 `chrome_120` / `firefox_120` / `ios_14` / `android_11_okhttp`）。
 - `reality.dest`：回落目标（格式 `host:port`）。
 - `reality.type`：回落网络类型（默认 `tcp`）。
+- `reality.strict_cert_verify`：是否严格校验证书签名（默认 `true`，生产应保持开启）。
 - `reality.private_key` / `reality.public_key`：REALITY 密钥对。
 - `reality.short_id`：短 ID。
+- `reality.fallback_guard.enabled`：是否启用 fallback 防护（默认 `true`）。
+- `reality.fallback_guard.rate_per_sec`：每 IP 每秒允许 fallback 次数（默认 `2`）。
+- `reality.fallback_guard.burst`：每 IP 令牌桶突发上限（默认 `10`）。
+- `reality.fallback_guard.circuit_fail_threshold`：触发熔断前连续失败次数（默认 `5`）。
+- `reality.fallback_guard.circuit_open_sec`：熔断持续秒数（默认 `30`）。
+- `reality.fallback_guard.state_ttl_sec`：fallback 防护状态保留秒数（默认 `600`）。
 
 ## 监控
 

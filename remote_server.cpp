@@ -1,4 +1,5 @@
 #include <ctime>
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -38,6 +39,7 @@ extern "C"
 #include "protocol.h"
 #include "ch_parser.h"
 #include "constants.h"
+#include "statistics.h"
 #include "mux_codec.h"
 #include "mux_tunnel.h"
 #include "crypto_util.h"
@@ -317,6 +319,7 @@ bool build_auth_decrypt_inputs(const client_hello_info& info,
 
 bool verify_auth_payload_fields(const std::optional<reality::auth_payload>& auth,
                                 const std::vector<std::uint8_t>& short_id_bytes,
+                                const std::string& sni,
                                 const connection_context& ctx)
 {
     if (!auth.has_value())
@@ -331,13 +334,17 @@ bool verify_auth_payload_fields(const std::optional<reality::auth_payload>& auth
 
     if (CRYPTO_memcmp(auth->short_id.data(), short_id_bytes.data(), short_id_bytes.size()) != 0)
     {
+        auto& stats = statistics::instance();
+        stats.inc_auth_failures();
+        stats.inc_auth_short_id_failures();
+        stats.inc_handshake_failure_by_sni(statistics::handshake_failure_reason::kShortId, sni);
         LOG_CTX_WARN(ctx, "{} auth fail short id mismatch", log_event::kAuth);
         return false;
     }
     return true;
 }
 
-bool verify_auth_timestamp(const std::uint32_t timestamp, const connection_context& ctx)
+bool verify_auth_timestamp(const std::uint32_t timestamp, const std::string& sni, const connection_context& ctx)
 {
     const auto now_tp = std::chrono::system_clock::now();
     const auto ts_tp = std::chrono::system_clock::time_point(std::chrono::seconds(timestamp));
@@ -346,6 +353,10 @@ bool verify_auth_timestamp(const std::uint32_t timestamp, const connection_conte
     const auto max_diff = std::chrono::seconds(constants::auth::kMaxClockSkewSec);
     if (diff > max_diff)
     {
+        auto& stats = statistics::instance();
+        stats.inc_auth_failures();
+        stats.inc_auth_clock_skew_failures();
+        stats.inc_handshake_failure_by_sni(statistics::handshake_failure_reason::kClockSkew, sni);
         LOG_CTX_WARN(ctx, "{} clock skew too large diff {}s", log_event::kAuth, diff_sec);
         return false;
     }
@@ -516,10 +527,14 @@ std::optional<reality::auth_payload> decrypt_auth_payload(const client_hello_inf
     return reality::parse_auth_payload(pt);
 }
 
-bool verify_replay_guard(replay_cache& replay_cache, const std::vector<std::uint8_t>& session_id, const connection_context& ctx)
+bool verify_replay_guard(replay_cache& replay_cache, const std::vector<std::uint8_t>& session_id, const std::string& sni, const connection_context& ctx)
 {
     if (!replay_cache.check_and_insert(session_id))
     {
+        auto& stats = statistics::instance();
+        stats.inc_auth_failures();
+        stats.inc_auth_replay_failures();
+        stats.inc_handshake_failure_by_sni(statistics::handshake_failure_reason::kReplay, sni);
         LOG_CTX_WARN(ctx, "{} replay attack detected", log_event::kAuth);
         return false;
     }
@@ -617,6 +632,7 @@ bool verify_client_finished_plaintext(const std::vector<std::uint8_t>& plaintext
 {
     if (content_type != reality::kContentTypeHandshake || plaintext.size() < 4 || plaintext[0] != 0x14)
     {
+        statistics::instance().inc_client_finished_failures();
         LOG_CTX_ERROR(ctx, "{} client finished verification failed type {}", log_event::kHandshake, static_cast<int>(content_type));
         return false;
     }
@@ -624,11 +640,13 @@ bool verify_client_finished_plaintext(const std::vector<std::uint8_t>& plaintext
     const std::uint32_t msg_len = (plaintext[1] << 16) | (plaintext[2] << 8) | plaintext[3];
     if (msg_len != expected_verify.size() || plaintext.size() != 4 + msg_len)
     {
+        statistics::instance().inc_client_finished_failures();
         LOG_CTX_ERROR(ctx, "{} client finished length invalid {}", log_event::kHandshake, plaintext.size());
         return false;
     }
     if (CRYPTO_memcmp(plaintext.data() + 4, expected_verify.data(), expected_verify.size()) != 0)
     {
+        statistics::instance().inc_client_finished_failures();
         LOG_CTX_ERROR(ctx, "{} client finished hmac verification failed", log_event::kHandshake);
         return false;
     }
@@ -672,8 +690,7 @@ asio::awaitable<void> handle_fallback_without_target(const std::shared_ptr<asio:
                                                      asio::io_context& io_context)
 {
     LOG_CTX_INFO(ctx, "{} no target sni {}", log_event::kFallback, sni.empty() ? "empty" : sni);
-    using asio::experimental::awaitable_operators::operator||;
-    co_await (fallback_failed_drain(socket) || fallback_wait_random_timer(ctx.conn_id(), io_context));
+    co_await fallback_wait_random_timer(ctx.conn_id(), io_context);
     close_fallback_socket(socket, ctx);
     LOG_CTX_INFO(ctx, "{} done", log_event::kFallback);
 }
@@ -727,6 +744,7 @@ remote_server::remote_server(io_context_pool& pool, const config& cfg)
     : io_context_(pool.get_io_context()),
       acceptor_(io_context_),
       fallbacks_(cfg.fallbacks),
+      fallback_guard_config_(cfg.reality.fallback_guard),
       timeout_config_(cfg.timeout),
       limits_config_(cfg.limits),
       heartbeat_config_(cfg.heartbeat)
@@ -887,7 +905,7 @@ bool remote_server::init_handshake_transcript(const std::vector<std::uint8_t>& i
 asio::awaitable<remote_server::server_handshake_res> remote_server::delay_and_fallback(std::shared_ptr<asio::ip::tcp::socket> s,
                                                                                         const std::vector<std::uint8_t>& initial_buf,
                                                                                         const connection_context& ctx,
-                                                                                        const std::string& client_sni) const
+                                                                                        const std::string& client_sni)
 {
     static thread_local std::mt19937 delay_gen(std::random_device{}());
     std::uniform_int_distribution<std::uint32_t> delay_dist(10, 50);
@@ -1236,16 +1254,16 @@ bool remote_server::authenticate_client(const client_hello_info& info, const std
         return false;
     }
 
-    if (!verify_auth_payload_fields(auth, short_id_bytes_, ctx))
+    if (!verify_auth_payload_fields(auth, short_id_bytes_, info.sni, ctx))
     {
         return false;
     }
-    if (!verify_auth_timestamp(auth->timestamp, ctx))
+    if (!verify_auth_timestamp(auth->timestamp, info.sni, ctx))
     {
         return false;
     }
 
-    return verify_replay_guard(replay_cache_, info.session_id, ctx);
+    return verify_replay_guard(replay_cache_, info.session_id, info.sni, ctx);
 }
 
 asio::awaitable<remote_server::server_handshake_res> remote_server::perform_handshake_response(std::shared_ptr<asio::ip::tcp::socket> s,
@@ -1434,6 +1452,7 @@ asio::awaitable<bool> remote_server::verify_client_finished(std::shared_ptr<asio
     const auto plaintext = reality::tls_record_layer::decrypt_record(cipher, c_hs_keys.first, c_hs_keys.second, 0, record, ctype, ec);
     if (ec)
     {
+        statistics::instance().inc_client_finished_failures();
         LOG_CTX_ERROR(ctx, "{} client finished decrypt failed {}", log_event::kHandshake, ec.message());
         co_return false;
     }
@@ -1442,6 +1461,7 @@ asio::awaitable<bool> remote_server::verify_client_finished(std::shared_ptr<asio
         reality::tls_key_schedule::compute_finished_verify_data(hs_keys.client_handshake_traffic_secret, trans.finish(), md, ec);
     if (ec)
     {
+        statistics::instance().inc_client_finished_failures();
         LOG_CTX_ERROR(ctx, "{} client finished verify data failed {}", log_event::kHandshake, ec.message());
         co_return false;
     }
@@ -1497,15 +1517,121 @@ asio::awaitable<void> remote_server::fallback_failed(const std::shared_ptr<asio:
     ignore = s->shutdown(asio::ip::tcp::socket::shutdown_receive, ignore);
 }
 
+std::string remote_server::fallback_guard_key(const connection_context& ctx) const
+{
+    if (!ctx.remote_addr().empty())
+    {
+        return ctx.remote_addr();
+    }
+    return "unknown";
+}
+
+void remote_server::cleanup_fallback_guard_state_locked(const std::chrono::steady_clock::time_point& now)
+{
+    const auto ttl_seconds = std::max<std::uint32_t>(1, fallback_guard_config_.state_ttl_sec);
+    const auto ttl = std::chrono::seconds(ttl_seconds);
+    std::erase_if(fallback_guard_states_,
+                  [&](const auto& kv)
+                  { return now - kv.second.last_seen > ttl; });
+}
+
+bool remote_server::consume_fallback_token(const connection_context& ctx)
+{
+    if (!fallback_guard_config_.enabled)
+    {
+        return true;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    std::lock_guard<std::mutex> lock(fallback_guard_mu_);
+    cleanup_fallback_guard_state_locked(now);
+
+    auto& state = fallback_guard_states_[fallback_guard_key(ctx)];
+    if (state.tokens == 0 && state.last_seen.time_since_epoch().count() == 0)
+    {
+        state.tokens = static_cast<double>(fallback_guard_config_.burst);
+        state.last_refill = now;
+    }
+
+    const auto rate_per_sec = static_cast<double>(fallback_guard_config_.rate_per_sec);
+    if (rate_per_sec > 0)
+    {
+        const auto elapsed = std::chrono::duration<double>(now - state.last_refill).count();
+        if (elapsed > 0)
+        {
+            const auto burst = static_cast<double>(fallback_guard_config_.burst);
+            state.tokens = std::min(burst, state.tokens + elapsed * rate_per_sec);
+            state.last_refill = now;
+        }
+    }
+    state.last_seen = now;
+
+    if (state.circuit_open_until > now)
+    {
+        statistics::instance().inc_fallback_rate_limited();
+        return false;
+    }
+
+    if (state.tokens < 1.0)
+    {
+        statistics::instance().inc_fallback_rate_limited();
+        return false;
+    }
+
+    state.tokens -= 1.0;
+    return true;
+}
+
+void remote_server::record_fallback_result(const connection_context& ctx, const bool success)
+{
+    if (!fallback_guard_config_.enabled)
+    {
+        return;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    std::lock_guard<std::mutex> lock(fallback_guard_mu_);
+    auto it = fallback_guard_states_.find(fallback_guard_key(ctx));
+    if (it == fallback_guard_states_.end())
+    {
+        return;
+    }
+
+    auto& state = it->second;
+    state.last_seen = now;
+    if (success)
+    {
+        state.consecutive_failures = 0;
+        return;
+    }
+
+    state.consecutive_failures++;
+    if (fallback_guard_config_.circuit_fail_threshold > 0 && state.consecutive_failures >= fallback_guard_config_.circuit_fail_threshold)
+    {
+        const auto open_sec = std::max<std::uint32_t>(1, fallback_guard_config_.circuit_open_sec);
+        state.circuit_open_until = now + std::chrono::seconds(open_sec);
+        state.consecutive_failures = 0;
+    }
+}
+
 asio::awaitable<void> remote_server::handle_fallback(const std::shared_ptr<asio::ip::tcp::socket>& s,
                                                      const std::vector<std::uint8_t>& buf,
                                                      const connection_context& ctx,
-                                                     const std::string& sni) const
+                                                     const std::string& sni)
 {
+    if (!consume_fallback_token(ctx))
+    {
+        LOG_CTX_WARN(ctx, "{} blocked by fallback guard", log_event::kFallback);
+        co_await fallback_wait_random_timer(ctx.conn_id(), io_context_);
+        close_fallback_socket(s, ctx);
+        co_return;
+    }
+
     const auto fallback_target = find_fallback_target_by_sni(sni);
     if (fallback_target.first.empty())
     {
         co_await handle_fallback_without_target(s, ctx, sni, io_context_);
+        record_fallback_result(ctx, false);
         co_return;
     }
 
@@ -1515,15 +1641,18 @@ asio::awaitable<void> remote_server::handle_fallback(const std::shared_ptr<asio:
     LOG_CTX_INFO(ctx, "{} proxying sni {} to {} {}", log_event::kFallback, sni, target_host, target_port);
     if (!co_await resolve_and_connect_fallback_target(t, io_context_, target_host, target_port, ctx))
     {
+        record_fallback_result(ctx, false);
         co_return;
     }
     if (!co_await write_fallback_initial_buffer(t, buf, ctx))
     {
+        record_fallback_result(ctx, false);
         co_return;
     }
 
     using asio::experimental::awaitable_operators::operator&&;
     co_await (proxy_half(s, t) && proxy_half(t, s));
+    record_fallback_result(ctx, true);
     LOG_CTX_INFO(ctx, "{} session finished", log_event::kFallback);
 }
 

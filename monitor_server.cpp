@@ -8,6 +8,31 @@
 namespace mux
 {
 
+namespace
+{
+
+std::string escape_prometheus_label(std::string value)
+{
+    std::string out;
+    out.reserve(value.size());
+    for (const char c : value)
+    {
+        if (c == '\\' || c == '"')
+        {
+            out.push_back('\\');
+        }
+        if (c == '\n')
+        {
+            out.append("\\n");
+            continue;
+        }
+        out.push_back(c);
+    }
+    return out;
+}
+
+}    // namespace
+
 class monitor_session : public std::enable_shared_from_this<monitor_session>
 {
    public:
@@ -80,7 +105,24 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
         ss << "socks_bytes_read_total " << stats.bytes_read() << "\n";
         ss << "socks_bytes_written_total " << stats.bytes_written() << "\n";
         ss << "socks_auth_failures_total " << stats.auth_failures() << "\n";
+        ss << "socks_auth_short_id_failures_total " << stats.auth_short_id_failures() << "\n";
+        ss << "socks_auth_clock_skew_failures_total " << stats.auth_clock_skew_failures() << "\n";
+        ss << "socks_auth_replay_failures_total " << stats.auth_replay_failures() << "\n";
+        ss << "socks_cert_verify_failures_total " << stats.cert_verify_failures() << "\n";
+        ss << "socks_client_finished_failures_total " << stats.client_finished_failures() << "\n";
+        ss << "socks_fallback_rate_limited_total " << stats.fallback_rate_limited() << "\n";
         ss << "socks_routing_blocked_total " << stats.routing_blocked() << "\n";
+        const auto handshake_failure_sni_metrics = stats.handshake_failure_sni_metrics();
+        for (const auto& metric : handshake_failure_sni_metrics)
+        {
+            ss << "socks_handshake_failures_by_sni_total{reason=\""
+               << escape_prometheus_label(metric.reason)
+               << "\",sni=\""
+               << escape_prometheus_label(metric.sni)
+               << "\"} "
+               << metric.count
+               << "\n";
+        }
 
         response_ = ss.str();
 
