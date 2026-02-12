@@ -19,6 +19,7 @@
 #include <asio/cancellation_signal.hpp>
 
 #include "mux_codec.h"
+#include "protocol.h"
 #include "crypto_util.h"
 #include "context_pool.h"
 #include "socks_client.h"
@@ -90,6 +91,31 @@ static asio::awaitable<void> run_udp_echo_server(std::shared_ptr<asio::ip::udp::
             break;
         }
     }
+}
+
+static std::uint16_t pick_free_tcp_port(asio::io_context& io_context)
+{
+    asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    return acceptor.local_endpoint().port();
+}
+
+static bool wait_for_tcp_port(const std::uint16_t port, const int attempts = 60)
+{
+    for (int i = 0; i < attempts; ++i)
+    {
+        asio::io_context io_context;
+        asio::ip::tcp::socket socket(io_context);
+        std::error_code ec;
+        socket.connect(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), port), ec);
+        if (!ec)
+        {
+            std::error_code ignore;
+            socket.close(ignore);
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    return false;
 }
 
 TEST_F(udp_integration_test, UdpAssociateAndEcho)
@@ -324,4 +350,171 @@ TEST_F(udp_integration_test, UdpAssociateAndEcho)
 
     EXPECT_TRUE(test_passed.load());
     EXPECT_FALSE(test_failed.load());
+}
+
+TEST_F(udp_integration_test, UdpAssociateIgnoresFragmentedPacketAndKeepsSessionAlive)
+{
+    std::error_code ec;
+    io_context_pool pool(4, ec);
+    ASSERT_FALSE(ec);
+
+    const auto server_port = pick_free_tcp_port(pool.get_io_context());
+    const auto local_socks_port = pick_free_tcp_port(pool.get_io_context());
+    const std::string sni = "www.google.com";
+
+    mux::config server_cfg;
+    server_cfg.inbound.host = "127.0.0.1";
+    server_cfg.inbound.port = server_port;
+    server_cfg.reality.private_key = server_priv_key();
+    server_cfg.reality.short_id = short_id();
+    server_cfg.timeout.read = 10;
+    server_cfg.timeout.write = 10;
+    server_cfg.timeout.idle = 10;
+    auto server = std::make_shared<remote_server>(pool, server_cfg);
+    const auto dummy_cert = reality::construct_certificate({0x01, 0x02, 0x03});
+    reality::server_fingerprint dummy_fp;
+    server->set_certificate(sni, dummy_cert, dummy_fp);
+    server->start();
+
+    mux::config client_cfg;
+    client_cfg.outbound.host = "127.0.0.1";
+    client_cfg.outbound.port = server_port;
+    client_cfg.socks.port = local_socks_port;
+    client_cfg.reality.public_key = client_pub_key();
+    client_cfg.reality.sni = sni;
+    client_cfg.reality.short_id = short_id();
+    client_cfg.reality.strict_cert_verify = false;
+    client_cfg.timeout.read = 10;
+    client_cfg.timeout.write = 10;
+    client_cfg.timeout.idle = 10;
+    auto client = std::make_shared<socks_client>(pool, client_cfg);
+    client->start();
+
+    auto echo_socket = std::make_shared<asio::ip::udp::socket>(pool.get_io_context());
+    echo_socket->open(asio::ip::udp::v4(), ec);
+    ASSERT_FALSE(ec);
+    echo_socket->bind(asio::ip::udp::endpoint(asio::ip::udp::v4(), 0), ec);
+    ASSERT_FALSE(ec);
+    const auto echo_server_port = echo_socket->local_endpoint().port();
+    echo_socket->close(ec);
+    ASSERT_FALSE(ec);
+    asio::co_spawn(pool.get_io_context(), run_udp_echo_server(echo_socket, echo_server_port), asio::detached);
+
+    std::thread pool_thread([&pool]() { pool.run(); });
+    ASSERT_TRUE(wait_for_tcp_port(local_socks_port));
+
+    asio::io_context io_context;
+    asio::ip::tcp::socket tcp_socket(io_context);
+    tcp_socket.connect(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), local_socks_port), ec);
+    ASSERT_FALSE(ec);
+
+    std::uint8_t method_req[] = {socks::kVer, 0x01, socks::kMethodNoAuth};
+    asio::write(tcp_socket, asio::buffer(method_req), ec);
+    ASSERT_FALSE(ec);
+    std::uint8_t method_res[2] = {0};
+    asio::read(tcp_socket, asio::buffer(method_res), ec);
+    ASSERT_FALSE(ec);
+    ASSERT_EQ(method_res[0], socks::kVer);
+    ASSERT_EQ(method_res[1], socks::kMethodNoAuth);
+
+    std::uint8_t associate_req[] = {socks::kVer, socks::kCmdUdpAssociate, 0x00, socks::kAtypIpv4, 0, 0, 0, 0, 0, 0};
+    asio::write(tcp_socket, asio::buffer(associate_req), ec);
+    ASSERT_FALSE(ec);
+
+    std::uint8_t associate_res[10] = {0};
+    asio::read(tcp_socket, asio::buffer(associate_res), ec);
+    ASSERT_FALSE(ec);
+    ASSERT_EQ(associate_res[0], socks::kVer);
+    ASSERT_EQ(associate_res[1], socks::kRepSuccess);
+    const auto proxy_bind_port = static_cast<std::uint16_t>((associate_res[8] << 8) | associate_res[9]);
+    ASSERT_NE(proxy_bind_port, 0);
+
+    asio::ip::udp::socket udp_socket(io_context);
+    udp_socket.open(asio::ip::udp::v4(), ec);
+    ASSERT_FALSE(ec);
+    udp_socket.non_blocking(true, ec);
+    ASSERT_FALSE(ec);
+
+    const asio::ip::udp::endpoint proxy_ep(asio::ip::make_address("127.0.0.1"), proxy_bind_port);
+    const std::string payload = "udp-fragment-should-drop";
+    std::vector<std::uint8_t> frag_packet = {0x00,
+                                             0x00,
+                                             0x01,
+                                             socks::kAtypIpv4,
+                                             127,
+                                             0,
+                                             0,
+                                             1,
+                                             static_cast<std::uint8_t>((echo_server_port >> 8) & 0xFF),
+                                             static_cast<std::uint8_t>(echo_server_port & 0xFF)};
+    frag_packet.insert(frag_packet.end(), payload.begin(), payload.end());
+    udp_socket.send_to(asio::buffer(frag_packet), proxy_ep, 0, ec);
+    ASSERT_FALSE(ec);
+
+    auto poll_udp = [&](std::vector<std::uint8_t>& out, const std::chrono::milliseconds timeout) -> bool
+    {
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        for (;;)
+        {
+            std::vector<std::uint8_t> recv_buf(4096);
+            asio::ip::udp::endpoint sender;
+            std::error_code recv_ec;
+            const auto n = udp_socket.receive_from(asio::buffer(recv_buf), sender, 0, recv_ec);
+            if (!recv_ec)
+            {
+                recv_buf.resize(n);
+                out = std::move(recv_buf);
+                return true;
+            }
+            if (recv_ec != asio::error::would_block && recv_ec != asio::error::try_again)
+            {
+                ADD_FAILURE() << "unexpected udp recv error: " << recv_ec.message();
+                return false;
+            }
+            if (std::chrono::steady_clock::now() >= deadline)
+            {
+                return false;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+    };
+
+    std::vector<std::uint8_t> recv_packet;
+    const bool got_fragment_reply = poll_udp(recv_packet, std::chrono::milliseconds(400));
+    EXPECT_FALSE(got_fragment_reply);
+
+    const std::string good_payload = "udp-valid-after-frag";
+    std::vector<std::uint8_t> good_packet = {0x00,
+                                             0x00,
+                                             0x00,
+                                             socks::kAtypIpv4,
+                                             127,
+                                             0,
+                                             0,
+                                             1,
+                                             static_cast<std::uint8_t>((echo_server_port >> 8) & 0xFF),
+                                             static_cast<std::uint8_t>(echo_server_port & 0xFF)};
+    good_packet.insert(good_packet.end(), good_payload.begin(), good_payload.end());
+    udp_socket.send_to(asio::buffer(good_packet), proxy_ep, 0, ec);
+    ASSERT_FALSE(ec);
+
+    recv_packet.clear();
+    ASSERT_TRUE(poll_udp(recv_packet, std::chrono::seconds(3)));
+    ASSERT_GT(recv_packet.size(), 10U);
+    EXPECT_EQ(std::string(recv_packet.begin() + 10, recv_packet.end()), good_payload);
+
+    client->stop();
+    server->stop();
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+    std::error_code ignore;
+    tcp_socket.close(ignore);
+    udp_socket.close(ignore);
+    echo_socket->close(ignore);
+
+    pool.stop();
+    if (pool_thread.joinable())
+    {
+        pool_thread.join();
+    }
 }
