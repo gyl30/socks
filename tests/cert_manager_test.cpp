@@ -124,4 +124,20 @@ TEST(CertManagerTest, UpdateExistingEntryDoesNotEvictOthers)
     EXPECT_TRUE(manager.get_certificate("b").has_value());
 }
 
+TEST(CertManagerTest, ZeroCapacityClampedToOne)
+{
+    cert_manager manager(0);
+    server_fingerprint fp;
+    const std::vector<uint8_t> cert_a = {0x01};
+    const std::vector<uint8_t> cert_b = {0x02};
+
+    manager.set_certificate("a.example.com", cert_a, fp, "trace-a");
+    manager.set_certificate("b.example.com", cert_b, fp, "trace-b");
+
+    EXPECT_FALSE(manager.get_certificate("a.example.com").has_value());
+    const auto entry_b = manager.get_certificate("b.example.com");
+    ASSERT_TRUE(entry_b.has_value());
+    EXPECT_EQ(entry_b->cert_msg, cert_b);
+}
+
 }    // namespace reality
