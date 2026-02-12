@@ -715,11 +715,28 @@ void client_tunnel_pool::start()
     }
 }
 
-void client_tunnel_pool::stop()
+void client_tunnel_pool::close_pending_socket(const std::size_t index, std::shared_ptr<asio::ip::tcp::socket> pending_socket)
 {
-    LOG_INFO("client pool stopping closing resources");
-    stop_.store(true, std::memory_order_release);
+    auto* io_context = (index < tunnel_io_contexts_.size()) ? tunnel_io_contexts_[index] : nullptr;
+    if (io_context != nullptr)
+    {
+        asio::post(*io_context,
+                   [pending_socket = std::move(pending_socket)]()
+                   {
+                       std::error_code ec;
+                       pending_socket->cancel(ec);
+                       pending_socket->close(ec);
+                   });
+        return;
+    }
 
+    std::error_code ec;
+    pending_socket->cancel(ec);
+    pending_socket->close(ec);
+}
+
+void client_tunnel_pool::release_all_pending_sockets()
+{
     for (std::size_t i = 0; i < pending_sockets_.size(); ++i)
     {
         auto pending_socket = atomic_exchange_shared(pending_sockets_[i]);
@@ -727,25 +744,12 @@ void client_tunnel_pool::stop()
         {
             continue;
         }
-        auto* io_context = (i < tunnel_io_contexts_.size()) ? tunnel_io_contexts_[i] : nullptr;
-        if (io_context != nullptr)
-        {
-            asio::post(*io_context,
-                       [pending_socket = std::move(pending_socket)]()
-                       {
-                           std::error_code ec;
-                           pending_socket->cancel(ec);
-                           pending_socket->close(ec);
-                       });
-        }
-        else
-        {
-            std::error_code ec;
-            pending_socket->cancel(ec);
-            pending_socket->close(ec);
-        }
+        close_pending_socket(i, std::move(pending_socket));
     }
+}
 
+void client_tunnel_pool::release_all_tunnels()
+{
     for (auto& tunnel : tunnel_pool_)
     {
         auto current_tunnel = atomic_exchange_shared(tunnel);
@@ -754,6 +758,14 @@ void client_tunnel_pool::stop()
             current_tunnel->connection()->release_resources();
         }
     }
+}
+
+void client_tunnel_pool::stop()
+{
+    LOG_INFO("client pool stopping closing resources");
+    stop_.store(true, std::memory_order_release);
+    release_all_pending_sockets();
+    release_all_tunnels();
 }
 
 std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> client_tunnel_pool::select_tunnel()

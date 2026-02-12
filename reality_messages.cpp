@@ -1,4 +1,6 @@
 #include <ctime>
+#include <array>
+#include <algorithm>
 #include <memory>
 #include <random>
 #include <string>
@@ -775,9 +777,17 @@ bool is_supported_certificate_verify_scheme(std::uint16_t scheme)
     using reality::tls_consts::sig_alg::kRsaPssRsaeSha384;
     using reality::tls_consts::sig_alg::kRsaPssRsaeSha512;
 
-    return scheme == kEd25519 || scheme == kEcdsaSecp256r1Sha256 || scheme == kEcdsaSecp384r1Sha384 || scheme == kEcdsaSecp521r1Sha512 ||
-           scheme == kRsaPkcs1Sha256 || scheme == kRsaPkcs1Sha384 || scheme == kRsaPkcs1Sha512 || scheme == kRsaPssRsaeSha256 ||
-           scheme == kRsaPssRsaeSha384 || scheme == kRsaPssRsaeSha512;
+    constexpr std::array<std::uint16_t, 10> supported_schemes = {kEd25519,
+                                                                  kEcdsaSecp256r1Sha256,
+                                                                  kEcdsaSecp384r1Sha384,
+                                                                  kEcdsaSecp521r1Sha512,
+                                                                  kRsaPkcs1Sha256,
+                                                                  kRsaPkcs1Sha384,
+                                                                  kRsaPkcs1Sha512,
+                                                                  kRsaPssRsaeSha256,
+                                                                  kRsaPssRsaeSha384,
+                                                                  kRsaPssRsaeSha512};
+    return std::ranges::find(supported_schemes, scheme) != supported_schemes.end();
 }
 
 std::optional<std::uint16_t> extract_cipher_suite_from_server_hello(const std::vector<std::uint8_t>& server_hello)
