@@ -65,6 +65,14 @@ TEST_F(config_test, ParseValues)
             "sni": "google.com",
             "strict_cert_verify": true,
             "replay_cache_max_entries": 4096
+        },
+        "heartbeat": {
+            "enabled": true,
+            "idle_timeout": 42,
+            "min_interval": 15,
+            "max_interval": 30,
+            "min_padding": 16,
+            "max_padding": 128
         }
     })";
     write_config_file(content);
@@ -89,6 +97,8 @@ TEST_F(config_test, ParseValues)
         EXPECT_EQ(cfg.reality.sni, "google.com");
         EXPECT_TRUE(cfg.reality.strict_cert_verify);
         EXPECT_EQ(cfg.reality.replay_cache_max_entries, 4096);
+        EXPECT_EQ(cfg.heartbeat.idle_timeout, 42);
+        EXPECT_EQ(cfg.heartbeat.max_padding, 128);
     }
 }
 
@@ -157,4 +167,14 @@ TEST_F(config_test, EmptyHostAddress)
     const auto cfg_opt = mux::parse_config(tmp_file());
     ASSERT_TRUE(cfg_opt.has_value());
     EXPECT_TRUE(cfg_opt->inbound.host.empty());
+}
+
+TEST_F(config_test, DumpConfigIncludesHeartbeatIdleTimeout)
+{
+    mux::config cfg;
+    cfg.heartbeat.idle_timeout = 77;
+
+    const auto dumped = mux::dump_config(cfg);
+    EXPECT_NE(dumped.find("\"idle_timeout\""), std::string::npos);
+    EXPECT_NE(dumped.find("\"heartbeat\""), std::string::npos);
 }
