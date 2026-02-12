@@ -58,6 +58,20 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
 
     asio::awaitable<void> connect_remote_loop(std::uint32_t index, asio::io_context& io_context);
 
+    [[nodiscard]] asio::awaitable<bool> establish_tunnel_for_connection(
+        std::uint32_t index,
+        asio::io_context& io_context,
+        std::uint32_t cid,
+        const std::string& trace_id,
+        const std::shared_ptr<asio::ip::tcp::socket>& socket,
+        std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>& tunnel);
+
+    asio::awaitable<void> handle_connection_failure(std::uint32_t index,
+                                                    const std::shared_ptr<asio::ip::tcp::socket>& socket,
+                                                    const std::error_code& ec,
+                                                    const char* stage,
+                                                    asio::io_context& io_context);
+
     [[nodiscard]] asio::awaitable<bool> tcp_connect(asio::io_context& io_context, asio::ip::tcp::socket& socket, std::error_code& ec) const;
 
     [[nodiscard]] asio::awaitable<std::pair<bool, handshake_result>> perform_reality_handshake(asio::ip::tcp::socket& socket,
