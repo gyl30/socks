@@ -478,3 +478,13 @@ TEST(CertFetcherTest, WhiteBoxProcessServerHelloAndHandshakeMessage)
     EXPECT_FALSE(session.process_handshake_message(encrypted_extensions, cert_msg));
     EXPECT_EQ(session.fingerprint_.alpn, "h2");
 }
+
+TEST(CertFetcherTest, ProcessServerHelloTruncatedMessageLength)
+{
+    asio::io_context ctx;
+    reality::cert_fetcher::fetch_session session(ctx, "127.0.0.1", 443, "example.com", "trace");
+
+    std::vector<std::uint8_t> server_hello = {0x02, 0x00, 0x00, 0x20, 0x01};
+    const auto ec = session.process_server_hello(server_hello);
+    EXPECT_EQ(ec, asio::error::fault);
+}

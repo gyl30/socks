@@ -139,14 +139,26 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
     std::uint32_t min_interval_ms_ = 0;
 };
 
-monitor_server::monitor_server(asio::io_context& ioc, std::uint16_t port, std::string token) : monitor_server(ioc, port, std::move(token), 0) {}
+monitor_server::monitor_server(asio::io_context& ioc, std::uint16_t port, std::string token)
+    : monitor_server(ioc, "127.0.0.1", port, std::move(token), 0)
+{
+}
 
 monitor_server::monitor_server(asio::io_context& ioc, std::uint16_t port, std::string token, const std::uint32_t min_interval_ms)
+    : monitor_server(ioc, "127.0.0.1", port, std::move(token), min_interval_ms)
+{
+}
+
+monitor_server::monitor_server(asio::io_context& ioc,
+                               std::string bind_host,
+                               const std::uint16_t port,
+                               std::string token,
+                               const std::uint32_t min_interval_ms)
     : acceptor_(ioc), token_(std::move(token)), min_interval_ms_(min_interval_ms)
 {
     asio::ip::tcp::endpoint endpoint;
     asio::error_code ec;
-    endpoint.address(asio::ip::make_address("127.0.0.1", ec));
+    endpoint.address(asio::ip::make_address(bind_host, ec));
     if (ec)
     {
         LOG_ERROR("failed to parse address: {}", ec.message());
@@ -173,7 +185,7 @@ monitor_server::monitor_server(asio::io_context& ioc, std::uint16_t port, std::s
         LOG_ERROR("failed to listen: {}", ec.message());
         return;
     }
-    LOG_INFO("monitor server listening on 127.0.0.1:{}", port);
+    LOG_INFO("monitor server listening on {}:{}", bind_host, port);
 }
 
 void monitor_server::start() { do_accept(); }
