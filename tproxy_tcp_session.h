@@ -5,6 +5,7 @@
 #include <chrono>
 #include <memory>
 #include <string>
+#include <utility>
 #include <cstdint>
 
 #include <asio/ip/tcp.hpp>
@@ -36,6 +37,11 @@ class tproxy_tcp_session : public std::enable_shared_from_this<tproxy_tcp_sessio
 
    private:
     [[nodiscard]] asio::awaitable<void> run();
+    [[nodiscard]] asio::awaitable<std::pair<route_type, std::shared_ptr<upstream>>> select_backend(const std::string& host);
+    [[nodiscard]] asio::awaitable<bool> connect_backend(const std::shared_ptr<upstream>& backend,
+                                                        const std::string& host,
+                                                        std::uint16_t port,
+                                                        route_type route);
 
     [[nodiscard]] asio::awaitable<void> client_to_upstream(std::shared_ptr<upstream> backend);
 
@@ -43,6 +49,9 @@ class tproxy_tcp_session : public std::enable_shared_from_this<tproxy_tcp_sessio
 
     [[nodiscard]] asio::awaitable<void> idle_watchdog(std::shared_ptr<upstream> backend);
     [[nodiscard]] asio::awaitable<void> close_backend_once(const std::shared_ptr<upstream>& backend);
+
+    void start_idle_watchdog(const std::shared_ptr<upstream>& backend);
+    void close_client_socket();
 
    private:
     connection_context ctx_;
