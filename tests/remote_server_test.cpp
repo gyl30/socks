@@ -474,6 +474,48 @@ TEST_F(remote_server_test, MultiSNIFallback)
     EXPECT_EQ(fallback_b_count.load(), 1);
 }
 
+TEST_F(remote_server_test, WildcardStarFallback)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+    std::thread pool_thread([&pool] { pool.run(); });
+
+    const std::uint16_t server_port = pick_free_port();
+    const std::uint16_t fallback_port = pick_free_port();
+
+    asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), fallback_port));
+    std::atomic<bool> fallback_triggered{false};
+    fallback_acceptor.async_accept(
+        [&](std::error_code accept_ec, asio::ip::tcp::socket peer)
+        {
+            if (!accept_ec)
+            {
+                fallback_triggered = true;
+            }
+        });
+
+    auto server = std::make_shared<mux::remote_server>(
+        pool, make_server_cfg(server_port, {{"*", "127.0.0.1", std::to_string(fallback_port)}}, "0102030405060708"));
+    server->start();
+
+    {
+        asio::ip::tcp::socket sock(pool.get_io_context());
+        sock.connect({asio::ip::make_address("127.0.0.1"), server_port});
+        asio::write(sock, asio::buffer("INVALID DATA"));
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    }
+
+    std::error_code close_ec;
+    fallback_acceptor.cancel(close_ec);
+    fallback_acceptor.close(close_ec);
+    server->stop();
+    pool.stop();
+    pool_thread.join();
+
+    EXPECT_TRUE(fallback_triggered.load());
+}
+
 TEST_F(remote_server_test, FallbackGuardRateLimitBlocksFallbackDial)
 {
     std::error_code ec;
