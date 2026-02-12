@@ -7,6 +7,7 @@
 #include <cstring>
 #include <cerrno>
 #include <algorithm>
+#include <future>
 
 #include <netinet/in.h>
 #include <sys/socket.h>
@@ -114,6 +115,48 @@ bool is_tproxy_setsockopt(const int level, const int optname)
 #endif
     }
     return false;
+}
+
+template <typename Func>
+auto run_on_io_context(asio::io_context& io_context, Func&& fn) -> decltype(fn())
+{
+    using result_type = decltype(fn());
+    std::promise<result_type> promise;
+    auto future = promise.get_future();
+    asio::post(io_context,
+               [func = std::forward<Func>(fn), promise = std::move(promise)]() mutable
+               {
+                   promise.set_value(func());
+               });
+    return future.get();
+}
+
+bool tcp_acceptor_is_open(asio::io_context& io_context, const std::shared_ptr<mux::tproxy_client>& client)
+{
+    return run_on_io_context(io_context, [client]() { return client->tcp_acceptor_.is_open(); });
+}
+
+bool udp_socket_is_open(asio::io_context& io_context, const std::shared_ptr<mux::tproxy_client>& client)
+{
+    return run_on_io_context(io_context, [client]() { return client->udp_socket_.is_open(); });
+}
+
+void emplace_udp_session(asio::io_context& io_context,
+                         const std::shared_ptr<mux::tproxy_client>& client,
+                         const std::string& key,
+                         const std::shared_ptr<mux::tproxy_udp_session>& session)
+{
+    run_on_io_context(io_context,
+                      [client, key, session]()
+                      {
+                          client->udp_sessions_.emplace(key, session);
+                          return true;
+                      });
+}
+
+std::size_t udp_session_count(asio::io_context& io_context, const std::shared_ptr<mux::tproxy_client>& client)
+{
+    return run_on_io_context(io_context, [client]() { return client->udp_sessions_.size(); });
 }
 
 class direct_router : public mux::router
@@ -458,7 +501,7 @@ TEST(TproxyClientTest, UdpLoopHandlesPacketAndCleanupPrunesIdleSessions)
     std::thread runner([&pool]() { pool.run(); });
     std::this_thread::sleep_for(std::chrono::milliseconds(150));
 
-    if (!client->udp_socket_.is_open())
+    if (!udp_socket_is_open(pool.get_io_context(), client))
     {
         client->stop();
         pool.stop();
@@ -478,10 +521,10 @@ TEST(TproxyClientTest, UdpLoopHandlesPacketAndCleanupPrunesIdleSessions)
     auto idle_session = std::make_shared<mux::tproxy_udp_session>(
         pool.get_io_context(), client->tunnel_pool_, client->router_, client->sender_, 77, cfg, session_src);
     idle_session->start();
-    client->udp_sessions_.emplace(client->endpoint_key(session_src), idle_session);
+    emplace_udp_session(pool.get_io_context(), client, client->endpoint_key(session_src), idle_session);
 
     std::this_thread::sleep_for(std::chrono::milliseconds(1400));
-    EXPECT_LE(client->udp_sessions_.size(), 1U);
+    EXPECT_LE(udp_session_count(pool.get_io_context(), client), 1U);
 
     client->stop();
     pool.stop();
@@ -548,11 +591,11 @@ TEST(TproxyClientTest, AcceptLoopStopsWhenStopFlagSetAfterPendingAccept)
                    asio::detached);
 
     std::thread runner([&pool]() { pool.run(); });
-    for (int i = 0; i < 50 && !client->tcp_acceptor_.is_open(); ++i)
+    for (int i = 0; i < 50 && !tcp_acceptor_is_open(pool.get_io_context(), client); ++i)
     {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-    if (!client->tcp_acceptor_.is_open())
+    if (!tcp_acceptor_is_open(pool.get_io_context(), client))
     {
         client->stop();
         pool.stop();
@@ -613,11 +656,11 @@ TEST(TproxyClientTest, UdpLoopBreaksWhenReadableAndStopFlagAlreadySet)
                    asio::detached);
 
     std::thread runner([&pool]() { pool.run(); });
-    for (int i = 0; i < 50 && !client->udp_socket_.is_open(); ++i)
+    for (int i = 0; i < 50 && !udp_socket_is_open(pool.get_io_context(), client); ++i)
     {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-    if (!client->udp_socket_.is_open())
+    if (!udp_socket_is_open(pool.get_io_context(), client))
     {
         client->stop();
         pool.stop();
@@ -673,11 +716,11 @@ TEST(TproxyClientTest, UdpLoopRetriesWhenSocketClosedUnexpectedly)
                    asio::detached);
 
     std::thread runner([&pool]() { pool.run(); });
-    for (int i = 0; i < 50 && !client->udp_socket_.is_open(); ++i)
+    for (int i = 0; i < 50 && !udp_socket_is_open(pool.get_io_context(), client); ++i)
     {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-    if (!client->udp_socket_.is_open())
+    if (!udp_socket_is_open(pool.get_io_context(), client))
     {
         client->stop();
         pool.stop();
@@ -832,11 +875,11 @@ TEST(TproxyClientTest, WrappedRecvmsgCoversUdpReadErrorBranches)
                    asio::detached);
 
     std::thread runner([&pool]() { pool.run(); });
-    for (int i = 0; i < 50 && !client->udp_socket_.is_open(); ++i)
+    for (int i = 0; i < 50 && !udp_socket_is_open(pool.get_io_context(), client); ++i)
     {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-    ASSERT_TRUE(client->udp_socket_.is_open());
+    ASSERT_TRUE(udp_socket_is_open(pool.get_io_context(), client));
 
     asio::io_context sender_ctx;
     asio::ip::udp::socket sender(sender_ctx);

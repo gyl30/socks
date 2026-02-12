@@ -1,4 +1,4 @@
-
+import argparse
 import socket
 import struct
 import time
@@ -8,6 +8,8 @@ import os
 import sys
 import json
 import signal
+import shutil
+import re
 
 SOCKS_BIN = "./socks"
 BUILD_DIR = "./build"
@@ -29,6 +31,25 @@ def log_pass(msg):
 
 def log_fail(msg):
     print(f"{Colors.FAIL}[FAIL] {msg}{Colors.ENDC}")
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Run valgrind memory safety test against socks client/server.")
+    parser.add_argument("--build-dir", default="./build", help="Build directory that contains the socks binary.")
+    parser.add_argument("--socks-bin", default="./socks", help="Path to socks binary relative to --build-dir.")
+    parser.add_argument("--traffic-count", type=int, default=5, help="Number of extra short SOCKS connections.")
+    return parser.parse_args()
+
+
+def stop_process(proc):
+    if proc is None or proc.poll() is not None:
+        return
+    proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=5)
 
 class EchoServer:
     def __init__(self, port):
@@ -120,7 +141,7 @@ def start_socks_process_valgrind(config_file, log_file, name):
         "--track-origins=yes",
         "--error-exitcode=1",
         f"--log-file={valgrind_log}",
-        "./socks", "-c", config_file
+        SOCKS_BIN, "-c", config_file
     ]
     
     with open(log_file, "w") as out:
@@ -140,7 +161,38 @@ def socks5_connect(proxy_port, target_host, target_port):
         raise Exception("Connect failed")
     return s
 
-def run_valgrind_test():
+def analyze_valgrind_log(path, display_name):
+    if not os.path.exists(path):
+        log_fail(f"{display_name}: log not found {path}")
+        return False
+
+    with open(path, "r", encoding="utf-8", errors="ignore") as f:
+        content = f.read()
+
+    error_summary_ok = re.search(r"ERROR SUMMARY:\s+0 errors from 0 contexts", content) is not None
+    lost_summary_ok = all(
+        re.search(pattern, content) is not None
+        for pattern in (
+            r"definitely lost:\s+0 bytes in 0 blocks",
+            r"indirectly lost:\s+0 bytes in 0 blocks",
+            r"possibly lost:\s+0 bytes in 0 blocks",
+        )
+    )
+    all_freed_ok = "All heap blocks were freed -- no leaks are possible" in content
+
+    if error_summary_ok and (lost_summary_ok or all_freed_ok):
+        log_pass(f"{display_name}: no valgrind errors and no leaks")
+        return True
+
+    log_fail(f"{display_name}: valgrind errors or leaks detected")
+    for line in content.splitlines():
+        stripped = line.strip()
+        if "ERROR SUMMARY:" in stripped or "definitely lost:" in stripped or "indirectly lost:" in stripped or "possibly lost:" in stripped:
+            print(f"  {stripped}")
+    return False
+
+
+def run_valgrind_test(traffic_count):
     log_info("Starting Valgrind Memory Test...")
     
     echo = EchoServer(ECHO_PORT)
@@ -162,7 +214,7 @@ def run_valgrind_test():
         "inbound": {"host": "127.0.0.1", "port": 1098},
         "outbound": {"host": "127.0.0.1", "port": 20008},
         "socks": {"host": "127.0.0.1", "port": 1098, "auth": False},
-        "reality": { "sni": "valgrind.test.com", "public_key": keys["public_key"], "private_key": keys["private_key"], "short_id": SHORT_ID },
+        "reality": { "sni": "valgrind.test.com", "public_key": keys["public_key"], "private_key": keys["private_key"], "short_id": SHORT_ID, "strict_cert_verify": False },
         "timeout": {"idle": 10}
     }
     
@@ -173,6 +225,7 @@ def run_valgrind_test():
     cp, c_vlog = start_socks_process_valgrind("val_client.json", f"{BUILD_DIR}/val_client_stdout.log", "client")
     
     time.sleep(5)
+    success = True
     
     try:
         log_info("Running traffic...")
@@ -183,39 +236,47 @@ def run_valgrind_test():
             log_pass("Traffic success")
         else:
             log_fail("Traffic mismatch")
+            success = False
         sock.close()
         
-        for i in range(5):
+        for _ in range(traffic_count):
             sock = socks5_connect(1098, "127.0.0.1", ECHO_PORT)
             sock.close()
             time.sleep(0.1)
             
     except Exception as e:
         log_fail(f"Test Error: {e}")
+        success = False
     finally:
         log_info("Stopping processes...")
-        os.kill(sp.pid, signal.SIGTERM)
-        os.kill(cp.pid, signal.SIGTERM)
-        sp.wait()
-        cp.wait()
+        stop_process(sp)
+        stop_process(cp)
         echo.stop()
         tls.stop()
+
+    server_rc = sp.wait(timeout=5)
+    client_rc = cp.wait(timeout=5)
+    if server_rc != 0:
+        log_fail(f"server process exit code={server_rc}")
+        success = False
+    if client_rc != 0:
+        log_fail(f"client process exit code={client_rc}")
+        success = False
         
     log_info("Analyzing Valgrind Logs...")
-    for vlog in [s_vlog, c_vlog]:
-        path = f"{BUILD_DIR}/{vlog}"
-        if os.path.exists(path):
-            with open(path, 'r') as f:
-                content = f.read()
-                if "definitely lost: 0 bytes in 0 blocks" in content:
-                    log_pass(f"{vlog}: No definite leaks")
-                else:
-                    log_fail(f"{vlog}: LEAKS DETECTED or Valgrind Error!")
-                    for line in content.split('\n'):
-                        if "definitely lost:" in line or "indirectly lost:" in line or "possibly lost:" in line:
-                            print(f"  {line.strip()}")
-        else:
-            log_fail(f"{vlog} not found!")
+    success = analyze_valgrind_log(f"{BUILD_DIR}/{s_vlog}", s_vlog) and success
+    success = analyze_valgrind_log(f"{BUILD_DIR}/{c_vlog}", c_vlog) and success
+    return success
+
 
 if __name__ == "__main__":
-    run_valgrind_test()
+    if shutil.which("valgrind") is None:
+        print("[FAIL] valgrind is not installed")
+        sys.exit(1)
+
+    args = parse_args()
+    BUILD_DIR = args.build_dir
+    SOCKS_BIN = args.socks_bin
+
+    ok = run_valgrind_test(args.traffic_count)
+    sys.exit(0 if ok else 1)
