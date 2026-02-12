@@ -559,6 +559,44 @@ TEST(RealityMessagesTest, PaddingDisabledForShortClientHello)
     EXPECT_EQ(padding->size(), 0);
 }
 
+TEST(RealityMessagesTest, PaddingNearUpperBoundUsesSingleByte)
+{
+    reality::fingerprint_spec spec_no_padding;
+    spec_no_padding.client_version = tls_consts::kVer12;
+    spec_no_padding.cipher_suites = {tls_consts::cipher::kTlsAes128GcmSha256};
+    spec_no_padding.compression_methods = {0x00};
+    spec_no_padding.extensions.push_back(std::make_shared<reality::sni_blueprint>());
+
+    auto spec_with_padding = spec_no_padding;
+    spec_with_padding.extensions.push_back(std::make_shared<reality::padding_blueprint>());
+
+    const std::vector<std::uint8_t> session_id(32, 0x31);
+    const std::vector<std::uint8_t> random(32, 0x32);
+    const std::vector<std::uint8_t> pubkey(32, 0x33);
+
+    std::optional<std::string> near_upper_bound_host;
+    std::size_t near_upper_bound_unpadded_len = 0;
+    for (std::size_t host_len = 1; host_len <= 900; ++host_len)
+    {
+        const std::string candidate_host(host_len, 'a');
+        const auto no_pad = reality::client_hello_builder::build(spec_no_padding, session_id, random, pubkey, candidate_host);
+        const std::size_t unpadded_len = no_pad.size() + 4;
+        if (unpadded_len >= 0x1fc && unpadded_len <= 0x1ff)
+        {
+            near_upper_bound_host = candidate_host;
+            near_upper_bound_unpadded_len = unpadded_len;
+            break;
+        }
+    }
+
+    ASSERT_TRUE(near_upper_bound_host.has_value());
+    const auto with_pad = reality::client_hello_builder::build(spec_with_padding, session_id, random, pubkey, *near_upper_bound_host);
+    const auto padding = extract_extension_data_by_type(with_pad, tls_consts::ext::kPadding);
+    ASSERT_TRUE(padding.has_value());
+    EXPECT_EQ(expected_boring_padding_len(near_upper_bound_unpadded_len), 1);
+    EXPECT_EQ(padding->size(), 1);
+}
+
 TEST(RealityMessagesTest, PaddingDisabledForOversizedClientHello)
 {
     reality::fingerprint_spec spec_no_padding;
