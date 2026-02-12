@@ -173,6 +173,27 @@ TEST_F(upstream_test, DirectUpstreamReconnectSuccess)
     server.stop();
 }
 
+TEST_F(upstream_test, DirectUpstreamConnectWithSocketMark)
+{
+    echo_server server;
+    const std::uint16_t port = server.port();
+
+    mux::direct_upstream upstream(ctx(), mux::connection_context{}, 1);
+    EXPECT_TRUE(mux::test::run_awaitable(ctx(), upstream.connect("127.0.0.1", port)));
+
+    const std::vector<std::uint8_t> data = {0x11};
+    EXPECT_EQ(mux::test::run_awaitable(ctx(), upstream.write(data)), data.size());
+
+    std::vector<std::uint8_t> buf(16);
+    const auto [read_ec, read_n] = mux::test::run_awaitable(ctx(), upstream.read(buf));
+    EXPECT_FALSE(read_ec);
+    EXPECT_EQ(read_n, data.size());
+    EXPECT_EQ(buf[0], 0x11);
+
+    mux::test::run_awaitable_void(ctx(), upstream.close());
+    server.stop();
+}
+
 TEST_F(upstream_test, DirectUpstreamWriteError)
 {
     auto acceptor = std::make_shared<asio::ip::tcp::acceptor>(ctx(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
