@@ -36,6 +36,7 @@ target_link_options(
         -Wl,--wrap=EVP_PKEY_CTX_set1_hkdf_key
         -Wl,--wrap=EVP_PKEY_CTX_set1_hkdf_salt
         -Wl,--wrap=EVP_CIPHER_CTX_ctrl
+        -Wl,--wrap=X509_get_pubkey
 )
 add_socks_test(router_test)
 add_socks_test(domain_matcher_test)
