@@ -1,4 +1,5 @@
 #include <memory>
+#include <array>
 #include <string>
 #include <thread>
 #include <vector>
@@ -18,7 +19,9 @@
 
 #include "mux_codec.h"
 #include "mux_protocol.h"
+#define private public
 #include "mux_connection.h"
+#undef private
 #include "mux_stream_interface.h"
 
 namespace
@@ -170,6 +173,72 @@ TEST_F(mux_connection_integration_test, TryRegisterStreamRejectsDuplicateId)
     EXPECT_TRUE(conn->try_register_stream(100, stream_a));
     EXPECT_FALSE(conn->try_register_stream(100, stream_b));
     EXPECT_TRUE(conn->has_stream(100));
+}
+
+TEST_F(mux_connection_integration_test, ClosedStateGuardsAndUnlimitedCheck)
+{
+    asio::ip::tcp::socket socket(io_ctx());
+    reality_engine engine{{}, {}, {}, {}, EVP_aes_128_gcm()};
+    auto conn = std::make_shared<mux_connection>(std::move(socket), io_ctx(), std::move(engine), true, 2);
+    auto stream = std::make_shared<simple_mock_stream>();
+
+    conn->register_stream(1, nullptr);
+    conn->connection_state_.store(mux_connection_state::kClosed, std::memory_order_release);
+    conn->register_stream(2, stream);
+    EXPECT_FALSE(conn->has_stream(2));
+    EXPECT_FALSE(conn->try_register_stream(3, stream));
+    EXPECT_FALSE(conn->can_accept_stream());
+
+    config::limits_t limits_cfg;
+    limits_cfg.max_streams = 0;
+    auto unlimited = std::make_shared<mux_connection>(
+        asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 3, "trace", config::timeout_t{}, limits_cfg);
+    unlimited->connection_state_.store(mux_connection_state::kClosed, std::memory_order_release);
+    EXPECT_TRUE(unlimited->can_accept_stream());
+}
+
+TEST_F(mux_connection_integration_test, OffThreadRegisterAndQueryPaths)
+{
+    auto conn = std::make_shared<mux_connection>(
+        asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 4);
+    conn->started_.store(true, std::memory_order_release);
+    conn->connection_state_.store(mux_connection_state::kConnected, std::memory_order_release);
+
+    auto guard = asio::make_work_guard(io_ctx());
+    std::thread io_thread([&]() { io_ctx().run(); });
+
+    auto stream = std::make_shared<simple_mock_stream>();
+    EXPECT_TRUE(conn->try_register_stream(42, stream));
+    EXPECT_TRUE(conn->has_stream(42));
+    EXPECT_TRUE(conn->can_accept_stream());
+
+    io_ctx().stop();
+    if (io_thread.joinable())
+    {
+        io_thread.join();
+    }
+    io_ctx().restart();
+}
+
+TEST_F(mux_connection_integration_test, StopDrainingAndInternalErrorBranches)
+{
+    auto conn = std::make_shared<mux_connection>(
+        asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 5);
+
+    conn->connection_state_.store(mux_connection_state::kDraining, std::memory_order_release);
+    conn->stop();
+    io_ctx().poll();
+
+    conn->connection_state_.store(mux_connection_state::kClosed, std::memory_order_release);
+    conn->stop_impl();
+    conn->close_socket_on_stop();
+
+    EXPECT_TRUE(conn->should_stop_read(asio::error::connection_reset, 0));
+
+    std::array<std::uint8_t, 8> junk = {0x17, 0x03, 0x03, 0x00, 0x01, 0x00, 0x00, 0x00};
+    conn->mux_dispatcher_.set_max_buffer(1);
+    conn->mux_dispatcher_.on_plaintext_data(std::span<const std::uint8_t>(junk.data(), junk.size()));
+    EXPECT_TRUE(conn->has_dispatch_failure(std::make_error_code(std::errc::protocol_error)));
 }
 
 }    // namespace
