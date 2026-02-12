@@ -28,3 +28,9 @@ TEST(TlsRecordValidationTest, NonCcsRecordRejected)
     const std::array<std::uint8_t, 5> header = {0x17, 0x03, 0x03, 0x00, 0x01};
     EXPECT_FALSE(reality::is_valid_tls13_compat_ccs(header, 0x01));
 }
+
+TEST(TlsRecordValidationTest, InvalidRecordVersionRejected)
+{
+    const std::array<std::uint8_t, 5> header = {0x14, 0x03, 0x01, 0x00, 0x01};
+    EXPECT_FALSE(reality::is_valid_tls13_compat_ccs(header, 0x01));
+}

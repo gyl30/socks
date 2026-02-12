@@ -536,3 +536,49 @@ TEST(RealityMessagesTest, PaddingUsesBoringStyleFormula)
     const std::size_t unpadded_len = no_pad.size() + 4;
     EXPECT_EQ(padding->size(), expected_boring_padding_len(unpadded_len));
 }
+
+TEST(RealityMessagesTest, PaddingDisabledForShortClientHello)
+{
+    reality::fingerprint_spec spec_no_padding;
+    spec_no_padding.client_version = tls_consts::kVer12;
+    spec_no_padding.cipher_suites = {tls_consts::cipher::kTlsAes128GcmSha256};
+    spec_no_padding.compression_methods = {0x00};
+
+    auto spec_with_padding = spec_no_padding;
+    spec_with_padding.extensions.push_back(std::make_shared<reality::padding_blueprint>());
+
+    const std::vector<std::uint8_t> session_id(32, 0x11);
+    const std::vector<std::uint8_t> random(32, 0x12);
+    const std::vector<std::uint8_t> pubkey(32, 0x13);
+    const auto no_pad = reality::client_hello_builder::build(spec_no_padding, session_id, random, pubkey, "x.com");
+    const auto with_pad = reality::client_hello_builder::build(spec_with_padding, session_id, random, pubkey, "x.com");
+
+    ASSERT_LT(no_pad.size() + 4, 0x100);
+    const auto padding = extract_extension_data_by_type(with_pad, tls_consts::ext::kPadding);
+    ASSERT_TRUE(padding.has_value());
+    EXPECT_EQ(padding->size(), 0);
+}
+
+TEST(RealityMessagesTest, PaddingDisabledForOversizedClientHello)
+{
+    reality::fingerprint_spec spec_no_padding;
+    spec_no_padding.client_version = tls_consts::kVer12;
+    spec_no_padding.cipher_suites = {tls_consts::cipher::kTlsAes128GcmSha256};
+    spec_no_padding.compression_methods = {0x00};
+    spec_no_padding.extensions.push_back(std::make_shared<reality::sni_blueprint>());
+
+    auto spec_with_padding = spec_no_padding;
+    spec_with_padding.extensions.push_back(std::make_shared<reality::padding_blueprint>());
+
+    const std::vector<std::uint8_t> session_id(32, 0x21);
+    const std::vector<std::uint8_t> random(32, 0x22);
+    const std::vector<std::uint8_t> pubkey(32, 0x23);
+    const std::string long_host(700, 'a');
+    const auto no_pad = reality::client_hello_builder::build(spec_no_padding, session_id, random, pubkey, long_host);
+    const auto with_pad = reality::client_hello_builder::build(spec_with_padding, session_id, random, pubkey, long_host);
+
+    ASSERT_GT(no_pad.size() + 4, 0x1ff);
+    const auto padding = extract_extension_data_by_type(with_pad, tls_consts::ext::kPadding);
+    ASSERT_TRUE(padding.has_value());
+    EXPECT_EQ(padding->size(), 0);
+}
