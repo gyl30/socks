@@ -240,22 +240,38 @@ std::string_view trim(const std::string_view sv)
     const auto end = sv.find_last_not_of(" \t\r\n");
     return sv.substr(start, end - start + 1);
 }
-}    // namespace
 
-void ip_matcher::add_rule(const std::string& cidr)
+bool split_cidr_line(const std::string& cidr, std::string_view& ip_part, std::string_view& len_part)
 {
     const std::string_view line_sv = cidr;
     const auto slash_pos = line_sv.find('/');
     if (slash_pos == std::string_view::npos)
     {
+        return false;
+    }
+    ip_part = trim(line_sv.substr(0, slash_pos));
+    len_part = trim(line_sv.substr(slash_pos + 1));
+    return !ip_part.empty() && !len_part.empty();
+}
+
+bool parse_prefix_length(const std::string_view len_part, int& prefix_len)
+{
+    const auto [ptr, from_ec] = std::from_chars(len_part.data(), len_part.data() + len_part.size(), prefix_len);
+    return from_ec == std::errc{} && ptr == len_part.data() + len_part.size();
+}
+}    // namespace
+
+void ip_matcher::add_rule(const std::string& cidr)
+{
+    std::string_view ip_part;
+    std::string_view len_part;
+    if (!split_cidr_line(cidr, ip_part, len_part))
+    {
         return;
     }
-    const auto ip_part = trim(line_sv.substr(0, slash_pos));
-    const auto len_part = trim(line_sv.substr(slash_pos + 1));
 
     int prefix_len = 0;
-    const auto [ptr, from_ec] = std::from_chars(len_part.data(), len_part.data() + len_part.size(), prefix_len);
-    if (from_ec != std::errc{} || ptr != len_part.data() + len_part.size())
+    if (!parse_prefix_length(len_part, prefix_len))
     {
         LOG_WARN("invalid prefix length {}", len_part);
         return;
@@ -290,6 +306,30 @@ void ip_matcher::optimize()
     }
 }
 
+void ip_matcher::process_optimize_stack_entry(trie_node* curr, const bool visited, std::vector<std::pair<trie_node*, bool>>& stack)
+{
+    if (curr == nullptr)
+    {
+        return;
+    }
+    if (!visited)
+    {
+        stack.emplace_back(curr, true);
+        stack.emplace_back(curr->children[1].get(), false);
+        stack.emplace_back(curr->children[0].get(), false);
+        return;
+    }
+    if (curr->is_match)
+    {
+        prune_children(curr);
+        return;
+    }
+    if (can_merge_match_children(curr))
+    {
+        mark_node_match(curr);
+    }
+}
+
 void ip_matcher::optimize_node(const std::unique_ptr<trie_node>& node)
 {
     if (node == nullptr)
@@ -304,28 +344,7 @@ void ip_matcher::optimize_node(const std::unique_ptr<trie_node>& node)
     {
         const auto [curr, visited] = stack.back();
         stack.pop_back();
-        if (curr == nullptr)
-        {
-            continue;
-        }
-        if (!visited)
-        {
-            stack.emplace_back(curr, true);
-            stack.emplace_back(curr->children[1].get(), false);
-            stack.emplace_back(curr->children[0].get(), false);
-            continue;
-        }
-
-        if (curr->is_match)
-        {
-            prune_children(curr);
-            continue;
-        }
-
-        if (can_merge_match_children(curr))
-        {
-            mark_node_match(curr);
-        }
+        process_optimize_stack_entry(curr, visited, stack);
     }
 }
 
