@@ -14,6 +14,7 @@
 extern "C"
 {
 #include <openssl/evp.h>
+#include <openssl/ec.h>
 #include <openssl/rand.h>
 }
 
@@ -26,6 +27,56 @@ namespace reality
 
 namespace
 {
+
+std::vector<std::uint8_t> fallback_secp256r1_public_key()
+{
+    return {0x04, 0x6b, 0x17, 0xd1, 0xf2, 0xe1, 0x2c, 0x42, 0x47, 0xf8, 0xbc, 0xe6, 0xe5, 0x63, 0xa4, 0x40, 0xf2,
+            0x77, 0x03, 0x7d, 0x81, 0x2d, 0xeb, 0x33, 0xa0, 0xf4, 0xa1, 0x39, 0x45, 0xd8, 0x98, 0xc2, 0x96, 0x4f,
+            0xe3, 0x42, 0xe2, 0xfe, 0x1a, 0x7f, 0x9b, 0x8e, 0xe7, 0xeb, 0x4a, 0x7c, 0x0f, 0x9e, 0x16, 0x2b, 0xce,
+            0x33, 0x57, 0x6b, 0x31, 0x5e, 0xce, 0xcb, 0xb6, 0x40, 0x68, 0x37, 0xbf, 0x51, 0xf5};
+}
+
+std::vector<std::uint8_t> generate_secp256r1_public_key()
+{
+    const openssl_ptrs::evp_pkey_ctx_ptr pkey_ctx_ptr(EVP_PKEY_CTX_new_id(EVP_PKEY_EC, nullptr));
+    if (pkey_ctx_ptr == nullptr || EVP_PKEY_keygen_init(pkey_ctx_ptr.get()) <= 0 ||
+        EVP_PKEY_CTX_set_ec_paramgen_curve_nid(pkey_ctx_ptr.get(), NID_X9_62_prime256v1) <= 0)
+    {
+        return fallback_secp256r1_public_key();
+    }
+
+    EVP_PKEY* raw_pkey = nullptr;
+    if (EVP_PKEY_keygen(pkey_ctx_ptr.get(), &raw_pkey) <= 0 || raw_pkey == nullptr)
+    {
+        return fallback_secp256r1_public_key();
+    }
+    const openssl_ptrs::evp_pkey_ptr pkey(raw_pkey);
+
+    const EC_KEY* ec_key = EVP_PKEY_get0_EC_KEY(pkey.get());
+    if (ec_key == nullptr)
+    {
+        return fallback_secp256r1_public_key();
+    }
+    const EC_GROUP* group = EC_KEY_get0_group(ec_key);
+    const EC_POINT* pub_point = EC_KEY_get0_public_key(ec_key);
+    if (group == nullptr || pub_point == nullptr)
+    {
+        return fallback_secp256r1_public_key();
+    }
+
+    const std::size_t key_len = EC_POINT_point2oct(group, pub_point, POINT_CONVERSION_UNCOMPRESSED, nullptr, 0, nullptr);
+    if (key_len != 65)
+    {
+        return fallback_secp256r1_public_key();
+    }
+
+    std::vector<std::uint8_t> key_data(key_len);
+    if (EC_POINT_point2oct(group, pub_point, POINT_CONVERSION_UNCOMPRESSED, key_data.data(), key_data.size(), nullptr) != key_data.size())
+    {
+        return fallback_secp256r1_public_key();
+    }
+    return key_data;
+}
 
 struct extension_build_context
 {
@@ -148,9 +199,7 @@ std::vector<std::uint8_t> resolve_key_share_data(const key_share_blueprint::key_
     }
     if (key_share.group == tls_consts::group::kSecp256r1)
     {
-        std::vector<std::uint8_t> key_data(65);
-        (void)RAND_bytes(key_data.data(), 65);
-        return key_data;
+        return generate_secp256r1_public_key();
     }
     return {};
 }
