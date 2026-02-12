@@ -5,7 +5,9 @@
 
 #include <gtest/gtest.h>
 
+#define private public
 #include "ch_parser.h"
+#undef private
 #include "reality_core.h"
 
 using mux::ch_parser;
@@ -316,6 +318,136 @@ TEST(CHParserTest, WrongRecordType)
     buf[0] = 0x17;
     auto info = ch_parser::parse(buf);
     EXPECT_TRUE(info.random.empty());
+}
+
+TEST(CHParserTest, InternalReadAndSkipFailures)
+{
+    {
+        std::vector<std::uint8_t> buf;
+        ch_parser::reader r(buf);
+        mux::client_hello_info info;
+        EXPECT_FALSE(ch_parser::read_session_id(r, info));
+    }
+
+    {
+        std::vector<std::uint8_t> buf = {0x00, 0x00};
+        ch_parser::reader r(buf);
+        EXPECT_FALSE(ch_parser::skip_cipher_suites_and_compression(r));
+    }
+
+    {
+        std::vector<std::uint8_t> buf = {0x00, 0x01, 0x02};
+        ch_parser::reader r(buf);
+        std::uint16_t type = 0;
+        std::uint16_t len = 0;
+        EXPECT_FALSE(ch_parser::read_extension_header(r, type, len));
+    }
+
+    {
+        std::vector<std::uint8_t> buf = {0x01};
+        ch_parser::reader r(buf);
+        std::uint8_t type = 0;
+        std::uint16_t len = 0;
+        EXPECT_FALSE(ch_parser::read_sni_item_header(r, type, len));
+    }
+
+    {
+        std::vector<std::uint8_t> buf = {0x00, 0x1D, 0x00};
+        ch_parser::reader r(buf);
+        std::uint16_t group = 0;
+        std::uint16_t len = 0;
+        EXPECT_FALSE(ch_parser::read_key_share_item_header(r, group, len));
+    }
+}
+
+TEST(CHParserTest, InternalSNIAndExtensionBranches)
+{
+    {
+        std::vector<std::uint8_t> buf = {0xAB};
+        ch_parser::reader r(buf);
+        mux::client_hello_info info;
+        EXPECT_TRUE(ch_parser::handle_sni_item(r, 0x01, 2, info));
+    }
+
+    {
+        std::vector<std::uint8_t> buf = {0xAB, 0xCD};
+        ch_parser::reader r(buf);
+        mux::client_hello_info info;
+        EXPECT_FALSE(ch_parser::handle_sni_item(r, 0x01, 2, info));
+    }
+
+    {
+        std::vector<std::uint8_t> buf = {0x00, 0x05, 0x01};
+        ch_parser::reader r(buf);
+        mux::client_hello_info info;
+        ch_parser::parse_extension_block(r, info);
+        EXPECT_TRUE(info.sni.empty());
+    }
+
+    {
+        std::vector<std::uint8_t> buf = {0x00, 0x00, 0x00, 0x05, 0xFF};
+        ch_parser::reader r(buf);
+        mux::client_hello_info info;
+        ch_parser::parse_extensions(r, info);
+        EXPECT_TRUE(info.sni.empty());
+    }
+
+    {
+        std::vector<std::uint8_t> buf;
+        ch_parser::reader r(buf);
+        mux::client_hello_info info;
+        ch_parser::parse_sni(r, info);
+        EXPECT_TRUE(info.sni.empty());
+    }
+
+    {
+        std::vector<std::uint8_t> buf = {0x00, 0x05, 0x41};
+        ch_parser::reader r(buf);
+        mux::client_hello_info info;
+        ch_parser::parse_sni(r, info);
+        EXPECT_TRUE(info.sni.empty());
+    }
+}
+
+TEST(CHParserTest, InternalKeyShareBranches)
+{
+    {
+        std::vector<std::uint8_t> buf(31, 0x11);
+        ch_parser::reader r(buf);
+        mux::client_hello_info info;
+        ch_parser::handle_key_share_item(r, reality::tls_consts::group::kX25519, 31, info);
+        EXPECT_FALSE(info.has_x25519_share);
+    }
+
+    {
+        mux::client_hello_info info;
+        ch_parser::finalize_key_share_info(info);
+        EXPECT_FALSE(info.is_tls13);
+    }
+
+    {
+        std::vector<std::uint8_t> buf;
+        ch_parser::reader r(buf);
+        mux::client_hello_info info;
+        ch_parser::parse_key_share(r, info);
+        EXPECT_FALSE(info.is_tls13);
+    }
+
+    {
+        std::vector<std::uint8_t> buf = {0x00, 0x05, 0x01};
+        ch_parser::reader r(buf);
+        mux::client_hello_info info;
+        ch_parser::parse_key_share(r, info);
+        EXPECT_FALSE(info.is_tls13);
+    }
+
+    {
+        std::vector<std::uint8_t> buf = {0x00, 0x04, 0x00, 0x17, 0x00, 0x01};
+        ch_parser::reader r(buf);
+        mux::client_hello_info info;
+        ch_parser::parse_key_share(r, info);
+        EXPECT_FALSE(info.is_tls13);
+    }
 }
 
 TEST(CHParserTest, WrongHandshakeType)
