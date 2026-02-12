@@ -248,7 +248,8 @@ cat >"${TMPDIR}/config.json" <<EOF
   "reality": {
     "sni": "example.com",
     "public_key": "${REALITY_PUB}",
-    "short_id": ""
+    "short_id": "",
+    "strict_cert_verify": false
   },
   "limits": { "max_connections": 1 },
   "timeout": { "idle": 5 }
