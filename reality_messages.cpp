@@ -13,8 +13,8 @@
 
 extern "C"
 {
+#include <openssl/core_names.h>
 #include <openssl/evp.h>
-#include <openssl/ec.h>
 #include <openssl/rand.h>
 }
 
@@ -52,30 +52,64 @@ std::vector<std::uint8_t> generate_secp256r1_public_key()
     }
     const openssl_ptrs::evp_pkey_ptr pkey(raw_pkey);
 
-    const EC_KEY* ec_key = EVP_PKEY_get0_EC_KEY(pkey.get());
-    if (ec_key == nullptr)
-    {
-        return fallback_secp256r1_public_key();
-    }
-    const EC_GROUP* group = EC_KEY_get0_group(ec_key);
-    const EC_POINT* pub_point = EC_KEY_get0_public_key(ec_key);
-    if (group == nullptr || pub_point == nullptr)
-    {
-        return fallback_secp256r1_public_key();
-    }
-
-    const std::size_t key_len = EC_POINT_point2oct(group, pub_point, POINT_CONVERSION_UNCOMPRESSED, nullptr, 0, nullptr);
-    if (key_len != 65)
+    std::size_t key_len = 0;
+    if (EVP_PKEY_get_octet_string_param(pkey.get(), OSSL_PKEY_PARAM_PUB_KEY, nullptr, 0, &key_len) != 1 || key_len != 65)
     {
         return fallback_secp256r1_public_key();
     }
 
     std::vector<std::uint8_t> key_data(key_len);
-    if (EC_POINT_point2oct(group, pub_point, POINT_CONVERSION_UNCOMPRESSED, key_data.data(), key_data.size(), nullptr) != key_data.size())
+    std::size_t out_len = 0;
+    if (EVP_PKEY_get_octet_string_param(pkey.get(), OSSL_PKEY_PARAM_PUB_KEY, key_data.data(), key_data.size(), &out_len) != 1 ||
+        out_len != key_data.size() || key_data[0] != 0x04)
     {
         return fallback_secp256r1_public_key();
     }
     return key_data;
+}
+
+bool fill_random_bytes(std::vector<std::uint8_t>& buffer)
+{
+    if (buffer.empty())
+    {
+        return true;
+    }
+    if (RAND_bytes(buffer.data(), static_cast<int>(buffer.size())) != 1)
+    {
+        std::fill(buffer.begin(), buffer.end(), 0x00);
+        return false;
+    }
+    return true;
+}
+
+std::uint16_t select_grease_ech_payload_len()
+{
+    static constexpr std::array<std::uint16_t, 4> kPayloadLens = {144, 176, 208, 240};
+    std::uint8_t random_idx = 0;
+    if (RAND_bytes(&random_idx, 1) != 1)
+    {
+        random_idx = 0;
+    }
+    return kPayloadLens[random_idx % kPayloadLens.size()];
+}
+
+std::size_t boring_padding_len(const std::size_t unpadded_len)
+{
+    if (unpadded_len <= 0xff || unpadded_len >= 0x200)
+    {
+        return 0;
+    }
+
+    std::size_t padding_len = 0x200 - unpadded_len;
+    if (padding_len >= 5)
+    {
+        padding_len -= 4;
+    }
+    else
+    {
+        padding_len = 1;
+    }
+    return padding_len;
 }
 
 struct extension_build_context
@@ -300,15 +334,22 @@ bool build_application_settings_new_ext(const std::shared_ptr<extension_blueprin
 bool build_grease_ech_ext(std::vector<std::uint8_t>& ext_buffer, std::uint16_t& ext_type)
 {
     ext_type = tls_consts::ext::kGreaseEch;
-    ext_buffer.reserve(10);
     ext_buffer.push_back(0x00);
-    ext_buffer.push_back(0x0a);
-    ext_buffer.push_back(0x0a);
-    ext_buffer.push_back(0x0a);
-    ext_buffer.push_back(0x0a);
-    ext_buffer.push_back(0x00);
-    message_builder::push_u16(ext_buffer, 0);
-    message_builder::push_u16(ext_buffer, 0);
+    message_builder::push_u16(ext_buffer, 0x0001);
+    message_builder::push_u16(ext_buffer, 0x0001);
+
+    std::uint8_t config_id = 0;
+    (void)RAND_bytes(&config_id, 1);
+    ext_buffer.push_back(config_id);
+
+    std::vector<std::uint8_t> enc_key(32, 0);
+    (void)fill_random_bytes(enc_key);
+    message_builder::push_vector_u16(ext_buffer, enc_key);
+
+    const std::uint16_t payload_len = select_grease_ech_payload_len();
+    std::vector<std::uint8_t> payload(payload_len, 0);
+    (void)fill_random_bytes(payload);
+    message_builder::push_vector_u16(ext_buffer, payload);
     return true;
 }
 
@@ -361,11 +402,7 @@ bool build_padding_ext(std::vector<std::uint8_t>& ext_buffer, std::uint16_t& ext
 {
     ext_type = tls_consts::ext::kPadding;
     const auto current_len = ctx.hello_size + 2 + ctx.exts_size + 4;
-    std::size_t padding_len = 0;
-    if (current_len < 512)
-    {
-        padding_len = 512 - current_len;
-    }
+    const std::size_t padding_len = boring_padding_len(current_len);
     if (padding_len > 0)
     {
         ext_buffer.resize(padding_len, 0x00);
