@@ -352,15 +352,11 @@ std::pair<const EVP_MD*, const EVP_CIPHER*> select_negotiated_suite(const std::u
     return std::make_pair(EVP_sha256(), EVP_aes_128_gcm());
 }
 
-bool build_authenticated_client_hello(const std::uint8_t* public_key,
-                                      const std::uint8_t* private_key,
-                                      const std::vector<std::uint8_t>& server_pub_key,
-                                      const std::vector<std::uint8_t>& short_id_bytes,
-                                      const std::array<std::uint8_t, 3>& client_ver,
-                                      const reality::fingerprint_spec& spec,
-                                      const std::string& sni,
-                                      std::vector<std::uint8_t>& hello_body,
-                                      std::error_code& ec)
+bool derive_client_auth_key_material(const std::uint8_t* private_key,
+                                     const std::vector<std::uint8_t>& server_pub_key,
+                                     std::vector<std::uint8_t>& client_random,
+                                     std::vector<std::uint8_t>& auth_key,
+                                     std::error_code& ec)
 {
     const auto shared = reality::crypto_util::x25519_derive(std::vector<std::uint8_t>(private_key, private_key + 32), server_pub_key, ec);
     LOG_DEBUG("using server pub key size {}", server_pub_key.size());
@@ -369,26 +365,32 @@ bool build_authenticated_client_hello(const std::uint8_t* public_key,
         return false;
     }
 
-    std::vector<std::uint8_t> client_random(32);
+    client_random.resize(32);
     if (RAND_bytes(client_random.data(), 32) != 1)
     {
         ec = std::make_error_code(std::errc::operation_canceled);
         return false;
     }
+
     const std::vector<std::uint8_t> salt(client_random.begin(), client_random.begin() + constants::auth::kSaltLen);
     const auto r_info = reality::crypto_util::hex_to_bytes("5245414c495459");
     const auto prk = reality::crypto_util::hkdf_extract(salt, shared, EVP_sha256(), ec);
-    const auto auth_key = reality::crypto_util::hkdf_expand(prk, r_info, 16, EVP_sha256(), ec);
-
-    LOG_DEBUG("client auth material ready random {} bytes eph pub {} bytes", client_random.size(), 32);
-    const std::uint32_t now = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-    std::array<std::uint8_t, reality::kAuthPayloadLen> payload{};
-    if (!reality::build_auth_payload(short_id_bytes, client_ver, now, payload))
+    auth_key = reality::crypto_util::hkdf_expand(prk, r_info, 16, EVP_sha256(), ec);
+    if (ec)
     {
-        ec = std::make_error_code(std::errc::invalid_argument);
         return false;
     }
+    LOG_DEBUG("client auth material ready random {} bytes eph pub {} bytes", client_random.size(), 32);
+    return true;
+}
 
+bool build_client_hello_with_placeholder_sid(const reality::fingerprint_spec& spec,
+                                             const std::vector<std::uint8_t>& client_random,
+                                             const std::uint8_t* public_key,
+                                             const std::string& sni,
+                                             std::vector<std::uint8_t>& hello_body,
+                                             std::uint32_t& absolute_sid_offset)
+{
     const std::vector<std::uint8_t> placeholder_session_id(32, 0);
     hello_body = reality::client_hello_builder::build(
         spec, placeholder_session_id, client_random, std::vector<std::uint8_t>(public_key, public_key + 32), sni);
@@ -404,22 +406,70 @@ bool build_authenticated_client_hello(const std::uint8_t* public_key,
         return false;
     }
 
-    const std::uint32_t absolute_sid_offset = ch_info.sid_offset - 5;
+    absolute_sid_offset = ch_info.sid_offset - 5;
     if (absolute_sid_offset + 32 > hello_body.size())
     {
         LOG_ERROR("session id offset out of bounds: {} / {}", absolute_sid_offset, hello_body.size());
         return false;
     }
+    return true;
+}
 
-    const auto sid = reality::crypto_util::aead_encrypt(EVP_aes_128_gcm(),
-                                                        auth_key,
-                                                        std::vector<std::uint8_t>(client_random.begin() + constants::auth::kSaltLen, client_random.end()),
-                                                        std::vector<std::uint8_t>(payload.begin(), payload.end()),
-                                                        hello_body,
-                                                        ec);
+bool encrypt_client_session_id(const std::vector<std::uint8_t>& auth_key,
+                               const std::vector<std::uint8_t>& client_random,
+                               const std::array<std::uint8_t, reality::kAuthPayloadLen>& payload,
+                               const std::vector<std::uint8_t>& hello_body,
+                               std::vector<std::uint8_t>& sid,
+                               std::error_code& ec)
+{
+    sid = reality::crypto_util::aead_encrypt(EVP_aes_128_gcm(),
+                                             auth_key,
+                                             std::vector<std::uint8_t>(client_random.begin() + constants::auth::kSaltLen, client_random.end()),
+                                             std::vector<std::uint8_t>(payload.begin(), payload.end()),
+                                             hello_body,
+                                             ec);
     if (ec || sid.size() != 32)
     {
         LOG_ERROR("auth encryption failed ct size {}", sid.size());
+        return false;
+    }
+    return true;
+}
+
+bool build_authenticated_client_hello(const std::uint8_t* public_key,
+                                      const std::uint8_t* private_key,
+                                      const std::vector<std::uint8_t>& server_pub_key,
+                                      const std::vector<std::uint8_t>& short_id_bytes,
+                                      const std::array<std::uint8_t, 3>& client_ver,
+                                      const reality::fingerprint_spec& spec,
+                                      const std::string& sni,
+                                      std::vector<std::uint8_t>& hello_body,
+                                      std::error_code& ec)
+{
+    std::vector<std::uint8_t> client_random;
+    std::vector<std::uint8_t> auth_key;
+    if (!derive_client_auth_key_material(private_key, server_pub_key, client_random, auth_key, ec))
+    {
+        return false;
+    }
+
+    const std::uint32_t now = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    std::array<std::uint8_t, reality::kAuthPayloadLen> payload{};
+    if (!reality::build_auth_payload(short_id_bytes, client_ver, now, payload))
+    {
+        ec = std::make_error_code(std::errc::invalid_argument);
+        return false;
+    }
+
+    std::uint32_t absolute_sid_offset = 0;
+    if (!build_client_hello_with_placeholder_sid(spec, client_random, public_key, sni, hello_body, absolute_sid_offset))
+    {
+        return false;
+    }
+
+    std::vector<std::uint8_t> sid;
+    if (!encrypt_client_session_id(auth_key, client_random, payload, hello_body, sid, ec))
+    {
         return false;
     }
 
