@@ -5,6 +5,9 @@
 #include <string_view>
 #include <thread>
 #include <utility>
+#include <dirent.h>
+#include <unistd.h>
+#include <sys/resource.h>
 
 #include <asio.hpp>
 #include <gtest/gtest.h>
@@ -72,6 +75,26 @@ std::string request_with_retry(std::uint16_t port, const std::string& request)
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
     return read_response(port, request);
+}
+
+std::size_t count_open_fds()
+{
+    std::size_t count = 0;
+    DIR* dir = opendir("/proc/self/fd");
+    if (dir == nullptr)
+    {
+        return 0;
+    }
+    while (readdir(dir) != nullptr)
+    {
+        ++count;
+    }
+    closedir(dir);
+    if (count >= 2)
+    {
+        count -= 2;
+    }
+    return count;
 }
 
 class monitor_server_env
@@ -178,6 +201,48 @@ TEST(MonitorServerTest, ConstructorHandlesInvalidBindHost)
     auto bad_server = std::make_shared<monitor_server>(ioc, std::string("bad host"), port, std::string("token"), 10);
     ASSERT_NE(server, nullptr);
     ASSERT_NE(bad_server, nullptr);
+}
+
+TEST(MonitorServerTest, ConstructorHandlesOpenFailure)
+{
+    asio::io_context ioc;
+
+    asio::ip::tcp::acceptor primer(ioc);
+    asio::error_code ec;
+    primer.open(asio::ip::tcp::v4(), ec);
+    ASSERT_FALSE(ec);
+    primer.close(ec);
+    ASSERT_FALSE(ec);
+
+    struct limit_guard
+    {
+        rlimit old_limit{};
+        bool restore = false;
+        ~limit_guard()
+        {
+            if (restore)
+            {
+                (void)setrlimit(RLIMIT_NOFILE, &old_limit);
+            }
+        }
+    } guard;
+
+    ASSERT_EQ(getrlimit(RLIMIT_NOFILE, &guard.old_limit), 0);
+    const auto open_fds = count_open_fds();
+    ASSERT_GT(open_fds, 0U);
+    if (open_fds <= 8)
+    {
+        GTEST_SKIP() << "open fds too small for deterministic RLIMIT test";
+    }
+
+    rlimit reduced = guard.old_limit;
+    reduced.rlim_cur = static_cast<rlim_t>(open_fds);
+    ASSERT_EQ(setrlimit(RLIMIT_NOFILE, &reduced), 0);
+    guard.restore = true;
+
+    const auto port = pick_free_port();
+    auto server = std::make_shared<monitor_server>(ioc, port, std::string("token"), 10);
+    ASSERT_NE(server, nullptr);
 }
 
 }    // namespace mux
