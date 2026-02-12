@@ -68,6 +68,7 @@ TEST_F(connection_pool_test, TunnelReuse)
     client_cfg.reality.public_key = client_pub_key();
     client_cfg.reality.sni = sni;
     client_cfg.reality.short_id = "0102030405060708";
+    client_cfg.reality.strict_cert_verify = false;
     client_cfg.limits = limits;
     auto client = std::make_shared<mux::socks_client>(pool, client_cfg);
     client->start();
