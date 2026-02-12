@@ -352,6 +352,81 @@ std::pair<const EVP_MD*, const EVP_CIPHER*> select_negotiated_suite(const std::u
     return std::make_pair(EVP_sha256(), EVP_aes_128_gcm());
 }
 
+bool build_authenticated_client_hello(const std::uint8_t* public_key,
+                                      const std::uint8_t* private_key,
+                                      const std::vector<std::uint8_t>& server_pub_key,
+                                      const std::vector<std::uint8_t>& short_id_bytes,
+                                      const std::array<std::uint8_t, 3>& client_ver,
+                                      const reality::fingerprint_spec& spec,
+                                      const std::string& sni,
+                                      std::vector<std::uint8_t>& hello_body,
+                                      std::error_code& ec)
+{
+    const auto shared = reality::crypto_util::x25519_derive(std::vector<std::uint8_t>(private_key, private_key + 32), server_pub_key, ec);
+    LOG_DEBUG("using server pub key size {}", server_pub_key.size());
+    if (ec)
+    {
+        return false;
+    }
+
+    std::vector<std::uint8_t> client_random(32);
+    if (RAND_bytes(client_random.data(), 32) != 1)
+    {
+        ec = std::make_error_code(std::errc::operation_canceled);
+        return false;
+    }
+    const std::vector<std::uint8_t> salt(client_random.begin(), client_random.begin() + constants::auth::kSaltLen);
+    const auto r_info = reality::crypto_util::hex_to_bytes("5245414c495459");
+    const auto prk = reality::crypto_util::hkdf_extract(salt, shared, EVP_sha256(), ec);
+    const auto auth_key = reality::crypto_util::hkdf_expand(prk, r_info, 16, EVP_sha256(), ec);
+
+    LOG_DEBUG("client auth material ready random {} bytes eph pub {} bytes", client_random.size(), 32);
+    const std::uint32_t now = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    std::array<std::uint8_t, reality::kAuthPayloadLen> payload{};
+    if (!reality::build_auth_payload(short_id_bytes, client_ver, now, payload))
+    {
+        ec = std::make_error_code(std::errc::invalid_argument);
+        return false;
+    }
+
+    const std::vector<std::uint8_t> placeholder_session_id(32, 0);
+    hello_body = reality::client_hello_builder::build(
+        spec, placeholder_session_id, client_random, std::vector<std::uint8_t>(public_key, public_key + 32), sni);
+
+    std::vector<std::uint8_t> dummy_record =
+        reality::write_record_header(reality::kContentTypeHandshake, static_cast<std::uint16_t>(hello_body.size()));
+    dummy_record.insert(dummy_record.end(), hello_body.begin(), hello_body.end());
+
+    const client_hello_info ch_info = ch_parser::parse(dummy_record);
+    if (ch_info.sid_offset < 5)
+    {
+        LOG_ERROR("generated client hello session id offset is invalid: {}", ch_info.sid_offset);
+        return false;
+    }
+
+    const std::uint32_t absolute_sid_offset = ch_info.sid_offset - 5;
+    if (absolute_sid_offset + 32 > hello_body.size())
+    {
+        LOG_ERROR("session id offset out of bounds: {} / {}", absolute_sid_offset, hello_body.size());
+        return false;
+    }
+
+    const auto sid = reality::crypto_util::aead_encrypt(EVP_aes_128_gcm(),
+                                                        auth_key,
+                                                        std::vector<std::uint8_t>(client_random.begin() + constants::auth::kSaltLen, client_random.end()),
+                                                        std::vector<std::uint8_t>(payload.begin(), payload.end()),
+                                                        hello_body,
+                                                        ec);
+    if (ec || sid.size() != 32)
+    {
+        LOG_ERROR("auth encryption failed ct size {}", sid.size());
+        return false;
+    }
+
+    std::memcpy(hello_body.data() + absolute_sid_offset, sid.data(), 32);
+    return true;
+}
+
 }    // namespace
 
 client_tunnel_pool::client_tunnel_pool(io_context_pool& pool, const config& cfg, const std::uint32_t mark)
@@ -733,76 +808,15 @@ asio::awaitable<bool> client_tunnel_pool::generate_and_send_client_hello(asio::i
                                                                          reality::transcript& trans,
                                                                          std::error_code& ec) const
 {
-    const auto shared = reality::crypto_util::x25519_derive(std::vector<std::uint8_t>(private_key, private_key + 32), server_pub_key_, ec);
-    LOG_DEBUG("using server pub key size {}", server_pub_key_.size());
-    if (ec)
+    std::vector<std::uint8_t> hello_body;
+    if (!build_authenticated_client_hello(
+            public_key, private_key, server_pub_key_, short_id_bytes_, client_ver_, spec, sni_, hello_body, ec))
     {
         co_return false;
     }
 
-    std::vector<std::uint8_t> client_random(32);
-    if (RAND_bytes(client_random.data(), 32) != 1)
-    {
-        ec = std::make_error_code(std::errc::operation_canceled);
-        co_return false;
-    }
-    const std::vector<std::uint8_t> salt(client_random.begin(), client_random.begin() + constants::auth::kSaltLen);
-    const auto r_info = reality::crypto_util::hex_to_bytes("5245414c495459");
-    const auto prk = reality::crypto_util::hkdf_extract(salt, shared, EVP_sha256(), ec);
-    const std::size_t auth_key_len = 16;
-    const auto auth_key = reality::crypto_util::hkdf_expand(prk, r_info, auth_key_len, EVP_sha256(), ec);
-
-    LOG_DEBUG("client auth material ready random {} bytes eph pub {} bytes", client_random.size(), 32);
-    const std::uint32_t now = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-    std::array<std::uint8_t, reality::kAuthPayloadLen> payload{};
-    if (!reality::build_auth_payload(short_id_bytes_, client_ver_, now, payload))
-    {
-        ec = std::make_error_code(std::errc::invalid_argument);
-        co_return false;
-    }
-
-    const std::vector<std::uint8_t> placeholder_session_id(32, 0);
-    auto hello_body = reality::client_hello_builder::build(
-        spec, placeholder_session_id, client_random, std::vector<std::uint8_t>(public_key, public_key + 32), sni_);
-
-    std::vector<std::uint8_t> dummy_record =
-        reality::write_record_header(reality::kContentTypeHandshake, static_cast<std::uint16_t>(hello_body.size()));
-    dummy_record.insert(dummy_record.end(), hello_body.begin(), hello_body.end());
-
-    client_hello_info ch_info = ch_parser::parse(dummy_record);
-    if (ch_info.sid_offset < 5)
-    {
-        LOG_ERROR("generated client hello session id offset is invalid: {}", ch_info.sid_offset);
-        co_return false;
-    }
-
-    const std::uint32_t absolute_sid_offset = ch_info.sid_offset - 5;
-    if (absolute_sid_offset + 32 > hello_body.size())
-    {
-        LOG_ERROR("session id offset out of bounds: {} / {}", absolute_sid_offset, hello_body.size());
-        co_return false;
-    }
-
-    const EVP_CIPHER* auth_cipher = EVP_aes_128_gcm();
-    const auto sid =
-        reality::crypto_util::aead_encrypt(auth_cipher,
-                                           auth_key,
-                                           std::vector<std::uint8_t>(client_random.begin() + constants::auth::kSaltLen, client_random.end()),
-                                           std::vector<std::uint8_t>(payload.begin(), payload.end()),
-                                           hello_body,
-                                           ec);
-
-    if (ec || sid.size() != 32)
-    {
-        LOG_ERROR("auth encryption failed ct size {}", sid.size());
-        co_return false;
-    }
-
-    std::memcpy(hello_body.data() + absolute_sid_offset, sid.data(), 32);
-
-    const std::vector<std::uint8_t> ch = hello_body;
-    auto ch_rec = reality::write_record_header(reality::kContentTypeHandshake, static_cast<std::uint16_t>(ch.size()));
-    ch_rec.insert(ch_rec.end(), ch.begin(), ch.end());
+    auto ch_rec = reality::write_record_header(reality::kContentTypeHandshake, static_cast<std::uint16_t>(hello_body.size()));
+    ch_rec.insert(ch_rec.end(), hello_body.begin(), hello_body.end());
 
     auto [we, wn] = co_await asio::async_write(socket, asio::buffer(ch_rec), asio::as_tuple(asio::use_awaitable));
     if (we)
@@ -812,7 +826,7 @@ asio::awaitable<bool> client_tunnel_pool::generate_and_send_client_hello(asio::i
         co_return false;
     }
     LOG_DEBUG("sending client hello record size {}", ch_rec.size());
-    trans.update(ch);
+    trans.update(hello_body);
     co_return true;
 }
 

@@ -21,6 +21,17 @@
 #include "tproxy_client.h"
 #include "monitor_server.h"
 
+namespace
+{
+
+struct runtime_services
+{
+    std::shared_ptr<mux::remote_server> server = nullptr;
+    std::shared_ptr<mux::socks_client> socks = nullptr;
+    std::shared_ptr<mux::tproxy_client> tproxy = nullptr;
+    std::shared_ptr<mux::monitor_server> monitor = nullptr;
+};
+
 static void print_usage(const char* prog)
 {
     std::cout << "Usage:\n";
@@ -55,6 +66,121 @@ static int parse_config_from_file(const std::string& file, mux::config& cfg)
     return 0;
 }
 
+runtime_services start_runtime_services(mux::io_context_pool& pool, const mux::config& cfg)
+{
+    runtime_services services;
+    if (cfg.monitor.enabled)
+    {
+        services.monitor = std::make_shared<mux::monitor_server>(
+            pool.get_io_context(), cfg.monitor.port, cfg.monitor.token, cfg.monitor.min_interval_ms);
+        services.monitor->start();
+    }
+
+    if (cfg.mode == "server")
+    {
+        services.server = std::make_shared<mux::remote_server>(pool, cfg);
+        services.server->start();
+        return services;
+    }
+
+    if (cfg.socks.enabled)
+    {
+        services.socks = std::make_shared<mux::socks_client>(pool, cfg);
+        services.socks->start();
+    }
+    if (cfg.tproxy.enabled)
+    {
+        services.tproxy = std::make_shared<mux::tproxy_client>(pool, cfg);
+        services.tproxy->start();
+    }
+    return services;
+}
+
+bool register_shutdown_signals(asio::signal_set& signals, mux::io_context_pool& pool, const runtime_services& services)
+{
+    std::error_code ec;
+    ec = signals.add(SIGINT, ec);
+    if (ec)
+    {
+        LOG_ERROR("fatal failed to register sigint error {}", ec.message());
+        return false;
+    }
+    ec = signals.add(SIGTERM, ec);
+    if (ec)
+    {
+        LOG_ERROR("fatal failed to register sigterm error {}", ec.message());
+        return false;
+    }
+
+    signals.async_wait(
+        [&pool, services](const std::error_code& error, int)
+        {
+            if (error)
+            {
+                return;
+            }
+
+            if (services.socks != nullptr)
+            {
+                services.socks->stop();
+            }
+            if (services.tproxy != nullptr)
+            {
+                services.tproxy->stop();
+            }
+            if (services.server != nullptr)
+            {
+                services.server->stop();
+            }
+            pool.stop();
+        });
+    return true;
+}
+
+int run_with_config(const char* prog, const std::string& config_path)
+{
+    mux::config cfg;
+    if (parse_config_from_file(config_path, cfg) != 0)
+    {
+        print_usage(prog);
+        return -1;
+    }
+
+    init_log(cfg.log.file);
+    set_level(cfg.log.level);
+    mux::statistics::instance().start_time();
+
+    const auto threads_count = std::thread::hardware_concurrency();
+    std::error_code ec;
+    mux::io_context_pool pool(threads_count > 0 ? threads_count : 4, ec);
+    if (ec)
+    {
+        LOG_ERROR("fatal failed to create io context pool error {}", ec.message());
+        return 1;
+    }
+
+    if (cfg.mode != "client" && cfg.mode != "server")
+    {
+        print_usage(prog);
+        return 1;
+    }
+
+    const auto services = start_runtime_services(pool, cfg);
+    asio::signal_set signals(pool.get_io_context());
+    if (!register_shutdown_signals(signals, pool, services))
+    {
+        return 1;
+    }
+
+    pool.run();
+    LOG_INFO("{} {} shutdown", prog, cfg.mode);
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    shutdown_log();
+    return 0;
+}
+
+}    // namespace
+
 int main(int argc, char** argv)
 {
     if (argc < 2)
@@ -87,104 +213,5 @@ int main(int argc, char** argv)
         print_usage(argv[0]);
         return -1;
     }
-
-    mux::config cfg;
-    if (parse_config_from_file(argv[2], cfg) != 0)
-    {
-        print_usage(argv[0]);
-        return -1;
-    }
-
-    init_log(cfg.log.file);
-    set_level(cfg.log.level);
-
-    mux::statistics::instance().start_time();
-
-    const auto threads_count = std::thread::hardware_concurrency();
-    std::error_code ec;
-    mux::io_context_pool pool(threads_count > 0 ? threads_count : 4, ec);
-    if (ec)
-    {
-        LOG_ERROR("fatal failed to create io context pool error {}", ec.message());
-        return 1;
-    }
-
-    if (cfg.mode != "client" && cfg.mode != "server")
-    {
-        print_usage(argv[0]);
-        return 1;
-    }
-
-    std::shared_ptr<mux::remote_server> server = nullptr;
-    std::shared_ptr<mux::socks_client> socks = nullptr;
-    std::shared_ptr<mux::tproxy_client> tproxy = nullptr;
-    std::shared_ptr<mux::monitor_server> monitor = nullptr;
-
-    if (cfg.monitor.enabled)
-    {
-        monitor = std::make_shared<mux::monitor_server>(pool.get_io_context(), cfg.monitor.port, cfg.monitor.token, cfg.monitor.min_interval_ms);
-        monitor->start();
-    }
-
-    if (cfg.mode == "server")
-    {
-        server = std::make_shared<mux::remote_server>(pool, cfg);
-        server->start();
-    }
-    else if (cfg.mode == "client")
-    {
-        if (cfg.socks.enabled)
-        {
-            socks = std::make_shared<mux::socks_client>(pool, cfg);
-            socks->start();
-        }
-        if (cfg.tproxy.enabled)
-        {
-            tproxy = std::make_shared<mux::tproxy_client>(pool, cfg);
-            tproxy->start();
-        }
-    }
-
-    asio::io_context& signal_ctx = pool.get_io_context();
-    asio::signal_set signals(signal_ctx);
-    ec = signals.add(SIGINT, ec);
-    if (ec)
-    {
-        LOG_ERROR("fatal failed to register sigint error {}", ec.message());
-        return 1;
-    }
-    ec = signals.add(SIGTERM, ec);
-    if (ec)
-    {
-        LOG_ERROR("fatal failed to register sigterm error {}", ec.message());
-        return 1;
-    }
-
-    signals.async_wait(
-        [&pool, server, socks, tproxy](const std::error_code& error, int)
-        {
-            if (!error)
-            {
-                if (socks != nullptr)
-                {
-                    socks->stop();
-                }
-                if (tproxy != nullptr)
-                {
-                    tproxy->stop();
-                }
-                if (server != nullptr)
-                {
-                    server->stop();
-                }
-
-                pool.stop();
-            }
-        });
-
-    pool.run();
-    LOG_INFO("{} {} shutdown", argv[0], cfg.mode);
-    std::this_thread::sleep_for(std::chrono::seconds(1));
-    shutdown_log();
-    return 0;
+    return run_with_config(argv[0], argv[2]);
 }
