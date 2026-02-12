@@ -140,4 +140,14 @@ TEST(CertManagerTest, ZeroCapacityClampedToOne)
     EXPECT_EQ(entry_b->cert_msg, cert_b);
 }
 
+TEST(CertManagerTest, MissingSniWithoutDefaultReturnsNullopt)
+{
+    cert_manager manager;
+    server_fingerprint fp;
+    const std::vector<uint8_t> cert = {0x01};
+    manager.set_certificate("known.example.com", cert, fp, "trace-known");
+
+    EXPECT_FALSE(manager.get_certificate("missing.example.com").has_value());
+}
+
 }    // namespace reality
