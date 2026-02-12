@@ -114,6 +114,10 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     void handle_stream_frame(const mux::frame_header& header, std::vector<std::uint8_t> payload);
     void on_mux_frame(mux::frame_header header, std::vector<std::uint8_t> payload);
     void stop_impl();
+    void reset_streams_on_stop(stream_map_t& streams_to_clear);
+    void close_socket_on_stop();
+    void finalize_stop_state();
+    [[nodiscard]] asio::awaitable<bool> read_and_dispatch_once();
 
    private:
     connection_context ctx_;
