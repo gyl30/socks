@@ -155,3 +155,19 @@ TEST(ReflectTest, CharPointerDeserialize)
     ASSERT_TRUE(reflect::deserialize_struct(t, json.c_str(), json.size()));
     EXPECT_EQ(t.i, 123);
 }
+
+TEST(ReflectTest, CharPointerDeserializeInvalidJson)
+{
+    reflect::test_struct t{};
+    const std::string invalid_json = R"({"i":)";
+    EXPECT_FALSE(reflect::deserialize_struct(t, invalid_json.c_str(), invalid_json.size()));
+}
+
+TEST(ReflectTest, OptionalDirectSerializeCoversNullBranch)
+{
+    std::optional<int> empty_opt;
+    EXPECT_EQ(reflect::serialize_struct(empty_opt), "null");
+
+    std::optional<int> value_opt = 7;
+    EXPECT_EQ(reflect::serialize_struct(value_opt), "7");
+}
