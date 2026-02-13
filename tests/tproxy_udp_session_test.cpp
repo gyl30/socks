@@ -1699,6 +1699,89 @@ TEST(TproxyClientTest, SetupCoversEmptyHostV6OnlyRecvOrigdstAndMarkFailureBranch
     reset_socket_wrappers();
 }
 
+TEST(TproxyClientTest, SetupCoversV6DualStackSuccessBranches)
+{
+    reset_socket_wrappers();
+    force_tproxy_setsockopt_success(true);
+
+    mux::config cfg;
+    cfg.tproxy.enabled = true;
+    cfg.tproxy.listen_host = "::1";
+    cfg.tproxy.tcp_port = pick_free_tcp_port();
+    cfg.tproxy.udp_port = pick_free_tcp_port();
+    cfg.tproxy.mark = 0;
+
+    {
+        std::error_code ec;
+        mux::io_context_pool pool(1, ec);
+        ASSERT_FALSE(ec);
+        auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
+
+        asio::co_spawn(pool.get_io_context(),
+                       [client]() -> asio::awaitable<void>
+                       {
+                           co_await client->accept_tcp_loop();
+                           co_return;
+                       },
+                       asio::detached);
+
+        std::thread runner([&pool]() { pool.run(); });
+        bool tcp_opened = false;
+        for (int i = 0; i < 50 && !(tcp_opened = tcp_acceptor_is_open(pool.get_io_context(), client)); ++i)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+
+        if (!tcp_opened)
+        {
+            client->stop();
+            pool.stop();
+            runner.join();
+            GTEST_SKIP() << "tcp ipv6 listener unavailable in current environment";
+        }
+
+        client->stop();
+        pool.stop();
+        runner.join();
+    }
+
+    {
+        std::error_code ec;
+        mux::io_context_pool pool(1, ec);
+        ASSERT_FALSE(ec);
+        auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
+
+        asio::co_spawn(pool.get_io_context(),
+                       [client]() -> asio::awaitable<void>
+                       {
+                           co_await client->udp_loop();
+                           co_return;
+                       },
+                       asio::detached);
+
+        std::thread runner([&pool]() { pool.run(); });
+        bool udp_opened = false;
+        for (int i = 0; i < 50 && !(udp_opened = udp_socket_is_open(pool.get_io_context(), client)); ++i)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+
+        if (!udp_opened)
+        {
+            client->stop();
+            pool.stop();
+            runner.join();
+            GTEST_SKIP() << "udp ipv6 listener unavailable in current environment";
+        }
+
+        client->stop();
+        pool.stop();
+        runner.join();
+    }
+
+    reset_socket_wrappers();
+}
+
 TEST(TproxyClientTest, StopCoversCloseErrorLogBranches)
 {
     reset_socket_wrappers();
