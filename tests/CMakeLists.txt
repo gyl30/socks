@@ -24,6 +24,9 @@ target_link_options(
         -Wl,--wrap=socket
         -Wl,--wrap=setsockopt
         -Wl,--wrap=listen
+        -Wl,--wrap=accept
+        -Wl,--wrap=accept4
+        -Wl,--wrap=close
 )
 add_socks_test(net_utils_test)
 target_link_options(
