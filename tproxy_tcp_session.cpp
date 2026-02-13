@@ -80,8 +80,12 @@ tproxy_tcp_session::tproxy_tcp_session(asio::ip::tcp::socket socket,
 
 void tproxy_tcp_session::start()
 {
-    const auto self = shared_from_this();
-    asio::co_spawn(io_context_, [self]() -> asio::awaitable<void> { co_await self->run(); }, asio::detached);
+    asio::co_spawn(io_context_, run_detached(shared_from_this()), asio::detached);
+}
+
+asio::awaitable<void> tproxy_tcp_session::run_detached(std::shared_ptr<tproxy_tcp_session> self)
+{
+    co_await self->run();
 }
 
 asio::awaitable<void> tproxy_tcp_session::run()
@@ -153,10 +157,13 @@ asio::awaitable<bool> tproxy_tcp_session::connect_backend(const std::shared_ptr<
 
 void tproxy_tcp_session::start_idle_watchdog(const std::shared_ptr<upstream>& backend)
 {
-    asio::co_spawn(
-        io_context_,
-        [self = shared_from_this(), backend]() -> asio::awaitable<void> { co_await self->idle_watchdog(backend); },
-        asio::detached);
+    asio::co_spawn(io_context_, idle_watchdog_detached(shared_from_this(), backend), asio::detached);
+}
+
+asio::awaitable<void> tproxy_tcp_session::idle_watchdog_detached(std::shared_ptr<tproxy_tcp_session> self,
+                                                                  std::shared_ptr<upstream> backend)
+{
+    co_await self->idle_watchdog(std::move(backend));
 }
 
 void tproxy_tcp_session::close_client_socket()
