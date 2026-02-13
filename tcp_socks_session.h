@@ -43,10 +43,16 @@ class tcp_socks_session : public std::enable_shared_from_this<tcp_socks_session>
                                                         route_type route);
     [[nodiscard]] asio::awaitable<bool> reply_success();
 
+    [[nodiscard]] static asio::awaitable<void> run_detached(std::shared_ptr<tcp_socks_session> self,
+                                                            std::string host,
+                                                            std::uint16_t port);
+
     [[nodiscard]] asio::awaitable<void> client_to_upstream(std::shared_ptr<upstream> backend);
 
     [[nodiscard]] asio::awaitable<void> upstream_to_client(std::shared_ptr<upstream> backend);
     [[nodiscard]] asio::awaitable<void> idle_watchdog(std::shared_ptr<upstream> backend);
+    [[nodiscard]] static asio::awaitable<void> idle_watchdog_detached(std::shared_ptr<tcp_socks_session> self,
+                                                                      std::shared_ptr<upstream> backend);
     [[nodiscard]] asio::awaitable<void> close_backend_once(const std::shared_ptr<upstream>& backend);
     [[nodiscard]] std::shared_ptr<upstream> create_backend(route_type route) const;
 
