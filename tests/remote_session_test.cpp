@@ -1,6 +1,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <chrono>
 #include <cstdint>
 #include <utility>
 #include <system_error>
@@ -11,6 +12,7 @@
 #include <asio/write.hpp>
 #include <asio/io_context.hpp>
 #include <asio/ip/tcp.hpp>
+#include <asio/steady_timer.hpp>
 #include <asio/use_awaitable.hpp>
 #include <asio/as_tuple.hpp>
 
@@ -315,6 +317,28 @@ TEST(RemoteSessionTest, DownstreamStopsWhenTargetReadFailsStillSendsFin)
     ASSERT_FALSE(ec);
 
     EXPECT_CALL(*conn, mock_send_async(27, mux::kCmdFin, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(std::error_code{}));
+    mux::test::run_awaitable_void(io_context, session->downstream());
+}
+
+TEST(RemoteSessionTest, DownstreamStopsWhenTargetReadOperationAbortedStillSendsFin)
+{
+    asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    mux::connection_context ctx;
+    auto session = std::make_shared<mux::remote_session>(conn, 28, io_context, ctx);
+
+    auto pair = make_tcp_socket_pair(io_context);
+    session->target_socket_ = std::move(pair.server);
+
+    asio::steady_timer cancel_timer(io_context);
+    cancel_timer.expires_after(std::chrono::milliseconds(10));
+    cancel_timer.async_wait([session](const std::error_code&)
+                            {
+                                std::error_code ec;
+                                session->target_socket_.cancel(ec);
+                            });
+
+    EXPECT_CALL(*conn, mock_send_async(28, mux::kCmdFin, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(std::error_code{}));
     mux::test::run_awaitable_void(io_context, session->downstream());
 }
 

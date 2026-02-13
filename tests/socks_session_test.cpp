@@ -432,6 +432,8 @@ TEST_F(socks_session_test, HelperBranchesSelectMethodAndVerifyCredential)
     EXPECT_TRUE(auth_session.verify_credentials("user", "pass"));
     EXPECT_FALSE(auth_session.verify_credentials("user2", "pass"));
     EXPECT_FALSE(auth_session.verify_credentials("user", "pass2"));
+    EXPECT_FALSE(auth_session.verify_credentials("uSer", "pass"));
+    EXPECT_FALSE(auth_session.verify_credentials("user", "paSs"));
 
     config::socks_t no_auth_cfg;
     no_auth_cfg.auth = false;
@@ -739,6 +741,26 @@ TEST_F(socks_session_test, RequestHeaderValidationAndRejectRequestBranches)
         EXPECT_FALSE(invalid_cmd.ok);
         EXPECT_EQ(invalid_cmd.cmd, 0x7f);
     }
+}
+
+TEST_F(socks_session_test, StartAndStopLifecycleWithInvalidGreeting)
+{
+    auto pair = make_tcp_socket_pair(io_ctx());
+    auto session = std::make_shared<socks_session>(std::move(pair.server), io_ctx(), nullptr, nullptr, 1);
+
+    const std::uint8_t bad_hello[] = {0x04, 0x01};
+    asio::write(pair.client, asio::buffer(bad_hello));
+
+    session->start();
+    io_ctx().run();
+    io_ctx().restart();
+
+    EXPECT_TRUE(session->socket_.is_open());
+    session->stop();
+    EXPECT_FALSE(session->socket_.is_open());
+
+    session->stop();
+    EXPECT_FALSE(session->socket_.is_open());
 }
 
 }    // namespace
