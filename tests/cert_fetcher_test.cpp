@@ -31,13 +31,26 @@ namespace
 {
 
 std::atomic<bool> g_fail_hkdf_md_once{false};
+std::atomic<bool> g_fail_keygen_once{false};
+std::atomic<int> g_fail_rand_bytes_on_call{0};
+std::atomic<int> g_rand_bytes_call_count{0};
 
 void fail_next_hkdf_md()
 {
     g_fail_hkdf_md_once.store(true, std::memory_order_release);
 }
 
+void fail_next_keygen() { g_fail_keygen_once.store(true, std::memory_order_release); }
+
+void fail_rand_bytes_on_call(const int call_index)
+{
+    g_rand_bytes_call_count.store(0, std::memory_order_release);
+    g_fail_rand_bytes_on_call.store(call_index, std::memory_order_release);
+}
+
 extern "C" int __real_EVP_PKEY_CTX_set_hkdf_md(EVP_PKEY_CTX* ctx, const EVP_MD* md);
+extern "C" int __real_EVP_PKEY_keygen(EVP_PKEY_CTX* ctx, EVP_PKEY** ppkey);
+extern "C" int __real_RAND_bytes(unsigned char* buf, int num);
 
 extern "C" int __wrap_EVP_PKEY_CTX_set_hkdf_md(EVP_PKEY_CTX* ctx, const EVP_MD* md)
 {
@@ -46,6 +59,30 @@ extern "C" int __wrap_EVP_PKEY_CTX_set_hkdf_md(EVP_PKEY_CTX* ctx, const EVP_MD* 
         return 0;
     }
     return __real_EVP_PKEY_CTX_set_hkdf_md(ctx, md);
+}
+
+extern "C" int __wrap_EVP_PKEY_keygen(EVP_PKEY_CTX* ctx, EVP_PKEY** ppkey)
+{
+    if (g_fail_keygen_once.exchange(false, std::memory_order_acq_rel))
+    {
+        return 0;
+    }
+    return __real_EVP_PKEY_keygen(ctx, ppkey);
+}
+
+extern "C" int __wrap_RAND_bytes(unsigned char* buf, int num)
+{
+    const int target_call = g_fail_rand_bytes_on_call.load(std::memory_order_acquire);
+    if (target_call > 0)
+    {
+        const int current_call = g_rand_bytes_call_count.fetch_add(1, std::memory_order_acq_rel) + 1;
+        if (current_call == target_call)
+        {
+            g_fail_rand_bytes_on_call.store(0, std::memory_order_release);
+            return 0;
+        }
+    }
+    return __real_RAND_bytes(buf, num);
 }
 
 constexpr char kTestCertPem[] =
@@ -204,6 +241,40 @@ TEST(CertFetcherTest, ReassemblerLimits)
     ec.clear();
     EXPECT_TRUE(assembler.next(msg, ec));
     EXPECT_EQ(msg, complete_msg);
+}
+
+TEST(CertFetcherTest, ReassemblerPartialMessagePath)
+{
+    reality::handshake_reassembler assembler;
+    std::vector<std::uint8_t> msg;
+    std::error_code ec;
+
+    const std::vector<std::uint8_t> partial_msg = {0x01, 0x00, 0x00, 0x02, 0x7f};
+    assembler.append(partial_msg);
+    EXPECT_FALSE(assembler.next(msg, ec));
+
+    const std::array<std::uint8_t, 1> tail = {0x80};
+    assembler.append(tail);
+    EXPECT_TRUE(assembler.next(msg, ec));
+    EXPECT_EQ(msg, std::vector<std::uint8_t>({0x01, 0x00, 0x00, 0x02, 0x7f, 0x80}));
+}
+
+TEST(CertFetcherTest, InitHandshakeMaterialFailureBranches)
+{
+    asio::io_context ctx;
+    reality::cert_fetcher::fetch_session session(ctx, "127.0.0.1", 443, "example.com", "trace");
+
+    std::vector<std::uint8_t> client_random(32, 0);
+    std::vector<std::uint8_t> session_id(32, 0);
+
+    fail_next_keygen();
+    EXPECT_FALSE(session.init_handshake_material(client_random, session_id));
+
+    fail_rand_bytes_on_call(1);
+    EXPECT_FALSE(session.init_handshake_material(client_random, session_id));
+
+    fail_rand_bytes_on_call(2);
+    EXPECT_FALSE(session.init_handshake_material(client_random, session_id));
 }
 
 TEST(CertFetcherTest, MockServerScenarios)
@@ -518,6 +589,9 @@ TEST(CertFetcherTest, WhiteBoxProcessServerHelloAndHandshakeMessage)
     const std::vector<std::uint8_t> cert_handshake = {0x0b, 0x00, 0x00, 0x00};
     EXPECT_TRUE(session.process_handshake_message(cert_handshake, cert_msg));
     EXPECT_EQ(cert_msg, cert_handshake);
+
+    const std::vector<std::uint8_t> other_handshake = {0x0f, 0x00, 0x00, 0x00};
+    EXPECT_FALSE(session.process_handshake_message(other_handshake, cert_msg));
 }
 
 TEST(CertFetcherTest, ProcessServerHelloHandlesHkdfContextFailure)

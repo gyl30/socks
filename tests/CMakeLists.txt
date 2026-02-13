@@ -126,6 +126,8 @@ target_link_options(
     cert_fetcher_test
     PRIVATE
         -Wl,--wrap=EVP_PKEY_CTX_set_hkdf_md
+        -Wl,--wrap=EVP_PKEY_keygen
+        -Wl,--wrap=RAND_bytes
 )
 add_socks_test(key_rotator_test)
 add_socks_test(socks_client_mock_test)
