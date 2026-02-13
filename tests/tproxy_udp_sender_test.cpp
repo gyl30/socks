@@ -2,6 +2,9 @@
 #include <memory>
 #include <vector>
 #include <cstdint>
+#include <atomic>
+#include <cerrno>
+#include <sys/socket.h>
 
 #include <gtest/gtest.h>
 #include <asio/ip/udp.hpp>
@@ -14,6 +17,43 @@
 
 namespace
 {
+
+enum class udp_sender_fail_mode
+{
+    kNone = 0,
+    kSocketOnce,
+    kSetsockoptAlwaysSuccess,
+};
+
+std::atomic<int> g_udp_sender_fail_mode{static_cast<int>(udp_sender_fail_mode::kNone)};
+
+class udp_sender_fail_guard
+{
+   public:
+    explicit udp_sender_fail_guard(const udp_sender_fail_mode mode)
+    {
+        g_udp_sender_fail_mode.store(static_cast<int>(mode), std::memory_order_release);
+    }
+
+    ~udp_sender_fail_guard() { g_udp_sender_fail_mode.store(static_cast<int>(udp_sender_fail_mode::kNone), std::memory_order_release); }
+};
+
+bool consume_udp_sender_socket_fail_once()
+{
+    const auto current = static_cast<udp_sender_fail_mode>(g_udp_sender_fail_mode.load(std::memory_order_acquire));
+    if (current != udp_sender_fail_mode::kSocketOnce)
+    {
+        return false;
+    }
+    g_udp_sender_fail_mode.store(static_cast<int>(udp_sender_fail_mode::kNone), std::memory_order_release);
+    return true;
+}
+
+bool force_udp_sender_setsockopt_success()
+{
+    return static_cast<udp_sender_fail_mode>(g_udp_sender_fail_mode.load(std::memory_order_acquire))
+           == udp_sender_fail_mode::kSetsockoptAlwaysSuccess;
+}
 
 std::shared_ptr<asio::ip::udp::socket> make_bound_udp_v4_socket(asio::io_context& ctx)
 {
@@ -36,6 +76,28 @@ std::shared_ptr<asio::ip::udp::socket> make_open_udp_v6_socket(asio::io_context&
 }
 
 }    // namespace
+
+extern "C" int __real_socket(int domain, int type, int protocol);
+extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);
+
+extern "C" int __wrap_socket(int domain, int type, int protocol)
+{
+    if (consume_udp_sender_socket_fail_once())
+    {
+        errno = EMFILE;
+        return -1;
+    }
+    return __real_socket(domain, type, protocol);
+}
+
+extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)
+{
+    if (force_udp_sender_setsockopt_success())
+    {
+        return 0;
+    }
+    return __real_setsockopt(sockfd, level, optname, optval, optlen);
+}
 
 TEST(TproxyUdpSenderTest, CacheMaintenanceBranches)
 {
@@ -134,13 +196,35 @@ TEST(TproxyUdpSenderTest, GetSocketEvictsWhenCacheLooksFull)
     asio::io_context ctx;
     mux::tproxy_udp_sender sender(ctx, 0);
 
+    const auto now_ms = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
     auto shared_socket = make_bound_udp_v4_socket(ctx);
     for (std::uint16_t port = 10000; port < 11024; ++port)
     {
-        sender.update_cached_socket({asio::ip::make_address("127.0.0.1"), port}, shared_socket, 5000);
+        sender.update_cached_socket({asio::ip::make_address("127.0.0.1"), port}, shared_socket, now_ms + port);
     }
     ASSERT_GE(sender.sockets_.size(), 1024u);
 
     const auto bad_src = asio::ip::udp::endpoint(asio::ip::make_address("203.0.113.8"), 23456);
     EXPECT_EQ(sender.get_socket(bad_src), nullptr);
+}
+
+TEST(TproxyUdpSenderTest, CreateBoundSocketHandlesOpenFailure)
+{
+    asio::io_context ctx;
+    mux::tproxy_udp_sender sender(ctx, 0);
+    udp_sender_fail_guard guard(udp_sender_fail_mode::kSocketOnce);
+
+    const auto src_ep = asio::ip::udp::endpoint(asio::ip::make_address("127.0.0.1"), 0);
+    EXPECT_EQ(sender.create_bound_socket(src_ep, false), nullptr);
+}
+
+TEST(TproxyUdpSenderTest, CreateBoundSocketBindFailureAfterPrepareSuccess)
+{
+    asio::io_context ctx;
+    mux::tproxy_udp_sender sender(ctx, 0);
+    udp_sender_fail_guard guard(udp_sender_fail_mode::kSetsockoptAlwaysSuccess);
+
+    const auto impossible_src = asio::ip::udp::endpoint(asio::ip::make_address("203.0.113.99"), 34567);
+    EXPECT_EQ(sender.create_bound_socket(impossible_src, false), nullptr);
 }
