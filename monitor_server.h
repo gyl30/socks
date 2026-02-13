@@ -1,6 +1,7 @@
 #ifndef MONITOR_SERVER_H
 #define MONITOR_SERVER_H
 
+#include <atomic>
 #include <chrono>
 #include <memory>
 #include <string>
@@ -23,6 +24,7 @@ class monitor_server : public std::enable_shared_from_this<monitor_server>
     monitor_server(asio::io_context& ioc, std::uint16_t port, std::string token, std::uint32_t min_interval_ms);
     monitor_server(asio::io_context& ioc, std::string bind_host, std::uint16_t port, std::string token, std::uint32_t min_interval_ms);
     void start();
+    void stop();
 
    private:
     void do_accept();
@@ -31,6 +33,7 @@ class monitor_server : public std::enable_shared_from_this<monitor_server>
     std::string token_;
     std::uint32_t min_interval_ms_ = 0;
     std::shared_ptr<monitor_rate_state> rate_state_ = std::make_shared<monitor_rate_state>();
+    std::atomic<bool> stop_ = {false};
 };
 
 }    // namespace mux

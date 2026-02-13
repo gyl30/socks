@@ -110,6 +110,10 @@ bool register_signal(asio::signal_set& signals, const int signal, const char* si
 
 void stop_runtime_services(mux::io_context_pool& pool, const runtime_services& services)
 {
+    if (services.monitor != nullptr)
+    {
+        services.monitor->stop();
+    }
     if (services.socks != nullptr)
     {
         services.socks->stop();
