@@ -232,8 +232,10 @@ void apply_reality_dest_config(const config::reality_t& reality_cfg,
 std::uint16_t parse_fallback_port(const std::string& port_text)
 {
     std::uint16_t fetch_port = 443;
-    auto [ptr, from_ec] = std::from_chars(port_text.data(), port_text.data() + port_text.size(), fetch_port);
-    if (from_ec != std::errc())
+    const auto begin = port_text.data();
+    const auto end = begin + port_text.size();
+    auto [ptr, from_ec] = std::from_chars(begin, end, fetch_port);
+    if (from_ec != std::errc() || ptr != end)
     {
         LOG_WARN("invalid fallback port {} defaulting to 443", port_text);
         return 443;
