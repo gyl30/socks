@@ -24,6 +24,10 @@ namespace mux
 {
 
 class mux_stream;
+namespace detail
+{
+std::vector<std::uint8_t> build_udp_associate_reply(const asio::ip::address& local_addr, std::uint16_t udp_bind_port);
+}
 
 class udp_socks_session : public mux_stream_interface, public std::enable_shared_from_this<udp_socks_session>
 {
