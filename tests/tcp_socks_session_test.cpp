@@ -1,6 +1,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <array>
 #include <chrono>
 #include <algorithm>
 #include <cstdint>
@@ -8,9 +9,16 @@
 #include <system_error>
 
 #include <gtest/gtest.h>
+#include <asio/read.hpp>
+#include <asio/write.hpp>
+#include <asio/co_spawn.hpp>
+#include <asio/detached.hpp>
+#include <asio/as_tuple.hpp>
 #include <asio/io_context.hpp>
 #include <asio/ip/tcp.hpp>
 #include <asio/steady_timer.hpp>
+#include <asio/use_awaitable.hpp>
+#include <asio/redirect_error.hpp>
 
 #define private public
 #include "tcp_socks_session.h"
@@ -84,6 +92,11 @@ class configured_router final : public mux::router
     void add_block_domain(const std::string& domain)
     {
         block_domain_matcher()->add(domain);
+    }
+
+    void add_direct_cidr(const std::string& cidr)
+    {
+        direct_ip_matcher()->add_rule(cidr);
     }
 };
 
@@ -417,6 +430,76 @@ TEST(TcpSocksSessionTest, UpstreamToClientStopsWhenClientWriteFails)
     session->socket_.close();
 
     mux::test::run_awaitable_void(io_context, session->upstream_to_client(backend));
+}
+
+TEST(TcpSocksSessionTest, RunDirectPathRepliesSuccessAndForwardsPayload)
+{
+    asio::io_context io_context;
+    auto pair = make_tcp_socket_pair(io_context);
+    auto router = std::make_shared<configured_router>();
+    router->add_direct_cidr("127.0.0.1/32");
+    auto session = make_tcp_session_with_router(io_context, std::move(pair.server), router);
+
+    asio::ip::tcp::acceptor backend_acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    const std::uint16_t backend_port = backend_acceptor.local_endpoint().port();
+    asio::co_spawn(
+        io_context,
+        [&backend_acceptor]() -> asio::awaitable<void>
+        {
+            auto backend_socket = co_await backend_acceptor.async_accept(asio::use_awaitable);
+            std::array<std::uint8_t, 4> buf = {0};
+            std::error_code read_ec;
+            const std::size_t n =
+                co_await backend_socket.async_read_some(asio::buffer(buf), asio::redirect_error(asio::use_awaitable, read_ec));
+            if (!read_ec && n > 0)
+            {
+                (void)co_await asio::async_write(backend_socket, asio::buffer(buf.data(), n), asio::as_tuple(asio::use_awaitable));
+            }
+            std::error_code ignore;
+            backend_socket.close(ignore);
+            co_return;
+        },
+        asio::detached);
+
+    const std::array<std::uint8_t, 4> payload = {0x11, 0x22, 0x33, 0x44};
+    asio::write(pair.client, asio::buffer(payload));
+    pair.client.shutdown(asio::ip::tcp::socket::shutdown_send);
+
+    mux::test::run_awaitable_void(io_context, session->run("127.0.0.1", backend_port));
+
+    std::uint8_t rep[10] = {0};
+    asio::read(pair.client, asio::buffer(rep));
+    EXPECT_EQ(rep[0], socks::kVer);
+    EXPECT_EQ(rep[1], socks::kRepSuccess);
+
+    std::array<std::uint8_t, 4> echoed = {0};
+    asio::read(pair.client, asio::buffer(echoed));
+    EXPECT_EQ(echoed, payload);
+}
+
+TEST(TcpSocksSessionTest, RunStopsWhenReplySuccessWriteFails)
+{
+    asio::io_context io_context;
+    auto pair = make_tcp_socket_pair(io_context);
+    auto router = std::make_shared<configured_router>();
+    router->add_direct_cidr("127.0.0.1/32");
+    auto session = make_tcp_session_with_router(io_context, std::move(pair.server), router);
+    session->socket_.close();
+
+    asio::ip::tcp::acceptor backend_acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    const std::uint16_t backend_port = backend_acceptor.local_endpoint().port();
+    asio::co_spawn(
+        io_context,
+        [&backend_acceptor]() -> asio::awaitable<void>
+        {
+            auto backend_socket = co_await backend_acceptor.async_accept(asio::use_awaitable);
+            std::error_code ignore;
+            backend_socket.close(ignore);
+            co_return;
+        },
+        asio::detached);
+
+    mux::test::run_awaitable_void(io_context, session->run("127.0.0.1", backend_port));
 }
 
 }    // namespace
