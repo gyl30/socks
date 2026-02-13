@@ -50,8 +50,8 @@ jobs:
     - name: Run Valgrind Memory Safety Test
       run: python3 script/valgrind_test.py --build-dir build_valgrind --socks-bin ./socks
 
-    - name: Enforce Coverage >= 95% (overall)
-      run: BUILD_DIR=build_coverage BUILD_JOBS=15 TEST_JOBS=20 COVERAGE_THRESHOLD=95 PER_FILE_GATE=0 script/run_coverage.sh
+    - name: Enforce Coverage >= 95% (per-file)
+      run: BUILD_DIR=build_coverage BUILD_JOBS=15 TEST_JOBS=20 COVERAGE_THRESHOLD=95 PER_FILE_GATE=1 script/run_coverage.sh
 
   fuzzing-smoke:
     name: Fuzzing Smoke Test (Clang)
