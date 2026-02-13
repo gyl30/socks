@@ -636,3 +636,58 @@ TEST(CHParserTest, KeyShareWrongLength)
     auto info = ch_parser::parse(builder.get_buffer());
     EXPECT_TRUE(info.x25519_pub.empty());
 }
+
+TEST(CHParserTest, ParseBeforeExtensionsFailsOnTruncatedSessionId)
+{
+    client_hello_builder builder;
+    builder.start_handshake();
+    builder.finish();
+
+    auto buf = builder.get_buffer();
+    constexpr std::size_t sid_len_pos = 5 + 1 + 3 + 2 + 32;
+    buf[sid_len_pos] = 4;
+    buf.resize(sid_len_pos + 1);
+
+    auto info = ch_parser::parse(buf);
+    EXPECT_TRUE(info.session_id.empty());
+    EXPECT_TRUE(info.sni.empty());
+}
+
+TEST(CHParserTest, ParseSniHandlesShortListWithoutItems)
+{
+    std::vector<std::uint8_t> buf = {0x00, 0x01, 0xAB};
+    ch_parser::reader r(buf);
+    mux::client_hello_info info;
+
+    ch_parser::parse_sni(r, info);
+    EXPECT_TRUE(info.sni.empty());
+}
+
+TEST(CHParserTest, ParseSniContinuesAfterSkippingNonHostNameItem)
+{
+    std::vector<std::uint8_t> buf = {
+        0x00, 0x0A,
+        0x01, 0x00, 0x01, 0x78,
+        0x00, 0x00, 0x03, 0x61, 0x62, 0x63,
+    };
+    ch_parser::reader r(buf);
+    mux::client_hello_info info;
+
+    ch_parser::parse_sni(r, info);
+    EXPECT_EQ(info.sni, "abc");
+}
+
+TEST(CHParserTest, ParseKeyShareX25519Len32ButInsufficientData)
+{
+    std::vector<std::uint8_t> buf = {
+        0x00, 0x08,
+        0x00, 0x1d, 0x00, 0x20, 0x11, 0x22, 0x33, 0x44,
+    };
+    ch_parser::reader r(buf);
+    mux::client_hello_info info;
+
+    ch_parser::parse_key_share(r, info);
+    EXPECT_FALSE(info.has_x25519_share);
+    EXPECT_TRUE(info.x25519_pub.empty());
+    EXPECT_FALSE(info.is_tls13);
+}
