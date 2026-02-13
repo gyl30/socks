@@ -63,8 +63,14 @@ tcp_socks_session::tcp_socks_session(asio::ip::tcp::socket socket,
 
 void tcp_socks_session::start(const std::string& host, const std::uint16_t port)
 {
-    const auto self = shared_from_this();
-    asio::co_spawn(io_context_, [self, host, port]() -> asio::awaitable<void> { co_await self->run(host, port); }, asio::detached);
+    asio::co_spawn(io_context_, run_detached(shared_from_this(), host, port), asio::detached);
+}
+
+asio::awaitable<void> tcp_socks_session::run_detached(std::shared_ptr<tcp_socks_session> self,
+                                                      std::string host,
+                                                      const std::uint16_t port)
+{
+    co_await self->run(host, port);
 }
 
 asio::awaitable<void> tcp_socks_session::run(const std::string& host, const std::uint16_t port)
@@ -144,10 +150,12 @@ asio::awaitable<bool> tcp_socks_session::reply_success()
 
 void tcp_socks_session::start_idle_watchdog(const std::shared_ptr<upstream>& backend)
 {
-    asio::co_spawn(
-        io_context_,
-        [self = shared_from_this(), backend]() -> asio::awaitable<void> { co_await self->idle_watchdog(backend); },
-        asio::detached);
+    asio::co_spawn(io_context_, idle_watchdog_detached(shared_from_this(), backend), asio::detached);
+}
+
+asio::awaitable<void> tcp_socks_session::idle_watchdog_detached(std::shared_ptr<tcp_socks_session> self, std::shared_ptr<upstream> backend)
+{
+    co_await self->idle_watchdog(std::move(backend));
 }
 
 void tcp_socks_session::close_client_socket()
