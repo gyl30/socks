@@ -18,7 +18,9 @@
 #include "context_pool.h"
 #include "socks_client.h"
 #include "remote_server.h"
+#ifdef __linux__
 #include "tproxy_client.h"
+#endif
 #include "monitor_server.h"
 
 namespace
@@ -28,7 +30,9 @@ struct runtime_services
 {
     std::shared_ptr<mux::remote_server> server = nullptr;
     std::shared_ptr<mux::socks_client> socks = nullptr;
+#ifdef __linux__
     std::shared_ptr<mux::tproxy_client> tproxy = nullptr;
+#endif
     std::shared_ptr<mux::monitor_server> monitor = nullptr;
 };
 
@@ -88,11 +92,13 @@ runtime_services start_runtime_services(mux::io_context_pool& pool, const mux::c
         services.socks = std::make_shared<mux::socks_client>(pool, cfg);
         services.socks->start();
     }
+#ifdef __linux__
     if (cfg.tproxy.enabled)
     {
         services.tproxy = std::make_shared<mux::tproxy_client>(pool, cfg);
         services.tproxy->start();
     }
+#endif
     return services;
 }
 
@@ -118,10 +124,12 @@ void stop_runtime_services(mux::io_context_pool& pool, const runtime_services& s
     {
         services.socks->stop();
     }
+#ifdef __linux__
     if (services.tproxy != nullptr)
     {
         services.tproxy->stop();
     }
+#endif
     if (services.server != nullptr)
     {
         services.server->stop();
