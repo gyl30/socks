@@ -168,6 +168,7 @@ add_socks_test(udp_socks_session_test)
 target_link_options(
     udp_socks_session_test
     PRIVATE
+        -Wl,--wrap=bind
         -Wl,--wrap=close
 )
 add_socks_test(tcp_socks_session_test)
