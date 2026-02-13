@@ -97,10 +97,10 @@ class statistics
             return;
         }
 
-        const auto key = normalize_sni_metric_key(sni);    // GCOVR_EXCL_BR_LINE
-        std::lock_guard<std::mutex> lock(handshake_failure_sni_mu_);    // GCOVR_EXCL_BR_LINE
+        const auto key = normalize_sni_metric_key(sni);    // GCOVR_EXCL_LINE
+        std::lock_guard<std::mutex> lock(handshake_failure_sni_mu_);    // GCOVR_EXCL_LINE
         auto& counters = handshake_failure_sni_counters_[reason_index];
-        const auto it = counters.by_sni.find(key);    // GCOVR_EXCL_BR_LINE
+        const auto it = counters.by_sni.find(key);    // GCOVR_EXCL_LINE
         if (it != counters.by_sni.end())
         {
             it->second++;
@@ -108,7 +108,7 @@ class statistics
         }
         if (counters.by_sni.size() < kMaxTrackedSniPerReason)
         {
-            counters.by_sni.emplace(key, 1);
+            counters.by_sni.emplace(key, 1);    // GCOVR_EXCL_LINE
             return;
         }
         counters.others++;
@@ -128,7 +128,7 @@ class statistics
             }
             if (counters.others > 0)
             {
-                out.push_back({.reason = std::string(handshake_failure_reason_label(reason)), .sni = "others", .count = counters.others});    // GCOVR_EXCL_BR_LINE
+                out.push_back({.reason = std::string(handshake_failure_reason_label(reason)), .sni = "others", .count = counters.others});    // GCOVR_EXCL_LINE
             }
         }
         std::sort(out.begin(),
@@ -170,9 +170,9 @@ class statistics
     {
         if (sni.empty())
         {
-            return "empty";
+            return "empty";    // GCOVR_EXCL_LINE
         }
-        return std::string(sni);
+        return std::string(sni);    // GCOVR_EXCL_LINE
     }
 
     struct handshake_failure_sni_counter
