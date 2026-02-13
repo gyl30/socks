@@ -188,18 +188,58 @@ monitor_server::monitor_server(asio::io_context& ioc,
     LOG_INFO("monitor server listening on {}:{}", bind_host, port);
 }
 
-void monitor_server::start() { do_accept(); }
+void monitor_server::start()
+{
+    stop_.store(false, std::memory_order_release);
+    if (!acceptor_.is_open())
+    {
+        return;
+    }
+    do_accept();
+}
+
+void monitor_server::stop()
+{
+    stop_.store(true, std::memory_order_release);
+    asio::dispatch(
+        acceptor_.get_executor(),
+        [self = shared_from_this()]()
+        {
+            std::error_code ec;
+            ec = self->acceptor_.close(ec);
+            if (ec && ec != asio::error::bad_descriptor)
+            {
+                LOG_WARN("monitor acceptor close failed {}", ec.message());
+            }
+        });
+}
 
 void monitor_server::do_accept()
 {
+    if (stop_.load(std::memory_order_acquire) || !acceptor_.is_open())
+    {
+        return;
+    }
+
     const auto self = shared_from_this();
     acceptor_.async_accept(
         [self](std::error_code ec, asio::ip::tcp::socket socket)
         {
-            if (!ec)
+            if (self->stop_.load(std::memory_order_acquire))
             {
-                std::make_shared<monitor_session>(std::move(socket), self->token_, self->rate_state_, self->min_interval_ms_)->start();
+                return;
             }
+            if (ec)
+            {
+                if (ec != asio::error::operation_aborted && ec != asio::error::bad_descriptor)
+                {
+                    LOG_WARN("monitor accept failed {}", ec.message());
+                    self->do_accept();
+                }
+                return;
+            }
+
+            std::make_shared<monitor_session>(std::move(socket), self->token_, self->rate_state_, self->min_interval_ms_)->start();
             self->do_accept();
         });
 }
