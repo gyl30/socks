@@ -74,6 +74,12 @@ target_link_options(
         -Wl,--wrap=RAND_bytes
 )
 add_socks_test(config_test)
+target_link_options(
+    config_test
+    PRIVATE
+        -Wl,--wrap=fread
+        -Wl,--wrap=ferror
+)
 add_socks_test(reflect_test)
 add_socks_test(tls_key_schedule_test)
 add_socks_test(socks_client_test)

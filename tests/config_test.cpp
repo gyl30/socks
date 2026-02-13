@@ -1,11 +1,44 @@
 #include <cstdio>
 #include <string>
+#include <atomic>
+#include <cerrno>
 #include <fstream>
 #include <unistd.h>
 
 #include <gtest/gtest.h>
 
 #include "config.h"
+
+namespace
+{
+
+std::atomic<bool> g_force_fread_error{false};
+std::atomic<bool> g_injected_fread_error{false};
+
+}    // namespace
+
+extern "C" std::size_t __real_fread(void* ptr, std::size_t size, std::size_t count, FILE* stream);
+extern "C" int __real_ferror(FILE* stream);
+
+extern "C" std::size_t __wrap_fread(void* ptr, std::size_t size, std::size_t count, FILE* stream)
+{
+    if (g_force_fread_error.exchange(false))
+    {
+        g_injected_fread_error.store(true);
+        errno = EIO;
+        return 0;
+    }
+    return __real_fread(ptr, size, count, stream);
+}
+
+extern "C" int __wrap_ferror(FILE* stream)
+{
+    if (g_injected_fread_error.exchange(false))
+    {
+        return 1;
+    }
+    return __real_ferror(stream);
+}
 
 class config_test : public ::testing::Test
 {
@@ -113,6 +146,18 @@ TEST_F(config_test, InvalidJson)
     write_config_file("{ invalid_json }");
     const auto cfg = mux::parse_config(tmp_file());
     EXPECT_FALSE(cfg.has_value());
+}
+
+TEST_F(config_test, ReadErrorReturnsEmptyConfig)
+{
+    const std::string content = R"({
+        "mode": "client"
+    })";
+    write_config_file(content);
+
+    g_force_fread_error.store(true);
+    const auto cfg_opt = mux::parse_config(tmp_file());
+    EXPECT_FALSE(cfg_opt.has_value());
 }
 
 TEST_F(config_test, ReplayCacheMaxEntriesWrongTypeRejected)
