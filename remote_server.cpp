@@ -674,21 +674,6 @@ bool verify_client_finished_plaintext(const std::vector<std::uint8_t>& plaintext
     return true;
 }
 
-asio::awaitable<void> fallback_failed_drain(const std::shared_ptr<asio::ip::tcp::socket>& socket)
-{
-    char data[constants::net::kBufferSize] = {0};
-    for (;;)
-    {
-        const auto [read_ec, read_n] = co_await socket->async_read_some(asio::buffer(data), asio::as_tuple(asio::use_awaitable));
-        if (read_ec || read_n == 0)
-        {
-            break;
-        }
-    }
-    std::error_code ignore;
-    ignore = socket->shutdown(asio::ip::tcp::socket::shutdown_receive, ignore);
-}
-
 asio::awaitable<void> fallback_wait_random_timer(const std::uint32_t conn_id, asio::io_context& io_context)
 {
     asio::steady_timer fallback_timer(io_context);

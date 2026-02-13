@@ -212,7 +212,7 @@ std::optional<std::vector<std::uint8_t>> extract_key_share_data_by_group(const s
 
     const auto& ext = *key_share_ext;
     const std::uint16_t share_list_len = static_cast<std::uint16_t>((ext[0] << 8) | ext[1]);
-    if (2 + share_list_len > ext.size())
+    if (static_cast<std::size_t>(2 + share_list_len) > ext.size())
     {
         return std::nullopt;
     }
