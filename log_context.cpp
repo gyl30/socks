@@ -2,50 +2,97 @@
 #include <random>
 #include <string>
 #include <cstdint>
-#include <iomanip>
-#include <sstream>
+#include <cstdio>
+#include <charconv>
+#include <system_error>
 
 #include "log_context.h"
 
 namespace mux
 {
+namespace
+{
+
+template <typename IntT>
+void append_int(std::string& out, const IntT value)
+{
+    char buf[32];
+    const auto [ptr, ec] = std::to_chars(buf, buf + sizeof(buf), value);
+    if (ec == std::errc())
+    {
+        out.append(buf, ptr);
+    }
+}
+
+std::string fixed_hex_16(std::uint64_t value)
+{
+    char buf[16];
+    const auto [ptr, ec] = std::to_chars(buf, buf + sizeof(buf), value, 16);
+    if (ec != std::errc())
+    {
+        return "0000000000000000";
+    }
+
+    const auto len = static_cast<std::size_t>(ptr - buf);
+    std::string out;
+    out.reserve(16);
+    out.append(16 - len, '0');
+    out.append(buf, len);
+    return out;
+}
+
+}    // namespace
+
 
 std::string generate_trace_id()
 {
     static thread_local std::mt19937_64 gen(std::random_device{}());
     std::uniform_int_distribution<std::uint64_t> dist;
-    std::ostringstream oss;
-    oss << std::hex << std::setfill('0') << std::setw(16) << dist(gen);
-    return oss.str();
+    return fixed_hex_16(dist(gen));
 }
 
 std::string connection_context::prefix() const
 {
-    std::ostringstream oss;
+    std::string out;
+    out.reserve(trace_id_.size() + 32);
     if (!trace_id_.empty())
     {
-        oss << "t" << trace_id_ << " ";
+        out.push_back('t');
+        out += trace_id_;
+        out.push_back(' ');
     }
-    oss << "c" << conn_id_;
+    out.push_back('c');
+    append_int(out, conn_id_);
     if (stream_id_ > 0)
     {
-        oss << "_s" << stream_id_;
+        out += "_s";
+        append_int(out, stream_id_);
     }
-    return oss.str();
+    return out;
 }
 
 std::string connection_context::connection_info() const
 {
-    std::ostringstream oss;
-    oss << local_addr_ << "_" << local_port_ << "_" << remote_addr_ << "_" << remote_port_;
-    return oss.str();
+    std::string out;
+    out.reserve(local_addr_.size() + remote_addr_.size() + 32);
+    out += local_addr_;
+    out.push_back('_');
+    append_int(out, local_port_);
+    out.push_back('_');
+    out += remote_addr_;
+    out.push_back('_');
+    append_int(out, remote_port_);
+    return out;
 }
 
 std::string connection_context::target_info() const
 {
-    std::ostringstream oss;
-    oss << target_host_ << "_" << target_port_;
-    return oss.str();
+    std::string out;
+    out.reserve(target_host_.size() + 16);
+    out += target_host_;
+    out.push_back('_');
+    append_int(out, target_port_);
+    return out;
 }
 
 double connection_context::duration_seconds() const
@@ -57,9 +104,19 @@ double connection_context::duration_seconds() const
 
 std::string connection_context::stats_summary() const
 {
-    std::ostringstream oss;
-    oss << "tx " << tx_bytes_ << " rx " << rx_bytes_ << " duration " << std::fixed << std::setprecision(2) << duration_seconds() << "s";
-    return oss.str();
+    char duration_buf[32];
+    std::snprintf(duration_buf, sizeof(duration_buf), "%.2f", duration_seconds());
+
+    std::string out;
+    out.reserve(96);
+    out += "tx ";
+    append_int(out, tx_bytes_);
+    out += " rx ";
+    append_int(out, rx_bytes_);
+    out += " duration ";
+    out += duration_buf;
+    out.push_back('s');
+    return out;
 }
 
 connection_context connection_context::with_stream(const std::uint32_t sid) const
@@ -86,31 +143,36 @@ std::string format_bytes(std::uint64_t bytes)
     constexpr std::uint64_t kMib = kKib * 1024ULL;
     constexpr std::uint64_t kGib = kMib * 1024ULL;
     const auto bytes_d = static_cast<double>(bytes);
-    std::ostringstream oss;
+    char number_buf[32];
     if (bytes >= kGib)
     {
-        oss << std::fixed << std::setprecision(2) << (bytes_d / static_cast<double>(kGib)) << "GB";
+        std::snprintf(number_buf, sizeof(number_buf), "%.2fGB", bytes_d / static_cast<double>(kGib));
+        return std::string(number_buf);
     }
-    else if (bytes >= kMib)
+    if (bytes >= kMib)
     {
-        oss << std::fixed << std::setprecision(2) << (bytes_d / static_cast<double>(kMib)) << "MB";
+        std::snprintf(number_buf, sizeof(number_buf), "%.2fMB", bytes_d / static_cast<double>(kMib));
+        return std::string(number_buf);
     }
-    else if (bytes >= kKib)
+    if (bytes >= kKib)
     {
-        oss << std::fixed << std::setprecision(2) << (bytes_d / static_cast<double>(kKib)) << "KB";
+        std::snprintf(number_buf, sizeof(number_buf), "%.2fKB", bytes_d / static_cast<double>(kKib));
+        return std::string(number_buf);
     }
-    else
-    {
-        oss << bytes << "B";
-    }
-    return oss.str();
+    std::string out;
+    out.reserve(24);
+    append_int(out, bytes);
+    out.push_back('B');
+    return out;
 }
 
 std::string format_latency_ms(std::int64_t ms)
 {
-    std::ostringstream oss;
-    oss << ms << "ms";
-    return oss.str();
+    std::string out;
+    out.reserve(24);
+    append_int(out, ms);
+    out += "ms";
+    return out;
 }
 
 }    // namespace mux

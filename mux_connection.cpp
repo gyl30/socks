@@ -1,11 +1,11 @@
 #include <span>
-#include <future>
 #include <atomic>
 #include <chrono>
 #include <memory>
 #include <random>
 #include <ranges>
 #include <string>
+#include <thread>
 #include <vector>
 #include <cstdint>
 #include <utility>
@@ -96,6 +96,54 @@ timeout_snapshot collect_timeout_snapshot(const std::atomic<std::uint64_t>& last
 {
     std::uniform_int_distribution<std::uint32_t> delay_dist(5, 30);
     return delay_dist(rng);
+}
+
+template <typename Fn>
+bool run_sync_bool_query(asio::io_context& io_context, Fn&& fn)
+{
+    constexpr int kPending = 0;
+    constexpr int kFalse = 1;
+    constexpr int kTrue = 2;
+
+    auto result = std::make_shared<std::atomic<int>>(kPending);
+    asio::post(
+        io_context,
+        [result, fn = std::forward<Fn>(fn)]() mutable
+        {
+            result->store(fn() ? kTrue : kFalse, std::memory_order_release);
+        });
+
+    while (true)
+    {
+        const int value = result->load(std::memory_order_acquire);
+        if (value == kTrue)
+        {
+            return true;
+        }
+        if (value == kFalse)
+        {
+            return false;
+        }
+        std::this_thread::yield();
+    }
+}
+
+template <typename Fn>
+void run_sync_void_query(asio::io_context& io_context, Fn&& fn)
+{
+    auto done = std::make_shared<std::atomic<bool>>(false);
+    asio::post(
+        io_context,
+        [done, fn = std::forward<Fn>(fn)]() mutable
+        {
+            fn();
+            done->store(true, std::memory_order_release);
+        });
+
+    while (!done->load(std::memory_order_acquire))
+    {
+        std::this_thread::yield();
+    }
 }
 
 asio::awaitable<void> wait_draining_delay(asio::steady_timer& timer, const std::uint32_t delay_seconds, const std::uint32_t cid)
@@ -260,16 +308,12 @@ void mux_connection::register_stream(const std::uint32_t id, std::shared_ptr<mux
         register_stream_local(id, std::move(stream));
         return;
     }
-
-    auto done = std::make_shared<std::promise<void>>();
-    auto done_future = done->get_future();
-    asio::post(io_context_,
-               [self = shared_from_this(), id, stream = std::move(stream), done]() mutable
-               {
-                   self->register_stream_local(id, std::move(stream));
-                   done->set_value();
-               });
-    done_future.wait();
+    run_sync_void_query(
+        io_context_,
+        [self = shared_from_this(), id, stream = std::move(stream)]() mutable
+        {
+            self->register_stream_local(id, std::move(stream));
+        });
 }
 
 bool mux_connection::try_register_stream(const std::uint32_t id, std::shared_ptr<mux_stream_interface> stream)
@@ -287,15 +331,12 @@ bool mux_connection::try_register_stream(const std::uint32_t id, std::shared_ptr
     {
         return try_register_stream_local(id, std::move(stream));
     }
-
-    auto registered = std::make_shared<std::promise<bool>>();
-    auto registered_future = registered->get_future();
-    asio::post(io_context_,
-               [self = shared_from_this(), id, stream = std::move(stream), registered]() mutable
-               {
-                   registered->set_value(self->try_register_stream_local(id, std::move(stream)));
-               });
-    return registered_future.get();
+    return run_sync_bool_query(
+        io_context_,
+        [self = shared_from_this(), id, stream = std::move(stream)]() mutable
+        {
+            return self->try_register_stream_local(id, std::move(stream));
+        });
 }
 
 void mux_connection::remove_stream(const std::uint32_t id)
@@ -683,15 +724,12 @@ bool mux_connection::can_accept_stream()
     {
         return can_accept_stream_local();
     }
-
-    auto accepted = std::make_shared<std::promise<bool>>();
-    auto accepted_future = accepted->get_future();
-    asio::post(io_context_,
-               [self = shared_from_this(), accepted]()
-               {
-                   accepted->set_value(self->can_accept_stream_local());
-               });
-    return accepted_future.get();
+    return run_sync_bool_query(
+        io_context_,
+        [self = shared_from_this()]()
+        {
+            return self->can_accept_stream_local();
+        });
 }
 
 bool mux_connection::has_stream(const std::uint32_t id)
@@ -705,15 +743,12 @@ bool mux_connection::has_stream(const std::uint32_t id)
     {
         return has_stream_local(id);
     }
-
-    auto has = std::make_shared<std::promise<bool>>();
-    auto has_future = has->get_future();
-    asio::post(io_context_,
-               [self = shared_from_this(), id, has]()
-               {
-                   has->set_value(self->has_stream_local(id));
-               });
-    return has_future.get();
+    return run_sync_bool_query(
+        io_context_,
+        [self = shared_from_this(), id]()
+        {
+            return self->has_stream_local(id);
+        });
 }
 
 std::shared_ptr<mux_stream> mux_connection::create_stream(const std::string& trace_id)
