@@ -83,6 +83,15 @@ TEST(MuxTunnelTest, CreateStreamAndRegisterPaths)
     EXPECT_FALSE(tunnel->connection_->has_stream(9002));
 }
 
+TEST(MuxTunnelTest, RunWithConnectionCoversStartPath)
+{
+    asio::io_context io_context;
+    auto tunnel = make_tunnel(io_context, 7);
+
+    tunnel->connection_->connection_state_.store(mux::mux_connection_state::kClosed, std::memory_order_release);
+    mux::test::run_awaitable_void(io_context, tunnel->run());
+}
+
 TEST(MuxTunnelTest, CreateStreamReturnsNullWhenClosedOrAtCapacity)
 {
     asio::io_context io_context;

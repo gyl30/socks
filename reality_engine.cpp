@@ -42,6 +42,29 @@ std::span<const std::uint8_t> reality_engine::encrypt(const std::vector<std::uin
     return {tx_buf_.data(), tx_buf_.size()};
 }
 
+void reality_engine::process_available_records(std::error_code& ec, const record_callback& callback)
+{
+    ec.clear();
+    std::uint8_t content_type = 0;
+    std::size_t payload_len = 0;
+
+    while (try_decrypt_next_record(content_type, payload_len, ec))
+    {
+        if (ec)
+        {
+            return;
+        }
+
+        callback(content_type, std::span<const std::uint8_t>(scratch_buf_.data(), payload_len));
+
+        if (content_type == reality::kContentTypeAlert)
+        {
+            ec = asio::error::eof;
+            return;
+        }
+    }
+}
+
 bool reality_engine::try_decrypt_next_record(std::uint8_t& content_type, std::size_t& payload_len, std::error_code& ec)
 {
     if (rx_buf_->size() < reality::kTlsRecordHeaderSize)
