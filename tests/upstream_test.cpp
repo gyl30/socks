@@ -122,28 +122,18 @@ class echo_server
 
     ~echo_server() noexcept
     {
-        try
+        stop();
+        if (thread_.joinable())
         {
-            stop();
-            if (thread_.joinable())
-            {
-                thread_.join();
-            }
-        }
-        catch (const std::exception& e)
-        {
-            LOG_ERROR("echo server destructor exception {}", e.what());
-        }
-        catch (...)
-        {
-            LOG_ERROR("echo server destructor unknown exception");
+            thread_.join();
         }
     }
 
     void stop()
     {
         ctx_.stop();
-        acceptor_.close();
+        std::error_code ec;
+        acceptor_.close(ec);
     }
 
    private:
@@ -392,6 +382,26 @@ TEST_F(upstream_test, ProxyUpstreamConnectFailsWhenTunnelStopped)
     EXPECT_FALSE(success);
 }
 
+TEST_F(upstream_test, ProxyUpstreamIsTunnelReadyCoversShortCircuitBranches)
+{
+    mux::proxy_upstream null_tunnel_upstream(nullptr, mux::connection_context{});
+    EXPECT_FALSE(null_tunnel_upstream.is_tunnel_ready());
+
+    auto tunnel_without_connection = make_test_tunnel(ctx());
+    tunnel_without_connection->connection_ = nullptr;
+    mux::proxy_upstream no_connection_upstream(tunnel_without_connection, mux::connection_context{});
+    EXPECT_FALSE(no_connection_upstream.is_tunnel_ready());
+
+    auto stopped_tunnel = make_test_tunnel(ctx());
+    stopped_tunnel->connection()->stop();
+    mux::proxy_upstream stopped_upstream(stopped_tunnel, mux::connection_context{});
+    EXPECT_FALSE(stopped_upstream.is_tunnel_ready());
+
+    auto ready_tunnel = make_test_tunnel(ctx());
+    mux::proxy_upstream ready_upstream(ready_tunnel, mux::connection_context{});
+    EXPECT_TRUE(ready_upstream.is_tunnel_ready());
+}
+
 TEST_F(upstream_test, ProxyUpstreamConnectFailsWhenCreateStreamRejectedByLimit)
 {
     mux::config::limits_t limits;
@@ -566,6 +576,17 @@ TEST_F(upstream_test, ProxyUpstreamCleanupNullStreamNoop)
     mux::test::run_awaitable_void(ctx(), upstream.cleanup_stream(nullptr));
 }
 
+TEST_F(upstream_test, ProxyUpstreamCleanupStreamWithoutTunnelStillClosesStream)
+{
+    auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
+    auto stream = make_mock_stream(ctx(), mock_conn, 23);
+    mux::proxy_upstream upstream(nullptr, mux::connection_context{});
+
+    EXPECT_CALL(*mock_conn, mock_send_async(23, mux::kCmdFin, std::vector<std::uint8_t>{}))
+        .WillOnce(::testing::Return(std::error_code{}));
+    mux::test::run_awaitable_void(ctx(), upstream.cleanup_stream(stream));
+}
+
 TEST_F(upstream_test, ProxyUpstreamCleanupStreamRemovesFromTunnel)
 {
     auto tunnel = make_test_tunnel(ctx());
@@ -604,6 +625,20 @@ TEST_F(upstream_test, ProxyUpstreamReadReturnsZeroWhenStreamReportsEof)
     upstream.stream_ = stream;
 
     stream->on_close();
+    std::vector<std::uint8_t> buf(8);
+    const auto [ec, n] = mux::test::run_awaitable(ctx(), upstream.read(buf));
+    EXPECT_EQ(ec, asio::error::eof);
+    EXPECT_EQ(n, 0U);
+}
+
+TEST_F(upstream_test, ProxyUpstreamReadReturnsZeroWhenPayloadEmpty)
+{
+    auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
+    auto stream = make_mock_stream(ctx(), mock_conn);
+    mux::proxy_upstream upstream(nullptr, mux::connection_context{});
+    upstream.stream_ = stream;
+
+    stream->on_data({});
     std::vector<std::uint8_t> buf(8);
     const auto [ec, n] = mux::test::run_awaitable(ctx(), upstream.read(buf));
     EXPECT_EQ(ec, asio::error::eof);
