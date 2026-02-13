@@ -22,8 +22,11 @@ enum class monitor_fail_mode
 {
     kNone = 0,
     kSocket,
+    kSocketAlways,
     kReuseAddr,
+    kReuseAddrAlways,
     kListen,
+    kListenAlways,
 };
 
 std::atomic<int> g_monitor_fail_mode{static_cast<int>(monitor_fail_mode::kNone)};
@@ -39,16 +42,19 @@ class monitor_fail_guard
     ~monitor_fail_guard() { g_monitor_fail_mode.store(static_cast<int>(monitor_fail_mode::kNone), std::memory_order_release); }
 };
 
-monitor_fail_mode consume_monitor_fail_mode(const monitor_fail_mode expected)
+bool should_fail_monitor_mode(const monitor_fail_mode once_mode, const monitor_fail_mode always_mode)
 {
-    const auto exp = static_cast<int>(expected);
-    const auto old = g_monitor_fail_mode.load(std::memory_order_acquire);
-    if (old != exp)
+    const auto current = static_cast<monitor_fail_mode>(g_monitor_fail_mode.load(std::memory_order_acquire));
+    if (current == always_mode)
     {
-        return monitor_fail_mode::kNone;
+        return true;
     }
-    g_monitor_fail_mode.store(static_cast<int>(monitor_fail_mode::kNone), std::memory_order_release);
-    return expected;
+    if (current == once_mode)
+    {
+        g_monitor_fail_mode.store(static_cast<int>(monitor_fail_mode::kNone), std::memory_order_release);
+        return true;
+    }
+    return false;
 }
 
 std::uint16_t pick_free_port()
@@ -147,7 +153,7 @@ extern "C" int __real_listen(int sockfd, int backlog);
 
 extern "C" int __wrap_socket(int domain, int type, int protocol)
 {
-    if (consume_monitor_fail_mode(monitor_fail_mode::kSocket) == monitor_fail_mode::kSocket)
+    if (should_fail_monitor_mode(monitor_fail_mode::kSocket, monitor_fail_mode::kSocketAlways))
     {
         errno = EMFILE;
         return -1;
@@ -158,7 +164,7 @@ extern "C" int __wrap_socket(int domain, int type, int protocol)
 extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)
 {
     if (level == SOL_SOCKET && optname == SO_REUSEADDR
-        && consume_monitor_fail_mode(monitor_fail_mode::kReuseAddr) == monitor_fail_mode::kReuseAddr)
+        && should_fail_monitor_mode(monitor_fail_mode::kReuseAddr, monitor_fail_mode::kReuseAddrAlways))
     {
         errno = EPERM;
         return -1;
@@ -168,7 +174,7 @@ extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void*
 
 extern "C" int __wrap_listen(int sockfd, int backlog)
 {
-    if (consume_monitor_fail_mode(monitor_fail_mode::kListen) == monitor_fail_mode::kListen)
+    if (should_fail_monitor_mode(monitor_fail_mode::kListen, monitor_fail_mode::kListenAlways))
     {
         errno = EACCES;
         return -1;
@@ -253,12 +259,14 @@ TEST(MonitorServerTest, ConstructorHandlesInvalidBindHost)
     auto bad_server = std::make_shared<monitor_server>(ioc, std::string("bad host"), port, std::string("token"), 10);
     ASSERT_NE(server, nullptr);
     ASSERT_NE(bad_server, nullptr);
+    bad_server->start();
+    ioc.poll();
 }
 
 TEST(MonitorServerTest, ConstructorHandlesOpenFailure)
 {
     asio::io_context ioc;
-    monitor_fail_guard guard(monitor_fail_mode::kSocket);
+    monitor_fail_guard guard(monitor_fail_mode::kSocketAlways);
     auto server = std::make_shared<monitor_server>(ioc, 0, std::string("token"), 10);
     ASSERT_NE(server, nullptr);
 }
@@ -266,7 +274,7 @@ TEST(MonitorServerTest, ConstructorHandlesOpenFailure)
 TEST(MonitorServerTest, ConstructorHandlesReuseAddressFailure)
 {
     asio::io_context ioc;
-    monitor_fail_guard guard(monitor_fail_mode::kReuseAddr);
+    monitor_fail_guard guard(monitor_fail_mode::kReuseAddrAlways);
     auto server = std::make_shared<monitor_server>(ioc, 0, std::string("token"), 10);
     ASSERT_NE(server, nullptr);
 }
@@ -274,7 +282,7 @@ TEST(MonitorServerTest, ConstructorHandlesReuseAddressFailure)
 TEST(MonitorServerTest, ConstructorHandlesListenFailure)
 {
     asio::io_context ioc;
-    monitor_fail_guard guard(monitor_fail_mode::kListen);
+    monitor_fail_guard guard(monitor_fail_mode::kListenAlways);
     auto server = std::make_shared<monitor_server>(ioc, 0, std::string("token"), 10);
     ASSERT_NE(server, nullptr);
 }

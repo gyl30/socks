@@ -82,6 +82,8 @@ target_link_options(
     PRIVATE
         -Wl,--wrap=socket
         -Wl,--wrap=setsockopt
+        -Wl,--wrap=accept
+        -Wl,--wrap=accept4
 )
 add_socks_test(reality_fingerprint_test)
 add_socks_test(reality_auth_test)
