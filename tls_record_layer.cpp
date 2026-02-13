@@ -73,6 +73,8 @@ void tls_record_layer::encrypt_record_append(const cipher_context& ctx,
                                              std::vector<std::uint8_t>& output_buffer,
                                              std::error_code& ec)
 {
+    ensure_openssl_initialized();
+
     std::vector<std::uint8_t> nonce = iv;
     for (int i = 0; i < 8; ++i)
     {
@@ -140,6 +142,8 @@ std::size_t tls_record_layer::decrypt_record(const cipher_context& ctx,
                                              std::uint8_t& out_content_type,
                                              std::error_code& ec)
 {
+    ensure_openssl_initialized();
+
     if (!validate_record_for_decrypt(record_data, ec))
     {
         return 0;

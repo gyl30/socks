@@ -4,8 +4,7 @@
 #include <vector>
 #include <cstddef>
 #include <cstdint>
-#include <iomanip>
-#include <sstream>
+#include <mutex>
 #include <utility>
 #include <algorithm>
 #include <system_error>
@@ -25,6 +24,17 @@ extern "C"
 
 namespace reality
 {
+
+void ensure_openssl_initialized()
+{
+    static std::once_flag init_flag;
+    std::call_once(
+        init_flag,
+        []()
+        {
+            (void)OPENSSL_init_crypto(OPENSSL_INIT_NO_LOAD_CONFIG, nullptr);
+        });
+}
 
 namespace
 {
@@ -239,16 +249,24 @@ bool decrypt_aead_payload(const cipher_context& ctx,
 
 std::string crypto_util::bytes_to_hex(const std::vector<std::uint8_t>& bytes)
 {
-    std::ostringstream oss;
-    for (const std::uint8_t c : bytes)
+    static constexpr std::array<char, 16> kHexTable = {'0', '1', '2', '3', '4', '5', '6', '7',
+                                                        '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
+
+    std::string hex;
+    hex.resize(bytes.size() * 2);
+    for (std::size_t i = 0; i < bytes.size(); ++i)
     {
-        oss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(c);
+        const auto value = bytes[i];
+        hex[2 * i] = kHexTable[(value >> 4) & 0x0F];
+        hex[2 * i + 1] = kHexTable[value & 0x0F];
     }
-    return oss.str();
+    return hex;
 }
 
 std::vector<std::uint8_t> crypto_util::hex_to_bytes(const std::string& hex)
 {
+    ensure_openssl_initialized();
+
     long len = 0;
     std::uint8_t* buf = OPENSSL_hexstr2buf(hex.c_str(), &len);
     if (buf == nullptr)
@@ -262,6 +280,8 @@ std::vector<std::uint8_t> crypto_util::hex_to_bytes(const std::string& hex)
 
 bool crypto_util::base64_url_decode(const std::string& input, std::vector<std::uint8_t>& out)
 {
+    ensure_openssl_initialized();
+
     out.clear();
     if (input.empty())
     {
@@ -291,6 +311,8 @@ bool crypto_util::base64_url_decode(const std::string& input, std::vector<std::u
 
 std::uint16_t crypto_util::random_grease()
 {
+    ensure_openssl_initialized();
+
     std::uint8_t idx = 0;
     if (RAND_bytes(&idx, 1) != 1)
     {
@@ -304,6 +326,8 @@ std::uint16_t crypto_util::random_grease()
 
 bool crypto_util::generate_x25519_keypair(std::uint8_t out_public[32], std::uint8_t out_private[32])
 {
+    ensure_openssl_initialized();
+
     const openssl_ptrs::evp_pkey_ctx_ptr pkey_ctx_ptr(EVP_PKEY_CTX_new_id(EVP_PKEY_X25519, nullptr));
 
     if (pkey_ctx_ptr != nullptr && EVP_PKEY_keygen_init(pkey_ctx_ptr.get()) > 0)
@@ -327,6 +351,8 @@ bool crypto_util::generate_x25519_keypair(std::uint8_t out_public[32], std::uint
 
 std::vector<std::uint8_t> crypto_util::extract_public_key(const std::vector<std::uint8_t>& private_key, std::error_code& ec)
 {
+    ensure_openssl_initialized();
+
     if (private_key.size() != 32)
     {
         ec = std::make_error_code(std::errc::invalid_argument);
@@ -354,6 +380,8 @@ std::vector<std::uint8_t> crypto_util::extract_public_key(const std::vector<std:
 
 std::vector<std::uint8_t> crypto_util::extract_ed25519_public_key(const std::vector<std::uint8_t>& private_key, std::error_code& ec)
 {
+    ensure_openssl_initialized();
+
     if (private_key.size() != 32)
     {
         ec = std::make_error_code(std::errc::invalid_argument);
@@ -383,6 +411,8 @@ std::vector<std::uint8_t> crypto_util::x25519_derive(const std::vector<std::uint
                                                      const std::vector<std::uint8_t>& peer_public_key,
                                                      std::error_code& ec)
 {
+    ensure_openssl_initialized();
+
     if (!validate_x25519_keys(private_key, peer_public_key, ec))
     {
         return {};
@@ -407,6 +437,8 @@ std::vector<std::uint8_t> crypto_util::hkdf_extract(const std::vector<std::uint8
                                                     const EVP_MD* md,
                                                     std::error_code& ec)
 {
+    ensure_openssl_initialized();
+
     const auto evp_pkey_ctx = create_hkdf_context(md, EVP_PKEY_HKDEF_MODE_EXTRACT_ONLY, ec);
     if (evp_pkey_ctx == nullptr)
     {
@@ -438,6 +470,8 @@ std::vector<std::uint8_t> crypto_util::hkdf_extract(const std::vector<std::uint8
 std::vector<std::uint8_t> crypto_util::hkdf_expand(
     const std::vector<std::uint8_t>& prk, const std::vector<std::uint8_t>& info, const std::size_t len, const EVP_MD* md, std::error_code& ec)
 {
+    ensure_openssl_initialized();
+
     if (len == 0)
     {
         ec.clear();
@@ -502,6 +536,8 @@ std::size_t crypto_util::aead_decrypt(const cipher_context& ctx,
                                       const std::span<std::uint8_t> output_buffer,
                                       std::error_code& ec)
 {
+    ensure_openssl_initialized();
+
     std::size_t pt_len = 0;
     if (!validate_aead_decrypt_inputs(cipher, key, nonce, ciphertext, output_buffer, pt_len, ec))
     {
@@ -561,6 +597,8 @@ void crypto_util::aead_encrypt_append(const cipher_context& ctx,
                                       std::vector<std::uint8_t>& output_buffer,
                                       std::error_code& ec)
 {
+    ensure_openssl_initialized();
+
     if (key.size() != static_cast<std::size_t>(EVP_CIPHER_key_length(cipher)))
     {
         ec = std::make_error_code(std::errc::invalid_argument);
@@ -615,6 +653,8 @@ std::vector<std::uint8_t> crypto_util::aead_encrypt(const EVP_CIPHER* cipher,
 
 openssl_ptrs::evp_pkey_ptr crypto_util::extract_pubkey_from_cert(const std::vector<std::uint8_t>& cert_der, std::error_code& ec)
 {
+    ensure_openssl_initialized();
+
     const std::uint8_t* p = cert_der.data();
 
     const openssl_ptrs::x509_ptr x509(d2i_X509(nullptr, &p, static_cast<long>(cert_der.size())));
@@ -639,6 +679,8 @@ bool crypto_util::verify_tls13_signature(EVP_PKEY* pub_key,
                                          const std::vector<std::uint8_t>& signature,
                                          std::error_code& ec)
 {
+    ensure_openssl_initialized();
+
     std::vector<std::uint8_t> to_verify(64, 0x20);
 
     const std::string context_str = "TLS 1.3, server CertificateVerify";

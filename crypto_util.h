@@ -7,8 +7,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <iomanip>
-#include <sstream>
 #include <system_error>
 
 extern "C"
@@ -22,6 +20,8 @@ extern "C"
 
 namespace reality
 {
+
+void ensure_openssl_initialized();
 
 class crypto_util
 {
