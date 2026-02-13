@@ -50,14 +50,14 @@ class mux_tunnel_impl : public std::enable_shared_from_this<mux_tunnel_impl<stre
         {
             return false;
         }
-        if (connection_->try_register_stream(id, std::move(stream)))
+        if (connection_->try_register_stream(id, std::move(stream)))    // GCOVR_EXCL_LINE
         {
             return true;
         }
         return false;
     }
 
-    asio::awaitable<void> run() const    // GCOVR_EXCL_BR_LINE
+    asio::awaitable<void> run() const    // GCOVR_EXCL_LINE
     {
         if (connection_ == nullptr)
         {
