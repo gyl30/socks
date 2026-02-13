@@ -7,6 +7,7 @@
 #include <limits>
 #include <atomic>
 #include <system_error>
+#include <algorithm>
 
 #include <gtest/gtest.h>
 
@@ -29,6 +30,13 @@ std::atomic<bool> g_fail_hkdf_set_key{false};
 std::atomic<bool> g_fail_hkdf_set_salt{false};
 std::atomic<bool> g_fail_set_gcm_tag{false};
 std::atomic<bool> g_fail_x509_get_pubkey{false};
+std::atomic<bool> g_fail_rand_bytes{false};
+std::atomic<bool> g_fail_x25519_ctx_new_id{false};
+std::atomic<bool> g_fail_x25519_raw_private_key{false};
+std::atomic<bool> g_fail_ed25519_raw_private_key{false};
+std::atomic<bool> g_fail_hkdf_add_info{false};
+std::atomic<bool> g_fail_md_ctx_new{false};
+std::atomic<bool> g_fail_pkey_derive{false};
 
 void fail_next_hkdf_set_key() { g_fail_hkdf_set_key.store(true, std::memory_order_release); }
 
@@ -37,6 +45,20 @@ void fail_next_hkdf_set_salt() { g_fail_hkdf_set_salt.store(true, std::memory_or
 void fail_next_set_gcm_tag() { g_fail_set_gcm_tag.store(true, std::memory_order_release); }
 
 void fail_next_x509_get_pubkey() { g_fail_x509_get_pubkey.store(true, std::memory_order_release); }
+
+void fail_next_rand_bytes() { g_fail_rand_bytes.store(true, std::memory_order_release); }
+
+void fail_next_x25519_ctx_new_id() { g_fail_x25519_ctx_new_id.store(true, std::memory_order_release); }
+
+void fail_next_x25519_raw_private_key() { g_fail_x25519_raw_private_key.store(true, std::memory_order_release); }
+
+void fail_next_ed25519_raw_private_key() { g_fail_ed25519_raw_private_key.store(true, std::memory_order_release); }
+
+void fail_next_hkdf_add_info() { g_fail_hkdf_add_info.store(true, std::memory_order_release); }
+
+void fail_next_md_ctx_new() { g_fail_md_ctx_new.store(true, std::memory_order_release); }
+
+void fail_next_pkey_derive() { g_fail_pkey_derive.store(true, std::memory_order_release); }
 
 std::vector<std::uint8_t> build_self_signed_cert_der()
 {
@@ -113,6 +135,12 @@ extern "C" int __real_EVP_PKEY_CTX_set1_hkdf_key(EVP_PKEY_CTX* ctx, const unsign
 extern "C" int __real_EVP_PKEY_CTX_set1_hkdf_salt(EVP_PKEY_CTX* ctx, const unsigned char* salt, int saltlen);
 extern "C" int __real_EVP_CIPHER_CTX_ctrl(EVP_CIPHER_CTX* ctx, int type, int arg, void* ptr);
 extern "C" EVP_PKEY* __real_X509_get_pubkey(X509* x);
+extern "C" int __real_RAND_bytes(unsigned char* buf, int num);
+extern "C" EVP_PKEY_CTX* __real_EVP_PKEY_CTX_new_id(int id, ENGINE* e);
+extern "C" EVP_PKEY* __real_EVP_PKEY_new_raw_private_key(int type, ENGINE* e, const unsigned char* key, size_t keylen);
+extern "C" int __real_EVP_PKEY_CTX_add1_hkdf_info(EVP_PKEY_CTX* ctx, const unsigned char* info, int infolen);
+extern "C" EVP_MD_CTX* __real_EVP_MD_CTX_new();
+extern "C" int __real_EVP_PKEY_derive(EVP_PKEY_CTX* ctx, unsigned char* key, size_t* keylen);
 
 extern "C" int __wrap_EVP_PKEY_CTX_set1_hkdf_key(EVP_PKEY_CTX* ctx, const unsigned char* key, int keylen)
 {
@@ -148,6 +176,64 @@ extern "C" EVP_PKEY* __wrap_X509_get_pubkey(X509* x)
         return nullptr;
     }
     return __real_X509_get_pubkey(x);
+}
+
+extern "C" int __wrap_RAND_bytes(unsigned char* buf, int num)
+{
+    if (g_fail_rand_bytes.exchange(false, std::memory_order_acq_rel))
+    {
+        return 0;
+    }
+    return __real_RAND_bytes(buf, num);
+}
+
+extern "C" EVP_PKEY_CTX* __wrap_EVP_PKEY_CTX_new_id(int id, ENGINE* e)
+{
+    if (id == EVP_PKEY_X25519 && g_fail_x25519_ctx_new_id.exchange(false, std::memory_order_acq_rel))
+    {
+        return nullptr;
+    }
+    return __real_EVP_PKEY_CTX_new_id(id, e);
+}
+
+extern "C" EVP_PKEY* __wrap_EVP_PKEY_new_raw_private_key(int type, ENGINE* e, const unsigned char* key, size_t keylen)
+{
+    if (type == EVP_PKEY_X25519 && g_fail_x25519_raw_private_key.exchange(false, std::memory_order_acq_rel))
+    {
+        return nullptr;
+    }
+    if (type == EVP_PKEY_ED25519 && g_fail_ed25519_raw_private_key.exchange(false, std::memory_order_acq_rel))
+    {
+        return nullptr;
+    }
+    return __real_EVP_PKEY_new_raw_private_key(type, e, key, keylen);
+}
+
+extern "C" int __wrap_EVP_PKEY_CTX_add1_hkdf_info(EVP_PKEY_CTX* ctx, const unsigned char* info, int infolen)
+{
+    if (g_fail_hkdf_add_info.exchange(false, std::memory_order_acq_rel))
+    {
+        return 0;
+    }
+    return __real_EVP_PKEY_CTX_add1_hkdf_info(ctx, info, infolen);
+}
+
+extern "C" EVP_MD_CTX* __wrap_EVP_MD_CTX_new()
+{
+    if (g_fail_md_ctx_new.exchange(false, std::memory_order_acq_rel))
+    {
+        return nullptr;
+    }
+    return __real_EVP_MD_CTX_new();
+}
+
+extern "C" int __wrap_EVP_PKEY_derive(EVP_PKEY_CTX* ctx, unsigned char* key, size_t* keylen)
+{
+    if (g_fail_pkey_derive.exchange(false, std::memory_order_acq_rel))
+    {
+        return 0;
+    }
+    return __real_EVP_PKEY_derive(ctx, key, keylen);
 }
 
 TEST(CryptoUtilTest, HexConversion)
@@ -727,4 +813,90 @@ TEST(CryptoUtilTest, AEADDecryptSetTagFailureBranch)
     const auto n = crypto_util::aead_decrypt(ctx, EVP_aes_256_gcm(), key, nonce, ciphertext, aad, out, ec);
     EXPECT_EQ(n, 0U);
     EXPECT_EQ(ec, std::errc::bad_message);
+}
+
+TEST(CryptoUtilTest, RandomGreaseFallsBackWhenRandFails)
+{
+    fail_next_rand_bytes();
+    EXPECT_EQ(crypto_util::random_grease(), 0x0a0a);
+}
+
+TEST(CryptoUtilTest, GenerateX25519KeypairFailureCleansesOutput)
+{
+    std::uint8_t pub[32];
+    std::uint8_t priv[32];
+    std::fill_n(pub, 32, 0xAA);
+    std::fill_n(priv, 32, 0xBB);
+
+    fail_next_x25519_ctx_new_id();
+    EXPECT_FALSE(crypto_util::generate_x25519_keypair(pub, priv));
+    for (std::size_t i = 0; i < 32; ++i)
+    {
+        EXPECT_EQ(pub[i], 0U);
+        EXPECT_EQ(priv[i], 0U);
+    }
+}
+
+TEST(CryptoUtilTest, ExtractPublicKeyLowLevelPrivateKeyCreationFailure)
+{
+    std::error_code ec;
+    const std::vector<std::uint8_t> raw_private(32, 0x11);
+
+    fail_next_x25519_raw_private_key();
+    const auto x25519_pub = crypto_util::extract_public_key(raw_private, ec);
+    EXPECT_TRUE(ec);
+    EXPECT_TRUE(x25519_pub.empty());
+
+    ec.clear();
+    fail_next_ed25519_raw_private_key();
+    const auto ed25519_pub = crypto_util::extract_ed25519_public_key(raw_private, ec);
+    EXPECT_TRUE(ec);
+    EXPECT_TRUE(ed25519_pub.empty());
+}
+
+TEST(CryptoUtilTest, X25519DerivePropagatesKeyObjectCreationFailure)
+{
+    std::error_code ec;
+    const std::vector<std::uint8_t> private_key(32, 0x21);
+    const std::vector<std::uint8_t> peer_public_key(32, 0x42);
+
+    fail_next_x25519_raw_private_key();
+    const auto shared = crypto_util::x25519_derive(private_key, peer_public_key, ec);
+    EXPECT_TRUE(ec);
+    EXPECT_TRUE(shared.empty());
+}
+
+TEST(CryptoUtilTest, HkdfLowLevelFailureBranches)
+{
+    std::error_code ec;
+
+    fail_next_pkey_derive();
+    const auto prk = crypto_util::hkdf_extract(std::vector<std::uint8_t>{0x01}, std::vector<std::uint8_t>{0x02}, EVP_sha256(), ec);
+    EXPECT_EQ(ec, std::errc::protocol_error);
+    EXPECT_TRUE(prk.empty());
+
+    ec.clear();
+    fail_next_hkdf_add_info();
+    const auto okm = crypto_util::hkdf_expand(std::vector<std::uint8_t>(32, 0x03), std::vector<std::uint8_t>{0x04}, 16, EVP_sha256(), ec);
+    EXPECT_EQ(ec, std::errc::protocol_error);
+    EXPECT_TRUE(okm.empty());
+}
+
+TEST(CryptoUtilTest, VerifyTls13SignatureHandlesMdCtxCreationFailure)
+{
+    EVP_PKEY* pkey = nullptr;
+    EVP_PKEY_CTX* keygen_ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_ED25519, nullptr);
+    ASSERT_NE(keygen_ctx, nullptr);
+    ASSERT_EQ(EVP_PKEY_keygen_init(keygen_ctx), 1);
+    ASSERT_EQ(EVP_PKEY_keygen(keygen_ctx, &pkey), 1);
+    EVP_PKEY_CTX_free(keygen_ctx);
+    ASSERT_NE(pkey, nullptr);
+
+    std::error_code ec;
+    fail_next_md_ctx_new();
+    const bool ok = crypto_util::verify_tls13_signature(pkey, std::vector<std::uint8_t>(32, 0x77), std::vector<std::uint8_t>(64, 0x88), ec);
+    EXPECT_FALSE(ok);
+    EXPECT_EQ(ec, std::errc::not_enough_memory);
+
+    EVP_PKEY_free(pkey);
 }
