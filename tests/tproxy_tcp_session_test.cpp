@@ -4,6 +4,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <cerrno>
 #include <cstdint>
 #include <system_error>
 
@@ -29,8 +30,44 @@
 #include "tproxy_tcp_session.h"
 #undef private
 
+extern "C" int __real_shutdown(int sockfd, int how);
+extern "C" int __real_close(int fd);
+
 namespace
 {
+
+std::atomic<bool> g_fail_shutdown_once{false};
+std::atomic<int> g_fail_shutdown_errno{EPERM};
+std::atomic<bool> g_fail_close_once{false};
+std::atomic<int> g_fail_close_errno{EIO};
+
+void fail_next_shutdown(const int err)
+{
+    g_fail_shutdown_errno.store(err, std::memory_order_release);
+    g_fail_shutdown_once.store(true, std::memory_order_release);
+}
+
+void fail_next_close(const int err)
+{
+    g_fail_close_errno.store(err, std::memory_order_release);
+    g_fail_close_once.store(true, std::memory_order_release);
+}
+
+struct tcp_socket_pair
+{
+    asio::ip::tcp::socket client;
+    asio::ip::tcp::socket server;
+};
+
+tcp_socket_pair make_tcp_socket_pair(asio::io_context& io_context)
+{
+    asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    asio::ip::tcp::socket client(io_context);
+    asio::ip::tcp::socket server(io_context);
+    client.connect(acceptor.local_endpoint());
+    acceptor.accept(server);
+    return tcp_socket_pair{std::move(client), std::move(server)};
+}
 
 class direct_router : public mux::router
 {
@@ -85,6 +122,26 @@ class mock_upstream final : public mux::upstream
 };
 
 }    // namespace
+
+extern "C" int __wrap_shutdown(int sockfd, int how)
+{
+    if (g_fail_shutdown_once.exchange(false, std::memory_order_acq_rel))
+    {
+        errno = g_fail_shutdown_errno.load(std::memory_order_acquire);
+        return -1;
+    }
+    return __real_shutdown(sockfd, how);
+}
+
+extern "C" int __wrap_close(int fd)
+{
+    if (g_fail_close_once.exchange(false, std::memory_order_acq_rel))
+    {
+        errno = g_fail_close_errno.load(std::memory_order_acquire);
+        return -1;
+    }
+    return __real_close(fd);
+}
 
 TEST(TproxyTcpSessionTest, DirectEcho)
 {
@@ -289,4 +346,110 @@ TEST(TproxyTcpSessionTest, ConnectBackendReflectsUpstreamResult)
     const auto connect_fail =
         mux::test::run_awaitable(ctx, session->connect_backend(backend, "127.0.0.1", 80, mux::route_type::kDirect));
     EXPECT_FALSE(connect_fail);
+}
+
+TEST(TproxyTcpSessionTest, CloseClientSocketIgnoresExpectedErrors)
+{
+    asio::io_context ctx;
+    auto pair = make_tcp_socket_pair(ctx);
+    auto router = std::make_shared<direct_router>();
+    mux::config cfg;
+    const asio::ip::tcp::endpoint dst_ep(asio::ip::make_address("127.0.0.1"), 80);
+    auto session = std::make_shared<mux::tproxy_tcp_session>(std::move(pair.server), ctx, nullptr, std::move(router), 7, cfg, dst_ep);
+
+    fail_next_shutdown(ENOTCONN);
+    fail_next_close(EBADF);
+    session->close_client_socket();
+
+    EXPECT_FALSE(session->socket_.is_open());
+    pair.client.close();
+}
+
+TEST(TproxyTcpSessionTest, CloseClientSocketHandlesUnexpectedErrors)
+{
+    asio::io_context ctx;
+    auto pair = make_tcp_socket_pair(ctx);
+    auto router = std::make_shared<direct_router>();
+    mux::config cfg;
+    const asio::ip::tcp::endpoint dst_ep(asio::ip::make_address("127.0.0.1"), 80);
+    auto session = std::make_shared<mux::tproxy_tcp_session>(std::move(pair.server), ctx, nullptr, std::move(router), 8, cfg, dst_ep);
+
+    fail_next_shutdown(EPERM);
+    fail_next_close(EIO);
+    session->close_client_socket();
+
+    EXPECT_FALSE(session->socket_.is_open());
+    pair.client.close();
+}
+
+TEST(TproxyTcpSessionTest, ShutdownClientSendHandlesExpectedAndUnexpectedErrors)
+{
+    asio::io_context ctx;
+    auto pair = make_tcp_socket_pair(ctx);
+    auto router = std::make_shared<direct_router>();
+    mux::config cfg;
+    const asio::ip::tcp::endpoint dst_ep(asio::ip::make_address("127.0.0.1"), 80);
+    auto session = std::make_shared<mux::tproxy_tcp_session>(std::move(pair.server), ctx, nullptr, std::move(router), 9, cfg, dst_ep);
+
+    fail_next_shutdown(EIO);
+    session->shutdown_client_send();
+
+    fail_next_shutdown(ENOTCONN);
+    session->shutdown_client_send();
+
+    fail_next_shutdown(EBADF);
+    session->shutdown_client_send();
+
+    session->close_client_socket();
+    pair.client.close();
+}
+
+TEST(TproxyTcpSessionTest, StartIdleWatchdogSpawnsAndClosesIdleSocket)
+{
+    asio::io_context ctx;
+    auto pair = make_tcp_socket_pair(ctx);
+    auto router = std::make_shared<direct_router>();
+    mux::config cfg;
+    cfg.timeout.idle = 1;
+    const asio::ip::tcp::endpoint dst_ep(asio::ip::make_address("127.0.0.1"), 80);
+    auto session = std::make_shared<mux::tproxy_tcp_session>(std::move(pair.server), ctx, nullptr, std::move(router), 10, cfg, dst_ep);
+    auto backend = std::make_shared<mock_upstream>();
+
+    session->last_activity_time_ms_.store(0, std::memory_order_release);
+    session->start_idle_watchdog(backend);
+    ctx.run_for(std::chrono::milliseconds(1100));
+    ctx.restart();
+
+    EXPECT_EQ(backend->close_calls, 1);
+    EXPECT_FALSE(session->socket_.is_open());
+    pair.client.close();
+}
+
+TEST(TproxyTcpSessionTest, StartIdleWatchdogSpawnsAndHandlesCancel)
+{
+    asio::io_context ctx;
+    auto pair = make_tcp_socket_pair(ctx);
+    auto router = std::make_shared<direct_router>();
+    mux::config cfg;
+    cfg.timeout.idle = 1;
+    const asio::ip::tcp::endpoint dst_ep(asio::ip::make_address("127.0.0.1"), 80);
+    auto session = std::make_shared<mux::tproxy_tcp_session>(std::move(pair.server), ctx, nullptr, std::move(router), 11, cfg, dst_ep);
+    auto backend = std::make_shared<mock_upstream>();
+
+    asio::steady_timer cancel_timer(ctx);
+    cancel_timer.expires_after(std::chrono::milliseconds(10));
+    cancel_timer.async_wait([session](const std::error_code&)
+                            {
+                                session->idle_timer_.cancel();
+                                std::error_code ignore;
+                                session->socket_.close(ignore);
+                            });
+
+    session->start_idle_watchdog(backend);
+    ctx.run();
+    ctx.restart();
+
+    EXPECT_EQ(backend->close_calls, 0);
+    EXPECT_FALSE(session->socket_.is_open());
+    pair.client.close();
 }
