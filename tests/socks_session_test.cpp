@@ -849,4 +849,17 @@ TEST_F(socks_session_test, StopHandlesUnexpectedShutdownAndCloseErrors)
     pair.client.close();
 }
 
+TEST_F(socks_session_test, StopIgnoresExpectedShutdownAndCloseErrors)
+{
+    auto pair = make_tcp_socket_pair(io_ctx());
+    auto session = std::make_shared<socks_session>(std::move(pair.server), io_ctx(), nullptr, nullptr, 4);
+
+    fail_next_shutdown(ENOTCONN);
+    fail_next_close(EBADF);
+    session->stop();
+
+    EXPECT_FALSE(session->socket_.is_open());
+    pair.client.close();
+}
+
 }    // namespace
