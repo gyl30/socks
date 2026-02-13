@@ -146,6 +146,20 @@ TEST(TproxyUdpSenderTest, CacheMaintenanceBranches)
     EXPECT_TRUE(sender.sockets_.empty());
 }
 
+TEST(TproxyUdpSenderTest, EndpointKeyEqualCoversTrueAndFalsePaths)
+{
+    mux::tproxy_udp_sender::endpoint_key_equal eq;
+
+    const mux::tproxy_udp_sender::endpoint_key key{asio::ip::make_address("127.0.0.1"), 10001};
+    const mux::tproxy_udp_sender::endpoint_key same_key{asio::ip::make_address("127.0.0.1"), 10001};
+    const mux::tproxy_udp_sender::endpoint_key diff_addr{asio::ip::make_address("127.0.0.2"), 10001};
+    const mux::tproxy_udp_sender::endpoint_key diff_port{asio::ip::make_address("127.0.0.1"), 10002};
+
+    EXPECT_TRUE(eq(key, same_key));
+    EXPECT_FALSE(eq(key, diff_addr));
+    EXPECT_FALSE(eq(key, diff_port));
+}
+
 TEST(TproxyUdpSenderTest, SocketOptionAndBindBranches)
 {
     asio::io_context ctx;

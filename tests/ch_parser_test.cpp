@@ -360,6 +360,17 @@ TEST(CHParserTest, InternalReadAndSkipFailures)
     }
 }
 
+TEST(CHParserTest, ReaderInvalidSliceKeepsSafeAccessors)
+{
+    std::vector<std::uint8_t> buf = {0x01};
+    ch_parser::reader r(buf);
+    auto invalid = r.slice(2);
+
+    EXPECT_FALSE(invalid.valid());
+    EXPECT_EQ(invalid.remaining(), 0u);
+    EXPECT_EQ(invalid.offset(), 0u);
+}
+
 TEST(CHParserTest, InternalSNIAndExtensionBranches)
 {
     {
