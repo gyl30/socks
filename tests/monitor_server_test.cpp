@@ -8,6 +8,7 @@
 #include <thread>
 #include <utility>
 #include <sys/socket.h>
+#include <unistd.h>
 
 #include <asio.hpp>
 #include <gtest/gtest.h>
@@ -30,6 +31,10 @@ enum class monitor_fail_mode
 };
 
 std::atomic<int> g_monitor_fail_mode{static_cast<int>(monitor_fail_mode::kNone)};
+std::atomic<bool> g_fail_accept_once{false};
+std::atomic<int> g_fail_accept_errno{EIO};
+std::atomic<bool> g_fail_close_once{false};
+std::atomic<int> g_fail_close_errno{EIO};
 
 class monitor_fail_guard
 {
@@ -55,6 +60,18 @@ bool should_fail_monitor_mode(const monitor_fail_mode once_mode, const monitor_f
         return true;
     }
     return false;
+}
+
+void fail_next_accept(const int err)
+{
+    g_fail_accept_errno.store(err, std::memory_order_release);
+    g_fail_accept_once.store(true, std::memory_order_release);
+}
+
+void fail_next_close(const int err)
+{
+    g_fail_close_errno.store(err, std::memory_order_release);
+    g_fail_close_once.store(true, std::memory_order_release);
 }
 
 std::uint16_t pick_free_port()
@@ -116,6 +133,19 @@ std::string request_with_retry(std::uint16_t port, const std::string& request)
     return read_response(port, request);
 }
 
+void connect_and_close_without_payload(const std::uint16_t port)
+{
+    asio::io_context ioc;
+    asio::ip::tcp::socket socket(ioc);
+    asio::error_code ec;
+    socket.connect(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), port), ec);
+    if (ec)
+    {
+        return;
+    }
+    socket.close(ec);
+}
+
 class monitor_server_env
 {
    public:
@@ -150,6 +180,9 @@ class monitor_server_env
 extern "C" int __real_socket(int domain, int type, int protocol);
 extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);
 extern "C" int __real_listen(int sockfd, int backlog);
+extern "C" int __real_accept(int sockfd, struct sockaddr* addr, socklen_t* addrlen);
+extern "C" int __real_accept4(int sockfd, struct sockaddr* addr, socklen_t* addrlen, int flags);
+extern "C" int __real_close(int fd);
 
 extern "C" int __wrap_socket(int domain, int type, int protocol)
 {
@@ -180,6 +213,36 @@ extern "C" int __wrap_listen(int sockfd, int backlog)
         return -1;
     }
     return __real_listen(sockfd, backlog);
+}
+
+extern "C" int __wrap_accept(int sockfd, struct sockaddr* addr, socklen_t* addrlen)
+{
+    if (g_fail_accept_once.exchange(false, std::memory_order_acq_rel))
+    {
+        errno = g_fail_accept_errno.load(std::memory_order_acquire);
+        return -1;
+    }
+    return __real_accept(sockfd, addr, addrlen);
+}
+
+extern "C" int __wrap_accept4(int sockfd, struct sockaddr* addr, socklen_t* addrlen, int flags)
+{
+    if (g_fail_accept_once.exchange(false, std::memory_order_acq_rel))
+    {
+        errno = g_fail_accept_errno.load(std::memory_order_acquire);
+        return -1;
+    }
+    return __real_accept4(sockfd, addr, addrlen, flags);
+}
+
+extern "C" int __wrap_close(int fd)
+{
+    if (g_fail_close_once.exchange(false, std::memory_order_acq_rel))
+    {
+        errno = g_fail_close_errno.load(std::memory_order_acquire);
+        return -1;
+    }
+    return __real_close(fd);
 }
 
 namespace mux
@@ -319,6 +382,48 @@ TEST(MonitorServerTest, StopClosesAcceptorAndRejectsNewConnections)
     {
         runner.join();
     }
+}
+
+TEST(MonitorServerTest, StopLogsAcceptorCloseFailureBranch)
+{
+    const auto port = pick_free_port();
+    asio::io_context ioc;
+    auto server = std::make_shared<monitor_server>(ioc, port, std::string(), 10);
+    ASSERT_NE(server, nullptr);
+    server->start();
+
+    std::thread runner([&ioc]() { ioc.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    fail_next_close(EIO);
+    server->stop();
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    ioc.stop();
+    if (runner.joinable())
+    {
+        runner.join();
+    }
+}
+
+TEST(MonitorServerTest, AcceptFailureRetriesAndServesRequest)
+{
+    const auto port = pick_free_port();
+    monitor_server_env env(port, std::string());
+
+    fail_next_accept(EIO);
+    const auto resp = request_with_retry(port, "metrics\n");
+    EXPECT_NE(resp.find("socks_uptime_seconds "), std::string::npos);
+}
+
+TEST(MonitorServerTest, SessionReadErrorPathStillAcceptsNextClient)
+{
+    const auto port = pick_free_port();
+    monitor_server_env env(port, std::string());
+
+    connect_and_close_without_payload(port);
+    const auto resp = request_with_retry(port, "metrics\n");
+    EXPECT_NE(resp.find("socks_uptime_seconds "), std::string::npos);
 }
 
 }    // namespace mux
