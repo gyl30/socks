@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <utility>
 #include <system_error>
+#include <unistd.h>
 
 #include <asio/read.hpp>
 #include <gtest/gtest.h>
@@ -239,6 +240,104 @@ TEST_F(mux_connection_integration_test, StopDrainingAndInternalErrorBranches)
     conn->mux_dispatcher_.set_max_buffer(1);
     conn->mux_dispatcher_.on_plaintext_data(std::span<const std::uint8_t>(junk.data(), junk.size()));
     EXPECT_TRUE(conn->has_dispatch_failure(std::make_error_code(std::errc::protocol_error)));
+}
+
+TEST_F(mux_connection_integration_test, HandleStreamAndUnknownStreamBranches)
+{
+    auto conn = std::make_shared<mux_connection>(
+        asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 6);
+
+    auto stream = std::make_shared<simple_mock_stream>();
+    conn->register_stream_local(100, stream);
+
+    std::vector<std::uint8_t> ack_payload = {1, 2, 3};
+    const frame_header ack_header{
+        .stream_id = 100,
+        .length = static_cast<std::uint16_t>(ack_payload.size()),
+        .command = kCmdAck,
+    };
+    conn->handle_stream_frame(ack_header, ack_payload);
+    EXPECT_EQ(stream->received_data(), ack_payload);
+
+    conn->handle_unknown_stream(1000, kCmdRst);
+    conn->handle_unknown_stream(1001, kCmdDat);
+    io_ctx().poll();
+}
+
+TEST_F(mux_connection_integration_test, SynCallbackAndReadGuardBranches)
+{
+    auto conn = std::make_shared<mux_connection>(
+        asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 7);
+
+    const frame_header syn_header{
+        .stream_id = 88,
+        .length = 1,
+        .command = kCmdSyn,
+    };
+
+    conn->on_mux_frame(syn_header, {7});
+
+    bool syn_called = false;
+    std::uint32_t syn_stream_id = 0;
+    std::vector<std::uint8_t> syn_payload;
+    conn->set_syn_callback(
+        [&](const std::uint32_t stream_id, std::vector<std::uint8_t> payload)
+        {
+            syn_called = true;
+            syn_stream_id = stream_id;
+            syn_payload = std::move(payload);
+        });
+    conn->on_mux_frame(syn_header, {9});
+
+    EXPECT_TRUE(syn_called);
+    EXPECT_EQ(syn_stream_id, 88);
+    EXPECT_EQ(syn_payload, std::vector<std::uint8_t>({9}));
+
+    EXPECT_FALSE(conn->should_stop_read(std::error_code{}, 8));
+    EXPECT_TRUE(conn->should_stop_read(std::error_code{}, 0));
+    EXPECT_TRUE(conn->should_stop_read(asio::error::eof, 0));
+    EXPECT_TRUE(conn->should_stop_read(asio::error::operation_aborted, 0));
+}
+
+TEST_F(mux_connection_integration_test, ResetStreamsAndDispatchFailureBranches)
+{
+    auto conn = std::make_shared<mux_connection>(
+        asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 8);
+
+    auto reset_stream = std::make_shared<simple_mock_stream>();
+    mux_connection::stream_map_t streams_to_clear;
+    streams_to_clear.emplace(1, reset_stream);
+    streams_to_clear.emplace(2, nullptr);
+    conn->reset_streams_on_stop(streams_to_clear);
+
+    EXPECT_TRUE(reset_stream->reset());
+    EXPECT_TRUE(streams_to_clear.empty());
+    EXPECT_FALSE(conn->has_dispatch_failure(std::error_code{}));
+    EXPECT_TRUE(conn->has_dispatch_failure(std::make_error_code(std::errc::protocol_error)));
+}
+
+TEST_F(mux_connection_integration_test, TryRegisterNullAndCloseSocketErrorBranches)
+{
+    auto conn = std::make_shared<mux_connection>(
+        asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 9);
+
+    EXPECT_FALSE(conn->try_register_stream(77, nullptr));
+
+    asio::ip::tcp::socket broken_socket(io_ctx());
+    std::error_code open_ec;
+    broken_socket.open(asio::ip::tcp::v4(), open_ec);
+    ASSERT_FALSE(open_ec);
+
+    const int native_fd = broken_socket.native_handle();
+    ASSERT_GE(native_fd, 0);
+    ASSERT_EQ(::close(native_fd), 0);
+
+    conn->socket_ = std::move(broken_socket);
+    conn->close_socket_on_stop();
+
+    conn->write_channel_.reset();
+    conn->finalize_stop_state();
+    EXPECT_EQ(conn->connection_state_.load(std::memory_order_acquire), mux_connection_state::kClosed);
 }
 
 }    // namespace
