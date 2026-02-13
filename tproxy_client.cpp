@@ -138,7 +138,7 @@ void maybe_set_udp_mark(asio::ip::udp::socket& socket, const std::uint32_t mark)
     std::error_code mark_ec;
     if (!net::set_socket_mark(socket.native_handle(), mark, mark_ec))
     {
-        LOG_WARN("tproxy udp set mark failed {}", mark_ec.message());
+        LOG_WARN("tproxy udp set mark failed code {}", mark_ec.value());
     }
 }
 
@@ -220,7 +220,7 @@ bool prepare_tcp_destination(asio::ip::tcp::socket& socket, asio::ip::tcp::endpo
     ec = socket.set_option(asio::ip::tcp::no_delay(true), ec);
     if (ec)
     {
-        LOG_WARN("tproxy tcp set no delay failed {}", ec.message());
+        LOG_WARN("tproxy tcp set no delay failed code {}", ec.value());
     }
 
     const auto local_ep = socket.local_endpoint(ec);
