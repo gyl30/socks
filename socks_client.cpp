@@ -281,10 +281,7 @@ void stop_sessions(const std::vector<std::shared_ptr<socks_session>>& sessions)
 {
     for (const auto& session : sessions)
     {
-        if (session != nullptr)
-        {
-            session->stop();
-        }
+        session->stop();
     }
 }
 
@@ -324,7 +321,12 @@ void socks_client::start()
 
     tunnel_pool_->start();
 
-    asio::co_spawn(io_context_, [self = shared_from_this()]() -> asio::awaitable<void> { co_await self->accept_local_loop(); }, asio::detached);
+    asio::co_spawn(io_context_, accept_local_loop_detached(shared_from_this()), asio::detached);
+}
+
+asio::awaitable<void> socks_client::accept_local_loop_detached(std::shared_ptr<socks_client> self)
+{
+    co_await self->accept_local_loop();
 }
 
 void socks_client::stop()
