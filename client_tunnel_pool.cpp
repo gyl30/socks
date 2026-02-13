@@ -311,7 +311,7 @@ bool verify_server_certificate_verify_message(const std::vector<std::uint8_t>& m
         std::error_code verify_ec;
         if (!reality::crypto_util::verify_tls13_signature(validation_state.server_pub_key.get(), transcript_hash, cert_verify->signature, verify_ec))
         {
-            LOG_WARN("certificate verify signature check skipped {}", verify_ec.message());
+            LOG_WARN("certificate verify signature check skipped code {}", verify_ec.value());
         }
         else
         {
