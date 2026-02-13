@@ -1,4 +1,6 @@
 #include <array>
+#include <atomic>
+#include <cerrno>
 #include <memory>
 #include <optional>
 #include <string>
@@ -16,6 +18,14 @@
 #include <asio/ip/tcp.hpp>
 #include <asio/use_awaitable.hpp>
 
+#include <sys/socket.h>
+
+extern "C"
+{
+#include <openssl/evp.h>
+#include <openssl/rand.h>
+}
+
 #include "config.h"
 #include "context_pool.h"
 #include "crypto_util.h"
@@ -29,6 +39,94 @@
 
 namespace
 {
+
+std::atomic<bool> g_fail_rand_bytes_once{false};
+std::atomic<bool> g_fail_hkdf_add_info_once{false};
+std::atomic<bool> g_fail_cipher_ctx_ctrl_once{false};
+std::atomic<bool> g_fail_encrypt_init_once{false};
+std::atomic<bool> g_fail_pkey_derive_once{false};
+std::atomic<bool> g_fail_socket_once{false};
+std::atomic<int> g_fail_socket_errno{EMFILE};
+
+void fail_next_rand_bytes() { g_fail_rand_bytes_once.store(true, std::memory_order_release); }
+
+void fail_next_hkdf_add_info() { g_fail_hkdf_add_info_once.store(true, std::memory_order_release); }
+
+void fail_next_cipher_ctx_ctrl() { g_fail_cipher_ctx_ctrl_once.store(true, std::memory_order_release); }
+
+void fail_next_encrypt_init() { g_fail_encrypt_init_once.store(true, std::memory_order_release); }
+
+void fail_next_pkey_derive() { g_fail_pkey_derive_once.store(true, std::memory_order_release); }
+
+void fail_next_socket(const int err)
+{
+    g_fail_socket_errno.store(err, std::memory_order_release);
+    g_fail_socket_once.store(true, std::memory_order_release);
+}
+
+extern "C" int __real_RAND_bytes(unsigned char* buf, int num);
+extern "C" int __real_EVP_PKEY_CTX_add1_hkdf_info(EVP_PKEY_CTX* ctx, const unsigned char* info, int infolen);
+extern "C" int __real_EVP_CIPHER_CTX_ctrl(EVP_CIPHER_CTX* ctx, int type, int arg, void* ptr);
+extern "C" int __real_EVP_EncryptInit_ex(
+    EVP_CIPHER_CTX* ctx, const EVP_CIPHER* type, ENGINE* impl, const unsigned char* key, const unsigned char* iv);
+extern "C" int __real_EVP_PKEY_derive(EVP_PKEY_CTX* ctx, unsigned char* key, size_t* keylen);
+extern "C" int __real_socket(int domain, int type, int protocol);
+
+extern "C" int __wrap_RAND_bytes(unsigned char* buf, int num)
+{
+    if (g_fail_rand_bytes_once.exchange(false, std::memory_order_acq_rel))
+    {
+        return 0;
+    }
+    return __real_RAND_bytes(buf, num);
+}
+
+extern "C" int __wrap_EVP_PKEY_CTX_add1_hkdf_info(EVP_PKEY_CTX* ctx, const unsigned char* info, int infolen)
+{
+    if (g_fail_hkdf_add_info_once.exchange(false, std::memory_order_acq_rel))
+    {
+        return 0;
+    }
+    return __real_EVP_PKEY_CTX_add1_hkdf_info(ctx, info, infolen);
+}
+
+extern "C" int __wrap_EVP_CIPHER_CTX_ctrl(EVP_CIPHER_CTX* ctx, int type, int arg, void* ptr)
+{
+    if (type == EVP_CTRL_GCM_GET_TAG && g_fail_cipher_ctx_ctrl_once.exchange(false, std::memory_order_acq_rel))
+    {
+        return 0;
+    }
+    return __real_EVP_CIPHER_CTX_ctrl(ctx, type, arg, ptr);
+}
+
+extern "C" int __wrap_EVP_EncryptInit_ex(
+    EVP_CIPHER_CTX* ctx, const EVP_CIPHER* type, ENGINE* impl, const unsigned char* key, const unsigned char* iv)
+{
+    if (g_fail_encrypt_init_once.exchange(false, std::memory_order_acq_rel))
+    {
+        return 0;
+    }
+    return __real_EVP_EncryptInit_ex(ctx, type, impl, key, iv);
+}
+
+extern "C" int __wrap_EVP_PKEY_derive(EVP_PKEY_CTX* ctx, unsigned char* key, size_t* keylen)
+{
+    if (g_fail_pkey_derive_once.exchange(false, std::memory_order_acq_rel))
+    {
+        return 0;
+    }
+    return __real_EVP_PKEY_derive(ctx, key, keylen);
+}
+
+extern "C" int __wrap_socket(int domain, int type, int protocol)
+{
+    if (g_fail_socket_once.exchange(false, std::memory_order_acq_rel))
+    {
+        errno = g_fail_socket_errno.load(std::memory_order_acquire);
+        return -1;
+    }
+    return __real_socket(domain, type, protocol);
+}
 
 std::uint16_t pick_free_port()
 {
@@ -59,6 +157,33 @@ std::string generate_public_key_hex()
     return reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(pub, pub + 32));
 }
 
+std::vector<std::uint8_t> build_minimal_valid_certificate_message()
+{
+    return {
+        0x0b, 0x00, 0x00, 0x0a,    // handshake header (msg_len = 10)
+        0x00,                      // certificate_request_context length
+        0x00, 0x00, 0x06,          // certificate_list length
+        0x00, 0x00, 0x03,          // first certificate length
+        0x01, 0x02, 0x03           // first certificate bytes
+    };
+}
+
+std::vector<std::uint8_t> build_certificate_verify_message()
+{
+    std::array<std::uint8_t, 32> sign_key_bytes{};
+    for (std::size_t i = 0; i < sign_key_bytes.size(); ++i)
+    {
+        sign_key_bytes[i] = static_cast<std::uint8_t>(i + 1);
+    }
+    reality::openssl_ptrs::evp_pkey_ptr sign_key(
+        EVP_PKEY_new_raw_private_key(EVP_PKEY_ED25519, nullptr, sign_key_bytes.data(), sign_key_bytes.size()));
+    if (sign_key == nullptr)
+    {
+        return {};
+    }
+    return reality::construct_certificate_verify(sign_key.get(), {});
+}
+
 }    // namespace
 
 TEST(ClientTunnelPoolWhiteboxTest, ConfigValidationAndStartGuardBranches)
@@ -72,6 +197,10 @@ TEST(ClientTunnelPoolWhiteboxTest, ConfigValidationAndStartGuardBranches)
 
     auto no_fingerprint_pool = std::make_shared<mux::client_tunnel_pool>(pool, cfg, 0);
     EXPECT_TRUE(no_fingerprint_pool->valid());
+
+    cfg.reality.fingerprint.clear();
+    auto empty_fingerprint_name_pool = std::make_shared<mux::client_tunnel_pool>(pool, cfg, 0);
+    EXPECT_TRUE(empty_fingerprint_name_pool->valid());
 
     cfg.reality.fingerprint = "chrome";
     auto known_fingerprint_pool = std::make_shared<mux::client_tunnel_pool>(pool, cfg, 0);
@@ -111,6 +240,8 @@ TEST(ClientTunnelPoolWhiteboxTest, SelectAndIndexGuardBranches)
 
     tunnel_pool->clear_pending_socket_if_match(42, pending_socket);
     tunnel_pool->clear_tunnel_if_match(42, nullptr);
+    tunnel_pool->tunnel_pool_.resize(1);
+    tunnel_pool->clear_tunnel_if_match(0, nullptr);
 
     auto created_socket = tunnel_pool->create_pending_socket(io_context, 9);
     ASSERT_NE(created_socket, nullptr);
@@ -592,4 +723,305 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsUnsupportedCertificat
     io_context.run();
     EXPECT_FALSE(loop_res.first);
     EXPECT_EQ(loop_ec, asio::error::no_protocol_option);
+}
+
+TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopCertificateRangeAndFinishedBranches)
+{
+    auto run_case = [](const std::vector<std::uint8_t>& plaintext,
+                       const reality::handshake_keys& hs_keys,
+                       std::error_code& loop_ec) -> bool
+    {
+        asio::io_context io_context;
+        std::error_code ec;
+
+        asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+        asio::ip::tcp::socket writer(io_context);
+        writer.connect(acceptor.local_endpoint(), ec);
+        EXPECT_FALSE(ec);
+        asio::ip::tcp::socket reader(io_context);
+        acceptor.accept(reader, ec);
+        EXPECT_FALSE(ec);
+
+        const std::vector<std::uint8_t> key(16, 0x12);
+        const std::vector<std::uint8_t> iv(12, 0x34);
+        auto record = reality::tls_record_layer::encrypt_record(EVP_aes_128_gcm(), key, iv, 0, plaintext, reality::kContentTypeHandshake, ec);
+        EXPECT_FALSE(ec);
+        asio::write(writer, asio::buffer(record), ec);
+        EXPECT_FALSE(ec);
+        writer.shutdown(asio::ip::tcp::socket::shutdown_send, ec);
+
+        reality::transcript trans;
+        std::pair<bool, std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>> loop_res;
+        asio::co_spawn(io_context,
+                       [&]() -> asio::awaitable<void>
+                       {
+                           loop_res = co_await mux::client_tunnel_pool::handshake_read_loop(
+                               reader, {key, iv}, hs_keys, false, "whitebox-finished", trans, EVP_aes_128_gcm(), EVP_sha256(), loop_ec);
+                           co_return;
+                       },
+                       asio::detached);
+        io_context.run();
+        return loop_res.first;
+    };
+
+    const auto cert_msg = build_minimal_valid_certificate_message();
+    const auto cert_verify_msg = build_certificate_verify_message();
+    ASSERT_FALSE(cert_verify_msg.empty());
+
+    reality::handshake_keys hs_keys_ok{};
+    hs_keys_ok.server_handshake_traffic_secret.assign(32, 0x21);
+    hs_keys_ok.master_secret.assign(32, 0x45);
+
+    std::error_code case_ec;
+
+    // Hit parse_first_certificate_range branch where cert_list length overflows message size.
+    {
+        const std::vector<std::uint8_t> bad_list_len = {
+            0x0b, 0x00, 0x00, 0x07,
+            0x00,
+            0x00, 0x00, 0x0a,
+            0x00, 0x00, 0x00};
+        EXPECT_FALSE(run_case(bad_list_len, hs_keys_ok, case_ec));
+        EXPECT_TRUE(case_ec);
+    }
+
+    // Hit parse_first_certificate_range branch where cert length overflows message size.
+    {
+        const std::vector<std::uint8_t> bad_cert_len = {
+            0x0b, 0x00, 0x00, 0x07,
+            0x00,
+            0x00, 0x00, 0x00,
+            0x00, 0x00, 0x03};
+        EXPECT_FALSE(run_case(bad_cert_len, hs_keys_ok, case_ec));
+        EXPECT_TRUE(case_ec);
+    }
+
+    // Hit finished verify size mismatch branch.
+    {
+        std::vector<std::uint8_t> plaintext = cert_msg;
+        plaintext.insert(plaintext.end(), cert_verify_msg.begin(), cert_verify_msg.end());
+        const std::vector<std::uint8_t> bad_finished = {0x14, 0x00, 0x00, 0x01, 0x00};
+        plaintext.insert(plaintext.end(), bad_finished.begin(), bad_finished.end());
+        EXPECT_FALSE(run_case(plaintext, hs_keys_ok, case_ec));
+        EXPECT_EQ(case_ec, asio::error::invalid_argument);
+    }
+
+    // Hit repeated certificate short-circuit + finished hmac mismatch branch.
+    {
+        std::vector<std::uint8_t> plaintext = cert_msg;
+        plaintext.insert(plaintext.end(), cert_msg.begin(), cert_msg.end());
+        plaintext.insert(plaintext.end(), cert_verify_msg.begin(), cert_verify_msg.end());
+        std::vector<std::uint8_t> wrong_finished(4 + 32, 0x00);
+        wrong_finished[0] = 0x14;
+        wrong_finished[3] = 0x20;
+        plaintext.insert(plaintext.end(), wrong_finished.begin(), wrong_finished.end());
+        EXPECT_FALSE(run_case(plaintext, hs_keys_ok, case_ec));
+        EXPECT_EQ(case_ec, std::errc::permission_denied);
+    }
+
+    // Hit finished verify derive-failed branch (empty secret).
+    {
+        reality::handshake_keys hs_keys_fail{};
+        hs_keys_fail.master_secret.assign(32, 0x67);
+        std::vector<std::uint8_t> plaintext = cert_msg;
+        plaintext.insert(plaintext.end(), cert_verify_msg.begin(), cert_verify_msg.end());
+        const std::vector<std::uint8_t> finished = {0x14, 0x00, 0x00, 0x00};
+        plaintext.insert(plaintext.end(), finished.begin(), finished.end());
+        EXPECT_FALSE(run_case(plaintext, hs_keys_fail, case_ec));
+        EXPECT_TRUE(case_ec);
+    }
+
+    // Hit read_handshake_message_bounds incomplete-message break branch.
+    {
+        const std::vector<std::uint8_t> partial = {0x0b, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x00};
+        EXPECT_FALSE(run_case(partial, hs_keys_ok, case_ec));
+        EXPECT_TRUE(case_ec);
+    }
+}
+
+TEST(ClientTunnelPoolWhiteboxTest, ClientHelloAndSocketPreparationFailureBranchesWithWrappers)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+    asio::io_context io_context;
+
+    auto cfg = make_base_cfg();
+    cfg.reality.public_key = generate_public_key_hex();
+    cfg.reality.fingerprint = "chrome";
+    auto tunnel_pool = std::make_shared<mux::client_tunnel_pool>(pool, cfg, 1);
+
+    std::uint8_t ephemeral_pub[32];
+    std::uint8_t ephemeral_priv[32];
+    ASSERT_TRUE(reality::crypto_util::generate_x25519_keypair(ephemeral_pub, ephemeral_priv));
+    const auto spec = reality::fingerprint_factory::get(reality::fingerprint_type::kChrome120);
+
+    // Hit select_fingerprint_spec(fingerprint_type.has_value()) branch.
+    {
+        asio::ip::tcp::socket disconnected(io_context);
+        std::error_code hs_ec;
+        std::pair<bool, mux::client_tunnel_pool::handshake_result> hs_res;
+        asio::co_spawn(io_context,
+                       [&]() -> asio::awaitable<void>
+                       {
+                           hs_res = co_await tunnel_pool->perform_reality_handshake(disconnected, hs_ec);
+                           co_return;
+                       },
+                       asio::detached);
+        io_context.run();
+        EXPECT_FALSE(hs_res.first);
+        EXPECT_TRUE(hs_ec);
+    }
+
+    io_context.restart();
+
+    // Hit derive_client_auth_key_material RAND failure branch.
+    {
+        fail_next_rand_bytes();
+        asio::ip::tcp::socket disconnected(io_context);
+        reality::transcript trans;
+        bool hello_ok = true;
+        std::error_code hello_ec;
+        asio::co_spawn(io_context,
+                       [&]() -> asio::awaitable<void>
+                       {
+                           hello_ok = co_await tunnel_pool->generate_and_send_client_hello(
+                               disconnected, ephemeral_pub, ephemeral_priv, spec, trans, hello_ec);
+                           co_return;
+                       },
+                       asio::detached);
+        io_context.run();
+        EXPECT_FALSE(hello_ok);
+        EXPECT_EQ(hello_ec, std::errc::operation_canceled);
+    }
+
+    io_context.restart();
+
+    // Hit derive_client_auth_key_material HKDF expand failure branch.
+    {
+        fail_next_hkdf_add_info();
+        asio::ip::tcp::socket disconnected(io_context);
+        reality::transcript trans;
+        bool hello_ok = true;
+        std::error_code hello_ec;
+        asio::co_spawn(io_context,
+                       [&]() -> asio::awaitable<void>
+                       {
+                           hello_ok = co_await tunnel_pool->generate_and_send_client_hello(
+                               disconnected, ephemeral_pub, ephemeral_priv, spec, trans, hello_ec);
+                           co_return;
+                       },
+                       asio::detached);
+        io_context.run();
+        EXPECT_FALSE(hello_ok);
+        EXPECT_TRUE(hello_ec);
+    }
+
+    io_context.restart();
+
+    // Hit encrypt_client_session_id failure branch.
+    {
+        fail_next_cipher_ctx_ctrl();
+        fail_next_encrypt_init();
+        asio::ip::tcp::socket disconnected(io_context);
+        reality::transcript trans;
+        bool hello_ok = true;
+        std::error_code hello_ec;
+        asio::co_spawn(io_context,
+                       [&]() -> asio::awaitable<void>
+                       {
+                           hello_ok = co_await tunnel_pool->generate_and_send_client_hello(
+                               disconnected, ephemeral_pub, ephemeral_priv, spec, trans, hello_ec);
+                           co_return;
+                       },
+                       asio::detached);
+        io_context.run();
+        EXPECT_FALSE(hello_ok);
+        EXPECT_TRUE(hello_ec);
+    }
+
+    io_context.restart();
+
+    // Hit prepare_socket_for_connect open-failure branch.
+    {
+        fail_next_socket(EMFILE);
+        asio::ip::tcp::socket sock(io_context);
+        bool connect_ok = true;
+        std::error_code connect_ec;
+        asio::co_spawn(io_context,
+                       [&]() -> asio::awaitable<void>
+                       {
+                           connect_ok = co_await tunnel_pool->tcp_connect(io_context, sock, connect_ec);
+                           co_return;
+                       },
+                       asio::detached);
+        io_context.run();
+        EXPECT_FALSE(connect_ok);
+        EXPECT_TRUE(connect_ec);
+    }
+
+    io_context.restart();
+
+    // Hit prepare_socket_for_connect close/open and set-mark warning branches.
+    {
+        asio::ip::tcp::socket sock(io_context);
+        std::error_code open_ec;
+        sock.open(asio::ip::tcp::v4(), open_ec);
+        ASSERT_FALSE(open_ec);
+        bool connect_ok = true;
+        std::error_code connect_ec;
+        asio::co_spawn(io_context,
+                       [&]() -> asio::awaitable<void>
+                       {
+                           connect_ok = co_await tunnel_pool->tcp_connect(io_context, sock, connect_ec);
+                           co_return;
+                       },
+                       asio::detached);
+        io_context.run();
+        EXPECT_FALSE(connect_ok);
+    }
+}
+
+TEST(ClientTunnelPoolWhiteboxTest, ProcessServerHelloCoversX25519DeriveFailure)
+{
+    asio::io_context io_context;
+    std::error_code ec;
+
+    asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    asio::ip::tcp::socket writer(io_context);
+    writer.connect(acceptor.local_endpoint(), ec);
+    ASSERT_FALSE(ec);
+    asio::ip::tcp::socket reader(io_context);
+    acceptor.accept(reader, ec);
+    ASSERT_FALSE(ec);
+
+    std::vector<std::uint8_t> server_random(32, 0x52);
+    std::vector<std::uint8_t> session_id(32, 0x33);
+    std::vector<std::uint8_t> key_share(32, 0x44);
+    auto sh = reality::construct_server_hello(server_random, session_id, 0x1301, reality::tls_consts::group::kX25519, key_share);
+    auto record = reality::write_record_header(reality::kContentTypeHandshake, static_cast<std::uint16_t>(sh.size()));
+    record.insert(record.end(), sh.begin(), sh.end());
+    asio::write(writer, asio::buffer(record), ec);
+    ASSERT_FALSE(ec);
+    writer.shutdown(asio::ip::tcp::socket::shutdown_send, ec);
+
+    std::uint8_t peer_pub[32];
+    std::uint8_t peer_priv[32];
+    ASSERT_TRUE(reality::crypto_util::generate_x25519_keypair(peer_pub, peer_priv));
+
+    fail_next_pkey_derive();
+
+    reality::transcript trans;
+    std::error_code hs_ec;
+    mux::client_tunnel_pool::server_hello_res sh_res;
+    asio::co_spawn(io_context,
+                   [&]() -> asio::awaitable<void>
+                   {
+                       sh_res = co_await mux::client_tunnel_pool::process_server_hello(reader, peer_priv, trans, hs_ec);
+                       co_return;
+                   },
+                   asio::detached);
+    io_context.run();
+    EXPECT_FALSE(sh_res.ok);
+    EXPECT_TRUE(hs_ec);
 }
