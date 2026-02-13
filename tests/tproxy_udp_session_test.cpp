@@ -1785,6 +1785,42 @@ TEST(TproxyClientTest, StopIgnoresBadDescriptorCloseBranches)
     reset_socket_wrappers();
 }
 
+TEST(TproxyClientTest, StopIgnoresBadDescriptorCloseBranchWithoutRuntimeSetup)
+{
+    reset_socket_wrappers();
+
+    std::error_code ec;
+    mux::io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+
+    mux::config cfg;
+    cfg.tproxy.enabled = true;
+    auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
+
+    std::thread runner([&pool]() { pool.run(); });
+
+    const bool opened = run_on_io_context(pool.get_io_context(),
+                                          [client]()
+                                          {
+                                              std::error_code open_ec;
+                                              client->tcp_acceptor_.open(asio::ip::tcp::v4(), open_ec);
+                                              if (open_ec)
+                                              {
+                                                  return false;
+                                              }
+                                              client->udp_socket_.open(asio::ip::udp::v4(), open_ec);
+                                              return !open_ec;
+                                          });
+    ASSERT_TRUE(opened);
+
+    fail_next_close(EBADF);
+    client->stop();
+    pool.stop();
+    runner.join();
+
+    reset_socket_wrappers();
+}
+
 TEST(TproxyClientTest, UdpCleanupLoopCoversNullSessionBranch)
 {
     std::error_code ec;
