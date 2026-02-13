@@ -96,6 +96,7 @@ target_link_options(
         -Wl,--wrap=setsockopt
         -Wl,--wrap=accept
         -Wl,--wrap=accept4
+        -Wl,--wrap=close
 )
 add_socks_test(reality_fingerprint_test)
 add_socks_test(reality_auth_test)
