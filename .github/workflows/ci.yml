@@ -49,7 +49,7 @@ jobs:
 
     - name: Run Valgrind Memory Safety Test
 
-    - name: Enforce Coverage >= 95% (overall)
+    - name: Enforce Coverage >= 95% (per-file)
 
   fuzzing-smoke:
     name: Fuzzing Smoke Test (Clang)
