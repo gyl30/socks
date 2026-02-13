@@ -159,6 +159,11 @@ target_link_options(
 )
 add_socks_test(tcp_socks_session_test)
 add_socks_test(remote_session_test)
+target_link_options(
+    remote_session_test
+    PRIVATE
+        -Wl,--wrap=setsockopt
+)
 add_socks_test(remote_udp_session_test)
 add_socks_test(router_file_test)
 

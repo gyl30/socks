@@ -1,10 +1,13 @@
+#include <atomic>
 #include <memory>
 #include <string>
 #include <vector>
 #include <chrono>
 #include <cstdint>
 #include <utility>
+#include <thread>
 #include <system_error>
+#include <cerrno>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -15,6 +18,8 @@
 #include <asio/steady_timer.hpp>
 #include <asio/use_awaitable.hpp>
 #include <asio/as_tuple.hpp>
+#include <sys/socket.h>
+#include <netinet/tcp.h>
 
 extern "C"
 {
@@ -29,6 +34,28 @@ extern "C"
 #include "protocol.h"
 #include "test_util.h"
 #include "mock_mux_connection.h"
+
+std::atomic<bool> g_fail_tcp_nodelay_setsockopt_once{false};
+std::atomic<int> g_fail_tcp_nodelay_setsockopt_errno{EPERM};
+
+void fail_next_tcp_nodelay_setsockopt(const int err)
+{
+    g_fail_tcp_nodelay_setsockopt_errno.store(err, std::memory_order_release);
+    g_fail_tcp_nodelay_setsockopt_once.store(true, std::memory_order_release);
+}
+
+extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);
+
+extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)
+{
+    if (level == IPPROTO_TCP && optname == TCP_NODELAY &&
+        g_fail_tcp_nodelay_setsockopt_once.exchange(false, std::memory_order_acq_rel))
+    {
+        errno = g_fail_tcp_nodelay_setsockopt_errno.load(std::memory_order_acquire);
+        return -1;
+    }
+    return __real_setsockopt(sockfd, level, optname, optval, optlen);
+}
 
 namespace
 {
@@ -191,6 +218,53 @@ TEST(RemoteSessionTest, RunAckSendFailureReturnsWithoutReset)
     mux::test::run_awaitable_void(io_context, session->run(make_syn("127.0.0.1", acceptor.local_endpoint().port())));
 }
 
+TEST(RemoteSessionTest, RunSuccessWhenSetNoDelayFailsStillSendsAckAndFin)
+{
+    asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    mux::connection_context ctx;
+    auto session = std::make_shared<mux::remote_session>(conn, 29, io_context, ctx);
+    session->recv_channel_.close();
+
+    asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    const std::uint16_t port = acceptor.local_endpoint().port();
+    std::thread accept_thread(
+        [&io_context, &acceptor]()
+        {
+            asio::ip::tcp::socket accepted(io_context);
+            std::error_code ec;
+            acceptor.accept(accepted, ec);
+            if (!ec)
+            {
+                accepted.close(ec);
+            }
+        });
+
+    std::vector<std::uint8_t> ack_payload;
+    {
+        ::testing::InSequence seq;
+        EXPECT_CALL(*conn, mock_send_async(29, mux::kCmdAck, _))
+            .WillOnce([&ack_payload](const std::uint32_t, const std::uint8_t, const std::vector<std::uint8_t>& payload)
+                      {
+                          ack_payload = payload;
+                          return std::error_code{};
+                      });
+        EXPECT_CALL(*conn, mock_send_async(29, mux::kCmdFin, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(std::error_code{}));
+    }
+    fail_next_tcp_nodelay_setsockopt(EPERM);
+
+    mux::test::run_awaitable_void(io_context, session->run(make_syn("127.0.0.1", port)));
+
+    if (accept_thread.joinable())
+    {
+        accept_thread.join();
+    }
+
+    mux::ack_payload ack{};
+    ASSERT_TRUE(mux::mux_codec::decode_ack(ack_payload.data(), ack_payload.size(), ack));
+    EXPECT_EQ(ack.socks_rep, socks::kRepSuccess);
+}
+
 TEST(RemoteSessionTest, UpstreamWritesPayloadAndStopsOnEmptyFrame)
 {
     asio::io_context io_context;
@@ -339,6 +413,29 @@ TEST(RemoteSessionTest, DownstreamStopsWhenTargetReadOperationAbortedStillSendsF
                             });
 
     EXPECT_CALL(*conn, mock_send_async(28, mux::kCmdFin, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(std::error_code{}));
+    mux::test::run_awaitable_void(io_context, session->downstream());
+}
+
+TEST(RemoteSessionTest, DownstreamStopsWhenTargetReadConnectionResetStillSendsFin)
+{
+    asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    mux::connection_context ctx;
+    auto session = std::make_shared<mux::remote_session>(conn, 30, io_context, ctx);
+
+    auto pair = make_tcp_socket_pair(io_context);
+    session->target_socket_ = std::move(pair.server);
+
+    linger linger_opt{};
+    linger_opt.l_onoff = 1;
+    linger_opt.l_linger = 0;
+    ASSERT_EQ(::setsockopt(pair.client.native_handle(), SOL_SOCKET, SO_LINGER, &linger_opt, sizeof(linger_opt)), 0);
+
+    std::error_code ec;
+    pair.client.close(ec);
+    ASSERT_FALSE(ec);
+
+    EXPECT_CALL(*conn, mock_send_async(30, mux::kCmdFin, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(std::error_code{}));
     mux::test::run_awaitable_void(io_context, session->downstream());
 }
 
