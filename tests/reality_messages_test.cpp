@@ -37,6 +37,8 @@ extern "C" int __real_EVP_PKEY_get_octet_string_param(const EVP_PKEY* pkey,
                                                        unsigned char* buf,
                                                        std::size_t max_buf_sz,
                                                        std::size_t* out_len);
+extern "C" EVP_MD_CTX* __real_EVP_MD_CTX_new();
+extern "C" int __real_EVP_DigestSign(EVP_MD_CTX* ctx, unsigned char* sigret, std::size_t* siglen, const unsigned char* tbs, std::size_t tbslen);
 
 namespace
 {
@@ -51,6 +53,8 @@ enum class pkey_octet_mode : int
 std::atomic<bool> g_force_rand_fail{false};
 std::atomic<bool> g_force_pkey_ctx_new_null{false};
 std::atomic<bool> g_force_pkey_keygen_fail{false};
+std::atomic<bool> g_force_md_ctx_new_null{false};
+std::atomic<bool> g_force_digest_sign_fail{false};
 std::atomic<int> g_pkey_octet_mode{static_cast<int>(pkey_octet_mode::kPassThrough)};
 
 void reset_reality_message_hooks()
@@ -58,6 +62,8 @@ void reset_reality_message_hooks()
     g_force_rand_fail.store(false, std::memory_order_release);
     g_force_pkey_ctx_new_null.store(false, std::memory_order_release);
     g_force_pkey_keygen_fail.store(false, std::memory_order_release);
+    g_force_md_ctx_new_null.store(false, std::memory_order_release);
+    g_force_digest_sign_fail.store(false, std::memory_order_release);
     g_pkey_octet_mode.store(static_cast<int>(pkey_octet_mode::kPassThrough), std::memory_order_release);
 }
 
@@ -333,6 +339,24 @@ extern "C" int __wrap_EVP_PKEY_get_octet_string_param(const EVP_PKEY* pkey,
     return __real_EVP_PKEY_get_octet_string_param(pkey, key_name, buf, max_buf_sz, out_len);
 }
 
+extern "C" EVP_MD_CTX* __wrap_EVP_MD_CTX_new()
+{
+    if (g_force_md_ctx_new_null.load(std::memory_order_acquire))
+    {
+        return nullptr;
+    }
+    return __real_EVP_MD_CTX_new();
+}
+
+extern "C" int __wrap_EVP_DigestSign(EVP_MD_CTX* ctx, unsigned char* sigret, std::size_t* siglen, const unsigned char* tbs, std::size_t tbslen)
+{
+    if (g_force_digest_sign_fail.load(std::memory_order_acquire))
+    {
+        return 0;
+    }
+    return __real_EVP_DigestSign(ctx, sigret, siglen, tbs, tbslen);
+}
+
 TEST(RealityMessagesTest, RecordHeader)
 {
     const auto header = reality::write_record_header(0x16, 0x1234);
@@ -535,6 +559,36 @@ TEST(RealityMessagesTest, CertificateVerifyParse)
     }
 }
 
+TEST(RealityMessagesTest, CertificateVerifyReturnsEmptyWhenMdCtxCreationFails)
+{
+    hook_reset_guard guard;
+
+    std::array<std::uint8_t, 32> priv{};
+    ASSERT_EQ(RAND_bytes(priv.data(), static_cast<int>(priv.size())), 1);
+
+    const reality::openssl_ptrs::evp_pkey_ptr priv_key(EVP_PKEY_new_raw_private_key(EVP_PKEY_ED25519, nullptr, priv.data(), priv.size()));
+    ASSERT_TRUE(priv_key);
+
+    g_force_md_ctx_new_null.store(true, std::memory_order_release);
+    const auto cv = reality::construct_certificate_verify(priv_key.get(), std::vector<std::uint8_t>(32, 0x33));
+    EXPECT_TRUE(cv.empty());
+}
+
+TEST(RealityMessagesTest, CertificateVerifyReturnsEmptyWhenDigestSignFails)
+{
+    hook_reset_guard guard;
+
+    std::array<std::uint8_t, 32> priv{};
+    ASSERT_EQ(RAND_bytes(priv.data(), static_cast<int>(priv.size())), 1);
+
+    const reality::openssl_ptrs::evp_pkey_ptr priv_key(EVP_PKEY_new_raw_private_key(EVP_PKEY_ED25519, nullptr, priv.data(), priv.size()));
+    ASSERT_TRUE(priv_key);
+
+    g_force_digest_sign_fail.store(true, std::memory_order_release);
+    const auto cv = reality::construct_certificate_verify(priv_key.get(), std::vector<std::uint8_t>(32, 0x44));
+    EXPECT_TRUE(cv.empty());
+}
+
 TEST(RealityMessagesTest, CertificateVerifySchemeSupport)
 {
     EXPECT_TRUE(reality::is_supported_certificate_verify_scheme(0x0807));
@@ -614,6 +668,25 @@ TEST(RealityMessagesTest, ClientHelloGreaseEchHandlesRandFailure)
     const std::vector<std::uint8_t> pubkey(32, 0x33);
     const auto ch = reality::client_hello_builder::build(spec, session_id, random, pubkey, "example.com");
     EXPECT_FALSE(ch.empty());
+    EXPECT_FALSE(extract_extension_data_by_type(ch, tls_consts::ext::kGreaseEch).has_value());
+}
+
+TEST(RealityMessagesTest, ClientHelloPreSharedKeySkipsExtensionWhenRandFails)
+{
+    hook_reset_guard guard;
+    reality::fingerprint_spec spec;
+    spec.client_version = tls_consts::kVer12;
+    spec.cipher_suites = {tls_consts::cipher::kTlsAes128GcmSha256};
+    spec.compression_methods = {0x00};
+    spec.extensions.push_back(std::make_shared<reality::pre_shared_key_blueprint>());
+
+    g_force_rand_fail.store(true, std::memory_order_release);
+    const std::vector<std::uint8_t> session_id(32, 0x11);
+    const std::vector<std::uint8_t> random(32, 0x22);
+    const std::vector<std::uint8_t> pubkey(32, 0x33);
+    const auto ch = reality::client_hello_builder::build(spec, session_id, random, pubkey, "example.com");
+    EXPECT_FALSE(ch.empty());
+    EXPECT_FALSE(extract_extension_data_by_type(ch, tls_consts::ext::kPreSharedKey).has_value());
 }
 
 TEST(RealityMessagesTest, Secp256r1KeyShareFallsBackWhenCtxCreationFails)

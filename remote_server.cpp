@@ -417,6 +417,12 @@ handshake_crypto_result build_handshake_crypto(const std::vector<std::uint8_t>& 
     }
 
     const auto cv = reality::construct_certificate_verify(sign_key.get(), trans.finish());
+    if (cv.empty())
+    {
+        LOG_CTX_ERROR(ctx, "{} certificate verify construct failed", log_event::kHandshake);
+        ec = asio::error::fault;
+        return out;
+    }
     trans.update(cv);
 
     const auto s_fin_verify =

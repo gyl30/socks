@@ -339,16 +339,25 @@ bool build_grease_ech_ext(std::vector<std::uint8_t>& ext_buffer, std::uint16_t& 
     message_builder::push_u16(ext_buffer, 0x0001);
 
     std::uint8_t config_id = 0;
-    (void)RAND_bytes(&config_id, 1);
+    if (RAND_bytes(&config_id, 1) != 1)
+    {
+        return false;
+    }
     ext_buffer.push_back(config_id);
 
     std::vector<std::uint8_t> enc_key(32, 0);
-    (void)fill_random_bytes(enc_key);
+    if (!fill_random_bytes(enc_key))
+    {
+        return false;
+    }
     message_builder::push_vector_u16(ext_buffer, enc_key);
 
     const std::uint16_t payload_len = select_grease_ech_payload_len();
     std::vector<std::uint8_t> payload(payload_len, 0);
-    (void)fill_random_bytes(payload);
+    if (!fill_random_bytes(payload))
+    {
+        return false;
+    }
     message_builder::push_vector_u16(ext_buffer, payload);
     return true;
 }
@@ -387,12 +396,18 @@ bool build_pre_shared_key_ext(std::vector<std::uint8_t>& ext_buffer, std::uint16
 {
     ext_type = tls_consts::ext::kPreSharedKey;
     std::vector<std::uint8_t> identity(32);
-    (void)RAND_bytes(identity.data(), 32);
+    if (RAND_bytes(identity.data(), static_cast<int>(identity.size())) != 1)
+    {
+        return false;
+    }
     message_builder::push_u16(ext_buffer, 32 + 2 + 4);
     message_builder::push_vector_u16(ext_buffer, identity);
     message_builder::push_u32(ext_buffer, 0);
     std::vector<std::uint8_t> binder(32);
-    (void)RAND_bytes(binder.data(), 32);
+    if (RAND_bytes(binder.data(), static_cast<int>(binder.size())) != 1)
+    {
+        return false;
+    }
     message_builder::push_u16(ext_buffer, 33);
     message_builder::push_vector_u8(ext_buffer, binder);
     return true;
@@ -845,6 +860,11 @@ std::vector<std::uint8_t> construct_certificate(const std::vector<std::uint8_t>&
 
 std::vector<std::uint8_t> construct_certificate_verify(EVP_PKEY* signing_key, const std::vector<std::uint8_t>& handshake_hash)
 {
+    if (signing_key == nullptr)
+    {
+        return {};
+    }
+
     std::vector<std::uint8_t> msg;
     msg.push_back(0x0f);
     std::vector<std::uint8_t> to_sign(64, 0x20);
@@ -854,12 +874,29 @@ std::vector<std::uint8_t> construct_certificate_verify(EVP_PKEY* signing_key, co
     to_sign.insert(to_sign.end(), handshake_hash.begin(), handshake_hash.end());
 
     EVP_MD_CTX* mctx = EVP_MD_CTX_new();
-    (void)EVP_DigestSignInit(mctx, nullptr, nullptr, nullptr, signing_key);
+    if (mctx == nullptr)
+    {
+        return {};
+    }
+    if (EVP_DigestSignInit(mctx, nullptr, nullptr, nullptr, signing_key) != 1)
+    {
+        EVP_MD_CTX_free(mctx);
+        return {};
+    }
     std::size_t sig_len = 0;
-    (void)EVP_DigestSign(mctx, nullptr, &sig_len, to_sign.data(), to_sign.size());
+    if (EVP_DigestSign(mctx, nullptr, &sig_len, to_sign.data(), to_sign.size()) != 1 || sig_len == 0)
+    {
+        EVP_MD_CTX_free(mctx);
+        return {};
+    }
     std::vector<std::uint8_t> signature(sig_len);
-    (void)EVP_DigestSign(mctx, signature.data(), &sig_len, to_sign.data(), to_sign.size());
+    if (EVP_DigestSign(mctx, signature.data(), &sig_len, to_sign.data(), to_sign.size()) != 1)
+    {
+        EVP_MD_CTX_free(mctx);
+        return {};
+    }
     EVP_MD_CTX_free(mctx);
+    signature.resize(sig_len);
 
     std::vector<std::uint8_t> body;
     message_builder::push_u16(body, 0x0807);
