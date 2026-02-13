@@ -160,7 +160,33 @@ TEST_F(mux_connection_integration_test, ReadTimeoutHandling)
     EXPECT_FALSE(conn_s->is_open());
 }
 
-TEST_F(mux_connection_integration_test, WriteTimeoutHandling) {}
+TEST_F(mux_connection_integration_test, WriteTimeoutHandling)
+{
+    asio::ip::tcp::acceptor acceptor(io_ctx(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    auto socket_server = std::make_shared<asio::ip::tcp::socket>(io_ctx());
+    auto socket_client = std::make_shared<asio::ip::tcp::socket>(io_ctx());
+
+    socket_client->connect(acceptor.local_endpoint());
+    acceptor.accept(*socket_server);
+
+    config::timeout_t timeout_cfg;
+    timeout_cfg.read = 100;
+    timeout_cfg.write = 1;
+
+    auto conn_s =
+        std::make_shared<mux_connection>(
+            std::move(*socket_server), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, false, 12, "write_timeout", timeout_cfg);
+
+    asio::co_spawn(io_ctx(), [conn_s]() -> asio::awaitable<void> { co_await conn_s->start(); }, asio::detached);
+
+    auto start_time = std::chrono::steady_clock::now();
+    while (conn_s->is_open() && (std::chrono::steady_clock::now() - start_time < std::chrono::seconds(5)))
+    {
+        io_ctx().poll();
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    EXPECT_FALSE(conn_s->is_open());
+}
 
 TEST_F(mux_connection_integration_test, TryRegisterStreamRejectsDuplicateId)
 {
@@ -223,7 +249,40 @@ TEST_F(mux_connection_integration_test, OffThreadRegisterAndQueryPaths)
     auto stream = std::make_shared<simple_mock_stream>();
     EXPECT_TRUE(conn->try_register_stream(42, stream));
     EXPECT_TRUE(conn->has_stream(42));
+    EXPECT_FALSE(conn->has_stream(4042));
     EXPECT_TRUE(conn->can_accept_stream());
+
+    io_ctx().stop();
+    if (io_thread.joinable())
+    {
+        io_thread.join();
+    }
+    io_ctx().restart();
+}
+
+TEST_F(mux_connection_integration_test, OffThreadCanAcceptStreamFalsePath)
+{
+    config::limits_t limits_cfg;
+    limits_cfg.max_streams = 1;
+
+    auto conn = std::make_shared<mux_connection>(
+        asio::ip::tcp::socket(io_ctx()),
+        io_ctx(),
+        reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()},
+        true,
+        11,
+        "trace",
+        config::timeout_t{},
+        limits_cfg);
+    conn->started_.store(true, std::memory_order_release);
+    conn->connection_state_.store(mux_connection_state::kConnected, std::memory_order_release);
+
+    auto guard = asio::make_work_guard(io_ctx());
+    std::thread io_thread([&]() { io_ctx().run(); });
+
+    auto stream = std::make_shared<simple_mock_stream>();
+    EXPECT_TRUE(conn->try_register_stream(1, stream));
+    EXPECT_FALSE(conn->can_accept_stream());
 
     io_ctx().stop();
     if (io_thread.joinable())
@@ -269,7 +328,17 @@ TEST_F(mux_connection_integration_test, HandleStreamAndUnknownStreamBranches)
         .command = kCmdAck,
     };
     conn->handle_stream_frame(ack_header, ack_payload);
-    EXPECT_EQ(stream->received_data(), ack_payload);
+    std::vector<std::uint8_t> dat_payload = {4, 5, 6};
+    const frame_header dat_header{
+        .stream_id = 100,
+        .length = static_cast<std::uint16_t>(dat_payload.size()),
+        .command = kCmdDat,
+    };
+    conn->handle_stream_frame(dat_header, dat_payload);
+
+    std::vector<std::uint8_t> expected = ack_payload;
+    expected.insert(expected.end(), dat_payload.begin(), dat_payload.end());
+    EXPECT_EQ(stream->received_data(), expected);
 
     conn->handle_unknown_stream(1000, kCmdRst);
     conn->handle_unknown_stream(1001, kCmdDat);
