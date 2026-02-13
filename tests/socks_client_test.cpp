@@ -34,6 +34,8 @@ std::atomic<bool> g_fail_tcp_nodelay_setsockopt_once{false};
 std::atomic<int> g_fail_tcp_nodelay_setsockopt_errno{EPERM};
 std::atomic<bool> g_fail_accept_once{false};
 std::atomic<int> g_fail_accept_errno{EIO};
+std::atomic<bool> g_fail_close_once{false};
+std::atomic<int> g_fail_close_errno{EIO};
 
 void fail_next_socket(const int err)
 {
@@ -59,10 +61,17 @@ void fail_next_accept(const int err)
     g_fail_accept_once.store(true, std::memory_order_release);
 }
 
+void fail_next_close(const int err)
+{
+    g_fail_close_errno.store(err, std::memory_order_release);
+    g_fail_close_once.store(true, std::memory_order_release);
+}
+
 extern "C" int __real_socket(int domain, int type, int protocol);
 extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);
 extern "C" int __real_accept(int sockfd, struct sockaddr* addr, socklen_t* addrlen);
 extern "C" int __real_accept4(int sockfd, struct sockaddr* addr, socklen_t* addrlen, int flags);
+extern "C" int __real_close(int fd);
 
 extern "C" int __wrap_socket(int domain, int type, int protocol)
 {
@@ -107,6 +116,16 @@ extern "C" int __wrap_accept4(int sockfd, struct sockaddr* addr, socklen_t* addr
         return -1;
     }
     return __real_accept4(sockfd, addr, addrlen, flags);
+}
+
+extern "C" int __wrap_close(int fd)
+{
+    if (g_fail_close_once.exchange(false, std::memory_order_acq_rel))
+    {
+        errno = g_fail_close_errno.load(std::memory_order_acquire);
+        return -1;
+    }
+    return __real_close(fd);
 }
 
 class failing_router final : public mux::router
@@ -286,6 +305,37 @@ TEST(LocalClientTest, StopWhenNotStarted)
 
     auto client = std::make_shared<mux::socks_client>(pool, cfg);
     client->stop();
+}
+
+TEST(LocalClientTest, StopLogsAcceptorCloseFailureBranch)
+{
+    std::error_code ec;
+    io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+
+    mux::config cfg;
+    cfg.outbound.host = "127.0.0.1";
+    cfg.outbound.port = 12345;
+    cfg.socks.host = "127.0.0.1";
+    cfg.socks.port = 0;
+    cfg.reality.public_key = std::string(64, 'a');
+    cfg.reality.sni = "example.com";
+
+    auto client = std::make_shared<mux::socks_client>(pool, cfg);
+    std::thread runner([&pool]() { pool.run(); });
+
+    client->start();
+    ASSERT_TRUE(wait_for_listen_port(client));
+
+    fail_next_close(EIO);
+    client->stop();
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    pool.stop();
+    if (runner.joinable())
+    {
+        runner.join();
+    }
 }
 
 TEST(LocalClientTest, DoubleStop)
