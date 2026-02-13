@@ -183,4 +183,37 @@ TEST(StatisticsTest, InvalidReasonIsIgnoredAndLabelsCovered)
     EXPECT_STREQ(statistics::handshake_failure_reason_label(static_cast<statistics::handshake_failure_reason>(99)), "unknown");
 }
 
+TEST(StatisticsTest, HandshakeFailureMetricsSortsAcrossDifferentReasons)
+{
+    auto& stats = statistics::instance();
+    const auto before = stats.handshake_failure_sni_metrics();
+    const auto cert_before = find_metric_count(before, "cert_verify", "cert-order");
+    const auto short_before = find_metric_count(before, "short_id", "short-order");
+
+    stats.inc_handshake_failure_by_sni(statistics::handshake_failure_reason::kCertVerify, "cert-order");
+    stats.inc_handshake_failure_by_sni(statistics::handshake_failure_reason::kShortId, "short-order");
+
+    const auto after = stats.handshake_failure_sni_metrics();
+    EXPECT_EQ(find_metric_count(after, "cert_verify", "cert-order"), cert_before + 1);
+    EXPECT_EQ(find_metric_count(after, "short_id", "short-order"), short_before + 1);
+
+    std::size_t cert_index = after.size();
+    std::size_t short_index = after.size();
+    for (std::size_t i = 0; i < after.size(); ++i)
+    {
+        if (after[i].reason == "cert_verify" && after[i].sni == "cert-order")
+        {
+            cert_index = i;
+        }
+        if (after[i].reason == "short_id" && after[i].sni == "short-order")
+        {
+            short_index = i;
+        }
+    }
+
+    ASSERT_LT(cert_index, after.size());
+    ASSERT_LT(short_index, after.size());
+    EXPECT_LT(cert_index, short_index);
+}
+
 }    // namespace mux
