@@ -156,6 +156,11 @@ asio::awaitable<std::shared_ptr<mux_stream>> establish_udp_associate_stream(std:
     co_return stream;
 }
 
+}    // namespace
+
+namespace detail
+{
+
 std::vector<std::uint8_t> build_udp_associate_reply(const asio::ip::address& local_addr, const std::uint16_t udp_bind_port)
 {
     std::vector<std::uint8_t> final_rep;
@@ -182,6 +187,11 @@ std::vector<std::uint8_t> build_udp_associate_reply(const asio::ip::address& loc
     return final_rep;
 }
 
+}    // namespace detail
+
+namespace
+{
+
 [[nodiscard]] bool is_tunnel_available(const std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>& tunnel_manager,
                                        const connection_context& ctx)
 {
@@ -198,7 +208,7 @@ asio::awaitable<bool> send_udp_associate_success_reply(asio::ip::tcp::socket& so
                                                        const std::uint16_t udp_bind_port,
                                                        const connection_context& ctx)
 {
-    const auto final_rep = build_udp_associate_reply(local_addr, udp_bind_port);
+    const auto final_rep = detail::build_udp_associate_reply(local_addr, udp_bind_port);
     const auto [write_ec, write_n] = co_await asio::async_write(socket, asio::buffer(final_rep), asio::as_tuple(asio::use_awaitable));
     (void)write_n;
     if (write_ec)
