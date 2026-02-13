@@ -1,5 +1,6 @@
 #include <array>
-#include <sstream>
+#include <charconv>
+#include <string_view>
 
 #include "log.h"
 #include "statistics.h"
@@ -29,6 +30,26 @@ std::string escape_prometheus_label(std::string value)
         out.push_back(c);
     }
     return out;
+}
+
+void append_uint64(std::string& out, const std::uint64_t value)
+{
+    std::array<char, 32> buffer{};
+    const auto [ptr, ec] = std::to_chars(buffer.data(), buffer.data() + buffer.size(), value);
+    if (ec == std::errc())
+    {
+        out.append(buffer.data(), ptr);
+        return;
+    }
+    out.push_back('0');
+}
+
+void append_metric_line(std::string& out, const std::string_view metric_name, const std::uint64_t value)
+{
+    out.append(metric_name);
+    out.push_back(' ');
+    append_uint64(out, value);
+    out.push_back('\n');
 }
 
 }    // namespace
@@ -96,35 +117,36 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
     void write_stats()
     {
         auto& stats = statistics::instance();
-        std::stringstream ss;
+        std::string response;
+        response.reserve(1024);
 
-        ss << "socks_uptime_seconds " << stats.uptime_seconds() << "\n";
-        ss << "socks_active_connections " << stats.active_connections() << "\n";
-        ss << "socks_total_connections " << stats.total_connections() << "\n";
-        ss << "socks_active_mux_tunnels " << stats.active_mux_sessions() << "\n";
-        ss << "socks_bytes_read_total " << stats.bytes_read() << "\n";
-        ss << "socks_bytes_written_total " << stats.bytes_written() << "\n";
-        ss << "socks_auth_failures_total " << stats.auth_failures() << "\n";
-        ss << "socks_auth_short_id_failures_total " << stats.auth_short_id_failures() << "\n";
-        ss << "socks_auth_clock_skew_failures_total " << stats.auth_clock_skew_failures() << "\n";
-        ss << "socks_auth_replay_failures_total " << stats.auth_replay_failures() << "\n";
-        ss << "socks_cert_verify_failures_total " << stats.cert_verify_failures() << "\n";
-        ss << "socks_client_finished_failures_total " << stats.client_finished_failures() << "\n";
-        ss << "socks_fallback_rate_limited_total " << stats.fallback_rate_limited() << "\n";
-        ss << "socks_routing_blocked_total " << stats.routing_blocked() << "\n";
+        append_metric_line(response, "socks_uptime_seconds", stats.uptime_seconds());
+        append_metric_line(response, "socks_active_connections", stats.active_connections());
+        append_metric_line(response, "socks_total_connections", stats.total_connections());
+        append_metric_line(response, "socks_active_mux_tunnels", stats.active_mux_sessions());
+        append_metric_line(response, "socks_bytes_read_total", stats.bytes_read());
+        append_metric_line(response, "socks_bytes_written_total", stats.bytes_written());
+        append_metric_line(response, "socks_auth_failures_total", stats.auth_failures());
+        append_metric_line(response, "socks_auth_short_id_failures_total", stats.auth_short_id_failures());
+        append_metric_line(response, "socks_auth_clock_skew_failures_total", stats.auth_clock_skew_failures());
+        append_metric_line(response, "socks_auth_replay_failures_total", stats.auth_replay_failures());
+        append_metric_line(response, "socks_cert_verify_failures_total", stats.cert_verify_failures());
+        append_metric_line(response, "socks_client_finished_failures_total", stats.client_finished_failures());
+        append_metric_line(response, "socks_fallback_rate_limited_total", stats.fallback_rate_limited());
+        append_metric_line(response, "socks_routing_blocked_total", stats.routing_blocked());
         const auto handshake_failure_sni_metrics = stats.handshake_failure_sni_metrics();
         for (const auto& metric : handshake_failure_sni_metrics)
         {
-            ss << "socks_handshake_failures_by_sni_total{reason=\""
-               << escape_prometheus_label(metric.reason)
-               << "\",sni=\""
-               << escape_prometheus_label(metric.sni)
-               << "\"} "
-               << metric.count
-               << "\n";
+            response.append("socks_handshake_failures_by_sni_total{reason=\"");
+            response.append(escape_prometheus_label(metric.reason));
+            response.append("\",sni=\"");
+            response.append(escape_prometheus_label(metric.sni));
+            response.append("\"} ");
+            append_uint64(response, metric.count);
+            response.push_back('\n');
         }
 
-        response_ = ss.str();
+        response_ = std::move(response);
 
         auto self = shared_from_this();
         asio::async_write(socket_, asio::buffer(response_), [this, self](std::error_code, std::size_t) { close_socket(); });
