@@ -76,7 +76,7 @@ TEST(ReflectTest, FullRoundTrip)
 
 TEST(ReflectTest, OptionalMissing)
 {
-    reflect::test_struct t;
+    reflect::test_struct t{};
     t.opt_i = std::nullopt;
     std::string json = reflect::serialize_struct(t);
 
