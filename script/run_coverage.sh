@@ -5,8 +5,10 @@ BUILD_DIR="${BUILD_DIR:-build_coverage}"
 BUILD_JOBS="${BUILD_JOBS:-15}"
 TEST_JOBS="${TEST_JOBS:-20}"
 COVERAGE_THRESHOLD="${COVERAGE_THRESHOLD:-95}"
+BRANCH_THRESHOLD="${BRANCH_THRESHOLD:-$COVERAGE_THRESHOLD}"
 SKIP_HTML_REPORT="${SKIP_HTML_REPORT:-0}"
 PER_FILE_GATE="${PER_FILE_GATE:-0}"
+BRANCH_PER_FILE_GATE="${BRANCH_PER_FILE_GATE:-0}"
 EXCLUDE_THROW_BRANCHES="${EXCLUDE_THROW_BRANCHES:-1}"
 
 if [ ! -d "${BUILD_DIR}" ]; then
@@ -72,12 +74,14 @@ else
         --exclude '(^|.*/)tests/.*' \
         --exclude '(^|.*/)main\.cpp$'
 
-    python3 - "$COVERAGE_THRESHOLD" "$PER_FILE_GATE" <<'PY'
+    python3 - "$COVERAGE_THRESHOLD" "$PER_FILE_GATE" "$BRANCH_THRESHOLD" "$BRANCH_PER_FILE_GATE" <<'PY'
 import json
 import sys
 
 threshold = float(sys.argv[1])
 per_file_gate = sys.argv[2] == "1"
+branch_threshold = float(sys.argv[3])
+branch_per_file_gate = sys.argv[4] == "1"
 with open("coverage_report/summary.json", "r", encoding="utf-8") as f:
     data = json.load(f)
 
@@ -90,6 +94,10 @@ failed = []
 checked = 0
 sum_total = 0
 sum_covered = 0
+branch_failed = []
+branch_checked = 0
+branch_sum_total = 0
+branch_sum_covered = 0
 
 for entry in files:
     name = entry.get("filename", "")
@@ -111,6 +119,19 @@ for entry in files:
     elif line_percent is not None and line_percent <= 1.0:
         line_percent = float(line_percent) * 100.0
 
+    branch_total = entry.get("branch_total")
+    branch_covered = entry.get("branch_covered")
+    branch_percent = entry.get("branch_percent")
+
+    if branch_total is None:
+        branch_total = entry.get("branches_total")
+    if branch_covered is None:
+        branch_covered = entry.get("branches_covered")
+    if branch_percent is None and branch_total:
+        branch_percent = (float(branch_covered) * 100.0) / float(branch_total)
+    elif branch_percent is not None and branch_percent <= 1.0:
+        branch_percent = float(branch_percent) * 100.0
+
     if not line_total:
         continue
 
@@ -119,6 +140,13 @@ for entry in files:
     checked += 1
     if line_percent < threshold:
         failed.append((name, line_percent, line_covered, line_total))
+
+    if branch_total:
+        branch_checked += 1
+        branch_sum_total += int(branch_total)
+        branch_sum_covered += int(branch_covered)
+        if branch_percent < branch_threshold:
+            branch_failed.append((name, branch_percent, branch_covered, branch_total))
 
 if checked == 0:
     print("No non-empty source files checked, failing coverage gate.")
@@ -130,12 +158,24 @@ if overall_pct < threshold:
     print(f"Overall coverage gate failed (< {threshold:.2f}%).")
     sys.exit(1)
 
+if branch_checked > 0:
+    overall_branch_pct = (float(branch_sum_covered) * 100.0) / float(branch_sum_total)
+    print(f"Overall project branch coverage: {overall_branch_pct:.2f}% ({branch_sum_covered}/{branch_sum_total})")
+
 if failed:
     header = "Per-file coverage gate failed" if per_file_gate else "Per-file coverage below threshold (warning only)"
     print(f"{header} (< {threshold:.2f}%):")
     for name, pct, covered, total in sorted(failed, key=lambda x: x[1]):
         print(f"  {name}: {pct:.2f}% ({covered}/{total})")
     if per_file_gate:
+        sys.exit(1)
+
+if branch_failed:
+    header = "Per-file branch coverage gate failed" if branch_per_file_gate else "Per-file branch coverage below threshold (warning only)"
+    print(f"{header} (< {branch_threshold:.2f}%):")
+    for name, pct, covered, total in sorted(branch_failed, key=lambda x: x[1]):
+        print(f"  {name}: {pct:.2f}% ({covered}/{total})")
+    if branch_per_file_gate:
         sys.exit(1)
 
 print(f"Coverage gate passed: {checked} files checked, threshold={threshold:.2f}%")
