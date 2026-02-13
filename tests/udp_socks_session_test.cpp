@@ -3,6 +3,7 @@
 #include <memory>
 #include <vector>
 #include <array>
+#include <optional>
 #include <cstdint>
 #include <system_error>
 #include <atomic>
@@ -19,6 +20,7 @@
 #include <asio/use_awaitable.hpp>
 
 #include <sys/socket.h>
+#include <netinet/in.h>
 #include <unistd.h>
 
 #include "protocol.h"
@@ -45,6 +47,13 @@ std::atomic<bool> g_fail_close_once{false};
 std::atomic<int> g_fail_close_errno{EIO};
 std::atomic<bool> g_fail_bind_once{false};
 std::atomic<int> g_fail_bind_errno{EADDRINUSE};
+std::atomic<bool> g_fail_setsockopt_once{false};
+std::atomic<int> g_fail_setsockopt_level{-1};
+std::atomic<int> g_fail_setsockopt_optname{-1};
+std::atomic<int> g_fail_setsockopt_errno{EPERM};
+std::atomic<int> g_fail_getsockname_on_call{0};
+std::atomic<int> g_fail_getsockname_errno{ENOTSOCK};
+std::atomic<int> g_getsockname_call_count{0};
 
 void fail_next_close(const int err)
 {
@@ -58,8 +67,25 @@ void fail_next_bind(const int err)
     g_fail_bind_once.store(true, std::memory_order_release);
 }
 
+void fail_next_setsockopt(const int level, const int optname, const int err)
+{
+    g_fail_setsockopt_level.store(level, std::memory_order_release);
+    g_fail_setsockopt_optname.store(optname, std::memory_order_release);
+    g_fail_setsockopt_errno.store(err, std::memory_order_release);
+    g_fail_setsockopt_once.store(true, std::memory_order_release);
+}
+
+void fail_getsockname_on_call(const int nth_call, const int err)
+{
+    g_getsockname_call_count.store(0, std::memory_order_release);
+    g_fail_getsockname_errno.store(err, std::memory_order_release);
+    g_fail_getsockname_on_call.store(nth_call, std::memory_order_release);
+}
+
 extern "C" int __real_close(int fd);
 extern "C" int __real_bind(int sockfd, const sockaddr* addr, socklen_t addrlen);
+extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);
+extern "C" int __real_getsockname(int sockfd, sockaddr* addr, socklen_t* addrlen);
 
 extern "C" int __wrap_close(int fd)
 {
@@ -79,6 +105,34 @@ extern "C" int __wrap_bind(int sockfd, const sockaddr* addr, socklen_t addrlen)
         return -1;
     }
     return __real_bind(sockfd, addr, addrlen);
+}
+
+extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)
+{
+    if (g_fail_setsockopt_once.exchange(false, std::memory_order_acq_rel)
+        && level == g_fail_setsockopt_level.load(std::memory_order_acquire)
+        && optname == g_fail_setsockopt_optname.load(std::memory_order_acquire))
+    {
+        errno = g_fail_setsockopt_errno.load(std::memory_order_acquire);
+        return -1;
+    }
+    return __real_setsockopt(sockfd, level, optname, optval, optlen);
+}
+
+extern "C" int __wrap_getsockname(int sockfd, sockaddr* addr, socklen_t* addrlen)
+{
+    const int target_call = g_fail_getsockname_on_call.load(std::memory_order_acquire);
+    if (target_call > 0)
+    {
+        const int current_call = g_getsockname_call_count.fetch_add(1, std::memory_order_acq_rel) + 1;
+        if (current_call == target_call)
+        {
+            g_fail_getsockname_on_call.store(0, std::memory_order_release);
+            errno = g_fail_getsockname_errno.load(std::memory_order_acquire);
+            return -1;
+        }
+    }
+    return __real_getsockname(sockfd, addr, addrlen);
 }
 
 struct tcp_socket_pair
@@ -104,6 +158,48 @@ tcp_socket_pair make_tcp_socket_pair(asio::io_context& ctx)
     {
         return tcp_socket_pair{asio::ip::tcp::socket(ctx), asio::ip::tcp::socket(ctx)};
     }
+    return tcp_socket_pair{std::move(client), std::move(server)};
+}
+
+std::optional<tcp_socket_pair> make_tcp_socket_pair_v6(asio::io_context& ctx)
+{
+    std::error_code ec;
+    asio::ip::tcp::acceptor acceptor(ctx);
+    acceptor.open(asio::ip::tcp::v6(), ec);
+    if (ec)
+    {
+        return std::nullopt;
+    }
+    acceptor.set_option(asio::ip::v6_only(true), ec);
+    if (ec)
+    {
+        return std::nullopt;
+    }
+    acceptor.bind({asio::ip::make_address("::1"), 0}, ec);
+    if (ec)
+    {
+        return std::nullopt;
+    }
+    acceptor.listen(asio::socket_base::max_listen_connections, ec);
+    if (ec)
+    {
+        return std::nullopt;
+    }
+
+    asio::ip::tcp::socket client(ctx);
+    client.connect(acceptor.local_endpoint(ec), ec);
+    if (ec)
+    {
+        return std::nullopt;
+    }
+
+    asio::ip::tcp::socket server(ctx);
+    acceptor.accept(server, ec);
+    if (ec)
+    {
+        return std::nullopt;
+    }
+
     return tcp_socket_pair{std::move(client), std::move(server)};
 }
 
@@ -421,6 +517,107 @@ TEST(UdpSocksSessionTest, PrepareUdpAssociateHandlesBindFailureAndStartPath)
     EXPECT_EQ(err[1], socks::kRepGenFail);
 }
 
+TEST(UdpSocksSessionTest, PrepareUdpAssociateHandlesUdpLocalEndpointFailure)
+{
+    asio::io_context ctx;
+    mux::config::timeout_t timeout_cfg;
+    auto pair = make_tcp_socket_pair(ctx);
+    ASSERT_TRUE(pair.client.is_open());
+    ASSERT_TRUE(pair.server.is_open());
+
+    auto session = std::make_shared<mux::udp_socks_session>(std::move(pair.server), ctx, nullptr, 40, timeout_cfg);
+    fail_getsockname_on_call(2, ENOTSOCK);
+
+    asio::ip::address local_addr;
+    std::uint16_t udp_bind_port = 0;
+    const auto stream = mux::test::run_awaitable(ctx, session->prepare_udp_associate(local_addr, udp_bind_port));
+    EXPECT_EQ(stream, nullptr);
+
+    std::uint8_t err[10] = {0};
+    asio::read(pair.client, asio::buffer(err));
+    EXPECT_EQ(err[0], socks::kVer);
+    EXPECT_EQ(err[1], socks::kRepGenFail);
+}
+
+TEST(UdpSocksSessionTest, PrepareUdpAssociateHandlesIpv6V6OnlyOptionFailure)
+{
+#ifdef IPV6_V6ONLY
+    asio::io_context ctx;
+    mux::config::timeout_t timeout_cfg;
+    auto pair_opt = make_tcp_socket_pair_v6(ctx);
+    if (!pair_opt.has_value())
+    {
+        GTEST_SKIP() << "IPv6 loopback unavailable";
+    }
+    auto pair = std::move(*pair_opt);
+    ASSERT_TRUE(pair.client.is_open());
+    ASSERT_TRUE(pair.server.is_open());
+
+    auto session = std::make_shared<mux::udp_socks_session>(std::move(pair.server), ctx, nullptr, 41, timeout_cfg);
+    fail_next_setsockopt(IPPROTO_IPV6, IPV6_V6ONLY, EPERM);
+
+    asio::ip::address local_addr;
+    std::uint16_t udp_bind_port = 0;
+    const auto stream = mux::test::run_awaitable(ctx, session->prepare_udp_associate(local_addr, udp_bind_port));
+    EXPECT_EQ(stream, nullptr);
+
+    std::uint8_t err[10] = {0};
+    asio::read(pair.client, asio::buffer(err));
+    EXPECT_EQ(err[0], socks::kVer);
+    EXPECT_EQ(err[1], socks::kRepGenFail);
+#else
+    GTEST_SKIP() << "IPV6_V6ONLY is unavailable on this platform";
+#endif
+}
+
+TEST(UdpSocksSessionTest, PrepareUdpAssociateHandlesNullTunnelConnection)
+{
+    asio::io_context ctx;
+    mux::config::timeout_t timeout_cfg;
+    auto pair = make_tcp_socket_pair(ctx);
+    ASSERT_TRUE(pair.client.is_open());
+    ASSERT_TRUE(pair.server.is_open());
+
+    auto tunnel = make_test_tunnel(ctx, 203);
+    tunnel->connection_ = nullptr;
+    auto session = std::make_shared<mux::udp_socks_session>(std::move(pair.server), ctx, tunnel, 42, timeout_cfg);
+
+    asio::ip::address local_addr;
+    std::uint16_t udp_bind_port = 0;
+    const auto stream = mux::test::run_awaitable(ctx, session->prepare_udp_associate(local_addr, udp_bind_port));
+    EXPECT_EQ(stream, nullptr);
+
+    std::uint8_t err[10] = {0};
+    asio::read(pair.client, asio::buffer(err));
+    EXPECT_EQ(err[0], socks::kVer);
+    EXPECT_EQ(err[1], socks::kRepHostUnreach);
+}
+
+TEST(UdpSocksSessionTest, PrepareUdpAssociateHandlesClosedTunnelConnection)
+{
+    asio::io_context ctx;
+    mux::config::timeout_t timeout_cfg;
+    auto pair = make_tcp_socket_pair(ctx);
+    ASSERT_TRUE(pair.client.is_open());
+    ASSERT_TRUE(pair.server.is_open());
+
+    auto tunnel = make_test_tunnel(ctx, 204);
+    auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx);
+    mock_conn->connection_state_.store(mux::mux_connection_state::kClosed, std::memory_order_release);
+    tunnel->connection_ = mock_conn;
+    auto session = std::make_shared<mux::udp_socks_session>(std::move(pair.server), ctx, tunnel, 43, timeout_cfg);
+
+    asio::ip::address local_addr;
+    std::uint16_t udp_bind_port = 0;
+    const auto stream = mux::test::run_awaitable(ctx, session->prepare_udp_associate(local_addr, udp_bind_port));
+    EXPECT_EQ(stream, nullptr);
+
+    std::uint8_t err[10] = {0};
+    asio::read(pair.client, asio::buffer(err));
+    EXPECT_EQ(err[0], socks::kVer);
+    EXPECT_EQ(err[1], socks::kRepHostUnreach);
+}
+
 TEST(UdpSocksSessionTest, StartSpawnsRunAndWritesHostUnreachWhenTunnelUnavailable)
 {
     asio::io_context ctx;
@@ -500,4 +697,12 @@ TEST(UdpSocksSessionTest, CloseImplLogsCloseFailureBranch)
     session->close_impl();
 
     session->close_impl();
+
+    auto session_bad_descriptor = std::make_shared<mux::udp_socks_session>(asio::ip::tcp::socket(ctx), ctx, nullptr, 44, timeout_cfg);
+    session_bad_descriptor->udp_socket_.open(asio::ip::udp::v4(), ec);
+    ASSERT_FALSE(ec);
+    session_bad_descriptor->udp_socket_.bind({asio::ip::make_address("127.0.0.1"), 0}, ec);
+    ASSERT_FALSE(ec);
+    fail_next_close(EBADF);
+    session_bad_descriptor->close_impl();
 }
