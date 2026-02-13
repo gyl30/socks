@@ -65,6 +65,22 @@ TEST(ContextPoolTest, StopMultipleTimes)
     pool.stop();
 }
 
+TEST(ContextPoolTest, StopMarksAllContextsStopped)
+{
+    std::error_code ec;
+    io_context_pool pool(2, ec);
+    EXPECT_FALSE(ec);
+
+    auto& ctx1 = pool.get_io_context();
+    auto& ctx2 = pool.get_io_context();
+    EXPECT_FALSE(ctx1.stopped());
+    EXPECT_FALSE(ctx2.stopped());
+
+    pool.stop();
+    EXPECT_TRUE(ctx1.stopped());
+    EXPECT_TRUE(ctx2.stopped());
+}
+
 TEST(ContextPoolTest, RunAndStop)
 {
     std::error_code ec;
