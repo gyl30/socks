@@ -158,6 +158,7 @@ target_link_options(
         -Wl,--wrap=close
 )
 add_socks_test(tcp_socks_session_test)
+add_socks_test(remote_session_test)
 add_socks_test(remote_udp_session_test)
 add_socks_test(router_file_test)
 
