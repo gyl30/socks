@@ -103,6 +103,18 @@ TEST(TlsKeyScheduleTest, DeriveApplicationSecretsCoversServerSecretFailureBranch
     EXPECT_TRUE(app.second.empty());
 }
 
+TEST(TlsKeyScheduleTest, DeriveApplicationSecretsNullDigestReturnsError)
+{
+    std::error_code ec;
+    const std::vector<std::uint8_t> master_secret(32, 0x9b);
+    const std::vector<std::uint8_t> handshake_hash(32, 0xac);
+
+    const auto app = tls_key_schedule::derive_application_secrets(master_secret, handshake_hash, nullptr, ec);
+    EXPECT_TRUE(ec);
+    EXPECT_TRUE(app.first.empty());
+    EXPECT_TRUE(app.second.empty());
+}
+
 TEST(TlsKeyScheduleTest, ComputeFinishedVerifyDataInvalidBaseKey)
 {
     std::error_code ec;
