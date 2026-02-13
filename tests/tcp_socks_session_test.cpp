@@ -8,7 +8,9 @@
 #include <utility>
 #include <system_error>
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include <asio/post.hpp>
 #include <asio/read.hpp>
 #include <asio/write.hpp>
 #include <asio/co_spawn.hpp>
@@ -20,14 +22,25 @@
 #include <asio/use_awaitable.hpp>
 #include <asio/redirect_error.hpp>
 
+extern "C"
+{
+#include <openssl/evp.h>
+}
+
 #define private public
 #include "tcp_socks_session.h"
 #undef private
 
+#include "protocol.h"
+#include "mux_codec.h"
+#include "mux_tunnel.h"
 #include "test_util.h"
+#include "mock_mux_connection.h"
 
 namespace
 {
+
+using ::testing::_;
 
 class fake_upstream final : public mux::upstream
 {
@@ -98,6 +111,11 @@ class configured_router final : public mux::router
     {
         direct_ip_matcher()->add_rule(cidr);
     }
+
+    void add_proxy_domain(const std::string& domain)
+    {
+        proxy_domain_matcher()->add(domain);
+    }
 };
 
 struct tcp_socket_pair
@@ -130,13 +148,21 @@ std::shared_ptr<mux::tcp_socks_session> make_tcp_session(asio::io_context& io_co
 std::shared_ptr<mux::tcp_socks_session> make_tcp_session_with_router(asio::io_context& io_context,
                                                                      asio::ip::tcp::socket socket,
                                                                      std::shared_ptr<mux::router> router,
+                                                                     std::shared_ptr<mux::mux_tunnel_impl<asio::ip::tcp::socket>> tunnel = nullptr,
                                                                      const std::uint32_t sid = 1,
                                                                      const std::uint16_t idle_timeout_sec = 1)
 {
     mux::config::timeout_t timeout_cfg{};
     timeout_cfg.idle = idle_timeout_sec;
     return std::make_shared<mux::tcp_socks_session>(
-        std::move(socket), io_context, nullptr, std::move(router), sid, timeout_cfg);
+        std::move(socket), io_context, std::move(tunnel), std::move(router), sid, timeout_cfg);
+}
+
+std::shared_ptr<mux::mux_tunnel_impl<asio::ip::tcp::socket>> make_test_tunnel(asio::io_context& io_context,
+                                                                                const std::uint32_t conn_id = 9)
+{
+    return std::make_shared<mux::mux_tunnel_impl<asio::ip::tcp::socket>>(
+        asio::ip::tcp::socket(io_context), io_context, mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, conn_id);
 }
 
 TEST(TcpSocksSessionTest, CreateBackendReturnsNullForBlockRoute)
@@ -324,6 +350,23 @@ TEST(TcpSocksSessionTest, StartSpawnsRunAndReturnsErrorCodeForBlockedRoute)
     EXPECT_EQ(err[1], socks::kRepNotAllowed);
 }
 
+TEST(TcpSocksSessionTest, StartSpawnsRunAndReturnsHostUnreachForProxyWithoutTunnel)
+{
+    asio::io_context io_context;
+    auto pair = make_tcp_socket_pair(io_context);
+    auto router = std::make_shared<configured_router>();
+    auto session = make_tcp_session_with_router(io_context, std::move(pair.server), router);
+
+    session->start("203.0.113.1", 443);
+    io_context.run();
+    io_context.restart();
+
+    std::uint8_t err[10] = {0};
+    asio::read(pair.client, asio::buffer(err));
+    EXPECT_EQ(err[0], socks::kVer);
+    EXPECT_EQ(err[1], socks::kRepHostUnreach);
+}
+
 TEST(TcpSocksSessionTest, CloseClientSocketHandlesOpenAndClosedSockets)
 {
     asio::io_context io_context;
@@ -333,6 +376,19 @@ TEST(TcpSocksSessionTest, CloseClientSocketHandlesOpenAndClosedSockets)
     EXPECT_TRUE(session->socket_.is_open());
     session->close_client_socket();
     EXPECT_FALSE(session->socket_.is_open());
+
+    session->close_client_socket();
+    EXPECT_FALSE(session->socket_.is_open());
+}
+
+TEST(TcpSocksSessionTest, CloseClientSocketHandlesNotConnectedSocket)
+{
+    asio::io_context io_context;
+    auto pair = make_tcp_socket_pair(io_context);
+    auto session = make_tcp_session(io_context, std::move(pair.server));
+    std::error_code ec;
+    session->socket_.shutdown(asio::ip::tcp::socket::shutdown_both, ec);
+    ASSERT_FALSE(ec);
 
     session->close_client_socket();
     EXPECT_FALSE(session->socket_.is_open());
@@ -406,6 +462,22 @@ TEST(TcpSocksSessionTest, StartIdleWatchdogSpawnsAndHandlesCancel)
     io_context.restart();
 
     EXPECT_EQ(backend->close_calls, 0U);
+}
+
+TEST(TcpSocksSessionTest, StartIdleWatchdogSpawnsAndClosesIdleSession)
+{
+    asio::io_context io_context;
+    auto pair = make_tcp_socket_pair(io_context);
+    auto session = make_tcp_session(io_context, std::move(pair.server));
+    auto backend = std::make_shared<fake_upstream>();
+
+    session->last_activity_time_ms_.store(0, std::memory_order_release);
+    session->start_idle_watchdog(backend);
+    io_context.run_for(std::chrono::milliseconds(1100));
+    io_context.restart();
+
+    EXPECT_EQ(backend->close_calls, 1U);
+    EXPECT_FALSE(session->socket_.is_open());
 }
 
 TEST(TcpSocksSessionTest, IdleWatchdogReturnsImmediatelyWhenSocketClosed)
@@ -500,6 +572,77 @@ TEST(TcpSocksSessionTest, RunStopsWhenReplySuccessWriteFails)
         asio::detached);
 
     mux::test::run_awaitable_void(io_context, session->run("127.0.0.1", backend_port));
+}
+
+TEST(TcpSocksSessionTest, RunReturnsHostUnreachWhenProxyTunnelUnavailable)
+{
+    asio::io_context io_context;
+    auto pair = make_tcp_socket_pair(io_context);
+    auto router = std::make_shared<configured_router>();
+    auto session = make_tcp_session_with_router(io_context, std::move(pair.server), router);
+
+    mux::test::run_awaitable_void(io_context, session->run("198.51.100.2", 443));
+
+    std::uint8_t err[10] = {0};
+    asio::read(pair.client, asio::buffer(err));
+    EXPECT_EQ(err[0], socks::kVer);
+    EXPECT_EQ(err[1], socks::kRepHostUnreach);
+}
+
+TEST(TcpSocksSessionTest, RunProxyPathRepliesSuccessWhenAckAccepted)
+{
+    asio::io_context io_context;
+    auto pair = make_tcp_socket_pair(io_context);
+    auto router = std::make_shared<configured_router>();
+    auto tunnel = make_test_tunnel(io_context, 91);
+    auto mock_conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    tunnel->connection_ = mock_conn;
+
+    ON_CALL(*mock_conn, id()).WillByDefault(::testing::Return(91));
+    ON_CALL(*mock_conn, mock_send_async(_, _, _)).WillByDefault(::testing::Return(std::error_code{}));
+
+    std::vector<std::uint8_t> dat_payload;
+    EXPECT_CALL(*mock_conn, mock_send_async(_, mux::kCmdSyn, _)).WillOnce(::testing::Return(std::error_code{}));
+    EXPECT_CALL(*mock_conn, register_stream(_, _))
+        .WillOnce([&io_context](const std::uint32_t, std::shared_ptr<mux::mux_stream_interface> stream_iface)
+                  {
+                      auto stream = std::dynamic_pointer_cast<mux::mux_stream>(stream_iface);
+                      ASSERT_NE(stream, nullptr);
+
+                      mux::ack_payload ack{};
+                      ack.socks_rep = socks::kRepSuccess;
+                      std::vector<std::uint8_t> ack_data;
+                      mux::mux_codec::encode_ack(ack, ack_data);
+                      asio::post(io_context, [stream, ack_data]() { stream->on_data(ack_data); });
+
+                      asio::post(io_context, [stream]() { stream->on_data(std::vector<std::uint8_t>{0xBE, 0xEF}); });
+                      asio::post(io_context, [stream]() { stream->on_close(); });
+                  });
+    EXPECT_CALL(*mock_conn, mock_send_async(_, mux::kCmdDat, _))
+        .WillOnce([&dat_payload](const std::uint32_t, const std::uint8_t, const std::vector<std::uint8_t>& payload)
+                  {
+                      dat_payload = payload;
+                      return std::error_code{};
+                  });
+    EXPECT_CALL(*mock_conn, mock_send_async(_, mux::kCmdFin, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(std::error_code{}));
+
+    const auto session = make_tcp_session_with_router(io_context, std::move(pair.server), router, tunnel);
+    const std::vector<std::uint8_t> payload = {0x11, 0x22, 0x33};
+    asio::write(pair.client, asio::buffer(payload));
+    pair.client.shutdown(asio::ip::tcp::socket::shutdown_send);
+
+    mux::test::run_awaitable_void(io_context, session->run("203.0.113.7", 443));
+
+    std::uint8_t rep[10] = {0};
+    asio::read(pair.client, asio::buffer(rep));
+    EXPECT_EQ(rep[0], socks::kVer);
+    EXPECT_EQ(rep[1], socks::kRepSuccess);
+
+    std::uint8_t echoed[2] = {0};
+    asio::read(pair.client, asio::buffer(echoed));
+    EXPECT_EQ(echoed[0], 0xBE);
+    EXPECT_EQ(echoed[1], 0xEF);
+    EXPECT_EQ(dat_payload, payload);
 }
 
 }    // namespace
