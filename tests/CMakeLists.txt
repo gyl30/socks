@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
 
+set(MSAN_UMR_NOISE_OPTIONS
+    "intercept_strlen=0:intercept_strcmp=0:intercept_strndup=0:intercept_strchr=0:intercept_memcmp=0:intercept_strstr=0:intercept_strspn=0:intercept_strtok=0:intercept_strpbrk=0:intercept_memmem=0")
+
 macro(add_socks_test NAME)
     add_executable(${NAME} ${NAME}.cpp)
     target_link_libraries(${NAME} PRIVATE
@@ -8,7 +11,16 @@ macro(add_socks_test NAME)
         GTest::gmock_main
     )
     include(GoogleTest)
-    gtest_discover_tests(${NAME} DISCOVERY_TIMEOUT 60)
+    if(CMAKE_CXX_FLAGS MATCHES "-fsanitize=memory")
+        gtest_discover_tests(
+            ${NAME}
+            DISCOVERY_TIMEOUT 60
+            PROPERTIES
+                ENVIRONMENT "MSAN_OPTIONS=${MSAN_UMR_NOISE_OPTIONS}"
+        )
+    else()
+        gtest_discover_tests(${NAME} DISCOVERY_TIMEOUT 60)
+    endif()
 endmacro()
 
 add_socks_test(cert_manager_test)
@@ -220,4 +232,8 @@ add_socks_test(router_file_test)
 
 add_test(NAME tproxy_integration_test COMMAND ${CMAKE_SOURCE_DIR}/tests/tproxy_integration_test.sh)
 set_tests_properties(tproxy_integration_test PROPERTIES SKIP_RETURN_CODE 77)
-set_tests_properties(tproxy_integration_test PROPERTIES ENVIRONMENT "BIN=${CMAKE_BINARY_DIR}/socks")
+if(CMAKE_CXX_FLAGS MATCHES "-fsanitize=memory")
+    set_tests_properties(tproxy_integration_test PROPERTIES ENVIRONMENT "BIN=${CMAKE_BINARY_DIR}/socks;MSAN_OPTIONS=${MSAN_UMR_NOISE_OPTIONS}")
+else()
+    set_tests_properties(tproxy_integration_test PROPERTIES ENVIRONMENT "BIN=${CMAKE_BINARY_DIR}/socks")
+endif()

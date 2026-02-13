@@ -3,7 +3,8 @@
 #include <string>
 #include <vector>
 #include <cstdint>
-#include <fstream>
+#include <cstdio>
+#include <cstdlib>
 #include <utility>
 #include <charconv>
 #include <string_view>
@@ -192,15 +193,42 @@ ip_matcher::~ip_matcher() = default;
 
 bool ip_matcher::load(const std::string& filename)
 {
-    std::ifstream file(filename);
-    if (!file.is_open())
+    struct file_guard
+    {
+        FILE* file = nullptr;
+        ~file_guard()
+        {
+            if (file != nullptr)
+            {
+                (void)std::fclose(file);
+            }
+        }
+    };
+
+    file_guard guard{std::fopen(filename.c_str(), "r")};
+    if (guard.file == nullptr)
     {
         LOG_WARN("failed to open direct ip file {}", filename);
         return false;
     }
-    std::string line;
-    while (std::getline(file, line))
+
+    char* raw_line = nullptr;
+    std::size_t raw_line_capacity = 0;
+    struct line_buffer_guard
     {
+        char*& raw_line;
+        ~line_buffer_guard() { std::free(raw_line); }
+    } raw_line_guard{raw_line};
+
+    while (true)
+    {
+        const ssize_t line_size = ::getline(&raw_line, &raw_line_capacity, guard.file);
+        if (line_size < 0)
+        {
+            break;
+        }
+
+        std::string line(raw_line, static_cast<std::size_t>(line_size));
         if (line.empty() || line[0] == '#')
         {
             continue;

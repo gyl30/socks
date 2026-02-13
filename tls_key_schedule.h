@@ -106,9 +106,15 @@ class tls_key_schedule
             return {};
         }
 
-        std::uint8_t hmac_out[EVP_MAX_MD_SIZE];
-        unsigned int hmac_len;
-        HMAC(md, finished_key.data(), static_cast<int>(finished_key.size()), handshake_hash.data(), handshake_hash.size(), hmac_out, &hmac_len);
+        std::uint8_t hmac_out[EVP_MAX_MD_SIZE] = {};
+        unsigned int hmac_len = 0;
+        if (HMAC(md, finished_key.data(), static_cast<int>(finished_key.size()), handshake_hash.data(), handshake_hash.size(), hmac_out, &hmac_len)
+            == nullptr
+            || hmac_len == 0)
+        {
+            ec = std::make_error_code(std::errc::protocol_error);
+            return {};
+        }
         ec.clear();
         return {hmac_out, hmac_out + hmac_len};
     }
