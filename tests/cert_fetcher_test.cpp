@@ -1,5 +1,6 @@
 #include <chrono>
 #include <array>
+#include <atomic>
 #include <memory>
 #include <string>
 #include <vector>
@@ -28,6 +29,24 @@ extern "C"
 
 namespace
 {
+
+std::atomic<bool> g_fail_hkdf_md_once{false};
+
+void fail_next_hkdf_md()
+{
+    g_fail_hkdf_md_once.store(true, std::memory_order_release);
+}
+
+extern "C" int __real_EVP_PKEY_CTX_set_hkdf_md(EVP_PKEY_CTX* ctx, const EVP_MD* md);
+
+extern "C" int __wrap_EVP_PKEY_CTX_set_hkdf_md(EVP_PKEY_CTX* ctx, const EVP_MD* md)
+{
+    if (g_fail_hkdf_md_once.exchange(false, std::memory_order_acq_rel))
+    {
+        return 0;
+    }
+    return __real_EVP_PKEY_CTX_set_hkdf_md(ctx, md);
+}
 
 constexpr char kTestCertPem[] =
     "-----BEGIN CERTIFICATE-----\n"
@@ -179,6 +198,12 @@ TEST(CertFetcherTest, ReassemblerLimits)
     assembler.append(huge_header);
     EXPECT_FALSE(assembler.next(msg, ec));
     EXPECT_EQ(ec, std::errc::message_size);
+
+    std::vector<std::uint8_t> complete_msg = {0x01, 0x00, 0x00, 0x01, 0x7f};
+    assembler.append(complete_msg);
+    ec.clear();
+    EXPECT_TRUE(assembler.next(msg, ec));
+    EXPECT_EQ(msg, complete_msg);
 }
 
 TEST(CertFetcherTest, MockServerScenarios)
@@ -456,6 +481,18 @@ TEST(CertFetcherTest, WhiteBoxHelpersAndRecordTypeBranches)
     EXPECT_EQ(ccs_ret.first, reality::kContentTypeChangeCipherSpec);
     EXPECT_EQ(ccs_ret.second.size(), rec.size());
     EXPECT_GE(pt_buf.size(), rec.size());
+
+    session.negotiated_cipher_ = EVP_aes_128_gcm();
+    session.dec_iv_.assign(12, 0);
+    session.dec_key_.clear();
+
+    std::uint8_t app_head[5] = {reality::kContentTypeApplicationData, 0x03, 0x03, 0x00, 0x10};
+    std::vector<std::uint8_t> app_rec(16, 0);
+    ec.clear();
+    auto app_ret = session.decrypt_application_record(app_head, app_rec, pt_buf, ec);
+    EXPECT_EQ(app_ret.first, 0);
+    EXPECT_TRUE(app_ret.second.empty());
+    EXPECT_EQ(ec, std::errc::invalid_argument);
 }
 
 TEST(CertFetcherTest, WhiteBoxProcessServerHelloAndHandshakeMessage)
@@ -477,6 +514,35 @@ TEST(CertFetcherTest, WhiteBoxProcessServerHelloAndHandshakeMessage)
     std::vector<std::uint8_t> cert_msg;
     EXPECT_FALSE(session.process_handshake_message(encrypted_extensions, cert_msg));
     EXPECT_EQ(session.fingerprint_.alpn, "h2");
+
+    const std::vector<std::uint8_t> cert_handshake = {0x0b, 0x00, 0x00, 0x00};
+    EXPECT_TRUE(session.process_handshake_message(cert_handshake, cert_msg));
+    EXPECT_EQ(cert_msg, cert_handshake);
+}
+
+TEST(CertFetcherTest, ProcessServerHelloHandlesHkdfContextFailure)
+{
+    asio::io_context ctx;
+    reality::cert_fetcher::fetch_session session(ctx, "127.0.0.1", 443, "example.com", "trace");
+
+    std::array<std::uint8_t, 32> client_public{};
+    std::array<std::uint8_t, 32> client_private{};
+    ASSERT_TRUE(reality::crypto_util::generate_x25519_keypair(client_public.data(), client_private.data()));
+    std::memcpy(session.client_private_, client_private.data(), client_private.size());
+
+    std::array<std::uint8_t, 32> server_public{};
+    std::array<std::uint8_t, 32> server_private{};
+    ASSERT_TRUE(reality::crypto_util::generate_x25519_keypair(server_public.data(), server_private.data()));
+
+    const auto server_hello = reality::construct_server_hello(std::vector<std::uint8_t>(32, 0x11),
+                                                              std::vector<std::uint8_t>(32, 0x22),
+                                                              reality::tls_consts::cipher::kTlsAes128GcmSha256,
+                                                              reality::tls_consts::group::kX25519,
+                                                              std::vector<std::uint8_t>(server_public.begin(), server_public.end()));
+
+    fail_next_hkdf_md();
+    const auto ec = session.process_server_hello(server_hello);
+    EXPECT_EQ(ec, std::errc::protocol_error);
 }
 
 TEST(CertFetcherTest, ProcessServerHelloTruncatedMessageLength)
