@@ -14,6 +14,7 @@
 #include <asio/ip/tcp.hpp>
 
 #include <sys/socket.h>
+#include <netinet/tcp.h>
 
 #include "context_pool.h"
 #define private public
@@ -29,6 +30,10 @@ std::atomic<bool> g_fail_socket_once{false};
 std::atomic<int> g_fail_socket_errno{EMFILE};
 std::atomic<bool> g_fail_reuse_setsockopt_once{false};
 std::atomic<int> g_fail_reuse_setsockopt_errno{EPERM};
+std::atomic<bool> g_fail_tcp_nodelay_setsockopt_once{false};
+std::atomic<int> g_fail_tcp_nodelay_setsockopt_errno{EPERM};
+std::atomic<bool> g_fail_accept_once{false};
+std::atomic<int> g_fail_accept_errno{EIO};
 
 void fail_next_socket(const int err)
 {
@@ -42,8 +47,22 @@ void fail_next_reuse_setsockopt(const int err)
     g_fail_reuse_setsockopt_once.store(true, std::memory_order_release);
 }
 
+void fail_next_tcp_nodelay_setsockopt(const int err)
+{
+    g_fail_tcp_nodelay_setsockopt_errno.store(err, std::memory_order_release);
+    g_fail_tcp_nodelay_setsockopt_once.store(true, std::memory_order_release);
+}
+
+void fail_next_accept(const int err)
+{
+    g_fail_accept_errno.store(err, std::memory_order_release);
+    g_fail_accept_once.store(true, std::memory_order_release);
+}
+
 extern "C" int __real_socket(int domain, int type, int protocol);
 extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);
+extern "C" int __real_accept(int sockfd, struct sockaddr* addr, socklen_t* addrlen);
+extern "C" int __real_accept4(int sockfd, struct sockaddr* addr, socklen_t* addrlen, int flags);
 
 extern "C" int __wrap_socket(int domain, int type, int protocol)
 {
@@ -62,7 +81,32 @@ extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void*
         errno = g_fail_reuse_setsockopt_errno.load(std::memory_order_acquire);
         return -1;
     }
+    if (level == IPPROTO_TCP && optname == TCP_NODELAY && g_fail_tcp_nodelay_setsockopt_once.exchange(false, std::memory_order_acq_rel))
+    {
+        errno = g_fail_tcp_nodelay_setsockopt_errno.load(std::memory_order_acquire);
+        return -1;
+    }
     return __real_setsockopt(sockfd, level, optname, optval, optlen);
+}
+
+extern "C" int __wrap_accept(int sockfd, struct sockaddr* addr, socklen_t* addrlen)
+{
+    if (g_fail_accept_once.exchange(false, std::memory_order_acq_rel))
+    {
+        errno = g_fail_accept_errno.load(std::memory_order_acquire);
+        return -1;
+    }
+    return __real_accept(sockfd, addr, addrlen);
+}
+
+extern "C" int __wrap_accept4(int sockfd, struct sockaddr* addr, socklen_t* addrlen, int flags)
+{
+    if (g_fail_accept_once.exchange(false, std::memory_order_acq_rel))
+    {
+        errno = g_fail_accept_errno.load(std::memory_order_acquire);
+        return -1;
+    }
+    return __real_accept4(sockfd, addr, addrlen, flags);
 }
 
 class failing_router final : public mux::router
@@ -486,6 +530,82 @@ TEST(LocalClientTest, AcceptLoopSetupHandlesReuseAddressFailure)
     EXPECT_EQ(done.wait_for(std::chrono::seconds(2)), std::future_status::ready);
 
     client->stop();
+    pool.stop();
+    if (runner.joinable())
+    {
+        runner.join();
+    }
+}
+
+TEST(LocalClientTest, AcceptLoopLogsRetryOnAcceptError)
+{
+    std::error_code ec;
+    io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+
+    mux::config cfg;
+    cfg.outbound.host = "127.0.0.1";
+    cfg.outbound.port = 1;
+    cfg.socks.host = "127.0.0.1";
+    cfg.socks.port = 0;
+    cfg.reality.public_key = std::string(64, 'a');
+    cfg.reality.sni = "example.com";
+    const auto client = std::make_shared<mux::socks_client>(pool, cfg);
+
+    auto done = spawn_accept_local_loop(pool.get_io_context(), client);
+    std::thread runner([&pool]() { pool.run(); });
+    ASSERT_TRUE(wait_for_listen_port(client));
+
+    fail_next_accept(EIO);
+
+    asio::io_context connect_ctx;
+    asio::ip::tcp::socket connector(connect_ctx);
+    connector.connect(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), client->listen_port()), ec);
+    ASSERT_FALSE(ec);
+    connector.shutdown(asio::ip::tcp::socket::shutdown_both, ec);
+    connector.close(ec);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    client->stop();
+    EXPECT_EQ(done.wait_for(std::chrono::seconds(3)), std::future_status::ready);
+    pool.stop();
+    if (runner.joinable())
+    {
+        runner.join();
+    }
+}
+
+TEST(LocalClientTest, AcceptLoopHandlesNoDelaySetOptionFailure)
+{
+    std::error_code ec;
+    io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+
+    mux::config cfg;
+    cfg.outbound.host = "127.0.0.1";
+    cfg.outbound.port = 1;
+    cfg.socks.host = "127.0.0.1";
+    cfg.socks.port = 0;
+    cfg.reality.public_key = std::string(64, 'a');
+    cfg.reality.sni = "example.com";
+    const auto client = std::make_shared<mux::socks_client>(pool, cfg);
+
+    auto done = spawn_accept_local_loop(pool.get_io_context(), client);
+    std::thread runner([&pool]() { pool.run(); });
+    ASSERT_TRUE(wait_for_listen_port(client));
+
+    fail_next_tcp_nodelay_setsockopt(EPERM);
+
+    asio::io_context connect_ctx;
+    asio::ip::tcp::socket connector(connect_ctx);
+    connector.connect(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), client->listen_port()), ec);
+    ASSERT_FALSE(ec);
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    connector.shutdown(asio::ip::tcp::socket::shutdown_both, ec);
+    connector.close(ec);
+
+    client->stop();
+    EXPECT_EQ(done.wait_for(std::chrono::seconds(3)), std::future_status::ready);
     pool.stop();
     if (runner.joinable())
     {
