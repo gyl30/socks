@@ -158,3 +158,34 @@ TEST(KeyRotatorTest, ConstructorHandlesUnknownExceptionAndRecovers)
     const auto key = rotator.get_current_key();
     EXPECT_NE(key, nullptr);
 }
+
+TEST(KeyRotatorTest, TimeBasedRotationCompareExchangeFailureReturnsCurrentKey)
+{
+    g_keygen_mode.store(keygen_mode::kSuccess, std::memory_order_relaxed);
+    reality::key_rotator rotator(std::chrono::seconds(60));
+    const auto original_key = rotator.get_current_key();
+    ASSERT_NE(original_key, nullptr);
+
+    rotator.next_rotate_time_.store(std::chrono::steady_clock::now() - std::chrono::seconds(1), std::memory_order_relaxed);
+    rotator.rotating_.store(true, std::memory_order_release);
+
+    const auto key = rotator.get_current_key();
+    EXPECT_EQ(key, original_key);
+
+    rotator.rotating_.store(false, std::memory_order_release);
+}
+
+TEST(KeyRotatorTest, FallbackCompareExchangeFailureReturnsNullWhenStillRotating)
+{
+    g_keygen_mode.store(keygen_mode::kSuccess, std::memory_order_relaxed);
+    reality::key_rotator rotator(std::chrono::seconds(60));
+
+    std::atomic_store_explicit(&rotator.current_key_, std::shared_ptr<reality::x25519_keypair>{}, std::memory_order_release);
+    rotator.next_rotate_time_.store(std::chrono::steady_clock::now() + std::chrono::hours(1), std::memory_order_relaxed);
+    rotator.rotating_.store(true, std::memory_order_release);
+
+    const auto key = rotator.get_current_key();
+    EXPECT_EQ(key, nullptr);
+
+    rotator.rotating_.store(false, std::memory_order_release);
+}
