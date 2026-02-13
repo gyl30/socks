@@ -113,6 +113,11 @@ target_link_options(
         -Wl,--wrap=setsockopt
 )
 add_socks_test(cert_fetcher_test)
+target_link_options(
+    cert_fetcher_test
+    PRIVATE
+        -Wl,--wrap=EVP_PKEY_CTX_set_hkdf_md
+)
 add_socks_test(key_rotator_test)
 add_socks_test(socks_client_mock_test)
 add_socks_test(socks_client_handshake_test)
