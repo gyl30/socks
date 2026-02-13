@@ -62,6 +62,7 @@ std::optional<asio::ip::udp::endpoint> parse_ipv6_original_dst(const cmsghdr* cm
     return make_v6_endpoint(addr->sin6_addr, addr->sin6_port);
 }
 
+#ifdef __linux__
 std::optional<asio::ip::udp::endpoint> parse_original_dst_control_message(const cmsghdr* cm)
 {
     if (cm->cmsg_level == SOL_IP && cm->cmsg_type == IP_ORIGDSTADDR)
@@ -74,6 +75,7 @@ std::optional<asio::ip::udp::endpoint> parse_original_dst_control_message(const 
     }
     return std::nullopt;
 }
+#endif
 
 asio::ip::udp::endpoint endpoint_from_sockaddr_v4(const sockaddr_storage& addr, const std::size_t len)
 {
