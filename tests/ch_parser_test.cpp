@@ -574,6 +574,28 @@ TEST(CHParserTest, TruncatedHandshakeHeader)
     EXPECT_TRUE(info.random.empty());
 }
 
+TEST(CHParserTest, ReaderInvalidStateCoversGuardBranches)
+{
+    ch_parser::reader reader(nullptr, 0, nullptr);
+    EXPECT_FALSE(reader.valid());
+    EXPECT_FALSE(reader.has(1));
+    EXPECT_EQ(reader.remaining(), 0u);
+    EXPECT_EQ(reader.offset(), 0u);
+    EXPECT_EQ(reader.peek(0), 0u);
+
+    std::uint8_t value_u8 = 0;
+    std::uint16_t value_u16 = 0;
+    std::vector<std::uint8_t> value_vec;
+    EXPECT_FALSE(reader.skip(1));
+    EXPECT_FALSE(reader.read_u8(value_u8));
+    EXPECT_FALSE(reader.read_u16(value_u16));
+    EXPECT_FALSE(reader.read_vector(value_vec, 1));
+
+    auto sliced = reader.slice(1);
+    EXPECT_FALSE(sliced.valid());
+    EXPECT_EQ(sliced.remaining(), 0u);
+}
+
 TEST(CHParserTest, TruncatedRandomField)
 {
     std::vector<uint8_t> buf = {0x16, 0x03, 0x03, 0x00, 0x20, 0x01, 0x00, 0x00, 0x1c};
