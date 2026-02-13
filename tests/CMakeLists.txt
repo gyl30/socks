@@ -156,6 +156,12 @@ target_link_options(
         -Wl,--wrap=recvmsg
 )
 add_socks_test(tproxy_tcp_session_test)
+target_link_options(
+    tproxy_tcp_session_test
+    PRIVATE
+        -Wl,--wrap=shutdown
+        -Wl,--wrap=close
+)
 add_socks_test(tproxy_udp_sender_test)
 add_socks_test(udp_socks_session_test)
 target_link_options(
