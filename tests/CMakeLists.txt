@@ -36,6 +36,12 @@ add_socks_test(ip_matcher_test)
 add_socks_test(mux_codec_test)
 add_socks_test(socks_codec_test)
 add_socks_test(socks_session_test)
+target_link_options(
+    socks_session_test
+    PRIVATE
+        -Wl,--wrap=shutdown
+        -Wl,--wrap=close
+)
 add_socks_test(crypto_util_test)
 target_link_options(
     crypto_util_test
