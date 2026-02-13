@@ -1,3 +1,4 @@
+#include <atomic>
 #include <future>
 #include <memory>
 #include <string>
@@ -7,6 +8,7 @@
 #include <cstdint>
 #include <utility>
 #include <system_error>
+#include <cerrno>
 
 #include <asio/read.hpp>
 #include <gtest/gtest.h>
@@ -16,12 +18,54 @@
 #include <asio/io_context.hpp>
 #include <asio/use_future.hpp>
 #include <asio/executor_work_guard.hpp>
+#include <sys/socket.h>
+#include <unistd.h>
 
 #include "protocol.h"
 #define private public
 #include "socks_session.h"
 #undef private
 #include "test_util.h"
+
+std::atomic<bool> g_fail_shutdown_once{false};
+std::atomic<int> g_fail_shutdown_errno{EPERM};
+std::atomic<bool> g_fail_close_once{false};
+std::atomic<int> g_fail_close_errno{EIO};
+
+void fail_next_shutdown(const int err)
+{
+    g_fail_shutdown_errno.store(err, std::memory_order_release);
+    g_fail_shutdown_once.store(true, std::memory_order_release);
+}
+
+void fail_next_close(const int err)
+{
+    g_fail_close_errno.store(err, std::memory_order_release);
+    g_fail_close_once.store(true, std::memory_order_release);
+}
+
+extern "C" int __real_shutdown(int sockfd, int how);
+extern "C" int __real_close(int fd);
+
+extern "C" int __wrap_shutdown(int sockfd, int how)
+{
+    if (g_fail_shutdown_once.exchange(false, std::memory_order_acq_rel))
+    {
+        errno = g_fail_shutdown_errno.load(std::memory_order_acquire);
+        return -1;
+    }
+    return __real_shutdown(sockfd, how);
+}
+
+extern "C" int __wrap_close(int fd)
+{
+    if (g_fail_close_once.exchange(false, std::memory_order_acq_rel))
+    {
+        errno = g_fail_close_errno.load(std::memory_order_acquire);
+        return -1;
+    }
+    return __real_close(fd);
+}
 
 namespace mux
 {
@@ -761,6 +805,48 @@ TEST_F(socks_session_test, StartAndStopLifecycleWithInvalidGreeting)
 
     session->stop();
     EXPECT_FALSE(session->socket_.is_open());
+}
+
+TEST_F(socks_session_test, StartLifecycleWithUnsupportedCommand)
+{
+    auto pair = make_tcp_socket_pair(io_ctx());
+    auto session = std::make_shared<socks_session>(std::move(pair.server), io_ctx(), nullptr, nullptr, 2);
+
+    const std::vector<std::uint8_t> req = {
+        0x05, 0x01, 0x00,    // greeting
+        0x05, 0x09, 0x00, 0x01, 127, 0, 0, 1, 0x00, 0x50    // unsupported cmd
+    };
+    asio::write(pair.client, asio::buffer(req));
+
+    session->start();
+    io_ctx().run();
+    io_ctx().restart();
+
+    std::uint8_t method_res[2] = {0};
+    asio::read(pair.client, asio::buffer(method_res));
+    EXPECT_EQ(method_res[0], socks::kVer);
+    EXPECT_EQ(method_res[1], socks::kMethodNoAuth);
+
+    std::uint8_t err_res[10] = {0};
+    asio::read(pair.client, asio::buffer(err_res));
+    EXPECT_EQ(err_res[0], socks::kVer);
+    EXPECT_EQ(err_res[1], socks::kRepCmdNotSupported);
+
+    session->stop();
+}
+
+TEST_F(socks_session_test, StopHandlesUnexpectedShutdownAndCloseErrors)
+{
+    auto pair = make_tcp_socket_pair(io_ctx());
+    auto session = std::make_shared<socks_session>(std::move(pair.server), io_ctx(), nullptr, nullptr, 3);
+
+    fail_next_shutdown(EPERM);
+    fail_next_close(EIO);
+    session->stop();
+
+    session->stop();
+    EXPECT_FALSE(session->socket_.is_open());
+    pair.client.close();
 }
 
 }    // namespace
