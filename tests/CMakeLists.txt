@@ -153,6 +153,7 @@ target_link_options(
     PRIVATE
         -Wl,--wrap=socket
         -Wl,--wrap=setsockopt
+        -Wl,--wrap=bind
         -Wl,--wrap=recvmsg
 )
 add_socks_test(tproxy_tcp_session_test)
