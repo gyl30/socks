@@ -34,7 +34,14 @@ bool resolve_listen_address(const std::string& configured_host,
                             asio::ip::address& listen_addr,
                             std::error_code& ec)
 {
-    listen_host = configured_host.empty() ? "::" : configured_host;
+    if (configured_host.empty())
+    {
+        listen_host = "::";
+    }
+    else
+    {
+        listen_host = configured_host;
+    }
     listen_addr = asio::ip::make_address(listen_host, ec);
     return !ec;
 }
@@ -310,7 +317,11 @@ udp_recv_status recv_udp_packet(asio::ip::udp::socket& socket,
     const auto n = ::recvmsg(socket.native_handle(), &msg, 0);
     if (n < 0)
     {
-        if (errno == EAGAIN || errno == EWOULDBLOCK)
+        if (errno == EAGAIN
+#if EAGAIN != EWOULDBLOCK
+            || errno == EWOULDBLOCK
+#endif
+        )
         {
             return udp_recv_status::kTryAgain;
         }
@@ -572,24 +583,32 @@ void collect_expired_udp_sessions(std::unordered_map<std::string, std::shared_pt
 {
     for (auto it = sessions.begin(); it != sessions.end();)
     {
-        if (it->second != nullptr && it->second->is_idle(now_ms, idle_ms))
-        {
-            expired_sessions.push_back(it->second);
-            it = sessions.erase(it);
-        }
-        else
+        if (it->second == nullptr)
         {
             ++it;
+            continue;
         }
+        if (!it->second->is_idle(now_ms, idle_ms))
+        {
+            ++it;
+            continue;
+        }
+        expired_sessions.push_back(it->second);
+        it = sessions.erase(it);
     }
 }
 
 void log_close_error(const std::error_code& ec, const char* message)
 {
-    if (ec && ec != asio::error::bad_descriptor)
+    if (!ec)
     {
-        LOG_ERROR("{} {}", message, ec.message());
+        return;
     }
+    if (ec == asio::error::bad_descriptor)
+    {
+        return;
+    }
+    LOG_ERROR("{} {}", message, ec.message());
 }
 
 void close_tproxy_sockets(asio::ip::tcp::acceptor& tcp_acceptor, asio::ip::udp::socket& udp_socket)
@@ -621,10 +640,7 @@ void stop_udp_sessions(std::vector<std::shared_ptr<tproxy_udp_session>>& session
 {
     for (auto& session : sessions)
     {
-        if (session != nullptr)
-        {
-            session->stop();
-        }
+        session->stop();
     }
 }
 
@@ -678,12 +694,13 @@ void tproxy_client::start()
     }
 
     tunnel_pool_->start();
+    auto self = shared_from_this();
 
-    asio::co_spawn(io_context_, [self = shared_from_this()]() -> asio::awaitable<void> { co_await self->accept_tcp_loop(); }, asio::detached);
+    asio::co_spawn(io_context_, [self]() { return self->accept_tcp_loop(); }, asio::detached);
 
-    asio::co_spawn(io_context_, [self = shared_from_this()]() -> asio::awaitable<void> { co_await self->udp_loop(); }, asio::detached);
+    asio::co_spawn(io_context_, [self]() { return self->udp_loop(); }, asio::detached);
 
-    asio::co_spawn(io_context_, [self = shared_from_this()]() -> asio::awaitable<void> { co_await self->udp_cleanup_loop(); }, asio::detached);
+    asio::co_spawn(io_context_, [self]() { return self->udp_cleanup_loop(); }, asio::detached);
 }
 
 void tproxy_client::stop()

@@ -149,6 +149,7 @@ target_link_options(
         -Wl,--wrap=socket
         -Wl,--wrap=setsockopt
         -Wl,--wrap=listen
+        -Wl,--wrap=shutdown
         -Wl,--wrap=close
         -Wl,--wrap=RAND_bytes
         -Wl,--wrap=EVP_PKEY_new_raw_private_key
@@ -164,6 +165,10 @@ target_link_options(
         -Wl,--wrap=setsockopt
         -Wl,--wrap=bind
         -Wl,--wrap=recvmsg
+        -Wl,--wrap=accept
+        -Wl,--wrap=accept4
+        -Wl,--wrap=getsockname
+        -Wl,--wrap=close
 )
 add_socks_test(tproxy_tcp_session_test)
 target_link_options(
