@@ -7,6 +7,7 @@ TEST_JOBS="${TEST_JOBS:-20}"
 COVERAGE_THRESHOLD="${COVERAGE_THRESHOLD:-95}"
 SKIP_HTML_REPORT="${SKIP_HTML_REPORT:-0}"
 PER_FILE_GATE="${PER_FILE_GATE:-0}"
+EXCLUDE_THROW_BRANCHES="${EXCLUDE_THROW_BRANCHES:-1}"
 
 if [ ! -d "${BUILD_DIR}" ]; then
     mkdir "${BUILD_DIR}"
@@ -45,9 +46,14 @@ else
     fi
 
     mkdir -p coverage_report
+    GCOVR_BRANCH_ARGS=()
+    if [ "${EXCLUDE_THROW_BRANCHES}" = "1" ]; then
+        GCOVR_BRANCH_ARGS+=(--exclude-throw-branches --exclude-unreachable-branches)
+    fi
 
     if [ "${SKIP_HTML_REPORT}" != "1" ]; then
         gcovr -r .. --html -o coverage_report/index.html -j "${TEST_JOBS}" \
+            "${GCOVR_BRANCH_ARGS[@]}" \
             --exclude-directories '.*/third' \
             --exclude-directories '.*/tests' \
             --exclude-directories '.*/build.*' \
@@ -58,6 +64,7 @@ else
     fi
 
     gcovr -r .. --json-summary-pretty -o coverage_report/summary.json -j "${TEST_JOBS}" \
+        "${GCOVR_BRANCH_ARGS[@]}" \
         --exclude-directories '.*/third' \
         --exclude-directories '.*/tests' \
         --exclude-directories '.*/build.*' \
