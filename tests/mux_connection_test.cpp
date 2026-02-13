@@ -198,6 +198,18 @@ TEST_F(mux_connection_integration_test, ClosedStateGuardsAndUnlimitedCheck)
     EXPECT_TRUE(unlimited->can_accept_stream());
 }
 
+TEST_F(mux_connection_integration_test, IsOpenTreatsDrainingAsOpen)
+{
+    auto conn = std::make_shared<mux_connection>(
+        asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 10);
+
+    conn->connection_state_.store(mux_connection_state::kDraining, std::memory_order_release);
+    EXPECT_TRUE(conn->is_open());
+
+    conn->connection_state_.store(mux_connection_state::kClosing, std::memory_order_release);
+    EXPECT_FALSE(conn->is_open());
+}
+
 TEST_F(mux_connection_integration_test, OffThreadRegisterAndQueryPaths)
 {
     auto conn = std::make_shared<mux_connection>(

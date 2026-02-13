@@ -216,4 +216,31 @@ TEST_F(reality_engine_test, DecryptError)
     EXPECT_FALSE(called);
 }
 
+TEST_F(reality_engine_test, ProcessAvailableRecordsStopsWhenCallbackSetsError)
+{
+    reality_engine decrypt_engine(read_key(), read_iv(), write_key(), write_iv(), cipher());
+
+    std::error_code ec;
+    const std::vector<std::uint8_t> payload = {0x10, 0x20, 0x30};
+    const auto rec =
+        reality::tls_record_layer::encrypt_record(cipher(), read_key(), read_iv(), 0, payload, reality::kContentTypeApplicationData, ec);
+    ASSERT_FALSE(ec);
+
+    auto buf = decrypt_engine.read_buffer(rec.size());
+    std::memcpy(buf.data(), rec.data(), rec.size());
+    decrypt_engine.commit_read(rec.size());
+
+    std::size_t callback_calls = 0;
+    decrypt_engine.process_available_records(
+        ec,
+        [&ec, &callback_calls](std::uint8_t, std::span<const std::uint8_t>)
+        {
+            ++callback_calls;
+            ec = asio::error::operation_aborted;
+        });
+
+    EXPECT_EQ(callback_calls, 1u);
+    EXPECT_EQ(ec, asio::error::operation_aborted);
+}
+
 }    // namespace mux
