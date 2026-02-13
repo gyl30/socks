@@ -46,6 +46,8 @@ std::atomic<bool> g_fail_reuse_setsockopt_once{false};
 std::atomic<int> g_fail_reuse_setsockopt_errno{EPERM};
 std::atomic<bool> g_fail_listen_once{false};
 std::atomic<int> g_fail_listen_errno{EACCES};
+std::atomic<bool> g_fail_shutdown_once{false};
+std::atomic<int> g_fail_shutdown_errno{EIO};
 std::atomic<bool> g_fail_close_once{false};
 std::atomic<int> g_fail_close_errno{EIO};
 std::atomic<bool> g_fail_rand_bytes_once{false};
@@ -78,6 +80,12 @@ void fail_next_close(const int err)
     g_fail_close_once.store(true, std::memory_order_release);
 }
 
+void fail_next_shutdown(const int err)
+{
+    g_fail_shutdown_errno.store(err, std::memory_order_release);
+    g_fail_shutdown_once.store(true, std::memory_order_release);
+}
+
 void fail_next_rand_bytes() { g_fail_rand_bytes_once.store(true, std::memory_order_release); }
 
 void fail_next_ed25519_raw_private_key() { g_fail_ed25519_raw_private_key_once.store(true, std::memory_order_release); }
@@ -93,6 +101,7 @@ void fail_hkdf_add_info_on_call(const int call_index)
 extern "C" int __real_socket(int domain, int type, int protocol);
 extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);
 extern "C" int __real_listen(int sockfd, int backlog);
+extern "C" int __real_shutdown(int sockfd, int how);
 extern "C" int __real_close(int fd);
 extern "C" int __real_RAND_bytes(unsigned char* buf, int num);
 extern "C" EVP_PKEY* __real_EVP_PKEY_new_raw_private_key(int type, ENGINE* e, const unsigned char* key, size_t keylen);
@@ -127,6 +136,16 @@ extern "C" int __wrap_listen(int sockfd, int backlog)
         return -1;
     }
     return __real_listen(sockfd, backlog);
+}
+
+extern "C" int __wrap_shutdown(int sockfd, int how)
+{
+    if (g_fail_shutdown_once.exchange(false, std::memory_order_acq_rel))
+    {
+        errno = g_fail_shutdown_errno.load(std::memory_order_acquire);
+        return -1;
+    }
+    return __real_shutdown(sockfd, how);
 }
 
 extern "C" int __wrap_close(int fd)
@@ -1455,6 +1474,29 @@ TEST_F(remote_server_test, AuthenticateClientCoversShortIdClockSkewAndReplayBran
     EXPECT_GT(mux::statistics::instance().auth_replay_failures(), replay_before);
 }
 
+TEST_F(remote_server_test, AuthenticateClientCoversInvalidPayloadAndShortIdLengthBranches)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+
+    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
+    mux::connection_context ctx;
+
+    std::vector<std::uint8_t> sid_ok;
+    auto record = build_valid_sid_ch("www.google.com", "0102030405060708", static_cast<std::uint32_t>(time(nullptr)), sid_ok);
+    auto info = mux::ch_parser::parse(record);
+    ASSERT_EQ(info.session_id.size(), 32u);
+
+    auto invalid_payload_info = info;
+    invalid_payload_info.session_id[0] ^= 0x01;
+    EXPECT_FALSE(server->authenticate_client(invalid_payload_info, record, ctx));
+
+    server->auth_config_valid_ = true;
+    server->short_id_bytes_.assign(reality::kShortIdMaxLen + 1, 0x01);
+    EXPECT_FALSE(server->authenticate_client(info, record, ctx));
+}
+
 TEST_F(remote_server_test, PerformHandshakeResponseCoversRandomAndSignKeyFailureBranches)
 {
     std::error_code ec;
@@ -1657,6 +1699,46 @@ TEST_F(remote_server_test, StopCoversAcceptorCloseFailureBranch)
     server->stop();
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
+    pool.stop();
+    runner.join();
+}
+
+TEST_F(remote_server_test, HandleFallbackCoversCloseSocketErrorBranches)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+    std::thread runner([&pool]() { pool.run(); });
+
+    auto cfg = make_server_cfg(pick_free_port(), {{"*", "127.0.0.1", "1"}}, "0102030405060708");
+    cfg.reality.fallback_guard.enabled = true;
+    cfg.reality.fallback_guard.rate_per_sec = 0;
+    cfg.reality.fallback_guard.burst = 0;
+    auto server = std::make_shared<mux::remote_server>(pool, cfg);
+
+    auto fallback_socket = std::make_shared<asio::ip::tcp::socket>(pool.get_io_context());
+    mux::connection_context ctx;
+    ctx.conn_id(555);
+    ctx.remote_addr("127.0.0.10");
+    ctx.trace_id("fallback-close-errors");
+
+    std::promise<void> done;
+    auto done_future = done.get_future();
+
+    fail_next_shutdown(EIO);
+    fail_next_close(EIO);
+    asio::co_spawn(pool.get_io_context(),
+                   [server, fallback_socket, ctx, &done]() mutable -> asio::awaitable<void>
+                   {
+                       co_await server->handle_fallback(fallback_socket, std::vector<std::uint8_t>{0x16}, ctx, "blocked.test");
+                       done.set_value();
+                       co_return;
+                   },
+                   asio::detached);
+
+    EXPECT_EQ(done_future.wait_for(std::chrono::seconds(5)), std::future_status::ready);
+
+    server->stop();
     pool.stop();
     runner.join();
 }
