@@ -164,6 +164,12 @@ target_link_options(
         -Wl,--wrap=close
 )
 add_socks_test(tproxy_udp_sender_test)
+target_link_options(
+    tproxy_udp_sender_test
+    PRIVATE
+        -Wl,--wrap=socket
+        -Wl,--wrap=setsockopt
+)
 add_socks_test(udp_socks_session_test)
 target_link_options(
     udp_socks_session_test
