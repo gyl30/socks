@@ -143,6 +143,13 @@ TEST(MuxCodecTest, AckPayload_Decode_TooShort)
     EXPECT_FALSE(mux::mux_codec::decode_ack(buffer.data(), buffer.size(), output));
 }
 
+TEST(MuxCodecTest, AckPayload_Decode_InvalidAddrLen)
+{
+    std::vector<std::uint8_t> buffer = {0x00, 0x10, 0x01, 0x02};
+    mux::ack_payload output;
+    EXPECT_FALSE(mux::mux_codec::decode_ack(buffer.data(), buffer.size(), output));
+}
+
 TEST(MuxCodecTest, SynPayload_TruncateLongAddress)
 {
     mux::syn_payload input;
