@@ -174,6 +174,12 @@ target_link_options(
         -Wl,--wrap=close
 )
 add_socks_test(tcp_socks_session_test)
+target_link_options(
+    tcp_socks_session_test
+    PRIVATE
+        -Wl,--wrap=shutdown
+        -Wl,--wrap=close
+)
 add_socks_test(remote_session_test)
 target_link_options(
     remote_session_test
