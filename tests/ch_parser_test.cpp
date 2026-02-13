@@ -366,6 +366,14 @@ TEST(CHParserTest, InternalSNIAndExtensionBranches)
         std::vector<std::uint8_t> buf = {0xAB};
         ch_parser::reader r(buf);
         mux::client_hello_info info;
+        EXPECT_TRUE(ch_parser::handle_sni_item(r, 0x00, 2, info));
+        EXPECT_TRUE(info.sni.empty());
+    }
+
+    {
+        std::vector<std::uint8_t> buf = {0xAB};
+        ch_parser::reader r(buf);
+        mux::client_hello_info info;
         EXPECT_TRUE(ch_parser::handle_sni_item(r, 0x01, 2, info));
     }
 
