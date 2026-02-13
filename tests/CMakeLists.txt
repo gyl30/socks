@@ -44,6 +44,12 @@ target_link_options(
         -Wl,--wrap=EVP_PKEY_CTX_set1_hkdf_salt
         -Wl,--wrap=EVP_CIPHER_CTX_ctrl
         -Wl,--wrap=X509_get_pubkey
+        -Wl,--wrap=RAND_bytes
+        -Wl,--wrap=EVP_PKEY_CTX_new_id
+        -Wl,--wrap=EVP_PKEY_new_raw_private_key
+        -Wl,--wrap=EVP_PKEY_CTX_add1_hkdf_info
+        -Wl,--wrap=EVP_MD_CTX_new
+        -Wl,--wrap=EVP_PKEY_derive
 )
 add_socks_test(router_test)
 add_socks_test(domain_matcher_test)
@@ -69,6 +75,12 @@ add_socks_test(config_test)
 add_socks_test(reflect_test)
 add_socks_test(tls_key_schedule_test)
 add_socks_test(socks_client_test)
+target_link_options(
+    socks_client_test
+    PRIVATE
+        -Wl,--wrap=socket
+        -Wl,--wrap=setsockopt
+)
 add_socks_test(reality_fingerprint_test)
 add_socks_test(reality_auth_test)
 add_socks_test(mux_stream_test)
@@ -84,6 +96,16 @@ add_socks_test(socks_client_mock_test)
 add_socks_test(socks_client_handshake_test)
 add_socks_test(client_tunnel_pool_policy_test)
 add_socks_test(client_tunnel_pool_whitebox_test)
+target_link_options(
+    client_tunnel_pool_whitebox_test
+    PRIVATE
+        -Wl,--wrap=RAND_bytes
+        -Wl,--wrap=EVP_PKEY_CTX_add1_hkdf_info
+        -Wl,--wrap=EVP_CIPHER_CTX_ctrl
+        -Wl,--wrap=EVP_PKEY_derive
+        -Wl,--wrap=EVP_EncryptInit_ex
+        -Wl,--wrap=socket
+)
 add_socks_test(client_server_integration_test)
 add_socks_test(connection_pool_test)
 add_socks_test(limits_test)
@@ -91,6 +113,18 @@ add_socks_test(udp_integration_test)
 add_socks_test(protocol_edge_test)
 add_socks_test(socks_protocol_test)
 add_socks_test(remote_server_test)
+target_link_options(
+    remote_server_test
+    PRIVATE
+        -Wl,--wrap=socket
+        -Wl,--wrap=setsockopt
+        -Wl,--wrap=listen
+        -Wl,--wrap=close
+        -Wl,--wrap=RAND_bytes
+        -Wl,--wrap=EVP_PKEY_new_raw_private_key
+        -Wl,--wrap=EVP_PKEY_derive
+        -Wl,--wrap=EVP_PKEY_CTX_add1_hkdf_info
+)
 add_socks_test(remote_server_mux_test)
 add_socks_test(tproxy_udp_session_test)
 target_link_options(
@@ -103,6 +137,11 @@ target_link_options(
 add_socks_test(tproxy_tcp_session_test)
 add_socks_test(tproxy_udp_sender_test)
 add_socks_test(udp_socks_session_test)
+target_link_options(
+    udp_socks_session_test
+    PRIVATE
+        -Wl,--wrap=close
+)
 add_socks_test(tcp_socks_session_test)
 add_socks_test(remote_udp_session_test)
 add_socks_test(router_file_test)
