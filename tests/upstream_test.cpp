@@ -10,6 +10,7 @@
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include <asio/post.hpp>
 #include <asio/write.hpp>
 #include <asio/buffer.hpp>
 #include <asio/ip/tcp.hpp>
@@ -401,6 +402,91 @@ TEST_F(upstream_test, ProxyUpstreamConnectFailsWhenCreateStreamRejectedByLimit)
     mux::proxy_upstream upstream(tunnel, mux::connection_context{});
     const auto success = mux::test::run_awaitable(ctx(), upstream.connect("example.com", 443));
     EXPECT_FALSE(success);
+}
+
+TEST_F(upstream_test, ProxyUpstreamConnectSuccessSetsStream)
+{
+    auto tunnel = make_test_tunnel(ctx());
+    auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
+    ON_CALL(*mock_conn, id()).WillByDefault(::testing::Return(9));
+    ON_CALL(*mock_conn, mock_send_async(::testing::_, ::testing::_, ::testing::_)).WillByDefault(::testing::Return(std::error_code{}));
+    tunnel->connection_ = mock_conn;
+
+    EXPECT_CALL(*mock_conn, mock_send_async(::testing::_, mux::kCmdSyn, ::testing::_)).WillOnce(::testing::Return(std::error_code{}));
+    EXPECT_CALL(*mock_conn, register_stream(::testing::_, ::testing::_))
+        .WillOnce(
+            [this](const std::uint32_t id, std::shared_ptr<mux::mux_stream_interface> stream_iface)
+            {
+                (void)id;
+                auto stream = std::dynamic_pointer_cast<mux::mux_stream>(stream_iface);
+                ASSERT_NE(stream, nullptr);
+
+                mux::ack_payload ack{};
+                ack.socks_rep = socks::kRepSuccess;
+                std::vector<std::uint8_t> ack_data;
+                mux::mux_codec::encode_ack(ack, ack_data);
+                asio::post(this->ctx(), [stream, ack_data]() { stream->on_data(ack_data); });
+            });
+
+    mux::proxy_upstream upstream(tunnel, mux::connection_context{});
+    EXPECT_TRUE(mux::test::run_awaitable(ctx(), upstream.connect("example.com", 443)));
+    EXPECT_NE(upstream.stream_, nullptr);
+}
+
+TEST_F(upstream_test, ProxyUpstreamConnectFailsWhenSendSynFailsAndCleansStream)
+{
+    auto tunnel = make_test_tunnel(ctx());
+    auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
+    ON_CALL(*mock_conn, id()).WillByDefault(::testing::Return(9));
+    ON_CALL(*mock_conn, mock_send_async(::testing::_, ::testing::_, ::testing::_)).WillByDefault(::testing::Return(std::error_code{}));
+    tunnel->connection_ = mock_conn;
+
+    std::uint32_t stream_id = 0;
+    EXPECT_CALL(*mock_conn, register_stream(::testing::_, ::testing::_))
+        .WillOnce([&stream_id](const std::uint32_t id, std::shared_ptr<mux::mux_stream_interface> stream)
+                  {
+                      (void)stream;
+                      stream_id = id;
+                  });
+    EXPECT_CALL(*mock_conn, mock_send_async(::testing::_, mux::kCmdSyn, ::testing::_)).WillOnce(::testing::Return(asio::error::broken_pipe));
+    EXPECT_CALL(*mock_conn, mock_send_async(::testing::_, mux::kCmdFin, ::testing::_)).WillOnce(::testing::Return(std::error_code{}));
+    EXPECT_CALL(*mock_conn, remove_stream(::testing::_)).Times(1);
+
+    mux::proxy_upstream upstream(tunnel, mux::connection_context{});
+    EXPECT_FALSE(mux::test::run_awaitable(ctx(), upstream.connect("example.com", 443)));
+    EXPECT_EQ(upstream.stream_, nullptr);
+    EXPECT_NE(stream_id, 0U);
+}
+
+TEST_F(upstream_test, ProxyUpstreamConnectFailsWhenAckRejectedAndCleansStream)
+{
+    auto tunnel = make_test_tunnel(ctx());
+    auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
+    ON_CALL(*mock_conn, id()).WillByDefault(::testing::Return(9));
+    ON_CALL(*mock_conn, mock_send_async(::testing::_, ::testing::_, ::testing::_)).WillByDefault(::testing::Return(std::error_code{}));
+    tunnel->connection_ = mock_conn;
+
+    EXPECT_CALL(*mock_conn, register_stream(::testing::_, ::testing::_))
+        .WillOnce(
+            [this](const std::uint32_t id, std::shared_ptr<mux::mux_stream_interface> stream_iface)
+            {
+                (void)id;
+                auto stream = std::dynamic_pointer_cast<mux::mux_stream>(stream_iface);
+                ASSERT_NE(stream, nullptr);
+
+                mux::ack_payload ack{};
+                ack.socks_rep = socks::kRepConnRefused;
+                std::vector<std::uint8_t> ack_data;
+                mux::mux_codec::encode_ack(ack, ack_data);
+                asio::post(this->ctx(), [stream, ack_data]() { stream->on_data(ack_data); });
+            });
+    EXPECT_CALL(*mock_conn, mock_send_async(::testing::_, mux::kCmdSyn, ::testing::_)).WillOnce(::testing::Return(std::error_code{}));
+    EXPECT_CALL(*mock_conn, mock_send_async(::testing::_, mux::kCmdFin, ::testing::_)).WillOnce(::testing::Return(std::error_code{}));
+    EXPECT_CALL(*mock_conn, remove_stream(::testing::_)).Times(1);
+
+    mux::proxy_upstream upstream(tunnel, mux::connection_context{});
+    EXPECT_FALSE(mux::test::run_awaitable(ctx(), upstream.connect("example.com", 443)));
+    EXPECT_EQ(upstream.stream_, nullptr);
 }
 
 TEST_F(upstream_test, ProxyUpstreamSendSynRequestSuccess)
