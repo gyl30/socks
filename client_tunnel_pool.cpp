@@ -330,20 +330,8 @@ bool verify_server_finished_message(const std::vector<std::uint8_t>& msg_data,
                                     const reality::transcript& trans,
                                     std::error_code& ec)
 {
-    if (msg_data.size() < 4 || msg_data[0] != 0x14)
-    {
-        ec = asio::error::invalid_argument;
-        LOG_ERROR("server finished format invalid");
-        return false;
-    }
-
+    // handshake_read_loop only calls this helper after message type and bounds validation.
     const std::uint32_t msg_len = (msg_data[1] << 16) | (msg_data[2] << 8) | msg_data[3];
-    if (msg_data.size() != 4 + msg_len)
-    {
-        ec = asio::error::invalid_argument;
-        LOG_ERROR("server finished length invalid {}", msg_data.size());
-        return false;
-    }
 
     const auto expected_verify_data =
         reality::tls_key_schedule::compute_finished_verify_data(hs_keys.server_handshake_traffic_secret, trans.finish(), md, ec);
