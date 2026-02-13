@@ -745,6 +745,39 @@ TEST(TproxyClientTest, RouterLoadFailureStopsEarly)
     pool.stop();
 }
 
+TEST(TproxyClientTest, StopExtractsAndStopsUdpSessions)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+
+    mux::config cfg;
+    cfg.tproxy.enabled = true;
+    cfg.tproxy.listen_host = "127.0.0.1";
+    cfg.tproxy.tcp_port = pick_free_tcp_port();
+    cfg.tproxy.udp_port = cfg.tproxy.tcp_port;
+    auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
+
+    const asio::ip::udp::endpoint client_ep(asio::ip::make_address("127.0.0.1"), 19001);
+    auto live_session =
+        std::make_shared<mux::tproxy_udp_session>(pool.get_io_context(), client->tunnel_pool_, client->router_, client->sender_, 42, cfg, client_ep);
+
+    client->udp_sessions_.emplace("null-entry", nullptr);
+    client->udp_sessions_.emplace("live-entry", live_session);
+
+    std::thread runner([&pool]() { pool.run(); });
+    client->stop();
+    std::this_thread::sleep_for(std::chrono::milliseconds(80));
+
+    EXPECT_EQ(udp_session_count(pool.get_io_context(), client), 0U);
+
+    pool.stop();
+    if (runner.joinable())
+    {
+        runner.join();
+    }
+}
+
 TEST(TproxyClientTest, AcceptLoopStopsWhenStopFlagSetAfterPendingAccept)
 {
     reset_socket_wrappers();
