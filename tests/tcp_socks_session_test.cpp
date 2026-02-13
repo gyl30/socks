@@ -7,6 +7,8 @@
 #include <cstdint>
 #include <utility>
 #include <system_error>
+#include <atomic>
+#include <cerrno>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -21,6 +23,8 @@
 #include <asio/steady_timer.hpp>
 #include <asio/use_awaitable.hpp>
 #include <asio/redirect_error.hpp>
+
+#include <unistd.h>
 
 extern "C"
 {
@@ -41,6 +45,23 @@ namespace
 {
 
 using ::testing::_;
+
+std::atomic<bool> g_fail_shutdown_once{false};
+std::atomic<int> g_fail_shutdown_errno{EIO};
+std::atomic<bool> g_fail_close_once{false};
+std::atomic<int> g_fail_close_errno{EIO};
+
+void fail_next_shutdown(const int err)
+{
+    g_fail_shutdown_errno.store(err, std::memory_order_release);
+    g_fail_shutdown_once.store(true, std::memory_order_release);
+}
+
+void fail_next_close(const int err)
+{
+    g_fail_close_errno.store(err, std::memory_order_release);
+    g_fail_close_once.store(true, std::memory_order_release);
+}
 
 class fake_upstream final : public mux::upstream
 {
@@ -175,6 +196,29 @@ TEST(TcpSocksSessionTest, CreateBackendReturnsNullForBlockRoute)
         asio::ip::tcp::socket(io_context), io_context, nullptr, std::move(router), 1, timeout_cfg);
 
     EXPECT_EQ(session->create_backend(mux::route_type::kBlock), nullptr);
+}
+
+extern "C" int __real_shutdown(int fd, int how);
+extern "C" int __real_close(int fd);
+
+extern "C" int __wrap_shutdown(int fd, int how)
+{
+    if (g_fail_shutdown_once.exchange(false, std::memory_order_acq_rel))
+    {
+        errno = g_fail_shutdown_errno.load(std::memory_order_acquire);
+        return -1;
+    }
+    return __real_shutdown(fd, how);
+}
+
+extern "C" int __wrap_close(int fd)
+{
+    if (g_fail_close_once.exchange(false, std::memory_order_acq_rel))
+    {
+        errno = g_fail_close_errno.load(std::memory_order_acquire);
+        return -1;
+    }
+    return __real_close(fd);
 }
 
 TEST(TcpSocksSessionTest, CreateBackendReturnsDirectAndProxy)
@@ -392,6 +436,39 @@ TEST(TcpSocksSessionTest, CloseClientSocketHandlesNotConnectedSocket)
 
     session->close_client_socket();
     EXPECT_FALSE(session->socket_.is_open());
+}
+
+TEST(TcpSocksSessionTest, CloseClientSocketHandlesUnexpectedShutdownAndCloseErrors)
+{
+    asio::io_context io_context;
+    auto pair = make_tcp_socket_pair(io_context);
+    auto session = make_tcp_session(io_context, std::move(pair.server));
+
+    fail_next_shutdown(EIO);
+    fail_next_close(EIO);
+    session->close_client_socket();
+
+    std::error_code ec;
+    if (session->socket_.is_open())
+    {
+        session->socket_.close(ec);
+    }
+}
+
+TEST(TcpSocksSessionTest, CloseClientSocketIgnoresBadDescriptorCloseError)
+{
+    asio::io_context io_context;
+    auto pair = make_tcp_socket_pair(io_context);
+    auto session = make_tcp_session(io_context, std::move(pair.server));
+
+    fail_next_close(EBADF);
+    session->close_client_socket();
+
+    std::error_code ec;
+    if (session->socket_.is_open())
+    {
+        session->socket_.close(ec);
+    }
 }
 
 TEST(TcpSocksSessionTest, ReplyErrorWritesSocksErrorResponse)
