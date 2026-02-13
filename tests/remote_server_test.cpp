@@ -1,3 +1,7 @@
+#include <algorithm>
+#include <array>
+#include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <future>
 #include <memory>
@@ -11,6 +15,15 @@
 #include <asio/write.hpp>
 #include <asio/buffer.hpp>
 #include <asio/ip/tcp.hpp>
+
+#include <sys/socket.h>
+#include <unistd.h>
+
+extern "C"
+{
+#include <openssl/evp.h>
+#include <openssl/rand.h>
+}
 
 #include "ch_parser.h"
 #include "crypto_util.h"
@@ -26,6 +39,144 @@
 
 namespace
 {
+
+std::atomic<bool> g_fail_socket_once{false};
+std::atomic<int> g_fail_socket_errno{EMFILE};
+std::atomic<bool> g_fail_reuse_setsockopt_once{false};
+std::atomic<int> g_fail_reuse_setsockopt_errno{EPERM};
+std::atomic<bool> g_fail_listen_once{false};
+std::atomic<int> g_fail_listen_errno{EACCES};
+std::atomic<bool> g_fail_close_once{false};
+std::atomic<int> g_fail_close_errno{EIO};
+std::atomic<bool> g_fail_rand_bytes_once{false};
+std::atomic<bool> g_fail_ed25519_raw_private_key_once{false};
+std::atomic<bool> g_fail_pkey_derive_once{false};
+std::atomic<int> g_fail_hkdf_add_info_on_call{0};
+std::atomic<int> g_hkdf_add_info_call_counter{0};
+
+void fail_next_socket(const int err)
+{
+    g_fail_socket_errno.store(err, std::memory_order_release);
+    g_fail_socket_once.store(true, std::memory_order_release);
+}
+
+void fail_next_reuse_setsockopt(const int err)
+{
+    g_fail_reuse_setsockopt_errno.store(err, std::memory_order_release);
+    g_fail_reuse_setsockopt_once.store(true, std::memory_order_release);
+}
+
+void fail_next_listen(const int err)
+{
+    g_fail_listen_errno.store(err, std::memory_order_release);
+    g_fail_listen_once.store(true, std::memory_order_release);
+}
+
+void fail_next_close(const int err)
+{
+    g_fail_close_errno.store(err, std::memory_order_release);
+    g_fail_close_once.store(true, std::memory_order_release);
+}
+
+void fail_next_rand_bytes() { g_fail_rand_bytes_once.store(true, std::memory_order_release); }
+
+void fail_next_ed25519_raw_private_key() { g_fail_ed25519_raw_private_key_once.store(true, std::memory_order_release); }
+
+void fail_next_pkey_derive() { g_fail_pkey_derive_once.store(true, std::memory_order_release); }
+
+void fail_hkdf_add_info_on_call(const int call_index)
+{
+    g_hkdf_add_info_call_counter.store(0, std::memory_order_release);
+    g_fail_hkdf_add_info_on_call.store(call_index, std::memory_order_release);
+}
+
+extern "C" int __real_socket(int domain, int type, int protocol);
+extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);
+extern "C" int __real_listen(int sockfd, int backlog);
+extern "C" int __real_close(int fd);
+extern "C" int __real_RAND_bytes(unsigned char* buf, int num);
+extern "C" EVP_PKEY* __real_EVP_PKEY_new_raw_private_key(int type, ENGINE* e, const unsigned char* key, size_t keylen);
+extern "C" int __real_EVP_PKEY_derive(EVP_PKEY_CTX* ctx, unsigned char* key, size_t* keylen);
+extern "C" int __real_EVP_PKEY_CTX_add1_hkdf_info(EVP_PKEY_CTX* ctx, const unsigned char* info, int infolen);
+
+extern "C" int __wrap_socket(int domain, int type, int protocol)
+{
+    if (g_fail_socket_once.exchange(false, std::memory_order_acq_rel))
+    {
+        errno = g_fail_socket_errno.load(std::memory_order_acquire);
+        return -1;
+    }
+    return __real_socket(domain, type, protocol);
+}
+
+extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)
+{
+    if (level == SOL_SOCKET && optname == SO_REUSEADDR && g_fail_reuse_setsockopt_once.exchange(false, std::memory_order_acq_rel))
+    {
+        errno = g_fail_reuse_setsockopt_errno.load(std::memory_order_acquire);
+        return -1;
+    }
+    return __real_setsockopt(sockfd, level, optname, optval, optlen);
+}
+
+extern "C" int __wrap_listen(int sockfd, int backlog)
+{
+    if (g_fail_listen_once.exchange(false, std::memory_order_acq_rel))
+    {
+        errno = g_fail_listen_errno.load(std::memory_order_acquire);
+        return -1;
+    }
+    return __real_listen(sockfd, backlog);
+}
+
+extern "C" int __wrap_close(int fd)
+{
+    if (g_fail_close_once.exchange(false, std::memory_order_acq_rel))
+    {
+        errno = g_fail_close_errno.load(std::memory_order_acquire);
+        return -1;
+    }
+    return __real_close(fd);
+}
+
+extern "C" int __wrap_RAND_bytes(unsigned char* buf, int num)
+{
+    if (g_fail_rand_bytes_once.exchange(false, std::memory_order_acq_rel))
+    {
+        return 0;
+    }
+    return __real_RAND_bytes(buf, num);
+}
+
+extern "C" EVP_PKEY* __wrap_EVP_PKEY_new_raw_private_key(int type, ENGINE* e, const unsigned char* key, size_t keylen)
+{
+    if (type == EVP_PKEY_ED25519 && g_fail_ed25519_raw_private_key_once.exchange(false, std::memory_order_acq_rel))
+    {
+        return nullptr;
+    }
+    return __real_EVP_PKEY_new_raw_private_key(type, e, key, keylen);
+}
+
+extern "C" int __wrap_EVP_PKEY_derive(EVP_PKEY_CTX* ctx, unsigned char* key, size_t* keylen)
+{
+    if (g_fail_pkey_derive_once.exchange(false, std::memory_order_acq_rel))
+    {
+        return 0;
+    }
+    return __real_EVP_PKEY_derive(ctx, key, keylen);
+}
+
+extern "C" int __wrap_EVP_PKEY_CTX_add1_hkdf_info(EVP_PKEY_CTX* ctx, const unsigned char* info, int infolen)
+{
+    const int call_no = g_hkdf_add_info_call_counter.fetch_add(1, std::memory_order_acq_rel) + 1;
+    const int fail_on = g_fail_hkdf_add_info_on_call.load(std::memory_order_acquire);
+    if (fail_on > 0 && call_no == fail_on)
+    {
+        g_fail_hkdf_add_info_on_call.store(0, std::memory_order_release);
+        return 0;
+    }
+    return __real_EVP_PKEY_CTX_add1_hkdf_info(ctx, info, infolen);
+}
 
 std::uint16_t pick_free_port()
 {
@@ -76,13 +227,28 @@ class remote_server_test : public ::testing::Test
         std::error_code ec;
         auto shared =
             reality::crypto_util::x25519_derive(reality::crypto_util::hex_to_bytes(server_priv_key()), std::vector<uint8_t>(c_pub, c_pub + 32), ec);
+        if (ec)
+        {
+            return {};
+        }
         auto salt = std::vector<uint8_t>(info_random_.begin(), info_random_.begin() + 20);
         auto prk = reality::crypto_util::hkdf_extract(salt, shared, EVP_sha256(), ec);
+        if (ec)
+        {
+            return {};
+        }
         auto auth_key = reality::crypto_util::hkdf_expand(prk, reality::crypto_util::hex_to_bytes("5245414c495459"), 16, EVP_sha256(), ec);
+        if (ec)
+        {
+            return {};
+        }
 
         std::array<uint8_t, 16> payload;
         const std::array<std::uint8_t, 3> ver{1, 0, 0};
-        (void)reality::build_auth_payload(reality::crypto_util::hex_to_bytes(short_id_hex), ver, timestamp, payload);
+        if (!reality::build_auth_payload(reality::crypto_util::hex_to_bytes(short_id_hex), ver, timestamp, payload))
+        {
+            return {};
+        }
 
         auto spec = reality::fingerprint_factory::get(reality::fingerprint_type::kChrome120);
         auto ch_body =
@@ -92,9 +258,17 @@ class remote_server_test : public ::testing::Test
         record_tmp.insert(record_tmp.end(), ch_body.begin(), ch_body.end());
 
         auto info = mux::ch_parser::parse(record_tmp);
+        if (info.sid_offset < 5)
+        {
+            return {};
+        }
 
         std::vector<uint8_t> aad = ch_body;
-        uint32_t aad_sid_offset = info.sid_offset - 5;
+        const std::uint32_t aad_sid_offset = info.sid_offset - 5;
+        if (aad_sid_offset + 32 > aad.size())
+        {
+            return {};
+        }
         std::fill_n(aad.begin() + aad_sid_offset, 32, 0);
 
         out_sid = reality::crypto_util::aead_encrypt(EVP_aes_128_gcm(),
@@ -103,10 +277,14 @@ class remote_server_test : public ::testing::Test
                                                      std::vector<uint8_t>(payload.begin(), payload.end()),
                                                      aad,
                                                      ec);
+        if (ec || out_sid.size() != 32)
+        {
+            return {};
+        }
 
-        auto ch_final = reality::client_hello_builder::build(spec, out_sid, info_random_, std::vector<uint8_t>(c_pub, c_pub + 32), sni);
-        auto record = reality::write_record_header(reality::kContentTypeHandshake, static_cast<uint16_t>(ch_final.size()));
-        record.insert(record.end(), ch_final.begin(), ch_final.end());
+        std::copy(out_sid.begin(), out_sid.end(), ch_body.begin() + static_cast<std::ptrdiff_t>(aad_sid_offset));
+        auto record = reality::write_record_header(reality::kContentTypeHandshake, static_cast<uint16_t>(ch_body.size()));
+        record.insert(record.end(), ch_body.begin(), ch_body.end());
         return record;
     }
 
@@ -1189,6 +1367,287 @@ TEST_F(remote_server_test, PerformHandshakeResponseCoversCipherSuiteSelectionBra
     EXPECT_EQ(invalid_res.cipher, EVP_aes_128_gcm());
 
     (void)run_once("cipher.chacha", 72, false);
+
+    pool.stop();
+    runner.join();
+}
+
+TEST_F(remote_server_test, ConstructorCoversMalformedBracketDestParseBranches)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+
+    auto cfg_missing_bracket = make_server_cfg(pick_free_port(), {}, "0102030405060708");
+    cfg_missing_bracket.reality.dest = "[::1";
+    auto server_missing_bracket = std::make_shared<mux::remote_server>(pool, cfg_missing_bracket);
+    EXPECT_FALSE(server_missing_bracket->fallback_dest_valid_);
+    EXPECT_FALSE(server_missing_bracket->auth_config_valid_);
+
+    auto cfg_missing_colon = make_server_cfg(pick_free_port(), {}, "0102030405060708");
+    cfg_missing_colon.reality.dest = "[::1]8443";
+    auto server_missing_colon = std::make_shared<mux::remote_server>(pool, cfg_missing_colon);
+    EXPECT_FALSE(server_missing_colon->fallback_dest_valid_);
+    EXPECT_FALSE(server_missing_colon->auth_config_valid_);
+}
+
+TEST_F(remote_server_test, ConstructorAcceptorSetupFailureBranchesWithWrappers)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+
+    const auto open_fail_port = pick_free_port();
+    fail_next_socket(EMFILE);
+    auto open_fail_server = std::make_shared<mux::remote_server>(pool, make_server_cfg(open_fail_port, {}, "0102030405060708"));
+    EXPECT_TRUE(open_fail_server->private_key_.empty());
+
+    const auto reuse_fail_port = pick_free_port();
+    fail_next_reuse_setsockopt(EPERM);
+    auto reuse_fail_server = std::make_shared<mux::remote_server>(pool, make_server_cfg(reuse_fail_port, {}, "0102030405060708"));
+    EXPECT_TRUE(reuse_fail_server->private_key_.empty());
+
+    const auto listen_fail_port = pick_free_port();
+    fail_next_listen(EACCES);
+    auto listen_fail_server = std::make_shared<mux::remote_server>(pool, make_server_cfg(listen_fail_port, {}, "0102030405060708"));
+    EXPECT_TRUE(listen_fail_server->private_key_.empty());
+}
+
+TEST_F(remote_server_test, AuthenticateClientCoversShortIdClockSkewAndReplayBranches)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+
+    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
+    mux::connection_context ctx;
+
+    const auto short_id_before = mux::statistics::instance().auth_short_id_failures();
+    const auto skew_before = mux::statistics::instance().auth_clock_skew_failures();
+    const auto replay_before = mux::statistics::instance().auth_replay_failures();
+
+    std::vector<std::uint8_t> sid_mismatch;
+    const auto record_mismatch = build_valid_sid_ch("www.google.com", "ffffffffffffffff", static_cast<std::uint32_t>(time(nullptr)), sid_mismatch);
+    const auto info_mismatch = mux::ch_parser::parse(record_mismatch);
+    EXPECT_FALSE(server->authenticate_client(info_mismatch, record_mismatch, ctx));
+
+    std::vector<std::uint8_t> sid_skew;
+    const auto record_skew = build_valid_sid_ch("www.google.com", "0102030405060708", static_cast<std::uint32_t>(time(nullptr) - 1000), sid_skew);
+    const auto info_skew = mux::ch_parser::parse(record_skew);
+    EXPECT_FALSE(server->authenticate_client(info_skew, record_skew, ctx));
+
+    std::vector<std::uint8_t> sid_ok;
+    const auto record_ok = build_valid_sid_ch("www.google.com", "0102030405060708", static_cast<std::uint32_t>(time(nullptr)), sid_ok);
+    const auto info_ok = mux::ch_parser::parse(record_ok);
+    EXPECT_TRUE(server->authenticate_client(info_ok, record_ok, ctx));
+    EXPECT_FALSE(server->authenticate_client(info_ok, record_ok, ctx));
+
+    EXPECT_GT(mux::statistics::instance().auth_short_id_failures(), short_id_before);
+    EXPECT_GT(mux::statistics::instance().auth_clock_skew_failures(), skew_before);
+    EXPECT_GT(mux::statistics::instance().auth_replay_failures(), replay_before);
+}
+
+TEST_F(remote_server_test, PerformHandshakeResponseCoversRandomAndSignKeyFailureBranches)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+    std::thread runner([&pool]() { pool.run(); });
+
+    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
+    reality::server_fingerprint fp;
+    fp.cipher_suite = 0x1301;
+    fp.alpn = "h2";
+    server->set_certificate("fault.test", reality::construct_certificate({0x01, 0x02, 0x03}), fp, "fault-trace");
+
+    auto run_once = [&](const bool fail_rand, const bool fail_sign_key) -> std::pair<bool, std::error_code>
+    {
+        asio::ip::tcp::acceptor acceptor(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+        asio::ip::tcp::socket client_socket(pool.get_io_context());
+        client_socket.connect(acceptor.local_endpoint(), ec);
+        EXPECT_FALSE(ec);
+
+        auto server_socket = std::make_shared<asio::ip::tcp::socket>(pool.get_io_context());
+        acceptor.accept(*server_socket, ec);
+        EXPECT_FALSE(ec);
+
+        std::uint8_t peer_pub[32];
+        std::uint8_t peer_priv[32];
+        EXPECT_TRUE(reality::crypto_util::generate_x25519_keypair(peer_pub, peer_priv));
+
+        mux::client_hello_info info{};
+        info.sni = "fault.test";
+        info.session_id.assign(32, 0x12);
+        info.has_x25519_share = true;
+        info.x25519_pub.assign(peer_pub, peer_pub + 32);
+
+        mux::connection_context ctx;
+        ctx.conn_id(91);
+        ctx.trace_id("fault-branch");
+
+        if (fail_rand)
+        {
+            fail_next_rand_bytes();
+        }
+        if (fail_sign_key)
+        {
+            fail_next_ed25519_raw_private_key();
+        }
+
+        std::promise<std::pair<mux::remote_server::server_handshake_res, std::error_code>> done;
+        auto done_future = done.get_future();
+        asio::co_spawn(pool.get_io_context(),
+                       [server, server_socket, info, ctx, &done]() mutable -> asio::awaitable<void>
+                       {
+                           std::error_code hs_ec;
+                           reality::transcript trans;
+                           auto res = co_await server->perform_handshake_response(server_socket, info, trans, ctx, hs_ec);
+                           done.set_value({std::move(res), hs_ec});
+                           co_return;
+                       },
+                       asio::detached);
+
+        EXPECT_EQ(done_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+        auto [result, hs_ec] = done_future.get();
+        return {result.ok, hs_ec};
+    };
+
+    {
+        const auto [ok, hs_ec] = run_once(true, false);
+        EXPECT_FALSE(ok);
+        EXPECT_EQ(hs_ec, std::errc::operation_canceled);
+    }
+
+    {
+        const auto [ok, hs_ec] = run_once(false, true);
+        EXPECT_FALSE(ok);
+        EXPECT_EQ(hs_ec, asio::error::fault);
+    }
+
+    pool.stop();
+    runner.join();
+}
+
+TEST_F(remote_server_test, VerifyClientFinishedCoversPlaintextValidationBranches)
+{
+    auto run_case = [](const std::vector<std::uint8_t>& plaintext, const std::uint8_t inner_content_type) -> bool
+    {
+        asio::io_context io_context;
+        std::error_code ec;
+
+        asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+        asio::ip::tcp::socket writer(io_context);
+        writer.connect(acceptor.local_endpoint(), ec);
+        EXPECT_FALSE(ec);
+        auto reader = std::make_shared<asio::ip::tcp::socket>(io_context);
+        acceptor.accept(*reader, ec);
+        EXPECT_FALSE(ec);
+
+        const std::vector<std::uint8_t> key(16, 0x41);
+        const std::vector<std::uint8_t> iv(12, 0x62);
+        auto encrypted = reality::tls_record_layer::encrypt_record(EVP_aes_128_gcm(), key, iv, 0, plaintext, inner_content_type, ec);
+        EXPECT_FALSE(ec);
+        asio::write(writer, asio::buffer(encrypted), ec);
+        EXPECT_FALSE(ec);
+        writer.shutdown(asio::ip::tcp::socket::shutdown_send, ec);
+
+        mux::connection_context ctx;
+        ctx.conn_id(88);
+        ctx.trace_id("verify-client-finished");
+
+        reality::handshake_keys hs_keys;
+        hs_keys.client_handshake_traffic_secret.assign(32, 0x55);
+        reality::transcript trans;
+
+        bool ok = true;
+        std::error_code verify_ec;
+        asio::co_spawn(io_context,
+                       [&]() -> asio::awaitable<void>
+                       {
+                           ok = co_await mux::remote_server::verify_client_finished(
+                               reader, {key, iv}, hs_keys, trans, EVP_aes_128_gcm(), EVP_sha256(), ctx, verify_ec);
+                           co_return;
+                       },
+                       asio::detached);
+        io_context.run();
+        return ok;
+    };
+
+    EXPECT_FALSE(run_case({0x14, 0x00, 0x00, 0x00}, reality::kContentTypeApplicationData));
+    EXPECT_FALSE(run_case({0x14, 0x00, 0x00, 0x01, 0x00}, reality::kContentTypeHandshake));
+
+    std::vector<std::uint8_t> wrong_hmac(4 + 32, 0x00);
+    wrong_hmac[0] = 0x14;
+    wrong_hmac[3] = 0x20;
+    EXPECT_FALSE(run_case(wrong_hmac, reality::kContentTypeHandshake));
+}
+
+TEST_F(remote_server_test, DeriveApplicationTrafficKeysCoversFirstAndSecondDeriveFailure)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+
+    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
+
+    mux::remote_server::server_handshake_res sh_res{};
+    sh_res.cipher = EVP_aes_128_gcm();
+    sh_res.negotiated_md = EVP_sha256();
+    sh_res.hs_keys.master_secret.assign(32, 0x71);
+    sh_res.handshake_hash.assign(32, 0x72);
+
+    std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> c_app_keys;
+    std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> s_app_keys;
+
+    fail_hkdf_add_info_on_call(3);
+    EXPECT_FALSE(server->derive_application_traffic_keys(sh_res, c_app_keys, s_app_keys, ec));
+    EXPECT_TRUE(ec);
+
+    ec.clear();
+    fail_hkdf_add_info_on_call(5);
+    EXPECT_FALSE(server->derive_application_traffic_keys(sh_res, c_app_keys, s_app_keys, ec));
+    EXPECT_TRUE(ec);
+}
+
+TEST_F(remote_server_test, DeriveServerKeyShareCoversX25519DeriveFailureBranch)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+
+    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
+
+    std::uint8_t pub[32];
+    std::uint8_t priv[32];
+    ASSERT_TRUE(reality::crypto_util::generate_x25519_keypair(pub, priv));
+
+    mux::client_hello_info info{};
+    info.has_x25519_share = true;
+    info.x25519_pub.assign(32, 0x23);
+
+    mux::connection_context ctx;
+    std::vector<std::uint8_t> sh_shared;
+    std::vector<std::uint8_t> key_share_data;
+    std::uint16_t key_share_group = 0;
+
+    fail_next_pkey_derive();
+    EXPECT_FALSE(server->derive_server_key_share(info, pub, priv, ctx, sh_shared, key_share_data, key_share_group, ec));
+    EXPECT_TRUE(ec);
+}
+
+TEST_F(remote_server_test, StopCoversAcceptorCloseFailureBranch)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+    std::thread runner([&pool]() { pool.run(); });
+
+    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
+    server->start();
+
+    fail_next_close(EIO);
+    server->stop();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
     pool.stop();
     runner.join();
