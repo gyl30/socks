@@ -30,6 +30,7 @@ extern "C"
 #include "ip_matcher.h"
 #include "domain_matcher.h"
 #include "mux_stream.h"
+#include "test_util.h"
 #include "context_pool.h"
 #define private public
 #include "tproxy_udp_session.h"
@@ -37,6 +38,7 @@ extern "C"
 #undef private
 
 extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);
+extern "C" int __real_bind(int sockfd, const sockaddr* addr, socklen_t addrlen);
 extern "C" ssize_t __real_recvmsg(int sockfd, msghdr* msg, int flags);
 extern "C" int __real_socket(int domain, int type, int protocol);
 
@@ -59,6 +61,8 @@ std::atomic<int> g_fail_setsockopt_optname{-1};
 std::atomic<int> g_fail_setsockopt_errno{EPERM};
 std::atomic<bool> g_fail_socket_once{false};
 std::atomic<int> g_fail_socket_errno{EMFILE};
+std::atomic<bool> g_fail_bind_once{false};
+std::atomic<int> g_fail_bind_errno{EADDRINUSE};
 std::atomic<int> g_recvmsg_mode{static_cast<int>(wrapped_recvmsg_mode::kReal)};
 
 void reset_socket_wrappers()
@@ -70,6 +74,8 @@ void reset_socket_wrappers()
     g_fail_setsockopt_errno.store(EPERM, std::memory_order_release);
     g_fail_socket_once.store(false, std::memory_order_release);
     g_fail_socket_errno.store(EMFILE, std::memory_order_release);
+    g_fail_bind_once.store(false, std::memory_order_release);
+    g_fail_bind_errno.store(EADDRINUSE, std::memory_order_release);
     g_recvmsg_mode.store(static_cast<int>(wrapped_recvmsg_mode::kReal), std::memory_order_release);
 }
 
@@ -87,6 +93,12 @@ void fail_socket_once(const int err = EMFILE)
 {
     g_fail_socket_errno.store(err, std::memory_order_release);
     g_fail_socket_once.store(true, std::memory_order_release);
+}
+
+void fail_bind_once(const int err = EADDRINUSE)
+{
+    g_fail_bind_errno.store(err, std::memory_order_release);
+    g_fail_bind_once.store(true, std::memory_order_release);
 }
 
 void set_recvmsg_mode_once(const wrapped_recvmsg_mode mode) { g_recvmsg_mode.store(static_cast<int>(mode), std::memory_order_release); }
@@ -194,6 +206,19 @@ class direct_router : public mux::router
     }
 };
 
+class proxy_router final : public mux::router
+{
+   public:
+    proxy_router()
+    {
+        block_ip_matcher() = std::make_shared<mux::ip_matcher>();
+        direct_ip_matcher() = std::make_shared<mux::ip_matcher>();
+        proxy_domain_matcher() = std::make_shared<mux::domain_matcher>();
+        block_domain_matcher() = std::make_shared<mux::domain_matcher>();
+        direct_domain_matcher() = std::make_shared<mux::domain_matcher>();
+    }
+};
+
 class failing_load_router final : public mux::router
 {
    public:
@@ -240,6 +265,16 @@ extern "C" int __wrap_socket(int domain, int type, int protocol)
         return -1;
     }
     return __real_socket(domain, type, protocol);
+}
+
+extern "C" int __wrap_bind(int sockfd, const sockaddr* addr, socklen_t addrlen)
+{
+    if (g_fail_bind_once.exchange(false, std::memory_order_acq_rel))
+    {
+        errno = g_fail_bind_errno.load(std::memory_order_acquire);
+        return -1;
+    }
+    return __real_bind(sockfd, addr, addrlen);
 }
 
 extern "C" ssize_t __wrap_recvmsg(int sockfd, msghdr* msg, int flags)
@@ -482,6 +517,88 @@ TEST(TproxyUdpSessionTest, SendDirectIPv6AndCloseResetBranches)
 
     session->stop();
     ctx.poll();
+}
+
+TEST(TproxyUdpSessionTest, StartCoversBindFailureBranch)
+{
+    reset_socket_wrappers();
+
+    asio::io_context ctx;
+    auto router = std::make_shared<direct_router>();
+    mux::config cfg;
+    cfg.tproxy.mark = 0;
+    const asio::ip::udp::endpoint client_ep(asio::ip::make_address("127.0.0.1"), 12404);
+    auto session = std::make_shared<mux::tproxy_udp_session>(ctx, nullptr, router, nullptr, 8, cfg, client_ep);
+
+    fail_bind_once(EADDRINUSE);
+    session->start();
+    EXPECT_TRUE(session->direct_socket_.is_open());
+
+    session->stop();
+    ctx.poll();
+    reset_socket_wrappers();
+}
+
+TEST(TproxyUdpSessionTest, StopAndOnCloseCoverPartialStateBranches)
+{
+    asio::io_context ctx;
+    auto router = std::make_shared<direct_router>();
+    mux::config cfg;
+    cfg.tproxy.mark = 0;
+    const asio::ip::udp::endpoint client_ep(asio::ip::make_address("127.0.0.1"), 12405);
+    auto session = std::make_shared<mux::tproxy_udp_session>(ctx, nullptr, router, nullptr, 9, cfg, client_ep);
+
+    auto tunnel = std::make_shared<mux::mux_tunnel_impl<asio::ip::tcp::socket>>(
+        asio::ip::tcp::socket(ctx), ctx, mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 101);
+    auto stream = std::make_shared<mux::mux_stream>(13, tunnel->connection()->id(), "trace", tunnel->connection(), ctx);
+
+    session->tunnel_ = tunnel;
+    session->stream_.reset();
+    session->stop();
+    ctx.run();
+    ctx.restart();
+    EXPECT_EQ(session->stream_, nullptr);
+    EXPECT_TRUE(session->tunnel_.expired());
+
+    session->stream_ = stream;
+    session->tunnel_.reset();
+    session->on_close();
+    ctx.run();
+    ctx.restart();
+    EXPECT_EQ(session->stream_, nullptr);
+    EXPECT_TRUE(session->tunnel_.expired());
+}
+
+TEST(TproxyUdpSessionTest, ProxyStreamLifecycleCoversInstallCleanupAndReaderStart)
+{
+    asio::io_context ctx;
+    auto router = std::make_shared<proxy_router>();
+    mux::config cfg;
+    cfg.tproxy.mark = 0;
+    const asio::ip::udp::endpoint client_ep(asio::ip::make_address("127.0.0.1"), 12406);
+    auto session = std::make_shared<mux::tproxy_udp_session>(ctx, nullptr, router, nullptr, 10, cfg, client_ep);
+
+    auto tunnel = std::make_shared<mux::mux_tunnel_impl<asio::ip::tcp::socket>>(
+        asio::ip::tcp::socket(ctx), ctx, mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 102);
+    auto stream = std::make_shared<mux::mux_stream>(14, tunnel->connection()->id(), "trace", tunnel->connection(), ctx);
+
+    bool should_start_reader = false;
+    EXPECT_TRUE(session->install_proxy_stream(tunnel, stream, should_start_reader));
+    EXPECT_TRUE(should_start_reader);
+
+    session->stream_.reset();
+    session->tunnel_.reset();
+    session->proxy_reader_started_ = true;
+    should_start_reader = false;
+    EXPECT_TRUE(session->install_proxy_stream(tunnel, stream, should_start_reader));
+    EXPECT_FALSE(should_start_reader);
+
+    session->recv_channel_.close();
+    session->maybe_start_proxy_reader(true);
+    ctx.poll();
+    ctx.restart();
+
+    mux::test::run_awaitable_void(ctx, session->cleanup_proxy_stream(tunnel, stream));
 }
 
 TEST(TproxyClientTest, DisabledStartSetsStopFlag)
