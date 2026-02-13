@@ -28,6 +28,8 @@
 namespace mux
 {
 
+class mux_stream;
+
 enum class mux_connection_state : std::uint8_t
 {
     kConnected,
@@ -91,6 +93,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
 
     [[nodiscard]] bool can_accept_stream();
     [[nodiscard]] bool has_stream(std::uint32_t id);
+    [[nodiscard]] std::shared_ptr<mux_stream> create_stream(const std::string& trace_id = "");
 
    private:
     asio::awaitable<void> start_impl();

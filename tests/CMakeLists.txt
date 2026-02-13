@@ -91,6 +91,11 @@ target_link_options(
 )
 add_socks_test(reflect_test)
 add_socks_test(tls_key_schedule_test)
+target_link_options(
+    tls_key_schedule_test
+    PRIVATE
+        -Wl,--wrap=EVP_PKEY_derive
+)
 add_socks_test(socks_client_test)
 target_link_options(
     socks_client_test

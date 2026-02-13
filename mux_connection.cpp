@@ -34,6 +34,7 @@ extern "C"
 #include "statistics.h"
 #include "mux_protocol.h"
 #include "reality_core.h"
+#include "mux_stream.h"
 #include "mux_connection.h"
 
 namespace mux
@@ -713,6 +714,29 @@ bool mux_connection::has_stream(const std::uint32_t id)
                    has->set_value(self->has_stream_local(id));
                });
     return has_future.get();
+}
+
+std::shared_ptr<mux_stream> mux_connection::create_stream(const std::string& trace_id)
+{
+    if (!is_open())
+    {
+        return nullptr;
+    }
+    if (!can_accept_stream())
+    {
+        return nullptr;
+    }
+
+    std::string stream_trace_id = trace_id;
+    if (stream_trace_id.empty())
+    {
+        stream_trace_id = this->trace_id();
+    }
+
+    const std::uint32_t stream_id = acquire_next_id();
+    auto stream = std::make_shared<mux_stream>(stream_id, id(), std::move(stream_trace_id), shared_from_this(), io_context_);
+    register_stream(stream_id, stream);
+    return stream;
 }
 
 }    // namespace mux

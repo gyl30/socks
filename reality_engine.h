@@ -6,6 +6,7 @@
 #include <vector>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <system_error>
 
 #include <asio/error.hpp>
@@ -20,6 +21,8 @@ namespace mux
 class reality_engine
 {
    public:
+    using record_callback = std::function<void(std::uint8_t, std::span<const std::uint8_t>)>;
+
     static constexpr auto kInitialBufSize = 16 * 1024;
     static constexpr auto kMaxBufSize = 64 * 1024;
 
@@ -36,29 +39,7 @@ class reality_engine
 
     void commit_read(const std::size_t n) { rx_buf_->commit(n); }
 
-    template <typename Callback>
-    void process_available_records(std::error_code& ec, Callback&& callback)
-    {
-        ec.clear();
-        std::uint8_t content_type = 0;
-        std::size_t payload_len = 0;
-
-        while (try_decrypt_next_record(content_type, payload_len, ec))
-        {
-            if (ec)
-            {
-                return;
-            }
-
-            callback(content_type, std::span<const std::uint8_t>(scratch_buf_.data(), payload_len));
-
-            if (content_type == reality::kContentTypeAlert)
-            {
-                ec = asio::error::eof;
-                return;
-            }
-        }
-    }
+    void process_available_records(std::error_code& ec, const record_callback& callback);
 
     [[nodiscard]] std::span<const std::uint8_t> encrypt(const std::vector<std::uint8_t>& plaintext, std::error_code& ec);
 
