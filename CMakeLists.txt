@@ -47,14 +47,11 @@ set(SOCKS_SOURCES
     mux_connection.cpp
     remote_server.cpp
     socks_client.cpp
-    tproxy_client.cpp
     router.cpp
     socks_session.cpp
     tcp_socks_session.cpp
     udp_socks_session.cpp
-    tproxy_tcp_session.cpp
-    tproxy_udp_session.cpp
-    tproxy_udp_sender.cpp
+
     mux_dispatcher.cpp
     reality_messages.cpp
     tls_cipher_suite.cpp
@@ -83,6 +80,15 @@ set(SOCKS_SOURCES
     reality_auth.cpp
     monitor_server.cpp
 )
+
+if(LINUX)
+    list(APPEND SOCKS_SOURCES
+        tproxy_client.cpp
+        tproxy_tcp_session.cpp
+        tproxy_udp_session.cpp
+        tproxy_udp_sender.cpp
+    )
+endif()
 
 add_library(socks_core STATIC ${SOCKS_SOURCES})
 
