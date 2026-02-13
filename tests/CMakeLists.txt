@@ -135,6 +135,7 @@ target_link_options(
         -Wl,--wrap=EVP_PKEY_derive
         -Wl,--wrap=EVP_EncryptInit_ex
         -Wl,--wrap=socket
+        -Wl,--wrap=getsockname
 )
 add_socks_test(client_server_integration_test)
 add_socks_test(connection_pool_test)

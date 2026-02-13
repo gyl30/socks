@@ -47,6 +47,8 @@ std::atomic<bool> g_fail_encrypt_init_once{false};
 std::atomic<bool> g_fail_pkey_derive_once{false};
 std::atomic<bool> g_fail_socket_once{false};
 std::atomic<int> g_fail_socket_errno{EMFILE};
+std::atomic<bool> g_fail_getsockname_once{false};
+std::atomic<int> g_fail_getsockname_errno{ENOTSOCK};
 
 void fail_next_rand_bytes() { g_fail_rand_bytes_once.store(true, std::memory_order_release); }
 
@@ -64,6 +66,12 @@ void fail_next_socket(const int err)
     g_fail_socket_once.store(true, std::memory_order_release);
 }
 
+void fail_next_getsockname(const int err = ENOTSOCK)
+{
+    g_fail_getsockname_errno.store(err, std::memory_order_release);
+    g_fail_getsockname_once.store(true, std::memory_order_release);
+}
+
 extern "C" int __real_RAND_bytes(unsigned char* buf, int num);
 extern "C" int __real_EVP_PKEY_CTX_add1_hkdf_info(EVP_PKEY_CTX* ctx, const unsigned char* info, int infolen);
 extern "C" int __real_EVP_CIPHER_CTX_ctrl(EVP_CIPHER_CTX* ctx, int type, int arg, void* ptr);
@@ -71,6 +79,7 @@ extern "C" int __real_EVP_EncryptInit_ex(
     EVP_CIPHER_CTX* ctx, const EVP_CIPHER* type, ENGINE* impl, const unsigned char* key, const unsigned char* iv);
 extern "C" int __real_EVP_PKEY_derive(EVP_PKEY_CTX* ctx, unsigned char* key, size_t* keylen);
 extern "C" int __real_socket(int domain, int type, int protocol);
+extern "C" int __real_getsockname(int sockfd, sockaddr* addr, socklen_t* addrlen);
 
 extern "C" int __wrap_RAND_bytes(unsigned char* buf, int num)
 {
@@ -126,6 +135,16 @@ extern "C" int __wrap_socket(int domain, int type, int protocol)
         return -1;
     }
     return __real_socket(domain, type, protocol);
+}
+
+extern "C" int __wrap_getsockname(int sockfd, sockaddr* addr, socklen_t* addrlen)
+{
+    if (g_fail_getsockname_once.exchange(false, std::memory_order_acq_rel))
+    {
+        errno = g_fail_getsockname_errno.load(std::memory_order_acquire);
+        return -1;
+    }
+    return __real_getsockname(sockfd, addr, addrlen);
 }
 
 std::uint16_t pick_free_port()
@@ -1024,4 +1043,42 @@ TEST(ClientTunnelPoolWhiteboxTest, ProcessServerHelloCoversX25519DeriveFailure)
     io_context.run();
     EXPECT_FALSE(sh_res.ok);
     EXPECT_TRUE(hs_ec);
+}
+
+TEST(ClientTunnelPoolWhiteboxTest, TcpConnectSuccessCoversLocalEndpointFailureLogBranch)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+
+    asio::io_context io_context;
+    asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    const auto listen_port = acceptor.local_endpoint().port();
+
+    auto cfg = make_base_cfg();
+    cfg.outbound.host = "127.0.0.1";
+    cfg.outbound.port = listen_port;
+    cfg.reality.public_key = generate_public_key_hex();
+    auto tunnel_pool = std::make_shared<mux::client_tunnel_pool>(pool, cfg, 0);
+
+    std::shared_ptr<asio::ip::tcp::socket> accepted_peer = std::make_shared<asio::ip::tcp::socket>(io_context);
+    acceptor.async_accept(
+        *accepted_peer,
+        [&](const std::error_code&) {});
+
+    asio::ip::tcp::socket client_socket(io_context);
+    bool connect_ok = false;
+    std::error_code connect_ec;
+    fail_next_getsockname(ENOTSOCK);
+    asio::co_spawn(io_context,
+                   [&]() -> asio::awaitable<void>
+                   {
+                       connect_ok = co_await tunnel_pool->tcp_connect(io_context, client_socket, connect_ec);
+                       co_return;
+                   },
+                   asio::detached);
+
+    io_context.run();
+    EXPECT_TRUE(connect_ok);
+    EXPECT_FALSE(connect_ec);
 }
