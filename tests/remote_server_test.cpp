@@ -204,6 +204,23 @@ std::uint16_t pick_free_port()
     return acceptor.local_endpoint().port();
 }
 
+template <typename Predicate>
+bool wait_for_condition(Predicate predicate,
+                        const std::chrono::milliseconds timeout = std::chrono::milliseconds(1500),
+                        const std::chrono::milliseconds interval = std::chrono::milliseconds(10))
+{
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (std::chrono::steady_clock::now() < deadline)
+    {
+        if (predicate())
+        {
+            return true;
+        }
+        std::this_thread::sleep_for(interval);
+    }
+    return predicate();
+}
+
 }    // namespace
 
 class remote_server_test : public ::testing::Test
@@ -349,10 +366,10 @@ TEST_F(remote_server_test, AuthFailureTriggersFallback)
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
 
+    EXPECT_TRUE(wait_for_condition([&fallback_triggered]() { return fallback_triggered.load(); }));
     server->stop();
     pool.stop();
     pool_thread.join();
-    EXPECT_TRUE(fallback_triggered.load());
 }
 
 TEST_F(remote_server_test, AuthFailShortIdMismatch)
@@ -391,10 +408,10 @@ TEST_F(remote_server_test, AuthFailShortIdMismatch)
         std::this_thread::sleep_for(std::chrono::milliseconds(250));
     }
 
+    EXPECT_TRUE(wait_for_condition([&fallback_triggered]() { return fallback_triggered.load(); }));
     server->stop();
     pool.stop();
     pool_thread.join();
-    EXPECT_TRUE(fallback_triggered.load());
 }
 
 TEST_F(remote_server_test, ClockSkewDetected)
@@ -433,10 +450,10 @@ TEST_F(remote_server_test, ClockSkewDetected)
         std::this_thread::sleep_for(std::chrono::milliseconds(250));
     }
 
+    EXPECT_TRUE(wait_for_condition([&fallback_triggered]() { return fallback_triggered.load(); }));
     server->stop();
     pool.stop();
     pool_thread.join();
-    EXPECT_TRUE(fallback_triggered.load());
 }
 
 TEST_F(remote_server_test, AuthFailInvalidTLSHeader)
@@ -473,10 +490,10 @@ TEST_F(remote_server_test, AuthFailInvalidTLSHeader)
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
 
+    EXPECT_TRUE(wait_for_condition([&fallback_triggered]() { return fallback_triggered.load(); }));
     server->stop();
     pool.stop();
     pool_thread.join();
-    EXPECT_TRUE(fallback_triggered.load());
 }
 
 TEST_F(remote_server_test, AuthFailBufferTooShort)
@@ -515,10 +532,10 @@ TEST_F(remote_server_test, AuthFailBufferTooShort)
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
 
+    EXPECT_TRUE(wait_for_condition([&fallback_triggered]() { return fallback_triggered.load(); }));
     server->stop();
     pool.stop();
     pool_thread.join();
-    EXPECT_TRUE(fallback_triggered.load());
 }
 
 TEST_F(remote_server_test, FallbackResolveFail)
@@ -606,10 +623,10 @@ TEST_F(remote_server_test, InvalidAuthConfigPath)
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
 
+    EXPECT_TRUE(wait_for_condition([&fallback_triggered]() { return fallback_triggered.load(); }));
     server->stop();
     pool.stop();
     pool_thread.join();
-    EXPECT_TRUE(fallback_triggered.load());
 }
 
 TEST_F(remote_server_test, MultiSNIFallback)
@@ -667,7 +684,8 @@ TEST_F(remote_server_test, MultiSNIFallback)
     trigger_fallback("www.a.com");
     trigger_fallback("www.b.com");
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    EXPECT_TRUE(wait_for_condition([&fallback_a_count]() { return fallback_a_count.load() == 1; }));
+    EXPECT_TRUE(wait_for_condition([&fallback_b_count]() { return fallback_b_count.load() == 1; }));
 
     server->stop();
     pool.stop();
@@ -709,14 +727,13 @@ TEST_F(remote_server_test, WildcardStarFallback)
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
     }
 
+    EXPECT_TRUE(wait_for_condition([&fallback_triggered]() { return fallback_triggered.load(); }));
     std::error_code close_ec;
     fallback_acceptor.cancel(close_ec);
     fallback_acceptor.close(close_ec);
     server->stop();
     pool.stop();
     pool_thread.join();
-
-    EXPECT_TRUE(fallback_triggered.load());
 }
 
 TEST_F(remote_server_test, RealityDestFallbackUsedWhenNoFallbackEntries)
@@ -752,6 +769,7 @@ TEST_F(remote_server_test, RealityDestFallbackUsedWhenNoFallbackEntries)
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
     }
 
+    EXPECT_TRUE(wait_for_condition([&dest_triggered]() { return dest_triggered.load(); }));
     std::error_code close_ec;
     dest_acceptor.cancel(close_ec);
     dest_acceptor.close(close_ec);
@@ -813,6 +831,8 @@ TEST_F(remote_server_test, ExactSniFallbackPreferredOverRealityDest)
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
     }
 
+    EXPECT_TRUE(wait_for_condition([&exact_count]() { return exact_count.load() == 1; }));
+    EXPECT_TRUE(wait_for_condition([&dest_count]() { return dest_count.load() == 0; }));
     std::error_code close_ec;
     exact_acceptor.cancel(close_ec);
     exact_acceptor.close(close_ec);
