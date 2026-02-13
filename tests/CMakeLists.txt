@@ -100,6 +100,11 @@ target_compile_definitions(mux_heartbeat_test PRIVATE SPDLOG_ACTIVE_LEVEL=0)
 add_socks_test(mux_dispatcher_test)
 add_socks_test(replay_cache_test)
 add_socks_test(upstream_test)
+target_link_options(
+    upstream_test
+    PRIVATE
+        -Wl,--wrap=setsockopt
+)
 add_socks_test(cert_fetcher_test)
 add_socks_test(key_rotator_test)
 add_socks_test(socks_client_mock_test)
