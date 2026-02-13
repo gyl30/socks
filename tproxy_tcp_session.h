@@ -38,6 +38,7 @@ class tproxy_tcp_session : public std::enable_shared_from_this<tproxy_tcp_sessio
     void start();
 
    private:
+    [[nodiscard]] static asio::awaitable<void> run_detached(std::shared_ptr<tproxy_tcp_session> self);
     [[nodiscard]] asio::awaitable<void> run();
     [[nodiscard]] asio::awaitable<std::pair<route_type, std::shared_ptr<upstream>>> select_backend(const std::string& host);
     [[nodiscard]] asio::awaitable<bool> connect_backend(const std::shared_ptr<upstream>& backend,
@@ -56,6 +57,8 @@ class tproxy_tcp_session : public std::enable_shared_from_this<tproxy_tcp_sessio
     [[nodiscard]] asio::awaitable<bool> write_backend_chunk_to_client(const std::vector<std::uint8_t>& buf, std::uint32_t n);
     void shutdown_client_send();
 
+    [[nodiscard]] static asio::awaitable<void> idle_watchdog_detached(std::shared_ptr<tproxy_tcp_session> self,
+                                                                      std::shared_ptr<upstream> backend);
     [[nodiscard]] asio::awaitable<void> idle_watchdog(std::shared_ptr<upstream> backend);
     [[nodiscard]] asio::awaitable<void> close_backend_once(const std::shared_ptr<upstream>& backend);
 
