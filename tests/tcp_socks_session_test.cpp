@@ -1,6 +1,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <chrono>
 #include <algorithm>
 #include <cstdint>
 #include <utility>
@@ -9,6 +10,7 @@
 #include <gtest/gtest.h>
 #include <asio/io_context.hpp>
 #include <asio/ip/tcp.hpp>
+#include <asio/steady_timer.hpp>
 
 #define private public
 #include "tcp_socks_session.h"
@@ -67,6 +69,24 @@ class fake_upstream final : public mux::upstream
     }
 };
 
+class configured_router final : public mux::router
+{
+   public:
+    configured_router()
+    {
+        block_ip_matcher() = std::make_shared<mux::ip_matcher>();
+        direct_ip_matcher() = std::make_shared<mux::ip_matcher>();
+        proxy_domain_matcher() = std::make_shared<mux::domain_matcher>();
+        block_domain_matcher() = std::make_shared<mux::domain_matcher>();
+        direct_domain_matcher() = std::make_shared<mux::domain_matcher>();
+    }
+
+    void add_block_domain(const std::string& domain)
+    {
+        block_domain_matcher()->add(domain);
+    }
+};
+
 struct tcp_socket_pair
 {
     asio::ip::tcp::socket client;
@@ -92,6 +112,18 @@ std::shared_ptr<mux::tcp_socks_session> make_tcp_session(asio::io_context& io_co
     timeout_cfg.idle = 1;
     return std::make_shared<mux::tcp_socks_session>(
         std::move(socket), io_context, std::move(tunnel), std::move(router), 1, timeout_cfg);
+}
+
+std::shared_ptr<mux::tcp_socks_session> make_tcp_session_with_router(asio::io_context& io_context,
+                                                                     asio::ip::tcp::socket socket,
+                                                                     std::shared_ptr<mux::router> router,
+                                                                     const std::uint32_t sid = 1,
+                                                                     const std::uint16_t idle_timeout_sec = 1)
+{
+    mux::config::timeout_t timeout_cfg{};
+    timeout_cfg.idle = idle_timeout_sec;
+    return std::make_shared<mux::tcp_socks_session>(
+        std::move(socket), io_context, nullptr, std::move(router), sid, timeout_cfg);
 }
 
 TEST(TcpSocksSessionTest, CreateBackendReturnsNullForBlockRoute)
@@ -228,6 +260,163 @@ TEST(TcpSocksSessionTest, UpstreamToClientWritesDataThenStopsOnError)
     asio::read(pair.client, asio::buffer(buf));
     EXPECT_EQ(buf[0], 0xAA);
     EXPECT_EQ(buf[1], 0xBB);
+}
+
+TEST(TcpSocksSessionTest, RunReturnsNotAllowedWhenRouteBlocked)
+{
+    asio::io_context io_context;
+    auto pair = make_tcp_socket_pair(io_context);
+    auto router = std::make_shared<configured_router>();
+    router->add_block_domain("blocked.test");
+    auto session = make_tcp_session_with_router(io_context, std::move(pair.server), router);
+
+    mux::test::run_awaitable_void(io_context, session->run("blocked.test", 80));
+
+    std::uint8_t err[10] = {0};
+    asio::read(pair.client, asio::buffer(err));
+    EXPECT_EQ(err[0], socks::kVer);
+    EXPECT_EQ(err[1], socks::kRepNotAllowed);
+}
+
+TEST(TcpSocksSessionTest, RunReturnsHostUnreachWhenDirectConnectFails)
+{
+    asio::io_context io_context;
+    auto pair = make_tcp_socket_pair(io_context);
+    auto router = std::make_shared<configured_router>();
+    auto session = make_tcp_session_with_router(io_context, std::move(pair.server), router);
+
+    mux::test::run_awaitable_void(io_context, session->run("non-existent.invalid", 80));
+
+    std::uint8_t err[10] = {0};
+    asio::read(pair.client, asio::buffer(err));
+    EXPECT_EQ(err[0], socks::kVer);
+    EXPECT_EQ(err[1], socks::kRepHostUnreach);
+}
+
+TEST(TcpSocksSessionTest, StartSpawnsRunAndReturnsErrorCodeForBlockedRoute)
+{
+    asio::io_context io_context;
+    auto pair = make_tcp_socket_pair(io_context);
+    auto router = std::make_shared<configured_router>();
+    router->add_block_domain("blocked.test");
+    auto session = make_tcp_session_with_router(io_context, std::move(pair.server), router);
+
+    session->start("blocked.test", 80);
+    io_context.run();
+    io_context.restart();
+
+    std::uint8_t err[10] = {0};
+    asio::read(pair.client, asio::buffer(err));
+    EXPECT_EQ(err[0], socks::kVer);
+    EXPECT_EQ(err[1], socks::kRepNotAllowed);
+}
+
+TEST(TcpSocksSessionTest, CloseClientSocketHandlesOpenAndClosedSockets)
+{
+    asio::io_context io_context;
+    auto pair = make_tcp_socket_pair(io_context);
+    auto session = make_tcp_session(io_context, std::move(pair.server));
+
+    EXPECT_TRUE(session->socket_.is_open());
+    session->close_client_socket();
+    EXPECT_FALSE(session->socket_.is_open());
+
+    session->close_client_socket();
+    EXPECT_FALSE(session->socket_.is_open());
+}
+
+TEST(TcpSocksSessionTest, ReplyErrorWritesSocksErrorResponse)
+{
+    asio::io_context io_context;
+    auto pair = make_tcp_socket_pair(io_context);
+    auto session = make_tcp_session(io_context, std::move(pair.server));
+
+    mux::test::run_awaitable_void(io_context, session->reply_error(socks::kRepConnRefused));
+
+    std::uint8_t err[10] = {0};
+    asio::read(pair.client, asio::buffer(err));
+    EXPECT_EQ(err[0], socks::kVer);
+    EXPECT_EQ(err[1], socks::kRepConnRefused);
+}
+
+TEST(TcpSocksSessionTest, IdleWatchdogClosesBackendAndSocketWhenTimedOut)
+{
+    asio::io_context io_context;
+    auto pair = make_tcp_socket_pair(io_context);
+    auto session = make_tcp_session(io_context, std::move(pair.server));
+    auto backend = std::make_shared<fake_upstream>();
+
+    session->last_activity_time_ms_.store(0, std::memory_order_release);
+    mux::test::run_awaitable_void(io_context, session->idle_watchdog(backend));
+
+    EXPECT_EQ(backend->close_calls, 1U);
+    EXPECT_FALSE(session->socket_.is_open());
+}
+
+TEST(TcpSocksSessionTest, IdleWatchdogBreaksWhenTimerCanceled)
+{
+    asio::io_context io_context;
+    auto pair = make_tcp_socket_pair(io_context);
+    auto session = make_tcp_session(io_context, std::move(pair.server));
+    auto backend = std::make_shared<fake_upstream>();
+
+    asio::steady_timer cancel_timer(io_context);
+    cancel_timer.expires_after(std::chrono::milliseconds(10));
+    cancel_timer.async_wait([session](const std::error_code&)
+                            {
+                                session->idle_timer_.cancel();
+                            });
+
+    mux::test::run_awaitable_void(io_context, session->idle_watchdog(backend));
+
+    EXPECT_EQ(backend->close_calls, 0U);
+    EXPECT_TRUE(session->socket_.is_open());
+}
+
+TEST(TcpSocksSessionTest, StartIdleWatchdogSpawnsAndHandlesCancel)
+{
+    asio::io_context io_context;
+    auto pair = make_tcp_socket_pair(io_context);
+    auto session = make_tcp_session(io_context, std::move(pair.server));
+    auto backend = std::make_shared<fake_upstream>();
+
+    asio::steady_timer cancel_timer(io_context);
+    cancel_timer.expires_after(std::chrono::milliseconds(10));
+    cancel_timer.async_wait([session](const std::error_code&)
+                            {
+                                session->idle_timer_.cancel();
+                                session->socket_.close();
+                            });
+
+    session->start_idle_watchdog(backend);
+    io_context.run();
+    io_context.restart();
+
+    EXPECT_EQ(backend->close_calls, 0U);
+}
+
+TEST(TcpSocksSessionTest, IdleWatchdogReturnsImmediatelyWhenSocketClosed)
+{
+    asio::io_context io_context;
+    auto pair = make_tcp_socket_pair(io_context);
+    auto session = make_tcp_session(io_context, std::move(pair.server));
+    auto backend = std::make_shared<fake_upstream>();
+    session->socket_.close();
+
+    mux::test::run_awaitable_void(io_context, session->idle_watchdog(backend));
+    EXPECT_EQ(backend->close_calls, 0U);
+}
+
+TEST(TcpSocksSessionTest, UpstreamToClientStopsWhenClientWriteFails)
+{
+    asio::io_context io_context;
+    auto pair = make_tcp_socket_pair(io_context);
+    auto session = make_tcp_session(io_context, std::move(pair.server));
+    auto backend = std::make_shared<fake_upstream>();
+    backend->read_sequence.push_back({std::error_code{}, {0xAA}});
+    session->socket_.close();
+
+    mux::test::run_awaitable_void(io_context, session->upstream_to_client(backend));
 }
 
 }    // namespace
