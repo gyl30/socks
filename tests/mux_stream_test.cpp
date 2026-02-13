@@ -34,6 +34,18 @@ TEST_F(mux_stream_test, WriteSomeSuccess)
     EXPECT_FALSE(ec);
 }
 
+TEST_F(mux_stream_test, WriteSomeFailurePropagatesError)
+{
+    auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
+    auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx());
+
+    const std::vector<std::uint8_t> data = {1, 2, 3, 4};
+    EXPECT_CALL(*mock_conn, mock_send_async(1, mux::kCmdDat, data)).WillOnce(::testing::Return(asio::error::broken_pipe));
+
+    const auto ec = mux::test::run_awaitable(ctx(), stream->async_write_some(data.data(), data.size()));
+    EXPECT_EQ(ec, asio::error::broken_pipe);
+}
+
 TEST_F(mux_stream_test, ReadSomeSuccess)
 {
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
@@ -57,6 +69,26 @@ TEST_F(mux_stream_test, CloseSendsFin)
     mux::test::run_awaitable_void(ctx(), stream->close());
 }
 
+TEST_F(mux_stream_test, CloseIsIdempotent)
+{
+    auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
+    auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx());
+
+    EXPECT_CALL(*mock_conn, mock_send_async(1, mux::kCmdFin, std::vector<std::uint8_t>())).Times(1).WillOnce(::testing::Return(std::error_code()));
+
+    mux::test::run_awaitable_void(ctx(), stream->close());
+    mux::test::run_awaitable_void(ctx(), stream->close());
+}
+
+TEST_F(mux_stream_test, CloseWithoutConnection)
+{
+    auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
+    auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx());
+
+    mock_conn.reset();
+    mux::test::run_awaitable_void(ctx(), stream->close());
+}
+
 TEST_F(mux_stream_test, OnCloseUnblocksReader)
 {
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
@@ -67,6 +99,25 @@ TEST_F(mux_stream_test, OnCloseUnblocksReader)
     const auto [ec, read_data] = mux::test::run_awaitable(ctx(), stream->async_read_some());
 
     EXPECT_EQ(ec, asio::error::eof);
+}
+
+TEST_F(mux_stream_test, OnCloseSecondCallDoesNotInjectExtraEOF)
+{
+    auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
+    auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx());
+
+    const std::vector<std::uint8_t> payload = {42};
+    stream->on_close();
+    stream->on_close();
+    stream->on_data(payload);
+
+    const auto [first_ec, first_data] = mux::test::run_awaitable(ctx(), stream->async_read_some());
+    EXPECT_EQ(first_ec, asio::error::eof);
+    EXPECT_TRUE(first_data.empty());
+
+    const auto [second_ec, second_data] = mux::test::run_awaitable(ctx(), stream->async_read_some());
+    EXPECT_FALSE(second_ec);
+    EXPECT_EQ(second_data, payload);
 }
 
 TEST_F(mux_stream_test, WriteAfterClose)
@@ -103,4 +154,17 @@ TEST_F(mux_stream_test, OnReset)
 
     const auto [ec, read_data] = mux::test::run_awaitable(ctx(), stream->async_read_some());
     EXPECT_TRUE(ec);
+}
+
+TEST_F(mux_stream_test, OnDataIgnoredAfterReset)
+{
+    auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
+    auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx());
+
+    stream->on_reset();
+    stream->on_data({1, 2, 3});
+
+    const auto [ec, read_data] = mux::test::run_awaitable(ctx(), stream->async_read_some());
+    EXPECT_TRUE(ec);
+    EXPECT_TRUE(read_data.empty());
 }
