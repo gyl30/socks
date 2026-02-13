@@ -62,6 +62,8 @@ target_link_options(
         -Wl,--wrap=EVP_PKEY_CTX_new_id
         -Wl,--wrap=EVP_PKEY_keygen
         -Wl,--wrap=EVP_PKEY_get_octet_string_param
+        -Wl,--wrap=EVP_MD_CTX_new
+        -Wl,--wrap=EVP_DigestSign
 )
 add_socks_test(tls_cipher_suite_test)
 add_socks_test(tls_record_validation_test)
