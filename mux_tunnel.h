@@ -50,29 +50,29 @@ class mux_tunnel_impl : public std::enable_shared_from_this<mux_tunnel_impl<stre
         {
             return false;
         }
-        return connection_->try_register_stream(id, std::move(stream));
+        if (connection_->try_register_stream(id, std::move(stream)))
+        {
+            return true;
+        }
+        return false;
     }
 
     asio::awaitable<void> run() const
     {
-        if (connection_ != nullptr)
+        if (connection_ == nullptr)
         {
-            co_await connection_->start();
+            co_return;
         }
+        co_await connection_->start();
     }
 
     [[nodiscard]] std::shared_ptr<mux_stream> create_stream(const std::string& trace_id = "")
     {
-        if (connection_ == nullptr || !connection_->is_open() || !connection_->can_accept_stream())
+        if (connection_ == nullptr)
         {
             return nullptr;
         }
-
-        std::uint32_t id = connection_->acquire_next_id();
-        auto stream = std::make_shared<mux_stream>(
-            id, connection_->id(), trace_id.empty() ? connection_->trace_id() : trace_id, connection_, connection_->io_context());
-        connection_->register_stream(id, stream);
-        return stream;
+        return connection_->create_stream(trace_id);
     }
 
     void remove_stream(std::uint32_t id) const
