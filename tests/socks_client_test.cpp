@@ -4,9 +4,16 @@
 #include <thread>
 #include <system_error>
 #include <future>
+#include <atomic>
+#include <cerrno>
 
 #include <gtest/gtest.h>
+#include <asio/awaitable.hpp>
+#include <asio/co_spawn.hpp>
+#include <asio/detached.hpp>
 #include <asio/ip/tcp.hpp>
+
+#include <sys/socket.h>
 
 #include "context_pool.h"
 #define private public
@@ -17,6 +24,52 @@ using mux::io_context_pool;
 
 namespace
 {
+
+std::atomic<bool> g_fail_socket_once{false};
+std::atomic<int> g_fail_socket_errno{EMFILE};
+std::atomic<bool> g_fail_reuse_setsockopt_once{false};
+std::atomic<int> g_fail_reuse_setsockopt_errno{EPERM};
+
+void fail_next_socket(const int err)
+{
+    g_fail_socket_errno.store(err, std::memory_order_release);
+    g_fail_socket_once.store(true, std::memory_order_release);
+}
+
+void fail_next_reuse_setsockopt(const int err)
+{
+    g_fail_reuse_setsockopt_errno.store(err, std::memory_order_release);
+    g_fail_reuse_setsockopt_once.store(true, std::memory_order_release);
+}
+
+extern "C" int __real_socket(int domain, int type, int protocol);
+extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);
+
+extern "C" int __wrap_socket(int domain, int type, int protocol)
+{
+    if (g_fail_socket_once.exchange(false, std::memory_order_acq_rel))
+    {
+        errno = g_fail_socket_errno.load(std::memory_order_acquire);
+        return -1;
+    }
+    return __real_socket(domain, type, protocol);
+}
+
+extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)
+{
+    if (level == SOL_SOCKET && optname == SO_REUSEADDR && g_fail_reuse_setsockopt_once.exchange(false, std::memory_order_acq_rel))
+    {
+        errno = g_fail_reuse_setsockopt_errno.load(std::memory_order_acquire);
+        return -1;
+    }
+    return __real_setsockopt(sockfd, level, optname, optval, optlen);
+}
+
+class failing_router final : public mux::router
+{
+   public:
+    bool load() override { return false; }
+};
 
 bool wait_for_listen_port(const std::shared_ptr<mux::socks_client>& client)
 {
@@ -48,6 +101,22 @@ auto run_on_io_context(asio::io_context& io_context, Func&& fn) -> decltype(fn()
 std::size_t session_count(asio::io_context& io_context, const std::shared_ptr<mux::socks_client>& client)
 {
     return run_on_io_context(io_context, [client]() { return client->sessions_.size(); });
+}
+
+std::future<void> spawn_accept_local_loop(asio::io_context& io_context, const std::shared_ptr<mux::socks_client>& client)
+{
+    auto done = std::make_shared<std::promise<void>>();
+    auto future = done->get_future();
+    asio::co_spawn(
+        io_context,
+        [client, done]() -> asio::awaitable<void>
+        {
+            co_await client->accept_local_loop();
+            done->set_value();
+            co_return;
+        },
+        asio::detached);
+    return future;
 }
 
 }    // namespace
@@ -344,5 +413,82 @@ TEST(LocalClientTest, NoTunnelSelectionAndSessionPrunePath)
     if (pool_thread.joinable())
     {
         pool_thread.join();
+    }
+}
+
+TEST(LocalClientTest, RouterLoadFailureStopsEarly)
+{
+    std::error_code ec;
+    io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+
+    mux::config cfg;
+    cfg.outbound.host = "127.0.0.1";
+    cfg.outbound.port = 1;
+    cfg.socks.host = "127.0.0.1";
+    cfg.socks.port = 0;
+    cfg.reality.public_key = std::string(64, 'a');
+    cfg.reality.sni = "example.com";
+
+    const auto client = std::make_shared<mux::socks_client>(pool, cfg);
+    client->router_ = std::make_shared<failing_router>();
+    client->start();
+    EXPECT_TRUE(client->stop_.load(std::memory_order_acquire));
+    client->stop();
+}
+
+TEST(LocalClientTest, AcceptLoopSetupHandlesSocketOpenFailure)
+{
+    std::error_code ec;
+    io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+
+    mux::config cfg;
+    cfg.outbound.host = "127.0.0.1";
+    cfg.outbound.port = 1;
+    cfg.socks.host = "127.0.0.1";
+    cfg.socks.port = 0;
+    cfg.reality.public_key = std::string(64, 'a');
+    cfg.reality.sni = "example.com";
+    const auto client = std::make_shared<mux::socks_client>(pool, cfg);
+
+    fail_next_socket(EMFILE);
+    auto done = spawn_accept_local_loop(pool.get_io_context(), client);
+    std::thread runner([&pool]() { pool.run(); });
+    EXPECT_EQ(done.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+
+    client->stop();
+    pool.stop();
+    if (runner.joinable())
+    {
+        runner.join();
+    }
+}
+
+TEST(LocalClientTest, AcceptLoopSetupHandlesReuseAddressFailure)
+{
+    std::error_code ec;
+    io_context_pool pool(1, ec);
+    ASSERT_FALSE(ec);
+
+    mux::config cfg;
+    cfg.outbound.host = "127.0.0.1";
+    cfg.outbound.port = 1;
+    cfg.socks.host = "127.0.0.1";
+    cfg.socks.port = 0;
+    cfg.reality.public_key = std::string(64, 'a');
+    cfg.reality.sni = "example.com";
+    const auto client = std::make_shared<mux::socks_client>(pool, cfg);
+
+    fail_next_reuse_setsockopt(EPERM);
+    auto done = spawn_accept_local_loop(pool.get_io_context(), client);
+    std::thread runner([&pool]() { pool.run(); });
+    EXPECT_EQ(done.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+
+    client->stop();
+    pool.stop();
+    if (runner.joinable())
+    {
+        runner.join();
     }
 }
