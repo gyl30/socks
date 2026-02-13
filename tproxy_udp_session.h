@@ -52,6 +52,8 @@ class tproxy_udp_session : public mux_stream_interface, public std::enable_share
 
    private:
     static std::uint64_t now_ms();
+    [[nodiscard]] static asio::awaitable<void> direct_read_loop_detached(std::shared_ptr<tproxy_udp_session> self);
+    [[nodiscard]] static asio::awaitable<void> proxy_read_loop_detached(std::shared_ptr<tproxy_udp_session> self);
 
     void touch();
     asio::awaitable<void> handle_packet_inner(asio::ip::udp::endpoint dst_ep, std::vector<std::uint8_t> data);

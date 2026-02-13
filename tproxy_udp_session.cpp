@@ -98,7 +98,12 @@ void tproxy_udp_session::start()
         return;
     }
 
-    asio::co_spawn(io_context_, [self = shared_from_this()]() -> asio::awaitable<void> { co_await self->direct_read_loop(); }, asio::detached);
+    asio::co_spawn(io_context_, direct_read_loop_detached(shared_from_this()), asio::detached);
+}
+
+asio::awaitable<void> tproxy_udp_session::direct_read_loop_detached(std::shared_ptr<tproxy_udp_session> self)
+{
+    co_await self->direct_read_loop();
 }
 
 asio::awaitable<void> tproxy_udp_session::handle_packet(const asio::ip::udp::endpoint& dst_ep, const std::uint8_t* data, const std::size_t len)
@@ -286,7 +291,12 @@ void tproxy_udp_session::maybe_start_proxy_reader(const bool should_start_reader
     {
         return;
     }
-    asio::co_spawn(io_context_, [self = shared_from_this()]() -> asio::awaitable<void> { co_await self->proxy_read_loop(); }, asio::detached);
+    asio::co_spawn(io_context_, proxy_read_loop_detached(shared_from_this()), asio::detached);
+}
+
+asio::awaitable<void> tproxy_udp_session::proxy_read_loop_detached(std::shared_ptr<tproxy_udp_session> self)
+{
+    co_await self->proxy_read_loop();
 }
 
 asio::awaitable<bool> tproxy_udp_session::ensure_proxy_stream()
