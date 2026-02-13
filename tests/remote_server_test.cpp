@@ -1078,6 +1078,14 @@ TEST_F(remote_server_test, ConstructorCoversShortIdAndDestParsingBranches)
     const auto target = server_ipv6_dest->resolve_certificate_target(info);
     EXPECT_EQ(target.fetch_host, "127.0.0.1");
     EXPECT_EQ(target.fetch_port, static_cast<std::uint16_t>(443));
+
+    auto cfg_port_suffix = make_server_cfg(pick_free_port(), {{"www.port.test", "127.0.0.1", "443abc"}}, "0102030405060708");
+    auto server_port_suffix = std::make_shared<mux::remote_server>(pool, cfg_port_suffix);
+    mux::client_hello_info suffix_info{};
+    suffix_info.sni = "www.port.test";
+    const auto suffix_target = server_port_suffix->resolve_certificate_target(suffix_info);
+    EXPECT_EQ(suffix_target.fetch_host, "127.0.0.1");
+    EXPECT_EQ(suffix_target.fetch_port, static_cast<std::uint16_t>(443));
 }
 
 TEST_F(remote_server_test, ParseClientHelloAndTranscriptGuardBranches)
