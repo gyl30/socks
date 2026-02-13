@@ -136,6 +136,39 @@ TEST(RemoteUdpSessionTest, SetupUdpSocketSuccessAndCloseSocket)
     EXPECT_FALSE(session->udp_socket_.is_open());
 }
 
+TEST(RemoteUdpSessionTest, CloseSocketNoopWhenAlreadyClosed)
+{
+    asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    auto session = make_session(io_context, conn, 131);
+
+    EXPECT_FALSE(session->udp_socket_.is_open());
+    session->close_socket();
+    EXPECT_FALSE(session->udp_socket_.is_open());
+}
+
+TEST(RemoteUdpSessionTest, LogUdpLocalEndpointHandlesClosedSocket)
+{
+    asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    auto session = make_session(io_context, conn, 132);
+
+    session->log_udp_local_endpoint();
+    SUCCEED();
+}
+
+TEST(RemoteUdpSessionTest, CleanupAfterStopWithoutManagerClosesSocket)
+{
+    asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    auto session = make_session(io_context, conn, 133);
+    ASSERT_TRUE(mux::test::run_awaitable(io_context, session->setup_udp_socket(conn)));
+    ASSERT_TRUE(session->udp_socket_.is_open());
+
+    session->cleanup_after_stop();
+    EXPECT_FALSE(session->udp_socket_.is_open());
+}
+
 TEST(RemoteUdpSessionTest, ForwardMuxPayloadRejectsInvalidPackets)
 {
     asio::io_context io_context;
