@@ -335,7 +335,15 @@ bool verify_auth_payload_fields(const std::optional<reality::auth_payload>& auth
         return true;
     }
 
-    if (CRYPTO_memcmp(auth->short_id.data(), short_id_bytes.data(), short_id_bytes.size()) != 0)
+    if (short_id_bytes.size() > reality::kShortIdMaxLen)
+    {
+        LOG_CTX_ERROR(ctx, "{} auth fail short id length invalid {}", log_event::kAuth, short_id_bytes.size());
+        return false;
+    }
+
+    std::array<std::uint8_t, reality::kShortIdMaxLen> expected_short_id = {};
+    std::copy(short_id_bytes.begin(), short_id_bytes.end(), expected_short_id.begin());
+    if (CRYPTO_memcmp(auth->short_id.data(), expected_short_id.data(), expected_short_id.size()) != 0)
     {
         auto& stats = statistics::instance();
         stats.inc_auth_failures();
