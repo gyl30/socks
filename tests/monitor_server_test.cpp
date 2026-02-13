@@ -122,6 +122,10 @@ class monitor_server_env
 
     ~monitor_server_env()
     {
+        if (server_ != nullptr)
+        {
+            server_->stop();
+        }
         ioc_.stop();
         if (thread_.joinable())
         {
@@ -273,6 +277,40 @@ TEST(MonitorServerTest, ConstructorHandlesListenFailure)
     monitor_fail_guard guard(monitor_fail_mode::kListen);
     auto server = std::make_shared<monitor_server>(ioc, 0, std::string("token"), 10);
     ASSERT_NE(server, nullptr);
+}
+
+TEST(MonitorServerTest, StopClosesAcceptorAndRejectsNewConnections)
+{
+    const auto port = pick_free_port();
+    asio::io_context ioc;
+    auto server = std::make_shared<monitor_server>(ioc, port, std::string(), 10);
+    ASSERT_NE(server, nullptr);
+    server->start();
+
+    std::thread runner([&ioc]() { ioc.run(); });
+
+    const auto before_stop = request_with_retry(port, "metrics\n");
+    EXPECT_NE(before_stop.find("socks_uptime_seconds "), std::string::npos);
+
+    server->stop();
+
+    bool rejected = false;
+    for (int i = 0; i < 30; ++i)
+    {
+        if (read_response(port, "metrics\n").empty())
+        {
+            rejected = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    EXPECT_TRUE(rejected);
+
+    ioc.stop();
+    if (runner.joinable())
+    {
+        runner.join();
+    }
 }
 
 }    // namespace mux
