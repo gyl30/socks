@@ -280,6 +280,24 @@ TEST(MonitorServerTest, TokenRequiredAndRateLimit)
     EXPECT_NE(after_window.find("socks_uptime_seconds "), std::string::npos);
 }
 
+TEST(MonitorServerTest, RejectsTokenSubstringBypass)
+{
+    const auto port = pick_free_port();
+    monitor_server_env env(port, std::string("secret"));
+
+    const auto contains_secret_without_token_key = read_response(port, "foo=secret\n");
+    EXPECT_TRUE(contains_secret_without_token_key.empty());
+
+    const auto prefixed_token_key = read_response(port, "xtoken=secret\n");
+    EXPECT_TRUE(prefixed_token_key.empty());
+
+    const auto wrong_token_value = read_response(port, "token=secretx\n");
+    EXPECT_TRUE(wrong_token_value.empty());
+
+    const auto authed = request_with_retry(port, "token=secret\n");
+    EXPECT_NE(authed.find("socks_total_connections "), std::string::npos);
+}
+
 TEST(MonitorServerTest, EscapesPrometheusLabels)
 {
     auto& stats = statistics::instance();
