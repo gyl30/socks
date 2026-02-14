@@ -791,7 +791,12 @@ remote_server::remote_server(io_context_pool& pool, const config& cfg)
         return;
     }
     private_key_ = reality::crypto_util::hex_to_bytes(cfg.reality.private_key);
-    auth_config_valid_ = parse_hex_to_bytes(cfg.reality.short_id, short_id_bytes_, reality::kShortIdMaxLen, "short id");
+    if (private_key_.size() != 32)
+    {
+        LOG_ERROR("private key length invalid {}", private_key_.size());
+        auth_config_valid_ = false;
+    }
+    auth_config_valid_ = parse_hex_to_bytes(cfg.reality.short_id, short_id_bytes_, reality::kShortIdMaxLen, "short id") && auth_config_valid_;
     fallback_type_ = cfg.reality.type;
     if (!fallback_type_.empty() && fallback_type_ != "tcp")
     {

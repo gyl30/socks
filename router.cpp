@@ -1,37 +1,108 @@
+#include <filesystem>
+#include <optional>
+#include <string>
+#include <vector>
+#include <cstdlib>
+
 #include "router.h"
 
 namespace mux
 {
 
-bool router::load()
+namespace
 {
-    block_ip_matcher_ = std::make_shared<ip_matcher>();
-    if (!block_ip_matcher_->load("block_ip.txt"))
+
+std::vector<std::string> rule_search_dirs()
+{
+    std::vector<std::string> dirs;
+    if (const char* env_dir = std::getenv("SOCKS_CONFIG_DIR"); env_dir != nullptr && env_dir[0] != '\0')
     {
-        LOG_WARN("load block ip rule failed");
+        dirs.emplace_back(env_dir);
     }
-    direct_ip_matcher_ = std::make_shared<ip_matcher>();
-    if (!direct_ip_matcher_->load("direct_ip.txt"))
+    dirs.emplace_back("config");
+    dirs.emplace_back("../config");
+    dirs.emplace_back("../../config");
+    dirs.emplace_back(".");
+    return dirs;
+}
+
+std::optional<std::string> resolve_rule_path(const std::string& filename)
+{
+    namespace fs = std::filesystem;
+    if (filename.find('/') != std::string::npos || filename.find('\\') != std::string::npos)
     {
-        LOG_WARN("load direct ip rule failed");
-    }
-    proxy_domain_matcher_ = std::make_shared<domain_matcher>();
-    if (!proxy_domain_matcher_->load("proxy_domain.txt"))
-    {
-        LOG_WARN("load proxy domain rule failed");
-    }
-    block_domain_matcher_ = std::make_shared<domain_matcher>();
-    if (!block_domain_matcher_->load("block_domain.txt"))
-    {
-        LOG_WARN("load block domain rule failed");
+        if (fs::exists(filename))
+        {
+            return filename;
+        }
+        return std::nullopt;
     }
 
-    direct_domain_matcher_ = std::make_shared<domain_matcher>();
-    if (!direct_domain_matcher_->load("direct_domain.txt"))
+    for (const auto& dir : rule_search_dirs())
     {
-        LOG_WARN("load direct domain rule failed");
+        fs::path path = (dir == ".") ? fs::path(filename) : fs::path(dir) / filename;
+        if (fs::exists(path) && fs::is_regular_file(path))
+        {
+            return path.string();
+        }
+    }
+    return std::nullopt;
+}
+
+bool load_ip_rule(const std::shared_ptr<ip_matcher>& matcher, const std::string& filename, const char* rule_name)
+{
+    const auto path = resolve_rule_path(filename);
+    if (!path.has_value())
+    {
+        LOG_WARN("load {} rule failed file not found {}", rule_name, filename);
+        return false;
+    }
+    if (!matcher->load(*path))
+    {
+        LOG_WARN("load {} rule failed {}", rule_name, *path);
+        return false;
     }
     return true;
+}
+
+bool load_domain_rule(const std::shared_ptr<domain_matcher>& matcher, const std::string& filename, const char* rule_name)
+{
+    const auto path = resolve_rule_path(filename);
+    if (!path.has_value())
+    {
+        LOG_WARN("load {} rule failed file not found {}", rule_name, filename);
+        return false;
+    }
+    if (!matcher->load(*path))
+    {
+        LOG_WARN("load {} rule failed {}", rule_name, *path);
+        return false;
+    }
+    return true;
+}
+
+}    // namespace
+
+bool router::load()
+{
+    bool load_ok = true;
+
+    block_ip_matcher_ = std::make_shared<ip_matcher>();
+    load_ok = load_ip_rule(block_ip_matcher_, "block_ip.txt", "block ip") && load_ok;
+
+    direct_ip_matcher_ = std::make_shared<ip_matcher>();
+    load_ok = load_ip_rule(direct_ip_matcher_, "direct_ip.txt", "direct ip") && load_ok;
+
+    proxy_domain_matcher_ = std::make_shared<domain_matcher>();
+    load_ok = load_domain_rule(proxy_domain_matcher_, "proxy_domain.txt", "proxy domain") && load_ok;
+
+    block_domain_matcher_ = std::make_shared<domain_matcher>();
+    load_ok = load_domain_rule(block_domain_matcher_, "block_domain.txt", "block domain") && load_ok;
+
+    direct_domain_matcher_ = std::make_shared<domain_matcher>();
+    load_ok = load_domain_rule(direct_domain_matcher_, "direct_domain.txt", "direct domain") && load_ok;
+
+    return load_ok;
 }
 
 asio::awaitable<route_type> router::decide(const connection_context& ctx, const std::string& host) const
