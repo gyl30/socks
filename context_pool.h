@@ -17,7 +17,7 @@ namespace mux
 class io_context_pool
 {
    public:
-    explicit io_context_pool(std::size_t pool_size, std::error_code& ec);
+    explicit io_context_pool(std::size_t pool_size);
 
     io_context_pool(const io_context_pool&) = delete;
     io_context_pool& operator=(const io_context_pool&) = delete;

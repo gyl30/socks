@@ -122,7 +122,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     void finalize_stop_state();
     [[nodiscard]] bool should_stop_read(const std::error_code& read_ec, std::size_t n) const;
     void update_read_statistics(std::size_t n);
-    void process_decrypted_records(std::error_code& decrypt_ec);
+    std::expected<void, std::error_code> process_decrypted_records();
     [[nodiscard]] bool has_dispatch_failure(const std::error_code& decrypt_ec) const;
     [[nodiscard]] asio::awaitable<bool> read_and_dispatch_once();
 
