@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <optional>
 #include <system_error>
 
@@ -15,11 +16,11 @@ struct sockaddr_storage;
 namespace mux::net
 {
 
-[[nodiscard]] bool set_socket_mark(int fd, std::uint32_t mark, std::error_code& ec);
+[[nodiscard]] std::expected<void, std::error_code> set_socket_mark(int fd, std::uint32_t mark);
 
-[[nodiscard]] bool set_socket_transparent(int fd, bool ipv6, std::error_code& ec);
+[[nodiscard]] std::expected<void, std::error_code> set_socket_transparent(int fd, bool ipv6);
 
-[[nodiscard]] bool set_socket_recv_origdst(int fd, bool ipv6, std::error_code& ec);
+[[nodiscard]] std::expected<void, std::error_code> set_socket_recv_origdst(int fd, bool ipv6);
 
 [[nodiscard]] asio::ip::address normalize_address(const asio::ip::address& addr);
 

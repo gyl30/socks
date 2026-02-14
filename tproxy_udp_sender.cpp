@@ -143,10 +143,9 @@ void tproxy_udp_sender::set_reuse_address_option(const std::shared_ptr<asio::ip:
 
 bool tproxy_udp_sender::set_transparent_option(const std::shared_ptr<asio::ip::udp::socket>& socket, const bool ipv6)
 {
-    std::error_code trans_ec;
-    if (!net::set_socket_transparent(socket->native_handle(), ipv6, trans_ec))
+    if (auto r = net::set_socket_transparent(socket->native_handle(), ipv6); !r)
     {
-        LOG_WARN("tproxy udp transparent failed {}", trans_ec.message());
+        LOG_WARN("tproxy udp transparent failed {}", r.error().message());
         return false;
     }
     return true;
@@ -158,10 +157,9 @@ void tproxy_udp_sender::apply_socket_mark(const std::shared_ptr<asio::ip::udp::s
     {
         return;
     }
-    std::error_code mark_ec;
-    if (!net::set_socket_mark(socket->native_handle(), mark_, mark_ec))
+    if (auto r = net::set_socket_mark(socket->native_handle(), mark_); !r)
     {
-        LOG_WARN("tproxy udp set mark failed {}", mark_ec.message());
+        LOG_WARN("tproxy udp set mark failed {}", r.error().message());
     }
 }
 

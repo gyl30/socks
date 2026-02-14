@@ -91,9 +91,7 @@ class remote_server_mux_test : public ::testing::Test
 
 TEST_F(remote_server_mux_test, ProcessTcpConnectRequest)
 {
-    std::error_code ec;
-    mux::io_context_pool pool(2, ec);
-    ASSERT_FALSE(ec);
+    mux::io_context_pool pool(2);
     scoped_pool sp(pool);
 
     auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(0));
@@ -152,9 +150,7 @@ TEST_F(remote_server_mux_test, ProcessTcpConnectRequest)
 
 TEST_F(remote_server_mux_test, ProcessUdpAssociateRequest)
 {
-    std::error_code ec;
-    mux::io_context_pool pool(2, ec);
-    ASSERT_FALSE(ec);
+    mux::io_context_pool pool(2);
     scoped_pool sp(pool);
 
     auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(0));
@@ -211,9 +207,7 @@ TEST_F(remote_server_mux_test, ProcessUdpAssociateRequest)
 
 TEST_F(remote_server_mux_test, TargetConnectFail)
 {
-    std::error_code ec;
-    mux::io_context_pool pool(2, ec);
-    ASSERT_FALSE(ec);
+    mux::io_context_pool pool(2);
     scoped_pool sp(pool);
 
     auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(0));
@@ -268,9 +262,7 @@ TEST_F(remote_server_mux_test, TargetConnectFail)
 
 TEST_F(remote_server_mux_test, TargetResolveFail)
 {
-    std::error_code ec;
-    mux::io_context_pool pool(2, ec);
-    ASSERT_FALSE(ec);
+    mux::io_context_pool pool(2);
     scoped_pool sp(pool);
 
     auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(0));

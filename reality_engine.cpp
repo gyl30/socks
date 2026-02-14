@@ -21,25 +21,24 @@ reality_engine::reality_engine(std::vector<std::uint8_t> r_key,
     tx_buf_.reserve(kMaxBufSize);
 }
 
-std::span<const std::uint8_t> reality_engine::encrypt(const std::vector<std::uint8_t>& plaintext, std::error_code& ec)
+std::expected<std::span<const std::uint8_t>, std::error_code> reality_engine::encrypt(const std::vector<std::uint8_t>& plaintext)
 {
-    ec.clear();
     tx_buf_.clear();
 
     if (plaintext.empty())
     {
-        return {};
+        return std::span<const std::uint8_t>{};
     }
-    reality::tls_record_layer::encrypt_record_append(
-        encrypt_ctx_, cipher_, write_key_, write_iv_, write_seq_, plaintext, reality::kContentTypeApplicationData, tx_buf_, ec);
-    if (ec)
+    auto r = reality::tls_record_layer::encrypt_record_append(
+        encrypt_ctx_, cipher_, write_key_, write_iv_, write_seq_, plaintext, reality::kContentTypeApplicationData, tx_buf_);
+    if (!r)
     {
-        return {};
+        return std::unexpected(r.error());
     }
 
     write_seq_++;
 
-    return {tx_buf_.data(), tx_buf_.size()};
+    return std::span<const std::uint8_t>{tx_buf_.data(), tx_buf_.size()};
 }
 
 void reality_engine::process_available_records(std::error_code& ec, const record_callback& callback)
@@ -83,13 +82,16 @@ bool reality_engine::try_decrypt_next_record(std::uint8_t& content_type, std::si
 
     const std::span<const std::uint8_t> record_data(p, frame_size);
 
-    const std::size_t decrypted_len = reality::tls_record_layer::decrypt_record(
-        decrypt_ctx_, cipher_, read_key_, read_iv_, read_seq_, record_data, std::span<std::uint8_t>(scratch_buf_), content_type, ec);
+    auto decrypted = reality::tls_record_layer::decrypt_record(
+        decrypt_ctx_, cipher_, read_key_, read_iv_, read_seq_, record_data, std::span<std::uint8_t>(scratch_buf_), content_type);
 
-    if (ec)
+    if (!decrypted)
     {
+        ec = decrypted.error();
         return true;
     }
+
+    const std::size_t decrypted_len = *decrypted;
 
     read_seq_++;
     rx_buf_->consume(frame_size);

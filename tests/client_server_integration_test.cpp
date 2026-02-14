@@ -137,8 +137,8 @@ bool wait_for_socks_listen(const std::uint16_t socks_port, const int attempts = 
 TEST_F(integration_test, FullHandshakeAndMux)
 {
     std::error_code ec;
-    mux::io_context_pool pool(2, ec);
-    ASSERT_FALSE(ec);
+    mux::io_context_pool pool(2);
+
 
     const std::uint16_t server_port = 18844;
     const std::uint16_t local_socks_port = 11081;
@@ -205,8 +205,8 @@ TEST_F(integration_test, FullHandshakeAndMux)
 TEST_F(integration_test, FullDataTransfer)
 {
     std::error_code ec;
-    mux::io_context_pool pool(2, ec);
-    ASSERT_FALSE(ec);
+    mux::io_context_pool pool(2);
+
 
     auto echo_acceptor = std::make_shared<asio::ip::tcp::acceptor>(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
     const std::uint16_t echo_port = echo_acceptor->local_endpoint().port();
@@ -339,8 +339,8 @@ TEST_F(integration_test, FullDataTransfer)
 TEST_F(integration_test, SocksRejectsUnsupportedMethod)
 {
     std::error_code ec;
-    mux::io_context_pool pool(2, ec);
-    ASSERT_FALSE(ec);
+    mux::io_context_pool pool(2);
+
 
     const auto server_port = pick_free_tcp_port(pool.get_io_context());
     const auto local_socks_port = pick_free_tcp_port(pool.get_io_context());
@@ -375,8 +375,8 @@ TEST_F(integration_test, SocksRejectsUnsupportedMethod)
 TEST_F(integration_test, SocksUnsupportedCommandReturnsCmdNotSupported)
 {
     std::error_code ec;
-    mux::io_context_pool pool(2, ec);
-    ASSERT_FALSE(ec);
+    mux::io_context_pool pool(2);
+
 
     const auto server_port = pick_free_tcp_port(pool.get_io_context());
     const auto local_socks_port = pick_free_tcp_port(pool.get_io_context());
@@ -421,8 +421,8 @@ TEST_F(integration_test, SocksUnsupportedCommandReturnsCmdNotSupported)
 TEST_F(integration_test, SocksConnectClosedPortReturnsFailure)
 {
     std::error_code ec;
-    mux::io_context_pool pool(2, ec);
-    ASSERT_FALSE(ec);
+    mux::io_context_pool pool(2);
+
 
     const auto server_port = pick_free_tcp_port(pool.get_io_context());
     const auto local_socks_port = pick_free_tcp_port(pool.get_io_context());
