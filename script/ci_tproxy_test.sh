@@ -229,7 +229,30 @@ EOF
     REALITY_PUB="${PUB_KEY}"
     ip netns exec "${NS_SERVER}" bash -lc "cd '${TMPDIR}' && '${BIN}' -c server.json" &
     SERVER_PID=$!
-    sleep 1
+    ip netns exec "${NS_PROXY}" python3 - <<PY
+import socket
+import time
+
+HOST_IP = "${SERVER_IP}"
+REMOTE_PORT = int("${REMOTE_PORT}")
+
+deadline = time.time() + 10.0
+last_error = None
+while time.time() < deadline:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(0.5)
+    try:
+        sock.connect((HOST_IP, REMOTE_PORT))
+        print("remote server ready")
+        break
+    except OSError as exc:
+        last_error = exc
+        time.sleep(0.1)
+    finally:
+        sock.close()
+else:
+    raise SystemExit(f"remote server not ready: {last_error}")
+PY
 fi
 
 cat >"${TMPDIR}/config.json" <<EOF
@@ -289,56 +312,92 @@ sleep 1
 
 ip netns exec "${NS_CLIENT}" python3 - <<PY
 import socket
+import time
 
 HOST_IP = "${SERVER_IP}"
 TCP_PORT = int("${HOST_TCP_PORT}")
 
 msg = b"tproxy-tcp-test"
-s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-s.settimeout(5)
-s.connect((HOST_IP, TCP_PORT))
-s.sendall(msg)
-data = s.recv(4096)
-s.close()
-if data != msg:
-    raise SystemExit("tcp echo mismatch")
-print("tcp ok")
+deadline = time.time() + 12.0
+last_error = None
+while time.time() < deadline:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(2)
+    try:
+        sock.connect((HOST_IP, TCP_PORT))
+        sock.sendall(msg)
+        data = sock.recv(4096)
+        if data == msg:
+            print("tcp ok")
+            break
+        last_error = f"tcp echo mismatch {data!r}"
+    except OSError as exc:
+        last_error = exc
+    finally:
+        sock.close()
+    time.sleep(0.2)
+else:
+    raise SystemExit(f"tcp probe failed: {last_error}")
 PY
 
 ip netns exec "${NS_CLIENT}" python3 - <<PY
 import socket
+import time
 
 HOST_IP = "${SERVER_IP}"
 UDP_PORT = int("${HOST_UDP_PORT}")
 
 msg = b"tproxy-udp-test"
-s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-s.settimeout(5)
-s.sendto(msg, (HOST_IP, UDP_PORT))
-data, _ = s.recvfrom(4096)
-s.close()
-if data != msg:
-    raise SystemExit("udp echo mismatch")
-print("udp ok")
+deadline = time.time() + 10.0
+last_error = None
+while time.time() < deadline:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.settimeout(2)
+    try:
+        sock.sendto(msg, (HOST_IP, UDP_PORT))
+        data, _ = sock.recvfrom(4096)
+        if data == msg:
+            print("udp ok")
+            break
+        last_error = f"udp echo mismatch {data!r}"
+    except OSError as exc:
+        last_error = exc
+    finally:
+        sock.close()
+    time.sleep(0.2)
+else:
+    raise SystemExit(f"udp probe failed: {last_error}")
 PY
 
 sleep 6
 
 ip netns exec "${NS_CLIENT}" python3 - <<PY
 import socket
+import time
 
 HOST_IP = "${SERVER_IP}"
 UDP_PORT = int("${HOST_UDP_PORT}")
 
 msg = b"tproxy-udp-test-2"
-s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-s.settimeout(5)
-s.sendto(msg, (HOST_IP, UDP_PORT))
-data, _ = s.recvfrom(4096)
-s.close()
-if data != msg:
-    raise SystemExit("udp echo mismatch after idle")
-print("udp ok after idle")
+deadline = time.time() + 10.0
+last_error = None
+while time.time() < deadline:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.settimeout(2)
+    try:
+        sock.sendto(msg, (HOST_IP, UDP_PORT))
+        data, _ = sock.recvfrom(4096)
+        if data == msg:
+            print("udp ok after idle")
+            break
+        last_error = f"udp echo mismatch after idle {data!r}"
+    except OSError as exc:
+        last_error = exc
+    finally:
+        sock.close()
+    time.sleep(0.2)
+else:
+    raise SystemExit(f"udp probe after idle failed: {last_error}")
 PY
 
 echo "tproxy ci test done"

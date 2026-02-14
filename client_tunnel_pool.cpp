@@ -728,11 +728,6 @@ std::expected<std::vector<std::uint8_t>, std::error_code> derive_server_hello_sh
     return std::move(*hs_shared_result);
 }
 
-std::pair<bool, std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>> make_handshake_loop_fail_result()
-{
-    return std::make_pair(false, std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>{});
-}
-
 asio::awaitable<std::expected<void, std::error_code>> process_handshake_record(asio::ip::tcp::socket& socket,
                                                const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& s_hs_keys,
                                                reality::transcript& trans,

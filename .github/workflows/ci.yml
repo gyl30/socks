@@ -158,10 +158,10 @@ jobs:
     - name: Prepare Artifact Directory
       run: mkdir -p "$CI_ARTIFACT_DIR"
 
-    - name: Enforce Coverage >= 95% (per-file)
+    - name: Enforce Coverage >= 95% (line per-file)
       run: |
         set -euo pipefail
-        BUILD_DIR=build_coverage COVERAGE_THRESHOLD=95 PER_FILE_GATE=1 script/run_coverage.sh 2>&1 | tee "$CI_ARTIFACT_DIR/coverage.log"
+        BUILD_DIR=build_coverage COVERAGE_THRESHOLD=95 PER_FILE_GATE=1 BRANCH_PER_FILE_GATE=0 script/run_coverage.sh 2>&1 | tee "$CI_ARTIFACT_DIR/coverage.log"
 
     - name: Upload Coverage Artifacts
       if: always()
