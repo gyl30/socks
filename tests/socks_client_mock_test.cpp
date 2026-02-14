@@ -49,15 +49,15 @@ TEST(LocalClientMockTest, HandshakeFailurePaths)
         std::thread server_thread(
             [&]()
             {
-                try
+                std::error_code accept_ec;
+                tcp::socket socket(server_ctx);
+                acceptor.accept(socket, accept_ec);
+                if (!accept_ec)
                 {
-                    tcp::socket socket = acceptor.accept();
-                    asio::write(socket, asio::buffer(data_to_send));
+                    std::error_code write_ec;
+                    (void)asio::write(socket, asio::buffer(data_to_send), write_ec);
 
                     std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                }
-                catch (...)
-                {
                 }
             });
 
