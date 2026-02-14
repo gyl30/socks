@@ -37,6 +37,8 @@ def parse_args():
     parser.add_argument("--build-dir", default="./build", help="Build directory that contains the socks binary.")
     parser.add_argument("--socks-bin", default="./socks", help="Path to socks binary relative to --build-dir.")
     parser.add_argument("--traffic-count", type=int, default=5, help="Number of extra short SOCKS connections.")
+    parser.add_argument("--server-ready-timeout", type=int, default=20, help="Timeout seconds waiting for server inbound to become ready.")
+    parser.add_argument("--client-ready-timeout", type=int, default=90, help="Timeout seconds waiting for client socks to become ready.")
     return parser.parse_args()
 
 
@@ -225,7 +227,7 @@ def analyze_valgrind_log(path, display_name):
     return False
 
 
-def run_valgrind_test(traffic_count):
+def run_valgrind_test(traffic_count, server_ready_timeout, client_ready_timeout):
     log_info("Starting Valgrind Memory Test...")
 
     echo_port = pick_free_port()
@@ -261,10 +263,10 @@ def run_valgrind_test(traffic_count):
     write_json(f"{BUILD_DIR}/val_client.json", client_cfg)
 
     sp, s_vlog = start_socks_process_valgrind("val_server.json", f"{BUILD_DIR}/val_server_stdout.log", "server")
-    wait_for_tcp_ready("127.0.0.1", server_port, 15, "server inbound", sp)
+    wait_for_tcp_ready("127.0.0.1", server_port, server_ready_timeout, "server inbound", sp)
 
     cp, c_vlog = start_socks_process_valgrind("val_client.json", f"{BUILD_DIR}/val_client_stdout.log", "client")
-    wait_for_tcp_ready("127.0.0.1", client_socks_port, 20, "client socks", cp)
+    wait_for_tcp_ready("127.0.0.1", client_socks_port, client_ready_timeout, "client socks", cp)
 
     success = True
 
@@ -319,5 +321,5 @@ if __name__ == "__main__":
     BUILD_DIR = args.build_dir
     SOCKS_BIN = args.socks_bin
 
-    ok = run_valgrind_test(args.traffic_count)
+    ok = run_valgrind_test(args.traffic_count, args.server_ready_timeout, args.client_ready_timeout)
     sys.exit(0 if ok else 1)
