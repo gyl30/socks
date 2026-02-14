@@ -889,11 +889,7 @@ std::shared_ptr<mux_stream> mux_connection::create_stream(const std::string& tra
 
     const std::uint32_t stream_id = acquire_next_id();
     auto stream = std::make_shared<mux_stream>(stream_id, id(), std::move(stream_trace_id), shared_from_this(), io_context_);
-    if (!try_register_stream(stream_id, stream))
-    {
-        LOG_WARN("mux {} create stream {} register failed", cid_, stream_id);
-        return nullptr;
-    }
+    register_stream(stream_id, stream);
     return stream;
 }
 
