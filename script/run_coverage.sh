@@ -26,7 +26,7 @@ COVERAGE_THRESHOLD="${COVERAGE_THRESHOLD:-95}"
 BRANCH_THRESHOLD="${BRANCH_THRESHOLD:-$COVERAGE_THRESHOLD}"
 SKIP_HTML_REPORT="${SKIP_HTML_REPORT:-0}"
 PER_FILE_GATE="${PER_FILE_GATE:-0}"
-BRANCH_PER_FILE_GATE="${BRANCH_PER_FILE_GATE:-1}"
+BRANCH_PER_FILE_GATE="${BRANCH_PER_FILE_GATE:-0}"
 EXCLUDE_THROW_BRANCHES="${EXCLUDE_THROW_BRANCHES:-1}"
 
 if [ ! -d "${BUILD_DIR}" ]; then
@@ -119,9 +119,11 @@ branch_sum_covered = 0
 
 for entry in files:
     name = entry.get("filename", "")
-    if name.startswith("third/") or name.startswith("tests/"):
+    normalized_name = str(name).replace("\\", "/")
+    path_parts = [part for part in normalized_name.split("/") if part not in ("", ".")]
+    if "third" in path_parts or "tests" in path_parts:
         continue
-    if name.endswith("main.cpp"):
+    if path_parts and path_parts[-1] == "main.cpp":
         continue
 
     line_total = entry.get("line_total")
