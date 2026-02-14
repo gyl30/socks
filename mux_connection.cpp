@@ -1,6 +1,8 @@
 #include <span>
 #include <atomic>
 #include <chrono>
+#include <exception>
+#include <future>
 #include <memory>
 #include <random>
 #include <ranges>
@@ -101,49 +103,54 @@ timeout_snapshot collect_timeout_snapshot(const std::atomic<std::uint64_t>& last
 template <typename Fn>
 bool run_sync_bool_query(asio::io_context& io_context, Fn&& fn)
 {
-    constexpr int kPending = 0;
-    constexpr int kFalse = 1;
-    constexpr int kTrue = 2;
+    if (io_context.stopped())
+    {
+        return false;
+    }
 
-    auto result = std::make_shared<std::atomic<int>>(kPending);
+    std::promise<bool> promise;
+    auto future = promise.get_future();
     asio::post(
         io_context,
-        [result, fn = std::forward<Fn>(fn)]() mutable
+        [promise = std::move(promise), fn = std::forward<Fn>(fn)]() mutable
         {
-            result->store(fn() ? kTrue : kFalse, std::memory_order_release);
+            try
+            {
+                promise.set_value(fn());
+            }
+            catch (...)
+            {
+                promise.set_exception(std::current_exception());
+            }
         });
-
-    while (true)
-    {
-        const int value = result->load(std::memory_order_acquire);
-        if (value == kTrue)
-        {
-            return true;
-        }
-        if (value == kFalse)
-        {
-            return false;
-        }
-        std::this_thread::yield();
-    }
+    return future.get();
 }
 
 template <typename Fn>
 void run_sync_void_query(asio::io_context& io_context, Fn&& fn)
 {
-    auto done = std::make_shared<std::atomic<bool>>(false);
+    if (io_context.stopped())
+    {
+        return;
+    }
+
+    std::promise<void> promise;
+    auto future = promise.get_future();
     asio::post(
         io_context,
-        [done, fn = std::forward<Fn>(fn)]() mutable
+        [promise = std::move(promise), fn = std::forward<Fn>(fn)]() mutable
         {
-            fn();
-            done->store(true, std::memory_order_release);
+            try
+            {
+                fn();
+                promise.set_value();
+            }
+            catch (...)
+            {
+                promise.set_exception(std::current_exception());
+            }
         });
-
-    while (!done->load(std::memory_order_acquire))
-    {
-        std::this_thread::yield();
-    }
+    future.get();
 }
 
 asio::awaitable<void> wait_draining_delay(asio::steady_timer& timer, const std::uint32_t delay_seconds, const std::uint32_t cid)

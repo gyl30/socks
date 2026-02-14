@@ -834,7 +834,12 @@ client_tunnel_pool::client_tunnel_pool(io_context_pool& pool, const config& cfg,
       heartbeat_config_(cfg.heartbeat)
 {
     server_pub_key_ = reality::crypto_util::hex_to_bytes(cfg.reality.public_key);
-    auth_config_valid_ = parse_hex_to_bytes(cfg.reality.short_id, short_id_bytes_, reality::kShortIdMaxLen, "short id");
+    if (server_pub_key_.size() != 32)
+    {
+        LOG_ERROR("server public key length invalid {}", server_pub_key_.size());
+        auth_config_valid_ = false;
+    }
+    auth_config_valid_ = parse_hex_to_bytes(cfg.reality.short_id, short_id_bytes_, reality::kShortIdMaxLen, "short id") && auth_config_valid_;
     if (!parse_fingerprint_type(cfg.reality.fingerprint, fingerprint_type_))
     {
         LOG_ERROR("fingerprint invalid");
@@ -1002,20 +1007,20 @@ std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> client_tunnel_pool::buil
 {
     const std::size_t key_len = (handshake_ret.cipher_suite == 0x1302 || handshake_ret.cipher_suite == 0x1303) ? constants::crypto::kKeyLen256
                                                                                                                    : constants::crypto::kKeyLen128;
-    std::error_code ec;
     auto c_app_keys =
         reality::tls_key_schedule::derive_traffic_keys(handshake_ret.c_app_secret, key_len, constants::crypto::kIvLen, handshake_ret.md);
     auto s_app_keys =
         reality::tls_key_schedule::derive_traffic_keys(handshake_ret.s_app_secret, key_len, constants::crypto::kIvLen, handshake_ret.md);
     if (!c_app_keys || !s_app_keys)
     {
-        LOG_WARN("derive app traffic keys failed");
+        LOG_ERROR("derive app traffic keys failed");
+        return nullptr;
     }
 
-    reality_engine re(s_app_keys ? s_app_keys->first : std::vector<std::uint8_t>{},
-                      s_app_keys ? s_app_keys->second : std::vector<std::uint8_t>{},
-                      c_app_keys ? c_app_keys->first : std::vector<std::uint8_t>{},
-                      c_app_keys ? c_app_keys->second : std::vector<std::uint8_t>{},
+    reality_engine re(s_app_keys->first,
+                      s_app_keys->second,
+                      c_app_keys->first,
+                      c_app_keys->second,
                       handshake_ret.cipher);
     return std::make_shared<mux_tunnel_impl<asio::ip::tcp::socket>>(
         std::move(socket), io_context, std::move(re), true, cid, trace_id, timeout_config_, limits_config_, heartbeat_config_);
@@ -1063,6 +1068,12 @@ asio::awaitable<bool> client_tunnel_pool::establish_tunnel_for_connection(
     LOG_CTX_INFO(ctx, "{} handshake success cipher 0x{:04x}", log_event::kHandshake, handshake_ret.cipher_suite);
 
     tunnel = build_tunnel(std::move(*socket), io_context, cid, handshake_ret, trace_id);
+    if (tunnel == nullptr)
+    {
+        const auto derive_ec = std::make_error_code(std::errc::protocol_error);
+        co_await handle_connection_failure(index, socket, derive_ec, "derive app keys", io_context);
+        co_return false;
+    }
     co_return true;
 }
 
