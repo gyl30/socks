@@ -62,6 +62,24 @@
 
 `fallbacks`：SNI 伪装回退列表（`sni` / `host` / `port`）。
 
+## 测试脚本参数
+
+`script/valgrind_test.py` 支持以下关键参数：
+
+- `--traffic-count`：附加短连接探测次数，默认 `5`。
+- `--server-ready-timeout`：等待服务端入站端口就绪超时秒数，默认 `20`。
+- `--client-ready-timeout`：等待客户端 socks 端口就绪超时秒数，默认 `90`。
+
+CI 中建议显式传入超时参数，避免不同执行机性能差异导致偶发超时：
+
+```bash
+python3 script/valgrind_test.py \
+  --build-dir build_valgrind \
+  --socks-bin ./socks \
+  --server-ready-timeout 30 \
+  --client-ready-timeout 120
+```
+
 ## 推荐默认安全配置
 
 1. `socks.host = 127.0.0.1`，并开启 `socks.auth`。
