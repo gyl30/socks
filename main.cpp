@@ -188,13 +188,7 @@ int run_with_config(const char* prog, const std::string& config_path)
     set_level(cfg.log.level);
     mux::statistics::instance().start_time();
 
-    std::error_code ec;
-    mux::io_context_pool pool(resolve_worker_threads(), ec);
-    if (ec)
-    {
-        LOG_ERROR("fatal failed to create io context pool error {}", ec.message());
-        return 1;
-    }
+    mux::io_context_pool pool(resolve_worker_threads());
 
     if (!is_supported_runtime_mode(cfg.mode))
     {
