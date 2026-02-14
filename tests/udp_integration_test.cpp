@@ -121,7 +121,7 @@ static bool wait_for_tcp_port(const std::uint16_t port, const int attempts = 60)
 TEST_F(udp_integration_test, UdpAssociateAndEcho)
 {
     std::error_code ec;
-    io_context_pool pool(4, ec);
+    io_context_pool pool(4);
     ASSERT_FALSE(ec);
 
     std::uint16_t server_port = 0;
@@ -355,7 +355,7 @@ TEST_F(udp_integration_test, UdpAssociateAndEcho)
 TEST_F(udp_integration_test, UdpAssociateIgnoresFragmentedPacketAndKeepsSessionAlive)
 {
     std::error_code ec;
-    io_context_pool pool(4, ec);
+    io_context_pool pool(4);
     ASSERT_FALSE(ec);
 
     const auto server_port = pick_free_tcp_port(pool.get_io_context());

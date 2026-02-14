@@ -333,7 +333,7 @@ class remote_server_test : public ::testing::Test
 TEST_F(remote_server_test, AuthFailureTriggersFallback)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
 
@@ -375,7 +375,7 @@ TEST_F(remote_server_test, AuthFailureTriggersFallback)
 TEST_F(remote_server_test, AuthFailShortIdMismatch)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
 
@@ -417,7 +417,7 @@ TEST_F(remote_server_test, AuthFailShortIdMismatch)
 TEST_F(remote_server_test, ClockSkewDetected)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
 
@@ -459,7 +459,7 @@ TEST_F(remote_server_test, ClockSkewDetected)
 TEST_F(remote_server_test, AuthFailInvalidTLSHeader)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
 
@@ -499,7 +499,7 @@ TEST_F(remote_server_test, AuthFailInvalidTLSHeader)
 TEST_F(remote_server_test, AuthFailBufferTooShort)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
 
@@ -541,7 +541,7 @@ TEST_F(remote_server_test, AuthFailBufferTooShort)
 TEST_F(remote_server_test, FallbackResolveFail)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
 
@@ -565,7 +565,7 @@ TEST_F(remote_server_test, FallbackResolveFail)
 TEST_F(remote_server_test, FallbackConnectFail)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
 
@@ -589,7 +589,7 @@ TEST_F(remote_server_test, FallbackConnectFail)
 TEST_F(remote_server_test, InvalidAuthConfigPath)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
 
@@ -632,7 +632,7 @@ TEST_F(remote_server_test, InvalidAuthConfigPath)
 TEST_F(remote_server_test, MultiSNIFallback)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
 
@@ -698,7 +698,7 @@ TEST_F(remote_server_test, MultiSNIFallback)
 TEST_F(remote_server_test, WildcardStarFallback)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
 
@@ -739,7 +739,7 @@ TEST_F(remote_server_test, WildcardStarFallback)
 TEST_F(remote_server_test, RealityDestFallbackUsedWhenNoFallbackEntries)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
 
@@ -783,7 +783,7 @@ TEST_F(remote_server_test, RealityDestFallbackUsedWhenNoFallbackEntries)
 TEST_F(remote_server_test, ExactSniFallbackPreferredOverRealityDest)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
 
@@ -849,7 +849,7 @@ TEST_F(remote_server_test, ExactSniFallbackPreferredOverRealityDest)
 TEST_F(remote_server_test, FallbackGuardRateLimitBlocksFallbackDial)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
 
@@ -898,7 +898,7 @@ TEST_F(remote_server_test, FallbackGuardRateLimitBlocksFallbackDial)
 TEST_F(remote_server_test, FallbackGuardCircuitBreakerBlocksSubsequentAttempt)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
 
@@ -941,7 +941,7 @@ TEST_F(remote_server_test, FallbackGuardCircuitBreakerBlocksSubsequentAttempt)
 TEST_F(remote_server_test, ConstructorHandlesInvalidInboundHostAndUnsupportedFallbackType)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     auto cfg = make_server_cfg(pick_free_port(), {}, "0102030405060708");
@@ -956,7 +956,7 @@ TEST_F(remote_server_test, ConstructorHandlesInvalidInboundHostAndUnsupportedFal
 TEST_F(remote_server_test, ConstructorRejectsInvalidRealityDest)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     auto cfg = make_server_cfg(pick_free_port(), {}, "0102030405060708");
@@ -970,7 +970,7 @@ TEST_F(remote_server_test, ConstructorRejectsInvalidRealityDest)
 TEST_F(remote_server_test, ConstructorReturnsEarlyWhenBindFails)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     asio::ip::tcp::acceptor occupied(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
@@ -986,7 +986,7 @@ TEST_F(remote_server_test, ConstructorReturnsEarlyWhenBindFails)
 TEST_F(remote_server_test, FallbackSelectionAndCertificateTargetBranches)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     const std::uint16_t exact_port = pick_free_port();
@@ -1025,7 +1025,7 @@ TEST_F(remote_server_test, FallbackSelectionAndCertificateTargetBranches)
 TEST_F(remote_server_test, FallbackGuardStateMachineBranches)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     auto cfg = make_server_cfg(pick_free_port(), {}, "0102030405060708");
@@ -1069,7 +1069,7 @@ TEST_F(remote_server_test, FallbackGuardStateMachineBranches)
 TEST_F(remote_server_test, SetCertificateAsyncPathAfterStart)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
 
@@ -1094,7 +1094,7 @@ TEST_F(remote_server_test, SetCertificateAsyncPathAfterStart)
 TEST_F(remote_server_test, ConstructorCoversShortIdAndDestParsingBranches)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     auto cfg_invalid_hex = make_server_cfg(pick_free_port(), {}, "zz");
@@ -1130,7 +1130,7 @@ TEST_F(remote_server_test, ConstructorCoversShortIdAndDestParsingBranches)
 TEST_F(remote_server_test, ParseClientHelloAndTranscriptGuardBranches)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
@@ -1149,7 +1149,7 @@ TEST_F(remote_server_test, ParseClientHelloAndTranscriptGuardBranches)
 TEST_F(remote_server_test, AuthenticateClientFailureBranches)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
@@ -1187,7 +1187,7 @@ TEST_F(remote_server_test, AuthenticateClientFailureBranches)
 TEST_F(remote_server_test, AuthenticateClientShortIdAndTimestampFailureBranches)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
@@ -1207,7 +1207,7 @@ TEST_F(remote_server_test, AuthenticateClientShortIdAndTimestampFailureBranches)
 TEST_F(remote_server_test, DeriveShareAndFallbackHelperBranches)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
@@ -1239,7 +1239,7 @@ TEST_F(remote_server_test, DeriveShareAndFallbackHelperBranches)
 TEST_F(remote_server_test, RejectStreamForLimitSendsAckAndReset)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
@@ -1280,7 +1280,7 @@ TEST_F(remote_server_test, RejectStreamForLimitSendsAckAndReset)
 TEST_F(remote_server_test, FallbackFailedAndGuardDisabledBranches)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     auto cfg = make_server_cfg(pick_free_port(), {}, "0102030405060708");
@@ -1341,7 +1341,7 @@ TEST_F(remote_server_test, FallbackFailedAndGuardDisabledBranches)
 TEST_F(remote_server_test, PerformHandshakeResponseCoversCipherSuiteSelectionBranches)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread runner([&pool]() { pool.run(); });
 
@@ -1422,7 +1422,7 @@ TEST_F(remote_server_test, PerformHandshakeResponseCoversCipherSuiteSelectionBra
 TEST_F(remote_server_test, ConstructorCoversMalformedBracketDestParseBranches)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     auto cfg_missing_bracket = make_server_cfg(pick_free_port(), {}, "0102030405060708");
@@ -1441,7 +1441,7 @@ TEST_F(remote_server_test, ConstructorCoversMalformedBracketDestParseBranches)
 TEST_F(remote_server_test, ConstructorAcceptorSetupFailureBranchesWithWrappers)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     const auto open_fail_port = pick_free_port();
@@ -1463,7 +1463,7 @@ TEST_F(remote_server_test, ConstructorAcceptorSetupFailureBranchesWithWrappers)
 TEST_F(remote_server_test, AuthenticateClientCoversShortIdClockSkewAndReplayBranches)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
@@ -1497,7 +1497,7 @@ TEST_F(remote_server_test, AuthenticateClientCoversShortIdClockSkewAndReplayBran
 TEST_F(remote_server_test, AuthenticateClientCoversInvalidPayloadAndShortIdLengthBranches)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
@@ -1520,7 +1520,7 @@ TEST_F(remote_server_test, AuthenticateClientCoversInvalidPayloadAndShortIdLengt
 TEST_F(remote_server_test, PerformHandshakeResponseCoversRandomAndSignKeyFailureBranches)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread runner([&pool]() { pool.run(); });
 
@@ -1655,7 +1655,7 @@ TEST_F(remote_server_test, VerifyClientFinishedCoversPlaintextValidationBranches
 TEST_F(remote_server_test, DeriveApplicationTrafficKeysCoversFirstAndSecondDeriveFailure)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
@@ -1682,7 +1682,7 @@ TEST_F(remote_server_test, DeriveApplicationTrafficKeysCoversFirstAndSecondDeriv
 TEST_F(remote_server_test, DeriveServerKeyShareCoversX25519DeriveFailureBranch)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
@@ -1708,7 +1708,7 @@ TEST_F(remote_server_test, DeriveServerKeyShareCoversX25519DeriveFailureBranch)
 TEST_F(remote_server_test, StopCoversAcceptorCloseFailureBranch)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread runner([&pool]() { pool.run(); });
 
@@ -1726,7 +1726,7 @@ TEST_F(remote_server_test, StopCoversAcceptorCloseFailureBranch)
 TEST_F(remote_server_test, HandleFallbackCoversCloseSocketErrorBranches)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread runner([&pool]() { pool.run(); });
 

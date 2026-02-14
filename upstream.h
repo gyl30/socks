@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <expected>
 #include <utility>
 #include <system_error>
 
@@ -49,7 +50,7 @@ class direct_upstream : public upstream
     asio::awaitable<void> close() override;
 
    private:
-    bool open_socket_for_endpoint(const asio::ip::tcp::endpoint& endpoint, std::error_code& ec);
+    std::expected<void, std::error_code> open_socket_for_endpoint(const asio::ip::tcp::endpoint& endpoint);
     void apply_socket_mark();
     void apply_no_delay();
 

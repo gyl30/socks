@@ -63,71 +63,64 @@ TEST_F(tls_record_layer_test, RoundTrip)
     const std::vector<uint8_t> plaintext = {0xAA, 0xBB, 0xCC, 0xDD};
     const uint64_t seq = 1;
     const uint8_t type = 0x17;
-    std::error_code ec;
-
-    const auto encrypted = tls_record_layer::encrypt_record(cipher(), key(), iv(), seq, plaintext, type, ec);
-    ASSERT_FALSE(ec);
-    ASSERT_GT(encrypted.size(), plaintext.size() + 16);
+    const auto encrypted = tls_record_layer::encrypt_record(cipher(), key(), iv(), seq, plaintext, type);
+    ASSERT_TRUE(encrypted.has_value());
+    ASSERT_GT(encrypted->size(), plaintext.size() + 16);
 
     uint8_t out_type = 0;
-    const auto decrypted = tls_record_layer::decrypt_record(cipher(), key(), iv(), seq, encrypted, out_type, ec);
+    const auto decrypted = tls_record_layer::decrypt_record(cipher(), key(), iv(), seq, *encrypted, out_type);
 
-    ASSERT_FALSE(ec);
+    ASSERT_TRUE(decrypted.has_value());
     EXPECT_EQ(out_type, type);
-    EXPECT_EQ(decrypted, plaintext);
+    EXPECT_EQ(*decrypted, plaintext);
 }
 
 TEST_F(tls_record_layer_test, SequenceNumberMatters)
 {
     const std::vector<uint8_t> plaintext = {0x12, 0x34};
-    std::error_code ec;
-
-    const auto enc1 = tls_record_layer::encrypt_record(cipher(), key(), iv(), 100, plaintext, 0x17, ec);
-    ASSERT_FALSE(ec);
+    const auto enc1 = tls_record_layer::encrypt_record(cipher(), key(), iv(), 100, plaintext, 0x17);
+    ASSERT_TRUE(enc1.has_value());
 
     uint8_t out_type = 0;
 
-    const auto dec = tls_record_layer::decrypt_record(cipher(), key(), iv(), 101, enc1, out_type, ec);
+    const auto dec = tls_record_layer::decrypt_record(cipher(), key(), iv(), 101, *enc1, out_type);
 
-    EXPECT_TRUE(ec);
-    EXPECT_TRUE(dec.empty());
+    EXPECT_FALSE(dec.has_value());
 }
 
 TEST_F(tls_record_layer_test, TamperedCiphertext)
 {
     const std::vector<uint8_t> plaintext = {0x00, 0x01};
     const uint64_t seq = 50;
-    std::error_code ec;
+    auto enc = tls_record_layer::encrypt_record(cipher(), key(), iv(), seq, plaintext, 0x17);
+    ASSERT_TRUE(enc.has_value());
 
-    auto enc = tls_record_layer::encrypt_record(cipher(), key(), iv(), seq, plaintext, 0x17, ec);
-    ASSERT_FALSE(ec);
-
-    enc.back() ^= 0xFF;
+    enc->back() ^= 0xFF;
 
     uint8_t out_type = 0;
-    const auto dec = tls_record_layer::decrypt_record(cipher(), key(), iv(), seq, enc, out_type, ec);
+    const auto dec = tls_record_layer::decrypt_record(cipher(), key(), iv(), seq, *enc, out_type);
 
-    EXPECT_TRUE(ec);
+    EXPECT_FALSE(dec.has_value());
 }
 
 TEST_F(tls_record_layer_test, DecryptAllZeros)
 {
     std::vector<uint8_t> zeros(20, 0);
     const uint64_t seq = 0;
-    std::error_code ec;
 
     const std::vector<uint8_t> aad = {0x17, 0x03, 0x03, 0x00, static_cast<uint8_t>(zeros.size() + 16)};
-    auto encrypted = reality::crypto_util::aead_encrypt(cipher(), key(), iv(), zeros, aad, ec);
-    ASSERT_FALSE(ec);
+    auto encrypted = reality::crypto_util::aead_encrypt(cipher(), key(), iv(), zeros, aad);
+    ASSERT_TRUE(encrypted.has_value());
 
     std::vector<uint8_t> record;
     record.insert(record.end(), aad.begin(), aad.end());
-    record.insert(record.end(), encrypted.begin(), encrypted.end());
+    record.insert(record.end(), encrypted->begin(), encrypted->end());
 
     uint8_t out_type = 0;
-    (void)tls_record_layer::decrypt_record(cipher(), key(), iv(), seq, record, out_type, ec);
+    auto dec_result = tls_record_layer::decrypt_record(cipher(), key(), iv(), seq, record, out_type);
 
-    EXPECT_EQ(ec, std::errc::bad_message);
+    EXPECT_FALSE(dec_result.has_value());
+    EXPECT_EQ(dec_result.error(), std::make_error_code(std::errc::bad_message));
 }
 
 TEST_F(tls_record_layer_test, EncryptAppDataWithPadding)
@@ -135,29 +128,25 @@ TEST_F(tls_record_layer_test, EncryptAppDataWithPadding)
     const std::vector<uint8_t> plaintext = {0x01, 0x02, 0x03};
     const uint64_t seq = 10;
     const uint8_t type = reality::kContentTypeApplicationData;
-    std::error_code ec;
-
-    const auto encrypted = tls_record_layer::encrypt_record(cipher(), key(), iv(), seq, plaintext, type, ec);
-    ASSERT_FALSE(ec);
+    const auto encrypted = tls_record_layer::encrypt_record(cipher(), key(), iv(), seq, plaintext, type);
+    ASSERT_TRUE(encrypted.has_value());
 
     uint8_t out_type = 0;
-    const auto decrypted = tls_record_layer::decrypt_record(cipher(), key(), iv(), seq, encrypted, out_type, ec);
+    const auto decrypted = tls_record_layer::decrypt_record(cipher(), key(), iv(), seq, *encrypted, out_type);
 
-    ASSERT_FALSE(ec);
+    ASSERT_TRUE(decrypted.has_value());
     EXPECT_EQ(out_type, type);
-    EXPECT_EQ(decrypted, plaintext);
+    EXPECT_EQ(*decrypted, plaintext);
 }
 
 TEST_F(tls_record_layer_test, EncryptAppDataRandFailure)
 {
     fail_rand_bytes_once();
     const std::vector<uint8_t> plaintext = {0x01, 0x02, 0x03};
-    std::error_code ec;
 
     const auto encrypted = tls_record_layer::encrypt_record(
-        cipher(), key(), iv(), 10, plaintext, reality::kContentTypeApplicationData, ec);
-    EXPECT_TRUE(ec);
-    EXPECT_TRUE(encrypted.empty());
+        cipher(), key(), iv(), 10, plaintext, reality::kContentTypeApplicationData);
+    EXPECT_FALSE(encrypted.has_value());
 
     reset_rand_bytes_hook();
 }
@@ -168,21 +157,19 @@ TEST_F(tls_record_layer_test, DecryptSpanShortRecordRejected)
     std::array<uint8_t, 10> short_record{};
     std::array<uint8_t, 32> output{};
     std::uint8_t out_type = 0;
-    std::error_code ec;
-
-    const std::size_t n = tls_record_layer::decrypt_record(
-        ctx, cipher(), key(), iv(), 0, std::span<const uint8_t>(short_record), std::span<uint8_t>(output), out_type, ec);
-    EXPECT_EQ(n, 0U);
-    EXPECT_EQ(ec, std::errc::message_size);
+    const auto n = tls_record_layer::decrypt_record(
+        ctx, cipher(), key(), iv(), 0, std::span<const uint8_t>(short_record), std::span<uint8_t>(output), out_type);
+    EXPECT_FALSE(n.has_value());
+    EXPECT_EQ(n.error(), std::make_error_code(std::errc::message_size));
 }
 
 TEST_F(tls_record_layer_test, ShortMessage)
 {
     const std::vector<uint8_t> short_msg(10, 0x00);
     uint8_t out_type = 0;
-    std::error_code ec;
 
-    const auto dec = tls_record_layer::decrypt_record(cipher(), key(), iv(), 0, short_msg, out_type, ec);
+    const auto dec = tls_record_layer::decrypt_record(cipher(), key(), iv(), 0, short_msg, out_type);
 
-    EXPECT_EQ(ec, std::errc::message_size);
+    EXPECT_FALSE(dec.has_value());
+    EXPECT_EQ(dec.error(), std::make_error_code(std::errc::message_size));
 }

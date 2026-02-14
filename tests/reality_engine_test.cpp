@@ -49,11 +49,10 @@ TEST_F(reality_engine_test, EncryptEmptyData)
 {
     reality_engine engine(read_key(), read_iv(), write_key(), write_iv(), cipher());
 
-    std::error_code ec;
-    auto result = engine.encrypt({}, ec);
+    auto result = engine.encrypt({});
 
-    EXPECT_FALSE(ec);
-    EXPECT_TRUE(result.empty());
+    EXPECT_TRUE(result.has_value());
+    EXPECT_TRUE(result->empty());
 }
 
 TEST_F(reality_engine_test, EncryptProducesOutput)
@@ -61,24 +60,20 @@ TEST_F(reality_engine_test, EncryptProducesOutput)
     reality_engine engine(read_key(), read_iv(), write_key(), write_iv(), cipher());
 
     std::vector<std::uint8_t> plaintext = {'H', 'e', 'l', 'l', 'o'};
-    std::error_code ec;
-    auto result = engine.encrypt(plaintext, ec);
+    auto result = engine.encrypt(plaintext);
 
-    EXPECT_FALSE(ec);
-    EXPECT_FALSE(result.empty());
+    ASSERT_TRUE(result.has_value());
+    EXPECT_FALSE(result->empty());
 
-    EXPECT_GE(result.size(), plaintext.size() + 5 + 16 + 1);
+    EXPECT_GE(result->size(), plaintext.size() + 5 + 16 + 1);
 }
 
 TEST_F(reality_engine_test, EncryptReturnsErrorOnInvalidWriteKeyLength)
 {
     reality_engine engine(read_key(), read_iv(), std::vector<std::uint8_t>{0x01}, write_iv(), cipher());
-    std::error_code ec;
-
     const std::vector<std::uint8_t> plaintext = {'x'};
-    const auto result = engine.encrypt(plaintext, ec);
-    EXPECT_TRUE(ec);
-    EXPECT_TRUE(result.empty());
+    const auto result = engine.encrypt(plaintext);
+    EXPECT_FALSE(result.has_value());
 }
 
 TEST_F(reality_engine_test, DecryptInsufficientData)
@@ -123,8 +118,9 @@ TEST_F(reality_engine_test, EncryptDecryptRoundTrip)
     std::vector<std::uint8_t> plaintext = {'T', 'e', 's', 't', ' ', 'D', 'a', 't', 'a'};
 
     std::error_code ec;
-    auto encrypted = encrypt_engine.encrypt(plaintext, ec);
-    ASSERT_FALSE(ec);
+    auto encrypted_res = encrypt_engine.encrypt(plaintext);
+    ASSERT_TRUE(encrypted_res.has_value());
+    auto encrypted = *encrypted_res;
     ASSERT_FALSE(encrypted.empty());
 
     auto buf = decrypt_engine.read_buffer(encrypted.size());
@@ -151,17 +147,17 @@ TEST_F(reality_engine_test, MultipleEncryptions)
     std::vector<std::uint8_t> data2 = {'D', 'E', 'F'};
 
     std::error_code ec;
-    auto result1 = engine.encrypt(data1, ec);
-    EXPECT_FALSE(ec);
-    EXPECT_FALSE(result1.empty());
+    auto result1 = engine.encrypt(data1);
+    EXPECT_TRUE(result1.has_value());
+    EXPECT_FALSE(result1->empty());
 
-    std::vector<std::uint8_t> encrypted1(result1.begin(), result1.end());
+    std::vector<std::uint8_t> encrypted1(result1->begin(), result1->end());
 
-    auto result2 = engine.encrypt(data2, ec);
-    EXPECT_FALSE(ec);
-    EXPECT_FALSE(result2.empty());
+    auto result2 = engine.encrypt(data2);
+    EXPECT_TRUE(result2.has_value());
+    EXPECT_FALSE(result2->empty());
 
-    std::vector<std::uint8_t> encrypted2(result2.begin(), result2.end());
+    std::vector<std::uint8_t> encrypted2(result2->begin(), result2->end());
 
     EXPECT_NE(encrypted1, encrypted2);
 }
@@ -173,12 +169,12 @@ TEST_F(reality_engine_test, AlertContentType)
     std::error_code ec;
 
     std::vector<uint8_t> alert_plaintext = {0x02, 0x32};
-    auto alert_rec = reality::tls_record_layer::encrypt_record(cipher(), read_key(), read_iv(), 0, alert_plaintext, reality::kContentTypeAlert, ec);
-    ASSERT_FALSE(ec);
+    auto alert_rec = reality::tls_record_layer::encrypt_record(cipher(), read_key(), read_iv(), 0, alert_plaintext, reality::kContentTypeAlert);
+    ASSERT_TRUE(alert_rec.has_value());
 
-    auto buf = decrypt_engine.read_buffer(alert_rec.size());
-    std::memcpy(buf.data(), alert_rec.data(), alert_rec.size());
-    decrypt_engine.commit_read(alert_rec.size());
+    auto buf = decrypt_engine.read_buffer(alert_rec->size());
+    std::memcpy(buf.data(), alert_rec->data(), alert_rec->size());
+    decrypt_engine.commit_read(alert_rec->size());
 
     bool called = false;
     decrypt_engine.process_available_records(ec,
@@ -200,14 +196,14 @@ TEST_F(reality_engine_test, DecryptError)
 
     std::error_code ec;
     std::vector<uint8_t> data = {0x01, 0x02};
-    auto rec = reality::tls_record_layer::encrypt_record(cipher(), read_key(), read_iv(), 0, data, reality::kContentTypeApplicationData, ec);
-    ASSERT_FALSE(ec);
+    auto rec = reality::tls_record_layer::encrypt_record(cipher(), read_key(), read_iv(), 0, data, reality::kContentTypeApplicationData);
+    ASSERT_TRUE(rec.has_value());
 
-    rec.back() ^= 0xFF;
+    rec->back() ^= 0xFF;
 
-    auto buf = decrypt_engine.read_buffer(rec.size());
-    std::memcpy(buf.data(), rec.data(), rec.size());
-    decrypt_engine.commit_read(rec.size());
+    auto buf = decrypt_engine.read_buffer(rec->size());
+    std::memcpy(buf.data(), rec->data(), rec->size());
+    decrypt_engine.commit_read(rec->size());
 
     bool called = false;
     decrypt_engine.process_available_records(ec, [&called](std::uint8_t, std::span<const std::uint8_t>) { called = true; });
@@ -223,12 +219,12 @@ TEST_F(reality_engine_test, ProcessAvailableRecordsStopsWhenCallbackSetsError)
     std::error_code ec;
     const std::vector<std::uint8_t> payload = {0x10, 0x20, 0x30};
     const auto rec =
-        reality::tls_record_layer::encrypt_record(cipher(), read_key(), read_iv(), 0, payload, reality::kContentTypeApplicationData, ec);
-    ASSERT_FALSE(ec);
+        reality::tls_record_layer::encrypt_record(cipher(), read_key(), read_iv(), 0, payload, reality::kContentTypeApplicationData);
+    ASSERT_TRUE(rec.has_value());
 
-    auto buf = decrypt_engine.read_buffer(rec.size());
-    std::memcpy(buf.data(), rec.data(), rec.size());
-    decrypt_engine.commit_read(rec.size());
+    auto buf = decrypt_engine.read_buffer(rec->size());
+    std::memcpy(buf.data(), rec->data(), rec->size());
+    decrypt_engine.commit_read(rec->size());
 
     std::size_t callback_calls = 0;
     decrypt_engine.process_available_records(

@@ -29,11 +29,9 @@ namespace mux
 namespace
 {
 
-bool resolve_listen_address(const std::string& configured_host,
-                            std::string& listen_host,
-                            asio::ip::address& listen_addr,
-                            std::error_code& ec)
+std::expected<std::pair<std::string, asio::ip::address>, std::error_code> resolve_listen_address(const std::string& configured_host)
 {
+    std::string listen_host;
     if (configured_host.empty())
     {
         listen_host = "::";
@@ -42,53 +40,62 @@ bool resolve_listen_address(const std::string& configured_host,
     {
         listen_host = configured_host;
     }
-    listen_addr = asio::ip::make_address(listen_host, ec);
-    return !ec;
+    std::error_code ec;
+    auto listen_addr = asio::ip::make_address(listen_host, ec);
+    if (ec)
+    {
+        return std::unexpected(ec);
+    }
+    return std::make_pair(listen_host, listen_addr);
 }
 
-bool setup_tcp_listener_options(asio::ip::tcp::acceptor& acceptor, const bool is_v6, std::error_code& ec)
+std::expected<void, std::error_code> setup_tcp_listener_options(asio::ip::tcp::acceptor& acceptor, const bool is_v6)
 {
+    std::error_code ec;
     ec = acceptor.set_option(asio::ip::tcp::acceptor::reuse_address(true), ec);
     if (ec)
     {
-        return false;
+        return std::unexpected(ec);
     }
     if (is_v6)
     {
         ec = acceptor.set_option(asio::ip::v6_only(false), ec);
         if (ec)
         {
-            return false;
+            return std::unexpected(ec);
         }
     }
-    std::error_code trans_ec;
-    if (!net::set_socket_transparent(acceptor.native_handle(), is_v6, trans_ec))
+    if (auto r = net::set_socket_transparent(acceptor.native_handle(), is_v6); !r)
     {
-        ec = trans_ec;
-        return false;
+        return std::unexpected(r.error());
     }
-    return true;
+    return {};
 }
 
-bool setup_tcp_listener(asio::ip::tcp::acceptor& acceptor, const asio::ip::address& listen_addr, const std::uint16_t port, std::error_code& ec)
+std::expected<void, std::error_code> setup_tcp_listener(asio::ip::tcp::acceptor& acceptor, const asio::ip::address& listen_addr, const std::uint16_t port)
 {
     const asio::ip::tcp::endpoint ep{listen_addr, port};
+    std::error_code ec;
     ec = acceptor.open(ep.protocol(), ec);
     if (ec)
     {
-        return false;
+        return std::unexpected(ec);
     }
-    if (!setup_tcp_listener_options(acceptor, listen_addr.is_v6(), ec))
+    if (const auto res = setup_tcp_listener_options(acceptor, listen_addr.is_v6()); !res)
     {
-        return false;
+        return std::unexpected(res.error());
     }
     ec = acceptor.bind(ep, ec);
     if (ec)
     {
-        return false;
+        return std::unexpected(ec);
     }
     ec = acceptor.listen(asio::socket_base::max_listen_connections, ec);
-    return !ec;
+    if (ec)
+    {
+        return std::unexpected(ec);
+    }
+    return {};
 }
 
 void set_udp_reuse_option(asio::ip::udp::socket& socket)
@@ -101,32 +108,33 @@ void set_udp_reuse_option(asio::ip::udp::socket& socket)
     }
 }
 
-bool set_udp_dual_stack_if_needed(asio::ip::udp::socket& socket, const bool is_v6, std::error_code& ec)
+std::expected<void, std::error_code> set_udp_dual_stack_if_needed(asio::ip::udp::socket& socket, const bool is_v6)
 {
     if (!is_v6)
     {
-        return true;
+        return {};
     }
+    std::error_code ec;
     ec = socket.set_option(asio::ip::v6_only(false), ec);
-    return !ec;
+    if (ec)
+    {
+        return std::unexpected(ec);
+    }
+    return {};
 }
 
-bool configure_udp_transparent_options(asio::ip::udp::socket& socket, const bool is_v6, std::error_code& ec)
+std::expected<void, std::error_code> configure_udp_transparent_options(asio::ip::udp::socket& socket, const bool is_v6)
 {
-    std::error_code trans_ec;
-    if (!net::set_socket_transparent(socket.native_handle(), is_v6, trans_ec))
+    if (auto r = net::set_socket_transparent(socket.native_handle(), is_v6); !r)
     {
-        ec = trans_ec;
-        return false;
+        return std::unexpected(r.error());
     }
 
-    std::error_code recv_ec;
-    if (!net::set_socket_recv_origdst(socket.native_handle(), is_v6, recv_ec))
+    if (auto r = net::set_socket_recv_origdst(socket.native_handle(), is_v6); !r)
     {
-        ec = recv_ec;
-        return false;
+        return std::unexpected(r.error());
     }
-    return true;
+    return {};
 }
 
 void maybe_set_udp_mark(asio::ip::udp::socket& socket, const std::uint32_t mark)
@@ -135,39 +143,42 @@ void maybe_set_udp_mark(asio::ip::udp::socket& socket, const std::uint32_t mark)
     {
         return;
     }
-    std::error_code mark_ec;
-    if (!net::set_socket_mark(socket.native_handle(), mark, mark_ec))
+    if (auto r = net::set_socket_mark(socket.native_handle(), mark); !r)
     {
-        LOG_WARN("tproxy udp set mark failed code {}", mark_ec.value());
+        LOG_WARN("tproxy udp set mark failed code {}", r.error().value());
     }
 }
 
-bool setup_udp_listener(asio::ip::udp::socket& socket,
+std::expected<void, std::error_code> setup_udp_listener(asio::ip::udp::socket& socket,
                         const asio::ip::address& listen_addr,
                         const std::uint16_t port,
-                        const std::uint32_t mark,
-                        std::error_code& ec)
+                        const std::uint32_t mark)
 {
     const bool is_v6 = listen_addr.is_v6();
     const asio::ip::udp::endpoint ep{listen_addr, port};
+    std::error_code ec;
     ec = socket.open(ep.protocol(), ec);
     if (ec)
     {
-        return false;
+        return std::unexpected(ec);
     }
     set_udp_reuse_option(socket);
-    if (!set_udp_dual_stack_if_needed(socket, is_v6, ec))
+    if (auto res = set_udp_dual_stack_if_needed(socket, is_v6); !res)
     {
-        return false;
+        return std::unexpected(res.error());
     }
-    if (!configure_udp_transparent_options(socket, is_v6, ec))
+    if (auto res = configure_udp_transparent_options(socket, is_v6); !res)
     {
-        return false;
+        return std::unexpected(res.error());
     }
     maybe_set_udp_mark(socket, mark);
 
     ec = socket.bind(ep, ec);
-    return !ec;
+    if (ec)
+    {
+        return std::unexpected(ec);
+    }
+    return {};
 }
 
 std::string make_endpoint_key(const asio::ip::udp::endpoint& ep)
@@ -214,7 +225,7 @@ asio::awaitable<tcp_accept_status> accept_tcp_connection(asio::ip::tcp::acceptor
     co_return tcp_accept_status::kRetry;
 }
 
-bool prepare_tcp_destination(asio::ip::tcp::socket& socket, asio::ip::tcp::endpoint& dst_ep)
+std::expected<asio::ip::tcp::endpoint, std::error_code> prepare_tcp_destination(asio::ip::tcp::socket& socket)
 {
     std::error_code ec;
     ec = socket.set_option(asio::ip::tcp::no_delay(true), ec);
@@ -227,11 +238,10 @@ bool prepare_tcp_destination(asio::ip::tcp::socket& socket, asio::ip::tcp::endpo
     if (ec)
     {
         LOG_ERROR("tproxy tcp local endpoint failed {}", ec.message());
-        return false;
+        return std::unexpected(ec);
     }
 
-    dst_ep = asio::ip::tcp::endpoint(net::normalize_address(local_ep.address()), local_ep.port());
-    return true;
+    return asio::ip::tcp::endpoint(net::normalize_address(local_ep.address()), local_ep.port());
 }
 
 void start_tcp_session(asio::ip::tcp::socket s,
@@ -421,15 +431,15 @@ tcp_socket_action handle_accepted_tcp_socket(asio::ip::tcp::socket& socket,
         return tcp_socket_action::kBreak;
     }
 
-    asio::ip::tcp::endpoint dst_ep;
-    if (!prepare_tcp_destination(socket, dst_ep))
+    auto dst_ep_res = prepare_tcp_destination(socket);
+    if (!dst_ep_res)
     {
         close_accepted_socket(socket);
         return tcp_socket_action::kContinue;
     }
 
     const std::uint32_t sid = tunnel_pool->next_session_id();
-    start_tcp_session(std::move(socket), io_context, tunnel_pool, router, sid, cfg, dst_ep);
+    start_tcp_session(std::move(socket), io_context, tunnel_pool, router, sid, cfg, *dst_ep_res);
     return tcp_socket_action::kContinue;
 }
 
@@ -493,18 +503,20 @@ asio::awaitable<udp_packet_action> handle_udp_packet_once(
     co_return udp_packet_action::kContinue;
 }
 
-bool setup_tproxy_tcp_runtime(asio::ip::tcp::acceptor& tcp_acceptor,
-                              const config::tproxy_t& tproxy_config,
-                              const std::uint16_t tcp_port,
-                              std::string& listen_host,
-                              std::error_code& out_ec)
+std::expected<void, std::error_code> setup_tproxy_tcp_runtime(asio::ip::tcp::acceptor& tcp_acceptor,
+                               const config::tproxy_t& tproxy_config,
+                               const std::uint16_t tcp_port,
+                               std::string& listen_host)
 {
-    asio::ip::address listen_addr;
-    if (!resolve_listen_address(tproxy_config.listen_host, listen_host, listen_addr, out_ec))
+    auto addr_res = resolve_listen_address(tproxy_config.listen_host);
+    if (!addr_res)
     {
-        return false;
+        return std::unexpected(addr_res.error());
     }
-    return setup_tcp_listener(tcp_acceptor, listen_addr, tcp_port, out_ec);
+    const auto& [host, addr] = *addr_res;
+    listen_host = host;
+
+    return setup_tcp_listener(tcp_acceptor, addr, tcp_port);
 }
 
 asio::awaitable<bool> run_tcp_accept_iteration(asio::ip::tcp::acceptor& tcp_acceptor,
@@ -529,18 +541,20 @@ asio::awaitable<bool> run_tcp_accept_iteration(asio::ip::tcp::acceptor& tcp_acce
     co_return socket_action != tcp_socket_action::kBreak;
 }
 
-bool setup_tproxy_udp_runtime(asio::ip::udp::socket& udp_socket,
-                              const config::tproxy_t& tproxy_config,
-                              const std::uint16_t udp_port,
-                              std::string& listen_host,
-                              std::error_code& out_ec)
+std::expected<void, std::error_code> setup_tproxy_udp_runtime(asio::ip::udp::socket& udp_socket,
+                               const config::tproxy_t& tproxy_config,
+                               const std::uint16_t udp_port,
+                               std::string& listen_host)
 {
-    asio::ip::address listen_addr;
-    if (!resolve_listen_address(tproxy_config.listen_host, listen_host, listen_addr, out_ec))
+    auto addr_res = resolve_listen_address(tproxy_config.listen_host);
+    if (!addr_res)
     {
-        return false;
+         return std::unexpected(addr_res.error());
     }
-    return setup_udp_listener(udp_socket, listen_addr, udp_port, tproxy_config.mark, out_ec);
+    const auto& [host, addr] = *addr_res;
+    listen_host = host;
+
+    return setup_udp_listener(udp_socket, addr, udp_port, tproxy_config.mark);
 }
 
 asio::awaitable<udp_loop_action> run_udp_iteration(asio::ip::udp::socket& udp_socket,
@@ -727,10 +741,9 @@ std::string tproxy_client::endpoint_key(const asio::ip::udp::endpoint& ep) const
 asio::awaitable<void> tproxy_client::accept_tcp_loop()
 {
     std::string listen_host;
-    std::error_code setup_ec;
-    if (!setup_tproxy_tcp_runtime(tcp_acceptor_, tproxy_config_, tcp_port_, listen_host, setup_ec))
+    if (auto res = setup_tproxy_tcp_runtime(tcp_acceptor_, tproxy_config_, tcp_port_, listen_host); !res)
     {
-        LOG_ERROR("tproxy tcp setup failed {}", setup_ec.message());
+        LOG_ERROR("tproxy tcp setup failed {}", res.error().message());
         co_return;
     }
 
@@ -750,10 +763,9 @@ asio::awaitable<void> tproxy_client::accept_tcp_loop()
 asio::awaitable<void> tproxy_client::udp_loop()
 {
     std::string listen_host;
-    std::error_code setup_ec;
-    if (!setup_tproxy_udp_runtime(udp_socket_, tproxy_config_, udp_port_, listen_host, setup_ec))
+    if (auto res = setup_tproxy_udp_runtime(udp_socket_, tproxy_config_, udp_port_, listen_host); !res)
     {
-        LOG_ERROR("tproxy udp setup failed {}", setup_ec.message());
+        LOG_ERROR("tproxy udp setup failed {}", res.error().message());
         co_return;
     }
 

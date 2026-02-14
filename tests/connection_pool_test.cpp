@@ -41,7 +41,7 @@ class connection_pool_test : public ::testing::Test
 TEST_F(connection_pool_test, TunnelReuse)
 {
     std::error_code ec;
-    mux::io_context_pool pool(2, ec);
+    mux::io_context_pool pool(2);
     ASSERT_FALSE(ec);
 
     uint16_t server_port = 31081;

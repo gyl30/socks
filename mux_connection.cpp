@@ -505,8 +505,9 @@ void mux_connection::update_read_statistics(const std::size_t n)
     reality_engine_.commit_read(n);
 }
 
-void mux_connection::process_decrypted_records(std::error_code& decrypt_ec)
+std::expected<void, std::error_code> mux_connection::process_decrypted_records()
 {
+    std::error_code decrypt_ec;
     reality_engine_.process_available_records(decrypt_ec,
                                               [this](const std::uint8_t type, const std::span<const std::uint8_t> plaintext)
                                               {
@@ -515,6 +516,11 @@ void mux_connection::process_decrypted_records(std::error_code& decrypt_ec)
                                                       mux_dispatcher_.on_plaintext_data(plaintext);
                                                   }
                                               });
+    if (decrypt_ec)
+    {
+        return std::unexpected(decrypt_ec);
+    }
+    return {};
 }
 
 bool mux_connection::has_dispatch_failure(const std::error_code& decrypt_ec) const
@@ -542,8 +548,12 @@ asio::awaitable<bool> mux_connection::read_and_dispatch_once()
     }
     update_read_statistics(n);
 
+    auto decrypt_res = process_decrypted_records();
     std::error_code decrypt_ec;
-    process_decrypted_records(decrypt_ec);
+    if (!decrypt_res)
+    {
+        decrypt_ec = decrypt_res.error();
+    }
     if (has_dispatch_failure(decrypt_ec))
     {
         co_return false;
@@ -575,15 +585,15 @@ asio::awaitable<void> mux_connection::write_loop()
         }
 
         const auto mux_frame = mux_dispatcher::pack(msg.stream_id, msg.command, msg.payload);
-        std::error_code enc_ec;
+        const auto encrypt_result = reality_engine_.encrypt(mux_frame);
 
-        const auto ciphertext_span = reality_engine_.encrypt(mux_frame, enc_ec);
-
-        if (enc_ec)
+        if (!encrypt_result)
         {
-            LOG_ERROR("mux {} encrypt error {}", cid_, enc_ec.message());
+            LOG_ERROR("mux {} encrypt error {}", cid_, encrypt_result.error().message());
             break;
         }
+
+        const auto ciphertext_span = *encrypt_result;
 
         const auto [wec, n] =
             co_await asio::async_write(socket_, asio::buffer(ciphertext_span.data(), ciphertext_span.size()), asio::as_tuple(asio::use_awaitable));

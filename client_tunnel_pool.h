@@ -8,6 +8,7 @@
 #include <vector>
 #include <cstdint>
 #include <optional>
+#include <expected>
 
 #include <asio/ip/tcp.hpp>
 #include <asio/awaitable.hpp>
@@ -72,14 +73,11 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
                                                     const char* stage,
                                                     asio::io_context& io_context);
 
-    [[nodiscard]] asio::awaitable<bool> tcp_connect(asio::io_context& io_context, asio::ip::tcp::socket& socket, std::error_code& ec) const;
-    [[nodiscard]] asio::awaitable<bool> try_connect_endpoint(asio::ip::tcp::socket& socket,
-                                                             const asio::ip::tcp::endpoint& endpoint,
-                                                             std::error_code& ec) const;
+    [[nodiscard]] asio::awaitable<std::expected<void, std::error_code>> tcp_connect(asio::io_context& io_context, asio::ip::tcp::socket& socket) const;
+    [[nodiscard]] asio::awaitable<std::expected<void, std::error_code>> try_connect_endpoint(asio::ip::tcp::socket& socket,
+                                                                                             const asio::ip::tcp::endpoint& endpoint) const;
 
-    [[nodiscard]] asio::awaitable<std::pair<bool, handshake_result>> perform_reality_handshake(asio::ip::tcp::socket& socket,
-                                                                                               std::error_code& ec) const;
-
+    [[nodiscard]] asio::awaitable<std::expected<handshake_result, std::error_code>> perform_reality_handshake(asio::ip::tcp::socket& socket) const;
     [[nodiscard]] std::shared_ptr<asio::ip::tcp::socket> create_pending_socket(asio::io_context& io_context, std::uint32_t index);
     void clear_pending_socket_if_match(std::uint32_t index, const std::shared_ptr<asio::ip::tcp::socket>& socket);
     void close_pending_socket(std::size_t index, std::shared_ptr<asio::ip::tcp::socket> pending_socket);
@@ -90,12 +88,11 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
     [[nodiscard]] std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> build_tunnel(
         asio::ip::tcp::socket socket, asio::io_context& io_context, std::uint32_t cid, const handshake_result& handshake_ret, const std::string& trace_id) const;
 
-    [[nodiscard]] asio::awaitable<bool> generate_and_send_client_hello(asio::ip::tcp::socket& socket,
+    [[nodiscard]] asio::awaitable<std::expected<void, std::error_code>> generate_and_send_client_hello(asio::ip::tcp::socket& socket,
                                                                        const std::uint8_t* public_key,
                                                                        const std::uint8_t* private_key,
                                                                        const reality::fingerprint_spec& spec,
-                                                                       reality::transcript& trans,
-                                                                       std::error_code& ec) const;
+                                                                       reality::transcript& trans) const;
 
     struct server_hello_res
     {
@@ -106,12 +103,11 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
         std::uint16_t cipher_suite = 0;
     };
 
-    [[nodiscard]] static asio::awaitable<server_hello_res> process_server_hello(asio::ip::tcp::socket& socket,
+    [[nodiscard]] static asio::awaitable<std::expected<server_hello_res, std::error_code>> process_server_hello(asio::ip::tcp::socket& socket,
                                                                                 const std::uint8_t* private_key,
-                                                                                reality::transcript& trans,
-                                                                                std::error_code& ec);
+                                                                                reality::transcript& trans);
 
-    [[nodiscard]] static asio::awaitable<std::pair<bool, std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>>> handshake_read_loop(
+    [[nodiscard]] static asio::awaitable<std::expected<std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>, std::error_code>> handshake_read_loop(
         asio::ip::tcp::socket& socket,
         const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& s_hs_keys,
         const reality::handshake_keys& hs_keys,
@@ -119,16 +115,14 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
         const std::string& sni,
         reality::transcript& trans,
         const EVP_CIPHER* cipher,
-        const EVP_MD* md,
-        std::error_code& ec);
+        const EVP_MD* md);
 
-    [[nodiscard]] static asio::awaitable<bool> send_client_finished(asio::ip::tcp::socket& socket,
+    [[nodiscard]] static asio::awaitable<std::expected<void, std::error_code>> send_client_finished(asio::ip::tcp::socket& socket,
                                                                     const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& c_hs_keys,
                                                                     const std::vector<std::uint8_t>& c_hs_secret,
                                                                     const reality::transcript& trans,
                                                                     const EVP_CIPHER* cipher,
-                                                                    const EVP_MD* md,
-                                                                    std::error_code& ec);
+                                                                    const EVP_MD* md);
 
     asio::awaitable<void> wait_remote_retry(asio::io_context& io_context);
 

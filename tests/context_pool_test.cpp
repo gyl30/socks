@@ -11,18 +11,18 @@
 namespace mux
 {
 
-TEST(ContextPoolTest, ZeroSizeRejected)
+TEST(ContextPoolTest, ZeroSizeClampedToOne)
 {
-    std::error_code ec;
-    io_context_pool pool(0, ec);
-    EXPECT_TRUE(ec);
-    EXPECT_EQ(ec, std::make_error_code(std::errc::invalid_argument));
+    io_context_pool pool(0);
+    auto& ctx = pool.get_io_context();
+    EXPECT_FALSE(ctx.stopped());
+    pool.stop();
 }
 
 TEST(ContextPoolTest, SingleContextWorks)
 {
     std::error_code ec;
-    io_context_pool pool(1, ec);
+    io_context_pool pool(1);
     EXPECT_FALSE(ec);
 
     auto& ctx1 = pool.get_io_context();
@@ -36,7 +36,7 @@ TEST(ContextPoolTest, SingleContextWorks)
 TEST(ContextPoolTest, MultipleContextsRoundRobin)
 {
     std::error_code ec;
-    io_context_pool pool(3, ec);
+    io_context_pool pool(3);
     EXPECT_FALSE(ec);
 
     std::vector<asio::io_context*> contexts;
@@ -58,7 +58,7 @@ TEST(ContextPoolTest, MultipleContextsRoundRobin)
 TEST(ContextPoolTest, StopMultipleTimes)
 {
     std::error_code ec;
-    io_context_pool pool(2, ec);
+    io_context_pool pool(2);
     EXPECT_FALSE(ec);
 
     pool.stop();
@@ -68,7 +68,7 @@ TEST(ContextPoolTest, StopMultipleTimes)
 TEST(ContextPoolTest, StopMarksAllContextsStopped)
 {
     std::error_code ec;
-    io_context_pool pool(2, ec);
+    io_context_pool pool(2);
     EXPECT_FALSE(ec);
 
     auto& ctx1 = pool.get_io_context();
@@ -84,7 +84,7 @@ TEST(ContextPoolTest, StopMarksAllContextsStopped)
 TEST(ContextPoolTest, RunAndStop)
 {
     std::error_code ec;
-    io_context_pool pool(2, ec);
+    io_context_pool pool(2);
     EXPECT_FALSE(ec);
 
     std::thread stopper(

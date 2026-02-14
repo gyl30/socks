@@ -39,7 +39,7 @@ TEST(LocalClientMockTest, HandshakeFailurePaths)
     auto run_mock_server_and_test = [&](std::vector<std::uint8_t> data_to_send)
     {
         std::error_code ec;
-        mux::io_context_pool pool(1, ec);
+        mux::io_context_pool pool(1);
         ASSERT_FALSE(ec);
 
         asio::io_context server_ctx;
