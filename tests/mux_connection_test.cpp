@@ -1,5 +1,6 @@
 #include <memory>
 #include <array>
+#include <future>
 #include <string>
 #include <thread>
 #include <vector>
@@ -283,6 +284,62 @@ TEST_F(mux_connection_integration_test, OffThreadCanAcceptStreamFalsePath)
     auto stream = std::make_shared<simple_mock_stream>();
     EXPECT_TRUE(conn->try_register_stream(1, stream));
     EXPECT_FALSE(conn->can_accept_stream());
+
+    io_ctx().stop();
+    if (io_thread.joinable())
+    {
+        io_thread.join();
+    }
+    io_ctx().restart();
+}
+
+TEST_F(mux_connection_integration_test, OffThreadSyncQueriesReturnWhenIoQueueBusy)
+{
+    auto conn = std::make_shared<mux_connection>(
+        asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 15);
+    conn->started_.store(true, std::memory_order_release);
+    conn->connection_state_.store(mux_connection_state::kConnected, std::memory_order_release);
+
+    auto guard = asio::make_work_guard(io_ctx());
+    std::thread io_thread([&]() { io_ctx().run(); });
+
+    std::promise<void> blocker_started;
+    auto blocker_started_future = blocker_started.get_future();
+    std::atomic<bool> release_blocker{false};
+    asio::post(io_ctx(),
+               [&blocker_started, &release_blocker]()
+               {
+                   blocker_started.set_value();
+                   while (!release_blocker.load(std::memory_order_acquire))
+                   {
+                       std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                   }
+               });
+    EXPECT_EQ(blocker_started_future.wait_for(std::chrono::seconds(1)), std::future_status::ready);
+
+    auto stream = std::make_shared<simple_mock_stream>();
+    bool try_register_ok = true;
+    std::promise<void> caller_done;
+    auto caller_done_future = caller_done.get_future();
+    std::thread caller(
+        [&]()
+        {
+            conn->register_stream(101, stream);
+            try_register_ok = conn->try_register_stream(102, stream);
+            caller_done.set_value();
+        });
+
+    EXPECT_EQ(caller_done_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    release_blocker.store(true, std::memory_order_release);
+
+    if (caller.joinable())
+    {
+        caller.join();
+    }
+
+    EXPECT_FALSE(try_register_ok);
+    EXPECT_FALSE(conn->has_stream(101));
+    EXPECT_FALSE(conn->has_stream(102));
 
     io_ctx().stop();
     if (io_thread.joinable())
