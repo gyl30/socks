@@ -13,7 +13,6 @@ import re
 
 SOCKS_BIN = "./socks"
 BUILD_DIR = "./build"
-ECHO_PORT = 9997
 SHORT_ID = "0102030405060708"
 
 class Colors:
@@ -38,7 +37,30 @@ def parse_args():
     parser.add_argument("--build-dir", default="./build", help="Build directory that contains the socks binary.")
     parser.add_argument("--socks-bin", default="./socks", help="Path to socks binary relative to --build-dir.")
     parser.add_argument("--traffic-count", type=int, default=5, help="Number of extra short SOCKS connections.")
+    parser.add_argument("--server-ready-timeout", type=int, default=20, help="Timeout seconds waiting for server inbound to become ready.")
+    parser.add_argument("--client-ready-timeout", type=int, default=90, help="Timeout seconds waiting for client socks to become ready.")
     return parser.parse_args()
+
+
+def pick_free_port():
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def wait_for_tcp_ready(host, port, timeout_sec, name, proc=None):
+    deadline = time.time() + timeout_sec
+    last_error = None
+    while time.time() < deadline:
+        if proc is not None and proc.poll() is not None:
+            raise RuntimeError(f"{name} exited early with code {proc.returncode}")
+        try:
+            with socket.create_connection((host, port), timeout=0.3):
+                return
+        except OSError as e:
+            last_error = e
+            time.sleep(0.1)
+    raise RuntimeError(f"timeout waiting {name} on {host}:{port} last_error={last_error}")
 
 
 def stop_process(proc):
@@ -75,24 +97,29 @@ class EchoServer:
 
     def stop(self):
         self.running = False
-        try: self.sock.close() 
-        except: pass
+        try:
+            self.sock.close()
+        except Exception:
+            pass
+        if self.thread is not None:
+            self.thread.join(timeout=2)
 
     def run(self):
         while self.running:
             try:
-                conn, addr = self.sock.accept()
+                conn, _addr = self.sock.accept()
                 threading.Thread(target=self.handle_client, args=(conn,)).start()
-            except:
+            except Exception:
                 break
 
     def handle_client(self, conn):
         try:
             while True:
                 data = conn.recv(1024)
-                if not data: break
+                if not data:
+                    break
                 conn.sendall(data)
-        except:
+        except Exception:
             pass
         finally:
             conn.close()
@@ -117,8 +144,10 @@ class FakeTLSServer:
     def stop(self):
         if self.process:
             self.process.terminate()
-            try: self.process.wait(timeout=2)
-            except: self.process.kill()
+            try:
+                self.process.wait(timeout=2)
+            except Exception:
+                self.process.kill()
 
 def write_json(path, data):
     with open(path, 'w') as f:
@@ -198,44 +227,52 @@ def analyze_valgrind_log(path, display_name):
     return False
 
 
-def run_valgrind_test(traffic_count):
+def run_valgrind_test(traffic_count, server_ready_timeout, client_ready_timeout):
     log_info("Starting Valgrind Memory Test...")
-    
-    echo = EchoServer(ECHO_PORT)
+
+    echo_port = pick_free_port()
+    tls_port = pick_free_port()
+    server_port = pick_free_port()
+    client_socks_port = pick_free_port()
+
+    echo = EchoServer(echo_port)
     echo.start()
-    tls = FakeTLSServer(14448, "valgrind.test.com")
+    tls = FakeTLSServer(tls_port, "valgrind.test.com")
     tls.start()
-    
+    wait_for_tcp_ready("127.0.0.1", tls_port, 10, "fake tls server", tls.process)
+
     keys = generate_keys()
-    
+
     server_cfg = {
         "mode": "server", "log": {"level": "info", "file": "val_server.log"},
-        "inbound": {"host": "127.0.0.1", "port": 20008},
+        "inbound": {"host": "127.0.0.1", "port": server_port},
         "reality": { "sni": "valgrind.test.com", "private_key": keys["private_key"], "public_key": keys["public_key"], "short_id": SHORT_ID },
-        "fallbacks": [{"sni": "valgrind.test.com", "host": "127.0.0.1", "port": "14448"}],
+        "fallbacks": [{"sni": "valgrind.test.com", "host": "127.0.0.1", "port": str(tls_port)}],
         "timeout": {"idle": 10}
     }
     client_cfg = {
         "mode": "client", "log": {"level": "info", "file": "val_client.log"},
-        "inbound": {"host": "127.0.0.1", "port": 1098},
-        "outbound": {"host": "127.0.0.1", "port": 20008},
-        "socks": {"host": "127.0.0.1", "port": 1098, "auth": False},
+        "inbound": {"host": "127.0.0.1", "port": client_socks_port},
+        "outbound": {"host": "127.0.0.1", "port": server_port},
+        "socks": {"host": "127.0.0.1", "port": client_socks_port, "auth": False},
         "reality": { "sni": "valgrind.test.com", "public_key": keys["public_key"], "private_key": keys["private_key"], "short_id": SHORT_ID, "strict_cert_verify": False },
         "timeout": {"idle": 10}
     }
-    
+
     write_json(f"{BUILD_DIR}/val_server.json", server_cfg)
     write_json(f"{BUILD_DIR}/val_client.json", client_cfg)
-    
+
     sp, s_vlog = start_socks_process_valgrind("val_server.json", f"{BUILD_DIR}/val_server_stdout.log", "server")
+    wait_for_tcp_ready("127.0.0.1", server_port, server_ready_timeout, "server inbound", sp)
+
     cp, c_vlog = start_socks_process_valgrind("val_client.json", f"{BUILD_DIR}/val_client_stdout.log", "client")
-    
-    time.sleep(5)
+    wait_for_tcp_ready("127.0.0.1", client_socks_port, client_ready_timeout, "client socks", cp)
+
     success = True
-    
+
     try:
         log_info("Running traffic...")
-        sock = socks5_connect(1098, "127.0.0.1", ECHO_PORT)
+        sock = socks5_connect(client_socks_port, "127.0.0.1", echo_port)
         sock.sendall(b"MEMORY_TEST")
         res = sock.recv(1024)
         if res == b"MEMORY_TEST":
@@ -244,19 +281,19 @@ def run_valgrind_test(traffic_count):
             log_fail("Traffic mismatch")
             success = False
         sock.close()
-        
+
         for _ in range(traffic_count):
-            sock = socks5_connect(1098, "127.0.0.1", ECHO_PORT)
+            sock = socks5_connect(client_socks_port, "127.0.0.1", echo_port)
             sock.close()
             time.sleep(0.1)
-            
+
     except Exception as e:
         log_fail(f"Test Error: {e}")
         success = False
     finally:
         log_info("Stopping processes...")
-        stop_process(sp)
         stop_process(cp)
+        stop_process(sp)
         echo.stop()
         tls.stop()
 
@@ -284,5 +321,5 @@ if __name__ == "__main__":
     BUILD_DIR = args.build_dir
     SOCKS_BIN = args.socks_bin
 
-    ok = run_valgrind_test(args.traffic_count)
+    ok = run_valgrind_test(args.traffic_count, args.server_ready_timeout, args.client_ready_timeout)
     sys.exit(0 if ok else 1)
