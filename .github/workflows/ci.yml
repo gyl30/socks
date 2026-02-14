@@ -45,13 +45,13 @@ jobs:
           -DENABLE_ASAN=OFF
 
     - name: Build TSAN
-      run: cmake --build build_tsan -j15
+      run: cmake --build build_tsan
 
     - name: Run TSAN Full Test Suite
-      run: ctest --test-dir build_tsan -j20 --output-on-failure --output-log "$CI_ARTIFACT_DIR/ctest_tsan_unit.log" -E "$INTEGRATION_TEST_REGEX"
+      run: ctest --test-dir build_tsan --parallel --output-on-failure --output-log "$CI_ARTIFACT_DIR/ctest_tsan_unit.log" -E "$INTEGRATION_TEST_REGEX"
 
     - name: Run TSAN Integration Tests
-      run: ctest --test-dir build_tsan -j20 --output-on-failure --output-log "$CI_ARTIFACT_DIR/ctest_tsan_integration.log" -R "$INTEGRATION_TEST_REGEX"
+      run: ctest --test-dir build_tsan --parallel --output-on-failure --output-log "$CI_ARTIFACT_DIR/ctest_tsan_integration.log" -R "$INTEGRATION_TEST_REGEX"
 
     - name: Configure Valgrind Build
       run: |
@@ -61,7 +61,7 @@ jobs:
           -DENABLE_ASAN=OFF
 
     - name: Build Valgrind
-      run: cmake --build build_valgrind -j15
+      run: cmake --build build_valgrind
 
     - name: Run Valgrind Memory Safety Test
       run: |
@@ -71,7 +71,7 @@ jobs:
     - name: Enforce Coverage >= 95% (per-file)
       run: |
         set -euo pipefail
-        BUILD_DIR=build_coverage BUILD_JOBS=15 TEST_JOBS=20 COVERAGE_THRESHOLD=95 PER_FILE_GATE=1 script/run_coverage.sh 2>&1 | tee "$CI_ARTIFACT_DIR/coverage.log"
+        BUILD_DIR=build_coverage COVERAGE_THRESHOLD=95 PER_FILE_GATE=1 script/run_coverage.sh 2>&1 | tee "$CI_ARTIFACT_DIR/coverage.log"
 
     - name: Upload Quality Artifacts
       if: always()
@@ -101,7 +101,7 @@ jobs:
       run: cmake -S . -B build_fuzz -DENABLE_FUZZING=ON -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_COMPILER=clang -GNinja
 
     - name: Build Fuzzers
-      run: cmake --build build_fuzz -j15
+      run: cmake --build build_fuzz
 
     - name: Smoke Test Fuzzers
       run: |
