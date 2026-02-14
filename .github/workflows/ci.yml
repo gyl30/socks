@@ -27,6 +27,14 @@ jobs:
     - name: Prepare Artifact Directory
       run: mkdir -p "$CI_ARTIFACT_DIR"
 
+    - name: Guard Expected Assertion Style
+      run: |
+        set -euo pipefail
+        if grep -R -n -E 'value_or[[:space:]]*\(' tests --include='*_test.cpp'; then
+          echo "Found forbidden expected assertion pattern in tests: value_or(...)"
+          exit 1
+        fi
+
     - name: Configure TSAN Build
       run: |
         cmake -S . -B build_tsan -GNinja \
