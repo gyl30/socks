@@ -319,6 +319,7 @@ TEST_F(mux_connection_integration_test, OffThreadSyncQueriesReturnWhenIoQueueBus
 
     auto stream = std::make_shared<simple_mock_stream>();
     bool try_register_ok = true;
+    bool create_stream_is_null = false;
     std::promise<void> caller_done;
     auto caller_done_future = caller_done.get_future();
     std::thread caller(
@@ -326,10 +327,11 @@ TEST_F(mux_connection_integration_test, OffThreadSyncQueriesReturnWhenIoQueueBus
         {
             conn->register_stream(101, stream);
             try_register_ok = conn->try_register_stream(102, stream);
+            create_stream_is_null = (conn->create_stream("busy-queue") == nullptr);
             caller_done.set_value();
         });
 
-    EXPECT_EQ(caller_done_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_EQ(caller_done_future.wait_for(std::chrono::seconds(3)), std::future_status::ready);
     release_blocker.store(true, std::memory_order_release);
 
     if (caller.joinable())
@@ -338,6 +340,7 @@ TEST_F(mux_connection_integration_test, OffThreadSyncQueriesReturnWhenIoQueueBus
     }
 
     EXPECT_FALSE(try_register_ok);
+    EXPECT_TRUE(create_stream_is_null);
     EXPECT_FALSE(conn->has_stream(101));
     EXPECT_FALSE(conn->has_stream(102));
 
