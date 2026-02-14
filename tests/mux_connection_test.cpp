@@ -292,6 +292,48 @@ TEST_F(mux_connection_integration_test, OffThreadCanAcceptStreamFalsePath)
     io_ctx().restart();
 }
 
+TEST_F(mux_connection_integration_test, StoppedIoContextUsesInlineQueryPaths)
+{
+    config::limits_t limits_cfg;
+    limits_cfg.max_streams = 2;
+    auto conn = std::make_shared<mux_connection>(
+        asio::ip::tcp::socket(io_ctx()),
+        io_ctx(),
+        reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()},
+        true,
+        13,
+        "trace",
+        config::timeout_t{},
+        limits_cfg);
+    conn->started_.store(true, std::memory_order_release);
+    conn->connection_state_.store(mux_connection_state::kConnected, std::memory_order_release);
+
+    io_ctx().stop();
+
+    auto stream = std::make_shared<simple_mock_stream>();
+    EXPECT_TRUE(conn->try_register_stream(42, stream));
+    EXPECT_TRUE(conn->has_stream(42));
+    conn->remove_stream(42);
+    EXPECT_FALSE(conn->has_stream(42));
+    EXPECT_TRUE(conn->can_accept_stream());
+
+    io_ctx().restart();
+}
+
+TEST_F(mux_connection_integration_test, StopRunsInlineWhenIoContextStopped)
+{
+    auto conn = std::make_shared<mux_connection>(
+        asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 14);
+    conn->started_.store(true, std::memory_order_release);
+    conn->connection_state_.store(mux_connection_state::kConnected, std::memory_order_release);
+
+    io_ctx().stop();
+    conn->stop();
+
+    EXPECT_EQ(conn->connection_state_.load(std::memory_order_acquire), mux_connection_state::kClosed);
+    io_ctx().restart();
+}
+
 TEST_F(mux_connection_integration_test, StopDrainingAndInternalErrorBranches)
 {
     auto conn = std::make_shared<mux_connection>(

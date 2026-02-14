@@ -218,7 +218,7 @@ mux_connection::~mux_connection() { statistics::instance().dec_active_mux_sessio
 
 bool mux_connection::run_inline() const
 {
-    return !started_.load(std::memory_order_acquire) || io_context_.get_executor().running_in_this_thread();
+    return !started_.load(std::memory_order_acquire) || io_context_.stopped() || io_context_.get_executor().running_in_this_thread();
 }
 
 void mux_connection::register_stream_local(const std::uint32_t id, std::shared_ptr<mux_stream_interface> stream)
@@ -433,6 +433,12 @@ void mux_connection::stop()
         {
             return;
         }
+    }
+
+    if (run_inline())
+    {
+        stop_impl();
+        return;
     }
 
     asio::dispatch(io_context_, [self = shared_from_this()]() { self->stop_impl(); });
