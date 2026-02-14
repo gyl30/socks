@@ -107,6 +107,10 @@ bool run_sync_bool_query(asio::io_context& io_context, Fn&& fn)
     {
         return false;
     }
+    if (io_context.get_executor().running_in_this_thread())
+    {
+        return std::forward<Fn>(fn)();
+    }
 
     std::promise<bool> promise;
     auto future = promise.get_future();
@@ -131,6 +135,11 @@ void run_sync_void_query(asio::io_context& io_context, Fn&& fn)
 {
     if (io_context.stopped())
     {
+        return;
+    }
+    if (io_context.get_executor().running_in_this_thread())
+    {
+        std::forward<Fn>(fn)();
         return;
     }
 
