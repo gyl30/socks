@@ -111,7 +111,19 @@ bool run_sync_bool_query(asio::io_context& io_context, const std::uint32_t cid, 
     }
     if (io_context.get_executor().running_in_this_thread())
     {
-        return std::forward<Fn>(fn)();
+        try
+        {
+            return std::forward<Fn>(fn)();
+        }
+        catch (const std::exception& ex)
+        {
+            LOG_WARN("mux {} sync query {} threw {}", cid, query_name, ex.what());
+        }
+        catch (...)
+        {
+            LOG_WARN("mux {} sync query {} threw unknown", cid, query_name);
+        }
+        return false;
     }
 
     auto started = std::make_shared<std::atomic<bool>>(false);

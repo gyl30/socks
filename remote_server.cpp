@@ -831,7 +831,18 @@ void remote_server::set_certificate(std::string sni,
 {
     if (!started_.load(std::memory_order_acquire) || io_context_.stopped() || io_context_.get_executor().running_in_this_thread())
     {
-        cert_manager_.set_certificate(sni, std::move(cert_msg), std::move(fp), trace_id);
+        try
+        {
+            cert_manager_.set_certificate(sni, std::move(cert_msg), std::move(fp), trace_id);
+        }
+        catch (const std::exception& ex)
+        {
+            LOG_WARN("set certificate inline apply failed sni {} error {}", sni, ex.what());
+        }
+        catch (...)
+        {
+            LOG_WARN("set certificate inline apply failed sni {} unknown", sni);
+        }
         return;
     }
 
