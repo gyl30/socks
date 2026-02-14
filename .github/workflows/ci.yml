@@ -101,7 +101,7 @@ jobs:
       run: cmake -S . -B build_fuzz -DENABLE_FUZZING=ON -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_COMPILER=clang -GNinja
 
     - name: Build Fuzzers
-      run: cmake --build build_fuzz
+      run: cmake --build build_fuzz -j15
 
     - name: Smoke Test Fuzzers
       run: |
