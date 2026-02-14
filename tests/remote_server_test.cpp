@@ -966,6 +966,19 @@ TEST_F(remote_server_test, ConstructorRejectsInvalidRealityDest)
     EXPECT_FALSE(server->auth_config_valid_);
 }
 
+TEST_F(remote_server_test, ConstructorRejectsInvalidPrivateKeyLength)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    auto cfg = make_server_cfg(pick_free_port(), {}, "0102030405060708");
+    cfg.reality.private_key = "0102";
+    auto server = std::make_shared<mux::remote_server>(pool, cfg);
+
+    EXPECT_FALSE(server->auth_config_valid_);
+}
+
 TEST_F(remote_server_test, ConstructorReturnsEarlyWhenBindFails)
 {
     std::error_code ec;

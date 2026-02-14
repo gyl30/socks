@@ -293,6 +293,11 @@ TEST(ClientTunnelPoolWhiteboxTest, ConfigValidationAndStartGuardBranches)
     EXPECT_FALSE(long_short_id_pool->valid());
 
     cfg.reality.short_id = "0102030405060708";
+    cfg.reality.public_key = "0102";
+    auto invalid_public_key_pool = std::make_shared<mux::client_tunnel_pool>(pool, cfg, 0);
+    EXPECT_FALSE(invalid_public_key_pool->valid());
+
+    cfg.reality.public_key = generate_public_key_hex();
     cfg.reality.fingerprint = "invalid-fingerprint";
     auto invalid_fingerprint_pool = std::make_shared<mux::client_tunnel_pool>(pool, cfg, 0);
     EXPECT_FALSE(invalid_fingerprint_pool->valid());
@@ -345,9 +350,18 @@ TEST(ClientTunnelPoolWhiteboxTest, BuildTunnelAndWaitRetryBranches)
     bad_handshake.cipher_suite = 0x1301;
     bad_handshake.md = EVP_sha256();
     bad_handshake.cipher = EVP_aes_128_gcm();
+    bad_handshake.c_app_secret.clear();
+    bad_handshake.s_app_secret.clear();
 
-    auto tunnel = tunnel_pool->build_tunnel(std::move(socket), io_context, 1, bad_handshake, "trace-1");
-    ASSERT_NE(tunnel, nullptr);
+    auto bad_tunnel = tunnel_pool->build_tunnel(std::move(socket), io_context, 1, bad_handshake, "trace-1");
+    ASSERT_EQ(bad_tunnel, nullptr);
+
+    asio::ip::tcp::socket good_socket(io_context);
+    auto good_handshake = bad_handshake;
+    good_handshake.c_app_secret.assign(32, 0x11);
+    good_handshake.s_app_secret.assign(32, 0x22);
+    auto good_tunnel = tunnel_pool->build_tunnel(std::move(good_socket), io_context, 2, good_handshake, "trace-2");
+    ASSERT_NE(good_tunnel, nullptr);
 
     tunnel_pool->stop_.store(true, std::memory_order_release);
     asio::co_spawn(io_context,
@@ -358,6 +372,31 @@ TEST(ClientTunnelPoolWhiteboxTest, BuildTunnelAndWaitRetryBranches)
                    },
                    asio::detached);
     io_context.run();
+}
+
+TEST(ClientTunnelPoolWhiteboxTest, BuildTunnelReturnsNullWhenKeyDerivationFails)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    auto cfg = make_base_cfg();
+    cfg.reality.public_key = generate_public_key_hex();
+    auto tunnel_pool = std::make_shared<mux::client_tunnel_pool>(pool, cfg, 0);
+
+    asio::io_context io_context;
+    asio::ip::tcp::socket socket(io_context);
+
+    mux::client_tunnel_pool::handshake_result handshake{};
+    handshake.cipher_suite = 0x1301;
+    handshake.md = EVP_sha256();
+    handshake.cipher = EVP_aes_128_gcm();
+    handshake.c_app_secret.assign(32, 0x11);
+    handshake.s_app_secret.assign(32, 0x22);
+
+    fail_next_hkdf_add_info();
+    auto tunnel = tunnel_pool->build_tunnel(std::move(socket), io_context, 3, handshake, "trace-3");
+    EXPECT_EQ(tunnel, nullptr);
 }
 
 TEST(ClientTunnelPoolWhiteboxTest, TcpConnectAndHandshakeErrorBranches)
