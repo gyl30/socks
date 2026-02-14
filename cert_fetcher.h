@@ -34,7 +34,7 @@ class handshake_reassembler
 {
    public:
     void append(std::span<const std::uint8_t> data);
-    bool next(std::vector<std::uint8_t>& out, std::error_code& ec);
+    std::expected<bool, std::error_code> next(std::vector<std::uint8_t>& out);
 
    private:
     std::vector<std::uint8_t> buffer_;
@@ -70,32 +70,31 @@ class cert_fetcher
         bool validate_server_hello_body(const std::vector<std::uint8_t>& sh_body) const;
 
         asio::awaitable<std::vector<std::uint8_t>> find_certificate();
-        asio::awaitable<bool> append_next_handshake_record(handshake_reassembler& assembler,
-                                                           std::vector<std::uint8_t>& pt_buf,
-                                                           int record_index,
-                                                           std::error_code& ec);
-        bool consume_handshake_messages(handshake_reassembler& assembler,
-                                        std::vector<std::uint8_t>& msg,
-                                        std::vector<std::uint8_t>& cert_msg,
-                                        std::error_code& ec);
+        asio::awaitable<std::expected<void, std::error_code>> append_next_handshake_record(handshake_reassembler& assembler,
+                                                                                           std::vector<std::uint8_t>& pt_buf,
+                                                                                           int record_index);
+        std::expected<bool, std::error_code> consume_handshake_messages(handshake_reassembler& assembler,
+                                                                        std::vector<std::uint8_t>& msg,
+                                                                        std::vector<std::uint8_t>& cert_msg);
         bool process_handshake_message(const std::vector<std::uint8_t>& msg, std::vector<std::uint8_t>& cert_msg);
 
         std::error_code process_server_hello(const std::vector<std::uint8_t>& sh_body);
 
         asio::awaitable<std::pair<std::error_code, std::vector<std::uint8_t>>> read_record_plaintext();
 
-        bool validate_record_length(std::uint16_t len, std::error_code& out_ec) const;
-        asio::awaitable<bool> read_record_body(std::uint16_t len, std::vector<std::uint8_t>& rec, std::error_code& out_ec);
-        std::pair<std::uint8_t, std::span<std::uint8_t>> decrypt_application_record(const std::uint8_t head[5],
-                                                                                      const std::vector<std::uint8_t>& rec,
-                                                                                      std::vector<std::uint8_t>& pt_buf,
-                                                                                      std::error_code& out_ec);
-        std::pair<std::uint8_t, std::span<std::uint8_t>> handle_record_by_content_type(const std::uint8_t head[5],
-                                                                                         const std::vector<std::uint8_t>& rec,
-                                                                                         std::vector<std::uint8_t>& pt_buf,
-                                                                                         std::error_code& out_ec);
+        std::expected<void, std::error_code> validate_record_length(std::uint16_t len) const;
+        asio::awaitable<std::expected<void, std::error_code>> read_record_body(std::uint16_t len, std::vector<std::uint8_t>& rec);
+        std::expected<std::pair<std::uint8_t, std::span<std::uint8_t>>, std::error_code> decrypt_application_record(
+            const std::uint8_t head[5],
+            const std::vector<std::uint8_t>& rec,
+            std::vector<std::uint8_t>& pt_buf);
+        std::expected<std::pair<std::uint8_t, std::span<std::uint8_t>>, std::error_code> handle_record_by_content_type(
+            const std::uint8_t head[5],
+            const std::vector<std::uint8_t>& rec,
+            std::vector<std::uint8_t>& pt_buf);
 
-        asio::awaitable<std::pair<std::uint8_t, std::span<std::uint8_t>>> read_record(std::vector<std::uint8_t>& pt_buf, std::error_code& out_ec);
+        asio::awaitable<std::expected<std::pair<std::uint8_t, std::span<std::uint8_t>>, std::error_code>> read_record(
+            std::vector<std::uint8_t>& pt_buf);
 
        private:
         mux::connection_context ctx_;

@@ -2,6 +2,7 @@
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
+#include <expected>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <system_error>
@@ -99,80 +100,68 @@ asio::ip::udp::endpoint endpoint_from_sockaddr_v6(const sockaddr_storage& addr, 
 
 }    // namespace
 
-bool set_socket_mark(int fd, const std::uint32_t mark, std::error_code& ec)
+std::expected<void, std::error_code> set_socket_mark(int fd, const std::uint32_t mark)
 {
 #ifdef __linux__
     if (mark == 0)
     {
-        ec.clear();
-        return true;
+        return {};
     }
     if (setsockopt(fd, SOL_SOCKET, SO_MARK, &mark, sizeof(mark)) != 0)
     {
-        ec = std::error_code(errno, std::system_category());
-        return false;
+        return std::unexpected(std::error_code(errno, std::system_category()));
     }
-    ec.clear();
-    return true;
+    return {};
 #else
     (void)fd;
     (void)mark;
-    ec = std::make_error_code(std::errc::not_supported);
-    return false;
+    return std::unexpected(std::make_error_code(std::errc::not_supported));
 #endif
 }
 
-bool set_socket_transparent(int fd, const bool ipv6, std::error_code& ec)
+std::expected<void, std::error_code> set_socket_transparent(int fd, const bool ipv6)
 {
 #ifdef __linux__
     const int one = 1;
     if (setsockopt(fd, SOL_IP, IP_TRANSPARENT, &one, sizeof(one)) != 0)
     {
-        ec = std::error_code(errno, std::system_category());
-        return false;
+        return std::unexpected(std::error_code(errno, std::system_category()));
     }
     if (ipv6)
     {
         if (setsockopt(fd, SOL_IPV6, IPV6_TRANSPARENT, &one, sizeof(one)) != 0)
         {
-            ec = std::error_code(errno, std::system_category());
-            return false;
+            return std::unexpected(std::error_code(errno, std::system_category()));
         }
     }
-    ec.clear();
-    return true;
+    return {};
 #else
     (void)fd;
     (void)ipv6;
-    ec = std::make_error_code(std::errc::not_supported);
-    return false;
+    return std::unexpected(std::make_error_code(std::errc::not_supported));
 #endif
 }
 
-bool set_socket_recv_origdst(int fd, const bool ipv6, std::error_code& ec)
+std::expected<void, std::error_code> set_socket_recv_origdst(int fd, const bool ipv6)
 {
 #ifdef __linux__
     const int one = 1;
     if (setsockopt(fd, SOL_IP, IP_RECVORIGDSTADDR, &one, sizeof(one)) != 0)
     {
-        ec = std::error_code(errno, std::system_category());
-        return false;
+        return std::unexpected(std::error_code(errno, std::system_category()));
     }
     if (ipv6)
     {
         if (setsockopt(fd, SOL_IPV6, IPV6_RECVORIGDSTADDR, &one, sizeof(one)) != 0)
         {
-            ec = std::error_code(errno, std::system_category());
-            return false;
+            return std::unexpected(std::error_code(errno, std::system_category()));
         }
     }
-    ec.clear();
-    return true;
+    return {};
 #else
     (void)fd;
     (void)ipv6;
-    ec = std::make_error_code(std::errc::not_supported);
-    return false;
+    return std::unexpected(std::make_error_code(std::errc::not_supported));
 #endif
 }
 
