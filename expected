@@ -1,0 +1,183 @@
+#ifndef SOCKS_EXPECTED_SHIM_H
+#define SOCKS_EXPECTED_SHIM_H
+
+#if defined(__has_include_next)
+#if __has_include_next(<expected>)
+#include_next <expected>
+#endif
+#endif
+
+#if !defined(__cpp_lib_expected) || __cpp_lib_expected < 202202L
+
+#include <system_error>
+#include <type_traits>
+#include <utility>
+#include <variant>
+
+namespace std
+{
+
+template<typename E, typename G>
+[[nodiscard]] inline E expected_error_convert(G&& error)
+{
+    using error_type = std::decay_t<G>;
+    if constexpr (std::is_constructible_v<E, error_type>)
+    {
+        return E(std::forward<G>(error));
+    }
+    else
+    {
+        using std::make_error_code;
+        return static_cast<E>(make_error_code(static_cast<error_type>(error)));
+    }
+}
+
+template<typename E>
+class unexpected
+{
+   public:
+    using error_type = E;
+
+    unexpected(const unexpected&) = default;
+    unexpected(unexpected&&) = default;
+    unexpected& operator=(const unexpected&) = default;
+    unexpected& operator=(unexpected&&) = default;
+
+    template<typename G = E, typename = std::enable_if_t<std::is_constructible_v<E, G&&>>>
+    explicit unexpected(G&& e)
+        : error_(std::forward<G>(e))
+    {}
+
+    [[nodiscard]] E& error() & noexcept { return error_; }
+    [[nodiscard]] const E& error() const& noexcept { return error_; }
+    [[nodiscard]] E&& error() && noexcept { return std::move(error_); }
+    [[nodiscard]] const E&& error() const&& noexcept { return std::move(error_); }
+
+   private:
+    E error_;
+};
+
+template<typename E>
+unexpected(E) -> unexpected<E>;
+
+template<typename T, typename E>
+class expected
+{
+   public:
+    using value_type = T;
+    using error_type = E;
+
+    template<typename U = T, typename = std::enable_if_t<std::is_default_constructible_v<U>>>
+    expected()
+        : storage_(std::in_place_index<0>)
+    {}
+
+    expected(const T& value)
+        : storage_(std::in_place_index<0>, value)
+    {}
+
+    expected(T&& value)
+        : storage_(std::in_place_index<0>, std::move(value))
+    {}
+
+    template<typename G>
+    expected(const unexpected<G>& unexpect)
+        : storage_(std::in_place_index<1>, expected_error_convert<E>(unexpect.error()))
+    {}
+
+    template<typename G>
+    expected(unexpected<G>&& unexpect)
+        : storage_(std::in_place_index<1>, expected_error_convert<E>(std::forward<G>(unexpect.error())))
+    {}
+
+    expected(const expected&) = default;
+    expected(expected&&) = default;
+    expected& operator=(const expected&) = default;
+    expected& operator=(expected&&) = default;
+
+    [[nodiscard]] bool has_value() const noexcept { return storage_.index() == 0; }
+    [[nodiscard]] explicit operator bool() const noexcept { return has_value(); }
+
+    [[nodiscard]] T& value() & { return std::get<0>(storage_); }
+    [[nodiscard]] const T& value() const& { return std::get<0>(storage_); }
+    [[nodiscard]] T&& value() && { return std::move(std::get<0>(storage_)); }
+    [[nodiscard]] const T&& value() const&& { return std::move(std::get<0>(storage_)); }
+
+    [[nodiscard]] T& operator*() & { return value(); }
+    [[nodiscard]] const T& operator*() const& { return value(); }
+    [[nodiscard]] T&& operator*() && { return std::move(value()); }
+    [[nodiscard]] const T&& operator*() const&& { return std::move(value()); }
+
+    [[nodiscard]] T* operator->() { return &std::get<0>(storage_); }
+    [[nodiscard]] const T* operator->() const { return &std::get<0>(storage_); }
+
+    [[nodiscard]] E& error() & { return std::get<1>(storage_); }
+    [[nodiscard]] const E& error() const& { return std::get<1>(storage_); }
+    [[nodiscard]] E&& error() && { return std::move(std::get<1>(storage_)); }
+    [[nodiscard]] const E&& error() const&& { return std::move(std::get<1>(storage_)); }
+
+    template<typename U>
+    [[nodiscard]] T value_or(U&& fallback) const&
+    {
+        return has_value() ? std::get<0>(storage_) : static_cast<T>(std::forward<U>(fallback));
+    }
+
+    template<typename U>
+    [[nodiscard]] T value_or(U&& fallback) &&
+    {
+        return has_value() ? std::move(std::get<0>(storage_)) : static_cast<T>(std::forward<U>(fallback));
+    }
+
+   private:
+    std::variant<T, E> storage_;
+};
+
+template<typename E>
+class expected<void, E>
+{
+   public:
+    using value_type = void;
+    using error_type = E;
+
+    expected() noexcept(std::is_nothrow_default_constructible_v<E>)
+        : has_value_(true),
+          error_()
+    {}
+
+    template<typename G>
+    expected(const unexpected<G>& unexpect)
+        : has_value_(false),
+          error_(expected_error_convert<E>(unexpect.error()))
+    {}
+
+    template<typename G>
+    expected(unexpected<G>&& unexpect)
+        : has_value_(false),
+          error_(expected_error_convert<E>(std::forward<G>(unexpect.error())))
+    {}
+
+    expected(const expected&) = default;
+    expected(expected&&) = default;
+    expected& operator=(const expected&) = default;
+    expected& operator=(expected&&) = default;
+
+    [[nodiscard]] bool has_value() const noexcept { return has_value_; }
+    [[nodiscard]] explicit operator bool() const noexcept { return has_value_; }
+
+    void value() const noexcept {}
+
+    [[nodiscard]] E& error() & noexcept { return error_; }
+    [[nodiscard]] const E& error() const& noexcept { return error_; }
+    [[nodiscard]] E&& error() && noexcept { return std::move(error_); }
+    [[nodiscard]] const E&& error() const&& noexcept { return std::move(error_); }
+
+   private:
+    bool has_value_;
+    E error_;
+};
+
+}    // namespace std
+
+#endif
+
+#endif

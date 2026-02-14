@@ -2,8 +2,26 @@
 set -e
 
 BUILD_DIR="${BUILD_DIR:-build_coverage}"
-BUILD_JOBS="${BUILD_JOBS:-15}"
-TEST_JOBS="${TEST_JOBS:-20}"
+
+detect_jobs() {
+    if command -v nproc >/dev/null 2>&1; then
+        nproc
+        return
+    fi
+    if command -v sysctl >/dev/null 2>&1; then
+        sysctl -n hw.logicalcpu 2>/dev/null || true
+        return
+    fi
+    echo 1
+}
+
+DEFAULT_JOBS="$(detect_jobs)"
+if [ -z "${DEFAULT_JOBS}" ] || [ "${DEFAULT_JOBS}" -lt 1 ] 2>/dev/null; then
+    DEFAULT_JOBS=1
+fi
+
+BUILD_JOBS="${BUILD_JOBS:-${DEFAULT_JOBS}}"
+TEST_JOBS="${TEST_JOBS:-${DEFAULT_JOBS}}"
 COVERAGE_THRESHOLD="${COVERAGE_THRESHOLD:-95}"
 BRANCH_THRESHOLD="${BRANCH_THRESHOLD:-$COVERAGE_THRESHOLD}"
 SKIP_HTML_REPORT="${SKIP_HTML_REPORT:-0}"
