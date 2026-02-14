@@ -44,12 +44,18 @@ def parse_args():
 def stop_process(proc):
     if proc is None or proc.poll() is not None:
         return
-    proc.terminate()
+    # Prefer graceful shutdown path in socks (handled by SIGINT/SIGTERM),
+    # so valgrind sees a full teardown instead of abrupt process termination.
+    proc.send_signal(signal.SIGINT)
     try:
-        proc.wait(timeout=5)
+        proc.wait(timeout=10)
     except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait(timeout=5)
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
 
 class EchoServer:
     def __init__(self, port):

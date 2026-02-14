@@ -105,9 +105,6 @@ std::optional<negotiated_suite> select_negotiated_suite(const std::uint16_t ciph
     }
     return std::nullopt;
 }
-
-
-
 std::pair<std::uint8_t, std::span<std::uint8_t>> copy_plaintext_record(std::vector<std::uint8_t>& pt_buf, const std::vector<std::uint8_t>& rec)
 {
     if (pt_buf.size() < rec.size())

@@ -131,23 +131,29 @@ class echo_server
 
     void stop()
     {
+        if (stopped_.exchange(true, std::memory_order_acq_rel))
+        {
+            return;
+        }
         ctx_.stop();
-        std::error_code ec;
-        acceptor_.close(ec);
     }
 
    private:
     void do_accept()
     {
+        if (stopped_.load(std::memory_order_acquire))
+        {
+            return;
+        }
         auto socket = std::make_shared<asio::ip::tcp::socket>(acceptor_.get_executor());
         acceptor_.async_accept(*socket,
                                [this, socket](const std::error_code ec)
                                {
-                                   if (!ec)
-                                   {
-                                       do_echo(socket);
-                                   }
-                                   if (acceptor_.is_open())
+                                    if (!ec)
+                                    {
+                                        do_echo(socket);
+                                    }
+                                   if (!stopped_.load(std::memory_order_acquire))
                                    {
                                        do_accept();
                                    }
@@ -178,6 +184,7 @@ class echo_server
     asio::io_context ctx_;
     asio::ip::tcp::acceptor acceptor_;
     std::thread thread_;
+    std::atomic<bool> stopped_{false};
 };
 
 TEST_F(upstream_test, DirectUpstreamConnectSuccess)

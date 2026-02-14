@@ -593,7 +593,7 @@ TEST(CryptoUtilTest, HKDFInvalidArguments)
     EXPECT_FALSE(r2.has_value());
     EXPECT_EQ(r2.error(), std::make_error_code(std::errc::invalid_argument));
 
-    const auto okm_empty = crypto_util::hkdf_expand(prk, {0x01}, 0, EVP_sha256());
+    const auto okm_empty = crypto_util::hkdf_expand(*prk, {0x01}, 0, EVP_sha256());
     ASSERT_TRUE(okm_empty.has_value());
     EXPECT_TRUE(okm_empty->empty());
 }
@@ -660,7 +660,6 @@ TEST(CryptoUtilTest, HKDFNullDigestFails)
 
 TEST(CryptoUtilTest, AEADDecryptLowLevelFailureBranches)
 {
-    std::error_code ec;
     const std::vector<std::uint8_t> key(32, 0x11);
     const std::vector<std::uint8_t> nonce(12, 0x22);
     const std::vector<std::uint8_t> plaintext = {0x01, 0x02, 0x03, 0x04};
@@ -693,7 +692,6 @@ TEST(CryptoUtilTest, AEADDecryptLowLevelFailureBranches)
 
 TEST(CryptoUtilTest, AEADEncryptAppendMovedFromContextFails)
 {
-    std::error_code ec;
     const std::vector<std::uint8_t> key(32, 0x11);
     const std::vector<std::uint8_t> nonce(12, 0x22);
     const std::vector<std::uint8_t> plaintext = {0x01, 0x02, 0x03};
@@ -718,7 +716,6 @@ TEST(CryptoUtilTest, VerifySignatureNullKeyFails)
 
 TEST(CryptoUtilTest, AEADDecryptLowLevelRejectsTooShortCiphertext)
 {
-    std::error_code ec;
     reality::cipher_context ctx;
     const std::vector<std::uint8_t> key(32, 0x11);
     const std::vector<std::uint8_t> nonce(12, 0x22);
