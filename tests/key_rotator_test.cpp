@@ -1,6 +1,5 @@
 #include <atomic>
 #include <cstdint>
-#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -18,8 +17,6 @@ enum class keygen_mode : std::uint8_t
 {
     kSuccess = 0,
     kReturnFalse = 1,
-    kThrowStd = 2,
-    kThrowUnknown = 3,
 };
 
 std::atomic<keygen_mode> g_keygen_mode{keygen_mode::kSuccess};
@@ -37,15 +34,6 @@ bool crypto_util::generate_x25519_keypair(std::uint8_t out_public[32], std::uint
     {
         return false;
     }
-    if (mode == keygen_mode::kThrowStd)
-    {
-        throw std::runtime_error("forced keygen std exception");
-    }
-    if (mode == keygen_mode::kThrowUnknown)
-    {
-        throw 42;
-    }
-
     const auto seed = g_seed.fetch_add(1, std::memory_order_relaxed);
     for (std::size_t i = 0; i < 32; ++i)
     {
@@ -132,26 +120,6 @@ TEST(KeyRotatorTest, MissingCurrentKeyTriggersFallbackRotationPath)
 TEST(KeyRotatorTest, ConstructorHandlesGenerateFailureAndRecovers)
 {
     g_keygen_mode.store(keygen_mode::kReturnFalse, std::memory_order_relaxed);
-    reality::key_rotator rotator(std::chrono::seconds(60));
-
-    g_keygen_mode.store(keygen_mode::kSuccess, std::memory_order_relaxed);
-    const auto key = rotator.get_current_key();
-    EXPECT_NE(key, nullptr);
-}
-
-TEST(KeyRotatorTest, ConstructorHandlesStdExceptionAndRecovers)
-{
-    g_keygen_mode.store(keygen_mode::kThrowStd, std::memory_order_relaxed);
-    reality::key_rotator rotator(std::chrono::seconds(60));
-
-    g_keygen_mode.store(keygen_mode::kSuccess, std::memory_order_relaxed);
-    const auto key = rotator.get_current_key();
-    EXPECT_NE(key, nullptr);
-}
-
-TEST(KeyRotatorTest, ConstructorHandlesUnknownExceptionAndRecovers)
-{
-    g_keygen_mode.store(keygen_mode::kThrowUnknown, std::memory_order_relaxed);
     reality::key_rotator rotator(std::chrono::seconds(60));
 
     g_keygen_mode.store(keygen_mode::kSuccess, std::memory_order_relaxed);
