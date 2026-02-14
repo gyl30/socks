@@ -3,10 +3,10 @@
 
 #include <vector>
 #include <utility>
-#include <exception>
-#include <stdexcept>
+#include <optional>
 
 #include <asio.hpp>
+#include <gtest/gtest.h>
 
 namespace mux::test
 {
@@ -14,40 +14,42 @@ namespace mux::test
 template <typename T>
 T run_awaitable(asio::io_context& ctx, asio::awaitable<T> awaitable)
 {
-    T result;
+    std::optional<T> result;
+    bool done = false;
     asio::co_spawn(ctx,
-                   std::move(awaitable),
-                   [&](std::exception_ptr e, T res)
+                   [awaitable = std::move(awaitable), &result, &done]() mutable -> asio::awaitable<void>
                    {
-                       if (e)
-                       {
-                           std::rethrow_exception(e);
-                       }
-                       result = std::move(res);
-                   });
+                       result.emplace(co_await std::move(awaitable));
+                       done = true;
+                       co_return;
+                   },
+                   asio::detached);
     ctx.run();
     ctx.restart();
-    return result;
+    if (!done || !result.has_value())
+    {
+        ADD_FAILURE() << "awaitable did not complete";
+        return T{};
+    }
+    return std::move(*result);
 }
 
 inline void run_awaitable_void(asio::io_context& ctx, asio::awaitable<void> awaitable)
 {
     bool done = false;
     asio::co_spawn(ctx,
-                   std::move(awaitable),
-                   [&](std::exception_ptr e)
+                   [awaitable = std::move(awaitable), &done]() mutable -> asio::awaitable<void>
                    {
-                       if (e)
-                       {
-                           std::rethrow_exception(e);
-                       }
+                       co_await std::move(awaitable);
                        done = true;
-                   });
+                       co_return;
+                   },
+                   asio::detached);
     ctx.run();
     ctx.restart();
     if (!done)
     {
-        throw std::runtime_error("awaitable did not complete");
+        ADD_FAILURE() << "awaitable did not complete";
     }
 }
 

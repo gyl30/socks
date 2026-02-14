@@ -121,6 +121,8 @@ jobs:
     - name: Build Valgrind
       run: cmake --build build_valgrind
 
+    - name: Validate Valgrind Script Args
+
     - name: Run Valgrind Memory Safety Test
       run: |
         set -euo pipefail
