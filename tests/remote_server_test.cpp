@@ -221,92 +221,6 @@ bool wait_for_condition(Predicate predicate,
     return predicate();
 }
 
-std::vector<std::uint8_t> encrypt_record_compat(const EVP_CIPHER* cipher,
-                                                const std::vector<std::uint8_t>& key,
-                                                const std::vector<std::uint8_t>& iv,
-                                                const std::uint64_t seq,
-                                                const std::vector<std::uint8_t>& plaintext,
-                                                const std::uint8_t content_type,
-                                                std::error_code& ec)
-{
-    auto encrypted = reality::tls_record_layer::encrypt_record(cipher, key, iv, seq, plaintext, content_type);
-    if (!encrypted)
-    {
-        ec = encrypted.error();
-        return {};
-    }
-    ec.clear();
-    return std::move(*encrypted);
-}
-
-bool derive_server_key_share_compat(const std::shared_ptr<mux::remote_server>& server,
-                                    const mux::client_hello_info& info,
-                                    const std::uint8_t* public_key,
-                                    const std::uint8_t* private_key,
-                                    const mux::connection_context& ctx,
-                                    std::vector<std::uint8_t>& sh_shared,
-                                    std::vector<std::uint8_t>& key_share_data,
-                                    std::uint16_t& key_share_group,
-                                    std::error_code& ec)
-{
-    auto res = server->derive_server_key_share(info, public_key, private_key, ctx);
-    if (!res)
-    {
-        ec = res.error();
-        return false;
-    }
-    sh_shared = std::move(res->sh_shared);
-    key_share_data = std::move(res->key_share_data);
-    key_share_group = res->key_share_group;
-    ec.clear();
-    return true;
-}
-
-bool derive_application_traffic_keys_compat(const std::shared_ptr<mux::remote_server>& server,
-                                            const mux::remote_server::server_handshake_res& sh_res,
-                                            std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& c_app_keys,
-                                            std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& s_app_keys,
-                                            std::error_code& ec)
-{
-    auto res = server->derive_application_traffic_keys(sh_res);
-    if (!res)
-    {
-        ec = res.error();
-        return false;
-    }
-    c_app_keys = std::move(res->c_app_keys);
-    s_app_keys = std::move(res->s_app_keys);
-    ec.clear();
-    return true;
-}
-
-asio::awaitable<mux::remote_server::server_handshake_res> perform_handshake_response_compat(
-    mux::remote_server& server,
-    const std::shared_ptr<asio::ip::tcp::socket>& socket,
-    const mux::client_hello_info& info,
-    reality::transcript& trans,
-    const mux::connection_context& ctx,
-    std::error_code& ec)
-{
-    auto res = co_await server.perform_handshake_response(socket, info, trans, ctx);
-    ec = res.ec;
-    co_return res;
-}
-
-asio::awaitable<bool> verify_client_finished_compat(
-    const std::shared_ptr<asio::ip::tcp::socket>& socket,
-    const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& c_hs_keys,
-    const reality::handshake_keys& hs_keys,
-    const reality::transcript& trans,
-    const EVP_CIPHER* cipher,
-    const EVP_MD* md,
-    const mux::connection_context& ctx,
-    std::error_code& ec)
-{
-    ec = co_await mux::remote_server::verify_client_finished(socket, c_hs_keys, hs_keys, trans, cipher, md, ctx);
-    co_return !ec;
-}
-
 }    // namespace
 
 class remote_server_test : public ::testing::Test
@@ -1300,22 +1214,18 @@ TEST_F(remote_server_test, DeriveShareAndFallbackHelperBranches)
     mux::client_hello_info no_share_info{};
     std::array<std::uint8_t, 32> pub_key{};
     std::array<std::uint8_t, 32> priv_key{};
-    std::vector<std::uint8_t> shared;
-    std::vector<std::uint8_t> key_share_data;
-    std::uint16_t key_share_group = 0;
-    EXPECT_FALSE(derive_server_key_share_compat(
-        server, no_share_info, pub_key.data(), priv_key.data(), mux::connection_context{}, shared, key_share_data, key_share_group, ec));
-    EXPECT_EQ(ec, std::errc::invalid_argument);
+    const auto key_share_res = server->derive_server_key_share(no_share_info, pub_key.data(), priv_key.data(), mux::connection_context{});
+    EXPECT_FALSE(key_share_res.has_value());
+    EXPECT_EQ(key_share_res.error(), std::errc::invalid_argument);
 
     mux::remote_server::server_handshake_res bad_handshake{};
     bad_handshake.cipher = EVP_aes_128_gcm();
     bad_handshake.negotiated_md = EVP_sha256();
     bad_handshake.handshake_hash.assign(32, 0x55);
     bad_handshake.hs_keys.master_secret.clear();
-    std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> c_app_keys;
-    std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> s_app_keys;
-    EXPECT_FALSE(derive_application_traffic_keys_compat(server, bad_handshake, c_app_keys, s_app_keys, ec));
-    EXPECT_TRUE(ec);
+    const auto app_keys_res = server->derive_application_traffic_keys(bad_handshake);
+    EXPECT_FALSE(app_keys_res.has_value());
+    EXPECT_TRUE(app_keys_res.error());
 
     mux::connection_context ctx;
     server->record_fallback_result(ctx, false);
@@ -1472,10 +1382,9 @@ TEST_F(remote_server_test, PerformHandshakeResponseCoversCipherSuiteSelectionBra
         asio::co_spawn(pool.get_io_context(),
                        [server, server_socket, info, ctx, &done]() mutable -> asio::awaitable<void>
                        {
-                           std::error_code hs_ec;
                            reality::transcript trans;
-                           auto res = co_await perform_handshake_response_compat(*server, server_socket, info, trans, ctx, hs_ec);
-                           done.set_value({std::move(res), hs_ec});
+                           auto res = co_await server->perform_handshake_response(server_socket, info, trans, ctx);
+                           done.set_value({std::move(res), res.ec});
                            co_return;
                        },
                        asio::detached);
@@ -1654,10 +1563,9 @@ TEST_F(remote_server_test, PerformHandshakeResponseCoversRandomAndSignKeyFailure
         asio::co_spawn(pool.get_io_context(),
                        [server, server_socket, info, ctx, &done]() mutable -> asio::awaitable<void>
                        {
-                           std::error_code hs_ec;
                            reality::transcript trans;
-                           auto res = co_await perform_handshake_response_compat(*server, server_socket, info, trans, ctx, hs_ec);
-                           done.set_value({std::move(res), hs_ec});
+                           auto res = co_await server->perform_handshake_response(server_socket, info, trans, ctx);
+                           done.set_value({std::move(res), res.ec});
                            co_return;
                        },
                        asio::detached);
@@ -1700,9 +1608,13 @@ TEST_F(remote_server_test, VerifyClientFinishedCoversPlaintextValidationBranches
 
         const std::vector<std::uint8_t> key(16, 0x41);
         const std::vector<std::uint8_t> iv(12, 0x62);
-        auto encrypted = encrypt_record_compat(EVP_aes_128_gcm(), key, iv, 0, plaintext, inner_content_type, ec);
-        EXPECT_FALSE(ec);
-        asio::write(writer, asio::buffer(encrypted), ec);
+        const auto encrypted = reality::tls_record_layer::encrypt_record(EVP_aes_128_gcm(), key, iv, 0, plaintext, inner_content_type);
+        EXPECT_TRUE(encrypted.has_value());
+        if (!encrypted)
+        {
+            return false;
+        }
+        asio::write(writer, asio::buffer(*encrypted), ec);
         EXPECT_FALSE(ec);
         writer.shutdown(asio::ip::tcp::socket::shutdown_send, ec);
 
@@ -1719,8 +1631,9 @@ TEST_F(remote_server_test, VerifyClientFinishedCoversPlaintextValidationBranches
         asio::co_spawn(io_context,
                        [&]() -> asio::awaitable<void>
                        {
-                           ok = co_await verify_client_finished_compat(
-                               reader, {key, iv}, hs_keys, trans, EVP_aes_128_gcm(), EVP_sha256(), ctx, verify_ec);
+                           verify_ec = co_await mux::remote_server::verify_client_finished(
+                               reader, {key, iv}, hs_keys, trans, EVP_aes_128_gcm(), EVP_sha256(), ctx);
+                           ok = !verify_ec;
                            co_return;
                        },
                        asio::detached);
@@ -1751,17 +1664,16 @@ TEST_F(remote_server_test, DeriveApplicationTrafficKeysCoversFirstAndSecondDeriv
     sh_res.hs_keys.master_secret.assign(32, 0x71);
     sh_res.handshake_hash.assign(32, 0x72);
 
-    std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> c_app_keys;
-    std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> s_app_keys;
-
     fail_hkdf_add_info_on_call(3);
-    EXPECT_FALSE(derive_application_traffic_keys_compat(server, sh_res, c_app_keys, s_app_keys, ec));
-    EXPECT_TRUE(ec);
+    const auto first_app_keys_res = server->derive_application_traffic_keys(sh_res);
+    EXPECT_FALSE(first_app_keys_res.has_value());
+    EXPECT_TRUE(first_app_keys_res.error());
 
     ec.clear();
     fail_hkdf_add_info_on_call(5);
-    EXPECT_FALSE(derive_application_traffic_keys_compat(server, sh_res, c_app_keys, s_app_keys, ec));
-    EXPECT_TRUE(ec);
+    const auto second_app_keys_res = server->derive_application_traffic_keys(sh_res);
+    EXPECT_FALSE(second_app_keys_res.has_value());
+    EXPECT_TRUE(second_app_keys_res.error());
 }
 
 TEST_F(remote_server_test, DeriveServerKeyShareCoversX25519DeriveFailureBranch)
@@ -1781,13 +1693,11 @@ TEST_F(remote_server_test, DeriveServerKeyShareCoversX25519DeriveFailureBranch)
     info.x25519_pub.assign(32, 0x23);
 
     mux::connection_context ctx;
-    std::vector<std::uint8_t> sh_shared;
-    std::vector<std::uint8_t> key_share_data;
-    std::uint16_t key_share_group = 0;
 
     fail_next_pkey_derive();
-    EXPECT_FALSE(derive_server_key_share_compat(server, info, pub, priv, ctx, sh_shared, key_share_data, key_share_group, ec));
-    EXPECT_TRUE(ec);
+    const auto key_share_res = server->derive_server_key_share(info, pub, priv, ctx);
+    EXPECT_FALSE(key_share_res.has_value());
+    EXPECT_TRUE(key_share_res.error());
 }
 
 TEST_F(remote_server_test, StopCoversAcceptorCloseFailureBranch)
