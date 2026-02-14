@@ -133,10 +133,10 @@ TEST(TproxyUdpSenderTest, CacheMaintenanceBranches)
     sender.sockets_.clear();
     sender.evict_oldest_socket();
 
-    sender.update_cached_socket(k1, s1, now + 30);
+    sender.update_cached_socket(k1, s1, 0);
     const auto before_ts = sender.sockets_[k1].last_used_ms;
     sender.refresh_cached_socket_timestamp(k1, s1);
-    EXPECT_GE(sender.sockets_[k1].last_used_ms, before_ts);
+    EXPECT_GT(sender.sockets_[k1].last_used_ms, before_ts);
 
     sender.drop_cached_socket_if_match(k2, s2);
     EXPECT_EQ(sender.sockets_.size(), 1u);

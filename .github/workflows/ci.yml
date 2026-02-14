@@ -157,7 +157,7 @@ jobs:
     - name: Prepare Artifact Directory
       run: mkdir -p "$CI_ARTIFACT_DIR"
 
-    - name: Enforce Coverage >= 95% (per-file)
+    - name: Enforce Coverage >= 95% (line per-file)
       run: |
         set -euo pipefail
 

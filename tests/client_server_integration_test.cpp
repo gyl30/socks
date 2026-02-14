@@ -140,8 +140,8 @@ TEST_F(integration_test, FullHandshakeAndMux)
     mux::io_context_pool pool(2);
 
 
-    const std::uint16_t server_port = 18844;
-    const std::uint16_t local_socks_port = 11081;
+    const auto server_port = pick_free_tcp_port(pool.get_io_context());
+    const auto local_socks_port = pick_free_tcp_port(pool.get_io_context());
     const std::string sni = "www.google.com";
 
     mux::config::timeout_t timeouts;
@@ -161,8 +161,6 @@ TEST_F(integration_test, FullHandshakeAndMux)
     fp.alpn = "h2";
     server->set_certificate(sni, reality::construct_certificate({0x01, 0x02, 0x03}), fp);
 
-    server->start();
-
     mux::config client_cfg;
     client_cfg.outbound.host = "127.0.0.1";
     client_cfg.outbound.port = server_port;
@@ -179,7 +177,7 @@ TEST_F(integration_test, FullHandshakeAndMux)
     server->start();
     client->start();
 
-    std::this_thread::sleep_for(std::chrono::seconds(2));
+    ASSERT_TRUE(wait_for_socks_listen(local_socks_port));
 
     asio::io_context proxy_ctx;
     asio::ip::tcp::socket proxy_socket(proxy_ctx);
@@ -199,7 +197,7 @@ TEST_F(integration_test, FullHandshakeAndMux)
 
     client->stop();
     server->stop();
-    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
 }
 
 TEST_F(integration_test, FullDataTransfer)
@@ -260,8 +258,8 @@ TEST_F(integration_test, FullDataTransfer)
     };
     (*acceptor_handler)();
 
-    const std::uint16_t server_port = 18845;
-    const std::uint16_t local_socks_port = 11082;
+    const auto server_port = pick_free_tcp_port(pool.get_io_context());
+    const auto local_socks_port = pick_free_tcp_port(pool.get_io_context());
     const std::string sni = "www.google.com";
 
     mux::config::timeout_t timeouts;
@@ -293,11 +291,10 @@ TEST_F(integration_test, FullDataTransfer)
     client_cfg.reality.strict_cert_verify = false;
     client_cfg.timeout = timeouts;
     const auto client = std::make_shared<mux::socks_client>(pool, client_cfg);
-    client->start();
 
     scoped_pool sp(pool);
-
-    std::this_thread::sleep_for(std::chrono::seconds(2));
+    client->start();
+    ASSERT_TRUE(wait_for_socks_listen(local_socks_port));
 
     {
         asio::io_context proxy_ctx;

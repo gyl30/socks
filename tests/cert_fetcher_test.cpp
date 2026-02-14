@@ -221,25 +221,28 @@ TEST(CertFetcherTest, ReassemblerLimits)
 {
     reality::handshake_reassembler assembler;
     std::vector<std::uint8_t> msg;
-    std::error_code ec;
 
     std::vector<std::uint8_t> tiny = {0x01, 0x01};
     assembler.append(tiny);
-    EXPECT_FALSE(assembler.next(msg, ec));
+    const auto tiny_res = assembler.next(msg);
+    EXPECT_FALSE(tiny_res.value_or(false));
 
     std::vector<std::uint8_t> header_only = {0x01, 0x00, 0x00, 0x10};
     assembler.append(header_only);
-    EXPECT_FALSE(assembler.next(msg, ec));
+    const auto header_res = assembler.next(msg);
+    EXPECT_FALSE(header_res.value_or(false));
 
     std::vector<std::uint8_t> huge_header = {0x01, 0x01, 0x00, 0x01};
     assembler.append(huge_header);
-    EXPECT_FALSE(assembler.next(msg, ec));
-    EXPECT_EQ(ec, std::errc::message_size);
+    const auto huge_res = assembler.next(msg);
+    EXPECT_FALSE(huge_res.has_value());
+    EXPECT_EQ(huge_res.error(), std::errc::message_size);
 
     std::vector<std::uint8_t> complete_msg = {0x01, 0x00, 0x00, 0x01, 0x7f};
     assembler.append(complete_msg);
-    ec.clear();
-    EXPECT_TRUE(assembler.next(msg, ec));
+    const auto complete_res = assembler.next(msg);
+    ASSERT_TRUE(complete_res.has_value());
+    EXPECT_TRUE(*complete_res);
     EXPECT_EQ(msg, complete_msg);
 }
 
@@ -247,15 +250,18 @@ TEST(CertFetcherTest, ReassemblerPartialMessagePath)
 {
     reality::handshake_reassembler assembler;
     std::vector<std::uint8_t> msg;
-    std::error_code ec;
 
     const std::vector<std::uint8_t> partial_msg = {0x01, 0x00, 0x00, 0x02, 0x7f};
     assembler.append(partial_msg);
-    EXPECT_FALSE(assembler.next(msg, ec));
+    const auto partial_res = assembler.next(msg);
+    ASSERT_TRUE(partial_res.has_value());
+    EXPECT_FALSE(*partial_res);
 
     const std::array<std::uint8_t, 1> tail = {0x80};
     assembler.append(tail);
-    EXPECT_TRUE(assembler.next(msg, ec));
+    const auto final_res = assembler.next(msg);
+    ASSERT_TRUE(final_res.has_value());
+    EXPECT_TRUE(*final_res);
     EXPECT_EQ(msg, std::vector<std::uint8_t>({0x01, 0x00, 0x00, 0x02, 0x7f, 0x80}));
 }
 
@@ -528,29 +534,28 @@ TEST(CertFetcherTest, WhiteBoxHelpersAndRecordTypeBranches)
     EXPECT_FALSE(session.validate_server_hello_body({}));
     EXPECT_TRUE(session.validate_server_hello_body({0x01}));
 
-    std::error_code ec;
-    EXPECT_FALSE(session.validate_record_length(20000, ec));
-    EXPECT_EQ(ec, std::errc::message_size);
+    const auto len_res = session.validate_record_length(20000);
+    EXPECT_FALSE(len_res.has_value());
+    EXPECT_EQ(len_res.error(), std::errc::message_size);
 
     std::vector<std::uint8_t> rec = {0xaa, 0xbb, 0xcc};
     std::vector<std::uint8_t> pt_buf(1, 0);
 
     std::uint8_t alert_head[5] = {reality::kContentTypeAlert, 0x03, 0x03, 0x00, 0x03};
-    auto alert_ret = session.handle_record_by_content_type(alert_head, rec, pt_buf, ec);
-    EXPECT_EQ(alert_ret.first, 0);
-    EXPECT_TRUE(alert_ret.second.empty());
-    EXPECT_EQ(ec, asio::error::connection_reset);
+    auto alert_ret = session.handle_record_by_content_type(alert_head, rec, pt_buf);
+    EXPECT_FALSE(alert_ret.has_value());
+    EXPECT_EQ(alert_ret.error(), asio::error::connection_reset);
 
     std::uint8_t bad_head[5] = {0x99, 0x03, 0x03, 0x00, 0x03};
-    auto bad_ret = session.handle_record_by_content_type(bad_head, rec, pt_buf, ec);
-    EXPECT_EQ(bad_ret.first, 0);
-    EXPECT_TRUE(bad_ret.second.empty());
-    EXPECT_EQ(ec, asio::error::invalid_argument);
+    auto bad_ret = session.handle_record_by_content_type(bad_head, rec, pt_buf);
+    EXPECT_FALSE(bad_ret.has_value());
+    EXPECT_EQ(bad_ret.error(), asio::error::invalid_argument);
 
     std::uint8_t ccs_head[5] = {reality::kContentTypeChangeCipherSpec, 0x03, 0x03, 0x00, 0x03};
-    auto ccs_ret = session.handle_record_by_content_type(ccs_head, rec, pt_buf, ec);
-    EXPECT_EQ(ccs_ret.first, reality::kContentTypeChangeCipherSpec);
-    EXPECT_EQ(ccs_ret.second.size(), rec.size());
+    auto ccs_ret = session.handle_record_by_content_type(ccs_head, rec, pt_buf);
+    ASSERT_TRUE(ccs_ret.has_value());
+    EXPECT_EQ(ccs_ret->first, reality::kContentTypeChangeCipherSpec);
+    EXPECT_EQ(ccs_ret->second.size(), rec.size());
     EXPECT_GE(pt_buf.size(), rec.size());
 
     session.negotiated_cipher_ = EVP_aes_128_gcm();
@@ -559,11 +564,9 @@ TEST(CertFetcherTest, WhiteBoxHelpersAndRecordTypeBranches)
 
     std::uint8_t app_head[5] = {reality::kContentTypeApplicationData, 0x03, 0x03, 0x00, 0x10};
     std::vector<std::uint8_t> app_rec(16, 0);
-    ec.clear();
-    auto app_ret = session.decrypt_application_record(app_head, app_rec, pt_buf, ec);
-    EXPECT_EQ(app_ret.first, 0);
-    EXPECT_TRUE(app_ret.second.empty());
-    EXPECT_EQ(ec, std::errc::invalid_argument);
+    auto app_ret = session.decrypt_application_record(app_head, app_rec, pt_buf);
+    EXPECT_FALSE(app_ret.has_value());
+    EXPECT_EQ(app_ret.error(), std::errc::invalid_argument);
 }
 
 TEST(CertFetcherTest, WhiteBoxProcessServerHelloAndHandshakeMessage)
