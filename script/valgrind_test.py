@@ -32,14 +32,46 @@ def log_fail(msg):
     print(f"{Colors.FAIL}[FAIL] {msg}{Colors.ENDC}")
 
 
-def parse_args():
+def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="Run valgrind memory safety test against socks client/server.")
     parser.add_argument("--build-dir", default="./build", help="Build directory that contains the socks binary.")
     parser.add_argument("--socks-bin", default="./socks", help="Path to socks binary relative to --build-dir.")
     parser.add_argument("--traffic-count", type=int, default=5, help="Number of extra short SOCKS connections.")
     parser.add_argument("--server-ready-timeout", type=int, default=20, help="Timeout seconds waiting for server inbound to become ready.")
     parser.add_argument("--client-ready-timeout", type=int, default=90, help="Timeout seconds waiting for client socks to become ready.")
-    return parser.parse_args()
+    parser.add_argument("--self-test-args", action="store_true", help="Run argument parsing regression checks and exit.")
+    return parser.parse_args(argv)
+
+
+def run_arg_parse_regression_test():
+    default_args = parse_args([])
+    default_ok = (
+        default_args.traffic_count == 5
+        and default_args.server_ready_timeout == 20
+        and default_args.client_ready_timeout == 90
+        and default_args.self_test_args is False
+    )
+    if not default_ok:
+        log_fail("arg defaults mismatch")
+        return False
+
+    custom_args = parse_args([
+        "--traffic-count", "9",
+        "--server-ready-timeout", "31",
+        "--client-ready-timeout", "123",
+    ])
+    custom_ok = (
+        custom_args.traffic_count == 9
+        and custom_args.server_ready_timeout == 31
+        and custom_args.client_ready_timeout == 123
+        and custom_args.self_test_args is False
+    )
+    if not custom_ok:
+        log_fail("arg custom values mismatch")
+        return False
+
+    log_pass("arg regression checks passed")
+    return True
 
 
 def pick_free_port():
@@ -313,11 +345,15 @@ def run_valgrind_test(traffic_count, server_ready_timeout, client_ready_timeout)
 
 
 if __name__ == "__main__":
+    args = parse_args()
+    if args.self_test_args:
+        ok = run_arg_parse_regression_test()
+        sys.exit(0 if ok else 1)
+
     if shutil.which("valgrind") is None:
         print("[FAIL] valgrind is not installed")
         sys.exit(1)
 
-    args = parse_args()
     BUILD_DIR = args.build_dir
     SOCKS_BIN = args.socks_bin
 

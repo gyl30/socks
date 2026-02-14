@@ -121,10 +121,13 @@ jobs:
     - name: Build Valgrind
       run: cmake --build build_valgrind
 
+    - name: Validate Valgrind Script Args
+      run: python3 script/valgrind_test.py --self-test-args
+
     - name: Run Valgrind Memory Safety Test
       run: |
         set -euo pipefail
-        python3 script/valgrind_test.py --build-dir build_valgrind --socks-bin ./socks 2>&1 | tee "$CI_ARTIFACT_DIR/valgrind.log"
+        python3 script/valgrind_test.py --build-dir build_valgrind --socks-bin ./socks --server-ready-timeout 30 --client-ready-timeout 120 2>&1 | tee "$CI_ARTIFACT_DIR/valgrind.log"
 
     - name: Upload Valgrind Artifacts
       if: always()

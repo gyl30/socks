@@ -3,6 +3,8 @@ cmake_minimum_required(VERSION 3.16)
 set(MSAN_UMR_NOISE_OPTIONS
     "intercept_strlen=0:intercept_strcmp=0:intercept_strndup=0:intercept_strchr=0:intercept_memcmp=0:intercept_strstr=0:intercept_strspn=0:intercept_strtok=0:intercept_strpbrk=0:intercept_memmem=0")
 
+find_package(Python3 COMPONENTS Interpreter QUIET)
+
 macro(add_socks_test NAME)
     add_executable(${NAME} ${NAME}.cpp)
     target_link_libraries(${NAME} PRIVATE
@@ -275,4 +277,11 @@ if(LINUX)
     else()
         set_tests_properties(tproxy_integration_test PROPERTIES ENVIRONMENT "BIN=${CMAKE_BINARY_DIR}/socks")
     endif()
+endif()
+
+if(Python3_Interpreter_FOUND)
+    add_test(
+        NAME valgrind_script_args_test
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/script/valgrind_test.py --self-test-args
+    )
 endif()
