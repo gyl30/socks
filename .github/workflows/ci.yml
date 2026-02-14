@@ -10,6 +10,8 @@ jobs:
   quality-gates:
     name: Quality Gates
     runs-on: ubuntu-22.04
+    env:
+      INTEGRATION_TEST_REGEX: integration|tproxy_integration|udp_integration|mux_connection_integration_test
     
     steps:
     - uses: actions/checkout@v4
@@ -34,10 +36,10 @@ jobs:
       run: cmake --build build_tsan -j15
 
     - name: Run TSAN Full Test Suite
-      run: ctest --test-dir build_tsan -j20 --output-on-failure
+      run: ctest --test-dir build_tsan -j20 --output-on-failure -E "$INTEGRATION_TEST_REGEX"
 
     - name: Run TSAN Integration Tests
-      run: ctest --test-dir build_tsan -j20 --output-on-failure -R 'integration|tproxy_integration|udp_integration|mux_connection_integration_test'
+      run: ctest --test-dir build_tsan -j20 --output-on-failure -R "$INTEGRATION_TEST_REGEX"
 
     - name: Configure Valgrind Build
       run: |
