@@ -203,22 +203,14 @@ std::vector<std::uint8_t> build_certificate_verify_message()
     return reality::construct_certificate_verify(sign_key.get(), {});
 }
 
-std::vector<std::uint8_t> encrypt_record_compat(const EVP_CIPHER* cipher,
-                                                const std::vector<std::uint8_t>& key,
-                                                const std::vector<std::uint8_t>& iv,
-                                                const std::uint64_t seq,
-                                                const std::vector<std::uint8_t>& plaintext,
-                                                const std::uint8_t content_type,
-                                                std::error_code& ec)
+std::expected<std::vector<std::uint8_t>, std::error_code> encrypt_record_expected(const EVP_CIPHER* cipher,
+                                                                                   const std::vector<std::uint8_t>& key,
+                                                                                   const std::vector<std::uint8_t>& iv,
+                                                                                   const std::uint64_t seq,
+                                                                                   const std::vector<std::uint8_t>& plaintext,
+                                                                                   const std::uint8_t content_type)
 {
-    auto record = reality::tls_record_layer::encrypt_record(cipher, key, iv, seq, plaintext, content_type);
-    if (!record)
-    {
-        ec = record.error();
-        return {};
-    }
-    ec.clear();
-    return std::move(*record);
+    return reality::tls_record_layer::encrypt_record(cipher, key, iv, seq, plaintext, content_type);
 }
 
 asio::awaitable<std::expected<void, std::error_code>> tcp_connect_expected(mux::client_tunnel_pool& pool,
@@ -569,9 +561,9 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsCertVerifyBeforeCerti
     const std::vector<std::uint8_t> key(16, 0x11);
     const std::vector<std::uint8_t> iv(12, 0x22);
     const std::vector<std::uint8_t> plaintext = {0x0f, 0x00, 0x00, 0x00};
-    auto record = encrypt_record_compat(EVP_aes_128_gcm(), key, iv, 0, plaintext, reality::kContentTypeHandshake, ec);
-    ASSERT_FALSE(ec);
-    asio::write(writer, asio::buffer(record), ec);
+    const auto record = encrypt_record_expected(EVP_aes_128_gcm(), key, iv, 0, plaintext, reality::kContentTypeHandshake);
+    ASSERT_TRUE(record.has_value());
+    asio::write(writer, asio::buffer(*record), ec);
     ASSERT_FALSE(ec);
     writer.shutdown(asio::ip::tcp::socket::shutdown_send, ec);
 
@@ -607,9 +599,9 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsFinishedBeforeCertifi
     const std::vector<std::uint8_t> key(16, 0x31);
     const std::vector<std::uint8_t> iv(12, 0x41);
     const std::vector<std::uint8_t> plaintext = {0x14, 0x00, 0x00, 0x00};
-    auto record = encrypt_record_compat(EVP_aes_128_gcm(), key, iv, 0, plaintext, reality::kContentTypeHandshake, ec);
-    ASSERT_FALSE(ec);
-    asio::write(writer, asio::buffer(record), ec);
+    const auto record = encrypt_record_expected(EVP_aes_128_gcm(), key, iv, 0, plaintext, reality::kContentTypeHandshake);
+    ASSERT_TRUE(record.has_value());
+    asio::write(writer, asio::buffer(*record), ec);
     ASSERT_FALSE(ec);
     writer.shutdown(asio::ip::tcp::socket::shutdown_send, ec);
 
@@ -645,9 +637,9 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsMalformedCertificateM
     const std::vector<std::uint8_t> key(16, 0x51);
     const std::vector<std::uint8_t> iv(12, 0x61);
     const std::vector<std::uint8_t> plaintext = {0x0b, 0x00, 0x00, 0x01, 0x00};
-    auto record = encrypt_record_compat(EVP_aes_128_gcm(), key, iv, 0, plaintext, reality::kContentTypeHandshake, ec);
-    ASSERT_FALSE(ec);
-    asio::write(writer, asio::buffer(record), ec);
+    const auto record = encrypt_record_expected(EVP_aes_128_gcm(), key, iv, 0, plaintext, reality::kContentTypeHandshake);
+    ASSERT_TRUE(record.has_value());
+    asio::write(writer, asio::buffer(*record), ec);
     ASSERT_FALSE(ec);
     writer.shutdown(asio::ip::tcp::socket::shutdown_send, ec);
 
@@ -738,9 +730,9 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsMalformedCertificateV
     const std::vector<std::uint8_t> malformed_cert_verify = {0x0f, 0x00, 0x00, 0x00};
     std::vector<std::uint8_t> plaintext = cert_msg;
     plaintext.insert(plaintext.end(), malformed_cert_verify.begin(), malformed_cert_verify.end());
-    auto record = encrypt_record_compat(EVP_aes_128_gcm(), key, iv, 0, plaintext, reality::kContentTypeHandshake, ec);
-    ASSERT_FALSE(ec);
-    asio::write(writer, asio::buffer(record), ec);
+    const auto record = encrypt_record_expected(EVP_aes_128_gcm(), key, iv, 0, plaintext, reality::kContentTypeHandshake);
+    ASSERT_TRUE(record.has_value());
+    asio::write(writer, asio::buffer(*record), ec);
     ASSERT_FALSE(ec);
     writer.shutdown(asio::ip::tcp::socket::shutdown_send, ec);
 
@@ -779,9 +771,9 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsUnsupportedCertificat
     const std::vector<std::uint8_t> unsupported_cert_verify = {0x0f, 0x00, 0x00, 0x04, 0x00, 0x01, 0x00, 0x00};
     std::vector<std::uint8_t> plaintext = cert_msg;
     plaintext.insert(plaintext.end(), unsupported_cert_verify.begin(), unsupported_cert_verify.end());
-    auto record = encrypt_record_compat(EVP_aes_128_gcm(), key, iv, 0, plaintext, reality::kContentTypeHandshake, ec);
-    ASSERT_FALSE(ec);
-    asio::write(writer, asio::buffer(record), ec);
+    const auto record = encrypt_record_expected(EVP_aes_128_gcm(), key, iv, 0, plaintext, reality::kContentTypeHandshake);
+    ASSERT_TRUE(record.has_value());
+    asio::write(writer, asio::buffer(*record), ec);
     ASSERT_FALSE(ec);
     writer.shutdown(asio::ip::tcp::socket::shutdown_send, ec);
 
@@ -820,9 +812,9 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopCertificateRangeAndFinishedB
 
         const std::vector<std::uint8_t> key(16, 0x12);
         const std::vector<std::uint8_t> iv(12, 0x34);
-        auto record = encrypt_record_compat(EVP_aes_128_gcm(), key, iv, 0, plaintext, reality::kContentTypeHandshake, ec);
-        EXPECT_FALSE(ec);
-        asio::write(writer, asio::buffer(record), ec);
+        const auto record = encrypt_record_expected(EVP_aes_128_gcm(), key, iv, 0, plaintext, reality::kContentTypeHandshake);
+        EXPECT_TRUE(record.has_value());
+        asio::write(writer, asio::buffer(*record), ec);
         EXPECT_FALSE(ec);
         writer.shutdown(asio::ip::tcp::socket::shutdown_send, ec);
 
