@@ -221,6 +221,92 @@ bool wait_for_condition(Predicate predicate,
     return predicate();
 }
 
+std::vector<std::uint8_t> encrypt_record_compat(const EVP_CIPHER* cipher,
+                                                const std::vector<std::uint8_t>& key,
+                                                const std::vector<std::uint8_t>& iv,
+                                                const std::uint64_t seq,
+                                                const std::vector<std::uint8_t>& plaintext,
+                                                const std::uint8_t content_type,
+                                                std::error_code& ec)
+{
+    auto encrypted = reality::tls_record_layer::encrypt_record(cipher, key, iv, seq, plaintext, content_type);
+    if (!encrypted)
+    {
+        ec = encrypted.error();
+        return {};
+    }
+    ec.clear();
+    return std::move(*encrypted);
+}
+
+bool derive_server_key_share_compat(const std::shared_ptr<mux::remote_server>& server,
+                                    const mux::client_hello_info& info,
+                                    const std::uint8_t* public_key,
+                                    const std::uint8_t* private_key,
+                                    const mux::connection_context& ctx,
+                                    std::vector<std::uint8_t>& sh_shared,
+                                    std::vector<std::uint8_t>& key_share_data,
+                                    std::uint16_t& key_share_group,
+                                    std::error_code& ec)
+{
+    auto res = server->derive_server_key_share(info, public_key, private_key, ctx);
+    if (!res)
+    {
+        ec = res.error();
+        return false;
+    }
+    sh_shared = std::move(res->sh_shared);
+    key_share_data = std::move(res->key_share_data);
+    key_share_group = res->key_share_group;
+    ec.clear();
+    return true;
+}
+
+bool derive_application_traffic_keys_compat(const std::shared_ptr<mux::remote_server>& server,
+                                            const mux::remote_server::server_handshake_res& sh_res,
+                                            std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& c_app_keys,
+                                            std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& s_app_keys,
+                                            std::error_code& ec)
+{
+    auto res = server->derive_application_traffic_keys(sh_res);
+    if (!res)
+    {
+        ec = res.error();
+        return false;
+    }
+    c_app_keys = std::move(res->c_app_keys);
+    s_app_keys = std::move(res->s_app_keys);
+    ec.clear();
+    return true;
+}
+
+asio::awaitable<mux::remote_server::server_handshake_res> perform_handshake_response_compat(
+    mux::remote_server& server,
+    const std::shared_ptr<asio::ip::tcp::socket>& socket,
+    const mux::client_hello_info& info,
+    reality::transcript& trans,
+    const mux::connection_context& ctx,
+    std::error_code& ec)
+{
+    auto res = co_await server.perform_handshake_response(socket, info, trans, ctx);
+    ec = res.ec;
+    co_return res;
+}
+
+asio::awaitable<bool> verify_client_finished_compat(
+    const std::shared_ptr<asio::ip::tcp::socket>& socket,
+    const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& c_hs_keys,
+    const reality::handshake_keys& hs_keys,
+    const reality::transcript& trans,
+    const EVP_CIPHER* cipher,
+    const EVP_MD* md,
+    const mux::connection_context& ctx,
+    std::error_code& ec)
+{
+    ec = co_await mux::remote_server::verify_client_finished(socket, c_hs_keys, hs_keys, trans, cipher, md, ctx);
+    co_return !ec;
+}
+
 }    // namespace
 
 class remote_server_test : public ::testing::Test
@@ -260,21 +346,20 @@ class remote_server_test : public ::testing::Test
         {
             return {};
         }
-        std::error_code ec;
         auto shared =
-            reality::crypto_util::x25519_derive(reality::crypto_util::hex_to_bytes(server_priv_key()), std::vector<uint8_t>(c_pub, c_pub + 32), ec);
-        if (ec)
+            reality::crypto_util::x25519_derive(reality::crypto_util::hex_to_bytes(server_priv_key()), std::vector<uint8_t>(c_pub, c_pub + 32));
+        if (!shared)
         {
             return {};
         }
         auto salt = std::vector<uint8_t>(info_random_.begin(), info_random_.begin() + 20);
-        auto prk = reality::crypto_util::hkdf_extract(salt, shared, EVP_sha256(), ec);
-        if (ec)
+        auto prk = reality::crypto_util::hkdf_extract(salt, *shared, EVP_sha256());
+        if (!prk)
         {
             return {};
         }
-        auto auth_key = reality::crypto_util::hkdf_expand(prk, reality::crypto_util::hex_to_bytes("5245414c495459"), 16, EVP_sha256(), ec);
-        if (ec)
+        auto auth_key = reality::crypto_util::hkdf_expand(*prk, reality::crypto_util::hex_to_bytes("5245414c495459"), 16, EVP_sha256());
+        if (!auth_key)
         {
             return {};
         }
@@ -307,16 +392,16 @@ class remote_server_test : public ::testing::Test
         }
         std::fill_n(aad.begin() + aad_sid_offset, 32, 0);
 
-        out_sid = reality::crypto_util::aead_encrypt(EVP_aes_128_gcm(),
-                                                     auth_key,
-                                                     std::vector<uint8_t>(info_random_.begin() + 20, info_random_.end()),
-                                                     std::vector<uint8_t>(payload.begin(), payload.end()),
-                                                     aad,
-                                                     ec);
-        if (ec || out_sid.size() != 32)
+        auto sid_res = reality::crypto_util::aead_encrypt(EVP_aes_128_gcm(),
+                                                          *auth_key,
+                                                          std::vector<uint8_t>(info_random_.begin() + 20, info_random_.end()),
+                                                          std::vector<uint8_t>(payload.begin(), payload.end()),
+                                                          aad);
+        if (!sid_res || sid_res->size() != 32)
         {
             return {};
         }
+        out_sid = std::move(*sid_res);
 
         std::copy(out_sid.begin(), out_sid.end(), ch_body.begin() + static_cast<std::ptrdiff_t>(aad_sid_offset));
         auto record = reality::write_record_header(reality::kContentTypeHandshake, static_cast<uint16_t>(ch_body.size()));
@@ -1218,9 +1303,9 @@ TEST_F(remote_server_test, DeriveShareAndFallbackHelperBranches)
     std::vector<std::uint8_t> shared;
     std::vector<std::uint8_t> key_share_data;
     std::uint16_t key_share_group = 0;
-    EXPECT_FALSE(server->derive_server_key_share(
-        no_share_info, pub_key.data(), priv_key.data(), mux::connection_context{}, shared, key_share_data, key_share_group, ec));
-    EXPECT_EQ(ec, asio::error::invalid_argument);
+    EXPECT_FALSE(derive_server_key_share_compat(
+        server, no_share_info, pub_key.data(), priv_key.data(), mux::connection_context{}, shared, key_share_data, key_share_group, ec));
+    EXPECT_EQ(ec, std::errc::invalid_argument);
 
     mux::remote_server::server_handshake_res bad_handshake{};
     bad_handshake.cipher = EVP_aes_128_gcm();
@@ -1229,7 +1314,7 @@ TEST_F(remote_server_test, DeriveShareAndFallbackHelperBranches)
     bad_handshake.hs_keys.master_secret.clear();
     std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> c_app_keys;
     std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> s_app_keys;
-    EXPECT_FALSE(server->derive_application_traffic_keys(bad_handshake, c_app_keys, s_app_keys, ec));
+    EXPECT_FALSE(derive_application_traffic_keys_compat(server, bad_handshake, c_app_keys, s_app_keys, ec));
     EXPECT_TRUE(ec);
 
     mux::connection_context ctx;
@@ -1389,7 +1474,7 @@ TEST_F(remote_server_test, PerformHandshakeResponseCoversCipherSuiteSelectionBra
                        {
                            std::error_code hs_ec;
                            reality::transcript trans;
-                           auto res = co_await server->perform_handshake_response(server_socket, info, trans, ctx, hs_ec);
+                           auto res = co_await perform_handshake_response_compat(*server, server_socket, info, trans, ctx, hs_ec);
                            done.set_value({std::move(res), hs_ec});
                            co_return;
                        },
@@ -1571,7 +1656,7 @@ TEST_F(remote_server_test, PerformHandshakeResponseCoversRandomAndSignKeyFailure
                        {
                            std::error_code hs_ec;
                            reality::transcript trans;
-                           auto res = co_await server->perform_handshake_response(server_socket, info, trans, ctx, hs_ec);
+                           auto res = co_await perform_handshake_response_compat(*server, server_socket, info, trans, ctx, hs_ec);
                            done.set_value({std::move(res), hs_ec});
                            co_return;
                        },
@@ -1615,7 +1700,7 @@ TEST_F(remote_server_test, VerifyClientFinishedCoversPlaintextValidationBranches
 
         const std::vector<std::uint8_t> key(16, 0x41);
         const std::vector<std::uint8_t> iv(12, 0x62);
-        auto encrypted = reality::tls_record_layer::encrypt_record(EVP_aes_128_gcm(), key, iv, 0, plaintext, inner_content_type, ec);
+        auto encrypted = encrypt_record_compat(EVP_aes_128_gcm(), key, iv, 0, plaintext, inner_content_type, ec);
         EXPECT_FALSE(ec);
         asio::write(writer, asio::buffer(encrypted), ec);
         EXPECT_FALSE(ec);
@@ -1634,7 +1719,7 @@ TEST_F(remote_server_test, VerifyClientFinishedCoversPlaintextValidationBranches
         asio::co_spawn(io_context,
                        [&]() -> asio::awaitable<void>
                        {
-                           ok = co_await mux::remote_server::verify_client_finished(
+                           ok = co_await verify_client_finished_compat(
                                reader, {key, iv}, hs_keys, trans, EVP_aes_128_gcm(), EVP_sha256(), ctx, verify_ec);
                            co_return;
                        },
@@ -1670,12 +1755,12 @@ TEST_F(remote_server_test, DeriveApplicationTrafficKeysCoversFirstAndSecondDeriv
     std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> s_app_keys;
 
     fail_hkdf_add_info_on_call(3);
-    EXPECT_FALSE(server->derive_application_traffic_keys(sh_res, c_app_keys, s_app_keys, ec));
+    EXPECT_FALSE(derive_application_traffic_keys_compat(server, sh_res, c_app_keys, s_app_keys, ec));
     EXPECT_TRUE(ec);
 
     ec.clear();
     fail_hkdf_add_info_on_call(5);
-    EXPECT_FALSE(server->derive_application_traffic_keys(sh_res, c_app_keys, s_app_keys, ec));
+    EXPECT_FALSE(derive_application_traffic_keys_compat(server, sh_res, c_app_keys, s_app_keys, ec));
     EXPECT_TRUE(ec);
 }
 
@@ -1701,7 +1786,7 @@ TEST_F(remote_server_test, DeriveServerKeyShareCoversX25519DeriveFailureBranch)
     std::uint16_t key_share_group = 0;
 
     fail_next_pkey_derive();
-    EXPECT_FALSE(server->derive_server_key_share(info, pub, priv, ctx, sh_shared, key_share_data, key_share_group, ec));
+    EXPECT_FALSE(derive_server_key_share_compat(server, info, pub, priv, ctx, sh_shared, key_share_data, key_share_group, ec));
     EXPECT_TRUE(ec);
 }
 

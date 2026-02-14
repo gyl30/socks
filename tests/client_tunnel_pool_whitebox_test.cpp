@@ -203,6 +203,121 @@ std::vector<std::uint8_t> build_certificate_verify_message()
     return reality::construct_certificate_verify(sign_key.get(), {});
 }
 
+std::vector<std::uint8_t> encrypt_record_compat(const EVP_CIPHER* cipher,
+                                                const std::vector<std::uint8_t>& key,
+                                                const std::vector<std::uint8_t>& iv,
+                                                const std::uint64_t seq,
+                                                const std::vector<std::uint8_t>& plaintext,
+                                                const std::uint8_t content_type,
+                                                std::error_code& ec)
+{
+    auto record = reality::tls_record_layer::encrypt_record(cipher, key, iv, seq, plaintext, content_type);
+    if (!record)
+    {
+        ec = record.error();
+        return {};
+    }
+    ec.clear();
+    return std::move(*record);
+}
+
+asio::awaitable<bool> tcp_connect_compat(mux::client_tunnel_pool& pool,
+                                         asio::io_context& io_context,
+                                         asio::ip::tcp::socket& socket,
+                                         std::error_code& ec)
+{
+    auto res = co_await pool.tcp_connect(io_context, socket);
+    if (!res)
+    {
+        ec = res.error();
+        co_return false;
+    }
+    ec.clear();
+    co_return true;
+}
+
+asio::awaitable<bool> try_connect_endpoint_compat(mux::client_tunnel_pool& pool,
+                                                  asio::ip::tcp::socket& socket,
+                                                  const asio::ip::tcp::endpoint& endpoint,
+                                                  std::error_code& ec)
+{
+    auto res = co_await pool.try_connect_endpoint(socket, endpoint);
+    if (!res)
+    {
+        ec = res.error();
+        co_return false;
+    }
+    ec.clear();
+    co_return true;
+}
+
+asio::awaitable<bool> generate_and_send_client_hello_compat(mux::client_tunnel_pool& pool,
+                                                             asio::ip::tcp::socket& socket,
+                                                             const std::uint8_t* public_key,
+                                                             const std::uint8_t* private_key,
+                                                             const reality::fingerprint_spec& spec,
+                                                             reality::transcript& trans,
+                                                             std::error_code& ec)
+{
+    auto res = co_await pool.generate_and_send_client_hello(socket, public_key, private_key, spec, trans);
+    if (!res)
+    {
+        ec = res.error();
+        co_return false;
+    }
+    ec.clear();
+    co_return true;
+}
+
+asio::awaitable<mux::client_tunnel_pool::server_hello_res> process_server_hello_compat(asio::ip::tcp::socket& socket,
+                                                                                        const std::uint8_t* private_key,
+                                                                                        reality::transcript& trans,
+                                                                                        std::error_code& ec)
+{
+    auto res = co_await mux::client_tunnel_pool::process_server_hello(socket, private_key, trans);
+    if (!res)
+    {
+        ec = res.error();
+        co_return mux::client_tunnel_pool::server_hello_res{};
+    }
+    ec.clear();
+    co_return *res;
+}
+
+asio::awaitable<std::pair<bool, mux::client_tunnel_pool::handshake_result>> perform_reality_handshake_compat(
+    mux::client_tunnel_pool& pool, asio::ip::tcp::socket& socket, std::error_code& ec)
+{
+    auto res = co_await pool.perform_reality_handshake(socket);
+    if (!res)
+    {
+        ec = res.error();
+        co_return std::pair<bool, mux::client_tunnel_pool::handshake_result>{false, {}};
+    }
+    ec.clear();
+    co_return std::pair<bool, mux::client_tunnel_pool::handshake_result>{true, std::move(*res)};
+}
+
+asio::awaitable<std::pair<bool, std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>>> handshake_read_loop_compat(
+    asio::ip::tcp::socket& socket,
+    const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& s_hs_keys,
+    const reality::handshake_keys& hs_keys,
+    const bool strict_cert_verify,
+    const std::string& sni,
+    reality::transcript& trans,
+    const EVP_CIPHER* cipher,
+    const EVP_MD* md,
+    std::error_code& ec)
+{
+    auto res = co_await mux::client_tunnel_pool::handshake_read_loop(socket, s_hs_keys, hs_keys, strict_cert_verify, sni, trans, cipher, md);
+    if (!res)
+    {
+        ec = res.error();
+        co_return std::pair<bool, std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>>{false, {}};
+    }
+    ec.clear();
+    co_return std::pair<bool, std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>>{true, std::move(*res)};
+}
+
 }    // namespace
 
 TEST(ClientTunnelPoolWhiteboxTest, ConfigValidationAndStartGuardBranches)
@@ -317,7 +432,7 @@ TEST(ClientTunnelPoolWhiteboxTest, TcpConnectAndHandshakeErrorBranches)
     asio::co_spawn(io_context,
                    [tunnel_pool, &io_context, &socket, &connect_ok, &connect_ec]() -> asio::awaitable<void>
                    {
-                       connect_ok = co_await tunnel_pool->tcp_connect(io_context, socket, connect_ec);
+                       connect_ok = co_await tcp_connect_compat(*tunnel_pool, io_context, socket, connect_ec);
                        co_return;
                    },
                    asio::detached);
@@ -338,7 +453,7 @@ TEST(ClientTunnelPoolWhiteboxTest, TcpConnectAndHandshakeErrorBranches)
     asio::co_spawn(io_context,
                    [tunnel_pool, &try_socket, endpoint, &try_connect_ok, &try_connect_ec]() -> asio::awaitable<void>
                    {
-                       try_connect_ok = co_await tunnel_pool->try_connect_endpoint(try_socket, endpoint, try_connect_ec);
+                       try_connect_ok = co_await try_connect_endpoint_compat(*tunnel_pool, try_socket, endpoint, try_connect_ec);
                        co_return;
                    },
                    asio::detached);
@@ -372,8 +487,8 @@ TEST(ClientTunnelPoolWhiteboxTest, ClientHelloAndServerHelloIoErrorBranches)
     asio::co_spawn(io_context,
                    [tunnel_pool, &disconnected_socket, ephemeral_pub, ephemeral_priv, spec, &trans, &hello_ok, &hello_ec]() mutable -> asio::awaitable<void>
                    {
-                       hello_ok = co_await tunnel_pool->generate_and_send_client_hello(
-                           disconnected_socket, ephemeral_pub.data(), ephemeral_priv.data(), spec, trans, hello_ec);
+                       hello_ok = co_await generate_and_send_client_hello_compat(
+                           *tunnel_pool, disconnected_socket, ephemeral_pub.data(), ephemeral_priv.data(), spec, trans, hello_ec);
                        co_return;
                    },
                    asio::detached);
@@ -388,7 +503,7 @@ TEST(ClientTunnelPoolWhiteboxTest, ClientHelloAndServerHelloIoErrorBranches)
     asio::co_spawn(io_context,
                    [&disconnected_socket, ephemeral_priv, &trans, &sh_res, &sh_ec]() -> asio::awaitable<void>
                    {
-                       sh_res = co_await mux::client_tunnel_pool::process_server_hello(disconnected_socket, ephemeral_priv.data(), trans, sh_ec);
+                       sh_res = co_await process_server_hello_compat(disconnected_socket, ephemeral_priv.data(), trans, sh_ec);
                        co_return;
                    },
                    asio::detached);
@@ -432,7 +547,7 @@ TEST(ClientTunnelPoolWhiteboxTest, ProcessServerHelloRejectsUnsupportedCipherAnd
         asio::co_spawn(io_context,
                        [&]() -> asio::awaitable<void>
                        {
-                           sh_res = co_await mux::client_tunnel_pool::process_server_hello(reader, peer_priv, trans, hs_ec);
+                           sh_res = co_await process_server_hello_compat(reader, peer_priv, trans, hs_ec);
                            co_return;
                        },
                        asio::detached);
@@ -480,7 +595,7 @@ TEST(ClientTunnelPoolWhiteboxTest, ProcessServerHelloRejectsTruncatedSessionData
     asio::co_spawn(io_context,
                    [&]() -> asio::awaitable<void>
                    {
-                       sh_res = co_await mux::client_tunnel_pool::process_server_hello(reader, peer_priv, trans, hs_ec);
+                       sh_res = co_await process_server_hello_compat(reader, peer_priv, trans, hs_ec);
                        co_return;
                    },
                    asio::detached);
@@ -505,7 +620,7 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsCertVerifyBeforeCerti
     const std::vector<std::uint8_t> key(16, 0x11);
     const std::vector<std::uint8_t> iv(12, 0x22);
     const std::vector<std::uint8_t> plaintext = {0x0f, 0x00, 0x00, 0x00};
-    auto record = reality::tls_record_layer::encrypt_record(EVP_aes_128_gcm(), key, iv, 0, plaintext, reality::kContentTypeHandshake, ec);
+    auto record = encrypt_record_compat(EVP_aes_128_gcm(), key, iv, 0, plaintext, reality::kContentTypeHandshake, ec);
     ASSERT_FALSE(ec);
     asio::write(writer, asio::buffer(record), ec);
     ASSERT_FALSE(ec);
@@ -518,7 +633,7 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsCertVerifyBeforeCerti
     asio::co_spawn(io_context,
                    [&]() -> asio::awaitable<void>
                    {
-                       loop_res = co_await mux::client_tunnel_pool::handshake_read_loop(
+                       loop_res = co_await handshake_read_loop_compat(
                            reader, {key, iv}, hs_keys, false, "verify-before-cert", trans, EVP_aes_128_gcm(), EVP_sha256(), loop_ec);
                        co_return;
                    },
@@ -544,7 +659,7 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsFinishedBeforeCertifi
     const std::vector<std::uint8_t> key(16, 0x31);
     const std::vector<std::uint8_t> iv(12, 0x41);
     const std::vector<std::uint8_t> plaintext = {0x14, 0x00, 0x00, 0x00};
-    auto record = reality::tls_record_layer::encrypt_record(EVP_aes_128_gcm(), key, iv, 0, plaintext, reality::kContentTypeHandshake, ec);
+    auto record = encrypt_record_compat(EVP_aes_128_gcm(), key, iv, 0, plaintext, reality::kContentTypeHandshake, ec);
     ASSERT_FALSE(ec);
     asio::write(writer, asio::buffer(record), ec);
     ASSERT_FALSE(ec);
@@ -557,7 +672,7 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsFinishedBeforeCertifi
     asio::co_spawn(io_context,
                    [&]() -> asio::awaitable<void>
                    {
-                       loop_res = co_await mux::client_tunnel_pool::handshake_read_loop(
+                       loop_res = co_await handshake_read_loop_compat(
                            reader, {key, iv}, hs_keys, false, "finished-before-verify", trans, EVP_aes_128_gcm(), EVP_sha256(), loop_ec);
                        co_return;
                    },
@@ -583,7 +698,7 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsMalformedCertificateM
     const std::vector<std::uint8_t> key(16, 0x51);
     const std::vector<std::uint8_t> iv(12, 0x61);
     const std::vector<std::uint8_t> plaintext = {0x0b, 0x00, 0x00, 0x01, 0x00};
-    auto record = reality::tls_record_layer::encrypt_record(EVP_aes_128_gcm(), key, iv, 0, plaintext, reality::kContentTypeHandshake, ec);
+    auto record = encrypt_record_compat(EVP_aes_128_gcm(), key, iv, 0, plaintext, reality::kContentTypeHandshake, ec);
     ASSERT_FALSE(ec);
     asio::write(writer, asio::buffer(record), ec);
     ASSERT_FALSE(ec);
@@ -596,7 +711,7 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsMalformedCertificateM
     asio::co_spawn(io_context,
                    [&]() -> asio::awaitable<void>
                    {
-                       loop_res = co_await mux::client_tunnel_pool::handshake_read_loop(
+                       loop_res = co_await handshake_read_loop_compat(
                            reader, {key, iv}, hs_keys, false, "bad-cert-msg", trans, EVP_aes_128_gcm(), EVP_sha256(), loop_ec);
                        co_return;
                    },
@@ -628,8 +743,8 @@ TEST(ClientTunnelPoolWhiteboxTest, ClientHelloBuildFailureBranchesForAuthMateria
     asio::co_spawn(io_context,
                    [missing_pub_pool, &disconnected_socket_1, ephemeral_pub, ephemeral_priv, spec, &trans_1, &hello_ok_1, &hello_ec_1]() mutable -> asio::awaitable<void>
                    {
-                       hello_ok_1 = co_await missing_pub_pool->generate_and_send_client_hello(
-                           disconnected_socket_1, ephemeral_pub, ephemeral_priv, spec, trans_1, hello_ec_1);
+                       hello_ok_1 = co_await generate_and_send_client_hello_compat(
+                           *missing_pub_pool, disconnected_socket_1, ephemeral_pub, ephemeral_priv, spec, trans_1, hello_ec_1);
                        co_return;
                    },
                    asio::detached);
@@ -650,8 +765,8 @@ TEST(ClientTunnelPoolWhiteboxTest, ClientHelloBuildFailureBranchesForAuthMateria
     asio::co_spawn(io_context,
                    [invalid_short_id_pool, &disconnected_socket_2, ephemeral_pub, ephemeral_priv, spec, &trans_2, &hello_ok_2, &hello_ec_2]() mutable -> asio::awaitable<void>
                    {
-                       hello_ok_2 = co_await invalid_short_id_pool->generate_and_send_client_hello(
-                           disconnected_socket_2, ephemeral_pub, ephemeral_priv, spec, trans_2, hello_ec_2);
+                       hello_ok_2 = co_await generate_and_send_client_hello_compat(
+                           *invalid_short_id_pool, disconnected_socket_2, ephemeral_pub, ephemeral_priv, spec, trans_2, hello_ec_2);
                        co_return;
                    },
                    asio::detached);
@@ -679,7 +794,7 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsMalformedCertificateV
     const std::vector<std::uint8_t> malformed_cert_verify = {0x0f, 0x00, 0x00, 0x00};
     std::vector<std::uint8_t> plaintext = cert_msg;
     plaintext.insert(plaintext.end(), malformed_cert_verify.begin(), malformed_cert_verify.end());
-    auto record = reality::tls_record_layer::encrypt_record(EVP_aes_128_gcm(), key, iv, 0, plaintext, reality::kContentTypeHandshake, ec);
+    auto record = encrypt_record_compat(EVP_aes_128_gcm(), key, iv, 0, plaintext, reality::kContentTypeHandshake, ec);
     ASSERT_FALSE(ec);
     asio::write(writer, asio::buffer(record), ec);
     ASSERT_FALSE(ec);
@@ -692,7 +807,7 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsMalformedCertificateV
     asio::co_spawn(io_context,
                    [&]() -> asio::awaitable<void>
                    {
-                       loop_res = co_await mux::client_tunnel_pool::handshake_read_loop(
+                       loop_res = co_await handshake_read_loop_compat(
                            reader, {key, iv}, hs_keys, false, "bad-cert-verify-payload", trans, EVP_aes_128_gcm(), EVP_sha256(), loop_ec);
                        co_return;
                    },
@@ -721,7 +836,7 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsUnsupportedCertificat
     const std::vector<std::uint8_t> unsupported_cert_verify = {0x0f, 0x00, 0x00, 0x04, 0x00, 0x01, 0x00, 0x00};
     std::vector<std::uint8_t> plaintext = cert_msg;
     plaintext.insert(plaintext.end(), unsupported_cert_verify.begin(), unsupported_cert_verify.end());
-    auto record = reality::tls_record_layer::encrypt_record(EVP_aes_128_gcm(), key, iv, 0, plaintext, reality::kContentTypeHandshake, ec);
+    auto record = encrypt_record_compat(EVP_aes_128_gcm(), key, iv, 0, plaintext, reality::kContentTypeHandshake, ec);
     ASSERT_FALSE(ec);
     asio::write(writer, asio::buffer(record), ec);
     ASSERT_FALSE(ec);
@@ -734,7 +849,7 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsUnsupportedCertificat
     asio::co_spawn(io_context,
                    [&]() -> asio::awaitable<void>
                    {
-                       loop_res = co_await mux::client_tunnel_pool::handshake_read_loop(
+                       loop_res = co_await handshake_read_loop_compat(
                            reader, {key, iv}, hs_keys, false, "unsupported-cert-verify-scheme", trans, EVP_aes_128_gcm(), EVP_sha256(), loop_ec);
                        co_return;
                    },
@@ -763,7 +878,7 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopCertificateRangeAndFinishedB
 
         const std::vector<std::uint8_t> key(16, 0x12);
         const std::vector<std::uint8_t> iv(12, 0x34);
-        auto record = reality::tls_record_layer::encrypt_record(EVP_aes_128_gcm(), key, iv, 0, plaintext, reality::kContentTypeHandshake, ec);
+        auto record = encrypt_record_compat(EVP_aes_128_gcm(), key, iv, 0, plaintext, reality::kContentTypeHandshake, ec);
         EXPECT_FALSE(ec);
         asio::write(writer, asio::buffer(record), ec);
         EXPECT_FALSE(ec);
@@ -774,7 +889,7 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopCertificateRangeAndFinishedB
         asio::co_spawn(io_context,
                        [&]() -> asio::awaitable<void>
                        {
-                           loop_res = co_await mux::client_tunnel_pool::handshake_read_loop(
+                           loop_res = co_await handshake_read_loop_compat(
                                reader, {key, iv}, hs_keys, false, "whitebox-finished", trans, EVP_aes_128_gcm(), EVP_sha256(), loop_ec);
                            co_return;
                        },
@@ -883,7 +998,7 @@ TEST(ClientTunnelPoolWhiteboxTest, ClientHelloAndSocketPreparationFailureBranche
         asio::co_spawn(io_context,
                        [&]() -> asio::awaitable<void>
                        {
-                           hs_res = co_await tunnel_pool->perform_reality_handshake(disconnected, hs_ec);
+                           hs_res = co_await perform_reality_handshake_compat(*tunnel_pool, disconnected, hs_ec);
                            co_return;
                        },
                        asio::detached);
@@ -904,8 +1019,8 @@ TEST(ClientTunnelPoolWhiteboxTest, ClientHelloAndSocketPreparationFailureBranche
         asio::co_spawn(io_context,
                        [&]() -> asio::awaitable<void>
                        {
-                           hello_ok = co_await tunnel_pool->generate_and_send_client_hello(
-                               disconnected, ephemeral_pub, ephemeral_priv, spec, trans, hello_ec);
+                           hello_ok = co_await generate_and_send_client_hello_compat(
+                               *tunnel_pool, disconnected, ephemeral_pub, ephemeral_priv, spec, trans, hello_ec);
                            co_return;
                        },
                        asio::detached);
@@ -926,8 +1041,8 @@ TEST(ClientTunnelPoolWhiteboxTest, ClientHelloAndSocketPreparationFailureBranche
         asio::co_spawn(io_context,
                        [&]() -> asio::awaitable<void>
                        {
-                           hello_ok = co_await tunnel_pool->generate_and_send_client_hello(
-                               disconnected, ephemeral_pub, ephemeral_priv, spec, trans, hello_ec);
+                           hello_ok = co_await generate_and_send_client_hello_compat(
+                               *tunnel_pool, disconnected, ephemeral_pub, ephemeral_priv, spec, trans, hello_ec);
                            co_return;
                        },
                        asio::detached);
@@ -949,8 +1064,8 @@ TEST(ClientTunnelPoolWhiteboxTest, ClientHelloAndSocketPreparationFailureBranche
         asio::co_spawn(io_context,
                        [&]() -> asio::awaitable<void>
                        {
-                           hello_ok = co_await tunnel_pool->generate_and_send_client_hello(
-                               disconnected, ephemeral_pub, ephemeral_priv, spec, trans, hello_ec);
+                           hello_ok = co_await generate_and_send_client_hello_compat(
+                               *tunnel_pool, disconnected, ephemeral_pub, ephemeral_priv, spec, trans, hello_ec);
                            co_return;
                        },
                        asio::detached);
@@ -970,7 +1085,7 @@ TEST(ClientTunnelPoolWhiteboxTest, ClientHelloAndSocketPreparationFailureBranche
         asio::co_spawn(io_context,
                        [&]() -> asio::awaitable<void>
                        {
-                           connect_ok = co_await tunnel_pool->tcp_connect(io_context, sock, connect_ec);
+                           connect_ok = co_await tcp_connect_compat(*tunnel_pool, io_context, sock, connect_ec);
                            co_return;
                        },
                        asio::detached);
@@ -992,7 +1107,7 @@ TEST(ClientTunnelPoolWhiteboxTest, ClientHelloAndSocketPreparationFailureBranche
         asio::co_spawn(io_context,
                        [&]() -> asio::awaitable<void>
                        {
-                           connect_ok = co_await tunnel_pool->tcp_connect(io_context, sock, connect_ec);
+                           connect_ok = co_await tcp_connect_compat(*tunnel_pool, io_context, sock, connect_ec);
                            co_return;
                        },
                        asio::detached);
@@ -1036,7 +1151,7 @@ TEST(ClientTunnelPoolWhiteboxTest, ProcessServerHelloCoversX25519DeriveFailure)
     asio::co_spawn(io_context,
                    [&]() -> asio::awaitable<void>
                    {
-                       sh_res = co_await mux::client_tunnel_pool::process_server_hello(reader, peer_priv, trans, hs_ec);
+                       sh_res = co_await process_server_hello_compat(reader, peer_priv, trans, hs_ec);
                        co_return;
                    },
                    asio::detached);
@@ -1073,7 +1188,7 @@ TEST(ClientTunnelPoolWhiteboxTest, TcpConnectSuccessCoversLocalEndpointFailureLo
     asio::co_spawn(io_context,
                    [&]() -> asio::awaitable<void>
                    {
-                       connect_ok = co_await tunnel_pool->tcp_connect(io_context, client_socket, connect_ec);
+                       connect_ok = co_await tcp_connect_compat(*tunnel_pool, io_context, client_socket, connect_ec);
                        co_return;
                    },
                    asio::detached);
