@@ -473,6 +473,7 @@ TEST(LocalClientTest, NoTunnelSelectionAndSessionPrunePath)
     asio::io_context connect_ctx;
     asio::ip::tcp::socket first(connect_ctx);
     asio::ip::tcp::socket second(connect_ctx);
+    std::error_code ec;
     const asio::ip::tcp::endpoint ep(asio::ip::make_address("127.0.0.1"), client->listen_port());
     first.connect(ep, ec);
     ASSERT_FALSE(ec);
@@ -582,6 +583,7 @@ TEST(LocalClientTest, AcceptLoopLogsRetryOnAcceptError)
 
     asio::io_context connect_ctx;
     asio::ip::tcp::socket connector(connect_ctx);
+    std::error_code ec;
     connector.connect(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), client->listen_port()), ec);
     ASSERT_FALSE(ec);
     connector.shutdown(asio::ip::tcp::socket::shutdown_both, ec);
@@ -618,6 +620,7 @@ TEST(LocalClientTest, AcceptLoopHandlesNoDelaySetOptionFailure)
 
     asio::io_context connect_ctx;
     asio::ip::tcp::socket connector(connect_ctx);
+    std::error_code ec;
     connector.connect(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), client->listen_port()), ec);
     ASSERT_FALSE(ec);
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
