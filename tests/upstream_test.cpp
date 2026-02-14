@@ -432,17 +432,22 @@ TEST_F(upstream_test, ProxyUpstreamConnectSuccessSetsStream)
     EXPECT_CALL(*mock_conn, mock_send_async(::testing::_, mux::kCmdSyn, ::testing::_)).WillOnce(::testing::Return(std::error_code{}));
     EXPECT_CALL(*mock_conn, register_stream(::testing::_, ::testing::_))
         .WillOnce(
-            [this](const std::uint32_t id, std::shared_ptr<mux::mux_stream_interface> stream_iface)
+            [this](const std::uint32_t id, std::shared_ptr<mux::mux_stream_interface> stream_iface) -> bool
             {
                 (void)id;
                 auto stream = std::dynamic_pointer_cast<mux::mux_stream>(stream_iface);
-                ASSERT_NE(stream, nullptr);
+                EXPECT_NE(stream, nullptr);
+                if (stream == nullptr)
+                {
+                    return false;
+                }
 
                 mux::ack_payload ack{};
                 ack.socks_rep = socks::kRepSuccess;
                 std::vector<std::uint8_t> ack_data;
                 mux::mux_codec::encode_ack(ack, ack_data);
                 asio::post(this->ctx(), [stream, ack_data]() { stream->on_data(ack_data); });
+                return true;
             });
 
     mux::proxy_upstream upstream(tunnel, mux::connection_context{});
@@ -464,6 +469,7 @@ TEST_F(upstream_test, ProxyUpstreamConnectFailsWhenSendSynFailsAndCleansStream)
                   {
                       (void)stream;
                       stream_id = id;
+                      return true;
                   });
     EXPECT_CALL(*mock_conn, mock_send_async(::testing::_, mux::kCmdSyn, ::testing::_)).WillOnce(::testing::Return(asio::error::broken_pipe));
     EXPECT_CALL(*mock_conn, mock_send_async(::testing::_, mux::kCmdFin, ::testing::_)).WillOnce(::testing::Return(std::error_code{}));
@@ -485,17 +491,22 @@ TEST_F(upstream_test, ProxyUpstreamConnectFailsWhenAckRejectedAndCleansStream)
 
     EXPECT_CALL(*mock_conn, register_stream(::testing::_, ::testing::_))
         .WillOnce(
-            [this](const std::uint32_t id, std::shared_ptr<mux::mux_stream_interface> stream_iface)
+            [this](const std::uint32_t id, std::shared_ptr<mux::mux_stream_interface> stream_iface) -> bool
             {
                 (void)id;
                 auto stream = std::dynamic_pointer_cast<mux::mux_stream>(stream_iface);
-                ASSERT_NE(stream, nullptr);
+                EXPECT_NE(stream, nullptr);
+                if (stream == nullptr)
+                {
+                    return false;
+                }
 
                 mux::ack_payload ack{};
                 ack.socks_rep = socks::kRepConnRefused;
                 std::vector<std::uint8_t> ack_data;
                 mux::mux_codec::encode_ack(ack, ack_data);
                 asio::post(this->ctx(), [stream, ack_data]() { stream->on_data(ack_data); });
+                return true;
             });
     EXPECT_CALL(*mock_conn, mock_send_async(::testing::_, mux::kCmdSyn, ::testing::_)).WillOnce(::testing::Return(std::error_code{}));
     EXPECT_CALL(*mock_conn, mock_send_async(::testing::_, mux::kCmdFin, ::testing::_)).WillOnce(::testing::Return(std::error_code{}));

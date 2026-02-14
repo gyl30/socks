@@ -20,6 +20,7 @@
 #include "mux_codec.h"
 #include "log_context.h"
 #include "mux_protocol.h"
+#include "stop_dispatch.h"
 #include "remote_udp_session.h"
 
 namespace mux
@@ -58,7 +59,8 @@ namespace
 remote_udp_session::remote_udp_session(std::shared_ptr<mux_connection> connection,
                                        const std::uint32_t id,
                                        asio::io_context& io_context,
-                                       const connection_context& ctx)
+                                       const connection_context& ctx,
+                                       const config::timeout_t& timeout_cfg)
     : id_(id),
       io_context_(io_context),
       timer_(io_context_),
@@ -66,6 +68,9 @@ remote_udp_session::remote_udp_session(std::shared_ptr<mux_connection> connectio
       udp_socket_(io_context_),
       udp_resolver_(io_context_),
       connection_(std::move(connection)),
+      read_timeout_ms_(static_cast<std::uint64_t>(timeout_cfg.read) * 1000ULL),
+      write_timeout_ms_(static_cast<std::uint64_t>(timeout_cfg.write) * 1000ULL),
+      idle_timeout_ms_(static_cast<std::uint64_t>(timeout_cfg.idle) * 1000ULL),
       recv_channel_(io_context_, 128)
 {
     ctx_ = ctx;
@@ -96,6 +101,8 @@ asio::awaitable<void> remote_udp_session::handle_start_failure(const std::shared
     LOG_CTX_ERROR(ctx_, "{} {} failed {}", log_event::kMux, step, ec.message());
     const ack_payload ack{.socks_rep = socks::kRepGenFail, .bnd_addr = "", .bnd_port = 0};
     co_await send_ack_payload(conn, ack);
+    request_stop();
+    close_socket();
     if (auto manager = manager_.lock())
     {
         manager->remove_stream(id_);
@@ -194,14 +201,19 @@ asio::awaitable<void> remote_udp_session::run_udp_session_loops()
     co_await (mux_to_udp() || udp_to_mux() || watchdog() || idle_watchdog());
 }
 
-void remote_udp_session::cleanup_after_stop()
+asio::awaitable<void> remote_udp_session::cleanup_after_stop()
 {
     request_stop();
     close_socket();
+    if (auto conn = connection_.lock())
+    {
+        (void)co_await conn->send_async(id_, kCmdRst, {});
+    }
     if (auto manager = manager_.lock())
     {
         manager->remove_stream(id_);
     }
+    co_return;
 }
 
 asio::awaitable<void> remote_udp_session::start_impl(std::shared_ptr<remote_udp_session> self)
@@ -217,19 +229,37 @@ asio::awaitable<void> remote_udp_session::start_impl(std::shared_ptr<remote_udp_
     }
     log_udp_local_endpoint();
 
-    const ack_payload ack{.socks_rep = socks::kRepSuccess, .bnd_addr = "0.0.0.0", .bnd_port = 0};
+    std::error_code local_ep_ec;
+    const auto local_ep = udp_socket_.local_endpoint(local_ep_ec);
+    if (local_ep_ec)
+    {
+        co_await handle_start_failure(conn, "udp local endpoint", local_ep_ec);
+        co_return;
+    }
+    const ack_payload ack{
+        .socks_rep = socks::kRepSuccess,
+        .bnd_addr = local_ep.address().to_string(),
+        .bnd_port = local_ep.port(),
+    };
     co_await send_ack_payload(conn, ack);
 
     co_await run_udp_session_loops();
-    cleanup_after_stop();
+    co_await cleanup_after_stop();
     LOG_CTX_INFO(ctx_, "{} finished {}", log_event::kConnClose, ctx_.stats_summary());
 }
 
 void remote_udp_session::on_data(std::vector<std::uint8_t> data)
 {
-    asio::dispatch(io_context_,
-                   [self = shared_from_this(), data = std::move(data)]() mutable
-                   { self->recv_channel_.try_send(std::error_code(), std::move(data)); });
+    detail::dispatch_cleanup_or_run_inline(
+        io_context_,
+        [self = shared_from_this(), data = std::move(data)]() mutable
+        {
+            if (!self->recv_channel_.try_send(std::error_code(), std::move(data)))
+            {
+                LOG_CTX_WARN(self->ctx_, "{} recv channel unavailable on data", log_event::kMux);
+                self->request_stop();
+            }
+        });
 }
 
 void remote_udp_session::request_stop()
@@ -240,6 +270,7 @@ void remote_udp_session::request_stop()
     udp_resolver_.cancel();
     std::error_code ignore;
     ignore = udp_socket_.cancel(ignore);
+    close_socket();
 }
 
 void remote_udp_session::close_socket()
@@ -254,7 +285,15 @@ void remote_udp_session::close_socket()
 
 void remote_udp_session::on_close()
 {
-    asio::dispatch(io_context_, [self = shared_from_this()]() { self->request_stop(); });
+    detail::dispatch_cleanup_or_run_inline(
+        io_context_,
+        [weak_self = weak_from_this()]()
+        {
+            if (const auto self = weak_self.lock())
+            {
+                self->request_stop();
+            }
+        });
 }
 
 void remote_udp_session::on_reset() { on_close(); }
@@ -280,11 +319,11 @@ asio::awaitable<void> remote_udp_session::watchdog()
         const auto current_ms = now_ms();
         const auto read_elapsed_ms = current_ms - last_read_time_ms_.load(std::memory_order_acquire);
         const auto write_elapsed_ms = current_ms - last_write_time_ms_.load(std::memory_order_acquire);
-        if (read_elapsed_ms > 60000ULL)
+        if (read_elapsed_ms > read_timeout_ms_)
         {
             LOG_CTX_WARN(ctx_, "{} read idle {}s", log_event::kTimeout, read_elapsed_ms / 1000ULL);
         }
-        if (write_elapsed_ms > 60000ULL)
+        if (write_elapsed_ms > write_timeout_ms_)
         {
             LOG_CTX_WARN(ctx_, "{} write idle {}s", log_event::kTimeout, write_elapsed_ms / 1000ULL);
         }
@@ -360,7 +399,7 @@ asio::awaitable<void> remote_udp_session::idle_watchdog()
         }
         const auto current_ms = now_ms();
         const auto elapsed_ms = current_ms - last_activity_time_ms_.load(std::memory_order_acquire);
-        if (elapsed_ms > 60000ULL)
+        if (elapsed_ms > idle_timeout_ms_)
         {
             LOG_CTX_WARN(ctx_, "{} udp session idle closing", log_event::kMux);
             request_stop();

@@ -72,16 +72,16 @@ if (auto cfg = parse_config(...); cfg)
 }
 ```
 
-### 4. 异常 (Scope 限制)
+### 4. 异常
 
-仅在以下场景容许使用异常：
-- `reflect.h` 内部的 JSON 序列化/反序列化（由最外层捕获）。
-- 极少数不可恢复的初始化错误（如 `std::bad_alloc`）。
-- 禁止在核心业务逻辑流中使用异常进行控制流跳转。
+项目代码中禁止使用异常。
+- 禁止新增 `throw` / `try` / `catch`。
+- 错误统一通过 `std::expected`、`std::optional` 或显式状态值返回。
+- 反序列化失败必须通过返回值上报，不得依赖异常捕获。
 
 ## 规范要点
 
-1.  **一致性**：新代码必须使用 `std::expected`，禁止添加新的 `std::error_code&` 输出参数。
+1.  **一致性**：新代码必须使用 `std::expected`，禁止添加新的 `std::error_code&` 输出参数，也禁止使用异常。
 2.  **错误传播**：使用 `return std::unexpected(ec)` 传播错误。
 3.  **nodiscard**：所有返回 `std::expected` 的函数均应视为隐含 `[[nodiscard]]`（C++23 标准特性或编译器警告支持）。
 4.  **资源管理**：利用 RAII（如 `scoped_exit`）确保出错时资源正确释放。
@@ -100,3 +100,13 @@ if (ec) { ... }
 auto res = func(arg);
 if (!res) { auto ec = res.error(); ... }
 ```
+
+## 异常禁用工作清单
+
+为避免依赖缺失文档，异常禁用相关清单统一维护在本文件，不再依赖 `doc/tests_exception_inventory.md`。
+
+1. 项目代码（`third/` 除外）禁止新增 `throw` / `try` / `catch`。
+2. 新增错误返回接口统一使用 `std::expected`，禁止新增 `std::error_code&` 输出参数。
+3. 反序列化、握手、I/O 失败路径必须在测试中断言可观测错误返回，不依赖异常。
+4. 建议在本地或 CI 增加静态检查：`rg -n "\\bthrow\\b|\\btry\\b|\\bcatch\\b" --glob '*.{cpp,h}' --glob '!third/**'`。
+5. 发现存量不一致时，按“接口签名 -> 调用链 -> 测试”顺序迁移，避免半迁移状态。
