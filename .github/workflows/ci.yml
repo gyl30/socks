@@ -19,10 +19,22 @@ jobs:
       with:
         submodules: recursive
 
-    - name: Install Dependencies
+    - name: Install System Dependencies
       run: |
+        set -euo pipefail
         sudo apt-get update
-        sudo apt-get install -y cmake ninja-build libssl-dev clang python3 python3-pip valgrind gcovr iproute2 iptables net-tools
+        sudo apt-get install -y cmake ninja-build libssl-dev python3 python3-pip valgrind gcovr iproute2 iptables net-tools curl gnupg ca-certificates
+
+    - name: Install Latest Clang
+      run: |
+        set -euo pipefail
+        sudo rm -f /usr/share/keyrings/llvm-archive-keyring.gpg
+        curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
+        echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] https://apt.llvm.org/jammy/ llvm-toolchain-jammy main" | sudo tee /etc/apt/sources.list.d/llvm.list >/dev/null
+        sudo apt-get update
+        sudo apt-get install -y clang lld
+        clang --version
+        clang++ --version
 
     - name: Prepare Artifact Directory
       run: mkdir -p "$CI_ARTIFACT_DIR"
@@ -92,10 +104,22 @@ jobs:
       with:
         submodules: recursive
 
-    - name: Install Dependencies
+    - name: Install System Dependencies
       run: |
+        set -euo pipefail
         sudo apt-get update
-        sudo apt-get install -y cmake ninja-build libssl-dev clang
+        sudo apt-get install -y cmake ninja-build libssl-dev curl gnupg ca-certificates
+
+    - name: Install Latest Clang
+      run: |
+        set -euo pipefail
+        sudo rm -f /usr/share/keyrings/llvm-archive-keyring.gpg
+        curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
+        echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] https://apt.llvm.org/jammy/ llvm-toolchain-jammy main" | sudo tee /etc/apt/sources.list.d/llvm.list >/dev/null
+        sudo apt-get update
+        sudo apt-get install -y clang lld
+        clang --version
+        clang++ --version
 
     - name: Configure CMake (Fuzzing)
       run: cmake -S . -B build_fuzz -DENABLE_FUZZING=ON -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_COMPILER=clang -GNinja
