@@ -7,17 +7,59 @@ on:
     branches: [ "main" ]
 
 jobs:
-  quality-gates:
-    name: Quality Gates
+  guard-expected-assertion-style:
+    name: Guard Expected Assertion Style
     runs-on: ubuntu-22.04
-    
+
     steps:
     - uses: actions/checkout@v4
+      with:
+        submodules: recursive
 
-    - name: Install Dependencies
+    - name: Guard Expected Assertion Style
       run: |
+        set -euo pipefail
+        if grep -R -n -E 'value_or[[:space:]]*\(' tests --include='*_test.cpp'; then
+          echo "Found forbidden expected assertion pattern in tests: value_or(...)"
+          exit 1
+        fi
+
+  tsan:
+    name: TSAN (${{ matrix.suite }})
+    runs-on: ubuntu-22.04
+    needs: guard-expected-assertion-style
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [unit, integration]
+    env:
+      INTEGRATION_TEST_REGEX: integration|tproxy_integration|udp_integration|mux_connection_integration_test
+      CI_ARTIFACT_DIR: ci_artifacts
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install System Dependencies
+      run: |
+        set -euo pipefail
         sudo apt-get update
-        sudo apt-get install -y cmake ninja-build libssl-dev clang python3 python3-pip valgrind gcovr iproute2 iptables net-tools
+        sudo apt-get install -y cmake ninja-build libssl-dev python3 iproute2 iptables net-tools openssl curl gnupg ca-certificates
+
+    - name: Install Latest Clang
+      run: |
+        set -euo pipefail
+        sudo rm -f /usr/share/keyrings/llvm-archive-keyring.gpg
+        curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
+        echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] https://apt.llvm.org/jammy/ llvm-toolchain-jammy main" | sudo tee /etc/apt/sources.list.d/llvm.list >/dev/null
+        sudo apt-get update
+        sudo apt-get install -y clang lld
+        clang --version
+        clang++ --version
+
+    - name: Prepare Artifact Directory
+      run: mkdir -p "$CI_ARTIFACT_DIR"
 
     - name: Configure TSAN Build
       run: |
@@ -29,13 +71,45 @@ jobs:
           -DENABLE_ASAN=OFF
 
     - name: Build TSAN
-      run: cmake --build build_tsan -j15
+      run: cmake --build build_tsan
 
-    - name: Run TSAN Full Test Suite
-      run: ctest --test-dir build_tsan -j20 --output-on-failure
+    - name: Run TSAN Unit Test Suite
+      if: matrix.suite == 'unit'
+      run: ctest --test-dir build_tsan --parallel --output-on-failure --output-log "$CI_ARTIFACT_DIR/ctest_tsan_unit.log" -E "$INTEGRATION_TEST_REGEX"
 
     - name: Run TSAN Integration Tests
-      run: ctest --test-dir build_tsan -j20 --output-on-failure -R 'integration|tproxy_integration|udp_integration|mux_connection_integration_test'
+      if: matrix.suite == 'integration'
+      run: ctest --test-dir build_tsan --parallel --output-on-failure --output-log "$CI_ARTIFACT_DIR/ctest_tsan_integration.log" -R "$INTEGRATION_TEST_REGEX"
+
+    - name: Upload TSAN Artifacts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: tsan-${{ matrix.suite }}-artifacts
+        if-no-files-found: warn
+        path: |
+          ${{ env.CI_ARTIFACT_DIR }}/**
+
+  valgrind:
+    name: Valgrind Memory Safety
+    runs-on: ubuntu-22.04
+    needs: guard-expected-assertion-style
+    env:
+      CI_ARTIFACT_DIR: ci_artifacts
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install System Dependencies
+      run: |
+        set -euo pipefail
+        sudo apt-get update
+        sudo apt-get install -y cmake ninja-build libssl-dev python3 valgrind openssl
+
+    - name: Prepare Artifact Directory
+      run: mkdir -p "$CI_ARTIFACT_DIR"
 
     - name: Configure Valgrind Build
       run: |
@@ -45,25 +119,85 @@ jobs:
           -DENABLE_ASAN=OFF
 
     - name: Build Valgrind
-      run: cmake --build build_valgrind -j15
+      run: cmake --build build_valgrind
 
     - name: Run Valgrind Memory Safety Test
-      run: python3 script/valgrind_test.py --build-dir build_valgrind --socks-bin ./socks
+      run: |
+        set -euo pipefail
+        python3 script/valgrind_test.py --build-dir build_valgrind --socks-bin ./socks 2>&1 | tee "$CI_ARTIFACT_DIR/valgrind.log"
+
+    - name: Upload Valgrind Artifacts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: valgrind-artifacts
+        if-no-files-found: warn
+        path: |
+          ${{ env.CI_ARTIFACT_DIR }}/**
+          build_valgrind/*_valgrind.log
+          build_valgrind/val_*stdout.log
+
+  coverage:
+    name: Coverage Gate
+    runs-on: ubuntu-22.04
+    needs: guard-expected-assertion-style
+    env:
+      CI_ARTIFACT_DIR: ci_artifacts
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install System Dependencies
+      run: |
+        set -euo pipefail
+        sudo apt-get update
+        sudo apt-get install -y cmake ninja-build libssl-dev python3 python3-pip gcovr
+
+    - name: Prepare Artifact Directory
+      run: mkdir -p "$CI_ARTIFACT_DIR"
 
     - name: Enforce Coverage >= 95% (per-file)
-      run: BUILD_DIR=build_coverage BUILD_JOBS=15 TEST_JOBS=20 COVERAGE_THRESHOLD=95 PER_FILE_GATE=1 script/run_coverage.sh
+      run: |
+        set -euo pipefail
+        BUILD_DIR=build_coverage COVERAGE_THRESHOLD=95 PER_FILE_GATE=1 script/run_coverage.sh 2>&1 | tee "$CI_ARTIFACT_DIR/coverage.log"
+
+    - name: Upload Coverage Artifacts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-artifacts
+        if-no-files-found: warn
+        path: |
+          ${{ env.CI_ARTIFACT_DIR }}/**
+          build_coverage/coverage_report/summary.json
 
   fuzzing-smoke:
     name: Fuzzing Smoke Test (Clang)
     runs-on: ubuntu-22.04
     
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
 
-    - name: Install Dependencies
+    - name: Install System Dependencies
       run: |
+        set -euo pipefail
         sudo apt-get update
-        sudo apt-get install -y cmake ninja-build libssl-dev clang
+        sudo apt-get install -y cmake ninja-build libssl-dev curl gnupg ca-certificates
+
+    - name: Install Latest Clang
+      run: |
+        set -euo pipefail
+        sudo rm -f /usr/share/keyrings/llvm-archive-keyring.gpg
+        curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
+        echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] https://apt.llvm.org/jammy/ llvm-toolchain-jammy main" | sudo tee /etc/apt/sources.list.d/llvm.list >/dev/null
+        sudo apt-get update
+        sudo apt-get install -y clang lld
+        clang --version
+        clang++ --version
 
     - name: Configure CMake (Fuzzing)
       run: cmake -S . -B build_fuzz -DENABLE_FUZZING=ON -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_COMPILER=clang -GNinja
