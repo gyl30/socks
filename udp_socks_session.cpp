@@ -5,7 +5,6 @@
 #include <utility>
 #include <system_error>
 
-#include <asio/post.hpp>
 #include <asio/error.hpp>
 #include <asio/write.hpp>
 #include <asio/buffer.hpp>
@@ -23,6 +22,7 @@
 #include "mux_tunnel.h"
 #include "log_context.h"
 #include "mux_protocol.h"
+#include "stop_dispatch.h"
 #include "udp_socks_session.h"
 
 namespace mux
@@ -54,22 +54,46 @@ asio::awaitable<void> write_socks_error_reply(asio::ip::tcp::socket& socket, con
     co_await asio::async_write(socket, asio::buffer(err), asio::as_tuple(asio::use_awaitable));
 }
 
+void close_udp_socket_on_prepare_failure(asio::ip::udp::socket& udp_socket, const connection_context& ctx)
+{
+    std::error_code close_ec;
+    udp_socket.close(close_ec);
+    if (close_ec && close_ec != asio::error::bad_descriptor)
+    {
+        LOG_CTX_WARN(ctx, "{} close udp socket failed {}", log_event::kSocks, close_ec.message());
+    }
+}
+
 bool open_and_bind_udp_socket(asio::ip::udp::socket& udp_socket, const asio::ip::address& local_addr, const connection_context& ctx)
 {
     const auto udp_protocol = local_addr.is_v6() ? asio::ip::udp::v6() : asio::ip::udp::v4();
     std::error_code ec;
+    const char* failed_step = nullptr;
     ec = udp_socket.open(udp_protocol, ec);
+    if (ec)
+    {
+        failed_step = "open";
+    }
     if (!ec && local_addr.is_v6())
     {
         ec = udp_socket.set_option(asio::ip::v6_only(false), ec);
+        if (ec)
+        {
+            failed_step = "set v6 only";
+        }
     }
     if (!ec)
     {
         ec = udp_socket.bind(asio::ip::udp::endpoint(local_addr, 0), ec);
+        if (ec)
+        {
+            failed_step = "bind";
+        }
     }
     if (ec)
     {
-        LOG_CTX_ERROR(ctx, "{} bind failed {}", log_event::kSocks, ec.message());
+        LOG_CTX_ERROR(ctx, "{} udp {} failed {}", log_event::kSocks, failed_step, ec.message());
+        close_udp_socket_on_prepare_failure(udp_socket, ctx);
         return false;
     }
     return true;
@@ -82,6 +106,7 @@ bool query_udp_bind_port(asio::ip::udp::socket& udp_socket, const connection_con
     if (ec)
     {
         LOG_CTX_ERROR(ctx, "{} query udp endpoint failed {}", log_event::kSocks, ec.message());
+        close_udp_socket_on_prepare_failure(udp_socket, ctx);
         return false;
     }
     udp_bind_port = udp_local_ep.port();
@@ -116,6 +141,21 @@ bool bind_udp_socket_for_associate(asio::ip::tcp::socket& tcp_socket,
     return true;
 }
 
+asio::awaitable<void> close_and_remove_stream(const std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>& tunnel_manager,
+                                              const std::shared_ptr<mux_stream>& stream)
+{
+    if (stream == nullptr)
+    {
+        co_return;
+    }
+
+    co_await stream->close();
+    if (tunnel_manager != nullptr)
+    {
+        tunnel_manager->remove_stream(stream->id());
+    }
+}
+
 asio::awaitable<std::shared_ptr<mux_stream>> establish_udp_associate_stream(std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager,
                                                                             const connection_context& ctx)
 {
@@ -133,7 +173,7 @@ asio::awaitable<std::shared_ptr<mux_stream>> establish_udp_associate_stream(std:
     if (ec)
     {
         LOG_CTX_WARN(ctx, "{} syn failed {}", log_event::kSocks, ec.message());
-        co_await stream->close();
+        co_await close_and_remove_stream(tunnel_manager, stream);
         co_return nullptr;
     }
 
@@ -141,7 +181,7 @@ asio::awaitable<std::shared_ptr<mux_stream>> establish_udp_associate_stream(std:
     if (ack_ec)
     {
         LOG_CTX_WARN(ctx, "{} ack failed {}", log_event::kSocks, ack_ec.message());
-        co_await stream->close();
+        co_await close_and_remove_stream(tunnel_manager, stream);
         co_return nullptr;
     }
 
@@ -149,7 +189,7 @@ asio::awaitable<std::shared_ptr<mux_stream>> establish_udp_associate_stream(std:
     if (!mux_codec::decode_ack(ack_data.data(), ack_data.size(), ack_pl) || ack_pl.socks_rep != socks::kRepSuccess)
     {
         LOG_CTX_WARN(ctx, "{} ack rejected {}", log_event::kSocks, ack_pl.socks_rep);
-        co_await stream->close();
+        co_await close_and_remove_stream(tunnel_manager, stream);
         co_return nullptr;
     }
 
@@ -305,7 +345,14 @@ void udp_socks_session::start(const std::string& host, const std::uint16_t port)
     asio::co_spawn(io_context_, [self, host, port]() -> asio::awaitable<void> { co_await self->run(host, port); }, asio::detached);
 }
 
-void udp_socks_session::on_data(std::vector<std::uint8_t> data) { recv_channel_.try_send(std::error_code(), std::move(data)); }
+void udp_socks_session::on_data(std::vector<std::uint8_t> data)
+{
+    if (!recv_channel_.try_send(std::error_code(), std::move(data)))
+    {
+        LOG_CTX_WARN(ctx_, "{} recv channel unavailable on data", log_event::kSocks);
+        on_close();
+    }
+}
 
 void udp_socks_session::on_close()
 {
@@ -315,8 +362,15 @@ void udp_socks_session::on_close()
         return;
     }
 
-    const auto self = shared_from_this();
-    asio::post(io_context_, [self]() { self->close_impl(); });
+    detail::dispatch_cleanup_or_run_inline(
+        io_context_,
+        [weak_self = weak_from_this()]()
+        {
+            if (const auto self = weak_self.lock())
+            {
+                self->close_impl();
+            }
+        });
 }
 
 void udp_socks_session::close_impl()
@@ -337,6 +391,7 @@ asio::awaitable<std::shared_ptr<mux_stream>> udp_socks_session::prepare_udp_asso
     if (!bind_udp_socket_for_associate(socket_, udp_socket_, ctx_, local_addr, udp_bind_port))
     {
         co_await write_socks_error_reply(socket_, socks::kRepGenFail);
+        on_close();
         co_return nullptr;
     }
 
@@ -357,7 +412,8 @@ asio::awaitable<std::shared_ptr<mux_stream>> udp_socks_session::prepare_udp_asso
 
     if (!co_await send_udp_associate_success_reply(socket_, local_addr, udp_bind_port, ctx_))
     {
-        co_await stream->close();
+        co_await close_and_remove_stream(tunnel_manager_, stream);
+        on_close();
         co_return nullptr;
     }
     co_return stream;
@@ -368,8 +424,8 @@ asio::awaitable<void> udp_socks_session::finalize_udp_associate(const std::share
     on_close();
     if (stream != nullptr)
     {
-        tunnel_manager_->remove_stream(stream->id());
         co_await stream->close();
+        tunnel_manager_->remove_stream(stream->id());
     }
 }
 
@@ -422,7 +478,12 @@ asio::awaitable<void> udp_socks_session::run(const std::string& host, const std:
         co_return;
     }
 
-    tunnel_manager_->register_stream(stream->id(), shared_from_this());
+    if (!tunnel_manager_->register_stream(stream->id(), shared_from_this()))
+    {
+        LOG_CTX_ERROR(ctx_, "{} register stream failed {}", log_event::kSocks, stream->id());
+        co_await finalize_udp_associate(stream);
+        co_return;
+    }
 
     using asio::experimental::awaitable_operators::operator||;
     co_await (udp_sock_to_stream(stream) || stream_to_udp_sock(stream) || keep_tcp_alive() || idle_watchdog());
