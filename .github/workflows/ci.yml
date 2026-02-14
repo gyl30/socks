@@ -12,6 +12,7 @@ jobs:
     runs-on: ubuntu-22.04
     env:
       INTEGRATION_TEST_REGEX: integration|tproxy_integration|udp_integration|mux_connection_integration_test
+      CI_ARTIFACT_DIR: ci_artifacts
     
     steps:
     - uses: actions/checkout@v4
@@ -22,6 +23,9 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y cmake ninja-build libssl-dev clang python3 python3-pip valgrind gcovr iproute2 iptables net-tools
+
+    - name: Prepare Artifact Directory
+      run: mkdir -p "$CI_ARTIFACT_DIR"
 
     - name: Configure TSAN Build
       run: |
@@ -36,10 +40,10 @@ jobs:
       run: cmake --build build_tsan -j15
 
     - name: Run TSAN Full Test Suite
-      run: ctest --test-dir build_tsan -j20 --output-on-failure -E "$INTEGRATION_TEST_REGEX"
+      run: ctest --test-dir build_tsan -j20 --output-on-failure --output-log "$CI_ARTIFACT_DIR/ctest_tsan_unit.log" -E "$INTEGRATION_TEST_REGEX"
 
     - name: Run TSAN Integration Tests
-      run: ctest --test-dir build_tsan -j20 --output-on-failure -R "$INTEGRATION_TEST_REGEX"
+      run: ctest --test-dir build_tsan -j20 --output-on-failure --output-log "$CI_ARTIFACT_DIR/ctest_tsan_integration.log" -R "$INTEGRATION_TEST_REGEX"
 
     - name: Configure Valgrind Build
       run: |
@@ -52,10 +56,24 @@ jobs:
       run: cmake --build build_valgrind -j15
 
     - name: Run Valgrind Memory Safety Test
-      run: python3 script/valgrind_test.py --build-dir build_valgrind --socks-bin ./socks
+      run: |
+        set -euo pipefail
+        python3 script/valgrind_test.py --build-dir build_valgrind --socks-bin ./socks 2>&1 | tee "$CI_ARTIFACT_DIR/valgrind.log"
 
     - name: Enforce Coverage >= 95% (per-file)
-      run: BUILD_DIR=build_coverage BUILD_JOBS=15 TEST_JOBS=20 COVERAGE_THRESHOLD=95 PER_FILE_GATE=1 script/run_coverage.sh
+      run: |
+        set -euo pipefail
+        BUILD_DIR=build_coverage BUILD_JOBS=15 TEST_JOBS=20 COVERAGE_THRESHOLD=95 PER_FILE_GATE=1 script/run_coverage.sh 2>&1 | tee "$CI_ARTIFACT_DIR/coverage.log"
+
+    - name: Upload Quality Artifacts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: quality-gates-artifacts
+        if-no-files-found: warn
+        path: |
+          ${{ env.CI_ARTIFACT_DIR }}/**
+          build_coverage/coverage_report/summary.json
 
   fuzzing-smoke:
     name: Fuzzing Smoke Test (Clang)
