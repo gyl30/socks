@@ -22,7 +22,11 @@ class mock_mux_connection : public mux_connection
     {
     }
 
-    MOCK_METHOD(void, register_stream, (uint32_t id, std::shared_ptr<mux_stream_interface> stream), (override));
+    MOCK_METHOD(bool, register_stream, (uint32_t id, std::shared_ptr<mux_stream_interface> stream), (override));
+    bool register_stream_checked(const uint32_t id, std::shared_ptr<mux_stream_interface> stream) override
+    {
+        return register_stream(id, std::move(stream));
+    }
     MOCK_METHOD(void, remove_stream, (uint32_t id), (override));
     MOCK_METHOD(uint32_t, id, (), (const, override));
 
