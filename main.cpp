@@ -134,7 +134,7 @@ void stop_runtime_services(mux::io_context_pool& pool, const runtime_services& s
     {
         services.server->stop();
     }
-    pool.stop();
+    pool.shutdown();
 }
 
 std::uint32_t resolve_worker_threads()
