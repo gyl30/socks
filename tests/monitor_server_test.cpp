@@ -422,6 +422,57 @@ TEST(MonitorServerTest, StopRunsInlineWhenIoContextStopped)
     EXPECT_FALSE(server->acceptor_.is_open());
 }
 
+TEST(MonitorServerTest, StopRunsWhenIoQueueBlocked)
+{
+    const auto port = pick_free_port();
+    asio::io_context ioc;
+    auto server = std::make_shared<monitor_server>(ioc, port, std::string(), 10);
+    ASSERT_NE(server, nullptr);
+    server->start();
+
+    std::atomic<bool> blocker_started{false};
+    std::atomic<bool> release_blocker{false};
+    asio::post(
+        ioc,
+        [&blocker_started, &release_blocker]()
+        {
+            blocker_started.store(true, std::memory_order_release);
+            while (!release_blocker.load(std::memory_order_acquire))
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+        });
+
+    std::thread runner([&ioc]() { ioc.run(); });
+    for (int i = 0; i < 100 && !blocker_started.load(std::memory_order_acquire); ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_TRUE(blocker_started.load(std::memory_order_acquire));
+
+    server->stop();
+    EXPECT_FALSE(server->acceptor_.is_open());
+
+    release_blocker.store(true, std::memory_order_release);
+    ioc.stop();
+    if (runner.joinable())
+    {
+        runner.join();
+    }
+}
+
+TEST(MonitorServerTest, StopRunsWhenIoContextNotRunning)
+{
+    const auto port = pick_free_port();
+    asio::io_context ioc;
+    auto server = std::make_shared<monitor_server>(ioc, port, std::string(), 10);
+    ASSERT_NE(server, nullptr);
+    ASSERT_TRUE(server->acceptor_.is_open());
+
+    server->stop();
+    EXPECT_FALSE(server->acceptor_.is_open());
+}
+
 TEST(MonitorServerTest, StopLogsAcceptorCloseFailureBranch)
 {
     const auto port = pick_free_port();

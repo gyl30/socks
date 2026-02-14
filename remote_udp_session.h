@@ -16,6 +16,7 @@
 #include <asio/steady_timer.hpp>
 #include <asio/experimental/concurrent_channel.hpp>
 
+#include "config.h"
 #include "protocol.h"
 #include "mux_tunnel.h"
 #include "log_context.h"
@@ -32,7 +33,8 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
     remote_udp_session(std::shared_ptr<mux_connection> connection,
                        std::uint32_t id,
                        asio::io_context& io_context,
-                       const connection_context& ctx);
+                       const connection_context& ctx,
+                       const config::timeout_t& timeout_cfg = {});
 
     asio::awaitable<void> start();
 
@@ -49,7 +51,7 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
     asio::awaitable<void> forward_mux_payload(const std::vector<std::uint8_t>& data);
     void log_udp_local_endpoint();
     asio::awaitable<void> run_udp_session_loops();
-    void cleanup_after_stop();
+    asio::awaitable<void> cleanup_after_stop();
     void record_udp_write(std::size_t bytes);
     asio::awaitable<void> watchdog();
     asio::awaitable<void> mux_to_udp();
@@ -70,6 +72,9 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
     std::atomic<std::uint64_t> last_read_time_ms_{0};
     std::atomic<std::uint64_t> last_write_time_ms_{0};
     std::atomic<std::uint64_t> last_activity_time_ms_{0};
+    std::uint64_t read_timeout_ms_ = 0;
+    std::uint64_t write_timeout_ms_ = 0;
+    std::uint64_t idle_timeout_ms_ = 0;
     std::weak_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> manager_;
     asio::experimental::concurrent_channel<void(std::error_code, std::vector<std::uint8_t>)> recv_channel_;
 };

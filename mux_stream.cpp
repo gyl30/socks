@@ -97,9 +97,14 @@ asio::awaitable<void> mux_stream::close()
 
 void mux_stream::on_data(std::vector<std::uint8_t> data)
 {
-    if (!is_closed_)
+    if (is_closed_)
     {
-        recv_channel_.try_send(std::error_code{}, std::move(data));
+        return;
+    }
+    if (!recv_channel_.try_send(std::error_code{}, std::move(data)))
+    {
+        LOG_CTX_WARN(ctx_, "{} stream {} recv channel unavailable on data", log_event::kMux, id_);
+        close_internal();
     }
 }
 
@@ -108,7 +113,11 @@ void mux_stream::on_close()
     if (!fin_received_.exchange(true))
     {
         LOG_CTX_DEBUG(ctx_, "{} stream {} received fin", log_event::kMux, id_);
-        recv_channel_.try_send(std::error_code{}, std::vector<std::uint8_t>{});
+        if (!recv_channel_.try_send(std::error_code{}, std::vector<std::uint8_t>{}))
+        {
+            LOG_CTX_WARN(ctx_, "{} stream {} recv channel unavailable on fin", log_event::kMux, id_);
+            close_internal();
+        }
     }
 }
 

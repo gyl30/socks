@@ -41,30 +41,34 @@ std::expected<std::span<const std::uint8_t>, std::error_code> reality_engine::en
     return std::span<const std::uint8_t>{tx_buf_.data(), tx_buf_.size()};
 }
 
-void reality_engine::process_available_records(std::error_code& ec, const record_callback& callback)
+std::expected<void, std::error_code> reality_engine::process_available_records(const record_callback& callback)
 {
-    ec.clear();
     std::uint8_t content_type = 0;
     std::size_t payload_len = 0;
 
-    while (try_decrypt_next_record(content_type, payload_len, ec))
+    for (;;)
     {
-        if (ec)
+        const auto decrypt_res = try_decrypt_next_record(content_type, payload_len);
+        if (!decrypt_res)
         {
-            return;
+            return std::unexpected(decrypt_res.error());
+        }
+        if (!*decrypt_res)
+        {
+            break;
         }
 
         callback(content_type, std::span<const std::uint8_t>(scratch_buf_.data(), payload_len));
 
         if (content_type == reality::kContentTypeAlert)
         {
-            ec = asio::error::eof;
-            return;
+            return std::unexpected(asio::error::eof);
         }
     }
+    return {};
 }
 
-bool reality_engine::try_decrypt_next_record(std::uint8_t& content_type, std::size_t& payload_len, std::error_code& ec)
+std::expected<bool, std::error_code> reality_engine::try_decrypt_next_record(std::uint8_t& content_type, std::size_t& payload_len)
 {
     if (rx_buf_->size() < reality::kTlsRecordHeaderSize)
     {
@@ -87,8 +91,7 @@ bool reality_engine::try_decrypt_next_record(std::uint8_t& content_type, std::si
 
     if (!decrypted)
     {
-        ec = decrypted.error();
-        return true;
+        return std::unexpected(decrypted.error());
     }
 
     const std::size_t decrypted_len = *decrypted;

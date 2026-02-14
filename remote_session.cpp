@@ -12,6 +12,7 @@
 #include "protocol.h"
 #include "mux_codec.h"
 #include "log_context.h"
+#include "stop_dispatch.h"
 #include "remote_session.h"
 
 namespace mux
@@ -214,6 +215,7 @@ asio::awaitable<bool> prepare_remote_target_connection(asio::ip::tcp::resolver& 
     LOG_CTX_INFO(ctx, "{} connected {} {}", log_event::kConnEstablished, syn.addr, syn.port);
     if (!co_await send_ack(conn, stream_id, socks::kRepSuccess, ep_conn->address().to_string(), ep_conn->port(), ctx))
     {
+        close_target_socket(target_socket);
         remove_stream(manager, stream_id);
         co_return false;
     }
@@ -265,19 +267,42 @@ asio::awaitable<void> remote_session::run(const syn_payload& syn)
 
 void remote_session::on_data(std::vector<std::uint8_t> data)
 {
-    asio::dispatch(io_context_,
-                   [self = shared_from_this(), data = std::move(data)]() mutable
-                   { self->recv_channel_.try_send(std::error_code(), std::move(data)); });
+    detail::dispatch_cleanup_or_run_inline(
+        io_context_,
+        [self = shared_from_this(), data = std::move(data)]() mutable
+        {
+            if (!self->recv_channel_.try_send(std::error_code(), std::move(data)))
+            {
+                LOG_CTX_WARN(self->ctx_, "{} recv channel unavailable on data", log_event::kMux);
+                self->close_from_reset();
+            }
+        });
 }
 
 void remote_session::on_close()
 {
-    asio::dispatch(io_context_, [self = shared_from_this()]() { self->close_from_fin(); });
+    detail::dispatch_cleanup_or_run_inline(
+        io_context_,
+        [weak_self = weak_from_this()]()
+        {
+            if (const auto self = weak_self.lock())
+            {
+                self->close_from_fin();
+            }
+        });
 }
 
 void remote_session::on_reset()
 {
-    asio::dispatch(io_context_, [self = shared_from_this()]() { self->close_from_reset(); });
+    detail::dispatch_cleanup_or_run_inline(
+        io_context_,
+        [weak_self = weak_from_this()]()
+        {
+            if (const auto self = weak_self.lock())
+            {
+                self->close_from_reset();
+            }
+        });
 }
 
 void remote_session::close_from_fin()

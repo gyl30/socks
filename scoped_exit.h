@@ -21,13 +21,7 @@ class scoped_exit
     {
         if (!canceled_)
         {
-            try
-            {
-                callback_();
-            }
-            catch (...)
-            {
-            }
+            callback_();
         }
     }
 

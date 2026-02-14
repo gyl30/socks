@@ -681,10 +681,14 @@ TEST(TcpSocksSessionTest, RunProxyPathRepliesSuccessWhenAckAccepted)
     std::vector<std::uint8_t> dat_payload;
     EXPECT_CALL(*mock_conn, mock_send_async(_, mux::kCmdSyn, _)).WillOnce(::testing::Return(std::error_code{}));
     EXPECT_CALL(*mock_conn, register_stream(_, _))
-        .WillOnce([&io_context](const std::uint32_t, std::shared_ptr<mux::mux_stream_interface> stream_iface)
+        .WillOnce([&io_context](const std::uint32_t, std::shared_ptr<mux::mux_stream_interface> stream_iface) -> bool
                   {
                       auto stream = std::dynamic_pointer_cast<mux::mux_stream>(stream_iface);
-                      ASSERT_NE(stream, nullptr);
+                      EXPECT_NE(stream, nullptr);
+                      if (stream == nullptr)
+                      {
+                          return false;
+                      }
 
                       mux::ack_payload ack{};
                       ack.socks_rep = socks::kRepSuccess;
@@ -694,6 +698,7 @@ TEST(TcpSocksSessionTest, RunProxyPathRepliesSuccessWhenAckAccepted)
 
                       asio::post(io_context, [stream]() { stream->on_data(std::vector<std::uint8_t>{0xBE, 0xEF}); });
                       asio::post(io_context, [stream]() { stream->on_close(); });
+                      return true;
                   });
     EXPECT_CALL(*mock_conn, mock_send_async(_, mux::kCmdDat, _))
         .WillOnce([&dat_payload](const std::uint32_t, const std::uint8_t, const std::vector<std::uint8_t>& payload)

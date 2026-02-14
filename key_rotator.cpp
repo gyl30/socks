@@ -1,7 +1,7 @@
 #include <atomic>
 #include <chrono>
-#include <exception>
 #include <memory>
+#include <new>
 
 extern "C"
 {
@@ -65,28 +65,23 @@ bool key_rotator::rotate()
         }
     };
 
-    try
+    auto* raw_key = new (std::nothrow) x25519_keypair();
+    if (raw_key == nullptr)
     {
-        const auto new_key = std::shared_ptr<x25519_keypair>(new x25519_keypair(), deleter);
-        if (!reality::crypto_util::generate_x25519_keypair(new_key->public_key, new_key->private_key))
-        {
-            LOG_ERROR("key_rotator generate key failed");
-            return false;
-        }
-        std::atomic_store_explicit(&current_key_, new_key, std::memory_order_release);
-        next_rotate_time_.store(std::chrono::steady_clock::now() + interval_, std::memory_order_relaxed);
-        return true;
-    }
-    catch (const std::exception& ex)
-    {
-        LOG_ERROR("key_rotator rotate exception {}", ex.what());
+        LOG_ERROR("key_rotator allocate key failed");
         return false;
     }
-    catch (...)
+
+    const auto new_key = std::shared_ptr<x25519_keypair>(raw_key, deleter);
+    if (!reality::crypto_util::generate_x25519_keypair(new_key->public_key, new_key->private_key))
     {
-        LOG_ERROR("key_rotator rotate unknown exception");
+        LOG_ERROR("key_rotator generate key failed");
         return false;
     }
+
+    std::atomic_store_explicit(&current_key_, new_key, std::memory_order_release);
+    next_rotate_time_.store(std::chrono::steady_clock::now() + interval_, std::memory_order_relaxed);
+    return true;
 }
 
 }    // namespace reality

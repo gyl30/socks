@@ -36,12 +36,13 @@ class mux_tunnel_impl : public std::enable_shared_from_this<mux_tunnel_impl<stre
 
     [[nodiscard]] std::shared_ptr<mux_connection> connection() const { return connection_; }
 
-    void register_stream(std::uint32_t id, std::shared_ptr<mux_stream_interface> stream) const
+    [[nodiscard]] bool register_stream(std::uint32_t id, std::shared_ptr<mux_stream_interface> stream) const
     {
-        if (connection_ != nullptr)
+        if (connection_ == nullptr)
         {
-            connection_->register_stream(id, std::move(stream));
+            return false;
         }
+        return connection_->register_stream(id, std::move(stream));
     }
 
     [[nodiscard]] bool try_register_stream(std::uint32_t id, std::shared_ptr<mux_stream_interface> stream) const

@@ -16,6 +16,7 @@
 #include "log.h"
 #include "config.h"
 #include "router.h"
+#include "stop_dispatch.h"
 #include "socks_client.h"
 #include "socks_session.h"
 
@@ -30,6 +31,12 @@ void close_local_socket(asio::ip::tcp::socket& socket)
     std::error_code close_ec;
     close_ec = socket.shutdown(asio::ip::tcp::socket::shutdown_both, close_ec);
     close_ec = socket.close(close_ec);
+}
+
+void close_local_acceptor_on_setup_failure(asio::ip::tcp::acceptor& acceptor)
+{
+    std::error_code close_ec;
+    close_ec = acceptor.close(close_ec);
 }
 
 bool setup_local_acceptor(asio::ip::tcp::acceptor& acceptor,
@@ -47,15 +54,27 @@ bool setup_local_acceptor(asio::ip::tcp::acceptor& acceptor,
     ec = acceptor.set_option(asio::ip::tcp::acceptor::reuse_address(true), ec);
     if (ec)
     {
+        close_local_acceptor_on_setup_failure(acceptor);
         return false;
     }
     ec = acceptor.bind(ep, ec);
     if (ec)
     {
+        close_local_acceptor_on_setup_failure(acceptor);
         return false;
     }
-    bound_port = acceptor.local_endpoint().port();
+    const auto bound_ep = acceptor.local_endpoint(ec);
+    if (ec)
+    {
+        close_local_acceptor_on_setup_failure(acceptor);
+        return false;
+    }
+    bound_port = bound_ep.port();
     ec = acceptor.listen(asio::socket_base::max_listen_connections, ec);
+    if (ec)
+    {
+        close_local_acceptor_on_setup_failure(acceptor);
+    }
     return !ec;
 }
 
@@ -285,6 +304,13 @@ void stop_sessions(const std::vector<std::shared_ptr<socks_session>>& sessions)
     }
 }
 
+void stop_local_resources(asio::ip::tcp::acceptor& acceptor, std::vector<std::weak_ptr<socks_session>>& sessions)
+{
+    close_acceptor_on_stop(acceptor);
+    auto sessions_to_stop = collect_sessions_to_stop(sessions);
+    stop_sessions(sessions_to_stop);
+}
+
 }    // namespace
 
 socks_client::socks_client(io_context_pool& pool, const config& cfg)
@@ -334,13 +360,15 @@ void socks_client::stop()
     LOG_INFO("client stopping closing resources");
     stop_.store(true, std::memory_order_release);
 
-    asio::dispatch(io_context_,
-                   [self = shared_from_this()]()
-                   {
-                       close_acceptor_on_stop(self->acceptor_);
-                       auto sessions_to_stop = collect_sessions_to_stop(self->sessions_);
-                       stop_sessions(sessions_to_stop);
-                   });
+    detail::dispatch_cleanup_or_run_inline(
+        io_context_,
+        [weak_self = weak_from_this()]()
+        {
+            if (const auto self = weak_self.lock())
+            {
+                stop_local_resources(self->acceptor_, self->sessions_);
+            }
+        });
 
     tunnel_pool_->stop();
 }
