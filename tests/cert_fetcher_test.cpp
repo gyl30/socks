@@ -225,12 +225,14 @@ TEST(CertFetcherTest, ReassemblerLimits)
     std::vector<std::uint8_t> tiny = {0x01, 0x01};
     assembler.append(tiny);
     const auto tiny_res = assembler.next(msg);
-    EXPECT_FALSE(tiny_res.value_or(false));
+    ASSERT_TRUE(tiny_res.has_value());
+    EXPECT_FALSE(*tiny_res);
 
     std::vector<std::uint8_t> header_only = {0x01, 0x00, 0x00, 0x10};
     assembler.append(header_only);
     const auto header_res = assembler.next(msg);
-    EXPECT_FALSE(header_res.value_or(false));
+    ASSERT_TRUE(header_res.has_value());
+    EXPECT_FALSE(*header_res);
 
     std::vector<std::uint8_t> huge_header = {0x01, 0x01, 0x00, 0x01};
     assembler.append(huge_header);
