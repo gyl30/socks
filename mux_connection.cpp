@@ -172,16 +172,29 @@ bool run_sync_bool_query(asio::io_context& io_context, const std::uint32_t cid, 
 }
 
 template <typename Fn>
-void run_sync_void_query(asio::io_context& io_context, const std::uint32_t cid, const char* query_name, Fn&& fn)
+bool run_sync_void_query(asio::io_context& io_context, const std::uint32_t cid, const char* query_name, Fn&& fn)
 {
     if (io_context.stopped())
     {
-        return;
+        return false;
     }
     if (io_context.get_executor().running_in_this_thread())
     {
-        std::forward<Fn>(fn)();
-        return;
+        try
+        {
+            std::forward<Fn>(fn)();
+            return true;
+        }
+        catch (const std::exception& ex)
+        {
+            LOG_WARN("mux {} sync query {} threw {}", cid, query_name, ex.what());
+            return false;
+        }
+        catch (...)
+        {
+            LOG_WARN("mux {} sync query {} threw unknown", cid, query_name);
+            return false;
+        }
     }
 
     auto started = std::make_shared<std::atomic<bool>>(false);
@@ -218,18 +231,19 @@ void run_sync_void_query(asio::io_context& io_context, const std::uint32_t cid, 
         if (!started->load(std::memory_order_acquire))
         {
             LOG_WARN("mux {} sync query {} timeout {}ms", cid, query_name, kSyncQueryWaitTimeout.count());
-            return;
+            return false;
         }
         if (future.wait_for(kSyncQueryWaitTimeout) != std::future_status::ready)
         {
             LOG_WARN("mux {} sync query {} timeout while executing {}ms", cid, query_name, (kSyncQueryWaitTimeout * 2).count());
-            return;
+            return false;
         }
     }
 
     try
     {
         future.get();
+        return true;
     }
     catch (const std::exception& ex)
     {
@@ -239,6 +253,7 @@ void run_sync_void_query(asio::io_context& io_context, const std::uint32_t cid, 
     {
         LOG_WARN("mux {} sync query {} threw unknown", cid, query_name);
     }
+    return false;
 }
 
 asio::awaitable<void> wait_draining_delay(asio::steady_timer& timer, const std::uint32_t delay_seconds, const std::uint32_t cid)
@@ -389,21 +404,26 @@ void mux_connection::handle_stream_frame(const mux::frame_header& header, std::v
 
 void mux_connection::register_stream(const std::uint32_t id, std::shared_ptr<mux_stream_interface> stream)
 {
+    (void)register_stream_checked(id, std::move(stream));
+}
+
+bool mux_connection::register_stream_checked(const std::uint32_t id, std::shared_ptr<mux_stream_interface> stream)
+{
     if (stream == nullptr)
     {
-        return;
+        return false;
     }
     if (!is_open())
     {
-        return;
+        return false;
     }
 
     if (run_inline())
     {
         register_stream_local(id, std::move(stream));
-        return;
+        return true;
     }
-    run_sync_void_query(
+    return run_sync_void_query(
         io_context_,
         cid_,
         "register_stream",
@@ -889,7 +909,11 @@ std::shared_ptr<mux_stream> mux_connection::create_stream(const std::string& tra
 
     const std::uint32_t stream_id = acquire_next_id();
     auto stream = std::make_shared<mux_stream>(stream_id, id(), std::move(stream_trace_id), shared_from_this(), io_context_);
-    register_stream(stream_id, stream);
+    if (!register_stream_checked(stream_id, stream))
+    {
+        LOG_WARN("mux {} create stream {} register failed", cid_, stream_id);
+        return nullptr;
+    }
     return stream;
 }
 
