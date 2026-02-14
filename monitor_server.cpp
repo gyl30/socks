@@ -4,6 +4,7 @@
 #include <string_view>
 
 #include "log.h"
+#include "stop_dispatch.h"
 #include "statistics.h"
 #include "monitor_server.h"
 
@@ -287,13 +288,15 @@ void monitor_server::stop()
     stop_.store(true, std::memory_order_release);
 
     auto& io_context = static_cast<asio::io_context&>(acceptor_.get_executor().context());
-    if (io_context.stopped() || io_context.get_executor().running_in_this_thread())
-    {
-        stop_local();
-        return;
-    }
-
-    asio::dispatch(acceptor_.get_executor(), [self = shared_from_this()]() { self->stop_local(); });
+    detail::dispatch_cleanup_or_run_inline(
+        io_context,
+        [weak_self = weak_from_this()]()
+        {
+            if (const auto self = weak_self.lock())
+            {
+                self->stop_local();
+            }
+        });
 }
 
 void monitor_server::stop_local()

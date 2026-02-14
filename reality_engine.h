@@ -40,12 +40,12 @@ class reality_engine
 
     void commit_read(const std::size_t n) { rx_buf_->commit(n); }
 
-    void process_available_records(std::error_code& ec, const record_callback& callback);
+    [[nodiscard]] std::expected<void, std::error_code> process_available_records(const record_callback& callback);
 
     [[nodiscard]] std::expected<std::span<const std::uint8_t>, std::error_code> encrypt(const std::vector<std::uint8_t>& plaintext);
 
    private:
-    bool try_decrypt_next_record(std::uint8_t& content_type, std::size_t& payload_len, std::error_code& ec);
+    [[nodiscard]] std::expected<bool, std::error_code> try_decrypt_next_record(std::uint8_t& content_type, std::size_t& payload_len);
 
     std::vector<std::uint8_t> read_key_;
     std::vector<std::uint8_t> read_iv_;

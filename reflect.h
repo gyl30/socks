@@ -8,7 +8,6 @@
 #include <cassert>
 #include <cstdint>
 #include <optional>
-#include <stdexcept>
 #include <functional>
 #include <string_view>
 #include <type_traits>
@@ -27,13 +26,16 @@ struct JsonNull
 struct JsonReader
 {
     rapidjson::Value* m;
-    std::vector<const char*> path_;
+    std::vector<std::string> path_;
+    bool ok_ = true;
 
     JsonReader(rapidjson::Value* m) : m(m) {}
     void startObject() {}
     void endObject() {}
     void iterArray(const std::function<void()>& fn);
     void member(const char* name, const std::function<void()>& fn);
+    void set_invalid();
+    bool ok() const;
     bool isNull();
     std::string getString();
     std::string getPath() const;
@@ -59,6 +61,26 @@ struct JsonWriter
 
 inline std::string JsonReader::getString() { return m->GetString(); }
 inline bool JsonReader::isNull() { return m->IsNull(); }
+inline void JsonReader::set_invalid() { ok_ = false; }
+inline bool JsonReader::ok() const { return ok_; }
+inline std::string JsonReader::getPath() const
+{
+    if (path_.empty())
+    {
+        return "/";
+    }
+
+    std::string result = "/";
+    for (std::size_t i = 0; i < path_.size(); ++i)
+    {
+        if (i != 0)
+        {
+            result.push_back('/');
+        }
+        result.append(path_[i]);
+    }
+    return result;
+}
 inline void JsonWriter::startArray() { m->StartArray(); }
 inline void JsonWriter::endArray() { m->EndArray(); }
 inline void JsonWriter::startObject() { m->StartObject(); }
@@ -72,7 +94,8 @@ inline void reflect(JsonReader& vis, bool& v)
 {
     if (!vis.m->IsBool())
     {
-        throw std::invalid_argument("bool");
+        vis.set_invalid();
+        return;
     }
     v = vis.m->GetBool();
 }
@@ -80,39 +103,44 @@ inline void reflect(JsonReader& vis, unsigned char& v)
 {
     if (!vis.m->IsInt())
     {
-        throw std::invalid_argument("std::uint8_t");
+        vis.set_invalid();
+        return;
     }
-    v = (std::uint8_t)vis.m->GetInt();
+    v = static_cast<std::uint8_t>(vis.m->GetInt());
 }
 inline void reflect(JsonReader& vis, short& v)
 {
     if (!vis.m->IsInt())
     {
-        throw std::invalid_argument("short");
+        vis.set_invalid();
+        return;
     }
-    v = (short)vis.m->GetInt();
+    v = static_cast<short>(vis.m->GetInt());
 }
 inline void reflect(JsonReader& vis, unsigned short& v)
 {
     if (!vis.m->IsInt())
     {
-        throw std::invalid_argument("unsigned short");
+        vis.set_invalid();
+        return;
     }
-    v = (unsigned short)vis.m->GetInt();
+    v = static_cast<unsigned short>(vis.m->GetInt());
 }
 inline void reflect(JsonReader& vis, int8_t& v)
 {
     if (!vis.m->IsInt())
     {
-        throw std::invalid_argument("int8_t");
+        vis.set_invalid();
+        return;
     }
-    v = (unsigned short)vis.m->GetInt();
+    v = static_cast<int8_t>(vis.m->GetInt());
 }
 inline void reflect(JsonReader& vis, int& v)
 {
     if (!vis.m->IsInt())
     {
-        throw std::invalid_argument("int");
+        vis.set_invalid();
+        return;
     }
     v = vis.m->GetInt();
 }
@@ -120,31 +148,35 @@ inline void reflect(JsonReader& vis, unsigned& v)
 {
     if (!vis.m->IsUint64())
     {
-        throw std::invalid_argument("unsigned");
+        vis.set_invalid();
+        return;
     }
-    v = (unsigned)vis.m->GetUint64();
+    v = static_cast<unsigned>(vis.m->GetUint64());
 }
 inline void reflect(JsonReader& vis, long& v)
 {
     if (!vis.m->IsInt64())
     {
-        throw std::invalid_argument("long");
+        vis.set_invalid();
+        return;
     }
-    v = (long)vis.m->GetInt64();
+    v = static_cast<long>(vis.m->GetInt64());
 }
 inline void reflect(JsonReader& vis, unsigned long& v)
 {
     if (!vis.m->IsUint64())
     {
-        throw std::invalid_argument("unsigned long");
+        vis.set_invalid();
+        return;
     }
-    v = (unsigned long)vis.m->GetUint64();
+    v = static_cast<unsigned long>(vis.m->GetUint64());
 }
 inline void reflect(JsonReader& vis, long long& v)
 {
     if (!vis.m->IsInt64())
     {
-        throw std::invalid_argument("long long");
+        vis.set_invalid();
+        return;
     }
     v = vis.m->GetInt64();
 }
@@ -152,7 +184,8 @@ inline void reflect(JsonReader& vis, unsigned long long& v)
 {
     if (!vis.m->IsUint64())
     {
-        throw std::invalid_argument("unsigned long long");
+        vis.set_invalid();
+        return;
     }
     v = vis.m->GetUint64();
 }
@@ -160,7 +193,8 @@ inline void reflect(JsonReader& vis, double& v)
 {
     if (!vis.m->IsDouble())
     {
-        throw std::invalid_argument("double");
+        vis.set_invalid();
+        return;
     }
     v = vis.m->GetDouble();
 }
@@ -168,7 +202,8 @@ inline void reflect(JsonReader& vis, std::string& v)
 {
     if (!vis.m->IsString())
     {
-        throw std::invalid_argument("string");
+        vis.set_invalid();
+        return;
     }
     v = vis.getString();
 }
@@ -191,6 +226,10 @@ inline void reflect(JsonWriter& vis, JsonNull& v) { vis.m->Null(); }
 template <typename T>
 void reflect(JsonReader& vis, std::optional<T>& v)
 {
+    if (!vis.ok())
+    {
+        return;
+    }
     if (vis.isNull())
     {
         v = std::nullopt;
@@ -239,9 +278,17 @@ void reflect(JsonWriter& vis, std::optional<T>& v)
 template <typename T>
 inline void reflect(JsonReader& vis, std::vector<T>& v)
 {
+    if (!vis.ok())
+    {
+        return;
+    }
     vis.iterArray(
         [&]()
         {
+            if (!vis.ok())
+            {
+                return;
+            }
             v.emplace_back();
             reflect(vis, v.back());
         });
@@ -261,7 +308,7 @@ inline void reflectMemberStart(JsonReader& vis)
 {
     if (!vis.m->IsObject())
     {
-        throw std::invalid_argument("object");
+        vis.set_invalid();
     }
 }
 
@@ -280,6 +327,10 @@ inline void reflectMemberEnd(JsonWriter& vis) { vis.endObject(); }
 template <typename T>
 inline void reflectMember(JsonReader& vis, const char* name, T& v)
 {
+    if (!vis.ok())
+    {
+        return;
+    }
     vis.member(name, [&]() { reflect(vis, v); });
 }
 template <typename T>
@@ -301,22 +352,38 @@ inline void reflectMember(JsonWriter& vis, const char* name, std::optional<T>& v
 
 inline void JsonReader::iterArray(const std::function<void()>& fn)
 {
+    if (!ok_)
+    {
+        return;
+    }
     if (!m->IsArray())
     {
-        throw std::invalid_argument("array");
+        set_invalid();
+        return;
     }
-    path_.push_back("0");
+    path_.emplace_back("0");
+    std::size_t index = 0;
     for (auto& entry : m->GetArray())
     {
+        if (!ok_)
+        {
+            break;
+        }
+        path_.back() = std::to_string(index);
         auto* saved = m;
         m = &entry;
         fn();
         m = saved;
+        ++index;
     }
     path_.pop_back();
 }
 inline void JsonReader::member(const char* name, const std::function<void()>& fn)
 {
+    if (!ok_)
+    {
+        return;
+    }
     path_.push_back(name);
     auto it = m->FindMember(name);
     if (it != m->MemberEnd())
@@ -345,44 +412,31 @@ inline void JsonReader::member(const char* name, const std::function<void()>& fn
 template <typename T>
 inline bool deserialize_struct(T& t, const std::string& msg)
 {
-    try
-    {
-        rapidjson::Document reader;
-        const rapidjson::ParseResult ok = reader.Parse(msg.data());
-        if (!ok)
-        {
-            return false;
-        }
-
-        JsonReader json_reader{&reader};
-        reflect(json_reader, t);
-    }
-    catch (...)
+    rapidjson::Document reader;
+    const rapidjson::ParseResult ok = reader.Parse(msg.data());
+    if (!ok)
     {
         return false;
     }
-    return true;
+
+    JsonReader json_reader{&reader};
+    reflect(json_reader, t);
+    return json_reader.ok();
 }
 
 template <typename T>
 inline bool deserialize_struct(T& t, const char* msg, std::size_t lenght)
 {
-    try
-    {
-        rapidjson::Document reader;
-        const rapidjson::ParseResult ok = reader.Parse(msg, lenght);
-        if (!ok)
-        {
-            return false;
-        }
-        JsonReader json_reader{&reader};
-        reflect(json_reader, t);
-    }
-    catch (...)
+    rapidjson::Document reader;
+    const rapidjson::ParseResult ok = reader.Parse(msg, lenght);
+    if (!ok)
     {
         return false;
     }
-    return true;
+
+    JsonReader json_reader{&reader};
+    reflect(json_reader, t);
+    return json_reader.ok();
 }
 
 template <typename T>

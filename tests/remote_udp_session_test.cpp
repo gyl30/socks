@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <utility>
 #include <thread>
+#include <future>
 #include <system_error>
 #include <chrono>
 
@@ -55,10 +56,11 @@ std::vector<std::uint8_t> make_mux_udp_packet(const std::string& host,
 
 std::shared_ptr<mux::remote_udp_session> make_session(asio::io_context& io_context,
                                                       const std::shared_ptr<mux::mock_mux_connection>& conn,
-                                                      const std::uint32_t id = 1)
+                                                      const std::uint32_t id = 1,
+                                                      const mux::config::timeout_t& timeout_cfg = {})
 {
     mux::connection_context ctx;
-    return std::make_shared<mux::remote_udp_session>(conn, id, io_context, ctx);
+    return std::make_shared<mux::remote_udp_session>(conn, id, io_context, ctx, timeout_cfg);
 }
 
 std::shared_ptr<mux::mux_tunnel_impl<asio::ip::tcp::socket>> make_manager(asio::io_context& io_context, const std::uint32_t id = 99)
@@ -98,6 +100,7 @@ TEST(RemoteUdpSessionTest, SetupUdpSocketAlreadyOpenTriggersFailureAckAndReset)
 
     const bool ok = mux::test::run_awaitable(io_context, session->setup_udp_socket(conn));
     EXPECT_FALSE(ok);
+    EXPECT_FALSE(session->udp_socket_.is_open());
 
     mux::ack_payload ack{};
     ASSERT_TRUE(mux::mux_codec::decode_ack(ack_payload.data(), ack_payload.size(), ack));
@@ -165,7 +168,8 @@ TEST(RemoteUdpSessionTest, CleanupAfterStopWithoutManagerClosesSocket)
     ASSERT_TRUE(mux::test::run_awaitable(io_context, session->setup_udp_socket(conn)));
     ASSERT_TRUE(session->udp_socket_.is_open());
 
-    session->cleanup_after_stop();
+    EXPECT_CALL(*conn, mock_send_async(133, mux::kCmdRst, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(std::error_code{}));
+    mux::test::run_awaitable_void(io_context, session->cleanup_after_stop());
     EXPECT_FALSE(session->udp_socket_.is_open());
 }
 
@@ -336,6 +340,103 @@ TEST(RemoteUdpSessionTest, OnDataDispatchesPayload)
     EXPECT_EQ(data[1], 0x20);
 }
 
+TEST(RemoteUdpSessionTest, OnDataRunsStopWhenIoContextStopped)
+{
+    asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    auto session = make_session(io_context, conn, 215);
+    ASSERT_TRUE(mux::test::run_awaitable(io_context, session->setup_udp_socket(conn)));
+
+    session->recv_channel_.close();
+
+    session->timer_.expires_after(std::chrono::seconds(30));
+    session->timer_.async_wait([](const std::error_code&) {});
+
+    io_context.stop();
+    session->on_data(std::vector<std::uint8_t>{0x10});
+
+    EXPECT_EQ(session->timer_.cancel(), 0U);
+    EXPECT_FALSE(session->udp_socket_.is_open());
+    session->close_socket();
+}
+
+TEST(RemoteUdpSessionTest, OnDataRunsStopWhenIoContextNotRunning)
+{
+    asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    auto session = make_session(io_context, conn, 216);
+    ASSERT_TRUE(mux::test::run_awaitable(io_context, session->setup_udp_socket(conn)));
+
+    session->recv_channel_.close();
+
+    session->timer_.expires_after(std::chrono::seconds(30));
+    session->timer_.async_wait([](const std::error_code&) {});
+
+    session->on_data(std::vector<std::uint8_t>{0x10});
+    EXPECT_EQ(session->timer_.cancel(), 0U);
+    EXPECT_FALSE(session->udp_socket_.is_open());
+    session->close_socket();
+}
+
+TEST(RemoteUdpSessionTest, OnDataRunsStopWhenIoQueueBlocked)
+{
+    asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    auto session = make_session(io_context, conn, 214);
+    ASSERT_TRUE(mux::test::run_awaitable(io_context, session->setup_udp_socket(conn)));
+
+    session->recv_channel_.close();
+
+    std::promise<std::error_code> timer_wait_done;
+    auto timer_wait_future = timer_wait_done.get_future();
+    session->timer_.expires_after(std::chrono::seconds(30));
+    session->timer_.async_wait(
+        [done = std::move(timer_wait_done)](const std::error_code& ec) mutable
+        {
+            done.set_value(ec);
+        });
+
+    std::atomic<bool> blocker_started{false};
+    std::atomic<bool> release_blocker{false};
+    asio::post(
+        io_context,
+        [&blocker_started, &release_blocker]()
+        {
+            blocker_started.store(true, std::memory_order_release);
+            while (!release_blocker.load(std::memory_order_acquire))
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+        });
+
+    std::thread io_thread([&]() { io_context.run(); });
+    for (int i = 0; i < 100 && !blocker_started.load(std::memory_order_acquire); ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_TRUE(blocker_started.load(std::memory_order_acquire));
+
+    session->on_data(std::vector<std::uint8_t>{0x10});
+
+    release_blocker.store(true, std::memory_order_release);
+    const bool timer_cancelled = timer_wait_future.wait_for(std::chrono::milliseconds(200)) == std::future_status::ready;
+    if (!timer_cancelled)
+    {
+        session->request_stop();
+    }
+
+    io_context.stop();
+    if (io_thread.joinable())
+    {
+        io_thread.join();
+    }
+
+    ASSERT_TRUE(timer_cancelled);
+    EXPECT_EQ(timer_wait_future.get(), asio::error::operation_aborted);
+    EXPECT_FALSE(session->udp_socket_.is_open());
+    session->close_socket();
+}
+
 TEST(RemoteUdpSessionTest, OnCloseAndOnResetCloseReceiveChannel)
 {
     asio::io_context io_context;
@@ -356,6 +457,82 @@ TEST(RemoteUdpSessionTest, OnCloseAndOnResetCloseReceiveChannel)
     session->close_socket();
 }
 
+TEST(RemoteUdpSessionTest, OnCloseAndOnResetRunInlineWhenIoContextStopped)
+{
+    asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    auto session = make_session(io_context, conn, 211);
+    ASSERT_TRUE(mux::test::run_awaitable(io_context, session->setup_udp_socket(conn)));
+
+    io_context.stop();
+    session->on_close();
+    EXPECT_FALSE(session->recv_channel_.try_send(std::error_code{}, std::vector<std::uint8_t>{0x01}));
+    EXPECT_FALSE(session->udp_socket_.is_open());
+
+    session->on_reset();
+    EXPECT_FALSE(session->recv_channel_.try_send(std::error_code{}, std::vector<std::uint8_t>{0x02}));
+    session->close_socket();
+}
+
+TEST(RemoteUdpSessionTest, OnCloseAndOnResetRunWhenIoContextNotRunning)
+{
+    asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    auto session = make_session(io_context, conn, 212);
+    ASSERT_TRUE(mux::test::run_awaitable(io_context, session->setup_udp_socket(conn)));
+
+    session->on_close();
+    EXPECT_FALSE(session->recv_channel_.try_send(std::error_code{}, std::vector<std::uint8_t>{0x01}));
+    EXPECT_FALSE(session->udp_socket_.is_open());
+
+    session->on_reset();
+    EXPECT_FALSE(session->recv_channel_.try_send(std::error_code{}, std::vector<std::uint8_t>{0x02}));
+    session->close_socket();
+}
+
+TEST(RemoteUdpSessionTest, OnCloseAndOnResetRunWhenIoQueueBlocked)
+{
+    asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    auto session = make_session(io_context, conn, 213);
+    ASSERT_TRUE(mux::test::run_awaitable(io_context, session->setup_udp_socket(conn)));
+
+    std::atomic<bool> blocker_started{false};
+    std::atomic<bool> release_blocker{false};
+    asio::post(
+        io_context,
+        [&blocker_started, &release_blocker]()
+        {
+            blocker_started.store(true, std::memory_order_release);
+            while (!release_blocker.load(std::memory_order_acquire))
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+        });
+
+    std::thread io_thread([&]() { io_context.run(); });
+    for (int i = 0; i < 100 && !blocker_started.load(std::memory_order_acquire); ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_TRUE(blocker_started.load(std::memory_order_acquire));
+
+    session->on_close();
+    EXPECT_FALSE(session->recv_channel_.try_send(std::error_code{}, std::vector<std::uint8_t>{0x01}));
+    EXPECT_FALSE(session->udp_socket_.is_open());
+
+    session->on_reset();
+    EXPECT_FALSE(session->recv_channel_.try_send(std::error_code{}, std::vector<std::uint8_t>{0x02}));
+
+    release_blocker.store(true, std::memory_order_release);
+    io_context.stop();
+    if (io_thread.joinable())
+    {
+        io_thread.join();
+    }
+    session->close_socket();
+}
+
 TEST(RemoteUdpSessionTest, StartImplSendsAckAndCleansUpManager)
 {
     asio::io_context io_context;
@@ -373,6 +550,7 @@ TEST(RemoteUdpSessionTest, StartImplSendsAckAndCleansUpManager)
                       ack_payload = payload;
                       return std::error_code{};
                   });
+    EXPECT_CALL(*conn, mock_send_async(22, mux::kCmdRst, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(std::error_code{}));
 
     asio::co_spawn(
         io_context,
@@ -390,6 +568,9 @@ TEST(RemoteUdpSessionTest, StartImplSendsAckAndCleansUpManager)
     mux::ack_payload ack{};
     ASSERT_TRUE(mux::mux_codec::decode_ack(ack_payload.data(), ack_payload.size(), ack));
     EXPECT_EQ(ack.socks_rep, socks::kRepSuccess);
+    EXPECT_FALSE(ack.bnd_addr.empty());
+    EXPECT_NE(ack.bnd_addr, "0.0.0.0");
+    EXPECT_NE(ack.bnd_port, 0);
     EXPECT_FALSE(session->udp_socket_.is_open());
     EXPECT_FALSE(manager->connection()->has_stream(22));
 }
@@ -413,6 +594,21 @@ TEST(RemoteUdpSessionTest, WatchdogStopsWhenCancelled)
         asio::detached);
 
     mux::test::run_awaitable_void(io_context, session->watchdog());
+}
+
+TEST(RemoteUdpSessionTest, TimeoutThresholdsUseConfigValues)
+{
+    asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    mux::config::timeout_t timeout_cfg;
+    timeout_cfg.read = 12;
+    timeout_cfg.write = 34;
+    timeout_cfg.idle = 56;
+    auto session = make_session(io_context, conn, 230, timeout_cfg);
+
+    EXPECT_EQ(session->read_timeout_ms_, 12000ULL);
+    EXPECT_EQ(session->write_timeout_ms_, 34000ULL);
+    EXPECT_EQ(session->idle_timeout_ms_, 56000ULL);
 }
 
 TEST(RemoteUdpSessionTest, IdleWatchdogStopsWhenIdleTimedOut)

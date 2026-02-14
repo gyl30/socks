@@ -85,11 +85,10 @@ TEST_F(reality_engine_test, DecryptInsufficientData)
     std::memcpy(buf.data(), small_data, 3);
     engine.commit_read(3);
 
-    std::error_code ec;
     bool called = false;
-    engine.process_available_records(ec, [&called](std::uint8_t, std::span<const std::uint8_t>) { called = true; });
+    const auto process_res = engine.process_available_records([&called](std::uint8_t, std::span<const std::uint8_t>) { called = true; });
 
-    EXPECT_FALSE(ec);
+    EXPECT_TRUE(process_res.has_value());
     EXPECT_FALSE(called);
 }
 
@@ -102,11 +101,10 @@ TEST_F(reality_engine_test, DecryptWaitsForCompleteFrame)
     std::memcpy(buf.data(), header_only, sizeof(header_only));
     engine.commit_read(sizeof(header_only));
 
-    std::error_code ec;
     bool called = false;
-    engine.process_available_records(ec, [&called](std::uint8_t, std::span<const std::uint8_t>) { called = true; });
+    const auto process_res = engine.process_available_records([&called](std::uint8_t, std::span<const std::uint8_t>) { called = true; });
 
-    EXPECT_FALSE(ec);
+    EXPECT_TRUE(process_res.has_value());
     EXPECT_FALSE(called);
 }
 
@@ -117,7 +115,6 @@ TEST_F(reality_engine_test, EncryptDecryptRoundTrip)
 
     std::vector<std::uint8_t> plaintext = {'T', 'e', 's', 't', ' ', 'D', 'a', 't', 'a'};
 
-    std::error_code ec;
     auto encrypted_res = encrypt_engine.encrypt(plaintext);
     ASSERT_TRUE(encrypted_res.has_value());
     auto encrypted = *encrypted_res;
@@ -128,14 +125,14 @@ TEST_F(reality_engine_test, EncryptDecryptRoundTrip)
     decrypt_engine.commit_read(encrypted.size());
 
     std::vector<std::uint8_t> decrypted;
-    decrypt_engine.process_available_records(ec,
-                                             [&decrypted](std::uint8_t content_type, std::span<const std::uint8_t> data)
-                                             {
-                                                 EXPECT_EQ(content_type, reality::kContentTypeApplicationData);
-                                                 decrypted.assign(data.begin(), data.end());
-                                             });
+    const auto process_res = decrypt_engine.process_available_records(
+        [&decrypted](std::uint8_t content_type, std::span<const std::uint8_t> data)
+        {
+            EXPECT_EQ(content_type, reality::kContentTypeApplicationData);
+            decrypted.assign(data.begin(), data.end());
+        });
 
-    EXPECT_FALSE(ec);
+    EXPECT_TRUE(process_res.has_value());
     EXPECT_EQ(decrypted, plaintext);
 }
 
@@ -146,7 +143,6 @@ TEST_F(reality_engine_test, MultipleEncryptions)
     std::vector<std::uint8_t> data1 = {'A', 'B', 'C'};
     std::vector<std::uint8_t> data2 = {'D', 'E', 'F'};
 
-    std::error_code ec;
     auto result1 = engine.encrypt(data1);
     EXPECT_TRUE(result1.has_value());
     EXPECT_FALSE(result1->empty());
@@ -166,8 +162,6 @@ TEST_F(reality_engine_test, AlertContentType)
 {
     reality_engine decrypt_engine(read_key(), read_iv(), write_key(), write_iv(), cipher());
 
-    std::error_code ec;
-
     std::vector<uint8_t> alert_plaintext = {0x02, 0x32};
     auto alert_rec = reality::tls_record_layer::encrypt_record(cipher(), read_key(), read_iv(), 0, alert_plaintext, reality::kContentTypeAlert);
     ASSERT_TRUE(alert_rec.has_value());
@@ -177,16 +171,17 @@ TEST_F(reality_engine_test, AlertContentType)
     decrypt_engine.commit_read(alert_rec->size());
 
     bool called = false;
-    decrypt_engine.process_available_records(ec,
-                                             [&called](std::uint8_t type, std::span<const std::uint8_t>)
-                                             {
-                                                 if (type == reality::kContentTypeAlert)
-                                                 {
-                                                     called = true;
-                                                 }
-                                             });
+    const auto process_res = decrypt_engine.process_available_records(
+        [&called](std::uint8_t type, std::span<const std::uint8_t>)
+        {
+            if (type == reality::kContentTypeAlert)
+            {
+                called = true;
+            }
+        });
 
-    EXPECT_EQ(ec, asio::error::eof);
+    ASSERT_FALSE(process_res.has_value());
+    EXPECT_EQ(process_res.error(), asio::error::eof);
     EXPECT_TRUE(called);
 }
 
@@ -194,7 +189,6 @@ TEST_F(reality_engine_test, DecryptError)
 {
     reality_engine decrypt_engine(read_key(), read_iv(), write_key(), write_iv(), cipher());
 
-    std::error_code ec;
     std::vector<uint8_t> data = {0x01, 0x02};
     auto rec = reality::tls_record_layer::encrypt_record(cipher(), read_key(), read_iv(), 0, data, reality::kContentTypeApplicationData);
     ASSERT_TRUE(rec.has_value());
@@ -206,9 +200,10 @@ TEST_F(reality_engine_test, DecryptError)
     decrypt_engine.commit_read(rec->size());
 
     bool called = false;
-    decrypt_engine.process_available_records(ec, [&called](std::uint8_t, std::span<const std::uint8_t>) { called = true; });
+    const auto process_res = decrypt_engine.process_available_records([&called](std::uint8_t, std::span<const std::uint8_t>) { called = true; });
 
-    EXPECT_TRUE(ec);
+    ASSERT_FALSE(process_res.has_value());
+    EXPECT_TRUE(static_cast<bool>(process_res.error()));
     EXPECT_FALSE(called);
 }
 
@@ -216,7 +211,6 @@ TEST_F(reality_engine_test, ProcessAvailableRecordsStopsWhenCallbackSetsError)
 {
     reality_engine decrypt_engine(read_key(), read_iv(), write_key(), write_iv(), cipher());
 
-    std::error_code ec;
     const std::vector<std::uint8_t> payload = {0x10, 0x20, 0x30};
     const auto rec =
         reality::tls_record_layer::encrypt_record(cipher(), read_key(), read_iv(), 0, payload, reality::kContentTypeApplicationData);
@@ -227,16 +221,14 @@ TEST_F(reality_engine_test, ProcessAvailableRecordsStopsWhenCallbackSetsError)
     decrypt_engine.commit_read(rec->size());
 
     std::size_t callback_calls = 0;
-    decrypt_engine.process_available_records(
-        ec,
-        [&ec, &callback_calls](std::uint8_t, std::span<const std::uint8_t>)
+    const auto process_res = decrypt_engine.process_available_records(
+        [&callback_calls](std::uint8_t, std::span<const std::uint8_t>)
         {
             ++callback_calls;
-            ec = asio::error::operation_aborted;
         });
 
+    EXPECT_TRUE(process_res.has_value());
     EXPECT_EQ(callback_calls, 1u);
-    EXPECT_EQ(ec, asio::error::operation_aborted);
 }
 
 }    // namespace mux

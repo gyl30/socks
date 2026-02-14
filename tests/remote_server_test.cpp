@@ -13,6 +13,7 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <asio/write.hpp>
+#include <asio/post.hpp>
 #include <asio/buffer.hpp>
 #include <asio/ip/tcp.hpp>
 
@@ -1103,6 +1104,191 @@ TEST_F(remote_server_test, SetCertificateAsyncPathAfterStart)
     pool_thread.join();
 }
 
+TEST_F(remote_server_test, SetCertificateReturnsQuicklyWhenIoContextStopped)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+    std::thread pool_thread([&pool] { pool.run(); });
+
+    auto cfg = make_server_cfg(pick_free_port(), {}, "0102030405060708");
+    auto server = std::make_shared<mux::remote_server>(pool, cfg);
+    server->start();
+    server->stop();
+    pool.stop();
+    pool_thread.join();
+
+    reality::server_fingerprint fingerprint;
+    fingerprint.cipher_suite = 0x1301;
+    fingerprint.alpn = "h2";
+    const std::string sni = "stopped.ctx.test";
+
+    std::atomic<bool> done{false};
+    std::thread setter(
+        [&]()
+        {
+            server->set_certificate(sni, reality::construct_certificate({0x01, 0x02, 0x03}), fingerprint, "trace-stopped");
+            done.store(true, std::memory_order_release);
+        });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    const bool done_before_poll = done.load(std::memory_order_acquire);
+
+    if (!done_before_poll)
+    {
+        auto& io_context = pool.get_io_context();
+        io_context.restart();
+        for (int i = 0; i < 20 && !done.load(std::memory_order_acquire); ++i)
+        {
+            io_context.poll();
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+    }
+
+    if (setter.joinable())
+    {
+        setter.join();
+    }
+
+    EXPECT_TRUE(done_before_poll);
+    const auto cert_opt = server->cert_manager_.get_certificate(sni);
+    EXPECT_TRUE(cert_opt.has_value());
+}
+
+TEST_F(remote_server_test, SetCertificateReturnsWhenAsyncQueueBusy)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+    auto& io_context = pool.get_io_context();
+    std::thread pool_thread([&pool] { pool.run(); });
+
+    auto cfg = make_server_cfg(pick_free_port(), {}, "0102030405060708");
+    auto server = std::make_shared<mux::remote_server>(pool, cfg);
+    server->start();
+
+    std::promise<void> blocker_started;
+    auto blocker_started_future = blocker_started.get_future();
+    std::atomic<bool> release_blocker{false};
+    asio::post(io_context,
+               [&blocker_started, &release_blocker]()
+               {
+                   blocker_started.set_value();
+                   while (!release_blocker.load(std::memory_order_acquire))
+                   {
+                       std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                   }
+               });
+    EXPECT_EQ(blocker_started_future.wait_for(std::chrono::seconds(1)), std::future_status::ready);
+
+    reality::server_fingerprint fingerprint;
+    fingerprint.cipher_suite = 0x1301;
+    fingerprint.alpn = "h2";
+    const std::string sni = "busy.queue.test";
+
+    std::promise<void> setter_done;
+    auto setter_done_future = setter_done.get_future();
+    std::thread setter(
+        [&]()
+        {
+            server->set_certificate(sni, reality::construct_certificate({0x01, 0x02, 0x03}), fingerprint, "trace-busy");
+            setter_done.set_value();
+        });
+
+    const auto setter_status = setter_done_future.wait_for(std::chrono::milliseconds(500));
+    release_blocker.store(true, std::memory_order_release);
+    if (setter.joinable())
+    {
+        setter.join();
+    }
+
+    EXPECT_EQ(setter_status, std::future_status::ready);
+
+    bool cert_ready = false;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (std::chrono::steady_clock::now() < deadline)
+    {
+        std::promise<bool> cert_query_done;
+        auto cert_query_done_future = cert_query_done.get_future();
+        asio::post(io_context,
+                   [server, sni, cert_query_done = std::move(cert_query_done)]() mutable
+                   {
+                       cert_query_done.set_value(server->cert_manager_.get_certificate(sni).has_value());
+                   });
+        EXPECT_EQ(cert_query_done_future.wait_for(std::chrono::seconds(1)), std::future_status::ready);
+        if (cert_query_done_future.get())
+        {
+            cert_ready = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    EXPECT_TRUE(cert_ready);
+
+    server->stop();
+    pool.stop();
+    pool_thread.join();
+}
+
+TEST_F(remote_server_test, SetCertificateRunsWhenAsyncQueueBlockedThenIoStopped)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+    auto& io_context = pool.get_io_context();
+    std::thread pool_thread([&pool] { pool.run(); });
+
+    auto cfg = make_server_cfg(pick_free_port(), {}, "0102030405060708");
+    auto server = std::make_shared<mux::remote_server>(pool, cfg);
+    server->start();
+
+    std::promise<void> blocker_started;
+    auto blocker_started_future = blocker_started.get_future();
+    std::atomic<bool> release_blocker{false};
+    asio::post(io_context,
+               [&blocker_started, &release_blocker]()
+               {
+                   blocker_started.set_value();
+                   while (!release_blocker.load(std::memory_order_acquire))
+                   {
+                       std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                   }
+               });
+    EXPECT_EQ(blocker_started_future.wait_for(std::chrono::seconds(1)), std::future_status::ready);
+
+    reality::server_fingerprint fingerprint;
+    fingerprint.cipher_suite = 0x1301;
+    fingerprint.alpn = "h2";
+    const std::string sni = "blocked.then.stop.test";
+
+    std::promise<void> setter_done;
+    auto setter_done_future = setter_done.get_future();
+    std::thread setter(
+        [&]()
+        {
+            server->set_certificate(sni, reality::construct_certificate({0x01, 0x02, 0x03}), fingerprint, "trace-stop-race");
+            setter_done.set_value();
+        });
+
+    EXPECT_EQ(setter_done_future.wait_for(std::chrono::seconds(1)), std::future_status::ready);
+
+    server->stop();
+    pool.stop();
+    release_blocker.store(true, std::memory_order_release);
+
+    if (setter.joinable())
+    {
+        setter.join();
+    }
+    if (pool_thread.joinable())
+    {
+        pool_thread.join();
+    }
+
+    const auto cert_opt = server->cert_manager_.get_certificate(sni);
+    EXPECT_TRUE(cert_opt.has_value());
+}
+
 TEST_F(remote_server_test, ConstructorCoversShortIdAndDestParsingBranches)
 {
     std::error_code ec;
@@ -1455,16 +1641,19 @@ TEST_F(remote_server_test, ConstructorAcceptorSetupFailureBranchesWithWrappers)
     fail_next_socket(EMFILE);
     auto open_fail_server = std::make_shared<mux::remote_server>(pool, make_server_cfg(open_fail_port, {}, "0102030405060708"));
     EXPECT_TRUE(open_fail_server->private_key_.empty());
+    EXPECT_FALSE(open_fail_server->acceptor_.is_open());
 
     const auto reuse_fail_port = pick_free_port();
     fail_next_reuse_setsockopt(EPERM);
     auto reuse_fail_server = std::make_shared<mux::remote_server>(pool, make_server_cfg(reuse_fail_port, {}, "0102030405060708"));
     EXPECT_TRUE(reuse_fail_server->private_key_.empty());
+    EXPECT_FALSE(reuse_fail_server->acceptor_.is_open());
 
     const auto listen_fail_port = pick_free_port();
     fail_next_listen(EACCES);
     auto listen_fail_server = std::make_shared<mux::remote_server>(pool, make_server_cfg(listen_fail_port, {}, "0102030405060708"));
     EXPECT_TRUE(listen_fail_server->private_key_.empty());
+    EXPECT_FALSE(listen_fail_server->acceptor_.is_open());
 }
 
 TEST_F(remote_server_test, AuthenticateClientCoversShortIdClockSkewAndReplayBranches)
@@ -1729,6 +1918,137 @@ TEST_F(remote_server_test, StopCoversAcceptorCloseFailureBranch)
 
     pool.stop();
     runner.join();
+}
+
+TEST_F(remote_server_test, StopRunsInlineWhenIoContextStopped)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
+    server->start();
+
+    auto tunnel = std::make_shared<mux::mux_tunnel_impl<asio::ip::tcp::socket>>(
+        asio::ip::tcp::socket(pool.get_io_context()),
+        pool.get_io_context(),
+        mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()},
+        true,
+        901);
+    auto conn = tunnel->connection();
+    ASSERT_NE(conn, nullptr);
+    ASSERT_TRUE(conn->is_open());
+    server->active_tunnels_.push_back(tunnel);
+
+    pool.stop();
+
+    EXPECT_TRUE(server->acceptor_.is_open());
+    server->stop();
+
+    EXPECT_TRUE(server->stop_.load(std::memory_order_acquire));
+    EXPECT_FALSE(server->acceptor_.is_open());
+    EXPECT_FALSE(conn->is_open());
+    EXPECT_TRUE(server->active_tunnels_.empty());
+}
+
+TEST_F(remote_server_test, StopRunsWhenIoQueueBlocked)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
+    server->start();
+
+    auto tunnel = std::make_shared<mux::mux_tunnel_impl<asio::ip::tcp::socket>>(
+        asio::ip::tcp::socket(pool.get_io_context()),
+        pool.get_io_context(),
+        mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()},
+        true,
+        902);
+    auto conn = tunnel->connection();
+    ASSERT_NE(conn, nullptr);
+    ASSERT_TRUE(conn->is_open());
+    server->active_tunnels_.push_back(tunnel);
+
+    std::atomic<bool> blocker_started{false};
+    std::atomic<bool> release_blocker{false};
+    asio::post(
+        pool.get_io_context(),
+        [&blocker_started, &release_blocker]()
+        {
+            blocker_started.store(true, std::memory_order_release);
+            while (!release_blocker.load(std::memory_order_acquire))
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+        });
+
+    std::thread runner([&pool]() { pool.run(); });
+    bool started = false;
+    for (int i = 0; i < 100; ++i)
+    {
+        if (blocker_started.load(std::memory_order_acquire))
+        {
+            started = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    if (!started)
+    {
+        release_blocker.store(true, std::memory_order_release);
+        pool.stop();
+        if (runner.joinable())
+        {
+            runner.join();
+        }
+        FAIL();
+    }
+
+    EXPECT_TRUE(server->acceptor_.is_open());
+    server->stop();
+    EXPECT_TRUE(server->stop_.load(std::memory_order_acquire));
+    EXPECT_FALSE(server->acceptor_.is_open());
+    EXPECT_FALSE(conn->is_open());
+    EXPECT_TRUE(server->active_tunnels_.empty());
+
+    release_blocker.store(true, std::memory_order_release);
+    pool.stop();
+    if (runner.joinable())
+    {
+        runner.join();
+    }
+}
+
+TEST_F(remote_server_test, StopRunsWhenIoContextNotRunning)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
+    server->start();
+
+    auto tunnel = std::make_shared<mux::mux_tunnel_impl<asio::ip::tcp::socket>>(
+        asio::ip::tcp::socket(pool.get_io_context()),
+        pool.get_io_context(),
+        mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()},
+        true,
+        903);
+    auto conn = tunnel->connection();
+    ASSERT_NE(conn, nullptr);
+    ASSERT_TRUE(conn->is_open());
+    server->active_tunnels_.push_back(tunnel);
+
+    EXPECT_TRUE(server->acceptor_.is_open());
+    server->stop();
+
+    EXPECT_TRUE(server->stop_.load(std::memory_order_acquire));
+    EXPECT_FALSE(server->acceptor_.is_open());
+    EXPECT_FALSE(conn->is_open());
+    EXPECT_TRUE(server->active_tunnels_.empty());
+    pool.stop();
 }
 
 TEST_F(remote_server_test, HandleFallbackCoversCloseSocketErrorBranches)

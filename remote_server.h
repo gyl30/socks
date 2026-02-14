@@ -58,7 +58,16 @@ class remote_server : public std::enable_shared_from_this<remote_server>
 
     void stop();
 
-    [[nodiscard]] std::uint16_t listen_port() const { return acceptor_.local_endpoint().port(); }
+    [[nodiscard]] std::uint16_t listen_port() const
+    {
+        std::error_code ec;
+        const auto ep = acceptor_.local_endpoint(ec);
+        if (ec)
+        {
+            return 0;
+        }
+        return ep.port();
+    }
 
     void set_certificate(std::string sni,
                          std::vector<std::uint8_t> cert_msg,
@@ -67,6 +76,8 @@ class remote_server : public std::enable_shared_from_this<remote_server>
 
    private:
     struct server_handshake_res;
+
+    void stop_local();
 
     asio::awaitable<void> accept_loop();
 

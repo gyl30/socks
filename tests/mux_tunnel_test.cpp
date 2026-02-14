@@ -46,7 +46,7 @@ TEST(MuxTunnelTest, NullConnectionGuardsAllPublicMethods)
     auto tunnel = make_tunnel(io_context);
     tunnel->connection_ = nullptr;
 
-    tunnel->register_stream(1, nullptr);
+    EXPECT_FALSE(tunnel->register_stream(1, nullptr));
     EXPECT_FALSE(tunnel->try_register_stream(2, nullptr));
     EXPECT_EQ(tunnel->create_stream(), nullptr);
     tunnel->remove_stream(3);
@@ -74,7 +74,7 @@ TEST(MuxTunnelTest, CreateStreamAndRegisterPaths)
     EXPECT_FALSE(tunnel->try_register_stream(9001, stream_b));
     EXPECT_TRUE(tunnel->connection_->has_stream(9001));
 
-    tunnel->register_stream(9002, stream_b);
+    EXPECT_TRUE(tunnel->register_stream(9002, stream_b));
     EXPECT_TRUE(tunnel->connection_->has_stream(9002));
 
     tunnel->remove_stream(9001);

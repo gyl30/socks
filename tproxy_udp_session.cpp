@@ -1,4 +1,5 @@
 #include <chrono>
+#include <future>
 #include <memory>
 #include <string>
 #include <vector>
@@ -20,6 +21,7 @@
 #include "net_utils.h"
 #include "mux_stream.h"
 #include "mux_protocol.h"
+#include "stop_dispatch.h"
 #include "tproxy_udp_session.h"
 
 namespace mux
@@ -27,6 +29,16 @@ namespace mux
 
 namespace
 {
+
+void close_start_failed_socket(asio::ip::udp::socket& socket, const connection_context& ctx)
+{
+    std::error_code close_ec;
+    close_ec = socket.close(close_ec);
+    if (close_ec && close_ec != asio::error::bad_descriptor)
+    {
+        LOG_CTX_WARN(ctx, "{} udp close failed {}", log_event::kSocks, close_ec.message());
+    }
+}
 
 asio::ip::udp::endpoint map_v4_to_v6(const asio::ip::udp::endpoint& ep)
 {
@@ -69,14 +81,15 @@ tproxy_udp_session::tproxy_udp_session(asio::io_context& io_context,
     last_activity_ms_.store(now_ms(), std::memory_order_relaxed);
 }
 
-void tproxy_udp_session::start()
+bool tproxy_udp_session::start()
 {
     std::error_code ec;
     ec = direct_socket_.open(asio::ip::udp::v6(), ec);
     if (ec)
     {
         LOG_CTX_WARN(ctx_, "{} udp open failed {}", log_event::kSocks, ec.message());
-        return;
+        close_start_failed_socket(direct_socket_, ctx_);
+        return false;
     }
     ec = direct_socket_.set_option(asio::ip::v6_only(false), ec);
     if (ec)
@@ -94,10 +107,12 @@ void tproxy_udp_session::start()
     if (ec)
     {
         LOG_CTX_WARN(ctx_, "{} udp bind failed {}", log_event::kSocks, ec.message());
-        return;
+        close_start_failed_socket(direct_socket_, ctx_);
+        return false;
     }
 
     asio::co_spawn(io_context_, direct_read_loop_detached(shared_from_this()), asio::detached);
+    return true;
 }
 
 asio::awaitable<void> tproxy_udp_session::direct_read_loop_detached(std::shared_ptr<tproxy_udp_session> self)
@@ -135,47 +150,42 @@ asio::awaitable<void> tproxy_udp_session::handle_packet_inner(asio::ip::udp::end
 
 void tproxy_udp_session::stop()
 {
-    asio::dispatch(io_context_,
-                   [self = shared_from_this()]()
-                   {
-                       self->recv_channel_.close();
-                       auto stream = self->stream_;
-                       auto tunnel = self->tunnel_.lock();
-                       self->stream_.reset();
-                       self->tunnel_.reset();
-
-                       if (tunnel != nullptr && stream != nullptr)
-                       {
-                           tunnel->remove_stream(stream->id());
-                       }
-
-                       std::error_code ignore;
-                       ignore = self->direct_socket_.close(ignore);
-                   });
+    detail::dispatch_cleanup_or_run_inline(
+        io_context_,
+        [weak_self = weak_from_this()]()
+        {
+            if (const auto self = weak_self.lock())
+            {
+                self->stop_local(true);
+            }
+        });
 }
 
 void tproxy_udp_session::on_data(std::vector<std::uint8_t> data)
 {
-    asio::dispatch(io_context_,
-                   [self = shared_from_this(), data = std::move(data)]() mutable
-                   { self->recv_channel_.try_send(std::error_code(), std::move(data)); });
+    detail::dispatch_cleanup_or_run_inline(
+        io_context_,
+        [self = shared_from_this(), data = std::move(data)]() mutable
+        {
+            if (!self->recv_channel_.try_send(std::error_code(), std::move(data)))
+            {
+                LOG_CTX_WARN(self->ctx_, "{} recv channel unavailable on data", log_event::kSocks);
+                self->stop();
+            }
+        });
 }
 
 void tproxy_udp_session::on_close()
 {
-    asio::dispatch(io_context_,
-                   [self = shared_from_this()]()
-                   {
-                       auto stream = self->stream_;
-                       auto tunnel = self->tunnel_.lock();
-                       self->stream_.reset();
-                       self->tunnel_.reset();
-
-                       if (tunnel != nullptr && stream != nullptr)
-                       {
-                           tunnel->remove_stream(stream->id());
-                       }
-                   });
+    detail::dispatch_cleanup_or_run_inline(
+        io_context_,
+        [weak_self = weak_from_this()]()
+        {
+            if (const auto self = weak_self.lock())
+            {
+                self->on_close_local();
+            }
+        });
 }
 
 void tproxy_udp_session::on_reset() { on_close(); }
@@ -197,6 +207,58 @@ std::uint64_t tproxy_udp_session::now_ms()
 }
 
 void tproxy_udp_session::touch() { last_activity_ms_.store(now_ms(), std::memory_order_relaxed); }
+
+void tproxy_udp_session::stop_local(const bool allow_async_stream_close)
+{
+    recv_channel_.close();
+    auto stream = stream_;
+    auto tunnel = tunnel_.lock();
+    stream_.reset();
+    tunnel_.reset();
+
+    if (stream != nullptr && tunnel != nullptr)
+    {
+        tunnel->remove_stream(stream->id());
+    }
+
+    if (stream != nullptr && allow_async_stream_close)
+    {
+        if (io_context_.stopped())
+        {
+            stream->on_reset();
+        }
+        else if (io_context_.get_executor().running_in_this_thread())
+        {
+            asio::co_spawn(
+                io_context_,
+                [stream]() -> asio::awaitable<void>
+                {
+                    co_await stream->close();
+                },
+                asio::detached);
+        }
+        else
+        {
+            // io_context may not be running yet. Keep close asynchronous so FIN can
+            // still be sent once the event loop starts.
+            asio::co_spawn(
+                io_context_,
+                [stream]() -> asio::awaitable<void>
+                {
+                    co_await stream->close();
+                },
+                asio::detached);
+        }
+    }
+
+    std::error_code ignore;
+    ignore = direct_socket_.close(ignore);
+}
+
+void tproxy_udp_session::on_close_local()
+{
+    stop_local(false);
+}
 
 asio::awaitable<bool> tproxy_udp_session::negotiate_proxy_stream(
     const std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>& tunnel, const std::shared_ptr<mux_stream>& stream) const
@@ -242,7 +304,11 @@ bool tproxy_udp_session::install_proxy_stream(const std::shared_ptr<mux_tunnel_i
         return false;
     }
 
-    tunnel->register_stream(stream->id(), shared_from_this());
+    if (!tunnel->register_stream(stream->id(), shared_from_this()))
+    {
+        LOG_CTX_WARN(ctx_, "{} udp proxy register stream failed {}", log_event::kSocks, stream->id());
+        return false;
+    }
     stream_ = stream;
     tunnel_ = tunnel;
     if (!proxy_reader_started_)
@@ -310,8 +376,13 @@ asio::awaitable<bool> tproxy_udp_session::ensure_proxy_stream()
     {
         co_return false;
     }
+    if (!open_result.value())
+    {
+        LOG_CTX_WARN(ctx_, "{} udp proxy stream install failed", log_event::kSocks);
+        co_return false;
+    }
     maybe_start_proxy_reader(*open_result);
-    co_return true;
+    co_return stream_ != nullptr;
 }
 
 asio::awaitable<void> tproxy_udp_session::send_proxy(const asio::ip::udp::endpoint& dst_ep, const std::uint8_t* data, const std::size_t len)
@@ -335,6 +406,7 @@ asio::awaitable<void> tproxy_udp_session::send_proxy(const asio::ip::udp::endpoi
     auto stream = stream_;
     if (stream == nullptr)
     {
+        LOG_CTX_WARN(ctx_, "{} udp proxy stream unavailable after ensure", log_event::kSocks);
         co_return;
     }
 

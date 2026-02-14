@@ -333,6 +333,172 @@ TEST(ClientTunnelPoolWhiteboxTest, SelectAndIndexGuardBranches)
     ASSERT_NE(created_socket, nullptr);
 }
 
+TEST(ClientTunnelPoolWhiteboxTest, ClosePendingSocketRunsWhenIoContextNotRunning)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    auto cfg = make_base_cfg();
+    cfg.reality.public_key = generate_public_key_hex();
+    auto tunnel_pool = std::make_shared<mux::client_tunnel_pool>(pool, cfg, 0);
+
+    asio::io_context tunnel_io_context;
+    auto pending_socket = std::make_shared<asio::ip::tcp::socket>(tunnel_io_context);
+    pending_socket->open(asio::ip::tcp::v4(), ec);
+    ASSERT_FALSE(ec);
+    ASSERT_TRUE(pending_socket->is_open());
+
+    tunnel_pool->tunnel_io_contexts_.resize(1, &tunnel_io_context);
+    tunnel_pool->close_pending_socket(0, pending_socket);
+    EXPECT_FALSE(pending_socket->is_open());
+}
+
+TEST(ClientTunnelPoolWhiteboxTest, ClosePendingSocketRunsInlineWhenIoContextStopped)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    auto cfg = make_base_cfg();
+    cfg.reality.public_key = generate_public_key_hex();
+    auto tunnel_pool = std::make_shared<mux::client_tunnel_pool>(pool, cfg, 0);
+
+    asio::io_context tunnel_io_context;
+    auto pending_socket = std::make_shared<asio::ip::tcp::socket>(tunnel_io_context);
+    pending_socket->open(asio::ip::tcp::v4(), ec);
+    ASSERT_FALSE(ec);
+    ASSERT_TRUE(pending_socket->is_open());
+
+    tunnel_pool->tunnel_io_contexts_.resize(1, &tunnel_io_context);
+    tunnel_io_context.stop();
+    tunnel_pool->close_pending_socket(0, pending_socket);
+    EXPECT_FALSE(pending_socket->is_open());
+}
+
+TEST(ClientTunnelPoolWhiteboxTest, StopClosesPendingSocketWhenIoContextNotRunning)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    auto cfg = make_base_cfg();
+    cfg.reality.public_key = generate_public_key_hex();
+    auto tunnel_pool = std::make_shared<mux::client_tunnel_pool>(pool, cfg, 0);
+
+    asio::io_context tunnel_io_context;
+    auto pending_socket = std::make_shared<asio::ip::tcp::socket>(tunnel_io_context);
+    pending_socket->open(asio::ip::tcp::v4(), ec);
+    ASSERT_FALSE(ec);
+    ASSERT_TRUE(pending_socket->is_open());
+
+    tunnel_pool->pending_sockets_.resize(1);
+    tunnel_pool->pending_sockets_[0] = pending_socket;
+    tunnel_pool->tunnel_io_contexts_.resize(1, &tunnel_io_context);
+
+    tunnel_pool->stop();
+
+    EXPECT_TRUE(tunnel_pool->stop_.load(std::memory_order_acquire));
+    EXPECT_FALSE(pending_socket->is_open());
+    EXPECT_EQ(tunnel_pool->pending_sockets_[0], nullptr);
+}
+
+TEST(ClientTunnelPoolWhiteboxTest, StopClosesPendingSocketWhenIoContextStopped)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    auto cfg = make_base_cfg();
+    cfg.reality.public_key = generate_public_key_hex();
+    auto tunnel_pool = std::make_shared<mux::client_tunnel_pool>(pool, cfg, 0);
+
+    asio::io_context tunnel_io_context;
+    auto pending_socket = std::make_shared<asio::ip::tcp::socket>(tunnel_io_context);
+    pending_socket->open(asio::ip::tcp::v4(), ec);
+    ASSERT_FALSE(ec);
+    ASSERT_TRUE(pending_socket->is_open());
+
+    tunnel_pool->pending_sockets_.resize(1);
+    tunnel_pool->pending_sockets_[0] = pending_socket;
+    tunnel_pool->tunnel_io_contexts_.resize(1, &tunnel_io_context);
+
+    tunnel_io_context.stop();
+    tunnel_pool->stop();
+
+    EXPECT_TRUE(tunnel_pool->stop_.load(std::memory_order_acquire));
+    EXPECT_FALSE(pending_socket->is_open());
+    EXPECT_EQ(tunnel_pool->pending_sockets_[0], nullptr);
+}
+
+TEST(ClientTunnelPoolWhiteboxTest, StopClosesPendingSocketWhenIoQueueBlocked)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    auto cfg = make_base_cfg();
+    cfg.reality.public_key = generate_public_key_hex();
+    auto tunnel_pool = std::make_shared<mux::client_tunnel_pool>(pool, cfg, 0);
+
+    asio::io_context tunnel_io_context;
+    auto pending_socket = std::make_shared<asio::ip::tcp::socket>(tunnel_io_context);
+    pending_socket->open(asio::ip::tcp::v4(), ec);
+    ASSERT_FALSE(ec);
+    ASSERT_TRUE(pending_socket->is_open());
+
+    tunnel_pool->pending_sockets_.resize(1);
+    tunnel_pool->pending_sockets_[0] = pending_socket;
+    tunnel_pool->tunnel_io_contexts_.resize(1, &tunnel_io_context);
+
+    std::atomic<bool> blocker_started{false};
+    std::atomic<bool> release_blocker{false};
+    asio::post(
+        tunnel_io_context,
+        [&blocker_started, &release_blocker]()
+        {
+            blocker_started.store(true, std::memory_order_release);
+            while (!release_blocker.load(std::memory_order_acquire))
+            {
+                std::this_thread::yield();
+            }
+        });
+
+    std::thread io_thread([&tunnel_io_context]() { tunnel_io_context.run(); });
+    bool started = false;
+    for (int i = 0; i < 100000; ++i)
+    {
+        if (blocker_started.load(std::memory_order_acquire))
+        {
+            started = true;
+            break;
+        }
+        std::this_thread::yield();
+    }
+    if (!started)
+    {
+        release_blocker.store(true, std::memory_order_release);
+        tunnel_io_context.stop();
+        if (io_thread.joinable())
+        {
+            io_thread.join();
+        }
+        FAIL();
+    }
+
+    tunnel_pool->stop();
+    EXPECT_TRUE(tunnel_pool->stop_.load(std::memory_order_acquire));
+    EXPECT_FALSE(pending_socket->is_open());
+    EXPECT_EQ(tunnel_pool->pending_sockets_[0], nullptr);
+
+    release_blocker.store(true, std::memory_order_release);
+    tunnel_io_context.stop();
+    if (io_thread.joinable())
+    {
+        io_thread.join();
+    }
+}
+
 TEST(ClientTunnelPoolWhiteboxTest, BuildTunnelAndWaitRetryBranches)
 {
     std::error_code ec;

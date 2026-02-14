@@ -216,6 +216,7 @@ TEST(RemoteSessionTest, RunAckSendFailureReturnsWithoutReset)
     EXPECT_CALL(*conn, mock_send_async(13, mux::kCmdRst, _)).Times(0);
 
     mux::test::run_awaitable_void(io_context, session->run(make_syn("127.0.0.1", acceptor.local_endpoint().port())));
+    EXPECT_FALSE(session->target_socket_.is_open());
 }
 
 TEST(RemoteSessionTest, RunSuccessWhenSetNoDelayFailsStillSendsAckAndFin)
@@ -453,6 +454,84 @@ TEST(RemoteSessionTest, OnDataDispatchEnqueuesFrame)
     EXPECT_EQ(data[0], 0x55);
 }
 
+TEST(RemoteSessionTest, OnDataRunsCleanupWhenIoContextStopped)
+{
+    asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    mux::connection_context ctx;
+    auto session = std::make_shared<mux::remote_session>(conn, 32, io_context, ctx);
+
+    auto pair = make_tcp_socket_pair(io_context);
+    session->target_socket_ = std::move(pair.server);
+    ASSERT_TRUE(session->target_socket_.is_open());
+
+    session->recv_channel_.close();
+    io_context.stop();
+
+    session->on_data({0x55});
+    EXPECT_FALSE(session->target_socket_.is_open());
+}
+
+TEST(RemoteSessionTest, OnDataRunsCleanupWhenIoContextNotRunning)
+{
+    asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    mux::connection_context ctx;
+    auto session = std::make_shared<mux::remote_session>(conn, 33, io_context, ctx);
+
+    auto pair = make_tcp_socket_pair(io_context);
+    session->target_socket_ = std::move(pair.server);
+    ASSERT_TRUE(session->target_socket_.is_open());
+
+    session->recv_channel_.close();
+    session->on_data({0x55});
+    EXPECT_FALSE(session->target_socket_.is_open());
+}
+
+TEST(RemoteSessionTest, OnDataRunsCleanupWhenIoQueueBlocked)
+{
+    asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    mux::connection_context ctx;
+    auto session = std::make_shared<mux::remote_session>(conn, 31, io_context, ctx);
+
+    auto pair = make_tcp_socket_pair(io_context);
+    session->target_socket_ = std::move(pair.server);
+    ASSERT_TRUE(session->target_socket_.is_open());
+
+    session->recv_channel_.close();
+
+    std::atomic<bool> blocker_started{false};
+    std::atomic<bool> release_blocker{false};
+    asio::post(
+        io_context,
+        [&blocker_started, &release_blocker]()
+        {
+            blocker_started.store(true, std::memory_order_release);
+            while (!release_blocker.load(std::memory_order_acquire))
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+        });
+
+    std::thread io_thread([&]() { io_context.run(); });
+    for (int i = 0; i < 100 && !blocker_started.load(std::memory_order_acquire); ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_TRUE(blocker_started.load(std::memory_order_acquire));
+
+    session->on_data({0x55});
+    EXPECT_FALSE(session->target_socket_.is_open());
+
+    release_blocker.store(true, std::memory_order_release);
+    io_context.stop();
+    if (io_thread.joinable())
+    {
+        io_thread.join();
+    }
+}
+
 TEST(RemoteSessionTest, OnCloseAndOnResetDispatchCleanup)
 {
     asio::io_context io_context;
@@ -472,6 +551,88 @@ TEST(RemoteSessionTest, OnCloseAndOnResetDispatchCleanup)
     io_context.restart();
 
     EXPECT_FALSE(session->target_socket_.is_open());
+}
+
+TEST(RemoteSessionTest, OnCloseAndOnResetRunInlineWhenIoContextStopped)
+{
+    asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    mux::connection_context ctx;
+    auto session = std::make_shared<mux::remote_session>(conn, 22, io_context, ctx);
+
+    auto pair = make_tcp_socket_pair(io_context);
+    session->target_socket_ = std::move(pair.server);
+    ASSERT_TRUE(session->target_socket_.is_open());
+
+    io_context.stop();
+    session->on_close();
+    EXPECT_FALSE(session->recv_channel_.try_send(std::error_code{}, std::vector<std::uint8_t>{0x01}));
+
+    session->on_reset();
+    EXPECT_FALSE(session->target_socket_.is_open());
+}
+
+TEST(RemoteSessionTest, OnCloseAndOnResetRunWhenIoContextNotRunning)
+{
+    asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    mux::connection_context ctx;
+    auto session = std::make_shared<mux::remote_session>(conn, 23, io_context, ctx);
+
+    auto pair = make_tcp_socket_pair(io_context);
+    session->target_socket_ = std::move(pair.server);
+    ASSERT_TRUE(session->target_socket_.is_open());
+
+    session->on_close();
+    EXPECT_FALSE(session->recv_channel_.try_send(std::error_code{}, std::vector<std::uint8_t>{0x01}));
+
+    session->on_reset();
+    EXPECT_FALSE(session->target_socket_.is_open());
+}
+
+TEST(RemoteSessionTest, OnCloseAndOnResetRunWhenIoQueueBlocked)
+{
+    asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    mux::connection_context ctx;
+    auto session = std::make_shared<mux::remote_session>(conn, 24, io_context, ctx);
+
+    auto pair = make_tcp_socket_pair(io_context);
+    session->target_socket_ = std::move(pair.server);
+    ASSERT_TRUE(session->target_socket_.is_open());
+
+    std::atomic<bool> blocker_started{false};
+    std::atomic<bool> release_blocker{false};
+    asio::post(
+        io_context,
+        [&blocker_started, &release_blocker]()
+        {
+            blocker_started.store(true, std::memory_order_release);
+            while (!release_blocker.load(std::memory_order_acquire))
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+        });
+
+    std::thread io_thread([&]() { io_context.run(); });
+    for (int i = 0; i < 100 && !blocker_started.load(std::memory_order_acquire); ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_TRUE(blocker_started.load(std::memory_order_acquire));
+
+    session->on_close();
+    EXPECT_FALSE(session->recv_channel_.try_send(std::error_code{}, std::vector<std::uint8_t>{0x01}));
+
+    session->on_reset();
+    EXPECT_FALSE(session->target_socket_.is_open());
+
+    release_blocker.store(true, std::memory_order_release);
+    io_context.stop();
+    if (io_thread.joinable())
+    {
+        io_thread.join();
+    }
 }
 
 }    // namespace

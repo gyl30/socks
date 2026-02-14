@@ -38,7 +38,7 @@ class tproxy_udp_session : public mux_stream_interface, public std::enable_share
                        const config& cfg,
                        asio::ip::udp::endpoint client_ep);
 
-    void start();
+    bool start();
 
     asio::awaitable<void> handle_packet(const asio::ip::udp::endpoint& dst_ep, const std::uint8_t* data, std::size_t len);
 
@@ -80,6 +80,8 @@ class tproxy_udp_session : public mux_stream_interface, public std::enable_share
     asio::awaitable<void> direct_read_loop();
 
     asio::awaitable<void> proxy_read_loop();
+    void stop_local(bool allow_async_stream_close);
+    void on_close_local();
 
    private:
     connection_context ctx_;

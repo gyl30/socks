@@ -6,7 +6,6 @@
 #include <memory>
 #include <random>
 #include <string>
-#include <future>
 #include <vector>
 #include <cstdint>
 #include <cstring>
@@ -22,7 +21,6 @@
 #include <asio/co_spawn.hpp>
 #include <asio/detached.hpp>
 #include <asio/dispatch.hpp>
-#include <asio/post.hpp>
 #include <asio/steady_timer.hpp>
 #include <asio/use_awaitable.hpp>
 #include <asio/experimental/awaitable_operators.hpp>
@@ -46,6 +44,7 @@ extern "C"
 #include "log_context.h"
 #include "mux_protocol.h"
 #include "reality_auth.h"
+#include "stop_dispatch.h"
 #include "tls_record_validation.h"
 #include "remote_server.h"
 #include "reality_engine.h"
@@ -182,6 +181,12 @@ asio::ip::tcp::endpoint resolve_inbound_endpoint(const config::inbound_t& inboun
 
 bool setup_server_acceptor(asio::ip::tcp::acceptor& acceptor, const asio::ip::tcp::endpoint& ep)
 {
+    auto close_on_failure = [&acceptor]()
+    {
+        std::error_code close_ec;
+        acceptor.close(close_ec);
+    };
+
     std::error_code ec;
     ec = acceptor.open(ep.protocol(), ec);
     if (ec)
@@ -193,18 +198,21 @@ bool setup_server_acceptor(asio::ip::tcp::acceptor& acceptor, const asio::ip::tc
     if (ec)
     {
         LOG_ERROR("acceptor set reuse address failed {}", ec.message());
+        close_on_failure();
         return false;
     }
     ec = acceptor.bind(ep, ec);
     if (ec)
     {
         LOG_ERROR("acceptor bind failed {}", ec.message());
+        close_on_failure();
         return false;
     }
     ec = acceptor.listen(asio::socket_base::max_listen_connections, ec);
     if (ec)
     {
         LOG_ERROR("acceptor listen failed {}", ec.message());
+        close_on_failure();
         return false;
     }
     return true;
@@ -453,7 +461,13 @@ std::expected<handshake_crypto_result, std::error_code> build_handshake_crypto(c
 
     const auto s_fin_result =
         reality::tls_key_schedule::compute_finished_verify_data(out.hs_keys.server_handshake_traffic_secret, trans.finish(), out.md);
-    const auto s_fin = reality::construct_finished(s_fin_result.value_or(std::vector<std::uint8_t>{}));
+    if (!s_fin_result)
+    {
+        const auto ec = s_fin_result.error();
+        LOG_CTX_ERROR(ctx, "{} compute server finished failed {}", log_event::kHandshake, ec.message());
+        return std::unexpected(ec);
+    }
+    const auto s_fin = reality::construct_finished(*s_fin_result);
     trans.update(s_fin);
 
     std::vector<std::uint8_t> flight2_plain;
@@ -827,21 +841,18 @@ void remote_server::set_certificate(std::string sni,
                                     reality::server_fingerprint fp,
                                     const std::string& trace_id)
 {
-    if (!started_.load(std::memory_order_acquire) || io_context_.get_executor().running_in_this_thread())
+    if (!started_.load(std::memory_order_acquire))
     {
         cert_manager_.set_certificate(sni, std::move(cert_msg), std::move(fp), trace_id);
         return;
     }
 
-    auto done = std::make_shared<std::promise<void>>();
-    auto done_future = done->get_future();
-    asio::post(io_context_,
-               [this, sni = std::move(sni), cert_msg = std::move(cert_msg), fp = std::move(fp), trace_id, done]() mutable
-               {
-                   cert_manager_.set_certificate(sni, std::move(cert_msg), std::move(fp), trace_id);
-                   done->set_value();
-               });
-    done_future.wait();
+    detail::dispatch_cleanup_or_run_inline(
+        io_context_,
+        [this, sni = std::move(sni), cert_msg = std::move(cert_msg), fp = std::move(fp), trace_id]() mutable
+        {
+            cert_manager_.set_certificate(sni, std::move(cert_msg), std::move(fp), trace_id);
+        });
 }
 
 void remote_server::stop()
@@ -849,29 +860,38 @@ void remote_server::stop()
     stop_.store(true, std::memory_order_release);
     LOG_INFO("remote server stopping");
 
-    asio::dispatch(io_context_,
-                   [self = shared_from_this()]()
-                   {
-                       std::error_code close_ec;
-                       close_ec = self->acceptor_.close(close_ec);
-                       if (close_ec && close_ec != asio::error::bad_descriptor)
-                       {
-                           LOG_WARN("acceptor close failed {}", close_ec.message());
-                       }
+    detail::dispatch_cleanup_or_run_inline(
+        io_context_,
+        [weak_self = weak_from_this()]()
+        {
+            if (const auto self = weak_self.lock())
+            {
+                self->stop_local();
+            }
+        });
+}
 
-                       LOG_INFO("closing {} active tunnels", self->active_tunnels_.size());
-                       auto tunnels_to_close = std::move(self->active_tunnels_);
-                       self->active_tunnels_.clear();
+void remote_server::stop_local()
+{
+    std::error_code close_ec;
+    close_ec = acceptor_.close(close_ec);
+    if (close_ec && close_ec != asio::error::bad_descriptor)
+    {
+        LOG_WARN("acceptor close failed {}", close_ec.message());
+    }
 
-                       for (auto& weak_tunnel : tunnels_to_close)
-                       {
-                           const auto tunnel = weak_tunnel.lock();
-                           if (tunnel != nullptr && tunnel->connection() != nullptr)
-                           {
-                               tunnel->connection()->stop();
-                           }
-                       }
-                   });
+    LOG_INFO("closing {} active tunnels", active_tunnels_.size());
+    auto tunnels_to_close = std::move(active_tunnels_);
+    active_tunnels_.clear();
+
+    for (auto& weak_tunnel : tunnels_to_close)
+    {
+        const auto tunnel = weak_tunnel.lock();
+        if (tunnel != nullptr && tunnel->connection() != nullptr)
+        {
+            tunnel->connection()->stop();
+        }
+    }
 }
 
 asio::awaitable<void> remote_server::accept_loop()
@@ -906,14 +926,35 @@ connection_context remote_server::build_connection_context(const std::shared_ptr
     ctx.new_trace_id();
     ctx.conn_id(conn_id);
 
-    const auto local_ep = s->local_endpoint();
-    const auto remote_ep = s->remote_endpoint();
-    const auto local_addr = socks_codec::normalize_ip_address(local_ep.address());
-    const auto remote_addr = socks_codec::normalize_ip_address(remote_ep.address());
-    ctx.local_addr(local_addr.to_string());
-    ctx.local_port(local_ep.port());
-    ctx.remote_addr(remote_addr.to_string());
-    ctx.remote_port(remote_ep.port());
+    std::error_code local_ep_ec;
+    const auto local_ep = s->local_endpoint(local_ep_ec);
+    if (!local_ep_ec)
+    {
+        const auto local_addr = socks_codec::normalize_ip_address(local_ep.address());
+        ctx.local_addr(local_addr.to_string());
+        ctx.local_port(local_ep.port());
+    }
+    else
+    {
+        LOG_CTX_WARN(ctx, "{} query local endpoint failed {}", log_event::kConnInit, local_ep_ec.message());
+        ctx.local_addr("unknown");
+        ctx.local_port(0);
+    }
+
+    std::error_code remote_ep_ec;
+    const auto remote_ep = s->remote_endpoint(remote_ep_ec);
+    if (!remote_ep_ec)
+    {
+        const auto remote_addr = socks_codec::normalize_ip_address(remote_ep.address());
+        ctx.remote_addr(remote_addr.to_string());
+        ctx.remote_port(remote_ep.port());
+    }
+    else
+    {
+        LOG_CTX_WARN(ctx, "{} query remote endpoint failed {}", log_event::kConnInit, remote_ep_ec.message());
+        ctx.remote_addr("unknown");
+        ctx.remote_port(0);
+    }
     return ctx;
 }
 
@@ -1168,7 +1209,7 @@ asio::awaitable<void> remote_server::handle_udp_associate_stream(const std::shar
 {
     LOG_CTX_INFO(stream_ctx, "{} stream {} type udp associate associated via tcp", log_event::kMux, stream_id);
     const auto connection = tunnel->connection();
-    const auto sess = std::make_shared<remote_udp_session>(connection, stream_id, io_context, stream_ctx);
+    const auto sess = std::make_shared<remote_udp_session>(connection, stream_id, io_context, stream_ctx, timeout_config_);
     sess->set_manager(tunnel);
     if (!tunnel->try_register_stream(stream_id, sess))
     {
@@ -1311,6 +1352,11 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::perform_hand
     const connection_context& ctx)
 {
     const auto key_pair = key_rotator_.get_current_key();
+    if (key_pair == nullptr)
+    {
+        LOG_CTX_ERROR(ctx, "{} key rotation unavailable", log_event::kHandshake);
+        co_return server_handshake_res{.ok = false, .ec = asio::error::fault};
+    }
     const std::uint8_t* public_key = key_pair->public_key;
     const std::uint8_t* private_key = key_pair->private_key;
     
