@@ -166,6 +166,11 @@ std::size_t session_count(asio::io_context& io_context, const std::shared_ptr<mu
     return run_on_io_context(io_context, [client]() { return client->sessions_.size(); });
 }
 
+bool acceptor_is_open(asio::io_context& io_context, const std::shared_ptr<mux::socks_client>& client)
+{
+    return run_on_io_context(io_context, [client]() { return client->acceptor_.is_open(); });
+}
+
 std::future<void> spawn_accept_local_loop(asio::io_context& io_context, const std::shared_ptr<mux::socks_client>& client)
 {
     auto done = std::make_shared<std::promise<void>>();
@@ -329,6 +334,98 @@ TEST(LocalClientTest, StopLogsAcceptorCloseFailureBranch)
     }
 }
 
+TEST(LocalClientTest, StopRunsInlineWhenIoContextStopped)
+{
+    io_context_pool pool(1);
+    mux::config cfg;
+    cfg.outbound.host = "127.0.0.1";
+    cfg.outbound.port = 12345;
+    cfg.socks.port = 10089;
+    cfg.reality.public_key = std::string(64, 'a');
+    cfg.reality.sni = "example.com";
+
+    auto client = std::make_shared<mux::socks_client>(pool, cfg);
+
+    std::error_code ec;
+    client->acceptor_.open(asio::ip::tcp::v4(), ec);
+    ASSERT_FALSE(ec);
+    ASSERT_TRUE(client->acceptor_.is_open());
+
+    pool.stop();
+    client->stop();
+    EXPECT_FALSE(client->acceptor_.is_open());
+}
+
+TEST(LocalClientTest, StopRunsWhenIoQueueBlocked)
+{
+    io_context_pool pool(1);
+    mux::config cfg;
+    cfg.outbound.host = "127.0.0.1";
+    cfg.outbound.port = 12345;
+    cfg.socks.port = 10096;
+    cfg.reality.public_key = std::string(64, 'a');
+    cfg.reality.sni = "example.com";
+
+    auto client = std::make_shared<mux::socks_client>(pool, cfg);
+
+    std::error_code ec;
+    client->acceptor_.open(asio::ip::tcp::v4(), ec);
+    ASSERT_FALSE(ec);
+    ASSERT_TRUE(client->acceptor_.is_open());
+
+    std::atomic<bool> blocker_started{false};
+    std::atomic<bool> release_blocker{false};
+    asio::post(
+        pool.get_io_context(),
+        [&blocker_started, &release_blocker]()
+        {
+            blocker_started.store(true, std::memory_order_release);
+            while (!release_blocker.load(std::memory_order_acquire))
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+        });
+
+    std::thread runner([&pool]() { pool.run(); });
+    for (int i = 0; i < 100 && !blocker_started.load(std::memory_order_acquire); ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_TRUE(blocker_started.load(std::memory_order_acquire));
+
+    client->stop();
+    EXPECT_FALSE(client->acceptor_.is_open());
+
+    release_blocker.store(true, std::memory_order_release);
+    pool.stop();
+    if (runner.joinable())
+    {
+        runner.join();
+    }
+}
+
+TEST(LocalClientTest, StopRunsWhenIoContextNotRunning)
+{
+    io_context_pool pool(1);
+    mux::config cfg;
+    cfg.outbound.host = "127.0.0.1";
+    cfg.outbound.port = 12345;
+    cfg.socks.port = 10095;
+    cfg.reality.public_key = std::string(64, 'a');
+    cfg.reality.sni = "example.com";
+
+    auto client = std::make_shared<mux::socks_client>(pool, cfg);
+
+    std::error_code ec;
+    client->acceptor_.open(asio::ip::tcp::v4(), ec);
+    ASSERT_FALSE(ec);
+    ASSERT_TRUE(client->acceptor_.is_open());
+
+    client->stop();
+    EXPECT_FALSE(client->acceptor_.is_open());
+    pool.stop();
+}
+
 TEST(LocalClientTest, DoubleStop)
 {
     io_context_pool pool(1);
@@ -444,6 +541,7 @@ TEST(LocalClientTest, ListenPortConflictTriggersSetupFailure)
 
     client->start();
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    EXPECT_FALSE(acceptor_is_open(pool.get_io_context(), client));
     client->stop();
     pool.stop();
     if (pool_thread.joinable())
@@ -527,6 +625,7 @@ TEST(LocalClientTest, AcceptLoopSetupHandlesSocketOpenFailure)
     auto done = spawn_accept_local_loop(pool.get_io_context(), client);
     std::thread runner([&pool]() { pool.run(); });
     EXPECT_EQ(done.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_FALSE(acceptor_is_open(pool.get_io_context(), client));
 
     client->stop();
     pool.stop();
@@ -553,6 +652,7 @@ TEST(LocalClientTest, AcceptLoopSetupHandlesReuseAddressFailure)
     auto done = spawn_accept_local_loop(pool.get_io_context(), client);
     std::thread runner([&pool]() { pool.run(); });
     EXPECT_EQ(done.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_FALSE(acceptor_is_open(pool.get_io_context(), client));
 
     client->stop();
     pool.stop();
