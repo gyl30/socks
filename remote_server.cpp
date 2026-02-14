@@ -856,7 +856,18 @@ void remote_server::set_certificate(std::string sni,
         LOG_WARN("set certificate async wait timed out {}ms sni {}", kSetCertificateWaitTimeout.count(), sni_for_log);
         return;
     }
-    done_future.get();
+    try
+    {
+        done_future.get();
+    }
+    catch (const std::exception& ex)
+    {
+        LOG_WARN("set certificate async apply failed sni {} error {}", sni_for_log, ex.what());
+    }
+    catch (...)
+    {
+        LOG_WARN("set certificate async apply failed sni {} unknown", sni_for_log);
+    }
 }
 
 void remote_server::stop()
