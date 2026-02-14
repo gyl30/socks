@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstring>
 #include <utility>
+#include <expected>
 #include <system_error>
 
 extern "C"
@@ -24,99 +25,93 @@ namespace reality
 class tls_key_schedule
 {
    public:
-    [[nodiscard]] static std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> derive_traffic_keys(const std::vector<std::uint8_t>& secret,
-                                                                                                             std::error_code& ec,
-                                                                                                             std::size_t key_len = 16,
-                                                                                                             std::size_t iv_len = 12,
-                                                                                                             const EVP_MD* md = EVP_sha256())
+    [[nodiscard]] static std::expected<std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>, std::error_code> derive_traffic_keys(
+        const std::vector<std::uint8_t>& secret, std::size_t key_len = 16, std::size_t iv_len = 12, const EVP_MD* md = EVP_sha256())
     {
-        const std::vector<std::uint8_t> key = crypto_util::hkdf_expand_label(secret, "key", {}, key_len, md, ec);
-        if (ec)
+        auto key = crypto_util::hkdf_expand_label(secret, "key", {}, key_len, md);
+        if (!key)
         {
-            return {};
+            return std::unexpected(key.error());
         }
-        const std::vector<std::uint8_t> iv = crypto_util::hkdf_expand_label(secret, "iv", {}, iv_len, md, ec);
-        if (ec)
+        auto iv = crypto_util::hkdf_expand_label(secret, "iv", {}, iv_len, md);
+        if (!iv)
         {
-            return {};
+            return std::unexpected(iv.error());
         }
-        return {key, iv};
+        return std::pair{std::move(*key), std::move(*iv)};
     }
 
-    [[nodiscard]] static handshake_keys derive_handshake_keys(const std::vector<std::uint8_t>& shared_secret,
-                                                              const std::vector<std::uint8_t>& server_hello_hash,
-                                                              const EVP_MD* md,
-                                                              std::error_code& ec)
+    [[nodiscard]] static std::expected<handshake_keys, std::error_code> derive_handshake_keys(
+        const std::vector<std::uint8_t>& shared_secret,
+        const std::vector<std::uint8_t>& server_hello_hash,
+        const EVP_MD* md)
     {
         const std::size_t hash_len = EVP_MD_size(md);
         const std::vector<std::uint8_t> zero_ikm(hash_len, 0);
-        const std::vector<std::uint8_t> early_secret = crypto_util::hkdf_extract(zero_ikm, zero_ikm, md, ec);
-        if (ec)
+        auto early_secret = crypto_util::hkdf_extract(zero_ikm, zero_ikm, md);
+        if (!early_secret)
         {
-            return {};
+            return std::unexpected(early_secret.error());
         }
 
         std::vector<std::uint8_t> empty_hash(hash_len);
         unsigned int hl;
         EVP_Digest(nullptr, 0, empty_hash.data(), &hl, md, nullptr);
 
-        const std::vector<std::uint8_t> derived_secret = crypto_util::hkdf_expand_label(early_secret, "derived", empty_hash, hash_len, md, ec);
-        if (ec)
+        auto derived_secret = crypto_util::hkdf_expand_label(*early_secret, "derived", empty_hash, hash_len, md);
+        if (!derived_secret)
         {
-            return {};
+            return std::unexpected(derived_secret.error());
         }
-        const std::vector<std::uint8_t> handshake_secret = crypto_util::hkdf_extract(derived_secret, shared_secret, md, ec);
-        if (ec)
+        auto handshake_secret = crypto_util::hkdf_extract(*derived_secret, shared_secret, md);
+        if (!handshake_secret)
         {
-            return {};
+            return std::unexpected(handshake_secret.error());
         }
 
-        const std::vector<std::uint8_t> c_hs_secret =
-            crypto_util::hkdf_expand_label(handshake_secret, "c hs traffic", server_hello_hash, hash_len, md, ec);
-        const std::vector<std::uint8_t> s_hs_secret =
-            crypto_util::hkdf_expand_label(handshake_secret, "s hs traffic", server_hello_hash, hash_len, md, ec);
+        auto c_hs_secret = crypto_util::hkdf_expand_label(*handshake_secret, "c hs traffic", server_hello_hash, hash_len, md);
+        auto s_hs_secret = crypto_util::hkdf_expand_label(*handshake_secret, "s hs traffic", server_hello_hash, hash_len, md);
 
-        const std::vector<std::uint8_t> derived_secret_2 = crypto_util::hkdf_expand_label(handshake_secret, "derived", empty_hash, hash_len, md, ec);
-        const std::vector<std::uint8_t> master_secret = crypto_util::hkdf_extract(derived_secret_2, zero_ikm, md, ec);
+        auto derived_secret_2 = crypto_util::hkdf_expand_label(*handshake_secret, "derived", empty_hash, hash_len, md);
+        auto master_secret = crypto_util::hkdf_extract(*derived_secret_2, zero_ikm, md);
 
         return handshake_keys{
-            .client_handshake_traffic_secret = c_hs_secret, .server_handshake_traffic_secret = s_hs_secret, .master_secret = master_secret};
+            .client_handshake_traffic_secret = c_hs_secret.value_or(std::vector<std::uint8_t>{}),
+            .server_handshake_traffic_secret = s_hs_secret.value_or(std::vector<std::uint8_t>{}),
+            .master_secret = master_secret.value_or(std::vector<std::uint8_t>{})};
     }
 
-    [[nodiscard]] static std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> derive_application_secrets(
-        const std::vector<std::uint8_t>& master_secret, const std::vector<std::uint8_t>& handshake_hash, const EVP_MD* md, std::error_code& ec)
+    [[nodiscard]] static std::expected<std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>, std::error_code> derive_application_secrets(
+        const std::vector<std::uint8_t>& master_secret, const std::vector<std::uint8_t>& handshake_hash, const EVP_MD* md)
     {
         const std::size_t hash_len = EVP_MD_size(md);    // GCOVR_EXCL_LINE
-        const std::vector<std::uint8_t> c_app_secret =
-            crypto_util::hkdf_expand_label(master_secret, "c ap traffic", handshake_hash, hash_len, md, ec);    // GCOVR_EXCL_LINE
-        const std::vector<std::uint8_t> s_app_secret =
-            crypto_util::hkdf_expand_label(master_secret, "s ap traffic", handshake_hash, hash_len, md, ec);    // GCOVR_EXCL_LINE
-        return {c_app_secret, s_app_secret};    // GCOVR_EXCL_LINE
+        auto c_app_secret =
+            crypto_util::hkdf_expand_label(master_secret, "c ap traffic", handshake_hash, hash_len, md);    // GCOVR_EXCL_LINE
+        auto s_app_secret =
+            crypto_util::hkdf_expand_label(master_secret, "s ap traffic", handshake_hash, hash_len, md);    // GCOVR_EXCL_LINE
+        return std::pair{c_app_secret.value_or(std::vector<std::uint8_t>{}),
+                         s_app_secret.value_or(std::vector<std::uint8_t>{})};    // GCOVR_EXCL_LINE
     }
 
-    [[nodiscard]] static std::vector<std::uint8_t> compute_finished_verify_data(const std::vector<std::uint8_t>& base_key,
-                                                                                const std::vector<std::uint8_t>& handshake_hash,
-                                                                                const EVP_MD* md,
-                                                                                std::error_code& ec)
+    [[nodiscard]] static std::expected<std::vector<std::uint8_t>, std::error_code> compute_finished_verify_data(
+        const std::vector<std::uint8_t>& base_key, const std::vector<std::uint8_t>& handshake_hash, const EVP_MD* md)
     {
         const std::size_t hash_len = EVP_MD_size(md);
-        const std::vector<std::uint8_t> finished_key = crypto_util::hkdf_expand_label(base_key, "finished", {}, hash_len, md, ec);
-        if (ec)
+        auto finished_key = crypto_util::hkdf_expand_label(base_key, "finished", {}, hash_len, md);
+        if (!finished_key)
         {
-            return {};
+            return std::unexpected(finished_key.error());
         }
 
         std::uint8_t hmac_out[EVP_MAX_MD_SIZE] = {};
         unsigned int hmac_len = 0;
-        if (HMAC(md, finished_key.data(), static_cast<int>(finished_key.size()), handshake_hash.data(), handshake_hash.size(), hmac_out, &hmac_len)
+        if (HMAC(md, finished_key->data(), static_cast<int>(finished_key->size()), handshake_hash.data(), handshake_hash.size(), hmac_out, &hmac_len)
             == nullptr
             || hmac_len == 0)
         {
-            ec = std::make_error_code(std::errc::protocol_error);
-            return {};
+            return std::unexpected(std::make_error_code(std::errc::protocol_error));
         }
-        ec.clear();
-        return {hmac_out, hmac_out + hmac_len};
+        return std::vector<std::uint8_t>{hmac_out, hmac_out + hmac_len};
     }
 };
 }    // namespace reality

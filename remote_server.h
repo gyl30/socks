@@ -13,6 +13,7 @@
 #include <utility>
 #include <optional>
 #include <system_error>
+#include <expected>
 #include <unordered_map>
 #include <unordered_set>
 #include <mutex>
@@ -71,11 +72,15 @@ class remote_server : public std::enable_shared_from_this<remote_server>
 
     asio::awaitable<void> handle(std::shared_ptr<asio::ip::tcp::socket> s, const std::uint32_t conn_id);
 
-    [[nodiscard]] bool derive_application_traffic_keys(
-        const server_handshake_res& sh_res,
-        std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& c_app_keys,
-        std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& s_app_keys,
-        std::error_code& ec) const;
+    struct app_keys
+    {
+        std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> c_app_keys;
+        std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> s_app_keys;
+    };
+
+    [[nodiscard]] std::expected<app_keys, std::error_code> derive_application_traffic_keys(
+        const server_handshake_res& sh_res) const;
+
     asio::awaitable<bool> reject_connection_if_over_limit(const std::shared_ptr<asio::ip::tcp::socket>& s,
                                                           const std::vector<std::uint8_t>& initial_buf,
                                                           const connection_context& ctx);
@@ -111,6 +116,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     struct server_handshake_res
     {
         bool ok = false;
+        std::error_code ec;
         reality::handshake_keys hs_keys;
         std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> s_hs_keys;
         std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> c_hs_keys;
@@ -136,11 +142,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
                                                             const connection_context& ctx,
                                                             std::vector<std::uint8_t>& initial_buf);
 
-    asio::awaitable<server_handshake_res> perform_handshake_response(std::shared_ptr<asio::ip::tcp::socket> s,
-                                                                     const client_hello_info& info,
-                                                                     reality::transcript& trans,
-                                                                     const connection_context& ctx,
-                                                                     std::error_code& ec);
+
     [[nodiscard]] static connection_context build_connection_context(const std::shared_ptr<asio::ip::tcp::socket>& s, std::uint32_t conn_id);
     [[nodiscard]] static connection_context build_stream_context(const connection_context& ctx, const syn_payload& syn);
     [[nodiscard]] static client_hello_info parse_client_hello(const std::vector<std::uint8_t>& initial_buf, std::string& client_sni);
@@ -165,32 +167,39 @@ class remote_server : public std::enable_shared_from_this<remote_server>
                                                       const connection_context& stream_ctx,
                                                       std::uint32_t stream_id,
                                                       asio::io_context& io_context) const;
-    [[nodiscard]] bool derive_server_key_share(const client_hello_info& info,
-                                               const std::uint8_t* public_key,
-                                               const std::uint8_t* private_key,
-                                               const connection_context& ctx,
-                                               std::vector<std::uint8_t>& sh_shared,
-                                               std::vector<std::uint8_t>& key_share_data,
-                                               std::uint16_t& key_share_group,
-                                               std::error_code& ec) const;
+
+    struct key_share_result
+    {
+        std::vector<std::uint8_t> sh_shared;
+        std::vector<std::uint8_t> key_share_data;
+        std::uint16_t key_share_group;
+    };
+
+    [[nodiscard]] std::expected<key_share_result, std::error_code> derive_server_key_share(const client_hello_info& info,
+                                                                                           const std::uint8_t* public_key,
+                                                                                           const std::uint8_t* private_key,
+                                                                                           const connection_context& ctx) const;
+
+    asio::awaitable<server_handshake_res> perform_handshake_response(std::shared_ptr<asio::ip::tcp::socket> s,
+                                                                     const client_hello_info& info,
+                                                                     reality::transcript& trans,
+                                                                     const connection_context& ctx);
     [[nodiscard]] certificate_target resolve_certificate_target(const client_hello_info& info) const;
     asio::awaitable<std::optional<certificate_material>> load_certificate_material(const certificate_target& target,
                                                                                    const connection_context& ctx);
-    asio::awaitable<bool> send_server_hello_flight(const std::shared_ptr<asio::ip::tcp::socket>& s,
-                                                   const std::vector<std::uint8_t>& sh_msg,
-                                                   const std::vector<std::uint8_t>& flight2_enc,
-                                                   const connection_context& ctx,
-                                                   std::error_code& ec) const;
+    asio::awaitable<std::error_code> send_server_hello_flight(const std::shared_ptr<asio::ip::tcp::socket>& s,
+                                                              const std::vector<std::uint8_t>& sh_msg,
+                                                              const std::vector<std::uint8_t>& flight2_enc,
+                                                              const connection_context& ctx) const;
 
-    [[nodiscard]] static asio::awaitable<bool> verify_client_finished(
+    [[nodiscard]] static asio::awaitable<std::error_code> verify_client_finished(
         std::shared_ptr<asio::ip::tcp::socket> s,
         const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& c_hs_keys,
         const reality::handshake_keys& hs_keys,
         const reality::transcript& trans,
         const EVP_CIPHER* cipher,
         const EVP_MD* md,
-        const connection_context& ctx,
-        std::error_code& ec);
+        const connection_context& ctx);
 
     [[nodiscard]] std::pair<std::string, std::string> find_fallback_target_by_sni(const std::string& sni) const;
 

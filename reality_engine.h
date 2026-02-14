@@ -6,6 +6,7 @@
 #include <vector>
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <functional>
 #include <system_error>
 
@@ -41,7 +42,7 @@ class reality_engine
 
     void process_available_records(std::error_code& ec, const record_callback& callback);
 
-    [[nodiscard]] std::span<const std::uint8_t> encrypt(const std::vector<std::uint8_t>& plaintext, std::error_code& ec);
+    [[nodiscard]] std::expected<std::span<const std::uint8_t>, std::error_code> encrypt(const std::vector<std::uint8_t>& plaintext);
 
    private:
     bool try_decrypt_next_record(std::uint8_t& content_type, std::size_t& payload_len, std::error_code& ec);

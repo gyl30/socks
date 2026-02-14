@@ -63,7 +63,7 @@ asio::awaitable<void> mock_server_silent(tcp::acceptor& acceptor)
 TEST_F(local_client_handshake_test, HandshakeTimeout)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     tcp::acceptor acceptor(pool.get_io_context(), tcp::endpoint(tcp::v4(), 0));
@@ -121,7 +121,7 @@ asio::awaitable<void> mock_server_invalid_sh(tcp::acceptor& acceptor)
 TEST_F(local_client_handshake_test, InvalidServerHello)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     tcp::acceptor acceptor(pool.get_io_context(), tcp::endpoint(tcp::v4(), 0));
@@ -181,17 +181,16 @@ asio::awaitable<void> mock_server_unsupported_scheme(tcp::acceptor& acceptor, co
     plain.insert(plain.end(), cert.begin(), cert.end());
     plain.insert(plain.end(), cv.begin(), cv.end());
 
-    std::error_code enc_ec;
     auto enc = reality::tls_record_layer::encrypt_record(
-        EVP_aes_128_gcm(), std::vector<uint8_t>(16, 0), std::vector<uint8_t>(12, 0), 0, plain, reality::kContentTypeHandshake, enc_ec);
+        EVP_aes_128_gcm(), std::vector<uint8_t>(16, 0), std::vector<uint8_t>(12, 0), 0, plain, reality::kContentTypeHandshake);
 
-    co_await asio::async_write(socket, asio::buffer(enc), asio::as_tuple(asio::use_awaitable));
+    co_await asio::async_write(socket, asio::buffer(*enc), asio::as_tuple(asio::use_awaitable));
 }
 
 TEST_F(local_client_handshake_test, UnsupportedVerifyScheme)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     tcp::acceptor acceptor(pool.get_io_context(), tcp::endpoint(tcp::v4(), 0));

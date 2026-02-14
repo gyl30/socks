@@ -106,10 +106,7 @@ std::optional<negotiated_suite> select_negotiated_suite(const std::uint16_t ciph
     return std::nullopt;
 }
 
-std::pair<std::uint8_t, std::span<std::uint8_t>> empty_record_result()
-{
-    return std::make_pair(0, std::span<std::uint8_t>{});
-}
+
 
 std::pair<std::uint8_t, std::span<std::uint8_t>> copy_plaintext_record(std::vector<std::uint8_t>& pt_buf, const std::vector<std::uint8_t>& rec)
 {
@@ -141,40 +138,38 @@ std::error_code derive_server_record_protection(const std::vector<std::uint8_t>&
     constexpr std::size_t iv_len = 12;
 
     const auto server_pub = extract_server_public_key(sh_real);
-    std::error_code ec;
-    auto shared = crypto_util::x25519_derive(std::vector<std::uint8_t>(client_private, client_private + 32), server_pub, ec);
-    if (ec)
+    auto shared = crypto_util::x25519_derive(std::vector<std::uint8_t>(client_private, client_private + 32), server_pub);
+    if (!shared)
     {
         LOG_CTX_ERROR(ctx, "{} x25519 derive failed", mux::log_event::kCert);
-        return ec;
+        return shared.error();
     }
 
-    auto hs_keys = tls_key_schedule::derive_handshake_keys(shared, trans.finish(), suite.md, ec);
-    if (ec)
+    auto hs_keys = tls_key_schedule::derive_handshake_keys(*shared, trans.finish(), suite.md);
+    if (!hs_keys)
     {
         LOG_CTX_ERROR(ctx, "{} derive keys failed", mux::log_event::kCert);
-        return ec;
+        return hs_keys.error();
     }
 
-    auto s_hs_keys = tls_key_schedule::derive_traffic_keys(hs_keys.server_handshake_traffic_secret, ec, suite.key_len, iv_len, suite.md);
-    if (ec)
+    auto s_hs_keys = tls_key_schedule::derive_traffic_keys(hs_keys->server_handshake_traffic_secret, suite.key_len, iv_len, suite.md);
+    if (!s_hs_keys)
     {
         LOG_CTX_ERROR(ctx, "{} derive traffic keys failed", mux::log_event::kCert);
-        return ec;
+        return s_hs_keys.error();
     }
 
     negotiated_cipher = suite.cipher;
-    dec_key = std::move(s_hs_keys.first);
-    dec_iv = std::move(s_hs_keys.second);
+    dec_key = std::move(s_hs_keys->first);
+    dec_iv = std::move(s_hs_keys->second);
     return std::error_code{};
 }
 }
 
 void handshake_reassembler::append(std::span<const std::uint8_t> data) { buffer_.insert(buffer_.end(), data.begin(), data.end()); }
 
-bool handshake_reassembler::next(std::vector<std::uint8_t>& out, std::error_code& ec)
+std::expected<bool, std::error_code> handshake_reassembler::next(std::vector<std::uint8_t>& out)
 {
-    ec.clear();
     if (buffer_.size() < 4)
     {
         return false;
@@ -186,8 +181,7 @@ bool handshake_reassembler::next(std::vector<std::uint8_t>& out, std::error_code
     if (msg_len > kMaxMsgSize)
     {
         buffer_.clear();
-        ec = std::make_error_code(std::errc::message_size);
-        return false;
+        return std::unexpected(std::make_error_code(std::errc::message_size));
     }
 
     const std::uint32_t full_len = 4 + msg_len;
@@ -350,19 +344,21 @@ asio::awaitable<std::vector<std::uint8_t>> cert_fetcher::fetch_session::find_cer
 
     for (int i = 0; i < 100; ++i)
     {
-        std::error_code ec;
-        if (!(co_await append_next_handshake_record(assembler, pt_buf, i, ec)))
+        if (const auto append_res = co_await append_next_handshake_record(assembler, pt_buf, i); !append_res)
         {
+            LOG_CTX_ERROR(ctx_, "{} append record failed {}", mux::log_event::kCert, append_res.error().message());
             break;
         }
-        if (consume_handshake_messages(assembler, msg, cert_msg, ec))
+
+        const auto consume_res = consume_handshake_messages(assembler, msg, cert_msg);
+        if (!consume_res)
+        {
+            LOG_CTX_ERROR(ctx_, "{} consume failed {}", mux::log_event::kCert, consume_res.error().message());
+            break;
+        }
+        if (*consume_res)
         {
             co_return cert_msg;
-        }
-        if (ec)
-        {
-            LOG_CTX_ERROR(ctx_, "{} assembler error {}", mux::log_event::kCert, ec.message());
-            break;
         }
     }
 
@@ -370,34 +366,44 @@ asio::awaitable<std::vector<std::uint8_t>> cert_fetcher::fetch_session::find_cer
     co_return std::vector<std::uint8_t>{};
 }
 
-asio::awaitable<bool> cert_fetcher::fetch_session::append_next_handshake_record(handshake_reassembler& assembler,
-                                                                                 std::vector<std::uint8_t>& pt_buf,
-                                                                                 const int record_index,
-                                                                                 std::error_code& ec)
+asio::awaitable<std::expected<void, std::error_code>> cert_fetcher::fetch_session::append_next_handshake_record(handshake_reassembler& assembler,
+                                                                                                                 std::vector<std::uint8_t>& pt_buf,
+                                                                                                                 const int record_index)
 {
-    auto [type, pt_data] = co_await read_record(pt_buf, ec);
-    if (ec)
+    auto read_res = co_await read_record(pt_buf);
+    if (!read_res)
     {
-        LOG_CTX_ERROR(ctx_, "{} read record {} failed {}", mux::log_event::kCert, record_index, ec.message());
-        co_return false;
+        LOG_CTX_ERROR(ctx_, "{} read record {} failed {}", mux::log_event::kCert, record_index, read_res.error().message());
+        co_return std::unexpected(read_res.error());
     }
+
+    auto [type, pt_data] = *read_res;
 
     if (type == kContentTypeChangeCipherSpec || type != kContentTypeHandshake)
     {
-        co_return true;
+        co_return std::expected<void, std::error_code>{};
     }
 
     assembler.append(pt_data);
-    co_return true;
+    co_return std::expected<void, std::error_code>{};
 }
 
-bool cert_fetcher::fetch_session::consume_handshake_messages(handshake_reassembler& assembler,
-                                                             std::vector<std::uint8_t>& msg,
-                                                             std::vector<std::uint8_t>& cert_msg,
-                                                             std::error_code& ec)
+std::expected<bool, std::error_code> cert_fetcher::fetch_session::consume_handshake_messages(handshake_reassembler& assembler,
+                                                                                             std::vector<std::uint8_t>& msg,
+                                                                                             std::vector<std::uint8_t>& cert_msg)
 {
-    while (assembler.next(msg, ec))
+    while (true)
     {
+        auto next_res = assembler.next(msg);
+        if (!next_res)
+        {
+            return std::unexpected(next_res.error());
+        }
+        if (!*next_res)
+        {
+            break;
+        }
+
         if (process_handshake_message(msg, cert_msg))
         {
             return true;
@@ -492,51 +498,49 @@ asio::awaitable<std::pair<std::error_code, std::vector<std::uint8_t>>> cert_fetc
     co_return std::make_pair(std::error_code{}, std::move(body));
 }
 
-bool cert_fetcher::fetch_session::validate_record_length(const std::uint16_t len, std::error_code& out_ec) const
+std::expected<void, std::error_code> cert_fetcher::fetch_session::validate_record_length(const std::uint16_t len) const
 {
     if (len <= kMaxEncryptedRecordLen)
     {
-        return true;
+        return {};
     }
-    out_ec = std::make_error_code(std::errc::message_size);
-    return false;
+    return std::unexpected(std::make_error_code(std::errc::message_size));
 }
 
-asio::awaitable<bool> cert_fetcher::fetch_session::read_record_body(const std::uint16_t len,
-                                                                     std::vector<std::uint8_t>& rec,
-                                                                     std::error_code& out_ec)
+asio::awaitable<std::expected<void, std::error_code>> cert_fetcher::fetch_session::read_record_body(
+    const std::uint16_t len, std::vector<std::uint8_t>& rec)
 {
     rec.assign(len, 0);
     auto [body_ec, body_n] = co_await asio::async_read(socket_, asio::buffer(rec), asio::as_tuple(asio::use_awaitable));
     (void)body_n;
     if (body_ec)
     {
-        out_ec = body_ec;
-        co_return false;
+        co_return std::unexpected(body_ec);
     }
-    co_return true;
+    co_return std::expected<void, std::error_code>{};
 }
 
-std::pair<std::uint8_t, std::span<std::uint8_t>> cert_fetcher::fetch_session::decrypt_application_record(const std::uint8_t head[5],
-                                                                                                           const std::vector<std::uint8_t>& rec,
-                                                                                                           std::vector<std::uint8_t>& pt_buf,
-                                                                                                           std::error_code& out_ec)
+std::expected<std::pair<std::uint8_t, std::span<std::uint8_t>>, std::error_code> cert_fetcher::fetch_session::decrypt_application_record(
+    const std::uint8_t head[5],
+    const std::vector<std::uint8_t>& rec,
+    std::vector<std::uint8_t>& pt_buf)
 {
     auto ciphertext_record = build_encrypted_record_bytes(head, rec);
     std::uint8_t type = 0;
-    const std::uint32_t pt_len =
-        tls_record_layer::decrypt_record(decrypt_ctx_, negotiated_cipher_, dec_key_, dec_iv_, seq_++, ciphertext_record, pt_buf, type, out_ec);
-    if (out_ec)
+    auto decrypted = tls_record_layer::decrypt_record(
+        decrypt_ctx_, negotiated_cipher_, dec_key_, dec_iv_, seq_++, ciphertext_record, pt_buf, type);
+    if (!decrypted)
     {
-        return empty_record_result();
+        return std::unexpected(decrypted.error());
     }
+    const std::uint32_t pt_len = *decrypted;
     return std::make_pair(type, std::span<std::uint8_t>(pt_buf.data(), pt_len));
 }
 
-std::pair<std::uint8_t, std::span<std::uint8_t>> cert_fetcher::fetch_session::handle_record_by_content_type(const std::uint8_t head[5],
-                                                                                                              const std::vector<std::uint8_t>& rec,
-                                                                                                              std::vector<std::uint8_t>& pt_buf,
-                                                                                                              std::error_code& out_ec)
+std::expected<std::pair<std::uint8_t, std::span<std::uint8_t>>, std::error_code> cert_fetcher::fetch_session::handle_record_by_content_type(
+    const std::uint8_t head[5],
+    const std::vector<std::uint8_t>& rec,
+    std::vector<std::uint8_t>& pt_buf)
 {
     switch (head[0])
     {
@@ -544,43 +548,38 @@ std::pair<std::uint8_t, std::span<std::uint8_t>> cert_fetcher::fetch_session::ha
             return copy_plaintext_record(pt_buf, rec);
 
         case kContentTypeApplicationData:
-            return decrypt_application_record(head, rec, pt_buf, out_ec);
+            return decrypt_application_record(head, rec, pt_buf);
 
         case kContentTypeAlert:
             LOG_CTX_WARN(ctx_, "{} received plaintext alert", mux::log_event::kCert);
-            out_ec = asio::error::connection_reset;
-            return empty_record_result();
+            return std::unexpected(asio::error::connection_reset);
 
         default:
-            out_ec = asio::error::invalid_argument;
-            return empty_record_result();
+            return std::unexpected(asio::error::invalid_argument);
     }
 }
-
-asio::awaitable<std::pair<std::uint8_t, std::span<std::uint8_t>>> cert_fetcher::fetch_session::read_record(std::vector<std::uint8_t>& pt_buf,
-                                                                                                           std::error_code& out_ec)
+asio::awaitable<std::expected<std::pair<std::uint8_t, std::span<std::uint8_t>>, std::error_code>> cert_fetcher::fetch_session::read_record(
+    std::vector<std::uint8_t>& pt_buf)
 {
-    out_ec.clear();
     std::uint8_t head[5];
     auto [ec, n] = co_await asio::async_read(socket_, asio::buffer(head), asio::as_tuple(asio::use_awaitable));
     if (ec)
     {
-        out_ec = ec;
-        co_return empty_record_result();
+        co_return std::unexpected(ec);
     }
 
     const std::uint16_t len = (head[3] << 8) | head[4];
-    if (!validate_record_length(len, out_ec))
+    if (const auto res = validate_record_length(len); !res)
     {
-        co_return empty_record_result();
+        co_return std::unexpected(res.error());
     }
 
     std::vector<std::uint8_t> rec;
-    if (!co_await read_record_body(len, rec, out_ec))
+    if (const auto res = co_await read_record_body(len, rec); !res)
     {
-        co_return empty_record_result();
+        co_return std::unexpected(res.error());
     }
-    co_return handle_record_by_content_type(head, rec, pt_buf, out_ec);
+    co_return handle_record_by_content_type(head, rec, pt_buf);
 }
 
 }    // namespace reality

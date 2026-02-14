@@ -1,6 +1,7 @@
 #include <string>
 #include <vector>
 #include <cstring>
+#include <expected>
 #include <utility>
 #include <system_error>
 
@@ -24,15 +25,20 @@
 namespace mux
 {
 
-bool direct_upstream::open_socket_for_endpoint(const asio::ip::tcp::endpoint& endpoint, std::error_code& ec)
+std::expected<void, std::error_code> direct_upstream::open_socket_for_endpoint(const asio::ip::tcp::endpoint& endpoint)
 {
     if (socket_.is_open())
     {
         std::error_code close_ec;
         socket_.close(close_ec);
     }
+    std::error_code ec;
     ec = socket_.open(endpoint.protocol(), ec);
-    return !ec;
+    if (ec)
+    {
+        return std::unexpected(ec);
+    }
+    return {};
 }
 
 void direct_upstream::apply_socket_mark()
@@ -42,10 +48,9 @@ void direct_upstream::apply_socket_mark()
         return;
     }
 
-    std::error_code mark_ec;
-    if (!net::set_socket_mark(socket_.native_handle(), mark_, mark_ec))
+    if (auto r = net::set_socket_mark(socket_.native_handle(), mark_); !r)
     {
-        LOG_WARN("direct upstream set mark failed {}", mark_ec.message());
+        LOG_WARN("direct upstream set mark failed {}", r.error().message());
     }
 }
 
@@ -71,10 +76,9 @@ asio::awaitable<bool> direct_upstream::connect(const std::string& host, const st
     std::error_code last_ec;
     for (const auto& entry : eps)
     {
-        std::error_code open_ec;
-        if (!open_socket_for_endpoint(entry.endpoint(), open_ec))
+        if (auto open_result = open_socket_for_endpoint(entry.endpoint()); !open_result)
         {
-            last_ec = open_ec;
+            last_ec = open_result.error();
             continue;
         }
 

@@ -277,21 +277,20 @@ TEST(CryptoUtilTest, HKDFRFC5869Test1)
     const std::vector<uint8_t> info = {0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7, 0xf8, 0xf9};
     const size_t l_val = 42;
 
-    std::error_code ec;
-    const auto prk = crypto_util::hkdf_extract(salt, ikm, EVP_sha256(), ec);
-    ASSERT_FALSE(ec);
+    const auto prk = crypto_util::hkdf_extract(salt, ikm, EVP_sha256());
+    ASSERT_TRUE(prk.has_value());
 
     const std::vector<uint8_t> expected_prk = {0x07, 0x77, 0x09, 0x36, 0x2c, 0x2e, 0x32, 0xdf, 0x0d, 0xdc, 0x3f, 0x0d, 0xc4, 0x7b, 0xba, 0x63,
                                                0x90, 0xb6, 0xc7, 0x3b, 0xb5, 0x0f, 0x9c, 0x31, 0x22, 0xec, 0x84, 0x4a, 0xd7, 0xc2, 0xb3, 0xe5};
-    EXPECT_EQ(prk, expected_prk);
+    EXPECT_EQ(*prk, expected_prk);
 
-    const auto okm = crypto_util::hkdf_expand(prk, info, l_val, EVP_sha256(), ec);
-    ASSERT_FALSE(ec);
+    const auto okm = crypto_util::hkdf_expand(*prk, info, l_val, EVP_sha256());
+    ASSERT_TRUE(okm.has_value());
 
     const std::vector<uint8_t> expected_okm = {0x3c, 0xb2, 0x5f, 0x25, 0xfa, 0xac, 0xd5, 0x7a, 0x90, 0x43, 0x4f, 0x64, 0xd0, 0x36,
                                                0x2f, 0x2a, 0x2d, 0x2d, 0x0a, 0x90, 0xcf, 0x1a, 0x5a, 0x4c, 0x5d, 0xb0, 0x2d, 0x56,
                                                0xec, 0xc4, 0xc5, 0xbf, 0x34, 0x00, 0x72, 0x08, 0xd5, 0xb8, 0x87, 0x18, 0x58, 0x65};
-    EXPECT_EQ(okm, expected_okm);
+    EXPECT_EQ(*okm, expected_okm);
 }
 
 TEST(CryptoUtilTest, AEADAESGCMRoundTrip)
@@ -301,16 +300,15 @@ TEST(CryptoUtilTest, AEADAESGCMRoundTrip)
     const std::vector<uint8_t> plaintext = {0x48, 0x65, 0x6c, 0x6c, 0x6f};
     const std::vector<uint8_t> aad = {0xAA, 0xBB};
 
-    std::error_code ec;
-    const auto ciphertext = crypto_util::aead_encrypt(EVP_aes_256_gcm(), key, nonce, plaintext, aad, ec);
-    ASSERT_FALSE(ec);
-    ASSERT_FALSE(ciphertext.empty());
+    const auto ciphertext = crypto_util::aead_encrypt(EVP_aes_256_gcm(), key, nonce, plaintext, aad);
+    ASSERT_TRUE(ciphertext.has_value());
+    ASSERT_FALSE(ciphertext->empty());
 
-    EXPECT_EQ(ciphertext.size(), plaintext.size() + 16);
+    EXPECT_EQ(ciphertext->size(), plaintext.size() + 16);
 
-    const auto decrypted = crypto_util::aead_decrypt(EVP_aes_256_gcm(), key, nonce, ciphertext, aad, ec);
-    ASSERT_FALSE(ec);
-    EXPECT_EQ(decrypted, plaintext);
+    const auto decrypted = crypto_util::aead_decrypt(EVP_aes_256_gcm(), key, nonce, *ciphertext, aad);
+    ASSERT_TRUE(decrypted.has_value());
+    EXPECT_EQ(*decrypted, plaintext);
 }
 
 TEST(CryptoUtilTest, AEADDecryptFailBadTag)
@@ -320,15 +318,14 @@ TEST(CryptoUtilTest, AEADDecryptFailBadTag)
     const std::vector<uint8_t> plaintext = {0x48, 0x65, 0x6c, 0x6c, 0x6f};
     const std::vector<uint8_t> aad = {0xAA, 0xBB};
 
-    std::error_code ec;
-    auto ciphertext = crypto_util::aead_encrypt(EVP_aes_256_gcm(), key, nonce, plaintext, aad, ec);
-    ASSERT_FALSE(ec);
+    auto ciphertext = crypto_util::aead_encrypt(EVP_aes_256_gcm(), key, nonce, plaintext, aad);
+    ASSERT_TRUE(ciphertext.has_value());
 
-    ciphertext.back() ^= 0xFF;
+    ciphertext->back() ^= 0xFF;
 
-    const auto decrypted = crypto_util::aead_decrypt(EVP_aes_256_gcm(), key, nonce, ciphertext, aad, ec);
+    const auto decrypted = crypto_util::aead_decrypt(EVP_aes_256_gcm(), key, nonce, *ciphertext, aad);
 
-    EXPECT_TRUE(ec);
+    EXPECT_FALSE(decrypted.has_value());
 }
 
 TEST(CryptoUtilTest, X25519KeyExchange)
@@ -346,16 +343,14 @@ TEST(CryptoUtilTest, X25519KeyExchange)
     const std::vector<uint8_t> v_bob_priv(bob_priv, bob_priv + 32);
     const std::vector<uint8_t> v_bob_pub(bob_pub, bob_pub + 32);
 
-    std::error_code ec;
+    const auto alice_shared = crypto_util::x25519_derive(v_alice_priv, v_bob_pub);
+    ASSERT_TRUE(alice_shared.has_value());
 
-    const auto alice_shared = crypto_util::x25519_derive(v_alice_priv, v_bob_pub, ec);
-    ASSERT_FALSE(ec);
+    const auto bob_shared = crypto_util::x25519_derive(v_bob_priv, v_alice_pub);
+    ASSERT_TRUE(bob_shared.has_value());
 
-    const auto bob_shared = crypto_util::x25519_derive(v_bob_priv, v_alice_pub, ec);
-    ASSERT_FALSE(ec);
-
-    ASSERT_FALSE(alice_shared.empty());
-    EXPECT_EQ(alice_shared, bob_shared);
+    ASSERT_FALSE(alice_shared->empty());
+    EXPECT_EQ(*alice_shared, *bob_shared);
 }
 
 TEST(CryptoUtilTest, AEADDecryptFailBadNonce)
@@ -364,14 +359,12 @@ TEST(CryptoUtilTest, AEADDecryptFailBadNonce)
     std::vector<uint8_t> nonce(12, 0x22);
     const std::vector<uint8_t> plaintext = {0x48, 0x65, 0x6c, 0x6c, 0x6f};
     const std::vector<uint8_t> aad = {0xAA, 0xBB};
-    std::error_code ec;
-
-    const auto ciphertext = crypto_util::aead_encrypt(EVP_aes_256_gcm(), key, nonce, plaintext, aad, ec);
-    ASSERT_FALSE(ec);
+    const auto ciphertext = crypto_util::aead_encrypt(EVP_aes_256_gcm(), key, nonce, plaintext, aad);
+    ASSERT_TRUE(ciphertext.has_value());
 
     nonce[0] ^= 0x01;
-    const auto decrypted = crypto_util::aead_decrypt(EVP_aes_256_gcm(), key, nonce, ciphertext, aad, ec);
-    EXPECT_TRUE(ec);
+    const auto decrypted = crypto_util::aead_decrypt(EVP_aes_256_gcm(), key, nonce, *ciphertext, aad);
+    EXPECT_FALSE(decrypted.has_value());
 }
 
 TEST(CryptoUtilTest, AEADDecryptFailBadAAD)
@@ -380,24 +373,21 @@ TEST(CryptoUtilTest, AEADDecryptFailBadAAD)
     const std::vector<uint8_t> nonce(12, 0x22);
     const std::vector<uint8_t> plaintext = {0x48, 0x65, 0x6c, 0x6c, 0x6f};
     std::vector<uint8_t> aad = {0xAA, 0xBB};
-    std::error_code ec;
-
-    const auto ciphertext = crypto_util::aead_encrypt(EVP_aes_256_gcm(), key, nonce, plaintext, aad, ec);
-    ASSERT_FALSE(ec);
+    const auto ciphertext = crypto_util::aead_encrypt(EVP_aes_256_gcm(), key, nonce, plaintext, aad);
+    ASSERT_TRUE(ciphertext.has_value());
 
     aad[0] ^= 0x01;
-    const auto decrypted = crypto_util::aead_decrypt(EVP_aes_256_gcm(), key, nonce, ciphertext, aad, ec);
-    EXPECT_TRUE(ec);
+    const auto decrypted = crypto_util::aead_decrypt(EVP_aes_256_gcm(), key, nonce, *ciphertext, aad);
+    EXPECT_FALSE(decrypted.has_value());
 }
 
 TEST(CryptoUtilTest, HKDFEmptySalt)
 {
     const std::vector<uint8_t> ikm(22, 0x0b);
     const std::vector<uint8_t> salt;
-    std::error_code ec;
-    const auto prk = crypto_util::hkdf_extract(salt, ikm, EVP_sha256(), ec);
-    ASSERT_FALSE(ec);
-    ASSERT_FALSE(prk.empty());
+    const auto prk = crypto_util::hkdf_extract(salt, ikm, EVP_sha256());
+    ASSERT_TRUE(prk.has_value());
+    ASSERT_FALSE(prk->empty());
 }
 
 TEST(CryptoUtilTest, InvalidKeyLength)
@@ -406,11 +396,9 @@ TEST(CryptoUtilTest, InvalidKeyLength)
     const std::vector<uint8_t> nonce(12, 0x22);
     const std::vector<uint8_t> plaintext = {0x48, 0x65, 0x6c, 0x6c, 0x6f};
     const std::vector<uint8_t> aad;
-    std::error_code ec;
+    const auto ciphertext = crypto_util::aead_encrypt(EVP_aes_256_gcm(), short_key, nonce, plaintext, aad);
 
-    const auto ciphertext = crypto_util::aead_encrypt(EVP_aes_256_gcm(), short_key, nonce, plaintext, aad, ec);
-
-    EXPECT_TRUE(ec);
+    EXPECT_FALSE(ciphertext.has_value());
 }
 
 TEST(CryptoUtilTest, ZeroLengthPlaintext)
@@ -419,16 +407,14 @@ TEST(CryptoUtilTest, ZeroLengthPlaintext)
     const std::vector<uint8_t> nonce(12, 0x22);
     const std::vector<uint8_t> plaintext;
     const std::vector<uint8_t> aad;
-    std::error_code ec;
+    const auto ciphertext = crypto_util::aead_encrypt(EVP_aes_256_gcm(), key, nonce, plaintext, aad);
+    ASSERT_TRUE(ciphertext.has_value());
 
-    const auto ciphertext = crypto_util::aead_encrypt(EVP_aes_256_gcm(), key, nonce, plaintext, aad, ec);
-    ASSERT_FALSE(ec);
+    EXPECT_EQ(ciphertext->size(), 16);
 
-    EXPECT_EQ(ciphertext.size(), 16);
-
-    const auto decrypted = crypto_util::aead_decrypt(EVP_aes_256_gcm(), key, nonce, ciphertext, aad, ec);
-    ASSERT_FALSE(ec);
-    EXPECT_TRUE(decrypted.empty());
+    const auto decrypted = crypto_util::aead_decrypt(EVP_aes_256_gcm(), key, nonce, *ciphertext, aad);
+    ASSERT_TRUE(decrypted.has_value());
+    EXPECT_TRUE(decrypted->empty());
 }
 
 TEST(CryptoUtilTest, ExtractPublicKey)
@@ -439,10 +425,9 @@ TEST(CryptoUtilTest, ExtractPublicKey)
     const std::vector<uint8_t> v_priv(priv, priv + 32);
     const std::vector<uint8_t> v_pub(pub, pub + 32);
 
-    std::error_code ec;
-    const auto extracted_pub = crypto_util::extract_public_key(v_priv, ec);
-    ASSERT_FALSE(ec);
-    EXPECT_EQ(extracted_pub, v_pub);
+    const auto extracted_pub = crypto_util::extract_public_key(v_priv);
+    ASSERT_TRUE(extracted_pub.has_value());
+    EXPECT_EQ(*extracted_pub, v_pub);
 }
 
 TEST(CryptoUtilTest, GetRandomGrease)
@@ -459,26 +444,23 @@ TEST(CryptoUtilTest, HKDFExpandLabel)
     const std::vector<uint8_t> secret(32, 0x01);
     const std::vector<uint8_t> context = {0x0a, 0x0b};
     const std::string label = "test";
-    std::error_code ec;
-
-    const auto out = crypto_util::hkdf_expand_label(secret, label, context, 16, EVP_sha256(), ec);
-    ASSERT_FALSE(ec);
-    EXPECT_EQ(out.size(), 16);
+    const auto out = crypto_util::hkdf_expand_label(secret, label, context, 16, EVP_sha256());
+    ASSERT_TRUE(out.has_value());
+    EXPECT_EQ(out->size(), 16);
 }
 
 TEST(CryptoUtilTest, InvalidInputs)
 {
-    std::error_code ec;
-    (void)crypto_util::extract_public_key(std::vector<uint8_t>(31), ec);
-    EXPECT_TRUE(ec);
+    auto result1 = crypto_util::extract_public_key(std::vector<uint8_t>(31));
+    EXPECT_FALSE(result1.has_value());
 
-    (void)crypto_util::x25519_derive(std::vector<uint8_t>(32), std::vector<uint8_t>(31), ec);
-    EXPECT_TRUE(ec);
+    auto result2 = crypto_util::x25519_derive(std::vector<uint8_t>(32), std::vector<uint8_t>(31));
+    EXPECT_FALSE(result2.has_value());
 
     const std::vector<uint8_t> key(32, 0);
     const std::vector<uint8_t> nonce(12, 0);
-    (void)crypto_util::aead_decrypt(EVP_aes_256_gcm(), key, nonce, std::vector<uint8_t>(15), {}, ec);
-    EXPECT_TRUE(ec);
+    auto result3 = crypto_util::aead_decrypt(EVP_aes_256_gcm(), key, nonce, std::vector<uint8_t>(15), {});
+    EXPECT_FALSE(result3.has_value());
 
     const auto invalid_hex = crypto_util::hex_to_bytes("invalid hex");
     EXPECT_TRUE(invalid_hex.empty());
@@ -487,13 +469,12 @@ TEST(CryptoUtilTest, InvalidInputs)
 TEST(CryptoUtilTest, ED25519PublicKey)
 {
     const std::vector<uint8_t> priv(32, 0x42);
-    std::error_code ec;
-    const auto pub = crypto_util::extract_ed25519_public_key(priv, ec);
-    ASSERT_FALSE(ec);
-    EXPECT_EQ(pub.size(), 32);
+    const auto pub = crypto_util::extract_ed25519_public_key(priv);
+    ASSERT_TRUE(pub.has_value());
+    EXPECT_EQ(pub->size(), 32);
 
-    (void)crypto_util::extract_ed25519_public_key(std::vector<uint8_t>(31), ec);
-    EXPECT_TRUE(ec);
+    auto result = crypto_util::extract_ed25519_public_key(std::vector<uint8_t>(31));
+    EXPECT_FALSE(result.has_value());
 }
 
 TEST(CryptoUtilTest, AEADAppendAndBuffer)
@@ -502,23 +483,22 @@ TEST(CryptoUtilTest, AEADAppendAndBuffer)
     const std::vector<uint8_t> nonce(12, 0x22);
     const std::vector<uint8_t> plaintext = {0x01, 0x02, 0x03, 0x04};
     const std::vector<uint8_t> aad = {0xAA};
-    std::error_code ec;
-
     const reality::cipher_context ctx;
     std::vector<uint8_t> ciphertext;
-    crypto_util::aead_encrypt_append(ctx, EVP_aes_256_gcm(), key, nonce, plaintext, aad, ciphertext, ec);
-    ASSERT_FALSE(ec);
+    auto enc_result = crypto_util::aead_encrypt_append(ctx, EVP_aes_256_gcm(), key, nonce, plaintext, aad, ciphertext);
+    ASSERT_TRUE(enc_result.has_value());
     EXPECT_EQ(ciphertext.size(), plaintext.size() + 16);
 
     std::vector<uint8_t> decrypted(plaintext.size());
-    const size_t n = crypto_util::aead_decrypt(ctx, EVP_aes_256_gcm(), key, nonce, ciphertext, aad, decrypted, ec);
-    ASSERT_FALSE(ec);
-    EXPECT_EQ(n, plaintext.size());
+    const auto n = crypto_util::aead_decrypt(ctx, EVP_aes_256_gcm(), key, nonce, ciphertext, aad, decrypted);
+    ASSERT_TRUE(n.has_value());
+    EXPECT_EQ(*n, plaintext.size());
     EXPECT_EQ(decrypted, plaintext);
 
     std::vector<uint8_t> small_buffer(plaintext.size() - 1);
-    (void)crypto_util::aead_decrypt(ctx, EVP_aes_256_gcm(), key, nonce, ciphertext, aad, small_buffer, ec);
-    EXPECT_EQ(ec, std::errc::no_buffer_space);
+    auto small_result = crypto_util::aead_decrypt(ctx, EVP_aes_256_gcm(), key, nonce, ciphertext, aad, small_buffer);
+    EXPECT_FALSE(small_result.has_value());
+    EXPECT_EQ(small_result.error(), std::make_error_code(std::errc::no_buffer_space));
 }
 
 TEST(CryptoUtilTest, TLS13SignatureVerification)
@@ -544,25 +524,20 @@ TEST(CryptoUtilTest, TLS13SignatureVerification)
     EVP_DigestSign(mctx, signature.data(), &sig_len, to_sign.data(), to_sign.size());
     EVP_MD_CTX_free(mctx);
 
-    std::error_code ec;
-    bool ok = crypto_util::verify_tls13_signature(pkey, transcript_hash, signature, ec);
-    EXPECT_TRUE(ok);
-    EXPECT_FALSE(ec);
+    auto verify_result = crypto_util::verify_tls13_signature(pkey, transcript_hash, signature);
+    EXPECT_TRUE(verify_result.has_value());
 
     signature[0] ^= 0xFF;
-    ok = crypto_util::verify_tls13_signature(pkey, transcript_hash, signature, ec);
-    EXPECT_FALSE(ok);
-    EXPECT_TRUE(ec);
+    verify_result = crypto_util::verify_tls13_signature(pkey, transcript_hash, signature);
+    EXPECT_FALSE(verify_result.has_value());
 
     EVP_PKEY_free(pkey);
 }
 
 TEST(CryptoUtilTest, ExtractPubkeyFromCertInvalid)
 {
-    std::error_code ec;
-    auto pkey = crypto_util::extract_pubkey_from_cert({0x01, 0x02, 0x03}, ec);
-    EXPECT_TRUE(ec);
-    EXPECT_EQ(pkey.get(), nullptr);
+    auto pkey = crypto_util::extract_pubkey_from_cert({0x01, 0x02, 0x03});
+    EXPECT_FALSE(pkey.has_value());
 }
 
 TEST(CryptoUtilTest, ExtractPubkeyFromCertValid)
@@ -578,10 +553,9 @@ TEST(CryptoUtilTest, ExtractPubkeyFromCertValid)
 
         if (!cert_der.empty())
         {
-            std::error_code ec;
-            auto pkey = crypto_util::extract_pubkey_from_cert(cert_der, ec);
-            EXPECT_FALSE(ec);
-            EXPECT_NE(pkey.get(), nullptr);
+            auto pkey = crypto_util::extract_pubkey_from_cert(cert_der);
+            EXPECT_TRUE(pkey.has_value());
+            EXPECT_NE(pkey->get(), nullptr);
         }
     }
     (void)std::system("rm -f key_tmp.pem cert_tmp.pem cert_tmp.der");
@@ -589,36 +563,39 @@ TEST(CryptoUtilTest, ExtractPubkeyFromCertValid)
 
 TEST(CryptoUtilTest, AEADInvalidArguments)
 {
-    std::error_code ec;
     const std::vector<uint8_t> key(32, 0);
     const std::vector<uint8_t> nonce(12, 0);
 
-    (void)crypto_util::aead_decrypt(EVP_aes_256_gcm(), {}, nonce, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, {}, ec);
-    EXPECT_EQ(ec, std::errc::invalid_argument);
+    auto r1 = crypto_util::aead_decrypt(EVP_aes_256_gcm(), {}, nonce, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, {});
+    EXPECT_FALSE(r1.has_value());
+    EXPECT_EQ(r1.error(), std::make_error_code(std::errc::invalid_argument));
 
-    (void)crypto_util::aead_decrypt(EVP_aes_256_gcm(), key, {}, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, {}, ec);
-    EXPECT_EQ(ec, std::errc::invalid_argument);
+    auto r2 = crypto_util::aead_decrypt(EVP_aes_256_gcm(), key, {}, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, {});
+    EXPECT_FALSE(r2.has_value());
+    EXPECT_EQ(r2.error(), std::make_error_code(std::errc::invalid_argument));
 
-    (void)crypto_util::aead_encrypt(EVP_aes_256_gcm(), key, std::vector<uint8_t>(11, 0), {1}, {}, ec);
-    EXPECT_EQ(ec, std::errc::invalid_argument);
+    auto r3 = crypto_util::aead_encrypt(EVP_aes_256_gcm(), key, std::vector<uint8_t>(11, 0), {1}, {});
+    EXPECT_FALSE(r3.has_value());
+    EXPECT_EQ(r3.error(), std::make_error_code(std::errc::invalid_argument));
 }
 
-TEST(CryptoUtilTest, HKDFInvalidInputs)
+TEST(CryptoUtilTest, HKDFInvalidArguments)
 {
-    std::error_code ec;
-    const std::vector<uint8_t> ikm(22, 0x0b);
-    const std::vector<uint8_t> salt = {0x00, 0x01};
-    const std::vector<uint8_t> prk(32, 0x01);
+    const std::vector<uint8_t> salt(1, 0x01);
+    const auto prk = crypto_util::hkdf_extract(salt, {0x02}, EVP_sha256());
+    ASSERT_TRUE(prk.has_value());
 
-    (void)crypto_util::hkdf_extract(salt, {}, EVP_sha256(), ec);
-    EXPECT_EQ(ec, std::errc::invalid_argument);
+    auto r1 = crypto_util::hkdf_extract(salt, {}, EVP_sha256());
+    EXPECT_FALSE(r1.has_value());
+    EXPECT_EQ(r1.error(), std::make_error_code(std::errc::invalid_argument));
 
-    (void)crypto_util::hkdf_expand({}, {0x01}, 16, EVP_sha256(), ec);
-    EXPECT_EQ(ec, std::errc::invalid_argument);
+    auto r2 = crypto_util::hkdf_expand({}, {0x01}, 16, EVP_sha256());
+    EXPECT_FALSE(r2.has_value());
+    EXPECT_EQ(r2.error(), std::make_error_code(std::errc::invalid_argument));
 
-    const auto okm_empty = crypto_util::hkdf_expand(prk, {0x01}, 0, EVP_sha256(), ec);
-    EXPECT_FALSE(ec);
-    EXPECT_TRUE(okm_empty.empty());
+    const auto okm_empty = crypto_util::hkdf_expand(prk, {0x01}, 0, EVP_sha256());
+    ASSERT_TRUE(okm_empty.has_value());
+    EXPECT_TRUE(okm_empty->empty());
 }
 
 TEST(CryptoUtilTest, NonGCMCipherContext)
@@ -674,15 +651,11 @@ TEST(CryptoUtilTest, CipherContextRejectsInvalidGcmIvLength)
 
 TEST(CryptoUtilTest, HKDFNullDigestFails)
 {
-    std::error_code ec;
-    const auto prk = crypto_util::hkdf_extract({0x01}, {0x02}, nullptr, ec);
-    EXPECT_TRUE(ec);
-    EXPECT_TRUE(prk.empty());
+    const auto prk = crypto_util::hkdf_extract({0x01}, {0x02}, nullptr);
+    EXPECT_FALSE(prk.has_value());
 
-    ec.clear();
-    const auto okm = crypto_util::hkdf_expand({0x01}, {0x02}, 16, nullptr, ec);
-    EXPECT_TRUE(ec);
-    EXPECT_TRUE(okm.empty());
+    const auto okm = crypto_util::hkdf_expand({0x01}, {0x02}, 16, nullptr);
+    EXPECT_FALSE(okm.has_value());
 }
 
 TEST(CryptoUtilTest, AEADDecryptLowLevelFailureBranches)
@@ -691,16 +664,16 @@ TEST(CryptoUtilTest, AEADDecryptLowLevelFailureBranches)
     const std::vector<std::uint8_t> key(32, 0x11);
     const std::vector<std::uint8_t> nonce(12, 0x22);
     const std::vector<std::uint8_t> plaintext = {0x01, 0x02, 0x03, 0x04};
-    const auto ciphertext = crypto_util::aead_encrypt(EVP_aes_256_gcm(), key, nonce, plaintext, {}, ec);
-    ASSERT_FALSE(ec);
+    const auto ciphertext = crypto_util::aead_encrypt(EVP_aes_256_gcm(), key, nonce, plaintext, {});
+    ASSERT_TRUE(ciphertext.has_value());
 
     reality::cipher_context moved_from_ctx;
     reality::cipher_context valid_ctx(std::move(moved_from_ctx));
     (void)valid_ctx;
     std::vector<std::uint8_t> out(plaintext.size());
-    const auto n1 = crypto_util::aead_decrypt(moved_from_ctx, EVP_aes_256_gcm(), key, nonce, ciphertext, {}, out, ec);
-    EXPECT_EQ(n1, 0U);
-    EXPECT_EQ(ec, std::errc::protocol_error);
+    const auto n1 = crypto_util::aead_decrypt(moved_from_ctx, EVP_aes_256_gcm(), key, nonce, *ciphertext, {}, out);
+    EXPECT_FALSE(n1.has_value());
+    EXPECT_EQ(n1.error(), std::make_error_code(std::errc::protocol_error));
 
     reality::cipher_context cbc_ctx;
     const std::vector<std::uint8_t> long_nonce(16, 0x33);
@@ -713,10 +686,9 @@ TEST(CryptoUtilTest, AEADDecryptLowLevelFailureBranches)
                                   std::span<const std::uint8_t>(long_nonce.data(), 12),
                                   fake_ciphertext,
                                   std::vector<std::uint8_t>{0xaa},
-                                  out,
-                                  ec);
-    EXPECT_EQ(n2, 0U);
-    EXPECT_EQ(ec, std::errc::bad_message);
+                                  out);
+    EXPECT_FALSE(n2.has_value());
+    EXPECT_EQ(n2.error(), std::make_error_code(std::errc::bad_message));
 }
 
 TEST(CryptoUtilTest, AEADEncryptAppendMovedFromContextFails)
@@ -731,17 +703,17 @@ TEST(CryptoUtilTest, AEADEncryptAppendMovedFromContextFails)
     (void)valid_ctx;
 
     std::vector<std::uint8_t> out;
-    crypto_util::aead_encrypt_append(moved_from_ctx, EVP_aes_256_gcm(), key, nonce, plaintext, {}, out, ec);
-    EXPECT_EQ(ec, std::errc::protocol_error);
+    auto enc_result = crypto_util::aead_encrypt_append(moved_from_ctx, EVP_aes_256_gcm(), key, nonce, plaintext, {}, out);
+    EXPECT_FALSE(enc_result.has_value());
+    EXPECT_EQ(enc_result.error(), std::make_error_code(std::errc::protocol_error));
     EXPECT_TRUE(out.empty());
 }
 
 TEST(CryptoUtilTest, VerifySignatureNullKeyFails)
 {
-    std::error_code ec;
-    const bool ok = crypto_util::verify_tls13_signature(nullptr, std::vector<std::uint8_t>(32, 0x55), std::vector<std::uint8_t>(64, 0x11), ec);
-    EXPECT_FALSE(ok);
-    EXPECT_EQ(ec, std::errc::protocol_error);
+    const auto result = crypto_util::verify_tls13_signature(nullptr, std::vector<std::uint8_t>(32, 0x55), std::vector<std::uint8_t>(64, 0x11));
+    EXPECT_FALSE(result.has_value());
+    EXPECT_EQ(result.error(), std::make_error_code(std::errc::protocol_error));
 }
 
 TEST(CryptoUtilTest, AEADDecryptLowLevelRejectsTooShortCiphertext)
@@ -752,17 +724,15 @@ TEST(CryptoUtilTest, AEADDecryptLowLevelRejectsTooShortCiphertext)
     const std::vector<std::uint8_t> nonce(12, 0x22);
     std::vector<std::uint8_t> out(16, 0);
 
-    const auto n = crypto_util::aead_decrypt(ctx, EVP_aes_256_gcm(), key, nonce, std::vector<std::uint8_t>(15, 0), {}, out, ec);
-    EXPECT_EQ(n, 0U);
-    EXPECT_EQ(ec, std::errc::message_size);
+    const auto n = crypto_util::aead_decrypt(ctx, EVP_aes_256_gcm(), key, nonce, std::vector<std::uint8_t>(15, 0), {}, out);
+    EXPECT_FALSE(n.has_value());
+    EXPECT_EQ(n.error(), std::make_error_code(std::errc::message_size));
 }
 
 TEST(CryptoUtilTest, HKDFExpandOversizedOutputRejected)
 {
-    std::error_code ec;
-    const auto okm = crypto_util::hkdf_expand(std::vector<std::uint8_t>(32, 0x01), std::vector<std::uint8_t>{0x02}, 9000, EVP_sha256(), ec);
-    EXPECT_TRUE(ec);
-    EXPECT_TRUE(okm.empty());
+    const auto okm = crypto_util::hkdf_expand(std::vector<std::uint8_t>(32, 0x01), std::vector<std::uint8_t>{0x02}, 9000, EVP_sha256());
+    EXPECT_FALSE(okm.has_value());
 }
 
 TEST(CryptoUtilTest, ExtractPubkeyFromCertWithoutPublicKeyInfo)
@@ -770,49 +740,44 @@ TEST(CryptoUtilTest, ExtractPubkeyFromCertWithoutPublicKeyInfo)
     const auto der = build_self_signed_cert_der();
     ASSERT_FALSE(der.empty());
 
-    std::error_code ec;
     fail_next_x509_get_pubkey();
-    auto pub = crypto_util::extract_pubkey_from_cert(der, ec);
-    EXPECT_TRUE(ec);
-    EXPECT_EQ(pub.get(), nullptr);
+    auto pub = crypto_util::extract_pubkey_from_cert(der);
+    EXPECT_FALSE(pub.has_value());
 }
 
 TEST(CryptoUtilTest, HKDFExtractSetSaltFailureBranch)
 {
-    std::error_code ec;
     fail_next_hkdf_set_salt();
-    const auto prk = crypto_util::hkdf_extract(std::vector<std::uint8_t>{0x01}, std::vector<std::uint8_t>{0x02}, EVP_sha256(), ec);
-    EXPECT_EQ(ec, std::errc::protocol_error);
-    EXPECT_TRUE(prk.empty());
+    const auto prk = crypto_util::hkdf_extract(std::vector<std::uint8_t>{0x01}, std::vector<std::uint8_t>{0x02}, EVP_sha256());
+    EXPECT_FALSE(prk.has_value());
+    EXPECT_EQ(prk.error(), std::make_error_code(std::errc::protocol_error));
 }
 
 TEST(CryptoUtilTest, HKDFExpandSetKeyFailureBranch)
 {
-    std::error_code ec;
     fail_next_hkdf_set_key();
-    const auto okm = crypto_util::hkdf_expand(std::vector<std::uint8_t>(32, 0x11), std::vector<std::uint8_t>{0x01}, 16, EVP_sha256(), ec);
-    EXPECT_EQ(ec, std::errc::protocol_error);
-    EXPECT_TRUE(okm.empty());
+    const auto okm = crypto_util::hkdf_expand(std::vector<std::uint8_t>(32, 0x11), std::vector<std::uint8_t>{0x01}, 16, EVP_sha256());
+    EXPECT_FALSE(okm.has_value());
+    EXPECT_EQ(okm.error(), std::make_error_code(std::errc::protocol_error));
 }
 
 TEST(CryptoUtilTest, AEADDecryptSetTagFailureBranch)
 {
-    std::error_code ec;
     const std::vector<std::uint8_t> key(32, 0x11);
     const std::vector<std::uint8_t> nonce(12, 0x22);
     const std::vector<std::uint8_t> plaintext = {0x41, 0x42, 0x43, 0x44};
     const std::vector<std::uint8_t> aad = {0x01, 0x02};
 
-    const auto ciphertext = crypto_util::aead_encrypt(EVP_aes_256_gcm(), key, nonce, plaintext, aad, ec);
-    ASSERT_FALSE(ec);
-    ASSERT_EQ(ciphertext.size(), plaintext.size() + 16);
+    const auto ciphertext = crypto_util::aead_encrypt(EVP_aes_256_gcm(), key, nonce, plaintext, aad);
+    ASSERT_TRUE(ciphertext.has_value());
+    ASSERT_EQ(ciphertext->size(), plaintext.size() + 16);
 
     reality::cipher_context ctx;
     std::vector<std::uint8_t> out(plaintext.size(), 0);
     fail_next_set_gcm_tag();
-    const auto n = crypto_util::aead_decrypt(ctx, EVP_aes_256_gcm(), key, nonce, ciphertext, aad, out, ec);
-    EXPECT_EQ(n, 0U);
-    EXPECT_EQ(ec, std::errc::bad_message);
+    const auto n = crypto_util::aead_decrypt(ctx, EVP_aes_256_gcm(), key, nonce, *ciphertext, aad, out);
+    EXPECT_FALSE(n.has_value());
+    EXPECT_EQ(n.error(), std::make_error_code(std::errc::bad_message));
 }
 
 TEST(CryptoUtilTest, RandomGreaseFallsBackWhenRandFails)
@@ -839,47 +804,38 @@ TEST(CryptoUtilTest, GenerateX25519KeypairFailureCleansesOutput)
 
 TEST(CryptoUtilTest, ExtractPublicKeyLowLevelPrivateKeyCreationFailure)
 {
-    std::error_code ec;
     const std::vector<std::uint8_t> raw_private(32, 0x11);
 
     fail_next_x25519_raw_private_key();
-    const auto x25519_pub = crypto_util::extract_public_key(raw_private, ec);
-    EXPECT_TRUE(ec);
-    EXPECT_TRUE(x25519_pub.empty());
+    const auto x25519_pub = crypto_util::extract_public_key(raw_private);
+    EXPECT_FALSE(x25519_pub.has_value());
 
-    ec.clear();
     fail_next_ed25519_raw_private_key();
-    const auto ed25519_pub = crypto_util::extract_ed25519_public_key(raw_private, ec);
-    EXPECT_TRUE(ec);
-    EXPECT_TRUE(ed25519_pub.empty());
+    const auto ed25519_pub = crypto_util::extract_ed25519_public_key(raw_private);
+    EXPECT_FALSE(ed25519_pub.has_value());
 }
 
 TEST(CryptoUtilTest, X25519DerivePropagatesKeyObjectCreationFailure)
 {
-    std::error_code ec;
     const std::vector<std::uint8_t> private_key(32, 0x21);
     const std::vector<std::uint8_t> peer_public_key(32, 0x42);
 
     fail_next_x25519_raw_private_key();
-    const auto shared = crypto_util::x25519_derive(private_key, peer_public_key, ec);
-    EXPECT_TRUE(ec);
-    EXPECT_TRUE(shared.empty());
+    const auto shared = crypto_util::x25519_derive(private_key, peer_public_key);
+    EXPECT_FALSE(shared.has_value());
 }
 
 TEST(CryptoUtilTest, HkdfLowLevelFailureBranches)
 {
-    std::error_code ec;
-
     fail_next_pkey_derive();
-    const auto prk = crypto_util::hkdf_extract(std::vector<std::uint8_t>{0x01}, std::vector<std::uint8_t>{0x02}, EVP_sha256(), ec);
-    EXPECT_EQ(ec, std::errc::protocol_error);
-    EXPECT_TRUE(prk.empty());
+    const auto prk = crypto_util::hkdf_extract(std::vector<std::uint8_t>{0x01}, std::vector<std::uint8_t>{0x02}, EVP_sha256());
+    EXPECT_FALSE(prk.has_value());
+    EXPECT_EQ(prk.error(), std::make_error_code(std::errc::protocol_error));
 
-    ec.clear();
     fail_next_hkdf_add_info();
-    const auto okm = crypto_util::hkdf_expand(std::vector<std::uint8_t>(32, 0x03), std::vector<std::uint8_t>{0x04}, 16, EVP_sha256(), ec);
-    EXPECT_EQ(ec, std::errc::protocol_error);
-    EXPECT_TRUE(okm.empty());
+    const auto okm = crypto_util::hkdf_expand(std::vector<std::uint8_t>(32, 0x03), std::vector<std::uint8_t>{0x04}, 16, EVP_sha256());
+    EXPECT_FALSE(okm.has_value());
+    EXPECT_EQ(okm.error(), std::make_error_code(std::errc::protocol_error));
 }
 
 TEST(CryptoUtilTest, VerifyTls13SignatureHandlesMdCtxCreationFailure)
@@ -892,11 +848,10 @@ TEST(CryptoUtilTest, VerifyTls13SignatureHandlesMdCtxCreationFailure)
     EVP_PKEY_CTX_free(keygen_ctx);
     ASSERT_NE(pkey, nullptr);
 
-    std::error_code ec;
     fail_next_md_ctx_new();
-    const bool ok = crypto_util::verify_tls13_signature(pkey, std::vector<std::uint8_t>(32, 0x77), std::vector<std::uint8_t>(64, 0x88), ec);
-    EXPECT_FALSE(ok);
-    EXPECT_EQ(ec, std::errc::not_enough_memory);
+    const auto result = crypto_util::verify_tls13_signature(pkey, std::vector<std::uint8_t>(32, 0x77), std::vector<std::uint8_t>(64, 0x88));
+    EXPECT_FALSE(result.has_value());
+    EXPECT_EQ(result.error(), std::make_error_code(std::errc::not_enough_memory));
 
     EVP_PKEY_free(pkey);
 }

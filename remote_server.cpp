@@ -279,57 +279,68 @@ std::size_t key_len_from_cipher_suite(const std::uint16_t cipher_suite)
     return (cipher_suite == 0x1302) ? 32 : 16;
 }
 
-bool build_auth_decrypt_inputs(const client_hello_info& info,
-                               const std::vector<std::uint8_t>& buf,
-                               const std::vector<std::uint8_t>& server_private_key,
-                               const std::vector<std::uint8_t>& peer_pub_key,
-                               std::vector<std::uint8_t>& auth_key,
-                               std::vector<std::uint8_t>& nonce,
-                               std::vector<std::uint8_t>& aad,
-                               std::error_code& ec,
-                               const connection_context& ctx)
+struct auth_inputs
 {
-    const auto shared = reality::crypto_util::x25519_derive(server_private_key, peer_pub_key, ec);
-    if (ec)
+    std::vector<std::uint8_t> auth_key;
+    std::vector<std::uint8_t> nonce;
+    std::vector<std::uint8_t> aad;
+};
+
+std::expected<auth_inputs, std::error_code> build_auth_decrypt_inputs(const client_hello_info& info,
+                                                                      const std::vector<std::uint8_t>& buf,
+                                                                      const std::vector<std::uint8_t>& server_private_key,
+                                                                      const std::vector<std::uint8_t>& peer_pub_key,
+                                                                      const connection_context& ctx)
+{
+    auto shared_result = reality::crypto_util::x25519_derive(server_private_key, peer_pub_key);
+    if (!shared_result)
     {
+        const auto ec = shared_result.error();
         LOG_CTX_ERROR(ctx, "{} auth fail x25519 derive failed {}", log_event::kAuth, ec.message());
-        return false;
+        return std::unexpected(ec);
     }
+    const auto& shared = *shared_result;
 
     const auto salt = std::vector<std::uint8_t>(info.random.begin(), info.random.begin() + 20);
     const auto r_info = reality::crypto_util::hex_to_bytes("5245414c495459");
-    const auto prk = reality::crypto_util::hkdf_extract(salt, shared, EVP_sha256(), ec);
-    auth_key = reality::crypto_util::hkdf_expand(prk, r_info, 16, EVP_sha256(), ec);
-    nonce.assign(info.random.begin() + 20, info.random.end());
+    auto prk_result = reality::crypto_util::hkdf_extract(salt, shared, EVP_sha256());
+    if (!prk_result)
+    {
+        return std::unexpected(prk_result.error());
+    }
+    auto auth_key_result = reality::crypto_util::hkdf_expand(*prk_result, r_info, 16, EVP_sha256());
+    if (!auth_key_result)
+    {
+        return std::unexpected(auth_key_result.error());
+    }
+    
+    auth_inputs out;
+    out.auth_key = std::move(*auth_key_result);
+    out.nonce.assign(info.random.begin() + 20, info.random.end());
     LOG_CTX_DEBUG(ctx, "auth key derived");
 
     if (info.sid_offset < 5)
     {
         LOG_CTX_ERROR(ctx, "{} auth fail invalid sid offset {}", log_event::kAuth, info.sid_offset);
-        return false;
+        return std::unexpected(std::make_error_code(std::errc::invalid_argument));
     }
 
-    aad.assign(buf.begin() + 5, buf.end());
+    out.aad.assign(buf.begin() + 5, buf.end());
     const std::uint32_t aad_sid_offset = info.sid_offset - 5;
-    if (aad_sid_offset + constants::auth::kSessionIdLen > aad.size())
+    if (aad_sid_offset + constants::auth::kSessionIdLen > out.aad.size())
     {
         LOG_CTX_ERROR(ctx, "{} auth fail aad size mismatch", log_event::kAuth);
-        return false;
+        return std::unexpected(std::make_error_code(std::errc::invalid_argument));
     }
-    std::fill_n(aad.begin() + aad_sid_offset, constants::auth::kSessionIdLen, 0);
-    return true;
+    std::fill_n(out.aad.begin() + aad_sid_offset, constants::auth::kSessionIdLen, 0);
+    return out;
 }
 
-bool verify_auth_payload_fields(const std::optional<reality::auth_payload>& auth,
+bool verify_auth_payload_fields(const reality::auth_payload& auth,
                                 const std::vector<std::uint8_t>& short_id_bytes,
                                 const std::string& sni,
                                 const connection_context& ctx)
 {
-    if (!auth.has_value())
-    {
-        LOG_CTX_ERROR(ctx, "{} auth fail invalid payload", log_event::kAuth);
-        return false;
-    }
     if (short_id_bytes.empty())
     {
         return true;
@@ -343,7 +354,7 @@ bool verify_auth_payload_fields(const std::optional<reality::auth_payload>& auth
 
     std::array<std::uint8_t, reality::kShortIdMaxLen> expected_short_id = {};
     std::copy(short_id_bytes.begin(), short_id_bytes.end(), expected_short_id.begin());
-    if (CRYPTO_memcmp(auth->short_id.data(), expected_short_id.data(), expected_short_id.size()) != 0)
+    if (CRYPTO_memcmp(auth.short_id.data(), expected_short_id.data(), expected_short_id.size()) != 0)
     {
         auto& stats = statistics::instance();
         stats.inc_auth_failures();
@@ -376,7 +387,6 @@ bool verify_auth_timestamp(const std::uint32_t timestamp, const std::string& sni
 
 struct handshake_crypto_result
 {
-    bool ok = false;
     reality::handshake_keys hs_keys;
     std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> s_hs_keys;
     std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> c_hs_keys;
@@ -386,18 +396,17 @@ struct handshake_crypto_result
     std::vector<std::uint8_t> flight2_enc;
 };
 
-handshake_crypto_result build_handshake_crypto(const std::vector<std::uint8_t>& server_random,
-                                               const std::vector<std::uint8_t>& session_id,
-                                               const std::uint16_t cipher_suite,
-                                               const std::uint16_t key_share_group,
-                                               const std::vector<std::uint8_t>& key_share_data,
-                                               const std::vector<std::uint8_t>& shared_secret,
-                                               const std::vector<std::uint8_t>& cert_msg,
-                                               const std::string& alpn,
-                                               const std::vector<std::uint8_t>& sign_key_bytes,
-                                               reality::transcript& trans,
-                                               std::error_code& ec,
-                                               const connection_context& ctx)
+std::expected<handshake_crypto_result, std::error_code> build_handshake_crypto(const std::vector<std::uint8_t>& server_random,
+                                                                               const std::vector<std::uint8_t>& session_id,
+                                                                               const std::uint16_t cipher_suite,
+                                                                               const std::uint16_t key_share_group,
+                                                                               const std::vector<std::uint8_t>& key_share_data,
+                                                                               const std::vector<std::uint8_t>& shared_secret,
+                                                                               const std::vector<std::uint8_t>& cert_msg,
+                                                                               const std::string& alpn,
+                                                                               const std::vector<std::uint8_t>& sign_key_bytes,
+                                                                               reality::transcript& trans,
+                                                                               const connection_context& ctx)
 {
     handshake_crypto_result out;
     out.sh_msg = reality::construct_server_hello(server_random, session_id, cipher_suite, key_share_group, key_share_data);
@@ -405,12 +414,23 @@ handshake_crypto_result build_handshake_crypto(const std::vector<std::uint8_t>& 
 
     out.md = digest_from_cipher_suite(cipher_suite);
     trans.set_protocol_hash(out.md);
-    out.hs_keys = reality::tls_key_schedule::derive_handshake_keys(shared_secret, trans.finish(), out.md, ec);
+    auto hs_keys_result = reality::tls_key_schedule::derive_handshake_keys(shared_secret, trans.finish(), out.md);
+    if (!hs_keys_result)
+    {
+        return std::unexpected(hs_keys_result.error());
+    }
+    out.hs_keys = std::move(*hs_keys_result);
 
     constexpr std::size_t iv_len = 12;
     const auto key_len = key_len_from_cipher_suite(cipher_suite);
-    out.c_hs_keys = reality::tls_key_schedule::derive_traffic_keys(out.hs_keys.client_handshake_traffic_secret, ec, key_len, iv_len, out.md);
-    out.s_hs_keys = reality::tls_key_schedule::derive_traffic_keys(out.hs_keys.server_handshake_traffic_secret, ec, key_len, iv_len, out.md);
+    auto c_hs = reality::tls_key_schedule::derive_traffic_keys(out.hs_keys.client_handshake_traffic_secret, key_len, iv_len, out.md);
+    auto s_hs = reality::tls_key_schedule::derive_traffic_keys(out.hs_keys.server_handshake_traffic_secret, key_len, iv_len, out.md);
+    if (!c_hs || !s_hs)
+    {
+        return std::unexpected(c_hs ? s_hs.error() : c_hs.error());
+    }
+    out.c_hs_keys = std::move(*c_hs);
+    out.s_hs_keys = std::move(*s_hs);
 
     const auto enc_ext = reality::construct_encrypted_extensions(alpn);
     trans.update(enc_ext);
@@ -420,22 +440,20 @@ handshake_crypto_result build_handshake_crypto(const std::vector<std::uint8_t>& 
     if (sign_key == nullptr)
     {
         LOG_CTX_ERROR(ctx, "{} failed to load private key", log_event::kHandshake);
-        ec = asio::error::fault;
-        return out;
+        return std::unexpected(asio::error::fault);
     }
 
     const auto cv = reality::construct_certificate_verify(sign_key.get(), trans.finish());
     if (cv.empty())
     {
         LOG_CTX_ERROR(ctx, "{} certificate verify construct failed", log_event::kHandshake);
-        ec = asio::error::fault;
-        return out;
+        return std::unexpected(asio::error::fault);
     }
     trans.update(cv);
 
-    const auto s_fin_verify =
-        reality::tls_key_schedule::compute_finished_verify_data(out.hs_keys.server_handshake_traffic_secret, trans.finish(), out.md, ec);
-    const auto s_fin = reality::construct_finished(s_fin_verify);
+    const auto s_fin_result =
+        reality::tls_key_schedule::compute_finished_verify_data(out.hs_keys.server_handshake_traffic_secret, trans.finish(), out.md);
+    const auto s_fin = reality::construct_finished(s_fin_result.value_or(std::vector<std::uint8_t>{}));
     trans.update(s_fin);
 
     std::vector<std::uint8_t> flight2_plain;
@@ -445,15 +463,16 @@ handshake_crypto_result build_handshake_crypto(const std::vector<std::uint8_t>& 
     flight2_plain.insert(flight2_plain.end(), s_fin.begin(), s_fin.end());
 
     out.cipher = cipher_from_cipher_suite(cipher_suite);
-    out.flight2_enc =
-        reality::tls_record_layer::encrypt_record(out.cipher, out.s_hs_keys.first, out.s_hs_keys.second, 0, flight2_plain, reality::kContentTypeHandshake, ec);
-    if (ec)
+    auto flight2_result =
+        reality::tls_record_layer::encrypt_record(out.cipher, out.s_hs_keys.first, out.s_hs_keys.second, 0, flight2_plain, reality::kContentTypeHandshake);
+    if (!flight2_result)
     {
+        const auto ec = flight2_result.error();
         LOG_CTX_ERROR(ctx, "{} auth fail flight2 encrypt failed {}", log_event::kAuth, ec.message());
-        return out;
+        return std::unexpected(ec);
     }
+    out.flight2_enc = std::move(*flight2_result);
 
-    out.ok = true;
     return out;
 }
 
@@ -518,30 +537,33 @@ bool validate_auth_inputs(const client_hello_info& info, const bool auth_config_
     return true;
 }
 
-std::optional<reality::auth_payload> decrypt_auth_payload(const client_hello_info& info,
-                                                          const std::vector<std::uint8_t>& buf,
-                                                          const std::vector<std::uint8_t>& private_key,
-                                                          const std::vector<std::uint8_t>& peer_pub_key,
-                                                          std::error_code& ec,
-                                                          const connection_context& ctx)
+std::expected<reality::auth_payload, std::error_code> decrypt_auth_payload(const client_hello_info& info,
+                                                                           const std::vector<std::uint8_t>& buf,
+                                                                           const std::vector<std::uint8_t>& private_key,
+                                                                           const std::vector<std::uint8_t>& peer_pub_key,
+                                                                           const connection_context& ctx)
 {
-    std::vector<std::uint8_t> auth_key;
-    std::vector<std::uint8_t> nonce;
-    std::vector<std::uint8_t> aad;
-    if (!build_auth_decrypt_inputs(info, buf, private_key, peer_pub_key, auth_key, nonce, aad, ec, ctx))
+    const auto inputs_result = build_auth_decrypt_inputs(info, buf, private_key, peer_pub_key, ctx);
+    if (!inputs_result)
     {
-        return std::nullopt;
+        return std::unexpected(inputs_result.error());
     }
+    const auto& inputs = *inputs_result;
 
     const EVP_CIPHER* auth_cipher = EVP_aes_128_gcm();
-    const auto pt = reality::crypto_util::aead_decrypt(auth_cipher, auth_key, nonce, info.session_id, aad, ec);
-    if (ec || pt.size() != 16)
+    auto pt = reality::crypto_util::aead_decrypt(auth_cipher, inputs.auth_key, inputs.nonce, info.session_id, inputs.aad);
+    if (!pt || pt->size() != 16)
     {
-        LOG_CTX_ERROR(ctx, "{} auth fail decrypt failed tag mismatch ec {} pt size {}", log_event::kAuth, ec.message(), pt.size());
-        return std::nullopt;
+        LOG_CTX_ERROR(ctx, "{} auth fail decrypt failed tag mismatch pt size {}", log_event::kAuth, pt ? pt->size() : 0);
+        return std::unexpected(std::make_error_code(std::errc::bad_message));
     }
 
-    return reality::parse_auth_payload(pt);
+    auto payload = reality::parse_auth_payload(*pt);
+    if (!payload)
+    {
+        return std::unexpected(std::make_error_code(std::errc::bad_message));
+    }
+    return *payload;
 }
 
 bool verify_replay_guard(replay_cache& replay_cache, const std::vector<std::uint8_t>& session_id, const std::string& sni, const connection_context& ctx)
@@ -558,15 +580,14 @@ bool verify_replay_guard(replay_cache& replay_cache, const std::vector<std::uint
     return true;
 }
 
-bool generate_server_random(std::vector<std::uint8_t>& server_random, std::error_code& ec)
+std::expected<std::vector<std::uint8_t>, std::error_code> generate_server_random()
 {
-    server_random.assign(32, 0);
+    std::vector<std::uint8_t> server_random(32, 0);
     if (RAND_bytes(server_random.data(), 32) != 1)
     {
-        ec = std::make_error_code(std::errc::operation_canceled);
-        return false;
+        return std::unexpected(std::make_error_code(std::errc::operation_canceled));
     }
-    return true;
+    return server_random;
 }
 
 void log_ephemeral_public_key(const std::uint8_t* public_key, const connection_context& ctx)
@@ -777,9 +798,8 @@ remote_server::remote_server(io_context_pool& pool, const config& cfg)
         LOG_WARN("reality fallback type not supported {}", fallback_type_);
     }
     apply_reality_dest_config(cfg.reality, fallback_dest_host_, fallback_dest_port_, fallback_dest_valid_, auth_config_valid_);
-    std::error_code ignore;
-    const auto pub = reality::crypto_util::extract_public_key(private_key_, ignore);
-    LOG_INFO("server public key size {}", pub.size());
+    auto pub = reality::crypto_util::extract_public_key(private_key_);
+    LOG_INFO("server public key size {}", pub ? pub->size() : 0);
 }
 
 remote_server::~remote_server()
@@ -957,15 +977,14 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::negotiate_re
         co_return server_handshake_res{.ok = false};
     }
 
-    std::error_code ec;
-    auto sh_res = co_await perform_handshake_response(s, info, trans, ctx, ec);
+    auto sh_res = co_await perform_handshake_response(s, info, trans, ctx);
     if (!sh_res.ok)
     {
-        LOG_CTX_ERROR(ctx, "{} response error {}", log_event::kHandshake, ec.message());
+        LOG_CTX_ERROR(ctx, "{} response error {}", log_event::kHandshake, sh_res.ec.message());
         co_return server_handshake_res{.ok = false};
     }
 
-    if (!co_await verify_client_finished(s, sh_res.c_hs_keys, sh_res.hs_keys, trans, sh_res.cipher, sh_res.negotiated_md, ctx, ec))
+    if (const auto ec = co_await verify_client_finished(s, sh_res.c_hs_keys, sh_res.hs_keys, trans, sh_res.cipher, sh_res.negotiated_md, ctx); ec)
     {
         co_return server_handshake_res{.ok = false};
     }
@@ -986,14 +1005,13 @@ asio::awaitable<void> remote_server::handle(std::shared_ptr<asio::ip::tcp::socke
         co_return;
     }
 
-    std::error_code ec;
-    std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> c_app_keys;
-    std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> s_app_keys;
-    if (!derive_application_traffic_keys(sh_res, c_app_keys, s_app_keys, ec))
+    auto app_keys_result = derive_application_traffic_keys(sh_res);
+    if (!app_keys_result)
     {
-        LOG_CTX_ERROR(ctx, "{} derive app keys failed {}", log_event::kHandshake, ec.message());
+        LOG_CTX_ERROR(ctx, "{} derive app keys failed {}", log_event::kHandshake, app_keys_result.error().message());
         co_return;
     }
+    const auto& app_keys = *app_keys_result;
 
     LOG_CTX_INFO(ctx, "{} tunnel starting", log_event::kConnEstablished);
 
@@ -1002,39 +1020,40 @@ asio::awaitable<void> remote_server::handle(std::shared_ptr<asio::ip::tcp::socke
         co_return;
     }
 
-    auto tunnel = create_tunnel(s, sh_res, c_app_keys, s_app_keys, conn_id, ctx);
+    auto tunnel = create_tunnel(s, sh_res, app_keys.c_app_keys, app_keys.s_app_keys, conn_id, ctx);
     install_syn_callback(tunnel, ctx);
 
     co_await tunnel->run();
 }
 
-bool remote_server::derive_application_traffic_keys(const server_handshake_res& sh_res,
-                                                    std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& c_app_keys,
-                                                    std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& s_app_keys,
-                                                    std::error_code& ec) const
+std::expected<remote_server::app_keys, std::error_code> remote_server::derive_application_traffic_keys(
+    const server_handshake_res& sh_res) const
 {
-    const auto app_sec =
-        reality::tls_key_schedule::derive_application_secrets(sh_res.hs_keys.master_secret, sh_res.handshake_hash, sh_res.negotiated_md, ec);
-    if (ec)
+    auto app_sec =
+        reality::tls_key_schedule::derive_application_secrets(sh_res.hs_keys.master_secret, sh_res.handshake_hash, sh_res.negotiated_md);
+    if (!app_sec)
     {
-        return false;
+        return std::unexpected(app_sec.error());
     }
 
     const std::size_t key_len = EVP_CIPHER_key_length(sh_res.cipher);
     constexpr std::size_t iv_len = 12;
-    c_app_keys = reality::tls_key_schedule::derive_traffic_keys(app_sec.first, ec, key_len, iv_len, sh_res.negotiated_md);
-    if (ec)
+    auto c_keys = reality::tls_key_schedule::derive_traffic_keys(app_sec->first, key_len, iv_len, sh_res.negotiated_md);
+    if (!c_keys)
     {
-        return false;
+        return std::unexpected(c_keys.error());
     }
 
-    s_app_keys = reality::tls_key_schedule::derive_traffic_keys(app_sec.second, ec, key_len, iv_len, sh_res.negotiated_md);
-    if (ec)
+    auto s_keys = reality::tls_key_schedule::derive_traffic_keys(app_sec->second, key_len, iv_len, sh_res.negotiated_md);
+    if (!s_keys)
     {
-        return false;
+        return std::unexpected(s_keys.error());
     }
 
-    return true;
+    app_keys keys;
+    keys.c_app_keys = std::move(*c_keys);
+    keys.s_app_keys = std::move(*s_keys);
+    return keys;
 }
 
 asio::awaitable<bool> remote_server::reject_connection_if_over_limit(const std::shared_ptr<asio::ip::tcp::socket>& s,
@@ -1262,14 +1281,13 @@ bool remote_server::authenticate_client(const client_hello_info& info, const std
         return false;
     }
 
-    std::error_code ec;
-    const auto auth = decrypt_auth_payload(info, buf, private_key_, selected->x25519_pub, ec, ctx);
+    const auto auth = decrypt_auth_payload(info, buf, private_key_, selected->x25519_pub, ctx);
     if (!auth.has_value())
     {
         return false;
     }
 
-    if (!verify_auth_payload_fields(auth, short_id_bytes_, info.sni, ctx))
+    if (!verify_auth_payload_fields(*auth, short_id_bytes_, info.sni, ctx))
     {
         return false;
     }
@@ -1281,60 +1299,60 @@ bool remote_server::authenticate_client(const client_hello_info& info, const std
     return verify_replay_guard(replay_cache_, info.session_id, info.sni, ctx);
 }
 
-asio::awaitable<remote_server::server_handshake_res> remote_server::perform_handshake_response(std::shared_ptr<asio::ip::tcp::socket> s,
-                                                                                               const client_hello_info& info,
-                                                                                               reality::transcript& trans,
-                                                                                               const connection_context& ctx,
-                                                                                               std::error_code& ec)
+asio::awaitable<remote_server::server_handshake_res> remote_server::perform_handshake_response(
+    std::shared_ptr<asio::ip::tcp::socket> s,
+    const client_hello_info& info,
+    reality::transcript& trans,
+    const connection_context& ctx)
 {
     const auto key_pair = key_rotator_.get_current_key();
     const std::uint8_t* public_key = key_pair->public_key;
     const std::uint8_t* private_key = key_pair->private_key;
-    std::vector<std::uint8_t> server_random;
-    if (!generate_server_random(server_random, ec))
+    
+    auto server_random_result = generate_server_random();
+    if (!server_random_result)
     {
-        co_return server_handshake_res{.ok = false};
+        co_return server_handshake_res{.ok = false, .ec = server_random_result.error()};
     }
+    const auto& server_random = *server_random_result;
 
     log_ephemeral_public_key(public_key, ctx);
 
-    std::vector<std::uint8_t> sh_shared;
-    std::vector<std::uint8_t> key_share_data;
-    std::uint16_t key_share_group = 0;
-    if (!derive_server_key_share(info, public_key, private_key, ctx, sh_shared, key_share_data, key_share_group, ec))
+    auto key_share_res = derive_server_key_share(info, public_key, private_key, ctx);
+    if (!key_share_res)
     {
-        co_return server_handshake_res{.ok = false};
+        co_return server_handshake_res{.ok = false, .ec = key_share_res.error()};
     }
+    const auto& ks = *key_share_res;
 
     const auto target = resolve_certificate_target(info);
     const auto cert = co_await load_certificate_material(target, ctx);
     if (!cert.has_value())
     {
-        ec = asio::error::connection_refused;
-        co_return server_handshake_res{.ok = false};
+        co_return server_handshake_res{.ok = false, .ec = asio::error::connection_refused};
     }
 
     const std::uint16_t cipher_suite = select_cipher_suite_from_fingerprint(cert->fingerprint);
-    const auto crypto = build_handshake_crypto(server_random,
-                                               info.session_id,
-                                               cipher_suite,
-                                               key_share_group,
-                                               key_share_data,
-                                               sh_shared,
-                                               cert->cert_msg,
-                                               cert->fingerprint.alpn,
-                                               private_key_,
-                                               trans,
-                                               ec,
-                                               ctx);
-    if (!crypto.ok)
+    auto crypto_result = build_handshake_crypto(server_random,
+                                                info.session_id,
+                                                cipher_suite,
+                                                ks.key_share_group,
+                                                ks.key_share_data,
+                                                ks.sh_shared,
+                                                cert->cert_msg,
+                                                cert->fingerprint.alpn,
+                                                private_key_,
+                                                trans,
+                                                ctx);
+    if (!crypto_result)
     {
-        co_return server_handshake_res{.ok = false};
+        co_return server_handshake_res{.ok = false, .ec = crypto_result.error()};
     }
+    const auto& crypto = *crypto_result;
 
-    if (!co_await send_server_hello_flight(s, crypto.sh_msg, crypto.flight2_enc, ctx, ec))
+    if (const auto ec = co_await send_server_hello_flight(s, crypto.sh_msg, crypto.flight2_enc, ctx); ec)
     {
-        co_return server_handshake_res{.ok = false};
+        co_return server_handshake_res{.ok = false, .ec = ec};
     }
 
     co_return server_handshake_res{
@@ -1346,32 +1364,31 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::perform_hand
         .negotiated_md = crypto.md};
 }
 
-bool remote_server::derive_server_key_share(const client_hello_info& info,
-                                            const std::uint8_t* public_key,
-                                            const std::uint8_t* private_key,
-                                            const connection_context& ctx,
-                                            std::vector<std::uint8_t>& sh_shared,
-                                            std::vector<std::uint8_t>& key_share_data,
-                                            std::uint16_t& key_share_group,
-                                            std::error_code& ec) const
+std::expected<remote_server::key_share_result, std::error_code> remote_server::derive_server_key_share(
+    const client_hello_info& info,
+    const std::uint8_t* public_key,
+    const std::uint8_t* private_key,
+    const connection_context& ctx) const
 {
     const auto selected = select_key_share(info, ctx);
     if (!selected.has_value())
     {
-        ec = asio::error::invalid_argument;
-        return false;
+        return std::unexpected(std::make_error_code(std::errc::invalid_argument));
     }
 
-    sh_shared = reality::crypto_util::x25519_derive(std::vector<std::uint8_t>(private_key, private_key + 32), selected->x25519_pub, ec);
-    if (ec)
+    auto sh_shared_result = reality::crypto_util::x25519_derive(std::vector<std::uint8_t>(private_key, private_key + 32), selected->x25519_pub);
+    if (!sh_shared_result)
     {
+        const auto ec = sh_shared_result.error();
         LOG_CTX_ERROR(ctx, "{} x25519 derive failed", log_event::kHandshake);
-        return false;
+        return std::unexpected(ec);
     }
-
-    key_share_data.assign(public_key, public_key + 32);
-    key_share_group = selected->group;
-    return true;
+    
+    key_share_result res;
+    res.sh_shared = std::move(*sh_shared_result);
+    res.key_share_data.assign(public_key, public_key + 32);
+    res.key_share_group = selected->group;
+    return res;
 }
 
 remote_server::certificate_target remote_server::resolve_certificate_target(const client_hello_info& info) const
@@ -1420,11 +1437,11 @@ asio::awaitable<std::optional<remote_server::certificate_material>> remote_serve
     co_return material;
 }
 
-asio::awaitable<bool> remote_server::send_server_hello_flight(const std::shared_ptr<asio::ip::tcp::socket>& s,
-                                                              const std::vector<std::uint8_t>& sh_msg,
-                                                              const std::vector<std::uint8_t>& flight2_enc,
-                                                              const connection_context& ctx,
-                                                              std::error_code& ec) const
+asio::awaitable<std::error_code> remote_server::send_server_hello_flight(
+    const std::shared_ptr<asio::ip::tcp::socket>& s,
+    const std::vector<std::uint8_t>& sh_msg,
+    const std::vector<std::uint8_t>& flight2_enc,
+    const connection_context& ctx) const
 {
     LOG_CTX_INFO(ctx, "generated sh msg size {}", sh_msg.size());
     const auto out_sh = compose_server_hello_flight(sh_msg, flight2_enc);
@@ -1434,53 +1451,59 @@ asio::awaitable<bool> remote_server::send_server_hello_flight(const std::shared_
     (void)wn;
     if (we)
     {
-        ec = we;
-        co_return false;
+        co_return we;
     }
-    co_return true;
+    co_return std::error_code{};
 }
 
-asio::awaitable<bool> remote_server::verify_client_finished(std::shared_ptr<asio::ip::tcp::socket> s,
-                                                            const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& c_hs_keys,
-                                                            const reality::handshake_keys& hs_keys,
-                                                            const reality::transcript& trans,
-                                                            const EVP_CIPHER* cipher,
-                                                            const EVP_MD* md,
-                                                            const connection_context& ctx,
-                                                            std::error_code& ec)
+asio::awaitable<std::error_code> remote_server::verify_client_finished(
+    std::shared_ptr<asio::ip::tcp::socket> s,
+    const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& c_hs_keys,
+    const reality::handshake_keys& hs_keys,
+    const reality::transcript& trans,
+    const EVP_CIPHER* cipher,
+    const EVP_MD* md,
+    const connection_context& ctx)
 {
     std::array<std::uint8_t, 5> header = {0};
     if (!co_await read_tls_record_header_allow_ccs(s, header, ctx))
     {
-        co_return false;
+        co_return asio::error::fault;
     }
 
     const auto body_len = static_cast<std::uint16_t>((header[3] << 8) | header[4]);
     std::vector<std::uint8_t> body;
     if (!co_await read_tls_record_body(s, body_len, body, ctx))
     {
-        co_return false;
+        co_return asio::error::fault;
     }
 
     const auto record = compose_tls_record(header, body);
     std::uint8_t ctype = 0;
-    const auto plaintext = reality::tls_record_layer::decrypt_record(cipher, c_hs_keys.first, c_hs_keys.second, 0, record, ctype, ec);
-    if (ec)
+    auto plaintext_result = reality::tls_record_layer::decrypt_record(cipher, c_hs_keys.first, c_hs_keys.second, 0, record, ctype);
+    if (!plaintext_result)
     {
+        const auto ec = plaintext_result.error();
         statistics::instance().inc_client_finished_failures();
         LOG_CTX_ERROR(ctx, "{} client finished decrypt failed {}", log_event::kHandshake, ec.message());
-        co_return false;
+        co_return ec;
     }
 
-    const auto expected_fin_verify =
-        reality::tls_key_schedule::compute_finished_verify_data(hs_keys.client_handshake_traffic_secret, trans.finish(), md, ec);
-    if (ec)
+    auto expected_fin_verify =
+        reality::tls_key_schedule::compute_finished_verify_data(hs_keys.client_handshake_traffic_secret, trans.finish(), md);
+    if (!expected_fin_verify)
     {
+        const auto ec = expected_fin_verify.error();
         statistics::instance().inc_client_finished_failures();
         LOG_CTX_ERROR(ctx, "{} client finished verify data failed {}", log_event::kHandshake, ec.message());
-        co_return false;
+        co_return ec;
     }
-    co_return verify_client_finished_plaintext(plaintext, ctype, expected_fin_verify, ctx);
+    
+    if (!verify_client_finished_plaintext(*plaintext_result, ctype, *expected_fin_verify, ctx))
+    {
+        co_return std::make_error_code(std::errc::bad_message);
+    }
+    co_return std::error_code{};
 }
 
 std::pair<std::string, std::string> remote_server::find_fallback_target_by_sni(const std::string& sni) const

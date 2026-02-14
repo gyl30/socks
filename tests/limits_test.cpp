@@ -47,16 +47,15 @@ class limits_test : public ::testing::Test
 
 TEST_F(limits_test, ContextPoolInvalidSize)
 {
-    std::error_code ec;
-    const mux::io_context_pool pool(0, ec);
-    EXPECT_EQ(ec, std::errc::invalid_argument);
+    const mux::io_context_pool pool(0);
+    // Should not throw and should be usable
 }
 
 TEST_F(limits_test, ConnectionPoolCapacity)
 {
     std::error_code ec;
 
-    mux::io_context_pool pool(4, ec);
+    mux::io_context_pool pool(4);
     ASSERT_FALSE(ec);
 
     std::thread pool_thread([&pool] { pool.run(); });

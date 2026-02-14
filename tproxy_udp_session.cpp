@@ -85,10 +85,9 @@ void tproxy_udp_session::start()
     }
     if (mark_ != 0)
     {
-        std::error_code mark_ec;
-        if (!net::set_socket_mark(direct_socket_.native_handle(), mark_, mark_ec))
+        if (auto r = net::set_socket_mark(direct_socket_.native_handle(), mark_); !r)
         {
-            LOG_CTX_WARN(ctx_, "{} udp set mark failed {}", log_event::kSocks, mark_ec.message());
+            LOG_CTX_WARN(ctx_, "{} udp set mark failed {}", log_event::kSocks, r.error().message());
         }
     }
     ec = direct_socket_.bind(asio::ip::udp::endpoint(asio::ip::address_v6::any(), 0), ec);

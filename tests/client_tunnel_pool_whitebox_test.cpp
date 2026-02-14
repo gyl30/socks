@@ -208,7 +208,7 @@ std::vector<std::uint8_t> build_certificate_verify_message()
 TEST(ClientTunnelPoolWhiteboxTest, ConfigValidationAndStartGuardBranches)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     auto cfg = make_base_cfg();
@@ -242,7 +242,7 @@ TEST(ClientTunnelPoolWhiteboxTest, ConfigValidationAndStartGuardBranches)
 TEST(ClientTunnelPoolWhiteboxTest, SelectAndIndexGuardBranches)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     auto cfg = make_base_cfg();
@@ -269,7 +269,7 @@ TEST(ClientTunnelPoolWhiteboxTest, SelectAndIndexGuardBranches)
 TEST(ClientTunnelPoolWhiteboxTest, BuildTunnelAndWaitRetryBranches)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     auto cfg = make_base_cfg();
@@ -301,7 +301,7 @@ TEST(ClientTunnelPoolWhiteboxTest, BuildTunnelAndWaitRetryBranches)
 TEST(ClientTunnelPoolWhiteboxTest, TcpConnectAndHandshakeErrorBranches)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     auto cfg = make_base_cfg();
@@ -350,7 +350,7 @@ TEST(ClientTunnelPoolWhiteboxTest, TcpConnectAndHandshakeErrorBranches)
 TEST(ClientTunnelPoolWhiteboxTest, ClientHelloAndServerHelloIoErrorBranches)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     auto cfg = make_base_cfg();
@@ -609,7 +609,7 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsMalformedCertificateM
 TEST(ClientTunnelPoolWhiteboxTest, ClientHelloBuildFailureBranchesForAuthMaterialAndPayload)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     asio::io_context io_context;
 
@@ -861,7 +861,7 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopCertificateRangeAndFinishedB
 TEST(ClientTunnelPoolWhiteboxTest, ClientHelloAndSocketPreparationFailureBranchesWithWrappers)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     asio::io_context io_context;
 
@@ -1048,7 +1048,7 @@ TEST(ClientTunnelPoolWhiteboxTest, ProcessServerHelloCoversX25519DeriveFailure)
 TEST(ClientTunnelPoolWhiteboxTest, TcpConnectSuccessCoversLocalEndpointFailureLogBranch)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     asio::io_context io_context;
