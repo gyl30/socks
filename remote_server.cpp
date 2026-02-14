@@ -864,29 +864,36 @@ void remote_server::stop()
     stop_.store(true, std::memory_order_release);
     LOG_INFO("remote server stopping");
 
-    asio::dispatch(io_context_,
-                   [self = shared_from_this()]()
-                   {
-                       std::error_code close_ec;
-                       close_ec = self->acceptor_.close(close_ec);
-                       if (close_ec && close_ec != asio::error::bad_descriptor)
-                       {
-                           LOG_WARN("acceptor close failed {}", close_ec.message());
-                       }
+    if (io_context_.stopped() || io_context_.get_executor().running_in_this_thread())
+    {
+        stop_local();
+        return;
+    }
 
-                       LOG_INFO("closing {} active tunnels", self->active_tunnels_.size());
-                       auto tunnels_to_close = std::move(self->active_tunnels_);
-                       self->active_tunnels_.clear();
+    asio::dispatch(io_context_, [self = shared_from_this()]() { self->stop_local(); });
+}
 
-                       for (auto& weak_tunnel : tunnels_to_close)
-                       {
-                           const auto tunnel = weak_tunnel.lock();
-                           if (tunnel != nullptr && tunnel->connection() != nullptr)
-                           {
-                               tunnel->connection()->stop();
-                           }
-                       }
-                   });
+void remote_server::stop_local()
+{
+    std::error_code close_ec;
+    close_ec = acceptor_.close(close_ec);
+    if (close_ec && close_ec != asio::error::bad_descriptor)
+    {
+        LOG_WARN("acceptor close failed {}", close_ec.message());
+    }
+
+    LOG_INFO("closing {} active tunnels", active_tunnels_.size());
+    auto tunnels_to_close = std::move(active_tunnels_);
+    active_tunnels_.clear();
+
+    for (auto& weak_tunnel : tunnels_to_close)
+    {
+        const auto tunnel = weak_tunnel.lock();
+        if (tunnel != nullptr && tunnel->connection() != nullptr)
+        {
+            tunnel->connection()->stop();
+        }
+    }
 }
 
 asio::awaitable<void> remote_server::accept_loop()

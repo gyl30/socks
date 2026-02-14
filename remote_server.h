@@ -68,6 +68,8 @@ class remote_server : public std::enable_shared_from_this<remote_server>
    private:
     struct server_handshake_res;
 
+    void stop_local();
+
     asio::awaitable<void> accept_loop();
 
     asio::awaitable<void> handle(std::shared_ptr<asio::ip::tcp::socket> s, const std::uint32_t conn_id);
