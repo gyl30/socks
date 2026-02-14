@@ -58,6 +58,8 @@ namespace mux
 namespace
 {
 
+constexpr auto kSetCertificateWaitTimeout = std::chrono::milliseconds(200);
+
 bool parse_hex_to_bytes(const std::string& hex, std::vector<std::uint8_t>& out, const std::size_t max_len, const char* label)
 {
     out.clear();
@@ -833,15 +835,28 @@ void remote_server::set_certificate(std::string sni,
         return;
     }
 
+    const std::string sni_for_log = sni;
     auto done = std::make_shared<std::promise<void>>();
     auto done_future = done->get_future();
     asio::post(io_context_,
                [this, sni = std::move(sni), cert_msg = std::move(cert_msg), fp = std::move(fp), trace_id, done]() mutable
                {
-                   cert_manager_.set_certificate(sni, std::move(cert_msg), std::move(fp), trace_id);
-                   done->set_value();
+                   try
+                   {
+                       cert_manager_.set_certificate(sni, std::move(cert_msg), std::move(fp), trace_id);
+                       done->set_value();
+                   }
+                   catch (...)
+                   {
+                       done->set_exception(std::current_exception());
+                   }
                });
-    done_future.wait();
+    if (done_future.wait_for(kSetCertificateWaitTimeout) != std::future_status::ready)
+    {
+        LOG_WARN("set certificate async wait timed out {}ms sni {}", kSetCertificateWaitTimeout.count(), sni_for_log);
+        return;
+    }
+    done_future.get();
 }
 
 void remote_server::stop()
