@@ -10,13 +10,12 @@
 namespace mux
 {
 
-io_context_pool::io_context_pool(std::size_t pool_size, std::error_code& ec) : next_io_context_(0)
+io_context_pool::io_context_pool(std::size_t pool_size) : next_io_context_(0)
 {
     if (pool_size == 0)
     {
-        ec = std::make_error_code(std::errc::invalid_argument);
-        LOG_ERROR("io context pool size cannot be 0");
-        return;
+        LOG_WARN("io context pool size clamped from 0 to 1");
+        pool_size = 1;
     }
 
     for (std::size_t i = 0; i < pool_size; ++i)

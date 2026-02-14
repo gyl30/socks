@@ -148,50 +148,45 @@ TEST(net_utils_test, endpoint_from_sockaddr_unknown_family)
 
 TEST(net_utils_test, set_socket_mark_zero_short_circuit)
 {
-    std::error_code ec = std::make_error_code(std::errc::invalid_argument);
-    const bool ok = set_socket_mark(-1, 0, ec);
+    const auto result = set_socket_mark(-1, 0);
 #ifdef __linux__
-    EXPECT_TRUE(ok);
-    EXPECT_FALSE(ec);
+    EXPECT_TRUE(result.has_value());
 #else
-    EXPECT_FALSE(ok);
-    EXPECT_EQ(ec, std::make_error_code(std::errc::not_supported));
+    EXPECT_FALSE(result.has_value());
+    EXPECT_EQ(result.error(), std::make_error_code(std::errc::not_supported));
 #endif
 }
 
 TEST(net_utils_test, set_socket_mark_invalid_fd)
 {
-    std::error_code ec;
-    const bool ok = set_socket_mark(-1, 1, ec);
-    EXPECT_FALSE(ok);
+    const auto result = set_socket_mark(-1, 1);
+    EXPECT_FALSE(result.has_value());
 #ifdef __linux__
-    EXPECT_EQ(ec.value(), EBADF);
+    EXPECT_EQ(result.error().value(), EBADF);
 #else
-    EXPECT_EQ(ec, std::make_error_code(std::errc::not_supported));
+    EXPECT_EQ(result.error(), std::make_error_code(std::errc::not_supported));
 #endif
 }
 
 TEST(net_utils_test, set_socket_transparent_invalid_fd)
 {
-    std::error_code ec;
-    const bool ok = set_socket_transparent(-1, true, ec);
-    EXPECT_FALSE(ok);
+    const auto result = set_socket_transparent(-1, true);
+    EXPECT_FALSE(result.has_value());
 #ifdef __linux__
-    EXPECT_EQ(ec.value(), EBADF);
+    EXPECT_EQ(result.error().value(), EBADF);
 #else
-    EXPECT_EQ(ec, std::make_error_code(std::errc::not_supported));
+    EXPECT_EQ(result.error(), std::make_error_code(std::errc::not_supported));
 #endif
 }
 
 TEST(net_utils_test, set_socket_recv_origdst_invalid_fd)
 {
-    std::error_code ec;
-    const bool ok = set_socket_recv_origdst(-1, true, ec);
-    EXPECT_FALSE(ok);
+    const auto result = set_socket_recv_origdst(-1, true);
+    EXPECT_FALSE(result.has_value());
 #ifdef __linux__
-    EXPECT_EQ(ec.value(), EBADF);
+    EXPECT_EQ(result.error().value(), EBADF);
 #else
-    EXPECT_EQ(ec, std::make_error_code(std::errc::not_supported));
+    EXPECT_EQ(result.error(), std::make_error_code(std::errc::not_supported));
 #endif
 }
 
@@ -305,10 +300,9 @@ TEST(net_utils_test, set_socket_transparent_ipv6_second_setsockopt_failure)
     g_force_linux_first_opt_success.store(true, std::memory_order_release);
     fail_setsockopt_once(SOL_IPV6, IPV6_TRANSPARENT, EACCES);
 
-    std::error_code ec;
-    const bool ok = set_socket_transparent(-1, true, ec);
-    EXPECT_FALSE(ok);
-    EXPECT_EQ(ec.value(), EACCES);
+    const auto result = set_socket_transparent(-1, true);
+    EXPECT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().value(), EACCES);
 
     reset_setsockopt_hooks();
 }
@@ -319,10 +313,9 @@ TEST(net_utils_test, set_socket_recv_origdst_ipv6_second_setsockopt_failure)
     g_force_linux_first_opt_success.store(true, std::memory_order_release);
     fail_setsockopt_once(SOL_IPV6, IPV6_RECVORIGDSTADDR, EACCES);
 
-    std::error_code ec;
-    const bool ok = set_socket_recv_origdst(-1, true, ec);
-    EXPECT_FALSE(ok);
-    EXPECT_EQ(ec.value(), EACCES);
+    const auto result = set_socket_recv_origdst(-1, true);
+    EXPECT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().value(), EACCES);
 
     reset_setsockopt_hooks();
 }

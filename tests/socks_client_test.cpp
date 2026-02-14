@@ -186,9 +186,7 @@ std::future<void> spawn_accept_local_loop(asio::io_context& io_context, const st
 
 TEST(LocalClientTest, BasicStartStop)
 {
-    std::error_code ec;
-    io_context_pool pool(1, ec);
-    ASSERT_FALSE(ec);
+    io_context_pool pool(1);
 
     mux::config cfg;
     cfg.outbound.host = "127.0.0.1";
@@ -208,8 +206,7 @@ TEST(LocalClientTest, BasicStartStop)
 
 TEST(LocalClientTest, InvalidHexConfig)
 {
-    std::error_code ec;
-    io_context_pool pool(1, ec);
+    io_context_pool pool(1);
     const std::string bad_hex_odd = "ABC";
     const std::string bad_hex_chars = "GG";
     const std::string server_pub_key(64, 'a');
@@ -244,8 +241,7 @@ TEST(LocalClientTest, InvalidHexConfig)
 
 TEST(LocalClientTest, InvalidMaxConnectionsFallback)
 {
-    std::error_code ec;
-    io_context_pool pool(1, ec);
+    io_context_pool pool(1);
     mux::config cfg;
     cfg.outbound.host = "127.0.0.1";
     cfg.outbound.port = 12345;
@@ -261,8 +257,7 @@ TEST(LocalClientTest, InvalidMaxConnectionsFallback)
 
 TEST(LocalClientTest, InvalidAuthConfigAborts)
 {
-    std::error_code ec;
-    io_context_pool pool(1, ec);
+    io_context_pool pool(1);
     const std::string bad_hex_odd = "abc";
     mux::config cfg;
     cfg.outbound.host = "127.0.0.1";
@@ -278,8 +273,7 @@ TEST(LocalClientTest, InvalidAuthConfigAborts)
 
 TEST(LocalClientTest, Getters)
 {
-    std::error_code ec;
-    io_context_pool pool(1, ec);
+    io_context_pool pool(1);
     mux::config cfg;
     cfg.outbound.host = "127.0.0.1";
     cfg.outbound.port = 12345;
@@ -294,8 +288,7 @@ TEST(LocalClientTest, Getters)
 
 TEST(LocalClientTest, StopWhenNotStarted)
 {
-    std::error_code ec;
-    io_context_pool pool(1, ec);
+    io_context_pool pool(1);
     mux::config cfg;
     cfg.outbound.host = "127.0.0.1";
     cfg.outbound.port = 12345;
@@ -309,9 +302,7 @@ TEST(LocalClientTest, StopWhenNotStarted)
 
 TEST(LocalClientTest, StopLogsAcceptorCloseFailureBranch)
 {
-    std::error_code ec;
-    io_context_pool pool(1, ec);
-    ASSERT_FALSE(ec);
+    io_context_pool pool(1);
 
     mux::config cfg;
     cfg.outbound.host = "127.0.0.1";
@@ -340,8 +331,7 @@ TEST(LocalClientTest, StopLogsAcceptorCloseFailureBranch)
 
 TEST(LocalClientTest, DoubleStop)
 {
-    std::error_code ec;
-    io_context_pool pool(1, ec);
+    io_context_pool pool(1);
     mux::config cfg;
     cfg.outbound.host = "127.0.0.1";
     cfg.outbound.port = 12345;
@@ -358,8 +348,7 @@ TEST(LocalClientTest, DoubleStop)
 
 TEST(LocalClientTest, HandshakeFailInvalidServerPubKey)
 {
-    std::error_code ec;
-    io_context_pool pool(1, ec);
+    io_context_pool pool(1);
     const std::string bad_pub(31, 'a');
     mux::config cfg;
     cfg.outbound.host = "127.0.0.1";
@@ -376,8 +365,7 @@ TEST(LocalClientTest, HandshakeFailInvalidServerPubKey)
 
 TEST(LocalClientTest, ConnectFailureLoop)
 {
-    std::error_code ec;
-    io_context_pool pool(1, ec);
+    io_context_pool pool(1);
     mux::config cfg;
     cfg.outbound.host = "127.0.0.1";
     cfg.outbound.port = 1;
@@ -394,9 +382,7 @@ TEST(LocalClientTest, ConnectFailureLoop)
 
 TEST(LocalClientTest, DisabledSocksStopsImmediately)
 {
-    std::error_code ec;
-    io_context_pool pool(1, ec);
-    ASSERT_FALSE(ec);
+    io_context_pool pool(1);
 
     mux::config cfg;
     cfg.outbound.host = "127.0.0.1";
@@ -414,9 +400,7 @@ TEST(LocalClientTest, DisabledSocksStopsImmediately)
 
 TEST(LocalClientTest, InvalidListenHostAbortsAcceptLoop)
 {
-    std::error_code ec;
-    io_context_pool pool(1, ec);
-    ASSERT_FALSE(ec);
+    io_context_pool pool(1);
 
     mux::config cfg;
     cfg.outbound.host = "127.0.0.1";
@@ -441,9 +425,7 @@ TEST(LocalClientTest, InvalidListenHostAbortsAcceptLoop)
 
 TEST(LocalClientTest, ListenPortConflictTriggersSetupFailure)
 {
-    std::error_code ec;
-    io_context_pool pool(1, ec);
-    ASSERT_FALSE(ec);
+    io_context_pool pool(1);
 
     asio::io_context blocker_ctx;
     asio::ip::tcp::acceptor blocker(blocker_ctx, {asio::ip::make_address("127.0.0.1"), 0});
@@ -472,9 +454,7 @@ TEST(LocalClientTest, ListenPortConflictTriggersSetupFailure)
 
 TEST(LocalClientTest, NoTunnelSelectionAndSessionPrunePath)
 {
-    std::error_code ec;
-    io_context_pool pool(1, ec);
-    ASSERT_FALSE(ec);
+    io_context_pool pool(1);
 
     mux::config cfg;
     cfg.outbound.host = "127.0.0.1";
@@ -512,9 +492,7 @@ TEST(LocalClientTest, NoTunnelSelectionAndSessionPrunePath)
 
 TEST(LocalClientTest, RouterLoadFailureStopsEarly)
 {
-    std::error_code ec;
-    io_context_pool pool(1, ec);
-    ASSERT_FALSE(ec);
+    io_context_pool pool(1);
 
     mux::config cfg;
     cfg.outbound.host = "127.0.0.1";
@@ -533,9 +511,7 @@ TEST(LocalClientTest, RouterLoadFailureStopsEarly)
 
 TEST(LocalClientTest, AcceptLoopSetupHandlesSocketOpenFailure)
 {
-    std::error_code ec;
-    io_context_pool pool(1, ec);
-    ASSERT_FALSE(ec);
+    io_context_pool pool(1);
 
     mux::config cfg;
     cfg.outbound.host = "127.0.0.1";
@@ -561,9 +537,7 @@ TEST(LocalClientTest, AcceptLoopSetupHandlesSocketOpenFailure)
 
 TEST(LocalClientTest, AcceptLoopSetupHandlesReuseAddressFailure)
 {
-    std::error_code ec;
-    io_context_pool pool(1, ec);
-    ASSERT_FALSE(ec);
+    io_context_pool pool(1);
 
     mux::config cfg;
     cfg.outbound.host = "127.0.0.1";
@@ -589,9 +563,7 @@ TEST(LocalClientTest, AcceptLoopSetupHandlesReuseAddressFailure)
 
 TEST(LocalClientTest, AcceptLoopLogsRetryOnAcceptError)
 {
-    std::error_code ec;
-    io_context_pool pool(1, ec);
-    ASSERT_FALSE(ec);
+    io_context_pool pool(1);
 
     mux::config cfg;
     cfg.outbound.host = "127.0.0.1";
@@ -627,9 +599,7 @@ TEST(LocalClientTest, AcceptLoopLogsRetryOnAcceptError)
 
 TEST(LocalClientTest, AcceptLoopHandlesNoDelaySetOptionFailure)
 {
-    std::error_code ec;
-    io_context_pool pool(1, ec);
-    ASSERT_FALSE(ec);
+    io_context_pool pool(1);
 
     mux::config cfg;
     cfg.outbound.host = "127.0.0.1";

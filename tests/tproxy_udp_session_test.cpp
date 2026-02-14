@@ -679,7 +679,7 @@ TEST(TproxyUdpSessionTest, ProxyStreamLifecycleCoversInstallCleanupAndReaderStar
 TEST(TproxyClientTest, DisabledStartSetsStopFlag)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     mux::config cfg;
@@ -694,7 +694,7 @@ TEST(TproxyClientTest, DisabledStartSetsStopFlag)
 TEST(TproxyClientTest, InvalidRealityAuthConfigStopsEarly)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     mux::config cfg;
@@ -710,7 +710,7 @@ TEST(TproxyClientTest, InvalidRealityAuthConfigStopsEarly)
 TEST(TproxyClientTest, TcpPortZeroStopsEarlyAndEndpointKeyWorks)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     mux::config cfg;
@@ -727,7 +727,7 @@ TEST(TproxyClientTest, TcpPortZeroStopsEarlyAndEndpointKeyWorks)
 TEST(TproxyClientTest, UdpPortFallsBackToTcpPortWhenConfiguredZero)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     mux::config cfg;
@@ -747,7 +747,7 @@ TEST(TproxyClientTest, UdpPortFallsBackToTcpPortWhenConfiguredZero)
 TEST(TproxyClientTest, AcceptAndUdpLoopReturnOnInvalidListenHost)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     mux::config cfg;
@@ -786,7 +786,7 @@ TEST(TproxyClientTest, AcceptLoopSetupFailsWhenPortInUse)
     force_tproxy_setsockopt_success(true);
 
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     asio::ip::tcp::acceptor occupied(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
@@ -821,7 +821,7 @@ TEST(TproxyClientTest, UdpLoopHandlesPacketAndCleanupPrunesIdleSessions)
     force_tproxy_setsockopt_success(true);
 
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     const auto tcp_port = pick_free_tcp_port();
@@ -889,7 +889,7 @@ TEST(TproxyClientTest, UdpLoopHandlesPacketAndCleanupPrunesIdleSessions)
 TEST(TproxyClientTest, StartMutatedUdpPortFallsBackToTcpPort)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     const auto tcp_port = pick_free_tcp_port();
@@ -918,7 +918,7 @@ TEST(TproxyClientTest, StartMutatedUdpPortFallsBackToTcpPort)
 TEST(TproxyClientTest, RouterLoadFailureStopsEarly)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     mux::config cfg;
@@ -940,7 +940,7 @@ TEST(TproxyClientTest, RouterLoadFailureStopsEarly)
 TEST(TproxyClientTest, StopExtractsAndStopsUdpSessions)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     mux::config cfg;
@@ -976,7 +976,7 @@ TEST(TproxyClientTest, AcceptLoopStopsWhenStopFlagSetAfterPendingAccept)
     force_tproxy_setsockopt_success(true);
 
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     const auto tcp_port = pick_free_tcp_port();
@@ -1041,7 +1041,7 @@ TEST(TproxyClientTest, UdpLoopBreaksWhenReadableAndStopFlagAlreadySet)
     force_tproxy_setsockopt_success(true);
 
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     const auto tcp_port = pick_free_tcp_port();
@@ -1101,7 +1101,7 @@ TEST(TproxyClientTest, UdpLoopRetriesWhenSocketClosedUnexpectedly)
     force_tproxy_setsockopt_success(true);
 
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     const auto tcp_port = pick_free_tcp_port();
@@ -1156,7 +1156,7 @@ TEST(TproxyClientTest, WrappedSetsockoptCoversSetupFailureBranches)
     auto run_accept_loop_once = [](const mux::config& cfg)
     {
         std::error_code ec;
-        mux::io_context_pool pool(1, ec);
+        mux::io_context_pool pool(1);
         ASSERT_FALSE(ec);
         auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
 
@@ -1178,7 +1178,7 @@ TEST(TproxyClientTest, WrappedSetsockoptCoversSetupFailureBranches)
     auto run_udp_loop_once = [](const mux::config& cfg)
     {
         std::error_code ec;
-        mux::io_context_pool pool(1, ec);
+        mux::io_context_pool pool(1);
         ASSERT_FALSE(ec);
         auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
 
@@ -1262,7 +1262,7 @@ TEST(TproxyClientTest, SocketOpenFailureCoversSetupBranches)
     auto run_accept_loop_once = [](const mux::config& cfg)
     {
         std::error_code ec;
-        mux::io_context_pool pool(1, ec);
+        mux::io_context_pool pool(1);
         ASSERT_FALSE(ec);
         auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
 
@@ -1284,7 +1284,7 @@ TEST(TproxyClientTest, SocketOpenFailureCoversSetupBranches)
     auto run_udp_loop_once = [](const mux::config& cfg)
     {
         std::error_code ec;
-        mux::io_context_pool pool(1, ec);
+        mux::io_context_pool pool(1);
         ASSERT_FALSE(ec);
         auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
 
@@ -1327,7 +1327,7 @@ TEST(TproxyClientTest, UdpLoopReusesExistingSessionForSameSource)
     force_tproxy_setsockopt_success(true);
 
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     mux::config cfg;
@@ -1397,7 +1397,7 @@ TEST(TproxyClientTest, WrappedRecvmsgCoversUdpReadErrorBranches)
     force_tproxy_setsockopt_success(true);
 
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     mux::config cfg;
@@ -1459,7 +1459,7 @@ TEST(TproxyClientTest, AcceptLoopRetriesOnAcceptErrorBranch)
     force_tproxy_setsockopt_success(true);
 
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     mux::config cfg;
@@ -1506,7 +1506,7 @@ TEST(TproxyClientTest, AcceptLoopCoversNoDelayAndLocalEndpointFailureBranches)
     force_tproxy_setsockopt_success(true);
 
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     mux::config cfg;
@@ -1567,7 +1567,7 @@ TEST(TproxyClientTest, UdpLoopCoversRetryBranchAfterNativeFdInvalidation)
     force_tproxy_setsockopt_success(true);
 
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     mux::config cfg;
@@ -1622,7 +1622,7 @@ TEST(TproxyClientTest, SetupCoversEmptyHostV6OnlyRecvOrigdstAndMarkFailureBranch
     auto run_accept_loop_once = [](const mux::config& cfg)
     {
         std::error_code ec;
-        mux::io_context_pool pool(1, ec);
+        mux::io_context_pool pool(1);
         ASSERT_FALSE(ec);
         auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
 
@@ -1644,7 +1644,7 @@ TEST(TproxyClientTest, SetupCoversEmptyHostV6OnlyRecvOrigdstAndMarkFailureBranch
     auto run_udp_loop_once = [](const mux::config& cfg)
     {
         std::error_code ec;
-        mux::io_context_pool pool(1, ec);
+        mux::io_context_pool pool(1);
         ASSERT_FALSE(ec);
         auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
 
@@ -1713,7 +1713,7 @@ TEST(TproxyClientTest, SetupCoversV6DualStackSuccessBranches)
 
     {
         std::error_code ec;
-        mux::io_context_pool pool(1, ec);
+        mux::io_context_pool pool(1);
         ASSERT_FALSE(ec);
         auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
 
@@ -1747,7 +1747,7 @@ TEST(TproxyClientTest, SetupCoversV6DualStackSuccessBranches)
 
     {
         std::error_code ec;
-        mux::io_context_pool pool(1, ec);
+        mux::io_context_pool pool(1);
         ASSERT_FALSE(ec);
         auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
 
@@ -1788,7 +1788,7 @@ TEST(TproxyClientTest, StopCoversCloseErrorLogBranches)
     force_tproxy_setsockopt_success(true);
 
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     mux::config cfg;
@@ -1827,7 +1827,7 @@ TEST(TproxyClientTest, StopIgnoresBadDescriptorCloseBranches)
     force_tproxy_setsockopt_success(true);
 
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     mux::config cfg;
@@ -1873,7 +1873,7 @@ TEST(TproxyClientTest, StopIgnoresBadDescriptorCloseBranchWithoutRuntimeSetup)
     reset_socket_wrappers();
 
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     mux::config cfg;
@@ -1907,7 +1907,7 @@ TEST(TproxyClientTest, StopIgnoresBadDescriptorCloseBranchWithoutRuntimeSetup)
 TEST(TproxyClientTest, UdpCleanupLoopCoversNullSessionBranch)
 {
     std::error_code ec;
-    mux::io_context_pool pool(1, ec);
+    mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     mux::config cfg;
