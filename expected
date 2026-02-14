@@ -17,6 +17,42 @@
 namespace std
 {
 
+namespace __socks_expected_shim
+{
+
+template<typename E>
+class unexpected_value
+{
+   public:
+    using error_type = E;
+
+    unexpected_value(const unexpected_value&) = default;
+    unexpected_value(unexpected_value&&) = default;
+    unexpected_value& operator=(const unexpected_value&) = default;
+    unexpected_value& operator=(unexpected_value&&) = default;
+
+    template<typename G = E, typename = std::enable_if_t<std::is_constructible_v<E, G&&>>>
+    explicit unexpected_value(G&& e)
+        : error_(std::forward<G>(e))
+    {}
+
+    [[nodiscard]] E& error() & noexcept { return error_; }
+    [[nodiscard]] const E& error() const& noexcept { return error_; }
+    [[nodiscard]] E&& error() && noexcept { return std::move(error_); }
+    [[nodiscard]] const E&& error() const&& noexcept { return std::move(error_); }
+
+   private:
+    E error_;
+};
+
+}    // namespace __socks_expected_shim
+
+template<typename E>
+[[nodiscard]] inline auto unexpected(E&& error) -> __socks_expected_shim::unexpected_value<std::decay_t<E>>
+{
+    return __socks_expected_shim::unexpected_value<std::decay_t<E>>(std::forward<E>(error));
+}
+
 template<typename E, typename G>
 [[nodiscard]] inline E expected_error_convert(G&& error)
 {
@@ -31,34 +67,6 @@ template<typename E, typename G>
         return static_cast<E>(make_error_code(static_cast<error_type>(error)));
     }
 }
-
-template<typename E>
-class unexpected
-{
-   public:
-    using error_type = E;
-
-    unexpected(const unexpected&) = default;
-    unexpected(unexpected&&) = default;
-    unexpected& operator=(const unexpected&) = default;
-    unexpected& operator=(unexpected&&) = default;
-
-    template<typename G = E, typename = std::enable_if_t<std::is_constructible_v<E, G&&>>>
-    explicit unexpected(G&& e)
-        : error_(std::forward<G>(e))
-    {}
-
-    [[nodiscard]] E& error() & noexcept { return error_; }
-    [[nodiscard]] const E& error() const& noexcept { return error_; }
-    [[nodiscard]] E&& error() && noexcept { return std::move(error_); }
-    [[nodiscard]] const E&& error() const&& noexcept { return std::move(error_); }
-
-   private:
-    E error_;
-};
-
-template<typename E>
-unexpected(E) -> unexpected<E>;
 
 template<typename T, typename E>
 class expected
@@ -81,12 +89,12 @@ class expected
     {}
 
     template<typename G>
-    expected(const unexpected<G>& unexpect)
+    expected(const __socks_expected_shim::unexpected_value<G>& unexpect)
         : storage_(std::in_place_index<1>, expected_error_convert<E>(unexpect.error()))
     {}
 
     template<typename G>
-    expected(unexpected<G>&& unexpect)
+    expected(__socks_expected_shim::unexpected_value<G>&& unexpect)
         : storage_(std::in_place_index<1>, expected_error_convert<E>(std::forward<G>(unexpect.error())))
     {}
 
@@ -145,13 +153,13 @@ class expected<void, E>
     {}
 
     template<typename G>
-    expected(const unexpected<G>& unexpect)
+    expected(const __socks_expected_shim::unexpected_value<G>& unexpect)
         : has_value_(false),
           error_(expected_error_convert<E>(unexpect.error()))
     {}
 
     template<typename G>
-    expected(unexpected<G>&& unexpect)
+    expected(__socks_expected_shim::unexpected_value<G>&& unexpect)
         : has_value_(false),
           error_(expected_error_convert<E>(std::forward<G>(unexpect.error())))
     {}
