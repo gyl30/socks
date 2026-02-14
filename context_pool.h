@@ -24,6 +24,8 @@ class io_context_pool
 
     void run();
 
+    void shutdown();
+
     void stop();
 
     [[nodiscard]] asio::io_context& get_io_context();

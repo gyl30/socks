@@ -49,12 +49,18 @@ void io_context_pool::run()
 
 void io_context_pool::stop()
 {
-    LOG_INFO("io context pool stopping all contexts");
-    work_guards_.clear();
+    shutdown();
+    LOG_INFO("io context pool force stopping all contexts");
     for (const auto& io_context : io_contexts_)
     {
         io_context->stop();
     }
+}
+
+void io_context_pool::shutdown()
+{
+    LOG_INFO("io context pool shutting down work guards");
+    work_guards_.clear();
 }
 
 asio::io_context& io_context_pool::get_io_context()
