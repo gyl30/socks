@@ -1,4 +1,5 @@
 #include <array>
+#include <cctype>
 #include <charconv>
 #include <string_view>
 
@@ -52,6 +53,58 @@ void append_metric_line(std::string& out, const std::string_view metric_name, co
     out.push_back('\n');
 }
 
+bool is_token_value_terminator(const char c)
+{
+    return c == '&' || c == ' ' || c == '\r' || c == '\n' || c == '\t';
+}
+
+bool is_token_key_prefix_boundary(const std::string& req, const std::size_t token_key_pos)
+{
+    if (token_key_pos == 0)
+    {
+        return true;
+    }
+    const char prev = req[token_key_pos - 1];
+    return prev == '?' || prev == '&' || std::isspace(static_cast<unsigned char>(prev));
+}
+
+bool has_exact_token_parameter(const std::string& req, const std::string& token)
+{
+    if (token.empty())
+    {
+        return true;
+    }
+    constexpr std::string_view key = "token=";
+
+    std::size_t pos = 0;
+    while (true)
+    {
+        pos = req.find(key, pos);
+        if (pos == std::string::npos)
+        {
+            return false;
+        }
+
+        if (!is_token_key_prefix_boundary(req, pos))
+        {
+            pos += key.size();
+            continue;
+        }
+
+        const std::size_t value_begin = pos + key.size();
+        std::size_t value_end = value_begin;
+        while (value_end < req.size() && !is_token_value_terminator(req[value_end]))
+        {
+            value_end++;
+        }
+        if (value_end > value_begin && req.compare(value_begin, value_end - value_begin, token) == 0)
+        {
+            return true;
+        }
+        pos = value_end;
+    }
+}
+
 }    // namespace
 
 class monitor_session : public std::enable_shared_from_this<monitor_session>
@@ -79,7 +132,7 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
                                         if (!token_.empty())
                                         {
                                             const std::string req(buffer_.data(), length);
-                                            if (req.find(token_) == std::string::npos)
+                                            if (!has_exact_token_parameter(req, token_))
                                             {
                                                 LOG_WARN("monitor auth failed");
                                                 close_socket();
@@ -154,7 +207,7 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
 
    private:
     std::string response_;
-    std::array<char, 128> buffer_;
+    std::array<char, 4096> buffer_;
     asio::ip::tcp::socket socket_;
     std::string token_;
     std::shared_ptr<monitor_rate_state> rate_state_;
