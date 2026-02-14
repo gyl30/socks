@@ -827,7 +827,7 @@ void remote_server::set_certificate(std::string sni,
                                     reality::server_fingerprint fp,
                                     const std::string& trace_id)
 {
-    if (!started_.load(std::memory_order_acquire) || io_context_.get_executor().running_in_this_thread())
+    if (!started_.load(std::memory_order_acquire) || io_context_.stopped() || io_context_.get_executor().running_in_this_thread())
     {
         cert_manager_.set_certificate(sni, std::move(cert_msg), std::move(fp), trace_id);
         return;

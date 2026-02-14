@@ -1103,6 +1103,57 @@ TEST_F(remote_server_test, SetCertificateAsyncPathAfterStart)
     pool_thread.join();
 }
 
+TEST_F(remote_server_test, SetCertificateReturnsQuicklyWhenIoContextStopped)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+    std::thread pool_thread([&pool] { pool.run(); });
+
+    auto cfg = make_server_cfg(pick_free_port(), {}, "0102030405060708");
+    auto server = std::make_shared<mux::remote_server>(pool, cfg);
+    server->start();
+    server->stop();
+    pool.stop();
+    pool_thread.join();
+
+    reality::server_fingerprint fingerprint;
+    fingerprint.cipher_suite = 0x1301;
+    fingerprint.alpn = "h2";
+    const std::string sni = "stopped.ctx.test";
+
+    std::atomic<bool> done{false};
+    std::thread setter(
+        [&]()
+        {
+            server->set_certificate(sni, reality::construct_certificate({0x01, 0x02, 0x03}), fingerprint, "trace-stopped");
+            done.store(true, std::memory_order_release);
+        });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    const bool done_before_poll = done.load(std::memory_order_acquire);
+
+    if (!done_before_poll)
+    {
+        auto& io_context = pool.get_io_context();
+        io_context.restart();
+        for (int i = 0; i < 20 && !done.load(std::memory_order_acquire); ++i)
+        {
+            io_context.poll();
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+    }
+
+    if (setter.joinable())
+    {
+        setter.join();
+    }
+
+    EXPECT_TRUE(done_before_poll);
+    const auto cert_opt = server->cert_manager_.get_certificate(sni);
+    EXPECT_TRUE(cert_opt.has_value());
+}
+
 TEST_F(remote_server_test, ConstructorCoversShortIdAndDestParsingBranches)
 {
     std::error_code ec;
