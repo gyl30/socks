@@ -14,6 +14,11 @@ package "Infrastructure" {
     }
 }
 
+note right of io_context_pool
+  每个异步对象绑定单一 io_context
+  不引入 strand
+end note
+
 package "Mux Protocol Layer" {
     interface mux_stream_interface {
         + {abstract} on_data()

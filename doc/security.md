@@ -21,6 +21,13 @@
 3. `max_buffer` 限制 mux dispatcher 缓冲区，防止内存放大。
 4. 写队列与缓冲溢出会触发连接关闭与 reset。
 
+## 异步执行模型
+
+1. 每个异步对象绑定并只使用自己的 `io_context`，不使用 `strand`。
+2. 跨线程访问对象内部状态时，通过 `post/dispatch` 回到该对象的 `io_context` 执行。
+3. 任何同步等待回投递结果的路径都必须是有界等待，并覆盖 `running_in_this_thread` 与 `io_context.stopped()` 分支，避免自阻塞或停机阻塞。
+4. `stop` 语义要求在 `io_context` 已停止或当前线程即执行线程时可直接内联清理，避免清理逻辑因队列不再调度而丢失。
+
 ## 超时与空闲回收
 
 1. TCP/UDP 会话均有空闲检测，超时会主动关闭。
