@@ -355,6 +355,7 @@ TEST(RemoteUdpSessionTest, OnDataRunsStopWhenIoContextStopped)
     session->on_data(std::vector<std::uint8_t>{0x10});
 
     EXPECT_EQ(session->timer_.cancel(), 0U);
+    EXPECT_FALSE(session->udp_socket_.is_open());
     session->close_socket();
 }
 
@@ -372,6 +373,7 @@ TEST(RemoteUdpSessionTest, OnDataRunsStopWhenIoContextNotRunning)
 
     session->on_data(std::vector<std::uint8_t>{0x10});
     EXPECT_EQ(session->timer_.cancel(), 0U);
+    EXPECT_FALSE(session->udp_socket_.is_open());
     session->close_socket();
 }
 
@@ -430,6 +432,7 @@ TEST(RemoteUdpSessionTest, OnDataRunsStopWhenIoQueueBlocked)
 
     ASSERT_TRUE(timer_cancelled);
     EXPECT_EQ(timer_wait_future.get(), asio::error::operation_aborted);
+    EXPECT_FALSE(session->udp_socket_.is_open());
     session->close_socket();
 }
 
@@ -463,6 +466,7 @@ TEST(RemoteUdpSessionTest, OnCloseAndOnResetRunInlineWhenIoContextStopped)
     io_context.stop();
     session->on_close();
     EXPECT_FALSE(session->recv_channel_.try_send(std::error_code{}, std::vector<std::uint8_t>{0x01}));
+    EXPECT_FALSE(session->udp_socket_.is_open());
 
     session->on_reset();
     EXPECT_FALSE(session->recv_channel_.try_send(std::error_code{}, std::vector<std::uint8_t>{0x02}));
@@ -478,6 +482,7 @@ TEST(RemoteUdpSessionTest, OnCloseAndOnResetRunWhenIoContextNotRunning)
 
     session->on_close();
     EXPECT_FALSE(session->recv_channel_.try_send(std::error_code{}, std::vector<std::uint8_t>{0x01}));
+    EXPECT_FALSE(session->udp_socket_.is_open());
 
     session->on_reset();
     EXPECT_FALSE(session->recv_channel_.try_send(std::error_code{}, std::vector<std::uint8_t>{0x02}));
@@ -513,6 +518,7 @@ TEST(RemoteUdpSessionTest, OnCloseAndOnResetRunWhenIoQueueBlocked)
 
     session->on_close();
     EXPECT_FALSE(session->recv_channel_.try_send(std::error_code{}, std::vector<std::uint8_t>{0x01}));
+    EXPECT_FALSE(session->udp_socket_.is_open());
 
     session->on_reset();
     EXPECT_FALSE(session->recv_channel_.try_send(std::error_code{}, std::vector<std::uint8_t>{0x02}));

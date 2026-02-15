@@ -255,6 +255,7 @@ void remote_udp_session::request_stop()
     udp_resolver_.cancel();
     std::error_code ignore;
     ignore = udp_socket_.cancel(ignore);
+    close_socket();
 }
 
 void remote_udp_session::close_socket()
