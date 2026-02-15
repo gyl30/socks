@@ -1,4 +1,5 @@
 #include <chrono>
+#include <future>
 #include <memory>
 #include <string>
 #include <vector>
@@ -220,13 +221,34 @@ void tproxy_udp_session::stop_local(const bool allow_async_stream_close)
 
     if (stream != nullptr && allow_async_stream_close)
     {
-        asio::co_spawn(
-            io_context_,
-            [stream]() -> asio::awaitable<void>
+        if (io_context_.get_executor().running_in_this_thread())
+        {
+            asio::co_spawn(
+                io_context_,
+                [stream]() -> asio::awaitable<void>
+                {
+                    co_await stream->close();
+                },
+                asio::detached);
+        }
+        else
+        {
+            auto close_done = std::make_shared<std::promise<void>>();
+            auto close_done_future = close_done->get_future();
+            asio::co_spawn(
+                io_context_,
+                [stream, close_done]() -> asio::awaitable<void>
+                {
+                    co_await stream->close();
+                    close_done->set_value();
+                },
+                asio::detached);
+
+            if (close_done_future.wait_for(detail::kStopDispatchWaitTimeout) != std::future_status::ready)
             {
-                co_await stream->close();
-            },
-            asio::detached);
+                stream->on_reset();
+            }
+        }
     }
 
     std::error_code ignore;
