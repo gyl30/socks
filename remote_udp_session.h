@@ -49,7 +49,7 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
     asio::awaitable<void> forward_mux_payload(const std::vector<std::uint8_t>& data);
     void log_udp_local_endpoint();
     asio::awaitable<void> run_udp_session_loops();
-    void cleanup_after_stop();
+    asio::awaitable<void> cleanup_after_stop();
     void record_udp_write(std::size_t bytes);
     asio::awaitable<void> watchdog();
     asio::awaitable<void> mux_to_udp();

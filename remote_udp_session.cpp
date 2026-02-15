@@ -194,14 +194,19 @@ asio::awaitable<void> remote_udp_session::run_udp_session_loops()
     co_await (mux_to_udp() || udp_to_mux() || watchdog() || idle_watchdog());
 }
 
-void remote_udp_session::cleanup_after_stop()
+asio::awaitable<void> remote_udp_session::cleanup_after_stop()
 {
     request_stop();
     close_socket();
+    if (auto conn = connection_.lock())
+    {
+        (void)co_await conn->send_async(id_, kCmdRst, {});
+    }
     if (auto manager = manager_.lock())
     {
         manager->remove_stream(id_);
     }
+    co_return;
 }
 
 asio::awaitable<void> remote_udp_session::start_impl(std::shared_ptr<remote_udp_session> self)
@@ -221,7 +226,7 @@ asio::awaitable<void> remote_udp_session::start_impl(std::shared_ptr<remote_udp_
     co_await send_ack_payload(conn, ack);
 
     co_await run_udp_session_loops();
-    cleanup_after_stop();
+    co_await cleanup_after_stop();
     LOG_CTX_INFO(ctx_, "{} finished {}", log_event::kConnClose, ctx_.stats_summary());
 }
 

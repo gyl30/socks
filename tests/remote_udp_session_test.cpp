@@ -165,7 +165,8 @@ TEST(RemoteUdpSessionTest, CleanupAfterStopWithoutManagerClosesSocket)
     ASSERT_TRUE(mux::test::run_awaitable(io_context, session->setup_udp_socket(conn)));
     ASSERT_TRUE(session->udp_socket_.is_open());
 
-    session->cleanup_after_stop();
+    EXPECT_CALL(*conn, mock_send_async(133, mux::kCmdRst, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(std::error_code{}));
+    mux::test::run_awaitable_void(io_context, session->cleanup_after_stop());
     EXPECT_FALSE(session->udp_socket_.is_open());
 }
 
@@ -373,6 +374,7 @@ TEST(RemoteUdpSessionTest, StartImplSendsAckAndCleansUpManager)
                       ack_payload = payload;
                       return std::error_code{};
                   });
+    EXPECT_CALL(*conn, mock_send_async(22, mux::kCmdRst, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(std::error_code{}));
 
     asio::co_spawn(
         io_context,
