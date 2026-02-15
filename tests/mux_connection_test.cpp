@@ -462,6 +462,18 @@ TEST_F(mux_connection_integration_test, OffThreadTryRegisterTimeoutDoesNotMutate
     EXPECT_TRUE(conn->streams_.find(202) == conn->streams_.end());
 }
 
+TEST_F(mux_connection_integration_test, MarkStartedForExternalCallsPreventsPreStartInlineMutation)
+{
+    auto conn = std::make_shared<mux_connection>(
+        asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 20);
+    conn->connection_state_.store(mux_connection_state::kConnected, std::memory_order_release);
+    conn->mark_started_for_external_calls();
+
+    auto stream = std::make_shared<simple_mock_stream>();
+    EXPECT_FALSE(conn->try_register_stream(303, stream));
+    EXPECT_TRUE(conn->streams_.find(303) == conn->streams_.end());
+}
+
 TEST_F(mux_connection_integration_test, StoppedIoContextUsesInlineQueryPaths)
 {
     config::limits_t limits_cfg;

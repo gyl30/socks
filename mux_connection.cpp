@@ -262,6 +262,8 @@ mux_connection::mux_connection(asio::ip::tcp::socket socket,
 
 mux_connection::~mux_connection() { statistics::instance().dec_active_mux_sessions(); }
 
+void mux_connection::mark_started_for_external_calls() { started_.store(true, std::memory_order_release); }
+
 bool mux_connection::run_inline() const
 {
     return !started_.load(std::memory_order_acquire) || io_context_.stopped() || io_context_.get_executor().running_in_this_thread();

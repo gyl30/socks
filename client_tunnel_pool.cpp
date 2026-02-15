@@ -1102,6 +1102,10 @@ asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::uint32_
             break;
         }
 
+        if (const auto connection = tunnel->connection(); connection != nullptr)
+        {
+            connection->mark_started_for_external_calls();
+        }
         publish_tunnel(index, tunnel);
         clear_pending_socket_if_match(index, socket);
 
