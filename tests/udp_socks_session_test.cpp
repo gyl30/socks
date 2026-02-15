@@ -846,6 +846,27 @@ TEST(UdpSocksSessionTest, OnCloseRunsInlineWhenIoContextStopped)
     EXPECT_FALSE(session->udp_socket_.is_open());
 }
 
+TEST(UdpSocksSessionTest, OnDataTriggersCloseWhenIoContextStopped)
+{
+    asio::io_context ctx;
+    mux::config::timeout_t timeout_cfg;
+    auto session = std::make_shared<mux::udp_socks_session>(asio::ip::tcp::socket(ctx), ctx, nullptr, 48, timeout_cfg);
+
+    std::error_code ec;
+    session->udp_socket_.open(asio::ip::udp::v4(), ec);
+    ASSERT_FALSE(ec);
+    session->udp_socket_.bind({asio::ip::make_address("127.0.0.1"), 0}, ec);
+    ASSERT_FALSE(ec);
+    ASSERT_TRUE(session->udp_socket_.is_open());
+
+    session->recv_channel_.close();
+    ctx.stop();
+
+    session->on_data({0x11});
+    EXPECT_TRUE(session->closed_.load(std::memory_order_acquire));
+    EXPECT_FALSE(session->udp_socket_.is_open());
+}
+
 TEST(UdpSocksSessionTest, OnCloseRunsWhenIoContextNotRunning)
 {
     asio::io_context ctx;
@@ -862,6 +883,68 @@ TEST(UdpSocksSessionTest, OnCloseRunsWhenIoContextNotRunning)
     session->on_close();
     EXPECT_TRUE(session->closed_.load(std::memory_order_acquire));
     EXPECT_FALSE(session->udp_socket_.is_open());
+}
+
+TEST(UdpSocksSessionTest, OnDataTriggersCloseWhenIoQueueBlocked)
+{
+    asio::io_context ctx;
+    mux::config::timeout_t timeout_cfg;
+    auto session = std::make_shared<mux::udp_socks_session>(asio::ip::tcp::socket(ctx), ctx, nullptr, 49, timeout_cfg);
+
+    std::error_code ec;
+    session->udp_socket_.open(asio::ip::udp::v4(), ec);
+    ASSERT_FALSE(ec);
+    session->udp_socket_.bind({asio::ip::make_address("127.0.0.1"), 0}, ec);
+    ASSERT_FALSE(ec);
+    ASSERT_TRUE(session->udp_socket_.is_open());
+
+    session->recv_channel_.close();
+
+    std::atomic<bool> blocker_started{false};
+    std::atomic<bool> release_blocker{false};
+    asio::post(
+        ctx,
+        [&blocker_started, &release_blocker]()
+        {
+            blocker_started.store(true, std::memory_order_release);
+            while (!release_blocker.load(std::memory_order_acquire))
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+        });
+
+    std::thread io_thread([&]() { ctx.run(); });
+    bool started = false;
+    for (int i = 0; i < 100; ++i)
+    {
+        if (blocker_started.load(std::memory_order_acquire))
+        {
+            started = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    if (!started)
+    {
+        release_blocker.store(true, std::memory_order_release);
+        ctx.stop();
+        if (io_thread.joinable())
+        {
+            io_thread.join();
+        }
+        FAIL();
+    }
+
+    session->on_data({0x11});
+    EXPECT_TRUE(session->closed_.load(std::memory_order_acquire));
+    EXPECT_FALSE(session->udp_socket_.is_open());
+
+    release_blocker.store(true, std::memory_order_release);
+    ctx.stop();
+    if (io_thread.joinable())
+    {
+        io_thread.join();
+    }
 }
 
 TEST(UdpSocksSessionTest, OnCloseRunsWhenIoQueueBlocked)
