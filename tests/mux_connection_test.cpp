@@ -17,6 +17,7 @@
 #include <asio/co_spawn.hpp>
 #include <asio/detached.hpp>
 #include <asio/io_context.hpp>
+#include <asio/use_future.hpp>
 #include <asio/use_awaitable.hpp>
 
 #include "mux_codec.h"
@@ -235,6 +236,24 @@ TEST_F(mux_connection_integration_test, IsOpenTreatsDrainingAsOpen)
 
     conn->connection_state_.store(mux_connection_state::kClosing, std::memory_order_release);
     EXPECT_FALSE(conn->is_open());
+}
+
+TEST_F(mux_connection_integration_test, SendAsyncAllowedWhenDraining)
+{
+    auto conn = std::make_shared<mux_connection>(
+        asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 13);
+
+    conn->connection_state_.store(mux_connection_state::kDraining, std::memory_order_release);
+    auto future = asio::co_spawn(
+        io_ctx(),
+        [conn]() -> asio::awaitable<std::error_code>
+        {
+            co_return co_await conn->send_async(1, kCmdRst, {});
+        },
+        asio::use_future);
+
+    io_ctx().run();
+    EXPECT_EQ(future.get(), std::error_code{});
 }
 
 TEST_F(mux_connection_integration_test, OffThreadRegisterAndQueryPaths)

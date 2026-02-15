@@ -452,7 +452,7 @@ asio::awaitable<void> mux_connection::start_impl()
 
 asio::awaitable<std::error_code> mux_connection::send_async(const std::uint32_t stream_id, const std::uint8_t cmd, std::vector<std::uint8_t> payload)
 {
-    if (connection_state_.load(std::memory_order_acquire) != mux_connection_state::kConnected)
+    if (!is_open())
     {
         co_return asio::error::operation_aborted;
     }
