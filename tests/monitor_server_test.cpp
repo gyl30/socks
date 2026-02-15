@@ -268,17 +268,17 @@ TEST(MonitorServerTest, TokenRequiredAndRateLimit)
     const auto port = pick_free_port();
     monitor_server_env env(port, std::string("secret"), 500);
 
-    const auto unauth = read_response(port, "no token\n");
+    const auto unauth = read_response(port, "metrics\n");
     EXPECT_TRUE(unauth.empty());
 
-    const auto authed = request_with_retry(port, "token=secret\n");
+    const auto authed = request_with_retry(port, "metrics?token=secret\n");
     EXPECT_NE(authed.find("socks_total_connections "), std::string::npos);
 
-    const auto limited = read_response(port, "token=secret\n");
+    const auto limited = read_response(port, "metrics?token=secret\n");
     EXPECT_TRUE(limited.empty());
 
     std::this_thread::sleep_for(std::chrono::milliseconds(550));
-    const auto after_window = read_response(port, "token=secret\n");
+    const auto after_window = read_response(port, "metrics?token=secret\n");
     EXPECT_NE(after_window.find("socks_uptime_seconds "), std::string::npos);
 }
 
@@ -287,17 +287,32 @@ TEST(MonitorServerTest, RejectsTokenSubstringBypass)
     const auto port = pick_free_port();
     monitor_server_env env(port, std::string("secret"));
 
-    const auto contains_secret_without_token_key = read_response(port, "foo=secret\n");
+    const auto contains_secret_without_token_key = read_response(port, "metrics?foo=secret\n");
     EXPECT_TRUE(contains_secret_without_token_key.empty());
 
-    const auto prefixed_token_key = read_response(port, "xtoken=secret\n");
+    const auto prefixed_token_key = read_response(port, "metrics?xtoken=secret\n");
     EXPECT_TRUE(prefixed_token_key.empty());
 
-    const auto wrong_token_value = read_response(port, "token=secretx\n");
+    const auto wrong_token_value = read_response(port, "metrics?token=secretx\n");
     EXPECT_TRUE(wrong_token_value.empty());
 
-    const auto authed = request_with_retry(port, "token=secret\n");
+    const auto authed = request_with_retry(port, "metrics?token=secret\n");
     EXPECT_NE(authed.find("socks_total_connections "), std::string::npos);
+}
+
+TEST(MonitorServerTest, EnforcesPathAndSupportsHttpUrlDecodedToken)
+{
+    const auto port = pick_free_port();
+    monitor_server_env env(port, std::string("s+e/c"));
+
+    const auto invalid_path = read_response(port, "GET /status?token=s%2Be%2Fc HTTP/1.1\r\n\r\n");
+    EXPECT_TRUE(invalid_path.empty());
+
+    const auto invalid_method = read_response(port, "POST /metrics?token=s%2Be%2Fc HTTP/1.1\r\n\r\n");
+    EXPECT_TRUE(invalid_method.empty());
+
+    const auto authed = request_with_retry(port, "GET /metrics?token=s%2Be%2Fc HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+    EXPECT_NE(authed.find("socks_uptime_seconds "), std::string::npos);
 }
 
 TEST(MonitorServerTest, EscapesPrometheusLabels)
