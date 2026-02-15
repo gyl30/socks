@@ -231,6 +231,12 @@ monitor_server::monitor_server(asio::io_context& ioc,
                                const std::uint32_t min_interval_ms)
     : acceptor_(ioc), token_(std::move(token)), min_interval_ms_(min_interval_ms)
 {
+    auto close_acceptor_on_failure = [this]()
+    {
+        asio::error_code close_ec;
+        acceptor_.close(close_ec);
+    };
+
     asio::ip::tcp::endpoint endpoint;
     asio::error_code ec;
     endpoint.address(asio::ip::make_address(bind_host, ec));
@@ -248,16 +254,19 @@ monitor_server::monitor_server(asio::io_context& ioc,
     if (acceptor_.set_option(asio::socket_base::reuse_address(true), ec); ec)
     {
         LOG_ERROR("failed to set reuse_address: {}", ec.message());
+        close_acceptor_on_failure();
         return;
     }
     if (acceptor_.bind(endpoint, ec); ec)
     {
         LOG_ERROR("failed to bind: {}", ec.message());
+        close_acceptor_on_failure();
         return;
     }
     if (acceptor_.listen(asio::socket_base::max_listen_connections, ec); ec)
     {
         LOG_ERROR("failed to listen: {}", ec.message());
+        close_acceptor_on_failure();
         return;
     }
     LOG_INFO("monitor server listening on {}:{}", bind_host, port);
