@@ -356,6 +356,28 @@ TEST(LocalClientTest, StopRunsInlineWhenIoContextStopped)
     EXPECT_FALSE(client->acceptor_.is_open());
 }
 
+TEST(LocalClientTest, StopRunsWhenIoContextNotRunning)
+{
+    io_context_pool pool(1);
+    mux::config cfg;
+    cfg.outbound.host = "127.0.0.1";
+    cfg.outbound.port = 12345;
+    cfg.socks.port = 10095;
+    cfg.reality.public_key = std::string(64, 'a');
+    cfg.reality.sni = "example.com";
+
+    auto client = std::make_shared<mux::socks_client>(pool, cfg);
+
+    std::error_code ec;
+    client->acceptor_.open(asio::ip::tcp::v4(), ec);
+    ASSERT_FALSE(ec);
+    ASSERT_TRUE(client->acceptor_.is_open());
+
+    client->stop();
+    EXPECT_FALSE(client->acceptor_.is_open());
+    pool.stop();
+}
+
 TEST(LocalClientTest, DoubleStop)
 {
     io_context_pool pool(1);

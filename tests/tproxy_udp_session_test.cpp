@@ -2151,6 +2151,33 @@ TEST(TproxyClientTest, StopRunsInlineWhenIoContextStopped)
     reset_socket_wrappers();
 }
 
+TEST(TproxyClientTest, StopRunsWhenIoContextNotRunning)
+{
+    reset_socket_wrappers();
+
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    mux::config cfg;
+    cfg.tproxy.enabled = true;
+    auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
+
+    client->tcp_acceptor_.open(asio::ip::tcp::v4(), ec);
+    ASSERT_FALSE(ec);
+    client->udp_socket_.open(asio::ip::udp::v4(), ec);
+    ASSERT_FALSE(ec);
+    ASSERT_TRUE(client->tcp_acceptor_.is_open());
+    ASSERT_TRUE(client->udp_socket_.is_open());
+
+    client->stop();
+    EXPECT_FALSE(client->tcp_acceptor_.is_open());
+    EXPECT_FALSE(client->udp_socket_.is_open());
+    pool.stop();
+
+    reset_socket_wrappers();
+}
+
 TEST(TproxyClientTest, UdpCleanupLoopCoversNullSessionBranch)
 {
     std::error_code ec;

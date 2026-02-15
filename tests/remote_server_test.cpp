@@ -1878,6 +1878,23 @@ TEST_F(remote_server_test, StopRunsInlineWhenIoContextStopped)
     EXPECT_FALSE(server->acceptor_.is_open());
 }
 
+TEST_F(remote_server_test, StopRunsWhenIoContextNotRunning)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
+    server->start();
+
+    EXPECT_TRUE(server->acceptor_.is_open());
+    server->stop();
+
+    EXPECT_TRUE(server->stop_.load(std::memory_order_acquire));
+    EXPECT_FALSE(server->acceptor_.is_open());
+    pool.stop();
+}
+
 TEST_F(remote_server_test, HandleFallbackCoversCloseSocketErrorBranches)
 {
     std::error_code ec;
