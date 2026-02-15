@@ -1937,6 +1937,63 @@ TEST_F(remote_server_test, StopRunsInlineWhenIoContextStopped)
     EXPECT_FALSE(server->acceptor_.is_open());
 }
 
+TEST_F(remote_server_test, StopRunsWhenIoQueueBlocked)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
+    server->start();
+
+    std::atomic<bool> blocker_started{false};
+    std::atomic<bool> release_blocker{false};
+    asio::post(
+        pool.get_io_context(),
+        [&blocker_started, &release_blocker]()
+        {
+            blocker_started.store(true, std::memory_order_release);
+            while (!release_blocker.load(std::memory_order_acquire))
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+        });
+
+    std::thread runner([&pool]() { pool.run(); });
+    bool started = false;
+    for (int i = 0; i < 100; ++i)
+    {
+        if (blocker_started.load(std::memory_order_acquire))
+        {
+            started = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    if (!started)
+    {
+        release_blocker.store(true, std::memory_order_release);
+        pool.stop();
+        if (runner.joinable())
+        {
+            runner.join();
+        }
+        FAIL();
+    }
+
+    EXPECT_TRUE(server->acceptor_.is_open());
+    server->stop();
+    EXPECT_TRUE(server->stop_.load(std::memory_order_acquire));
+    EXPECT_FALSE(server->acceptor_.is_open());
+
+    release_blocker.store(true, std::memory_order_release);
+    pool.stop();
+    if (runner.joinable())
+    {
+        runner.join();
+    }
+}
+
 TEST_F(remote_server_test, StopRunsWhenIoContextNotRunning)
 {
     std::error_code ec;
