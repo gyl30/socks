@@ -677,6 +677,26 @@ TEST(TproxyUdpSessionTest, OnDataRunsStopWhenIoQueueBlocked)
     }
 }
 
+TEST(TproxyUdpSessionTest, OnDataRunsStopWhenIoContextStopped)
+{
+    asio::io_context ctx;
+    auto router = std::make_shared<direct_router>();
+    mux::config cfg;
+    cfg.tproxy.mark = 0;
+    const asio::ip::udp::endpoint client_ep(asio::ip::make_address("127.0.0.1"), 12421);
+    auto session = std::make_shared<mux::tproxy_udp_session>(ctx, nullptr, router, nullptr, 21, cfg, client_ep);
+
+    std::error_code ec;
+    session->direct_socket_.open(asio::ip::udp::v4(), ec);
+    ASSERT_FALSE(ec);
+    ASSERT_TRUE(session->direct_socket_.is_open());
+    session->recv_channel_.close();
+
+    ctx.stop();
+    session->on_data({0x55});
+    EXPECT_FALSE(session->direct_socket_.is_open());
+}
+
 TEST(TproxyUdpSessionTest, StopAndOnCloseCoverPartialStateBranches)
 {
     asio::io_context ctx;
