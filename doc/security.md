@@ -44,3 +44,25 @@
 1. SOCKS/MUX 失败必须返回错误码或 reset。
 2. 失败后立即回收 stream、关闭 socket、停止定时器。
 3. 严禁在运行时使用 `abort()` 终止进程。
+
+## 代码评审待修复清单（2026-02-15）
+
+以下问题用于指导后续迭代，按优先级从高到低执行。
+
+1. `中` monitor 限流在鉴权之前执行，未授权请求会占用限流窗口。定位：`monitor_server.cpp:238`、`monitor_server.cpp:245`。目标：先鉴权再计入限流。
+2. `中` UDP ASSOCIATE 成功 ACK 发送失败后仍继续运行会话循环。定位：`remote_udp_session.cpp:94`、`remote_udp_session.cpp:244`、`remote_udp_session.cpp:246`。目标：ACK 失败立即 stop/remove_stream/RST。
+3. `中` `max_connections=0` 语义不一致，客户端钳制为 1，服务端按 0 直接判满。定位：`client_tunnel_pool.cpp:857`、`remote_server.cpp:1110`。目标：统一语义并补配置校验。
+4. `低` 错误处理文档与实现风格不一致，文档描述为“全面 expected”，实现仍有 `awaitable<std::error_code>` 边界接口。定位：`doc/error_handling.md:3`、`mux_connection.h:83`、`remote_server.h:201`。目标：先统一文档口径，再逐步迁移接口。
+5. `低` UML 文档实体陈旧，与现有实现命名不一致。定位：`doc/class.uml:11`、`doc/class.uml:70`。目标：更新为 `socks_client`/`tproxy_client`/`monitor_server` 等当前实体。
+
+## 建议修复顺序
+
+1. 修复 monitor 鉴权/限流顺序（问题 1）。
+2. 修复 remote UDP ACK 失败退出路径（问题 2）。
+3. 统一 `max_connections=0` 语义并补测试（问题 3）。
+4. 收敛文档与 UML（问题 4、5）。
+
+## 每步验证要求
+
+1. 编译：`cmake --build build -j15`
+2. 单元与集成：`ctest --test-dir build -j20 --output-on-failure`
