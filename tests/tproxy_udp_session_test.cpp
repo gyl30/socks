@@ -507,7 +507,7 @@ TEST(TproxyUdpSessionTest, StartHandlesAlreadyOpenedSocket)
     ASSERT_FALSE(ec);
 
     session->start();
-    EXPECT_TRUE(session->direct_socket_.is_open());
+    EXPECT_FALSE(session->direct_socket_.is_open());
     session->stop();
     ctx.poll();
 }
@@ -609,7 +609,7 @@ TEST(TproxyUdpSessionTest, StartCoversBindFailureBranch)
 
     fail_bind_once(EADDRINUSE);
     session->start();
-    EXPECT_TRUE(session->direct_socket_.is_open());
+    EXPECT_FALSE(session->direct_socket_.is_open());
 
     session->stop();
     ctx.poll();

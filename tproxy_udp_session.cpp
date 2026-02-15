@@ -28,6 +28,16 @@ namespace mux
 namespace
 {
 
+void close_start_failed_socket(asio::ip::udp::socket& socket, const connection_context& ctx)
+{
+    std::error_code close_ec;
+    close_ec = socket.close(close_ec);
+    if (close_ec && close_ec != asio::error::bad_descriptor)
+    {
+        LOG_CTX_WARN(ctx, "{} udp close failed {}", log_event::kSocks, close_ec.message());
+    }
+}
+
 asio::ip::udp::endpoint map_v4_to_v6(const asio::ip::udp::endpoint& ep)
 {
     if (!ep.address().is_v4())
@@ -76,6 +86,7 @@ void tproxy_udp_session::start()
     if (ec)
     {
         LOG_CTX_WARN(ctx_, "{} udp open failed {}", log_event::kSocks, ec.message());
+        close_start_failed_socket(direct_socket_, ctx_);
         return;
     }
     ec = direct_socket_.set_option(asio::ip::v6_only(false), ec);
@@ -94,6 +105,7 @@ void tproxy_udp_session::start()
     if (ec)
     {
         LOG_CTX_WARN(ctx_, "{} udp bind failed {}", log_event::kSocks, ec.message());
+        close_start_failed_socket(direct_socket_, ctx_);
         return;
     }
 
