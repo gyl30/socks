@@ -47,13 +47,6 @@ class scoped_pool_runner
     std::thread thread_;
 };
 
-[[nodiscard]] std::uint16_t pick_free_port()
-{
-    asio::io_context io_context;
-    asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
-    return acceptor.local_endpoint().port();
-}
-
 [[nodiscard]] bool wait_for_tunnel(const std::shared_ptr<mux::client_tunnel_pool>& tunnel_pool, const std::chrono::milliseconds timeout)
 {
     const auto deadline = std::chrono::steady_clock::now() + timeout;
@@ -179,13 +172,12 @@ TEST_F(client_tunnel_pool_policy_test, DummyCertificateAllowedWhenStrictVerifyDi
     ASSERT_FALSE(ec);
     scoped_pool_runner runner(pool);
 
-    const std::uint16_t server_port = pick_free_port();
     const std::string sni = "www.google.com";
     const std::string short_id = "0102030405060708";
 
     mux::config server_cfg;
     server_cfg.inbound.host = "127.0.0.1";
-    server_cfg.inbound.port = server_port;
+    server_cfg.inbound.port = 0;
     server_cfg.reality.private_key = server_private_key();
     server_cfg.reality.short_id = short_id;
     auto server = std::make_shared<mux::remote_server>(pool, server_cfg);
@@ -195,6 +187,8 @@ TEST_F(client_tunnel_pool_policy_test, DummyCertificateAllowedWhenStrictVerifyDi
     fingerprint.alpn = "h2";
     server->set_certificate(sni, reality::construct_certificate({0x01, 0x02, 0x03}), fingerprint);
     server->start();
+    const std::uint16_t server_port = server->listen_port();
+    ASSERT_NE(server_port, 0);
 
     mux::config client_cfg;
     client_cfg.outbound.host = "127.0.0.1";
@@ -223,13 +217,12 @@ TEST_F(client_tunnel_pool_policy_test, DummyCertificateRejectedWhenStrictVerifyE
     ASSERT_FALSE(ec);
     scoped_pool_runner runner(pool);
 
-    const std::uint16_t server_port = pick_free_port();
     const std::string sni = "www.google.com";
     const std::string short_id = "0102030405060708";
 
     mux::config server_cfg;
     server_cfg.inbound.host = "127.0.0.1";
-    server_cfg.inbound.port = server_port;
+    server_cfg.inbound.port = 0;
     server_cfg.reality.private_key = server_private_key();
     server_cfg.reality.short_id = short_id;
     auto server = std::make_shared<mux::remote_server>(pool, server_cfg);
@@ -239,6 +232,8 @@ TEST_F(client_tunnel_pool_policy_test, DummyCertificateRejectedWhenStrictVerifyE
     fingerprint.alpn = "h2";
     server->set_certificate(sni, reality::construct_certificate({0x01, 0x02, 0x03}), fingerprint);
     server->start();
+    const std::uint16_t server_port = server->listen_port();
+    ASSERT_NE(server_port, 0);
 
     mux::config client_cfg;
     client_cfg.outbound.host = "127.0.0.1";
@@ -267,13 +262,12 @@ TEST_F(client_tunnel_pool_policy_test, StrictVerifyEnabledWithValidCertificateCh
     ASSERT_FALSE(ec);
     scoped_pool_runner runner(pool);
 
-    const std::uint16_t server_port = pick_free_port();
     const std::string sni = "www.google.com";
     const std::string short_id = "0102030405060708";
 
     mux::config server_cfg;
     server_cfg.inbound.host = "127.0.0.1";
-    server_cfg.inbound.port = server_port;
+    server_cfg.inbound.port = 0;
     server_cfg.reality.private_key = server_private_key();
     server_cfg.reality.short_id = short_id;
     auto server = std::make_shared<mux::remote_server>(pool, server_cfg);
@@ -285,6 +279,8 @@ TEST_F(client_tunnel_pool_policy_test, StrictVerifyEnabledWithValidCertificateCh
     ASSERT_FALSE(cert_der.empty());
     server->set_certificate(sni, reality::construct_certificate(cert_der), fingerprint);
     server->start();
+    const std::uint16_t server_port = server->listen_port();
+    ASSERT_NE(server_port, 0);
 
     mux::config client_cfg;
     client_cfg.outbound.host = "127.0.0.1";

@@ -575,6 +575,25 @@ TEST(RemoteUdpSessionTest, StartImplSendsAckAndCleansUpManager)
     EXPECT_FALSE(manager->connection()->has_stream(22));
 }
 
+TEST(RemoteUdpSessionTest, StartImplAckFailureStopsSessionAndRemovesStream)
+{
+    asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    auto session = make_session(io_context, conn, 25);
+    auto manager = make_manager(io_context, 302);
+    manager->connection()->register_stream(25, std::make_shared<noop_stream>());
+    ASSERT_TRUE(manager->connection()->has_stream(25));
+    session->set_manager(manager);
+
+    EXPECT_CALL(*conn, mock_send_async(25, mux::kCmdAck, _)).WillOnce(::testing::Return(asio::error::broken_pipe));
+    EXPECT_CALL(*conn, mock_send_async(25, mux::kCmdRst, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(std::error_code{}));
+
+    mux::test::run_awaitable_void(io_context, session->start_impl(session));
+
+    EXPECT_FALSE(session->udp_socket_.is_open());
+    EXPECT_FALSE(manager->connection()->has_stream(25));
+}
+
 TEST(RemoteUdpSessionTest, WatchdogStopsWhenCancelled)
 {
     asio::io_context io_context;

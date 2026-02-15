@@ -87,11 +87,12 @@ asio::awaitable<void> remote_udp_session::start()
     co_await start_impl(shared_from_this());
 }
 
-asio::awaitable<void> remote_udp_session::send_ack_payload(const std::shared_ptr<mux_connection>& conn, const ack_payload& ack)
+asio::awaitable<std::error_code> remote_udp_session::send_ack_payload(const std::shared_ptr<mux_connection>& conn,
+                                                                      const ack_payload& ack)
 {
     std::vector<std::uint8_t> ack_data;
     mux_codec::encode_ack(ack, ack_data);
-    (void)co_await conn->send_async(id_, kCmdAck, std::move(ack_data));
+    co_return co_await conn->send_async(id_, kCmdAck, std::move(ack_data));
 }
 
 asio::awaitable<void> remote_udp_session::handle_start_failure(const std::shared_ptr<mux_connection>& conn,
@@ -100,7 +101,10 @@ asio::awaitable<void> remote_udp_session::handle_start_failure(const std::shared
 {
     LOG_CTX_ERROR(ctx_, "{} {} failed {}", log_event::kMux, step, ec.message());
     const ack_payload ack{.socks_rep = socks::kRepGenFail, .bnd_addr = "", .bnd_port = 0};
-    co_await send_ack_payload(conn, ack);
+    if (const auto ack_ec = co_await send_ack_payload(conn, ack))
+    {
+        LOG_CTX_WARN(ctx_, "{} send ack failed {}", log_event::kMux, ack_ec.message());
+    }
     request_stop();
     close_socket();
     if (auto manager = manager_.lock())
@@ -241,7 +245,12 @@ asio::awaitable<void> remote_udp_session::start_impl(std::shared_ptr<remote_udp_
         .bnd_addr = local_ep.address().to_string(),
         .bnd_port = local_ep.port(),
     };
-    co_await send_ack_payload(conn, ack);
+    if (const auto ack_ec = co_await send_ack_payload(conn, ack))
+    {
+        LOG_CTX_WARN(ctx_, "{} send ack failed {}", log_event::kMux, ack_ec.message());
+        co_await cleanup_after_stop();
+        co_return;
+    }
 
     co_await run_udp_session_loops();
     co_await cleanup_after_stop();

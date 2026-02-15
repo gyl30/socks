@@ -105,6 +105,22 @@ TEST(StatisticsTest, CountersAndUptime)
     const auto blocked_before = stats.routing_blocked();
     stats.inc_routing_blocked();
     EXPECT_EQ(stats.routing_blocked(), blocked_before + 1);
+
+    const auto conn_limit_before = stats.connection_limit_rejected();
+    stats.inc_connection_limit_rejected();
+    EXPECT_EQ(stats.connection_limit_rejected(), conn_limit_before + 1);
+
+    const auto stream_limit_before = stats.stream_limit_rejected();
+    stats.inc_stream_limit_rejected();
+    EXPECT_EQ(stats.stream_limit_rejected(), stream_limit_before + 1);
+
+    const auto monitor_auth_before = stats.monitor_auth_failures();
+    stats.inc_monitor_auth_failures();
+    EXPECT_EQ(stats.monitor_auth_failures(), monitor_auth_before + 1);
+
+    const auto monitor_rate_before = stats.monitor_rate_limited();
+    stats.inc_monitor_rate_limited();
+    EXPECT_EQ(stats.monitor_rate_limited(), monitor_rate_before + 1);
 }
 
 TEST(StatisticsTest, HandshakeFailureMetricsTracksAndSorts)

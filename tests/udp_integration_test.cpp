@@ -53,19 +53,31 @@ class udp_integration_test : public ::testing::Test
     std::string short_id_;
 };
 
-static asio::awaitable<void> run_udp_echo_server(std::shared_ptr<asio::ip::udp::socket> socket, std::uint16_t port)
+static asio::awaitable<void> run_udp_echo_server(std::shared_ptr<asio::ip::udp::socket> socket,
+                                                 const std::uint16_t port,
+                                                 const std::shared_ptr<std::atomic<bool>>& stopped)
 {
+    const auto mark_stopped = [&stopped]()
+    {
+        if (stopped != nullptr)
+        {
+            stopped->store(true, std::memory_order_release);
+        }
+    };
+
     std::error_code ec;
     socket->open(asio::ip::udp::v4(), ec);
     if (ec)
     {
         LOG_ERROR("echo server open failed: {}", ec.message());
+        mark_stopped();
         co_return;
     }
     socket->bind(asio::ip::udp::endpoint(asio::ip::udp::v4(), port), ec);
     if (ec)
     {
         LOG_ERROR("echo server bind failed on port {}: {}", port, ec.message());
+        mark_stopped();
         co_return;
     }
 
@@ -91,6 +103,21 @@ static asio::awaitable<void> run_udp_echo_server(std::shared_ptr<asio::ip::udp::
             break;
         }
     }
+    mark_stopped();
+}
+
+static bool wait_for_flag(const std::shared_ptr<std::atomic<bool>>& done, const std::chrono::milliseconds timeout)
+{
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (done != nullptr && !done->load(std::memory_order_acquire))
+    {
+        if (std::chrono::steady_clock::now() >= deadline)
+        {
+            return false;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    return true;
 }
 
 static bool wait_for_tcp_port(const std::uint16_t port, const int attempts = 60)
@@ -163,8 +190,6 @@ TEST_F(udp_integration_test, UdpAssociateAndEcho)
     client_cfg.timeout.write = 10;
     auto client = std::make_shared<socks_client>(pool, client_cfg);
     client->start();
-    const auto local_socks_port = wait_for_socks_listen_port(client);
-    ASSERT_NE(local_socks_port, 0);
 
     auto echo_socket = std::make_shared<asio::ip::udp::socket>(pool.get_io_context());
 
@@ -173,9 +198,12 @@ TEST_F(udp_integration_test, UdpAssociateAndEcho)
     echo_server_port = echo_socket->local_endpoint().port();
     echo_socket->close();
 
-    asio::co_spawn(pool.get_io_context(), run_udp_echo_server(echo_socket, echo_server_port), asio::detached);
+    auto echo_stopped = std::make_shared<std::atomic<bool>>(false);
+    asio::co_spawn(echo_socket->get_executor(), run_udp_echo_server(echo_socket, echo_server_port, echo_stopped), asio::detached);
 
     std::thread pool_thread([&pool]() { pool.run(); });
+    const auto local_socks_port = wait_for_socks_listen_port(client);
+    ASSERT_NE(local_socks_port, 0);
 
     std::atomic<bool> test_passed{false};
     std::atomic<bool> test_failed{false};
@@ -343,6 +371,7 @@ TEST_F(udp_integration_test, UdpAssociateAndEcho)
         client_udp->close(ignore);
     }
     echo_socket->close(ignore);
+    EXPECT_TRUE(wait_for_flag(echo_stopped, std::chrono::seconds(2)));
 
     pool.stop();
     if (pool_thread.joinable())
@@ -391,8 +420,6 @@ TEST_F(udp_integration_test, UdpAssociateIgnoresFragmentedPacketAndKeepsSessionA
     client_cfg.timeout.idle = 10;
     auto client = std::make_shared<socks_client>(pool, client_cfg);
     client->start();
-    const auto local_socks_port = wait_for_socks_listen_port(client);
-    ASSERT_NE(local_socks_port, 0);
 
     auto echo_socket = std::make_shared<asio::ip::udp::socket>(pool.get_io_context());
     echo_socket->open(asio::ip::udp::v4(), ec);
@@ -402,9 +429,12 @@ TEST_F(udp_integration_test, UdpAssociateIgnoresFragmentedPacketAndKeepsSessionA
     const auto echo_server_port = echo_socket->local_endpoint().port();
     echo_socket->close(ec);
     ASSERT_FALSE(ec);
-    asio::co_spawn(pool.get_io_context(), run_udp_echo_server(echo_socket, echo_server_port), asio::detached);
+    auto echo_stopped = std::make_shared<std::atomic<bool>>(false);
+    asio::co_spawn(echo_socket->get_executor(), run_udp_echo_server(echo_socket, echo_server_port, echo_stopped), asio::detached);
 
     std::thread pool_thread([&pool]() { pool.run(); });
+    const auto local_socks_port = wait_for_socks_listen_port(client);
+    ASSERT_NE(local_socks_port, 0);
 
     asio::io_context io_context;
     asio::ip::tcp::socket tcp_socket(io_context);
@@ -514,6 +544,7 @@ TEST_F(udp_integration_test, UdpAssociateIgnoresFragmentedPacketAndKeepsSessionA
     tcp_socket.close(ignore);
     udp_socket.close(ignore);
     echo_socket->close(ignore);
+    EXPECT_TRUE(wait_for_flag(echo_stopped, std::chrono::seconds(2)));
 
     pool.stop();
     if (pool_thread.joinable())

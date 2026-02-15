@@ -80,6 +80,11 @@ struct parsed_monitor_request
     std::string_view query;
 };
 
+constexpr std::size_t kMaxMonitorRequestLineSize = 4096;
+constexpr std::size_t kMonitorRateStateMaxSources = 4096;
+constexpr std::uint32_t kMonitorRateStateRetentionMultiplier = 32;
+constexpr auto kMonitorRateStateMinRetention = std::chrono::minutes(5);
+
 std::string url_decode(std::string_view value)
 {
     auto hex_to_int = [](const char c) -> int
@@ -217,6 +222,60 @@ bool is_authorized_monitor_request(const std::string& request, const std::string
     return has_exact_token_parameter(parsed.query, token);
 }
 
+std::string monitor_rate_limit_key(asio::ip::tcp::socket& socket)
+{
+    std::error_code ec;
+    const auto remote_ep = socket.remote_endpoint(ec);
+    if (ec)
+    {
+        return "unknown";
+    }
+    return remote_ep.address().to_string();
+}
+
+void prune_monitor_rate_state(std::unordered_map<std::string, std::chrono::steady_clock::time_point>& last_request_time_by_source,
+                              const std::chrono::steady_clock::time_point now,
+                              std::chrono::milliseconds retention,
+                              const std::string& rate_key)
+{
+    if (retention < kMonitorRateStateMinRetention)
+    {
+        retention = kMonitorRateStateMinRetention;
+    }
+
+    for (auto it = last_request_time_by_source.begin(); it != last_request_time_by_source.end();)
+    {
+        if (now - it->second >= retention)
+        {
+            it = last_request_time_by_source.erase(it);
+            continue;
+        }
+        ++it;
+    }
+
+    if (last_request_time_by_source.size() < kMonitorRateStateMaxSources)
+    {
+        return;
+    }
+    if (last_request_time_by_source.find(rate_key) != last_request_time_by_source.end())
+    {
+        return;
+    }
+
+    auto oldest_it = last_request_time_by_source.end();
+    for (auto it = last_request_time_by_source.begin(); it != last_request_time_by_source.end(); ++it)
+    {
+        if (oldest_it == last_request_time_by_source.end() || it->second < oldest_it->second)
+        {
+            oldest_it = it;
+        }
+    }
+    if (oldest_it != last_request_time_by_source.end())
+    {
+        last_request_time_by_source.erase(oldest_it);
+    }
+}
+
 }    // namespace
 
 class monitor_session : public std::enable_shared_from_this<monitor_session>
@@ -230,34 +289,52 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
     void start()
     {
         auto self = shared_from_this();
-        socket_.async_read_some(asio::buffer(buffer_),
-                                [this, self](std::error_code ec, std::size_t length)
-                                {
-                                    if (!ec)
-                                    {
-                                        if (!check_rate_limit())
-                                        {
-                                            LOG_WARN("monitor rate limited");
-                                            close_socket();
-                                            return;
-                                        }
-                                        const std::string req(buffer_.data(), length);
-                                        if (!is_authorized_monitor_request(req, token_))
-                                        {
-                                            if (!token_.empty())
-                                            {
-                                                LOG_WARN("monitor auth failed");
-                                            }
-                                            else
-                                            {
-                                                LOG_WARN("monitor invalid request");
-                                            }
-                                            close_socket();
-                                            return;
-                                        }
-                                        write_stats();
-                                    }
-                                });
+        asio::async_read_until(socket_,
+                               asio::dynamic_buffer(request_line_, kMaxMonitorRequestLineSize),
+                               '\n',
+                               [this, self](std::error_code ec, std::size_t length)
+                               {
+                                   if (ec)
+                                   {
+                                       if (ec != asio::error::eof && ec != asio::error::operation_aborted)
+                                       {
+                                           LOG_WARN("monitor read failed {}", ec.message());
+                                       }
+                                       close_socket();
+                                       return;
+                                   }
+
+                                   if (length == 0 || length > request_line_.size())
+                                   {
+                                       LOG_WARN("monitor request line invalid");
+                                       close_socket();
+                                       return;
+                                   }
+
+                                   const std::string req(request_line_.data(), length);
+                                   if (!is_authorized_monitor_request(req, token_))
+                                   {
+                                       statistics::instance().inc_monitor_auth_failures();
+                                       if (!token_.empty())
+                                       {
+                                           LOG_WARN("monitor auth failed");
+                                       }
+                                       else
+                                       {
+                                           LOG_WARN("monitor invalid request");
+                                       }
+                                       close_socket();
+                                       return;
+                                   }
+                                   if (!check_rate_limit())
+                                   {
+                                       statistics::instance().inc_monitor_rate_limited();
+                                       LOG_WARN("monitor rate limited");
+                                       close_socket();
+                                       return;
+                                   }
+                                   write_stats();
+                               });
     }
 
    private:
@@ -275,11 +352,20 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
             return true;
         }
         const auto now = std::chrono::steady_clock::now();
-        if (now - rate_state_->last_request_time < std::chrono::milliseconds(min_interval_ms_))
+        const auto rate_key = monitor_rate_limit_key(socket_);
+        std::lock_guard<std::mutex> lock(rate_state_->mutex);
+        const auto retention_ms = static_cast<std::uint64_t>(min_interval_ms_) * kMonitorRateStateRetentionMultiplier;
+        prune_monitor_rate_state(rate_state_->last_request_time_by_source,
+                                 now,
+                                 std::chrono::milliseconds(retention_ms),
+                                 rate_key);
+        auto& last_request_time = rate_state_->last_request_time_by_source[rate_key];
+        if (last_request_time.time_since_epoch().count() != 0
+            && now - last_request_time < std::chrono::milliseconds(min_interval_ms_))
         {
             return false;
         }
-        rate_state_->last_request_time = now;
+        last_request_time = now;
         return true;
     }
 
@@ -303,6 +389,10 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
         append_metric_line(response, "socks_client_finished_failures_total", stats.client_finished_failures());
         append_metric_line(response, "socks_fallback_rate_limited_total", stats.fallback_rate_limited());
         append_metric_line(response, "socks_routing_blocked_total", stats.routing_blocked());
+        append_metric_line(response, "socks_connection_limit_rejected_total", stats.connection_limit_rejected());
+        append_metric_line(response, "socks_stream_limit_rejected_total", stats.stream_limit_rejected());
+        append_metric_line(response, "socks_monitor_auth_failures_total", stats.monitor_auth_failures());
+        append_metric_line(response, "socks_monitor_rate_limited_total", stats.monitor_rate_limited());
         const auto handshake_failure_sni_metrics = stats.handshake_failure_sni_metrics();
         for (const auto& metric : handshake_failure_sni_metrics)
         {
@@ -323,7 +413,7 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
 
    private:
     std::string response_;
-    std::array<char, 4096> buffer_;
+    std::string request_line_;
     asio::ip::tcp::socket socket_;
     std::string token_;
     std::shared_ptr<monitor_rate_state> rate_state_;

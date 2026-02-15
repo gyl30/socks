@@ -6,6 +6,7 @@
 #include <memory>
 #include <random>
 #include <string>
+#include <thread>
 #include <vector>
 #include <cstdint>
 #include <cstring>
@@ -56,6 +57,9 @@ namespace mux
 
 namespace
 {
+
+constexpr std::uint32_t kEphemeralServerBindRetryAttempts = 120;
+const auto kEphemeralServerBindRetryDelay = std::chrono::milliseconds(25);
 
 bool parse_hex_to_bytes(const std::string& hex, std::vector<std::uint8_t>& out, const std::size_t max_len, const char* label)
 {
@@ -138,6 +142,90 @@ bool should_stop_accept_loop_on_error(const std::error_code& accept_ec,
     return !acceptor.is_open();
 }
 
+struct timed_socket_read_res
+{
+    bool ok = false;
+    bool timed_out = false;
+    std::size_t read_size = 0;
+    std::error_code ec;
+};
+
+[[nodiscard]] bool should_skip_fallback_after_read_failure(const std::error_code& read_ec, const std::atomic<bool>& stop_flag)
+{
+    if (stop_flag.load(std::memory_order_acquire))
+    {
+        return true;
+    }
+    return read_ec == asio::error::operation_aborted || read_ec == asio::error::bad_descriptor || read_ec == asio::error::timed_out;
+}
+
+asio::awaitable<timed_socket_read_res> read_socket_with_timeout(const std::shared_ptr<asio::ip::tcp::socket>& socket,
+                                                                const asio::mutable_buffer buffer,
+                                                                asio::io_context& io_context,
+                                                                const std::uint32_t timeout_sec,
+                                                                const bool require_full_buffer)
+{
+    auto timer = std::make_shared<asio::steady_timer>(io_context);
+    auto timeout_triggered = std::make_shared<std::atomic<bool>>(false);
+    timer->expires_after(std::chrono::seconds(timeout_sec));
+    timer->async_wait(
+        [socket, timeout_triggered](const std::error_code& timer_ec)
+        {
+            if (timer_ec)
+            {
+                return;
+            }
+            timeout_triggered->store(true, std::memory_order_release);
+            std::error_code cancel_ec;
+            socket->cancel(cancel_ec);
+            if (cancel_ec && cancel_ec != asio::error::bad_descriptor)
+            {
+                LOG_WARN("cancel timeout socket failed {}", cancel_ec.message());
+            }
+
+            std::error_code close_ec;
+            close_ec = socket->close(close_ec);
+            if (close_ec && close_ec != asio::error::bad_descriptor)
+            {
+                LOG_WARN("close timeout socket failed {}", close_ec.message());
+            }
+        });
+
+    std::error_code read_ec;
+    std::size_t read_size = 0;
+    if (require_full_buffer)
+    {
+        const auto [exact_read_ec, exact_read_size] = co_await asio::async_read(*socket, buffer, asio::as_tuple(asio::use_awaitable));
+        read_ec = exact_read_ec;
+        read_size = exact_read_size;
+    }
+    else
+    {
+        const auto [read_some_ec, read_some_size] = co_await socket->async_read_some(buffer, asio::as_tuple(asio::use_awaitable));
+        read_ec = read_some_ec;
+        read_size = read_some_size;
+    }
+
+    const auto cancelled = timer->cancel();
+    (void)cancelled;
+    if (timeout_triggered->load(std::memory_order_acquire))
+    {
+        co_return timed_socket_read_res{
+            .ok = false,
+            .timed_out = true,
+            .ec = asio::error::timed_out};
+    }
+    if (read_ec)
+    {
+        co_return timed_socket_read_res{
+            .ok = false,
+            .ec = read_ec};
+    }
+    co_return timed_socket_read_res{
+        .ok = true,
+        .read_size = read_size};
+}
+
 std::optional<std::pair<std::string, std::string>> find_exact_sni_fallback(const std::vector<config::fallback_entry>& fallbacks,
                                                                             const std::string& sni)
 {
@@ -181,41 +269,54 @@ asio::ip::tcp::endpoint resolve_inbound_endpoint(const config::inbound_t& inboun
 
 bool setup_server_acceptor(asio::ip::tcp::acceptor& acceptor, const asio::ip::tcp::endpoint& ep)
 {
-    auto close_on_failure = [&acceptor]()
-    {
-        std::error_code close_ec;
-        acceptor.close(close_ec);
-    };
+    const bool retry_ephemeral_bind = (ep.port() == 0);
+    const std::uint32_t max_attempts = retry_ephemeral_bind ? kEphemeralServerBindRetryAttempts : 1;
 
-    std::error_code ec;
-    ec = acceptor.open(ep.protocol(), ec);
-    if (ec)
+    for (std::uint32_t attempt = 0; attempt < max_attempts; ++attempt)
     {
-        LOG_ERROR("acceptor open failed {}", ec.message());
-        return false;
+        auto close_on_failure = [&acceptor]()
+        {
+            std::error_code close_ec;
+            acceptor.close(close_ec);
+        };
+
+        std::error_code ec;
+        ec = acceptor.open(ep.protocol(), ec);
+        if (ec)
+        {
+            LOG_ERROR("acceptor open failed {}", ec.message());
+            return false;
+        }
+        ec = acceptor.set_option(asio::ip::tcp::acceptor::reuse_address(true), ec);
+        if (ec)
+        {
+            LOG_ERROR("acceptor set reuse address failed {}", ec.message());
+            close_on_failure();
+            return false;
+        }
+        ec = acceptor.bind(ep, ec);
+        if (ec)
+        {
+            close_on_failure();
+            const bool can_retry = retry_ephemeral_bind && ec == asio::error::address_in_use && (attempt + 1) < max_attempts;
+            if (can_retry)
+            {
+                std::this_thread::sleep_for(kEphemeralServerBindRetryDelay);
+                continue;
+            }
+            LOG_ERROR("acceptor bind failed {}", ec.message());
+            return false;
+        }
+        ec = acceptor.listen(asio::socket_base::max_listen_connections, ec);
+        if (ec)
+        {
+            LOG_ERROR("acceptor listen failed {}", ec.message());
+            close_on_failure();
+            return false;
+        }
+        return true;
     }
-    ec = acceptor.set_option(asio::ip::tcp::acceptor::reuse_address(true), ec);
-    if (ec)
-    {
-        LOG_ERROR("acceptor set reuse address failed {}", ec.message());
-        close_on_failure();
-        return false;
-    }
-    ec = acceptor.bind(ep, ec);
-    if (ec)
-    {
-        LOG_ERROR("acceptor bind failed {}", ec.message());
-        close_on_failure();
-        return false;
-    }
-    ec = acceptor.listen(asio::socket_base::max_listen_connections, ec);
-    if (ec)
-    {
-        LOG_ERROR("acceptor listen failed {}", ec.message());
-        close_on_failure();
-        return false;
-    }
-    return true;
+    return false;
 }
 
 void apply_reality_dest_config(const config::reality_t& reality_cfg,
@@ -285,6 +386,82 @@ const EVP_CIPHER* cipher_from_cipher_suite(const std::uint16_t cipher_suite)
 std::size_t key_len_from_cipher_suite(const std::uint16_t cipher_suite)
 {
     return (cipher_suite == 0x1302) ? 32 : 16;
+}
+
+std::uint8_t clamp_prefix(const std::uint8_t prefix, const std::uint8_t max_prefix)
+{
+    if (prefix > max_prefix)
+    {
+        return max_prefix;
+    }
+    return prefix;
+}
+
+std::uint32_t mask_from_v4_prefix(const std::uint8_t prefix)
+{
+    if (prefix == 0)
+    {
+        return 0;
+    }
+    if (prefix >= 32)
+    {
+        return 0xFFFFFFFFU;
+    }
+    return 0xFFFFFFFFU << (32 - prefix);
+}
+
+std::string format_v4_subnet_key(const asio::ip::address_v4& address, const std::uint8_t prefix)
+{
+    const auto mask = mask_from_v4_prefix(prefix);
+    const auto network = address.to_uint() & mask;
+    return asio::ip::address_v4(network).to_string() + "/" + std::to_string(prefix);
+}
+
+std::string format_v6_subnet_key(const asio::ip::address_v6& address, const std::uint8_t prefix)
+{
+    auto bytes = address.to_bytes();
+    if (prefix == 0)
+    {
+        bytes.fill(0);
+    }
+    else if (prefix < 128)
+    {
+        const std::size_t full_bytes = prefix / 8;
+        const std::uint8_t rem_bits = prefix % 8;
+        if (rem_bits == 0)
+        {
+            for (std::size_t i = full_bytes; i < bytes.size(); ++i)
+            {
+                bytes[i] = 0;
+            }
+        }
+        else
+        {
+            const auto mask = static_cast<std::uint8_t>(0xFFU << (8 - rem_bits));
+            bytes[full_bytes] &= mask;
+            for (std::size_t i = full_bytes + 1; i < bytes.size(); ++i)
+            {
+                bytes[i] = 0;
+            }
+        }
+    }
+    return asio::ip::address_v6(bytes).to_string() + "/" + std::to_string(prefix);
+}
+
+std::string build_source_limit_key(const asio::ip::address& address, const config::limits_t& limits)
+{
+    const auto normalized = socks_codec::normalize_ip_address(address);
+    if (normalized.is_v4())
+    {
+        const auto prefix_v4 = clamp_prefix(limits.source_prefix_v4, 32);
+        return format_v4_subnet_key(normalized.to_v4(), prefix_v4);
+    }
+    if (normalized.is_v6())
+    {
+        const auto prefix_v6 = clamp_prefix(limits.source_prefix_v6, 128);
+        return format_v6_subnet_key(normalized.to_v6(), prefix_v6);
+    }
+    return "unknown";
 }
 
 struct auth_inputs
@@ -513,6 +690,21 @@ void close_fallback_socket(const std::shared_ptr<asio::ip::tcp::socket>& socket,
     if (close_ec && close_ec != asio::error::bad_descriptor)
     {
         LOG_CTX_WARN(ctx, "{} close failed {}", log_event::kFallback, close_ec.message());
+    }
+}
+
+void close_socket_quietly(const std::shared_ptr<asio::ip::tcp::socket>& socket)
+{
+    std::error_code ec;
+    ec = socket->shutdown(asio::ip::tcp::socket::shutdown_both, ec);
+    if (ec && ec != asio::error::not_connected)
+    {
+        LOG_WARN("{} reject socket shutdown failed {}", log_event::kConnClose, ec.message());
+    }
+    ec = socket->close(ec);
+    if (ec && ec != asio::error::bad_descriptor)
+    {
+        LOG_WARN("{} reject socket close failed {}", log_event::kConnClose, ec.message());
     }
 }
 
@@ -792,6 +984,7 @@ asio::awaitable<bool> write_fallback_initial_buffer(const std::shared_ptr<asio::
 remote_server::remote_server(io_context_pool& pool, const config& cfg)
     : io_context_(pool.get_io_context()),
       acceptor_(io_context_),
+      inbound_endpoint_(resolve_inbound_endpoint(cfg.inbound)),
       replay_cache_(static_cast<std::size_t>(cfg.reality.replay_cache_max_entries)),
       fallbacks_(cfg.fallbacks),
       fallback_guard_config_(cfg.reality.fallback_guard),
@@ -799,8 +992,26 @@ remote_server::remote_server(io_context_pool& pool, const config& cfg)
       limits_config_(cfg.limits),
       heartbeat_config_(cfg.heartbeat)
 {
-    const auto ep = resolve_inbound_endpoint(cfg.inbound);
-    if (!setup_server_acceptor(acceptor_, ep))
+    const auto normalized_max_connections = normalize_max_connections(limits_config_.max_connections);
+    if (normalized_max_connections != limits_config_.max_connections)
+    {
+        LOG_WARN("max connections is 0 using 1");
+    }
+    limits_config_.max_connections = normalized_max_connections;
+    const auto normalized_prefix_v4 = clamp_prefix(limits_config_.source_prefix_v4, 32);
+    if (normalized_prefix_v4 != limits_config_.source_prefix_v4)
+    {
+        LOG_WARN("source prefix v4 {} out of range using {}", limits_config_.source_prefix_v4, normalized_prefix_v4);
+    }
+    limits_config_.source_prefix_v4 = normalized_prefix_v4;
+    const auto normalized_prefix_v6 = clamp_prefix(limits_config_.source_prefix_v6, 128);
+    if (normalized_prefix_v6 != limits_config_.source_prefix_v6)
+    {
+        LOG_WARN("source prefix v6 {} out of range using {}", limits_config_.source_prefix_v6, normalized_prefix_v6);
+    }
+    limits_config_.source_prefix_v6 = normalized_prefix_v6;
+
+    if (!setup_server_acceptor(acceptor_, inbound_endpoint_))
     {
         return;
     }
@@ -831,9 +1042,54 @@ remote_server::~remote_server()
 
 void remote_server::start()
 {
+    bool expected = false;
+    if (!started_.compare_exchange_strong(expected, true, std::memory_order_acq_rel))
+    {
+        LOG_WARN("remote server already started");
+        return;
+    }
+
+    if (!auth_config_valid_)
+    {
+        LOG_ERROR("remote server start failed invalid auth config");
+        std::error_code close_ec;
+        acceptor_.close(close_ec);
+        if (close_ec)
+        {
+            LOG_ERROR("remote server close acceptor failed {}", close_ec.message());
+        }
+        stop_.store(true, std::memory_order_release);
+        started_.store(false, std::memory_order_release);
+        return;
+    }
+
+    if (!ensure_acceptor_open())
+    {
+        LOG_ERROR("remote server start failed acceptor unavailable");
+        stop_.store(true, std::memory_order_release);
+        started_.store(false, std::memory_order_release);
+        return;
+    }
+
     stop_.store(false, std::memory_order_release);
-    started_.store(true, std::memory_order_release);
     asio::co_spawn(io_context_, [self = shared_from_this()] { return self->accept_loop(); }, asio::detached);
+}
+
+void remote_server::drain()
+{
+    stop_.store(true, std::memory_order_release);
+    LOG_INFO("remote server draining");
+
+    detail::dispatch_cleanup_or_run_inline(
+        io_context_,
+        [weak_self = weak_from_this()]()
+        {
+            if (const auto self = weak_self.lock())
+            {
+                self->stop_local(false);
+            }
+        },
+        detail::dispatch_timeout_policy::kRunInline);
 }
 
 void remote_server::set_certificate(std::string sni,
@@ -841,18 +1097,7 @@ void remote_server::set_certificate(std::string sni,
                                     reality::server_fingerprint fp,
                                     const std::string& trace_id)
 {
-    if (!started_.load(std::memory_order_acquire))
-    {
-        cert_manager_.set_certificate(sni, std::move(cert_msg), std::move(fp), trace_id);
-        return;
-    }
-
-    detail::dispatch_cleanup_or_run_inline(
-        io_context_,
-        [this, sni = std::move(sni), cert_msg = std::move(cert_msg), fp = std::move(fp), trace_id]() mutable
-        {
-            cert_manager_.set_certificate(sni, std::move(cert_msg), std::move(fp), trace_id);
-        });
+    cert_manager_.set_certificate(sni, std::move(cert_msg), std::move(fp), trace_id);
 }
 
 void remote_server::stop()
@@ -866,13 +1111,158 @@ void remote_server::stop()
         {
             if (const auto self = weak_self.lock())
             {
-                self->stop_local();
+                self->stop_local(true);
             }
-        });
+        },
+        detail::dispatch_timeout_policy::kRunInline);
 }
 
-void remote_server::stop_local()
+bool remote_server::ensure_acceptor_open()
 {
+    if (acceptor_.is_open())
+    {
+        return true;
+    }
+    return setup_server_acceptor(acceptor_, inbound_endpoint_);
+}
+
+std::shared_ptr<remote_server::tunnel_list_t> remote_server::snapshot_active_tunnels() const
+{
+    auto snapshot = std::atomic_load_explicit(&active_tunnels_, std::memory_order_acquire);
+    if (snapshot != nullptr)
+    {
+        return snapshot;
+    }
+    return std::make_shared<tunnel_list_t>();
+}
+
+std::size_t remote_server::prune_expired_tunnels()
+{
+    for (;;)
+    {
+        auto current = snapshot_active_tunnels();
+        auto pruned = std::make_shared<tunnel_list_t>();
+        pruned->reserve(current->size());
+        bool changed = false;
+        for (const auto& weak_tunnel : *current)
+        {
+            if (weak_tunnel.expired())
+            {
+                changed = true;
+                continue;
+            }
+            pruned->push_back(weak_tunnel);
+        }
+
+        if (!changed)
+        {
+            return current->size();
+        }
+
+        if (std::atomic_compare_exchange_weak_explicit(
+                &active_tunnels_, &current, pruned, std::memory_order_acq_rel, std::memory_order_acquire))
+        {
+            return pruned->size();
+        }
+    }
+}
+
+std::size_t remote_server::active_tunnel_count() const
+{
+    return snapshot_active_tunnels()->size();
+}
+
+std::shared_ptr<remote_server::tunnel_list_t> remote_server::detach_active_tunnels()
+{
+    auto empty = std::make_shared<tunnel_list_t>();
+    for (;;)
+    {
+        auto current = snapshot_active_tunnels();
+        if (std::atomic_compare_exchange_weak_explicit(
+                &active_tunnels_, &current, empty, std::memory_order_acq_rel, std::memory_order_acquire))
+        {
+            return current;
+        }
+    }
+}
+
+void remote_server::append_active_tunnel(const tunnel_ptr_t& tunnel)
+{
+    for (;;)
+    {
+        auto current = snapshot_active_tunnels();
+        auto updated = std::make_shared<tunnel_list_t>();
+        updated->reserve(current->size() + 1);
+        for (const auto& weak_tunnel : *current)
+        {
+            if (!weak_tunnel.expired())
+            {
+                updated->push_back(weak_tunnel);
+            }
+        }
+        updated->push_back(tunnel);
+        if (std::atomic_compare_exchange_weak_explicit(
+                &active_tunnels_, &current, updated, std::memory_order_acq_rel, std::memory_order_acquire))
+        {
+            return;
+        }
+    }
+}
+
+void remote_server::track_connection_socket(const std::shared_ptr<asio::ip::tcp::socket>& socket)
+{
+    if (socket == nullptr)
+    {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(tracked_connection_socket_mu_);
+    tracked_connection_sockets_[socket.get()] = socket;
+}
+
+void remote_server::untrack_connection_socket(const std::shared_ptr<asio::ip::tcp::socket>& socket)
+{
+    if (socket == nullptr)
+    {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(tracked_connection_socket_mu_);
+    tracked_connection_sockets_.erase(socket.get());
+}
+
+std::vector<std::shared_ptr<asio::ip::tcp::socket>> remote_server::snapshot_tracked_connection_sockets()
+{
+    std::vector<std::shared_ptr<asio::ip::tcp::socket>> sockets;
+    std::lock_guard<std::mutex> lock(tracked_connection_socket_mu_);
+    for (auto it = tracked_connection_sockets_.begin(); it != tracked_connection_sockets_.end();)
+    {
+        const auto socket = it->second.lock();
+        if (socket == nullptr)
+        {
+            it = tracked_connection_sockets_.erase(it);
+            continue;
+        }
+        sockets.push_back(socket);
+        ++it;
+    }
+    return sockets;
+}
+
+std::size_t remote_server::close_tracked_connection_sockets()
+{
+    auto sockets = snapshot_tracked_connection_sockets();
+    for (const auto& socket : sockets)
+    {
+        close_socket_quietly(socket);
+    }
+    return sockets.size();
+}
+
+void remote_server::stop_local(const bool close_tunnels)
+{
+    started_.store(false, std::memory_order_release);
+
     std::error_code close_ec;
     close_ec = acceptor_.close(close_ec);
     if (close_ec && close_ec != asio::error::bad_descriptor)
@@ -880,11 +1270,22 @@ void remote_server::stop_local()
         LOG_WARN("acceptor close failed {}", close_ec.message());
     }
 
-    LOG_INFO("closing {} active tunnels", active_tunnels_.size());
-    auto tunnels_to_close = std::move(active_tunnels_);
-    active_tunnels_.clear();
+    const auto closed_connection_sockets = close_tracked_connection_sockets();
+    if (closed_connection_sockets > 0)
+    {
+        LOG_INFO("closed {} in-flight sockets", closed_connection_sockets);
+    }
 
-    for (auto& weak_tunnel : tunnels_to_close)
+    if (!close_tunnels)
+    {
+        LOG_INFO("drain mode active keeping {} active tunnels", prune_expired_tunnels());
+        return;
+    }
+
+    LOG_INFO("closing {} active tunnels", prune_expired_tunnels());
+    auto tunnels_to_close = detach_active_tunnels();
+
+    for (auto& weak_tunnel : *tunnels_to_close)
     {
         const auto tunnel = weak_tunnel.lock();
         if (tunnel != nullptr && tunnel->connection() != nullptr)
@@ -916,8 +1317,133 @@ asio::awaitable<void> remote_server::accept_loop()
         ec = s->set_option(asio::ip::tcp::no_delay(true), ec);
         (void)ec;
         const std::uint32_t conn_id = next_conn_id_.fetch_add(1, std::memory_order_relaxed);
-        asio::co_spawn(io_context_, [self = shared_from_this(), s, conn_id]() { return self->handle(s, conn_id); }, asio::detached);
+        const auto source_key = connection_limit_source_key(s);
+        if (!try_reserve_connection_slot(source_key))
+        {
+            statistics::instance().inc_connection_limit_rejected();
+            LOG_WARN("{} connection limit reached rejecting before handshake conn {} source {}", log_event::kConnClose, conn_id, source_key);
+            close_socket_quietly(s);
+            continue;
+        }
+        track_connection_socket(s);
+        asio::co_spawn(
+            io_context_,
+            [self = shared_from_this(), s, conn_id, source_key]() { return self->handle(s, conn_id, source_key); },
+            asio::detached);
     }
+}
+
+bool remote_server::try_reserve_connection_slot(const std::string& source_key)
+{
+    std::lock_guard<std::mutex> lock(connection_slot_mu_);
+    const auto current = active_connection_slots_.load(std::memory_order_acquire);
+    if (current >= limits_config_.max_connections)
+    {
+        return false;
+    }
+
+    if (limits_config_.max_connections_per_source > 0)
+    {
+        auto& source_slots = active_source_connection_slots_[source_key];
+        if (source_slots >= limits_config_.max_connections_per_source)
+        {
+            return false;
+        }
+        source_slots++;
+    }
+
+    active_connection_slots_.store(current + 1, std::memory_order_release);
+    return true;
+}
+
+void remote_server::release_connection_slot(const std::string& source_key)
+{
+    std::lock_guard<std::mutex> lock(connection_slot_mu_);
+    const auto current = active_connection_slots_.load(std::memory_order_acquire);
+    if (current > 0)
+    {
+        active_connection_slots_.store(current - 1, std::memory_order_release);
+    }
+
+    if (limits_config_.max_connections_per_source == 0)
+    {
+        return;
+    }
+
+    const auto it = active_source_connection_slots_.find(source_key);
+    if (it == active_source_connection_slots_.end())
+    {
+        return;
+    }
+
+    if (it->second <= 1)
+    {
+        active_source_connection_slots_.erase(it);
+    }
+    else
+    {
+        it->second--;
+    }
+}
+
+std::string remote_server::connection_limit_source_key(const std::shared_ptr<asio::ip::tcp::socket>& s) const
+{
+    std::error_code remote_ep_ec;
+    const auto remote_ep = s->remote_endpoint(remote_ep_ec);
+    if (remote_ep_ec)
+    {
+        return "unknown";
+    }
+    return build_source_limit_key(remote_ep.address(), limits_config_);
+}
+
+asio::awaitable<void> remote_server::handle(std::shared_ptr<asio::ip::tcp::socket> s,
+                                            const std::uint32_t conn_id,
+                                            std::string source_key)
+{
+    [[maybe_unused]] const std::shared_ptr<void> slot_guard(
+        nullptr,
+        [self = shared_from_this(), source_key = std::move(source_key)](void*) mutable
+        {
+            self->release_connection_slot(source_key);
+        });
+    [[maybe_unused]] const std::shared_ptr<void> tracked_socket_guard(
+        nullptr,
+        [self = shared_from_this(), s](void*) mutable
+        {
+            self->untrack_connection_socket(s);
+        });
+
+    auto ctx = build_connection_context(s, conn_id);
+    LOG_CTX_INFO(ctx, "{} accepted {}", log_event::kConnInit, ctx.connection_info());
+
+    std::vector<std::uint8_t> initial_buf;
+    auto sh_res = co_await negotiate_reality(s, ctx, initial_buf);
+    if (!sh_res.ok)
+    {
+        co_return;
+    }
+
+    auto app_keys_result = derive_application_traffic_keys(sh_res);
+    if (!app_keys_result)
+    {
+        LOG_CTX_ERROR(ctx, "{} derive app keys failed {}", log_event::kHandshake, app_keys_result.error().message());
+        co_return;
+    }
+    const auto& app_keys = *app_keys_result;
+
+    LOG_CTX_INFO(ctx, "{} tunnel starting", log_event::kConnEstablished);
+
+    if (co_await reject_connection_if_over_limit(s, initial_buf, ctx))
+    {
+        co_return;
+    }
+
+    auto tunnel = create_tunnel(s, sh_res, app_keys.c_app_keys, app_keys.s_app_keys, conn_id, ctx);
+    untrack_connection_socket(s);
+    install_syn_callback(tunnel, ctx);
+
+    co_await tunnel->run();
 }
 
 connection_context remote_server::build_connection_context(const std::shared_ptr<asio::ip::tcp::socket>& s, const std::uint32_t conn_id)
@@ -988,11 +1514,26 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::delay_and_fa
                                                                                         const connection_context& ctx,
                                                                                         const std::string& client_sni)
 {
+    if (stop_.load(std::memory_order_acquire))
+    {
+        close_socket_quietly(s);
+        co_return server_handshake_res{.ok = false, .ec = asio::error::operation_aborted};
+    }
+
     static thread_local std::mt19937 delay_gen(std::random_device{}());
     std::uniform_int_distribution<std::uint32_t> delay_dist(10, 50);
     asio::steady_timer delay_timer(io_context_);
     delay_timer.expires_after(std::chrono::milliseconds(delay_dist(delay_gen)));
-    co_await delay_timer.async_wait(asio::as_tuple(asio::use_awaitable));
+    const auto [delay_ec] = co_await delay_timer.async_wait(asio::as_tuple(asio::use_awaitable));
+    if (delay_ec && delay_ec != asio::error::operation_aborted)
+    {
+        LOG_CTX_WARN(ctx, "{} fallback delay timer failed {}", log_event::kFallback, delay_ec.message());
+    }
+    if (stop_.load(std::memory_order_acquire))
+    {
+        close_socket_quietly(s);
+        co_return server_handshake_res{.ok = false, .ec = asio::error::operation_aborted};
+    }
     co_await handle_fallback(s, initial_buf, ctx, client_sni);
     co_return server_handshake_res{.ok = false};
 }
@@ -1001,17 +1542,27 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::negotiate_re
                                                                                       const connection_context& ctx,
                                                                                       std::vector<std::uint8_t>& initial_buf)
 {
-    const auto read_ok = co_await read_initial_and_validate(s, ctx, initial_buf);
-    std::string client_sni;
-    auto info = parse_client_hello(initial_buf, client_sni);
-
-    if (!read_ok)
+    const auto read_res = co_await read_initial_and_validate(s, ctx, initial_buf);
+    if (!read_res.ok)
     {
+        if (!read_res.allow_fallback || stop_.load(std::memory_order_acquire))
+        {
+            co_return server_handshake_res{.ok = false, .ec = read_res.ec};
+        }
+        std::string client_sni;
+        (void)parse_client_hello(initial_buf, client_sni);
         co_return co_await delay_and_fallback(s, initial_buf, ctx, client_sni);
     }
 
+    std::string client_sni;
+    auto info = parse_client_hello(initial_buf, client_sni);
+
     if (!authenticate_client(info, initial_buf, ctx))
     {
+        if (stop_.load(std::memory_order_acquire))
+        {
+            co_return server_handshake_res{.ok = false, .ec = asio::error::operation_aborted};
+        }
         LOG_CTX_WARN(ctx, "{} auth failed sni {}", log_event::kAuth, client_sni);
         co_return co_await delay_and_fallback(s, initial_buf, ctx, client_sni);
     }
@@ -1037,39 +1588,6 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::negotiate_re
 
     sh_res.handshake_hash = trans.finish();
     co_return sh_res;
-}
-
-asio::awaitable<void> remote_server::handle(std::shared_ptr<asio::ip::tcp::socket> s, const std::uint32_t conn_id)
-{
-    auto ctx = build_connection_context(s, conn_id);
-    LOG_CTX_INFO(ctx, "{} accepted {}", log_event::kConnInit, ctx.connection_info());
-
-    std::vector<std::uint8_t> initial_buf;
-    auto sh_res = co_await negotiate_reality(s, ctx, initial_buf);
-    if (!sh_res.ok)
-    {
-        co_return;
-    }
-
-    auto app_keys_result = derive_application_traffic_keys(sh_res);
-    if (!app_keys_result)
-    {
-        LOG_CTX_ERROR(ctx, "{} derive app keys failed {}", log_event::kHandshake, app_keys_result.error().message());
-        co_return;
-    }
-    const auto& app_keys = *app_keys_result;
-
-    LOG_CTX_INFO(ctx, "{} tunnel starting", log_event::kConnEstablished);
-
-    if (co_await reject_connection_if_over_limit(s, initial_buf, ctx))
-    {
-        co_return;
-    }
-
-    auto tunnel = create_tunnel(s, sh_res, app_keys.c_app_keys, app_keys.s_app_keys, conn_id, ctx);
-    install_syn_callback(tunnel, ctx);
-
-    co_await tunnel->run();
 }
 
 std::expected<remote_server::app_keys, std::error_code> remote_server::derive_application_traffic_keys(
@@ -1106,13 +1624,13 @@ asio::awaitable<bool> remote_server::reject_connection_if_over_limit(const std::
                                                                      const std::vector<std::uint8_t>& initial_buf,
                                                                      const connection_context& ctx)
 {
-    std::erase_if(active_tunnels_, [](const auto& wp) { return wp.expired(); });
-    const bool over_limit = active_tunnels_.size() >= limits_config_.max_connections;
+    const bool over_limit = prune_expired_tunnels() >= limits_config_.max_connections;
     if (!over_limit)
     {
         co_return false;
     }
 
+    statistics::instance().inc_connection_limit_rejected();
     LOG_CTX_WARN(ctx, "{} connection limit reached {} rejecting", log_event::kConnClose, limits_config_.max_connections);
     const auto info = ch_parser::parse(initial_buf);
     co_await handle_fallback(s, initial_buf, ctx, info.sni);
@@ -1130,7 +1648,7 @@ std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> remote_server::create_tu
     reality_engine engine(c_app_keys.first, c_app_keys.second, s_app_keys.first, s_app_keys.second, sh_res.cipher);
     auto tunnel = std::make_shared<mux_tunnel_impl<asio::ip::tcp::socket>>(
         std::move(*s), io_context_, std::move(engine), false, conn_id, ctx.trace_id(), timeout_config_, limits_config_, heartbeat_config_);
-    active_tunnels_.push_back(tunnel);
+    append_active_tunnel(tunnel);
     return tunnel;
 }
 
@@ -1174,6 +1692,7 @@ asio::awaitable<void> remote_server::reject_stream_for_limit(const std::shared_p
                                                              const connection_context& ctx,
                                                              const std::uint32_t stream_id) const
 {
+    statistics::instance().inc_stream_limit_rejected();
     LOG_CTX_WARN(ctx, "{} stream limit reached", log_event::kMux);
     const ack_payload ack{.socks_rep = socks::kRepGenFail, .bnd_addr = "", .bnd_port = 0};
     std::vector<std::uint8_t> ack_data;
@@ -1262,42 +1781,70 @@ asio::awaitable<void> remote_server::process_stream_request(std::shared_ptr<mux_
     co_await send_stream_reset(connection, stream_id);
 }
 
-asio::awaitable<bool> remote_server::read_initial_and_validate(std::shared_ptr<asio::ip::tcp::socket> s,
-                                                               const connection_context& ctx,
-                                                               std::vector<std::uint8_t>& buf)
+asio::awaitable<remote_server::initial_read_res> remote_server::read_initial_and_validate(std::shared_ptr<asio::ip::tcp::socket> s,
+                                                                                           const connection_context& ctx,
+                                                                                           std::vector<std::uint8_t>& buf)
 {
-    buf.resize(constants::net::kBufferSize);
-    const auto [read_ec, n] = co_await s->async_read_some(asio::buffer(buf), asio::as_tuple(asio::use_awaitable));
-    if (read_ec)
+    const auto timeout_sec = std::max<std::uint32_t>(1, timeout_config_.read);
+    if (stop_.load(std::memory_order_acquire))
     {
-        LOG_CTX_ERROR(ctx, "{} initial read error {}", log_event::kHandshake, read_ec.message());
-        co_return false;
+        co_return initial_read_res{.ok = false, .allow_fallback = false, .ec = asio::error::operation_aborted};
     }
+
+    buf.resize(constants::net::kBufferSize);
+    const auto first_read = co_await read_socket_with_timeout(s, asio::buffer(buf), io_context_, timeout_sec, false);
+    if (!first_read.ok)
+    {
+        if (first_read.timed_out)
+        {
+            LOG_CTX_WARN(ctx, "{} initial read timed out {}s", log_event::kHandshake, timeout_sec);
+        }
+        else if (!should_skip_fallback_after_read_failure(first_read.ec, stop_))
+        {
+            LOG_CTX_ERROR(ctx, "{} initial read error {}", log_event::kHandshake, first_read.ec.message());
+        }
+        co_return initial_read_res{.ok = false, .allow_fallback = false, .ec = first_read.ec};
+    }
+    const auto n = first_read.read_size;
     buf.resize(n);
     if (n < 5)
     {
         LOG_CTX_WARN(ctx, "{} invalid tls header short read {}", log_event::kHandshake, n);
-        co_return false;
+        co_return initial_read_res{.ok = false, .allow_fallback = true};
     }
 
     if (buf[0] != 0x16)
     {
         LOG_CTX_WARN(ctx, "{} invalid tls header 0x{:02x}", log_event::kHandshake, buf[0]);
-        co_return false;
+        co_return initial_read_res{.ok = false, .allow_fallback = true};
     }
     const std::size_t len = static_cast<std::uint16_t>((buf[3] << 8) | buf[4]);
     while (buf.size() < 5 + len)
     {
-        std::vector<std::uint8_t> tmp(5 + len - buf.size());
-        const auto [read_ec2, n2] = co_await asio::async_read(*s, asio::buffer(tmp), asio::as_tuple(asio::use_awaitable));
-        if (read_ec2)
+        if (stop_.load(std::memory_order_acquire))
         {
-            co_return false;
+            co_return initial_read_res{.ok = false, .allow_fallback = false, .ec = asio::error::operation_aborted};
         }
+        std::vector<std::uint8_t> tmp(5 + len - buf.size());
+        const auto extra_read = co_await read_socket_with_timeout(s, asio::buffer(tmp), io_context_, timeout_sec, true);
+        if (!extra_read.ok)
+        {
+            if (extra_read.timed_out)
+            {
+                LOG_CTX_WARN(ctx, "{} handshake body read timed out {}s", log_event::kHandshake, timeout_sec);
+            }
+            else if (!should_skip_fallback_after_read_failure(extra_read.ec, stop_))
+            {
+                LOG_CTX_ERROR(ctx, "{} handshake body read error {}", log_event::kHandshake, extra_read.ec.message());
+            }
+            co_return initial_read_res{.ok = false, .allow_fallback = false, .ec = extra_read.ec};
+        }
+        const auto n2 = extra_read.read_size;
+        tmp.resize(n2);
         buf.insert(buf.end(), tmp.begin(), tmp.end());
     }
     LOG_CTX_DEBUG(ctx, "{} received client hello record size {}", log_event::kHandshake, buf.size());
-    co_return true;
+    co_return initial_read_res{.ok = true};
 }
 
 std::optional<remote_server::selected_key_share> remote_server::select_key_share(const client_hello_info& info, const connection_context& ctx) const
@@ -1708,6 +2255,12 @@ asio::awaitable<void> remote_server::handle_fallback(const std::shared_ptr<asio:
                                                      const connection_context& ctx,
                                                      const std::string& sni)
 {
+    if (stop_.load(std::memory_order_acquire))
+    {
+        close_fallback_socket(s, ctx);
+        co_return;
+    }
+
     if (!consume_fallback_token(ctx))
     {
         LOG_CTX_WARN(ctx, "{} blocked by fallback guard", log_event::kFallback);

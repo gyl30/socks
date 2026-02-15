@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <optional>
 #include <functional>
+#include <limits>
 #include <string_view>
 #include <type_traits>
 
@@ -90,6 +91,44 @@ inline void JsonWriter::null_() { m->Null(); }
 inline void JsonWriter::int64(std::int64_t v) { m->Int64(v); }
 inline void JsonWriter::string(const char* s) { m->String(s); }
 inline void JsonWriter::string(const char* s, std::size_t len) { m->String(s, len); }
+
+template <typename T>
+bool read_signed_integer(JsonReader& vis, T& out)
+{
+    if (!vis.m->IsInt64())
+    {
+        vis.set_invalid();
+        return false;
+    }
+    const auto value = vis.m->GetInt64();
+    if (value < static_cast<std::int64_t>(std::numeric_limits<T>::min())
+        || value > static_cast<std::int64_t>(std::numeric_limits<T>::max()))
+    {
+        vis.set_invalid();
+        return false;
+    }
+    out = static_cast<T>(value);
+    return true;
+}
+
+template <typename T>
+bool read_unsigned_integer(JsonReader& vis, T& out)
+{
+    if (!vis.m->IsUint64())
+    {
+        vis.set_invalid();
+        return false;
+    }
+    const auto value = vis.m->GetUint64();
+    if (value > static_cast<std::uint64_t>(std::numeric_limits<T>::max()))
+    {
+        vis.set_invalid();
+        return false;
+    }
+    out = static_cast<T>(value);
+    return true;
+}
+
 inline void reflect(JsonReader& vis, bool& v)
 {
     if (!vis.m->IsBool())
@@ -101,93 +140,43 @@ inline void reflect(JsonReader& vis, bool& v)
 }
 inline void reflect(JsonReader& vis, unsigned char& v)
 {
-    if (!vis.m->IsInt())
-    {
-        vis.set_invalid();
-        return;
-    }
-    v = static_cast<std::uint8_t>(vis.m->GetInt());
+    (void)read_unsigned_integer(vis, v);
 }
 inline void reflect(JsonReader& vis, short& v)
 {
-    if (!vis.m->IsInt())
-    {
-        vis.set_invalid();
-        return;
-    }
-    v = static_cast<short>(vis.m->GetInt());
+    (void)read_signed_integer(vis, v);
 }
 inline void reflect(JsonReader& vis, unsigned short& v)
 {
-    if (!vis.m->IsInt())
-    {
-        vis.set_invalid();
-        return;
-    }
-    v = static_cast<unsigned short>(vis.m->GetInt());
+    (void)read_unsigned_integer(vis, v);
 }
 inline void reflect(JsonReader& vis, int8_t& v)
 {
-    if (!vis.m->IsInt())
-    {
-        vis.set_invalid();
-        return;
-    }
-    v = static_cast<int8_t>(vis.m->GetInt());
+    (void)read_signed_integer(vis, v);
 }
 inline void reflect(JsonReader& vis, int& v)
 {
-    if (!vis.m->IsInt())
-    {
-        vis.set_invalid();
-        return;
-    }
-    v = vis.m->GetInt();
+    (void)read_signed_integer(vis, v);
 }
 inline void reflect(JsonReader& vis, unsigned& v)
 {
-    if (!vis.m->IsUint64())
-    {
-        vis.set_invalid();
-        return;
-    }
-    v = static_cast<unsigned>(vis.m->GetUint64());
+    (void)read_unsigned_integer(vis, v);
 }
 inline void reflect(JsonReader& vis, long& v)
 {
-    if (!vis.m->IsInt64())
-    {
-        vis.set_invalid();
-        return;
-    }
-    v = static_cast<long>(vis.m->GetInt64());
+    (void)read_signed_integer(vis, v);
 }
 inline void reflect(JsonReader& vis, unsigned long& v)
 {
-    if (!vis.m->IsUint64())
-    {
-        vis.set_invalid();
-        return;
-    }
-    v = static_cast<unsigned long>(vis.m->GetUint64());
+    (void)read_unsigned_integer(vis, v);
 }
 inline void reflect(JsonReader& vis, long long& v)
 {
-    if (!vis.m->IsInt64())
-    {
-        vis.set_invalid();
-        return;
-    }
-    v = vis.m->GetInt64();
+    (void)read_signed_integer(vis, v);
 }
 inline void reflect(JsonReader& vis, unsigned long long& v)
 {
-    if (!vis.m->IsUint64())
-    {
-        vis.set_invalid();
-        return;
-    }
-    v = vis.m->GetUint64();
+    (void)read_unsigned_integer(vis, v);
 }
 inline void reflect(JsonReader& vis, double& v)
 {

@@ -163,7 +163,17 @@ auto run_on_io_context(asio::io_context& io_context, Func&& fn) -> decltype(fn()
 
 std::size_t session_count(asio::io_context& io_context, const std::shared_ptr<mux::socks_client>& client)
 {
-    return run_on_io_context(io_context, [client]() { return client->sessions_.size(); });
+    return run_on_io_context(
+        io_context,
+        [client]()
+        {
+            auto snapshot = std::atomic_load_explicit(&client->sessions_, std::memory_order_acquire);
+            if (snapshot == nullptr)
+            {
+                return std::size_t{0};
+            }
+            return snapshot->size();
+        });
 }
 
 bool acceptor_is_open(asio::io_context& io_context, const std::shared_ptr<mux::socks_client>& client)
@@ -440,6 +450,52 @@ TEST(LocalClientTest, DoubleStop)
     client->start();
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     client->stop();
+    client->stop();
+}
+
+TEST(LocalClientTest, StartWhileRunningIsIgnored)
+{
+    io_context_pool pool(1);
+    mux::config cfg;
+    cfg.outbound.host = "127.0.0.1";
+    cfg.outbound.port = 12345;
+    cfg.socks.port = 10098;
+    cfg.reality.public_key = std::string(64, 'a');
+    cfg.reality.sni = "example.com";
+
+    auto client = std::make_shared<mux::socks_client>(pool, cfg);
+    client->start();
+    EXPECT_TRUE(client->started_.load(std::memory_order_acquire));
+    EXPECT_FALSE(client->stop_.load(std::memory_order_acquire));
+    EXPECT_TRUE(client->acceptor_.is_open());
+
+    const auto first_port = client->listen_port();
+    client->start();
+    EXPECT_TRUE(client->started_.load(std::memory_order_acquire));
+    EXPECT_FALSE(client->stop_.load(std::memory_order_acquire));
+    EXPECT_TRUE(client->acceptor_.is_open());
+    EXPECT_EQ(client->listen_port(), first_port);
+
+    client->stop();
+}
+
+TEST(LocalClientTest, StartAfterStopResetsStopFlag)
+{
+    io_context_pool pool(1);
+    mux::config cfg;
+    cfg.outbound.host = "127.0.0.1";
+    cfg.outbound.port = 12345;
+    cfg.socks.port = 10097;
+    cfg.reality.public_key = std::string(64, 'a');
+    cfg.reality.sni = "example.com";
+
+    auto client = std::make_shared<mux::socks_client>(pool, cfg);
+    client->start();
+    client->stop();
+    EXPECT_TRUE(client->stop_.load(std::memory_order_acquire));
+
+    client->start();
+    EXPECT_FALSE(client->stop_.load(std::memory_order_acquire));
     client->stop();
 }
 

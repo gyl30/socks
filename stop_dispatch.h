@@ -7,6 +7,7 @@
 #include <memory>
 #include <type_traits>
 #include <utility>
+#include <cstdint>
 
 #include <asio/dispatch.hpp>
 #include <asio/io_context.hpp>
@@ -16,8 +17,16 @@ namespace mux::detail
 
 constexpr auto kStopDispatchWaitTimeout = std::chrono::milliseconds(50);
 
+enum class dispatch_timeout_policy : std::uint8_t
+{
+    kNoInline,
+    kRunInline,
+};
+
 template <typename Fn>
-void dispatch_cleanup_or_run_inline(asio::io_context& io_context, Fn&& fn)
+void dispatch_cleanup_or_run_inline(asio::io_context& io_context,
+                                    Fn&& fn,
+                                    const dispatch_timeout_policy timeout_policy = dispatch_timeout_policy::kNoInline)
 {
     if (io_context.stopped() || io_context.get_executor().running_in_this_thread())
     {
@@ -52,6 +61,10 @@ void dispatch_cleanup_or_run_inline(asio::io_context& io_context, Fn&& fn)
         });
 
     if (future.wait_for(kStopDispatchWaitTimeout) == std::future_status::ready)
+    {
+        return;
+    }
+    if (timeout_policy != dispatch_timeout_policy::kRunInline)
     {
         return;
     }

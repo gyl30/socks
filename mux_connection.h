@@ -108,7 +108,9 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     asio::awaitable<void> heartbeat_loop();
 
     [[nodiscard]] bool run_inline() const;
-    void register_stream_local(std::uint32_t id, std::shared_ptr<mux_stream_interface> stream);
+    [[nodiscard]] std::shared_ptr<stream_map_t> snapshot_streams() const;
+    [[nodiscard]] std::shared_ptr<stream_map_t> detach_streams();
+    [[nodiscard]] bool register_stream_local(std::uint32_t id, std::shared_ptr<mux_stream_interface> stream);
     [[nodiscard]] bool try_register_stream_local(std::uint32_t id, std::shared_ptr<mux_stream_interface> stream);
     void remove_stream_local(std::uint32_t id);
     [[nodiscard]] bool can_accept_stream_local() const;
@@ -119,7 +121,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     void handle_stream_frame(const mux::frame_header& header, std::vector<std::uint8_t> payload);
     void on_mux_frame(mux::frame_header header, std::vector<std::uint8_t> payload);
     void stop_impl();
-    void reset_streams_on_stop(stream_map_t& streams_to_clear);
+    void reset_streams_on_stop(const stream_map_t& streams_to_clear);
     void close_socket_on_stop();
     void finalize_stop_state();
     [[nodiscard]] bool should_stop_read(const std::error_code& read_ec, std::size_t n) const;
@@ -133,7 +135,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     std::uint32_t cid_;
     std::uint64_t read_bytes_ = 0;
     std::uint64_t write_bytes_ = 0;
-    stream_map_t streams_;
+    std::shared_ptr<stream_map_t> streams_ = std::make_shared<stream_map_t>();
     asio::io_context& io_context_;
     asio::steady_timer timer_;
     syn_callback_t syn_callback_;

@@ -8,9 +8,13 @@ package "Infrastructure" {
         + get_io_context() : io_context&
         - work_guards_
     }
-    class buffer_pool << (S, #FF7700) Singleton >> {
-        + acquire()
-        + release()
+
+    class monitor_server {
+        - acceptor_
+        - token_
+        - rate_state_
+        + start()
+        + stop()
     }
 }
 
@@ -67,11 +71,28 @@ package "Crypto Layer" {
 }
 
 package "Client Side" {
-    class local_client {
+    class client_tunnel_pool {
+        - tunnel_pool_
+        + start()
+        + stop()
+        + select_tunnel()
+    }
+
+    class socks_client {
         - acceptor_
-        - tunnel_manager_ : shared_ptr<mux_tunnel_impl>
-        + connect_remote_loop()
+        - tunnel_pool_ : shared_ptr<client_tunnel_pool>
         + accept_local_loop()
+        + start()
+        + stop()
+    }
+
+    class tproxy_client {
+        - tcp_acceptor_
+        - udp_socket_
+        - tunnel_pool_ : shared_ptr<client_tunnel_pool>
+        + accept_tcp_loop()
+        + udp_loop()
+        + udp_cleanup_loop()
     }
 
     class socks_session {
@@ -87,6 +108,16 @@ package "Client Side" {
     }
 
     class udp_socks_session {
+        - idle_timer_
+        + idle_watchdog()
+    }
+
+    class tproxy_tcp_session {
+        - idle_timer_
+        + idle_watchdog()
+    }
+
+    class tproxy_udp_session {
         - idle_timer_
         + idle_watchdog()
     }
@@ -116,9 +147,17 @@ package "Server Side" {
 }
 
 ' Relations
-local_client o-- io_context_pool
-local_client *-- mux_tunnel_impl : manages >
-local_client ..> socks_session : creates >
+socks_client o-- io_context_pool
+socks_client *-- client_tunnel_pool : uses >
+socks_client ..> socks_session : creates >
+
+tproxy_client o-- io_context_pool
+tproxy_client *-- client_tunnel_pool : uses >
+tproxy_client ..> tproxy_tcp_session : creates >
+tproxy_client ..> tproxy_udp_session : creates >
+
+client_tunnel_pool ..> mux_tunnel_impl : manages >
+monitor_server o-- io_context_pool
 
 socks_session ..> mux_stream : uses >
 tcp_socks_session ..> upstream : uses >

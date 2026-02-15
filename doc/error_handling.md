@@ -1,112 +1,79 @@
 # 错误处理规范
 
-本项目全面采用 C++23 `std::expected` 进行错误处理，替代传统的 `std::error_code&` 输出参数模式。
+本项目当前采用“`std::expected` 为主，`asio::awaitable<std::error_code>` 作为异步边界接口”的混合模式。
 
 ## 错误处理模式
 
-### 1. `std::expected<T, std::error_code>` 返回值 (同步操作)
+### 1. `std::expected<T, std::error_code>`（同步与业务层）
 
-适用于：绝大多数同步操作，如加密解密、配置解析、数据处理等。
+适用于：加密解密、协议编解码、配置校验、业务流程等需要表达“值或错误”的路径。
 
 ```cpp
-// 定义
-std::expected<std::vector<std::uint8_t>, std::error_code> crypto_util::aead_decrypt(
-    ...);
-
-// 使用方式
 auto result = crypto_util::aead_decrypt(...);
 if (!result)
 {
-    LOG_ERROR("decrypt failed: {}", result.error().message());
+    return std::unexpected(result.error());
+}
+auto plaintext = std::move(*result);
+```
+
+不返回值时使用 `std::expected<void, std::error_code>`。
+
+### 2. `asio::awaitable<std::error_code>`（异步 I/O 边界）
+
+适用于：socket 读写、握手分段发送/接收等“是否成功”语义的协程边界接口。
+
+```cpp
+std::error_code ec = co_await conn->send_async(stream_id, cmd, payload);
+if (ec)
+{
+    LOG_WARN("send failed {}", ec.message());
+    co_return;
+}
+```
+
+现有接口示例：`mux_connection::send_async`、`remote_server::send_server_hello_flight`、`remote_server::verify_client_finished`。
+
+### 3. `asio::awaitable<std::expected<T, std::error_code>>`（异步且需要返回值）
+
+适用于：既要异步执行又需要返回业务值的协程接口。
+
+### 4. `std::optional<T>`（非错误的“缺失”语义）
+
+适用于：查询可能不存在的数据或配置项。
+
+```cpp
+auto cfg = parse_config(path);
+if (!cfg)
+{
     return;
 }
-auto plaintext = *result; // 或者 std::move(*result)
 ```
 
-对于不返回具体值的函数，使用 `std::expected<void, std::error_code>`：
-
-```cpp
-std::expected<void, std::error_code> validate_input(...);
-
-if (auto res = validate_input(...); !res)
-{
-    return std::unexpected(res.error());
-}
-```
-
-### 2. `asio::awaitable<std::expected<T, std::error_code>>` (异步操作)
-
-适用于：所有协程环境下的异步网络 I/O 操作。
-
-```cpp
-// 定义
-asio::awaitable<std::expected<std::size_t, std::error_code>> async_read_wrapper(
-    asio::ip::tcp::socket& socket, ...);
-
-// 使用方式
-auto res = co_await async_read_wrapper(socket, ...);
-if (!res)
-{
-    LOG_ERROR("async read failed: {}", res.error().message());
-    co_return; // 或处理错误
-}
-auto bytes_transferred = *res;
-```
-
-**注意**：对于 `asio::awaitable<std::expected<void, std::error_code>>`，在 `co_return` 成功时需显式构造：
-
-```cpp
-co_return std::expected<void, std::error_code>{};
-```
-
-### 3. `std::optional<T>` 返回值 (仅限查询/缓存)
-
-适用于：查询可能不存在的数据（非错误情况），如缓存查找、配置项读取。
-
-```cpp
-std::optional<config> parse_config(const std::string& filename);
-
-if (auto cfg = parse_config(...); cfg)
-{
-    // found
-}
-```
-
-### 4. 异常
+### 5. 异常
 
 项目代码中禁止使用异常。
-- 禁止新增 `throw` / `try` / `catch`。
-- 错误统一通过 `std::expected`、`std::optional` 或显式状态值返回。
-- 反序列化失败必须通过返回值上报，不得依赖异常捕获。
+1. 禁止新增 `throw` / `try` / `catch`。
+2. 错误通过 `std::expected`、`std::optional`、`std::error_code` 或显式状态返回。
+3. 失败路径必须可测试、可日志观测，不依赖异常捕获。
 
 ## 规范要点
 
-1.  **一致性**：新代码必须使用 `std::expected`，禁止添加新的 `std::error_code&` 输出参数，也禁止使用异常。
-2.  **错误传播**：使用 `return std::unexpected(ec)` 传播错误。
-3.  **nodiscard**：所有返回 `std::expected` 的函数均应视为隐含 `[[nodiscard]]`（C++23 标准特性或编译器警告支持）。
-4.  **资源管理**：利用 RAII（如 `scoped_exit`）确保出错时资源正确释放。
+1. 新增业务接口优先使用 `std::expected`。
+2. 新增异步 I/O 边界接口允许使用 `asio::awaitable<std::error_code>`，禁止回退到 `std::error_code&` 输出参数。
+3. 统一通过返回值传播错误，禁止静默吞错。
+4. 关键错误路径必须记录日志并在测试中覆盖。
 
-## 迁移指南
+## 迁移策略
 
-旧代码：
-```cpp
-std::error_code ec;
-func(arg, ec);
-if (ec) { ... }
-```
-
-新代码：
-```cpp
-auto res = func(arg);
-if (!res) { auto ec = res.error(); ... }
-```
+1. 先统一文档口径（当前阶段已采用混合模式）。
+2. 新代码保持“业务 `expected`、边界 `awaitable<std::error_code>`”。
+3. 存量接口逐步迁移为更强类型返回（按“接口签名 -> 调用链 -> 测试”顺序）。
 
 ## 异常禁用工作清单
 
-为避免依赖缺失文档，异常禁用相关清单统一维护在本文件，不再依赖 `doc/tests_exception_inventory.md`。
+异常禁用专项清单以 `doc/tests_exception_inventory.md` 为主，本文件仅保留编码约束摘要。
 
 1. 项目代码（`third/` 除外）禁止新增 `throw` / `try` / `catch`。
-2. 新增错误返回接口统一使用 `std::expected`，禁止新增 `std::error_code&` 输出参数。
-3. 反序列化、握手、I/O 失败路径必须在测试中断言可观测错误返回，不依赖异常。
-4. 建议在本地或 CI 增加静态检查：`rg -n "\\bthrow\\b|\\btry\\b|\\bcatch\\b" --glob '*.{cpp,h}' --glob '!third/**'`。
-5. 发现存量不一致时，按“接口签名 -> 调用链 -> 测试”顺序迁移，避免半迁移状态。
+2. 禁止新增 `std::error_code&` 输出参数风格接口。
+3. 已在 CTest 增加 `no_exception_keywords_test` 静态检查，核心扫描命令为：`rg -n "\\bthrow\\b|\\btry\\b|\\bcatch\\b" --glob '*.{cpp,h}' --glob '!third/**'`。
