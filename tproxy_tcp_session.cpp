@@ -95,11 +95,14 @@ asio::awaitable<void> tproxy_tcp_session::run()
     const auto [route, backend] = co_await select_backend(host);
     if (backend == nullptr)
     {
+        close_client_socket();
         co_return;
     }
 
     if (!co_await connect_backend(backend, host, port, route))
     {
+        co_await close_backend_once(backend);
+        close_client_socket();
         co_return;
     }
 

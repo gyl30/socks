@@ -86,6 +86,23 @@ class direct_router : public mux::router
     }
 };
 
+class block_router : public mux::router
+{
+   public:
+    block_router()
+    {
+        block_ip_matcher() = std::make_shared<mux::ip_matcher>();
+        direct_ip_matcher() = std::make_shared<mux::ip_matcher>();
+        proxy_domain_matcher() = std::make_shared<mux::domain_matcher>();
+        block_domain_matcher() = std::make_shared<mux::domain_matcher>();
+        direct_domain_matcher() = std::make_shared<mux::domain_matcher>();
+
+        block_ip_matcher()->add_rule("0.0.0.0/0");
+        block_ip_matcher()->add_rule("::/0");
+        block_ip_matcher()->optimize();
+    }
+};
+
 class mock_upstream final : public mux::upstream
 {
    public:
@@ -346,6 +363,39 @@ TEST(TproxyTcpSessionTest, ConnectBackendReflectsUpstreamResult)
     const auto connect_fail =
         mux::test::run_awaitable(ctx, session->connect_backend(backend, "127.0.0.1", 80, mux::route_type::kDirect));
     EXPECT_FALSE(connect_fail);
+}
+
+TEST(TproxyTcpSessionTest, RunClosesClientSocketWhenBackendConnectFails)
+{
+    asio::io_context ctx;
+    auto pair = make_tcp_socket_pair(ctx);
+    auto router = std::make_shared<direct_router>();
+    mux::config cfg;
+
+    asio::ip::tcp::acceptor unused_acceptor(ctx, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    const auto unused_port = unused_acceptor.local_endpoint().port();
+    std::error_code close_ec;
+    unused_acceptor.close(close_ec);
+
+    const asio::ip::tcp::endpoint dst_ep(asio::ip::make_address("127.0.0.1"), unused_port);
+    auto session = std::make_shared<mux::tproxy_tcp_session>(std::move(pair.server), ctx, nullptr, std::move(router), 12, cfg, dst_ep);
+
+    mux::test::run_awaitable_void(ctx, session->run());
+    EXPECT_FALSE(session->socket_.is_open());
+}
+
+TEST(TproxyTcpSessionTest, RunClosesClientSocketWhenRouteBlocked)
+{
+    asio::io_context ctx;
+    auto pair = make_tcp_socket_pair(ctx);
+    auto router = std::make_shared<block_router>();
+    mux::config cfg;
+    const asio::ip::tcp::endpoint dst_ep(asio::ip::make_address("127.0.0.1"), 80);
+
+    auto session = std::make_shared<mux::tproxy_tcp_session>(std::move(pair.server), ctx, nullptr, std::move(router), 13, cfg, dst_ep);
+
+    mux::test::run_awaitable_void(ctx, session->run());
+    EXPECT_FALSE(session->socket_.is_open());
 }
 
 TEST(TproxyTcpSessionTest, CloseClientSocketIgnoresExpectedErrors)
