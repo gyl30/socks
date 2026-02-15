@@ -32,6 +32,7 @@ extern "C"
 #include "mux_codec.h"
 #include "mock_mux_connection.h"
 #include "reality_auth.h"
+#include "scoped_exit.h"
 #define private public
 #include "remote_server.h"
 #undef private
@@ -220,6 +221,78 @@ bool wait_for_condition(Predicate predicate,
         std::this_thread::sleep_for(interval);
     }
     return predicate();
+}
+
+bool start_server_until_listening(const std::shared_ptr<mux::remote_server>& server,
+                                  const std::uint32_t max_attempts = 120,
+                                  const std::chrono::milliseconds backoff = std::chrono::milliseconds(25))
+{
+    for (std::uint32_t attempt = 0; attempt < max_attempts; ++attempt)
+    {
+        server->start();
+        if (server->listen_port() != 0)
+        {
+            return true;
+        }
+        std::this_thread::sleep_for(backoff);
+    }
+    return false;
+}
+
+bool open_ephemeral_acceptor_until_ready(asio::ip::tcp::acceptor& acceptor,
+                                         const std::uint32_t max_attempts = 120,
+                                         const std::chrono::milliseconds backoff = std::chrono::milliseconds(25))
+{
+    for (std::uint32_t attempt = 0; attempt < max_attempts; ++attempt)
+    {
+        std::error_code ec;
+        ec = acceptor.open(asio::ip::tcp::v4(), ec);
+        if (ec)
+        {
+            std::this_thread::sleep_for(backoff);
+            continue;
+        }
+        ec = acceptor.set_option(asio::ip::tcp::acceptor::reuse_address(true), ec);
+        if (!ec)
+        {
+            ec = acceptor.bind(asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0), ec);
+        }
+        if (!ec)
+        {
+            ec = acceptor.listen(asio::socket_base::max_listen_connections, ec);
+        }
+        if (!ec)
+        {
+            return true;
+        }
+        std::error_code close_ec;
+        acceptor.close(close_ec);
+        std::this_thread::sleep_for(backoff);
+    }
+    return false;
+}
+
+std::shared_ptr<mux::remote_server> construct_server_until_acceptor_ready(mux::io_context_pool& pool,
+                                                                           const mux::config& cfg,
+                                                                           const std::uint32_t max_attempts = 120,
+                                                                           const std::chrono::milliseconds backoff = std::chrono::milliseconds(25))
+{
+    for (std::uint32_t attempt = 0; attempt < max_attempts; ++attempt)
+    {
+        try
+        {
+            auto server = std::make_shared<mux::remote_server>(pool, cfg);
+            if (server->acceptor_.is_open())
+            {
+                return server;
+            }
+        }
+        catch (const std::exception&)
+        {
+        }
+        std::this_thread::sleep_for(backoff);
+    }
+    return nullptr;
 }
 
 }    // namespace
@@ -586,7 +659,7 @@ TEST_F(remote_server_test, FallbackConnectFail)
     pool_thread.join();
 }
 
-TEST_F(remote_server_test, InvalidAuthConfigPath)
+TEST_F(remote_server_test, StartRejectsInvalidAuthConfig)
 {
     std::error_code ec;
     mux::io_context_pool pool(1);
@@ -609,21 +682,17 @@ TEST_F(remote_server_test, InvalidAuthConfigPath)
 
     auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(server_port, {{"", "127.0.0.1", std::to_string(fallback_port)}}, "abc"));
     server->start();
+    EXPECT_FALSE(server->running());
 
     {
         asio::ip::tcp::socket sock(pool.get_io_context());
-        sock.connect({asio::ip::make_address("127.0.0.1"), server_port});
-
-        auto spec = reality::fingerprint_factory::get(reality::fingerprint_type::kChrome120);
-        auto ch_msg = reality::client_hello_builder::build(
-            spec, std::vector<uint8_t>(32, 0), std::vector<uint8_t>(32, 0), std::vector<uint8_t>(32, 0), "www.google.com");
-        auto record = reality::write_record_header(reality::kContentTypeHandshake, static_cast<uint16_t>(ch_msg.size()));
-        record.insert(record.end(), ch_msg.begin(), ch_msg.end());
-        asio::write(sock, asio::buffer(record));
-        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        std::error_code connect_ec;
+        sock.connect({asio::ip::make_address("127.0.0.1"), server_port}, connect_ec);
+        EXPECT_TRUE(connect_ec);
     }
 
-    EXPECT_TRUE(wait_for_condition([&fallback_triggered]() { return fallback_triggered.load(); }));
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    EXPECT_FALSE(fallback_triggered.load());
     server->stop();
     pool.stop();
     pool_thread.join();
@@ -786,13 +855,31 @@ TEST_F(remote_server_test, ExactSniFallbackPreferredOverRealityDest)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
+    auto pool_cleanup = make_scoped_exit(
+        [&]()
+        {
+            pool.stop();
+            if (pool_thread.joinable())
+            {
+                pool_thread.join();
+            }
+        });
 
-    const std::uint16_t server_port = pick_free_port();
-    const std::uint16_t exact_port = pick_free_port();
-    const std::uint16_t dest_port = pick_free_port();
-
-    asio::ip::tcp::acceptor exact_acceptor(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), exact_port));
-    asio::ip::tcp::acceptor dest_acceptor(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), dest_port));
+    asio::ip::tcp::acceptor exact_acceptor(pool.get_io_context());
+    asio::ip::tcp::acceptor dest_acceptor(pool.get_io_context());
+    ASSERT_TRUE(open_ephemeral_acceptor_until_ready(exact_acceptor));
+    ASSERT_TRUE(open_ephemeral_acceptor_until_ready(dest_acceptor));
+    auto acceptor_cleanup = make_scoped_exit(
+        [&]()
+        {
+            std::error_code close_ec;
+            exact_acceptor.cancel(close_ec);
+            exact_acceptor.close(close_ec);
+            dest_acceptor.cancel(close_ec);
+            dest_acceptor.close(close_ec);
+        });
+    const auto exact_port = exact_acceptor.local_endpoint().port();
+    const auto dest_port = dest_acceptor.local_endpoint().port();
     std::atomic<int> exact_count{0};
     std::atomic<int> dest_count{0};
     exact_acceptor.async_accept(
@@ -813,34 +900,51 @@ TEST_F(remote_server_test, ExactSniFallbackPreferredOverRealityDest)
         });
 
     std::vector<mux::config::fallback_entry> fallbacks = {{"www.exact.test", "127.0.0.1", std::to_string(exact_port)}};
-    auto cfg = make_server_cfg(server_port, fallbacks, "0102030405060708");
+    auto cfg = make_server_cfg(0, fallbacks, "0102030405060708");
     cfg.reality.dest = std::string("127.0.0.1:") + std::to_string(dest_port);
-    auto server = std::make_shared<mux::remote_server>(pool, cfg);
-    server->start();
+    std::shared_ptr<mux::remote_server> server = std::make_shared<mux::remote_server>(pool, cfg);
+    auto server_cleanup = make_scoped_exit(
+        [&]()
+        {
+            if (server != nullptr)
+            {
+                server->stop();
+            }
+        });
+    const bool started = start_server_until_listening(server);
+    if (!started)
+    {
+        FAIL() << "server failed to start listening";
+    }
+    const auto server_port = server->listen_port();
 
     {
         asio::ip::tcp::socket sock(pool.get_io_context());
-        sock.connect({asio::ip::make_address("127.0.0.1"), server_port});
+        std::error_code connect_ec;
+        sock.connect({asio::ip::make_address("127.0.0.1"), server_port}, connect_ec);
+        ASSERT_FALSE(connect_ec);
+        if (connect_ec)
+        {
+            return;
+        }
 
         auto spec = reality::fingerprint_factory::get(reality::fingerprint_type::kChrome120);
         auto ch_body =
             reality::client_hello_builder::build(spec, std::vector<uint8_t>(32, 0), info_random(), std::vector<uint8_t>(32, 0), "www.exact.test");
         auto record = reality::write_record_header(reality::kContentTypeHandshake, static_cast<uint16_t>(ch_body.size()));
         record.insert(record.end(), ch_body.begin(), ch_body.end());
-        asio::write(sock, asio::buffer(record));
+        std::error_code write_ec;
+        asio::write(sock, asio::buffer(record), write_ec);
+        ASSERT_FALSE(write_ec);
+        if (write_ec)
+        {
+            return;
+        }
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
     }
 
     EXPECT_TRUE(wait_for_condition([&exact_count]() { return exact_count.load() == 1; }));
     EXPECT_TRUE(wait_for_condition([&dest_count]() { return dest_count.load() == 0; }));
-    std::error_code close_ec;
-    exact_acceptor.cancel(close_ec);
-    exact_acceptor.close(close_ec);
-    dest_acceptor.cancel(close_ec);
-    dest_acceptor.close(close_ec);
-    server->stop();
-    pool.stop();
-    pool_thread.join();
 
     EXPECT_EQ(exact_count.load(), 1);
     EXPECT_EQ(dest_count.load(), 0);
@@ -852,11 +956,26 @@ TEST_F(remote_server_test, FallbackGuardRateLimitBlocksFallbackDial)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
+    auto pool_cleanup = make_scoped_exit(
+        [&]()
+        {
+            pool.stop();
+            if (pool_thread.joinable())
+            {
+                pool_thread.join();
+            }
+        });
 
-    const std::uint16_t server_port = pick_free_port();
-    const std::uint16_t fallback_port = pick_free_port();
-
-    asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), fallback_port));
+    asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context());
+    ASSERT_TRUE(open_ephemeral_acceptor_until_ready(fallback_acceptor));
+    auto acceptor_cleanup = make_scoped_exit(
+        [&]()
+        {
+            std::error_code close_ec;
+            fallback_acceptor.cancel(close_ec);
+            fallback_acceptor.close(close_ec);
+        });
+    const auto fallback_port = fallback_acceptor.local_endpoint().port();
     std::atomic<bool> fallback_triggered{false};
     fallback_acceptor.async_accept(
         [&](std::error_code accept_ec, asio::ip::tcp::socket peer)
@@ -867,12 +986,21 @@ TEST_F(remote_server_test, FallbackGuardRateLimitBlocksFallbackDial)
             }
         });
 
-    auto cfg = make_server_cfg(server_port, {{"", "127.0.0.1", std::to_string(fallback_port)}}, "0102030405060708");
+    auto cfg = make_server_cfg(0, {{"", "127.0.0.1", std::to_string(fallback_port)}}, "0102030405060708");
     cfg.reality.fallback_guard.enabled = true;
     cfg.reality.fallback_guard.rate_per_sec = 0;
     cfg.reality.fallback_guard.burst = 0;
-    auto server = std::make_shared<mux::remote_server>(pool, cfg);
-    server->start();
+    std::shared_ptr<mux::remote_server> server = std::make_shared<mux::remote_server>(pool, cfg);
+    auto server_cleanup = make_scoped_exit(
+        [&]()
+        {
+            if (server != nullptr)
+            {
+                server->stop();
+            }
+        });
+    ASSERT_TRUE(start_server_until_listening(server));
+    const auto server_port = server->listen_port();
 
     const auto before = mux::statistics::instance().fallback_rate_limited();
     {
@@ -880,16 +1008,19 @@ TEST_F(remote_server_test, FallbackGuardRateLimitBlocksFallbackDial)
         std::error_code connect_ec;
         sock.connect({asio::ip::make_address("127.0.0.1"), server_port}, connect_ec);
         ASSERT_FALSE(connect_ec);
-        asio::write(sock, asio::buffer("INVALID DATA"));
+        if (connect_ec)
+        {
+            return;
+        }
+        std::error_code write_ec;
+        asio::write(sock, asio::buffer("INVALID DATA"), write_ec);
+        ASSERT_FALSE(write_ec);
+        if (write_ec)
+        {
+            return;
+        }
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
     }
-
-    std::error_code close_ec;
-    fallback_acceptor.cancel(close_ec);
-    fallback_acceptor.close(close_ec);
-    server->stop();
-    pool.stop();
-    pool_thread.join();
 
     EXPECT_FALSE(fallback_triggered.load());
     EXPECT_GT(mux::statistics::instance().fallback_rate_limited(), before);
@@ -901,16 +1032,33 @@ TEST_F(remote_server_test, FallbackGuardCircuitBreakerBlocksSubsequentAttempt)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
+    auto pool_cleanup = make_scoped_exit(
+        [&]()
+        {
+            pool.stop();
+            if (pool_thread.joinable())
+            {
+                pool_thread.join();
+            }
+        });
 
-    const std::uint16_t server_port = pick_free_port();
-    auto cfg = make_server_cfg(server_port, {{"", "127.0.0.1", "1"}}, "0102030405060708");
+    auto cfg = make_server_cfg(0, {{"", "127.0.0.1", "1"}}, "0102030405060708");
     cfg.reality.fallback_guard.enabled = true;
     cfg.reality.fallback_guard.rate_per_sec = 0;
     cfg.reality.fallback_guard.burst = 1;
     cfg.reality.fallback_guard.circuit_fail_threshold = 1;
     cfg.reality.fallback_guard.circuit_open_sec = 2;
-    auto server = std::make_shared<mux::remote_server>(pool, cfg);
-    server->start();
+    std::shared_ptr<mux::remote_server> server = std::make_shared<mux::remote_server>(pool, cfg);
+    auto server_cleanup = make_scoped_exit(
+        [&]()
+        {
+            if (server != nullptr)
+            {
+                server->stop();
+            }
+        });
+    ASSERT_TRUE(start_server_until_listening(server));
+    const auto server_port = server->listen_port();
 
     const auto before = mux::statistics::instance().fallback_rate_limited();
 
@@ -924,16 +1072,18 @@ TEST_F(remote_server_test, FallbackGuardCircuitBreakerBlocksSubsequentAttempt)
         {
             return;
         }
-        asio::write(sock, asio::buffer("TRIGGER FALLBACK"));
+        std::error_code write_ec;
+        asio::write(sock, asio::buffer("TRIGGER FALLBACK"), write_ec);
+        EXPECT_FALSE(write_ec);
+        if (write_ec)
+        {
+            return;
+        }
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
     };
 
     trigger_invalid();
     trigger_invalid();
-
-    server->stop();
-    pool.stop();
-    pool_thread.join();
 
     EXPECT_GT(mux::statistics::instance().fallback_rate_limited(), before);
 }
@@ -944,13 +1094,119 @@ TEST_F(remote_server_test, ConstructorHandlesInvalidInboundHostAndUnsupportedFal
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
+    auto fallback_type_cfg = make_server_cfg(0, {}, "0102030405060708");
+    fallback_type_cfg.reality.type = "udp";
+    auto fallback_type_server = construct_server_until_acceptor_ready(pool, fallback_type_cfg);
+    ASSERT_NE(fallback_type_server, nullptr);
+    EXPECT_EQ(fallback_type_server->fallback_type_, "udp");
+    EXPECT_TRUE(fallback_type_server->auth_config_valid_);
+
+    auto invalid_host_cfg = make_server_cfg(0, {}, "0102030405060708");
+    invalid_host_cfg.inbound.host = "not-a-valid-ip";
+    auto invalid_host_server = construct_server_until_acceptor_ready(pool, invalid_host_cfg);
+    ASSERT_NE(invalid_host_server, nullptr);
+    EXPECT_TRUE(invalid_host_server->inbound_endpoint_.address().is_v6());
+}
+
+TEST_F(remote_server_test, ConstructorNormalizesZeroMaxConnections)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
     auto cfg = make_server_cfg(pick_free_port(), {}, "0102030405060708");
-    cfg.inbound.host = "not-a-valid-ip";
-    cfg.reality.type = "udp";
+    cfg.limits.max_connections = 0;
     auto server = std::make_shared<mux::remote_server>(pool, cfg);
 
-    EXPECT_EQ(server->fallback_type_, "udp");
-    EXPECT_TRUE(server->auth_config_valid_);
+    EXPECT_EQ(server->limits_config_.max_connections, 1U);
+}
+
+TEST_F(remote_server_test, ConnectionSlotReservationPreHandshakeLimit)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    auto cfg = make_server_cfg(pick_free_port(), {}, "0102030405060708");
+    cfg.limits.max_connections = 2;
+    auto server = std::make_shared<mux::remote_server>(pool, cfg);
+    const std::string source_key = "127.0.0.1/32";
+
+    EXPECT_TRUE(server->try_reserve_connection_slot(source_key));
+    EXPECT_TRUE(server->try_reserve_connection_slot(source_key));
+    EXPECT_FALSE(server->try_reserve_connection_slot(source_key));
+    EXPECT_EQ(server->active_connection_slots_.load(std::memory_order_acquire), 2U);
+
+    server->release_connection_slot(source_key);
+    EXPECT_EQ(server->active_connection_slots_.load(std::memory_order_acquire), 1U);
+
+    EXPECT_TRUE(server->try_reserve_connection_slot(source_key));
+    EXPECT_EQ(server->active_connection_slots_.load(std::memory_order_acquire), 2U);
+
+    server->release_connection_slot(source_key);
+    server->release_connection_slot(source_key);
+    server->release_connection_slot(source_key);
+    EXPECT_EQ(server->active_connection_slots_.load(std::memory_order_acquire), 0U);
+}
+
+TEST_F(remote_server_test, ConnectionSlotReservationRespectsPerSourceLimit)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    auto cfg = make_server_cfg(pick_free_port(), {}, "0102030405060708");
+    cfg.limits.max_connections = 4;
+    cfg.limits.max_connections_per_source = 1;
+    auto server = std::make_shared<mux::remote_server>(pool, cfg);
+
+    EXPECT_TRUE(server->try_reserve_connection_slot("10.0.0.1/32"));
+    EXPECT_FALSE(server->try_reserve_connection_slot("10.0.0.1/32"));
+    EXPECT_TRUE(server->try_reserve_connection_slot("10.0.0.2/32"));
+    EXPECT_EQ(server->active_connection_slots_.load(std::memory_order_acquire), 2U);
+
+    server->release_connection_slot("10.0.0.1/32");
+    server->release_connection_slot("10.0.0.2/32");
+    EXPECT_EQ(server->active_connection_slots_.load(std::memory_order_acquire), 0U);
+}
+
+TEST_F(remote_server_test, ConstructorClampsSourcePrefixRange)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    auto cfg = make_server_cfg(pick_free_port(), {}, "0102030405060708");
+    cfg.limits.source_prefix_v4 = 255;
+    cfg.limits.source_prefix_v6 = 255;
+    auto server = std::make_shared<mux::remote_server>(pool, cfg);
+
+    EXPECT_EQ(server->limits_config_.source_prefix_v4, 32U);
+    EXPECT_EQ(server->limits_config_.source_prefix_v6, 128U);
+}
+
+TEST_F(remote_server_test, ConnectionLimitSourceKeyUsesConfiguredSubnet)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    auto cfg = make_server_cfg(pick_free_port(), {}, "0102030405060708");
+    cfg.limits.source_prefix_v4 = 24;
+    auto server = std::make_shared<mux::remote_server>(pool, cfg);
+
+    asio::io_context io_context;
+    asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    asio::ip::tcp::socket client(io_context);
+    asio::ip::tcp::socket accepted(io_context);
+
+    client.connect(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), acceptor.local_endpoint().port()), ec);
+    ASSERT_FALSE(ec);
+    acceptor.accept(accepted, ec);
+    ASSERT_FALSE(ec);
+
+    auto accepted_ptr = std::make_shared<asio::ip::tcp::socket>(std::move(accepted));
+    EXPECT_EQ(server->connection_limit_source_key(accepted_ptr), "127.0.0.0/24");
 }
 
 TEST_F(remote_server_test, ConstructorRejectsInvalidRealityDest)
@@ -1295,17 +1551,20 @@ TEST_F(remote_server_test, ConstructorCoversShortIdAndDestParsingBranches)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
-    auto cfg_invalid_hex = make_server_cfg(pick_free_port(), {}, "zz");
-    auto server_invalid_hex = std::make_shared<mux::remote_server>(pool, cfg_invalid_hex);
+    auto cfg_invalid_hex = make_server_cfg(0, {}, "zz");
+    auto server_invalid_hex = construct_server_until_acceptor_ready(pool, cfg_invalid_hex);
+    ASSERT_NE(server_invalid_hex, nullptr);
     EXPECT_FALSE(server_invalid_hex->auth_config_valid_);
 
-    auto cfg_long_short_id = make_server_cfg(pick_free_port(), {}, "010203040506070809");
-    auto server_long_short_id = std::make_shared<mux::remote_server>(pool, cfg_long_short_id);
+    auto cfg_long_short_id = make_server_cfg(0, {}, "010203040506070809");
+    auto server_long_short_id = construct_server_until_acceptor_ready(pool, cfg_long_short_id);
+    ASSERT_NE(server_long_short_id, nullptr);
     EXPECT_FALSE(server_long_short_id->auth_config_valid_);
 
-    auto cfg_ipv6_dest = make_server_cfg(pick_free_port(), {{"www.example.test", "127.0.0.1", "not-a-port"}}, "0102030405060708");
+    auto cfg_ipv6_dest = make_server_cfg(0, {{"www.example.test", "127.0.0.1", "not-a-port"}}, "0102030405060708");
     cfg_ipv6_dest.reality.dest = "[::1]:8443";
-    auto server_ipv6_dest = std::make_shared<mux::remote_server>(pool, cfg_ipv6_dest);
+    auto server_ipv6_dest = construct_server_until_acceptor_ready(pool, cfg_ipv6_dest);
+    ASSERT_NE(server_ipv6_dest, nullptr);
     EXPECT_TRUE(server_ipv6_dest->fallback_dest_valid_);
     EXPECT_EQ(server_ipv6_dest->fallback_dest_host_, "::1");
     EXPECT_EQ(server_ipv6_dest->fallback_dest_port_, "8443");
@@ -1316,8 +1575,9 @@ TEST_F(remote_server_test, ConstructorCoversShortIdAndDestParsingBranches)
     EXPECT_EQ(target.fetch_host, "127.0.0.1");
     EXPECT_EQ(target.fetch_port, static_cast<std::uint16_t>(443));
 
-    auto cfg_port_suffix = make_server_cfg(pick_free_port(), {{"www.port.test", "127.0.0.1", "443abc"}}, "0102030405060708");
-    auto server_port_suffix = std::make_shared<mux::remote_server>(pool, cfg_port_suffix);
+    auto cfg_port_suffix = make_server_cfg(0, {{"www.port.test", "127.0.0.1", "443abc"}}, "0102030405060708");
+    auto server_port_suffix = construct_server_until_acceptor_ready(pool, cfg_port_suffix);
+    ASSERT_NE(server_port_suffix, nullptr);
     mux::client_hello_info suffix_info{};
     suffix_info.sni = "www.port.test";
     const auto suffix_target = server_port_suffix->resolve_certificate_target(suffix_info);
@@ -1331,7 +1591,8 @@ TEST_F(remote_server_test, ParseClientHelloAndTranscriptGuardBranches)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
-    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
+    auto server = construct_server_until_acceptor_ready(pool, make_server_cfg(0, {}, "0102030405060708"));
+    ASSERT_NE(server, nullptr);
 
     std::string client_sni = "seed";
     const auto empty_info = mux::remote_server::parse_client_hello({}, client_sni);
@@ -1618,15 +1879,17 @@ TEST_F(remote_server_test, ConstructorCoversMalformedBracketDestParseBranches)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
-    auto cfg_missing_bracket = make_server_cfg(pick_free_port(), {}, "0102030405060708");
+    auto cfg_missing_bracket = make_server_cfg(0, {}, "0102030405060708");
     cfg_missing_bracket.reality.dest = "[::1";
-    auto server_missing_bracket = std::make_shared<mux::remote_server>(pool, cfg_missing_bracket);
+    auto server_missing_bracket = construct_server_until_acceptor_ready(pool, cfg_missing_bracket);
+    ASSERT_NE(server_missing_bracket, nullptr);
     EXPECT_FALSE(server_missing_bracket->fallback_dest_valid_);
     EXPECT_FALSE(server_missing_bracket->auth_config_valid_);
 
-    auto cfg_missing_colon = make_server_cfg(pick_free_port(), {}, "0102030405060708");
+    auto cfg_missing_colon = make_server_cfg(0, {}, "0102030405060708");
     cfg_missing_colon.reality.dest = "[::1]8443";
-    auto server_missing_colon = std::make_shared<mux::remote_server>(pool, cfg_missing_colon);
+    auto server_missing_colon = construct_server_until_acceptor_ready(pool, cfg_missing_colon);
+    ASSERT_NE(server_missing_colon, nullptr);
     EXPECT_FALSE(server_missing_colon->fallback_dest_valid_);
     EXPECT_FALSE(server_missing_colon->auth_config_valid_);
 }
@@ -1920,6 +2183,200 @@ TEST_F(remote_server_test, StopCoversAcceptorCloseFailureBranch)
     runner.join();
 }
 
+TEST_F(remote_server_test, StopClosesInFlightHandshakeConnections)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+    std::thread runner([&pool]() { pool.run(); });
+
+    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
+    ASSERT_TRUE(start_server_until_listening(server));
+    const auto listen_port = server->listen_port();
+    ASSERT_NE(listen_port, 0);
+
+    asio::io_context client_io_context;
+    asio::ip::tcp::socket client_socket(client_io_context);
+    client_socket.connect(asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), listen_port), ec);
+    ASSERT_FALSE(ec);
+
+    const std::array<std::uint8_t, 5> partial_client_hello = {0x16, 0x03, 0x03, 0x00, 0x20};
+    asio::write(client_socket, asio::buffer(partial_client_hello), ec);
+    ASSERT_FALSE(ec);
+
+    const auto tracked_non_empty = wait_for_condition(
+        [&server]()
+        {
+            std::lock_guard<std::mutex> lock(server->tracked_connection_socket_mu_);
+            return !server->tracked_connection_sockets_.empty();
+        });
+    EXPECT_TRUE(tracked_non_empty);
+
+    server->stop();
+
+    const auto tracked_cleared = wait_for_condition(
+        [&server]()
+        {
+            std::lock_guard<std::mutex> lock(server->tracked_connection_socket_mu_);
+            return server->tracked_connection_sockets_.empty();
+        });
+    EXPECT_TRUE(tracked_cleared);
+
+    const auto slots_released = wait_for_condition(
+        [&server]()
+        {
+            return server->active_connection_slots_.load(std::memory_order_acquire) == 0;
+        });
+    EXPECT_TRUE(slots_released);
+
+    client_socket.non_blocking(true, ec);
+    ASSERT_FALSE(ec);
+    const auto peer_closed = wait_for_condition(
+        [&client_socket]()
+        {
+            std::array<std::uint8_t, 1> buf = {0};
+            std::error_code read_ec;
+            (void)client_socket.read_some(asio::buffer(buf), read_ec);
+            if (read_ec == asio::error::would_block || read_ec == asio::error::try_again)
+            {
+                return false;
+            }
+            return read_ec == asio::error::eof || read_ec == asio::error::connection_reset || read_ec == asio::error::operation_aborted;
+        });
+    EXPECT_TRUE(peer_closed);
+
+    client_socket.close(ec);
+    pool.stop();
+    if (runner.joinable())
+    {
+        runner.join();
+    }
+}
+
+TEST_F(remote_server_test, HandshakeReadTimeoutReleasesSlotWithoutFallback)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+    std::thread runner([&pool]() { pool.run(); });
+
+    asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context());
+    ASSERT_TRUE(open_ephemeral_acceptor_until_ready(fallback_acceptor));
+    const auto fallback_port = fallback_acceptor.local_endpoint().port();
+    std::atomic<bool> fallback_triggered{false};
+    fallback_acceptor.async_accept(
+        [&fallback_triggered](const std::error_code& accept_ec, asio::ip::tcp::socket)
+        {
+            if (!accept_ec)
+            {
+                fallback_triggered.store(true, std::memory_order_release);
+            }
+        });
+
+    auto cfg = make_server_cfg(0, {{"", "127.0.0.1", std::to_string(fallback_port)}}, "0102030405060708");
+    cfg.timeout.read = 1;
+    auto server = std::make_shared<mux::remote_server>(pool, cfg);
+    ASSERT_TRUE(start_server_until_listening(server));
+    const auto listen_port = server->listen_port();
+    ASSERT_NE(listen_port, 0);
+
+    asio::io_context client_io_context;
+    asio::ip::tcp::socket client_socket(client_io_context);
+    client_socket.connect(asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), listen_port), ec);
+    ASSERT_FALSE(ec);
+
+    const std::array<std::uint8_t, 5> partial_client_hello = {0x16, 0x03, 0x03, 0x00, 0x20};
+    asio::write(client_socket, asio::buffer(partial_client_hello), ec);
+    ASSERT_FALSE(ec);
+
+    const auto slot_reserved = wait_for_condition(
+        [&server]()
+        {
+            return server->active_connection_slots_.load(std::memory_order_acquire) > 0;
+        });
+    EXPECT_TRUE(slot_reserved);
+
+    const auto slot_released = wait_for_condition(
+        [&server]()
+        {
+            return server->active_connection_slots_.load(std::memory_order_acquire) == 0;
+        },
+        std::chrono::milliseconds(4000),
+        std::chrono::milliseconds(20));
+    EXPECT_TRUE(slot_released);
+    EXPECT_FALSE(fallback_triggered.load(std::memory_order_acquire));
+
+    client_socket.non_blocking(true, ec);
+    ASSERT_FALSE(ec);
+    const auto peer_closed = wait_for_condition(
+        [&client_socket]()
+        {
+            std::array<std::uint8_t, 1> buf = {0};
+            std::error_code read_ec;
+            (void)client_socket.read_some(asio::buffer(buf), read_ec);
+            if (read_ec == asio::error::would_block || read_ec == asio::error::try_again)
+            {
+                return false;
+            }
+            return read_ec == asio::error::eof || read_ec == asio::error::connection_reset || read_ec == asio::error::operation_aborted;
+        },
+        std::chrono::milliseconds(2500),
+        std::chrono::milliseconds(20));
+    EXPECT_TRUE(peer_closed);
+
+    client_socket.close(ec);
+    server->stop();
+    std::error_code close_ec;
+    fallback_acceptor.cancel(close_ec);
+    fallback_acceptor.close(close_ec);
+    pool.stop();
+    if (runner.joinable())
+    {
+        runner.join();
+    }
+}
+
+TEST_F(remote_server_test, DelayAndFallbackShortCircuitsWhenStopRequested)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+    std::thread runner([&pool]() { pool.run(); });
+
+    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
+    auto socket = std::make_shared<asio::ip::tcp::socket>(pool.get_io_context());
+    mux::connection_context ctx;
+    ctx.conn_id(6060);
+    ctx.trace_id("delay-stop-short-circuit");
+
+    std::promise<std::pair<mux::remote_server::server_handshake_res, std::error_code>> done;
+    auto done_future = done.get_future();
+    server->stop_.store(true, std::memory_order_release);
+    asio::co_spawn(pool.get_io_context(),
+                   [server, socket, ctx, &done]() mutable -> asio::awaitable<void>
+                   {
+                       auto res = co_await server->delay_and_fallback(socket, std::vector<std::uint8_t>{0x16}, ctx, "stop.test");
+                       done.set_value(std::make_pair(std::move(res), std::error_code{}));
+                       co_return;
+                   },
+                   asio::detached);
+
+    EXPECT_EQ(done_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    if (done_future.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+    {
+        const auto [res, spawn_ec] = done_future.get();
+        EXPECT_FALSE(spawn_ec);
+        EXPECT_FALSE(res.ok);
+        EXPECT_EQ(res.ec, asio::error::operation_aborted);
+    }
+
+    pool.stop();
+    if (runner.joinable())
+    {
+        runner.join();
+    }
+}
+
 TEST_F(remote_server_test, StopRunsInlineWhenIoContextStopped)
 {
     std::error_code ec;
@@ -1938,7 +2395,7 @@ TEST_F(remote_server_test, StopRunsInlineWhenIoContextStopped)
     auto conn = tunnel->connection();
     ASSERT_NE(conn, nullptr);
     ASSERT_TRUE(conn->is_open());
-    server->active_tunnels_.push_back(tunnel);
+    server->append_active_tunnel(tunnel);
 
     pool.stop();
 
@@ -1948,7 +2405,7 @@ TEST_F(remote_server_test, StopRunsInlineWhenIoContextStopped)
     EXPECT_TRUE(server->stop_.load(std::memory_order_acquire));
     EXPECT_FALSE(server->acceptor_.is_open());
     EXPECT_FALSE(conn->is_open());
-    EXPECT_TRUE(server->active_tunnels_.empty());
+    EXPECT_EQ(server->active_tunnel_count(), 0U);
 }
 
 TEST_F(remote_server_test, StopRunsWhenIoQueueBlocked)
@@ -1969,7 +2426,7 @@ TEST_F(remote_server_test, StopRunsWhenIoQueueBlocked)
     auto conn = tunnel->connection();
     ASSERT_NE(conn, nullptr);
     ASSERT_TRUE(conn->is_open());
-    server->active_tunnels_.push_back(tunnel);
+    server->append_active_tunnel(tunnel);
 
     std::atomic<bool> blocker_started{false};
     std::atomic<bool> release_blocker{false};
@@ -2011,7 +2468,7 @@ TEST_F(remote_server_test, StopRunsWhenIoQueueBlocked)
     EXPECT_TRUE(server->stop_.load(std::memory_order_acquire));
     EXPECT_FALSE(server->acceptor_.is_open());
     EXPECT_FALSE(conn->is_open());
-    EXPECT_TRUE(server->active_tunnels_.empty());
+    EXPECT_EQ(server->active_tunnel_count(), 0U);
 
     release_blocker.store(true, std::memory_order_release);
     pool.stop();
@@ -2039,7 +2496,7 @@ TEST_F(remote_server_test, StopRunsWhenIoContextNotRunning)
     auto conn = tunnel->connection();
     ASSERT_NE(conn, nullptr);
     ASSERT_TRUE(conn->is_open());
-    server->active_tunnels_.push_back(tunnel);
+    server->append_active_tunnel(tunnel);
 
     EXPECT_TRUE(server->acceptor_.is_open());
     server->stop();
@@ -2047,7 +2504,93 @@ TEST_F(remote_server_test, StopRunsWhenIoContextNotRunning)
     EXPECT_TRUE(server->stop_.load(std::memory_order_acquire));
     EXPECT_FALSE(server->acceptor_.is_open());
     EXPECT_FALSE(conn->is_open());
-    EXPECT_TRUE(server->active_tunnels_.empty());
+    EXPECT_EQ(server->active_tunnel_count(), 0U);
+    pool.stop();
+}
+
+TEST_F(remote_server_test, DrainClosesAcceptorButKeepsActiveTunnels)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
+    server->start();
+
+    auto tunnel = std::make_shared<mux::mux_tunnel_impl<asio::ip::tcp::socket>>(
+        asio::ip::tcp::socket(pool.get_io_context()),
+        pool.get_io_context(),
+        mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()},
+        true,
+        904);
+    auto conn = tunnel->connection();
+    ASSERT_NE(conn, nullptr);
+    ASSERT_TRUE(conn->is_open());
+    server->append_active_tunnel(tunnel);
+
+    EXPECT_TRUE(server->acceptor_.is_open());
+    server->drain();
+
+    EXPECT_TRUE(server->stop_.load(std::memory_order_acquire));
+    EXPECT_FALSE(server->acceptor_.is_open());
+    EXPECT_TRUE(conn->is_open());
+    EXPECT_GT(server->active_tunnel_count(), 0U);
+
+    server->stop();
+    EXPECT_FALSE(conn->is_open());
+    EXPECT_EQ(server->active_tunnel_count(), 0U);
+    pool.stop();
+}
+
+TEST_F(remote_server_test, StartReopensAcceptorAfterStop)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    const auto port = pick_free_port();
+    auto cfg = make_server_cfg(port, {}, "0102030405060708");
+    auto server = std::make_shared<mux::remote_server>(pool, cfg);
+
+    std::thread runner([&pool]() { pool.run(); });
+
+    server->start();
+    EXPECT_TRUE(wait_for_condition([&server, port]() { return server->listen_port() == port; }));
+
+    server->stop();
+    EXPECT_TRUE(wait_for_condition([&server]() { return server->listen_port() == 0; }));
+
+    server->start();
+    EXPECT_TRUE(wait_for_condition([&server, port]() { return server->listen_port() == port; }));
+
+    server->stop();
+    pool.stop();
+    if (runner.joinable())
+    {
+        runner.join();
+    }
+}
+
+TEST_F(remote_server_test, StartWhileRunningIsIgnored)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    auto cfg = make_server_cfg(0, {}, "0102030405060708");
+    auto server = std::make_shared<mux::remote_server>(pool, cfg);
+
+    server->start();
+    EXPECT_TRUE(server->started_.load(std::memory_order_acquire));
+    EXPECT_FALSE(server->stop_.load(std::memory_order_acquire));
+    EXPECT_TRUE(server->acceptor_.is_open());
+
+    server->start();
+    EXPECT_TRUE(server->started_.load(std::memory_order_acquire));
+    EXPECT_FALSE(server->stop_.load(std::memory_order_acquire));
+    EXPECT_TRUE(server->acceptor_.is_open());
+
+    server->stop();
     pool.stop();
 }
 

@@ -5,7 +5,9 @@
 #include <chrono>
 #include <memory>
 #include <string>
+#include <mutex>
 #include <cstdint>
+#include <unordered_map>
 
 #include <asio.hpp>
 
@@ -14,7 +16,8 @@ namespace mux
 
 struct monitor_rate_state
 {
-    std::chrono::steady_clock::time_point last_request_time;
+    std::mutex mutex;
+    std::unordered_map<std::string, std::chrono::steady_clock::time_point> last_request_time_by_source;
 };
 
 class monitor_server : public std::enable_shared_from_this<monitor_server>
@@ -25,6 +28,7 @@ class monitor_server : public std::enable_shared_from_this<monitor_server>
     monitor_server(asio::io_context& ioc, std::string bind_host, std::uint16_t port, std::string token, std::uint32_t min_interval_ms);
     void start();
     void stop();
+    [[nodiscard]] bool running() const { return !stop_.load(std::memory_order_acquire) && acceptor_.is_open(); }
 
    private:
     void stop_local();

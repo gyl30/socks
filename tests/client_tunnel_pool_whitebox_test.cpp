@@ -147,18 +147,11 @@ extern "C" int __wrap_getsockname(int sockfd, sockaddr* addr, socklen_t* addrlen
     return __real_getsockname(sockfd, addr, addrlen);
 }
 
-std::uint16_t pick_free_port()
-{
-    asio::io_context io_context;
-    asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
-    return acceptor.local_endpoint().port();
-}
-
 mux::config make_base_cfg()
 {
     mux::config cfg;
     cfg.outbound.host = "127.0.0.1";
-    cfg.outbound.port = pick_free_port();
+    cfg.outbound.port = 0;
     cfg.reality.sni = "www.example.test";
     cfg.reality.short_id = "0102030405060708";
     cfg.limits.max_connections = 1;
@@ -252,6 +245,14 @@ asio::awaitable<std::expected<mux::client_tunnel_pool::handshake_result, std::er
     co_return co_await pool.perform_reality_handshake(socket);
 }
 
+asio::awaitable<std::expected<mux::client_tunnel_pool::handshake_result, std::error_code>> perform_reality_handshake_with_timeout_expected(
+    mux::client_tunnel_pool& pool,
+    const std::shared_ptr<asio::ip::tcp::socket>& socket,
+    asio::io_context& io_context)
+{
+    co_return co_await pool.perform_reality_handshake_with_timeout(socket, io_context);
+}
+
 asio::awaitable<std::expected<std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>, std::error_code>> handshake_read_loop_expected(
     asio::ip::tcp::socket& socket,
     const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& s_hs_keys,
@@ -306,6 +307,25 @@ TEST(ClientTunnelPoolWhiteboxTest, ConfigValidationAndStartGuardBranches)
     EXPECT_TRUE(invalid_fingerprint_pool->stop_.load(std::memory_order_acquire));
 }
 
+TEST(ClientTunnelPoolWhiteboxTest, StartNormalizesZeroMaxConnections)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    auto cfg = make_base_cfg();
+    cfg.reality.public_key = generate_public_key_hex();
+    cfg.limits.max_connections = 0;
+    auto tunnel_pool = std::make_shared<mux::client_tunnel_pool>(pool, cfg, 0);
+
+    tunnel_pool->start();
+    EXPECT_EQ(tunnel_pool->limits_config_.max_connections, 1U);
+    EXPECT_EQ(tunnel_pool->tunnel_pool_.size(), 1U);
+    EXPECT_EQ(tunnel_pool->pending_sockets_.size(), 1U);
+    EXPECT_EQ(tunnel_pool->tunnel_io_contexts_.size(), 1U);
+    tunnel_pool->stop();
+}
+
 TEST(ClientTunnelPoolWhiteboxTest, SelectAndIndexGuardBranches)
 {
     std::error_code ec;
@@ -331,6 +351,35 @@ TEST(ClientTunnelPoolWhiteboxTest, SelectAndIndexGuardBranches)
 
     auto created_socket = tunnel_pool->create_pending_socket(io_context, 9);
     ASSERT_NE(created_socket, nullptr);
+}
+
+TEST(ClientTunnelPoolWhiteboxTest, PublishTunnelRejectedWhenStopping)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    auto cfg = make_base_cfg();
+    cfg.reality.public_key = generate_public_key_hex();
+    auto tunnel_pool = std::make_shared<mux::client_tunnel_pool>(pool, cfg, 0);
+
+    tunnel_pool->tunnel_pool_.resize(1);
+    asio::io_context io_context;
+    auto tunnel = std::make_shared<mux::mux_tunnel_impl<asio::ip::tcp::socket>>(
+        asio::ip::tcp::socket(io_context),
+        io_context,
+        mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()},
+        true,
+        1101);
+
+    tunnel_pool->stop_.store(true, std::memory_order_release);
+    EXPECT_FALSE(tunnel_pool->publish_tunnel(0, tunnel));
+    EXPECT_EQ(tunnel_pool->tunnel_pool_[0], nullptr);
+
+    tunnel_pool->stop_.store(false, std::memory_order_release);
+    EXPECT_TRUE(tunnel_pool->publish_tunnel(0, tunnel));
+    EXPECT_EQ(tunnel_pool->tunnel_pool_[0], tunnel);
+    tunnel_pool->clear_tunnel_if_match(0, tunnel);
 }
 
 TEST(ClientTunnelPoolWhiteboxTest, ClosePendingSocketRunsWhenIoContextNotRunning)
@@ -610,6 +659,43 @@ TEST(ClientTunnelPoolWhiteboxTest, TcpConnectAndHandshakeErrorBranches)
     io_context.run();
     EXPECT_FALSE(try_connect_res.has_value());
     EXPECT_TRUE(try_connect_res.error());
+}
+
+TEST(ClientTunnelPoolWhiteboxTest, HandshakeTimeoutCancelsSocketAndReturnsTimedOut)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    auto cfg = make_base_cfg();
+    cfg.reality.public_key = generate_public_key_hex();
+    cfg.timeout.read = 1;
+    auto tunnel_pool = std::make_shared<mux::client_tunnel_pool>(pool, cfg, 0);
+
+    asio::io_context io_context;
+    asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+
+    auto client_socket = std::make_shared<asio::ip::tcp::socket>(io_context);
+    client_socket->connect(acceptor.local_endpoint(), ec);
+    ASSERT_FALSE(ec);
+
+    asio::ip::tcp::socket server_socket(io_context);
+    acceptor.accept(server_socket, ec);
+    ASSERT_FALSE(ec);
+
+    std::expected<mux::client_tunnel_pool::handshake_result, std::error_code> handshake_res;
+    asio::co_spawn(io_context,
+                   [tunnel_pool, client_socket, &io_context, &handshake_res]() -> asio::awaitable<void>
+                   {
+                       handshake_res = co_await perform_reality_handshake_with_timeout_expected(*tunnel_pool, client_socket, io_context);
+                       co_return;
+                   },
+                   asio::detached);
+    io_context.run();
+
+    ASSERT_FALSE(handshake_res.has_value());
+    EXPECT_EQ(handshake_res.error(), asio::error::timed_out);
+    EXPECT_FALSE(client_socket->is_open());
 }
 
 TEST(ClientTunnelPoolWhiteboxTest, ClientHelloAndServerHelloIoErrorBranches)

@@ -6,6 +6,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <tuple>
 #include <utility>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -76,19 +77,38 @@ void fail_next_close(const int err)
     g_fail_close_once.store(true, std::memory_order_release);
 }
 
-std::uint16_t pick_free_port()
-{
-    asio::io_context ioc;
-    asio::ip::tcp::acceptor acceptor(ioc, asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), 0));
-    return acceptor.local_endpoint().port();
-}
-
-std::string read_response(std::uint16_t port, const std::string& request)
+std::string read_response(std::uint16_t port,
+                          const std::string& request,
+                          const std::string& remote_host = "127.0.0.1",
+                          const std::string& local_host = "")
 {
     asio::io_context ioc;
     asio::ip::tcp::socket socket(ioc);
     asio::error_code ec;
-    socket.connect(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), port), ec);
+    const auto remote_addr = asio::ip::make_address(remote_host, ec);
+    if (ec)
+    {
+        return {};
+    }
+    if (!local_host.empty())
+    {
+        const auto local_addr = asio::ip::make_address(local_host, ec);
+        if (ec)
+        {
+            return {};
+        }
+        socket.open(local_addr.is_v6() ? asio::ip::tcp::v6() : asio::ip::tcp::v4(), ec);
+        if (ec)
+        {
+            return {};
+        }
+        socket.bind(asio::ip::tcp::endpoint(local_addr, 0), ec);
+        if (ec)
+        {
+            return {};
+        }
+    }
+    socket.connect(asio::ip::tcp::endpoint(remote_addr, port), ec);
     if (ec)
     {
         return {};
@@ -152,10 +172,41 @@ class monitor_server_env
 {
    public:
     template <typename... Args>
-    explicit monitor_server_env(Args&&... args) : server_(std::make_shared<mux::monitor_server>(ioc_, std::forward<Args>(args)...))
+    explicit monitor_server_env(Args&&... args)
     {
-        server_->start();
-        thread_ = std::thread([this]() { ioc_.run(); });
+        auto ctor_args = std::make_tuple(std::forward<Args>(args)...);
+        for (std::uint32_t attempt = 0; attempt < 120; ++attempt)
+        {
+            server_ = std::apply(
+                [this](auto&&... unpacked)
+                {
+                    return std::make_shared<mux::monitor_server>(ioc_, unpacked...);
+                },
+                ctor_args);
+            server_->start();
+            if (server_->acceptor_.is_open())
+            {
+                thread_ = std::thread([this]() { ioc_.run(); });
+                return;
+            }
+            server_.reset();
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        }
+    }
+
+    [[nodiscard]] std::uint16_t port() const
+    {
+        if (server_ == nullptr || !server_->acceptor_.is_open())
+        {
+            return 0;
+        }
+        std::error_code ec;
+        const auto endpoint = server_->acceptor_.local_endpoint(ec);
+        if (ec)
+        {
+            return 0;
+        }
+        return endpoint.port();
     }
 
     ~monitor_server_env()
@@ -254,38 +305,140 @@ TEST(MonitorServerTest, EmptyTokenReturnsMetrics)
 {
     statistics::instance().inc_total_connections();
 
-    const auto port = pick_free_port();
-    monitor_server_env env(port, std::string());
+    monitor_server_env env(0, std::string());
+    const auto port = env.port();
+    ASSERT_NE(port, 0);
 
     const auto resp = request_with_retry(port, "metrics\n");
     EXPECT_NE(resp.find("socks_uptime_seconds "), std::string::npos);
     EXPECT_NE(resp.find("socks_total_connections "), std::string::npos);
     EXPECT_NE(resp.find("socks_auth_failures_total "), std::string::npos);
+    EXPECT_NE(resp.find("socks_connection_limit_rejected_total "), std::string::npos);
+    EXPECT_NE(resp.find("socks_stream_limit_rejected_total "), std::string::npos);
+    EXPECT_NE(resp.find("socks_monitor_auth_failures_total "), std::string::npos);
+    EXPECT_NE(resp.find("socks_monitor_rate_limited_total "), std::string::npos);
 }
 
 TEST(MonitorServerTest, TokenRequiredAndRateLimit)
 {
-    const auto port = pick_free_port();
-    monitor_server_env env(port, std::string("secret"), 500);
+    auto& stats = statistics::instance();
+    const auto monitor_auth_before = stats.monitor_auth_failures();
+    const auto monitor_rate_before = stats.monitor_rate_limited();
+
+    monitor_server_env env(0, std::string("secret"), 500);
+    const auto port = env.port();
+    ASSERT_NE(port, 0);
+
+    const auto warmup = request_with_retry(port, "metrics?token=secret\n");
+    EXPECT_NE(warmup.find("socks_total_connections "), std::string::npos);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(550));
 
     const auto unauth = read_response(port, "metrics\n");
     EXPECT_TRUE(unauth.empty());
 
-    const auto authed = request_with_retry(port, "metrics?token=secret\n");
+    const auto authed = read_response(port, "metrics?token=secret\n");
     EXPECT_NE(authed.find("socks_total_connections "), std::string::npos);
 
     const auto limited = read_response(port, "metrics?token=secret\n");
     EXPECT_TRUE(limited.empty());
+    EXPECT_GT(stats.monitor_rate_limited(), monitor_rate_before);
+    EXPECT_GT(stats.monitor_auth_failures(), monitor_auth_before);
 
     std::this_thread::sleep_for(std::chrono::milliseconds(550));
     const auto after_window = read_response(port, "metrics?token=secret\n");
     EXPECT_NE(after_window.find("socks_uptime_seconds "), std::string::npos);
 }
 
+TEST(MonitorServerTest, UnauthorizedRequestDoesNotConsumeRateLimitWindow)
+{
+    monitor_server_env env(0, std::string("secret"), 500);
+    const auto port = env.port();
+    ASSERT_NE(port, 0);
+
+    const auto first_authed = request_with_retry(port, "metrics?token=secret\n");
+    EXPECT_NE(first_authed.find("socks_total_connections "), std::string::npos);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(550));
+
+    const auto unauth = read_response(port, "metrics\n");
+    EXPECT_TRUE(unauth.empty());
+
+    const auto authed_after_unauth = read_response(port, "metrics?token=secret\n");
+    EXPECT_NE(authed_after_unauth.find("socks_uptime_seconds "), std::string::npos);
+}
+
+TEST(MonitorServerTest, RateLimitIsolatedBySourceAddress)
+{
+    monitor_server_env env(std::string("0.0.0.0"), 0, std::string("secret"), 500);
+    const auto port = env.port();
+    ASSERT_NE(port, 0);
+
+    asio::error_code probe_ec;
+    asio::io_context probe_ioc;
+    asio::ip::tcp::socket probe_socket(probe_ioc);
+    probe_socket.open(asio::ip::tcp::v4(), probe_ec);
+    if (!probe_ec)
+    {
+        probe_socket.bind(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.2"), 0), probe_ec);
+    }
+    if (probe_ec)
+    {
+        GTEST_SKIP() << "source address 127.0.0.2 unavailable";
+    }
+
+    const auto first_source_a = request_with_retry(port, "metrics?token=secret\n");
+    EXPECT_NE(first_source_a.find("socks_uptime_seconds "), std::string::npos);
+
+    const auto limited_source_a = read_response(port, "metrics?token=secret\n");
+    EXPECT_TRUE(limited_source_a.empty());
+
+    const auto source_b = read_response(port, "metrics?token=secret\n", "127.0.0.1", "127.0.0.2");
+    EXPECT_NE(source_b.find("socks_uptime_seconds "), std::string::npos);
+}
+
+TEST(MonitorServerTest, RateLimitStateStaysBounded)
+{
+    constexpr std::size_t k_state_limit = 4096;
+
+    asio::io_context ioc;
+    auto server = std::make_shared<monitor_server>(ioc, 0, std::string("secret"), 10);
+    ASSERT_NE(server, nullptr);
+    server->start();
+
+    std::error_code ec;
+    const auto port = server->acceptor_.local_endpoint(ec).port();
+    ASSERT_FALSE(ec);
+    ASSERT_NE(port, 0);
+
+    const auto stale_time = std::chrono::steady_clock::now() - std::chrono::hours(1);
+    for (std::size_t i = 0; i < k_state_limit + 256; ++i)
+    {
+        server->rate_state_->last_request_time_by_source.emplace("stale-" + std::to_string(i), stale_time);
+    }
+    ASSERT_GT(server->rate_state_->last_request_time_by_source.size(), k_state_limit);
+
+    std::thread runner([&ioc]() { ioc.run(); });
+    const auto response = request_with_retry(port, "metrics?token=secret\n");
+    EXPECT_NE(response.find("socks_uptime_seconds "), std::string::npos);
+
+    server->stop();
+    ioc.stop();
+    if (runner.joinable())
+    {
+        runner.join();
+    }
+
+    EXPECT_LE(server->rate_state_->last_request_time_by_source.size(), k_state_limit);
+    EXPECT_NE(server->rate_state_->last_request_time_by_source.find("127.0.0.1"),
+              server->rate_state_->last_request_time_by_source.end());
+}
+
 TEST(MonitorServerTest, RejectsTokenSubstringBypass)
 {
-    const auto port = pick_free_port();
-    monitor_server_env env(port, std::string("secret"));
+    monitor_server_env env(0, std::string("secret"));
+    const auto port = env.port();
+    ASSERT_NE(port, 0);
 
     const auto contains_secret_without_token_key = read_response(port, "metrics?foo=secret\n");
     EXPECT_TRUE(contains_secret_without_token_key.empty());
@@ -302,8 +455,9 @@ TEST(MonitorServerTest, RejectsTokenSubstringBypass)
 
 TEST(MonitorServerTest, EnforcesPathAndSupportsHttpUrlDecodedToken)
 {
-    const auto port = pick_free_port();
-    monitor_server_env env(port, std::string("s+e/c"));
+    monitor_server_env env(0, std::string("s+e/c"));
+    const auto port = env.port();
+    ASSERT_NE(port, 0);
 
     const auto invalid_path = read_response(port, "GET /status?token=s%2Be%2Fc HTTP/1.1\r\n\r\n");
     EXPECT_TRUE(invalid_path.empty());
@@ -315,13 +469,54 @@ TEST(MonitorServerTest, EnforcesPathAndSupportsHttpUrlDecodedToken)
     EXPECT_NE(authed.find("socks_uptime_seconds "), std::string::npos);
 }
 
+TEST(MonitorServerTest, SupportsFragmentedHttpRequestLine)
+{
+    monitor_server_env env(0, std::string("secret"));
+    const auto port = env.port();
+    ASSERT_NE(port, 0);
+
+    asio::io_context ioc;
+    asio::ip::tcp::socket socket(ioc);
+    asio::error_code ec;
+    socket.connect(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), port), ec);
+    ASSERT_FALSE(ec);
+
+    asio::write(socket, asio::buffer("GET /metrics?token=secret HT"), ec);
+    ASSERT_FALSE(ec);
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    asio::write(socket, asio::buffer("TP/1.1\r\nHost: 127.0.0.1\r\n\r\n"), ec);
+    ASSERT_FALSE(ec);
+
+    std::string resp;
+    std::array<char, 1024> buffer{};
+    for (;;)
+    {
+        const auto n = socket.read_some(asio::buffer(buffer), ec);
+        if (n > 0)
+        {
+            resp.append(buffer.data(), n);
+        }
+        if (ec == asio::error::eof)
+        {
+            break;
+        }
+        if (ec)
+        {
+            break;
+        }
+    }
+
+    EXPECT_NE(resp.find("socks_uptime_seconds "), std::string::npos);
+}
+
 TEST(MonitorServerTest, EscapesPrometheusLabels)
 {
     auto& stats = statistics::instance();
     stats.inc_handshake_failure_by_sni(statistics::handshake_failure_reason::kShortId, "line1\"x\\y\nline2");
 
-    const auto port = pick_free_port();
-    monitor_server_env env(port, std::string());
+    monitor_server_env env(0, std::string());
+    const auto port = env.port();
+    ASSERT_NE(port, 0);
     const auto resp = request_with_retry(port, "metrics\n");
 
     EXPECT_NE(resp.find("reason=\"short_id\""), std::string::npos);
@@ -330,8 +525,6 @@ TEST(MonitorServerTest, EscapesPrometheusLabels)
 
 TEST(MonitorServerTest, ConstructWhenPortAlreadyInUse)
 {
-    const auto port = pick_free_port();
-
     asio::io_context guard_ioc;
     asio::ip::tcp::acceptor guard(guard_ioc);
     asio::error_code ec;
@@ -339,10 +532,13 @@ TEST(MonitorServerTest, ConstructWhenPortAlreadyInUse)
     ASSERT_FALSE(ec);
     guard.set_option(asio::socket_base::reuse_address(true), ec);
     ASSERT_FALSE(ec);
-    guard.bind(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), port), ec);
+    guard.bind(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), 0), ec);
     ASSERT_FALSE(ec);
     guard.listen(asio::socket_base::max_listen_connections, ec);
     ASSERT_FALSE(ec);
+    const auto port = guard.local_endpoint(ec).port();
+    ASSERT_FALSE(ec);
+    ASSERT_NE(port, 0);
 
     asio::io_context ioc;
     auto server = std::make_shared<monitor_server>(ioc, port, std::string("token"), 10);
@@ -352,11 +548,15 @@ TEST(MonitorServerTest, ConstructWhenPortAlreadyInUse)
 
 TEST(MonitorServerTest, ConstructorHandlesInvalidBindHost)
 {
-    const auto port = pick_free_port();
     asio::io_context ioc;
-    auto server = std::make_shared<monitor_server>(ioc, port, std::string("token"), 10);
-    auto bad_server = std::make_shared<monitor_server>(ioc, std::string("bad host"), port, std::string("token"), 10);
+    auto server = std::make_shared<monitor_server>(ioc, 0, std::string("token"), 10);
     ASSERT_NE(server, nullptr);
+    ASSERT_TRUE(server->acceptor_.is_open());
+    std::error_code ec;
+    const auto port = server->acceptor_.local_endpoint(ec).port();
+    ASSERT_FALSE(ec);
+    ASSERT_NE(port, 0);
+    auto bad_server = std::make_shared<monitor_server>(ioc, std::string("bad host"), port, std::string("token"), 10);
     ASSERT_NE(bad_server, nullptr);
     EXPECT_FALSE(bad_server->acceptor_.is_open());
     bad_server->start();
@@ -392,11 +592,14 @@ TEST(MonitorServerTest, ConstructorHandlesListenFailure)
 
 TEST(MonitorServerTest, StopClosesAcceptorAndRejectsNewConnections)
 {
-    const auto port = pick_free_port();
     asio::io_context ioc;
-    auto server = std::make_shared<monitor_server>(ioc, port, std::string(), 10);
+    auto server = std::make_shared<monitor_server>(ioc, 0, std::string(), 10);
     ASSERT_NE(server, nullptr);
     server->start();
+    std::error_code ec;
+    const auto port = server->acceptor_.local_endpoint(ec).port();
+    ASSERT_FALSE(ec);
+    ASSERT_NE(port, 0);
 
     std::thread runner([&ioc]() { ioc.run(); });
 
@@ -426,9 +629,8 @@ TEST(MonitorServerTest, StopClosesAcceptorAndRejectsNewConnections)
 
 TEST(MonitorServerTest, StopRunsInlineWhenIoContextStopped)
 {
-    const auto port = pick_free_port();
     asio::io_context ioc;
-    auto server = std::make_shared<monitor_server>(ioc, port, std::string(), 10);
+    auto server = std::make_shared<monitor_server>(ioc, 0, std::string(), 10);
     ASSERT_NE(server, nullptr);
     ASSERT_TRUE(server->acceptor_.is_open());
 
@@ -439,9 +641,8 @@ TEST(MonitorServerTest, StopRunsInlineWhenIoContextStopped)
 
 TEST(MonitorServerTest, StopRunsWhenIoQueueBlocked)
 {
-    const auto port = pick_free_port();
     asio::io_context ioc;
-    auto server = std::make_shared<monitor_server>(ioc, port, std::string(), 10);
+    auto server = std::make_shared<monitor_server>(ioc, 0, std::string(), 10);
     ASSERT_NE(server, nullptr);
     server->start();
 
@@ -478,9 +679,8 @@ TEST(MonitorServerTest, StopRunsWhenIoQueueBlocked)
 
 TEST(MonitorServerTest, StopRunsWhenIoContextNotRunning)
 {
-    const auto port = pick_free_port();
     asio::io_context ioc;
-    auto server = std::make_shared<monitor_server>(ioc, port, std::string(), 10);
+    auto server = std::make_shared<monitor_server>(ioc, 0, std::string(), 10);
     ASSERT_NE(server, nullptr);
     ASSERT_TRUE(server->acceptor_.is_open());
 
@@ -490,9 +690,8 @@ TEST(MonitorServerTest, StopRunsWhenIoContextNotRunning)
 
 TEST(MonitorServerTest, StopLogsAcceptorCloseFailureBranch)
 {
-    const auto port = pick_free_port();
     asio::io_context ioc;
-    auto server = std::make_shared<monitor_server>(ioc, port, std::string(), 10);
+    auto server = std::make_shared<monitor_server>(ioc, 0, std::string(), 10);
     ASSERT_NE(server, nullptr);
     server->start();
 
@@ -512,8 +711,9 @@ TEST(MonitorServerTest, StopLogsAcceptorCloseFailureBranch)
 
 TEST(MonitorServerTest, AcceptFailureRetriesAndServesRequest)
 {
-    const auto port = pick_free_port();
-    monitor_server_env env(port, std::string());
+    monitor_server_env env(0, std::string());
+    const auto port = env.port();
+    ASSERT_NE(port, 0);
 
     fail_next_accept(EIO);
     const auto resp = request_with_retry(port, "metrics\n");
@@ -522,8 +722,9 @@ TEST(MonitorServerTest, AcceptFailureRetriesAndServesRequest)
 
 TEST(MonitorServerTest, SessionReadErrorPathStillAcceptsNextClient)
 {
-    const auto port = pick_free_port();
-    monitor_server_env env(port, std::string());
+    monitor_server_env env(0, std::string());
+    const auto port = env.port();
+    ASSERT_NE(port, 0);
 
     connect_and_close_without_payload(port);
     const auto resp = request_with_retry(port, "metrics\n");
