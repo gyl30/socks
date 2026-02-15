@@ -214,6 +214,7 @@ asio::awaitable<bool> prepare_remote_target_connection(asio::ip::tcp::resolver& 
     LOG_CTX_INFO(ctx, "{} connected {} {}", log_event::kConnEstablished, syn.addr, syn.port);
     if (!co_await send_ack(conn, stream_id, socks::kRepSuccess, ep_conn->address().to_string(), ep_conn->port(), ctx))
     {
+        close_target_socket(target_socket);
         remove_stream(manager, stream_id);
         co_return false;
     }

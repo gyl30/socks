@@ -216,6 +216,7 @@ TEST(RemoteSessionTest, RunAckSendFailureReturnsWithoutReset)
     EXPECT_CALL(*conn, mock_send_async(13, mux::kCmdRst, _)).Times(0);
 
     mux::test::run_awaitable_void(io_context, session->run(make_syn("127.0.0.1", acceptor.local_endpoint().port())));
+    EXPECT_FALSE(session->target_socket_.is_open());
 }
 
 TEST(RemoteSessionTest, RunSuccessWhenSetNoDelayFailsStillSendsAckAndFin)
