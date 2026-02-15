@@ -54,7 +54,12 @@ bool setup_local_acceptor(asio::ip::tcp::acceptor& acceptor,
     {
         return false;
     }
-    bound_port = acceptor.local_endpoint().port();
+    const auto bound_ep = acceptor.local_endpoint(ec);
+    if (ec)
+    {
+        return false;
+    }
+    bound_port = bound_ep.port();
     ec = acceptor.listen(asio::socket_base::max_listen_connections, ec);
     return !ec;
 }

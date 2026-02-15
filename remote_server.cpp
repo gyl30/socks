@@ -455,7 +455,13 @@ std::expected<handshake_crypto_result, std::error_code> build_handshake_crypto(c
 
     const auto s_fin_result =
         reality::tls_key_schedule::compute_finished_verify_data(out.hs_keys.server_handshake_traffic_secret, trans.finish(), out.md);
-    const auto s_fin = reality::construct_finished(s_fin_result.value_or(std::vector<std::uint8_t>{}));
+    if (!s_fin_result)
+    {
+        const auto ec = s_fin_result.error();
+        LOG_CTX_ERROR(ctx, "{} compute server finished failed {}", log_event::kHandshake, ec.message());
+        return std::unexpected(ec);
+    }
+    const auto s_fin = reality::construct_finished(*s_fin_result);
     trans.update(s_fin);
 
     std::vector<std::uint8_t> flight2_plain;
@@ -920,14 +926,35 @@ connection_context remote_server::build_connection_context(const std::shared_ptr
     ctx.new_trace_id();
     ctx.conn_id(conn_id);
 
-    const auto local_ep = s->local_endpoint();
-    const auto remote_ep = s->remote_endpoint();
-    const auto local_addr = socks_codec::normalize_ip_address(local_ep.address());
-    const auto remote_addr = socks_codec::normalize_ip_address(remote_ep.address());
-    ctx.local_addr(local_addr.to_string());
-    ctx.local_port(local_ep.port());
-    ctx.remote_addr(remote_addr.to_string());
-    ctx.remote_port(remote_ep.port());
+    std::error_code local_ep_ec;
+    const auto local_ep = s->local_endpoint(local_ep_ec);
+    if (!local_ep_ec)
+    {
+        const auto local_addr = socks_codec::normalize_ip_address(local_ep.address());
+        ctx.local_addr(local_addr.to_string());
+        ctx.local_port(local_ep.port());
+    }
+    else
+    {
+        LOG_CTX_WARN(ctx, "{} query local endpoint failed {}", log_event::kConnInit, local_ep_ec.message());
+        ctx.local_addr("unknown");
+        ctx.local_port(0);
+    }
+
+    std::error_code remote_ep_ec;
+    const auto remote_ep = s->remote_endpoint(remote_ep_ec);
+    if (!remote_ep_ec)
+    {
+        const auto remote_addr = socks_codec::normalize_ip_address(remote_ep.address());
+        ctx.remote_addr(remote_addr.to_string());
+        ctx.remote_port(remote_ep.port());
+    }
+    else
+    {
+        LOG_CTX_WARN(ctx, "{} query remote endpoint failed {}", log_event::kConnInit, remote_ep_ec.message());
+        ctx.remote_addr("unknown");
+        ctx.remote_port(0);
+    }
     return ctx;
 }
 
@@ -1325,6 +1352,11 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::perform_hand
     const connection_context& ctx)
 {
     const auto key_pair = key_rotator_.get_current_key();
+    if (key_pair == nullptr)
+    {
+        LOG_CTX_ERROR(ctx, "{} key rotation unavailable", log_event::kHandshake);
+        co_return server_handshake_res{.ok = false, .ec = asio::error::fault};
+    }
     const std::uint8_t* public_key = key_pair->public_key;
     const std::uint8_t* private_key = key_pair->private_key;
     
