@@ -49,6 +49,7 @@ class tproxy_udp_session : public mux_stream_interface, public std::enable_share
     void on_reset() override;
 
     [[nodiscard]] bool is_idle(std::uint64_t now_ms, std::uint64_t idle_ms) const;
+    [[nodiscard]] bool terminated() const { return terminated_.load(std::memory_order_acquire); }
 
    private:
     static std::uint64_t now_ms();
@@ -96,6 +97,7 @@ class tproxy_udp_session : public mux_stream_interface, public std::enable_share
     asio::ip::udp::endpoint client_ep_;
     std::uint32_t mark_ = 0;
     std::atomic<std::uint64_t> last_activity_ms_{0};
+    std::atomic<bool> terminated_{false};
     bool proxy_reader_started_ = false;
 };
 

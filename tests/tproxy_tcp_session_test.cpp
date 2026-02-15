@@ -3,6 +3,7 @@
 #include <chrono>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 #include <cerrno>
 #include <cstdint>
@@ -59,14 +60,69 @@ struct tcp_socket_pair
     asio::ip::tcp::socket server;
 };
 
+bool open_ephemeral_tcp_acceptor(
+    asio::ip::tcp::acceptor& acceptor,
+    const std::uint32_t max_attempts = 120,
+    const std::chrono::milliseconds backoff = std::chrono::milliseconds(25))
+{
+    for (std::uint32_t attempt = 0; attempt < max_attempts; ++attempt)
+    {
+        std::error_code ec;
+        if (acceptor.is_open())
+        {
+            acceptor.close(ec);
+        }
+        ec = acceptor.open(asio::ip::tcp::v4(), ec);
+        if (!ec)
+        {
+            ec = acceptor.set_option(asio::ip::tcp::acceptor::reuse_address(true), ec);
+        }
+        if (!ec)
+        {
+            ec = acceptor.bind(asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0), ec);
+        }
+        if (!ec)
+        {
+            ec = acceptor.listen(asio::socket_base::max_listen_connections, ec);
+        }
+        if (!ec)
+        {
+            return true;
+        }
+        std::this_thread::sleep_for(backoff);
+    }
+    return false;
+}
+
 tcp_socket_pair make_tcp_socket_pair(asio::io_context& io_context)
 {
-    asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
-    asio::ip::tcp::socket client(io_context);
-    asio::ip::tcp::socket server(io_context);
-    client.connect(acceptor.local_endpoint());
-    acceptor.accept(server);
-    return tcp_socket_pair{std::move(client), std::move(server)};
+    for (std::uint32_t attempt = 0; attempt < 120; ++attempt)
+    {
+        asio::ip::tcp::acceptor acceptor(io_context);
+        if (!open_ephemeral_tcp_acceptor(acceptor, 1))
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+            continue;
+        }
+
+        std::error_code ec;
+        asio::ip::tcp::socket client(io_context);
+        asio::ip::tcp::socket server(io_context);
+        client.connect(acceptor.local_endpoint(), ec);
+        if (ec)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+            continue;
+        }
+        acceptor.accept(server, ec);
+        if (ec)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+            continue;
+        }
+        return tcp_socket_pair{std::move(client), std::move(server)};
+    }
+    return tcp_socket_pair{asio::ip::tcp::socket(io_context), asio::ip::tcp::socket(io_context)};
 }
 
 class direct_router : public mux::router
@@ -165,7 +221,8 @@ TEST(TproxyTcpSessionTest, DirectEcho)
     asio::io_context ctx;
     auto router = std::make_shared<direct_router>();
 
-    asio::ip::tcp::acceptor echo_acceptor(ctx, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    asio::ip::tcp::acceptor echo_acceptor(ctx);
+    ASSERT_TRUE(open_ephemeral_tcp_acceptor(echo_acceptor));
     const auto echo_port = echo_acceptor.local_endpoint().port();
 
     asio::co_spawn(
@@ -183,7 +240,8 @@ TEST(TproxyTcpSessionTest, DirectEcho)
         },
         asio::detached);
 
-    asio::ip::tcp::acceptor tproxy_acceptor(ctx, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    asio::ip::tcp::acceptor tproxy_acceptor(ctx);
+    ASSERT_TRUE(open_ephemeral_tcp_acceptor(tproxy_acceptor));
     const auto tproxy_port = tproxy_acceptor.local_endpoint().port();
 
     mux::config cfg;
@@ -372,7 +430,8 @@ TEST(TproxyTcpSessionTest, RunClosesClientSocketWhenBackendConnectFails)
     auto router = std::make_shared<direct_router>();
     mux::config cfg;
 
-    asio::ip::tcp::acceptor unused_acceptor(ctx, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    asio::ip::tcp::acceptor unused_acceptor(ctx);
+    ASSERT_TRUE(open_ephemeral_tcp_acceptor(unused_acceptor));
     const auto unused_port = unused_acceptor.local_endpoint().port();
     std::error_code close_ec;
     unused_acceptor.close(close_ec);

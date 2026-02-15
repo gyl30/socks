@@ -48,7 +48,7 @@ class limits_test : public ::testing::Test
 TEST_F(limits_test, ContextPoolInvalidSize)
 {
     const mux::io_context_pool pool(0);
-    // Should not throw and should be usable
+    // Should remain usable with fallback worker count
 }
 
 TEST_F(limits_test, ConnectionPoolCapacity)

@@ -46,7 +46,7 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
    private:
     asio::awaitable<void> start_impl(std::shared_ptr<remote_udp_session> self);
     asio::awaitable<bool> setup_udp_socket(const std::shared_ptr<mux_connection>& conn);
-    asio::awaitable<void> send_ack_payload(const std::shared_ptr<mux_connection>& conn, const ack_payload& ack);
+    asio::awaitable<std::error_code> send_ack_payload(const std::shared_ptr<mux_connection>& conn, const ack_payload& ack);
     asio::awaitable<void> handle_start_failure(const std::shared_ptr<mux_connection>& conn, const char* step, const std::error_code& ec);
     asio::awaitable<void> forward_mux_payload(const std::vector<std::uint8_t>& data);
     void log_udp_local_endpoint();

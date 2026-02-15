@@ -4,6 +4,8 @@
 
 #include "config.h"
 #include "reflect.h"
+#include "crypto_util.h"
+#include "mux_protocol.h"
 
 namespace reflect
 {
@@ -28,15 +30,76 @@ REFLECT_STRUCT(
     private_key,
     public_key,
     short_id);
-REFLECT_STRUCT(mux::config::limits_t, max_connections, max_buffer, max_streams);
+REFLECT_STRUCT(mux::config::limits_t, max_connections, max_connections_per_source, source_prefix_v4, source_prefix_v6, max_buffer, max_streams);
 REFLECT_STRUCT(mux::config::heartbeat_t, enabled, idle_timeout, min_interval, max_interval, min_padding, max_padding);
 REFLECT_STRUCT(mux::config::monitor_t, enabled, port, token, min_interval_ms);
-REFLECT_STRUCT(mux::config, mode, log, inbound, outbound, socks, tproxy, fallbacks, timeout, reality, limits, heartbeat, monitor);
+REFLECT_STRUCT(mux::config, mode, workers, log, inbound, outbound, socks, tproxy, fallbacks, timeout, reality, limits, heartbeat, monitor);
 
 }    // namespace reflect
 
 namespace mux
 {
+
+namespace
+{
+
+[[nodiscard]] bool validate_heartbeat_config(const config::heartbeat_t& heartbeat)
+{
+    if (heartbeat.min_interval == 0 || heartbeat.max_interval == 0)
+    {
+        return false;
+    }
+    if (heartbeat.min_interval > heartbeat.max_interval)
+    {
+        return false;
+    }
+    if (heartbeat.min_padding > heartbeat.max_padding)
+    {
+        return false;
+    }
+    if (heartbeat.max_padding > kMaxPayload)
+    {
+        return false;
+    }
+    return true;
+}
+
+[[nodiscard]] bool validate_limits_config(const config::limits_t& limits)
+{
+    if (limits.max_buffer == 0)
+    {
+        return false;
+    }
+    return true;
+}
+
+[[nodiscard]] bool has_enabled_client_inbound(const config& cfg)
+{
+#ifdef __linux__
+    return cfg.socks.enabled || cfg.tproxy.enabled;
+#else
+    return cfg.socks.enabled;
+#endif
+}
+
+[[nodiscard]] bool validate_config(const config& cfg)
+{
+    if (!validate_limits_config(cfg.limits))
+    {
+        return false;
+    }
+    if (!validate_heartbeat_config(cfg.heartbeat))
+    {
+        return false;
+    }
+    if (cfg.mode == "client" && !has_enabled_client_inbound(cfg))
+    {
+        return false;
+    }
+    return true;
+}
+
+}    // namespace
 
 static std::optional<std::string> read_file(const std::string& filename)
 {
@@ -80,6 +143,11 @@ std::optional<config> parse_config(const std::string& filename)
     {
         return {};
     }
+    cfg.limits.max_connections = normalize_max_connections(cfg.limits.max_connections);
+    if (!validate_config(cfg))
+    {
+        return {};
+    }
     return cfg;
 }
 
@@ -88,6 +156,13 @@ std::string dump_config(const config& cfg) { return reflect::serialize_struct(cf
 std::string dump_default_config()
 {
     config cfg;
+    std::uint8_t public_key[32] = {0};
+    std::uint8_t private_key[32] = {0};
+    if (reality::crypto_util::generate_x25519_keypair(public_key, private_key))
+    {
+        cfg.reality.private_key = reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(private_key, private_key + 32));
+        cfg.reality.public_key = reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(public_key, public_key + 32));
+    }
     cfg.fallbacks.push_back({});
     return dump_config(cfg);
 }

@@ -5,6 +5,7 @@
 ## 基础字段
 
 - `mode`：运行模式（默认 `server`）。
+- `workers`：`io_context` worker 线程数；`0` 表示自动使用硬件并发数（探测失败时回退到 `4`）。
 - `log.level` / `log.file`：日志等级与输出文件。
 
 ## 网络入口
@@ -18,6 +19,7 @@
 - `tproxy.listen_host`：TPROXY 监听地址（默认 `::`）。
 - `tproxy.tcp_port` / `tproxy.udp_port`：TPROXY TCP/UDP 端口。`udp_port = 0` 表示跟随 `tcp_port`。
 - `tproxy.mark`：TPROXY `SO_MARK`，用于路由/回避回环（默认 `0x11`）。
+- 所有端口字段均要求 `0-65535` 的无符号整数；超出范围或负数会在解析阶段直接报错。
 
 ## 传输与超时
 
@@ -26,12 +28,29 @@
 - `heartbeat.idle_timeout`：空闲多久触发心跳。
 - `heartbeat.min_interval` / `heartbeat.max_interval`：心跳随机间隔。
 - `heartbeat.min_padding` / `heartbeat.max_padding`：心跳填充长度范围。
+- `heartbeat.min_interval <= heartbeat.max_interval` 且 `heartbeat.min_padding <= heartbeat.max_padding`，否则配置解析失败。
+- `heartbeat.min_interval` 和 `heartbeat.max_interval` 必须大于 `0`，否则配置解析失败，避免出现零间隔忙轮询。
+- `heartbeat.max_padding` 必须小于等于 `65408`（`kMaxPayload`），否则配置解析失败，避免心跳分配超大缓冲区。
 
 ## 限制与保护
 
-- `limits.max_connections`：服务端隧道最大并发数。
+- `limits.max_connections`：服务端隧道最大并发数，`0` 会在加载与运行时归一化为 `1`。
+- `limits.max_connections_per_source`：单来源并发连接上限，`0` 表示不启用来源维度限制。
+- `limits.source_prefix_v4`：IPv4 来源聚合前缀（`0-32`），默认 `32`（按单 IP 限制）。
+- `limits.source_prefix_v6`：IPv6 来源聚合前缀（`0-128`），默认 `128`（按单 IP 限制）。
 - `limits.max_streams`：单连接 stream 最大数量。
 - `limits.max_buffer`：mux dispatcher 最大缓冲区。
+- `limits.max_buffer` 必须大于 `0`，否则配置解析失败。
+
+## 协议契约（兼容性红线）
+
+以下行为属于对外协议契约，后续版本不得无通知变更：
+
+1. `limits.max_connections = 0` 视为配置错误输入并归一化为 `1`，客户端和服务端一致执行。
+2. 服务端在 `accept` 成功后、REALITY 握手前预占连接槽；达到全局上限或来源上限时直接拒绝该连接，不进入握手路径。
+3. 流量进入 mux 后，若 `max_streams` 已达上限，服务端必须先返回 `ACK(rep=general failure)`，再发送 `RST`。
+4. SOCKS5 请求中，目标主机为空必须拒绝；`CONNECT` 请求目标端口为 `0` 必须拒绝；`UDP ASSOCIATE` 允许端口 `0`。
+5. 监控接口仅接受 `GET /metrics` 或 `metrics`，并要求 `token` 参数精确匹配；未授权请求不得占用限流窗口。
 
 ## REALITY
 
@@ -43,7 +62,7 @@
 - `reality.strict_cert_verify`：是否严格校验证书签名（默认 `false`）。
   - 仅当服务端证书公钥与 `CertificateVerify` 签名密钥一致时可开启；使用真实站点 fallback 证书时通常不满足该条件。
 - `reality.replay_cache_max_entries`：重放缓存最大条目数（默认 `100000`，用于控制窗口内内存占用）。
-- `reality.private_key` / `reality.public_key`：REALITY 密钥对。
+- `reality.private_key` / `reality.public_key`：REALITY 密钥对（结构体默认空值；`socks config` 输出时会生成随机密钥对）。
 - `reality.short_id`：短 ID。
 - `reality.fallback_guard.enabled`：是否启用 fallback 防护（默认 `true`）。
 - `reality.fallback_guard.rate_per_sec`：每 IP 每秒允许 fallback 次数（默认 `2`）。

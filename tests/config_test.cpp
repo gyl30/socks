@@ -3,17 +3,36 @@
 #include <atomic>
 #include <cerrno>
 #include <fstream>
+#include <cctype>
 #include <unistd.h>
 
 #include <gtest/gtest.h>
 
 #include "config.h"
+#include "mux_protocol.h"
 
 namespace
 {
 
 std::atomic<bool> g_force_fread_error{false};
 std::atomic<bool> g_injected_fread_error{false};
+
+bool is_hex_string(const std::string& value)
+{
+    if (value.empty())
+    {
+        return false;
+    }
+
+    for (const unsigned char ch : value)
+    {
+        if (!std::isxdigit(ch))
+        {
+            return false;
+        }
+    }
+    return true;
+}
 
 }    // namespace
 
@@ -73,10 +92,24 @@ TEST_F(config_test, DefaultConfigValid)
     EXPECT_NE(json.find("\"inbound\""), std::string::npos);
 }
 
+TEST_F(config_test, DumpDefaultConfigGeneratesRealityKeyPair)
+{
+    const auto json = mux::dump_default_config();
+    write_config_file(json);
+
+    const auto cfg_opt = mux::parse_config(tmp_file());
+    ASSERT_TRUE(cfg_opt.has_value());
+    EXPECT_EQ(cfg_opt->reality.private_key.size(), 64U);
+    EXPECT_EQ(cfg_opt->reality.public_key.size(), 64U);
+    EXPECT_TRUE(is_hex_string(cfg_opt->reality.private_key));
+    EXPECT_TRUE(is_hex_string(cfg_opt->reality.public_key));
+}
+
 TEST_F(config_test, ParseValues)
 {
     const std::string content = R"({
         "mode": "client",
+        "workers": 6,
         "inbound": {
             "host": "127.0.0.1",
             "port": 1080
@@ -106,6 +139,11 @@ TEST_F(config_test, ParseValues)
             "max_interval": 30,
             "min_padding": 16,
             "max_padding": 128
+        },
+        "limits": {
+            "max_connections_per_source": 3,
+            "source_prefix_v4": 24,
+            "source_prefix_v6": 64
         }
     })";
     write_config_file(content);
@@ -117,6 +155,7 @@ TEST_F(config_test, ParseValues)
         const auto& cfg = *cfg_opt;
 
         EXPECT_EQ(cfg.mode, "client");
+        EXPECT_EQ(cfg.workers, 6U);
         EXPECT_EQ(cfg.inbound.host, "127.0.0.1");
         EXPECT_EQ(cfg.inbound.port, 1080);
         EXPECT_TRUE(cfg.socks.auth);
@@ -132,6 +171,9 @@ TEST_F(config_test, ParseValues)
         EXPECT_EQ(cfg.reality.replay_cache_max_entries, 4096);
         EXPECT_EQ(cfg.heartbeat.idle_timeout, 42);
         EXPECT_EQ(cfg.heartbeat.max_padding, 128);
+        EXPECT_EQ(cfg.limits.max_connections_per_source, 3U);
+        EXPECT_EQ(cfg.limits.source_prefix_v4, 24U);
+        EXPECT_EQ(cfg.limits.source_prefix_v6, 64U);
     }
 }
 
@@ -139,6 +181,43 @@ TEST_F(config_test, MissingFile)
 {
     const auto cfg = mux::parse_config("non_existent_file.json");
     EXPECT_FALSE(cfg.has_value());
+}
+
+TEST_F(config_test, ClientWithoutAnyInboundRejected)
+{
+    const std::string content = R"({
+        "mode": "client",
+        "socks": {
+            "enabled": false
+        },
+        "tproxy": {
+            "enabled": false
+        }
+    })";
+    write_config_file(content);
+
+    const auto cfg_opt = mux::parse_config(tmp_file());
+    EXPECT_FALSE(cfg_opt.has_value());
+}
+
+TEST_F(config_test, ClientWithTproxyOnlyAccepted)
+{
+    const std::string content = R"({
+        "mode": "client",
+        "socks": {
+            "enabled": false
+        },
+        "tproxy": {
+            "enabled": true,
+            "tcp_port": 18080
+        }
+    })";
+    write_config_file(content);
+
+    const auto cfg_opt = mux::parse_config(tmp_file());
+    ASSERT_TRUE(cfg_opt.has_value());
+    EXPECT_TRUE(cfg_opt->tproxy.enabled);
+    EXPECT_FALSE(cfg_opt->socks.enabled);
 }
 
 TEST_F(config_test, InvalidJson)
@@ -183,6 +262,8 @@ TEST_F(config_test, MissingFieldsUseDefaults)
     EXPECT_EQ(cfg_opt->mode, "server");
     EXPECT_FALSE(cfg_opt->reality.strict_cert_verify);
     EXPECT_EQ(cfg_opt->reality.replay_cache_max_entries, 100000);
+    EXPECT_TRUE(cfg_opt->reality.private_key.empty());
+    EXPECT_TRUE(cfg_opt->reality.public_key.empty());
     EXPECT_TRUE(cfg_opt->reality.fallback_guard.enabled);
 }
 
@@ -196,8 +277,128 @@ TEST_F(config_test, InvalidPortRange)
     write_config_file(content);
 
     const auto cfg_opt = mux::parse_config(tmp_file());
+    EXPECT_FALSE(cfg_opt.has_value());
+}
+
+TEST_F(config_test, NegativePortRejected)
+{
+    const std::string content = R"({
+        "inbound": {
+            "port": -1
+        }
+    })";
+    write_config_file(content);
+
+    const auto cfg_opt = mux::parse_config(tmp_file());
+    EXPECT_FALSE(cfg_opt.has_value());
+}
+
+TEST_F(config_test, NegativeWorkersRejected)
+{
+    const std::string content = R"({
+        "workers": -1
+    })";
+    write_config_file(content);
+
+    const auto cfg_opt = mux::parse_config(tmp_file());
+    EXPECT_FALSE(cfg_opt.has_value());
+}
+
+TEST_F(config_test, WorkersZeroUsesAutoDetection)
+{
+    const std::string content = R"({
+        "workers": 0
+    })";
+    write_config_file(content);
+
+    const auto cfg_opt = mux::parse_config(tmp_file());
     ASSERT_TRUE(cfg_opt.has_value());
-    EXPECT_EQ(cfg_opt->inbound.port, static_cast<std::uint16_t>(70000U & 0xFFFFU));
+    EXPECT_EQ(cfg_opt->workers, 0U);
+}
+
+TEST_F(config_test, HeartbeatIntervalRangeRejected)
+{
+    const std::string content = R"({
+        "heartbeat": {
+            "min_interval": 30,
+            "max_interval": 10
+        }
+    })";
+    write_config_file(content);
+
+    const auto cfg_opt = mux::parse_config(tmp_file());
+    EXPECT_FALSE(cfg_opt.has_value());
+}
+
+TEST_F(config_test, HeartbeatZeroIntervalRejected)
+{
+    const std::string content = R"({
+        "heartbeat": {
+            "min_interval": 0,
+            "max_interval": 0
+        }
+    })";
+    write_config_file(content);
+
+    const auto cfg_opt = mux::parse_config(tmp_file());
+    EXPECT_FALSE(cfg_opt.has_value());
+}
+
+TEST_F(config_test, HeartbeatPaddingRangeRejected)
+{
+    const std::string content = R"({
+        "heartbeat": {
+            "min_padding": 256,
+            "max_padding": 128
+        }
+    })";
+    write_config_file(content);
+
+    const auto cfg_opt = mux::parse_config(tmp_file());
+    EXPECT_FALSE(cfg_opt.has_value());
+}
+
+TEST_F(config_test, HeartbeatPaddingTooLargeRejected)
+{
+    const auto too_large_padding = static_cast<std::uint64_t>(mux::kMaxPayload) + 1ULL;
+    const std::string content = std::string(R"({
+        "heartbeat": {
+            "min_padding": 16,
+            "max_padding": )")
+        + std::to_string(too_large_padding) + R"(
+        }
+    })";
+    write_config_file(content);
+
+    const auto cfg_opt = mux::parse_config(tmp_file());
+    EXPECT_FALSE(cfg_opt.has_value());
+}
+
+TEST_F(config_test, MaxConnectionsZeroNormalizedToOne)
+{
+    const std::string content = R"({
+        "limits": {
+            "max_connections": 0
+        }
+    })";
+    write_config_file(content);
+
+    const auto cfg_opt = mux::parse_config(tmp_file());
+    ASSERT_TRUE(cfg_opt.has_value());
+    EXPECT_EQ(cfg_opt->limits.max_connections, 1U);
+}
+
+TEST_F(config_test, MaxBufferZeroRejected)
+{
+    const std::string content = R"({
+        "limits": {
+            "max_buffer": 0
+        }
+    })";
+    write_config_file(content);
+
+    const auto cfg_opt = mux::parse_config(tmp_file());
+    EXPECT_FALSE(cfg_opt.has_value());
 }
 
 TEST_F(config_test, EmptyHostAddress)

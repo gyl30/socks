@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <array>
 #include <cctype>
 #include <chrono>
@@ -74,6 +75,14 @@ template <typename t>
 [[nodiscard]] std::shared_ptr<t> atomic_exchange_shared(std::shared_ptr<t>& slot)
 {
     return std::atomic_exchange_explicit(&slot, std::shared_ptr<t>{}, std::memory_order_acq_rel);
+}
+
+template <typename t>
+bool atomic_clear_if_match(std::shared_ptr<t>& slot, const std::shared_ptr<t>& expected_value)
+{
+    auto expected = expected_value;
+    return std::atomic_compare_exchange_strong_explicit(
+        &slot, &expected, std::shared_ptr<t>{}, std::memory_order_acq_rel, std::memory_order_acquire);
 }
 
 bool parse_hex_to_bytes(const std::string& hex, std::vector<std::uint8_t>& out, const std::size_t max_len, const char* label)
@@ -853,11 +862,12 @@ void client_tunnel_pool::start()
     }
 
     LOG_INFO("client pool starting target {} port {} with {} connections", remote_host_, remote_port_, limits_config_.max_connections);
-
-    if (limits_config_.max_connections == 0)
+    const auto normalized_max_connections = normalize_max_connections(limits_config_.max_connections);
+    if (normalized_max_connections != limits_config_.max_connections)
     {
-        limits_config_.max_connections = 1;
+        LOG_WARN("max connections is 0 using 1");
     }
+    limits_config_.max_connections = normalized_max_connections;
     tunnel_pool_.resize(limits_config_.max_connections);
     pending_sockets_.resize(limits_config_.max_connections);
     tunnel_io_contexts_.resize(limits_config_.max_connections, nullptr);
@@ -885,7 +895,8 @@ void client_tunnel_pool::close_pending_socket(const std::size_t index, std::shar
                 std::error_code ec;
                 pending_socket->cancel(ec);
                 pending_socket->close(ec);
-            });
+            },
+            detail::dispatch_timeout_policy::kRunInline);
         return;
     }
 
@@ -966,19 +977,27 @@ void client_tunnel_pool::clear_pending_socket_if_match(const std::uint32_t index
     {
         return;
     }
-
-    if (atomic_load_shared(pending_sockets_[index]) == socket)
-    {
-        atomic_store_shared(pending_sockets_[index], std::shared_ptr<asio::ip::tcp::socket>{});
-    }
+    atomic_clear_if_match(pending_sockets_[index], socket);
 }
 
-void client_tunnel_pool::publish_tunnel(const std::uint32_t index, const std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>& tunnel)
+bool client_tunnel_pool::publish_tunnel(const std::uint32_t index, const std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>& tunnel)
 {
-    if (index < tunnel_pool_.size())
+    if (index >= tunnel_pool_.size())
     {
-        atomic_store_shared(tunnel_pool_[index], tunnel);
+        return false;
     }
+    if (stop_.load(std::memory_order_acquire))
+    {
+        return false;
+    }
+
+    atomic_store_shared(tunnel_pool_[index], tunnel);
+    if (stop_.load(std::memory_order_acquire))
+    {
+        atomic_clear_if_match(tunnel_pool_[index], tunnel);
+        return false;
+    }
+    return true;
 }
 
 void client_tunnel_pool::clear_tunnel_if_match(const std::uint32_t index,
@@ -988,11 +1007,7 @@ void client_tunnel_pool::clear_tunnel_if_match(const std::uint32_t index,
     {
         return;
     }
-
-    if (atomic_load_shared(tunnel_pool_[index]) == tunnel)
-    {
-        atomic_store_shared(tunnel_pool_[index], std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>{});
-    }
+    atomic_clear_if_match(tunnel_pool_[index], tunnel);
 }
 
 std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> client_tunnel_pool::build_tunnel(asio::ip::tcp::socket socket,
@@ -1049,7 +1064,7 @@ asio::awaitable<bool> client_tunnel_pool::establish_tunnel_for_connection(
         co_return false;
     }
 
-    const auto handshake_res = co_await perform_reality_handshake(*socket);
+    const auto handshake_res = co_await perform_reality_handshake_with_timeout(socket, io_context);
     if (!handshake_res)
     {
         ec = handshake_res.error();
@@ -1071,6 +1086,48 @@ asio::awaitable<bool> client_tunnel_pool::establish_tunnel_for_connection(
         co_return false;
     }
     co_return true;
+}
+
+asio::awaitable<std::expected<client_tunnel_pool::handshake_result, std::error_code>> client_tunnel_pool::perform_reality_handshake_with_timeout(
+    const std::shared_ptr<asio::ip::tcp::socket>& socket,
+    asio::io_context& io_context) const
+{
+    const auto timeout_sec = std::max<std::uint32_t>(1, timeout_config_.read);
+    auto timer = std::make_shared<asio::steady_timer>(io_context);
+    auto timeout_triggered = std::make_shared<std::atomic<bool>>(false);
+    timer->expires_after(std::chrono::seconds(timeout_sec));
+    timer->async_wait(
+        [socket, timeout_triggered](const std::error_code& timer_ec)
+        {
+            if (timer_ec)
+            {
+                return;
+            }
+            timeout_triggered->store(true, std::memory_order_release);
+            std::error_code cancel_ec;
+            socket->cancel(cancel_ec);
+            if (cancel_ec && cancel_ec != asio::error::bad_descriptor)
+            {
+                LOG_WARN("cancel handshake socket failed {}", cancel_ec.message());
+            }
+
+            std::error_code close_ec;
+            close_ec = socket->close(close_ec);
+            if (close_ec && close_ec != asio::error::bad_descriptor)
+            {
+                LOG_WARN("close handshake socket failed {}", close_ec.message());
+            }
+        });
+
+    auto handshake_res = co_await perform_reality_handshake(*socket);
+    const auto cancelled = timer->cancel();
+    (void)cancelled;
+    if (timeout_triggered->load(std::memory_order_acquire))
+    {
+        LOG_ERROR("reality handshake timeout {}s", timeout_sec);
+        co_return std::unexpected(asio::error::timed_out);
+    }
+    co_return handshake_res;
 }
 
 asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::uint32_t index, asio::io_context& io_context)
@@ -1106,7 +1163,20 @@ asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::uint32_
         {
             connection->mark_started_for_external_calls();
         }
-        publish_tunnel(index, tunnel);
+        if (!publish_tunnel(index, tunnel))
+        {
+            clear_pending_socket_if_match(index, socket);
+            if (const auto connection = tunnel->connection(); connection != nullptr)
+            {
+                connection->release_resources();
+            }
+            if (stop_.load(std::memory_order_acquire))
+            {
+                break;
+            }
+            co_await wait_remote_retry(io_context);
+            continue;
+        }
         clear_pending_socket_if_match(index, socket);
 
         co_await tunnel->run();

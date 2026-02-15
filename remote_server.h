@@ -50,11 +50,17 @@ namespace mux
 class remote_server : public std::enable_shared_from_this<remote_server>
 {
    public:
+    using tunnel_t = mux_tunnel_impl<asio::ip::tcp::socket>;
+    using tunnel_ptr_t = std::shared_ptr<tunnel_t>;
+    using tunnel_list_t = std::vector<std::weak_ptr<tunnel_t>>;
+
     remote_server(io_context_pool& pool, const config& cfg);
 
     virtual ~remote_server();
 
     void start();
+
+    void drain();
 
     void stop();
 
@@ -68,6 +74,10 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         }
         return ep.port();
     }
+    [[nodiscard]] bool running() const
+    {
+        return started_.load(std::memory_order_acquire) && !stop_.load(std::memory_order_acquire) && acceptor_.is_open();
+    }
 
     void set_certificate(std::string sni,
                          std::vector<std::uint8_t> cert_msg,
@@ -77,11 +87,24 @@ class remote_server : public std::enable_shared_from_this<remote_server>
    private:
     struct server_handshake_res;
 
-    void stop_local();
+    [[nodiscard]] bool ensure_acceptor_open();
+    void stop_local(bool close_tunnels);
+    [[nodiscard]] std::shared_ptr<tunnel_list_t> snapshot_active_tunnels() const;
+    [[nodiscard]] std::size_t prune_expired_tunnels();
+    [[nodiscard]] std::size_t active_tunnel_count() const;
+    [[nodiscard]] std::shared_ptr<tunnel_list_t> detach_active_tunnels();
+    void append_active_tunnel(const tunnel_ptr_t& tunnel);
+    void track_connection_socket(const std::shared_ptr<asio::ip::tcp::socket>& socket);
+    void untrack_connection_socket(const std::shared_ptr<asio::ip::tcp::socket>& socket);
+    [[nodiscard]] std::vector<std::shared_ptr<asio::ip::tcp::socket>> snapshot_tracked_connection_sockets();
+    [[nodiscard]] std::size_t close_tracked_connection_sockets();
 
     asio::awaitable<void> accept_loop();
 
-    asio::awaitable<void> handle(std::shared_ptr<asio::ip::tcp::socket> s, const std::uint32_t conn_id);
+    asio::awaitable<void> handle(std::shared_ptr<asio::ip::tcp::socket> s, std::uint32_t conn_id, std::string source_key);
+
+    [[nodiscard]] bool try_reserve_connection_slot(const std::string& source_key);
+    void release_connection_slot(const std::string& source_key);
 
     struct app_keys
     {
@@ -110,9 +133,16 @@ class remote_server : public std::enable_shared_from_this<remote_server>
                                                  std::vector<std::uint8_t> payload,
                                                  asio::io_context& io_context) const;
 
-    [[nodiscard]] static asio::awaitable<bool> read_initial_and_validate(std::shared_ptr<asio::ip::tcp::socket> s,
-                                                                         const connection_context& ctx,
-                                                                         std::vector<std::uint8_t>& buf);
+    struct initial_read_res
+    {
+        bool ok = false;
+        bool allow_fallback = false;
+        std::error_code ec;
+    };
+
+    [[nodiscard]] asio::awaitable<initial_read_res> read_initial_and_validate(std::shared_ptr<asio::ip::tcp::socket> s,
+                                                                               const connection_context& ctx,
+                                                                               std::vector<std::uint8_t>& buf);
 
     [[nodiscard]] bool authenticate_client(const client_hello_info& info, const std::vector<std::uint8_t>& buf, const connection_context& ctx);
 
@@ -227,6 +257,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     void record_fallback_result(const connection_context& ctx, bool success);
     void cleanup_fallback_guard_state_locked(const std::chrono::steady_clock::time_point& now);
     [[nodiscard]] std::string fallback_guard_key(const connection_context& ctx) const;
+    [[nodiscard]] std::string connection_limit_source_key(const std::shared_ptr<asio::ip::tcp::socket>& s) const;
 
    private:
     struct fallback_guard_state
@@ -240,6 +271,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
 
     asio::io_context& io_context_;
     asio::ip::tcp::acceptor acceptor_;
+    asio::ip::tcp::endpoint inbound_endpoint_;
     std::vector<std::uint8_t> private_key_;
     std::vector<std::uint8_t> short_id_bytes_;
     bool auth_config_valid_ = true;
@@ -256,7 +288,12 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     std::mutex fallback_guard_mu_;
     std::unordered_map<std::string, fallback_guard_state> fallback_guard_states_;
     config::timeout_t timeout_config_;
-    std::vector<std::weak_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>> active_tunnels_;
+    std::atomic<std::uint32_t> active_connection_slots_{0};
+    std::mutex connection_slot_mu_;
+    std::unordered_map<std::string, std::uint32_t> active_source_connection_slots_;
+    std::mutex tracked_connection_socket_mu_;
+    std::unordered_map<asio::ip::tcp::socket*, std::weak_ptr<asio::ip::tcp::socket>> tracked_connection_sockets_;
+    std::shared_ptr<tunnel_list_t> active_tunnels_ = std::make_shared<tunnel_list_t>();
     config::limits_t limits_config_;
     config::heartbeat_t heartbeat_config_;
     std::atomic<bool> started_{false};

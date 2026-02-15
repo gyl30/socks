@@ -1,5 +1,7 @@
 #include <memory>
+#include <atomic>
 #include <array>
+#include <barrier>
 #include <future>
 #include <string>
 #include <thread>
@@ -27,6 +29,24 @@
 #undef private
 #include "mux_stream_interface.h"
 
+extern "C" int __real_RAND_bytes(unsigned char* buf, int num);
+
+namespace
+{
+
+std::atomic<bool> g_force_rand_bytes_failure{false};
+
+}    // namespace
+
+extern "C" int __wrap_RAND_bytes(unsigned char* buf, int num)
+{
+    if (g_force_rand_bytes_failure.exchange(false, std::memory_order_acq_rel))
+    {
+        return 0;
+    }
+    return __real_RAND_bytes(buf, num);
+}
+
 namespace
 {
 
@@ -49,6 +69,53 @@ class simple_mock_stream : public mux_stream_interface
     bool reset_ = false;
 };
 
+std::shared_ptr<mux_connection::stream_map_t> snapshot_streams_for_test(const std::shared_ptr<mux_connection>& conn)
+{
+    auto snapshot = std::atomic_load_explicit(&conn->streams_, std::memory_order_acquire);
+    if (snapshot != nullptr)
+    {
+        return snapshot;
+    }
+    return std::make_shared<mux_connection::stream_map_t>();
+}
+
+void insert_stream_for_test(const std::shared_ptr<mux_connection>& conn,
+                            const std::uint32_t id,
+                            const std::shared_ptr<mux_stream_interface>& stream)
+{
+    static const mux_connection::stream_map_t k_empty_streams{};
+    for (;;)
+    {
+        auto current = std::atomic_load_explicit(&conn->streams_, std::memory_order_acquire);
+        const auto* current_map = current.get();
+        if (current_map == nullptr)
+        {
+            current_map = &k_empty_streams;
+        }
+
+        auto updated = std::make_shared<mux_connection::stream_map_t>(*current_map);
+        (*updated)[id] = stream;
+
+        auto expected = current;
+        if (std::atomic_compare_exchange_weak_explicit(
+                &conn->streams_, &expected, updated, std::memory_order_acq_rel, std::memory_order_acquire))
+        {
+            return;
+        }
+    }
+}
+
+[[nodiscard]] bool has_stream_for_test(const std::shared_ptr<mux_connection>& conn, const std::uint32_t id)
+{
+    const auto snapshot = snapshot_streams_for_test(conn);
+    return snapshot->find(id) != snapshot->end();
+}
+
+[[nodiscard]] std::size_t stream_count_for_test(const std::shared_ptr<mux_connection>& conn)
+{
+    return snapshot_streams_for_test(conn)->size();
+}
+
 class mux_connection_integration_test : public ::testing::Test
 
 {
@@ -59,10 +126,44 @@ class mux_connection_integration_test : public ::testing::Test
     asio::io_context io_ctx_;
 };
 
+std::error_code setup_loopback_acceptor_with_retry(asio::ip::tcp::acceptor& acceptor, const int max_attempts = 128)
+{
+    std::error_code last_ec = asio::error::address_in_use;
+    for (int attempt = 0; attempt < max_attempts; ++attempt)
+    {
+        std::error_code ec;
+        acceptor.open(asio::ip::tcp::v4(), ec);
+        if (ec)
+        {
+            last_ec = ec;
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            continue;
+        }
+
+        acceptor.bind(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), 0), ec);
+        if (!ec)
+        {
+            acceptor.listen(asio::socket_base::max_listen_connections, ec);
+            if (!ec)
+            {
+                return {};
+            }
+        }
+
+        std::error_code ignored;
+        acceptor.close(ignored);
+        last_ec = ec;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    return last_ec;
+}
+
 TEST_F(mux_connection_integration_test, StreamDataExchange)
 
 {
-    asio::ip::tcp::acceptor acceptor(io_ctx(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    asio::ip::tcp::acceptor acceptor(io_ctx());
+    const auto setup_ec = setup_loopback_acceptor_with_retry(acceptor);
+    ASSERT_FALSE(setup_ec) << setup_ec.message();
 
     auto socket_server = std::make_shared<asio::ip::tcp::socket>(io_ctx());
 
@@ -136,7 +237,9 @@ TEST_F(mux_connection_integration_test, StreamDataExchange)
 
 TEST_F(mux_connection_integration_test, ReadTimeoutHandling)
 {
-    asio::ip::tcp::acceptor acceptor(io_ctx(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    asio::ip::tcp::acceptor acceptor(io_ctx());
+    const auto setup_ec = setup_loopback_acceptor_with_retry(acceptor);
+    ASSERT_FALSE(setup_ec) << setup_ec.message();
     auto socket_server = std::make_shared<asio::ip::tcp::socket>(io_ctx());
     auto socket_client = std::make_shared<asio::ip::tcp::socket>(io_ctx());
 
@@ -164,7 +267,9 @@ TEST_F(mux_connection_integration_test, ReadTimeoutHandling)
 
 TEST_F(mux_connection_integration_test, WriteTimeoutHandling)
 {
-    asio::ip::tcp::acceptor acceptor(io_ctx(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    asio::ip::tcp::acceptor acceptor(io_ctx());
+    const auto setup_ec = setup_loopback_acceptor_with_retry(acceptor);
+    ASSERT_FALSE(setup_ec) << setup_ec.message();
     auto socket_server = std::make_shared<asio::ip::tcp::socket>(io_ctx());
     auto socket_client = std::make_shared<asio::ip::tcp::socket>(io_ctx());
 
@@ -188,6 +293,76 @@ TEST_F(mux_connection_integration_test, WriteTimeoutHandling)
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
     EXPECT_FALSE(conn_s->is_open());
+}
+
+TEST_F(mux_connection_integration_test, HeartbeatRandFailureStopsConnection)
+{
+    asio::ip::tcp::acceptor acceptor(io_ctx());
+    const auto setup_ec = setup_loopback_acceptor_with_retry(acceptor);
+    ASSERT_FALSE(setup_ec) << setup_ec.message();
+    auto socket_server = std::make_shared<asio::ip::tcp::socket>(io_ctx());
+    auto socket_client = std::make_shared<asio::ip::tcp::socket>(io_ctx());
+
+    socket_client->connect(acceptor.local_endpoint());
+    acceptor.accept(*socket_server);
+
+    config::timeout_t timeout_cfg;
+    timeout_cfg.read = 100;
+    timeout_cfg.write = 100;
+
+    config::heartbeat_t heartbeat_client;
+    heartbeat_client.enabled = true;
+    heartbeat_client.idle_timeout = 0;
+    heartbeat_client.min_interval = 1;
+    heartbeat_client.max_interval = 1;
+    heartbeat_client.min_padding = 16;
+    heartbeat_client.max_padding = 16;
+
+    config::heartbeat_t heartbeat_server;
+    heartbeat_server.enabled = false;
+
+    auto conn_c = std::make_shared<mux_connection>(std::move(*socket_client),
+                                                   io_ctx(),
+                                                   reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()},
+                                                   true,
+                                                   21,
+                                                   "heartbeat_rand_fail_c",
+                                                   timeout_cfg,
+                                                   config::limits_t{},
+                                                   heartbeat_client);
+    auto conn_s = std::make_shared<mux_connection>(std::move(*socket_server),
+                                                   io_ctx(),
+                                                   reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()},
+                                                   false,
+                                                   22,
+                                                   "heartbeat_rand_fail_s",
+                                                   timeout_cfg,
+                                                   config::limits_t{},
+                                                   heartbeat_server);
+
+    g_force_rand_bytes_failure.store(true, std::memory_order_release);
+
+    asio::co_spawn(io_ctx(), [conn_c]() -> asio::awaitable<void> { co_await conn_c->start(); }, asio::detached);
+    asio::co_spawn(io_ctx(), [conn_s]() -> asio::awaitable<void> { co_await conn_s->start(); }, asio::detached);
+
+    std::thread io_thread([this]() { io_ctx().run(); });
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(4);
+    while (conn_c->is_open() && std::chrono::steady_clock::now() < deadline)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+
+    EXPECT_FALSE(conn_c->is_open());
+
+    g_force_rand_bytes_failure.store(false, std::memory_order_release);
+    conn_c->stop();
+    conn_s->stop();
+    io_ctx().stop();
+    if (io_thread.joinable())
+    {
+        io_thread.join();
+    }
 }
 
 TEST_F(mux_connection_integration_test, TryRegisterStreamRejectsDuplicateId)
@@ -223,7 +398,7 @@ TEST_F(mux_connection_integration_test, ClosedStateGuardsAndUnlimitedCheck)
     auto unlimited = std::make_shared<mux_connection>(
         asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 3, "trace", config::timeout_t{}, limits_cfg);
     unlimited->connection_state_.store(mux_connection_state::kClosed, std::memory_order_release);
-    EXPECT_TRUE(unlimited->can_accept_stream());
+    EXPECT_FALSE(unlimited->can_accept_stream());
 }
 
 TEST_F(mux_connection_integration_test, IsOpenTreatsDrainingAsOpen)
@@ -233,6 +408,10 @@ TEST_F(mux_connection_integration_test, IsOpenTreatsDrainingAsOpen)
 
     conn->connection_state_.store(mux_connection_state::kDraining, std::memory_order_release);
     EXPECT_TRUE(conn->is_open());
+    auto stream = std::make_shared<simple_mock_stream>();
+    EXPECT_FALSE(conn->can_accept_stream());
+    EXPECT_FALSE(conn->try_register_stream(501, stream));
+    EXPECT_EQ(conn->create_stream("draining"), nullptr);
 
     conn->connection_state_.store(mux_connection_state::kClosing, std::memory_order_release);
     EXPECT_FALSE(conn->is_open());
@@ -303,6 +482,73 @@ TEST_F(mux_connection_integration_test, OffThreadCanAcceptStreamFalsePath)
     auto stream = std::make_shared<simple_mock_stream>();
     EXPECT_TRUE(conn->try_register_stream(1, stream));
     EXPECT_FALSE(conn->can_accept_stream());
+
+    io_ctx().stop();
+    if (io_thread.joinable())
+    {
+        io_thread.join();
+    }
+    io_ctx().restart();
+}
+
+TEST_F(mux_connection_integration_test, OffThreadConcurrentCreateStreamRespectsLimit)
+{
+    config::limits_t limits_cfg;
+    limits_cfg.max_streams = 1;
+
+    auto conn = std::make_shared<mux_connection>(
+        asio::ip::tcp::socket(io_ctx()),
+        io_ctx(),
+        reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()},
+        true,
+        12,
+        "trace",
+        config::timeout_t{},
+        limits_cfg);
+    conn->started_.store(true, std::memory_order_release);
+    conn->connection_state_.store(mux_connection_state::kConnected, std::memory_order_release);
+
+    auto guard = asio::make_work_guard(io_ctx());
+    std::promise<void> io_started;
+    auto io_started_future = io_started.get_future();
+    std::thread io_thread(
+        [&]()
+        {
+            io_started.set_value();
+            io_ctx().run();
+        });
+    ASSERT_EQ(io_started_future.wait_for(std::chrono::seconds(1)), std::future_status::ready);
+
+    std::barrier gate(3);
+    std::shared_ptr<mux_stream> stream_a;
+    std::shared_ptr<mux_stream> stream_b;
+
+    std::thread t1(
+        [&]()
+        {
+            gate.arrive_and_wait();
+            stream_a = conn->create_stream("race-a");
+        });
+    std::thread t2(
+        [&]()
+        {
+            gate.arrive_and_wait();
+            stream_b = conn->create_stream("race-b");
+        });
+    gate.arrive_and_wait();
+
+    if (t1.joinable())
+    {
+        t1.join();
+    }
+    if (t2.joinable())
+    {
+        t2.join();
+    }
+
+    const auto success_count = static_cast<int>(stream_a != nullptr) + static_cast<int>(stream_b != nullptr);
+    EXPECT_EQ(success_count, 1);
+    EXPECT_EQ(stream_count_for_test(conn), 1U);
 
     io_ctx().stop();
     if (io_thread.joinable())
@@ -419,11 +665,11 @@ TEST_F(mux_connection_integration_test, OffThreadSyncQueryTimeoutDoesNotMutateAf
         io_thread.join();
     }
     EXPECT_FALSE(register_ok);
-    EXPECT_TRUE(conn->streams_.find(201) == conn->streams_.end());
+    EXPECT_FALSE(has_stream_for_test(conn, 201));
 
     io_ctx().restart();
     io_ctx().poll();
-    EXPECT_TRUE(conn->streams_.find(201) == conn->streams_.end());
+    EXPECT_FALSE(has_stream_for_test(conn, 201));
 }
 
 TEST_F(mux_connection_integration_test, OffThreadTryRegisterTimeoutDoesNotMutateAfterStopAndRestart)
@@ -474,11 +720,11 @@ TEST_F(mux_connection_integration_test, OffThreadTryRegisterTimeoutDoesNotMutate
         io_thread.join();
     }
     EXPECT_FALSE(try_register_ok);
-    EXPECT_TRUE(conn->streams_.find(202) == conn->streams_.end());
+    EXPECT_FALSE(has_stream_for_test(conn, 202));
 
     io_ctx().restart();
     io_ctx().poll();
-    EXPECT_TRUE(conn->streams_.find(202) == conn->streams_.end());
+    EXPECT_FALSE(has_stream_for_test(conn, 202));
 }
 
 TEST_F(mux_connection_integration_test, MarkStartedForExternalCallsPreventsPreStartInlineMutation)
@@ -490,7 +736,7 @@ TEST_F(mux_connection_integration_test, MarkStartedForExternalCallsPreventsPreSt
 
     auto stream = std::make_shared<simple_mock_stream>();
     EXPECT_FALSE(conn->try_register_stream(303, stream));
-    EXPECT_TRUE(conn->streams_.find(303) == conn->streams_.end());
+    EXPECT_FALSE(has_stream_for_test(conn, 303));
 }
 
 TEST_F(mux_connection_integration_test, StoppedIoContextUsesInlineQueryPaths)
@@ -554,7 +800,7 @@ TEST_F(mux_connection_integration_test, StopRunsWhenIoQueueBlocked)
     conn->connection_state_.store(mux_connection_state::kConnected, std::memory_order_release);
 
     auto stream = std::make_shared<simple_mock_stream>();
-    conn->streams_[303] = stream;
+    insert_stream_for_test(conn, 303, stream);
 
     std::atomic<bool> blocker_started{false};
     std::atomic<bool> release_blocker{false};
@@ -593,7 +839,7 @@ TEST_F(mux_connection_integration_test, StopRunsWhenIoQueueBlocked)
 
     conn->stop();
     EXPECT_EQ(conn->connection_state_.load(std::memory_order_acquire), mux_connection_state::kClosed);
-    EXPECT_TRUE(conn->streams_.find(303) == conn->streams_.end());
+    EXPECT_FALSE(has_stream_for_test(conn, 303));
     EXPECT_TRUE(stream->reset());
 
     release_blocker.store(true, std::memory_order_release);
@@ -620,11 +866,11 @@ TEST_F(mux_connection_integration_test, RemoveStreamRunsWhenIoContextNotRunning)
     conn->started_.store(true, std::memory_order_release);
     conn->connection_state_.store(mux_connection_state::kConnected, std::memory_order_release);
 
-    conn->streams_[77] = std::make_shared<simple_mock_stream>();
-    ASSERT_TRUE(conn->streams_.find(77) != conn->streams_.end());
+    insert_stream_for_test(conn, 77, std::make_shared<simple_mock_stream>());
+    ASSERT_TRUE(has_stream_for_test(conn, 77));
 
     conn->remove_stream(77);
-    EXPECT_TRUE(conn->streams_.find(77) == conn->streams_.end());
+    EXPECT_FALSE(has_stream_for_test(conn, 77));
 }
 
 TEST_F(mux_connection_integration_test, RemoveStreamRunsInlineWhenIoContextStopped)
@@ -643,12 +889,12 @@ TEST_F(mux_connection_integration_test, RemoveStreamRunsInlineWhenIoContextStopp
     conn->started_.store(true, std::memory_order_release);
     conn->connection_state_.store(mux_connection_state::kConnected, std::memory_order_release);
 
-    conn->streams_[78] = std::make_shared<simple_mock_stream>();
-    ASSERT_TRUE(conn->streams_.find(78) != conn->streams_.end());
+    insert_stream_for_test(conn, 78, std::make_shared<simple_mock_stream>());
+    ASSERT_TRUE(has_stream_for_test(conn, 78));
 
     io_ctx().stop();
     conn->remove_stream(78);
-    EXPECT_TRUE(conn->streams_.find(78) == conn->streams_.end());
+    EXPECT_FALSE(has_stream_for_test(conn, 78));
 }
 
 TEST_F(mux_connection_integration_test, RemoveStreamRunsWhenIoQueueBlocked)
@@ -667,8 +913,8 @@ TEST_F(mux_connection_integration_test, RemoveStreamRunsWhenIoQueueBlocked)
     conn->started_.store(true, std::memory_order_release);
     conn->connection_state_.store(mux_connection_state::kConnected, std::memory_order_release);
 
-    conn->streams_[79] = std::make_shared<simple_mock_stream>();
-    ASSERT_TRUE(conn->streams_.find(79) != conn->streams_.end());
+    insert_stream_for_test(conn, 79, std::make_shared<simple_mock_stream>());
+    ASSERT_TRUE(has_stream_for_test(conn, 79));
 
     std::atomic<bool> blocker_started{false};
     std::atomic<bool> release_blocker{false};
@@ -706,7 +952,197 @@ TEST_F(mux_connection_integration_test, RemoveStreamRunsWhenIoQueueBlocked)
     }
 
     conn->remove_stream(79);
-    EXPECT_TRUE(conn->streams_.find(79) == conn->streams_.end());
+    EXPECT_FALSE(has_stream_for_test(conn, 79));
+
+    release_blocker.store(true, std::memory_order_release);
+    io_ctx().stop();
+    if (io_thread.joinable())
+    {
+        io_thread.join();
+    }
+}
+
+TEST_F(mux_connection_integration_test, StopConcurrentRegisterAndTryRegisterWhenIoQueueBlocked)
+{
+    config::limits_t limits_cfg;
+    limits_cfg.max_streams = 8;
+    auto conn = std::make_shared<mux_connection>(
+        asio::ip::tcp::socket(io_ctx()),
+        io_ctx(),
+        reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()},
+        true,
+        21,
+        "trace",
+        config::timeout_t{},
+        limits_cfg);
+    conn->started_.store(true, std::memory_order_release);
+    conn->connection_state_.store(mux_connection_state::kConnected, std::memory_order_release);
+
+    auto existing_stream = std::make_shared<simple_mock_stream>();
+    insert_stream_for_test(conn, 701, existing_stream);
+    ASSERT_TRUE(has_stream_for_test(conn, 701));
+
+    std::atomic<bool> blocker_started{false};
+    std::atomic<bool> release_blocker{false};
+    asio::post(
+        io_ctx(),
+        [&blocker_started, &release_blocker]()
+        {
+            blocker_started.store(true, std::memory_order_release);
+            while (!release_blocker.load(std::memory_order_acquire))
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+        });
+
+    std::thread io_thread([this]() { io_ctx().run(); });
+    bool started = false;
+    for (int i = 0; i < 100; ++i)
+    {
+        if (blocker_started.load(std::memory_order_acquire))
+        {
+            started = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    if (!started)
+    {
+        release_blocker.store(true, std::memory_order_release);
+        io_ctx().stop();
+        if (io_thread.joinable())
+        {
+            io_thread.join();
+        }
+        FAIL();
+    }
+
+    std::barrier sync_point(3);
+    auto register_stream = std::make_shared<simple_mock_stream>();
+    auto try_register_stream = std::make_shared<simple_mock_stream>();
+    std::atomic<bool> register_ok{true};
+    std::atomic<bool> try_register_ok{true};
+    std::thread register_thread(
+        [&]()
+        {
+            sync_point.arrive_and_wait();
+            register_ok.store(conn->register_stream(702, register_stream), std::memory_order_release);
+        });
+    std::thread try_register_thread(
+        [&]()
+        {
+            sync_point.arrive_and_wait();
+            try_register_ok.store(conn->try_register_stream(703, try_register_stream), std::memory_order_release);
+        });
+
+    sync_point.arrive_and_wait();
+    conn->stop();
+
+    if (register_thread.joinable())
+    {
+        register_thread.join();
+    }
+    if (try_register_thread.joinable())
+    {
+        try_register_thread.join();
+    }
+
+    EXPECT_FALSE(register_ok.load(std::memory_order_acquire));
+    EXPECT_FALSE(try_register_ok.load(std::memory_order_acquire));
+    EXPECT_FALSE(has_stream_for_test(conn, 701));
+    EXPECT_FALSE(has_stream_for_test(conn, 702));
+    EXPECT_FALSE(has_stream_for_test(conn, 703));
+    EXPECT_EQ(stream_count_for_test(conn), 0U);
+    EXPECT_EQ(conn->connection_state_.load(std::memory_order_acquire), mux_connection_state::kClosed);
+    EXPECT_TRUE(existing_stream->reset());
+
+    release_blocker.store(true, std::memory_order_release);
+    io_ctx().stop();
+    if (io_thread.joinable())
+    {
+        io_thread.join();
+    }
+}
+
+TEST_F(mux_connection_integration_test, StopConcurrentRemoveWhenIoQueueBlocked)
+{
+    config::limits_t limits_cfg;
+    limits_cfg.max_streams = 8;
+    auto conn = std::make_shared<mux_connection>(
+        asio::ip::tcp::socket(io_ctx()),
+        io_ctx(),
+        reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()},
+        true,
+        22,
+        "trace",
+        config::timeout_t{},
+        limits_cfg);
+    conn->started_.store(true, std::memory_order_release);
+    conn->connection_state_.store(mux_connection_state::kConnected, std::memory_order_release);
+
+    auto remove_target = std::make_shared<simple_mock_stream>();
+    auto stop_target = std::make_shared<simple_mock_stream>();
+    insert_stream_for_test(conn, 710, remove_target);
+    insert_stream_for_test(conn, 711, stop_target);
+    ASSERT_TRUE(has_stream_for_test(conn, 710));
+    ASSERT_TRUE(has_stream_for_test(conn, 711));
+
+    std::atomic<bool> blocker_started{false};
+    std::atomic<bool> release_blocker{false};
+    asio::post(
+        io_ctx(),
+        [&blocker_started, &release_blocker]()
+        {
+            blocker_started.store(true, std::memory_order_release);
+            while (!release_blocker.load(std::memory_order_acquire))
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+        });
+
+    std::thread io_thread([this]() { io_ctx().run(); });
+    bool started = false;
+    for (int i = 0; i < 100; ++i)
+    {
+        if (blocker_started.load(std::memory_order_acquire))
+        {
+            started = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    if (!started)
+    {
+        release_blocker.store(true, std::memory_order_release);
+        io_ctx().stop();
+        if (io_thread.joinable())
+        {
+            io_thread.join();
+        }
+        FAIL();
+    }
+
+    std::barrier sync_point(2);
+    std::thread remove_thread(
+        [&]()
+        {
+            sync_point.arrive_and_wait();
+            conn->remove_stream(710);
+        });
+
+    sync_point.arrive_and_wait();
+    conn->stop();
+
+    if (remove_thread.joinable())
+    {
+        remove_thread.join();
+    }
+
+    EXPECT_FALSE(has_stream_for_test(conn, 710));
+    EXPECT_FALSE(has_stream_for_test(conn, 711));
+    EXPECT_EQ(stream_count_for_test(conn), 0U);
+    EXPECT_EQ(conn->connection_state_.load(std::memory_order_acquire), mux_connection_state::kClosed);
+    EXPECT_TRUE(stop_target->reset());
 
     release_blocker.store(true, std::memory_order_release);
     io_ctx().stop();
@@ -743,7 +1179,7 @@ TEST_F(mux_connection_integration_test, HandleStreamAndUnknownStreamBranches)
         asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 6);
 
     auto stream = std::make_shared<simple_mock_stream>();
-    conn->register_stream_local(100, stream);
+    EXPECT_TRUE(conn->register_stream_local(100, stream));
 
     std::vector<std::uint8_t> ack_payload = {1, 2, 3};
     const frame_header ack_header{
@@ -816,7 +1252,7 @@ TEST_F(mux_connection_integration_test, ResetStreamsAndDispatchFailureBranches)
     conn->reset_streams_on_stop(streams_to_clear);
 
     EXPECT_TRUE(reset_stream->reset());
-    EXPECT_TRUE(streams_to_clear.empty());
+    EXPECT_EQ(streams_to_clear.size(), 2U);
     EXPECT_FALSE(conn->has_dispatch_failure(std::error_code{}));
     EXPECT_TRUE(conn->has_dispatch_failure(std::make_error_code(std::errc::protocol_error)));
 }
