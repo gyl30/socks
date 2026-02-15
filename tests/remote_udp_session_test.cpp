@@ -389,6 +389,48 @@ TEST(RemoteUdpSessionTest, OnCloseAndOnResetRunWhenIoContextNotRunning)
     session->close_socket();
 }
 
+TEST(RemoteUdpSessionTest, OnCloseAndOnResetRunWhenIoQueueBlocked)
+{
+    asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    auto session = make_session(io_context, conn, 213);
+    ASSERT_TRUE(mux::test::run_awaitable(io_context, session->setup_udp_socket(conn)));
+
+    std::atomic<bool> blocker_started{false};
+    std::atomic<bool> release_blocker{false};
+    asio::post(
+        io_context,
+        [&blocker_started, &release_blocker]()
+        {
+            blocker_started.store(true, std::memory_order_release);
+            while (!release_blocker.load(std::memory_order_acquire))
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+        });
+
+    std::thread io_thread([&]() { io_context.run(); });
+    for (int i = 0; i < 100 && !blocker_started.load(std::memory_order_acquire); ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_TRUE(blocker_started.load(std::memory_order_acquire));
+
+    session->on_close();
+    EXPECT_FALSE(session->recv_channel_.try_send(std::error_code{}, std::vector<std::uint8_t>{0x01}));
+
+    session->on_reset();
+    EXPECT_FALSE(session->recv_channel_.try_send(std::error_code{}, std::vector<std::uint8_t>{0x02}));
+
+    release_blocker.store(true, std::memory_order_release);
+    io_context.stop();
+    if (io_thread.joinable())
+    {
+        io_thread.join();
+    }
+    session->close_socket();
+}
+
 TEST(RemoteUdpSessionTest, StartImplSendsAckAndCleansUpManager)
 {
     asio::io_context io_context;
