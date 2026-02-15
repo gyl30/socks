@@ -394,6 +394,17 @@ TEST_F(mux_connection_integration_test, StopRunsInlineWhenIoContextStopped)
     io_ctx().restart();
 }
 
+TEST_F(mux_connection_integration_test, StopRunsWhenIoContextNotRunning)
+{
+    auto conn = std::make_shared<mux_connection>(
+        asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 16);
+    conn->started_.store(true, std::memory_order_release);
+    conn->connection_state_.store(mux_connection_state::kConnected, std::memory_order_release);
+
+    conn->stop();
+    EXPECT_EQ(conn->connection_state_.load(std::memory_order_acquire), mux_connection_state::kClosed);
+}
+
 TEST_F(mux_connection_integration_test, StopDrainingAndInternalErrorBranches)
 {
     auto conn = std::make_shared<mux_connection>(

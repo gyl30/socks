@@ -494,4 +494,22 @@ TEST(RemoteSessionTest, OnCloseAndOnResetRunInlineWhenIoContextStopped)
     EXPECT_FALSE(session->target_socket_.is_open());
 }
 
+TEST(RemoteSessionTest, OnCloseAndOnResetRunWhenIoContextNotRunning)
+{
+    asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    mux::connection_context ctx;
+    auto session = std::make_shared<mux::remote_session>(conn, 23, io_context, ctx);
+
+    auto pair = make_tcp_socket_pair(io_context);
+    session->target_socket_ = std::move(pair.server);
+    ASSERT_TRUE(session->target_socket_.is_open());
+
+    session->on_close();
+    EXPECT_FALSE(session->recv_channel_.try_send(std::error_code{}, std::vector<std::uint8_t>{0x01}));
+
+    session->on_reset();
+    EXPECT_FALSE(session->target_socket_.is_open());
+}
+
 }    // namespace

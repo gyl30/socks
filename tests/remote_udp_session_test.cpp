@@ -374,6 +374,21 @@ TEST(RemoteUdpSessionTest, OnCloseAndOnResetRunInlineWhenIoContextStopped)
     session->close_socket();
 }
 
+TEST(RemoteUdpSessionTest, OnCloseAndOnResetRunWhenIoContextNotRunning)
+{
+    asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    auto session = make_session(io_context, conn, 212);
+    ASSERT_TRUE(mux::test::run_awaitable(io_context, session->setup_udp_socket(conn)));
+
+    session->on_close();
+    EXPECT_FALSE(session->recv_channel_.try_send(std::error_code{}, std::vector<std::uint8_t>{0x01}));
+
+    session->on_reset();
+    EXPECT_FALSE(session->recv_channel_.try_send(std::error_code{}, std::vector<std::uint8_t>{0x02}));
+    session->close_socket();
+}
+
 TEST(RemoteUdpSessionTest, StartImplSendsAckAndCleansUpManager)
 {
     asio::io_context io_context;
