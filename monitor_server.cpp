@@ -231,6 +231,12 @@ monitor_server::monitor_server(asio::io_context& ioc,
                                const std::uint32_t min_interval_ms)
     : acceptor_(ioc), token_(std::move(token)), min_interval_ms_(min_interval_ms)
 {
+    auto close_acceptor_on_failure = [this]()
+    {
+        asio::error_code close_ec;
+        acceptor_.close(close_ec);
+    };
+
     asio::ip::tcp::endpoint endpoint;
     asio::error_code ec;
     endpoint.address(asio::ip::make_address(bind_host, ec));
@@ -248,16 +254,19 @@ monitor_server::monitor_server(asio::io_context& ioc,
     if (acceptor_.set_option(asio::socket_base::reuse_address(true), ec); ec)
     {
         LOG_ERROR("failed to set reuse_address: {}", ec.message());
+        close_acceptor_on_failure();
         return;
     }
     if (acceptor_.bind(endpoint, ec); ec)
     {
         LOG_ERROR("failed to bind: {}", ec.message());
+        close_acceptor_on_failure();
         return;
     }
     if (acceptor_.listen(asio::socket_base::max_listen_connections, ec); ec)
     {
         LOG_ERROR("failed to listen: {}", ec.message());
+        close_acceptor_on_failure();
         return;
     }
     LOG_INFO("monitor server listening on {}:{}", bind_host, port);
@@ -276,17 +285,25 @@ void monitor_server::start()
 void monitor_server::stop()
 {
     stop_.store(true, std::memory_order_release);
-    asio::dispatch(
-        acceptor_.get_executor(),
-        [self = shared_from_this()]()
-        {
-            std::error_code ec;
-            ec = self->acceptor_.close(ec);
-            if (ec && ec != asio::error::bad_descriptor)
-            {
-                LOG_WARN("monitor acceptor close failed {}", ec.message());
-            }
-        });
+
+    auto& io_context = static_cast<asio::io_context&>(acceptor_.get_executor().context());
+    if (io_context.stopped() || io_context.get_executor().running_in_this_thread())
+    {
+        stop_local();
+        return;
+    }
+
+    asio::dispatch(acceptor_.get_executor(), [self = shared_from_this()]() { self->stop_local(); });
+}
+
+void monitor_server::stop_local()
+{
+    std::error_code ec;
+    ec = acceptor_.close(ec);
+    if (ec && ec != asio::error::bad_descriptor)
+    {
+        LOG_WARN("monitor acceptor close failed {}", ec.message());
+    }
 }
 
 void monitor_server::do_accept()

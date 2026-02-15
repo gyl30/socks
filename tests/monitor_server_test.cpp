@@ -13,7 +13,9 @@
 #include <asio.hpp>
 #include <gtest/gtest.h>
 
+#define private public
 #include "monitor_server.h"
+#undef private
 #include "statistics.h"
 
 namespace
@@ -330,6 +332,7 @@ TEST(MonitorServerTest, ConstructWhenPortAlreadyInUse)
     asio::io_context ioc;
     auto server = std::make_shared<monitor_server>(ioc, port, std::string("token"), 10);
     ASSERT_NE(server, nullptr);
+    EXPECT_FALSE(server->acceptor_.is_open());
 }
 
 TEST(MonitorServerTest, ConstructorHandlesInvalidBindHost)
@@ -340,6 +343,7 @@ TEST(MonitorServerTest, ConstructorHandlesInvalidBindHost)
     auto bad_server = std::make_shared<monitor_server>(ioc, std::string("bad host"), port, std::string("token"), 10);
     ASSERT_NE(server, nullptr);
     ASSERT_NE(bad_server, nullptr);
+    EXPECT_FALSE(bad_server->acceptor_.is_open());
     bad_server->start();
     ioc.poll();
 }
@@ -350,6 +354,7 @@ TEST(MonitorServerTest, ConstructorHandlesOpenFailure)
     monitor_fail_guard guard(monitor_fail_mode::kSocketAlways);
     auto server = std::make_shared<monitor_server>(ioc, 0, std::string("token"), 10);
     ASSERT_NE(server, nullptr);
+    EXPECT_FALSE(server->acceptor_.is_open());
 }
 
 TEST(MonitorServerTest, ConstructorHandlesReuseAddressFailure)
@@ -358,6 +363,7 @@ TEST(MonitorServerTest, ConstructorHandlesReuseAddressFailure)
     monitor_fail_guard guard(monitor_fail_mode::kReuseAddrAlways);
     auto server = std::make_shared<monitor_server>(ioc, 0, std::string("token"), 10);
     ASSERT_NE(server, nullptr);
+    EXPECT_FALSE(server->acceptor_.is_open());
 }
 
 TEST(MonitorServerTest, ConstructorHandlesListenFailure)
@@ -366,6 +372,7 @@ TEST(MonitorServerTest, ConstructorHandlesListenFailure)
     monitor_fail_guard guard(monitor_fail_mode::kListenAlways);
     auto server = std::make_shared<monitor_server>(ioc, 0, std::string("token"), 10);
     ASSERT_NE(server, nullptr);
+    EXPECT_FALSE(server->acceptor_.is_open());
 }
 
 TEST(MonitorServerTest, StopClosesAcceptorAndRejectsNewConnections)
@@ -400,6 +407,19 @@ TEST(MonitorServerTest, StopClosesAcceptorAndRejectsNewConnections)
     {
         runner.join();
     }
+}
+
+TEST(MonitorServerTest, StopRunsInlineWhenIoContextStopped)
+{
+    const auto port = pick_free_port();
+    asio::io_context ioc;
+    auto server = std::make_shared<monitor_server>(ioc, port, std::string(), 10);
+    ASSERT_NE(server, nullptr);
+    ASSERT_TRUE(server->acceptor_.is_open());
+
+    ioc.stop();
+    server->stop();
+    EXPECT_FALSE(server->acceptor_.is_open());
 }
 
 TEST(MonitorServerTest, StopLogsAcceptorCloseFailureBranch)
