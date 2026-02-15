@@ -653,15 +653,20 @@ TEST(UdpSocksSessionTest, PrepareAndFinalizeUdpAssociateSuccess)
 
     EXPECT_CALL(*mock_conn, mock_send_async(testing::_, mux::kCmdSyn, testing::_)).WillOnce(testing::Return(std::error_code{}));
     EXPECT_CALL(*mock_conn, register_stream(testing::_, testing::_))
-        .WillOnce([&ctx](const std::uint32_t, std::shared_ptr<mux::mux_stream_interface> iface)
+        .WillOnce([&ctx](const std::uint32_t, std::shared_ptr<mux::mux_stream_interface> iface) -> bool
                   {
                       auto stream = std::dynamic_pointer_cast<mux::mux_stream>(iface);
-                      ASSERT_NE(stream, nullptr);
+                      EXPECT_NE(stream, nullptr);
+                      if (stream == nullptr)
+                      {
+                          return false;
+                      }
                       mux::ack_payload ack{};
                       ack.socks_rep = socks::kRepSuccess;
                       std::vector<std::uint8_t> ack_data;
                       mux::mux_codec::encode_ack(ack, ack_data);
                       asio::post(ctx, [stream, ack_data]() { stream->on_data(ack_data); });
+                      return true;
                   });
     EXPECT_CALL(*mock_conn, remove_stream(testing::_)).Times(1);
     EXPECT_CALL(*mock_conn, mock_send_async(testing::_, mux::kCmdFin, std::vector<std::uint8_t>{}))

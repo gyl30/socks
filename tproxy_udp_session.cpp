@@ -158,7 +158,13 @@ void tproxy_udp_session::on_data(std::vector<std::uint8_t> data)
 {
     asio::dispatch(io_context_,
                    [self = shared_from_this(), data = std::move(data)]() mutable
-                   { self->recv_channel_.try_send(std::error_code(), std::move(data)); });
+                   {
+                       if (!self->recv_channel_.try_send(std::error_code(), std::move(data)))
+                       {
+                           LOG_CTX_WARN(self->ctx_, "{} recv channel unavailable on data", log_event::kSocks);
+                           self->stop();
+                       }
+                   });
 }
 
 void tproxy_udp_session::on_close()
@@ -242,7 +248,11 @@ bool tproxy_udp_session::install_proxy_stream(const std::shared_ptr<mux_tunnel_i
         return false;
     }
 
-    tunnel->register_stream(stream->id(), shared_from_this());
+    if (!tunnel->register_stream(stream->id(), shared_from_this()))
+    {
+        LOG_CTX_WARN(ctx_, "{} udp proxy register stream failed {}", log_event::kSocks, stream->id());
+        return false;
+    }
     stream_ = stream;
     tunnel_ = tunnel;
     if (!proxy_reader_started_)

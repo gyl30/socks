@@ -353,9 +353,9 @@ void mux_connection::handle_stream_frame(const mux::frame_header& header, std::v
     }
 }
 
-void mux_connection::register_stream(const std::uint32_t id, std::shared_ptr<mux_stream_interface> stream)
+bool mux_connection::register_stream(const std::uint32_t id, std::shared_ptr<mux_stream_interface> stream)
 {
-    (void)register_stream_checked(id, std::move(stream));
+    return register_stream_checked(id, std::move(stream));
 }
 
 bool mux_connection::register_stream_checked(const std::uint32_t id, std::shared_ptr<mux_stream_interface> stream)

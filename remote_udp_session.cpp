@@ -229,7 +229,13 @@ void remote_udp_session::on_data(std::vector<std::uint8_t> data)
 {
     asio::dispatch(io_context_,
                    [self = shared_from_this(), data = std::move(data)]() mutable
-                   { self->recv_channel_.try_send(std::error_code(), std::move(data)); });
+                   {
+                       if (!self->recv_channel_.try_send(std::error_code(), std::move(data)))
+                       {
+                           LOG_CTX_WARN(self->ctx_, "{} recv channel unavailable on data", log_event::kMux);
+                           self->request_stop();
+                       }
+                   });
 }
 
 void remote_udp_session::request_stop()

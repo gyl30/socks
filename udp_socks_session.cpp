@@ -305,7 +305,14 @@ void udp_socks_session::start(const std::string& host, const std::uint16_t port)
     asio::co_spawn(io_context_, [self, host, port]() -> asio::awaitable<void> { co_await self->run(host, port); }, asio::detached);
 }
 
-void udp_socks_session::on_data(std::vector<std::uint8_t> data) { recv_channel_.try_send(std::error_code(), std::move(data)); }
+void udp_socks_session::on_data(std::vector<std::uint8_t> data)
+{
+    if (!recv_channel_.try_send(std::error_code(), std::move(data)))
+    {
+        LOG_CTX_WARN(ctx_, "{} recv channel unavailable on data", log_event::kSocks);
+        on_close();
+    }
+}
 
 void udp_socks_session::on_close()
 {
@@ -422,7 +429,12 @@ asio::awaitable<void> udp_socks_session::run(const std::string& host, const std:
         co_return;
     }
 
-    tunnel_manager_->register_stream(stream->id(), shared_from_this());
+    if (!tunnel_manager_->register_stream(stream->id(), shared_from_this()))
+    {
+        LOG_CTX_ERROR(ctx_, "{} register stream failed {}", log_event::kSocks, stream->id());
+        co_await finalize_udp_associate(stream);
+        co_return;
+    }
 
     using asio::experimental::awaitable_operators::operator||;
     co_await (udp_sock_to_stream(stream) || stream_to_udp_sock(stream) || keep_tcp_alive() || idle_watchdog());
