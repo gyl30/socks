@@ -885,6 +885,26 @@ TEST(UdpSocksSessionTest, OnCloseRunsWhenIoContextNotRunning)
     EXPECT_FALSE(session->udp_socket_.is_open());
 }
 
+TEST(UdpSocksSessionTest, OnDataTriggersCloseWhenIoContextNotRunning)
+{
+    asio::io_context ctx;
+    mux::config::timeout_t timeout_cfg;
+    auto session = std::make_shared<mux::udp_socks_session>(asio::ip::tcp::socket(ctx), ctx, nullptr, 50, timeout_cfg);
+
+    std::error_code ec;
+    session->udp_socket_.open(asio::ip::udp::v4(), ec);
+    ASSERT_FALSE(ec);
+    session->udp_socket_.bind({asio::ip::make_address("127.0.0.1"), 0}, ec);
+    ASSERT_FALSE(ec);
+    ASSERT_TRUE(session->udp_socket_.is_open());
+
+    session->recv_channel_.close();
+    session->on_data({0x11});
+
+    EXPECT_TRUE(session->closed_.load(std::memory_order_acquire));
+    EXPECT_FALSE(session->udp_socket_.is_open());
+}
+
 TEST(UdpSocksSessionTest, OnDataTriggersCloseWhenIoQueueBlocked)
 {
     asio::io_context ctx;
