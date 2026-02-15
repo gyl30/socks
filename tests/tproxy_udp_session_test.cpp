@@ -616,6 +616,67 @@ TEST(TproxyUdpSessionTest, StartCoversBindFailureBranch)
     reset_socket_wrappers();
 }
 
+TEST(TproxyUdpSessionTest, OnDataRunsStopWhenIoQueueBlocked)
+{
+    asio::io_context ctx;
+    auto router = std::make_shared<direct_router>();
+    mux::config cfg;
+    cfg.tproxy.mark = 0;
+    const asio::ip::udp::endpoint client_ep(asio::ip::make_address("127.0.0.1"), 12420);
+    auto session = std::make_shared<mux::tproxy_udp_session>(ctx, nullptr, router, nullptr, 20, cfg, client_ep);
+
+    std::error_code ec;
+    session->direct_socket_.open(asio::ip::udp::v4(), ec);
+    ASSERT_FALSE(ec);
+    ASSERT_TRUE(session->direct_socket_.is_open());
+    session->recv_channel_.close();
+
+    std::atomic<bool> blocker_started{false};
+    std::atomic<bool> release_blocker{false};
+    asio::post(
+        ctx,
+        [&blocker_started, &release_blocker]()
+        {
+            blocker_started.store(true, std::memory_order_release);
+            while (!release_blocker.load(std::memory_order_acquire))
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+        });
+
+    std::thread io_thread([&]() { ctx.run(); });
+    bool started = false;
+    for (int i = 0; i < 100; ++i)
+    {
+        if (blocker_started.load(std::memory_order_acquire))
+        {
+            started = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    if (!started)
+    {
+        release_blocker.store(true, std::memory_order_release);
+        ctx.stop();
+        if (io_thread.joinable())
+        {
+            io_thread.join();
+        }
+        FAIL();
+    }
+
+    session->on_data({0x55});
+    EXPECT_FALSE(session->direct_socket_.is_open());
+
+    release_blocker.store(true, std::memory_order_release);
+    ctx.stop();
+    if (io_thread.joinable())
+    {
+        io_thread.join();
+    }
+}
+
 TEST(TproxyUdpSessionTest, StopAndOnCloseCoverPartialStateBranches)
 {
     asio::io_context ctx;
