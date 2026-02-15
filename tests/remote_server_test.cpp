@@ -1230,6 +1230,65 @@ TEST_F(remote_server_test, SetCertificateReturnsWhenAsyncQueueBusy)
     pool_thread.join();
 }
 
+TEST_F(remote_server_test, SetCertificateRunsWhenAsyncQueueBlockedThenIoStopped)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+    auto& io_context = pool.get_io_context();
+    std::thread pool_thread([&pool] { pool.run(); });
+
+    auto cfg = make_server_cfg(pick_free_port(), {}, "0102030405060708");
+    auto server = std::make_shared<mux::remote_server>(pool, cfg);
+    server->start();
+
+    std::promise<void> blocker_started;
+    auto blocker_started_future = blocker_started.get_future();
+    std::atomic<bool> release_blocker{false};
+    asio::post(io_context,
+               [&blocker_started, &release_blocker]()
+               {
+                   blocker_started.set_value();
+                   while (!release_blocker.load(std::memory_order_acquire))
+                   {
+                       std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                   }
+               });
+    EXPECT_EQ(blocker_started_future.wait_for(std::chrono::seconds(1)), std::future_status::ready);
+
+    reality::server_fingerprint fingerprint;
+    fingerprint.cipher_suite = 0x1301;
+    fingerprint.alpn = "h2";
+    const std::string sni = "blocked.then.stop.test";
+
+    std::promise<void> setter_done;
+    auto setter_done_future = setter_done.get_future();
+    std::thread setter(
+        [&]()
+        {
+            server->set_certificate(sni, reality::construct_certificate({0x01, 0x02, 0x03}), fingerprint, "trace-stop-race");
+            setter_done.set_value();
+        });
+
+    EXPECT_EQ(setter_done_future.wait_for(std::chrono::seconds(1)), std::future_status::ready);
+
+    server->stop();
+    pool.stop();
+    release_blocker.store(true, std::memory_order_release);
+
+    if (setter.joinable())
+    {
+        setter.join();
+    }
+    if (pool_thread.joinable())
+    {
+        pool_thread.join();
+    }
+
+    const auto cert_opt = server->cert_manager_.get_certificate(sni);
+    EXPECT_TRUE(cert_opt.has_value());
+}
+
 TEST_F(remote_server_test, ConstructorCoversShortIdAndDestParsingBranches)
 {
     std::error_code ec;

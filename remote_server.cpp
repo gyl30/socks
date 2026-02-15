@@ -6,7 +6,6 @@
 #include <memory>
 #include <random>
 #include <string>
-#include <future>
 #include <vector>
 #include <cstdint>
 #include <cstring>
@@ -22,7 +21,6 @@
 #include <asio/co_spawn.hpp>
 #include <asio/detached.hpp>
 #include <asio/dispatch.hpp>
-#include <asio/post.hpp>
 #include <asio/steady_timer.hpp>
 #include <asio/use_awaitable.hpp>
 #include <asio/experimental/awaitable_operators.hpp>
@@ -58,8 +56,6 @@ namespace mux
 
 namespace
 {
-
-constexpr auto kSetCertificateWaitTimeout = std::chrono::milliseconds(200);
 
 bool parse_hex_to_bytes(const std::string& hex, std::vector<std::uint8_t>& out, const std::size_t max_len, const char* label)
 {
@@ -845,26 +841,18 @@ void remote_server::set_certificate(std::string sni,
                                     reality::server_fingerprint fp,
                                     const std::string& trace_id)
 {
-    if (!started_.load(std::memory_order_acquire) || io_context_.stopped() || io_context_.get_executor().running_in_this_thread())
+    if (!started_.load(std::memory_order_acquire))
     {
         cert_manager_.set_certificate(sni, std::move(cert_msg), std::move(fp), trace_id);
         return;
     }
 
-    const std::string sni_for_log = sni;
-    auto done = std::make_shared<std::promise<void>>();
-    auto done_future = done->get_future();
-    asio::post(io_context_,
-               [this, sni = std::move(sni), cert_msg = std::move(cert_msg), fp = std::move(fp), trace_id, done]() mutable
-               {
-                   cert_manager_.set_certificate(sni, std::move(cert_msg), std::move(fp), trace_id);
-                   done->set_value();
-               });
-    if (done_future.wait_for(kSetCertificateWaitTimeout) != std::future_status::ready)
-    {
-        LOG_WARN("set certificate async wait timed out {}ms sni {}", kSetCertificateWaitTimeout.count(), sni_for_log);
-        return;
-    }
+    detail::dispatch_cleanup_or_run_inline(
+        io_context_,
+        [this, sni = std::move(sni), cert_msg = std::move(cert_msg), fp = std::move(fp), trace_id]() mutable
+        {
+            cert_manager_.set_certificate(sni, std::move(cert_msg), std::move(fp), trace_id);
+        });
 }
 
 void remote_server::stop()
