@@ -84,6 +84,7 @@ asio::awaitable<void> socks_session::run()
     if (!co_await handshake())
     {
         LOG_CTX_WARN(ctx_, "{} handshake failed", log_event::kSocks);
+        stop();
         co_return;
     }
 
@@ -91,6 +92,7 @@ asio::awaitable<void> socks_session::run()
     if (!ok)
     {
         LOG_CTX_WARN(ctx_, "{} request invalid", log_event::kSocks);
+        stop();
         co_return;
     }
 
@@ -109,6 +111,7 @@ asio::awaitable<void> socks_session::run()
     {
         LOG_WARN("socks session {} cmd {} unsupported", sid_, cmd);
         co_await reply_error(socks::kRepCmdNotSupported);
+        stop();
         co_return;
     }
 }
