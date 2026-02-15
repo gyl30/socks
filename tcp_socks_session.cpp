@@ -82,17 +82,21 @@ asio::awaitable<void> tcp_socks_session::run(const std::string& host, const std:
         LOG_CTX_WARN(ctx_, "{} blocked host {}", log_event::kRoute, host);
         statistics::instance().inc_routing_blocked();
         co_await reply_error(socks::kRepNotAllowed);
+        close_client_socket();
         co_return;
     }
 
     if (!co_await connect_backend(backend, host, port, route))
     {
+        co_await close_backend_once(backend);
+        close_client_socket();
         co_return;
     }
 
     if (!co_await reply_success())
     {
         co_await close_backend_once(backend);
+        close_client_socket();
         co_return;
     }
 
