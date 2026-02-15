@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <optional>
 #include <unordered_map>
+#include <mutex>
 
 #include "reality_messages.h"
 
@@ -42,6 +43,7 @@ class cert_manager
     std::size_t capacity_ = 100;
     std::list<cache_node> lru_;
     std::unordered_map<std::string, std::list<cache_node>::iterator> index_;
+    mutable std::mutex mutex_;
 };
 
 }    // namespace reality
