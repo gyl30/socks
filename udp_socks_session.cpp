@@ -362,6 +362,12 @@ void udp_socks_session::on_close()
         return;
     }
 
+    if (io_context_.stopped() || io_context_.get_executor().running_in_this_thread())
+    {
+        close_impl();
+        return;
+    }
+
     const auto self = shared_from_this();
     asio::post(io_context_, [self]() { self->close_impl(); });
 }

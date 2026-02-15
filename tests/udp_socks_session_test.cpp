@@ -826,3 +826,22 @@ TEST(UdpSocksSessionTest, CloseImplLogsCloseFailureBranch)
     fail_next_close(EBADF);
     session_bad_descriptor->close_impl();
 }
+
+TEST(UdpSocksSessionTest, OnCloseRunsInlineWhenIoContextStopped)
+{
+    asio::io_context ctx;
+    mux::config::timeout_t timeout_cfg;
+    auto session = std::make_shared<mux::udp_socks_session>(asio::ip::tcp::socket(ctx), ctx, nullptr, 45, timeout_cfg);
+
+    std::error_code ec;
+    session->udp_socket_.open(asio::ip::udp::v4(), ec);
+    ASSERT_FALSE(ec);
+    session->udp_socket_.bind({asio::ip::make_address("127.0.0.1"), 0}, ec);
+    ASSERT_FALSE(ec);
+    ASSERT_TRUE(session->udp_socket_.is_open());
+
+    ctx.stop();
+    session->on_close();
+    EXPECT_TRUE(session->closed_.load(std::memory_order_acquire));
+    EXPECT_FALSE(session->udp_socket_.is_open());
+}
