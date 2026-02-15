@@ -100,3 +100,13 @@ if (ec) { ... }
 auto res = func(arg);
 if (!res) { auto ec = res.error(); ... }
 ```
+
+## 异常禁用工作清单
+
+为避免依赖缺失文档，异常禁用相关清单统一维护在本文件，不再依赖 `doc/tests_exception_inventory.md`。
+
+1. 项目代码（`third/` 除外）禁止新增 `throw` / `try` / `catch`。
+2. 新增错误返回接口统一使用 `std::expected`，禁止新增 `std::error_code&` 输出参数。
+3. 反序列化、握手、I/O 失败路径必须在测试中断言可观测错误返回，不依赖异常。
+4. 建议在本地或 CI 增加静态检查：`rg -n "\\bthrow\\b|\\btry\\b|\\bcatch\\b" --glob '*.{cpp,h}' --glob '!third/**'`。
+5. 发现存量不一致时，按“接口签名 -> 调用链 -> 测试”顺序迁移，避免半迁移状态。
