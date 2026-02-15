@@ -799,7 +799,7 @@ TEST_F(socks_session_test, StartAndStopLifecycleWithInvalidGreeting)
     io_ctx().run();
     io_ctx().restart();
 
-    EXPECT_TRUE(session->socket_.is_open());
+    EXPECT_FALSE(session->socket_.is_open());
     session->stop();
     EXPECT_FALSE(session->socket_.is_open());
 
@@ -831,6 +831,7 @@ TEST_F(socks_session_test, StartLifecycleWithUnsupportedCommand)
     asio::read(pair.client, asio::buffer(err_res));
     EXPECT_EQ(err_res[0], socks::kVer);
     EXPECT_EQ(err_res[1], socks::kRepCmdNotSupported);
+    EXPECT_FALSE(session->socket_.is_open());
 
     session->stop();
 }
