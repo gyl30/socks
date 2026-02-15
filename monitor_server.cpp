@@ -235,12 +235,6 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
                                 {
                                     if (!ec)
                                     {
-                                        if (!check_rate_limit())
-                                        {
-                                            LOG_WARN("monitor rate limited");
-                                            close_socket();
-                                            return;
-                                        }
                                         const std::string req(buffer_.data(), length);
                                         if (!is_authorized_monitor_request(req, token_))
                                         {
@@ -252,6 +246,12 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
                                             {
                                                 LOG_WARN("monitor invalid request");
                                             }
+                                            close_socket();
+                                            return;
+                                        }
+                                        if (!check_rate_limit())
+                                        {
+                                            LOG_WARN("monitor rate limited");
                                             close_socket();
                                             return;
                                         }

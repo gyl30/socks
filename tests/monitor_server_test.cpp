@@ -282,6 +282,23 @@ TEST(MonitorServerTest, TokenRequiredAndRateLimit)
     EXPECT_NE(after_window.find("socks_uptime_seconds "), std::string::npos);
 }
 
+TEST(MonitorServerTest, UnauthorizedRequestDoesNotConsumeRateLimitWindow)
+{
+    const auto port = pick_free_port();
+    monitor_server_env env(port, std::string("secret"), 500);
+
+    const auto first_authed = request_with_retry(port, "metrics?token=secret\n");
+    EXPECT_NE(first_authed.find("socks_total_connections "), std::string::npos);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(550));
+
+    const auto unauth = read_response(port, "metrics\n");
+    EXPECT_TRUE(unauth.empty());
+
+    const auto authed_after_unauth = read_response(port, "metrics?token=secret\n");
+    EXPECT_NE(authed_after_unauth.find("socks_uptime_seconds "), std::string::npos);
+}
+
 TEST(MonitorServerTest, RejectsTokenSubstringBypass)
 {
     const auto port = pick_free_port();
