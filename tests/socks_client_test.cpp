@@ -356,6 +356,54 @@ TEST(LocalClientTest, StopRunsInlineWhenIoContextStopped)
     EXPECT_FALSE(client->acceptor_.is_open());
 }
 
+TEST(LocalClientTest, StopRunsWhenIoQueueBlocked)
+{
+    io_context_pool pool(1);
+    mux::config cfg;
+    cfg.outbound.host = "127.0.0.1";
+    cfg.outbound.port = 12345;
+    cfg.socks.port = 10096;
+    cfg.reality.public_key = std::string(64, 'a');
+    cfg.reality.sni = "example.com";
+
+    auto client = std::make_shared<mux::socks_client>(pool, cfg);
+
+    std::error_code ec;
+    client->acceptor_.open(asio::ip::tcp::v4(), ec);
+    ASSERT_FALSE(ec);
+    ASSERT_TRUE(client->acceptor_.is_open());
+
+    std::atomic<bool> blocker_started{false};
+    std::atomic<bool> release_blocker{false};
+    asio::post(
+        pool.get_io_context(),
+        [&blocker_started, &release_blocker]()
+        {
+            blocker_started.store(true, std::memory_order_release);
+            while (!release_blocker.load(std::memory_order_acquire))
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+        });
+
+    std::thread runner([&pool]() { pool.run(); });
+    for (int i = 0; i < 100 && !blocker_started.load(std::memory_order_acquire); ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_TRUE(blocker_started.load(std::memory_order_acquire));
+
+    client->stop();
+    EXPECT_FALSE(client->acceptor_.is_open());
+
+    release_blocker.store(true, std::memory_order_release);
+    pool.stop();
+    if (runner.joinable())
+    {
+        runner.join();
+    }
+}
+
 TEST(LocalClientTest, StopRunsWhenIoContextNotRunning)
 {
     io_context_pool pool(1);
