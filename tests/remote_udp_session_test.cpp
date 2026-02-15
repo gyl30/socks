@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <utility>
 #include <thread>
+#include <future>
 #include <system_error>
 #include <chrono>
 
@@ -336,6 +337,64 @@ TEST(RemoteUdpSessionTest, OnDataDispatchesPayload)
     ASSERT_EQ(data.size(), 2U);
     EXPECT_EQ(data[0], 0x10);
     EXPECT_EQ(data[1], 0x20);
+}
+
+TEST(RemoteUdpSessionTest, OnDataRunsStopWhenIoQueueBlocked)
+{
+    asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    auto session = make_session(io_context, conn, 214);
+    ASSERT_TRUE(mux::test::run_awaitable(io_context, session->setup_udp_socket(conn)));
+
+    session->recv_channel_.close();
+
+    std::promise<std::error_code> timer_wait_done;
+    auto timer_wait_future = timer_wait_done.get_future();
+    session->timer_.expires_after(std::chrono::seconds(30));
+    session->timer_.async_wait(
+        [done = std::move(timer_wait_done)](const std::error_code& ec) mutable
+        {
+            done.set_value(ec);
+        });
+
+    std::atomic<bool> blocker_started{false};
+    std::atomic<bool> release_blocker{false};
+    asio::post(
+        io_context,
+        [&blocker_started, &release_blocker]()
+        {
+            blocker_started.store(true, std::memory_order_release);
+            while (!release_blocker.load(std::memory_order_acquire))
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+        });
+
+    std::thread io_thread([&]() { io_context.run(); });
+    for (int i = 0; i < 100 && !blocker_started.load(std::memory_order_acquire); ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_TRUE(blocker_started.load(std::memory_order_acquire));
+
+    session->on_data(std::vector<std::uint8_t>{0x10});
+
+    release_blocker.store(true, std::memory_order_release);
+    const bool timer_cancelled = timer_wait_future.wait_for(std::chrono::milliseconds(200)) == std::future_status::ready;
+    if (!timer_cancelled)
+    {
+        session->request_stop();
+    }
+
+    io_context.stop();
+    if (io_thread.joinable())
+    {
+        io_thread.join();
+    }
+
+    ASSERT_TRUE(timer_cancelled);
+    EXPECT_EQ(timer_wait_future.get(), asio::error::operation_aborted);
+    session->close_socket();
 }
 
 TEST(RemoteUdpSessionTest, OnCloseAndOnResetCloseReceiveChannel)
