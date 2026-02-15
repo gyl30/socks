@@ -472,6 +472,22 @@ TEST(RemoteSessionTest, OnDataRunsCleanupWhenIoContextStopped)
     EXPECT_FALSE(session->target_socket_.is_open());
 }
 
+TEST(RemoteSessionTest, OnDataRunsCleanupWhenIoContextNotRunning)
+{
+    asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    mux::connection_context ctx;
+    auto session = std::make_shared<mux::remote_session>(conn, 33, io_context, ctx);
+
+    auto pair = make_tcp_socket_pair(io_context);
+    session->target_socket_ = std::move(pair.server);
+    ASSERT_TRUE(session->target_socket_.is_open());
+
+    session->recv_channel_.close();
+    session->on_data({0x55});
+    EXPECT_FALSE(session->target_socket_.is_open());
+}
+
 TEST(RemoteSessionTest, OnDataRunsCleanupWhenIoQueueBlocked)
 {
     asio::io_context io_context;
