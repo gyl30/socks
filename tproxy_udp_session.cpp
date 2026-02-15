@@ -258,15 +258,7 @@ void tproxy_udp_session::stop_local(const bool allow_async_stream_close)
 
 void tproxy_udp_session::on_close_local()
 {
-    auto stream = stream_;
-    auto tunnel = tunnel_.lock();
-    stream_.reset();
-    tunnel_.reset();
-
-    if (tunnel != nullptr && stream != nullptr)
-    {
-        tunnel->remove_stream(stream->id());
-    }
+    stop_local(false);
 }
 
 asio::awaitable<bool> tproxy_udp_session::negotiate_proxy_stream(
