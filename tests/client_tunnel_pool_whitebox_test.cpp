@@ -354,6 +354,33 @@ TEST(ClientTunnelPoolWhiteboxTest, ClosePendingSocketRunsWhenIoContextNotRunning
     EXPECT_FALSE(pending_socket->is_open());
 }
 
+TEST(ClientTunnelPoolWhiteboxTest, StopClosesPendingSocketWhenIoContextNotRunning)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    auto cfg = make_base_cfg();
+    cfg.reality.public_key = generate_public_key_hex();
+    auto tunnel_pool = std::make_shared<mux::client_tunnel_pool>(pool, cfg, 0);
+
+    asio::io_context tunnel_io_context;
+    auto pending_socket = std::make_shared<asio::ip::tcp::socket>(tunnel_io_context);
+    pending_socket->open(asio::ip::tcp::v4(), ec);
+    ASSERT_FALSE(ec);
+    ASSERT_TRUE(pending_socket->is_open());
+
+    tunnel_pool->pending_sockets_.resize(1);
+    tunnel_pool->pending_sockets_[0] = pending_socket;
+    tunnel_pool->tunnel_io_contexts_.resize(1, &tunnel_io_context);
+
+    tunnel_pool->stop();
+
+    EXPECT_TRUE(tunnel_pool->stop_.load(std::memory_order_acquire));
+    EXPECT_FALSE(pending_socket->is_open());
+    EXPECT_EQ(tunnel_pool->pending_sockets_[0], nullptr);
+}
+
 TEST(ClientTunnelPoolWhiteboxTest, BuildTunnelAndWaitRetryBranches)
 {
     std::error_code ec;
