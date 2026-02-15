@@ -1316,6 +1316,76 @@ TEST(TproxyClientTest, WrappedSetsockoptCoversSetupFailureBranches)
     reset_socket_wrappers();
 }
 
+TEST(TproxyClientTest, SetupFailureClosesAcceptTcpLoopAcceptor)
+{
+    reset_socket_wrappers();
+
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    mux::config cfg;
+    cfg.tproxy.enabled = true;
+    cfg.tproxy.listen_host = "127.0.0.1";
+    cfg.tproxy.tcp_port = pick_free_tcp_port();
+    cfg.tproxy.udp_port = pick_free_tcp_port();
+    cfg.tproxy.mark = 0;
+    auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
+
+    fail_setsockopt_once(SOL_SOCKET, SO_REUSEADDR, EPERM);
+    asio::co_spawn(pool.get_io_context(),
+                   [client]() -> asio::awaitable<void>
+                   {
+                       co_await client->accept_tcp_loop();
+                       co_return;
+                   },
+                   asio::detached);
+
+    std::thread runner([&pool]() { pool.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(120));
+    EXPECT_FALSE(tcp_acceptor_is_open(pool.get_io_context(), client));
+
+    client->stop();
+    pool.stop();
+    runner.join();
+    reset_socket_wrappers();
+}
+
+TEST(TproxyClientTest, SetupFailureClosesUdpLoopSocket)
+{
+    reset_socket_wrappers();
+
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    mux::config cfg;
+    cfg.tproxy.enabled = true;
+    cfg.tproxy.listen_host = "127.0.0.1";
+    cfg.tproxy.tcp_port = pick_free_tcp_port();
+    cfg.tproxy.udp_port = pick_free_tcp_port();
+    cfg.tproxy.mark = 0;
+    auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
+
+    fail_bind_once(EADDRINUSE);
+    asio::co_spawn(pool.get_io_context(),
+                   [client]() -> asio::awaitable<void>
+                   {
+                       co_await client->udp_loop();
+                       co_return;
+                   },
+                   asio::detached);
+
+    std::thread runner([&pool]() { pool.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(120));
+    EXPECT_FALSE(udp_socket_is_open(pool.get_io_context(), client));
+
+    client->stop();
+    pool.stop();
+    runner.join();
+    reset_socket_wrappers();
+}
+
 TEST(TproxyClientTest, SocketOpenFailureCoversSetupBranches)
 {
     auto run_accept_loop_once = [](const mux::config& cfg)

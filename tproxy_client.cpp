@@ -29,6 +29,18 @@ namespace mux
 namespace
 {
 
+void close_acceptor_on_setup_failure(asio::ip::tcp::acceptor& acceptor)
+{
+    std::error_code close_ec;
+    acceptor.close(close_ec);
+}
+
+void close_udp_socket_on_setup_failure(asio::ip::udp::socket& socket)
+{
+    std::error_code close_ec;
+    socket.close(close_ec);
+}
+
 std::expected<std::pair<std::string, asio::ip::address>, std::error_code> resolve_listen_address(const std::string& configured_host)
 {
     std::string listen_host;
@@ -83,16 +95,19 @@ std::expected<void, std::error_code> setup_tcp_listener(asio::ip::tcp::acceptor&
     }
     if (const auto res = setup_tcp_listener_options(acceptor, listen_addr.is_v6()); !res)
     {
+        close_acceptor_on_setup_failure(acceptor);
         return std::unexpected(res.error());
     }
     ec = acceptor.bind(ep, ec);
     if (ec)
     {
+        close_acceptor_on_setup_failure(acceptor);
         return std::unexpected(ec);
     }
     ec = acceptor.listen(asio::socket_base::max_listen_connections, ec);
     if (ec)
     {
+        close_acceptor_on_setup_failure(acceptor);
         return std::unexpected(ec);
     }
     return {};
@@ -165,10 +180,12 @@ std::expected<void, std::error_code> setup_udp_listener(asio::ip::udp::socket& s
     set_udp_reuse_option(socket);
     if (auto res = set_udp_dual_stack_if_needed(socket, is_v6); !res)
     {
+        close_udp_socket_on_setup_failure(socket);
         return std::unexpected(res.error());
     }
     if (auto res = configure_udp_transparent_options(socket, is_v6); !res)
     {
+        close_udp_socket_on_setup_failure(socket);
         return std::unexpected(res.error());
     }
     maybe_set_udp_mark(socket, mark);
@@ -176,6 +193,7 @@ std::expected<void, std::error_code> setup_udp_listener(asio::ip::udp::socket& s
     ec = socket.bind(ep, ec);
     if (ec)
     {
+        close_udp_socket_on_setup_failure(socket);
         return std::unexpected(ec);
     }
     return {};
