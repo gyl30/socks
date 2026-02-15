@@ -47,6 +47,7 @@ extern "C"
 #include "tls_cipher_suite.h"
 #include "tls_key_schedule.h"
 #include "tls_record_layer.h"
+#include "stop_dispatch.h"
 #include "client_tunnel_pool.h"
 #include "reality_fingerprint.h"
 
@@ -883,13 +884,14 @@ void client_tunnel_pool::close_pending_socket(const std::size_t index, std::shar
     auto* io_context = (index < tunnel_io_contexts_.size()) ? tunnel_io_contexts_[index] : nullptr;
     if (io_context != nullptr)
     {
-        asio::post(*io_context,
-                   [pending_socket = std::move(pending_socket)]()
-                   {
-                       std::error_code ec;
-                       pending_socket->cancel(ec);
-                       pending_socket->close(ec);
-                   });
+        detail::dispatch_cleanup_or_run_inline(
+            *io_context,
+            [pending_socket = std::move(pending_socket)]()
+            {
+                std::error_code ec;
+                pending_socket->cancel(ec);
+                pending_socket->close(ec);
+            });
         return;
     }
 
