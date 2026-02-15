@@ -81,7 +81,7 @@ tproxy_udp_session::tproxy_udp_session(asio::io_context& io_context,
     last_activity_ms_.store(now_ms(), std::memory_order_relaxed);
 }
 
-void tproxy_udp_session::start()
+bool tproxy_udp_session::start()
 {
     std::error_code ec;
     ec = direct_socket_.open(asio::ip::udp::v6(), ec);
@@ -89,7 +89,7 @@ void tproxy_udp_session::start()
     {
         LOG_CTX_WARN(ctx_, "{} udp open failed {}", log_event::kSocks, ec.message());
         close_start_failed_socket(direct_socket_, ctx_);
-        return;
+        return false;
     }
     ec = direct_socket_.set_option(asio::ip::v6_only(false), ec);
     if (ec)
@@ -108,10 +108,11 @@ void tproxy_udp_session::start()
     {
         LOG_CTX_WARN(ctx_, "{} udp bind failed {}", log_event::kSocks, ec.message());
         close_start_failed_socket(direct_socket_, ctx_);
-        return;
+        return false;
     }
 
     asio::co_spawn(io_context_, direct_read_loop_detached(shared_from_this()), asio::detached);
+    return true;
 }
 
 asio::awaitable<void> tproxy_udp_session::direct_read_loop_detached(std::shared_ptr<tproxy_udp_session> self)
@@ -375,8 +376,13 @@ asio::awaitable<bool> tproxy_udp_session::ensure_proxy_stream()
     {
         co_return false;
     }
+    if (!open_result.value())
+    {
+        LOG_CTX_WARN(ctx_, "{} udp proxy stream install failed", log_event::kSocks);
+        co_return false;
+    }
     maybe_start_proxy_reader(*open_result);
-    co_return true;
+    co_return stream_ != nullptr;
 }
 
 asio::awaitable<void> tproxy_udp_session::send_proxy(const asio::ip::udp::endpoint& dst_ep, const std::uint8_t* data, const std::size_t len)
@@ -400,6 +406,7 @@ asio::awaitable<void> tproxy_udp_session::send_proxy(const asio::ip::udp::endpoi
     auto stream = stream_;
     if (stream == nullptr)
     {
+        LOG_CTX_WARN(ctx_, "{} udp proxy stream unavailable after ensure", log_event::kSocks);
         co_return;
     }
 

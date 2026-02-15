@@ -303,7 +303,11 @@ std::shared_ptr<tproxy_udp_session> get_or_create_udp_session(
 
     const std::uint32_t sid = tunnel_pool->next_session_id();
     auto session = std::make_shared<tproxy_udp_session>(io_context, tunnel_pool, router, sender, sid, cfg, src_ep);
-    session->start();
+    if (!session->start())
+    {
+        LOG_WARN("tproxy udp session {} start failed", key);
+        return nullptr;
+    }
     sessions.emplace(key, session);
     return session;
 }

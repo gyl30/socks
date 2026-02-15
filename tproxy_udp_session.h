@@ -38,7 +38,7 @@ class tproxy_udp_session : public mux_stream_interface, public std::enable_share
                        const config& cfg,
                        asio::ip::udp::endpoint client_ep);
 
-    void start();
+    bool start();
 
     asio::awaitable<void> handle_packet(const asio::ip::udp::endpoint& dst_ep, const std::uint8_t* data, std::size_t len);
 
