@@ -59,7 +59,8 @@ namespace
 remote_udp_session::remote_udp_session(std::shared_ptr<mux_connection> connection,
                                        const std::uint32_t id,
                                        asio::io_context& io_context,
-                                       const connection_context& ctx)
+                                       const connection_context& ctx,
+                                       const config::timeout_t& timeout_cfg)
     : id_(id),
       io_context_(io_context),
       timer_(io_context_),
@@ -67,6 +68,9 @@ remote_udp_session::remote_udp_session(std::shared_ptr<mux_connection> connectio
       udp_socket_(io_context_),
       udp_resolver_(io_context_),
       connection_(std::move(connection)),
+      read_timeout_ms_(static_cast<std::uint64_t>(timeout_cfg.read) * 1000ULL),
+      write_timeout_ms_(static_cast<std::uint64_t>(timeout_cfg.write) * 1000ULL),
+      idle_timeout_ms_(static_cast<std::uint64_t>(timeout_cfg.idle) * 1000ULL),
       recv_channel_(io_context_, 128)
 {
     ctx_ = ctx;
@@ -304,11 +308,11 @@ asio::awaitable<void> remote_udp_session::watchdog()
         const auto current_ms = now_ms();
         const auto read_elapsed_ms = current_ms - last_read_time_ms_.load(std::memory_order_acquire);
         const auto write_elapsed_ms = current_ms - last_write_time_ms_.load(std::memory_order_acquire);
-        if (read_elapsed_ms > 60000ULL)
+        if (read_elapsed_ms > read_timeout_ms_)
         {
             LOG_CTX_WARN(ctx_, "{} read idle {}s", log_event::kTimeout, read_elapsed_ms / 1000ULL);
         }
-        if (write_elapsed_ms > 60000ULL)
+        if (write_elapsed_ms > write_timeout_ms_)
         {
             LOG_CTX_WARN(ctx_, "{} write idle {}s", log_event::kTimeout, write_elapsed_ms / 1000ULL);
         }
@@ -384,7 +388,7 @@ asio::awaitable<void> remote_udp_session::idle_watchdog()
         }
         const auto current_ms = now_ms();
         const auto elapsed_ms = current_ms - last_activity_time_ms_.load(std::memory_order_acquire);
-        if (elapsed_ms > 60000ULL)
+        if (elapsed_ms > idle_timeout_ms_)
         {
             LOG_CTX_WARN(ctx_, "{} udp session idle closing", log_event::kMux);
             request_stop();

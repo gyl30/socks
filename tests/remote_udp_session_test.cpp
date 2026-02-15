@@ -56,10 +56,11 @@ std::vector<std::uint8_t> make_mux_udp_packet(const std::string& host,
 
 std::shared_ptr<mux::remote_udp_session> make_session(asio::io_context& io_context,
                                                       const std::shared_ptr<mux::mock_mux_connection>& conn,
-                                                      const std::uint32_t id = 1)
+                                                      const std::uint32_t id = 1,
+                                                      const mux::config::timeout_t& timeout_cfg = {})
 {
     mux::connection_context ctx;
-    return std::make_shared<mux::remote_udp_session>(conn, id, io_context, ctx);
+    return std::make_shared<mux::remote_udp_session>(conn, id, io_context, ctx, timeout_cfg);
 }
 
 std::shared_ptr<mux::mux_tunnel_impl<asio::ip::tcp::socket>> make_manager(asio::io_context& io_context, const std::uint32_t id = 99)
@@ -590,6 +591,21 @@ TEST(RemoteUdpSessionTest, WatchdogStopsWhenCancelled)
         asio::detached);
 
     mux::test::run_awaitable_void(io_context, session->watchdog());
+}
+
+TEST(RemoteUdpSessionTest, TimeoutThresholdsUseConfigValues)
+{
+    asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    mux::config::timeout_t timeout_cfg;
+    timeout_cfg.read = 12;
+    timeout_cfg.write = 34;
+    timeout_cfg.idle = 56;
+    auto session = make_session(io_context, conn, 230, timeout_cfg);
+
+    EXPECT_EQ(session->read_timeout_ms_, 12000ULL);
+    EXPECT_EQ(session->write_timeout_ms_, 34000ULL);
+    EXPECT_EQ(session->idle_timeout_ms_, 56000ULL);
 }
 
 TEST(RemoteUdpSessionTest, IdleWatchdogStopsWhenIdleTimedOut)

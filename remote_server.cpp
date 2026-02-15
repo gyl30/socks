@@ -1209,7 +1209,7 @@ asio::awaitable<void> remote_server::handle_udp_associate_stream(const std::shar
 {
     LOG_CTX_INFO(stream_ctx, "{} stream {} type udp associate associated via tcp", log_event::kMux, stream_id);
     const auto connection = tunnel->connection();
-    const auto sess = std::make_shared<remote_udp_session>(connection, stream_id, io_context, stream_ctx);
+    const auto sess = std::make_shared<remote_udp_session>(connection, stream_id, io_context, stream_ctx, timeout_config_);
     sess->set_manager(tunnel);
     if (!tunnel->try_register_stream(stream_id, sess))
     {
