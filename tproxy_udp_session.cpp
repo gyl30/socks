@@ -147,33 +147,13 @@ asio::awaitable<void> tproxy_udp_session::handle_packet_inner(asio::ip::udp::end
 
 void tproxy_udp_session::stop()
 {
-    asio::dispatch(io_context_,
-                   [self = shared_from_this()]()
-                   {
-                       self->recv_channel_.close();
-                       auto stream = self->stream_;
-                       auto tunnel = self->tunnel_.lock();
-                       self->stream_.reset();
-                       self->tunnel_.reset();
+    if (io_context_.stopped() || io_context_.get_executor().running_in_this_thread())
+    {
+        stop_local(false);
+        return;
+    }
 
-                       if (stream != nullptr)
-                       {
-                           asio::co_spawn(
-                               self->io_context_,
-                               [tunnel, stream]() -> asio::awaitable<void>
-                               {
-                                   co_await stream->close();
-                                   if (tunnel != nullptr)
-                                   {
-                                       tunnel->remove_stream(stream->id());
-                                   }
-                               },
-                               asio::detached);
-                       }
-
-                       std::error_code ignore;
-                       ignore = self->direct_socket_.close(ignore);
-                   });
+    asio::dispatch(io_context_, [self = shared_from_this()]() { self->stop_local(true); });
 }
 
 void tproxy_udp_session::on_data(std::vector<std::uint8_t> data)
@@ -191,19 +171,13 @@ void tproxy_udp_session::on_data(std::vector<std::uint8_t> data)
 
 void tproxy_udp_session::on_close()
 {
-    asio::dispatch(io_context_,
-                   [self = shared_from_this()]()
-                   {
-                       auto stream = self->stream_;
-                       auto tunnel = self->tunnel_.lock();
-                       self->stream_.reset();
-                       self->tunnel_.reset();
+    if (io_context_.stopped() || io_context_.get_executor().running_in_this_thread())
+    {
+        on_close_local();
+        return;
+    }
 
-                       if (tunnel != nullptr && stream != nullptr)
-                       {
-                           tunnel->remove_stream(stream->id());
-                       }
-                   });
+    asio::dispatch(io_context_, [self = shared_from_this()]() { self->on_close_local(); });
 }
 
 void tproxy_udp_session::on_reset() { on_close(); }
@@ -225,6 +199,53 @@ std::uint64_t tproxy_udp_session::now_ms()
 }
 
 void tproxy_udp_session::touch() { last_activity_ms_.store(now_ms(), std::memory_order_relaxed); }
+
+void tproxy_udp_session::stop_local(const bool allow_async_stream_close)
+{
+    recv_channel_.close();
+    auto stream = stream_;
+    auto tunnel = tunnel_.lock();
+    stream_.reset();
+    tunnel_.reset();
+
+    if (stream != nullptr)
+    {
+        if (allow_async_stream_close)
+        {
+            asio::co_spawn(
+                io_context_,
+                [tunnel, stream]() -> asio::awaitable<void>
+                {
+                    co_await stream->close();
+                    if (tunnel != nullptr)
+                    {
+                        tunnel->remove_stream(stream->id());
+                    }
+                },
+                asio::detached);
+        }
+        else if (tunnel != nullptr)
+        {
+            tunnel->remove_stream(stream->id());
+        }
+    }
+
+    std::error_code ignore;
+    ignore = direct_socket_.close(ignore);
+}
+
+void tproxy_udp_session::on_close_local()
+{
+    auto stream = stream_;
+    auto tunnel = tunnel_.lock();
+    stream_.reset();
+    tunnel_.reset();
+
+    if (tunnel != nullptr && stream != nullptr)
+    {
+        tunnel->remove_stream(stream->id());
+    }
+}
 
 asio::awaitable<bool> tproxy_udp_session::negotiate_proxy_stream(
     const std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>& tunnel, const std::shared_ptr<mux_stream>& stream) const

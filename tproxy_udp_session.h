@@ -80,6 +80,8 @@ class tproxy_udp_session : public mux_stream_interface, public std::enable_share
     asio::awaitable<void> direct_read_loop();
 
     asio::awaitable<void> proxy_read_loop();
+    void stop_local(bool allow_async_stream_close);
+    void on_close_local();
 
    private:
     connection_context ctx_;
