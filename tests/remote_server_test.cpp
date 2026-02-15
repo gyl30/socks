@@ -1928,6 +1928,18 @@ TEST_F(remote_server_test, StopRunsInlineWhenIoContextStopped)
 
     auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
     server->start();
+
+    auto tunnel = std::make_shared<mux::mux_tunnel_impl<asio::ip::tcp::socket>>(
+        asio::ip::tcp::socket(pool.get_io_context()),
+        pool.get_io_context(),
+        mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()},
+        true,
+        901);
+    auto conn = tunnel->connection();
+    ASSERT_NE(conn, nullptr);
+    ASSERT_TRUE(conn->is_open());
+    server->active_tunnels_.push_back(tunnel);
+
     pool.stop();
 
     EXPECT_TRUE(server->acceptor_.is_open());
@@ -1935,6 +1947,8 @@ TEST_F(remote_server_test, StopRunsInlineWhenIoContextStopped)
 
     EXPECT_TRUE(server->stop_.load(std::memory_order_acquire));
     EXPECT_FALSE(server->acceptor_.is_open());
+    EXPECT_FALSE(conn->is_open());
+    EXPECT_TRUE(server->active_tunnels_.empty());
 }
 
 TEST_F(remote_server_test, StopRunsWhenIoQueueBlocked)
@@ -1945,6 +1959,17 @@ TEST_F(remote_server_test, StopRunsWhenIoQueueBlocked)
 
     auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
     server->start();
+
+    auto tunnel = std::make_shared<mux::mux_tunnel_impl<asio::ip::tcp::socket>>(
+        asio::ip::tcp::socket(pool.get_io_context()),
+        pool.get_io_context(),
+        mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()},
+        true,
+        902);
+    auto conn = tunnel->connection();
+    ASSERT_NE(conn, nullptr);
+    ASSERT_TRUE(conn->is_open());
+    server->active_tunnels_.push_back(tunnel);
 
     std::atomic<bool> blocker_started{false};
     std::atomic<bool> release_blocker{false};
@@ -1985,6 +2010,8 @@ TEST_F(remote_server_test, StopRunsWhenIoQueueBlocked)
     server->stop();
     EXPECT_TRUE(server->stop_.load(std::memory_order_acquire));
     EXPECT_FALSE(server->acceptor_.is_open());
+    EXPECT_FALSE(conn->is_open());
+    EXPECT_TRUE(server->active_tunnels_.empty());
 
     release_blocker.store(true, std::memory_order_release);
     pool.stop();
@@ -2003,11 +2030,24 @@ TEST_F(remote_server_test, StopRunsWhenIoContextNotRunning)
     auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
     server->start();
 
+    auto tunnel = std::make_shared<mux::mux_tunnel_impl<asio::ip::tcp::socket>>(
+        asio::ip::tcp::socket(pool.get_io_context()),
+        pool.get_io_context(),
+        mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()},
+        true,
+        903);
+    auto conn = tunnel->connection();
+    ASSERT_NE(conn, nullptr);
+    ASSERT_TRUE(conn->is_open());
+    server->active_tunnels_.push_back(tunnel);
+
     EXPECT_TRUE(server->acceptor_.is_open());
     server->stop();
 
     EXPECT_TRUE(server->stop_.load(std::memory_order_acquire));
     EXPECT_FALSE(server->acceptor_.is_open());
+    EXPECT_FALSE(conn->is_open());
+    EXPECT_TRUE(server->active_tunnels_.empty());
     pool.stop();
 }
 
