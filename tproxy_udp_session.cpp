@@ -144,14 +144,17 @@ void tproxy_udp_session::stop()
                        self->stream_.reset();
                        self->tunnel_.reset();
 
-                       if (tunnel != nullptr && stream != nullptr)
+                       if (stream != nullptr)
                        {
                            asio::co_spawn(
                                self->io_context_,
                                [tunnel, stream]() -> asio::awaitable<void>
                                {
                                    co_await stream->close();
-                                   tunnel->remove_stream(stream->id());
+                                   if (tunnel != nullptr)
+                                   {
+                                       tunnel->remove_stream(stream->id());
+                                   }
                                },
                                asio::detached);
                        }

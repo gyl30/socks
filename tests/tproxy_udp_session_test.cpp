@@ -676,6 +676,33 @@ TEST(TproxyUdpSessionTest, StopClosesProxyStreamBeforeRemovingStream)
     EXPECT_TRUE(session->tunnel_.expired());
 }
 
+TEST(TproxyUdpSessionTest, StopClosesProxyStreamWhenTunnelExpired)
+{
+    asio::io_context ctx;
+    auto router = std::make_shared<direct_router>();
+    mux::config cfg;
+    cfg.tproxy.mark = 0;
+    const asio::ip::udp::endpoint client_ep(asio::ip::make_address("127.0.0.1"), 12408);
+    auto session = std::make_shared<mux::tproxy_udp_session>(ctx, nullptr, router, nullptr, 11, cfg, client_ep);
+
+    auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx);
+    auto stream = std::make_shared<mux::mux_stream>(16, 104, "trace", mock_conn, ctx);
+
+    ON_CALL(*mock_conn, mock_send_async(testing::_, testing::_, testing::_)).WillByDefault(testing::Return(std::error_code{}));
+    EXPECT_CALL(*mock_conn, mock_send_async(16, mux::kCmdFin, std::vector<std::uint8_t>{}))
+        .WillOnce(testing::Return(std::error_code{}));
+    EXPECT_CALL(*mock_conn, remove_stream(testing::_)).Times(0);
+
+    session->stream_ = stream;
+    session->tunnel_.reset();
+    session->stop();
+    ctx.run();
+    ctx.restart();
+
+    EXPECT_EQ(session->stream_, nullptr);
+    EXPECT_TRUE(session->tunnel_.expired());
+}
+
 TEST(TproxyUdpSessionTest, ProxyStreamLifecycleCoversInstallCleanupAndReaderStart)
 {
     asio::io_context ctx;
