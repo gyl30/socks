@@ -33,6 +33,12 @@
 1. TCP/UDP 会话均有空闲检测，超时会主动关闭。
 2. 心跳与读写超时结合，保证连接不可长期占用。
 
+## 运行时控制
+
+1. `drain` 模式仅关闭入站接收，不主动中断已建立隧道，用于滚动维护窗口。
+2. `stop` 模式关闭入站并回收已建立隧道，用于完整停机。
+3. `stop` 或 `drain` 后可再次 `start` 重新打开监听端口，支持原地重启。
+
 ## 日志与审计
 
 1. 所有错误路径必须记录日志。
@@ -44,3 +50,29 @@
 1. SOCKS/MUX 失败必须返回错误码或 reset。
 2. 失败后立即回收 stream、关闭 socket、停止定时器。
 3. 严禁在运行时使用 `abort()` 终止进程。
+
+## 安全契约（稳定）
+
+1. 监控鉴权必须先于监控限流执行，未授权请求不应污染限流状态。
+2. fallback 防护按来源地址维度维护状态，限流与熔断只影响对应来源，不应跨来源串扰。
+3. 连接上限在握手前执行硬拒绝，避免被未完成握手连接占满计算资源。
+4. 握手失败、fallback 限流、路由拦截等关键拒绝路径必须暴露到监控指标中，便于告警与审计。
+
+## 代码评审待修复清单（2026-02-15）
+
+以下问题用于指导后续迭代，按优先级从高到低执行。
+
+1. `中` monitor 限流在鉴权之前执行，未授权请求会占用限流窗口。定位：`monitor_server.cpp:238`、`monitor_server.cpp:245`。目标：先鉴权再计入限流。状态：`已修复（2026-02-15）`。
+2. `中` UDP ASSOCIATE 成功 ACK 发送失败后仍继续运行会话循环。定位：`remote_udp_session.cpp:94`、`remote_udp_session.cpp:244`、`remote_udp_session.cpp:246`。目标：ACK 失败立即 stop/remove_stream/RST。状态：`已修复（2026-02-15）`。
+3. `中` `max_connections=0` 语义不一致，客户端钳制为 1，服务端按 0 直接判满。定位：`client_tunnel_pool.cpp:857`、`remote_server.cpp:1110`。目标：统一语义并补配置校验。状态：`已修复（2026-02-15）`。
+4. `低` 错误处理文档与实现风格不一致，文档描述为“全面 expected”，实现仍有 `awaitable<std::error_code>` 边界接口。定位：`doc/error_handling.md:3`、`mux_connection.h:83`、`remote_server.h:201`。目标：先统一文档口径，再逐步迁移接口。状态：`已修复（2026-02-15）`。
+5. `低` UML 文档实体陈旧，与现有实现命名不一致。定位：`doc/class.uml:11`、`doc/class.uml:70`。目标：更新为 `socks_client`/`tproxy_client`/`monitor_server` 等当前实体。状态：`已修复（2026-02-15）`。
+
+## 建议修复顺序
+
+1. 当前清单问题已全部修复，后续仅保留增量评审项。
+
+## 每步验证要求
+
+1. 编译：`cmake --build build -j15`
+2. 单元与集成：`ctest --test-dir build -j20 --output-on-failure`

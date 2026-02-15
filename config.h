@@ -12,6 +12,7 @@ namespace mux
 struct config
 {
     std::string mode = "server";
+    std::uint32_t workers = 0;
 
     struct log_t
     {
@@ -68,6 +69,9 @@ struct config
     struct limits_t
     {
         std::uint32_t max_connections = 5;
+        std::uint32_t max_connections_per_source = 0;
+        std::uint8_t source_prefix_v4 = 32;
+        std::uint8_t source_prefix_v6 = 128;
         std::uint64_t max_buffer = 10L * 1024 * 1024;
         std::uint32_t max_streams = 1024;
     } limits;
@@ -108,11 +112,16 @@ struct config
         std::string type = "tcp";
         bool strict_cert_verify = false;
         std::uint32_t replay_cache_max_entries = 100000;
-        std::string private_key = "b0c338c6353fab820a0e5d16b6fcf41ee4166940795f89d0cde8902675ce9456";
-        std::string public_key = "8d4e6ddf1479f2305b6645f045e02f9f5e400005884a8f1663ee9c51915bcc6d";
+        std::string private_key;
+        std::string public_key;
         std::string short_id;
     } reality;
 };
+
+[[nodiscard]] constexpr std::uint32_t normalize_max_connections(const std::uint32_t max_connections)
+{
+    return (max_connections == 0) ? 1U : max_connections;
+}
 
 [[nodiscard]] std::optional<config> parse_config(const std::string& filename);
 [[nodiscard]] std::string dump_config(const config& cfg);
