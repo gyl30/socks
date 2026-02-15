@@ -593,6 +593,83 @@ TEST(UdpSocksSessionTest, PrepareUdpAssociateHandlesClosedTunnelConnection)
     EXPECT_EQ(err[1], socks::kRepHostUnreach);
 }
 
+TEST(UdpSocksSessionTest, PrepareUdpAssociateSynFailureRemovesCreatedStream)
+{
+    asio::io_context ctx;
+    mux::config::timeout_t timeout_cfg;
+    auto pair = make_tcp_socket_pair(ctx);
+    ASSERT_TRUE(pair.client.is_open());
+    ASSERT_TRUE(pair.server.is_open());
+
+    auto tunnel = make_test_tunnel(ctx, 205);
+    auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx);
+    tunnel->connection_ = mock_conn;
+
+    ON_CALL(*mock_conn, id()).WillByDefault(testing::Return(205));
+    ON_CALL(*mock_conn, mock_send_async(testing::_, testing::_, testing::_)).WillByDefault(testing::Return(std::error_code{}));
+
+    EXPECT_CALL(*mock_conn, register_stream(testing::_, testing::_)).WillOnce(testing::Return(true));
+    EXPECT_CALL(*mock_conn, mock_send_async(testing::_, mux::kCmdSyn, testing::_))
+        .WillOnce(testing::Return(std::make_error_code(std::errc::broken_pipe)));
+    EXPECT_CALL(*mock_conn, mock_send_async(testing::_, mux::kCmdFin, std::vector<std::uint8_t>{}))
+        .WillOnce(testing::Return(std::error_code{}));
+    EXPECT_CALL(*mock_conn, remove_stream(testing::_)).Times(1);
+
+    auto session = std::make_shared<mux::udp_socks_session>(std::move(pair.server), ctx, tunnel, 45, timeout_cfg);
+    asio::ip::address local_addr;
+    std::uint16_t udp_bind_port = 0;
+    const auto stream = mux::test::run_awaitable(ctx, session->prepare_udp_associate(local_addr, udp_bind_port));
+    EXPECT_EQ(stream, nullptr);
+
+    std::uint8_t err[10] = {0};
+    asio::read(pair.client, asio::buffer(err));
+    EXPECT_EQ(err[0], socks::kVer);
+    EXPECT_EQ(err[1], socks::kRepGenFail);
+}
+
+TEST(UdpSocksSessionTest, PrepareUdpAssociateAckFailureRemovesCreatedStream)
+{
+    asio::io_context ctx;
+    mux::config::timeout_t timeout_cfg;
+    auto pair = make_tcp_socket_pair(ctx);
+    ASSERT_TRUE(pair.client.is_open());
+    ASSERT_TRUE(pair.server.is_open());
+
+    auto tunnel = make_test_tunnel(ctx, 206);
+    auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx);
+    tunnel->connection_ = mock_conn;
+
+    ON_CALL(*mock_conn, id()).WillByDefault(testing::Return(206));
+    ON_CALL(*mock_conn, mock_send_async(testing::_, testing::_, testing::_)).WillByDefault(testing::Return(std::error_code{}));
+
+    EXPECT_CALL(*mock_conn, mock_send_async(testing::_, mux::kCmdSyn, testing::_)).WillOnce(testing::Return(std::error_code{}));
+    EXPECT_CALL(*mock_conn, register_stream(testing::_, testing::_))
+        .WillOnce([&ctx](const std::uint32_t, std::shared_ptr<mux::mux_stream_interface> iface) -> bool
+                  {
+                      auto stream = std::dynamic_pointer_cast<mux::mux_stream>(iface);
+                      EXPECT_NE(stream, nullptr);
+                      if (stream == nullptr)
+                      {
+                          return false;
+                      }
+                      asio::post(ctx, [stream]() { stream->on_reset(); });
+                      return true;
+                  });
+    EXPECT_CALL(*mock_conn, mock_send_async(testing::_, mux::kCmdFin, std::vector<std::uint8_t>{})).Times(0);
+    EXPECT_CALL(*mock_conn, remove_stream(testing::_)).Times(1);
+
+    auto session = std::make_shared<mux::udp_socks_session>(std::move(pair.server), ctx, tunnel, 46, timeout_cfg);
+    asio::ip::address local_addr;
+    std::uint16_t udp_bind_port = 0;
+    const auto stream = mux::test::run_awaitable(ctx, session->prepare_udp_associate(local_addr, udp_bind_port));
+    EXPECT_EQ(stream, nullptr);
+
+    std::uint8_t err[10] = {0};
+    asio::read(pair.client, asio::buffer(err));
+    EXPECT_EQ(err[0], socks::kVer);
+    EXPECT_EQ(err[1], socks::kRepGenFail);
+}
+
 TEST(UdpSocksSessionTest, StartSpawnsRunAndWritesHostUnreachWhenTunnelUnavailable)
 {
     asio::io_context ctx;

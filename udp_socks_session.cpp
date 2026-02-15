@@ -116,6 +116,21 @@ bool bind_udp_socket_for_associate(asio::ip::tcp::socket& tcp_socket,
     return true;
 }
 
+asio::awaitable<void> close_and_remove_stream(const std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>& tunnel_manager,
+                                              const std::shared_ptr<mux_stream>& stream)
+{
+    if (stream == nullptr)
+    {
+        co_return;
+    }
+
+    co_await stream->close();
+    if (tunnel_manager != nullptr)
+    {
+        tunnel_manager->remove_stream(stream->id());
+    }
+}
+
 asio::awaitable<std::shared_ptr<mux_stream>> establish_udp_associate_stream(std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager,
                                                                             const connection_context& ctx)
 {
@@ -133,7 +148,7 @@ asio::awaitable<std::shared_ptr<mux_stream>> establish_udp_associate_stream(std:
     if (ec)
     {
         LOG_CTX_WARN(ctx, "{} syn failed {}", log_event::kSocks, ec.message());
-        co_await stream->close();
+        co_await close_and_remove_stream(tunnel_manager, stream);
         co_return nullptr;
     }
 
@@ -141,7 +156,7 @@ asio::awaitable<std::shared_ptr<mux_stream>> establish_udp_associate_stream(std:
     if (ack_ec)
     {
         LOG_CTX_WARN(ctx, "{} ack failed {}", log_event::kSocks, ack_ec.message());
-        co_await stream->close();
+        co_await close_and_remove_stream(tunnel_manager, stream);
         co_return nullptr;
     }
 
@@ -149,7 +164,7 @@ asio::awaitable<std::shared_ptr<mux_stream>> establish_udp_associate_stream(std:
     if (!mux_codec::decode_ack(ack_data.data(), ack_data.size(), ack_pl) || ack_pl.socks_rep != socks::kRepSuccess)
     {
         LOG_CTX_WARN(ctx, "{} ack rejected {}", log_event::kSocks, ack_pl.socks_rep);
-        co_await stream->close();
+        co_await close_and_remove_stream(tunnel_manager, stream);
         co_return nullptr;
     }
 
@@ -364,7 +379,7 @@ asio::awaitable<std::shared_ptr<mux_stream>> udp_socks_session::prepare_udp_asso
 
     if (!co_await send_udp_associate_success_reply(socket_, local_addr, udp_bind_port, ctx_))
     {
-        co_await stream->close();
+        co_await close_and_remove_stream(tunnel_manager_, stream);
         co_return nullptr;
     }
     co_return stream;
