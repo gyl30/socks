@@ -16,6 +16,7 @@
 #include <linux/netfilter_ipv4.h>
 
 #include <gtest/gtest.h>
+#include <gmock/gmock.h>
 #include <asio/co_spawn.hpp>
 #include <asio/detached.hpp>
 #include <asio/awaitable.hpp>
@@ -37,6 +38,7 @@ extern "C"
 #include "tproxy_udp_session.h"
 #include "tproxy_client.h"
 #undef private
+#include "mock_mux_connection.h"
 
 extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);
 extern "C" int __real_bind(int sockfd, const sockaddr* addr, socklen_t addrlen);
@@ -640,6 +642,36 @@ TEST(TproxyUdpSessionTest, StopAndOnCloseCoverPartialStateBranches)
     session->on_close();
     ctx.run();
     ctx.restart();
+    EXPECT_EQ(session->stream_, nullptr);
+    EXPECT_TRUE(session->tunnel_.expired());
+}
+
+TEST(TproxyUdpSessionTest, StopClosesProxyStreamBeforeRemovingStream)
+{
+    asio::io_context ctx;
+    auto router = std::make_shared<direct_router>();
+    mux::config cfg;
+    cfg.tproxy.mark = 0;
+    const asio::ip::udp::endpoint client_ep(asio::ip::make_address("127.0.0.1"), 12407);
+    auto session = std::make_shared<mux::tproxy_udp_session>(ctx, nullptr, router, nullptr, 10, cfg, client_ep);
+
+    auto tunnel = std::make_shared<mux::mux_tunnel_impl<asio::ip::tcp::socket>>(
+        asio::ip::tcp::socket(ctx), ctx, mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 103);
+    auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx);
+    tunnel->connection_ = mock_conn;
+    auto stream = std::make_shared<mux::mux_stream>(15, 103, "trace", mock_conn, ctx);
+
+    ON_CALL(*mock_conn, mock_send_async(testing::_, testing::_, testing::_)).WillByDefault(testing::Return(std::error_code{}));
+    EXPECT_CALL(*mock_conn, mock_send_async(15, mux::kCmdFin, std::vector<std::uint8_t>{}))
+        .WillOnce(testing::Return(std::error_code{}));
+    EXPECT_CALL(*mock_conn, remove_stream(15)).Times(1);
+
+    session->stream_ = stream;
+    session->tunnel_ = tunnel;
+    session->stop();
+    ctx.run();
+    ctx.restart();
+
     EXPECT_EQ(session->stream_, nullptr);
     EXPECT_TRUE(session->tunnel_.expired());
 }
