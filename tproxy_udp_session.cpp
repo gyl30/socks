@@ -222,7 +222,11 @@ void tproxy_udp_session::stop_local(const bool allow_async_stream_close)
 
     if (stream != nullptr && allow_async_stream_close)
     {
-        if (io_context_.get_executor().running_in_this_thread())
+        if (io_context_.stopped())
+        {
+            stream->on_reset();
+        }
+        else if (io_context_.get_executor().running_in_this_thread())
         {
             asio::co_spawn(
                 io_context_,
@@ -234,21 +238,15 @@ void tproxy_udp_session::stop_local(const bool allow_async_stream_close)
         }
         else
         {
-            auto close_done = std::make_shared<std::promise<void>>();
-            auto close_done_future = close_done->get_future();
+            // io_context may not be running yet. Keep close asynchronous so FIN can
+            // still be sent once the event loop starts.
             asio::co_spawn(
                 io_context_,
-                [stream, close_done]() -> asio::awaitable<void>
+                [stream]() -> asio::awaitable<void>
                 {
                     co_await stream->close();
-                    close_done->set_value();
                 },
                 asio::detached);
-
-            if (close_done_future.wait_for(detail::kStopDispatchWaitTimeout) != std::future_status::ready)
-            {
-                stream->on_reset();
-            }
         }
     }
 
