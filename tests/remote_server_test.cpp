@@ -1582,16 +1582,19 @@ TEST_F(remote_server_test, ConstructorAcceptorSetupFailureBranchesWithWrappers)
     fail_next_socket(EMFILE);
     auto open_fail_server = std::make_shared<mux::remote_server>(pool, make_server_cfg(open_fail_port, {}, "0102030405060708"));
     EXPECT_TRUE(open_fail_server->private_key_.empty());
+    EXPECT_FALSE(open_fail_server->acceptor_.is_open());
 
     const auto reuse_fail_port = pick_free_port();
     fail_next_reuse_setsockopt(EPERM);
     auto reuse_fail_server = std::make_shared<mux::remote_server>(pool, make_server_cfg(reuse_fail_port, {}, "0102030405060708"));
     EXPECT_TRUE(reuse_fail_server->private_key_.empty());
+    EXPECT_FALSE(reuse_fail_server->acceptor_.is_open());
 
     const auto listen_fail_port = pick_free_port();
     fail_next_listen(EACCES);
     auto listen_fail_server = std::make_shared<mux::remote_server>(pool, make_server_cfg(listen_fail_port, {}, "0102030405060708"));
     EXPECT_TRUE(listen_fail_server->private_key_.empty());
+    EXPECT_FALSE(listen_fail_server->acceptor_.is_open());
 }
 
 TEST_F(remote_server_test, AuthenticateClientCoversShortIdClockSkewAndReplayBranches)

@@ -184,6 +184,12 @@ asio::ip::tcp::endpoint resolve_inbound_endpoint(const config::inbound_t& inboun
 
 bool setup_server_acceptor(asio::ip::tcp::acceptor& acceptor, const asio::ip::tcp::endpoint& ep)
 {
+    auto close_on_failure = [&acceptor]()
+    {
+        std::error_code close_ec;
+        acceptor.close(close_ec);
+    };
+
     std::error_code ec;
     ec = acceptor.open(ep.protocol(), ec);
     if (ec)
@@ -195,18 +201,21 @@ bool setup_server_acceptor(asio::ip::tcp::acceptor& acceptor, const asio::ip::tc
     if (ec)
     {
         LOG_ERROR("acceptor set reuse address failed {}", ec.message());
+        close_on_failure();
         return false;
     }
     ec = acceptor.bind(ep, ec);
     if (ec)
     {
         LOG_ERROR("acceptor bind failed {}", ec.message());
+        close_on_failure();
         return false;
     }
     ec = acceptor.listen(asio::socket_base::max_listen_connections, ec);
     if (ec)
     {
         LOG_ERROR("acceptor listen failed {}", ec.message());
+        close_on_failure();
         return false;
     }
     return true;
