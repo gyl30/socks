@@ -229,7 +229,18 @@ asio::awaitable<void> remote_udp_session::start_impl(std::shared_ptr<remote_udp_
     }
     log_udp_local_endpoint();
 
-    const ack_payload ack{.socks_rep = socks::kRepSuccess, .bnd_addr = "0.0.0.0", .bnd_port = 0};
+    std::error_code local_ep_ec;
+    const auto local_ep = udp_socket_.local_endpoint(local_ep_ec);
+    if (local_ep_ec)
+    {
+        co_await handle_start_failure(conn, "udp local endpoint", local_ep_ec);
+        co_return;
+    }
+    const ack_payload ack{
+        .socks_rep = socks::kRepSuccess,
+        .bnd_addr = local_ep.address().to_string(),
+        .bnd_port = local_ep.port(),
+    };
     co_await send_ack_payload(conn, ack);
 
     co_await run_udp_session_loops();

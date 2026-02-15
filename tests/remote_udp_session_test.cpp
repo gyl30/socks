@@ -568,6 +568,9 @@ TEST(RemoteUdpSessionTest, StartImplSendsAckAndCleansUpManager)
     mux::ack_payload ack{};
     ASSERT_TRUE(mux::mux_codec::decode_ack(ack_payload.data(), ack_payload.size(), ack));
     EXPECT_EQ(ack.socks_rep, socks::kRepSuccess);
+    EXPECT_FALSE(ack.bnd_addr.empty());
+    EXPECT_NE(ack.bnd_addr, "0.0.0.0");
+    EXPECT_NE(ack.bnd_port, 0);
     EXPECT_FALSE(session->udp_socket_.is_open());
     EXPECT_FALSE(manager->connection()->has_stream(22));
 }
