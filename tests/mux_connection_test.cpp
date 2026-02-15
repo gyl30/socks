@@ -405,6 +405,29 @@ TEST_F(mux_connection_integration_test, StopRunsWhenIoContextNotRunning)
     EXPECT_EQ(conn->connection_state_.load(std::memory_order_acquire), mux_connection_state::kClosed);
 }
 
+TEST_F(mux_connection_integration_test, RemoveStreamRunsWhenIoContextNotRunning)
+{
+    config::limits_t limits_cfg;
+    limits_cfg.max_streams = 4;
+    auto conn = std::make_shared<mux_connection>(
+        asio::ip::tcp::socket(io_ctx()),
+        io_ctx(),
+        reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()},
+        true,
+        17,
+        "trace",
+        config::timeout_t{},
+        limits_cfg);
+    conn->started_.store(true, std::memory_order_release);
+    conn->connection_state_.store(mux_connection_state::kConnected, std::memory_order_release);
+
+    conn->streams_[77] = std::make_shared<simple_mock_stream>();
+    ASSERT_TRUE(conn->streams_.find(77) != conn->streams_.end());
+
+    conn->remove_stream(77);
+    EXPECT_TRUE(conn->streams_.find(77) == conn->streams_.end());
+}
+
 TEST_F(mux_connection_integration_test, StopDrainingAndInternalErrorBranches)
 {
     auto conn = std::make_shared<mux_connection>(

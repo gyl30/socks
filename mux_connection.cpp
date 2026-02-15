@@ -418,11 +418,15 @@ void mux_connection::remove_stream(const std::uint32_t id)
         return;
     }
 
-    asio::post(io_context_,
-               [self = shared_from_this(), id]()
-               {
-                   self->remove_stream_local(id);
-               });
+    detail::dispatch_cleanup_or_run_inline(
+        io_context_,
+        [weak_self = weak_from_this(), id]()
+        {
+            if (const auto self = weak_self.lock())
+            {
+                self->remove_stream_local(id);
+            }
+        });
 }
 
 asio::awaitable<void> mux_connection::start()
