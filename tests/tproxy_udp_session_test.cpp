@@ -706,6 +706,37 @@ TEST(TproxyUdpSessionTest, StopRemovesStreamWhenIoContextNotRunning)
     EXPECT_TRUE(session->tunnel_.expired());
 }
 
+TEST(TproxyUdpSessionTest, StopRemovesStreamWhenIoContextNotRunningWithStartedConnection)
+{
+    asio::io_context ctx;
+    auto router = std::make_shared<direct_router>();
+    mux::config cfg;
+    cfg.tproxy.mark = 0;
+    const asio::ip::udp::endpoint client_ep(asio::ip::make_address("127.0.0.1"), 12413);
+    auto session = std::make_shared<mux::tproxy_udp_session>(ctx, nullptr, router, nullptr, 14, cfg, client_ep);
+
+    auto tunnel = std::make_shared<mux::mux_tunnel_impl<asio::ip::tcp::socket>>(
+        asio::ip::tcp::socket(ctx), ctx, mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 107);
+    auto conn = tunnel->connection();
+    ASSERT_NE(conn, nullptr);
+
+    auto stream = std::make_shared<mux::mux_stream>(19, conn->id(), "trace", conn, ctx);
+    ASSERT_TRUE(conn->register_stream(19, stream));
+    ASSERT_TRUE(conn->streams_.find(19) != conn->streams_.end());
+
+    conn->started_.store(true, std::memory_order_release);
+    conn->connection_state_.store(mux::mux_connection_state::kConnected, std::memory_order_release);
+    ASSERT_FALSE(ctx.stopped());
+
+    session->stream_ = stream;
+    session->tunnel_ = tunnel;
+    session->stop();
+
+    EXPECT_EQ(session->stream_, nullptr);
+    EXPECT_TRUE(session->tunnel_.expired());
+    EXPECT_TRUE(conn->streams_.find(19) == conn->streams_.end());
+}
+
 TEST(TproxyUdpSessionTest, StopClosesProxyStreamBeforeRemovingStream)
 {
     asio::io_context ctx;
