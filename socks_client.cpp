@@ -32,6 +32,12 @@ void close_local_socket(asio::ip::tcp::socket& socket)
     close_ec = socket.close(close_ec);
 }
 
+void close_local_acceptor_on_setup_failure(asio::ip::tcp::acceptor& acceptor)
+{
+    std::error_code close_ec;
+    close_ec = acceptor.close(close_ec);
+}
+
 bool setup_local_acceptor(asio::ip::tcp::acceptor& acceptor,
                           const asio::ip::address& listen_addr,
                           const std::uint16_t port,
@@ -47,20 +53,27 @@ bool setup_local_acceptor(asio::ip::tcp::acceptor& acceptor,
     ec = acceptor.set_option(asio::ip::tcp::acceptor::reuse_address(true), ec);
     if (ec)
     {
+        close_local_acceptor_on_setup_failure(acceptor);
         return false;
     }
     ec = acceptor.bind(ep, ec);
     if (ec)
     {
+        close_local_acceptor_on_setup_failure(acceptor);
         return false;
     }
     const auto bound_ep = acceptor.local_endpoint(ec);
     if (ec)
     {
+        close_local_acceptor_on_setup_failure(acceptor);
         return false;
     }
     bound_port = bound_ep.port();
     ec = acceptor.listen(asio::socket_base::max_listen_connections, ec);
+    if (ec)
+    {
+        close_local_acceptor_on_setup_failure(acceptor);
+    }
     return !ec;
 }
 
