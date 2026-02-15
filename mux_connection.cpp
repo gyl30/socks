@@ -596,20 +596,14 @@ void mux_connection::update_read_statistics(const std::size_t n)
 
 std::expected<void, std::error_code> mux_connection::process_decrypted_records()
 {
-    std::error_code decrypt_ec;
-    reality_engine_.process_available_records(decrypt_ec,
-                                              [this](const std::uint8_t type, const std::span<const std::uint8_t> plaintext)
-                                              {
-                                                  if (type == reality::kContentTypeApplicationData && !plaintext.empty())
-                                                  {
-                                                      mux_dispatcher_.on_plaintext_data(plaintext);
-                                                  }
-                                              });
-    if (decrypt_ec)
-    {
-        return std::unexpected(decrypt_ec);
-    }
-    return {};
+    return reality_engine_.process_available_records(
+        [this](const std::uint8_t type, const std::span<const std::uint8_t> plaintext)
+        {
+            if (type == reality::kContentTypeApplicationData && !plaintext.empty())
+            {
+                mux_dispatcher_.on_plaintext_data(plaintext);
+            }
+        });
 }
 
 bool mux_connection::has_dispatch_failure(const std::error_code& decrypt_ec) const
