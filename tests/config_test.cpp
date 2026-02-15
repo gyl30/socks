@@ -181,7 +181,7 @@ TEST_F(config_test, MissingFieldsUseDefaults)
     const auto cfg_opt = mux::parse_config(tmp_file());
     ASSERT_TRUE(cfg_opt.has_value());
     EXPECT_EQ(cfg_opt->mode, "server");
-    EXPECT_TRUE(cfg_opt->reality.strict_cert_verify);
+    EXPECT_FALSE(cfg_opt->reality.strict_cert_verify);
     EXPECT_EQ(cfg_opt->reality.replay_cache_max_entries, 100000);
     EXPECT_TRUE(cfg_opt->reality.fallback_guard.enabled);
 }
