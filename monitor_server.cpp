@@ -1,6 +1,7 @@
 #include <array>
 #include <cctype>
 #include <charconv>
+#include <string>
 #include <string_view>
 
 #include "log.h"
@@ -54,56 +55,166 @@ void append_metric_line(std::string& out, const std::string_view metric_name, co
     out.push_back('\n');
 }
 
-bool is_token_value_terminator(const char c)
+std::string_view trim_left(std::string_view value)
 {
-    return c == '&' || c == ' ' || c == '\r' || c == '\n' || c == '\t';
-}
-
-bool is_token_key_prefix_boundary(const std::string& req, const std::size_t token_key_pos)
-{
-    if (token_key_pos == 0)
+    while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front())))
     {
-        return true;
+        value.remove_prefix(1);
     }
-    const char prev = req[token_key_pos - 1];
-    return prev == '?' || prev == '&' || std::isspace(static_cast<unsigned char>(prev));
+    return value;
 }
 
-bool has_exact_token_parameter(const std::string& req, const std::string& token)
+std::string_view trim(std::string_view value)
+{
+    value = trim_left(value);
+    while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back())))
+    {
+        value.remove_suffix(1);
+    }
+    return value;
+}
+
+struct parsed_monitor_request
+{
+    bool valid = false;
+    std::string_view query;
+};
+
+std::string url_decode(std::string_view value)
+{
+    auto hex_to_int = [](const char c) -> int
+    {
+        if (c >= '0' && c <= '9')
+        {
+            return c - '0';
+        }
+        if (c >= 'a' && c <= 'f')
+        {
+            return c - 'a' + 10;
+        }
+        if (c >= 'A' && c <= 'F')
+        {
+            return c - 'A' + 10;
+        }
+        return -1;
+    };
+
+    std::string decoded;
+    decoded.reserve(value.size());
+    for (std::size_t i = 0; i < value.size(); ++i)
+    {
+        const char c = value[i];
+        if (c == '%' && i + 2 < value.size())
+        {
+            const int hi = hex_to_int(value[i + 1]);
+            const int lo = hex_to_int(value[i + 2]);
+            if (hi >= 0 && lo >= 0)
+            {
+                decoded.push_back(static_cast<char>((hi << 4) | lo));
+                i += 2;
+                continue;
+            }
+        }
+        if (c == '+')
+        {
+            decoded.push_back(' ');
+            continue;
+        }
+        decoded.push_back(c);
+    }
+    return decoded;
+}
+
+parsed_monitor_request parse_monitor_request(const std::string& request)
+{
+    const std::size_t line_end_pos = request.find('\n');
+    std::string_view line(request.data(), line_end_pos == std::string::npos ? request.size() : line_end_pos);
+    if (!line.empty() && line.back() == '\r')
+    {
+        line.remove_suffix(1);
+    }
+    line = trim(line);
+    if (line.empty())
+    {
+        return {};
+    }
+
+    std::string_view target = line;
+    const std::size_t first_space = line.find(' ');
+    if (first_space != std::string::npos)
+    {
+        const std::string_view method = line.substr(0, first_space);
+        if (method != "GET")
+        {
+            return {};
+        }
+
+        const std::string_view after_method = trim_left(line.substr(first_space + 1));
+        const std::size_t target_end = after_method.find(' ');
+        if (target_end == std::string::npos)
+        {
+            return {};
+        }
+        target = after_method.substr(0, target_end);
+    }
+    if (target.empty())
+    {
+        return {};
+    }
+
+    const std::size_t query_pos = target.find('?');
+    const std::string_view path = target.substr(0, query_pos);
+    if (path != "metrics" && path != "/metrics")
+    {
+        return {};
+    }
+
+    parsed_monitor_request parsed;
+    parsed.valid = true;
+    if (query_pos != std::string::npos && query_pos + 1 < target.size())
+    {
+        parsed.query = target.substr(query_pos + 1);
+    }
+    return parsed;
+}
+
+bool has_exact_token_parameter(const std::string_view query, const std::string& token)
 {
     if (token.empty())
     {
         return true;
     }
-    constexpr std::string_view key = "token=";
 
     std::size_t pos = 0;
-    while (true)
+    while (pos <= query.size())
     {
-        pos = req.find(key, pos);
-        if (pos == std::string::npos)
-        {
-            return false;
-        }
-
-        if (!is_token_key_prefix_boundary(req, pos))
-        {
-            pos += key.size();
-            continue;
-        }
-
-        const std::size_t value_begin = pos + key.size();
-        std::size_t value_end = value_begin;
-        while (value_end < req.size() && !is_token_value_terminator(req[value_end]))
-        {
-            value_end++;
-        }
-        if (value_end > value_begin && req.compare(value_begin, value_end - value_begin, token) == 0)
+        const std::size_t amp = query.find('&', pos);
+        const std::size_t pair_end = amp == std::string::npos ? query.size() : amp;
+        const std::string_view pair = query.substr(pos, pair_end - pos);
+        const std::size_t eq = pair.find('=');
+        const std::string_view key = pair.substr(0, eq);
+        const std::string_view value = eq == std::string::npos ? std::string_view{} : pair.substr(eq + 1);
+        if (key == "token" && url_decode(value) == token)
         {
             return true;
         }
-        pos = value_end;
+        if (amp == std::string::npos)
+        {
+            break;
+        }
+        pos = amp + 1;
     }
+    return false;
+}
+
+bool is_authorized_monitor_request(const std::string& request, const std::string& token)
+{
+    const auto parsed = parse_monitor_request(request);
+    if (!parsed.valid)
+    {
+        return false;
+    }
+    return has_exact_token_parameter(parsed.query, token);
 }
 
 }    // namespace
@@ -130,15 +241,19 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
                                             close_socket();
                                             return;
                                         }
-                                        if (!token_.empty())
+                                        const std::string req(buffer_.data(), length);
+                                        if (!is_authorized_monitor_request(req, token_))
                                         {
-                                            const std::string req(buffer_.data(), length);
-                                            if (!has_exact_token_parameter(req, token_))
+                                            if (!token_.empty())
                                             {
                                                 LOG_WARN("monitor auth failed");
-                                                close_socket();
-                                                return;
                                             }
+                                            else
+                                            {
+                                                LOG_WARN("monitor invalid request");
+                                            }
+                                            close_socket();
+                                            return;
                                         }
                                         write_stats();
                                     }
