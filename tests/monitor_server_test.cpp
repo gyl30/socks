@@ -409,6 +409,19 @@ TEST(MonitorServerTest, StopClosesAcceptorAndRejectsNewConnections)
     }
 }
 
+TEST(MonitorServerTest, StopRunsInlineWhenIoContextStopped)
+{
+    const auto port = pick_free_port();
+    asio::io_context ioc;
+    auto server = std::make_shared<monitor_server>(ioc, port, std::string(), 10);
+    ASSERT_NE(server, nullptr);
+    ASSERT_TRUE(server->acceptor_.is_open());
+
+    ioc.stop();
+    server->stop();
+    EXPECT_FALSE(server->acceptor_.is_open());
+}
+
 TEST(MonitorServerTest, StopLogsAcceptorCloseFailureBranch)
 {
     const auto port = pick_free_port();

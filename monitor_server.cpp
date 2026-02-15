@@ -285,17 +285,25 @@ void monitor_server::start()
 void monitor_server::stop()
 {
     stop_.store(true, std::memory_order_release);
-    asio::dispatch(
-        acceptor_.get_executor(),
-        [self = shared_from_this()]()
-        {
-            std::error_code ec;
-            ec = self->acceptor_.close(ec);
-            if (ec && ec != asio::error::bad_descriptor)
-            {
-                LOG_WARN("monitor acceptor close failed {}", ec.message());
-            }
-        });
+
+    auto& io_context = static_cast<asio::io_context&>(acceptor_.get_executor().context());
+    if (io_context.stopped() || io_context.get_executor().running_in_this_thread())
+    {
+        stop_local();
+        return;
+    }
+
+    asio::dispatch(acceptor_.get_executor(), [self = shared_from_this()]() { self->stop_local(); });
+}
+
+void monitor_server::stop_local()
+{
+    std::error_code ec;
+    ec = acceptor_.close(ec);
+    if (ec && ec != asio::error::bad_descriptor)
+    {
+        LOG_WARN("monitor acceptor close failed {}", ec.message());
+    }
 }
 
 void monitor_server::do_accept()
