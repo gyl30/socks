@@ -27,6 +27,7 @@ class monitor_server : public std::enable_shared_from_this<monitor_server>
     void stop();
 
    private:
+    void stop_local();
     void do_accept();
 
     asio::ip::tcp::acceptor acceptor_;
