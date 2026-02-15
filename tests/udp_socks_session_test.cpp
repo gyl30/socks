@@ -3,11 +3,11 @@
 #include <memory>
 #include <vector>
 #include <array>
-#include <optional>
 #include <cstdint>
 #include <system_error>
 #include <atomic>
 #include <cerrno>
+#include <cstring>
 
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
@@ -51,6 +51,7 @@ std::atomic<bool> g_fail_setsockopt_once{false};
 std::atomic<int> g_fail_setsockopt_level{-1};
 std::atomic<int> g_fail_setsockopt_optname{-1};
 std::atomic<int> g_fail_setsockopt_errno{EPERM};
+std::atomic<bool> g_mock_getsockname_ipv6_any_once{false};
 std::atomic<int> g_fail_getsockname_on_call{0};
 std::atomic<int> g_fail_getsockname_errno{ENOTSOCK};
 std::atomic<int> g_getsockname_call_count{0};
@@ -80,6 +81,11 @@ void fail_getsockname_on_call(const int nth_call, const int err)
     g_getsockname_call_count.store(0, std::memory_order_release);
     g_fail_getsockname_errno.store(err, std::memory_order_release);
     g_fail_getsockname_on_call.store(nth_call, std::memory_order_release);
+}
+
+void mock_next_getsockname_ipv6_any()
+{
+    g_mock_getsockname_ipv6_any_once.store(true, std::memory_order_release);
 }
 
 extern "C" int __real_close(int fd);
@@ -121,6 +127,21 @@ extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void*
 
 extern "C" int __wrap_getsockname(int sockfd, sockaddr* addr, socklen_t* addrlen)
 {
+    if (g_mock_getsockname_ipv6_any_once.exchange(false, std::memory_order_acq_rel))
+    {
+        if (addr == nullptr || addrlen == nullptr || *addrlen < sizeof(sockaddr_in6))
+        {
+            errno = EINVAL;
+            return -1;
+        }
+        sockaddr_in6 mock_addr{};
+        mock_addr.sin6_family = AF_INET6;
+        mock_addr.sin6_addr = in6addr_any;
+        std::memcpy(addr, &mock_addr, sizeof(mock_addr));
+        *addrlen = sizeof(mock_addr);
+        return 0;
+    }
+
     const int target_call = g_fail_getsockname_on_call.load(std::memory_order_acquire);
     if (target_call > 0)
     {
@@ -158,48 +179,6 @@ tcp_socket_pair make_tcp_socket_pair(asio::io_context& ctx)
     {
         return tcp_socket_pair{asio::ip::tcp::socket(ctx), asio::ip::tcp::socket(ctx)};
     }
-    return tcp_socket_pair{std::move(client), std::move(server)};
-}
-
-std::optional<tcp_socket_pair> make_tcp_socket_pair_v6(asio::io_context& ctx)
-{
-    std::error_code ec;
-    asio::ip::tcp::acceptor acceptor(ctx);
-    acceptor.open(asio::ip::tcp::v6(), ec);
-    if (ec)
-    {
-        return std::nullopt;
-    }
-    acceptor.set_option(asio::ip::v6_only(true), ec);
-    if (ec)
-    {
-        return std::nullopt;
-    }
-    acceptor.bind({asio::ip::make_address("::1"), 0}, ec);
-    if (ec)
-    {
-        return std::nullopt;
-    }
-    acceptor.listen(asio::socket_base::max_listen_connections, ec);
-    if (ec)
-    {
-        return std::nullopt;
-    }
-
-    asio::ip::tcp::socket client(ctx);
-    client.connect(acceptor.local_endpoint(ec), ec);
-    if (ec)
-    {
-        return std::nullopt;
-    }
-
-    asio::ip::tcp::socket server(ctx);
-    acceptor.accept(server, ec);
-    if (ec)
-    {
-        return std::nullopt;
-    }
-
     return tcp_socket_pair{std::move(client), std::move(server)};
 }
 
@@ -544,16 +523,12 @@ TEST(UdpSocksSessionTest, PrepareUdpAssociateHandlesIpv6V6OnlyOptionFailure)
 #ifdef IPV6_V6ONLY
     asio::io_context ctx;
     mux::config::timeout_t timeout_cfg;
-    auto pair_opt = make_tcp_socket_pair_v6(ctx);
-    if (!pair_opt.has_value())
-    {
-        GTEST_SKIP() << "IPv6 loopback unavailable";
-    }
-    auto pair = std::move(*pair_opt);
+    auto pair = make_tcp_socket_pair(ctx);
     ASSERT_TRUE(pair.client.is_open());
     ASSERT_TRUE(pair.server.is_open());
 
     auto session = std::make_shared<mux::udp_socks_session>(std::move(pair.server), ctx, nullptr, 41, timeout_cfg);
+    mock_next_getsockname_ipv6_any();
     fail_next_setsockopt(IPPROTO_IPV6, IPV6_V6ONLY, EPERM);
 
     asio::ip::address local_addr;
