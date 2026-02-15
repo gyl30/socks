@@ -359,6 +359,7 @@ TEST(TcpSocksSessionTest, RunReturnsNotAllowedWhenRouteBlocked)
     asio::read(pair.client, asio::buffer(err));
     EXPECT_EQ(err[0], socks::kVer);
     EXPECT_EQ(err[1], socks::kRepNotAllowed);
+    EXPECT_FALSE(session->socket_.is_open());
 }
 
 TEST(TcpSocksSessionTest, RunReturnsHostUnreachWhenDirectConnectFails)
@@ -374,6 +375,7 @@ TEST(TcpSocksSessionTest, RunReturnsHostUnreachWhenDirectConnectFails)
     asio::read(pair.client, asio::buffer(err));
     EXPECT_EQ(err[0], socks::kVer);
     EXPECT_EQ(err[1], socks::kRepHostUnreach);
+    EXPECT_FALSE(session->socket_.is_open());
 }
 
 TEST(TcpSocksSessionTest, StartSpawnsRunAndReturnsErrorCodeForBlockedRoute)
@@ -392,6 +394,7 @@ TEST(TcpSocksSessionTest, StartSpawnsRunAndReturnsErrorCodeForBlockedRoute)
     asio::read(pair.client, asio::buffer(err));
     EXPECT_EQ(err[0], socks::kVer);
     EXPECT_EQ(err[1], socks::kRepNotAllowed);
+    EXPECT_FALSE(session->socket_.is_open());
 }
 
 TEST(TcpSocksSessionTest, StartSpawnsRunAndReturnsHostUnreachForProxyWithoutTunnel)
@@ -409,6 +412,7 @@ TEST(TcpSocksSessionTest, StartSpawnsRunAndReturnsHostUnreachForProxyWithoutTunn
     asio::read(pair.client, asio::buffer(err));
     EXPECT_EQ(err[0], socks::kVer);
     EXPECT_EQ(err[1], socks::kRepHostUnreach);
+    EXPECT_FALSE(session->socket_.is_open());
 }
 
 TEST(TcpSocksSessionTest, CloseClientSocketHandlesOpenAndClosedSockets)
@@ -664,6 +668,7 @@ TEST(TcpSocksSessionTest, RunReturnsHostUnreachWhenProxyTunnelUnavailable)
     asio::read(pair.client, asio::buffer(err));
     EXPECT_EQ(err[0], socks::kVer);
     EXPECT_EQ(err[1], socks::kRepHostUnreach);
+    EXPECT_FALSE(session->socket_.is_open());
 }
 
 TEST(TcpSocksSessionTest, RunProxyPathRepliesSuccessWhenAckAccepted)
