@@ -740,13 +740,22 @@ void tproxy_client::stop()
     LOG_INFO("tproxy client stopping closing resources");
     stop_.store(true, std::memory_order_release);
 
-    asio::dispatch(io_context_,
-                   [self = shared_from_this()]()
-                   {
-                       close_tproxy_sockets(self->tcp_acceptor_, self->udp_socket_);
-                       auto sessions = extract_udp_sessions(self->udp_sessions_);
-                       stop_udp_sessions(sessions);
-                   });
+    if (io_context_.stopped() || io_context_.get_executor().running_in_this_thread())
+    {
+        close_tproxy_sockets(tcp_acceptor_, udp_socket_);
+        auto sessions = extract_udp_sessions(udp_sessions_);
+        stop_udp_sessions(sessions);
+    }
+    else
+    {
+        asio::dispatch(io_context_,
+                       [self = shared_from_this()]()
+                       {
+                           close_tproxy_sockets(self->tcp_acceptor_, self->udp_socket_);
+                           auto sessions = extract_udp_sessions(self->udp_sessions_);
+                           stop_udp_sessions(sessions);
+                       });
+    }
 
     tunnel_pool_->stop();
 }
