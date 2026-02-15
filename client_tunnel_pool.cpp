@@ -1333,7 +1333,7 @@ asio::awaitable<std::expected<std::pair<std::vector<std::uint8_t>, std::vector<s
         auto& stats = statistics::instance();
         stats.inc_cert_verify_failures();
         stats.inc_handshake_failure_by_sni(statistics::handshake_failure_reason::kCertVerify, sni);
-        LOG_ERROR("server certificate verify signature required");
+        LOG_ERROR("server certificate verify signature required possible cert key mismatch");
         co_return std::unexpected(std::make_error_code(std::errc::permission_denied));
     }
     if (!strict_cert_verify && !validation_state.cert_verify_signature_checked)

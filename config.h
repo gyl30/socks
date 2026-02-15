@@ -106,7 +106,7 @@ struct config
         std::string fingerprint = "random";
         std::string dest;
         std::string type = "tcp";
-        bool strict_cert_verify = true;
+        bool strict_cert_verify = false;
         std::uint32_t replay_cache_max_entries = 100000;
         std::string private_key = "b0c338c6353fab820a0e5d16b6fcf41ee4166940795f89d0cde8902675ce9456";
         std::string public_key = "8d4e6ddf1479f2305b6645f045e02f9f5e400005884a8f1663ee9c51915bcc6d";

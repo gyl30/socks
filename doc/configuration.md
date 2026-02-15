@@ -40,7 +40,8 @@
   - 可选值：`random`、`chrome`、`firefox`、`ios`、`android`（分别映射到 `chrome_120` / `firefox_120` / `ios_14` / `android_11_okhttp`）。
 - `reality.dest`：回落目标（格式 `host:port`）。
 - `reality.type`：回落网络类型（默认 `tcp`）。
-- `reality.strict_cert_verify`：是否严格校验证书签名（默认 `true`，生产应保持开启）。
+- `reality.strict_cert_verify`：是否严格校验证书签名（默认 `false`）。
+  - 仅当服务端证书公钥与 `CertificateVerify` 签名密钥一致时可开启；使用真实站点 fallback 证书时通常不满足该条件。
 - `reality.replay_cache_max_entries`：重放缓存最大条目数（默认 `100000`，用于控制窗口内内存占用）。
 - `reality.private_key` / `reality.public_key`：REALITY 密钥对。
 - `reality.short_id`：短 ID。
