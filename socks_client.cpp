@@ -303,6 +303,13 @@ void stop_sessions(const std::vector<std::shared_ptr<socks_session>>& sessions)
     }
 }
 
+void stop_local_resources(asio::ip::tcp::acceptor& acceptor, std::vector<std::weak_ptr<socks_session>>& sessions)
+{
+    close_acceptor_on_stop(acceptor);
+    auto sessions_to_stop = collect_sessions_to_stop(sessions);
+    stop_sessions(sessions_to_stop);
+}
+
 }    // namespace
 
 socks_client::socks_client(io_context_pool& pool, const config& cfg)
@@ -352,13 +359,14 @@ void socks_client::stop()
     LOG_INFO("client stopping closing resources");
     stop_.store(true, std::memory_order_release);
 
-    asio::dispatch(io_context_,
-                   [self = shared_from_this()]()
-                   {
-                       close_acceptor_on_stop(self->acceptor_);
-                       auto sessions_to_stop = collect_sessions_to_stop(self->sessions_);
-                       stop_sessions(sessions_to_stop);
-                   });
+    if (io_context_.stopped() || io_context_.get_executor().running_in_this_thread())
+    {
+        stop_local_resources(acceptor_, sessions_);
+    }
+    else
+    {
+        asio::dispatch(io_context_, [self = shared_from_this()]() { stop_local_resources(self->acceptor_, self->sessions_); });
+    }
 
     tunnel_pool_->stop();
 }
