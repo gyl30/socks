@@ -54,22 +54,46 @@ asio::awaitable<void> write_socks_error_reply(asio::ip::tcp::socket& socket, con
     co_await asio::async_write(socket, asio::buffer(err), asio::as_tuple(asio::use_awaitable));
 }
 
+void close_udp_socket_on_prepare_failure(asio::ip::udp::socket& udp_socket, const connection_context& ctx)
+{
+    std::error_code close_ec;
+    udp_socket.close(close_ec);
+    if (close_ec && close_ec != asio::error::bad_descriptor)
+    {
+        LOG_CTX_WARN(ctx, "{} close udp socket failed {}", log_event::kSocks, close_ec.message());
+    }
+}
+
 bool open_and_bind_udp_socket(asio::ip::udp::socket& udp_socket, const asio::ip::address& local_addr, const connection_context& ctx)
 {
     const auto udp_protocol = local_addr.is_v6() ? asio::ip::udp::v6() : asio::ip::udp::v4();
     std::error_code ec;
+    const char* failed_step = nullptr;
     ec = udp_socket.open(udp_protocol, ec);
+    if (ec)
+    {
+        failed_step = "open";
+    }
     if (!ec && local_addr.is_v6())
     {
         ec = udp_socket.set_option(asio::ip::v6_only(false), ec);
+        if (ec)
+        {
+            failed_step = "set v6 only";
+        }
     }
     if (!ec)
     {
         ec = udp_socket.bind(asio::ip::udp::endpoint(local_addr, 0), ec);
+        if (ec)
+        {
+            failed_step = "bind";
+        }
     }
     if (ec)
     {
-        LOG_CTX_ERROR(ctx, "{} bind failed {}", log_event::kSocks, ec.message());
+        LOG_CTX_ERROR(ctx, "{} udp {} failed {}", log_event::kSocks, failed_step, ec.message());
+        close_udp_socket_on_prepare_failure(udp_socket, ctx);
         return false;
     }
     return true;
@@ -82,6 +106,7 @@ bool query_udp_bind_port(asio::ip::udp::socket& udp_socket, const connection_con
     if (ec)
     {
         LOG_CTX_ERROR(ctx, "{} query udp endpoint failed {}", log_event::kSocks, ec.message());
+        close_udp_socket_on_prepare_failure(udp_socket, ctx);
         return false;
     }
     udp_bind_port = udp_local_ep.port();

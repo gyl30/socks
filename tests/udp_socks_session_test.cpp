@@ -513,6 +513,8 @@ TEST(UdpSocksSessionTest, PrepareUdpAssociateHandlesUdpLocalEndpointFailure)
     std::uint16_t udp_bind_port = 0;
     const auto stream = mux::test::run_awaitable(ctx, session->prepare_udp_associate(local_addr, udp_bind_port));
     EXPECT_EQ(stream, nullptr);
+    EXPECT_TRUE(session->closed_.load(std::memory_order_acquire));
+    EXPECT_FALSE(session->udp_socket_.is_open());
 
     std::uint8_t err[10] = {0};
     asio::read(pair.client, asio::buffer(err));
@@ -537,6 +539,8 @@ TEST(UdpSocksSessionTest, PrepareUdpAssociateHandlesIpv6V6OnlyOptionFailure)
     std::uint16_t udp_bind_port = 0;
     const auto stream = mux::test::run_awaitable(ctx, session->prepare_udp_associate(local_addr, udp_bind_port));
     EXPECT_EQ(stream, nullptr);
+    EXPECT_TRUE(session->closed_.load(std::memory_order_acquire));
+    EXPECT_FALSE(session->udp_socket_.is_open());
 
     std::uint8_t err[10] = {0};
     asio::read(pair.client, asio::buffer(err));
