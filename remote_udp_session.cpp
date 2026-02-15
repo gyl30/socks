@@ -96,6 +96,8 @@ asio::awaitable<void> remote_udp_session::handle_start_failure(const std::shared
     LOG_CTX_ERROR(ctx_, "{} {} failed {}", log_event::kMux, step, ec.message());
     const ack_payload ack{.socks_rep = socks::kRepGenFail, .bnd_addr = "", .bnd_port = 0};
     co_await send_ack_payload(conn, ack);
+    request_stop();
+    close_socket();
     if (auto manager = manager_.lock())
     {
         manager->remove_stream(id_);

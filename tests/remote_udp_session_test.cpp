@@ -98,6 +98,7 @@ TEST(RemoteUdpSessionTest, SetupUdpSocketAlreadyOpenTriggersFailureAckAndReset)
 
     const bool ok = mux::test::run_awaitable(io_context, session->setup_udp_socket(conn));
     EXPECT_FALSE(ok);
+    EXPECT_FALSE(session->udp_socket_.is_open());
 
     mux::ack_payload ack{};
     ASSERT_TRUE(mux::mux_codec::decode_ack(ack_payload.data(), ack_payload.size(), ack));
