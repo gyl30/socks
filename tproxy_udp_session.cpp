@@ -213,26 +213,20 @@ void tproxy_udp_session::stop_local(const bool allow_async_stream_close)
     stream_.reset();
     tunnel_.reset();
 
-    if (stream != nullptr)
+    if (stream != nullptr && tunnel != nullptr)
     {
-        if (allow_async_stream_close)
-        {
-            asio::co_spawn(
-                io_context_,
-                [tunnel, stream]() -> asio::awaitable<void>
-                {
-                    co_await stream->close();
-                    if (tunnel != nullptr)
-                    {
-                        tunnel->remove_stream(stream->id());
-                    }
-                },
-                asio::detached);
-        }
-        else if (tunnel != nullptr)
-        {
-            tunnel->remove_stream(stream->id());
-        }
+        tunnel->remove_stream(stream->id());
+    }
+
+    if (stream != nullptr && allow_async_stream_close)
+    {
+        asio::co_spawn(
+            io_context_,
+            [stream]() -> asio::awaitable<void>
+            {
+                co_await stream->close();
+            },
+            asio::detached);
     }
 
     std::error_code ignore;
