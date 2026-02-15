@@ -407,6 +407,61 @@ TEST_F(mux_connection_integration_test, OffThreadSyncQueryTimeoutDoesNotMutateAf
     EXPECT_TRUE(conn->streams_.find(201) == conn->streams_.end());
 }
 
+TEST_F(mux_connection_integration_test, OffThreadTryRegisterTimeoutDoesNotMutateAfterStopAndRestart)
+{
+    auto conn = std::make_shared<mux_connection>(
+        asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 19);
+    conn->started_.store(true, std::memory_order_release);
+    conn->connection_state_.store(mux_connection_state::kConnected, std::memory_order_release);
+
+    auto guard = asio::make_work_guard(io_ctx());
+    std::thread io_thread([&]() { io_ctx().run(); });
+
+    std::promise<void> blocker_started;
+    auto blocker_started_future = blocker_started.get_future();
+    std::atomic<bool> release_blocker{false};
+    asio::post(io_ctx(),
+               [&blocker_started, &release_blocker]()
+               {
+                   blocker_started.set_value();
+                   while (!release_blocker.load(std::memory_order_acquire))
+                   {
+                       std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                   }
+               });
+    EXPECT_EQ(blocker_started_future.wait_for(std::chrono::seconds(1)), std::future_status::ready);
+
+    auto stream = std::make_shared<simple_mock_stream>();
+    bool try_register_ok = true;
+    std::promise<void> caller_done;
+    auto caller_done_future = caller_done.get_future();
+    std::thread caller(
+        [&]()
+        {
+            try_register_ok = conn->try_register_stream(202, stream);
+            caller_done.set_value();
+        });
+
+    EXPECT_EQ(caller_done_future.wait_for(std::chrono::seconds(1)), std::future_status::ready);
+    io_ctx().stop();
+    release_blocker.store(true, std::memory_order_release);
+
+    if (caller.joinable())
+    {
+        caller.join();
+    }
+    if (io_thread.joinable())
+    {
+        io_thread.join();
+    }
+    EXPECT_FALSE(try_register_ok);
+    EXPECT_TRUE(conn->streams_.find(202) == conn->streams_.end());
+
+    io_ctx().restart();
+    io_ctx().poll();
+    EXPECT_TRUE(conn->streams_.find(202) == conn->streams_.end());
+}
+
 TEST_F(mux_connection_integration_test, StoppedIoContextUsesInlineQueryPaths)
 {
     config::limits_t limits_cfg;
