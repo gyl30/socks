@@ -339,6 +339,25 @@ TEST(RemoteUdpSessionTest, OnDataDispatchesPayload)
     EXPECT_EQ(data[1], 0x20);
 }
 
+TEST(RemoteUdpSessionTest, OnDataRunsStopWhenIoContextStopped)
+{
+    asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    auto session = make_session(io_context, conn, 215);
+    ASSERT_TRUE(mux::test::run_awaitable(io_context, session->setup_udp_socket(conn)));
+
+    session->recv_channel_.close();
+
+    session->timer_.expires_after(std::chrono::seconds(30));
+    session->timer_.async_wait([](const std::error_code&) {});
+
+    io_context.stop();
+    session->on_data(std::vector<std::uint8_t>{0x10});
+
+    EXPECT_EQ(session->timer_.cancel(), 0U);
+    session->close_socket();
+}
+
 TEST(RemoteUdpSessionTest, OnDataRunsStopWhenIoQueueBlocked)
 {
     asio::io_context io_context;
