@@ -1,4 +1,3 @@
-#include <chrono>
 #include <memory>
 #include <string>
 #include <thread>
@@ -70,36 +69,67 @@ static int parse_config_from_file(const std::string& file, mux::config& cfg)
     return 0;
 }
 
-runtime_services start_runtime_services(mux::io_context_pool& pool, const mux::config& cfg)
+bool start_runtime_services(mux::io_context_pool& pool, const mux::config& cfg, runtime_services& services)
 {
-    runtime_services services;
     if (cfg.monitor.enabled)
     {
         services.monitor = std::make_shared<mux::monitor_server>(
             pool.get_io_context(), cfg.monitor.port, cfg.monitor.token, cfg.monitor.min_interval_ms);
         services.monitor->start();
+        if (!services.monitor->running())
+        {
+            LOG_ERROR("monitor server start failed");
+            return false;
+        }
     }
 
     if (cfg.mode == "server")
     {
         services.server = std::make_shared<mux::remote_server>(pool, cfg);
         services.server->start();
-        return services;
+        if (!services.server->running())
+        {
+            LOG_ERROR("remote server start failed");
+            return false;
+        }
+        return true;
+    }
+
+    const bool has_socks_inbound = cfg.socks.enabled;
+#ifdef __linux__
+    const bool has_tproxy_inbound = cfg.tproxy.enabled;
+#else
+    const bool has_tproxy_inbound = false;
+#endif
+    if (!has_socks_inbound && !has_tproxy_inbound)
+    {
+        LOG_ERROR("no client inbound enabled");
+        return false;
     }
 
     if (cfg.socks.enabled)
     {
         services.socks = std::make_shared<mux::socks_client>(pool, cfg);
         services.socks->start();
+        if (!services.socks->running())
+        {
+            LOG_ERROR("socks client start failed");
+            return false;
+        }
     }
 #ifdef __linux__
     if (cfg.tproxy.enabled)
     {
         services.tproxy = std::make_shared<mux::tproxy_client>(pool, cfg);
         services.tproxy->start();
+        if (!services.tproxy->running())
+        {
+            LOG_ERROR("tproxy client start failed");
+            return false;
+        }
     }
 #endif
-    return services;
+    return true;
 }
 
 bool register_signal(asio::signal_set& signals, const int signal, const char* signal_name)
@@ -137,8 +167,13 @@ void stop_runtime_services(mux::io_context_pool& pool, const runtime_services& s
     pool.shutdown();
 }
 
-std::uint32_t resolve_worker_threads()
+std::uint32_t resolve_worker_threads(const mux::config& cfg)
 {
+    if (cfg.workers > 0)
+    {
+        return cfg.workers;
+    }
+
     const auto threads_count = std::thread::hardware_concurrency();
     if (threads_count > 0)
     {
@@ -188,7 +223,7 @@ int run_with_config(const char* prog, const std::string& config_path)
     set_level(cfg.log.level);
     mux::statistics::instance().start_time();
 
-    mux::io_context_pool pool(resolve_worker_threads());
+    mux::io_context_pool pool(resolve_worker_threads(cfg));
 
     if (!is_supported_runtime_mode(cfg.mode))
     {
@@ -197,7 +232,13 @@ int run_with_config(const char* prog, const std::string& config_path)
         return 1;
     }
 
-    const auto services = start_runtime_services(pool, cfg);
+    runtime_services services;
+    if (!start_runtime_services(pool, cfg, services))
+    {
+        stop_runtime_services(pool, services);
+        shutdown_log();
+        return 1;
+    }
     asio::signal_set signals(pool.get_io_context());
     if (!register_shutdown_signals(signals, pool, services))
     {
@@ -208,7 +249,6 @@ int run_with_config(const char* prog, const std::string& config_path)
 
     pool.run();
     LOG_INFO("{} {} shutdown", prog, cfg.mode);
-    std::this_thread::sleep_for(std::chrono::seconds(1));
     shutdown_log();
     return 0;
 }

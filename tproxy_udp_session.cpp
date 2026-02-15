@@ -83,11 +83,13 @@ tproxy_udp_session::tproxy_udp_session(asio::io_context& io_context,
 
 bool tproxy_udp_session::start()
 {
+    terminated_.store(false, std::memory_order_release);
     std::error_code ec;
     ec = direct_socket_.open(asio::ip::udp::v6(), ec);
     if (ec)
     {
         LOG_CTX_WARN(ctx_, "{} udp open failed {}", log_event::kSocks, ec.message());
+        terminated_.store(true, std::memory_order_release);
         close_start_failed_socket(direct_socket_, ctx_);
         return false;
     }
@@ -107,6 +109,7 @@ bool tproxy_udp_session::start()
     if (ec)
     {
         LOG_CTX_WARN(ctx_, "{} udp bind failed {}", log_event::kSocks, ec.message());
+        terminated_.store(true, std::memory_order_release);
         close_start_failed_socket(direct_socket_, ctx_);
         return false;
     }
@@ -129,6 +132,10 @@ asio::awaitable<void> tproxy_udp_session::handle_packet(const asio::ip::udp::end
 
 asio::awaitable<void> tproxy_udp_session::handle_packet_inner(asio::ip::udp::endpoint dst_ep, std::vector<std::uint8_t> data)
 {
+    if (terminated_.load(std::memory_order_acquire))
+    {
+        co_return;
+    }
     touch();
     const auto host = dst_ep.address().to_string();
     const auto route = co_await router_->decide_ip(ctx_, host, dst_ep.address());
@@ -210,6 +217,7 @@ void tproxy_udp_session::touch() { last_activity_ms_.store(now_ms(), std::memory
 
 void tproxy_udp_session::stop_local(const bool allow_async_stream_close)
 {
+    terminated_.store(true, std::memory_order_release);
     recv_channel_.close();
     auto stream = stream_;
     auto tunnel = tunnel_.lock();
