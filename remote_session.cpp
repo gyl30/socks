@@ -12,6 +12,7 @@
 #include "protocol.h"
 #include "mux_codec.h"
 #include "log_context.h"
+#include "stop_dispatch.h"
 #include "remote_session.h"
 
 namespace mux
@@ -279,22 +280,28 @@ void remote_session::on_data(std::vector<std::uint8_t> data)
 
 void remote_session::on_close()
 {
-    if (io_context_.stopped() || io_context_.get_executor().running_in_this_thread())
-    {
-        close_from_fin();
-        return;
-    }
-    asio::dispatch(io_context_, [self = shared_from_this()]() { self->close_from_fin(); });
+    detail::dispatch_cleanup_or_run_inline(
+        io_context_,
+        [weak_self = weak_from_this()]()
+        {
+            if (const auto self = weak_self.lock())
+            {
+                self->close_from_fin();
+            }
+        });
 }
 
 void remote_session::on_reset()
 {
-    if (io_context_.stopped() || io_context_.get_executor().running_in_this_thread())
-    {
-        close_from_reset();
-        return;
-    }
-    asio::dispatch(io_context_, [self = shared_from_this()]() { self->close_from_reset(); });
+    detail::dispatch_cleanup_or_run_inline(
+        io_context_,
+        [weak_self = weak_from_this()]()
+        {
+            if (const auto self = weak_self.lock())
+            {
+                self->close_from_reset();
+            }
+        });
 }
 
 void remote_session::close_from_fin()

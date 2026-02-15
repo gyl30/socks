@@ -16,6 +16,7 @@
 #include "log.h"
 #include "config.h"
 #include "router.h"
+#include "stop_dispatch.h"
 #include "socks_client.h"
 #include "socks_session.h"
 
@@ -359,14 +360,15 @@ void socks_client::stop()
     LOG_INFO("client stopping closing resources");
     stop_.store(true, std::memory_order_release);
 
-    if (io_context_.stopped() || io_context_.get_executor().running_in_this_thread())
-    {
-        stop_local_resources(acceptor_, sessions_);
-    }
-    else
-    {
-        asio::dispatch(io_context_, [self = shared_from_this()]() { stop_local_resources(self->acceptor_, self->sessions_); });
-    }
+    detail::dispatch_cleanup_or_run_inline(
+        io_context_,
+        [weak_self = weak_from_this()]()
+        {
+            if (const auto self = weak_self.lock())
+            {
+                stop_local_resources(self->acceptor_, self->sessions_);
+            }
+        });
 
     tunnel_pool_->stop();
 }

@@ -46,6 +46,7 @@ extern "C"
 #include "log_context.h"
 #include "mux_protocol.h"
 #include "reality_auth.h"
+#include "stop_dispatch.h"
 #include "tls_record_validation.h"
 #include "remote_server.h"
 #include "reality_engine.h"
@@ -871,13 +872,15 @@ void remote_server::stop()
     stop_.store(true, std::memory_order_release);
     LOG_INFO("remote server stopping");
 
-    if (io_context_.stopped() || io_context_.get_executor().running_in_this_thread())
-    {
-        stop_local();
-        return;
-    }
-
-    asio::dispatch(io_context_, [self = shared_from_this()]() { self->stop_local(); });
+    detail::dispatch_cleanup_or_run_inline(
+        io_context_,
+        [weak_self = weak_from_this()]()
+        {
+            if (const auto self = weak_self.lock())
+            {
+                self->stop_local();
+            }
+        });
 }
 
 void remote_server::stop_local()

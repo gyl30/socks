@@ -20,6 +20,7 @@
 #include "mux_codec.h"
 #include "log_context.h"
 #include "mux_protocol.h"
+#include "stop_dispatch.h"
 #include "remote_udp_session.h"
 
 namespace mux
@@ -267,12 +268,15 @@ void remote_udp_session::close_socket()
 
 void remote_udp_session::on_close()
 {
-    if (io_context_.stopped() || io_context_.get_executor().running_in_this_thread())
-    {
-        request_stop();
-        return;
-    }
-    asio::dispatch(io_context_, [self = shared_from_this()]() { self->request_stop(); });
+    detail::dispatch_cleanup_or_run_inline(
+        io_context_,
+        [weak_self = weak_from_this()]()
+        {
+            if (const auto self = weak_self.lock())
+            {
+                self->request_stop();
+            }
+        });
 }
 
 void remote_udp_session::on_reset() { on_close(); }

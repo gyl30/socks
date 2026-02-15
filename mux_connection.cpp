@@ -36,6 +36,7 @@ extern "C"
 #include "mux_protocol.h"
 #include "reality_core.h"
 #include "mux_stream.h"
+#include "stop_dispatch.h"
 #include "mux_connection.h"
 
 namespace mux
@@ -495,7 +496,15 @@ void mux_connection::stop()
         return;
     }
 
-    asio::dispatch(io_context_, [self = shared_from_this()]() { self->stop_impl(); });
+    detail::dispatch_cleanup_or_run_inline(
+        io_context_,
+        [weak_self = weak_from_this()]()
+        {
+            if (const auto self = weak_self.lock())
+            {
+                self->stop_impl();
+            }
+        });
 }
 
 void mux_connection::stop_impl()

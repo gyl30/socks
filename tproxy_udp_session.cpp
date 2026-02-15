@@ -20,6 +20,7 @@
 #include "net_utils.h"
 #include "mux_stream.h"
 #include "mux_protocol.h"
+#include "stop_dispatch.h"
 #include "tproxy_udp_session.h"
 
 namespace mux
@@ -147,13 +148,15 @@ asio::awaitable<void> tproxy_udp_session::handle_packet_inner(asio::ip::udp::end
 
 void tproxy_udp_session::stop()
 {
-    if (io_context_.stopped() || io_context_.get_executor().running_in_this_thread())
-    {
-        stop_local(false);
-        return;
-    }
-
-    asio::dispatch(io_context_, [self = shared_from_this()]() { self->stop_local(true); });
+    detail::dispatch_cleanup_or_run_inline(
+        io_context_,
+        [weak_self = weak_from_this()]()
+        {
+            if (const auto self = weak_self.lock())
+            {
+                self->stop_local(true);
+            }
+        });
 }
 
 void tproxy_udp_session::on_data(std::vector<std::uint8_t> data)
@@ -171,13 +174,15 @@ void tproxy_udp_session::on_data(std::vector<std::uint8_t> data)
 
 void tproxy_udp_session::on_close()
 {
-    if (io_context_.stopped() || io_context_.get_executor().running_in_this_thread())
-    {
-        on_close_local();
-        return;
-    }
-
-    asio::dispatch(io_context_, [self = shared_from_this()]() { self->on_close_local(); });
+    detail::dispatch_cleanup_or_run_inline(
+        io_context_,
+        [weak_self = weak_from_this()]()
+        {
+            if (const auto self = weak_self.lock())
+            {
+                self->on_close_local();
+            }
+        });
 }
 
 void tproxy_udp_session::on_reset() { on_close(); }

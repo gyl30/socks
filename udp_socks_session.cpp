@@ -5,7 +5,6 @@
 #include <utility>
 #include <system_error>
 
-#include <asio/post.hpp>
 #include <asio/error.hpp>
 #include <asio/write.hpp>
 #include <asio/buffer.hpp>
@@ -23,6 +22,7 @@
 #include "mux_tunnel.h"
 #include "log_context.h"
 #include "mux_protocol.h"
+#include "stop_dispatch.h"
 #include "udp_socks_session.h"
 
 namespace mux
@@ -362,14 +362,15 @@ void udp_socks_session::on_close()
         return;
     }
 
-    if (io_context_.stopped() || io_context_.get_executor().running_in_this_thread())
-    {
-        close_impl();
-        return;
-    }
-
-    const auto self = shared_from_this();
-    asio::post(io_context_, [self]() { self->close_impl(); });
+    detail::dispatch_cleanup_or_run_inline(
+        io_context_,
+        [weak_self = weak_from_this()]()
+        {
+            if (const auto self = weak_self.lock())
+            {
+                self->close_impl();
+            }
+        });
 }
 
 void udp_socks_session::close_impl()
