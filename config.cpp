@@ -80,6 +80,7 @@ std::optional<config> parse_config(const std::string& filename)
     {
         return {};
     }
+    cfg.limits.max_connections = normalize_max_connections(cfg.limits.max_connections);
     return cfg;
 }
 

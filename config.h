@@ -114,6 +114,11 @@ struct config
     } reality;
 };
 
+[[nodiscard]] constexpr std::uint32_t normalize_max_connections(const std::uint32_t max_connections)
+{
+    return (max_connections == 0) ? 1U : max_connections;
+}
+
 [[nodiscard]] std::optional<config> parse_config(const std::string& filename);
 [[nodiscard]] std::string dump_config(const config& cfg);
 [[nodiscard]] std::string dump_default_config();

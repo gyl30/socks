@@ -799,6 +799,13 @@ remote_server::remote_server(io_context_pool& pool, const config& cfg)
       limits_config_(cfg.limits),
       heartbeat_config_(cfg.heartbeat)
 {
+    const auto normalized_max_connections = normalize_max_connections(limits_config_.max_connections);
+    if (normalized_max_connections != limits_config_.max_connections)
+    {
+        LOG_WARN("max connections is 0 using 1");
+    }
+    limits_config_.max_connections = normalized_max_connections;
+
     const auto ep = resolve_inbound_endpoint(cfg.inbound);
     if (!setup_server_acceptor(acceptor_, ep))
     {

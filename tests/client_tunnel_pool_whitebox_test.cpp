@@ -306,6 +306,25 @@ TEST(ClientTunnelPoolWhiteboxTest, ConfigValidationAndStartGuardBranches)
     EXPECT_TRUE(invalid_fingerprint_pool->stop_.load(std::memory_order_acquire));
 }
 
+TEST(ClientTunnelPoolWhiteboxTest, StartNormalizesZeroMaxConnections)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    auto cfg = make_base_cfg();
+    cfg.reality.public_key = generate_public_key_hex();
+    cfg.limits.max_connections = 0;
+    auto tunnel_pool = std::make_shared<mux::client_tunnel_pool>(pool, cfg, 0);
+
+    tunnel_pool->start();
+    EXPECT_EQ(tunnel_pool->limits_config_.max_connections, 1U);
+    EXPECT_EQ(tunnel_pool->tunnel_pool_.size(), 1U);
+    EXPECT_EQ(tunnel_pool->pending_sockets_.size(), 1U);
+    EXPECT_EQ(tunnel_pool->tunnel_io_contexts_.size(), 1U);
+    tunnel_pool->stop();
+}
+
 TEST(ClientTunnelPoolWhiteboxTest, SelectAndIndexGuardBranches)
 {
     std::error_code ec;

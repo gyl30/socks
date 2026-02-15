@@ -29,7 +29,7 @@
 
 ## 限制与保护
 
-- `limits.max_connections`：服务端隧道最大并发数。
+- `limits.max_connections`：服务端隧道最大并发数，`0` 会在加载与运行时归一化为 `1`。
 - `limits.max_streams`：单连接 stream 最大数量。
 - `limits.max_buffer`：mux dispatcher 最大缓冲区。
 

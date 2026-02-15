@@ -853,11 +853,12 @@ void client_tunnel_pool::start()
     }
 
     LOG_INFO("client pool starting target {} port {} with {} connections", remote_host_, remote_port_, limits_config_.max_connections);
-
-    if (limits_config_.max_connections == 0)
+    const auto normalized_max_connections = normalize_max_connections(limits_config_.max_connections);
+    if (normalized_max_connections != limits_config_.max_connections)
     {
-        limits_config_.max_connections = 1;
+        LOG_WARN("max connections is 0 using 1");
     }
+    limits_config_.max_connections = normalized_max_connections;
     tunnel_pool_.resize(limits_config_.max_connections);
     pending_sockets_.resize(limits_config_.max_connections);
     tunnel_io_contexts_.resize(limits_config_.max_connections, nullptr);
