@@ -359,6 +359,7 @@ asio::awaitable<std::shared_ptr<mux_stream>> udp_socks_session::prepare_udp_asso
     if (!bind_udp_socket_for_associate(socket_, udp_socket_, ctx_, local_addr, udp_bind_port))
     {
         co_await write_socks_error_reply(socket_, socks::kRepGenFail);
+        on_close();
         co_return nullptr;
     }
 
@@ -380,6 +381,7 @@ asio::awaitable<std::shared_ptr<mux_stream>> udp_socks_session::prepare_udp_asso
     if (!co_await send_udp_associate_success_reply(socket_, local_addr, udp_bind_port, ctx_))
     {
         co_await close_and_remove_stream(tunnel_manager_, stream);
+        on_close();
         co_return nullptr;
     }
     co_return stream;
