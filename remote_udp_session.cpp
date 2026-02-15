@@ -267,6 +267,11 @@ void remote_udp_session::close_socket()
 
 void remote_udp_session::on_close()
 {
+    if (io_context_.stopped() || io_context_.get_executor().running_in_this_thread())
+    {
+        request_stop();
+        return;
+    }
     asio::dispatch(io_context_, [self = shared_from_this()]() { self->request_stop(); });
 }
 
