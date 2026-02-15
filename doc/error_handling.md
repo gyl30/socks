@@ -72,16 +72,16 @@ if (auto cfg = parse_config(...); cfg)
 }
 ```
 
-### 4. 异常 (Scope 限制)
+### 4. 异常
 
-仅在以下场景容许使用异常：
-- `reflect.h` 内部的 JSON 序列化/反序列化（由最外层捕获）。
-- 极少数不可恢复的初始化错误（如 `std::bad_alloc`）。
-- 禁止在核心业务逻辑流中使用异常进行控制流跳转。
+项目代码中禁止使用异常。
+- 禁止新增 `throw` / `try` / `catch`。
+- 错误统一通过 `std::expected`、`std::optional` 或显式状态值返回。
+- 反序列化失败必须通过返回值上报，不得依赖异常捕获。
 
 ## 规范要点
 
-1.  **一致性**：新代码必须使用 `std::expected`，禁止添加新的 `std::error_code&` 输出参数。
+1.  **一致性**：新代码必须使用 `std::expected`，禁止添加新的 `std::error_code&` 输出参数，也禁止使用异常。
 2.  **错误传播**：使用 `return std::unexpected(ec)` 传播错误。
 3.  **nodiscard**：所有返回 `std::expected` 的函数均应视为隐含 `[[nodiscard]]`（C++23 标准特性或编译器警告支持）。
 4.  **资源管理**：利用 RAII（如 `scoped_exit`）确保出错时资源正确释放。

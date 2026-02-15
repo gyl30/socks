@@ -831,18 +831,7 @@ void remote_server::set_certificate(std::string sni,
 {
     if (!started_.load(std::memory_order_acquire) || io_context_.stopped() || io_context_.get_executor().running_in_this_thread())
     {
-        try
-        {
-            cert_manager_.set_certificate(sni, std::move(cert_msg), std::move(fp), trace_id);
-        }
-        catch (const std::exception& ex)
-        {
-            LOG_WARN("set certificate inline apply failed sni {} error {}", sni, ex.what());
-        }
-        catch (...)
-        {
-            LOG_WARN("set certificate inline apply failed sni {} unknown", sni);
-        }
+        cert_manager_.set_certificate(sni, std::move(cert_msg), std::move(fp), trace_id);
         return;
     }
 
@@ -852,32 +841,13 @@ void remote_server::set_certificate(std::string sni,
     asio::post(io_context_,
                [this, sni = std::move(sni), cert_msg = std::move(cert_msg), fp = std::move(fp), trace_id, done]() mutable
                {
-                   try
-                   {
-                       cert_manager_.set_certificate(sni, std::move(cert_msg), std::move(fp), trace_id);
-                       done->set_value();
-                   }
-                   catch (...)
-                   {
-                       done->set_exception(std::current_exception());
-                   }
+                   cert_manager_.set_certificate(sni, std::move(cert_msg), std::move(fp), trace_id);
+                   done->set_value();
                });
     if (done_future.wait_for(kSetCertificateWaitTimeout) != std::future_status::ready)
     {
         LOG_WARN("set certificate async wait timed out {}ms sni {}", kSetCertificateWaitTimeout.count(), sni_for_log);
         return;
-    }
-    try
-    {
-        done_future.get();
-    }
-    catch (const std::exception& ex)
-    {
-        LOG_WARN("set certificate async apply failed sni {} error {}", sni_for_log, ex.what());
-    }
-    catch (...)
-    {
-        LOG_WARN("set certificate async apply failed sni {} unknown", sni_for_log);
     }
 }
 

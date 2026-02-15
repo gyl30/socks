@@ -1,7 +1,6 @@
 #include <span>
 #include <atomic>
 #include <chrono>
-#include <exception>
 #include <future>
 #include <memory>
 #include <random>
@@ -111,19 +110,7 @@ bool run_sync_bool_query(asio::io_context& io_context, const std::uint32_t cid, 
     }
     if (io_context.get_executor().running_in_this_thread())
     {
-        try
-        {
-            return std::forward<Fn>(fn)();
-        }
-        catch (const std::exception& ex)
-        {
-            LOG_WARN("mux {} sync query {} threw {}", cid, query_name, ex.what());
-        }
-        catch (...)
-        {
-            LOG_WARN("mux {} sync query {} threw unknown", cid, query_name);
-        }
-        return false;
+        return std::forward<Fn>(fn)();
     }
 
     auto started = std::make_shared<std::atomic<bool>>(false);
@@ -136,21 +123,16 @@ bool run_sync_bool_query(asio::io_context& io_context, const std::uint32_t cid, 
         {
             if (cancelled->load(std::memory_order_acquire))
             {
+                promise.set_value(false);
                 return;
             }
             started->store(true, std::memory_order_release);
             if (cancelled->load(std::memory_order_acquire))
             {
+                promise.set_value(false);
                 return;
             }
-            try
-            {
-                promise.set_value(fn());
-            }
-            catch (...)
-            {
-                promise.set_exception(std::current_exception());
-            }
+            promise.set_value(fn());
         });
 
     if (future.wait_for(kSyncQueryWaitTimeout) != std::future_status::ready)
@@ -168,19 +150,7 @@ bool run_sync_bool_query(asio::io_context& io_context, const std::uint32_t cid, 
         }
     }
 
-    try
-    {
-        return future.get();
-    }
-    catch (const std::exception& ex)
-    {
-        LOG_WARN("mux {} sync query {} threw {}", cid, query_name, ex.what());
-    }
-    catch (...)
-    {
-        LOG_WARN("mux {} sync query {} threw unknown", cid, query_name);
-    }
-    return false;
+    return future.get();
 }
 
 template <typename Fn>
@@ -192,26 +162,13 @@ bool run_sync_void_query(asio::io_context& io_context, const std::uint32_t cid, 
     }
     if (io_context.get_executor().running_in_this_thread())
     {
-        try
-        {
-            std::forward<Fn>(fn)();
-            return true;
-        }
-        catch (const std::exception& ex)
-        {
-            LOG_WARN("mux {} sync query {} threw {}", cid, query_name, ex.what());
-            return false;
-        }
-        catch (...)
-        {
-            LOG_WARN("mux {} sync query {} threw unknown", cid, query_name);
-            return false;
-        }
+        std::forward<Fn>(fn)();
+        return true;
     }
 
     auto started = std::make_shared<std::atomic<bool>>(false);
     auto cancelled = std::make_shared<std::atomic<bool>>(false);
-    std::promise<void> promise;
+    std::promise<bool> promise;
     auto future = promise.get_future();
     asio::post(
         io_context,
@@ -219,22 +176,17 @@ bool run_sync_void_query(asio::io_context& io_context, const std::uint32_t cid, 
         {
             if (cancelled->load(std::memory_order_acquire))
             {
+                promise.set_value(false);
                 return;
             }
             started->store(true, std::memory_order_release);
             if (cancelled->load(std::memory_order_acquire))
             {
+                promise.set_value(false);
                 return;
             }
-            try
-            {
-                fn();
-                promise.set_value();
-            }
-            catch (...)
-            {
-                promise.set_exception(std::current_exception());
-            }
+            fn();
+            promise.set_value(true);
         });
 
     if (future.wait_for(kSyncQueryWaitTimeout) != std::future_status::ready)
@@ -252,20 +204,7 @@ bool run_sync_void_query(asio::io_context& io_context, const std::uint32_t cid, 
         }
     }
 
-    try
-    {
-        future.get();
-        return true;
-    }
-    catch (const std::exception& ex)
-    {
-        LOG_WARN("mux {} sync query {} threw {}", cid, query_name, ex.what());
-    }
-    catch (...)
-    {
-        LOG_WARN("mux {} sync query {} threw unknown", cid, query_name);
-    }
-    return false;
+    return future.get();
 }
 
 asio::awaitable<void> wait_draining_delay(asio::steady_timer& timer, const std::uint32_t delay_seconds, const std::uint32_t cid)
