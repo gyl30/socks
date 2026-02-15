@@ -392,8 +392,8 @@ asio::awaitable<void> udp_socks_session::finalize_udp_associate(const std::share
     on_close();
     if (stream != nullptr)
     {
-        tunnel_manager_->remove_stream(stream->id());
         co_await stream->close();
+        tunnel_manager_->remove_stream(stream->id());
     }
 }
 

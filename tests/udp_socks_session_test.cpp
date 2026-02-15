@@ -776,9 +776,12 @@ TEST(UdpSocksSessionTest, PrepareAndFinalizeUdpAssociateSuccess)
                       asio::post(ctx, [stream, ack_data]() { stream->on_data(ack_data); });
                       return true;
                   });
-    EXPECT_CALL(*mock_conn, remove_stream(testing::_)).Times(1);
+    testing::Sequence cleanup_seq;
     EXPECT_CALL(*mock_conn, mock_send_async(testing::_, mux::kCmdFin, std::vector<std::uint8_t>{}))
+        .InSequence(cleanup_seq)
         .WillOnce(testing::Return(std::error_code{}));
+    EXPECT_CALL(*mock_conn, remove_stream(testing::_))
+        .InSequence(cleanup_seq);
 
     auto session = std::make_shared<mux::udp_socks_session>(std::move(pair.server), ctx, tunnel, 38, timeout_cfg);
     asio::ip::address local_addr;
