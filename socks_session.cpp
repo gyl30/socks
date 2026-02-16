@@ -469,6 +469,17 @@ asio::awaitable<socks_session::request_info> socks_session::read_request_target(
         co_return make_invalid_request(cmd);
     }
 
+    if (cmd == socks::kCmdConnect && host.empty())
+    {
+        LOG_WARN("socks session {} request empty host", sid_);
+        co_return co_await reject_request(cmd, socks::kRepGenFail);
+    }
+    if (cmd == socks::kCmdConnect && port == 0)
+    {
+        LOG_WARN("socks session {} request invalid port 0", sid_);
+        co_return co_await reject_request(cmd, socks::kRepGenFail);
+    }
+
     LOG_INFO("socks session {} request {} {}", sid_, host, port);
     co_return request_info{.ok = true, .host = host, .port = port, .cmd = cmd};
 }
