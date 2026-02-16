@@ -1094,6 +1094,56 @@ void remote_server::append_active_tunnel(const tunnel_ptr_t& tunnel)
     }
 }
 
+void remote_server::track_connection_socket(const std::shared_ptr<asio::ip::tcp::socket>& socket)
+{
+    if (socket == nullptr)
+    {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(tracked_connection_socket_mu_);
+    tracked_connection_sockets_[socket.get()] = socket;
+}
+
+void remote_server::untrack_connection_socket(const std::shared_ptr<asio::ip::tcp::socket>& socket)
+{
+    if (socket == nullptr)
+    {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(tracked_connection_socket_mu_);
+    tracked_connection_sockets_.erase(socket.get());
+}
+
+std::vector<std::shared_ptr<asio::ip::tcp::socket>> remote_server::snapshot_tracked_connection_sockets()
+{
+    std::vector<std::shared_ptr<asio::ip::tcp::socket>> sockets;
+    std::lock_guard<std::mutex> lock(tracked_connection_socket_mu_);
+    for (auto it = tracked_connection_sockets_.begin(); it != tracked_connection_sockets_.end();)
+    {
+        const auto socket = it->second.lock();
+        if (socket == nullptr)
+        {
+            it = tracked_connection_sockets_.erase(it);
+            continue;
+        }
+        sockets.push_back(socket);
+        ++it;
+    }
+    return sockets;
+}
+
+std::size_t remote_server::close_tracked_connection_sockets()
+{
+    auto sockets = snapshot_tracked_connection_sockets();
+    for (const auto& socket : sockets)
+    {
+        close_socket_quietly(socket);
+    }
+    return sockets.size();
+}
+
 void remote_server::stop_local(const bool close_tunnels)
 {
     started_.store(false, std::memory_order_release);
@@ -1103,6 +1153,12 @@ void remote_server::stop_local(const bool close_tunnels)
     if (close_ec && close_ec != asio::error::bad_descriptor)
     {
         LOG_WARN("acceptor close failed {}", close_ec.message());
+    }
+
+    const auto closed_connection_sockets = close_tracked_connection_sockets();
+    if (closed_connection_sockets > 0)
+    {
+        LOG_INFO("closed {} in-flight sockets", closed_connection_sockets);
     }
 
     if (!close_tunnels)
@@ -1154,6 +1210,7 @@ asio::awaitable<void> remote_server::accept_loop()
             close_socket_quietly(s);
             continue;
         }
+        track_connection_socket(s);
         asio::co_spawn(
             io_context_,
             [self = shared_from_this(), s, conn_id, source_key]() { return self->handle(s, conn_id, source_key); },
@@ -1235,6 +1292,12 @@ asio::awaitable<void> remote_server::handle(std::shared_ptr<asio::ip::tcp::socke
         {
             self->release_connection_slot(source_key);
         });
+    [[maybe_unused]] const std::shared_ptr<void> tracked_socket_guard(
+        nullptr,
+        [self = shared_from_this(), s](void*) mutable
+        {
+            self->untrack_connection_socket(s);
+        });
 
     auto ctx = build_connection_context(s, conn_id);
     LOG_CTX_INFO(ctx, "{} accepted {}", log_event::kConnInit, ctx.connection_info());
@@ -1262,6 +1325,7 @@ asio::awaitable<void> remote_server::handle(std::shared_ptr<asio::ip::tcp::socke
     }
 
     auto tunnel = create_tunnel(s, sh_res, app_keys.c_app_keys, app_keys.s_app_keys, conn_id, ctx);
+    untrack_connection_socket(s);
     install_syn_callback(tunnel, ctx);
 
     co_await tunnel->run();

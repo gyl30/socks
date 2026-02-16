@@ -94,6 +94,10 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     [[nodiscard]] std::size_t active_tunnel_count() const;
     [[nodiscard]] std::shared_ptr<tunnel_list_t> detach_active_tunnels();
     void append_active_tunnel(const tunnel_ptr_t& tunnel);
+    void track_connection_socket(const std::shared_ptr<asio::ip::tcp::socket>& socket);
+    void untrack_connection_socket(const std::shared_ptr<asio::ip::tcp::socket>& socket);
+    [[nodiscard]] std::vector<std::shared_ptr<asio::ip::tcp::socket>> snapshot_tracked_connection_sockets();
+    [[nodiscard]] std::size_t close_tracked_connection_sockets();
 
     asio::awaitable<void> accept_loop();
 
@@ -280,6 +284,8 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     std::atomic<std::uint32_t> active_connection_slots_{0};
     std::mutex connection_slot_mu_;
     std::unordered_map<std::string, std::uint32_t> active_source_connection_slots_;
+    std::mutex tracked_connection_socket_mu_;
+    std::unordered_map<asio::ip::tcp::socket*, std::weak_ptr<asio::ip::tcp::socket>> tracked_connection_sockets_;
     std::shared_ptr<tunnel_list_t> active_tunnels_ = std::make_shared<tunnel_list_t>();
     config::limits_t limits_config_;
     config::heartbeat_t heartbeat_config_;

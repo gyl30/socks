@@ -2187,6 +2187,76 @@ TEST_F(remote_server_test, StopCoversAcceptorCloseFailureBranch)
     runner.join();
 }
 
+TEST_F(remote_server_test, StopClosesInFlightHandshakeConnections)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+    std::thread runner([&pool]() { pool.run(); });
+
+    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
+    ASSERT_TRUE(start_server_until_listening(server));
+    const auto listen_port = server->listen_port();
+    ASSERT_NE(listen_port, 0);
+
+    asio::io_context client_io_context;
+    asio::ip::tcp::socket client_socket(client_io_context);
+    client_socket.connect(asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), listen_port), ec);
+    ASSERT_FALSE(ec);
+
+    const std::array<std::uint8_t, 5> partial_client_hello = {0x16, 0x03, 0x03, 0x00, 0x20};
+    asio::write(client_socket, asio::buffer(partial_client_hello), ec);
+    ASSERT_FALSE(ec);
+
+    const auto tracked_non_empty = wait_for_condition(
+        [&server]()
+        {
+            std::lock_guard<std::mutex> lock(server->tracked_connection_socket_mu_);
+            return !server->tracked_connection_sockets_.empty();
+        });
+    EXPECT_TRUE(tracked_non_empty);
+
+    server->stop();
+
+    const auto tracked_cleared = wait_for_condition(
+        [&server]()
+        {
+            std::lock_guard<std::mutex> lock(server->tracked_connection_socket_mu_);
+            return server->tracked_connection_sockets_.empty();
+        });
+    EXPECT_TRUE(tracked_cleared);
+
+    const auto slots_released = wait_for_condition(
+        [&server]()
+        {
+            return server->active_connection_slots_.load(std::memory_order_acquire) == 0;
+        });
+    EXPECT_TRUE(slots_released);
+
+    client_socket.non_blocking(true, ec);
+    ASSERT_FALSE(ec);
+    const auto peer_closed = wait_for_condition(
+        [&client_socket]()
+        {
+            std::array<std::uint8_t, 1> buf = {0};
+            std::error_code read_ec;
+            (void)client_socket.read_some(asio::buffer(buf), read_ec);
+            if (read_ec == asio::error::would_block || read_ec == asio::error::try_again)
+            {
+                return false;
+            }
+            return read_ec == asio::error::eof || read_ec == asio::error::connection_reset || read_ec == asio::error::operation_aborted;
+        });
+    EXPECT_TRUE(peer_closed);
+
+    client_socket.close(ec);
+    pool.stop();
+    if (runner.joinable())
+    {
+        runner.join();
+    }
+}
+
 TEST_F(remote_server_test, StopRunsInlineWhenIoContextStopped)
 {
     std::error_code ec;
