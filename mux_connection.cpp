@@ -269,53 +269,153 @@ bool mux_connection::run_inline() const
     return !started_.load(std::memory_order_acquire) || io_context_.stopped() || io_context_.get_executor().running_in_this_thread();
 }
 
+std::shared_ptr<mux_connection::stream_map_t> mux_connection::snapshot_streams() const
+{
+    auto snapshot = std::atomic_load_explicit(&streams_, std::memory_order_acquire);
+    if (snapshot != nullptr)
+    {
+        return snapshot;
+    }
+    return std::make_shared<stream_map_t>();
+}
+
+std::shared_ptr<mux_connection::stream_map_t> mux_connection::detach_streams()
+{
+    for (;;)
+    {
+        auto current = std::atomic_load_explicit(&streams_, std::memory_order_acquire);
+        auto updated = std::make_shared<stream_map_t>();
+        auto expected = current;
+        if (std::atomic_compare_exchange_weak_explicit(
+                &streams_, &expected, updated, std::memory_order_acq_rel, std::memory_order_acquire))
+        {
+            if (current != nullptr)
+            {
+                return current;
+            }
+            return std::make_shared<stream_map_t>();
+        }
+    }
+}
+
 bool mux_connection::register_stream_local(const std::uint32_t id, std::shared_ptr<mux_stream_interface> stream)
 {
-    const auto it = streams_.find(id);
-    if (it == streams_.end() && limits_config_.max_streams > 0 && streams_.size() >= limits_config_.max_streams)
+    static const stream_map_t k_empty_streams{};
+    for (;;)
     {
-        return false;
+        if (!is_open())
+        {
+            return false;
+        }
+
+        auto current = std::atomic_load_explicit(&streams_, std::memory_order_acquire);
+        const auto* current_map = current.get();
+        if (current_map == nullptr)
+        {
+            current_map = &k_empty_streams;
+        }
+
+        const auto it = current_map->find(id);
+        if (it == current_map->end() && limits_config_.max_streams > 0 && current_map->size() >= limits_config_.max_streams)
+        {
+            return false;
+        }
+
+        auto updated = std::make_shared<stream_map_t>(*current_map);
+        (*updated)[id] = stream;
+
+        auto expected = current;
+        if (std::atomic_compare_exchange_weak_explicit(
+                &streams_, &expected, updated, std::memory_order_acq_rel, std::memory_order_acquire))
+        {
+            LOG_DEBUG("mux {} stream {} registered", cid_, id);
+            return true;
+        }
     }
-    streams_[id] = std::move(stream);
-    LOG_DEBUG("mux {} stream {} registered", cid_, id);
-    return true;
 }
 
 bool mux_connection::try_register_stream_local(const std::uint32_t id, std::shared_ptr<mux_stream_interface> stream)
 {
-    if (limits_config_.max_streams > 0 && streams_.size() >= limits_config_.max_streams)
+    static const stream_map_t k_empty_streams{};
+    for (;;)
     {
-        return false;
+        if (!is_open())
+        {
+            return false;
+        }
+
+        auto current = std::atomic_load_explicit(&streams_, std::memory_order_acquire);
+        const auto* current_map = current.get();
+        if (current_map == nullptr)
+        {
+            current_map = &k_empty_streams;
+        }
+
+        if (limits_config_.max_streams > 0 && current_map->size() >= limits_config_.max_streams)
+        {
+            return false;
+        }
+        if (current_map->find(id) != current_map->end())
+        {
+            return false;
+        }
+
+        auto updated = std::make_shared<stream_map_t>(*current_map);
+        const auto [it, inserted] = updated->try_emplace(id, stream);
+        if (!inserted)
+        {
+            return false;
+        }
+
+        auto expected = current;
+        if (std::atomic_compare_exchange_weak_explicit(
+                &streams_, &expected, updated, std::memory_order_acq_rel, std::memory_order_acquire))
+        {
+            LOG_DEBUG("mux {} stream {} registered", cid_, id);
+            return true;
+        }
     }
-    const auto [it, inserted] = streams_.try_emplace(id, std::move(stream));
-    if (!inserted)
-    {
-        return false;
-    }
-    LOG_DEBUG("mux {} stream {} registered", cid_, id);
-    return true;
 }
 
 void mux_connection::remove_stream_local(const std::uint32_t id)
 {
-    streams_.erase(id);
-    LOG_DEBUG("mux {} stream {} removed", cid_, id);
+    for (;;)
+    {
+        auto current = std::atomic_load_explicit(&streams_, std::memory_order_acquire);
+        if (current == nullptr || current->find(id) == current->end())
+        {
+            LOG_DEBUG("mux {} stream {} removed", cid_, id);
+            return;
+        }
+
+        auto updated = std::make_shared<stream_map_t>(*current);
+        updated->erase(id);
+        auto expected = current;
+        if (std::atomic_compare_exchange_weak_explicit(
+                &streams_, &expected, updated, std::memory_order_acq_rel, std::memory_order_acquire))
+        {
+            LOG_DEBUG("mux {} stream {} removed", cid_, id);
+            return;
+        }
+    }
 }
 
 bool mux_connection::can_accept_stream_local() const
 {
-    return streams_.size() < limits_config_.max_streams;
+    return snapshot_streams()->size() < limits_config_.max_streams;
 }
 
 bool mux_connection::has_stream_local(const std::uint32_t id) const
 {
-    return streams_.find(id) != streams_.end();
+    const auto snapshot = snapshot_streams();
+    return snapshot->find(id) != snapshot->end();
 }
 
 std::shared_ptr<mux_stream_interface> mux_connection::find_stream(const std::uint32_t stream_id) const
 {
-    const auto it = streams_.find(stream_id);
-    if (it != streams_.end())
+    const auto snapshot = snapshot_streams();
+    const auto it = snapshot->find(stream_id);
+    if (it != snapshot->end())
     {
         return it->second;
     }
@@ -529,7 +629,12 @@ void mux_connection::stop_impl()
         return;
     }
     LOG_INFO("mux {} stopping", cid_);
-    stream_map_t streams_to_clear = std::move(streams_);
+    auto detached_streams = detach_streams();
+    stream_map_t streams_to_clear;
+    if (detached_streams != nullptr)
+    {
+        streams_to_clear = std::move(*detached_streams);
+    }
     reset_streams_on_stop(streams_to_clear);
     close_socket_on_stop();
     finalize_stop_state();
@@ -727,7 +832,7 @@ asio::awaitable<void> mux_connection::timeout_loop()
         const auto snapshot = collect_timeout_snapshot(last_read_time_ms_, last_write_time_ms_, timeout_config_);
         if (is_timeout_exceeded(snapshot))
         {
-            if (streams_.empty())
+            if (snapshot_streams()->empty())
             {
                 LOG_DEBUG("mux {} timeout without streams, closing", cid_);
                 break;

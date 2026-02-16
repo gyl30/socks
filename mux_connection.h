@@ -108,6 +108,8 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     asio::awaitable<void> heartbeat_loop();
 
     [[nodiscard]] bool run_inline() const;
+    [[nodiscard]] std::shared_ptr<stream_map_t> snapshot_streams() const;
+    [[nodiscard]] std::shared_ptr<stream_map_t> detach_streams();
     [[nodiscard]] bool register_stream_local(std::uint32_t id, std::shared_ptr<mux_stream_interface> stream);
     [[nodiscard]] bool try_register_stream_local(std::uint32_t id, std::shared_ptr<mux_stream_interface> stream);
     void remove_stream_local(std::uint32_t id);
@@ -133,7 +135,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     std::uint32_t cid_;
     std::uint64_t read_bytes_ = 0;
     std::uint64_t write_bytes_ = 0;
-    stream_map_t streams_;
+    std::shared_ptr<stream_map_t> streams_ = std::make_shared<stream_map_t>();
     asio::io_context& io_context_;
     asio::steady_timer timer_;
     syn_callback_t syn_callback_;

@@ -69,6 +69,53 @@ class simple_mock_stream : public mux_stream_interface
     bool reset_ = false;
 };
 
+std::shared_ptr<mux_connection::stream_map_t> snapshot_streams_for_test(const std::shared_ptr<mux_connection>& conn)
+{
+    auto snapshot = std::atomic_load_explicit(&conn->streams_, std::memory_order_acquire);
+    if (snapshot != nullptr)
+    {
+        return snapshot;
+    }
+    return std::make_shared<mux_connection::stream_map_t>();
+}
+
+void insert_stream_for_test(const std::shared_ptr<mux_connection>& conn,
+                            const std::uint32_t id,
+                            const std::shared_ptr<mux_stream_interface>& stream)
+{
+    static const mux_connection::stream_map_t k_empty_streams{};
+    for (;;)
+    {
+        auto current = std::atomic_load_explicit(&conn->streams_, std::memory_order_acquire);
+        const auto* current_map = current.get();
+        if (current_map == nullptr)
+        {
+            current_map = &k_empty_streams;
+        }
+
+        auto updated = std::make_shared<mux_connection::stream_map_t>(*current_map);
+        (*updated)[id] = stream;
+
+        auto expected = current;
+        if (std::atomic_compare_exchange_weak_explicit(
+                &conn->streams_, &expected, updated, std::memory_order_acq_rel, std::memory_order_acquire))
+        {
+            return;
+        }
+    }
+}
+
+[[nodiscard]] bool has_stream_for_test(const std::shared_ptr<mux_connection>& conn, const std::uint32_t id)
+{
+    const auto snapshot = snapshot_streams_for_test(conn);
+    return snapshot->find(id) != snapshot->end();
+}
+
+[[nodiscard]] std::size_t stream_count_for_test(const std::shared_ptr<mux_connection>& conn)
+{
+    return snapshot_streams_for_test(conn)->size();
+}
+
 class mux_connection_integration_test : public ::testing::Test
 
 {
@@ -497,7 +544,7 @@ TEST_F(mux_connection_integration_test, OffThreadConcurrentCreateStreamRespectsL
 
     const auto success_count = static_cast<int>(stream_a != nullptr) + static_cast<int>(stream_b != nullptr);
     EXPECT_EQ(success_count, 1);
-    EXPECT_EQ(conn->streams_.size(), 1U);
+    EXPECT_EQ(stream_count_for_test(conn), 1U);
 
     io_ctx().stop();
     if (io_thread.joinable())
@@ -614,11 +661,11 @@ TEST_F(mux_connection_integration_test, OffThreadSyncQueryTimeoutDoesNotMutateAf
         io_thread.join();
     }
     EXPECT_FALSE(register_ok);
-    EXPECT_TRUE(conn->streams_.find(201) == conn->streams_.end());
+    EXPECT_FALSE(has_stream_for_test(conn, 201));
 
     io_ctx().restart();
     io_ctx().poll();
-    EXPECT_TRUE(conn->streams_.find(201) == conn->streams_.end());
+    EXPECT_FALSE(has_stream_for_test(conn, 201));
 }
 
 TEST_F(mux_connection_integration_test, OffThreadTryRegisterTimeoutDoesNotMutateAfterStopAndRestart)
@@ -669,11 +716,11 @@ TEST_F(mux_connection_integration_test, OffThreadTryRegisterTimeoutDoesNotMutate
         io_thread.join();
     }
     EXPECT_FALSE(try_register_ok);
-    EXPECT_TRUE(conn->streams_.find(202) == conn->streams_.end());
+    EXPECT_FALSE(has_stream_for_test(conn, 202));
 
     io_ctx().restart();
     io_ctx().poll();
-    EXPECT_TRUE(conn->streams_.find(202) == conn->streams_.end());
+    EXPECT_FALSE(has_stream_for_test(conn, 202));
 }
 
 TEST_F(mux_connection_integration_test, MarkStartedForExternalCallsPreventsPreStartInlineMutation)
@@ -685,7 +732,7 @@ TEST_F(mux_connection_integration_test, MarkStartedForExternalCallsPreventsPreSt
 
     auto stream = std::make_shared<simple_mock_stream>();
     EXPECT_FALSE(conn->try_register_stream(303, stream));
-    EXPECT_TRUE(conn->streams_.find(303) == conn->streams_.end());
+    EXPECT_FALSE(has_stream_for_test(conn, 303));
 }
 
 TEST_F(mux_connection_integration_test, StoppedIoContextUsesInlineQueryPaths)
@@ -749,7 +796,7 @@ TEST_F(mux_connection_integration_test, StopRunsWhenIoQueueBlocked)
     conn->connection_state_.store(mux_connection_state::kConnected, std::memory_order_release);
 
     auto stream = std::make_shared<simple_mock_stream>();
-    conn->streams_[303] = stream;
+    insert_stream_for_test(conn, 303, stream);
 
     std::atomic<bool> blocker_started{false};
     std::atomic<bool> release_blocker{false};
@@ -788,7 +835,7 @@ TEST_F(mux_connection_integration_test, StopRunsWhenIoQueueBlocked)
 
     conn->stop();
     EXPECT_EQ(conn->connection_state_.load(std::memory_order_acquire), mux_connection_state::kClosed);
-    EXPECT_TRUE(conn->streams_.find(303) == conn->streams_.end());
+    EXPECT_FALSE(has_stream_for_test(conn, 303));
     EXPECT_TRUE(stream->reset());
 
     release_blocker.store(true, std::memory_order_release);
@@ -815,11 +862,11 @@ TEST_F(mux_connection_integration_test, RemoveStreamRunsWhenIoContextNotRunning)
     conn->started_.store(true, std::memory_order_release);
     conn->connection_state_.store(mux_connection_state::kConnected, std::memory_order_release);
 
-    conn->streams_[77] = std::make_shared<simple_mock_stream>();
-    ASSERT_TRUE(conn->streams_.find(77) != conn->streams_.end());
+    insert_stream_for_test(conn, 77, std::make_shared<simple_mock_stream>());
+    ASSERT_TRUE(has_stream_for_test(conn, 77));
 
     conn->remove_stream(77);
-    EXPECT_TRUE(conn->streams_.find(77) == conn->streams_.end());
+    EXPECT_FALSE(has_stream_for_test(conn, 77));
 }
 
 TEST_F(mux_connection_integration_test, RemoveStreamRunsInlineWhenIoContextStopped)
@@ -838,12 +885,12 @@ TEST_F(mux_connection_integration_test, RemoveStreamRunsInlineWhenIoContextStopp
     conn->started_.store(true, std::memory_order_release);
     conn->connection_state_.store(mux_connection_state::kConnected, std::memory_order_release);
 
-    conn->streams_[78] = std::make_shared<simple_mock_stream>();
-    ASSERT_TRUE(conn->streams_.find(78) != conn->streams_.end());
+    insert_stream_for_test(conn, 78, std::make_shared<simple_mock_stream>());
+    ASSERT_TRUE(has_stream_for_test(conn, 78));
 
     io_ctx().stop();
     conn->remove_stream(78);
-    EXPECT_TRUE(conn->streams_.find(78) == conn->streams_.end());
+    EXPECT_FALSE(has_stream_for_test(conn, 78));
 }
 
 TEST_F(mux_connection_integration_test, RemoveStreamRunsWhenIoQueueBlocked)
@@ -862,8 +909,8 @@ TEST_F(mux_connection_integration_test, RemoveStreamRunsWhenIoQueueBlocked)
     conn->started_.store(true, std::memory_order_release);
     conn->connection_state_.store(mux_connection_state::kConnected, std::memory_order_release);
 
-    conn->streams_[79] = std::make_shared<simple_mock_stream>();
-    ASSERT_TRUE(conn->streams_.find(79) != conn->streams_.end());
+    insert_stream_for_test(conn, 79, std::make_shared<simple_mock_stream>());
+    ASSERT_TRUE(has_stream_for_test(conn, 79));
 
     std::atomic<bool> blocker_started{false};
     std::atomic<bool> release_blocker{false};
@@ -901,7 +948,7 @@ TEST_F(mux_connection_integration_test, RemoveStreamRunsWhenIoQueueBlocked)
     }
 
     conn->remove_stream(79);
-    EXPECT_TRUE(conn->streams_.find(79) == conn->streams_.end());
+    EXPECT_FALSE(has_stream_for_test(conn, 79));
 
     release_blocker.store(true, std::memory_order_release);
     io_ctx().stop();

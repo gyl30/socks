@@ -221,6 +221,22 @@ std::shared_ptr<mux::tproxy_client::udp_session_map_t> snapshot_udp_sessions(con
     return std::make_shared<mux::tproxy_client::udp_session_map_t>();
 }
 
+std::shared_ptr<mux::mux_connection::stream_map_t> snapshot_connection_streams(const std::shared_ptr<mux::mux_connection>& conn)
+{
+    auto snapshot = std::atomic_load_explicit(&conn->streams_, std::memory_order_acquire);
+    if (snapshot != nullptr)
+    {
+        return snapshot;
+    }
+    return std::make_shared<mux::mux_connection::stream_map_t>();
+}
+
+bool connection_has_stream(const std::shared_ptr<mux::mux_connection>& conn, const std::uint32_t id)
+{
+    const auto snapshot = snapshot_connection_streams(conn);
+    return snapshot->find(id) != snapshot->end();
+}
+
 void emplace_udp_session(asio::io_context& io_context,
                          const std::shared_ptr<mux::tproxy_client>& client,
                          const std::string& key,
@@ -974,7 +990,7 @@ TEST(TproxyUdpSessionTest, StopRemovesStreamWhenIoContextNotRunningWithStartedCo
 
     auto stream = std::make_shared<mux::mux_stream>(19, conn->id(), "trace", conn, ctx);
     ASSERT_TRUE(conn->register_stream(19, stream));
-    ASSERT_TRUE(conn->streams_.find(19) != conn->streams_.end());
+    ASSERT_TRUE(connection_has_stream(conn, 19));
 
     conn->started_.store(true, std::memory_order_release);
     conn->connection_state_.store(mux::mux_connection_state::kConnected, std::memory_order_release);
@@ -986,7 +1002,7 @@ TEST(TproxyUdpSessionTest, StopRemovesStreamWhenIoContextNotRunningWithStartedCo
 
     EXPECT_EQ(session->stream_, nullptr);
     EXPECT_TRUE(session->tunnel_.expired());
-    EXPECT_TRUE(conn->streams_.find(19) == conn->streams_.end());
+    EXPECT_FALSE(connection_has_stream(conn, 19));
 }
 
 TEST(TproxyUdpSessionTest, StopResetsProxyStreamWhenIoContextStopped)
