@@ -398,6 +398,11 @@ asio::awaitable<void> remote_udp_session::udp_to_mux()
 
 asio::awaitable<void> remote_udp_session::idle_watchdog()
 {
+    if (idle_timeout_ms_ == 0)
+    {
+        co_return;
+    }
+
     while (udp_socket_.is_open())
     {
         idle_timer_.expires_after(std::chrono::seconds(1));

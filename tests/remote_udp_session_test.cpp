@@ -630,6 +630,21 @@ TEST(RemoteUdpSessionTest, TimeoutThresholdsUseConfigValues)
     EXPECT_EQ(session->idle_timeout_ms_, 56000ULL);
 }
 
+TEST(RemoteUdpSessionTest, IdleWatchdogDisabledWhenIdleTimeoutZero)
+{
+    asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    mux::config::timeout_t timeout_cfg;
+    timeout_cfg.idle = 0;
+    auto session = make_session(io_context, conn, 231, timeout_cfg);
+    ASSERT_TRUE(mux::test::run_awaitable(io_context, session->setup_udp_socket(conn)));
+    session->last_activity_time_ms_.store(0, std::memory_order_release);
+
+    mux::test::run_awaitable_void(io_context, session->idle_watchdog());
+    EXPECT_TRUE(session->udp_socket_.is_open());
+    session->close_socket();
+}
+
 TEST(RemoteUdpSessionTest, IdleWatchdogStopsWhenIdleTimedOut)
 {
     asio::io_context io_context;
