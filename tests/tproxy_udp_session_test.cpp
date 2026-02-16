@@ -1397,6 +1397,7 @@ TEST(TproxyClientTest, StartMutatedUdpPortFallsBackToTcpPort)
     cfg.tproxy.mark = 0;
     cfg.tproxy.tcp_port = tcp_port;
     cfg.tproxy.udp_port = tcp_port;
+    cfg.reality.public_key = std::string(64, 'a');
 
     auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
     client->udp_port_ = 0;
