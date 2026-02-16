@@ -1248,7 +1248,7 @@ TEST_F(mux_connection_integration_test, ResetStreamsAndDispatchFailureBranches)
     conn->reset_streams_on_stop(streams_to_clear);
 
     EXPECT_TRUE(reset_stream->reset());
-    EXPECT_TRUE(streams_to_clear.empty());
+    EXPECT_EQ(streams_to_clear.size(), 2U);
     EXPECT_FALSE(conn->has_dispatch_failure(std::error_code{}));
     EXPECT_TRUE(conn->has_dispatch_failure(std::make_error_code(std::errc::protocol_error)));
 }

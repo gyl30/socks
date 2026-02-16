@@ -629,13 +629,11 @@ void mux_connection::stop_impl()
         return;
     }
     LOG_INFO("mux {} stopping", cid_);
-    auto detached_streams = detach_streams();
-    stream_map_t streams_to_clear;
+    const auto detached_streams = detach_streams();
     if (detached_streams != nullptr)
     {
-        streams_to_clear = std::move(*detached_streams);
+        reset_streams_on_stop(*detached_streams);
     }
-    reset_streams_on_stop(streams_to_clear);
     close_socket_on_stop();
     finalize_stop_state();
 }
@@ -645,16 +643,15 @@ void mux_connection::release_resources()
     stop();
 }
 
-void mux_connection::reset_streams_on_stop(stream_map_t& streams_to_clear)
+void mux_connection::reset_streams_on_stop(const stream_map_t& streams_to_clear)
 {
-    for (auto& stream : streams_to_clear | std::views::values)
+    for (const auto& stream : streams_to_clear | std::views::values)
     {
         if (stream != nullptr)
         {
             stream->on_reset();
         }
     }
-    streams_to_clear.clear();
 }
 
 void mux_connection::close_socket_on_stop()
