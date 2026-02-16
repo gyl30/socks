@@ -1,4 +1,3 @@
-#include <chrono>
 #include <memory>
 #include <string>
 #include <thread>
@@ -233,7 +232,6 @@ int run_with_config(const char* prog, const std::string& config_path)
 
     pool.run();
     LOG_INFO("{} {} shutdown", prog, cfg.mode);
-    std::this_thread::sleep_for(std::chrono::seconds(1));
     shutdown_log();
     return 0;
 }
