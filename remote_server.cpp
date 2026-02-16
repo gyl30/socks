@@ -965,7 +965,8 @@ void remote_server::drain()
             {
                 self->stop_local(false);
             }
-        });
+        },
+        detail::dispatch_timeout_policy::kRunInline);
 }
 
 void remote_server::set_certificate(std::string sni,
@@ -973,18 +974,7 @@ void remote_server::set_certificate(std::string sni,
                                     reality::server_fingerprint fp,
                                     const std::string& trace_id)
 {
-    if (!started_.load(std::memory_order_acquire))
-    {
-        cert_manager_.set_certificate(sni, std::move(cert_msg), std::move(fp), trace_id);
-        return;
-    }
-
-    detail::dispatch_cleanup_or_run_inline(
-        io_context_,
-        [this, sni = std::move(sni), cert_msg = std::move(cert_msg), fp = std::move(fp), trace_id]() mutable
-        {
-            cert_manager_.set_certificate(sni, std::move(cert_msg), std::move(fp), trace_id);
-        });
+    cert_manager_.set_certificate(sni, std::move(cert_msg), std::move(fp), trace_id);
 }
 
 void remote_server::stop()
@@ -1000,7 +990,8 @@ void remote_server::stop()
             {
                 self->stop_local(true);
             }
-        });
+        },
+        detail::dispatch_timeout_policy::kRunInline);
 }
 
 bool remote_server::ensure_acceptor_open()
