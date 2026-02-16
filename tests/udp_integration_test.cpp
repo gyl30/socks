@@ -93,12 +93,6 @@ static asio::awaitable<void> run_udp_echo_server(std::shared_ptr<asio::ip::udp::
     }
 }
 
-static std::uint16_t pick_free_tcp_port(asio::io_context& io_context)
-{
-    asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
-    return acceptor.local_endpoint().port();
-}
-
 static bool wait_for_tcp_port(const std::uint16_t port, const int attempts = 60)
 {
     for (int i = 0; i < attempts; ++i)
@@ -118,28 +112,32 @@ static bool wait_for_tcp_port(const std::uint16_t port, const int attempts = 60)
     return false;
 }
 
+static std::uint16_t wait_for_socks_listen_port(const std::shared_ptr<socks_client>& client, const int attempts = 80)
+{
+    for (int i = 0; i < attempts; ++i)
+    {
+        const auto port = client->listen_port();
+        if (port != 0 && wait_for_tcp_port(port, 1))
+        {
+            return port;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    return 0;
+}
+
 TEST_F(udp_integration_test, UdpAssociateAndEcho)
 {
     std::error_code ec;
     io_context_pool pool(4);
     ASSERT_FALSE(ec);
 
-    std::uint16_t server_port = 0;
-    std::uint16_t local_socks_port = 0;
     std::uint16_t echo_server_port = 0;
     const std::string sni = "www.google.com";
 
-    asio::ip::tcp::acceptor server_acceptor(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
-    server_port = server_acceptor.local_endpoint().port();
-    server_acceptor.close();
-
-    asio::ip::tcp::acceptor local_acceptor(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
-    local_socks_port = local_acceptor.local_endpoint().port();
-    local_acceptor.close();
-
     mux::config cfg;
     cfg.inbound.host = "127.0.0.1";
-    cfg.inbound.port = server_port;
+    cfg.inbound.port = 0;
     cfg.reality.private_key = server_priv_key();
     cfg.reality.short_id = short_id();
     cfg.timeout.read = 10;
@@ -150,11 +148,13 @@ TEST_F(udp_integration_test, UdpAssociateAndEcho)
     reality::server_fingerprint dummy_fp;
     server->set_certificate(sni, dummy_cert, dummy_fp);
     server->start();
+    const auto server_port = server->listen_port();
+    ASSERT_NE(server_port, 0);
 
     mux::config client_cfg;
     client_cfg.outbound.host = "127.0.0.1";
     client_cfg.outbound.port = server_port;
-    client_cfg.socks.port = local_socks_port;
+    client_cfg.socks.port = 0;
     client_cfg.reality.public_key = client_pub_key();
     client_cfg.reality.sni = sni;
     client_cfg.reality.short_id = short_id();
@@ -163,6 +163,8 @@ TEST_F(udp_integration_test, UdpAssociateAndEcho)
     client_cfg.timeout.write = 10;
     auto client = std::make_shared<socks_client>(pool, client_cfg);
     client->start();
+    const auto local_socks_port = wait_for_socks_listen_port(client);
+    ASSERT_NE(local_socks_port, 0);
 
     auto echo_socket = std::make_shared<asio::ip::udp::socket>(pool.get_io_context());
 
@@ -358,13 +360,11 @@ TEST_F(udp_integration_test, UdpAssociateIgnoresFragmentedPacketAndKeepsSessionA
     io_context_pool pool(4);
     ASSERT_FALSE(ec);
 
-    const auto server_port = pick_free_tcp_port(pool.get_io_context());
-    const auto local_socks_port = pick_free_tcp_port(pool.get_io_context());
     const std::string sni = "www.google.com";
 
     mux::config server_cfg;
     server_cfg.inbound.host = "127.0.0.1";
-    server_cfg.inbound.port = server_port;
+    server_cfg.inbound.port = 0;
     server_cfg.reality.private_key = server_priv_key();
     server_cfg.reality.short_id = short_id();
     server_cfg.timeout.read = 10;
@@ -375,11 +375,13 @@ TEST_F(udp_integration_test, UdpAssociateIgnoresFragmentedPacketAndKeepsSessionA
     reality::server_fingerprint dummy_fp;
     server->set_certificate(sni, dummy_cert, dummy_fp);
     server->start();
+    const auto server_port = server->listen_port();
+    ASSERT_NE(server_port, 0);
 
     mux::config client_cfg;
     client_cfg.outbound.host = "127.0.0.1";
     client_cfg.outbound.port = server_port;
-    client_cfg.socks.port = local_socks_port;
+    client_cfg.socks.port = 0;
     client_cfg.reality.public_key = client_pub_key();
     client_cfg.reality.sni = sni;
     client_cfg.reality.short_id = short_id();
@@ -389,6 +391,8 @@ TEST_F(udp_integration_test, UdpAssociateIgnoresFragmentedPacketAndKeepsSessionA
     client_cfg.timeout.idle = 10;
     auto client = std::make_shared<socks_client>(pool, client_cfg);
     client->start();
+    const auto local_socks_port = wait_for_socks_listen_port(client);
+    ASSERT_NE(local_socks_port, 0);
 
     auto echo_socket = std::make_shared<asio::ip::udp::socket>(pool.get_io_context());
     echo_socket->open(asio::ip::udp::v4(), ec);
@@ -401,7 +405,6 @@ TEST_F(udp_integration_test, UdpAssociateIgnoresFragmentedPacketAndKeepsSessionA
     asio::co_spawn(pool.get_io_context(), run_udp_echo_server(echo_socket, echo_server_port), asio::detached);
 
     std::thread pool_thread([&pool]() { pool.run(); });
-    ASSERT_TRUE(wait_for_tcp_port(local_socks_port));
 
     asio::io_context io_context;
     asio::ip::tcp::socket tcp_socket(io_context);
