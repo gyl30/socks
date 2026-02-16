@@ -61,7 +61,6 @@ class integration_test : public ::testing::Test
     [[nodiscard]] const std::string& client_pub_key() const { return client_pub_key_; }
     [[nodiscard]] const std::string& short_id() const { return short_id_; }
     [[nodiscard]] stack_handles make_stack(mux::io_context_pool& pool,
-                                           const std::uint16_t server_port,
                                            const std::uint16_t local_socks_port,
                                            const std::uint16_t timeout_s = 10) const
     {
@@ -73,7 +72,7 @@ class integration_test : public ::testing::Test
 
         mux::config server_cfg;
         server_cfg.inbound.host = "127.0.0.1";
-        server_cfg.inbound.port = server_port;
+        server_cfg.inbound.port = 0;
         server_cfg.reality.private_key = server_priv_key();
         server_cfg.reality.short_id = short_id();
         server_cfg.timeout = timeouts;
@@ -83,6 +82,7 @@ class integration_test : public ::testing::Test
         fp.cipher_suite = 0x1301;
         fp.alpn = "h2";
         server->set_certificate(sni, reality::construct_certificate({0x01, 0x02, 0x03}), fp);
+        const auto server_port = server->listen_port();
 
         mux::config client_cfg;
         client_cfg.outbound.host = "127.0.0.1";
@@ -107,12 +107,6 @@ class integration_test : public ::testing::Test
 namespace
 {
 
-std::uint16_t pick_free_tcp_port(asio::io_context& io_context)
-{
-    asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
-    return acceptor.local_endpoint().port();
-}
-
 bool wait_for_socks_listen(const std::uint16_t socks_port, const int attempts = 60)
 {
     for (int i = 0; i < attempts; ++i)
@@ -132,6 +126,23 @@ bool wait_for_socks_listen(const std::uint16_t socks_port, const int attempts = 
     return false;
 }
 
+bool wait_for_socks_listen(const std::shared_ptr<mux::socks_client>& client,
+                           std::uint16_t& socks_port,
+                           const int attempts = 60)
+{
+    for (int i = 0; i < attempts; ++i)
+    {
+        const auto port = client->listen_port();
+        if (port != 0 && wait_for_socks_listen(port, 1))
+        {
+            socks_port = port;
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    return false;
+}
+
 }    // namespace
 
 TEST_F(integration_test, FullHandshakeAndMux)
@@ -139,9 +150,6 @@ TEST_F(integration_test, FullHandshakeAndMux)
     std::error_code ec;
     mux::io_context_pool pool(2);
 
-
-    const auto server_port = pick_free_tcp_port(pool.get_io_context());
-    const auto local_socks_port = pick_free_tcp_port(pool.get_io_context());
     const std::string sni = "www.google.com";
 
     mux::config::timeout_t timeouts;
@@ -150,7 +158,7 @@ TEST_F(integration_test, FullHandshakeAndMux)
 
     mux::config server_cfg;
     server_cfg.inbound.host = "127.0.0.1";
-    server_cfg.inbound.port = server_port;
+    server_cfg.inbound.port = 0;
     server_cfg.reality.private_key = server_priv_key();
     server_cfg.reality.short_id = short_id();
     server_cfg.timeout = timeouts;
@@ -160,11 +168,13 @@ TEST_F(integration_test, FullHandshakeAndMux)
     fp.cipher_suite = 0x1301;
     fp.alpn = "h2";
     server->set_certificate(sni, reality::construct_certificate({0x01, 0x02, 0x03}), fp);
+    const auto server_port = server->listen_port();
+    ASSERT_NE(server_port, 0);
 
     mux::config client_cfg;
     client_cfg.outbound.host = "127.0.0.1";
     client_cfg.outbound.port = server_port;
-    client_cfg.socks.port = local_socks_port;
+    client_cfg.socks.port = 0;
     client_cfg.reality.public_key = client_pub_key();
     client_cfg.reality.sni = sni;
     client_cfg.reality.short_id = short_id();
@@ -177,7 +187,8 @@ TEST_F(integration_test, FullHandshakeAndMux)
     server->start();
     client->start();
 
-    ASSERT_TRUE(wait_for_socks_listen(local_socks_port));
+    std::uint16_t local_socks_port = 0;
+    ASSERT_TRUE(wait_for_socks_listen(client, local_socks_port));
 
     asio::io_context proxy_ctx;
     asio::ip::tcp::socket proxy_socket(proxy_ctx);
@@ -204,7 +215,6 @@ TEST_F(integration_test, FullDataTransfer)
 {
     std::error_code ec;
     mux::io_context_pool pool(2);
-
 
     auto echo_acceptor = std::make_shared<asio::ip::tcp::acceptor>(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
     const std::uint16_t echo_port = echo_acceptor->local_endpoint().port();
@@ -258,8 +268,6 @@ TEST_F(integration_test, FullDataTransfer)
     };
     (*acceptor_handler)();
 
-    const auto server_port = pick_free_tcp_port(pool.get_io_context());
-    const auto local_socks_port = pick_free_tcp_port(pool.get_io_context());
     const std::string sni = "www.google.com";
 
     mux::config::timeout_t timeouts;
@@ -268,7 +276,7 @@ TEST_F(integration_test, FullDataTransfer)
 
     mux::config server_cfg;
     server_cfg.inbound.host = "127.0.0.1";
-    server_cfg.inbound.port = server_port;
+    server_cfg.inbound.port = 0;
     server_cfg.reality.private_key = server_priv_key();
     server_cfg.reality.short_id = short_id();
     server_cfg.timeout = timeouts;
@@ -278,13 +286,13 @@ TEST_F(integration_test, FullDataTransfer)
     fp.cipher_suite = 0x1301;
     fp.alpn = "h2";
     server->set_certificate(sni, reality::construct_certificate({0x01, 0x02, 0x03}), fp);
-
-    server->start();
+    const auto server_port = server->listen_port();
+    ASSERT_NE(server_port, 0);
 
     mux::config client_cfg;
     client_cfg.outbound.host = "127.0.0.1";
     client_cfg.outbound.port = server_port;
-    client_cfg.socks.port = local_socks_port;
+    client_cfg.socks.port = 0;
     client_cfg.reality.public_key = client_pub_key();
     client_cfg.reality.sni = sni;
     client_cfg.reality.short_id = short_id();
@@ -293,8 +301,10 @@ TEST_F(integration_test, FullDataTransfer)
     const auto client = std::make_shared<mux::socks_client>(pool, client_cfg);
 
     scoped_pool sp(pool);
+    server->start();
     client->start();
-    ASSERT_TRUE(wait_for_socks_listen(local_socks_port));
+    std::uint16_t local_socks_port = 0;
+    ASSERT_TRUE(wait_for_socks_listen(client, local_socks_port));
 
     {
         asio::io_context proxy_ctx;
@@ -338,16 +348,15 @@ TEST_F(integration_test, SocksRejectsUnsupportedMethod)
     std::error_code ec;
     mux::io_context_pool pool(2);
 
-
-    const auto server_port = pick_free_tcp_port(pool.get_io_context());
-    const auto local_socks_port = pick_free_tcp_port(pool.get_io_context());
-    auto stack = make_stack(pool, server_port, local_socks_port, 5);
+    auto stack = make_stack(pool, 0, 5);
+    ASSERT_NE(stack.server->listen_port(), 0);
 
     scoped_pool sp(pool);
     stack.server->start();
     stack.client->start();
 
-    ASSERT_TRUE(wait_for_socks_listen(local_socks_port));
+    std::uint16_t local_socks_port = 0;
+    ASSERT_TRUE(wait_for_socks_listen(stack.client, local_socks_port));
 
     asio::io_context proxy_ctx;
     asio::ip::tcp::socket proxy_socket(proxy_ctx);
@@ -374,16 +383,15 @@ TEST_F(integration_test, SocksUnsupportedCommandReturnsCmdNotSupported)
     std::error_code ec;
     mux::io_context_pool pool(2);
 
-
-    const auto server_port = pick_free_tcp_port(pool.get_io_context());
-    const auto local_socks_port = pick_free_tcp_port(pool.get_io_context());
-    auto stack = make_stack(pool, server_port, local_socks_port, 5);
+    auto stack = make_stack(pool, 0, 5);
+    ASSERT_NE(stack.server->listen_port(), 0);
 
     scoped_pool sp(pool);
     stack.server->start();
     stack.client->start();
 
-    ASSERT_TRUE(wait_for_socks_listen(local_socks_port));
+    std::uint16_t local_socks_port = 0;
+    ASSERT_TRUE(wait_for_socks_listen(stack.client, local_socks_port));
 
     asio::io_context proxy_ctx;
     asio::ip::tcp::socket proxy_socket(proxy_ctx);
@@ -420,20 +428,23 @@ TEST_F(integration_test, SocksConnectClosedPortReturnsFailure)
     std::error_code ec;
     mux::io_context_pool pool(2);
 
+    auto stack = make_stack(pool, 0, 5);
+    ASSERT_NE(stack.server->listen_port(), 0);
 
-    const auto server_port = pick_free_tcp_port(pool.get_io_context());
-    const auto local_socks_port = pick_free_tcp_port(pool.get_io_context());
-    auto stack = make_stack(pool, server_port, local_socks_port, 5);
-
-    asio::ip::tcp::acceptor closed_target_acceptor(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
-    const auto closed_target_port = closed_target_acceptor.local_endpoint().port();
-    closed_target_acceptor.close();
+    asio::io_context closed_target_context;
+    asio::ip::tcp::socket closed_target_socket(closed_target_context);
+    closed_target_socket.open(asio::ip::tcp::v4(), ec);
+    ASSERT_FALSE(ec);
+    closed_target_socket.bind(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), 0), ec);
+    ASSERT_FALSE(ec);
+    const auto closed_target_port = closed_target_socket.local_endpoint().port();
 
     scoped_pool sp(pool);
     stack.server->start();
     stack.client->start();
 
-    ASSERT_TRUE(wait_for_socks_listen(local_socks_port));
+    std::uint16_t local_socks_port = 0;
+    ASSERT_TRUE(wait_for_socks_listen(stack.client, local_socks_port));
 
     asio::io_context proxy_ctx;
     asio::ip::tcp::socket proxy_socket(proxy_ctx);
@@ -462,6 +473,8 @@ TEST_F(integration_test, SocksConnectClosedPortReturnsFailure)
     EXPECT_EQ(conn_resp[0], socks::kVer);
     EXPECT_NE(conn_resp[1], socks::kRepSuccess);
 
+    closed_target_socket.close(ec);
+    ASSERT_FALSE(ec);
     stack.client->stop();
     stack.server->stop();
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
