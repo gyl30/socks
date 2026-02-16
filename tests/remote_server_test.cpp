@@ -32,6 +32,7 @@ extern "C"
 #include "mux_codec.h"
 #include "mock_mux_connection.h"
 #include "reality_auth.h"
+#include "scoped_exit.h"
 #define private public
 #include "remote_server.h"
 #undef private
@@ -220,6 +221,78 @@ bool wait_for_condition(Predicate predicate,
         std::this_thread::sleep_for(interval);
     }
     return predicate();
+}
+
+bool start_server_until_listening(const std::shared_ptr<mux::remote_server>& server,
+                                  const std::uint32_t max_attempts = 120,
+                                  const std::chrono::milliseconds backoff = std::chrono::milliseconds(25))
+{
+    for (std::uint32_t attempt = 0; attempt < max_attempts; ++attempt)
+    {
+        server->start();
+        if (server->listen_port() != 0)
+        {
+            return true;
+        }
+        std::this_thread::sleep_for(backoff);
+    }
+    return false;
+}
+
+bool open_ephemeral_acceptor_until_ready(asio::ip::tcp::acceptor& acceptor,
+                                         const std::uint32_t max_attempts = 120,
+                                         const std::chrono::milliseconds backoff = std::chrono::milliseconds(25))
+{
+    for (std::uint32_t attempt = 0; attempt < max_attempts; ++attempt)
+    {
+        std::error_code ec;
+        ec = acceptor.open(asio::ip::tcp::v4(), ec);
+        if (ec)
+        {
+            std::this_thread::sleep_for(backoff);
+            continue;
+        }
+        ec = acceptor.set_option(asio::ip::tcp::acceptor::reuse_address(true), ec);
+        if (!ec)
+        {
+            ec = acceptor.bind(asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0), ec);
+        }
+        if (!ec)
+        {
+            ec = acceptor.listen(asio::socket_base::max_listen_connections, ec);
+        }
+        if (!ec)
+        {
+            return true;
+        }
+        std::error_code close_ec;
+        acceptor.close(close_ec);
+        std::this_thread::sleep_for(backoff);
+    }
+    return false;
+}
+
+std::shared_ptr<mux::remote_server> construct_server_until_acceptor_ready(mux::io_context_pool& pool,
+                                                                           const mux::config& cfg,
+                                                                           const std::uint32_t max_attempts = 120,
+                                                                           const std::chrono::milliseconds backoff = std::chrono::milliseconds(25))
+{
+    for (std::uint32_t attempt = 0; attempt < max_attempts; ++attempt)
+    {
+        try
+        {
+            auto server = std::make_shared<mux::remote_server>(pool, cfg);
+            if (server->acceptor_.is_open())
+            {
+                return server;
+            }
+        }
+        catch (const std::exception&)
+        {
+        }
+        std::this_thread::sleep_for(backoff);
+    }
+    return nullptr;
 }
 
 }    // namespace
@@ -786,13 +859,31 @@ TEST_F(remote_server_test, ExactSniFallbackPreferredOverRealityDest)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
+    auto pool_cleanup = make_scoped_exit(
+        [&]()
+        {
+            pool.stop();
+            if (pool_thread.joinable())
+            {
+                pool_thread.join();
+            }
+        });
 
-    const std::uint16_t server_port = pick_free_port();
-    const std::uint16_t exact_port = pick_free_port();
-    const std::uint16_t dest_port = pick_free_port();
-
-    asio::ip::tcp::acceptor exact_acceptor(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), exact_port));
-    asio::ip::tcp::acceptor dest_acceptor(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), dest_port));
+    asio::ip::tcp::acceptor exact_acceptor(pool.get_io_context());
+    asio::ip::tcp::acceptor dest_acceptor(pool.get_io_context());
+    ASSERT_TRUE(open_ephemeral_acceptor_until_ready(exact_acceptor));
+    ASSERT_TRUE(open_ephemeral_acceptor_until_ready(dest_acceptor));
+    auto acceptor_cleanup = make_scoped_exit(
+        [&]()
+        {
+            std::error_code close_ec;
+            exact_acceptor.cancel(close_ec);
+            exact_acceptor.close(close_ec);
+            dest_acceptor.cancel(close_ec);
+            dest_acceptor.close(close_ec);
+        });
+    const auto exact_port = exact_acceptor.local_endpoint().port();
+    const auto dest_port = dest_acceptor.local_endpoint().port();
     std::atomic<int> exact_count{0};
     std::atomic<int> dest_count{0};
     exact_acceptor.async_accept(
@@ -813,34 +904,51 @@ TEST_F(remote_server_test, ExactSniFallbackPreferredOverRealityDest)
         });
 
     std::vector<mux::config::fallback_entry> fallbacks = {{"www.exact.test", "127.0.0.1", std::to_string(exact_port)}};
-    auto cfg = make_server_cfg(server_port, fallbacks, "0102030405060708");
+    auto cfg = make_server_cfg(0, fallbacks, "0102030405060708");
     cfg.reality.dest = std::string("127.0.0.1:") + std::to_string(dest_port);
-    auto server = std::make_shared<mux::remote_server>(pool, cfg);
-    server->start();
+    std::shared_ptr<mux::remote_server> server = std::make_shared<mux::remote_server>(pool, cfg);
+    auto server_cleanup = make_scoped_exit(
+        [&]()
+        {
+            if (server != nullptr)
+            {
+                server->stop();
+            }
+        });
+    const bool started = start_server_until_listening(server);
+    if (!started)
+    {
+        FAIL() << "server failed to start listening";
+    }
+    const auto server_port = server->listen_port();
 
     {
         asio::ip::tcp::socket sock(pool.get_io_context());
-        sock.connect({asio::ip::make_address("127.0.0.1"), server_port});
+        std::error_code connect_ec;
+        sock.connect({asio::ip::make_address("127.0.0.1"), server_port}, connect_ec);
+        ASSERT_FALSE(connect_ec);
+        if (connect_ec)
+        {
+            return;
+        }
 
         auto spec = reality::fingerprint_factory::get(reality::fingerprint_type::kChrome120);
         auto ch_body =
             reality::client_hello_builder::build(spec, std::vector<uint8_t>(32, 0), info_random(), std::vector<uint8_t>(32, 0), "www.exact.test");
         auto record = reality::write_record_header(reality::kContentTypeHandshake, static_cast<uint16_t>(ch_body.size()));
         record.insert(record.end(), ch_body.begin(), ch_body.end());
-        asio::write(sock, asio::buffer(record));
+        std::error_code write_ec;
+        asio::write(sock, asio::buffer(record), write_ec);
+        ASSERT_FALSE(write_ec);
+        if (write_ec)
+        {
+            return;
+        }
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
     }
 
     EXPECT_TRUE(wait_for_condition([&exact_count]() { return exact_count.load() == 1; }));
     EXPECT_TRUE(wait_for_condition([&dest_count]() { return dest_count.load() == 0; }));
-    std::error_code close_ec;
-    exact_acceptor.cancel(close_ec);
-    exact_acceptor.close(close_ec);
-    dest_acceptor.cancel(close_ec);
-    dest_acceptor.close(close_ec);
-    server->stop();
-    pool.stop();
-    pool_thread.join();
 
     EXPECT_EQ(exact_count.load(), 1);
     EXPECT_EQ(dest_count.load(), 0);
@@ -944,13 +1052,18 @@ TEST_F(remote_server_test, ConstructorHandlesInvalidInboundHostAndUnsupportedFal
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
-    auto cfg = make_server_cfg(pick_free_port(), {}, "0102030405060708");
-    cfg.inbound.host = "not-a-valid-ip";
-    cfg.reality.type = "udp";
-    auto server = std::make_shared<mux::remote_server>(pool, cfg);
+    auto fallback_type_cfg = make_server_cfg(0, {}, "0102030405060708");
+    fallback_type_cfg.reality.type = "udp";
+    auto fallback_type_server = construct_server_until_acceptor_ready(pool, fallback_type_cfg);
+    ASSERT_NE(fallback_type_server, nullptr);
+    EXPECT_EQ(fallback_type_server->fallback_type_, "udp");
+    EXPECT_TRUE(fallback_type_server->auth_config_valid_);
 
-    EXPECT_EQ(server->fallback_type_, "udp");
-    EXPECT_TRUE(server->auth_config_valid_);
+    auto invalid_host_cfg = make_server_cfg(0, {}, "0102030405060708");
+    invalid_host_cfg.inbound.host = "not-a-valid-ip";
+    auto invalid_host_server = construct_server_until_acceptor_ready(pool, invalid_host_cfg);
+    ASSERT_NE(invalid_host_server, nullptr);
+    EXPECT_TRUE(invalid_host_server->inbound_endpoint_.address().is_v6());
 }
 
 TEST_F(remote_server_test, ConstructorNormalizesZeroMaxConnections)
