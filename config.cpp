@@ -1,11 +1,18 @@
 #include <cstdio>
+#include <cerrno>
+#include <cstring>
 #include <string>
 #include <optional>
+#include <expected>
+#include <utility>
 
 #include "config.h"
 #include "reflect.h"
 #include "crypto_util.h"
 #include "mux_protocol.h"
+
+#include "rapidjson/document.h"
+#include "rapidjson/error/en.h"
 
 namespace reflect
 {
@@ -43,34 +50,63 @@ namespace mux
 namespace
 {
 
-[[nodiscard]] bool validate_heartbeat_config(const config::heartbeat_t& heartbeat)
+[[nodiscard]] config_error make_config_error(std::string path, std::string reason)
 {
-    if (heartbeat.min_interval == 0 || heartbeat.max_interval == 0)
+    config_error error;
+    error.path = std::move(path);
+    error.reason = std::move(reason);
+    return error;
+}
+
+[[nodiscard]] std::expected<void, config_error> validate_heartbeat_config(const config::heartbeat_t& heartbeat)
+{
+    if (heartbeat.min_interval == 0)
     {
-        return false;
+        return std::unexpected(make_config_error("/heartbeat/min_interval", "must be greater than 0"));
+    }
+    if (heartbeat.max_interval == 0)
+    {
+        return std::unexpected(make_config_error("/heartbeat/max_interval", "must be greater than 0"));
     }
     if (heartbeat.min_interval > heartbeat.max_interval)
     {
-        return false;
+        return std::unexpected(make_config_error("/heartbeat/min_interval", "must be less than or equal to max_interval"));
     }
     if (heartbeat.min_padding > heartbeat.max_padding)
     {
-        return false;
+        return std::unexpected(make_config_error("/heartbeat/min_padding", "must be less than or equal to max_padding"));
     }
     if (heartbeat.max_padding > kMaxPayload)
     {
-        return false;
+        return std::unexpected(make_config_error("/heartbeat/max_padding", "must be less than or equal to max payload"));
     }
-    return true;
+    return {};
 }
 
-[[nodiscard]] bool validate_limits_config(const config::limits_t& limits)
+[[nodiscard]] std::expected<void, config_error> validate_limits_config(const config::limits_t& limits)
 {
     if (limits.max_buffer == 0)
     {
-        return false;
+        return std::unexpected(make_config_error("/limits/max_buffer", "must be greater than 0"));
     }
-    return true;
+    return {};
+}
+
+[[nodiscard]] std::expected<void, config_error> validate_socks_config(const config::socks_t& socks)
+{
+    if (!socks.enabled || !socks.auth)
+    {
+        return {};
+    }
+    if (socks.username.empty())
+    {
+        return std::unexpected(make_config_error("/socks/username", "must be non-empty when auth is enabled"));
+    }
+    if (socks.password.empty())
+    {
+        return std::unexpected(make_config_error("/socks/password", "must be non-empty when auth is enabled"));
+    }
+    return {};
 }
 
 [[nodiscard]] bool has_enabled_client_inbound(const config& cfg)
@@ -82,33 +118,35 @@ namespace
 #endif
 }
 
-[[nodiscard]] bool validate_config(const config& cfg)
+[[nodiscard]] std::expected<void, config_error> validate_config(const config& cfg)
 {
-    if (!validate_limits_config(cfg.limits))
+    if (const auto limits_result = validate_limits_config(cfg.limits); !limits_result)
     {
-        return false;
+        return std::unexpected(limits_result.error());
     }
-    if (!validate_heartbeat_config(cfg.heartbeat))
+    if (const auto heartbeat_result = validate_heartbeat_config(cfg.heartbeat); !heartbeat_result)
     {
-        return false;
+        return std::unexpected(heartbeat_result.error());
+    }
+    if (const auto socks_result = validate_socks_config(cfg.socks); !socks_result)
+    {
+        return std::unexpected(socks_result.error());
     }
     if (cfg.mode == "client" && !has_enabled_client_inbound(cfg))
     {
-        return false;
+        return std::unexpected(make_config_error("/mode", "client mode requires socks or tproxy inbound"));
     }
-    return true;
+    return {};
 }
 
-}    // namespace
-
-static std::optional<std::string> read_file(const std::string& filename)
+[[nodiscard]] std::expected<std::string, config_error> read_file(const std::string& filename)
 {
     char buf[256 * 1024] = {0};
     std::string result;
     FILE* f = fopen(filename.c_str(), "rb");
     if (f == nullptr)
     {
-        return {};
+        return std::unexpected(make_config_error("/", std::string("open file failed: ") + std::strerror(errno)));
     }
     for (;;)
     {
@@ -122,7 +160,7 @@ static std::optional<std::string> read_file(const std::string& filename)
             if (ferror(f) != 0)
             {
                 fclose(f);
-                return {};
+                return std::unexpected(make_config_error("/", std::string("read file failed: ") + std::strerror(errno)));
             }
             break;
         }
@@ -131,24 +169,52 @@ static std::optional<std::string> read_file(const std::string& filename)
     return result;
 }
 
-std::optional<config> parse_config(const std::string& filename)
+[[nodiscard]] std::expected<config, config_error> deserialize_config_with_error(const std::string& text)
 {
-    const auto file_content = read_file(filename);
-    if (!file_content.has_value())
+    rapidjson::Document reader;
+    const rapidjson::ParseResult parse_result = reader.Parse(text.c_str());
+    if (!parse_result)
     {
-        return {};
+        return std::unexpected(
+            make_config_error("/", "json parse error at offset " + std::to_string(parse_result.Offset()) + ": " + rapidjson::GetParseError_En(parse_result.Code())));
     }
+
     config cfg;
-    if (!reflect::deserialize_struct(cfg, file_content.value()))
+    reflect::JsonReader json_reader{&reader};
+    reflect::reflect(json_reader, cfg);
+    if (!json_reader.ok())
     {
-        return {};
+        return std::unexpected(make_config_error(json_reader.getPath(), "invalid type or value"));
     }
+
     cfg.limits.max_connections = normalize_max_connections(cfg.limits.max_connections);
-    if (!validate_config(cfg))
+    if (const auto validate_result = validate_config(cfg); !validate_result)
     {
-        return {};
+        return std::unexpected(validate_result.error());
     }
     return cfg;
+}
+
+}    // namespace
+
+std::expected<config, config_error> parse_config_with_error(const std::string& filename)
+{
+    const auto file_content = read_file(filename);
+    if (!file_content)
+    {
+        return std::unexpected(file_content.error());
+    }
+    return deserialize_config_with_error(*file_content);
+}
+
+std::optional<config> parse_config(const std::string& filename)
+{
+    const auto parsed = parse_config_with_error(filename);
+    if (!parsed)
+    {
+        return std::nullopt;
+    }
+    return *parsed;
 }
 
 std::string dump_config(const config& cfg) { return reflect::serialize_struct(cfg); }
