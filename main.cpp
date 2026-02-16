@@ -193,6 +193,7 @@ int run_with_config(const char* prog, const std::string& config_path)
     if (!is_supported_runtime_mode(cfg.mode))
     {
         print_usage(prog);
+        shutdown_log();
         return 1;
     }
 
@@ -200,6 +201,8 @@ int run_with_config(const char* prog, const std::string& config_path)
     asio::signal_set signals(pool.get_io_context());
     if (!register_shutdown_signals(signals, pool, services))
     {
+        stop_runtime_services(pool, services);
+        shutdown_log();
         return 1;
     }
 
