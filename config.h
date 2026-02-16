@@ -12,6 +12,7 @@ namespace mux
 struct config
 {
     std::string mode = "server";
+    std::uint32_t workers = 0;
 
     struct log_t
     {

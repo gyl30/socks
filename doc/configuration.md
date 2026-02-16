@@ -5,6 +5,7 @@
 ## 基础字段
 
 - `mode`：运行模式（默认 `server`）。
+- `workers`：`io_context` worker 线程数；`0` 表示自动使用硬件并发数（探测失败时回退到 `4`）。
 - `log.level` / `log.file`：日志等级与输出文件。
 
 ## 网络入口

@@ -155,8 +155,13 @@ void stop_runtime_services(mux::io_context_pool& pool, const runtime_services& s
     pool.shutdown();
 }
 
-std::uint32_t resolve_worker_threads()
+std::uint32_t resolve_worker_threads(const mux::config& cfg)
 {
+    if (cfg.workers > 0)
+    {
+        return cfg.workers;
+    }
+
     const auto threads_count = std::thread::hardware_concurrency();
     if (threads_count > 0)
     {
@@ -206,7 +211,7 @@ int run_with_config(const char* prog, const std::string& config_path)
     set_level(cfg.log.level);
     mux::statistics::instance().start_time();
 
-    mux::io_context_pool pool(resolve_worker_threads());
+    mux::io_context_pool pool(resolve_worker_threads(cfg));
 
     if (!is_supported_runtime_mode(cfg.mode))
     {
