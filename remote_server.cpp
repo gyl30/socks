@@ -6,6 +6,7 @@
 #include <memory>
 #include <random>
 #include <string>
+#include <thread>
 #include <vector>
 #include <cstdint>
 #include <cstring>
@@ -56,6 +57,9 @@ namespace mux
 
 namespace
 {
+
+constexpr std::uint32_t kEphemeralServerBindRetryAttempts = 120;
+const auto kEphemeralServerBindRetryDelay = std::chrono::milliseconds(25);
 
 bool parse_hex_to_bytes(const std::string& hex, std::vector<std::uint8_t>& out, const std::size_t max_len, const char* label)
 {
@@ -265,41 +269,54 @@ asio::ip::tcp::endpoint resolve_inbound_endpoint(const config::inbound_t& inboun
 
 bool setup_server_acceptor(asio::ip::tcp::acceptor& acceptor, const asio::ip::tcp::endpoint& ep)
 {
-    auto close_on_failure = [&acceptor]()
-    {
-        std::error_code close_ec;
-        acceptor.close(close_ec);
-    };
+    const bool retry_ephemeral_bind = (ep.port() == 0);
+    const std::uint32_t max_attempts = retry_ephemeral_bind ? kEphemeralServerBindRetryAttempts : 1;
 
-    std::error_code ec;
-    ec = acceptor.open(ep.protocol(), ec);
-    if (ec)
+    for (std::uint32_t attempt = 0; attempt < max_attempts; ++attempt)
     {
-        LOG_ERROR("acceptor open failed {}", ec.message());
-        return false;
+        auto close_on_failure = [&acceptor]()
+        {
+            std::error_code close_ec;
+            acceptor.close(close_ec);
+        };
+
+        std::error_code ec;
+        ec = acceptor.open(ep.protocol(), ec);
+        if (ec)
+        {
+            LOG_ERROR("acceptor open failed {}", ec.message());
+            return false;
+        }
+        ec = acceptor.set_option(asio::ip::tcp::acceptor::reuse_address(true), ec);
+        if (ec)
+        {
+            LOG_ERROR("acceptor set reuse address failed {}", ec.message());
+            close_on_failure();
+            return false;
+        }
+        ec = acceptor.bind(ep, ec);
+        if (ec)
+        {
+            close_on_failure();
+            const bool can_retry = retry_ephemeral_bind && ec == asio::error::address_in_use && (attempt + 1) < max_attempts;
+            if (can_retry)
+            {
+                std::this_thread::sleep_for(kEphemeralServerBindRetryDelay);
+                continue;
+            }
+            LOG_ERROR("acceptor bind failed {}", ec.message());
+            return false;
+        }
+        ec = acceptor.listen(asio::socket_base::max_listen_connections, ec);
+        if (ec)
+        {
+            LOG_ERROR("acceptor listen failed {}", ec.message());
+            close_on_failure();
+            return false;
+        }
+        return true;
     }
-    ec = acceptor.set_option(asio::ip::tcp::acceptor::reuse_address(true), ec);
-    if (ec)
-    {
-        LOG_ERROR("acceptor set reuse address failed {}", ec.message());
-        close_on_failure();
-        return false;
-    }
-    ec = acceptor.bind(ep, ec);
-    if (ec)
-    {
-        LOG_ERROR("acceptor bind failed {}", ec.message());
-        close_on_failure();
-        return false;
-    }
-    ec = acceptor.listen(asio::socket_base::max_listen_connections, ec);
-    if (ec)
-    {
-        LOG_ERROR("acceptor listen failed {}", ec.message());
-        close_on_failure();
-        return false;
-    }
-    return true;
+    return false;
 }
 
 void apply_reality_dest_config(const config::reality_t& reality_cfg,
