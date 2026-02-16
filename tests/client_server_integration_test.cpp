@@ -107,6 +107,41 @@ class integration_test : public ::testing::Test
 namespace
 {
 
+std::shared_ptr<asio::ip::tcp::acceptor> create_ephemeral_acceptor(
+    asio::io_context& io_context,
+    const std::uint32_t max_attempts = 120,
+    const std::chrono::milliseconds backoff = std::chrono::milliseconds(25))
+{
+    auto acceptor = std::make_shared<asio::ip::tcp::acceptor>(io_context);
+    for (std::uint32_t attempt = 0; attempt < max_attempts; ++attempt)
+    {
+        std::error_code ec;
+        if (acceptor->is_open())
+        {
+            acceptor->close(ec);
+        }
+        ec = acceptor->open(asio::ip::tcp::v4(), ec);
+        if (!ec)
+        {
+            ec = acceptor->set_option(asio::ip::tcp::acceptor::reuse_address(true), ec);
+        }
+        if (!ec)
+        {
+            ec = acceptor->bind(asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0), ec);
+        }
+        if (!ec)
+        {
+            ec = acceptor->listen(asio::socket_base::max_listen_connections, ec);
+        }
+        if (!ec)
+        {
+            return acceptor;
+        }
+        std::this_thread::sleep_for(backoff);
+    }
+    return nullptr;
+}
+
 bool wait_for_socks_listen(const std::uint16_t socks_port, const int attempts = 60)
 {
     for (int i = 0; i < attempts; ++i)
@@ -216,7 +251,8 @@ TEST_F(integration_test, FullDataTransfer)
     std::error_code ec;
     mux::io_context_pool pool(2);
 
-    auto echo_acceptor = std::make_shared<asio::ip::tcp::acceptor>(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    auto echo_acceptor = create_ephemeral_acceptor(pool.get_io_context());
+    ASSERT_NE(echo_acceptor, nullptr);
     const std::uint16_t echo_port = echo_acceptor->local_endpoint().port();
 
     struct echo_session : std::enable_shared_from_this<echo_session>

@@ -14,6 +14,7 @@
 #include <asio/ip/tcp.hpp>
 
 #include <sys/socket.h>
+#include <netinet/in.h>
 #include <netinet/tcp.h>
 
 #include "context_pool.h"
@@ -36,6 +37,8 @@ std::atomic<bool> g_fail_accept_once{false};
 std::atomic<int> g_fail_accept_errno{EIO};
 std::atomic<bool> g_fail_close_once{false};
 std::atomic<int> g_fail_close_errno{EIO};
+std::atomic<bool> g_fail_ephemeral_bind_once{false};
+std::atomic<int> g_fail_bind_errno{EADDRINUSE};
 
 void fail_next_socket(const int err)
 {
@@ -67,8 +70,34 @@ void fail_next_close(const int err)
     g_fail_close_once.store(true, std::memory_order_release);
 }
 
+void fail_next_ephemeral_bind(const int err)
+{
+    g_fail_bind_errno.store(err, std::memory_order_release);
+    g_fail_ephemeral_bind_once.store(true, std::memory_order_release);
+}
+
+bool is_ephemeral_bind(const struct sockaddr* addr, const socklen_t addrlen)
+{
+    if (addr == nullptr)
+    {
+        return false;
+    }
+    if (addr->sa_family == AF_INET && addrlen >= static_cast<socklen_t>(sizeof(sockaddr_in)))
+    {
+        const auto* addr_v4 = reinterpret_cast<const sockaddr_in*>(addr);
+        return addr_v4->sin_port == 0;
+    }
+    if (addr->sa_family == AF_INET6 && addrlen >= static_cast<socklen_t>(sizeof(sockaddr_in6)))
+    {
+        const auto* addr_v6 = reinterpret_cast<const sockaddr_in6*>(addr);
+        return addr_v6->sin6_port == 0;
+    }
+    return false;
+}
+
 extern "C" int __real_socket(int domain, int type, int protocol);
 extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);
+extern "C" int __real_bind(int sockfd, const struct sockaddr* addr, socklen_t addrlen);
 extern "C" int __real_accept(int sockfd, struct sockaddr* addr, socklen_t* addrlen);
 extern "C" int __real_accept4(int sockfd, struct sockaddr* addr, socklen_t* addrlen, int flags);
 extern "C" int __real_close(int fd);
@@ -96,6 +125,16 @@ extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void*
         return -1;
     }
     return __real_setsockopt(sockfd, level, optname, optval, optlen);
+}
+
+extern "C" int __wrap_bind(int sockfd, const struct sockaddr* addr, socklen_t addrlen)
+{
+    if (is_ephemeral_bind(addr, addrlen) && g_fail_ephemeral_bind_once.exchange(false, std::memory_order_acq_rel))
+    {
+        errno = g_fail_bind_errno.load(std::memory_order_acquire);
+        return -1;
+    }
+    return __real_bind(sockfd, addr, addrlen);
 }
 
 extern "C" int __wrap_accept(int sockfd, struct sockaddr* addr, socklen_t* addrlen)
@@ -598,6 +637,34 @@ TEST(LocalClientTest, ListenPortConflictTriggersSetupFailure)
     client->start();
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
     EXPECT_FALSE(acceptor_is_open(pool.get_io_context(), client));
+    client->stop();
+    pool.stop();
+    if (pool_thread.joinable())
+    {
+        pool_thread.join();
+    }
+}
+
+TEST(LocalClientTest, EphemeralBindAddressInUseRetriesAndSucceeds)
+{
+    io_context_pool pool(1);
+
+    mux::config cfg;
+    cfg.outbound.host = "127.0.0.1";
+    cfg.outbound.port = 1;
+    cfg.socks.host = "127.0.0.1";
+    cfg.socks.port = 0;
+    cfg.reality.public_key = std::string(64, 'a');
+    cfg.reality.sni = "example.com";
+
+    const auto client = std::make_shared<mux::socks_client>(pool, cfg);
+    std::thread pool_thread([&pool]() { pool.run(); });
+
+    fail_next_ephemeral_bind(EADDRINUSE);
+    client->start();
+    ASSERT_TRUE(wait_for_listen_port(client));
+    EXPECT_NE(client->listen_port(), 0);
+
     client->stop();
     pool.stop();
     if (pool_thread.joinable())
