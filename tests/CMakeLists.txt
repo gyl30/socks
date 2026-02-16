@@ -246,6 +246,8 @@ if(LINUX)
             -Wl,--wrap=listen
             -Wl,--wrap=shutdown
             -Wl,--wrap=close
+            -Wl,--wrap=send
+            -Wl,--wrap=sendmsg
             -Wl,--wrap=RAND_bytes
             -Wl,--wrap=EVP_PKEY_new_raw_private_key
             -Wl,--wrap=EVP_PKEY_derive

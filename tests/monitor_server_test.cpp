@@ -317,6 +317,10 @@ TEST(MonitorServerTest, EmptyTokenReturnsMetrics)
     EXPECT_NE(resp.find("socks_stream_limit_rejected_total "), std::string::npos);
     EXPECT_NE(resp.find("socks_monitor_auth_failures_total "), std::string::npos);
     EXPECT_NE(resp.find("socks_monitor_rate_limited_total "), std::string::npos);
+    EXPECT_NE(resp.find("socks_fallback_no_target_total "), std::string::npos);
+    EXPECT_NE(resp.find("socks_fallback_resolve_failures_total "), std::string::npos);
+    EXPECT_NE(resp.find("socks_fallback_connect_failures_total "), std::string::npos);
+    EXPECT_NE(resp.find("socks_fallback_write_failures_total "), std::string::npos);
 }
 
 TEST(MonitorServerTest, TokenRequiredAndRateLimit)
