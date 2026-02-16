@@ -6,6 +6,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <tuple>
 #include <utility>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -171,10 +172,26 @@ class monitor_server_env
 {
    public:
     template <typename... Args>
-    explicit monitor_server_env(Args&&... args) : server_(std::make_shared<mux::monitor_server>(ioc_, std::forward<Args>(args)...))
+    explicit monitor_server_env(Args&&... args)
     {
-        server_->start();
-        thread_ = std::thread([this]() { ioc_.run(); });
+        auto ctor_args = std::make_tuple(std::forward<Args>(args)...);
+        for (std::uint32_t attempt = 0; attempt < 120; ++attempt)
+        {
+            server_ = std::apply(
+                [this](auto&&... unpacked)
+                {
+                    return std::make_shared<mux::monitor_server>(ioc_, unpacked...);
+                },
+                ctor_args);
+            server_->start();
+            if (server_->acceptor_.is_open())
+            {
+                thread_ = std::thread([this]() { ioc_.run(); });
+                return;
+            }
+            server_.reset();
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        }
     }
 
     [[nodiscard]] std::uint16_t port() const
