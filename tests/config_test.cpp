@@ -1,3 +1,4 @@
+#include <array>
 #include <cstdio>
 #include <string>
 #include <atomic>
@@ -10,6 +11,7 @@
 
 #include "config.h"
 #include "mux_protocol.h"
+#include "monitor_server.h"
 
 namespace
 {
@@ -32,6 +34,29 @@ bool is_hex_string(const std::string& value)
         }
     }
     return true;
+}
+
+std::string read_text_file(const char* path)
+{
+    std::ifstream in(path);
+    if (!in.is_open())
+    {
+        return {};
+    }
+    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+}
+
+std::string load_configuration_doc()
+{
+    for (const char* path : {"doc/configuration.md", "../doc/configuration.md", "../../doc/configuration.md"})
+    {
+        auto content = read_text_file(path);
+        if (!content.empty())
+        {
+            return content;
+        }
+    }
+    return {};
 }
 
 }    // namespace
@@ -227,6 +252,16 @@ TEST_F(config_test, InvalidJson)
     EXPECT_FALSE(cfg.has_value());
 }
 
+TEST_F(config_test, ParseConfigWithErrorReportsJsonSyntax)
+{
+    write_config_file("{ invalid_json }");
+
+    const auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/");
+    EXPECT_NE(parsed.error().reason.find("json parse error"), std::string::npos);
+}
+
 TEST_F(config_test, ReadErrorReturnsEmptyConfig)
 {
     const std::string content = R"({
@@ -250,6 +285,21 @@ TEST_F(config_test, ReplayCacheMaxEntriesWrongTypeRejected)
 
     const auto cfg_opt = mux::parse_config(tmp_file());
     EXPECT_FALSE(cfg_opt.has_value());
+}
+
+TEST_F(config_test, ParseConfigWithErrorReportsTypeErrorPath)
+{
+    const std::string content = R"({
+        "reality": {
+            "replay_cache_max_entries": "bad"
+        }
+    })";
+    write_config_file(content);
+
+    const auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/reality/replay_cache_max_entries");
+    EXPECT_NE(parsed.error().reason.find("invalid type or value"), std::string::npos);
 }
 
 TEST_F(config_test, MissingFieldsUseDefaults)
@@ -328,6 +378,22 @@ TEST_F(config_test, HeartbeatIntervalRangeRejected)
 
     const auto cfg_opt = mux::parse_config(tmp_file());
     EXPECT_FALSE(cfg_opt.has_value());
+}
+
+TEST_F(config_test, ParseConfigWithErrorReportsValidationPath)
+{
+    const std::string content = R"({
+        "heartbeat": {
+            "min_interval": 30,
+            "max_interval": 10
+        }
+    })";
+    write_config_file(content);
+
+    const auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/heartbeat/min_interval");
+    EXPECT_NE(parsed.error().reason.find("must be less than or equal to max_interval"), std::string::npos);
 }
 
 TEST_F(config_test, HeartbeatZeroIntervalRejected)
@@ -423,4 +489,194 @@ TEST_F(config_test, DumpConfigIncludesHeartbeatIdleTimeout)
     const auto dumped = mux::dump_config(cfg);
     EXPECT_NE(dumped.find("\"idle_timeout\""), std::string::npos);
     EXPECT_NE(dumped.find("\"heartbeat\""), std::string::npos);
+}
+
+TEST_F(config_test, ContractMatrixHeartbeatRulesStayAlignedWithDocumentation)
+{
+    const auto doc = load_configuration_doc();
+    ASSERT_FALSE(doc.empty());
+    EXPECT_NE(doc.find("heartbeat.min_interval <= heartbeat.max_interval"), std::string::npos);
+    EXPECT_NE(doc.find("heartbeat.min_interval` 和 `heartbeat.max_interval` 必须大于 `0`"), std::string::npos);
+    EXPECT_NE(doc.find("heartbeat.max_padding` 必须小于等于"), std::string::npos);
+
+    struct heartbeat_contract_case
+    {
+        const char* json;
+        const char* expected_path;
+        const char* expected_reason_substr;
+    };
+
+    const std::array<heartbeat_contract_case, 3> cases = {
+        heartbeat_contract_case{
+            R"({
+                "heartbeat": {
+                    "min_interval": 30,
+                    "max_interval": 10
+                }
+            })",
+            "/heartbeat/min_interval",
+            "must be less than or equal to max_interval"},
+        heartbeat_contract_case{
+            R"({
+                "heartbeat": {
+                    "min_interval": 1,
+                    "max_interval": 0
+                }
+            })",
+            "/heartbeat/max_interval",
+            "must be greater than 0"},
+        heartbeat_contract_case{
+            R"({
+                "heartbeat": {
+                    "min_padding": 1,
+                    "max_padding": 70000
+                }
+            })",
+            "/heartbeat/max_padding",
+            "max payload"}};
+
+    for (const auto& c : cases)
+    {
+        write_config_file(c.json);
+        const auto parsed = mux::parse_config_with_error(tmp_file());
+        ASSERT_FALSE(parsed.has_value());
+        EXPECT_EQ(parsed.error().path, c.expected_path);
+        EXPECT_NE(parsed.error().reason.find(c.expected_reason_substr), std::string::npos);
+    }
+}
+
+TEST_F(config_test, ContractMatrixLimitsRulesStayAlignedWithDocumentation)
+{
+    const auto doc = load_configuration_doc();
+    ASSERT_FALSE(doc.empty());
+    EXPECT_NE(doc.find("limits.max_connections"), std::string::npos);
+    EXPECT_NE(doc.find("`0` 会在加载与运行时归一化为 `1`"), std::string::npos);
+    EXPECT_NE(doc.find("limits.max_buffer` 必须大于 `0`"), std::string::npos);
+
+    write_config_file(R"({
+        "limits": {
+            "max_connections": 0
+        }
+    })");
+    auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_EQ(parsed->limits.max_connections, 1U);
+
+    write_config_file(R"({
+        "limits": {
+            "max_buffer": 0
+        }
+    })");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/limits/max_buffer");
+    EXPECT_NE(parsed.error().reason.find("must be greater than 0"), std::string::npos);
+}
+
+TEST_F(config_test, ContractMatrixMonitorRulesStayAlignedWithDocumentation)
+{
+    const auto doc = load_configuration_doc();
+    ASSERT_FALSE(doc.empty());
+    EXPECT_NE(doc.find("monitor.min_interval_ms"), std::string::npos);
+    EXPECT_NE(doc.find("monitor.token"), std::string::npos);
+    EXPECT_NE(doc.find("未授权请求不得占用限流窗口"), std::string::npos);
+
+    write_config_file(R"({
+        "monitor": {
+            "enabled": true,
+            "port": 19090,
+            "token": "secret",
+            "min_interval_ms": 120
+        }
+    })");
+
+    const auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_TRUE(parsed->monitor.enabled);
+    EXPECT_EQ(parsed->monitor.port, 19090);
+    EXPECT_EQ(parsed->monitor.token, "secret");
+    EXPECT_EQ(parsed->monitor.min_interval_ms, 120U);
+
+    mux::monitor_rate_state rate_state;
+    const auto now = std::chrono::steady_clock::now();
+    EXPECT_TRUE(mux::detail::allow_monitor_request_by_source(rate_state, "127.0.0.1", parsed->monitor.min_interval_ms, now));
+    EXPECT_FALSE(
+        mux::detail::allow_monitor_request_by_source(rate_state, "127.0.0.1", parsed->monitor.min_interval_ms, now + std::chrono::milliseconds(60)));
+    EXPECT_TRUE(
+        mux::detail::allow_monitor_request_by_source(rate_state, "127.0.0.1", parsed->monitor.min_interval_ms, now + std::chrono::milliseconds(130)));
+}
+
+TEST_F(config_test, SocksAuthEnabledRequiresNonEmptyCredentials)
+{
+    write_config_file(R"({
+        "socks": {
+            "enabled": true,
+            "auth": true,
+            "username": "",
+            "password": "pass"
+        }
+    })");
+    auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/socks/username");
+    EXPECT_NE(parsed.error().reason.find("must be non-empty when auth is enabled"), std::string::npos);
+
+    write_config_file(R"({
+        "socks": {
+            "enabled": true,
+            "auth": true,
+            "username": "user",
+            "password": ""
+        }
+    })");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/socks/password");
+    EXPECT_NE(parsed.error().reason.find("must be non-empty when auth is enabled"), std::string::npos);
+
+    write_config_file(R"({
+        "socks": {
+            "enabled": true,
+            "auth": true,
+            "username": "user",
+            "password": "pass"
+        }
+    })");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_TRUE(parsed->socks.auth);
+    EXPECT_EQ(parsed->socks.username, "user");
+    EXPECT_EQ(parsed->socks.password, "pass");
+}
+
+TEST_F(config_test, ContractMatrixSocksAuthRulesStayAlignedWithDocumentation)
+{
+    const auto doc = load_configuration_doc();
+    ASSERT_FALSE(doc.empty());
+    EXPECT_NE(doc.find("当 `socks.auth = true` 时，`socks.username` 与 `socks.password` 必须均为非空字符串"), std::string::npos);
+    EXPECT_NE(doc.find("任一为空会在配置解析阶段直接报错"), std::string::npos);
+
+    write_config_file(R"({
+        "socks": {
+            "enabled": true,
+            "auth": true,
+            "username": "",
+            "password": "pass"
+        }
+    })");
+    auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/socks/username");
+
+    write_config_file(R"({
+        "socks": {
+            "enabled": true,
+            "auth": true,
+            "username": "user",
+            "password": ""
+        }
+    })");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/socks/password");
 }

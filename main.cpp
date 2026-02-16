@@ -60,12 +60,14 @@ static void dump_x25519()
 
 static int parse_config_from_file(const std::string& file, mux::config& cfg)
 {
-    const auto c = mux::parse_config(file);
-    if (!c.has_value())
+    const auto parsed = mux::parse_config_with_error(file);
+    if (!parsed)
     {
+        const auto& error = parsed.error();
+        std::cerr << "parse config failed path " << error.path << " reason " << error.reason << '\n';
         return -1;
     }
-    cfg = c.value();
+    cfg = *parsed;
     return 0;
 }
 

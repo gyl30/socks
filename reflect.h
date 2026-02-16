@@ -28,6 +28,7 @@ struct JsonReader
 {
     rapidjson::Value* m;
     std::vector<std::string> path_;
+    std::string invalid_path_;
     bool ok_ = true;
 
     JsonReader(rapidjson::Value* m) : m(m) {}
@@ -62,10 +63,27 @@ struct JsonWriter
 
 inline std::string JsonReader::getString() { return m->GetString(); }
 inline bool JsonReader::isNull() { return m->IsNull(); }
-inline void JsonReader::set_invalid() { ok_ = false; }
+inline void JsonReader::set_invalid()
+{
+    if (!ok_)
+    {
+        return;
+    }
+    invalid_path_ = getPath();
+    ok_ = false;
+}
 inline bool JsonReader::ok() const { return ok_; }
 inline std::string JsonReader::getPath() const
 {
+    if (!ok_)
+    {
+        if (!invalid_path_.empty())
+        {
+            return invalid_path_;
+        }
+        return "/";
+    }
+
     if (path_.empty())
     {
         return "/";
