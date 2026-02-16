@@ -25,6 +25,7 @@ class monitor_server : public std::enable_shared_from_this<monitor_server>
     monitor_server(asio::io_context& ioc, std::string bind_host, std::uint16_t port, std::string token, std::uint32_t min_interval_ms);
     void start();
     void stop();
+    [[nodiscard]] bool running() const { return !stop_.load(std::memory_order_acquire) && acceptor_.is_open(); }
 
    private:
     void stop_local();

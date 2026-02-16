@@ -70,6 +70,10 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         }
         return ep.port();
     }
+    [[nodiscard]] bool running() const
+    {
+        return started_.load(std::memory_order_acquire) && !stop_.load(std::memory_order_acquire) && acceptor_.is_open();
+    }
 
     void set_certificate(std::string sni,
                          std::vector<std::uint8_t> cert_msg,

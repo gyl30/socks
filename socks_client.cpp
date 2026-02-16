@@ -347,6 +347,17 @@ void socks_client::start()
         return;
     }
 
+    const std::uint16_t configured_port = listen_port_.load(std::memory_order_acquire);
+    std::uint16_t bound_port = 0;
+    if (!prepare_local_listener(acceptor_, socks_config_.host, configured_port, bound_port))
+    {
+        LOG_ERROR("local socks5 setup failed");
+        stop_.store(true, std::memory_order_release);
+        return;
+    }
+    listen_port_.store(bound_port, std::memory_order_release);
+    LOG_INFO("local socks5 listening on {}:{}", socks_config_.host, listen_port_.load(std::memory_order_acquire));
+
     tunnel_pool_->start();
 
     asio::co_spawn(io_context_, accept_local_loop_detached(shared_from_this()), asio::detached);
@@ -377,15 +388,18 @@ void socks_client::stop()
 
 asio::awaitable<void> socks_client::accept_local_loop()
 {
-    const std::uint16_t configured_port = listen_port_.load(std::memory_order_acquire);
-    std::uint16_t bound_port = 0;
-    if (!prepare_local_listener(acceptor_, socks_config_.host, configured_port, bound_port))
+    if (!acceptor_.is_open())
     {
-        co_return;
+        const std::uint16_t configured_port = listen_port_.load(std::memory_order_acquire);
+        std::uint16_t bound_port = 0;
+        if (!prepare_local_listener(acceptor_, socks_config_.host, configured_port, bound_port))
+        {
+            stop_.store(true, std::memory_order_release);
+            co_return;
+        }
+        listen_port_.store(bound_port, std::memory_order_release);
+        LOG_INFO("local socks5 listening on {}:{}", socks_config_.host, listen_port_.load(std::memory_order_acquire));
     }
-    listen_port_.store(bound_port, std::memory_order_release);
-
-    LOG_INFO("local socks5 listening on {}:{}", socks_config_.host, listen_port_.load(std::memory_order_acquire));
     while (!stop_.load(std::memory_order_acquire))
     {
         if (!(co_await run_accept_iteration(

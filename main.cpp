@@ -70,36 +70,55 @@ static int parse_config_from_file(const std::string& file, mux::config& cfg)
     return 0;
 }
 
-runtime_services start_runtime_services(mux::io_context_pool& pool, const mux::config& cfg)
+bool start_runtime_services(mux::io_context_pool& pool, const mux::config& cfg, runtime_services& services)
 {
-    runtime_services services;
     if (cfg.monitor.enabled)
     {
         services.monitor = std::make_shared<mux::monitor_server>(
             pool.get_io_context(), cfg.monitor.port, cfg.monitor.token, cfg.monitor.min_interval_ms);
         services.monitor->start();
+        if (!services.monitor->running())
+        {
+            LOG_ERROR("monitor server start failed");
+            return false;
+        }
     }
 
     if (cfg.mode == "server")
     {
         services.server = std::make_shared<mux::remote_server>(pool, cfg);
         services.server->start();
-        return services;
+        if (!services.server->running())
+        {
+            LOG_ERROR("remote server start failed");
+            return false;
+        }
+        return true;
     }
 
     if (cfg.socks.enabled)
     {
         services.socks = std::make_shared<mux::socks_client>(pool, cfg);
         services.socks->start();
+        if (!services.socks->running())
+        {
+            LOG_ERROR("socks client start failed");
+            return false;
+        }
     }
 #ifdef __linux__
     if (cfg.tproxy.enabled)
     {
         services.tproxy = std::make_shared<mux::tproxy_client>(pool, cfg);
         services.tproxy->start();
+        if (!services.tproxy->running())
+        {
+            LOG_ERROR("tproxy client start failed");
+            return false;
+        }
     }
 #endif
-    return services;
+    return true;
 }
 
 bool register_signal(asio::signal_set& signals, const int signal, const char* signal_name)
@@ -197,7 +216,13 @@ int run_with_config(const char* prog, const std::string& config_path)
         return 1;
     }
 
-    const auto services = start_runtime_services(pool, cfg);
+    runtime_services services;
+    if (!start_runtime_services(pool, cfg, services))
+    {
+        stop_runtime_services(pool, services);
+        shutdown_log();
+        return 1;
+    }
     asio::signal_set signals(pool.get_io_context());
     if (!register_shutdown_signals(signals, pool, services))
     {

@@ -730,6 +730,26 @@ void tproxy_client::start()
         udp_port_ = tcp_port_;
     }
 
+    std::string tcp_listen_host;
+    if (auto res = setup_tproxy_tcp_runtime(tcp_acceptor_, tproxy_config_, tcp_port_, tcp_listen_host); !res)
+    {
+        LOG_ERROR("tproxy tcp setup failed {}", res.error().message());
+        stop_.store(true, std::memory_order_release);
+        return;
+    }
+
+    std::string udp_listen_host;
+    if (auto res = setup_tproxy_udp_runtime(udp_socket_, tproxy_config_, udp_port_, udp_listen_host); !res)
+    {
+        LOG_ERROR("tproxy udp setup failed {}", res.error().message());
+        close_tproxy_sockets(tcp_acceptor_, udp_socket_);
+        stop_.store(true, std::memory_order_release);
+        return;
+    }
+
+    LOG_INFO("tproxy tcp listening on {}:{}", tcp_listen_host, tcp_port_);
+    LOG_INFO("tproxy udp listening on {}:{}", udp_listen_host, udp_port_);
+
     tunnel_pool_->start();
     auto self = shared_from_this();
 
@@ -767,14 +787,17 @@ std::string tproxy_client::endpoint_key(const asio::ip::udp::endpoint& ep) const
 
 asio::awaitable<void> tproxy_client::accept_tcp_loop()
 {
-    std::string listen_host;
-    if (auto res = setup_tproxy_tcp_runtime(tcp_acceptor_, tproxy_config_, tcp_port_, listen_host); !res)
+    if (!tcp_acceptor_.is_open())
     {
-        LOG_ERROR("tproxy tcp setup failed {}", res.error().message());
-        co_return;
+        std::string listen_host;
+        if (auto res = setup_tproxy_tcp_runtime(tcp_acceptor_, tproxy_config_, tcp_port_, listen_host); !res)
+        {
+            LOG_ERROR("tproxy tcp setup failed {}", res.error().message());
+            stop_.store(true, std::memory_order_release);
+            co_return;
+        }
+        LOG_INFO("tproxy tcp listening on {}:{}", listen_host, tcp_port_);
     }
-
-    LOG_INFO("tproxy tcp listening on {}:{}", listen_host, tcp_port_);
 
     while (!stop_.load(std::memory_order_acquire))
     {
@@ -789,14 +812,17 @@ asio::awaitable<void> tproxy_client::accept_tcp_loop()
 
 asio::awaitable<void> tproxy_client::udp_loop()
 {
-    std::string listen_host;
-    if (auto res = setup_tproxy_udp_runtime(udp_socket_, tproxy_config_, udp_port_, listen_host); !res)
+    if (!udp_socket_.is_open())
     {
-        LOG_ERROR("tproxy udp setup failed {}", res.error().message());
-        co_return;
+        std::string listen_host;
+        if (auto res = setup_tproxy_udp_runtime(udp_socket_, tproxy_config_, udp_port_, listen_host); !res)
+        {
+            LOG_ERROR("tproxy udp setup failed {}", res.error().message());
+            stop_.store(true, std::memory_order_release);
+            co_return;
+        }
+        LOG_INFO("tproxy udp listening on {}:{}", listen_host, udp_port_);
     }
-
-    LOG_INFO("tproxy udp listening on {}:{}", listen_host, udp_port_);
 
     std::vector<std::uint8_t> buf(65535);
     std::array<char, 512> control;
