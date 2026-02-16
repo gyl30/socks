@@ -338,7 +338,7 @@ std::shared_ptr<tproxy_udp_session> get_or_create_udp_session(
     {
         auto current = snapshot_udp_sessions(sessions);
         const auto it = current->find(key);
-        if (it != current->end() && it->second != nullptr)
+        if (it != current->end() && it->second != nullptr && !it->second->terminated())
         {
             return it->second;
         }
