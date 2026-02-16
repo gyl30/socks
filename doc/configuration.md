@@ -62,7 +62,7 @@
 - `reality.strict_cert_verify`：是否严格校验证书签名（默认 `false`）。
   - 仅当服务端证书公钥与 `CertificateVerify` 签名密钥一致时可开启；使用真实站点 fallback 证书时通常不满足该条件。
 - `reality.replay_cache_max_entries`：重放缓存最大条目数（默认 `100000`，用于控制窗口内内存占用）。
-- `reality.private_key` / `reality.public_key`：REALITY 密钥对。
+- `reality.private_key` / `reality.public_key`：REALITY 密钥对（默认空值，需显式配置）。
 - `reality.short_id`：短 ID。
 - `reality.fallback_guard.enabled`：是否启用 fallback 防护（默认 `true`）。
 - `reality.fallback_guard.rate_per_sec`：每 IP 每秒允许 fallback 次数（默认 `2`）。

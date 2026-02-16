@@ -231,6 +231,8 @@ TEST_F(config_test, MissingFieldsUseDefaults)
     EXPECT_EQ(cfg_opt->mode, "server");
     EXPECT_FALSE(cfg_opt->reality.strict_cert_verify);
     EXPECT_EQ(cfg_opt->reality.replay_cache_max_entries, 100000);
+    EXPECT_TRUE(cfg_opt->reality.private_key.empty());
+    EXPECT_TRUE(cfg_opt->reality.public_key.empty());
     EXPECT_TRUE(cfg_opt->reality.fallback_guard.enabled);
 }
 
