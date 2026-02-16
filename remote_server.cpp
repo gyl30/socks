@@ -925,14 +925,21 @@ asio::awaitable<void> fallback_wait_random_timer(const std::uint32_t conn_id, as
     LOG_DEBUG("{} fallback failed timer {} ms", conn_id, wait_ms);
 }
 
+asio::awaitable<void> fallback_wait_and_close_socket(const std::shared_ptr<asio::ip::tcp::socket>& socket,
+                                                     const connection_context& ctx,
+                                                     asio::io_context& io_context)
+{
+    co_await fallback_wait_random_timer(ctx.conn_id(), io_context);
+    close_fallback_socket(socket, ctx);
+}
+
 asio::awaitable<void> handle_fallback_without_target(const std::shared_ptr<asio::ip::tcp::socket>& socket,
                                                      const connection_context& ctx,
                                                      const std::string& sni,
                                                      asio::io_context& io_context)
 {
     LOG_CTX_INFO(ctx, "{} no target sni {}", log_event::kFallback, sni.empty() ? "empty" : sni);
-    co_await fallback_wait_random_timer(ctx.conn_id(), io_context);
-    close_fallback_socket(socket, ctx);
+    co_await fallback_wait_and_close_socket(socket, ctx, io_context);
     LOG_CTX_INFO(ctx, "{} done", log_event::kFallback);
 }
 
@@ -2264,8 +2271,7 @@ asio::awaitable<void> remote_server::handle_fallback(const std::shared_ptr<asio:
     if (!consume_fallback_token(ctx))
     {
         LOG_CTX_WARN(ctx, "{} blocked by fallback guard", log_event::kFallback);
-        co_await fallback_wait_random_timer(ctx.conn_id(), io_context_);
-        close_fallback_socket(s, ctx);
+        co_await fallback_wait_and_close_socket(s, ctx, io_context_);
         co_return;
     }
 
@@ -2284,11 +2290,15 @@ asio::awaitable<void> remote_server::handle_fallback(const std::shared_ptr<asio:
     if (!co_await resolve_and_connect_fallback_target(t, io_context_, target_host, target_port, ctx))
     {
         record_fallback_result(ctx, false);
+        close_fallback_socket(t, ctx);
+        co_await fallback_wait_and_close_socket(s, ctx, io_context_);
         co_return;
     }
     if (!co_await write_fallback_initial_buffer(t, buf, ctx))
     {
         record_fallback_result(ctx, false);
+        close_fallback_socket(t, ctx);
+        co_await fallback_wait_and_close_socket(s, ctx, io_context_);
         co_return;
     }
 
