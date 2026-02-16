@@ -202,8 +202,30 @@ extern "C" int __wrap_EVP_PKEY_CTX_add1_hkdf_info(EVP_PKEY_CTX* ctx, const unsig
 std::uint16_t pick_free_port()
 {
     asio::io_context io_context;
-    asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
-    return acceptor.local_endpoint().port();
+    for (std::uint32_t attempt = 0; attempt < 120; ++attempt)
+    {
+        asio::ip::tcp::acceptor acceptor(io_context);
+        std::error_code ec;
+        ec = acceptor.open(asio::ip::tcp::v4(), ec);
+        if (!ec)
+        {
+            ec = acceptor.set_option(asio::ip::tcp::acceptor::reuse_address(true), ec);
+        }
+        if (!ec)
+        {
+            ec = acceptor.bind(asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0), ec);
+        }
+        if (!ec)
+        {
+            const auto bound_ep = acceptor.local_endpoint(ec);
+            if (!ec)
+            {
+                return bound_ep.port();
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    }
+    return 0;
 }
 
 template <typename Predicate>
@@ -1196,7 +1218,8 @@ TEST_F(remote_server_test, ConnectionLimitSourceKeyUsesConfiguredSubnet)
     auto server = std::make_shared<mux::remote_server>(pool, cfg);
 
     asio::io_context io_context;
-    asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    asio::ip::tcp::acceptor acceptor(io_context);
+    ASSERT_TRUE(open_ephemeral_acceptor_until_ready(acceptor));
     asio::ip::tcp::socket client(io_context);
     asio::ip::tcp::socket accepted(io_context);
 
@@ -1242,7 +1265,8 @@ TEST_F(remote_server_test, ConstructorReturnsEarlyWhenBindFails)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
-    asio::ip::tcp::acceptor occupied(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    asio::ip::tcp::acceptor occupied(pool.get_io_context());
+    ASSERT_TRUE(open_ephemeral_acceptor_until_ready(occupied));
     const auto used_port = occupied.local_endpoint().port();
 
     auto cfg = make_server_cfg(used_port, {}, "0102030405060708");
@@ -1748,7 +1772,8 @@ TEST_F(remote_server_test, FallbackFailedAndGuardDisabledBranches)
     server->record_fallback_result(guard_ctx, false);
 
     asio::io_context io_context;
-    asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    asio::ip::tcp::acceptor acceptor(io_context);
+    ASSERT_TRUE(open_ephemeral_acceptor_until_ready(acceptor));
 
     asio::ip::tcp::socket client_socket(io_context);
     client_socket.connect(acceptor.local_endpoint(), ec);
@@ -1814,7 +1839,12 @@ TEST_F(remote_server_test, PerformHandshakeResponseCoversCipherSuiteSelectionBra
 
     auto run_once = [&](const std::string& sni, const std::uint32_t conn_id, const bool expect_ok) -> mux::remote_server::server_handshake_res
     {
-        asio::ip::tcp::acceptor acceptor(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+        asio::ip::tcp::acceptor acceptor(pool.get_io_context());
+        if (!open_ephemeral_acceptor_until_ready(acceptor))
+        {
+            ADD_FAILURE() << "open ephemeral acceptor failed";
+            return {};
+        }
         asio::ip::tcp::socket client_socket(pool.get_io_context());
         client_socket.connect(acceptor.local_endpoint(), ec);
         EXPECT_FALSE(ec);
@@ -1991,7 +2021,12 @@ TEST_F(remote_server_test, PerformHandshakeResponseCoversRandomAndSignKeyFailure
 
     auto run_once = [&](const bool fail_rand, const bool fail_sign_key) -> std::pair<bool, std::error_code>
     {
-        asio::ip::tcp::acceptor acceptor(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+        asio::ip::tcp::acceptor acceptor(pool.get_io_context());
+        if (!open_ephemeral_acceptor_until_ready(acceptor))
+        {
+            ADD_FAILURE() << "open ephemeral acceptor failed";
+            return {false, asio::error::address_in_use};
+        }
         asio::ip::tcp::socket client_socket(pool.get_io_context());
         client_socket.connect(acceptor.local_endpoint(), ec);
         EXPECT_FALSE(ec);
@@ -2063,7 +2098,12 @@ TEST_F(remote_server_test, VerifyClientFinishedCoversPlaintextValidationBranches
         asio::io_context io_context;
         std::error_code ec;
 
-        asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+        asio::ip::tcp::acceptor acceptor(io_context);
+        if (!open_ephemeral_acceptor_until_ready(acceptor))
+        {
+            ADD_FAILURE() << "open ephemeral acceptor failed";
+            return false;
+        }
         asio::ip::tcp::socket writer(io_context);
         writer.connect(acceptor.local_endpoint(), ec);
         EXPECT_FALSE(ec);
