@@ -77,6 +77,7 @@ std::atomic<int> g_fail_getsockname_errno{ENOTSOCK};
 std::atomic<bool> g_fail_close_once{false};
 std::atomic<int> g_fail_close_errno{EIO};
 std::atomic<int> g_recvmsg_mode{static_cast<int>(wrapped_recvmsg_mode::kReal)};
+std::atomic<bool> g_force_ipv6_socket_compat{false};
 
 void reset_socket_wrappers()
 {
@@ -96,6 +97,7 @@ void reset_socket_wrappers()
     g_fail_close_once.store(false, std::memory_order_release);
     g_fail_close_errno.store(EIO, std::memory_order_release);
     g_recvmsg_mode.store(static_cast<int>(wrapped_recvmsg_mode::kReal), std::memory_order_release);
+    g_force_ipv6_socket_compat.store(false, std::memory_order_release);
 }
 
 void force_tproxy_setsockopt_success(const bool enable) { g_force_tproxy_sockopt_success.store(enable, std::memory_order_release); }
@@ -139,6 +141,7 @@ void fail_next_close(const int err = EIO)
 }
 
 void set_recvmsg_mode_once(const wrapped_recvmsg_mode mode) { g_recvmsg_mode.store(static_cast<int>(mode), std::memory_order_release); }
+void force_ipv6_socket_compat(const bool enable) { g_force_ipv6_socket_compat.store(enable, std::memory_order_release); }
 
 bool is_tproxy_setsockopt(const int level, const int optname)
 {
@@ -291,11 +294,22 @@ extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void*
         return 0;
     }
 
+    if (g_force_ipv6_socket_compat.load(std::memory_order_acquire)
+        && (level == SOL_IPV6 || level == IPPROTO_IPV6)
+        && optname == IPV6_V6ONLY)
+    {
+        return 0;
+    }
+
     return __real_setsockopt(sockfd, level, optname, optval, optlen);
 }
 
 extern "C" int __wrap_socket(int domain, int type, int protocol)
 {
+    if (g_force_ipv6_socket_compat.load(std::memory_order_acquire) && domain == AF_INET6)
+    {
+        return __real_socket(AF_INET, type, protocol);
+    }
     if (g_fail_socket_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_socket_errno.load(std::memory_order_acquire);
@@ -346,6 +360,10 @@ extern "C" int __wrap_close(int fd)
 
 extern "C" int __wrap_bind(int sockfd, const sockaddr* addr, socklen_t addrlen)
 {
+    if (g_force_ipv6_socket_compat.load(std::memory_order_acquire) && addr != nullptr && addr->sa_family == AF_INET6)
+    {
+        return 0;
+    }
     if (g_fail_bind_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_bind_errno.load(std::memory_order_acquire);
@@ -2232,6 +2250,7 @@ TEST(TproxyClientTest, SetupCoversV6DualStackSuccessBranches)
 {
     reset_socket_wrappers();
     force_tproxy_setsockopt_success(true);
+    force_ipv6_socket_compat(true);
 
     mux::config cfg;
     cfg.tproxy.enabled = true;
@@ -2260,14 +2279,7 @@ TEST(TproxyClientTest, SetupCoversV6DualStackSuccessBranches)
         {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
-
-        if (!tcp_opened)
-        {
-            client->stop();
-            pool.stop();
-            runner.join();
-            GTEST_SKIP() << "tcp ipv6 listener unavailable in current environment";
-        }
+        EXPECT_TRUE(tcp_opened);
 
         client->stop();
         pool.stop();
@@ -2294,20 +2306,14 @@ TEST(TproxyClientTest, SetupCoversV6DualStackSuccessBranches)
         {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
-
-        if (!udp_opened)
-        {
-            client->stop();
-            pool.stop();
-            runner.join();
-            GTEST_SKIP() << "udp ipv6 listener unavailable in current environment";
-        }
+        EXPECT_TRUE(udp_opened);
 
         client->stop();
         pool.stop();
         runner.join();
     }
 
+    force_ipv6_socket_compat(false);
     reset_socket_wrappers();
 }
 
