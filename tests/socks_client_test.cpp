@@ -443,6 +443,32 @@ TEST(LocalClientTest, DoubleStop)
     client->stop();
 }
 
+TEST(LocalClientTest, StartWhileRunningIsIgnored)
+{
+    io_context_pool pool(1);
+    mux::config cfg;
+    cfg.outbound.host = "127.0.0.1";
+    cfg.outbound.port = 12345;
+    cfg.socks.port = 10098;
+    cfg.reality.public_key = std::string(64, 'a');
+    cfg.reality.sni = "example.com";
+
+    auto client = std::make_shared<mux::socks_client>(pool, cfg);
+    client->start();
+    EXPECT_TRUE(client->started_.load(std::memory_order_acquire));
+    EXPECT_FALSE(client->stop_.load(std::memory_order_acquire));
+    EXPECT_TRUE(client->acceptor_.is_open());
+
+    const auto first_port = client->listen_port();
+    client->start();
+    EXPECT_TRUE(client->started_.load(std::memory_order_acquire));
+    EXPECT_FALSE(client->stop_.load(std::memory_order_acquire));
+    EXPECT_TRUE(client->acceptor_.is_open());
+    EXPECT_EQ(client->listen_port(), first_port);
+
+    client->stop();
+}
+
 TEST(LocalClientTest, StartAfterStopResetsStopFlag)
 {
     io_context_pool pool(1);

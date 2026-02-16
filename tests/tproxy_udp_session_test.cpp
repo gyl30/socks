@@ -1099,6 +1099,25 @@ TEST(TproxyClientTest, DisabledStartSetsStopFlag)
     client->stop();
 }
 
+TEST(TproxyClientTest, StartWhileRunningIsIgnored)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    mux::config cfg;
+    cfg.tproxy.enabled = true;
+    auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
+
+    client->started_.store(true, std::memory_order_release);
+    client->stop_.store(false, std::memory_order_release);
+    client->start();
+
+    EXPECT_TRUE(client->started_.load(std::memory_order_acquire));
+    EXPECT_FALSE(client->stop_.load(std::memory_order_acquire));
+    client->stop();
+}
+
 TEST(TproxyClientTest, UdpDispatchQueueIsBounded)
 {
     std::error_code ec;

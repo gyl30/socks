@@ -693,29 +693,39 @@ tproxy_client::tproxy_client(io_context_pool& pool, const config& cfg)
 
 void tproxy_client::start()
 {
+    bool expected = false;
+    if (!started_.compare_exchange_strong(expected, true, std::memory_order_acq_rel))
+    {
+        LOG_WARN("tproxy client already started");
+        return;
+    }
     stop_.store(false, std::memory_order_release);
     if (!tproxy_config_.enabled)
     {
         LOG_INFO("tproxy client disabled");
         stop_.store(true, std::memory_order_release);
+        started_.store(false, std::memory_order_release);
         return;
     }
     if (!tunnel_pool_->valid())
     {
         LOG_ERROR("invalid reality auth config");
         stop_.store(true, std::memory_order_release);
+        started_.store(false, std::memory_order_release);
         return;
     }
     if (!router_->load())
     {
         LOG_ERROR("failed to load router data");
         stop_.store(true, std::memory_order_release);
+        started_.store(false, std::memory_order_release);
         return;
     }
     if (tcp_port_ == 0)
     {
         LOG_ERROR("tproxy tcp port invalid");
         stop_.store(true, std::memory_order_release);
+        started_.store(false, std::memory_order_release);
         return;
     }
     if (udp_port_ == 0)
@@ -728,6 +738,7 @@ void tproxy_client::start()
     {
         LOG_ERROR("tproxy tcp setup failed {}", res.error().message());
         stop_.store(true, std::memory_order_release);
+        started_.store(false, std::memory_order_release);
         return;
     }
 
@@ -737,6 +748,7 @@ void tproxy_client::start()
         LOG_ERROR("tproxy udp setup failed {}", res.error().message());
         close_tproxy_sockets(tcp_acceptor_, udp_socket_);
         stop_.store(true, std::memory_order_release);
+        started_.store(false, std::memory_order_release);
         return;
     }
 
@@ -759,6 +771,7 @@ void tproxy_client::stop()
 {
     LOG_INFO("tproxy client stopping closing resources");
     stop_.store(true, std::memory_order_release);
+    started_.store(false, std::memory_order_release);
 
     detail::dispatch_cleanup_or_run_inline(
         io_context_,

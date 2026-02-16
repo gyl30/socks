@@ -326,24 +326,33 @@ socks_client::socks_client(io_context_pool& pool, const config& cfg)
 
 void socks_client::start()
 {
+    bool expected = false;
+    if (!started_.compare_exchange_strong(expected, true, std::memory_order_acq_rel))
+    {
+        LOG_WARN("socks client already started");
+        return;
+    }
     stop_.store(false, std::memory_order_release);
 
     if (!tunnel_pool_->valid())
     {
         LOG_ERROR("invalid reality auth config");
         stop_.store(true, std::memory_order_release);
+        started_.store(false, std::memory_order_release);
         return;
     }
     if (!router_->load())
     {
         LOG_ERROR("failed to load router data");
         stop_.store(true, std::memory_order_release);
+        started_.store(false, std::memory_order_release);
         return;
     }
     if (!socks_config_.enabled)
     {
         LOG_INFO("socks client disabled");
         stop_.store(true, std::memory_order_release);
+        started_.store(false, std::memory_order_release);
         return;
     }
 
@@ -353,6 +362,7 @@ void socks_client::start()
     {
         LOG_ERROR("local socks5 setup failed");
         stop_.store(true, std::memory_order_release);
+        started_.store(false, std::memory_order_release);
         return;
     }
     listen_port_.store(bound_port, std::memory_order_release);
@@ -372,6 +382,7 @@ void socks_client::stop()
 {
     LOG_INFO("client stopping closing resources");
     stop_.store(true, std::memory_order_release);
+    started_.store(false, std::memory_order_release);
 
     detail::dispatch_cleanup_or_run_inline(
         io_context_,
@@ -395,6 +406,7 @@ asio::awaitable<void> socks_client::accept_local_loop()
         if (!prepare_local_listener(acceptor_, socks_config_.host, configured_port, bound_port))
         {
             stop_.store(true, std::memory_order_release);
+            started_.store(false, std::memory_order_release);
             co_return;
         }
         listen_port_.store(bound_port, std::memory_order_release);
@@ -408,6 +420,7 @@ asio::awaitable<void> socks_client::accept_local_loop()
             break;
         }
     }
+    started_.store(false, std::memory_order_release);
     LOG_INFO("accept local loop exited");
 }
 

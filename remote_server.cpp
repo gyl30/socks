@@ -941,14 +941,22 @@ remote_server::~remote_server()
 
 void remote_server::start()
 {
+    bool expected = false;
+    if (!started_.compare_exchange_strong(expected, true, std::memory_order_acq_rel))
+    {
+        LOG_WARN("remote server already started");
+        return;
+    }
+
     if (!ensure_acceptor_open())
     {
         LOG_ERROR("remote server start failed acceptor unavailable");
+        stop_.store(true, std::memory_order_release);
+        started_.store(false, std::memory_order_release);
         return;
     }
 
     stop_.store(false, std::memory_order_release);
-    started_.store(true, std::memory_order_release);
     asio::co_spawn(io_context_, [self = shared_from_this()] { return self->accept_loop(); }, asio::detached);
 }
 
@@ -1005,6 +1013,8 @@ bool remote_server::ensure_acceptor_open()
 
 void remote_server::stop_local(const bool close_tunnels)
 {
+    started_.store(false, std::memory_order_release);
+
     std::error_code close_ec;
     close_ec = acceptor_.close(close_ec);
     if (close_ec && close_ec != asio::error::bad_descriptor)
