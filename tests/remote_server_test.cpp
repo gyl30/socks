@@ -1555,17 +1555,20 @@ TEST_F(remote_server_test, ConstructorCoversShortIdAndDestParsingBranches)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
-    auto cfg_invalid_hex = make_server_cfg(pick_free_port(), {}, "zz");
-    auto server_invalid_hex = std::make_shared<mux::remote_server>(pool, cfg_invalid_hex);
+    auto cfg_invalid_hex = make_server_cfg(0, {}, "zz");
+    auto server_invalid_hex = construct_server_until_acceptor_ready(pool, cfg_invalid_hex);
+    ASSERT_NE(server_invalid_hex, nullptr);
     EXPECT_FALSE(server_invalid_hex->auth_config_valid_);
 
-    auto cfg_long_short_id = make_server_cfg(pick_free_port(), {}, "010203040506070809");
-    auto server_long_short_id = std::make_shared<mux::remote_server>(pool, cfg_long_short_id);
+    auto cfg_long_short_id = make_server_cfg(0, {}, "010203040506070809");
+    auto server_long_short_id = construct_server_until_acceptor_ready(pool, cfg_long_short_id);
+    ASSERT_NE(server_long_short_id, nullptr);
     EXPECT_FALSE(server_long_short_id->auth_config_valid_);
 
-    auto cfg_ipv6_dest = make_server_cfg(pick_free_port(), {{"www.example.test", "127.0.0.1", "not-a-port"}}, "0102030405060708");
+    auto cfg_ipv6_dest = make_server_cfg(0, {{"www.example.test", "127.0.0.1", "not-a-port"}}, "0102030405060708");
     cfg_ipv6_dest.reality.dest = "[::1]:8443";
-    auto server_ipv6_dest = std::make_shared<mux::remote_server>(pool, cfg_ipv6_dest);
+    auto server_ipv6_dest = construct_server_until_acceptor_ready(pool, cfg_ipv6_dest);
+    ASSERT_NE(server_ipv6_dest, nullptr);
     EXPECT_TRUE(server_ipv6_dest->fallback_dest_valid_);
     EXPECT_EQ(server_ipv6_dest->fallback_dest_host_, "::1");
     EXPECT_EQ(server_ipv6_dest->fallback_dest_port_, "8443");
@@ -1576,8 +1579,9 @@ TEST_F(remote_server_test, ConstructorCoversShortIdAndDestParsingBranches)
     EXPECT_EQ(target.fetch_host, "127.0.0.1");
     EXPECT_EQ(target.fetch_port, static_cast<std::uint16_t>(443));
 
-    auto cfg_port_suffix = make_server_cfg(pick_free_port(), {{"www.port.test", "127.0.0.1", "443abc"}}, "0102030405060708");
-    auto server_port_suffix = std::make_shared<mux::remote_server>(pool, cfg_port_suffix);
+    auto cfg_port_suffix = make_server_cfg(0, {{"www.port.test", "127.0.0.1", "443abc"}}, "0102030405060708");
+    auto server_port_suffix = construct_server_until_acceptor_ready(pool, cfg_port_suffix);
+    ASSERT_NE(server_port_suffix, nullptr);
     mux::client_hello_info suffix_info{};
     suffix_info.sni = "www.port.test";
     const auto suffix_target = server_port_suffix->resolve_certificate_target(suffix_info);
@@ -1591,7 +1595,8 @@ TEST_F(remote_server_test, ParseClientHelloAndTranscriptGuardBranches)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
-    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
+    auto server = construct_server_until_acceptor_ready(pool, make_server_cfg(0, {}, "0102030405060708"));
+    ASSERT_NE(server, nullptr);
 
     std::string client_sni = "seed";
     const auto empty_info = mux::remote_server::parse_client_hello({}, client_sni);
