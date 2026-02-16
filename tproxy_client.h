@@ -4,13 +4,16 @@
 #include <atomic>
 #include <memory>
 #include <string>
+#include <vector>
 #include <cstdint>
 #include <unordered_map>
+#include <system_error>
 
 #include <asio/ip/tcp.hpp>
 #include <asio/ip/udp.hpp>
 #include <asio/io_context.hpp>
 #include <asio/awaitable.hpp>
+#include <asio/experimental/concurrent_channel.hpp>
 
 #include "config.h"
 #include "router.h"
@@ -22,6 +25,15 @@
 
 namespace mux
 {
+
+struct tproxy_udp_dispatch_item
+{
+    asio::ip::udp::endpoint src_ep;
+    asio::ip::udp::endpoint dst_ep;
+    std::vector<std::uint8_t> payload;
+};
+
+using tproxy_udp_dispatch_channel = asio::experimental::concurrent_channel<void(std::error_code, tproxy_udp_dispatch_item)>;
 
 class tproxy_client : public std::enable_shared_from_this<tproxy_client>
 {
@@ -47,6 +59,8 @@ class tproxy_client : public std::enable_shared_from_this<tproxy_client>
 
     asio::awaitable<void> udp_cleanup_loop();
 
+    asio::awaitable<void> udp_dispatch_loop();
+
     [[nodiscard]] std::string endpoint_key(const asio::ip::udp::endpoint& ep) const;
 
   private:
@@ -58,6 +72,8 @@ class tproxy_client : public std::enable_shared_from_this<tproxy_client>
     std::shared_ptr<router> router_;
     std::shared_ptr<tproxy_udp_sender> sender_;
     std::unordered_map<std::string, std::shared_ptr<tproxy_udp_session>> udp_sessions_;
+    std::shared_ptr<tproxy_udp_dispatch_channel> udp_dispatch_channel_;
+    std::atomic<bool> udp_dispatch_started_{false};
     config cfg_;
     config::tproxy_t tproxy_config_;
     std::uint16_t tcp_port_ = 0;

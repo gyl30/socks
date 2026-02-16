@@ -1099,6 +1099,38 @@ TEST(TproxyClientTest, DisabledStartSetsStopFlag)
     client->stop();
 }
 
+TEST(TproxyClientTest, UdpDispatchQueueIsBounded)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    mux::config cfg;
+    cfg.tproxy.enabled = true;
+    auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
+    ASSERT_NE(client->udp_dispatch_channel_, nullptr);
+
+    constexpr std::size_t k_max_probe = 10000;
+    std::size_t accepted = 0;
+    for (; accepted < k_max_probe; ++accepted)
+    {
+        mux::tproxy_udp_dispatch_item packet;
+        packet.src_ep =
+            asio::ip::udp::endpoint(asio::ip::make_address("127.0.0.1"), static_cast<std::uint16_t>(10000 + (accepted % 2000)));
+        packet.dst_ep = asio::ip::udp::endpoint(asio::ip::make_address("1.1.1.1"), 53);
+        packet.payload.assign(8, 0x7f);
+        if (!client->udp_dispatch_channel_->try_send(std::error_code{}, std::move(packet)))
+        {
+            break;
+        }
+    }
+
+    EXPECT_LT(accepted, k_max_probe);
+    client->udp_dispatch_channel_->close();
+    client->stop();
+    pool.stop();
+}
+
 TEST(TproxyClientTest, InvalidRealityAuthConfigStopsEarly)
 {
     std::error_code ec;
