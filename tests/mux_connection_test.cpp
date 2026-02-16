@@ -60,10 +60,44 @@ class mux_connection_integration_test : public ::testing::Test
     asio::io_context io_ctx_;
 };
 
+std::error_code setup_loopback_acceptor_with_retry(asio::ip::tcp::acceptor& acceptor, const int max_attempts = 128)
+{
+    std::error_code last_ec = asio::error::address_in_use;
+    for (int attempt = 0; attempt < max_attempts; ++attempt)
+    {
+        std::error_code ec;
+        acceptor.open(asio::ip::tcp::v4(), ec);
+        if (ec)
+        {
+            last_ec = ec;
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            continue;
+        }
+
+        acceptor.bind(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), 0), ec);
+        if (!ec)
+        {
+            acceptor.listen(asio::socket_base::max_listen_connections, ec);
+            if (!ec)
+            {
+                return {};
+            }
+        }
+
+        std::error_code ignored;
+        acceptor.close(ignored);
+        last_ec = ec;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    return last_ec;
+}
+
 TEST_F(mux_connection_integration_test, StreamDataExchange)
 
 {
-    asio::ip::tcp::acceptor acceptor(io_ctx(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    asio::ip::tcp::acceptor acceptor(io_ctx());
+    const auto setup_ec = setup_loopback_acceptor_with_retry(acceptor);
+    ASSERT_FALSE(setup_ec) << setup_ec.message();
 
     auto socket_server = std::make_shared<asio::ip::tcp::socket>(io_ctx());
 
@@ -137,7 +171,9 @@ TEST_F(mux_connection_integration_test, StreamDataExchange)
 
 TEST_F(mux_connection_integration_test, ReadTimeoutHandling)
 {
-    asio::ip::tcp::acceptor acceptor(io_ctx(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    asio::ip::tcp::acceptor acceptor(io_ctx());
+    const auto setup_ec = setup_loopback_acceptor_with_retry(acceptor);
+    ASSERT_FALSE(setup_ec) << setup_ec.message();
     auto socket_server = std::make_shared<asio::ip::tcp::socket>(io_ctx());
     auto socket_client = std::make_shared<asio::ip::tcp::socket>(io_ctx());
 
@@ -165,7 +201,9 @@ TEST_F(mux_connection_integration_test, ReadTimeoutHandling)
 
 TEST_F(mux_connection_integration_test, WriteTimeoutHandling)
 {
-    asio::ip::tcp::acceptor acceptor(io_ctx(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    asio::ip::tcp::acceptor acceptor(io_ctx());
+    const auto setup_ec = setup_loopback_acceptor_with_retry(acceptor);
+    ASSERT_FALSE(setup_ec) << setup_ec.message();
     auto socket_server = std::make_shared<asio::ip::tcp::socket>(io_ctx());
     auto socket_client = std::make_shared<asio::ip::tcp::socket>(io_ctx());
 
