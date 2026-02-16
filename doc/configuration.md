@@ -81,6 +81,57 @@
 - `monitor.token`：监控接口 token。
 - `monitor.min_interval_ms`：最小请求间隔。
 
+### fallback 失败原因指标
+
+监控接口会输出以下 fallback 失败原因计数：
+
+- `socks_fallback_no_target_total`
+- `socks_fallback_resolve_failures_total`
+- `socks_fallback_connect_failures_total`
+- `socks_fallback_write_failures_total`
+
+### 看板查询建议
+
+推荐按 5 分钟窗口观察各失败原因增量：
+
+```promql
+increase(socks_fallback_no_target_total[5m])
+increase(socks_fallback_resolve_failures_total[5m])
+increase(socks_fallback_connect_failures_total[5m])
+increase(socks_fallback_write_failures_total[5m])
+```
+
+可再补一个总失败增量面板：
+
+```promql
+increase(socks_fallback_no_target_total[5m])
++ increase(socks_fallback_resolve_failures_total[5m])
++ increase(socks_fallback_connect_failures_total[5m])
++ increase(socks_fallback_write_failures_total[5m])
+```
+
+### 告警规则样例
+
+以下阈值为默认样例，建议按生产基线调整：
+
+```yaml
+groups:
+  - name: socks-fallback-alerts
+    rules:
+      - alert: SocksFallbackNoTargetSpike
+        expr: increase(socks_fallback_no_target_total[10m]) > 20
+        for: 5m
+      - alert: SocksFallbackResolveFailuresHigh
+        expr: increase(socks_fallback_resolve_failures_total[10m]) > 10
+        for: 5m
+      - alert: SocksFallbackConnectFailuresHigh
+        expr: increase(socks_fallback_connect_failures_total[10m]) > 20
+        for: 5m
+      - alert: SocksFallbackWriteFailuresHigh
+        expr: increase(socks_fallback_write_failures_total[10m]) > 10
+        for: 5m
+```
+
 ## fallback
 
 `fallbacks`：SNI 伪装回退列表（`sni` / `host` / `port`）。
