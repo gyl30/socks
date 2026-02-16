@@ -309,10 +309,48 @@ std::uint64_t now_ms()
     return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(now).count());
 }
 
+bool open_ephemeral_tcp_acceptor(
+    asio::ip::tcp::acceptor& acceptor,
+    const std::uint32_t max_attempts = 120,
+    const std::chrono::milliseconds backoff = std::chrono::milliseconds(25))
+{
+    for (std::uint32_t attempt = 0; attempt < max_attempts; ++attempt)
+    {
+        std::error_code ec;
+        if (acceptor.is_open())
+        {
+            acceptor.close(ec);
+        }
+        ec = acceptor.open(asio::ip::tcp::v4(), ec);
+        if (!ec)
+        {
+            ec = acceptor.set_option(asio::ip::tcp::acceptor::reuse_address(true), ec);
+        }
+        if (!ec)
+        {
+            ec = acceptor.bind(asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0), ec);
+        }
+        if (!ec)
+        {
+            ec = acceptor.listen(asio::socket_base::max_listen_connections, ec);
+        }
+        if (!ec)
+        {
+            return true;
+        }
+        std::this_thread::sleep_for(backoff);
+    }
+    return false;
+}
+
 std::uint16_t pick_free_tcp_port()
 {
     asio::io_context io_context;
-    asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    asio::ip::tcp::acceptor acceptor(io_context);
+    if (!open_ephemeral_tcp_acceptor(acceptor))
+    {
+        return 0;
+    }
     return acceptor.local_endpoint().port();
 }
 
@@ -1286,7 +1324,8 @@ TEST(TproxyClientTest, AcceptLoopSetupFailsWhenPortInUse)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
-    asio::ip::tcp::acceptor occupied(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    asio::ip::tcp::acceptor occupied(pool.get_io_context());
+    ASSERT_TRUE(open_ephemeral_tcp_acceptor(occupied));
     const auto used_port = occupied.local_endpoint().port();
 
     mux::config cfg;
