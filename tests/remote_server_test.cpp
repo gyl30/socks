@@ -1883,15 +1883,17 @@ TEST_F(remote_server_test, ConstructorCoversMalformedBracketDestParseBranches)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
-    auto cfg_missing_bracket = make_server_cfg(pick_free_port(), {}, "0102030405060708");
+    auto cfg_missing_bracket = make_server_cfg(0, {}, "0102030405060708");
     cfg_missing_bracket.reality.dest = "[::1";
-    auto server_missing_bracket = std::make_shared<mux::remote_server>(pool, cfg_missing_bracket);
+    auto server_missing_bracket = construct_server_until_acceptor_ready(pool, cfg_missing_bracket);
+    ASSERT_NE(server_missing_bracket, nullptr);
     EXPECT_FALSE(server_missing_bracket->fallback_dest_valid_);
     EXPECT_FALSE(server_missing_bracket->auth_config_valid_);
 
-    auto cfg_missing_colon = make_server_cfg(pick_free_port(), {}, "0102030405060708");
+    auto cfg_missing_colon = make_server_cfg(0, {}, "0102030405060708");
     cfg_missing_colon.reality.dest = "[::1]8443";
-    auto server_missing_colon = std::make_shared<mux::remote_server>(pool, cfg_missing_colon);
+    auto server_missing_colon = construct_server_until_acceptor_ready(pool, cfg_missing_colon);
+    ASSERT_NE(server_missing_colon, nullptr);
     EXPECT_FALSE(server_missing_colon->fallback_dest_valid_);
     EXPECT_FALSE(server_missing_colon->auth_config_valid_);
 }
