@@ -2152,6 +2152,69 @@ TEST_F(remote_server_test, StopRunsWhenIoContextNotRunning)
     pool.stop();
 }
 
+TEST_F(remote_server_test, DrainClosesAcceptorButKeepsActiveTunnels)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
+    server->start();
+
+    auto tunnel = std::make_shared<mux::mux_tunnel_impl<asio::ip::tcp::socket>>(
+        asio::ip::tcp::socket(pool.get_io_context()),
+        pool.get_io_context(),
+        mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()},
+        true,
+        904);
+    auto conn = tunnel->connection();
+    ASSERT_NE(conn, nullptr);
+    ASSERT_TRUE(conn->is_open());
+    server->active_tunnels_.push_back(tunnel);
+
+    EXPECT_TRUE(server->acceptor_.is_open());
+    server->drain();
+
+    EXPECT_TRUE(server->stop_.load(std::memory_order_acquire));
+    EXPECT_FALSE(server->acceptor_.is_open());
+    EXPECT_TRUE(conn->is_open());
+    EXPECT_FALSE(server->active_tunnels_.empty());
+
+    server->stop();
+    EXPECT_FALSE(conn->is_open());
+    EXPECT_TRUE(server->active_tunnels_.empty());
+    pool.stop();
+}
+
+TEST_F(remote_server_test, StartReopensAcceptorAfterStop)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    const auto port = pick_free_port();
+    auto cfg = make_server_cfg(port, {}, "0102030405060708");
+    auto server = std::make_shared<mux::remote_server>(pool, cfg);
+
+    std::thread runner([&pool]() { pool.run(); });
+
+    server->start();
+    EXPECT_TRUE(wait_for_condition([&server, port]() { return server->listen_port() == port; }));
+
+    server->stop();
+    EXPECT_TRUE(wait_for_condition([&server]() { return server->listen_port() == 0; }));
+
+    server->start();
+    EXPECT_TRUE(wait_for_condition([&server, port]() { return server->listen_port() == port; }));
+
+    server->stop();
+    pool.stop();
+    if (runner.joinable())
+    {
+        runner.join();
+    }
+}
+
 TEST_F(remote_server_test, HandleFallbackCoversCloseSocketErrorBranches)
 {
     std::error_code ec;

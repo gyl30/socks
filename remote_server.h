@@ -56,6 +56,8 @@ class remote_server : public std::enable_shared_from_this<remote_server>
 
     void start();
 
+    void drain();
+
     void stop();
 
     [[nodiscard]] std::uint16_t listen_port() const
@@ -77,7 +79,8 @@ class remote_server : public std::enable_shared_from_this<remote_server>
    private:
     struct server_handshake_res;
 
-    void stop_local();
+    [[nodiscard]] bool ensure_acceptor_open();
+    void stop_local(bool close_tunnels);
 
     asio::awaitable<void> accept_loop();
 
@@ -244,6 +247,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
 
     asio::io_context& io_context_;
     asio::ip::tcp::acceptor acceptor_;
+    asio::ip::tcp::endpoint inbound_endpoint_;
     std::vector<std::uint8_t> private_key_;
     std::vector<std::uint8_t> short_id_bytes_;
     bool auth_config_valid_ = true;

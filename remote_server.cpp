@@ -883,6 +883,7 @@ asio::awaitable<bool> write_fallback_initial_buffer(const std::shared_ptr<asio::
 remote_server::remote_server(io_context_pool& pool, const config& cfg)
     : io_context_(pool.get_io_context()),
       acceptor_(io_context_),
+      inbound_endpoint_(resolve_inbound_endpoint(cfg.inbound)),
       replay_cache_(static_cast<std::size_t>(cfg.reality.replay_cache_max_entries)),
       fallbacks_(cfg.fallbacks),
       fallback_guard_config_(cfg.reality.fallback_guard),
@@ -909,8 +910,7 @@ remote_server::remote_server(io_context_pool& pool, const config& cfg)
     }
     limits_config_.source_prefix_v6 = normalized_prefix_v6;
 
-    const auto ep = resolve_inbound_endpoint(cfg.inbound);
-    if (!setup_server_acceptor(acceptor_, ep))
+    if (!setup_server_acceptor(acceptor_, inbound_endpoint_))
     {
         return;
     }
@@ -941,9 +941,31 @@ remote_server::~remote_server()
 
 void remote_server::start()
 {
+    if (!ensure_acceptor_open())
+    {
+        LOG_ERROR("remote server start failed acceptor unavailable");
+        return;
+    }
+
     stop_.store(false, std::memory_order_release);
     started_.store(true, std::memory_order_release);
     asio::co_spawn(io_context_, [self = shared_from_this()] { return self->accept_loop(); }, asio::detached);
+}
+
+void remote_server::drain()
+{
+    stop_.store(true, std::memory_order_release);
+    LOG_INFO("remote server draining");
+
+    detail::dispatch_cleanup_or_run_inline(
+        io_context_,
+        [weak_self = weak_from_this()]()
+        {
+            if (const auto self = weak_self.lock())
+            {
+                self->stop_local(false);
+            }
+        });
 }
 
 void remote_server::set_certificate(std::string sni,
@@ -976,18 +998,33 @@ void remote_server::stop()
         {
             if (const auto self = weak_self.lock())
             {
-                self->stop_local();
+                self->stop_local(true);
             }
         });
 }
 
-void remote_server::stop_local()
+bool remote_server::ensure_acceptor_open()
+{
+    if (acceptor_.is_open())
+    {
+        return true;
+    }
+    return setup_server_acceptor(acceptor_, inbound_endpoint_);
+}
+
+void remote_server::stop_local(const bool close_tunnels)
 {
     std::error_code close_ec;
     close_ec = acceptor_.close(close_ec);
     if (close_ec && close_ec != asio::error::bad_descriptor)
     {
         LOG_WARN("acceptor close failed {}", close_ec.message());
+    }
+
+    if (!close_tunnels)
+    {
+        LOG_INFO("drain mode active keeping {} active tunnels", active_tunnels_.size());
+        return;
     }
 
     LOG_INFO("closing {} active tunnels", active_tunnels_.size());
