@@ -2581,8 +2581,7 @@ TEST_F(remote_server_test, StartWhileRunningIsIgnored)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
-    const auto port = pick_free_port();
-    auto cfg = make_server_cfg(port, {}, "0102030405060708");
+    auto cfg = make_server_cfg(0, {}, "0102030405060708");
     auto server = std::make_shared<mux::remote_server>(pool, cfg);
 
     server->start();
