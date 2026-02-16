@@ -81,10 +81,10 @@ class remote_server : public std::enable_shared_from_this<remote_server>
 
     asio::awaitable<void> accept_loop();
 
-    asio::awaitable<void> handle(std::shared_ptr<asio::ip::tcp::socket> s, const std::uint32_t conn_id);
+    asio::awaitable<void> handle(std::shared_ptr<asio::ip::tcp::socket> s, std::uint32_t conn_id, std::string source_key);
 
-    [[nodiscard]] bool try_reserve_connection_slot();
-    void release_connection_slot();
+    [[nodiscard]] bool try_reserve_connection_slot(const std::string& source_key);
+    void release_connection_slot(const std::string& source_key);
 
     struct app_keys
     {
@@ -230,6 +230,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     void record_fallback_result(const connection_context& ctx, bool success);
     void cleanup_fallback_guard_state_locked(const std::chrono::steady_clock::time_point& now);
     [[nodiscard]] std::string fallback_guard_key(const connection_context& ctx) const;
+    [[nodiscard]] std::string connection_limit_source_key(const std::shared_ptr<asio::ip::tcp::socket>& s) const;
 
    private:
     struct fallback_guard_state
@@ -260,6 +261,8 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     std::unordered_map<std::string, fallback_guard_state> fallback_guard_states_;
     config::timeout_t timeout_config_;
     std::atomic<std::uint32_t> active_connection_slots_{0};
+    std::mutex connection_slot_mu_;
+    std::unordered_map<std::string, std::uint32_t> active_source_connection_slots_;
     std::vector<std::weak_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>> active_tunnels_;
     config::limits_t limits_config_;
     config::heartbeat_t heartbeat_config_;

@@ -68,6 +68,9 @@ struct config
     struct limits_t
     {
         std::uint32_t max_connections = 5;
+        std::uint32_t max_connections_per_source = 0;
+        std::uint8_t source_prefix_v4 = 32;
+        std::uint8_t source_prefix_v6 = 128;
         std::uint64_t max_buffer = 10L * 1024 * 1024;
         std::uint32_t max_streams = 1024;
     } limits;

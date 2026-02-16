@@ -30,6 +30,9 @@
 ## 限制与保护
 
 - `limits.max_connections`：服务端隧道最大并发数，`0` 会在加载与运行时归一化为 `1`。
+- `limits.max_connections_per_source`：单来源并发连接上限，`0` 表示不启用来源维度限制。
+- `limits.source_prefix_v4`：IPv4 来源聚合前缀（`0-32`），默认 `32`（按单 IP 限制）。
+- `limits.source_prefix_v6`：IPv6 来源聚合前缀（`0-128`），默认 `128`（按单 IP 限制）。
 - `limits.max_streams`：单连接 stream 最大数量。
 - `limits.max_buffer`：mux dispatcher 最大缓冲区。
 
@@ -38,7 +41,7 @@
 以下行为属于对外协议契约，后续版本不得无通知变更：
 
 1. `limits.max_connections = 0` 视为配置错误输入并归一化为 `1`，客户端和服务端一致执行。
-2. 服务端在 `accept` 成功后、REALITY 握手前预占连接槽；达到连接上限时直接拒绝该连接，不进入握手路径。
+2. 服务端在 `accept` 成功后、REALITY 握手前预占连接槽；达到全局上限或来源上限时直接拒绝该连接，不进入握手路径。
 3. 流量进入 mux 后，若 `max_streams` 已达上限，服务端必须先返回 `ACK(rep=general failure)`，再发送 `RST`。
 4. SOCKS5 请求中，目标主机为空必须拒绝；`CONNECT` 请求目标端口为 `0` 必须拒绝；`UDP ASSOCIATE` 允许端口 `0`。
 5. 监控接口仅接受 `GET /metrics` 或 `metrics`，并要求 `token` 参数精确匹配；未授权请求不得占用限流窗口。

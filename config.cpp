@@ -28,7 +28,7 @@ REFLECT_STRUCT(
     private_key,
     public_key,
     short_id);
-REFLECT_STRUCT(mux::config::limits_t, max_connections, max_buffer, max_streams);
+REFLECT_STRUCT(mux::config::limits_t, max_connections, max_connections_per_source, source_prefix_v4, source_prefix_v6, max_buffer, max_streams);
 REFLECT_STRUCT(mux::config::heartbeat_t, enabled, idle_timeout, min_interval, max_interval, min_padding, max_padding);
 REFLECT_STRUCT(mux::config::monitor_t, enabled, port, token, min_interval_ms);
 REFLECT_STRUCT(mux::config, mode, log, inbound, outbound, socks, tproxy, fallbacks, timeout, reality, limits, heartbeat, monitor);

@@ -975,22 +975,83 @@ TEST_F(remote_server_test, ConnectionSlotReservationPreHandshakeLimit)
     auto cfg = make_server_cfg(pick_free_port(), {}, "0102030405060708");
     cfg.limits.max_connections = 2;
     auto server = std::make_shared<mux::remote_server>(pool, cfg);
+    const std::string source_key = "127.0.0.1/32";
 
-    EXPECT_TRUE(server->try_reserve_connection_slot());
-    EXPECT_TRUE(server->try_reserve_connection_slot());
-    EXPECT_FALSE(server->try_reserve_connection_slot());
+    EXPECT_TRUE(server->try_reserve_connection_slot(source_key));
+    EXPECT_TRUE(server->try_reserve_connection_slot(source_key));
+    EXPECT_FALSE(server->try_reserve_connection_slot(source_key));
     EXPECT_EQ(server->active_connection_slots_.load(std::memory_order_acquire), 2U);
 
-    server->release_connection_slot();
+    server->release_connection_slot(source_key);
     EXPECT_EQ(server->active_connection_slots_.load(std::memory_order_acquire), 1U);
 
-    EXPECT_TRUE(server->try_reserve_connection_slot());
+    EXPECT_TRUE(server->try_reserve_connection_slot(source_key));
     EXPECT_EQ(server->active_connection_slots_.load(std::memory_order_acquire), 2U);
 
-    server->release_connection_slot();
-    server->release_connection_slot();
-    server->release_connection_slot();
+    server->release_connection_slot(source_key);
+    server->release_connection_slot(source_key);
+    server->release_connection_slot(source_key);
     EXPECT_EQ(server->active_connection_slots_.load(std::memory_order_acquire), 0U);
+}
+
+TEST_F(remote_server_test, ConnectionSlotReservationRespectsPerSourceLimit)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    auto cfg = make_server_cfg(pick_free_port(), {}, "0102030405060708");
+    cfg.limits.max_connections = 4;
+    cfg.limits.max_connections_per_source = 1;
+    auto server = std::make_shared<mux::remote_server>(pool, cfg);
+
+    EXPECT_TRUE(server->try_reserve_connection_slot("10.0.0.1/32"));
+    EXPECT_FALSE(server->try_reserve_connection_slot("10.0.0.1/32"));
+    EXPECT_TRUE(server->try_reserve_connection_slot("10.0.0.2/32"));
+    EXPECT_EQ(server->active_connection_slots_.load(std::memory_order_acquire), 2U);
+
+    server->release_connection_slot("10.0.0.1/32");
+    server->release_connection_slot("10.0.0.2/32");
+    EXPECT_EQ(server->active_connection_slots_.load(std::memory_order_acquire), 0U);
+}
+
+TEST_F(remote_server_test, ConstructorClampsSourcePrefixRange)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    auto cfg = make_server_cfg(pick_free_port(), {}, "0102030405060708");
+    cfg.limits.source_prefix_v4 = 255;
+    cfg.limits.source_prefix_v6 = 255;
+    auto server = std::make_shared<mux::remote_server>(pool, cfg);
+
+    EXPECT_EQ(server->limits_config_.source_prefix_v4, 32U);
+    EXPECT_EQ(server->limits_config_.source_prefix_v6, 128U);
+}
+
+TEST_F(remote_server_test, ConnectionLimitSourceKeyUsesConfiguredSubnet)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    auto cfg = make_server_cfg(pick_free_port(), {}, "0102030405060708");
+    cfg.limits.source_prefix_v4 = 24;
+    auto server = std::make_shared<mux::remote_server>(pool, cfg);
+
+    asio::io_context io_context;
+    asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    asio::ip::tcp::socket client(io_context);
+    asio::ip::tcp::socket accepted(io_context);
+
+    client.connect(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), acceptor.local_endpoint().port()), ec);
+    ASSERT_FALSE(ec);
+    acceptor.accept(accepted, ec);
+    ASSERT_FALSE(ec);
+
+    auto accepted_ptr = std::make_shared<asio::ip::tcp::socket>(std::move(accepted));
+    EXPECT_EQ(server->connection_limit_source_key(accepted_ptr), "127.0.0.0/24");
 }
 
 TEST_F(remote_server_test, ConstructorRejectsInvalidRealityDest)

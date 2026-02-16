@@ -106,6 +106,11 @@ TEST_F(config_test, ParseValues)
             "max_interval": 30,
             "min_padding": 16,
             "max_padding": 128
+        },
+        "limits": {
+            "max_connections_per_source": 3,
+            "source_prefix_v4": 24,
+            "source_prefix_v6": 64
         }
     })";
     write_config_file(content);
@@ -132,6 +137,9 @@ TEST_F(config_test, ParseValues)
         EXPECT_EQ(cfg.reality.replay_cache_max_entries, 4096);
         EXPECT_EQ(cfg.heartbeat.idle_timeout, 42);
         EXPECT_EQ(cfg.heartbeat.max_padding, 128);
+        EXPECT_EQ(cfg.limits.max_connections_per_source, 3U);
+        EXPECT_EQ(cfg.limits.source_prefix_v4, 24U);
+        EXPECT_EQ(cfg.limits.source_prefix_v6, 64U);
     }
 }
 

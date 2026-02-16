@@ -287,6 +287,82 @@ std::size_t key_len_from_cipher_suite(const std::uint16_t cipher_suite)
     return (cipher_suite == 0x1302) ? 32 : 16;
 }
 
+std::uint8_t clamp_prefix(const std::uint8_t prefix, const std::uint8_t max_prefix)
+{
+    if (prefix > max_prefix)
+    {
+        return max_prefix;
+    }
+    return prefix;
+}
+
+std::uint32_t mask_from_v4_prefix(const std::uint8_t prefix)
+{
+    if (prefix == 0)
+    {
+        return 0;
+    }
+    if (prefix >= 32)
+    {
+        return 0xFFFFFFFFU;
+    }
+    return 0xFFFFFFFFU << (32 - prefix);
+}
+
+std::string format_v4_subnet_key(const asio::ip::address_v4& address, const std::uint8_t prefix)
+{
+    const auto mask = mask_from_v4_prefix(prefix);
+    const auto network = address.to_uint() & mask;
+    return asio::ip::address_v4(network).to_string() + "/" + std::to_string(prefix);
+}
+
+std::string format_v6_subnet_key(const asio::ip::address_v6& address, const std::uint8_t prefix)
+{
+    auto bytes = address.to_bytes();
+    if (prefix == 0)
+    {
+        bytes.fill(0);
+    }
+    else if (prefix < 128)
+    {
+        const std::size_t full_bytes = prefix / 8;
+        const std::uint8_t rem_bits = prefix % 8;
+        if (rem_bits == 0)
+        {
+            for (std::size_t i = full_bytes; i < bytes.size(); ++i)
+            {
+                bytes[i] = 0;
+            }
+        }
+        else
+        {
+            const auto mask = static_cast<std::uint8_t>(0xFFU << (8 - rem_bits));
+            bytes[full_bytes] &= mask;
+            for (std::size_t i = full_bytes + 1; i < bytes.size(); ++i)
+            {
+                bytes[i] = 0;
+            }
+        }
+    }
+    return asio::ip::address_v6(bytes).to_string() + "/" + std::to_string(prefix);
+}
+
+std::string build_source_limit_key(const asio::ip::address& address, const config::limits_t& limits)
+{
+    const auto normalized = socks_codec::normalize_ip_address(address);
+    if (normalized.is_v4())
+    {
+        const auto prefix_v4 = clamp_prefix(limits.source_prefix_v4, 32);
+        return format_v4_subnet_key(normalized.to_v4(), prefix_v4);
+    }
+    if (normalized.is_v6())
+    {
+        const auto prefix_v6 = clamp_prefix(limits.source_prefix_v6, 128);
+        return format_v6_subnet_key(normalized.to_v6(), prefix_v6);
+    }
+    return "unknown";
+}
+
 struct auth_inputs
 {
     std::vector<std::uint8_t> auth_key;
@@ -820,6 +896,18 @@ remote_server::remote_server(io_context_pool& pool, const config& cfg)
         LOG_WARN("max connections is 0 using 1");
     }
     limits_config_.max_connections = normalized_max_connections;
+    const auto normalized_prefix_v4 = clamp_prefix(limits_config_.source_prefix_v4, 32);
+    if (normalized_prefix_v4 != limits_config_.source_prefix_v4)
+    {
+        LOG_WARN("source prefix v4 {} out of range using {}", limits_config_.source_prefix_v4, normalized_prefix_v4);
+    }
+    limits_config_.source_prefix_v4 = normalized_prefix_v4;
+    const auto normalized_prefix_v6 = clamp_prefix(limits_config_.source_prefix_v6, 128);
+    if (normalized_prefix_v6 != limits_config_.source_prefix_v6)
+    {
+        LOG_WARN("source prefix v6 {} out of range using {}", limits_config_.source_prefix_v6, normalized_prefix_v6);
+    }
+    limits_config_.source_prefix_v6 = normalized_prefix_v6;
 
     const auto ep = resolve_inbound_endpoint(cfg.inbound);
     if (!setup_server_acceptor(acceptor_, ep))
@@ -938,49 +1026,125 @@ asio::awaitable<void> remote_server::accept_loop()
         ec = s->set_option(asio::ip::tcp::no_delay(true), ec);
         (void)ec;
         const std::uint32_t conn_id = next_conn_id_.fetch_add(1, std::memory_order_relaxed);
-        if (!try_reserve_connection_slot())
+        const auto source_key = connection_limit_source_key(s);
+        if (!try_reserve_connection_slot(source_key))
         {
             statistics::instance().inc_connection_limit_rejected();
-            LOG_WARN("{} connection limit reached {} rejecting before handshake conn {}", log_event::kConnClose, limits_config_.max_connections, conn_id);
+            LOG_WARN("{} connection limit reached rejecting before handshake conn {} source {}", log_event::kConnClose, conn_id, source_key);
             close_socket_quietly(s);
             continue;
         }
-        asio::co_spawn(io_context_, [self = shared_from_this(), s, conn_id]() { return self->handle(s, conn_id); }, asio::detached);
+        asio::co_spawn(
+            io_context_,
+            [self = shared_from_this(), s, conn_id, source_key]() { return self->handle(s, conn_id, source_key); },
+            asio::detached);
     }
 }
 
-bool remote_server::try_reserve_connection_slot()
+bool remote_server::try_reserve_connection_slot(const std::string& source_key)
 {
-    std::uint32_t current = active_connection_slots_.load(std::memory_order_acquire);
-    while (true)
+    std::lock_guard<std::mutex> lock(connection_slot_mu_);
+    const auto current = active_connection_slots_.load(std::memory_order_acquire);
+    if (current >= limits_config_.max_connections)
     {
-        if (current >= limits_config_.max_connections)
+        return false;
+    }
+
+    if (limits_config_.max_connections_per_source > 0)
+    {
+        auto& source_slots = active_source_connection_slots_[source_key];
+        if (source_slots >= limits_config_.max_connections_per_source)
         {
             return false;
         }
-        if (active_connection_slots_.compare_exchange_weak(current,
-                                                           current + 1,
-                                                           std::memory_order_acq_rel,
-                                                           std::memory_order_acquire))
-        {
-            return true;
-        }
+        source_slots++;
+    }
+
+    active_connection_slots_.store(current + 1, std::memory_order_release);
+    return true;
+}
+
+void remote_server::release_connection_slot(const std::string& source_key)
+{
+    std::lock_guard<std::mutex> lock(connection_slot_mu_);
+    const auto current = active_connection_slots_.load(std::memory_order_acquire);
+    if (current > 0)
+    {
+        active_connection_slots_.store(current - 1, std::memory_order_release);
+    }
+
+    if (limits_config_.max_connections_per_source == 0)
+    {
+        return;
+    }
+
+    const auto it = active_source_connection_slots_.find(source_key);
+    if (it == active_source_connection_slots_.end())
+    {
+        return;
+    }
+
+    if (it->second <= 1)
+    {
+        active_source_connection_slots_.erase(it);
+    }
+    else
+    {
+        it->second--;
     }
 }
 
-void remote_server::release_connection_slot()
+std::string remote_server::connection_limit_source_key(const std::shared_ptr<asio::ip::tcp::socket>& s) const
 {
-    std::uint32_t current = active_connection_slots_.load(std::memory_order_acquire);
-    while (current > 0)
+    std::error_code remote_ep_ec;
+    const auto remote_ep = s->remote_endpoint(remote_ep_ec);
+    if (remote_ep_ec)
     {
-        if (active_connection_slots_.compare_exchange_weak(current,
-                                                           current - 1,
-                                                           std::memory_order_acq_rel,
-                                                           std::memory_order_acquire))
-        {
-            return;
-        }
+        return "unknown";
     }
+    return build_source_limit_key(remote_ep.address(), limits_config_);
+}
+
+asio::awaitable<void> remote_server::handle(std::shared_ptr<asio::ip::tcp::socket> s,
+                                            const std::uint32_t conn_id,
+                                            std::string source_key)
+{
+    [[maybe_unused]] const std::shared_ptr<void> slot_guard(
+        nullptr,
+        [self = shared_from_this(), source_key = std::move(source_key)](void*) mutable
+        {
+            self->release_connection_slot(source_key);
+        });
+
+    auto ctx = build_connection_context(s, conn_id);
+    LOG_CTX_INFO(ctx, "{} accepted {}", log_event::kConnInit, ctx.connection_info());
+
+    std::vector<std::uint8_t> initial_buf;
+    auto sh_res = co_await negotiate_reality(s, ctx, initial_buf);
+    if (!sh_res.ok)
+    {
+        co_return;
+    }
+
+    auto app_keys_result = derive_application_traffic_keys(sh_res);
+    if (!app_keys_result)
+    {
+        LOG_CTX_ERROR(ctx, "{} derive app keys failed {}", log_event::kHandshake, app_keys_result.error().message());
+        co_return;
+    }
+    const auto& app_keys = *app_keys_result;
+
+    LOG_CTX_INFO(ctx, "{} tunnel starting", log_event::kConnEstablished);
+
+    if (co_await reject_connection_if_over_limit(s, initial_buf, ctx))
+    {
+        co_return;
+    }
+
+    auto tunnel = create_tunnel(s, sh_res, app_keys.c_app_keys, app_keys.s_app_keys, conn_id, ctx);
+    install_syn_callback(tunnel, ctx);
+
+    co_await tunnel->run();
 }
 
 connection_context remote_server::build_connection_context(const std::shared_ptr<asio::ip::tcp::socket>& s, const std::uint32_t conn_id)
@@ -1100,41 +1264,6 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::negotiate_re
 
     sh_res.handshake_hash = trans.finish();
     co_return sh_res;
-}
-
-asio::awaitable<void> remote_server::handle(std::shared_ptr<asio::ip::tcp::socket> s, const std::uint32_t conn_id)
-{
-    [[maybe_unused]] const std::shared_ptr<void> slot_guard(nullptr, [self = shared_from_this()](void*) { self->release_connection_slot(); });
-
-    auto ctx = build_connection_context(s, conn_id);
-    LOG_CTX_INFO(ctx, "{} accepted {}", log_event::kConnInit, ctx.connection_info());
-
-    std::vector<std::uint8_t> initial_buf;
-    auto sh_res = co_await negotiate_reality(s, ctx, initial_buf);
-    if (!sh_res.ok)
-    {
-        co_return;
-    }
-
-    auto app_keys_result = derive_application_traffic_keys(sh_res);
-    if (!app_keys_result)
-    {
-        LOG_CTX_ERROR(ctx, "{} derive app keys failed {}", log_event::kHandshake, app_keys_result.error().message());
-        co_return;
-    }
-    const auto& app_keys = *app_keys_result;
-
-    LOG_CTX_INFO(ctx, "{} tunnel starting", log_event::kConnEstablished);
-
-    if (co_await reject_connection_if_over_limit(s, initial_buf, ctx))
-    {
-        co_return;
-    }
-
-    auto tunnel = create_tunnel(s, sh_res, app_keys.c_app_keys, app_keys.s_app_keys, conn_id, ctx);
-    install_syn_callback(tunnel, ctx);
-
-    co_await tunnel->run();
 }
 
 std::expected<remote_server::app_keys, std::error_code> remote_server::derive_application_traffic_keys(
