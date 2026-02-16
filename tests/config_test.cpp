@@ -8,6 +8,7 @@
 #include <gtest/gtest.h>
 
 #include "config.h"
+#include "mux_protocol.h"
 
 namespace
 {
@@ -254,6 +255,22 @@ TEST_F(config_test, HeartbeatPaddingRangeRejected)
         "heartbeat": {
             "min_padding": 256,
             "max_padding": 128
+        }
+    })";
+    write_config_file(content);
+
+    const auto cfg_opt = mux::parse_config(tmp_file());
+    EXPECT_FALSE(cfg_opt.has_value());
+}
+
+TEST_F(config_test, HeartbeatPaddingTooLargeRejected)
+{
+    const auto too_large_padding = static_cast<std::uint64_t>(mux::kMaxPayload) + 1ULL;
+    const std::string content = std::string(R"({
+        "heartbeat": {
+            "min_padding": 16,
+            "max_padding": )")
+        + std::to_string(too_large_padding) + R"(
         }
     })";
     write_config_file(content);

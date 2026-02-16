@@ -4,6 +4,7 @@
 
 #include "config.h"
 #include "reflect.h"
+#include "mux_protocol.h"
 
 namespace reflect
 {
@@ -52,6 +53,10 @@ namespace
         return false;
     }
     if (heartbeat.min_padding > heartbeat.max_padding)
+    {
+        return false;
+    }
+    if (heartbeat.max_padding > kMaxPayload)
     {
         return false;
     }
