@@ -77,6 +77,14 @@ template <typename t>
     return std::atomic_exchange_explicit(&slot, std::shared_ptr<t>{}, std::memory_order_acq_rel);
 }
 
+template <typename t>
+bool atomic_clear_if_match(std::shared_ptr<t>& slot, const std::shared_ptr<t>& expected_value)
+{
+    auto expected = expected_value;
+    return std::atomic_compare_exchange_strong_explicit(
+        &slot, &expected, std::shared_ptr<t>{}, std::memory_order_acq_rel, std::memory_order_acquire);
+}
+
 bool parse_hex_to_bytes(const std::string& hex, std::vector<std::uint8_t>& out, const std::size_t max_len, const char* label)
 {
     out.clear();
@@ -968,11 +976,7 @@ void client_tunnel_pool::clear_pending_socket_if_match(const std::uint32_t index
     {
         return;
     }
-
-    if (atomic_load_shared(pending_sockets_[index]) == socket)
-    {
-        atomic_store_shared(pending_sockets_[index], std::shared_ptr<asio::ip::tcp::socket>{});
-    }
+    atomic_clear_if_match(pending_sockets_[index], socket);
 }
 
 void client_tunnel_pool::publish_tunnel(const std::uint32_t index, const std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>& tunnel)
@@ -990,11 +994,7 @@ void client_tunnel_pool::clear_tunnel_if_match(const std::uint32_t index,
     {
         return;
     }
-
-    if (atomic_load_shared(tunnel_pool_[index]) == tunnel)
-    {
-        atomic_store_shared(tunnel_pool_[index], std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>{});
-    }
+    atomic_clear_if_match(tunnel_pool_[index], tunnel);
 }
 
 std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> client_tunnel_pool::build_tunnel(asio::ip::tcp::socket socket,
