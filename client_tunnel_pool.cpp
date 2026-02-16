@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <array>
 #include <cctype>
 #include <chrono>
@@ -1050,7 +1051,7 @@ asio::awaitable<bool> client_tunnel_pool::establish_tunnel_for_connection(
         co_return false;
     }
 
-    const auto handshake_res = co_await perform_reality_handshake(*socket);
+    const auto handshake_res = co_await perform_reality_handshake_with_timeout(socket, io_context);
     if (!handshake_res)
     {
         ec = handshake_res.error();
@@ -1072,6 +1073,48 @@ asio::awaitable<bool> client_tunnel_pool::establish_tunnel_for_connection(
         co_return false;
     }
     co_return true;
+}
+
+asio::awaitable<std::expected<client_tunnel_pool::handshake_result, std::error_code>> client_tunnel_pool::perform_reality_handshake_with_timeout(
+    const std::shared_ptr<asio::ip::tcp::socket>& socket,
+    asio::io_context& io_context) const
+{
+    const auto timeout_sec = std::max<std::uint32_t>(1, timeout_config_.read);
+    auto timer = std::make_shared<asio::steady_timer>(io_context);
+    auto timeout_triggered = std::make_shared<std::atomic<bool>>(false);
+    timer->expires_after(std::chrono::seconds(timeout_sec));
+    timer->async_wait(
+        [socket, timeout_triggered](const std::error_code& timer_ec)
+        {
+            if (timer_ec)
+            {
+                return;
+            }
+            timeout_triggered->store(true, std::memory_order_release);
+            std::error_code cancel_ec;
+            socket->cancel(cancel_ec);
+            if (cancel_ec && cancel_ec != asio::error::bad_descriptor)
+            {
+                LOG_WARN("cancel handshake socket failed {}", cancel_ec.message());
+            }
+
+            std::error_code close_ec;
+            close_ec = socket->close(close_ec);
+            if (close_ec && close_ec != asio::error::bad_descriptor)
+            {
+                LOG_WARN("close handshake socket failed {}", close_ec.message());
+            }
+        });
+
+    auto handshake_res = co_await perform_reality_handshake(*socket);
+    const auto cancelled = timer->cancel();
+    (void)cancelled;
+    if (timeout_triggered->load(std::memory_order_acquire))
+    {
+        LOG_ERROR("reality handshake timeout {}s", timeout_sec);
+        co_return std::unexpected(asio::error::timed_out);
+    }
+    co_return handshake_res;
 }
 
 asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::uint32_t index, asio::io_context& io_context)
