@@ -646,6 +646,32 @@ TEST_F(socks_session_test, ReadTargetHostPortAndValidationBranches)
     {
         auto pair = make_tcp_socket_pair(io_ctx());
         auto session = std::make_shared<socks_session>(std::move(pair.server), io_ctx(), nullptr, nullptr, 3);
+        const std::uint8_t empty_domain[] = {0x00, 0x00, 0x50};
+        asio::write(pair.client, asio::buffer(empty_domain));
+        auto req = mux::test::run_awaitable(io_ctx(), session->read_request_target(socks::kCmdConnect, socks::kAtypDomain));
+        EXPECT_FALSE(req.ok);
+        EXPECT_EQ(req.cmd, socks::kCmdConnect);
+        std::uint8_t err[10] = {0};
+        asio::read(pair.client, asio::buffer(err));
+        EXPECT_EQ(err[1], socks::kRepGenFail);
+    }
+
+    {
+        auto pair = make_tcp_socket_pair(io_ctx());
+        auto session = std::make_shared<socks_session>(std::move(pair.server), io_ctx(), nullptr, nullptr, 4);
+        const std::uint8_t zero_port_domain[] = {0x04, 't', 'e', 's', 't', 0x00, 0x00};
+        asio::write(pair.client, asio::buffer(zero_port_domain));
+        auto req = mux::test::run_awaitable(io_ctx(), session->read_request_target(socks::kCmdConnect, socks::kAtypDomain));
+        EXPECT_FALSE(req.ok);
+        EXPECT_EQ(req.cmd, socks::kCmdConnect);
+        std::uint8_t err[10] = {0};
+        asio::read(pair.client, asio::buffer(err));
+        EXPECT_EQ(err[1], socks::kRepGenFail);
+    }
+
+    {
+        auto pair = make_tcp_socket_pair(io_ctx());
+        auto session = std::make_shared<socks_session>(std::move(pair.server), io_ctx(), nullptr, nullptr, 5);
         const std::uint8_t ipv6_port[] = {0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0x00, 0x35};
         asio::write(pair.client, asio::buffer(ipv6_port));
         auto req = mux::test::run_awaitable(io_ctx(), session->read_request_target(socks::kCmdConnect, socks::kAtypIpv6));
@@ -656,7 +682,7 @@ TEST_F(socks_session_test, ReadTargetHostPortAndValidationBranches)
 
     {
         auto pair = make_tcp_socket_pair(io_ctx());
-        auto session = std::make_shared<socks_session>(std::move(pair.server), io_ctx(), nullptr, nullptr, 4);
+        auto session = std::make_shared<socks_session>(std::move(pair.server), io_ctx(), nullptr, nullptr, 6);
         const std::uint8_t only_ipv4[] = {1, 2, 3, 4};
         asio::write(pair.client, asio::buffer(only_ipv4));
         pair.client.shutdown(asio::ip::tcp::socket::shutdown_send);
@@ -670,7 +696,7 @@ TEST_F(socks_session_test, ReadTargetHostPortAndValidationBranches)
 
     {
         auto pair = make_tcp_socket_pair(io_ctx());
-        auto session = std::make_shared<socks_session>(std::move(pair.server), io_ctx(), nullptr, nullptr, 5);
+        auto session = std::make_shared<socks_session>(std::move(pair.server), io_ctx(), nullptr, nullptr, 7);
         auto req = mux::test::run_awaitable(io_ctx(), session->read_request_target(socks::kCmdConnect, 0x09));
         EXPECT_FALSE(req.ok);
         EXPECT_EQ(req.cmd, socks::kCmdConnect);
