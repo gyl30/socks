@@ -1032,6 +1032,20 @@ void remote_server::start()
         return;
     }
 
+    if (!auth_config_valid_)
+    {
+        LOG_ERROR("remote server start failed invalid auth config");
+        std::error_code close_ec;
+        acceptor_.close(close_ec);
+        if (close_ec)
+        {
+            LOG_ERROR("remote server close acceptor failed {}", close_ec.message());
+        }
+        stop_.store(true, std::memory_order_release);
+        started_.store(false, std::memory_order_release);
+        return;
+    }
+
     if (!ensure_acceptor_open())
     {
         LOG_ERROR("remote server start failed acceptor unavailable");

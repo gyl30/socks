@@ -659,7 +659,7 @@ TEST_F(remote_server_test, FallbackConnectFail)
     pool_thread.join();
 }
 
-TEST_F(remote_server_test, InvalidAuthConfigPath)
+TEST_F(remote_server_test, StartRejectsInvalidAuthConfig)
 {
     std::error_code ec;
     mux::io_context_pool pool(1);
@@ -682,21 +682,17 @@ TEST_F(remote_server_test, InvalidAuthConfigPath)
 
     auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(server_port, {{"", "127.0.0.1", std::to_string(fallback_port)}}, "abc"));
     server->start();
+    EXPECT_FALSE(server->running());
 
     {
         asio::ip::tcp::socket sock(pool.get_io_context());
-        sock.connect({asio::ip::make_address("127.0.0.1"), server_port});
-
-        auto spec = reality::fingerprint_factory::get(reality::fingerprint_type::kChrome120);
-        auto ch_msg = reality::client_hello_builder::build(
-            spec, std::vector<uint8_t>(32, 0), std::vector<uint8_t>(32, 0), std::vector<uint8_t>(32, 0), "www.google.com");
-        auto record = reality::write_record_header(reality::kContentTypeHandshake, static_cast<uint16_t>(ch_msg.size()));
-        record.insert(record.end(), ch_msg.begin(), ch_msg.end());
-        asio::write(sock, asio::buffer(record));
-        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        std::error_code connect_ec;
+        sock.connect({asio::ip::make_address("127.0.0.1"), server_port}, connect_ec);
+        EXPECT_TRUE(connect_ec);
     }
 
-    EXPECT_TRUE(wait_for_condition([&fallback_triggered]() { return fallback_triggered.load(); }));
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    EXPECT_FALSE(fallback_triggered.load());
     server->stop();
     pool.stop();
     pool_thread.join();
