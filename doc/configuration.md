@@ -15,6 +15,8 @@
 - `socks.enabled`：是否启用 SOCKS5 入站（默认 `true`）。
 - `socks.host` / `socks.port`：本地 SOCKS5 监听地址与端口。
 - `socks.auth` / `socks.username` / `socks.password`：SOCKS5 认证配置。
+  - 当 `socks.auth = true` 且 `socks.username` 与 `socks.password` 均非空时，启用用户名/密码认证。
+  - 当用户名或密码任一为空时，跳过身份验证，按无认证方式协商。
 - `tproxy.enabled`：是否启用 TPROXY 入站（默认 `false`）。
 - `tproxy.listen_host`：TPROXY 监听地址（默认 `::`）。
 - `tproxy.tcp_port` / `tproxy.udp_port`：TPROXY TCP/UDP 端口。`udp_port = 0` 表示跟随 `tcp_port`。
@@ -51,6 +53,7 @@
 3. 流量进入 mux 后，若 `max_streams` 已达上限，服务端必须先返回 `ACK(rep=general failure)`，再发送 `RST`。
 4. SOCKS5 请求中，目标主机为空必须拒绝；`CONNECT` 请求目标端口为 `0` 必须拒绝；`UDP ASSOCIATE` 允许端口 `0`。
 5. 监控接口仅接受 `GET /metrics` 或 `metrics`，并要求 `token` 参数精确匹配；未授权请求不得占用限流窗口。
+6. 客户端配置变更不支持热加载，修改配置后必须重启客户端进程生效。
 
 ## REALITY
 
