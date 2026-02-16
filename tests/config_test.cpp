@@ -234,6 +234,20 @@ TEST_F(config_test, HeartbeatIntervalRangeRejected)
     EXPECT_FALSE(cfg_opt.has_value());
 }
 
+TEST_F(config_test, HeartbeatZeroIntervalRejected)
+{
+    const std::string content = R"({
+        "heartbeat": {
+            "min_interval": 0,
+            "max_interval": 0
+        }
+    })";
+    write_config_file(content);
+
+    const auto cfg_opt = mux::parse_config(tmp_file());
+    EXPECT_FALSE(cfg_opt.has_value());
+}
+
 TEST_F(config_test, HeartbeatPaddingRangeRejected)
 {
     const std::string content = R"({

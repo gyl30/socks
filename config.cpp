@@ -43,6 +43,10 @@ namespace
 
 [[nodiscard]] bool validate_heartbeat_config(const config::heartbeat_t& heartbeat)
 {
+    if (heartbeat.min_interval == 0 || heartbeat.max_interval == 0)
+    {
+        return false;
+    }
     if (heartbeat.min_interval > heartbeat.max_interval)
     {
         return false;

@@ -28,6 +28,7 @@
 - `heartbeat.min_interval` / `heartbeat.max_interval`：心跳随机间隔。
 - `heartbeat.min_padding` / `heartbeat.max_padding`：心跳填充长度范围。
 - `heartbeat.min_interval <= heartbeat.max_interval` 且 `heartbeat.min_padding <= heartbeat.max_padding`，否则配置解析失败。
+- `heartbeat.min_interval` 和 `heartbeat.max_interval` 必须大于 `0`，否则配置解析失败，避免出现零间隔忙轮询。
 
 ## 限制与保护
 
