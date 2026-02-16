@@ -4,6 +4,7 @@ set(MSAN_UMR_NOISE_OPTIONS
     "intercept_strlen=0:intercept_strcmp=0:intercept_strndup=0:intercept_strchr=0:intercept_memcmp=0:intercept_strstr=0:intercept_strspn=0:intercept_strtok=0:intercept_strpbrk=0:intercept_memmem=0")
 
 find_package(Python3 COMPONENTS Interpreter QUIET)
+find_program(RG_EXECUTABLE rg)
 
 macro(add_socks_test NAME)
     add_executable(${NAME} ${NAME}.cpp)
@@ -277,6 +278,46 @@ if(LINUX)
     else()
         set_tests_properties(tproxy_integration_test PROPERTIES ENVIRONMENT "BIN=${CMAKE_BINARY_DIR}/socks")
     endif()
+endif()
+
+if(RG_EXECUTABLE)
+    set(NO_EXCEPTION_CHECK_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/no_exception_keywords_test.cmake")
+    file(
+        WRITE
+        "${NO_EXCEPTION_CHECK_SCRIPT}"
+        "if(NOT DEFINED PROJECT_SOURCE_DIR)\n"
+        "    message(FATAL_ERROR \"PROJECT_SOURCE_DIR missing\")\n"
+        "endif()\n"
+        "if(NOT DEFINED RG_EXECUTABLE)\n"
+        "    message(FATAL_ERROR \"RG_EXECUTABLE missing\")\n"
+        "endif()\n"
+        "execute_process(\n"
+        "    COMMAND \"\\${RG_EXECUTABLE}\" -n \"\\\\bthrow\\\\b|\\\\btry\\\\b|\\\\bcatch\\\\b\" --glob \"*.{cpp,h}\" --glob \"!third/**\" --glob \"!build/**\" --glob \"!**/build/**\" \"\\${PROJECT_SOURCE_DIR}\"\n"
+        "    RESULT_VARIABLE rg_exit\n"
+        "    OUTPUT_VARIABLE rg_output\n"
+        "    ERROR_VARIABLE rg_error\n"
+        "    OUTPUT_STRIP_TRAILING_WHITESPACE\n"
+        "    ERROR_STRIP_TRAILING_WHITESPACE\n"
+        ")\n"
+        "if(rg_exit EQUAL 0)\n"
+        "    message(FATAL_ERROR \"exception keywords found\\n\\${rg_output}\")\n"
+        "endif()\n"
+        "if(NOT rg_exit EQUAL 1)\n"
+        "    message(FATAL_ERROR \"rg execution failed with code \\${rg_exit}\\n\\${rg_error}\")\n"
+        "endif()\n"
+    )
+    add_test(
+        NAME no_exception_keywords_test
+        COMMAND
+            ${CMAKE_COMMAND}
+            -DPROJECT_SOURCE_DIR=${CMAKE_SOURCE_DIR}
+            -DRG_EXECUTABLE=${RG_EXECUTABLE}
+            -P
+            ${NO_EXCEPTION_CHECK_SCRIPT}
+    )
+    set_tests_properties(no_exception_keywords_test PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+else()
+    message(WARNING "rg not found no_exception_keywords_test disabled")
 endif()
 
 if(Python3_Interpreter_FOUND)

@@ -76,4 +76,4 @@ if (!cfg)
 
 1. 项目代码（`third/` 除外）禁止新增 `throw` / `try` / `catch`。
 2. 禁止新增 `std::error_code&` 输出参数风格接口。
-3. 建议在本地或 CI 增加静态检查：`rg -n "\\bthrow\\b|\\btry\\b|\\bcatch\\b" --glob '*.{cpp,h}' --glob '!third/**'`。
+3. 已在 CTest 增加 `no_exception_keywords_test` 静态检查，核心扫描命令为：`rg -n "\\bthrow\\b|\\btry\\b|\\bcatch\\b" --glob '*.{cpp,h}' --glob '!third/**'`。
