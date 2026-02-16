@@ -219,6 +219,17 @@ bool is_authorized_monitor_request(const std::string& request, const std::string
     return has_exact_token_parameter(parsed.query, token);
 }
 
+std::string monitor_rate_limit_key(asio::ip::tcp::socket& socket)
+{
+    std::error_code ec;
+    const auto remote_ep = socket.remote_endpoint(ec);
+    if (ec)
+    {
+        return "unknown";
+    }
+    return remote_ep.address().to_string();
+}
+
 }    // namespace
 
 class monitor_session : public std::enable_shared_from_this<monitor_session>
@@ -295,11 +306,15 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
             return true;
         }
         const auto now = std::chrono::steady_clock::now();
-        if (now - rate_state_->last_request_time < std::chrono::milliseconds(min_interval_ms_))
+        const auto rate_key = monitor_rate_limit_key(socket_);
+        std::lock_guard<std::mutex> lock(rate_state_->mutex);
+        auto& last_request_time = rate_state_->last_request_time_by_source[rate_key];
+        if (last_request_time.time_since_epoch().count() != 0
+            && now - last_request_time < std::chrono::milliseconds(min_interval_ms_))
         {
             return false;
         }
-        rate_state_->last_request_time = now;
+        last_request_time = now;
         return true;
     }
 

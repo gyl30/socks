@@ -83,12 +83,38 @@ std::uint16_t pick_free_port()
     return acceptor.local_endpoint().port();
 }
 
-std::string read_response(std::uint16_t port, const std::string& request)
+std::string read_response(std::uint16_t port,
+                          const std::string& request,
+                          const std::string& remote_host = "127.0.0.1",
+                          const std::string& local_host = "")
 {
     asio::io_context ioc;
     asio::ip::tcp::socket socket(ioc);
     asio::error_code ec;
-    socket.connect(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), port), ec);
+    const auto remote_addr = asio::ip::make_address(remote_host, ec);
+    if (ec)
+    {
+        return {};
+    }
+    if (!local_host.empty())
+    {
+        const auto local_addr = asio::ip::make_address(local_host, ec);
+        if (ec)
+        {
+            return {};
+        }
+        socket.open(local_addr.is_v6() ? asio::ip::tcp::v6() : asio::ip::tcp::v4(), ec);
+        if (ec)
+        {
+            return {};
+        }
+        socket.bind(asio::ip::tcp::endpoint(local_addr, 0), ec);
+        if (ec)
+        {
+            return {};
+        }
+    }
+    socket.connect(asio::ip::tcp::endpoint(remote_addr, port), ec);
     if (ec)
     {
         return {};
@@ -312,6 +338,34 @@ TEST(MonitorServerTest, UnauthorizedRequestDoesNotConsumeRateLimitWindow)
 
     const auto authed_after_unauth = read_response(port, "metrics?token=secret\n");
     EXPECT_NE(authed_after_unauth.find("socks_uptime_seconds "), std::string::npos);
+}
+
+TEST(MonitorServerTest, RateLimitIsolatedBySourceAddress)
+{
+    const auto port = pick_free_port();
+    monitor_server_env env(std::string("0.0.0.0"), port, std::string("secret"), 500);
+
+    asio::error_code probe_ec;
+    asio::io_context probe_ioc;
+    asio::ip::tcp::socket probe_socket(probe_ioc);
+    probe_socket.open(asio::ip::tcp::v4(), probe_ec);
+    if (!probe_ec)
+    {
+        probe_socket.bind(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.2"), 0), probe_ec);
+    }
+    if (probe_ec)
+    {
+        GTEST_SKIP() << "source address 127.0.0.2 unavailable";
+    }
+
+    const auto first_source_a = request_with_retry(port, "metrics?token=secret\n");
+    EXPECT_NE(first_source_a.find("socks_uptime_seconds "), std::string::npos);
+
+    const auto limited_source_a = read_response(port, "metrics?token=secret\n");
+    EXPECT_TRUE(limited_source_a.empty());
+
+    const auto source_b = read_response(port, "metrics?token=secret\n", "127.0.0.1", "127.0.0.2");
+    EXPECT_NE(source_b.find("socks_uptime_seconds "), std::string::npos);
 }
 
 TEST(MonitorServerTest, RejectsTokenSubstringBypass)
