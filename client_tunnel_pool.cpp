@@ -980,12 +980,24 @@ void client_tunnel_pool::clear_pending_socket_if_match(const std::uint32_t index
     atomic_clear_if_match(pending_sockets_[index], socket);
 }
 
-void client_tunnel_pool::publish_tunnel(const std::uint32_t index, const std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>& tunnel)
+bool client_tunnel_pool::publish_tunnel(const std::uint32_t index, const std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>& tunnel)
 {
-    if (index < tunnel_pool_.size())
+    if (index >= tunnel_pool_.size())
     {
-        atomic_store_shared(tunnel_pool_[index], tunnel);
+        return false;
     }
+    if (stop_.load(std::memory_order_acquire))
+    {
+        return false;
+    }
+
+    atomic_store_shared(tunnel_pool_[index], tunnel);
+    if (stop_.load(std::memory_order_acquire))
+    {
+        atomic_clear_if_match(tunnel_pool_[index], tunnel);
+        return false;
+    }
+    return true;
 }
 
 void client_tunnel_pool::clear_tunnel_if_match(const std::uint32_t index,
@@ -1151,7 +1163,20 @@ asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::uint32_
         {
             connection->mark_started_for_external_calls();
         }
-        publish_tunnel(index, tunnel);
+        if (!publish_tunnel(index, tunnel))
+        {
+            clear_pending_socket_if_match(index, socket);
+            if (const auto connection = tunnel->connection(); connection != nullptr)
+            {
+                connection->release_resources();
+            }
+            if (stop_.load(std::memory_order_acquire))
+            {
+                break;
+            }
+            co_await wait_remote_retry(io_context);
+            continue;
+        }
         clear_pending_socket_if_match(index, socket);
 
         co_await tunnel->run();

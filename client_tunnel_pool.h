@@ -85,7 +85,7 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
     void close_pending_socket(std::size_t index, std::shared_ptr<asio::ip::tcp::socket> pending_socket);
     void release_all_pending_sockets();
     void release_all_tunnels();
-    void publish_tunnel(std::uint32_t index, const std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>& tunnel);
+    [[nodiscard]] bool publish_tunnel(std::uint32_t index, const std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>& tunnel);
     void clear_tunnel_if_match(std::uint32_t index, const std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>& tunnel);
     [[nodiscard]] std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> build_tunnel(
         asio::ip::tcp::socket socket, asio::io_context& io_context, std::uint32_t cid, const handshake_result& handshake_ret, const std::string& trace_id) const;

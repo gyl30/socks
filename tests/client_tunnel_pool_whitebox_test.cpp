@@ -360,6 +360,35 @@ TEST(ClientTunnelPoolWhiteboxTest, SelectAndIndexGuardBranches)
     ASSERT_NE(created_socket, nullptr);
 }
 
+TEST(ClientTunnelPoolWhiteboxTest, PublishTunnelRejectedWhenStopping)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    auto cfg = make_base_cfg();
+    cfg.reality.public_key = generate_public_key_hex();
+    auto tunnel_pool = std::make_shared<mux::client_tunnel_pool>(pool, cfg, 0);
+
+    tunnel_pool->tunnel_pool_.resize(1);
+    asio::io_context io_context;
+    auto tunnel = std::make_shared<mux::mux_tunnel_impl<asio::ip::tcp::socket>>(
+        asio::ip::tcp::socket(io_context),
+        io_context,
+        mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()},
+        true,
+        1101);
+
+    tunnel_pool->stop_.store(true, std::memory_order_release);
+    EXPECT_FALSE(tunnel_pool->publish_tunnel(0, tunnel));
+    EXPECT_EQ(tunnel_pool->tunnel_pool_[0], nullptr);
+
+    tunnel_pool->stop_.store(false, std::memory_order_release);
+    EXPECT_TRUE(tunnel_pool->publish_tunnel(0, tunnel));
+    EXPECT_EQ(tunnel_pool->tunnel_pool_[0], tunnel);
+    tunnel_pool->clear_tunnel_if_match(0, tunnel);
+}
+
 TEST(ClientTunnelPoolWhiteboxTest, ClosePendingSocketRunsWhenIoContextNotRunning)
 {
     std::error_code ec;
