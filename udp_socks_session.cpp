@@ -555,6 +555,11 @@ asio::awaitable<void> udp_socks_session::keep_tcp_alive()
 
 asio::awaitable<void> udp_socks_session::idle_watchdog()
 {
+    if (timeout_config_.idle == 0)
+    {
+        co_return;
+    }
+
     while (!closed_.load(std::memory_order_acquire))
     {
         idle_timer_.expires_after(std::chrono::seconds(1));
