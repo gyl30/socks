@@ -31,6 +31,7 @@ extern "C"
 #include "router.h"
 #include "ip_matcher.h"
 #include "domain_matcher.h"
+#include "mux_codec.h"
 #include "mux_stream.h"
 #include "test_util.h"
 #include "context_pool.h"
@@ -1158,6 +1159,90 @@ TEST(TproxyUdpSessionTest, ProxyStreamLifecycleCoversInstallCleanupAndReaderStar
     ctx.restart();
 
     mux::test::run_awaitable_void(ctx, session->cleanup_proxy_stream(tunnel, stream));
+}
+
+TEST(TproxyUdpSessionTest, EnsureProxyStreamSucceedsWhenConcurrentInstallAlreadyCompleted)
+{
+    asio::io_context ctx;
+    mux::io_context_pool pool(1);
+    auto router = std::make_shared<proxy_router>();
+    mux::config cfg;
+    cfg.reality.public_key = std::string(64, 'a');
+    cfg.timeout.idle = 3;
+    cfg.tproxy.mark = 0;
+
+    auto tunnel_pool = std::make_shared<mux::client_tunnel_pool>(pool, cfg, 0);
+    auto session = std::make_shared<mux::tproxy_udp_session>(
+        ctx,
+        tunnel_pool,
+        router,
+        nullptr,
+        30,
+        cfg,
+        asio::ip::udp::endpoint(asio::ip::make_address("127.0.0.1"), 12435));
+
+    auto tunnel = std::make_shared<mux::mux_tunnel_impl<asio::ip::tcp::socket>>(
+        asio::ip::tcp::socket(ctx), ctx, mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 130);
+    auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx);
+    tunnel->connection_ = mock_conn;
+    tunnel_pool->tunnel_pool_.resize(1);
+    tunnel_pool->tunnel_pool_[0] = tunnel;
+
+    std::shared_ptr<mux::mux_stream> handshake_stream;
+    std::atomic<bool> syn_sent{false};
+
+    ON_CALL(*mock_conn, id()).WillByDefault(testing::Return(130));
+    ON_CALL(*mock_conn, register_stream(testing::_, testing::_))
+        .WillByDefault(
+            [&handshake_stream](const std::uint32_t /*id*/, const std::shared_ptr<mux::mux_stream_interface>& stream)
+            {
+                if (const auto mux_stream = std::dynamic_pointer_cast<mux::mux_stream>(stream))
+                {
+                    handshake_stream = mux_stream;
+                }
+                return true;
+            });
+    ON_CALL(*mock_conn, remove_stream(testing::_)).WillByDefault([](const std::uint32_t /*id*/) {});
+    ON_CALL(*mock_conn, mock_send_async(testing::_, testing::_, testing::_))
+        .WillByDefault(
+            [&syn_sent](const std::uint32_t /*id*/, const std::uint8_t cmd, const std::vector<std::uint8_t>& /*payload*/)
+            {
+                if (cmd == mux::kCmdSyn)
+                {
+                    syn_sent.store(true, std::memory_order_release);
+                }
+                return std::error_code{};
+            });
+
+    bool ensure_ok = false;
+    asio::co_spawn(
+        ctx,
+        [session, &ensure_ok]() -> asio::awaitable<void>
+        {
+            ensure_ok = co_await session->ensure_proxy_stream();
+        },
+        asio::detached);
+
+    for (int i = 0; i < 200 && !syn_sent.load(std::memory_order_acquire); ++i)
+    {
+        ctx.poll_one();
+    }
+    ASSERT_TRUE(syn_sent.load(std::memory_order_acquire));
+    ASSERT_NE(handshake_stream, nullptr);
+
+    auto preinstalled_stream = std::make_shared<mux::mux_stream>(999, 130, "existing", mock_conn, ctx);
+    session->stream_ = preinstalled_stream;
+    session->tunnel_ = tunnel;
+
+    mux::ack_payload ack{.socks_rep = socks::kRepSuccess, .bnd_addr = "0.0.0.0", .bnd_port = 0};
+    std::vector<std::uint8_t> ack_data;
+    mux::mux_codec::encode_ack(ack, ack_data);
+    handshake_stream->on_data(std::move(ack_data));
+
+    ctx.run();
+
+    EXPECT_TRUE(ensure_ok);
+    EXPECT_EQ(session->stream_, preinstalled_stream);
 }
 
 TEST(TproxyClientTest, DisabledStartSetsStopFlag)
