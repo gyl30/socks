@@ -326,6 +326,8 @@ socks_client::socks_client(io_context_pool& pool, const config& cfg)
 
 void socks_client::start()
 {
+    stop_.store(false, std::memory_order_release);
+
     if (!tunnel_pool_->valid())
     {
         LOG_ERROR("invalid reality auth config");
