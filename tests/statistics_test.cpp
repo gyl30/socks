@@ -102,6 +102,22 @@ TEST(StatisticsTest, CountersAndUptime)
     stats.inc_fallback_rate_limited();
     EXPECT_EQ(stats.fallback_rate_limited(), fallback_before + 1);
 
+    const auto fallback_no_target_before = stats.fallback_no_target();
+    stats.inc_fallback_no_target();
+    EXPECT_EQ(stats.fallback_no_target(), fallback_no_target_before + 1);
+
+    const auto fallback_resolve_before = stats.fallback_resolve_failures();
+    stats.inc_fallback_resolve_failures();
+    EXPECT_EQ(stats.fallback_resolve_failures(), fallback_resolve_before + 1);
+
+    const auto fallback_connect_before = stats.fallback_connect_failures();
+    stats.inc_fallback_connect_failures();
+    EXPECT_EQ(stats.fallback_connect_failures(), fallback_connect_before + 1);
+
+    const auto fallback_write_before = stats.fallback_write_failures();
+    stats.inc_fallback_write_failures();
+    EXPECT_EQ(stats.fallback_write_failures(), fallback_write_before + 1);
+
     const auto blocked_before = stats.routing_blocked();
     stats.inc_routing_blocked();
     EXPECT_EQ(stats.routing_blocked(), blocked_before + 1);
