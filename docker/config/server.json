@@ -26,5 +26,11 @@
     },
     "limits": {
         "max_connections": 10000
+    },
+    "monitor": {
+        "enabled": true,
+        "port": 9090,
+        "token": "docker-monitor-token",
+        "min_interval_ms": 100
     }
 }
