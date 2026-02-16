@@ -303,7 +303,7 @@ bool mux_connection::register_stream_local(const std::uint32_t id, std::shared_p
     static const stream_map_t k_empty_streams{};
     for (;;)
     {
-        if (!is_open())
+        if (connection_state_.load(std::memory_order_acquire) != mux_connection_state::kConnected)
         {
             return false;
         }
@@ -339,7 +339,7 @@ bool mux_connection::try_register_stream_local(const std::uint32_t id, std::shar
     static const stream_map_t k_empty_streams{};
     for (;;)
     {
-        if (!is_open())
+        if (connection_state_.load(std::memory_order_acquire) != mux_connection_state::kConnected)
         {
             return false;
         }
@@ -402,6 +402,14 @@ void mux_connection::remove_stream_local(const std::uint32_t id)
 
 bool mux_connection::can_accept_stream_local() const
 {
+    if (connection_state_.load(std::memory_order_acquire) != mux_connection_state::kConnected)
+    {
+        return false;
+    }
+    if (limits_config_.max_streams == 0)
+    {
+        return true;
+    }
     return snapshot_streams()->size() < limits_config_.max_streams;
 }
 
@@ -835,8 +843,13 @@ asio::awaitable<void> mux_connection::timeout_loop()
                 break;
             }
 
+            mux_connection_state expected = mux_connection_state::kConnected;
+            if (!connection_state_.compare_exchange_strong(expected, mux_connection_state::kDraining, std::memory_order_acq_rel))
+            {
+                break;
+            }
+
             LOG_DEBUG("mux {} entering draining mode", cid_);
-            connection_state_.store(mux_connection_state::kDraining, std::memory_order_release);
             const auto delay_seconds = pick_draining_delay_seconds(rng);
             co_await wait_draining_delay(timer_, delay_seconds, cid_);
             break;
@@ -921,6 +934,10 @@ void mux_connection::on_mux_frame(const mux::frame_header header, std::vector<st
 
 bool mux_connection::can_accept_stream()
 {
+    if (connection_state_.load(std::memory_order_acquire) != mux_connection_state::kConnected)
+    {
+        return false;
+    }
     if (limits_config_.max_streams == 0)
     {
         return true;
