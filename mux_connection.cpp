@@ -782,7 +782,11 @@ asio::awaitable<void> mux_connection::heartbeat_loop()
         std::uniform_int_distribution<std::uint32_t> padding_dist(heartbeat_config_.min_padding, heartbeat_config_.max_padding);
         const auto padding_len = padding_dist(rng);
         std::vector<std::uint8_t> padding(padding_len);
-        RAND_bytes(padding.data(), static_cast<int>(padding_len));
+        if (padding_len > 0 && RAND_bytes(padding.data(), static_cast<int>(padding_len)) != 1)
+        {
+            LOG_ERROR("mux {} heartbeat rand failed", cid_);
+            break;
+        }
 
         LOG_DEBUG("mux {} sending heartbeat size {}", cid_, padding_len);
         (void)co_await send_async(mux::kStreamIdHeartbeat, mux::kCmdDat, std::move(padding));

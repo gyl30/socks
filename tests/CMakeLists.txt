@@ -146,6 +146,13 @@ add_socks_test(reality_fingerprint_test)
 add_socks_test(reality_auth_test)
 add_socks_test(mux_stream_test)
 add_socks_test(mux_connection_test)
+if(LINUX)
+    target_link_options(
+        mux_connection_test
+        PRIVATE
+            -Wl,--wrap=RAND_bytes
+    )
+endif()
 add_socks_test(mux_tunnel_test)
 add_socks_test(mux_heartbeat_test)
 target_compile_definitions(mux_heartbeat_test PRIVATE SPDLOG_ACTIVE_LEVEL=0)
