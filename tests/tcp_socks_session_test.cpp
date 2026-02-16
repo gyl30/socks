@@ -629,6 +629,23 @@ TEST(TcpSocksSessionTest, IdleWatchdogReturnsImmediatelyWhenSocketClosed)
     EXPECT_EQ(backend->close_calls, 0U);
 }
 
+TEST(TcpSocksSessionTest, IdleWatchdogDisabledWhenIdleTimeoutZero)
+{
+    asio::io_context io_context;
+    auto pair = make_tcp_socket_pair(io_context);
+    auto router = std::make_shared<mux::router>();
+    mux::config::timeout_t timeout_cfg{};
+    timeout_cfg.idle = 0;
+    auto session =
+        std::make_shared<mux::tcp_socks_session>(std::move(pair.server), io_context, nullptr, std::move(router), 88, timeout_cfg);
+    auto backend = std::make_shared<fake_upstream>();
+
+    session->last_activity_time_ms_.store(0, std::memory_order_release);
+    mux::test::run_awaitable_void(io_context, session->idle_watchdog(backend));
+    EXPECT_EQ(backend->close_calls, 0U);
+    EXPECT_TRUE(session->socket_.is_open());
+}
+
 TEST(TcpSocksSessionTest, UpstreamToClientStopsWhenClientWriteFails)
 {
     asio::io_context io_context;

@@ -257,6 +257,11 @@ asio::awaitable<void> tcp_socks_session::close_backend_once(const std::shared_pt
 
 asio::awaitable<void> tcp_socks_session::idle_watchdog(std::shared_ptr<upstream> backend)
 {
+    if (timeout_config_.idle == 0)
+    {
+        co_return;
+    }
+
     while (socket_.is_open())
     {
         idle_timer_.expires_after(std::chrono::seconds(1));
