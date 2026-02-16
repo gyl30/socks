@@ -474,6 +474,27 @@ TEST(UdpSocksSessionTest, PrepareUdpAssociateIPv6PathBranches)
     EXPECT_EQ(rep[rep.size() - 1], static_cast<std::uint8_t>(5353 & 0xFF));
 }
 
+TEST(UdpSocksSessionTest, IdleWatchdogDisabledWhenIdleTimeoutZero)
+{
+    asio::io_context ctx;
+    mux::config::timeout_t timeout_cfg;
+    timeout_cfg.idle = 0;
+    auto pair = make_tcp_socket_pair(ctx);
+    ASSERT_TRUE(pair.client.is_open());
+    ASSERT_TRUE(pair.server.is_open());
+
+    auto session = std::make_shared<mux::udp_socks_session>(std::move(pair.server), ctx, nullptr, 37, timeout_cfg);
+    session->last_activity_time_ms_.store(0, std::memory_order_release);
+    mux::test::run_awaitable_void(ctx, session->idle_watchdog());
+
+    EXPECT_FALSE(session->closed_.load(std::memory_order_acquire));
+    EXPECT_TRUE(session->socket_.is_open());
+
+    session->on_close();
+    std::error_code ec;
+    pair.client.close(ec);
+}
+
 TEST(UdpSocksSessionTest, PrepareUdpAssociateHandlesBindFailureAndStartPath)
 {
     asio::io_context ctx;
