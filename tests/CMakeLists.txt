@@ -168,6 +168,7 @@ if(LINUX)
         PRIVATE
             -Wl,--wrap=socket
             -Wl,--wrap=setsockopt
+            -Wl,--wrap=bind
             -Wl,--wrap=accept
             -Wl,--wrap=accept4
             -Wl,--wrap=close

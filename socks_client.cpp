@@ -1,5 +1,6 @@
 #include <chrono>
 #include <memory>
+#include <thread>
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -27,6 +28,8 @@ namespace
 {
 
 using session_list_t = std::vector<std::weak_ptr<socks_session>>;
+constexpr std::uint32_t kEphemeralBindRetryAttempts = 120;
+const auto kEphemeralBindRetryDelay = std::chrono::milliseconds(25);
 
 void close_local_socket(asio::ip::tcp::socket& socket)
 {
@@ -90,13 +93,27 @@ bool prepare_local_listener(asio::ip::tcp::acceptor& acceptor, const std::string
         return false;
     }
 
+    const bool retry_ephemeral_bind = (port == 0);
+    const std::uint32_t max_attempts = retry_ephemeral_bind ? kEphemeralBindRetryAttempts : 1;
+
     std::error_code setup_ec;
-    if (!setup_local_acceptor(acceptor, listen_addr, port, bound_port, setup_ec))
+    for (std::uint32_t attempt = 0; attempt < max_attempts; ++attempt)
     {
-        LOG_ERROR("local acceptor setup failed {}", setup_ec.message());
-        return false;
+        if (setup_local_acceptor(acceptor, listen_addr, port, bound_port, setup_ec))
+        {
+            return true;
+        }
+
+        const bool can_retry = retry_ephemeral_bind && setup_ec == asio::error::address_in_use && (attempt + 1) < max_attempts;
+        if (!can_retry)
+        {
+            break;
+        }
+        std::this_thread::sleep_for(kEphemeralBindRetryDelay);
     }
-    return true;
+
+    LOG_ERROR("local acceptor setup failed {}", setup_ec.message());
+    return false;
 }
 
 void log_accept_error(const std::error_code& ec)
