@@ -20,9 +20,41 @@ macro(add_socks_test NAME)
             DISCOVERY_TIMEOUT 60
             PROPERTIES
                 ENVIRONMENT "MSAN_OPTIONS=${MSAN_UMR_NOISE_OPTIONS}"
+                RESOURCE_LOCK "net_ports"
         )
     else()
-        gtest_discover_tests(${NAME} DISCOVERY_TIMEOUT 60)
+        gtest_discover_tests(
+            ${NAME}
+            DISCOVERY_TIMEOUT 60
+            PROPERTIES
+                RESOURCE_LOCK "net_ports"
+        )
+    endif()
+endmacro()
+
+macro(add_socks_locked_test NAME LOCK_NAME)
+    add_executable(${NAME} ${NAME}.cpp)
+    target_link_libraries(${NAME} PRIVATE
+        socks_core
+        GTest::gtest_main
+        GTest::gmock_main
+    )
+    include(GoogleTest)
+    if(CMAKE_CXX_FLAGS MATCHES "-fsanitize=memory")
+        gtest_discover_tests(
+            ${NAME}
+            DISCOVERY_TIMEOUT 60
+            PROPERTIES
+                ENVIRONMENT "MSAN_OPTIONS=${MSAN_UMR_NOISE_OPTIONS}"
+                RESOURCE_LOCK "${LOCK_NAME}"
+        )
+    else()
+        gtest_discover_tests(
+            ${NAME}
+            DISCOVERY_TIMEOUT 60
+            PROPERTIES
+                RESOURCE_LOCK "${LOCK_NAME}"
+        )
     endif()
 endmacro()
 
@@ -130,7 +162,7 @@ if(LINUX)
         PRIVATE
             -Wl,--wrap=EVP_PKEY_derive
     )
-    add_socks_test(socks_client_test)
+    add_socks_locked_test(socks_client_test net_ports)
     target_link_options(
         socks_client_test
         PRIVATE
@@ -179,10 +211,10 @@ endif()
 add_socks_test(key_rotator_test)
 add_socks_test(socks_client_mock_test)
 add_socks_test(socks_client_handshake_test)
-add_socks_test(client_tunnel_pool_policy_test)
+add_socks_locked_test(client_tunnel_pool_policy_test net_ports)
 
 if(LINUX)
-    add_socks_test(client_tunnel_pool_whitebox_test)
+    add_socks_locked_test(client_tunnel_pool_whitebox_test net_ports)
     target_link_options(
         client_tunnel_pool_whitebox_test
         PRIVATE
@@ -196,15 +228,15 @@ if(LINUX)
     )
 endif()
 
-add_socks_test(client_server_integration_test)
+add_socks_locked_test(client_server_integration_test net_ports)
 add_socks_test(connection_pool_test)
 add_socks_test(limits_test)
-add_socks_test(udp_integration_test)
+add_socks_locked_test(udp_integration_test net_ports)
 add_socks_test(protocol_edge_test)
 add_socks_test(socks_protocol_test)
 
 if(LINUX)
-    add_socks_test(remote_server_test)
+    add_socks_locked_test(remote_server_test net_ports)
     target_link_options(
         remote_server_test
         PRIVATE
@@ -220,10 +252,10 @@ if(LINUX)
     )
 endif()
 
-add_socks_test(remote_server_mux_test)
+add_socks_locked_test(remote_server_mux_test net_ports)
 
 if(LINUX)
-    add_socks_test(tproxy_udp_session_test)
+    add_socks_locked_test(tproxy_udp_session_test net_ports)
     target_link_options(
         tproxy_udp_session_test
         PRIVATE
@@ -259,7 +291,7 @@ if(LINUX)
             -Wl,--wrap=getsockname
             -Wl,--wrap=close
     )
-    add_socks_test(tcp_socks_session_test)
+    add_socks_locked_test(tcp_socks_session_test net_ports)
     target_link_options(
         tcp_socks_session_test
         PRIVATE
