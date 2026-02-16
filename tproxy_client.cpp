@@ -675,7 +675,7 @@ void collect_expired_udp_sessions(std::shared_ptr<udp_session_map_t>& sessions,
             {
                 continue;
             }
-            if (session->is_idle(now_ms, idle_ms))
+            if (session->terminated() || (idle_ms != 0 && session->is_idle(now_ms, idle_ms)))
             {
                 detached_sessions.push_back(session);
                 continue;
@@ -1001,13 +1001,8 @@ asio::awaitable<void> tproxy_client::udp_cleanup_loop()
             continue;
         }
 
-        if (udp_idle_timeout_sec_ == 0)
-        {
-            continue;
-        }
-
         const auto now_ms = now_steady_ms();
-        const auto idle_ms = static_cast<std::uint64_t>(udp_idle_timeout_sec_) * 1000U;
+        const auto idle_ms = udp_idle_timeout_sec_ == 0 ? 0U : static_cast<std::uint64_t>(udp_idle_timeout_sec_) * 1000U;
 
         std::vector<std::shared_ptr<tproxy_udp_session>> expired_sessions;
         collect_expired_udp_sessions(udp_sessions_, now_ms, idle_ms, expired_sessions);

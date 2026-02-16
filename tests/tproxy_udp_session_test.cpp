@@ -2944,3 +2944,38 @@ TEST(TproxyClientTest, UdpCleanupLoopCoversNullSessionBranch)
     pool.stop();
     runner.join();
 }
+
+TEST(TproxyClientTest, UdpCleanupLoopPrunesTerminatedSessionsWhenIdleDisabled)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    mux::config cfg;
+    cfg.tproxy.enabled = true;
+    cfg.timeout.idle = 0;
+    auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
+
+    auto router = std::make_shared<direct_router>();
+    const asio::ip::udp::endpoint client_ep(asio::ip::make_address("127.0.0.1"), 12434);
+    auto terminated_session = std::make_shared<mux::tproxy_udp_session>(pool.get_io_context(), nullptr, router, nullptr, 34, cfg, client_ep);
+    terminated_session->terminated_.store(true, std::memory_order_release);
+    emplace_udp_session(pool.get_io_context(), client, "127.0.0.1:12434", terminated_session);
+    ASSERT_EQ(udp_session_count(pool.get_io_context(), client), 1U);
+
+    asio::co_spawn(pool.get_io_context(),
+                   [client]() -> asio::awaitable<void>
+                   {
+                       co_await client->udp_cleanup_loop();
+                       co_return;
+                   },
+                   asio::detached);
+
+    std::thread runner([&pool]() { pool.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(1300));
+    EXPECT_TRUE(udp_sessions_empty(client));
+
+    client->stop_.store(true, std::memory_order_release);
+    pool.stop();
+    runner.join();
+}
