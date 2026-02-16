@@ -152,6 +152,43 @@ TEST_F(config_test, MissingFile)
     EXPECT_FALSE(cfg.has_value());
 }
 
+TEST_F(config_test, ClientWithoutAnyInboundRejected)
+{
+    const std::string content = R"({
+        "mode": "client",
+        "socks": {
+            "enabled": false
+        },
+        "tproxy": {
+            "enabled": false
+        }
+    })";
+    write_config_file(content);
+
+    const auto cfg_opt = mux::parse_config(tmp_file());
+    EXPECT_FALSE(cfg_opt.has_value());
+}
+
+TEST_F(config_test, ClientWithTproxyOnlyAccepted)
+{
+    const std::string content = R"({
+        "mode": "client",
+        "socks": {
+            "enabled": false
+        },
+        "tproxy": {
+            "enabled": true,
+            "tcp_port": 18080
+        }
+    })";
+    write_config_file(content);
+
+    const auto cfg_opt = mux::parse_config(tmp_file());
+    ASSERT_TRUE(cfg_opt.has_value());
+    EXPECT_TRUE(cfg_opt->tproxy.enabled);
+    EXPECT_FALSE(cfg_opt->socks.enabled);
+}
+
 TEST_F(config_test, InvalidJson)
 {
     write_config_file("{ invalid_json }");

@@ -95,6 +95,18 @@ bool start_runtime_services(mux::io_context_pool& pool, const mux::config& cfg, 
         return true;
     }
 
+    const bool has_socks_inbound = cfg.socks.enabled;
+#ifdef __linux__
+    const bool has_tproxy_inbound = cfg.tproxy.enabled;
+#else
+    const bool has_tproxy_inbound = false;
+#endif
+    if (!has_socks_inbound && !has_tproxy_inbound)
+    {
+        LOG_ERROR("no client inbound enabled");
+        return false;
+    }
+
     if (cfg.socks.enabled)
     {
         services.socks = std::make_shared<mux::socks_client>(pool, cfg);

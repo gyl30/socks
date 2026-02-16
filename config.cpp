@@ -72,6 +72,15 @@ namespace
     return true;
 }
 
+[[nodiscard]] bool has_enabled_client_inbound(const config& cfg)
+{
+#ifdef __linux__
+    return cfg.socks.enabled || cfg.tproxy.enabled;
+#else
+    return cfg.socks.enabled;
+#endif
+}
+
 [[nodiscard]] bool validate_config(const config& cfg)
 {
     if (!validate_limits_config(cfg.limits))
@@ -79,6 +88,10 @@ namespace
         return false;
     }
     if (!validate_heartbeat_config(cfg.heartbeat))
+    {
+        return false;
+    }
+    if (cfg.mode == "client" && !has_enabled_client_inbound(cfg))
     {
         return false;
     }
