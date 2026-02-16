@@ -27,6 +27,8 @@
 2. 跨线程访问对象内部状态时，通过 `post/dispatch` 回到该对象的 `io_context` 执行。
 3. 任何同步等待回投递结果的路径都必须是有界等待，并覆盖 `running_in_this_thread` 与 `io_context.stopped()` 分支，避免自阻塞或停机阻塞。
 4. `stop` 语义要求在 `io_context` 已停止或当前线程即执行线程时可直接内联清理，避免清理逻辑因队列不再调度而丢失。
+5. `mux_connection::streams_` 采用“原子快照 + CAS”更新模型，发布后的快照必须视为只读，不允许对旧快照执行 `move/clear/erase` 等写操作。
+6. `mux_connection` 在 `stop/remove` 路径使用 `dispatch_cleanup_or_run_inline`，当队列阻塞或超时仍需内联完成清理，保证资源回收不丢失。
 
 ## 超时与空闲回收
 
@@ -67,6 +69,7 @@
 3. `中` `max_connections=0` 语义不一致，客户端钳制为 1，服务端按 0 直接判满。定位：`client_tunnel_pool.cpp:857`、`remote_server.cpp:1110`。目标：统一语义并补配置校验。状态：`已修复（2026-02-15）`。
 4. `低` 错误处理文档与实现风格不一致，文档描述为“全面 expected”，实现仍有 `awaitable<std::error_code>` 边界接口。定位：`doc/error_handling.md:3`、`mux_connection.h:83`、`remote_server.h:201`。目标：先统一文档口径，再逐步迁移接口。状态：`已修复（2026-02-15）`。
 5. `低` UML 文档实体陈旧，与现有实现命名不一致。定位：`doc/class.uml:11`、`doc/class.uml:70`。目标：更新为 `socks_client`/`tproxy_client`/`monitor_server` 等当前实体。状态：`已修复（2026-02-15）`。
+6. `中` `mux_connection` 在 `stop/remove` 并发下若写入旧快照会触发数据竞争。定位：`mux_connection.cpp:391`、`mux_connection.cpp:636`。目标：旧快照只读，`stop` 仅遍历 reset。状态：`已修复（2026-02-16）`。
 
 ## 建议修复顺序
 
