@@ -26,7 +26,7 @@ enum class dispatch_timeout_policy : std::uint8_t
 template <typename Fn>
 void dispatch_cleanup_or_run_inline(asio::io_context& io_context,
                                     Fn&& fn,
-                                    const dispatch_timeout_policy timeout_policy = dispatch_timeout_policy::kNoInline)
+                                    const dispatch_timeout_policy timeout_policy = dispatch_timeout_policy::kRunInline)
 {
     if (io_context.stopped() || io_context.get_executor().running_in_this_thread())
     {
