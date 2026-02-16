@@ -939,6 +939,7 @@ asio::awaitable<void> handle_fallback_without_target(const std::shared_ptr<asio:
                                                      asio::io_context& io_context)
 {
     LOG_CTX_INFO(ctx, "{} no target sni {}", log_event::kFallback, sni.empty() ? "empty" : sni);
+    statistics::instance().inc_fallback_no_target();
     co_await fallback_wait_and_close_socket(socket, ctx, io_context);
     LOG_CTX_INFO(ctx, "{} done", log_event::kFallback);
 }
@@ -953,6 +954,7 @@ asio::awaitable<bool> resolve_and_connect_fallback_target(const std::shared_ptr<
     const auto [resolve_ec, endpoints] = co_await resolver.async_resolve(target_host, target_port, asio::as_tuple(asio::use_awaitable));
     if (resolve_ec)
     {
+        statistics::instance().inc_fallback_resolve_failures();
         LOG_CTX_WARN(ctx, "{} resolve failed {}", log_event::kFallback, resolve_ec.message());
         co_return false;
     }
@@ -961,6 +963,7 @@ asio::awaitable<bool> resolve_and_connect_fallback_target(const std::shared_ptr<
     (void)endpoint;
     if (connect_ec)
     {
+        statistics::instance().inc_fallback_connect_failures();
         LOG_CTX_WARN(ctx, "{} connect target failed {}", log_event::kFallback, connect_ec.message());
         co_return false;
     }
@@ -980,6 +983,7 @@ asio::awaitable<bool> write_fallback_initial_buffer(const std::shared_ptr<asio::
     (void)write_n;
     if (write_ec)
     {
+        statistics::instance().inc_fallback_write_failures();
         LOG_CTX_WARN(ctx, "{} write initial buf failed", log_event::kFallback);
         co_return false;
     }

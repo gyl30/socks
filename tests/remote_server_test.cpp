@@ -641,6 +641,7 @@ TEST_F(remote_server_test, FallbackResolveFail)
     std::thread pool_thread([&pool] { pool.run(); });
 
     std::uint16_t server_port = 29971;
+    const auto resolve_fail_before = mux::statistics::instance().fallback_resolve_failures();
 
     auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(server_port, {{"", "invalid.hostname.test", "80"}}, "0102030405060708"));
     server->start();
@@ -651,6 +652,12 @@ TEST_F(remote_server_test, FallbackResolveFail)
         asio::write(sock, asio::buffer("TRIGGER FALLBACK"));
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
     }
+
+    EXPECT_TRUE(wait_for_condition(
+        [resolve_fail_before]()
+        {
+            return mux::statistics::instance().fallback_resolve_failures() > resolve_fail_before;
+        }));
 
     server->stop();
     pool.stop();
@@ -665,6 +672,7 @@ TEST_F(remote_server_test, FallbackConnectFail)
     std::thread pool_thread([&pool] { pool.run(); });
 
     std::uint16_t server_port = 29981;
+    const auto connect_fail_before = mux::statistics::instance().fallback_connect_failures();
 
     auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(server_port, {{"", "127.0.0.1", "1"}}, "0102030405060708"));
     server->start();
@@ -675,6 +683,12 @@ TEST_F(remote_server_test, FallbackConnectFail)
         asio::write(sock, asio::buffer("TRIGGER FALLBACK"));
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
     }
+
+    EXPECT_TRUE(wait_for_condition(
+        [connect_fail_before]()
+        {
+            return mux::statistics::instance().fallback_connect_failures() > connect_fail_before;
+        }));
 
     server->stop();
     pool.stop();
