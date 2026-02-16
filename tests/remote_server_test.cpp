@@ -52,6 +52,8 @@ std::atomic<bool> g_fail_shutdown_once{false};
 std::atomic<int> g_fail_shutdown_errno{EIO};
 std::atomic<bool> g_fail_close_once{false};
 std::atomic<int> g_fail_close_errno{EIO};
+std::atomic<bool> g_fail_send_once{false};
+std::atomic<int> g_fail_send_errno{EPIPE};
 std::atomic<bool> g_fail_rand_bytes_once{false};
 std::atomic<bool> g_fail_ed25519_raw_private_key_once{false};
 std::atomic<bool> g_fail_pkey_derive_once{false};
@@ -88,6 +90,12 @@ void fail_next_shutdown(const int err)
     g_fail_shutdown_once.store(true, std::memory_order_release);
 }
 
+void fail_next_send(const int err)
+{
+    g_fail_send_errno.store(err, std::memory_order_release);
+    g_fail_send_once.store(true, std::memory_order_release);
+}
+
 void fail_next_rand_bytes() { g_fail_rand_bytes_once.store(true, std::memory_order_release); }
 
 void fail_next_ed25519_raw_private_key() { g_fail_ed25519_raw_private_key_once.store(true, std::memory_order_release); }
@@ -105,6 +113,8 @@ extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void*
 extern "C" int __real_listen(int sockfd, int backlog);
 extern "C" int __real_shutdown(int sockfd, int how);
 extern "C" int __real_close(int fd);
+extern "C" ssize_t __real_send(int sockfd, const void* buf, size_t len, int flags);
+extern "C" ssize_t __real_sendmsg(int sockfd, const struct msghdr* msg, int flags);
 extern "C" int __real_RAND_bytes(unsigned char* buf, int num);
 extern "C" EVP_PKEY* __real_EVP_PKEY_new_raw_private_key(int type, ENGINE* e, const unsigned char* key, size_t keylen);
 extern "C" int __real_EVP_PKEY_derive(EVP_PKEY_CTX* ctx, unsigned char* key, size_t* keylen);
@@ -158,6 +168,26 @@ extern "C" int __wrap_close(int fd)
         return -1;
     }
     return __real_close(fd);
+}
+
+extern "C" ssize_t __wrap_send(int sockfd, const void* buf, size_t len, int flags)
+{
+    if (g_fail_send_once.exchange(false, std::memory_order_acq_rel))
+    {
+        errno = g_fail_send_errno.load(std::memory_order_acquire);
+        return -1;
+    }
+    return __real_send(sockfd, buf, len, flags);
+}
+
+extern "C" ssize_t __wrap_sendmsg(int sockfd, const struct msghdr* msg, int flags)
+{
+    if (g_fail_send_once.exchange(false, std::memory_order_acq_rel))
+    {
+        errno = g_fail_send_errno.load(std::memory_order_acquire);
+        return -1;
+    }
+    return __real_sendmsg(sockfd, msg, flags);
 }
 
 extern "C" int __wrap_RAND_bytes(unsigned char* buf, int num)
@@ -643,7 +673,7 @@ TEST_F(remote_server_test, FallbackResolveFail)
     std::uint16_t server_port = 29971;
     const auto resolve_fail_before = mux::statistics::instance().fallback_resolve_failures();
 
-    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(server_port, {{"", "invalid.hostname.test", "80"}}, "0102030405060708"));
+    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(server_port, {{"", "no-such-host.invalid", "80"}}, "0102030405060708"));
     server->start();
 
     {
@@ -657,7 +687,8 @@ TEST_F(remote_server_test, FallbackResolveFail)
         [resolve_fail_before]()
         {
             return mux::statistics::instance().fallback_resolve_failures() > resolve_fail_before;
-        }));
+        },
+        std::chrono::milliseconds(10000)));
 
     server->stop();
     pool.stop();
@@ -689,6 +720,71 @@ TEST_F(remote_server_test, FallbackConnectFail)
         {
             return mux::statistics::instance().fallback_connect_failures() > connect_fail_before;
         }));
+
+    server->stop();
+    pool.stop();
+    pool_thread.join();
+}
+
+TEST_F(remote_server_test, FallbackWriteFailIncrementsMetric)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+    std::thread pool_thread([&pool] { pool.run(); });
+
+    const std::uint16_t server_port = pick_free_port();
+    ASSERT_NE(server_port, 0);
+    const std::uint16_t fallback_port = pick_free_port();
+    ASSERT_NE(fallback_port, 0);
+
+    auto server = std::make_shared<mux::remote_server>(
+        pool, make_server_cfg(server_port, {{"", "127.0.0.1", std::to_string(fallback_port)}}, "0102030405060708"));
+    server->start();
+
+    asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), fallback_port));
+    std::shared_ptr<asio::ip::tcp::socket> fallback_peer;
+    std::promise<void> fallback_accepted;
+    auto fallback_accepted_future = fallback_accepted.get_future();
+    fallback_acceptor.async_accept(
+        [&](std::error_code accept_ec, asio::ip::tcp::socket peer)
+        {
+            if (!accept_ec)
+            {
+                fallback_peer = std::make_shared<asio::ip::tcp::socket>(std::move(peer));
+            }
+            fallback_accepted.set_value();
+        });
+
+    const auto write_fail_before = mux::statistics::instance().fallback_write_failures();
+    fail_next_send(EPIPE);
+
+    {
+        asio::ip::tcp::socket sock(pool.get_io_context());
+        sock.connect({asio::ip::make_address("127.0.0.1"), server_port}, ec);
+        ASSERT_FALSE(ec);
+
+        static constexpr char kTrigger[] = "TRIGGER FALLBACK";
+        const auto wrote = ::write(sock.native_handle(), kTrigger, sizeof(kTrigger) - 1);
+        ASSERT_GT(wrote, 0);
+    }
+
+    EXPECT_EQ(fallback_accepted_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_TRUE(wait_for_condition(
+        [write_fail_before]()
+        {
+            return mux::statistics::instance().fallback_write_failures() > write_fail_before;
+        },
+        std::chrono::milliseconds(3000)));
+
+    std::error_code close_ec;
+    fallback_acceptor.cancel(close_ec);
+    fallback_acceptor.close(close_ec);
+    if (fallback_peer != nullptr && fallback_peer->is_open())
+    {
+        fallback_peer->shutdown(asio::ip::tcp::socket::shutdown_both, close_ec);
+        fallback_peer->close(close_ec);
+    }
 
     server->stop();
     pool.stop();
