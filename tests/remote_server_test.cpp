@@ -2205,7 +2205,7 @@ TEST_F(remote_server_test, StopRunsInlineWhenIoContextStopped)
     auto conn = tunnel->connection();
     ASSERT_NE(conn, nullptr);
     ASSERT_TRUE(conn->is_open());
-    server->active_tunnels_.push_back(tunnel);
+    server->append_active_tunnel(tunnel);
 
     pool.stop();
 
@@ -2215,7 +2215,7 @@ TEST_F(remote_server_test, StopRunsInlineWhenIoContextStopped)
     EXPECT_TRUE(server->stop_.load(std::memory_order_acquire));
     EXPECT_FALSE(server->acceptor_.is_open());
     EXPECT_FALSE(conn->is_open());
-    EXPECT_TRUE(server->active_tunnels_.empty());
+    EXPECT_EQ(server->active_tunnel_count(), 0U);
 }
 
 TEST_F(remote_server_test, StopRunsWhenIoQueueBlocked)
@@ -2236,7 +2236,7 @@ TEST_F(remote_server_test, StopRunsWhenIoQueueBlocked)
     auto conn = tunnel->connection();
     ASSERT_NE(conn, nullptr);
     ASSERT_TRUE(conn->is_open());
-    server->active_tunnels_.push_back(tunnel);
+    server->append_active_tunnel(tunnel);
 
     std::atomic<bool> blocker_started{false};
     std::atomic<bool> release_blocker{false};
@@ -2278,7 +2278,7 @@ TEST_F(remote_server_test, StopRunsWhenIoQueueBlocked)
     EXPECT_TRUE(server->stop_.load(std::memory_order_acquire));
     EXPECT_FALSE(server->acceptor_.is_open());
     EXPECT_FALSE(conn->is_open());
-    EXPECT_TRUE(server->active_tunnels_.empty());
+    EXPECT_EQ(server->active_tunnel_count(), 0U);
 
     release_blocker.store(true, std::memory_order_release);
     pool.stop();
@@ -2306,7 +2306,7 @@ TEST_F(remote_server_test, StopRunsWhenIoContextNotRunning)
     auto conn = tunnel->connection();
     ASSERT_NE(conn, nullptr);
     ASSERT_TRUE(conn->is_open());
-    server->active_tunnels_.push_back(tunnel);
+    server->append_active_tunnel(tunnel);
 
     EXPECT_TRUE(server->acceptor_.is_open());
     server->stop();
@@ -2314,7 +2314,7 @@ TEST_F(remote_server_test, StopRunsWhenIoContextNotRunning)
     EXPECT_TRUE(server->stop_.load(std::memory_order_acquire));
     EXPECT_FALSE(server->acceptor_.is_open());
     EXPECT_FALSE(conn->is_open());
-    EXPECT_TRUE(server->active_tunnels_.empty());
+    EXPECT_EQ(server->active_tunnel_count(), 0U);
     pool.stop();
 }
 
@@ -2336,7 +2336,7 @@ TEST_F(remote_server_test, DrainClosesAcceptorButKeepsActiveTunnels)
     auto conn = tunnel->connection();
     ASSERT_NE(conn, nullptr);
     ASSERT_TRUE(conn->is_open());
-    server->active_tunnels_.push_back(tunnel);
+    server->append_active_tunnel(tunnel);
 
     EXPECT_TRUE(server->acceptor_.is_open());
     server->drain();
@@ -2344,11 +2344,11 @@ TEST_F(remote_server_test, DrainClosesAcceptorButKeepsActiveTunnels)
     EXPECT_TRUE(server->stop_.load(std::memory_order_acquire));
     EXPECT_FALSE(server->acceptor_.is_open());
     EXPECT_TRUE(conn->is_open());
-    EXPECT_FALSE(server->active_tunnels_.empty());
+    EXPECT_GT(server->active_tunnel_count(), 0U);
 
     server->stop();
     EXPECT_FALSE(conn->is_open());
-    EXPECT_TRUE(server->active_tunnels_.empty());
+    EXPECT_EQ(server->active_tunnel_count(), 0U);
     pool.stop();
 }
 

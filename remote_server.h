@@ -50,6 +50,10 @@ namespace mux
 class remote_server : public std::enable_shared_from_this<remote_server>
 {
    public:
+    using tunnel_t = mux_tunnel_impl<asio::ip::tcp::socket>;
+    using tunnel_ptr_t = std::shared_ptr<tunnel_t>;
+    using tunnel_list_t = std::vector<std::weak_ptr<tunnel_t>>;
+
     remote_server(io_context_pool& pool, const config& cfg);
 
     virtual ~remote_server();
@@ -85,6 +89,11 @@ class remote_server : public std::enable_shared_from_this<remote_server>
 
     [[nodiscard]] bool ensure_acceptor_open();
     void stop_local(bool close_tunnels);
+    [[nodiscard]] std::shared_ptr<tunnel_list_t> snapshot_active_tunnels() const;
+    [[nodiscard]] std::size_t prune_expired_tunnels();
+    [[nodiscard]] std::size_t active_tunnel_count() const;
+    [[nodiscard]] std::shared_ptr<tunnel_list_t> detach_active_tunnels();
+    void append_active_tunnel(const tunnel_ptr_t& tunnel);
 
     asio::awaitable<void> accept_loop();
 
@@ -271,7 +280,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     std::atomic<std::uint32_t> active_connection_slots_{0};
     std::mutex connection_slot_mu_;
     std::unordered_map<std::string, std::uint32_t> active_source_connection_slots_;
-    std::vector<std::weak_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>> active_tunnels_;
+    std::shared_ptr<tunnel_list_t> active_tunnels_ = std::make_shared<tunnel_list_t>();
     config::limits_t limits_config_;
     config::heartbeat_t heartbeat_config_;
     std::atomic<bool> started_{false};

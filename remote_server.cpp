@@ -1011,6 +1011,89 @@ bool remote_server::ensure_acceptor_open()
     return setup_server_acceptor(acceptor_, inbound_endpoint_);
 }
 
+std::shared_ptr<remote_server::tunnel_list_t> remote_server::snapshot_active_tunnels() const
+{
+    auto snapshot = std::atomic_load_explicit(&active_tunnels_, std::memory_order_acquire);
+    if (snapshot != nullptr)
+    {
+        return snapshot;
+    }
+    return std::make_shared<tunnel_list_t>();
+}
+
+std::size_t remote_server::prune_expired_tunnels()
+{
+    for (;;)
+    {
+        auto current = snapshot_active_tunnels();
+        auto pruned = std::make_shared<tunnel_list_t>();
+        pruned->reserve(current->size());
+        bool changed = false;
+        for (const auto& weak_tunnel : *current)
+        {
+            if (weak_tunnel.expired())
+            {
+                changed = true;
+                continue;
+            }
+            pruned->push_back(weak_tunnel);
+        }
+
+        if (!changed)
+        {
+            return current->size();
+        }
+
+        if (std::atomic_compare_exchange_weak_explicit(
+                &active_tunnels_, &current, pruned, std::memory_order_acq_rel, std::memory_order_acquire))
+        {
+            return pruned->size();
+        }
+    }
+}
+
+std::size_t remote_server::active_tunnel_count() const
+{
+    return snapshot_active_tunnels()->size();
+}
+
+std::shared_ptr<remote_server::tunnel_list_t> remote_server::detach_active_tunnels()
+{
+    auto empty = std::make_shared<tunnel_list_t>();
+    for (;;)
+    {
+        auto current = snapshot_active_tunnels();
+        if (std::atomic_compare_exchange_weak_explicit(
+                &active_tunnels_, &current, empty, std::memory_order_acq_rel, std::memory_order_acquire))
+        {
+            return current;
+        }
+    }
+}
+
+void remote_server::append_active_tunnel(const tunnel_ptr_t& tunnel)
+{
+    for (;;)
+    {
+        auto current = snapshot_active_tunnels();
+        auto updated = std::make_shared<tunnel_list_t>();
+        updated->reserve(current->size() + 1);
+        for (const auto& weak_tunnel : *current)
+        {
+            if (!weak_tunnel.expired())
+            {
+                updated->push_back(weak_tunnel);
+            }
+        }
+        updated->push_back(tunnel);
+        if (std::atomic_compare_exchange_weak_explicit(
+                &active_tunnels_, &current, updated, std::memory_order_acq_rel, std::memory_order_acquire))
+        {
+            return;
+        }
+    }
+}
+
 void remote_server::stop_local(const bool close_tunnels)
 {
     started_.store(false, std::memory_order_release);
@@ -1024,15 +1107,14 @@ void remote_server::stop_local(const bool close_tunnels)
 
     if (!close_tunnels)
     {
-        LOG_INFO("drain mode active keeping {} active tunnels", active_tunnels_.size());
+        LOG_INFO("drain mode active keeping {} active tunnels", prune_expired_tunnels());
         return;
     }
 
-    LOG_INFO("closing {} active tunnels", active_tunnels_.size());
-    auto tunnels_to_close = std::move(active_tunnels_);
-    active_tunnels_.clear();
+    LOG_INFO("closing {} active tunnels", prune_expired_tunnels());
+    auto tunnels_to_close = detach_active_tunnels();
 
-    for (auto& weak_tunnel : tunnels_to_close)
+    for (auto& weak_tunnel : *tunnels_to_close)
     {
         const auto tunnel = weak_tunnel.lock();
         if (tunnel != nullptr && tunnel->connection() != nullptr)
@@ -1338,8 +1420,7 @@ asio::awaitable<bool> remote_server::reject_connection_if_over_limit(const std::
                                                                      const std::vector<std::uint8_t>& initial_buf,
                                                                      const connection_context& ctx)
 {
-    std::erase_if(active_tunnels_, [](const auto& wp) { return wp.expired(); });
-    const bool over_limit = active_tunnels_.size() >= limits_config_.max_connections;
+    const bool over_limit = prune_expired_tunnels() >= limits_config_.max_connections;
     if (!over_limit)
     {
         co_return false;
@@ -1363,7 +1444,7 @@ std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> remote_server::create_tu
     reality_engine engine(c_app_keys.first, c_app_keys.second, s_app_keys.first, s_app_keys.second, sh_res.cipher);
     auto tunnel = std::make_shared<mux_tunnel_impl<asio::ip::tcp::socket>>(
         std::move(*s), io_context_, std::move(engine), false, conn_id, ctx.trace_id(), timeout_config_, limits_config_, heartbeat_config_);
-    active_tunnels_.push_back(tunnel);
+    append_active_tunnel(tunnel);
     return tunnel;
 }
 
