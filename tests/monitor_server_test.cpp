@@ -76,13 +76,6 @@ void fail_next_close(const int err)
     g_fail_close_once.store(true, std::memory_order_release);
 }
 
-std::uint16_t pick_free_port()
-{
-    asio::io_context ioc;
-    asio::ip::tcp::acceptor acceptor(ioc, asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), 0));
-    return acceptor.local_endpoint().port();
-}
-
 std::string read_response(std::uint16_t port,
                           const std::string& request,
                           const std::string& remote_host = "127.0.0.1",
@@ -184,6 +177,21 @@ class monitor_server_env
         thread_ = std::thread([this]() { ioc_.run(); });
     }
 
+    [[nodiscard]] std::uint16_t port() const
+    {
+        if (server_ == nullptr || !server_->acceptor_.is_open())
+        {
+            return 0;
+        }
+        std::error_code ec;
+        const auto endpoint = server_->acceptor_.local_endpoint(ec);
+        if (ec)
+        {
+            return 0;
+        }
+        return endpoint.port();
+    }
+
     ~monitor_server_env()
     {
         if (server_ != nullptr)
@@ -280,8 +288,9 @@ TEST(MonitorServerTest, EmptyTokenReturnsMetrics)
 {
     statistics::instance().inc_total_connections();
 
-    const auto port = pick_free_port();
-    monitor_server_env env(port, std::string());
+    monitor_server_env env(0, std::string());
+    const auto port = env.port();
+    ASSERT_NE(port, 0);
 
     const auto resp = request_with_retry(port, "metrics\n");
     EXPECT_NE(resp.find("socks_uptime_seconds "), std::string::npos);
@@ -299,8 +308,9 @@ TEST(MonitorServerTest, TokenRequiredAndRateLimit)
     const auto monitor_auth_before = stats.monitor_auth_failures();
     const auto monitor_rate_before = stats.monitor_rate_limited();
 
-    const auto port = pick_free_port();
-    monitor_server_env env(port, std::string("secret"), 500);
+    monitor_server_env env(0, std::string("secret"), 500);
+    const auto port = env.port();
+    ASSERT_NE(port, 0);
 
     const auto warmup = request_with_retry(port, "metrics?token=secret\n");
     EXPECT_NE(warmup.find("socks_total_connections "), std::string::npos);
@@ -325,8 +335,9 @@ TEST(MonitorServerTest, TokenRequiredAndRateLimit)
 
 TEST(MonitorServerTest, UnauthorizedRequestDoesNotConsumeRateLimitWindow)
 {
-    const auto port = pick_free_port();
-    monitor_server_env env(port, std::string("secret"), 500);
+    monitor_server_env env(0, std::string("secret"), 500);
+    const auto port = env.port();
+    ASSERT_NE(port, 0);
 
     const auto first_authed = request_with_retry(port, "metrics?token=secret\n");
     EXPECT_NE(first_authed.find("socks_total_connections "), std::string::npos);
@@ -342,8 +353,9 @@ TEST(MonitorServerTest, UnauthorizedRequestDoesNotConsumeRateLimitWindow)
 
 TEST(MonitorServerTest, RateLimitIsolatedBySourceAddress)
 {
-    const auto port = pick_free_port();
-    monitor_server_env env(std::string("0.0.0.0"), port, std::string("secret"), 500);
+    monitor_server_env env(std::string("0.0.0.0"), 0, std::string("secret"), 500);
+    const auto port = env.port();
+    ASSERT_NE(port, 0);
 
     asio::error_code probe_ec;
     asio::io_context probe_ioc;
@@ -370,8 +382,9 @@ TEST(MonitorServerTest, RateLimitIsolatedBySourceAddress)
 
 TEST(MonitorServerTest, RejectsTokenSubstringBypass)
 {
-    const auto port = pick_free_port();
-    monitor_server_env env(port, std::string("secret"));
+    monitor_server_env env(0, std::string("secret"));
+    const auto port = env.port();
+    ASSERT_NE(port, 0);
 
     const auto contains_secret_without_token_key = read_response(port, "metrics?foo=secret\n");
     EXPECT_TRUE(contains_secret_without_token_key.empty());
@@ -388,8 +401,9 @@ TEST(MonitorServerTest, RejectsTokenSubstringBypass)
 
 TEST(MonitorServerTest, EnforcesPathAndSupportsHttpUrlDecodedToken)
 {
-    const auto port = pick_free_port();
-    monitor_server_env env(port, std::string("s+e/c"));
+    monitor_server_env env(0, std::string("s+e/c"));
+    const auto port = env.port();
+    ASSERT_NE(port, 0);
 
     const auto invalid_path = read_response(port, "GET /status?token=s%2Be%2Fc HTTP/1.1\r\n\r\n");
     EXPECT_TRUE(invalid_path.empty());
@@ -403,8 +417,9 @@ TEST(MonitorServerTest, EnforcesPathAndSupportsHttpUrlDecodedToken)
 
 TEST(MonitorServerTest, SupportsFragmentedHttpRequestLine)
 {
-    const auto port = pick_free_port();
-    monitor_server_env env(port, std::string("secret"));
+    monitor_server_env env(0, std::string("secret"));
+    const auto port = env.port();
+    ASSERT_NE(port, 0);
 
     asio::io_context ioc;
     asio::ip::tcp::socket socket(ioc);
@@ -445,8 +460,9 @@ TEST(MonitorServerTest, EscapesPrometheusLabels)
     auto& stats = statistics::instance();
     stats.inc_handshake_failure_by_sni(statistics::handshake_failure_reason::kShortId, "line1\"x\\y\nline2");
 
-    const auto port = pick_free_port();
-    monitor_server_env env(port, std::string());
+    monitor_server_env env(0, std::string());
+    const auto port = env.port();
+    ASSERT_NE(port, 0);
     const auto resp = request_with_retry(port, "metrics\n");
 
     EXPECT_NE(resp.find("reason=\"short_id\""), std::string::npos);
@@ -455,8 +471,6 @@ TEST(MonitorServerTest, EscapesPrometheusLabels)
 
 TEST(MonitorServerTest, ConstructWhenPortAlreadyInUse)
 {
-    const auto port = pick_free_port();
-
     asio::io_context guard_ioc;
     asio::ip::tcp::acceptor guard(guard_ioc);
     asio::error_code ec;
@@ -464,10 +478,13 @@ TEST(MonitorServerTest, ConstructWhenPortAlreadyInUse)
     ASSERT_FALSE(ec);
     guard.set_option(asio::socket_base::reuse_address(true), ec);
     ASSERT_FALSE(ec);
-    guard.bind(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), port), ec);
+    guard.bind(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), 0), ec);
     ASSERT_FALSE(ec);
     guard.listen(asio::socket_base::max_listen_connections, ec);
     ASSERT_FALSE(ec);
+    const auto port = guard.local_endpoint(ec).port();
+    ASSERT_FALSE(ec);
+    ASSERT_NE(port, 0);
 
     asio::io_context ioc;
     auto server = std::make_shared<monitor_server>(ioc, port, std::string("token"), 10);
@@ -477,11 +494,15 @@ TEST(MonitorServerTest, ConstructWhenPortAlreadyInUse)
 
 TEST(MonitorServerTest, ConstructorHandlesInvalidBindHost)
 {
-    const auto port = pick_free_port();
     asio::io_context ioc;
-    auto server = std::make_shared<monitor_server>(ioc, port, std::string("token"), 10);
-    auto bad_server = std::make_shared<monitor_server>(ioc, std::string("bad host"), port, std::string("token"), 10);
+    auto server = std::make_shared<monitor_server>(ioc, 0, std::string("token"), 10);
     ASSERT_NE(server, nullptr);
+    ASSERT_TRUE(server->acceptor_.is_open());
+    std::error_code ec;
+    const auto port = server->acceptor_.local_endpoint(ec).port();
+    ASSERT_FALSE(ec);
+    ASSERT_NE(port, 0);
+    auto bad_server = std::make_shared<monitor_server>(ioc, std::string("bad host"), port, std::string("token"), 10);
     ASSERT_NE(bad_server, nullptr);
     EXPECT_FALSE(bad_server->acceptor_.is_open());
     bad_server->start();
@@ -517,11 +538,14 @@ TEST(MonitorServerTest, ConstructorHandlesListenFailure)
 
 TEST(MonitorServerTest, StopClosesAcceptorAndRejectsNewConnections)
 {
-    const auto port = pick_free_port();
     asio::io_context ioc;
-    auto server = std::make_shared<monitor_server>(ioc, port, std::string(), 10);
+    auto server = std::make_shared<monitor_server>(ioc, 0, std::string(), 10);
     ASSERT_NE(server, nullptr);
     server->start();
+    std::error_code ec;
+    const auto port = server->acceptor_.local_endpoint(ec).port();
+    ASSERT_FALSE(ec);
+    ASSERT_NE(port, 0);
 
     std::thread runner([&ioc]() { ioc.run(); });
 
@@ -551,9 +575,8 @@ TEST(MonitorServerTest, StopClosesAcceptorAndRejectsNewConnections)
 
 TEST(MonitorServerTest, StopRunsInlineWhenIoContextStopped)
 {
-    const auto port = pick_free_port();
     asio::io_context ioc;
-    auto server = std::make_shared<monitor_server>(ioc, port, std::string(), 10);
+    auto server = std::make_shared<monitor_server>(ioc, 0, std::string(), 10);
     ASSERT_NE(server, nullptr);
     ASSERT_TRUE(server->acceptor_.is_open());
 
@@ -564,9 +587,8 @@ TEST(MonitorServerTest, StopRunsInlineWhenIoContextStopped)
 
 TEST(MonitorServerTest, StopRunsWhenIoQueueBlocked)
 {
-    const auto port = pick_free_port();
     asio::io_context ioc;
-    auto server = std::make_shared<monitor_server>(ioc, port, std::string(), 10);
+    auto server = std::make_shared<monitor_server>(ioc, 0, std::string(), 10);
     ASSERT_NE(server, nullptr);
     server->start();
 
@@ -603,9 +625,8 @@ TEST(MonitorServerTest, StopRunsWhenIoQueueBlocked)
 
 TEST(MonitorServerTest, StopRunsWhenIoContextNotRunning)
 {
-    const auto port = pick_free_port();
     asio::io_context ioc;
-    auto server = std::make_shared<monitor_server>(ioc, port, std::string(), 10);
+    auto server = std::make_shared<monitor_server>(ioc, 0, std::string(), 10);
     ASSERT_NE(server, nullptr);
     ASSERT_TRUE(server->acceptor_.is_open());
 
@@ -615,9 +636,8 @@ TEST(MonitorServerTest, StopRunsWhenIoContextNotRunning)
 
 TEST(MonitorServerTest, StopLogsAcceptorCloseFailureBranch)
 {
-    const auto port = pick_free_port();
     asio::io_context ioc;
-    auto server = std::make_shared<monitor_server>(ioc, port, std::string(), 10);
+    auto server = std::make_shared<monitor_server>(ioc, 0, std::string(), 10);
     ASSERT_NE(server, nullptr);
     server->start();
 
@@ -637,8 +657,9 @@ TEST(MonitorServerTest, StopLogsAcceptorCloseFailureBranch)
 
 TEST(MonitorServerTest, AcceptFailureRetriesAndServesRequest)
 {
-    const auto port = pick_free_port();
-    monitor_server_env env(port, std::string());
+    monitor_server_env env(0, std::string());
+    const auto port = env.port();
+    ASSERT_NE(port, 0);
 
     fail_next_accept(EIO);
     const auto resp = request_with_retry(port, "metrics\n");
@@ -647,8 +668,9 @@ TEST(MonitorServerTest, AcceptFailureRetriesAndServesRequest)
 
 TEST(MonitorServerTest, SessionReadErrorPathStillAcceptsNextClient)
 {
-    const auto port = pick_free_port();
-    monitor_server_env env(port, std::string());
+    monitor_server_env env(0, std::string());
+    const auto port = env.port();
+    ASSERT_NE(port, 0);
 
     connect_and_close_without_payload(port);
     const auto resp = request_with_retry(port, "metrics\n");
