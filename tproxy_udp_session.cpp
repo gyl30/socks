@@ -386,6 +386,12 @@ asio::awaitable<bool> tproxy_udp_session::ensure_proxy_stream()
     }
     if (!open_result.value())
     {
+        // Another coroutine may have installed a stream while this coroutine was
+        // waiting for SYN/ACK. Treat it as success if stream_ is now available.
+        if (stream_ != nullptr)
+        {
+            co_return true;
+        }
         LOG_CTX_WARN(ctx_, "{} udp proxy stream install failed", log_event::kSocks);
         co_return false;
     }

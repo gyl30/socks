@@ -675,7 +675,7 @@ void collect_expired_udp_sessions(std::shared_ptr<udp_session_map_t>& sessions,
             {
                 continue;
             }
-            if (session->is_idle(now_ms, idle_ms))
+            if (session->terminated() || (idle_ms != 0 && session->is_idle(now_ms, idle_ms)))
             {
                 detached_sessions.push_back(session);
                 continue;
@@ -881,6 +881,11 @@ std::string tproxy_client::endpoint_key(const asio::ip::udp::endpoint& ep) const
 
 asio::awaitable<void> tproxy_client::accept_tcp_loop()
 {
+    if (stop_.load(std::memory_order_acquire))
+    {
+        co_return;
+    }
+
     if (!tcp_acceptor_.is_open())
     {
         std::string listen_host;
@@ -888,6 +893,11 @@ asio::awaitable<void> tproxy_client::accept_tcp_loop()
         {
             LOG_ERROR("tproxy tcp setup failed {}", res.error().message());
             stop_.store(true, std::memory_order_release);
+            co_return;
+        }
+        if (stop_.load(std::memory_order_acquire))
+        {
+            close_acceptor_on_setup_failure(tcp_acceptor_);
             co_return;
         }
         LOG_INFO("tproxy tcp listening on {}:{}", listen_host, tcp_port_);
@@ -906,6 +916,11 @@ asio::awaitable<void> tproxy_client::accept_tcp_loop()
 
 asio::awaitable<void> tproxy_client::udp_loop()
 {
+    if (stop_.load(std::memory_order_acquire))
+    {
+        co_return;
+    }
+
     if (!udp_socket_.is_open())
     {
         std::string listen_host;
@@ -913,6 +928,11 @@ asio::awaitable<void> tproxy_client::udp_loop()
         {
             LOG_ERROR("tproxy udp setup failed {}", res.error().message());
             stop_.store(true, std::memory_order_release);
+            co_return;
+        }
+        if (stop_.load(std::memory_order_acquire))
+        {
+            close_udp_socket_on_setup_failure(udp_socket_);
             co_return;
         }
         LOG_INFO("tproxy udp listening on {}:{}", listen_host, udp_port_);
@@ -1001,13 +1021,8 @@ asio::awaitable<void> tproxy_client::udp_cleanup_loop()
             continue;
         }
 
-        if (udp_idle_timeout_sec_ == 0)
-        {
-            continue;
-        }
-
         const auto now_ms = now_steady_ms();
-        const auto idle_ms = static_cast<std::uint64_t>(udp_idle_timeout_sec_) * 1000U;
+        const auto idle_ms = udp_idle_timeout_sec_ == 0 ? 0U : static_cast<std::uint64_t>(udp_idle_timeout_sec_) * 1000U;
 
         std::vector<std::shared_ptr<tproxy_udp_session>> expired_sessions;
         collect_expired_udp_sessions(udp_sessions_, now_ms, idle_ms, expired_sessions);
