@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cerrno>
 #include <fstream>
+#include <cctype>
 #include <unistd.h>
 
 #include <gtest/gtest.h>
@@ -15,6 +16,23 @@ namespace
 
 std::atomic<bool> g_force_fread_error{false};
 std::atomic<bool> g_injected_fread_error{false};
+
+bool is_hex_string(const std::string& value)
+{
+    if (value.empty())
+    {
+        return false;
+    }
+
+    for (const unsigned char ch : value)
+    {
+        if (!std::isxdigit(ch))
+        {
+            return false;
+        }
+    }
+    return true;
+}
 
 }    // namespace
 
@@ -72,6 +90,19 @@ TEST_F(config_test, DefaultConfigValid)
 
     EXPECT_NE(json.find("\"mode\""), std::string::npos);
     EXPECT_NE(json.find("\"inbound\""), std::string::npos);
+}
+
+TEST_F(config_test, DumpDefaultConfigGeneratesRealityKeyPair)
+{
+    const auto json = mux::dump_default_config();
+    write_config_file(json);
+
+    const auto cfg_opt = mux::parse_config(tmp_file());
+    ASSERT_TRUE(cfg_opt.has_value());
+    EXPECT_EQ(cfg_opt->reality.private_key.size(), 64U);
+    EXPECT_EQ(cfg_opt->reality.public_key.size(), 64U);
+    EXPECT_TRUE(is_hex_string(cfg_opt->reality.private_key));
+    EXPECT_TRUE(is_hex_string(cfg_opt->reality.public_key));
 }
 
 TEST_F(config_test, ParseValues)
