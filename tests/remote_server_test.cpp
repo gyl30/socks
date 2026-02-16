@@ -966,6 +966,33 @@ TEST_F(remote_server_test, ConstructorNormalizesZeroMaxConnections)
     EXPECT_EQ(server->limits_config_.max_connections, 1U);
 }
 
+TEST_F(remote_server_test, ConnectionSlotReservationPreHandshakeLimit)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    auto cfg = make_server_cfg(pick_free_port(), {}, "0102030405060708");
+    cfg.limits.max_connections = 2;
+    auto server = std::make_shared<mux::remote_server>(pool, cfg);
+
+    EXPECT_TRUE(server->try_reserve_connection_slot());
+    EXPECT_TRUE(server->try_reserve_connection_slot());
+    EXPECT_FALSE(server->try_reserve_connection_slot());
+    EXPECT_EQ(server->active_connection_slots_.load(std::memory_order_acquire), 2U);
+
+    server->release_connection_slot();
+    EXPECT_EQ(server->active_connection_slots_.load(std::memory_order_acquire), 1U);
+
+    EXPECT_TRUE(server->try_reserve_connection_slot());
+    EXPECT_EQ(server->active_connection_slots_.load(std::memory_order_acquire), 2U);
+
+    server->release_connection_slot();
+    server->release_connection_slot();
+    server->release_connection_slot();
+    EXPECT_EQ(server->active_connection_slots_.load(std::memory_order_acquire), 0U);
+}
+
 TEST_F(remote_server_test, ConstructorRejectsInvalidRealityDest)
 {
     std::error_code ec;

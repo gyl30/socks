@@ -83,6 +83,9 @@ class remote_server : public std::enable_shared_from_this<remote_server>
 
     asio::awaitable<void> handle(std::shared_ptr<asio::ip::tcp::socket> s, const std::uint32_t conn_id);
 
+    [[nodiscard]] bool try_reserve_connection_slot();
+    void release_connection_slot();
+
     struct app_keys
     {
         std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> c_app_keys;
@@ -256,6 +259,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     std::mutex fallback_guard_mu_;
     std::unordered_map<std::string, fallback_guard_state> fallback_guard_states_;
     config::timeout_t timeout_config_;
+    std::atomic<std::uint32_t> active_connection_slots_{0};
     std::vector<std::weak_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>> active_tunnels_;
     config::limits_t limits_config_;
     config::heartbeat_t heartbeat_config_;

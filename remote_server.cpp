@@ -516,6 +516,21 @@ void close_fallback_socket(const std::shared_ptr<asio::ip::tcp::socket>& socket,
     }
 }
 
+void close_socket_quietly(const std::shared_ptr<asio::ip::tcp::socket>& socket)
+{
+    std::error_code ec;
+    ec = socket->shutdown(asio::ip::tcp::socket::shutdown_both, ec);
+    if (ec && ec != asio::error::not_connected)
+    {
+        LOG_WARN("{} reject socket shutdown failed {}", log_event::kConnClose, ec.message());
+    }
+    ec = socket->close(ec);
+    if (ec && ec != asio::error::bad_descriptor)
+    {
+        LOG_WARN("{} reject socket close failed {}", log_event::kConnClose, ec.message());
+    }
+}
+
 asio::awaitable<void> proxy_half(const std::shared_ptr<asio::ip::tcp::socket>& from, const std::shared_ptr<asio::ip::tcp::socket>& to)
 {
     std::vector<std::uint8_t> data(constants::net::kBufferSize);
@@ -923,7 +938,47 @@ asio::awaitable<void> remote_server::accept_loop()
         ec = s->set_option(asio::ip::tcp::no_delay(true), ec);
         (void)ec;
         const std::uint32_t conn_id = next_conn_id_.fetch_add(1, std::memory_order_relaxed);
+        if (!try_reserve_connection_slot())
+        {
+            LOG_WARN("{} connection limit reached {} rejecting before handshake conn {}", log_event::kConnClose, limits_config_.max_connections, conn_id);
+            close_socket_quietly(s);
+            continue;
+        }
         asio::co_spawn(io_context_, [self = shared_from_this(), s, conn_id]() { return self->handle(s, conn_id); }, asio::detached);
+    }
+}
+
+bool remote_server::try_reserve_connection_slot()
+{
+    std::uint32_t current = active_connection_slots_.load(std::memory_order_acquire);
+    while (true)
+    {
+        if (current >= limits_config_.max_connections)
+        {
+            return false;
+        }
+        if (active_connection_slots_.compare_exchange_weak(current,
+                                                           current + 1,
+                                                           std::memory_order_acq_rel,
+                                                           std::memory_order_acquire))
+        {
+            return true;
+        }
+    }
+}
+
+void remote_server::release_connection_slot()
+{
+    std::uint32_t current = active_connection_slots_.load(std::memory_order_acquire);
+    while (current > 0)
+    {
+        if (active_connection_slots_.compare_exchange_weak(current,
+                                                           current - 1,
+                                                           std::memory_order_acq_rel,
+                                                           std::memory_order_acquire))
+        {
+            return;
+        }
     }
 }
 
@@ -1048,6 +1103,8 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::negotiate_re
 
 asio::awaitable<void> remote_server::handle(std::shared_ptr<asio::ip::tcp::socket> s, const std::uint32_t conn_id)
 {
+    [[maybe_unused]] const std::shared_ptr<void> slot_guard(nullptr, [self = shared_from_this()](void*) { self->release_connection_slot(); });
+
     auto ctx = build_connection_context(s, conn_id);
     LOG_CTX_INFO(ctx, "{} accepted {}", log_event::kConnInit, ctx.connection_info());
 
