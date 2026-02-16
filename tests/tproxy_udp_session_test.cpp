@@ -211,22 +211,44 @@ bool udp_socket_is_open(asio::io_context& io_context, const std::shared_ptr<mux:
     return run_on_io_context(io_context, [client]() { return client->udp_socket_.is_open(); });
 }
 
+std::shared_ptr<mux::tproxy_client::udp_session_map_t> snapshot_udp_sessions(const std::shared_ptr<mux::tproxy_client>& client)
+{
+    auto snapshot = std::atomic_load_explicit(&client->udp_sessions_, std::memory_order_acquire);
+    if (snapshot != nullptr)
+    {
+        return snapshot;
+    }
+    return std::make_shared<mux::tproxy_client::udp_session_map_t>();
+}
+
 void emplace_udp_session(asio::io_context& io_context,
                          const std::shared_ptr<mux::tproxy_client>& client,
                          const std::string& key,
                          const std::shared_ptr<mux::tproxy_udp_session>& session)
 {
-    run_on_io_context(io_context,
-                      [client, key, session]()
-                      {
-                          client->udp_sessions_.emplace(key, session);
-                          return true;
-                      });
+    (void)io_context;
+    for (;;)
+    {
+        auto current = snapshot_udp_sessions(client);
+        auto updated = std::make_shared<mux::tproxy_client::udp_session_map_t>(*current);
+        (*updated)[key] = session;
+        if (std::atomic_compare_exchange_weak_explicit(
+                &client->udp_sessions_, &current, updated, std::memory_order_acq_rel, std::memory_order_acquire))
+        {
+            return;
+        }
+    }
 }
 
 std::size_t udp_session_count(asio::io_context& io_context, const std::shared_ptr<mux::tproxy_client>& client)
 {
-    return run_on_io_context(io_context, [client]() { return client->udp_sessions_.size(); });
+    (void)io_context;
+    return snapshot_udp_sessions(client)->size();
+}
+
+bool udp_sessions_empty(const std::shared_ptr<mux::tproxy_client>& client)
+{
+    return snapshot_udp_sessions(client)->empty();
 }
 
 class direct_router : public mux::router
@@ -1413,8 +1435,8 @@ TEST(TproxyClientTest, StopExtractsAndStopsUdpSessions)
     auto live_session =
         std::make_shared<mux::tproxy_udp_session>(pool.get_io_context(), client->tunnel_pool_, client->router_, client->sender_, 42, cfg, client_ep);
 
-    client->udp_sessions_.emplace("null-entry", nullptr);
-    client->udp_sessions_.emplace("live-entry", live_session);
+    emplace_udp_session(pool.get_io_context(), client, "null-entry", nullptr);
+    emplace_udp_session(pool.get_io_context(), client, "live-entry", live_session);
 
     std::thread runner([&pool]() { pool.run(); });
     client->stop();
@@ -2632,13 +2654,13 @@ TEST(TproxyClientTest, StopClosesUdpSessionsWhenIoContextStopped)
     ASSERT_FALSE(ec);
     ASSERT_TRUE(session->direct_socket_.is_open());
 
-    client->udp_sessions_.emplace("127.0.0.1:12431", session);
-    ASSERT_EQ(client->udp_sessions_.size(), 1U);
+    emplace_udp_session(pool.get_io_context(), client, "127.0.0.1:12431", session);
+    ASSERT_EQ(udp_session_count(pool.get_io_context(), client), 1U);
 
     pool.stop();
     client->stop();
 
-    EXPECT_TRUE(client->udp_sessions_.empty());
+    EXPECT_TRUE(udp_sessions_empty(client));
     EXPECT_FALSE(session->direct_socket_.is_open());
     reset_socket_wrappers();
 }
@@ -2662,12 +2684,12 @@ TEST(TproxyClientTest, StopClosesUdpSessionsWhenIoContextNotRunning)
     ASSERT_FALSE(ec);
     ASSERT_TRUE(session->direct_socket_.is_open());
 
-    client->udp_sessions_.emplace("127.0.0.1:12432", session);
-    ASSERT_EQ(client->udp_sessions_.size(), 1U);
+    emplace_udp_session(pool.get_io_context(), client, "127.0.0.1:12432", session);
+    ASSERT_EQ(udp_session_count(pool.get_io_context(), client), 1U);
 
     client->stop();
 
-    EXPECT_TRUE(client->udp_sessions_.empty());
+    EXPECT_TRUE(udp_sessions_empty(client));
     EXPECT_FALSE(session->direct_socket_.is_open());
     pool.stop();
     reset_socket_wrappers();
@@ -2692,8 +2714,8 @@ TEST(TproxyClientTest, StopClosesUdpSessionsWhenIoQueueBlocked)
     ASSERT_FALSE(ec);
     ASSERT_TRUE(session->direct_socket_.is_open());
 
-    client->udp_sessions_.emplace("127.0.0.1:12433", session);
-    ASSERT_EQ(client->udp_sessions_.size(), 1U);
+    emplace_udp_session(pool.get_io_context(), client, "127.0.0.1:12433", session);
+    ASSERT_EQ(udp_session_count(pool.get_io_context(), client), 1U);
 
     std::atomic<bool> blocker_started{false};
     std::atomic<bool> release_blocker{false};
@@ -2732,7 +2754,7 @@ TEST(TproxyClientTest, StopClosesUdpSessionsWhenIoQueueBlocked)
     }
 
     client->stop();
-    EXPECT_TRUE(client->udp_sessions_.empty());
+    EXPECT_TRUE(udp_sessions_empty(client));
     EXPECT_FALSE(session->direct_socket_.is_open());
 
     release_blocker.store(true, std::memory_order_release);
@@ -2754,7 +2776,7 @@ TEST(TproxyClientTest, UdpCleanupLoopCoversNullSessionBranch)
     cfg.tproxy.enabled = true;
     cfg.timeout.idle = 1;
     auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
-    client->udp_sessions_.emplace("null-session", std::shared_ptr<mux::tproxy_udp_session>{});
+    emplace_udp_session(pool.get_io_context(), client, "null-session", std::shared_ptr<mux::tproxy_udp_session>{});
 
     asio::co_spawn(pool.get_io_context(),
                    [client]() -> asio::awaitable<void>

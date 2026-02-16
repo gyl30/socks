@@ -33,6 +33,7 @@ namespace
 
 constexpr std::size_t k_udp_dispatch_queue_capacity = 2048;
 constexpr std::size_t k_udp_dispatch_worker_count = 4;
+using udp_session_map_t = tproxy_client::udp_session_map_t;
 
 void close_acceptor_on_setup_failure(asio::ip::tcp::acceptor& acceptor)
 {
@@ -289,8 +290,41 @@ void log_udp_recv_error(const std::string& error_text)
     LOG_ERROR("tproxy udp recvmsg failed {}", error_text);
 }
 
+std::shared_ptr<udp_session_map_t> snapshot_udp_sessions(const std::shared_ptr<udp_session_map_t>& sessions)
+{
+    auto snapshot = std::atomic_load_explicit(&sessions, std::memory_order_acquire);
+    if (snapshot != nullptr)
+    {
+        return snapshot;
+    }
+    return std::make_shared<udp_session_map_t>();
+}
+
+void erase_udp_session_if_same(std::shared_ptr<udp_session_map_t>& sessions,
+                               const std::string& key,
+                               const std::shared_ptr<tproxy_udp_session>& expected_session)
+{
+    for (;;)
+    {
+        auto current = snapshot_udp_sessions(sessions);
+        const auto it = current->find(key);
+        if (it == current->end() || it->second != expected_session)
+        {
+            return;
+        }
+
+        auto updated = std::make_shared<udp_session_map_t>(*current);
+        updated->erase(key);
+        if (std::atomic_compare_exchange_weak_explicit(
+                &sessions, &current, updated, std::memory_order_acq_rel, std::memory_order_acquire))
+        {
+            return;
+        }
+    }
+}
+
 std::shared_ptr<tproxy_udp_session> get_or_create_udp_session(
-    std::unordered_map<std::string, std::shared_ptr<tproxy_udp_session>>& sessions,
+    std::shared_ptr<udp_session_map_t>& sessions,
     const std::string& key,
     const asio::ip::udp::endpoint& src_ep,
     asio::io_context& io_context,
@@ -299,21 +333,38 @@ std::shared_ptr<tproxy_udp_session> get_or_create_udp_session(
     const std::shared_ptr<tproxy_udp_sender>& sender,
     const config& cfg)
 {
-    auto it = sessions.find(key);
-    if (it != sessions.end())
+    std::shared_ptr<tproxy_udp_session> prepared_session = nullptr;
+    for (;;)
     {
-        return it->second;
+        auto current = snapshot_udp_sessions(sessions);
+        const auto it = current->find(key);
+        if (it != current->end() && it->second != nullptr)
+        {
+            return it->second;
+        }
+
+        if (prepared_session == nullptr)
+        {
+            const std::uint32_t sid = tunnel_pool->next_session_id();
+            prepared_session = std::make_shared<tproxy_udp_session>(io_context, tunnel_pool, router, sender, sid, cfg, src_ep);
+        }
+
+        auto updated = std::make_shared<udp_session_map_t>(*current);
+        (*updated)[key] = prepared_session;
+        if (std::atomic_compare_exchange_weak_explicit(
+                &sessions, &current, updated, std::memory_order_acq_rel, std::memory_order_acquire))
+        {
+            break;
+        }
     }
 
-    const std::uint32_t sid = tunnel_pool->next_session_id();
-    auto session = std::make_shared<tproxy_udp_session>(io_context, tunnel_pool, router, sender, sid, cfg, src_ep);
-    if (!session->start())
+    if (!prepared_session->start())
     {
         LOG_WARN("tproxy udp session {} start failed", key);
+        erase_udp_session_if_same(sessions, key, prepared_session);
         return nullptr;
     }
-    sessions.emplace(key, session);
-    return session;
+    return prepared_session;
 }
 
 enum class udp_recv_status
@@ -605,25 +656,47 @@ std::uint64_t now_steady_ms()
     return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(now).count());
 }
 
-void collect_expired_udp_sessions(std::unordered_map<std::string, std::shared_ptr<tproxy_udp_session>>& sessions,
+void collect_expired_udp_sessions(std::shared_ptr<udp_session_map_t>& sessions,
                                   const std::uint64_t now_ms,
                                   const std::uint64_t idle_ms,
                                   std::vector<std::shared_ptr<tproxy_udp_session>>& expired_sessions)
 {
-    for (auto it = sessions.begin(); it != sessions.end();)
+    for (;;)
     {
-        if (it->second == nullptr)
+        auto current = snapshot_udp_sessions(sessions);
+        auto updated = std::make_shared<udp_session_map_t>();
+        updated->reserve(current->size());
+        std::vector<std::shared_ptr<tproxy_udp_session>> detached_sessions;
+        detached_sessions.reserve(current->size());
+
+        for (const auto& [key, session] : *current)
         {
-            ++it;
-            continue;
+            if (session == nullptr)
+            {
+                continue;
+            }
+            if (session->is_idle(now_ms, idle_ms))
+            {
+                detached_sessions.push_back(session);
+                continue;
+            }
+            updated->emplace(key, session);
         }
-        if (!it->second->is_idle(now_ms, idle_ms))
+
+        if (detached_sessions.empty() && updated->size() == current->size())
         {
-            ++it;
-            continue;
+            return;
         }
-        expired_sessions.push_back(it->second);
-        it = sessions.erase(it);
+
+        if (std::atomic_compare_exchange_weak_explicit(
+                &sessions, &current, updated, std::memory_order_acq_rel, std::memory_order_acquire))
+        {
+            for (auto& session : detached_sessions)
+            {
+                expired_sessions.push_back(std::move(session));
+            }
+            return;
+        }
     }
 }
 
@@ -650,19 +723,27 @@ void close_tproxy_sockets(asio::ip::tcp::acceptor& tcp_acceptor, asio::ip::udp::
 }
 
 std::vector<std::shared_ptr<tproxy_udp_session>> extract_udp_sessions(
-    std::unordered_map<std::string, std::shared_ptr<tproxy_udp_session>>& udp_sessions)
+    std::shared_ptr<udp_session_map_t>& udp_sessions)
 {
-    std::vector<std::shared_ptr<tproxy_udp_session>> sessions;
-    sessions.reserve(udp_sessions.size());
-    for (auto& entry : udp_sessions)
+    auto empty = std::make_shared<udp_session_map_t>();
+    for (;;)
     {
-        if (entry.second != nullptr)
+        auto current = snapshot_udp_sessions(udp_sessions);
+        if (std::atomic_compare_exchange_weak_explicit(
+                &udp_sessions, &current, empty, std::memory_order_acq_rel, std::memory_order_acquire))
         {
-            sessions.push_back(entry.second);
+            std::vector<std::shared_ptr<tproxy_udp_session>> sessions;
+            sessions.reserve(current->size());
+            for (auto& entry : *current)
+            {
+                if (entry.second != nullptr)
+                {
+                    sessions.push_back(entry.second);
+                }
+            }
+            return sessions;
         }
     }
-    udp_sessions.clear();
-    return sessions;
 }
 
 void stop_udp_sessions(std::vector<std::shared_ptr<tproxy_udp_session>>& sessions)

@@ -38,6 +38,8 @@ using tproxy_udp_dispatch_channel = asio::experimental::concurrent_channel<void(
 class tproxy_client : public std::enable_shared_from_this<tproxy_client>
 {
    public:
+    using udp_session_map_t = std::unordered_map<std::string, std::shared_ptr<tproxy_udp_session>>;
+
     tproxy_client(io_context_pool& pool, const config& cfg);
 
     void start();
@@ -72,7 +74,7 @@ class tproxy_client : public std::enable_shared_from_this<tproxy_client>
     std::shared_ptr<client_tunnel_pool> tunnel_pool_;
     std::shared_ptr<router> router_;
     std::shared_ptr<tproxy_udp_sender> sender_;
-    std::unordered_map<std::string, std::shared_ptr<tproxy_udp_session>> udp_sessions_;
+    std::shared_ptr<udp_session_map_t> udp_sessions_ = std::make_shared<udp_session_map_t>();
     std::shared_ptr<tproxy_udp_dispatch_channel> udp_dispatch_channel_;
     std::atomic<bool> udp_dispatch_started_{false};
     config cfg_;
