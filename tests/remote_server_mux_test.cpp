@@ -89,6 +89,38 @@ class remote_server_mux_test : public ::testing::Test
     std::string short_id_;
 };
 
+static std::uint16_t wait_for_socks_listen_port(const std::shared_ptr<mux::socks_client>& client, const int attempts = 80)
+{
+    for (int i = 0; i < attempts; ++i)
+    {
+        const auto listen_port = client->listen_port();
+        if (listen_port != 0)
+        {
+            return listen_port;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    return 0;
+}
+
+static bool connect_proxy_with_retry(asio::ip::tcp::socket& socket, const std::uint16_t port, const int attempts = 40)
+{
+    const auto endpoint = asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), port);
+    for (int i = 0; i < attempts; ++i)
+    {
+        std::error_code ec;
+        socket.connect(endpoint, ec);
+        if (!ec)
+        {
+            return true;
+        }
+        std::error_code close_ec;
+        socket.close(close_ec);
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    return false;
+}
+
 TEST_F(remote_server_mux_test, ProcessTcpConnectRequest)
 {
     mux::io_context_pool pool(2);
@@ -103,6 +135,7 @@ TEST_F(remote_server_mux_test, ProcessTcpConnectRequest)
 
     server->start();
     const std::uint16_t server_port = server->listen_port();
+    ASSERT_NE(server_port, 0);
 
     mux::config::timeout_t timeouts;
     timeouts.read = 10;
@@ -110,22 +143,12 @@ TEST_F(remote_server_mux_test, ProcessTcpConnectRequest)
     auto client = std::make_shared<mux::socks_client>(pool, make_client_cfg(server_port, "www.google.com", timeouts));
     client->start();
 
-    std::uint16_t local_socks_port = 0;
-    for (int i = 0; i < 50; ++i)
-    {
-        local_socks_port = client->listen_port();
-        if (local_socks_port != 0)
-        {
-            break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    }
+    const std::uint16_t local_socks_port = wait_for_socks_listen_port(client);
     ASSERT_NE(local_socks_port, 0);
-    std::this_thread::sleep_for(std::chrono::seconds(1));
 
     {
         asio::ip::tcp::socket proxy_sock(pool.get_io_context());
-        proxy_sock.connect({asio::ip::make_address("127.0.0.1"), local_socks_port});
+        ASSERT_TRUE(connect_proxy_with_retry(proxy_sock, local_socks_port));
 
         std::uint8_t handshake[] = {0x05, 0x01, 0x00};
         asio::write(proxy_sock, asio::buffer(handshake));
@@ -162,6 +185,7 @@ TEST_F(remote_server_mux_test, ProcessUdpAssociateRequest)
 
     server->start();
     const std::uint16_t server_port = server->listen_port();
+    ASSERT_NE(server_port, 0);
 
     mux::config::timeout_t timeouts;
     timeouts.read = 10;
@@ -169,22 +193,12 @@ TEST_F(remote_server_mux_test, ProcessUdpAssociateRequest)
     auto client = std::make_shared<mux::socks_client>(pool, make_client_cfg(server_port, "www.google.com", timeouts));
     client->start();
 
-    std::uint16_t local_socks_port = 0;
-    for (int i = 0; i < 50; ++i)
-    {
-        local_socks_port = client->listen_port();
-        if (local_socks_port != 0)
-        {
-            break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    }
+    const std::uint16_t local_socks_port = wait_for_socks_listen_port(client);
     ASSERT_NE(local_socks_port, 0);
-    std::this_thread::sleep_for(std::chrono::seconds(1));
 
     {
         asio::ip::tcp::socket proxy_sock(pool.get_io_context());
-        proxy_sock.connect({asio::ip::make_address("127.0.0.1"), local_socks_port});
+        ASSERT_TRUE(connect_proxy_with_retry(proxy_sock, local_socks_port));
 
         std::uint8_t handshake[] = {0x05, 0x01, 0x00};
         asio::write(proxy_sock, asio::buffer(handshake));
@@ -219,26 +233,17 @@ TEST_F(remote_server_mux_test, TargetConnectFail)
 
     server->start();
     const std::uint16_t server_port = server->listen_port();
+    ASSERT_NE(server_port, 0);
 
     auto client = std::make_shared<mux::socks_client>(pool, make_client_cfg(server_port, "www.google.com", mux::config::timeout_t{}));
     client->start();
 
-    std::uint16_t local_socks_port = 0;
-    for (int i = 0; i < 50; ++i)
-    {
-        local_socks_port = client->listen_port();
-        if (local_socks_port != 0)
-        {
-            break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    }
+    const std::uint16_t local_socks_port = wait_for_socks_listen_port(client);
     ASSERT_NE(local_socks_port, 0);
-    std::this_thread::sleep_for(std::chrono::seconds(1));
 
     {
         asio::ip::tcp::socket proxy_sock(pool.get_io_context());
-        proxy_sock.connect({asio::ip::make_address("127.0.0.1"), local_socks_port});
+        ASSERT_TRUE(connect_proxy_with_retry(proxy_sock, local_socks_port));
 
         std::uint8_t handshake[] = {0x05, 0x01, 0x00};
         asio::write(proxy_sock, asio::buffer(handshake));
@@ -274,26 +279,17 @@ TEST_F(remote_server_mux_test, TargetResolveFail)
 
     server->start();
     const std::uint16_t server_port = server->listen_port();
+    ASSERT_NE(server_port, 0);
 
     auto client = std::make_shared<mux::socks_client>(pool, make_client_cfg(server_port, "www.google.com", mux::config::timeout_t{}));
     client->start();
 
-    std::uint16_t local_socks_port = 0;
-    for (int i = 0; i < 50; ++i)
-    {
-        local_socks_port = client->listen_port();
-        if (local_socks_port != 0)
-        {
-            break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    }
+    const std::uint16_t local_socks_port = wait_for_socks_listen_port(client);
     ASSERT_NE(local_socks_port, 0);
-    std::this_thread::sleep_for(std::chrono::seconds(1));
 
     {
         asio::ip::tcp::socket proxy_sock(pool.get_io_context());
-        proxy_sock.connect({asio::ip::make_address("127.0.0.1"), local_socks_port});
+        ASSERT_TRUE(connect_proxy_with_retry(proxy_sock, local_socks_port));
 
         std::uint8_t handshake[] = {0x05, 0x01, 0x00};
         asio::write(proxy_sock, asio::buffer(handshake));
