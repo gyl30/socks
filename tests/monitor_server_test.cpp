@@ -332,6 +332,45 @@ TEST(MonitorServerTest, EnforcesPathAndSupportsHttpUrlDecodedToken)
     EXPECT_NE(authed.find("socks_uptime_seconds "), std::string::npos);
 }
 
+TEST(MonitorServerTest, SupportsFragmentedHttpRequestLine)
+{
+    const auto port = pick_free_port();
+    monitor_server_env env(port, std::string("secret"));
+
+    asio::io_context ioc;
+    asio::ip::tcp::socket socket(ioc);
+    asio::error_code ec;
+    socket.connect(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), port), ec);
+    ASSERT_FALSE(ec);
+
+    asio::write(socket, asio::buffer("GET /metrics?token=secret HT"), ec);
+    ASSERT_FALSE(ec);
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    asio::write(socket, asio::buffer("TP/1.1\r\nHost: 127.0.0.1\r\n\r\n"), ec);
+    ASSERT_FALSE(ec);
+
+    std::string resp;
+    std::array<char, 1024> buffer{};
+    for (;;)
+    {
+        const auto n = socket.read_some(asio::buffer(buffer), ec);
+        if (n > 0)
+        {
+            resp.append(buffer.data(), n);
+        }
+        if (ec == asio::error::eof)
+        {
+            break;
+        }
+        if (ec)
+        {
+            break;
+        }
+    }
+
+    EXPECT_NE(resp.find("socks_uptime_seconds "), std::string::npos);
+}
+
 TEST(MonitorServerTest, EscapesPrometheusLabels)
 {
     auto& stats = statistics::instance();

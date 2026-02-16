@@ -80,6 +80,8 @@ struct parsed_monitor_request
     std::string_view query;
 };
 
+constexpr std::size_t kMaxMonitorRequestLineSize = 4096;
+
 std::string url_decode(std::string_view value)
 {
     auto hex_to_int = [](const char c) -> int
@@ -230,34 +232,50 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
     void start()
     {
         auto self = shared_from_this();
-        socket_.async_read_some(asio::buffer(buffer_),
-                                [this, self](std::error_code ec, std::size_t length)
-                                {
-                                    if (!ec)
-                                    {
-                                        const std::string req(buffer_.data(), length);
-                                        if (!is_authorized_monitor_request(req, token_))
-                                        {
-                                            if (!token_.empty())
-                                            {
-                                                LOG_WARN("monitor auth failed");
-                                            }
-                                            else
-                                            {
-                                                LOG_WARN("monitor invalid request");
-                                            }
-                                            close_socket();
-                                            return;
-                                        }
-                                        if (!check_rate_limit())
-                                        {
-                                            LOG_WARN("monitor rate limited");
-                                            close_socket();
-                                            return;
-                                        }
-                                        write_stats();
-                                    }
-                                });
+        asio::async_read_until(socket_,
+                               asio::dynamic_buffer(request_line_, kMaxMonitorRequestLineSize),
+                               '\n',
+                               [this, self](std::error_code ec, std::size_t length)
+                               {
+                                   if (ec)
+                                   {
+                                       if (ec != asio::error::eof && ec != asio::error::operation_aborted)
+                                       {
+                                           LOG_WARN("monitor read failed {}", ec.message());
+                                       }
+                                       close_socket();
+                                       return;
+                                   }
+
+                                   if (length == 0 || length > request_line_.size())
+                                   {
+                                       LOG_WARN("monitor request line invalid");
+                                       close_socket();
+                                       return;
+                                   }
+
+                                   const std::string req(request_line_.data(), length);
+                                   if (!is_authorized_monitor_request(req, token_))
+                                   {
+                                       if (!token_.empty())
+                                       {
+                                           LOG_WARN("monitor auth failed");
+                                       }
+                                       else
+                                       {
+                                           LOG_WARN("monitor invalid request");
+                                       }
+                                       close_socket();
+                                       return;
+                                   }
+                                   if (!check_rate_limit())
+                                   {
+                                       LOG_WARN("monitor rate limited");
+                                       close_socket();
+                                       return;
+                                   }
+                                   write_stats();
+                               });
     }
 
    private:
@@ -323,7 +341,7 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
 
    private:
     std::string response_;
-    std::array<char, 4096> buffer_;
+    std::string request_line_;
     asio::ip::tcp::socket socket_;
     std::string token_;
     std::shared_ptr<monitor_rate_state> rate_state_;
