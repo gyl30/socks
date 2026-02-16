@@ -257,6 +257,7 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
                                    const std::string req(request_line_.data(), length);
                                    if (!is_authorized_monitor_request(req, token_))
                                    {
+                                       statistics::instance().inc_monitor_auth_failures();
                                        if (!token_.empty())
                                        {
                                            LOG_WARN("monitor auth failed");
@@ -270,6 +271,7 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
                                    }
                                    if (!check_rate_limit())
                                    {
+                                       statistics::instance().inc_monitor_rate_limited();
                                        LOG_WARN("monitor rate limited");
                                        close_socket();
                                        return;
@@ -321,6 +323,10 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
         append_metric_line(response, "socks_client_finished_failures_total", stats.client_finished_failures());
         append_metric_line(response, "socks_fallback_rate_limited_total", stats.fallback_rate_limited());
         append_metric_line(response, "socks_routing_blocked_total", stats.routing_blocked());
+        append_metric_line(response, "socks_connection_limit_rejected_total", stats.connection_limit_rejected());
+        append_metric_line(response, "socks_stream_limit_rejected_total", stats.stream_limit_rejected());
+        append_metric_line(response, "socks_monitor_auth_failures_total", stats.monitor_auth_failures());
+        append_metric_line(response, "socks_monitor_rate_limited_total", stats.monitor_rate_limited());
         const auto handshake_failure_sni_metrics = stats.handshake_failure_sni_metrics();
         for (const auto& metric : handshake_failure_sni_metrics)
         {

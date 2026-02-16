@@ -261,21 +261,36 @@ TEST(MonitorServerTest, EmptyTokenReturnsMetrics)
     EXPECT_NE(resp.find("socks_uptime_seconds "), std::string::npos);
     EXPECT_NE(resp.find("socks_total_connections "), std::string::npos);
     EXPECT_NE(resp.find("socks_auth_failures_total "), std::string::npos);
+    EXPECT_NE(resp.find("socks_connection_limit_rejected_total "), std::string::npos);
+    EXPECT_NE(resp.find("socks_stream_limit_rejected_total "), std::string::npos);
+    EXPECT_NE(resp.find("socks_monitor_auth_failures_total "), std::string::npos);
+    EXPECT_NE(resp.find("socks_monitor_rate_limited_total "), std::string::npos);
 }
 
 TEST(MonitorServerTest, TokenRequiredAndRateLimit)
 {
+    auto& stats = statistics::instance();
+    const auto monitor_auth_before = stats.monitor_auth_failures();
+    const auto monitor_rate_before = stats.monitor_rate_limited();
+
     const auto port = pick_free_port();
     monitor_server_env env(port, std::string("secret"), 500);
+
+    const auto warmup = request_with_retry(port, "metrics?token=secret\n");
+    EXPECT_NE(warmup.find("socks_total_connections "), std::string::npos);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(550));
 
     const auto unauth = read_response(port, "metrics\n");
     EXPECT_TRUE(unauth.empty());
 
-    const auto authed = request_with_retry(port, "metrics?token=secret\n");
+    const auto authed = read_response(port, "metrics?token=secret\n");
     EXPECT_NE(authed.find("socks_total_connections "), std::string::npos);
 
     const auto limited = read_response(port, "metrics?token=secret\n");
     EXPECT_TRUE(limited.empty());
+    EXPECT_GT(stats.monitor_rate_limited(), monitor_rate_before);
+    EXPECT_GT(stats.monitor_auth_failures(), monitor_auth_before);
 
     std::this_thread::sleep_for(std::chrono::milliseconds(550));
     const auto after_window = read_response(port, "metrics?token=secret\n");

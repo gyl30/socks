@@ -940,6 +940,7 @@ asio::awaitable<void> remote_server::accept_loop()
         const std::uint32_t conn_id = next_conn_id_.fetch_add(1, std::memory_order_relaxed);
         if (!try_reserve_connection_slot())
         {
+            statistics::instance().inc_connection_limit_rejected();
             LOG_WARN("{} connection limit reached {} rejecting before handshake conn {}", log_event::kConnClose, limits_config_.max_connections, conn_id);
             close_socket_quietly(s);
             continue;
@@ -1177,6 +1178,7 @@ asio::awaitable<bool> remote_server::reject_connection_if_over_limit(const std::
         co_return false;
     }
 
+    statistics::instance().inc_connection_limit_rejected();
     LOG_CTX_WARN(ctx, "{} connection limit reached {} rejecting", log_event::kConnClose, limits_config_.max_connections);
     const auto info = ch_parser::parse(initial_buf);
     co_await handle_fallback(s, initial_buf, ctx, info.sni);
@@ -1238,6 +1240,7 @@ asio::awaitable<void> remote_server::reject_stream_for_limit(const std::shared_p
                                                              const connection_context& ctx,
                                                              const std::uint32_t stream_id) const
 {
+    statistics::instance().inc_stream_limit_rejected();
     LOG_CTX_WARN(ctx, "{} stream limit reached", log_event::kMux);
     const ack_payload ack{.socks_rep = socks::kRepGenFail, .bnd_addr = "", .bnd_port = 0};
     std::vector<std::uint8_t> ack_data;

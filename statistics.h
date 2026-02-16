@@ -89,6 +89,18 @@ class statistics
     void inc_routing_blocked() { routing_blocked_++; }
     std::uint64_t routing_blocked() const { return routing_blocked_.load(); }
 
+    void inc_connection_limit_rejected() { connection_limit_rejected_++; }
+    std::uint64_t connection_limit_rejected() const { return connection_limit_rejected_.load(); }
+
+    void inc_stream_limit_rejected() { stream_limit_rejected_++; }
+    std::uint64_t stream_limit_rejected() const { return stream_limit_rejected_.load(); }
+
+    void inc_monitor_auth_failures() { monitor_auth_failures_++; }
+    std::uint64_t monitor_auth_failures() const { return monitor_auth_failures_.load(); }
+
+    void inc_monitor_rate_limited() { monitor_rate_limited_++; }
+    std::uint64_t monitor_rate_limited() const { return monitor_rate_limited_.load(); }
+
     void inc_handshake_failure_by_sni(const handshake_failure_reason reason, const std::string_view sni)
     {
         const auto reason_index = static_cast<std::size_t>(reason);
@@ -196,6 +208,10 @@ class statistics
     std::atomic<std::uint64_t> client_finished_failures_{0};
     std::atomic<std::uint64_t> fallback_rate_limited_{0};
     std::atomic<std::uint64_t> routing_blocked_{0};
+    std::atomic<std::uint64_t> connection_limit_rejected_{0};
+    std::atomic<std::uint64_t> stream_limit_rejected_{0};
+    std::atomic<std::uint64_t> monitor_auth_failures_{0};
+    std::atomic<std::uint64_t> monitor_rate_limited_{0};
     mutable std::mutex handshake_failure_sni_mu_;
     std::array<handshake_failure_sni_counter, static_cast<std::size_t>(handshake_failure_reason::kCount)> handshake_failure_sni_counters_{};
 
