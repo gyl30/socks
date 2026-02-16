@@ -204,8 +204,20 @@ TEST_F(config_test, InvalidPortRange)
     write_config_file(content);
 
     const auto cfg_opt = mux::parse_config(tmp_file());
-    ASSERT_TRUE(cfg_opt.has_value());
-    EXPECT_EQ(cfg_opt->inbound.port, static_cast<std::uint16_t>(70000U & 0xFFFFU));
+    EXPECT_FALSE(cfg_opt.has_value());
+}
+
+TEST_F(config_test, NegativePortRejected)
+{
+    const std::string content = R"({
+        "inbound": {
+            "port": -1
+        }
+    })";
+    write_config_file(content);
+
+    const auto cfg_opt = mux::parse_config(tmp_file());
+    EXPECT_FALSE(cfg_opt.has_value());
 }
 
 TEST_F(config_test, MaxConnectionsZeroNormalizedToOne)

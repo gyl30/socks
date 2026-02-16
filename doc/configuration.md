@@ -18,6 +18,7 @@
 - `tproxy.listen_host`：TPROXY 监听地址（默认 `::`）。
 - `tproxy.tcp_port` / `tproxy.udp_port`：TPROXY TCP/UDP 端口。`udp_port = 0` 表示跟随 `tcp_port`。
 - `tproxy.mark`：TPROXY `SO_MARK`，用于路由/回避回环（默认 `0x11`）。
+- 所有端口字段均要求 `0-65535` 的无符号整数；超出范围或负数会在解析阶段直接报错。
 
 ## 传输与超时
 
