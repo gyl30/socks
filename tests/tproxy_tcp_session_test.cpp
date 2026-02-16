@@ -562,3 +562,26 @@ TEST(TproxyTcpSessionTest, StartIdleWatchdogSpawnsAndHandlesCancel)
     EXPECT_FALSE(session->socket_.is_open());
     pair.client.close();
 }
+
+TEST(TproxyTcpSessionTest, IdleWatchdogDisabledWhenIdleTimeoutZero)
+{
+    asio::io_context ctx;
+    auto pair = make_tcp_socket_pair(ctx);
+    auto router = std::make_shared<direct_router>();
+    mux::config cfg;
+    cfg.timeout.idle = 0;
+    const asio::ip::tcp::endpoint dst_ep(asio::ip::make_address("127.0.0.1"), 80);
+    auto session = std::make_shared<mux::tproxy_tcp_session>(std::move(pair.server), ctx, nullptr, std::move(router), 14, cfg, dst_ep);
+    auto backend = std::make_shared<mock_upstream>();
+
+    session->last_activity_time_ms_.store(0, std::memory_order_release);
+    session->start_idle_watchdog(backend);
+    ctx.run_for(std::chrono::milliseconds(1100));
+    ctx.restart();
+
+    EXPECT_EQ(backend->close_calls, 0);
+    EXPECT_TRUE(session->socket_.is_open());
+
+    session->close_client_socket();
+    pair.client.close();
+}
