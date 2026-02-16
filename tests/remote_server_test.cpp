@@ -52,6 +52,8 @@ std::atomic<bool> g_fail_shutdown_once{false};
 std::atomic<int> g_fail_shutdown_errno{EIO};
 std::atomic<bool> g_fail_close_once{false};
 std::atomic<int> g_fail_close_errno{EIO};
+std::atomic<bool> g_fail_send_once{false};
+std::atomic<int> g_fail_send_errno{EPIPE};
 std::atomic<bool> g_fail_rand_bytes_once{false};
 std::atomic<bool> g_fail_ed25519_raw_private_key_once{false};
 std::atomic<bool> g_fail_pkey_derive_once{false};
@@ -88,6 +90,12 @@ void fail_next_shutdown(const int err)
     g_fail_shutdown_once.store(true, std::memory_order_release);
 }
 
+void fail_next_send(const int err)
+{
+    g_fail_send_errno.store(err, std::memory_order_release);
+    g_fail_send_once.store(true, std::memory_order_release);
+}
+
 void fail_next_rand_bytes() { g_fail_rand_bytes_once.store(true, std::memory_order_release); }
 
 void fail_next_ed25519_raw_private_key() { g_fail_ed25519_raw_private_key_once.store(true, std::memory_order_release); }
@@ -105,6 +113,8 @@ extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void*
 extern "C" int __real_listen(int sockfd, int backlog);
 extern "C" int __real_shutdown(int sockfd, int how);
 extern "C" int __real_close(int fd);
+extern "C" ssize_t __real_send(int sockfd, const void* buf, size_t len, int flags);
+extern "C" ssize_t __real_sendmsg(int sockfd, const struct msghdr* msg, int flags);
 extern "C" int __real_RAND_bytes(unsigned char* buf, int num);
 extern "C" EVP_PKEY* __real_EVP_PKEY_new_raw_private_key(int type, ENGINE* e, const unsigned char* key, size_t keylen);
 extern "C" int __real_EVP_PKEY_derive(EVP_PKEY_CTX* ctx, unsigned char* key, size_t* keylen);
@@ -158,6 +168,26 @@ extern "C" int __wrap_close(int fd)
         return -1;
     }
     return __real_close(fd);
+}
+
+extern "C" ssize_t __wrap_send(int sockfd, const void* buf, size_t len, int flags)
+{
+    if (g_fail_send_once.exchange(false, std::memory_order_acq_rel))
+    {
+        errno = g_fail_send_errno.load(std::memory_order_acquire);
+        return -1;
+    }
+    return __real_send(sockfd, buf, len, flags);
+}
+
+extern "C" ssize_t __wrap_sendmsg(int sockfd, const struct msghdr* msg, int flags)
+{
+    if (g_fail_send_once.exchange(false, std::memory_order_acq_rel))
+    {
+        errno = g_fail_send_errno.load(std::memory_order_acquire);
+        return -1;
+    }
+    return __real_sendmsg(sockfd, msg, flags);
 }
 
 extern "C" int __wrap_RAND_bytes(unsigned char* buf, int num)
@@ -243,6 +273,31 @@ bool wait_for_condition(Predicate predicate,
         std::this_thread::sleep_for(interval);
     }
     return predicate();
+}
+
+auto make_thread_join_guard(std::thread& worker)
+{
+    return make_scoped_exit(
+        [&worker]()
+        {
+            if (worker.joinable())
+            {
+                worker.join();
+            }
+        });
+}
+
+auto make_pool_thread_guard(mux::io_context_pool& pool, std::thread& worker)
+{
+    return make_scoped_exit(
+        [&pool, &worker]()
+        {
+            pool.stop();
+            if (worker.joinable())
+            {
+                worker.join();
+            }
+        });
 }
 
 bool start_server_until_listening(const std::shared_ptr<mux::remote_server>& server,
@@ -431,6 +486,7 @@ TEST_F(remote_server_test, AuthFailureTriggersFallback)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
+    auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
 
     std::uint16_t server_port = 29911;
     std::uint16_t fallback_port = 29912;
@@ -473,6 +529,7 @@ TEST_F(remote_server_test, AuthFailShortIdMismatch)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
+    auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
 
     std::uint16_t server_port = 29928;
     std::uint16_t fallback_port = 29929;
@@ -515,6 +572,7 @@ TEST_F(remote_server_test, ClockSkewDetected)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
+    auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
 
     std::uint16_t server_port = 29932;
     std::uint16_t fallback_port = 29933;
@@ -557,6 +615,7 @@ TEST_F(remote_server_test, AuthFailInvalidTLSHeader)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
+    auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
 
     std::uint16_t server_port = 29951;
     std::uint16_t fallback_port = 29952;
@@ -597,6 +656,7 @@ TEST_F(remote_server_test, AuthFailBufferTooShort)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
+    auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
 
     std::uint16_t server_port = 29961;
     std::uint16_t fallback_port = 29962;
@@ -639,10 +699,14 @@ TEST_F(remote_server_test, FallbackResolveFail)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
+    auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
 
     std::uint16_t server_port = 29971;
+    const auto resolve_fail_before = mux::statistics::instance().fallback_resolve_failures();
 
-    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(server_port, {{"", "invalid.hostname.test", "80"}}, "0102030405060708"));
+    // Use an invalid service name to trigger resolver failure deterministically
+    // without relying on external DNS latency.
+    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(server_port, {{"", "127.0.0.1", "bad"}}, "0102030405060708"));
     server->start();
 
     {
@@ -651,6 +715,13 @@ TEST_F(remote_server_test, FallbackResolveFail)
         asio::write(sock, asio::buffer("TRIGGER FALLBACK"));
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
     }
+
+    EXPECT_TRUE(wait_for_condition(
+        [resolve_fail_before]()
+        {
+            return mux::statistics::instance().fallback_resolve_failures() > resolve_fail_before;
+        },
+        std::chrono::milliseconds(10000)));
 
     server->stop();
     pool.stop();
@@ -663,8 +734,10 @@ TEST_F(remote_server_test, FallbackConnectFail)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
+    auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
 
     std::uint16_t server_port = 29981;
+    const auto connect_fail_before = mux::statistics::instance().fallback_connect_failures();
 
     auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(server_port, {{"", "127.0.0.1", "1"}}, "0102030405060708"));
     server->start();
@@ -676,9 +749,96 @@ TEST_F(remote_server_test, FallbackConnectFail)
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
     }
 
+    EXPECT_TRUE(wait_for_condition(
+        [connect_fail_before]()
+        {
+            return mux::statistics::instance().fallback_connect_failures() > connect_fail_before;
+        }));
+
     server->stop();
     pool.stop();
     pool_thread.join();
+}
+
+TEST_F(remote_server_test, FallbackWriteFailIncrementsMetric)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+    std::thread pool_thread([&pool] { pool.run(); });
+    auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
+    auto pool_cleanup = make_scoped_exit(
+        [&]()
+        {
+            pool.stop();
+            if (pool_thread.joinable())
+            {
+                pool_thread.join();
+            }
+        });
+
+    asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context());
+    ASSERT_TRUE(open_ephemeral_acceptor_until_ready(fallback_acceptor));
+    const auto fallback_port = fallback_acceptor.local_endpoint().port();
+
+    auto server = std::make_shared<mux::remote_server>(
+        pool, make_server_cfg(0, {{"", "127.0.0.1", std::to_string(fallback_port)}}, "0102030405060708"));
+    auto server_cleanup = make_scoped_exit(
+        [&]()
+        {
+            if (server != nullptr)
+            {
+                server->stop();
+            }
+        });
+    ASSERT_TRUE(start_server_until_listening(server));
+    const auto server_port = server->listen_port();
+
+    auto fallback_peer = std::make_shared<std::shared_ptr<asio::ip::tcp::socket>>();
+    auto fallback_accepted = std::make_shared<std::promise<void>>();
+    auto fallback_accepted_future = fallback_accepted->get_future();
+    fallback_acceptor.async_accept(
+        [fallback_peer, fallback_accepted](std::error_code accept_ec, asio::ip::tcp::socket peer)
+        {
+            if (!accept_ec)
+            {
+                *fallback_peer = std::make_shared<asio::ip::tcp::socket>(std::move(peer));
+            }
+            fallback_accepted->set_value();
+        });
+    auto acceptor_cleanup = make_scoped_exit(
+        [&]()
+        {
+            std::error_code close_ec;
+            fallback_acceptor.cancel(close_ec);
+            fallback_acceptor.close(close_ec);
+            if (*fallback_peer != nullptr && (*fallback_peer)->is_open())
+            {
+                (*fallback_peer)->shutdown(asio::ip::tcp::socket::shutdown_both, close_ec);
+                (*fallback_peer)->close(close_ec);
+            }
+        });
+
+    const auto write_fail_before = mux::statistics::instance().fallback_write_failures();
+    fail_next_send(EPIPE);
+
+    {
+        asio::ip::tcp::socket sock(pool.get_io_context());
+        sock.connect({asio::ip::make_address("127.0.0.1"), server_port}, ec);
+        ASSERT_FALSE(ec);
+
+        static constexpr char kTrigger[] = "TRIGGER FALLBACK";
+        const auto wrote = ::write(sock.native_handle(), kTrigger, sizeof(kTrigger) - 1);
+        ASSERT_GT(wrote, 0);
+    }
+
+    EXPECT_EQ(fallback_accepted_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_TRUE(wait_for_condition(
+        [write_fail_before]()
+        {
+            return mux::statistics::instance().fallback_write_failures() > write_fail_before;
+        },
+        std::chrono::milliseconds(3000)));
 }
 
 TEST_F(remote_server_test, StartRejectsInvalidAuthConfig)
@@ -687,6 +847,7 @@ TEST_F(remote_server_test, StartRejectsInvalidAuthConfig)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
+    auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
 
     std::uint16_t server_port = 29943;
     std::uint16_t fallback_port = 29944;
@@ -726,6 +887,7 @@ TEST_F(remote_server_test, MultiSNIFallback)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
+    auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
 
     std::uint16_t server_port = 29991;
     std::uint16_t fallback_port_a = 29992;
@@ -792,6 +954,7 @@ TEST_F(remote_server_test, WildcardStarFallback)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
+    auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
 
     const std::uint16_t server_port = pick_free_port();
     const std::uint16_t fallback_port = pick_free_port();
@@ -833,6 +996,7 @@ TEST_F(remote_server_test, RealityDestFallbackUsedWhenNoFallbackEntries)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
+    auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
 
     const std::uint16_t server_port = pick_free_port();
     const std::uint16_t dest_port = pick_free_port();
@@ -877,6 +1041,7 @@ TEST_F(remote_server_test, ExactSniFallbackPreferredOverRealityDest)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
+    auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
     auto pool_cleanup = make_scoped_exit(
         [&]()
         {
@@ -978,6 +1143,7 @@ TEST_F(remote_server_test, FallbackGuardRateLimitBlocksFallbackDial)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
+    auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
     auto pool_cleanup = make_scoped_exit(
         [&]()
         {
@@ -1054,6 +1220,7 @@ TEST_F(remote_server_test, FallbackGuardCircuitBreakerBlocksSubsequentAttempt)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
+    auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
     auto pool_cleanup = make_scoped_exit(
         [&]()
         {
@@ -1365,6 +1532,7 @@ TEST_F(remote_server_test, SetCertificateAsyncPathAfterStart)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
+    auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
 
     auto cfg = make_server_cfg(pick_free_port(), {}, "0102030405060708");
     auto server = std::make_shared<mux::remote_server>(pool, cfg);
@@ -1390,6 +1558,7 @@ TEST_F(remote_server_test, SetCertificateReturnsQuicklyWhenIoContextStopped)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
+    auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
 
     auto cfg = make_server_cfg(pick_free_port(), {}, "0102030405060708");
     auto server = std::make_shared<mux::remote_server>(pool, cfg);
@@ -1410,6 +1579,7 @@ TEST_F(remote_server_test, SetCertificateReturnsQuicklyWhenIoContextStopped)
             server->set_certificate(sni, reality::construct_certificate({0x01, 0x02, 0x03}), fingerprint, "trace-stopped");
             done.store(true, std::memory_order_release);
         });
+    auto setter_guard = make_thread_join_guard(setter);
 
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     const bool done_before_poll = done.load(std::memory_order_acquire);
@@ -1442,6 +1612,7 @@ TEST_F(remote_server_test, SetCertificateReturnsWhenAsyncQueueBusy)
     ASSERT_FALSE(ec);
     auto& io_context = pool.get_io_context();
     std::thread pool_thread([&pool] { pool.run(); });
+    auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
 
     auto cfg = make_server_cfg(pick_free_port(), {}, "0102030405060708");
     auto server = std::make_shared<mux::remote_server>(pool, cfg);
@@ -1474,6 +1645,7 @@ TEST_F(remote_server_test, SetCertificateReturnsWhenAsyncQueueBusy)
             server->set_certificate(sni, reality::construct_certificate({0x01, 0x02, 0x03}), fingerprint, "trace-busy");
             setter_done.set_value();
         });
+    auto setter_guard = make_thread_join_guard(setter);
 
     const auto setter_status = setter_done_future.wait_for(std::chrono::milliseconds(500));
     release_blocker.store(true, std::memory_order_release);
@@ -1517,6 +1689,7 @@ TEST_F(remote_server_test, SetCertificateRunsWhenAsyncQueueBlockedThenIoStopped)
     ASSERT_FALSE(ec);
     auto& io_context = pool.get_io_context();
     std::thread pool_thread([&pool] { pool.run(); });
+    auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
 
     auto cfg = make_server_cfg(pick_free_port(), {}, "0102030405060708");
     auto server = std::make_shared<mux::remote_server>(pool, cfg);
@@ -1549,6 +1722,7 @@ TEST_F(remote_server_test, SetCertificateRunsWhenAsyncQueueBlockedThenIoStopped)
             server->set_certificate(sni, reality::construct_certificate({0x01, 0x02, 0x03}), fingerprint, "trace-stop-race");
             setter_done.set_value();
         });
+    auto setter_guard = make_thread_join_guard(setter);
 
     EXPECT_EQ(setter_done_future.wait_for(std::chrono::seconds(1)), std::future_status::ready);
 
@@ -1751,6 +1925,7 @@ TEST_F(remote_server_test, RejectStreamForLimitSendsAckAndReset)
                    asio::detached);
 
     std::thread runner([&pool]() { pool.run(); });
+    auto runner_guard = make_pool_thread_guard(pool, runner);
     EXPECT_EQ(done_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
     pool.stop();
     runner.join();
@@ -1770,52 +1945,6 @@ TEST_F(remote_server_test, FallbackFailedAndGuardDisabledBranches)
     guard_ctx.remote_addr("127.0.0.8");
     EXPECT_TRUE(server->consume_fallback_token(guard_ctx));
     server->record_fallback_result(guard_ctx, false);
-
-    asio::io_context io_context;
-    asio::ip::tcp::acceptor acceptor(io_context);
-    ASSERT_TRUE(open_ephemeral_acceptor_until_ready(acceptor));
-
-    asio::ip::tcp::socket client_socket(io_context);
-    client_socket.connect(acceptor.local_endpoint(), ec);
-    ASSERT_FALSE(ec);
-
-    asio::ip::tcp::socket peer_socket(io_context);
-    acceptor.accept(peer_socket, ec);
-    ASSERT_FALSE(ec);
-
-    auto fallback_socket = std::make_shared<asio::ip::tcp::socket>(std::move(client_socket));
-
-    bool drain_done = false;
-    asio::co_spawn(io_context,
-                   [fallback_socket, &drain_done]() -> asio::awaitable<void>
-                   {
-                       co_await mux::remote_server::fallback_failed(fallback_socket);
-                       drain_done = true;
-                       co_return;
-                   },
-                   asio::detached);
-
-    const std::string payload = "fallback-data";
-    asio::write(peer_socket, asio::buffer(payload), ec);
-    ASSERT_FALSE(ec);
-    peer_socket.shutdown(asio::ip::tcp::socket::shutdown_send, ec);
-    peer_socket.close(ec);
-
-    io_context.run();
-    EXPECT_TRUE(drain_done);
-
-    io_context.restart();
-    bool timer_done = false;
-    asio::co_spawn(io_context,
-                   [&io_context, &timer_done]() -> asio::awaitable<void>
-                   {
-                       co_await mux::remote_server::fallback_failed_timer(123, io_context);
-                       timer_done = true;
-                       co_return;
-                   },
-                   asio::detached);
-    io_context.run();
-    EXPECT_TRUE(timer_done);
 }
 
 TEST_F(remote_server_test, PerformHandshakeResponseCoversCipherSuiteSelectionBranches)
@@ -1824,6 +1953,7 @@ TEST_F(remote_server_test, PerformHandshakeResponseCoversCipherSuiteSelectionBra
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread runner([&pool]() { pool.run(); });
+    auto runner_guard = make_pool_thread_guard(pool, runner);
 
     auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
 
@@ -2012,6 +2142,7 @@ TEST_F(remote_server_test, PerformHandshakeResponseCoversRandomAndSignKeyFailure
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread runner([&pool]() { pool.run(); });
+    auto runner_guard = make_pool_thread_guard(pool, runner);
 
     auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
     reality::server_fingerprint fp;
@@ -2211,6 +2342,7 @@ TEST_F(remote_server_test, StopCoversAcceptorCloseFailureBranch)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread runner([&pool]() { pool.run(); });
+    auto runner_guard = make_pool_thread_guard(pool, runner);
 
     auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
     server->start();
@@ -2229,6 +2361,7 @@ TEST_F(remote_server_test, StopClosesInFlightHandshakeConnections)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread runner([&pool]() { pool.run(); });
+    auto runner_guard = make_pool_thread_guard(pool, runner);
 
     auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
     ASSERT_TRUE(start_server_until_listening(server));
@@ -2299,6 +2432,7 @@ TEST_F(remote_server_test, HandshakeReadTimeoutReleasesSlotWithoutFallback)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread runner([&pool]() { pool.run(); });
+    auto runner_guard = make_pool_thread_guard(pool, runner);
 
     asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context());
     ASSERT_TRUE(open_ephemeral_acceptor_until_ready(fallback_acceptor));
@@ -2382,6 +2516,7 @@ TEST_F(remote_server_test, DelayAndFallbackShortCircuitsWhenStopRequested)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread runner([&pool]() { pool.run(); });
+    auto runner_guard = make_pool_thread_guard(pool, runner);
 
     auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
     auto socket = std::make_shared<asio::ip::tcp::socket>(pool.get_io_context());
@@ -2482,6 +2617,7 @@ TEST_F(remote_server_test, StopRunsWhenIoQueueBlocked)
         });
 
     std::thread runner([&pool]() { pool.run(); });
+    auto runner_guard = make_pool_thread_guard(pool, runner);
     bool started = false;
     for (int i = 0; i < 100; ++i)
     {
@@ -2593,6 +2729,7 @@ TEST_F(remote_server_test, StartReopensAcceptorAfterStop)
     auto server = std::make_shared<mux::remote_server>(pool, cfg);
 
     std::thread runner([&pool]() { pool.run(); });
+    auto runner_guard = make_pool_thread_guard(pool, runner);
 
     server->start();
     EXPECT_TRUE(wait_for_condition([&server, port]() { return server->listen_port() == port; }));
@@ -2640,6 +2777,7 @@ TEST_F(remote_server_test, HandleFallbackCoversCloseSocketErrorBranches)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread runner([&pool]() { pool.run(); });
+    auto runner_guard = make_pool_thread_guard(pool, runner);
 
     auto cfg = make_server_cfg(pick_free_port(), {{"*", "127.0.0.1", "1"}}, "0102030405060708");
     cfg.reality.fallback_guard.enabled = true;

@@ -46,6 +46,7 @@ set(SOCKS_SOURCES
     net_utils.cpp
     mux_connection.cpp
     remote_server.cpp
+    remote_server_stream.cpp
     socks_client.cpp
     router.cpp
     socks_session.cpp

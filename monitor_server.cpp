@@ -388,6 +388,10 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
         append_metric_line(response, "socks_cert_verify_failures_total", stats.cert_verify_failures());
         append_metric_line(response, "socks_client_finished_failures_total", stats.client_finished_failures());
         append_metric_line(response, "socks_fallback_rate_limited_total", stats.fallback_rate_limited());
+        append_metric_line(response, "socks_fallback_no_target_total", stats.fallback_no_target());
+        append_metric_line(response, "socks_fallback_resolve_failures_total", stats.fallback_resolve_failures());
+        append_metric_line(response, "socks_fallback_connect_failures_total", stats.fallback_connect_failures());
+        append_metric_line(response, "socks_fallback_write_failures_total", stats.fallback_write_failures());
         append_metric_line(response, "socks_routing_blocked_total", stats.routing_blocked());
         append_metric_line(response, "socks_connection_limit_rejected_total", stats.connection_limit_rejected());
         append_metric_line(response, "socks_stream_limit_rejected_total", stats.stream_limit_rejected());

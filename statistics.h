@@ -86,6 +86,18 @@ class statistics
     void inc_fallback_rate_limited() { fallback_rate_limited_++; }
     std::uint64_t fallback_rate_limited() const { return fallback_rate_limited_.load(); }
 
+    void inc_fallback_no_target() { fallback_no_target_++; }
+    std::uint64_t fallback_no_target() const { return fallback_no_target_.load(); }
+
+    void inc_fallback_resolve_failures() { fallback_resolve_failures_++; }
+    std::uint64_t fallback_resolve_failures() const { return fallback_resolve_failures_.load(); }
+
+    void inc_fallback_connect_failures() { fallback_connect_failures_++; }
+    std::uint64_t fallback_connect_failures() const { return fallback_connect_failures_.load(); }
+
+    void inc_fallback_write_failures() { fallback_write_failures_++; }
+    std::uint64_t fallback_write_failures() const { return fallback_write_failures_.load(); }
+
     void inc_routing_blocked() { routing_blocked_++; }
     std::uint64_t routing_blocked() const { return routing_blocked_.load(); }
 
@@ -207,6 +219,10 @@ class statistics
     std::atomic<std::uint64_t> cert_verify_failures_{0};
     std::atomic<std::uint64_t> client_finished_failures_{0};
     std::atomic<std::uint64_t> fallback_rate_limited_{0};
+    std::atomic<std::uint64_t> fallback_no_target_{0};
+    std::atomic<std::uint64_t> fallback_resolve_failures_{0};
+    std::atomic<std::uint64_t> fallback_connect_failures_{0};
+    std::atomic<std::uint64_t> fallback_write_failures_{0};
     std::atomic<std::uint64_t> routing_blocked_{0};
     std::atomic<std::uint64_t> connection_limit_rejected_{0};
     std::atomic<std::uint64_t> stream_limit_rejected_{0};
