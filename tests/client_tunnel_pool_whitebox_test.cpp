@@ -147,18 +147,11 @@ extern "C" int __wrap_getsockname(int sockfd, sockaddr* addr, socklen_t* addrlen
     return __real_getsockname(sockfd, addr, addrlen);
 }
 
-std::uint16_t pick_free_port()
-{
-    asio::io_context io_context;
-    asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
-    return acceptor.local_endpoint().port();
-}
-
 mux::config make_base_cfg()
 {
     mux::config cfg;
     cfg.outbound.host = "127.0.0.1";
-    cfg.outbound.port = pick_free_port();
+    cfg.outbound.port = 0;
     cfg.reality.sni = "www.example.test";
     cfg.reality.short_id = "0102030405060708";
     cfg.limits.max_connections = 1;
