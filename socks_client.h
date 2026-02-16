@@ -45,7 +45,8 @@ class socks_client : public std::enable_shared_from_this<socks_client>
     asio::ip::tcp::acceptor acceptor_;
     std::shared_ptr<mux::router> router_;
     std::shared_ptr<client_tunnel_pool> tunnel_pool_;
-    std::vector<std::weak_ptr<socks_session>> sessions_;
+    std::shared_ptr<std::vector<std::weak_ptr<socks_session>>> sessions_ =
+        std::make_shared<std::vector<std::weak_ptr<socks_session>>>();
     config::timeout_t timeout_config_;
     config::socks_t socks_config_;
 };

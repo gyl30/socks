@@ -163,7 +163,17 @@ auto run_on_io_context(asio::io_context& io_context, Func&& fn) -> decltype(fn()
 
 std::size_t session_count(asio::io_context& io_context, const std::shared_ptr<mux::socks_client>& client)
 {
-    return run_on_io_context(io_context, [client]() { return client->sessions_.size(); });
+    return run_on_io_context(
+        io_context,
+        [client]()
+        {
+            auto snapshot = std::atomic_load_explicit(&client->sessions_, std::memory_order_acquire);
+            if (snapshot == nullptr)
+            {
+                return std::size_t{0};
+            }
+            return snapshot->size();
+        });
 }
 
 bool acceptor_is_open(asio::io_context& io_context, const std::shared_ptr<mux::socks_client>& client)
