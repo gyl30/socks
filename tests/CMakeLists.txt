@@ -311,7 +311,12 @@ add_socks_test(router_file_test)
 
 if(LINUX)
     add_test(NAME tproxy_integration_test COMMAND ${CMAKE_SOURCE_DIR}/tests/tproxy_integration_test.sh)
-    set_tests_properties(tproxy_integration_test PROPERTIES SKIP_RETURN_CODE 77)
+    set_tests_properties(
+        tproxy_integration_test
+        PROPERTIES
+            SKIP_RETURN_CODE 77
+            RESOURCE_LOCK "net_ports"
+    )
     if(CMAKE_CXX_FLAGS MATCHES "-fsanitize=memory")
         set_tests_properties(tproxy_integration_test PROPERTIES ENVIRONMENT "BIN=${CMAKE_BINARY_DIR}/socks;MSAN_OPTIONS=${MSAN_UMR_NOISE_OPTIONS}")
     else()
