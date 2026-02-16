@@ -51,7 +51,8 @@ class tproxy_client : public std::enable_shared_from_this<tproxy_client>
     [[nodiscard]] std::uint16_t udp_port() const { return udp_port_; }
     [[nodiscard]] bool running() const
     {
-        return !stop_.load(std::memory_order_acquire) && tcp_acceptor_.is_open() && udp_socket_.is_open();
+        return started_.load(std::memory_order_acquire) && !stop_.load(std::memory_order_acquire) && tcp_acceptor_.is_open()
+               && udp_socket_.is_open();
     }
 
    private:
