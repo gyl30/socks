@@ -81,6 +81,9 @@ struct parsed_monitor_request
 };
 
 constexpr std::size_t kMaxMonitorRequestLineSize = 4096;
+constexpr std::size_t kMonitorRateStateMaxSources = 4096;
+constexpr std::uint32_t kMonitorRateStateRetentionMultiplier = 32;
+constexpr auto kMonitorRateStateMinRetention = std::chrono::minutes(5);
 
 std::string url_decode(std::string_view value)
 {
@@ -230,6 +233,49 @@ std::string monitor_rate_limit_key(asio::ip::tcp::socket& socket)
     return remote_ep.address().to_string();
 }
 
+void prune_monitor_rate_state(std::unordered_map<std::string, std::chrono::steady_clock::time_point>& last_request_time_by_source,
+                              const std::chrono::steady_clock::time_point now,
+                              std::chrono::milliseconds retention,
+                              const std::string& rate_key)
+{
+    if (retention < kMonitorRateStateMinRetention)
+    {
+        retention = kMonitorRateStateMinRetention;
+    }
+
+    for (auto it = last_request_time_by_source.begin(); it != last_request_time_by_source.end();)
+    {
+        if (now - it->second >= retention)
+        {
+            it = last_request_time_by_source.erase(it);
+            continue;
+        }
+        ++it;
+    }
+
+    if (last_request_time_by_source.size() < kMonitorRateStateMaxSources)
+    {
+        return;
+    }
+    if (last_request_time_by_source.find(rate_key) != last_request_time_by_source.end())
+    {
+        return;
+    }
+
+    auto oldest_it = last_request_time_by_source.end();
+    for (auto it = last_request_time_by_source.begin(); it != last_request_time_by_source.end(); ++it)
+    {
+        if (oldest_it == last_request_time_by_source.end() || it->second < oldest_it->second)
+        {
+            oldest_it = it;
+        }
+    }
+    if (oldest_it != last_request_time_by_source.end())
+    {
+        last_request_time_by_source.erase(oldest_it);
+    }
+}
+
 }    // namespace
 
 class monitor_session : public std::enable_shared_from_this<monitor_session>
@@ -308,6 +354,11 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
         const auto now = std::chrono::steady_clock::now();
         const auto rate_key = monitor_rate_limit_key(socket_);
         std::lock_guard<std::mutex> lock(rate_state_->mutex);
+        const auto retention_ms = static_cast<std::uint64_t>(min_interval_ms_) * kMonitorRateStateRetentionMultiplier;
+        prune_monitor_rate_state(rate_state_->last_request_time_by_source,
+                                 now,
+                                 std::chrono::milliseconds(retention_ms),
+                                 rate_key);
         auto& last_request_time = rate_state_->last_request_time_by_source[rate_key];
         if (last_request_time.time_since_epoch().count() != 0
             && now - last_request_time < std::chrono::milliseconds(min_interval_ms_))

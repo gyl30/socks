@@ -397,6 +397,43 @@ TEST(MonitorServerTest, RateLimitIsolatedBySourceAddress)
     EXPECT_NE(source_b.find("socks_uptime_seconds "), std::string::npos);
 }
 
+TEST(MonitorServerTest, RateLimitStateStaysBounded)
+{
+    constexpr std::size_t k_state_limit = 4096;
+
+    asio::io_context ioc;
+    auto server = std::make_shared<monitor_server>(ioc, 0, std::string("secret"), 10);
+    ASSERT_NE(server, nullptr);
+    server->start();
+
+    std::error_code ec;
+    const auto port = server->acceptor_.local_endpoint(ec).port();
+    ASSERT_FALSE(ec);
+    ASSERT_NE(port, 0);
+
+    const auto stale_time = std::chrono::steady_clock::now() - std::chrono::hours(1);
+    for (std::size_t i = 0; i < k_state_limit + 256; ++i)
+    {
+        server->rate_state_->last_request_time_by_source.emplace("stale-" + std::to_string(i), stale_time);
+    }
+    ASSERT_GT(server->rate_state_->last_request_time_by_source.size(), k_state_limit);
+
+    std::thread runner([&ioc]() { ioc.run(); });
+    const auto response = request_with_retry(port, "metrics?token=secret\n");
+    EXPECT_NE(response.find("socks_uptime_seconds "), std::string::npos);
+
+    server->stop();
+    ioc.stop();
+    if (runner.joinable())
+    {
+        runner.join();
+    }
+
+    EXPECT_LE(server->rate_state_->last_request_time_by_source.size(), k_state_limit);
+    EXPECT_NE(server->rate_state_->last_request_time_by_source.find("127.0.0.1"),
+              server->rate_state_->last_request_time_by_source.end());
+}
+
 TEST(MonitorServerTest, RejectsTokenSubstringBypass)
 {
     monitor_server_env env(0, std::string("secret"));
