@@ -63,8 +63,21 @@ namespace
     return true;
 }
 
+[[nodiscard]] bool validate_limits_config(const config::limits_t& limits)
+{
+    if (limits.max_buffer == 0)
+    {
+        return false;
+    }
+    return true;
+}
+
 [[nodiscard]] bool validate_config(const config& cfg)
 {
+    if (!validate_limits_config(cfg.limits))
+    {
+        return false;
+    }
     if (!validate_heartbeat_config(cfg.heartbeat))
     {
         return false;

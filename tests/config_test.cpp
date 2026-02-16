@@ -293,6 +293,19 @@ TEST_F(config_test, MaxConnectionsZeroNormalizedToOne)
     EXPECT_EQ(cfg_opt->limits.max_connections, 1U);
 }
 
+TEST_F(config_test, MaxBufferZeroRejected)
+{
+    const std::string content = R"({
+        "limits": {
+            "max_buffer": 0
+        }
+    })";
+    write_config_file(content);
+
+    const auto cfg_opt = mux::parse_config(tmp_file());
+    EXPECT_FALSE(cfg_opt.has_value());
+}
+
 TEST_F(config_test, EmptyHostAddress)
 {
     const std::string content = R"({
