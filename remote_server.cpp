@@ -138,6 +138,90 @@ bool should_stop_accept_loop_on_error(const std::error_code& accept_ec,
     return !acceptor.is_open();
 }
 
+struct timed_socket_read_res
+{
+    bool ok = false;
+    bool timed_out = false;
+    std::size_t read_size = 0;
+    std::error_code ec;
+};
+
+[[nodiscard]] bool should_skip_fallback_after_read_failure(const std::error_code& read_ec, const std::atomic<bool>& stop_flag)
+{
+    if (stop_flag.load(std::memory_order_acquire))
+    {
+        return true;
+    }
+    return read_ec == asio::error::operation_aborted || read_ec == asio::error::bad_descriptor || read_ec == asio::error::timed_out;
+}
+
+asio::awaitable<timed_socket_read_res> read_socket_with_timeout(const std::shared_ptr<asio::ip::tcp::socket>& socket,
+                                                                const asio::mutable_buffer buffer,
+                                                                asio::io_context& io_context,
+                                                                const std::uint32_t timeout_sec,
+                                                                const bool require_full_buffer)
+{
+    auto timer = std::make_shared<asio::steady_timer>(io_context);
+    auto timeout_triggered = std::make_shared<std::atomic<bool>>(false);
+    timer->expires_after(std::chrono::seconds(timeout_sec));
+    timer->async_wait(
+        [socket, timeout_triggered](const std::error_code& timer_ec)
+        {
+            if (timer_ec)
+            {
+                return;
+            }
+            timeout_triggered->store(true, std::memory_order_release);
+            std::error_code cancel_ec;
+            socket->cancel(cancel_ec);
+            if (cancel_ec && cancel_ec != asio::error::bad_descriptor)
+            {
+                LOG_WARN("cancel timeout socket failed {}", cancel_ec.message());
+            }
+
+            std::error_code close_ec;
+            close_ec = socket->close(close_ec);
+            if (close_ec && close_ec != asio::error::bad_descriptor)
+            {
+                LOG_WARN("close timeout socket failed {}", close_ec.message());
+            }
+        });
+
+    std::error_code read_ec;
+    std::size_t read_size = 0;
+    if (require_full_buffer)
+    {
+        const auto [exact_read_ec, exact_read_size] = co_await asio::async_read(*socket, buffer, asio::as_tuple(asio::use_awaitable));
+        read_ec = exact_read_ec;
+        read_size = exact_read_size;
+    }
+    else
+    {
+        const auto [read_some_ec, read_some_size] = co_await socket->async_read_some(buffer, asio::as_tuple(asio::use_awaitable));
+        read_ec = read_some_ec;
+        read_size = read_some_size;
+    }
+
+    const auto cancelled = timer->cancel();
+    (void)cancelled;
+    if (timeout_triggered->load(std::memory_order_acquire))
+    {
+        co_return timed_socket_read_res{
+            .ok = false,
+            .timed_out = true,
+            .ec = asio::error::timed_out};
+    }
+    if (read_ec)
+    {
+        co_return timed_socket_read_res{
+            .ok = false,
+            .ec = read_ec};
+    }
+    co_return timed_socket_read_res{
+        .ok = true,
+        .read_size = read_size};
+}
+
 std::optional<std::pair<std::string, std::string>> find_exact_sni_fallback(const std::vector<config::fallback_entry>& fallbacks,
                                                                             const std::string& sni)
 {
@@ -1399,11 +1483,26 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::delay_and_fa
                                                                                         const connection_context& ctx,
                                                                                         const std::string& client_sni)
 {
+    if (stop_.load(std::memory_order_acquire))
+    {
+        close_socket_quietly(s);
+        co_return server_handshake_res{.ok = false, .ec = asio::error::operation_aborted};
+    }
+
     static thread_local std::mt19937 delay_gen(std::random_device{}());
     std::uniform_int_distribution<std::uint32_t> delay_dist(10, 50);
     asio::steady_timer delay_timer(io_context_);
     delay_timer.expires_after(std::chrono::milliseconds(delay_dist(delay_gen)));
-    co_await delay_timer.async_wait(asio::as_tuple(asio::use_awaitable));
+    const auto [delay_ec] = co_await delay_timer.async_wait(asio::as_tuple(asio::use_awaitable));
+    if (delay_ec && delay_ec != asio::error::operation_aborted)
+    {
+        LOG_CTX_WARN(ctx, "{} fallback delay timer failed {}", log_event::kFallback, delay_ec.message());
+    }
+    if (stop_.load(std::memory_order_acquire))
+    {
+        close_socket_quietly(s);
+        co_return server_handshake_res{.ok = false, .ec = asio::error::operation_aborted};
+    }
     co_await handle_fallback(s, initial_buf, ctx, client_sni);
     co_return server_handshake_res{.ok = false};
 }
@@ -1412,17 +1511,27 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::negotiate_re
                                                                                       const connection_context& ctx,
                                                                                       std::vector<std::uint8_t>& initial_buf)
 {
-    const auto read_ok = co_await read_initial_and_validate(s, ctx, initial_buf);
-    std::string client_sni;
-    auto info = parse_client_hello(initial_buf, client_sni);
-
-    if (!read_ok)
+    const auto read_res = co_await read_initial_and_validate(s, ctx, initial_buf);
+    if (!read_res.ok)
     {
+        if (!read_res.allow_fallback || stop_.load(std::memory_order_acquire))
+        {
+            co_return server_handshake_res{.ok = false, .ec = read_res.ec};
+        }
+        std::string client_sni;
+        (void)parse_client_hello(initial_buf, client_sni);
         co_return co_await delay_and_fallback(s, initial_buf, ctx, client_sni);
     }
 
+    std::string client_sni;
+    auto info = parse_client_hello(initial_buf, client_sni);
+
     if (!authenticate_client(info, initial_buf, ctx))
     {
+        if (stop_.load(std::memory_order_acquire))
+        {
+            co_return server_handshake_res{.ok = false, .ec = asio::error::operation_aborted};
+        }
         LOG_CTX_WARN(ctx, "{} auth failed sni {}", log_event::kAuth, client_sni);
         co_return co_await delay_and_fallback(s, initial_buf, ctx, client_sni);
     }
@@ -1641,42 +1750,70 @@ asio::awaitable<void> remote_server::process_stream_request(std::shared_ptr<mux_
     co_await send_stream_reset(connection, stream_id);
 }
 
-asio::awaitable<bool> remote_server::read_initial_and_validate(std::shared_ptr<asio::ip::tcp::socket> s,
-                                                               const connection_context& ctx,
-                                                               std::vector<std::uint8_t>& buf)
+asio::awaitable<remote_server::initial_read_res> remote_server::read_initial_and_validate(std::shared_ptr<asio::ip::tcp::socket> s,
+                                                                                           const connection_context& ctx,
+                                                                                           std::vector<std::uint8_t>& buf)
 {
-    buf.resize(constants::net::kBufferSize);
-    const auto [read_ec, n] = co_await s->async_read_some(asio::buffer(buf), asio::as_tuple(asio::use_awaitable));
-    if (read_ec)
+    const auto timeout_sec = std::max<std::uint32_t>(1, timeout_config_.read);
+    if (stop_.load(std::memory_order_acquire))
     {
-        LOG_CTX_ERROR(ctx, "{} initial read error {}", log_event::kHandshake, read_ec.message());
-        co_return false;
+        co_return initial_read_res{.ok = false, .allow_fallback = false, .ec = asio::error::operation_aborted};
     }
+
+    buf.resize(constants::net::kBufferSize);
+    const auto first_read = co_await read_socket_with_timeout(s, asio::buffer(buf), io_context_, timeout_sec, false);
+    if (!first_read.ok)
+    {
+        if (first_read.timed_out)
+        {
+            LOG_CTX_WARN(ctx, "{} initial read timed out {}s", log_event::kHandshake, timeout_sec);
+        }
+        else if (!should_skip_fallback_after_read_failure(first_read.ec, stop_))
+        {
+            LOG_CTX_ERROR(ctx, "{} initial read error {}", log_event::kHandshake, first_read.ec.message());
+        }
+        co_return initial_read_res{.ok = false, .allow_fallback = false, .ec = first_read.ec};
+    }
+    const auto n = first_read.read_size;
     buf.resize(n);
     if (n < 5)
     {
         LOG_CTX_WARN(ctx, "{} invalid tls header short read {}", log_event::kHandshake, n);
-        co_return false;
+        co_return initial_read_res{.ok = false, .allow_fallback = true};
     }
 
     if (buf[0] != 0x16)
     {
         LOG_CTX_WARN(ctx, "{} invalid tls header 0x{:02x}", log_event::kHandshake, buf[0]);
-        co_return false;
+        co_return initial_read_res{.ok = false, .allow_fallback = true};
     }
     const std::size_t len = static_cast<std::uint16_t>((buf[3] << 8) | buf[4]);
     while (buf.size() < 5 + len)
     {
-        std::vector<std::uint8_t> tmp(5 + len - buf.size());
-        const auto [read_ec2, n2] = co_await asio::async_read(*s, asio::buffer(tmp), asio::as_tuple(asio::use_awaitable));
-        if (read_ec2)
+        if (stop_.load(std::memory_order_acquire))
         {
-            co_return false;
+            co_return initial_read_res{.ok = false, .allow_fallback = false, .ec = asio::error::operation_aborted};
         }
+        std::vector<std::uint8_t> tmp(5 + len - buf.size());
+        const auto extra_read = co_await read_socket_with_timeout(s, asio::buffer(tmp), io_context_, timeout_sec, true);
+        if (!extra_read.ok)
+        {
+            if (extra_read.timed_out)
+            {
+                LOG_CTX_WARN(ctx, "{} handshake body read timed out {}s", log_event::kHandshake, timeout_sec);
+            }
+            else if (!should_skip_fallback_after_read_failure(extra_read.ec, stop_))
+            {
+                LOG_CTX_ERROR(ctx, "{} handshake body read error {}", log_event::kHandshake, extra_read.ec.message());
+            }
+            co_return initial_read_res{.ok = false, .allow_fallback = false, .ec = extra_read.ec};
+        }
+        const auto n2 = extra_read.read_size;
+        tmp.resize(n2);
         buf.insert(buf.end(), tmp.begin(), tmp.end());
     }
     LOG_CTX_DEBUG(ctx, "{} received client hello record size {}", log_event::kHandshake, buf.size());
-    co_return true;
+    co_return initial_read_res{.ok = true};
 }
 
 std::optional<remote_server::selected_key_share> remote_server::select_key_share(const client_hello_info& info, const connection_context& ctx) const
@@ -2087,6 +2224,12 @@ asio::awaitable<void> remote_server::handle_fallback(const std::shared_ptr<asio:
                                                      const connection_context& ctx,
                                                      const std::string& sni)
 {
+    if (stop_.load(std::memory_order_acquire))
+    {
+        close_fallback_socket(s, ctx);
+        co_return;
+    }
+
     if (!consume_fallback_token(ctx))
     {
         LOG_CTX_WARN(ctx, "{} blocked by fallback guard", log_event::kFallback);

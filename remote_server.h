@@ -133,9 +133,16 @@ class remote_server : public std::enable_shared_from_this<remote_server>
                                                  std::vector<std::uint8_t> payload,
                                                  asio::io_context& io_context) const;
 
-    [[nodiscard]] static asio::awaitable<bool> read_initial_and_validate(std::shared_ptr<asio::ip::tcp::socket> s,
-                                                                         const connection_context& ctx,
-                                                                         std::vector<std::uint8_t>& buf);
+    struct initial_read_res
+    {
+        bool ok = false;
+        bool allow_fallback = false;
+        std::error_code ec;
+    };
+
+    [[nodiscard]] asio::awaitable<initial_read_res> read_initial_and_validate(std::shared_ptr<asio::ip::tcp::socket> s,
+                                                                               const connection_context& ctx,
+                                                                               std::vector<std::uint8_t>& buf);
 
     [[nodiscard]] bool authenticate_client(const client_hello_info& info, const std::vector<std::uint8_t>& buf, const connection_context& ctx);
 

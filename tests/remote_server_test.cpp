@@ -2257,6 +2257,130 @@ TEST_F(remote_server_test, StopClosesInFlightHandshakeConnections)
     }
 }
 
+TEST_F(remote_server_test, HandshakeReadTimeoutReleasesSlotWithoutFallback)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+    std::thread runner([&pool]() { pool.run(); });
+
+    asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context());
+    ASSERT_TRUE(open_ephemeral_acceptor_until_ready(fallback_acceptor));
+    const auto fallback_port = fallback_acceptor.local_endpoint().port();
+    std::atomic<bool> fallback_triggered{false};
+    fallback_acceptor.async_accept(
+        [&fallback_triggered](const std::error_code& accept_ec, asio::ip::tcp::socket)
+        {
+            if (!accept_ec)
+            {
+                fallback_triggered.store(true, std::memory_order_release);
+            }
+        });
+
+    auto cfg = make_server_cfg(0, {{"", "127.0.0.1", std::to_string(fallback_port)}}, "0102030405060708");
+    cfg.timeout.read = 1;
+    auto server = std::make_shared<mux::remote_server>(pool, cfg);
+    ASSERT_TRUE(start_server_until_listening(server));
+    const auto listen_port = server->listen_port();
+    ASSERT_NE(listen_port, 0);
+
+    asio::io_context client_io_context;
+    asio::ip::tcp::socket client_socket(client_io_context);
+    client_socket.connect(asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), listen_port), ec);
+    ASSERT_FALSE(ec);
+
+    const std::array<std::uint8_t, 5> partial_client_hello = {0x16, 0x03, 0x03, 0x00, 0x20};
+    asio::write(client_socket, asio::buffer(partial_client_hello), ec);
+    ASSERT_FALSE(ec);
+
+    const auto slot_reserved = wait_for_condition(
+        [&server]()
+        {
+            return server->active_connection_slots_.load(std::memory_order_acquire) > 0;
+        });
+    EXPECT_TRUE(slot_reserved);
+
+    const auto slot_released = wait_for_condition(
+        [&server]()
+        {
+            return server->active_connection_slots_.load(std::memory_order_acquire) == 0;
+        },
+        std::chrono::milliseconds(4000),
+        std::chrono::milliseconds(20));
+    EXPECT_TRUE(slot_released);
+    EXPECT_FALSE(fallback_triggered.load(std::memory_order_acquire));
+
+    client_socket.non_blocking(true, ec);
+    ASSERT_FALSE(ec);
+    const auto peer_closed = wait_for_condition(
+        [&client_socket]()
+        {
+            std::array<std::uint8_t, 1> buf = {0};
+            std::error_code read_ec;
+            (void)client_socket.read_some(asio::buffer(buf), read_ec);
+            if (read_ec == asio::error::would_block || read_ec == asio::error::try_again)
+            {
+                return false;
+            }
+            return read_ec == asio::error::eof || read_ec == asio::error::connection_reset || read_ec == asio::error::operation_aborted;
+        },
+        std::chrono::milliseconds(2500),
+        std::chrono::milliseconds(20));
+    EXPECT_TRUE(peer_closed);
+
+    client_socket.close(ec);
+    server->stop();
+    std::error_code close_ec;
+    fallback_acceptor.cancel(close_ec);
+    fallback_acceptor.close(close_ec);
+    pool.stop();
+    if (runner.joinable())
+    {
+        runner.join();
+    }
+}
+
+TEST_F(remote_server_test, DelayAndFallbackShortCircuitsWhenStopRequested)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+    std::thread runner([&pool]() { pool.run(); });
+
+    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
+    auto socket = std::make_shared<asio::ip::tcp::socket>(pool.get_io_context());
+    mux::connection_context ctx;
+    ctx.conn_id(6060);
+    ctx.trace_id("delay-stop-short-circuit");
+
+    std::promise<std::pair<mux::remote_server::server_handshake_res, std::error_code>> done;
+    auto done_future = done.get_future();
+    server->stop_.store(true, std::memory_order_release);
+    asio::co_spawn(pool.get_io_context(),
+                   [server, socket, ctx, &done]() mutable -> asio::awaitable<void>
+                   {
+                       auto res = co_await server->delay_and_fallback(socket, std::vector<std::uint8_t>{0x16}, ctx, "stop.test");
+                       done.set_value(std::make_pair(std::move(res), std::error_code{}));
+                       co_return;
+                   },
+                   asio::detached);
+
+    EXPECT_EQ(done_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    if (done_future.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+    {
+        const auto [res, spawn_ec] = done_future.get();
+        EXPECT_FALSE(spawn_ec);
+        EXPECT_FALSE(res.ok);
+        EXPECT_EQ(res.ec, asio::error::operation_aborted);
+    }
+
+    pool.stop();
+    if (runner.joinable())
+    {
+        runner.join();
+    }
+}
+
 TEST_F(remote_server_test, StopRunsInlineWhenIoContextStopped)
 {
     std::error_code ec;
