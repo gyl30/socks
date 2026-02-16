@@ -416,23 +416,33 @@ bool read_udp_packet_for_session(asio::ip::udp::socket& socket,
     return true;
 }
 
-asio::awaitable<void> dispatch_udp_packet(std::unordered_map<std::string, std::shared_ptr<tproxy_udp_session>>& sessions,
-                                          const std::string& key,
-                                          const asio::ip::udp::endpoint& src_ep,
-                                          const asio::ip::udp::endpoint& dst_ep,
-                                          const std::vector<std::uint8_t>& buffer,
-                                          const std::size_t packet_len,
-                                          asio::io_context& io_context,
-                                          const std::shared_ptr<client_tunnel_pool>& tunnel_pool,
-                                          const std::shared_ptr<router>& router,
-                                          const std::shared_ptr<tproxy_udp_sender>& sender,
-                                          const config& cfg)
+asio::awaitable<void> dispatch_udp_packet_task(std::shared_ptr<tproxy_udp_session> session,
+                                               asio::ip::udp::endpoint dst_ep,
+                                               std::vector<std::uint8_t> payload)
+{
+    co_await session->handle_packet(dst_ep, payload.data(), payload.size());
+}
+
+void dispatch_udp_packet(std::unordered_map<std::string, std::shared_ptr<tproxy_udp_session>>& sessions,
+                         const std::string& key,
+                         const asio::ip::udp::endpoint& src_ep,
+                         const asio::ip::udp::endpoint& dst_ep,
+                         const std::vector<std::uint8_t>& buffer,
+                         const std::size_t packet_len,
+                         asio::io_context& io_context,
+                         const std::shared_ptr<client_tunnel_pool>& tunnel_pool,
+                         const std::shared_ptr<router>& router,
+                         const std::shared_ptr<tproxy_udp_sender>& sender,
+                         const config& cfg)
 {
     auto session = get_or_create_udp_session(sessions, key, src_ep, io_context, tunnel_pool, router, sender, cfg);
-    if (session != nullptr)
+    if (session == nullptr)
     {
-        co_await session->handle_packet(dst_ep, buffer.data(), packet_len);
+        return;
     }
+
+    std::vector<std::uint8_t> payload(buffer.begin(), buffer.begin() + packet_len);
+    asio::co_spawn(io_context, dispatch_udp_packet_task(std::move(session), dst_ep, std::move(payload)), asio::detached);
 }
 
 enum class tcp_socket_action
@@ -522,7 +532,7 @@ asio::awaitable<udp_packet_action> handle_udp_packet_once(
         co_return udp_packet_action::kBreak;
     }
 
-    co_await dispatch_udp_packet(sessions, key, src_ep, dst_ep, buffer, packet_len, io_context, tunnel_pool, router, sender, cfg);
+    dispatch_udp_packet(sessions, key, src_ep, dst_ep, buffer, packet_len, io_context, tunnel_pool, router, sender, cfg);
     co_return udp_packet_action::kContinue;
 }
 
