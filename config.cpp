@@ -38,6 +38,33 @@ REFLECT_STRUCT(mux::config, mode, log, inbound, outbound, socks, tproxy, fallbac
 namespace mux
 {
 
+namespace
+{
+
+[[nodiscard]] bool validate_heartbeat_config(const config::heartbeat_t& heartbeat)
+{
+    if (heartbeat.min_interval > heartbeat.max_interval)
+    {
+        return false;
+    }
+    if (heartbeat.min_padding > heartbeat.max_padding)
+    {
+        return false;
+    }
+    return true;
+}
+
+[[nodiscard]] bool validate_config(const config& cfg)
+{
+    if (!validate_heartbeat_config(cfg.heartbeat))
+    {
+        return false;
+    }
+    return true;
+}
+
+}    // namespace
+
 static std::optional<std::string> read_file(const std::string& filename)
 {
     char buf[256 * 1024] = {0};
@@ -81,6 +108,10 @@ std::optional<config> parse_config(const std::string& filename)
         return {};
     }
     cfg.limits.max_connections = normalize_max_connections(cfg.limits.max_connections);
+    if (!validate_config(cfg))
+    {
+        return {};
+    }
     return cfg;
 }
 

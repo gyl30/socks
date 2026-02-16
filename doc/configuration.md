@@ -27,6 +27,7 @@
 - `heartbeat.idle_timeout`：空闲多久触发心跳。
 - `heartbeat.min_interval` / `heartbeat.max_interval`：心跳随机间隔。
 - `heartbeat.min_padding` / `heartbeat.max_padding`：心跳填充长度范围。
+- `heartbeat.min_interval <= heartbeat.max_interval` 且 `heartbeat.min_padding <= heartbeat.max_padding`，否则配置解析失败。
 
 ## 限制与保护
 

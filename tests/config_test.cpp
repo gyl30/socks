@@ -220,6 +220,34 @@ TEST_F(config_test, NegativePortRejected)
     EXPECT_FALSE(cfg_opt.has_value());
 }
 
+TEST_F(config_test, HeartbeatIntervalRangeRejected)
+{
+    const std::string content = R"({
+        "heartbeat": {
+            "min_interval": 30,
+            "max_interval": 10
+        }
+    })";
+    write_config_file(content);
+
+    const auto cfg_opt = mux::parse_config(tmp_file());
+    EXPECT_FALSE(cfg_opt.has_value());
+}
+
+TEST_F(config_test, HeartbeatPaddingRangeRejected)
+{
+    const std::string content = R"({
+        "heartbeat": {
+            "min_padding": 256,
+            "max_padding": 128
+        }
+    })";
+    write_config_file(content);
+
+    const auto cfg_opt = mux::parse_config(tmp_file());
+    EXPECT_FALSE(cfg_opt.has_value());
+}
+
 TEST_F(config_test, MaxConnectionsZeroNormalizedToOne)
 {
     const std::string content = R"({
