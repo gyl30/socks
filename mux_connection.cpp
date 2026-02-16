@@ -269,14 +269,24 @@ bool mux_connection::run_inline() const
     return !started_.load(std::memory_order_acquire) || io_context_.stopped() || io_context_.get_executor().running_in_this_thread();
 }
 
-void mux_connection::register_stream_local(const std::uint32_t id, std::shared_ptr<mux_stream_interface> stream)
+bool mux_connection::register_stream_local(const std::uint32_t id, std::shared_ptr<mux_stream_interface> stream)
 {
+    const auto it = streams_.find(id);
+    if (it == streams_.end() && limits_config_.max_streams > 0 && streams_.size() >= limits_config_.max_streams)
+    {
+        return false;
+    }
     streams_[id] = std::move(stream);
     LOG_DEBUG("mux {} stream {} registered", cid_, id);
+    return true;
 }
 
 bool mux_connection::try_register_stream_local(const std::uint32_t id, std::shared_ptr<mux_stream_interface> stream)
 {
+    if (limits_config_.max_streams > 0 && streams_.size() >= limits_config_.max_streams)
+    {
+        return false;
+    }
     const auto [it, inserted] = streams_.try_emplace(id, std::move(stream));
     if (!inserted)
     {
@@ -374,16 +384,15 @@ bool mux_connection::register_stream_checked(const std::uint32_t id, std::shared
 
     if (run_inline())
     {
-        register_stream_local(id, std::move(stream));
-        return true;
+        return register_stream_local(id, std::move(stream));
     }
-    return run_sync_void_query(
+    return run_sync_bool_query(
         io_context_,
         cid_,
         "register_stream",
         [self = shared_from_this(), id, stream = std::move(stream)]() mutable
         {
-            self->register_stream_local(id, std::move(stream));
+            return self->register_stream_local(id, std::move(stream));
         });
 }
 

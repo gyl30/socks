@@ -1,5 +1,6 @@
 #include <memory>
 #include <array>
+#include <barrier>
 #include <future>
 #include <string>
 #include <thread>
@@ -303,6 +304,73 @@ TEST_F(mux_connection_integration_test, OffThreadCanAcceptStreamFalsePath)
     auto stream = std::make_shared<simple_mock_stream>();
     EXPECT_TRUE(conn->try_register_stream(1, stream));
     EXPECT_FALSE(conn->can_accept_stream());
+
+    io_ctx().stop();
+    if (io_thread.joinable())
+    {
+        io_thread.join();
+    }
+    io_ctx().restart();
+}
+
+TEST_F(mux_connection_integration_test, OffThreadConcurrentCreateStreamRespectsLimit)
+{
+    config::limits_t limits_cfg;
+    limits_cfg.max_streams = 1;
+
+    auto conn = std::make_shared<mux_connection>(
+        asio::ip::tcp::socket(io_ctx()),
+        io_ctx(),
+        reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()},
+        true,
+        12,
+        "trace",
+        config::timeout_t{},
+        limits_cfg);
+    conn->started_.store(true, std::memory_order_release);
+    conn->connection_state_.store(mux_connection_state::kConnected, std::memory_order_release);
+
+    auto guard = asio::make_work_guard(io_ctx());
+    std::promise<void> io_started;
+    auto io_started_future = io_started.get_future();
+    std::thread io_thread(
+        [&]()
+        {
+            io_started.set_value();
+            io_ctx().run();
+        });
+    ASSERT_EQ(io_started_future.wait_for(std::chrono::seconds(1)), std::future_status::ready);
+
+    std::barrier gate(3);
+    std::shared_ptr<mux_stream> stream_a;
+    std::shared_ptr<mux_stream> stream_b;
+
+    std::thread t1(
+        [&]()
+        {
+            gate.arrive_and_wait();
+            stream_a = conn->create_stream("race-a");
+        });
+    std::thread t2(
+        [&]()
+        {
+            gate.arrive_and_wait();
+            stream_b = conn->create_stream("race-b");
+        });
+    gate.arrive_and_wait();
+
+    if (t1.joinable())
+    {
+        t1.join();
+    }
+    if (t2.joinable())
+    {
+        t2.join();
+    }
+
+    const auto success_count = static_cast<int>(stream_a != nullptr) + static_cast<int>(stream_b != nullptr);
+    EXPECT_EQ(success_count, 1);
+    EXPECT_EQ(conn->streams_.size(), 1U);
 
     io_ctx().stop();
     if (io_thread.joinable())
@@ -743,7 +811,7 @@ TEST_F(mux_connection_integration_test, HandleStreamAndUnknownStreamBranches)
         asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 6);
 
     auto stream = std::make_shared<simple_mock_stream>();
-    conn->register_stream_local(100, stream);
+    EXPECT_TRUE(conn->register_stream_local(100, stream));
 
     std::vector<std::uint8_t> ack_payload = {1, 2, 3};
     const frame_header ack_header{

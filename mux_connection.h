@@ -108,7 +108,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     asio::awaitable<void> heartbeat_loop();
 
     [[nodiscard]] bool run_inline() const;
-    void register_stream_local(std::uint32_t id, std::shared_ptr<mux_stream_interface> stream);
+    [[nodiscard]] bool register_stream_local(std::uint32_t id, std::shared_ptr<mux_stream_interface> stream);
     [[nodiscard]] bool try_register_stream_local(std::uint32_t id, std::shared_ptr<mux_stream_interface> stream);
     void remove_stream_local(std::uint32_t id);
     [[nodiscard]] bool can_accept_stream_local() const;
