@@ -130,7 +130,7 @@ std::string url_decode(std::string_view value)
     return decoded;
 }
 
-parsed_monitor_request parse_monitor_request(const std::string& request)
+parsed_monitor_request parse_monitor_request(const std::string_view request)
 {
     const std::size_t line_end_pos = request.find('\n');
     std::string_view line(request.data(), line_end_pos == std::string::npos ? request.size() : line_end_pos);
@@ -199,9 +199,20 @@ bool has_exact_token_parameter(const std::string_view query, const std::string& 
         const std::size_t eq = pair.find('=');
         const std::string_view key = pair.substr(0, eq);
         const std::string_view value = eq == std::string::npos ? std::string_view{} : pair.substr(eq + 1);
-        if (key == "token" && url_decode(value) == token)
+        if (key == "token")
         {
-            return true;
+            const bool needs_decode = value.find('%') != std::string_view::npos || value.find('+') != std::string_view::npos;
+            if (!needs_decode)
+            {
+                if (value == token)
+                {
+                    return true;
+                }
+            }
+            else if (url_decode(value) == token)
+            {
+                return true;
+            }
         }
         if (amp == std::string::npos)
         {
@@ -212,7 +223,7 @@ bool has_exact_token_parameter(const std::string_view query, const std::string& 
     return false;
 }
 
-bool is_authorized_monitor_request(const std::string& request, const std::string& token)
+bool is_authorized_monitor_request(const std::string_view request, const std::string& token)
 {
     const auto parsed = parse_monitor_request(request);
     if (!parsed.valid)
@@ -375,8 +386,8 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
                                        return;
                                    }
 
-                                   const std::string req(request_line_.data(), length);
-                                   if (!is_authorized_monitor_request(req, token_))
+                                   const std::string_view request_view(request_line_.data(), length);
+                                   if (!is_authorized_monitor_request(request_view, token_))
                                    {
                                        statistics::instance().inc_monitor_auth_failures();
                                        if (!token_.empty())
