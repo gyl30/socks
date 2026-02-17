@@ -881,6 +881,21 @@ TEST_F(remote_server_test, StartRejectsInvalidAuthConfig)
     pool_thread.join();
 }
 
+TEST_F(remote_server_test, StartInvalidAuthConfigHandlesAcceptorCloseFailure)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "abc"));
+    fail_next_close(EIO);
+    server->start();
+
+    EXPECT_FALSE(server->running());
+    EXPECT_FALSE(server->started_.load(std::memory_order_acquire));
+    EXPECT_TRUE(server->stop_.load(std::memory_order_acquire));
+}
+
 TEST_F(remote_server_test, MultiSNIFallback)
 {
     std::error_code ec;
@@ -1397,6 +1412,142 @@ TEST_F(remote_server_test, ConnectionLimitSourceKeyUsesConfiguredSubnet)
 
     auto accepted_ptr = std::make_shared<asio::ip::tcp::socket>(std::move(accepted));
     EXPECT_EQ(server->connection_limit_source_key(accepted_ptr), "127.0.0.0/24");
+}
+
+TEST_F(remote_server_test, SnapshotAndTrackedSocketNullBranches)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    auto cfg = make_server_cfg(pick_free_port(), {}, "0102030405060708");
+    auto server = std::make_shared<mux::remote_server>(pool, cfg);
+
+    server->active_tunnels_.reset();
+    EXPECT_TRUE(server->snapshot_active_tunnels()->empty());
+
+    server->track_connection_socket(nullptr);
+    server->untrack_connection_socket(nullptr);
+
+    {
+        std::lock_guard<std::mutex> lock(server->tracked_connection_socket_mu_);
+        server->tracked_connection_sockets_[reinterpret_cast<asio::ip::tcp::socket*>(0x1)] = std::weak_ptr<asio::ip::tcp::socket>{};
+    }
+    const auto tracked = server->snapshot_tracked_connection_sockets();
+    EXPECT_TRUE(tracked.empty());
+    EXPECT_TRUE(server->tracked_connection_sockets_.empty());
+}
+
+TEST_F(remote_server_test, ReleaseConnectionSlotMissingAndDecrementBranches)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    auto cfg = make_server_cfg(pick_free_port(), {}, "0102030405060708");
+    cfg.limits.max_connections = 8;
+    cfg.limits.max_connections_per_source = 4;
+    auto server = std::make_shared<mux::remote_server>(pool, cfg);
+
+    server->active_connection_slots_.store(2, std::memory_order_release);
+    server->active_source_connection_slots_["existing"] = 2;
+
+    server->release_connection_slot("missing");
+    EXPECT_EQ(server->active_connection_slots_.load(std::memory_order_acquire), 1U);
+    EXPECT_EQ(server->active_source_connection_slots_["existing"], 2U);
+
+    server->release_connection_slot("existing");
+    EXPECT_EQ(server->active_connection_slots_.load(std::memory_order_acquire), 0U);
+    EXPECT_EQ(server->active_source_connection_slots_["existing"], 1U);
+}
+
+TEST_F(remote_server_test, ConnectionLimitSourceKeyUnknownAndZeroPrefixBranches)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    auto cfg = make_server_cfg(pick_free_port(), {}, "0102030405060708");
+    cfg.limits.source_prefix_v4 = 0;
+    auto server = std::make_shared<mux::remote_server>(pool, cfg);
+
+    auto unconnected = std::make_shared<asio::ip::tcp::socket>(pool.get_io_context());
+    EXPECT_EQ(server->connection_limit_source_key(unconnected), "unknown");
+
+    asio::io_context io_context;
+    asio::ip::tcp::acceptor acceptor(io_context);
+    ASSERT_TRUE(open_ephemeral_acceptor_until_ready(acceptor));
+    asio::ip::tcp::socket client(io_context);
+    asio::ip::tcp::socket accepted(io_context);
+
+    client.connect(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), acceptor.local_endpoint().port()), ec);
+    ASSERT_FALSE(ec);
+    acceptor.accept(accepted, ec);
+    ASSERT_FALSE(ec);
+
+    auto accepted_ptr = std::make_shared<asio::ip::tcp::socket>(std::move(accepted));
+    EXPECT_EQ(server->connection_limit_source_key(accepted_ptr), "0.0.0.0/0");
+}
+
+TEST_F(remote_server_test, ConnectionLimitSourceKeyIpv6PrefixBranches)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    auto cfg = make_server_cfg(pick_free_port(), {}, "0102030405060708");
+    cfg.limits.source_prefix_v6 = 0;
+    auto server = std::make_shared<mux::remote_server>(pool, cfg);
+
+    asio::io_context io_context;
+    asio::ip::tcp::acceptor acceptor(io_context);
+    acceptor.open(asio::ip::tcp::v6(), ec);
+    if (ec)
+    {
+        GTEST_SKIP() << "IPv6 not available: " << ec.message();
+    }
+    acceptor.set_option(asio::ip::v6_only(true), ec);
+    if (ec)
+    {
+        GTEST_SKIP() << "IPv6 only socket unsupported: " << ec.message();
+    }
+    acceptor.bind(asio::ip::tcp::endpoint(asio::ip::make_address_v6("::1"), 0), ec);
+    if (ec)
+    {
+        GTEST_SKIP() << "IPv6 loopback bind failed: " << ec.message();
+    }
+    acceptor.listen(asio::socket_base::max_listen_connections, ec);
+    ASSERT_FALSE(ec);
+
+    asio::ip::tcp::socket client(io_context);
+    asio::ip::tcp::socket accepted(io_context);
+    client.connect(asio::ip::tcp::endpoint(asio::ip::make_address_v6("::1"), acceptor.local_endpoint().port()), ec);
+    ASSERT_FALSE(ec);
+    acceptor.accept(accepted, ec);
+    ASSERT_FALSE(ec);
+
+    auto accepted_ptr = std::make_shared<asio::ip::tcp::socket>(std::move(accepted));
+    const auto v6_prefix_0 = server->connection_limit_source_key(accepted_ptr);
+    EXPECT_THAT(v6_prefix_0, ::testing::EndsWith("/0"));
+
+    server->limits_config_.source_prefix_v6 = 65;
+    const auto v6_prefix_65 = server->connection_limit_source_key(accepted_ptr);
+    EXPECT_THAT(v6_prefix_65, ::testing::EndsWith("/65"));
+}
+
+TEST_F(remote_server_test, BuildConnectionContextUsesUnknownWhenEndpointQueryFails)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    auto unconnected = std::make_shared<asio::ip::tcp::socket>(pool.get_io_context());
+    const auto ctx = mux::remote_server::build_connection_context(unconnected, 42);
+
+    EXPECT_EQ(ctx.local_addr(), "unknown");
+    EXPECT_EQ(ctx.local_port(), 0U);
+    EXPECT_EQ(ctx.remote_addr(), "unknown");
+    EXPECT_EQ(ctx.remote_port(), 0U);
 }
 
 TEST_F(remote_server_test, ConstructorRejectsInvalidRealityDest)
@@ -2136,6 +2287,24 @@ TEST_F(remote_server_test, AuthenticateClientCoversInvalidPayloadAndShortIdLengt
     EXPECT_FALSE(server->authenticate_client(info, record, ctx));
 }
 
+TEST_F(remote_server_test, AuthenticateClientRejectsWhenAuthConfigInvalid)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
+    server->auth_config_valid_ = false;
+
+    mux::client_hello_info info{};
+    info.is_tls13 = true;
+    info.session_id.assign(32, 0x11);
+    info.sni = "auth.invalid";
+
+    mux::connection_context ctx;
+    EXPECT_FALSE(server->authenticate_client(info, std::vector<std::uint8_t>(64, 0x22), ctx));
+}
+
 TEST_F(remote_server_test, PerformHandshakeResponseCoversRandomAndSignKeyFailureBranches)
 {
     std::error_code ec;
@@ -2353,6 +2522,23 @@ TEST_F(remote_server_test, StopCoversAcceptorCloseFailureBranch)
 
     pool.stop();
     runner.join();
+}
+
+TEST_F(remote_server_test, StopLocalCoversTrackedSocketCloseFailureBranch)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
+    auto tracked_socket = std::make_shared<asio::ip::tcp::socket>(pool.get_io_context());
+    tracked_socket->open(asio::ip::tcp::v4(), ec);
+    ASSERT_FALSE(ec);
+
+    server->track_connection_socket(tracked_socket);
+    server->acceptor_.close(ec);
+    fail_next_close(EIO);
+    server->stop_local(false);
 }
 
 TEST_F(remote_server_test, StopClosesInFlightHandshakeConnections)
