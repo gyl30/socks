@@ -1281,4 +1281,69 @@ TEST_F(mux_connection_integration_test, TryRegisterNullAndCloseSocketErrorBranch
     EXPECT_EQ(conn->connection_state_.load(std::memory_order_acquire), mux_connection_state::kClosed);
 }
 
+TEST_F(mux_connection_integration_test, StreamStorageNullFallbackPaths)
+{
+    auto conn = std::make_shared<mux_connection>(
+        asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 23);
+
+    conn->streams_.reset();
+    const auto snapshot = conn->snapshot_streams();
+    EXPECT_TRUE(snapshot->empty());
+
+    conn->streams_.reset();
+    const auto detached = conn->detach_streams();
+    EXPECT_TRUE(detached->empty());
+    EXPECT_NE(conn->streams_, nullptr);
+
+    auto stream = std::make_shared<simple_mock_stream>();
+    conn->streams_.reset();
+    EXPECT_TRUE(conn->register_stream_local(501, stream));
+    EXPECT_TRUE(conn->has_stream_local(501));
+}
+
+TEST_F(mux_connection_integration_test, TryRegisterLocalNullStorageAndLimitBranches)
+{
+    config::limits_t limits_cfg;
+    limits_cfg.max_streams = 1;
+    auto conn = std::make_shared<mux_connection>(
+        asio::ip::tcp::socket(io_ctx()),
+        io_ctx(),
+        reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()},
+        true,
+        24,
+        "trace",
+        config::timeout_t{},
+        limits_cfg);
+
+    conn->streams_.reset();
+    auto stream_a = std::make_shared<simple_mock_stream>();
+    auto stream_b = std::make_shared<simple_mock_stream>();
+    EXPECT_TRUE(conn->try_register_stream_local(601, stream_a));
+    EXPECT_FALSE(conn->try_register_stream_local(602, stream_b));
+    EXPECT_TRUE(conn->has_stream_local(601));
+    EXPECT_FALSE(conn->has_stream_local(602));
+}
+
+TEST_F(mux_connection_integration_test, CanAcceptStreamLocalAndPublicLimitBranches)
+{
+    config::limits_t unlimited_limits;
+    unlimited_limits.max_streams = 0;
+    auto unlimited_conn = std::make_shared<mux_connection>(
+        asio::ip::tcp::socket(io_ctx()),
+        io_ctx(),
+        reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()},
+        true,
+        25,
+        "trace",
+        config::timeout_t{},
+        unlimited_limits);
+
+    unlimited_conn->connection_state_.store(mux_connection_state::kConnected, std::memory_order_release);
+    EXPECT_TRUE(unlimited_conn->can_accept_stream_local());
+    EXPECT_TRUE(unlimited_conn->can_accept_stream());
+
+    unlimited_conn->connection_state_.store(mux_connection_state::kClosing, std::memory_order_release);
+    EXPECT_FALSE(unlimited_conn->can_accept_stream_local());
+}
+
 }    // namespace
