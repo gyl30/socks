@@ -501,6 +501,46 @@ TEST(MonitorServerTest, SupportsFragmentedHttpRequestLine)
     EXPECT_NE(resp.find("socks_uptime_seconds "), std::string::npos);
 }
 
+TEST(MonitorServerTest, RejectsInvalidPercentEncodingToken)
+{
+    monitor_server_env env(0, std::string("secret"));
+    const auto port = env.port();
+    ASSERT_NE(port, 0);
+
+    const auto invalid = read_response(port, "GET /metrics?token=sec%2xret HTTP/1.1\r\n\r\n");
+    EXPECT_TRUE(invalid.empty());
+
+    const auto valid = request_with_retry(port, "GET /metrics?token=secret HTTP/1.1\r\n\r\n");
+    EXPECT_NE(valid.find("socks_uptime_seconds "), std::string::npos);
+}
+
+TEST(MonitorServerTest, RejectsMalformedHttpRequestLine)
+{
+    monitor_server_env env(0, std::string("secret"));
+    const auto port = env.port();
+    ASSERT_NE(port, 0);
+
+    const auto malformed = read_response(port, "GET    HTTP/1.1\r\n\r\n");
+    EXPECT_TRUE(malformed.empty());
+
+    const auto valid = request_with_retry(port, "GET /metrics?token=secret HTTP/1.1\r\n\r\n");
+    EXPECT_NE(valid.find("socks_uptime_seconds "), std::string::npos);
+}
+
+TEST(MonitorServerTest, RejectsOversizedRequestLineAndKeepsServing)
+{
+    monitor_server_env env(0, std::string("secret"));
+    const auto port = env.port();
+    ASSERT_NE(port, 0);
+
+    const std::string oversized_line = "GET /metrics?token=secret" + std::string(5000, 'a') + " HTTP/1.1\r\n\r\n";
+    const auto oversized = read_response(port, oversized_line);
+    EXPECT_TRUE(oversized.empty());
+
+    const auto valid = request_with_retry(port, "GET /metrics?token=secret HTTP/1.1\r\n\r\n");
+    EXPECT_NE(valid.find("socks_uptime_seconds "), std::string::npos);
+}
+
 TEST(MonitorServerTest, EscapesPrometheusLabels)
 {
     auto& stats = statistics::instance();
