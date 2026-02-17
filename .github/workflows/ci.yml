@@ -272,6 +272,7 @@ jobs:
       run: |
         ./build_fuzz/fuzz_socks_handshake -max_total_time=10
         ./build_fuzz/fuzz_reality_auth -max_total_time=10
+        ./build_fuzz/fuzz_config -max_total_time=5
         ./build_fuzz/fuzz_reality_decrypt -max_total_time=10
         ./build_fuzz/fuzz_mux_codec -max_total_time=5
         ./build_fuzz/fuzz_ch_parser -max_total_time=5

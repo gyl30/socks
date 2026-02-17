@@ -348,9 +348,10 @@ def run_valgrind_test(traffic_count, server_ready_timeout, client_ready_timeout)
     try:
         log_info("Running traffic...")
         sock = socks5_connect(client_socks_port, "127.0.0.1", echo_port)
-        sock.sendall(b"MEMORY_TEST")
-        res = sock.recv(1024)
-        if res == b"MEMORY_TEST":
+        probe = b"MEMORY_TEST"
+        sock.sendall(probe)
+        res = recv_exact(sock, len(probe))
+        if res == probe:
             log_pass("Traffic success")
         else:
             log_fail("Traffic mismatch")
