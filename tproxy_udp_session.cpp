@@ -21,6 +21,7 @@
 #include "net_utils.h"
 #include "mux_stream.h"
 #include "mux_protocol.h"
+#include "statistics.h"
 #include "stop_dispatch.h"
 #include "tproxy_udp_session.h"
 
@@ -142,6 +143,7 @@ asio::awaitable<void> tproxy_udp_session::handle_packet_inner(asio::ip::udp::end
 
     if (route == route_type::kBlock)
     {
+        statistics::instance().inc_routing_blocked();
         LOG_CTX_WARN(ctx_, "{} blocked udp {}", log_event::kRoute, host);
         co_return;
     }

@@ -114,6 +114,12 @@ class statistics
     void inc_monitor_rate_limited() { monitor_rate_limited_++; }
     std::uint64_t monitor_rate_limited() const { return monitor_rate_limited_.load(); }
 
+    void inc_tproxy_udp_dispatch_enqueued() { tproxy_udp_dispatch_enqueued_++; }
+    std::uint64_t tproxy_udp_dispatch_enqueued() const { return tproxy_udp_dispatch_enqueued_.load(); }
+
+    void inc_tproxy_udp_dispatch_dropped() { tproxy_udp_dispatch_dropped_++; }
+    std::uint64_t tproxy_udp_dispatch_dropped() const { return tproxy_udp_dispatch_dropped_.load(); }
+
     void inc_handshake_failure_by_sni(const handshake_failure_reason reason, const std::string_view sni)
     {
         const auto reason_index = static_cast<std::size_t>(reason);
@@ -261,6 +267,8 @@ class statistics
     std::atomic<std::uint64_t> stream_limit_rejected_{0};
     std::atomic<std::uint64_t> monitor_auth_failures_{0};
     std::atomic<std::uint64_t> monitor_rate_limited_{0};
+    std::atomic<std::uint64_t> tproxy_udp_dispatch_enqueued_{0};
+    std::atomic<std::uint64_t> tproxy_udp_dispatch_dropped_{0};
     mutable std::mutex handshake_failure_sni_mu_;
     std::array<handshake_failure_sni_counter, static_cast<std::size_t>(handshake_failure_reason::kCount)> handshake_failure_sni_counters_{};
 

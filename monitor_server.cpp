@@ -462,6 +462,8 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
         append_metric_line(response, "socks_stream_limit_rejected_total", stats.stream_limit_rejected());
         append_metric_line(response, "socks_monitor_auth_failures_total", stats.monitor_auth_failures());
         append_metric_line(response, "socks_monitor_rate_limited_total", stats.monitor_rate_limited());
+        append_metric_line(response, "socks_tproxy_udp_dispatch_enqueued_total", stats.tproxy_udp_dispatch_enqueued());
+        append_metric_line(response, "socks_tproxy_udp_dispatch_dropped_total", stats.tproxy_udp_dispatch_dropped());
         const auto handshake_failure_sni_metrics = stats.handshake_failure_sni_metrics();
         for (const auto& metric : handshake_failure_sni_metrics)
         {

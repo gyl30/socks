@@ -1,14 +1,17 @@
 #include <array>
+#include <charconv>
 #include <chrono>
 #include <atomic>
 #include <cerrno>
 #include <cstdint>
+#include <optional>
 #include <random>
 #include <string>
 #include <string_view>
 #include <thread>
 #include <tuple>
 #include <utility>
+#include <vector>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -19,6 +22,7 @@
 #include "monitor_server.h"
 #undef private
 #include "statistics.h"
+#include "tproxy_client.h"
 
 namespace
 {
@@ -154,6 +158,39 @@ std::string request_with_retry(std::uint16_t port, const std::string& request)
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
     return read_response(port, request);
+}
+
+std::optional<std::uint64_t> parse_metric_value(const std::string& response, const std::string_view metric_name)
+{
+    const std::string prefix = std::string(metric_name) + " ";
+    std::size_t pos = 0;
+    while (pos < response.size())
+    {
+        std::size_t line_end = response.find('\n', pos);
+        if (line_end == std::string::npos)
+        {
+            line_end = response.size();
+        }
+        const std::string_view line(response.data() + pos, line_end - pos);
+        if (line.size() >= prefix.size() && line.substr(0, prefix.size()) == prefix)
+        {
+            std::uint64_t value = 0;
+            const char* first = line.data() + prefix.size();
+            const char* last = line.data() + line.size();
+            const auto parsed = std::from_chars(first, last, value);
+            if (parsed.ec == std::errc())
+            {
+                return value;
+            }
+            return std::nullopt;
+        }
+        if (line_end == response.size())
+        {
+            break;
+        }
+        pos = line_end + 1;
+    }
+    return std::nullopt;
 }
 
 void connect_and_close_without_payload(const std::uint16_t port)
@@ -369,10 +406,110 @@ TEST(MonitorServerTest, EmptyTokenReturnsMetrics)
     EXPECT_NE(resp.find("socks_stream_limit_rejected_total "), std::string::npos);
     EXPECT_NE(resp.find("socks_monitor_auth_failures_total "), std::string::npos);
     EXPECT_NE(resp.find("socks_monitor_rate_limited_total "), std::string::npos);
+    EXPECT_NE(resp.find("socks_tproxy_udp_dispatch_enqueued_total "), std::string::npos);
+    EXPECT_NE(resp.find("socks_tproxy_udp_dispatch_dropped_total "), std::string::npos);
     EXPECT_NE(resp.find("socks_fallback_no_target_total "), std::string::npos);
     EXPECT_NE(resp.find("socks_fallback_resolve_failures_total "), std::string::npos);
     EXPECT_NE(resp.find("socks_fallback_connect_failures_total "), std::string::npos);
     EXPECT_NE(resp.find("socks_fallback_write_failures_total "), std::string::npos);
+}
+
+TEST(MonitorServerTest, TproxyUdpDispatchDropMetricReflectsDroppedPackets)
+{
+    monitor_server_env env(0, std::string());
+    const auto port = env.port();
+    ASSERT_NE(port, 0);
+
+    asio::io_context ioc;
+    mux::tproxy_udp_dispatch_channel dispatch_channel(ioc, 1);
+
+    mux::tproxy_udp_dispatch_item preload_packet;
+    preload_packet.src_ep = asio::ip::udp::endpoint(asio::ip::make_address("127.0.0.1"), 53111);
+    preload_packet.dst_ep = asio::ip::udp::endpoint(asio::ip::make_address("1.1.1.1"), 53);
+    preload_packet.payload.assign(8, 0x7f);
+    ASSERT_TRUE(dispatch_channel.try_send(std::error_code{}, std::move(preload_packet)));
+
+    auto& stats = statistics::instance();
+    const auto before = stats.tproxy_udp_dispatch_dropped();
+    const asio::ip::udp::endpoint src_ep(asio::ip::make_address("127.0.0.1"), 53112);
+    const asio::ip::udp::endpoint dst_ep(asio::ip::make_address("1.1.1.1"), 53);
+    const std::vector<std::uint8_t> payload = {0xca, 0xfe, 0xba, 0xbe};
+    constexpr std::size_t k_drop_attempts = 64;
+
+    std::size_t dropped = 0;
+    for (std::size_t i = 0; i < k_drop_attempts; ++i)
+    {
+        if (!tproxy_client::enqueue_udp_packet(dispatch_channel, src_ep, dst_ep, payload, payload.size()))
+        {
+            ++dropped;
+        }
+    }
+    ASSERT_EQ(dropped, k_drop_attempts);
+
+    const auto resp = request_with_retry(port, "metrics\n");
+    const auto metric_value = parse_metric_value(resp, "socks_tproxy_udp_dispatch_dropped_total");
+    ASSERT_TRUE(metric_value.has_value());
+    EXPECT_GE(*metric_value, before + dropped);
+
+    dispatch_channel.close();
+}
+
+TEST(MonitorServerTest, TproxyUdpDispatchMetricsCanDeriveDropRatio)
+{
+    monitor_server_env env(0, std::string());
+    const auto port = env.port();
+    ASSERT_NE(port, 0);
+
+    asio::io_context ioc;
+    mux::tproxy_udp_dispatch_channel dispatch_channel(ioc, 4);
+
+    auto& stats = statistics::instance();
+    const auto enqueued_before = stats.tproxy_udp_dispatch_enqueued();
+    const auto dropped_before = stats.tproxy_udp_dispatch_dropped();
+    const asio::ip::udp::endpoint src_ep(asio::ip::make_address("127.0.0.1"), 53221);
+    const asio::ip::udp::endpoint dst_ep(asio::ip::make_address("1.1.1.1"), 53);
+    const std::vector<std::uint8_t> payload = {0xde, 0xad, 0xbe, 0xef};
+
+    std::size_t enqueued = 0;
+    for (std::size_t i = 0; i < 4; ++i)
+    {
+        if (tproxy_client::enqueue_udp_packet(dispatch_channel, src_ep, dst_ep, payload, payload.size()))
+        {
+            ++enqueued;
+        }
+    }
+    ASSERT_EQ(enqueued, 4U);
+
+    std::size_t dropped = 0;
+    for (std::size_t i = 0; i < 3; ++i)
+    {
+        if (!tproxy_client::enqueue_udp_packet(dispatch_channel, src_ep, dst_ep, payload, payload.size()))
+        {
+            ++dropped;
+        }
+    }
+    ASSERT_EQ(dropped, 3U);
+
+    const auto resp = request_with_retry(port, "metrics\n");
+    const auto enqueued_metric = parse_metric_value(resp, "socks_tproxy_udp_dispatch_enqueued_total");
+    const auto dropped_metric = parse_metric_value(resp, "socks_tproxy_udp_dispatch_dropped_total");
+    ASSERT_TRUE(enqueued_metric.has_value());
+    ASSERT_TRUE(dropped_metric.has_value());
+    ASSERT_GE(*enqueued_metric, enqueued_before);
+    ASSERT_GE(*dropped_metric, dropped_before);
+
+    const auto delta_enqueued = *enqueued_metric - enqueued_before;
+    const auto delta_dropped = *dropped_metric - dropped_before;
+    EXPECT_GE(delta_enqueued, enqueued);
+    EXPECT_GE(delta_dropped, dropped);
+
+    const auto denominator = delta_enqueued + delta_dropped;
+    ASSERT_GT(denominator, 0U);
+    const double drop_ratio = static_cast<double>(delta_dropped) / static_cast<double>(denominator);
+    EXPECT_GT(drop_ratio, 0.0);
+    EXPECT_LT(drop_ratio, 1.0);
+
+    dispatch_channel.close();
 }
 
 TEST(MonitorServerTest, TokenRequiredAndRateLimit)

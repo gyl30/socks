@@ -3,6 +3,7 @@
 
 #include <memory>
 #include <vector>
+#include <atomic>
 #include <cstdint>
 
 #include <asio/io_context.hpp>
@@ -48,6 +49,7 @@ class remote_session : public mux_stream_interface, public std::enable_shared_fr
     std::weak_ptr<mux_connection> connection_;
     asio::experimental::concurrent_channel<void(std::error_code, std::vector<std::uint8_t>)> recv_channel_;
     std::weak_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> manager_;
+    std::atomic<bool> reset_requested_{false};
 };
 
 }    // namespace mux

@@ -2,6 +2,7 @@
 #define TPROXY_CLIENT_H
 
 #include <atomic>
+#include <mutex>
 #include <memory>
 #include <string>
 #include <vector>
@@ -55,6 +56,12 @@ class tproxy_client : public std::enable_shared_from_this<tproxy_client>
                && udp_socket_.is_open();
     }
 
+    [[nodiscard]] static bool enqueue_udp_packet(tproxy_udp_dispatch_channel& dispatch_channel,
+                                                 const asio::ip::udp::endpoint& src_ep,
+                                                 const asio::ip::udp::endpoint& dst_ep,
+                                                 const std::vector<std::uint8_t>& buffer,
+                                                 std::size_t packet_len);
+
    private:
     asio::awaitable<void> accept_tcp_loop();
 
@@ -66,7 +73,7 @@ class tproxy_client : public std::enable_shared_from_this<tproxy_client>
 
     [[nodiscard]] std::string endpoint_key(const asio::ip::udp::endpoint& ep) const;
 
-  private:
+   private:
     std::atomic<bool> stop_{false};
     std::atomic<bool> started_{false};
     asio::io_context& io_context_;
@@ -78,6 +85,7 @@ class tproxy_client : public std::enable_shared_from_this<tproxy_client>
     std::shared_ptr<udp_session_map_t> udp_sessions_ = std::make_shared<udp_session_map_t>();
     std::shared_ptr<tproxy_udp_dispatch_channel> udp_dispatch_channel_;
     std::atomic<bool> udp_dispatch_started_{false};
+    std::mutex lifecycle_mu_;
     config cfg_;
     config::tproxy_t tproxy_config_;
     std::uint16_t tcp_port_ = 0;
