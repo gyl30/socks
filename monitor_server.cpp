@@ -15,7 +15,7 @@ namespace mux
 namespace
 {
 
-std::string escape_prometheus_label(std::string value)
+std::string escape_prometheus_label(const std::string_view value)
 {
     std::string out;
     out.reserve(value.size());
