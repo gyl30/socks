@@ -241,10 +241,6 @@ class remote_server : public std::enable_shared_from_this<remote_server>
 
     [[nodiscard]] std::pair<std::string, std::string> find_fallback_target_by_sni(const std::string& sni) const;
 
-    static asio::awaitable<void> fallback_failed_timer(std::uint32_t conn_id, asio::io_context& io_context);
-
-    static asio::awaitable<void> fallback_failed(const std::shared_ptr<asio::ip::tcp::socket>& s);
-
     asio::awaitable<void> handle_fallback(const std::shared_ptr<asio::ip::tcp::socket>& s,
                                           const std::vector<std::uint8_t>& buf,
                                           const connection_context& ctx,

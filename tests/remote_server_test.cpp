@@ -1943,52 +1943,6 @@ TEST_F(remote_server_test, FallbackFailedAndGuardDisabledBranches)
     guard_ctx.remote_addr("127.0.0.8");
     EXPECT_TRUE(server->consume_fallback_token(guard_ctx));
     server->record_fallback_result(guard_ctx, false);
-
-    asio::io_context io_context;
-    asio::ip::tcp::acceptor acceptor(io_context);
-    ASSERT_TRUE(open_ephemeral_acceptor_until_ready(acceptor));
-
-    asio::ip::tcp::socket client_socket(io_context);
-    client_socket.connect(acceptor.local_endpoint(), ec);
-    ASSERT_FALSE(ec);
-
-    asio::ip::tcp::socket peer_socket(io_context);
-    acceptor.accept(peer_socket, ec);
-    ASSERT_FALSE(ec);
-
-    auto fallback_socket = std::make_shared<asio::ip::tcp::socket>(std::move(client_socket));
-
-    bool drain_done = false;
-    asio::co_spawn(io_context,
-                   [fallback_socket, &drain_done]() -> asio::awaitable<void>
-                   {
-                       co_await mux::remote_server::fallback_failed(fallback_socket);
-                       drain_done = true;
-                       co_return;
-                   },
-                   asio::detached);
-
-    const std::string payload = "fallback-data";
-    asio::write(peer_socket, asio::buffer(payload), ec);
-    ASSERT_FALSE(ec);
-    peer_socket.shutdown(asio::ip::tcp::socket::shutdown_send, ec);
-    peer_socket.close(ec);
-
-    io_context.run();
-    EXPECT_TRUE(drain_done);
-
-    io_context.restart();
-    bool timer_done = false;
-    asio::co_spawn(io_context,
-                   [&io_context, &timer_done]() -> asio::awaitable<void>
-                   {
-                       co_await mux::remote_server::fallback_failed_timer(123, io_context);
-                       timer_done = true;
-                       co_return;
-                   },
-                   asio::detached);
-    io_context.run();
-    EXPECT_TRUE(timer_done);
 }
 
 TEST_F(remote_server_test, PerformHandshakeResponseCoversCipherSuiteSelectionBranches)

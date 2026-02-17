@@ -2110,38 +2110,6 @@ std::pair<std::string, std::string> remote_server::find_fallback_target_by_sni(c
     return {};
 }
 
-asio::awaitable<void> remote_server::fallback_failed_timer(const std::uint32_t conn_id, asio::io_context& io_context)
-{
-    asio::steady_timer fallback_timer(io_context);
-    constexpr std::uint32_t max_wait_ms = constants::fallback::kMaxWaitMs;
-    static thread_local std::mt19937 gen(std::random_device{}());
-    std::uniform_int_distribution<std::uint32_t> dist(0, max_wait_ms - 1);
-    const std::uint32_t wait_ms = dist(gen);
-    fallback_timer.expires_after(std::chrono::milliseconds(wait_ms));
-    const auto [wait_ec] = co_await fallback_timer.async_wait(asio::as_tuple(asio::use_awaitable));
-    if (wait_ec)
-    {
-        LOG_ERROR("{} fallback failed timer {} ms error {}", conn_id, wait_ms, wait_ec.message());
-    }
-    LOG_DEBUG("{} fallback failed timer {} ms", conn_id, wait_ms);
-}
-
-asio::awaitable<void> remote_server::fallback_failed(const std::shared_ptr<asio::ip::tcp::socket>& s)
-{
-    char d[constants::net::kBufferSize] = {0};
-    for (;;)
-    {
-        const auto [read_ec, n] = co_await s->async_read_some(asio::buffer(d), asio::as_tuple(asio::use_awaitable));
-        if (read_ec || n == 0)
-        {
-            break;
-        }
-    }
-
-    std::error_code ignore;
-    ignore = s->shutdown(asio::ip::tcp::socket::shutdown_receive, ignore);
-}
-
 std::string remote_server::fallback_guard_key(const connection_context& ctx) const
 {
     if (!ctx.remote_addr().empty())
