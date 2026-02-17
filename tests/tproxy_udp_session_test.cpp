@@ -304,6 +304,12 @@ class failing_load_router final : public mux::router
     bool load() override { return false; }
 };
 
+class always_load_router final : public mux::router
+{
+   public:
+    bool load() override { return true; }
+};
+
 std::uint64_t now_ms()
 {
     const auto now = std::chrono::steady_clock::now().time_since_epoch();
@@ -359,8 +365,9 @@ std::uint16_t pick_free_tcp_port()
 
 extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)
 {
-    if (g_fail_setsockopt_once.exchange(false, std::memory_order_acq_rel) && g_fail_setsockopt_level.load(std::memory_order_acquire) == level
-        && g_fail_setsockopt_optname.load(std::memory_order_acquire) == optname)
+    const bool level_match = (g_fail_setsockopt_level.load(std::memory_order_acquire) == level);
+    const bool optname_match = (g_fail_setsockopt_optname.load(std::memory_order_acquire) == optname);
+    if (level_match && optname_match && g_fail_setsockopt_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_setsockopt_errno.load(std::memory_order_acquire);
         return -1;
@@ -1376,6 +1383,34 @@ TEST(TproxyClientTest, TcpPortZeroStopsEarlyAndEndpointKeyWorks)
     client->stop();
 }
 
+TEST(TproxyClientTest, TcpPortZeroStopsAfterPassingAuthAndRouterChecks)
+{
+    reset_socket_wrappers();
+    force_tproxy_setsockopt_success(true);
+
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    mux::config cfg;
+    cfg.tproxy.enabled = true;
+    cfg.tproxy.listen_host = "127.0.0.1";
+    cfg.tproxy.mark = 0;
+    cfg.tproxy.tcp_port = 0;
+    cfg.tproxy.udp_port = 0;
+    cfg.reality.public_key = std::string(64, 'a');
+
+    auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
+    client->router_ = std::make_shared<always_load_router>();
+    client->start();
+
+    EXPECT_TRUE(client->stop_.load(std::memory_order_acquire));
+    EXPECT_FALSE(client->started_.load(std::memory_order_acquire));
+    client->stop();
+    pool.stop();
+    reset_socket_wrappers();
+}
+
 TEST(TproxyClientTest, UdpPortFallsBackToTcpPortWhenConfiguredZero)
 {
     std::error_code ec;
@@ -1590,6 +1625,74 @@ TEST(TproxyClientTest, RouterLoadFailureStopsEarly)
     EXPECT_TRUE(client->stop_.load(std::memory_order_acquire));
     client->stop();
     pool.stop();
+}
+
+TEST(TproxyClientTest, RouterLoadFailureBranchHitAfterValidAuth)
+{
+    reset_socket_wrappers();
+    force_tproxy_setsockopt_success(true);
+
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    mux::config cfg;
+    cfg.tproxy.enabled = true;
+    cfg.tproxy.listen_host = "127.0.0.1";
+    cfg.tproxy.mark = 0;
+    cfg.tproxy.tcp_port = pick_free_tcp_port();
+    cfg.tproxy.udp_port = cfg.tproxy.tcp_port;
+    cfg.reality.public_key = std::string(64, 'a');
+
+    auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
+    client->router_ = std::make_shared<failing_load_router>();
+    client->start();
+
+    EXPECT_TRUE(client->stop_.load(std::memory_order_acquire));
+    EXPECT_FALSE(client->started_.load(std::memory_order_acquire));
+    client->stop();
+    pool.stop();
+    reset_socket_wrappers();
+}
+
+TEST(TproxyClientTest, UdpSetupFailureAfterTcpSetupStopsClient)
+{
+    reset_socket_wrappers();
+    force_tproxy_setsockopt_success(true);
+
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    const auto tcp_port = pick_free_tcp_port();
+    ASSERT_NE(tcp_port, 0);
+
+    mux::config cfg;
+    cfg.tproxy.enabled = true;
+    cfg.tproxy.listen_host = "127.0.0.1";
+    cfg.tproxy.mark = 0;
+    cfg.tproxy.tcp_port = tcp_port;
+    cfg.tproxy.udp_port = static_cast<std::uint16_t>(tcp_port + 1);
+    cfg.reality.public_key = std::string(64, 'a');
+
+    auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
+    client->router_ = std::make_shared<always_load_router>();
+
+#ifdef IP_RECVORIGDSTADDR
+    fail_setsockopt_once(SOL_IP, IP_RECVORIGDSTADDR, EPERM);
+#else
+    GTEST_SKIP() << "IP_RECVORIGDSTADDR not available";
+#endif
+
+    client->start();
+
+    EXPECT_TRUE(client->stop_.load(std::memory_order_acquire));
+    EXPECT_FALSE(client->started_.load(std::memory_order_acquire));
+    EXPECT_FALSE(client->tcp_acceptor_.is_open());
+    EXPECT_FALSE(client->udp_socket_.is_open());
+    client->stop();
+    pool.stop();
+    reset_socket_wrappers();
 }
 
 TEST(TproxyClientTest, StopExtractsAndStopsUdpSessions)
