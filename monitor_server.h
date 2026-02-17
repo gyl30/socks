@@ -44,6 +44,7 @@ struct monitor_rate_state
                        transparent_string_hash,
                        transparent_string_equal>
         last_request_time_by_source;
+    std::chrono::steady_clock::time_point last_prune_time;
 };
 
 namespace detail

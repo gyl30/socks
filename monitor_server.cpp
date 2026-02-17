@@ -280,6 +280,30 @@ void prune_monitor_rate_state(
     }
 }
 
+bool should_prune_monitor_rate_state(
+    const std::unordered_map<std::string,
+                             std::chrono::steady_clock::time_point,
+                             monitor_rate_state::transparent_string_hash,
+                             monitor_rate_state::transparent_string_equal>& last_request_time_by_source,
+    const std::chrono::steady_clock::time_point last_prune_time,
+    const std::chrono::steady_clock::time_point now,
+    std::chrono::milliseconds retention)
+{
+    if (last_request_time_by_source.size() >= kMonitorRateStateMaxSources)
+    {
+        return true;
+    }
+    if (retention < kMonitorRateStateMinRetention)
+    {
+        retention = kMonitorRateStateMinRetention;
+    }
+    if (last_prune_time.time_since_epoch().count() == 0)
+    {
+        return true;
+    }
+    return now - last_prune_time >= retention;
+}
+
 }    // namespace
 
 namespace detail
@@ -297,7 +321,12 @@ bool allow_monitor_request_by_source(monitor_rate_state& rate_state,
 
     std::lock_guard<std::mutex> lock(rate_state.mutex);
     const auto retention_ms = static_cast<std::uint64_t>(min_interval_ms) * kMonitorRateStateRetentionMultiplier;
-    prune_monitor_rate_state(rate_state.last_request_time_by_source, now, std::chrono::milliseconds(retention_ms), source_key);
+    const auto retention = std::chrono::milliseconds(retention_ms);
+    if (should_prune_monitor_rate_state(rate_state.last_request_time_by_source, rate_state.last_prune_time, now, retention))
+    {
+        prune_monitor_rate_state(rate_state.last_request_time_by_source, now, retention, source_key);
+        rate_state.last_prune_time = now;
+    }
     if (auto it = rate_state.last_request_time_by_source.find(source_key); it != rate_state.last_request_time_by_source.end())
     {
         if (now - it->second < std::chrono::milliseconds(min_interval_ms))
