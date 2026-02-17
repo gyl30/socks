@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <fstream>
 #include <cstdlib>
+#include <system_error>
 #include <unistd.h>
 #include <filesystem>
 
@@ -107,6 +108,48 @@ TEST_F(router_file_test, MissingRuleFileCausesLoadFailure)
 
     mux::router router;
     EXPECT_FALSE(router.load());
+}
+
+TEST_F(router_file_test, MissingDomainRuleFileCausesLoadFailure)
+{
+    std::filesystem::remove("block_domain.txt");
+
+    mux::router router;
+    EXPECT_FALSE(router.load());
+}
+
+TEST_F(router_file_test, UnreadableIpRuleFileCausesLoadFailure)
+{
+    std::error_code ec;
+    std::filesystem::permissions("direct_ip.txt", std::filesystem::perms::none, std::filesystem::perm_options::replace, ec);
+    ASSERT_FALSE(ec) << ec.message();
+
+    mux::router router;
+    EXPECT_FALSE(router.load());
+
+    std::filesystem::permissions(
+        "direct_ip.txt",
+        std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
+        std::filesystem::perm_options::replace,
+        ec);
+    EXPECT_FALSE(ec) << ec.message();
+}
+
+TEST_F(router_file_test, UnreadableDomainRuleFileCausesLoadFailure)
+{
+    std::error_code ec;
+    std::filesystem::permissions("block_domain.txt", std::filesystem::perms::none, std::filesystem::perm_options::replace, ec);
+    ASSERT_FALSE(ec) << ec.message();
+
+    mux::router router;
+    EXPECT_FALSE(router.load());
+
+    std::filesystem::permissions(
+        "block_domain.txt",
+        std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
+        std::filesystem::perm_options::replace,
+        ec);
+    EXPECT_FALSE(ec) << ec.message();
 }
 
 TEST_F(router_file_test, LoadRuleFilesFromSocksConfigDir)
