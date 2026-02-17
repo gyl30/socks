@@ -154,6 +154,29 @@ python3 script/valgrind_test.py \
   --client-ready-timeout 120
 ```
 
+## 分层测试执行（smoke/full）
+
+使用 `script/run_test_tier.sh` 统一执行分层回归：
+
+```bash
+# 快速回归（本地开发默认）
+bash script/run_test_tier.sh --tier smoke --build-dir build
+
+# 全量回归（发布前/合并前）
+bash script/run_test_tier.sh --tier full --build-dir build
+```
+
+可选参数：
+
+- `--jobs`：指定并行度（默认读取 `TEST_JOBS` 或 `nproc`）。
+- `SMOKE_TEST_REGEX`：覆盖 smoke 测试集合。
+- `INTEGRATION_TEST_REGEX`：覆盖 integration 测试匹配规则（`--tier unit|integration` 使用）。
+
+CI 策略：
+
+- `pull_request` 默认执行 `smoke`，保证快速反馈。
+- `push` 执行 `smoke + full`，保证主线全量回归。
+
 ## 推荐默认安全配置
 
 1. `socks.host = 127.0.0.1`，并开启 `socks.auth`。

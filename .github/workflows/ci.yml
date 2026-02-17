@@ -56,6 +56,42 @@ jobs:
         fi
         python3 script/complexity_gate.py --base "$BASE_REF" --threshold 15
 
+  tiered-regression:
+    name: Tiered Regression (${{ matrix.tier }})
+    runs-on: ubuntu-22.04
+    needs: complexity-gate
+    if: github.event_name == 'push' || matrix.tier == 'smoke'
+    strategy:
+      fail-fast: false
+      matrix:
+        tier: [smoke, full]
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install System Dependencies
+      run: |
+        set -euo pipefail
+        sudo apt-get update
+        sudo apt-get install -y cmake ninja-build libssl-dev
+
+    - name: Configure Tiered Build
+      run: |
+        cmake -S . -B build_tier -GNinja \
+          -DCMAKE_BUILD_TYPE=Debug \
+          -DENABLE_TSAN=OFF \
+          -DENABLE_ASAN=ON
+
+    - name: Build Tiered Tests
+      run: cmake --build build_tier
+
+    - name: Run Tiered Regression
+      run: |
+        set -euo pipefail
+        bash script/run_test_tier.sh --tier "${{ matrix.tier }}" --build-dir build_tier --jobs 8
+
   tsan:
     name: TSAN (${{ matrix.suite }})
     runs-on: ubuntu-22.04
