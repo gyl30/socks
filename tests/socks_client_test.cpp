@@ -731,6 +731,32 @@ TEST(LocalClientTest, RouterLoadFailureStopsEarly)
     client->stop();
 }
 
+TEST(LocalClientTest, AcceptLoopSkipsSetupWhenStopAlreadySet)
+{
+    io_context_pool pool(1);
+
+    mux::config cfg;
+    cfg.outbound.host = "127.0.0.1";
+    cfg.outbound.port = 1;
+    cfg.socks.host = "127.0.0.1";
+    cfg.socks.port = 0;
+    cfg.reality.public_key = std::string(64, 'a');
+    cfg.reality.sni = "example.com";
+    const auto client = std::make_shared<mux::socks_client>(pool, cfg);
+    client->stop_.store(true, std::memory_order_release);
+
+    auto done = spawn_accept_local_loop(pool.get_io_context(), client);
+    std::thread runner([&pool]() { pool.run(); });
+    EXPECT_EQ(done.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_FALSE(acceptor_is_open(pool.get_io_context(), client));
+
+    pool.stop();
+    if (runner.joinable())
+    {
+        runner.join();
+    }
+}
+
 TEST(LocalClientTest, AcceptLoopSetupHandlesSocketOpenFailure)
 {
     io_context_pool pool(1);
