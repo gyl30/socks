@@ -116,9 +116,13 @@ extern "C" int __wrap_bind(int sockfd, const sockaddr* addr, socklen_t addrlen)
 extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)
 {
     if (g_fail_setsockopt_once.exchange(false, std::memory_order_acq_rel)
-        && level == g_fail_setsockopt_level.load(std::memory_order_acquire)
-        && optname == g_fail_setsockopt_optname.load(std::memory_order_acquire))
+        && level == g_fail_setsockopt_level.load(std::memory_order_acquire))
     {
+        const int configured_optname = g_fail_setsockopt_optname.load(std::memory_order_acquire);
+        if (configured_optname >= 0 && optname != configured_optname)
+        {
+            return __real_setsockopt(sockfd, level, optname, optval, optlen);
+        }
         errno = g_fail_setsockopt_errno.load(std::memory_order_acquire);
         return -1;
     }
@@ -545,7 +549,6 @@ TEST(UdpSocksSessionTest, PrepareUdpAssociateHandlesUdpLocalEndpointFailure)
 
 TEST(UdpSocksSessionTest, PrepareUdpAssociateHandlesIpv6V6OnlyOptionFailure)
 {
-#ifdef IPV6_V6ONLY
     asio::io_context ctx;
     mux::config::timeout_t timeout_cfg;
     auto pair = make_tcp_socket_pair(ctx);
@@ -554,7 +557,7 @@ TEST(UdpSocksSessionTest, PrepareUdpAssociateHandlesIpv6V6OnlyOptionFailure)
 
     auto session = std::make_shared<mux::udp_socks_session>(std::move(pair.server), ctx, nullptr, 41, timeout_cfg);
     mock_next_getsockname_ipv6_any();
-    fail_next_setsockopt(IPPROTO_IPV6, IPV6_V6ONLY, EPERM);
+    fail_next_setsockopt(IPPROTO_IPV6, -1, EPERM);
 
     asio::ip::address local_addr;
     std::uint16_t udp_bind_port = 0;
@@ -567,9 +570,6 @@ TEST(UdpSocksSessionTest, PrepareUdpAssociateHandlesIpv6V6OnlyOptionFailure)
     asio::read(pair.client, asio::buffer(err));
     EXPECT_EQ(err[0], socks::kVer);
     EXPECT_EQ(err[1], socks::kRepGenFail);
-#else
-    GTEST_SKIP() << "IPV6_V6ONLY is unavailable on this platform";
-#endif
 }
 
 TEST(UdpSocksSessionTest, PrepareUdpAssociateHandlesNullTunnelConnection)
