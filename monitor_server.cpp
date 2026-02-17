@@ -15,7 +15,7 @@ namespace mux
 namespace
 {
 
-std::string escape_prometheus_label(std::string value)
+std::string escape_prometheus_label(const std::string_view value)
 {
     std::string out;
     out.reserve(value.size());
@@ -85,52 +85,55 @@ constexpr std::size_t kMonitorRateStateMaxSources = 4096;
 constexpr std::uint32_t kMonitorRateStateRetentionMultiplier = 32;
 constexpr auto kMonitorRateStateMinRetention = std::chrono::minutes(5);
 
-std::string url_decode(std::string_view value)
+int hex_to_int(const char c)
 {
-    auto hex_to_int = [](const char c) -> int
+    if (c >= '0' && c <= '9')
     {
-        if (c >= '0' && c <= '9')
-        {
-            return c - '0';
-        }
-        if (c >= 'a' && c <= 'f')
-        {
-            return c - 'a' + 10;
-        }
-        if (c >= 'A' && c <= 'F')
-        {
-            return c - 'A' + 10;
-        }
-        return -1;
-    };
-
-    std::string decoded;
-    decoded.reserve(value.size());
-    for (std::size_t i = 0; i < value.size(); ++i)
-    {
-        const char c = value[i];
-        if (c == '%' && i + 2 < value.size())
-        {
-            const int hi = hex_to_int(value[i + 1]);
-            const int lo = hex_to_int(value[i + 2]);
-            if (hi >= 0 && lo >= 0)
-            {
-                decoded.push_back(static_cast<char>((hi << 4) | lo));
-                i += 2;
-                continue;
-            }
-        }
-        if (c == '+')
-        {
-            decoded.push_back(' ');
-            continue;
-        }
-        decoded.push_back(c);
+        return c - '0';
     }
-    return decoded;
+    if (c >= 'a' && c <= 'f')
+    {
+        return c - 'a' + 10;
+    }
+    if (c >= 'A' && c <= 'F')
+    {
+        return c - 'A' + 10;
+    }
+    return -1;
 }
 
-parsed_monitor_request parse_monitor_request(const std::string& request)
+bool url_decoded_equals(std::string_view encoded, const std::string_view expected)
+{
+    std::size_t expected_pos = 0;
+    for (std::size_t i = 0; i < encoded.size(); ++i)
+    {
+        const char c = encoded[i];
+        char decoded_char = c;
+        if (c == '%' && i + 2 < encoded.size())
+        {
+            const int hi = hex_to_int(encoded[i + 1]);
+            const int lo = hex_to_int(encoded[i + 2]);
+            if (hi >= 0 && lo >= 0)
+            {
+                decoded_char = static_cast<char>((hi << 4) | lo);
+                i += 2;
+            }
+        }
+        else if (c == '+')
+        {
+            decoded_char = ' ';
+        }
+
+        if (expected_pos >= expected.size() || decoded_char != expected[expected_pos])
+        {
+            return false;
+        }
+        ++expected_pos;
+    }
+    return expected_pos == expected.size();
+}
+
+parsed_monitor_request parse_monitor_request(const std::string_view request)
 {
     const std::size_t line_end_pos = request.find('\n');
     std::string_view line(request.data(), line_end_pos == std::string::npos ? request.size() : line_end_pos);
@@ -199,9 +202,20 @@ bool has_exact_token_parameter(const std::string_view query, const std::string& 
         const std::size_t eq = pair.find('=');
         const std::string_view key = pair.substr(0, eq);
         const std::string_view value = eq == std::string::npos ? std::string_view{} : pair.substr(eq + 1);
-        if (key == "token" && url_decode(value) == token)
+        if (key == "token")
         {
-            return true;
+            const bool needs_decode = value.find_first_of("%+") != std::string_view::npos;
+            if (!needs_decode)
+            {
+                if (value == token)
+                {
+                    return true;
+                }
+            }
+            else if (url_decoded_equals(value, token))
+            {
+                return true;
+            }
         }
         if (amp == std::string::npos)
         {
@@ -212,7 +226,7 @@ bool has_exact_token_parameter(const std::string_view query, const std::string& 
     return false;
 }
 
-bool is_authorized_monitor_request(const std::string& request, const std::string& token)
+bool is_authorized_monitor_request(const std::string_view request, const std::string& token)
 {
     const auto parsed = parse_monitor_request(request);
     if (!parsed.valid)
@@ -233,10 +247,14 @@ std::string monitor_rate_limit_key(asio::ip::tcp::socket& socket)
     return remote_ep.address().to_string();
 }
 
-void prune_monitor_rate_state(std::unordered_map<std::string, std::chrono::steady_clock::time_point>& last_request_time_by_source,
-                              const std::chrono::steady_clock::time_point now,
-                              std::chrono::milliseconds retention,
-                              const std::string& rate_key)
+void prune_monitor_rate_state(
+    std::unordered_map<std::string,
+                       std::chrono::steady_clock::time_point,
+                       monitor_rate_state::transparent_string_hash,
+                       monitor_rate_state::transparent_string_equal>& last_request_time_by_source,
+    const std::chrono::steady_clock::time_point now,
+    std::chrono::milliseconds retention,
+    const std::string_view rate_key)
 {
     if (retention < kMonitorRateStateMinRetention)
     {
@@ -276,7 +294,67 @@ void prune_monitor_rate_state(std::unordered_map<std::string, std::chrono::stead
     }
 }
 
+bool should_prune_monitor_rate_state(
+    const std::unordered_map<std::string,
+                             std::chrono::steady_clock::time_point,
+                             monitor_rate_state::transparent_string_hash,
+                             monitor_rate_state::transparent_string_equal>& last_request_time_by_source,
+    const std::chrono::steady_clock::time_point last_prune_time,
+    const std::chrono::steady_clock::time_point now,
+    std::chrono::milliseconds retention)
+{
+    if (last_request_time_by_source.size() >= kMonitorRateStateMaxSources)
+    {
+        return true;
+    }
+    if (retention < kMonitorRateStateMinRetention)
+    {
+        retention = kMonitorRateStateMinRetention;
+    }
+    if (last_prune_time.time_since_epoch().count() == 0)
+    {
+        return true;
+    }
+    return now - last_prune_time >= retention;
+}
+
 }    // namespace
+
+namespace detail
+{
+
+bool allow_monitor_request_by_source(monitor_rate_state& rate_state,
+                                     const std::string_view source_key,
+                                     const std::uint32_t min_interval_ms,
+                                     const std::chrono::steady_clock::time_point now)
+{
+    if (min_interval_ms == 0)
+    {
+        return true;
+    }
+
+    std::lock_guard<std::mutex> lock(rate_state.mutex);
+    const auto retention_ms = static_cast<std::uint64_t>(min_interval_ms) * kMonitorRateStateRetentionMultiplier;
+    const auto retention = std::chrono::milliseconds(retention_ms);
+    if (should_prune_monitor_rate_state(rate_state.last_request_time_by_source, rate_state.last_prune_time, now, retention))
+    {
+        prune_monitor_rate_state(rate_state.last_request_time_by_source, now, retention, source_key);
+        rate_state.last_prune_time = now;
+    }
+    if (auto it = rate_state.last_request_time_by_source.find(source_key); it != rate_state.last_request_time_by_source.end())
+    {
+        if (now - it->second < std::chrono::milliseconds(min_interval_ms))
+        {
+            return false;
+        }
+        it->second = now;
+        return true;
+    }
+    rate_state.last_request_time_by_source.emplace(std::string(source_key), now);
+    return true;
+}
+
+}    // namespace detail
 
 class monitor_session : public std::enable_shared_from_this<monitor_session>
 {
@@ -311,8 +389,8 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
                                        return;
                                    }
 
-                                   const std::string req(request_line_.data(), length);
-                                   if (!is_authorized_monitor_request(req, token_))
+                                   const std::string_view request_view(request_line_.data(), length);
+                                   if (!is_authorized_monitor_request(request_view, token_))
                                    {
                                        statistics::instance().inc_monitor_auth_failures();
                                        if (!token_.empty())
@@ -351,22 +429,9 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
         {
             return true;
         }
-        const auto now = std::chrono::steady_clock::now();
         const auto rate_key = monitor_rate_limit_key(socket_);
-        std::lock_guard<std::mutex> lock(rate_state_->mutex);
-        const auto retention_ms = static_cast<std::uint64_t>(min_interval_ms_) * kMonitorRateStateRetentionMultiplier;
-        prune_monitor_rate_state(rate_state_->last_request_time_by_source,
-                                 now,
-                                 std::chrono::milliseconds(retention_ms),
-                                 rate_key);
-        auto& last_request_time = rate_state_->last_request_time_by_source[rate_key];
-        if (last_request_time.time_since_epoch().count() != 0
-            && now - last_request_time < std::chrono::milliseconds(min_interval_ms_))
-        {
-            return false;
-        }
-        last_request_time = now;
-        return true;
+        return detail::allow_monitor_request_by_source(
+            *rate_state_, rate_key, min_interval_ms_, std::chrono::steady_clock::now());
     }
 
     void write_stats()
@@ -484,17 +549,23 @@ monitor_server::monitor_server(asio::io_context& ioc,
 
 void monitor_server::start()
 {
-    stop_.store(false, std::memory_order_release);
     if (!acceptor_.is_open())
     {
         return;
     }
+    bool expected = false;
+    if (!started_.compare_exchange_strong(expected, true, std::memory_order_acq_rel, std::memory_order_acquire))
+    {
+        return;
+    }
+    stop_.store(false, std::memory_order_release);
     do_accept();
 }
 
 void monitor_server::stop()
 {
     stop_.store(true, std::memory_order_release);
+    started_.store(false, std::memory_order_release);
 
     auto& io_context = static_cast<asio::io_context&>(acceptor_.get_executor().context());
     detail::dispatch_cleanup_or_run_inline(
@@ -510,6 +581,7 @@ void monitor_server::stop()
 
 void monitor_server::stop_local()
 {
+    started_.store(false, std::memory_order_release);
     std::error_code ec;
     ec = acceptor_.close(ec);
     if (ec && ec != asio::error::bad_descriptor)
