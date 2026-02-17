@@ -2418,7 +2418,6 @@ TEST(TproxyClientTest, AcceptLoopRetriesOnAcceptErrorBranch)
 TEST(TproxyClientTest, AcceptLoopCoversNoDelayAndLocalEndpointFailureBranches)
 {
     reset_socket_wrappers();
-    force_tproxy_setsockopt_success(true);
 
     std::error_code ec;
     mux::io_context_pool pool(1);
@@ -2431,6 +2430,9 @@ TEST(TproxyClientTest, AcceptLoopCoversNoDelayAndLocalEndpointFailureBranches)
     cfg.tproxy.tcp_port = pick_free_tcp_port();
     cfg.tproxy.udp_port = pick_free_tcp_port();
     auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
+    ASSERT_TRUE(open_ephemeral_tcp_acceptor(client->tcp_acceptor_));
+    const auto listen_port = client->tcp_acceptor_.local_endpoint().port();
+    ASSERT_NE(listen_port, 0);
 
     fail_setsockopt_once(IPPROTO_TCP, TCP_NODELAY, EPERM);
     fail_next_getsockname(EIO);
@@ -2444,28 +2446,11 @@ TEST(TproxyClientTest, AcceptLoopCoversNoDelayAndLocalEndpointFailureBranches)
                    asio::detached);
 
     std::thread runner([&pool]() { pool.run(); });
-    for (int i = 0; i < 50 && !tcp_acceptor_is_open(pool.get_io_context(), client); ++i)
-    {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    if (!tcp_acceptor_is_open(pool.get_io_context(), client))
-    {
-        client->stop();
-        pool.stop();
-        runner.join();
-        GTEST_SKIP() << "tcp transparent socket unavailable in current environment";
-    }
 
     asio::io_context dial_ctx;
     asio::ip::tcp::socket dial_socket(dial_ctx);
-    dial_socket.connect(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), cfg.tproxy.tcp_port), ec);
-    if (ec)
-    {
-        client->stop();
-        pool.stop();
-        runner.join();
-        GTEST_SKIP() << "tcp listener not reachable in current environment";
-    }
+    dial_socket.connect(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), listen_port), ec);
+    ASSERT_FALSE(ec);
 
     std::this_thread::sleep_for(std::chrono::milliseconds(120));
     dial_socket.close(ec);
