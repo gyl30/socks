@@ -65,7 +65,10 @@ class monitor_server : public std::enable_shared_from_this<monitor_server>
     monitor_server(asio::io_context& ioc, std::string bind_host, std::uint16_t port, std::string token, std::uint32_t min_interval_ms);
     void start();
     void stop();
-    [[nodiscard]] bool running() const { return !stop_.load(std::memory_order_acquire) && acceptor_.is_open(); }
+    [[nodiscard]] bool running() const
+    {
+        return started_.load(std::memory_order_acquire) && !stop_.load(std::memory_order_acquire) && acceptor_.is_open();
+    }
 
    private:
     void stop_local();
@@ -75,6 +78,7 @@ class monitor_server : public std::enable_shared_from_this<monitor_server>
     std::string token_;
     std::uint32_t min_interval_ms_ = 0;
     std::shared_ptr<monitor_rate_state> rate_state_ = std::make_shared<monitor_rate_state>();
+    std::atomic<bool> started_ = {false};
     std::atomic<bool> stop_ = {false};
 };
 

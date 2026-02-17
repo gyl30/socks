@@ -549,17 +549,23 @@ monitor_server::monitor_server(asio::io_context& ioc,
 
 void monitor_server::start()
 {
-    stop_.store(false, std::memory_order_release);
     if (!acceptor_.is_open())
     {
         return;
     }
+    bool expected = false;
+    if (!started_.compare_exchange_strong(expected, true, std::memory_order_acq_rel, std::memory_order_acquire))
+    {
+        return;
+    }
+    stop_.store(false, std::memory_order_release);
     do_accept();
 }
 
 void monitor_server::stop()
 {
     stop_.store(true, std::memory_order_release);
+    started_.store(false, std::memory_order_release);
 
     auto& io_context = static_cast<asio::io_context&>(acceptor_.get_executor().context());
     detail::dispatch_cleanup_or_run_inline(
@@ -575,6 +581,7 @@ void monitor_server::stop()
 
 void monitor_server::stop_local()
 {
+    started_.store(false, std::memory_order_release);
     std::error_code ec;
     ec = acceptor_.close(ec);
     if (ec && ec != asio::error::bad_descriptor)

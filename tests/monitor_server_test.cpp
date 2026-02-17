@@ -582,6 +582,48 @@ TEST(MonitorServerTest, ConstructorHandlesListenFailure)
     EXPECT_FALSE(server->acceptor_.is_open());
 }
 
+TEST(MonitorServerTest, RunningReflectsStartAndStopLifecycle)
+{
+    asio::io_context ioc;
+    auto server = std::make_shared<monitor_server>(ioc, 0, std::string(), 10);
+    ASSERT_NE(server, nullptr);
+    EXPECT_FALSE(server->running());
+
+    server->start();
+    EXPECT_TRUE(server->running());
+
+    server->stop();
+    EXPECT_FALSE(server->running());
+}
+
+TEST(MonitorServerTest, StartWhileRunningIsIgnored)
+{
+    asio::io_context ioc;
+    auto server = std::make_shared<monitor_server>(ioc, 0, std::string(), 10);
+    ASSERT_NE(server, nullptr);
+    server->start();
+    EXPECT_TRUE(server->running());
+
+    server->start();
+    EXPECT_TRUE(server->running());
+
+    std::error_code ec;
+    const auto port = server->acceptor_.local_endpoint(ec).port();
+    ASSERT_FALSE(ec);
+    ASSERT_NE(port, 0);
+
+    std::thread runner([&ioc]() { ioc.run(); });
+    const auto response = request_with_retry(port, "metrics\n");
+    EXPECT_NE(response.find("socks_uptime_seconds "), std::string::npos);
+
+    server->stop();
+    ioc.stop();
+    if (runner.joinable())
+    {
+        runner.join();
+    }
+}
+
 TEST(MonitorServerTest, StopClosesAcceptorAndRejectsNewConnections)
 {
     asio::io_context ioc;
