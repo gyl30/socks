@@ -21,7 +21,25 @@ EOF
 
 tier=""
 build_dir="build"
-jobs="${TEST_JOBS:-$(nproc)}"
+
+detect_jobs() {
+  if command -v nproc >/dev/null 2>&1; then
+    nproc
+    return
+  fi
+  if command -v sysctl >/dev/null 2>&1; then
+    sysctl -n hw.logicalcpu 2>/dev/null || true
+    return
+  fi
+  echo 1
+}
+
+default_jobs="$(detect_jobs)"
+if [[ -z "${default_jobs}" ]] || ! [[ "${default_jobs}" =~ ^[0-9]+$ ]] || [[ "${default_jobs}" -lt 1 ]]; then
+  default_jobs=1
+fi
+
+jobs="${TEST_JOBS:-${default_jobs}}"
 smoke_regex="${SMOKE_TEST_REGEX:-config_test|monitor_server_test|mux_codec_test|protocol_edge_test|socks_protocol_test|reality_auth_test|limits_test}"
 integration_regex="${INTEGRATION_TEST_REGEX:-integration|tproxy_integration|udp_integration|mux_connection_integration_test}"
 
@@ -53,6 +71,12 @@ done
 
 if [[ -z "$tier" ]]; then
   echo "--tier is required" >&2
+  usage
+  exit 2
+fi
+
+if ! [[ "$jobs" =~ ^[0-9]+$ ]] || [[ "$jobs" -lt 1 ]]; then
+  echo "--jobs must be a positive integer" >&2
   usage
   exit 2
 fi
