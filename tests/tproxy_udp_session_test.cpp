@@ -1657,6 +1657,49 @@ TEST(TproxyClientTest, AcceptLoopStopsWhenStopFlagSetAfterPendingAccept)
     reset_socket_wrappers();
 }
 
+TEST(TproxyClientTest, AcceptLoopSkipsSetupWhenStopAlreadySet)
+{
+    reset_socket_wrappers();
+    force_tproxy_setsockopt_success(true);
+
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    mux::config cfg;
+    cfg.tproxy.enabled = true;
+    cfg.tproxy.listen_host = "127.0.0.1";
+    cfg.tproxy.mark = 0;
+    cfg.tproxy.tcp_port = pick_free_tcp_port();
+    cfg.tproxy.udp_port = pick_free_tcp_port();
+    auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
+    client->stop_.store(true, std::memory_order_release);
+
+    std::atomic<bool> finished{false};
+    asio::co_spawn(
+        pool.get_io_context(),
+        [client, &finished]() -> asio::awaitable<void>
+        {
+            co_await client->accept_tcp_loop();
+            finished.store(true, std::memory_order_release);
+            co_return;
+        },
+        asio::detached);
+
+    std::thread runner([&pool]() { pool.run(); });
+    for (int i = 0; i < 50 && !finished.load(std::memory_order_acquire); ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    EXPECT_TRUE(finished.load(std::memory_order_acquire));
+
+    pool.stop();
+    runner.join();
+    EXPECT_FALSE(client->tcp_acceptor_.is_open());
+
+    reset_socket_wrappers();
+}
+
 TEST(TproxyClientTest, UdpLoopBreaksWhenReadableAndStopFlagAlreadySet)
 {
     reset_socket_wrappers();
@@ -1713,6 +1756,49 @@ TEST(TproxyClientTest, UdpLoopBreaksWhenReadableAndStopFlagAlreadySet)
     client->stop();
     pool.stop();
     runner.join();
+
+    reset_socket_wrappers();
+}
+
+TEST(TproxyClientTest, UdpLoopSkipsSetupWhenStopAlreadySet)
+{
+    reset_socket_wrappers();
+    force_tproxy_setsockopt_success(true);
+
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    mux::config cfg;
+    cfg.tproxy.enabled = true;
+    cfg.tproxy.listen_host = "127.0.0.1";
+    cfg.tproxy.mark = 0;
+    cfg.tproxy.tcp_port = pick_free_tcp_port();
+    cfg.tproxy.udp_port = pick_free_tcp_port();
+    auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
+    client->stop_.store(true, std::memory_order_release);
+
+    std::atomic<bool> finished{false};
+    asio::co_spawn(
+        pool.get_io_context(),
+        [client, &finished]() -> asio::awaitable<void>
+        {
+            co_await client->udp_loop();
+            finished.store(true, std::memory_order_release);
+            co_return;
+        },
+        asio::detached);
+
+    std::thread runner([&pool]() { pool.run(); });
+    for (int i = 0; i < 50 && !finished.load(std::memory_order_acquire); ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    EXPECT_TRUE(finished.load(std::memory_order_acquire));
+
+    pool.stop();
+    runner.join();
+    EXPECT_FALSE(client->udp_socket_.is_open());
 
     reset_socket_wrappers();
 }
