@@ -20,13 +20,13 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
     std::memcpy(buf.data(), data, size);
     engine.commit_read(size);
 
-    std::error_code ec;
-    engine.process_available_records(ec,
-                                     [](std::uint8_t content_type, std::span<const std::uint8_t> payload)
-                                     {
-                                         (void)content_type;
-                                         (void)payload;
-                                     });
+    auto result = engine.process_available_records(
+        [](std::uint8_t content_type, std::span<const std::uint8_t> payload)
+        {
+            (void)content_type;
+            (void)payload;
+        });
+    (void)result;
 
     return 0;
 }

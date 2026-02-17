@@ -74,9 +74,11 @@ else
     if [ "${SKIP_HTML_REPORT}" != "1" ]; then
         gcovr -r .. --html -o coverage_report/index.html -j "${TEST_JOBS}" \
             "${GCOVR_BRANCH_ARGS[@]}" \
+            --exclude-directories '.*/_deps' \
             --exclude-directories '.*/third' \
             --exclude-directories '.*/tests' \
             --exclude-directories '.*/build.*' \
+            --exclude '(^|.*/)_deps/.*' \
             --exclude '(^|.*/)third/.*' \
             --exclude '(^|.*/)tests/.*' \
             --exclude '(^|.*/)main\.cpp$'
@@ -85,9 +87,11 @@ else
 
     gcovr -r .. --json-summary-pretty -o coverage_report/summary.json -j "${TEST_JOBS}" \
         "${GCOVR_BRANCH_ARGS[@]}" \
+        --exclude-directories '.*/_deps' \
         --exclude-directories '.*/third' \
         --exclude-directories '.*/tests' \
         --exclude-directories '.*/build.*' \
+        --exclude '(^|.*/)_deps/.*' \
         --exclude '(^|.*/)third/.*' \
         --exclude '(^|.*/)tests/.*' \
         --exclude '(^|.*/)main\.cpp$'
@@ -121,7 +125,7 @@ for entry in files:
     name = entry.get("filename", "")
     normalized_name = str(name).replace("\\", "/")
     path_parts = [part for part in normalized_name.split("/") if part not in ("", ".")]
-    if "third" in path_parts or "tests" in path_parts:
+    if "_deps" in path_parts or "third" in path_parts or "tests" in path_parts:
         continue
     if path_parts and path_parts[-1] == "main.cpp":
         continue

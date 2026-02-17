@@ -111,6 +111,16 @@ def stop_process(proc):
             proc.kill()
             proc.wait(timeout=5)
 
+
+def recv_exact(sock, size):
+    data = bytearray()
+    while len(data) < size:
+        chunk = sock.recv(size - len(data))
+        if not chunk:
+            raise RuntimeError(f"socket closed while waiting {size} bytes")
+        data.extend(chunk)
+    return bytes(data)
+
 class EchoServer:
     def __init__(self, port):
         self.port = port
@@ -217,16 +227,43 @@ def start_socks_process_valgrind(config_file, log_file, name):
 
 def socks5_connect(proxy_port, target_host, target_port):
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.settimeout(5)
+    s.settimeout(15)
     s.connect(('127.0.0.1', proxy_port))
     s.sendall(b'\x05\x01\x00')
-    s.recv(2)
+    method_resp = recv_exact(s, 2)
+    if method_resp != b'\x05\x00':
+        raise Exception(f"SOCKS method negotiation failed: {method_resp!r}")
     req = b'\x05\x01\x00\x01' + socket.inet_aton(target_host) + struct.pack('!H', target_port)
     s.sendall(req)
-    resp = s.recv(1024)
+    resp = recv_exact(s, 10)
     if len(resp) < 10 or resp[1] != 0:
         raise Exception("Connect failed")
     return s
+
+
+def wait_for_proxy_data_path(proxy_port, target_host, target_port, timeout_sec):
+    deadline = time.time() + timeout_sec
+    last_error = None
+    while time.time() < deadline:
+        sock = None
+        try:
+            sock = socks5_connect(proxy_port, target_host, target_port)
+            probe = b"READY_CHECK"
+            sock.sendall(probe)
+            got = recv_exact(sock, len(probe))
+            if got == probe:
+                return
+            last_error = RuntimeError(f"probe mismatch expected={probe!r} got={got!r}")
+        except Exception as e:
+            last_error = e
+            time.sleep(0.5)
+        finally:
+            if sock is not None:
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+    raise RuntimeError(f"timeout waiting end-to-end socks path last_error={last_error}")
 
 def analyze_valgrind_log(path, display_name):
     if not os.path.exists(path):
@@ -299,6 +336,12 @@ def run_valgrind_test(traffic_count, server_ready_timeout, client_ready_timeout)
 
     cp, c_vlog = start_socks_process_valgrind("val_client.json", f"{BUILD_DIR}/val_client_stdout.log", "client")
     wait_for_tcp_ready("127.0.0.1", client_socks_port, client_ready_timeout, "client socks", cp)
+    wait_for_proxy_data_path(
+        client_socks_port,
+        "127.0.0.1",
+        echo_port,
+        max(30, server_ready_timeout, client_ready_timeout),
+    )
 
     success = True
 
