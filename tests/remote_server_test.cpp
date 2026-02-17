@@ -732,28 +732,56 @@ TEST_F(remote_server_test, FallbackWriteFailIncrementsMetric)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
+    auto pool_cleanup = make_scoped_exit(
+        [&]()
+        {
+            pool.stop();
+            if (pool_thread.joinable())
+            {
+                pool_thread.join();
+            }
+        });
 
-    const std::uint16_t server_port = pick_free_port();
-    ASSERT_NE(server_port, 0);
-    const std::uint16_t fallback_port = pick_free_port();
-    ASSERT_NE(fallback_port, 0);
+    asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context());
+    ASSERT_TRUE(open_ephemeral_acceptor_until_ready(fallback_acceptor));
+    const auto fallback_port = fallback_acceptor.local_endpoint().port();
 
     auto server = std::make_shared<mux::remote_server>(
-        pool, make_server_cfg(server_port, {{"", "127.0.0.1", std::to_string(fallback_port)}}, "0102030405060708"));
-    server->start();
+        pool, make_server_cfg(0, {{"", "127.0.0.1", std::to_string(fallback_port)}}, "0102030405060708"));
+    auto server_cleanup = make_scoped_exit(
+        [&]()
+        {
+            if (server != nullptr)
+            {
+                server->stop();
+            }
+        });
+    ASSERT_TRUE(start_server_until_listening(server));
+    const auto server_port = server->listen_port();
 
-    asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), fallback_port));
-    std::shared_ptr<asio::ip::tcp::socket> fallback_peer;
-    std::promise<void> fallback_accepted;
-    auto fallback_accepted_future = fallback_accepted.get_future();
+    auto fallback_peer = std::make_shared<std::shared_ptr<asio::ip::tcp::socket>>();
+    auto fallback_accepted = std::make_shared<std::promise<void>>();
+    auto fallback_accepted_future = fallback_accepted->get_future();
     fallback_acceptor.async_accept(
-        [&](std::error_code accept_ec, asio::ip::tcp::socket peer)
+        [fallback_peer, fallback_accepted](std::error_code accept_ec, asio::ip::tcp::socket peer)
         {
             if (!accept_ec)
             {
-                fallback_peer = std::make_shared<asio::ip::tcp::socket>(std::move(peer));
+                *fallback_peer = std::make_shared<asio::ip::tcp::socket>(std::move(peer));
             }
-            fallback_accepted.set_value();
+            fallback_accepted->set_value();
+        });
+    auto acceptor_cleanup = make_scoped_exit(
+        [&]()
+        {
+            std::error_code close_ec;
+            fallback_acceptor.cancel(close_ec);
+            fallback_acceptor.close(close_ec);
+            if (*fallback_peer != nullptr && (*fallback_peer)->is_open())
+            {
+                (*fallback_peer)->shutdown(asio::ip::tcp::socket::shutdown_both, close_ec);
+                (*fallback_peer)->close(close_ec);
+            }
         });
 
     const auto write_fail_before = mux::statistics::instance().fallback_write_failures();
@@ -776,19 +804,6 @@ TEST_F(remote_server_test, FallbackWriteFailIncrementsMetric)
             return mux::statistics::instance().fallback_write_failures() > write_fail_before;
         },
         std::chrono::milliseconds(3000)));
-
-    std::error_code close_ec;
-    fallback_acceptor.cancel(close_ec);
-    fallback_acceptor.close(close_ec);
-    if (fallback_peer != nullptr && fallback_peer->is_open())
-    {
-        fallback_peer->shutdown(asio::ip::tcp::socket::shutdown_both, close_ec);
-        fallback_peer->close(close_ec);
-    }
-
-    server->stop();
-    pool.stop();
-    pool_thread.join();
 }
 
 TEST_F(remote_server_test, StartRejectsInvalidAuthConfig)
