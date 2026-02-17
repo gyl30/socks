@@ -85,49 +85,52 @@ constexpr std::size_t kMonitorRateStateMaxSources = 4096;
 constexpr std::uint32_t kMonitorRateStateRetentionMultiplier = 32;
 constexpr auto kMonitorRateStateMinRetention = std::chrono::minutes(5);
 
-std::string url_decode(std::string_view value)
+int hex_to_int(const char c)
 {
-    auto hex_to_int = [](const char c) -> int
+    if (c >= '0' && c <= '9')
     {
-        if (c >= '0' && c <= '9')
-        {
-            return c - '0';
-        }
-        if (c >= 'a' && c <= 'f')
-        {
-            return c - 'a' + 10;
-        }
-        if (c >= 'A' && c <= 'F')
-        {
-            return c - 'A' + 10;
-        }
-        return -1;
-    };
+        return c - '0';
+    }
+    if (c >= 'a' && c <= 'f')
+    {
+        return c - 'a' + 10;
+    }
+    if (c >= 'A' && c <= 'F')
+    {
+        return c - 'A' + 10;
+    }
+    return -1;
+}
 
-    std::string decoded;
-    decoded.reserve(value.size());
-    for (std::size_t i = 0; i < value.size(); ++i)
+bool url_decoded_equals(std::string_view encoded, const std::string_view expected)
+{
+    std::size_t expected_pos = 0;
+    for (std::size_t i = 0; i < encoded.size(); ++i)
     {
-        const char c = value[i];
-        if (c == '%' && i + 2 < value.size())
+        const char c = encoded[i];
+        char decoded_char = c;
+        if (c == '%' && i + 2 < encoded.size())
         {
-            const int hi = hex_to_int(value[i + 1]);
-            const int lo = hex_to_int(value[i + 2]);
+            const int hi = hex_to_int(encoded[i + 1]);
+            const int lo = hex_to_int(encoded[i + 2]);
             if (hi >= 0 && lo >= 0)
             {
-                decoded.push_back(static_cast<char>((hi << 4) | lo));
+                decoded_char = static_cast<char>((hi << 4) | lo);
                 i += 2;
-                continue;
             }
         }
-        if (c == '+')
+        else if (c == '+')
         {
-            decoded.push_back(' ');
-            continue;
+            decoded_char = ' ';
         }
-        decoded.push_back(c);
+
+        if (expected_pos >= expected.size() || decoded_char != expected[expected_pos])
+        {
+            return false;
+        }
+        ++expected_pos;
     }
-    return decoded;
+    return expected_pos == expected.size();
 }
 
 parsed_monitor_request parse_monitor_request(const std::string_view request)
@@ -201,7 +204,7 @@ bool has_exact_token_parameter(const std::string_view query, const std::string& 
         const std::string_view value = eq == std::string::npos ? std::string_view{} : pair.substr(eq + 1);
         if (key == "token")
         {
-            const bool needs_decode = value.find('%') != std::string_view::npos || value.find('+') != std::string_view::npos;
+            const bool needs_decode = value.find_first_of("%+") != std::string_view::npos;
             if (!needs_decode)
             {
                 if (value == token)
@@ -209,7 +212,7 @@ bool has_exact_token_parameter(const std::string_view query, const std::string& 
                     return true;
                 }
             }
-            else if (url_decode(value) == token)
+            else if (url_decoded_equals(value, token))
             {
                 return true;
             }
