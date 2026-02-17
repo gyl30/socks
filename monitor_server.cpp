@@ -233,10 +233,14 @@ std::string monitor_rate_limit_key(asio::ip::tcp::socket& socket)
     return remote_ep.address().to_string();
 }
 
-void prune_monitor_rate_state(std::unordered_map<std::string, std::chrono::steady_clock::time_point>& last_request_time_by_source,
-                              const std::chrono::steady_clock::time_point now,
-                              std::chrono::milliseconds retention,
-                              const std::string& rate_key)
+void prune_monitor_rate_state(
+    std::unordered_map<std::string,
+                       std::chrono::steady_clock::time_point,
+                       monitor_rate_state::transparent_string_hash,
+                       monitor_rate_state::transparent_string_equal>& last_request_time_by_source,
+    const std::chrono::steady_clock::time_point now,
+    std::chrono::milliseconds retention,
+    const std::string_view rate_key)
 {
     if (retention < kMonitorRateStateMinRetention)
     {
@@ -291,16 +295,19 @@ bool allow_monitor_request_by_source(monitor_rate_state& rate_state,
         return true;
     }
 
-    const std::string rate_key(source_key);
     std::lock_guard<std::mutex> lock(rate_state.mutex);
     const auto retention_ms = static_cast<std::uint64_t>(min_interval_ms) * kMonitorRateStateRetentionMultiplier;
-    prune_monitor_rate_state(rate_state.last_request_time_by_source, now, std::chrono::milliseconds(retention_ms), rate_key);
-    auto& last_request_time = rate_state.last_request_time_by_source[rate_key];
-    if (last_request_time.time_since_epoch().count() != 0 && now - last_request_time < std::chrono::milliseconds(min_interval_ms))
+    prune_monitor_rate_state(rate_state.last_request_time_by_source, now, std::chrono::milliseconds(retention_ms), source_key);
+    if (auto it = rate_state.last_request_time_by_source.find(source_key); it != rate_state.last_request_time_by_source.end())
     {
-        return false;
+        if (now - it->second < std::chrono::milliseconds(min_interval_ms))
+        {
+            return false;
+        }
+        it->second = now;
+        return true;
     }
-    last_request_time = now;
+    rate_state.last_request_time_by_source.emplace(std::string(source_key), now);
     return true;
 }
 

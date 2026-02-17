@@ -7,6 +7,7 @@
 #include <string>
 #include <mutex>
 #include <cstdint>
+#include <functional>
 #include <string_view>
 #include <unordered_map>
 
@@ -17,8 +18,32 @@ namespace mux
 
 struct monitor_rate_state
 {
+    struct transparent_string_hash
+    {
+        using is_transparent = void;
+
+        [[nodiscard]] std::size_t operator()(const std::string_view value) const noexcept
+        {
+            return std::hash<std::string_view>{}(value);
+        }
+    };
+
+    struct transparent_string_equal
+    {
+        using is_transparent = void;
+
+        [[nodiscard]] bool operator()(const std::string_view lhs, const std::string_view rhs) const noexcept
+        {
+            return lhs == rhs;
+        }
+    };
+
     std::mutex mutex;
-    std::unordered_map<std::string, std::chrono::steady_clock::time_point> last_request_time_by_source;
+    std::unordered_map<std::string,
+                       std::chrono::steady_clock::time_point,
+                       transparent_string_hash,
+                       transparent_string_equal>
+        last_request_time_by_source;
 };
 
 namespace detail
