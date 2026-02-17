@@ -142,6 +142,17 @@ class statistics
     {
         std::vector<handshake_failure_sni_metric> out;
         std::lock_guard<std::mutex> lock(handshake_failure_sni_mu_);
+        std::size_t total_metrics = 0;
+        for (std::size_t i = 0; i < static_cast<std::size_t>(handshake_failure_reason::kCount); ++i)
+        {
+            const auto& counters = handshake_failure_sni_counters_[i];
+            total_metrics += counters.by_sni.size();
+            if (counters.others > 0)
+            {
+                ++total_metrics;
+            }
+        }
+        out.reserve(total_metrics);
         for (std::size_t i = 0; i < static_cast<std::size_t>(handshake_failure_reason::kCount); ++i)
         {
             const auto reason = static_cast<handshake_failure_reason>(i);
