@@ -1601,16 +1601,17 @@ TEST(TproxyClientTest, AcceptLoopStopsWhenStopFlagSetAfterPendingAccept)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
-    const auto tcp_port = pick_free_tcp_port();
-    const auto udp_port = pick_free_tcp_port();
-
     mux::config cfg;
     cfg.tproxy.enabled = true;
     cfg.tproxy.listen_host = "127.0.0.1";
     cfg.tproxy.mark = 0;
-    cfg.tproxy.tcp_port = tcp_port;
-    cfg.tproxy.udp_port = udp_port;
+    cfg.tproxy.tcp_port = pick_free_tcp_port();
+    cfg.tproxy.udp_port = pick_free_tcp_port();
     auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
+
+    ASSERT_TRUE(open_ephemeral_tcp_acceptor(client->tcp_acceptor_));
+    const auto listen_port = client->tcp_acceptor_.local_endpoint().port();
+    ASSERT_NE(listen_port, 0);
 
     asio::co_spawn(pool.get_io_context(),
                    [client]() -> asio::awaitable<void>
@@ -1621,30 +1622,13 @@ TEST(TproxyClientTest, AcceptLoopStopsWhenStopFlagSetAfterPendingAccept)
                    asio::detached);
 
     std::thread runner([&pool]() { pool.run(); });
-    for (int i = 0; i < 50 && !tcp_acceptor_is_open(pool.get_io_context(), client); ++i)
-    {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    if (!tcp_acceptor_is_open(pool.get_io_context(), client))
-    {
-        client->stop();
-        pool.stop();
-        runner.join();
-        GTEST_SKIP() << "tcp transparent socket unavailable in current environment";
-    }
 
     client->stop_.store(true, std::memory_order_release);
 
     asio::io_context dial_ctx;
     asio::ip::tcp::socket dial_socket(dial_ctx);
-    dial_socket.connect(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), tcp_port), ec);
-    if (ec)
-    {
-        client->stop();
-        pool.stop();
-        runner.join();
-        GTEST_SKIP() << "tcp listener not reachable in current environment";
-    }
+    dial_socket.connect(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), listen_port), ec);
+    ASSERT_FALSE(ec);
     dial_socket.shutdown(asio::ip::tcp::socket::shutdown_both, ec);
     dial_socket.close(ec);
 
