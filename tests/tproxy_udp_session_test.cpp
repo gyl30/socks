@@ -2645,21 +2645,27 @@ TEST(TproxyClientTest, StopCoversCloseErrorLogBranches)
     auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
 
     std::thread runner([&pool]() { pool.run(); });
-    client->start();
-    for (int i = 0; i < 50 && (!tcp_acceptor_is_open(pool.get_io_context(), client) || !udp_socket_is_open(pool.get_io_context(), client)); ++i)
-    {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    if (!tcp_acceptor_is_open(pool.get_io_context(), client) && !udp_socket_is_open(pool.get_io_context(), client))
-    {
-        client->stop();
-        pool.stop();
-        runner.join();
-        GTEST_SKIP() << "tproxy sockets unavailable in current environment";
-    }
+    const bool opened = run_on_io_context(pool.get_io_context(),
+                                          [client]()
+                                          {
+                                              std::error_code open_ec;
+                                              client->tcp_acceptor_.open(asio::ip::tcp::v4(), open_ec);
+                                              if (open_ec)
+                                              {
+                                                  return false;
+                                              }
+                                              client->udp_socket_.open(asio::ip::udp::v4(), open_ec);
+                                              return !open_ec;
+                                          });
+    ASSERT_TRUE(opened);
 
     fail_next_close(EIO);
     client->stop();
+    for (int i = 0; i < 50 && g_fail_close_once.load(std::memory_order_acquire); ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    EXPECT_FALSE(g_fail_close_once.load(std::memory_order_acquire));
     pool.stop();
     runner.join();
 
