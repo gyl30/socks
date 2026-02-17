@@ -1279,6 +1279,38 @@ TEST(TproxyClientTest, StartWhileRunningIsIgnored)
     client->stop();
 }
 
+TEST(TproxyClientTest, RunningRequiresStartedFlag)
+{
+    reset_socket_wrappers();
+
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    mux::config cfg;
+    cfg.tproxy.enabled = true;
+    auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
+    EXPECT_FALSE(client->running());
+
+    client->tcp_acceptor_.open(asio::ip::tcp::v4(), ec);
+    ASSERT_FALSE(ec);
+    client->udp_socket_.open(asio::ip::udp::v4(), ec);
+    ASSERT_FALSE(ec);
+    EXPECT_FALSE(client->running());
+
+    client->started_.store(true, std::memory_order_release);
+    client->stop_.store(false, std::memory_order_release);
+    EXPECT_TRUE(client->running());
+
+    client->stop_.store(true, std::memory_order_release);
+    EXPECT_FALSE(client->running());
+
+    client->tcp_acceptor_.close(ec);
+    client->udp_socket_.close(ec);
+    pool.stop();
+    reset_socket_wrappers();
+}
+
 TEST(TproxyClientTest, UdpDispatchQueueIsBounded)
 {
     std::error_code ec;
