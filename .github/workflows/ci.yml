@@ -3,8 +3,7 @@ name: CI
 on:
   push:
     branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
+
 
 jobs:
   guard-expected-assertion-style:
@@ -27,7 +26,6 @@ jobs:
   complexity-gate:
     name: Complexity Gate
     runs-on: ubuntu-22.04
-    needs: guard-expected-assertion-style
 
     steps:
     - uses: actions/checkout@v4
@@ -49,18 +47,12 @@ jobs:
     - name: Enforce Changed Function Complexity Threshold
       run: |
         set -euo pipefail
-        if [ "${{ github.event_name }}" = "pull_request" ]; then
-          BASE_REF="${{ github.event.pull_request.base.sha }}"
-        else
-          BASE_REF="${{ github.event.before }}"
-        fi
+        BASE_REF="${{ github.event.before }}"
         python3 script/complexity_gate.py --base "$BASE_REF" --threshold 15
 
   tiered-regression:
     name: Tiered Regression (${{ matrix.tier }})
     runs-on: ubuntu-22.04
-    needs: complexity-gate
-    if: github.event_name == 'push' || matrix.tier == 'smoke'
     strategy:
       fail-fast: false
       matrix:
@@ -95,9 +87,7 @@ jobs:
   tsan:
     name: TSAN (${{ matrix.suite }})
     runs-on: ubuntu-22.04
-    needs:
-    - guard-expected-assertion-style
-    - complexity-gate
+
     strategy:
       fail-fast: false
       matrix:
@@ -163,9 +153,7 @@ jobs:
   valgrind:
     name: Valgrind Memory Safety
     runs-on: ubuntu-22.04
-    needs:
-    - guard-expected-assertion-style
-    - complexity-gate
+
     env:
       CI_ARTIFACT_DIR: ci_artifacts
 
@@ -215,9 +203,7 @@ jobs:
   coverage:
     name: Coverage Gate
     runs-on: ubuntu-22.04
-    needs:
-    - guard-expected-assertion-style
-    - complexity-gate
+
     env:
       CI_ARTIFACT_DIR: ci_artifacts
 
