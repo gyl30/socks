@@ -278,6 +278,34 @@ void prune_monitor_rate_state(std::unordered_map<std::string, std::chrono::stead
 
 }    // namespace
 
+namespace detail
+{
+
+bool allow_monitor_request_by_source(monitor_rate_state& rate_state,
+                                     const std::string_view source_key,
+                                     const std::uint32_t min_interval_ms,
+                                     const std::chrono::steady_clock::time_point now)
+{
+    if (min_interval_ms == 0)
+    {
+        return true;
+    }
+
+    const std::string rate_key(source_key);
+    std::lock_guard<std::mutex> lock(rate_state.mutex);
+    const auto retention_ms = static_cast<std::uint64_t>(min_interval_ms) * kMonitorRateStateRetentionMultiplier;
+    prune_monitor_rate_state(rate_state.last_request_time_by_source, now, std::chrono::milliseconds(retention_ms), rate_key);
+    auto& last_request_time = rate_state.last_request_time_by_source[rate_key];
+    if (last_request_time.time_since_epoch().count() != 0 && now - last_request_time < std::chrono::milliseconds(min_interval_ms))
+    {
+        return false;
+    }
+    last_request_time = now;
+    return true;
+}
+
+}    // namespace detail
+
 class monitor_session : public std::enable_shared_from_this<monitor_session>
 {
    public:
@@ -351,22 +379,9 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
         {
             return true;
         }
-        const auto now = std::chrono::steady_clock::now();
         const auto rate_key = monitor_rate_limit_key(socket_);
-        std::lock_guard<std::mutex> lock(rate_state_->mutex);
-        const auto retention_ms = static_cast<std::uint64_t>(min_interval_ms_) * kMonitorRateStateRetentionMultiplier;
-        prune_monitor_rate_state(rate_state_->last_request_time_by_source,
-                                 now,
-                                 std::chrono::milliseconds(retention_ms),
-                                 rate_key);
-        auto& last_request_time = rate_state_->last_request_time_by_source[rate_key];
-        if (last_request_time.time_since_epoch().count() != 0
-            && now - last_request_time < std::chrono::milliseconds(min_interval_ms_))
-        {
-            return false;
-        }
-        last_request_time = now;
-        return true;
+        return detail::allow_monitor_request_by_source(
+            *rate_state_, rate_key, min_interval_ms_, std::chrono::steady_clock::now());
     }
 
     void write_stats()

@@ -374,31 +374,19 @@ TEST(MonitorServerTest, UnauthorizedRequestDoesNotConsumeRateLimitWindow)
 
 TEST(MonitorServerTest, RateLimitIsolatedBySourceAddress)
 {
-    monitor_server_env env(std::string("0.0.0.0"), 0, std::string("secret"), 500);
-    const auto port = env.port();
-    ASSERT_NE(port, 0);
+    monitor_rate_state rate_state;
+    constexpr std::uint32_t k_min_interval_ms = 500;
+    const auto now = std::chrono::steady_clock::now();
 
-    asio::error_code probe_ec;
-    asio::io_context probe_ioc;
-    asio::ip::tcp::socket probe_socket(probe_ioc);
-    probe_socket.open(asio::ip::tcp::v4(), probe_ec);
-    if (!probe_ec)
-    {
-        probe_socket.bind(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.2"), 0), probe_ec);
-    }
-    if (probe_ec)
-    {
-        GTEST_SKIP() << "source address 127.0.0.2 unavailable";
-    }
+    EXPECT_TRUE(detail::allow_monitor_request_by_source(rate_state, "127.0.0.1", k_min_interval_ms, now));
+    EXPECT_FALSE(detail::allow_monitor_request_by_source(
+        rate_state, "127.0.0.1", k_min_interval_ms, now + std::chrono::milliseconds(100)));
+    EXPECT_TRUE(detail::allow_monitor_request_by_source(
+        rate_state, "127.0.0.2", k_min_interval_ms, now + std::chrono::milliseconds(100)));
 
-    const auto first_source_a = request_with_retry(port, "metrics?token=secret\n");
-    EXPECT_NE(first_source_a.find("socks_uptime_seconds "), std::string::npos);
-
-    const auto limited_source_a = read_response(port, "metrics?token=secret\n");
-    EXPECT_TRUE(limited_source_a.empty());
-
-    const auto source_b = read_response(port, "metrics?token=secret\n", "127.0.0.1", "127.0.0.2");
-    EXPECT_NE(source_b.find("socks_uptime_seconds "), std::string::npos);
+    std::lock_guard<std::mutex> lock(rate_state.mutex);
+    EXPECT_EQ(rate_state.last_request_time_by_source.count("127.0.0.1"), 1U);
+    EXPECT_EQ(rate_state.last_request_time_by_source.count("127.0.0.2"), 1U);
 }
 
 TEST(MonitorServerTest, RateLimitStateStaysBounded)

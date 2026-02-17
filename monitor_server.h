@@ -7,6 +7,7 @@
 #include <string>
 #include <mutex>
 #include <cstdint>
+#include <string_view>
 #include <unordered_map>
 
 #include <asio.hpp>
@@ -19,6 +20,16 @@ struct monitor_rate_state
     std::mutex mutex;
     std::unordered_map<std::string, std::chrono::steady_clock::time_point> last_request_time_by_source;
 };
+
+namespace detail
+{
+
+bool allow_monitor_request_by_source(monitor_rate_state& rate_state,
+                                     std::string_view source_key,
+                                     std::uint32_t min_interval_ms,
+                                     std::chrono::steady_clock::time_point now);
+
+}    // namespace detail
 
 class monitor_server : public std::enable_shared_from_this<monitor_server>
 {
