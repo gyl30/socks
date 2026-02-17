@@ -2381,7 +2381,6 @@ TEST(TproxyClientTest, WrappedRecvmsgCoversUdpReadErrorBranches)
 TEST(TproxyClientTest, AcceptLoopRetriesOnAcceptErrorBranch)
 {
     reset_socket_wrappers();
-    force_tproxy_setsockopt_success(true);
 
     std::error_code ec;
     mux::io_context_pool pool(1);
@@ -2395,6 +2394,8 @@ TEST(TproxyClientTest, AcceptLoopRetriesOnAcceptErrorBranch)
     cfg.tproxy.udp_port = pick_free_tcp_port();
     auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
 
+    ASSERT_TRUE(open_ephemeral_tcp_acceptor(client->tcp_acceptor_));
+
     fail_next_accept(EIO);
     asio::co_spawn(pool.get_io_context(),
                    [client]() -> asio::awaitable<void>
@@ -2405,17 +2406,6 @@ TEST(TproxyClientTest, AcceptLoopRetriesOnAcceptErrorBranch)
                    asio::detached);
 
     std::thread runner([&pool]() { pool.run(); });
-    for (int i = 0; i < 50 && !tcp_acceptor_is_open(pool.get_io_context(), client); ++i)
-    {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    if (!tcp_acceptor_is_open(pool.get_io_context(), client))
-    {
-        client->stop();
-        pool.stop();
-        runner.join();
-        GTEST_SKIP() << "tcp transparent socket unavailable in current environment";
-    }
 
     std::this_thread::sleep_for(std::chrono::milliseconds(1150));
     client->stop();
