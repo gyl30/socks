@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cerrno>
 #include <cstdint>
+#include <random>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -166,6 +167,57 @@ void connect_and_close_without_payload(const std::uint16_t port)
         return;
     }
     socket.close(ec);
+}
+
+std::string random_identifier(std::mt19937& rng, const std::size_t min_len, const std::size_t max_len)
+{
+    static constexpr std::string_view kAlphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
+    std::uniform_int_distribution<std::size_t> len_dist(min_len, max_len);
+    const std::size_t len = len_dist(rng);
+    std::string out;
+    out.reserve(len);
+    std::uniform_int_distribution<std::size_t> char_dist(0, kAlphabet.size() - 1);
+    for (std::size_t i = 0; i < len; ++i)
+    {
+        out.push_back(kAlphabet[char_dist(rng)]);
+    }
+    return out;
+}
+
+std::string mutate_token_value(std::mt19937& rng, const std::string& token)
+{
+    std::string out = token;
+    std::uniform_int_distribution<int> op_dist(0, 2);
+    const int op = op_dist(rng);
+    if (op == 0 || out.empty())
+    {
+        if (out.empty())
+        {
+            out.push_back('x');
+            return out;
+        }
+        std::uniform_int_distribution<std::size_t> pos_dist(0, out.size() - 1);
+        const std::size_t pos = pos_dist(rng);
+        out[pos] = out[pos] == 'x' ? 'y' : 'x';
+    }
+    else if (op == 1)
+    {
+        out.push_back('x');
+    }
+    else if (out.size() > 1)
+    {
+        std::uniform_int_distribution<std::size_t> pos_dist(0, out.size() - 1);
+        out.erase(pos_dist(rng), 1);
+    }
+    else
+    {
+        out = "xx";
+    }
+    if (out == token)
+    {
+        out.push_back('x');
+    }
+    return out;
 }
 
 class monitor_server_env
@@ -374,31 +426,19 @@ TEST(MonitorServerTest, UnauthorizedRequestDoesNotConsumeRateLimitWindow)
 
 TEST(MonitorServerTest, RateLimitIsolatedBySourceAddress)
 {
-    monitor_server_env env(std::string("0.0.0.0"), 0, std::string("secret"), 500);
-    const auto port = env.port();
-    ASSERT_NE(port, 0);
+    monitor_rate_state rate_state;
+    constexpr std::uint32_t k_min_interval_ms = 500;
+    const auto now = std::chrono::steady_clock::now();
 
-    asio::error_code probe_ec;
-    asio::io_context probe_ioc;
-    asio::ip::tcp::socket probe_socket(probe_ioc);
-    probe_socket.open(asio::ip::tcp::v4(), probe_ec);
-    if (!probe_ec)
-    {
-        probe_socket.bind(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.2"), 0), probe_ec);
-    }
-    if (probe_ec)
-    {
-        GTEST_SKIP() << "source address 127.0.0.2 unavailable";
-    }
+    EXPECT_TRUE(detail::allow_monitor_request_by_source(rate_state, "127.0.0.1", k_min_interval_ms, now));
+    EXPECT_FALSE(detail::allow_monitor_request_by_source(
+        rate_state, "127.0.0.1", k_min_interval_ms, now + std::chrono::milliseconds(100)));
+    EXPECT_TRUE(detail::allow_monitor_request_by_source(
+        rate_state, "127.0.0.2", k_min_interval_ms, now + std::chrono::milliseconds(100)));
 
-    const auto first_source_a = request_with_retry(port, "metrics?token=secret\n");
-    EXPECT_NE(first_source_a.find("socks_uptime_seconds "), std::string::npos);
-
-    const auto limited_source_a = read_response(port, "metrics?token=secret\n");
-    EXPECT_TRUE(limited_source_a.empty());
-
-    const auto source_b = read_response(port, "metrics?token=secret\n", "127.0.0.1", "127.0.0.2");
-    EXPECT_NE(source_b.find("socks_uptime_seconds "), std::string::npos);
+    std::lock_guard<std::mutex> lock(rate_state.mutex);
+    EXPECT_EQ(rate_state.last_request_time_by_source.count("127.0.0.1"), 1U);
+    EXPECT_EQ(rate_state.last_request_time_by_source.count("127.0.0.2"), 1U);
 }
 
 TEST(MonitorServerTest, RateLimitStateStaysBounded)
@@ -513,6 +553,124 @@ TEST(MonitorServerTest, SupportsFragmentedHttpRequestLine)
     EXPECT_NE(resp.find("socks_uptime_seconds "), std::string::npos);
 }
 
+TEST(MonitorServerTest, RejectsInvalidPercentEncodingToken)
+{
+    monitor_server_env env(0, std::string("secret"));
+    const auto port = env.port();
+    ASSERT_NE(port, 0);
+
+    const auto invalid = read_response(port, "GET /metrics?token=sec%2xret HTTP/1.1\r\n\r\n");
+    EXPECT_TRUE(invalid.empty());
+
+    const auto valid = request_with_retry(port, "GET /metrics?token=secret HTTP/1.1\r\n\r\n");
+    EXPECT_NE(valid.find("socks_uptime_seconds "), std::string::npos);
+}
+
+TEST(MonitorServerTest, RejectsMalformedHttpRequestLine)
+{
+    monitor_server_env env(0, std::string("secret"));
+    const auto port = env.port();
+    ASSERT_NE(port, 0);
+
+    const auto malformed = read_response(port, "GET    HTTP/1.1\r\n\r\n");
+    EXPECT_TRUE(malformed.empty());
+
+    const auto valid = request_with_retry(port, "GET /metrics?token=secret HTTP/1.1\r\n\r\n");
+    EXPECT_NE(valid.find("socks_uptime_seconds "), std::string::npos);
+}
+
+TEST(MonitorServerTest, RejectsOversizedRequestLineAndKeepsServing)
+{
+    monitor_server_env env(0, std::string("secret"));
+    const auto port = env.port();
+    ASSERT_NE(port, 0);
+
+    const std::string oversized_line = "GET /metrics?token=secret" + std::string(5000, 'a') + " HTTP/1.1\r\n\r\n";
+    const auto oversized = read_response(port, oversized_line);
+    EXPECT_TRUE(oversized.empty());
+
+    const auto valid = request_with_retry(port, "GET /metrics?token=secret HTTP/1.1\r\n\r\n");
+    EXPECT_NE(valid.find("socks_uptime_seconds "), std::string::npos);
+}
+
+TEST(MonitorServerTest, PropertyFuzzAuthBypassNearMissesAreRejected)
+{
+    constexpr std::string_view kToken = "secret";
+    monitor_server_env env(0, std::string(kToken), 0);
+    const auto port = env.port();
+    ASSERT_NE(port, 0);
+
+    std::mt19937 rng(20260217u);
+    const std::array<std::string_view, 4> bad_methods = {"POST", "PUT", "HEAD", "GETT"};
+    const std::array<std::string_view, 4> bad_paths = {"/status", "/metricsx", "metricsx", "/"};
+    const std::array<std::string_view, 4> bad_keys = {"foo", "xtoken", "tokenx", "t0ken"};
+
+    for (std::size_t i = 0; i < 160; ++i)
+    {
+        std::string request;
+        const auto variant = i % 5;
+        if (variant == 0)
+        {
+            std::uniform_int_distribution<std::size_t> dist(0, bad_methods.size() - 1);
+            request = std::string(bad_methods[dist(rng)]) + " /metrics?token=secret HTTP/1.1\r\n\r\n";
+        }
+        else if (variant == 1)
+        {
+            std::uniform_int_distribution<std::size_t> dist(0, bad_paths.size() - 1);
+            request = "GET " + std::string(bad_paths[dist(rng)]) + "?token=secret HTTP/1.1\r\n\r\n";
+        }
+        else if (variant == 2)
+        {
+            std::uniform_int_distribution<std::size_t> dist(0, bad_keys.size() - 1);
+            request = "GET /metrics?" + std::string(bad_keys[dist(rng)]) + "=secret HTTP/1.1\r\n\r\n";
+        }
+        else if (variant == 3)
+        {
+            request = "GET /metrics?token=%2xsecret HTTP/1.1\r\n\r\n";
+        }
+        else
+        {
+            request = "GET /metrics?token=" + mutate_token_value(rng, std::string(kToken)) + " HTTP/1.1\r\n\r\n";
+        }
+
+        const auto resp = read_response(port, request);
+        EXPECT_TRUE(resp.empty()) << "unexpected authorized request: " << request;
+    }
+
+    const auto valid = request_with_retry(port, "GET /metrics?token=secret HTTP/1.1\r\n\r\n");
+    EXPECT_NE(valid.find("socks_uptime_seconds "), std::string::npos);
+}
+
+TEST(MonitorServerTest, PropertyFuzzMalformedLinesDoNotPoisonServerState)
+{
+    monitor_server_env env(0, std::string("secret"), 0);
+    const auto port = env.port();
+    ASSERT_NE(port, 0);
+
+    std::mt19937 rng(1337u);
+    for (std::size_t i = 0; i < 120; ++i)
+    {
+        std::string request_line = random_identifier(rng, 1, 40);
+        if (i % 3 == 0)
+        {
+            request_line = "GET" + random_identifier(rng, 1, 30);
+        }
+        else if (i % 3 == 1)
+        {
+            request_line = "GET " + random_identifier(rng, 1, 20) + " HTTP/1.1";
+        }
+        else
+        {
+            request_line = random_identifier(rng, 1, 10) + " /metrics?token=secret HTTP/1.1";
+        }
+        const auto resp = read_response(port, request_line + "\r\n\r\n");
+        EXPECT_TRUE(resp.empty()) << "malformed line unexpectedly succeeded: " << request_line;
+    }
+
+    const auto valid = request_with_retry(port, "GET /metrics?token=secret HTTP/1.1\r\n\r\n");
+    EXPECT_NE(valid.find("socks_total_connections "), std::string::npos);
+}
+
 TEST(MonitorServerTest, EscapesPrometheusLabels)
 {
     auto& stats = statistics::instance();
@@ -592,6 +750,48 @@ TEST(MonitorServerTest, ConstructorHandlesListenFailure)
     auto server = std::make_shared<monitor_server>(ioc, 0, std::string("token"), 10);
     ASSERT_NE(server, nullptr);
     EXPECT_FALSE(server->acceptor_.is_open());
+}
+
+TEST(MonitorServerTest, RunningReflectsStartAndStopLifecycle)
+{
+    asio::io_context ioc;
+    auto server = std::make_shared<monitor_server>(ioc, 0, std::string(), 10);
+    ASSERT_NE(server, nullptr);
+    EXPECT_FALSE(server->running());
+
+    server->start();
+    EXPECT_TRUE(server->running());
+
+    server->stop();
+    EXPECT_FALSE(server->running());
+}
+
+TEST(MonitorServerTest, StartWhileRunningIsIgnored)
+{
+    asio::io_context ioc;
+    auto server = std::make_shared<monitor_server>(ioc, 0, std::string(), 10);
+    ASSERT_NE(server, nullptr);
+    server->start();
+    EXPECT_TRUE(server->running());
+
+    server->start();
+    EXPECT_TRUE(server->running());
+
+    std::error_code ec;
+    const auto port = server->acceptor_.local_endpoint(ec).port();
+    ASSERT_FALSE(ec);
+    ASSERT_NE(port, 0);
+
+    std::thread runner([&ioc]() { ioc.run(); });
+    const auto response = request_with_retry(port, "metrics\n");
+    EXPECT_NE(response.find("socks_uptime_seconds "), std::string::npos);
+
+    server->stop();
+    ioc.stop();
+    if (runner.joinable())
+    {
+        runner.join();
+    }
 }
 
 TEST(MonitorServerTest, StopClosesAcceptorAndRejectsNewConnections)
