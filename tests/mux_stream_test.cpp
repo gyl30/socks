@@ -168,3 +168,37 @@ TEST_F(mux_stream_test, OnDataIgnoredAfterReset)
     EXPECT_TRUE(ec);
     EXPECT_TRUE(read_data.empty());
 }
+
+TEST_F(mux_stream_test, OnDataChannelFullClosesStream)
+{
+    auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
+    auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx());
+
+    for (int i = 0; i < 1024; ++i)
+    {
+        stream->on_data({1});
+    }
+
+    stream->on_data({2});
+
+    const std::vector<std::uint8_t> data = {9};
+    const auto ec = mux::test::run_awaitable(ctx(), stream->async_write_some(data.data(), data.size()));
+    EXPECT_EQ(ec, asio::error::operation_aborted);
+}
+
+TEST_F(mux_stream_test, OnCloseChannelFullClosesStream)
+{
+    auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
+    auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx());
+
+    for (int i = 0; i < 1024; ++i)
+    {
+        stream->on_data({1});
+    }
+
+    stream->on_close();
+
+    const std::vector<std::uint8_t> data = {9};
+    const auto ec = mux::test::run_awaitable(ctx(), stream->async_write_some(data.data(), data.size()));
+    EXPECT_EQ(ec, asio::error::operation_aborted);
+}

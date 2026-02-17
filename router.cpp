@@ -29,15 +29,6 @@ std::vector<std::string> rule_search_dirs()
 std::optional<std::string> resolve_rule_path(const std::string& filename)
 {
     namespace fs = std::filesystem;
-    if (filename.find('/') != std::string::npos || filename.find('\\') != std::string::npos)
-    {
-        if (fs::exists(filename))
-        {
-            return filename;
-        }
-        return std::nullopt;
-    }
-
     for (const auto& dir : rule_search_dirs())
     {
         fs::path path = (dir == ".") ? fs::path(filename) : fs::path(dir) / filename;
