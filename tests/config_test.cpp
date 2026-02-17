@@ -227,6 +227,16 @@ TEST_F(config_test, InvalidJson)
     EXPECT_FALSE(cfg.has_value());
 }
 
+TEST_F(config_test, ParseConfigWithErrorReportsJsonSyntax)
+{
+    write_config_file("{ invalid_json }");
+
+    const auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/");
+    EXPECT_NE(parsed.error().reason.find("json parse error"), std::string::npos);
+}
+
 TEST_F(config_test, ReadErrorReturnsEmptyConfig)
 {
     const std::string content = R"({
@@ -250,6 +260,21 @@ TEST_F(config_test, ReplayCacheMaxEntriesWrongTypeRejected)
 
     const auto cfg_opt = mux::parse_config(tmp_file());
     EXPECT_FALSE(cfg_opt.has_value());
+}
+
+TEST_F(config_test, ParseConfigWithErrorReportsTypeErrorPath)
+{
+    const std::string content = R"({
+        "reality": {
+            "replay_cache_max_entries": "bad"
+        }
+    })";
+    write_config_file(content);
+
+    const auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/reality/replay_cache_max_entries");
+    EXPECT_NE(parsed.error().reason.find("invalid type or value"), std::string::npos);
 }
 
 TEST_F(config_test, MissingFieldsUseDefaults)
@@ -328,6 +353,22 @@ TEST_F(config_test, HeartbeatIntervalRangeRejected)
 
     const auto cfg_opt = mux::parse_config(tmp_file());
     EXPECT_FALSE(cfg_opt.has_value());
+}
+
+TEST_F(config_test, ParseConfigWithErrorReportsValidationPath)
+{
+    const std::string content = R"({
+        "heartbeat": {
+            "min_interval": 30,
+            "max_interval": 10
+        }
+    })";
+    write_config_file(content);
+
+    const auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/heartbeat/min_interval");
+    EXPECT_NE(parsed.error().reason.find("must be less than or equal to max_interval"), std::string::npos);
 }
 
 TEST_F(config_test, HeartbeatZeroIntervalRejected)
