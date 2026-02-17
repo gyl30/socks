@@ -1,4 +1,5 @@
 #include <optional>
+#include <atomic>
 
 #include <asio/write.hpp>
 #include <asio/ip/tcp.hpp>
@@ -192,14 +193,24 @@ asio::awaitable<bool> prepare_remote_target_connection(asio::ip::tcp::resolver& 
                                                        std::shared_ptr<mux_connection> conn,
                                                        std::weak_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> manager,
                                                        const std::uint32_t stream_id,
-                                                       connection_context& ctx)
+                                                       connection_context& ctx,
+                                                       const std::atomic<bool>& reset_requested)
 {
+    if (reset_requested.load(std::memory_order_acquire))
+    {
+        co_return false;
+    }
+
     ctx.set_target(syn.addr, syn.port);
     LOG_CTX_INFO(ctx, "{} connecting {} {}", log_event::kMux, syn.addr, syn.port);
 
     const auto eps = co_await resolve_target_endpoints(resolver, syn, ctx);
     if (!eps.has_value())
     {
+        if (reset_requested.load(std::memory_order_acquire))
+        {
+            co_return false;
+        }
         co_await send_failure_ack_and_reset(manager, conn, stream_id, socks::kRepHostUnreach, ctx);
         co_return false;
     }
@@ -207,7 +218,18 @@ asio::awaitable<bool> prepare_remote_target_connection(asio::ip::tcp::resolver& 
     const auto ep_conn = co_await connect_target_endpoint(target_socket, eps.value(), ctx);
     if (!ep_conn.has_value())
     {
+        if (reset_requested.load(std::memory_order_acquire))
+        {
+            co_return false;
+        }
         co_await send_failure_ack_and_reset(manager, conn, stream_id, socks::kRepConnRefused, ctx);
+        co_return false;
+    }
+
+    if (reset_requested.load(std::memory_order_acquire))
+    {
+        close_target_socket(target_socket);
+        remove_stream(manager, stream_id);
         co_return false;
     }
 
@@ -247,13 +269,31 @@ asio::awaitable<void> remote_session::start(const syn_payload& syn)
 
 asio::awaitable<void> remote_session::run(const syn_payload& syn)
 {
+    if (reset_requested_.load(std::memory_order_acquire))
+    {
+        remove_stream(manager_, id_);
+        co_return;
+    }
+
     auto conn = connection_.lock();
     if (!conn)
     {
         co_return;
     }
-    if (!co_await prepare_remote_target_connection(resolver_, target_socket_, syn, conn, manager_, id_, ctx_))
+    if (!co_await prepare_remote_target_connection(resolver_, target_socket_, syn, conn, manager_, id_, ctx_, reset_requested_))
     {
+        if (reset_requested_.load(std::memory_order_acquire))
+        {
+            close_target_socket(target_socket_);
+            remove_stream(manager_, id_);
+        }
+        co_return;
+    }
+
+    if (reset_requested_.load(std::memory_order_acquire))
+    {
+        close_target_socket(target_socket_);
+        remove_stream(manager_, id_);
         co_return;
     }
 
@@ -315,7 +355,9 @@ void remote_session::close_from_fin()
 
 void remote_session::close_from_reset()
 {
+    reset_requested_.store(true, std::memory_order_release);
     recv_channel_.close();
+    resolver_.cancel();
     std::error_code ec;
     ec = target_socket_.close(ec);
 }
