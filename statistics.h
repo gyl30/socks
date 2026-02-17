@@ -29,7 +29,7 @@ class statistics
 
     struct handshake_failure_sni_metric
     {
-        std::string reason;
+        std::string_view reason;
         std::string sni;
         std::uint64_t count = 0;
     };
@@ -156,14 +156,15 @@ class statistics
         for (std::size_t i = 0; i < static_cast<std::size_t>(handshake_failure_reason::kCount); ++i)
         {
             const auto reason = static_cast<handshake_failure_reason>(i);
+            const std::string_view reason_label = handshake_failure_reason_label(reason);
             const auto& counters = handshake_failure_sni_counters_[i];
             for (const auto& [sni, count] : counters.by_sni)
             {
-                out.push_back({.reason = std::string(handshake_failure_reason_label(reason)), .sni = sni, .count = count});
+                out.push_back({.reason = reason_label, .sni = sni, .count = count});
             }
             if (counters.others > 0)
             {
-                out.push_back({.reason = std::string(handshake_failure_reason_label(reason)), .sni = "others", .count = counters.others});    // GCOVR_EXCL_LINE
+                out.push_back({.reason = reason_label, .sni = "others", .count = counters.others});    // GCOVR_EXCL_LINE
             }
         }
         std::sort(out.begin(),
