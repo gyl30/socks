@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <string_view>
@@ -29,7 +30,7 @@ class statistics
 
     struct handshake_failure_sni_metric
     {
-        std::string reason;
+        std::string_view reason;
         std::string sni;
         std::uint64_t count = 0;
     };
@@ -121,7 +122,7 @@ class statistics
             return;
         }
 
-        const auto key = normalize_sni_metric_key(sni);    // GCOVR_EXCL_LINE
+        const std::string_view key = normalize_sni_metric_key(sni);    // GCOVR_EXCL_LINE
         std::lock_guard<std::mutex> lock(handshake_failure_sni_mu_);    // GCOVR_EXCL_LINE
         auto& counters = handshake_failure_sni_counters_[reason_index];
         const auto it = counters.by_sni.find(key);    // GCOVR_EXCL_LINE
@@ -132,7 +133,7 @@ class statistics
         }
         if (counters.by_sni.size() < kMaxTrackedSniPerReason)
         {
-            counters.by_sni.emplace(key, 1);    // GCOVR_EXCL_LINE
+            counters.by_sni.emplace(std::string(key), 1);    // GCOVR_EXCL_LINE
             return;
         }
         counters.others++;
@@ -142,17 +143,29 @@ class statistics
     {
         std::vector<handshake_failure_sni_metric> out;
         std::lock_guard<std::mutex> lock(handshake_failure_sni_mu_);
+        std::size_t total_metrics = 0;
+        for (std::size_t i = 0; i < static_cast<std::size_t>(handshake_failure_reason::kCount); ++i)
+        {
+            const auto& counters = handshake_failure_sni_counters_[i];
+            total_metrics += counters.by_sni.size();
+            if (counters.others > 0)
+            {
+                ++total_metrics;
+            }
+        }
+        out.reserve(total_metrics);
         for (std::size_t i = 0; i < static_cast<std::size_t>(handshake_failure_reason::kCount); ++i)
         {
             const auto reason = static_cast<handshake_failure_reason>(i);
+            const std::string_view reason_label = handshake_failure_reason_label(reason);
             const auto& counters = handshake_failure_sni_counters_[i];
             for (const auto& [sni, count] : counters.by_sni)
             {
-                out.push_back({.reason = std::string(handshake_failure_reason_label(reason)), .sni = sni, .count = count});
+                out.push_back({.reason = reason_label, .sni = sni, .count = count});
             }
             if (counters.others > 0)
             {
-                out.push_back({.reason = std::string(handshake_failure_reason_label(reason)), .sni = "others", .count = counters.others});    // GCOVR_EXCL_LINE
+                out.push_back({.reason = reason_label, .sni = "others", .count = counters.others});    // GCOVR_EXCL_LINE
             }
         }
         std::sort(out.begin(),
@@ -190,18 +203,38 @@ class statistics
     }
 
    private:
-    static std::string normalize_sni_metric_key(const std::string_view sni)
+    static std::string_view normalize_sni_metric_key(const std::string_view sni)
     {
         if (sni.empty())
         {
             return "empty";    // GCOVR_EXCL_LINE
         }
-        return std::string(sni);    // GCOVR_EXCL_LINE
+        return sni;    // GCOVR_EXCL_LINE
     }
+
+    struct transparent_string_hash
+    {
+        using is_transparent = void;
+
+        [[nodiscard]] std::size_t operator()(const std::string_view value) const noexcept
+        {
+            return std::hash<std::string_view>{}(value);
+        }
+    };
+
+    struct transparent_string_equal
+    {
+        using is_transparent = void;
+
+        [[nodiscard]] bool operator()(const std::string_view lhs, const std::string_view rhs) const noexcept
+        {
+            return lhs == rhs;
+        }
+    };
 
     struct handshake_failure_sni_counter
     {
-        std::unordered_map<std::string, std::uint64_t> by_sni;
+        std::unordered_map<std::string, std::uint64_t, transparent_string_hash, transparent_string_equal> by_sni;
         std::uint64_t others = 0;
     };
 
