@@ -15,8 +15,8 @@
 - `socks.enabled`：是否启用 SOCKS5 入站（默认 `true`）。
 - `socks.host` / `socks.port`：本地 SOCKS5 监听地址与端口。
 - `socks.auth` / `socks.username` / `socks.password`：SOCKS5 认证配置。
-  - 当 `socks.auth = true` 且 `socks.username` 与 `socks.password` 均非空时，启用用户名/密码认证。
-  - 当用户名或密码任一为空时，跳过身份验证，按无认证方式协商。
+  - 当 `socks.auth = true` 时，`socks.username` 与 `socks.password` 必须均为非空字符串。
+  - 任一为空会在配置解析阶段直接报错。
 - `tproxy.enabled`：是否启用 TPROXY 入站（默认 `false`）。
 - `tproxy.listen_host`：TPROXY 监听地址（默认 `::`）。
 - `tproxy.tcp_port` / `tproxy.udp_port`：TPROXY TCP/UDP 端口。`udp_port = 0` 表示跟随 `tcp_port`。

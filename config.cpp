@@ -92,6 +92,23 @@ namespace
     return {};
 }
 
+[[nodiscard]] std::expected<void, config_error> validate_socks_config(const config::socks_t& socks)
+{
+    if (!socks.enabled || !socks.auth)
+    {
+        return {};
+    }
+    if (socks.username.empty())
+    {
+        return std::unexpected(make_config_error("/socks/username", "must be non-empty when auth is enabled"));
+    }
+    if (socks.password.empty())
+    {
+        return std::unexpected(make_config_error("/socks/password", "must be non-empty when auth is enabled"));
+    }
+    return {};
+}
+
 [[nodiscard]] bool has_enabled_client_inbound(const config& cfg)
 {
 #ifdef __linux__
@@ -110,6 +127,10 @@ namespace
     if (const auto heartbeat_result = validate_heartbeat_config(cfg.heartbeat); !heartbeat_result)
     {
         return std::unexpected(heartbeat_result.error());
+    }
+    if (const auto socks_result = validate_socks_config(cfg.socks); !socks_result)
+    {
+        return std::unexpected(socks_result.error());
     }
     if (cfg.mode == "client" && !has_enabled_client_inbound(cfg))
     {

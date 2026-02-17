@@ -605,3 +605,78 @@ TEST_F(config_test, ContractMatrixMonitorRulesStayAlignedWithDocumentation)
     EXPECT_TRUE(
         mux::detail::allow_monitor_request_by_source(rate_state, "127.0.0.1", parsed->monitor.min_interval_ms, now + std::chrono::milliseconds(130)));
 }
+
+TEST_F(config_test, SocksAuthEnabledRequiresNonEmptyCredentials)
+{
+    write_config_file(R"({
+        "socks": {
+            "enabled": true,
+            "auth": true,
+            "username": "",
+            "password": "pass"
+        }
+    })");
+    auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/socks/username");
+    EXPECT_NE(parsed.error().reason.find("must be non-empty when auth is enabled"), std::string::npos);
+
+    write_config_file(R"({
+        "socks": {
+            "enabled": true,
+            "auth": true,
+            "username": "user",
+            "password": ""
+        }
+    })");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/socks/password");
+    EXPECT_NE(parsed.error().reason.find("must be non-empty when auth is enabled"), std::string::npos);
+
+    write_config_file(R"({
+        "socks": {
+            "enabled": true,
+            "auth": true,
+            "username": "user",
+            "password": "pass"
+        }
+    })");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_TRUE(parsed->socks.auth);
+    EXPECT_EQ(parsed->socks.username, "user");
+    EXPECT_EQ(parsed->socks.password, "pass");
+}
+
+TEST_F(config_test, ContractMatrixSocksAuthRulesStayAlignedWithDocumentation)
+{
+    const auto doc = load_configuration_doc();
+    ASSERT_FALSE(doc.empty());
+    EXPECT_NE(doc.find("当 `socks.auth = true` 时，`socks.username` 与 `socks.password` 必须均为非空字符串"), std::string::npos);
+    EXPECT_NE(doc.find("任一为空会在配置解析阶段直接报错"), std::string::npos);
+
+    write_config_file(R"({
+        "socks": {
+            "enabled": true,
+            "auth": true,
+            "username": "",
+            "password": "pass"
+        }
+    })");
+    auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/socks/username");
+
+    write_config_file(R"({
+        "socks": {
+            "enabled": true,
+            "auth": true,
+            "username": "user",
+            "password": ""
+        }
+    })");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/socks/password");
+}
