@@ -1,5 +1,7 @@
 #include <atomic>
+#include <cstdlib>
 #include <cstdint>
+#include <new>
 #include <thread>
 #include <vector>
 
@@ -21,8 +23,30 @@ enum class keygen_mode : std::uint8_t
 
 std::atomic<keygen_mode> g_keygen_mode{keygen_mode::kSuccess};
 std::atomic<std::uint8_t> g_seed{1};
+std::atomic<bool> g_fail_nothrow_new_once{false};
 
 }    // namespace
+
+void* operator new(std::size_t size, const std::nothrow_t&) noexcept
+{
+    if (g_fail_nothrow_new_once.exchange(false, std::memory_order_acq_rel))
+    {
+        return nullptr;
+    }
+    try
+    {
+        return ::operator new(size);
+    }
+    catch (...)
+    {
+        return nullptr;
+    }
+}
+
+void operator delete(void* ptr, const std::nothrow_t&) noexcept
+{
+    ::operator delete(ptr);
+}
 
 namespace reality
 {
@@ -156,4 +180,19 @@ TEST(KeyRotatorTest, FallbackCompareExchangeFailureReturnsNullWhenStillRotating)
     EXPECT_EQ(key, nullptr);
 
     rotator.rotating_.store(false, std::memory_order_release);
+}
+
+TEST(KeyRotatorTest, RotateReturnsFalseWhenKeyAllocationFails)
+{
+    g_keygen_mode.store(keygen_mode::kSuccess, std::memory_order_relaxed);
+    reality::key_rotator rotator(std::chrono::seconds(60));
+
+    const auto before = rotator.get_current_key();
+    ASSERT_NE(before, nullptr);
+
+    g_fail_nothrow_new_once.store(true, std::memory_order_release);
+    EXPECT_FALSE(rotator.rotate());
+
+    const auto after = rotator.get_current_key();
+    EXPECT_EQ(after, before);
 }

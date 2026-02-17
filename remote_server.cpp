@@ -60,6 +60,7 @@ namespace
 
 constexpr std::uint32_t kEphemeralServerBindRetryAttempts = 120;
 const auto kEphemeralServerBindRetryDelay = std::chrono::milliseconds(25);
+constexpr std::size_t kFallbackGuardMaxSources = 4096;
 
 bool parse_hex_to_bytes(const std::string& hex, std::vector<std::uint8_t>& out, const std::size_t max_len, const char* label)
 {
@@ -150,6 +151,29 @@ struct timed_socket_read_res
     std::error_code ec;
 };
 
+struct timed_socket_write_res
+{
+    bool ok = false;
+    bool timed_out = false;
+    std::size_t write_size = 0;
+    std::error_code ec;
+};
+
+struct timed_socket_resolve_res
+{
+    bool ok = false;
+    bool timed_out = false;
+    asio::ip::tcp::resolver::results_type endpoints;
+    std::error_code ec;
+};
+
+struct timed_socket_connect_res
+{
+    bool ok = false;
+    bool timed_out = false;
+    std::error_code ec;
+};
+
 [[nodiscard]] bool should_skip_fallback_after_read_failure(const std::error_code& read_ec, const std::atomic<bool>& stop_flag)
 {
     if (stop_flag.load(std::memory_order_acquire))
@@ -213,17 +237,262 @@ asio::awaitable<timed_socket_read_res> read_socket_with_timeout(const std::share
         co_return timed_socket_read_res{
             .ok = false,
             .timed_out = true,
+            .read_size = read_size,
             .ec = asio::error::timed_out};
     }
     if (read_ec)
     {
         co_return timed_socket_read_res{
             .ok = false,
+            .read_size = read_size,
             .ec = read_ec};
     }
     co_return timed_socket_read_res{
         .ok = true,
         .read_size = read_size};
+}
+
+asio::awaitable<timed_socket_read_res> read_socket_exact_with_optional_timeout(const std::shared_ptr<asio::ip::tcp::socket>& socket,
+                                                                               const asio::mutable_buffer buffer,
+                                                                               asio::io_context* io_context,
+                                                                               const std::uint32_t timeout_sec)
+{
+    if (io_context != nullptr && timeout_sec > 0)
+    {
+        co_return co_await read_socket_with_timeout(socket, buffer, *io_context, timeout_sec, true);
+    }
+
+    const auto [read_ec, read_size] = co_await asio::async_read(*socket, buffer, asio::as_tuple(asio::use_awaitable));
+    if (read_ec)
+    {
+        co_return timed_socket_read_res{
+            .ok = false,
+            .read_size = read_size,
+            .ec = read_ec};
+    }
+
+    co_return timed_socket_read_res{
+        .ok = true,
+        .read_size = read_size};
+}
+
+asio::awaitable<timed_socket_write_res> write_socket_with_timeout(const std::shared_ptr<asio::ip::tcp::socket>& socket,
+                                                                  const asio::const_buffer buffer,
+                                                                  asio::io_context& io_context,
+                                                                  const std::uint32_t timeout_sec)
+{
+    auto timer = std::make_shared<asio::steady_timer>(io_context);
+    auto timeout_triggered = std::make_shared<std::atomic<bool>>(false);
+    timer->expires_after(std::chrono::seconds(timeout_sec));
+    timer->async_wait(
+        [socket, timeout_triggered](const std::error_code& timer_ec)
+        {
+            if (timer_ec)
+            {
+                return;
+            }
+            timeout_triggered->store(true, std::memory_order_release);
+            std::error_code cancel_ec;
+            socket->cancel(cancel_ec);
+            if (cancel_ec && cancel_ec != asio::error::bad_descriptor)
+            {
+                LOG_WARN("cancel timeout socket failed {}", cancel_ec.message());
+            }
+
+            std::error_code close_ec;
+            close_ec = socket->close(close_ec);
+            if (close_ec && close_ec != asio::error::bad_descriptor)
+            {
+                LOG_WARN("close timeout socket failed {}", close_ec.message());
+            }
+        });
+
+    const auto [write_ec, write_n] = co_await asio::async_write(*socket, buffer, asio::as_tuple(asio::use_awaitable));
+    const auto cancelled = timer->cancel();
+    (void)cancelled;
+    if (timeout_triggered->load(std::memory_order_acquire))
+    {
+        co_return timed_socket_write_res{
+            .ok = false,
+            .timed_out = true,
+            .write_size = write_n,
+            .ec = asio::error::timed_out};
+    }
+    if (write_ec)
+    {
+        co_return timed_socket_write_res{
+            .ok = false,
+            .write_size = write_n,
+            .ec = write_ec};
+    }
+    co_return timed_socket_write_res{
+        .ok = true,
+        .write_size = write_n};
+}
+
+asio::awaitable<timed_socket_write_res> write_socket_with_optional_timeout(const std::shared_ptr<asio::ip::tcp::socket>& socket,
+                                                                           const asio::const_buffer buffer,
+                                                                           asio::io_context* io_context,
+                                                                           const std::uint32_t timeout_sec)
+{
+    if (io_context != nullptr && timeout_sec > 0)
+    {
+        co_return co_await write_socket_with_timeout(socket, buffer, *io_context, timeout_sec);
+    }
+
+    const auto [write_ec, write_n] = co_await asio::async_write(*socket, buffer, asio::as_tuple(asio::use_awaitable));
+    if (write_ec)
+    {
+        co_return timed_socket_write_res{
+            .ok = false,
+            .write_size = write_n,
+            .ec = write_ec};
+    }
+    co_return timed_socket_write_res{
+        .ok = true,
+        .write_size = write_n};
+}
+
+asio::awaitable<timed_socket_resolve_res> resolve_socket_with_timeout(asio::io_context& io_context,
+                                                                      const std::string& host,
+                                                                      const std::string& port,
+                                                                      const std::uint32_t timeout_sec)
+{
+    asio::ip::tcp::resolver resolver(io_context);
+    auto timer = std::make_shared<asio::steady_timer>(io_context);
+    auto timeout_triggered = std::make_shared<std::atomic<bool>>(false);
+    timer->expires_after(std::chrono::seconds(timeout_sec));
+    timer->async_wait(
+        [resolver_ptr = &resolver, timeout_triggered](const std::error_code& timer_ec)
+        {
+            if (timer_ec)
+            {
+                return;
+            }
+            timeout_triggered->store(true, std::memory_order_release);
+            resolver_ptr->cancel();
+        });
+
+    const auto [resolve_ec, endpoints] = co_await resolver.async_resolve(host, port, asio::as_tuple(asio::use_awaitable));
+    const auto cancelled = timer->cancel();
+    (void)cancelled;
+    if (timeout_triggered->load(std::memory_order_acquire))
+    {
+        co_return timed_socket_resolve_res{
+            .ok = false,
+            .timed_out = true,
+            .ec = asio::error::timed_out};
+    }
+    if (resolve_ec)
+    {
+        co_return timed_socket_resolve_res{
+            .ok = false,
+            .ec = resolve_ec};
+    }
+    co_return timed_socket_resolve_res{
+        .ok = true,
+        .endpoints = endpoints};
+}
+
+asio::awaitable<timed_socket_resolve_res> resolve_socket_with_optional_timeout(asio::io_context& io_context,
+                                                                               const std::string& host,
+                                                                               const std::string& port,
+                                                                               const std::uint32_t timeout_sec)
+{
+    if (timeout_sec > 0)
+    {
+        co_return co_await resolve_socket_with_timeout(io_context, host, port, timeout_sec);
+    }
+
+    asio::ip::tcp::resolver resolver(io_context);
+    const auto [resolve_ec, endpoints] = co_await resolver.async_resolve(host, port, asio::as_tuple(asio::use_awaitable));
+    if (resolve_ec)
+    {
+        co_return timed_socket_resolve_res{
+            .ok = false,
+            .ec = resolve_ec};
+    }
+
+    co_return timed_socket_resolve_res{
+        .ok = true,
+        .endpoints = endpoints};
+}
+
+asio::awaitable<timed_socket_connect_res> connect_socket_with_timeout(
+    const std::shared_ptr<asio::ip::tcp::socket>& socket,
+    const asio::ip::tcp::resolver::results_type& endpoints,
+    asio::io_context& io_context,
+    const std::uint32_t timeout_sec)
+{
+    auto timer = std::make_shared<asio::steady_timer>(io_context);
+    auto timeout_triggered = std::make_shared<std::atomic<bool>>(false);
+    timer->expires_after(std::chrono::seconds(timeout_sec));
+    timer->async_wait(
+        [socket, timeout_triggered](const std::error_code& timer_ec)
+        {
+            if (timer_ec)
+            {
+                return;
+            }
+            timeout_triggered->store(true, std::memory_order_release);
+            std::error_code cancel_ec;
+            socket->cancel(cancel_ec);
+            if (cancel_ec && cancel_ec != asio::error::bad_descriptor)
+            {
+                LOG_WARN("cancel timeout socket failed {}", cancel_ec.message());
+            }
+
+            std::error_code close_ec;
+            close_ec = socket->close(close_ec);
+            if (close_ec && close_ec != asio::error::bad_descriptor)
+            {
+                LOG_WARN("close timeout socket failed {}", close_ec.message());
+            }
+        });
+
+    const auto [connect_ec, endpoint] = co_await asio::async_connect(*socket, endpoints, asio::as_tuple(asio::use_awaitable));
+    (void)endpoint;
+    const auto cancelled = timer->cancel();
+    (void)cancelled;
+    if (timeout_triggered->load(std::memory_order_acquire))
+    {
+        co_return timed_socket_connect_res{
+            .ok = false,
+            .timed_out = true,
+            .ec = asio::error::timed_out};
+    }
+    if (connect_ec)
+    {
+        co_return timed_socket_connect_res{
+            .ok = false,
+            .ec = connect_ec};
+    }
+    co_return timed_socket_connect_res{
+        .ok = true};
+}
+
+asio::awaitable<timed_socket_connect_res> connect_socket_with_optional_timeout(
+    const std::shared_ptr<asio::ip::tcp::socket>& socket,
+    const asio::ip::tcp::resolver::results_type& endpoints,
+    asio::io_context* io_context,
+    const std::uint32_t timeout_sec)
+{
+    if (io_context != nullptr && timeout_sec > 0)
+    {
+        co_return co_await connect_socket_with_timeout(socket, endpoints, *io_context, timeout_sec);
+    }
+
+    const auto [connect_ec, endpoint] = co_await asio::async_connect(*socket, endpoints, asio::as_tuple(asio::use_awaitable));
+    (void)endpoint;
+    if (connect_ec)
+    {
+        co_return timed_socket_connect_res{
+            .ok = false,
+            .ec = connect_ec};
+    }
+
+    co_return timed_socket_connect_res{
+        .ok = true};
 }
 
 std::optional<std::pair<std::string, std::string>> find_exact_sni_fallback(const std::vector<config::fallback_entry>& fallbacks,
@@ -809,68 +1078,95 @@ std::uint16_t select_cipher_suite_from_fingerprint(const reality::server_fingerp
     return normalize_cipher_suite(fingerprint.cipher_suite != 0 ? fingerprint.cipher_suite : 0x1301);
 }
 
-asio::awaitable<bool> read_tls_record_header_allow_ccs(const std::shared_ptr<asio::ip::tcp::socket>& socket,
-                                                       std::array<std::uint8_t, 5>& header,
-                                                       const connection_context& ctx)
+asio::awaitable<std::error_code> read_tls_record_header_allow_ccs(const std::shared_ptr<asio::ip::tcp::socket>& socket,
+                                                                  std::array<std::uint8_t, 5>& header,
+                                                                  const connection_context& ctx,
+                                                                  asio::io_context* io_context,
+                                                                  const std::uint32_t timeout_sec)
 {
-    const auto [read_ec, read_n] = co_await asio::async_read(*socket, asio::buffer(header), asio::as_tuple(asio::use_awaitable));
-    (void)read_n;
-    if (read_ec)
+    const auto read_header = co_await read_socket_exact_with_optional_timeout(socket, asio::buffer(header), io_context, timeout_sec);
+    if (!read_header.ok)
     {
-        LOG_CTX_ERROR(ctx, "{} read client finished header error {}", log_event::kHandshake, read_ec.message());
-        co_return false;
+        statistics::instance().inc_client_finished_failures();
+        if (read_header.timed_out)
+        {
+            LOG_CTX_WARN(ctx, "{} read client finished header timed out {}s", log_event::kHandshake, timeout_sec);
+            co_return asio::error::timed_out;
+        }
+        LOG_CTX_ERROR(ctx, "{} read client finished header error {}", log_event::kHandshake, read_header.ec.message());
+        co_return read_header.ec;
     }
 
     if (header[0] != 0x14)
     {
-        co_return true;
+        co_return std::error_code{};
     }
 
     const auto ccs_len = static_cast<std::uint16_t>((header[3] << 8) | header[4]);
     if (ccs_len != 1)
     {
+        statistics::instance().inc_client_finished_failures();
         LOG_CTX_ERROR(ctx, "{} invalid ccs length {}", log_event::kHandshake, ccs_len);
-        co_return false;
+        co_return std::make_error_code(std::errc::bad_message);
     }
 
     std::array<std::uint8_t, 1> ccs_body = {0};
-    const auto [read_ccs_ec, read_ccs_n] = co_await asio::async_read(*socket, asio::buffer(ccs_body), asio::as_tuple(asio::use_awaitable));
-    (void)read_ccs_n;
-    if (read_ccs_ec)
+    const auto read_ccs = co_await read_socket_exact_with_optional_timeout(socket, asio::buffer(ccs_body), io_context, timeout_sec);
+    if (!read_ccs.ok)
     {
-        LOG_CTX_ERROR(ctx, "{} read ccs error {}", log_event::kHandshake, read_ccs_ec.message());
-        co_return false;
+        statistics::instance().inc_client_finished_failures();
+        if (read_ccs.timed_out)
+        {
+            LOG_CTX_WARN(ctx, "{} read ccs timed out {}s", log_event::kHandshake, timeout_sec);
+            co_return asio::error::timed_out;
+        }
+        LOG_CTX_ERROR(ctx, "{} read ccs error {}", log_event::kHandshake, read_ccs.ec.message());
+        co_return read_ccs.ec;
     }
     if (!reality::is_valid_tls13_compat_ccs(header, ccs_body[0]))
     {
+        statistics::instance().inc_client_finished_failures();
         LOG_CTX_ERROR(ctx, "{} invalid ccs body {}", log_event::kHandshake, ccs_body[0]);
-        co_return false;
+        co_return std::make_error_code(std::errc::bad_message);
     }
 
-    const auto [read_ec2, read_n2] = co_await asio::async_read(*socket, asio::buffer(header), asio::as_tuple(asio::use_awaitable));
-    (void)read_n2;
-    if (read_ec2)
+    const auto read_header_after_ccs =
+        co_await read_socket_exact_with_optional_timeout(socket, asio::buffer(header), io_context, timeout_sec);
+    if (!read_header_after_ccs.ok)
     {
-        LOG_CTX_ERROR(ctx, "{} read client finished header after ccs error {}", log_event::kHandshake, read_ec2.message());
-        co_return false;
+        statistics::instance().inc_client_finished_failures();
+        if (read_header_after_ccs.timed_out)
+        {
+            LOG_CTX_WARN(ctx, "{} read client finished header after ccs timed out {}s", log_event::kHandshake, timeout_sec);
+            co_return asio::error::timed_out;
+        }
+        LOG_CTX_ERROR(ctx, "{} read client finished header after ccs error {}", log_event::kHandshake, read_header_after_ccs.ec.message());
+        co_return read_header_after_ccs.ec;
     }
-    co_return true;
+    co_return std::error_code{};
 }
 
-asio::awaitable<bool> read_tls_record_body(const std::shared_ptr<asio::ip::tcp::socket>& socket,
-                                           const std::uint16_t body_len,
-                                           std::vector<std::uint8_t>& body,
-                                           const connection_context& ctx)
+asio::awaitable<std::error_code> read_tls_record_body(const std::shared_ptr<asio::ip::tcp::socket>& socket,
+                                                      const std::uint16_t body_len,
+                                                      std::vector<std::uint8_t>& body,
+                                                      const connection_context& ctx,
+                                                      asio::io_context* io_context,
+                                                      const std::uint32_t timeout_sec)
 {
     body.assign(body_len, 0);
-    const auto [read_ec, read_n] = co_await asio::async_read(*socket, asio::buffer(body), asio::as_tuple(asio::use_awaitable));
-    (void)read_n;
-    if (read_ec)
+    const auto read_body = co_await read_socket_exact_with_optional_timeout(socket, asio::buffer(body), io_context, timeout_sec);
+    if (!read_body.ok)
     {
-        LOG_CTX_ERROR(ctx, "{} read client finished body error {}", log_event::kHandshake, read_ec.message());
-        co_return false;
+        statistics::instance().inc_client_finished_failures();
+        if (read_body.timed_out)
+        {
+            LOG_CTX_WARN(ctx, "{} read client finished body timed out {}s", log_event::kHandshake, timeout_sec);
+            co_return asio::error::timed_out;
+        }
+        LOG_CTX_ERROR(ctx, "{} read client finished body error {}", log_event::kHandshake, read_body.ec.message());
+        co_return read_body.ec;
     }
-    co_return true;
+    co_return std::error_code{};
 }
 
 std::vector<std::uint8_t> compose_tls_record(const std::array<std::uint8_t, 5>& header, const std::vector<std::uint8_t>& body)
@@ -948,23 +1244,36 @@ asio::awaitable<bool> resolve_and_connect_fallback_target(const std::shared_ptr<
                                                           asio::io_context& io_context,
                                                           const std::string& target_host,
                                                           const std::string& target_port,
-                                                          const connection_context& ctx)
+                                                          const connection_context& ctx,
+                                                          const std::uint32_t timeout_sec)
 {
-    asio::ip::tcp::resolver resolver(io_context);
-    const auto [resolve_ec, endpoints] = co_await resolver.async_resolve(target_host, target_port, asio::as_tuple(asio::use_awaitable));
-    if (resolve_ec)
+    const auto resolve_res = co_await resolve_socket_with_optional_timeout(io_context, target_host, target_port, timeout_sec);
+    if (!resolve_res.ok)
     {
         statistics::instance().inc_fallback_resolve_failures();
-        LOG_CTX_WARN(ctx, "{} resolve failed {}", log_event::kFallback, resolve_ec.message());
+        if (resolve_res.timed_out)
+        {
+            LOG_CTX_WARN(ctx, "{} resolve timed out {}s", log_event::kFallback, timeout_sec);
+        }
+        else
+        {
+            LOG_CTX_WARN(ctx, "{} resolve failed {}", log_event::kFallback, resolve_res.ec.message());
+        }
         co_return false;
     }
 
-    const auto [connect_ec, endpoint] = co_await asio::async_connect(*target_socket, endpoints, asio::as_tuple(asio::use_awaitable));
-    (void)endpoint;
-    if (connect_ec)
+    const auto connect_res = co_await connect_socket_with_optional_timeout(target_socket, resolve_res.endpoints, &io_context, timeout_sec);
+    if (!connect_res.ok)
     {
         statistics::instance().inc_fallback_connect_failures();
-        LOG_CTX_WARN(ctx, "{} connect target failed {}", log_event::kFallback, connect_ec.message());
+        if (connect_res.timed_out)
+        {
+            LOG_CTX_WARN(ctx, "{} connect target timed out {}s", log_event::kFallback, timeout_sec);
+        }
+        else
+        {
+            LOG_CTX_WARN(ctx, "{} connect target failed {}", log_event::kFallback, connect_res.ec.message());
+        }
         co_return false;
     }
     co_return true;
@@ -972,18 +1281,24 @@ asio::awaitable<bool> resolve_and_connect_fallback_target(const std::shared_ptr<
 
 asio::awaitable<bool> write_fallback_initial_buffer(const std::shared_ptr<asio::ip::tcp::socket>& target_socket,
                                                     const std::vector<std::uint8_t>& buf,
-                                                    const connection_context& ctx)
+                                                    const connection_context& ctx,
+                                                    asio::io_context* io_context,
+                                                    const std::uint32_t timeout_sec)
 {
     if (buf.empty())
     {
         co_return true;
     }
 
-    const auto [write_ec, write_n] = co_await asio::async_write(*target_socket, asio::buffer(buf), asio::as_tuple(asio::use_awaitable));
-    (void)write_n;
-    if (write_ec)
+    const auto write_res = co_await write_socket_with_optional_timeout(target_socket, asio::buffer(buf), io_context, timeout_sec);
+    if (!write_res.ok)
     {
         statistics::instance().inc_fallback_write_failures();
+        if (write_res.timed_out)
+        {
+            LOG_CTX_WARN(ctx, "{} write initial buf timed out {}s", log_event::kFallback, timeout_sec);
+            co_return false;
+        }
         LOG_CTX_WARN(ctx, "{} write initial buf failed", log_event::kFallback);
         co_return false;
     }
@@ -1587,7 +1902,10 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::negotiate_re
         co_return server_handshake_res{.ok = false};
     }
 
-    if (const auto ec = co_await verify_client_finished(s, sh_res.c_hs_keys, sh_res.hs_keys, trans, sh_res.cipher, sh_res.negotiated_md, ctx); ec)
+    const auto verify_timeout_sec = std::max<std::uint32_t>(1, timeout_config_.read);
+    if (const auto ec =
+            co_await verify_client_finished(s, sh_res.c_hs_keys, sh_res.hs_keys, trans, sh_res.cipher, sh_res.negotiated_md, ctx, &io_context_, verify_timeout_sec);
+        ec)
     {
         co_return server_handshake_res{.ok = false};
     }
@@ -1665,12 +1983,40 @@ asio::awaitable<remote_server::initial_read_res> remote_server::read_initial_and
         }
         co_return initial_read_res{.ok = false, .allow_fallback = false, .ec = first_read.ec};
     }
-    const auto n = first_read.read_size;
-    buf.resize(n);
-    if (n < 5)
+    buf.resize(first_read.read_size);
+    while (buf.size() < 5)
     {
-        LOG_CTX_WARN(ctx, "{} invalid tls header short read {}", log_event::kHandshake, n);
-        co_return initial_read_res{.ok = false, .allow_fallback = true};
+        if (stop_.load(std::memory_order_acquire))
+        {
+            co_return initial_read_res{.ok = false, .allow_fallback = false, .ec = asio::error::operation_aborted};
+        }
+        std::vector<std::uint8_t> header_remaining(5 - buf.size());
+        const auto header_read = co_await read_socket_with_timeout(s, asio::buffer(header_remaining), io_context_, timeout_sec, true);
+        if (!header_read.ok)
+        {
+            if (header_read.read_size > 0)
+            {
+                header_remaining.resize(header_read.read_size);
+                buf.insert(buf.end(), header_remaining.begin(), header_remaining.end());
+            }
+            if (header_read.timed_out)
+            {
+                LOG_CTX_WARN(ctx, "{} header read timed out {}s", log_event::kHandshake, timeout_sec);
+                co_return initial_read_res{.ok = false, .allow_fallback = false, .ec = header_read.ec};
+            }
+            if (header_read.ec == asio::error::eof)
+            {
+                LOG_CTX_WARN(ctx, "{} invalid tls header short read {}", log_event::kHandshake, buf.size());
+                co_return initial_read_res{.ok = false, .allow_fallback = true, .ec = header_read.ec};
+            }
+            if (!should_skip_fallback_after_read_failure(header_read.ec, stop_))
+            {
+                LOG_CTX_ERROR(ctx, "{} header read error {}", log_event::kHandshake, header_read.ec.message());
+            }
+            co_return initial_read_res{.ok = false, .allow_fallback = false, .ec = header_read.ec};
+        }
+        header_remaining.resize(header_read.read_size);
+        buf.insert(buf.end(), header_remaining.begin(), header_remaining.end());
     }
 
     if (buf[0] != 0x16)
@@ -1808,7 +2154,8 @@ asio::awaitable<remote_server::server_handshake_res> remote_server::perform_hand
     }
     const auto& crypto = *crypto_result;
 
-    if (const auto ec = co_await send_server_hello_flight(s, crypto.sh_msg, crypto.flight2_enc, ctx); ec)
+    const auto write_timeout_sec = std::max<std::uint32_t>(1, timeout_config_.write);
+    if (const auto ec = co_await send_server_hello_flight(s, crypto.sh_msg, crypto.flight2_enc, ctx, &io_context_, write_timeout_sec); ec)
     {
         co_return server_handshake_res{.ok = false, .ec = ec};
     }
@@ -1899,17 +2246,24 @@ asio::awaitable<std::error_code> remote_server::send_server_hello_flight(
     const std::shared_ptr<asio::ip::tcp::socket>& s,
     const std::vector<std::uint8_t>& sh_msg,
     const std::vector<std::uint8_t>& flight2_enc,
-    const connection_context& ctx) const
+    const connection_context& ctx,
+    asio::io_context* io_context,
+    const std::uint32_t timeout_sec) const
 {
     LOG_CTX_INFO(ctx, "generated sh msg size {}", sh_msg.size());
     const auto out_sh = compose_server_hello_flight(sh_msg, flight2_enc);
     LOG_CTX_INFO(ctx, "total out sh size {}", out_sh.size());
     LOG_CTX_DEBUG(ctx, "{} sending server hello flight size {}", log_event::kHandshake, out_sh.size());
-    const auto [we, wn] = co_await asio::async_write(*s, asio::buffer(out_sh), asio::as_tuple(asio::use_awaitable));
-    (void)wn;
-    if (we)
+    const auto write_res = co_await write_socket_with_optional_timeout(s, asio::buffer(out_sh), io_context, timeout_sec);
+    if (!write_res.ok)
     {
-        co_return we;
+        if (write_res.timed_out)
+        {
+            LOG_CTX_WARN(ctx, "{} write server hello timed out {}s", log_event::kHandshake, timeout_sec);
+            co_return asio::error::timed_out;
+        }
+        LOG_CTX_ERROR(ctx, "{} write server hello failed {}", log_event::kHandshake, write_res.ec.message());
+        co_return write_res.ec;
     }
     co_return std::error_code{};
 }
@@ -1921,19 +2275,21 @@ asio::awaitable<std::error_code> remote_server::verify_client_finished(
     const reality::transcript& trans,
     const EVP_CIPHER* cipher,
     const EVP_MD* md,
-    const connection_context& ctx)
+    const connection_context& ctx,
+    asio::io_context* io_context,
+    const std::uint32_t timeout_sec)
 {
     std::array<std::uint8_t, 5> header = {0};
-    if (!co_await read_tls_record_header_allow_ccs(s, header, ctx))
+    if (const auto header_ec = co_await read_tls_record_header_allow_ccs(s, header, ctx, io_context, timeout_sec); header_ec)
     {
-        co_return asio::error::fault;
+        co_return header_ec;
     }
 
     const auto body_len = static_cast<std::uint16_t>((header[3] << 8) | header[4]);
     std::vector<std::uint8_t> body;
-    if (!co_await read_tls_record_body(s, body_len, body, ctx))
+    if (const auto body_ec = co_await read_tls_record_body(s, body_len, body, ctx, io_context, timeout_sec); body_ec)
     {
-        co_return asio::error::fault;
+        co_return body_ec;
     }
 
     const auto record = compose_tls_record(header, body);
@@ -2010,7 +2366,24 @@ bool remote_server::consume_fallback_token(const connection_context& ctx)
     std::lock_guard<std::mutex> lock(fallback_guard_mu_);
     cleanup_fallback_guard_state_locked(now);
 
-    auto& state = fallback_guard_states_[fallback_guard_key(ctx)];
+    const auto source_key = fallback_guard_key(ctx);
+    if (fallback_guard_states_.size() >= kFallbackGuardMaxSources && fallback_guard_states_.find(source_key) == fallback_guard_states_.end())
+    {
+        auto oldest_it = fallback_guard_states_.end();
+        for (auto it = fallback_guard_states_.begin(); it != fallback_guard_states_.end(); ++it)
+        {
+            if (oldest_it == fallback_guard_states_.end() || it->second.last_seen < oldest_it->second.last_seen)
+            {
+                oldest_it = it;
+            }
+        }
+        if (oldest_it != fallback_guard_states_.end())
+        {
+            fallback_guard_states_.erase(oldest_it);
+        }
+    }
+
+    auto& state = fallback_guard_states_[source_key];
     if (state.tokens == 0 && state.last_seen.time_since_epoch().count() == 0)
     {
         state.tokens = static_cast<double>(fallback_guard_config_.burst);
@@ -2106,16 +2479,18 @@ asio::awaitable<void> remote_server::handle_fallback(const std::shared_ptr<asio:
 
     const auto target_host = fallback_target.first;
     const auto target_port = fallback_target.second;
+    const auto connect_timeout_sec = std::max<std::uint32_t>(1, timeout_config_.write);
     auto t = std::make_shared<asio::ip::tcp::socket>(io_context_);
     LOG_CTX_INFO(ctx, "{} proxying sni {} to {} {}", log_event::kFallback, sni, target_host, target_port);
-    if (!co_await resolve_and_connect_fallback_target(t, io_context_, target_host, target_port, ctx))
+    if (!co_await resolve_and_connect_fallback_target(t, io_context_, target_host, target_port, ctx, connect_timeout_sec))
     {
         record_fallback_result(ctx, false);
         close_fallback_socket(t, ctx);
         co_await fallback_wait_and_close_socket(s, ctx, io_context_);
         co_return;
     }
-    if (!co_await write_fallback_initial_buffer(t, buf, ctx))
+    const auto write_timeout_sec = std::max<std::uint32_t>(1, timeout_config_.write);
+    if (!co_await write_fallback_initial_buffer(t, buf, ctx, &io_context_, write_timeout_sec))
     {
         record_fallback_result(ctx, false);
         close_fallback_socket(t, ctx);
