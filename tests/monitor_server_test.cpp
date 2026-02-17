@@ -441,6 +441,17 @@ TEST(MonitorServerTest, RateLimitIsolatedBySourceAddress)
     EXPECT_EQ(rate_state.last_request_time_by_source.count("127.0.0.2"), 1U);
 }
 
+TEST(MonitorServerTest, RateLimitBySourceDisabledWhenMinIntervalZero)
+{
+    monitor_rate_state rate_state;
+    const auto now = std::chrono::steady_clock::now();
+
+    EXPECT_TRUE(detail::allow_monitor_request_by_source(rate_state, "127.0.0.1", 0, now));
+
+    std::lock_guard<std::mutex> lock(rate_state.mutex);
+    EXPECT_TRUE(rate_state.last_request_time_by_source.empty());
+}
+
 TEST(MonitorServerTest, RateLimitStateStaysBounded)
 {
     constexpr std::size_t k_state_limit = 4096;
@@ -478,6 +489,47 @@ TEST(MonitorServerTest, RateLimitStateStaysBounded)
               server->rate_state_->last_request_time_by_source.end());
 }
 
+TEST(MonitorServerTest, RateLimitPruneSkipsEvictionWhenSourceAlreadyTrackedAtCapacity)
+{
+    constexpr std::size_t k_state_limit = 4096;
+
+    monitor_rate_state rate_state;
+    const auto now = std::chrono::steady_clock::now();
+    rate_state.last_request_time_by_source.emplace("hot-source", now - std::chrono::seconds(1));
+    for (std::size_t i = 0; i < k_state_limit - 1; ++i)
+    {
+        rate_state.last_request_time_by_source.emplace("src-" + std::to_string(i), now);
+    }
+    ASSERT_EQ(rate_state.last_request_time_by_source.size(), k_state_limit);
+
+    EXPECT_TRUE(detail::allow_monitor_request_by_source(rate_state, "hot-source", 500, now));
+
+    std::lock_guard<std::mutex> lock(rate_state.mutex);
+    EXPECT_EQ(rate_state.last_request_time_by_source.size(), k_state_limit);
+    EXPECT_EQ(rate_state.last_request_time_by_source.count("hot-source"), 1U);
+}
+
+TEST(MonitorServerTest, RateLimitPruneEvictsOldestSourceWhenCapacityReached)
+{
+    constexpr std::size_t k_state_limit = 4096;
+
+    monitor_rate_state rate_state;
+    const auto now = std::chrono::steady_clock::now();
+    rate_state.last_request_time_by_source.emplace("oldest-source", now - std::chrono::seconds(30));
+    for (std::size_t i = 0; i < k_state_limit - 1; ++i)
+    {
+        rate_state.last_request_time_by_source.emplace("src-" + std::to_string(i), now);
+    }
+    ASSERT_EQ(rate_state.last_request_time_by_source.size(), k_state_limit);
+
+    EXPECT_TRUE(detail::allow_monitor_request_by_source(rate_state, "new-source", 500, now));
+
+    std::lock_guard<std::mutex> lock(rate_state.mutex);
+    EXPECT_EQ(rate_state.last_request_time_by_source.size(), k_state_limit);
+    EXPECT_EQ(rate_state.last_request_time_by_source.count("oldest-source"), 0U);
+    EXPECT_EQ(rate_state.last_request_time_by_source.count("new-source"), 1U);
+}
+
 TEST(MonitorServerTest, RejectsTokenSubstringBypass)
 {
     monitor_server_env env(0, std::string("secret"));
@@ -495,6 +547,16 @@ TEST(MonitorServerTest, RejectsTokenSubstringBypass)
 
     const auto authed = request_with_retry(port, "metrics?token=secret\n");
     EXPECT_NE(authed.find("socks_total_connections "), std::string::npos);
+}
+
+TEST(MonitorServerTest, SupportsMultiParamTokenWithTrimmedLineAndUrlDecoding)
+{
+    monitor_server_env env(0, std::string("a ~"));
+    const auto port = env.port();
+    ASSERT_NE(port, 0);
+
+    const auto authed = request_with_retry(port, "metrics?foo=1&token=a+%7e   \n");
+    EXPECT_NE(authed.find("socks_uptime_seconds "), std::string::npos);
 }
 
 TEST(MonitorServerTest, EnforcesPathAndSupportsHttpUrlDecodedToken)
@@ -577,6 +639,20 @@ TEST(MonitorServerTest, RejectsMalformedHttpRequestLine)
 
     const auto valid = request_with_retry(port, "GET /metrics?token=secret HTTP/1.1\r\n\r\n");
     EXPECT_NE(valid.find("socks_uptime_seconds "), std::string::npos);
+}
+
+TEST(MonitorServerTest, EmptyLineRequestWithEmptyTokenIsRejected)
+{
+    auto& stats = statistics::instance();
+    const auto auth_failures_before = stats.monitor_auth_failures();
+
+    monitor_server_env env(0, std::string());
+    const auto port = env.port();
+    ASSERT_NE(port, 0);
+
+    const auto resp = read_response(port, "\n");
+    EXPECT_TRUE(resp.empty());
+    EXPECT_GT(stats.monitor_auth_failures(), auth_failures_before);
 }
 
 TEST(MonitorServerTest, RejectsOversizedRequestLineAndKeepsServing)
@@ -933,6 +1009,20 @@ TEST(MonitorServerTest, SessionReadErrorPathStillAcceptsNextClient)
     connect_and_close_without_payload(port);
     const auto resp = request_with_retry(port, "metrics\n");
     EXPECT_NE(resp.find("socks_uptime_seconds "), std::string::npos);
+}
+
+TEST(MonitorServerTest, DoAcceptReturnsImmediatelyWhenStopped)
+{
+    asio::io_context ioc;
+    auto server = std::make_shared<monitor_server>(ioc, 0, std::string(), 10);
+    ASSERT_NE(server, nullptr);
+    ASSERT_TRUE(server->acceptor_.is_open());
+
+    server->stop_.store(true, std::memory_order_release);
+    server->do_accept();
+    ioc.poll();
+
+    EXPECT_TRUE(server->acceptor_.is_open());
 }
 
 }    // namespace mux
