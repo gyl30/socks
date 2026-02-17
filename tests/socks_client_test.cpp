@@ -340,6 +340,35 @@ TEST(LocalClientTest, Getters)
     EXPECT_EQ(client->listen_port(), 10082);
 }
 
+TEST(LocalClientTest, RunningRequiresStartedFlag)
+{
+    io_context_pool pool(1);
+    mux::config cfg;
+    cfg.outbound.host = "127.0.0.1";
+    cfg.outbound.port = 12345;
+    cfg.socks.port = 10083;
+    cfg.reality.public_key = std::string(64, 'a');
+    cfg.reality.sni = "example.com";
+
+    auto client = std::make_shared<mux::socks_client>(pool, cfg);
+    EXPECT_FALSE(client->running());
+
+    std::error_code ec;
+    client->acceptor_.open(asio::ip::tcp::v4(), ec);
+    ASSERT_FALSE(ec);
+    EXPECT_TRUE(client->acceptor_.is_open());
+    EXPECT_FALSE(client->running());
+
+    client->started_.store(true, std::memory_order_release);
+    client->stop_.store(false, std::memory_order_release);
+    EXPECT_TRUE(client->running());
+
+    client->stop_.store(true, std::memory_order_release);
+    EXPECT_FALSE(client->running());
+
+    client->acceptor_.close(ec);
+}
+
 TEST(LocalClientTest, StopWhenNotStarted)
 {
     io_context_pool pool(1);
@@ -729,6 +758,32 @@ TEST(LocalClientTest, RouterLoadFailureStopsEarly)
     client->start();
     EXPECT_TRUE(client->stop_.load(std::memory_order_acquire));
     client->stop();
+}
+
+TEST(LocalClientTest, AcceptLoopSkipsSetupWhenStopAlreadySet)
+{
+    io_context_pool pool(1);
+
+    mux::config cfg;
+    cfg.outbound.host = "127.0.0.1";
+    cfg.outbound.port = 1;
+    cfg.socks.host = "127.0.0.1";
+    cfg.socks.port = 0;
+    cfg.reality.public_key = std::string(64, 'a');
+    cfg.reality.sni = "example.com";
+    const auto client = std::make_shared<mux::socks_client>(pool, cfg);
+    client->stop_.store(true, std::memory_order_release);
+
+    auto done = spawn_accept_local_loop(pool.get_io_context(), client);
+    std::thread runner([&pool]() { pool.run(); });
+    EXPECT_EQ(done.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_FALSE(acceptor_is_open(pool.get_io_context(), client));
+
+    pool.stop();
+    if (runner.joinable())
+    {
+        runner.join();
+    }
 }
 
 TEST(LocalClientTest, AcceptLoopSetupHandlesSocketOpenFailure)
