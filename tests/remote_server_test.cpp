@@ -275,6 +275,31 @@ bool wait_for_condition(Predicate predicate,
     return predicate();
 }
 
+auto make_thread_join_guard(std::thread& worker)
+{
+    return make_scoped_exit(
+        [&worker]()
+        {
+            if (worker.joinable())
+            {
+                worker.join();
+            }
+        });
+}
+
+auto make_pool_thread_guard(mux::io_context_pool& pool, std::thread& worker)
+{
+    return make_scoped_exit(
+        [&pool, &worker]()
+        {
+            pool.stop();
+            if (worker.joinable())
+            {
+                worker.join();
+            }
+        });
+}
+
 bool start_server_until_listening(const std::shared_ptr<mux::remote_server>& server,
                                   const std::uint32_t max_attempts = 120,
                                   const std::chrono::milliseconds backoff = std::chrono::milliseconds(25))
@@ -461,6 +486,7 @@ TEST_F(remote_server_test, AuthFailureTriggersFallback)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
+    auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
 
     std::uint16_t server_port = 29911;
     std::uint16_t fallback_port = 29912;
@@ -503,6 +529,7 @@ TEST_F(remote_server_test, AuthFailShortIdMismatch)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
+    auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
 
     std::uint16_t server_port = 29928;
     std::uint16_t fallback_port = 29929;
@@ -545,6 +572,7 @@ TEST_F(remote_server_test, ClockSkewDetected)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
+    auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
 
     std::uint16_t server_port = 29932;
     std::uint16_t fallback_port = 29933;
@@ -587,6 +615,7 @@ TEST_F(remote_server_test, AuthFailInvalidTLSHeader)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
+    auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
 
     std::uint16_t server_port = 29951;
     std::uint16_t fallback_port = 29952;
@@ -627,6 +656,7 @@ TEST_F(remote_server_test, AuthFailBufferTooShort)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
+    auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
 
     std::uint16_t server_port = 29961;
     std::uint16_t fallback_port = 29962;
@@ -669,6 +699,7 @@ TEST_F(remote_server_test, FallbackResolveFail)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
+    auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
 
     std::uint16_t server_port = 29971;
     const auto resolve_fail_before = mux::statistics::instance().fallback_resolve_failures();
@@ -701,6 +732,7 @@ TEST_F(remote_server_test, FallbackConnectFail)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
+    auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
 
     std::uint16_t server_port = 29981;
     const auto connect_fail_before = mux::statistics::instance().fallback_connect_failures();
@@ -732,6 +764,7 @@ TEST_F(remote_server_test, FallbackWriteFailIncrementsMetric)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
+    auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
     auto pool_cleanup = make_scoped_exit(
         [&]()
         {
@@ -812,6 +845,7 @@ TEST_F(remote_server_test, StartRejectsInvalidAuthConfig)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
+    auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
 
     std::uint16_t server_port = 29943;
     std::uint16_t fallback_port = 29944;
@@ -851,6 +885,7 @@ TEST_F(remote_server_test, MultiSNIFallback)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
+    auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
 
     std::uint16_t server_port = 29991;
     std::uint16_t fallback_port_a = 29992;
@@ -917,6 +952,7 @@ TEST_F(remote_server_test, WildcardStarFallback)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
+    auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
 
     const std::uint16_t server_port = pick_free_port();
     const std::uint16_t fallback_port = pick_free_port();
@@ -958,6 +994,7 @@ TEST_F(remote_server_test, RealityDestFallbackUsedWhenNoFallbackEntries)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
+    auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
 
     const std::uint16_t server_port = pick_free_port();
     const std::uint16_t dest_port = pick_free_port();
@@ -1002,6 +1039,7 @@ TEST_F(remote_server_test, ExactSniFallbackPreferredOverRealityDest)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
+    auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
     auto pool_cleanup = make_scoped_exit(
         [&]()
         {
@@ -1103,6 +1141,7 @@ TEST_F(remote_server_test, FallbackGuardRateLimitBlocksFallbackDial)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
+    auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
     auto pool_cleanup = make_scoped_exit(
         [&]()
         {
@@ -1179,6 +1218,7 @@ TEST_F(remote_server_test, FallbackGuardCircuitBreakerBlocksSubsequentAttempt)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
+    auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
     auto pool_cleanup = make_scoped_exit(
         [&]()
         {
@@ -1490,6 +1530,7 @@ TEST_F(remote_server_test, SetCertificateAsyncPathAfterStart)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
+    auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
 
     auto cfg = make_server_cfg(pick_free_port(), {}, "0102030405060708");
     auto server = std::make_shared<mux::remote_server>(pool, cfg);
@@ -1515,6 +1556,7 @@ TEST_F(remote_server_test, SetCertificateReturnsQuicklyWhenIoContextStopped)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
+    auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
 
     auto cfg = make_server_cfg(pick_free_port(), {}, "0102030405060708");
     auto server = std::make_shared<mux::remote_server>(pool, cfg);
@@ -1535,6 +1577,7 @@ TEST_F(remote_server_test, SetCertificateReturnsQuicklyWhenIoContextStopped)
             server->set_certificate(sni, reality::construct_certificate({0x01, 0x02, 0x03}), fingerprint, "trace-stopped");
             done.store(true, std::memory_order_release);
         });
+    auto setter_guard = make_thread_join_guard(setter);
 
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     const bool done_before_poll = done.load(std::memory_order_acquire);
@@ -1567,6 +1610,7 @@ TEST_F(remote_server_test, SetCertificateReturnsWhenAsyncQueueBusy)
     ASSERT_FALSE(ec);
     auto& io_context = pool.get_io_context();
     std::thread pool_thread([&pool] { pool.run(); });
+    auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
 
     auto cfg = make_server_cfg(pick_free_port(), {}, "0102030405060708");
     auto server = std::make_shared<mux::remote_server>(pool, cfg);
@@ -1599,6 +1643,7 @@ TEST_F(remote_server_test, SetCertificateReturnsWhenAsyncQueueBusy)
             server->set_certificate(sni, reality::construct_certificate({0x01, 0x02, 0x03}), fingerprint, "trace-busy");
             setter_done.set_value();
         });
+    auto setter_guard = make_thread_join_guard(setter);
 
     const auto setter_status = setter_done_future.wait_for(std::chrono::milliseconds(500));
     release_blocker.store(true, std::memory_order_release);
@@ -1642,6 +1687,7 @@ TEST_F(remote_server_test, SetCertificateRunsWhenAsyncQueueBlockedThenIoStopped)
     ASSERT_FALSE(ec);
     auto& io_context = pool.get_io_context();
     std::thread pool_thread([&pool] { pool.run(); });
+    auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
 
     auto cfg = make_server_cfg(pick_free_port(), {}, "0102030405060708");
     auto server = std::make_shared<mux::remote_server>(pool, cfg);
@@ -1674,6 +1720,7 @@ TEST_F(remote_server_test, SetCertificateRunsWhenAsyncQueueBlockedThenIoStopped)
             server->set_certificate(sni, reality::construct_certificate({0x01, 0x02, 0x03}), fingerprint, "trace-stop-race");
             setter_done.set_value();
         });
+    auto setter_guard = make_thread_join_guard(setter);
 
     EXPECT_EQ(setter_done_future.wait_for(std::chrono::seconds(1)), std::future_status::ready);
 
@@ -1876,6 +1923,7 @@ TEST_F(remote_server_test, RejectStreamForLimitSendsAckAndReset)
                    asio::detached);
 
     std::thread runner([&pool]() { pool.run(); });
+    auto runner_guard = make_pool_thread_guard(pool, runner);
     EXPECT_EQ(done_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
     pool.stop();
     runner.join();
@@ -1949,6 +1997,7 @@ TEST_F(remote_server_test, PerformHandshakeResponseCoversCipherSuiteSelectionBra
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread runner([&pool]() { pool.run(); });
+    auto runner_guard = make_pool_thread_guard(pool, runner);
 
     auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
 
@@ -2137,6 +2186,7 @@ TEST_F(remote_server_test, PerformHandshakeResponseCoversRandomAndSignKeyFailure
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread runner([&pool]() { pool.run(); });
+    auto runner_guard = make_pool_thread_guard(pool, runner);
 
     auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
     reality::server_fingerprint fp;
@@ -2336,6 +2386,7 @@ TEST_F(remote_server_test, StopCoversAcceptorCloseFailureBranch)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread runner([&pool]() { pool.run(); });
+    auto runner_guard = make_pool_thread_guard(pool, runner);
 
     auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
     server->start();
@@ -2354,6 +2405,7 @@ TEST_F(remote_server_test, StopClosesInFlightHandshakeConnections)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread runner([&pool]() { pool.run(); });
+    auto runner_guard = make_pool_thread_guard(pool, runner);
 
     auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
     ASSERT_TRUE(start_server_until_listening(server));
@@ -2424,6 +2476,7 @@ TEST_F(remote_server_test, HandshakeReadTimeoutReleasesSlotWithoutFallback)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread runner([&pool]() { pool.run(); });
+    auto runner_guard = make_pool_thread_guard(pool, runner);
 
     asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context());
     ASSERT_TRUE(open_ephemeral_acceptor_until_ready(fallback_acceptor));
@@ -2507,6 +2560,7 @@ TEST_F(remote_server_test, DelayAndFallbackShortCircuitsWhenStopRequested)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread runner([&pool]() { pool.run(); });
+    auto runner_guard = make_pool_thread_guard(pool, runner);
 
     auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
     auto socket = std::make_shared<asio::ip::tcp::socket>(pool.get_io_context());
@@ -2607,6 +2661,7 @@ TEST_F(remote_server_test, StopRunsWhenIoQueueBlocked)
         });
 
     std::thread runner([&pool]() { pool.run(); });
+    auto runner_guard = make_pool_thread_guard(pool, runner);
     bool started = false;
     for (int i = 0; i < 100; ++i)
     {
@@ -2718,6 +2773,7 @@ TEST_F(remote_server_test, StartReopensAcceptorAfterStop)
     auto server = std::make_shared<mux::remote_server>(pool, cfg);
 
     std::thread runner([&pool]() { pool.run(); });
+    auto runner_guard = make_pool_thread_guard(pool, runner);
 
     server->start();
     EXPECT_TRUE(wait_for_condition([&server, port]() { return server->listen_port() == port; }));
@@ -2765,6 +2821,7 @@ TEST_F(remote_server_test, HandleFallbackCoversCloseSocketErrorBranches)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread runner([&pool]() { pool.run(); });
+    auto runner_guard = make_pool_thread_guard(pool, runner);
 
     auto cfg = make_server_cfg(pick_free_port(), {{"*", "127.0.0.1", "1"}}, "0102030405060708");
     cfg.reality.fallback_guard.enabled = true;
