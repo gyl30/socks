@@ -24,10 +24,44 @@ jobs:
           exit 1
         fi
 
+  complexity-gate:
+    name: Complexity Gate
+    runs-on: ubuntu-22.04
+    needs: guard-expected-assertion-style
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        fetch-depth: 0
+
+    - name: Install System Dependencies
+      run: |
+        set -euo pipefail
+        sudo apt-get update
+        sudo apt-get install -y python3 python3-pip
+
+    - name: Install Lizard
+      run: |
+        set -euo pipefail
+        python3 -m pip install lizard
+
+    - name: Enforce Changed Function Complexity Threshold
+      run: |
+        set -euo pipefail
+        if [ "${{ github.event_name }}" = "pull_request" ]; then
+          BASE_REF="${{ github.event.pull_request.base.sha }}"
+        else
+          BASE_REF="${{ github.event.before }}"
+        fi
+        python3 script/complexity_gate.py --base "$BASE_REF" --threshold 15
+
   tsan:
     name: TSAN (${{ matrix.suite }})
     runs-on: ubuntu-22.04
-    needs: guard-expected-assertion-style
+    needs:
+    - guard-expected-assertion-style
+    - complexity-gate
     strategy:
       fail-fast: false
       matrix:
@@ -93,7 +127,9 @@ jobs:
   valgrind:
     name: Valgrind Memory Safety
     runs-on: ubuntu-22.04
-    needs: guard-expected-assertion-style
+    needs:
+    - guard-expected-assertion-style
+    - complexity-gate
     env:
       CI_ARTIFACT_DIR: ci_artifacts
 
@@ -143,7 +179,9 @@ jobs:
   coverage:
     name: Coverage Gate
     runs-on: ubuntu-22.04
-    needs: guard-expected-assertion-style
+    needs:
+    - guard-expected-assertion-style
+    - complexity-gate
     env:
       CI_ARTIFACT_DIR: ci_artifacts
 
