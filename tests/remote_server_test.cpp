@@ -704,7 +704,9 @@ TEST_F(remote_server_test, FallbackResolveFail)
     std::uint16_t server_port = 29971;
     const auto resolve_fail_before = mux::statistics::instance().fallback_resolve_failures();
 
-    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(server_port, {{"", "no-such-host.invalid", "80"}}, "0102030405060708"));
+    // Use an invalid service name to trigger resolver failure deterministically
+    // without relying on external DNS latency.
+    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(server_port, {{"", "127.0.0.1", "bad"}}, "0102030405060708"));
     server->start();
 
     {
