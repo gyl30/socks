@@ -219,6 +219,19 @@ TEST(RemoteSessionTest, RunAckSendFailureReturnsWithoutReset)
     EXPECT_FALSE(session->target_socket_.is_open());
 }
 
+TEST(RemoteSessionTest, RunSkipsHandshakeWhenResetAlreadyRequested)
+{
+    asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    mux::connection_context ctx;
+    auto session = std::make_shared<mux::remote_session>(conn, 34, io_context, ctx);
+
+    session->on_reset();
+
+    EXPECT_CALL(*conn, mock_send_async(_, _, _)).Times(0);
+    mux::test::run_awaitable_void(io_context, session->run(make_syn("non-existent.invalid", 443)));
+}
+
 TEST(RemoteSessionTest, RunSuccessWhenSetNoDelayFailsStillSendsAckAndFin)
 {
     asio::io_context io_context;

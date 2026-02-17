@@ -90,6 +90,64 @@
 - `socks_fallback_connect_failures_total`
 - `socks_fallback_write_failures_total`
 
+### TPROXY UDP 背压指标
+
+- `socks_tproxy_udp_dispatch_dropped_total`
+  - 含义：TPROXY UDP 分发队列满导致的丢包累计次数。
+  - 判读：该值持续增长通常表示 UDP 入队速度长期高于分发消费速度。
+  - 日志关联：丢包日志已做采样输出（首条 + 每 256 条），日志中会带 `dropped_total`。
+- `socks_tproxy_udp_dispatch_enqueued_total`
+  - 含义：TPROXY UDP 分发成功入队累计次数。
+  - 用途：结合 dropped 指标计算丢包比例。
+
+建议面板先看 5 分钟增量：
+
+```promql
+increase(socks_tproxy_udp_dispatch_dropped_total[5m])
+increase(socks_tproxy_udp_dispatch_enqueued_total[5m])
+```
+
+丢包比例可用如下表达式（避免除零）：
+
+```promql
+increase(socks_tproxy_udp_dispatch_dropped_total[5m])
+/
+clamp_min(
+  increase(socks_tproxy_udp_dispatch_dropped_total[5m])
+  + increase(socks_tproxy_udp_dispatch_enqueued_total[5m]),
+  1
+)
+```
+
+告警样例（需按业务基线调整）：
+
+```yaml
+groups:
+  - name: socks-tproxy-alerts
+    rules:
+      - alert: SocksTproxyUdpDispatchDropsHigh
+        expr: increase(socks_tproxy_udp_dispatch_dropped_total[10m]) > 100
+        for: 5m
+```
+
+### 运行排障手册（TPROXY UDP 背压）
+
+建议按 10 分钟窗口使用以下量分级处置：
+
+- `drop_ratio_10m`：`increase(socks_tproxy_udp_dispatch_dropped_total[10m]) / clamp_min(increase(socks_tproxy_udp_dispatch_dropped_total[10m]) + increase(socks_tproxy_udp_dispatch_enqueued_total[10m]), 1)`
+- `dropped_10m`：`increase(socks_tproxy_udp_dispatch_dropped_total[10m])`
+
+- 观察级：`drop_ratio_10m < 1%` 且 `dropped_10m < 100`。记录趋势并持续观察。
+- 告警级：`drop_ratio_10m` 在 `1%-5%` 或 `dropped_10m >= 100`。需要介入定位瓶颈。
+- 紧急级：`drop_ratio_10m > 5%` 持续 10 分钟，或 `dropped_10m >= 1000`。按容量/流量故障处理。
+
+推荐排查顺序：
+
+1. 先看流量侧：`increase(socks_tproxy_udp_dispatch_enqueued_total[5m])` 是否突然升高，确认是否突发流量导致。
+2. 再看消费侧：TPROXY worker/CPU 是否饱和，是否存在长时间调度延迟。
+3. 再看上游侧：路由判定、隧道建立、上游写入是否阻塞导致分发消费下降。
+4. 最后看持续性：`drop_ratio` 是否在流量回落后仍高位，若是需要扩容或进一步定位慢路径。
+
 ### 看板查询建议
 
 推荐按 5 分钟窗口观察各失败原因增量：
