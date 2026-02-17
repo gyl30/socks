@@ -228,7 +228,9 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     asio::awaitable<std::error_code> send_server_hello_flight(const std::shared_ptr<asio::ip::tcp::socket>& s,
                                                               const std::vector<std::uint8_t>& sh_msg,
                                                               const std::vector<std::uint8_t>& flight2_enc,
-                                                              const connection_context& ctx) const;
+                                                              const connection_context& ctx,
+                                                              asio::io_context* io_context = nullptr,
+                                                              std::uint32_t timeout_sec = 0) const;
 
     [[nodiscard]] static asio::awaitable<std::error_code> verify_client_finished(
         std::shared_ptr<asio::ip::tcp::socket> s,
@@ -237,7 +239,9 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         const reality::transcript& trans,
         const EVP_CIPHER* cipher,
         const EVP_MD* md,
-        const connection_context& ctx);
+        const connection_context& ctx,
+        asio::io_context* io_context = nullptr,
+        std::uint32_t timeout_sec = 0);
 
     [[nodiscard]] std::pair<std::string, std::string> find_fallback_target_by_sni(const std::string& sni) const;
 
