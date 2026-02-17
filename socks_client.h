@@ -31,7 +31,10 @@ class socks_client : public std::enable_shared_from_this<socks_client>
     void stop();
 
     [[nodiscard]] std::uint16_t listen_port() const { return listen_port_.load(std::memory_order_acquire); }
-    [[nodiscard]] bool running() const { return !stop_.load(std::memory_order_acquire) && acceptor_.is_open(); }
+    [[nodiscard]] bool running() const
+    {
+        return started_.load(std::memory_order_acquire) && !stop_.load(std::memory_order_acquire) && acceptor_.is_open();
+    }
 
    private:
     [[nodiscard]] static asio::awaitable<void> accept_local_loop_detached(std::shared_ptr<socks_client> self);

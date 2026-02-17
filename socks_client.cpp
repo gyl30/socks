@@ -445,6 +445,12 @@ void socks_client::stop()
 
 asio::awaitable<void> socks_client::accept_local_loop()
 {
+    if (stop_.load(std::memory_order_acquire))
+    {
+        started_.store(false, std::memory_order_release);
+        co_return;
+    }
+
     if (!acceptor_.is_open())
     {
         const std::uint16_t configured_port = listen_port_.load(std::memory_order_acquire);
@@ -452,6 +458,12 @@ asio::awaitable<void> socks_client::accept_local_loop()
         if (!prepare_local_listener(acceptor_, socks_config_.host, configured_port, bound_port))
         {
             stop_.store(true, std::memory_order_release);
+            started_.store(false, std::memory_order_release);
+            co_return;
+        }
+        if (stop_.load(std::memory_order_acquire))
+        {
+            close_local_acceptor_on_setup_failure(acceptor_);
             started_.store(false, std::memory_order_release);
             co_return;
         }
