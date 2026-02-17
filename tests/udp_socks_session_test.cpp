@@ -1,5 +1,6 @@
 #include <thread>
 #include <chrono>
+#include <future>
 #include <memory>
 #include <vector>
 #include <array>
@@ -886,6 +887,47 @@ TEST(UdpSocksSessionTest, OnDataTriggersCloseWhenIoContextStopped)
     session->on_data({0x11});
     EXPECT_TRUE(session->closed_.load(std::memory_order_acquire));
     EXPECT_FALSE(session->udp_socket_.is_open());
+}
+
+TEST(UdpSocksSessionTest, OnDataDispatchesFromForeignThread)
+{
+    asio::io_context ctx;
+    mux::config::timeout_t timeout_cfg;
+    auto session = std::make_shared<mux::udp_socks_session>(asio::ip::tcp::socket(ctx), ctx, nullptr, 58, timeout_cfg);
+
+    std::promise<std::vector<std::uint8_t>> received_promise;
+    auto received_future = received_promise.get_future();
+
+    asio::co_spawn(
+        ctx,
+        [session, &received_promise]() -> asio::awaitable<void>
+        {
+            const auto [ec, data] = co_await session->recv_channel_.async_receive(asio::as_tuple(asio::use_awaitable));
+            if (ec)
+            {
+                received_promise.set_value({});
+                co_return;
+            }
+            received_promise.set_value(data);
+        },
+        asio::detached);
+
+    std::thread io_thread([&ctx]() { ctx.run(); });
+    session->on_data({0x21, 0x22});
+
+    ASSERT_EQ(received_future.wait_for(std::chrono::seconds(1)), std::future_status::ready);
+    const auto data = received_future.get();
+    ASSERT_EQ(data.size(), 2U);
+    EXPECT_EQ(data[0], 0x21);
+    EXPECT_EQ(data[1], 0x22);
+    EXPECT_FALSE(session->closed_.load(std::memory_order_acquire));
+
+    session->on_close();
+    ctx.stop();
+    if (io_thread.joinable())
+    {
+        io_thread.join();
+    }
 }
 
 TEST(UdpSocksSessionTest, OnCloseRunsWhenIoContextNotRunning)
