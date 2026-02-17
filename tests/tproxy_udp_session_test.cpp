@@ -1790,22 +1790,23 @@ TEST(TproxyClientTest, UdpLoopSkipsSetupWhenStopAlreadySet)
 TEST(TproxyClientTest, UdpLoopRetriesWhenSocketClosedUnexpectedly)
 {
     reset_socket_wrappers();
-    force_tproxy_setsockopt_success(true);
 
     std::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
-    const auto tcp_port = pick_free_tcp_port();
-    const auto udp_port = pick_free_tcp_port();
-
     mux::config cfg;
     cfg.tproxy.enabled = true;
     cfg.tproxy.listen_host = "127.0.0.1";
     cfg.tproxy.mark = 0;
-    cfg.tproxy.tcp_port = tcp_port;
-    cfg.tproxy.udp_port = udp_port;
+    cfg.tproxy.tcp_port = pick_free_tcp_port();
+    cfg.tproxy.udp_port = pick_free_tcp_port();
     auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
+
+    client->udp_socket_.open(asio::ip::udp::v4(), ec);
+    ASSERT_FALSE(ec);
+    client->udp_socket_.bind(asio::ip::udp::endpoint(asio::ip::make_address("127.0.0.1"), 0), ec);
+    ASSERT_FALSE(ec);
 
     asio::co_spawn(pool.get_io_context(),
                    [client]() -> asio::awaitable<void>
@@ -1816,17 +1817,11 @@ TEST(TproxyClientTest, UdpLoopRetriesWhenSocketClosedUnexpectedly)
                    asio::detached);
 
     std::thread runner([&pool]() { pool.run(); });
-    for (int i = 0; i < 50 && !udp_socket_is_open(pool.get_io_context(), client); ++i)
+    for (int i = 0; i < 50 && !client->udp_dispatch_started_.load(std::memory_order_acquire); ++i)
     {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-    if (!udp_socket_is_open(pool.get_io_context(), client))
-    {
-        client->stop();
-        pool.stop();
-        runner.join();
-        GTEST_SKIP() << "udp transparent socket unavailable in current environment";
-    }
+    ASSERT_TRUE(client->udp_dispatch_started_.load(std::memory_order_acquire));
 
     asio::post(pool.get_io_context(),
                [client]()
