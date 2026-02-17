@@ -115,9 +115,6 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     [[nodiscard]] std::expected<app_keys, std::error_code> derive_application_traffic_keys(
         const server_handshake_res& sh_res) const;
 
-    asio::awaitable<bool> reject_connection_if_over_limit(const std::shared_ptr<asio::ip::tcp::socket>& s,
-                                                          const std::vector<std::uint8_t>& initial_buf,
-                                                          const connection_context& ctx);
     std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> create_tunnel(
         const std::shared_ptr<asio::ip::tcp::socket>& s,
         const server_handshake_res& sh_res,

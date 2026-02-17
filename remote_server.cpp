@@ -1445,11 +1445,6 @@ asio::awaitable<void> remote_server::handle(std::shared_ptr<asio::ip::tcp::socke
 
     LOG_CTX_INFO(ctx, "{} tunnel starting", log_event::kConnEstablished);
 
-    if (co_await reject_connection_if_over_limit(s, initial_buf, ctx))
-    {
-        co_return;
-    }
-
     auto tunnel = create_tunnel(s, sh_res, app_keys.c_app_keys, app_keys.s_app_keys, conn_id, ctx);
     untrack_connection_socket(s);
     install_syn_callback(tunnel, ctx);
@@ -1629,23 +1624,6 @@ std::expected<remote_server::app_keys, std::error_code> remote_server::derive_ap
     keys.c_app_keys = std::move(*c_keys);
     keys.s_app_keys = std::move(*s_keys);
     return keys;
-}
-
-asio::awaitable<bool> remote_server::reject_connection_if_over_limit(const std::shared_ptr<asio::ip::tcp::socket>& s,
-                                                                     const std::vector<std::uint8_t>& initial_buf,
-                                                                     const connection_context& ctx)
-{
-    const bool over_limit = prune_expired_tunnels() >= limits_config_.max_connections;
-    if (!over_limit)
-    {
-        co_return false;
-    }
-
-    statistics::instance().inc_connection_limit_rejected();
-    LOG_CTX_WARN(ctx, "{} connection limit reached {} rejecting", log_event::kConnClose, limits_config_.max_connections);
-    const auto info = ch_parser::parse(initial_buf);
-    co_await handle_fallback(s, initial_buf, ctx, info.sni);
-    co_return true;
 }
 
 std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> remote_server::create_tunnel(
