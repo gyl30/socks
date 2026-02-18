@@ -22,6 +22,7 @@
 
 #include "log.h"
 #include "net_utils.h"
+#include "statistics.h"
 #include "stop_dispatch.h"
 #include "tproxy_client.h"
 
@@ -33,7 +34,28 @@ namespace
 
 constexpr std::size_t k_udp_dispatch_queue_capacity = 2048;
 constexpr std::size_t k_udp_dispatch_worker_count = 4;
+constexpr std::uint64_t k_udp_dispatch_drop_log_sample = 256;
 using udp_session_map_t = tproxy_client::udp_session_map_t;
+std::atomic<std::uint64_t> g_udp_dispatch_drop_last_logged_total{0};
+
+void maybe_log_udp_dispatch_drop(const std::uint64_t dropped_total)
+{
+    if (dropped_total != 1 && (dropped_total % k_udp_dispatch_drop_log_sample) != 0)
+    {
+        return;
+    }
+
+    auto observed = g_udp_dispatch_drop_last_logged_total.load(std::memory_order_acquire);
+    while (observed < dropped_total)
+    {
+        if (g_udp_dispatch_drop_last_logged_total.compare_exchange_weak(
+                observed, dropped_total, std::memory_order_acq_rel, std::memory_order_acquire))
+        {
+            LOG_WARN("tproxy udp dispatch queue full dropping packet dropped_total={}", dropped_total);
+            return;
+        }
+    }
+}
 
 void close_acceptor_on_setup_failure(asio::ip::tcp::acceptor& acceptor)
 {
@@ -471,24 +493,6 @@ bool read_udp_packet_for_session(asio::ip::udp::socket& socket,
     return true;
 }
 
-bool enqueue_udp_packet(tproxy_udp_dispatch_channel& dispatch_channel,
-                        const asio::ip::udp::endpoint& src_ep,
-                        const asio::ip::udp::endpoint& dst_ep,
-                        const std::vector<std::uint8_t>& buffer,
-                        const std::size_t packet_len)
-{
-    tproxy_udp_dispatch_item packet;
-    packet.src_ep = src_ep;
-    packet.dst_ep = dst_ep;
-    packet.payload.assign(buffer.begin(), buffer.begin() + packet_len);
-    if (dispatch_channel.try_send(std::error_code(), std::move(packet)))
-    {
-        return true;
-    }
-    LOG_WARN("tproxy udp dispatch queue full dropping packet");
-    return false;
-}
-
 enum class tcp_socket_action
 {
     kContinue,
@@ -570,7 +574,7 @@ asio::awaitable<udp_packet_action> handle_udp_packet_once(
         co_return udp_packet_action::kBreak;
     }
 
-    (void)enqueue_udp_packet(dispatch_channel, src_ep, dst_ep, buffer, packet_len);
+    (void)tproxy_client::enqueue_udp_packet(dispatch_channel, src_ep, dst_ep, buffer, packet_len);
     co_return udp_packet_action::kContinue;
 }
 
@@ -774,6 +778,8 @@ tproxy_client::tproxy_client(io_context_pool& pool, const config& cfg)
 
 void tproxy_client::start()
 {
+    std::lock_guard<std::mutex> lock(lifecycle_mu_);
+
     bool expected = false;
     if (!started_.compare_exchange_strong(expected, true, std::memory_order_acq_rel))
     {
@@ -850,6 +856,8 @@ void tproxy_client::start()
 
 void tproxy_client::stop()
 {
+    std::lock_guard<std::mutex> lock(lifecycle_mu_);
+
     LOG_INFO("tproxy client stopping closing resources");
     stop_.store(true, std::memory_order_release);
     started_.store(false, std::memory_order_release);
@@ -877,6 +885,26 @@ void tproxy_client::stop()
 std::string tproxy_client::endpoint_key(const asio::ip::udp::endpoint& ep) const
 {
     return make_endpoint_key(ep);
+}
+
+bool tproxy_client::enqueue_udp_packet(tproxy_udp_dispatch_channel& dispatch_channel,
+                                       const asio::ip::udp::endpoint& src_ep,
+                                       const asio::ip::udp::endpoint& dst_ep,
+                                       const std::vector<std::uint8_t>& buffer,
+                                       const std::size_t packet_len)
+{
+    tproxy_udp_dispatch_item packet;
+    packet.src_ep = src_ep;
+    packet.dst_ep = dst_ep;
+    packet.payload.assign(buffer.begin(), buffer.begin() + packet_len);
+    if (dispatch_channel.try_send(std::error_code(), std::move(packet)))
+    {
+        statistics::instance().inc_tproxy_udp_dispatch_enqueued();
+        return true;
+    }
+    statistics::instance().inc_tproxy_udp_dispatch_dropped();
+    maybe_log_udp_dispatch_drop(statistics::instance().tproxy_udp_dispatch_dropped());
+    return false;
 }
 
 asio::awaitable<void> tproxy_client::accept_tcp_loop()
