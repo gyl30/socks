@@ -217,6 +217,56 @@ TEST(RemoteSessionTest, RunConnectFailureSendsConnRefusedAckAndReset)
     EXPECT_EQ(ack.socks_rep, socks::kRepConnRefused);
 }
 
+TEST(RemoteSessionTest, RunConnectTimeoutSendsConnRefusedAckAndReset)
+{
+    asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    mux::connection_context ctx;
+    auto session = std::make_shared<mux::remote_session>(conn, 35, io_context, ctx, 1);
+
+    std::error_code ec;
+    asio::ip::tcp::acceptor saturated_acceptor(io_context);
+    ec = saturated_acceptor.open(asio::ip::tcp::v4(), ec);
+    ASSERT_FALSE(ec);
+    ec = saturated_acceptor.set_option(asio::ip::tcp::acceptor::reuse_address(true), ec);
+    ASSERT_FALSE(ec);
+    ec = saturated_acceptor.bind(asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0), ec);
+    ASSERT_FALSE(ec);
+    ec = saturated_acceptor.listen(1, ec);
+    ASSERT_FALSE(ec);
+
+    const auto target_port = saturated_acceptor.local_endpoint().port();
+    asio::ip::tcp::socket queued_client_a(io_context);
+    queued_client_a.connect({asio::ip::make_address("127.0.0.1"), target_port}, ec);
+    ASSERT_FALSE(ec);
+    asio::ip::tcp::socket queued_client_b(io_context);
+    queued_client_b.connect({asio::ip::make_address("127.0.0.1"), target_port}, ec);
+    ASSERT_FALSE(ec);
+
+    std::vector<std::uint8_t> ack_payload;
+    EXPECT_CALL(*conn, mock_send_async(35, mux::kCmdAck, _))
+        .WillOnce([&ack_payload](const std::uint32_t, const std::uint8_t, const std::vector<std::uint8_t>& payload)
+                  {
+                      ack_payload = payload;
+                      return std::error_code{};
+                  });
+    EXPECT_CALL(*conn, mock_send_async(35, mux::kCmdRst, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(std::error_code{}));
+
+    const auto start = std::chrono::steady_clock::now();
+    mux::test::run_awaitable_void(io_context, session->run(make_syn("127.0.0.1", target_port)));
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+
+    mux::ack_payload ack{};
+    ASSERT_TRUE(mux::mux_codec::decode_ack(ack_payload.data(), ack_payload.size(), ack));
+    EXPECT_EQ(ack.socks_rep, socks::kRepConnRefused);
+    EXPECT_LT(std::chrono::duration_cast<std::chrono::seconds>(elapsed).count(), 5);
+
+    std::error_code close_ec;
+    queued_client_a.close(close_ec);
+    queued_client_b.close(close_ec);
+    saturated_acceptor.close(close_ec);
+}
+
 TEST(RemoteSessionTest, RunAckSendFailureReturnsWithoutReset)
 {
     asio::io_context io_context;
