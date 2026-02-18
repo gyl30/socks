@@ -61,7 +61,8 @@ bool key_rotator::rotate()
         if (kp != nullptr)
         {
             OPENSSL_cleanse(kp->private_key, 32);
-            delete kp;
+            kp->~x25519_keypair();
+            ::operator delete(static_cast<void*>(kp), std::nothrow);
         }
     };
 
