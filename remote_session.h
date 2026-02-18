@@ -24,7 +24,8 @@ class remote_session : public mux_stream_interface, public std::enable_shared_fr
     remote_session(std::shared_ptr<mux_connection> connection,
                    std::uint32_t id,
                    asio::io_context& io_context,
-                   const connection_context& ctx);
+                   const connection_context& ctx,
+                   std::uint32_t connect_timeout_sec = 10);
 
     [[nodiscard]] asio::awaitable<void> start(const syn_payload& syn);
 
@@ -50,6 +51,7 @@ class remote_session : public mux_stream_interface, public std::enable_shared_fr
     asio::experimental::concurrent_channel<void(std::error_code, std::vector<std::uint8_t>)> recv_channel_;
     std::weak_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> manager_;
     std::atomic<bool> reset_requested_{false};
+    std::uint32_t connect_timeout_sec_ = 10;
 };
 
 }    // namespace mux
