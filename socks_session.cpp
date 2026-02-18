@@ -33,6 +33,22 @@ extern "C"
 namespace mux
 {
 
+namespace
+{
+
+std::shared_ptr<void> make_active_connection_guard()
+{
+    return std::shared_ptr<void>(
+        new int(0),
+        [](void* ptr)
+        {
+            delete static_cast<int*>(ptr);
+            statistics::instance().dec_active_connections();
+        });
+}
+
+}    // namespace
+
 socks_session::socks_session(asio::ip::tcp::socket socket,
                              asio::io_context& io_context,
                              std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager,
@@ -54,9 +70,10 @@ socks_session::socks_session(asio::ip::tcp::socket socket,
     ctx_.conn_id(sid);
     statistics::instance().inc_total_connections();
     statistics::instance().inc_active_connections();
+    active_connection_guard_ = make_active_connection_guard();
 }
 
-socks_session::~socks_session() { statistics::instance().dec_active_connections(); }
+socks_session::~socks_session() = default;
 
 void socks_session::start()
 {
@@ -99,12 +116,14 @@ asio::awaitable<void> socks_session::run()
     if (cmd == socks::kCmdConnect)
     {
         const auto tcp_sess =
-            std::make_shared<tcp_socks_session>(std::move(socket_), io_context_, tunnel_manager_, router_, sid_, timeout_config_);
+            std::make_shared<tcp_socks_session>(
+                std::move(socket_), io_context_, tunnel_manager_, router_, sid_, timeout_config_, std::move(active_connection_guard_));
         tcp_sess->start(host, port);
     }
     else if (cmd == socks::kCmdUdpAssociate)
     {
-        const auto udp_sess = std::make_shared<udp_socks_session>(std::move(socket_), io_context_, tunnel_manager_, sid_, timeout_config_);
+        const auto udp_sess =
+            std::make_shared<udp_socks_session>(std::move(socket_), io_context_, tunnel_manager_, sid_, timeout_config_, std::move(active_connection_guard_));
         udp_sess->start(host, port);
     }
     else
