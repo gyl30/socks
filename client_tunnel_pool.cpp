@@ -776,10 +776,32 @@ asio::awaitable<std::expected<void, std::error_code>> process_handshake_record(a
 
 asio::awaitable<std::expected<asio::ip::tcp::resolver::results_type, std::error_code>> resolve_remote_endpoints(asio::io_context& io_context,
                                                                                                  const std::string& remote_host,
-                                                                                                 const std::string& remote_port)
+                                                                                                 const std::string& remote_port,
+                                                                                                 const std::uint32_t timeout_sec)
 {
     asio::ip::tcp::resolver resolver(io_context);
+    auto timer = std::make_shared<asio::steady_timer>(io_context);
+    auto timeout_triggered = std::make_shared<std::atomic<bool>>(false);
+    timer->expires_after(std::chrono::seconds(timeout_sec));
+    timer->async_wait(
+        [resolver_ptr = &resolver, timeout_triggered](const std::error_code& timer_ec)
+        {
+            if (timer_ec)
+            {
+                return;
+            }
+            timeout_triggered->store(true, std::memory_order_release);
+            resolver_ptr->cancel();
+        });
+
     auto [resolve_error, resolve_endpoints] = co_await resolver.async_resolve(remote_host, remote_port, asio::as_tuple(asio::use_awaitable));
+    const auto cancelled = timer->cancel();
+    (void)cancelled;
+    if (timeout_triggered->load(std::memory_order_acquire))
+    {
+        LOG_ERROR("resolve {} timeout {}s", remote_host, timeout_sec);
+        co_return std::unexpected(asio::error::timed_out);
+    }
     if (resolve_error)
     {
         LOG_ERROR("resolve {} failed {}", remote_host, resolve_error.message());
@@ -1191,7 +1213,8 @@ asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::uint32_
 
 asio::awaitable<std::expected<void, std::error_code>> client_tunnel_pool::tcp_connect(asio::io_context& io_context, asio::ip::tcp::socket& socket) const
 {
-    const auto resolve_endpoints = co_await resolve_remote_endpoints(io_context, remote_host_, remote_port_);
+    const auto timeout_sec = std::max<std::uint32_t>(1, timeout_config_.read);
+    const auto resolve_endpoints = co_await resolve_remote_endpoints(io_context, remote_host_, remote_port_, timeout_sec);
     if (!resolve_endpoints)
     {
         co_return std::unexpected(resolve_endpoints.error());
@@ -1225,7 +1248,40 @@ asio::awaitable<std::expected<void, std::error_code>> client_tunnel_pool::tcp_co
 asio::awaitable<std::expected<void, std::error_code>> client_tunnel_pool::try_connect_endpoint(asio::ip::tcp::socket& socket,
                                                                const asio::ip::tcp::endpoint& endpoint) const
 {
+    const auto timeout_sec = std::max<std::uint32_t>(1, timeout_config_.read);
+    auto timer = std::make_shared<asio::steady_timer>(socket.get_executor());
+    auto timeout_triggered = std::make_shared<std::atomic<bool>>(false);
+    timer->expires_after(std::chrono::seconds(timeout_sec));
+    timer->async_wait(
+        [&socket, timeout_triggered](const std::error_code& timer_ec)
+        {
+            if (timer_ec)
+            {
+                return;
+            }
+            timeout_triggered->store(true, std::memory_order_release);
+            std::error_code cancel_ec;
+            socket.cancel(cancel_ec);
+            if (cancel_ec && cancel_ec != asio::error::bad_descriptor)
+            {
+                LOG_WARN("cancel connect socket failed {}", cancel_ec.message());
+            }
+
+            std::error_code close_ec;
+            socket.close(close_ec);
+            if (close_ec && close_ec != asio::error::bad_descriptor)
+            {
+                LOG_WARN("close connect socket failed {}", close_ec.message());
+            }
+        });
+
     auto [conn_error] = co_await socket.async_connect(endpoint, asio::as_tuple(asio::use_awaitable));
+    const auto cancelled = timer->cancel();
+    (void)cancelled;
+    if (timeout_triggered->load(std::memory_order_acquire))
+    {
+        co_return std::unexpected(asio::error::timed_out);
+    }
     if (conn_error)
     {
         co_return std::unexpected(conn_error);

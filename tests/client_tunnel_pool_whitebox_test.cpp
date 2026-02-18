@@ -700,6 +700,59 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeTimeoutCancelsSocketAndReturnsTimedO
     EXPECT_FALSE(client_socket->is_open());
 }
 
+TEST(ClientTunnelPoolWhiteboxTest, TcpConnectTimeoutReturnsTimedOutAndClosesSocket)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    asio::io_context io_context;
+    asio::ip::tcp::acceptor saturated_acceptor(io_context);
+    ec = saturated_acceptor.open(asio::ip::tcp::v4(), ec);
+    ASSERT_FALSE(ec);
+    ec = saturated_acceptor.set_option(asio::ip::tcp::acceptor::reuse_address(true), ec);
+    ASSERT_FALSE(ec);
+    ec = saturated_acceptor.bind(asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0), ec);
+    ASSERT_FALSE(ec);
+    ec = saturated_acceptor.listen(1, ec);
+    ASSERT_FALSE(ec);
+
+    const auto target_port = saturated_acceptor.local_endpoint().port();
+    asio::ip::tcp::socket queued_client_a(io_context);
+    queued_client_a.connect({asio::ip::make_address("127.0.0.1"), target_port}, ec);
+    ASSERT_FALSE(ec);
+    asio::ip::tcp::socket queued_client_b(io_context);
+    queued_client_b.connect({asio::ip::make_address("127.0.0.1"), target_port}, ec);
+    ASSERT_FALSE(ec);
+
+    auto cfg = make_base_cfg();
+    cfg.outbound.host = "127.0.0.1";
+    cfg.outbound.port = target_port;
+    cfg.reality.public_key = generate_public_key_hex();
+    cfg.timeout.read = 1;
+    auto tunnel_pool = std::make_shared<mux::client_tunnel_pool>(pool, cfg, 0);
+
+    asio::ip::tcp::socket client_socket(io_context);
+    std::expected<void, std::error_code> connect_res;
+    asio::co_spawn(io_context,
+                   [tunnel_pool, &io_context, &client_socket, &connect_res]() -> asio::awaitable<void>
+                   {
+                       connect_res = co_await tcp_connect_expected(*tunnel_pool, io_context, client_socket);
+                       co_return;
+                   },
+                   asio::detached);
+    io_context.run();
+
+    ASSERT_FALSE(connect_res.has_value());
+    EXPECT_EQ(connect_res.error(), asio::error::timed_out);
+    EXPECT_FALSE(client_socket.is_open());
+
+    std::error_code close_ec;
+    queued_client_a.close(close_ec);
+    queued_client_b.close(close_ec);
+    saturated_acceptor.close(close_ec);
+}
+
 TEST(ClientTunnelPoolWhiteboxTest, ClientHelloAndServerHelloIoErrorBranches)
 {
     std::error_code ec;
