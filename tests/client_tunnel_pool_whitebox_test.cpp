@@ -36,6 +36,7 @@ extern "C"
 #define private public
 #include "client_tunnel_pool.h"
 #undef private
+#include "test_util.h"
 
 namespace
 {
@@ -673,7 +674,8 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeTimeoutCancelsSocketAndReturnsTimedO
     auto tunnel_pool = std::make_shared<mux::client_tunnel_pool>(pool, cfg, 0);
 
     asio::io_context io_context;
-    asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    asio::ip::tcp::acceptor acceptor(io_context);
+    ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
 
     auto client_socket = std::make_shared<asio::ip::tcp::socket>(io_context);
     client_socket->connect(acceptor.local_endpoint(), ec);
@@ -753,7 +755,8 @@ TEST(ClientTunnelPoolWhiteboxTest, ProcessServerHelloRejectsUnsupportedCipherAnd
         asio::io_context io_context;
         std::error_code ec;
 
-        asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+        asio::ip::tcp::acceptor acceptor(io_context);
+        ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
         asio::ip::tcp::socket writer(io_context);
         writer.connect(acceptor.local_endpoint(), ec);
         ASSERT_FALSE(ec);
@@ -799,7 +802,8 @@ TEST(ClientTunnelPoolWhiteboxTest, ProcessServerHelloRejectsTruncatedSessionData
     asio::io_context io_context;
     std::error_code ec;
 
-    asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    asio::ip::tcp::acceptor acceptor(io_context);
+    ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
     asio::ip::tcp::socket writer(io_context);
     writer.connect(acceptor.local_endpoint(), ec);
     ASSERT_FALSE(ec);
@@ -841,7 +845,8 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsCertVerifyBeforeCerti
     asio::io_context io_context;
     std::error_code ec;
 
-    asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    asio::ip::tcp::acceptor acceptor(io_context);
+    ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
     asio::ip::tcp::socket writer(io_context);
     writer.connect(acceptor.local_endpoint(), ec);
     ASSERT_FALSE(ec);
@@ -879,7 +884,8 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsFinishedBeforeCertifi
     asio::io_context io_context;
     std::error_code ec;
 
-    asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    asio::ip::tcp::acceptor acceptor(io_context);
+    ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
     asio::ip::tcp::socket writer(io_context);
     writer.connect(acceptor.local_endpoint(), ec);
     ASSERT_FALSE(ec);
@@ -917,7 +923,8 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsMalformedCertificateM
     asio::io_context io_context;
     std::error_code ec;
 
-    asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    asio::ip::tcp::acceptor acceptor(io_context);
+    ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
     asio::ip::tcp::socket writer(io_context);
     writer.connect(acceptor.local_endpoint(), ec);
     ASSERT_FALSE(ec);
@@ -1007,7 +1014,8 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsMalformedCertificateV
     asio::io_context io_context;
     std::error_code ec;
 
-    asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    asio::ip::tcp::acceptor acceptor(io_context);
+    ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
     asio::ip::tcp::socket writer(io_context);
     writer.connect(acceptor.local_endpoint(), ec);
     ASSERT_FALSE(ec);
@@ -1048,7 +1056,8 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsUnsupportedCertificat
     asio::io_context io_context;
     std::error_code ec;
 
-    asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    asio::ip::tcp::acceptor acceptor(io_context);
+    ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
     asio::ip::tcp::socket writer(io_context);
     writer.connect(acceptor.local_endpoint(), ec);
     ASSERT_FALSE(ec);
@@ -1093,7 +1102,13 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopCertificateRangeAndFinishedB
         asio::io_context io_context;
         std::error_code ec;
 
-        asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+        asio::ip::tcp::acceptor acceptor(io_context);
+        if (!mux::test::open_ephemeral_tcp_acceptor(acceptor))
+        {
+            ADD_FAILURE() << "failed to open ephemeral tcp acceptor";
+            loop_ec = asio::error::operation_aborted;
+            return false;
+        }
         asio::ip::tcp::socket writer(io_context);
         writer.connect(acceptor.local_endpoint(), ec);
         EXPECT_FALSE(ec);
@@ -1346,7 +1361,8 @@ TEST(ClientTunnelPoolWhiteboxTest, ProcessServerHelloCoversX25519DeriveFailure)
     asio::io_context io_context;
     std::error_code ec;
 
-    asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    asio::ip::tcp::acceptor acceptor(io_context);
+    ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
     asio::ip::tcp::socket writer(io_context);
     writer.connect(acceptor.local_endpoint(), ec);
     ASSERT_FALSE(ec);
@@ -1391,7 +1407,8 @@ TEST(ClientTunnelPoolWhiteboxTest, TcpConnectSuccessCoversLocalEndpointFailureLo
     ASSERT_FALSE(ec);
 
     asio::io_context io_context;
-    asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    asio::ip::tcp::acceptor acceptor(io_context);
+    ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
     const auto listen_port = acceptor.local_endpoint().port();
 
     auto cfg = make_base_cfg();
