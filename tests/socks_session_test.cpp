@@ -93,11 +93,24 @@ struct tcp_socket_pair
 
 tcp_socket_pair make_tcp_socket_pair(asio::io_context& io_context)
 {
-    asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    asio::ip::tcp::acceptor acceptor(io_context);
+    if (!mux::test::open_ephemeral_tcp_acceptor(acceptor))
+    {
+        return tcp_socket_pair{asio::ip::tcp::socket(io_context), asio::ip::tcp::socket(io_context)};
+    }
     asio::ip::tcp::socket client(io_context);
     asio::ip::tcp::socket server(io_context);
-    client.connect(acceptor.local_endpoint());
-    acceptor.accept(server);
+    std::error_code ec;
+    client.connect(acceptor.local_endpoint(), ec);
+    if (ec)
+    {
+        return tcp_socket_pair{asio::ip::tcp::socket(io_context), asio::ip::tcp::socket(io_context)};
+    }
+    acceptor.accept(server, ec);
+    if (ec)
+    {
+        return tcp_socket_pair{asio::ip::tcp::socket(io_context), asio::ip::tcp::socket(io_context)};
+    }
     return tcp_socket_pair{std::move(client), std::move(server)};
 }
 
@@ -136,7 +149,8 @@ TEST_F(socks_session_test, HandshakeNoAuthSuccess)
 {
     asio::ip::tcp::socket client_sock(io_ctx());
     asio::ip::tcp::socket server_sock(io_ctx());
-    asio::ip::tcp::acceptor acceptor(io_ctx(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    asio::ip::tcp::acceptor acceptor(io_ctx());
+    ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
 
     client_sock.connect(acceptor.local_endpoint());
     acceptor.accept(server_sock);
@@ -167,7 +181,8 @@ TEST_F(socks_session_test, HandshakePasswordAuthSuccess)
 {
     asio::ip::tcp::socket client_sock(io_ctx());
     asio::ip::tcp::socket server_sock(io_ctx());
-    asio::ip::tcp::acceptor acceptor(io_ctx(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    asio::ip::tcp::acceptor acceptor(io_ctx());
+    ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
 
     client_sock.connect(acceptor.local_endpoint());
     acceptor.accept(server_sock);
@@ -209,7 +224,8 @@ TEST_F(socks_session_test, ReadConnectRequestDomain)
 {
     asio::ip::tcp::socket client_sock(io_ctx());
     asio::ip::tcp::socket server_sock(io_ctx());
-    asio::ip::tcp::acceptor acceptor(io_ctx(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    asio::ip::tcp::acceptor acceptor(io_ctx());
+    ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
 
     client_sock.connect(acceptor.local_endpoint());
     acceptor.accept(server_sock);
@@ -236,12 +252,11 @@ TEST_F(socks_session_test, ReadConnectRequestDomain)
 
 TEST_F(socks_session_test, HandshakeNoAcceptableMethod)
 {
-    asio::ip::tcp::socket client_sock(io_ctx());
-    asio::ip::tcp::socket server_sock(io_ctx());
-    asio::ip::tcp::acceptor acceptor(io_ctx(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
-
-    client_sock.connect(acceptor.local_endpoint());
-    acceptor.accept(server_sock);
+    auto pair = make_tcp_socket_pair(io_ctx());
+    ASSERT_TRUE(pair.client.is_open());
+    ASSERT_TRUE(pair.server.is_open());
+    asio::ip::tcp::socket client_sock(std::move(pair.client));
+    asio::ip::tcp::socket server_sock(std::move(pair.server));
 
     config::socks_t cfg;
     cfg.auth = false;
@@ -267,12 +282,11 @@ TEST_F(socks_session_test, HandshakeNoAcceptableMethod)
 
 TEST_F(socks_session_test, HandshakePasswordAuthWrongPassword)
 {
-    asio::ip::tcp::socket client_sock(io_ctx());
-    asio::ip::tcp::socket server_sock(io_ctx());
-    asio::ip::tcp::acceptor acceptor(io_ctx(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
-
-    client_sock.connect(acceptor.local_endpoint());
-    acceptor.accept(server_sock);
+    auto pair = make_tcp_socket_pair(io_ctx());
+    ASSERT_TRUE(pair.client.is_open());
+    ASSERT_TRUE(pair.server.is_open());
+    asio::ip::tcp::socket client_sock(std::move(pair.client));
+    asio::ip::tcp::socket server_sock(std::move(pair.server));
 
     config::socks_t cfg;
     cfg.auth = true;
@@ -311,7 +325,8 @@ TEST_F(socks_session_test, HandshakePasswordAuthInvalidVersion)
 {
     asio::ip::tcp::socket client_sock(io_ctx());
     asio::ip::tcp::socket server_sock(io_ctx());
-    asio::ip::tcp::acceptor acceptor(io_ctx(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    asio::ip::tcp::acceptor acceptor(io_ctx());
+    ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
 
     client_sock.connect(acceptor.local_endpoint());
     acceptor.accept(server_sock);
@@ -346,7 +361,8 @@ TEST_F(socks_session_test, ReadRequestInvalidHeaderRejected)
 {
     asio::ip::tcp::socket client_sock(io_ctx());
     asio::ip::tcp::socket server_sock(io_ctx());
-    asio::ip::tcp::acceptor acceptor(io_ctx(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    asio::ip::tcp::acceptor acceptor(io_ctx());
+    ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
 
     client_sock.connect(acceptor.local_endpoint());
     acceptor.accept(server_sock);
@@ -375,7 +391,8 @@ TEST_F(socks_session_test, ReadRequestUnsupportedCmdRejected)
 {
     asio::ip::tcp::socket client_sock(io_ctx());
     asio::ip::tcp::socket server_sock(io_ctx());
-    asio::ip::tcp::acceptor acceptor(io_ctx(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    asio::ip::tcp::acceptor acceptor(io_ctx());
+    ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
 
     client_sock.connect(acceptor.local_endpoint());
     acceptor.accept(server_sock);
@@ -404,7 +421,8 @@ TEST_F(socks_session_test, ReadRequestUnsupportedAtypRejected)
 {
     asio::ip::tcp::socket client_sock(io_ctx());
     asio::ip::tcp::socket server_sock(io_ctx());
-    asio::ip::tcp::acceptor acceptor(io_ctx(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    asio::ip::tcp::acceptor acceptor(io_ctx());
+    ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
 
     client_sock.connect(acceptor.local_endpoint());
     acceptor.accept(server_sock);
@@ -431,12 +449,11 @@ TEST_F(socks_session_test, ReadRequestUnsupportedAtypRejected)
 
 TEST_F(socks_session_test, ReadConnectRequestIPv4)
 {
-    asio::ip::tcp::socket client_sock(io_ctx());
-    asio::ip::tcp::socket server_sock(io_ctx());
-    asio::ip::tcp::acceptor acceptor(io_ctx(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
-
-    client_sock.connect(acceptor.local_endpoint());
-    acceptor.accept(server_sock);
+    auto pair = make_tcp_socket_pair(io_ctx());
+    ASSERT_TRUE(pair.client.is_open());
+    ASSERT_TRUE(pair.server.is_open());
+    asio::ip::tcp::socket client_sock(std::move(pair.client));
+    asio::ip::tcp::socket server_sock(std::move(pair.server));
 
     auto session = std::make_shared<socks_session>(std::move(server_sock), io_ctx(), nullptr, nullptr, 1);
 
@@ -462,7 +479,8 @@ TEST_F(socks_session_test, ReadConnectRequestIPv6)
 {
     asio::ip::tcp::socket client_sock(io_ctx());
     asio::ip::tcp::socket server_sock(io_ctx());
-    asio::ip::tcp::acceptor acceptor(io_ctx(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    asio::ip::tcp::acceptor acceptor(io_ctx());
+    ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
 
     client_sock.connect(acceptor.local_endpoint());
     acceptor.accept(server_sock);

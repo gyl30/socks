@@ -21,6 +21,7 @@
 #define private public
 #include "socks_client.h"
 #undef private
+#include "test_util.h"
 
 using mux::io_context_pool;
 
@@ -649,7 +650,8 @@ TEST(LocalClientTest, ListenPortConflictTriggersSetupFailure)
     io_context_pool pool(1);
 
     asio::io_context blocker_ctx;
-    asio::ip::tcp::acceptor blocker(blocker_ctx, {asio::ip::make_address("127.0.0.1"), 0});
+    asio::ip::tcp::acceptor blocker(blocker_ctx);
+    ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(blocker));
     const auto blocked_port = blocker.local_endpoint().port();
 
     mux::config cfg;

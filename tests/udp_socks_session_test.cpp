@@ -169,7 +169,11 @@ struct tcp_socket_pair
 
 tcp_socket_pair make_tcp_socket_pair(asio::io_context& ctx)
 {
-    asio::ip::tcp::acceptor acceptor(ctx, {asio::ip::tcp::v4(), 0});
+    asio::ip::tcp::acceptor acceptor(ctx);
+    if (!mux::test::open_ephemeral_tcp_acceptor(acceptor))
+    {
+        return tcp_socket_pair{asio::ip::tcp::socket(ctx), asio::ip::tcp::socket(ctx)};
+    }
     asio::ip::tcp::socket client(ctx);
     asio::ip::tcp::socket server(ctx);
 

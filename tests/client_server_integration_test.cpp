@@ -19,6 +19,7 @@
 #include "context_pool.h"
 #include "socks_client.h"
 #include "remote_server.h"
+#include "test_util.h"
 
 class scoped_pool
 {
@@ -471,8 +472,7 @@ TEST_F(integration_test, SocksConnectClosedPortReturnsFailure)
     asio::ip::tcp::socket closed_target_socket(closed_target_context);
     closed_target_socket.open(asio::ip::tcp::v4(), ec);
     ASSERT_FALSE(ec);
-    closed_target_socket.bind(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), 0), ec);
-    ASSERT_FALSE(ec);
+    ASSERT_TRUE(mux::test::bind_ephemeral_tcp_socket(closed_target_socket));
     const auto closed_target_port = closed_target_socket.local_endpoint().port();
 
     scoped_pool sp(pool);
