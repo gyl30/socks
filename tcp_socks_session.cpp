@@ -48,12 +48,14 @@ tcp_socks_session::tcp_socks_session(asio::ip::tcp::socket socket,
                                      std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager,
                                      std::shared_ptr<router> router,
                                      const std::uint32_t sid,
-                                     const config::timeout_t& timeout_cfg)
+                                     const config::timeout_t& timeout_cfg,
+                                     std::shared_ptr<void> active_connection_guard)
     : io_context_(io_context),
       socket_(std::move(socket)),
       idle_timer_(io_context_),
       router_(std::move(router)),
       tunnel_manager_(std::move(tunnel_manager)),
+      active_connection_guard_(std::move(active_connection_guard)),
       timeout_config_(timeout_cfg)
 {
     ctx_.new_trace_id();

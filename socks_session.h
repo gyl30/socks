@@ -113,6 +113,7 @@ class socks_session : public std::enable_shared_from_this<socks_session>
     asio::ip::tcp::socket socket_;
     std::shared_ptr<router> router_;
     std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager_;
+    std::shared_ptr<void> active_connection_guard_;
     config::timeout_t timeout_config_;
 };
 

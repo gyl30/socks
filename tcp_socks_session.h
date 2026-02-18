@@ -29,7 +29,8 @@ class tcp_socks_session : public std::enable_shared_from_this<tcp_socks_session>
                       std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager,
                       std::shared_ptr<router> router,
                       const std::uint32_t sid,
-                      const config::timeout_t& timeout_cfg);
+                      const config::timeout_t& timeout_cfg,
+                      std::shared_ptr<void> active_connection_guard = nullptr);
 
     void start(const std::string& host, const std::uint16_t port);
 
@@ -68,6 +69,7 @@ class tcp_socks_session : public std::enable_shared_from_this<tcp_socks_session>
     std::atomic<bool> backend_closed_{false};
     std::shared_ptr<router> router_;
     std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager_;
+    std::shared_ptr<void> active_connection_guard_;
     config::timeout_t timeout_config_;
 };
 

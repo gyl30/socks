@@ -22,6 +22,7 @@
 #include <unistd.h>
 
 #include "protocol.h"
+#include "statistics.h"
 #define private public
 #include "socks_session.h"
 #undef private
@@ -108,6 +109,28 @@ class socks_session_test : public ::testing::Test
    private:
     asio::io_context io_ctx_;
 };
+
+TEST_F(socks_session_test, ActiveConnectionGuardOutlivesSessionObject)
+{
+    auto& stats = mux::statistics::instance();
+    const auto active_before = stats.active_connections();
+
+    std::shared_ptr<void> guard;
+    {
+        auto pair = make_tcp_socket_pair(io_ctx());
+        auto session = std::make_shared<socks_session>(std::move(pair.server), io_ctx(), nullptr, nullptr, 999);
+        EXPECT_EQ(stats.active_connections(), active_before + 1);
+
+        guard = std::move(session->active_connection_guard_);
+        session.reset();
+
+        ASSERT_NE(guard, nullptr);
+        EXPECT_EQ(stats.active_connections(), active_before + 1);
+    }
+
+    guard.reset();
+    EXPECT_EQ(stats.active_connections(), active_before);
+}
 
 TEST_F(socks_session_test, HandshakeNoAuthSuccess)
 {
