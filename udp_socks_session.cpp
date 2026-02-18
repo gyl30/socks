@@ -324,7 +324,8 @@ udp_socks_session::udp_socks_session(asio::ip::tcp::socket socket,
                                      asio::io_context& io_context,
                                      std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager,
                                      const std::uint32_t sid,
-                                     const config::timeout_t& timeout_cfg)
+                                     const config::timeout_t& timeout_cfg,
+                                     std::shared_ptr<void> active_connection_guard)
     : io_context_(io_context),
       timer_(io_context_),
       idle_timer_(io_context_),
@@ -332,6 +333,7 @@ udp_socks_session::udp_socks_session(asio::ip::tcp::socket socket,
       udp_socket_(io_context_),
       tunnel_manager_(std::move(tunnel_manager)),
       recv_channel_(io_context_, 128),
+      active_connection_guard_(std::move(active_connection_guard)),
       timeout_config_(timeout_cfg)
 {
     ctx_.new_trace_id();
