@@ -1700,6 +1700,45 @@ TEST_F(remote_server_test, FallbackGuardStateMachineBranches)
     server->record_fallback_result(unknown_ctx, false);
 }
 
+TEST_F(remote_server_test, FallbackGuardCapsTrackedSources)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    auto cfg = make_server_cfg(pick_free_port(), {}, "0102030405060708");
+    cfg.reality.fallback_guard.enabled = true;
+    cfg.reality.fallback_guard.rate_per_sec = 0;
+    cfg.reality.fallback_guard.burst = 1;
+    cfg.reality.fallback_guard.state_ttl_sec = 3600;
+    auto server = std::make_shared<mux::remote_server>(pool, cfg);
+
+    constexpr std::size_t kMaxFallbackGuardSources = 4096;
+    const auto ts = std::chrono::steady_clock::now();
+    {
+        std::lock_guard<std::mutex> lock(server->fallback_guard_mu_);
+        for (std::size_t i = 0; i < kMaxFallbackGuardSources; ++i)
+        {
+            mux::remote_server::fallback_guard_state state{};
+            state.tokens = 1.0;
+            state.last_refill = ts;
+            state.last_seen = ts;
+            server->fallback_guard_states_.emplace("source-" + std::to_string(i), state);
+        }
+        ASSERT_EQ(server->fallback_guard_states_.size(), kMaxFallbackGuardSources);
+    }
+
+    mux::connection_context new_ctx;
+    new_ctx.remote_addr("source-new");
+    EXPECT_TRUE(server->consume_fallback_token(new_ctx));
+
+    {
+        std::lock_guard<std::mutex> lock(server->fallback_guard_mu_);
+        EXPECT_EQ(server->fallback_guard_states_.size(), kMaxFallbackGuardSources);
+        EXPECT_NE(server->fallback_guard_states_.find("source-new"), server->fallback_guard_states_.end());
+    }
+}
+
 TEST_F(remote_server_test, SetCertificateAsyncPathAfterStart)
 {
     std::error_code ec;
