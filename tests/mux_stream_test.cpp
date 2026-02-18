@@ -8,7 +8,9 @@
 #include <asio/io_context.hpp>
 
 #include "test_util.h"
+#define private public
 #include "mux_stream.h"
+#undef private
 #include "mux_protocol.h"
 #include "mock_mux_connection.h"
 
@@ -201,4 +203,27 @@ TEST_F(mux_stream_test, OnCloseChannelFullClosesStream)
     const std::vector<std::uint8_t> data = {9};
     const auto ec = mux::test::run_awaitable(ctx(), stream->async_write_some(data.data(), data.size()));
     EXPECT_EQ(ec, asio::error::operation_aborted);
+}
+
+TEST_F(mux_stream_test, OnDataClosedChannelTriggersUnavailableBranch)
+{
+    auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
+    auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx());
+
+    stream->recv_channel_.close();
+    stream->on_data({7, 8, 9});
+
+    EXPECT_TRUE(stream->is_closed_.load(std::memory_order_acquire));
+}
+
+TEST_F(mux_stream_test, OnCloseClosedChannelTriggersUnavailableBranch)
+{
+    auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
+    auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx());
+
+    stream->recv_channel_.close();
+    stream->on_close();
+
+    EXPECT_TRUE(stream->is_closed_.load(std::memory_order_acquire));
+    EXPECT_TRUE(stream->fin_received_.load(std::memory_order_acquire));
 }
