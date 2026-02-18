@@ -896,6 +896,29 @@ TEST_F(remote_server_test, StartInvalidAuthConfigHandlesAcceptorCloseFailure)
     EXPECT_TRUE(server->stop_.load(std::memory_order_acquire));
 }
 
+TEST_F(remote_server_test, StartFailsWhenAcceptorReopenUnavailable)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
+    ASSERT_TRUE(server->acceptor_.is_open());
+
+    server->acceptor_.close(ec);
+    ASSERT_FALSE(ec);
+    ASSERT_FALSE(server->acceptor_.is_open());
+
+    fail_next_socket(EMFILE);
+    server->start();
+
+    EXPECT_FALSE(server->running());
+    EXPECT_FALSE(server->started_.load(std::memory_order_acquire));
+    EXPECT_TRUE(server->stop_.load(std::memory_order_acquire));
+    EXPECT_FALSE(server->acceptor_.is_open());
+    EXPECT_EQ(server->listen_port(), 0);
+}
+
 TEST_F(remote_server_test, MultiSNIFallback)
 {
     std::error_code ec;
