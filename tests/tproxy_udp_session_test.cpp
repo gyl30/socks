@@ -321,6 +321,23 @@ class proxy_router final : public mux::router
     }
 };
 
+class block_router final : public mux::router
+{
+   public:
+    block_router()
+    {
+        block_ip_matcher() = std::make_shared<mux::ip_matcher>();
+        direct_ip_matcher() = std::make_shared<mux::ip_matcher>();
+        proxy_domain_matcher() = std::make_shared<mux::domain_matcher>();
+        block_domain_matcher() = std::make_shared<mux::domain_matcher>();
+        direct_domain_matcher() = std::make_shared<mux::domain_matcher>();
+
+        block_ip_matcher()->add_rule("0.0.0.0/0");
+        block_ip_matcher()->add_rule("::/0");
+        block_ip_matcher()->optimize();
+    }
+};
+
 class failing_load_router final : public mux::router
 {
    public:
@@ -700,6 +717,32 @@ TEST(TproxyUdpSessionTest, IdleDetection)
 
     session->stop();
     ctx.poll();
+}
+
+TEST(TproxyUdpSessionTest, HandlePacketIncrementsRoutingBlockedWhenRouteBlocked)
+{
+    asio::io_context ctx;
+    auto router = std::make_shared<block_router>();
+
+    mux::config cfg;
+    cfg.tproxy.mark = 0;
+
+    auto& stats = mux::statistics::instance();
+    const auto blocked_before = stats.routing_blocked();
+
+    const asio::ip::udp::endpoint client_ep(asio::ip::make_address("127.0.0.1"), 12346);
+    auto session = std::make_shared<mux::tproxy_udp_session>(ctx, nullptr, router, nullptr, 4, cfg, client_ep);
+
+    const asio::ip::udp::endpoint dst_ep(asio::ip::make_address("127.0.0.1"), 53);
+    const std::array<std::uint8_t, 1> data = {0x00};
+    asio::co_spawn(
+        ctx,
+        [session, dst_ep, data]() -> asio::awaitable<void> { co_await session->handle_packet(dst_ep, data.data(), data.size()); },
+        asio::detached);
+
+    ctx.run();
+
+    EXPECT_EQ(stats.routing_blocked(), blocked_before + 1);
 }
 
 TEST(TproxyUdpSessionTest, IdleTimeoutZeroNeverExpires)
