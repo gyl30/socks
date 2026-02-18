@@ -219,6 +219,41 @@ TEST_F(upstream_test, DirectUpstreamConnectFail)
     EXPECT_FALSE(success);
 }
 
+TEST_F(upstream_test, DirectUpstreamConnectTimeoutWhenBacklogSaturated)
+{
+    std::error_code ec;
+    asio::ip::tcp::acceptor saturated_acceptor(ctx());
+    ec = saturated_acceptor.open(asio::ip::tcp::v4(), ec);
+    ASSERT_FALSE(ec);
+    ec = saturated_acceptor.set_option(asio::ip::tcp::acceptor::reuse_address(true), ec);
+    ASSERT_FALSE(ec);
+    ec = saturated_acceptor.bind(asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0), ec);
+    ASSERT_FALSE(ec);
+    ec = saturated_acceptor.listen(1, ec);
+    ASSERT_FALSE(ec);
+
+    const auto target_port = saturated_acceptor.local_endpoint().port();
+    asio::ip::tcp::socket queued_client_a(ctx());
+    queued_client_a.connect({asio::ip::make_address("127.0.0.1"), target_port}, ec);
+    ASSERT_FALSE(ec);
+    asio::ip::tcp::socket queued_client_b(ctx());
+    queued_client_b.connect({asio::ip::make_address("127.0.0.1"), target_port}, ec);
+    ASSERT_FALSE(ec);
+
+    mux::direct_upstream upstream(ctx(), mux::connection_context{}, 0, 1);
+    const auto start = std::chrono::steady_clock::now();
+    const auto success = mux::test::run_awaitable(ctx(), upstream.connect("127.0.0.1", target_port));
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+
+    EXPECT_FALSE(success);
+    EXPECT_LT(std::chrono::duration_cast<std::chrono::seconds>(elapsed).count(), 5);
+
+    std::error_code close_ec;
+    queued_client_a.close(close_ec);
+    queued_client_b.close(close_ec);
+    saturated_acceptor.close(close_ec);
+}
+
 TEST_F(upstream_test, DirectUpstreamResolveFail)
 {
     mux::direct_upstream upstream(ctx(), mux::connection_context{});
