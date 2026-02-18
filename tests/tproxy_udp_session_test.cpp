@@ -1634,6 +1634,37 @@ TEST(TproxyClientTest, UdpDispatchEnqueueAndDropMetricsAreSeparated)
     pool.stop();
 }
 
+TEST(TproxyClientTest, UdpDispatchRejectsOversizedPayloadLength)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    mux::config cfg;
+    cfg.tproxy.enabled = true;
+    auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
+    ASSERT_NE(client->udp_dispatch_channel_, nullptr);
+
+    auto& stats = mux::statistics::instance();
+    const auto enqueued_before = stats.tproxy_udp_dispatch_enqueued();
+    const auto dropped_before = stats.tproxy_udp_dispatch_dropped();
+
+    const asio::ip::udp::endpoint src_ep(asio::ip::make_address("127.0.0.1"), 11911);
+    const asio::ip::udp::endpoint dst_ep(asio::ip::make_address("1.1.1.1"), 53);
+    const std::vector<std::uint8_t> payload = {0x11, 0x22, 0x33, 0x44};
+
+    ASSERT_FALSE(mux::tproxy_client::enqueue_udp_packet(*client->udp_dispatch_channel_, src_ep, dst_ep, payload, payload.size() + 1));
+
+    const auto enqueued_after = stats.tproxy_udp_dispatch_enqueued();
+    const auto dropped_after = stats.tproxy_udp_dispatch_dropped();
+    EXPECT_EQ(enqueued_after - enqueued_before, 0U);
+    EXPECT_EQ(dropped_after - dropped_before, 1U);
+
+    client->udp_dispatch_channel_->close();
+    client->stop();
+    pool.stop();
+}
+
 TEST(TproxyClientTest, UdpDispatchQueueFullDropLogIsSampled)
 {
     std::error_code ec;

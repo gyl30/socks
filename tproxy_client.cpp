@@ -917,6 +917,14 @@ bool tproxy_client::enqueue_udp_packet(tproxy_udp_dispatch_channel& dispatch_cha
                                        const std::vector<std::uint8_t>& buffer,
                                        const std::size_t packet_len)
 {
+    if (packet_len > buffer.size())
+    {
+        LOG_WARN("tproxy udp invalid packet length {} buffer size {}", packet_len, buffer.size());
+        statistics::instance().inc_tproxy_udp_dispatch_dropped();
+        maybe_log_udp_dispatch_drop(statistics::instance().tproxy_udp_dispatch_dropped());
+        return false;
+    }
+
     tproxy_udp_dispatch_item packet;
     packet.src_ep = src_ep;
     packet.dst_ep = dst_ep;
