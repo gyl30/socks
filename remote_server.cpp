@@ -60,6 +60,7 @@ namespace
 
 constexpr std::uint32_t kEphemeralServerBindRetryAttempts = 120;
 const auto kEphemeralServerBindRetryDelay = std::chrono::milliseconds(25);
+constexpr std::size_t kFallbackGuardMaxSources = 4096;
 
 bool parse_hex_to_bytes(const std::string& hex, std::vector<std::uint8_t>& out, const std::size_t max_len, const char* label)
 {
@@ -2010,7 +2011,24 @@ bool remote_server::consume_fallback_token(const connection_context& ctx)
     std::lock_guard<std::mutex> lock(fallback_guard_mu_);
     cleanup_fallback_guard_state_locked(now);
 
-    auto& state = fallback_guard_states_[fallback_guard_key(ctx)];
+    const auto source_key = fallback_guard_key(ctx);
+    if (fallback_guard_states_.size() >= kFallbackGuardMaxSources && fallback_guard_states_.find(source_key) == fallback_guard_states_.end())
+    {
+        auto oldest_it = fallback_guard_states_.end();
+        for (auto it = fallback_guard_states_.begin(); it != fallback_guard_states_.end(); ++it)
+        {
+            if (oldest_it == fallback_guard_states_.end() || it->second.last_seen < oldest_it->second.last_seen)
+            {
+                oldest_it = it;
+            }
+        }
+        if (oldest_it != fallback_guard_states_.end())
+        {
+            fallback_guard_states_.erase(oldest_it);
+        }
+    }
+
+    auto& state = fallback_guard_states_[source_key];
     if (state.tokens == 0 && state.last_seen.time_since_epoch().count() == 0)
     {
         state.tokens = static_cast<double>(fallback_guard_config_.burst);
