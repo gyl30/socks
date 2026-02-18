@@ -243,13 +243,18 @@ mux_connection::mux_connection(asio::ip::tcp::socket socket,
 {
     ctx_.trace_id(trace_id);
     ctx_.conn_id(conn_id);
-    std::error_code ec;
-    const auto local_ep = socket_.local_endpoint(ec);
-    const auto remote_ep = socket_.remote_endpoint(ec);
-    if (!ec)
+    std::error_code local_ep_ec;
+    const auto local_ep = socket_.local_endpoint(local_ep_ec);
+    if (!local_ep_ec)
     {
         ctx_.local_addr(local_ep.address().to_string());
         ctx_.local_port(local_ep.port());
+    }
+
+    std::error_code remote_ep_ec;
+    const auto remote_ep = socket_.remote_endpoint(remote_ep_ec);
+    if (!remote_ep_ec)
+    {
         ctx_.remote_addr(remote_ep.address().to_string());
         ctx_.remote_port(remote_ep.port());
     }
