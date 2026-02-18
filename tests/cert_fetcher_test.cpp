@@ -537,6 +537,53 @@ TEST(CertFetcherTest, ConnectFailure)
     ctx.run();
 }
 
+TEST(CertFetcherTest, ConnectTimeout)
+{
+    asio::io_context ctx;
+    std::error_code ec;
+
+    asio::ip::tcp::acceptor saturated_acceptor(ctx);
+    ec = saturated_acceptor.open(asio::ip::tcp::v4(), ec);
+    ASSERT_FALSE(ec);
+    ec = saturated_acceptor.set_option(asio::ip::tcp::acceptor::reuse_address(true), ec);
+    ASSERT_FALSE(ec);
+    ec = saturated_acceptor.bind(asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0), ec);
+    ASSERT_FALSE(ec);
+    ec = saturated_acceptor.listen(1, ec);
+    ASSERT_FALSE(ec);
+
+    const auto target_port = saturated_acceptor.local_endpoint().port();
+    asio::ip::tcp::socket queued_client_a(ctx);
+    queued_client_a.connect({asio::ip::make_address("127.0.0.1"), target_port}, ec);
+    ASSERT_FALSE(ec);
+    asio::ip::tcp::socket queued_client_b(ctx);
+    queued_client_b.connect({asio::ip::make_address("127.0.0.1"), target_port}, ec);
+    ASSERT_FALSE(ec);
+
+    bool finished = false;
+    const auto start = std::chrono::steady_clock::now();
+    asio::co_spawn(
+        ctx,
+        [&]() -> asio::awaitable<void>
+        {
+            auto res = co_await reality::cert_fetcher::fetch(ctx, "127.0.0.1", target_port, "localhost", "test", 1);
+            EXPECT_FALSE(res.has_value());
+            finished = true;
+            co_return;
+        },
+        asio::detached);
+    ctx.run();
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+
+    EXPECT_TRUE(finished);
+    EXPECT_LT(std::chrono::duration_cast<std::chrono::seconds>(elapsed).count(), 5);
+
+    std::error_code close_ec;
+    queued_client_a.close(close_ec);
+    queued_client_b.close(close_ec);
+    saturated_acceptor.close(close_ec);
+}
+
 TEST(CertFetcherTest, WhiteBoxHelpersAndRecordTypeBranches)
 {
     std::array<std::uint8_t, 3> raw = {0x01, 0xab, 0xff};

@@ -47,7 +47,12 @@ class cert_fetcher
     static std::string hex(const std::uint8_t* data, std::size_t len);
 
     static asio::awaitable<std::optional<fetch_result>> fetch(
-        asio::io_context& io_context, std::string host, std::uint16_t port, std::string sni, const std::string& trace_id = "");
+        asio::io_context& io_context,
+        std::string host,
+        std::uint16_t port,
+        std::string sni,
+        const std::string& trace_id = "",
+        std::uint32_t connect_timeout_sec = 10);
 
    private:
     class fetch_session
@@ -57,7 +62,8 @@ class cert_fetcher
                       std::string host,
                       std::uint16_t port,
                       std::string sni,
-                      const std::string& trace_id);
+                      const std::string& trace_id,
+                      std::uint32_t connect_timeout_sec = 10);
 
         asio::awaitable<std::optional<fetch_result>> run();
 
@@ -103,6 +109,7 @@ class cert_fetcher
         std::string host_;
         std::uint16_t port_;
         std::string sni_;
+        std::uint32_t connect_timeout_sec_ = 10;
         server_fingerprint fingerprint_;
 
         transcript trans_;
