@@ -339,7 +339,7 @@ if(RG_EXECUTABLE)
         "    message(FATAL_ERROR \"RG_EXECUTABLE missing\")\n"
         "endif()\n"
         "execute_process(\n"
-        "    COMMAND \"\\${RG_EXECUTABLE}\" -n \"\\\\bthrow\\\\b|\\\\btry\\\\b|\\\\bcatch\\\\b\" --glob \"*.{cpp,h}\" --glob \"!third/**\" --glob \"!build/**\" --glob \"!**/build/**\" \"\\${PROJECT_SOURCE_DIR}\"\n"
+        "    COMMAND \"\${RG_EXECUTABLE}\" -n \"\\\\bthrow\\\\b|\\\\btry\\\\b|\\\\bcatch\\\\b\" --glob \"*.{cpp,h}\" --glob \"!third/**\" --glob \"!build/**\" --glob \"!**/build/**\" \"\${PROJECT_SOURCE_DIR}\"\n"
         "    RESULT_VARIABLE rg_exit\n"
         "    OUTPUT_VARIABLE rg_output\n"
         "    ERROR_VARIABLE rg_error\n"
@@ -347,10 +347,10 @@ if(RG_EXECUTABLE)
         "    ERROR_STRIP_TRAILING_WHITESPACE\n"
         ")\n"
         "if(rg_exit EQUAL 0)\n"
-        "    message(FATAL_ERROR \"exception keywords found\\n\\${rg_output}\")\n"
+        "    message(FATAL_ERROR \"exception keywords found\\n\${rg_output}\")\n"
         "endif()\n"
         "if(NOT rg_exit EQUAL 1)\n"
-        "    message(FATAL_ERROR \"rg execution failed with code \\${rg_exit}\\n\\${rg_error}\")\n"
+        "    message(FATAL_ERROR \"rg execution failed with code \${rg_exit}\\n\${rg_error}\")\n"
         "endif()\n"
     )
     add_test(

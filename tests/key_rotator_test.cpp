@@ -27,26 +27,31 @@ std::atomic<bool> g_fail_nothrow_new_once{false};
 
 }    // namespace
 
+#if defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+#define SOCKS_HAS_TSAN 1
+#endif
+#endif
+
+#if defined(__SANITIZE_THREAD__)
+#define SOCKS_HAS_TSAN 1
+#endif
+
+#if !defined(SOCKS_HAS_TSAN)
 void* operator new(std::size_t size, const std::nothrow_t&) noexcept
 {
     if (g_fail_nothrow_new_once.exchange(false, std::memory_order_acq_rel))
     {
         return nullptr;
     }
-    try
-    {
-        return ::operator new(size);
-    }
-    catch (...)
-    {
-        return nullptr;
-    }
+    return std::malloc(size);
 }
 
 void operator delete(void* ptr, const std::nothrow_t&) noexcept
 {
-    ::operator delete(ptr);
+    std::free(ptr);
 }
+#endif
 
 namespace reality
 {
@@ -184,6 +189,9 @@ TEST(KeyRotatorTest, FallbackCompareExchangeFailureReturnsNullWhenStillRotating)
 
 TEST(KeyRotatorTest, RotateReturnsFalseWhenKeyAllocationFails)
 {
+#if defined(SOCKS_HAS_TSAN)
+    GTEST_SKIP() << "tsan runtime overrides nothrow operator new/delete";
+#else
     g_keygen_mode.store(keygen_mode::kSuccess, std::memory_order_relaxed);
     reality::key_rotator rotator(std::chrono::seconds(60));
 
@@ -195,4 +203,5 @@ TEST(KeyRotatorTest, RotateReturnsFalseWhenKeyAllocationFails)
 
     const auto after = rotator.get_current_key();
     EXPECT_EQ(after, before);
+#endif
 }
