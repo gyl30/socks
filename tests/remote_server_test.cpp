@@ -356,16 +356,10 @@ std::shared_ptr<mux::remote_server> construct_server_until_acceptor_ready(mux::i
 {
     for (std::uint32_t attempt = 0; attempt < max_attempts; ++attempt)
     {
-        try
+        auto server = std::make_shared<mux::remote_server>(pool, cfg);
+        if (server->acceptor_.is_open())
         {
-            auto server = std::make_shared<mux::remote_server>(pool, cfg);
-            if (server->acceptor_.is_open())
-            {
-                return server;
-            }
-        }
-        catch (const std::exception&)
-        {
+            return server;
         }
         std::this_thread::sleep_for(backoff);
     }
