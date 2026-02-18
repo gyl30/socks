@@ -78,11 +78,24 @@ struct tcp_socket_pair
 
 tcp_socket_pair make_tcp_socket_pair(asio::io_context& io_context)
 {
-    asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    asio::ip::tcp::acceptor acceptor(io_context);
+    if (!mux::test::open_ephemeral_tcp_acceptor(acceptor))
+    {
+        return tcp_socket_pair{asio::ip::tcp::socket(io_context), asio::ip::tcp::socket(io_context)};
+    }
     asio::ip::tcp::socket client(io_context);
     asio::ip::tcp::socket server(io_context);
-    client.connect(acceptor.local_endpoint());
-    acceptor.accept(server);
+    std::error_code ec;
+    client.connect(acceptor.local_endpoint(), ec);
+    if (ec)
+    {
+        return tcp_socket_pair{asio::ip::tcp::socket(io_context), asio::ip::tcp::socket(io_context)};
+    }
+    acceptor.accept(server, ec);
+    if (ec)
+    {
+        return tcp_socket_pair{asio::ip::tcp::socket(io_context), asio::ip::tcp::socket(io_context)};
+    }
     return tcp_socket_pair{std::move(client), std::move(server)};
 }
 
@@ -183,7 +196,8 @@ TEST(RemoteSessionTest, RunConnectFailureSendsConnRefusedAckAndReset)
     mux::connection_context ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 11, io_context, ctx);
 
-    asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    asio::ip::tcp::acceptor acceptor(io_context);
+    ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
     const std::uint16_t closed_port = acceptor.local_endpoint().port();
     acceptor.close();
 
@@ -210,7 +224,8 @@ TEST(RemoteSessionTest, RunAckSendFailureReturnsWithoutReset)
     mux::connection_context ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 13, io_context, ctx);
 
-    asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    asio::ip::tcp::acceptor acceptor(io_context);
+    ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
 
     EXPECT_CALL(*conn, mock_send_async(13, mux::kCmdAck, _)).WillOnce(::testing::Return(asio::error::broken_pipe));
     EXPECT_CALL(*conn, mock_send_async(13, mux::kCmdRst, _)).Times(0);
@@ -240,7 +255,8 @@ TEST(RemoteSessionTest, RunSuccessWhenSetNoDelayFailsStillSendsAckAndFin)
     auto session = std::make_shared<mux::remote_session>(conn, 29, io_context, ctx);
     session->recv_channel_.close();
 
-    asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    asio::ip::tcp::acceptor acceptor(io_context);
+    ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
     const std::uint16_t port = acceptor.local_endpoint().port();
     std::thread accept_thread(
         [&io_context, &acceptor]()
