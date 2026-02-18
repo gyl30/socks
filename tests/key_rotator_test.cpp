@@ -33,19 +33,12 @@ void* operator new(std::size_t size, const std::nothrow_t&) noexcept
     {
         return nullptr;
     }
-    try
-    {
-        return ::operator new(size);
-    }
-    catch (...)
-    {
-        return nullptr;
-    }
+    return std::malloc(size);
 }
 
 void operator delete(void* ptr, const std::nothrow_t&) noexcept
 {
-    ::operator delete(ptr);
+    std::free(ptr);
 }
 
 namespace reality
