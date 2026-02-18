@@ -36,7 +36,8 @@ class udp_socks_session : public mux_stream_interface, public std::enable_shared
                       asio::io_context& io_context,
                       std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager,
                       std::uint32_t sid,
-                      const config::timeout_t& timeout_cfg);
+                      const config::timeout_t& timeout_cfg,
+                      std::shared_ptr<void> active_connection_guard = nullptr);
 
     void start(const std::string& host, std::uint16_t port);
 
@@ -74,6 +75,7 @@ class udp_socks_session : public mux_stream_interface, public std::enable_shared
     std::atomic<bool> closed_{false};
     asio::ip::udp::endpoint client_ep_;
     bool has_client_ep_ = false;
+    std::shared_ptr<void> active_connection_guard_;
     config::timeout_t timeout_config_;
 };
 
