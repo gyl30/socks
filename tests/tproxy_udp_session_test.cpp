@@ -3768,6 +3768,70 @@ TEST(TproxyClientTest, StopClosesUdpSessionsWhenIoQueueBlocked)
     reset_socket_wrappers();
 }
 
+TEST(TproxyClientTest, UdpDispatchLoopDoesNotCreateSessionAfterStopRequested)
+{
+    reset_socket_wrappers();
+
+    mux::io_context_pool pool(1);
+    mux::config cfg;
+    cfg.tproxy.enabled = true;
+    auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
+    client->router_ = std::make_shared<direct_router>();
+    client->udp_dispatch_channel_ = std::make_shared<mux::tproxy_udp_dispatch_channel>(pool.get_io_context(), 8);
+    client->stop_.store(false, std::memory_order_release);
+
+    asio::co_spawn(pool.get_io_context(), [client]() { return client->udp_dispatch_loop(); }, asio::detached);
+    std::thread runner([&pool]() { pool.run(); });
+
+    const asio::ip::udp::endpoint src_ep(asio::ip::make_address("127.0.0.1"), 22345);
+    const asio::ip::udp::endpoint dst_ep(asio::ip::make_address("8.8.8.8"), 53);
+    const std::vector<std::uint8_t> packet = {0x01, 0x02, 0x03, 0x04};
+
+    ASSERT_TRUE(mux::tproxy_client::enqueue_udp_packet(*client->udp_dispatch_channel_, src_ep, dst_ep, packet, packet.size()));
+
+    bool created = false;
+    for (int i = 0; i < 100; ++i)
+    {
+        if (!udp_sessions_empty(client))
+        {
+            created = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_TRUE(created);
+
+    client->stop_.store(true, std::memory_order_release);
+
+    auto existing = snapshot_udp_sessions(client);
+    for (auto& [key, session] : *existing)
+    {
+        (void)key;
+        if (session != nullptr)
+        {
+            session->stop();
+        }
+    }
+    std::atomic_store_explicit(
+        &client->udp_sessions_, std::make_shared<mux::tproxy_client::udp_session_map_t>(), std::memory_order_release);
+    ASSERT_TRUE(udp_sessions_empty(client));
+
+    ASSERT_TRUE(mux::tproxy_client::enqueue_udp_packet(*client->udp_dispatch_channel_, src_ep, dst_ep, packet, packet.size()));
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    EXPECT_TRUE(udp_sessions_empty(client));
+
+    if (client->udp_dispatch_channel_ != nullptr)
+    {
+        client->udp_dispatch_channel_->close();
+    }
+    pool.stop();
+    if (runner.joinable())
+    {
+        runner.join();
+    }
+    reset_socket_wrappers();
+}
+
 TEST(TproxyClientTest, UdpCleanupLoopCoversNullSessionBranch)
 {
     std::error_code ec;

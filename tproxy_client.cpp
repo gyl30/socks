@@ -353,11 +353,22 @@ std::shared_ptr<tproxy_udp_session> get_or_create_udp_session(
     const std::shared_ptr<client_tunnel_pool>& tunnel_pool,
     const std::shared_ptr<router>& router,
     const std::shared_ptr<tproxy_udp_sender>& sender,
-    const config& cfg)
+    const config& cfg,
+    const std::atomic<bool>& stop_flag)
 {
+    if (stop_flag.load(std::memory_order_acquire))
+    {
+        return nullptr;
+    }
+
     std::shared_ptr<tproxy_udp_session> prepared_session = nullptr;
     for (;;)
     {
+        if (stop_flag.load(std::memory_order_acquire))
+        {
+            return nullptr;
+        }
+
         auto current = snapshot_udp_sessions(sessions);
         const auto it = current->find(key);
         if (it != current->end() && it->second != nullptr && !it->second->terminated())
@@ -380,9 +391,22 @@ std::shared_ptr<tproxy_udp_session> get_or_create_udp_session(
         }
     }
 
+    if (stop_flag.load(std::memory_order_acquire))
+    {
+        erase_udp_session_if_same(sessions, key, prepared_session);
+        return nullptr;
+    }
+
     if (!prepared_session->start())
     {
         LOG_WARN("tproxy udp session {} start failed", key);
+        erase_udp_session_if_same(sessions, key, prepared_session);
+        return nullptr;
+    }
+
+    if (stop_flag.load(std::memory_order_acquire))
+    {
+        prepared_session->stop();
         erase_udp_session_if_same(sessions, key, prepared_session);
         return nullptr;
     }
@@ -1016,16 +1040,28 @@ asio::awaitable<void> tproxy_client::udp_dispatch_loop()
             }
             break;
         }
+
+        if (stop_.load(std::memory_order_acquire))
+        {
+            break;
+        }
+
         if (packet.payload.empty())
         {
             continue;
         }
 
         const auto key = make_endpoint_key(packet.src_ep);
-        auto session = get_or_create_udp_session(udp_sessions_, key, packet.src_ep, io_context_, tunnel_pool_, router_, sender_, cfg_);
+        auto session = get_or_create_udp_session(udp_sessions_, key, packet.src_ep, io_context_, tunnel_pool_, router_, sender_, cfg_, stop_);
         if (session == nullptr)
         {
             continue;
+        }
+        if (stop_.load(std::memory_order_acquire))
+        {
+            session->stop();
+            erase_udp_session_if_same(udp_sessions_, key, session);
+            break;
         }
         co_await session->handle_packet(packet.dst_ep, packet.payload.data(), packet.payload.size());
     }
