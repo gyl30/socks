@@ -994,7 +994,11 @@ bool tproxy_client::enqueue_udp_packet(tproxy_udp_dispatch_channel& dispatch_cha
     tproxy_udp_dispatch_item packet;
     packet.src_ep = src_ep;
     packet.dst_ep = dst_ep;
-    packet.payload.assign(buffer.begin(), buffer.begin() + packet_len);
+    packet.payload.resize(packet_len);
+    if (packet_len > 0)
+    {
+        std::memcpy(packet.payload.data(), buffer.data(), packet_len);
+    }
     if (dispatch_channel.try_send(std::error_code(), std::move(packet)))
     {
         statistics::instance().inc_tproxy_udp_dispatch_enqueued();
