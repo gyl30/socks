@@ -253,6 +253,7 @@ asio::awaitable<bool> start_local_session(asio::ip::tcp::socket socket,
                                           std::shared_ptr<session_list_t>& sessions,
                                           const config::socks_t& socks_config,
                                           const config::timeout_t& timeout_config,
+                                          const config::queues_t& queue_config,
                                           const std::atomic<bool>& stop)
 {
     if (stop.load(std::memory_order_acquire))
@@ -273,7 +274,8 @@ asio::awaitable<bool> start_local_session(asio::ip::tcp::socket socket,
     const std::uint32_t sid = tunnel_pool->next_session_id();
     log_tunnel_selection(sid, selected_tunnel);
 
-    auto session = std::make_shared<socks_session>(std::move(socket), io_context, selected_tunnel, router, sid, socks_config, timeout_config);
+    auto session =
+        std::make_shared<socks_session>(std::move(socket), io_context, selected_tunnel, router, sid, socks_config, timeout_config, queue_config);
     if (stop.load(std::memory_order_acquire))
     {
         session->stop();
@@ -292,6 +294,7 @@ asio::awaitable<bool> run_accept_iteration(asio::ip::tcp::acceptor& acceptor,
                                            std::shared_ptr<session_list_t>& sessions,
                                            const config::socks_t& socks_config,
                                            const config::timeout_t& timeout_config,
+                                           const config::queues_t& queue_config,
                                            const std::atomic<bool>& stop)
 {
     asio::ip::tcp::socket socket(io_context);
@@ -311,7 +314,8 @@ asio::awaitable<bool> run_accept_iteration(asio::ip::tcp::acceptor& acceptor,
         co_return false;
     }
 
-    if (!(co_await start_local_session(std::move(socket), io_context, tunnel_pool, router, sessions, socks_config, timeout_config, stop)))
+    if (!(co_await start_local_session(
+            std::move(socket), io_context, tunnel_pool, router, sessions, socks_config, timeout_config, queue_config, stop)))
     {
         co_return false;
     }
@@ -366,6 +370,7 @@ socks_client::socks_client(io_context_pool& pool, const config& cfg)
       router_(std::make_shared<mux::router>()),
       tunnel_pool_(std::make_shared<client_tunnel_pool>(pool, cfg, 0)),
       timeout_config_(cfg.timeout),
+      queue_config_(cfg.queues),
       socks_config_(cfg.socks)
 {
 }
@@ -473,7 +478,7 @@ asio::awaitable<void> socks_client::accept_local_loop()
     while (!stop_.load(std::memory_order_acquire))
     {
         if (!(co_await run_accept_iteration(
-                  acceptor_, io_context_, tunnel_pool_, router_, sessions_, socks_config_, timeout_config_, stop_)))
+                  acceptor_, io_context_, tunnel_pool_, router_, sessions_, socks_config_, timeout_config_, queue_config_, stop_)))
         {
             break;
         }
