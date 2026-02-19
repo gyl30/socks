@@ -71,66 +71,110 @@ static int parse_config_from_file(const std::string& file, mux::config& cfg)
     return 0;
 }
 
+bool start_monitor_if_enabled(mux::io_context_pool& pool, const mux::config& cfg, runtime_services& services)
+{
+    if (!cfg.monitor.enabled)
+    {
+        return true;
+    }
+    services.monitor = std::make_shared<mux::monitor_server>(pool.get_io_context(), cfg.monitor.port);
+    services.monitor->start();
+    if (!services.monitor->running())
+    {
+        LOG_ERROR("monitor server start failed");
+        return false;
+    }
+    return true;
+}
+
+bool start_server_mode(mux::io_context_pool& pool, const mux::config& cfg, runtime_services& services)
+{
+    services.server = std::make_shared<mux::remote_server>(pool, cfg);
+    services.server->start();
+    if (!services.server->running())
+    {
+        LOG_ERROR("remote server start failed");
+        return false;
+    }
+    return true;
+}
+
+bool has_client_inbound_enabled(const mux::config& cfg)
+{
+#ifdef __linux__
+    return cfg.socks.enabled || cfg.tproxy.enabled;
+#else
+    return cfg.socks.enabled;
+#endif
+}
+
+bool start_socks_inbound_if_enabled(mux::io_context_pool& pool, const mux::config& cfg, runtime_services& services)
+{
+    if (!cfg.socks.enabled)
+    {
+        return true;
+    }
+    services.socks = std::make_shared<mux::socks_client>(pool, cfg);
+    services.socks->start();
+    if (!services.socks->running())
+    {
+        LOG_ERROR("socks client start failed");
+        return false;
+    }
+    return true;
+}
+
+#ifdef __linux__
+bool start_tproxy_inbound_if_enabled(mux::io_context_pool& pool, const mux::config& cfg, runtime_services& services)
+{
+    if (!cfg.tproxy.enabled)
+    {
+        return true;
+    }
+    services.tproxy = std::make_shared<mux::tproxy_client>(pool, cfg);
+    services.tproxy->start();
+    if (!services.tproxy->running())
+    {
+        LOG_ERROR("tproxy client start failed");
+        return false;
+    }
+    return true;
+}
+#endif
+
+bool start_client_mode(mux::io_context_pool& pool, const mux::config& cfg, runtime_services& services)
+{
+    if (!start_socks_inbound_if_enabled(pool, cfg, services))
+    {
+        return false;
+    }
+#ifdef __linux__
+    if (!start_tproxy_inbound_if_enabled(pool, cfg, services))
+    {
+        return false;
+    }
+#endif
+    return true;
+}
+
 bool start_runtime_services(mux::io_context_pool& pool, const mux::config& cfg, runtime_services& services)
 {
-    if (cfg.monitor.enabled)
+    if (!start_monitor_if_enabled(pool, cfg, services))
     {
-        services.monitor = std::make_shared<mux::monitor_server>(pool.get_io_context(), cfg.monitor.port);
-        services.monitor->start();
-        if (!services.monitor->running())
-        {
-            LOG_ERROR("monitor server start failed");
-            return false;
-        }
+        return false;
     }
 
     if (cfg.mode == "server")
     {
-        services.server = std::make_shared<mux::remote_server>(pool, cfg);
-        services.server->start();
-        if (!services.server->running())
-        {
-            LOG_ERROR("remote server start failed");
-            return false;
-        }
-        return true;
+        return start_server_mode(pool, cfg, services);
     }
 
-    const bool has_socks_inbound = cfg.socks.enabled;
-#ifdef __linux__
-    const bool has_tproxy_inbound = cfg.tproxy.enabled;
-#else
-    const bool has_tproxy_inbound = false;
-#endif
-    if (!has_socks_inbound && !has_tproxy_inbound)
+    if (!has_client_inbound_enabled(cfg))
     {
         LOG_ERROR("no client inbound enabled");
         return false;
     }
-
-    if (cfg.socks.enabled)
-    {
-        services.socks = std::make_shared<mux::socks_client>(pool, cfg);
-        services.socks->start();
-        if (!services.socks->running())
-        {
-            LOG_ERROR("socks client start failed");
-            return false;
-        }
-    }
-#ifdef __linux__
-    if (cfg.tproxy.enabled)
-    {
-        services.tproxy = std::make_shared<mux::tproxy_client>(pool, cfg);
-        services.tproxy->start();
-        if (!services.tproxy->running())
-        {
-            LOG_ERROR("tproxy client start failed");
-            return false;
-        }
-    }
-#endif
-    return true;
+    return start_client_mode(pool, cfg, services);
 }
 
 bool register_signal(boost::asio::signal_set& signals, const int signal, const char* signal_name)
