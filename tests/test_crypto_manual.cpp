@@ -8,6 +8,8 @@
 #include <iostream>
 #include <algorithm>
 
+#include <boost/system/error_code.hpp>
+
 extern "C"
 {
 #include <openssl/ssl.h>
@@ -44,24 +46,24 @@ void test_ecdh_set(const std::string& label,
                    const std::vector<std::uint8_t>& pub2)
 {
     std::cout << "--- " << label << " ---" << std::endl;
-    std::error_code ec;
-
-    auto shared1 = reality::crypto_util::x25519_derive(priv1, pub2, ec);
-    if (ec)
+    auto shared1 = reality::crypto_util::x25519_derive(priv1, pub2);
+    if (!shared1)
     {
-        std::cout << "  [1] Derive Error: " << ec.message() << std::endl;
+        std::cout << "  [1] Derive Error: " << shared1.error().message() << std::endl;
     }
 
-    auto shared2 = reality::crypto_util::x25519_derive(priv2, pub1, ec);
-    if (ec)
+    auto shared2 = reality::crypto_util::x25519_derive(priv2, pub1);
+    if (!shared2)
     {
-        std::cout << "  [2] Derive Error: " << ec.message() << std::endl;
+        std::cout << "  [2] Derive Error: " << shared2.error().message() << std::endl;
     }
 
-    std::cout << "  Shared1: " << to_hex(shared1) << std::endl;
-    std::cout << "  Shared2: " << to_hex(shared2) << std::endl;
+    const auto shared1_value = shared1.value_or(std::vector<std::uint8_t>{});
+    const auto shared2_value = shared2.value_or(std::vector<std::uint8_t>{});
+    std::cout << "  Shared1: " << to_hex(shared1_value) << std::endl;
+    std::cout << "  Shared2: " << to_hex(shared2_value) << std::endl;
 
-    if (shared1 == shared2 && !shared1.empty())
+    if (shared1_value == shared2_value && !shared1_value.empty())
     {
         std::cout << "  RESULT: PASS" << std::endl;
     }

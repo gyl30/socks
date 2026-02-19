@@ -8,7 +8,9 @@
 #include <cstring>
 #include <utility>
 #include <expected>
-#include <system_error>
+
+#include <boost/system/errc.hpp>
+#include <boost/system/error_code.hpp>
 
 extern "C"
 {
@@ -25,7 +27,7 @@ namespace reality
 class tls_key_schedule
 {
    public:
-    [[nodiscard]] static std::expected<std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>, std::error_code> derive_traffic_keys(
+    [[nodiscard]] static std::expected<std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>, boost::system::error_code> derive_traffic_keys(
         const std::vector<std::uint8_t>& secret, std::size_t key_len = 16, std::size_t iv_len = 12, const EVP_MD* md = EVP_sha256())
     {
         auto key = crypto_util::hkdf_expand_label(secret, "key", {}, key_len, md);
@@ -41,7 +43,7 @@ class tls_key_schedule
         return std::pair{std::move(*key), std::move(*iv)};
     }
 
-    [[nodiscard]] static std::expected<handshake_keys, std::error_code> derive_handshake_keys(
+    [[nodiscard]] static std::expected<handshake_keys, boost::system::error_code> derive_handshake_keys(
         const std::vector<std::uint8_t>& shared_secret,
         const std::vector<std::uint8_t>& server_hello_hash,
         const EVP_MD* md)
@@ -81,7 +83,7 @@ class tls_key_schedule
             .master_secret = master_secret.value_or(std::vector<std::uint8_t>{})};
     }
 
-    [[nodiscard]] static std::expected<std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>, std::error_code> derive_application_secrets(
+    [[nodiscard]] static std::expected<std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>, boost::system::error_code> derive_application_secrets(
         const std::vector<std::uint8_t>& master_secret, const std::vector<std::uint8_t>& handshake_hash, const EVP_MD* md)
     {
         const std::size_t hash_len = EVP_MD_size(md);    // GCOVR_EXCL_LINE
@@ -93,7 +95,7 @@ class tls_key_schedule
                          s_app_secret.value_or(std::vector<std::uint8_t>{})};    // GCOVR_EXCL_LINE
     }
 
-    [[nodiscard]] static std::expected<std::vector<std::uint8_t>, std::error_code> compute_finished_verify_data(
+    [[nodiscard]] static std::expected<std::vector<std::uint8_t>, boost::system::error_code> compute_finished_verify_data(
         const std::vector<std::uint8_t>& base_key, const std::vector<std::uint8_t>& handshake_hash, const EVP_MD* md)
     {
         const std::size_t hash_len = EVP_MD_size(md);
@@ -109,7 +111,7 @@ class tls_key_schedule
             == nullptr
             || hmac_len == 0)
         {
-            return std::unexpected(std::make_error_code(std::errc::protocol_error));
+            return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
         }
         return std::vector<std::uint8_t>{hmac_out, hmac_out + hmac_len};
     }
