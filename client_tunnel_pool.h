@@ -50,6 +50,13 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
     [[nodiscard]] std::uint32_t next_session_id();
 
    private:
+    enum class connect_loop_action
+    {
+        kRunTunnel,
+        kRetryLater,
+        kStopLoop,
+    };
+
     struct handshake_result
     {
         std::vector<std::uint8_t> c_app_secret;
@@ -60,6 +67,9 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
     };
 
     boost::asio::awaitable<void> connect_remote_loop(std::uint32_t index, boost::asio::io_context& io_context);
+    [[nodiscard]] connect_loop_action prepare_tunnel_for_run(std::uint32_t index,
+                                                             const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
+                                                             const std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>>& tunnel);
 
     [[nodiscard]] boost::asio::awaitable<bool> establish_tunnel_for_connection(
         std::uint32_t index,
