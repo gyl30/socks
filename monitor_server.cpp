@@ -77,6 +77,7 @@ std::string_view trim(std::string_view value)
 struct parsed_monitor_request
 {
     bool valid = false;
+    bool is_http = false;
     std::string_view query;
 };
 
@@ -149,6 +150,7 @@ parsed_monitor_request parse_monitor_request(const std::string_view request)
 
     std::string_view target = line;
     const std::size_t first_space = line.find(' ');
+    bool is_http = false;
     if (first_space != std::string::npos)
     {
         const std::string_view method = line.substr(0, first_space);
@@ -156,6 +158,7 @@ parsed_monitor_request parse_monitor_request(const std::string_view request)
         {
             return {};
         }
+        is_http = true;
 
         const std::string_view after_method = trim_left(line.substr(first_space + 1));
         const std::size_t target_end = after_method.find(' ');
@@ -179,6 +182,7 @@ parsed_monitor_request parse_monitor_request(const std::string_view request)
 
     parsed_monitor_request parsed;
     parsed.valid = true;
+    parsed.is_http = is_http;
     if (query_pos != std::string::npos && query_pos + 1 < target.size())
     {
         parsed.query = target.substr(query_pos + 1);
@@ -224,16 +228,6 @@ bool has_exact_token_parameter(const std::string_view query, const std::string& 
         pos = amp + 1;
     }
     return false;
-}
-
-bool is_authorized_monitor_request(const std::string_view request, const std::string& token)
-{
-    const auto parsed = parse_monitor_request(request);
-    if (!parsed.valid)
-    {
-        return false;
-    }
-    return has_exact_token_parameter(parsed.query, token);
 }
 
 std::string monitor_rate_limit_key(asio::ip::tcp::socket& socket)
@@ -390,7 +384,8 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
                                    }
 
                                    const std::string_view request_view(request_line_.data(), length);
-                                   if (!is_authorized_monitor_request(request_view, token_))
+                                   const auto parsed = parse_monitor_request(request_view);
+                                   if (!parsed.valid || !has_exact_token_parameter(parsed.query, token_))
                                    {
                                        statistics::instance().inc_monitor_auth_failures();
                                        if (!token_.empty())
@@ -411,7 +406,7 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
                                        close_socket();
                                        return;
                                    }
-                                   write_stats();
+                                   write_stats(parsed.is_http);
                                });
     }
 
@@ -434,71 +429,87 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
             *rate_state_, rate_key, min_interval_ms_, std::chrono::steady_clock::now());
     }
 
-    void write_stats()
+    void write_stats(const bool response_as_http)
     {
         auto& stats = statistics::instance();
-        std::string response;
-        response.reserve(1024);
+        std::string metrics_payload;
+        metrics_payload.reserve(1024);
 
-        append_metric_line(response, "socks_uptime_seconds", stats.uptime_seconds());
-        append_metric_line(response, "socks_active_connections", stats.active_connections());
-        append_metric_line(response, "socks_total_connections", stats.total_connections());
-        append_metric_line(response, "socks_active_mux_tunnels", stats.active_mux_sessions());
-        append_metric_line(response, "socks_bytes_read_total", stats.bytes_read());
-        append_metric_line(response, "socks_bytes_written_total", stats.bytes_written());
-        append_metric_line(response, "socks_auth_failures_total", stats.auth_failures());
-        append_metric_line(response, "socks_auth_short_id_failures_total", stats.auth_short_id_failures());
-        append_metric_line(response, "socks_auth_clock_skew_failures_total", stats.auth_clock_skew_failures());
-        append_metric_line(response, "socks_auth_replay_failures_total", stats.auth_replay_failures());
-        append_metric_line(response, "socks_cert_verify_failures_total", stats.cert_verify_failures());
-        append_metric_line(response, "socks_client_finished_failures_total", stats.client_finished_failures());
-        append_metric_line(response, "socks_fallback_rate_limited_total", stats.fallback_rate_limited());
-        append_metric_line(response, "socks_fallback_no_target_total", stats.fallback_no_target());
-        append_metric_line(response, "socks_fallback_resolve_failures_total", stats.fallback_resolve_failures());
-        append_metric_line(response, "socks_fallback_resolve_timeouts_total", stats.fallback_resolve_timeouts());
-        append_metric_line(response, "socks_fallback_resolve_errors_total", stats.fallback_resolve_errors());
-        append_metric_line(response, "socks_fallback_connect_failures_total", stats.fallback_connect_failures());
-        append_metric_line(response, "socks_fallback_connect_timeouts_total", stats.fallback_connect_timeouts());
-        append_metric_line(response, "socks_fallback_connect_errors_total", stats.fallback_connect_errors());
-        append_metric_line(response, "socks_fallback_write_failures_total", stats.fallback_write_failures());
-        append_metric_line(response, "socks_fallback_write_timeouts_total", stats.fallback_write_timeouts());
-        append_metric_line(response, "socks_fallback_write_errors_total", stats.fallback_write_errors());
-        append_metric_line(response, "socks_direct_upstream_resolve_timeouts_total", stats.direct_upstream_resolve_timeouts());
-        append_metric_line(response, "socks_direct_upstream_resolve_errors_total", stats.direct_upstream_resolve_errors());
-        append_metric_line(response, "socks_direct_upstream_connect_timeouts_total", stats.direct_upstream_connect_timeouts());
-        append_metric_line(response, "socks_direct_upstream_connect_errors_total", stats.direct_upstream_connect_errors());
-        append_metric_line(response, "socks_remote_session_resolve_timeouts_total", stats.remote_session_resolve_timeouts());
-        append_metric_line(response, "socks_remote_session_resolve_errors_total", stats.remote_session_resolve_errors());
-        append_metric_line(response, "socks_remote_session_connect_timeouts_total", stats.remote_session_connect_timeouts());
-        append_metric_line(response, "socks_remote_session_connect_errors_total", stats.remote_session_connect_errors());
-        append_metric_line(response, "socks_remote_udp_session_resolve_timeouts_total", stats.remote_udp_session_resolve_timeouts());
-        append_metric_line(response, "socks_remote_udp_session_resolve_errors_total", stats.remote_udp_session_resolve_errors());
-        append_metric_line(response, "socks_client_tunnel_pool_resolve_timeouts_total", stats.client_tunnel_pool_resolve_timeouts());
-        append_metric_line(response, "socks_client_tunnel_pool_resolve_errors_total", stats.client_tunnel_pool_resolve_errors());
-        append_metric_line(response, "socks_client_tunnel_pool_connect_timeouts_total", stats.client_tunnel_pool_connect_timeouts());
-        append_metric_line(response, "socks_client_tunnel_pool_connect_errors_total", stats.client_tunnel_pool_connect_errors());
-        append_metric_line(response, "socks_client_tunnel_pool_handshake_timeouts_total", stats.client_tunnel_pool_handshake_timeouts());
-        append_metric_line(response, "socks_client_tunnel_pool_handshake_errors_total", stats.client_tunnel_pool_handshake_errors());
-        append_metric_line(response, "socks_routing_blocked_total", stats.routing_blocked());
-        append_metric_line(response, "socks_connection_limit_rejected_total", stats.connection_limit_rejected());
-        append_metric_line(response, "socks_stream_limit_rejected_total", stats.stream_limit_rejected());
-        append_metric_line(response, "socks_monitor_auth_failures_total", stats.monitor_auth_failures());
-        append_metric_line(response, "socks_monitor_rate_limited_total", stats.monitor_rate_limited());
-        append_metric_line(response, "socks_tproxy_udp_dispatch_enqueued_total", stats.tproxy_udp_dispatch_enqueued());
-        append_metric_line(response, "socks_tproxy_udp_dispatch_dropped_total", stats.tproxy_udp_dispatch_dropped());
+        append_metric_line(metrics_payload, "socks_uptime_seconds", stats.uptime_seconds());
+        append_metric_line(metrics_payload, "socks_active_connections", stats.active_connections());
+        append_metric_line(metrics_payload, "socks_total_connections", stats.total_connections());
+        append_metric_line(metrics_payload, "socks_active_mux_tunnels", stats.active_mux_sessions());
+        append_metric_line(metrics_payload, "socks_bytes_read_total", stats.bytes_read());
+        append_metric_line(metrics_payload, "socks_bytes_written_total", stats.bytes_written());
+        append_metric_line(metrics_payload, "socks_auth_failures_total", stats.auth_failures());
+        append_metric_line(metrics_payload, "socks_auth_short_id_failures_total", stats.auth_short_id_failures());
+        append_metric_line(metrics_payload, "socks_auth_clock_skew_failures_total", stats.auth_clock_skew_failures());
+        append_metric_line(metrics_payload, "socks_auth_replay_failures_total", stats.auth_replay_failures());
+        append_metric_line(metrics_payload, "socks_cert_verify_failures_total", stats.cert_verify_failures());
+        append_metric_line(metrics_payload, "socks_client_finished_failures_total", stats.client_finished_failures());
+        append_metric_line(metrics_payload, "socks_fallback_rate_limited_total", stats.fallback_rate_limited());
+        append_metric_line(metrics_payload, "socks_fallback_no_target_total", stats.fallback_no_target());
+        append_metric_line(metrics_payload, "socks_fallback_resolve_failures_total", stats.fallback_resolve_failures());
+        append_metric_line(metrics_payload, "socks_fallback_resolve_timeouts_total", stats.fallback_resolve_timeouts());
+        append_metric_line(metrics_payload, "socks_fallback_resolve_errors_total", stats.fallback_resolve_errors());
+        append_metric_line(metrics_payload, "socks_fallback_connect_failures_total", stats.fallback_connect_failures());
+        append_metric_line(metrics_payload, "socks_fallback_connect_timeouts_total", stats.fallback_connect_timeouts());
+        append_metric_line(metrics_payload, "socks_fallback_connect_errors_total", stats.fallback_connect_errors());
+        append_metric_line(metrics_payload, "socks_fallback_write_failures_total", stats.fallback_write_failures());
+        append_metric_line(metrics_payload, "socks_fallback_write_timeouts_total", stats.fallback_write_timeouts());
+        append_metric_line(metrics_payload, "socks_fallback_write_errors_total", stats.fallback_write_errors());
+        append_metric_line(metrics_payload, "socks_direct_upstream_resolve_timeouts_total", stats.direct_upstream_resolve_timeouts());
+        append_metric_line(metrics_payload, "socks_direct_upstream_resolve_errors_total", stats.direct_upstream_resolve_errors());
+        append_metric_line(metrics_payload, "socks_direct_upstream_connect_timeouts_total", stats.direct_upstream_connect_timeouts());
+        append_metric_line(metrics_payload, "socks_direct_upstream_connect_errors_total", stats.direct_upstream_connect_errors());
+        append_metric_line(metrics_payload, "socks_remote_session_resolve_timeouts_total", stats.remote_session_resolve_timeouts());
+        append_metric_line(metrics_payload, "socks_remote_session_resolve_errors_total", stats.remote_session_resolve_errors());
+        append_metric_line(metrics_payload, "socks_remote_session_connect_timeouts_total", stats.remote_session_connect_timeouts());
+        append_metric_line(metrics_payload, "socks_remote_session_connect_errors_total", stats.remote_session_connect_errors());
+        append_metric_line(metrics_payload, "socks_remote_udp_session_resolve_timeouts_total", stats.remote_udp_session_resolve_timeouts());
+        append_metric_line(metrics_payload, "socks_remote_udp_session_resolve_errors_total", stats.remote_udp_session_resolve_errors());
+        append_metric_line(metrics_payload, "socks_client_tunnel_pool_resolve_timeouts_total", stats.client_tunnel_pool_resolve_timeouts());
+        append_metric_line(metrics_payload, "socks_client_tunnel_pool_resolve_errors_total", stats.client_tunnel_pool_resolve_errors());
+        append_metric_line(metrics_payload, "socks_client_tunnel_pool_connect_timeouts_total", stats.client_tunnel_pool_connect_timeouts());
+        append_metric_line(metrics_payload, "socks_client_tunnel_pool_connect_errors_total", stats.client_tunnel_pool_connect_errors());
+        append_metric_line(metrics_payload, "socks_client_tunnel_pool_handshake_timeouts_total", stats.client_tunnel_pool_handshake_timeouts());
+        append_metric_line(metrics_payload, "socks_client_tunnel_pool_handshake_errors_total", stats.client_tunnel_pool_handshake_errors());
+        append_metric_line(metrics_payload, "socks_routing_blocked_total", stats.routing_blocked());
+        append_metric_line(metrics_payload, "socks_connection_limit_rejected_total", stats.connection_limit_rejected());
+        append_metric_line(metrics_payload, "socks_stream_limit_rejected_total", stats.stream_limit_rejected());
+        append_metric_line(metrics_payload, "socks_monitor_auth_failures_total", stats.monitor_auth_failures());
+        append_metric_line(metrics_payload, "socks_monitor_rate_limited_total", stats.monitor_rate_limited());
+        append_metric_line(metrics_payload, "socks_tproxy_udp_dispatch_enqueued_total", stats.tproxy_udp_dispatch_enqueued());
+        append_metric_line(metrics_payload, "socks_tproxy_udp_dispatch_dropped_total", stats.tproxy_udp_dispatch_dropped());
         const auto handshake_failure_sni_metrics = stats.handshake_failure_sni_metrics();
         for (const auto& metric : handshake_failure_sni_metrics)
         {
-            response.append("socks_handshake_failures_by_sni_total{reason=\"");
-            response.append(escape_prometheus_label(metric.reason));
-            response.append("\",sni=\"");
-            response.append(escape_prometheus_label(metric.sni));
-            response.append("\"} ");
-            append_uint64(response, metric.count);
-            response.push_back('\n');
+            metrics_payload.append("socks_handshake_failures_by_sni_total{reason=\"");
+            metrics_payload.append(escape_prometheus_label(metric.reason));
+            metrics_payload.append("\",sni=\"");
+            metrics_payload.append(escape_prometheus_label(metric.sni));
+            metrics_payload.append("\"} ");
+            append_uint64(metrics_payload, metric.count);
+            metrics_payload.push_back('\n');
         }
 
-        response_ = std::move(response);
+        if (response_as_http)
+        {
+            std::string response;
+            response.reserve(metrics_payload.size() + 128);
+            response.append("HTTP/1.1 200 OK\r\n");
+            response.append("Content-Type: text/plain; version=0.0.4; charset=utf-8\r\n");
+            response.append("Connection: close\r\n");
+            response.append("Content-Length: ");
+            append_uint64(response, static_cast<std::uint64_t>(metrics_payload.size()));
+            response.append("\r\n\r\n");
+            response.append(metrics_payload);
+            response_ = std::move(response);
+        }
+        else
+        {
+            response_ = std::move(metrics_payload);
+        }
 
         auto self = shared_from_this();
         asio::async_write(socket_, asio::buffer(response_), [this, self](std::error_code, std::size_t) { close_socket(); });

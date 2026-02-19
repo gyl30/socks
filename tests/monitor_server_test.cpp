@@ -399,6 +399,7 @@ TEST(MonitorServerTest, EmptyTokenReturnsMetrics)
     ASSERT_NE(port, 0);
 
     const auto resp = request_with_retry(port, "metrics\n");
+    EXPECT_NE(resp.rfind("HTTP/1.1 ", 0), 0u);
     EXPECT_NE(resp.find("socks_uptime_seconds "), std::string::npos);
     EXPECT_NE(resp.find("socks_total_connections "), std::string::npos);
     EXPECT_NE(resp.find("socks_auth_failures_total "), std::string::npos);
@@ -731,6 +732,10 @@ TEST(MonitorServerTest, EnforcesPathAndSupportsHttpUrlDecodedToken)
     EXPECT_TRUE(invalid_method.empty());
 
     const auto authed = request_with_retry(port, "GET /metrics?token=s%2Be%2Fc HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+    EXPECT_EQ(authed.rfind("HTTP/1.1 200 OK\r\n", 0), 0u);
+    EXPECT_NE(authed.find("\r\nContent-Type: text/plain; version=0.0.4; charset=utf-8\r\n"), std::string::npos);
+    EXPECT_NE(authed.find("\r\nContent-Length: "), std::string::npos);
+    EXPECT_NE(authed.find("\r\n\r\nsocks_uptime_seconds "), std::string::npos);
     EXPECT_NE(authed.find("socks_uptime_seconds "), std::string::npos);
 }
 
