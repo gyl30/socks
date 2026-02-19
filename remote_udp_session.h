@@ -34,7 +34,8 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
                        std::uint32_t id,
                        asio::io_context& io_context,
                        const connection_context& ctx,
-                       const config::timeout_t& timeout_cfg = {});
+                       const config::timeout_t& timeout_cfg = {},
+                       std::size_t recv_channel_capacity = 128);
 
     asio::awaitable<void> start();
 
@@ -69,6 +70,8 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
     asio::ip::udp::socket udp_socket_;
     asio::ip::udp::resolver udp_resolver_;
     std::weak_ptr<mux_connection> connection_;
+    std::atomic<bool> terminated_{false};
+    std::atomic<bool> cleaned_up_{false};
     std::atomic<std::uint64_t> last_read_time_ms_{0};
     std::atomic<std::uint64_t> last_write_time_ms_{0};
     std::atomic<std::uint64_t> last_activity_time_ms_{0};

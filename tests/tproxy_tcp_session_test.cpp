@@ -423,6 +423,23 @@ TEST(TproxyTcpSessionTest, ConnectBackendReflectsUpstreamResult)
     EXPECT_FALSE(connect_fail);
 }
 
+TEST(TproxyTcpSessionTest, SelectBackendDirectUsesConfiguredReadTimeout)
+{
+    asio::io_context ctx;
+    auto router = std::make_shared<direct_router>();
+    mux::config cfg;
+    cfg.timeout.read = 9;
+    const asio::ip::tcp::endpoint dst_ep(asio::ip::make_address("127.0.0.1"), 80);
+    auto session =
+        std::make_shared<mux::tproxy_tcp_session>(asio::ip::tcp::socket(ctx), ctx, nullptr, std::move(router), 26, cfg, dst_ep);
+
+    const auto [route, backend] = mux::test::run_awaitable(ctx, session->select_backend("127.0.0.1"));
+    EXPECT_EQ(route, mux::route_type::kDirect);
+    const auto direct_backend = std::dynamic_pointer_cast<mux::direct_upstream>(backend);
+    ASSERT_NE(direct_backend, nullptr);
+    EXPECT_EQ(direct_backend->timeout_sec_, 9U);
+}
+
 TEST(TproxyTcpSessionTest, RunClosesClientSocketWhenBackendConnectFails)
 {
     asio::io_context ctx;

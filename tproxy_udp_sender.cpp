@@ -25,6 +25,19 @@ namespace
 
 constexpr std::size_t kMaxCachedSockets = 1024;
 constexpr std::uint64_t kSocketIdleTimeoutMs = 300000;
+constexpr std::uint64_t kSocketPruneIntervalMs = 1000;
+
+template <typename ByteContainer>
+std::size_t hash_bytes(const ByteContainer& bytes)
+{
+    std::size_t hash = 1469598103934665603ULL;
+    for (const auto byte : bytes)
+    {
+        hash ^= static_cast<std::size_t>(byte);
+        hash *= 1099511628211ULL;
+    }
+    return hash;
+}
 
 [[nodiscard]] std::uint64_t now_ms()
 {
@@ -38,8 +51,19 @@ tproxy_udp_sender::tproxy_udp_sender(asio::io_context& io_context, const std::ui
 
 std::size_t tproxy_udp_sender::endpoint_hash::operator()(const endpoint_key& key) const
 {
-    const auto addr_text = key.addr.to_string();
-    const std::size_t h1 = std::hash<std::string>()(addr_text);
+    std::size_t h1 = 0;
+    if (key.addr.is_v4())
+    {
+        h1 = hash_bytes(key.addr.to_v4().to_bytes()) ^ 0x4ULL;
+    }
+    else if (key.addr.is_v6())
+    {
+        h1 = hash_bytes(key.addr.to_v6().to_bytes()) ^ 0x6ULL;
+    }
+    else
+    {
+        h1 = std::hash<std::string>()(key.addr.to_string());
+    }
     const std::size_t h2 = std::hash<std::uint16_t>()(key.port);
     return h1 ^ (h2 + 0x9e3779b97f4a7c15ULL + (h1 << 6U) + (h1 >> 2U));
 }
@@ -48,7 +72,11 @@ std::shared_ptr<asio::ip::udp::socket> tproxy_udp_sender::get_socket(const asio:
 {
     const auto now = now_ms();
     const endpoint_key key{src_ep.address(), src_ep.port()};
-    prune_sockets(now);
+    if (last_prune_ms_ == 0 || now >= (last_prune_ms_ + kSocketPruneIntervalMs))
+    {
+        prune_sockets(now);
+        last_prune_ms_ = now;
+    }
     if (const auto cached = get_cached_socket(key, now); cached != nullptr)
     {
         return cached;
@@ -250,7 +278,7 @@ void tproxy_udp_sender::refresh_cached_socket_timestamp(const endpoint_key& key,
 
 asio::awaitable<void> tproxy_udp_sender::send_to_client(const asio::ip::udp::endpoint& client_ep,
                                                         const asio::ip::udp::endpoint& src_ep,
-                                                        const std::vector<std::uint8_t>& payload)
+                                                        const asio::const_buffer payload)
 {
     co_await asio::dispatch(io_context_, asio::use_awaitable);
 
@@ -262,7 +290,7 @@ asio::awaitable<void> tproxy_udp_sender::send_to_client(const asio::ip::udp::end
         co_return;
     }
 
-    const auto [ec, n] = co_await socket->async_send_to(asio::buffer(payload), norm_client, asio::as_tuple(asio::use_awaitable));
+    const auto [ec, n] = co_await socket->async_send_to(payload, norm_client, asio::as_tuple(asio::use_awaitable));
     if (ec)
     {
         LOG_WARN("tproxy udp send to client failed {}", ec.message());
@@ -270,6 +298,13 @@ asio::awaitable<void> tproxy_udp_sender::send_to_client(const asio::ip::udp::end
         co_return;
     }
     refresh_cached_socket_timestamp(endpoint_key{norm_src.address(), norm_src.port()}, socket);
+}
+
+asio::awaitable<void> tproxy_udp_sender::send_to_client(const asio::ip::udp::endpoint& client_ep,
+                                                        const asio::ip::udp::endpoint& src_ep,
+                                                        const std::vector<std::uint8_t>& payload)
+{
+    co_await send_to_client(client_ep, src_ep, asio::buffer(payload));
 }
 
 }    // namespace mux

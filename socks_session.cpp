@@ -55,7 +55,8 @@ socks_session::socks_session(asio::ip::tcp::socket socket,
                              std::shared_ptr<router> router,
                              const std::uint32_t sid,
                              const config::socks_t& socks_cfg,
-                             const config::timeout_t& timeout_cfg)
+                             const config::timeout_t& timeout_cfg,
+                             const config::queues_t& queue_cfg)
     : sid_(sid),
       username_(socks_cfg.username),
       password_(socks_cfg.password),
@@ -64,7 +65,8 @@ socks_session::socks_session(asio::ip::tcp::socket socket,
       socket_(std::move(socket)),
       router_(std::move(router)),
       tunnel_manager_(std::move(tunnel_manager)),
-      timeout_config_(timeout_cfg)
+      timeout_config_(timeout_cfg),
+      queue_config_(queue_cfg)
 {
     ctx_.new_trace_id();
     ctx_.conn_id(sid);
@@ -122,8 +124,14 @@ asio::awaitable<void> socks_session::run()
     }
     else if (cmd == socks::kCmdUdpAssociate)
     {
-        const auto udp_sess =
-            std::make_shared<udp_socks_session>(std::move(socket_), io_context_, tunnel_manager_, sid_, timeout_config_, std::move(active_connection_guard_));
+        const auto udp_sess = std::make_shared<udp_socks_session>(
+            std::move(socket_),
+            io_context_,
+            tunnel_manager_,
+            sid_,
+            timeout_config_,
+            std::move(active_connection_guard_),
+            queue_config_.udp_session_recv_channel_capacity);
         udp_sess->start(host, port);
     }
     else

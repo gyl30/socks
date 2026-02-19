@@ -27,6 +27,7 @@
 #include "protocol.h"
 #include "mux_codec.h"
 #include "mux_tunnel.h"
+#include "statistics.h"
 #include "test_util.h"
 #include "mock_mux_connection.h"
 
@@ -209,6 +210,8 @@ TEST(RemoteUdpSessionTest, ForwardMuxPayloadRejectsInvalidPackets)
     asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     auto session = make_session(io_context, conn, 14);
+    auto& stats = mux::statistics::instance();
+    const auto resolve_errors_before = stats.remote_udp_session_resolve_errors();
     ASSERT_TRUE(mux::test::run_awaitable(io_context, session->setup_udp_socket(conn)));
 
     mux::test::run_awaitable_void(io_context, session->forward_mux_payload(std::vector<std::uint8_t>{0x00, 0x01}));
@@ -216,6 +219,7 @@ TEST(RemoteUdpSessionTest, ForwardMuxPayloadRejectsInvalidPackets)
     mux::test::run_awaitable_void(io_context, session->forward_mux_payload(no_payload_packet));
     const auto resolve_fail_packet = make_mux_udp_packet("non-existent.invalid", 5353, std::vector<std::uint8_t>{0x01});
     mux::test::run_awaitable_void(io_context, session->forward_mux_payload(resolve_fail_packet));
+    EXPECT_GE(stats.remote_udp_session_resolve_errors(), resolve_errors_before + 1);
 }
 
 TEST(RemoteUdpSessionTest, ForwardMuxPayloadSendsIpv4AndIpv6Payloads)
@@ -283,6 +287,8 @@ TEST(RemoteUdpSessionTest, ForwardMuxPayloadResolveTimeoutDropsPayload)
     mux::config::timeout_t timeout_cfg;
     timeout_cfg.read = 1;
     auto session = make_session(io_context, conn, 134, timeout_cfg);
+    auto& stats = mux::statistics::instance();
+    const auto resolve_timeouts_before = stats.remote_udp_session_resolve_timeouts();
     ASSERT_TRUE(mux::test::run_awaitable(io_context, session->setup_udp_socket(conn)));
 
     asio::ip::udp::socket receiver(io_context);
@@ -305,6 +311,7 @@ TEST(RemoteUdpSessionTest, ForwardMuxPayloadResolveTimeoutDropsPayload)
     const auto recv_n = receiver.receive_from(asio::buffer(recv_buf), from_ep, 0, ec);
     EXPECT_EQ(recv_n, 0U);
     EXPECT_TRUE(ec == asio::error::would_block || ec == asio::error::try_again);
+    EXPECT_GE(stats.remote_udp_session_resolve_timeouts(), resolve_timeouts_before + 1);
 }
 
 TEST(RemoteUdpSessionTest, MuxToUdpProcessesUntilEmptyFrame)
@@ -635,6 +642,27 @@ TEST(RemoteUdpSessionTest, StartImplSendsAckAndCleansUpManager)
     EXPECT_NE(ack.bnd_port, 0);
     EXPECT_FALSE(session->udp_socket_.is_open());
     EXPECT_FALSE(manager->connection()->has_stream(22));
+}
+
+TEST(RemoteUdpSessionTest, StartImplSkipsAckWhenStopRequestedBeforeStart)
+{
+    asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    auto session = make_session(io_context, conn, 26);
+    auto manager = make_manager(io_context, 303);
+    manager->connection()->register_stream(26, std::make_shared<noop_stream>());
+    ASSERT_TRUE(manager->connection()->has_stream(26));
+    session->set_manager(manager);
+
+    session->on_close();
+
+    EXPECT_CALL(*conn, mock_send_async(26, mux::kCmdAck, _)).Times(0);
+    EXPECT_CALL(*conn, mock_send_async(26, mux::kCmdRst, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(std::error_code{}));
+
+    mux::test::run_awaitable_void(io_context, session->start_impl(session));
+
+    EXPECT_FALSE(session->udp_socket_.is_open());
+    EXPECT_FALSE(manager->connection()->has_stream(26));
 }
 
 TEST(RemoteUdpSessionTest, StartImplAckFailureStopsSessionAndRemovesStream)

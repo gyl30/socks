@@ -8,7 +8,6 @@
 #include <asio/as_tuple.hpp>
 #include <asio/co_spawn.hpp>
 #include <asio/dispatch.hpp>
-#include <asio/steady_timer.hpp>
 #include <asio/use_awaitable.hpp>
 #include <asio/experimental/awaitable_operators.hpp>
 
@@ -17,6 +16,8 @@
 #include "mux_codec.h"
 #include "log_context.h"
 #include "stop_dispatch.h"
+#include "timeout_io.h"
+#include "statistics.h"
 #include "remote_session.h"
 
 namespace mux
@@ -26,22 +27,8 @@ namespace
 {
 
 using resolve_results = asio::ip::tcp::resolver::results_type;
-
-struct timed_resolve_result
-{
-    bool ok = false;
-    bool timed_out = false;
-    resolve_results endpoints;
-    std::error_code ec;
-};
-
-struct timed_connect_result
-{
-    bool ok = false;
-    bool timed_out = false;
-    asio::ip::tcp::endpoint endpoint;
-    std::error_code ec;
-};
+using timed_resolve_result = timeout_io::timed_tcp_resolve_result;
+using timed_connect_result = timeout_io::timed_tcp_connect_result;
 
 asio::awaitable<bool> send_ack(std::shared_ptr<mux_connection> conn,
                                const std::uint32_t stream_id,
@@ -96,41 +83,22 @@ asio::awaitable<timed_resolve_result> resolve_target_endpoints(asio::ip::tcp::re
                                                                const connection_context& ctx,
                                                                const std::uint32_t timeout_sec)
 {
-    auto timer = std::make_shared<asio::steady_timer>(resolver.get_executor());
-    auto timeout_triggered = std::make_shared<std::atomic<bool>>(false);
-    timer->expires_after(std::chrono::seconds(timeout_sec));
-    timer->async_wait(
-        [&resolver, timeout_triggered](const std::error_code& timer_ec)
-        {
-            if (timer_ec)
-            {
-                return;
-            }
-            timeout_triggered->store(true, std::memory_order_release);
-            resolver.cancel();
-        });
-
-    const auto [resolve_ec, eps] = co_await resolver.async_resolve(syn.addr, std::to_string(syn.port), asio::as_tuple(asio::use_awaitable));
-    const auto cancelled = timer->cancel();
-    (void)cancelled;
-    if (timeout_triggered->load(std::memory_order_acquire))
+    const auto resolve_res = co_await timeout_io::async_resolve_with_timeout(resolver, syn.addr, std::to_string(syn.port), timeout_sec);
+    if (resolve_res.timed_out)
     {
-        LOG_CTX_ERROR(ctx, "{} resolve timed out {}s", log_event::kMux, timeout_sec);
-        co_return timed_resolve_result{
-            .ok = false,
-            .timed_out = true,
-            .ec = asio::error::timed_out};
+        statistics::instance().inc_remote_session_resolve_timeouts();
+        LOG_CTX_ERROR(
+            ctx, "{} stage=resolve target={}:{} timeout={}s", log_event::kMux, syn.addr, syn.port, timeout_sec);
+        co_return resolve_res;
     }
-    if (resolve_ec)
+    if (!resolve_res.ok)
     {
-        LOG_CTX_ERROR(ctx, "{} resolve failed {}", log_event::kMux, resolve_ec.message());
-        co_return timed_resolve_result{
-            .ok = false,
-            .ec = resolve_ec};
+        statistics::instance().inc_remote_session_resolve_errors();
+        LOG_CTX_ERROR(
+            ctx, "{} stage=resolve target={}:{} error={}", log_event::kMux, syn.addr, syn.port, resolve_res.ec.message());
+        co_return resolve_res;
     }
-    co_return timed_resolve_result{
-        .ok = true,
-        .endpoints = eps};
+    co_return resolve_res;
 }
 
 asio::awaitable<timed_connect_result> connect_target_endpoint(asio::ip::tcp::socket& target_socket,
@@ -138,53 +106,22 @@ asio::awaitable<timed_connect_result> connect_target_endpoint(asio::ip::tcp::soc
                                                               const connection_context& ctx,
                                                               const std::uint32_t timeout_sec)
 {
-    auto timer = std::make_shared<asio::steady_timer>(target_socket.get_executor());
-    auto timeout_triggered = std::make_shared<std::atomic<bool>>(false);
-    timer->expires_after(std::chrono::seconds(timeout_sec));
-    timer->async_wait(
-        [&target_socket, timeout_triggered](const std::error_code& timer_ec)
-        {
-            if (timer_ec)
-            {
-                return;
-            }
-            timeout_triggered->store(true, std::memory_order_release);
-            std::error_code cancel_ec;
-            target_socket.cancel(cancel_ec);
-            if (cancel_ec && cancel_ec != asio::error::bad_descriptor)
-            {
-                LOG_WARN("remote session cancel timeout socket failed {}", cancel_ec.message());
-            }
-
-            std::error_code close_ec;
-            target_socket.close(close_ec);
-            if (close_ec && close_ec != asio::error::bad_descriptor)
-            {
-                LOG_WARN("remote session close timeout socket failed {}", close_ec.message());
-            }
-        });
-
-    const auto [connect_ec, ep_conn] = co_await asio::async_connect(target_socket, eps, asio::as_tuple(asio::use_awaitable));
-    const auto cancelled = timer->cancel();
-    (void)cancelled;
-    if (timeout_triggered->load(std::memory_order_acquire))
+    const auto connect_res = co_await timeout_io::async_connect_with_timeout(target_socket, eps, timeout_sec, "remote session");
+    if (connect_res.timed_out)
     {
-        LOG_CTX_ERROR(ctx, "{} connect timed out {}s", log_event::kMux, timeout_sec);
-        co_return timed_connect_result{
-            .ok = false,
-            .timed_out = true,
-            .ec = asio::error::timed_out};
+        statistics::instance().inc_remote_session_connect_timeouts();
+        LOG_CTX_ERROR(
+            ctx, "{} stage=connect target={}:{} timeout={}s", log_event::kMux, ctx.target_host(), ctx.target_port(), timeout_sec);
+        co_return connect_res;
     }
-    if (connect_ec)
+    if (!connect_res.ok)
     {
-        LOG_CTX_ERROR(ctx, "{} connect failed {}", log_event::kMux, connect_ec.message());
-        co_return timed_connect_result{
-            .ok = false,
-            .ec = connect_ec};
+        statistics::instance().inc_remote_session_connect_errors();
+        LOG_CTX_ERROR(
+            ctx, "{} stage=connect target={}:{} error={}", log_event::kMux, ctx.target_host(), ctx.target_port(), connect_res.ec.message());
+        co_return connect_res;
     }
-    co_return timed_connect_result{
-        .ok = true,
-        .endpoint = ep_conn};
+    co_return connect_res;
 }
 
 void set_target_socket_no_delay(asio::ip::tcp::socket& target_socket, const connection_context& ctx)
@@ -286,7 +223,7 @@ asio::awaitable<bool> prepare_remote_target_connection(asio::ip::tcp::resolver& 
                                                        const std::atomic<bool>& reset_requested,
                                                        const std::uint32_t connect_timeout_sec)
 {
-    const auto timeout_sec = (connect_timeout_sec == 0) ? 1U : connect_timeout_sec;
+    const auto timeout_sec = connect_timeout_sec;
     if (reset_requested.load(std::memory_order_acquire))
     {
         co_return false;
@@ -449,7 +386,11 @@ void remote_session::close_from_fin()
 
 void remote_session::close_from_reset()
 {
-    reset_requested_.store(true, std::memory_order_release);
+    const auto already_requested = reset_requested_.exchange(true, std::memory_order_acq_rel);
+    if (already_requested)
+    {
+        return;
+    }
     recv_channel_.close();
     resolver_.cancel();
     std::error_code ec;
@@ -490,7 +431,10 @@ asio::awaitable<void> remote_session::downstream()
         }
     }
     LOG_CTX_INFO(ctx_, "{} target to mux finished", log_event::kDataRecv);
-    co_await send_fin_to_connection(connection_, id_);
+    if (!reset_requested_.load(std::memory_order_acquire))
+    {
+        co_await send_fin_to_connection(connection_, id_);
+    }
 }
 
 }    // namespace mux

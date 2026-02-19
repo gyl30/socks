@@ -229,7 +229,6 @@ class remote_server : public std::enable_shared_from_this<remote_server>
                                                               const std::vector<std::uint8_t>& sh_msg,
                                                               const std::vector<std::uint8_t>& flight2_enc,
                                                               const connection_context& ctx,
-                                                              asio::io_context* io_context = nullptr,
                                                               std::uint32_t timeout_sec = 0) const;
 
     [[nodiscard]] static asio::awaitable<std::error_code> verify_client_finished(
@@ -240,7 +239,6 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         const EVP_CIPHER* cipher,
         const EVP_MD* md,
         const connection_context& ctx,
-        asio::io_context* io_context = nullptr,
         std::uint32_t timeout_sec = 0);
 
     [[nodiscard]] std::pair<std::string, std::string> find_fallback_target_by_sni(const std::string& sni) const;
@@ -285,6 +283,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     std::mutex fallback_guard_mu_;
     std::unordered_map<std::string, fallback_guard_state> fallback_guard_states_;
     config::timeout_t timeout_config_;
+    config::queues_t queues_config_;
     std::atomic<std::uint32_t> active_connection_slots_{0};
     std::mutex connection_slot_mu_;
     std::unordered_map<std::string, std::uint32_t> active_source_connection_slots_;

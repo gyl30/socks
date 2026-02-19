@@ -774,6 +774,31 @@ TEST(UdpSocksSessionTest, StartSpawnsRunAndWritesHostUnreachWhenTunnelUnavailabl
     EXPECT_EQ(err[1], socks::kRepHostUnreach);
 }
 
+TEST(UdpSocksSessionTest, RunReturnsWhenAlreadyClosed)
+{
+    asio::io_context ctx;
+    mux::config::timeout_t timeout_cfg;
+    auto pair = make_tcp_socket_pair(ctx);
+    ASSERT_TRUE(pair.client.is_open());
+    ASSERT_TRUE(pair.server.is_open());
+
+    auto tunnel = make_test_tunnel(ctx, 209);
+    auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx);
+    tunnel->connection_ = mock_conn;
+
+    ON_CALL(*mock_conn, id()).WillByDefault(testing::Return(209));
+    ON_CALL(*mock_conn, mock_send_async(testing::_, testing::_, testing::_)).WillByDefault(testing::Return(std::error_code{}));
+
+    EXPECT_CALL(*mock_conn, mock_send_async(testing::_, mux::kCmdSyn, testing::_)).Times(0);
+
+    auto session = std::make_shared<mux::udp_socks_session>(std::move(pair.server), ctx, tunnel, 39, timeout_cfg);
+    session->on_close();
+
+    mux::test::run_awaitable_void(ctx, session->run("ignored.example", 1234));
+    EXPECT_TRUE(session->closed_.load(std::memory_order_acquire));
+    EXPECT_FALSE(session->udp_socket_.is_open());
+}
+
 TEST(UdpSocksSessionTest, PrepareAndFinalizeUdpAssociateSuccess)
 {
     mux::config::timeout_t timeout_cfg;

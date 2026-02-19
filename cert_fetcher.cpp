@@ -1,7 +1,6 @@
 #include <span>
 #include <string>
 #include <vector>
-#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <chrono>
@@ -19,7 +18,6 @@
 #include <asio/connect.hpp>
 #include <asio/as_tuple.hpp>
 #include <asio/awaitable.hpp>
-#include <asio/steady_timer.hpp>
 #include <asio/use_awaitable.hpp>
 
 extern "C"
@@ -37,6 +35,7 @@ extern "C"
 #include "tls_key_schedule.h"
 #include "tls_record_layer.h"
 #include "reality_fingerprint.h"
+#include "timeout_io.h"
 
 namespace reality
 {
@@ -45,112 +44,6 @@ namespace
 {
 constexpr std::size_t kMaxMsgSize = 64L * 1024;
 constexpr std::size_t kMaxEncryptedRecordLen = 18432;
-
-struct timed_resolve_result
-{
-    bool ok = false;
-    bool timed_out = false;
-    asio::ip::tcp::resolver::results_type endpoints;
-    std::error_code ec;
-};
-
-struct timed_connect_result
-{
-    bool ok = false;
-    bool timed_out = false;
-    std::error_code ec;
-};
-
-asio::awaitable<timed_resolve_result> resolve_with_timeout(asio::ip::tcp::resolver& resolver,
-                                                           const std::string& host,
-                                                           const std::string& port,
-                                                           const std::uint32_t timeout_sec)
-{
-    auto timer = std::make_shared<asio::steady_timer>(resolver.get_executor());
-    auto timeout_triggered = std::make_shared<std::atomic<bool>>(false);
-    timer->expires_after(std::chrono::seconds(timeout_sec));
-    timer->async_wait(
-        [&resolver, timeout_triggered](const std::error_code& timer_ec)
-        {
-            if (timer_ec)
-            {
-                return;
-            }
-            timeout_triggered->store(true, std::memory_order_release);
-            resolver.cancel();
-        });
-
-    const auto [resolve_ec, endpoints] = co_await resolver.async_resolve(host, port, asio::as_tuple(asio::use_awaitable));
-    const auto cancelled = timer->cancel();
-    (void)cancelled;
-    if (timeout_triggered->load(std::memory_order_acquire))
-    {
-        co_return timed_resolve_result{
-            .ok = false,
-            .timed_out = true,
-            .ec = asio::error::timed_out};
-    }
-    if (resolve_ec)
-    {
-        co_return timed_resolve_result{
-            .ok = false,
-            .ec = resolve_ec};
-    }
-    co_return timed_resolve_result{
-        .ok = true,
-        .endpoints = endpoints};
-}
-
-asio::awaitable<timed_connect_result> connect_with_timeout(asio::ip::tcp::socket& socket,
-                                                           const asio::ip::tcp::resolver::results_type& endpoints,
-                                                           const std::uint32_t timeout_sec)
-{
-    auto timer = std::make_shared<asio::steady_timer>(socket.get_executor());
-    auto timeout_triggered = std::make_shared<std::atomic<bool>>(false);
-    timer->expires_after(std::chrono::seconds(timeout_sec));
-    timer->async_wait(
-        [&socket, timeout_triggered](const std::error_code& timer_ec)
-        {
-            if (timer_ec)
-            {
-                return;
-            }
-            timeout_triggered->store(true, std::memory_order_release);
-            std::error_code cancel_ec;
-            socket.cancel(cancel_ec);
-            if (cancel_ec && cancel_ec != asio::error::bad_descriptor)
-            {
-                LOG_WARN("cert fetcher cancel timeout socket failed {}", cancel_ec.message());
-            }
-
-            std::error_code close_ec;
-            socket.close(close_ec);
-            if (close_ec && close_ec != asio::error::bad_descriptor)
-            {
-                LOG_WARN("cert fetcher close timeout socket failed {}", close_ec.message());
-            }
-        });
-
-    const auto [connect_ec, endpoint] = co_await asio::async_connect(socket, endpoints, asio::as_tuple(asio::use_awaitable));
-    (void)endpoint;
-    const auto cancelled = timer->cancel();
-    (void)cancelled;
-    if (timeout_triggered->load(std::memory_order_acquire))
-    {
-        co_return timed_connect_result{
-            .ok = false,
-            .timed_out = true,
-            .ec = asio::error::timed_out};
-    }
-    if (connect_ec)
-    {
-        co_return timed_connect_result{
-            .ok = false,
-            .ec = connect_ec};
-    }
-    co_return timed_connect_result{
-        .ok = true};
-}
 
 struct negotiated_suite
 {
@@ -367,31 +260,35 @@ asio::awaitable<std::optional<fetch_result>> cert_fetcher::fetch_session::run()
 asio::awaitable<std::error_code> cert_fetcher::fetch_session::connect()
 {
     asio::ip::tcp::resolver resolver(io_context_);
-    const auto timeout_sec = (connect_timeout_sec_ == 0) ? 1U : connect_timeout_sec_;
-    const auto resolve_res = co_await resolve_with_timeout(resolver, host_, std::to_string(port_), timeout_sec);
+    const auto timeout_sec = connect_timeout_sec_;
+    const auto resolve_res = co_await mux::timeout_io::async_resolve_with_timeout(resolver, host_, std::to_string(port_), timeout_sec);
     if (!resolve_res.ok)
     {
         if (resolve_res.timed_out)
         {
-            LOG_CTX_ERROR(ctx_, "{} resolve timed out {}s", mux::log_event::kCert, timeout_sec);
+            LOG_CTX_ERROR(
+                ctx_, "{} stage=resolve target={}:{} timeout={}s", mux::log_event::kCert, host_, port_, timeout_sec);
         }
         else
         {
-            LOG_CTX_ERROR(ctx_, "{} resolve failed {}", mux::log_event::kCert, resolve_res.ec.message());
+            LOG_CTX_ERROR(
+                ctx_, "{} stage=resolve target={}:{} error={}", mux::log_event::kCert, host_, port_, resolve_res.ec.message());
         }
         co_return resolve_res.ec;
     }
 
-    const auto connect_res = co_await connect_with_timeout(socket_, resolve_res.endpoints, timeout_sec);
+    const auto connect_res = co_await mux::timeout_io::async_connect_with_timeout(socket_, resolve_res.endpoints, timeout_sec, "cert fetcher");
     if (!connect_res.ok)
     {
         if (connect_res.timed_out)
         {
-            LOG_CTX_ERROR(ctx_, "{} connect timed out {}s", mux::log_event::kCert, timeout_sec);
+            LOG_CTX_ERROR(
+                ctx_, "{} stage=connect target={}:{} timeout={}s", mux::log_event::kCert, host_, port_, timeout_sec);
         }
         else
         {
-            LOG_CTX_ERROR(ctx_, "{} connect failed {}", mux::log_event::kCert, connect_res.ec.message());
+            LOG_CTX_ERROR(
+                ctx_, "{} stage=connect target={}:{} error={}", mux::log_event::kCert, host_, port_, connect_res.ec.message());
         }
         co_return connect_res.ec;
     }

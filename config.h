@@ -67,6 +67,12 @@ struct config
         std::uint32_t idle = 300;
     } timeout;
 
+    struct queues_t
+    {
+        std::uint32_t udp_session_recv_channel_capacity = 128;
+        std::uint32_t tproxy_udp_dispatch_queue_capacity = 2048;
+    } queues;
+
     struct limits_t
     {
         std::uint32_t max_connections = 5;

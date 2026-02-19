@@ -21,6 +21,8 @@
 #include "log_context.h"
 #include "mux_protocol.h"
 #include "stop_dispatch.h"
+#include "timeout_io.h"
+#include "statistics.h"
 #include "remote_udp_session.h"
 
 namespace mux
@@ -28,14 +30,6 @@ namespace mux
 
 namespace
 {
-
-struct timed_udp_resolve_result
-{
-    bool ok = false;
-    bool timed_out = false;
-    asio::ip::udp::resolver::results_type endpoints;
-    std::error_code ec;
-};
 
 [[nodiscard]] std::uint64_t now_ms()
 {
@@ -62,53 +56,14 @@ struct timed_udp_resolve_result
     return asio::ip::udp::endpoint(asio::ip::address_v6(v6_bytes), endpoint.port());
 }
 
-asio::awaitable<timed_udp_resolve_result> resolve_udp_with_timeout(asio::ip::udp::resolver& resolver,
-                                                                   const std::string& host,
-                                                                   const std::string& port,
-                                                                   const std::uint64_t timeout_ms)
-{
-    auto timer = std::make_shared<asio::steady_timer>(resolver.get_executor());
-    auto timeout_triggered = std::make_shared<std::atomic<bool>>(false);
-    timer->expires_after(std::chrono::milliseconds(timeout_ms));
-    timer->async_wait(
-        [&resolver, timeout_triggered](const std::error_code& timer_ec)
-        {
-            if (timer_ec)
-            {
-                return;
-            }
-            timeout_triggered->store(true, std::memory_order_release);
-            resolver.cancel();
-        });
-
-    const auto [resolve_ec, endpoints] = co_await resolver.async_resolve(host, port, asio::as_tuple(asio::use_awaitable));
-    const auto cancelled = timer->cancel();
-    (void)cancelled;
-    if (timeout_triggered->load(std::memory_order_acquire))
-    {
-        co_return timed_udp_resolve_result{
-            .ok = false,
-            .timed_out = true,
-            .ec = asio::error::timed_out};
-    }
-    if (resolve_ec)
-    {
-        co_return timed_udp_resolve_result{
-            .ok = false,
-            .ec = resolve_ec};
-    }
-    co_return timed_udp_resolve_result{
-        .ok = true,
-        .endpoints = endpoints};
-}
-
 }    // namespace
 
 remote_udp_session::remote_udp_session(std::shared_ptr<mux_connection> connection,
                                        const std::uint32_t id,
                                        asio::io_context& io_context,
                                        const connection_context& ctx,
-                                       const config::timeout_t& timeout_cfg)
+                                       const config::timeout_t& timeout_cfg,
+                                       const std::size_t recv_channel_capacity)
     : id_(id),
       io_context_(io_context),
       timer_(io_context_),
@@ -119,7 +74,7 @@ remote_udp_session::remote_udp_session(std::shared_ptr<mux_connection> connectio
       read_timeout_ms_(static_cast<std::uint64_t>(timeout_cfg.read) * 1000ULL),
       write_timeout_ms_(static_cast<std::uint64_t>(timeout_cfg.write) * 1000ULL),
       idle_timeout_ms_(static_cast<std::uint64_t>(timeout_cfg.idle) * 1000ULL),
-      recv_channel_(io_context_, 128)
+      recv_channel_(io_context_, recv_channel_capacity)
 {
     ctx_ = ctx;
     ctx_.stream_id(id);
@@ -153,13 +108,7 @@ asio::awaitable<void> remote_udp_session::handle_start_failure(const std::shared
     {
         LOG_CTX_WARN(ctx_, "{} send ack failed {}", log_event::kMux, ack_ec.message());
     }
-    request_stop();
-    close_socket();
-    if (auto manager = manager_.lock())
-    {
-        manager->remove_stream(id_);
-    }
-    (void)co_await conn->send_async(id_, kCmdRst, {});
+    co_await cleanup_after_stop();
 }
 
 asio::awaitable<bool> remote_udp_session::setup_udp_socket(const std::shared_ptr<mux_connection>& conn)
@@ -202,34 +151,53 @@ asio::awaitable<void> remote_udp_session::forward_mux_payload(const std::vector<
     socks_udp_header header;
     if (!socks_codec::decode_udp_header(data.data(), data.size(), header))
     {
-        LOG_CTX_WARN(ctx_, "{} udp failed to decode header", log_event::kMux);
+        LOG_CTX_WARN(ctx_, "{} stage=decode_header error=invalid_udp_header", log_event::kMux);
         co_return;
     }
 
     if (header.header_len >= data.size())
     {
-        LOG_CTX_WARN(ctx_, "{} udp invalid header len", log_event::kMux);
+        LOG_CTX_WARN(
+            ctx_,
+            "{} stage=decode_header error=invalid_header_len header_len={} packet_len={}",
+            log_event::kMux,
+            header.header_len,
+            data.size());
         co_return;
     }
 
-    const auto resolve_timeout_ms = (read_timeout_ms_ == 0) ? 1000ULL : read_timeout_ms_;
-    const auto resolve_res = co_await resolve_udp_with_timeout(udp_resolver_, header.addr, std::to_string(header.port), resolve_timeout_ms);
+    const auto resolve_timeout_ms = read_timeout_ms_;
+    const auto resolve_res = co_await timeout_io::async_resolve_with_timeout(udp_resolver_, header.addr, std::to_string(header.port), resolve_timeout_ms);
     if (!resolve_res.ok)
     {
         if (resolve_res.timed_out)
         {
-            LOG_CTX_WARN(ctx_, "{} udp resolve timeout {}ms for {}", log_event::kMux, resolve_timeout_ms, header.addr);
+            statistics::instance().inc_remote_udp_session_resolve_timeouts();
+            LOG_CTX_WARN(
+                ctx_,
+                "{} stage=resolve target={}:{} timeout={}ms",
+                log_event::kMux,
+                header.addr,
+                header.port,
+                resolve_timeout_ms);
         }
         else
         {
-            LOG_CTX_WARN(ctx_, "{} udp resolve error for {} {}", log_event::kMux, header.addr, resolve_res.ec.message());
+            statistics::instance().inc_remote_udp_session_resolve_errors();
+            LOG_CTX_WARN(
+                ctx_,
+                "{} stage=resolve target={}:{} error={}",
+                log_event::kMux,
+                header.addr,
+                header.port,
+                resolve_res.ec.message());
         }
         co_return;
     }
 
     if (resolve_res.endpoints.begin() == resolve_res.endpoints.end())
     {
-        LOG_CTX_WARN(ctx_, "{} udp resolve empty for {}", log_event::kMux, header.addr);
+        LOG_CTX_WARN(ctx_, "{} stage=resolve target={}:{} error=empty_result", log_event::kMux, header.addr, header.port);
         co_return;
     }
 
@@ -241,7 +209,13 @@ asio::awaitable<void> remote_udp_session::forward_mux_payload(const std::vector<
         asio::buffer(data.data() + header.header_len, payload_len), target_ep, asio::as_tuple(asio::use_awaitable));
     if (send_ec)
     {
-        LOG_CTX_WARN(ctx_, "{} udp send error {}", log_event::kMux, send_ec.message());
+        LOG_CTX_WARN(
+            ctx_,
+            "{} stage=send target={}:{} error={}",
+            log_event::kMux,
+            target_ep.address().to_string(),
+            target_ep.port(),
+            send_ec.message());
         co_return;
     }
 
@@ -269,6 +243,11 @@ asio::awaitable<void> remote_udp_session::run_udp_session_loops()
 asio::awaitable<void> remote_udp_session::cleanup_after_stop()
 {
     request_stop();
+    const auto already_cleaned = cleaned_up_.exchange(true, std::memory_order_acq_rel);
+    if (already_cleaned)
+    {
+        co_return;
+    }
     close_socket();
     if (auto conn = connection_.lock())
     {
@@ -288,10 +267,24 @@ asio::awaitable<void> remote_udp_session::start_impl(std::shared_ptr<remote_udp_
     {
         co_return;
     }
+
+    if (terminated_.load(std::memory_order_acquire))
+    {
+        co_await cleanup_after_stop();
+        co_return;
+    }
+
     if (!(co_await setup_udp_socket(conn)))
     {
         co_return;
     }
+
+    if (terminated_.load(std::memory_order_acquire))
+    {
+        co_await cleanup_after_stop();
+        co_return;
+    }
+
     log_udp_local_endpoint();
 
     std::error_code local_ep_ec;
@@ -309,6 +302,12 @@ asio::awaitable<void> remote_udp_session::start_impl(std::shared_ptr<remote_udp_
     if (const auto ack_ec = co_await send_ack_payload(conn, ack))
     {
         LOG_CTX_WARN(ctx_, "{} send ack failed {}", log_event::kMux, ack_ec.message());
+        co_await cleanup_after_stop();
+        co_return;
+    }
+
+    if (terminated_.load(std::memory_order_acquire))
+    {
         co_await cleanup_after_stop();
         co_return;
     }
@@ -334,6 +333,11 @@ void remote_udp_session::on_data(std::vector<std::uint8_t> data)
 
 void remote_udp_session::request_stop()
 {
+    const auto already_terminated = terminated_.exchange(true, std::memory_order_acq_rel);
+    if (already_terminated)
+    {
+        return;
+    }
     recv_channel_.close();
     timer_.cancel();
     idle_timer_.cancel();
@@ -389,11 +393,11 @@ asio::awaitable<void> remote_udp_session::watchdog()
         const auto current_ms = now_ms();
         const auto read_elapsed_ms = current_ms - last_read_time_ms_.load(std::memory_order_acquire);
         const auto write_elapsed_ms = current_ms - last_write_time_ms_.load(std::memory_order_acquire);
-        if (read_elapsed_ms > read_timeout_ms_)
+        if (read_timeout_ms_ > 0 && read_elapsed_ms > read_timeout_ms_)
         {
             LOG_CTX_WARN(ctx_, "{} read idle {}s", log_event::kTimeout, read_elapsed_ms / 1000ULL);
         }
-        if (write_elapsed_ms > write_timeout_ms_)
+        if (write_timeout_ms_ > 0 && write_elapsed_ms > write_timeout_ms_)
         {
             LOG_CTX_WARN(ctx_, "{} write idle {}s", log_event::kTimeout, write_elapsed_ms / 1000ULL);
         }
@@ -419,6 +423,9 @@ asio::awaitable<void> remote_udp_session::udp_to_mux()
 {
     std::vector<std::uint8_t> buf(65535);
     asio::ip::udp::endpoint ep;
+    asio::ip::udp::endpoint cached_ep;
+    std::vector<std::uint8_t> cached_header;
+    bool has_cached_header = false;
     for (;;)
     {
         const auto [recv_ec, n] = co_await udp_socket_.async_receive_from(asio::buffer(buf), ep, asio::as_tuple(asio::use_awaitable));
@@ -437,10 +444,19 @@ asio::awaitable<void> remote_udp_session::udp_to_mux()
         ctx_.add_rx_bytes(n);
         last_activity_time_ms_.store(ts, std::memory_order_release);
 
-        socks_udp_header h;
-        h.addr = ep.address().to_string();
-        h.port = ep.port();
-        std::vector<std::uint8_t> pkt = socks_codec::encode_udp_header(h);
+        if (!has_cached_header || cached_ep != ep)
+        {
+            socks_udp_header h;
+            h.addr = ep.address().to_string();
+            h.port = ep.port();
+            cached_header = socks_codec::encode_udp_header(h);
+            cached_ep = ep;
+            has_cached_header = true;
+        }
+
+        std::vector<std::uint8_t> pkt;
+        pkt.reserve(cached_header.size() + n);
+        pkt.insert(pkt.end(), cached_header.begin(), cached_header.end());
         pkt.insert(pkt.end(), buf.begin(), buf.begin() + static_cast<std::uint32_t>(n));
 
         if (auto conn = connection_.lock())

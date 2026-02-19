@@ -33,6 +33,7 @@ extern "C"
 #include "tls_record_layer.h"
 #include "transcript.h"
 #include "reality_fingerprint.h"
+#include "statistics.h"
 #define private public
 #include "client_tunnel_pool.h"
 #undef private
@@ -212,13 +213,6 @@ asio::awaitable<std::expected<void, std::error_code>> tcp_connect_expected(mux::
                                                                             asio::ip::tcp::socket& socket)
 {
     co_return co_await pool.tcp_connect(io_context, socket);
-}
-
-asio::awaitable<std::expected<void, std::error_code>> try_connect_endpoint_expected(mux::client_tunnel_pool& pool,
-                                                                                     asio::ip::tcp::socket& socket,
-                                                                                     const asio::ip::tcp::endpoint& endpoint)
-{
-    co_return co_await pool.try_connect_endpoint(socket, endpoint);
 }
 
 asio::awaitable<std::expected<void, std::error_code>> generate_and_send_client_hello_expected(mux::client_tunnel_pool& pool,
@@ -620,6 +614,8 @@ TEST(ClientTunnelPoolWhiteboxTest, TcpConnectAndHandshakeErrorBranches)
     std::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
+    auto& stats = mux::statistics::instance();
+    const auto resolve_errors_before = stats.client_tunnel_pool_resolve_errors();
 
     auto cfg = make_base_cfg();
     cfg.outbound.host = "invalid.host.for.coverage.test";
@@ -640,26 +636,30 @@ TEST(ClientTunnelPoolWhiteboxTest, TcpConnectAndHandshakeErrorBranches)
     io_context.run();
     EXPECT_FALSE(connect_res.has_value());
     EXPECT_TRUE(connect_res.error());
+    EXPECT_GE(stats.client_tunnel_pool_resolve_errors(), resolve_errors_before + 1);
 
     io_context.restart();
+    const auto connect_errors_before = stats.client_tunnel_pool_connect_errors();
+
+    auto connect_error_cfg = make_base_cfg();
+    connect_error_cfg.outbound.host = "127.0.0.1";
+    connect_error_cfg.outbound.port = 1;
+    connect_error_cfg.reality.public_key = generate_public_key_hex();
+    auto connect_error_pool = std::make_shared<mux::client_tunnel_pool>(pool, connect_error_cfg, 0);
 
     asio::ip::tcp::socket try_socket(io_context);
-    const asio::ip::tcp::endpoint endpoint(asio::ip::make_address("127.0.0.1"), 1);
-    std::error_code open_ec;
-    try_socket.open(endpoint.protocol(), open_ec);
-    ASSERT_FALSE(open_ec);
-
-    std::expected<void, std::error_code> try_connect_res;
+    std::expected<void, std::error_code> connect_error_res;
     asio::co_spawn(io_context,
-                   [tunnel_pool, &try_socket, endpoint, &try_connect_res]() -> asio::awaitable<void>
+                   [connect_error_pool, &io_context, &try_socket, &connect_error_res]() -> asio::awaitable<void>
                    {
-                       try_connect_res = co_await try_connect_endpoint_expected(*tunnel_pool, try_socket, endpoint);
+                       connect_error_res = co_await tcp_connect_expected(*connect_error_pool, io_context, try_socket);
                        co_return;
                    },
                    asio::detached);
     io_context.run();
-    EXPECT_FALSE(try_connect_res.has_value());
-    EXPECT_TRUE(try_connect_res.error());
+    EXPECT_FALSE(connect_error_res.has_value());
+    EXPECT_TRUE(connect_error_res.error());
+    EXPECT_GE(stats.client_tunnel_pool_connect_errors(), connect_errors_before + 1);
 }
 
 TEST(ClientTunnelPoolWhiteboxTest, HandshakeTimeoutCancelsSocketAndReturnsTimedOut)
@@ -667,6 +667,8 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeTimeoutCancelsSocketAndReturnsTimedO
     std::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
+    auto& stats = mux::statistics::instance();
+    const auto handshake_timeouts_before = stats.client_tunnel_pool_handshake_timeouts();
 
     auto cfg = make_base_cfg();
     cfg.reality.public_key = generate_public_key_hex();
@@ -698,6 +700,38 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeTimeoutCancelsSocketAndReturnsTimedO
     ASSERT_FALSE(handshake_res.has_value());
     EXPECT_EQ(handshake_res.error(), asio::error::timed_out);
     EXPECT_FALSE(client_socket->is_open());
+    EXPECT_GE(stats.client_tunnel_pool_handshake_timeouts(), handshake_timeouts_before + 1);
+}
+
+TEST(ClientTunnelPoolWhiteboxTest, HandshakeIoErrorIncrementsHandshakeErrorMetric)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+    auto& stats = mux::statistics::instance();
+    const auto handshake_errors_before = stats.client_tunnel_pool_handshake_errors();
+
+    auto cfg = make_base_cfg();
+    cfg.reality.public_key = generate_public_key_hex();
+    cfg.timeout.read = 1;
+    auto tunnel_pool = std::make_shared<mux::client_tunnel_pool>(pool, cfg, 0);
+
+    asio::io_context io_context;
+    auto disconnected_socket = std::make_shared<asio::ip::tcp::socket>(io_context);
+    std::expected<mux::client_tunnel_pool::handshake_result, std::error_code> handshake_res;
+    asio::co_spawn(io_context,
+                   [tunnel_pool, disconnected_socket, &io_context, &handshake_res]() -> asio::awaitable<void>
+                   {
+                       handshake_res = co_await perform_reality_handshake_with_timeout_expected(*tunnel_pool, disconnected_socket, io_context);
+                       co_return;
+                   },
+                   asio::detached);
+    io_context.run();
+
+    ASSERT_FALSE(handshake_res.has_value());
+    EXPECT_TRUE(handshake_res.error());
+    EXPECT_NE(handshake_res.error(), asio::error::timed_out);
+    EXPECT_GE(stats.client_tunnel_pool_handshake_errors(), handshake_errors_before + 1);
 }
 
 TEST(ClientTunnelPoolWhiteboxTest, TcpConnectTimeoutReturnsTimedOutAndClosesSocket)
@@ -705,6 +739,8 @@ TEST(ClientTunnelPoolWhiteboxTest, TcpConnectTimeoutReturnsTimedOutAndClosesSock
     std::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
+    auto& stats = mux::statistics::instance();
+    const auto connect_timeouts_before = stats.client_tunnel_pool_connect_timeouts();
 
     asio::io_context io_context;
     asio::ip::tcp::acceptor saturated_acceptor(io_context);
@@ -746,6 +782,7 @@ TEST(ClientTunnelPoolWhiteboxTest, TcpConnectTimeoutReturnsTimedOutAndClosesSock
     ASSERT_FALSE(connect_res.has_value());
     EXPECT_EQ(connect_res.error(), asio::error::timed_out);
     EXPECT_FALSE(client_socket.is_open());
+    EXPECT_GE(stats.client_tunnel_pool_connect_timeouts(), connect_timeouts_before + 1);
 
     std::error_code close_ec;
     queued_client_a.close(close_ec);

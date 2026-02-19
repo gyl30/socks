@@ -90,6 +90,7 @@ add_socks_test(reality_engine_test)
 add_socks_test(ip_matcher_test)
 add_socks_test(mux_codec_test)
 add_socks_test(socks_codec_test)
+add_socks_test(timeout_io_test)
 
 if(LINUX)
     add_socks_test(socks_session_test)

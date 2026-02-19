@@ -34,7 +34,8 @@ class socks_session : public std::enable_shared_from_this<socks_session>
                   std::shared_ptr<router> router,
                   std::uint32_t sid,
                   const config::socks_t& socks_cfg = {},
-                  const config::timeout_t& timeout_cfg = {});
+                  const config::timeout_t& timeout_cfg = {},
+                  const config::queues_t& queue_cfg = {});
 
     ~socks_session();
 
@@ -115,6 +116,7 @@ class socks_session : public std::enable_shared_from_this<socks_session>
     std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager_;
     std::shared_ptr<void> active_connection_guard_;
     config::timeout_t timeout_config_;
+    config::queues_t queue_config_;
 };
 
 }    // namespace mux

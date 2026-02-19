@@ -290,6 +290,22 @@ TEST(TcpSocksSessionTest, CreateBackendReturnsDirectAndProxy)
     EXPECT_NE(session->create_backend(mux::route_type::kProxy), nullptr);
 }
 
+TEST(TcpSocksSessionTest, CreateBackendDirectUsesConfiguredReadTimeout)
+{
+    asio::io_context io_context;
+    auto router = std::make_shared<mux::router>();
+    mux::config::timeout_t timeout_cfg{};
+    timeout_cfg.read = 7;
+
+    auto session = std::make_shared<mux::tcp_socks_session>(
+        asio::ip::tcp::socket(io_context), io_context, nullptr, std::move(router), 1, timeout_cfg);
+
+    const auto backend = session->create_backend(mux::route_type::kDirect);
+    const auto direct_backend = std::dynamic_pointer_cast<mux::direct_upstream>(backend);
+    ASSERT_NE(direct_backend, nullptr);
+    EXPECT_EQ(direct_backend->timeout_sec_, 7U);
+}
+
 TEST(TcpSocksSessionTest, ReplySuccessWritesSocksResponse)
 {
     asio::io_context io_context;

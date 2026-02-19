@@ -32,6 +32,8 @@ class transcript;
 namespace mux
 {
 
+class connection_context;
+
 class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_pool>
 {
    public:
@@ -71,13 +73,19 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
                                                     const std::shared_ptr<asio::ip::tcp::socket>& socket,
                                                     const std::error_code& ec,
                                                     const char* stage,
+                                                    const connection_context& ctx,
                                                     asio::io_context& io_context);
 
-    [[nodiscard]] asio::awaitable<std::expected<void, std::error_code>> tcp_connect(asio::io_context& io_context, asio::ip::tcp::socket& socket) const;
+    [[nodiscard]] asio::awaitable<std::expected<void, std::error_code>> tcp_connect(
+        asio::io_context& io_context, asio::ip::tcp::socket& socket, const connection_context& ctx) const;
+    [[nodiscard]] asio::awaitable<std::expected<void, std::error_code>> tcp_connect(
+        asio::io_context& io_context, asio::ip::tcp::socket& socket) const;
     [[nodiscard]] asio::awaitable<std::expected<void, std::error_code>> try_connect_endpoint(asio::ip::tcp::socket& socket,
                                                                                              const asio::ip::tcp::endpoint& endpoint) const;
 
     [[nodiscard]] asio::awaitable<std::expected<handshake_result, std::error_code>> perform_reality_handshake(asio::ip::tcp::socket& socket) const;
+    [[nodiscard]] asio::awaitable<std::expected<handshake_result, std::error_code>> perform_reality_handshake_with_timeout(
+        const std::shared_ptr<asio::ip::tcp::socket>& socket, asio::io_context& io_context, const connection_context& ctx) const;
     [[nodiscard]] asio::awaitable<std::expected<handshake_result, std::error_code>> perform_reality_handshake_with_timeout(
         const std::shared_ptr<asio::ip::tcp::socket>& socket, asio::io_context& io_context) const;
     [[nodiscard]] std::shared_ptr<asio::ip::tcp::socket> create_pending_socket(asio::io_context& io_context, std::uint32_t index);

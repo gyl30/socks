@@ -121,7 +121,8 @@ asio::awaitable<std::pair<route_type, std::shared_ptr<upstream>>> tproxy_tcp_ses
     const auto route = co_await router_->decide_ip(ctx_, host, dst_ep_.address());
     if (route == route_type::kDirect)
     {
-        const std::shared_ptr<upstream> backend = std::make_shared<direct_upstream>(io_context_, ctx_, mark_);
+        const auto connect_timeout_sec = (timeout_config_.read == 0) ? 1U : timeout_config_.read;
+        const std::shared_ptr<upstream> backend = std::make_shared<direct_upstream>(io_context_, ctx_, mark_, connect_timeout_sec);
         co_return std::make_pair(route, backend);
     }
 
@@ -210,8 +211,7 @@ asio::awaitable<bool> tproxy_tcp_session::write_client_chunk_to_backend(const st
                                                                          const std::vector<std::uint8_t>& buf,
                                                                          const std::uint32_t n)
 {
-    const std::vector<std::uint8_t> chunk(buf.begin(), buf.begin() + n);
-    const auto written = co_await backend->write(chunk);
+    const auto written = co_await backend->write(buf.data(), n);
     if (written == 0)
     {
         LOG_CTX_WARN(ctx_, "{} failed to write to backend", log_event::kSocks);

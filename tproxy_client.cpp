@@ -1,8 +1,10 @@
 #include <array>
+#include <charconv>
 #include <cerrno>
 #include <chrono>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 #include <cstdint>
 #include <cstring>
@@ -32,9 +34,9 @@ namespace mux
 namespace
 {
 
-constexpr std::size_t k_udp_dispatch_queue_capacity = 2048;
 constexpr std::size_t k_udp_dispatch_worker_count = 4;
 constexpr std::uint64_t k_udp_dispatch_drop_log_sample = 256;
+constexpr std::size_t k_udp_dispatch_src_key_cache_capacity = 256;
 using udp_session_map_t = tproxy_client::udp_session_map_t;
 std::atomic<std::uint64_t> g_udp_dispatch_drop_last_logged_total{0};
 
@@ -229,8 +231,71 @@ std::expected<void, std::error_code> setup_udp_listener(asio::ip::udp::socket& s
 
 std::string make_endpoint_key(const asio::ip::udp::endpoint& ep)
 {
-    return ep.address().to_string() + ":" + std::to_string(ep.port());
+    std::string key = ep.address().to_string();
+    char port_buf[6];
+    const auto [ptr, ec] = std::to_chars(port_buf, port_buf + sizeof(port_buf), ep.port());
+    if (ec == std::errc())
+    {
+        key.reserve(key.size() + 1 + static_cast<std::size_t>(ptr - port_buf));
+        key.push_back(':');
+        key.append(port_buf, ptr);
+        return key;
+    }
+
+    key.reserve(key.size() + 8);
+    key.push_back(':');
+    key.append(std::to_string(ep.port()));
+    return key;
 }
+
+template <typename ByteContainer>
+std::size_t hash_bytes(const ByteContainer& bytes)
+{
+    std::size_t seed = 1469598103934665603ULL;
+    for (const auto b : bytes)
+    {
+        seed ^= static_cast<std::size_t>(b);
+        seed *= 1099511628211ULL;
+    }
+    return seed;
+}
+
+struct udp_endpoint_key
+{
+    asio::ip::address addr;
+    std::uint16_t port = 0;
+};
+
+struct endpoint_hash
+{
+    std::size_t operator()(const udp_endpoint_key& key) const noexcept
+    {
+        std::size_t seed = 1469598103934665603ULL;
+        if (key.addr.is_v4())
+        {
+            const auto bytes = key.addr.to_v4().to_bytes();
+            seed ^= hash_bytes(bytes);
+            seed *= 1099511628211ULL;
+        }
+        else
+        {
+            const auto bytes = key.addr.to_v6().to_bytes();
+            seed ^= hash_bytes(bytes);
+            seed *= 1099511628211ULL;
+        }
+        seed ^= static_cast<std::size_t>(key.port);
+        seed *= 1099511628211ULL;
+        return seed;
+    }
+};
+
+struct endpoint_key_equal
+{
+    bool operator()(const udp_endpoint_key& lhs, const udp_endpoint_key& rhs) const noexcept
+    {
+        return lhs.port == rhs.port && lhs.addr == rhs.addr;
+    }
+};
 
 void close_accepted_socket(asio::ip::tcp::socket& socket)
 {
@@ -791,7 +856,8 @@ tproxy_client::tproxy_client(io_context_pool& pool, const config& cfg)
       tunnel_pool_(std::make_shared<client_tunnel_pool>(pool, cfg, cfg.tproxy.mark)),
       router_(std::make_shared<router>()),
       sender_(std::make_shared<tproxy_udp_sender>(io_context_, cfg.tproxy.mark)),
-      udp_dispatch_channel_(std::make_shared<tproxy_udp_dispatch_channel>(io_context_, k_udp_dispatch_queue_capacity)),
+      udp_dispatch_channel_(std::make_shared<tproxy_udp_dispatch_channel>(
+          io_context_, static_cast<std::size_t>(cfg.queues.tproxy_udp_dispatch_queue_capacity))),
       cfg_(cfg),
       tproxy_config_(cfg.tproxy),
       tcp_port_(cfg.tproxy.tcp_port),
@@ -866,7 +932,8 @@ void tproxy_client::start()
     LOG_INFO("tproxy tcp listening on {}:{}", tcp_listen_host, tcp_port_);
     LOG_INFO("tproxy udp listening on {}:{}", udp_listen_host, udp_port_);
 
-    udp_dispatch_channel_ = std::make_shared<tproxy_udp_dispatch_channel>(io_context_, k_udp_dispatch_queue_capacity);
+    udp_dispatch_channel_ = std::make_shared<tproxy_udp_dispatch_channel>(
+        io_context_, static_cast<std::size_t>(cfg_.queues.tproxy_udp_dispatch_queue_capacity));
     udp_dispatch_started_.store(false, std::memory_order_release);
     tunnel_pool_->start();
     auto self = shared_from_this();
@@ -928,7 +995,11 @@ bool tproxy_client::enqueue_udp_packet(tproxy_udp_dispatch_channel& dispatch_cha
     tproxy_udp_dispatch_item packet;
     packet.src_ep = src_ep;
     packet.dst_ep = dst_ep;
-    packet.payload.assign(buffer.begin(), buffer.begin() + packet_len);
+    packet.payload.resize(packet_len);
+    if (packet_len > 0)
+    {
+        std::memcpy(packet.payload.data(), buffer.data(), packet_len);
+    }
     if (dispatch_channel.try_send(std::error_code(), std::move(packet)))
     {
         statistics::instance().inc_tproxy_udp_dispatch_enqueued();
@@ -1036,6 +1107,8 @@ asio::awaitable<void> tproxy_client::udp_dispatch_loop()
     {
         co_return;
     }
+    std::unordered_map<udp_endpoint_key, std::string, endpoint_hash, endpoint_key_equal> src_key_cache;
+    src_key_cache.reserve(k_udp_dispatch_src_key_cache_capacity);
 
     while (!stop_.load(std::memory_order_acquire))
     {
@@ -1059,8 +1132,25 @@ asio::awaitable<void> tproxy_client::udp_dispatch_loop()
             continue;
         }
 
-        const auto key = make_endpoint_key(packet.src_ep);
-        auto session = get_or_create_udp_session(udp_sessions_, key, packet.src_ep, io_context_, tunnel_pool_, router_, sender_, cfg_, stop_);
+        const udp_endpoint_key src_key{packet.src_ep.address(), packet.src_ep.port()};
+        const std::string* key = nullptr;
+        const auto it = src_key_cache.find(src_key);
+        if (it != src_key_cache.end())
+        {
+            key = &it->second;
+        }
+        else
+        {
+            if (src_key_cache.size() >= k_udp_dispatch_src_key_cache_capacity)
+            {
+                src_key_cache.clear();
+            }
+            const auto [inserted_it, inserted] = src_key_cache.emplace(src_key, make_endpoint_key(packet.src_ep));
+            (void)inserted;
+            key = &inserted_it->second;
+        }
+
+        auto session = get_or_create_udp_session(udp_sessions_, *key, packet.src_ep, io_context_, tunnel_pool_, router_, sender_, cfg_, stop_);
         if (session == nullptr)
         {
             continue;
@@ -1068,10 +1158,10 @@ asio::awaitable<void> tproxy_client::udp_dispatch_loop()
         if (stop_.load(std::memory_order_acquire))
         {
             session->stop();
-            erase_udp_session_if_same(udp_sessions_, key, session);
+            erase_udp_session_if_same(udp_sessions_, *key, session);
             break;
         }
-        co_await session->handle_packet(packet.dst_ep, packet.payload.data(), packet.payload.size());
+        co_await session->handle_packet(packet.dst_ep, std::move(packet.payload));
     }
 
     LOG_INFO("tproxy udp dispatch loop exited");
