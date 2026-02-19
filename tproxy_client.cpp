@@ -34,7 +34,6 @@ namespace mux
 namespace
 {
 
-constexpr std::size_t k_udp_dispatch_queue_capacity = 2048;
 constexpr std::size_t k_udp_dispatch_worker_count = 4;
 constexpr std::uint64_t k_udp_dispatch_drop_log_sample = 256;
 constexpr std::size_t k_udp_dispatch_src_key_cache_capacity = 256;
@@ -857,7 +856,8 @@ tproxy_client::tproxy_client(io_context_pool& pool, const config& cfg)
       tunnel_pool_(std::make_shared<client_tunnel_pool>(pool, cfg, cfg.tproxy.mark)),
       router_(std::make_shared<router>()),
       sender_(std::make_shared<tproxy_udp_sender>(io_context_, cfg.tproxy.mark)),
-      udp_dispatch_channel_(std::make_shared<tproxy_udp_dispatch_channel>(io_context_, k_udp_dispatch_queue_capacity)),
+      udp_dispatch_channel_(std::make_shared<tproxy_udp_dispatch_channel>(
+          io_context_, static_cast<std::size_t>(cfg.queues.tproxy_udp_dispatch_queue_capacity))),
       cfg_(cfg),
       tproxy_config_(cfg.tproxy),
       tcp_port_(cfg.tproxy.tcp_port),
@@ -932,7 +932,8 @@ void tproxy_client::start()
     LOG_INFO("tproxy tcp listening on {}:{}", tcp_listen_host, tcp_port_);
     LOG_INFO("tproxy udp listening on {}:{}", udp_listen_host, udp_port_);
 
-    udp_dispatch_channel_ = std::make_shared<tproxy_udp_dispatch_channel>(io_context_, k_udp_dispatch_queue_capacity);
+    udp_dispatch_channel_ = std::make_shared<tproxy_udp_dispatch_channel>(
+        io_context_, static_cast<std::size_t>(cfg_.queues.tproxy_udp_dispatch_queue_capacity));
     udp_dispatch_started_.store(false, std::memory_order_release);
     tunnel_pool_->start();
     auto self = shared_from_this();

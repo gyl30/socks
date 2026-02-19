@@ -62,7 +62,8 @@ remote_udp_session::remote_udp_session(std::shared_ptr<mux_connection> connectio
                                        const std::uint32_t id,
                                        asio::io_context& io_context,
                                        const connection_context& ctx,
-                                       const config::timeout_t& timeout_cfg)
+                                       const config::timeout_t& timeout_cfg,
+                                       const std::size_t recv_channel_capacity)
     : id_(id),
       io_context_(io_context),
       timer_(io_context_),
@@ -73,7 +74,7 @@ remote_udp_session::remote_udp_session(std::shared_ptr<mux_connection> connectio
       read_timeout_ms_(static_cast<std::uint64_t>(timeout_cfg.read) * 1000ULL),
       write_timeout_ms_(static_cast<std::uint64_t>(timeout_cfg.write) * 1000ULL),
       idle_timeout_ms_(static_cast<std::uint64_t>(timeout_cfg.idle) * 1000ULL),
-      recv_channel_(io_context_, 128)
+      recv_channel_(io_context_, recv_channel_capacity)
 {
     ctx_ = ctx;
     ctx_.stream_id(id);

@@ -285,6 +285,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     std::mutex fallback_guard_mu_;
     std::unordered_map<std::string, fallback_guard_state> fallback_guard_states_;
     config::timeout_t timeout_config_;
+    config::queues_t queues_config_;
     std::atomic<std::uint32_t> active_connection_slots_{0};
     std::mutex connection_slot_mu_;
     std::unordered_map<std::string, std::uint32_t> active_source_connection_slots_;

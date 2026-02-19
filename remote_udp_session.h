@@ -34,7 +34,8 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
                        std::uint32_t id,
                        asio::io_context& io_context,
                        const connection_context& ctx,
-                       const config::timeout_t& timeout_cfg = {});
+                       const config::timeout_t& timeout_cfg = {},
+                       std::size_t recv_channel_capacity = 128);
 
     asio::awaitable<void> start();
 

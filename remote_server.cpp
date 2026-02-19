@@ -1079,6 +1079,7 @@ remote_server::remote_server(io_context_pool& pool, const config& cfg)
       fallbacks_(cfg.fallbacks),
       fallback_guard_config_(cfg.reality.fallback_guard),
       timeout_config_(cfg.timeout),
+      queues_config_(cfg.queues),
       limits_config_(cfg.limits),
       heartbeat_config_(cfg.heartbeat)
 {

@@ -73,7 +73,7 @@ tproxy_udp_session::tproxy_udp_session(asio::io_context& io_context,
       tunnel_pool_(std::move(tunnel_pool)),
       router_(std::move(router)),
       sender_(std::move(sender)),
-      recv_channel_(io_context_, 128),
+      recv_channel_(io_context_, cfg.queues.udp_session_recv_channel_capacity),
       client_ep_(net::normalize_endpoint(client_ep)),
       mark_(cfg.tproxy.mark)
 {

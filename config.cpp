@@ -24,6 +24,7 @@ REFLECT_STRUCT(mux::config::socks_t, enabled, host, port, auth, username, passwo
 REFLECT_STRUCT(mux::config::tproxy_t, enabled, listen_host, tcp_port, udp_port, mark);
 REFLECT_STRUCT(mux::config::fallback_entry, sni, host, port);
 REFLECT_STRUCT(mux::config::timeout_t, read, write, idle);
+REFLECT_STRUCT(mux::config::queues_t, udp_session_recv_channel_capacity, tproxy_udp_dispatch_queue_capacity);
 REFLECT_STRUCT(mux::config::reality_t::fallback_guard_t, enabled, rate_per_sec, burst, circuit_fail_threshold, circuit_open_sec, state_ttl_sec);
 REFLECT_STRUCT(
     mux::config::reality_t,
@@ -40,7 +41,7 @@ REFLECT_STRUCT(
 REFLECT_STRUCT(mux::config::limits_t, max_connections, max_connections_per_source, source_prefix_v4, source_prefix_v6, max_buffer, max_streams);
 REFLECT_STRUCT(mux::config::heartbeat_t, enabled, idle_timeout, min_interval, max_interval, min_padding, max_padding);
 REFLECT_STRUCT(mux::config::monitor_t, enabled, port, token, min_interval_ms);
-REFLECT_STRUCT(mux::config, mode, workers, log, inbound, outbound, socks, tproxy, fallbacks, timeout, reality, limits, heartbeat, monitor);
+REFLECT_STRUCT(mux::config, mode, workers, log, inbound, outbound, socks, tproxy, fallbacks, timeout, queues, reality, limits, heartbeat, monitor);
 
 }    // namespace reflect
 
@@ -49,6 +50,9 @@ namespace mux
 
 namespace
 {
+
+constexpr std::uint32_t kQueueCapacityMin = 1;
+constexpr std::uint32_t kQueueCapacityMax = 65535;
 
 [[nodiscard]] config_error make_config_error(std::string path, std::string reason)
 {
@@ -92,6 +96,21 @@ namespace
     return {};
 }
 
+[[nodiscard]] std::expected<void, config_error> validate_queues_config(const config::queues_t& queues)
+{
+    if (queues.udp_session_recv_channel_capacity < kQueueCapacityMin || queues.udp_session_recv_channel_capacity > kQueueCapacityMax)
+    {
+        return std::unexpected(
+            make_config_error("/queues/udp_session_recv_channel_capacity", "must be between 1 and 65535"));
+    }
+    if (queues.tproxy_udp_dispatch_queue_capacity < kQueueCapacityMin || queues.tproxy_udp_dispatch_queue_capacity > kQueueCapacityMax)
+    {
+        return std::unexpected(
+            make_config_error("/queues/tproxy_udp_dispatch_queue_capacity", "must be between 1 and 65535"));
+    }
+    return {};
+}
+
 [[nodiscard]] std::expected<void, config_error> validate_socks_config(const config::socks_t& socks)
 {
     if (!socks.enabled || !socks.auth)
@@ -127,6 +146,10 @@ namespace
     if (const auto heartbeat_result = validate_heartbeat_config(cfg.heartbeat); !heartbeat_result)
     {
         return std::unexpected(heartbeat_result.error());
+    }
+    if (const auto queues_result = validate_queues_config(cfg.queues); !queues_result)
+    {
+        return std::unexpected(queues_result.error());
     }
     if (const auto socks_result = validate_socks_config(cfg.socks); !socks_result)
     {
