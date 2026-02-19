@@ -11,16 +11,16 @@
 #include <system_error>
 #include <unistd.h>
 
-#include <asio/read.hpp>
+#include <boost/asio/read.hpp>
 #include <gtest/gtest.h>
-#include <asio/write.hpp>
-#include <asio/ip/tcp.hpp>
-#include <asio/as_tuple.hpp>
-#include <asio/co_spawn.hpp>
-#include <asio/detached.hpp>
-#include <asio/io_context.hpp>
-#include <asio/use_future.hpp>
-#include <asio/use_awaitable.hpp>
+#include <boost/asio/write.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/as_tuple.hpp>
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/detached.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/use_future.hpp>
+#include <boost/asio/use_awaitable.hpp>
 
 #include "mux_codec.h"
 #include "mux_protocol.h"
@@ -120,19 +120,19 @@ class mux_connection_integration_test : public ::testing::Test
 
 {
    protected:
-    asio::io_context& io_ctx() { return io_ctx_; }
+    boost::asio::io_context& io_ctx() { return io_ctx_; }
 
    private:
-    asio::io_context io_ctx_;
+    boost::asio::io_context io_ctx_;
 };
 
-std::error_code setup_loopback_acceptor_with_retry(asio::ip::tcp::acceptor& acceptor, const int max_attempts = 128)
+boost::system::error_code setup_loopback_acceptor_with_retry(boost::asio::ip::tcp::acceptor& acceptor, const int max_attempts = 128)
 {
-    std::error_code last_ec = asio::error::address_in_use;
+    boost::system::error_code last_ec = boost::asio::error::address_in_use;
     for (int attempt = 0; attempt < max_attempts; ++attempt)
     {
-        std::error_code ec;
-        acceptor.open(asio::ip::tcp::v4(), ec);
+        boost::system::error_code ec;
+        acceptor.open(boost::asio::ip::tcp::v4(), ec);
         if (ec)
         {
             last_ec = ec;
@@ -140,17 +140,17 @@ std::error_code setup_loopback_acceptor_with_retry(asio::ip::tcp::acceptor& acce
             continue;
         }
 
-        acceptor.bind(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), 0), ec);
+        acceptor.bind(boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 0), ec);
         if (!ec)
         {
-            acceptor.listen(asio::socket_base::max_listen_connections, ec);
+            acceptor.listen(boost::asio::socket_base::max_listen_connections, ec);
             if (!ec)
             {
                 return {};
             }
         }
 
-        std::error_code ignored;
+        boost::system::error_code ignored;
         acceptor.close(ignored);
         last_ec = ec;
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
@@ -161,17 +161,17 @@ std::error_code setup_loopback_acceptor_with_retry(asio::ip::tcp::acceptor& acce
 TEST_F(mux_connection_integration_test, StreamDataExchange)
 
 {
-    asio::ip::tcp::acceptor acceptor(io_ctx());
+    boost::asio::ip::tcp::acceptor acceptor(io_ctx());
     const auto setup_ec = setup_loopback_acceptor_with_retry(acceptor);
     ASSERT_FALSE(setup_ec) << setup_ec.message();
 
-    auto socket_server = std::make_shared<asio::ip::tcp::socket>(io_ctx());
+    auto socket_server = std::make_shared<boost::asio::ip::tcp::socket>(io_ctx());
 
-    auto socket_client = std::make_shared<asio::ip::tcp::socket>(io_ctx());
+    auto socket_client = std::make_shared<boost::asio::ip::tcp::socket>(io_ctx());
 
     std::atomic<bool> accepted{false};
 
-    acceptor.async_accept(*socket_server, [&](std::error_code ec) { accepted = true; });
+    acceptor.async_accept(*socket_server, [&](boost::system::error_code ec) { accepted = true; });
 
     socket_client->connect(acceptor.local_endpoint());
 
@@ -191,18 +191,18 @@ TEST_F(mux_connection_integration_test, StreamDataExchange)
     auto stream_s = std::make_shared<simple_mock_stream>();
     conn_s->register_stream(100, stream_s);
 
-    asio::co_spawn(io_ctx(), [conn_c]() -> asio::awaitable<void> { co_await conn_c->start(); }, asio::detached);
-    asio::co_spawn(io_ctx(), [conn_s]() -> asio::awaitable<void> { co_await conn_s->start(); }, asio::detached);
+    boost::asio::co_spawn(io_ctx(), [conn_c]() -> boost::asio::awaitable<void> { co_await conn_c->start(); }, boost::asio::detached);
+    boost::asio::co_spawn(io_ctx(), [conn_s]() -> boost::asio::awaitable<void> { co_await conn_s->start(); }, boost::asio::detached);
 
     std::vector<uint8_t> test_data = {'h', 'e', 'l', 'l', 'o'};
 
-    asio::co_spawn(
+    boost::asio::co_spawn(
         io_ctx(),
-        [&]() -> asio::awaitable<void>
+        [&]() -> boost::asio::awaitable<void>
         {
             co_await conn_c->send_async(100, kCmdDat, test_data);
 
-            asio::steady_timer timer(io_ctx());
+            boost::asio::steady_timer timer(io_ctx());
             for (int i = 0; i < 10; ++i)
             {
                 if (stream_s->received_data().size() == test_data.size())
@@ -210,7 +210,7 @@ TEST_F(mux_connection_integration_test, StreamDataExchange)
                     break;
                 }
                 timer.expires_after(std::chrono::milliseconds(50));
-                co_await timer.async_wait(asio::as_tuple(asio::use_awaitable));
+                co_await timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
             }
 
             EXPECT_EQ(stream_s->received_data(), test_data);
@@ -223,25 +223,25 @@ TEST_F(mux_connection_integration_test, StreamDataExchange)
                     break;
                 }
                 timer.expires_after(std::chrono::milliseconds(50));
-                co_await timer.async_wait(asio::as_tuple(asio::use_awaitable));
+                co_await timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
             }
             EXPECT_TRUE(stream_s->closed());
 
             conn_c->stop();
             conn_s->stop();
         },
-        asio::detached);
+        boost::asio::detached);
 
     io_ctx().run();
 }
 
 TEST_F(mux_connection_integration_test, ReadTimeoutHandling)
 {
-    asio::ip::tcp::acceptor acceptor(io_ctx());
+    boost::asio::ip::tcp::acceptor acceptor(io_ctx());
     const auto setup_ec = setup_loopback_acceptor_with_retry(acceptor);
     ASSERT_FALSE(setup_ec) << setup_ec.message();
-    auto socket_server = std::make_shared<asio::ip::tcp::socket>(io_ctx());
-    auto socket_client = std::make_shared<asio::ip::tcp::socket>(io_ctx());
+    auto socket_server = std::make_shared<boost::asio::ip::tcp::socket>(io_ctx());
+    auto socket_client = std::make_shared<boost::asio::ip::tcp::socket>(io_ctx());
 
     socket_client->connect(acceptor.local_endpoint());
     acceptor.accept(*socket_server);
@@ -254,7 +254,7 @@ TEST_F(mux_connection_integration_test, ReadTimeoutHandling)
         std::make_shared<mux_connection>(
             std::move(*socket_server), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, false, 1, "test", timeout_cfg);
 
-    asio::co_spawn(io_ctx(), [conn_s]() -> asio::awaitable<void> { co_await conn_s->start(); }, asio::detached);
+    boost::asio::co_spawn(io_ctx(), [conn_s]() -> boost::asio::awaitable<void> { co_await conn_s->start(); }, boost::asio::detached);
 
     auto start_time = std::chrono::steady_clock::now();
     while (conn_s->is_open() && (std::chrono::steady_clock::now() - start_time < std::chrono::seconds(5)))
@@ -267,11 +267,11 @@ TEST_F(mux_connection_integration_test, ReadTimeoutHandling)
 
 TEST_F(mux_connection_integration_test, WriteTimeoutHandling)
 {
-    asio::ip::tcp::acceptor acceptor(io_ctx());
+    boost::asio::ip::tcp::acceptor acceptor(io_ctx());
     const auto setup_ec = setup_loopback_acceptor_with_retry(acceptor);
     ASSERT_FALSE(setup_ec) << setup_ec.message();
-    auto socket_server = std::make_shared<asio::ip::tcp::socket>(io_ctx());
-    auto socket_client = std::make_shared<asio::ip::tcp::socket>(io_ctx());
+    auto socket_server = std::make_shared<boost::asio::ip::tcp::socket>(io_ctx());
+    auto socket_client = std::make_shared<boost::asio::ip::tcp::socket>(io_ctx());
 
     socket_client->connect(acceptor.local_endpoint());
     acceptor.accept(*socket_server);
@@ -284,7 +284,7 @@ TEST_F(mux_connection_integration_test, WriteTimeoutHandling)
         std::make_shared<mux_connection>(
             std::move(*socket_server), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, false, 12, "write_timeout", timeout_cfg);
 
-    asio::co_spawn(io_ctx(), [conn_s]() -> asio::awaitable<void> { co_await conn_s->start(); }, asio::detached);
+    boost::asio::co_spawn(io_ctx(), [conn_s]() -> boost::asio::awaitable<void> { co_await conn_s->start(); }, boost::asio::detached);
 
     auto start_time = std::chrono::steady_clock::now();
     while (conn_s->is_open() && (std::chrono::steady_clock::now() - start_time < std::chrono::seconds(5)))
@@ -297,11 +297,11 @@ TEST_F(mux_connection_integration_test, WriteTimeoutHandling)
 
 TEST_F(mux_connection_integration_test, HeartbeatRandFailureStopsConnection)
 {
-    asio::ip::tcp::acceptor acceptor(io_ctx());
+    boost::asio::ip::tcp::acceptor acceptor(io_ctx());
     const auto setup_ec = setup_loopback_acceptor_with_retry(acceptor);
     ASSERT_FALSE(setup_ec) << setup_ec.message();
-    auto socket_server = std::make_shared<asio::ip::tcp::socket>(io_ctx());
-    auto socket_client = std::make_shared<asio::ip::tcp::socket>(io_ctx());
+    auto socket_server = std::make_shared<boost::asio::ip::tcp::socket>(io_ctx());
+    auto socket_client = std::make_shared<boost::asio::ip::tcp::socket>(io_ctx());
 
     socket_client->connect(acceptor.local_endpoint());
     acceptor.accept(*socket_server);
@@ -342,8 +342,8 @@ TEST_F(mux_connection_integration_test, HeartbeatRandFailureStopsConnection)
 
     g_force_rand_bytes_failure.store(true, std::memory_order_release);
 
-    asio::co_spawn(io_ctx(), [conn_c]() -> asio::awaitable<void> { co_await conn_c->start(); }, asio::detached);
-    asio::co_spawn(io_ctx(), [conn_s]() -> asio::awaitable<void> { co_await conn_s->start(); }, asio::detached);
+    boost::asio::co_spawn(io_ctx(), [conn_c]() -> boost::asio::awaitable<void> { co_await conn_c->start(); }, boost::asio::detached);
+    boost::asio::co_spawn(io_ctx(), [conn_s]() -> boost::asio::awaitable<void> { co_await conn_s->start(); }, boost::asio::detached);
 
     std::thread io_thread([this]() { io_ctx().run(); });
 
@@ -367,7 +367,7 @@ TEST_F(mux_connection_integration_test, HeartbeatRandFailureStopsConnection)
 
 TEST_F(mux_connection_integration_test, TryRegisterStreamRejectsDuplicateId)
 {
-    asio::ip::tcp::socket socket(io_ctx());
+    boost::asio::ip::tcp::socket socket(io_ctx());
     reality_engine engine{{}, {}, {}, {}, EVP_aes_128_gcm()};
     auto conn = std::make_shared<mux_connection>(std::move(socket), io_ctx(), std::move(engine), true, 1);
 
@@ -381,7 +381,7 @@ TEST_F(mux_connection_integration_test, TryRegisterStreamRejectsDuplicateId)
 
 TEST_F(mux_connection_integration_test, ClosedStateGuardsAndUnlimitedCheck)
 {
-    asio::ip::tcp::socket socket(io_ctx());
+    boost::asio::ip::tcp::socket socket(io_ctx());
     reality_engine engine{{}, {}, {}, {}, EVP_aes_128_gcm()};
     auto conn = std::make_shared<mux_connection>(std::move(socket), io_ctx(), std::move(engine), true, 2);
     auto stream = std::make_shared<simple_mock_stream>();
@@ -396,7 +396,7 @@ TEST_F(mux_connection_integration_test, ClosedStateGuardsAndUnlimitedCheck)
     config::limits_t limits_cfg;
     limits_cfg.max_streams = 0;
     auto unlimited = std::make_shared<mux_connection>(
-        asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 3, "trace", config::timeout_t{}, limits_cfg);
+        boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 3, "trace", config::timeout_t{}, limits_cfg);
     unlimited->connection_state_.store(mux_connection_state::kClosed, std::memory_order_release);
     EXPECT_FALSE(unlimited->can_accept_stream());
 }
@@ -404,7 +404,7 @@ TEST_F(mux_connection_integration_test, ClosedStateGuardsAndUnlimitedCheck)
 TEST_F(mux_connection_integration_test, IsOpenTreatsDrainingAsOpen)
 {
     auto conn = std::make_shared<mux_connection>(
-        asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 10);
+        boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 10);
 
     conn->connection_state_.store(mux_connection_state::kDraining, std::memory_order_release);
     EXPECT_TRUE(conn->is_open());
@@ -420,29 +420,29 @@ TEST_F(mux_connection_integration_test, IsOpenTreatsDrainingAsOpen)
 TEST_F(mux_connection_integration_test, SendAsyncAllowedWhenDraining)
 {
     auto conn = std::make_shared<mux_connection>(
-        asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 13);
+        boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 13);
 
     conn->connection_state_.store(mux_connection_state::kDraining, std::memory_order_release);
-    auto future = asio::co_spawn(
+    auto future = boost::asio::co_spawn(
         io_ctx(),
-        [conn]() -> asio::awaitable<std::error_code>
+        [conn]() -> boost::asio::awaitable<boost::system::error_code>
         {
             co_return co_await conn->send_async(1, kCmdRst, {});
         },
-        asio::use_future);
+        boost::asio::use_future);
 
     io_ctx().run();
-    EXPECT_EQ(future.get(), std::error_code{});
+    EXPECT_EQ(future.get(), boost::system::error_code{});
 }
 
 TEST_F(mux_connection_integration_test, OffThreadRegisterAndQueryPaths)
 {
     auto conn = std::make_shared<mux_connection>(
-        asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 4);
+        boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 4);
     conn->started_.store(true, std::memory_order_release);
     conn->connection_state_.store(mux_connection_state::kConnected, std::memory_order_release);
 
-    auto guard = asio::make_work_guard(io_ctx());
+    auto guard = boost::asio::make_work_guard(io_ctx());
     std::thread io_thread([&]() { io_ctx().run(); });
 
     auto stream = std::make_shared<simple_mock_stream>();
@@ -465,7 +465,7 @@ TEST_F(mux_connection_integration_test, OffThreadCanAcceptStreamFalsePath)
     limits_cfg.max_streams = 1;
 
     auto conn = std::make_shared<mux_connection>(
-        asio::ip::tcp::socket(io_ctx()),
+        boost::asio::ip::tcp::socket(io_ctx()),
         io_ctx(),
         reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()},
         true,
@@ -476,7 +476,7 @@ TEST_F(mux_connection_integration_test, OffThreadCanAcceptStreamFalsePath)
     conn->started_.store(true, std::memory_order_release);
     conn->connection_state_.store(mux_connection_state::kConnected, std::memory_order_release);
 
-    auto guard = asio::make_work_guard(io_ctx());
+    auto guard = boost::asio::make_work_guard(io_ctx());
     std::thread io_thread([&]() { io_ctx().run(); });
 
     auto stream = std::make_shared<simple_mock_stream>();
@@ -497,7 +497,7 @@ TEST_F(mux_connection_integration_test, OffThreadConcurrentCreateStreamRespectsL
     limits_cfg.max_streams = 1;
 
     auto conn = std::make_shared<mux_connection>(
-        asio::ip::tcp::socket(io_ctx()),
+        boost::asio::ip::tcp::socket(io_ctx()),
         io_ctx(),
         reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()},
         true,
@@ -508,7 +508,7 @@ TEST_F(mux_connection_integration_test, OffThreadConcurrentCreateStreamRespectsL
     conn->started_.store(true, std::memory_order_release);
     conn->connection_state_.store(mux_connection_state::kConnected, std::memory_order_release);
 
-    auto guard = asio::make_work_guard(io_ctx());
+    auto guard = boost::asio::make_work_guard(io_ctx());
     std::promise<void> io_started;
     auto io_started_future = io_started.get_future();
     std::thread io_thread(
@@ -561,17 +561,17 @@ TEST_F(mux_connection_integration_test, OffThreadConcurrentCreateStreamRespectsL
 TEST_F(mux_connection_integration_test, OffThreadSyncQueriesReturnWhenIoQueueBusy)
 {
     auto conn = std::make_shared<mux_connection>(
-        asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 15);
+        boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 15);
     conn->started_.store(true, std::memory_order_release);
     conn->connection_state_.store(mux_connection_state::kConnected, std::memory_order_release);
 
-    auto guard = asio::make_work_guard(io_ctx());
+    auto guard = boost::asio::make_work_guard(io_ctx());
     std::thread io_thread([&]() { io_ctx().run(); });
 
     std::promise<void> blocker_started;
     auto blocker_started_future = blocker_started.get_future();
     std::atomic<bool> release_blocker{false};
-    asio::post(io_ctx(),
+    boost::asio::post(io_ctx(),
                [&blocker_started, &release_blocker]()
                {
                    blocker_started.set_value();
@@ -620,17 +620,17 @@ TEST_F(mux_connection_integration_test, OffThreadSyncQueriesReturnWhenIoQueueBus
 TEST_F(mux_connection_integration_test, OffThreadSyncQueryTimeoutDoesNotMutateAfterStopAndRestart)
 {
     auto conn = std::make_shared<mux_connection>(
-        asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 18);
+        boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 18);
     conn->started_.store(true, std::memory_order_release);
     conn->connection_state_.store(mux_connection_state::kConnected, std::memory_order_release);
 
-    auto guard = asio::make_work_guard(io_ctx());
+    auto guard = boost::asio::make_work_guard(io_ctx());
     std::thread io_thread([&]() { io_ctx().run(); });
 
     std::promise<void> blocker_started;
     auto blocker_started_future = blocker_started.get_future();
     std::atomic<bool> release_blocker{false};
-    asio::post(io_ctx(),
+    boost::asio::post(io_ctx(),
                [&blocker_started, &release_blocker]()
                {
                    blocker_started.set_value();
@@ -675,17 +675,17 @@ TEST_F(mux_connection_integration_test, OffThreadSyncQueryTimeoutDoesNotMutateAf
 TEST_F(mux_connection_integration_test, OffThreadTryRegisterTimeoutDoesNotMutateAfterStopAndRestart)
 {
     auto conn = std::make_shared<mux_connection>(
-        asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 19);
+        boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 19);
     conn->started_.store(true, std::memory_order_release);
     conn->connection_state_.store(mux_connection_state::kConnected, std::memory_order_release);
 
-    auto guard = asio::make_work_guard(io_ctx());
+    auto guard = boost::asio::make_work_guard(io_ctx());
     std::thread io_thread([&]() { io_ctx().run(); });
 
     std::promise<void> blocker_started;
     auto blocker_started_future = blocker_started.get_future();
     std::atomic<bool> release_blocker{false};
-    asio::post(io_ctx(),
+    boost::asio::post(io_ctx(),
                [&blocker_started, &release_blocker]()
                {
                    blocker_started.set_value();
@@ -730,7 +730,7 @@ TEST_F(mux_connection_integration_test, OffThreadTryRegisterTimeoutDoesNotMutate
 TEST_F(mux_connection_integration_test, MarkStartedForExternalCallsPreventsPreStartInlineMutation)
 {
     auto conn = std::make_shared<mux_connection>(
-        asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 20);
+        boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 20);
     conn->connection_state_.store(mux_connection_state::kConnected, std::memory_order_release);
     conn->mark_started_for_external_calls();
 
@@ -744,7 +744,7 @@ TEST_F(mux_connection_integration_test, StoppedIoContextUsesInlineQueryPaths)
     config::limits_t limits_cfg;
     limits_cfg.max_streams = 2;
     auto conn = std::make_shared<mux_connection>(
-        asio::ip::tcp::socket(io_ctx()),
+        boost::asio::ip::tcp::socket(io_ctx()),
         io_ctx(),
         reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()},
         true,
@@ -770,7 +770,7 @@ TEST_F(mux_connection_integration_test, StoppedIoContextUsesInlineQueryPaths)
 TEST_F(mux_connection_integration_test, StopRunsInlineWhenIoContextStopped)
 {
     auto conn = std::make_shared<mux_connection>(
-        asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 14);
+        boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 14);
     conn->started_.store(true, std::memory_order_release);
     conn->connection_state_.store(mux_connection_state::kConnected, std::memory_order_release);
 
@@ -784,7 +784,7 @@ TEST_F(mux_connection_integration_test, StopRunsInlineWhenIoContextStopped)
 TEST_F(mux_connection_integration_test, StopRunsWhenIoContextNotRunning)
 {
     auto conn = std::make_shared<mux_connection>(
-        asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 16);
+        boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 16);
     conn->started_.store(true, std::memory_order_release);
     conn->connection_state_.store(mux_connection_state::kConnected, std::memory_order_release);
 
@@ -795,7 +795,7 @@ TEST_F(mux_connection_integration_test, StopRunsWhenIoContextNotRunning)
 TEST_F(mux_connection_integration_test, StopRunsWhenIoQueueBlocked)
 {
     auto conn = std::make_shared<mux_connection>(
-        asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 18);
+        boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 18);
     conn->started_.store(true, std::memory_order_release);
     conn->connection_state_.store(mux_connection_state::kConnected, std::memory_order_release);
 
@@ -804,7 +804,7 @@ TEST_F(mux_connection_integration_test, StopRunsWhenIoQueueBlocked)
 
     std::atomic<bool> blocker_started{false};
     std::atomic<bool> release_blocker{false};
-    asio::post(
+    boost::asio::post(
         io_ctx(),
         [&blocker_started, &release_blocker]()
         {
@@ -855,7 +855,7 @@ TEST_F(mux_connection_integration_test, RemoveStreamRunsWhenIoContextNotRunning)
     config::limits_t limits_cfg;
     limits_cfg.max_streams = 4;
     auto conn = std::make_shared<mux_connection>(
-        asio::ip::tcp::socket(io_ctx()),
+        boost::asio::ip::tcp::socket(io_ctx()),
         io_ctx(),
         reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()},
         true,
@@ -878,7 +878,7 @@ TEST_F(mux_connection_integration_test, RemoveStreamRunsInlineWhenIoContextStopp
     config::limits_t limits_cfg;
     limits_cfg.max_streams = 4;
     auto conn = std::make_shared<mux_connection>(
-        asio::ip::tcp::socket(io_ctx()),
+        boost::asio::ip::tcp::socket(io_ctx()),
         io_ctx(),
         reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()},
         true,
@@ -902,7 +902,7 @@ TEST_F(mux_connection_integration_test, RemoveStreamRunsWhenIoQueueBlocked)
     config::limits_t limits_cfg;
     limits_cfg.max_streams = 4;
     auto conn = std::make_shared<mux_connection>(
-        asio::ip::tcp::socket(io_ctx()),
+        boost::asio::ip::tcp::socket(io_ctx()),
         io_ctx(),
         reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()},
         true,
@@ -918,7 +918,7 @@ TEST_F(mux_connection_integration_test, RemoveStreamRunsWhenIoQueueBlocked)
 
     std::atomic<bool> blocker_started{false};
     std::atomic<bool> release_blocker{false};
-    asio::post(
+    boost::asio::post(
         io_ctx(),
         [&blocker_started, &release_blocker]()
         {
@@ -967,7 +967,7 @@ TEST_F(mux_connection_integration_test, StopConcurrentRegisterAndTryRegisterWhen
     config::limits_t limits_cfg;
     limits_cfg.max_streams = 8;
     auto conn = std::make_shared<mux_connection>(
-        asio::ip::tcp::socket(io_ctx()),
+        boost::asio::ip::tcp::socket(io_ctx()),
         io_ctx(),
         reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()},
         true,
@@ -984,7 +984,7 @@ TEST_F(mux_connection_integration_test, StopConcurrentRegisterAndTryRegisterWhen
 
     std::atomic<bool> blocker_started{false};
     std::atomic<bool> release_blocker{false};
-    asio::post(
+    boost::asio::post(
         io_ctx(),
         [&blocker_started, &release_blocker]()
         {
@@ -1069,7 +1069,7 @@ TEST_F(mux_connection_integration_test, StopConcurrentRemoveWhenIoQueueBlocked)
     config::limits_t limits_cfg;
     limits_cfg.max_streams = 8;
     auto conn = std::make_shared<mux_connection>(
-        asio::ip::tcp::socket(io_ctx()),
+        boost::asio::ip::tcp::socket(io_ctx()),
         io_ctx(),
         reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()},
         true,
@@ -1089,7 +1089,7 @@ TEST_F(mux_connection_integration_test, StopConcurrentRemoveWhenIoQueueBlocked)
 
     std::atomic<bool> blocker_started{false};
     std::atomic<bool> release_blocker{false};
-    asio::post(
+    boost::asio::post(
         io_ctx(),
         [&blocker_started, &release_blocker]()
         {
@@ -1155,7 +1155,7 @@ TEST_F(mux_connection_integration_test, StopConcurrentRemoveWhenIoQueueBlocked)
 TEST_F(mux_connection_integration_test, StopDrainingAndInternalErrorBranches)
 {
     auto conn = std::make_shared<mux_connection>(
-        asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 5);
+        boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 5);
 
     conn->connection_state_.store(mux_connection_state::kDraining, std::memory_order_release);
     conn->stop();
@@ -1165,7 +1165,7 @@ TEST_F(mux_connection_integration_test, StopDrainingAndInternalErrorBranches)
     conn->stop_impl();
     conn->close_socket_on_stop();
 
-    EXPECT_TRUE(conn->should_stop_read(asio::error::connection_reset, 0));
+    EXPECT_TRUE(conn->should_stop_read(boost::asio::error::connection_reset, 0));
 
     std::array<std::uint8_t, 8> junk = {0x17, 0x03, 0x03, 0x00, 0x01, 0x00, 0x00, 0x00};
     conn->mux_dispatcher_.set_max_buffer(1);
@@ -1176,7 +1176,7 @@ TEST_F(mux_connection_integration_test, StopDrainingAndInternalErrorBranches)
 TEST_F(mux_connection_integration_test, HandleStreamAndUnknownStreamBranches)
 {
     auto conn = std::make_shared<mux_connection>(
-        asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 6);
+        boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 6);
 
     auto stream = std::make_shared<simple_mock_stream>();
     EXPECT_TRUE(conn->register_stream_local(100, stream));
@@ -1208,7 +1208,7 @@ TEST_F(mux_connection_integration_test, HandleStreamAndUnknownStreamBranches)
 TEST_F(mux_connection_integration_test, SynCallbackAndReadGuardBranches)
 {
     auto conn = std::make_shared<mux_connection>(
-        asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 7);
+        boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 7);
 
     const frame_header syn_header{
         .stream_id = 88,
@@ -1234,16 +1234,16 @@ TEST_F(mux_connection_integration_test, SynCallbackAndReadGuardBranches)
     EXPECT_EQ(syn_stream_id, 88);
     EXPECT_EQ(syn_payload, std::vector<std::uint8_t>({9}));
 
-    EXPECT_FALSE(conn->should_stop_read(std::error_code{}, 8));
-    EXPECT_TRUE(conn->should_stop_read(std::error_code{}, 0));
-    EXPECT_TRUE(conn->should_stop_read(asio::error::eof, 0));
-    EXPECT_TRUE(conn->should_stop_read(asio::error::operation_aborted, 0));
+    EXPECT_FALSE(conn->should_stop_read(boost::system::error_code{}, 8));
+    EXPECT_TRUE(conn->should_stop_read(boost::system::error_code{}, 0));
+    EXPECT_TRUE(conn->should_stop_read(boost::asio::error::eof, 0));
+    EXPECT_TRUE(conn->should_stop_read(boost::asio::error::operation_aborted, 0));
 }
 
 TEST_F(mux_connection_integration_test, ResetStreamsAndDispatchFailureBranches)
 {
     auto conn = std::make_shared<mux_connection>(
-        asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 8);
+        boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 8);
 
     auto reset_stream = std::make_shared<simple_mock_stream>();
     mux_connection::stream_map_t streams_to_clear;
@@ -1253,20 +1253,20 @@ TEST_F(mux_connection_integration_test, ResetStreamsAndDispatchFailureBranches)
 
     EXPECT_TRUE(reset_stream->reset());
     EXPECT_EQ(streams_to_clear.size(), 2U);
-    EXPECT_FALSE(conn->has_dispatch_failure(std::error_code{}));
+    EXPECT_FALSE(conn->has_dispatch_failure(boost::system::error_code{}));
     EXPECT_TRUE(conn->has_dispatch_failure(std::make_error_code(std::errc::protocol_error)));
 }
 
 TEST_F(mux_connection_integration_test, TryRegisterNullAndCloseSocketErrorBranches)
 {
     auto conn = std::make_shared<mux_connection>(
-        asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 9);
+        boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 9);
 
     EXPECT_FALSE(conn->try_register_stream(77, nullptr));
 
-    asio::ip::tcp::socket broken_socket(io_ctx());
-    std::error_code open_ec;
-    broken_socket.open(asio::ip::tcp::v4(), open_ec);
+    boost::asio::ip::tcp::socket broken_socket(io_ctx());
+    boost::system::error_code open_ec;
+    broken_socket.open(boost::asio::ip::tcp::v4(), open_ec);
     ASSERT_FALSE(open_ec);
 
     const int native_fd = broken_socket.native_handle();
@@ -1284,7 +1284,7 @@ TEST_F(mux_connection_integration_test, TryRegisterNullAndCloseSocketErrorBranch
 TEST_F(mux_connection_integration_test, StreamStorageNullFallbackPaths)
 {
     auto conn = std::make_shared<mux_connection>(
-        asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 23);
+        boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 23);
 
     conn->streams_.reset();
     const auto snapshot = conn->snapshot_streams();
@@ -1306,7 +1306,7 @@ TEST_F(mux_connection_integration_test, TryRegisterLocalNullStorageAndLimitBranc
     config::limits_t limits_cfg;
     limits_cfg.max_streams = 1;
     auto conn = std::make_shared<mux_connection>(
-        asio::ip::tcp::socket(io_ctx()),
+        boost::asio::ip::tcp::socket(io_ctx()),
         io_ctx(),
         reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()},
         true,
@@ -1329,7 +1329,7 @@ TEST_F(mux_connection_integration_test, CanAcceptStreamLocalAndPublicLimitBranch
     config::limits_t unlimited_limits;
     unlimited_limits.max_streams = 0;
     auto unlimited_conn = std::make_shared<mux_connection>(
-        asio::ip::tcp::socket(io_ctx()),
+        boost::asio::ip::tcp::socket(io_ctx()),
         io_ctx(),
         reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()},
         true,

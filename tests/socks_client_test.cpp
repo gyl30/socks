@@ -8,10 +8,10 @@
 #include <cerrno>
 
 #include <gtest/gtest.h>
-#include <asio/awaitable.hpp>
-#include <asio/co_spawn.hpp>
-#include <asio/detached.hpp>
-#include <asio/ip/tcp.hpp>
+#include <boost/asio/awaitable.hpp>
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/detached.hpp>
+#include <boost/asio/ip/tcp.hpp>
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -188,12 +188,12 @@ bool wait_for_listen_port(const std::shared_ptr<mux::socks_client>& client)
 }
 
 template <typename Func>
-auto run_on_io_context(asio::io_context& io_context, Func&& fn) -> decltype(fn())
+auto run_on_io_context(boost::asio::io_context& io_context, Func&& fn) -> decltype(fn())
 {
     using result_type = decltype(fn());
     std::promise<result_type> promise;
     auto future = promise.get_future();
-    asio::post(io_context,
+    boost::asio::post(io_context,
                [func = std::forward<Func>(fn), promise = std::move(promise)]() mutable
                {
                    promise.set_value(func());
@@ -201,7 +201,7 @@ auto run_on_io_context(asio::io_context& io_context, Func&& fn) -> decltype(fn()
     return future.get();
 }
 
-std::size_t session_count(asio::io_context& io_context, const std::shared_ptr<mux::socks_client>& client)
+std::size_t session_count(boost::asio::io_context& io_context, const std::shared_ptr<mux::socks_client>& client)
 {
     return run_on_io_context(
         io_context,
@@ -216,24 +216,24 @@ std::size_t session_count(asio::io_context& io_context, const std::shared_ptr<mu
         });
 }
 
-bool acceptor_is_open(asio::io_context& io_context, const std::shared_ptr<mux::socks_client>& client)
+bool acceptor_is_open(boost::asio::io_context& io_context, const std::shared_ptr<mux::socks_client>& client)
 {
     return run_on_io_context(io_context, [client]() { return client->acceptor_.is_open(); });
 }
 
-std::future<void> spawn_accept_local_loop(asio::io_context& io_context, const std::shared_ptr<mux::socks_client>& client)
+std::future<void> spawn_accept_local_loop(boost::asio::io_context& io_context, const std::shared_ptr<mux::socks_client>& client)
 {
     auto done = std::make_shared<std::promise<void>>();
     auto future = done->get_future();
-    asio::co_spawn(
+    boost::asio::co_spawn(
         io_context,
-        [client, done]() -> asio::awaitable<void>
+        [client, done]() -> boost::asio::awaitable<void>
         {
             co_await client->accept_local_loop();
             done->set_value();
             co_return;
         },
-        asio::detached);
+        boost::asio::detached);
     return future;
 }
 
@@ -354,8 +354,8 @@ TEST(LocalClientTest, RunningRequiresStartedFlag)
     auto client = std::make_shared<mux::socks_client>(pool, cfg);
     EXPECT_FALSE(client->running());
 
-    std::error_code ec;
-    client->acceptor_.open(asio::ip::tcp::v4(), ec);
+    boost::system::error_code ec;
+    client->acceptor_.open(boost::asio::ip::tcp::v4(), ec);
     ASSERT_FALSE(ec);
     EXPECT_TRUE(client->acceptor_.is_open());
     EXPECT_FALSE(client->running());
@@ -425,8 +425,8 @@ TEST(LocalClientTest, StopRunsInlineWhenIoContextStopped)
 
     auto client = std::make_shared<mux::socks_client>(pool, cfg);
 
-    std::error_code ec;
-    client->acceptor_.open(asio::ip::tcp::v4(), ec);
+    boost::system::error_code ec;
+    client->acceptor_.open(boost::asio::ip::tcp::v4(), ec);
     ASSERT_FALSE(ec);
     ASSERT_TRUE(client->acceptor_.is_open());
 
@@ -447,14 +447,14 @@ TEST(LocalClientTest, StopRunsWhenIoQueueBlocked)
 
     auto client = std::make_shared<mux::socks_client>(pool, cfg);
 
-    std::error_code ec;
-    client->acceptor_.open(asio::ip::tcp::v4(), ec);
+    boost::system::error_code ec;
+    client->acceptor_.open(boost::asio::ip::tcp::v4(), ec);
     ASSERT_FALSE(ec);
     ASSERT_TRUE(client->acceptor_.is_open());
 
     std::atomic<bool> blocker_started{false};
     std::atomic<bool> release_blocker{false};
-    asio::post(
+    boost::asio::post(
         pool.get_io_context(),
         [&blocker_started, &release_blocker]()
         {
@@ -495,8 +495,8 @@ TEST(LocalClientTest, StopRunsWhenIoContextNotRunning)
 
     auto client = std::make_shared<mux::socks_client>(pool, cfg);
 
-    std::error_code ec;
-    client->acceptor_.open(asio::ip::tcp::v4(), ec);
+    boost::system::error_code ec;
+    client->acceptor_.open(boost::asio::ip::tcp::v4(), ec);
     ASSERT_FALSE(ec);
     ASSERT_TRUE(client->acceptor_.is_open());
 
@@ -649,8 +649,8 @@ TEST(LocalClientTest, ListenPortConflictTriggersSetupFailure)
 {
     io_context_pool pool(1);
 
-    asio::io_context blocker_ctx;
-    asio::ip::tcp::acceptor blocker(blocker_ctx);
+    boost::asio::io_context blocker_ctx;
+    boost::asio::ip::tcp::acceptor blocker(blocker_ctx);
     ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(blocker));
     const auto blocked_port = blocker.local_endpoint().port();
 
@@ -722,11 +722,11 @@ TEST(LocalClientTest, NoTunnelSelectionAndSessionPrunePath)
     client->start();
     ASSERT_TRUE(wait_for_listen_port(client));
 
-    asio::io_context connect_ctx;
-    asio::ip::tcp::socket first(connect_ctx);
-    asio::ip::tcp::socket second(connect_ctx);
-    std::error_code ec;
-    const asio::ip::tcp::endpoint ep(asio::ip::make_address("127.0.0.1"), client->listen_port());
+    boost::asio::io_context connect_ctx;
+    boost::asio::ip::tcp::socket first(connect_ctx);
+    boost::asio::ip::tcp::socket second(connect_ctx);
+    boost::system::error_code ec;
+    const boost::asio::ip::tcp::endpoint ep(boost::asio::ip::make_address("127.0.0.1"), client->listen_port());
     first.connect(ep, ec);
     ASSERT_FALSE(ec);
     second.connect(ep, ec);
@@ -961,12 +961,12 @@ TEST(LocalClientTest, AcceptLoopLogsRetryOnAcceptError)
 
     fail_next_accept(EIO);
 
-    asio::io_context connect_ctx;
-    asio::ip::tcp::socket connector(connect_ctx);
-    std::error_code ec;
-    connector.connect(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), client->listen_port()), ec);
+    boost::asio::io_context connect_ctx;
+    boost::asio::ip::tcp::socket connector(connect_ctx);
+    boost::system::error_code ec;
+    connector.connect(boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address("127.0.0.1"), client->listen_port()), ec);
     ASSERT_FALSE(ec);
-    connector.shutdown(asio::ip::tcp::socket::shutdown_both, ec);
+    connector.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
     connector.close(ec);
 
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
@@ -998,13 +998,13 @@ TEST(LocalClientTest, AcceptLoopHandlesNoDelaySetOptionFailure)
 
     fail_next_tcp_nodelay_setsockopt(EPERM);
 
-    asio::io_context connect_ctx;
-    asio::ip::tcp::socket connector(connect_ctx);
-    std::error_code ec;
-    connector.connect(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), client->listen_port()), ec);
+    boost::asio::io_context connect_ctx;
+    boost::asio::ip::tcp::socket connector(connect_ctx);
+    boost::system::error_code ec;
+    connector.connect(boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address("127.0.0.1"), client->listen_port()), ec);
     ASSERT_FALSE(ec);
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
-    connector.shutdown(asio::ip::tcp::socket::shutdown_both, ec);
+    connector.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
     connector.close(ec);
 
     client->stop();

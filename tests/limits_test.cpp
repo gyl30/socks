@@ -8,11 +8,11 @@
 #include <functional>
 #include <system_error>
 
-#include <asio/read.hpp>
+#include <boost/asio/read.hpp>
 #include <gtest/gtest.h>
-#include <asio/write.hpp>
-#include <asio/buffer.hpp>
-#include <asio/ip/tcp.hpp>
+#include <boost/asio/write.hpp>
+#include <boost/asio/buffer.hpp>
+#include <boost/asio/ip/tcp.hpp>
 
 #include "config.h"
 #include "crypto_util.h"
@@ -53,7 +53,7 @@ TEST_F(limits_test, ContextPoolInvalidSize)
 
 TEST_F(limits_test, ConnectionPoolCapacity)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
 
     mux::io_context_pool pool(4);
     ASSERT_FALSE(ec);
@@ -87,14 +87,14 @@ TEST_F(limits_test, ConnectionPoolCapacity)
     server->start();
 
     const uint16_t target_port = 30080;
-    asio::ip::tcp::acceptor target_acceptor(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), target_port));
-    std::vector<std::shared_ptr<asio::ip::tcp::socket>> target_sockets;
+    boost::asio::ip::tcp::acceptor target_acceptor(pool.get_io_context(), boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), target_port));
+    std::vector<std::shared_ptr<boost::asio::ip::tcp::socket>> target_sockets;
 
     std::function<void()> accept_target = [&]()
     {
-        auto sock = std::make_shared<asio::ip::tcp::socket>(pool.get_io_context());
+        auto sock = std::make_shared<boost::asio::ip::tcp::socket>(pool.get_io_context());
         target_acceptor.async_accept(*sock,
-                                     [&, sock](const std::error_code ec_accept)
+                                     [&, sock](const boost::system::error_code ec_accept)
                                      {
                                          if (!ec_accept)
                                          {
@@ -122,9 +122,9 @@ TEST_F(limits_test, ConnectionPoolCapacity)
 
     auto connect_socks = [&]([[maybe_unused]] int id) -> bool
     {
-        asio::ip::tcp::socket sock(pool.get_io_context());
-        const asio::ip::tcp::endpoint ep(asio::ip::make_address("127.0.0.1"), local_socks_port);
-        std::error_code cec;
+        boost::asio::ip::tcp::socket sock(pool.get_io_context());
+        const boost::asio::ip::tcp::endpoint ep(boost::asio::ip::make_address("127.0.0.1"), local_socks_port);
+        boost::system::error_code cec;
         sock.connect(ep, cec);
         if (cec)
         {
@@ -132,14 +132,14 @@ TEST_F(limits_test, ConnectionPoolCapacity)
         }
 
         const uint8_t ver_method[] = {0x05, 0x01, 0x00};
-        (void)asio::write(sock, asio::buffer(ver_method), cec);
+        (void)boost::asio::write(sock, boost::asio::buffer(ver_method), cec);
         if (cec)
         {
             return false;
         }
 
         uint8_t resp[2];
-        (void)asio::read(sock, asio::buffer(resp), cec);
+        (void)boost::asio::read(sock, boost::asio::buffer(resp), cec);
         if (cec || resp[1] != 0x00)
         {
             return false;
@@ -149,14 +149,14 @@ TEST_F(limits_test, ConnectionPoolCapacity)
         uint8_t req[10] = {0x05, 0x01, 0x00, 0x01, 127, 0, 0, 1};
         std::memcpy(req + 8, &port_n, 2);
 
-        (void)asio::write(sock, asio::buffer(req, 10), cec);
+        (void)boost::asio::write(sock, boost::asio::buffer(req, 10), cec);
         if (cec)
         {
             return false;
         }
 
         uint8_t reply[10];
-        (void)asio::read(sock, asio::buffer(reply), cec);
+        (void)boost::asio::read(sock, boost::asio::buffer(reply), cec);
 
         if (!cec && reply[1] == 0x00)
         {

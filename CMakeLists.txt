@@ -42,6 +42,7 @@ if(ENABLE_COVERAGE)
 endif()
 
 find_package(OpenSSL REQUIRED)
+find_package(Boost 1.89 REQUIRED)
 
 set(SOCKS_SOURCES
     log.cpp
@@ -102,11 +103,11 @@ endif()
 
 target_include_directories(socks_core PUBLIC
     ${OPENSSL_INCLUDE_DIR}
+    ${Boost_INCLUDE_DIRS}
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
 target_include_directories(socks_core PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/third/asio/include
     ${CMAKE_CURRENT_SOURCE_DIR}/third/spdlog/include
     ${CMAKE_CURRENT_SOURCE_DIR}/third/rapidjson/include
 )

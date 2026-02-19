@@ -7,15 +7,15 @@
 #include <utility>
 #include <system_error>
 
-#include <asio/read.hpp>
+#include <boost/asio/read.hpp>
 #include <gtest/gtest.h>
-#include <asio/write.hpp>
-#include <asio/buffer.hpp>
-#include <asio/ip/tcp.hpp>
-#include <asio/as_tuple.hpp>
-#include <asio/co_spawn.hpp>
-#include <asio/detached.hpp>
-#include <asio/use_awaitable.hpp>
+#include <boost/asio/write.hpp>
+#include <boost/asio/buffer.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/as_tuple.hpp>
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/detached.hpp>
+#include <boost/asio/use_awaitable.hpp>
 
 #include "crypto_util.h"
 #include "context_pool.h"
@@ -26,7 +26,7 @@
 namespace
 {
 
-using asio::ip::tcp;
+using boost::asio::ip::tcp;
 
 class local_client_handshake_test : public ::testing::Test
 {
@@ -44,32 +44,32 @@ class local_client_handshake_test : public ::testing::Test
     std::string server_pub_hex_;
 };
 
-asio::awaitable<void> mock_server_silent(tcp::acceptor& acceptor)
+boost::asio::awaitable<void> mock_server_silent(tcp::acceptor& acceptor)
 {
-    auto [ec, socket] = co_await acceptor.async_accept(asio::as_tuple(asio::use_awaitable));
+    auto [ec, socket] = co_await acceptor.async_accept(boost::asio::as_tuple(boost::asio::use_awaitable));
     if (ec)
     {
         co_return;
     }
 
     std::vector<uint8_t> buf(1024);
-    co_await socket.async_read_some(asio::buffer(buf), asio::as_tuple(asio::use_awaitable));
+    co_await socket.async_read_some(boost::asio::buffer(buf), boost::asio::as_tuple(boost::asio::use_awaitable));
 
-    asio::steady_timer timer(socket.get_executor());
+    boost::asio::steady_timer timer(socket.get_executor());
     timer.expires_after(std::chrono::seconds(2));
-    co_await timer.async_wait(asio::as_tuple(asio::use_awaitable));
+    co_await timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
 }
 
 TEST_F(local_client_handshake_test, HandshakeTimeout)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     tcp::acceptor acceptor(pool.get_io_context(), tcp::endpoint(tcp::v4(), 0));
     std::uint16_t port = acceptor.local_endpoint().port();
 
-    asio::co_spawn(pool.get_io_context(), mock_server_silent(acceptor), asio::detached);
+    boost::asio::co_spawn(pool.get_io_context(), mock_server_silent(acceptor), boost::asio::detached);
 
     mux::config::timeout_t timeouts;
     timeouts.read = 1;
@@ -103,31 +103,31 @@ TEST_F(local_client_handshake_test, HandshakeTimeout)
     }
 }
 
-asio::awaitable<void> mock_server_invalid_sh(tcp::acceptor& acceptor)
+boost::asio::awaitable<void> mock_server_invalid_sh(tcp::acceptor& acceptor)
 {
-    auto [ec, socket] = co_await acceptor.async_accept(asio::as_tuple(asio::use_awaitable));
+    auto [ec, socket] = co_await acceptor.async_accept(boost::asio::as_tuple(boost::asio::use_awaitable));
     if (ec)
     {
         co_return;
     }
 
     std::vector<uint8_t> buf(1024);
-    co_await socket.async_read_some(asio::buffer(buf), asio::as_tuple(asio::use_awaitable));
+    co_await socket.async_read_some(boost::asio::buffer(buf), boost::asio::as_tuple(boost::asio::use_awaitable));
 
     std::vector<uint8_t> garbage = {0x16, 0x03, 0x03, 0x00, 0x05, 0xDE, 0xAD, 0xBE, 0xEF, 0x00};
-    co_await asio::async_write(socket, asio::buffer(garbage), asio::as_tuple(asio::use_awaitable));
+    co_await boost::asio::async_write(socket, boost::asio::buffer(garbage), boost::asio::as_tuple(boost::asio::use_awaitable));
 }
 
 TEST_F(local_client_handshake_test, InvalidServerHello)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     tcp::acceptor acceptor(pool.get_io_context(), tcp::endpoint(tcp::v4(), 0));
     std::uint16_t port = acceptor.local_endpoint().port();
 
-    asio::co_spawn(pool.get_io_context(), mock_server_invalid_sh(acceptor), asio::detached);
+    boost::asio::co_spawn(pool.get_io_context(), mock_server_invalid_sh(acceptor), boost::asio::detached);
 
     mux::config client_cfg;
     client_cfg.outbound.host = "127.0.0.1";
@@ -149,16 +149,16 @@ TEST_F(local_client_handshake_test, InvalidServerHello)
     }
 }
 
-asio::awaitable<void> mock_server_unsupported_scheme(tcp::acceptor& acceptor, const std::string& server_priv_hex)
+boost::asio::awaitable<void> mock_server_unsupported_scheme(tcp::acceptor& acceptor, const std::string& server_priv_hex)
 {
-    auto [ec, socket] = co_await acceptor.async_accept(asio::as_tuple(asio::use_awaitable));
+    auto [ec, socket] = co_await acceptor.async_accept(boost::asio::as_tuple(boost::asio::use_awaitable));
     if (ec)
     {
         co_return;
     }
 
     std::vector<uint8_t> ch_buf(2048);
-    auto [re1, n1] = co_await socket.async_read_some(asio::buffer(ch_buf), asio::as_tuple(asio::use_awaitable));
+    auto [re1, n1] = co_await socket.async_read_some(boost::asio::buffer(ch_buf), boost::asio::as_tuple(boost::asio::use_awaitable));
     if (re1)
     {
         co_return;
@@ -169,7 +169,7 @@ asio::awaitable<void> mock_server_unsupported_scheme(tcp::acceptor& acceptor, co
     auto sh = reality::construct_server_hello(srand, sid, 0x1301, reality::tls_consts::group::kX25519, std::vector<uint8_t>(32, 0x66));
     auto sh_rec = reality::write_record_header(reality::kContentTypeHandshake, static_cast<uint16_t>(sh.size()));
     sh_rec.insert(sh_rec.end(), sh.begin(), sh.end());
-    co_await asio::async_write(socket, asio::buffer(sh_rec), asio::as_tuple(asio::use_awaitable));
+    co_await boost::asio::async_write(socket, boost::asio::buffer(sh_rec), boost::asio::as_tuple(boost::asio::use_awaitable));
 
     std::vector<uint8_t> enc_ext = reality::construct_encrypted_extensions("");
     std::vector<uint8_t> cert = reality::construct_certificate({0x01, 0x02, 0x03});
@@ -184,19 +184,19 @@ asio::awaitable<void> mock_server_unsupported_scheme(tcp::acceptor& acceptor, co
     auto enc = reality::tls_record_layer::encrypt_record(
         EVP_aes_128_gcm(), std::vector<uint8_t>(16, 0), std::vector<uint8_t>(12, 0), 0, plain, reality::kContentTypeHandshake);
 
-    co_await asio::async_write(socket, asio::buffer(*enc), asio::as_tuple(asio::use_awaitable));
+    co_await boost::asio::async_write(socket, boost::asio::buffer(*enc), boost::asio::as_tuple(boost::asio::use_awaitable));
 }
 
 TEST_F(local_client_handshake_test, UnsupportedVerifyScheme)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     tcp::acceptor acceptor(pool.get_io_context(), tcp::endpoint(tcp::v4(), 0));
     std::uint16_t port = acceptor.local_endpoint().port();
 
-    asio::co_spawn(pool.get_io_context(), mock_server_unsupported_scheme(acceptor, server_pub_hex()), asio::detached);
+    boost::asio::co_spawn(pool.get_io_context(), mock_server_unsupported_scheme(acceptor, server_pub_hex()), boost::asio::detached);
 
     mux::config client_cfg;
     client_cfg.outbound.host = "127.0.0.1";

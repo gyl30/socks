@@ -3,8 +3,8 @@
 #include <cstdint>
 
 #include <gtest/gtest.h>
-#include <asio/io_context.hpp>
-#include <asio/ip/tcp.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/ip/tcp.hpp>
 
 extern "C"
 {
@@ -19,7 +19,7 @@ extern "C"
 namespace
 {
 
-using tunnel_t = mux::mux_tunnel_impl<asio::ip::tcp::socket>;
+using tunnel_t = mux::mux_tunnel_impl<boost::asio::ip::tcp::socket>;
 
 class noop_stream : public mux::mux_stream_interface
 {
@@ -29,10 +29,10 @@ class noop_stream : public mux::mux_stream_interface
     void on_reset() override {}
 };
 
-std::shared_ptr<tunnel_t> make_tunnel(asio::io_context& io_context, const std::uint32_t conn_id = 1)
+std::shared_ptr<tunnel_t> make_tunnel(boost::asio::io_context& io_context, const std::uint32_t conn_id = 1)
 {
     return std::make_shared<tunnel_t>(
-        asio::ip::tcp::socket(io_context),
+        boost::asio::ip::tcp::socket(io_context),
         io_context,
         mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()},
         true,
@@ -42,7 +42,7 @@ std::shared_ptr<tunnel_t> make_tunnel(asio::io_context& io_context, const std::u
 
 TEST(MuxTunnelTest, NullConnectionGuardsAllPublicMethods)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto tunnel = make_tunnel(io_context);
     tunnel->connection_ = nullptr;
 
@@ -56,7 +56,7 @@ TEST(MuxTunnelTest, NullConnectionGuardsAllPublicMethods)
 
 TEST(MuxTunnelTest, CreateStreamAndRegisterPaths)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto tunnel = make_tunnel(io_context, 2);
     auto stream_a = std::make_shared<noop_stream>();
     auto stream_b = std::make_shared<noop_stream>();
@@ -85,7 +85,7 @@ TEST(MuxTunnelTest, CreateStreamAndRegisterPaths)
 
 TEST(MuxTunnelTest, RunWithConnectionCoversStartPath)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto tunnel = make_tunnel(io_context, 7);
 
     tunnel->connection_->connection_state_.store(mux::mux_connection_state::kClosed, std::memory_order_release);
@@ -94,7 +94,7 @@ TEST(MuxTunnelTest, RunWithConnectionCoversStartPath)
 
 TEST(MuxTunnelTest, CreateStreamReturnsNullWhenClosedOrAtCapacity)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto tunnel = make_tunnel(io_context, 3);
 
     tunnel->connection_->connection_state_.store(mux::mux_connection_state::kClosed, std::memory_order_release);

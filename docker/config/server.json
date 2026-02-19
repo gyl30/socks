@@ -29,8 +29,6 @@
     },
     "monitor": {
         "enabled": true,
-        "port": 9090,
-        "token": "docker-monitor-token",
-        "min_interval_ms": 100
+        "port": 9090
     }
 }

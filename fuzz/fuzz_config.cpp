@@ -28,7 +28,7 @@ REFLECT_STRUCT(
     short_id);
 REFLECT_STRUCT(mux::config::limits_t, max_connections, max_buffer, max_streams);
 REFLECT_STRUCT(mux::config::heartbeat_t, enabled, min_interval, max_interval, min_padding, max_padding);
-REFLECT_STRUCT(mux::config::monitor_t, enabled, port, token, min_interval_ms);
+REFLECT_STRUCT(mux::config::monitor_t, enabled, port);
 REFLECT_STRUCT(mux::config, mode, log, inbound, outbound, socks, fallbacks, timeout, reality, limits, heartbeat, monitor);
 }    // namespace reflect
 

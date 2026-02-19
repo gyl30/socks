@@ -7,21 +7,21 @@
 #include <system_error>
 
 #include <gtest/gtest.h>
-#include <asio/write.hpp>
-#include <asio/ip/tcp.hpp>
-#include <asio/co_spawn.hpp>
-#include <asio/detached.hpp>
-#include <asio/awaitable.hpp>
-#include <asio/this_coro.hpp>
-#include <asio/io_context.hpp>
-#include <asio/steady_timer.hpp>
-#include <asio/use_awaitable.hpp>
+#include <boost/asio/write.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/detached.hpp>
+#include <boost/asio/awaitable.hpp>
+#include <boost/asio/this_coro.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/steady_timer.hpp>
+#include <boost/asio/use_awaitable.hpp>
 
 #include "crypto_util.h"
 #include "context_pool.h"
 #include "socks_client.h"
 
-using asio::ip::tcp;
+using boost::asio::ip::tcp;
 
 TEST(LocalClientMockTest, HandshakeFailurePaths)
 {
@@ -38,24 +38,24 @@ TEST(LocalClientMockTest, HandshakeFailurePaths)
 
     auto run_mock_server_and_test = [&](std::vector<std::uint8_t> data_to_send)
     {
-        std::error_code ec;
+        boost::system::error_code ec;
         mux::io_context_pool pool(1);
         ASSERT_FALSE(ec);
 
-        asio::io_context server_ctx;
+        boost::asio::io_context server_ctx;
         tcp::acceptor acceptor(server_ctx, tcp::endpoint(tcp::v4(), 0));
         std::uint16_t port = acceptor.local_endpoint().port();
 
         std::thread server_thread(
             [&]()
             {
-                std::error_code accept_ec;
+                boost::system::error_code accept_ec;
                 tcp::socket socket(server_ctx);
                 acceptor.accept(socket, accept_ec);
                 if (!accept_ec)
                 {
-                    std::error_code write_ec;
-                    (void)asio::write(socket, asio::buffer(data_to_send), write_ec);
+                    boost::system::error_code write_ec;
+                    (void)boost::asio::write(socket, boost::asio::buffer(data_to_send), write_ec);
 
                     std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 }

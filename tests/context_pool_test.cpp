@@ -21,7 +21,7 @@ TEST(ContextPoolTest, ZeroSizeClampedToOne)
 
 TEST(ContextPoolTest, SingleContextWorks)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     io_context_pool pool(1);
     EXPECT_FALSE(ec);
 
@@ -35,11 +35,11 @@ TEST(ContextPoolTest, SingleContextWorks)
 
 TEST(ContextPoolTest, MultipleContextsRoundRobin)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     io_context_pool pool(3);
     EXPECT_FALSE(ec);
 
-    std::vector<asio::io_context*> contexts;
+    std::vector<boost::asio::io_context*> contexts;
     for (int i = 0; i < 6; ++i)
     {
         contexts.push_back(&pool.get_io_context());
@@ -49,7 +49,7 @@ TEST(ContextPoolTest, MultipleContextsRoundRobin)
     EXPECT_EQ(contexts[1], contexts[4]);
     EXPECT_EQ(contexts[2], contexts[5]);
 
-    std::unordered_set<asio::io_context*> unique_contexts(contexts.begin(), contexts.begin() + 3);
+    std::unordered_set<boost::asio::io_context*> unique_contexts(contexts.begin(), contexts.begin() + 3);
     EXPECT_EQ(unique_contexts.size(), 3U);
 
     pool.stop();
@@ -57,7 +57,7 @@ TEST(ContextPoolTest, MultipleContextsRoundRobin)
 
 TEST(ContextPoolTest, StopMultipleTimes)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     io_context_pool pool(2);
     EXPECT_FALSE(ec);
 
@@ -67,7 +67,7 @@ TEST(ContextPoolTest, StopMultipleTimes)
 
 TEST(ContextPoolTest, StopMarksAllContextsStopped)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     io_context_pool pool(2);
     EXPECT_FALSE(ec);
 
@@ -83,7 +83,7 @@ TEST(ContextPoolTest, StopMarksAllContextsStopped)
 
 TEST(ContextPoolTest, RunAndStop)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     io_context_pool pool(2);
     EXPECT_FALSE(ec);
 

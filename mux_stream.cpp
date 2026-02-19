@@ -7,11 +7,11 @@
 #include <utility>
 #include <system_error>
 
-#include <asio/error.hpp>
-#include <asio/as_tuple.hpp>
-#include <asio/awaitable.hpp>
-#include <asio/use_awaitable.hpp>
-#include <asio/io_context.hpp>
+#include <boost/asio/error.hpp>
+#include <boost/asio/as_tuple.hpp>
+#include <boost/asio/awaitable.hpp>
+#include <boost/asio/use_awaitable.hpp>
+#include <boost/asio/io_context.hpp>
 
 #include "log.h"
 #include "mux_stream.h"
@@ -26,7 +26,7 @@ mux_stream::mux_stream(std::uint32_t id,
                        std::uint32_t cid,
                        const std::string& trace_id,
                        const std::shared_ptr<mux_connection>& connection,
-                       asio::io_context& io_context)
+                       boost::asio::io_context& io_context)
     : id_(id), connection_(connection), recv_channel_(io_context, 1024)
 {
     ctx_.trace_id(trace_id);
@@ -38,38 +38,38 @@ mux_stream::~mux_stream() { close_internal(); }
 
 std::uint32_t mux_stream::id() const { return id_; }
 
-asio::awaitable<std::tuple<std::error_code, std::vector<std::uint8_t>>> mux_stream::async_read_some()
+boost::asio::awaitable<std::tuple<boost::system::error_code, std::vector<std::uint8_t>>> mux_stream::async_read_some()
 {
-    const auto [ec, data] = co_await recv_channel_.async_receive(asio::as_tuple(asio::use_awaitable));
+    const auto [ec, data] = co_await recv_channel_.async_receive(boost::asio::as_tuple(boost::asio::use_awaitable));
     if (ec)
     {
         co_return std::make_tuple(ec, std::vector<std::uint8_t>{});
     }
     if (data.empty())
     {
-        co_return std::make_tuple(asio::error::eof, std::vector<std::uint8_t>{});
+        co_return std::make_tuple(boost::asio::error::eof, std::vector<std::uint8_t>{});
     }
     rx_bytes_ += data.size();
-    co_return std::make_tuple(std::error_code{}, std::move(data));
+    co_return std::make_tuple(boost::system::error_code{}, std::move(data));
 }
 
-asio::awaitable<std::error_code> mux_stream::async_write_some(const void* data, std::size_t len)
+boost::asio::awaitable<boost::system::error_code> mux_stream::async_write_some(const void* data, std::size_t len)
 {
     std::vector<std::uint8_t> payload(static_cast<const std::uint8_t*>(data), static_cast<const std::uint8_t*>(data) + len);
     co_return co_await async_write_some(std::move(payload));
 }
 
-asio::awaitable<std::error_code> mux_stream::async_write_some(std::vector<std::uint8_t> payload)
+boost::asio::awaitable<boost::system::error_code> mux_stream::async_write_some(std::vector<std::uint8_t> payload)
 {
     if (is_closed_)
     {
-        co_return asio::error::operation_aborted;
+        co_return boost::asio::error::operation_aborted;
     }
 
     const auto connection = connection_.lock();
     if (!connection)
     {
-        co_return asio::error::connection_aborted;
+        co_return boost::asio::error::connection_aborted;
     }
 
     const auto len = payload.size();
@@ -81,7 +81,7 @@ asio::awaitable<std::error_code> mux_stream::async_write_some(std::vector<std::u
     co_return ec;
 }
 
-asio::awaitable<void> mux_stream::close()
+boost::asio::awaitable<void> mux_stream::close()
 {
     if (is_closed_.exchange(true))
     {
@@ -107,7 +107,7 @@ void mux_stream::on_data(std::vector<std::uint8_t> data)
     {
         return;
     }
-    if (!recv_channel_.try_send(std::error_code{}, std::move(data)))
+    if (!recv_channel_.try_send(boost::system::error_code{}, std::move(data)))
     {
         LOG_CTX_WARN(ctx_, "{} stream {} recv channel unavailable on data", log_event::kMux, id_);
         close_internal();
@@ -119,7 +119,7 @@ void mux_stream::on_close()
     if (!fin_received_.exchange(true))
     {
         LOG_CTX_DEBUG(ctx_, "{} stream {} received fin", log_event::kMux, id_);
-        if (!recv_channel_.try_send(std::error_code{}, std::vector<std::uint8_t>{}))
+        if (!recv_channel_.try_send(boost::system::error_code{}, std::vector<std::uint8_t>{}))
         {
             LOG_CTX_WARN(ctx_, "{} stream {} recv channel unavailable on fin", log_event::kMux, id_);
             close_internal();

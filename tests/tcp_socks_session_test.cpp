@@ -13,17 +13,17 @@
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include <asio/post.hpp>
-#include <asio/read.hpp>
-#include <asio/write.hpp>
-#include <asio/co_spawn.hpp>
-#include <asio/detached.hpp>
-#include <asio/as_tuple.hpp>
-#include <asio/io_context.hpp>
-#include <asio/ip/tcp.hpp>
-#include <asio/steady_timer.hpp>
-#include <asio/use_awaitable.hpp>
-#include <asio/redirect_error.hpp>
+#include <boost/asio/post.hpp>
+#include <boost/asio/read.hpp>
+#include <boost/asio/write.hpp>
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/detached.hpp>
+#include <boost/asio/as_tuple.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/steady_timer.hpp>
+#include <boost/asio/use_awaitable.hpp>
+#include <boost/asio/redirect_error.hpp>
 
 #include <unistd.h>
 
@@ -71,20 +71,20 @@ class fake_upstream final : public mux::upstream
     std::size_t write_result = 0;
     std::size_t close_calls = 0;
     std::vector<std::vector<std::uint8_t>> writes;
-    std::vector<std::pair<std::error_code, std::vector<std::uint8_t>>> read_sequence;
+    std::vector<std::pair<boost::system::error_code, std::vector<std::uint8_t>>> read_sequence;
 
-    asio::awaitable<bool> connect(const std::string& host, std::uint16_t port) override
+    boost::asio::awaitable<bool> connect(const std::string& host, std::uint16_t port) override
     {
         (void)host;
         (void)port;
         co_return connect_result;
     }
 
-    asio::awaitable<std::pair<std::error_code, std::size_t>> read(std::vector<std::uint8_t>& buf) override
+    boost::asio::awaitable<std::pair<boost::system::error_code, std::size_t>> read(std::vector<std::uint8_t>& buf) override
     {
         if (read_sequence.empty())
         {
-            co_return std::make_pair(asio::error::eof, 0U);
+            co_return std::make_pair(boost::asio::error::eof, 0U);
         }
         auto [ec, data] = std::move(read_sequence.front());
         read_sequence.erase(read_sequence.begin());
@@ -99,13 +99,13 @@ class fake_upstream final : public mux::upstream
         co_return std::make_pair(ec, data.size());
     }
 
-    asio::awaitable<std::size_t> write(const std::vector<std::uint8_t>& data) override
+    boost::asio::awaitable<std::size_t> write(const std::vector<std::uint8_t>& data) override
     {
         writes.push_back(data);
         co_return write_result;
     }
 
-    asio::awaitable<void> close() override
+    boost::asio::awaitable<void> close() override
     {
         ++close_calls;
         co_return;
@@ -142,34 +142,34 @@ class configured_router final : public mux::router
 
 struct tcp_socket_pair
 {
-    asio::ip::tcp::socket client;
-    asio::ip::tcp::socket server;
+    boost::asio::ip::tcp::socket client;
+    boost::asio::ip::tcp::socket server;
 };
 
 bool open_ephemeral_tcp_acceptor(
-    asio::ip::tcp::acceptor& acceptor,
+    boost::asio::ip::tcp::acceptor& acceptor,
     const std::uint32_t max_attempts = 120,
     const std::chrono::milliseconds backoff = std::chrono::milliseconds(25))
 {
     for (std::uint32_t attempt = 0; attempt < max_attempts; ++attempt)
     {
-        std::error_code ec;
+        boost::system::error_code ec;
         if (acceptor.is_open())
         {
             acceptor.close(ec);
         }
-        ec = acceptor.open(asio::ip::tcp::v4(), ec);
+        ec = acceptor.open(boost::asio::ip::tcp::v4(), ec);
         if (!ec)
         {
-            ec = acceptor.set_option(asio::ip::tcp::acceptor::reuse_address(true), ec);
+            ec = acceptor.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true), ec);
         }
         if (!ec)
         {
-            ec = acceptor.bind(asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0), ec);
+            ec = acceptor.bind(boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 0), ec);
         }
         if (!ec)
         {
-            ec = acceptor.listen(asio::socket_base::max_listen_connections, ec);
+            ec = acceptor.listen(boost::asio::socket_base::max_listen_connections, ec);
         }
         if (!ec)
         {
@@ -180,20 +180,20 @@ bool open_ephemeral_tcp_acceptor(
     return false;
 }
 
-tcp_socket_pair make_tcp_socket_pair(asio::io_context& io_context)
+tcp_socket_pair make_tcp_socket_pair(boost::asio::io_context& io_context)
 {
     for (std::uint32_t attempt = 0; attempt < 120; ++attempt)
     {
-        asio::ip::tcp::acceptor acceptor(io_context);
+        boost::asio::ip::tcp::acceptor acceptor(io_context);
         if (!open_ephemeral_tcp_acceptor(acceptor, 1))
         {
             std::this_thread::sleep_for(std::chrono::milliseconds(25));
             continue;
         }
 
-        std::error_code ec;
-        asio::ip::tcp::socket client(io_context);
-        asio::ip::tcp::socket server(io_context);
+        boost::system::error_code ec;
+        boost::asio::ip::tcp::socket client(io_context);
+        boost::asio::ip::tcp::socket server(io_context);
         client.connect(acceptor.local_endpoint(), ec);
         if (ec)
         {
@@ -208,12 +208,12 @@ tcp_socket_pair make_tcp_socket_pair(asio::io_context& io_context)
         }
         return tcp_socket_pair{std::move(client), std::move(server)};
     }
-    return tcp_socket_pair{asio::ip::tcp::socket(io_context), asio::ip::tcp::socket(io_context)};
+    return tcp_socket_pair{boost::asio::ip::tcp::socket(io_context), boost::asio::ip::tcp::socket(io_context)};
 }
 
-std::shared_ptr<mux::tcp_socks_session> make_tcp_session(asio::io_context& io_context,
-                                                         asio::ip::tcp::socket socket,
-                                                         std::shared_ptr<mux::mux_tunnel_impl<asio::ip::tcp::socket>> tunnel = nullptr)
+std::shared_ptr<mux::tcp_socks_session> make_tcp_session(boost::asio::io_context& io_context,
+                                                         boost::asio::ip::tcp::socket socket,
+                                                         std::shared_ptr<mux::mux_tunnel_impl<boost::asio::ip::tcp::socket>> tunnel = nullptr)
 {
     auto router = std::make_shared<mux::router>();
     mux::config::timeout_t timeout_cfg{};
@@ -222,10 +222,10 @@ std::shared_ptr<mux::tcp_socks_session> make_tcp_session(asio::io_context& io_co
         std::move(socket), io_context, std::move(tunnel), std::move(router), 1, timeout_cfg);
 }
 
-std::shared_ptr<mux::tcp_socks_session> make_tcp_session_with_router(asio::io_context& io_context,
-                                                                     asio::ip::tcp::socket socket,
+std::shared_ptr<mux::tcp_socks_session> make_tcp_session_with_router(boost::asio::io_context& io_context,
+                                                                     boost::asio::ip::tcp::socket socket,
                                                                      std::shared_ptr<mux::router> router,
-                                                                     std::shared_ptr<mux::mux_tunnel_impl<asio::ip::tcp::socket>> tunnel = nullptr,
+                                                                     std::shared_ptr<mux::mux_tunnel_impl<boost::asio::ip::tcp::socket>> tunnel = nullptr,
                                                                      const std::uint32_t sid = 1,
                                                                      const std::uint16_t idle_timeout_sec = 1)
 {
@@ -235,21 +235,21 @@ std::shared_ptr<mux::tcp_socks_session> make_tcp_session_with_router(asio::io_co
         std::move(socket), io_context, std::move(tunnel), std::move(router), sid, timeout_cfg);
 }
 
-std::shared_ptr<mux::mux_tunnel_impl<asio::ip::tcp::socket>> make_test_tunnel(asio::io_context& io_context,
+std::shared_ptr<mux::mux_tunnel_impl<boost::asio::ip::tcp::socket>> make_test_tunnel(boost::asio::io_context& io_context,
                                                                                 const std::uint32_t conn_id = 9)
 {
-    return std::make_shared<mux::mux_tunnel_impl<asio::ip::tcp::socket>>(
-        asio::ip::tcp::socket(io_context), io_context, mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, conn_id);
+    return std::make_shared<mux::mux_tunnel_impl<boost::asio::ip::tcp::socket>>(
+        boost::asio::ip::tcp::socket(io_context), io_context, mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, conn_id);
 }
 
 TEST(TcpSocksSessionTest, CreateBackendReturnsNullForBlockRoute)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto router = std::make_shared<mux::router>();
     mux::config::timeout_t timeout_cfg{};
 
     auto session = std::make_shared<mux::tcp_socks_session>(
-        asio::ip::tcp::socket(io_context), io_context, nullptr, std::move(router), 1, timeout_cfg);
+        boost::asio::ip::tcp::socket(io_context), io_context, nullptr, std::move(router), 1, timeout_cfg);
 
     EXPECT_EQ(session->create_backend(mux::route_type::kBlock), nullptr);
 }
@@ -279,12 +279,12 @@ extern "C" int __wrap_close(int fd)
 
 TEST(TcpSocksSessionTest, CreateBackendReturnsDirectAndProxy)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto router = std::make_shared<mux::router>();
     mux::config::timeout_t timeout_cfg{};
 
     auto session = std::make_shared<mux::tcp_socks_session>(
-        asio::ip::tcp::socket(io_context), io_context, nullptr, std::move(router), 1, timeout_cfg);
+        boost::asio::ip::tcp::socket(io_context), io_context, nullptr, std::move(router), 1, timeout_cfg);
 
     EXPECT_NE(session->create_backend(mux::route_type::kDirect), nullptr);
     EXPECT_NE(session->create_backend(mux::route_type::kProxy), nullptr);
@@ -292,13 +292,13 @@ TEST(TcpSocksSessionTest, CreateBackendReturnsDirectAndProxy)
 
 TEST(TcpSocksSessionTest, CreateBackendDirectUsesConfiguredReadTimeout)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto router = std::make_shared<mux::router>();
     mux::config::timeout_t timeout_cfg{};
     timeout_cfg.read = 7;
 
     auto session = std::make_shared<mux::tcp_socks_session>(
-        asio::ip::tcp::socket(io_context), io_context, nullptr, std::move(router), 1, timeout_cfg);
+        boost::asio::ip::tcp::socket(io_context), io_context, nullptr, std::move(router), 1, timeout_cfg);
 
     const auto backend = session->create_backend(mux::route_type::kDirect);
     const auto direct_backend = std::dynamic_pointer_cast<mux::direct_upstream>(backend);
@@ -308,13 +308,13 @@ TEST(TcpSocksSessionTest, CreateBackendDirectUsesConfiguredReadTimeout)
 
 TEST(TcpSocksSessionTest, CreateBackendDirectKeepsReadTimeoutZeroAsDisabled)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto router = std::make_shared<mux::router>();
     mux::config::timeout_t timeout_cfg{};
     timeout_cfg.read = 0;
 
     auto session = std::make_shared<mux::tcp_socks_session>(
-        asio::ip::tcp::socket(io_context), io_context, nullptr, std::move(router), 1, timeout_cfg);
+        boost::asio::ip::tcp::socket(io_context), io_context, nullptr, std::move(router), 1, timeout_cfg);
 
     const auto backend = session->create_backend(mux::route_type::kDirect);
     const auto direct_backend = std::dynamic_pointer_cast<mux::direct_upstream>(backend);
@@ -324,21 +324,21 @@ TEST(TcpSocksSessionTest, CreateBackendDirectKeepsReadTimeoutZeroAsDisabled)
 
 TEST(TcpSocksSessionTest, ReplySuccessWritesSocksResponse)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto pair = make_tcp_socket_pair(io_context);
     auto session = make_tcp_session(io_context, std::move(pair.server));
 
     EXPECT_TRUE(mux::test::run_awaitable(io_context, session->reply_success()));
 
     std::uint8_t res[10] = {0};
-    asio::read(pair.client, asio::buffer(res));
+    boost::asio::read(pair.client, boost::asio::buffer(res));
     EXPECT_EQ(res[0], socks::kVer);
     EXPECT_EQ(res[1], socks::kRepSuccess);
 }
 
 TEST(TcpSocksSessionTest, ReplySuccessFailsWhenServerSocketClosed)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto pair = make_tcp_socket_pair(io_context);
     auto session = make_tcp_session(io_context, std::move(pair.server));
     session->socket_.close();
@@ -348,7 +348,7 @@ TEST(TcpSocksSessionTest, ReplySuccessFailsWhenServerSocketClosed)
 
 TEST(TcpSocksSessionTest, ConnectBackendSuccessAndFailure)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto pair = make_tcp_socket_pair(io_context);
     auto session = make_tcp_session(io_context, std::move(pair.server));
 
@@ -363,14 +363,14 @@ TEST(TcpSocksSessionTest, ConnectBackendSuccessAndFailure)
         io_context, session->connect_backend(backend_fail, "example.com", 443, mux::route_type::kProxy)));
 
     std::uint8_t res[10] = {0};
-    asio::read(pair.client, asio::buffer(res));
+    boost::asio::read(pair.client, boost::asio::buffer(res));
     EXPECT_EQ(res[0], socks::kVer);
     EXPECT_EQ(res[1], socks::kRepHostUnreach);
 }
 
 TEST(TcpSocksSessionTest, CloseBackendOnceIsIdempotentAndHandlesNull)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto pair = make_tcp_socket_pair(io_context);
     auto session = make_tcp_session(io_context, std::move(pair.server));
     auto backend = std::make_shared<fake_upstream>();
@@ -385,15 +385,15 @@ TEST(TcpSocksSessionTest, CloseBackendOnceIsIdempotentAndHandlesNull)
 
 TEST(TcpSocksSessionTest, ClientToUpstreamWritesDataAndStopsOnEof)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto pair = make_tcp_socket_pair(io_context);
     auto session = make_tcp_session(io_context, std::move(pair.server));
     auto backend = std::make_shared<fake_upstream>();
     backend->write_result = 3;
 
     const std::uint8_t payload[] = {0x10, 0x20, 0x30};
-    asio::write(pair.client, asio::buffer(payload));
-    pair.client.shutdown(asio::ip::tcp::socket::shutdown_send);
+    boost::asio::write(pair.client, boost::asio::buffer(payload));
+    pair.client.shutdown(boost::asio::ip::tcp::socket::shutdown_send);
 
     mux::test::run_awaitable_void(io_context, session->client_to_upstream(backend));
     ASSERT_EQ(backend->writes.size(), 1U);
@@ -403,14 +403,14 @@ TEST(TcpSocksSessionTest, ClientToUpstreamWritesDataAndStopsOnEof)
 
 TEST(TcpSocksSessionTest, ClientToUpstreamStopsWhenBackendWriteFails)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto pair = make_tcp_socket_pair(io_context);
     auto session = make_tcp_session(io_context, std::move(pair.server));
     auto backend = std::make_shared<fake_upstream>();
     backend->write_result = 0;
 
     const std::uint8_t payload[] = {0x01, 0x02};
-    asio::write(pair.client, asio::buffer(payload));
+    boost::asio::write(pair.client, boost::asio::buffer(payload));
 
     mux::test::run_awaitable_void(io_context, session->client_to_upstream(backend));
     ASSERT_EQ(backend->writes.size(), 1U);
@@ -420,15 +420,15 @@ TEST(TcpSocksSessionTest, ClientToUpstreamStopsWhenBackendWriteFails)
 
 TEST(TcpSocksSessionTest, ClientToUpstreamHandlesPartialBackendWrites)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto pair = make_tcp_socket_pair(io_context);
     auto session = make_tcp_session(io_context, std::move(pair.server));
     auto backend = std::make_shared<fake_upstream>();
     backend->write_result = 2;
 
     const std::uint8_t payload[] = {0xA1, 0xB2, 0xC3, 0xD4};
-    asio::write(pair.client, asio::buffer(payload));
-    pair.client.shutdown(asio::ip::tcp::socket::shutdown_send);
+    boost::asio::write(pair.client, boost::asio::buffer(payload));
+    pair.client.shutdown(boost::asio::ip::tcp::socket::shutdown_send);
 
     mux::test::run_awaitable_void(io_context, session->client_to_upstream(backend));
     ASSERT_EQ(backend->writes.size(), 2U);
@@ -438,24 +438,24 @@ TEST(TcpSocksSessionTest, ClientToUpstreamHandlesPartialBackendWrites)
 
 TEST(TcpSocksSessionTest, UpstreamToClientWritesDataThenStopsOnError)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto pair = make_tcp_socket_pair(io_context);
     auto session = make_tcp_session(io_context, std::move(pair.server));
     auto backend = std::make_shared<fake_upstream>();
-    backend->read_sequence.push_back({std::error_code{}, {0xAA, 0xBB}});
-    backend->read_sequence.push_back({asio::error::eof, {}});
+    backend->read_sequence.push_back({boost::system::error_code{}, {0xAA, 0xBB}});
+    backend->read_sequence.push_back({boost::asio::error::eof, {}});
 
     mux::test::run_awaitable_void(io_context, session->upstream_to_client(backend));
 
     std::uint8_t buf[2] = {0};
-    asio::read(pair.client, asio::buffer(buf));
+    boost::asio::read(pair.client, boost::asio::buffer(buf));
     EXPECT_EQ(buf[0], 0xAA);
     EXPECT_EQ(buf[1], 0xBB);
 }
 
 TEST(TcpSocksSessionTest, RunReturnsNotAllowedWhenRouteBlocked)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto pair = make_tcp_socket_pair(io_context);
     auto router = std::make_shared<configured_router>();
     router->add_block_domain("blocked.test");
@@ -464,7 +464,7 @@ TEST(TcpSocksSessionTest, RunReturnsNotAllowedWhenRouteBlocked)
     mux::test::run_awaitable_void(io_context, session->run("blocked.test", 80));
 
     std::uint8_t err[10] = {0};
-    asio::read(pair.client, asio::buffer(err));
+    boost::asio::read(pair.client, boost::asio::buffer(err));
     EXPECT_EQ(err[0], socks::kVer);
     EXPECT_EQ(err[1], socks::kRepNotAllowed);
     EXPECT_FALSE(session->socket_.is_open());
@@ -472,7 +472,7 @@ TEST(TcpSocksSessionTest, RunReturnsNotAllowedWhenRouteBlocked)
 
 TEST(TcpSocksSessionTest, RunReturnsGeneralFailureWhenRouterMissing)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto pair = make_tcp_socket_pair(io_context);
     mux::config::timeout_t timeout_cfg{};
     auto session = std::make_shared<mux::tcp_socks_session>(
@@ -481,7 +481,7 @@ TEST(TcpSocksSessionTest, RunReturnsGeneralFailureWhenRouterMissing)
     mux::test::run_awaitable_void(io_context, session->run("example.test", 80));
 
     std::uint8_t err[10] = {0};
-    asio::read(pair.client, asio::buffer(err));
+    boost::asio::read(pair.client, boost::asio::buffer(err));
     EXPECT_EQ(err[0], socks::kVer);
     EXPECT_EQ(err[1], socks::kRepGenFail);
     EXPECT_FALSE(session->socket_.is_open());
@@ -489,7 +489,7 @@ TEST(TcpSocksSessionTest, RunReturnsGeneralFailureWhenRouterMissing)
 
 TEST(TcpSocksSessionTest, RunReturnsHostUnreachWhenDirectConnectFails)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto pair = make_tcp_socket_pair(io_context);
     auto router = std::make_shared<configured_router>();
     auto session = make_tcp_session_with_router(io_context, std::move(pair.server), router);
@@ -497,7 +497,7 @@ TEST(TcpSocksSessionTest, RunReturnsHostUnreachWhenDirectConnectFails)
     mux::test::run_awaitable_void(io_context, session->run("non-existent.invalid", 80));
 
     std::uint8_t err[10] = {0};
-    asio::read(pair.client, asio::buffer(err));
+    boost::asio::read(pair.client, boost::asio::buffer(err));
     EXPECT_EQ(err[0], socks::kVer);
     EXPECT_EQ(err[1], socks::kRepHostUnreach);
     EXPECT_FALSE(session->socket_.is_open());
@@ -505,7 +505,7 @@ TEST(TcpSocksSessionTest, RunReturnsHostUnreachWhenDirectConnectFails)
 
 TEST(TcpSocksSessionTest, StartSpawnsRunAndReturnsErrorCodeForBlockedRoute)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto pair = make_tcp_socket_pair(io_context);
     auto router = std::make_shared<configured_router>();
     router->add_block_domain("blocked.test");
@@ -516,7 +516,7 @@ TEST(TcpSocksSessionTest, StartSpawnsRunAndReturnsErrorCodeForBlockedRoute)
     io_context.restart();
 
     std::uint8_t err[10] = {0};
-    asio::read(pair.client, asio::buffer(err));
+    boost::asio::read(pair.client, boost::asio::buffer(err));
     EXPECT_EQ(err[0], socks::kVer);
     EXPECT_EQ(err[1], socks::kRepNotAllowed);
     EXPECT_FALSE(session->socket_.is_open());
@@ -524,7 +524,7 @@ TEST(TcpSocksSessionTest, StartSpawnsRunAndReturnsErrorCodeForBlockedRoute)
 
 TEST(TcpSocksSessionTest, StartSpawnsRunAndReturnsHostUnreachForProxyWithoutTunnel)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto pair = make_tcp_socket_pair(io_context);
     auto router = std::make_shared<configured_router>();
     auto session = make_tcp_session_with_router(io_context, std::move(pair.server), router);
@@ -534,7 +534,7 @@ TEST(TcpSocksSessionTest, StartSpawnsRunAndReturnsHostUnreachForProxyWithoutTunn
     io_context.restart();
 
     std::uint8_t err[10] = {0};
-    asio::read(pair.client, asio::buffer(err));
+    boost::asio::read(pair.client, boost::asio::buffer(err));
     EXPECT_EQ(err[0], socks::kVer);
     EXPECT_EQ(err[1], socks::kRepHostUnreach);
     EXPECT_FALSE(session->socket_.is_open());
@@ -542,7 +542,7 @@ TEST(TcpSocksSessionTest, StartSpawnsRunAndReturnsHostUnreachForProxyWithoutTunn
 
 TEST(TcpSocksSessionTest, CloseClientSocketHandlesOpenAndClosedSockets)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto pair = make_tcp_socket_pair(io_context);
     auto session = make_tcp_session(io_context, std::move(pair.server));
 
@@ -556,11 +556,11 @@ TEST(TcpSocksSessionTest, CloseClientSocketHandlesOpenAndClosedSockets)
 
 TEST(TcpSocksSessionTest, CloseClientSocketHandlesNotConnectedSocket)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto pair = make_tcp_socket_pair(io_context);
     auto session = make_tcp_session(io_context, std::move(pair.server));
-    std::error_code ec;
-    session->socket_.shutdown(asio::ip::tcp::socket::shutdown_both, ec);
+    boost::system::error_code ec;
+    session->socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
     ASSERT_FALSE(ec);
 
     session->close_client_socket();
@@ -569,7 +569,7 @@ TEST(TcpSocksSessionTest, CloseClientSocketHandlesNotConnectedSocket)
 
 TEST(TcpSocksSessionTest, CloseClientSocketHandlesUnexpectedShutdownAndCloseErrors)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto pair = make_tcp_socket_pair(io_context);
     auto session = make_tcp_session(io_context, std::move(pair.server));
 
@@ -577,7 +577,7 @@ TEST(TcpSocksSessionTest, CloseClientSocketHandlesUnexpectedShutdownAndCloseErro
     fail_next_close(EIO);
     session->close_client_socket();
 
-    std::error_code ec;
+    boost::system::error_code ec;
     if (session->socket_.is_open())
     {
         session->socket_.close(ec);
@@ -586,14 +586,14 @@ TEST(TcpSocksSessionTest, CloseClientSocketHandlesUnexpectedShutdownAndCloseErro
 
 TEST(TcpSocksSessionTest, CloseClientSocketIgnoresBadDescriptorCloseError)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto pair = make_tcp_socket_pair(io_context);
     auto session = make_tcp_session(io_context, std::move(pair.server));
 
     fail_next_close(EBADF);
     session->close_client_socket();
 
-    std::error_code ec;
+    boost::system::error_code ec;
     if (session->socket_.is_open())
     {
         session->socket_.close(ec);
@@ -602,21 +602,21 @@ TEST(TcpSocksSessionTest, CloseClientSocketIgnoresBadDescriptorCloseError)
 
 TEST(TcpSocksSessionTest, ReplyErrorWritesSocksErrorResponse)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto pair = make_tcp_socket_pair(io_context);
     auto session = make_tcp_session(io_context, std::move(pair.server));
 
     mux::test::run_awaitable_void(io_context, session->reply_error(socks::kRepConnRefused));
 
     std::uint8_t err[10] = {0};
-    asio::read(pair.client, asio::buffer(err));
+    boost::asio::read(pair.client, boost::asio::buffer(err));
     EXPECT_EQ(err[0], socks::kVer);
     EXPECT_EQ(err[1], socks::kRepConnRefused);
 }
 
 TEST(TcpSocksSessionTest, IdleWatchdogClosesBackendAndSocketWhenTimedOut)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto pair = make_tcp_socket_pair(io_context);
     auto session = make_tcp_session(io_context, std::move(pair.server));
     auto backend = std::make_shared<fake_upstream>();
@@ -630,14 +630,14 @@ TEST(TcpSocksSessionTest, IdleWatchdogClosesBackendAndSocketWhenTimedOut)
 
 TEST(TcpSocksSessionTest, IdleWatchdogBreaksWhenTimerCanceled)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto pair = make_tcp_socket_pair(io_context);
     auto session = make_tcp_session(io_context, std::move(pair.server));
     auto backend = std::make_shared<fake_upstream>();
 
-    asio::steady_timer cancel_timer(io_context);
+    boost::asio::steady_timer cancel_timer(io_context);
     cancel_timer.expires_after(std::chrono::milliseconds(10));
-    cancel_timer.async_wait([session](const std::error_code&)
+    cancel_timer.async_wait([session](const boost::system::error_code&)
                             {
                                 session->idle_timer_.cancel();
                             });
@@ -650,14 +650,14 @@ TEST(TcpSocksSessionTest, IdleWatchdogBreaksWhenTimerCanceled)
 
 TEST(TcpSocksSessionTest, StartIdleWatchdogSpawnsAndHandlesCancel)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto pair = make_tcp_socket_pair(io_context);
     auto session = make_tcp_session(io_context, std::move(pair.server));
     auto backend = std::make_shared<fake_upstream>();
 
-    asio::steady_timer cancel_timer(io_context);
+    boost::asio::steady_timer cancel_timer(io_context);
     cancel_timer.expires_after(std::chrono::milliseconds(10));
-    cancel_timer.async_wait([session](const std::error_code&)
+    cancel_timer.async_wait([session](const boost::system::error_code&)
                             {
                                 session->idle_timer_.cancel();
                                 session->socket_.close();
@@ -672,7 +672,7 @@ TEST(TcpSocksSessionTest, StartIdleWatchdogSpawnsAndHandlesCancel)
 
 TEST(TcpSocksSessionTest, StartIdleWatchdogSpawnsAndClosesIdleSession)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto pair = make_tcp_socket_pair(io_context);
     auto session = make_tcp_session(io_context, std::move(pair.server));
     auto backend = std::make_shared<fake_upstream>();
@@ -688,7 +688,7 @@ TEST(TcpSocksSessionTest, StartIdleWatchdogSpawnsAndClosesIdleSession)
 
 TEST(TcpSocksSessionTest, IdleWatchdogReturnsImmediatelyWhenSocketClosed)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto pair = make_tcp_socket_pair(io_context);
     auto session = make_tcp_session(io_context, std::move(pair.server));
     auto backend = std::make_shared<fake_upstream>();
@@ -700,7 +700,7 @@ TEST(TcpSocksSessionTest, IdleWatchdogReturnsImmediatelyWhenSocketClosed)
 
 TEST(TcpSocksSessionTest, IdleWatchdogDisabledWhenIdleTimeoutZero)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto pair = make_tcp_socket_pair(io_context);
     auto router = std::make_shared<mux::router>();
     mux::config::timeout_t timeout_cfg{};
@@ -717,11 +717,11 @@ TEST(TcpSocksSessionTest, IdleWatchdogDisabledWhenIdleTimeoutZero)
 
 TEST(TcpSocksSessionTest, UpstreamToClientStopsWhenClientWriteFails)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto pair = make_tcp_socket_pair(io_context);
     auto session = make_tcp_session(io_context, std::move(pair.server));
     auto backend = std::make_shared<fake_upstream>();
-    backend->read_sequence.push_back({std::error_code{}, {0xAA}});
+    backend->read_sequence.push_back({boost::system::error_code{}, {0xAA}});
     session->socket_.close();
 
     mux::test::run_awaitable_void(io_context, session->upstream_to_client(backend));
@@ -729,79 +729,79 @@ TEST(TcpSocksSessionTest, UpstreamToClientStopsWhenClientWriteFails)
 
 TEST(TcpSocksSessionTest, RunDirectPathRepliesSuccessAndForwardsPayload)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto pair = make_tcp_socket_pair(io_context);
     auto router = std::make_shared<configured_router>();
     router->add_direct_cidr("127.0.0.1/32");
     auto session = make_tcp_session_with_router(io_context, std::move(pair.server), router);
 
-    asio::ip::tcp::acceptor backend_acceptor(io_context);
+    boost::asio::ip::tcp::acceptor backend_acceptor(io_context);
     ASSERT_TRUE(open_ephemeral_tcp_acceptor(backend_acceptor));
     const std::uint16_t backend_port = backend_acceptor.local_endpoint().port();
-    asio::co_spawn(
+    boost::asio::co_spawn(
         io_context,
-        [&backend_acceptor]() -> asio::awaitable<void>
+        [&backend_acceptor]() -> boost::asio::awaitable<void>
         {
-            auto backend_socket = co_await backend_acceptor.async_accept(asio::use_awaitable);
+            auto backend_socket = co_await backend_acceptor.async_accept(boost::asio::use_awaitable);
             std::array<std::uint8_t, 4> buf = {0};
-            std::error_code read_ec;
+            boost::system::error_code read_ec;
             const std::size_t n =
-                co_await backend_socket.async_read_some(asio::buffer(buf), asio::redirect_error(asio::use_awaitable, read_ec));
+                co_await backend_socket.async_read_some(boost::asio::buffer(buf), boost::asio::redirect_error(boost::asio::use_awaitable, read_ec));
             if (!read_ec && n > 0)
             {
-                (void)co_await asio::async_write(backend_socket, asio::buffer(buf.data(), n), asio::as_tuple(asio::use_awaitable));
+                (void)co_await boost::asio::async_write(backend_socket, boost::asio::buffer(buf.data(), n), boost::asio::as_tuple(boost::asio::use_awaitable));
             }
-            std::error_code ignore;
+            boost::system::error_code ignore;
             backend_socket.close(ignore);
             co_return;
         },
-        asio::detached);
+        boost::asio::detached);
 
     const std::array<std::uint8_t, 4> payload = {0x11, 0x22, 0x33, 0x44};
-    asio::write(pair.client, asio::buffer(payload));
-    pair.client.shutdown(asio::ip::tcp::socket::shutdown_send);
+    boost::asio::write(pair.client, boost::asio::buffer(payload));
+    pair.client.shutdown(boost::asio::ip::tcp::socket::shutdown_send);
 
     mux::test::run_awaitable_void(io_context, session->run("127.0.0.1", backend_port));
 
     std::uint8_t rep[10] = {0};
-    asio::read(pair.client, asio::buffer(rep));
+    boost::asio::read(pair.client, boost::asio::buffer(rep));
     EXPECT_EQ(rep[0], socks::kVer);
     EXPECT_EQ(rep[1], socks::kRepSuccess);
 
     std::array<std::uint8_t, 4> echoed = {0};
-    asio::read(pair.client, asio::buffer(echoed));
+    boost::asio::read(pair.client, boost::asio::buffer(echoed));
     EXPECT_EQ(echoed, payload);
 }
 
 TEST(TcpSocksSessionTest, RunStopsWhenReplySuccessWriteFails)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto pair = make_tcp_socket_pair(io_context);
     auto router = std::make_shared<configured_router>();
     router->add_direct_cidr("127.0.0.1/32");
     auto session = make_tcp_session_with_router(io_context, std::move(pair.server), router);
     session->socket_.close();
 
-    asio::ip::tcp::acceptor backend_acceptor(io_context);
+    boost::asio::ip::tcp::acceptor backend_acceptor(io_context);
     ASSERT_TRUE(open_ephemeral_tcp_acceptor(backend_acceptor));
     const std::uint16_t backend_port = backend_acceptor.local_endpoint().port();
-    asio::co_spawn(
+    boost::asio::co_spawn(
         io_context,
-        [&backend_acceptor]() -> asio::awaitable<void>
+        [&backend_acceptor]() -> boost::asio::awaitable<void>
         {
-            auto backend_socket = co_await backend_acceptor.async_accept(asio::use_awaitable);
-            std::error_code ignore;
+            auto backend_socket = co_await backend_acceptor.async_accept(boost::asio::use_awaitable);
+            boost::system::error_code ignore;
             backend_socket.close(ignore);
             co_return;
         },
-        asio::detached);
+        boost::asio::detached);
 
     mux::test::run_awaitable_void(io_context, session->run("127.0.0.1", backend_port));
 }
 
 TEST(TcpSocksSessionTest, RunReturnsHostUnreachWhenProxyTunnelUnavailable)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto pair = make_tcp_socket_pair(io_context);
     auto router = std::make_shared<configured_router>();
     auto session = make_tcp_session_with_router(io_context, std::move(pair.server), router);
@@ -809,7 +809,7 @@ TEST(TcpSocksSessionTest, RunReturnsHostUnreachWhenProxyTunnelUnavailable)
     mux::test::run_awaitable_void(io_context, session->run("198.51.100.2", 443));
 
     std::uint8_t err[10] = {0};
-    asio::read(pair.client, asio::buffer(err));
+    boost::asio::read(pair.client, boost::asio::buffer(err));
     EXPECT_EQ(err[0], socks::kVer);
     EXPECT_EQ(err[1], socks::kRepHostUnreach);
     EXPECT_FALSE(session->socket_.is_open());
@@ -817,7 +817,7 @@ TEST(TcpSocksSessionTest, RunReturnsHostUnreachWhenProxyTunnelUnavailable)
 
 TEST(TcpSocksSessionTest, RunProxyPathRepliesSuccessWhenAckAccepted)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto pair = make_tcp_socket_pair(io_context);
     auto router = std::make_shared<configured_router>();
     auto tunnel = make_test_tunnel(io_context, 91);
@@ -825,10 +825,10 @@ TEST(TcpSocksSessionTest, RunProxyPathRepliesSuccessWhenAckAccepted)
     tunnel->connection_ = mock_conn;
 
     ON_CALL(*mock_conn, id()).WillByDefault(::testing::Return(91));
-    ON_CALL(*mock_conn, mock_send_async(_, _, _)).WillByDefault(::testing::Return(std::error_code{}));
+    ON_CALL(*mock_conn, mock_send_async(_, _, _)).WillByDefault(::testing::Return(boost::system::error_code{}));
 
     std::vector<std::uint8_t> dat_payload;
-    EXPECT_CALL(*mock_conn, mock_send_async(_, mux::kCmdSyn, _)).WillOnce(::testing::Return(std::error_code{}));
+    EXPECT_CALL(*mock_conn, mock_send_async(_, mux::kCmdSyn, _)).WillOnce(::testing::Return(boost::system::error_code{}));
     EXPECT_CALL(*mock_conn, register_stream(_, _))
         .WillOnce([&io_context](const std::uint32_t, std::shared_ptr<mux::mux_stream_interface> stream_iface) -> bool
                   {
@@ -843,34 +843,34 @@ TEST(TcpSocksSessionTest, RunProxyPathRepliesSuccessWhenAckAccepted)
                       ack.socks_rep = socks::kRepSuccess;
                       std::vector<std::uint8_t> ack_data;
                       mux::mux_codec::encode_ack(ack, ack_data);
-                      asio::post(io_context, [stream, ack_data]() { stream->on_data(ack_data); });
+                      boost::asio::post(io_context, [stream, ack_data]() { stream->on_data(ack_data); });
 
-                      asio::post(io_context, [stream]() { stream->on_data(std::vector<std::uint8_t>{0xBE, 0xEF}); });
-                      asio::post(io_context, [stream]() { stream->on_close(); });
+                      boost::asio::post(io_context, [stream]() { stream->on_data(std::vector<std::uint8_t>{0xBE, 0xEF}); });
+                      boost::asio::post(io_context, [stream]() { stream->on_close(); });
                       return true;
                   });
     EXPECT_CALL(*mock_conn, mock_send_async(_, mux::kCmdDat, _))
         .WillOnce([&dat_payload](const std::uint32_t, const std::uint8_t, const std::vector<std::uint8_t>& payload)
                   {
                       dat_payload = payload;
-                      return std::error_code{};
+                      return boost::system::error_code{};
                   });
-    EXPECT_CALL(*mock_conn, mock_send_async(_, mux::kCmdFin, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(std::error_code{}));
+    EXPECT_CALL(*mock_conn, mock_send_async(_, mux::kCmdFin, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(boost::system::error_code{}));
 
     const auto session = make_tcp_session_with_router(io_context, std::move(pair.server), router, tunnel);
     const std::vector<std::uint8_t> payload = {0x11, 0x22, 0x33};
-    asio::write(pair.client, asio::buffer(payload));
-    pair.client.shutdown(asio::ip::tcp::socket::shutdown_send);
+    boost::asio::write(pair.client, boost::asio::buffer(payload));
+    pair.client.shutdown(boost::asio::ip::tcp::socket::shutdown_send);
 
     mux::test::run_awaitable_void(io_context, session->run("203.0.113.7", 443));
 
     std::uint8_t rep[10] = {0};
-    asio::read(pair.client, asio::buffer(rep));
+    boost::asio::read(pair.client, boost::asio::buffer(rep));
     EXPECT_EQ(rep[0], socks::kVer);
     EXPECT_EQ(rep[1], socks::kRepSuccess);
 
     std::uint8_t echoed[2] = {0};
-    asio::read(pair.client, asio::buffer(echoed));
+    boost::asio::read(pair.client, boost::asio::buffer(echoed));
     EXPECT_EQ(echoed[0], 0xBE);
     EXPECT_EQ(echoed[1], 0xEF);
     EXPECT_EQ(dat_payload, payload);

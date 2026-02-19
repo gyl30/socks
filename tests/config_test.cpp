@@ -11,7 +11,6 @@
 
 #include "config.h"
 #include "mux_protocol.h"
-#include "monitor_server.h"
 
 namespace
 {
@@ -321,6 +320,8 @@ TEST_F(config_test, MissingFieldsUseDefaults)
     EXPECT_TRUE(cfg_opt->reality.private_key.empty());
     EXPECT_TRUE(cfg_opt->reality.public_key.empty());
     EXPECT_TRUE(cfg_opt->reality.fallback_guard.enabled);
+    EXPECT_EQ(cfg_opt->queues.udp_session_recv_channel_capacity, 512U);
+    EXPECT_EQ(cfg_opt->queues.tproxy_udp_dispatch_queue_capacity, 512U);
 }
 
 TEST_F(config_test, InvalidPortRange)
@@ -662,16 +663,14 @@ TEST_F(config_test, ContractMatrixMonitorRulesStayAlignedWithDocumentation)
 {
     const auto doc = load_configuration_doc();
     ASSERT_FALSE(doc.empty());
-    EXPECT_NE(doc.find("monitor.min_interval_ms"), std::string::npos);
-    EXPECT_NE(doc.find("monitor.token"), std::string::npos);
-    EXPECT_NE(doc.find("未授权请求不得占用限流窗口"), std::string::npos);
+    EXPECT_NE(doc.find("monitor.enabled"), std::string::npos);
+    EXPECT_NE(doc.find("monitor.port"), std::string::npos);
+    EXPECT_NE(doc.find("仅支持 HTTP `GET /metrics`"), std::string::npos);
 
     write_config_file(R"({
         "monitor": {
             "enabled": true,
-            "port": 19090,
-            "token": "secret",
-            "min_interval_ms": 120
+            "port": 19090
         }
     })");
 
@@ -679,16 +678,6 @@ TEST_F(config_test, ContractMatrixMonitorRulesStayAlignedWithDocumentation)
     ASSERT_TRUE(parsed.has_value());
     EXPECT_TRUE(parsed->monitor.enabled);
     EXPECT_EQ(parsed->monitor.port, 19090);
-    EXPECT_EQ(parsed->monitor.token, "secret");
-    EXPECT_EQ(parsed->monitor.min_interval_ms, 120U);
-
-    mux::monitor_rate_state rate_state;
-    const auto now = std::chrono::steady_clock::now();
-    EXPECT_TRUE(mux::detail::allow_monitor_request_by_source(rate_state, "127.0.0.1", parsed->monitor.min_interval_ms, now));
-    EXPECT_FALSE(
-        mux::detail::allow_monitor_request_by_source(rate_state, "127.0.0.1", parsed->monitor.min_interval_ms, now + std::chrono::milliseconds(60)));
-    EXPECT_TRUE(
-        mux::detail::allow_monitor_request_by_source(rate_state, "127.0.0.1", parsed->monitor.min_interval_ms, now + std::chrono::milliseconds(130)));
 }
 
 TEST_F(config_test, SocksAuthEnabledRequiresNonEmptyCredentials)

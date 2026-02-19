@@ -28,8 +28,8 @@
 - `timeout.read` / `timeout.write` / `timeout.idle`：读写与空闲超时秒数。
 - `timeout.read = 0` 与 `timeout.write = 0`：表示禁用对应读写阶段超时。
 - `timeout.idle = 0`：表示禁用空闲超时。
-- `queues.udp_session_recv_channel_capacity`：UDP 会话接收队列深度（用于 `udp_socks_session`、`remote_udp_session`、`tproxy_udp_session`，默认 `128`）。
-- `queues.tproxy_udp_dispatch_queue_capacity`：TPROXY UDP 分发队列深度（默认 `2048`）。
+- `queues.udp_session_recv_channel_capacity`：UDP 会话接收队列深度（用于 `udp_socks_session`、`remote_udp_session`、`tproxy_udp_session`，默认 `512`）。
+- `queues.tproxy_udp_dispatch_queue_capacity`：TPROXY UDP 分发队列深度（默认 `512`）。
 - `queues.udp_session_recv_channel_capacity` 与 `queues.tproxy_udp_dispatch_queue_capacity` 必须在 `1-65535`，否则配置解析失败。
 - `heartbeat.enabled`：是否启用心跳。
 - `heartbeat.idle_timeout`：空闲多久触发心跳。
@@ -57,7 +57,7 @@
 2. 服务端在 `accept` 成功后、REALITY 握手前预占连接槽；达到全局上限或来源上限时直接拒绝该连接，不进入握手路径。
 3. 流量进入 mux 后，若 `max_streams` 已达上限，服务端必须先返回 `ACK(rep=general failure)`，再发送 `RST`。
 4. SOCKS5 请求中，目标主机为空必须拒绝；`CONNECT` 请求目标端口为 `0` 必须拒绝；`UDP ASSOCIATE` 允许端口 `0`。
-5. 监控接口仅接受 `GET /metrics` 或 `metrics`，并要求 `token` 参数精确匹配；未授权请求不得占用限流窗口。
+5. 监控接口仅支持 HTTP `GET /metrics`，返回 Prometheus 文本格式指标。
 6. 客户端配置变更不支持热加载，修改配置后必须重启客户端进程生效。
 7. `timeout.read = 0` 与 `timeout.write = 0` 必须表示禁用对应阶段超时，不得隐式归一化为最小正值。
 
@@ -84,8 +84,6 @@
 
 - `monitor.enabled`：是否启用监控接口。
 - `monitor.port`：监控端口（仅本机）。
-- `monitor.token`：监控接口 token。
-- `monitor.min_interval_ms`：最小请求间隔。
 
 ### fallback 失败原因指标
 
@@ -245,4 +243,4 @@ CI 策略：
 
 1. `socks.host = 127.0.0.1`，并开启 `socks.auth`。
 2. 配置合理 `max_connections` 与 `max_streams`。
-4. 启用 `monitor.token`，避免无鉴权访问。
+4. 监控端口建议仅绑定本机或放在受控内网。

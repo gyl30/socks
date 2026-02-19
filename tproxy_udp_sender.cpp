@@ -6,12 +6,12 @@
 #include <iterator>
 #include <system_error>
 
-#include <asio/buffer.hpp>
-#include <asio/as_tuple.hpp>
-#include <asio/awaitable.hpp>
-#include <asio/dispatch.hpp>
-#include <asio/ip/v6_only.hpp>
-#include <asio/use_awaitable.hpp>
+#include <boost/asio/buffer.hpp>
+#include <boost/asio/as_tuple.hpp>
+#include <boost/asio/awaitable.hpp>
+#include <boost/asio/dispatch.hpp>
+#include <boost/asio/ip/v6_only.hpp>
+#include <boost/asio/use_awaitable.hpp>
 
 #include "log.h"
 #include "net_utils.h"
@@ -47,7 +47,7 @@ std::size_t hash_bytes(const ByteContainer& bytes)
 
 }    // namespace
 
-tproxy_udp_sender::tproxy_udp_sender(asio::io_context& io_context, const std::uint32_t mark) : io_context_(io_context), mark_(mark) {}
+tproxy_udp_sender::tproxy_udp_sender(boost::asio::io_context& io_context, const std::uint32_t mark) : io_context_(io_context), mark_(mark) {}
 
 std::size_t tproxy_udp_sender::endpoint_hash::operator()(const endpoint_key& key) const
 {
@@ -68,7 +68,7 @@ std::size_t tproxy_udp_sender::endpoint_hash::operator()(const endpoint_key& key
     return h1 ^ (h2 + 0x9e3779b97f4a7c15ULL + (h1 << 6U) + (h1 >> 2U));
 }
 
-std::shared_ptr<asio::ip::udp::socket> tproxy_udp_sender::get_socket(const asio::ip::udp::endpoint& src_ep)
+std::shared_ptr<boost::asio::ip::udp::socket> tproxy_udp_sender::get_socket(const boost::asio::ip::udp::endpoint& src_ep)
 {
     const auto now = now_ms();
     const endpoint_key key{src_ep.address(), src_ep.port()};
@@ -97,7 +97,7 @@ std::shared_ptr<asio::ip::udp::socket> tproxy_udp_sender::get_socket(const asio:
     return socket;
 }
 
-std::shared_ptr<asio::ip::udp::socket> tproxy_udp_sender::get_cached_socket(const endpoint_key& key, const std::uint64_t now_ms)
+std::shared_ptr<boost::asio::ip::udp::socket> tproxy_udp_sender::get_cached_socket(const endpoint_key& key, const std::uint64_t now_ms)
 {
     auto it = sockets_.find(key);
     if (it == sockets_.end())
@@ -108,11 +108,11 @@ std::shared_ptr<asio::ip::udp::socket> tproxy_udp_sender::get_cached_socket(cons
     return it->second.socket;
 }
 
-std::shared_ptr<asio::ip::udp::socket> tproxy_udp_sender::create_bound_socket(const asio::ip::udp::endpoint& src_ep, const bool ipv6)
+std::shared_ptr<boost::asio::ip::udp::socket> tproxy_udp_sender::create_bound_socket(const boost::asio::ip::udp::endpoint& src_ep, const bool ipv6)
 {
-    auto socket = std::make_shared<asio::ip::udp::socket>(io_context_);
-    std::error_code ec;
-    socket->open(ipv6 ? asio::ip::udp::v6() : asio::ip::udp::v4(), ec);
+    auto socket = std::make_shared<boost::asio::ip::udp::socket>(io_context_);
+    boost::system::error_code ec;
+    socket->open(ipv6 ? boost::asio::ip::udp::v6() : boost::asio::ip::udp::v4(), ec);
     if (ec)
     {
         LOG_WARN("tproxy udp open failed {}", ec.message());
@@ -132,7 +132,7 @@ std::shared_ptr<asio::ip::udp::socket> tproxy_udp_sender::create_bound_socket(co
     return socket;
 }
 
-bool tproxy_udp_sender::prepare_socket_options(const std::shared_ptr<asio::ip::udp::socket>& socket, const bool ipv6)
+bool tproxy_udp_sender::prepare_socket_options(const std::shared_ptr<boost::asio::ip::udp::socket>& socket, const bool ipv6)
 {
     if (ipv6)
     {
@@ -147,10 +147,10 @@ bool tproxy_udp_sender::prepare_socket_options(const std::shared_ptr<asio::ip::u
     return true;
 }
 
-bool tproxy_udp_sender::set_ipv6_dual_stack_option(const std::shared_ptr<asio::ip::udp::socket>& socket)
+bool tproxy_udp_sender::set_ipv6_dual_stack_option(const std::shared_ptr<boost::asio::ip::udp::socket>& socket)
 {
-    std::error_code ec;
-    ec = socket->set_option(asio::ip::v6_only(false), ec);
+    boost::system::error_code ec;
+    ec = socket->set_option(boost::asio::ip::v6_only(false), ec);
     if (!ec)
     {
         return true;
@@ -159,17 +159,17 @@ bool tproxy_udp_sender::set_ipv6_dual_stack_option(const std::shared_ptr<asio::i
     return false;
 }
 
-void tproxy_udp_sender::set_reuse_address_option(const std::shared_ptr<asio::ip::udp::socket>& socket)
+void tproxy_udp_sender::set_reuse_address_option(const std::shared_ptr<boost::asio::ip::udp::socket>& socket)
 {
-    std::error_code ec;
-    ec = socket->set_option(asio::socket_base::reuse_address(true), ec);
+    boost::system::error_code ec;
+    ec = socket->set_option(boost::asio::socket_base::reuse_address(true), ec);
     if (ec)
     {
         LOG_WARN("tproxy udp reuse addr failed {}", ec.message());
     }
 }
 
-bool tproxy_udp_sender::set_transparent_option(const std::shared_ptr<asio::ip::udp::socket>& socket, const bool ipv6)
+bool tproxy_udp_sender::set_transparent_option(const std::shared_ptr<boost::asio::ip::udp::socket>& socket, const bool ipv6)
 {
     if (auto r = net::set_socket_transparent(socket->native_handle(), ipv6); !r)
     {
@@ -179,7 +179,7 @@ bool tproxy_udp_sender::set_transparent_option(const std::shared_ptr<asio::ip::u
     return true;
 }
 
-void tproxy_udp_sender::apply_socket_mark(const std::shared_ptr<asio::ip::udp::socket>& socket) const
+void tproxy_udp_sender::apply_socket_mark(const std::shared_ptr<boost::asio::ip::udp::socket>& socket) const
 {
     if (mark_ == 0)
     {
@@ -191,9 +191,9 @@ void tproxy_udp_sender::apply_socket_mark(const std::shared_ptr<asio::ip::udp::s
     }
 }
 
-bool tproxy_udp_sender::bind_socket_to_source(const std::shared_ptr<asio::ip::udp::socket>& socket, const asio::ip::udp::endpoint& src_ep)
+bool tproxy_udp_sender::bind_socket_to_source(const std::shared_ptr<boost::asio::ip::udp::socket>& socket, const boost::asio::ip::udp::endpoint& src_ep)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     ec = socket->bind(src_ep, ec);
     if (!ec)
     {
@@ -205,7 +205,7 @@ bool tproxy_udp_sender::bind_socket_to_source(const std::shared_ptr<asio::ip::ud
 }
 
 void tproxy_udp_sender::update_cached_socket(const endpoint_key& key,
-                                             const std::shared_ptr<asio::ip::udp::socket>& socket,
+                                             const std::shared_ptr<boost::asio::ip::udp::socket>& socket,
                                              const std::uint64_t now_ms)
 {
     sockets_[key] = cached_socket{.socket = socket, .last_used_ms = now_ms};
@@ -221,7 +221,7 @@ void tproxy_udp_sender::prune_sockets(const std::uint64_t now_ms)
         {
             if (it->second.socket != nullptr)
             {
-                std::error_code ignore;
+                boost::system::error_code ignore;
                 ignore = it->second.socket->close(ignore);
             }
             it = sockets_.erase(it);
@@ -249,25 +249,25 @@ void tproxy_udp_sender::evict_oldest_socket()
 
     if (oldest_it->second.socket != nullptr)
     {
-        std::error_code ignore;
+        boost::system::error_code ignore;
         ignore = oldest_it->second.socket->close(ignore);
     }
     sockets_.erase(oldest_it);
 }
 
-void tproxy_udp_sender::drop_cached_socket_if_match(const endpoint_key& key, const std::shared_ptr<asio::ip::udp::socket>& socket)
+void tproxy_udp_sender::drop_cached_socket_if_match(const endpoint_key& key, const std::shared_ptr<boost::asio::ip::udp::socket>& socket)
 {
     auto it = sockets_.find(key);
     if (it == sockets_.end() || it->second.socket != socket)
     {
         return;
     }
-    std::error_code ignore;
+    boost::system::error_code ignore;
     ignore = it->second.socket->close(ignore);
     sockets_.erase(it);
 }
 
-void tproxy_udp_sender::refresh_cached_socket_timestamp(const endpoint_key& key, const std::shared_ptr<asio::ip::udp::socket>& socket)
+void tproxy_udp_sender::refresh_cached_socket_timestamp(const endpoint_key& key, const std::shared_ptr<boost::asio::ip::udp::socket>& socket)
 {
     auto it = sockets_.find(key);
     if (it != sockets_.end() && it->second.socket == socket)
@@ -276,11 +276,11 @@ void tproxy_udp_sender::refresh_cached_socket_timestamp(const endpoint_key& key,
     }
 }
 
-asio::awaitable<void> tproxy_udp_sender::send_to_client(const asio::ip::udp::endpoint& client_ep,
-                                                        const asio::ip::udp::endpoint& src_ep,
-                                                        const asio::const_buffer payload)
+boost::asio::awaitable<void> tproxy_udp_sender::send_to_client(const boost::asio::ip::udp::endpoint& client_ep,
+                                                        const boost::asio::ip::udp::endpoint& src_ep,
+                                                        const boost::asio::const_buffer payload)
 {
-    co_await asio::dispatch(io_context_, asio::use_awaitable);
+    co_await boost::asio::dispatch(io_context_, boost::asio::use_awaitable);
 
     const auto norm_src = net::normalize_endpoint(src_ep);
     const auto norm_client = net::normalize_endpoint(client_ep);
@@ -290,7 +290,7 @@ asio::awaitable<void> tproxy_udp_sender::send_to_client(const asio::ip::udp::end
         co_return;
     }
 
-    const auto [ec, n] = co_await socket->async_send_to(payload, norm_client, asio::as_tuple(asio::use_awaitable));
+    const auto [ec, n] = co_await socket->async_send_to(payload, norm_client, boost::asio::as_tuple(boost::asio::use_awaitable));
     if (ec)
     {
         LOG_WARN("tproxy udp send to client failed {}", ec.message());
@@ -300,11 +300,11 @@ asio::awaitable<void> tproxy_udp_sender::send_to_client(const asio::ip::udp::end
     refresh_cached_socket_timestamp(endpoint_key{norm_src.address(), norm_src.port()}, socket);
 }
 
-asio::awaitable<void> tproxy_udp_sender::send_to_client(const asio::ip::udp::endpoint& client_ep,
-                                                        const asio::ip::udp::endpoint& src_ep,
+boost::asio::awaitable<void> tproxy_udp_sender::send_to_client(const boost::asio::ip::udp::endpoint& client_ep,
+                                                        const boost::asio::ip::udp::endpoint& src_ep,
                                                         const std::vector<std::uint8_t>& payload)
 {
-    co_await send_to_client(client_ep, src_ep, asio::buffer(payload));
+    co_await send_to_client(client_ep, src_ep, boost::asio::buffer(payload));
 }
 
 }    // namespace mux

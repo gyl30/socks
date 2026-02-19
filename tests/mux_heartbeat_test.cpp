@@ -6,13 +6,13 @@
 #include <vector>
 
 #include <gtest/gtest.h>
-#include <asio/ip/tcp.hpp>
+#include <boost/asio/ip/tcp.hpp>
 #include <spdlog/spdlog.h>
-#include <asio/co_spawn.hpp>
-#include <asio/detached.hpp>
-#include <asio/io_context.hpp>
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/detached.hpp>
+#include <boost/asio/io_context.hpp>
 #include <spdlog/sinks/base_sink.h>
-#include <asio/executor_work_guard.hpp>
+#include <boost/asio/executor_work_guard.hpp>
 
 #include "mux_protocol.h"
 #include "mux_connection.h"
@@ -45,12 +45,12 @@ using custom_sink_t = heartbeat_log_sink<std::mutex>;
 
 TEST(HeartbeatTest, HeartbeatSendReceive)
 {
-    asio::io_context io_ctx;
-    auto work = asio::make_work_guard(io_ctx);
+    boost::asio::io_context io_ctx;
+    auto work = boost::asio::make_work_guard(io_ctx);
 
-    asio::ip::tcp::acceptor acceptor(io_ctx, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
-    auto socket_server = std::make_shared<asio::ip::tcp::socket>(io_ctx);
-    auto socket_client = std::make_shared<asio::ip::tcp::socket>(io_ctx);
+    boost::asio::ip::tcp::acceptor acceptor(io_ctx, boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 0));
+    auto socket_server = std::make_shared<boost::asio::ip::tcp::socket>(io_ctx);
+    auto socket_client = std::make_shared<boost::asio::ip::tcp::socket>(io_ctx);
 
     socket_client->connect(acceptor.local_endpoint());
     acceptor.accept(*socket_server);
@@ -93,8 +93,8 @@ TEST(HeartbeatTest, HeartbeatSendReceive)
                                                         mux::config::limits_t{},
                                                         hb_s);
 
-    asio::co_spawn(io_ctx, [conn_c]() -> asio::awaitable<void> { co_await conn_c->start(); }, asio::detached);
-    asio::co_spawn(io_ctx, [conn_s]() -> asio::awaitable<void> { co_await conn_s->start(); }, asio::detached);
+    boost::asio::co_spawn(io_ctx, [conn_c]() -> boost::asio::awaitable<void> { co_await conn_c->start(); }, boost::asio::detached);
+    boost::asio::co_spawn(io_ctx, [conn_s]() -> boost::asio::awaitable<void> { co_await conn_s->start(); }, boost::asio::detached);
 
     std::thread t([&io_ctx] { io_ctx.run(); });
 

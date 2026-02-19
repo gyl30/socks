@@ -5,7 +5,7 @@
 #include <string>
 #include <cstdint>
 
-#include <asio.hpp>
+#include <boost/asio.hpp>
 
 #include "ip_matcher.h"
 #include "log_context.h"
@@ -29,12 +29,12 @@ class router
 
    public:
     virtual bool load();
-    [[nodiscard]] asio::awaitable<route_type> decide(const connection_context& ctx, const std::string& host) const;
+    [[nodiscard]] boost::asio::awaitable<route_type> decide(const connection_context& ctx, const std::string& host) const;
 
-    [[nodiscard]] asio::awaitable<route_type> decide_ip(const connection_context& ctx,
+    [[nodiscard]] boost::asio::awaitable<route_type> decide_ip(const connection_context& ctx,
                                                         const std::string& host,
-                                                        const asio::ip::address& addr) const;
-    [[nodiscard]] asio::awaitable<route_type> decide_domain(const connection_context& ctx, const std::string& host) const;
+                                                        const boost::asio::ip::address& addr) const;
+    [[nodiscard]] boost::asio::awaitable<route_type> decide_domain(const connection_context& ctx, const std::string& host) const;
 
    protected:
     std::shared_ptr<ip_matcher>& block_ip_matcher() { return block_ip_matcher_; }

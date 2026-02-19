@@ -12,19 +12,19 @@
 #include <utility>
 #include <system_error>
 
-#include <asio/error.hpp>
-#include <asio/write.hpp>
-#include <asio/buffer.hpp>
-#include <asio/ip/tcp.hpp>
-#include <asio/as_tuple.hpp>
-#include <asio/co_spawn.hpp>
-#include <asio/detached.hpp>
-#include <asio/post.hpp>
-#include <asio/dispatch.hpp>
-#include <asio/steady_timer.hpp>
-#include <asio/use_awaitable.hpp>
-#include <asio/redirect_error.hpp>
-#include <asio/experimental/awaitable_operators.hpp>
+#include <boost/asio/error.hpp>
+#include <boost/asio/write.hpp>
+#include <boost/asio/buffer.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/as_tuple.hpp>
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/detached.hpp>
+#include <boost/asio/post.hpp>
+#include <boost/asio/dispatch.hpp>
+#include <boost/asio/steady_timer.hpp>
+#include <boost/asio/use_awaitable.hpp>
+#include <boost/asio/redirect_error.hpp>
+#include <boost/asio/experimental/awaitable_operators.hpp>
 
 extern "C"
 {
@@ -61,13 +61,13 @@ struct timeout_snapshot
     std::uint64_t write_timeout_ms = 0;
 };
 
-bool handle_timeout_wait_error(const std::error_code& ec, const std::uint32_t cid)
+bool handle_timeout_wait_error(const boost::system::error_code& ec, const std::uint32_t cid)
 {
     if (!ec)
     {
         return false;
     }
-    if (ec == asio::error::operation_aborted)
+    if (ec == boost::asio::error::operation_aborted)
     {
         LOG_DEBUG("mux {} timeout timer cancelled", cid);
     }
@@ -103,7 +103,7 @@ timeout_snapshot collect_timeout_snapshot(const std::atomic<std::uint64_t>& last
 }
 
 template <typename Fn>
-bool run_sync_bool_query(asio::io_context& io_context, const std::uint32_t cid, const char* query_name, Fn&& fn)
+bool run_sync_bool_query(boost::asio::io_context& io_context, const std::uint32_t cid, const char* query_name, Fn&& fn)
 {
     if (io_context.stopped())
     {
@@ -118,7 +118,7 @@ bool run_sync_bool_query(asio::io_context& io_context, const std::uint32_t cid, 
     auto cancelled = std::make_shared<std::atomic<bool>>(false);
     std::promise<bool> promise;
     auto future = promise.get_future();
-    asio::post(
+    boost::asio::post(
         io_context,
         [started, cancelled, promise = std::move(promise), fn = std::forward<Fn>(fn)]() mutable
         {
@@ -155,7 +155,7 @@ bool run_sync_bool_query(asio::io_context& io_context, const std::uint32_t cid, 
 }
 
 template <typename Fn>
-bool run_sync_void_query(asio::io_context& io_context, const std::uint32_t cid, const char* query_name, Fn&& fn)
+bool run_sync_void_query(boost::asio::io_context& io_context, const std::uint32_t cid, const char* query_name, Fn&& fn)
 {
     if (io_context.stopped())
     {
@@ -171,7 +171,7 @@ bool run_sync_void_query(asio::io_context& io_context, const std::uint32_t cid, 
     auto cancelled = std::make_shared<std::atomic<bool>>(false);
     std::promise<bool> promise;
     auto future = promise.get_future();
-    asio::post(
+    boost::asio::post(
         io_context,
         [started, cancelled, promise = std::move(promise), fn = std::forward<Fn>(fn)]() mutable
         {
@@ -208,10 +208,10 @@ bool run_sync_void_query(asio::io_context& io_context, const std::uint32_t cid, 
     return future.get();
 }
 
-asio::awaitable<void> wait_draining_delay(asio::steady_timer& timer, const std::uint32_t delay_seconds, const std::uint32_t cid)
+boost::asio::awaitable<void> wait_draining_delay(boost::asio::steady_timer& timer, const std::uint32_t delay_seconds, const std::uint32_t cid)
 {
     timer.expires_after(std::chrono::seconds(delay_seconds));
-    const auto [wait_ec] = co_await timer.async_wait(asio::as_tuple(asio::use_awaitable));
+    const auto [wait_ec] = co_await timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
     if (!wait_ec)
     {
         LOG_DEBUG("mux {} draining complete after {}s", cid, delay_seconds);
@@ -220,8 +220,8 @@ asio::awaitable<void> wait_draining_delay(asio::steady_timer& timer, const std::
 
 }    // namespace
 
-mux_connection::mux_connection(asio::ip::tcp::socket socket,
-                               asio::io_context& io_context,
+mux_connection::mux_connection(boost::asio::ip::tcp::socket socket,
+                               boost::asio::io_context& io_context,
                                reality_engine engine,
                                const bool is_client,
                                const std::uint32_t conn_id,
@@ -243,7 +243,7 @@ mux_connection::mux_connection(asio::ip::tcp::socket socket,
 {
     ctx_.trace_id(trace_id);
     ctx_.conn_id(conn_id);
-    std::error_code local_ep_ec;
+    boost::system::error_code local_ep_ec;
     const auto local_ep = socket_.local_endpoint(local_ep_ec);
     if (!local_ep_ec)
     {
@@ -251,7 +251,7 @@ mux_connection::mux_connection(asio::ip::tcp::socket socket,
         ctx_.local_port(local_ep.port());
     }
 
-    std::error_code remote_ep_ec;
+    boost::system::error_code remote_ep_ec;
     const auto remote_ep = socket_.remote_endpoint(remote_ep_ec);
     if (!remote_ep_ec)
     {
@@ -444,12 +444,12 @@ void mux_connection::handle_unknown_stream(const std::uint32_t stream_id, const 
 
     LOG_DEBUG("mux {} recv frame for unknown stream {}", cid_, stream_id);
     const auto self = shared_from_this();
-    asio::co_spawn(io_context_,
-                   [self, stream_id]() -> asio::awaitable<void>
+    boost::asio::co_spawn(io_context_,
+                   [self, stream_id]() -> boost::asio::awaitable<void>
                    {
                        (void)co_await self->send_async(stream_id, kCmdRst, {});
                    },
-                   asio::detached);
+                   boost::asio::detached);
 }
 
 void mux_connection::handle_stream_frame(const mux::frame_header& header, std::vector<std::uint8_t> payload)
@@ -553,17 +553,17 @@ void mux_connection::remove_stream(const std::uint32_t id)
         });
 }
 
-asio::awaitable<void> mux_connection::start()
+boost::asio::awaitable<void> mux_connection::start()
 {
-    co_await asio::dispatch(io_context_, asio::use_awaitable);
+    co_await boost::asio::dispatch(io_context_, boost::asio::use_awaitable);
     co_await start_impl();
 }
 
-asio::awaitable<void> mux_connection::start_impl()
+boost::asio::awaitable<void> mux_connection::start_impl()
 {
     started_.store(true, std::memory_order_release);
     LOG_DEBUG("mux {} started loops", cid_);
-    using asio::experimental::awaitable_operators::operator||;
+    using boost::asio::experimental::awaitable_operators::operator||;
     const auto ts = now_ms();
     last_read_time_ms_.store(ts, std::memory_order_release);
     last_write_time_ms_.store(ts, std::memory_order_release);
@@ -572,17 +572,17 @@ asio::awaitable<void> mux_connection::start_impl()
     stop();
 }
 
-asio::awaitable<std::error_code> mux_connection::send_async(const std::uint32_t stream_id, const std::uint8_t cmd, std::vector<std::uint8_t> payload)
+boost::asio::awaitable<boost::system::error_code> mux_connection::send_async(const std::uint32_t stream_id, const std::uint8_t cmd, std::vector<std::uint8_t> payload)
 {
     if (!is_open())
     {
-        co_return asio::error::operation_aborted;
+        co_return boost::asio::error::operation_aborted;
     }
 
     if (payload.size() > mux::kMaxPayload)
     {
         LOG_ERROR("mux {} payload too large {}", cid_, payload.size());
-        co_return asio::error::message_size;
+        co_return boost::asio::error::message_size;
     }
 
     if (cmd != mux::kCmdDat || payload.size() < 128)
@@ -591,7 +591,7 @@ asio::awaitable<std::error_code> mux_connection::send_async(const std::uint32_t 
     }
 
     mux_write_msg msg{.command = cmd, .stream_id = stream_id, .payload = std::move(payload)};
-    const auto [ec] = co_await write_channel_->async_send(std::error_code{}, std::move(msg), asio::as_tuple(asio::use_awaitable));
+    const auto [ec] = co_await write_channel_->async_send(boost::system::error_code{}, std::move(msg), boost::asio::as_tuple(boost::asio::use_awaitable));
 
     if (ec)
     {
@@ -599,7 +599,7 @@ asio::awaitable<std::error_code> mux_connection::send_async(const std::uint32_t 
         stop();
         co_return ec;
     }
-    co_return std::error_code();
+    co_return boost::system::error_code();
 }
 
 void mux_connection::stop()
@@ -674,8 +674,8 @@ void mux_connection::close_socket_on_stop()
         return;
     }
 
-    std::error_code ec;
-    ec = socket_.shutdown(asio::ip::tcp::socket::shutdown_both, ec);
+    boost::system::error_code ec;
+    ec = socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
     if (ec)
     {
         LOG_WARN("mux {} shutdown failed error {}", cid_, ec.message());
@@ -699,13 +699,13 @@ void mux_connection::finalize_stop_state()
     connection_state_.store(mux_connection_state::kClosed, std::memory_order_release);
 }
 
-bool mux_connection::should_stop_read(const std::error_code& read_ec, const std::size_t n) const
+bool mux_connection::should_stop_read(const boost::system::error_code& read_ec, const std::size_t n) const
 {
     if (!read_ec && n != 0)
     {
         return false;
     }
-    if (read_ec != asio::error::eof && read_ec != asio::error::operation_aborted)
+    if (read_ec != boost::asio::error::eof && read_ec != boost::asio::error::operation_aborted)
     {
         LOG_ERROR("mux {} read error {}", cid_, read_ec.message());
     }
@@ -720,7 +720,7 @@ void mux_connection::update_read_statistics(const std::size_t n)
     reality_engine_.commit_read(n);
 }
 
-std::expected<void, std::error_code> mux_connection::process_decrypted_records()
+std::expected<void, boost::system::error_code> mux_connection::process_decrypted_records()
 {
     return reality_engine_.process_available_records(
         [this](const std::uint8_t type, const std::span<const std::uint8_t> plaintext)
@@ -732,7 +732,7 @@ std::expected<void, std::error_code> mux_connection::process_decrypted_records()
         });
 }
 
-bool mux_connection::has_dispatch_failure(const std::error_code& decrypt_ec) const
+bool mux_connection::has_dispatch_failure(const boost::system::error_code& decrypt_ec) const
 {
     if (mux_dispatcher_.overflowed())
     {
@@ -747,10 +747,10 @@ bool mux_connection::has_dispatch_failure(const std::error_code& decrypt_ec) con
     return false;
 }
 
-asio::awaitable<bool> mux_connection::read_and_dispatch_once()
+boost::asio::awaitable<bool> mux_connection::read_and_dispatch_once()
 {
     const auto buf = reality_engine_.read_buffer(8192);
-    const auto [read_ec, n] = co_await socket_.async_read_some(buf, asio::as_tuple(asio::use_awaitable));
+    const auto [read_ec, n] = co_await socket_.async_read_some(buf, boost::asio::as_tuple(boost::asio::use_awaitable));
     if (should_stop_read(read_ec, n))
     {
         co_return false;
@@ -758,7 +758,7 @@ asio::awaitable<bool> mux_connection::read_and_dispatch_once()
     update_read_statistics(n);
 
     auto decrypt_res = process_decrypted_records();
-    std::error_code decrypt_ec;
+    boost::system::error_code decrypt_ec;
     if (!decrypt_res)
     {
         decrypt_ec = decrypt_res.error();
@@ -770,7 +770,7 @@ asio::awaitable<bool> mux_connection::read_and_dispatch_once()
     co_return true;
 }
 
-asio::awaitable<void> mux_connection::read_loop()
+boost::asio::awaitable<void> mux_connection::read_loop()
 {
     while (is_open())
     {
@@ -783,11 +783,11 @@ asio::awaitable<void> mux_connection::read_loop()
     stop();
 }
 
-asio::awaitable<void> mux_connection::write_loop()
+boost::asio::awaitable<void> mux_connection::write_loop()
 {
     while (is_open())
     {
-        const auto [ec, msg] = co_await write_channel_->async_receive(asio::as_tuple(asio::use_awaitable));
+        const auto [ec, msg] = co_await write_channel_->async_receive(boost::asio::as_tuple(boost::asio::use_awaitable));
         if (ec)
         {
             break;
@@ -805,7 +805,7 @@ asio::awaitable<void> mux_connection::write_loop()
         const auto ciphertext_span = *encrypt_result;
 
         const auto [wec, n] =
-            co_await asio::async_write(socket_, asio::buffer(ciphertext_span.data(), ciphertext_span.size()), asio::as_tuple(asio::use_awaitable));
+            co_await boost::asio::async_write(socket_, boost::asio::buffer(ciphertext_span.data(), ciphertext_span.size()), boost::asio::as_tuple(boost::asio::use_awaitable));
 
         if (wec)
         {
@@ -820,14 +820,14 @@ asio::awaitable<void> mux_connection::write_loop()
     stop();
 }
 
-asio::awaitable<void> mux_connection::timeout_loop()
+boost::asio::awaitable<void> mux_connection::timeout_loop()
 {
     static thread_local std::mt19937 rng(std::random_device{}());
 
     while (is_open())
     {
         timer_.expires_after(std::chrono::seconds(1));
-        const auto [ec] = co_await timer_.async_wait(asio::as_tuple(asio::use_awaitable));
+        const auto [ec] = co_await timer_.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
         if (handle_timeout_wait_error(ec, cid_))
         {
             break;
@@ -865,19 +865,19 @@ asio::awaitable<void> mux_connection::timeout_loop()
     stop();
 }
 
-asio::awaitable<void> mux_connection::heartbeat_loop()
+boost::asio::awaitable<void> mux_connection::heartbeat_loop()
 {
     if (!heartbeat_config_.enabled)
     {
-        asio::steady_timer timer(io_context_);
+        boost::asio::steady_timer timer(io_context_);
         timer.expires_at(std::chrono::steady_clock::time_point::max());
-        std::error_code ec;
-        co_await timer.async_wait(asio::redirect_error(asio::use_awaitable, ec));
+        boost::system::error_code ec;
+        co_await timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, ec));
         co_return;
     }
 
     static thread_local std::mt19937 rng(std::random_device{}());
-    asio::steady_timer heartbeat_timer(io_context_);
+    boost::asio::steady_timer heartbeat_timer(io_context_);
 
     while (is_open())
     {
@@ -885,7 +885,7 @@ asio::awaitable<void> mux_connection::heartbeat_loop()
         const auto interval = interval_dist(rng);
         heartbeat_timer.expires_after(std::chrono::seconds(interval));
 
-        const auto [ec] = co_await heartbeat_timer.async_wait(asio::as_tuple(asio::use_awaitable));
+        const auto [ec] = co_await heartbeat_timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
         if (ec)
         {
             break;

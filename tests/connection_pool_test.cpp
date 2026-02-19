@@ -6,8 +6,8 @@
 #include <cstdint>
 
 #include <gtest/gtest.h>
-#include <asio/ip/tcp.hpp>
-#include <asio/io_context.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/io_context.hpp>
 
 #include "crypto_util.h"
 #include "context_pool.h"
@@ -40,7 +40,7 @@ class connection_pool_test : public ::testing::Test
 
 TEST_F(connection_pool_test, TunnelReuse)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(2);
     ASSERT_FALSE(ec);
 
@@ -77,13 +77,13 @@ TEST_F(connection_pool_test, TunnelReuse)
 
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
-    asio::io_context client_ctx;
-    asio::ip::tcp::socket s1(client_ctx);
-    s1.connect({asio::ip::make_address("127.0.0.1"), local_socks_port}, ec);
+    boost::asio::io_context client_ctx;
+    boost::asio::ip::tcp::socket s1(client_ctx);
+    s1.connect({boost::asio::ip::make_address("127.0.0.1"), local_socks_port}, ec);
     ASSERT_FALSE(ec);
 
-    asio::ip::tcp::socket s2(client_ctx);
-    s2.connect({asio::ip::make_address("127.0.0.1"), local_socks_port}, ec);
+    boost::asio::ip::tcp::socket s2(client_ctx);
+    s2.connect({boost::asio::ip::make_address("127.0.0.1"), local_socks_port}, ec);
     ASSERT_FALSE(ec);
 
     client->stop();

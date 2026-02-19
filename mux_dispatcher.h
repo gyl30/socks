@@ -8,8 +8,8 @@
 #include <cstring>
 #include <functional>
 
-#include <asio/buffer.hpp>
-#include <asio/streambuf.hpp>
+#include <boost/asio/buffer.hpp>
+#include <boost/asio/streambuf.hpp>
 
 #include "mux_codec.h"
 #include "log_context.h"
@@ -39,7 +39,7 @@ class mux_dispatcher
 
    private:
     frame_callback_t callback_;
-    asio::streambuf buffer_;
+    boost::asio::streambuf buffer_;
     connection_context ctx_;
     std::size_t max_buffer_ = 0;
     std::atomic<bool> overflowed_{false};

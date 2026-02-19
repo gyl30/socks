@@ -6,14 +6,14 @@
 #include <utility>
 #include <system_error>
 
-#include <asio/error.hpp>
-#include <asio/buffer.hpp>
-#include <asio/as_tuple.hpp>
-#include <asio/co_spawn.hpp>
-#include <asio/dispatch.hpp>
-#include <asio/ip/address_v6.hpp>
-#include <asio/use_awaitable.hpp>
-#include <asio/experimental/awaitable_operators.hpp>
+#include <boost/asio/error.hpp>
+#include <boost/asio/buffer.hpp>
+#include <boost/asio/as_tuple.hpp>
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/dispatch.hpp>
+#include <boost/asio/ip/address_v6.hpp>
+#include <boost/asio/use_awaitable.hpp>
+#include <boost/asio/experimental/awaitable_operators.hpp>
 
 #include "log.h"
 #include "protocol.h"
@@ -37,7 +37,7 @@ namespace
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
 }
 
-[[nodiscard]] asio::ip::udp::endpoint normalize_target_endpoint(const asio::ip::udp::endpoint& endpoint)
+[[nodiscard]] boost::asio::ip::udp::endpoint normalize_target_endpoint(const boost::asio::ip::udp::endpoint& endpoint)
 {
     if (!endpoint.address().is_v4())
     {
@@ -46,21 +46,21 @@ namespace
 
     const auto v4 = endpoint.address().to_v4();
     const auto v4_bytes = v4.to_bytes();
-    asio::ip::address_v6::bytes_type v6_bytes = {0};
+    boost::asio::ip::address_v6::bytes_type v6_bytes = {0};
     v6_bytes[10] = 0xFF;
     v6_bytes[11] = 0xFF;
     v6_bytes[12] = v4_bytes[0];
     v6_bytes[13] = v4_bytes[1];
     v6_bytes[14] = v4_bytes[2];
     v6_bytes[15] = v4_bytes[3];
-    return asio::ip::udp::endpoint(asio::ip::address_v6(v6_bytes), endpoint.port());
+    return boost::asio::ip::udp::endpoint(boost::asio::ip::address_v6(v6_bytes), endpoint.port());
 }
 
 }    // namespace
 
 remote_udp_session::remote_udp_session(std::shared_ptr<mux_connection> connection,
                                        const std::uint32_t id,
-                                       asio::io_context& io_context,
+                                       boost::asio::io_context& io_context,
                                        const connection_context& ctx,
                                        const config::timeout_t& timeout_cfg,
                                        const std::size_t recv_channel_capacity)
@@ -84,13 +84,13 @@ remote_udp_session::remote_udp_session(std::shared_ptr<mux_connection> connectio
     last_activity_time_ms_.store(ts, std::memory_order_release);
 }
 
-asio::awaitable<void> remote_udp_session::start()
+boost::asio::awaitable<void> remote_udp_session::start()
 {
-    co_await asio::dispatch(io_context_, asio::use_awaitable);
+    co_await boost::asio::dispatch(io_context_, boost::asio::use_awaitable);
     co_await start_impl(shared_from_this());
 }
 
-asio::awaitable<std::error_code> remote_udp_session::send_ack_payload(const std::shared_ptr<mux_connection>& conn,
+boost::asio::awaitable<boost::system::error_code> remote_udp_session::send_ack_payload(const std::shared_ptr<mux_connection>& conn,
                                                                       const ack_payload& ack)
 {
     std::vector<std::uint8_t> ack_data;
@@ -98,9 +98,9 @@ asio::awaitable<std::error_code> remote_udp_session::send_ack_payload(const std:
     co_return co_await conn->send_async(id_, kCmdAck, std::move(ack_data));
 }
 
-asio::awaitable<void> remote_udp_session::handle_start_failure(const std::shared_ptr<mux_connection>& conn,
+boost::asio::awaitable<void> remote_udp_session::handle_start_failure(const std::shared_ptr<mux_connection>& conn,
                                                                const char* step,
-                                                               const std::error_code& ec)
+                                                               const boost::system::error_code& ec)
 {
     LOG_CTX_ERROR(ctx_, "{} {} failed {}", log_event::kMux, step, ec.message());
     const ack_payload ack{.socks_rep = socks::kRepGenFail, .bnd_addr = "", .bnd_port = 0};
@@ -111,24 +111,24 @@ asio::awaitable<void> remote_udp_session::handle_start_failure(const std::shared
     co_await cleanup_after_stop();
 }
 
-asio::awaitable<bool> remote_udp_session::setup_udp_socket(const std::shared_ptr<mux_connection>& conn)
+boost::asio::awaitable<bool> remote_udp_session::setup_udp_socket(const std::shared_ptr<mux_connection>& conn)
 {
-    std::error_code ec;
-    ec = udp_socket_.open(asio::ip::udp::v6(), ec);
+    boost::system::error_code ec;
+    ec = udp_socket_.open(boost::asio::ip::udp::v6(), ec);
     if (ec)
     {
         co_await handle_start_failure(conn, "udp open", ec);
         co_return false;
     }
 
-    ec = udp_socket_.set_option(asio::ip::v6_only(false), ec);
+    ec = udp_socket_.set_option(boost::asio::ip::v6_only(false), ec);
     if (ec)
     {
         co_await handle_start_failure(conn, "udp v4 and v6", ec);
         co_return false;
     }
 
-    ec = udp_socket_.bind(asio::ip::udp::endpoint(asio::ip::udp::v6(), 0), ec);
+    ec = udp_socket_.bind(boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v6(), 0), ec);
     if (ec)
     {
         co_await handle_start_failure(conn, "udp bind", ec);
@@ -146,7 +146,7 @@ void remote_udp_session::record_udp_write(const std::size_t bytes)
     last_activity_time_ms_.store(ts, std::memory_order_release);
 }
 
-asio::awaitable<void> remote_udp_session::forward_mux_payload(const std::vector<std::uint8_t>& data)
+boost::asio::awaitable<void> remote_udp_session::forward_mux_payload(const std::vector<std::uint8_t>& data)
 {
     socks_udp_header header;
     if (!socks_codec::decode_udp_header(data.data(), data.size(), header))
@@ -206,7 +206,7 @@ asio::awaitable<void> remote_udp_session::forward_mux_payload(const std::vector<
     LOG_CTX_DEBUG(ctx_, "{} udp forwarding {} bytes to {}", log_event::kMux, payload_len, target_ep.address().to_string());
 
     const auto [send_ec, sent_len] = co_await udp_socket_.async_send_to(
-        asio::buffer(data.data() + header.header_len, payload_len), target_ep, asio::as_tuple(asio::use_awaitable));
+        boost::asio::buffer(data.data() + header.header_len, payload_len), target_ep, boost::asio::as_tuple(boost::asio::use_awaitable));
     if (send_ec)
     {
         LOG_CTX_WARN(
@@ -224,7 +224,7 @@ asio::awaitable<void> remote_udp_session::forward_mux_payload(const std::vector<
 
 void remote_udp_session::log_udp_local_endpoint()
 {
-    std::error_code local_ep_ec;
+    boost::system::error_code local_ep_ec;
     const auto local_ep = udp_socket_.local_endpoint(local_ep_ec);
     if (local_ep_ec)
     {
@@ -234,13 +234,13 @@ void remote_udp_session::log_udp_local_endpoint()
     LOG_CTX_INFO(ctx_, "{} udp session started bound at {}", log_event::kMux, local_ep.address().to_string());
 }
 
-asio::awaitable<void> remote_udp_session::run_udp_session_loops()
+boost::asio::awaitable<void> remote_udp_session::run_udp_session_loops()
 {
-    using asio::experimental::awaitable_operators::operator||;
+    using boost::asio::experimental::awaitable_operators::operator||;
     co_await (mux_to_udp() || udp_to_mux() || watchdog() || idle_watchdog());
 }
 
-asio::awaitable<void> remote_udp_session::cleanup_after_stop()
+boost::asio::awaitable<void> remote_udp_session::cleanup_after_stop()
 {
     request_stop();
     const auto already_cleaned = cleaned_up_.exchange(true, std::memory_order_acq_rel);
@@ -260,7 +260,7 @@ asio::awaitable<void> remote_udp_session::cleanup_after_stop()
     co_return;
 }
 
-asio::awaitable<void> remote_udp_session::start_impl(std::shared_ptr<remote_udp_session> self)
+boost::asio::awaitable<void> remote_udp_session::start_impl(std::shared_ptr<remote_udp_session> self)
 {
     auto conn = connection_.lock();
     if (!conn)
@@ -288,7 +288,7 @@ asio::awaitable<void> remote_udp_session::start_impl(std::shared_ptr<remote_udp_
 
     log_udp_local_endpoint();
 
-    std::error_code local_ep_ec;
+    boost::system::error_code local_ep_ec;
     const auto local_ep = udp_socket_.local_endpoint(local_ep_ec);
     if (local_ep_ec)
     {
@@ -324,7 +324,7 @@ void remote_udp_session::on_data(std::vector<std::uint8_t> data)
         io_context_,
         [self = shared_from_this(), data = std::move(data)]() mutable
         {
-            if (!self->recv_channel_.try_send(std::error_code(), std::move(data)))
+            if (!self->recv_channel_.try_send(boost::system::error_code(), std::move(data)))
             {
                 LOG_CTX_WARN(self->ctx_, "{} recv channel unavailable on data", log_event::kMux);
                 self->request_stop();
@@ -343,7 +343,7 @@ void remote_udp_session::request_stop()
     timer_.cancel();
     idle_timer_.cancel();
     udp_resolver_.cancel();
-    std::error_code ignore;
+    boost::system::error_code ignore;
     ignore = udp_socket_.cancel(ignore);
     close_socket();
     if (auto manager = manager_.lock())
@@ -358,7 +358,7 @@ void remote_udp_session::close_socket()
     {
         return;
     }
-    std::error_code ignore;
+    boost::system::error_code ignore;
     ignore = udp_socket_.close(ignore);
 }
 
@@ -377,15 +377,15 @@ void remote_udp_session::on_close()
 
 void remote_udp_session::on_reset() { on_close(); }
 
-asio::awaitable<void> remote_udp_session::watchdog()
+boost::asio::awaitable<void> remote_udp_session::watchdog()
 {
     while (udp_socket_.is_open())
     {
         timer_.expires_after(std::chrono::seconds(1));
-        const auto [wait_ec] = co_await timer_.async_wait(asio::as_tuple(asio::use_awaitable));
+        const auto [wait_ec] = co_await timer_.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
         if (wait_ec)
         {
-            if (wait_ec == asio::error::operation_aborted)
+            if (wait_ec == boost::asio::error::operation_aborted)
             {
                 LOG_CTX_DEBUG(ctx_, "{} watchdog stopped {}", log_event::kTimeout, wait_ec.message());
             }
@@ -410,11 +410,11 @@ asio::awaitable<void> remote_udp_session::watchdog()
     LOG_CTX_DEBUG(ctx_, "{} watchdog finished", log_event::kMux);
 }
 
-asio::awaitable<void> remote_udp_session::mux_to_udp()
+boost::asio::awaitable<void> remote_udp_session::mux_to_udp()
 {
     for (;;)
     {
-        const auto [recv_ec, data] = co_await recv_channel_.async_receive(asio::as_tuple(asio::use_awaitable));
+        const auto [recv_ec, data] = co_await recv_channel_.async_receive(boost::asio::as_tuple(boost::asio::use_awaitable));
         if (recv_ec || data.empty())
         {
             break;
@@ -424,19 +424,19 @@ asio::awaitable<void> remote_udp_session::mux_to_udp()
     }
 }
 
-asio::awaitable<void> remote_udp_session::udp_to_mux()
+boost::asio::awaitable<void> remote_udp_session::udp_to_mux()
 {
     std::vector<std::uint8_t> buf(65535);
-    asio::ip::udp::endpoint ep;
-    asio::ip::udp::endpoint cached_ep;
+    boost::asio::ip::udp::endpoint ep;
+    boost::asio::ip::udp::endpoint cached_ep;
     std::vector<std::uint8_t> cached_header;
     bool has_cached_header = false;
     for (;;)
     {
-        const auto [recv_ec, n] = co_await udp_socket_.async_receive_from(asio::buffer(buf), ep, asio::as_tuple(asio::use_awaitable));
+        const auto [recv_ec, n] = co_await udp_socket_.async_receive_from(boost::asio::buffer(buf), ep, boost::asio::as_tuple(boost::asio::use_awaitable));
         if (recv_ec)
         {
-            if (recv_ec != asio::error::operation_aborted)
+            if (recv_ec != boost::asio::error::operation_aborted)
             {
                 LOG_CTX_WARN(ctx_, "{} udp receive error {}", log_event::kMux, recv_ec.message());
             }
@@ -478,7 +478,7 @@ asio::awaitable<void> remote_udp_session::udp_to_mux()
     }
 }
 
-asio::awaitable<void> remote_udp_session::idle_watchdog()
+boost::asio::awaitable<void> remote_udp_session::idle_watchdog()
 {
     if (idle_timeout_ms_ == 0)
     {
@@ -488,7 +488,7 @@ asio::awaitable<void> remote_udp_session::idle_watchdog()
     while (udp_socket_.is_open())
     {
         idle_timer_.expires_after(std::chrono::seconds(1));
-        const auto [wait_ec] = co_await idle_timer_.async_wait(asio::as_tuple(asio::use_awaitable));
+        const auto [wait_ec] = co_await idle_timer_.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
         if (wait_ec)
         {
             break;

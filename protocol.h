@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <cstring>
 
-#include <asio/ip/address.hpp>
+#include <boost/asio/ip/address.hpp>
 
 namespace socks
 {
@@ -67,7 +67,7 @@ struct socks_udp_header
 class socks_codec
 {
    public:
-    [[nodiscard]] static asio::ip::address normalize_ip_address(const asio::ip::address& addr);
+    [[nodiscard]] static boost::asio::ip::address normalize_ip_address(const boost::asio::ip::address& addr);
 
     [[nodiscard]] static std::vector<std::uint8_t> encode_udp_header(const socks_udp_header& h);
 

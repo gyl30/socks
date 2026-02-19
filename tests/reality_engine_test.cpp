@@ -181,7 +181,7 @@ TEST_F(reality_engine_test, AlertContentType)
         });
 
     ASSERT_FALSE(process_res.has_value());
-    EXPECT_EQ(process_res.error(), asio::error::eof);
+    EXPECT_EQ(process_res.error(), boost::asio::error::eof);
     EXPECT_TRUE(called);
 }
 

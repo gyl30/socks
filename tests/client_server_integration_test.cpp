@@ -7,11 +7,11 @@
 #include <functional>
 #include <system_error>
 
-#include <asio/read.hpp>
+#include <boost/asio/read.hpp>
 #include <gtest/gtest.h>
-#include <asio/write.hpp>
-#include <asio/buffer.hpp>
-#include <asio/ip/tcp.hpp>
+#include <boost/asio/write.hpp>
+#include <boost/asio/buffer.hpp>
+#include <boost/asio/ip/tcp.hpp>
 
 #include "config.h"
 #include "protocol.h"
@@ -108,31 +108,31 @@ class integration_test : public ::testing::Test
 namespace
 {
 
-std::shared_ptr<asio::ip::tcp::acceptor> create_ephemeral_acceptor(
-    asio::io_context& io_context,
+std::shared_ptr<boost::asio::ip::tcp::acceptor> create_ephemeral_acceptor(
+    boost::asio::io_context& io_context,
     const std::uint32_t max_attempts = 120,
     const std::chrono::milliseconds backoff = std::chrono::milliseconds(25))
 {
-    auto acceptor = std::make_shared<asio::ip::tcp::acceptor>(io_context);
+    auto acceptor = std::make_shared<boost::asio::ip::tcp::acceptor>(io_context);
     for (std::uint32_t attempt = 0; attempt < max_attempts; ++attempt)
     {
-        std::error_code ec;
+        boost::system::error_code ec;
         if (acceptor->is_open())
         {
             acceptor->close(ec);
         }
-        ec = acceptor->open(asio::ip::tcp::v4(), ec);
+        ec = acceptor->open(boost::asio::ip::tcp::v4(), ec);
         if (!ec)
         {
-            ec = acceptor->set_option(asio::ip::tcp::acceptor::reuse_address(true), ec);
+            ec = acceptor->set_option(boost::asio::ip::tcp::acceptor::reuse_address(true), ec);
         }
         if (!ec)
         {
-            ec = acceptor->bind(asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0), ec);
+            ec = acceptor->bind(boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 0), ec);
         }
         if (!ec)
         {
-            ec = acceptor->listen(asio::socket_base::max_listen_connections, ec);
+            ec = acceptor->listen(boost::asio::socket_base::max_listen_connections, ec);
         }
         if (!ec)
         {
@@ -147,13 +147,13 @@ bool wait_for_socks_listen(const std::uint16_t socks_port, const int attempts = 
 {
     for (int i = 0; i < attempts; ++i)
     {
-        asio::io_context io_context;
-        asio::ip::tcp::socket socket(io_context);
-        std::error_code ec;
-        socket.connect(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), socks_port), ec);
+        boost::asio::io_context io_context;
+        boost::asio::ip::tcp::socket socket(io_context);
+        boost::system::error_code ec;
+        socket.connect(boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address("127.0.0.1"), socks_port), ec);
         if (!ec)
         {
-            std::error_code ignore;
+            boost::system::error_code ignore;
             socket.close(ignore);
             return true;
         }
@@ -183,7 +183,7 @@ bool wait_for_socks_listen(const std::shared_ptr<mux::socks_client>& client,
 
 TEST_F(integration_test, FullHandshakeAndMux)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(2);
 
     const std::string sni = "www.google.com";
@@ -226,17 +226,17 @@ TEST_F(integration_test, FullHandshakeAndMux)
     std::uint16_t local_socks_port = 0;
     ASSERT_TRUE(wait_for_socks_listen(client, local_socks_port));
 
-    asio::io_context proxy_ctx;
-    asio::ip::tcp::socket proxy_socket(proxy_ctx);
-    proxy_socket.connect(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), local_socks_port), ec);
+    boost::asio::io_context proxy_ctx;
+    boost::asio::ip::tcp::socket proxy_socket(proxy_ctx);
+    proxy_socket.connect(boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address("127.0.0.1"), local_socks_port), ec);
     if (!ec)
     {
         std::uint8_t handshake[] = {0x05, 0x01, 0x00};
-        asio::write(proxy_socket, asio::buffer(handshake), ec);
+        boost::asio::write(proxy_socket, boost::asio::buffer(handshake), ec);
         EXPECT_FALSE(ec);
 
         std::uint8_t response[2];
-        asio::read(proxy_socket, asio::buffer(response), ec);
+        boost::asio::read(proxy_socket, boost::asio::buffer(response), ec);
         EXPECT_FALSE(ec);
         EXPECT_EQ(response[0], 0x05);
         EXPECT_EQ(response[1], 0x00);
@@ -249,7 +249,7 @@ TEST_F(integration_test, FullHandshakeAndMux)
 
 TEST_F(integration_test, FullDataTransfer)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(2);
 
     auto echo_acceptor = create_ephemeral_acceptor(pool.get_io_context());
@@ -258,20 +258,20 @@ TEST_F(integration_test, FullDataTransfer)
 
     struct echo_session : std::enable_shared_from_this<echo_session>
     {
-        asio::ip::tcp::socket socket;
+        boost::asio::ip::tcp::socket socket;
         std::vector<uint8_t> data;
-        echo_session(asio::ip::tcp::socket s) : socket(std::move(s)), data(1024) {}
+        echo_session(boost::asio::ip::tcp::socket s) : socket(std::move(s)), data(1024) {}
         void start()
         {
             auto self = shared_from_this();
-            socket.async_read_some(asio::buffer(data),
-                                   [self](std::error_code ec, std::size_t n)
+            socket.async_read_some(boost::asio::buffer(data),
+                                   [self](boost::system::error_code ec, std::size_t n)
                                    {
                                        if (!ec)
                                        {
-                                           asio::async_write(self->socket,
-                                                             asio::buffer(self->data, n),
-                                                             [self](std::error_code ec, std::size_t)
+                                           boost::asio::async_write(self->socket,
+                                                             boost::asio::buffer(self->data, n),
+                                                             [self](boost::system::error_code ec, std::size_t)
                                                              {
                                                                  if (!ec)
                                                                  {
@@ -288,7 +288,7 @@ TEST_F(integration_test, FullDataTransfer)
     *acceptor_handler = [echo_acceptor, weak_handler]()
     {
         echo_acceptor->async_accept(
-            [echo_acceptor, weak_handler](std::error_code ec, asio::ip::tcp::socket socket)
+            [echo_acceptor, weak_handler](boost::system::error_code ec, boost::asio::ip::tcp::socket socket)
             {
                 if (!ec)
                 {
@@ -296,7 +296,7 @@ TEST_F(integration_test, FullDataTransfer)
                 }
                 if (auto handler = weak_handler.lock())
                 {
-                    if (!ec || ec != asio::error::operation_aborted)
+                    if (!ec || ec != boost::asio::error::operation_aborted)
                     {
                         (*handler)();
                     }
@@ -344,33 +344,33 @@ TEST_F(integration_test, FullDataTransfer)
     ASSERT_TRUE(wait_for_socks_listen(client, local_socks_port));
 
     {
-        asio::io_context proxy_ctx;
-        asio::ip::tcp::socket proxy_socket(proxy_ctx);
-        proxy_socket.connect(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), local_socks_port), ec);
+        boost::asio::io_context proxy_ctx;
+        boost::asio::ip::tcp::socket proxy_socket(proxy_ctx);
+        proxy_socket.connect(boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address("127.0.0.1"), local_socks_port), ec);
         ASSERT_FALSE(ec);
 
         std::uint8_t handshake[] = {0x05, 0x01, 0x00};
-        asio::write(proxy_socket, asio::buffer(handshake));
+        boost::asio::write(proxy_socket, boost::asio::buffer(handshake));
         std::uint8_t resp[2];
-        asio::read(proxy_socket, asio::buffer(resp));
+        boost::asio::read(proxy_socket, boost::asio::buffer(resp));
         EXPECT_EQ(resp[0], 0x05);
         EXPECT_EQ(resp[1], 0x00);
 
         std::vector<uint8_t> conn_req = {0x05, 0x01, 0x00, 0x01, 127, 0, 0, 1};
         conn_req.push_back(static_cast<uint8_t>((echo_port >> 8) & 0xFF));
         conn_req.push_back(static_cast<uint8_t>(echo_port & 0xFF));
-        asio::write(proxy_socket, asio::buffer(conn_req));
+        boost::asio::write(proxy_socket, boost::asio::buffer(conn_req));
 
         std::uint8_t conn_resp[10];
-        asio::read(proxy_socket, asio::buffer(conn_resp));
+        boost::asio::read(proxy_socket, boost::asio::buffer(conn_resp));
         EXPECT_EQ(conn_resp[0], 0x05);
         EXPECT_EQ(conn_resp[1], 0x00);
 
         std::string test_data = "hello raii proxy echo server\n";
-        asio::write(proxy_socket, asio::buffer(test_data));
+        boost::asio::write(proxy_socket, boost::asio::buffer(test_data));
 
         std::vector<char> echo_buf(test_data.size());
-        asio::read(proxy_socket, asio::buffer(echo_buf));
+        boost::asio::read(proxy_socket, boost::asio::buffer(echo_buf));
         EXPECT_EQ(std::string(echo_buf.begin(), echo_buf.end()), test_data);
     }
 
@@ -382,7 +382,7 @@ TEST_F(integration_test, FullDataTransfer)
 
 TEST_F(integration_test, SocksRejectsUnsupportedMethod)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(2);
 
     auto stack = make_stack(pool, 0, 5);
@@ -395,17 +395,17 @@ TEST_F(integration_test, SocksRejectsUnsupportedMethod)
     std::uint16_t local_socks_port = 0;
     ASSERT_TRUE(wait_for_socks_listen(stack.client, local_socks_port));
 
-    asio::io_context proxy_ctx;
-    asio::ip::tcp::socket proxy_socket(proxy_ctx);
-    proxy_socket.connect(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), local_socks_port), ec);
+    boost::asio::io_context proxy_ctx;
+    boost::asio::ip::tcp::socket proxy_socket(proxy_ctx);
+    proxy_socket.connect(boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address("127.0.0.1"), local_socks_port), ec);
     ASSERT_FALSE(ec);
 
     std::uint8_t handshake[] = {socks::kVer, 0x01, socks::kMethodPassword};
-    asio::write(proxy_socket, asio::buffer(handshake), ec);
+    boost::asio::write(proxy_socket, boost::asio::buffer(handshake), ec);
     ASSERT_FALSE(ec);
 
     std::uint8_t response[2] = {0};
-    asio::read(proxy_socket, asio::buffer(response), ec);
+    boost::asio::read(proxy_socket, boost::asio::buffer(response), ec);
     ASSERT_FALSE(ec);
     EXPECT_EQ(response[0], socks::kVer);
     EXPECT_EQ(response[1], socks::kMethodNoAcceptable);
@@ -417,7 +417,7 @@ TEST_F(integration_test, SocksRejectsUnsupportedMethod)
 
 TEST_F(integration_test, SocksUnsupportedCommandReturnsCmdNotSupported)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(2);
 
     auto stack = make_stack(pool, 0, 5);
@@ -430,27 +430,27 @@ TEST_F(integration_test, SocksUnsupportedCommandReturnsCmdNotSupported)
     std::uint16_t local_socks_port = 0;
     ASSERT_TRUE(wait_for_socks_listen(stack.client, local_socks_port));
 
-    asio::io_context proxy_ctx;
-    asio::ip::tcp::socket proxy_socket(proxy_ctx);
-    proxy_socket.connect(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), local_socks_port), ec);
+    boost::asio::io_context proxy_ctx;
+    boost::asio::ip::tcp::socket proxy_socket(proxy_ctx);
+    proxy_socket.connect(boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address("127.0.0.1"), local_socks_port), ec);
     ASSERT_FALSE(ec);
 
     std::uint8_t handshake[] = {socks::kVer, 0x01, socks::kMethodNoAuth};
-    asio::write(proxy_socket, asio::buffer(handshake), ec);
+    boost::asio::write(proxy_socket, boost::asio::buffer(handshake), ec);
     ASSERT_FALSE(ec);
 
     std::uint8_t handshake_response[2] = {0};
-    asio::read(proxy_socket, asio::buffer(handshake_response), ec);
+    boost::asio::read(proxy_socket, boost::asio::buffer(handshake_response), ec);
     ASSERT_FALSE(ec);
     ASSERT_EQ(handshake_response[0], socks::kVer);
     ASSERT_EQ(handshake_response[1], socks::kMethodNoAuth);
 
     std::vector<std::uint8_t> bind_req = {socks::kVer, socks::kCmdBind, 0x00, socks::kAtypIpv4, 127, 0, 0, 1, 0, 80};
-    asio::write(proxy_socket, asio::buffer(bind_req), ec);
+    boost::asio::write(proxy_socket, boost::asio::buffer(bind_req), ec);
     ASSERT_FALSE(ec);
 
     std::uint8_t bind_resp[10] = {0};
-    asio::read(proxy_socket, asio::buffer(bind_resp), ec);
+    boost::asio::read(proxy_socket, boost::asio::buffer(bind_resp), ec);
     ASSERT_FALSE(ec);
     EXPECT_EQ(bind_resp[0], socks::kVer);
     EXPECT_EQ(bind_resp[1], socks::kRepCmdNotSupported);
@@ -462,15 +462,15 @@ TEST_F(integration_test, SocksUnsupportedCommandReturnsCmdNotSupported)
 
 TEST_F(integration_test, SocksConnectClosedPortReturnsFailure)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(2);
 
     auto stack = make_stack(pool, 0, 5);
     ASSERT_NE(stack.server->listen_port(), 0);
 
-    asio::io_context closed_target_context;
-    asio::ip::tcp::socket closed_target_socket(closed_target_context);
-    closed_target_socket.open(asio::ip::tcp::v4(), ec);
+    boost::asio::io_context closed_target_context;
+    boost::asio::ip::tcp::socket closed_target_socket(closed_target_context);
+    closed_target_socket.open(boost::asio::ip::tcp::v4(), ec);
     ASSERT_FALSE(ec);
     ASSERT_TRUE(mux::test::bind_ephemeral_tcp_socket(closed_target_socket));
     const auto closed_target_port = closed_target_socket.local_endpoint().port();
@@ -482,17 +482,17 @@ TEST_F(integration_test, SocksConnectClosedPortReturnsFailure)
     std::uint16_t local_socks_port = 0;
     ASSERT_TRUE(wait_for_socks_listen(stack.client, local_socks_port));
 
-    asio::io_context proxy_ctx;
-    asio::ip::tcp::socket proxy_socket(proxy_ctx);
-    proxy_socket.connect(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), local_socks_port), ec);
+    boost::asio::io_context proxy_ctx;
+    boost::asio::ip::tcp::socket proxy_socket(proxy_ctx);
+    proxy_socket.connect(boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address("127.0.0.1"), local_socks_port), ec);
     ASSERT_FALSE(ec);
 
     std::uint8_t handshake[] = {socks::kVer, 0x01, socks::kMethodNoAuth};
-    asio::write(proxy_socket, asio::buffer(handshake), ec);
+    boost::asio::write(proxy_socket, boost::asio::buffer(handshake), ec);
     ASSERT_FALSE(ec);
 
     std::uint8_t handshake_response[2] = {0};
-    asio::read(proxy_socket, asio::buffer(handshake_response), ec);
+    boost::asio::read(proxy_socket, boost::asio::buffer(handshake_response), ec);
     ASSERT_FALSE(ec);
     ASSERT_EQ(handshake_response[0], socks::kVer);
     ASSERT_EQ(handshake_response[1], socks::kMethodNoAuth);
@@ -500,11 +500,11 @@ TEST_F(integration_test, SocksConnectClosedPortReturnsFailure)
     std::vector<std::uint8_t> conn_req = {socks::kVer, socks::kCmdConnect, 0x00, socks::kAtypIpv4, 127, 0, 0, 1};
     conn_req.push_back(static_cast<std::uint8_t>((closed_target_port >> 8) & 0xFF));
     conn_req.push_back(static_cast<std::uint8_t>(closed_target_port & 0xFF));
-    asio::write(proxy_socket, asio::buffer(conn_req), ec);
+    boost::asio::write(proxy_socket, boost::asio::buffer(conn_req), ec);
     ASSERT_FALSE(ec);
 
     std::uint8_t conn_resp[10] = {0};
-    asio::read(proxy_socket, asio::buffer(conn_resp), ec);
+    boost::asio::read(proxy_socket, boost::asio::buffer(conn_resp), ec);
     ASSERT_FALSE(ec);
     EXPECT_EQ(conn_resp[0], socks::kVer);
     EXPECT_NE(conn_resp[1], socks::kRepSuccess);
