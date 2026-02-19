@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <cstddef>
 #include <expected>
 #include <utility>
 #include <system_error>
@@ -30,6 +31,16 @@ class upstream
 
     [[nodiscard]] virtual asio::awaitable<std::size_t> write(const std::vector<std::uint8_t>& data) = 0;
 
+    [[nodiscard]] virtual asio::awaitable<std::size_t> write(const std::uint8_t* data, const std::size_t len)
+    {
+        if (data == nullptr || len == 0)
+        {
+            co_return 0;
+        }
+        const std::vector<std::uint8_t> payload(data, data + len);
+        co_return co_await write(payload);
+    }
+
     virtual asio::awaitable<void> close() = 0;
 };
 
@@ -49,6 +60,7 @@ class direct_upstream : public upstream
     asio::awaitable<std::pair<std::error_code, std::size_t>> read(std::vector<std::uint8_t>& buf) override;
 
     asio::awaitable<std::size_t> write(const std::vector<std::uint8_t>& data) override;
+    asio::awaitable<std::size_t> write(const std::uint8_t* data, std::size_t len) override;
 
     asio::awaitable<void> close() override;
 
@@ -75,13 +87,14 @@ class proxy_upstream : public upstream
     asio::awaitable<std::pair<std::error_code, std::size_t>> read(std::vector<std::uint8_t>& buf) override;
 
     asio::awaitable<std::size_t> write(const std::vector<std::uint8_t>& data) override;
+    asio::awaitable<std::size_t> write(const std::uint8_t* data, std::size_t len) override;
 
     asio::awaitable<void> close() override;
 
   private:
     [[nodiscard]] bool is_tunnel_ready() const;
     asio::awaitable<bool> send_syn_request(const std::shared_ptr<mux_stream>& stream, const std::string& host, std::uint16_t port);
-    asio::awaitable<bool> wait_connect_ack(const std::shared_ptr<mux_stream>& stream);
+    asio::awaitable<bool> wait_connect_ack(const std::shared_ptr<mux_stream>& stream, const std::string& host, std::uint16_t port);
     asio::awaitable<void> cleanup_stream(const std::shared_ptr<mux_stream>& stream);
 
    private:
