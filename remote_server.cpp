@@ -908,22 +908,56 @@ std::uint16_t select_cipher_suite_from_fingerprint(const reality::server_fingerp
     return normalize_cipher_suite(fingerprint.cipher_suite != 0 ? fingerprint.cipher_suite : 0x1301);
 }
 
+boost::system::error_code classify_client_finished_read_failure(const timed_socket_read_res& read_res,
+                                                                const connection_context& ctx,
+                                                                const std::uint32_t timeout_sec,
+                                                                const char* stage)
+{
+    statistics::instance().inc_client_finished_failures();
+    if (read_res.timed_out)
+    {
+        LOG_CTX_WARN(ctx, "{} read {} timed out {}s", log_event::kHandshake, stage, timeout_sec);
+        return boost::asio::error::timed_out;
+    }
+    LOG_CTX_ERROR(ctx, "{} read {} error {}", log_event::kHandshake, stage, read_res.ec.message());
+    return read_res.ec;
+}
+
+boost::asio::awaitable<boost::system::error_code> consume_tls13_compat_ccs(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
+                                                                            std::array<std::uint8_t, 5>& header,
+                                                                            const connection_context& ctx,
+                                                                            const std::uint32_t timeout_sec)
+{
+    std::array<std::uint8_t, 1> ccs_body = {0};
+    const auto read_ccs = co_await read_socket_exact_with_timeout(socket, boost::asio::buffer(ccs_body), timeout_sec);
+    if (!read_ccs.ok)
+    {
+        co_return classify_client_finished_read_failure(read_ccs, ctx, timeout_sec, "ccs");
+    }
+    if (!reality::is_valid_tls13_compat_ccs(header, ccs_body[0]))
+    {
+        statistics::instance().inc_client_finished_failures();
+        LOG_CTX_ERROR(ctx, "{} invalid ccs body {}", log_event::kHandshake, ccs_body[0]);
+        co_return std::make_error_code(std::errc::bad_message);
+    }
+
+    const auto read_header_after_ccs = co_await read_socket_exact_with_timeout(socket, boost::asio::buffer(header), timeout_sec);
+    if (!read_header_after_ccs.ok)
+    {
+        co_return classify_client_finished_read_failure(read_header_after_ccs, ctx, timeout_sec, "client finished header after ccs");
+    }
+    co_return boost::system::error_code{};
+}
+
 boost::asio::awaitable<boost::system::error_code> read_tls_record_header_allow_ccs(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
-                                                                  std::array<std::uint8_t, 5>& header,
-                                                                  const connection_context& ctx,
-                                                                  const std::uint32_t timeout_sec)
+                                                                                     std::array<std::uint8_t, 5>& header,
+                                                                                     const connection_context& ctx,
+                                                                                     const std::uint32_t timeout_sec)
 {
     const auto read_header = co_await read_socket_exact_with_timeout(socket, boost::asio::buffer(header), timeout_sec);
     if (!read_header.ok)
     {
-        statistics::instance().inc_client_finished_failures();
-        if (read_header.timed_out)
-        {
-            LOG_CTX_WARN(ctx, "{} read client finished header timed out {}s", log_event::kHandshake, timeout_sec);
-            co_return boost::asio::error::timed_out;
-        }
-        LOG_CTX_ERROR(ctx, "{} read client finished header error {}", log_event::kHandshake, read_header.ec.message());
-        co_return read_header.ec;
+        co_return classify_client_finished_read_failure(read_header, ctx, timeout_sec, "client finished header");
     }
 
     if (header[0] != 0x14)
@@ -938,40 +972,7 @@ boost::asio::awaitable<boost::system::error_code> read_tls_record_header_allow_c
         LOG_CTX_ERROR(ctx, "{} invalid ccs length {}", log_event::kHandshake, ccs_len);
         co_return std::make_error_code(std::errc::bad_message);
     }
-
-    std::array<std::uint8_t, 1> ccs_body = {0};
-    const auto read_ccs = co_await read_socket_exact_with_timeout(socket, boost::asio::buffer(ccs_body), timeout_sec);
-    if (!read_ccs.ok)
-    {
-        statistics::instance().inc_client_finished_failures();
-        if (read_ccs.timed_out)
-        {
-            LOG_CTX_WARN(ctx, "{} read ccs timed out {}s", log_event::kHandshake, timeout_sec);
-            co_return boost::asio::error::timed_out;
-        }
-        LOG_CTX_ERROR(ctx, "{} read ccs error {}", log_event::kHandshake, read_ccs.ec.message());
-        co_return read_ccs.ec;
-    }
-    if (!reality::is_valid_tls13_compat_ccs(header, ccs_body[0]))
-    {
-        statistics::instance().inc_client_finished_failures();
-        LOG_CTX_ERROR(ctx, "{} invalid ccs body {}", log_event::kHandshake, ccs_body[0]);
-        co_return std::make_error_code(std::errc::bad_message);
-    }
-
-    const auto read_header_after_ccs = co_await read_socket_exact_with_timeout(socket, boost::asio::buffer(header), timeout_sec);
-    if (!read_header_after_ccs.ok)
-    {
-        statistics::instance().inc_client_finished_failures();
-        if (read_header_after_ccs.timed_out)
-        {
-            LOG_CTX_WARN(ctx, "{} read client finished header after ccs timed out {}s", log_event::kHandshake, timeout_sec);
-            co_return boost::asio::error::timed_out;
-        }
-        LOG_CTX_ERROR(ctx, "{} read client finished header after ccs error {}", log_event::kHandshake, read_header_after_ccs.ec.message());
-        co_return read_header_after_ccs.ec;
-    }
-    co_return boost::system::error_code{};
+    co_return co_await consume_tls13_compat_ccs(socket, header, ctx, timeout_sec);
 }
 
 boost::asio::awaitable<boost::system::error_code> read_tls_record_body(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
