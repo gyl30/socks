@@ -72,7 +72,6 @@ def build_clang_args(root: Path) -> List[str]:
         "c++",
         "-std=c++23",
         f"-I{root}",
-        f"-I{root / 'third' / 'asio' / 'include'}",
         f"-I{root / 'third' / 'spdlog' / 'include'}",
         f"-I{root / 'third' / 'rapidjson' / 'include'}",
     ]
