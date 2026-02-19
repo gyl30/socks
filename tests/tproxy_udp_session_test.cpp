@@ -768,15 +768,15 @@ TEST(TproxyUdpSessionTest, InternalGuardBranches)
     const auto session = std::make_shared<mux::tproxy_udp_session>(ctx, nullptr, router, nullptr, 3, cfg, client_ep);
 
     asio::ip::udp::endpoint src_ep;
-    std::vector<std::uint8_t> payload;
-    EXPECT_FALSE(session->decode_proxy_packet({0x00, 0x01}, src_ep, payload));
+    std::size_t payload_offset = 0;
+    EXPECT_FALSE(session->decode_proxy_packet({0x00, 0x01}, src_ep, payload_offset));
 
     socks_udp_header h;
     h.addr = "not-an-ip";
     h.port = 5353;
     auto pkt = socks_codec::encode_udp_header(h);
     pkt.push_back(0x42);
-    EXPECT_FALSE(session->decode_proxy_packet(pkt, src_ep, payload));
+    EXPECT_FALSE(session->decode_proxy_packet(pkt, src_ep, payload_offset));
 
     session->maybe_start_proxy_reader(false);
 
@@ -879,12 +879,13 @@ TEST(TproxyUdpSessionTest, SendDirectIPv6AndCloseResetBranches)
     EXPECT_EQ(session->stream_, nullptr);
     EXPECT_TRUE(session->tunnel_.expired());
 
-    session->stream_ = stream;
-    session->tunnel_ = tunnel;
-    session->on_reset();
+    auto reset_session = std::make_shared<mux::tproxy_udp_session>(ctx, nullptr, router, nullptr, 8, cfg, client_ep);
+    reset_session->stream_ = stream;
+    reset_session->tunnel_ = tunnel;
+    reset_session->on_reset();
     ctx.poll();
-    EXPECT_EQ(session->stream_, nullptr);
-    EXPECT_TRUE(session->tunnel_.expired());
+    EXPECT_EQ(reset_session->stream_, nullptr);
+    EXPECT_TRUE(reset_session->tunnel_.expired());
 
     session->stop();
     ctx.poll();
@@ -1031,13 +1032,14 @@ TEST(TproxyUdpSessionTest, StopAndOnCloseCoverPartialStateBranches)
     EXPECT_EQ(session->stream_, nullptr);
     EXPECT_TRUE(session->tunnel_.expired());
 
-    session->stream_ = stream;
-    session->tunnel_.reset();
-    session->on_close();
+    auto close_only_session = std::make_shared<mux::tproxy_udp_session>(ctx, nullptr, router, nullptr, 10, cfg, client_ep);
+    close_only_session->stream_ = stream;
+    close_only_session->tunnel_.reset();
+    close_only_session->on_close();
     ctx.run();
     ctx.restart();
-    EXPECT_EQ(session->stream_, nullptr);
-    EXPECT_TRUE(session->tunnel_.expired());
+    EXPECT_EQ(close_only_session->stream_, nullptr);
+    EXPECT_TRUE(close_only_session->tunnel_.expired());
 }
 
 TEST(TproxyUdpSessionTest, StopAndOnCloseRunInlineWhenIoContextStopped)
@@ -1067,11 +1069,10 @@ TEST(TproxyUdpSessionTest, StopAndOnCloseRunInlineWhenIoContextStopped)
     EXPECT_TRUE(session->tunnel_.expired());
     EXPECT_FALSE(session->direct_socket_.is_open());
 
-    session->stream_ = stream;
-    session->tunnel_ = tunnel;
     session->on_close();
     EXPECT_EQ(session->stream_, nullptr);
     EXPECT_TRUE(session->tunnel_.expired());
+    EXPECT_FALSE(session->direct_socket_.is_open());
 }
 
 TEST(TproxyUdpSessionTest, StopAndOnCloseRunWhenIoQueueBlocked)
@@ -1089,7 +1090,7 @@ TEST(TproxyUdpSessionTest, StopAndOnCloseRunWhenIoQueueBlocked)
     tunnel->connection_ = mock_conn;
     auto stream = std::make_shared<mux::mux_stream>(21, 109, "trace", mock_conn, ctx);
 
-    EXPECT_CALL(*mock_conn, remove_stream(21)).Times(2);
+    EXPECT_CALL(*mock_conn, remove_stream(21)).Times(1);
     EXPECT_CALL(*mock_conn, mock_send_async(testing::_, testing::_, testing::_)).Times(0);
 
     std::error_code ec;
@@ -1140,11 +1141,10 @@ TEST(TproxyUdpSessionTest, StopAndOnCloseRunWhenIoQueueBlocked)
     EXPECT_TRUE(session->tunnel_.expired());
     EXPECT_FALSE(session->direct_socket_.is_open());
 
-    session->stream_ = stream;
-    session->tunnel_ = tunnel;
     session->on_close();
     EXPECT_EQ(session->stream_, nullptr);
     EXPECT_TRUE(session->tunnel_.expired());
+    EXPECT_FALSE(session->direct_socket_.is_open());
 
     release_blocker.store(true, std::memory_order_release);
     ctx.stop();
@@ -1358,6 +1358,61 @@ TEST(TproxyUdpSessionTest, ProxyStreamLifecycleCoversInstallCleanupAndReaderStar
     ctx.restart();
 
     mux::test::run_awaitable_void(ctx, session->cleanup_proxy_stream(tunnel, stream));
+}
+
+TEST(TproxyUdpSessionTest, InstallProxyStreamRejectsWhenSessionAlreadyTerminated)
+{
+    asio::io_context ctx;
+    auto router = std::make_shared<proxy_router>();
+    mux::config cfg;
+    cfg.tproxy.mark = 0;
+    const asio::ip::udp::endpoint client_ep(asio::ip::make_address("127.0.0.1"), 12407);
+    auto session = std::make_shared<mux::tproxy_udp_session>(ctx, nullptr, router, nullptr, 11, cfg, client_ep);
+
+    auto tunnel = std::make_shared<mux::mux_tunnel_impl<asio::ip::tcp::socket>>(
+        asio::ip::tcp::socket(ctx), ctx, mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 103);
+    auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx);
+    tunnel->connection_ = mock_conn;
+    auto stream = std::make_shared<mux::mux_stream>(15, 103, "trace", mock_conn, ctx);
+
+    session->terminated_.store(true, std::memory_order_release);
+
+    bool should_start_reader = false;
+    EXPECT_CALL(*mock_conn, register_stream(testing::_, testing::_)).Times(0);
+    EXPECT_FALSE(session->install_proxy_stream(tunnel, stream, should_start_reader));
+    EXPECT_FALSE(should_start_reader);
+    EXPECT_EQ(session->stream_, nullptr);
+    EXPECT_TRUE(session->tunnel_.expired());
+}
+
+TEST(TproxyUdpSessionTest, InstallProxyStreamRejectsWhenTerminatedDuringRegister)
+{
+    asio::io_context ctx;
+    auto router = std::make_shared<proxy_router>();
+    mux::config cfg;
+    cfg.tproxy.mark = 0;
+    const asio::ip::udp::endpoint client_ep(asio::ip::make_address("127.0.0.1"), 12408);
+    auto session = std::make_shared<mux::tproxy_udp_session>(ctx, nullptr, router, nullptr, 12, cfg, client_ep);
+
+    auto tunnel = std::make_shared<mux::mux_tunnel_impl<asio::ip::tcp::socket>>(
+        asio::ip::tcp::socket(ctx), ctx, mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 104);
+    auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx);
+    tunnel->connection_ = mock_conn;
+    auto stream = std::make_shared<mux::mux_stream>(16, 104, "trace", mock_conn, ctx);
+
+    EXPECT_CALL(*mock_conn, register_stream(16, testing::_))
+        .WillOnce(
+            [session](const std::uint32_t /*id*/, const std::shared_ptr<mux::mux_stream_interface>& /*stream*/)
+            {
+                session->terminated_.store(true, std::memory_order_release);
+                return true;
+            });
+
+    bool should_start_reader = false;
+    EXPECT_FALSE(session->install_proxy_stream(tunnel, stream, should_start_reader));
+    EXPECT_FALSE(should_start_reader);
+    EXPECT_EQ(session->stream_, nullptr);
+    EXPECT_TRUE(session->tunnel_.expired());
 }
 
 TEST(TproxyUdpSessionTest, EnsureProxyStreamSucceedsWhenConcurrentInstallAlreadyCompleted)
