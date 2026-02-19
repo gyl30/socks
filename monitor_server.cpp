@@ -1,6 +1,5 @@
 #include <array>
 #include <charconv>
-#include <chrono>
 #include <string>
 #include <string_view>
 
@@ -60,81 +59,6 @@ void append_metric_line(std::string& out, const std::string_view metric_name, co
     out.push_back(' ');
     append_uint64(out, value);
     out.push_back('\n');
-}
-
-constexpr std::size_t kMonitorRateStateMaxSources = 4096;
-constexpr std::uint32_t kMonitorRateStateRetentionMultiplier = 32;
-constexpr auto kMonitorRateStateMinRetention = std::chrono::minutes(5);
-
-void prune_monitor_rate_state(
-    std::unordered_map<std::string,
-                       std::chrono::steady_clock::time_point,
-                       monitor_rate_state::transparent_string_hash,
-                       monitor_rate_state::transparent_string_equal>& last_request_time_by_source,
-    const std::chrono::steady_clock::time_point now,
-    std::chrono::milliseconds retention,
-    const std::string_view rate_key)
-{
-    if (retention < kMonitorRateStateMinRetention)
-    {
-        retention = kMonitorRateStateMinRetention;
-    }
-
-    for (auto it = last_request_time_by_source.begin(); it != last_request_time_by_source.end();)
-    {
-        if (now - it->second >= retention)
-        {
-            it = last_request_time_by_source.erase(it);
-            continue;
-        }
-        ++it;
-    }
-
-    if (last_request_time_by_source.size() < kMonitorRateStateMaxSources)
-    {
-        return;
-    }
-    if (last_request_time_by_source.find(rate_key) != last_request_time_by_source.end())
-    {
-        return;
-    }
-
-    auto oldest_it = last_request_time_by_source.end();
-    for (auto it = last_request_time_by_source.begin(); it != last_request_time_by_source.end(); ++it)
-    {
-        if (oldest_it == last_request_time_by_source.end() || it->second < oldest_it->second)
-        {
-            oldest_it = it;
-        }
-    }
-    if (oldest_it != last_request_time_by_source.end())
-    {
-        last_request_time_by_source.erase(oldest_it);
-    }
-}
-
-bool should_prune_monitor_rate_state(
-    const std::unordered_map<std::string,
-                             std::chrono::steady_clock::time_point,
-                             monitor_rate_state::transparent_string_hash,
-                             monitor_rate_state::transparent_string_equal>& last_request_time_by_source,
-    const std::chrono::steady_clock::time_point last_prune_time,
-    const std::chrono::steady_clock::time_point now,
-    std::chrono::milliseconds retention)
-{
-    if (last_request_time_by_source.size() >= kMonitorRateStateMaxSources)
-    {
-        return true;
-    }
-    if (retention < kMonitorRateStateMinRetention)
-    {
-        retention = kMonitorRateStateMinRetention;
-    }
-    if (last_prune_time.time_since_epoch().count() == 0)
-    {
-        return true;
-    }
-    return now - last_prune_time >= retention;
 }
 
 bool is_metrics_target(const beast::string_view target)
@@ -228,52 +152,10 @@ http::response<http::string_body> make_text_response(const http::status status,
 
 }    // namespace
 
-namespace detail
-{
-
-bool allow_monitor_request_by_source(monitor_rate_state& rate_state,
-                                     const std::string_view source_key,
-                                     const std::uint32_t min_interval_ms,
-                                     const std::chrono::steady_clock::time_point now)
-{
-    if (min_interval_ms == 0)
-    {
-        return true;
-    }
-
-    std::lock_guard<std::mutex> lock(rate_state.mutex);
-    const auto retention_ms = static_cast<std::uint64_t>(min_interval_ms) * kMonitorRateStateRetentionMultiplier;
-    const auto retention = std::chrono::milliseconds(retention_ms);
-    if (should_prune_monitor_rate_state(rate_state.last_request_time_by_source, rate_state.last_prune_time, now, retention))
-    {
-        prune_monitor_rate_state(rate_state.last_request_time_by_source, now, retention, source_key);
-        rate_state.last_prune_time = now;
-    }
-    if (auto it = rate_state.last_request_time_by_source.find(source_key); it != rate_state.last_request_time_by_source.end())
-    {
-        if (now - it->second < std::chrono::milliseconds(min_interval_ms))
-        {
-            return false;
-        }
-        it->second = now;
-        return true;
-    }
-    rate_state.last_request_time_by_source.emplace(std::string(source_key), now);
-    return true;
-}
-
-}    // namespace detail
-
 class monitor_session : public std::enable_shared_from_this<monitor_session>
 {
    public:
-    monitor_session(tcp::socket socket, std::string token, std::shared_ptr<monitor_rate_state> rate_state, std::uint32_t min_interval_ms)
-        : stream_(std::move(socket))
-    {
-        (void)token;
-        (void)rate_state;
-        (void)min_interval_ms;
-    }
+    explicit monitor_session(tcp::socket socket) : stream_(std::move(socket)) {}
 
     void start() { do_read(); }
 
@@ -350,22 +232,15 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
     http::response<http::string_body> response_;
 };
 
-monitor_server::monitor_server(boost::asio::io_context& ioc, std::uint16_t port, std::string token)
-    : monitor_server(ioc, "127.0.0.1", port, std::move(token), 0)
-{
-}
-
-monitor_server::monitor_server(boost::asio::io_context& ioc, std::uint16_t port, std::string token, const std::uint32_t min_interval_ms)
-    : monitor_server(ioc, "127.0.0.1", port, std::move(token), min_interval_ms)
+monitor_server::monitor_server(boost::asio::io_context& ioc, const std::uint16_t port)
+    : monitor_server(ioc, "127.0.0.1", port)
 {
 }
 
 monitor_server::monitor_server(boost::asio::io_context& ioc,
                                std::string bind_host,
-                               const std::uint16_t port,
-                               std::string token,
-                               const std::uint32_t min_interval_ms)
-    : acceptor_(ioc), token_(std::move(token)), min_interval_ms_(min_interval_ms)
+                               const std::uint16_t port)
+    : acceptor_(ioc)
 {
     auto close_acceptor_on_failure = [this]()
     {
@@ -476,7 +351,7 @@ void monitor_server::do_accept()
                 return;
             }
 
-            std::make_shared<monitor_session>(std::move(socket), self->token_, self->rate_state_, self->min_interval_ms_)->start();
+            std::make_shared<monitor_session>(std::move(socket))->start();
             self->do_accept();
         });
 }

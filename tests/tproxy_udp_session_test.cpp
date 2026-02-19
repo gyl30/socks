@@ -2054,7 +2054,7 @@ TEST(TproxyClientTest, UdpLoopBackpressureMetricsVisibleViaMonitorEndpoint)
     set_recvmsg_mode_sticky(wrapped_recvmsg_mode::kSyntheticValidSticky);
 
     boost::asio::io_context monitor_ioc;
-    auto monitor = std::make_shared<mux::monitor_server>(monitor_ioc, 0, std::string());
+    auto monitor = std::make_shared<mux::monitor_server>(monitor_ioc, 0);
     ASSERT_NE(monitor, nullptr);
     monitor->start();
     ASSERT_TRUE(monitor->acceptor_.is_open());

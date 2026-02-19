@@ -97,8 +97,6 @@ struct config
     {
         bool enabled = false;
         std::uint16_t port = 9090;
-        std::string token;
-        std::uint32_t min_interval_ms = 50;
     } monitor;
 
     struct reality_t

@@ -353,7 +353,7 @@ TEST(MonitorServerTest, GetMetricsReturnsHttpPayload)
 {
     statistics::instance().inc_total_connections();
 
-    monitor_server_env env(0, std::string());
+    monitor_server_env env(0);
     const auto port = env.port();
     ASSERT_NE(port, 0);
 
@@ -367,13 +367,13 @@ TEST(MonitorServerTest, GetMetricsReturnsHttpPayload)
 
 TEST(MonitorServerTest, SupportsMetricsPathQueryString)
 {
-    monitor_server_env env(0, std::string("ignored-token"), 1000);
+    monitor_server_env env(0);
     const auto port = env.port();
     ASSERT_NE(port, 0);
 
     const auto resp = request_with_retry(
         port,
-        "GET /metrics?token=ignored HTTP/1.1\r\n"
+        "GET /metrics?debug=1 HTTP/1.1\r\n"
         "Host: 127.0.0.1\r\n"
         "Connection: close\r\n"
         "\r\n");
@@ -383,7 +383,7 @@ TEST(MonitorServerTest, SupportsMetricsPathQueryString)
 
 TEST(MonitorServerTest, RejectsNonGetMethod)
 {
-    monitor_server_env env(0, std::string());
+    monitor_server_env env(0);
     const auto port = env.port();
     ASSERT_NE(port, 0);
 
@@ -398,7 +398,7 @@ TEST(MonitorServerTest, RejectsNonGetMethod)
 
 TEST(MonitorServerTest, RejectsNonMetricsPath)
 {
-    monitor_server_env env(0, std::string());
+    monitor_server_env env(0);
     const auto port = env.port();
     ASSERT_NE(port, 0);
 
@@ -413,7 +413,7 @@ TEST(MonitorServerTest, RejectsNonMetricsPath)
 
 TEST(MonitorServerTest, SupportsFragmentedHttpRequest)
 {
-    monitor_server_env env(0, std::string());
+    monitor_server_env env(0);
     const auto port = env.port();
     ASSERT_NE(port, 0);
 
@@ -456,7 +456,7 @@ TEST(MonitorServerTest, SupportsFragmentedHttpRequest)
 
 TEST(MonitorServerTest, TproxyUdpDispatchDropMetricReflectsDroppedPackets)
 {
-    monitor_server_env env(0, std::string());
+    monitor_server_env env(0);
     const auto port = env.port();
     ASSERT_NE(port, 0);
 
@@ -496,7 +496,7 @@ TEST(MonitorServerTest, TproxyUdpDispatchDropMetricReflectsDroppedPackets)
 
 TEST(MonitorServerTest, TproxyUdpDispatchMetricsCanDeriveDropRatio)
 {
-    monitor_server_env env(0, std::string());
+    monitor_server_env env(0);
     const auto port = env.port();
     ASSERT_NE(port, 0);
 
@@ -557,7 +557,7 @@ TEST(MonitorServerTest, EscapesPrometheusLabels)
     auto& stats = statistics::instance();
     stats.inc_handshake_failure_by_sni(statistics::handshake_failure_reason::kShortId, "line1\"x\\y\nline2");
 
-    monitor_server_env env(0, std::string());
+    monitor_server_env env(0);
     const auto port = env.port();
     ASSERT_NE(port, 0);
 
@@ -584,7 +584,7 @@ TEST(MonitorServerTest, ConstructWhenPortAlreadyInUse)
     ASSERT_NE(port, 0);
 
     boost::asio::io_context ioc;
-    auto server = std::make_shared<monitor_server>(ioc, port, std::string("token"), 10);
+    auto server = std::make_shared<monitor_server>(ioc, port);
     ASSERT_NE(server, nullptr);
     EXPECT_FALSE(server->acceptor_.is_open());
 }
@@ -592,14 +592,14 @@ TEST(MonitorServerTest, ConstructWhenPortAlreadyInUse)
 TEST(MonitorServerTest, ConstructorHandlesInvalidBindHost)
 {
     boost::asio::io_context ioc;
-    auto server = std::make_shared<monitor_server>(ioc, 0, std::string("token"), 10);
+    auto server = std::make_shared<monitor_server>(ioc, 0);
     ASSERT_NE(server, nullptr);
     ASSERT_TRUE(server->acceptor_.is_open());
     boost::system::error_code ec;
     const auto port = server->acceptor_.local_endpoint(ec).port();
     ASSERT_FALSE(ec);
     ASSERT_NE(port, 0);
-    auto bad_server = std::make_shared<monitor_server>(ioc, std::string("bad host"), port, std::string("token"), 10);
+    auto bad_server = std::make_shared<monitor_server>(ioc, std::string("bad host"), port);
     ASSERT_NE(bad_server, nullptr);
     EXPECT_FALSE(bad_server->acceptor_.is_open());
     bad_server->start();
@@ -610,7 +610,7 @@ TEST(MonitorServerTest, ConstructorHandlesOpenFailure)
 {
     boost::asio::io_context ioc;
     monitor_fail_guard guard(monitor_fail_mode::kSocketAlways);
-    auto server = std::make_shared<monitor_server>(ioc, 0, std::string("token"), 10);
+    auto server = std::make_shared<monitor_server>(ioc, 0);
     ASSERT_NE(server, nullptr);
     EXPECT_FALSE(server->acceptor_.is_open());
 }
@@ -619,7 +619,7 @@ TEST(MonitorServerTest, ConstructorHandlesReuseAddressFailure)
 {
     boost::asio::io_context ioc;
     monitor_fail_guard guard(monitor_fail_mode::kReuseAddrAlways);
-    auto server = std::make_shared<monitor_server>(ioc, 0, std::string("token"), 10);
+    auto server = std::make_shared<monitor_server>(ioc, 0);
     ASSERT_NE(server, nullptr);
     EXPECT_FALSE(server->acceptor_.is_open());
 }
@@ -628,7 +628,7 @@ TEST(MonitorServerTest, ConstructorHandlesListenFailure)
 {
     boost::asio::io_context ioc;
     monitor_fail_guard guard(monitor_fail_mode::kListenAlways);
-    auto server = std::make_shared<monitor_server>(ioc, 0, std::string("token"), 10);
+    auto server = std::make_shared<monitor_server>(ioc, 0);
     ASSERT_NE(server, nullptr);
     EXPECT_FALSE(server->acceptor_.is_open());
 }
@@ -636,7 +636,7 @@ TEST(MonitorServerTest, ConstructorHandlesListenFailure)
 TEST(MonitorServerTest, RunningReflectsStartAndStopLifecycle)
 {
     boost::asio::io_context ioc;
-    auto server = std::make_shared<monitor_server>(ioc, 0, std::string(), 10);
+    auto server = std::make_shared<monitor_server>(ioc, 0);
     ASSERT_NE(server, nullptr);
     EXPECT_FALSE(server->running());
 
@@ -650,7 +650,7 @@ TEST(MonitorServerTest, RunningReflectsStartAndStopLifecycle)
 TEST(MonitorServerTest, StartWhileRunningIsIgnored)
 {
     boost::asio::io_context ioc;
-    auto server = std::make_shared<monitor_server>(ioc, 0, std::string(), 10);
+    auto server = std::make_shared<monitor_server>(ioc, 0);
     ASSERT_NE(server, nullptr);
     server->start();
     EXPECT_TRUE(server->running());
@@ -678,7 +678,7 @@ TEST(MonitorServerTest, StartWhileRunningIsIgnored)
 TEST(MonitorServerTest, StopClosesAcceptorAndRejectsNewConnections)
 {
     boost::asio::io_context ioc;
-    auto server = std::make_shared<monitor_server>(ioc, 0, std::string(), 10);
+    auto server = std::make_shared<monitor_server>(ioc, 0);
     ASSERT_NE(server, nullptr);
     server->start();
     boost::system::error_code ec;
@@ -715,7 +715,7 @@ TEST(MonitorServerTest, StopClosesAcceptorAndRejectsNewConnections)
 TEST(MonitorServerTest, StopRunsInlineWhenIoContextStopped)
 {
     boost::asio::io_context ioc;
-    auto server = std::make_shared<monitor_server>(ioc, 0, std::string(), 10);
+    auto server = std::make_shared<monitor_server>(ioc, 0);
     ASSERT_NE(server, nullptr);
     ASSERT_TRUE(server->acceptor_.is_open());
 
@@ -727,7 +727,7 @@ TEST(MonitorServerTest, StopRunsInlineWhenIoContextStopped)
 TEST(MonitorServerTest, StopRunsWhenIoQueueBlocked)
 {
     boost::asio::io_context ioc;
-    auto server = std::make_shared<monitor_server>(ioc, 0, std::string(), 10);
+    auto server = std::make_shared<monitor_server>(ioc, 0);
     ASSERT_NE(server, nullptr);
     server->start();
 
@@ -765,7 +765,7 @@ TEST(MonitorServerTest, StopRunsWhenIoQueueBlocked)
 TEST(MonitorServerTest, StopRunsWhenIoContextNotRunning)
 {
     boost::asio::io_context ioc;
-    auto server = std::make_shared<monitor_server>(ioc, 0, std::string(), 10);
+    auto server = std::make_shared<monitor_server>(ioc, 0);
     ASSERT_NE(server, nullptr);
     ASSERT_TRUE(server->acceptor_.is_open());
 
@@ -776,7 +776,7 @@ TEST(MonitorServerTest, StopRunsWhenIoContextNotRunning)
 TEST(MonitorServerTest, StopLogsAcceptorCloseFailureBranch)
 {
     boost::asio::io_context ioc;
-    auto server = std::make_shared<monitor_server>(ioc, 0, std::string(), 10);
+    auto server = std::make_shared<monitor_server>(ioc, 0);
     ASSERT_NE(server, nullptr);
     server->start();
 
@@ -796,7 +796,7 @@ TEST(MonitorServerTest, StopLogsAcceptorCloseFailureBranch)
 
 TEST(MonitorServerTest, AcceptFailureRetriesAndServesRequest)
 {
-    monitor_server_env env(0, std::string());
+    monitor_server_env env(0);
     const auto port = env.port();
     ASSERT_NE(port, 0);
 
@@ -807,7 +807,7 @@ TEST(MonitorServerTest, AcceptFailureRetriesAndServesRequest)
 
 TEST(MonitorServerTest, SessionReadErrorPathStillAcceptsNextClient)
 {
-    monitor_server_env env(0, std::string());
+    monitor_server_env env(0);
     const auto port = env.port();
     ASSERT_NE(port, 0);
 
@@ -819,7 +819,7 @@ TEST(MonitorServerTest, SessionReadErrorPathStillAcceptsNextClient)
 TEST(MonitorServerTest, DoAcceptReturnsImmediatelyWhenStopped)
 {
     boost::asio::io_context ioc;
-    auto server = std::make_shared<monitor_server>(ioc, 0, std::string(), 10);
+    auto server = std::make_shared<monitor_server>(ioc, 0);
     ASSERT_NE(server, nullptr);
     ASSERT_TRUE(server->acceptor_.is_open());
 

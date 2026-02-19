@@ -75,8 +75,7 @@ bool start_runtime_services(mux::io_context_pool& pool, const mux::config& cfg, 
 {
     if (cfg.monitor.enabled)
     {
-        services.monitor = std::make_shared<mux::monitor_server>(
-            pool.get_io_context(), cfg.monitor.port, cfg.monitor.token, cfg.monitor.min_interval_ms);
+        services.monitor = std::make_shared<mux::monitor_server>(pool.get_io_context(), cfg.monitor.port);
         services.monitor->start();
         if (!services.monitor->running())
         {

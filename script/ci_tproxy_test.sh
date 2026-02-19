@@ -29,7 +29,6 @@ BIN=${BIN:-"$(pwd)/build/socks"}
 TPROXY_QUEUE_CAPACITY=${TPROXY_QUEUE_CAPACITY:-512}
 UDP_SESSION_QUEUE_CAPACITY=${UDP_SESSION_QUEUE_CAPACITY:-512}
 MONITOR_PORT=${MONITOR_PORT:-19090}
-MONITOR_TOKEN=${MONITOR_TOKEN:-tproxy_ci_token}
 UDP_BURST_COUNT=${UDP_BURST_COUNT:-0}
 UDP_BURST_PAYLOAD_BYTES=${UDP_BURST_PAYLOAD_BYTES:-256}
 UDP_BURST_TIMEOUT_MS=${UDP_BURST_TIMEOUT_MS:-1000}
@@ -289,8 +288,7 @@ cat >"${TMPDIR}/config.json" <<EOF
   },
   "monitor": {
     "enabled": true,
-    "port": ${MONITOR_PORT},
-    "token": "${MONITOR_TOKEN}"
+    "port": ${MONITOR_PORT}
   }
 }
 EOF
@@ -492,7 +490,12 @@ import json
 import socket
 
 sock = socket.create_connection(("127.0.0.1", int("${MONITOR_PORT}")), timeout=3)
-sock.sendall(b"metrics?token=${MONITOR_TOKEN}\n")
+sock.sendall(
+    b"GET /metrics HTTP/1.1\r\n"
+    b"Host: 127.0.0.1\r\n"
+    b"Connection: close\r\n"
+    b"\r\n"
+)
 parts = []
 while True:
     chunk = sock.recv(4096)
