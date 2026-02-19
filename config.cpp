@@ -6,6 +6,8 @@
 #include <expected>
 #include <utility>
 
+#include <openssl/crypto.h>
+
 #include "config.h"
 #include "reflect.h"
 #include "crypto_util.h"
@@ -247,11 +249,17 @@ std::string dump_default_config()
     config cfg;
     std::uint8_t public_key[32] = {0};
     std::uint8_t private_key[32] = {0};
+    const auto wipe_keys = [&]()
+    {
+        OPENSSL_cleanse(private_key, sizeof(private_key));
+        OPENSSL_cleanse(public_key, sizeof(public_key));
+    };
     if (reality::crypto_util::generate_x25519_keypair(public_key, private_key))
     {
         cfg.reality.private_key = reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(private_key, private_key + 32));
         cfg.reality.public_key = reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(public_key, public_key + 32));
     }
+    wipe_keys();
     cfg.fallbacks.push_back({});
     return dump_config(cfg);
 }
