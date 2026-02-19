@@ -908,22 +908,56 @@ std::uint16_t select_cipher_suite_from_fingerprint(const reality::server_fingerp
     return normalize_cipher_suite(fingerprint.cipher_suite != 0 ? fingerprint.cipher_suite : 0x1301);
 }
 
+boost::system::error_code classify_client_finished_read_failure(const timed_socket_read_res& read_res,
+                                                                const connection_context& ctx,
+                                                                const std::uint32_t timeout_sec,
+                                                                const char* stage)
+{
+    statistics::instance().inc_client_finished_failures();
+    if (read_res.timed_out)
+    {
+        LOG_CTX_WARN(ctx, "{} read {} timed out {}s", log_event::kHandshake, stage, timeout_sec);
+        return boost::asio::error::timed_out;
+    }
+    LOG_CTX_ERROR(ctx, "{} read {} error {}", log_event::kHandshake, stage, read_res.ec.message());
+    return read_res.ec;
+}
+
+boost::asio::awaitable<boost::system::error_code> consume_tls13_compat_ccs(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
+                                                                            std::array<std::uint8_t, 5>& header,
+                                                                            const connection_context& ctx,
+                                                                            const std::uint32_t timeout_sec)
+{
+    std::array<std::uint8_t, 1> ccs_body = {0};
+    const auto read_ccs = co_await read_socket_exact_with_timeout(socket, boost::asio::buffer(ccs_body), timeout_sec);
+    if (!read_ccs.ok)
+    {
+        co_return classify_client_finished_read_failure(read_ccs, ctx, timeout_sec, "ccs");
+    }
+    if (!reality::is_valid_tls13_compat_ccs(header, ccs_body[0]))
+    {
+        statistics::instance().inc_client_finished_failures();
+        LOG_CTX_ERROR(ctx, "{} invalid ccs body {}", log_event::kHandshake, ccs_body[0]);
+        co_return std::make_error_code(std::errc::bad_message);
+    }
+
+    const auto read_header_after_ccs = co_await read_socket_exact_with_timeout(socket, boost::asio::buffer(header), timeout_sec);
+    if (!read_header_after_ccs.ok)
+    {
+        co_return classify_client_finished_read_failure(read_header_after_ccs, ctx, timeout_sec, "client finished header after ccs");
+    }
+    co_return boost::system::error_code{};
+}
+
 boost::asio::awaitable<boost::system::error_code> read_tls_record_header_allow_ccs(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
-                                                                  std::array<std::uint8_t, 5>& header,
-                                                                  const connection_context& ctx,
-                                                                  const std::uint32_t timeout_sec)
+                                                                                     std::array<std::uint8_t, 5>& header,
+                                                                                     const connection_context& ctx,
+                                                                                     const std::uint32_t timeout_sec)
 {
     const auto read_header = co_await read_socket_exact_with_timeout(socket, boost::asio::buffer(header), timeout_sec);
     if (!read_header.ok)
     {
-        statistics::instance().inc_client_finished_failures();
-        if (read_header.timed_out)
-        {
-            LOG_CTX_WARN(ctx, "{} read client finished header timed out {}s", log_event::kHandshake, timeout_sec);
-            co_return boost::asio::error::timed_out;
-        }
-        LOG_CTX_ERROR(ctx, "{} read client finished header error {}", log_event::kHandshake, read_header.ec.message());
-        co_return read_header.ec;
+        co_return classify_client_finished_read_failure(read_header, ctx, timeout_sec, "client finished header");
     }
 
     if (header[0] != 0x14)
@@ -938,40 +972,7 @@ boost::asio::awaitable<boost::system::error_code> read_tls_record_header_allow_c
         LOG_CTX_ERROR(ctx, "{} invalid ccs length {}", log_event::kHandshake, ccs_len);
         co_return std::make_error_code(std::errc::bad_message);
     }
-
-    std::array<std::uint8_t, 1> ccs_body = {0};
-    const auto read_ccs = co_await read_socket_exact_with_timeout(socket, boost::asio::buffer(ccs_body), timeout_sec);
-    if (!read_ccs.ok)
-    {
-        statistics::instance().inc_client_finished_failures();
-        if (read_ccs.timed_out)
-        {
-            LOG_CTX_WARN(ctx, "{} read ccs timed out {}s", log_event::kHandshake, timeout_sec);
-            co_return boost::asio::error::timed_out;
-        }
-        LOG_CTX_ERROR(ctx, "{} read ccs error {}", log_event::kHandshake, read_ccs.ec.message());
-        co_return read_ccs.ec;
-    }
-    if (!reality::is_valid_tls13_compat_ccs(header, ccs_body[0]))
-    {
-        statistics::instance().inc_client_finished_failures();
-        LOG_CTX_ERROR(ctx, "{} invalid ccs body {}", log_event::kHandshake, ccs_body[0]);
-        co_return std::make_error_code(std::errc::bad_message);
-    }
-
-    const auto read_header_after_ccs = co_await read_socket_exact_with_timeout(socket, boost::asio::buffer(header), timeout_sec);
-    if (!read_header_after_ccs.ok)
-    {
-        statistics::instance().inc_client_finished_failures();
-        if (read_header_after_ccs.timed_out)
-        {
-            LOG_CTX_WARN(ctx, "{} read client finished header after ccs timed out {}s", log_event::kHandshake, timeout_sec);
-            co_return boost::asio::error::timed_out;
-        }
-        LOG_CTX_ERROR(ctx, "{} read client finished header after ccs error {}", log_event::kHandshake, read_header_after_ccs.ec.message());
-        co_return read_header_after_ccs.ec;
-    }
-    co_return boost::system::error_code{};
+    co_return co_await consume_tls13_compat_ccs(socket, header, ctx, timeout_sec);
 }
 
 boost::asio::awaitable<boost::system::error_code> read_tls_record_body(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
@@ -2155,54 +2156,66 @@ void remote_server::cleanup_fallback_guard_state_locked(const std::chrono::stead
                   { return now - kv.second.last_seen > ttl; });
 }
 
-bool remote_server::consume_fallback_token(const connection_context& ctx)
+void remote_server::evict_fallback_guard_source_if_needed_locked(const std::string& source_key)
 {
-    if (!fallback_guard_config_.enabled)
+    if (fallback_guard_states_.size() < kFallbackGuardMaxSources || fallback_guard_states_.contains(source_key))
     {
-        return true;
+        return;
     }
 
-    const auto now = std::chrono::steady_clock::now();
-    std::lock_guard<std::mutex> lock(fallback_guard_mu_);
-    cleanup_fallback_guard_state_locked(now);
-
-    const auto source_key = fallback_guard_key(ctx);
-    if (fallback_guard_states_.size() >= kFallbackGuardMaxSources && fallback_guard_states_.find(source_key) == fallback_guard_states_.end())
+    auto oldest_it = fallback_guard_states_.end();
+    for (auto it = fallback_guard_states_.begin(); it != fallback_guard_states_.end(); ++it)
     {
-        auto oldest_it = fallback_guard_states_.end();
-        for (auto it = fallback_guard_states_.begin(); it != fallback_guard_states_.end(); ++it)
+        if (oldest_it == fallback_guard_states_.end() || it->second.last_seen < oldest_it->second.last_seen)
         {
-            if (oldest_it == fallback_guard_states_.end() || it->second.last_seen < oldest_it->second.last_seen)
-            {
-                oldest_it = it;
-            }
-        }
-        if (oldest_it != fallback_guard_states_.end())
-        {
-            fallback_guard_states_.erase(oldest_it);
+            oldest_it = it;
         }
     }
+    if (oldest_it != fallback_guard_states_.end())
+    {
+        fallback_guard_states_.erase(oldest_it);
+    }
+}
 
+remote_server::fallback_guard_state& remote_server::get_or_init_fallback_guard_state_locked(
+    const std::string& source_key,
+    const std::chrono::steady_clock::time_point& now)
+{
     auto& state = fallback_guard_states_[source_key];
     if (state.tokens == 0 && state.last_seen.time_since_epoch().count() == 0)
     {
         state.tokens = static_cast<double>(fallback_guard_config_.burst);
         state.last_refill = now;
     }
+    return state;
+}
 
+void remote_server::refill_fallback_tokens_locked(
+    fallback_guard_state& state,
+    const std::chrono::steady_clock::time_point& now) const
+{
     const auto rate_per_sec = static_cast<double>(fallback_guard_config_.rate_per_sec);
-    if (rate_per_sec > 0)
+    if (rate_per_sec <= 0)
     {
-        const auto elapsed = std::chrono::duration<double>(now - state.last_refill).count();
-        if (elapsed > 0)
-        {
-            const auto burst = static_cast<double>(fallback_guard_config_.burst);
-            state.tokens = std::min(burst, state.tokens + elapsed * rate_per_sec);
-            state.last_refill = now;
-        }
+        return;
     }
-    state.last_seen = now;
 
+    const auto elapsed = std::chrono::duration<double>(now - state.last_refill).count();
+    if (elapsed <= 0)
+    {
+        return;
+    }
+
+    const auto burst = static_cast<double>(fallback_guard_config_.burst);
+    state.tokens = std::min(burst, state.tokens + elapsed * rate_per_sec);
+    state.last_refill = now;
+}
+
+bool remote_server::fallback_guard_allows_request_locked(
+    fallback_guard_state& state,
+    const std::chrono::steady_clock::time_point& now)
+{
+    state.last_seen = now;
     if (state.circuit_open_until > now)
     {
         statistics::instance().inc_fallback_rate_limited();
@@ -2217,6 +2230,24 @@ bool remote_server::consume_fallback_token(const connection_context& ctx)
 
     state.tokens -= 1.0;
     return true;
+}
+
+bool remote_server::consume_fallback_token(const connection_context& ctx)
+{
+    if (!fallback_guard_config_.enabled)
+    {
+        return true;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    std::lock_guard<std::mutex> lock(fallback_guard_mu_);
+    cleanup_fallback_guard_state_locked(now);
+
+    const auto source_key = fallback_guard_key(ctx);
+    evict_fallback_guard_source_if_needed_locked(source_key);
+    auto& state = get_or_init_fallback_guard_state_locked(source_key, now);
+    refill_fallback_tokens_locked(state, now);
+    return fallback_guard_allows_request_locked(state, now);
 }
 
 void remote_server::record_fallback_result(const connection_context& ctx, const bool success)

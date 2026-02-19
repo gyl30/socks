@@ -248,9 +248,19 @@ class remote_server : public std::enable_shared_from_this<remote_server>
                                           const connection_context& ctx,
                                           const std::string& sni);
 
+    struct fallback_guard_state;
+
     [[nodiscard]] bool consume_fallback_token(const connection_context& ctx);
     void record_fallback_result(const connection_context& ctx, bool success);
     void cleanup_fallback_guard_state_locked(const std::chrono::steady_clock::time_point& now);
+    void evict_fallback_guard_source_if_needed_locked(const std::string& source_key);
+    [[nodiscard]] fallback_guard_state& get_or_init_fallback_guard_state_locked(
+        const std::string& source_key,
+        const std::chrono::steady_clock::time_point& now);
+    void refill_fallback_tokens_locked(fallback_guard_state& state, const std::chrono::steady_clock::time_point& now) const;
+    [[nodiscard]] bool fallback_guard_allows_request_locked(
+        fallback_guard_state& state,
+        const std::chrono::steady_clock::time_point& now);
     [[nodiscard]] std::string fallback_guard_key(const connection_context& ctx) const;
     [[nodiscard]] std::string connection_limit_source_key(const std::shared_ptr<boost::asio::ip::tcp::socket>& s) const;
 
