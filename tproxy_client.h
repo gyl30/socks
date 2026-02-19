@@ -10,11 +10,11 @@
 #include <unordered_map>
 #include <system_error>
 
-#include <asio/ip/tcp.hpp>
-#include <asio/ip/udp.hpp>
-#include <asio/io_context.hpp>
-#include <asio/awaitable.hpp>
-#include <asio/experimental/concurrent_channel.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/ip/udp.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/awaitable.hpp>
+#include <boost/asio/experimental/concurrent_channel.hpp>
 
 #include "config.h"
 #include "router.h"
@@ -29,12 +29,12 @@ namespace mux
 
 struct tproxy_udp_dispatch_item
 {
-    asio::ip::udp::endpoint src_ep;
-    asio::ip::udp::endpoint dst_ep;
+    boost::asio::ip::udp::endpoint src_ep;
+    boost::asio::ip::udp::endpoint dst_ep;
     std::vector<std::uint8_t> payload;
 };
 
-using tproxy_udp_dispatch_channel = asio::experimental::concurrent_channel<void(std::error_code, tproxy_udp_dispatch_item)>;
+using tproxy_udp_dispatch_channel = boost::asio::experimental::concurrent_channel<void(boost::system::error_code, tproxy_udp_dispatch_item)>;
 
 class tproxy_client : public std::enable_shared_from_this<tproxy_client>
 {
@@ -57,28 +57,35 @@ class tproxy_client : public std::enable_shared_from_this<tproxy_client>
     }
 
     [[nodiscard]] static bool enqueue_udp_packet(tproxy_udp_dispatch_channel& dispatch_channel,
-                                                 const asio::ip::udp::endpoint& src_ep,
-                                                 const asio::ip::udp::endpoint& dst_ep,
+                                                 const boost::asio::ip::udp::endpoint& src_ep,
+                                                 const boost::asio::ip::udp::endpoint& dst_ep,
                                                  const std::vector<std::uint8_t>& buffer,
                                                  std::size_t packet_len);
 
    private:
-    asio::awaitable<void> accept_tcp_loop();
+    boost::asio::awaitable<void> accept_tcp_loop();
 
-    asio::awaitable<void> udp_loop();
+    boost::asio::awaitable<void> udp_loop();
 
-    asio::awaitable<void> udp_cleanup_loop();
+    boost::asio::awaitable<void> udp_cleanup_loop();
 
-    asio::awaitable<void> udp_dispatch_loop();
+    boost::asio::awaitable<void> udp_dispatch_loop();
 
-    [[nodiscard]] std::string endpoint_key(const asio::ip::udp::endpoint& ep) const;
+    [[nodiscard]] std::string endpoint_key(const boost::asio::ip::udp::endpoint& ep) const;
+    void rollback_start_state();
+    [[nodiscard]] bool validate_start_prerequisites(std::shared_ptr<client_tunnel_pool>& tunnel_pool,
+                                                    std::shared_ptr<router>& router);
+    [[nodiscard]] bool setup_runtime_sockets(std::string& tcp_listen_host, std::string& udp_listen_host);
+    void start_runtime_loops(const std::shared_ptr<client_tunnel_pool>& tunnel_pool,
+                             const std::string& tcp_listen_host,
+                             const std::string& udp_listen_host);
 
    private:
     std::atomic<bool> stop_{false};
     std::atomic<bool> started_{false};
-    asio::io_context& io_context_;
-    asio::ip::tcp::acceptor tcp_acceptor_;
-    asio::ip::udp::socket udp_socket_;
+    boost::asio::io_context& io_context_;
+    boost::asio::ip::tcp::acceptor tcp_acceptor_;
+    boost::asio::ip::udp::socket udp_socket_;
     std::shared_ptr<client_tunnel_pool> tunnel_pool_;
     std::shared_ptr<router> router_;
     std::shared_ptr<tproxy_udp_sender> sender_;

@@ -10,8 +10,8 @@
 #include <functional>
 #include <system_error>
 
-#include <asio/error.hpp>
-#include <asio/streambuf.hpp>
+#include <boost/asio/error.hpp>
+#include <boost/asio/streambuf.hpp>
 
 #include "reality_core.h"
 #include "cipher_context.h"
@@ -40,12 +40,12 @@ class reality_engine
 
     void commit_read(const std::size_t n) { rx_buf_->commit(n); }
 
-    [[nodiscard]] std::expected<void, std::error_code> process_available_records(const record_callback& callback);
+    [[nodiscard]] std::expected<void, boost::system::error_code> process_available_records(const record_callback& callback);
 
-    [[nodiscard]] std::expected<std::span<const std::uint8_t>, std::error_code> encrypt(const std::vector<std::uint8_t>& plaintext);
+    [[nodiscard]] std::expected<std::span<const std::uint8_t>, boost::system::error_code> encrypt(const std::vector<std::uint8_t>& plaintext);
 
    private:
-    [[nodiscard]] std::expected<bool, std::error_code> try_decrypt_next_record(std::uint8_t& content_type, std::size_t& payload_len);
+    [[nodiscard]] std::expected<bool, boost::system::error_code> try_decrypt_next_record(std::uint8_t& content_type, std::size_t& payload_len);
 
     std::vector<std::uint8_t> read_key_;
     std::vector<std::uint8_t> read_iv_;
@@ -55,7 +55,7 @@ class reality_engine
     reality::cipher_context encrypt_ctx_;
     std::uint64_t read_seq_ = 0;
     std::uint64_t write_seq_ = 0;
-    std::unique_ptr<asio::streambuf> rx_buf_;
+    std::unique_ptr<boost::asio::streambuf> rx_buf_;
     const EVP_CIPHER* cipher_;
     std::vector<std::uint8_t> tx_buf_;
     std::vector<std::uint8_t> scratch_buf_;
