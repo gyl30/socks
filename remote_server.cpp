@@ -62,6 +62,7 @@ namespace
 constexpr std::uint32_t kEphemeralServerBindRetryAttempts = 120;
 const auto kEphemeralServerBindRetryDelay = std::chrono::milliseconds(25);
 constexpr std::size_t kFallbackGuardMaxSources = 4096;
+constexpr std::size_t kTlsRecordHeaderSize = 5;
 
 bool parse_hex_to_bytes(const std::string& hex, std::vector<std::uint8_t>& out, const std::size_t max_len, const char* label)
 {
@@ -148,6 +149,133 @@ using timed_socket_read_res = timeout_io::timed_tcp_read_result;
 using timed_socket_write_res = timeout_io::timed_tcp_write_result;
 using timed_socket_resolve_res = timeout_io::timed_tcp_resolve_result;
 using timed_socket_connect_res = timeout_io::timed_tcp_connect_result;
+
+[[nodiscard]] bool should_skip_fallback_after_read_failure(const boost::system::error_code& read_ec, const std::atomic<bool>& stop_flag);
+boost::asio::awaitable<timed_socket_read_res> read_socket_with_timeout(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
+                                                                const boost::asio::mutable_buffer buffer,
+                                                                const std::uint32_t timeout_sec,
+                                                                const bool require_full_buffer);
+
+struct initial_read_outcome
+{
+    bool ok = false;
+    bool allow_fallback = false;
+    boost::system::error_code ec;
+};
+
+[[nodiscard]] initial_read_outcome make_initial_read_error(const boost::system::error_code& ec, const bool allow_fallback = false)
+{
+    return initial_read_outcome{.ok = false, .allow_fallback = allow_fallback, .ec = ec};
+}
+
+[[nodiscard]] initial_read_outcome classify_initial_read_failure(const timed_socket_read_res& read_res,
+                                                                 const connection_context& ctx,
+                                                                 const std::uint32_t timeout_sec,
+                                                                 const std::atomic<bool>& stop_flag)
+{
+    if (read_res.timed_out)
+    {
+        LOG_CTX_WARN(ctx, "{} initial read timed out {}s", log_event::kHandshake, timeout_sec);
+    }
+    else if (!should_skip_fallback_after_read_failure(read_res.ec, stop_flag))
+    {
+        LOG_CTX_ERROR(ctx, "{} initial read error {}", log_event::kHandshake, read_res.ec.message());
+    }
+    return make_initial_read_error(read_res.ec);
+}
+
+[[nodiscard]] initial_read_outcome classify_header_read_failure(const timed_socket_read_res& read_res,
+                                                                const connection_context& ctx,
+                                                                const std::uint32_t timeout_sec,
+                                                                const std::size_t header_size,
+                                                                const std::atomic<bool>& stop_flag)
+{
+    if (read_res.timed_out)
+    {
+        LOG_CTX_WARN(ctx, "{} header read timed out {}s", log_event::kHandshake, timeout_sec);
+        return make_initial_read_error(read_res.ec);
+    }
+    if (read_res.ec == boost::asio::error::eof)
+    {
+        LOG_CTX_WARN(ctx, "{} invalid tls header short read {}", log_event::kHandshake, header_size);
+        return make_initial_read_error(read_res.ec, true);
+    }
+    if (!should_skip_fallback_after_read_failure(read_res.ec, stop_flag))
+    {
+        LOG_CTX_ERROR(ctx, "{} header read error {}", log_event::kHandshake, read_res.ec.message());
+    }
+    return make_initial_read_error(read_res.ec);
+}
+
+[[nodiscard]] initial_read_outcome classify_body_read_failure(const timed_socket_read_res& read_res,
+                                                              const connection_context& ctx,
+                                                              const std::uint32_t timeout_sec,
+                                                              const std::atomic<bool>& stop_flag)
+{
+    if (read_res.timed_out)
+    {
+        LOG_CTX_WARN(ctx, "{} handshake body read timed out {}s", log_event::kHandshake, timeout_sec);
+    }
+    else if (!should_skip_fallback_after_read_failure(read_res.ec, stop_flag))
+    {
+        LOG_CTX_ERROR(ctx, "{} handshake body read error {}", log_event::kHandshake, read_res.ec.message());
+    }
+    return make_initial_read_error(read_res.ec);
+}
+
+boost::asio::awaitable<initial_read_outcome> fill_tls_record_header(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
+                                                                     const connection_context& ctx,
+                                                                     std::vector<std::uint8_t>& buf,
+                                                                     const std::uint32_t timeout_sec,
+                                                                     const std::atomic<bool>& stop_flag)
+{
+    while (buf.size() < kTlsRecordHeaderSize)
+    {
+        if (stop_flag.load(std::memory_order_acquire))
+        {
+            co_return make_initial_read_error(boost::asio::error::operation_aborted);
+        }
+        std::vector<std::uint8_t> header_remaining(kTlsRecordHeaderSize - buf.size());
+        const auto header_read = co_await read_socket_with_timeout(socket, boost::asio::buffer(header_remaining), timeout_sec, true);
+        if (!header_read.ok)
+        {
+            if (header_read.read_size > 0)
+            {
+                header_remaining.resize(header_read.read_size);
+                buf.insert(buf.end(), header_remaining.begin(), header_remaining.end());
+            }
+            co_return classify_header_read_failure(header_read, ctx, timeout_sec, buf.size(), stop_flag);
+        }
+        header_remaining.resize(header_read.read_size);
+        buf.insert(buf.end(), header_remaining.begin(), header_remaining.end());
+    }
+    co_return initial_read_outcome{.ok = true};
+}
+
+boost::asio::awaitable<initial_read_outcome> fill_tls_record_body(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
+                                                                   const connection_context& ctx,
+                                                                   std::vector<std::uint8_t>& buf,
+                                                                   const std::uint32_t payload_len,
+                                                                   const std::uint32_t timeout_sec,
+                                                                   const std::atomic<bool>& stop_flag)
+{
+    while (buf.size() < kTlsRecordHeaderSize + payload_len)
+    {
+        if (stop_flag.load(std::memory_order_acquire))
+        {
+            co_return make_initial_read_error(boost::asio::error::operation_aborted);
+        }
+        std::vector<std::uint8_t> extra(kTlsRecordHeaderSize + payload_len - buf.size());
+        const auto extra_read = co_await read_socket_with_timeout(socket, boost::asio::buffer(extra), timeout_sec, true);
+        if (!extra_read.ok)
+        {
+            co_return classify_body_read_failure(extra_read, ctx, timeout_sec, stop_flag);
+        }
+        extra.resize(extra_read.read_size);
+        buf.insert(buf.end(), extra.begin(), extra.end());
+    }
+    co_return initial_read_outcome{.ok = true};
+}
 
 [[nodiscard]] bool should_skip_fallback_after_read_failure(const boost::system::error_code& read_ec, const std::atomic<bool>& stop_flag)
 {
@@ -1689,6 +1817,10 @@ boost::asio::awaitable<remote_server::initial_read_res> remote_server::read_init
                                                                                            const connection_context& ctx,
                                                                                            std::vector<std::uint8_t>& buf)
 {
+    const auto to_member_result = [](const initial_read_outcome& outcome)
+    {
+        return initial_read_res{.ok = outcome.ok, .allow_fallback = outcome.allow_fallback, .ec = outcome.ec};
+    };
     const auto timeout_sec = timeout_config_.read;
     if (stop_.load(std::memory_order_acquire))
     {
@@ -1699,50 +1831,13 @@ boost::asio::awaitable<remote_server::initial_read_res> remote_server::read_init
     const auto first_read = co_await read_socket_with_timeout(s, boost::asio::buffer(buf), timeout_sec, false);
     if (!first_read.ok)
     {
-        if (first_read.timed_out)
-        {
-            LOG_CTX_WARN(ctx, "{} initial read timed out {}s", log_event::kHandshake, timeout_sec);
-        }
-        else if (!should_skip_fallback_after_read_failure(first_read.ec, stop_))
-        {
-            LOG_CTX_ERROR(ctx, "{} initial read error {}", log_event::kHandshake, first_read.ec.message());
-        }
-        co_return initial_read_res{.ok = false, .allow_fallback = false, .ec = first_read.ec};
+        co_return to_member_result(classify_initial_read_failure(first_read, ctx, timeout_sec, stop_));
     }
     buf.resize(first_read.read_size);
-    while (buf.size() < 5)
+    const auto header_read = co_await fill_tls_record_header(s, ctx, buf, timeout_sec, stop_);
+    if (!header_read.ok)
     {
-        if (stop_.load(std::memory_order_acquire))
-        {
-            co_return initial_read_res{.ok = false, .allow_fallback = false, .ec = boost::asio::error::operation_aborted};
-        }
-        std::vector<std::uint8_t> header_remaining(5 - buf.size());
-        const auto header_read = co_await read_socket_with_timeout(s, boost::asio::buffer(header_remaining), timeout_sec, true);
-        if (!header_read.ok)
-        {
-            if (header_read.read_size > 0)
-            {
-                header_remaining.resize(header_read.read_size);
-                buf.insert(buf.end(), header_remaining.begin(), header_remaining.end());
-            }
-            if (header_read.timed_out)
-            {
-                LOG_CTX_WARN(ctx, "{} header read timed out {}s", log_event::kHandshake, timeout_sec);
-                co_return initial_read_res{.ok = false, .allow_fallback = false, .ec = header_read.ec};
-            }
-            if (header_read.ec == boost::asio::error::eof)
-            {
-                LOG_CTX_WARN(ctx, "{} invalid tls header short read {}", log_event::kHandshake, buf.size());
-                co_return initial_read_res{.ok = false, .allow_fallback = true, .ec = header_read.ec};
-            }
-            if (!should_skip_fallback_after_read_failure(header_read.ec, stop_))
-            {
-                LOG_CTX_ERROR(ctx, "{} header read error {}", log_event::kHandshake, header_read.ec.message());
-            }
-            co_return initial_read_res{.ok = false, .allow_fallback = false, .ec = header_read.ec};
-        }
-        header_remaining.resize(header_read.read_size);
-        buf.insert(buf.end(), header_remaining.begin(), header_remaining.end());
+        co_return to_member_result(header_read);
     }
 
     if (buf[0] != 0x16)
@@ -1751,29 +1846,10 @@ boost::asio::awaitable<remote_server::initial_read_res> remote_server::read_init
         co_return initial_read_res{.ok = false, .allow_fallback = true};
     }
     const std::size_t len = static_cast<std::uint16_t>((buf[3] << 8) | buf[4]);
-    while (buf.size() < 5 + len)
+    const auto body_read = co_await fill_tls_record_body(s, ctx, buf, static_cast<std::uint32_t>(len), timeout_sec, stop_);
+    if (!body_read.ok)
     {
-        if (stop_.load(std::memory_order_acquire))
-        {
-            co_return initial_read_res{.ok = false, .allow_fallback = false, .ec = boost::asio::error::operation_aborted};
-        }
-        std::vector<std::uint8_t> tmp(5 + len - buf.size());
-        const auto extra_read = co_await read_socket_with_timeout(s, boost::asio::buffer(tmp), timeout_sec, true);
-        if (!extra_read.ok)
-        {
-            if (extra_read.timed_out)
-            {
-                LOG_CTX_WARN(ctx, "{} handshake body read timed out {}s", log_event::kHandshake, timeout_sec);
-            }
-            else if (!should_skip_fallback_after_read_failure(extra_read.ec, stop_))
-            {
-                LOG_CTX_ERROR(ctx, "{} handshake body read error {}", log_event::kHandshake, extra_read.ec.message());
-            }
-            co_return initial_read_res{.ok = false, .allow_fallback = false, .ec = extra_read.ec};
-        }
-        const auto n2 = extra_read.read_size;
-        tmp.resize(n2);
-        buf.insert(buf.end(), tmp.begin(), tmp.end());
+        co_return to_member_result(body_read);
     }
     LOG_CTX_DEBUG(ctx, "{} received client hello record size {}", log_event::kHandshake, buf.size());
     co_return initial_read_res{.ok = true};

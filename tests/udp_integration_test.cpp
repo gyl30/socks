@@ -5,6 +5,7 @@
 #include <thread>
 #include <vector>
 #include <cstdint>
+#include <optional>
 
 #include <gtest/gtest.h>
 #include <boost/asio/write.hpp>
@@ -153,6 +154,184 @@ static std::uint16_t wait_for_socks_listen_port(const std::shared_ptr<socks_clie
     return 0;
 }
 
+static void close_tcp_socket_quietly(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket)
+{
+    if (socket == nullptr)
+    {
+        return;
+    }
+    boost::system::error_code ignore;
+    socket->close(ignore);
+}
+
+static boost::asio::awaitable<void> wait_socks_retry(boost::asio::steady_timer& retry_timer)
+{
+    retry_timer.expires_after(std::chrono::milliseconds(50));
+    auto [wait_ec] = co_await retry_timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
+    (void)wait_ec;
+}
+
+static boost::asio::awaitable<bool> send_socks_method_no_auth(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket)
+{
+    std::uint8_t method_req[] = {0x05, 0x01, 0x00};
+    auto [write_ec, write_n] = co_await boost::asio::async_write(*socket, boost::asio::buffer(method_req), boost::asio::as_tuple(boost::asio::use_awaitable));
+    (void)write_n;
+    if (write_ec)
+    {
+        co_return false;
+    }
+
+    std::uint8_t method_res[2];
+    auto [read_ec, read_n] = co_await boost::asio::async_read(*socket, boost::asio::buffer(method_res), boost::asio::as_tuple(boost::asio::use_awaitable));
+    if (read_ec || read_n != sizeof(method_res))
+    {
+        co_return false;
+    }
+    co_return method_res[0] == 0x05 && method_res[1] == 0x00;
+}
+
+static boost::asio::awaitable<std::optional<std::uint16_t>> request_udp_associate_port(
+    const std::shared_ptr<boost::asio::ip::tcp::socket>& socket)
+{
+    std::uint8_t associate_req[] = {0x05, 0x03, 0x00, 0x01, 0, 0, 0, 0, 0, 0};
+    auto [assoc_write_ec, assoc_write_n] =
+        co_await boost::asio::async_write(*socket, boost::asio::buffer(associate_req), boost::asio::as_tuple(boost::asio::use_awaitable));
+    (void)assoc_write_n;
+    if (assoc_write_ec)
+    {
+        co_return std::nullopt;
+    }
+
+    std::uint8_t associate_res[10];
+    auto [assoc_read_ec, assoc_read_n] =
+        co_await boost::asio::async_read(*socket, boost::asio::buffer(associate_res), boost::asio::as_tuple(boost::asio::use_awaitable));
+    if (assoc_read_ec || assoc_read_n != sizeof(associate_res) || associate_res[1] != 0x00)
+    {
+        co_return std::nullopt;
+    }
+    co_return static_cast<std::uint16_t>((associate_res[8] << 8) | associate_res[9]);
+}
+
+struct udp_associate_ready
+{
+    std::shared_ptr<boost::asio::ip::tcp::socket> tcp_socket;
+    std::uint16_t proxy_bind_port = 0;
+};
+
+static boost::asio::awaitable<std::optional<udp_associate_ready>> establish_udp_associate_channel(const std::uint16_t local_socks_port,
+                                                                                            const int max_attempts = 60)
+{
+    auto exec = co_await boost::asio::this_coro::executor;
+    boost::asio::steady_timer retry_timer(exec);
+
+    for (int attempt = 0; attempt < max_attempts; ++attempt)
+    {
+        auto socket = std::make_shared<boost::asio::ip::tcp::socket>(exec);
+        auto [connect_ec] =
+            co_await socket->async_connect({boost::asio::ip::make_address("127.0.0.1"), local_socks_port}, boost::asio::as_tuple(boost::asio::use_awaitable));
+        if (connect_ec)
+        {
+            co_await wait_socks_retry(retry_timer);
+            continue;
+        }
+
+        const bool method_ok = co_await send_socks_method_no_auth(socket);
+        if (!method_ok)
+        {
+            close_tcp_socket_quietly(socket);
+            co_await wait_socks_retry(retry_timer);
+            continue;
+        }
+
+        const auto proxy_port = co_await request_udp_associate_port(socket);
+        if (!proxy_port.has_value())
+        {
+            close_tcp_socket_quietly(socket);
+            co_await wait_socks_retry(retry_timer);
+            continue;
+        }
+
+        co_return udp_associate_ready{.tcp_socket = socket, .proxy_bind_port = *proxy_port};
+    }
+    co_return std::nullopt;
+}
+
+static std::vector<std::uint8_t> build_udp_packet(const std::uint16_t echo_server_port, const std::string& payload_data)
+{
+    std::vector<std::uint8_t> packet;
+    packet.reserve(10 + payload_data.size());
+    packet.push_back(0x00);
+    packet.push_back(0x00);
+    packet.push_back(0x00);
+    packet.push_back(0x01);
+    packet.push_back(127);
+    packet.push_back(0);
+    packet.push_back(0);
+    packet.push_back(1);
+    packet.push_back(static_cast<std::uint8_t>((echo_server_port >> 8) & 0xFF));
+    packet.push_back(static_cast<std::uint8_t>(echo_server_port & 0xFF));
+    packet.insert(packet.end(), payload_data.begin(), payload_data.end());
+    return packet;
+}
+
+static boost::asio::awaitable<bool> send_udp_echo_and_validate(const std::shared_ptr<boost::asio::ip::udp::socket>& udp_socket,
+                                                        const std::uint16_t proxy_bind_port,
+                                                        const std::uint16_t echo_server_port,
+                                                        const std::string& payload_data)
+{
+    const auto packet = build_udp_packet(echo_server_port, payload_data);
+    const boost::asio::ip::udp::endpoint proxy_ep(boost::asio::ip::make_address("127.0.0.1"), proxy_bind_port);
+    auto [send_ec, send_n] = co_await udp_socket->async_send_to(boost::asio::buffer(packet), proxy_ep, boost::asio::as_tuple(boost::asio::use_awaitable));
+    (void)send_n;
+    if (send_ec)
+    {
+        co_return false;
+    }
+
+    std::vector<std::uint8_t> recv_buf(4096);
+    boost::asio::ip::udp::endpoint sender_ep;
+    auto [recv_ec, recv_n] = co_await udp_socket->async_receive_from(boost::asio::buffer(recv_buf), sender_ep, boost::asio::as_tuple(boost::asio::use_awaitable));
+    if (recv_ec || recv_n <= 10)
+    {
+        co_return false;
+    }
+
+    const std::string recv_payload(recv_buf.begin() + 10, recv_buf.begin() + recv_n);
+    co_return recv_payload == payload_data;
+}
+
+static boost::asio::awaitable<void> run_udp_associate_echo_flow(const std::uint16_t local_socks_port,
+                                                         const std::uint16_t echo_server_port,
+                                                         std::atomic<bool>& test_passed,
+                                                         std::atomic<bool>& test_failed,
+                                                         std::shared_ptr<boost::asio::ip::tcp::socket>& client_tcp,
+                                                         std::shared_ptr<boost::asio::ip::udp::socket>& client_udp)
+{
+    const auto ready = co_await establish_udp_associate_channel(local_socks_port);
+    if (!ready.has_value())
+    {
+        test_failed = true;
+        co_return;
+    }
+
+    client_tcp = ready->tcp_socket;
+    auto exec = co_await boost::asio::this_coro::executor;
+    client_udp = std::make_shared<boost::asio::ip::udp::socket>(exec);
+
+    boost::system::error_code udp_ec;
+    client_udp->open(boost::asio::ip::udp::v4(), udp_ec);
+    if (udp_ec)
+    {
+        test_failed = true;
+        co_return;
+    }
+
+    const std::string payload_data = "Hello UDP Multi-Stage Handshake";
+    const bool echo_ok = co_await send_udp_echo_and_validate(client_udp, ready->proxy_bind_port, echo_server_port, payload_data);
+    test_passed = echo_ok;
+    test_failed = !echo_ok;
+}
+
 TEST_F(udp_integration_test, UdpAssociateAndEcho)
 {
     boost::system::error_code ec;
@@ -213,138 +392,7 @@ TEST_F(udp_integration_test, UdpAssociateAndEcho)
     boost::asio::cancellation_signal cancel_sig;
     boost::asio::co_spawn(
         pool.get_io_context(),
-        [&]() -> boost::asio::awaitable<void>
-        {
-            auto exec = co_await boost::asio::this_coro::executor;
-            boost::asio::steady_timer retry_timer(exec);
-
-            std::uint16_t proxy_bind_port = 0;
-            bool socks_ready = false;
-            for (int attempt = 0; attempt < 60; ++attempt)
-            {
-                auto sock = std::make_shared<boost::asio::ip::tcp::socket>(exec);
-                auto [connect_ec] =
-                    co_await sock->async_connect({boost::asio::ip::make_address("127.0.0.1"), local_socks_port}, boost::asio::as_tuple(boost::asio::use_awaitable));
-                if (connect_ec)
-                {
-                    retry_timer.expires_after(std::chrono::milliseconds(50));
-                    co_await retry_timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
-                    continue;
-                }
-
-                std::uint8_t method_req[] = {0x05, 0x01, 0x00};
-                auto [write_ec, write_n] = co_await boost::asio::async_write(*sock, boost::asio::buffer(method_req), boost::asio::as_tuple(boost::asio::use_awaitable));
-                (void)write_n;
-                if (write_ec)
-                {
-                    boost::system::error_code ignore;
-                    sock->close(ignore);
-                    retry_timer.expires_after(std::chrono::milliseconds(50));
-                    co_await retry_timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
-                    continue;
-                }
-
-                std::uint8_t method_res[2];
-                auto [read_ec, read_n] = co_await boost::asio::async_read(*sock, boost::asio::buffer(method_res), boost::asio::as_tuple(boost::asio::use_awaitable));
-                if (read_ec || read_n != sizeof(method_res) || method_res[0] != 0x05 || method_res[1] != 0x00)
-                {
-                    boost::system::error_code ignore;
-                    sock->close(ignore);
-                    retry_timer.expires_after(std::chrono::milliseconds(50));
-                    co_await retry_timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
-                    continue;
-                }
-
-                std::uint8_t associate_req[] = {0x05, 0x03, 0x00, 0x01, 0, 0, 0, 0, 0, 0};
-                auto [assoc_write_ec, assoc_write_n] =
-                    co_await boost::asio::async_write(*sock, boost::asio::buffer(associate_req), boost::asio::as_tuple(boost::asio::use_awaitable));
-                (void)assoc_write_n;
-                if (assoc_write_ec)
-                {
-                    boost::system::error_code ignore;
-                    sock->close(ignore);
-                    retry_timer.expires_after(std::chrono::milliseconds(50));
-                    co_await retry_timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
-                    continue;
-                }
-
-                std::uint8_t associate_res[10];
-                auto [assoc_read_ec, assoc_read_n] =
-                    co_await boost::asio::async_read(*sock, boost::asio::buffer(associate_res), boost::asio::as_tuple(boost::asio::use_awaitable));
-                if (assoc_read_ec || assoc_read_n != sizeof(associate_res) || associate_res[1] != 0x00)
-                {
-                    boost::system::error_code ignore;
-                    sock->close(ignore);
-                    retry_timer.expires_after(std::chrono::milliseconds(50));
-                    co_await retry_timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
-                    continue;
-                }
-
-                proxy_bind_port = (associate_res[8] << 8) | associate_res[9];
-                client_tcp = sock;
-                socks_ready = true;
-                break;
-            }
-
-            if (!socks_ready)
-            {
-                test_failed = true;
-                co_return;
-            }
-
-            client_udp = std::make_shared<boost::asio::ip::udp::socket>(exec);
-            boost::system::error_code udp_ec;
-            client_udp->open(boost::asio::ip::udp::v4(), udp_ec);
-            if (udp_ec)
-            {
-                test_failed = true;
-                co_return;
-            }
-
-            const std::string payload_data = "Hello UDP Multi-Stage Handshake";
-            std::vector<uint8_t> packet;
-            packet.push_back(0x00);
-            packet.push_back(0x00);
-            packet.push_back(0x00);
-            packet.push_back(0x01);
-            packet.push_back(127);
-            packet.push_back(0);
-            packet.push_back(0);
-            packet.push_back(1);
-            packet.push_back((echo_server_port >> 8) & 0xFF);
-            packet.push_back(echo_server_port & 0xFF);
-            packet.insert(packet.end(), payload_data.begin(), payload_data.end());
-
-            const boost::asio::ip::udp::endpoint proxy_ep(boost::asio::ip::make_address("127.0.0.1"), proxy_bind_port);
-            auto [send_ec, send_n] = co_await client_udp->async_send_to(boost::asio::buffer(packet), proxy_ep, boost::asio::as_tuple(boost::asio::use_awaitable));
-            (void)send_n;
-            if (send_ec)
-            {
-                test_failed = true;
-                co_return;
-            }
-
-            std::vector<uint8_t> recv_buf(4096);
-            boost::asio::ip::udp::endpoint sender_ep;
-            auto [re, n] = co_await client_udp->async_receive_from(boost::asio::buffer(recv_buf), sender_ep, boost::asio::as_tuple(boost::asio::use_awaitable));
-
-            if (!re && n > 10)
-            {
-                const std::string recv_payload(recv_buf.begin() + 10, recv_buf.begin() + n);
-                if (recv_payload == payload_data)
-                {
-                    test_passed = true;
-                }
-                else
-                {
-                    test_failed = true;
-                }
-            }
-            else
-            {
-                test_failed = true;
-            }
-        },
+        run_udp_associate_echo_flow(local_socks_port, echo_server_port, test_passed, test_failed, client_tcp, client_udp),
         boost::asio::bind_cancellation_slot(cancel_sig.slot(), boost::asio::detached));
 
     for (int i = 0; i < 200; ++i)
