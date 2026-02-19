@@ -1,7 +1,5 @@
 #include <string>
 #include <vector>
-#include <atomic>
-#include <chrono>
 #include <cstring>
 #include <memory>
 #include <expected>
@@ -15,7 +13,6 @@
 #include <asio/connect.hpp>
 #include <asio/as_tuple.hpp>
 #include <asio/use_awaitable.hpp>
-#include <asio/steady_timer.hpp>
 
 #include "log.h"
 #include "protocol.h"
@@ -25,119 +22,10 @@
 #include "mux_stream.h"
 #include "log_context.h"
 #include "mux_protocol.h"
+#include "timeout_io.h"
 
 namespace mux
 {
-
-namespace
-{
-
-struct timed_resolve_result
-{
-    bool ok = false;
-    bool timed_out = false;
-    asio::ip::tcp::resolver::results_type endpoints;
-    std::error_code ec;
-};
-
-struct timed_connect_result
-{
-    bool ok = false;
-    bool timed_out = false;
-    std::error_code ec;
-};
-
-asio::awaitable<timed_resolve_result> resolve_with_timeout(asio::ip::tcp::resolver& resolver,
-                                                           const std::string& host,
-                                                           const std::string& port,
-                                                           const std::uint32_t timeout_sec)
-{
-    auto timer = std::make_shared<asio::steady_timer>(resolver.get_executor());
-    auto timeout_triggered = std::make_shared<std::atomic<bool>>(false);
-    timer->expires_after(std::chrono::seconds(timeout_sec));
-    timer->async_wait(
-        [&resolver, timeout_triggered](const std::error_code& timer_ec)
-        {
-            if (timer_ec)
-            {
-                return;
-            }
-            timeout_triggered->store(true, std::memory_order_release);
-            resolver.cancel();
-        });
-
-    const auto [resolve_ec, endpoints] = co_await resolver.async_resolve(host, port, asio::as_tuple(asio::use_awaitable));
-    const auto cancelled = timer->cancel();
-    (void)cancelled;
-    if (timeout_triggered->load(std::memory_order_acquire))
-    {
-        co_return timed_resolve_result{
-            .ok = false,
-            .timed_out = true,
-            .ec = asio::error::timed_out};
-    }
-    if (resolve_ec)
-    {
-        co_return timed_resolve_result{
-            .ok = false,
-            .ec = resolve_ec};
-    }
-    co_return timed_resolve_result{
-        .ok = true,
-        .endpoints = endpoints};
-}
-
-asio::awaitable<timed_connect_result> connect_with_timeout(asio::ip::tcp::socket& socket,
-                                                           const asio::ip::tcp::endpoint& endpoint,
-                                                           const std::uint32_t timeout_sec)
-{
-    auto timer = std::make_shared<asio::steady_timer>(socket.get_executor());
-    auto timeout_triggered = std::make_shared<std::atomic<bool>>(false);
-    timer->expires_after(std::chrono::seconds(timeout_sec));
-    timer->async_wait(
-        [&socket, timeout_triggered](const std::error_code& timer_ec)
-        {
-            if (timer_ec)
-            {
-                return;
-            }
-            timeout_triggered->store(true, std::memory_order_release);
-            std::error_code cancel_ec;
-            socket.cancel(cancel_ec);
-            if (cancel_ec && cancel_ec != asio::error::bad_descriptor)
-            {
-                LOG_WARN("direct upstream cancel timeout socket failed {}", cancel_ec.message());
-            }
-
-            std::error_code close_ec;
-            socket.close(close_ec);
-            if (close_ec && close_ec != asio::error::bad_descriptor)
-            {
-                LOG_WARN("direct upstream close timeout socket failed {}", close_ec.message());
-            }
-        });
-
-    const auto [connect_ec] = co_await socket.async_connect(endpoint, asio::as_tuple(asio::use_awaitable));
-    const auto cancelled = timer->cancel();
-    (void)cancelled;
-    if (timeout_triggered->load(std::memory_order_acquire))
-    {
-        co_return timed_connect_result{
-            .ok = false,
-            .timed_out = true,
-            .ec = asio::error::timed_out};
-    }
-    if (connect_ec)
-    {
-        co_return timed_connect_result{
-            .ok = false,
-            .ec = connect_ec};
-    }
-    co_return timed_connect_result{
-        .ok = true};
-}
-
-}    // namespace
 
 std::expected<void, std::error_code> direct_upstream::open_socket_for_endpoint(const asio::ip::tcp::endpoint& endpoint)
 {
@@ -180,8 +68,8 @@ void direct_upstream::apply_no_delay()
 
 asio::awaitable<bool> direct_upstream::connect(const std::string& host, const std::uint16_t port)
 {
-    const auto timeout_sec = (timeout_sec_ == 0) ? 1U : timeout_sec_;
-    const auto resolve_res = co_await resolve_with_timeout(resolver_, host, std::to_string(port), timeout_sec);
+    const auto timeout_sec = timeout_sec_;
+    const auto resolve_res = co_await timeout_io::async_resolve_with_timeout(resolver_, host, std::to_string(port), timeout_sec);
     if (!resolve_res.ok)
     {
         if (resolve_res.timed_out)
@@ -206,7 +94,7 @@ asio::awaitable<bool> direct_upstream::connect(const std::string& host, const st
 
         apply_socket_mark();
 
-        const auto connect_res = co_await connect_with_timeout(socket_, entry.endpoint(), timeout_sec);
+        const auto connect_res = co_await timeout_io::async_connect_with_timeout(socket_, entry.endpoint(), timeout_sec, "direct upstream");
         if (!connect_res.ok)
         {
             if (connect_res.timed_out)

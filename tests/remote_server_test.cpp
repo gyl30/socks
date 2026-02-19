@@ -846,7 +846,8 @@ TEST_F(remote_server_test, FallbackConnectTimeoutIncrementsMetricWhenBacklogSatu
     ASSERT_FALSE(ec);
 
     auto cfg = make_server_cfg(0, {{"", "127.0.0.1", std::to_string(saturated_port)}}, "0102030405060708");
-    cfg.timeout.write = 1;
+    cfg.timeout.read = 1;
+    cfg.timeout.write = 100;
     auto server = std::make_shared<mux::remote_server>(pool, cfg);
 
     const auto connect_fail_before = mux::statistics::instance().fallback_connect_failures();

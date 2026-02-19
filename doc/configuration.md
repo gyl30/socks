@@ -26,6 +26,8 @@
 ## 传输与超时
 
 - `timeout.read` / `timeout.write` / `timeout.idle`：读写与空闲超时秒数。
+- `timeout.read = 0` 与 `timeout.write = 0`：表示禁用对应读写阶段超时。
+- `timeout.idle = 0`：表示禁用空闲超时。
 - `heartbeat.enabled`：是否启用心跳。
 - `heartbeat.idle_timeout`：空闲多久触发心跳。
 - `heartbeat.min_interval` / `heartbeat.max_interval`：心跳随机间隔。
@@ -54,6 +56,7 @@
 4. SOCKS5 请求中，目标主机为空必须拒绝；`CONNECT` 请求目标端口为 `0` 必须拒绝；`UDP ASSOCIATE` 允许端口 `0`。
 5. 监控接口仅接受 `GET /metrics` 或 `metrics`，并要求 `token` 参数精确匹配；未授权请求不得占用限流窗口。
 6. 客户端配置变更不支持热加载，修改配置后必须重启客户端进程生效。
+7. `timeout.read = 0` 与 `timeout.write = 0` 必须表示禁用对应阶段超时，不得隐式归一化为最小正值。
 
 ## REALITY
 

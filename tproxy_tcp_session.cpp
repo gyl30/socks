@@ -121,7 +121,8 @@ asio::awaitable<std::pair<route_type, std::shared_ptr<upstream>>> tproxy_tcp_ses
     const auto route = co_await router_->decide_ip(ctx_, host, dst_ep_.address());
     if (route == route_type::kDirect)
     {
-        const std::shared_ptr<upstream> backend = std::make_shared<direct_upstream>(io_context_, ctx_, mark_);
+        const auto connect_timeout_sec = (timeout_config_.read == 0) ? 1U : timeout_config_.read;
+        const std::shared_ptr<upstream> backend = std::make_shared<direct_upstream>(io_context_, ctx_, mark_, connect_timeout_sec);
         co_return std::make_pair(route, backend);
     }
 

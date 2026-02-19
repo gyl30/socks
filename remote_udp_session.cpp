@@ -21,6 +21,7 @@
 #include "log_context.h"
 #include "mux_protocol.h"
 #include "stop_dispatch.h"
+#include "timeout_io.h"
 #include "remote_udp_session.h"
 
 namespace mux
@@ -28,14 +29,6 @@ namespace mux
 
 namespace
 {
-
-struct timed_udp_resolve_result
-{
-    bool ok = false;
-    bool timed_out = false;
-    asio::ip::udp::resolver::results_type endpoints;
-    std::error_code ec;
-};
 
 [[nodiscard]] std::uint64_t now_ms()
 {
@@ -60,46 +53,6 @@ struct timed_udp_resolve_result
     v6_bytes[14] = v4_bytes[2];
     v6_bytes[15] = v4_bytes[3];
     return asio::ip::udp::endpoint(asio::ip::address_v6(v6_bytes), endpoint.port());
-}
-
-asio::awaitable<timed_udp_resolve_result> resolve_udp_with_timeout(asio::ip::udp::resolver& resolver,
-                                                                   const std::string& host,
-                                                                   const std::string& port,
-                                                                   const std::uint64_t timeout_ms)
-{
-    auto timer = std::make_shared<asio::steady_timer>(resolver.get_executor());
-    auto timeout_triggered = std::make_shared<std::atomic<bool>>(false);
-    timer->expires_after(std::chrono::milliseconds(timeout_ms));
-    timer->async_wait(
-        [&resolver, timeout_triggered](const std::error_code& timer_ec)
-        {
-            if (timer_ec)
-            {
-                return;
-            }
-            timeout_triggered->store(true, std::memory_order_release);
-            resolver.cancel();
-        });
-
-    const auto [resolve_ec, endpoints] = co_await resolver.async_resolve(host, port, asio::as_tuple(asio::use_awaitable));
-    const auto cancelled = timer->cancel();
-    (void)cancelled;
-    if (timeout_triggered->load(std::memory_order_acquire))
-    {
-        co_return timed_udp_resolve_result{
-            .ok = false,
-            .timed_out = true,
-            .ec = asio::error::timed_out};
-    }
-    if (resolve_ec)
-    {
-        co_return timed_udp_resolve_result{
-            .ok = false,
-            .ec = resolve_ec};
-    }
-    co_return timed_udp_resolve_result{
-        .ok = true,
-        .endpoints = endpoints};
 }
 
 }    // namespace
@@ -212,8 +165,8 @@ asio::awaitable<void> remote_udp_session::forward_mux_payload(const std::vector<
         co_return;
     }
 
-    const auto resolve_timeout_ms = (read_timeout_ms_ == 0) ? 1000ULL : read_timeout_ms_;
-    const auto resolve_res = co_await resolve_udp_with_timeout(udp_resolver_, header.addr, std::to_string(header.port), resolve_timeout_ms);
+    const auto resolve_timeout_ms = read_timeout_ms_;
+    const auto resolve_res = co_await timeout_io::async_resolve_with_timeout(udp_resolver_, header.addr, std::to_string(header.port), resolve_timeout_ms);
     if (!resolve_res.ok)
     {
         if (resolve_res.timed_out)
@@ -389,11 +342,11 @@ asio::awaitable<void> remote_udp_session::watchdog()
         const auto current_ms = now_ms();
         const auto read_elapsed_ms = current_ms - last_read_time_ms_.load(std::memory_order_acquire);
         const auto write_elapsed_ms = current_ms - last_write_time_ms_.load(std::memory_order_acquire);
-        if (read_elapsed_ms > read_timeout_ms_)
+        if (read_timeout_ms_ > 0 && read_elapsed_ms > read_timeout_ms_)
         {
             LOG_CTX_WARN(ctx_, "{} read idle {}s", log_event::kTimeout, read_elapsed_ms / 1000ULL);
         }
-        if (write_elapsed_ms > write_timeout_ms_)
+        if (write_timeout_ms_ > 0 && write_elapsed_ms > write_timeout_ms_)
         {
             LOG_CTX_WARN(ctx_, "{} write idle {}s", log_event::kTimeout, write_elapsed_ms / 1000ULL);
         }

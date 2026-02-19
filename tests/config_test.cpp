@@ -491,6 +491,31 @@ TEST_F(config_test, DumpConfigIncludesHeartbeatIdleTimeout)
     EXPECT_NE(dumped.find("\"heartbeat\""), std::string::npos);
 }
 
+TEST_F(config_test, ContractMatrixTimeoutRulesStayAlignedWithDocumentation)
+{
+    const auto doc = load_configuration_doc();
+    ASSERT_FALSE(doc.empty());
+    EXPECT_NE(doc.find("timeout.read"), std::string::npos);
+    EXPECT_NE(doc.find("timeout.write"), std::string::npos);
+    EXPECT_NE(doc.find("timeout.idle"), std::string::npos);
+    EXPECT_NE(doc.find("timeout.read = 0` 与 `timeout.write = 0`"), std::string::npos);
+    EXPECT_NE(doc.find("timeout.idle = 0`：表示禁用空闲超时"), std::string::npos);
+
+    write_config_file(R"({
+        "timeout": {
+            "read": 0,
+            "write": 0,
+            "idle": 0
+        }
+    })");
+
+    const auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_EQ(parsed->timeout.read, 0U);
+    EXPECT_EQ(parsed->timeout.write, 0U);
+    EXPECT_EQ(parsed->timeout.idle, 0U);
+}
+
 TEST_F(config_test, ContractMatrixHeartbeatRulesStayAlignedWithDocumentation)
 {
     const auto doc = load_configuration_doc();
