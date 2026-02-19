@@ -11,7 +11,7 @@
 #include <string_view>
 #include <unordered_map>
 
-#include <asio.hpp>
+#include <boost/asio.hpp>
 
 namespace mux
 {
@@ -60,9 +60,9 @@ bool allow_monitor_request_by_source(monitor_rate_state& rate_state,
 class monitor_server : public std::enable_shared_from_this<monitor_server>
 {
    public:
-    monitor_server(asio::io_context& ioc, std::uint16_t port, std::string token);
-    monitor_server(asio::io_context& ioc, std::uint16_t port, std::string token, std::uint32_t min_interval_ms);
-    monitor_server(asio::io_context& ioc, std::string bind_host, std::uint16_t port, std::string token, std::uint32_t min_interval_ms);
+    monitor_server(boost::asio::io_context& ioc, std::uint16_t port, std::string token);
+    monitor_server(boost::asio::io_context& ioc, std::uint16_t port, std::string token, std::uint32_t min_interval_ms);
+    monitor_server(boost::asio::io_context& ioc, std::string bind_host, std::uint16_t port, std::string token, std::uint32_t min_interval_ms);
     void start();
     void stop();
     [[nodiscard]] bool running() const
@@ -74,7 +74,7 @@ class monitor_server : public std::enable_shared_from_this<monitor_server>
     void stop_local();
     void do_accept();
 
-    asio::ip::tcp::acceptor acceptor_;
+    boost::asio::ip::tcp::acceptor acceptor_;
     std::string token_;
     std::uint32_t min_interval_ms_ = 0;
     std::shared_ptr<monitor_rate_state> rate_state_ = std::make_shared<monitor_rate_state>();

@@ -15,7 +15,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-#include <asio.hpp>
+#include <boost/asio.hpp>
 #include <gtest/gtest.h>
 
 #define private public
@@ -87,39 +87,39 @@ std::string read_response(std::uint16_t port,
                           const std::string& remote_host = "127.0.0.1",
                           const std::string& local_host = "")
 {
-    asio::io_context ioc;
-    asio::ip::tcp::socket socket(ioc);
-    asio::error_code ec;
-    const auto remote_addr = asio::ip::make_address(remote_host, ec);
+    boost::asio::io_context ioc;
+    boost::asio::ip::tcp::socket socket(ioc);
+    boost::system::error_code ec;
+    const auto remote_addr = boost::asio::ip::make_address(remote_host, ec);
     if (ec)
     {
         return {};
     }
     if (!local_host.empty())
     {
-        const auto local_addr = asio::ip::make_address(local_host, ec);
+        const auto local_addr = boost::asio::ip::make_address(local_host, ec);
         if (ec)
         {
             return {};
         }
-        socket.open(local_addr.is_v6() ? asio::ip::tcp::v6() : asio::ip::tcp::v4(), ec);
+        socket.open(local_addr.is_v6() ? boost::asio::ip::tcp::v6() : boost::asio::ip::tcp::v4(), ec);
         if (ec)
         {
             return {};
         }
-        socket.bind(asio::ip::tcp::endpoint(local_addr, 0), ec);
+        socket.bind(boost::asio::ip::tcp::endpoint(local_addr, 0), ec);
         if (ec)
         {
             return {};
         }
     }
-    socket.connect(asio::ip::tcp::endpoint(remote_addr, port), ec);
+    socket.connect(boost::asio::ip::tcp::endpoint(remote_addr, port), ec);
     if (ec)
     {
         return {};
     }
 
-    asio::write(socket, asio::buffer(request), ec);
+    boost::asio::write(socket, boost::asio::buffer(request), ec);
     if (ec)
     {
         return {};
@@ -129,12 +129,12 @@ std::string read_response(std::uint16_t port,
     std::array<char, 1024> buffer{};
     for (;;)
     {
-        const auto n = socket.read_some(asio::buffer(buffer), ec);
+        const auto n = socket.read_some(boost::asio::buffer(buffer), ec);
         if (n > 0)
         {
             out.append(buffer.data(), n);
         }
-        if (ec == asio::error::eof)
+        if (ec == boost::asio::error::eof)
         {
             break;
         }
@@ -195,10 +195,10 @@ std::optional<std::uint64_t> parse_metric_value(const std::string& response, con
 
 void connect_and_close_without_payload(const std::uint16_t port)
 {
-    asio::io_context ioc;
-    asio::ip::tcp::socket socket(ioc);
-    asio::error_code ec;
-    socket.connect(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), port), ec);
+    boost::asio::io_context ioc;
+    boost::asio::ip::tcp::socket socket(ioc);
+    boost::system::error_code ec;
+    socket.connect(boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address("127.0.0.1"), port), ec);
     if (ec)
     {
         return;
@@ -289,7 +289,7 @@ class monitor_server_env
         {
             return 0;
         }
-        std::error_code ec;
+        boost::system::error_code ec;
         const auto endpoint = server_->acceptor_.local_endpoint(ec);
         if (ec)
         {
@@ -312,7 +312,7 @@ class monitor_server_env
     }
 
    private:
-    asio::io_context ioc_;
+    boost::asio::io_context ioc_;
     std::shared_ptr<mux::monitor_server> server_;
     std::thread thread_;
 };
@@ -443,19 +443,19 @@ TEST(MonitorServerTest, TproxyUdpDispatchDropMetricReflectsDroppedPackets)
     const auto port = env.port();
     ASSERT_NE(port, 0);
 
-    asio::io_context ioc;
+    boost::asio::io_context ioc;
     mux::tproxy_udp_dispatch_channel dispatch_channel(ioc, 1);
 
     mux::tproxy_udp_dispatch_item preload_packet;
-    preload_packet.src_ep = asio::ip::udp::endpoint(asio::ip::make_address("127.0.0.1"), 53111);
-    preload_packet.dst_ep = asio::ip::udp::endpoint(asio::ip::make_address("1.1.1.1"), 53);
+    preload_packet.src_ep = boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 53111);
+    preload_packet.dst_ep = boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("1.1.1.1"), 53);
     preload_packet.payload.assign(8, 0x7f);
-    ASSERT_TRUE(dispatch_channel.try_send(std::error_code{}, std::move(preload_packet)));
+    ASSERT_TRUE(dispatch_channel.try_send(boost::system::error_code{}, std::move(preload_packet)));
 
     auto& stats = statistics::instance();
     const auto before = stats.tproxy_udp_dispatch_dropped();
-    const asio::ip::udp::endpoint src_ep(asio::ip::make_address("127.0.0.1"), 53112);
-    const asio::ip::udp::endpoint dst_ep(asio::ip::make_address("1.1.1.1"), 53);
+    const boost::asio::ip::udp::endpoint src_ep(boost::asio::ip::make_address("127.0.0.1"), 53112);
+    const boost::asio::ip::udp::endpoint dst_ep(boost::asio::ip::make_address("1.1.1.1"), 53);
     const std::vector<std::uint8_t> payload = {0xca, 0xfe, 0xba, 0xbe};
     constexpr std::size_t k_drop_attempts = 64;
 
@@ -483,14 +483,14 @@ TEST(MonitorServerTest, TproxyUdpDispatchMetricsCanDeriveDropRatio)
     const auto port = env.port();
     ASSERT_NE(port, 0);
 
-    asio::io_context ioc;
+    boost::asio::io_context ioc;
     mux::tproxy_udp_dispatch_channel dispatch_channel(ioc, 4);
 
     auto& stats = statistics::instance();
     const auto enqueued_before = stats.tproxy_udp_dispatch_enqueued();
     const auto dropped_before = stats.tproxy_udp_dispatch_dropped();
-    const asio::ip::udp::endpoint src_ep(asio::ip::make_address("127.0.0.1"), 53221);
-    const asio::ip::udp::endpoint dst_ep(asio::ip::make_address("1.1.1.1"), 53);
+    const boost::asio::ip::udp::endpoint src_ep(boost::asio::ip::make_address("127.0.0.1"), 53221);
+    const boost::asio::ip::udp::endpoint dst_ep(boost::asio::ip::make_address("1.1.1.1"), 53);
     const std::vector<std::uint8_t> payload = {0xde, 0xad, 0xbe, 0xef};
 
     std::size_t enqueued = 0;
@@ -616,12 +616,12 @@ TEST(MonitorServerTest, RateLimitStateStaysBounded)
 {
     constexpr std::size_t k_state_limit = 4096;
 
-    asio::io_context ioc;
+    boost::asio::io_context ioc;
     auto server = std::make_shared<monitor_server>(ioc, 0, std::string("secret"), 10);
     ASSERT_NE(server, nullptr);
     server->start();
 
-    std::error_code ec;
+    boost::system::error_code ec;
     const auto port = server->acceptor_.local_endpoint(ec).port();
     ASSERT_FALSE(ec);
     ASSERT_NE(port, 0);
@@ -745,28 +745,28 @@ TEST(MonitorServerTest, SupportsFragmentedHttpRequestLine)
     const auto port = env.port();
     ASSERT_NE(port, 0);
 
-    asio::io_context ioc;
-    asio::ip::tcp::socket socket(ioc);
-    asio::error_code ec;
-    socket.connect(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), port), ec);
+    boost::asio::io_context ioc;
+    boost::asio::ip::tcp::socket socket(ioc);
+    boost::system::error_code ec;
+    socket.connect(boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address("127.0.0.1"), port), ec);
     ASSERT_FALSE(ec);
 
-    asio::write(socket, asio::buffer("GET /metrics?token=secret HT"), ec);
+    boost::asio::write(socket, boost::asio::buffer("GET /metrics?token=secret HT"), ec);
     ASSERT_FALSE(ec);
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    asio::write(socket, asio::buffer("TP/1.1\r\nHost: 127.0.0.1\r\n\r\n"), ec);
+    boost::asio::write(socket, boost::asio::buffer("TP/1.1\r\nHost: 127.0.0.1\r\n\r\n"), ec);
     ASSERT_FALSE(ec);
 
     std::string resp;
     std::array<char, 1024> buffer{};
     for (;;)
     {
-        const auto n = socket.read_some(asio::buffer(buffer), ec);
+        const auto n = socket.read_some(boost::asio::buffer(buffer), ec);
         if (n > 0)
         {
             resp.append(buffer.data(), n);
         }
-        if (ec == asio::error::eof)
+        if (ec == boost::asio::error::eof)
         {
             break;
         }
@@ -927,22 +927,22 @@ TEST(MonitorServerTest, EscapesPrometheusLabels)
 
 TEST(MonitorServerTest, ConstructWhenPortAlreadyInUse)
 {
-    asio::io_context guard_ioc;
-    asio::ip::tcp::acceptor guard(guard_ioc);
-    asio::error_code ec;
-    guard.open(asio::ip::tcp::v4(), ec);
+    boost::asio::io_context guard_ioc;
+    boost::asio::ip::tcp::acceptor guard(guard_ioc);
+    boost::system::error_code ec;
+    guard.open(boost::asio::ip::tcp::v4(), ec);
     ASSERT_FALSE(ec);
-    guard.set_option(asio::socket_base::reuse_address(true), ec);
+    guard.set_option(boost::asio::socket_base::reuse_address(true), ec);
     ASSERT_FALSE(ec);
-    guard.bind(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), 0), ec);
+    guard.bind(boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 0), ec);
     ASSERT_FALSE(ec);
-    guard.listen(asio::socket_base::max_listen_connections, ec);
+    guard.listen(boost::asio::socket_base::max_listen_connections, ec);
     ASSERT_FALSE(ec);
     const auto port = guard.local_endpoint(ec).port();
     ASSERT_FALSE(ec);
     ASSERT_NE(port, 0);
 
-    asio::io_context ioc;
+    boost::asio::io_context ioc;
     auto server = std::make_shared<monitor_server>(ioc, port, std::string("token"), 10);
     ASSERT_NE(server, nullptr);
     EXPECT_FALSE(server->acceptor_.is_open());
@@ -950,11 +950,11 @@ TEST(MonitorServerTest, ConstructWhenPortAlreadyInUse)
 
 TEST(MonitorServerTest, ConstructorHandlesInvalidBindHost)
 {
-    asio::io_context ioc;
+    boost::asio::io_context ioc;
     auto server = std::make_shared<monitor_server>(ioc, 0, std::string("token"), 10);
     ASSERT_NE(server, nullptr);
     ASSERT_TRUE(server->acceptor_.is_open());
-    std::error_code ec;
+    boost::system::error_code ec;
     const auto port = server->acceptor_.local_endpoint(ec).port();
     ASSERT_FALSE(ec);
     ASSERT_NE(port, 0);
@@ -967,7 +967,7 @@ TEST(MonitorServerTest, ConstructorHandlesInvalidBindHost)
 
 TEST(MonitorServerTest, ConstructorHandlesOpenFailure)
 {
-    asio::io_context ioc;
+    boost::asio::io_context ioc;
     monitor_fail_guard guard(monitor_fail_mode::kSocketAlways);
     auto server = std::make_shared<monitor_server>(ioc, 0, std::string("token"), 10);
     ASSERT_NE(server, nullptr);
@@ -976,7 +976,7 @@ TEST(MonitorServerTest, ConstructorHandlesOpenFailure)
 
 TEST(MonitorServerTest, ConstructorHandlesReuseAddressFailure)
 {
-    asio::io_context ioc;
+    boost::asio::io_context ioc;
     monitor_fail_guard guard(monitor_fail_mode::kReuseAddrAlways);
     auto server = std::make_shared<monitor_server>(ioc, 0, std::string("token"), 10);
     ASSERT_NE(server, nullptr);
@@ -985,7 +985,7 @@ TEST(MonitorServerTest, ConstructorHandlesReuseAddressFailure)
 
 TEST(MonitorServerTest, ConstructorHandlesListenFailure)
 {
-    asio::io_context ioc;
+    boost::asio::io_context ioc;
     monitor_fail_guard guard(monitor_fail_mode::kListenAlways);
     auto server = std::make_shared<monitor_server>(ioc, 0, std::string("token"), 10);
     ASSERT_NE(server, nullptr);
@@ -994,7 +994,7 @@ TEST(MonitorServerTest, ConstructorHandlesListenFailure)
 
 TEST(MonitorServerTest, RunningReflectsStartAndStopLifecycle)
 {
-    asio::io_context ioc;
+    boost::asio::io_context ioc;
     auto server = std::make_shared<monitor_server>(ioc, 0, std::string(), 10);
     ASSERT_NE(server, nullptr);
     EXPECT_FALSE(server->running());
@@ -1008,7 +1008,7 @@ TEST(MonitorServerTest, RunningReflectsStartAndStopLifecycle)
 
 TEST(MonitorServerTest, StartWhileRunningIsIgnored)
 {
-    asio::io_context ioc;
+    boost::asio::io_context ioc;
     auto server = std::make_shared<monitor_server>(ioc, 0, std::string(), 10);
     ASSERT_NE(server, nullptr);
     server->start();
@@ -1017,7 +1017,7 @@ TEST(MonitorServerTest, StartWhileRunningIsIgnored)
     server->start();
     EXPECT_TRUE(server->running());
 
-    std::error_code ec;
+    boost::system::error_code ec;
     const auto port = server->acceptor_.local_endpoint(ec).port();
     ASSERT_FALSE(ec);
     ASSERT_NE(port, 0);
@@ -1036,11 +1036,11 @@ TEST(MonitorServerTest, StartWhileRunningIsIgnored)
 
 TEST(MonitorServerTest, StopClosesAcceptorAndRejectsNewConnections)
 {
-    asio::io_context ioc;
+    boost::asio::io_context ioc;
     auto server = std::make_shared<monitor_server>(ioc, 0, std::string(), 10);
     ASSERT_NE(server, nullptr);
     server->start();
-    std::error_code ec;
+    boost::system::error_code ec;
     const auto port = server->acceptor_.local_endpoint(ec).port();
     ASSERT_FALSE(ec);
     ASSERT_NE(port, 0);
@@ -1073,7 +1073,7 @@ TEST(MonitorServerTest, StopClosesAcceptorAndRejectsNewConnections)
 
 TEST(MonitorServerTest, StopRunsInlineWhenIoContextStopped)
 {
-    asio::io_context ioc;
+    boost::asio::io_context ioc;
     auto server = std::make_shared<monitor_server>(ioc, 0, std::string(), 10);
     ASSERT_NE(server, nullptr);
     ASSERT_TRUE(server->acceptor_.is_open());
@@ -1085,14 +1085,14 @@ TEST(MonitorServerTest, StopRunsInlineWhenIoContextStopped)
 
 TEST(MonitorServerTest, StopRunsWhenIoQueueBlocked)
 {
-    asio::io_context ioc;
+    boost::asio::io_context ioc;
     auto server = std::make_shared<monitor_server>(ioc, 0, std::string(), 10);
     ASSERT_NE(server, nullptr);
     server->start();
 
     std::atomic<bool> blocker_started{false};
     std::atomic<bool> release_blocker{false};
-    asio::post(
+    boost::asio::post(
         ioc,
         [&blocker_started, &release_blocker]()
         {
@@ -1123,7 +1123,7 @@ TEST(MonitorServerTest, StopRunsWhenIoQueueBlocked)
 
 TEST(MonitorServerTest, StopRunsWhenIoContextNotRunning)
 {
-    asio::io_context ioc;
+    boost::asio::io_context ioc;
     auto server = std::make_shared<monitor_server>(ioc, 0, std::string(), 10);
     ASSERT_NE(server, nullptr);
     ASSERT_TRUE(server->acceptor_.is_open());
@@ -1134,7 +1134,7 @@ TEST(MonitorServerTest, StopRunsWhenIoContextNotRunning)
 
 TEST(MonitorServerTest, StopLogsAcceptorCloseFailureBranch)
 {
-    asio::io_context ioc;
+    boost::asio::io_context ioc;
     auto server = std::make_shared<monitor_server>(ioc, 0, std::string(), 10);
     ASSERT_NE(server, nullptr);
     server->start();
@@ -1177,7 +1177,7 @@ TEST(MonitorServerTest, SessionReadErrorPathStillAcceptsNextClient)
 
 TEST(MonitorServerTest, DoAcceptReturnsImmediatelyWhenStopped)
 {
-    asio::io_context ioc;
+    boost::asio::io_context ioc;
     auto server = std::make_shared<monitor_server>(ioc, 0, std::string(), 10);
     ASSERT_NE(server, nullptr);
     ASSERT_TRUE(server->acceptor_.is_open());

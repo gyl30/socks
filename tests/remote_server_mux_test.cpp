@@ -5,11 +5,11 @@
 #include <vector>
 #include <cstdint>
 
-#include <asio/read.hpp>
+#include <boost/asio/read.hpp>
 #include <gtest/gtest.h>
-#include <asio/write.hpp>
-#include <asio/buffer.hpp>
-#include <asio/ip/tcp.hpp>
+#include <boost/asio/write.hpp>
+#include <boost/asio/buffer.hpp>
+#include <boost/asio/ip/tcp.hpp>
 
 #include "log.h"
 #include "protocol.h"
@@ -103,18 +103,18 @@ static std::uint16_t wait_for_socks_listen_port(const std::shared_ptr<mux::socks
     return 0;
 }
 
-static bool connect_proxy_with_retry(asio::ip::tcp::socket& socket, const std::uint16_t port, const int attempts = 40)
+static bool connect_proxy_with_retry(boost::asio::ip::tcp::socket& socket, const std::uint16_t port, const int attempts = 40)
 {
-    const auto endpoint = asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), port);
+    const auto endpoint = boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address("127.0.0.1"), port);
     for (int i = 0; i < attempts; ++i)
     {
-        std::error_code ec;
+        boost::system::error_code ec;
         socket.connect(endpoint, ec);
         if (!ec)
         {
             return true;
         }
-        std::error_code close_ec;
+        boost::system::error_code close_ec;
         socket.close(close_ec);
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
@@ -147,20 +147,20 @@ TEST_F(remote_server_mux_test, ProcessTcpConnectRequest)
     ASSERT_NE(local_socks_port, 0);
 
     {
-        asio::ip::tcp::socket proxy_sock(pool.get_io_context());
+        boost::asio::ip::tcp::socket proxy_sock(pool.get_io_context());
         ASSERT_TRUE(connect_proxy_with_retry(proxy_sock, local_socks_port));
 
         std::uint8_t handshake[] = {0x05, 0x01, 0x00};
-        asio::write(proxy_sock, asio::buffer(handshake));
+        boost::asio::write(proxy_sock, boost::asio::buffer(handshake));
         std::uint8_t resp[2];
-        asio::read(proxy_sock, asio::buffer(resp, 2));
+        boost::asio::read(proxy_sock, boost::asio::buffer(resp, 2));
 
         std::uint8_t conn_req[] = {
             0x05, 0x01, 0x00, 0x01, 127, 0, 0, 1, static_cast<uint8_t>(server_port >> 8), static_cast<uint8_t>(server_port & 0xFF)};
-        asio::write(proxy_sock, asio::buffer(conn_req));
+        boost::asio::write(proxy_sock, boost::asio::buffer(conn_req));
 
         std::uint8_t conn_resp[10];
-        asio::read(proxy_sock, asio::buffer(conn_resp, 10));
+        boost::asio::read(proxy_sock, boost::asio::buffer(conn_resp, 10));
 
         EXPECT_EQ(conn_resp[0], 0x05);
         EXPECT_EQ(conn_resp[1], 0x00);
@@ -197,19 +197,19 @@ TEST_F(remote_server_mux_test, ProcessUdpAssociateRequest)
     ASSERT_NE(local_socks_port, 0);
 
     {
-        asio::ip::tcp::socket proxy_sock(pool.get_io_context());
+        boost::asio::ip::tcp::socket proxy_sock(pool.get_io_context());
         ASSERT_TRUE(connect_proxy_with_retry(proxy_sock, local_socks_port));
 
         std::uint8_t handshake[] = {0x05, 0x01, 0x00};
-        asio::write(proxy_sock, asio::buffer(handshake));
+        boost::asio::write(proxy_sock, boost::asio::buffer(handshake));
         std::uint8_t resp[2];
-        asio::read(proxy_sock, asio::buffer(resp, 2));
+        boost::asio::read(proxy_sock, boost::asio::buffer(resp, 2));
 
         std::uint8_t udp_req[] = {0x05, 0x03, 0x00, 0x01, 0, 0, 0, 0, 0, 0};
-        asio::write(proxy_sock, asio::buffer(udp_req));
+        boost::asio::write(proxy_sock, boost::asio::buffer(udp_req));
 
         std::uint8_t udp_resp[10];
-        asio::read(proxy_sock, asio::buffer(udp_resp, 10));
+        boost::asio::read(proxy_sock, boost::asio::buffer(udp_resp, 10));
         EXPECT_EQ(udp_resp[0], 0x05);
         EXPECT_EQ(udp_resp[1], 0x00);
     }
@@ -242,19 +242,19 @@ TEST_F(remote_server_mux_test, TargetConnectFail)
     ASSERT_NE(local_socks_port, 0);
 
     {
-        asio::ip::tcp::socket proxy_sock(pool.get_io_context());
+        boost::asio::ip::tcp::socket proxy_sock(pool.get_io_context());
         ASSERT_TRUE(connect_proxy_with_retry(proxy_sock, local_socks_port));
 
         std::uint8_t handshake[] = {0x05, 0x01, 0x00};
-        asio::write(proxy_sock, asio::buffer(handshake));
+        boost::asio::write(proxy_sock, boost::asio::buffer(handshake));
         std::uint8_t resp[2];
-        asio::read(proxy_sock, asio::buffer(resp, 2));
+        boost::asio::read(proxy_sock, boost::asio::buffer(resp, 2));
 
         std::uint8_t conn_req[] = {0x05, 0x01, 0x00, 0x01, 127, 0, 0, 1, 0, 1};
-        asio::write(proxy_sock, asio::buffer(conn_req));
+        boost::asio::write(proxy_sock, boost::asio::buffer(conn_req));
 
         std::uint8_t conn_resp[10];
-        asio::read(proxy_sock, asio::buffer(conn_resp, 10));
+        boost::asio::read(proxy_sock, boost::asio::buffer(conn_resp, 10));
 
         EXPECT_EQ(conn_resp[0], 0x05);
         EXPECT_NE(conn_resp[1], 0x00);
@@ -288,13 +288,13 @@ TEST_F(remote_server_mux_test, TargetResolveFail)
     ASSERT_NE(local_socks_port, 0);
 
     {
-        asio::ip::tcp::socket proxy_sock(pool.get_io_context());
+        boost::asio::ip::tcp::socket proxy_sock(pool.get_io_context());
         ASSERT_TRUE(connect_proxy_with_retry(proxy_sock, local_socks_port));
 
         std::uint8_t handshake[] = {0x05, 0x01, 0x00};
-        asio::write(proxy_sock, asio::buffer(handshake));
+        boost::asio::write(proxy_sock, boost::asio::buffer(handshake));
         std::uint8_t resp[2];
-        asio::read(proxy_sock, asio::buffer(resp, 2));
+        boost::asio::read(proxy_sock, boost::asio::buffer(resp, 2));
 
         const std::string domain = "invalid.domain.totally.fake";
         std::vector<uint8_t> conn_req = {0x05, 0x01, 0x00, 0x03, static_cast<uint8_t>(domain.size())};
@@ -302,10 +302,10 @@ TEST_F(remote_server_mux_test, TargetResolveFail)
         conn_req.push_back(0);
         conn_req.push_back(80);
 
-        asio::write(proxy_sock, asio::buffer(conn_req));
+        boost::asio::write(proxy_sock, boost::asio::buffer(conn_req));
 
         std::uint8_t conn_resp[10];
-        asio::read(proxy_sock, asio::buffer(conn_resp, 10));
+        boost::asio::read(proxy_sock, boost::asio::buffer(conn_resp, 10));
 
         EXPECT_EQ(conn_resp[0], 0x05);
         EXPECT_EQ(conn_resp[1], 0x04);

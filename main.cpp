@@ -7,8 +7,8 @@
 #include <iostream>
 #include <system_error>
 
-#include <asio/io_context.hpp>
-#include <asio/signal_set.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/signal_set.hpp>
 
 #include "log.h"
 #include "config.h"
@@ -134,9 +134,9 @@ bool start_runtime_services(mux::io_context_pool& pool, const mux::config& cfg, 
     return true;
 }
 
-bool register_signal(asio::signal_set& signals, const int signal, const char* signal_name)
+bool register_signal(boost::asio::signal_set& signals, const int signal, const char* signal_name)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     ec = signals.add(signal, ec);
     if (!ec)
     {
@@ -189,7 +189,7 @@ bool is_supported_runtime_mode(const std::string& mode)
     return mode == "client" || mode == "server";
 }
 
-bool register_shutdown_signals(asio::signal_set& signals, mux::io_context_pool& pool, const runtime_services& services)
+bool register_shutdown_signals(boost::asio::signal_set& signals, mux::io_context_pool& pool, const runtime_services& services)
 {
     if (!register_signal(signals, SIGINT, "sigint"))
     {
@@ -201,7 +201,7 @@ bool register_shutdown_signals(asio::signal_set& signals, mux::io_context_pool& 
     }
 
     signals.async_wait(
-        [&pool, services](const std::error_code& error, int)
+        [&pool, services](const boost::system::error_code& error, int)
         {
             if (error)
             {
@@ -241,7 +241,7 @@ int run_with_config(const char* prog, const std::string& config_path)
         shutdown_log();
         return 1;
     }
-    asio::signal_set signals(pool.get_io_context());
+    boost::asio::signal_set signals(pool.get_io_context());
     if (!register_shutdown_signals(signals, pool, services))
     {
         stop_runtime_services(pool, services);

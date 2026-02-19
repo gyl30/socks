@@ -230,9 +230,9 @@ bool has_exact_token_parameter(const std::string_view query, const std::string& 
     return false;
 }
 
-std::string monitor_rate_limit_key(asio::ip::tcp::socket& socket)
+std::string monitor_rate_limit_key(boost::asio::ip::tcp::socket& socket)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     const auto remote_ep = socket.remote_endpoint(ec);
     if (ec)
     {
@@ -353,7 +353,7 @@ bool allow_monitor_request_by_source(monitor_rate_state& rate_state,
 class monitor_session : public std::enable_shared_from_this<monitor_session>
 {
    public:
-    monitor_session(asio::ip::tcp::socket socket, std::string token, std::shared_ptr<monitor_rate_state> rate_state, std::uint32_t min_interval_ms)
+    monitor_session(boost::asio::ip::tcp::socket socket, std::string token, std::shared_ptr<monitor_rate_state> rate_state, std::uint32_t min_interval_ms)
         : socket_(std::move(socket)), token_(std::move(token)), rate_state_(std::move(rate_state)), min_interval_ms_(min_interval_ms)
     {
     }
@@ -361,14 +361,14 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
     void start()
     {
         auto self = shared_from_this();
-        asio::async_read_until(socket_,
-                               asio::dynamic_buffer(request_line_, kMaxMonitorRequestLineSize),
+        boost::asio::async_read_until(socket_,
+                               boost::asio::dynamic_buffer(request_line_, kMaxMonitorRequestLineSize),
                                '\n',
-                               [this, self](std::error_code ec, std::size_t length)
+                               [this, self](boost::system::error_code ec, std::size_t length)
                                {
                                    if (ec)
                                    {
-                                       if (ec != asio::error::eof && ec != asio::error::operation_aborted)
+                                       if (ec != boost::asio::error::eof && ec != boost::asio::error::operation_aborted)
                                        {
                                            LOG_WARN("monitor read failed {}", ec.message());
                                        }
@@ -413,8 +413,8 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
    private:
     void close_socket()
     {
-        std::error_code ignored_ec;
-        ignored_ec = socket_.shutdown(asio::ip::tcp::socket::shutdown_both, ignored_ec);
+        boost::system::error_code ignored_ec;
+        ignored_ec = socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ignored_ec);
         ignored_ec = socket_.close(ignored_ec);
     }
 
@@ -512,29 +512,29 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
         }
 
         auto self = shared_from_this();
-        asio::async_write(socket_, asio::buffer(response_), [this, self](std::error_code, std::size_t) { close_socket(); });
+        boost::asio::async_write(socket_, boost::asio::buffer(response_), [this, self](boost::system::error_code, std::size_t) { close_socket(); });
     }
 
    private:
     std::string response_;
     std::string request_line_;
-    asio::ip::tcp::socket socket_;
+    boost::asio::ip::tcp::socket socket_;
     std::string token_;
     std::shared_ptr<monitor_rate_state> rate_state_;
     std::uint32_t min_interval_ms_ = 0;
 };
 
-monitor_server::monitor_server(asio::io_context& ioc, std::uint16_t port, std::string token)
+monitor_server::monitor_server(boost::asio::io_context& ioc, std::uint16_t port, std::string token)
     : monitor_server(ioc, "127.0.0.1", port, std::move(token), 0)
 {
 }
 
-monitor_server::monitor_server(asio::io_context& ioc, std::uint16_t port, std::string token, const std::uint32_t min_interval_ms)
+monitor_server::monitor_server(boost::asio::io_context& ioc, std::uint16_t port, std::string token, const std::uint32_t min_interval_ms)
     : monitor_server(ioc, "127.0.0.1", port, std::move(token), min_interval_ms)
 {
 }
 
-monitor_server::monitor_server(asio::io_context& ioc,
+monitor_server::monitor_server(boost::asio::io_context& ioc,
                                std::string bind_host,
                                const std::uint16_t port,
                                std::string token,
@@ -543,13 +543,13 @@ monitor_server::monitor_server(asio::io_context& ioc,
 {
     auto close_acceptor_on_failure = [this]()
     {
-        asio::error_code close_ec;
+        boost::system::error_code close_ec;
         acceptor_.close(close_ec);
     };
 
-    asio::ip::tcp::endpoint endpoint;
-    asio::error_code ec;
-    endpoint.address(asio::ip::make_address(bind_host, ec));
+    boost::asio::ip::tcp::endpoint endpoint;
+    boost::system::error_code ec;
+    endpoint.address(boost::asio::ip::make_address(bind_host, ec));
     if (ec)
     {
         LOG_ERROR("failed to parse address: {}", ec.message());
@@ -561,7 +561,7 @@ monitor_server::monitor_server(asio::io_context& ioc,
         LOG_ERROR("failed to open acceptor: {}", ec.message());
         return;
     }
-    if (acceptor_.set_option(asio::socket_base::reuse_address(true), ec); ec)
+    if (acceptor_.set_option(boost::asio::socket_base::reuse_address(true), ec); ec)
     {
         LOG_ERROR("failed to set reuse_address: {}", ec.message());
         close_acceptor_on_failure();
@@ -573,7 +573,7 @@ monitor_server::monitor_server(asio::io_context& ioc,
         close_acceptor_on_failure();
         return;
     }
-    if (acceptor_.listen(asio::socket_base::max_listen_connections, ec); ec)
+    if (acceptor_.listen(boost::asio::socket_base::max_listen_connections, ec); ec)
     {
         LOG_ERROR("failed to listen: {}", ec.message());
         close_acceptor_on_failure();
@@ -602,7 +602,7 @@ void monitor_server::stop()
     stop_.store(true, std::memory_order_release);
     started_.store(false, std::memory_order_release);
 
-    auto& io_context = static_cast<asio::io_context&>(acceptor_.get_executor().context());
+    auto& io_context = static_cast<boost::asio::io_context&>(acceptor_.get_executor().context());
     detail::dispatch_cleanup_or_run_inline(
         io_context,
         [weak_self = weak_from_this()]()
@@ -617,9 +617,9 @@ void monitor_server::stop()
 void monitor_server::stop_local()
 {
     started_.store(false, std::memory_order_release);
-    std::error_code ec;
+    boost::system::error_code ec;
     ec = acceptor_.close(ec);
-    if (ec && ec != asio::error::bad_descriptor)
+    if (ec && ec != boost::asio::error::bad_descriptor)
     {
         LOG_WARN("monitor acceptor close failed {}", ec.message());
     }
@@ -634,7 +634,7 @@ void monitor_server::do_accept()
 
     const auto self = shared_from_this();
     acceptor_.async_accept(
-        [self](std::error_code ec, asio::ip::tcp::socket socket)
+        [self](boost::system::error_code ec, boost::asio::ip::tcp::socket socket)
         {
             if (self->stop_.load(std::memory_order_acquire))
             {
@@ -642,7 +642,7 @@ void monitor_server::do_accept()
             }
             if (ec)
             {
-                if (ec != asio::error::operation_aborted && ec != asio::error::bad_descriptor)
+                if (ec != boost::asio::error::operation_aborted && ec != boost::asio::error::bad_descriptor)
                 {
                     LOG_WARN("monitor accept failed {}", ec.message());
                     self->do_accept();
