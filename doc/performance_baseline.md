@@ -126,4 +126,34 @@ python3 script/perf_queue_sweep.py \
 建议：
 
 1. 将 `queues.udp_session_recv_channel_capacity` 默认值从 `128` 调整到 `512`（吞吐与 P95 更优，且无丢包）。
-2. `queues.tproxy_udp_dispatch_queue_capacity` 已支持配置，默认保持 `2048`；本轮扫描未覆盖 TPROXY 路径，建议在具备 `CAP_NET_ADMIN` 的环境单独复测。
+
+## UDP 队列容量扫描（TPROXY 分发队列）
+
+- 扫描脚本：`script/perf_tproxy_queue_sweep.py`
+- 依赖：`tests/tproxy_integration_test.sh`（需 root 或支持 `unshare -Urnm`）
+- 扫描输出：`build_release_perf/perf_tproxy_queue_sweep_512_2048_runs3.json`
+
+命令：
+
+```bash
+python3 script/perf_tproxy_queue_sweep.py \
+  --socks-bin build/socks \
+  --capacities 512,2048 \
+  --runs 3 \
+  --burst-count 8000 \
+  --payload-bytes 512 \
+  --udp-timeout-ms 800 \
+  --out-json build_release_perf/perf_tproxy_queue_sweep_512_2048_runs3.json
+```
+
+结果汇总（均值）：
+
+| `queues.tproxy_udp_dispatch_queue_capacity` | UDP 吞吐（Mbps） | UDP RTT P95（ms） | UDP RTT P99（ms） | dispatch 丢弃率 |
+| --- | --- | --- | --- | --- |
+| 512 | 26.809 | 0.177 | 0.218 | 0.000000 |
+| 2048 | 25.231 | 0.225 | 0.387 | 0.000000 |
+
+建议：
+
+1. 将 `queues.tproxy_udp_dispatch_queue_capacity` 默认值从 `2048` 调整到 `512`。
+2. 后续如业务流量模型变化，可用同脚本在目标环境重扫并按数据回调容量。

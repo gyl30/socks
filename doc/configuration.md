@@ -29,7 +29,7 @@
 - `timeout.read = 0` 与 `timeout.write = 0`：表示禁用对应读写阶段超时。
 - `timeout.idle = 0`：表示禁用空闲超时。
 - `queues.udp_session_recv_channel_capacity`：UDP 会话接收队列深度（用于 `udp_socks_session`、`remote_udp_session`、`tproxy_udp_session`，默认 `512`）。
-- `queues.tproxy_udp_dispatch_queue_capacity`：TPROXY UDP 分发队列深度（默认 `2048`）。
+- `queues.tproxy_udp_dispatch_queue_capacity`：TPROXY UDP 分发队列深度（默认 `512`）。
 - `queues.udp_session_recv_channel_capacity` 与 `queues.tproxy_udp_dispatch_queue_capacity` 必须在 `1-65535`，否则配置解析失败。
 - `heartbeat.enabled`：是否启用心跳。
 - `heartbeat.idle_timeout`：空闲多久触发心跳。
