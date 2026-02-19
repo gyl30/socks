@@ -265,6 +265,7 @@ asio::awaitable<void> remote_udp_session::start_impl(std::shared_ptr<remote_udp_
     auto conn = connection_.lock();
     if (!conn)
     {
+        co_await cleanup_after_stop();
         co_return;
     }
 
@@ -345,6 +346,10 @@ void remote_udp_session::request_stop()
     std::error_code ignore;
     ignore = udp_socket_.cancel(ignore);
     close_socket();
+    if (auto manager = manager_.lock())
+    {
+        manager->remove_stream(id_);
+    }
 }
 
 void remote_udp_session::close_socket()

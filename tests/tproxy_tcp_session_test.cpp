@@ -159,6 +159,19 @@ class block_router : public mux::router
     }
 };
 
+class proxy_router : public mux::router
+{
+   public:
+    proxy_router()
+    {
+        block_ip_matcher() = std::make_shared<mux::ip_matcher>();
+        direct_ip_matcher() = std::make_shared<mux::ip_matcher>();
+        proxy_domain_matcher() = std::make_shared<mux::domain_matcher>();
+        block_domain_matcher() = std::make_shared<mux::domain_matcher>();
+        direct_domain_matcher() = std::make_shared<mux::domain_matcher>();
+    }
+};
+
 class mock_upstream final : public mux::upstream
 {
    public:
@@ -166,7 +179,9 @@ class mock_upstream final : public mux::upstream
     std::pair<std::error_code, std::size_t> read_result = {asio::error::eof, 0};
     std::size_t write_result = 0;
     int close_calls = 0;
+    std::size_t write_calls = 0;
     std::vector<std::uint8_t> last_write;
+    std::vector<std::vector<std::uint8_t>> writes;
 
     asio::awaitable<bool> connect(const std::string& host, std::uint16_t port) override
     {
@@ -183,7 +198,9 @@ class mock_upstream final : public mux::upstream
 
     asio::awaitable<std::size_t> write(const std::vector<std::uint8_t>& data) override
     {
+        ++write_calls;
         last_write = data;
+        writes.push_back(data);
         co_return write_result;
     }
 
@@ -386,20 +403,56 @@ TEST(TproxyTcpSessionTest, WriteClientChunkToBackendTracksActivity)
     session->last_activity_time_ms_.store(1, std::memory_order_release);
 
     backend->write_result = 0;
+    backend->writes.clear();
     const auto fail = mux::test::run_awaitable(ctx, session->write_client_chunk_to_backend(backend, buf, 3));
     EXPECT_FALSE(fail);
     ASSERT_EQ(backend->last_write.size(), 3U);
     EXPECT_EQ(session->last_activity_time_ms_.load(std::memory_order_acquire), 1U);
 
     backend->write_result = 3;
+    backend->writes.clear();
     const auto ok = mux::test::run_awaitable(ctx, session->write_client_chunk_to_backend(backend, buf, 3));
     EXPECT_TRUE(ok);
     EXPECT_GT(session->last_activity_time_ms_.load(std::memory_order_acquire), 1U);
+    ASSERT_EQ(backend->writes.size(), 1U);
+    EXPECT_EQ(backend->writes[0], std::vector<std::uint8_t>({0x01, 0x02, 0x03}));
 
     backend->write_result = 4;
+    backend->writes.clear();
     const auto ok_full = mux::test::run_awaitable(ctx, session->write_client_chunk_to_backend(backend, buf, 4));
     EXPECT_TRUE(ok_full);
     EXPECT_GT(session->last_activity_time_ms_.load(std::memory_order_acquire), 1U);
+    ASSERT_EQ(backend->writes.size(), 1U);
+    EXPECT_EQ(backend->writes[0], std::vector<std::uint8_t>({0x01, 0x02, 0x03, 0x04}));
+
+    backend->write_result = 2;
+    backend->writes.clear();
+    const auto ok_partial = mux::test::run_awaitable(ctx, session->write_client_chunk_to_backend(backend, buf, 4));
+    EXPECT_TRUE(ok_partial);
+    ASSERT_EQ(backend->writes.size(), 2U);
+    EXPECT_EQ(backend->writes[0], std::vector<std::uint8_t>({0x01, 0x02, 0x03, 0x04}));
+    EXPECT_EQ(backend->writes[1], std::vector<std::uint8_t>({0x03, 0x04}));
+}
+
+TEST(TproxyTcpSessionTest, ClientToUpstreamClosesBackendWhenWriteFails)
+{
+    asio::io_context ctx;
+    auto pair = make_tcp_socket_pair(ctx);
+    auto router = std::make_shared<direct_router>();
+    mux::config cfg;
+    const asio::ip::tcp::endpoint dst_ep(asio::ip::make_address("127.0.0.1"), 80);
+    auto session = std::make_shared<mux::tproxy_tcp_session>(std::move(pair.server), ctx, nullptr, std::move(router), 33, cfg, dst_ep);
+
+    auto backend = std::make_shared<mock_upstream>();
+    backend->write_result = 0;
+
+    const std::uint8_t payload[] = {0x21, 0x43, 0x65};
+    asio::write(pair.client, asio::buffer(payload));
+
+    mux::test::run_awaitable_void(ctx, session->client_to_upstream(backend));
+    ASSERT_EQ(backend->writes.size(), 1U);
+    EXPECT_EQ(backend->writes[0], std::vector<std::uint8_t>({0x21, 0x43, 0x65}));
+    EXPECT_EQ(backend->close_calls, 1);
 }
 
 TEST(TproxyTcpSessionTest, ConnectBackendReflectsUpstreamResult)
@@ -438,6 +491,50 @@ TEST(TproxyTcpSessionTest, SelectBackendDirectUsesConfiguredReadTimeout)
     const auto direct_backend = std::dynamic_pointer_cast<mux::direct_upstream>(backend);
     ASSERT_NE(direct_backend, nullptr);
     EXPECT_EQ(direct_backend->timeout_sec_, 9U);
+}
+
+TEST(TproxyTcpSessionTest, SelectBackendDirectKeepsReadTimeoutZeroAsDisabled)
+{
+    asio::io_context ctx;
+    auto router = std::make_shared<direct_router>();
+    mux::config cfg;
+    cfg.timeout.read = 0;
+    const asio::ip::tcp::endpoint dst_ep(asio::ip::make_address("127.0.0.1"), 80);
+    auto session =
+        std::make_shared<mux::tproxy_tcp_session>(asio::ip::tcp::socket(ctx), ctx, nullptr, std::move(router), 27, cfg, dst_ep);
+
+    const auto [route, backend] = mux::test::run_awaitable(ctx, session->select_backend("127.0.0.1"));
+    EXPECT_EQ(route, mux::route_type::kDirect);
+    const auto direct_backend = std::dynamic_pointer_cast<mux::direct_upstream>(backend);
+    ASSERT_NE(direct_backend, nullptr);
+    EXPECT_EQ(direct_backend->timeout_sec_, 0U);
+}
+
+TEST(TproxyTcpSessionTest, SelectBackendProxyWithoutTunnelPoolReturnsNull)
+{
+    asio::io_context ctx;
+    auto router = std::make_shared<proxy_router>();
+    mux::config cfg;
+    const asio::ip::tcp::endpoint dst_ep(asio::ip::make_address("127.0.0.1"), 80);
+    auto session =
+        std::make_shared<mux::tproxy_tcp_session>(asio::ip::tcp::socket(ctx), ctx, nullptr, std::move(router), 28, cfg, dst_ep);
+
+    const auto [route, backend] = mux::test::run_awaitable(ctx, session->select_backend("127.0.0.1"));
+    EXPECT_EQ(route, mux::route_type::kProxy);
+    EXPECT_EQ(backend, nullptr);
+}
+
+TEST(TproxyTcpSessionTest, SelectBackendReturnsBlockedWhenRouterMissing)
+{
+    asio::io_context ctx;
+    mux::config cfg;
+    const asio::ip::tcp::endpoint dst_ep(asio::ip::make_address("127.0.0.1"), 80);
+    auto session =
+        std::make_shared<mux::tproxy_tcp_session>(asio::ip::tcp::socket(ctx), ctx, nullptr, nullptr, 29, cfg, dst_ep);
+
+    const auto [route, backend] = mux::test::run_awaitable(ctx, session->select_backend("127.0.0.1"));
+    EXPECT_EQ(route, mux::route_type::kBlock);
+    EXPECT_EQ(backend, nullptr);
 }
 
 TEST(TproxyTcpSessionTest, RunClosesClientSocketWhenBackendConnectFails)

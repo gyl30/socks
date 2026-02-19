@@ -77,6 +77,14 @@ asio::awaitable<void> tcp_socks_session::run_detached(std::shared_ptr<tcp_socks_
 
 asio::awaitable<void> tcp_socks_session::run(const std::string& host, const std::uint16_t port)
 {
+    if (router_ == nullptr)
+    {
+        LOG_CTX_ERROR(ctx_, "{} router unavailable", log_event::kRoute);
+        co_await reply_error(socks::kRepGenFail);
+        close_client_socket();
+        co_return;
+    }
+
     const auto route = co_await router_->decide(ctx_, host);
     const auto backend = create_backend(route);
     if (backend == nullptr)
@@ -115,8 +123,7 @@ std::shared_ptr<upstream> tcp_socks_session::create_backend(const route_type rou
 {
     if (route == route_type::kDirect)
     {
-        const auto connect_timeout_sec = (timeout_config_.read == 0) ? 1U : timeout_config_.read;
-        return std::make_shared<direct_upstream>(io_context_, ctx_, 0, connect_timeout_sec);
+        return std::make_shared<direct_upstream>(io_context_, ctx_, 0, timeout_config_.read);
     }
     if (route == route_type::kProxy)
     {
@@ -201,10 +208,23 @@ asio::awaitable<void> tcp_socks_session::client_to_upstream(std::shared_ptr<upst
             break;
         }
 
-        const auto written = co_await backend->write(buf.data(), n);
-        if (written == 0)
+        std::size_t total_written = 0;
+        bool write_failed = false;
+        while (total_written < n)
+        {
+            const auto remaining = static_cast<std::size_t>(n - total_written);
+            const auto written = co_await backend->write(buf.data() + total_written, remaining);
+            if (written == 0 || written > remaining)
+            {
+                write_failed = true;
+                break;
+            }
+            total_written += written;
+        }
+        if (write_failed)
         {
             LOG_CTX_WARN(ctx_, "{} failed to write to backend", log_event::kSocks);
+            co_await close_backend_once(backend);
             break;
         }
         last_activity_time_ms_.store(now_ms(), std::memory_order_release);

@@ -314,6 +314,8 @@ asio::awaitable<void> remote_session::run(const syn_payload& syn)
     auto conn = connection_.lock();
     if (!conn)
     {
+        close_target_socket(target_socket_);
+        remove_stream(manager_, id_);
         co_return;
     }
     if (!co_await prepare_remote_target_connection(
@@ -401,6 +403,7 @@ void remote_session::close_from_reset()
     resolver_.cancel();
     std::error_code ec;
     ec = target_socket_.close(ec);
+    remove_stream(manager_, id_);
 }
 
 asio::awaitable<void> remote_session::upstream()
@@ -433,6 +436,7 @@ asio::awaitable<void> remote_session::downstream()
         }
         if (!co_await send_downstream_payload(connection_, id_, buf, n, ctx_))
         {
+            recv_channel_.close();
             break;
         }
     }

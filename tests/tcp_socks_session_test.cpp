@@ -306,6 +306,22 @@ TEST(TcpSocksSessionTest, CreateBackendDirectUsesConfiguredReadTimeout)
     EXPECT_EQ(direct_backend->timeout_sec_, 7U);
 }
 
+TEST(TcpSocksSessionTest, CreateBackendDirectKeepsReadTimeoutZeroAsDisabled)
+{
+    asio::io_context io_context;
+    auto router = std::make_shared<mux::router>();
+    mux::config::timeout_t timeout_cfg{};
+    timeout_cfg.read = 0;
+
+    auto session = std::make_shared<mux::tcp_socks_session>(
+        asio::ip::tcp::socket(io_context), io_context, nullptr, std::move(router), 1, timeout_cfg);
+
+    const auto backend = session->create_backend(mux::route_type::kDirect);
+    const auto direct_backend = std::dynamic_pointer_cast<mux::direct_upstream>(backend);
+    ASSERT_NE(direct_backend, nullptr);
+    EXPECT_EQ(direct_backend->timeout_sec_, 0U);
+}
+
 TEST(TcpSocksSessionTest, ReplySuccessWritesSocksResponse)
 {
     asio::io_context io_context;
@@ -382,6 +398,7 @@ TEST(TcpSocksSessionTest, ClientToUpstreamWritesDataAndStopsOnEof)
     mux::test::run_awaitable_void(io_context, session->client_to_upstream(backend));
     ASSERT_EQ(backend->writes.size(), 1U);
     EXPECT_EQ(backend->writes[0], std::vector<std::uint8_t>({0x10, 0x20, 0x30}));
+    EXPECT_EQ(backend->close_calls, 0U);
 }
 
 TEST(TcpSocksSessionTest, ClientToUpstreamStopsWhenBackendWriteFails)
@@ -398,6 +415,25 @@ TEST(TcpSocksSessionTest, ClientToUpstreamStopsWhenBackendWriteFails)
     mux::test::run_awaitable_void(io_context, session->client_to_upstream(backend));
     ASSERT_EQ(backend->writes.size(), 1U);
     EXPECT_EQ(backend->writes[0], std::vector<std::uint8_t>({0x01, 0x02}));
+    EXPECT_EQ(backend->close_calls, 1U);
+}
+
+TEST(TcpSocksSessionTest, ClientToUpstreamHandlesPartialBackendWrites)
+{
+    asio::io_context io_context;
+    auto pair = make_tcp_socket_pair(io_context);
+    auto session = make_tcp_session(io_context, std::move(pair.server));
+    auto backend = std::make_shared<fake_upstream>();
+    backend->write_result = 2;
+
+    const std::uint8_t payload[] = {0xA1, 0xB2, 0xC3, 0xD4};
+    asio::write(pair.client, asio::buffer(payload));
+    pair.client.shutdown(asio::ip::tcp::socket::shutdown_send);
+
+    mux::test::run_awaitable_void(io_context, session->client_to_upstream(backend));
+    ASSERT_EQ(backend->writes.size(), 2U);
+    EXPECT_EQ(backend->writes[0], std::vector<std::uint8_t>({0xA1, 0xB2, 0xC3, 0xD4}));
+    EXPECT_EQ(backend->writes[1], std::vector<std::uint8_t>({0xC3, 0xD4}));
 }
 
 TEST(TcpSocksSessionTest, UpstreamToClientWritesDataThenStopsOnError)
@@ -431,6 +467,23 @@ TEST(TcpSocksSessionTest, RunReturnsNotAllowedWhenRouteBlocked)
     asio::read(pair.client, asio::buffer(err));
     EXPECT_EQ(err[0], socks::kVer);
     EXPECT_EQ(err[1], socks::kRepNotAllowed);
+    EXPECT_FALSE(session->socket_.is_open());
+}
+
+TEST(TcpSocksSessionTest, RunReturnsGeneralFailureWhenRouterMissing)
+{
+    asio::io_context io_context;
+    auto pair = make_tcp_socket_pair(io_context);
+    mux::config::timeout_t timeout_cfg{};
+    auto session = std::make_shared<mux::tcp_socks_session>(
+        std::move(pair.server), io_context, nullptr, nullptr, 1, timeout_cfg);
+
+    mux::test::run_awaitable_void(io_context, session->run("example.test", 80));
+
+    std::uint8_t err[10] = {0};
+    asio::read(pair.client, asio::buffer(err));
+    EXPECT_EQ(err[0], socks::kVer);
+    EXPECT_EQ(err[1], socks::kRepGenFail);
     EXPECT_FALSE(session->socket_.is_open());
 }
 

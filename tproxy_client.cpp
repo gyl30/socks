@@ -884,14 +884,30 @@ void tproxy_client::start()
         started_.store(false, std::memory_order_release);
         return;
     }
-    if (!tunnel_pool_->valid())
+    auto tunnel_pool = tunnel_pool_;
+    if (tunnel_pool == nullptr)
+    {
+        LOG_ERROR("tproxy tunnel pool unavailable");
+        stop_.store(true, std::memory_order_release);
+        started_.store(false, std::memory_order_release);
+        return;
+    }
+    auto router = router_;
+    if (router == nullptr)
+    {
+        LOG_ERROR("tproxy router unavailable");
+        stop_.store(true, std::memory_order_release);
+        started_.store(false, std::memory_order_release);
+        return;
+    }
+    if (!tunnel_pool->valid())
     {
         LOG_ERROR("invalid reality auth config");
         stop_.store(true, std::memory_order_release);
         started_.store(false, std::memory_order_release);
         return;
     }
-    if (!router_->load())
+    if (!router->load())
     {
         LOG_ERROR("failed to load router data");
         stop_.store(true, std::memory_order_release);
@@ -935,7 +951,7 @@ void tproxy_client::start()
     udp_dispatch_channel_ = std::make_shared<tproxy_udp_dispatch_channel>(
         io_context_, static_cast<std::size_t>(cfg_.queues.tproxy_udp_dispatch_queue_capacity));
     udp_dispatch_started_.store(false, std::memory_order_release);
-    tunnel_pool_->start();
+    tunnel_pool->start();
     auto self = shared_from_this();
 
     asio::co_spawn(io_context_, [self]() { return self->accept_tcp_loop(); }, asio::detached);
@@ -970,7 +986,10 @@ void tproxy_client::stop()
             }
         });
 
-    tunnel_pool_->stop();
+    if (tunnel_pool_ != nullptr)
+    {
+        tunnel_pool_->stop();
+    }
 }
 
 std::string tproxy_client::endpoint_key(const asio::ip::udp::endpoint& ep) const
@@ -1017,6 +1036,16 @@ asio::awaitable<void> tproxy_client::accept_tcp_loop()
         co_return;
     }
 
+    auto tunnel_pool = tunnel_pool_;
+    auto router = router_;
+    if (tunnel_pool == nullptr || router == nullptr)
+    {
+        LOG_ERROR("tproxy tcp dependencies unavailable");
+        stop_.store(true, std::memory_order_release);
+        started_.store(false, std::memory_order_release);
+        co_return;
+    }
+
     if (!tcp_acceptor_.is_open())
     {
         std::string listen_host;
@@ -1036,7 +1065,7 @@ asio::awaitable<void> tproxy_client::accept_tcp_loop()
 
     while (!stop_.load(std::memory_order_acquire))
     {
-        if (!co_await run_tcp_accept_iteration(tcp_acceptor_, io_context_, stop_, tunnel_pool_, router_, cfg_))
+        if (!co_await run_tcp_accept_iteration(tcp_acceptor_, io_context_, stop_, tunnel_pool, router, cfg_))
         {
             break;
         }
@@ -1107,6 +1136,16 @@ asio::awaitable<void> tproxy_client::udp_dispatch_loop()
     {
         co_return;
     }
+    auto tunnel_pool = tunnel_pool_;
+    auto router = router_;
+    auto sender = sender_;
+    if (tunnel_pool == nullptr || router == nullptr || sender == nullptr)
+    {
+        LOG_ERROR("tproxy udp dependencies unavailable");
+        stop_.store(true, std::memory_order_release);
+        started_.store(false, std::memory_order_release);
+        co_return;
+    }
     std::unordered_map<udp_endpoint_key, std::string, endpoint_hash, endpoint_key_equal> src_key_cache;
     src_key_cache.reserve(k_udp_dispatch_src_key_cache_capacity);
 
@@ -1150,7 +1189,8 @@ asio::awaitable<void> tproxy_client::udp_dispatch_loop()
             key = &inserted_it->second;
         }
 
-        auto session = get_or_create_udp_session(udp_sessions_, *key, packet.src_ep, io_context_, tunnel_pool_, router_, sender_, cfg_, stop_);
+        auto session = get_or_create_udp_session(
+            udp_sessions_, *key, packet.src_ep, io_context_, tunnel_pool, router, sender, cfg_, stop_);
         if (session == nullptr)
         {
             continue;

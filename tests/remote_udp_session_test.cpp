@@ -112,6 +112,23 @@ TEST(RemoteUdpSessionTest, StartReturnsWhenConnectionExpired)
     SUCCEED();
 }
 
+TEST(RemoteUdpSessionTest, StartRemovesManagerStreamWhenConnectionExpired)
+{
+    asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    auto session = make_session(io_context, conn, 110);
+    auto manager = make_manager(io_context, 410);
+    manager->connection()->register_stream(110, std::make_shared<noop_stream>());
+    ASSERT_TRUE(manager->connection()->has_stream(110));
+    session->set_manager(manager);
+    conn.reset();
+
+    mux::test::run_awaitable_void(io_context, session->start());
+
+    EXPECT_FALSE(manager->connection()->has_stream(110));
+    EXPECT_FALSE(session->udp_socket_.is_open());
+}
+
 TEST(RemoteUdpSessionTest, SetupUdpSocketAlreadyOpenTriggersFailureAckAndReset)
 {
     asio::io_context io_context;
@@ -524,6 +541,32 @@ TEST(RemoteUdpSessionTest, OnCloseAndOnResetCloseReceiveChannel)
     EXPECT_TRUE(recv_ec);
     EXPECT_TRUE(recv_data.empty());
     session->close_socket();
+}
+
+TEST(RemoteUdpSessionTest, OnCloseAndOnResetRemoveManagerStreamEvenBeforeStart)
+{
+    asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    auto manager = make_manager(io_context, 411);
+
+    auto session = make_session(io_context, conn, 210);
+    manager->connection()->register_stream(210, std::make_shared<noop_stream>());
+    ASSERT_TRUE(manager->connection()->has_stream(210));
+    session->set_manager(manager);
+
+    session->on_close();
+    io_context.run();
+    io_context.restart();
+    EXPECT_FALSE(manager->connection()->has_stream(210));
+
+    auto reset_session = make_session(io_context, conn, 211);
+    manager->connection()->register_stream(211, std::make_shared<noop_stream>());
+    ASSERT_TRUE(manager->connection()->has_stream(211));
+    reset_session->set_manager(manager);
+    reset_session->on_reset();
+    io_context.run();
+    io_context.restart();
+    EXPECT_FALSE(manager->connection()->has_stream(211));
 }
 
 TEST(RemoteUdpSessionTest, OnCloseAndOnResetRunInlineWhenIoContextStopped)
