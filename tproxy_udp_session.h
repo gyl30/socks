@@ -40,6 +40,8 @@ class tproxy_udp_session : public mux_stream_interface, public std::enable_share
 
     bool start();
 
+    asio::awaitable<void> handle_packet(const asio::ip::udp::endpoint& dst_ep, std::vector<std::uint8_t> data);
+
     asio::awaitable<void> handle_packet(const asio::ip::udp::endpoint& dst_ep, const std::uint8_t* data, std::size_t len);
 
     void stop();
@@ -70,7 +72,7 @@ class tproxy_udp_session : public mux_stream_interface, public std::enable_share
                               bool& should_start_reader);
     asio::awaitable<std::optional<bool>> open_proxy_stream();
     void maybe_start_proxy_reader(bool should_start_reader);
-    bool decode_proxy_packet(const std::vector<std::uint8_t>& data, asio::ip::udp::endpoint& src_ep, std::vector<std::uint8_t>& payload) const;
+    bool decode_proxy_packet(const std::vector<std::uint8_t>& data, asio::ip::udp::endpoint& src_ep, std::size_t& payload_offset) const;
 
     asio::awaitable<bool> ensure_proxy_stream();
 
@@ -99,6 +101,9 @@ class tproxy_udp_session : public mux_stream_interface, public std::enable_share
     std::atomic<std::uint64_t> last_activity_ms_{0};
     std::atomic<bool> terminated_{false};
     bool proxy_reader_started_ = false;
+    bool has_cached_proxy_header_ = false;
+    asio::ip::udp::endpoint cached_proxy_dst_ep_;
+    std::vector<std::uint8_t> cached_proxy_header_;
 };
 
 }    // namespace mux

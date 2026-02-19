@@ -115,7 +115,8 @@ std::shared_ptr<upstream> tcp_socks_session::create_backend(const route_type rou
 {
     if (route == route_type::kDirect)
     {
-        return std::make_shared<direct_upstream>(io_context_, ctx_, 0);
+        const auto connect_timeout_sec = (timeout_config_.read == 0) ? 1U : timeout_config_.read;
+        return std::make_shared<direct_upstream>(io_context_, ctx_, 0, connect_timeout_sec);
     }
     if (route == route_type::kProxy)
     {
@@ -200,8 +201,7 @@ asio::awaitable<void> tcp_socks_session::client_to_upstream(std::shared_ptr<upst
             break;
         }
 
-        const std::vector<std::uint8_t> chunk(buf.begin(), buf.begin() + n);
-        const auto written = co_await backend->write(chunk);
+        const auto written = co_await backend->write(buf.data(), n);
         if (written == 0)
         {
             LOG_CTX_WARN(ctx_, "{} failed to write to backend", log_event::kSocks);

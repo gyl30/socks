@@ -50,6 +50,8 @@
 1. 所有错误路径必须记录日志。
 2. 敏感握手数据不输出明文，仅记录大小或状态。
 3. 日志内容统一小写，避免额外格式化符号。
+4. 关键失败日志统一字段：`trace_id/conn_id/stream_id`（由 `LOG_CTX_*` 前缀输出）+ `stage` + `target` + `error/timeout`。
+5. 当前关键链路至少覆盖：`client_tunnel_pool(resolve/connect/handshake)`、`remote_session(resolve/connect)`、`remote_udp_session(decode_header/resolve/send)`、`direct_upstream(resolve/connect)`、`proxy_upstream(send_syn/wait_ack/decode_ack)`、`fallback(resolve/connect/write)`、`cert_fetcher(resolve/connect)`。
 
 ## 失败路径处理
 
@@ -66,9 +68,31 @@
 
 ## 监控告警基线
 
-1. fallback 失败应至少按 `no_target`、`resolve_fail`、`connect_fail`、`write_fail` 四类拆分观测。
-2. 看板应使用 `increase(...[5m])` 展示各失败原因短窗口增量，便于快速定位 DNS、目标可达性或回写链路问题。
-3. 告警建议以 10 分钟窗口设置阈值并增加 `for` 持续时间，避免瞬时抖动导致误报。
+1. fallback 失败按阶段拆分观测：`socks_fallback_*_{failures,timeouts,errors}_total`。
+2. 客户端建连按阶段拆分观测：`socks_client_tunnel_pool_{resolve,connect,handshake}_{timeouts,errors}_total`。
+3. 服务端会话按阶段拆分观测：`socks_remote_session_{resolve,connect}_{timeouts,errors}_total`、`socks_remote_udp_session_resolve_{timeouts,errors}_total`、`socks_direct_upstream_{resolve,connect}_{timeouts,errors}_total`。
+4. 看板建议先展示 5 分钟短窗增量，再展示 1 小时趋势，示例：
+
+```promql
+increase(socks_fallback_connect_timeouts_total[5m])
+increase(socks_client_tunnel_pool_handshake_errors_total[5m])
+increase(socks_remote_session_connect_errors_total[5m])
+```
+
+5. 告警建议使用 10 分钟窗口并加 `for` 抑制瞬时抖动，初始阈值可从以下基线起步（按单实例）：
+
+```promql
+# fallback connect 超时突增
+increase(socks_fallback_connect_timeouts_total[10m]) > 20
+
+# 隧道握手错误突增
+increase(socks_client_tunnel_pool_handshake_errors_total[10m]) > 15
+
+# 远端 TCP 连接失败突增
+increase(socks_remote_session_connect_errors_total[10m]) > 30
+```
+
+6. 基线阈值需结合部署规模按实例数线性放大，并在上线后一周依据真实流量回放修订。
 
 ## 每步验证要求
 

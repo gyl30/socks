@@ -7,6 +7,7 @@
 #include <unordered_map>
 
 #include <asio/ip/udp.hpp>
+#include <asio/buffer.hpp>
 #include <asio/io_context.hpp>
 #include <asio/awaitable.hpp>
 
@@ -17,6 +18,10 @@ class tproxy_udp_sender
 {
    public:
     tproxy_udp_sender(asio::io_context& io_context, std::uint32_t mark);
+
+    asio::awaitable<void> send_to_client(const asio::ip::udp::endpoint& client_ep,
+                                         const asio::ip::udp::endpoint& src_ep,
+                                         asio::const_buffer payload);
 
     asio::awaitable<void> send_to_client(const asio::ip::udp::endpoint& client_ep,
                                          const asio::ip::udp::endpoint& src_ep,
@@ -66,6 +71,7 @@ class tproxy_udp_sender
     asio::io_context& io_context_;
     std::uint32_t mark_ = 0;
     std::unordered_map<endpoint_key, cached_socket, endpoint_hash, endpoint_key_equal> sockets_;
+    std::uint64_t last_prune_ms_ = 0;
 };
 
 }    // namespace mux

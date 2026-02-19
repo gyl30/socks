@@ -25,6 +25,7 @@ extern "C"
 }
 
 #include "log.h"
+#include "statistics.h"
 #define private public
 #include "upstream.h"
 #undef private
@@ -213,14 +214,19 @@ TEST_F(upstream_test, DirectUpstreamConnectSuccess)
 
 TEST_F(upstream_test, DirectUpstreamConnectFail)
 {
+    auto& stats = mux::statistics::instance();
+    const auto connect_errors_before = stats.direct_upstream_connect_errors();
     mux::direct_upstream upstream(ctx(), mux::connection_context{});
 
     const auto success = mux::test::run_awaitable(ctx(), upstream.connect("127.0.0.1", 1));
     EXPECT_FALSE(success);
+    EXPECT_GE(stats.direct_upstream_connect_errors(), connect_errors_before + 1);
 }
 
 TEST_F(upstream_test, DirectUpstreamConnectTimeoutWhenBacklogSaturated)
 {
+    auto& stats = mux::statistics::instance();
+    const auto connect_timeouts_before = stats.direct_upstream_connect_timeouts();
     std::error_code ec;
     asio::ip::tcp::acceptor saturated_acceptor(ctx());
     ec = saturated_acceptor.open(asio::ip::tcp::v4(), ec);
@@ -247,6 +253,7 @@ TEST_F(upstream_test, DirectUpstreamConnectTimeoutWhenBacklogSaturated)
 
     EXPECT_FALSE(success);
     EXPECT_LT(std::chrono::duration_cast<std::chrono::seconds>(elapsed).count(), 5);
+    EXPECT_GE(stats.direct_upstream_connect_timeouts(), connect_timeouts_before + 1);
 
     std::error_code close_ec;
     queued_client_a.close(close_ec);
@@ -256,10 +263,13 @@ TEST_F(upstream_test, DirectUpstreamConnectTimeoutWhenBacklogSaturated)
 
 TEST_F(upstream_test, DirectUpstreamResolveFail)
 {
+    auto& stats = mux::statistics::instance();
+    const auto resolve_errors_before = stats.direct_upstream_resolve_errors();
     mux::direct_upstream upstream(ctx(), mux::connection_context{});
 
     const auto success = mux::test::run_awaitable(ctx(), upstream.connect("non-existent.invalid", 80));
     EXPECT_FALSE(success);
+    EXPECT_GE(stats.direct_upstream_resolve_errors(), resolve_errors_before + 1);
 }
 
 TEST_F(upstream_test, DirectUpstreamReconnectSuccess)
@@ -585,7 +595,7 @@ TEST_F(upstream_test, ProxyUpstreamWaitConnectAckSuccess)
     mux::mux_codec::encode_ack(ack, ack_data);
     stream->on_data(ack_data);
 
-    EXPECT_TRUE(mux::test::run_awaitable(ctx(), upstream.wait_connect_ack(stream)));
+    EXPECT_TRUE(mux::test::run_awaitable(ctx(), upstream.wait_connect_ack(stream, "example.com", 443)));
 }
 
 TEST_F(upstream_test, ProxyUpstreamWaitConnectAckReadError)
@@ -595,7 +605,7 @@ TEST_F(upstream_test, ProxyUpstreamWaitConnectAckReadError)
     mux::proxy_upstream upstream(nullptr, mux::connection_context{});
 
     stream->on_reset();
-    EXPECT_FALSE(mux::test::run_awaitable(ctx(), upstream.wait_connect_ack(stream)));
+    EXPECT_FALSE(mux::test::run_awaitable(ctx(), upstream.wait_connect_ack(stream, "example.com", 443)));
 }
 
 TEST_F(upstream_test, ProxyUpstreamWaitConnectAckDecodeFailure)
@@ -605,7 +615,7 @@ TEST_F(upstream_test, ProxyUpstreamWaitConnectAckDecodeFailure)
     mux::proxy_upstream upstream(nullptr, mux::connection_context{});
 
     stream->on_data({0x01});
-    EXPECT_FALSE(mux::test::run_awaitable(ctx(), upstream.wait_connect_ack(stream)));
+    EXPECT_FALSE(mux::test::run_awaitable(ctx(), upstream.wait_connect_ack(stream, "example.com", 443)));
 }
 
 TEST_F(upstream_test, ProxyUpstreamWaitConnectAckRemoteReject)
@@ -620,7 +630,7 @@ TEST_F(upstream_test, ProxyUpstreamWaitConnectAckRemoteReject)
     mux::mux_codec::encode_ack(ack, ack_data);
     stream->on_data(ack_data);
 
-    EXPECT_FALSE(mux::test::run_awaitable(ctx(), upstream.wait_connect_ack(stream)));
+    EXPECT_FALSE(mux::test::run_awaitable(ctx(), upstream.wait_connect_ack(stream, "example.com", 443)));
 }
 
 TEST_F(upstream_test, ProxyUpstreamCleanupNullStreamNoop)

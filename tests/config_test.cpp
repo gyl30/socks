@@ -152,6 +152,10 @@ TEST_F(config_test, ParseValues)
             "udp_port": 18081,
             "mark": 17
         },
+        "queues": {
+            "udp_session_recv_channel_capacity": 256,
+            "tproxy_udp_dispatch_queue_capacity": 4096
+        },
         "reality": {
             "sni": "google.com",
             "strict_cert_verify": true,
@@ -196,6 +200,8 @@ TEST_F(config_test, ParseValues)
         EXPECT_EQ(cfg.reality.replay_cache_max_entries, 4096);
         EXPECT_EQ(cfg.heartbeat.idle_timeout, 42);
         EXPECT_EQ(cfg.heartbeat.max_padding, 128);
+        EXPECT_EQ(cfg.queues.udp_session_recv_channel_capacity, 256U);
+        EXPECT_EQ(cfg.queues.tproxy_udp_dispatch_queue_capacity, 4096U);
         EXPECT_EQ(cfg.limits.max_connections_per_source, 3U);
         EXPECT_EQ(cfg.limits.source_prefix_v4, 24U);
         EXPECT_EQ(cfg.limits.source_prefix_v6, 64U);
@@ -467,6 +473,31 @@ TEST_F(config_test, MaxBufferZeroRejected)
     EXPECT_FALSE(cfg_opt.has_value());
 }
 
+TEST_F(config_test, QueueCapacityOutOfRangeRejected)
+{
+    write_config_file(R"({
+        "queues": {
+            "udp_session_recv_channel_capacity": 0
+        }
+    })");
+
+    auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/queues/udp_session_recv_channel_capacity");
+    EXPECT_NE(parsed.error().reason.find("must be between 1 and 65535"), std::string::npos);
+
+    write_config_file(R"({
+        "queues": {
+            "tproxy_udp_dispatch_queue_capacity": 70000
+        }
+    })");
+
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/queues/tproxy_udp_dispatch_queue_capacity");
+    EXPECT_NE(parsed.error().reason.find("must be between 1 and 65535"), std::string::npos);
+}
+
 TEST_F(config_test, EmptyHostAddress)
 {
     const std::string content = R"({
@@ -489,6 +520,31 @@ TEST_F(config_test, DumpConfigIncludesHeartbeatIdleTimeout)
     const auto dumped = mux::dump_config(cfg);
     EXPECT_NE(dumped.find("\"idle_timeout\""), std::string::npos);
     EXPECT_NE(dumped.find("\"heartbeat\""), std::string::npos);
+}
+
+TEST_F(config_test, ContractMatrixTimeoutRulesStayAlignedWithDocumentation)
+{
+    const auto doc = load_configuration_doc();
+    ASSERT_FALSE(doc.empty());
+    EXPECT_NE(doc.find("timeout.read"), std::string::npos);
+    EXPECT_NE(doc.find("timeout.write"), std::string::npos);
+    EXPECT_NE(doc.find("timeout.idle"), std::string::npos);
+    EXPECT_NE(doc.find("timeout.read = 0` 与 `timeout.write = 0`"), std::string::npos);
+    EXPECT_NE(doc.find("timeout.idle = 0`：表示禁用空闲超时"), std::string::npos);
+
+    write_config_file(R"({
+        "timeout": {
+            "read": 0,
+            "write": 0,
+            "idle": 0
+        }
+    })");
+
+    const auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_EQ(parsed->timeout.read, 0U);
+    EXPECT_EQ(parsed->timeout.write, 0U);
+    EXPECT_EQ(parsed->timeout.idle, 0U);
 }
 
 TEST_F(config_test, ContractMatrixHeartbeatRulesStayAlignedWithDocumentation)
@@ -571,6 +627,35 @@ TEST_F(config_test, ContractMatrixLimitsRulesStayAlignedWithDocumentation)
     ASSERT_FALSE(parsed.has_value());
     EXPECT_EQ(parsed.error().path, "/limits/max_buffer");
     EXPECT_NE(parsed.error().reason.find("must be greater than 0"), std::string::npos);
+}
+
+TEST_F(config_test, ContractMatrixQueueRulesStayAlignedWithDocumentation)
+{
+    const auto doc = load_configuration_doc();
+    ASSERT_FALSE(doc.empty());
+    EXPECT_NE(doc.find("queues.udp_session_recv_channel_capacity"), std::string::npos);
+    EXPECT_NE(doc.find("queues.tproxy_udp_dispatch_queue_capacity"), std::string::npos);
+    EXPECT_NE(doc.find("必须在 `1-65535`"), std::string::npos);
+
+    write_config_file(R"({
+        "queues": {
+            "udp_session_recv_channel_capacity": 1024,
+            "tproxy_udp_dispatch_queue_capacity": 8192
+        }
+    })");
+    auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_EQ(parsed->queues.udp_session_recv_channel_capacity, 1024U);
+    EXPECT_EQ(parsed->queues.tproxy_udp_dispatch_queue_capacity, 8192U);
+
+    write_config_file(R"({
+        "queues": {
+            "udp_session_recv_channel_capacity": 0
+        }
+    })");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/queues/udp_session_recv_channel_capacity");
 }
 
 TEST_F(config_test, ContractMatrixMonitorRulesStayAlignedWithDocumentation)

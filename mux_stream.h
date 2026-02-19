@@ -38,6 +38,7 @@ class mux_stream : public mux_stream_interface, public std::enable_shared_from_t
     [[nodiscard]] asio::awaitable<std::tuple<std::error_code, std::vector<std::uint8_t>>> async_read_some();
 
     [[nodiscard]] asio::awaitable<std::error_code> async_write_some(const void* data, std::size_t len);
+    [[nodiscard]] asio::awaitable<std::error_code> async_write_some(std::vector<std::uint8_t> payload);
 
     asio::awaitable<void> close();
 

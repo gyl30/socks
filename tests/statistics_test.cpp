@@ -110,13 +110,101 @@ TEST(StatisticsTest, CountersAndUptime)
     stats.inc_fallback_resolve_failures();
     EXPECT_EQ(stats.fallback_resolve_failures(), fallback_resolve_before + 1);
 
+    const auto fallback_resolve_timeout_before = stats.fallback_resolve_timeouts();
+    stats.inc_fallback_resolve_timeouts();
+    EXPECT_EQ(stats.fallback_resolve_timeouts(), fallback_resolve_timeout_before + 1);
+
+    const auto fallback_resolve_error_before = stats.fallback_resolve_errors();
+    stats.inc_fallback_resolve_errors();
+    EXPECT_EQ(stats.fallback_resolve_errors(), fallback_resolve_error_before + 1);
+
     const auto fallback_connect_before = stats.fallback_connect_failures();
     stats.inc_fallback_connect_failures();
     EXPECT_EQ(stats.fallback_connect_failures(), fallback_connect_before + 1);
 
+    const auto fallback_connect_timeout_before = stats.fallback_connect_timeouts();
+    stats.inc_fallback_connect_timeouts();
+    EXPECT_EQ(stats.fallback_connect_timeouts(), fallback_connect_timeout_before + 1);
+
+    const auto fallback_connect_error_before = stats.fallback_connect_errors();
+    stats.inc_fallback_connect_errors();
+    EXPECT_EQ(stats.fallback_connect_errors(), fallback_connect_error_before + 1);
+
     const auto fallback_write_before = stats.fallback_write_failures();
     stats.inc_fallback_write_failures();
     EXPECT_EQ(stats.fallback_write_failures(), fallback_write_before + 1);
+
+    const auto fallback_write_timeout_before = stats.fallback_write_timeouts();
+    stats.inc_fallback_write_timeouts();
+    EXPECT_EQ(stats.fallback_write_timeouts(), fallback_write_timeout_before + 1);
+
+    const auto fallback_write_error_before = stats.fallback_write_errors();
+    stats.inc_fallback_write_errors();
+    EXPECT_EQ(stats.fallback_write_errors(), fallback_write_error_before + 1);
+
+    const auto direct_upstream_resolve_timeout_before = stats.direct_upstream_resolve_timeouts();
+    stats.inc_direct_upstream_resolve_timeouts();
+    EXPECT_EQ(stats.direct_upstream_resolve_timeouts(), direct_upstream_resolve_timeout_before + 1);
+
+    const auto direct_upstream_resolve_error_before = stats.direct_upstream_resolve_errors();
+    stats.inc_direct_upstream_resolve_errors();
+    EXPECT_EQ(stats.direct_upstream_resolve_errors(), direct_upstream_resolve_error_before + 1);
+
+    const auto direct_upstream_connect_timeout_before = stats.direct_upstream_connect_timeouts();
+    stats.inc_direct_upstream_connect_timeouts();
+    EXPECT_EQ(stats.direct_upstream_connect_timeouts(), direct_upstream_connect_timeout_before + 1);
+
+    const auto direct_upstream_connect_error_before = stats.direct_upstream_connect_errors();
+    stats.inc_direct_upstream_connect_errors();
+    EXPECT_EQ(stats.direct_upstream_connect_errors(), direct_upstream_connect_error_before + 1);
+
+    const auto remote_resolve_timeout_before = stats.remote_session_resolve_timeouts();
+    stats.inc_remote_session_resolve_timeouts();
+    EXPECT_EQ(stats.remote_session_resolve_timeouts(), remote_resolve_timeout_before + 1);
+
+    const auto remote_resolve_error_before = stats.remote_session_resolve_errors();
+    stats.inc_remote_session_resolve_errors();
+    EXPECT_EQ(stats.remote_session_resolve_errors(), remote_resolve_error_before + 1);
+
+    const auto remote_connect_timeout_before = stats.remote_session_connect_timeouts();
+    stats.inc_remote_session_connect_timeouts();
+    EXPECT_EQ(stats.remote_session_connect_timeouts(), remote_connect_timeout_before + 1);
+
+    const auto remote_connect_error_before = stats.remote_session_connect_errors();
+    stats.inc_remote_session_connect_errors();
+    EXPECT_EQ(stats.remote_session_connect_errors(), remote_connect_error_before + 1);
+
+    const auto remote_udp_resolve_timeout_before = stats.remote_udp_session_resolve_timeouts();
+    stats.inc_remote_udp_session_resolve_timeouts();
+    EXPECT_EQ(stats.remote_udp_session_resolve_timeouts(), remote_udp_resolve_timeout_before + 1);
+
+    const auto remote_udp_resolve_error_before = stats.remote_udp_session_resolve_errors();
+    stats.inc_remote_udp_session_resolve_errors();
+    EXPECT_EQ(stats.remote_udp_session_resolve_errors(), remote_udp_resolve_error_before + 1);
+
+    const auto client_tunnel_resolve_timeout_before = stats.client_tunnel_pool_resolve_timeouts();
+    stats.inc_client_tunnel_pool_resolve_timeouts();
+    EXPECT_EQ(stats.client_tunnel_pool_resolve_timeouts(), client_tunnel_resolve_timeout_before + 1);
+
+    const auto client_tunnel_resolve_error_before = stats.client_tunnel_pool_resolve_errors();
+    stats.inc_client_tunnel_pool_resolve_errors();
+    EXPECT_EQ(stats.client_tunnel_pool_resolve_errors(), client_tunnel_resolve_error_before + 1);
+
+    const auto client_tunnel_connect_timeout_before = stats.client_tunnel_pool_connect_timeouts();
+    stats.inc_client_tunnel_pool_connect_timeouts();
+    EXPECT_EQ(stats.client_tunnel_pool_connect_timeouts(), client_tunnel_connect_timeout_before + 1);
+
+    const auto client_tunnel_connect_error_before = stats.client_tunnel_pool_connect_errors();
+    stats.inc_client_tunnel_pool_connect_errors();
+    EXPECT_EQ(stats.client_tunnel_pool_connect_errors(), client_tunnel_connect_error_before + 1);
+
+    const auto client_tunnel_handshake_timeout_before = stats.client_tunnel_pool_handshake_timeouts();
+    stats.inc_client_tunnel_pool_handshake_timeouts();
+    EXPECT_EQ(stats.client_tunnel_pool_handshake_timeouts(), client_tunnel_handshake_timeout_before + 1);
+
+    const auto client_tunnel_handshake_error_before = stats.client_tunnel_pool_handshake_errors();
+    stats.inc_client_tunnel_pool_handshake_errors();
+    EXPECT_EQ(stats.client_tunnel_pool_handshake_errors(), client_tunnel_handshake_error_before + 1);
 
     const auto blocked_before = stats.routing_blocked();
     stats.inc_routing_blocked();

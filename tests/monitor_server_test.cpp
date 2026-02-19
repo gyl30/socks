@@ -410,8 +410,30 @@ TEST(MonitorServerTest, EmptyTokenReturnsMetrics)
     EXPECT_NE(resp.find("socks_tproxy_udp_dispatch_dropped_total "), std::string::npos);
     EXPECT_NE(resp.find("socks_fallback_no_target_total "), std::string::npos);
     EXPECT_NE(resp.find("socks_fallback_resolve_failures_total "), std::string::npos);
+    EXPECT_NE(resp.find("socks_fallback_resolve_timeouts_total "), std::string::npos);
+    EXPECT_NE(resp.find("socks_fallback_resolve_errors_total "), std::string::npos);
     EXPECT_NE(resp.find("socks_fallback_connect_failures_total "), std::string::npos);
+    EXPECT_NE(resp.find("socks_fallback_connect_timeouts_total "), std::string::npos);
+    EXPECT_NE(resp.find("socks_fallback_connect_errors_total "), std::string::npos);
     EXPECT_NE(resp.find("socks_fallback_write_failures_total "), std::string::npos);
+    EXPECT_NE(resp.find("socks_fallback_write_timeouts_total "), std::string::npos);
+    EXPECT_NE(resp.find("socks_fallback_write_errors_total "), std::string::npos);
+    EXPECT_NE(resp.find("socks_direct_upstream_resolve_timeouts_total "), std::string::npos);
+    EXPECT_NE(resp.find("socks_direct_upstream_resolve_errors_total "), std::string::npos);
+    EXPECT_NE(resp.find("socks_direct_upstream_connect_timeouts_total "), std::string::npos);
+    EXPECT_NE(resp.find("socks_direct_upstream_connect_errors_total "), std::string::npos);
+    EXPECT_NE(resp.find("socks_remote_session_resolve_timeouts_total "), std::string::npos);
+    EXPECT_NE(resp.find("socks_remote_session_resolve_errors_total "), std::string::npos);
+    EXPECT_NE(resp.find("socks_remote_session_connect_timeouts_total "), std::string::npos);
+    EXPECT_NE(resp.find("socks_remote_session_connect_errors_total "), std::string::npos);
+    EXPECT_NE(resp.find("socks_remote_udp_session_resolve_timeouts_total "), std::string::npos);
+    EXPECT_NE(resp.find("socks_remote_udp_session_resolve_errors_total "), std::string::npos);
+    EXPECT_NE(resp.find("socks_client_tunnel_pool_resolve_timeouts_total "), std::string::npos);
+    EXPECT_NE(resp.find("socks_client_tunnel_pool_resolve_errors_total "), std::string::npos);
+    EXPECT_NE(resp.find("socks_client_tunnel_pool_connect_timeouts_total "), std::string::npos);
+    EXPECT_NE(resp.find("socks_client_tunnel_pool_connect_errors_total "), std::string::npos);
+    EXPECT_NE(resp.find("socks_client_tunnel_pool_handshake_timeouts_total "), std::string::npos);
+    EXPECT_NE(resp.find("socks_client_tunnel_pool_handshake_errors_total "), std::string::npos);
 }
 
 TEST(MonitorServerTest, TproxyUdpDispatchDropMetricReflectsDroppedPackets)

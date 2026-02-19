@@ -762,6 +762,7 @@ TEST_F(remote_server_test, FallbackResolveFail)
 
     std::uint16_t server_port = 29971;
     const auto resolve_fail_before = mux::statistics::instance().fallback_resolve_failures();
+    const auto resolve_error_before = mux::statistics::instance().fallback_resolve_errors();
 
     // Use an invalid service name to trigger resolver failure deterministically
     // without relying on external DNS latency.
@@ -781,6 +782,12 @@ TEST_F(remote_server_test, FallbackResolveFail)
             return mux::statistics::instance().fallback_resolve_failures() > resolve_fail_before;
         },
         std::chrono::milliseconds(10000)));
+    EXPECT_TRUE(wait_for_condition(
+        [resolve_error_before]()
+        {
+            return mux::statistics::instance().fallback_resolve_errors() > resolve_error_before;
+        },
+        std::chrono::milliseconds(10000)));
 
     server->stop();
     pool.stop();
@@ -797,6 +804,7 @@ TEST_F(remote_server_test, FallbackConnectFail)
 
     std::uint16_t server_port = 29981;
     const auto connect_fail_before = mux::statistics::instance().fallback_connect_failures();
+    const auto connect_error_before = mux::statistics::instance().fallback_connect_errors();
 
     auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(server_port, {{"", "127.0.0.1", "1"}}, "0102030405060708"));
     server->start();
@@ -812,6 +820,11 @@ TEST_F(remote_server_test, FallbackConnectFail)
         [connect_fail_before]()
         {
             return mux::statistics::instance().fallback_connect_failures() > connect_fail_before;
+        }));
+    EXPECT_TRUE(wait_for_condition(
+        [connect_error_before]()
+        {
+            return mux::statistics::instance().fallback_connect_errors() > connect_error_before;
         }));
 
     server->stop();
@@ -846,10 +859,12 @@ TEST_F(remote_server_test, FallbackConnectTimeoutIncrementsMetricWhenBacklogSatu
     ASSERT_FALSE(ec);
 
     auto cfg = make_server_cfg(0, {{"", "127.0.0.1", std::to_string(saturated_port)}}, "0102030405060708");
-    cfg.timeout.write = 1;
+    cfg.timeout.read = 1;
+    cfg.timeout.write = 100;
     auto server = std::make_shared<mux::remote_server>(pool, cfg);
 
     const auto connect_fail_before = mux::statistics::instance().fallback_connect_failures();
+    const auto connect_timeout_before = mux::statistics::instance().fallback_connect_timeouts();
     auto fallback_socket = std::make_shared<asio::ip::tcp::socket>(pool.get_io_context());
     mux::connection_context ctx;
     ctx.conn_id(557);
@@ -872,6 +887,12 @@ TEST_F(remote_server_test, FallbackConnectTimeoutIncrementsMetricWhenBacklogSatu
         [connect_fail_before]()
         {
             return mux::statistics::instance().fallback_connect_failures() > connect_fail_before;
+        },
+        std::chrono::milliseconds(3000)));
+    EXPECT_TRUE(wait_for_condition(
+        [connect_timeout_before]()
+        {
+            return mux::statistics::instance().fallback_connect_timeouts() > connect_timeout_before;
         },
         std::chrono::milliseconds(3000)));
 
@@ -945,6 +966,7 @@ TEST_F(remote_server_test, FallbackWriteFailIncrementsMetric)
         });
 
     const auto write_fail_before = mux::statistics::instance().fallback_write_failures();
+    const auto write_error_before = mux::statistics::instance().fallback_write_errors();
     fail_next_send(EPIPE);
 
     {
@@ -962,6 +984,12 @@ TEST_F(remote_server_test, FallbackWriteFailIncrementsMetric)
         [write_fail_before]()
         {
             return mux::statistics::instance().fallback_write_failures() > write_fail_before;
+        },
+        std::chrono::milliseconds(3000)));
+    EXPECT_TRUE(wait_for_condition(
+        [write_error_before]()
+        {
+            return mux::statistics::instance().fallback_write_errors() > write_error_before;
         },
         std::chrono::milliseconds(3000)));
 }
@@ -1012,6 +1040,7 @@ TEST_F(remote_server_test, HandleFallbackWriteTimeoutIncrementsMetric)
         });
 
     const auto write_fail_before = mux::statistics::instance().fallback_write_failures();
+    const auto write_timeout_before = mux::statistics::instance().fallback_write_timeouts();
     auto fallback_socket = std::make_shared<asio::ip::tcp::socket>(pool.get_io_context());
     mux::connection_context ctx;
     ctx.conn_id(556);
@@ -1036,6 +1065,12 @@ TEST_F(remote_server_test, HandleFallbackWriteTimeoutIncrementsMetric)
         [write_fail_before]()
         {
             return mux::statistics::instance().fallback_write_failures() > write_fail_before;
+        },
+        std::chrono::milliseconds(2000)));
+    EXPECT_TRUE(wait_for_condition(
+        [write_timeout_before]()
+        {
+            return mux::statistics::instance().fallback_write_timeouts() > write_timeout_before;
         },
         std::chrono::milliseconds(2000)));
 }
@@ -2756,7 +2791,6 @@ TEST_F(remote_server_test, VerifyClientFinishedTimeoutWhenPeerStalls)
                            EVP_aes_128_gcm(),
                            EVP_sha256(),
                            ctx,
-                           &io_context,
                            1);
                        co_return;
                    },
@@ -2794,7 +2828,7 @@ TEST_F(remote_server_test, SendServerHelloFlightTimeoutWhenPeerStalls)
     std::promise<std::error_code> done;
     auto done_future = done.get_future();
     asio::co_spawn(*io_context,
-                   [server, server_socket, io_context, &done]() -> asio::awaitable<void>
+                   [server, server_socket, &done]() -> asio::awaitable<void>
                    {
                        mux::connection_context ctx;
                        ctx.conn_id(110);
@@ -2802,8 +2836,7 @@ TEST_F(remote_server_test, SendServerHelloFlightTimeoutWhenPeerStalls)
 
                        const std::vector<std::uint8_t> sh_msg = {0x02, 0x00, 0x00, 0x00};
                        std::vector<std::uint8_t> flight2_enc(8 * 1024 * 1024, 0x5a);
-                       const auto write_ec =
-                           co_await server->send_server_hello_flight(server_socket, sh_msg, flight2_enc, ctx, io_context, 1);
+                       const auto write_ec = co_await server->send_server_hello_flight(server_socket, sh_msg, flight2_enc, ctx, 1);
                        done.set_value(write_ec);
                        co_return;
                    },

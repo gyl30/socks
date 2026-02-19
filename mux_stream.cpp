@@ -55,6 +55,12 @@ asio::awaitable<std::tuple<std::error_code, std::vector<std::uint8_t>>> mux_stre
 
 asio::awaitable<std::error_code> mux_stream::async_write_some(const void* data, std::size_t len)
 {
+    std::vector<std::uint8_t> payload(static_cast<const std::uint8_t*>(data), static_cast<const std::uint8_t*>(data) + len);
+    co_return co_await async_write_some(std::move(payload));
+}
+
+asio::awaitable<std::error_code> mux_stream::async_write_some(std::vector<std::uint8_t> payload)
+{
     if (is_closed_)
     {
         co_return asio::error::operation_aborted;
@@ -66,7 +72,7 @@ asio::awaitable<std::error_code> mux_stream::async_write_some(const void* data, 
         co_return asio::error::connection_aborted;
     }
 
-    std::vector<std::uint8_t> payload(static_cast<const std::uint8_t*>(data), static_cast<const std::uint8_t*>(data) + len);
+    const auto len = payload.size();
     const auto ec = co_await connection->send_async(id_, kCmdDat, std::move(payload));
     if (!ec)
     {

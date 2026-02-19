@@ -93,11 +93,77 @@ class statistics
     void inc_fallback_resolve_failures() { fallback_resolve_failures_++; }
     std::uint64_t fallback_resolve_failures() const { return fallback_resolve_failures_.load(); }
 
+    void inc_fallback_resolve_timeouts() { fallback_resolve_timeouts_++; }
+    std::uint64_t fallback_resolve_timeouts() const { return fallback_resolve_timeouts_.load(); }
+
+    void inc_fallback_resolve_errors() { fallback_resolve_errors_++; }
+    std::uint64_t fallback_resolve_errors() const { return fallback_resolve_errors_.load(); }
+
     void inc_fallback_connect_failures() { fallback_connect_failures_++; }
     std::uint64_t fallback_connect_failures() const { return fallback_connect_failures_.load(); }
 
+    void inc_fallback_connect_timeouts() { fallback_connect_timeouts_++; }
+    std::uint64_t fallback_connect_timeouts() const { return fallback_connect_timeouts_.load(); }
+
+    void inc_fallback_connect_errors() { fallback_connect_errors_++; }
+    std::uint64_t fallback_connect_errors() const { return fallback_connect_errors_.load(); }
+
     void inc_fallback_write_failures() { fallback_write_failures_++; }
     std::uint64_t fallback_write_failures() const { return fallback_write_failures_.load(); }
+
+    void inc_fallback_write_timeouts() { fallback_write_timeouts_++; }
+    std::uint64_t fallback_write_timeouts() const { return fallback_write_timeouts_.load(); }
+
+    void inc_fallback_write_errors() { fallback_write_errors_++; }
+    std::uint64_t fallback_write_errors() const { return fallback_write_errors_.load(); }
+
+    void inc_direct_upstream_resolve_timeouts() { direct_upstream_resolve_timeouts_++; }
+    std::uint64_t direct_upstream_resolve_timeouts() const { return direct_upstream_resolve_timeouts_.load(); }
+
+    void inc_direct_upstream_resolve_errors() { direct_upstream_resolve_errors_++; }
+    std::uint64_t direct_upstream_resolve_errors() const { return direct_upstream_resolve_errors_.load(); }
+
+    void inc_direct_upstream_connect_timeouts() { direct_upstream_connect_timeouts_++; }
+    std::uint64_t direct_upstream_connect_timeouts() const { return direct_upstream_connect_timeouts_.load(); }
+
+    void inc_direct_upstream_connect_errors() { direct_upstream_connect_errors_++; }
+    std::uint64_t direct_upstream_connect_errors() const { return direct_upstream_connect_errors_.load(); }
+
+    void inc_remote_session_resolve_timeouts() { remote_session_resolve_timeouts_++; }
+    std::uint64_t remote_session_resolve_timeouts() const { return remote_session_resolve_timeouts_.load(); }
+
+    void inc_remote_session_resolve_errors() { remote_session_resolve_errors_++; }
+    std::uint64_t remote_session_resolve_errors() const { return remote_session_resolve_errors_.load(); }
+
+    void inc_remote_session_connect_timeouts() { remote_session_connect_timeouts_++; }
+    std::uint64_t remote_session_connect_timeouts() const { return remote_session_connect_timeouts_.load(); }
+
+    void inc_remote_session_connect_errors() { remote_session_connect_errors_++; }
+    std::uint64_t remote_session_connect_errors() const { return remote_session_connect_errors_.load(); }
+
+    void inc_remote_udp_session_resolve_timeouts() { remote_udp_session_resolve_timeouts_++; }
+    std::uint64_t remote_udp_session_resolve_timeouts() const { return remote_udp_session_resolve_timeouts_.load(); }
+
+    void inc_remote_udp_session_resolve_errors() { remote_udp_session_resolve_errors_++; }
+    std::uint64_t remote_udp_session_resolve_errors() const { return remote_udp_session_resolve_errors_.load(); }
+
+    void inc_client_tunnel_pool_resolve_timeouts() { client_tunnel_pool_resolve_timeouts_++; }
+    std::uint64_t client_tunnel_pool_resolve_timeouts() const { return client_tunnel_pool_resolve_timeouts_.load(); }
+
+    void inc_client_tunnel_pool_resolve_errors() { client_tunnel_pool_resolve_errors_++; }
+    std::uint64_t client_tunnel_pool_resolve_errors() const { return client_tunnel_pool_resolve_errors_.load(); }
+
+    void inc_client_tunnel_pool_connect_timeouts() { client_tunnel_pool_connect_timeouts_++; }
+    std::uint64_t client_tunnel_pool_connect_timeouts() const { return client_tunnel_pool_connect_timeouts_.load(); }
+
+    void inc_client_tunnel_pool_connect_errors() { client_tunnel_pool_connect_errors_++; }
+    std::uint64_t client_tunnel_pool_connect_errors() const { return client_tunnel_pool_connect_errors_.load(); }
+
+    void inc_client_tunnel_pool_handshake_timeouts() { client_tunnel_pool_handshake_timeouts_++; }
+    std::uint64_t client_tunnel_pool_handshake_timeouts() const { return client_tunnel_pool_handshake_timeouts_.load(); }
+
+    void inc_client_tunnel_pool_handshake_errors() { client_tunnel_pool_handshake_errors_++; }
+    std::uint64_t client_tunnel_pool_handshake_errors() const { return client_tunnel_pool_handshake_errors_.load(); }
 
     void inc_routing_blocked() { routing_blocked_++; }
     std::uint64_t routing_blocked() const { return routing_blocked_.load(); }
@@ -260,8 +326,30 @@ class statistics
     std::atomic<std::uint64_t> fallback_rate_limited_{0};
     std::atomic<std::uint64_t> fallback_no_target_{0};
     std::atomic<std::uint64_t> fallback_resolve_failures_{0};
+    std::atomic<std::uint64_t> fallback_resolve_timeouts_{0};
+    std::atomic<std::uint64_t> fallback_resolve_errors_{0};
     std::atomic<std::uint64_t> fallback_connect_failures_{0};
+    std::atomic<std::uint64_t> fallback_connect_timeouts_{0};
+    std::atomic<std::uint64_t> fallback_connect_errors_{0};
     std::atomic<std::uint64_t> fallback_write_failures_{0};
+    std::atomic<std::uint64_t> fallback_write_timeouts_{0};
+    std::atomic<std::uint64_t> fallback_write_errors_{0};
+    std::atomic<std::uint64_t> direct_upstream_resolve_timeouts_{0};
+    std::atomic<std::uint64_t> direct_upstream_resolve_errors_{0};
+    std::atomic<std::uint64_t> direct_upstream_connect_timeouts_{0};
+    std::atomic<std::uint64_t> direct_upstream_connect_errors_{0};
+    std::atomic<std::uint64_t> remote_session_resolve_timeouts_{0};
+    std::atomic<std::uint64_t> remote_session_resolve_errors_{0};
+    std::atomic<std::uint64_t> remote_session_connect_timeouts_{0};
+    std::atomic<std::uint64_t> remote_session_connect_errors_{0};
+    std::atomic<std::uint64_t> remote_udp_session_resolve_timeouts_{0};
+    std::atomic<std::uint64_t> remote_udp_session_resolve_errors_{0};
+    std::atomic<std::uint64_t> client_tunnel_pool_resolve_timeouts_{0};
+    std::atomic<std::uint64_t> client_tunnel_pool_resolve_errors_{0};
+    std::atomic<std::uint64_t> client_tunnel_pool_connect_timeouts_{0};
+    std::atomic<std::uint64_t> client_tunnel_pool_connect_errors_{0};
+    std::atomic<std::uint64_t> client_tunnel_pool_handshake_timeouts_{0};
+    std::atomic<std::uint64_t> client_tunnel_pool_handshake_errors_{0};
     std::atomic<std::uint64_t> routing_blocked_{0};
     std::atomic<std::uint64_t> connection_limit_rejected_{0};
     std::atomic<std::uint64_t> stream_limit_rejected_{0};
