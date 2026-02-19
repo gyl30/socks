@@ -26,6 +26,12 @@ OUTBOUND_MARK=${OUTBOUND_MARK:-18}
 REMOTE_PORT=${REMOTE_PORT:-18444}
 TLS_PORT=${TLS_PORT:-24443}
 BIN=${BIN:-"$(pwd)/build/socks"}
+TPROXY_QUEUE_CAPACITY=${TPROXY_QUEUE_CAPACITY:-512}
+UDP_SESSION_QUEUE_CAPACITY=${UDP_SESSION_QUEUE_CAPACITY:-512}
+MONITOR_PORT=${MONITOR_PORT:-19090}
+UDP_BURST_COUNT=${UDP_BURST_COUNT:-0}
+UDP_BURST_PAYLOAD_BYTES=${UDP_BURST_PAYLOAD_BYTES:-256}
+UDP_BURST_TIMEOUT_MS=${UDP_BURST_TIMEOUT_MS:-1000}
 
 require_cmd() {
     command -v "$1" >/dev/null 2>&1 || { echo "missing command: $1" >&2; exit 1; }
@@ -275,7 +281,15 @@ cat >"${TMPDIR}/config.json" <<EOF
     "strict_cert_verify": false
   },
   "limits": { "max_connections": 1 },
-  "timeout": { "idle": 5 }
+  "timeout": { "idle": 5 },
+  "queues": {
+    "udp_session_recv_channel_capacity": ${UDP_SESSION_QUEUE_CAPACITY},
+    "tproxy_udp_dispatch_queue_capacity": ${TPROXY_QUEUE_CAPACITY}
+  },
+  "monitor": {
+    "enabled": true,
+    "port": ${MONITOR_PORT}
+  }
 }
 EOF
 
@@ -399,5 +413,121 @@ while time.time() < deadline:
 else:
     raise SystemExit(f"udp probe after idle failed: {last_error}")
 PY
+
+if [[ "${UDP_BURST_COUNT}" -gt 0 ]]; then
+    BURST_JSON=$(ip netns exec "${NS_CLIENT}" python3 - <<PY
+import json
+import socket
+import struct
+import time
+
+HOST_IP = "${SERVER_IP}"
+UDP_PORT = int("${HOST_UDP_PORT}")
+COUNT = int("${UDP_BURST_COUNT}")
+PAYLOAD_BYTES = int("${UDP_BURST_PAYLOAD_BYTES}")
+TIMEOUT_SEC = int("${UDP_BURST_TIMEOUT_MS}") / 1000.0
+
+if COUNT <= 0:
+    raise SystemExit("invalid UDP_BURST_COUNT")
+if PAYLOAD_BYTES < 4:
+    raise SystemExit("UDP_BURST_PAYLOAD_BYTES must be >= 4")
+
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sock.settimeout(TIMEOUT_SEC)
+rtts_ms = []
+success = 0
+start = time.perf_counter()
+for seq in range(COUNT):
+    payload = struct.pack("!I", seq) + bytes([seq % 251]) * (PAYLOAD_BYTES - 4)
+    t0 = time.perf_counter_ns()
+    sock.sendto(payload, (HOST_IP, UDP_PORT))
+    try:
+        data, _ = sock.recvfrom(65535)
+    except socket.timeout:
+        continue
+    if len(data) < 4:
+        continue
+    recv_seq = struct.unpack("!I", data[:4])[0]
+    if recv_seq != seq:
+        continue
+    success += 1
+    rtts_ms.append((time.perf_counter_ns() - t0) / 1_000_000.0)
+
+wall_sec = max(time.perf_counter() - start, 1e-9)
+sock.close()
+loss_rate = 1.0 - (success / float(COUNT))
+throughput_mbps = success * PAYLOAD_BYTES * 8.0 / wall_sec / 1_000_000.0
+rtts_ms.sort()
+if rtts_ms:
+    p95 = rtts_ms[int(round((len(rtts_ms) - 1) * 0.95))]
+    p99 = rtts_ms[int(round((len(rtts_ms) - 1) * 0.99))]
+    avg = sum(rtts_ms) / float(len(rtts_ms))
+else:
+    p95 = None
+    p99 = None
+    avg = None
+
+print(
+    json.dumps(
+        {
+            "sent_count": COUNT,
+            "success_count": success,
+            "packet_loss_rate": round(loss_rate, 5),
+            "throughput_mbps": round(throughput_mbps, 3),
+            "rtt_avg_ms": round(avg, 3) if avg is not None else None,
+            "rtt_p95_ms": round(p95, 3) if p95 is not None else None,
+            "rtt_p99_ms": round(p99, 3) if p99 is not None else None,
+            "wall_time_sec": round(wall_sec, 3),
+        },
+        separators=(",", ":"),
+    )
+)
+PY
+)
+
+    DISPATCH_JSON=$(ip netns exec "${NS_PROXY}" python3 - <<PY
+import json
+import socket
+
+sock = socket.create_connection(("127.0.0.1", int("${MONITOR_PORT}")), timeout=3)
+sock.sendall(
+    b"GET /metrics HTTP/1.1\r\n"
+    b"Host: 127.0.0.1\r\n"
+    b"Connection: close\r\n"
+    b"\r\n"
+)
+parts = []
+while True:
+    chunk = sock.recv(4096)
+    if not chunk:
+        break
+    parts.append(chunk)
+sock.close()
+text = b"".join(parts).decode("utf-8", errors="ignore")
+dropped = 0.0
+enqueued = 0.0
+for line in text.splitlines():
+    if line.startswith("socks_tproxy_udp_dispatch_dropped_total "):
+        dropped = float(line.split()[1])
+    elif line.startswith("socks_tproxy_udp_dispatch_enqueued_total "):
+        enqueued = float(line.split()[1])
+total = dropped + enqueued
+drop_ratio = (dropped / total) if total > 0 else 0.0
+print(
+    json.dumps(
+        {
+            "dropped_total": int(dropped),
+            "enqueued_total": int(enqueued),
+            "drop_ratio": round(drop_ratio, 6),
+        },
+        separators=(",", ":"),
+    )
+)
+PY
+)
+
+    echo "TPROXY_PERF_BURST ${BURST_JSON}"
+    echo "TPROXY_PERF_DISPATCH ${DISPATCH_JSON}"
+fi
 
 echo "tproxy ci test done"

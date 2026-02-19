@@ -2,19 +2,19 @@
 #include <cstdint>
 
 #include <gtest/gtest.h>
-#include <asio/ip/address.hpp>
+#include <boost/asio/ip/address.hpp>
 
 #include "protocol.h"
 
 TEST(SocksCodecTest, NormalizeIP)
 {
-    const auto v4 = asio::ip::make_address("1.2.3.4");
+    const auto v4 = boost::asio::ip::make_address("1.2.3.4");
     EXPECT_EQ(socks_codec::normalize_ip_address(v4), v4);
 
-    const auto v6 = asio::ip::make_address("2001:db8::1");
+    const auto v6 = boost::asio::ip::make_address("2001:db8::1");
     EXPECT_EQ(socks_codec::normalize_ip_address(v6), v6);
 
-    const auto mapped = asio::ip::make_address("::ffff:192.168.1.1");
+    const auto mapped = boost::asio::ip::make_address("::ffff:192.168.1.1");
     const auto normalized = socks_codec::normalize_ip_address(mapped);
     EXPECT_TRUE(normalized.is_v4());
     EXPECT_EQ(normalized.to_string(), "192.168.1.1");
@@ -53,7 +53,7 @@ TEST(SocksCodecTest, UDPHeaderRoundTripIPv6)
     ASSERT_TRUE(success);
     EXPECT_EQ(output.frag, input.frag);
 
-    EXPECT_EQ(asio::ip::make_address(output.addr), asio::ip::make_address(input.addr));
+    EXPECT_EQ(boost::asio::ip::make_address(output.addr), boost::asio::ip::make_address(input.addr));
     EXPECT_EQ(output.port, input.port);
 }
 

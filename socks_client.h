@@ -7,9 +7,9 @@
 #include <vector>
 #include <cstdint>
 
-#include <asio/ip/tcp.hpp>
-#include <asio/io_context.hpp>
-#include <asio/awaitable.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/awaitable.hpp>
 
 #include "config.h"
 #include "router.h"
@@ -37,15 +37,15 @@ class socks_client : public std::enable_shared_from_this<socks_client>
     }
 
    private:
-    [[nodiscard]] static asio::awaitable<void> accept_local_loop_detached(std::shared_ptr<socks_client> self);
-    asio::awaitable<void> accept_local_loop();
+    [[nodiscard]] static boost::asio::awaitable<void> accept_local_loop_detached(std::shared_ptr<socks_client> self);
+    boost::asio::awaitable<void> accept_local_loop();
 
   private:
     std::atomic<bool> stop_{false};
     std::atomic<bool> started_{false};
     std::atomic<std::uint16_t> listen_port_{0};
-    asio::io_context& io_context_;
-    asio::ip::tcp::acceptor acceptor_;
+    boost::asio::io_context& io_context_;
+    boost::asio::ip::tcp::acceptor acceptor_;
     std::shared_ptr<mux::router> router_;
     std::shared_ptr<client_tunnel_pool> tunnel_pool_;
     std::shared_ptr<std::vector<std::weak_ptr<socks_session>>> sessions_ =
