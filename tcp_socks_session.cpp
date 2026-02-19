@@ -5,15 +5,15 @@
 #include <utility>
 #include <system_error>
 
-#include <asio/error.hpp>
-#include <asio/write.hpp>
-#include <asio/buffer.hpp>
-#include <asio/ip/tcp.hpp>
-#include <asio/as_tuple.hpp>
-#include <asio/co_spawn.hpp>
-#include <asio/detached.hpp>
-#include <asio/use_awaitable.hpp>
-#include <asio/experimental/awaitable_operators.hpp>
+#include <boost/asio/error.hpp>
+#include <boost/asio/write.hpp>
+#include <boost/asio/buffer.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/as_tuple.hpp>
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/detached.hpp>
+#include <boost/asio/use_awaitable.hpp>
+#include <boost/asio/experimental/awaitable_operators.hpp>
 
 #include "log.h"
 #include "router.h"
@@ -43,9 +43,9 @@ namespace
 
 }    // namespace
 
-tcp_socks_session::tcp_socks_session(asio::ip::tcp::socket socket,
-                                     asio::io_context& io_context,
-                                     std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager,
+tcp_socks_session::tcp_socks_session(boost::asio::ip::tcp::socket socket,
+                                     boost::asio::io_context& io_context,
+                                     std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> tunnel_manager,
                                      std::shared_ptr<router> router,
                                      const std::uint32_t sid,
                                      const config::timeout_t& timeout_cfg,
@@ -65,17 +65,17 @@ tcp_socks_session::tcp_socks_session(asio::ip::tcp::socket socket,
 
 void tcp_socks_session::start(const std::string& host, const std::uint16_t port)
 {
-    asio::co_spawn(io_context_, run_detached(shared_from_this(), host, port), asio::detached);
+    boost::asio::co_spawn(io_context_, run_detached(shared_from_this(), host, port), boost::asio::detached);
 }
 
-asio::awaitable<void> tcp_socks_session::run_detached(std::shared_ptr<tcp_socks_session> self,
+boost::asio::awaitable<void> tcp_socks_session::run_detached(std::shared_ptr<tcp_socks_session> self,
                                                       std::string host,
                                                       const std::uint16_t port)
 {
     co_await self->run(host, port);
 }
 
-asio::awaitable<void> tcp_socks_session::run(const std::string& host, const std::uint16_t port)
+boost::asio::awaitable<void> tcp_socks_session::run(const std::string& host, const std::uint16_t port)
 {
     if (router_ == nullptr)
     {
@@ -112,7 +112,7 @@ asio::awaitable<void> tcp_socks_session::run(const std::string& host, const std:
 
     LOG_CTX_INFO(ctx_, "{} connected {} {} via {}", log_event::kConnEstablished, host, port, route_name(route));
     start_idle_watchdog(backend);
-    using asio::experimental::awaitable_operators::operator&&;
+    using boost::asio::experimental::awaitable_operators::operator&&;
     co_await (client_to_upstream(backend) && upstream_to_client(backend));
     co_await close_backend_once(backend);
     close_client_socket();
@@ -132,7 +132,7 @@ std::shared_ptr<upstream> tcp_socks_session::create_backend(const route_type rou
     return nullptr;
 }
 
-asio::awaitable<bool> tcp_socks_session::connect_backend(const std::shared_ptr<upstream>& backend,
+boost::asio::awaitable<bool> tcp_socks_session::connect_backend(const std::shared_ptr<upstream>& backend,
                                                          const std::string& host,
                                                          const std::uint16_t port,
                                                          const route_type route)
@@ -148,10 +148,10 @@ asio::awaitable<bool> tcp_socks_session::connect_backend(const std::shared_ptr<u
     co_return false;
 }
 
-asio::awaitable<bool> tcp_socks_session::reply_success()
+boost::asio::awaitable<bool> tcp_socks_session::reply_success()
 {
     std::uint8_t rep[] = {socks::kVer, socks::kRepSuccess, 0, socks::kAtypIpv4, 0, 0, 0, 0, 0, 0};
-    const auto [we, wn] = co_await asio::async_write(socket_, asio::buffer(rep), asio::as_tuple(asio::use_awaitable));
+    const auto [we, wn] = co_await boost::asio::async_write(socket_, boost::asio::buffer(rep), boost::asio::as_tuple(boost::asio::use_awaitable));
     (void)wn;
     if (!we)
     {
@@ -164,44 +164,44 @@ asio::awaitable<bool> tcp_socks_session::reply_success()
 
 void tcp_socks_session::start_idle_watchdog(const std::shared_ptr<upstream>& backend)
 {
-    asio::co_spawn(io_context_, idle_watchdog_detached(shared_from_this(), backend), asio::detached);
+    boost::asio::co_spawn(io_context_, idle_watchdog_detached(shared_from_this(), backend), boost::asio::detached);
 }
 
-asio::awaitable<void> tcp_socks_session::idle_watchdog_detached(std::shared_ptr<tcp_socks_session> self, std::shared_ptr<upstream> backend)
+boost::asio::awaitable<void> tcp_socks_session::idle_watchdog_detached(std::shared_ptr<tcp_socks_session> self, std::shared_ptr<upstream> backend)
 {
     co_await self->idle_watchdog(std::move(backend));
 }
 
 void tcp_socks_session::close_client_socket()
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     idle_timer_.cancel();
-    ec = socket_.shutdown(asio::ip::tcp::socket::shutdown_both, ec);
-    if (ec && ec != asio::error::not_connected)
+    ec = socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
+    if (ec && ec != boost::asio::error::not_connected)
     {
         LOG_CTX_WARN(ctx_, "{} shutdown client failed {}", log_event::kSocks, ec.message());
     }
 
     ec = socket_.close(ec);
-    if (ec && ec != asio::error::bad_descriptor)
+    if (ec && ec != boost::asio::error::bad_descriptor)
     {
         LOG_CTX_WARN(ctx_, "{} close client failed {}", log_event::kSocks, ec.message());
     }
 }
 
-asio::awaitable<void> tcp_socks_session::reply_error(const std::uint8_t code)
+boost::asio::awaitable<void> tcp_socks_session::reply_error(const std::uint8_t code)
 {
     std::uint8_t err[] = {socks::kVer, code, 0, socks::kAtypIpv4, 0, 0, 0, 0, 0, 0};
-    (void)co_await asio::async_write(socket_, asio::buffer(err), asio::as_tuple(asio::use_awaitable));
+    (void)co_await boost::asio::async_write(socket_, boost::asio::buffer(err), boost::asio::as_tuple(boost::asio::use_awaitable));
 }
 
-asio::awaitable<void> tcp_socks_session::client_to_upstream(std::shared_ptr<upstream> backend)
+boost::asio::awaitable<void> tcp_socks_session::client_to_upstream(std::shared_ptr<upstream> backend)
 {
     std::vector<std::uint8_t> buf(8192);
     for (;;)
     {
-        std::error_code ec;
-        const std::uint32_t n = co_await socket_.async_read_some(asio::buffer(buf), asio::redirect_error(asio::use_awaitable, ec));
+        boost::system::error_code ec;
+        const std::uint32_t n = co_await socket_.async_read_some(boost::asio::buffer(buf), boost::asio::redirect_error(boost::asio::use_awaitable, ec));
         if (ec || n == 0)
         {
             LOG_CTX_WARN(ctx_, "{} failed to read from client {}", log_event::kSocks, ec.message());
@@ -232,7 +232,7 @@ asio::awaitable<void> tcp_socks_session::client_to_upstream(std::shared_ptr<upst
     LOG_CTX_INFO(ctx_, "{} client to upstream finished", log_event::kSocks);
 }
 
-asio::awaitable<void> tcp_socks_session::upstream_to_client(std::shared_ptr<upstream> backend)
+boost::asio::awaitable<void> tcp_socks_session::upstream_to_client(std::shared_ptr<upstream> backend)
 {
     std::vector<std::uint8_t> buf(8192);
     for (;;)
@@ -244,7 +244,7 @@ asio::awaitable<void> tcp_socks_session::upstream_to_client(std::shared_ptr<upst
             break;
         }
 
-        const auto [we, wn] = co_await asio::async_write(socket_, asio::buffer(buf.data(), n), asio::as_tuple(asio::use_awaitable));
+        const auto [we, wn] = co_await boost::asio::async_write(socket_, boost::asio::buffer(buf.data(), n), boost::asio::as_tuple(boost::asio::use_awaitable));
         if (we)
         {
             LOG_CTX_WARN(ctx_, "{} failed to write to client {}", log_event::kSocks, we.message());
@@ -253,15 +253,15 @@ asio::awaitable<void> tcp_socks_session::upstream_to_client(std::shared_ptr<upst
         last_activity_time_ms_.store(now_ms(), std::memory_order_release);
     }
     LOG_CTX_INFO(ctx_, "{} upstream to client finished", log_event::kSocks);
-    std::error_code ignore;
-    ignore = socket_.shutdown(asio::ip::tcp::socket::shutdown_send, ignore);
+    boost::system::error_code ignore;
+    ignore = socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ignore);
     if (ignore)
     {
         LOG_CTX_WARN(ctx_, "{} failed to shutdown client {}", log_event::kSocks, ignore.message());
     }
 }
 
-asio::awaitable<void> tcp_socks_session::close_backend_once(const std::shared_ptr<upstream>& backend)
+boost::asio::awaitable<void> tcp_socks_session::close_backend_once(const std::shared_ptr<upstream>& backend)
 {
     if (backend == nullptr)
     {
@@ -277,7 +277,7 @@ asio::awaitable<void> tcp_socks_session::close_backend_once(const std::shared_pt
     co_await backend->close();
 }
 
-asio::awaitable<void> tcp_socks_session::idle_watchdog(std::shared_ptr<upstream> backend)
+boost::asio::awaitable<void> tcp_socks_session::idle_watchdog(std::shared_ptr<upstream> backend)
 {
     if (timeout_config_.idle == 0)
     {
@@ -287,7 +287,7 @@ asio::awaitable<void> tcp_socks_session::idle_watchdog(std::shared_ptr<upstream>
     while (socket_.is_open())
     {
         idle_timer_.expires_after(std::chrono::seconds(1));
-        const auto [wait_ec] = co_await idle_timer_.async_wait(asio::as_tuple(asio::use_awaitable));
+        const auto [wait_ec] = co_await idle_timer_.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
         if (wait_ec)
         {
             break;
@@ -299,7 +299,7 @@ asio::awaitable<void> tcp_socks_session::idle_watchdog(std::shared_ptr<upstream>
         {
             LOG_CTX_WARN(ctx_, "{} tcp session idle closing", log_event::kSocks);
             co_await close_backend_once(backend);
-            std::error_code ignore;
+            boost::system::error_code ignore;
             ignore = socket_.close(ignore);
             break;
         }

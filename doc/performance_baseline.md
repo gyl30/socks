@@ -92,3 +92,68 @@ python3 script/perf_baseline.py \
 
 1. A 与 B 仅用于同机、同脚本、同参数下的相对比较，不作为跨机器绝对性能结论。
 2. 后续每次数据面优化完成后，建议同时更新 A/B 两组数据，保持趋势可追踪。
+
+## UDP 队列容量扫描（SOCKS UDP 路径）
+
+- 扫描脚本：`script/perf_queue_sweep.py`
+- 扫描输出：`build_release_perf/perf_queue_sweep_latest.json`
+
+命令（Release）：
+
+```bash
+python3 script/perf_queue_sweep.py \
+  --build-dir build_release_perf \
+  --socks-bin ./socks \
+  --capacities 64,128,256,512 \
+  --runs 2 \
+  --iterations 6000 \
+  --payload-size 512 \
+  --inflight 32 \
+  --udp-timeout-ms 100 \
+  --stall-timeout-sec 3.0 \
+  --out-json build_release_perf/perf_queue_sweep_latest.json
+```
+
+结果汇总（均值）：
+
+| `queues.udp_session_recv_channel_capacity` | UDP 吞吐（Mbps） | UDP RTT P95（ms） | 总峰值 RSS（MB） |
+| --- | --- | --- | --- |
+| 64 | 5.604 | 69.546 | 2949.219 |
+| 128 | 3.905 | 75.331 | 3593.047 |
+| 256 | 4.441 | 64.726 | 3703.754 |
+| 512 | 6.075 | 44.096 | 3514.031 |
+
+建议：
+
+1. 将 `queues.udp_session_recv_channel_capacity` 默认值从 `128` 调整到 `512`（吞吐与 P95 更优，且无丢包）。
+
+## UDP 队列容量扫描（TPROXY 分发队列）
+
+- 扫描脚本：`script/perf_tproxy_queue_sweep.py`
+- 依赖：`tests/tproxy_integration_test.sh`（需 root 或支持 `unshare -Urnm`）
+- 扫描输出：`build_release_perf/perf_tproxy_queue_sweep_512_2048_runs3.json`
+
+命令：
+
+```bash
+python3 script/perf_tproxy_queue_sweep.py \
+  --socks-bin build/socks \
+  --capacities 512,2048 \
+  --runs 3 \
+  --burst-count 8000 \
+  --payload-bytes 512 \
+  --udp-timeout-ms 800 \
+  --out-json build_release_perf/perf_tproxy_queue_sweep_512_2048_runs3.json
+```
+
+结果汇总（均值）：
+
+| `queues.tproxy_udp_dispatch_queue_capacity` | UDP 吞吐（Mbps） | UDP RTT P95（ms） | UDP RTT P99（ms） | dispatch 丢弃率 |
+| --- | --- | --- | --- | --- |
+| 512 | 26.809 | 0.177 | 0.218 | 0.000000 |
+| 2048 | 25.231 | 0.225 | 0.387 | 0.000000 |
+
+建议：
+
+1. 将 `queues.tproxy_udp_dispatch_queue_capacity` 默认值从 `2048` 调整到 `512`。
+2. 后续如业务流量模型变化，可用同脚本在目标环境重扫并按数据回调容量。

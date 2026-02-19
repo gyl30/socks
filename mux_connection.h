@@ -12,11 +12,11 @@
 #include <system_error>
 #include <unordered_map>
 
-#include <asio/ip/tcp.hpp>
-#include <asio/io_context.hpp>
-#include <asio/awaitable.hpp>
-#include <asio/steady_timer.hpp>
-#include <asio/experimental/concurrent_channel.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/awaitable.hpp>
+#include <boost/asio/steady_timer.hpp>
+#include <boost/asio/experimental/concurrent_channel.hpp>
 
 #include "config.h"
 #include "log_context.h"
@@ -51,8 +51,8 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     using stream_map_t = std::unordered_map<std::uint32_t, std::shared_ptr<mux_stream_interface>>;
     using syn_callback_t = std::function<void(std::uint32_t, std::vector<std::uint8_t>)>;
 
-    mux_connection(asio::ip::tcp::socket socket,
-                   asio::io_context& io_context,
+    mux_connection(boost::asio::ip::tcp::socket socket,
+                   boost::asio::io_context& io_context,
                    reality_engine engine,
                    bool is_client,
                    std::uint32_t conn_id,
@@ -63,7 +63,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
 
     virtual ~mux_connection();
 
-    [[nodiscard]] asio::io_context& io_context() const { return io_context_; }
+    [[nodiscard]] boost::asio::io_context& io_context() const { return io_context_; }
     [[nodiscard]] std::string trace_id() const { return ctx_.trace_id(); }
 
     void set_syn_callback(syn_callback_t cb) { syn_callback_ = std::move(cb); }
@@ -78,9 +78,9 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     [[nodiscard]] virtual std::uint32_t id() const { return cid_; }
     void mark_started_for_external_calls();
 
-    [[nodiscard]] asio::awaitable<void> start();
+    [[nodiscard]] boost::asio::awaitable<void> start();
 
-    [[nodiscard]] virtual asio::awaitable<std::error_code> send_async(const std::uint32_t stream_id,
+    [[nodiscard]] virtual boost::asio::awaitable<boost::system::error_code> send_async(const std::uint32_t stream_id,
                                                                       const std::uint8_t cmd,
                                                                       std::vector<std::uint8_t> payload);
 
@@ -98,14 +98,14 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     [[nodiscard]] std::shared_ptr<mux_stream> create_stream(const std::string& trace_id = "");
 
    private:
-    asio::awaitable<void> start_impl();
-    asio::awaitable<void> read_loop();
+    boost::asio::awaitable<void> start_impl();
+    boost::asio::awaitable<void> read_loop();
 
-    asio::awaitable<void> write_loop();
+    boost::asio::awaitable<void> write_loop();
 
-    asio::awaitable<void> timeout_loop();
+    boost::asio::awaitable<void> timeout_loop();
 
-    asio::awaitable<void> heartbeat_loop();
+    boost::asio::awaitable<void> heartbeat_loop();
 
     [[nodiscard]] bool run_inline() const;
     [[nodiscard]] std::shared_ptr<stream_map_t> snapshot_streams() const;
@@ -124,11 +124,11 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     void reset_streams_on_stop(const stream_map_t& streams_to_clear);
     void close_socket_on_stop();
     void finalize_stop_state();
-    [[nodiscard]] bool should_stop_read(const std::error_code& read_ec, std::size_t n) const;
+    [[nodiscard]] bool should_stop_read(const boost::system::error_code& read_ec, std::size_t n) const;
     void update_read_statistics(std::size_t n);
-    std::expected<void, std::error_code> process_decrypted_records();
-    [[nodiscard]] bool has_dispatch_failure(const std::error_code& decrypt_ec) const;
-    [[nodiscard]] asio::awaitable<bool> read_and_dispatch_once();
+    std::expected<void, boost::system::error_code> process_decrypted_records();
+    [[nodiscard]] bool has_dispatch_failure(const boost::system::error_code& decrypt_ec) const;
+    [[nodiscard]] boost::asio::awaitable<bool> read_and_dispatch_once();
 
    private:
     connection_context ctx_;
@@ -136,10 +136,10 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     std::uint64_t read_bytes_ = 0;
     std::uint64_t write_bytes_ = 0;
     std::shared_ptr<stream_map_t> streams_ = std::make_shared<stream_map_t>();
-    asio::io_context& io_context_;
-    asio::steady_timer timer_;
+    boost::asio::io_context& io_context_;
+    boost::asio::steady_timer timer_;
     syn_callback_t syn_callback_;
-    asio::ip::tcp::socket socket_;
+    boost::asio::ip::tcp::socket socket_;
     reality_engine reality_engine_;
     mux_dispatcher mux_dispatcher_;
     std::atomic<std::uint32_t> next_stream_id_;
@@ -151,7 +151,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     config::limits_t limits_config_;
     config::heartbeat_t heartbeat_config_;
 
-    using channel_type = asio::experimental::concurrent_channel<void(std::error_code, mux_write_msg)>;
+    using channel_type = boost::asio::experimental::concurrent_channel<void(boost::system::error_code, mux_write_msg)>;
     std::unique_ptr<channel_type> write_channel_;
 };
 

@@ -10,9 +10,9 @@
 #include <optional>
 #include <system_error>
 
-#include <asio/ip/tcp.hpp>
-#include <asio/io_context.hpp>
-#include <asio/awaitable.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/awaitable.hpp>
 
 #include "transcript.h"
 #include "log_context.h"
@@ -34,7 +34,7 @@ class handshake_reassembler
 {
    public:
     void append(std::span<const std::uint8_t> data);
-    std::expected<bool, std::error_code> next(std::vector<std::uint8_t>& out);
+    std::expected<bool, boost::system::error_code> next(std::vector<std::uint8_t>& out);
 
    private:
     std::vector<std::uint8_t> buffer_;
@@ -46,8 +46,8 @@ class cert_fetcher
     static std::string hex(const std::vector<std::uint8_t>& data);
     static std::string hex(const std::uint8_t* data, std::size_t len);
 
-    static asio::awaitable<std::optional<fetch_result>> fetch(
-        asio::io_context& io_context,
+    static boost::asio::awaitable<std::optional<fetch_result>> fetch(
+        boost::asio::io_context& io_context,
         std::string host,
         std::uint16_t port,
         std::string sni,
@@ -58,54 +58,54 @@ class cert_fetcher
     class fetch_session
     {
        public:
-        fetch_session(asio::io_context& io_context,
+        fetch_session(boost::asio::io_context& io_context,
                       std::string host,
                       std::uint16_t port,
                       std::string sni,
                       const std::string& trace_id,
                       std::uint32_t connect_timeout_sec = 10);
 
-        asio::awaitable<std::optional<fetch_result>> run();
+        boost::asio::awaitable<std::optional<fetch_result>> run();
 
        private:
-        asio::awaitable<std::error_code> connect();
+        boost::asio::awaitable<boost::system::error_code> connect();
 
-        asio::awaitable<std::error_code> perform_handshake_start();
+        boost::asio::awaitable<boost::system::error_code> perform_handshake_start();
         bool init_handshake_material(std::vector<std::uint8_t>& client_random, std::vector<std::uint8_t>& session_id);
-        asio::awaitable<std::error_code> send_client_hello_record(const std::vector<std::uint8_t>& client_hello);
+        boost::asio::awaitable<boost::system::error_code> send_client_hello_record(const std::vector<std::uint8_t>& client_hello);
         bool validate_server_hello_body(const std::vector<std::uint8_t>& sh_body) const;
 
-        asio::awaitable<std::vector<std::uint8_t>> find_certificate();
-        asio::awaitable<std::expected<void, std::error_code>> append_next_handshake_record(handshake_reassembler& assembler,
+        boost::asio::awaitable<std::vector<std::uint8_t>> find_certificate();
+        boost::asio::awaitable<std::expected<void, boost::system::error_code>> append_next_handshake_record(handshake_reassembler& assembler,
                                                                                            std::vector<std::uint8_t>& pt_buf,
                                                                                            int record_index);
-        std::expected<bool, std::error_code> consume_handshake_messages(handshake_reassembler& assembler,
+        std::expected<bool, boost::system::error_code> consume_handshake_messages(handshake_reassembler& assembler,
                                                                         std::vector<std::uint8_t>& msg,
                                                                         std::vector<std::uint8_t>& cert_msg);
         bool process_handshake_message(const std::vector<std::uint8_t>& msg, std::vector<std::uint8_t>& cert_msg);
 
-        std::error_code process_server_hello(const std::vector<std::uint8_t>& sh_body);
+        boost::system::error_code process_server_hello(const std::vector<std::uint8_t>& sh_body);
 
-        asio::awaitable<std::pair<std::error_code, std::vector<std::uint8_t>>> read_record_plaintext();
+        boost::asio::awaitable<std::pair<boost::system::error_code, std::vector<std::uint8_t>>> read_record_plaintext();
 
-        std::expected<void, std::error_code> validate_record_length(std::uint16_t len) const;
-        asio::awaitable<std::expected<void, std::error_code>> read_record_body(std::uint16_t len, std::vector<std::uint8_t>& rec);
-        std::expected<std::pair<std::uint8_t, std::span<std::uint8_t>>, std::error_code> decrypt_application_record(
+        std::expected<void, boost::system::error_code> validate_record_length(std::uint16_t len) const;
+        boost::asio::awaitable<std::expected<void, boost::system::error_code>> read_record_body(std::uint16_t len, std::vector<std::uint8_t>& rec);
+        std::expected<std::pair<std::uint8_t, std::span<std::uint8_t>>, boost::system::error_code> decrypt_application_record(
             const std::uint8_t head[5],
             const std::vector<std::uint8_t>& rec,
             std::vector<std::uint8_t>& pt_buf);
-        std::expected<std::pair<std::uint8_t, std::span<std::uint8_t>>, std::error_code> handle_record_by_content_type(
+        std::expected<std::pair<std::uint8_t, std::span<std::uint8_t>>, boost::system::error_code> handle_record_by_content_type(
             const std::uint8_t head[5],
             const std::vector<std::uint8_t>& rec,
             std::vector<std::uint8_t>& pt_buf);
 
-        asio::awaitable<std::expected<std::pair<std::uint8_t, std::span<std::uint8_t>>, std::error_code>> read_record(
+        boost::asio::awaitable<std::expected<std::pair<std::uint8_t, std::span<std::uint8_t>>, boost::system::error_code>> read_record(
             std::vector<std::uint8_t>& pt_buf);
 
        private:
         mux::connection_context ctx_;
-        asio::io_context& io_context_;
-        asio::ip::tcp::socket socket_;
+        boost::asio::io_context& io_context_;
+        boost::asio::ip::tcp::socket socket_;
         std::string host_;
         std::uint16_t port_;
         std::string sni_;
