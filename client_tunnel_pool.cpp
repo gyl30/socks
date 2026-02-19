@@ -407,15 +407,51 @@ boost::asio::awaitable<std::expected<encrypted_record, boost::system::error_code
     co_return encrypted_record{.content_type = rh[0], .ciphertext = std::move(ciphertext)};
 }
 
-std::expected<void, boost::system::error_code> consume_handshake_plaintext(const std::vector<std::uint8_t>& plaintext,
-                                                                 std::vector<std::uint8_t>& handshake_buffer,
-                                                                 handshake_validation_state& validation_state,
-                                                                 bool& handshake_fin,
-                                                                 const reality::handshake_keys& hs_keys,
-                                                                 const EVP_MD* md,
-                                                                 reality::transcript& trans)
+std::expected<void, boost::system::error_code> handle_handshake_message(const std::uint8_t msg_type,
+                                                                         const std::vector<std::uint8_t>& msg_data,
+                                                                         handshake_validation_state& validation_state,
+                                                                         bool& handshake_fin,
+                                                                         const reality::handshake_keys& hs_keys,
+                                                                         const EVP_MD* md,
+                                                                         reality::transcript& trans)
 {
-    handshake_buffer.insert(handshake_buffer.end(), plaintext.begin(), plaintext.end());
+    if (msg_type == 0x0b)
+    {
+        if (const auto res = load_server_public_key_from_certificate(msg_data, validation_state); !res)
+        {
+            return std::unexpected(res.error());
+        }
+    }
+    else if (msg_type == 0x0f)
+    {
+        if (const auto res = verify_server_certificate_verify_message(msg_data, trans, validation_state); !res)
+        {
+            return std::unexpected(res.error());
+        }
+    }
+    else if (msg_type == 0x14)
+    {
+        if (!validation_state.cert_verify_checked)
+        {
+            LOG_ERROR("server finished before certificate verify");
+            return std::unexpected(boost::asio::error::invalid_argument);
+        }
+        if (const auto res = verify_server_finished_message(msg_data, hs_keys, md, trans); !res)
+        {
+            return std::unexpected(res.error());
+        }
+        handshake_fin = true;
+    }
+    return {};
+}
+
+std::expected<std::uint32_t, boost::system::error_code> consume_handshake_buffer(std::vector<std::uint8_t>& handshake_buffer,
+                                                                                  handshake_validation_state& validation_state,
+                                                                                  bool& handshake_fin,
+                                                                                  const reality::handshake_keys& hs_keys,
+                                                                                  const EVP_MD* md,
+                                                                                  reality::transcript& trans)
+{
     std::uint32_t offset = 0;
     while (offset + 4 <= handshake_buffer.size())
     {
@@ -427,44 +463,60 @@ std::expected<void, boost::system::error_code> consume_handshake_plaintext(const
         }
 
         const std::vector<std::uint8_t> msg_data(handshake_buffer.begin() + offset, handshake_buffer.begin() + offset + 4 + msg_len);
-        if (msg_type == 0x0b)
+        if (const auto res = handle_handshake_message(msg_type, msg_data, validation_state, handshake_fin, hs_keys, md, trans); !res)
         {
-            if (const auto res = load_server_public_key_from_certificate(msg_data, validation_state); !res)
-            {
-                return std::unexpected(res.error());
-            }
+            return std::unexpected(res.error());
         }
-        else if (msg_type == 0x0f)
-        {
-            if (const auto res = verify_server_certificate_verify_message(msg_data, trans, validation_state); !res)
-            {
-                return std::unexpected(res.error());
-            }
-        }
-        else if (msg_type == 0x14)
-        {
-            if (!validation_state.cert_verify_checked)
-            {
-                LOG_ERROR("server finished before certificate verify");
-                return std::unexpected(boost::asio::error::invalid_argument);
-            }
-            if (const auto res = verify_server_finished_message(msg_data, hs_keys, md, trans); !res)
-            {
-                return std::unexpected(res.error());
-            }
-            handshake_fin = true;
-        }
-
         trans.update(msg_data);
         offset += 4 + msg_len;
     }
+    return offset;
+}
 
-    handshake_buffer.erase(handshake_buffer.begin(), handshake_buffer.begin() + offset);
+std::expected<void, boost::system::error_code> consume_handshake_plaintext(const std::vector<std::uint8_t>& plaintext,
+                                                                            std::vector<std::uint8_t>& handshake_buffer,
+                                                                            handshake_validation_state& validation_state,
+                                                                            bool& handshake_fin,
+                                                                            const reality::handshake_keys& hs_keys,
+                                                                            const EVP_MD* md,
+                                                                            reality::transcript& trans)
+{
+    handshake_buffer.insert(handshake_buffer.end(), plaintext.begin(), plaintext.end());
+    const auto consumed = consume_handshake_buffer(handshake_buffer, validation_state, handshake_fin, hs_keys, md, trans);
+    if (!consumed)
+    {
+        return std::unexpected(consumed.error());
+    }
+    handshake_buffer.erase(handshake_buffer.begin(), handshake_buffer.begin() + *consumed);
+    return {};
+}
+
+std::expected<void, boost::system::error_code> validate_server_handshake_chain(const handshake_validation_state& validation_state,
+                                                                                const bool strict_cert_verify,
+                                                                                const std::string& sni)
+{
+    if (!validation_state.cert_checked || !validation_state.cert_verify_checked)
+    {
+        LOG_ERROR("server auth chain incomplete");
+        return std::unexpected(std::make_error_code(std::errc::permission_denied));
+    }
+    if (strict_cert_verify && !validation_state.cert_verify_signature_checked)
+    {
+        auto& stats = statistics::instance();
+        stats.inc_cert_verify_failures();
+        stats.inc_handshake_failure_by_sni(statistics::handshake_failure_reason::kCertVerify, sni);
+        LOG_ERROR("server certificate verify signature required possible cert key mismatch");
+        return std::unexpected(std::make_error_code(std::errc::permission_denied));
+    }
+    if (!strict_cert_verify && !validation_state.cert_verify_signature_checked)
+    {
+        LOG_DEBUG("server certificate verify signature unchecked");
+    }
     return {};
 }
 
 boost::asio::awaitable<std::expected<std::vector<std::uint8_t>, boost::system::error_code>> read_handshake_record_body(boost::asio::ip::tcp::socket& socket,
-                                                                                                        const char* step)
+                                                                                                                         const char* step)
 {
     std::uint8_t header[5];
     auto [read_header_ec, read_header_n] = co_await boost::asio::async_read(socket, boost::asio::buffer(header, 5), boost::asio::as_tuple(boost::asio::use_awaitable));
@@ -1184,31 +1236,16 @@ boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::
             continue;
         }
 
-        if (stop_.load(std::memory_order_acquire))
+        const auto action = prepare_tunnel_for_run(index, socket, tunnel);
+        if (action == connect_loop_action::kStopLoop)
         {
-            clear_pending_socket_if_match(index, socket);
             break;
         }
-
-        if (const auto connection = tunnel->connection(); connection != nullptr)
+        if (action == connect_loop_action::kRetryLater)
         {
-            connection->mark_started_for_external_calls();
-        }
-        if (!publish_tunnel(index, tunnel))
-        {
-            clear_pending_socket_if_match(index, socket);
-            if (const auto connection = tunnel->connection(); connection != nullptr)
-            {
-                connection->release_resources();
-            }
-            if (stop_.load(std::memory_order_acquire))
-            {
-                break;
-            }
             co_await wait_remote_retry(io_context);
             continue;
         }
-        clear_pending_socket_if_match(index, socket);
 
         co_await tunnel->run();
 
@@ -1218,6 +1255,39 @@ boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::
         co_await wait_remote_retry(io_context);
     }
     LOG_INFO("{} connect remote loop {} exited", log_event::kConnClose, index);
+}
+
+client_tunnel_pool::connect_loop_action client_tunnel_pool::prepare_tunnel_for_run(
+    const std::uint32_t index,
+    const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
+    const std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>>& tunnel)
+{
+    if (stop_.load(std::memory_order_acquire))
+    {
+        clear_pending_socket_if_match(index, socket);
+        return connect_loop_action::kStopLoop;
+    }
+
+    if (const auto connection = tunnel->connection(); connection != nullptr)
+    {
+        connection->mark_started_for_external_calls();
+    }
+    if (!publish_tunnel(index, tunnel))
+    {
+        clear_pending_socket_if_match(index, socket);
+        if (const auto connection = tunnel->connection(); connection != nullptr)
+        {
+            connection->release_resources();
+        }
+        if (stop_.load(std::memory_order_acquire))
+        {
+            return connect_loop_action::kStopLoop;
+        }
+        return connect_loop_action::kRetryLater;
+    }
+
+    clear_pending_socket_if_match(index, socket);
+    return connect_loop_action::kRunTunnel;
 }
 
 boost::asio::awaitable<std::expected<void, boost::system::error_code>> client_tunnel_pool::tcp_connect(boost::asio::io_context& io_context,
@@ -1451,22 +1521,9 @@ boost::asio::awaitable<std::expected<std::pair<std::vector<std::uint8_t>, std::v
         }
     }
 
-    if (!validation_state.cert_checked || !validation_state.cert_verify_checked)
+    if (const auto res = validate_server_handshake_chain(validation_state, strict_cert_verify, sni); !res)
     {
-        LOG_ERROR("server auth chain incomplete");
-        co_return std::unexpected(std::make_error_code(std::errc::permission_denied));
-    }
-    if (strict_cert_verify && !validation_state.cert_verify_signature_checked)
-    {
-        auto& stats = statistics::instance();
-        stats.inc_cert_verify_failures();
-        stats.inc_handshake_failure_by_sni(statistics::handshake_failure_reason::kCertVerify, sni);
-        LOG_ERROR("server certificate verify signature required possible cert key mismatch");
-        co_return std::unexpected(std::make_error_code(std::errc::permission_denied));
-    }
-    if (!strict_cert_verify && !validation_state.cert_verify_signature_checked)
-    {
-        LOG_DEBUG("server certificate verify signature unchecked");
+        co_return std::unexpected(res.error());
     }
 
     auto app_sec = reality::tls_key_schedule::derive_application_secrets(hs_keys.master_secret, trans.finish(), md);
