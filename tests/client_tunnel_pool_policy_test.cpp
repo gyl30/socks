@@ -7,7 +7,7 @@
 #include <system_error>
 
 #include <gtest/gtest.h>
-#include <asio/ip/tcp.hpp>
+#include <boost/asio/ip/tcp.hpp>
 
 extern "C"
 {
@@ -167,7 +167,7 @@ class client_tunnel_pool_policy_test : public ::testing::Test
 
 TEST_F(client_tunnel_pool_policy_test, DummyCertificateAllowedWhenStrictVerifyDisabled)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(2);
     ASSERT_FALSE(ec);
     scoped_pool_runner runner(pool);
@@ -212,7 +212,7 @@ TEST_F(client_tunnel_pool_policy_test, DummyCertificateAllowedWhenStrictVerifyDi
 
 TEST_F(client_tunnel_pool_policy_test, DummyCertificateRejectedWhenStrictVerifyEnabled)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(2);
     ASSERT_FALSE(ec);
     scoped_pool_runner runner(pool);
@@ -257,7 +257,7 @@ TEST_F(client_tunnel_pool_policy_test, DummyCertificateRejectedWhenStrictVerifyE
 
 TEST_F(client_tunnel_pool_policy_test, StrictVerifyEnabledWithValidCertificateChainShouldPass)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(2);
     ASSERT_FALSE(ec);
     scoped_pool_runner runner(pool);

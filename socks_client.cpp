@@ -6,13 +6,13 @@
 #include <cstdint>
 #include <system_error>
 
-#include <asio/error.hpp>
-#include <asio/as_tuple.hpp>
-#include <asio/co_spawn.hpp>
-#include <asio/detached.hpp>
-#include <asio/dispatch.hpp>
-#include <asio/steady_timer.hpp>
-#include <asio/use_awaitable.hpp>
+#include <boost/asio/error.hpp>
+#include <boost/asio/as_tuple.hpp>
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/detached.hpp>
+#include <boost/asio/dispatch.hpp>
+#include <boost/asio/steady_timer.hpp>
+#include <boost/asio/use_awaitable.hpp>
 
 #include "log.h"
 #include "config.h"
@@ -31,32 +31,32 @@ using session_list_t = std::vector<std::weak_ptr<socks_session>>;
 constexpr std::uint32_t kEphemeralBindRetryAttempts = 120;
 const auto kEphemeralBindRetryDelay = std::chrono::milliseconds(25);
 
-void close_local_socket(asio::ip::tcp::socket& socket)
+void close_local_socket(boost::asio::ip::tcp::socket& socket)
 {
-    std::error_code close_ec;
-    close_ec = socket.shutdown(asio::ip::tcp::socket::shutdown_both, close_ec);
+    boost::system::error_code close_ec;
+    close_ec = socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, close_ec);
     close_ec = socket.close(close_ec);
 }
 
-void close_local_acceptor_on_setup_failure(asio::ip::tcp::acceptor& acceptor)
+void close_local_acceptor_on_setup_failure(boost::asio::ip::tcp::acceptor& acceptor)
 {
-    std::error_code close_ec;
+    boost::system::error_code close_ec;
     close_ec = acceptor.close(close_ec);
 }
 
-bool setup_local_acceptor(asio::ip::tcp::acceptor& acceptor,
-                          const asio::ip::address& listen_addr,
+bool setup_local_acceptor(boost::asio::ip::tcp::acceptor& acceptor,
+                          const boost::asio::ip::address& listen_addr,
                           const std::uint16_t port,
                           std::uint16_t& bound_port,
-                          std::error_code& ec)
+                          boost::system::error_code& ec)
 {
-    const asio::ip::tcp::endpoint ep{listen_addr, port};
+    const boost::asio::ip::tcp::endpoint ep{listen_addr, port};
     ec = acceptor.open(ep.protocol(), ec);
     if (ec)
     {
         return false;
     }
-    ec = acceptor.set_option(asio::ip::tcp::acceptor::reuse_address(true), ec);
+    ec = acceptor.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true), ec);
     if (ec)
     {
         close_local_acceptor_on_setup_failure(acceptor);
@@ -75,7 +75,7 @@ bool setup_local_acceptor(asio::ip::tcp::acceptor& acceptor,
         return false;
     }
     bound_port = bound_ep.port();
-    ec = acceptor.listen(asio::socket_base::max_listen_connections, ec);
+    ec = acceptor.listen(boost::asio::socket_base::max_listen_connections, ec);
     if (ec)
     {
         close_local_acceptor_on_setup_failure(acceptor);
@@ -83,10 +83,10 @@ bool setup_local_acceptor(asio::ip::tcp::acceptor& acceptor,
     return !ec;
 }
 
-bool prepare_local_listener(asio::ip::tcp::acceptor& acceptor, const std::string& host, const std::uint16_t port, std::uint16_t& bound_port)
+bool prepare_local_listener(boost::asio::ip::tcp::acceptor& acceptor, const std::string& host, const std::uint16_t port, std::uint16_t& bound_port)
 {
-    std::error_code addr_ec;
-    const auto listen_addr = asio::ip::make_address(host, addr_ec);
+    boost::system::error_code addr_ec;
+    const auto listen_addr = boost::asio::ip::make_address(host, addr_ec);
     if (addr_ec)
     {
         LOG_ERROR("local acceptor parse address failed {}", addr_ec.message());
@@ -96,7 +96,7 @@ bool prepare_local_listener(asio::ip::tcp::acceptor& acceptor, const std::string
     const bool retry_ephemeral_bind = (port == 0);
     const std::uint32_t max_attempts = retry_ephemeral_bind ? kEphemeralBindRetryAttempts : 1;
 
-    std::error_code setup_ec;
+    boost::system::error_code setup_ec;
     for (std::uint32_t attempt = 0; attempt < max_attempts; ++attempt)
     {
         if (setup_local_acceptor(acceptor, listen_addr, port, bound_port, setup_ec))
@@ -104,7 +104,7 @@ bool prepare_local_listener(asio::ip::tcp::acceptor& acceptor, const std::string
             return true;
         }
 
-        const bool can_retry = retry_ephemeral_bind && setup_ec == asio::error::address_in_use && (attempt + 1) < max_attempts;
+        const bool can_retry = retry_ephemeral_bind && setup_ec == boost::asio::error::address_in_use && (attempt + 1) < max_attempts;
         if (!can_retry)
         {
             break;
@@ -116,16 +116,16 @@ bool prepare_local_listener(asio::ip::tcp::acceptor& acceptor, const std::string
     return false;
 }
 
-void log_accept_error(const std::error_code& ec)
+void log_accept_error(const boost::system::error_code& ec)
 {
     LOG_ERROR("local accept failed {}", ec.message());
 }
 
-asio::awaitable<void> wait_retry_delay(asio::io_context& io_context)
+boost::asio::awaitable<void> wait_retry_delay(boost::asio::io_context& io_context)
 {
-    asio::steady_timer retry_timer(io_context);
+    boost::asio::steady_timer retry_timer(io_context);
     retry_timer.expires_after(std::chrono::seconds(1));
-    (void)co_await retry_timer.async_wait(asio::as_tuple(asio::use_awaitable));
+    (void)co_await retry_timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
 }
 
 enum class local_accept_status
@@ -135,16 +135,16 @@ enum class local_accept_status
     kStop,
 };
 
-asio::awaitable<local_accept_status> accept_local_socket(asio::ip::tcp::acceptor& acceptor,
-                                                         asio::ip::tcp::socket& socket,
-                                                         asio::io_context& io_context)
+boost::asio::awaitable<local_accept_status> accept_local_socket(boost::asio::ip::tcp::acceptor& acceptor,
+                                                         boost::asio::ip::tcp::socket& socket,
+                                                         boost::asio::io_context& io_context)
 {
-    const auto [accept_ec] = co_await acceptor.async_accept(socket, asio::as_tuple(asio::use_awaitable));
+    const auto [accept_ec] = co_await acceptor.async_accept(socket, boost::asio::as_tuple(boost::asio::use_awaitable));
     if (!accept_ec)
     {
         co_return local_accept_status::kAccepted;
     }
-    if (accept_ec == asio::error::operation_aborted)
+    if (accept_ec == boost::asio::error::operation_aborted)
     {
         co_return local_accept_status::kStop;
     }
@@ -153,10 +153,10 @@ asio::awaitable<local_accept_status> accept_local_socket(asio::ip::tcp::acceptor
     co_return local_accept_status::kRetry;
 }
 
-void set_no_delay_or_log(asio::ip::tcp::socket& socket)
+void set_no_delay_or_log(boost::asio::ip::tcp::socket& socket)
 {
-    std::error_code ec;
-    ec = socket.set_option(asio::ip::tcp::no_delay(true), ec);
+    boost::system::error_code ec;
+    ec = socket.set_option(boost::asio::ip::tcp::no_delay(true), ec);
     if (ec)
     {
         LOG_WARN("failed to set no delay on local socket {}", ec.message());
@@ -210,7 +210,7 @@ std::shared_ptr<session_list_t> detach_sessions(std::shared_ptr<session_list_t>&
     }
 }
 
-asio::awaitable<std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>> wait_for_tunnel_ready(asio::io_context& io_context,
+boost::asio::awaitable<std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>>> wait_for_tunnel_ready(boost::asio::io_context& io_context,
                                                                                                 std::shared_ptr<client_tunnel_pool> pool,
                                                                                                 const std::atomic<bool>& stop)
 {
@@ -226,11 +226,11 @@ asio::awaitable<std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>> wait_fo
         co_return selected_tunnel;
     }
 
-    asio::steady_timer tunnel_wait_timer(io_context);
+    boost::asio::steady_timer tunnel_wait_timer(io_context);
     for (std::uint32_t attempt = 0; attempt < 6 && !stop.load(std::memory_order_acquire) && selected_tunnel == nullptr; ++attempt)
     {
         tunnel_wait_timer.expires_after(std::chrono::milliseconds(200));
-        const auto [wait_ec] = co_await tunnel_wait_timer.async_wait(asio::as_tuple(asio::use_awaitable));
+        const auto [wait_ec] = co_await tunnel_wait_timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
         if (wait_ec)
         {
             break;
@@ -241,7 +241,7 @@ asio::awaitable<std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>> wait_fo
     co_return selected_tunnel;
 }
 
-void log_tunnel_selection(const std::uint32_t sid, const std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>& selected_tunnel)
+void log_tunnel_selection(const std::uint32_t sid, const std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>>& selected_tunnel)
 {
     if (selected_tunnel == nullptr)
     {
@@ -252,8 +252,8 @@ void log_tunnel_selection(const std::uint32_t sid, const std::shared_ptr<mux_tun
     LOG_INFO("client session {} selected tunnel", sid);
 }
 
-asio::awaitable<bool> start_local_session(asio::ip::tcp::socket socket,
-                                          asio::io_context& io_context,
+boost::asio::awaitable<bool> start_local_session(boost::asio::ip::tcp::socket socket,
+                                          boost::asio::io_context& io_context,
                                           const std::shared_ptr<client_tunnel_pool>& tunnel_pool,
                                           const std::shared_ptr<router>& router,
                                           std::shared_ptr<session_list_t>& sessions,
@@ -306,8 +306,8 @@ asio::awaitable<bool> start_local_session(asio::ip::tcp::socket socket,
     co_return true;
 }
 
-asio::awaitable<bool> run_accept_iteration(asio::ip::tcp::acceptor& acceptor,
-                                           asio::io_context& io_context,
+boost::asio::awaitable<bool> run_accept_iteration(boost::asio::ip::tcp::acceptor& acceptor,
+                                           boost::asio::io_context& io_context,
                                            const std::shared_ptr<client_tunnel_pool>& tunnel_pool,
                                            const std::shared_ptr<router>& router,
                                            std::shared_ptr<session_list_t>& sessions,
@@ -316,7 +316,7 @@ asio::awaitable<bool> run_accept_iteration(asio::ip::tcp::acceptor& acceptor,
                                            const config::queues_t& queue_config,
                                            const std::atomic<bool>& stop)
 {
-    asio::ip::tcp::socket socket(io_context);
+    boost::asio::ip::tcp::socket socket(io_context);
     const auto accept_status = co_await accept_local_socket(acceptor, socket, io_context);
     if (accept_status == local_accept_status::kStop)
     {
@@ -341,11 +341,11 @@ asio::awaitable<bool> run_accept_iteration(asio::ip::tcp::acceptor& acceptor,
     co_return true;
 }
 
-void close_acceptor_on_stop(asio::ip::tcp::acceptor& acceptor)
+void close_acceptor_on_stop(boost::asio::ip::tcp::acceptor& acceptor)
 {
-    std::error_code close_ec;
+    boost::system::error_code close_ec;
     close_ec = acceptor.close(close_ec);
-    if (close_ec && close_ec != asio::error::bad_descriptor)
+    if (close_ec && close_ec != boost::asio::error::bad_descriptor)
     {
         LOG_ERROR("acceptor close failed {}", close_ec.message());
     }
@@ -373,7 +373,7 @@ void stop_sessions(const std::vector<std::shared_ptr<socks_session>>& sessions)
     }
 }
 
-void stop_local_resources(asio::ip::tcp::acceptor& acceptor, std::shared_ptr<session_list_t>& sessions)
+void stop_local_resources(boost::asio::ip::tcp::acceptor& acceptor, std::shared_ptr<session_list_t>& sessions)
 {
     close_acceptor_on_stop(acceptor);
     auto sessions_to_stop = collect_sessions_to_stop(detach_sessions(sessions));
@@ -458,10 +458,10 @@ void socks_client::start()
 
     tunnel_pool->start();
 
-    asio::co_spawn(io_context_, accept_local_loop_detached(shared_from_this()), asio::detached);
+    boost::asio::co_spawn(io_context_, accept_local_loop_detached(shared_from_this()), boost::asio::detached);
 }
 
-asio::awaitable<void> socks_client::accept_local_loop_detached(std::shared_ptr<socks_client> self)
+boost::asio::awaitable<void> socks_client::accept_local_loop_detached(std::shared_ptr<socks_client> self)
 {
     co_await self->accept_local_loop();
 }
@@ -488,7 +488,7 @@ void socks_client::stop()
     }
 }
 
-asio::awaitable<void> socks_client::accept_local_loop()
+boost::asio::awaitable<void> socks_client::accept_local_loop()
 {
     if (stop_.load(std::memory_order_acquire))
     {

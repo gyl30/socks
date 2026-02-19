@@ -4,13 +4,13 @@
 #include <cstring>
 #include <memory>
 
-#include <asio/write.hpp>
-#include <asio/ip/tcp.hpp>
-#include <asio/as_tuple.hpp>
-#include <asio/co_spawn.hpp>
-#include <asio/dispatch.hpp>
-#include <asio/use_awaitable.hpp>
-#include <asio/experimental/awaitable_operators.hpp>
+#include <boost/asio/write.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/as_tuple.hpp>
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/dispatch.hpp>
+#include <boost/asio/use_awaitable.hpp>
+#include <boost/asio/experimental/awaitable_operators.hpp>
 
 #include "log.h"
 #include "protocol.h"
@@ -27,11 +27,11 @@ namespace mux
 namespace
 {
 
-using resolve_results = asio::ip::tcp::resolver::results_type;
+using resolve_results = boost::asio::ip::tcp::resolver::results_type;
 using timed_resolve_result = timeout_io::timed_tcp_resolve_result;
 using timed_connect_result = timeout_io::timed_tcp_connect_result;
 
-asio::awaitable<bool> send_ack(std::shared_ptr<mux_connection> conn,
+boost::asio::awaitable<bool> send_ack(std::shared_ptr<mux_connection> conn,
                                const std::uint32_t stream_id,
                                const std::uint8_t rep,
                                const std::string& addr,
@@ -50,7 +50,7 @@ asio::awaitable<bool> send_ack(std::shared_ptr<mux_connection> conn,
     co_return true;
 }
 
-asio::awaitable<void> remove_stream_and_reset(std::weak_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> manager,
+boost::asio::awaitable<void> remove_stream_and_reset(std::weak_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> manager,
                                               std::shared_ptr<mux_connection> conn,
                                               const std::uint32_t stream_id)
 {
@@ -61,7 +61,7 @@ asio::awaitable<void> remove_stream_and_reset(std::weak_ptr<mux_tunnel_impl<asio
     (void)co_await conn->send_async(stream_id, kCmdRst, {});
 }
 
-void remove_stream(std::weak_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> manager, const std::uint32_t stream_id)
+void remove_stream(std::weak_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> manager, const std::uint32_t stream_id)
 {
     if (auto mgr = manager.lock())
     {
@@ -69,7 +69,7 @@ void remove_stream(std::weak_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> manager
     }
 }
 
-asio::awaitable<void> send_failure_ack_and_reset(std::weak_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> manager,
+boost::asio::awaitable<void> send_failure_ack_and_reset(std::weak_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> manager,
                                                  std::shared_ptr<mux_connection> conn,
                                                  const std::uint32_t stream_id,
                                                  const std::uint8_t rep,
@@ -79,7 +79,7 @@ asio::awaitable<void> send_failure_ack_and_reset(std::weak_ptr<mux_tunnel_impl<a
     co_await remove_stream_and_reset(manager, conn, stream_id);
 }
 
-asio::awaitable<timed_resolve_result> resolve_target_endpoints(asio::ip::tcp::resolver& resolver,
+boost::asio::awaitable<timed_resolve_result> resolve_target_endpoints(boost::asio::ip::tcp::resolver& resolver,
                                                                const syn_payload& syn,
                                                                const connection_context& ctx,
                                                                const std::uint32_t timeout_sec)
@@ -102,7 +102,7 @@ asio::awaitable<timed_resolve_result> resolve_target_endpoints(asio::ip::tcp::re
     co_return resolve_res;
 }
 
-asio::awaitable<timed_connect_result> connect_target_endpoint(asio::ip::tcp::socket& target_socket,
+boost::asio::awaitable<timed_connect_result> connect_target_endpoint(boost::asio::ip::tcp::socket& target_socket,
                                                               const resolve_results& eps,
                                                               const connection_context& ctx,
                                                               const std::uint32_t timeout_sec)
@@ -125,19 +125,19 @@ asio::awaitable<timed_connect_result> connect_target_endpoint(asio::ip::tcp::soc
     co_return connect_res;
 }
 
-void set_target_socket_no_delay(asio::ip::tcp::socket& target_socket, const connection_context& ctx)
+void set_target_socket_no_delay(boost::asio::ip::tcp::socket& target_socket, const connection_context& ctx)
 {
-    std::error_code ec_sock;
-    ec_sock = target_socket.set_option(asio::ip::tcp::no_delay(true), ec_sock);
+    boost::system::error_code ec_sock;
+    ec_sock = target_socket.set_option(boost::asio::ip::tcp::no_delay(true), ec_sock);
     if (ec_sock)
     {
         LOG_CTX_WARN(ctx, "set_option no_delay failed {}", ec_sock.message());
     }
 }
 
-bool should_stop_upstream(const std::error_code& recv_ec,
+bool should_stop_upstream(const boost::system::error_code& recv_ec,
                           const std::vector<std::uint8_t>& data,
-                          asio::ip::tcp::socket& target_socket,
+                          boost::asio::ip::tcp::socket& target_socket,
                           const connection_context& ctx)
 {
     if (!recv_ec && !data.empty())
@@ -148,15 +148,15 @@ bool should_stop_upstream(const std::error_code& recv_ec,
     {
         LOG_CTX_DEBUG(ctx, "{} mux channel closed {}", log_event::kDataRecv, recv_ec.message());
     }
-    std::error_code ignore;
-    ignore = target_socket.shutdown(asio::ip::tcp::socket::shutdown_send, ignore);
+    boost::system::error_code ignore;
+    ignore = target_socket.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ignore);
     (void)ignore;
     return true;
 }
 
-asio::awaitable<bool> write_to_target(asio::ip::tcp::socket& target_socket, const std::vector<std::uint8_t>& data, connection_context& ctx)
+boost::asio::awaitable<bool> write_to_target(boost::asio::ip::tcp::socket& target_socket, const std::vector<std::uint8_t>& data, connection_context& ctx)
 {
-    const auto [write_ec, write_size] = co_await asio::async_write(target_socket, asio::buffer(data), asio::as_tuple(asio::use_awaitable));
+    const auto [write_ec, write_size] = co_await boost::asio::async_write(target_socket, boost::asio::buffer(data), boost::asio::as_tuple(boost::asio::use_awaitable));
     if (write_ec)
     {
         LOG_CTX_WARN(ctx, "{} failed to write to target {}", log_event::kDataSend, write_ec.message());
@@ -166,20 +166,20 @@ asio::awaitable<bool> write_to_target(asio::ip::tcp::socket& target_socket, cons
     co_return true;
 }
 
-bool should_stop_downstream(const std::error_code& read_ec, const std::uint32_t read_size, const connection_context& ctx)
+bool should_stop_downstream(const boost::system::error_code& read_ec, const std::uint32_t read_size, const connection_context& ctx)
 {
     if (!read_ec && read_size > 0)
     {
         return false;
     }
-    if (read_ec && read_ec != asio::error::eof && read_ec != asio::error::operation_aborted)
+    if (read_ec && read_ec != boost::asio::error::eof && read_ec != boost::asio::error::operation_aborted)
     {
         LOG_CTX_WARN(ctx, "{} failed to read from target {}", log_event::kDataRecv, read_ec.message());
     }
     return true;
 }
 
-asio::awaitable<bool> send_downstream_payload(const std::weak_ptr<mux_connection>& connection,
+boost::asio::awaitable<bool> send_downstream_payload(const std::weak_ptr<mux_connection>& connection,
                                               const std::uint32_t stream_id,
                                               const std::vector<std::uint8_t>& buf,
                                               const std::uint32_t size,
@@ -204,7 +204,7 @@ asio::awaitable<bool> send_downstream_payload(const std::weak_ptr<mux_connection
     co_return true;
 }
 
-asio::awaitable<void> send_fin_to_connection(const std::weak_ptr<mux_connection>& connection, const std::uint32_t stream_id)
+boost::asio::awaitable<void> send_fin_to_connection(const std::weak_ptr<mux_connection>& connection, const std::uint32_t stream_id)
 {
     if (auto conn = connection.lock())
     {
@@ -212,18 +212,18 @@ asio::awaitable<void> send_fin_to_connection(const std::weak_ptr<mux_connection>
     }
 }
 
-void close_target_socket(asio::ip::tcp::socket& target_socket)
+void close_target_socket(boost::asio::ip::tcp::socket& target_socket)
 {
-    std::error_code ignore;
+    boost::system::error_code ignore;
     ignore = target_socket.close(ignore);
     (void)ignore;
 }
 
-asio::awaitable<bool> prepare_remote_target_connection(asio::ip::tcp::resolver& resolver,
-                                                       asio::ip::tcp::socket& target_socket,
+boost::asio::awaitable<bool> prepare_remote_target_connection(boost::asio::ip::tcp::resolver& resolver,
+                                                       boost::asio::ip::tcp::socket& target_socket,
                                                        const syn_payload& syn,
                                                        std::shared_ptr<mux_connection> conn,
-                                                       std::weak_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> manager,
+                                                       std::weak_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> manager,
                                                        const std::uint32_t stream_id,
                                                        connection_context& ctx,
                                                        const std::atomic<bool>& reset_requested,
@@ -282,7 +282,7 @@ asio::awaitable<bool> prepare_remote_target_connection(asio::ip::tcp::resolver& 
 
 remote_session::remote_session(std::shared_ptr<mux_connection> connection,
                                const std::uint32_t id,
-                               asio::io_context& io_context,
+                               boost::asio::io_context& io_context,
                                const connection_context& ctx,
                                const std::uint32_t connect_timeout_sec)
     : id_(id),
@@ -297,13 +297,13 @@ remote_session::remote_session(std::shared_ptr<mux_connection> connection,
     ctx_.stream_id(id);
 }
 
-asio::awaitable<void> remote_session::start(const syn_payload& syn)
+boost::asio::awaitable<void> remote_session::start(const syn_payload& syn)
 {
-    co_await asio::dispatch(io_context_, asio::use_awaitable);
+    co_await boost::asio::dispatch(io_context_, boost::asio::use_awaitable);
     co_await run(syn);
 }
 
-asio::awaitable<void> remote_session::run(const syn_payload& syn)
+boost::asio::awaitable<void> remote_session::run(const syn_payload& syn)
 {
     if (reset_requested_.load(std::memory_order_acquire))
     {
@@ -336,7 +336,7 @@ asio::awaitable<void> remote_session::run(const syn_payload& syn)
         co_return;
     }
 
-    using asio::experimental::awaitable_operators::operator&&;
+    using boost::asio::experimental::awaitable_operators::operator&&;
     co_await (upstream() && downstream());
 
     close_target_socket(target_socket_);
@@ -350,7 +350,7 @@ void remote_session::on_data(std::vector<std::uint8_t> data)
         io_context_,
         [self = shared_from_this(), data = std::move(data)]() mutable
         {
-            if (!self->recv_channel_.try_send(std::error_code(), std::move(data)))
+            if (!self->recv_channel_.try_send(boost::system::error_code(), std::move(data)))
             {
                 LOG_CTX_WARN(self->ctx_, "{} recv channel unavailable on data", log_event::kMux);
                 self->close_from_reset();
@@ -388,8 +388,8 @@ void remote_session::close_from_fin()
 {
     LOG_CTX_DEBUG(ctx_, "{} received fin from client", log_event::kMux);
     recv_channel_.close();
-    std::error_code ec;
-    ec = target_socket_.shutdown(asio::ip::tcp::socket::shutdown_send, ec);
+    boost::system::error_code ec;
+    ec = target_socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
 }
 
 void remote_session::close_from_reset()
@@ -401,16 +401,16 @@ void remote_session::close_from_reset()
     }
     recv_channel_.close();
     resolver_.cancel();
-    std::error_code ec;
+    boost::system::error_code ec;
     ec = target_socket_.close(ec);
     remove_stream(manager_, id_);
 }
 
-asio::awaitable<void> remote_session::upstream()
+boost::asio::awaitable<void> remote_session::upstream()
 {
     for (;;)
     {
-        const auto [recv_ec, data] = co_await recv_channel_.async_receive(asio::as_tuple(asio::use_awaitable));
+        const auto [recv_ec, data] = co_await recv_channel_.async_receive(boost::asio::as_tuple(boost::asio::use_awaitable));
         if (should_stop_upstream(recv_ec, data, target_socket_, ctx_))
         {
             break;
@@ -423,13 +423,13 @@ asio::awaitable<void> remote_session::upstream()
     LOG_CTX_INFO(ctx_, "{} mux to target finished", log_event::kDataSend);
 }
 
-asio::awaitable<void> remote_session::downstream()
+boost::asio::awaitable<void> remote_session::downstream()
 {
     std::vector<std::uint8_t> buf(8192);
     for (;;)
     {
-        std::error_code re;
-        const std::uint32_t n = co_await target_socket_.async_read_some(asio::buffer(buf), asio::redirect_error(asio::use_awaitable, re));
+        boost::system::error_code re;
+        const std::uint32_t n = co_await target_socket_.async_read_some(boost::asio::buffer(buf), boost::asio::redirect_error(boost::asio::use_awaitable, re));
         if (should_stop_downstream(re, n, ctx_))
         {
             break;

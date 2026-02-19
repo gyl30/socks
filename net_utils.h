@@ -7,8 +7,8 @@
 #include <optional>
 #include <system_error>
 
-#include <asio/ip/udp.hpp>
-#include <asio/ip/address.hpp>
+#include <boost/asio/ip/udp.hpp>
+#include <boost/asio/ip/address.hpp>
 
 struct msghdr;
 struct sockaddr_storage;
@@ -16,19 +16,19 @@ struct sockaddr_storage;
 namespace mux::net
 {
 
-[[nodiscard]] std::expected<void, std::error_code> set_socket_mark(int fd, std::uint32_t mark);
+[[nodiscard]] std::expected<void, boost::system::error_code> set_socket_mark(int fd, std::uint32_t mark);
 
-[[nodiscard]] std::expected<void, std::error_code> set_socket_transparent(int fd, bool ipv6);
+[[nodiscard]] std::expected<void, boost::system::error_code> set_socket_transparent(int fd, bool ipv6);
 
-[[nodiscard]] std::expected<void, std::error_code> set_socket_recv_origdst(int fd, bool ipv6);
+[[nodiscard]] std::expected<void, boost::system::error_code> set_socket_recv_origdst(int fd, bool ipv6);
 
-[[nodiscard]] asio::ip::address normalize_address(const asio::ip::address& addr);
+[[nodiscard]] boost::asio::ip::address normalize_address(const boost::asio::ip::address& addr);
 
-[[nodiscard]] asio::ip::udp::endpoint normalize_endpoint(const asio::ip::udp::endpoint& ep);
+[[nodiscard]] boost::asio::ip::udp::endpoint normalize_endpoint(const boost::asio::ip::udp::endpoint& ep);
 
-[[nodiscard]] std::optional<asio::ip::udp::endpoint> parse_original_dst(const msghdr& msg);
+[[nodiscard]] std::optional<boost::asio::ip::udp::endpoint> parse_original_dst(const msghdr& msg);
 
-[[nodiscard]] asio::ip::udp::endpoint endpoint_from_sockaddr(const sockaddr_storage& addr, std::size_t len);
+[[nodiscard]] boost::asio::ip::udp::endpoint endpoint_from_sockaddr(const sockaddr_storage& addr, std::size_t len);
 
 }    // namespace mux::net
 
