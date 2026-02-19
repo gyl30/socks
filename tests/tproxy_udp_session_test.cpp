@@ -768,15 +768,15 @@ TEST(TproxyUdpSessionTest, InternalGuardBranches)
     const auto session = std::make_shared<mux::tproxy_udp_session>(ctx, nullptr, router, nullptr, 3, cfg, client_ep);
 
     asio::ip::udp::endpoint src_ep;
-    std::vector<std::uint8_t> payload;
-    EXPECT_FALSE(session->decode_proxy_packet({0x00, 0x01}, src_ep, payload));
+    std::size_t payload_offset = 0;
+    EXPECT_FALSE(session->decode_proxy_packet({0x00, 0x01}, src_ep, payload_offset));
 
     socks_udp_header h;
     h.addr = "not-an-ip";
     h.port = 5353;
     auto pkt = socks_codec::encode_udp_header(h);
     pkt.push_back(0x42);
-    EXPECT_FALSE(session->decode_proxy_packet(pkt, src_ep, payload));
+    EXPECT_FALSE(session->decode_proxy_packet(pkt, src_ep, payload_offset));
 
     session->maybe_start_proxy_reader(false);
 

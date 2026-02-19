@@ -140,7 +140,17 @@ asio::awaitable<std::pair<std::error_code, std::size_t>> direct_upstream::read(s
 
 asio::awaitable<std::size_t> direct_upstream::write(const std::vector<std::uint8_t>& data)
 {
-    auto [ec, n] = co_await asio::async_write(socket_, asio::buffer(data), asio::as_tuple(asio::use_awaitable));
+    co_return co_await write(data.data(), data.size());
+}
+
+asio::awaitable<std::size_t> direct_upstream::write(const std::uint8_t* data, const std::size_t len)
+{
+    if (data == nullptr || len == 0)
+    {
+        co_return 0;
+    }
+
+    auto [ec, n] = co_await asio::async_write(socket_, asio::buffer(data, len), asio::as_tuple(asio::use_awaitable));
     if (ec)
     {
         LOG_CTX_ERROR(ctx_, "{} write error {}", log_event::kRoute, ec.message());
@@ -288,19 +298,28 @@ asio::awaitable<std::pair<std::error_code, std::size_t>> proxy_upstream::read(st
 
 asio::awaitable<std::size_t> proxy_upstream::write(const std::vector<std::uint8_t>& data)
 {
+    co_return co_await write(data.data(), data.size());
+}
+
+asio::awaitable<std::size_t> proxy_upstream::write(const std::uint8_t* data, const std::size_t len)
+{
     auto stream = stream_;
     if (stream == nullptr)
     {
         co_return 0;
     }
+    if (data == nullptr || len == 0)
+    {
+        co_return 0;
+    }
 
-    auto ec = co_await stream->async_write_some(data.data(), data.size());
+    auto ec = co_await stream->async_write_some(data, len);
     if (ec)
     {
         LOG_CTX_ERROR(ctx_, "{} write error {}", log_event::kRoute, ec.message());
         co_return 0;
     }
-    co_return data.size();
+    co_return len;
 }
 
 asio::awaitable<void> proxy_upstream::close()

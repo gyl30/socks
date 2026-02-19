@@ -595,7 +595,7 @@ TEST_F(upstream_test, ProxyUpstreamWaitConnectAckSuccess)
     mux::mux_codec::encode_ack(ack, ack_data);
     stream->on_data(ack_data);
 
-    EXPECT_TRUE(mux::test::run_awaitable(ctx(), upstream.wait_connect_ack(stream)));
+    EXPECT_TRUE(mux::test::run_awaitable(ctx(), upstream.wait_connect_ack(stream, "example.com", 443)));
 }
 
 TEST_F(upstream_test, ProxyUpstreamWaitConnectAckReadError)
@@ -605,7 +605,7 @@ TEST_F(upstream_test, ProxyUpstreamWaitConnectAckReadError)
     mux::proxy_upstream upstream(nullptr, mux::connection_context{});
 
     stream->on_reset();
-    EXPECT_FALSE(mux::test::run_awaitable(ctx(), upstream.wait_connect_ack(stream)));
+    EXPECT_FALSE(mux::test::run_awaitable(ctx(), upstream.wait_connect_ack(stream, "example.com", 443)));
 }
 
 TEST_F(upstream_test, ProxyUpstreamWaitConnectAckDecodeFailure)
@@ -615,7 +615,7 @@ TEST_F(upstream_test, ProxyUpstreamWaitConnectAckDecodeFailure)
     mux::proxy_upstream upstream(nullptr, mux::connection_context{});
 
     stream->on_data({0x01});
-    EXPECT_FALSE(mux::test::run_awaitable(ctx(), upstream.wait_connect_ack(stream)));
+    EXPECT_FALSE(mux::test::run_awaitable(ctx(), upstream.wait_connect_ack(stream, "example.com", 443)));
 }
 
 TEST_F(upstream_test, ProxyUpstreamWaitConnectAckRemoteReject)
@@ -630,7 +630,7 @@ TEST_F(upstream_test, ProxyUpstreamWaitConnectAckRemoteReject)
     mux::mux_codec::encode_ack(ack, ack_data);
     stream->on_data(ack_data);
 
-    EXPECT_FALSE(mux::test::run_awaitable(ctx(), upstream.wait_connect_ack(stream)));
+    EXPECT_FALSE(mux::test::run_awaitable(ctx(), upstream.wait_connect_ack(stream, "example.com", 443)));
 }
 
 TEST_F(upstream_test, ProxyUpstreamCleanupNullStreamNoop)

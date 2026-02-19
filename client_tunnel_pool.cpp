@@ -1110,6 +1110,14 @@ asio::awaitable<bool> client_tunnel_pool::establish_tunnel_for_connection(
 
 asio::awaitable<std::expected<client_tunnel_pool::handshake_result, std::error_code>> client_tunnel_pool::perform_reality_handshake_with_timeout(
     const std::shared_ptr<asio::ip::tcp::socket>& socket,
+    asio::io_context& io_context) const
+{
+    connection_context ctx;
+    co_return co_await perform_reality_handshake_with_timeout(socket, io_context, ctx);
+}
+
+asio::awaitable<std::expected<client_tunnel_pool::handshake_result, std::error_code>> client_tunnel_pool::perform_reality_handshake_with_timeout(
+    const std::shared_ptr<asio::ip::tcp::socket>& socket,
     asio::io_context& io_context,
     const connection_context& ctx) const
 {
@@ -1206,6 +1214,13 @@ asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::uint32_
         co_await wait_remote_retry(io_context);
     }
     LOG_INFO("{} connect remote loop {} exited", log_event::kConnClose, index);
+}
+
+asio::awaitable<std::expected<void, std::error_code>> client_tunnel_pool::tcp_connect(asio::io_context& io_context,
+                                                                                       asio::ip::tcp::socket& socket) const
+{
+    connection_context ctx;
+    co_return co_await tcp_connect(io_context, socket, ctx);
 }
 
 asio::awaitable<std::expected<void, std::error_code>> client_tunnel_pool::tcp_connect(asio::io_context& io_context,

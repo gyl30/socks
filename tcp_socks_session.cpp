@@ -201,8 +201,7 @@ asio::awaitable<void> tcp_socks_session::client_to_upstream(std::shared_ptr<upst
             break;
         }
 
-        const std::vector<std::uint8_t> chunk(buf.begin(), buf.begin() + n);
-        const auto written = co_await backend->write(chunk);
+        const auto written = co_await backend->write(buf.data(), n);
         if (written == 0)
         {
             LOG_CTX_WARN(ctx_, "{} failed to write to backend", log_event::kSocks);

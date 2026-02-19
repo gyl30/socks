@@ -422,6 +422,9 @@ asio::awaitable<void> remote_udp_session::udp_to_mux()
 {
     std::vector<std::uint8_t> buf(65535);
     asio::ip::udp::endpoint ep;
+    asio::ip::udp::endpoint cached_ep;
+    std::vector<std::uint8_t> cached_header;
+    bool has_cached_header = false;
     for (;;)
     {
         const auto [recv_ec, n] = co_await udp_socket_.async_receive_from(asio::buffer(buf), ep, asio::as_tuple(asio::use_awaitable));
@@ -440,10 +443,19 @@ asio::awaitable<void> remote_udp_session::udp_to_mux()
         ctx_.add_rx_bytes(n);
         last_activity_time_ms_.store(ts, std::memory_order_release);
 
-        socks_udp_header h;
-        h.addr = ep.address().to_string();
-        h.port = ep.port();
-        std::vector<std::uint8_t> pkt = socks_codec::encode_udp_header(h);
+        if (!has_cached_header || cached_ep != ep)
+        {
+            socks_udp_header h;
+            h.addr = ep.address().to_string();
+            h.port = ep.port();
+            cached_header = socks_codec::encode_udp_header(h);
+            cached_ep = ep;
+            has_cached_header = true;
+        }
+
+        std::vector<std::uint8_t> pkt;
+        pkt.reserve(cached_header.size() + n);
+        pkt.insert(pkt.end(), cached_header.begin(), cached_header.end());
         pkt.insert(pkt.end(), buf.begin(), buf.begin() + static_cast<std::uint32_t>(n));
 
         if (auto conn = connection_.lock())

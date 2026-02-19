@@ -124,11 +124,17 @@ asio::awaitable<void> tproxy_udp_session::direct_read_loop_detached(std::shared_
     co_await self->direct_read_loop();
 }
 
-asio::awaitable<void> tproxy_udp_session::handle_packet(const asio::ip::udp::endpoint& dst_ep, const std::uint8_t* data, const std::size_t len)
+asio::awaitable<void> tproxy_udp_session::handle_packet(const asio::ip::udp::endpoint& dst_ep, std::vector<std::uint8_t> data)
+{
+    co_await asio::dispatch(io_context_, asio::use_awaitable);
+    co_await handle_packet_inner(dst_ep, std::move(data));
+}
+
+asio::awaitable<void> tproxy_udp_session::handle_packet(
+    const asio::ip::udp::endpoint& dst_ep, const std::uint8_t* data, const std::size_t len)
 {
     auto payload = std::vector<std::uint8_t>(data, data + len);
-    co_await asio::dispatch(io_context_, asio::use_awaitable);
-    co_await handle_packet_inner(dst_ep, std::move(payload));
+    co_await handle_packet(dst_ep, std::move(payload));
 }
 
 asio::awaitable<void> tproxy_udp_session::handle_packet_inner(asio::ip::udp::endpoint dst_ep, std::vector<std::uint8_t> data)
@@ -447,15 +453,25 @@ asio::awaitable<void> tproxy_udp_session::send_proxy(const asio::ip::udp::endpoi
         co_return;
     }
 
-    socks_udp_header h;
-    h.addr = dst_ep.address().to_string();
-    h.port = dst_ep.port();
-    std::vector<std::uint8_t> pkt = socks_codec::encode_udp_header(h);
-    if (pkt.size() + len > mux::kMaxPayload)
+    if (!has_cached_proxy_header_ || cached_proxy_dst_ep_ != dst_ep)
+    {
+        socks_udp_header h;
+        h.addr = dst_ep.address().to_string();
+        h.port = dst_ep.port();
+        cached_proxy_header_ = socks_codec::encode_udp_header(h);
+        cached_proxy_dst_ep_ = dst_ep;
+        has_cached_proxy_header_ = true;
+    }
+
+    if (cached_proxy_header_.size() + len > mux::kMaxPayload)
     {
         LOG_CTX_WARN(ctx_, "{} udp packet too large {}", log_event::kSocks, len);
         co_return;
     }
+
+    std::vector<std::uint8_t> pkt;
+    pkt.reserve(cached_proxy_header_.size() + len);
+    pkt.insert(pkt.end(), cached_proxy_header_.begin(), cached_proxy_header_.end());
     pkt.insert(pkt.end(), data, data + len);
 
     auto stream = stream_;
@@ -465,7 +481,7 @@ asio::awaitable<void> tproxy_udp_session::send_proxy(const asio::ip::udp::endpoi
         co_return;
     }
 
-    if (const auto write_ec = co_await stream->async_write_some(pkt.data(), pkt.size()))
+    if (const auto write_ec = co_await stream->async_write_some(std::move(pkt)))
     {
         LOG_CTX_WARN(ctx_, "{} udp write to stream failed {}", log_event::kSocks, write_ec.message());
     }
@@ -499,8 +515,7 @@ asio::awaitable<void> tproxy_udp_session::direct_read_loop()
 
         touch();
         const auto norm_sender = net::normalize_endpoint(sender);
-        std::vector<std::uint8_t> payload(buf.begin(), buf.begin() + static_cast<std::ptrdiff_t>(n));
-        co_await sender_->send_to_client(client_ep_, norm_sender, payload);
+        co_await sender_->send_to_client(client_ep_, norm_sender, asio::buffer(buf.data(), n));
     }
 }
 
@@ -516,18 +531,19 @@ asio::awaitable<void> tproxy_udp_session::proxy_read_loop()
 
         touch();
         asio::ip::udp::endpoint src_ep;
-        std::vector<std::uint8_t> payload;
-        if (!decode_proxy_packet(data, src_ep, payload))
+        std::size_t payload_offset = 0;
+        if (!decode_proxy_packet(data, src_ep, payload_offset))
         {
             continue;
         }
-        co_await sender_->send_to_client(client_ep_, src_ep, payload);
+        co_await sender_->send_to_client(
+            client_ep_, src_ep, asio::buffer(data.data() + static_cast<std::ptrdiff_t>(payload_offset), data.size() - payload_offset));
     }
 }
 
 bool tproxy_udp_session::decode_proxy_packet(const std::vector<std::uint8_t>& data,
                                              asio::ip::udp::endpoint& src_ep,
-                                             std::vector<std::uint8_t>& payload) const
+                                             std::size_t& payload_offset) const
 {
     socks_udp_header h;
     if (!socks_codec::decode_udp_header(data.data(), data.size(), h))
@@ -549,7 +565,7 @@ bool tproxy_udp_session::decode_proxy_packet(const std::vector<std::uint8_t>& da
         return false;
     }
     src_ep = asio::ip::udp::endpoint(addr, h.port);
-    payload.assign(data.begin() + static_cast<std::ptrdiff_t>(h.header_len), data.end());
+    payload_offset = h.header_len;
     return true;
 }
 
