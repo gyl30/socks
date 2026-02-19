@@ -410,53 +410,56 @@ void erase_udp_session_if_same(std::shared_ptr<udp_session_map_t>& sessions,
     }
 }
 
-std::shared_ptr<tproxy_udp_session> get_or_create_udp_session(
-    std::shared_ptr<udp_session_map_t>& sessions,
-    const std::string& key,
-    const boost::asio::ip::udp::endpoint& src_ep,
-    boost::asio::io_context& io_context,
-    const std::shared_ptr<client_tunnel_pool>& tunnel_pool,
-    const std::shared_ptr<router>& router,
-    const std::shared_ptr<tproxy_udp_sender>& sender,
-    const config& cfg,
-    const std::atomic<bool>& stop_flag)
+bool stop_requested(const std::atomic<bool>& stop_flag)
 {
-    if (stop_flag.load(std::memory_order_acquire))
+    return stop_flag.load(std::memory_order_acquire);
+}
+
+std::shared_ptr<tproxy_udp_session> find_live_udp_session(
+    const std::shared_ptr<udp_session_map_t>& sessions,
+    const std::string& key)
+{
+    const auto it = sessions->find(key);
+    if (it == sessions->end() || it->second == nullptr || it->second->terminated())
     {
         return nullptr;
     }
+    return it->second;
+}
 
-    std::shared_ptr<tproxy_udp_session> prepared_session = nullptr;
-    for (;;)
+void ensure_prepared_udp_session(std::shared_ptr<tproxy_udp_session>& prepared_session,
+                                 boost::asio::io_context& io_context,
+                                 const std::shared_ptr<client_tunnel_pool>& tunnel_pool,
+                                 const std::shared_ptr<router>& router,
+                                 const std::shared_ptr<tproxy_udp_sender>& sender,
+                                 const config& cfg,
+                                 const boost::asio::ip::udp::endpoint& src_ep)
+{
+    if (prepared_session != nullptr)
     {
-        if (stop_flag.load(std::memory_order_acquire))
-        {
-            return nullptr;
-        }
-
-        auto current = snapshot_udp_sessions(sessions);
-        const auto it = current->find(key);
-        if (it != current->end() && it->second != nullptr && !it->second->terminated())
-        {
-            return it->second;
-        }
-
-        if (prepared_session == nullptr)
-        {
-            const std::uint32_t sid = tunnel_pool->next_session_id();
-            prepared_session = std::make_shared<tproxy_udp_session>(io_context, tunnel_pool, router, sender, sid, cfg, src_ep);
-        }
-
-        auto updated = std::make_shared<udp_session_map_t>(*current);
-        (*updated)[key] = prepared_session;
-        if (std::atomic_compare_exchange_weak_explicit(
-                &sessions, &current, updated, std::memory_order_acq_rel, std::memory_order_acquire))
-        {
-            break;
-        }
+        return;
     }
+    const std::uint32_t sid = tunnel_pool->next_session_id();
+    prepared_session = std::make_shared<tproxy_udp_session>(io_context, tunnel_pool, router, sender, sid, cfg, src_ep);
+}
 
-    if (stop_flag.load(std::memory_order_acquire))
+bool try_publish_udp_session(std::shared_ptr<udp_session_map_t>& sessions,
+                             std::shared_ptr<udp_session_map_t>& current,
+                             const std::string& key,
+                             const std::shared_ptr<tproxy_udp_session>& prepared_session)
+{
+    auto updated = std::make_shared<udp_session_map_t>(*current);
+    (*updated)[key] = prepared_session;
+    return std::atomic_compare_exchange_weak_explicit(
+        &sessions, &current, updated, std::memory_order_acq_rel, std::memory_order_acquire);
+}
+
+std::shared_ptr<tproxy_udp_session> start_udp_session_or_rollback(std::shared_ptr<udp_session_map_t>& sessions,
+                                                                  const std::string& key,
+                                                                  const std::shared_ptr<tproxy_udp_session>& prepared_session,
+                                                                  const std::atomic<bool>& stop_flag)
+{
+    if (stop_requested(stop_flag))
     {
         erase_udp_session_if_same(sessions, key, prepared_session);
         return nullptr;
@@ -469,13 +472,53 @@ std::shared_ptr<tproxy_udp_session> get_or_create_udp_session(
         return nullptr;
     }
 
-    if (stop_flag.load(std::memory_order_acquire))
+    if (stop_requested(stop_flag))
     {
         prepared_session->stop();
         erase_udp_session_if_same(sessions, key, prepared_session);
         return nullptr;
     }
     return prepared_session;
+}
+
+std::shared_ptr<tproxy_udp_session> get_or_create_udp_session(
+    std::shared_ptr<udp_session_map_t>& sessions,
+    const std::string& key,
+    const boost::asio::ip::udp::endpoint& src_ep,
+    boost::asio::io_context& io_context,
+    const std::shared_ptr<client_tunnel_pool>& tunnel_pool,
+    const std::shared_ptr<router>& router,
+    const std::shared_ptr<tproxy_udp_sender>& sender,
+    const config& cfg,
+    const std::atomic<bool>& stop_flag)
+{
+    if (stop_requested(stop_flag))
+    {
+        return nullptr;
+    }
+
+    std::shared_ptr<tproxy_udp_session> prepared_session = nullptr;
+    for (;;)
+    {
+        if (stop_requested(stop_flag))
+        {
+            return nullptr;
+        }
+
+        auto current = snapshot_udp_sessions(sessions);
+        if (auto existing = find_live_udp_session(current, key); existing != nullptr)
+        {
+            return existing;
+        }
+
+        ensure_prepared_udp_session(prepared_session, io_context, tunnel_pool, router, sender, cfg, src_ep);
+        if (try_publish_udp_session(sessions, current, key, prepared_session))
+        {
+            break;
+        }
+    }
+
+    return start_udp_session_or_rollback(sessions, key, prepared_session, stop_flag);
 }
 
 enum class udp_recv_status
@@ -743,10 +786,140 @@ boost::asio::awaitable<udp_loop_action> run_udp_iteration(boost::asio::ip::udp::
     co_return udp_loop_action::kContinue;
 }
 
+enum class udp_dispatch_receive_action
+{
+    kPacketReady,
+    kContinue,
+    kBreak,
+};
+
+boost::asio::awaitable<udp_dispatch_receive_action> receive_dispatch_packet(
+    tproxy_udp_dispatch_channel& dispatch_channel,
+    std::atomic<bool>& stop_flag,
+    tproxy_udp_dispatch_item& packet)
+{
+    const auto [recv_ec, received_packet] = co_await dispatch_channel.async_receive(boost::asio::as_tuple(boost::asio::use_awaitable));
+    if (recv_ec)
+    {
+        if (recv_ec != boost::asio::experimental::error::channel_closed && recv_ec != boost::asio::error::operation_aborted)
+        {
+            LOG_ERROR("tproxy udp dispatch receive failed {}", recv_ec.message());
+        }
+        co_return udp_dispatch_receive_action::kBreak;
+    }
+
+    if (stop_flag.load(std::memory_order_acquire))
+    {
+        co_return udp_dispatch_receive_action::kBreak;
+    }
+
+    if (received_packet.payload.empty())
+    {
+        co_return udp_dispatch_receive_action::kContinue;
+    }
+
+    packet = std::move(received_packet);
+    co_return udp_dispatch_receive_action::kPacketReady;
+}
+
+const std::string& resolve_src_key_with_cache(
+    std::unordered_map<udp_endpoint_key, std::string, endpoint_hash, endpoint_key_equal>& src_key_cache,
+    const boost::asio::ip::udp::endpoint& src_ep)
+{
+    const udp_endpoint_key src_key{src_ep.address(), src_ep.port()};
+    const auto cached = src_key_cache.find(src_key);
+    if (cached != src_key_cache.end())
+    {
+        return cached->second;
+    }
+
+    if (src_key_cache.size() >= k_udp_dispatch_src_key_cache_capacity)
+    {
+        src_key_cache.clear();
+    }
+    const auto [inserted_it, inserted] = src_key_cache.emplace(src_key, make_endpoint_key(src_ep));
+    (void)inserted;
+    return inserted_it->second;
+}
+
+boost::asio::awaitable<bool> dispatch_udp_packet_to_session(
+    std::shared_ptr<udp_session_map_t>& udp_sessions,
+    const std::string& src_key,
+    tproxy_udp_dispatch_item packet,
+    boost::asio::io_context& io_context,
+    const std::shared_ptr<client_tunnel_pool>& tunnel_pool,
+    const std::shared_ptr<router>& router,
+    const std::shared_ptr<tproxy_udp_sender>& sender,
+    const config& cfg,
+    std::atomic<bool>& stop_flag)
+{
+    auto session =
+        get_or_create_udp_session(udp_sessions, src_key, packet.src_ep, io_context, tunnel_pool, router, sender, cfg, stop_flag);
+    if (session == nullptr)
+    {
+        co_return true;
+    }
+    if (stop_flag.load(std::memory_order_acquire))
+    {
+        session->stop();
+        erase_udp_session_if_same(udp_sessions, src_key, session);
+        co_return false;
+    }
+    co_await session->handle_packet(packet.dst_ep, std::move(packet.payload));
+    co_return true;
+}
+
 std::uint64_t now_steady_ms()
 {
     const auto now = std::chrono::steady_clock::now().time_since_epoch();
     return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(now).count());
+}
+
+bool udp_session_is_expired(const std::shared_ptr<tproxy_udp_session>& session, const std::uint64_t now_ms, const std::uint64_t idle_ms)
+{
+    return session->terminated() || (idle_ms != 0 && session->is_idle(now_ms, idle_ms));
+}
+
+void split_udp_sessions_by_expiry(const std::shared_ptr<udp_session_map_t>& current,
+                                  const std::uint64_t now_ms,
+                                  const std::uint64_t idle_ms,
+                                  std::shared_ptr<udp_session_map_t>& active_sessions,
+                                  std::vector<std::shared_ptr<tproxy_udp_session>>& expired_sessions)
+{
+    active_sessions = std::make_shared<udp_session_map_t>();
+    active_sessions->reserve(current->size());
+    expired_sessions.clear();
+    expired_sessions.reserve(current->size());
+
+    for (const auto& [key, session] : *current)
+    {
+        if (session == nullptr)
+        {
+            continue;
+        }
+        if (udp_session_is_expired(session, now_ms, idle_ms))
+        {
+            expired_sessions.push_back(session);
+            continue;
+        }
+        active_sessions->emplace(key, session);
+    }
+}
+
+bool udp_sessions_unchanged(const std::shared_ptr<udp_session_map_t>& current,
+                            const std::shared_ptr<udp_session_map_t>& active_sessions,
+                            const std::vector<std::shared_ptr<tproxy_udp_session>>& expired_sessions)
+{
+    return expired_sessions.empty() && active_sessions->size() == current->size();
+}
+
+void append_expired_udp_sessions(std::vector<std::shared_ptr<tproxy_udp_session>>& target,
+                                 std::vector<std::shared_ptr<tproxy_udp_session>>& detached_sessions)
+{
+    for (auto& session : detached_sessions)
+    {
+        target.push_back(std::move(session));
+    }
 }
 
 void collect_expired_udp_sessions(std::shared_ptr<udp_session_map_t>& sessions,
@@ -757,26 +930,11 @@ void collect_expired_udp_sessions(std::shared_ptr<udp_session_map_t>& sessions,
     for (;;)
     {
         auto current = snapshot_udp_sessions(sessions);
-        auto updated = std::make_shared<udp_session_map_t>();
-        updated->reserve(current->size());
+        std::shared_ptr<udp_session_map_t> updated = nullptr;
         std::vector<std::shared_ptr<tproxy_udp_session>> detached_sessions;
-        detached_sessions.reserve(current->size());
+        split_udp_sessions_by_expiry(current, now_ms, idle_ms, updated, detached_sessions);
 
-        for (const auto& [key, session] : *current)
-        {
-            if (session == nullptr)
-            {
-                continue;
-            }
-            if (session->terminated() || (idle_ms != 0 && session->is_idle(now_ms, idle_ms)))
-            {
-                detached_sessions.push_back(session);
-                continue;
-            }
-            updated->emplace(key, session);
-        }
-
-        if (detached_sessions.empty() && updated->size() == current->size())
+        if (udp_sessions_unchanged(current, updated, detached_sessions))
         {
             return;
         }
@@ -784,10 +942,7 @@ void collect_expired_udp_sessions(std::shared_ptr<udp_session_map_t>& sessions,
         if (std::atomic_compare_exchange_weak_explicit(
                 &sessions, &current, updated, std::memory_order_acq_rel, std::memory_order_acquire))
         {
-            for (auto& session : detached_sessions)
-            {
-                expired_sessions.push_back(std::move(session));
-            }
+            append_expired_udp_sessions(expired_sessions, detached_sessions);
             return;
         }
     }
@@ -880,71 +1035,103 @@ void tproxy_client::start()
     if (!tproxy_config_.enabled)
     {
         LOG_INFO("tproxy client disabled");
-        stop_.store(true, std::memory_order_release);
-        started_.store(false, std::memory_order_release);
+        rollback_start_state();
         return;
     }
-    auto tunnel_pool = tunnel_pool_;
+
+    std::shared_ptr<client_tunnel_pool> tunnel_pool = nullptr;
+    std::shared_ptr<router> router = nullptr;
+    if (!validate_start_prerequisites(tunnel_pool, router))
+    {
+        return;
+    }
+
+    std::string tcp_listen_host;
+    std::string udp_listen_host;
+    if (!setup_runtime_sockets(tcp_listen_host, udp_listen_host))
+    {
+        return;
+    }
+
+    start_runtime_loops(tunnel_pool, tcp_listen_host, udp_listen_host);
+}
+
+void tproxy_client::rollback_start_state()
+{
+    stop_.store(true, std::memory_order_release);
+    started_.store(false, std::memory_order_release);
+}
+
+bool tproxy_client::validate_start_prerequisites(std::shared_ptr<client_tunnel_pool>& tunnel_pool,
+                                                 std::shared_ptr<router>& router)
+{
+    tunnel_pool = tunnel_pool_;
     if (tunnel_pool == nullptr)
     {
         LOG_ERROR("tproxy tunnel pool unavailable");
-        stop_.store(true, std::memory_order_release);
-        started_.store(false, std::memory_order_release);
-        return;
+        rollback_start_state();
+        return false;
     }
-    auto router = router_;
+
+    router = router_;
     if (router == nullptr)
     {
         LOG_ERROR("tproxy router unavailable");
-        stop_.store(true, std::memory_order_release);
-        started_.store(false, std::memory_order_release);
-        return;
+        rollback_start_state();
+        return false;
     }
+
     if (!tunnel_pool->valid())
     {
         LOG_ERROR("invalid reality auth config");
-        stop_.store(true, std::memory_order_release);
-        started_.store(false, std::memory_order_release);
-        return;
+        rollback_start_state();
+        return false;
     }
+
     if (!router->load())
     {
         LOG_ERROR("failed to load router data");
-        stop_.store(true, std::memory_order_release);
-        started_.store(false, std::memory_order_release);
-        return;
+        rollback_start_state();
+        return false;
     }
+
     if (tcp_port_ == 0)
     {
         LOG_ERROR("tproxy tcp port invalid");
-        stop_.store(true, std::memory_order_release);
-        started_.store(false, std::memory_order_release);
-        return;
+        rollback_start_state();
+        return false;
     }
+
     if (udp_port_ == 0)
     {
         udp_port_ = tcp_port_;
     }
+    return true;
+}
 
-    std::string tcp_listen_host;
+bool tproxy_client::setup_runtime_sockets(std::string& tcp_listen_host, std::string& udp_listen_host)
+{
     if (auto res = setup_tproxy_tcp_runtime(tcp_acceptor_, tproxy_config_, tcp_port_, tcp_listen_host); !res)
     {
         LOG_ERROR("tproxy tcp setup failed {}", res.error().message());
-        stop_.store(true, std::memory_order_release);
-        started_.store(false, std::memory_order_release);
-        return;
+        rollback_start_state();
+        return false;
     }
 
-    std::string udp_listen_host;
     if (auto res = setup_tproxy_udp_runtime(udp_socket_, tproxy_config_, udp_port_, udp_listen_host); !res)
     {
         LOG_ERROR("tproxy udp setup failed {}", res.error().message());
         close_tproxy_sockets(tcp_acceptor_, udp_socket_);
-        stop_.store(true, std::memory_order_release);
-        started_.store(false, std::memory_order_release);
-        return;
+        rollback_start_state();
+        return false;
     }
+    return true;
+}
 
+void tproxy_client::start_runtime_loops(const std::shared_ptr<client_tunnel_pool>& tunnel_pool,
+                                        const std::string& tcp_listen_host,
+                                        const std::string& udp_listen_host)
+{
     LOG_INFO("tproxy tcp listening on {}:{}", tcp_listen_host, tcp_port_);
     LOG_INFO("tproxy udp listening on {}:{}", udp_listen_host, udp_port_);
 
@@ -1151,57 +1338,24 @@ boost::asio::awaitable<void> tproxy_client::udp_dispatch_loop()
 
     while (!stop_.load(std::memory_order_acquire))
     {
-        const auto [recv_ec, packet] = co_await dispatch_channel->async_receive(boost::asio::as_tuple(boost::asio::use_awaitable));
-        if (recv_ec)
-        {
-            if (recv_ec != boost::asio::experimental::error::channel_closed && recv_ec != boost::asio::error::operation_aborted)
-            {
-                LOG_ERROR("tproxy udp dispatch receive failed {}", recv_ec.message());
-            }
-            break;
-        }
-
-        if (stop_.load(std::memory_order_acquire))
+        tproxy_udp_dispatch_item packet;
+        const auto receive_action = co_await receive_dispatch_packet(*dispatch_channel, stop_, packet);
+        if (receive_action == udp_dispatch_receive_action::kBreak)
         {
             break;
         }
-
-        if (packet.payload.empty())
+        if (receive_action == udp_dispatch_receive_action::kContinue)
         {
             continue;
         }
 
-        const udp_endpoint_key src_key{packet.src_ep.address(), packet.src_ep.port()};
-        const std::string* key = nullptr;
-        const auto it = src_key_cache.find(src_key);
-        if (it != src_key_cache.end())
+        const auto& key = resolve_src_key_with_cache(src_key_cache, packet.src_ep);
+        const bool keep_loop =
+            co_await dispatch_udp_packet_to_session(udp_sessions_, key, std::move(packet), io_context_, tunnel_pool, router, sender, cfg_, stop_);
+        if (!keep_loop)
         {
-            key = &it->second;
-        }
-        else
-        {
-            if (src_key_cache.size() >= k_udp_dispatch_src_key_cache_capacity)
-            {
-                src_key_cache.clear();
-            }
-            const auto [inserted_it, inserted] = src_key_cache.emplace(src_key, make_endpoint_key(packet.src_ep));
-            (void)inserted;
-            key = &inserted_it->second;
-        }
-
-        auto session = get_or_create_udp_session(
-            udp_sessions_, *key, packet.src_ep, io_context_, tunnel_pool, router, sender, cfg_, stop_);
-        if (session == nullptr)
-        {
-            continue;
-        }
-        if (stop_.load(std::memory_order_acquire))
-        {
-            session->stop();
-            erase_udp_session_if_same(udp_sessions_, *key, session);
             break;
         }
-        co_await session->handle_packet(packet.dst_ep, std::move(packet.payload));
     }
 
     LOG_INFO("tproxy udp dispatch loop exited");

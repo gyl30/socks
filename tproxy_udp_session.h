@@ -77,6 +77,13 @@ class tproxy_udp_session : public mux_stream_interface, public std::enable_share
     boost::asio::awaitable<bool> ensure_proxy_stream();
 
     boost::asio::awaitable<void> send_proxy(const boost::asio::ip::udp::endpoint& dst_ep, const std::uint8_t* data, std::size_t len);
+    void refresh_cached_proxy_header(const boost::asio::ip::udp::endpoint& dst_ep);
+    [[nodiscard]] bool build_proxy_packet(const boost::asio::ip::udp::endpoint& dst_ep,
+                                          const std::uint8_t* data,
+                                          std::size_t len,
+                                          std::vector<std::uint8_t>& packet);
+    boost::asio::awaitable<void> handle_proxy_write_failure(const std::shared_ptr<mux_stream>& stream,
+                                                            const boost::system::error_code& write_ec);
 
     boost::asio::awaitable<void> send_direct(const boost::asio::ip::udp::endpoint& dst_ep, const std::uint8_t* data, std::size_t len);
 

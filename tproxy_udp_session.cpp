@@ -448,6 +448,56 @@ boost::asio::awaitable<bool> tproxy_udp_session::ensure_proxy_stream()
     co_return stream_ != nullptr;
 }
 
+void tproxy_udp_session::refresh_cached_proxy_header(const boost::asio::ip::udp::endpoint& dst_ep)
+{
+    if (has_cached_proxy_header_ && cached_proxy_dst_ep_ == dst_ep)
+    {
+        return;
+    }
+    socks_udp_header h;
+    h.addr = dst_ep.address().to_string();
+    h.port = dst_ep.port();
+    cached_proxy_header_ = socks_codec::encode_udp_header(h);
+    cached_proxy_dst_ep_ = dst_ep;
+    has_cached_proxy_header_ = true;
+}
+
+bool tproxy_udp_session::build_proxy_packet(const boost::asio::ip::udp::endpoint& dst_ep,
+                                            const std::uint8_t* data,
+                                            const std::size_t len,
+                                            std::vector<std::uint8_t>& packet)
+{
+    refresh_cached_proxy_header(dst_ep);
+    if (cached_proxy_header_.size() + len > mux::kMaxPayload)
+    {
+        LOG_CTX_WARN(ctx_, "{} udp packet too large {}", log_event::kSocks, len);
+        return false;
+    }
+
+    packet.clear();
+    packet.reserve(cached_proxy_header_.size() + len);
+    packet.insert(packet.end(), cached_proxy_header_.begin(), cached_proxy_header_.end());
+    packet.insert(packet.end(), data, data + len);
+    return true;
+}
+
+boost::asio::awaitable<void> tproxy_udp_session::handle_proxy_write_failure(const std::shared_ptr<mux_stream>& stream,
+                                                                             const boost::system::error_code& write_ec)
+{
+    LOG_CTX_WARN(ctx_, "{} udp write to stream failed {}", log_event::kSocks, write_ec.message());
+    auto tunnel = tunnel_.lock();
+    if (stream_ == stream)
+    {
+        stream_.reset();
+        tunnel_.reset();
+    }
+    co_await stream->close();
+    if (tunnel != nullptr)
+    {
+        tunnel->remove_stream(stream->id());
+    }
+}
+
 boost::asio::awaitable<void> tproxy_udp_session::send_proxy(const boost::asio::ip::udp::endpoint& dst_ep, const std::uint8_t* data, const std::size_t len)
 {
     if (terminated_.load(std::memory_order_acquire))
@@ -465,26 +515,11 @@ boost::asio::awaitable<void> tproxy_udp_session::send_proxy(const boost::asio::i
         co_return;
     }
 
-    if (!has_cached_proxy_header_ || cached_proxy_dst_ep_ != dst_ep)
+    std::vector<std::uint8_t> pkt;
+    if (!build_proxy_packet(dst_ep, data, len, pkt))
     {
-        socks_udp_header h;
-        h.addr = dst_ep.address().to_string();
-        h.port = dst_ep.port();
-        cached_proxy_header_ = socks_codec::encode_udp_header(h);
-        cached_proxy_dst_ep_ = dst_ep;
-        has_cached_proxy_header_ = true;
-    }
-
-    if (cached_proxy_header_.size() + len > mux::kMaxPayload)
-    {
-        LOG_CTX_WARN(ctx_, "{} udp packet too large {}", log_event::kSocks, len);
         co_return;
     }
-
-    std::vector<std::uint8_t> pkt;
-    pkt.reserve(cached_proxy_header_.size() + len);
-    pkt.insert(pkt.end(), cached_proxy_header_.begin(), cached_proxy_header_.end());
-    pkt.insert(pkt.end(), data, data + len);
 
     auto stream = stream_;
     if (stream == nullptr)
@@ -495,18 +530,7 @@ boost::asio::awaitable<void> tproxy_udp_session::send_proxy(const boost::asio::i
 
     if (const auto write_ec = co_await stream->async_write_some(std::move(pkt)))
     {
-        LOG_CTX_WARN(ctx_, "{} udp write to stream failed {}", log_event::kSocks, write_ec.message());
-        auto tunnel = tunnel_.lock();
-        if (stream_ == stream)
-        {
-            stream_.reset();
-            tunnel_.reset();
-        }
-        co_await stream->close();
-        if (tunnel != nullptr)
-        {
-            tunnel->remove_stream(stream->id());
-        }
+        co_await handle_proxy_write_failure(stream, write_ec);
     }
 }
 
