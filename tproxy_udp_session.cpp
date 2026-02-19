@@ -144,6 +144,12 @@ asio::awaitable<void> tproxy_udp_session::handle_packet_inner(asio::ip::udp::end
         co_return;
     }
     touch();
+    if (router_ == nullptr)
+    {
+        LOG_CTX_WARN(ctx_, "{} udp router unavailable", log_event::kRoute);
+        stop_local(true);
+        co_return;
+    }
     const auto host = dst_ep.address().to_string();
     const auto route = co_await router_->decide_ip(ctx_, host, dst_ep.address());
     if (terminated_.load(std::memory_order_acquire))
@@ -357,6 +363,12 @@ bool tproxy_udp_session::install_proxy_stream(const std::shared_ptr<mux_tunnel_i
 
 asio::awaitable<std::optional<bool>> tproxy_udp_session::open_proxy_stream()
 {
+    if (tunnel_pool_ == nullptr)
+    {
+        LOG_CTX_WARN(ctx_, "{} udp proxy tunnel pool unavailable", log_event::kSocks);
+        co_return std::nullopt;
+    }
+
     const auto tunnel = tunnel_pool_->select_tunnel();
     if (tunnel == nullptr)
     {
@@ -484,6 +496,17 @@ asio::awaitable<void> tproxy_udp_session::send_proxy(const asio::ip::udp::endpoi
     if (const auto write_ec = co_await stream->async_write_some(std::move(pkt)))
     {
         LOG_CTX_WARN(ctx_, "{} udp write to stream failed {}", log_event::kSocks, write_ec.message());
+        auto tunnel = tunnel_.lock();
+        if (stream_ == stream)
+        {
+            stream_.reset();
+            tunnel_.reset();
+        }
+        co_await stream->close();
+        if (tunnel != nullptr)
+        {
+            tunnel->remove_stream(stream->id());
+        }
     }
 }
 
@@ -515,7 +538,13 @@ asio::awaitable<void> tproxy_udp_session::direct_read_loop()
 
         touch();
         const auto norm_sender = net::normalize_endpoint(sender);
-        co_await sender_->send_to_client(client_ep_, norm_sender, asio::buffer(buf.data(), n));
+        auto sender = sender_;
+        if (sender == nullptr)
+        {
+            LOG_CTX_WARN(ctx_, "{} udp sender unavailable", log_event::kSocks);
+            continue;
+        }
+        co_await sender->send_to_client(client_ep_, norm_sender, asio::buffer(buf.data(), n));
     }
 }
 
@@ -536,7 +565,13 @@ asio::awaitable<void> tproxy_udp_session::proxy_read_loop()
         {
             continue;
         }
-        co_await sender_->send_to_client(
+        auto sender = sender_;
+        if (sender == nullptr)
+        {
+            LOG_CTX_WARN(ctx_, "{} udp sender unavailable", log_event::kSocks);
+            continue;
+        }
+        co_await sender->send_to_client(
             client_ep_, src_ep, asio::buffer(data.data() + static_cast<std::ptrdiff_t>(payload_offset), data.size() - payload_offset));
     }
 }

@@ -762,6 +762,50 @@ TEST(LocalClientTest, RouterLoadFailureStopsEarly)
     client->stop();
 }
 
+TEST(LocalClientTest, StartWithNullTunnelPoolStopsEarly)
+{
+    io_context_pool pool(1);
+
+    mux::config cfg;
+    cfg.outbound.host = "127.0.0.1";
+    cfg.outbound.port = 1;
+    cfg.socks.host = "127.0.0.1";
+    cfg.socks.port = 0;
+    cfg.reality.public_key = std::string(64, 'a');
+    cfg.reality.sni = "example.com";
+
+    const auto client = std::make_shared<mux::socks_client>(pool, cfg);
+    client->tunnel_pool_.reset();
+    client->start();
+
+    EXPECT_TRUE(client->stop_.load(std::memory_order_acquire));
+    EXPECT_FALSE(client->started_.load(std::memory_order_acquire));
+    EXPECT_FALSE(client->acceptor_.is_open());
+    client->stop();
+}
+
+TEST(LocalClientTest, StartWithNullRouterStopsEarly)
+{
+    io_context_pool pool(1);
+
+    mux::config cfg;
+    cfg.outbound.host = "127.0.0.1";
+    cfg.outbound.port = 1;
+    cfg.socks.host = "127.0.0.1";
+    cfg.socks.port = 0;
+    cfg.reality.public_key = std::string(64, 'a');
+    cfg.reality.sni = "example.com";
+
+    const auto client = std::make_shared<mux::socks_client>(pool, cfg);
+    client->router_.reset();
+    client->start();
+
+    EXPECT_TRUE(client->stop_.load(std::memory_order_acquire));
+    EXPECT_FALSE(client->started_.load(std::memory_order_acquire));
+    EXPECT_FALSE(client->acceptor_.is_open());
+    client->stop();
+}
+
 TEST(LocalClientTest, AcceptLoopSkipsSetupWhenStopAlreadySet)
 {
     io_context_pool pool(1);
@@ -781,6 +825,62 @@ TEST(LocalClientTest, AcceptLoopSkipsSetupWhenStopAlreadySet)
     EXPECT_EQ(done.wait_for(std::chrono::seconds(2)), std::future_status::ready);
     EXPECT_FALSE(acceptor_is_open(pool.get_io_context(), client));
 
+    pool.stop();
+    if (runner.joinable())
+    {
+        runner.join();
+    }
+}
+
+TEST(LocalClientTest, AcceptLoopReturnsWhenTunnelPoolMissing)
+{
+    io_context_pool pool(1);
+
+    mux::config cfg;
+    cfg.outbound.host = "127.0.0.1";
+    cfg.outbound.port = 1;
+    cfg.socks.host = "127.0.0.1";
+    cfg.socks.port = 0;
+    cfg.reality.public_key = std::string(64, 'a');
+    cfg.reality.sni = "example.com";
+    const auto client = std::make_shared<mux::socks_client>(pool, cfg);
+    client->tunnel_pool_.reset();
+
+    auto done = spawn_accept_local_loop(pool.get_io_context(), client);
+    std::thread runner([&pool]() { pool.run(); });
+    EXPECT_EQ(done.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_TRUE(client->stop_.load(std::memory_order_acquire));
+    EXPECT_FALSE(acceptor_is_open(pool.get_io_context(), client));
+
+    client->stop();
+    pool.stop();
+    if (runner.joinable())
+    {
+        runner.join();
+    }
+}
+
+TEST(LocalClientTest, AcceptLoopReturnsWhenRouterMissing)
+{
+    io_context_pool pool(1);
+
+    mux::config cfg;
+    cfg.outbound.host = "127.0.0.1";
+    cfg.outbound.port = 1;
+    cfg.socks.host = "127.0.0.1";
+    cfg.socks.port = 0;
+    cfg.reality.public_key = std::string(64, 'a');
+    cfg.reality.sni = "example.com";
+    const auto client = std::make_shared<mux::socks_client>(pool, cfg);
+    client->router_.reset();
+
+    auto done = spawn_accept_local_loop(pool.get_io_context(), client);
+    std::thread runner([&pool]() { pool.run(); });
+    EXPECT_EQ(done.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_TRUE(client->stop_.load(std::memory_order_acquire));
+    EXPECT_FALSE(acceptor_is_open(pool.get_io_context(), client));
+
+    client->stop();
     pool.stop();
     if (runner.joinable())
     {

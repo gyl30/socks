@@ -214,6 +214,12 @@ asio::awaitable<std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>> wait_fo
                                                                                                 std::shared_ptr<client_tunnel_pool> pool,
                                                                                                 const std::atomic<bool>& stop)
 {
+    if (pool == nullptr)
+    {
+        LOG_ERROR("tunnel pool unavailable");
+        co_return nullptr;
+    }
+
     auto selected_tunnel = pool->select_tunnel();
     if (selected_tunnel != nullptr)
     {
@@ -256,6 +262,19 @@ asio::awaitable<bool> start_local_session(asio::ip::tcp::socket socket,
                                           const config::queues_t& queue_config,
                                           const std::atomic<bool>& stop)
 {
+    if (tunnel_pool == nullptr)
+    {
+        LOG_ERROR("local session start failed tunnel pool unavailable");
+        close_local_socket(socket);
+        co_return false;
+    }
+    if (router == nullptr)
+    {
+        LOG_ERROR("local session start failed router unavailable");
+        close_local_socket(socket);
+        co_return false;
+    }
+
     if (stop.load(std::memory_order_acquire))
     {
         close_local_socket(socket);
@@ -385,14 +404,32 @@ void socks_client::start()
     }
     stop_.store(false, std::memory_order_release);
 
-    if (!tunnel_pool_->valid())
+    auto tunnel_pool = tunnel_pool_;
+    if (tunnel_pool == nullptr)
+    {
+        LOG_ERROR("tunnel pool unavailable");
+        stop_.store(true, std::memory_order_release);
+        started_.store(false, std::memory_order_release);
+        return;
+    }
+
+    auto router = router_;
+    if (router == nullptr)
+    {
+        LOG_ERROR("router unavailable");
+        stop_.store(true, std::memory_order_release);
+        started_.store(false, std::memory_order_release);
+        return;
+    }
+
+    if (!tunnel_pool->valid())
     {
         LOG_ERROR("invalid reality auth config");
         stop_.store(true, std::memory_order_release);
         started_.store(false, std::memory_order_release);
         return;
     }
-    if (!router_->load())
+    if (!router->load())
     {
         LOG_ERROR("failed to load router data");
         stop_.store(true, std::memory_order_release);
@@ -419,7 +456,7 @@ void socks_client::start()
     listen_port_.store(bound_port, std::memory_order_release);
     LOG_INFO("local socks5 listening on {}:{}", socks_config_.host, listen_port_.load(std::memory_order_acquire));
 
-    tunnel_pool_->start();
+    tunnel_pool->start();
 
     asio::co_spawn(io_context_, accept_local_loop_detached(shared_from_this()), asio::detached);
 }
@@ -445,13 +482,33 @@ void socks_client::stop()
             }
         });
 
-    tunnel_pool_->stop();
+    if (tunnel_pool_ != nullptr)
+    {
+        tunnel_pool_->stop();
+    }
 }
 
 asio::awaitable<void> socks_client::accept_local_loop()
 {
     if (stop_.load(std::memory_order_acquire))
     {
+        started_.store(false, std::memory_order_release);
+        co_return;
+    }
+
+    auto tunnel_pool = tunnel_pool_;
+    if (tunnel_pool == nullptr)
+    {
+        LOG_ERROR("accept loop tunnel pool unavailable");
+        stop_.store(true, std::memory_order_release);
+        started_.store(false, std::memory_order_release);
+        co_return;
+    }
+    auto router = router_;
+    if (router == nullptr)
+    {
+        LOG_ERROR("accept loop router unavailable");
+        stop_.store(true, std::memory_order_release);
         started_.store(false, std::memory_order_release);
         co_return;
     }
@@ -478,7 +535,7 @@ asio::awaitable<void> socks_client::accept_local_loop()
     while (!stop_.load(std::memory_order_acquire))
     {
         if (!(co_await run_accept_iteration(
-                  acceptor_, io_context_, tunnel_pool_, router_, sessions_, socks_config_, timeout_config_, queue_config_, stop_)))
+                  acceptor_, io_context_, tunnel_pool, router, sessions_, socks_config_, timeout_config_, queue_config_, stop_)))
         {
             break;
         }

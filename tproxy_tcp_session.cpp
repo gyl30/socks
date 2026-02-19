@@ -118,16 +118,27 @@ asio::awaitable<void> tproxy_tcp_session::run()
 
 asio::awaitable<std::pair<route_type, std::shared_ptr<upstream>>> tproxy_tcp_session::select_backend(const std::string& host)
 {
+    if (router_ == nullptr)
+    {
+        LOG_CTX_WARN(ctx_, "{} router unavailable", log_event::kRoute);
+        statistics::instance().inc_routing_blocked();
+        co_return std::make_pair(route_type::kBlock, std::shared_ptr<upstream>(nullptr));
+    }
+
     const auto route = co_await router_->decide_ip(ctx_, host, dst_ep_.address());
     if (route == route_type::kDirect)
     {
-        const auto connect_timeout_sec = (timeout_config_.read == 0) ? 1U : timeout_config_.read;
-        const std::shared_ptr<upstream> backend = std::make_shared<direct_upstream>(io_context_, ctx_, mark_, connect_timeout_sec);
+        const std::shared_ptr<upstream> backend = std::make_shared<direct_upstream>(io_context_, ctx_, mark_, timeout_config_.read);
         co_return std::make_pair(route, backend);
     }
 
     if (route == route_type::kProxy)
     {
+        if (tunnel_pool_ == nullptr)
+        {
+            LOG_CTX_WARN(ctx_, "{} tcp proxy tunnel pool unavailable", log_event::kRoute);
+            co_return std::make_pair(route, std::shared_ptr<upstream>(nullptr));
+        }
         const auto tunnel = tunnel_pool_->select_tunnel();
         if (tunnel == nullptr)
         {
@@ -211,8 +222,19 @@ asio::awaitable<bool> tproxy_tcp_session::write_client_chunk_to_backend(const st
                                                                          const std::vector<std::uint8_t>& buf,
                                                                          const std::uint32_t n)
 {
-    const auto written = co_await backend->write(buf.data(), n);
-    if (written == 0)
+    std::size_t total_written = 0;
+    while (total_written < n)
+    {
+        const auto remaining = static_cast<std::size_t>(n - total_written);
+        const auto written = co_await backend->write(buf.data() + total_written, remaining);
+        if (written == 0 || written > remaining)
+        {
+            LOG_CTX_WARN(ctx_, "{} failed to write to backend", log_event::kSocks);
+            co_return false;
+        }
+        total_written += written;
+    }
+    if (total_written != n)
     {
         LOG_CTX_WARN(ctx_, "{} failed to write to backend", log_event::kSocks);
         co_return false;
@@ -234,6 +256,7 @@ asio::awaitable<void> tproxy_tcp_session::client_to_upstream(std::shared_ptr<ups
         }
         if (!co_await write_client_chunk_to_backend(backend, buf, n))
         {
+            co_await close_backend_once(backend);
             break;
         }
     }
