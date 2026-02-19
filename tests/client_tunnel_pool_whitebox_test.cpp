@@ -242,10 +242,9 @@ asio::awaitable<std::expected<mux::client_tunnel_pool::handshake_result, std::er
 
 asio::awaitable<std::expected<mux::client_tunnel_pool::handshake_result, std::error_code>> perform_reality_handshake_with_timeout_expected(
     mux::client_tunnel_pool& pool,
-    const std::shared_ptr<asio::ip::tcp::socket>& socket,
-    asio::io_context& io_context)
+    const std::shared_ptr<asio::ip::tcp::socket>& socket)
 {
-    co_return co_await pool.perform_reality_handshake_with_timeout(socket, io_context);
+    co_return co_await pool.perform_reality_handshake_with_timeout(socket);
 }
 
 asio::awaitable<std::expected<std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>, std::error_code>> handshake_read_loop_expected(
@@ -689,9 +688,9 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeTimeoutCancelsSocketAndReturnsTimedO
 
     std::expected<mux::client_tunnel_pool::handshake_result, std::error_code> handshake_res;
     asio::co_spawn(io_context,
-                   [tunnel_pool, client_socket, &io_context, &handshake_res]() -> asio::awaitable<void>
+                   [tunnel_pool, client_socket, &handshake_res]() -> asio::awaitable<void>
                    {
-                       handshake_res = co_await perform_reality_handshake_with_timeout_expected(*tunnel_pool, client_socket, io_context);
+                       handshake_res = co_await perform_reality_handshake_with_timeout_expected(*tunnel_pool, client_socket);
                        co_return;
                    },
                    asio::detached);
@@ -720,9 +719,9 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeIoErrorIncrementsHandshakeErrorMetri
     auto disconnected_socket = std::make_shared<asio::ip::tcp::socket>(io_context);
     std::expected<mux::client_tunnel_pool::handshake_result, std::error_code> handshake_res;
     asio::co_spawn(io_context,
-                   [tunnel_pool, disconnected_socket, &io_context, &handshake_res]() -> asio::awaitable<void>
+                   [tunnel_pool, disconnected_socket, &handshake_res]() -> asio::awaitable<void>
                    {
-                       handshake_res = co_await perform_reality_handshake_with_timeout_expected(*tunnel_pool, disconnected_socket, io_context);
+                       handshake_res = co_await perform_reality_handshake_with_timeout_expected(*tunnel_pool, disconnected_socket);
                        co_return;
                    },
                    asio::detached);
@@ -731,6 +730,36 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeIoErrorIncrementsHandshakeErrorMetri
     ASSERT_FALSE(handshake_res.has_value());
     EXPECT_TRUE(handshake_res.error());
     EXPECT_NE(handshake_res.error(), asio::error::timed_out);
+    EXPECT_GE(stats.client_tunnel_pool_handshake_errors(), handshake_errors_before + 1);
+}
+
+TEST(ClientTunnelPoolWhiteboxTest, HandshakeNullSocketReturnsInvalidArgument)
+{
+    std::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+    auto& stats = mux::statistics::instance();
+    const auto handshake_errors_before = stats.client_tunnel_pool_handshake_errors();
+
+    auto cfg = make_base_cfg();
+    cfg.reality.public_key = generate_public_key_hex();
+    cfg.timeout.read = 1;
+    auto tunnel_pool = std::make_shared<mux::client_tunnel_pool>(pool, cfg, 0);
+
+    asio::io_context io_context;
+    std::shared_ptr<asio::ip::tcp::socket> null_socket;
+    std::expected<mux::client_tunnel_pool::handshake_result, std::error_code> handshake_res;
+    asio::co_spawn(io_context,
+                   [tunnel_pool, null_socket, &handshake_res]() -> asio::awaitable<void>
+                   {
+                       handshake_res = co_await perform_reality_handshake_with_timeout_expected(*tunnel_pool, null_socket);
+                       co_return;
+                   },
+                   asio::detached);
+    io_context.run();
+
+    ASSERT_FALSE(handshake_res.has_value());
+    EXPECT_EQ(handshake_res.error(), std::errc::invalid_argument);
     EXPECT_GE(stats.client_tunnel_pool_handshake_errors(), handshake_errors_before + 1);
 }
 

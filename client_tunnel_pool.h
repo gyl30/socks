@@ -85,9 +85,9 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
 
     [[nodiscard]] asio::awaitable<std::expected<handshake_result, std::error_code>> perform_reality_handshake(asio::ip::tcp::socket& socket) const;
     [[nodiscard]] asio::awaitable<std::expected<handshake_result, std::error_code>> perform_reality_handshake_with_timeout(
-        const std::shared_ptr<asio::ip::tcp::socket>& socket, asio::io_context& io_context, const connection_context& ctx) const;
+        const std::shared_ptr<asio::ip::tcp::socket>& socket, const connection_context& ctx) const;
     [[nodiscard]] asio::awaitable<std::expected<handshake_result, std::error_code>> perform_reality_handshake_with_timeout(
-        const std::shared_ptr<asio::ip::tcp::socket>& socket, asio::io_context& io_context) const;
+        const std::shared_ptr<asio::ip::tcp::socket>& socket) const;
     [[nodiscard]] std::shared_ptr<asio::ip::tcp::socket> create_pending_socket(asio::io_context& io_context, std::uint32_t index);
     void clear_pending_socket_if_match(std::uint32_t index, const std::shared_ptr<asio::ip::tcp::socket>& socket);
     void close_pending_socket(std::size_t index, std::shared_ptr<asio::ip::tcp::socket> pending_socket);

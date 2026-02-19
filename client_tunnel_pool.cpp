@@ -1087,7 +1087,7 @@ asio::awaitable<bool> client_tunnel_pool::establish_tunnel_for_connection(
         co_return false;
     }
 
-    const auto handshake_res = co_await perform_reality_handshake_with_timeout(socket, io_context, ctx);
+    const auto handshake_res = co_await perform_reality_handshake_with_timeout(socket, ctx);
     if (!handshake_res)
     {
         ec = handshake_res.error();
@@ -1109,19 +1109,23 @@ asio::awaitable<bool> client_tunnel_pool::establish_tunnel_for_connection(
 }
 
 asio::awaitable<std::expected<client_tunnel_pool::handshake_result, std::error_code>> client_tunnel_pool::perform_reality_handshake_with_timeout(
-    const std::shared_ptr<asio::ip::tcp::socket>& socket,
-    asio::io_context& io_context) const
+    const std::shared_ptr<asio::ip::tcp::socket>& socket) const
 {
     connection_context ctx;
-    co_return co_await perform_reality_handshake_with_timeout(socket, io_context, ctx);
+    co_return co_await perform_reality_handshake_with_timeout(socket, ctx);
 }
 
 asio::awaitable<std::expected<client_tunnel_pool::handshake_result, std::error_code>> client_tunnel_pool::perform_reality_handshake_with_timeout(
     const std::shared_ptr<asio::ip::tcp::socket>& socket,
-    asio::io_context& io_context,
     const connection_context& ctx) const
 {
-    (void)io_context;
+    if (!socket)
+    {
+        statistics::instance().inc_client_tunnel_pool_handshake_errors();
+        LOG_CTX_ERROR(
+            ctx, "{} stage=handshake target={}:{} error=invalid_socket", log_event::kHandshake, remote_host_, remote_port_);
+        co_return std::unexpected(std::make_error_code(std::errc::invalid_argument));
+    }
     const auto timeout_sec = timeout_config_.read;
     auto timeout_state = timeout_io::arm_socket_timeout(socket, std::chrono::seconds(timeout_sec), "handshake");
 
