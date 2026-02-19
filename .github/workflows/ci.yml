@@ -4,6 +4,11 @@ on:
   push:
     branches: [ "main" ]
 
+env:
+  BOOST_VERSION: "1.89.0"
+  BOOST_ARCHIVE: "boost_1_89_0.tar.bz2"
+  BOOST_SRC_DIR: "boost_1_89_0"
+  BOOST_INSTALL_PREFIX: "/home/runner/.local/boost-1.89"
 
 jobs:
   guard-expected-assertion-style:
@@ -67,14 +72,37 @@ jobs:
       run: |
         set -euo pipefail
         sudo apt-get update
-        sudo apt-get install -y cmake ninja-build libssl-dev ripgrep
+        sudo apt-get install -y cmake ninja-build libssl-dev ripgrep wget
+
+    - name: Cache Boost 1.89
+      id: cache-boost
+      uses: actions/cache@v4
+      with:
+        key: boost-1.89.0-${{ runner.os }}-v1
+        path: |
+          ~/.cache/boost_1_89_0.tar.bz2
+          ~/.cache/boost_1_89_0
+          ~/.local/boost-1.89
+
+    - name: Install Boost 1.89 from source
+      if: steps.cache-boost.outputs.cache-hit != 'true'
+      run: |
+        set -euo pipefail
+        mkdir -p "$HOME/.cache" "$HOME/.local"
+        wget -O "$HOME/.cache/${BOOST_ARCHIVE}" "https://archives.boost.io/release/${BOOST_VERSION}/source/${BOOST_ARCHIVE}"
+        rm -rf "$HOME/.cache/${BOOST_SRC_DIR}"
+        tar xf "$HOME/.cache/${BOOST_ARCHIVE}" -C "$HOME/.cache"
+        cd "$HOME/.cache/${BOOST_SRC_DIR}"
+        ./bootstrap.sh --prefix="${BOOST_INSTALL_PREFIX}"
+        ./b2 install -j15
 
     - name: Configure Tiered Build
       run: |
         cmake -S . -B build_tier -GNinja \
           -DCMAKE_BUILD_TYPE=Debug \
           -DENABLE_TSAN=OFF \
-          -DENABLE_ASAN=ON
+          -DENABLE_ASAN=ON \
+          -DCMAKE_PREFIX_PATH="${BOOST_INSTALL_PREFIX}"
 
     - name: Build Tiered Tests
       run: cmake --build build_tier
@@ -105,7 +133,29 @@ jobs:
       run: |
         set -euo pipefail
         sudo apt-get update
-        sudo apt-get install -y cmake ninja-build libssl-dev python3 iproute2 iptables net-tools openssl curl gnupg ca-certificates ripgrep
+        sudo apt-get install -y cmake ninja-build libssl-dev python3 iproute2 iptables net-tools openssl curl gnupg ca-certificates ripgrep wget
+
+    - name: Cache Boost 1.89
+      id: cache-boost
+      uses: actions/cache@v4
+      with:
+        key: boost-1.89.0-${{ runner.os }}-v1
+        path: |
+          ~/.cache/boost_1_89_0.tar.bz2
+          ~/.cache/boost_1_89_0
+          ~/.local/boost-1.89
+
+    - name: Install Boost 1.89 from source
+      if: steps.cache-boost.outputs.cache-hit != 'true'
+      run: |
+        set -euo pipefail
+        mkdir -p "$HOME/.cache" "$HOME/.local"
+        wget -O "$HOME/.cache/${BOOST_ARCHIVE}" "https://archives.boost.io/release/${BOOST_VERSION}/source/${BOOST_ARCHIVE}"
+        rm -rf "$HOME/.cache/${BOOST_SRC_DIR}"
+        tar xf "$HOME/.cache/${BOOST_ARCHIVE}" -C "$HOME/.cache"
+        cd "$HOME/.cache/${BOOST_SRC_DIR}"
+        ./bootstrap.sh --prefix="${BOOST_INSTALL_PREFIX}"
+        ./b2 install -j15
 
     - name: Install Latest Clang
       run: |
@@ -128,7 +178,8 @@ jobs:
           -DCMAKE_C_COMPILER=clang \
           -DCMAKE_CXX_COMPILER=clang++ \
           -DENABLE_TSAN=ON \
-          -DENABLE_ASAN=OFF
+          -DENABLE_ASAN=OFF \
+          -DCMAKE_PREFIX_PATH="${BOOST_INSTALL_PREFIX}"
 
     - name: Build TSAN
       run: cmake --build build_tsan
@@ -166,7 +217,29 @@ jobs:
       run: |
         set -euo pipefail
         sudo apt-get update
-        sudo apt-get install -y cmake ninja-build libssl-dev python3 valgrind openssl
+        sudo apt-get install -y cmake ninja-build libssl-dev python3 valgrind openssl wget
+
+    - name: Cache Boost 1.89
+      id: cache-boost
+      uses: actions/cache@v4
+      with:
+        key: boost-1.89.0-${{ runner.os }}-v1
+        path: |
+          ~/.cache/boost_1_89_0.tar.bz2
+          ~/.cache/boost_1_89_0
+          ~/.local/boost-1.89
+
+    - name: Install Boost 1.89 from source
+      if: steps.cache-boost.outputs.cache-hit != 'true'
+      run: |
+        set -euo pipefail
+        mkdir -p "$HOME/.cache" "$HOME/.local"
+        wget -O "$HOME/.cache/${BOOST_ARCHIVE}" "https://archives.boost.io/release/${BOOST_VERSION}/source/${BOOST_ARCHIVE}"
+        rm -rf "$HOME/.cache/${BOOST_SRC_DIR}"
+        tar xf "$HOME/.cache/${BOOST_ARCHIVE}" -C "$HOME/.cache"
+        cd "$HOME/.cache/${BOOST_SRC_DIR}"
+        ./bootstrap.sh --prefix="${BOOST_INSTALL_PREFIX}"
+        ./b2 install -j15
 
     - name: Prepare Artifact Directory
       run: mkdir -p "$CI_ARTIFACT_DIR"
@@ -176,7 +249,8 @@ jobs:
         cmake -S . -B build_valgrind -GNinja \
           -DCMAKE_BUILD_TYPE=Debug \
           -DENABLE_TSAN=OFF \
-          -DENABLE_ASAN=OFF
+          -DENABLE_ASAN=OFF \
+          -DCMAKE_PREFIX_PATH="${BOOST_INSTALL_PREFIX}"
 
     - name: Build Valgrind
       run: cmake --build build_valgrind
@@ -216,7 +290,29 @@ jobs:
       run: |
         set -euo pipefail
         sudo apt-get update
-        sudo apt-get install -y cmake ninja-build libssl-dev python3 python3-pip gcovr ripgrep
+        sudo apt-get install -y cmake ninja-build libssl-dev python3 python3-pip gcovr ripgrep wget
+
+    - name: Cache Boost 1.89
+      id: cache-boost
+      uses: actions/cache@v4
+      with:
+        key: boost-1.89.0-${{ runner.os }}-v1
+        path: |
+          ~/.cache/boost_1_89_0.tar.bz2
+          ~/.cache/boost_1_89_0
+          ~/.local/boost-1.89
+
+    - name: Install Boost 1.89 from source
+      if: steps.cache-boost.outputs.cache-hit != 'true'
+      run: |
+        set -euo pipefail
+        mkdir -p "$HOME/.cache" "$HOME/.local"
+        wget -O "$HOME/.cache/${BOOST_ARCHIVE}" "https://archives.boost.io/release/${BOOST_VERSION}/source/${BOOST_ARCHIVE}"
+        rm -rf "$HOME/.cache/${BOOST_SRC_DIR}"
+        tar xf "$HOME/.cache/${BOOST_ARCHIVE}" -C "$HOME/.cache"
+        cd "$HOME/.cache/${BOOST_SRC_DIR}"
+        ./bootstrap.sh --prefix="${BOOST_INSTALL_PREFIX}"
+        ./b2 install -j15
 
     - name: Prepare Artifact Directory
       run: mkdir -p "$CI_ARTIFACT_DIR"
@@ -224,7 +320,7 @@ jobs:
     - name: Enforce Coverage >= 95% (line overall)
       run: |
         set -euo pipefail
-        BUILD_DIR=build_coverage COVERAGE_THRESHOLD=95 PER_FILE_GATE=0 BRANCH_PER_FILE_GATE=0 script/run_coverage.sh 2>&1 | tee "$CI_ARTIFACT_DIR/coverage.log"
+        CMAKE_PREFIX_PATH="${BOOST_INSTALL_PREFIX}" BUILD_DIR=build_coverage COVERAGE_THRESHOLD=95 PER_FILE_GATE=0 BRANCH_PER_FILE_GATE=0 script/run_coverage.sh 2>&1 | tee "$CI_ARTIFACT_DIR/coverage.log"
 
     - name: Upload Coverage Artifacts
       if: always()
@@ -249,7 +345,29 @@ jobs:
       run: |
         set -euo pipefail
         sudo apt-get update
-        sudo apt-get install -y cmake ninja-build libssl-dev curl gnupg ca-certificates
+        sudo apt-get install -y cmake ninja-build libssl-dev curl gnupg ca-certificates wget
+
+    - name: Cache Boost 1.89
+      id: cache-boost
+      uses: actions/cache@v4
+      with:
+        key: boost-1.89.0-${{ runner.os }}-v1
+        path: |
+          ~/.cache/boost_1_89_0.tar.bz2
+          ~/.cache/boost_1_89_0
+          ~/.local/boost-1.89
+
+    - name: Install Boost 1.89 from source
+      if: steps.cache-boost.outputs.cache-hit != 'true'
+      run: |
+        set -euo pipefail
+        mkdir -p "$HOME/.cache" "$HOME/.local"
+        wget -O "$HOME/.cache/${BOOST_ARCHIVE}" "https://archives.boost.io/release/${BOOST_VERSION}/source/${BOOST_ARCHIVE}"
+        rm -rf "$HOME/.cache/${BOOST_SRC_DIR}"
+        tar xf "$HOME/.cache/${BOOST_ARCHIVE}" -C "$HOME/.cache"
+        cd "$HOME/.cache/${BOOST_SRC_DIR}"
+        ./bootstrap.sh --prefix="${BOOST_INSTALL_PREFIX}"
+        ./b2 install -j15
 
     - name: Install Latest Clang
       run: |
@@ -263,7 +381,7 @@ jobs:
         clang++ --version
 
     - name: Configure CMake (Fuzzing)
-      run: cmake -S . -B build_fuzz -DENABLE_FUZZING=ON -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_COMPILER=clang -GNinja
+      run: cmake -S . -B build_fuzz -DENABLE_FUZZING=ON -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_COMPILER=clang -DCMAKE_PREFIX_PATH="${BOOST_INSTALL_PREFIX}" -GNinja
 
     - name: Build Fuzzers
       run: cmake --build build_fuzz

@@ -139,7 +139,7 @@ def run_complexity_gate(repo_root: Path, base_ref: str, threshold: int) -> int:
     for file_path in files:
         changed_ranges[Path(file_path).as_posix()] = changed_line_ranges(repo_root, base_commit, file_path)
 
-    lizard_cmd = [sys.executable, "-m", "lizard", *files]
+    lizard_cmd = [sys.executable, "-m", "lizard", "-i", "-1", *files]
     try:
         lizard_output = run_command(lizard_cmd, repo_root)
     except RuntimeError as exc:
