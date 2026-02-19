@@ -1,6 +1,7 @@
 #include <optional>
 #include <atomic>
 #include <chrono>
+#include <cstring>
 #include <memory>
 
 #include <asio/write.hpp>
@@ -189,7 +190,12 @@ asio::awaitable<bool> send_downstream_payload(const std::weak_ptr<mux_connection
     {
         co_return false;
     }
-    if (const auto ec = co_await conn->send_async(stream_id, kCmdDat, std::vector<std::uint8_t>(buf.begin(), buf.begin() + size)))
+    std::vector<std::uint8_t> payload(size);
+    if (size > 0)
+    {
+        std::memcpy(payload.data(), buf.data(), size);
+    }
+    if (const auto ec = co_await conn->send_async(stream_id, kCmdDat, std::move(payload)))
     {
         LOG_CTX_WARN(ctx, "{} failed to write to mux {}", log_event::kDataSend, ec.message());
         co_return false;
