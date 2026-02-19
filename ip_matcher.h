@@ -8,7 +8,7 @@
 #include <algorithm>
 #include <utility>
 
-#include <asio.hpp>
+#include <boost/asio.hpp>
 
 #include "log.h"
 
@@ -23,7 +23,7 @@ class ip_matcher
 
     bool load(const std::string& filename);
 
-    [[nodiscard]] bool match(const asio::ip::address& addr) const;
+    [[nodiscard]] bool match(const boost::asio::ip::address& addr) const;
 
     void add_rule(const std::string& cidr);
 
@@ -34,10 +34,10 @@ class ip_matcher
     std::unique_ptr<trie_node> root_v4_;
     std::unique_ptr<trie_node> root_v6_;
 
-    static bool match_v4(const asio::ip::address_v4& addr, const std::unique_ptr<trie_node>& root);
-    static bool match_v6(const asio::ip::address_v6& addr, const std::unique_ptr<trie_node>& root);
-    static void add_rule_v4(int prefix_len, const asio::ip::address_v4& addr, std::unique_ptr<trie_node>& root);
-    static void add_rule_v6(int prefix_len, const asio::ip::address_v6& addr, std::unique_ptr<trie_node>& root);
+    static bool match_v4(const boost::asio::ip::address_v4& addr, const std::unique_ptr<trie_node>& root);
+    static bool match_v6(const boost::asio::ip::address_v6& addr, const std::unique_ptr<trie_node>& root);
+    static void add_rule_v4(int prefix_len, const boost::asio::ip::address_v4& addr, std::unique_ptr<trie_node>& root);
+    static void add_rule_v6(int prefix_len, const boost::asio::ip::address_v6& addr, std::unique_ptr<trie_node>& root);
 
     static bool is_valid_prefix_length(int prefix_len, int max_prefix_len);
     static trie_node* ensure_root(std::unique_ptr<trie_node>& root);

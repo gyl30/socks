@@ -7,8 +7,8 @@
 #include <sys/socket.h>
 
 #include <gtest/gtest.h>
-#include <asio/ip/udp.hpp>
-#include <asio/io_context.hpp>
+#include <boost/asio/ip/udp.hpp>
+#include <boost/asio/io_context.hpp>
 
 #include "test_util.h"
 #define private public
@@ -55,22 +55,22 @@ bool force_udp_sender_setsockopt_success()
            == udp_sender_fail_mode::kSetsockoptAlwaysSuccess;
 }
 
-std::shared_ptr<asio::ip::udp::socket> make_bound_udp_v4_socket(asio::io_context& ctx)
+std::shared_ptr<boost::asio::ip::udp::socket> make_bound_udp_v4_socket(boost::asio::io_context& ctx)
 {
-    auto sock = std::make_shared<asio::ip::udp::socket>(ctx);
-    std::error_code ec;
-    sock->open(asio::ip::udp::v4(), ec);
+    auto sock = std::make_shared<boost::asio::ip::udp::socket>(ctx);
+    boost::system::error_code ec;
+    sock->open(boost::asio::ip::udp::v4(), ec);
     EXPECT_FALSE(ec);
-    sock->bind(asio::ip::udp::endpoint(asio::ip::make_address("127.0.0.1"), 0), ec);
+    sock->bind(boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 0), ec);
     EXPECT_FALSE(ec);
     return sock;
 }
 
-std::shared_ptr<asio::ip::udp::socket> make_open_udp_v6_socket(asio::io_context& ctx)
+std::shared_ptr<boost::asio::ip::udp::socket> make_open_udp_v6_socket(boost::asio::io_context& ctx)
 {
-    auto sock = std::make_shared<asio::ip::udp::socket>(ctx);
-    std::error_code ec;
-    sock->open(asio::ip::udp::v6(), ec);
+    auto sock = std::make_shared<boost::asio::ip::udp::socket>(ctx);
+    boost::system::error_code ec;
+    sock->open(boost::asio::ip::udp::v6(), ec);
     EXPECT_FALSE(ec);
     return sock;
 }
@@ -101,13 +101,13 @@ extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void*
 
 TEST(TproxyUdpSenderTest, CacheMaintenanceBranches)
 {
-    asio::io_context ctx;
+    boost::asio::io_context ctx;
     mux::tproxy_udp_sender sender(ctx, 0);
 
     const auto now = static_cast<std::uint64_t>(1'000'000);
-    const mux::tproxy_udp_sender::endpoint_key keep_key{asio::ip::make_address("127.0.0.1"), 10001};
-    const mux::tproxy_udp_sender::endpoint_key expired_key{asio::ip::make_address("127.0.0.2"), 10002};
-    const mux::tproxy_udp_sender::endpoint_key invalid_key{asio::ip::make_address("127.0.0.3"), 10003};
+    const mux::tproxy_udp_sender::endpoint_key keep_key{boost::asio::ip::make_address("127.0.0.1"), 10001};
+    const mux::tproxy_udp_sender::endpoint_key expired_key{boost::asio::ip::make_address("127.0.0.2"), 10002};
+    const mux::tproxy_udp_sender::endpoint_key invalid_key{boost::asio::ip::make_address("127.0.0.3"), 10003};
 
     auto keep_socket = make_bound_udp_v4_socket(ctx);
     auto expired_socket = make_bound_udp_v4_socket(ctx);
@@ -121,8 +121,8 @@ TEST(TproxyUdpSenderTest, CacheMaintenanceBranches)
     EXPECT_NE(sender.get_cached_socket(keep_key, now + 1), nullptr);
     EXPECT_EQ(sender.get_cached_socket(invalid_key, now + 1), nullptr);
 
-    const mux::tproxy_udp_sender::endpoint_key k1{asio::ip::make_address("127.0.0.10"), 10100};
-    const mux::tproxy_udp_sender::endpoint_key k2{asio::ip::make_address("127.0.0.11"), 10101};
+    const mux::tproxy_udp_sender::endpoint_key k1{boost::asio::ip::make_address("127.0.0.10"), 10100};
+    const mux::tproxy_udp_sender::endpoint_key k2{boost::asio::ip::make_address("127.0.0.11"), 10101};
     auto s1 = make_bound_udp_v4_socket(ctx);
     auto s2 = make_bound_udp_v4_socket(ctx);
     sender.update_cached_socket(k1, s1, now + 10);
@@ -150,10 +150,10 @@ TEST(TproxyUdpSenderTest, EndpointKeyEqualCoversTrueAndFalsePaths)
 {
     mux::tproxy_udp_sender::endpoint_key_equal eq;
 
-    const mux::tproxy_udp_sender::endpoint_key key{asio::ip::make_address("127.0.0.1"), 10001};
-    const mux::tproxy_udp_sender::endpoint_key same_key{asio::ip::make_address("127.0.0.1"), 10001};
-    const mux::tproxy_udp_sender::endpoint_key diff_addr{asio::ip::make_address("127.0.0.2"), 10001};
-    const mux::tproxy_udp_sender::endpoint_key diff_port{asio::ip::make_address("127.0.0.1"), 10002};
+    const mux::tproxy_udp_sender::endpoint_key key{boost::asio::ip::make_address("127.0.0.1"), 10001};
+    const mux::tproxy_udp_sender::endpoint_key same_key{boost::asio::ip::make_address("127.0.0.1"), 10001};
+    const mux::tproxy_udp_sender::endpoint_key diff_addr{boost::asio::ip::make_address("127.0.0.2"), 10001};
+    const mux::tproxy_udp_sender::endpoint_key diff_port{boost::asio::ip::make_address("127.0.0.1"), 10002};
 
     EXPECT_TRUE(eq(key, same_key));
     EXPECT_FALSE(eq(key, diff_addr));
@@ -162,17 +162,17 @@ TEST(TproxyUdpSenderTest, EndpointKeyEqualCoversTrueAndFalsePaths)
 
 TEST(TproxyUdpSenderTest, SocketOptionAndBindBranches)
 {
-    asio::io_context ctx;
+    boost::asio::io_context ctx;
     mux::tproxy_udp_sender sender(ctx, 0);
     mux::tproxy_udp_sender sender_marked(ctx, 1234);
 
-    auto unopened = std::make_shared<asio::ip::udp::socket>(ctx);
+    auto unopened = std::make_shared<boost::asio::ip::udp::socket>(ctx);
     EXPECT_FALSE(sender.set_ipv6_dual_stack_option(unopened));
     sender.set_reuse_address_option(unopened);
     EXPECT_FALSE(sender.set_transparent_option(unopened, false));
     sender.apply_socket_mark(unopened);
     sender_marked.apply_socket_mark(unopened);
-    EXPECT_FALSE(sender.bind_socket_to_source(unopened, asio::ip::udp::endpoint(asio::ip::make_address("127.0.0.1"), 0)));
+    EXPECT_FALSE(sender.bind_socket_to_source(unopened, boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 0)));
 
     EXPECT_FALSE(sender.prepare_socket_options(unopened, true));
     EXPECT_FALSE(sender.prepare_socket_options(unopened, false));
@@ -180,18 +180,18 @@ TEST(TproxyUdpSenderTest, SocketOptionAndBindBranches)
     auto open_v6 = make_open_udp_v6_socket(ctx);
     (void)sender.set_ipv6_dual_stack_option(open_v6);
 
-    const auto impossible_src = asio::ip::udp::endpoint(asio::ip::make_address("203.0.113.7"), 12345);
+    const auto impossible_src = boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("203.0.113.7"), 12345);
     EXPECT_EQ(sender.create_bound_socket(impossible_src, false), nullptr);
 }
 
 TEST(TproxyUdpSenderTest, SendToClientSuccessAndErrorPaths)
 {
-    asio::io_context ctx;
+    boost::asio::io_context ctx;
     mux::tproxy_udp_sender sender(ctx, 0);
 
-    asio::ip::udp::socket receiver(ctx, asio::ip::udp::endpoint(asio::ip::make_address("127.0.0.1"), 0));
+    boost::asio::ip::udp::socket receiver(ctx, boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 0));
     const auto client_ep = receiver.local_endpoint();
-    const asio::ip::udp::endpoint src_ep(asio::ip::make_address("127.0.0.1"), 18080);
+    const boost::asio::ip::udp::endpoint src_ep(boost::asio::ip::make_address("127.0.0.1"), 18080);
 
     auto src_socket = make_bound_udp_v4_socket(ctx);
     const auto now_ms = static_cast<std::uint64_t>(
@@ -200,14 +200,14 @@ TEST(TproxyUdpSenderTest, SendToClientSuccessAndErrorPaths)
     mux::test::run_awaitable_void(ctx, sender.send_to_client(client_ep, src_ep, std::vector<std::uint8_t>{0x01, 0x02, 0x03}));
     EXPECT_EQ(sender.sockets_.size(), 1u);
 
-    const asio::ip::udp::endpoint v6_client_ep(asio::ip::make_address("::1"), client_ep.port());
+    const boost::asio::ip::udp::endpoint v6_client_ep(boost::asio::ip::make_address("::1"), client_ep.port());
     mux::test::run_awaitable_void(ctx, sender.send_to_client(v6_client_ep, src_ep, std::vector<std::uint8_t>{0xAA}));
     EXPECT_TRUE(sender.sockets_.empty());
 }
 
 TEST(TproxyUdpSenderTest, GetSocketEvictsWhenCacheLooksFull)
 {
-    asio::io_context ctx;
+    boost::asio::io_context ctx;
     mux::tproxy_udp_sender sender(ctx, 0);
 
     const auto now_ms = static_cast<std::uint64_t>(
@@ -215,30 +215,30 @@ TEST(TproxyUdpSenderTest, GetSocketEvictsWhenCacheLooksFull)
     auto shared_socket = make_bound_udp_v4_socket(ctx);
     for (std::uint16_t port = 10000; port < 11024; ++port)
     {
-        sender.update_cached_socket({asio::ip::make_address("127.0.0.1"), port}, shared_socket, now_ms + port);
+        sender.update_cached_socket({boost::asio::ip::make_address("127.0.0.1"), port}, shared_socket, now_ms + port);
     }
     ASSERT_GE(sender.sockets_.size(), 1024u);
 
-    const auto bad_src = asio::ip::udp::endpoint(asio::ip::make_address("203.0.113.8"), 23456);
+    const auto bad_src = boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("203.0.113.8"), 23456);
     EXPECT_EQ(sender.get_socket(bad_src), nullptr);
 }
 
 TEST(TproxyUdpSenderTest, CreateBoundSocketHandlesOpenFailure)
 {
-    asio::io_context ctx;
+    boost::asio::io_context ctx;
     mux::tproxy_udp_sender sender(ctx, 0);
     udp_sender_fail_guard guard(udp_sender_fail_mode::kSocketOnce);
 
-    const auto src_ep = asio::ip::udp::endpoint(asio::ip::make_address("127.0.0.1"), 0);
+    const auto src_ep = boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 0);
     EXPECT_EQ(sender.create_bound_socket(src_ep, false), nullptr);
 }
 
 TEST(TproxyUdpSenderTest, CreateBoundSocketBindFailureAfterPrepareSuccess)
 {
-    asio::io_context ctx;
+    boost::asio::io_context ctx;
     mux::tproxy_udp_sender sender(ctx, 0);
     udp_sender_fail_guard guard(udp_sender_fail_mode::kSetsockoptAlwaysSuccess);
 
-    const auto impossible_src = asio::ip::udp::endpoint(asio::ip::make_address("203.0.113.99"), 34567);
+    const auto impossible_src = boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("203.0.113.99"), 34567);
     EXPECT_EQ(sender.create_bound_socket(impossible_src, false), nullptr);
 }

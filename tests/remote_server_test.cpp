@@ -12,10 +12,10 @@
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include <asio/write.hpp>
-#include <asio/post.hpp>
-#include <asio/buffer.hpp>
-#include <asio/ip/tcp.hpp>
+#include <boost/asio/write.hpp>
+#include <boost/asio/post.hpp>
+#include <boost/asio/buffer.hpp>
+#include <boost/asio/ip/tcp.hpp>
 
 #include <sys/socket.h>
 #include <unistd.h>
@@ -231,19 +231,19 @@ extern "C" int __wrap_EVP_PKEY_CTX_add1_hkdf_info(EVP_PKEY_CTX* ctx, const unsig
 
 std::uint16_t pick_free_port()
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     for (std::uint32_t attempt = 0; attempt < 120; ++attempt)
     {
-        asio::ip::tcp::acceptor acceptor(io_context);
-        std::error_code ec;
-        ec = acceptor.open(asio::ip::tcp::v4(), ec);
+        boost::asio::ip::tcp::acceptor acceptor(io_context);
+        boost::system::error_code ec;
+        ec = acceptor.open(boost::asio::ip::tcp::v4(), ec);
         if (!ec)
         {
-            ec = acceptor.set_option(asio::ip::tcp::acceptor::reuse_address(true), ec);
+            ec = acceptor.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true), ec);
         }
         if (!ec)
         {
-            ec = acceptor.bind(asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0), ec);
+            ec = acceptor.bind(boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 0), ec);
         }
         if (!ec)
         {
@@ -316,33 +316,33 @@ bool start_server_until_listening(const std::shared_ptr<mux::remote_server>& ser
     return false;
 }
 
-bool open_ephemeral_acceptor_until_ready(asio::ip::tcp::acceptor& acceptor,
+bool open_ephemeral_acceptor_until_ready(boost::asio::ip::tcp::acceptor& acceptor,
                                          const std::uint32_t max_attempts = 120,
                                          const std::chrono::milliseconds backoff = std::chrono::milliseconds(25))
 {
     for (std::uint32_t attempt = 0; attempt < max_attempts; ++attempt)
     {
-        std::error_code ec;
-        ec = acceptor.open(asio::ip::tcp::v4(), ec);
+        boost::system::error_code ec;
+        ec = acceptor.open(boost::asio::ip::tcp::v4(), ec);
         if (ec)
         {
             std::this_thread::sleep_for(backoff);
             continue;
         }
-        ec = acceptor.set_option(asio::ip::tcp::acceptor::reuse_address(true), ec);
+        ec = acceptor.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true), ec);
         if (!ec)
         {
-            ec = acceptor.bind(asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0), ec);
+            ec = acceptor.bind(boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 0), ec);
         }
         if (!ec)
         {
-            ec = acceptor.listen(asio::socket_base::max_listen_connections, ec);
+            ec = acceptor.listen(boost::asio::socket_base::max_listen_connections, ec);
         }
         if (!ec)
         {
             return true;
         }
-        std::error_code close_ec;
+        boost::system::error_code close_ec;
         acceptor.close(close_ec);
         std::this_thread::sleep_for(backoff);
     }
@@ -476,7 +476,7 @@ class remote_server_test : public ::testing::Test
 
 TEST_F(remote_server_test, AuthFailureTriggersFallback)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
@@ -485,10 +485,10 @@ TEST_F(remote_server_test, AuthFailureTriggersFallback)
     std::uint16_t server_port = 29911;
     std::uint16_t fallback_port = 29912;
 
-    asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), fallback_port));
+    boost::asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context(), boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), fallback_port));
     std::atomic<bool> fallback_triggered{false};
     fallback_acceptor.async_accept(
-        [&](std::error_code ec, asio::ip::tcp::socket peer)
+        [&](boost::system::error_code ec, boost::asio::ip::tcp::socket peer)
         {
             if (!ec)
             {
@@ -505,9 +505,9 @@ TEST_F(remote_server_test, AuthFailureTriggersFallback)
     server->start();
 
     {
-        asio::ip::tcp::socket sock(pool.get_io_context());
-        sock.connect({asio::ip::make_address("127.0.0.1"), server_port});
-        asio::write(sock, asio::buffer("INVALID DATA"));
+        boost::asio::ip::tcp::socket sock(pool.get_io_context());
+        sock.connect({boost::asio::ip::make_address("127.0.0.1"), server_port});
+        boost::asio::write(sock, boost::asio::buffer("INVALID DATA"));
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
 
@@ -519,7 +519,7 @@ TEST_F(remote_server_test, AuthFailureTriggersFallback)
 
 TEST_F(remote_server_test, AuthFailShortIdMismatch)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
@@ -528,10 +528,10 @@ TEST_F(remote_server_test, AuthFailShortIdMismatch)
     std::uint16_t server_port = 29928;
     std::uint16_t fallback_port = 29929;
 
-    asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), fallback_port));
+    boost::asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context(), boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), fallback_port));
     std::atomic<bool> fallback_triggered{false};
     fallback_acceptor.async_accept(
-        [&](std::error_code ec, asio::ip::tcp::socket peer)
+        [&](boost::system::error_code ec, boost::asio::ip::tcp::socket peer)
         {
             if (!ec)
             {
@@ -548,9 +548,9 @@ TEST_F(remote_server_test, AuthFailShortIdMismatch)
     auto record = build_valid_sid_ch("www.google.com", "ffffffffffffffff", static_cast<uint32_t>(time(nullptr)), sid);
 
     {
-        asio::ip::tcp::socket sock(pool.get_io_context());
-        sock.connect({asio::ip::make_address("127.0.0.1"), server_port});
-        asio::write(sock, asio::buffer(record));
+        boost::asio::ip::tcp::socket sock(pool.get_io_context());
+        sock.connect({boost::asio::ip::make_address("127.0.0.1"), server_port});
+        boost::asio::write(sock, boost::asio::buffer(record));
         std::this_thread::sleep_for(std::chrono::milliseconds(250));
     }
 
@@ -562,7 +562,7 @@ TEST_F(remote_server_test, AuthFailShortIdMismatch)
 
 TEST_F(remote_server_test, ClockSkewDetected)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
@@ -571,10 +571,10 @@ TEST_F(remote_server_test, ClockSkewDetected)
     std::uint16_t server_port = 29932;
     std::uint16_t fallback_port = 29933;
 
-    asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), fallback_port));
+    boost::asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context(), boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), fallback_port));
     std::atomic<bool> fallback_triggered{false};
     fallback_acceptor.async_accept(
-        [&](std::error_code ec, asio::ip::tcp::socket peer)
+        [&](boost::system::error_code ec, boost::asio::ip::tcp::socket peer)
         {
             if (!ec)
             {
@@ -591,9 +591,9 @@ TEST_F(remote_server_test, ClockSkewDetected)
     auto record = build_valid_sid_ch("www.google.com", "0102030405060708", static_cast<uint32_t>(time(nullptr) - 1000), sid);
 
     {
-        asio::ip::tcp::socket sock(pool.get_io_context());
-        sock.connect({asio::ip::make_address("127.0.0.1"), server_port});
-        asio::write(sock, asio::buffer(record));
+        boost::asio::ip::tcp::socket sock(pool.get_io_context());
+        sock.connect({boost::asio::ip::make_address("127.0.0.1"), server_port});
+        boost::asio::write(sock, boost::asio::buffer(record));
         std::this_thread::sleep_for(std::chrono::milliseconds(250));
     }
 
@@ -605,7 +605,7 @@ TEST_F(remote_server_test, ClockSkewDetected)
 
 TEST_F(remote_server_test, AuthFailInvalidTLSHeader)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
@@ -614,10 +614,10 @@ TEST_F(remote_server_test, AuthFailInvalidTLSHeader)
     std::uint16_t server_port = 29951;
     std::uint16_t fallback_port = 29952;
 
-    asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), fallback_port));
+    boost::asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context(), boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), fallback_port));
     std::atomic<bool> fallback_triggered{false};
     fallback_acceptor.async_accept(
-        [&](std::error_code ec, asio::ip::tcp::socket peer)
+        [&](boost::system::error_code ec, boost::asio::ip::tcp::socket peer)
         {
             if (!ec)
             {
@@ -630,11 +630,11 @@ TEST_F(remote_server_test, AuthFailInvalidTLSHeader)
     server->start();
 
     {
-        asio::ip::tcp::socket sock(pool.get_io_context());
-        sock.connect({asio::ip::make_address("127.0.0.1"), server_port});
+        boost::asio::ip::tcp::socket sock(pool.get_io_context());
+        sock.connect({boost::asio::ip::make_address("127.0.0.1"), server_port});
 
         std::vector<uint8_t> invalid_header = {0x17, 0x03, 0x03, 0x00, 0x05, 0x01, 0x02, 0x03, 0x04, 0x05};
-        asio::write(sock, asio::buffer(invalid_header));
+        boost::asio::write(sock, boost::asio::buffer(invalid_header));
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
 
@@ -646,7 +646,7 @@ TEST_F(remote_server_test, AuthFailInvalidTLSHeader)
 
 TEST_F(remote_server_test, AuthFailBufferTooShort)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
@@ -655,10 +655,10 @@ TEST_F(remote_server_test, AuthFailBufferTooShort)
     std::uint16_t server_port = 29961;
     std::uint16_t fallback_port = 29962;
 
-    asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), fallback_port));
+    boost::asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context(), boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), fallback_port));
     std::atomic<bool> fallback_triggered{false};
     fallback_acceptor.async_accept(
-        [&](std::error_code ec, asio::ip::tcp::socket peer)
+        [&](boost::system::error_code ec, boost::asio::ip::tcp::socket peer)
         {
             if (!ec)
             {
@@ -671,13 +671,13 @@ TEST_F(remote_server_test, AuthFailBufferTooShort)
     server->start();
 
     {
-        asio::ip::tcp::socket sock(pool.get_io_context());
-        sock.connect({asio::ip::make_address("127.0.0.1"), server_port});
+        boost::asio::ip::tcp::socket sock(pool.get_io_context());
+        sock.connect({boost::asio::ip::make_address("127.0.0.1"), server_port});
 
         std::vector<uint8_t> short_buf = {0x16, 0x03, 0x03, 0x00};
-        asio::write(sock, asio::buffer(short_buf));
+        boost::asio::write(sock, boost::asio::buffer(short_buf));
 
-        sock.shutdown(asio::ip::tcp::socket::shutdown_send);
+        sock.shutdown(boost::asio::ip::tcp::socket::shutdown_send);
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
 
@@ -689,7 +689,7 @@ TEST_F(remote_server_test, AuthFailBufferTooShort)
 
 TEST_F(remote_server_test, AuthFailBufferTooShortPreservesPartialHeaderForFallback)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
@@ -698,23 +698,23 @@ TEST_F(remote_server_test, AuthFailBufferTooShortPreservesPartialHeaderForFallba
     std::uint16_t server_port = 29963;
     std::uint16_t fallback_port = 29964;
 
-    asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), fallback_port));
+    boost::asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context(), boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), fallback_port));
     auto fallback_payload_promise = std::make_shared<std::promise<std::vector<std::uint8_t>>>();
     auto fallback_payload_future = fallback_payload_promise->get_future();
     fallback_acceptor.async_accept(
-        [fallback_payload_promise](std::error_code accept_ec, asio::ip::tcp::socket peer)
+        [fallback_payload_promise](boost::system::error_code accept_ec, boost::asio::ip::tcp::socket peer)
         {
             if (accept_ec)
             {
                 fallback_payload_promise->set_value({});
                 return;
             }
-            auto peer_socket = std::make_shared<asio::ip::tcp::socket>(std::move(peer));
+            auto peer_socket = std::make_shared<boost::asio::ip::tcp::socket>(std::move(peer));
             auto read_buf = std::make_shared<std::array<std::uint8_t, 4>>();
-            asio::async_read(
+            boost::asio::async_read(
                 *peer_socket,
-                asio::buffer(*read_buf),
-                [peer_socket, read_buf, fallback_payload_promise](std::error_code, const std::size_t n)
+                boost::asio::buffer(*read_buf),
+                [peer_socket, read_buf, fallback_payload_promise](boost::system::error_code, const std::size_t n)
                 {
                     std::vector<std::uint8_t> payload(read_buf->begin(), read_buf->begin() + n);
                     fallback_payload_promise->set_value(std::move(payload));
@@ -726,17 +726,17 @@ TEST_F(remote_server_test, AuthFailBufferTooShortPreservesPartialHeaderForFallba
     server->start();
 
     {
-        asio::ip::tcp::socket sock(pool.get_io_context());
-        sock.connect({asio::ip::make_address("127.0.0.1"), server_port});
+        boost::asio::ip::tcp::socket sock(pool.get_io_context());
+        sock.connect({boost::asio::ip::make_address("127.0.0.1"), server_port});
 
         const std::array<std::uint8_t, 1> first = {0x16};
         const std::array<std::uint8_t, 3> remain = {0x03, 0x03, 0x00};
-        asio::write(sock, asio::buffer(first), ec);
+        boost::asio::write(sock, boost::asio::buffer(first), ec);
         ASSERT_FALSE(ec);
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        asio::write(sock, asio::buffer(remain), ec);
+        boost::asio::write(sock, boost::asio::buffer(remain), ec);
         ASSERT_FALSE(ec);
-        sock.shutdown(asio::ip::tcp::socket::shutdown_send, ec);
+        sock.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
         ASSERT_FALSE(ec);
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
@@ -754,7 +754,7 @@ TEST_F(remote_server_test, AuthFailBufferTooShortPreservesPartialHeaderForFallba
 
 TEST_F(remote_server_test, FallbackResolveFail)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
@@ -770,9 +770,9 @@ TEST_F(remote_server_test, FallbackResolveFail)
     server->start();
 
     {
-        asio::ip::tcp::socket sock(pool.get_io_context());
-        sock.connect({asio::ip::make_address("127.0.0.1"), server_port});
-        asio::write(sock, asio::buffer("TRIGGER FALLBACK"));
+        boost::asio::ip::tcp::socket sock(pool.get_io_context());
+        sock.connect({boost::asio::ip::make_address("127.0.0.1"), server_port});
+        boost::asio::write(sock, boost::asio::buffer("TRIGGER FALLBACK"));
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
     }
 
@@ -796,7 +796,7 @@ TEST_F(remote_server_test, FallbackResolveFail)
 
 TEST_F(remote_server_test, FallbackConnectFail)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
@@ -810,9 +810,9 @@ TEST_F(remote_server_test, FallbackConnectFail)
     server->start();
 
     {
-        asio::ip::tcp::socket sock(pool.get_io_context());
-        sock.connect({asio::ip::make_address("127.0.0.1"), server_port});
-        asio::write(sock, asio::buffer("TRIGGER FALLBACK"));
+        boost::asio::ip::tcp::socket sock(pool.get_io_context());
+        sock.connect({boost::asio::ip::make_address("127.0.0.1"), server_port});
+        boost::asio::write(sock, boost::asio::buffer("TRIGGER FALLBACK"));
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
     }
 
@@ -834,28 +834,28 @@ TEST_F(remote_server_test, FallbackConnectFail)
 
 TEST_F(remote_server_test, FallbackConnectTimeoutIncrementsMetricWhenBacklogSaturated)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
     auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
 
-    asio::ip::tcp::acceptor saturated_acceptor(pool.get_io_context());
-    ec = saturated_acceptor.open(asio::ip::tcp::v4(), ec);
+    boost::asio::ip::tcp::acceptor saturated_acceptor(pool.get_io_context());
+    ec = saturated_acceptor.open(boost::asio::ip::tcp::v4(), ec);
     ASSERT_FALSE(ec);
-    ec = saturated_acceptor.set_option(asio::ip::tcp::acceptor::reuse_address(true), ec);
+    ec = saturated_acceptor.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true), ec);
     ASSERT_FALSE(ec);
-    ec = saturated_acceptor.bind(asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0), ec);
+    ec = saturated_acceptor.bind(boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 0), ec);
     ASSERT_FALSE(ec);
     ec = saturated_acceptor.listen(1, ec);
     ASSERT_FALSE(ec);
     const auto saturated_port = saturated_acceptor.local_endpoint().port();
 
-    asio::ip::tcp::socket queued_client_a(pool.get_io_context());
-    queued_client_a.connect({asio::ip::make_address("127.0.0.1"), saturated_port}, ec);
+    boost::asio::ip::tcp::socket queued_client_a(pool.get_io_context());
+    queued_client_a.connect({boost::asio::ip::make_address("127.0.0.1"), saturated_port}, ec);
     ASSERT_FALSE(ec);
-    asio::ip::tcp::socket queued_client_b(pool.get_io_context());
-    queued_client_b.connect({asio::ip::make_address("127.0.0.1"), saturated_port}, ec);
+    boost::asio::ip::tcp::socket queued_client_b(pool.get_io_context());
+    queued_client_b.connect({boost::asio::ip::make_address("127.0.0.1"), saturated_port}, ec);
     ASSERT_FALSE(ec);
 
     auto cfg = make_server_cfg(0, {{"", "127.0.0.1", std::to_string(saturated_port)}}, "0102030405060708");
@@ -865,7 +865,7 @@ TEST_F(remote_server_test, FallbackConnectTimeoutIncrementsMetricWhenBacklogSatu
 
     const auto connect_fail_before = mux::statistics::instance().fallback_connect_failures();
     const auto connect_timeout_before = mux::statistics::instance().fallback_connect_timeouts();
-    auto fallback_socket = std::make_shared<asio::ip::tcp::socket>(pool.get_io_context());
+    auto fallback_socket = std::make_shared<boost::asio::ip::tcp::socket>(pool.get_io_context());
     mux::connection_context ctx;
     ctx.conn_id(557);
     ctx.remote_addr("127.0.0.20");
@@ -873,14 +873,14 @@ TEST_F(remote_server_test, FallbackConnectTimeoutIncrementsMetricWhenBacklogSatu
 
     std::promise<void> done;
     auto done_future = done.get_future();
-    asio::co_spawn(pool.get_io_context(),
-                   [server, fallback_socket, ctx, &done]() mutable -> asio::awaitable<void>
+    boost::asio::co_spawn(pool.get_io_context(),
+                   [server, fallback_socket, ctx, &done]() mutable -> boost::asio::awaitable<void>
                    {
                        co_await server->handle_fallback(fallback_socket, std::vector<std::uint8_t>{0x16}, ctx, "backlog.test");
                        done.set_value();
                        co_return;
                    },
-                   asio::detached);
+                   boost::asio::detached);
 
     EXPECT_EQ(done_future.wait_for(std::chrono::seconds(8)), std::future_status::ready);
     EXPECT_TRUE(wait_for_condition(
@@ -896,7 +896,7 @@ TEST_F(remote_server_test, FallbackConnectTimeoutIncrementsMetricWhenBacklogSatu
         },
         std::chrono::milliseconds(3000)));
 
-    std::error_code close_ec;
+    boost::system::error_code close_ec;
     queued_client_a.close(close_ec);
     queued_client_b.close(close_ec);
     saturated_acceptor.cancel(close_ec);
@@ -908,7 +908,7 @@ TEST_F(remote_server_test, FallbackConnectTimeoutIncrementsMetricWhenBacklogSatu
 
 TEST_F(remote_server_test, FallbackWriteFailIncrementsMetric)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
@@ -923,7 +923,7 @@ TEST_F(remote_server_test, FallbackWriteFailIncrementsMetric)
             }
         });
 
-    asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context());
+    boost::asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context());
     ASSERT_TRUE(open_ephemeral_acceptor_until_ready(fallback_acceptor));
     const auto fallback_port = fallback_acceptor.local_endpoint().port();
 
@@ -940,27 +940,27 @@ TEST_F(remote_server_test, FallbackWriteFailIncrementsMetric)
     ASSERT_TRUE(start_server_until_listening(server));
     const auto server_port = server->listen_port();
 
-    auto fallback_peer = std::make_shared<std::shared_ptr<asio::ip::tcp::socket>>();
+    auto fallback_peer = std::make_shared<std::shared_ptr<boost::asio::ip::tcp::socket>>();
     auto fallback_accepted = std::make_shared<std::promise<void>>();
     auto fallback_accepted_future = fallback_accepted->get_future();
     fallback_acceptor.async_accept(
-        [fallback_peer, fallback_accepted](std::error_code accept_ec, asio::ip::tcp::socket peer)
+        [fallback_peer, fallback_accepted](boost::system::error_code accept_ec, boost::asio::ip::tcp::socket peer)
         {
             if (!accept_ec)
             {
-                *fallback_peer = std::make_shared<asio::ip::tcp::socket>(std::move(peer));
+                *fallback_peer = std::make_shared<boost::asio::ip::tcp::socket>(std::move(peer));
             }
             fallback_accepted->set_value();
         });
     auto acceptor_cleanup = make_scoped_exit(
         [&]()
         {
-            std::error_code close_ec;
+            boost::system::error_code close_ec;
             fallback_acceptor.cancel(close_ec);
             fallback_acceptor.close(close_ec);
             if (*fallback_peer != nullptr && (*fallback_peer)->is_open())
             {
-                (*fallback_peer)->shutdown(asio::ip::tcp::socket::shutdown_both, close_ec);
+                (*fallback_peer)->shutdown(boost::asio::ip::tcp::socket::shutdown_both, close_ec);
                 (*fallback_peer)->close(close_ec);
             }
         });
@@ -970,8 +970,8 @@ TEST_F(remote_server_test, FallbackWriteFailIncrementsMetric)
     fail_next_send(EPIPE);
 
     {
-        asio::ip::tcp::socket sock(pool.get_io_context());
-        sock.connect({asio::ip::make_address("127.0.0.1"), server_port}, ec);
+        boost::asio::ip::tcp::socket sock(pool.get_io_context());
+        sock.connect({boost::asio::ip::make_address("127.0.0.1"), server_port}, ec);
         ASSERT_FALSE(ec);
 
         static constexpr char kTrigger[] = "TRIGGER FALLBACK";
@@ -996,13 +996,13 @@ TEST_F(remote_server_test, FallbackWriteFailIncrementsMetric)
 
 TEST_F(remote_server_test, HandleFallbackWriteTimeoutIncrementsMetric)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
     auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
 
-    asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context());
+    boost::asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context());
     ASSERT_TRUE(open_ephemeral_acceptor_until_ready(fallback_acceptor));
     const auto fallback_port = fallback_acceptor.local_endpoint().port();
 
@@ -1010,18 +1010,18 @@ TEST_F(remote_server_test, HandleFallbackWriteTimeoutIncrementsMetric)
     cfg.timeout.write = 1;
     auto server = std::make_shared<mux::remote_server>(pool, cfg);
 
-    auto fallback_peer = std::make_shared<std::shared_ptr<asio::ip::tcp::socket>>();
+    auto fallback_peer = std::make_shared<std::shared_ptr<boost::asio::ip::tcp::socket>>();
     auto fallback_accepted = std::make_shared<std::promise<void>>();
     auto fallback_accepted_future = fallback_accepted->get_future();
     fallback_acceptor.async_accept(
-        [fallback_peer, fallback_accepted](std::error_code accept_ec, asio::ip::tcp::socket peer)
+        [fallback_peer, fallback_accepted](boost::system::error_code accept_ec, boost::asio::ip::tcp::socket peer)
         {
             if (!accept_ec)
             {
-                std::error_code option_ec;
-                peer.set_option(asio::socket_base::receive_buffer_size(1024), option_ec);
+                boost::system::error_code option_ec;
+                peer.set_option(boost::asio::socket_base::receive_buffer_size(1024), option_ec);
                 (void)option_ec;
-                *fallback_peer = std::make_shared<asio::ip::tcp::socket>(std::move(peer));
+                *fallback_peer = std::make_shared<boost::asio::ip::tcp::socket>(std::move(peer));
             }
             fallback_accepted->set_value();
         });
@@ -1029,19 +1029,19 @@ TEST_F(remote_server_test, HandleFallbackWriteTimeoutIncrementsMetric)
     auto close_all = make_scoped_exit(
         [&]()
         {
-            std::error_code close_ec;
+            boost::system::error_code close_ec;
             fallback_acceptor.cancel(close_ec);
             fallback_acceptor.close(close_ec);
             if (*fallback_peer != nullptr && (*fallback_peer)->is_open())
             {
-                (*fallback_peer)->shutdown(asio::ip::tcp::socket::shutdown_both, close_ec);
+                (*fallback_peer)->shutdown(boost::asio::ip::tcp::socket::shutdown_both, close_ec);
                 (*fallback_peer)->close(close_ec);
             }
         });
 
     const auto write_fail_before = mux::statistics::instance().fallback_write_failures();
     const auto write_timeout_before = mux::statistics::instance().fallback_write_timeouts();
-    auto fallback_socket = std::make_shared<asio::ip::tcp::socket>(pool.get_io_context());
+    auto fallback_socket = std::make_shared<boost::asio::ip::tcp::socket>(pool.get_io_context());
     mux::connection_context ctx;
     ctx.conn_id(556);
     ctx.remote_addr("127.0.0.10");
@@ -1049,15 +1049,15 @@ TEST_F(remote_server_test, HandleFallbackWriteTimeoutIncrementsMetric)
 
     std::promise<void> done;
     auto done_future = done.get_future();
-    asio::co_spawn(pool.get_io_context(),
-                   [server, fallback_socket, ctx, &done]() mutable -> asio::awaitable<void>
+    boost::asio::co_spawn(pool.get_io_context(),
+                   [server, fallback_socket, ctx, &done]() mutable -> boost::asio::awaitable<void>
                    {
                        std::vector<std::uint8_t> buf(16 * 1024 * 1024, 0x5a);
                        co_await server->handle_fallback(fallback_socket, buf, ctx, "timeout.test");
                        done.set_value();
                        co_return;
                    },
-                   asio::detached);
+                   boost::asio::detached);
 
     EXPECT_EQ(fallback_accepted_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
     EXPECT_EQ(done_future.wait_for(std::chrono::seconds(6)), std::future_status::ready);
@@ -1077,7 +1077,7 @@ TEST_F(remote_server_test, HandleFallbackWriteTimeoutIncrementsMetric)
 
 TEST_F(remote_server_test, StartRejectsInvalidAuthConfig)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
@@ -1086,10 +1086,10 @@ TEST_F(remote_server_test, StartRejectsInvalidAuthConfig)
     std::uint16_t server_port = 29943;
     std::uint16_t fallback_port = 29944;
 
-    asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), fallback_port));
+    boost::asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context(), boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), fallback_port));
     std::atomic<bool> fallback_triggered{false};
     fallback_acceptor.async_accept(
-        [&](std::error_code ec, asio::ip::tcp::socket peer)
+        [&](boost::system::error_code ec, boost::asio::ip::tcp::socket peer)
         {
             if (!ec)
             {
@@ -1102,9 +1102,9 @@ TEST_F(remote_server_test, StartRejectsInvalidAuthConfig)
     EXPECT_FALSE(server->running());
 
     {
-        asio::ip::tcp::socket sock(pool.get_io_context());
-        std::error_code connect_ec;
-        sock.connect({asio::ip::make_address("127.0.0.1"), server_port}, connect_ec);
+        boost::asio::ip::tcp::socket sock(pool.get_io_context());
+        boost::system::error_code connect_ec;
+        sock.connect({boost::asio::ip::make_address("127.0.0.1"), server_port}, connect_ec);
         EXPECT_TRUE(connect_ec);
     }
 
@@ -1117,7 +1117,7 @@ TEST_F(remote_server_test, StartRejectsInvalidAuthConfig)
 
 TEST_F(remote_server_test, StartInvalidAuthConfigHandlesAcceptorCloseFailure)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
@@ -1132,7 +1132,7 @@ TEST_F(remote_server_test, StartInvalidAuthConfigHandlesAcceptorCloseFailure)
 
 TEST_F(remote_server_test, StartFailsWhenAcceptorReopenUnavailable)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
@@ -1155,7 +1155,7 @@ TEST_F(remote_server_test, StartFailsWhenAcceptorReopenUnavailable)
 
 TEST_F(remote_server_test, MultiSNIFallback)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
@@ -1165,14 +1165,14 @@ TEST_F(remote_server_test, MultiSNIFallback)
     std::uint16_t fallback_port_a = 29992;
     std::uint16_t fallback_port_b = 29993;
 
-    asio::ip::tcp::acceptor acceptor_a(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), fallback_port_a));
-    asio::ip::tcp::acceptor acceptor_b(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), fallback_port_b));
+    boost::asio::ip::tcp::acceptor acceptor_a(pool.get_io_context(), boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), fallback_port_a));
+    boost::asio::ip::tcp::acceptor acceptor_b(pool.get_io_context(), boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), fallback_port_b));
 
     std::atomic<int> fallback_a_count{0};
     std::atomic<int> fallback_b_count{0};
 
     acceptor_a.async_accept(
-        [&](std::error_code ec, asio::ip::tcp::socket peer)
+        [&](boost::system::error_code ec, boost::asio::ip::tcp::socket peer)
         {
             if (!ec)
             {
@@ -1180,7 +1180,7 @@ TEST_F(remote_server_test, MultiSNIFallback)
             }
         });
     acceptor_b.async_accept(
-        [&](std::error_code ec, asio::ip::tcp::socket peer)
+        [&](boost::system::error_code ec, boost::asio::ip::tcp::socket peer)
         {
             if (!ec)
             {
@@ -1196,13 +1196,13 @@ TEST_F(remote_server_test, MultiSNIFallback)
 
     auto trigger_fallback = [&](const std::string& sni)
     {
-        asio::ip::tcp::socket sock(pool.get_io_context());
-        sock.connect({asio::ip::make_address("127.0.0.1"), server_port});
+        boost::asio::ip::tcp::socket sock(pool.get_io_context());
+        sock.connect({boost::asio::ip::make_address("127.0.0.1"), server_port});
         auto spec = reality::fingerprint_factory::get(reality::fingerprint_type::kChrome120);
         auto ch_body = reality::client_hello_builder::build(spec, std::vector<uint8_t>(32, 0), info_random(), std::vector<uint8_t>(32, 0), sni);
         auto record = reality::write_record_header(reality::kContentTypeHandshake, static_cast<uint16_t>(ch_body.size()));
         record.insert(record.end(), ch_body.begin(), ch_body.end());
-        asio::write(sock, asio::buffer(record));
+        boost::asio::write(sock, boost::asio::buffer(record));
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     };
 
@@ -1222,7 +1222,7 @@ TEST_F(remote_server_test, MultiSNIFallback)
 
 TEST_F(remote_server_test, WildcardStarFallback)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
@@ -1231,10 +1231,10 @@ TEST_F(remote_server_test, WildcardStarFallback)
     const std::uint16_t server_port = pick_free_port();
     const std::uint16_t fallback_port = pick_free_port();
 
-    asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), fallback_port));
+    boost::asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context(), boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), fallback_port));
     std::atomic<bool> fallback_triggered{false};
     fallback_acceptor.async_accept(
-        [&](std::error_code accept_ec, asio::ip::tcp::socket peer)
+        [&](boost::system::error_code accept_ec, boost::asio::ip::tcp::socket peer)
         {
             if (!accept_ec)
             {
@@ -1247,14 +1247,14 @@ TEST_F(remote_server_test, WildcardStarFallback)
     server->start();
 
     {
-        asio::ip::tcp::socket sock(pool.get_io_context());
-        sock.connect({asio::ip::make_address("127.0.0.1"), server_port});
-        asio::write(sock, asio::buffer("INVALID DATA"));
+        boost::asio::ip::tcp::socket sock(pool.get_io_context());
+        sock.connect({boost::asio::ip::make_address("127.0.0.1"), server_port});
+        boost::asio::write(sock, boost::asio::buffer("INVALID DATA"));
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
     }
 
     EXPECT_TRUE(wait_for_condition([&fallback_triggered]() { return fallback_triggered.load(); }));
-    std::error_code close_ec;
+    boost::system::error_code close_ec;
     fallback_acceptor.cancel(close_ec);
     fallback_acceptor.close(close_ec);
     server->stop();
@@ -1264,7 +1264,7 @@ TEST_F(remote_server_test, WildcardStarFallback)
 
 TEST_F(remote_server_test, RealityDestFallbackUsedWhenNoFallbackEntries)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
@@ -1273,10 +1273,10 @@ TEST_F(remote_server_test, RealityDestFallbackUsedWhenNoFallbackEntries)
     const std::uint16_t server_port = pick_free_port();
     const std::uint16_t dest_port = pick_free_port();
 
-    asio::ip::tcp::acceptor dest_acceptor(pool.get_io_context(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), dest_port));
+    boost::asio::ip::tcp::acceptor dest_acceptor(pool.get_io_context(), boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), dest_port));
     std::atomic<bool> dest_triggered{false};
     dest_acceptor.async_accept(
-        [&](std::error_code accept_ec, asio::ip::tcp::socket peer)
+        [&](boost::system::error_code accept_ec, boost::asio::ip::tcp::socket peer)
         {
             if (!accept_ec)
             {
@@ -1290,14 +1290,14 @@ TEST_F(remote_server_test, RealityDestFallbackUsedWhenNoFallbackEntries)
     server->start();
 
     {
-        asio::ip::tcp::socket sock(pool.get_io_context());
-        sock.connect({asio::ip::make_address("127.0.0.1"), server_port});
-        asio::write(sock, asio::buffer("INVALID DATA"));
+        boost::asio::ip::tcp::socket sock(pool.get_io_context());
+        sock.connect({boost::asio::ip::make_address("127.0.0.1"), server_port});
+        boost::asio::write(sock, boost::asio::buffer("INVALID DATA"));
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
     }
 
     EXPECT_TRUE(wait_for_condition([&dest_triggered]() { return dest_triggered.load(); }));
-    std::error_code close_ec;
+    boost::system::error_code close_ec;
     dest_acceptor.cancel(close_ec);
     dest_acceptor.close(close_ec);
     server->stop();
@@ -1309,7 +1309,7 @@ TEST_F(remote_server_test, RealityDestFallbackUsedWhenNoFallbackEntries)
 
 TEST_F(remote_server_test, ExactSniFallbackPreferredOverRealityDest)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
@@ -1324,14 +1324,14 @@ TEST_F(remote_server_test, ExactSniFallbackPreferredOverRealityDest)
             }
         });
 
-    asio::ip::tcp::acceptor exact_acceptor(pool.get_io_context());
-    asio::ip::tcp::acceptor dest_acceptor(pool.get_io_context());
+    boost::asio::ip::tcp::acceptor exact_acceptor(pool.get_io_context());
+    boost::asio::ip::tcp::acceptor dest_acceptor(pool.get_io_context());
     ASSERT_TRUE(open_ephemeral_acceptor_until_ready(exact_acceptor));
     ASSERT_TRUE(open_ephemeral_acceptor_until_ready(dest_acceptor));
     auto acceptor_cleanup = make_scoped_exit(
         [&]()
         {
-            std::error_code close_ec;
+            boost::system::error_code close_ec;
             exact_acceptor.cancel(close_ec);
             exact_acceptor.close(close_ec);
             dest_acceptor.cancel(close_ec);
@@ -1342,7 +1342,7 @@ TEST_F(remote_server_test, ExactSniFallbackPreferredOverRealityDest)
     std::atomic<int> exact_count{0};
     std::atomic<int> dest_count{0};
     exact_acceptor.async_accept(
-        [&](std::error_code accept_ec, asio::ip::tcp::socket peer)
+        [&](boost::system::error_code accept_ec, boost::asio::ip::tcp::socket peer)
         {
             if (!accept_ec)
             {
@@ -1350,7 +1350,7 @@ TEST_F(remote_server_test, ExactSniFallbackPreferredOverRealityDest)
             }
         });
     dest_acceptor.async_accept(
-        [&](std::error_code accept_ec, asio::ip::tcp::socket peer)
+        [&](boost::system::error_code accept_ec, boost::asio::ip::tcp::socket peer)
         {
             if (!accept_ec)
             {
@@ -1378,9 +1378,9 @@ TEST_F(remote_server_test, ExactSniFallbackPreferredOverRealityDest)
     const auto server_port = server->listen_port();
 
     {
-        asio::ip::tcp::socket sock(pool.get_io_context());
-        std::error_code connect_ec;
-        sock.connect({asio::ip::make_address("127.0.0.1"), server_port}, connect_ec);
+        boost::asio::ip::tcp::socket sock(pool.get_io_context());
+        boost::system::error_code connect_ec;
+        sock.connect({boost::asio::ip::make_address("127.0.0.1"), server_port}, connect_ec);
         ASSERT_FALSE(connect_ec);
         if (connect_ec)
         {
@@ -1392,8 +1392,8 @@ TEST_F(remote_server_test, ExactSniFallbackPreferredOverRealityDest)
             reality::client_hello_builder::build(spec, std::vector<uint8_t>(32, 0), info_random(), std::vector<uint8_t>(32, 0), "www.exact.test");
         auto record = reality::write_record_header(reality::kContentTypeHandshake, static_cast<uint16_t>(ch_body.size()));
         record.insert(record.end(), ch_body.begin(), ch_body.end());
-        std::error_code write_ec;
-        asio::write(sock, asio::buffer(record), write_ec);
+        boost::system::error_code write_ec;
+        boost::asio::write(sock, boost::asio::buffer(record), write_ec);
         ASSERT_FALSE(write_ec);
         if (write_ec)
         {
@@ -1411,7 +1411,7 @@ TEST_F(remote_server_test, ExactSniFallbackPreferredOverRealityDest)
 
 TEST_F(remote_server_test, FallbackGuardRateLimitBlocksFallbackDial)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
@@ -1426,19 +1426,19 @@ TEST_F(remote_server_test, FallbackGuardRateLimitBlocksFallbackDial)
             }
         });
 
-    asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context());
+    boost::asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context());
     ASSERT_TRUE(open_ephemeral_acceptor_until_ready(fallback_acceptor));
     auto acceptor_cleanup = make_scoped_exit(
         [&]()
         {
-            std::error_code close_ec;
+            boost::system::error_code close_ec;
             fallback_acceptor.cancel(close_ec);
             fallback_acceptor.close(close_ec);
         });
     const auto fallback_port = fallback_acceptor.local_endpoint().port();
     std::atomic<bool> fallback_triggered{false};
     fallback_acceptor.async_accept(
-        [&](std::error_code accept_ec, asio::ip::tcp::socket peer)
+        [&](boost::system::error_code accept_ec, boost::asio::ip::tcp::socket peer)
         {
             if (!accept_ec)
             {
@@ -1464,16 +1464,16 @@ TEST_F(remote_server_test, FallbackGuardRateLimitBlocksFallbackDial)
 
     const auto before = mux::statistics::instance().fallback_rate_limited();
     {
-        asio::ip::tcp::socket sock(pool.get_io_context());
-        std::error_code connect_ec;
-        sock.connect({asio::ip::make_address("127.0.0.1"), server_port}, connect_ec);
+        boost::asio::ip::tcp::socket sock(pool.get_io_context());
+        boost::system::error_code connect_ec;
+        sock.connect({boost::asio::ip::make_address("127.0.0.1"), server_port}, connect_ec);
         ASSERT_FALSE(connect_ec);
         if (connect_ec)
         {
             return;
         }
-        std::error_code write_ec;
-        asio::write(sock, asio::buffer("INVALID DATA"), write_ec);
+        boost::system::error_code write_ec;
+        boost::asio::write(sock, boost::asio::buffer("INVALID DATA"), write_ec);
         ASSERT_FALSE(write_ec);
         if (write_ec)
         {
@@ -1488,7 +1488,7 @@ TEST_F(remote_server_test, FallbackGuardRateLimitBlocksFallbackDial)
 
 TEST_F(remote_server_test, FallbackGuardCircuitBreakerBlocksSubsequentAttempt)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
@@ -1525,16 +1525,16 @@ TEST_F(remote_server_test, FallbackGuardCircuitBreakerBlocksSubsequentAttempt)
 
     auto trigger_invalid = [&]()
     {
-        asio::ip::tcp::socket sock(pool.get_io_context());
-        std::error_code connect_ec;
-        sock.connect({asio::ip::make_address("127.0.0.1"), server_port}, connect_ec);
+        boost::asio::ip::tcp::socket sock(pool.get_io_context());
+        boost::system::error_code connect_ec;
+        sock.connect({boost::asio::ip::make_address("127.0.0.1"), server_port}, connect_ec);
         EXPECT_FALSE(connect_ec);
         if (connect_ec)
         {
             return;
         }
-        std::error_code write_ec;
-        asio::write(sock, asio::buffer("TRIGGER FALLBACK"), write_ec);
+        boost::system::error_code write_ec;
+        boost::asio::write(sock, boost::asio::buffer("TRIGGER FALLBACK"), write_ec);
         EXPECT_FALSE(write_ec);
         if (write_ec)
         {
@@ -1551,7 +1551,7 @@ TEST_F(remote_server_test, FallbackGuardCircuitBreakerBlocksSubsequentAttempt)
 
 TEST_F(remote_server_test, ConstructorHandlesInvalidInboundHostAndUnsupportedFallbackType)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
@@ -1571,7 +1571,7 @@ TEST_F(remote_server_test, ConstructorHandlesInvalidInboundHostAndUnsupportedFal
 
 TEST_F(remote_server_test, ConstructorNormalizesZeroMaxConnections)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
@@ -1584,7 +1584,7 @@ TEST_F(remote_server_test, ConstructorNormalizesZeroMaxConnections)
 
 TEST_F(remote_server_test, ConnectionSlotReservationPreHandshakeLimit)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
@@ -1612,7 +1612,7 @@ TEST_F(remote_server_test, ConnectionSlotReservationPreHandshakeLimit)
 
 TEST_F(remote_server_test, ConnectionSlotReservationRespectsPerSourceLimit)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
@@ -1633,7 +1633,7 @@ TEST_F(remote_server_test, ConnectionSlotReservationRespectsPerSourceLimit)
 
 TEST_F(remote_server_test, ConstructorClampsSourcePrefixRange)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
@@ -1648,7 +1648,7 @@ TEST_F(remote_server_test, ConstructorClampsSourcePrefixRange)
 
 TEST_F(remote_server_test, ConnectionLimitSourceKeyUsesConfiguredSubnet)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
@@ -1656,24 +1656,24 @@ TEST_F(remote_server_test, ConnectionLimitSourceKeyUsesConfiguredSubnet)
     cfg.limits.source_prefix_v4 = 24;
     auto server = std::make_shared<mux::remote_server>(pool, cfg);
 
-    asio::io_context io_context;
-    asio::ip::tcp::acceptor acceptor(io_context);
+    boost::asio::io_context io_context;
+    boost::asio::ip::tcp::acceptor acceptor(io_context);
     ASSERT_TRUE(open_ephemeral_acceptor_until_ready(acceptor));
-    asio::ip::tcp::socket client(io_context);
-    asio::ip::tcp::socket accepted(io_context);
+    boost::asio::ip::tcp::socket client(io_context);
+    boost::asio::ip::tcp::socket accepted(io_context);
 
-    client.connect(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), acceptor.local_endpoint().port()), ec);
+    client.connect(boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address("127.0.0.1"), acceptor.local_endpoint().port()), ec);
     ASSERT_FALSE(ec);
     acceptor.accept(accepted, ec);
     ASSERT_FALSE(ec);
 
-    auto accepted_ptr = std::make_shared<asio::ip::tcp::socket>(std::move(accepted));
+    auto accepted_ptr = std::make_shared<boost::asio::ip::tcp::socket>(std::move(accepted));
     EXPECT_EQ(server->connection_limit_source_key(accepted_ptr), "127.0.0.0/24");
 }
 
 TEST_F(remote_server_test, SnapshotAndTrackedSocketNullBranches)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
@@ -1688,7 +1688,7 @@ TEST_F(remote_server_test, SnapshotAndTrackedSocketNullBranches)
 
     {
         std::lock_guard<std::mutex> lock(server->tracked_connection_socket_mu_);
-        server->tracked_connection_sockets_[reinterpret_cast<asio::ip::tcp::socket*>(0x1)] = std::weak_ptr<asio::ip::tcp::socket>{};
+        server->tracked_connection_sockets_[reinterpret_cast<boost::asio::ip::tcp::socket*>(0x1)] = std::weak_ptr<boost::asio::ip::tcp::socket>{};
     }
     const auto tracked = server->snapshot_tracked_connection_sockets();
     EXPECT_TRUE(tracked.empty());
@@ -1697,7 +1697,7 @@ TEST_F(remote_server_test, SnapshotAndTrackedSocketNullBranches)
 
 TEST_F(remote_server_test, ReleaseConnectionSlotMissingAndDecrementBranches)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
@@ -1720,7 +1720,7 @@ TEST_F(remote_server_test, ReleaseConnectionSlotMissingAndDecrementBranches)
 
 TEST_F(remote_server_test, ConnectionLimitSourceKeyUnknownAndZeroPrefixBranches)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
@@ -1728,27 +1728,27 @@ TEST_F(remote_server_test, ConnectionLimitSourceKeyUnknownAndZeroPrefixBranches)
     cfg.limits.source_prefix_v4 = 0;
     auto server = std::make_shared<mux::remote_server>(pool, cfg);
 
-    auto unconnected = std::make_shared<asio::ip::tcp::socket>(pool.get_io_context());
+    auto unconnected = std::make_shared<boost::asio::ip::tcp::socket>(pool.get_io_context());
     EXPECT_EQ(server->connection_limit_source_key(unconnected), "unknown");
 
-    asio::io_context io_context;
-    asio::ip::tcp::acceptor acceptor(io_context);
+    boost::asio::io_context io_context;
+    boost::asio::ip::tcp::acceptor acceptor(io_context);
     ASSERT_TRUE(open_ephemeral_acceptor_until_ready(acceptor));
-    asio::ip::tcp::socket client(io_context);
-    asio::ip::tcp::socket accepted(io_context);
+    boost::asio::ip::tcp::socket client(io_context);
+    boost::asio::ip::tcp::socket accepted(io_context);
 
-    client.connect(asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), acceptor.local_endpoint().port()), ec);
+    client.connect(boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address("127.0.0.1"), acceptor.local_endpoint().port()), ec);
     ASSERT_FALSE(ec);
     acceptor.accept(accepted, ec);
     ASSERT_FALSE(ec);
 
-    auto accepted_ptr = std::make_shared<asio::ip::tcp::socket>(std::move(accepted));
+    auto accepted_ptr = std::make_shared<boost::asio::ip::tcp::socket>(std::move(accepted));
     EXPECT_EQ(server->connection_limit_source_key(accepted_ptr), "0.0.0.0/0");
 }
 
 TEST_F(remote_server_test, ConnectionLimitSourceKeyIpv6PrefixBranches)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
@@ -1756,34 +1756,34 @@ TEST_F(remote_server_test, ConnectionLimitSourceKeyIpv6PrefixBranches)
     cfg.limits.source_prefix_v6 = 0;
     auto server = std::make_shared<mux::remote_server>(pool, cfg);
 
-    asio::io_context io_context;
-    asio::ip::tcp::acceptor acceptor(io_context);
-    acceptor.open(asio::ip::tcp::v6(), ec);
+    boost::asio::io_context io_context;
+    boost::asio::ip::tcp::acceptor acceptor(io_context);
+    acceptor.open(boost::asio::ip::tcp::v6(), ec);
     if (ec)
     {
         GTEST_SKIP() << "IPv6 not available: " << ec.message();
     }
-    acceptor.set_option(asio::ip::v6_only(true), ec);
+    acceptor.set_option(boost::asio::ip::v6_only(true), ec);
     if (ec)
     {
         GTEST_SKIP() << "IPv6 only socket unsupported: " << ec.message();
     }
-    acceptor.bind(asio::ip::tcp::endpoint(asio::ip::make_address_v6("::1"), 0), ec);
+    acceptor.bind(boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address_v6("::1"), 0), ec);
     if (ec)
     {
         GTEST_SKIP() << "IPv6 loopback bind failed: " << ec.message();
     }
-    acceptor.listen(asio::socket_base::max_listen_connections, ec);
+    acceptor.listen(boost::asio::socket_base::max_listen_connections, ec);
     ASSERT_FALSE(ec);
 
-    asio::ip::tcp::socket client(io_context);
-    asio::ip::tcp::socket accepted(io_context);
-    client.connect(asio::ip::tcp::endpoint(asio::ip::make_address_v6("::1"), acceptor.local_endpoint().port()), ec);
+    boost::asio::ip::tcp::socket client(io_context);
+    boost::asio::ip::tcp::socket accepted(io_context);
+    client.connect(boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address_v6("::1"), acceptor.local_endpoint().port()), ec);
     ASSERT_FALSE(ec);
     acceptor.accept(accepted, ec);
     ASSERT_FALSE(ec);
 
-    auto accepted_ptr = std::make_shared<asio::ip::tcp::socket>(std::move(accepted));
+    auto accepted_ptr = std::make_shared<boost::asio::ip::tcp::socket>(std::move(accepted));
     const auto v6_prefix_0 = server->connection_limit_source_key(accepted_ptr);
     EXPECT_THAT(v6_prefix_0, ::testing::EndsWith("/0"));
 
@@ -1794,11 +1794,11 @@ TEST_F(remote_server_test, ConnectionLimitSourceKeyIpv6PrefixBranches)
 
 TEST_F(remote_server_test, BuildConnectionContextUsesUnknownWhenEndpointQueryFails)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
-    auto unconnected = std::make_shared<asio::ip::tcp::socket>(pool.get_io_context());
+    auto unconnected = std::make_shared<boost::asio::ip::tcp::socket>(pool.get_io_context());
     const auto ctx = mux::remote_server::build_connection_context(unconnected, 42);
 
     EXPECT_EQ(ctx.local_addr(), "unknown");
@@ -1809,7 +1809,7 @@ TEST_F(remote_server_test, BuildConnectionContextUsesUnknownWhenEndpointQueryFai
 
 TEST_F(remote_server_test, ConstructorRejectsInvalidRealityDest)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
@@ -1823,7 +1823,7 @@ TEST_F(remote_server_test, ConstructorRejectsInvalidRealityDest)
 
 TEST_F(remote_server_test, ConstructorRejectsInvalidPrivateKeyLength)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
@@ -1836,11 +1836,11 @@ TEST_F(remote_server_test, ConstructorRejectsInvalidPrivateKeyLength)
 
 TEST_F(remote_server_test, ConstructorReturnsEarlyWhenBindFails)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
-    asio::ip::tcp::acceptor occupied(pool.get_io_context());
+    boost::asio::ip::tcp::acceptor occupied(pool.get_io_context());
     ASSERT_TRUE(open_ephemeral_acceptor_until_ready(occupied));
     const auto used_port = occupied.local_endpoint().port();
 
@@ -1853,7 +1853,7 @@ TEST_F(remote_server_test, ConstructorReturnsEarlyWhenBindFails)
 
 TEST_F(remote_server_test, FallbackSelectionAndCertificateTargetBranches)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
@@ -1892,7 +1892,7 @@ TEST_F(remote_server_test, FallbackSelectionAndCertificateTargetBranches)
 
 TEST_F(remote_server_test, FallbackGuardStateMachineBranches)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
@@ -1936,7 +1936,7 @@ TEST_F(remote_server_test, FallbackGuardStateMachineBranches)
 
 TEST_F(remote_server_test, FallbackGuardCapsTrackedSources)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
@@ -1975,7 +1975,7 @@ TEST_F(remote_server_test, FallbackGuardCapsTrackedSources)
 
 TEST_F(remote_server_test, SetCertificateAsyncPathAfterStart)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
@@ -2001,7 +2001,7 @@ TEST_F(remote_server_test, SetCertificateAsyncPathAfterStart)
 
 TEST_F(remote_server_test, SetCertificateReturnsQuicklyWhenIoContextStopped)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread pool_thread([&pool] { pool.run(); });
@@ -2054,7 +2054,7 @@ TEST_F(remote_server_test, SetCertificateReturnsQuicklyWhenIoContextStopped)
 
 TEST_F(remote_server_test, SetCertificateReturnsWhenAsyncQueueBusy)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     auto& io_context = pool.get_io_context();
@@ -2068,7 +2068,7 @@ TEST_F(remote_server_test, SetCertificateReturnsWhenAsyncQueueBusy)
     std::promise<void> blocker_started;
     auto blocker_started_future = blocker_started.get_future();
     std::atomic<bool> release_blocker{false};
-    asio::post(io_context,
+    boost::asio::post(io_context,
                [&blocker_started, &release_blocker]()
                {
                    blocker_started.set_value();
@@ -2109,7 +2109,7 @@ TEST_F(remote_server_test, SetCertificateReturnsWhenAsyncQueueBusy)
     {
         std::promise<bool> cert_query_done;
         auto cert_query_done_future = cert_query_done.get_future();
-        asio::post(io_context,
+        boost::asio::post(io_context,
                    [server, sni, cert_query_done = std::move(cert_query_done)]() mutable
                    {
                        cert_query_done.set_value(server->cert_manager_.get_certificate(sni).has_value());
@@ -2131,7 +2131,7 @@ TEST_F(remote_server_test, SetCertificateReturnsWhenAsyncQueueBusy)
 
 TEST_F(remote_server_test, SetCertificateRunsWhenAsyncQueueBlockedThenIoStopped)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     auto& io_context = pool.get_io_context();
@@ -2145,7 +2145,7 @@ TEST_F(remote_server_test, SetCertificateRunsWhenAsyncQueueBlockedThenIoStopped)
     std::promise<void> blocker_started;
     auto blocker_started_future = blocker_started.get_future();
     std::atomic<bool> release_blocker{false};
-    asio::post(io_context,
+    boost::asio::post(io_context,
                [&blocker_started, &release_blocker]()
                {
                    blocker_started.set_value();
@@ -2192,7 +2192,7 @@ TEST_F(remote_server_test, SetCertificateRunsWhenAsyncQueueBlockedThenIoStopped)
 
 TEST_F(remote_server_test, ConstructorCoversShortIdAndDestParsingBranches)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
@@ -2232,7 +2232,7 @@ TEST_F(remote_server_test, ConstructorCoversShortIdAndDestParsingBranches)
 
 TEST_F(remote_server_test, ParseClientHelloAndTranscriptGuardBranches)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
@@ -2252,7 +2252,7 @@ TEST_F(remote_server_test, ParseClientHelloAndTranscriptGuardBranches)
 
 TEST_F(remote_server_test, AuthenticateClientFailureBranches)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
@@ -2290,7 +2290,7 @@ TEST_F(remote_server_test, AuthenticateClientFailureBranches)
 
 TEST_F(remote_server_test, AuthenticateClientShortIdAndTimestampFailureBranches)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
@@ -2310,7 +2310,7 @@ TEST_F(remote_server_test, AuthenticateClientShortIdAndTimestampFailureBranches)
 
 TEST_F(remote_server_test, DeriveShareAndFallbackHelperBranches)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
@@ -2338,7 +2338,7 @@ TEST_F(remote_server_test, DeriveShareAndFallbackHelperBranches)
 
 TEST_F(remote_server_test, RejectStreamForLimitSendsAckAndReset)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
@@ -2356,20 +2356,20 @@ TEST_F(remote_server_test, RejectStreamForLimitSendsAckAndReset)
                 mux::ack_payload ack{};
                 EXPECT_TRUE(mux::mux_codec::decode_ack(payload.data(), payload.size(), ack));
                 EXPECT_EQ(ack.socks_rep, socks::kRepGenFail);
-                return std::error_code{};
+                return boost::system::error_code{};
             });
-    EXPECT_CALL(*conn, mock_send_async(42, mux::kCmdRst, testing::_)).WillOnce(testing::Return(std::error_code{}));
+    EXPECT_CALL(*conn, mock_send_async(42, mux::kCmdRst, testing::_)).WillOnce(testing::Return(boost::system::error_code{}));
 
     std::promise<void> done;
     auto done_future = done.get_future();
-    asio::co_spawn(pool.get_io_context(),
-                   [server, conn, ctx, &done]() mutable -> asio::awaitable<void>
+    boost::asio::co_spawn(pool.get_io_context(),
+                   [server, conn, ctx, &done]() mutable -> boost::asio::awaitable<void>
                    {
                        co_await server->reject_stream_for_limit(conn, ctx, 42);
                        done.set_value();
                        co_return;
                    },
-                   asio::detached);
+                   boost::asio::detached);
 
     std::thread runner([&pool]() { pool.run(); });
     auto runner_guard = make_pool_thread_guard(pool, runner);
@@ -2380,7 +2380,7 @@ TEST_F(remote_server_test, RejectStreamForLimitSendsAckAndReset)
 
 TEST_F(remote_server_test, FallbackFailedAndGuardDisabledBranches)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
@@ -2396,7 +2396,7 @@ TEST_F(remote_server_test, FallbackFailedAndGuardDisabledBranches)
 
 TEST_F(remote_server_test, PerformHandshakeResponseCoversCipherSuiteSelectionBranches)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread runner([&pool]() { pool.run(); });
@@ -2416,17 +2416,17 @@ TEST_F(remote_server_test, PerformHandshakeResponseCoversCipherSuiteSelectionBra
 
     auto run_once = [&](const std::string& sni, const std::uint32_t conn_id, const bool expect_ok) -> mux::remote_server::server_handshake_res
     {
-        asio::ip::tcp::acceptor acceptor(pool.get_io_context());
+        boost::asio::ip::tcp::acceptor acceptor(pool.get_io_context());
         if (!open_ephemeral_acceptor_until_ready(acceptor))
         {
             ADD_FAILURE() << "open ephemeral acceptor failed";
             return {};
         }
-        asio::ip::tcp::socket client_socket(pool.get_io_context());
+        boost::asio::ip::tcp::socket client_socket(pool.get_io_context());
         client_socket.connect(acceptor.local_endpoint(), ec);
         EXPECT_FALSE(ec);
 
-        auto server_socket = std::make_shared<asio::ip::tcp::socket>(pool.get_io_context());
+        auto server_socket = std::make_shared<boost::asio::ip::tcp::socket>(pool.get_io_context());
         acceptor.accept(*server_socket, ec);
         EXPECT_FALSE(ec);
 
@@ -2444,17 +2444,17 @@ TEST_F(remote_server_test, PerformHandshakeResponseCoversCipherSuiteSelectionBra
         ctx.conn_id(conn_id);
         ctx.trace_id(sni);
 
-        std::promise<std::pair<mux::remote_server::server_handshake_res, std::error_code>> done;
+        std::promise<std::pair<mux::remote_server::server_handshake_res, boost::system::error_code>> done;
         auto done_future = done.get_future();
-        asio::co_spawn(pool.get_io_context(),
-                       [server, server_socket, info, ctx, &done]() mutable -> asio::awaitable<void>
+        boost::asio::co_spawn(pool.get_io_context(),
+                       [server, server_socket, info, ctx, &done]() mutable -> boost::asio::awaitable<void>
                        {
                            reality::transcript trans;
                            auto res = co_await server->perform_handshake_response(server_socket, info, trans, ctx);
                            done.set_value({std::move(res), res.ec});
                            co_return;
                        },
-                       asio::detached);
+                       boost::asio::detached);
 
         EXPECT_EQ(done_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
         auto [result, hs_ec] = done_future.get();
@@ -2482,7 +2482,7 @@ TEST_F(remote_server_test, PerformHandshakeResponseCoversCipherSuiteSelectionBra
 
 TEST_F(remote_server_test, ConstructorCoversMalformedBracketDestParseBranches)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
@@ -2503,7 +2503,7 @@ TEST_F(remote_server_test, ConstructorCoversMalformedBracketDestParseBranches)
 
 TEST_F(remote_server_test, ConstructorAcceptorSetupFailureBranchesWithWrappers)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
@@ -2528,7 +2528,7 @@ TEST_F(remote_server_test, ConstructorAcceptorSetupFailureBranchesWithWrappers)
 
 TEST_F(remote_server_test, AuthenticateClientCoversShortIdClockSkewAndReplayBranches)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
@@ -2562,7 +2562,7 @@ TEST_F(remote_server_test, AuthenticateClientCoversShortIdClockSkewAndReplayBran
 
 TEST_F(remote_server_test, AuthenticateClientCoversInvalidPayloadAndShortIdLengthBranches)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
@@ -2585,7 +2585,7 @@ TEST_F(remote_server_test, AuthenticateClientCoversInvalidPayloadAndShortIdLengt
 
 TEST_F(remote_server_test, AuthenticateClientRejectsWhenAuthConfigInvalid)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
@@ -2603,7 +2603,7 @@ TEST_F(remote_server_test, AuthenticateClientRejectsWhenAuthConfigInvalid)
 
 TEST_F(remote_server_test, PerformHandshakeResponseCoversRandomAndSignKeyFailureBranches)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread runner([&pool]() { pool.run(); });
@@ -2615,19 +2615,19 @@ TEST_F(remote_server_test, PerformHandshakeResponseCoversRandomAndSignKeyFailure
     fp.alpn = "h2";
     server->set_certificate("fault.test", reality::construct_certificate({0x01, 0x02, 0x03}), fp, "fault-trace");
 
-    auto run_once = [&](const bool fail_rand, const bool fail_sign_key) -> std::pair<bool, std::error_code>
+    auto run_once = [&](const bool fail_rand, const bool fail_sign_key) -> std::pair<bool, boost::system::error_code>
     {
-        asio::ip::tcp::acceptor acceptor(pool.get_io_context());
+        boost::asio::ip::tcp::acceptor acceptor(pool.get_io_context());
         if (!open_ephemeral_acceptor_until_ready(acceptor))
         {
             ADD_FAILURE() << "open ephemeral acceptor failed";
-            return {false, asio::error::address_in_use};
+            return {false, boost::asio::error::address_in_use};
         }
-        asio::ip::tcp::socket client_socket(pool.get_io_context());
+        boost::asio::ip::tcp::socket client_socket(pool.get_io_context());
         client_socket.connect(acceptor.local_endpoint(), ec);
         EXPECT_FALSE(ec);
 
-        auto server_socket = std::make_shared<asio::ip::tcp::socket>(pool.get_io_context());
+        auto server_socket = std::make_shared<boost::asio::ip::tcp::socket>(pool.get_io_context());
         acceptor.accept(*server_socket, ec);
         EXPECT_FALSE(ec);
 
@@ -2654,17 +2654,17 @@ TEST_F(remote_server_test, PerformHandshakeResponseCoversRandomAndSignKeyFailure
             fail_next_ed25519_raw_private_key();
         }
 
-        std::promise<std::pair<mux::remote_server::server_handshake_res, std::error_code>> done;
+        std::promise<std::pair<mux::remote_server::server_handshake_res, boost::system::error_code>> done;
         auto done_future = done.get_future();
-        asio::co_spawn(pool.get_io_context(),
-                       [server, server_socket, info, ctx, &done]() mutable -> asio::awaitable<void>
+        boost::asio::co_spawn(pool.get_io_context(),
+                       [server, server_socket, info, ctx, &done]() mutable -> boost::asio::awaitable<void>
                        {
                            reality::transcript trans;
                            auto res = co_await server->perform_handshake_response(server_socket, info, trans, ctx);
                            done.set_value({std::move(res), res.ec});
                            co_return;
                        },
-                       asio::detached);
+                       boost::asio::detached);
 
         EXPECT_EQ(done_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
         auto [result, hs_ec] = done_future.get();
@@ -2680,7 +2680,7 @@ TEST_F(remote_server_test, PerformHandshakeResponseCoversRandomAndSignKeyFailure
     {
         const auto [ok, hs_ec] = run_once(false, true);
         EXPECT_FALSE(ok);
-        EXPECT_EQ(hs_ec, asio::error::fault);
+        EXPECT_EQ(hs_ec, boost::asio::error::fault);
     }
 
     pool.stop();
@@ -2691,19 +2691,19 @@ TEST_F(remote_server_test, VerifyClientFinishedCoversPlaintextValidationBranches
 {
     auto run_case = [](const std::vector<std::uint8_t>& plaintext, const std::uint8_t inner_content_type) -> bool
     {
-        asio::io_context io_context;
-        std::error_code ec;
+        boost::asio::io_context io_context;
+        boost::system::error_code ec;
 
-        asio::ip::tcp::acceptor acceptor(io_context);
+        boost::asio::ip::tcp::acceptor acceptor(io_context);
         if (!open_ephemeral_acceptor_until_ready(acceptor))
         {
             ADD_FAILURE() << "open ephemeral acceptor failed";
             return false;
         }
-        asio::ip::tcp::socket writer(io_context);
+        boost::asio::ip::tcp::socket writer(io_context);
         writer.connect(acceptor.local_endpoint(), ec);
         EXPECT_FALSE(ec);
-        auto reader = std::make_shared<asio::ip::tcp::socket>(io_context);
+        auto reader = std::make_shared<boost::asio::ip::tcp::socket>(io_context);
         acceptor.accept(*reader, ec);
         EXPECT_FALSE(ec);
 
@@ -2715,9 +2715,9 @@ TEST_F(remote_server_test, VerifyClientFinishedCoversPlaintextValidationBranches
         {
             return false;
         }
-        asio::write(writer, asio::buffer(*encrypted), ec);
+        boost::asio::write(writer, boost::asio::buffer(*encrypted), ec);
         EXPECT_FALSE(ec);
-        writer.shutdown(asio::ip::tcp::socket::shutdown_send, ec);
+        writer.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
 
         mux::connection_context ctx;
         ctx.conn_id(88);
@@ -2728,16 +2728,16 @@ TEST_F(remote_server_test, VerifyClientFinishedCoversPlaintextValidationBranches
         reality::transcript trans;
 
         bool ok = true;
-        std::error_code verify_ec;
-        asio::co_spawn(io_context,
-                       [&]() -> asio::awaitable<void>
+        boost::system::error_code verify_ec;
+        boost::asio::co_spawn(io_context,
+                       [&]() -> boost::asio::awaitable<void>
                        {
                            verify_ec = co_await mux::remote_server::verify_client_finished(
                                reader, {key, iv}, hs_keys, trans, EVP_aes_128_gcm(), EVP_sha256(), ctx);
                            ok = !verify_ec;
                            co_return;
                        },
-                       asio::detached);
+                       boost::asio::detached);
         io_context.run();
         return ok;
     };
@@ -2755,17 +2755,17 @@ TEST_F(remote_server_test, VerifyClientFinishedTimeoutWhenPeerStalls)
 {
     const auto client_finished_failures_before = mux::statistics::instance().client_finished_failures();
 
-    asio::io_context io_context;
-    std::error_code ec;
+    boost::asio::io_context io_context;
+    boost::system::error_code ec;
 
-    asio::ip::tcp::acceptor acceptor(io_context);
+    boost::asio::ip::tcp::acceptor acceptor(io_context);
     ASSERT_TRUE(open_ephemeral_acceptor_until_ready(acceptor));
 
-    asio::ip::tcp::socket writer(io_context);
+    boost::asio::ip::tcp::socket writer(io_context);
     writer.connect(acceptor.local_endpoint(), ec);
     ASSERT_FALSE(ec);
 
-    auto reader = std::make_shared<asio::ip::tcp::socket>(io_context);
+    auto reader = std::make_shared<boost::asio::ip::tcp::socket>(io_context);
     acceptor.accept(*reader, ec);
     ASSERT_FALSE(ec);
 
@@ -2779,9 +2779,9 @@ TEST_F(remote_server_test, VerifyClientFinishedTimeoutWhenPeerStalls)
     ctx.conn_id(109);
     ctx.trace_id("verify-client-finished-timeout");
 
-    std::error_code verify_ec;
-    asio::co_spawn(io_context,
-                   [&]() -> asio::awaitable<void>
+    boost::system::error_code verify_ec;
+    boost::asio::co_spawn(io_context,
+                   [&]() -> boost::asio::awaitable<void>
                    {
                        verify_ec = co_await mux::remote_server::verify_client_finished(
                            reader,
@@ -2794,16 +2794,16 @@ TEST_F(remote_server_test, VerifyClientFinishedTimeoutWhenPeerStalls)
                            1);
                        co_return;
                    },
-                   asio::detached);
+                   boost::asio::detached);
 
     io_context.run();
-    EXPECT_EQ(verify_ec, asio::error::timed_out);
+    EXPECT_EQ(verify_ec, boost::asio::error::timed_out);
     EXPECT_GT(mux::statistics::instance().client_finished_failures(), client_finished_failures_before);
 }
 
 TEST_F(remote_server_test, SendServerHelloFlightTimeoutWhenPeerStalls)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread runner([&pool]() { pool.run(); });
@@ -2812,23 +2812,23 @@ TEST_F(remote_server_test, SendServerHelloFlightTimeoutWhenPeerStalls)
     auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(0, {}, "0102030405060708"));
     auto* io_context = &pool.get_io_context();
 
-    asio::ip::tcp::acceptor acceptor(*io_context);
+    boost::asio::ip::tcp::acceptor acceptor(*io_context);
     ASSERT_TRUE(open_ephemeral_acceptor_until_ready(acceptor));
 
-    asio::ip::tcp::socket client_socket(*io_context);
+    boost::asio::ip::tcp::socket client_socket(*io_context);
     client_socket.connect(acceptor.local_endpoint(), ec);
     ASSERT_FALSE(ec);
 
-    auto server_socket = std::make_shared<asio::ip::tcp::socket>(*io_context);
+    auto server_socket = std::make_shared<boost::asio::ip::tcp::socket>(*io_context);
     acceptor.accept(*server_socket, ec);
     ASSERT_FALSE(ec);
-    server_socket->set_option(asio::socket_base::send_buffer_size(1024), ec);
+    server_socket->set_option(boost::asio::socket_base::send_buffer_size(1024), ec);
     ASSERT_FALSE(ec);
 
-    std::promise<std::error_code> done;
+    std::promise<boost::system::error_code> done;
     auto done_future = done.get_future();
-    asio::co_spawn(*io_context,
-                   [server, server_socket, &done]() -> asio::awaitable<void>
+    boost::asio::co_spawn(*io_context,
+                   [server, server_socket, &done]() -> boost::asio::awaitable<void>
                    {
                        mux::connection_context ctx;
                        ctx.conn_id(110);
@@ -2840,10 +2840,10 @@ TEST_F(remote_server_test, SendServerHelloFlightTimeoutWhenPeerStalls)
                        done.set_value(write_ec);
                        co_return;
                    },
-                   asio::detached);
+                   boost::asio::detached);
 
     ASSERT_EQ(done_future.wait_for(std::chrono::seconds(4)), std::future_status::ready);
-    EXPECT_EQ(done_future.get(), asio::error::timed_out);
+    EXPECT_EQ(done_future.get(), boost::asio::error::timed_out);
 
     client_socket.close(ec);
     pool.stop();
@@ -2852,7 +2852,7 @@ TEST_F(remote_server_test, SendServerHelloFlightTimeoutWhenPeerStalls)
 
 TEST_F(remote_server_test, DeriveApplicationTrafficKeysCoversFirstAndSecondDeriveFailure)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
@@ -2878,7 +2878,7 @@ TEST_F(remote_server_test, DeriveApplicationTrafficKeysCoversFirstAndSecondDeriv
 
 TEST_F(remote_server_test, DeriveServerKeyShareCoversX25519DeriveFailureBranch)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
@@ -2902,7 +2902,7 @@ TEST_F(remote_server_test, DeriveServerKeyShareCoversX25519DeriveFailureBranch)
 
 TEST_F(remote_server_test, StopCoversAcceptorCloseFailureBranch)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread runner([&pool]() { pool.run(); });
@@ -2921,13 +2921,13 @@ TEST_F(remote_server_test, StopCoversAcceptorCloseFailureBranch)
 
 TEST_F(remote_server_test, StopLocalCoversTrackedSocketCloseFailureBranch)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
-    auto tracked_socket = std::make_shared<asio::ip::tcp::socket>(pool.get_io_context());
-    tracked_socket->open(asio::ip::tcp::v4(), ec);
+    auto tracked_socket = std::make_shared<boost::asio::ip::tcp::socket>(pool.get_io_context());
+    tracked_socket->open(boost::asio::ip::tcp::v4(), ec);
     ASSERT_FALSE(ec);
 
     server->track_connection_socket(tracked_socket);
@@ -2938,7 +2938,7 @@ TEST_F(remote_server_test, StopLocalCoversTrackedSocketCloseFailureBranch)
 
 TEST_F(remote_server_test, StopClosesInFlightHandshakeConnections)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread runner([&pool]() { pool.run(); });
@@ -2949,13 +2949,13 @@ TEST_F(remote_server_test, StopClosesInFlightHandshakeConnections)
     const auto listen_port = server->listen_port();
     ASSERT_NE(listen_port, 0);
 
-    asio::io_context client_io_context;
-    asio::ip::tcp::socket client_socket(client_io_context);
-    client_socket.connect(asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), listen_port), ec);
+    boost::asio::io_context client_io_context;
+    boost::asio::ip::tcp::socket client_socket(client_io_context);
+    client_socket.connect(boost::asio::ip::tcp::endpoint(boost::asio::ip::address_v4::loopback(), listen_port), ec);
     ASSERT_FALSE(ec);
 
     const std::array<std::uint8_t, 5> partial_client_hello = {0x16, 0x03, 0x03, 0x00, 0x20};
-    asio::write(client_socket, asio::buffer(partial_client_hello), ec);
+    boost::asio::write(client_socket, boost::asio::buffer(partial_client_hello), ec);
     ASSERT_FALSE(ec);
 
     const auto tracked_non_empty = wait_for_condition(
@@ -2989,13 +2989,13 @@ TEST_F(remote_server_test, StopClosesInFlightHandshakeConnections)
         [&client_socket]()
         {
             std::array<std::uint8_t, 1> buf = {0};
-            std::error_code read_ec;
-            (void)client_socket.read_some(asio::buffer(buf), read_ec);
-            if (read_ec == asio::error::would_block || read_ec == asio::error::try_again)
+            boost::system::error_code read_ec;
+            (void)client_socket.read_some(boost::asio::buffer(buf), read_ec);
+            if (read_ec == boost::asio::error::would_block || read_ec == boost::asio::error::try_again)
             {
                 return false;
             }
-            return read_ec == asio::error::eof || read_ec == asio::error::connection_reset || read_ec == asio::error::operation_aborted;
+            return read_ec == boost::asio::error::eof || read_ec == boost::asio::error::connection_reset || read_ec == boost::asio::error::operation_aborted;
         });
     EXPECT_TRUE(peer_closed);
 
@@ -3009,18 +3009,18 @@ TEST_F(remote_server_test, StopClosesInFlightHandshakeConnections)
 
 TEST_F(remote_server_test, HandshakeReadTimeoutReleasesSlotWithoutFallback)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread runner([&pool]() { pool.run(); });
     auto runner_guard = make_pool_thread_guard(pool, runner);
 
-    asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context());
+    boost::asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context());
     ASSERT_TRUE(open_ephemeral_acceptor_until_ready(fallback_acceptor));
     const auto fallback_port = fallback_acceptor.local_endpoint().port();
     std::atomic<bool> fallback_triggered{false};
     fallback_acceptor.async_accept(
-        [&fallback_triggered](const std::error_code& accept_ec, asio::ip::tcp::socket)
+        [&fallback_triggered](const boost::system::error_code& accept_ec, boost::asio::ip::tcp::socket)
         {
             if (!accept_ec)
             {
@@ -3035,13 +3035,13 @@ TEST_F(remote_server_test, HandshakeReadTimeoutReleasesSlotWithoutFallback)
     const auto listen_port = server->listen_port();
     ASSERT_NE(listen_port, 0);
 
-    asio::io_context client_io_context;
-    asio::ip::tcp::socket client_socket(client_io_context);
-    client_socket.connect(asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), listen_port), ec);
+    boost::asio::io_context client_io_context;
+    boost::asio::ip::tcp::socket client_socket(client_io_context);
+    client_socket.connect(boost::asio::ip::tcp::endpoint(boost::asio::ip::address_v4::loopback(), listen_port), ec);
     ASSERT_FALSE(ec);
 
     const std::array<std::uint8_t, 5> partial_client_hello = {0x16, 0x03, 0x03, 0x00, 0x20};
-    asio::write(client_socket, asio::buffer(partial_client_hello), ec);
+    boost::asio::write(client_socket, boost::asio::buffer(partial_client_hello), ec);
     ASSERT_FALSE(ec);
 
     const auto slot_reserved = wait_for_condition(
@@ -3067,13 +3067,13 @@ TEST_F(remote_server_test, HandshakeReadTimeoutReleasesSlotWithoutFallback)
         [&client_socket]()
         {
             std::array<std::uint8_t, 1> buf = {0};
-            std::error_code read_ec;
-            (void)client_socket.read_some(asio::buffer(buf), read_ec);
-            if (read_ec == asio::error::would_block || read_ec == asio::error::try_again)
+            boost::system::error_code read_ec;
+            (void)client_socket.read_some(boost::asio::buffer(buf), read_ec);
+            if (read_ec == boost::asio::error::would_block || read_ec == boost::asio::error::try_again)
             {
                 return false;
             }
-            return read_ec == asio::error::eof || read_ec == asio::error::connection_reset || read_ec == asio::error::operation_aborted;
+            return read_ec == boost::asio::error::eof || read_ec == boost::asio::error::connection_reset || read_ec == boost::asio::error::operation_aborted;
         },
         std::chrono::milliseconds(2500),
         std::chrono::milliseconds(20));
@@ -3081,7 +3081,7 @@ TEST_F(remote_server_test, HandshakeReadTimeoutReleasesSlotWithoutFallback)
 
     client_socket.close(ec);
     server->stop();
-    std::error_code close_ec;
+    boost::system::error_code close_ec;
     fallback_acceptor.cancel(close_ec);
     fallback_acceptor.close(close_ec);
     pool.stop();
@@ -3093,7 +3093,7 @@ TEST_F(remote_server_test, HandshakeReadTimeoutReleasesSlotWithoutFallback)
 
 TEST_F(remote_server_test, ReadInitialAndValidateAcceptsFragmentedTlsHeader)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread runner([&pool]() { pool.run(); });
@@ -3101,14 +3101,14 @@ TEST_F(remote_server_test, ReadInitialAndValidateAcceptsFragmentedTlsHeader)
 
     auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(0, {}, "0102030405060708"));
 
-    asio::ip::tcp::acceptor acceptor(pool.get_io_context());
+    boost::asio::ip::tcp::acceptor acceptor(pool.get_io_context());
     ASSERT_TRUE(open_ephemeral_acceptor_until_ready(acceptor));
 
-    asio::ip::tcp::socket client_socket(pool.get_io_context());
+    boost::asio::ip::tcp::socket client_socket(pool.get_io_context());
     client_socket.connect(acceptor.local_endpoint(), ec);
     ASSERT_FALSE(ec);
 
-    auto server_socket = std::make_shared<asio::ip::tcp::socket>(pool.get_io_context());
+    auto server_socket = std::make_shared<boost::asio::ip::tcp::socket>(pool.get_io_context());
     acceptor.accept(*server_socket, ec);
     ASSERT_FALSE(ec);
 
@@ -3118,8 +3118,8 @@ TEST_F(remote_server_test, ReadInitialAndValidateAcceptsFragmentedTlsHeader)
 
     std::promise<mux::remote_server::initial_read_res> done;
     auto done_future = done.get_future();
-    asio::co_spawn(pool.get_io_context(),
-                   [server, server_socket, &done]() -> asio::awaitable<void>
+    boost::asio::co_spawn(pool.get_io_context(),
+                   [server, server_socket, &done]() -> boost::asio::awaitable<void>
                    {
                        mux::connection_context ctx;
                        ctx.conn_id(9001);
@@ -3129,12 +3129,12 @@ TEST_F(remote_server_test, ReadInitialAndValidateAcceptsFragmentedTlsHeader)
                        done.set_value(res);
                        co_return;
                    },
-                   asio::detached);
+                   boost::asio::detached);
 
-    asio::write(client_socket, asio::buffer(record.data(), 2), ec);
+    boost::asio::write(client_socket, boost::asio::buffer(record.data(), 2), ec);
     ASSERT_FALSE(ec);
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    asio::write(client_socket, asio::buffer(record.data() + 2, record.size() - 2), ec);
+    boost::asio::write(client_socket, boost::asio::buffer(record.data() + 2, record.size() - 2), ec);
     ASSERT_FALSE(ec);
 
     ASSERT_EQ(done_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
@@ -3146,29 +3146,29 @@ TEST_F(remote_server_test, ReadInitialAndValidateAcceptsFragmentedTlsHeader)
 
 TEST_F(remote_server_test, DelayAndFallbackShortCircuitsWhenStopRequested)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread runner([&pool]() { pool.run(); });
     auto runner_guard = make_pool_thread_guard(pool, runner);
 
     auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
-    auto socket = std::make_shared<asio::ip::tcp::socket>(pool.get_io_context());
+    auto socket = std::make_shared<boost::asio::ip::tcp::socket>(pool.get_io_context());
     mux::connection_context ctx;
     ctx.conn_id(6060);
     ctx.trace_id("delay-stop-short-circuit");
 
-    std::promise<std::pair<mux::remote_server::server_handshake_res, std::error_code>> done;
+    std::promise<std::pair<mux::remote_server::server_handshake_res, boost::system::error_code>> done;
     auto done_future = done.get_future();
     server->stop_.store(true, std::memory_order_release);
-    asio::co_spawn(pool.get_io_context(),
-                   [server, socket, ctx, &done]() mutable -> asio::awaitable<void>
+    boost::asio::co_spawn(pool.get_io_context(),
+                   [server, socket, ctx, &done]() mutable -> boost::asio::awaitable<void>
                    {
                        auto res = co_await server->delay_and_fallback(socket, std::vector<std::uint8_t>{0x16}, ctx, "stop.test");
-                       done.set_value(std::make_pair(std::move(res), std::error_code{}));
+                       done.set_value(std::make_pair(std::move(res), boost::system::error_code{}));
                        co_return;
                    },
-                   asio::detached);
+                   boost::asio::detached);
 
     EXPECT_EQ(done_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
     if (done_future.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
@@ -3176,7 +3176,7 @@ TEST_F(remote_server_test, DelayAndFallbackShortCircuitsWhenStopRequested)
         const auto [res, spawn_ec] = done_future.get();
         EXPECT_FALSE(spawn_ec);
         EXPECT_FALSE(res.ok);
-        EXPECT_EQ(res.ec, asio::error::operation_aborted);
+        EXPECT_EQ(res.ec, boost::asio::error::operation_aborted);
     }
 
     pool.stop();
@@ -3188,15 +3188,15 @@ TEST_F(remote_server_test, DelayAndFallbackShortCircuitsWhenStopRequested)
 
 TEST_F(remote_server_test, StopRunsInlineWhenIoContextStopped)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
     server->start();
 
-    auto tunnel = std::make_shared<mux::mux_tunnel_impl<asio::ip::tcp::socket>>(
-        asio::ip::tcp::socket(pool.get_io_context()),
+    auto tunnel = std::make_shared<mux::mux_tunnel_impl<boost::asio::ip::tcp::socket>>(
+        boost::asio::ip::tcp::socket(pool.get_io_context()),
         pool.get_io_context(),
         mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()},
         true,
@@ -3219,15 +3219,15 @@ TEST_F(remote_server_test, StopRunsInlineWhenIoContextStopped)
 
 TEST_F(remote_server_test, StopRunsWhenIoQueueBlocked)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
     server->start();
 
-    auto tunnel = std::make_shared<mux::mux_tunnel_impl<asio::ip::tcp::socket>>(
-        asio::ip::tcp::socket(pool.get_io_context()),
+    auto tunnel = std::make_shared<mux::mux_tunnel_impl<boost::asio::ip::tcp::socket>>(
+        boost::asio::ip::tcp::socket(pool.get_io_context()),
         pool.get_io_context(),
         mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()},
         true,
@@ -3239,7 +3239,7 @@ TEST_F(remote_server_test, StopRunsWhenIoQueueBlocked)
 
     std::atomic<bool> blocker_started{false};
     std::atomic<bool> release_blocker{false};
-    asio::post(
+    boost::asio::post(
         pool.get_io_context(),
         [&blocker_started, &release_blocker]()
         {
@@ -3290,15 +3290,15 @@ TEST_F(remote_server_test, StopRunsWhenIoQueueBlocked)
 
 TEST_F(remote_server_test, StopRunsWhenIoContextNotRunning)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
     server->start();
 
-    auto tunnel = std::make_shared<mux::mux_tunnel_impl<asio::ip::tcp::socket>>(
-        asio::ip::tcp::socket(pool.get_io_context()),
+    auto tunnel = std::make_shared<mux::mux_tunnel_impl<boost::asio::ip::tcp::socket>>(
+        boost::asio::ip::tcp::socket(pool.get_io_context()),
         pool.get_io_context(),
         mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()},
         true,
@@ -3320,15 +3320,15 @@ TEST_F(remote_server_test, StopRunsWhenIoContextNotRunning)
 
 TEST_F(remote_server_test, DrainClosesAcceptorButKeepsActiveTunnels)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
     auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(pick_free_port(), {}, "0102030405060708"));
     server->start();
 
-    auto tunnel = std::make_shared<mux::mux_tunnel_impl<asio::ip::tcp::socket>>(
-        asio::ip::tcp::socket(pool.get_io_context()),
+    auto tunnel = std::make_shared<mux::mux_tunnel_impl<boost::asio::ip::tcp::socket>>(
+        boost::asio::ip::tcp::socket(pool.get_io_context()),
         pool.get_io_context(),
         mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()},
         true,
@@ -3354,7 +3354,7 @@ TEST_F(remote_server_test, DrainClosesAcceptorButKeepsActiveTunnels)
 
 TEST_F(remote_server_test, StartReopensAcceptorAfterStop)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
@@ -3384,7 +3384,7 @@ TEST_F(remote_server_test, StartReopensAcceptorAfterStop)
 
 TEST_F(remote_server_test, StartWhileRunningIsIgnored)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
@@ -3407,7 +3407,7 @@ TEST_F(remote_server_test, StartWhileRunningIsIgnored)
 
 TEST_F(remote_server_test, HandleFallbackCoversCloseSocketErrorBranches)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
     std::thread runner([&pool]() { pool.run(); });
@@ -3419,7 +3419,7 @@ TEST_F(remote_server_test, HandleFallbackCoversCloseSocketErrorBranches)
     cfg.reality.fallback_guard.burst = 0;
     auto server = std::make_shared<mux::remote_server>(pool, cfg);
 
-    auto fallback_socket = std::make_shared<asio::ip::tcp::socket>(pool.get_io_context());
+    auto fallback_socket = std::make_shared<boost::asio::ip::tcp::socket>(pool.get_io_context());
     mux::connection_context ctx;
     ctx.conn_id(555);
     ctx.remote_addr("127.0.0.10");
@@ -3430,14 +3430,14 @@ TEST_F(remote_server_test, HandleFallbackCoversCloseSocketErrorBranches)
 
     fail_next_shutdown(EIO);
     fail_next_close(EIO);
-    asio::co_spawn(pool.get_io_context(),
-                   [server, fallback_socket, ctx, &done]() mutable -> asio::awaitable<void>
+    boost::asio::co_spawn(pool.get_io_context(),
+                   [server, fallback_socket, ctx, &done]() mutable -> boost::asio::awaitable<void>
                    {
                        co_await server->handle_fallback(fallback_socket, std::vector<std::uint8_t>{0x16}, ctx, "blocked.test");
                        done.set_value();
                        co_return;
                    },
-                   asio::detached);
+                   boost::asio::detached);
 
     EXPECT_EQ(done_future.wait_for(std::chrono::seconds(5)), std::future_status::ready);
 

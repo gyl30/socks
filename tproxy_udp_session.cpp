@@ -7,14 +7,14 @@
 #include <cstdint>
 #include <system_error>
 
-#include <asio/error.hpp>
-#include <asio/buffer.hpp>
-#include <asio/as_tuple.hpp>
-#include <asio/co_spawn.hpp>
-#include <asio/detached.hpp>
-#include <asio/dispatch.hpp>
-#include <asio/ip/v6_only.hpp>
-#include <asio/use_awaitable.hpp>
+#include <boost/asio/error.hpp>
+#include <boost/asio/buffer.hpp>
+#include <boost/asio/as_tuple.hpp>
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/detached.hpp>
+#include <boost/asio/dispatch.hpp>
+#include <boost/asio/ip/v6_only.hpp>
+#include <boost/asio/use_awaitable.hpp>
 
 #include "log.h"
 #include "mux_codec.h"
@@ -31,17 +31,17 @@ namespace mux
 namespace
 {
 
-void close_start_failed_socket(asio::ip::udp::socket& socket, const connection_context& ctx)
+void close_start_failed_socket(boost::asio::ip::udp::socket& socket, const connection_context& ctx)
 {
-    std::error_code close_ec;
+    boost::system::error_code close_ec;
     close_ec = socket.close(close_ec);
-    if (close_ec && close_ec != asio::error::bad_descriptor)
+    if (close_ec && close_ec != boost::asio::error::bad_descriptor)
     {
         LOG_CTX_WARN(ctx, "{} udp close failed {}", log_event::kSocks, close_ec.message());
     }
 }
 
-asio::ip::udp::endpoint map_v4_to_v6(const asio::ip::udp::endpoint& ep)
+boost::asio::ip::udp::endpoint map_v4_to_v6(const boost::asio::ip::udp::endpoint& ep)
 {
     if (!ep.address().is_v4())
     {
@@ -49,25 +49,25 @@ asio::ip::udp::endpoint map_v4_to_v6(const asio::ip::udp::endpoint& ep)
     }
     const auto v4 = ep.address().to_v4();
     const auto v4_bytes = v4.to_bytes();
-    asio::ip::address_v6::bytes_type v6_bytes = {0};
+    boost::asio::ip::address_v6::bytes_type v6_bytes = {0};
     v6_bytes[10] = 0xFF;
     v6_bytes[11] = 0xFF;
     v6_bytes[12] = v4_bytes[0];
     v6_bytes[13] = v4_bytes[1];
     v6_bytes[14] = v4_bytes[2];
     v6_bytes[15] = v4_bytes[3];
-    return asio::ip::udp::endpoint(asio::ip::address_v6(v6_bytes), ep.port());
+    return boost::asio::ip::udp::endpoint(boost::asio::ip::address_v6(v6_bytes), ep.port());
 }
 
 }    // namespace
 
-tproxy_udp_session::tproxy_udp_session(asio::io_context& io_context,
+tproxy_udp_session::tproxy_udp_session(boost::asio::io_context& io_context,
                                        std::shared_ptr<client_tunnel_pool> tunnel_pool,
                                        std::shared_ptr<router> router,
                                        std::shared_ptr<tproxy_udp_sender> sender,
                                        const std::uint32_t sid,
                                        const config& cfg,
-                                       asio::ip::udp::endpoint client_ep)
+                                       boost::asio::ip::udp::endpoint client_ep)
     : io_context_(io_context),
       direct_socket_(io_context_),
       tunnel_pool_(std::move(tunnel_pool)),
@@ -85,8 +85,8 @@ tproxy_udp_session::tproxy_udp_session(asio::io_context& io_context,
 bool tproxy_udp_session::start()
 {
     terminated_.store(false, std::memory_order_release);
-    std::error_code ec;
-    ec = direct_socket_.open(asio::ip::udp::v6(), ec);
+    boost::system::error_code ec;
+    ec = direct_socket_.open(boost::asio::ip::udp::v6(), ec);
     if (ec)
     {
         LOG_CTX_WARN(ctx_, "{} udp open failed {}", log_event::kSocks, ec.message());
@@ -94,7 +94,7 @@ bool tproxy_udp_session::start()
         close_start_failed_socket(direct_socket_, ctx_);
         return false;
     }
-    ec = direct_socket_.set_option(asio::ip::v6_only(false), ec);
+    ec = direct_socket_.set_option(boost::asio::ip::v6_only(false), ec);
     if (ec)
     {
         LOG_CTX_WARN(ctx_, "{} udp v6 only failed {}", log_event::kSocks, ec.message());
@@ -106,7 +106,7 @@ bool tproxy_udp_session::start()
             LOG_CTX_WARN(ctx_, "{} udp set mark failed {}", log_event::kSocks, r.error().message());
         }
     }
-    ec = direct_socket_.bind(asio::ip::udp::endpoint(asio::ip::address_v6::any(), 0), ec);
+    ec = direct_socket_.bind(boost::asio::ip::udp::endpoint(boost::asio::ip::address_v6::any(), 0), ec);
     if (ec)
     {
         LOG_CTX_WARN(ctx_, "{} udp bind failed {}", log_event::kSocks, ec.message());
@@ -115,29 +115,29 @@ bool tproxy_udp_session::start()
         return false;
     }
 
-    asio::co_spawn(io_context_, direct_read_loop_detached(shared_from_this()), asio::detached);
+    boost::asio::co_spawn(io_context_, direct_read_loop_detached(shared_from_this()), boost::asio::detached);
     return true;
 }
 
-asio::awaitable<void> tproxy_udp_session::direct_read_loop_detached(std::shared_ptr<tproxy_udp_session> self)
+boost::asio::awaitable<void> tproxy_udp_session::direct_read_loop_detached(std::shared_ptr<tproxy_udp_session> self)
 {
     co_await self->direct_read_loop();
 }
 
-asio::awaitable<void> tproxy_udp_session::handle_packet(const asio::ip::udp::endpoint& dst_ep, std::vector<std::uint8_t> data)
+boost::asio::awaitable<void> tproxy_udp_session::handle_packet(const boost::asio::ip::udp::endpoint& dst_ep, std::vector<std::uint8_t> data)
 {
-    co_await asio::dispatch(io_context_, asio::use_awaitable);
+    co_await boost::asio::dispatch(io_context_, boost::asio::use_awaitable);
     co_await handle_packet_inner(dst_ep, std::move(data));
 }
 
-asio::awaitable<void> tproxy_udp_session::handle_packet(
-    const asio::ip::udp::endpoint& dst_ep, const std::uint8_t* data, const std::size_t len)
+boost::asio::awaitable<void> tproxy_udp_session::handle_packet(
+    const boost::asio::ip::udp::endpoint& dst_ep, const std::uint8_t* data, const std::size_t len)
 {
     auto payload = std::vector<std::uint8_t>(data, data + len);
     co_await handle_packet(dst_ep, std::move(payload));
 }
 
-asio::awaitable<void> tproxy_udp_session::handle_packet_inner(asio::ip::udp::endpoint dst_ep, std::vector<std::uint8_t> data)
+boost::asio::awaitable<void> tproxy_udp_session::handle_packet_inner(boost::asio::ip::udp::endpoint dst_ep, std::vector<std::uint8_t> data)
 {
     if (terminated_.load(std::memory_order_acquire))
     {
@@ -192,7 +192,7 @@ void tproxy_udp_session::on_data(std::vector<std::uint8_t> data)
         io_context_,
         [self = shared_from_this(), data = std::move(data)]() mutable
         {
-            if (!self->recv_channel_.try_send(std::error_code(), std::move(data)))
+            if (!self->recv_channel_.try_send(boost::system::error_code(), std::move(data)))
             {
                 LOG_CTX_WARN(self->ctx_, "{} recv channel unavailable on data", log_event::kSocks);
                 self->stop();
@@ -260,29 +260,29 @@ void tproxy_udp_session::stop_local(const bool allow_async_stream_close)
         }
         else if (io_context_.get_executor().running_in_this_thread())
         {
-            asio::co_spawn(
+            boost::asio::co_spawn(
                 io_context_,
-                [stream]() -> asio::awaitable<void>
+                [stream]() -> boost::asio::awaitable<void>
                 {
                     co_await stream->close();
                 },
-                asio::detached);
+                boost::asio::detached);
         }
         else
         {
             // io_context may not be running yet. Keep close asynchronous so FIN can
             // still be sent once the event loop starts.
-            asio::co_spawn(
+            boost::asio::co_spawn(
                 io_context_,
-                [stream]() -> asio::awaitable<void>
+                [stream]() -> boost::asio::awaitable<void>
                 {
                     co_await stream->close();
                 },
-                asio::detached);
+                boost::asio::detached);
         }
     }
 
-    std::error_code ignore;
+    boost::system::error_code ignore;
     ignore = direct_socket_.close(ignore);
 }
 
@@ -291,8 +291,8 @@ void tproxy_udp_session::on_close_local()
     stop_local(false);
 }
 
-asio::awaitable<bool> tproxy_udp_session::negotiate_proxy_stream(
-    const std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>& tunnel, const std::shared_ptr<mux_stream>& stream) const
+boost::asio::awaitable<bool> tproxy_udp_session::negotiate_proxy_stream(
+    const std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>>& tunnel, const std::shared_ptr<mux_stream>& stream) const
 {
     const syn_payload syn{.socks_cmd = socks::kCmdUdpAssociate, .addr = "0.0.0.0", .port = 0};
     std::vector<std::uint8_t> syn_data;
@@ -319,14 +319,14 @@ asio::awaitable<bool> tproxy_udp_session::negotiate_proxy_stream(
     co_return true;
 }
 
-asio::awaitable<void> tproxy_udp_session::cleanup_proxy_stream(
-    const std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>& tunnel, const std::shared_ptr<mux_stream>& stream) const
+boost::asio::awaitable<void> tproxy_udp_session::cleanup_proxy_stream(
+    const std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>>& tunnel, const std::shared_ptr<mux_stream>& stream) const
 {
     co_await stream->close();
     tunnel->remove_stream(stream->id());
 }
 
-bool tproxy_udp_session::install_proxy_stream(const std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>& tunnel,
+bool tproxy_udp_session::install_proxy_stream(const std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>>& tunnel,
                                               const std::shared_ptr<mux_stream>& stream,
                                               bool& should_start_reader)
 {
@@ -361,7 +361,7 @@ bool tproxy_udp_session::install_proxy_stream(const std::shared_ptr<mux_tunnel_i
     return true;
 }
 
-asio::awaitable<std::optional<bool>> tproxy_udp_session::open_proxy_stream()
+boost::asio::awaitable<std::optional<bool>> tproxy_udp_session::open_proxy_stream()
 {
     if (tunnel_pool_ == nullptr)
     {
@@ -404,15 +404,15 @@ void tproxy_udp_session::maybe_start_proxy_reader(const bool should_start_reader
     {
         return;
     }
-    asio::co_spawn(io_context_, proxy_read_loop_detached(shared_from_this()), asio::detached);
+    boost::asio::co_spawn(io_context_, proxy_read_loop_detached(shared_from_this()), boost::asio::detached);
 }
 
-asio::awaitable<void> tproxy_udp_session::proxy_read_loop_detached(std::shared_ptr<tproxy_udp_session> self)
+boost::asio::awaitable<void> tproxy_udp_session::proxy_read_loop_detached(std::shared_ptr<tproxy_udp_session> self)
 {
     co_await self->proxy_read_loop();
 }
 
-asio::awaitable<bool> tproxy_udp_session::ensure_proxy_stream()
+boost::asio::awaitable<bool> tproxy_udp_session::ensure_proxy_stream()
 {
     if (terminated_.load(std::memory_order_acquire))
     {
@@ -448,7 +448,57 @@ asio::awaitable<bool> tproxy_udp_session::ensure_proxy_stream()
     co_return stream_ != nullptr;
 }
 
-asio::awaitable<void> tproxy_udp_session::send_proxy(const asio::ip::udp::endpoint& dst_ep, const std::uint8_t* data, const std::size_t len)
+void tproxy_udp_session::refresh_cached_proxy_header(const boost::asio::ip::udp::endpoint& dst_ep)
+{
+    if (has_cached_proxy_header_ && cached_proxy_dst_ep_ == dst_ep)
+    {
+        return;
+    }
+    socks_udp_header h;
+    h.addr = dst_ep.address().to_string();
+    h.port = dst_ep.port();
+    cached_proxy_header_ = socks_codec::encode_udp_header(h);
+    cached_proxy_dst_ep_ = dst_ep;
+    has_cached_proxy_header_ = true;
+}
+
+bool tproxy_udp_session::build_proxy_packet(const boost::asio::ip::udp::endpoint& dst_ep,
+                                            const std::uint8_t* data,
+                                            const std::size_t len,
+                                            std::vector<std::uint8_t>& packet)
+{
+    refresh_cached_proxy_header(dst_ep);
+    if (cached_proxy_header_.size() + len > mux::kMaxPayload)
+    {
+        LOG_CTX_WARN(ctx_, "{} udp packet too large {}", log_event::kSocks, len);
+        return false;
+    }
+
+    packet.clear();
+    packet.reserve(cached_proxy_header_.size() + len);
+    packet.insert(packet.end(), cached_proxy_header_.begin(), cached_proxy_header_.end());
+    packet.insert(packet.end(), data, data + len);
+    return true;
+}
+
+boost::asio::awaitable<void> tproxy_udp_session::handle_proxy_write_failure(const std::shared_ptr<mux_stream>& stream,
+                                                                             const boost::system::error_code& write_ec)
+{
+    LOG_CTX_WARN(ctx_, "{} udp write to stream failed {}", log_event::kSocks, write_ec.message());
+    auto tunnel = tunnel_.lock();
+    if (stream_ == stream)
+    {
+        stream_.reset();
+        tunnel_.reset();
+    }
+    co_await stream->close();
+    if (tunnel != nullptr)
+    {
+        tunnel->remove_stream(stream->id());
+    }
+}
+
+boost::asio::awaitable<void> tproxy_udp_session::send_proxy(const boost::asio::ip::udp::endpoint& dst_ep, const std::uint8_t* data, const std::size_t len)
 {
     if (terminated_.load(std::memory_order_acquire))
     {
@@ -465,26 +515,11 @@ asio::awaitable<void> tproxy_udp_session::send_proxy(const asio::ip::udp::endpoi
         co_return;
     }
 
-    if (!has_cached_proxy_header_ || cached_proxy_dst_ep_ != dst_ep)
+    std::vector<std::uint8_t> pkt;
+    if (!build_proxy_packet(dst_ep, data, len, pkt))
     {
-        socks_udp_header h;
-        h.addr = dst_ep.address().to_string();
-        h.port = dst_ep.port();
-        cached_proxy_header_ = socks_codec::encode_udp_header(h);
-        cached_proxy_dst_ep_ = dst_ep;
-        has_cached_proxy_header_ = true;
-    }
-
-    if (cached_proxy_header_.size() + len > mux::kMaxPayload)
-    {
-        LOG_CTX_WARN(ctx_, "{} udp packet too large {}", log_event::kSocks, len);
         co_return;
     }
-
-    std::vector<std::uint8_t> pkt;
-    pkt.reserve(cached_proxy_header_.size() + len);
-    pkt.insert(pkt.end(), cached_proxy_header_.begin(), cached_proxy_header_.end());
-    pkt.insert(pkt.end(), data, data + len);
 
     auto stream = stream_;
     if (stream == nullptr)
@@ -495,41 +530,30 @@ asio::awaitable<void> tproxy_udp_session::send_proxy(const asio::ip::udp::endpoi
 
     if (const auto write_ec = co_await stream->async_write_some(std::move(pkt)))
     {
-        LOG_CTX_WARN(ctx_, "{} udp write to stream failed {}", log_event::kSocks, write_ec.message());
-        auto tunnel = tunnel_.lock();
-        if (stream_ == stream)
-        {
-            stream_.reset();
-            tunnel_.reset();
-        }
-        co_await stream->close();
-        if (tunnel != nullptr)
-        {
-            tunnel->remove_stream(stream->id());
-        }
+        co_await handle_proxy_write_failure(stream, write_ec);
     }
 }
 
-asio::awaitable<void> tproxy_udp_session::send_direct(const asio::ip::udp::endpoint& dst_ep, const std::uint8_t* data, const std::size_t len)
+boost::asio::awaitable<void> tproxy_udp_session::send_direct(const boost::asio::ip::udp::endpoint& dst_ep, const std::uint8_t* data, const std::size_t len)
 {
     const auto target = map_v4_to_v6(dst_ep);
-    const auto [ec, n] = co_await direct_socket_.async_send_to(asio::buffer(data, len), target, asio::as_tuple(asio::use_awaitable));
+    const auto [ec, n] = co_await direct_socket_.async_send_to(boost::asio::buffer(data, len), target, boost::asio::as_tuple(boost::asio::use_awaitable));
     if (ec)
     {
         LOG_CTX_WARN(ctx_, "{} udp direct send failed {}", log_event::kSocks, ec.message());
     }
 }
 
-asio::awaitable<void> tproxy_udp_session::direct_read_loop()
+boost::asio::awaitable<void> tproxy_udp_session::direct_read_loop()
 {
     std::vector<std::uint8_t> buf(65535);
-    asio::ip::udp::endpoint sender;
+    boost::asio::ip::udp::endpoint sender;
     for (;;)
     {
-        const auto [recv_ec, n] = co_await direct_socket_.async_receive_from(asio::buffer(buf), sender, asio::as_tuple(asio::use_awaitable));
+        const auto [recv_ec, n] = co_await direct_socket_.async_receive_from(boost::asio::buffer(buf), sender, boost::asio::as_tuple(boost::asio::use_awaitable));
         if (recv_ec)
         {
-            if (recv_ec != asio::error::operation_aborted)
+            if (recv_ec != boost::asio::error::operation_aborted)
             {
                 LOG_CTX_WARN(ctx_, "{} udp direct recv failed {}", log_event::kSocks, recv_ec.message());
             }
@@ -544,22 +568,22 @@ asio::awaitable<void> tproxy_udp_session::direct_read_loop()
             LOG_CTX_WARN(ctx_, "{} udp sender unavailable", log_event::kSocks);
             continue;
         }
-        co_await sender->send_to_client(client_ep_, norm_sender, asio::buffer(buf.data(), n));
+        co_await sender->send_to_client(client_ep_, norm_sender, boost::asio::buffer(buf.data(), n));
     }
 }
 
-asio::awaitable<void> tproxy_udp_session::proxy_read_loop()
+boost::asio::awaitable<void> tproxy_udp_session::proxy_read_loop()
 {
     for (;;)
     {
-        const auto [ec, data] = co_await recv_channel_.async_receive(asio::as_tuple(asio::use_awaitable));
+        const auto [ec, data] = co_await recv_channel_.async_receive(boost::asio::as_tuple(boost::asio::use_awaitable));
         if (ec || data.empty())
         {
             break;
         }
 
         touch();
-        asio::ip::udp::endpoint src_ep;
+        boost::asio::ip::udp::endpoint src_ep;
         std::size_t payload_offset = 0;
         if (!decode_proxy_packet(data, src_ep, payload_offset))
         {
@@ -572,12 +596,12 @@ asio::awaitable<void> tproxy_udp_session::proxy_read_loop()
             continue;
         }
         co_await sender->send_to_client(
-            client_ep_, src_ep, asio::buffer(data.data() + static_cast<std::ptrdiff_t>(payload_offset), data.size() - payload_offset));
+            client_ep_, src_ep, boost::asio::buffer(data.data() + static_cast<std::ptrdiff_t>(payload_offset), data.size() - payload_offset));
     }
 }
 
 bool tproxy_udp_session::decode_proxy_packet(const std::vector<std::uint8_t>& data,
-                                             asio::ip::udp::endpoint& src_ep,
+                                             boost::asio::ip::udp::endpoint& src_ep,
                                              std::size_t& payload_offset) const
 {
     socks_udp_header h;
@@ -592,14 +616,14 @@ bool tproxy_udp_session::decode_proxy_packet(const std::vector<std::uint8_t>& da
         return false;
     }
 
-    std::error_code addr_ec;
-    const auto addr = asio::ip::make_address(h.addr, addr_ec);
+    boost::system::error_code addr_ec;
+    const auto addr = boost::asio::ip::make_address(h.addr, addr_ec);
     if (addr_ec)
     {
         LOG_CTX_WARN(ctx_, "{} udp parse addr failed {}", log_event::kSocks, addr_ec.message());
         return false;
     }
-    src_ep = asio::ip::udp::endpoint(addr, h.port);
+    src_ep = boost::asio::ip::udp::endpoint(addr, h.port);
     payload_offset = h.header_len;
     return true;
 }

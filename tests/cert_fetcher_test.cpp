@@ -7,16 +7,16 @@
 #include <cstdint>
 #include <system_error>
 
-#include <asio/ssl.hpp>
+#include <boost/asio/ssl.hpp>
 #include <gtest/gtest.h>
-#include <asio/write.hpp>
-#include <asio/ip/tcp.hpp>
-#include <asio/co_spawn.hpp>
-#include <asio/detached.hpp>
-#include <asio/awaitable.hpp>
-#include <asio/io_context.hpp>
-#include <asio/steady_timer.hpp>
-#include <asio/use_awaitable.hpp>
+#include <boost/asio/write.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/detached.hpp>
+#include <boost/asio/awaitable.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/steady_timer.hpp>
+#include <boost/asio/use_awaitable.hpp>
 
 extern "C"
 {
@@ -139,43 +139,43 @@ constexpr char kTestKeyPem[] =
 class local_tls_server
 {
    public:
-    explicit local_tls_server(asio::io_context& ctx) : ssl_ctx_(asio::ssl::context::tls_server), acceptor_(ctx)
+    explicit local_tls_server(boost::asio::io_context& ctx) : ssl_ctx_(boost::asio::ssl::context::tls_server), acceptor_(ctx)
     {
-        ssl_ctx_.set_options(asio::ssl::context::default_workarounds);
-        ssl_ctx_.use_certificate_chain(asio::buffer(kTestCertPem, sizeof(kTestCertPem) - 1));
-        ssl_ctx_.use_private_key(asio::buffer(kTestKeyPem, sizeof(kTestKeyPem) - 1), asio::ssl::context::pem);
+        ssl_ctx_.set_options(boost::asio::ssl::context::default_workarounds);
+        ssl_ctx_.use_certificate_chain(boost::asio::buffer(kTestCertPem, sizeof(kTestCertPem) - 1));
+        ssl_ctx_.use_private_key(boost::asio::buffer(kTestKeyPem, sizeof(kTestKeyPem) - 1), boost::asio::ssl::context::pem);
 #if defined(TLS1_3_VERSION)
         SSL_CTX_set_min_proto_version(ssl_ctx_.native_handle(), TLS1_3_VERSION);
 #endif
 
-        asio::ip::tcp::endpoint ep(asio::ip::make_address("127.0.0.1"), 0);
-        std::error_code ec;
+        boost::asio::ip::tcp::endpoint ep(boost::asio::ip::make_address("127.0.0.1"), 0);
+        boost::system::error_code ec;
         acceptor_.open(ep.protocol(), ec);
-        acceptor_.set_option(asio::ip::tcp::acceptor::reuse_address(true), ec);
+        acceptor_.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true), ec);
         acceptor_.bind(ep, ec);
-        acceptor_.listen(asio::socket_base::max_listen_connections, ec);
+        acceptor_.listen(boost::asio::socket_base::max_listen_connections, ec);
         port_ = acceptor_.local_endpoint(ec).port();
     }
 
     void start()
     {
         acceptor_.async_accept(
-            [this](const std::error_code& ec, asio::ip::tcp::socket socket)
+            [this](const boost::system::error_code& ec, boost::asio::ip::tcp::socket socket)
             {
                 if (ec)
                 {
                     return;
                 }
-                auto stream = std::make_shared<asio::ssl::stream<asio::ip::tcp::socket>>(std::move(socket), ssl_ctx_);
-                stream->async_handshake(asio::ssl::stream_base::server, [stream](const std::error_code&) {});
+                auto stream = std::make_shared<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>>(std::move(socket), ssl_ctx_);
+                stream->async_handshake(boost::asio::ssl::stream_base::server, [stream](const boost::system::error_code&) {});
             });
     }
 
     [[nodiscard]] std::uint16_t port() const { return port_; }
 
    private:
-    asio::ssl::context ssl_ctx_;
-    asio::ip::tcp::acceptor acceptor_;
+    boost::asio::ssl::context ssl_ctx_;
+    boost::asio::ip::tcp::acceptor acceptor_;
     std::uint16_t port_ = 0;
 };
 
@@ -183,14 +183,14 @@ class local_tls_server
 
 TEST(CertFetcherTest, BasicFetch)
 {
-    asio::io_context ctx;
+    boost::asio::io_context ctx;
     local_tls_server server(ctx);
     server.start();
     bool finished = false;
 
-    asio::co_spawn(
+    boost::asio::co_spawn(
         ctx,
-        [&]() -> asio::awaitable<void>
+        [&]() -> boost::asio::awaitable<void>
         {
             const auto res = co_await reality::cert_fetcher::fetch(ctx, "127.0.0.1", server.port(), "example.com");
             if (res.has_value())
@@ -200,12 +200,12 @@ TEST(CertFetcherTest, BasicFetch)
             finished = true;
             co_return;
         },
-        asio::detached);
+        boost::asio::detached);
 
-    asio::steady_timer timer(ctx);
+    boost::asio::steady_timer timer(ctx);
     timer.expires_after(std::chrono::seconds(10));
     timer.async_wait(
-        [&](const std::error_code ec)
+        [&](const boost::system::error_code ec)
         {
             if (!ec)
             {
@@ -282,7 +282,7 @@ TEST(CertFetcherTest, ReassemblerPartialMessagePath)
 
 TEST(CertFetcherTest, InitHandshakeMaterialFailureBranches)
 {
-    asio::io_context ctx;
+    boost::asio::io_context ctx;
     reality::cert_fetcher::fetch_session session(ctx, "127.0.0.1", 443, "example.com", "trace");
 
     std::vector<std::uint8_t> client_random(32, 0);
@@ -300,23 +300,23 @@ TEST(CertFetcherTest, InitHandshakeMaterialFailureBranches)
 
 TEST(CertFetcherTest, MockServerScenarios)
 {
-    using asio::ip::tcp;
-    asio::io_context ctx;
+    using boost::asio::ip::tcp;
+    boost::asio::io_context ctx;
 
     auto run_mock_server = [&](std::vector<std::uint8_t> data_to_send)
     {
         auto acceptor = std::make_shared<tcp::acceptor>(ctx, tcp::endpoint(tcp::v4(), 0));
         std::uint16_t port = acceptor->local_endpoint().port();
 
-        asio::co_spawn(
+        boost::asio::co_spawn(
             ctx,
-            [acceptor, data_to_send]() -> asio::awaitable<void>
+            [acceptor, data_to_send]() -> boost::asio::awaitable<void>
             {
-                auto socket = co_await acceptor->async_accept(asio::use_awaitable);
-                co_await asio::async_write(socket, asio::buffer(data_to_send), asio::use_awaitable);
+                auto socket = co_await acceptor->async_accept(boost::asio::use_awaitable);
+                co_await boost::asio::async_write(socket, boost::asio::buffer(data_to_send), boost::asio::use_awaitable);
                 co_return;
             },
-            asio::detached);
+            boost::asio::detached);
 
         return port;
     };
@@ -325,15 +325,15 @@ TEST(CertFetcherTest, MockServerScenarios)
         std::vector<std::uint8_t> bad_rec = {0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x32};
         std::uint16_t port = run_mock_server(bad_rec);
 
-        asio::co_spawn(
+        boost::asio::co_spawn(
             ctx,
-            [&]() -> asio::awaitable<void>
+            [&]() -> boost::asio::awaitable<void>
             {
                 auto res = co_await reality::cert_fetcher::fetch(ctx, "127.0.0.1", port, "localhost", "test");
                 EXPECT_FALSE(res.has_value());
                 co_return;
             },
-            asio::detached);
+            boost::asio::detached);
         ctx.run();
         ctx.restart();
     }
@@ -342,15 +342,15 @@ TEST(CertFetcherTest, MockServerScenarios)
         std::vector<std::uint8_t> unexpected_type = {0x17, 0x03, 0x03, 0x00, 0x05, 0x01, 0x02, 0x03, 0x04, 0x05};
         std::uint16_t port = run_mock_server(unexpected_type);
 
-        asio::co_spawn(
+        boost::asio::co_spawn(
             ctx,
-            [&]() -> asio::awaitable<void>
+            [&]() -> boost::asio::awaitable<void>
             {
                 auto res = co_await reality::cert_fetcher::fetch(ctx, "127.0.0.1", port, "localhost", "test");
                 EXPECT_FALSE(res.has_value());
                 co_return;
             },
-            asio::detached);
+            boost::asio::detached);
         ctx.run();
         ctx.restart();
     }
@@ -359,15 +359,15 @@ TEST(CertFetcherTest, MockServerScenarios)
         std::vector<std::uint8_t> short_sh = {0x16, 0x03, 0x03, 0x00, 0x05, 0x02, 0x00, 0x00, 0x00, 0x01};
         std::uint16_t port = run_mock_server(short_sh);
 
-        asio::co_spawn(
+        boost::asio::co_spawn(
             ctx,
-            [&]() -> asio::awaitable<void>
+            [&]() -> boost::asio::awaitable<void>
             {
                 auto res = co_await reality::cert_fetcher::fetch(ctx, "127.0.0.1", port, "localhost", "test");
                 EXPECT_FALSE(res.has_value());
                 co_return;
             },
-            asio::detached);
+            boost::asio::detached);
         ctx.run();
         ctx.restart();
     }
@@ -376,15 +376,15 @@ TEST(CertFetcherTest, MockServerScenarios)
         std::vector<std::uint8_t> too_short_sh = {0x16, 0x03, 0x03, 0x00, 0x03, 0x02, 0x00, 0x00};
         std::uint16_t port = run_mock_server(too_short_sh);
 
-        asio::co_spawn(
+        boost::asio::co_spawn(
             ctx,
-            [&]() -> asio::awaitable<void>
+            [&]() -> boost::asio::awaitable<void>
             {
                 auto res = co_await reality::cert_fetcher::fetch(ctx, "127.0.0.1", port, "localhost", "test");
                 EXPECT_FALSE(res.has_value());
                 co_return;
             },
-            asio::detached);
+            boost::asio::detached);
         ctx.run();
         ctx.restart();
     }
@@ -393,15 +393,15 @@ TEST(CertFetcherTest, MockServerScenarios)
         std::vector<std::uint8_t> long_rec = {0x16, 0x03, 0x03, 0x48, 0x01};
         std::uint16_t port = run_mock_server(long_rec);
 
-        asio::co_spawn(
+        boost::asio::co_spawn(
             ctx,
-            [&]() -> asio::awaitable<void>
+            [&]() -> boost::asio::awaitable<void>
             {
                 auto res = co_await reality::cert_fetcher::fetch(ctx, "127.0.0.1", port, "localhost", "test");
                 EXPECT_FALSE(res.has_value());
                 co_return;
             },
-            asio::detached);
+            boost::asio::detached);
         ctx.run();
         ctx.restart();
     }
@@ -412,15 +412,15 @@ TEST(CertFetcherTest, MockServerScenarios)
                                           0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0x00, 0x00, 0x00, 0x00};
         uint16_t port = run_mock_server(bad_cs_sh);
 
-        asio::co_spawn(
+        boost::asio::co_spawn(
             ctx,
-            [&]() -> asio::awaitable<void>
+            [&]() -> boost::asio::awaitable<void>
             {
                 auto res = co_await reality::cert_fetcher::fetch(ctx, "127.0.0.1", port, "localhost", "test");
                 EXPECT_FALSE(res.has_value());
                 co_return;
             },
-            asio::detached);
+            boost::asio::detached);
         ctx.run();
         ctx.restart();
     }
@@ -432,15 +432,15 @@ TEST(CertFetcherTest, MockServerScenarios)
         };
         uint16_t port = run_mock_server(short_sid_sh);
 
-        asio::co_spawn(
+        boost::asio::co_spawn(
             ctx,
-            [&]() -> asio::awaitable<void>
+            [&]() -> boost::asio::awaitable<void>
             {
                 auto res = co_await reality::cert_fetcher::fetch(ctx, "127.0.0.1", port, "localhost", "test");
                 EXPECT_FALSE(res.has_value());
                 co_return;
             },
-            asio::detached);
+            boost::asio::detached);
         ctx.run();
         ctx.restart();
     }
@@ -451,15 +451,15 @@ TEST(CertFetcherTest, MockServerScenarios)
                                         0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0x00, 0x13, 0x02, 0x00};
         uint16_t port = run_mock_server(sh_1302);
 
-        asio::co_spawn(
+        boost::asio::co_spawn(
             ctx,
-            [&]() -> asio::awaitable<void>
+            [&]() -> boost::asio::awaitable<void>
             {
                 auto res = co_await reality::cert_fetcher::fetch(ctx, "127.0.0.1", port, "localhost", "test");
                 EXPECT_FALSE(res.has_value());
                 co_return;
             },
-            asio::detached);
+            boost::asio::detached);
         ctx.run();
         ctx.restart();
     }
@@ -470,15 +470,15 @@ TEST(CertFetcherTest, MockServerScenarios)
                                         0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0x00, 0x13, 0x03, 0x00};
         uint16_t port = run_mock_server(sh_1303);
 
-        asio::co_spawn(
+        boost::asio::co_spawn(
             ctx,
-            [&]() -> asio::awaitable<void>
+            [&]() -> boost::asio::awaitable<void>
             {
                 auto res = co_await reality::cert_fetcher::fetch(ctx, "127.0.0.1", port, "localhost", "test");
                 EXPECT_FALSE(res.has_value());
                 co_return;
             },
-            asio::detached);
+            boost::asio::detached);
         ctx.run();
         ctx.restart();
     }
@@ -491,15 +491,15 @@ TEST(CertFetcherTest, MockServerScenarios)
         };
         uint16_t port = run_mock_server(short_sh_for_cs);
 
-        asio::co_spawn(
+        boost::asio::co_spawn(
             ctx,
-            [&]() -> asio::awaitable<void>
+            [&]() -> boost::asio::awaitable<void>
             {
                 auto res = co_await reality::cert_fetcher::fetch(ctx, "127.0.0.1", port, "localhost", "test");
                 EXPECT_FALSE(res.has_value());
                 co_return;
             },
-            asio::detached);
+            boost::asio::detached);
         ctx.run();
         ctx.restart();
     }
@@ -508,15 +508,15 @@ TEST(CertFetcherTest, MockServerScenarios)
         std::vector<std::uint8_t> invalid_type = {0x99, 0x03, 0x03, 0x00, 0x01, 0x00};
         uint16_t port = run_mock_server(invalid_type);
 
-        asio::co_spawn(
+        boost::asio::co_spawn(
             ctx,
-            [&]() -> asio::awaitable<void>
+            [&]() -> boost::asio::awaitable<void>
             {
                 auto res = co_await reality::cert_fetcher::fetch(ctx, "127.0.0.1", port, "localhost", "test");
                 EXPECT_FALSE(res.has_value());
                 co_return;
             },
-            asio::detached);
+            boost::asio::detached);
         ctx.run();
         ctx.restart();
     }
@@ -524,61 +524,61 @@ TEST(CertFetcherTest, MockServerScenarios)
 
 TEST(CertFetcherTest, ConnectFailure)
 {
-    asio::io_context ctx;
-    asio::co_spawn(
+    boost::asio::io_context ctx;
+    boost::asio::co_spawn(
         ctx,
-        [&]() -> asio::awaitable<void>
+        [&]() -> boost::asio::awaitable<void>
         {
             auto res = co_await reality::cert_fetcher::fetch(ctx, "127.0.0.1", 1, "localhost", "test");
             EXPECT_FALSE(res.has_value());
             co_return;
         },
-        asio::detached);
+        boost::asio::detached);
     ctx.run();
 }
 
 TEST(CertFetcherTest, ConnectTimeout)
 {
-    asio::io_context ctx;
-    std::error_code ec;
+    boost::asio::io_context ctx;
+    boost::system::error_code ec;
 
-    asio::ip::tcp::acceptor saturated_acceptor(ctx);
-    ec = saturated_acceptor.open(asio::ip::tcp::v4(), ec);
+    boost::asio::ip::tcp::acceptor saturated_acceptor(ctx);
+    ec = saturated_acceptor.open(boost::asio::ip::tcp::v4(), ec);
     ASSERT_FALSE(ec);
-    ec = saturated_acceptor.set_option(asio::ip::tcp::acceptor::reuse_address(true), ec);
+    ec = saturated_acceptor.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true), ec);
     ASSERT_FALSE(ec);
-    ec = saturated_acceptor.bind(asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0), ec);
+    ec = saturated_acceptor.bind(boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 0), ec);
     ASSERT_FALSE(ec);
     ec = saturated_acceptor.listen(1, ec);
     ASSERT_FALSE(ec);
 
     const auto target_port = saturated_acceptor.local_endpoint().port();
-    asio::ip::tcp::socket queued_client_a(ctx);
-    queued_client_a.connect({asio::ip::make_address("127.0.0.1"), target_port}, ec);
+    boost::asio::ip::tcp::socket queued_client_a(ctx);
+    queued_client_a.connect({boost::asio::ip::make_address("127.0.0.1"), target_port}, ec);
     ASSERT_FALSE(ec);
-    asio::ip::tcp::socket queued_client_b(ctx);
-    queued_client_b.connect({asio::ip::make_address("127.0.0.1"), target_port}, ec);
+    boost::asio::ip::tcp::socket queued_client_b(ctx);
+    queued_client_b.connect({boost::asio::ip::make_address("127.0.0.1"), target_port}, ec);
     ASSERT_FALSE(ec);
 
     bool finished = false;
     const auto start = std::chrono::steady_clock::now();
-    asio::co_spawn(
+    boost::asio::co_spawn(
         ctx,
-        [&]() -> asio::awaitable<void>
+        [&]() -> boost::asio::awaitable<void>
         {
             auto res = co_await reality::cert_fetcher::fetch(ctx, "127.0.0.1", target_port, "localhost", "test", 1);
             EXPECT_FALSE(res.has_value());
             finished = true;
             co_return;
         },
-        asio::detached);
+        boost::asio::detached);
     ctx.run();
     const auto elapsed = std::chrono::steady_clock::now() - start;
 
     EXPECT_TRUE(finished);
     EXPECT_LT(std::chrono::duration_cast<std::chrono::seconds>(elapsed).count(), 5);
 
-    std::error_code close_ec;
+    boost::system::error_code close_ec;
     queued_client_a.close(close_ec);
     queued_client_b.close(close_ec);
     saturated_acceptor.close(close_ec);
@@ -590,7 +590,7 @@ TEST(CertFetcherTest, WhiteBoxHelpersAndRecordTypeBranches)
     EXPECT_EQ(reality::cert_fetcher::hex(std::vector<std::uint8_t>{0x0f}), "0f");
     EXPECT_EQ(reality::cert_fetcher::hex(raw.data(), raw.size()), "01abff");
 
-    asio::io_context ctx;
+    boost::asio::io_context ctx;
     reality::cert_fetcher::fetch_session session(ctx, "127.0.0.1", 443, "example.com", "trace");
 
     EXPECT_FALSE(session.validate_server_hello_body({}));
@@ -606,12 +606,12 @@ TEST(CertFetcherTest, WhiteBoxHelpersAndRecordTypeBranches)
     std::uint8_t alert_head[5] = {reality::kContentTypeAlert, 0x03, 0x03, 0x00, 0x03};
     auto alert_ret = session.handle_record_by_content_type(alert_head, rec, pt_buf);
     EXPECT_FALSE(alert_ret.has_value());
-    EXPECT_EQ(alert_ret.error(), asio::error::connection_reset);
+    EXPECT_EQ(alert_ret.error(), boost::asio::error::connection_reset);
 
     std::uint8_t bad_head[5] = {0x99, 0x03, 0x03, 0x00, 0x03};
     auto bad_ret = session.handle_record_by_content_type(bad_head, rec, pt_buf);
     EXPECT_FALSE(bad_ret.has_value());
-    EXPECT_EQ(bad_ret.error(), asio::error::invalid_argument);
+    EXPECT_EQ(bad_ret.error(), boost::asio::error::invalid_argument);
 
     std::uint8_t ccs_head[5] = {reality::kContentTypeChangeCipherSpec, 0x03, 0x03, 0x00, 0x03};
     auto ccs_ret = session.handle_record_by_content_type(ccs_head, rec, pt_buf);
@@ -633,7 +633,7 @@ TEST(CertFetcherTest, WhiteBoxHelpersAndRecordTypeBranches)
 
 TEST(CertFetcherTest, WhiteBoxProcessServerHelloAndHandshakeMessage)
 {
-    asio::io_context ctx;
+    boost::asio::io_context ctx;
     reality::cert_fetcher::fetch_session session(ctx, "127.0.0.1", 443, "example.com", "trace");
 
     std::vector<std::uint8_t> server_hello(43, 0);
@@ -644,7 +644,7 @@ TEST(CertFetcherTest, WhiteBoxProcessServerHelloAndHandshakeMessage)
     server_hello[40] = 0x34;
 
     const auto ec = session.process_server_hello(server_hello);
-    EXPECT_EQ(ec, asio::error::no_protocol_option);
+    EXPECT_EQ(ec, boost::asio::error::no_protocol_option);
 
     auto encrypted_extensions = reality::construct_encrypted_extensions("h2");
     std::vector<std::uint8_t> cert_msg;
@@ -661,7 +661,7 @@ TEST(CertFetcherTest, WhiteBoxProcessServerHelloAndHandshakeMessage)
 
 TEST(CertFetcherTest, ProcessServerHelloHandlesHkdfContextFailure)
 {
-    asio::io_context ctx;
+    boost::asio::io_context ctx;
     reality::cert_fetcher::fetch_session session(ctx, "127.0.0.1", 443, "example.com", "trace");
 
     std::array<std::uint8_t, 32> client_public{};
@@ -686,10 +686,10 @@ TEST(CertFetcherTest, ProcessServerHelloHandlesHkdfContextFailure)
 
 TEST(CertFetcherTest, ProcessServerHelloTruncatedMessageLength)
 {
-    asio::io_context ctx;
+    boost::asio::io_context ctx;
     reality::cert_fetcher::fetch_session session(ctx, "127.0.0.1", 443, "example.com", "trace");
 
     std::vector<std::uint8_t> server_hello = {0x02, 0x00, 0x00, 0x20, 0x01};
     const auto ec = session.process_server_hello(server_hello);
-    EXPECT_EQ(ec, asio::error::fault);
+    EXPECT_EQ(ec, boost::asio::error::fault);
 }

@@ -10,9 +10,9 @@
 #include <cstdint>
 #include <system_error>
 
-#include <asio/awaitable.hpp>
-#include <asio/io_context.hpp>
-#include <asio/experimental/concurrent_channel.hpp>
+#include <boost/asio/awaitable.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/experimental/concurrent_channel.hpp>
 
 #include "log_context.h"
 #include "mux_stream_interface.h"
@@ -29,18 +29,18 @@ class mux_stream : public mux_stream_interface, public std::enable_shared_from_t
                std::uint32_t cid,
                const std::string& trace_id,
                const std::shared_ptr<mux_connection>& connection,
-               asio::io_context& io_context);
+               boost::asio::io_context& io_context);
 
     ~mux_stream() override;
 
     [[nodiscard]] std::uint32_t id() const;
 
-    [[nodiscard]] asio::awaitable<std::tuple<std::error_code, std::vector<std::uint8_t>>> async_read_some();
+    [[nodiscard]] boost::asio::awaitable<std::tuple<boost::system::error_code, std::vector<std::uint8_t>>> async_read_some();
 
-    [[nodiscard]] asio::awaitable<std::error_code> async_write_some(const void* data, std::size_t len);
-    [[nodiscard]] asio::awaitable<std::error_code> async_write_some(std::vector<std::uint8_t> payload);
+    [[nodiscard]] boost::asio::awaitable<boost::system::error_code> async_write_some(const void* data, std::size_t len);
+    [[nodiscard]] boost::asio::awaitable<boost::system::error_code> async_write_some(std::vector<std::uint8_t> payload);
 
-    asio::awaitable<void> close();
+    boost::asio::awaitable<void> close();
 
     void on_data(std::vector<std::uint8_t> data) override;
 
@@ -55,7 +55,7 @@ class mux_stream : public mux_stream_interface, public std::enable_shared_from_t
     std::uint32_t id_ = 0;
     connection_context ctx_;
     std::weak_ptr<mux_connection> connection_;
-    asio::experimental::concurrent_channel<void(std::error_code, std::vector<std::uint8_t>)> recv_channel_;
+    boost::asio::experimental::concurrent_channel<void(boost::system::error_code, std::vector<std::uint8_t>)> recv_channel_;
     std::atomic<bool> is_closed_{false};
     std::atomic<bool> fin_sent_{false};
     std::atomic<bool> fin_received_{false};

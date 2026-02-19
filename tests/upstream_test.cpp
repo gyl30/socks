@@ -10,11 +10,11 @@
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include <asio/post.hpp>
-#include <asio/write.hpp>
-#include <asio/buffer.hpp>
-#include <asio/ip/tcp.hpp>
-#include <asio/io_context.hpp>
+#include <boost/asio/post.hpp>
+#include <boost/asio/write.hpp>
+#include <boost/asio/buffer.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/io_context.hpp>
 
 #include <sys/socket.h>
 #include <netinet/tcp.h>
@@ -76,11 +76,11 @@ extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void*
     return __real_setsockopt(sockfd, level, optname, optval, optlen);
 }
 
-std::shared_ptr<mux::mux_tunnel_impl<asio::ip::tcp::socket>> make_test_tunnel(
-    asio::io_context& io_context, const mux::config::limits_t& limits = {})
+std::shared_ptr<mux::mux_tunnel_impl<boost::asio::ip::tcp::socket>> make_test_tunnel(
+    boost::asio::io_context& io_context, const mux::config::limits_t& limits = {})
 {
-    return std::make_shared<mux::mux_tunnel_impl<asio::ip::tcp::socket>>(
-        asio::ip::tcp::socket(io_context),
+    return std::make_shared<mux::mux_tunnel_impl<boost::asio::ip::tcp::socket>>(
+        boost::asio::ip::tcp::socket(io_context),
         io_context,
         mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()},
         true,
@@ -91,7 +91,7 @@ std::shared_ptr<mux::mux_tunnel_impl<asio::ip::tcp::socket>> make_test_tunnel(
         mux::config::heartbeat_t{});
 }
 
-std::shared_ptr<mux::mux_stream> make_mock_stream(asio::io_context& io_context,
+std::shared_ptr<mux::mux_stream> make_mock_stream(boost::asio::io_context& io_context,
                                                    const std::shared_ptr<mux::mock_mux_connection>& connection,
                                                    const std::uint32_t stream_id = 1)
 {
@@ -104,16 +104,16 @@ class upstream_test : public ::testing::Test
 {
    protected:
     void TearDown() override { ctx_.stop(); }
-    asio::io_context& ctx() { return ctx_; }
+    boost::asio::io_context& ctx() { return ctx_; }
 
    private:
-    asio::io_context ctx_;
+    boost::asio::io_context ctx_;
 };
 
 class echo_server
 {
    public:
-    echo_server() : acceptor_(ctx_, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0))
+    echo_server() : acceptor_(ctx_, boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 0))
     {
         do_accept();
         thread_ = std::thread([this] { ctx_.run(); });
@@ -146,9 +146,9 @@ class echo_server
         {
             return;
         }
-        auto socket = std::make_shared<asio::ip::tcp::socket>(acceptor_.get_executor());
+        auto socket = std::make_shared<boost::asio::ip::tcp::socket>(acceptor_.get_executor());
         acceptor_.async_accept(*socket,
-                               [this, socket](const std::error_code ec)
+                               [this, socket](const boost::system::error_code ec)
                                {
                                     if (!ec)
                                     {
@@ -161,17 +161,17 @@ class echo_server
                                });
     }
 
-    void do_echo(const std::shared_ptr<asio::ip::tcp::socket>& socket)
+    void do_echo(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket)
     {
         auto buf = std::make_shared<std::vector<std::uint8_t>>(1024);
-        socket->async_read_some(asio::buffer(*buf),
-                                [this, socket, buf](const std::error_code ec, const std::size_t n)
+        socket->async_read_some(boost::asio::buffer(*buf),
+                                [this, socket, buf](const boost::system::error_code ec, const std::size_t n)
                                 {
                                     if (!ec)
                                     {
-                                        asio::async_write(*socket,
-                                                          asio::buffer(*buf, n),
-                                                          [this, socket, buf](const std::error_code ec_write, std::size_t)
+                                        boost::asio::async_write(*socket,
+                                                          boost::asio::buffer(*buf, n),
+                                                          [this, socket, buf](const boost::system::error_code ec_write, std::size_t)
                                                           {
                                                               if (!ec_write)
                                                               {
@@ -182,8 +182,8 @@ class echo_server
                                 });
     }
 
-    asio::io_context ctx_;
-    asio::ip::tcp::acceptor acceptor_;
+    boost::asio::io_context ctx_;
+    boost::asio::ip::tcp::acceptor acceptor_;
     std::thread thread_;
     std::atomic<bool> stopped_{false};
 };
@@ -227,23 +227,23 @@ TEST_F(upstream_test, DirectUpstreamConnectTimeoutWhenBacklogSaturated)
 {
     auto& stats = mux::statistics::instance();
     const auto connect_timeouts_before = stats.direct_upstream_connect_timeouts();
-    std::error_code ec;
-    asio::ip::tcp::acceptor saturated_acceptor(ctx());
-    ec = saturated_acceptor.open(asio::ip::tcp::v4(), ec);
+    boost::system::error_code ec;
+    boost::asio::ip::tcp::acceptor saturated_acceptor(ctx());
+    ec = saturated_acceptor.open(boost::asio::ip::tcp::v4(), ec);
     ASSERT_FALSE(ec);
-    ec = saturated_acceptor.set_option(asio::ip::tcp::acceptor::reuse_address(true), ec);
+    ec = saturated_acceptor.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true), ec);
     ASSERT_FALSE(ec);
-    ec = saturated_acceptor.bind(asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0), ec);
+    ec = saturated_acceptor.bind(boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 0), ec);
     ASSERT_FALSE(ec);
     ec = saturated_acceptor.listen(1, ec);
     ASSERT_FALSE(ec);
 
     const auto target_port = saturated_acceptor.local_endpoint().port();
-    asio::ip::tcp::socket queued_client_a(ctx());
-    queued_client_a.connect({asio::ip::make_address("127.0.0.1"), target_port}, ec);
+    boost::asio::ip::tcp::socket queued_client_a(ctx());
+    queued_client_a.connect({boost::asio::ip::make_address("127.0.0.1"), target_port}, ec);
     ASSERT_FALSE(ec);
-    asio::ip::tcp::socket queued_client_b(ctx());
-    queued_client_b.connect({asio::ip::make_address("127.0.0.1"), target_port}, ec);
+    boost::asio::ip::tcp::socket queued_client_b(ctx());
+    queued_client_b.connect({boost::asio::ip::make_address("127.0.0.1"), target_port}, ec);
     ASSERT_FALSE(ec);
 
     mux::direct_upstream upstream(ctx(), mux::connection_context{}, 0, 1);
@@ -255,7 +255,7 @@ TEST_F(upstream_test, DirectUpstreamConnectTimeoutWhenBacklogSaturated)
     EXPECT_LT(std::chrono::duration_cast<std::chrono::seconds>(elapsed).count(), 5);
     EXPECT_GE(stats.direct_upstream_connect_timeouts(), connect_timeouts_before + 1);
 
-    std::error_code close_ec;
+    boost::system::error_code close_ec;
     queued_client_a.close(close_ec);
     queued_client_b.close(close_ec);
     saturated_acceptor.close(close_ec);
@@ -358,18 +358,18 @@ TEST_F(upstream_test, DirectUpstreamConnectWithNoDelayFailureStillSucceeds)
 
 TEST_F(upstream_test, DirectUpstreamWriteError)
 {
-    auto acceptor = std::make_shared<asio::ip::tcp::acceptor>(ctx(), asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+    auto acceptor = std::make_shared<boost::asio::ip::tcp::acceptor>(ctx(), boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 0));
     std::uint16_t port = acceptor->local_endpoint().port();
 
-    asio::co_spawn(
+    boost::asio::co_spawn(
         ctx(),
-        [acceptor]() -> asio::awaitable<void>
+        [acceptor]() -> boost::asio::awaitable<void>
         {
-            auto socket = co_await acceptor->async_accept(asio::use_awaitable);
+            auto socket = co_await acceptor->async_accept(boost::asio::use_awaitable);
             socket.close();
             co_return;
         },
-        asio::detached);
+        boost::asio::detached);
 
     mux::direct_upstream upstream(ctx(), mux::connection_context{});
     const auto success = mux::test::run_awaitable(ctx(), upstream.connect("127.0.0.1", port));
@@ -415,7 +415,7 @@ TEST_F(upstream_test, ProxyUpstreamReadWriteWithoutConnect)
 
     std::vector<std::uint8_t> buf(16);
     const auto [read_ec, read_n] = mux::test::run_awaitable(ctx(), upstream.read(buf));
-    EXPECT_EQ(read_ec, asio::error::operation_aborted);
+    EXPECT_EQ(read_ec, boost::asio::error::operation_aborted);
     EXPECT_EQ(read_n, 0);
 
     const auto write_n = mux::test::run_awaitable(ctx(), upstream.write({0x01, 0x02, 0x03}));
@@ -471,10 +471,10 @@ TEST_F(upstream_test, ProxyUpstreamConnectSuccessSetsStream)
     auto tunnel = make_test_tunnel(ctx());
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
     ON_CALL(*mock_conn, id()).WillByDefault(::testing::Return(9));
-    ON_CALL(*mock_conn, mock_send_async(::testing::_, ::testing::_, ::testing::_)).WillByDefault(::testing::Return(std::error_code{}));
+    ON_CALL(*mock_conn, mock_send_async(::testing::_, ::testing::_, ::testing::_)).WillByDefault(::testing::Return(boost::system::error_code{}));
     tunnel->connection_ = mock_conn;
 
-    EXPECT_CALL(*mock_conn, mock_send_async(::testing::_, mux::kCmdSyn, ::testing::_)).WillOnce(::testing::Return(std::error_code{}));
+    EXPECT_CALL(*mock_conn, mock_send_async(::testing::_, mux::kCmdSyn, ::testing::_)).WillOnce(::testing::Return(boost::system::error_code{}));
     EXPECT_CALL(*mock_conn, register_stream(::testing::_, ::testing::_))
         .WillOnce(
             [this](const std::uint32_t id, std::shared_ptr<mux::mux_stream_interface> stream_iface) -> bool
@@ -491,7 +491,7 @@ TEST_F(upstream_test, ProxyUpstreamConnectSuccessSetsStream)
                 ack.socks_rep = socks::kRepSuccess;
                 std::vector<std::uint8_t> ack_data;
                 mux::mux_codec::encode_ack(ack, ack_data);
-                asio::post(this->ctx(), [stream, ack_data]() { stream->on_data(ack_data); });
+                boost::asio::post(this->ctx(), [stream, ack_data]() { stream->on_data(ack_data); });
                 return true;
             });
 
@@ -505,7 +505,7 @@ TEST_F(upstream_test, ProxyUpstreamConnectFailsWhenSendSynFailsAndCleansStream)
     auto tunnel = make_test_tunnel(ctx());
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
     ON_CALL(*mock_conn, id()).WillByDefault(::testing::Return(9));
-    ON_CALL(*mock_conn, mock_send_async(::testing::_, ::testing::_, ::testing::_)).WillByDefault(::testing::Return(std::error_code{}));
+    ON_CALL(*mock_conn, mock_send_async(::testing::_, ::testing::_, ::testing::_)).WillByDefault(::testing::Return(boost::system::error_code{}));
     tunnel->connection_ = mock_conn;
 
     std::uint32_t stream_id = 0;
@@ -516,8 +516,8 @@ TEST_F(upstream_test, ProxyUpstreamConnectFailsWhenSendSynFailsAndCleansStream)
                       stream_id = id;
                       return true;
                   });
-    EXPECT_CALL(*mock_conn, mock_send_async(::testing::_, mux::kCmdSyn, ::testing::_)).WillOnce(::testing::Return(asio::error::broken_pipe));
-    EXPECT_CALL(*mock_conn, mock_send_async(::testing::_, mux::kCmdFin, ::testing::_)).WillOnce(::testing::Return(std::error_code{}));
+    EXPECT_CALL(*mock_conn, mock_send_async(::testing::_, mux::kCmdSyn, ::testing::_)).WillOnce(::testing::Return(boost::asio::error::broken_pipe));
+    EXPECT_CALL(*mock_conn, mock_send_async(::testing::_, mux::kCmdFin, ::testing::_)).WillOnce(::testing::Return(boost::system::error_code{}));
     EXPECT_CALL(*mock_conn, remove_stream(::testing::_)).Times(1);
 
     mux::proxy_upstream upstream(tunnel, mux::connection_context{});
@@ -531,7 +531,7 @@ TEST_F(upstream_test, ProxyUpstreamConnectFailsWhenAckRejectedAndCleansStream)
     auto tunnel = make_test_tunnel(ctx());
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
     ON_CALL(*mock_conn, id()).WillByDefault(::testing::Return(9));
-    ON_CALL(*mock_conn, mock_send_async(::testing::_, ::testing::_, ::testing::_)).WillByDefault(::testing::Return(std::error_code{}));
+    ON_CALL(*mock_conn, mock_send_async(::testing::_, ::testing::_, ::testing::_)).WillByDefault(::testing::Return(boost::system::error_code{}));
     tunnel->connection_ = mock_conn;
 
     EXPECT_CALL(*mock_conn, register_stream(::testing::_, ::testing::_))
@@ -550,11 +550,11 @@ TEST_F(upstream_test, ProxyUpstreamConnectFailsWhenAckRejectedAndCleansStream)
                 ack.socks_rep = socks::kRepConnRefused;
                 std::vector<std::uint8_t> ack_data;
                 mux::mux_codec::encode_ack(ack, ack_data);
-                asio::post(this->ctx(), [stream, ack_data]() { stream->on_data(ack_data); });
+                boost::asio::post(this->ctx(), [stream, ack_data]() { stream->on_data(ack_data); });
                 return true;
             });
-    EXPECT_CALL(*mock_conn, mock_send_async(::testing::_, mux::kCmdSyn, ::testing::_)).WillOnce(::testing::Return(std::error_code{}));
-    EXPECT_CALL(*mock_conn, mock_send_async(::testing::_, mux::kCmdFin, ::testing::_)).WillOnce(::testing::Return(std::error_code{}));
+    EXPECT_CALL(*mock_conn, mock_send_async(::testing::_, mux::kCmdSyn, ::testing::_)).WillOnce(::testing::Return(boost::system::error_code{}));
+    EXPECT_CALL(*mock_conn, mock_send_async(::testing::_, mux::kCmdFin, ::testing::_)).WillOnce(::testing::Return(boost::system::error_code{}));
     EXPECT_CALL(*mock_conn, remove_stream(::testing::_)).Times(1);
 
     mux::proxy_upstream upstream(tunnel, mux::connection_context{});
@@ -646,7 +646,7 @@ TEST_F(upstream_test, ProxyUpstreamCleanupStreamWithoutTunnelStillClosesStream)
     mux::proxy_upstream upstream(nullptr, mux::connection_context{});
 
     EXPECT_CALL(*mock_conn, mock_send_async(23, mux::kCmdFin, std::vector<std::uint8_t>{}))
-        .WillOnce(::testing::Return(std::error_code{}));
+        .WillOnce(::testing::Return(boost::system::error_code{}));
     mux::test::run_awaitable_void(ctx(), upstream.cleanup_stream(stream));
 }
 
@@ -690,7 +690,7 @@ TEST_F(upstream_test, ProxyUpstreamReadReturnsZeroWhenStreamReportsEof)
     stream->on_close();
     std::vector<std::uint8_t> buf(8);
     const auto [ec, n] = mux::test::run_awaitable(ctx(), upstream.read(buf));
-    EXPECT_EQ(ec, asio::error::eof);
+    EXPECT_EQ(ec, boost::asio::error::eof);
     EXPECT_EQ(n, 0U);
 }
 
@@ -704,7 +704,7 @@ TEST_F(upstream_test, ProxyUpstreamReadReturnsZeroWhenPayloadEmpty)
     stream->on_data({});
     std::vector<std::uint8_t> buf(8);
     const auto [ec, n] = mux::test::run_awaitable(ctx(), upstream.read(buf));
-    EXPECT_EQ(ec, asio::error::eof);
+    EXPECT_EQ(ec, boost::asio::error::eof);
     EXPECT_EQ(n, 0U);
 }
 
@@ -716,7 +716,7 @@ TEST_F(upstream_test, ProxyUpstreamWriteSuccess)
     upstream.stream_ = stream;
 
     const std::vector<std::uint8_t> data = {1, 2, 3};
-    EXPECT_CALL(*mock_conn, mock_send_async(7, mux::kCmdDat, data)).WillOnce(::testing::Return(std::error_code{}));
+    EXPECT_CALL(*mock_conn, mock_send_async(7, mux::kCmdDat, data)).WillOnce(::testing::Return(boost::system::error_code{}));
 
     EXPECT_EQ(mux::test::run_awaitable(ctx(), upstream.write(data)), data.size());
 }
@@ -729,7 +729,7 @@ TEST_F(upstream_test, ProxyUpstreamWriteErrorReturnsZero)
     upstream.stream_ = stream;
 
     const std::vector<std::uint8_t> data = {4, 5, 6};
-    EXPECT_CALL(*mock_conn, mock_send_async(8, mux::kCmdDat, data)).WillOnce(::testing::Return(asio::error::broken_pipe));
+    EXPECT_CALL(*mock_conn, mock_send_async(8, mux::kCmdDat, data)).WillOnce(::testing::Return(boost::asio::error::broken_pipe));
 
     EXPECT_EQ(mux::test::run_awaitable(ctx(), upstream.write(data)), 0U);
 }
@@ -741,7 +741,7 @@ TEST_F(upstream_test, ProxyUpstreamCloseWithStreamNoTunnel)
     mux::proxy_upstream upstream(nullptr, mux::connection_context{});
     upstream.stream_ = stream;
 
-    EXPECT_CALL(*mock_conn, mock_send_async(9, mux::kCmdFin, std::vector<std::uint8_t>())).WillOnce(::testing::Return(std::error_code{}));
+    EXPECT_CALL(*mock_conn, mock_send_async(9, mux::kCmdFin, std::vector<std::uint8_t>())).WillOnce(::testing::Return(boost::system::error_code{}));
     mux::test::run_awaitable_void(ctx(), upstream.close());
     EXPECT_EQ(upstream.stream_, nullptr);
 }
@@ -763,8 +763,8 @@ TEST_F(upstream_test, ProxyUpstreamCloseWithStreamAndTunnelRemovesStream)
 
 TEST_F(upstream_test, MovedFromTunnelReturnsNullAndRejectsRegister)
 {
-    mux::mux_tunnel_impl<asio::ip::tcp::socket> tunnel(
-        asio::ip::tcp::socket(ctx()), ctx(), mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 7);
+    mux::mux_tunnel_impl<boost::asio::ip::tcp::socket> tunnel(
+        boost::asio::ip::tcp::socket(ctx()), ctx(), mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 7);
     auto moved = std::move(tunnel);
     (void)moved;
 

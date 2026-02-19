@@ -7,8 +7,8 @@
 #include <filesystem>
 
 #include <gtest/gtest.h>
-#include <asio/io_context.hpp>
-#include <asio/ip/address.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/ip/address.hpp>
 
 #include "router.h"
 #include "test_util.h"
@@ -94,9 +94,9 @@ TEST_F(router_file_test, EmptyDirectIpDefaultsProxy)
     mux::router router;
     ASSERT_TRUE(router.load());
 
-    asio::io_context ctx;
+    boost::asio::io_context ctx;
     mux::connection_context conn_ctx;
-    const auto addr = asio::ip::make_address("8.8.8.8");
+    const auto addr = boost::asio::ip::make_address("8.8.8.8");
     const auto result = mux::test::run_awaitable(ctx, router.decide_ip(conn_ctx, "8.8.8.8", addr));
 
     EXPECT_EQ(result, mux::route_type::kProxy);
@@ -120,7 +120,7 @@ TEST_F(router_file_test, MissingDomainRuleFileCausesLoadFailure)
 
 TEST_F(router_file_test, UnreadableIpRuleFileCausesLoadFailure)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     std::filesystem::permissions("direct_ip.txt", std::filesystem::perms::none, std::filesystem::perm_options::replace, ec);
     ASSERT_FALSE(ec) << ec.message();
 
@@ -137,7 +137,7 @@ TEST_F(router_file_test, UnreadableIpRuleFileCausesLoadFailure)
 
 TEST_F(router_file_test, UnreadableDomainRuleFileCausesLoadFailure)
 {
-    std::error_code ec;
+    boost::system::error_code ec;
     std::filesystem::permissions("block_domain.txt", std::filesystem::perms::none, std::filesystem::perm_options::replace, ec);
     ASSERT_FALSE(ec) << ec.message();
 
@@ -174,9 +174,9 @@ TEST_F(router_file_test, LoadRuleFilesFromSocksConfigDir)
     mux::router router;
     ASSERT_TRUE(router.load());
 
-    asio::io_context ctx;
+    boost::asio::io_context ctx;
     mux::connection_context conn_ctx;
-    const auto addr = asio::ip::make_address("8.8.8.8");
+    const auto addr = boost::asio::ip::make_address("8.8.8.8");
     const auto result = mux::test::run_awaitable(ctx, router.decide_ip(conn_ctx, "8.8.8.8", addr));
     EXPECT_EQ(result, mux::route_type::kDirect);
 }

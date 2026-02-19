@@ -5,9 +5,9 @@
 #include <cstring>
 #include <system_error>
 
-#include <asio/ip/address.hpp>
-#include <asio/ip/address_v4.hpp>
-#include <asio/ip/address_v6.hpp>
+#include <boost/asio/ip/address.hpp>
+#include <boost/asio/ip/address_v4.hpp>
+#include <boost/asio/ip/address_v6.hpp>
 
 #include "protocol.h"
 
@@ -29,9 +29,9 @@ bool parse_ipv4_address(const std::uint8_t* data, const std::size_t len, std::si
     {
         return false;
     }
-    asio::ip::address_v4::bytes_type bytes;
+    boost::asio::ip::address_v4::bytes_type bytes;
     std::memcpy(bytes.data(), data + pos, 4);
-    addr = asio::ip::address_v4(bytes).to_string();
+    addr = boost::asio::ip::address_v4(bytes).to_string();
     pos += 4;
     return true;
 }
@@ -59,9 +59,9 @@ bool parse_ipv6_address(const std::uint8_t* data, const std::size_t len, std::si
     {
         return false;
     }
-    asio::ip::address_v6::bytes_type bytes;
+    boost::asio::ip::address_v6::bytes_type bytes;
     std::memcpy(bytes.data(), data + pos, 16);
-    addr = asio::ip::address_v6(bytes).to_string();
+    addr = boost::asio::ip::address_v6(bytes).to_string();
     pos += 16;
     return true;
 }
@@ -112,14 +112,14 @@ bool parse_address_and_port(const std::uint8_t* data,
     return true;
 }
 
-void append_udp_ipv4_address(std::vector<std::uint8_t>& buf, const asio::ip::address_v4& address)
+void append_udp_ipv4_address(std::vector<std::uint8_t>& buf, const boost::asio::ip::address_v4& address)
 {
     buf.push_back(socks::kAtypIpv4);
     const auto bytes = address.to_bytes();
     buf.insert(buf.end(), bytes.begin(), bytes.end());
 }
 
-void append_udp_ipv6_address(std::vector<std::uint8_t>& buf, const asio::ip::address_v6& address)
+void append_udp_ipv6_address(std::vector<std::uint8_t>& buf, const boost::asio::ip::address_v6& address)
 {
     buf.push_back(socks::kAtypIpv6);
     const auto bytes = address.to_bytes();
@@ -135,8 +135,8 @@ void append_udp_domain_address(std::vector<std::uint8_t>& buf, const std::string
 
 void append_udp_target_address(std::vector<std::uint8_t>& buf, const std::string& host)
 {
-    std::error_code ec;
-    auto address = asio::ip::make_address(host, ec);
+    boost::system::error_code ec;
+    auto address = boost::asio::ip::make_address(host, ec);
     if (ec)
     {
         append_udp_domain_address(buf, host);
@@ -158,7 +158,7 @@ void append_udp_target_address(std::vector<std::uint8_t>& buf, const std::string
 
 }
 
-asio::ip::address socks_codec::normalize_ip_address(const asio::ip::address& addr)
+boost::asio::ip::address socks_codec::normalize_ip_address(const boost::asio::ip::address& addr)
 {
     if (addr.is_v4())
     {
@@ -169,7 +169,7 @@ asio::ip::address socks_codec::normalize_ip_address(const asio::ip::address& add
     {
         if (const auto& v6 = addr.to_v6(); v6.is_v4_mapped())
         {
-            return asio::ip::make_address_v4(asio::ip::v4_mapped, v6);
+            return boost::asio::ip::make_address_v4(boost::asio::ip::v4_mapped, v6);
         }
     }
 

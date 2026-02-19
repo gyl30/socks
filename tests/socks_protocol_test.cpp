@@ -3,7 +3,7 @@
 #include <cstdint>
 
 #include <gtest/gtest.h>
-#include <asio/ip/address.hpp>
+#include <boost/asio/ip/address.hpp>
 
 #include "protocol.h"
 
@@ -20,7 +20,7 @@ TEST(SocksProtocolTest, IPv6AddressDecoding)
     EXPECT_EQ(out.ver, 0x05);
     EXPECT_EQ(out.cmd, 0x01);
     EXPECT_EQ(out.atyp, socks::kAtypIpv6);
-    EXPECT_EQ(asio::ip::make_address(out.addr), asio::ip::make_address("2001:db8::1"));
+    EXPECT_EQ(boost::asio::ip::make_address(out.addr), boost::asio::ip::make_address("2001:db8::1"));
     EXPECT_EQ(out.port, 443);
 }
 

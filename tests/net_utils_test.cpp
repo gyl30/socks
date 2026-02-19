@@ -192,7 +192,7 @@ TEST(net_utils_test, set_socket_recv_origdst_invalid_fd)
 
 TEST(net_utils_test, normalize_address_v4_mapped_v6)
 {
-    const auto mapped = asio::ip::make_address("::ffff:127.0.0.1");
+    const auto mapped = boost::asio::ip::make_address("::ffff:127.0.0.1");
     const auto normalized = normalize_address(mapped);
 
     EXPECT_TRUE(normalized.is_v4());

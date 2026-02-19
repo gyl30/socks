@@ -3,8 +3,8 @@
 #include <utility>
 #include <vector>
 
-#include <asio/co_spawn.hpp>
-#include <asio/detached.hpp>
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/detached.hpp>
 
 #include "log.h"
 #include "statistics.h"
@@ -16,9 +16,9 @@
 namespace mux
 {
 
-void remote_server::install_syn_callback(const std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>& tunnel, const connection_context& ctx)
+void remote_server::install_syn_callback(const std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>>& tunnel, const connection_context& ctx)
 {
-    std::weak_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> weak_tunnel = tunnel;
+    std::weak_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> weak_tunnel = tunnel;
     tunnel->connection()->set_syn_callback(
         [weak_self = std::weak_ptr<remote_server>(shared_from_this()), weak_tunnel, ctx](const std::uint32_t id, std::vector<std::uint8_t> p)
         {
@@ -27,11 +27,11 @@ void remote_server::install_syn_callback(const std::shared_ptr<mux_tunnel_impl<a
                 if (auto tunnel = weak_tunnel.lock())
                 {
                     auto* stream_io_context = &tunnel->connection()->io_context();
-                    asio::co_spawn(
+                    boost::asio::co_spawn(
                         *stream_io_context,
                         [self, tunnel, ctx, id, p = std::move(p), stream_io_context]() mutable
                         { return self->process_stream_request(tunnel, ctx, id, std::move(p), *stream_io_context); },
-                        asio::detached);
+                        boost::asio::detached);
                 }
             }
         });
@@ -47,12 +47,12 @@ connection_context remote_server::build_stream_context(const connection_context&
     return stream_ctx;
 }
 
-asio::awaitable<void> remote_server::send_stream_reset(const std::shared_ptr<mux_connection>& connection, const std::uint32_t stream_id) const
+boost::asio::awaitable<void> remote_server::send_stream_reset(const std::shared_ptr<mux_connection>& connection, const std::uint32_t stream_id) const
 {
     (void)co_await connection->send_async(stream_id, kCmdRst, {});
 }
 
-asio::awaitable<void> remote_server::reject_stream_for_limit(const std::shared_ptr<mux_connection>& connection,
+boost::asio::awaitable<void> remote_server::reject_stream_for_limit(const std::shared_ptr<mux_connection>& connection,
                                                              const connection_context& ctx,
                                                              const std::uint32_t stream_id) const
 {
@@ -65,12 +65,12 @@ asio::awaitable<void> remote_server::reject_stream_for_limit(const std::shared_p
     co_await send_stream_reset(connection, stream_id);
 }
 
-asio::awaitable<void> remote_server::handle_tcp_connect_stream(const std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>& tunnel,
+boost::asio::awaitable<void> remote_server::handle_tcp_connect_stream(const std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>>& tunnel,
                                                                const connection_context& stream_ctx,
                                                                const std::uint32_t stream_id,
                                                                const syn_payload& syn,
                                                                const std::size_t payload_size,
-                                                               asio::io_context& io_context) const
+                                                               boost::asio::io_context& io_context) const
 {
     LOG_CTX_INFO(stream_ctx, "{} stream {} type tcp connect target {} {} payload size {}", log_event::kMux, stream_id, syn.addr, syn.port, payload_size);
     const auto connection = tunnel->connection();
@@ -85,10 +85,10 @@ asio::awaitable<void> remote_server::handle_tcp_connect_stream(const std::shared
     co_await sess->start(syn);
 }
 
-asio::awaitable<void> remote_server::handle_udp_associate_stream(const std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>>& tunnel,
+boost::asio::awaitable<void> remote_server::handle_udp_associate_stream(const std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>>& tunnel,
                                                                  const connection_context& stream_ctx,
                                                                  const std::uint32_t stream_id,
-                                                                 asio::io_context& io_context) const
+                                                                 boost::asio::io_context& io_context) const
 {
     LOG_CTX_INFO(stream_ctx, "{} stream {} type udp associate associated via tcp", log_event::kMux, stream_id);
     const auto connection = tunnel->connection();
@@ -104,11 +104,11 @@ asio::awaitable<void> remote_server::handle_udp_associate_stream(const std::shar
     co_await sess->start();
 }
 
-asio::awaitable<void> remote_server::process_stream_request(std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel,
+boost::asio::awaitable<void> remote_server::process_stream_request(std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> tunnel,
                                                             const connection_context& ctx,
                                                             const std::uint32_t stream_id,
                                                             std::vector<std::uint8_t> payload,
-                                                            asio::io_context& io_context) const
+                                                            boost::asio::io_context& io_context) const
 {
     const auto connection = tunnel->connection();
     if (!connection->can_accept_stream())

@@ -4,8 +4,8 @@
 #include <fstream>
 
 #include <gtest/gtest.h>
-#include <asio/error_code.hpp>
-#include <asio/ip/address.hpp>
+#include <boost/system/error_code.hpp>
+#include <boost/asio/ip/address.hpp>
 
 #include "ip_matcher.h"
 
@@ -43,15 +43,15 @@ TEST_F(ip_matcher_test, MatchIPv4Basic)
     mux::ip_matcher matcher;
     ASSERT_TRUE(matcher.load(rule_file()));
 
-    asio::error_code ec;
+    boost::system::error_code ec;
 
-    EXPECT_TRUE(matcher.match(asio::ip::make_address("192.168.1.1", ec)));
-    EXPECT_TRUE(matcher.match(asio::ip::make_address("192.168.1.255", ec)));
-    EXPECT_TRUE(matcher.match(asio::ip::make_address("10.1.1.1", ec)));
-    EXPECT_TRUE(matcher.match(asio::ip::make_address("10.255.255.255", ec)));
+    EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("192.168.1.1", ec)));
+    EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("192.168.1.255", ec)));
+    EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("10.1.1.1", ec)));
+    EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("10.255.255.255", ec)));
 
-    EXPECT_FALSE(matcher.match(asio::ip::make_address("192.168.2.1", ec)));
-    EXPECT_FALSE(matcher.match(asio::ip::make_address("11.0.0.1", ec)));
+    EXPECT_FALSE(matcher.match(boost::asio::ip::make_address("192.168.2.1", ec)));
+    EXPECT_FALSE(matcher.match(boost::asio::ip::make_address("11.0.0.1", ec)));
 }
 
 TEST_F(ip_matcher_test, MatchIPv6Basic)
@@ -61,18 +61,18 @@ TEST_F(ip_matcher_test, MatchIPv6Basic)
     mux::ip_matcher matcher;
     ASSERT_TRUE(matcher.load(rule_file()));
 
-    asio::error_code ec;
+    boost::system::error_code ec;
 
-    EXPECT_TRUE(matcher.match(asio::ip::make_address("2001:db8::1", ec)));
-    EXPECT_TRUE(matcher.match(asio::ip::make_address("2001:db8:ffff:ffff:ffff:ffff:ffff:ffff", ec)));
-    EXPECT_FALSE(matcher.match(asio::ip::make_address("2001:db9::1", ec)));
+    EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("2001:db8::1", ec)));
+    EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("2001:db8:ffff:ffff:ffff:ffff:ffff:ffff", ec)));
+    EXPECT_FALSE(matcher.match(boost::asio::ip::make_address("2001:db9::1", ec)));
 
-    EXPECT_TRUE(matcher.match(asio::ip::make_address("fe80::1", ec)));
-    EXPECT_TRUE(matcher.match(asio::ip::make_address("febf::1", ec)));
-    EXPECT_FALSE(matcher.match(asio::ip::make_address("fec0::1", ec)));
+    EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("fe80::1", ec)));
+    EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("febf::1", ec)));
+    EXPECT_FALSE(matcher.match(boost::asio::ip::make_address("fec0::1", ec)));
 
-    EXPECT_TRUE(matcher.match(asio::ip::make_address("::1", ec)));
-    EXPECT_FALSE(matcher.match(asio::ip::make_address("::2", ec)));
+    EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("::1", ec)));
+    EXPECT_FALSE(matcher.match(boost::asio::ip::make_address("::2", ec)));
 }
 
 TEST_F(ip_matcher_test, MatchIPv6ComplexMasks)
@@ -82,10 +82,10 @@ TEST_F(ip_matcher_test, MatchIPv6ComplexMasks)
     mux::ip_matcher matcher;
     ASSERT_TRUE(matcher.load(rule_file()));
 
-    asio::error_code ec;
-    EXPECT_TRUE(matcher.match(asio::ip::make_address("2400:cb00:1234::1", ec)));
-    EXPECT_TRUE(matcher.match(asio::ip::make_address("2606:4700:4700::1111", ec)));
-    EXPECT_FALSE(matcher.match(asio::ip::make_address("2606:4700:4700:1::1", ec)));
+    boost::system::error_code ec;
+    EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("2400:cb00:1234::1", ec)));
+    EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("2606:4700:4700::1111", ec)));
+    EXPECT_FALSE(matcher.match(boost::asio::ip::make_address("2606:4700:4700:1::1", ec)));
 }
 
 TEST_F(ip_matcher_test, EdgeCasesOptimization)
@@ -95,15 +95,15 @@ TEST_F(ip_matcher_test, EdgeCasesOptimization)
     mux::ip_matcher matcher;
     ASSERT_TRUE(matcher.load(rule_file()));
 
-    asio::error_code ec;
+    boost::system::error_code ec;
 
-    EXPECT_TRUE(matcher.match(asio::ip::make_address("192.168.1.100", ec)));
-    EXPECT_TRUE(matcher.match(asio::ip::make_address("192.168.1.200", ec)));
-    EXPECT_TRUE(matcher.match(asio::ip::make_address("192.168.2.50", ec)));
-    EXPECT_FALSE(matcher.match(asio::ip::make_address("192.168.3.1", ec)));
+    EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("192.168.1.100", ec)));
+    EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("192.168.1.200", ec)));
+    EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("192.168.2.50", ec)));
+    EXPECT_FALSE(matcher.match(boost::asio::ip::make_address("192.168.3.1", ec)));
 
-    EXPECT_TRUE(matcher.match(asio::ip::make_address("2001:db8:8000::1", ec)));
-    EXPECT_TRUE(matcher.match(asio::ip::make_address("2001:db8::1", ec)));
+    EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("2001:db8:8000::1", ec)));
+    EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("2001:db8::1", ec)));
 }
 
 TEST_F(ip_matcher_test, EdgeCasesInvalidInputs)
@@ -114,11 +114,11 @@ TEST_F(ip_matcher_test, EdgeCasesInvalidInputs)
 
     ASSERT_TRUE(matcher.load(rule_file()));
 
-    asio::error_code ec;
-    EXPECT_TRUE(matcher.match(asio::ip::make_address("1.2.3.10", ec)));
-    EXPECT_TRUE(matcher.match(asio::ip::make_address("8.8.8.8", ec)));
+    boost::system::error_code ec;
+    EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("1.2.3.10", ec)));
+    EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("8.8.8.8", ec)));
 
-    EXPECT_FALSE(matcher.match(asio::ip::make_address("10.0.0.1", ec)));
+    EXPECT_FALSE(matcher.match(boost::asio::ip::make_address("10.0.0.1", ec)));
 }
 
 TEST_F(ip_matcher_test, MatchIPv4MatchAll)
@@ -127,9 +127,9 @@ TEST_F(ip_matcher_test, MatchIPv4MatchAll)
     mux::ip_matcher matcher;
     ASSERT_TRUE(matcher.load(rule_file()));
 
-    asio::error_code ec;
-    EXPECT_TRUE(matcher.match(asio::ip::make_address("1.1.1.1", ec)));
-    EXPECT_TRUE(matcher.match(asio::ip::make_address("255.255.255.255", ec)));
+    boost::system::error_code ec;
+    EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("1.1.1.1", ec)));
+    EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("255.255.255.255", ec)));
 }
 
 TEST_F(ip_matcher_test, MatchIPv6MatchAll)
@@ -138,9 +138,9 @@ TEST_F(ip_matcher_test, MatchIPv6MatchAll)
     mux::ip_matcher matcher;
     ASSERT_TRUE(matcher.load(rule_file()));
 
-    asio::error_code ec;
-    EXPECT_TRUE(matcher.match(asio::ip::make_address("fe80::1", ec)));
-    EXPECT_TRUE(matcher.match(asio::ip::make_address("::1", ec)));
+    boost::system::error_code ec;
+    EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("fe80::1", ec)));
+    EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("::1", ec)));
 }
 
 TEST_F(ip_matcher_test, PrefixWithSpaces)
@@ -149,10 +149,10 @@ TEST_F(ip_matcher_test, PrefixWithSpaces)
     mux::ip_matcher matcher;
     ASSERT_TRUE(matcher.load(rule_file()));
 
-    asio::error_code ec;
+    boost::system::error_code ec;
 
-    EXPECT_TRUE(matcher.match(asio::ip::make_address("192.168.1.1", ec)));
-    EXPECT_TRUE(matcher.match(asio::ip::make_address("192.168.2.1", ec)));
+    EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("192.168.1.1", ec)));
+    EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("192.168.2.1", ec)));
 }
 
 TEST_F(ip_matcher_test, PrefixLeadingZero)
@@ -161,8 +161,8 @@ TEST_F(ip_matcher_test, PrefixLeadingZero)
     mux::ip_matcher matcher;
     ASSERT_TRUE(matcher.load(rule_file()));
 
-    asio::error_code ec;
-    EXPECT_TRUE(matcher.match(asio::ip::make_address("10.1.1.1", ec)));
+    boost::system::error_code ec;
+    EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("10.1.1.1", ec)));
 }
 
 TEST_F(ip_matcher_test, PrefixOutOfRange)
@@ -171,8 +171,8 @@ TEST_F(ip_matcher_test, PrefixOutOfRange)
     mux::ip_matcher matcher;
     ASSERT_TRUE(matcher.load(rule_file()));
 
-    asio::error_code ec;
-    EXPECT_FALSE(matcher.match(asio::ip::make_address("192.168.1.1", ec)));
+    boost::system::error_code ec;
+    EXPECT_FALSE(matcher.match(boost::asio::ip::make_address("192.168.1.1", ec)));
 }
 
 TEST_F(ip_matcher_test, IPv6Exact128BitBoundary)
@@ -181,9 +181,9 @@ TEST_F(ip_matcher_test, IPv6Exact128BitBoundary)
     mux::ip_matcher matcher;
     ASSERT_TRUE(matcher.load(rule_file()));
 
-    asio::error_code ec;
-    EXPECT_TRUE(matcher.match(asio::ip::make_address("2001:db8::1", ec)));
-    EXPECT_FALSE(matcher.match(asio::ip::make_address("2001:db8::2", ec)));
+    boost::system::error_code ec;
+    EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("2001:db8::1", ec)));
+    EXPECT_FALSE(matcher.match(boost::asio::ip::make_address("2001:db8::2", ec)));
 }
 
 TEST_F(ip_matcher_test, LargeRuleSet)
@@ -203,13 +203,13 @@ TEST_F(ip_matcher_test, LargeRuleSet)
     mux::ip_matcher matcher;
     ASSERT_TRUE(matcher.load(rule_file()));
 
-    asio::error_code ec;
+    boost::system::error_code ec;
 
-    EXPECT_TRUE(matcher.match(asio::ip::make_address("10.0.0.1", ec)));
-    EXPECT_TRUE(matcher.match(asio::ip::make_address("10.0.255.1", ec)));
-    EXPECT_TRUE(matcher.match(asio::ip::make_address("10.1.0.1", ec)));
+    EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("10.0.0.1", ec)));
+    EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("10.0.255.1", ec)));
+    EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("10.1.0.1", ec)));
 
-    EXPECT_FALSE(matcher.match(asio::ip::make_address("10.5.0.1", ec)));
+    EXPECT_FALSE(matcher.match(boost::asio::ip::make_address("10.5.0.1", ec)));
 }
 
 TEST_F(ip_matcher_test, IPv6OddBitPrefix)
@@ -218,9 +218,9 @@ TEST_F(ip_matcher_test, IPv6OddBitPrefix)
     mux::ip_matcher matcher;
     ASSERT_TRUE(matcher.load(rule_file()));
 
-    asio::error_code ec;
-    EXPECT_TRUE(matcher.match(asio::ip::make_address("2001:db8::1", ec)));
-    EXPECT_FALSE(matcher.match(asio::ip::make_address("2001:db8:0:0:8000::1", ec)));
+    boost::system::error_code ec;
+    EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("2001:db8::1", ec)));
+    EXPECT_FALSE(matcher.match(boost::asio::ip::make_address("2001:db8:0:0:8000::1", ec)));
 }
 
 TEST_F(ip_matcher_test, IPv6NonCanonicalNetwork)
@@ -229,9 +229,9 @@ TEST_F(ip_matcher_test, IPv6NonCanonicalNetwork)
     mux::ip_matcher matcher;
     ASSERT_TRUE(matcher.load(rule_file()));
 
-    asio::error_code ec;
+    boost::system::error_code ec;
 
-    EXPECT_TRUE(matcher.match(asio::ip::make_address("2001:db8::1", ec)));
+    EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("2001:db8::1", ec)));
 }
 
 TEST_F(ip_matcher_test, AttackMixedIPv4IPv6Massive)
@@ -252,12 +252,12 @@ TEST_F(ip_matcher_test, AttackMixedIPv4IPv6Massive)
     mux::ip_matcher matcher;
     ASSERT_TRUE(matcher.load(rule_file()));
 
-    asio::error_code ec;
+    boost::system::error_code ec;
 
-    EXPECT_TRUE(matcher.match(asio::ip::make_address("10.1.1.1", ec)));
-    EXPECT_TRUE(matcher.match(asio::ip::make_address("2001:db8:1::1", ec)));
+    EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("10.1.1.1", ec)));
+    EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("2001:db8:1::1", ec)));
 
-    EXPECT_FALSE(matcher.match(asio::ip::make_address("10.255.1.1", ec)));
+    EXPECT_FALSE(matcher.match(boost::asio::ip::make_address("10.255.1.1", ec)));
 }
 
 TEST_F(ip_matcher_test, DoSNestedSubnets)
@@ -273,11 +273,11 @@ TEST_F(ip_matcher_test, DoSNestedSubnets)
     mux::ip_matcher matcher;
     ASSERT_TRUE(matcher.load(rule_file()));
 
-    asio::error_code ec;
+    boost::system::error_code ec;
 
-    EXPECT_TRUE(matcher.match(asio::ip::make_address("10.0.0.1", ec)));
+    EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("10.0.0.1", ec)));
 
-    EXPECT_TRUE(matcher.match(asio::ip::make_address("10.128.0.1", ec)));
+    EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("10.128.0.1", ec)));
 }
 
 TEST_F(ip_matcher_test, CarriageReturnAndPrefixParsingBranches)
@@ -296,8 +296,8 @@ TEST_F(ip_matcher_test, CarriageReturnAndPrefixParsingBranches)
     mux::ip_matcher matcher;
     ASSERT_TRUE(matcher.load(rule_file()));
 
-    asio::error_code ec;
-    EXPECT_TRUE(matcher.match(asio::ip::make_address("10.10.1.1", ec)));
-    EXPECT_TRUE(matcher.match(asio::ip::make_address("11.1.1.1", ec)));
-    EXPECT_TRUE(matcher.match(asio::ip::make_address("2001:db8::1", ec)));
+    boost::system::error_code ec;
+    EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("10.10.1.1", ec)));
+    EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("11.1.1.1", ec)));
+    EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("2001:db8::1", ec)));
 }

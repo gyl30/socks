@@ -2,10 +2,10 @@
 #include <string>
 
 #include <gtest/gtest.h>
-#include <asio/co_spawn.hpp>
-#include <asio/detached.hpp>
-#include <asio/awaitable.hpp>
-#include <asio/io_context.hpp>
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/detached.hpp>
+#include <boost/asio/awaitable.hpp>
+#include <boost/asio/io_context.hpp>
 
 #include "router.h"
 #include "ip_matcher.h"
@@ -51,13 +51,13 @@ class router_test : public ::testing::Test
     mux::route_type run_decision(const std::string& host)
     {
         mux::route_type result = mux::route_type::kDirect;
-        asio::io_context ctx;
+        boost::asio::io_context ctx;
         mux::connection_context conn_ctx;
 
-        asio::co_spawn(
+        boost::asio::co_spawn(
             ctx,
-            [&]() -> asio::awaitable<void> { result = co_await test_router_->decide(conn_ctx, host); },
-            asio::detached);
+            [&]() -> boost::asio::awaitable<void> { result = co_await test_router_->decide(conn_ctx, host); },
+            boost::asio::detached);
 
         ctx.run();
         return result;

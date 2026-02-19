@@ -20,9 +20,9 @@ io_context_pool::io_context_pool(std::size_t pool_size) : next_io_context_(0)
 
     for (std::size_t i = 0; i < pool_size; ++i)
     {
-        auto ctx = std::make_shared<asio::io_context>();
+        auto ctx = std::make_shared<boost::asio::io_context>();
         io_contexts_.push_back(ctx);
-        work_guards_.push_back(asio::make_work_guard(*ctx));
+        work_guards_.push_back(boost::asio::make_work_guard(*ctx));
     }
 }
 
@@ -63,7 +63,7 @@ void io_context_pool::shutdown()
     work_guards_.clear();
 }
 
-asio::io_context& io_context_pool::get_io_context()
+boost::asio::io_context& io_context_pool::get_io_context()
 {
     const std::size_t index = next_io_context_.fetch_add(1, std::memory_order_relaxed) % io_contexts_.size();
     return *io_contexts_[index];

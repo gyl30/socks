@@ -6,13 +6,13 @@
 #include <utility>
 #include <system_error>
 
-#include <asio/error.hpp>
-#include <asio/write.hpp>
-#include <asio/buffer.hpp>
-#include <asio/ip/tcp.hpp>
-#include <asio/connect.hpp>
-#include <asio/as_tuple.hpp>
-#include <asio/use_awaitable.hpp>
+#include <boost/asio/error.hpp>
+#include <boost/asio/write.hpp>
+#include <boost/asio/buffer.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/connect.hpp>
+#include <boost/asio/as_tuple.hpp>
+#include <boost/asio/use_awaitable.hpp>
 
 #include "log.h"
 #include "protocol.h"
@@ -28,14 +28,14 @@
 namespace mux
 {
 
-std::expected<void, std::error_code> direct_upstream::open_socket_for_endpoint(const asio::ip::tcp::endpoint& endpoint)
+std::expected<void, boost::system::error_code> direct_upstream::open_socket_for_endpoint(const boost::asio::ip::tcp::endpoint& endpoint)
 {
     if (socket_.is_open())
     {
-        std::error_code close_ec;
+        boost::system::error_code close_ec;
         socket_.close(close_ec);
     }
-    std::error_code ec;
+    boost::system::error_code ec;
     ec = socket_.open(endpoint.protocol(), ec);
     if (ec)
     {
@@ -59,15 +59,15 @@ void direct_upstream::apply_socket_mark()
 
 void direct_upstream::apply_no_delay()
 {
-    std::error_code ec;
-    ec = socket_.set_option(asio::ip::tcp::no_delay(true), ec);
+    boost::system::error_code ec;
+    ec = socket_.set_option(boost::asio::ip::tcp::no_delay(true), ec);
     if (ec)
     {
         LOG_WARN("direct upstream set no delay failed error {}", ec.message());
     }
 }
 
-asio::awaitable<bool> direct_upstream::connect(const std::string& host, const std::uint16_t port)
+boost::asio::awaitable<bool> direct_upstream::connect(const std::string& host, const std::uint16_t port)
 {
     const auto timeout_sec = timeout_sec_;
     const auto resolve_res = co_await timeout_io::async_resolve_with_timeout(resolver_, host, std::to_string(port), timeout_sec);
@@ -89,7 +89,7 @@ asio::awaitable<bool> direct_upstream::connect(const std::string& host, const st
         co_return false;
     }
 
-    std::error_code last_ec;
+    boost::system::error_code last_ec;
     for (const auto& entry : resolve_res.endpoints)
     {
         if (auto open_result = open_socket_for_endpoint(entry.endpoint()); !open_result)
@@ -105,7 +105,7 @@ asio::awaitable<bool> direct_upstream::connect(const std::string& host, const st
         {
             if (connect_res.timed_out)
             {
-                last_ec = asio::error::timed_out;
+                last_ec = boost::asio::error::timed_out;
                 continue;
             }
             last_ec = connect_res.ec;
@@ -116,9 +116,9 @@ asio::awaitable<bool> direct_upstream::connect(const std::string& host, const st
         co_return true;
     }
 
-    const auto err = last_ec ? last_ec : std::make_error_code(std::errc::host_unreachable);
+    const auto err = last_ec ? last_ec : boost::system::errc::make_error_code(boost::system::errc::host_unreachable);
     auto& stats = statistics::instance();
-    if (err == asio::error::timed_out)
+    if (err == boost::asio::error::timed_out)
     {
         stats.inc_direct_upstream_connect_timeouts();
         LOG_CTX_WARN(
@@ -132,25 +132,25 @@ asio::awaitable<bool> direct_upstream::connect(const std::string& host, const st
     co_return false;
 }
 
-asio::awaitable<std::pair<std::error_code, std::size_t>> direct_upstream::read(std::vector<std::uint8_t>& buf)
+boost::asio::awaitable<std::pair<boost::system::error_code, std::size_t>> direct_upstream::read(std::vector<std::uint8_t>& buf)
 {
-    auto [ec, n] = co_await socket_.async_read_some(asio::buffer(buf), asio::as_tuple(asio::use_awaitable));
+    auto [ec, n] = co_await socket_.async_read_some(boost::asio::buffer(buf), boost::asio::as_tuple(boost::asio::use_awaitable));
     co_return std::make_pair(ec, n);
 }
 
-asio::awaitable<std::size_t> direct_upstream::write(const std::vector<std::uint8_t>& data)
+boost::asio::awaitable<std::size_t> direct_upstream::write(const std::vector<std::uint8_t>& data)
 {
     co_return co_await write(data.data(), data.size());
 }
 
-asio::awaitable<std::size_t> direct_upstream::write(const std::uint8_t* data, const std::size_t len)
+boost::asio::awaitable<std::size_t> direct_upstream::write(const std::uint8_t* data, const std::size_t len)
 {
     if (data == nullptr || len == 0)
     {
         co_return 0;
     }
 
-    auto [ec, n] = co_await asio::async_write(socket_, asio::buffer(data, len), asio::as_tuple(asio::use_awaitable));
+    auto [ec, n] = co_await boost::asio::async_write(socket_, boost::asio::buffer(data, len), boost::asio::as_tuple(boost::asio::use_awaitable));
     if (ec)
     {
         LOG_CTX_ERROR(ctx_, "{} write error {}", log_event::kRoute, ec.message());
@@ -159,10 +159,10 @@ asio::awaitable<std::size_t> direct_upstream::write(const std::uint8_t* data, co
     co_return n;
 }
 
-asio::awaitable<void> direct_upstream::close()
+boost::asio::awaitable<void> direct_upstream::close()
 {
-    std::error_code ec;
-    ec = socket_.shutdown(asio::ip::tcp::socket::shutdown_both, ec);
+    boost::system::error_code ec;
+    ec = socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
     if (ec)
     {
         LOG_WARN("direct upstream shutdown failed error {}", ec.message());
@@ -175,7 +175,7 @@ asio::awaitable<void> direct_upstream::close()
     co_return;
 }
 
-proxy_upstream::proxy_upstream(std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel, connection_context ctx)
+proxy_upstream::proxy_upstream(std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> tunnel, connection_context ctx)
     : ctx_(std::move(ctx)), tunnel_(std::move(tunnel))
 {
 }
@@ -185,7 +185,7 @@ bool proxy_upstream::is_tunnel_ready() const
     return tunnel_ != nullptr && tunnel_->connection() != nullptr && tunnel_->connection()->is_open();
 }
 
-asio::awaitable<bool> proxy_upstream::send_syn_request(const std::shared_ptr<mux_stream>& stream,
+boost::asio::awaitable<bool> proxy_upstream::send_syn_request(const std::shared_ptr<mux_stream>& stream,
                                                        const std::string& host,
                                                        const std::uint16_t port)
 {
@@ -202,7 +202,7 @@ asio::awaitable<bool> proxy_upstream::send_syn_request(const std::shared_ptr<mux
     co_return true;
 }
 
-asio::awaitable<bool> proxy_upstream::wait_connect_ack(const std::shared_ptr<mux_stream>& stream,
+boost::asio::awaitable<bool> proxy_upstream::wait_connect_ack(const std::shared_ptr<mux_stream>& stream,
                                                        const std::string& host,
                                                        const std::uint16_t port)
 {
@@ -229,7 +229,7 @@ asio::awaitable<bool> proxy_upstream::wait_connect_ack(const std::shared_ptr<mux
     co_return true;
 }
 
-asio::awaitable<void> proxy_upstream::cleanup_stream(const std::shared_ptr<mux_stream>& stream)
+boost::asio::awaitable<void> proxy_upstream::cleanup_stream(const std::shared_ptr<mux_stream>& stream)
 {
     if (stream == nullptr)
     {
@@ -243,7 +243,7 @@ asio::awaitable<void> proxy_upstream::cleanup_stream(const std::shared_ptr<mux_s
     }
 }
 
-asio::awaitable<bool> proxy_upstream::connect(const std::string& host, const std::uint16_t port)
+boost::asio::awaitable<bool> proxy_upstream::connect(const std::string& host, const std::uint16_t port)
 {
     if (!is_tunnel_ready())
     {
@@ -275,12 +275,12 @@ asio::awaitable<bool> proxy_upstream::connect(const std::string& host, const std
     co_return true;
 }
 
-asio::awaitable<std::pair<std::error_code, std::size_t>> proxy_upstream::read(std::vector<std::uint8_t>& buf)
+boost::asio::awaitable<std::pair<boost::system::error_code, std::size_t>> proxy_upstream::read(std::vector<std::uint8_t>& buf)
 {
     auto stream = stream_;
     if (stream == nullptr)
     {
-        co_return std::make_pair(asio::error::operation_aborted, 0);
+        co_return std::make_pair(boost::asio::error::operation_aborted, 0);
     }
 
     auto [ec, data] = co_await stream->async_read_some();
@@ -296,12 +296,12 @@ asio::awaitable<std::pair<std::error_code, std::size_t>> proxy_upstream::read(st
     co_return std::make_pair(ec, 0);
 }
 
-asio::awaitable<std::size_t> proxy_upstream::write(const std::vector<std::uint8_t>& data)
+boost::asio::awaitable<std::size_t> proxy_upstream::write(const std::vector<std::uint8_t>& data)
 {
     co_return co_await write(data.data(), data.size());
 }
 
-asio::awaitable<std::size_t> proxy_upstream::write(const std::uint8_t* data, const std::size_t len)
+boost::asio::awaitable<std::size_t> proxy_upstream::write(const std::uint8_t* data, const std::size_t len)
 {
     auto stream = stream_;
     if (stream == nullptr)
@@ -322,7 +322,7 @@ asio::awaitable<std::size_t> proxy_upstream::write(const std::uint8_t* data, con
     co_return len;
 }
 
-asio::awaitable<void> proxy_upstream::close()
+boost::asio::awaitable<void> proxy_upstream::close()
 {
     auto stream = stream_;
     stream_.reset();

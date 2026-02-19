@@ -12,13 +12,13 @@
 
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
-#include <asio/co_spawn.hpp>
-#include <asio/detached.hpp>
-#include <asio/awaitable.hpp>
-#include <asio/io_context.hpp>
-#include <asio/ip/tcp.hpp>
-#include <asio/ip/udp.hpp>
-#include <asio/use_awaitable.hpp>
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/detached.hpp>
+#include <boost/asio/awaitable.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/ip/udp.hpp>
+#include <boost/asio/use_awaitable.hpp>
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -163,64 +163,64 @@ extern "C" int __wrap_getsockname(int sockfd, sockaddr* addr, socklen_t* addrlen
 
 struct tcp_socket_pair
 {
-    asio::ip::tcp::socket client;
-    asio::ip::tcp::socket server;
+    boost::asio::ip::tcp::socket client;
+    boost::asio::ip::tcp::socket server;
 };
 
-tcp_socket_pair make_tcp_socket_pair(asio::io_context& ctx)
+tcp_socket_pair make_tcp_socket_pair(boost::asio::io_context& ctx)
 {
-    asio::ip::tcp::acceptor acceptor(ctx);
+    boost::asio::ip::tcp::acceptor acceptor(ctx);
     if (!mux::test::open_ephemeral_tcp_acceptor(acceptor))
     {
-        return tcp_socket_pair{asio::ip::tcp::socket(ctx), asio::ip::tcp::socket(ctx)};
+        return tcp_socket_pair{boost::asio::ip::tcp::socket(ctx), boost::asio::ip::tcp::socket(ctx)};
     }
-    asio::ip::tcp::socket client(ctx);
-    asio::ip::tcp::socket server(ctx);
+    boost::asio::ip::tcp::socket client(ctx);
+    boost::asio::ip::tcp::socket server(ctx);
 
-    std::error_code ec;
+    boost::system::error_code ec;
     client.connect(acceptor.local_endpoint(), ec);
     if (ec)
     {
-        return tcp_socket_pair{asio::ip::tcp::socket(ctx), asio::ip::tcp::socket(ctx)};
+        return tcp_socket_pair{boost::asio::ip::tcp::socket(ctx), boost::asio::ip::tcp::socket(ctx)};
     }
     acceptor.accept(server, ec);
     if (ec)
     {
-        return tcp_socket_pair{asio::ip::tcp::socket(ctx), asio::ip::tcp::socket(ctx)};
+        return tcp_socket_pair{boost::asio::ip::tcp::socket(ctx), boost::asio::ip::tcp::socket(ctx)};
     }
     return tcp_socket_pair{std::move(client), std::move(server)};
 }
 
-std::shared_ptr<mux::mux_tunnel_impl<asio::ip::tcp::socket>> make_test_tunnel(asio::io_context& io_context,
+std::shared_ptr<mux::mux_tunnel_impl<boost::asio::ip::tcp::socket>> make_test_tunnel(boost::asio::io_context& io_context,
                                                                                 const std::uint32_t conn_id = 100)
 {
-    return std::make_shared<mux::mux_tunnel_impl<asio::ip::tcp::socket>>(
-        asio::ip::tcp::socket(io_context), io_context, mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, conn_id);
+    return std::make_shared<mux::mux_tunnel_impl<boost::asio::ip::tcp::socket>>(
+        boost::asio::ip::tcp::socket(io_context), io_context, mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, conn_id);
 }
 
 }    // namespace
 
 TEST(UdpSocksSessionTest, PrepareUdpAssociateFailureBranches)
 {
-    asio::io_context ctx;
+    boost::asio::io_context ctx;
     mux::config::timeout_t timeout_cfg;
 
     auto session_with_closed_tcp =
-        std::make_shared<mux::udp_socks_session>(asio::ip::tcp::socket(ctx), ctx, nullptr, 1, timeout_cfg);
+        std::make_shared<mux::udp_socks_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, 1, timeout_cfg);
 
     bool done = false;
-    asio::co_spawn(
+    boost::asio::co_spawn(
         ctx,
-        [&]() -> asio::awaitable<void>
+        [&]() -> boost::asio::awaitable<void>
         {
-            asio::ip::address local_addr;
+            boost::asio::ip::address local_addr;
             std::uint16_t udp_bind_port = 0;
             const auto stream = co_await session_with_closed_tcp->prepare_udp_associate(local_addr, udp_bind_port);
             EXPECT_EQ(stream, nullptr);
             done = true;
             co_return;
         },
-        asio::detached);
+        boost::asio::detached);
     ctx.run();
     EXPECT_TRUE(done);
 
@@ -232,73 +232,73 @@ TEST(UdpSocksSessionTest, PrepareUdpAssociateFailureBranches)
         std::make_shared<mux::udp_socks_session>(std::move(pair.server), ctx, nullptr, 2, timeout_cfg);
 
     done = false;
-    asio::co_spawn(
+    boost::asio::co_spawn(
         ctx,
-        [&]() -> asio::awaitable<void>
+        [&]() -> boost::asio::awaitable<void>
         {
-            asio::ip::address local_addr;
+            boost::asio::ip::address local_addr;
             std::uint16_t udp_bind_port = 0;
             const auto stream = co_await session_without_tunnel->prepare_udp_associate(local_addr, udp_bind_port);
             EXPECT_EQ(stream, nullptr);
             done = true;
             co_return;
         },
-        asio::detached);
+        boost::asio::detached);
     ctx.run();
     EXPECT_TRUE(done);
 }
 
 TEST(UdpSocksSessionTest, ShouldStopStreamToUdpCoversExpectedAndUnexpectedErrors)
 {
-    asio::io_context ctx;
+    boost::asio::io_context ctx;
     mux::config::timeout_t timeout_cfg;
-    auto session = std::make_shared<mux::udp_socks_session>(asio::ip::tcp::socket(ctx), ctx, nullptr, 30, timeout_cfg);
+    auto session = std::make_shared<mux::udp_socks_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, 30, timeout_cfg);
 
-    EXPECT_FALSE(session->should_stop_stream_to_udp(std::error_code{}, std::vector<std::uint8_t>{0x01}));
-    EXPECT_TRUE(session->should_stop_stream_to_udp(asio::experimental::error::channel_closed, {}));
-    EXPECT_TRUE(session->should_stop_stream_to_udp(asio::experimental::error::channel_cancelled, {}));
-    EXPECT_TRUE(session->should_stop_stream_to_udp(asio::error::operation_aborted, {}));
-    EXPECT_TRUE(session->should_stop_stream_to_udp(asio::error::connection_reset, {}));
+    EXPECT_FALSE(session->should_stop_stream_to_udp(boost::system::error_code{}, std::vector<std::uint8_t>{0x01}));
+    EXPECT_TRUE(session->should_stop_stream_to_udp(boost::asio::experimental::error::channel_closed, {}));
+    EXPECT_TRUE(session->should_stop_stream_to_udp(boost::asio::experimental::error::channel_cancelled, {}));
+    EXPECT_TRUE(session->should_stop_stream_to_udp(boost::asio::error::operation_aborted, {}));
+    EXPECT_TRUE(session->should_stop_stream_to_udp(boost::asio::error::connection_reset, {}));
 }
 
 TEST(UdpSocksSessionTest, ForwardAndReceiveStopBranches)
 {
-    asio::io_context ctx;
+    boost::asio::io_context ctx;
     mux::config::timeout_t timeout_cfg;
-    auto session = std::make_shared<mux::udp_socks_session>(asio::ip::tcp::socket(ctx), ctx, nullptr, 3, timeout_cfg);
+    auto session = std::make_shared<mux::udp_socks_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, 3, timeout_cfg);
 
-    EXPECT_TRUE(session->should_stop_stream_to_udp(asio::error::connection_reset, {}));
+    EXPECT_TRUE(session->should_stop_stream_to_udp(boost::asio::error::connection_reset, {}));
 
     bool returned = false;
-    asio::co_spawn(
+    boost::asio::co_spawn(
         ctx,
-        [&]() -> asio::awaitable<void>
+        [&]() -> boost::asio::awaitable<void>
         {
             co_await session->forward_stream_data_to_client(std::vector<std::uint8_t>{0x01, 0x02});
             returned = true;
             co_return;
         },
-        asio::detached);
+        boost::asio::detached);
     ctx.run();
     EXPECT_TRUE(returned);
 }
 
 TEST(UdpSocksSessionTest, StreamToUdpSockForwardsDataToTrackedEndpoint)
 {
-    asio::io_context ctx;
+    boost::asio::io_context ctx;
     mux::config::timeout_t timeout_cfg;
-    auto session = std::make_shared<mux::udp_socks_session>(asio::ip::tcp::socket(ctx), ctx, nullptr, 31, timeout_cfg);
+    auto session = std::make_shared<mux::udp_socks_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, 31, timeout_cfg);
 
-    std::error_code ec;
-    session->udp_socket_.open(asio::ip::udp::v4(), ec);
+    boost::system::error_code ec;
+    session->udp_socket_.open(boost::asio::ip::udp::v4(), ec);
     ASSERT_FALSE(ec);
-    session->udp_socket_.bind({asio::ip::make_address("127.0.0.1"), 0}, ec);
+    session->udp_socket_.bind({boost::asio::ip::make_address("127.0.0.1"), 0}, ec);
     ASSERT_FALSE(ec);
 
-    asio::ip::udp::socket recv_socket(ctx);
-    recv_socket.open(asio::ip::udp::v4(), ec);
+    boost::asio::ip::udp::socket recv_socket(ctx);
+    recv_socket.open(boost::asio::ip::udp::v4(), ec);
     ASSERT_FALSE(ec);
-    recv_socket.bind({asio::ip::make_address("127.0.0.1"), 0}, ec);
+    recv_socket.bind({boost::asio::ip::make_address("127.0.0.1"), 0}, ec);
     ASSERT_FALSE(ec);
     recv_socket.non_blocking(true, ec);
     ASSERT_FALSE(ec);
@@ -309,15 +309,15 @@ TEST(UdpSocksSessionTest, StreamToUdpSockForwardsDataToTrackedEndpoint)
     ASSERT_NE(session->client_ep_.port(), 0);
 
     session->on_data({0x51, 0x52, 0x53});
-    asio::steady_timer stop_timer(ctx);
+    boost::asio::steady_timer stop_timer(ctx);
     stop_timer.expires_after(std::chrono::milliseconds(30));
-    stop_timer.async_wait([session](const std::error_code&) { session->on_close(); });
+    stop_timer.async_wait([session](const boost::system::error_code&) { session->on_close(); });
 
     mux::test::run_awaitable_void(ctx, session->stream_to_udp_sock(nullptr));
 
     std::array<std::uint8_t, 8> recv_buf = {0};
-    asio::ip::udp::endpoint sender;
-    const auto recv_n = recv_socket.receive_from(asio::buffer(recv_buf), sender, 0, ec);
+    boost::asio::ip::udp::endpoint sender;
+    const auto recv_n = recv_socket.receive_from(boost::asio::buffer(recv_buf), sender, 0, ec);
     EXPECT_FALSE(ec);
     ASSERT_EQ(recv_n, 3U);
     EXPECT_EQ(recv_buf[0], 0x51);
@@ -327,28 +327,28 @@ TEST(UdpSocksSessionTest, StreamToUdpSockForwardsDataToTrackedEndpoint)
 
 TEST(UdpSocksSessionTest, ForwardStreamDataToClientHandlesZeroPortAndSendError)
 {
-    asio::io_context ctx;
+    boost::asio::io_context ctx;
     mux::config::timeout_t timeout_cfg;
-    auto session = std::make_shared<mux::udp_socks_session>(asio::ip::tcp::socket(ctx), ctx, nullptr, 32, timeout_cfg);
+    auto session = std::make_shared<mux::udp_socks_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, 32, timeout_cfg);
 
     session->has_client_ep_ = true;
-    session->client_ep_ = {asio::ip::make_address("127.0.0.1"), 0};
+    session->client_ep_ = {boost::asio::ip::make_address("127.0.0.1"), 0};
     mux::test::run_awaitable_void(ctx, session->forward_stream_data_to_client(std::vector<std::uint8_t>{0x01}));
 
-    session->client_ep_ = {asio::ip::make_address("127.0.0.1"), 5353};
+    session->client_ep_ = {boost::asio::ip::make_address("127.0.0.1"), 5353};
     mux::test::run_awaitable_void(ctx, session->forward_stream_data_to_client(std::vector<std::uint8_t>{0x02}));
 }
 
 TEST(UdpSocksSessionTest, UdpSockToStreamValidationBranches)
 {
-    asio::io_context ctx;
+    boost::asio::io_context ctx;
     mux::config::timeout_t timeout_cfg;
-    auto session = std::make_shared<mux::udp_socks_session>(asio::ip::tcp::socket(ctx), ctx, nullptr, 4, timeout_cfg);
+    auto session = std::make_shared<mux::udp_socks_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, 4, timeout_cfg);
 
-    std::error_code ec;
-    session->udp_socket_.open(asio::ip::udp::v4(), ec);
+    boost::system::error_code ec;
+    session->udp_socket_.open(boost::asio::ip::udp::v4(), ec);
     ASSERT_FALSE(ec);
-    session->udp_socket_.bind({asio::ip::make_address("127.0.0.1"), 0}, ec);
+    session->udp_socket_.bind({boost::asio::ip::make_address("127.0.0.1"), 0}, ec);
     ASSERT_FALSE(ec);
     const auto recv_ep = session->udp_socket_.local_endpoint(ec);
     ASSERT_FALSE(ec);
@@ -356,35 +356,35 @@ TEST(UdpSocksSessionTest, UdpSockToStreamValidationBranches)
     auto conn = std::make_shared<mux::mock_mux_connection>(ctx);
     EXPECT_CALL(*conn, mock_send_async(1, mux::kCmdDat, testing::_))
         .Times(testing::AtLeast(1))
-        .WillRepeatedly(testing::Return(std::error_code{}));
+        .WillRepeatedly(testing::Return(boost::system::error_code{}));
 
     auto stream = std::make_shared<mux::mux_stream>(1, 1, "trace", conn, ctx);
-    asio::co_spawn(
+    boost::asio::co_spawn(
         ctx,
-        [session, stream]() -> asio::awaitable<void>
+        [session, stream]() -> boost::asio::awaitable<void>
         {
             co_await session->udp_sock_to_stream(stream);
             co_return;
         },
-        asio::detached);
+        boost::asio::detached);
 
     std::thread runner([&ctx]() { ctx.run(); });
 
-    asio::io_context send_ctx;
-    asio::ip::udp::socket sender1(send_ctx);
-    asio::ip::udp::socket sender2(send_ctx);
-    sender1.open(asio::ip::udp::v4(), ec);
+    boost::asio::io_context send_ctx;
+    boost::asio::ip::udp::socket sender1(send_ctx);
+    boost::asio::ip::udp::socket sender2(send_ctx);
+    sender1.open(boost::asio::ip::udp::v4(), ec);
     ASSERT_FALSE(ec);
-    sender2.open(asio::ip::udp::v4(), ec);
+    sender2.open(boost::asio::ip::udp::v4(), ec);
     ASSERT_FALSE(ec);
-    sender1.bind({asio::ip::make_address("127.0.0.1"), 0}, ec);
+    sender1.bind({boost::asio::ip::make_address("127.0.0.1"), 0}, ec);
     ASSERT_FALSE(ec);
-    sender2.bind({asio::ip::make_address("127.0.0.1"), 0}, ec);
+    sender2.bind({boost::asio::ip::make_address("127.0.0.1"), 0}, ec);
     ASSERT_FALSE(ec);
 
-    auto send_packet = [&](asio::ip::udp::socket& sender, const std::vector<std::uint8_t>& data)
+    auto send_packet = [&](boost::asio::ip::udp::socket& sender, const std::vector<std::uint8_t>& data)
     {
-        sender.send_to(asio::buffer(data), recv_ep, 0, ec);
+        sender.send_to(boost::asio::buffer(data), recv_ep, 0, ec);
         ASSERT_FALSE(ec);
     };
 
@@ -433,39 +433,39 @@ TEST(UdpSocksSessionTest, KeepTcpAliveCoversExpectedErrorCodes)
     mux::config::timeout_t timeout_cfg;
 
     {
-        asio::io_context ctx;
-        auto session = std::make_shared<mux::udp_socks_session>(asio::ip::tcp::socket(ctx), ctx, nullptr, 33, timeout_cfg);
+        boost::asio::io_context ctx;
+        auto session = std::make_shared<mux::udp_socks_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, 33, timeout_cfg);
         mux::test::run_awaitable_void(ctx, session->keep_tcp_alive());
 
-        std::error_code ec;
-        session->socket_.open(asio::ip::tcp::v4(), ec);
+        boost::system::error_code ec;
+        session->socket_.open(boost::asio::ip::tcp::v4(), ec);
         ASSERT_FALSE(ec);
         mux::test::run_awaitable_void(ctx, session->keep_tcp_alive());
     }
 
     {
-        asio::io_context ctx;
+        boost::asio::io_context ctx;
         auto pair = make_tcp_socket_pair(ctx);
         ASSERT_TRUE(pair.client.is_open());
         ASSERT_TRUE(pair.server.is_open());
         auto session = std::make_shared<mux::udp_socks_session>(std::move(pair.server), ctx, nullptr, 34, timeout_cfg);
 
-        std::error_code ec;
-        pair.client.shutdown(asio::ip::tcp::socket::shutdown_send, ec);
+        boost::system::error_code ec;
+        pair.client.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
         ASSERT_FALSE(ec);
         mux::test::run_awaitable_void(ctx, session->keep_tcp_alive());
     }
 
     {
-        asio::io_context ctx;
+        boost::asio::io_context ctx;
         auto pair = make_tcp_socket_pair(ctx);
         ASSERT_TRUE(pair.server.is_open());
         auto session = std::make_shared<mux::udp_socks_session>(std::move(pair.server), ctx, nullptr, 35, timeout_cfg);
-        asio::steady_timer timer(ctx);
+        boost::asio::steady_timer timer(ctx);
         timer.expires_after(std::chrono::milliseconds(10));
-        timer.async_wait([session](const std::error_code&)
+        timer.async_wait([session](const boost::system::error_code&)
                          {
-                             std::error_code close_ec;
+                             boost::system::error_code close_ec;
                              session->socket_.close(close_ec);
                          });
         mux::test::run_awaitable_void(ctx, session->keep_tcp_alive());
@@ -474,7 +474,7 @@ TEST(UdpSocksSessionTest, KeepTcpAliveCoversExpectedErrorCodes)
 
 TEST(UdpSocksSessionTest, PrepareUdpAssociateIPv6PathBranches)
 {
-    const auto rep = mux::detail::build_udp_associate_reply(asio::ip::make_address("::1"), 5353);
+    const auto rep = mux::detail::build_udp_associate_reply(boost::asio::ip::make_address("::1"), 5353);
     ASSERT_GE(rep.size(), 4U + 16U + 2U);
     EXPECT_EQ(rep[0], socks::kVer);
     EXPECT_EQ(rep[1], socks::kRepSuccess);
@@ -485,7 +485,7 @@ TEST(UdpSocksSessionTest, PrepareUdpAssociateIPv6PathBranches)
 
 TEST(UdpSocksSessionTest, IdleWatchdogDisabledWhenIdleTimeoutZero)
 {
-    asio::io_context ctx;
+    boost::asio::io_context ctx;
     mux::config::timeout_t timeout_cfg;
     timeout_cfg.idle = 0;
     auto pair = make_tcp_socket_pair(ctx);
@@ -500,13 +500,13 @@ TEST(UdpSocksSessionTest, IdleWatchdogDisabledWhenIdleTimeoutZero)
     EXPECT_TRUE(session->socket_.is_open());
 
     session->on_close();
-    std::error_code ec;
+    boost::system::error_code ec;
     pair.client.close(ec);
 }
 
 TEST(UdpSocksSessionTest, PrepareUdpAssociateHandlesBindFailureAndStartPath)
 {
-    asio::io_context ctx;
+    boost::asio::io_context ctx;
     mux::config::timeout_t timeout_cfg;
     auto pair = make_tcp_socket_pair(ctx);
     ASSERT_TRUE(pair.client.is_open());
@@ -515,7 +515,7 @@ TEST(UdpSocksSessionTest, PrepareUdpAssociateHandlesBindFailureAndStartPath)
     auto session = std::make_shared<mux::udp_socks_session>(std::move(pair.server), ctx, nullptr, 36, timeout_cfg);
     fail_next_bind(EADDRINUSE);
 
-    asio::ip::address local_addr;
+    boost::asio::ip::address local_addr;
     std::uint16_t udp_bind_port = 0;
     const auto stream = mux::test::run_awaitable(ctx, session->prepare_udp_associate(local_addr, udp_bind_port));
     EXPECT_EQ(stream, nullptr);
@@ -523,14 +523,14 @@ TEST(UdpSocksSessionTest, PrepareUdpAssociateHandlesBindFailureAndStartPath)
     EXPECT_FALSE(session->udp_socket_.is_open());
 
     std::uint8_t err[10] = {0};
-    asio::read(pair.client, asio::buffer(err));
+    boost::asio::read(pair.client, boost::asio::buffer(err));
     EXPECT_EQ(err[0], socks::kVer);
     EXPECT_EQ(err[1], socks::kRepGenFail);
 }
 
 TEST(UdpSocksSessionTest, PrepareUdpAssociateHandlesUdpLocalEndpointFailure)
 {
-    asio::io_context ctx;
+    boost::asio::io_context ctx;
     mux::config::timeout_t timeout_cfg;
     auto pair = make_tcp_socket_pair(ctx);
     ASSERT_TRUE(pair.client.is_open());
@@ -539,7 +539,7 @@ TEST(UdpSocksSessionTest, PrepareUdpAssociateHandlesUdpLocalEndpointFailure)
     auto session = std::make_shared<mux::udp_socks_session>(std::move(pair.server), ctx, nullptr, 40, timeout_cfg);
     fail_getsockname_on_call(2, ENOTSOCK);
 
-    asio::ip::address local_addr;
+    boost::asio::ip::address local_addr;
     std::uint16_t udp_bind_port = 0;
     const auto stream = mux::test::run_awaitable(ctx, session->prepare_udp_associate(local_addr, udp_bind_port));
     EXPECT_EQ(stream, nullptr);
@@ -547,14 +547,14 @@ TEST(UdpSocksSessionTest, PrepareUdpAssociateHandlesUdpLocalEndpointFailure)
     EXPECT_FALSE(session->udp_socket_.is_open());
 
     std::uint8_t err[10] = {0};
-    asio::read(pair.client, asio::buffer(err));
+    boost::asio::read(pair.client, boost::asio::buffer(err));
     EXPECT_EQ(err[0], socks::kVer);
     EXPECT_EQ(err[1], socks::kRepGenFail);
 }
 
 TEST(UdpSocksSessionTest, PrepareUdpAssociateHandlesIpv6V6OnlyOptionFailure)
 {
-    asio::io_context ctx;
+    boost::asio::io_context ctx;
     mux::config::timeout_t timeout_cfg;
     auto pair = make_tcp_socket_pair(ctx);
     ASSERT_TRUE(pair.client.is_open());
@@ -564,7 +564,7 @@ TEST(UdpSocksSessionTest, PrepareUdpAssociateHandlesIpv6V6OnlyOptionFailure)
     mock_next_getsockname_ipv6_any();
     fail_next_setsockopt(IPPROTO_IPV6, -1, EPERM);
 
-    asio::ip::address local_addr;
+    boost::asio::ip::address local_addr;
     std::uint16_t udp_bind_port = 0;
     const auto stream = mux::test::run_awaitable(ctx, session->prepare_udp_associate(local_addr, udp_bind_port));
     EXPECT_EQ(stream, nullptr);
@@ -572,14 +572,14 @@ TEST(UdpSocksSessionTest, PrepareUdpAssociateHandlesIpv6V6OnlyOptionFailure)
     EXPECT_FALSE(session->udp_socket_.is_open());
 
     std::uint8_t err[10] = {0};
-    asio::read(pair.client, asio::buffer(err));
+    boost::asio::read(pair.client, boost::asio::buffer(err));
     EXPECT_EQ(err[0], socks::kVer);
     EXPECT_EQ(err[1], socks::kRepGenFail);
 }
 
 TEST(UdpSocksSessionTest, PrepareUdpAssociateHandlesNullTunnelConnection)
 {
-    asio::io_context ctx;
+    boost::asio::io_context ctx;
     mux::config::timeout_t timeout_cfg;
     auto pair = make_tcp_socket_pair(ctx);
     ASSERT_TRUE(pair.client.is_open());
@@ -589,20 +589,20 @@ TEST(UdpSocksSessionTest, PrepareUdpAssociateHandlesNullTunnelConnection)
     tunnel->connection_ = nullptr;
     auto session = std::make_shared<mux::udp_socks_session>(std::move(pair.server), ctx, tunnel, 42, timeout_cfg);
 
-    asio::ip::address local_addr;
+    boost::asio::ip::address local_addr;
     std::uint16_t udp_bind_port = 0;
     const auto stream = mux::test::run_awaitable(ctx, session->prepare_udp_associate(local_addr, udp_bind_port));
     EXPECT_EQ(stream, nullptr);
 
     std::uint8_t err[10] = {0};
-    asio::read(pair.client, asio::buffer(err));
+    boost::asio::read(pair.client, boost::asio::buffer(err));
     EXPECT_EQ(err[0], socks::kVer);
     EXPECT_EQ(err[1], socks::kRepHostUnreach);
 }
 
 TEST(UdpSocksSessionTest, PrepareUdpAssociateHandlesClosedTunnelConnection)
 {
-    asio::io_context ctx;
+    boost::asio::io_context ctx;
     mux::config::timeout_t timeout_cfg;
     auto pair = make_tcp_socket_pair(ctx);
     ASSERT_TRUE(pair.client.is_open());
@@ -614,20 +614,20 @@ TEST(UdpSocksSessionTest, PrepareUdpAssociateHandlesClosedTunnelConnection)
     tunnel->connection_ = mock_conn;
     auto session = std::make_shared<mux::udp_socks_session>(std::move(pair.server), ctx, tunnel, 43, timeout_cfg);
 
-    asio::ip::address local_addr;
+    boost::asio::ip::address local_addr;
     std::uint16_t udp_bind_port = 0;
     const auto stream = mux::test::run_awaitable(ctx, session->prepare_udp_associate(local_addr, udp_bind_port));
     EXPECT_EQ(stream, nullptr);
 
     std::uint8_t err[10] = {0};
-    asio::read(pair.client, asio::buffer(err));
+    boost::asio::read(pair.client, boost::asio::buffer(err));
     EXPECT_EQ(err[0], socks::kVer);
     EXPECT_EQ(err[1], socks::kRepHostUnreach);
 }
 
 TEST(UdpSocksSessionTest, PrepareUdpAssociateSynFailureRemovesCreatedStream)
 {
-    asio::io_context ctx;
+    boost::asio::io_context ctx;
     mux::config::timeout_t timeout_cfg;
     auto pair = make_tcp_socket_pair(ctx);
     ASSERT_TRUE(pair.client.is_open());
@@ -638,30 +638,30 @@ TEST(UdpSocksSessionTest, PrepareUdpAssociateSynFailureRemovesCreatedStream)
     tunnel->connection_ = mock_conn;
 
     ON_CALL(*mock_conn, id()).WillByDefault(testing::Return(205));
-    ON_CALL(*mock_conn, mock_send_async(testing::_, testing::_, testing::_)).WillByDefault(testing::Return(std::error_code{}));
+    ON_CALL(*mock_conn, mock_send_async(testing::_, testing::_, testing::_)).WillByDefault(testing::Return(boost::system::error_code{}));
 
     EXPECT_CALL(*mock_conn, register_stream(testing::_, testing::_)).WillOnce(testing::Return(true));
     EXPECT_CALL(*mock_conn, mock_send_async(testing::_, mux::kCmdSyn, testing::_))
         .WillOnce(testing::Return(std::make_error_code(std::errc::broken_pipe)));
     EXPECT_CALL(*mock_conn, mock_send_async(testing::_, mux::kCmdFin, std::vector<std::uint8_t>{}))
-        .WillOnce(testing::Return(std::error_code{}));
+        .WillOnce(testing::Return(boost::system::error_code{}));
     EXPECT_CALL(*mock_conn, remove_stream(testing::_)).Times(1);
 
     auto session = std::make_shared<mux::udp_socks_session>(std::move(pair.server), ctx, tunnel, 45, timeout_cfg);
-    asio::ip::address local_addr;
+    boost::asio::ip::address local_addr;
     std::uint16_t udp_bind_port = 0;
     const auto stream = mux::test::run_awaitable(ctx, session->prepare_udp_associate(local_addr, udp_bind_port));
     EXPECT_EQ(stream, nullptr);
 
     std::uint8_t err[10] = {0};
-    asio::read(pair.client, asio::buffer(err));
+    boost::asio::read(pair.client, boost::asio::buffer(err));
     EXPECT_EQ(err[0], socks::kVer);
     EXPECT_EQ(err[1], socks::kRepGenFail);
 }
 
 TEST(UdpSocksSessionTest, PrepareUdpAssociateAckFailureRemovesCreatedStream)
 {
-    asio::io_context ctx;
+    boost::asio::io_context ctx;
     mux::config::timeout_t timeout_cfg;
     auto pair = make_tcp_socket_pair(ctx);
     ASSERT_TRUE(pair.client.is_open());
@@ -672,9 +672,9 @@ TEST(UdpSocksSessionTest, PrepareUdpAssociateAckFailureRemovesCreatedStream)
     tunnel->connection_ = mock_conn;
 
     ON_CALL(*mock_conn, id()).WillByDefault(testing::Return(206));
-    ON_CALL(*mock_conn, mock_send_async(testing::_, testing::_, testing::_)).WillByDefault(testing::Return(std::error_code{}));
+    ON_CALL(*mock_conn, mock_send_async(testing::_, testing::_, testing::_)).WillByDefault(testing::Return(boost::system::error_code{}));
 
-    EXPECT_CALL(*mock_conn, mock_send_async(testing::_, mux::kCmdSyn, testing::_)).WillOnce(testing::Return(std::error_code{}));
+    EXPECT_CALL(*mock_conn, mock_send_async(testing::_, mux::kCmdSyn, testing::_)).WillOnce(testing::Return(boost::system::error_code{}));
     EXPECT_CALL(*mock_conn, register_stream(testing::_, testing::_))
         .WillOnce([&ctx](const std::uint32_t, std::shared_ptr<mux::mux_stream_interface> iface) -> bool
                   {
@@ -684,27 +684,27 @@ TEST(UdpSocksSessionTest, PrepareUdpAssociateAckFailureRemovesCreatedStream)
                       {
                           return false;
                       }
-                      asio::post(ctx, [stream]() { stream->on_reset(); });
+                      boost::asio::post(ctx, [stream]() { stream->on_reset(); });
                       return true;
                   });
     EXPECT_CALL(*mock_conn, mock_send_async(testing::_, mux::kCmdFin, std::vector<std::uint8_t>{})).Times(0);
     EXPECT_CALL(*mock_conn, remove_stream(testing::_)).Times(1);
 
     auto session = std::make_shared<mux::udp_socks_session>(std::move(pair.server), ctx, tunnel, 46, timeout_cfg);
-    asio::ip::address local_addr;
+    boost::asio::ip::address local_addr;
     std::uint16_t udp_bind_port = 0;
     const auto stream = mux::test::run_awaitable(ctx, session->prepare_udp_associate(local_addr, udp_bind_port));
     EXPECT_EQ(stream, nullptr);
 
     std::uint8_t err[10] = {0};
-    asio::read(pair.client, asio::buffer(err));
+    boost::asio::read(pair.client, boost::asio::buffer(err));
     EXPECT_EQ(err[0], socks::kVer);
     EXPECT_EQ(err[1], socks::kRepGenFail);
 }
 
 TEST(UdpSocksSessionTest, PrepareUdpAssociateSuccessReplyFailureCleansUpSessionAndStream)
 {
-    asio::io_context ctx;
+    boost::asio::io_context ctx;
     mux::config::timeout_t timeout_cfg;
     auto pair = make_tcp_socket_pair(ctx);
     ASSERT_TRUE(pair.client.is_open());
@@ -717,9 +717,9 @@ TEST(UdpSocksSessionTest, PrepareUdpAssociateSuccessReplyFailureCleansUpSessionA
     auto* session_raw = session.get();
 
     ON_CALL(*mock_conn, id()).WillByDefault(testing::Return(207));
-    ON_CALL(*mock_conn, mock_send_async(testing::_, testing::_, testing::_)).WillByDefault(testing::Return(std::error_code{}));
+    ON_CALL(*mock_conn, mock_send_async(testing::_, testing::_, testing::_)).WillByDefault(testing::Return(boost::system::error_code{}));
 
-    EXPECT_CALL(*mock_conn, mock_send_async(testing::_, mux::kCmdSyn, testing::_)).WillOnce(testing::Return(std::error_code{}));
+    EXPECT_CALL(*mock_conn, mock_send_async(testing::_, mux::kCmdSyn, testing::_)).WillOnce(testing::Return(boost::system::error_code{}));
     EXPECT_CALL(*mock_conn, register_stream(testing::_, testing::_))
         .WillOnce([&ctx, session_raw](const std::uint32_t, std::shared_ptr<mux::mux_stream_interface> iface) -> bool
                   {
@@ -730,10 +730,10 @@ TEST(UdpSocksSessionTest, PrepareUdpAssociateSuccessReplyFailureCleansUpSessionA
                           return false;
                       }
 
-                      asio::post(ctx,
+                      boost::asio::post(ctx,
                                  [session_raw]()
                                  {
-                                     std::error_code close_ec;
+                                     boost::system::error_code close_ec;
                                      session_raw->socket_.close(close_ec);
                                  });
 
@@ -741,14 +741,14 @@ TEST(UdpSocksSessionTest, PrepareUdpAssociateSuccessReplyFailureCleansUpSessionA
                       ack.socks_rep = socks::kRepSuccess;
                       std::vector<std::uint8_t> ack_data;
                       mux::mux_codec::encode_ack(ack, ack_data);
-                      asio::post(ctx, [stream, ack_data]() { stream->on_data(ack_data); });
+                      boost::asio::post(ctx, [stream, ack_data]() { stream->on_data(ack_data); });
                       return true;
                   });
     EXPECT_CALL(*mock_conn, mock_send_async(testing::_, mux::kCmdFin, std::vector<std::uint8_t>{}))
-        .WillOnce(testing::Return(std::error_code{}));
+        .WillOnce(testing::Return(boost::system::error_code{}));
     EXPECT_CALL(*mock_conn, remove_stream(testing::_)).Times(1);
 
-    asio::ip::address local_addr;
+    boost::asio::ip::address local_addr;
     std::uint16_t udp_bind_port = 0;
     const auto stream = mux::test::run_awaitable(ctx, session->prepare_udp_associate(local_addr, udp_bind_port));
     EXPECT_EQ(stream, nullptr);
@@ -758,7 +758,7 @@ TEST(UdpSocksSessionTest, PrepareUdpAssociateSuccessReplyFailureCleansUpSessionA
 
 TEST(UdpSocksSessionTest, StartSpawnsRunAndWritesHostUnreachWhenTunnelUnavailable)
 {
-    asio::io_context ctx;
+    boost::asio::io_context ctx;
     mux::config::timeout_t timeout_cfg;
     auto pair = make_tcp_socket_pair(ctx);
     ASSERT_TRUE(pair.client.is_open());
@@ -769,14 +769,14 @@ TEST(UdpSocksSessionTest, StartSpawnsRunAndWritesHostUnreachWhenTunnelUnavailabl
     ctx.run();
 
     std::uint8_t err[10] = {0};
-    asio::read(pair.client, asio::buffer(err));
+    boost::asio::read(pair.client, boost::asio::buffer(err));
     EXPECT_EQ(err[0], socks::kVer);
     EXPECT_EQ(err[1], socks::kRepHostUnreach);
 }
 
 TEST(UdpSocksSessionTest, RunReturnsWhenAlreadyClosed)
 {
-    asio::io_context ctx;
+    boost::asio::io_context ctx;
     mux::config::timeout_t timeout_cfg;
     auto pair = make_tcp_socket_pair(ctx);
     ASSERT_TRUE(pair.client.is_open());
@@ -787,7 +787,7 @@ TEST(UdpSocksSessionTest, RunReturnsWhenAlreadyClosed)
     tunnel->connection_ = mock_conn;
 
     ON_CALL(*mock_conn, id()).WillByDefault(testing::Return(209));
-    ON_CALL(*mock_conn, mock_send_async(testing::_, testing::_, testing::_)).WillByDefault(testing::Return(std::error_code{}));
+    ON_CALL(*mock_conn, mock_send_async(testing::_, testing::_, testing::_)).WillByDefault(testing::Return(boost::system::error_code{}));
 
     EXPECT_CALL(*mock_conn, mock_send_async(testing::_, mux::kCmdSyn, testing::_)).Times(0);
 
@@ -802,7 +802,7 @@ TEST(UdpSocksSessionTest, RunReturnsWhenAlreadyClosed)
 TEST(UdpSocksSessionTest, PrepareAndFinalizeUdpAssociateSuccess)
 {
     mux::config::timeout_t timeout_cfg;
-    asio::io_context ctx;
+    boost::asio::io_context ctx;
     auto pair = make_tcp_socket_pair(ctx);
     ASSERT_TRUE(pair.client.is_open());
     ASSERT_TRUE(pair.server.is_open());
@@ -812,9 +812,9 @@ TEST(UdpSocksSessionTest, PrepareAndFinalizeUdpAssociateSuccess)
     tunnel->connection_ = mock_conn;
 
     ON_CALL(*mock_conn, id()).WillByDefault(testing::Return(201));
-    ON_CALL(*mock_conn, mock_send_async(testing::_, testing::_, testing::_)).WillByDefault(testing::Return(std::error_code{}));
+    ON_CALL(*mock_conn, mock_send_async(testing::_, testing::_, testing::_)).WillByDefault(testing::Return(boost::system::error_code{}));
 
-    EXPECT_CALL(*mock_conn, mock_send_async(testing::_, mux::kCmdSyn, testing::_)).WillOnce(testing::Return(std::error_code{}));
+    EXPECT_CALL(*mock_conn, mock_send_async(testing::_, mux::kCmdSyn, testing::_)).WillOnce(testing::Return(boost::system::error_code{}));
     EXPECT_CALL(*mock_conn, register_stream(testing::_, testing::_))
         .WillOnce([&ctx](const std::uint32_t, std::shared_ptr<mux::mux_stream_interface> iface) -> bool
                   {
@@ -828,18 +828,18 @@ TEST(UdpSocksSessionTest, PrepareAndFinalizeUdpAssociateSuccess)
                       ack.socks_rep = socks::kRepSuccess;
                       std::vector<std::uint8_t> ack_data;
                       mux::mux_codec::encode_ack(ack, ack_data);
-                      asio::post(ctx, [stream, ack_data]() { stream->on_data(ack_data); });
+                      boost::asio::post(ctx, [stream, ack_data]() { stream->on_data(ack_data); });
                       return true;
                   });
     testing::Sequence cleanup_seq;
     EXPECT_CALL(*mock_conn, mock_send_async(testing::_, mux::kCmdFin, std::vector<std::uint8_t>{}))
         .InSequence(cleanup_seq)
-        .WillOnce(testing::Return(std::error_code{}));
+        .WillOnce(testing::Return(boost::system::error_code{}));
     EXPECT_CALL(*mock_conn, remove_stream(testing::_))
         .InSequence(cleanup_seq);
 
     auto session = std::make_shared<mux::udp_socks_session>(std::move(pair.server), ctx, tunnel, 38, timeout_cfg);
-    asio::ip::address local_addr;
+    boost::asio::ip::address local_addr;
     std::uint16_t udp_bind_port = 0;
     const auto stream = mux::test::run_awaitable(ctx, session->prepare_udp_associate(local_addr, udp_bind_port));
     ASSERT_NE(stream, nullptr);
@@ -847,21 +847,21 @@ TEST(UdpSocksSessionTest, PrepareAndFinalizeUdpAssociateSuccess)
     mux::test::run_awaitable_void(ctx, session->finalize_udp_associate(stream));
 
     std::uint8_t rep[10] = {0};
-    asio::read(pair.client, asio::buffer(rep));
+    boost::asio::read(pair.client, boost::asio::buffer(rep));
     EXPECT_EQ(rep[0], socks::kVer);
     EXPECT_EQ(rep[1], socks::kRepSuccess);
 }
 
 TEST(UdpSocksSessionTest, CloseImplLogsCloseFailureBranch)
 {
-    asio::io_context ctx;
+    boost::asio::io_context ctx;
     mux::config::timeout_t timeout_cfg;
-    auto session = std::make_shared<mux::udp_socks_session>(asio::ip::tcp::socket(ctx), ctx, nullptr, 5, timeout_cfg);
+    auto session = std::make_shared<mux::udp_socks_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, 5, timeout_cfg);
 
-    std::error_code ec;
-    session->udp_socket_.open(asio::ip::udp::v4(), ec);
+    boost::system::error_code ec;
+    session->udp_socket_.open(boost::asio::ip::udp::v4(), ec);
     ASSERT_FALSE(ec);
-    session->udp_socket_.bind({asio::ip::make_address("127.0.0.1"), 0}, ec);
+    session->udp_socket_.bind({boost::asio::ip::make_address("127.0.0.1"), 0}, ec);
     ASSERT_FALSE(ec);
 
     fail_next_close(EIO);
@@ -869,10 +869,10 @@ TEST(UdpSocksSessionTest, CloseImplLogsCloseFailureBranch)
 
     session->close_impl();
 
-    auto session_bad_descriptor = std::make_shared<mux::udp_socks_session>(asio::ip::tcp::socket(ctx), ctx, nullptr, 44, timeout_cfg);
-    session_bad_descriptor->udp_socket_.open(asio::ip::udp::v4(), ec);
+    auto session_bad_descriptor = std::make_shared<mux::udp_socks_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, 44, timeout_cfg);
+    session_bad_descriptor->udp_socket_.open(boost::asio::ip::udp::v4(), ec);
     ASSERT_FALSE(ec);
-    session_bad_descriptor->udp_socket_.bind({asio::ip::make_address("127.0.0.1"), 0}, ec);
+    session_bad_descriptor->udp_socket_.bind({boost::asio::ip::make_address("127.0.0.1"), 0}, ec);
     ASSERT_FALSE(ec);
     fail_next_close(EBADF);
     session_bad_descriptor->close_impl();
@@ -880,14 +880,14 @@ TEST(UdpSocksSessionTest, CloseImplLogsCloseFailureBranch)
 
 TEST(UdpSocksSessionTest, OnCloseRunsInlineWhenIoContextStopped)
 {
-    asio::io_context ctx;
+    boost::asio::io_context ctx;
     mux::config::timeout_t timeout_cfg;
-    auto session = std::make_shared<mux::udp_socks_session>(asio::ip::tcp::socket(ctx), ctx, nullptr, 45, timeout_cfg);
+    auto session = std::make_shared<mux::udp_socks_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, 45, timeout_cfg);
 
-    std::error_code ec;
-    session->udp_socket_.open(asio::ip::udp::v4(), ec);
+    boost::system::error_code ec;
+    session->udp_socket_.open(boost::asio::ip::udp::v4(), ec);
     ASSERT_FALSE(ec);
-    session->udp_socket_.bind({asio::ip::make_address("127.0.0.1"), 0}, ec);
+    session->udp_socket_.bind({boost::asio::ip::make_address("127.0.0.1"), 0}, ec);
     ASSERT_FALSE(ec);
     ASSERT_TRUE(session->udp_socket_.is_open());
 
@@ -899,14 +899,14 @@ TEST(UdpSocksSessionTest, OnCloseRunsInlineWhenIoContextStopped)
 
 TEST(UdpSocksSessionTest, OnDataTriggersCloseWhenIoContextStopped)
 {
-    asio::io_context ctx;
+    boost::asio::io_context ctx;
     mux::config::timeout_t timeout_cfg;
-    auto session = std::make_shared<mux::udp_socks_session>(asio::ip::tcp::socket(ctx), ctx, nullptr, 48, timeout_cfg);
+    auto session = std::make_shared<mux::udp_socks_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, 48, timeout_cfg);
 
-    std::error_code ec;
-    session->udp_socket_.open(asio::ip::udp::v4(), ec);
+    boost::system::error_code ec;
+    session->udp_socket_.open(boost::asio::ip::udp::v4(), ec);
     ASSERT_FALSE(ec);
-    session->udp_socket_.bind({asio::ip::make_address("127.0.0.1"), 0}, ec);
+    session->udp_socket_.bind({boost::asio::ip::make_address("127.0.0.1"), 0}, ec);
     ASSERT_FALSE(ec);
     ASSERT_TRUE(session->udp_socket_.is_open());
 
@@ -920,18 +920,18 @@ TEST(UdpSocksSessionTest, OnDataTriggersCloseWhenIoContextStopped)
 
 TEST(UdpSocksSessionTest, OnDataDispatchesFromForeignThread)
 {
-    asio::io_context ctx;
+    boost::asio::io_context ctx;
     mux::config::timeout_t timeout_cfg;
-    auto session = std::make_shared<mux::udp_socks_session>(asio::ip::tcp::socket(ctx), ctx, nullptr, 58, timeout_cfg);
+    auto session = std::make_shared<mux::udp_socks_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, 58, timeout_cfg);
 
     std::promise<std::vector<std::uint8_t>> received_promise;
     auto received_future = received_promise.get_future();
 
-    asio::co_spawn(
+    boost::asio::co_spawn(
         ctx,
-        [session, &received_promise]() -> asio::awaitable<void>
+        [session, &received_promise]() -> boost::asio::awaitable<void>
         {
-            const auto [ec, data] = co_await session->recv_channel_.async_receive(asio::as_tuple(asio::use_awaitable));
+            const auto [ec, data] = co_await session->recv_channel_.async_receive(boost::asio::as_tuple(boost::asio::use_awaitable));
             if (ec)
             {
                 received_promise.set_value({});
@@ -939,7 +939,7 @@ TEST(UdpSocksSessionTest, OnDataDispatchesFromForeignThread)
             }
             received_promise.set_value(data);
         },
-        asio::detached);
+        boost::asio::detached);
 
     std::thread io_thread([&ctx]() { ctx.run(); });
     session->on_data({0x21, 0x22});
@@ -961,14 +961,14 @@ TEST(UdpSocksSessionTest, OnDataDispatchesFromForeignThread)
 
 TEST(UdpSocksSessionTest, OnCloseRunsWhenIoContextNotRunning)
 {
-    asio::io_context ctx;
+    boost::asio::io_context ctx;
     mux::config::timeout_t timeout_cfg;
-    auto session = std::make_shared<mux::udp_socks_session>(asio::ip::tcp::socket(ctx), ctx, nullptr, 46, timeout_cfg);
+    auto session = std::make_shared<mux::udp_socks_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, 46, timeout_cfg);
 
-    std::error_code ec;
-    session->udp_socket_.open(asio::ip::udp::v4(), ec);
+    boost::system::error_code ec;
+    session->udp_socket_.open(boost::asio::ip::udp::v4(), ec);
     ASSERT_FALSE(ec);
-    session->udp_socket_.bind({asio::ip::make_address("127.0.0.1"), 0}, ec);
+    session->udp_socket_.bind({boost::asio::ip::make_address("127.0.0.1"), 0}, ec);
     ASSERT_FALSE(ec);
     ASSERT_TRUE(session->udp_socket_.is_open());
 
@@ -979,14 +979,14 @@ TEST(UdpSocksSessionTest, OnCloseRunsWhenIoContextNotRunning)
 
 TEST(UdpSocksSessionTest, OnDataTriggersCloseWhenIoContextNotRunning)
 {
-    asio::io_context ctx;
+    boost::asio::io_context ctx;
     mux::config::timeout_t timeout_cfg;
-    auto session = std::make_shared<mux::udp_socks_session>(asio::ip::tcp::socket(ctx), ctx, nullptr, 50, timeout_cfg);
+    auto session = std::make_shared<mux::udp_socks_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, 50, timeout_cfg);
 
-    std::error_code ec;
-    session->udp_socket_.open(asio::ip::udp::v4(), ec);
+    boost::system::error_code ec;
+    session->udp_socket_.open(boost::asio::ip::udp::v4(), ec);
     ASSERT_FALSE(ec);
-    session->udp_socket_.bind({asio::ip::make_address("127.0.0.1"), 0}, ec);
+    session->udp_socket_.bind({boost::asio::ip::make_address("127.0.0.1"), 0}, ec);
     ASSERT_FALSE(ec);
     ASSERT_TRUE(session->udp_socket_.is_open());
 
@@ -999,14 +999,14 @@ TEST(UdpSocksSessionTest, OnDataTriggersCloseWhenIoContextNotRunning)
 
 TEST(UdpSocksSessionTest, OnDataTriggersCloseWhenIoQueueBlocked)
 {
-    asio::io_context ctx;
+    boost::asio::io_context ctx;
     mux::config::timeout_t timeout_cfg;
-    auto session = std::make_shared<mux::udp_socks_session>(asio::ip::tcp::socket(ctx), ctx, nullptr, 49, timeout_cfg);
+    auto session = std::make_shared<mux::udp_socks_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, 49, timeout_cfg);
 
-    std::error_code ec;
-    session->udp_socket_.open(asio::ip::udp::v4(), ec);
+    boost::system::error_code ec;
+    session->udp_socket_.open(boost::asio::ip::udp::v4(), ec);
     ASSERT_FALSE(ec);
-    session->udp_socket_.bind({asio::ip::make_address("127.0.0.1"), 0}, ec);
+    session->udp_socket_.bind({boost::asio::ip::make_address("127.0.0.1"), 0}, ec);
     ASSERT_FALSE(ec);
     ASSERT_TRUE(session->udp_socket_.is_open());
 
@@ -1014,7 +1014,7 @@ TEST(UdpSocksSessionTest, OnDataTriggersCloseWhenIoQueueBlocked)
 
     std::atomic<bool> blocker_started{false};
     std::atomic<bool> release_blocker{false};
-    asio::post(
+    boost::asio::post(
         ctx,
         [&blocker_started, &release_blocker]()
         {
@@ -1061,20 +1061,20 @@ TEST(UdpSocksSessionTest, OnDataTriggersCloseWhenIoQueueBlocked)
 
 TEST(UdpSocksSessionTest, OnCloseRunsWhenIoQueueBlocked)
 {
-    asio::io_context ctx;
+    boost::asio::io_context ctx;
     mux::config::timeout_t timeout_cfg;
-    auto session = std::make_shared<mux::udp_socks_session>(asio::ip::tcp::socket(ctx), ctx, nullptr, 47, timeout_cfg);
+    auto session = std::make_shared<mux::udp_socks_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, 47, timeout_cfg);
 
-    std::error_code ec;
-    session->udp_socket_.open(asio::ip::udp::v4(), ec);
+    boost::system::error_code ec;
+    session->udp_socket_.open(boost::asio::ip::udp::v4(), ec);
     ASSERT_FALSE(ec);
-    session->udp_socket_.bind({asio::ip::make_address("127.0.0.1"), 0}, ec);
+    session->udp_socket_.bind({boost::asio::ip::make_address("127.0.0.1"), 0}, ec);
     ASSERT_FALSE(ec);
     ASSERT_TRUE(session->udp_socket_.is_open());
 
     std::atomic<bool> blocker_started{false};
     std::atomic<bool> release_blocker{false};
-    asio::post(
+    boost::asio::post(
         ctx,
         [&blocker_started, &release_blocker]()
         {

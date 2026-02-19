@@ -9,8 +9,8 @@
 #include <utility>
 #include <cstdint>
 
-#include <asio/dispatch.hpp>
-#include <asio/io_context.hpp>
+#include <boost/asio/dispatch.hpp>
+#include <boost/asio/io_context.hpp>
 
 namespace mux::detail
 {
@@ -24,7 +24,7 @@ enum class dispatch_timeout_policy : std::uint8_t
 };
 
 template <typename Fn>
-void dispatch_cleanup_or_run_inline(asio::io_context& io_context,
+void dispatch_cleanup_or_run_inline(boost::asio::io_context& io_context,
                                     Fn&& fn,
                                     const dispatch_timeout_policy timeout_policy = dispatch_timeout_policy::kRunInline)
 {
@@ -48,7 +48,7 @@ void dispatch_cleanup_or_run_inline(asio::io_context& io_context,
     auto state = std::make_shared<dispatch_state>(std::forward<Fn>(fn));
     auto future = state->dispatch_done.get_future();
 
-    asio::dispatch(
+    boost::asio::dispatch(
         io_context,
         [state]()
         {

@@ -13,7 +13,7 @@ reality_engine::reality_engine(std::vector<std::uint8_t> r_key,
       read_iv_(std::move(r_iv)),
       write_key_(std::move(w_key)),
       write_iv_(std::move(w_iv)),
-      rx_buf_(std::make_unique<asio::streambuf>(kMaxBufSize)),
+      rx_buf_(std::make_unique<boost::asio::streambuf>(kMaxBufSize)),
       cipher_(cipher)
 {
     rx_buf_->prepare(kInitialBufSize);
@@ -21,7 +21,7 @@ reality_engine::reality_engine(std::vector<std::uint8_t> r_key,
     tx_buf_.reserve(kMaxBufSize);
 }
 
-std::expected<std::span<const std::uint8_t>, std::error_code> reality_engine::encrypt(const std::vector<std::uint8_t>& plaintext)
+std::expected<std::span<const std::uint8_t>, boost::system::error_code> reality_engine::encrypt(const std::vector<std::uint8_t>& plaintext)
 {
     tx_buf_.clear();
 
@@ -41,7 +41,7 @@ std::expected<std::span<const std::uint8_t>, std::error_code> reality_engine::en
     return std::span<const std::uint8_t>{tx_buf_.data(), tx_buf_.size()};
 }
 
-std::expected<void, std::error_code> reality_engine::process_available_records(const record_callback& callback)
+std::expected<void, boost::system::error_code> reality_engine::process_available_records(const record_callback& callback)
 {
     std::uint8_t content_type = 0;
     std::size_t payload_len = 0;
@@ -62,13 +62,13 @@ std::expected<void, std::error_code> reality_engine::process_available_records(c
 
         if (content_type == reality::kContentTypeAlert)
         {
-            return std::unexpected(asio::error::eof);
+            return std::unexpected(boost::asio::error::eof);
         }
     }
     return {};
 }
 
-std::expected<bool, std::error_code> reality_engine::try_decrypt_next_record(std::uint8_t& content_type, std::size_t& payload_len)
+std::expected<bool, boost::system::error_code> reality_engine::try_decrypt_next_record(std::uint8_t& content_type, std::size_t& payload_len)
 {
     if (rx_buf_->size() < reality::kTlsRecordHeaderSize)
     {

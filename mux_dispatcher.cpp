@@ -5,7 +5,7 @@
 #include <cstring>
 #include <utility>
 
-#include <asio/buffer.hpp>
+#include <boost/asio/buffer.hpp>
 
 #include "log.h"
 #include "mux_codec.h"
@@ -40,7 +40,7 @@ void mux_dispatcher::on_plaintext_data(std::span<const std::uint8_t> data)
     }
 
     auto mutable_bufs = buffer_.prepare(data.size());
-    const std::size_t n = asio::buffer_copy(mutable_bufs, asio::buffer(data.data(), data.size()));
+    const std::size_t n = boost::asio::buffer_copy(mutable_bufs, boost::asio::buffer(data.data(), data.size()));
     buffer_.commit(n);
 
     process_frames();

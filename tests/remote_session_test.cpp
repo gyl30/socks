@@ -12,14 +12,14 @@
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include <asio/read.hpp>
-#include <asio/write.hpp>
-#include <asio/io_context.hpp>
-#include <asio/ip/tcp.hpp>
-#include <asio/steady_timer.hpp>
-#include <asio/use_awaitable.hpp>
-#include <asio/as_tuple.hpp>
-#include <asio/experimental/awaitable_operators.hpp>
+#include <boost/asio/read.hpp>
+#include <boost/asio/write.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/steady_timer.hpp>
+#include <boost/asio/use_awaitable.hpp>
+#include <boost/asio/as_tuple.hpp>
+#include <boost/asio/experimental/awaitable_operators.hpp>
 #include <sys/socket.h>
 #include <netinet/tcp.h>
 
@@ -75,29 +75,29 @@ class noop_stream : public mux::mux_stream_interface
 
 struct tcp_socket_pair
 {
-    asio::ip::tcp::socket client;
-    asio::ip::tcp::socket server;
+    boost::asio::ip::tcp::socket client;
+    boost::asio::ip::tcp::socket server;
 };
 
-tcp_socket_pair make_tcp_socket_pair(asio::io_context& io_context)
+tcp_socket_pair make_tcp_socket_pair(boost::asio::io_context& io_context)
 {
-    asio::ip::tcp::acceptor acceptor(io_context);
+    boost::asio::ip::tcp::acceptor acceptor(io_context);
     if (!mux::test::open_ephemeral_tcp_acceptor(acceptor))
     {
-        return tcp_socket_pair{asio::ip::tcp::socket(io_context), asio::ip::tcp::socket(io_context)};
+        return tcp_socket_pair{boost::asio::ip::tcp::socket(io_context), boost::asio::ip::tcp::socket(io_context)};
     }
-    asio::ip::tcp::socket client(io_context);
-    asio::ip::tcp::socket server(io_context);
-    std::error_code ec;
+    boost::asio::ip::tcp::socket client(io_context);
+    boost::asio::ip::tcp::socket server(io_context);
+    boost::system::error_code ec;
     client.connect(acceptor.local_endpoint(), ec);
     if (ec)
     {
-        return tcp_socket_pair{asio::ip::tcp::socket(io_context), asio::ip::tcp::socket(io_context)};
+        return tcp_socket_pair{boost::asio::ip::tcp::socket(io_context), boost::asio::ip::tcp::socket(io_context)};
     }
     acceptor.accept(server, ec);
     if (ec)
     {
-        return tcp_socket_pair{asio::ip::tcp::socket(io_context), asio::ip::tcp::socket(io_context)};
+        return tcp_socket_pair{boost::asio::ip::tcp::socket(io_context), boost::asio::ip::tcp::socket(io_context)};
     }
     return tcp_socket_pair{std::move(client), std::move(server)};
 }
@@ -112,16 +112,16 @@ mux::syn_payload make_syn(const std::string& host, const std::uint16_t port)
     return syn;
 }
 
-std::shared_ptr<mux::mux_tunnel_impl<asio::ip::tcp::socket>> make_manager(asio::io_context& io_context,
+std::shared_ptr<mux::mux_tunnel_impl<boost::asio::ip::tcp::socket>> make_manager(boost::asio::io_context& io_context,
                                                                             const std::uint32_t conn_id = 301)
 {
-    return std::make_shared<mux::mux_tunnel_impl<asio::ip::tcp::socket>>(
-        asio::ip::tcp::socket(io_context), io_context, mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, conn_id);
+    return std::make_shared<mux::mux_tunnel_impl<boost::asio::ip::tcp::socket>>(
+        boost::asio::ip::tcp::socket(io_context), io_context, mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, conn_id);
 }
 
 TEST(RemoteSessionTest, StartReturnsWhenConnectionExpired)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     mux::connection_context ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 7, io_context, ctx);
@@ -133,7 +133,7 @@ TEST(RemoteSessionTest, StartReturnsWhenConnectionExpired)
 
 TEST(RemoteSessionTest, StartRemovesManagerStreamWhenConnectionExpired)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     mux::connection_context ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 8, io_context, ctx);
@@ -151,7 +151,7 @@ TEST(RemoteSessionTest, StartRemovesManagerStreamWhenConnectionExpired)
 
 TEST(RemoteSessionTest, RunResolveFailureSendsHostUnreachAckAndReset)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     mux::connection_context ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 9, io_context, ctx);
@@ -163,9 +163,9 @@ TEST(RemoteSessionTest, RunResolveFailureSendsHostUnreachAckAndReset)
         .WillOnce([&ack_payload](const std::uint32_t, const std::uint8_t, const std::vector<std::uint8_t>& payload)
                   {
                       ack_payload = payload;
-                      return std::error_code{};
+                      return boost::system::error_code{};
                   });
-    EXPECT_CALL(*conn, mock_send_async(9, mux::kCmdRst, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(std::error_code{}));
+    EXPECT_CALL(*conn, mock_send_async(9, mux::kCmdRst, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(boost::system::error_code{}));
 
     mux::test::run_awaitable_void(io_context, session->run(make_syn("non-existent.invalid", 443)));
 
@@ -177,7 +177,7 @@ TEST(RemoteSessionTest, RunResolveFailureSendsHostUnreachAckAndReset)
 
 TEST(RemoteSessionTest, RunResolveFailureRemovesManagerStream)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     mux::connection_context ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 10, io_context, ctx);
@@ -187,8 +187,8 @@ TEST(RemoteSessionTest, RunResolveFailureRemovesManagerStream)
     ASSERT_TRUE(manager->connection()->has_stream(10));
     session->set_manager(manager);
 
-    EXPECT_CALL(*conn, mock_send_async(10, mux::kCmdAck, _)).WillOnce(::testing::Return(std::error_code{}));
-    EXPECT_CALL(*conn, mock_send_async(10, mux::kCmdRst, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(std::error_code{}));
+    EXPECT_CALL(*conn, mock_send_async(10, mux::kCmdAck, _)).WillOnce(::testing::Return(boost::system::error_code{}));
+    EXPECT_CALL(*conn, mock_send_async(10, mux::kCmdRst, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(boost::system::error_code{}));
 
     mux::test::run_awaitable_void(io_context, session->run(make_syn("non-existent.invalid", 443)));
     EXPECT_FALSE(manager->connection()->has_stream(10));
@@ -196,7 +196,7 @@ TEST(RemoteSessionTest, RunResolveFailureRemovesManagerStream)
 
 TEST(RemoteSessionTest, RunResolveFailureAckSendErrorStillResetsAndRemovesManagerStream)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     mux::connection_context ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 12, io_context, ctx);
@@ -206,8 +206,8 @@ TEST(RemoteSessionTest, RunResolveFailureAckSendErrorStillResetsAndRemovesManage
     ASSERT_TRUE(manager->connection()->has_stream(12));
     session->set_manager(manager);
 
-    EXPECT_CALL(*conn, mock_send_async(12, mux::kCmdAck, _)).WillOnce(::testing::Return(asio::error::broken_pipe));
-    EXPECT_CALL(*conn, mock_send_async(12, mux::kCmdRst, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(std::error_code{}));
+    EXPECT_CALL(*conn, mock_send_async(12, mux::kCmdAck, _)).WillOnce(::testing::Return(boost::asio::error::broken_pipe));
+    EXPECT_CALL(*conn, mock_send_async(12, mux::kCmdRst, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(boost::system::error_code{}));
 
     mux::test::run_awaitable_void(io_context, session->run(make_syn("non-existent.invalid", 443)));
     EXPECT_FALSE(manager->connection()->has_stream(12));
@@ -215,14 +215,14 @@ TEST(RemoteSessionTest, RunResolveFailureAckSendErrorStillResetsAndRemovesManage
 
 TEST(RemoteSessionTest, RunConnectFailureSendsConnRefusedAckAndReset)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     mux::connection_context ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 11, io_context, ctx);
     auto& stats = mux::statistics::instance();
     const auto connect_errors_before = stats.remote_session_connect_errors();
 
-    asio::ip::tcp::acceptor acceptor(io_context);
+    boost::asio::ip::tcp::acceptor acceptor(io_context);
     ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
     const std::uint16_t closed_port = acceptor.local_endpoint().port();
     acceptor.close();
@@ -232,9 +232,9 @@ TEST(RemoteSessionTest, RunConnectFailureSendsConnRefusedAckAndReset)
         .WillOnce([&ack_payload](const std::uint32_t, const std::uint8_t, const std::vector<std::uint8_t>& payload)
                   {
                       ack_payload = payload;
-                      return std::error_code{};
+                      return boost::system::error_code{};
                   });
-    EXPECT_CALL(*conn, mock_send_async(11, mux::kCmdRst, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(std::error_code{}));
+    EXPECT_CALL(*conn, mock_send_async(11, mux::kCmdRst, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(boost::system::error_code{}));
 
     mux::test::run_awaitable_void(io_context, session->run(make_syn("127.0.0.1", closed_port)));
 
@@ -246,30 +246,30 @@ TEST(RemoteSessionTest, RunConnectFailureSendsConnRefusedAckAndReset)
 
 TEST(RemoteSessionTest, RunConnectTimeoutSendsConnRefusedAckAndReset)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     mux::connection_context ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 35, io_context, ctx, 1);
     auto& stats = mux::statistics::instance();
     const auto connect_timeouts_before = stats.remote_session_connect_timeouts();
 
-    std::error_code ec;
-    asio::ip::tcp::acceptor saturated_acceptor(io_context);
-    ec = saturated_acceptor.open(asio::ip::tcp::v4(), ec);
+    boost::system::error_code ec;
+    boost::asio::ip::tcp::acceptor saturated_acceptor(io_context);
+    ec = saturated_acceptor.open(boost::asio::ip::tcp::v4(), ec);
     ASSERT_FALSE(ec);
-    ec = saturated_acceptor.set_option(asio::ip::tcp::acceptor::reuse_address(true), ec);
+    ec = saturated_acceptor.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true), ec);
     ASSERT_FALSE(ec);
-    ec = saturated_acceptor.bind(asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0), ec);
+    ec = saturated_acceptor.bind(boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 0), ec);
     ASSERT_FALSE(ec);
     ec = saturated_acceptor.listen(1, ec);
     ASSERT_FALSE(ec);
 
     const auto target_port = saturated_acceptor.local_endpoint().port();
-    asio::ip::tcp::socket queued_client_a(io_context);
-    queued_client_a.connect({asio::ip::make_address("127.0.0.1"), target_port}, ec);
+    boost::asio::ip::tcp::socket queued_client_a(io_context);
+    queued_client_a.connect({boost::asio::ip::make_address("127.0.0.1"), target_port}, ec);
     ASSERT_FALSE(ec);
-    asio::ip::tcp::socket queued_client_b(io_context);
-    queued_client_b.connect({asio::ip::make_address("127.0.0.1"), target_port}, ec);
+    boost::asio::ip::tcp::socket queued_client_b(io_context);
+    queued_client_b.connect({boost::asio::ip::make_address("127.0.0.1"), target_port}, ec);
     ASSERT_FALSE(ec);
 
     std::vector<std::uint8_t> ack_payload;
@@ -277,9 +277,9 @@ TEST(RemoteSessionTest, RunConnectTimeoutSendsConnRefusedAckAndReset)
         .WillOnce([&ack_payload](const std::uint32_t, const std::uint8_t, const std::vector<std::uint8_t>& payload)
                   {
                       ack_payload = payload;
-                      return std::error_code{};
+                      return boost::system::error_code{};
                   });
-    EXPECT_CALL(*conn, mock_send_async(35, mux::kCmdRst, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(std::error_code{}));
+    EXPECT_CALL(*conn, mock_send_async(35, mux::kCmdRst, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(boost::system::error_code{}));
 
     const auto start = std::chrono::steady_clock::now();
     mux::test::run_awaitable_void(io_context, session->run(make_syn("127.0.0.1", target_port)));
@@ -291,7 +291,7 @@ TEST(RemoteSessionTest, RunConnectTimeoutSendsConnRefusedAckAndReset)
     EXPECT_LT(std::chrono::duration_cast<std::chrono::seconds>(elapsed).count(), 5);
     EXPECT_GE(stats.remote_session_connect_timeouts(), connect_timeouts_before + 1);
 
-    std::error_code close_ec;
+    boost::system::error_code close_ec;
     queued_client_a.close(close_ec);
     queued_client_b.close(close_ec);
     saturated_acceptor.close(close_ec);
@@ -299,15 +299,15 @@ TEST(RemoteSessionTest, RunConnectTimeoutSendsConnRefusedAckAndReset)
 
 TEST(RemoteSessionTest, RunAckSendFailureReturnsWithoutReset)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     mux::connection_context ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 13, io_context, ctx);
 
-    asio::ip::tcp::acceptor acceptor(io_context);
+    boost::asio::ip::tcp::acceptor acceptor(io_context);
     ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
 
-    EXPECT_CALL(*conn, mock_send_async(13, mux::kCmdAck, _)).WillOnce(::testing::Return(asio::error::broken_pipe));
+    EXPECT_CALL(*conn, mock_send_async(13, mux::kCmdAck, _)).WillOnce(::testing::Return(boost::asio::error::broken_pipe));
     EXPECT_CALL(*conn, mock_send_async(13, mux::kCmdRst, _)).Times(0);
 
     mux::test::run_awaitable_void(io_context, session->run(make_syn("127.0.0.1", acceptor.local_endpoint().port())));
@@ -316,7 +316,7 @@ TEST(RemoteSessionTest, RunAckSendFailureReturnsWithoutReset)
 
 TEST(RemoteSessionTest, RunSkipsHandshakeWhenResetAlreadyRequested)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     mux::connection_context ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 34, io_context, ctx);
@@ -329,20 +329,20 @@ TEST(RemoteSessionTest, RunSkipsHandshakeWhenResetAlreadyRequested)
 
 TEST(RemoteSessionTest, RunSuccessWhenSetNoDelayFailsStillSendsAckAndFin)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     mux::connection_context ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 29, io_context, ctx);
     session->recv_channel_.close();
 
-    asio::ip::tcp::acceptor acceptor(io_context);
+    boost::asio::ip::tcp::acceptor acceptor(io_context);
     ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
     const std::uint16_t port = acceptor.local_endpoint().port();
     std::thread accept_thread(
         [&io_context, &acceptor]()
         {
-            asio::ip::tcp::socket accepted(io_context);
-            std::error_code ec;
+            boost::asio::ip::tcp::socket accepted(io_context);
+            boost::system::error_code ec;
             acceptor.accept(accepted, ec);
             if (!ec)
             {
@@ -357,9 +357,9 @@ TEST(RemoteSessionTest, RunSuccessWhenSetNoDelayFailsStillSendsAckAndFin)
             .WillOnce([&ack_payload](const std::uint32_t, const std::uint8_t, const std::vector<std::uint8_t>& payload)
                       {
                           ack_payload = payload;
-                          return std::error_code{};
+                          return boost::system::error_code{};
                       });
-        EXPECT_CALL(*conn, mock_send_async(29, mux::kCmdFin, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(std::error_code{}));
+        EXPECT_CALL(*conn, mock_send_async(29, mux::kCmdFin, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(boost::system::error_code{}));
     }
     fail_next_tcp_nodelay_setsockopt(EPERM);
 
@@ -377,27 +377,27 @@ TEST(RemoteSessionTest, RunSuccessWhenSetNoDelayFailsStillSendsAckAndFin)
 
 TEST(RemoteSessionTest, UpstreamWritesPayloadAndStopsOnEmptyFrame)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     mux::connection_context ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 15, io_context, ctx);
 
     auto pair = make_tcp_socket_pair(io_context);
     session->target_socket_ = std::move(pair.server);
-    session->recv_channel_.try_send(std::error_code{}, std::vector<std::uint8_t>{0x11, 0x22});
-    session->recv_channel_.try_send(std::error_code{}, std::vector<std::uint8_t>{});
+    session->recv_channel_.try_send(boost::system::error_code{}, std::vector<std::uint8_t>{0x11, 0x22});
+    session->recv_channel_.try_send(boost::system::error_code{}, std::vector<std::uint8_t>{});
 
     mux::test::run_awaitable_void(io_context, session->upstream());
 
     std::uint8_t recv_buf[2] = {0};
-    asio::read(pair.client, asio::buffer(recv_buf));
+    boost::asio::read(pair.client, boost::asio::buffer(recv_buf));
     EXPECT_EQ(recv_buf[0], 0x11);
     EXPECT_EQ(recv_buf[1], 0x22);
 }
 
 TEST(RemoteSessionTest, UpstreamStopsWhenChannelClosed)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     mux::connection_context ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 16, io_context, ctx);
@@ -411,24 +411,24 @@ TEST(RemoteSessionTest, UpstreamStopsWhenChannelClosed)
 
 TEST(RemoteSessionTest, UpstreamStopsWhenWriteToTargetFails)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     mux::connection_context ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 26, io_context, ctx);
 
     auto pair = make_tcp_socket_pair(io_context);
     session->target_socket_ = std::move(pair.server);
-    std::error_code ec;
+    boost::system::error_code ec;
     session->target_socket_.close(ec);
     ASSERT_FALSE(ec);
 
-    session->recv_channel_.try_send(std::error_code{}, std::vector<std::uint8_t>{0x33});
+    session->recv_channel_.try_send(boost::system::error_code{}, std::vector<std::uint8_t>{0x33});
     mux::test::run_awaitable_void(io_context, session->upstream());
 }
 
 TEST(RemoteSessionTest, DownstreamSendsDataAndFin)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     mux::connection_context ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 17, io_context, ctx);
@@ -437,13 +437,13 @@ TEST(RemoteSessionTest, DownstreamSendsDataAndFin)
     session->target_socket_ = std::move(pair.server);
 
     const std::vector<std::uint8_t> payload = {0xA1, 0xB2, 0xC3};
-    asio::write(pair.client, asio::buffer(payload));
-    pair.client.shutdown(asio::ip::tcp::socket::shutdown_send);
+    boost::asio::write(pair.client, boost::asio::buffer(payload));
+    pair.client.shutdown(boost::asio::ip::tcp::socket::shutdown_send);
 
     {
         ::testing::InSequence seq;
-        EXPECT_CALL(*conn, mock_send_async(17, mux::kCmdDat, payload)).WillOnce(::testing::Return(std::error_code{}));
-        EXPECT_CALL(*conn, mock_send_async(17, mux::kCmdFin, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(std::error_code{}));
+        EXPECT_CALL(*conn, mock_send_async(17, mux::kCmdDat, payload)).WillOnce(::testing::Return(boost::system::error_code{}));
+        EXPECT_CALL(*conn, mock_send_async(17, mux::kCmdFin, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(boost::system::error_code{}));
     }
 
     mux::test::run_awaitable_void(io_context, session->downstream());
@@ -451,7 +451,7 @@ TEST(RemoteSessionTest, DownstreamSendsDataAndFin)
 
 TEST(RemoteSessionTest, DownstreamStopsWhenMuxSendFailsStillFin)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     mux::connection_context ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 18, io_context, ctx);
@@ -460,12 +460,12 @@ TEST(RemoteSessionTest, DownstreamStopsWhenMuxSendFailsStillFin)
     session->target_socket_ = std::move(pair.server);
 
     const std::vector<std::uint8_t> payload = {0xCA, 0xFE};
-    asio::write(pair.client, asio::buffer(payload));
+    boost::asio::write(pair.client, boost::asio::buffer(payload));
 
     {
         ::testing::InSequence seq;
-        EXPECT_CALL(*conn, mock_send_async(18, mux::kCmdDat, payload)).WillOnce(::testing::Return(asio::error::broken_pipe));
-        EXPECT_CALL(*conn, mock_send_async(18, mux::kCmdFin, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(std::error_code{}));
+        EXPECT_CALL(*conn, mock_send_async(18, mux::kCmdDat, payload)).WillOnce(::testing::Return(boost::asio::error::broken_pipe));
+        EXPECT_CALL(*conn, mock_send_async(18, mux::kCmdFin, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(boost::system::error_code{}));
     }
 
     mux::test::run_awaitable_void(io_context, session->downstream());
@@ -473,7 +473,7 @@ TEST(RemoteSessionTest, DownstreamStopsWhenMuxSendFailsStillFin)
 
 TEST(RemoteSessionTest, DownstreamMuxSendFailureUnblocksUpstreamLoop)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     mux::connection_context ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 38, io_context, ctx);
@@ -482,12 +482,12 @@ TEST(RemoteSessionTest, DownstreamMuxSendFailureUnblocksUpstreamLoop)
     session->target_socket_ = std::move(pair.server);
 
     const std::vector<std::uint8_t> payload = {0xDE, 0xAD};
-    asio::write(pair.client, asio::buffer(payload));
+    boost::asio::write(pair.client, boost::asio::buffer(payload));
 
     {
         ::testing::InSequence seq;
-        EXPECT_CALL(*conn, mock_send_async(38, mux::kCmdDat, payload)).WillOnce(::testing::Return(asio::error::broken_pipe));
-        EXPECT_CALL(*conn, mock_send_async(38, mux::kCmdFin, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(std::error_code{}));
+        EXPECT_CALL(*conn, mock_send_async(38, mux::kCmdDat, payload)).WillOnce(::testing::Return(boost::asio::error::broken_pipe));
+        EXPECT_CALL(*conn, mock_send_async(38, mux::kCmdFin, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(boost::system::error_code{}));
     }
 
     auto future = std::async(
@@ -496,9 +496,9 @@ TEST(RemoteSessionTest, DownstreamMuxSendFailureUnblocksUpstreamLoop)
         {
             mux::test::run_awaitable_void(
                 io_context,
-                [session]() -> asio::awaitable<void>
+                [session]() -> boost::asio::awaitable<void>
                 {
-                    using asio::experimental::awaitable_operators::operator&&;
+                    using boost::asio::experimental::awaitable_operators::operator&&;
                     co_await (session->upstream() && session->downstream());
                 }());
         });
@@ -507,7 +507,7 @@ TEST(RemoteSessionTest, DownstreamMuxSendFailureUnblocksUpstreamLoop)
     if (!completed)
     {
         session->recv_channel_.close();
-        std::error_code close_ec;
+        boost::system::error_code close_ec;
         session->target_socket_.close(close_ec);
         pair.client.close(close_ec);
     }
@@ -518,7 +518,7 @@ TEST(RemoteSessionTest, DownstreamMuxSendFailureUnblocksUpstreamLoop)
 
 TEST(RemoteSessionTest, DownstreamStopsWhenConnectionExpired)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     mux::connection_context ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 19, io_context, ctx);
@@ -526,7 +526,7 @@ TEST(RemoteSessionTest, DownstreamStopsWhenConnectionExpired)
     auto pair = make_tcp_socket_pair(io_context);
     session->target_socket_ = std::move(pair.server);
 
-    asio::write(pair.client, asio::buffer(std::vector<std::uint8_t>{0x01, 0x02}));
+    boost::asio::write(pair.client, boost::asio::buffer(std::vector<std::uint8_t>{0x01, 0x02}));
     conn.reset();
 
     mux::test::run_awaitable_void(io_context, session->downstream());
@@ -534,24 +534,24 @@ TEST(RemoteSessionTest, DownstreamStopsWhenConnectionExpired)
 
 TEST(RemoteSessionTest, DownstreamStopsWhenTargetReadFailsStillSendsFin)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     mux::connection_context ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 27, io_context, ctx);
 
     auto pair = make_tcp_socket_pair(io_context);
     session->target_socket_ = std::move(pair.server);
-    std::error_code ec;
+    boost::system::error_code ec;
     session->target_socket_.close(ec);
     ASSERT_FALSE(ec);
 
-    EXPECT_CALL(*conn, mock_send_async(27, mux::kCmdFin, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(std::error_code{}));
+    EXPECT_CALL(*conn, mock_send_async(27, mux::kCmdFin, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(boost::system::error_code{}));
     mux::test::run_awaitable_void(io_context, session->downstream());
 }
 
 TEST(RemoteSessionTest, DownstreamStopsWhenTargetReadOperationAbortedStillSendsFin)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     mux::connection_context ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 28, io_context, ctx);
@@ -559,21 +559,21 @@ TEST(RemoteSessionTest, DownstreamStopsWhenTargetReadOperationAbortedStillSendsF
     auto pair = make_tcp_socket_pair(io_context);
     session->target_socket_ = std::move(pair.server);
 
-    asio::steady_timer cancel_timer(io_context);
+    boost::asio::steady_timer cancel_timer(io_context);
     cancel_timer.expires_after(std::chrono::milliseconds(10));
-    cancel_timer.async_wait([session](const std::error_code&)
+    cancel_timer.async_wait([session](const boost::system::error_code&)
                             {
-                                std::error_code ec;
+                                boost::system::error_code ec;
                                 session->target_socket_.cancel(ec);
                             });
 
-    EXPECT_CALL(*conn, mock_send_async(28, mux::kCmdFin, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(std::error_code{}));
+    EXPECT_CALL(*conn, mock_send_async(28, mux::kCmdFin, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(boost::system::error_code{}));
     mux::test::run_awaitable_void(io_context, session->downstream());
 }
 
 TEST(RemoteSessionTest, DownstreamStopsWhenTargetReadConnectionResetStillSendsFin)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     mux::connection_context ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 30, io_context, ctx);
@@ -586,17 +586,17 @@ TEST(RemoteSessionTest, DownstreamStopsWhenTargetReadConnectionResetStillSendsFi
     linger_opt.l_linger = 0;
     ASSERT_EQ(::setsockopt(pair.client.native_handle(), SOL_SOCKET, SO_LINGER, &linger_opt, sizeof(linger_opt)), 0);
 
-    std::error_code ec;
+    boost::system::error_code ec;
     pair.client.close(ec);
     ASSERT_FALSE(ec);
 
-    EXPECT_CALL(*conn, mock_send_async(30, mux::kCmdFin, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(std::error_code{}));
+    EXPECT_CALL(*conn, mock_send_async(30, mux::kCmdFin, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(boost::system::error_code{}));
     mux::test::run_awaitable_void(io_context, session->downstream());
 }
 
 TEST(RemoteSessionTest, DownstreamSkipsFinWhenResetRequested)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     mux::connection_context ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 36, io_context, ctx);
@@ -614,13 +614,13 @@ TEST(RemoteSessionTest, DownstreamSkipsFinWhenResetRequested)
 
 TEST(RemoteSessionTest, OnDataDispatchEnqueuesFrame)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     mux::connection_context ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 20, io_context, ctx);
 
     session->on_data({0x55});
-    const auto [ec, data] = mux::test::run_awaitable(io_context, session->recv_channel_.async_receive(asio::as_tuple(asio::use_awaitable)));
+    const auto [ec, data] = mux::test::run_awaitable(io_context, session->recv_channel_.async_receive(boost::asio::as_tuple(boost::asio::use_awaitable)));
     EXPECT_FALSE(ec);
     ASSERT_EQ(data.size(), 1U);
     EXPECT_EQ(data[0], 0x55);
@@ -628,7 +628,7 @@ TEST(RemoteSessionTest, OnDataDispatchEnqueuesFrame)
 
 TEST(RemoteSessionTest, OnDataRunsCleanupWhenIoContextStopped)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     mux::connection_context ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 32, io_context, ctx);
@@ -646,7 +646,7 @@ TEST(RemoteSessionTest, OnDataRunsCleanupWhenIoContextStopped)
 
 TEST(RemoteSessionTest, OnDataRunsCleanupWhenIoContextNotRunning)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     mux::connection_context ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 33, io_context, ctx);
@@ -662,7 +662,7 @@ TEST(RemoteSessionTest, OnDataRunsCleanupWhenIoContextNotRunning)
 
 TEST(RemoteSessionTest, OnDataRunsCleanupWhenIoQueueBlocked)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     mux::connection_context ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 31, io_context, ctx);
@@ -675,7 +675,7 @@ TEST(RemoteSessionTest, OnDataRunsCleanupWhenIoQueueBlocked)
 
     std::atomic<bool> blocker_started{false};
     std::atomic<bool> release_blocker{false};
-    asio::post(
+    boost::asio::post(
         io_context,
         [&blocker_started, &release_blocker]()
         {
@@ -706,7 +706,7 @@ TEST(RemoteSessionTest, OnDataRunsCleanupWhenIoQueueBlocked)
 
 TEST(RemoteSessionTest, OnCloseAndOnResetDispatchCleanup)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     mux::connection_context ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 21, io_context, ctx);
@@ -727,7 +727,7 @@ TEST(RemoteSessionTest, OnCloseAndOnResetDispatchCleanup)
 
 TEST(RemoteSessionTest, OnResetRemovesManagerStreamEvenBeforeRun)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     mux::connection_context ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 39, io_context, ctx);
@@ -746,7 +746,7 @@ TEST(RemoteSessionTest, OnResetRemovesManagerStreamEvenBeforeRun)
 
 TEST(RemoteSessionTest, OnCloseAndOnResetRunInlineWhenIoContextStopped)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     mux::connection_context ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 22, io_context, ctx);
@@ -757,7 +757,7 @@ TEST(RemoteSessionTest, OnCloseAndOnResetRunInlineWhenIoContextStopped)
 
     io_context.stop();
     session->on_close();
-    EXPECT_FALSE(session->recv_channel_.try_send(std::error_code{}, std::vector<std::uint8_t>{0x01}));
+    EXPECT_FALSE(session->recv_channel_.try_send(boost::system::error_code{}, std::vector<std::uint8_t>{0x01}));
 
     session->on_reset();
     EXPECT_FALSE(session->target_socket_.is_open());
@@ -765,7 +765,7 @@ TEST(RemoteSessionTest, OnCloseAndOnResetRunInlineWhenIoContextStopped)
 
 TEST(RemoteSessionTest, OnCloseAndOnResetRunWhenIoContextNotRunning)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     mux::connection_context ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 23, io_context, ctx);
@@ -775,7 +775,7 @@ TEST(RemoteSessionTest, OnCloseAndOnResetRunWhenIoContextNotRunning)
     ASSERT_TRUE(session->target_socket_.is_open());
 
     session->on_close();
-    EXPECT_FALSE(session->recv_channel_.try_send(std::error_code{}, std::vector<std::uint8_t>{0x01}));
+    EXPECT_FALSE(session->recv_channel_.try_send(boost::system::error_code{}, std::vector<std::uint8_t>{0x01}));
 
     session->on_reset();
     EXPECT_FALSE(session->target_socket_.is_open());
@@ -783,7 +783,7 @@ TEST(RemoteSessionTest, OnCloseAndOnResetRunWhenIoContextNotRunning)
 
 TEST(RemoteSessionTest, OnCloseAndOnResetRunWhenIoQueueBlocked)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     mux::connection_context ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 24, io_context, ctx);
@@ -794,7 +794,7 @@ TEST(RemoteSessionTest, OnCloseAndOnResetRunWhenIoQueueBlocked)
 
     std::atomic<bool> blocker_started{false};
     std::atomic<bool> release_blocker{false};
-    asio::post(
+    boost::asio::post(
         io_context,
         [&blocker_started, &release_blocker]()
         {
@@ -813,7 +813,7 @@ TEST(RemoteSessionTest, OnCloseAndOnResetRunWhenIoQueueBlocked)
     ASSERT_TRUE(blocker_started.load(std::memory_order_acquire));
 
     session->on_close();
-    EXPECT_FALSE(session->recv_channel_.try_send(std::error_code{}, std::vector<std::uint8_t>{0x01}));
+    EXPECT_FALSE(session->recv_channel_.try_send(boost::system::error_code{}, std::vector<std::uint8_t>{0x01}));
 
     session->on_reset();
     EXPECT_FALSE(session->target_socket_.is_open());

@@ -5,7 +5,7 @@
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include <asio/io_context.hpp>
+#include <boost/asio/io_context.hpp>
 
 #include "test_util.h"
 #define private public
@@ -17,10 +17,10 @@
 class mux_stream_test : public ::testing::Test
 {
    protected:
-    asio::io_context& ctx() { return ctx_; }
+    boost::asio::io_context& ctx() { return ctx_; }
 
    private:
-    asio::io_context ctx_;
+    boost::asio::io_context ctx_;
 };
 
 TEST_F(mux_stream_test, WriteSomeSuccess)
@@ -30,7 +30,7 @@ TEST_F(mux_stream_test, WriteSomeSuccess)
 
     const std::vector<std::uint8_t> data = {1, 2, 3, 4};
 
-    EXPECT_CALL(*mock_conn, mock_send_async(1, mux::kCmdDat, data)).WillOnce(::testing::Return(std::error_code()));
+    EXPECT_CALL(*mock_conn, mock_send_async(1, mux::kCmdDat, data)).WillOnce(::testing::Return(boost::system::error_code()));
 
     const auto ec = mux::test::run_awaitable(ctx(), stream->async_write_some(data.data(), data.size()));
     EXPECT_FALSE(ec);
@@ -42,10 +42,10 @@ TEST_F(mux_stream_test, WriteSomeFailurePropagatesError)
     auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx());
 
     const std::vector<std::uint8_t> data = {1, 2, 3, 4};
-    EXPECT_CALL(*mock_conn, mock_send_async(1, mux::kCmdDat, data)).WillOnce(::testing::Return(asio::error::broken_pipe));
+    EXPECT_CALL(*mock_conn, mock_send_async(1, mux::kCmdDat, data)).WillOnce(::testing::Return(boost::asio::error::broken_pipe));
 
     const auto ec = mux::test::run_awaitable(ctx(), stream->async_write_some(data.data(), data.size()));
-    EXPECT_EQ(ec, asio::error::broken_pipe);
+    EXPECT_EQ(ec, boost::asio::error::broken_pipe);
 }
 
 TEST_F(mux_stream_test, ReadSomeSuccess)
@@ -66,7 +66,7 @@ TEST_F(mux_stream_test, CloseSendsFin)
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
     auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx());
 
-    EXPECT_CALL(*mock_conn, mock_send_async(1, mux::kCmdFin, std::vector<std::uint8_t>())).WillOnce(::testing::Return(std::error_code()));
+    EXPECT_CALL(*mock_conn, mock_send_async(1, mux::kCmdFin, std::vector<std::uint8_t>())).WillOnce(::testing::Return(boost::system::error_code()));
 
     mux::test::run_awaitable_void(ctx(), stream->close());
 }
@@ -76,7 +76,7 @@ TEST_F(mux_stream_test, CloseIsIdempotent)
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
     auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx());
 
-    EXPECT_CALL(*mock_conn, mock_send_async(1, mux::kCmdFin, std::vector<std::uint8_t>())).Times(1).WillOnce(::testing::Return(std::error_code()));
+    EXPECT_CALL(*mock_conn, mock_send_async(1, mux::kCmdFin, std::vector<std::uint8_t>())).Times(1).WillOnce(::testing::Return(boost::system::error_code()));
 
     mux::test::run_awaitable_void(ctx(), stream->close());
     mux::test::run_awaitable_void(ctx(), stream->close());
@@ -100,7 +100,7 @@ TEST_F(mux_stream_test, OnCloseUnblocksReader)
 
     const auto [ec, read_data] = mux::test::run_awaitable(ctx(), stream->async_read_some());
 
-    EXPECT_EQ(ec, asio::error::eof);
+    EXPECT_EQ(ec, boost::asio::error::eof);
 }
 
 TEST_F(mux_stream_test, OnCloseSecondCallDoesNotInjectExtraEOF)
@@ -114,7 +114,7 @@ TEST_F(mux_stream_test, OnCloseSecondCallDoesNotInjectExtraEOF)
     stream->on_data(payload);
 
     const auto [first_ec, first_data] = mux::test::run_awaitable(ctx(), stream->async_read_some());
-    EXPECT_EQ(first_ec, asio::error::eof);
+    EXPECT_EQ(first_ec, boost::asio::error::eof);
     EXPECT_TRUE(first_data.empty());
 
     const auto [second_ec, second_data] = mux::test::run_awaitable(ctx(), stream->async_read_some());
@@ -127,12 +127,12 @@ TEST_F(mux_stream_test, WriteAfterClose)
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
     auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx());
 
-    EXPECT_CALL(*mock_conn, mock_send_async(1, mux::kCmdFin, ::testing::_)).WillOnce(::testing::Return(std::error_code()));
+    EXPECT_CALL(*mock_conn, mock_send_async(1, mux::kCmdFin, ::testing::_)).WillOnce(::testing::Return(boost::system::error_code()));
     mux::test::run_awaitable_void(ctx(), stream->close());
 
     const std::vector<std::uint8_t> data = {1, 2, 3, 4};
     const auto ec = mux::test::run_awaitable(ctx(), stream->async_write_some(data.data(), data.size()));
-    EXPECT_EQ(ec, asio::error::operation_aborted);
+    EXPECT_EQ(ec, boost::asio::error::operation_aborted);
 }
 
 TEST_F(mux_stream_test, WriteAfterConnectionDestroyed)
@@ -144,7 +144,7 @@ TEST_F(mux_stream_test, WriteAfterConnectionDestroyed)
 
     const std::vector<std::uint8_t> data = {1, 2, 3, 4};
     const auto ec = mux::test::run_awaitable(ctx(), stream->async_write_some(data.data(), data.size()));
-    EXPECT_EQ(ec, asio::error::connection_aborted);
+    EXPECT_EQ(ec, boost::asio::error::connection_aborted);
 }
 
 TEST_F(mux_stream_test, OnReset)
@@ -185,7 +185,7 @@ TEST_F(mux_stream_test, OnDataChannelFullClosesStream)
 
     const std::vector<std::uint8_t> data = {9};
     const auto ec = mux::test::run_awaitable(ctx(), stream->async_write_some(data.data(), data.size()));
-    EXPECT_EQ(ec, asio::error::operation_aborted);
+    EXPECT_EQ(ec, boost::asio::error::operation_aborted);
 }
 
 TEST_F(mux_stream_test, OnCloseChannelFullClosesStream)
@@ -202,7 +202,7 @@ TEST_F(mux_stream_test, OnCloseChannelFullClosesStream)
 
     const std::vector<std::uint8_t> data = {9};
     const auto ec = mux::test::run_awaitable(ctx(), stream->async_write_some(data.data(), data.size()));
-    EXPECT_EQ(ec, asio::error::operation_aborted);
+    EXPECT_EQ(ec, boost::asio::error::operation_aborted);
 }
 
 TEST_F(mux_stream_test, OnDataClosedChannelTriggersUnavailableBranch)

@@ -10,14 +10,14 @@
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include <asio/read.hpp>
-#include <asio/write.hpp>
-#include <asio/as_tuple.hpp>
-#include <asio/co_spawn.hpp>
-#include <asio/detached.hpp>
-#include <asio/io_context.hpp>
-#include <asio/steady_timer.hpp>
-#include <asio/use_awaitable.hpp>
+#include <boost/asio/read.hpp>
+#include <boost/asio/write.hpp>
+#include <boost/asio/as_tuple.hpp>
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/detached.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/steady_timer.hpp>
+#include <boost/asio/use_awaitable.hpp>
 #include <netdb.h>
 
 #define private public
@@ -86,7 +86,7 @@ std::vector<std::uint8_t> make_mux_udp_packet(const std::string& host,
     return packet;
 }
 
-std::shared_ptr<mux::remote_udp_session> make_session(asio::io_context& io_context,
+std::shared_ptr<mux::remote_udp_session> make_session(boost::asio::io_context& io_context,
                                                       const std::shared_ptr<mux::mock_mux_connection>& conn,
                                                       const std::uint32_t id = 1,
                                                       const mux::config::timeout_t& timeout_cfg = {})
@@ -95,15 +95,15 @@ std::shared_ptr<mux::remote_udp_session> make_session(asio::io_context& io_conte
     return std::make_shared<mux::remote_udp_session>(conn, id, io_context, ctx, timeout_cfg);
 }
 
-std::shared_ptr<mux::mux_tunnel_impl<asio::ip::tcp::socket>> make_manager(asio::io_context& io_context, const std::uint32_t id = 99)
+std::shared_ptr<mux::mux_tunnel_impl<boost::asio::ip::tcp::socket>> make_manager(boost::asio::io_context& io_context, const std::uint32_t id = 99)
 {
-    return std::make_shared<mux::mux_tunnel_impl<asio::ip::tcp::socket>>(
-        asio::ip::tcp::socket(io_context), io_context, mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, id);
+    return std::make_shared<mux::mux_tunnel_impl<boost::asio::ip::tcp::socket>>(
+        boost::asio::ip::tcp::socket(io_context), io_context, mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, id);
 }
 
 TEST(RemoteUdpSessionTest, StartReturnsWhenConnectionExpired)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     auto session = make_session(io_context, conn, 10);
     conn.reset();
@@ -114,7 +114,7 @@ TEST(RemoteUdpSessionTest, StartReturnsWhenConnectionExpired)
 
 TEST(RemoteUdpSessionTest, StartRemovesManagerStreamWhenConnectionExpired)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     auto session = make_session(io_context, conn, 110);
     auto manager = make_manager(io_context, 410);
@@ -131,11 +131,11 @@ TEST(RemoteUdpSessionTest, StartRemovesManagerStreamWhenConnectionExpired)
 
 TEST(RemoteUdpSessionTest, SetupUdpSocketAlreadyOpenTriggersFailureAckAndReset)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     auto session = make_session(io_context, conn, 11);
-    std::error_code ec;
-    session->udp_socket_.open(asio::ip::udp::v6(), ec);
+    boost::system::error_code ec;
+    session->udp_socket_.open(boost::asio::ip::udp::v6(), ec);
     ASSERT_FALSE(ec);
 
     std::vector<std::uint8_t> ack_payload;
@@ -143,9 +143,9 @@ TEST(RemoteUdpSessionTest, SetupUdpSocketAlreadyOpenTriggersFailureAckAndReset)
         .WillOnce([&ack_payload](const std::uint32_t, const std::uint8_t, const std::vector<std::uint8_t>& payload)
                   {
                       ack_payload = payload;
-                      return std::error_code{};
+                      return boost::system::error_code{};
                   });
-    EXPECT_CALL(*conn, mock_send_async(11, mux::kCmdRst, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(std::error_code{}));
+    EXPECT_CALL(*conn, mock_send_async(11, mux::kCmdRst, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(boost::system::error_code{}));
 
     const bool ok = mux::test::run_awaitable(io_context, session->setup_udp_socket(conn));
     EXPECT_FALSE(ok);
@@ -158,7 +158,7 @@ TEST(RemoteUdpSessionTest, SetupUdpSocketAlreadyOpenTriggersFailureAckAndReset)
 
 TEST(RemoteUdpSessionTest, HandleStartFailureRemovesStreamWhenManagerExists)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     auto session = make_session(io_context, conn, 12);
 
@@ -167,16 +167,16 @@ TEST(RemoteUdpSessionTest, HandleStartFailureRemovesStreamWhenManagerExists)
     ASSERT_TRUE(manager->connection()->has_stream(12));
     session->set_manager(manager);
 
-    EXPECT_CALL(*conn, mock_send_async(12, mux::kCmdAck, _)).WillOnce(::testing::Return(std::error_code{}));
-    EXPECT_CALL(*conn, mock_send_async(12, mux::kCmdRst, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(std::error_code{}));
+    EXPECT_CALL(*conn, mock_send_async(12, mux::kCmdAck, _)).WillOnce(::testing::Return(boost::system::error_code{}));
+    EXPECT_CALL(*conn, mock_send_async(12, mux::kCmdRst, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(boost::system::error_code{}));
 
-    mux::test::run_awaitable_void(io_context, session->handle_start_failure(conn, "udp open", asio::error::already_open));
+    mux::test::run_awaitable_void(io_context, session->handle_start_failure(conn, "udp open", boost::asio::error::already_open));
     EXPECT_FALSE(manager->connection()->has_stream(12));
 }
 
 TEST(RemoteUdpSessionTest, SetupUdpSocketSuccessAndCloseSocket)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     auto session = make_session(io_context, conn, 13);
 
@@ -190,7 +190,7 @@ TEST(RemoteUdpSessionTest, SetupUdpSocketSuccessAndCloseSocket)
 
 TEST(RemoteUdpSessionTest, CloseSocketNoopWhenAlreadyClosed)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     auto session = make_session(io_context, conn, 131);
 
@@ -201,7 +201,7 @@ TEST(RemoteUdpSessionTest, CloseSocketNoopWhenAlreadyClosed)
 
 TEST(RemoteUdpSessionTest, LogUdpLocalEndpointHandlesClosedSocket)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     auto session = make_session(io_context, conn, 132);
 
@@ -211,20 +211,20 @@ TEST(RemoteUdpSessionTest, LogUdpLocalEndpointHandlesClosedSocket)
 
 TEST(RemoteUdpSessionTest, CleanupAfterStopWithoutManagerClosesSocket)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     auto session = make_session(io_context, conn, 133);
     ASSERT_TRUE(mux::test::run_awaitable(io_context, session->setup_udp_socket(conn)));
     ASSERT_TRUE(session->udp_socket_.is_open());
 
-    EXPECT_CALL(*conn, mock_send_async(133, mux::kCmdRst, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(std::error_code{}));
+    EXPECT_CALL(*conn, mock_send_async(133, mux::kCmdRst, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(boost::system::error_code{}));
     mux::test::run_awaitable_void(io_context, session->cleanup_after_stop());
     EXPECT_FALSE(session->udp_socket_.is_open());
 }
 
 TEST(RemoteUdpSessionTest, ForwardMuxPayloadRejectsInvalidPackets)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     auto session = make_session(io_context, conn, 14);
     auto& stats = mux::statistics::instance();
@@ -241,18 +241,18 @@ TEST(RemoteUdpSessionTest, ForwardMuxPayloadRejectsInvalidPackets)
 
 TEST(RemoteUdpSessionTest, ForwardMuxPayloadSendsIpv4AndIpv6Payloads)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     auto session = make_session(io_context, conn, 15);
     ASSERT_TRUE(mux::test::run_awaitable(io_context, session->setup_udp_socket(conn)));
 
-    asio::ip::udp::socket receiver(io_context);
-    std::error_code ec;
-    receiver.open(asio::ip::udp::v6(), ec);
+    boost::asio::ip::udp::socket receiver(io_context);
+    boost::system::error_code ec;
+    receiver.open(boost::asio::ip::udp::v6(), ec);
     ASSERT_FALSE(ec);
-    receiver.set_option(asio::ip::v6_only(false), ec);
+    receiver.set_option(boost::asio::ip::v6_only(false), ec);
     ASSERT_FALSE(ec);
-    receiver.bind(asio::ip::udp::endpoint(asio::ip::udp::v6(), 0), ec);
+    receiver.bind(boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v6(), 0), ec);
     ASSERT_FALSE(ec);
     receiver.non_blocking(true, ec);
     ASSERT_FALSE(ec);
@@ -261,16 +261,16 @@ TEST(RemoteUdpSessionTest, ForwardMuxPayloadSendsIpv4AndIpv6Payloads)
     const auto v4_packet = make_mux_udp_packet("127.0.0.1", port, std::vector<std::uint8_t>{0x11, 0x22});
     mux::test::run_awaitable_void(io_context, session->forward_mux_payload(v4_packet));
     std::array<std::uint8_t, 8> first_recv = {0};
-    asio::ip::udp::endpoint from_ep;
+    boost::asio::ip::udp::endpoint from_ep;
     std::size_t first_n = 0;
     for (int i = 0; i < 50; ++i)
     {
-        first_n = receiver.receive_from(asio::buffer(first_recv), from_ep, 0, ec);
+        first_n = receiver.receive_from(boost::asio::buffer(first_recv), from_ep, 0, ec);
         if (!ec)
         {
             break;
         }
-        if (ec != asio::error::would_block && ec != asio::error::try_again)
+        if (ec != boost::asio::error::would_block && ec != boost::asio::error::try_again)
         {
             break;
         }
@@ -287,7 +287,7 @@ TEST(RemoteUdpSessionTest, ForwardMuxPayloadSendsIpv4AndIpv6Payloads)
 
 TEST(RemoteUdpSessionTest, ForwardMuxPayloadStopsWhenSocketClosed)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     auto session = make_session(io_context, conn, 16);
     ASSERT_TRUE(mux::test::run_awaitable(io_context, session->setup_udp_socket(conn)));
@@ -299,7 +299,7 @@ TEST(RemoteUdpSessionTest, ForwardMuxPayloadStopsWhenSocketClosed)
 
 TEST(RemoteUdpSessionTest, ForwardMuxPayloadResolveTimeoutDropsPayload)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     mux::config::timeout_t timeout_cfg;
     timeout_cfg.read = 1;
@@ -308,13 +308,13 @@ TEST(RemoteUdpSessionTest, ForwardMuxPayloadResolveTimeoutDropsPayload)
     const auto resolve_timeouts_before = stats.remote_udp_session_resolve_timeouts();
     ASSERT_TRUE(mux::test::run_awaitable(io_context, session->setup_udp_socket(conn)));
 
-    asio::ip::udp::socket receiver(io_context);
-    std::error_code ec;
-    receiver.open(asio::ip::udp::v6(), ec);
+    boost::asio::ip::udp::socket receiver(io_context);
+    boost::system::error_code ec;
+    receiver.open(boost::asio::ip::udp::v6(), ec);
     ASSERT_FALSE(ec);
-    receiver.set_option(asio::ip::v6_only(false), ec);
+    receiver.set_option(boost::asio::ip::v6_only(false), ec);
     ASSERT_FALSE(ec);
-    receiver.bind(asio::ip::udp::endpoint(asio::ip::udp::v6(), 0), ec);
+    receiver.bind(boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v6(), 0), ec);
     ASSERT_FALSE(ec);
     receiver.non_blocking(true, ec);
     ASSERT_FALSE(ec);
@@ -324,37 +324,37 @@ TEST(RemoteUdpSessionTest, ForwardMuxPayloadResolveTimeoutDropsPayload)
     mux::test::run_awaitable_void(io_context, session->forward_mux_payload(packet));
 
     std::array<std::uint8_t, 8> recv_buf = {0};
-    asio::ip::udp::endpoint from_ep;
-    const auto recv_n = receiver.receive_from(asio::buffer(recv_buf), from_ep, 0, ec);
+    boost::asio::ip::udp::endpoint from_ep;
+    const auto recv_n = receiver.receive_from(boost::asio::buffer(recv_buf), from_ep, 0, ec);
     EXPECT_EQ(recv_n, 0U);
-    EXPECT_TRUE(ec == asio::error::would_block || ec == asio::error::try_again);
+    EXPECT_TRUE(ec == boost::asio::error::would_block || ec == boost::asio::error::try_again);
     EXPECT_GE(stats.remote_udp_session_resolve_timeouts(), resolve_timeouts_before + 1);
 }
 
 TEST(RemoteUdpSessionTest, MuxToUdpProcessesUntilEmptyFrame)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     auto session = make_session(io_context, conn, 17);
     ASSERT_TRUE(mux::test::run_awaitable(io_context, session->setup_udp_socket(conn)));
 
-    asio::ip::udp::socket receiver(io_context);
-    std::error_code ec;
-    receiver.open(asio::ip::udp::v6(), ec);
+    boost::asio::ip::udp::socket receiver(io_context);
+    boost::system::error_code ec;
+    receiver.open(boost::asio::ip::udp::v6(), ec);
     ASSERT_FALSE(ec);
-    receiver.set_option(asio::ip::v6_only(false), ec);
+    receiver.set_option(boost::asio::ip::v6_only(false), ec);
     ASSERT_FALSE(ec);
-    receiver.bind(asio::ip::udp::endpoint(asio::ip::udp::v6(), 0), ec);
+    receiver.bind(boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v6(), 0), ec);
     ASSERT_FALSE(ec);
 
     const auto payload_packet = make_mux_udp_packet("127.0.0.1", receiver.local_endpoint().port(), std::vector<std::uint8_t>{0x7A});
-    session->recv_channel_.try_send(std::error_code{}, payload_packet);
-    session->recv_channel_.try_send(std::error_code{}, std::vector<std::uint8_t>{});
+    session->recv_channel_.try_send(boost::system::error_code{}, payload_packet);
+    session->recv_channel_.try_send(boost::system::error_code{}, std::vector<std::uint8_t>{});
     mux::test::run_awaitable_void(io_context, session->mux_to_udp());
 
     std::array<std::uint8_t, 8> recv = {0};
-    asio::ip::udp::endpoint from_ep;
-    const auto n = receiver.receive_from(asio::buffer(recv), from_ep, 0, ec);
+    boost::asio::ip::udp::endpoint from_ep;
+    const auto n = receiver.receive_from(boost::asio::buffer(recv), from_ep, 0, ec);
     ASSERT_FALSE(ec);
     ASSERT_EQ(n, 1U);
     EXPECT_EQ(recv[0], 0x7A);
@@ -362,18 +362,18 @@ TEST(RemoteUdpSessionTest, MuxToUdpProcessesUntilEmptyFrame)
 
 TEST(RemoteUdpSessionTest, UdpToMuxForwardsAndStopsOnSendFailure)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     auto session = make_session(io_context, conn, 18);
     ASSERT_TRUE(mux::test::run_awaitable(io_context, session->setup_udp_socket(conn)));
 
-    asio::ip::udp::socket sender(io_context);
-    std::error_code ec;
-    sender.open(asio::ip::udp::v4(), ec);
+    boost::asio::ip::udp::socket sender(io_context);
+    boost::system::error_code ec;
+    sender.open(boost::asio::ip::udp::v4(), ec);
     ASSERT_FALSE(ec);
     const std::vector<std::uint8_t> source_payload = {0xAA, 0xBB};
-    const auto target_ep = asio::ip::udp::endpoint(asio::ip::make_address_v4("127.0.0.1"), session->udp_socket_.local_endpoint().port());
-    sender.send_to(asio::buffer(source_payload), target_ep, 0, ec);
+    const auto target_ep = boost::asio::ip::udp::endpoint(boost::asio::ip::make_address_v4("127.0.0.1"), session->udp_socket_.local_endpoint().port());
+    sender.send_to(boost::asio::buffer(source_payload), target_ep, 0, ec);
     ASSERT_FALSE(ec);
 
     std::vector<std::uint8_t> dat_payload;
@@ -381,7 +381,7 @@ TEST(RemoteUdpSessionTest, UdpToMuxForwardsAndStopsOnSendFailure)
         .WillOnce([&dat_payload](const std::uint32_t, const std::uint8_t, const std::vector<std::uint8_t>& payload)
                   {
                       dat_payload = payload;
-                      return asio::error::broken_pipe;
+                      return boost::asio::error::broken_pipe;
                   });
 
     mux::test::run_awaitable_void(io_context, session->udp_to_mux());
@@ -395,18 +395,18 @@ TEST(RemoteUdpSessionTest, UdpToMuxForwardsAndStopsOnSendFailure)
 
 TEST(RemoteUdpSessionTest, UdpToMuxStopsWhenConnectionExpired)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     auto session = make_session(io_context, conn, 19);
     ASSERT_TRUE(mux::test::run_awaitable(io_context, session->setup_udp_socket(conn)));
     conn.reset();
 
-    asio::ip::udp::socket sender(io_context);
-    std::error_code ec;
-    sender.open(asio::ip::udp::v4(), ec);
+    boost::asio::ip::udp::socket sender(io_context);
+    boost::system::error_code ec;
+    sender.open(boost::asio::ip::udp::v4(), ec);
     ASSERT_FALSE(ec);
-    const auto target_ep = asio::ip::udp::endpoint(asio::ip::make_address_v4("127.0.0.1"), session->udp_socket_.local_endpoint().port());
-    sender.send_to(asio::buffer(std::vector<std::uint8_t>{0xEE}), target_ep, 0, ec);
+    const auto target_ep = boost::asio::ip::udp::endpoint(boost::asio::ip::make_address_v4("127.0.0.1"), session->udp_socket_.local_endpoint().port());
+    sender.send_to(boost::asio::buffer(std::vector<std::uint8_t>{0xEE}), target_ep, 0, ec);
     ASSERT_FALSE(ec);
 
     mux::test::run_awaitable_void(io_context, session->udp_to_mux());
@@ -414,12 +414,12 @@ TEST(RemoteUdpSessionTest, UdpToMuxStopsWhenConnectionExpired)
 
 TEST(RemoteUdpSessionTest, OnDataDispatchesPayload)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     auto session = make_session(io_context, conn, 20);
 
     session->on_data(std::vector<std::uint8_t>{0x10, 0x20});
-    const auto [recv_ec, data] = mux::test::run_awaitable(io_context, session->recv_channel_.async_receive(asio::as_tuple(asio::use_awaitable)));
+    const auto [recv_ec, data] = mux::test::run_awaitable(io_context, session->recv_channel_.async_receive(boost::asio::as_tuple(boost::asio::use_awaitable)));
     EXPECT_FALSE(recv_ec);
     ASSERT_EQ(data.size(), 2U);
     EXPECT_EQ(data[0], 0x10);
@@ -428,7 +428,7 @@ TEST(RemoteUdpSessionTest, OnDataDispatchesPayload)
 
 TEST(RemoteUdpSessionTest, OnDataRunsStopWhenIoContextStopped)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     auto session = make_session(io_context, conn, 215);
     ASSERT_TRUE(mux::test::run_awaitable(io_context, session->setup_udp_socket(conn)));
@@ -436,7 +436,7 @@ TEST(RemoteUdpSessionTest, OnDataRunsStopWhenIoContextStopped)
     session->recv_channel_.close();
 
     session->timer_.expires_after(std::chrono::seconds(30));
-    session->timer_.async_wait([](const std::error_code&) {});
+    session->timer_.async_wait([](const boost::system::error_code&) {});
 
     io_context.stop();
     session->on_data(std::vector<std::uint8_t>{0x10});
@@ -448,7 +448,7 @@ TEST(RemoteUdpSessionTest, OnDataRunsStopWhenIoContextStopped)
 
 TEST(RemoteUdpSessionTest, OnDataRunsStopWhenIoContextNotRunning)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     auto session = make_session(io_context, conn, 216);
     ASSERT_TRUE(mux::test::run_awaitable(io_context, session->setup_udp_socket(conn)));
@@ -456,7 +456,7 @@ TEST(RemoteUdpSessionTest, OnDataRunsStopWhenIoContextNotRunning)
     session->recv_channel_.close();
 
     session->timer_.expires_after(std::chrono::seconds(30));
-    session->timer_.async_wait([](const std::error_code&) {});
+    session->timer_.async_wait([](const boost::system::error_code&) {});
 
     session->on_data(std::vector<std::uint8_t>{0x10});
     EXPECT_EQ(session->timer_.cancel(), 0U);
@@ -466,25 +466,25 @@ TEST(RemoteUdpSessionTest, OnDataRunsStopWhenIoContextNotRunning)
 
 TEST(RemoteUdpSessionTest, OnDataRunsStopWhenIoQueueBlocked)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     auto session = make_session(io_context, conn, 214);
     ASSERT_TRUE(mux::test::run_awaitable(io_context, session->setup_udp_socket(conn)));
 
     session->recv_channel_.close();
 
-    std::promise<std::error_code> timer_wait_done;
+    std::promise<boost::system::error_code> timer_wait_done;
     auto timer_wait_future = timer_wait_done.get_future();
     session->timer_.expires_after(std::chrono::seconds(30));
     session->timer_.async_wait(
-        [done = std::move(timer_wait_done)](const std::error_code& ec) mutable
+        [done = std::move(timer_wait_done)](const boost::system::error_code& ec) mutable
         {
             done.set_value(ec);
         });
 
     std::atomic<bool> blocker_started{false};
     std::atomic<bool> release_blocker{false};
-    asio::post(
+    boost::asio::post(
         io_context,
         [&blocker_started, &release_blocker]()
         {
@@ -518,14 +518,14 @@ TEST(RemoteUdpSessionTest, OnDataRunsStopWhenIoQueueBlocked)
     }
 
     ASSERT_TRUE(timer_cancelled);
-    EXPECT_EQ(timer_wait_future.get(), asio::error::operation_aborted);
+    EXPECT_EQ(timer_wait_future.get(), boost::asio::error::operation_aborted);
     EXPECT_FALSE(session->udp_socket_.is_open());
     session->close_socket();
 }
 
 TEST(RemoteUdpSessionTest, OnCloseAndOnResetCloseReceiveChannel)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     auto session = make_session(io_context, conn, 21);
     ASSERT_TRUE(mux::test::run_awaitable(io_context, session->setup_udp_socket(conn)));
@@ -537,7 +537,7 @@ TEST(RemoteUdpSessionTest, OnCloseAndOnResetCloseReceiveChannel)
     io_context.run();
     io_context.restart();
 
-    const auto [recv_ec, recv_data] = mux::test::run_awaitable(io_context, session->recv_channel_.async_receive(asio::as_tuple(asio::use_awaitable)));
+    const auto [recv_ec, recv_data] = mux::test::run_awaitable(io_context, session->recv_channel_.async_receive(boost::asio::as_tuple(boost::asio::use_awaitable)));
     EXPECT_TRUE(recv_ec);
     EXPECT_TRUE(recv_data.empty());
     session->close_socket();
@@ -545,7 +545,7 @@ TEST(RemoteUdpSessionTest, OnCloseAndOnResetCloseReceiveChannel)
 
 TEST(RemoteUdpSessionTest, OnCloseAndOnResetRemoveManagerStreamEvenBeforeStart)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     auto manager = make_manager(io_context, 411);
 
@@ -571,47 +571,47 @@ TEST(RemoteUdpSessionTest, OnCloseAndOnResetRemoveManagerStreamEvenBeforeStart)
 
 TEST(RemoteUdpSessionTest, OnCloseAndOnResetRunInlineWhenIoContextStopped)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     auto session = make_session(io_context, conn, 211);
     ASSERT_TRUE(mux::test::run_awaitable(io_context, session->setup_udp_socket(conn)));
 
     io_context.stop();
     session->on_close();
-    EXPECT_FALSE(session->recv_channel_.try_send(std::error_code{}, std::vector<std::uint8_t>{0x01}));
+    EXPECT_FALSE(session->recv_channel_.try_send(boost::system::error_code{}, std::vector<std::uint8_t>{0x01}));
     EXPECT_FALSE(session->udp_socket_.is_open());
 
     session->on_reset();
-    EXPECT_FALSE(session->recv_channel_.try_send(std::error_code{}, std::vector<std::uint8_t>{0x02}));
+    EXPECT_FALSE(session->recv_channel_.try_send(boost::system::error_code{}, std::vector<std::uint8_t>{0x02}));
     session->close_socket();
 }
 
 TEST(RemoteUdpSessionTest, OnCloseAndOnResetRunWhenIoContextNotRunning)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     auto session = make_session(io_context, conn, 212);
     ASSERT_TRUE(mux::test::run_awaitable(io_context, session->setup_udp_socket(conn)));
 
     session->on_close();
-    EXPECT_FALSE(session->recv_channel_.try_send(std::error_code{}, std::vector<std::uint8_t>{0x01}));
+    EXPECT_FALSE(session->recv_channel_.try_send(boost::system::error_code{}, std::vector<std::uint8_t>{0x01}));
     EXPECT_FALSE(session->udp_socket_.is_open());
 
     session->on_reset();
-    EXPECT_FALSE(session->recv_channel_.try_send(std::error_code{}, std::vector<std::uint8_t>{0x02}));
+    EXPECT_FALSE(session->recv_channel_.try_send(boost::system::error_code{}, std::vector<std::uint8_t>{0x02}));
     session->close_socket();
 }
 
 TEST(RemoteUdpSessionTest, OnCloseAndOnResetRunWhenIoQueueBlocked)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     auto session = make_session(io_context, conn, 213);
     ASSERT_TRUE(mux::test::run_awaitable(io_context, session->setup_udp_socket(conn)));
 
     std::atomic<bool> blocker_started{false};
     std::atomic<bool> release_blocker{false};
-    asio::post(
+    boost::asio::post(
         io_context,
         [&blocker_started, &release_blocker]()
         {
@@ -630,11 +630,11 @@ TEST(RemoteUdpSessionTest, OnCloseAndOnResetRunWhenIoQueueBlocked)
     ASSERT_TRUE(blocker_started.load(std::memory_order_acquire));
 
     session->on_close();
-    EXPECT_FALSE(session->recv_channel_.try_send(std::error_code{}, std::vector<std::uint8_t>{0x01}));
+    EXPECT_FALSE(session->recv_channel_.try_send(boost::system::error_code{}, std::vector<std::uint8_t>{0x01}));
     EXPECT_FALSE(session->udp_socket_.is_open());
 
     session->on_reset();
-    EXPECT_FALSE(session->recv_channel_.try_send(std::error_code{}, std::vector<std::uint8_t>{0x02}));
+    EXPECT_FALSE(session->recv_channel_.try_send(boost::system::error_code{}, std::vector<std::uint8_t>{0x02}));
 
     release_blocker.store(true, std::memory_order_release);
     io_context.stop();
@@ -647,7 +647,7 @@ TEST(RemoteUdpSessionTest, OnCloseAndOnResetRunWhenIoQueueBlocked)
 
 TEST(RemoteUdpSessionTest, StartImplSendsAckAndCleansUpManager)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     auto session = make_session(io_context, conn, 22);
     auto manager = make_manager(io_context, 301);
@@ -660,20 +660,20 @@ TEST(RemoteUdpSessionTest, StartImplSendsAckAndCleansUpManager)
         .WillOnce([&ack_payload](const std::uint32_t, const std::uint8_t, const std::vector<std::uint8_t>& payload)
                   {
                       ack_payload = payload;
-                      return std::error_code{};
+                      return boost::system::error_code{};
                   });
-    EXPECT_CALL(*conn, mock_send_async(22, mux::kCmdRst, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(std::error_code{}));
+    EXPECT_CALL(*conn, mock_send_async(22, mux::kCmdRst, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(boost::system::error_code{}));
 
-    asio::co_spawn(
+    boost::asio::co_spawn(
         io_context,
-        [session]() -> asio::awaitable<void>
+        [session]() -> boost::asio::awaitable<void>
         {
-            asio::steady_timer stop_timer(co_await asio::this_coro::executor);
+            boost::asio::steady_timer stop_timer(co_await boost::asio::this_coro::executor);
             stop_timer.expires_after(std::chrono::milliseconds(10));
-            co_await stop_timer.async_wait(asio::as_tuple(asio::use_awaitable));
+            co_await stop_timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
             session->on_close();
         },
-        asio::detached);
+        boost::asio::detached);
 
     mux::test::run_awaitable_void(io_context, session->start_impl(session));
 
@@ -689,7 +689,7 @@ TEST(RemoteUdpSessionTest, StartImplSendsAckAndCleansUpManager)
 
 TEST(RemoteUdpSessionTest, StartImplSkipsAckWhenStopRequestedBeforeStart)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     auto session = make_session(io_context, conn, 26);
     auto manager = make_manager(io_context, 303);
@@ -700,7 +700,7 @@ TEST(RemoteUdpSessionTest, StartImplSkipsAckWhenStopRequestedBeforeStart)
     session->on_close();
 
     EXPECT_CALL(*conn, mock_send_async(26, mux::kCmdAck, _)).Times(0);
-    EXPECT_CALL(*conn, mock_send_async(26, mux::kCmdRst, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(std::error_code{}));
+    EXPECT_CALL(*conn, mock_send_async(26, mux::kCmdRst, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(boost::system::error_code{}));
 
     mux::test::run_awaitable_void(io_context, session->start_impl(session));
 
@@ -710,7 +710,7 @@ TEST(RemoteUdpSessionTest, StartImplSkipsAckWhenStopRequestedBeforeStart)
 
 TEST(RemoteUdpSessionTest, StartImplAckFailureStopsSessionAndRemovesStream)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     auto session = make_session(io_context, conn, 25);
     auto manager = make_manager(io_context, 302);
@@ -718,8 +718,8 @@ TEST(RemoteUdpSessionTest, StartImplAckFailureStopsSessionAndRemovesStream)
     ASSERT_TRUE(manager->connection()->has_stream(25));
     session->set_manager(manager);
 
-    EXPECT_CALL(*conn, mock_send_async(25, mux::kCmdAck, _)).WillOnce(::testing::Return(asio::error::broken_pipe));
-    EXPECT_CALL(*conn, mock_send_async(25, mux::kCmdRst, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(std::error_code{}));
+    EXPECT_CALL(*conn, mock_send_async(25, mux::kCmdAck, _)).WillOnce(::testing::Return(boost::asio::error::broken_pipe));
+    EXPECT_CALL(*conn, mock_send_async(25, mux::kCmdRst, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(boost::system::error_code{}));
 
     mux::test::run_awaitable_void(io_context, session->start_impl(session));
 
@@ -729,28 +729,28 @@ TEST(RemoteUdpSessionTest, StartImplAckFailureStopsSessionAndRemovesStream)
 
 TEST(RemoteUdpSessionTest, WatchdogStopsWhenCancelled)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     auto session = make_session(io_context, conn, 23);
     ASSERT_TRUE(mux::test::run_awaitable(io_context, session->setup_udp_socket(conn)));
 
-    asio::co_spawn(
+    boost::asio::co_spawn(
         io_context,
-        [session]() -> asio::awaitable<void>
+        [session]() -> boost::asio::awaitable<void>
         {
-            asio::steady_timer timer(co_await asio::this_coro::executor);
+            boost::asio::steady_timer timer(co_await boost::asio::this_coro::executor);
             timer.expires_after(std::chrono::milliseconds(20));
-            co_await timer.async_wait(asio::as_tuple(asio::use_awaitable));
+            co_await timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
             session->request_stop();
         },
-        asio::detached);
+        boost::asio::detached);
 
     mux::test::run_awaitable_void(io_context, session->watchdog());
 }
 
 TEST(RemoteUdpSessionTest, TimeoutThresholdsUseConfigValues)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     mux::config::timeout_t timeout_cfg;
     timeout_cfg.read = 12;
@@ -765,7 +765,7 @@ TEST(RemoteUdpSessionTest, TimeoutThresholdsUseConfigValues)
 
 TEST(RemoteUdpSessionTest, IdleWatchdogDisabledWhenIdleTimeoutZero)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     mux::config::timeout_t timeout_cfg;
     timeout_cfg.idle = 0;
@@ -780,7 +780,7 @@ TEST(RemoteUdpSessionTest, IdleWatchdogDisabledWhenIdleTimeoutZero)
 
 TEST(RemoteUdpSessionTest, IdleWatchdogStopsWhenIdleTimedOut)
 {
-    asio::io_context io_context;
+    boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     auto session = make_session(io_context, conn, 24);
     ASSERT_TRUE(mux::test::run_awaitable(io_context, session->setup_udp_socket(conn)));

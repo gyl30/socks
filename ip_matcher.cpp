@@ -10,10 +10,10 @@
 #include <string_view>
 #include <system_error>
 
-#include <asio.hpp>
-#include <asio/ip/address.hpp>
-#include <asio/ip/address_v4.hpp>
-#include <asio/ip/address_v6.hpp>
+#include <boost/asio.hpp>
+#include <boost/asio/ip/address.hpp>
+#include <boost/asio/ip/address_v4.hpp>
+#include <boost/asio/ip/address_v6.hpp>
 
 #include "log.h"
 #include "ip_matcher.h"
@@ -41,7 +41,7 @@ bool get_bit_v6(const std::array<std::uint8_t, 16>& bytes, int index)
 }
 }    // namespace
 
-bool ip_matcher::match_v4(const asio::ip::address_v4& addr, const std::unique_ptr<trie_node>& root)
+bool ip_matcher::match_v4(const boost::asio::ip::address_v4& addr, const std::unique_ptr<trie_node>& root)
 {
     if (root == nullptr)
     {
@@ -70,7 +70,7 @@ bool ip_matcher::match_v4(const asio::ip::address_v4& addr, const std::unique_pt
     return false;
 }
 
-bool ip_matcher::match_v6(const asio::ip::address_v6& addr, const std::unique_ptr<trie_node>& root)
+bool ip_matcher::match_v6(const boost::asio::ip::address_v6& addr, const std::unique_ptr<trie_node>& root)
 {
     if (root == nullptr)
     {
@@ -140,7 +140,7 @@ bool ip_matcher::can_merge_match_children(const trie_node* node)
     return node->children[0] != nullptr && node->children[0]->is_match && node->children[1] != nullptr && node->children[1]->is_match;
 }
 
-void ip_matcher::add_rule_v4(const int prefix_len, const asio::ip::address_v4& addr, std::unique_ptr<trie_node>& root)
+void ip_matcher::add_rule_v4(const int prefix_len, const boost::asio::ip::address_v4& addr, std::unique_ptr<trie_node>& root)
 {
     if (!is_valid_prefix_length(prefix_len, 32))
     {
@@ -164,7 +164,7 @@ void ip_matcher::add_rule_v4(const int prefix_len, const asio::ip::address_v4& a
     mark_node_match(curr);
 }
 
-void ip_matcher::add_rule_v6(const int prefix_len, const asio::ip::address_v6& addr, std::unique_ptr<trie_node>& root)
+void ip_matcher::add_rule_v6(const int prefix_len, const boost::asio::ip::address_v6& addr, std::unique_ptr<trie_node>& root)
 {
     if (!is_valid_prefix_length(prefix_len, 128))
     {
@@ -243,7 +243,7 @@ bool ip_matcher::load(const std::string& filename)
     return true;
 }
 
-bool ip_matcher::match(const asio::ip::address& addr) const
+bool ip_matcher::match(const boost::asio::ip::address& addr) const
 {
     if (addr.is_v4())
     {
@@ -304,8 +304,8 @@ void ip_matcher::add_rule(const std::string& cidr)
         LOG_WARN("invalid prefix length {}", len_part);
         return;
     }
-    std::error_code ec;
-    const auto addr = asio::ip::make_address(ip_part, ec);
+    boost::system::error_code ec;
+    const auto addr = boost::asio::ip::make_address(ip_part, ec);
     if (ec)
     {
         LOG_ERROR("{} parse address failed {}", ip_part, ec.message());

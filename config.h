@@ -69,8 +69,8 @@ struct config
 
     struct queues_t
     {
-        std::uint32_t udp_session_recv_channel_capacity = 128;
-        std::uint32_t tproxy_udp_dispatch_queue_capacity = 2048;
+        std::uint32_t udp_session_recv_channel_capacity = 512;
+        std::uint32_t tproxy_udp_dispatch_queue_capacity = 512;
     } queues;
 
     struct limits_t
@@ -97,8 +97,6 @@ struct config
     {
         bool enabled = false;
         std::uint16_t port = 9090;
-        std::string token;
-        std::uint32_t min_interval_ms = 50;
     } monitor;
 
     struct reality_t
