@@ -2102,7 +2102,13 @@ TEST(TproxyClientTest, UdpLoopBackpressureMetricsVisibleViaMonitorEndpoint)
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
-    const auto response = request_monitor_response_with_retry(monitor_port, "metrics\n");
+    set_recvmsg_mode_sticky(wrapped_recvmsg_mode::kReal);
+    const auto response = request_monitor_response_with_retry(
+        monitor_port,
+        "GET /metrics HTTP/1.1\r\n"
+        "Host: 127.0.0.1\r\n"
+        "Connection: close\r\n"
+        "\r\n");
     const auto enqueued_metric = parse_metric_counter(response, "socks_tproxy_udp_dispatch_enqueued_total");
     const auto dropped_metric = parse_metric_counter(response, "socks_tproxy_udp_dispatch_dropped_total");
 

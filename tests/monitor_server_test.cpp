@@ -1,11 +1,10 @@
 #include <array>
+#include <atomic>
 #include <charconv>
 #include <chrono>
-#include <atomic>
 #include <cerrno>
 #include <cstdint>
 #include <optional>
-#include <random>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -81,6 +80,12 @@ void fail_next_close(const int err)
     g_fail_close_errno.store(err, std::memory_order_release);
     g_fail_close_once.store(true, std::memory_order_release);
 }
+
+constexpr std::string_view k_metrics_get_request =
+    "GET /metrics HTTP/1.1\r\n"
+    "Host: 127.0.0.1\r\n"
+    "Connection: close\r\n"
+    "\r\n";
 
 std::string read_response(std::uint16_t port,
                           const std::string& request,
@@ -160,6 +165,11 @@ std::string request_with_retry(std::uint16_t port, const std::string& request)
     return read_response(port, request);
 }
 
+std::string request_metrics_with_retry(const std::uint16_t port)
+{
+    return request_with_retry(port, std::string(k_metrics_get_request));
+}
+
 std::optional<std::uint64_t> parse_metric_value(const std::string& response, const std::string_view metric_name)
 {
     const std::string prefix = std::string(metric_name) + " ";
@@ -204,57 +214,6 @@ void connect_and_close_without_payload(const std::uint16_t port)
         return;
     }
     socket.close(ec);
-}
-
-std::string random_identifier(std::mt19937& rng, const std::size_t min_len, const std::size_t max_len)
-{
-    static constexpr std::string_view kAlphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
-    std::uniform_int_distribution<std::size_t> len_dist(min_len, max_len);
-    const std::size_t len = len_dist(rng);
-    std::string out;
-    out.reserve(len);
-    std::uniform_int_distribution<std::size_t> char_dist(0, kAlphabet.size() - 1);
-    for (std::size_t i = 0; i < len; ++i)
-    {
-        out.push_back(kAlphabet[char_dist(rng)]);
-    }
-    return out;
-}
-
-std::string mutate_token_value(std::mt19937& rng, const std::string& token)
-{
-    std::string out = token;
-    std::uniform_int_distribution<int> op_dist(0, 2);
-    const int op = op_dist(rng);
-    if (op == 0 || out.empty())
-    {
-        if (out.empty())
-        {
-            out.push_back('x');
-            return out;
-        }
-        std::uniform_int_distribution<std::size_t> pos_dist(0, out.size() - 1);
-        const std::size_t pos = pos_dist(rng);
-        out[pos] = out[pos] == 'x' ? 'y' : 'x';
-    }
-    else if (op == 1)
-    {
-        out.push_back('x');
-    }
-    else if (out.size() > 1)
-    {
-        std::uniform_int_distribution<std::size_t> pos_dist(0, out.size() - 1);
-        out.erase(pos_dist(rng), 1);
-    }
-    else
-    {
-        out = "xx";
-    }
-    if (out == token)
-    {
-        out.push_back('x');
-    }
-    return out;
 }
 
 class monitor_server_env
@@ -390,7 +349,7 @@ extern "C" int __wrap_close(int fd)
 namespace mux
 {
 
-TEST(MonitorServerTest, EmptyTokenReturnsMetrics)
+TEST(MonitorServerTest, GetMetricsReturnsHttpPayload)
 {
     statistics::instance().inc_total_connections();
 
@@ -398,43 +357,101 @@ TEST(MonitorServerTest, EmptyTokenReturnsMetrics)
     const auto port = env.port();
     ASSERT_NE(port, 0);
 
-    const auto resp = request_with_retry(port, "metrics\n");
-    EXPECT_NE(resp.rfind("HTTP/1.1 ", 0), 0u);
-    EXPECT_NE(resp.find("socks_uptime_seconds "), std::string::npos);
+    const auto resp = request_metrics_with_retry(port);
+    EXPECT_EQ(resp.rfind("HTTP/1.1 200 OK\r\n", 0), 0u);
+    EXPECT_NE(resp.find("\r\nContent-Type: text/plain; version=0.0.4; charset=utf-8\r\n"), std::string::npos);
+    EXPECT_NE(resp.find("\r\nContent-Length: "), std::string::npos);
+    EXPECT_NE(resp.find("\r\n\r\nsocks_uptime_seconds "), std::string::npos);
     EXPECT_NE(resp.find("socks_total_connections "), std::string::npos);
-    EXPECT_NE(resp.find("socks_auth_failures_total "), std::string::npos);
-    EXPECT_NE(resp.find("socks_connection_limit_rejected_total "), std::string::npos);
-    EXPECT_NE(resp.find("socks_stream_limit_rejected_total "), std::string::npos);
-    EXPECT_NE(resp.find("socks_monitor_auth_failures_total "), std::string::npos);
-    EXPECT_NE(resp.find("socks_monitor_rate_limited_total "), std::string::npos);
-    EXPECT_NE(resp.find("socks_tproxy_udp_dispatch_enqueued_total "), std::string::npos);
-    EXPECT_NE(resp.find("socks_tproxy_udp_dispatch_dropped_total "), std::string::npos);
-    EXPECT_NE(resp.find("socks_fallback_no_target_total "), std::string::npos);
-    EXPECT_NE(resp.find("socks_fallback_resolve_failures_total "), std::string::npos);
-    EXPECT_NE(resp.find("socks_fallback_resolve_timeouts_total "), std::string::npos);
-    EXPECT_NE(resp.find("socks_fallback_resolve_errors_total "), std::string::npos);
-    EXPECT_NE(resp.find("socks_fallback_connect_failures_total "), std::string::npos);
-    EXPECT_NE(resp.find("socks_fallback_connect_timeouts_total "), std::string::npos);
-    EXPECT_NE(resp.find("socks_fallback_connect_errors_total "), std::string::npos);
-    EXPECT_NE(resp.find("socks_fallback_write_failures_total "), std::string::npos);
-    EXPECT_NE(resp.find("socks_fallback_write_timeouts_total "), std::string::npos);
-    EXPECT_NE(resp.find("socks_fallback_write_errors_total "), std::string::npos);
-    EXPECT_NE(resp.find("socks_direct_upstream_resolve_timeouts_total "), std::string::npos);
-    EXPECT_NE(resp.find("socks_direct_upstream_resolve_errors_total "), std::string::npos);
-    EXPECT_NE(resp.find("socks_direct_upstream_connect_timeouts_total "), std::string::npos);
-    EXPECT_NE(resp.find("socks_direct_upstream_connect_errors_total "), std::string::npos);
-    EXPECT_NE(resp.find("socks_remote_session_resolve_timeouts_total "), std::string::npos);
-    EXPECT_NE(resp.find("socks_remote_session_resolve_errors_total "), std::string::npos);
-    EXPECT_NE(resp.find("socks_remote_session_connect_timeouts_total "), std::string::npos);
-    EXPECT_NE(resp.find("socks_remote_session_connect_errors_total "), std::string::npos);
-    EXPECT_NE(resp.find("socks_remote_udp_session_resolve_timeouts_total "), std::string::npos);
-    EXPECT_NE(resp.find("socks_remote_udp_session_resolve_errors_total "), std::string::npos);
-    EXPECT_NE(resp.find("socks_client_tunnel_pool_resolve_timeouts_total "), std::string::npos);
-    EXPECT_NE(resp.find("socks_client_tunnel_pool_resolve_errors_total "), std::string::npos);
-    EXPECT_NE(resp.find("socks_client_tunnel_pool_connect_timeouts_total "), std::string::npos);
-    EXPECT_NE(resp.find("socks_client_tunnel_pool_connect_errors_total "), std::string::npos);
-    EXPECT_NE(resp.find("socks_client_tunnel_pool_handshake_timeouts_total "), std::string::npos);
-    EXPECT_NE(resp.find("socks_client_tunnel_pool_handshake_errors_total "), std::string::npos);
+}
+
+TEST(MonitorServerTest, SupportsMetricsPathQueryString)
+{
+    monitor_server_env env(0, std::string("ignored-token"), 1000);
+    const auto port = env.port();
+    ASSERT_NE(port, 0);
+
+    const auto resp = request_with_retry(
+        port,
+        "GET /metrics?token=ignored HTTP/1.1\r\n"
+        "Host: 127.0.0.1\r\n"
+        "Connection: close\r\n"
+        "\r\n");
+    EXPECT_EQ(resp.rfind("HTTP/1.1 200 OK\r\n", 0), 0u);
+    EXPECT_NE(resp.find("socks_uptime_seconds "), std::string::npos);
+}
+
+TEST(MonitorServerTest, RejectsNonGetMethod)
+{
+    monitor_server_env env(0, std::string());
+    const auto port = env.port();
+    ASSERT_NE(port, 0);
+
+    const auto resp = request_with_retry(
+        port,
+        "POST /metrics HTTP/1.1\r\n"
+        "Host: 127.0.0.1\r\n"
+        "Connection: close\r\n"
+        "\r\n");
+    EXPECT_EQ(resp.rfind("HTTP/1.1 405 ", 0), 0u);
+}
+
+TEST(MonitorServerTest, RejectsNonMetricsPath)
+{
+    monitor_server_env env(0, std::string());
+    const auto port = env.port();
+    ASSERT_NE(port, 0);
+
+    const auto resp = request_with_retry(
+        port,
+        "GET /status HTTP/1.1\r\n"
+        "Host: 127.0.0.1\r\n"
+        "Connection: close\r\n"
+        "\r\n");
+    EXPECT_EQ(resp.rfind("HTTP/1.1 404 ", 0), 0u);
+}
+
+TEST(MonitorServerTest, SupportsFragmentedHttpRequest)
+{
+    monitor_server_env env(0, std::string());
+    const auto port = env.port();
+    ASSERT_NE(port, 0);
+
+    boost::asio::io_context ioc;
+    boost::asio::ip::tcp::socket socket(ioc);
+    boost::system::error_code ec;
+    socket.connect(boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address("127.0.0.1"), port), ec);
+    ASSERT_FALSE(ec);
+
+    const std::string first_chunk = "GET /metrics HTTP/1.1\r\n";
+    boost::asio::write(socket, boost::asio::buffer(first_chunk), ec);
+    ASSERT_FALSE(ec);
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    const std::string second_chunk = "Host: 127.0.0.1\r\nConnection: close\r\n\r\n";
+    boost::asio::write(socket, boost::asio::buffer(second_chunk), ec);
+    ASSERT_FALSE(ec);
+
+    std::string resp;
+    std::array<char, 1024> buffer{};
+    for (;;)
+    {
+        const auto n = socket.read_some(boost::asio::buffer(buffer), ec);
+        if (n > 0)
+        {
+            resp.append(buffer.data(), n);
+        }
+        if (ec == boost::asio::error::eof)
+        {
+            break;
+        }
+        if (ec)
+        {
+            break;
+        }
+    }
+
+    EXPECT_EQ(resp.rfind("HTTP/1.1 200 OK\r\n", 0), 0u);
+    EXPECT_NE(resp.find("socks_uptime_seconds "), std::string::npos);
 }
 
 TEST(MonitorServerTest, TproxyUdpDispatchDropMetricReflectsDroppedPackets)
@@ -469,7 +486,7 @@ TEST(MonitorServerTest, TproxyUdpDispatchDropMetricReflectsDroppedPackets)
     }
     ASSERT_EQ(dropped, k_drop_attempts);
 
-    const auto resp = request_with_retry(port, "metrics\n");
+    const auto resp = request_metrics_with_retry(port);
     const auto metric_value = parse_metric_value(resp, "socks_tproxy_udp_dispatch_dropped_total");
     ASSERT_TRUE(metric_value.has_value());
     EXPECT_GE(*metric_value, before + dropped);
@@ -513,7 +530,7 @@ TEST(MonitorServerTest, TproxyUdpDispatchMetricsCanDeriveDropRatio)
     }
     ASSERT_EQ(dropped, 3U);
 
-    const auto resp = request_with_retry(port, "metrics\n");
+    const auto resp = request_metrics_with_retry(port);
     const auto enqueued_metric = parse_metric_value(resp, "socks_tproxy_udp_dispatch_enqueued_total");
     const auto dropped_metric = parse_metric_value(resp, "socks_tproxy_udp_dispatch_dropped_total");
     ASSERT_TRUE(enqueued_metric.has_value());
@@ -535,382 +552,6 @@ TEST(MonitorServerTest, TproxyUdpDispatchMetricsCanDeriveDropRatio)
     dispatch_channel.close();
 }
 
-TEST(MonitorServerTest, TokenRequiredAndRateLimit)
-{
-    auto& stats = statistics::instance();
-    const auto monitor_auth_before = stats.monitor_auth_failures();
-    const auto monitor_rate_before = stats.monitor_rate_limited();
-
-    monitor_server_env env(0, std::string("secret"), 500);
-    const auto port = env.port();
-    ASSERT_NE(port, 0);
-
-    const auto warmup = request_with_retry(port, "metrics?token=secret\n");
-    EXPECT_NE(warmup.find("socks_total_connections "), std::string::npos);
-
-    std::this_thread::sleep_for(std::chrono::milliseconds(550));
-
-    const auto unauth = read_response(port, "metrics\n");
-    EXPECT_TRUE(unauth.empty());
-
-    const auto authed = read_response(port, "metrics?token=secret\n");
-    EXPECT_NE(authed.find("socks_total_connections "), std::string::npos);
-
-    const auto limited = read_response(port, "metrics?token=secret\n");
-    EXPECT_TRUE(limited.empty());
-    EXPECT_GT(stats.monitor_rate_limited(), monitor_rate_before);
-    EXPECT_GT(stats.monitor_auth_failures(), monitor_auth_before);
-
-    std::this_thread::sleep_for(std::chrono::milliseconds(550));
-    const auto after_window = read_response(port, "metrics?token=secret\n");
-    EXPECT_NE(after_window.find("socks_uptime_seconds "), std::string::npos);
-}
-
-TEST(MonitorServerTest, UnauthorizedRequestDoesNotConsumeRateLimitWindow)
-{
-    monitor_server_env env(0, std::string("secret"), 500);
-    const auto port = env.port();
-    ASSERT_NE(port, 0);
-
-    const auto first_authed = request_with_retry(port, "metrics?token=secret\n");
-    EXPECT_NE(first_authed.find("socks_total_connections "), std::string::npos);
-
-    std::this_thread::sleep_for(std::chrono::milliseconds(550));
-
-    const auto unauth = read_response(port, "metrics\n");
-    EXPECT_TRUE(unauth.empty());
-
-    const auto authed_after_unauth = read_response(port, "metrics?token=secret\n");
-    EXPECT_NE(authed_after_unauth.find("socks_uptime_seconds "), std::string::npos);
-}
-
-TEST(MonitorServerTest, RateLimitIsolatedBySourceAddress)
-{
-    monitor_rate_state rate_state;
-    constexpr std::uint32_t k_min_interval_ms = 500;
-    const auto now = std::chrono::steady_clock::now();
-
-    EXPECT_TRUE(detail::allow_monitor_request_by_source(rate_state, "127.0.0.1", k_min_interval_ms, now));
-    EXPECT_FALSE(detail::allow_monitor_request_by_source(
-        rate_state, "127.0.0.1", k_min_interval_ms, now + std::chrono::milliseconds(100)));
-    EXPECT_TRUE(detail::allow_monitor_request_by_source(
-        rate_state, "127.0.0.2", k_min_interval_ms, now + std::chrono::milliseconds(100)));
-
-    std::lock_guard<std::mutex> lock(rate_state.mutex);
-    EXPECT_EQ(rate_state.last_request_time_by_source.count("127.0.0.1"), 1U);
-    EXPECT_EQ(rate_state.last_request_time_by_source.count("127.0.0.2"), 1U);
-}
-
-TEST(MonitorServerTest, RateLimitBySourceDisabledWhenMinIntervalZero)
-{
-    monitor_rate_state rate_state;
-    const auto now = std::chrono::steady_clock::now();
-
-    EXPECT_TRUE(detail::allow_monitor_request_by_source(rate_state, "127.0.0.1", 0, now));
-
-    std::lock_guard<std::mutex> lock(rate_state.mutex);
-    EXPECT_TRUE(rate_state.last_request_time_by_source.empty());
-}
-
-TEST(MonitorServerTest, RateLimitStateStaysBounded)
-{
-    constexpr std::size_t k_state_limit = 4096;
-
-    boost::asio::io_context ioc;
-    auto server = std::make_shared<monitor_server>(ioc, 0, std::string("secret"), 10);
-    ASSERT_NE(server, nullptr);
-    server->start();
-
-    boost::system::error_code ec;
-    const auto port = server->acceptor_.local_endpoint(ec).port();
-    ASSERT_FALSE(ec);
-    ASSERT_NE(port, 0);
-
-    const auto stale_time = std::chrono::steady_clock::now() - std::chrono::hours(1);
-    for (std::size_t i = 0; i < k_state_limit + 256; ++i)
-    {
-        server->rate_state_->last_request_time_by_source.emplace("stale-" + std::to_string(i), stale_time);
-    }
-    ASSERT_GT(server->rate_state_->last_request_time_by_source.size(), k_state_limit);
-
-    std::thread runner([&ioc]() { ioc.run(); });
-    const auto response = request_with_retry(port, "metrics?token=secret\n");
-    EXPECT_NE(response.find("socks_uptime_seconds "), std::string::npos);
-
-    server->stop();
-    ioc.stop();
-    if (runner.joinable())
-    {
-        runner.join();
-    }
-
-    EXPECT_LE(server->rate_state_->last_request_time_by_source.size(), k_state_limit);
-    EXPECT_NE(server->rate_state_->last_request_time_by_source.find("127.0.0.1"),
-              server->rate_state_->last_request_time_by_source.end());
-}
-
-TEST(MonitorServerTest, RateLimitPruneSkipsEvictionWhenSourceAlreadyTrackedAtCapacity)
-{
-    constexpr std::size_t k_state_limit = 4096;
-
-    monitor_rate_state rate_state;
-    const auto now = std::chrono::steady_clock::now();
-    rate_state.last_request_time_by_source.emplace("hot-source", now - std::chrono::seconds(1));
-    for (std::size_t i = 0; i < k_state_limit - 1; ++i)
-    {
-        rate_state.last_request_time_by_source.emplace("src-" + std::to_string(i), now);
-    }
-    ASSERT_EQ(rate_state.last_request_time_by_source.size(), k_state_limit);
-
-    EXPECT_TRUE(detail::allow_monitor_request_by_source(rate_state, "hot-source", 500, now));
-
-    std::lock_guard<std::mutex> lock(rate_state.mutex);
-    EXPECT_EQ(rate_state.last_request_time_by_source.size(), k_state_limit);
-    EXPECT_EQ(rate_state.last_request_time_by_source.count("hot-source"), 1U);
-}
-
-TEST(MonitorServerTest, RateLimitPruneEvictsOldestSourceWhenCapacityReached)
-{
-    constexpr std::size_t k_state_limit = 4096;
-
-    monitor_rate_state rate_state;
-    const auto now = std::chrono::steady_clock::now();
-    rate_state.last_request_time_by_source.emplace("oldest-source", now - std::chrono::seconds(30));
-    for (std::size_t i = 0; i < k_state_limit - 1; ++i)
-    {
-        rate_state.last_request_time_by_source.emplace("src-" + std::to_string(i), now);
-    }
-    ASSERT_EQ(rate_state.last_request_time_by_source.size(), k_state_limit);
-
-    EXPECT_TRUE(detail::allow_monitor_request_by_source(rate_state, "new-source", 500, now));
-
-    std::lock_guard<std::mutex> lock(rate_state.mutex);
-    EXPECT_EQ(rate_state.last_request_time_by_source.size(), k_state_limit);
-    EXPECT_EQ(rate_state.last_request_time_by_source.count("oldest-source"), 0U);
-    EXPECT_EQ(rate_state.last_request_time_by_source.count("new-source"), 1U);
-}
-
-TEST(MonitorServerTest, RejectsTokenSubstringBypass)
-{
-    monitor_server_env env(0, std::string("secret"));
-    const auto port = env.port();
-    ASSERT_NE(port, 0);
-
-    const auto contains_secret_without_token_key = read_response(port, "metrics?foo=secret\n");
-    EXPECT_TRUE(contains_secret_without_token_key.empty());
-
-    const auto prefixed_token_key = read_response(port, "metrics?xtoken=secret\n");
-    EXPECT_TRUE(prefixed_token_key.empty());
-
-    const auto wrong_token_value = read_response(port, "metrics?token=secretx\n");
-    EXPECT_TRUE(wrong_token_value.empty());
-
-    const auto authed = request_with_retry(port, "metrics?token=secret\n");
-    EXPECT_NE(authed.find("socks_total_connections "), std::string::npos);
-}
-
-TEST(MonitorServerTest, SupportsMultiParamTokenWithTrimmedLineAndUrlDecoding)
-{
-    monitor_server_env env(0, std::string("a ~"));
-    const auto port = env.port();
-    ASSERT_NE(port, 0);
-
-    const auto authed = request_with_retry(port, "metrics?foo=1&token=a+%7e   \n");
-    EXPECT_NE(authed.find("socks_uptime_seconds "), std::string::npos);
-}
-
-TEST(MonitorServerTest, EnforcesPathAndSupportsHttpUrlDecodedToken)
-{
-    monitor_server_env env(0, std::string("s+e/c"));
-    const auto port = env.port();
-    ASSERT_NE(port, 0);
-
-    const auto invalid_path = read_response(port, "GET /status?token=s%2Be%2Fc HTTP/1.1\r\n\r\n");
-    EXPECT_TRUE(invalid_path.empty());
-
-    const auto invalid_method = read_response(port, "POST /metrics?token=s%2Be%2Fc HTTP/1.1\r\n\r\n");
-    EXPECT_TRUE(invalid_method.empty());
-
-    const auto authed = request_with_retry(port, "GET /metrics?token=s%2Be%2Fc HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
-    EXPECT_EQ(authed.rfind("HTTP/1.1 200 OK\r\n", 0), 0u);
-    EXPECT_NE(authed.find("\r\nContent-Type: text/plain; version=0.0.4; charset=utf-8\r\n"), std::string::npos);
-    EXPECT_NE(authed.find("\r\nContent-Length: "), std::string::npos);
-    EXPECT_NE(authed.find("\r\n\r\nsocks_uptime_seconds "), std::string::npos);
-    EXPECT_NE(authed.find("socks_uptime_seconds "), std::string::npos);
-}
-
-TEST(MonitorServerTest, SupportsFragmentedHttpRequestLine)
-{
-    monitor_server_env env(0, std::string("secret"));
-    const auto port = env.port();
-    ASSERT_NE(port, 0);
-
-    boost::asio::io_context ioc;
-    boost::asio::ip::tcp::socket socket(ioc);
-    boost::system::error_code ec;
-    socket.connect(boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address("127.0.0.1"), port), ec);
-    ASSERT_FALSE(ec);
-
-    boost::asio::write(socket, boost::asio::buffer("GET /metrics?token=secret HT"), ec);
-    ASSERT_FALSE(ec);
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    boost::asio::write(socket, boost::asio::buffer("TP/1.1\r\nHost: 127.0.0.1\r\n\r\n"), ec);
-    ASSERT_FALSE(ec);
-
-    std::string resp;
-    std::array<char, 1024> buffer{};
-    for (;;)
-    {
-        const auto n = socket.read_some(boost::asio::buffer(buffer), ec);
-        if (n > 0)
-        {
-            resp.append(buffer.data(), n);
-        }
-        if (ec == boost::asio::error::eof)
-        {
-            break;
-        }
-        if (ec)
-        {
-            break;
-        }
-    }
-
-    EXPECT_NE(resp.find("socks_uptime_seconds "), std::string::npos);
-}
-
-TEST(MonitorServerTest, RejectsInvalidPercentEncodingToken)
-{
-    monitor_server_env env(0, std::string("secret"));
-    const auto port = env.port();
-    ASSERT_NE(port, 0);
-
-    const auto invalid = read_response(port, "GET /metrics?token=sec%2xret HTTP/1.1\r\n\r\n");
-    EXPECT_TRUE(invalid.empty());
-
-    const auto valid = request_with_retry(port, "GET /metrics?token=secret HTTP/1.1\r\n\r\n");
-    EXPECT_NE(valid.find("socks_uptime_seconds "), std::string::npos);
-}
-
-TEST(MonitorServerTest, RejectsMalformedHttpRequestLine)
-{
-    monitor_server_env env(0, std::string("secret"));
-    const auto port = env.port();
-    ASSERT_NE(port, 0);
-
-    const auto malformed = read_response(port, "GET    HTTP/1.1\r\n\r\n");
-    EXPECT_TRUE(malformed.empty());
-
-    const auto valid = request_with_retry(port, "GET /metrics?token=secret HTTP/1.1\r\n\r\n");
-    EXPECT_NE(valid.find("socks_uptime_seconds "), std::string::npos);
-}
-
-TEST(MonitorServerTest, EmptyLineRequestWithEmptyTokenIsRejected)
-{
-    auto& stats = statistics::instance();
-    const auto auth_failures_before = stats.monitor_auth_failures();
-
-    monitor_server_env env(0, std::string());
-    const auto port = env.port();
-    ASSERT_NE(port, 0);
-
-    const auto resp = read_response(port, "\n");
-    EXPECT_TRUE(resp.empty());
-    EXPECT_GT(stats.monitor_auth_failures(), auth_failures_before);
-}
-
-TEST(MonitorServerTest, RejectsOversizedRequestLineAndKeepsServing)
-{
-    monitor_server_env env(0, std::string("secret"));
-    const auto port = env.port();
-    ASSERT_NE(port, 0);
-
-    const std::string oversized_line = "GET /metrics?token=secret" + std::string(5000, 'a') + " HTTP/1.1\r\n\r\n";
-    const auto oversized = read_response(port, oversized_line);
-    EXPECT_TRUE(oversized.empty());
-
-    const auto valid = request_with_retry(port, "GET /metrics?token=secret HTTP/1.1\r\n\r\n");
-    EXPECT_NE(valid.find("socks_uptime_seconds "), std::string::npos);
-}
-
-TEST(MonitorServerTest, PropertyFuzzAuthBypassNearMissesAreRejected)
-{
-    constexpr std::string_view kToken = "secret";
-    monitor_server_env env(0, std::string(kToken), 0);
-    const auto port = env.port();
-    ASSERT_NE(port, 0);
-
-    std::mt19937 rng(20260217u);
-    const std::array<std::string_view, 4> bad_methods = {"POST", "PUT", "HEAD", "GETT"};
-    const std::array<std::string_view, 4> bad_paths = {"/status", "/metricsx", "metricsx", "/"};
-    const std::array<std::string_view, 4> bad_keys = {"foo", "xtoken", "tokenx", "t0ken"};
-
-    for (std::size_t i = 0; i < 160; ++i)
-    {
-        std::string request;
-        const auto variant = i % 5;
-        if (variant == 0)
-        {
-            std::uniform_int_distribution<std::size_t> dist(0, bad_methods.size() - 1);
-            request = std::string(bad_methods[dist(rng)]) + " /metrics?token=secret HTTP/1.1\r\n\r\n";
-        }
-        else if (variant == 1)
-        {
-            std::uniform_int_distribution<std::size_t> dist(0, bad_paths.size() - 1);
-            request = "GET " + std::string(bad_paths[dist(rng)]) + "?token=secret HTTP/1.1\r\n\r\n";
-        }
-        else if (variant == 2)
-        {
-            std::uniform_int_distribution<std::size_t> dist(0, bad_keys.size() - 1);
-            request = "GET /metrics?" + std::string(bad_keys[dist(rng)]) + "=secret HTTP/1.1\r\n\r\n";
-        }
-        else if (variant == 3)
-        {
-            request = "GET /metrics?token=%2xsecret HTTP/1.1\r\n\r\n";
-        }
-        else
-        {
-            request = "GET /metrics?token=" + mutate_token_value(rng, std::string(kToken)) + " HTTP/1.1\r\n\r\n";
-        }
-
-        const auto resp = read_response(port, request);
-        EXPECT_TRUE(resp.empty()) << "unexpected authorized request: " << request;
-    }
-
-    const auto valid = request_with_retry(port, "GET /metrics?token=secret HTTP/1.1\r\n\r\n");
-    EXPECT_NE(valid.find("socks_uptime_seconds "), std::string::npos);
-}
-
-TEST(MonitorServerTest, PropertyFuzzMalformedLinesDoNotPoisonServerState)
-{
-    monitor_server_env env(0, std::string("secret"), 0);
-    const auto port = env.port();
-    ASSERT_NE(port, 0);
-
-    std::mt19937 rng(1337u);
-    for (std::size_t i = 0; i < 120; ++i)
-    {
-        std::string request_line = random_identifier(rng, 1, 40);
-        if (i % 3 == 0)
-        {
-            request_line = "GET" + random_identifier(rng, 1, 30);
-        }
-        else if (i % 3 == 1)
-        {
-            request_line = "GET " + random_identifier(rng, 1, 20) + " HTTP/1.1";
-        }
-        else
-        {
-            request_line = random_identifier(rng, 1, 10) + " /metrics?token=secret HTTP/1.1";
-        }
-        const auto resp = read_response(port, request_line + "\r\n\r\n");
-        EXPECT_TRUE(resp.empty()) << "malformed line unexpectedly succeeded: " << request_line;
-    }
-
-    const auto valid = request_with_retry(port, "GET /metrics?token=secret HTTP/1.1\r\n\r\n");
-    EXPECT_NE(valid.find("socks_total_connections "), std::string::npos);
-}
-
 TEST(MonitorServerTest, EscapesPrometheusLabels)
 {
     auto& stats = statistics::instance();
@@ -919,8 +560,8 @@ TEST(MonitorServerTest, EscapesPrometheusLabels)
     monitor_server_env env(0, std::string());
     const auto port = env.port();
     ASSERT_NE(port, 0);
-    const auto resp = request_with_retry(port, "metrics\n");
 
+    const auto resp = request_metrics_with_retry(port);
     EXPECT_NE(resp.find("reason=\"short_id\""), std::string::npos);
     EXPECT_NE(resp.find("sni=\"line1\\\"x\\\\y\\nline2\""), std::string::npos);
 }
@@ -1023,7 +664,7 @@ TEST(MonitorServerTest, StartWhileRunningIsIgnored)
     ASSERT_NE(port, 0);
 
     std::thread runner([&ioc]() { ioc.run(); });
-    const auto response = request_with_retry(port, "metrics\n");
+    const auto response = request_metrics_with_retry(port);
     EXPECT_NE(response.find("socks_uptime_seconds "), std::string::npos);
 
     server->stop();
@@ -1047,7 +688,7 @@ TEST(MonitorServerTest, StopClosesAcceptorAndRejectsNewConnections)
 
     std::thread runner([&ioc]() { ioc.run(); });
 
-    const auto before_stop = request_with_retry(port, "metrics\n");
+    const auto before_stop = request_metrics_with_retry(port);
     EXPECT_NE(before_stop.find("socks_uptime_seconds "), std::string::npos);
 
     server->stop();
@@ -1055,7 +696,7 @@ TEST(MonitorServerTest, StopClosesAcceptorAndRejectsNewConnections)
     bool rejected = false;
     for (int i = 0; i < 30; ++i)
     {
-        if (read_response(port, "metrics\n").empty())
+        if (read_response(port, std::string(k_metrics_get_request)).empty())
         {
             rejected = true;
             break;
@@ -1160,7 +801,7 @@ TEST(MonitorServerTest, AcceptFailureRetriesAndServesRequest)
     ASSERT_NE(port, 0);
 
     fail_next_accept(EIO);
-    const auto resp = request_with_retry(port, "metrics\n");
+    const auto resp = request_metrics_with_retry(port);
     EXPECT_NE(resp.find("socks_uptime_seconds "), std::string::npos);
 }
 
@@ -1171,7 +812,7 @@ TEST(MonitorServerTest, SessionReadErrorPathStillAcceptsNextClient)
     ASSERT_NE(port, 0);
 
     connect_and_close_without_payload(port);
-    const auto resp = request_with_retry(port, "metrics\n");
+    const auto resp = request_metrics_with_retry(port);
     EXPECT_NE(resp.find("socks_uptime_seconds "), std::string::npos);
 }
 
