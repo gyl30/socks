@@ -987,13 +987,16 @@ asio::awaitable<bool> resolve_and_connect_fallback_target(const std::shared_ptr<
     const auto resolve_res = co_await resolve_socket_with_optional_timeout(io_context, target_host, target_port, timeout_sec);
     if (!resolve_res.ok)
     {
-        statistics::instance().inc_fallback_resolve_failures();
+        auto& stats = statistics::instance();
+        stats.inc_fallback_resolve_failures();
         if (resolve_res.timed_out)
         {
+            stats.inc_fallback_resolve_timeouts();
             LOG_CTX_WARN(ctx, "{} resolve timed out {}s", log_event::kFallback, timeout_sec);
         }
         else
         {
+            stats.inc_fallback_resolve_errors();
             LOG_CTX_WARN(ctx, "{} resolve failed {}", log_event::kFallback, resolve_res.ec.message());
         }
         co_return false;
@@ -1002,13 +1005,16 @@ asio::awaitable<bool> resolve_and_connect_fallback_target(const std::shared_ptr<
     const auto connect_res = co_await connect_socket_with_optional_timeout(target_socket, resolve_res.endpoints, &io_context, timeout_sec);
     if (!connect_res.ok)
     {
-        statistics::instance().inc_fallback_connect_failures();
+        auto& stats = statistics::instance();
+        stats.inc_fallback_connect_failures();
         if (connect_res.timed_out)
         {
+            stats.inc_fallback_connect_timeouts();
             LOG_CTX_WARN(ctx, "{} connect target timed out {}s", log_event::kFallback, timeout_sec);
         }
         else
         {
+            stats.inc_fallback_connect_errors();
             LOG_CTX_WARN(ctx, "{} connect target failed {}", log_event::kFallback, connect_res.ec.message());
         }
         co_return false;
@@ -1030,12 +1036,15 @@ asio::awaitable<bool> write_fallback_initial_buffer(const std::shared_ptr<asio::
     const auto write_res = co_await write_socket_with_optional_timeout(target_socket, asio::buffer(buf), io_context, timeout_sec);
     if (!write_res.ok)
     {
-        statistics::instance().inc_fallback_write_failures();
+        auto& stats = statistics::instance();
+        stats.inc_fallback_write_failures();
         if (write_res.timed_out)
         {
+            stats.inc_fallback_write_timeouts();
             LOG_CTX_WARN(ctx, "{} write initial buf timed out {}s", log_event::kFallback, timeout_sec);
             co_return false;
         }
+        stats.inc_fallback_write_errors();
         LOG_CTX_WARN(ctx, "{} write initial buf failed", log_event::kFallback);
         co_return false;
     }

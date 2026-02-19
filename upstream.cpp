@@ -20,6 +20,7 @@
 #include "mux_codec.h"
 #include "net_utils.h"
 #include "mux_stream.h"
+#include "statistics.h"
 #include "log_context.h"
 #include "mux_protocol.h"
 #include "timeout_io.h"
@@ -72,12 +73,15 @@ asio::awaitable<bool> direct_upstream::connect(const std::string& host, const st
     const auto resolve_res = co_await timeout_io::async_resolve_with_timeout(resolver_, host, std::to_string(port), timeout_sec);
     if (!resolve_res.ok)
     {
+        auto& stats = statistics::instance();
         if (resolve_res.timed_out)
         {
+            stats.inc_direct_upstream_resolve_timeouts();
             LOG_CTX_WARN(ctx_, "{} resolve timed out {}s", log_event::kRoute, timeout_sec);
         }
         else
         {
+            stats.inc_direct_upstream_resolve_errors();
             LOG_CTX_WARN(ctx_, "{} resolve failed {}", log_event::kRoute, resolve_res.ec.message());
         }
         co_return false;
@@ -111,6 +115,15 @@ asio::awaitable<bool> direct_upstream::connect(const std::string& host, const st
     }
 
     const auto err = last_ec ? last_ec : std::make_error_code(std::errc::host_unreachable);
+    auto& stats = statistics::instance();
+    if (err == asio::error::timed_out)
+    {
+        stats.inc_direct_upstream_connect_timeouts();
+    }
+    else
+    {
+        stats.inc_direct_upstream_connect_errors();
+    }
     LOG_CTX_WARN(ctx_, "{} connect failed {}", log_event::kRoute, err.message());
     co_return false;
 }

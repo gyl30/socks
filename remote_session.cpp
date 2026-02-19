@@ -17,6 +17,7 @@
 #include "log_context.h"
 #include "stop_dispatch.h"
 #include "timeout_io.h"
+#include "statistics.h"
 #include "remote_session.h"
 
 namespace mux
@@ -85,11 +86,13 @@ asio::awaitable<timed_resolve_result> resolve_target_endpoints(asio::ip::tcp::re
     const auto resolve_res = co_await timeout_io::async_resolve_with_timeout(resolver, syn.addr, std::to_string(syn.port), timeout_sec);
     if (resolve_res.timed_out)
     {
+        statistics::instance().inc_remote_session_resolve_timeouts();
         LOG_CTX_ERROR(ctx, "{} resolve timed out {}s", log_event::kMux, timeout_sec);
         co_return resolve_res;
     }
     if (!resolve_res.ok)
     {
+        statistics::instance().inc_remote_session_resolve_errors();
         LOG_CTX_ERROR(ctx, "{} resolve failed {}", log_event::kMux, resolve_res.ec.message());
         co_return resolve_res;
     }
@@ -104,11 +107,13 @@ asio::awaitable<timed_connect_result> connect_target_endpoint(asio::ip::tcp::soc
     const auto connect_res = co_await timeout_io::async_connect_with_timeout(target_socket, eps, timeout_sec, "remote session");
     if (connect_res.timed_out)
     {
+        statistics::instance().inc_remote_session_connect_timeouts();
         LOG_CTX_ERROR(ctx, "{} connect timed out {}s", log_event::kMux, timeout_sec);
         co_return connect_res;
     }
     if (!connect_res.ok)
     {
+        statistics::instance().inc_remote_session_connect_errors();
         LOG_CTX_ERROR(ctx, "{} connect failed {}", log_event::kMux, connect_res.ec.message());
         co_return connect_res;
     }

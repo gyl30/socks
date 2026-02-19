@@ -784,11 +784,13 @@ asio::awaitable<std::expected<asio::ip::tcp::resolver::results_type, std::error_
     const auto resolve_res = co_await timeout_io::async_resolve_with_timeout(resolver, remote_host, remote_port, timeout_sec);
     if (resolve_res.timed_out)
     {
+        statistics::instance().inc_client_tunnel_pool_resolve_timeouts();
         LOG_ERROR("resolve {} timeout {}s", remote_host, timeout_sec);
         co_return std::unexpected(asio::error::timed_out);
     }
     if (!resolve_res.ok)
     {
+        statistics::instance().inc_client_tunnel_pool_resolve_errors();
         LOG_ERROR("resolve {} failed {}", remote_host, resolve_res.ec.message());
         co_return std::unexpected(resolve_res.ec);
     }
@@ -1106,8 +1108,21 @@ asio::awaitable<std::expected<client_tunnel_pool::handshake_result, std::error_c
     auto handshake_res = co_await perform_reality_handshake(*socket);
     if (timeout_io::disarm_timeout(timeout_state))
     {
+        statistics::instance().inc_client_tunnel_pool_handshake_timeouts();
         LOG_ERROR("reality handshake timeout {}s", timeout_sec);
         co_return std::unexpected(asio::error::timed_out);
+    }
+    if (!handshake_res)
+    {
+        auto& stats = statistics::instance();
+        if (handshake_res.error() == asio::error::timed_out)
+        {
+            stats.inc_client_tunnel_pool_handshake_timeouts();
+        }
+        else
+        {
+            stats.inc_client_tunnel_pool_handshake_errors();
+        }
     }
     co_return handshake_res;
 }
@@ -1201,6 +1216,15 @@ asio::awaitable<std::expected<void, std::error_code>> client_tunnel_pool::tcp_co
         }
     }
 
+    auto& stats = statistics::instance();
+    if (last_ec == asio::error::timed_out)
+    {
+        stats.inc_client_tunnel_pool_connect_timeouts();
+    }
+    else
+    {
+        stats.inc_client_tunnel_pool_connect_errors();
+    }
     LOG_ERROR("connect {} failed {}", remote_host_, last_ec.message());
     co_return std::unexpected(last_ec);
 }

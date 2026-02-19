@@ -22,6 +22,7 @@
 #include "mux_protocol.h"
 #include "stop_dispatch.h"
 #include "timeout_io.h"
+#include "statistics.h"
 #include "remote_udp_session.h"
 
 namespace mux
@@ -165,10 +166,12 @@ asio::awaitable<void> remote_udp_session::forward_mux_payload(const std::vector<
     {
         if (resolve_res.timed_out)
         {
+            statistics::instance().inc_remote_udp_session_resolve_timeouts();
             LOG_CTX_WARN(ctx_, "{} udp resolve timeout {}ms for {}", log_event::kMux, resolve_timeout_ms, header.addr);
         }
         else
         {
+            statistics::instance().inc_remote_udp_session_resolve_errors();
             LOG_CTX_WARN(ctx_, "{} udp resolve error for {} {}", log_event::kMux, header.addr, resolve_res.ec.message());
         }
         co_return;

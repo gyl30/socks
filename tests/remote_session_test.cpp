@@ -32,6 +32,7 @@ extern "C"
 
 #include "mux_codec.h"
 #include "protocol.h"
+#include "statistics.h"
 #include "test_util.h"
 #include "mock_mux_connection.h"
 
@@ -134,6 +135,8 @@ TEST(RemoteSessionTest, RunResolveFailureSendsHostUnreachAckAndReset)
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     mux::connection_context ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 9, io_context, ctx);
+    auto& stats = mux::statistics::instance();
+    const auto resolve_errors_before = stats.remote_session_resolve_errors();
 
     std::vector<std::uint8_t> ack_payload;
     EXPECT_CALL(*conn, mock_send_async(9, mux::kCmdAck, _))
@@ -149,6 +152,7 @@ TEST(RemoteSessionTest, RunResolveFailureSendsHostUnreachAckAndReset)
     mux::ack_payload ack{};
     ASSERT_TRUE(mux::mux_codec::decode_ack(ack_payload.data(), ack_payload.size(), ack));
     EXPECT_EQ(ack.socks_rep, socks::kRepHostUnreach);
+    EXPECT_GE(stats.remote_session_resolve_errors(), resolve_errors_before + 1);
 }
 
 TEST(RemoteSessionTest, RunResolveFailureRemovesManagerStream)
@@ -195,6 +199,8 @@ TEST(RemoteSessionTest, RunConnectFailureSendsConnRefusedAckAndReset)
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     mux::connection_context ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 11, io_context, ctx);
+    auto& stats = mux::statistics::instance();
+    const auto connect_errors_before = stats.remote_session_connect_errors();
 
     asio::ip::tcp::acceptor acceptor(io_context);
     ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
@@ -215,6 +221,7 @@ TEST(RemoteSessionTest, RunConnectFailureSendsConnRefusedAckAndReset)
     mux::ack_payload ack{};
     ASSERT_TRUE(mux::mux_codec::decode_ack(ack_payload.data(), ack_payload.size(), ack));
     EXPECT_EQ(ack.socks_rep, socks::kRepConnRefused);
+    EXPECT_GE(stats.remote_session_connect_errors(), connect_errors_before + 1);
 }
 
 TEST(RemoteSessionTest, RunConnectTimeoutSendsConnRefusedAckAndReset)
@@ -223,6 +230,8 @@ TEST(RemoteSessionTest, RunConnectTimeoutSendsConnRefusedAckAndReset)
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
     mux::connection_context ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 35, io_context, ctx, 1);
+    auto& stats = mux::statistics::instance();
+    const auto connect_timeouts_before = stats.remote_session_connect_timeouts();
 
     std::error_code ec;
     asio::ip::tcp::acceptor saturated_acceptor(io_context);
@@ -260,6 +269,7 @@ TEST(RemoteSessionTest, RunConnectTimeoutSendsConnRefusedAckAndReset)
     ASSERT_TRUE(mux::mux_codec::decode_ack(ack_payload.data(), ack_payload.size(), ack));
     EXPECT_EQ(ack.socks_rep, socks::kRepConnRefused);
     EXPECT_LT(std::chrono::duration_cast<std::chrono::seconds>(elapsed).count(), 5);
+    EXPECT_GE(stats.remote_session_connect_timeouts(), connect_timeouts_before + 1);
 
     std::error_code close_ec;
     queued_client_a.close(close_ec);
