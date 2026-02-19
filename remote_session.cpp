@@ -87,13 +87,15 @@ asio::awaitable<timed_resolve_result> resolve_target_endpoints(asio::ip::tcp::re
     if (resolve_res.timed_out)
     {
         statistics::instance().inc_remote_session_resolve_timeouts();
-        LOG_CTX_ERROR(ctx, "{} resolve timed out {}s", log_event::kMux, timeout_sec);
+        LOG_CTX_ERROR(
+            ctx, "{} stage=resolve target={}:{} timeout={}s", log_event::kMux, syn.addr, syn.port, timeout_sec);
         co_return resolve_res;
     }
     if (!resolve_res.ok)
     {
         statistics::instance().inc_remote_session_resolve_errors();
-        LOG_CTX_ERROR(ctx, "{} resolve failed {}", log_event::kMux, resolve_res.ec.message());
+        LOG_CTX_ERROR(
+            ctx, "{} stage=resolve target={}:{} error={}", log_event::kMux, syn.addr, syn.port, resolve_res.ec.message());
         co_return resolve_res;
     }
     co_return resolve_res;
@@ -108,13 +110,15 @@ asio::awaitable<timed_connect_result> connect_target_endpoint(asio::ip::tcp::soc
     if (connect_res.timed_out)
     {
         statistics::instance().inc_remote_session_connect_timeouts();
-        LOG_CTX_ERROR(ctx, "{} connect timed out {}s", log_event::kMux, timeout_sec);
+        LOG_CTX_ERROR(
+            ctx, "{} stage=connect target={}:{} timeout={}s", log_event::kMux, ctx.target_host(), ctx.target_port(), timeout_sec);
         co_return connect_res;
     }
     if (!connect_res.ok)
     {
         statistics::instance().inc_remote_session_connect_errors();
-        LOG_CTX_ERROR(ctx, "{} connect failed {}", log_event::kMux, connect_res.ec.message());
+        LOG_CTX_ERROR(
+            ctx, "{} stage=connect target={}:{} error={}", log_event::kMux, ctx.target_host(), ctx.target_port(), connect_res.ec.message());
         co_return connect_res;
     }
     co_return connect_res;

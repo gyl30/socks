@@ -150,13 +150,18 @@ asio::awaitable<void> remote_udp_session::forward_mux_payload(const std::vector<
     socks_udp_header header;
     if (!socks_codec::decode_udp_header(data.data(), data.size(), header))
     {
-        LOG_CTX_WARN(ctx_, "{} udp failed to decode header", log_event::kMux);
+        LOG_CTX_WARN(ctx_, "{} stage=decode_header error=invalid_udp_header", log_event::kMux);
         co_return;
     }
 
     if (header.header_len >= data.size())
     {
-        LOG_CTX_WARN(ctx_, "{} udp invalid header len", log_event::kMux);
+        LOG_CTX_WARN(
+            ctx_,
+            "{} stage=decode_header error=invalid_header_len header_len={} packet_len={}",
+            log_event::kMux,
+            header.header_len,
+            data.size());
         co_return;
     }
 
@@ -167,19 +172,31 @@ asio::awaitable<void> remote_udp_session::forward_mux_payload(const std::vector<
         if (resolve_res.timed_out)
         {
             statistics::instance().inc_remote_udp_session_resolve_timeouts();
-            LOG_CTX_WARN(ctx_, "{} udp resolve timeout {}ms for {}", log_event::kMux, resolve_timeout_ms, header.addr);
+            LOG_CTX_WARN(
+                ctx_,
+                "{} stage=resolve target={}:{} timeout={}ms",
+                log_event::kMux,
+                header.addr,
+                header.port,
+                resolve_timeout_ms);
         }
         else
         {
             statistics::instance().inc_remote_udp_session_resolve_errors();
-            LOG_CTX_WARN(ctx_, "{} udp resolve error for {} {}", log_event::kMux, header.addr, resolve_res.ec.message());
+            LOG_CTX_WARN(
+                ctx_,
+                "{} stage=resolve target={}:{} error={}",
+                log_event::kMux,
+                header.addr,
+                header.port,
+                resolve_res.ec.message());
         }
         co_return;
     }
 
     if (resolve_res.endpoints.begin() == resolve_res.endpoints.end())
     {
-        LOG_CTX_WARN(ctx_, "{} udp resolve empty for {}", log_event::kMux, header.addr);
+        LOG_CTX_WARN(ctx_, "{} stage=resolve target={}:{} error=empty_result", log_event::kMux, header.addr, header.port);
         co_return;
     }
 
@@ -191,7 +208,13 @@ asio::awaitable<void> remote_udp_session::forward_mux_payload(const std::vector<
         asio::buffer(data.data() + header.header_len, payload_len), target_ep, asio::as_tuple(asio::use_awaitable));
     if (send_ec)
     {
-        LOG_CTX_WARN(ctx_, "{} udp send error {}", log_event::kMux, send_ec.message());
+        LOG_CTX_WARN(
+            ctx_,
+            "{} stage=send target={}:{} error={}",
+            log_event::kMux,
+            target_ep.address().to_string(),
+            target_ep.port(),
+            send_ec.message());
         co_return;
     }
 

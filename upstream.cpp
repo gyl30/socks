@@ -77,12 +77,14 @@ asio::awaitable<bool> direct_upstream::connect(const std::string& host, const st
         if (resolve_res.timed_out)
         {
             stats.inc_direct_upstream_resolve_timeouts();
-            LOG_CTX_WARN(ctx_, "{} resolve timed out {}s", log_event::kRoute, timeout_sec);
+            LOG_CTX_WARN(
+                ctx_, "{} stage=resolve target={}:{} timeout={}s", log_event::kRoute, host, port, timeout_sec);
         }
         else
         {
             stats.inc_direct_upstream_resolve_errors();
-            LOG_CTX_WARN(ctx_, "{} resolve failed {}", log_event::kRoute, resolve_res.ec.message());
+            LOG_CTX_WARN(
+                ctx_, "{} stage=resolve target={}:{} error={}", log_event::kRoute, host, port, resolve_res.ec.message());
         }
         co_return false;
     }
@@ -119,12 +121,14 @@ asio::awaitable<bool> direct_upstream::connect(const std::string& host, const st
     if (err == asio::error::timed_out)
     {
         stats.inc_direct_upstream_connect_timeouts();
+        LOG_CTX_WARN(
+            ctx_, "{} stage=connect target={}:{} timeout={}s", log_event::kRoute, host, port, timeout_sec);
     }
     else
     {
         stats.inc_direct_upstream_connect_errors();
+        LOG_CTX_WARN(ctx_, "{} stage=connect target={}:{} error={}", log_event::kRoute, host, port, err.message());
     }
-    LOG_CTX_WARN(ctx_, "{} connect failed {}", log_event::kRoute, err.message());
     co_return false;
 }
 
@@ -175,31 +179,41 @@ asio::awaitable<bool> proxy_upstream::send_syn_request(const std::shared_ptr<mux
                                                        const std::string& host,
                                                        const std::uint16_t port)
 {
+    const auto stream_ctx = ctx_.with_stream(stream->id());
     const syn_payload syn{.socks_cmd = socks::kCmdConnect, .addr = host, .port = port, .trace_id = ctx_.trace_id()};
     std::vector<std::uint8_t> syn_data;
     mux_codec::encode_syn(syn, syn_data);
     const auto ec = co_await tunnel_->connection()->send_async(stream->id(), kCmdSyn, std::move(syn_data));
     if (ec)
     {
-        LOG_CTX_ERROR(ctx_, "{} send syn failed {}", log_event::kRoute, ec.message());
+        LOG_CTX_ERROR(stream_ctx, "{} stage=send_syn target={}:{} error={}", log_event::kRoute, host, port, ec.message());
         co_return false;
     }
     co_return true;
 }
 
-asio::awaitable<bool> proxy_upstream::wait_connect_ack(const std::shared_ptr<mux_stream>& stream)
+asio::awaitable<bool> proxy_upstream::wait_connect_ack(const std::shared_ptr<mux_stream>& stream,
+                                                       const std::string& host,
+                                                       const std::uint16_t port)
 {
+    const auto stream_ctx = ctx_.with_stream(stream->id());
     auto [ack_ec, ack_data] = co_await stream->async_read_some();
     if (ack_ec)
     {
-        LOG_CTX_ERROR(ctx_, "{} wait ack failed {}", log_event::kRoute, ack_ec.message());
+        LOG_CTX_ERROR(stream_ctx, "{} stage=wait_ack target={}:{} error={}", log_event::kRoute, host, port, ack_ec.message());
         co_return false;
     }
 
-    ack_payload ack;
-    if (!mux_codec::decode_ack(ack_data.data(), ack_data.size(), ack) || ack.socks_rep != socks::kRepSuccess)
+    ack_payload ack{};
+    if (!mux_codec::decode_ack(ack_data.data(), ack_data.size(), ack))
     {
-        LOG_CTX_WARN(ctx_, "{} remote rejected {}", log_event::kRoute, ack.socks_rep);
+        LOG_CTX_WARN(stream_ctx, "{} stage=decode_ack target={}:{} error=invalid_ack_payload", log_event::kRoute, host, port);
+        co_return false;
+    }
+    if (ack.socks_rep != socks::kRepSuccess)
+    {
+        LOG_CTX_WARN(
+            stream_ctx, "{} stage=wait_ack target={}:{} remote_rep={}", log_event::kRoute, host, port, ack.socks_rep);
         co_return false;
     }
     co_return true;
@@ -240,7 +254,7 @@ asio::awaitable<bool> proxy_upstream::connect(const std::string& host, const std
         co_return false;
     }
 
-    if (!(co_await wait_connect_ack(stream)))
+    if (!(co_await wait_connect_ack(stream, host, port)))
     {
         co_await cleanup_stream(stream);
         co_return false;

@@ -266,11 +266,13 @@ asio::awaitable<std::error_code> cert_fetcher::fetch_session::connect()
     {
         if (resolve_res.timed_out)
         {
-            LOG_CTX_ERROR(ctx_, "{} resolve timed out {}s", mux::log_event::kCert, timeout_sec);
+            LOG_CTX_ERROR(
+                ctx_, "{} stage=resolve target={}:{} timeout={}s", mux::log_event::kCert, host_, port_, timeout_sec);
         }
         else
         {
-            LOG_CTX_ERROR(ctx_, "{} resolve failed {}", mux::log_event::kCert, resolve_res.ec.message());
+            LOG_CTX_ERROR(
+                ctx_, "{} stage=resolve target={}:{} error={}", mux::log_event::kCert, host_, port_, resolve_res.ec.message());
         }
         co_return resolve_res.ec;
     }
@@ -280,11 +282,13 @@ asio::awaitable<std::error_code> cert_fetcher::fetch_session::connect()
     {
         if (connect_res.timed_out)
         {
-            LOG_CTX_ERROR(ctx_, "{} connect timed out {}s", mux::log_event::kCert, timeout_sec);
+            LOG_CTX_ERROR(
+                ctx_, "{} stage=connect target={}:{} timeout={}s", mux::log_event::kCert, host_, port_, timeout_sec);
         }
         else
         {
-            LOG_CTX_ERROR(ctx_, "{} connect failed {}", mux::log_event::kCert, connect_res.ec.message());
+            LOG_CTX_ERROR(
+                ctx_, "{} stage=connect target={}:{} error={}", mux::log_event::kCert, host_, port_, connect_res.ec.message());
         }
         co_return connect_res.ec;
     }

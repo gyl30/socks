@@ -992,12 +992,19 @@ asio::awaitable<bool> resolve_and_connect_fallback_target(const std::shared_ptr<
         if (resolve_res.timed_out)
         {
             stats.inc_fallback_resolve_timeouts();
-            LOG_CTX_WARN(ctx, "{} resolve timed out {}s", log_event::kFallback, timeout_sec);
+            LOG_CTX_WARN(
+                ctx, "{} stage=resolve target={}:{} timeout={}s", log_event::kFallback, target_host, target_port, timeout_sec);
         }
         else
         {
             stats.inc_fallback_resolve_errors();
-            LOG_CTX_WARN(ctx, "{} resolve failed {}", log_event::kFallback, resolve_res.ec.message());
+            LOG_CTX_WARN(
+                ctx,
+                "{} stage=resolve target={}:{} error={}",
+                log_event::kFallback,
+                target_host,
+                target_port,
+                resolve_res.ec.message());
         }
         co_return false;
     }
@@ -1010,12 +1017,19 @@ asio::awaitable<bool> resolve_and_connect_fallback_target(const std::shared_ptr<
         if (connect_res.timed_out)
         {
             stats.inc_fallback_connect_timeouts();
-            LOG_CTX_WARN(ctx, "{} connect target timed out {}s", log_event::kFallback, timeout_sec);
+            LOG_CTX_WARN(
+                ctx, "{} stage=connect target={}:{} timeout={}s", log_event::kFallback, target_host, target_port, timeout_sec);
         }
         else
         {
             stats.inc_fallback_connect_errors();
-            LOG_CTX_WARN(ctx, "{} connect target failed {}", log_event::kFallback, connect_res.ec.message());
+            LOG_CTX_WARN(
+                ctx,
+                "{} stage=connect target={}:{} error={}",
+                log_event::kFallback,
+                target_host,
+                target_port,
+                connect_res.ec.message());
         }
         co_return false;
     }
@@ -1024,6 +1038,8 @@ asio::awaitable<bool> resolve_and_connect_fallback_target(const std::shared_ptr<
 
 asio::awaitable<bool> write_fallback_initial_buffer(const std::shared_ptr<asio::ip::tcp::socket>& target_socket,
                                                     const std::vector<std::uint8_t>& buf,
+                                                    const std::string& target_host,
+                                                    const std::string& target_port,
                                                     const connection_context& ctx,
                                                     asio::io_context* io_context,
                                                     const std::uint32_t timeout_sec)
@@ -1041,11 +1057,13 @@ asio::awaitable<bool> write_fallback_initial_buffer(const std::shared_ptr<asio::
         if (write_res.timed_out)
         {
             stats.inc_fallback_write_timeouts();
-            LOG_CTX_WARN(ctx, "{} write initial buf timed out {}s", log_event::kFallback, timeout_sec);
+            LOG_CTX_WARN(
+                ctx, "{} stage=write target={}:{} timeout={}s", log_event::kFallback, target_host, target_port, timeout_sec);
             co_return false;
         }
         stats.inc_fallback_write_errors();
-        LOG_CTX_WARN(ctx, "{} write initial buf failed", log_event::kFallback);
+        LOG_CTX_WARN(
+            ctx, "{} stage=write target={}:{} error={}", log_event::kFallback, target_host, target_port, write_res.ec.message());
         co_return false;
     }
     co_return true;
@@ -2236,7 +2254,7 @@ asio::awaitable<void> remote_server::handle_fallback(const std::shared_ptr<asio:
         co_return;
     }
     const auto write_timeout_sec = timeout_config_.write;
-    if (!co_await write_fallback_initial_buffer(t, buf, ctx, &io_context_, write_timeout_sec))
+    if (!co_await write_fallback_initial_buffer(t, buf, target_host, target_port, ctx, &io_context_, write_timeout_sec))
     {
         record_fallback_result(ctx, false);
         close_fallback_socket(t, ctx);
