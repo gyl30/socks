@@ -2155,54 +2155,66 @@ void remote_server::cleanup_fallback_guard_state_locked(const std::chrono::stead
                   { return now - kv.second.last_seen > ttl; });
 }
 
-bool remote_server::consume_fallback_token(const connection_context& ctx)
+void remote_server::evict_fallback_guard_source_if_needed_locked(const std::string& source_key)
 {
-    if (!fallback_guard_config_.enabled)
+    if (fallback_guard_states_.size() < kFallbackGuardMaxSources || fallback_guard_states_.contains(source_key))
     {
-        return true;
+        return;
     }
 
-    const auto now = std::chrono::steady_clock::now();
-    std::lock_guard<std::mutex> lock(fallback_guard_mu_);
-    cleanup_fallback_guard_state_locked(now);
-
-    const auto source_key = fallback_guard_key(ctx);
-    if (fallback_guard_states_.size() >= kFallbackGuardMaxSources && fallback_guard_states_.find(source_key) == fallback_guard_states_.end())
+    auto oldest_it = fallback_guard_states_.end();
+    for (auto it = fallback_guard_states_.begin(); it != fallback_guard_states_.end(); ++it)
     {
-        auto oldest_it = fallback_guard_states_.end();
-        for (auto it = fallback_guard_states_.begin(); it != fallback_guard_states_.end(); ++it)
+        if (oldest_it == fallback_guard_states_.end() || it->second.last_seen < oldest_it->second.last_seen)
         {
-            if (oldest_it == fallback_guard_states_.end() || it->second.last_seen < oldest_it->second.last_seen)
-            {
-                oldest_it = it;
-            }
-        }
-        if (oldest_it != fallback_guard_states_.end())
-        {
-            fallback_guard_states_.erase(oldest_it);
+            oldest_it = it;
         }
     }
+    if (oldest_it != fallback_guard_states_.end())
+    {
+        fallback_guard_states_.erase(oldest_it);
+    }
+}
 
+remote_server::fallback_guard_state& remote_server::get_or_init_fallback_guard_state_locked(
+    const std::string& source_key,
+    const std::chrono::steady_clock::time_point& now)
+{
     auto& state = fallback_guard_states_[source_key];
     if (state.tokens == 0 && state.last_seen.time_since_epoch().count() == 0)
     {
         state.tokens = static_cast<double>(fallback_guard_config_.burst);
         state.last_refill = now;
     }
+    return state;
+}
 
+void remote_server::refill_fallback_tokens_locked(
+    fallback_guard_state& state,
+    const std::chrono::steady_clock::time_point& now) const
+{
     const auto rate_per_sec = static_cast<double>(fallback_guard_config_.rate_per_sec);
-    if (rate_per_sec > 0)
+    if (rate_per_sec <= 0)
     {
-        const auto elapsed = std::chrono::duration<double>(now - state.last_refill).count();
-        if (elapsed > 0)
-        {
-            const auto burst = static_cast<double>(fallback_guard_config_.burst);
-            state.tokens = std::min(burst, state.tokens + elapsed * rate_per_sec);
-            state.last_refill = now;
-        }
+        return;
     }
-    state.last_seen = now;
 
+    const auto elapsed = std::chrono::duration<double>(now - state.last_refill).count();
+    if (elapsed <= 0)
+    {
+        return;
+    }
+
+    const auto burst = static_cast<double>(fallback_guard_config_.burst);
+    state.tokens = std::min(burst, state.tokens + elapsed * rate_per_sec);
+    state.last_refill = now;
+}
+
+bool remote_server::fallback_guard_allows_request_locked(
+    fallback_guard_state& state,
+    const std::chrono::steady_clock::time_point& now)
+{
+    state.last_seen = now;
     if (state.circuit_open_until > now)
     {
         statistics::instance().inc_fallback_rate_limited();
@@ -2217,6 +2229,24 @@ bool remote_server::consume_fallback_token(const connection_context& ctx)
 
     state.tokens -= 1.0;
     return true;
+}
+
+bool remote_server::consume_fallback_token(const connection_context& ctx)
+{
+    if (!fallback_guard_config_.enabled)
+    {
+        return true;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    std::lock_guard<std::mutex> lock(fallback_guard_mu_);
+    cleanup_fallback_guard_state_locked(now);
+
+    const auto source_key = fallback_guard_key(ctx);
+    evict_fallback_guard_source_if_needed_locked(source_key);
+    auto& state = get_or_init_fallback_guard_state_locked(source_key, now);
+    refill_fallback_tokens_locked(state, now);
+    return fallback_guard_allows_request_locked(state, now);
 }
 
 void remote_server::record_fallback_result(const connection_context& ctx, const bool success)
