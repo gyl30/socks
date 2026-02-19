@@ -2791,7 +2791,6 @@ TEST_F(remote_server_test, VerifyClientFinishedTimeoutWhenPeerStalls)
                            EVP_aes_128_gcm(),
                            EVP_sha256(),
                            ctx,
-                           &io_context,
                            1);
                        co_return;
                    },
@@ -2829,7 +2828,7 @@ TEST_F(remote_server_test, SendServerHelloFlightTimeoutWhenPeerStalls)
     std::promise<std::error_code> done;
     auto done_future = done.get_future();
     asio::co_spawn(*io_context,
-                   [server, server_socket, io_context, &done]() -> asio::awaitable<void>
+                   [server, server_socket, &done]() -> asio::awaitable<void>
                    {
                        mux::connection_context ctx;
                        ctx.conn_id(110);
@@ -2837,8 +2836,7 @@ TEST_F(remote_server_test, SendServerHelloFlightTimeoutWhenPeerStalls)
 
                        const std::vector<std::uint8_t> sh_msg = {0x02, 0x00, 0x00, 0x00};
                        std::vector<std::uint8_t> flight2_enc(8 * 1024 * 1024, 0x5a);
-                       const auto write_ec =
-                           co_await server->send_server_hello_flight(server_socket, sh_msg, flight2_enc, ctx, io_context, 1);
+                       const auto write_ec = co_await server->send_server_hello_flight(server_socket, sh_msg, flight2_enc, ctx, 1);
                        done.set_value(write_ec);
                        co_return;
                    },
