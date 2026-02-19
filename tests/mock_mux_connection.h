@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <system_error>
 
-#include <asio.hpp>
+#include <boost/asio.hpp>
 #include <gmock/gmock.h>
 
 #include "mux_connection.h"
@@ -17,8 +17,8 @@ namespace mux
 class mock_mux_connection : public mux_connection
 {
    public:
-    mock_mux_connection(asio::io_context& ctx)
-        : mux_connection(asio::ip::tcp::socket(ctx), ctx, reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 0)
+    mock_mux_connection(boost::asio::io_context& ctx)
+        : mux_connection(boost::asio::ip::tcp::socket(ctx), ctx, reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 0)
     {
     }
 
@@ -30,11 +30,11 @@ class mock_mux_connection : public mux_connection
     MOCK_METHOD(void, remove_stream, (uint32_t id), (override));
     MOCK_METHOD(uint32_t, id, (), (const, override));
 
-    asio::awaitable<std::error_code> send_async(uint32_t stream_id, uint8_t cmd, std::vector<uint8_t> payload) override
+    boost::asio::awaitable<boost::system::error_code> send_async(uint32_t stream_id, uint8_t cmd, std::vector<uint8_t> payload) override
     {
         co_return mock_send_async(stream_id, cmd, payload);
     }
-    MOCK_METHOD(std::error_code, mock_send_async, (uint32_t stream_id, uint8_t cmd, const std::vector<uint8_t>& payload));
+    MOCK_METHOD(boost::system::error_code, mock_send_async, (uint32_t stream_id, uint8_t cmd, const std::vector<uint8_t>& payload));
 };
 
 }                    

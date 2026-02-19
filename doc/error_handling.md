@@ -1,6 +1,6 @@
 # 错误处理规范
 
-本项目当前采用“`std::expected` 为主，`asio::awaitable<std::error_code>` 作为异步边界接口”的混合模式。
+本项目当前采用“`std::expected` 为主，`boost::asio::awaitable<std::error_code>` 作为异步边界接口”的混合模式。
 
 ## 错误处理模式
 
@@ -19,7 +19,7 @@ auto plaintext = std::move(*result);
 
 不返回值时使用 `std::expected<void, std::error_code>`。
 
-### 2. `asio::awaitable<std::error_code>`（异步 I/O 边界）
+### 2. `boost::asio::awaitable<std::error_code>`（异步 I/O 边界）
 
 适用于：socket 读写、握手分段发送/接收等“是否成功”语义的协程边界接口。
 
@@ -34,7 +34,7 @@ if (ec)
 
 现有接口示例：`mux_connection::send_async`、`remote_server::send_server_hello_flight`、`remote_server::verify_client_finished`。
 
-### 3. `asio::awaitable<std::expected<T, std::error_code>>`（异步且需要返回值）
+### 3. `boost::asio::awaitable<std::expected<T, std::error_code>>`（异步且需要返回值）
 
 适用于：既要异步执行又需要返回业务值的协程接口。
 
@@ -60,7 +60,7 @@ if (!cfg)
 ## 规范要点
 
 1. 新增业务接口优先使用 `std::expected`。
-2. 新增异步 I/O 边界接口允许使用 `asio::awaitable<std::error_code>`，禁止回退到 `std::error_code&` 输出参数。
+2. 新增异步 I/O 边界接口允许使用 `boost::asio::awaitable<std::error_code>`，禁止回退到 `std::error_code&` 输出参数。
 3. 统一通过返回值传播错误，禁止静默吞错。
 4. 关键错误路径必须记录日志并在测试中覆盖。
 

@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <utility>
 
-#include <asio.hpp>
+#include <boost/asio.hpp>
 
 #include "config.h"
 #include "mux_stream.h"
@@ -21,7 +21,7 @@ class mux_tunnel_impl : public std::enable_shared_from_this<mux_tunnel_impl<stre
 {
    public:
     explicit mux_tunnel_impl(stream_layer socket,
-                             asio::io_context& io_context,
+                             boost::asio::io_context& io_context,
                              reality_engine engine,
                              bool is_client,
                              std::uint32_t conn_id,
@@ -58,7 +58,7 @@ class mux_tunnel_impl : public std::enable_shared_from_this<mux_tunnel_impl<stre
         return false;
     }
 
-    asio::awaitable<void> run() const    // GCOVR_EXCL_LINE
+    boost::asio::awaitable<void> run() const    // GCOVR_EXCL_LINE
     {
         if (connection_ == nullptr)
         {

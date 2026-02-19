@@ -8,8 +8,8 @@
 #include <utility>
 #include <system_error>
 
-#include <asio/io_context.hpp>
-#include <asio/executor_work_guard.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/executor_work_guard.hpp>
 
 namespace mux
 {
@@ -28,12 +28,12 @@ class io_context_pool
 
     void stop();
 
-    [[nodiscard]] asio::io_context& get_io_context();
+    [[nodiscard]] boost::asio::io_context& get_io_context();
 
    private:
-    using work_guard_t = decltype(asio::make_work_guard(std::declval<asio::io_context&>()));
+    using work_guard_t = decltype(boost::asio::make_work_guard(std::declval<boost::asio::io_context&>()));
 
-    std::vector<std::shared_ptr<asio::io_context>> io_contexts_;
+    std::vector<std::shared_ptr<boost::asio::io_context>> io_contexts_;
     alignas(sizeof(std::size_t)) std::atomic<std::size_t> next_io_context_ = {0};
     std::vector<work_guard_t> work_guards_;
 };
