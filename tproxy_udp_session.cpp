@@ -140,6 +140,10 @@ asio::awaitable<void> tproxy_udp_session::handle_packet_inner(asio::ip::udp::end
     touch();
     const auto host = dst_ep.address().to_string();
     const auto route = co_await router_->decide_ip(ctx_, host, dst_ep.address());
+    if (terminated_.load(std::memory_order_acquire))
+    {
+        co_return;
+    }
 
     if (route == route_type::kBlock)
     {
@@ -219,7 +223,12 @@ void tproxy_udp_session::touch() { last_activity_ms_.store(now_ms(), std::memory
 
 void tproxy_udp_session::stop_local(const bool allow_async_stream_close)
 {
-    terminated_.store(true, std::memory_order_release);
+    const auto already_terminated = terminated_.exchange(true, std::memory_order_acq_rel);
+    if (already_terminated)
+    {
+        return;
+    }
+
     recv_channel_.close();
     auto stream = stream_;
     auto tunnel = tunnel_.lock();
@@ -309,6 +318,11 @@ bool tproxy_udp_session::install_proxy_stream(const std::shared_ptr<mux_tunnel_i
                                               const std::shared_ptr<mux_stream>& stream,
                                               bool& should_start_reader)
 {
+    if (terminated_.load(std::memory_order_acquire))
+    {
+        return false;
+    }
+
     if (stream_ != nullptr)
     {
         return false;
@@ -319,6 +333,12 @@ bool tproxy_udp_session::install_proxy_stream(const std::shared_ptr<mux_tunnel_i
         LOG_CTX_WARN(ctx_, "{} udp proxy register stream failed {}", log_event::kSocks, stream->id());
         return false;
     }
+
+    if (terminated_.load(std::memory_order_acquire))
+    {
+        return false;
+    }
+
     stream_ = stream;
     tunnel_ = tunnel;
     if (!proxy_reader_started_)
@@ -376,12 +396,21 @@ asio::awaitable<void> tproxy_udp_session::proxy_read_loop_detached(std::shared_p
 
 asio::awaitable<bool> tproxy_udp_session::ensure_proxy_stream()
 {
+    if (terminated_.load(std::memory_order_acquire))
+    {
+        co_return false;
+    }
+
     if (stream_ != nullptr)
     {
         co_return true;
     }
 
     const auto open_result = co_await open_proxy_stream();
+    if (terminated_.load(std::memory_order_acquire))
+    {
+        co_return false;
+    }
     if (!open_result.has_value())
     {
         co_return false;
@@ -403,7 +432,17 @@ asio::awaitable<bool> tproxy_udp_session::ensure_proxy_stream()
 
 asio::awaitable<void> tproxy_udp_session::send_proxy(const asio::ip::udp::endpoint& dst_ep, const std::uint8_t* data, const std::size_t len)
 {
+    if (terminated_.load(std::memory_order_acquire))
+    {
+        co_return;
+    }
+
     if (!co_await ensure_proxy_stream())
+    {
+        co_return;
+    }
+
+    if (terminated_.load(std::memory_order_acquire))
     {
         co_return;
     }

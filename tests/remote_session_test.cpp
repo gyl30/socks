@@ -519,6 +519,24 @@ TEST(RemoteSessionTest, DownstreamStopsWhenTargetReadConnectionResetStillSendsFi
     mux::test::run_awaitable_void(io_context, session->downstream());
 }
 
+TEST(RemoteSessionTest, DownstreamSkipsFinWhenResetRequested)
+{
+    asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    mux::connection_context ctx;
+    auto session = std::make_shared<mux::remote_session>(conn, 36, io_context, ctx);
+
+    auto pair = make_tcp_socket_pair(io_context);
+    session->target_socket_ = std::move(pair.server);
+    ASSERT_TRUE(session->target_socket_.is_open());
+
+    session->on_reset();
+    EXPECT_FALSE(session->target_socket_.is_open());
+
+    EXPECT_CALL(*conn, mock_send_async(36, mux::kCmdFin, std::vector<std::uint8_t>{})).Times(0);
+    mux::test::run_awaitable_void(io_context, session->downstream());
+}
+
 TEST(RemoteSessionTest, OnDataDispatchEnqueuesFrame)
 {
     asio::io_context io_context;

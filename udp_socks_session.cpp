@@ -395,9 +395,20 @@ void udp_socks_session::close_impl()
 
 asio::awaitable<std::shared_ptr<mux_stream>> udp_socks_session::prepare_udp_associate(asio::ip::address& local_addr, std::uint16_t& udp_bind_port)
 {
+    if (closed_.load(std::memory_order_acquire))
+    {
+        co_return nullptr;
+    }
+
     if (!bind_udp_socket_for_associate(socket_, udp_socket_, ctx_, local_addr, udp_bind_port))
     {
         co_await write_socks_error_reply(socket_, socks::kRepGenFail);
+        on_close();
+        co_return nullptr;
+    }
+
+    if (closed_.load(std::memory_order_acquire))
+    {
         on_close();
         co_return nullptr;
     }
@@ -413,6 +424,13 @@ asio::awaitable<std::shared_ptr<mux_stream>> udp_socks_session::prepare_udp_asso
     if (stream == nullptr)
     {
         co_await write_socks_error_reply(socket_, socks::kRepGenFail);
+        on_close();
+        co_return nullptr;
+    }
+
+    if (closed_.load(std::memory_order_acquire))
+    {
+        co_await close_and_remove_stream(tunnel_manager_, stream);
         on_close();
         co_return nullptr;
     }
@@ -477,11 +495,22 @@ asio::awaitable<void> udp_socks_session::run(const std::string& host, const std:
     (void)host;
     (void)port;
 
+    if (closed_.load(std::memory_order_acquire))
+    {
+        co_return;
+    }
+
     asio::ip::address local_addr;
     std::uint16_t udp_bind_port = 0;
     const auto stream = co_await prepare_udp_associate(local_addr, udp_bind_port);
     if (stream == nullptr)
     {
+        co_return;
+    }
+
+    if (closed_.load(std::memory_order_acquire))
+    {
+        co_await finalize_udp_associate(stream);
         co_return;
     }
 

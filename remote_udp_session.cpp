@@ -106,13 +106,7 @@ asio::awaitable<void> remote_udp_session::handle_start_failure(const std::shared
     {
         LOG_CTX_WARN(ctx_, "{} send ack failed {}", log_event::kMux, ack_ec.message());
     }
-    request_stop();
-    close_socket();
-    if (auto manager = manager_.lock())
-    {
-        manager->remove_stream(id_);
-    }
-    (void)co_await conn->send_async(id_, kCmdRst, {});
+    co_await cleanup_after_stop();
 }
 
 asio::awaitable<bool> remote_udp_session::setup_udp_socket(const std::shared_ptr<mux_connection>& conn)
@@ -222,6 +216,11 @@ asio::awaitable<void> remote_udp_session::run_udp_session_loops()
 asio::awaitable<void> remote_udp_session::cleanup_after_stop()
 {
     request_stop();
+    const auto already_cleaned = cleaned_up_.exchange(true, std::memory_order_acq_rel);
+    if (already_cleaned)
+    {
+        co_return;
+    }
     close_socket();
     if (auto conn = connection_.lock())
     {
@@ -241,10 +240,24 @@ asio::awaitable<void> remote_udp_session::start_impl(std::shared_ptr<remote_udp_
     {
         co_return;
     }
+
+    if (terminated_.load(std::memory_order_acquire))
+    {
+        co_await cleanup_after_stop();
+        co_return;
+    }
+
     if (!(co_await setup_udp_socket(conn)))
     {
         co_return;
     }
+
+    if (terminated_.load(std::memory_order_acquire))
+    {
+        co_await cleanup_after_stop();
+        co_return;
+    }
+
     log_udp_local_endpoint();
 
     std::error_code local_ep_ec;
@@ -262,6 +275,12 @@ asio::awaitable<void> remote_udp_session::start_impl(std::shared_ptr<remote_udp_
     if (const auto ack_ec = co_await send_ack_payload(conn, ack))
     {
         LOG_CTX_WARN(ctx_, "{} send ack failed {}", log_event::kMux, ack_ec.message());
+        co_await cleanup_after_stop();
+        co_return;
+    }
+
+    if (terminated_.load(std::memory_order_acquire))
+    {
         co_await cleanup_after_stop();
         co_return;
     }
@@ -287,6 +306,11 @@ void remote_udp_session::on_data(std::vector<std::uint8_t> data)
 
 void remote_udp_session::request_stop()
 {
+    const auto already_terminated = terminated_.exchange(true, std::memory_order_acq_rel);
+    if (already_terminated)
+    {
+        return;
+    }
     recv_channel_.close();
     timer_.cancel();
     idle_timer_.cancel();

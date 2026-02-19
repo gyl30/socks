@@ -377,7 +377,11 @@ void remote_session::close_from_fin()
 
 void remote_session::close_from_reset()
 {
-    reset_requested_.store(true, std::memory_order_release);
+    const auto already_requested = reset_requested_.exchange(true, std::memory_order_acq_rel);
+    if (already_requested)
+    {
+        return;
+    }
     recv_channel_.close();
     resolver_.cancel();
     std::error_code ec;
@@ -418,7 +422,10 @@ asio::awaitable<void> remote_session::downstream()
         }
     }
     LOG_CTX_INFO(ctx_, "{} target to mux finished", log_event::kDataRecv);
-    co_await send_fin_to_connection(connection_, id_);
+    if (!reset_requested_.load(std::memory_order_acquire))
+    {
+        co_await send_fin_to_connection(connection_, id_);
+    }
 }
 
 }    // namespace mux
