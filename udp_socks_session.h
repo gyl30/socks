@@ -5,6 +5,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <cstddef>
 #include <cstdint>
 
 #include <asio/ip/tcp.hpp>
@@ -37,7 +38,8 @@ class udp_socks_session : public mux_stream_interface, public std::enable_shared
                       std::shared_ptr<mux_tunnel_impl<asio::ip::tcp::socket>> tunnel_manager,
                       std::uint32_t sid,
                       const config::timeout_t& timeout_cfg,
-                      std::shared_ptr<void> active_connection_guard = nullptr);
+                      std::shared_ptr<void> active_connection_guard = nullptr,
+                      std::size_t recv_channel_capacity = 128);
 
     void start(const std::string& host, std::uint16_t port);
 
