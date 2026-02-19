@@ -321,6 +321,8 @@ TEST_F(config_test, MissingFieldsUseDefaults)
     EXPECT_TRUE(cfg_opt->reality.private_key.empty());
     EXPECT_TRUE(cfg_opt->reality.public_key.empty());
     EXPECT_TRUE(cfg_opt->reality.fallback_guard.enabled);
+    EXPECT_EQ(cfg_opt->queues.udp_session_recv_channel_capacity, 512U);
+    EXPECT_EQ(cfg_opt->queues.tproxy_udp_dispatch_queue_capacity, 2048U);
 }
 
 TEST_F(config_test, InvalidPortRange)

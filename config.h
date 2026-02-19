@@ -69,7 +69,7 @@ struct config
 
     struct queues_t
     {
-        std::uint32_t udp_session_recv_channel_capacity = 128;
+        std::uint32_t udp_session_recv_channel_capacity = 512;
         std::uint32_t tproxy_udp_dispatch_queue_capacity = 2048;
     } queues;
 

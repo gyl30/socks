@@ -92,3 +92,38 @@ python3 script/perf_baseline.py \
 
 1. A 与 B 仅用于同机、同脚本、同参数下的相对比较，不作为跨机器绝对性能结论。
 2. 后续每次数据面优化完成后，建议同时更新 A/B 两组数据，保持趋势可追踪。
+
+## UDP 队列容量扫描（SOCKS UDP 路径）
+
+- 扫描脚本：`script/perf_queue_sweep.py`
+- 扫描输出：`build_release_perf/perf_queue_sweep_latest.json`
+
+命令（Release）：
+
+```bash
+python3 script/perf_queue_sweep.py \
+  --build-dir build_release_perf \
+  --socks-bin ./socks \
+  --capacities 64,128,256,512 \
+  --runs 2 \
+  --iterations 6000 \
+  --payload-size 512 \
+  --inflight 32 \
+  --udp-timeout-ms 100 \
+  --stall-timeout-sec 3.0 \
+  --out-json build_release_perf/perf_queue_sweep_latest.json
+```
+
+结果汇总（均值）：
+
+| `queues.udp_session_recv_channel_capacity` | UDP 吞吐（Mbps） | UDP RTT P95（ms） | 总峰值 RSS（MB） |
+| --- | --- | --- | --- |
+| 64 | 5.604 | 69.546 | 2949.219 |
+| 128 | 3.905 | 75.331 | 3593.047 |
+| 256 | 4.441 | 64.726 | 3703.754 |
+| 512 | 6.075 | 44.096 | 3514.031 |
+
+建议：
+
+1. 将 `queues.udp_session_recv_channel_capacity` 默认值从 `128` 调整到 `512`（吞吐与 P95 更优，且无丢包）。
+2. `queues.tproxy_udp_dispatch_queue_capacity` 已支持配置，默认保持 `2048`；本轮扫描未覆盖 TPROXY 路径，建议在具备 `CAP_NET_ADMIN` 的环境单独复测。
