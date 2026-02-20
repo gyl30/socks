@@ -423,7 +423,12 @@ std::expected<std::vector<std::uint8_t>, boost::system::error_code> crypto_util:
         return std::unexpected(r.error());
     }
 
-    std::size_t out_len = EVP_MD_size(md);
+    const int md_size = EVP_MD_size(md);
+    if (md_size <= 0)
+    {
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+    }
+    std::size_t out_len = static_cast<std::size_t>(md_size);
     std::vector<std::uint8_t> prk(out_len);
     if (EVP_PKEY_derive(evp_pkey_ctx->get(), prk.data(), &out_len) <= 0)
     {
@@ -580,7 +585,12 @@ std::expected<void, boost::system::error_code> crypto_util::aead_encrypt_append(
 
     EVP_CIPHER_CTX_ctrl(ctx.get(), EVP_CTRL_GCM_GET_TAG, kAeadTagSize, out_ptr + out_len + final_len);
 
-    output_buffer.resize(current_size + out_len + final_len + kAeadTagSize);
+    if (out_len < 0 || final_len < 0)
+    {
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+    }
+    output_buffer.resize(
+        current_size + static_cast<std::size_t>(out_len) + static_cast<std::size_t>(final_len) + kAeadTagSize);
     return {};
 }
 

@@ -616,7 +616,9 @@ TEST(CryptoUtilTest, NonGCMCipherContext)
 
     int final_len = 0;
     ASSERT_EQ(EVP_EncryptFinal_ex(ctx.get(), ciphertext.data() + out_len, &final_len), 1);
-    ciphertext.resize(out_len + final_len);
+    ASSERT_GE(out_len, 0);
+    ASSERT_GE(final_len, 0);
+    ciphertext.resize(static_cast<std::size_t>(out_len + final_len));
 
     const reality::cipher_context ctx_dec;
     ASSERT_TRUE(ctx_dec.init(false, EVP_aes_128_cbc(), key.data(), iv.data(), 16));
@@ -624,7 +626,9 @@ TEST(CryptoUtilTest, NonGCMCipherContext)
     std::vector<uint8_t> decrypted(32);
     ASSERT_EQ(EVP_DecryptUpdate(ctx_dec.get(), decrypted.data(), &out_len, ciphertext.data(), static_cast<int>(ciphertext.size())), 1);
     ASSERT_EQ(EVP_DecryptFinal_ex(ctx_dec.get(), decrypted.data() + out_len, &final_len), 1);
-    decrypted.resize(out_len + final_len);
+    ASSERT_GE(out_len, 0);
+    ASSERT_GE(final_len, 0);
+    decrypted.resize(static_cast<std::size_t>(out_len + final_len));
 
     EXPECT_EQ(decrypted, plaintext);
 }

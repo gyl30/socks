@@ -180,7 +180,7 @@ boost::asio::awaitable<bool> write_to_target(boost::asio::ip::tcp::socket& targe
     co_return true;
 }
 
-bool should_stop_downstream(const boost::system::error_code& read_ec, const std::uint32_t read_size, const connection_context& ctx)
+bool should_stop_downstream(const boost::system::error_code& read_ec, const std::size_t read_size, const connection_context& ctx)
 {
     if (!read_ec && read_size > 0)
     {
@@ -196,7 +196,7 @@ bool should_stop_downstream(const boost::system::error_code& read_ec, const std:
 boost::asio::awaitable<bool> send_downstream_payload(const std::weak_ptr<mux_connection>& connection,
                                               const std::uint32_t stream_id,
                                               const std::vector<std::uint8_t>& buf,
-                                              const std::uint32_t size,
+                                              const std::size_t size,
                                               connection_context& ctx)
 {
     auto conn = connection.lock();
@@ -443,7 +443,7 @@ boost::asio::awaitable<void> remote_session::downstream()
     for (;;)
     {
         boost::system::error_code re;
-        const std::uint32_t n = co_await target_socket_.async_read_some(boost::asio::buffer(buf), boost::asio::redirect_error(boost::asio::use_awaitable, re));
+        const std::size_t n = co_await target_socket_.async_read_some(boost::asio::buffer(buf), boost::asio::redirect_error(boost::asio::use_awaitable, re));
         if (should_stop_downstream(re, n, ctx_))
         {
             break;
