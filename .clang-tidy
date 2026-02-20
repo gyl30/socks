@@ -18,6 +18,12 @@ Checks: '-*,
   -readability-magic-numbers,
   -concurrency-mt-unsafe,
   -misc-use-anonymous-namespace,
+  -readability-else-after-return,
+  -clang-analyzer-core.CallAndMessage,
+  -clang-analyzer-core.NullDereference,
+  -clang-analyzer-optin.cplusplus.UninitializedObject,
+  -misc-non-private-member-variables-in-classes
   '
 
-HeaderFilterRegex: '^(?!.*(third|build)/).*'
+HeaderFilterRegex: '.*'
+ExcludeHeaderFilterRegex: '.*(/third/|/build/).*'

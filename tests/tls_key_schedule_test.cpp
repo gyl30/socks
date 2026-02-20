@@ -1,3 +1,5 @@
+// NOLINTBEGIN(google-build-using-namespace)
+// NOLINTBEGIN(misc-include-cleaner)
 #include <vector>
 #include <system_error>
 #include <atomic>
@@ -28,13 +30,13 @@ void fail_evp_pkey_derive_on_call(const int call_index)
 
 }    // namespace
 
-extern "C" int __real_EVP_PKEY_derive(EVP_PKEY_CTX* ctx, unsigned char* key, size_t* keylen);
+extern "C" int __real_EVP_PKEY_derive(EVP_PKEY_CTX* ctx, unsigned char* key, size_t* keylen);  // NOLINT(bugprone-reserved-identifier)
 
-extern "C" int __wrap_EVP_PKEY_derive(EVP_PKEY_CTX* ctx, unsigned char* key, size_t* keylen)
+extern "C" int __wrap_EVP_PKEY_derive(EVP_PKEY_CTX* ctx, unsigned char* key, size_t* keylen)  // NOLINT(bugprone-reserved-identifier)
 {
     if (key == nullptr || keylen == nullptr)
     {
-        return __real_EVP_PKEY_derive(ctx, key, keylen);
+        return __real_EVP_PKEY_derive(ctx, key, keylen);  // NOLINT(bugprone-reserved-identifier)
     }
 
     const int call_index = g_tls_key_schedule_derive_call_counter.fetch_add(1, std::memory_order_acq_rel) + 1;
@@ -44,7 +46,7 @@ extern "C" int __wrap_EVP_PKEY_derive(EVP_PKEY_CTX* ctx, unsigned char* key, siz
         g_tls_key_schedule_fail_derive_call.store(0, std::memory_order_release);
         return 0;
     }
-    return __real_EVP_PKEY_derive(ctx, key, keylen);
+    return __real_EVP_PKEY_derive(ctx, key, keylen);  // NOLINT(bugprone-reserved-identifier)
 }
 
 TEST(TlsKeyScheduleTest, DeriveTrafficKeysInvalidSecret)
@@ -86,7 +88,7 @@ TEST(TlsKeyScheduleTest, DeriveApplicationSecretsCoversServerSecretFailureBranch
     const auto app = tls_key_schedule::derive_application_secrets(master_secret, handshake_hash, EVP_sha256());
     // value_or is used internally, so this still returns a value with partial results
     ASSERT_TRUE(app.has_value());
-    EXPECT_EQ(app->first.size(), 32u);
+    EXPECT_EQ(app->first.size(), 32U);
     EXPECT_TRUE(app->second.empty());
 }
 
@@ -121,8 +123,8 @@ TEST(TlsKeyScheduleTest, DeriveTrafficKeysSuccess)
 
     const auto keys = tls_key_schedule::derive_traffic_keys(secret);
     ASSERT_TRUE(keys.has_value());
-    EXPECT_EQ(keys->first.size(), 16u);
-    EXPECT_EQ(keys->second.size(), 12u);
+    EXPECT_EQ(keys->first.size(), 16U);
+    EXPECT_EQ(keys->second.size(), 12U);
 }
 
 TEST(TlsKeyScheduleTest, DeriveHandshakeAndApplicationSecretsSuccess)
@@ -132,14 +134,14 @@ TEST(TlsKeyScheduleTest, DeriveHandshakeAndApplicationSecretsSuccess)
 
     const auto hs = tls_key_schedule::derive_handshake_keys(shared_secret, server_hello_hash, EVP_sha256());
     ASSERT_TRUE(hs.has_value());
-    EXPECT_EQ(hs->client_handshake_traffic_secret.size(), 32u);
-    EXPECT_EQ(hs->server_handshake_traffic_secret.size(), 32u);
-    EXPECT_EQ(hs->master_secret.size(), 32u);
+    EXPECT_EQ(hs->client_handshake_traffic_secret.size(), 32U);
+    EXPECT_EQ(hs->server_handshake_traffic_secret.size(), 32U);
+    EXPECT_EQ(hs->master_secret.size(), 32U);
 
     const auto app = tls_key_schedule::derive_application_secrets(hs->master_secret, server_hello_hash, EVP_sha256());
     ASSERT_TRUE(app.has_value());
-    EXPECT_EQ(app->first.size(), 32u);
-    EXPECT_EQ(app->second.size(), 32u);
+    EXPECT_EQ(app->first.size(), 32U);
+    EXPECT_EQ(app->second.size(), 32U);
 }
 
 TEST(TlsKeyScheduleTest, ComputeFinishedVerifyDataSuccess)
@@ -149,5 +151,7 @@ TEST(TlsKeyScheduleTest, ComputeFinishedVerifyDataSuccess)
 
     const auto verify = tls_key_schedule::compute_finished_verify_data(base_key, handshake_hash, EVP_sha256());
     ASSERT_TRUE(verify.has_value());
-    EXPECT_EQ(verify->size(), 32u);
+    EXPECT_EQ(verify->size(), 32U);
 }
+// NOLINTEND(misc-include-cleaner)
+// NOLINTEND(google-build-using-namespace)

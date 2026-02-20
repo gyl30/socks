@@ -1,3 +1,5 @@
+// NOLINTBEGIN(modernize-use-starts-ends-with, performance-enum-size)
+// NOLINTBEGIN(bugprone-unchecked-optional-access, bugprone-unused-return-value, misc-include-cleaner)
 #include <array>
 #include <atomic>
 #include <charconv>
@@ -278,24 +280,24 @@ class monitor_server_env
 
 }    // namespace
 
-extern "C" int __real_socket(int domain, int type, int protocol);
-extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);
-extern "C" int __real_listen(int sockfd, int backlog);
-extern "C" int __real_accept(int sockfd, struct sockaddr* addr, socklen_t* addrlen);
-extern "C" int __real_accept4(int sockfd, struct sockaddr* addr, socklen_t* addrlen, int flags);
-extern "C" int __real_close(int fd);
+extern "C" int __real_socket(int domain, int type, int protocol);  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_listen(int sockfd, int backlog);  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_accept(int sockfd, struct sockaddr* addr, socklen_t* addrlen);  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_accept4(int sockfd, struct sockaddr* addr, socklen_t* addrlen, int flags);  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_close(int fd);  // NOLINT(bugprone-reserved-identifier)
 
-extern "C" int __wrap_socket(int domain, int type, int protocol)
+extern "C" int __wrap_socket(int domain, int type, int protocol)  // NOLINT(bugprone-reserved-identifier)
 {
     if (should_fail_monitor_mode(monitor_fail_mode::kSocket, monitor_fail_mode::kSocketAlways))
     {
         errno = EMFILE;
         return -1;
     }
-    return __real_socket(domain, type, protocol);
+    return __real_socket(domain, type, protocol);  // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)
+extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)  // NOLINT(bugprone-reserved-identifier)
 {
     if (level == SOL_SOCKET && optname == SO_REUSEADDR
         && should_fail_monitor_mode(monitor_fail_mode::kReuseAddr, monitor_fail_mode::kReuseAddrAlways))
@@ -303,47 +305,47 @@ extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void*
         errno = EPERM;
         return -1;
     }
-    return __real_setsockopt(sockfd, level, optname, optval, optlen);
+    return __real_setsockopt(sockfd, level, optname, optval, optlen);  // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_listen(int sockfd, int backlog)
+extern "C" int __wrap_listen(int sockfd, int backlog)  // NOLINT(bugprone-reserved-identifier)
 {
     if (should_fail_monitor_mode(monitor_fail_mode::kListen, monitor_fail_mode::kListenAlways))
     {
         errno = EACCES;
         return -1;
     }
-    return __real_listen(sockfd, backlog);
+    return __real_listen(sockfd, backlog);  // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_accept(int sockfd, struct sockaddr* addr, socklen_t* addrlen)
+extern "C" int __wrap_accept(int sockfd, struct sockaddr* addr, socklen_t* addrlen)  // NOLINT(bugprone-reserved-identifier)
 {
     if (g_fail_accept_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_accept_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_accept(sockfd, addr, addrlen);
+    return __real_accept(sockfd, addr, addrlen);  // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_accept4(int sockfd, struct sockaddr* addr, socklen_t* addrlen, int flags)
+extern "C" int __wrap_accept4(int sockfd, struct sockaddr* addr, socklen_t* addrlen, int flags)  // NOLINT(bugprone-reserved-identifier)
 {
     if (g_fail_accept_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_accept_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_accept4(sockfd, addr, addrlen, flags);
+    return __real_accept4(sockfd, addr, addrlen, flags);  // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_close(int fd)
+extern "C" int __wrap_close(int fd)  // NOLINT(bugprone-reserved-identifier)
 {
     if (g_fail_close_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_close_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_close(fd);
+    return __real_close(fd);  // NOLINT(bugprone-reserved-identifier)
 }
 
 namespace mux
@@ -353,12 +355,12 @@ TEST(MonitorServerTest, GetMetricsReturnsHttpPayload)
 {
     statistics::instance().inc_total_connections();
 
-    monitor_server_env env(0);
+    monitor_server_env const env(0);
     const auto port = env.port();
     ASSERT_NE(port, 0);
 
     const auto resp = request_metrics_with_retry(port);
-    EXPECT_EQ(resp.rfind("HTTP/1.1 200 OK\r\n", 0), 0u);
+    EXPECT_EQ(resp.rfind("HTTP/1.1 200 OK\r\n", 0), 0U);
     EXPECT_NE(resp.find("\r\nContent-Type: text/plain; version=0.0.4; charset=utf-8\r\n"), std::string::npos);
     EXPECT_NE(resp.find("\r\nContent-Length: "), std::string::npos);
     EXPECT_NE(resp.find("\r\n\r\nsocks_uptime_seconds "), std::string::npos);
@@ -367,7 +369,7 @@ TEST(MonitorServerTest, GetMetricsReturnsHttpPayload)
 
 TEST(MonitorServerTest, SupportsMetricsPathQueryString)
 {
-    monitor_server_env env(0);
+    monitor_server_env const env(0);
     const auto port = env.port();
     ASSERT_NE(port, 0);
 
@@ -377,13 +379,13 @@ TEST(MonitorServerTest, SupportsMetricsPathQueryString)
         "Host: 127.0.0.1\r\n"
         "Connection: close\r\n"
         "\r\n");
-    EXPECT_EQ(resp.rfind("HTTP/1.1 200 OK\r\n", 0), 0u);
+    EXPECT_EQ(resp.rfind("HTTP/1.1 200 OK\r\n", 0), 0U);
     EXPECT_NE(resp.find("socks_uptime_seconds "), std::string::npos);
 }
 
 TEST(MonitorServerTest, RejectsNonGetMethod)
 {
-    monitor_server_env env(0);
+    monitor_server_env const env(0);
     const auto port = env.port();
     ASSERT_NE(port, 0);
 
@@ -393,12 +395,12 @@ TEST(MonitorServerTest, RejectsNonGetMethod)
         "Host: 127.0.0.1\r\n"
         "Connection: close\r\n"
         "\r\n");
-    EXPECT_EQ(resp.rfind("HTTP/1.1 405 ", 0), 0u);
+    EXPECT_EQ(resp.rfind("HTTP/1.1 405 ", 0), 0U);
 }
 
 TEST(MonitorServerTest, RejectsNonMetricsPath)
 {
-    monitor_server_env env(0);
+    monitor_server_env const env(0);
     const auto port = env.port();
     ASSERT_NE(port, 0);
 
@@ -408,12 +410,12 @@ TEST(MonitorServerTest, RejectsNonMetricsPath)
         "Host: 127.0.0.1\r\n"
         "Connection: close\r\n"
         "\r\n");
-    EXPECT_EQ(resp.rfind("HTTP/1.1 404 ", 0), 0u);
+    EXPECT_EQ(resp.rfind("HTTP/1.1 404 ", 0), 0U);
 }
 
 TEST(MonitorServerTest, SupportsFragmentedHttpRequest)
 {
-    monitor_server_env env(0);
+    monitor_server_env const env(0);
     const auto port = env.port();
     ASSERT_NE(port, 0);
 
@@ -450,13 +452,13 @@ TEST(MonitorServerTest, SupportsFragmentedHttpRequest)
         }
     }
 
-    EXPECT_EQ(resp.rfind("HTTP/1.1 200 OK\r\n", 0), 0u);
+    EXPECT_EQ(resp.rfind("HTTP/1.1 200 OK\r\n", 0), 0U);
     EXPECT_NE(resp.find("socks_uptime_seconds "), std::string::npos);
 }
 
 TEST(MonitorServerTest, TproxyUdpDispatchDropMetricReflectsDroppedPackets)
 {
-    monitor_server_env env(0);
+    monitor_server_env const env(0);
     const auto port = env.port();
     ASSERT_NE(port, 0);
 
@@ -496,7 +498,7 @@ TEST(MonitorServerTest, TproxyUdpDispatchDropMetricReflectsDroppedPackets)
 
 TEST(MonitorServerTest, TproxyUdpDispatchMetricsCanDeriveDropRatio)
 {
-    monitor_server_env env(0);
+    monitor_server_env const env(0);
     const auto port = env.port();
     ASSERT_NE(port, 0);
 
@@ -557,7 +559,7 @@ TEST(MonitorServerTest, EscapesPrometheusLabels)
     auto& stats = statistics::instance();
     stats.inc_handshake_failure_by_sni(statistics::handshake_failure_reason::kShortId, "line1\"x\\y\nline2");
 
-    monitor_server_env env(0);
+    monitor_server_env const env(0);
     const auto port = env.port();
     ASSERT_NE(port, 0);
 
@@ -609,7 +611,7 @@ TEST(MonitorServerTest, ConstructorHandlesInvalidBindHost)
 TEST(MonitorServerTest, ConstructorHandlesOpenFailure)
 {
     boost::asio::io_context ioc;
-    monitor_fail_guard guard(monitor_fail_mode::kSocketAlways);
+    monitor_fail_guard const guard(monitor_fail_mode::kSocketAlways);
     auto server = std::make_shared<monitor_server>(ioc, 0);
     ASSERT_NE(server, nullptr);
     EXPECT_FALSE(server->acceptor_.is_open());
@@ -618,7 +620,7 @@ TEST(MonitorServerTest, ConstructorHandlesOpenFailure)
 TEST(MonitorServerTest, ConstructorHandlesReuseAddressFailure)
 {
     boost::asio::io_context ioc;
-    monitor_fail_guard guard(monitor_fail_mode::kReuseAddrAlways);
+    monitor_fail_guard const guard(monitor_fail_mode::kReuseAddrAlways);
     auto server = std::make_shared<monitor_server>(ioc, 0);
     ASSERT_NE(server, nullptr);
     EXPECT_FALSE(server->acceptor_.is_open());
@@ -627,7 +629,7 @@ TEST(MonitorServerTest, ConstructorHandlesReuseAddressFailure)
 TEST(MonitorServerTest, ConstructorHandlesListenFailure)
 {
     boost::asio::io_context ioc;
-    monitor_fail_guard guard(monitor_fail_mode::kListenAlways);
+    monitor_fail_guard const guard(monitor_fail_mode::kListenAlways);
     auto server = std::make_shared<monitor_server>(ioc, 0);
     ASSERT_NE(server, nullptr);
     EXPECT_FALSE(server->acceptor_.is_open());
@@ -796,7 +798,7 @@ TEST(MonitorServerTest, StopLogsAcceptorCloseFailureBranch)
 
 TEST(MonitorServerTest, AcceptFailureRetriesAndServesRequest)
 {
-    monitor_server_env env(0);
+    monitor_server_env const env(0);
     const auto port = env.port();
     ASSERT_NE(port, 0);
 
@@ -807,7 +809,7 @@ TEST(MonitorServerTest, AcceptFailureRetriesAndServesRequest)
 
 TEST(MonitorServerTest, SessionReadErrorPathStillAcceptsNextClient)
 {
-    monitor_server_env env(0);
+    monitor_server_env const env(0);
     const auto port = env.port();
     ASSERT_NE(port, 0);
 
@@ -831,3 +833,5 @@ TEST(MonitorServerTest, DoAcceptReturnsImmediatelyWhenStopped)
 }
 
 }    // namespace mux
+// NOLINTEND(bugprone-unchecked-optional-access, bugprone-unused-return-value, misc-include-cleaner)
+// NOLINTEND(modernize-use-starts-ends-with, performance-enum-size)
