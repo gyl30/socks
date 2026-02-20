@@ -1,3 +1,5 @@
+// NOLINTBEGIN(google-build-using-namespace, modernize-use-nodiscard, readability-isolate-declaration)
+// NOLINTBEGIN(bugprone-unused-return-value, misc-include-cleaner)
 #include <chrono>
 #include <memory>
 #include <string>
@@ -43,7 +45,7 @@ class scoped_pool
     std::thread thread_;
 };
 
-class remote_server_mux_test : public ::testing::Test
+class RemoteServerMuxTest : public ::testing::Test
 {
    protected:
     void SetUp() override
@@ -121,10 +123,10 @@ static bool connect_proxy_with_retry(boost::asio::ip::tcp::socket& socket, const
     return false;
 }
 
-TEST_F(remote_server_mux_test, ProcessTcpConnectRequest)
+TEST_F(RemoteServerMuxTest, ProcessTcpConnectRequest)
 {
     mux::io_context_pool pool(2);
-    scoped_pool sp(pool);
+    scoped_pool const sp(pool);
 
     auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(0));
 
@@ -171,10 +173,10 @@ TEST_F(remote_server_mux_test, ProcessTcpConnectRequest)
     std::this_thread::sleep_for(std::chrono::milliseconds(2000));
 }
 
-TEST_F(remote_server_mux_test, ProcessUdpAssociateRequest)
+TEST_F(RemoteServerMuxTest, ProcessUdpAssociateRequest)
 {
     mux::io_context_pool pool(2);
-    scoped_pool sp(pool);
+    scoped_pool const sp(pool);
 
     auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(0));
 
@@ -219,10 +221,10 @@ TEST_F(remote_server_mux_test, ProcessUdpAssociateRequest)
     std::this_thread::sleep_for(std::chrono::milliseconds(2000));
 }
 
-TEST_F(remote_server_mux_test, TargetConnectFail)
+TEST_F(RemoteServerMuxTest, TargetConnectFail)
 {
     mux::io_context_pool pool(2);
-    scoped_pool sp(pool);
+    scoped_pool const sp(pool);
 
     auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(0));
 
@@ -265,10 +267,10 @@ TEST_F(remote_server_mux_test, TargetConnectFail)
     std::this_thread::sleep_for(std::chrono::milliseconds(2000));
 }
 
-TEST_F(remote_server_mux_test, TargetResolveFail)
+TEST_F(RemoteServerMuxTest, TargetResolveFail)
 {
     mux::io_context_pool pool(2);
-    scoped_pool sp(pool);
+    scoped_pool const sp(pool);
 
     auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(0));
 
@@ -315,3 +317,5 @@ TEST_F(remote_server_mux_test, TargetResolveFail)
     server->stop();
     std::this_thread::sleep_for(std::chrono::milliseconds(2000));
 }
+// NOLINTEND(bugprone-unused-return-value, misc-include-cleaner)
+// NOLINTEND(google-build-using-namespace, modernize-use-nodiscard, readability-isolate-declaration)

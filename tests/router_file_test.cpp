@@ -1,3 +1,5 @@
+// NOLINTBEGIN(google-runtime-int)
+// NOLINTBEGIN(misc-include-cleaner)
 #include <string>
 #include <cstdint>
 #include <fstream>
@@ -45,7 +47,7 @@ class env_var_guard
     std::string old_value_;
 };
 
-class router_file_test : public ::testing::Test
+class RouterFileTest : public ::testing::Test
 {
    protected:
     void SetUp() override
@@ -89,20 +91,20 @@ class router_file_test : public ::testing::Test
 
 }    // namespace
 
-TEST_F(router_file_test, EmptyDirectIpDefaultsProxy)
+TEST_F(RouterFileTest, EmptyDirectIpDefaultsProxy)
 {
     mux::router router;
     ASSERT_TRUE(router.load());
 
     boost::asio::io_context ctx;
-    mux::connection_context conn_ctx;
+    mux::connection_context const conn_ctx;
     const auto addr = boost::asio::ip::make_address("8.8.8.8");
     const auto result = mux::test::run_awaitable(ctx, router.decide_ip(conn_ctx, "8.8.8.8", addr));
 
     EXPECT_EQ(result, mux::route_type::kProxy);
 }
 
-TEST_F(router_file_test, MissingRuleFileCausesLoadFailure)
+TEST_F(RouterFileTest, MissingRuleFileCausesLoadFailure)
 {
     std::filesystem::remove("direct_ip.txt");
 
@@ -110,7 +112,7 @@ TEST_F(router_file_test, MissingRuleFileCausesLoadFailure)
     EXPECT_FALSE(router.load());
 }
 
-TEST_F(router_file_test, MissingDomainRuleFileCausesLoadFailure)
+TEST_F(RouterFileTest, MissingDomainRuleFileCausesLoadFailure)
 {
     std::filesystem::remove("block_domain.txt");
 
@@ -118,7 +120,7 @@ TEST_F(router_file_test, MissingDomainRuleFileCausesLoadFailure)
     EXPECT_FALSE(router.load());
 }
 
-TEST_F(router_file_test, UnreadableIpRuleFileCausesLoadFailure)
+TEST_F(RouterFileTest, UnreadableIpRuleFileCausesLoadFailure)
 {
     boost::system::error_code ec;
     std::filesystem::permissions("direct_ip.txt", std::filesystem::perms::none, std::filesystem::perm_options::replace, ec);
@@ -135,7 +137,7 @@ TEST_F(router_file_test, UnreadableIpRuleFileCausesLoadFailure)
     EXPECT_FALSE(ec) << ec.message();
 }
 
-TEST_F(router_file_test, UnreadableDomainRuleFileCausesLoadFailure)
+TEST_F(RouterFileTest, UnreadableDomainRuleFileCausesLoadFailure)
 {
     boost::system::error_code ec;
     std::filesystem::permissions("block_domain.txt", std::filesystem::perms::none, std::filesystem::perm_options::replace, ec);
@@ -152,7 +154,7 @@ TEST_F(router_file_test, UnreadableDomainRuleFileCausesLoadFailure)
     EXPECT_FALSE(ec) << ec.message();
 }
 
-TEST_F(router_file_test, LoadRuleFilesFromSocksConfigDir)
+TEST_F(RouterFileTest, LoadRuleFilesFromSocksConfigDir)
 {
     const auto cfg_dir = std::filesystem::path("env_config");
     std::filesystem::create_directories(cfg_dir);
@@ -169,14 +171,16 @@ TEST_F(router_file_test, LoadRuleFilesFromSocksConfigDir)
     std::filesystem::remove("block_domain.txt");
     std::filesystem::remove("direct_domain.txt");
 
-    env_var_guard guard("SOCKS_CONFIG_DIR", cfg_dir.string());
+    env_var_guard const guard("SOCKS_CONFIG_DIR", cfg_dir.string());
 
     mux::router router;
     ASSERT_TRUE(router.load());
 
     boost::asio::io_context ctx;
-    mux::connection_context conn_ctx;
+    mux::connection_context const conn_ctx;
     const auto addr = boost::asio::ip::make_address("8.8.8.8");
     const auto result = mux::test::run_awaitable(ctx, router.decide_ip(conn_ctx, "8.8.8.8", addr));
     EXPECT_EQ(result, mux::route_type::kDirect);
 }
+// NOLINTEND(misc-include-cleaner)
+// NOLINTEND(google-runtime-int)

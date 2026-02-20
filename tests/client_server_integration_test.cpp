@@ -1,3 +1,5 @@
+// NOLINTBEGIN(google-explicit-constructor, misc-non-private-member-variables-in-classes)
+// NOLINTBEGIN(bugprone-unused-return-value, misc-include-cleaner)
 #include <chrono>
 #include <memory>
 #include <string>
@@ -39,7 +41,7 @@ class scoped_pool
     std::thread thread_;
 };
 
-class integration_test : public ::testing::Test
+class IntegrationTest : public ::testing::Test
 {
    protected:
     struct stack_handles
@@ -181,7 +183,7 @@ bool wait_for_socks_listen(const std::shared_ptr<mux::socks_client>& client,
 
 }    // namespace
 
-TEST_F(integration_test, FullHandshakeAndMux)
+TEST_F(IntegrationTest, FullHandshakeAndMux)
 {
     boost::system::error_code ec;
     mux::io_context_pool pool(2);
@@ -218,7 +220,7 @@ TEST_F(integration_test, FullHandshakeAndMux)
     client_cfg.timeout = timeouts;
     const auto client = std::make_shared<mux::socks_client>(pool, client_cfg);
 
-    scoped_pool sp(pool);
+    scoped_pool const sp(pool);
 
     server->start();
     client->start();
@@ -247,7 +249,7 @@ TEST_F(integration_test, FullHandshakeAndMux)
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
 }
 
-TEST_F(integration_test, FullDataTransfer)
+TEST_F(IntegrationTest, FullDataTransfer)
 {
     boost::system::error_code ec;
     mux::io_context_pool pool(2);
@@ -284,7 +286,7 @@ TEST_F(integration_test, FullDataTransfer)
     };
 
     auto acceptor_handler = std::make_shared<std::function<void()>>();
-    std::weak_ptr<std::function<void()>> weak_handler = acceptor_handler;
+    std::weak_ptr<std::function<void()>> const weak_handler = acceptor_handler;
     *acceptor_handler = [echo_acceptor, weak_handler]()
     {
         echo_acceptor->async_accept(
@@ -337,7 +339,7 @@ TEST_F(integration_test, FullDataTransfer)
     client_cfg.timeout = timeouts;
     const auto client = std::make_shared<mux::socks_client>(pool, client_cfg);
 
-    scoped_pool sp(pool);
+    scoped_pool const sp(pool);
     server->start();
     client->start();
     std::uint16_t local_socks_port = 0;
@@ -380,7 +382,7 @@ TEST_F(integration_test, FullDataTransfer)
     std::this_thread::sleep_for(std::chrono::milliseconds(2000));
 }
 
-TEST_F(integration_test, SocksRejectsUnsupportedMethod)
+TEST_F(IntegrationTest, SocksRejectsUnsupportedMethod)
 {
     boost::system::error_code ec;
     mux::io_context_pool pool(2);
@@ -388,7 +390,7 @@ TEST_F(integration_test, SocksRejectsUnsupportedMethod)
     auto stack = make_stack(pool, 0, 5);
     ASSERT_NE(stack.server->listen_port(), 0);
 
-    scoped_pool sp(pool);
+    scoped_pool const sp(pool);
     stack.server->start();
     stack.client->start();
 
@@ -415,7 +417,7 @@ TEST_F(integration_test, SocksRejectsUnsupportedMethod)
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
 }
 
-TEST_F(integration_test, SocksUnsupportedCommandReturnsCmdNotSupported)
+TEST_F(IntegrationTest, SocksUnsupportedCommandReturnsCmdNotSupported)
 {
     boost::system::error_code ec;
     mux::io_context_pool pool(2);
@@ -423,7 +425,7 @@ TEST_F(integration_test, SocksUnsupportedCommandReturnsCmdNotSupported)
     auto stack = make_stack(pool, 0, 5);
     ASSERT_NE(stack.server->listen_port(), 0);
 
-    scoped_pool sp(pool);
+    scoped_pool const sp(pool);
     stack.server->start();
     stack.client->start();
 
@@ -460,7 +462,7 @@ TEST_F(integration_test, SocksUnsupportedCommandReturnsCmdNotSupported)
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
 }
 
-TEST_F(integration_test, SocksConnectClosedPortReturnsFailure)
+TEST_F(IntegrationTest, SocksConnectClosedPortReturnsFailure)
 {
     boost::system::error_code ec;
     mux::io_context_pool pool(2);
@@ -475,7 +477,7 @@ TEST_F(integration_test, SocksConnectClosedPortReturnsFailure)
     ASSERT_TRUE(mux::test::bind_ephemeral_tcp_socket(closed_target_socket));
     const auto closed_target_port = closed_target_socket.local_endpoint().port();
 
-    scoped_pool sp(pool);
+    scoped_pool const sp(pool);
     stack.server->start();
     stack.client->start();
 
@@ -515,3 +517,5 @@ TEST_F(integration_test, SocksConnectClosedPortReturnsFailure)
     stack.server->stop();
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
 }
+// NOLINTEND(bugprone-unused-return-value, misc-include-cleaner)
+// NOLINTEND(google-explicit-constructor, misc-non-private-member-variables-in-classes)

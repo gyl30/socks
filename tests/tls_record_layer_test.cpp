@@ -1,3 +1,5 @@
+// NOLINTBEGIN(modernize-use-nodiscard)
+// NOLINTBEGIN(misc-include-cleaner)
 #include <array>
 #include <atomic>
 #include <vector>
@@ -12,10 +14,11 @@ extern "C"
 }
 
 #include "tls_record_layer.h"
+#include "crypto_util.h"
 
 using reality::tls_record_layer;
 
-extern "C" int __real_RAND_bytes(unsigned char* buf, int num);
+extern "C" int __real_RAND_bytes(unsigned char* buf, int num);  // NOLINT(bugprone-reserved-identifier)
 
 namespace
 {
@@ -28,7 +31,7 @@ void reset_rand_bytes_hook() { g_force_rand_bytes_fail_once.store(false, std::me
 
 }    // namespace
 
-extern "C" int __wrap_RAND_bytes(unsigned char* buf, int num)
+extern "C" int __wrap_RAND_bytes(unsigned char* buf, int num)  // NOLINT(bugprone-reserved-identifier)
 {
     if (g_force_rand_bytes_fail_once.exchange(false, std::memory_order_acq_rel))
     {
@@ -36,10 +39,10 @@ extern "C" int __wrap_RAND_bytes(unsigned char* buf, int num)
         (void)num;
         return 0;
     }
-    return __real_RAND_bytes(buf, num);
+    return __real_RAND_bytes(buf, num);  // NOLINT(bugprone-reserved-identifier)
 }
 
-class tls_record_layer_test : public ::testing::Test
+class TlsRecordLayerTest : public ::testing::Test
 {
    protected:
     void SetUp() override
@@ -58,7 +61,7 @@ class tls_record_layer_test : public ::testing::Test
     const EVP_CIPHER* cipher_ = EVP_aes_256_gcm();
 };
 
-TEST_F(tls_record_layer_test, RoundTrip)
+TEST_F(TlsRecordLayerTest, RoundTrip)
 {
     const std::vector<uint8_t> plaintext = {0xAA, 0xBB, 0xCC, 0xDD};
     const uint64_t seq = 1;
@@ -75,7 +78,7 @@ TEST_F(tls_record_layer_test, RoundTrip)
     EXPECT_EQ(*decrypted, plaintext);
 }
 
-TEST_F(tls_record_layer_test, SequenceNumberMatters)
+TEST_F(TlsRecordLayerTest, SequenceNumberMatters)
 {
     const std::vector<uint8_t> plaintext = {0x12, 0x34};
     const auto enc1 = tls_record_layer::encrypt_record(cipher(), key(), iv(), 100, plaintext, 0x17);
@@ -88,7 +91,7 @@ TEST_F(tls_record_layer_test, SequenceNumberMatters)
     EXPECT_FALSE(dec.has_value());
 }
 
-TEST_F(tls_record_layer_test, TamperedCiphertext)
+TEST_F(TlsRecordLayerTest, TamperedCiphertext)
 {
     const std::vector<uint8_t> plaintext = {0x00, 0x01};
     const uint64_t seq = 50;
@@ -103,9 +106,9 @@ TEST_F(tls_record_layer_test, TamperedCiphertext)
     EXPECT_FALSE(dec.has_value());
 }
 
-TEST_F(tls_record_layer_test, DecryptAllZeros)
+TEST_F(TlsRecordLayerTest, DecryptAllZeros)
 {
-    std::vector<uint8_t> zeros(20, 0);
+    std::vector<uint8_t> const zeros(20, 0);
     const uint64_t seq = 0;
 
     const std::vector<uint8_t> aad = {0x17, 0x03, 0x03, 0x00, static_cast<uint8_t>(zeros.size() + 16)};
@@ -123,7 +126,7 @@ TEST_F(tls_record_layer_test, DecryptAllZeros)
     EXPECT_EQ(dec_result.error(), std::make_error_code(std::errc::bad_message));
 }
 
-TEST_F(tls_record_layer_test, EncryptAppDataWithPadding)
+TEST_F(TlsRecordLayerTest, EncryptAppDataWithPadding)
 {
     const std::vector<uint8_t> plaintext = {0x01, 0x02, 0x03};
     const uint64_t seq = 10;
@@ -139,7 +142,7 @@ TEST_F(tls_record_layer_test, EncryptAppDataWithPadding)
     EXPECT_EQ(*decrypted, plaintext);
 }
 
-TEST_F(tls_record_layer_test, EncryptAppDataRandFailure)
+TEST_F(TlsRecordLayerTest, EncryptAppDataRandFailure)
 {
     fail_rand_bytes_once();
     const std::vector<uint8_t> plaintext = {0x01, 0x02, 0x03};
@@ -151,7 +154,7 @@ TEST_F(tls_record_layer_test, EncryptAppDataRandFailure)
     reset_rand_bytes_hook();
 }
 
-TEST_F(tls_record_layer_test, DecryptSpanShortRecordRejected)
+TEST_F(TlsRecordLayerTest, DecryptSpanShortRecordRejected)
 {
     const reality::cipher_context ctx;
     std::array<uint8_t, 10> short_record{};
@@ -163,7 +166,7 @@ TEST_F(tls_record_layer_test, DecryptSpanShortRecordRejected)
     EXPECT_EQ(n.error(), std::make_error_code(std::errc::message_size));
 }
 
-TEST_F(tls_record_layer_test, ShortMessage)
+TEST_F(TlsRecordLayerTest, ShortMessage)
 {
     const std::vector<uint8_t> short_msg(10, 0x00);
     uint8_t out_type = 0;
@@ -173,3 +176,5 @@ TEST_F(tls_record_layer_test, ShortMessage)
     EXPECT_FALSE(dec.has_value());
     EXPECT_EQ(dec.error(), std::make_error_code(std::errc::message_size));
 }
+// NOLINTEND(misc-include-cleaner)
+// NOLINTEND(modernize-use-nodiscard)

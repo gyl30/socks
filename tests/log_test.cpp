@@ -1,3 +1,4 @@
+// NOLINTBEGIN(misc-include-cleaner)
 #include <cstdlib>
 #include <fstream>
 
@@ -53,3 +54,4 @@ TEST(LogTest, SetLevelValues)
 }
 
 }    // namespace mux
+// NOLINTEND(misc-include-cleaner)

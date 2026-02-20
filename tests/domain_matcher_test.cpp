@@ -8,7 +8,7 @@
 
 using mux::domain_matcher;
 
-class domain_matcher_test : public ::testing::Test
+class DomainMatcherTest : public ::testing::Test
 {
    protected:
     domain_matcher& matcher() { return matcher_; }
@@ -17,7 +17,7 @@ class domain_matcher_test : public ::testing::Test
     domain_matcher matcher_;
 };
 
-TEST_F(domain_matcher_test, BasicMatch)
+TEST_F(DomainMatcherTest, BasicMatch)
 {
     matcher().add("google.com");
     EXPECT_TRUE(matcher().match("google.com"));
@@ -27,14 +27,14 @@ TEST_F(domain_matcher_test, BasicMatch)
     EXPECT_FALSE(matcher().match("agoogle.com"));
 }
 
-TEST_F(domain_matcher_test, CaseInsensitive)
+TEST_F(DomainMatcherTest, CaseInsensitive)
 {
     matcher().add("Google.Com");
     EXPECT_TRUE(matcher().match("GOOGLE.COM"));
     EXPECT_TRUE(matcher().match("www.google.com"));
 }
 
-TEST_F(domain_matcher_test, TrailingDot)
+TEST_F(DomainMatcherTest, TrailingDot)
 {
     matcher().add("example.com.");
     EXPECT_TRUE(matcher().match("example.com"));
@@ -44,14 +44,14 @@ TEST_F(domain_matcher_test, TrailingDot)
     EXPECT_TRUE(matcher().match("another.com."));
 }
 
-TEST_F(domain_matcher_test, EmptyDomain)
+TEST_F(DomainMatcherTest, EmptyDomain)
 {
     matcher().add("");
     EXPECT_FALSE(matcher().match(""));
     EXPECT_FALSE(matcher().match("any.com"));
 }
 
-TEST_F(domain_matcher_test, SuffixMatch)
+TEST_F(DomainMatcherTest, SuffixMatch)
 {
     matcher().add("com.cn");
     EXPECT_TRUE(matcher().match("test.com.cn"));
@@ -59,7 +59,7 @@ TEST_F(domain_matcher_test, SuffixMatch)
     EXPECT_FALSE(matcher().match("mycom.cn"));
 }
 
-TEST_F(domain_matcher_test, LoadFromFile)
+TEST_F(DomainMatcherTest, LoadFromFile)
 {
     const std::string filename = "test_domains.txt";
     {
@@ -79,9 +79,9 @@ TEST_F(domain_matcher_test, LoadFromFile)
     std::filesystem::remove(filename);
 }
 
-TEST_F(domain_matcher_test, LoadNonExistentFile) { EXPECT_FALSE(matcher().load("non_existent_file.txt")); }
+TEST_F(DomainMatcherTest, LoadNonExistentFile) { EXPECT_FALSE(matcher().load("non_existent_file.txt")); }
 
-TEST_F(domain_matcher_test, MatchWithEmptyOrDotOnly)
+TEST_F(DomainMatcherTest, MatchWithEmptyOrDotOnly)
 {
     EXPECT_FALSE(matcher().match(""));
 

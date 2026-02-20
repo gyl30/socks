@@ -1,3 +1,5 @@
+// NOLINTBEGIN(misc-use-internal-linkage, readability-named-parameter)
+// NOLINTBEGIN(bugprone-unused-return-value, misc-include-cleaner)
 #include <atomic>
 #include <memory>
 #include <string>
@@ -47,9 +49,9 @@ void fail_next_tcp_nodelay_setsockopt(const int err)
     g_fail_tcp_nodelay_setsockopt_once.store(true, std::memory_order_release);
 }
 
-extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);
+extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);  // NOLINT(bugprone-reserved-identifier)
 
-extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)
+extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)  // NOLINT(bugprone-reserved-identifier)
 {
     if (level == IPPROTO_TCP && optname == TCP_NODELAY &&
         g_fail_tcp_nodelay_setsockopt_once.exchange(false, std::memory_order_acq_rel))
@@ -57,7 +59,7 @@ extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void*
         errno = g_fail_tcp_nodelay_setsockopt_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_setsockopt(sockfd, level, optname, optval, optlen);
+    return __real_setsockopt(sockfd, level, optname, optval, optlen);  // NOLINT(bugprone-reserved-identifier)
 }
 
 namespace
@@ -84,7 +86,7 @@ tcp_socket_pair make_tcp_socket_pair(boost::asio::io_context& io_context)
     boost::asio::ip::tcp::acceptor acceptor(io_context);
     if (!mux::test::open_ephemeral_tcp_acceptor(acceptor))
     {
-        return tcp_socket_pair{boost::asio::ip::tcp::socket(io_context), boost::asio::ip::tcp::socket(io_context)};
+        return tcp_socket_pair{.client = boost::asio::ip::tcp::socket(io_context), .server = boost::asio::ip::tcp::socket(io_context)};
     }
     boost::asio::ip::tcp::socket client(io_context);
     boost::asio::ip::tcp::socket server(io_context);
@@ -92,14 +94,14 @@ tcp_socket_pair make_tcp_socket_pair(boost::asio::io_context& io_context)
     client.connect(acceptor.local_endpoint(), ec);
     if (ec)
     {
-        return tcp_socket_pair{boost::asio::ip::tcp::socket(io_context), boost::asio::ip::tcp::socket(io_context)};
+        return tcp_socket_pair{.client = boost::asio::ip::tcp::socket(io_context), .server = boost::asio::ip::tcp::socket(io_context)};
     }
     acceptor.accept(server, ec);
     if (ec)
     {
-        return tcp_socket_pair{boost::asio::ip::tcp::socket(io_context), boost::asio::ip::tcp::socket(io_context)};
+        return tcp_socket_pair{.client = boost::asio::ip::tcp::socket(io_context), .server = boost::asio::ip::tcp::socket(io_context)};
     }
-    return tcp_socket_pair{std::move(client), std::move(server)};
+    return tcp_socket_pair{.client = std::move(client), .server = std::move(server)};
 }
 
 mux::syn_payload make_syn(const std::string& host, const std::uint16_t port)
@@ -123,7 +125,7 @@ TEST(RemoteSessionTest, StartReturnsWhenConnectionExpired)
 {
     boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
-    mux::connection_context ctx;
+    mux::connection_context const ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 7, io_context, ctx);
     conn.reset();
 
@@ -135,7 +137,7 @@ TEST(RemoteSessionTest, StartRemovesManagerStreamWhenConnectionExpired)
 {
     boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
-    mux::connection_context ctx;
+    mux::connection_context const ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 8, io_context, ctx);
 
     auto manager = make_manager(io_context, 450);
@@ -153,7 +155,7 @@ TEST(RemoteSessionTest, RunResolveFailureSendsHostUnreachAckAndReset)
 {
     boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
-    mux::connection_context ctx;
+    mux::connection_context const ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 9, io_context, ctx);
     auto& stats = mux::statistics::instance();
     const auto resolve_errors_before = stats.remote_session_resolve_errors();
@@ -179,7 +181,7 @@ TEST(RemoteSessionTest, RunResolveFailureRemovesManagerStream)
 {
     boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
-    mux::connection_context ctx;
+    mux::connection_context const ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 10, io_context, ctx);
 
     auto manager = make_manager(io_context, 302);
@@ -198,7 +200,7 @@ TEST(RemoteSessionTest, RunResolveFailureAckSendErrorStillResetsAndRemovesManage
 {
     boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
-    mux::connection_context ctx;
+    mux::connection_context const ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 12, io_context, ctx);
 
     auto manager = make_manager(io_context, 303);
@@ -217,7 +219,7 @@ TEST(RemoteSessionTest, RunConnectFailureSendsConnRefusedAckAndReset)
 {
     boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
-    mux::connection_context ctx;
+    mux::connection_context const ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 11, io_context, ctx);
     auto& stats = mux::statistics::instance();
     const auto connect_errors_before = stats.remote_session_connect_errors();
@@ -248,7 +250,7 @@ TEST(RemoteSessionTest, RunConnectTimeoutSendsConnRefusedAckAndReset)
 {
     boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
-    mux::connection_context ctx;
+    mux::connection_context const ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 35, io_context, ctx, 1);
     auto& stats = mux::statistics::instance();
     const auto connect_timeouts_before = stats.remote_session_connect_timeouts();
@@ -301,7 +303,7 @@ TEST(RemoteSessionTest, RunAckSendFailureReturnsWithoutReset)
 {
     boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
-    mux::connection_context ctx;
+    mux::connection_context const ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 13, io_context, ctx);
 
     boost::asio::ip::tcp::acceptor acceptor(io_context);
@@ -318,7 +320,7 @@ TEST(RemoteSessionTest, RunSkipsHandshakeWhenResetAlreadyRequested)
 {
     boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
-    mux::connection_context ctx;
+    mux::connection_context const ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 34, io_context, ctx);
 
     session->on_reset();
@@ -331,7 +333,7 @@ TEST(RemoteSessionTest, RunSuccessWhenSetNoDelayFailsStillSendsAckAndFin)
 {
     boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
-    mux::connection_context ctx;
+    mux::connection_context const ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 29, io_context, ctx);
     session->recv_channel_.close();
 
@@ -352,7 +354,7 @@ TEST(RemoteSessionTest, RunSuccessWhenSetNoDelayFailsStillSendsAckAndFin)
 
     std::vector<std::uint8_t> ack_payload;
     {
-        ::testing::InSequence seq;
+        ::testing::InSequence const seq;
         EXPECT_CALL(*conn, mock_send_async(29, mux::kCmdAck, _))
             .WillOnce([&ack_payload](const std::uint32_t, const std::uint8_t, const std::vector<std::uint8_t>& payload)
                       {
@@ -379,7 +381,7 @@ TEST(RemoteSessionTest, UpstreamWritesPayloadAndStopsOnEmptyFrame)
 {
     boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
-    mux::connection_context ctx;
+    mux::connection_context const ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 15, io_context, ctx);
 
     auto pair = make_tcp_socket_pair(io_context);
@@ -399,7 +401,7 @@ TEST(RemoteSessionTest, UpstreamStopsWhenChannelClosed)
 {
     boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
-    mux::connection_context ctx;
+    mux::connection_context const ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 16, io_context, ctx);
 
     auto pair = make_tcp_socket_pair(io_context);
@@ -413,7 +415,7 @@ TEST(RemoteSessionTest, UpstreamStopsWhenWriteToTargetFails)
 {
     boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
-    mux::connection_context ctx;
+    mux::connection_context const ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 26, io_context, ctx);
 
     auto pair = make_tcp_socket_pair(io_context);
@@ -430,7 +432,7 @@ TEST(RemoteSessionTest, DownstreamSendsDataAndFin)
 {
     boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
-    mux::connection_context ctx;
+    mux::connection_context const ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 17, io_context, ctx);
 
     auto pair = make_tcp_socket_pair(io_context);
@@ -441,7 +443,7 @@ TEST(RemoteSessionTest, DownstreamSendsDataAndFin)
     pair.client.shutdown(boost::asio::ip::tcp::socket::shutdown_send);
 
     {
-        ::testing::InSequence seq;
+        ::testing::InSequence const seq;
         EXPECT_CALL(*conn, mock_send_async(17, mux::kCmdDat, payload)).WillOnce(::testing::Return(boost::system::error_code{}));
         EXPECT_CALL(*conn, mock_send_async(17, mux::kCmdFin, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(boost::system::error_code{}));
     }
@@ -453,7 +455,7 @@ TEST(RemoteSessionTest, DownstreamStopsWhenMuxSendFailsStillFin)
 {
     boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
-    mux::connection_context ctx;
+    mux::connection_context const ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 18, io_context, ctx);
 
     auto pair = make_tcp_socket_pair(io_context);
@@ -463,7 +465,7 @@ TEST(RemoteSessionTest, DownstreamStopsWhenMuxSendFailsStillFin)
     boost::asio::write(pair.client, boost::asio::buffer(payload));
 
     {
-        ::testing::InSequence seq;
+        ::testing::InSequence const seq;
         EXPECT_CALL(*conn, mock_send_async(18, mux::kCmdDat, payload)).WillOnce(::testing::Return(boost::asio::error::broken_pipe));
         EXPECT_CALL(*conn, mock_send_async(18, mux::kCmdFin, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(boost::system::error_code{}));
     }
@@ -475,7 +477,7 @@ TEST(RemoteSessionTest, DownstreamMuxSendFailureUnblocksUpstreamLoop)
 {
     boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
-    mux::connection_context ctx;
+    mux::connection_context const ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 38, io_context, ctx);
 
     auto pair = make_tcp_socket_pair(io_context);
@@ -485,7 +487,7 @@ TEST(RemoteSessionTest, DownstreamMuxSendFailureUnblocksUpstreamLoop)
     boost::asio::write(pair.client, boost::asio::buffer(payload));
 
     {
-        ::testing::InSequence seq;
+        ::testing::InSequence const seq;
         EXPECT_CALL(*conn, mock_send_async(38, mux::kCmdDat, payload)).WillOnce(::testing::Return(boost::asio::error::broken_pipe));
         EXPECT_CALL(*conn, mock_send_async(38, mux::kCmdFin, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(boost::system::error_code{}));
     }
@@ -520,7 +522,7 @@ TEST(RemoteSessionTest, DownstreamStopsWhenConnectionExpired)
 {
     boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
-    mux::connection_context ctx;
+    mux::connection_context const ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 19, io_context, ctx);
 
     auto pair = make_tcp_socket_pair(io_context);
@@ -536,7 +538,7 @@ TEST(RemoteSessionTest, DownstreamStopsWhenTargetReadFailsStillSendsFin)
 {
     boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
-    mux::connection_context ctx;
+    mux::connection_context const ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 27, io_context, ctx);
 
     auto pair = make_tcp_socket_pair(io_context);
@@ -553,7 +555,7 @@ TEST(RemoteSessionTest, DownstreamStopsWhenTargetReadOperationAbortedStillSendsF
 {
     boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
-    mux::connection_context ctx;
+    mux::connection_context const ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 28, io_context, ctx);
 
     auto pair = make_tcp_socket_pair(io_context);
@@ -575,7 +577,7 @@ TEST(RemoteSessionTest, DownstreamStopsWhenTargetReadConnectionResetStillSendsFi
 {
     boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
-    mux::connection_context ctx;
+    mux::connection_context const ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 30, io_context, ctx);
 
     auto pair = make_tcp_socket_pair(io_context);
@@ -598,7 +600,7 @@ TEST(RemoteSessionTest, DownstreamSkipsFinWhenResetRequested)
 {
     boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
-    mux::connection_context ctx;
+    mux::connection_context const ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 36, io_context, ctx);
 
     auto pair = make_tcp_socket_pair(io_context);
@@ -616,7 +618,7 @@ TEST(RemoteSessionTest, OnDataDispatchEnqueuesFrame)
 {
     boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
-    mux::connection_context ctx;
+    mux::connection_context const ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 20, io_context, ctx);
 
     session->on_data({0x55});
@@ -630,7 +632,7 @@ TEST(RemoteSessionTest, OnDataRunsCleanupWhenIoContextStopped)
 {
     boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
-    mux::connection_context ctx;
+    mux::connection_context const ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 32, io_context, ctx);
 
     auto pair = make_tcp_socket_pair(io_context);
@@ -648,7 +650,7 @@ TEST(RemoteSessionTest, OnDataRunsCleanupWhenIoContextNotRunning)
 {
     boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
-    mux::connection_context ctx;
+    mux::connection_context const ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 33, io_context, ctx);
 
     auto pair = make_tcp_socket_pair(io_context);
@@ -664,7 +666,7 @@ TEST(RemoteSessionTest, OnDataRunsCleanupWhenIoQueueBlocked)
 {
     boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
-    mux::connection_context ctx;
+    mux::connection_context const ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 31, io_context, ctx);
 
     auto pair = make_tcp_socket_pair(io_context);
@@ -708,7 +710,7 @@ TEST(RemoteSessionTest, OnCloseAndOnResetDispatchCleanup)
 {
     boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
-    mux::connection_context ctx;
+    mux::connection_context const ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 21, io_context, ctx);
 
     auto pair = make_tcp_socket_pair(io_context);
@@ -729,7 +731,7 @@ TEST(RemoteSessionTest, OnResetRemovesManagerStreamEvenBeforeRun)
 {
     boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
-    mux::connection_context ctx;
+    mux::connection_context const ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 39, io_context, ctx);
 
     auto manager = make_manager(io_context, 451);
@@ -748,7 +750,7 @@ TEST(RemoteSessionTest, OnCloseAndOnResetRunInlineWhenIoContextStopped)
 {
     boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
-    mux::connection_context ctx;
+    mux::connection_context const ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 22, io_context, ctx);
 
     auto pair = make_tcp_socket_pair(io_context);
@@ -767,7 +769,7 @@ TEST(RemoteSessionTest, OnCloseAndOnResetRunWhenIoContextNotRunning)
 {
     boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
-    mux::connection_context ctx;
+    mux::connection_context const ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 23, io_context, ctx);
 
     auto pair = make_tcp_socket_pair(io_context);
@@ -785,7 +787,7 @@ TEST(RemoteSessionTest, OnCloseAndOnResetRunWhenIoQueueBlocked)
 {
     boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
-    mux::connection_context ctx;
+    mux::connection_context const ctx;
     auto session = std::make_shared<mux::remote_session>(conn, 24, io_context, ctx);
 
     auto pair = make_tcp_socket_pair(io_context);
@@ -827,3 +829,5 @@ TEST(RemoteSessionTest, OnCloseAndOnResetRunWhenIoQueueBlocked)
 }
 
 }    // namespace
+// NOLINTEND(bugprone-unused-return-value, misc-include-cleaner)
+// NOLINTEND(misc-use-internal-linkage, readability-named-parameter)

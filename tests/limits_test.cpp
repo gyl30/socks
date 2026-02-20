@@ -1,3 +1,4 @@
+// NOLINTBEGIN(bugprone-unused-return-value, misc-include-cleaner)
 #include <chrono>
 #include <memory>
 #include <string>
@@ -22,7 +23,7 @@
 #include "remote_server.h"
 #include "reality_messages.h"
 
-class limits_test : public ::testing::Test
+class LimitsTest : public ::testing::Test
 {
    protected:
     void SetUp() override
@@ -45,15 +46,15 @@ class limits_test : public ::testing::Test
     std::string short_id_;
 };
 
-TEST_F(limits_test, ContextPoolInvalidSize)
+TEST_F(LimitsTest, ContextPoolInvalidSize)
 {
     const mux::io_context_pool pool(0);
     // Should remain usable with fallback worker count
 }
 
-TEST_F(limits_test, ConnectionPoolCapacity)
+TEST_F(LimitsTest, ConnectionPoolCapacity)
 {
-    boost::system::error_code ec;
+    boost::system::error_code const ec;
 
     mux::io_context_pool pool(4);
     ASSERT_FALSE(ec);
@@ -193,3 +194,4 @@ TEST_F(limits_test, ConnectionPoolCapacity)
     target_acceptor.close();
     pool_thread.join();
 }
+// NOLINTEND(bugprone-unused-return-value, misc-include-cleaner)

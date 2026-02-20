@@ -323,20 +323,20 @@ TEST(CHParserTest, WrongRecordType)
 TEST(CHParserTest, InternalReadAndSkipFailures)
 {
     {
-        std::vector<std::uint8_t> buf;
+        std::vector<std::uint8_t> const buf;
         ch_parser::reader r(buf);
         mux::client_hello_info info;
         EXPECT_FALSE(ch_parser::read_session_id(r, info));
     }
 
     {
-        std::vector<std::uint8_t> buf = {0x00, 0x00};
+        std::vector<std::uint8_t> const buf = {0x00, 0x00};
         ch_parser::reader r(buf);
         EXPECT_FALSE(ch_parser::skip_cipher_suites_and_compression(r));
     }
 
     {
-        std::vector<std::uint8_t> buf = {0x00, 0x01, 0x02};
+        std::vector<std::uint8_t> const buf = {0x00, 0x01, 0x02};
         ch_parser::reader r(buf);
         std::uint16_t type = 0;
         std::uint16_t len = 0;
@@ -344,7 +344,7 @@ TEST(CHParserTest, InternalReadAndSkipFailures)
     }
 
     {
-        std::vector<std::uint8_t> buf = {0x01};
+        std::vector<std::uint8_t> const buf = {0x01};
         ch_parser::reader r(buf);
         std::uint8_t type = 0;
         std::uint16_t len = 0;
@@ -352,7 +352,7 @@ TEST(CHParserTest, InternalReadAndSkipFailures)
     }
 
     {
-        std::vector<std::uint8_t> buf = {0x00, 0x1D, 0x00};
+        std::vector<std::uint8_t> const buf = {0x00, 0x1D, 0x00};
         ch_parser::reader r(buf);
         std::uint16_t group = 0;
         std::uint16_t len = 0;
@@ -362,19 +362,19 @@ TEST(CHParserTest, InternalReadAndSkipFailures)
 
 TEST(CHParserTest, ReaderInvalidSliceKeepsSafeAccessors)
 {
-    std::vector<std::uint8_t> buf = {0x01};
+    std::vector<std::uint8_t> const buf = {0x01};
     ch_parser::reader r(buf);
     auto invalid = r.slice(2);
 
     EXPECT_FALSE(invalid.valid());
-    EXPECT_EQ(invalid.remaining(), 0u);
-    EXPECT_EQ(invalid.offset(), 0u);
+    EXPECT_EQ(invalid.remaining(), 0U);
+    EXPECT_EQ(invalid.offset(), 0U);
 }
 
 TEST(CHParserTest, InternalSNIAndExtensionBranches)
 {
     {
-        std::vector<std::uint8_t> buf = {0xAB};
+        std::vector<std::uint8_t> const buf = {0xAB};
         ch_parser::reader r(buf);
         mux::client_hello_info info;
         EXPECT_TRUE(ch_parser::handle_sni_item(r, 0x00, 2, info));
@@ -382,21 +382,21 @@ TEST(CHParserTest, InternalSNIAndExtensionBranches)
     }
 
     {
-        std::vector<std::uint8_t> buf = {0xAB};
+        std::vector<std::uint8_t> const buf = {0xAB};
         ch_parser::reader r(buf);
         mux::client_hello_info info;
         EXPECT_TRUE(ch_parser::handle_sni_item(r, 0x01, 2, info));
     }
 
     {
-        std::vector<std::uint8_t> buf = {0xAB, 0xCD};
+        std::vector<std::uint8_t> const buf = {0xAB, 0xCD};
         ch_parser::reader r(buf);
         mux::client_hello_info info;
         EXPECT_FALSE(ch_parser::handle_sni_item(r, 0x01, 2, info));
     }
 
     {
-        std::vector<std::uint8_t> buf = {0x00, 0x05, 0x01};
+        std::vector<std::uint8_t> const buf = {0x00, 0x05, 0x01};
         ch_parser::reader r(buf);
         mux::client_hello_info info;
         ch_parser::parse_extension_block(r, info);
@@ -404,7 +404,7 @@ TEST(CHParserTest, InternalSNIAndExtensionBranches)
     }
 
     {
-        std::vector<std::uint8_t> buf = {0x00, 0x00, 0x00, 0x05, 0xFF};
+        std::vector<std::uint8_t> const buf = {0x00, 0x00, 0x00, 0x05, 0xFF};
         ch_parser::reader r(buf);
         mux::client_hello_info info;
         ch_parser::parse_extensions(r, info);
@@ -412,7 +412,7 @@ TEST(CHParserTest, InternalSNIAndExtensionBranches)
     }
 
     {
-        std::vector<std::uint8_t> buf;
+        std::vector<std::uint8_t> const buf;
         ch_parser::reader r(buf);
         mux::client_hello_info info;
         ch_parser::parse_sni(r, info);
@@ -420,7 +420,7 @@ TEST(CHParserTest, InternalSNIAndExtensionBranches)
     }
 
     {
-        std::vector<std::uint8_t> buf = {0x00, 0x05, 0x41};
+        std::vector<std::uint8_t> const buf = {0x00, 0x05, 0x41};
         ch_parser::reader r(buf);
         mux::client_hello_info info;
         ch_parser::parse_sni(r, info);
@@ -431,7 +431,7 @@ TEST(CHParserTest, InternalSNIAndExtensionBranches)
 TEST(CHParserTest, InternalKeyShareBranches)
 {
     {
-        std::vector<std::uint8_t> buf(31, 0x11);
+        std::vector<std::uint8_t> const buf(31, 0x11);
         ch_parser::reader r(buf);
         mux::client_hello_info info;
         ch_parser::handle_key_share_item(r, reality::tls_consts::group::kX25519, 31, info);
@@ -445,7 +445,7 @@ TEST(CHParserTest, InternalKeyShareBranches)
     }
 
     {
-        std::vector<std::uint8_t> buf;
+        std::vector<std::uint8_t> const buf;
         ch_parser::reader r(buf);
         mux::client_hello_info info;
         ch_parser::parse_key_share(r, info);
@@ -453,7 +453,7 @@ TEST(CHParserTest, InternalKeyShareBranches)
     }
 
     {
-        std::vector<std::uint8_t> buf = {0x00, 0x05, 0x01};
+        std::vector<std::uint8_t> const buf = {0x00, 0x05, 0x01};
         ch_parser::reader r(buf);
         mux::client_hello_info info;
         ch_parser::parse_key_share(r, info);
@@ -461,7 +461,7 @@ TEST(CHParserTest, InternalKeyShareBranches)
     }
 
     {
-        std::vector<std::uint8_t> buf = {0x00, 0x04, 0x00, 0x17, 0x00, 0x01};
+        std::vector<std::uint8_t> const buf = {0x00, 0x04, 0x00, 0x17, 0x00, 0x01};
         ch_parser::reader r(buf);
         mux::client_hello_info info;
         ch_parser::parse_key_share(r, info);
@@ -523,14 +523,14 @@ TEST(CHParserTest, SNINonHostName)
 
 TEST(CHParserTest, TruncatedHandshakeType)
 {
-    std::vector<uint8_t> buf = {0x16, 0x03, 0x03, 0x00, 0x01};
+    std::vector<uint8_t> const buf = {0x16, 0x03, 0x03, 0x00, 0x01};
     auto info = ch_parser::parse(buf);
     EXPECT_TRUE(info.random.empty());
 }
 
 TEST(CHParserTest, TruncatedVersion)
 {
-    std::vector<uint8_t> buf = {0x16, 0x03, 0x03, 0x00, 0x05, 0x01, 0x00, 0x00};
+    std::vector<uint8_t> const buf = {0x16, 0x03, 0x03, 0x00, 0x05, 0x01, 0x00, 0x00};
     auto info = ch_parser::parse(buf);
     EXPECT_TRUE(info.random.empty());
 }
@@ -569,7 +569,7 @@ TEST(CHParserTest, TruncatedExtensionsLen)
 
 TEST(CHParserTest, TruncatedHandshakeHeader)
 {
-    std::vector<uint8_t> buf = {0x16, 0x03, 0x03, 0x00, 0x01, 0x01};
+    std::vector<uint8_t> const buf = {0x16, 0x03, 0x03, 0x00, 0x01, 0x01};
     auto info = ch_parser::parse(buf);
     EXPECT_TRUE(info.random.empty());
 }
@@ -579,9 +579,9 @@ TEST(CHParserTest, ReaderInvalidStateCoversGuardBranches)
     ch_parser::reader reader(nullptr, 0, nullptr);
     EXPECT_FALSE(reader.valid());
     EXPECT_FALSE(reader.has(1));
-    EXPECT_EQ(reader.remaining(), 0u);
-    EXPECT_EQ(reader.offset(), 0u);
-    EXPECT_EQ(reader.peek(0), 0u);
+    EXPECT_EQ(reader.remaining(), 0U);
+    EXPECT_EQ(reader.offset(), 0U);
+    EXPECT_EQ(reader.peek(0), 0U);
 
     std::uint8_t value_u8 = 0;
     std::uint16_t value_u16 = 0;
@@ -593,7 +593,7 @@ TEST(CHParserTest, ReaderInvalidStateCoversGuardBranches)
 
     auto sliced = reader.slice(1);
     EXPECT_FALSE(sliced.valid());
-    EXPECT_EQ(sliced.remaining(), 0u);
+    EXPECT_EQ(sliced.remaining(), 0U);
 }
 
 TEST(CHParserTest, TruncatedRandomField)
@@ -655,7 +655,7 @@ TEST(CHParserTest, ParseBeforeExtensionsFailsOnTruncatedSessionId)
 
 TEST(CHParserTest, ParseSniHandlesShortListWithoutItems)
 {
-    std::vector<std::uint8_t> buf = {0x00, 0x01, 0xAB};
+    std::vector<std::uint8_t> const buf = {0x00, 0x01, 0xAB};
     ch_parser::reader r(buf);
     mux::client_hello_info info;
 
@@ -665,10 +665,19 @@ TEST(CHParserTest, ParseSniHandlesShortListWithoutItems)
 
 TEST(CHParserTest, ParseSniContinuesAfterSkippingNonHostNameItem)
 {
-    std::vector<std::uint8_t> buf = {
-        0x00, 0x0A,
-        0x01, 0x00, 0x01, 0x78,
-        0x00, 0x00, 0x03, 0x61, 0x62, 0x63,
+    std::vector<std::uint8_t> const buf = {
+        0x00,
+        0x0A,
+        0x01,
+        0x00,
+        0x01,
+        0x78,
+        0x00,
+        0x00,
+        0x03,
+        0x61,
+        0x62,
+        0x63,
     };
     ch_parser::reader r(buf);
     mux::client_hello_info info;
@@ -679,9 +688,17 @@ TEST(CHParserTest, ParseSniContinuesAfterSkippingNonHostNameItem)
 
 TEST(CHParserTest, ParseKeyShareX25519Len32ButInsufficientData)
 {
-    std::vector<std::uint8_t> buf = {
-        0x00, 0x08,
-        0x00, 0x1d, 0x00, 0x20, 0x11, 0x22, 0x33, 0x44,
+    std::vector<std::uint8_t> const buf = {
+        0x00,
+        0x08,
+        0x00,
+        0x1d,
+        0x00,
+        0x20,
+        0x11,
+        0x22,
+        0x33,
+        0x44,
     };
     ch_parser::reader r(buf);
     mux::client_hello_info info;

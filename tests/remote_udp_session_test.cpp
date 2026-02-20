@@ -1,3 +1,5 @@
+// NOLINTBEGIN(readability-named-parameter)
+// NOLINTBEGIN(bugprone-unused-return-value, misc-include-cleaner)
 #include <memory>
 #include <string>
 #include <vector>
@@ -45,12 +47,12 @@ void delay_next_getaddrinfo(const int delay_ms)
     g_delay_getaddrinfo_once.store(true, std::memory_order_release);
 }
 
-extern "C" int __real_getaddrinfo(const char* node,
+extern "C" int __real_getaddrinfo(const char* node,  // NOLINT(bugprone-reserved-identifier)
                                   const char* service,
                                   const struct addrinfo* hints,
                                   struct addrinfo** res);
 
-extern "C" int __wrap_getaddrinfo(const char* node,
+extern "C" int __wrap_getaddrinfo(const char* node,  // NOLINT(bugprone-reserved-identifier)
                                   const char* service,
                                   const struct addrinfo* hints,
                                   struct addrinfo** res)
@@ -63,7 +65,7 @@ extern "C" int __wrap_getaddrinfo(const char* node,
             std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
         }
     }
-    return __real_getaddrinfo(node, service, hints, res);
+    return __real_getaddrinfo(node, service, hints, res);  // NOLINT(bugprone-reserved-identifier)
 }
 
 class noop_stream : public mux::mux_stream_interface
@@ -91,7 +93,7 @@ std::shared_ptr<mux::remote_udp_session> make_session(boost::asio::io_context& i
                                                       const std::uint32_t id = 1,
                                                       const mux::config::timeout_t& timeout_cfg = {})
 {
-    mux::connection_context ctx;
+    mux::connection_context const ctx;
     return std::make_shared<mux::remote_udp_session>(conn, id, io_context, ctx, timeout_cfg);
 }
 
@@ -790,3 +792,5 @@ TEST(RemoteUdpSessionTest, IdleWatchdogStopsWhenIdleTimedOut)
 }
 
 }    // namespace
+// NOLINTEND(bugprone-unused-return-value, misc-include-cleaner)
+// NOLINTEND(readability-named-parameter)

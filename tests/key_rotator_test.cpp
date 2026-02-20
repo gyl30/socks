@@ -1,3 +1,5 @@
+// NOLINTBEGIN(performance-inefficient-vector-operation, readability-named-parameter)
+// NOLINTBEGIN(misc-include-cleaner)
 #include <atomic>
 #include <cstdlib>
 #include <cstdint>
@@ -205,3 +207,5 @@ TEST(KeyRotatorTest, RotateReturnsFalseWhenKeyAllocationFails)
     EXPECT_EQ(after, before);
 #endif
 }
+// NOLINTEND(misc-include-cleaner)
+// NOLINTEND(performance-inefficient-vector-operation, readability-named-parameter)

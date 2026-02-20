@@ -1,4 +1,3 @@
-#include <span>
 #include <vector>
 #include <cstddef>
 #include <cstdint>
@@ -12,7 +11,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
         return 0;
     }
 
-    std::vector<uint8_t> input(data, data + size);
+    const std::vector<uint8_t> input(data, data + size);
     auto hello = mux::ch_parser::parse(input);
     (void)hello;
 

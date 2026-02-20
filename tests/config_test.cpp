@@ -1,3 +1,5 @@
+// NOLINTBEGIN(modernize-return-braced-init-list, modernize-use-nodiscard, readability-implicit-bool-conversion, readability-use-anyofallof)
+// NOLINTBEGIN(bugprone-unchecked-optional-access, misc-include-cleaner)
 #include <array>
 #include <cstdio>
 #include <string>
@@ -60,10 +62,10 @@ std::string load_configuration_doc()
 
 }    // namespace
 
-extern "C" std::size_t __real_fread(void* ptr, std::size_t size, std::size_t count, FILE* stream);
-extern "C" int __real_ferror(FILE* stream);
+extern "C" std::size_t __real_fread(void* ptr, std::size_t size, std::size_t count, FILE* stream);  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_ferror(FILE* stream);  // NOLINT(bugprone-reserved-identifier)
 
-extern "C" std::size_t __wrap_fread(void* ptr, std::size_t size, std::size_t count, FILE* stream)
+extern "C" std::size_t __wrap_fread(void* ptr, std::size_t size, std::size_t count, FILE* stream)  // NOLINT(bugprone-reserved-identifier)
 {
     if (g_force_fread_error.exchange(false))
     {
@@ -71,19 +73,19 @@ extern "C" std::size_t __wrap_fread(void* ptr, std::size_t size, std::size_t cou
         errno = EIO;
         return 0;
     }
-    return __real_fread(ptr, size, count, stream);
+    return __real_fread(ptr, size, count, stream);  // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_ferror(FILE* stream)
+extern "C" int __wrap_ferror(FILE* stream)  // NOLINT(bugprone-reserved-identifier)
 {
     if (g_injected_fread_error.exchange(false))
     {
         return 1;
     }
-    return __real_ferror(stream);
+    return __real_ferror(stream);  // NOLINT(bugprone-reserved-identifier)
 }
 
-class config_test : public ::testing::Test
+class ConfigTest : public ::testing::Test
 {
    protected:
     void SetUp() override
@@ -107,7 +109,7 @@ class config_test : public ::testing::Test
     std::string tmp_file_;
 };
 
-TEST_F(config_test, DefaultConfigValid)
+TEST_F(ConfigTest, DefaultConfigValid)
 {
     const auto json = mux::dump_default_config();
     ASSERT_FALSE(json.empty());
@@ -116,7 +118,7 @@ TEST_F(config_test, DefaultConfigValid)
     EXPECT_NE(json.find("\"inbound\""), std::string::npos);
 }
 
-TEST_F(config_test, DumpDefaultConfigGeneratesRealityKeyPair)
+TEST_F(ConfigTest, DumpDefaultConfigGeneratesRealityKeyPair)
 {
     const auto json = mux::dump_default_config();
     write_config_file(json);
@@ -129,7 +131,7 @@ TEST_F(config_test, DumpDefaultConfigGeneratesRealityKeyPair)
     EXPECT_TRUE(is_hex_string(cfg_opt->reality.public_key));
 }
 
-TEST_F(config_test, ParseValues)
+TEST_F(ConfigTest, ParseValues)
 {
     const std::string content = R"({
         "mode": "client",
@@ -207,13 +209,13 @@ TEST_F(config_test, ParseValues)
     }
 }
 
-TEST_F(config_test, MissingFile)
+TEST_F(ConfigTest, MissingFile)
 {
     const auto cfg = mux::parse_config("non_existent_file.json");
     EXPECT_FALSE(cfg.has_value());
 }
 
-TEST_F(config_test, ClientWithoutAnyInboundRejected)
+TEST_F(ConfigTest, ClientWithoutAnyInboundRejected)
 {
     const std::string content = R"({
         "mode": "client",
@@ -230,7 +232,7 @@ TEST_F(config_test, ClientWithoutAnyInboundRejected)
     EXPECT_FALSE(cfg_opt.has_value());
 }
 
-TEST_F(config_test, ClientWithTproxyOnlyAccepted)
+TEST_F(ConfigTest, ClientWithTproxyOnlyAccepted)
 {
     const std::string content = R"({
         "mode": "client",
@@ -250,14 +252,14 @@ TEST_F(config_test, ClientWithTproxyOnlyAccepted)
     EXPECT_FALSE(cfg_opt->socks.enabled);
 }
 
-TEST_F(config_test, InvalidJson)
+TEST_F(ConfigTest, InvalidJson)
 {
     write_config_file("{ invalid_json }");
     const auto cfg = mux::parse_config(tmp_file());
     EXPECT_FALSE(cfg.has_value());
 }
 
-TEST_F(config_test, ParseConfigWithErrorReportsJsonSyntax)
+TEST_F(ConfigTest, ParseConfigWithErrorReportsJsonSyntax)
 {
     write_config_file("{ invalid_json }");
 
@@ -267,7 +269,7 @@ TEST_F(config_test, ParseConfigWithErrorReportsJsonSyntax)
     EXPECT_NE(parsed.error().reason.find("json parse error"), std::string::npos);
 }
 
-TEST_F(config_test, ReadErrorReturnsEmptyConfig)
+TEST_F(ConfigTest, ReadErrorReturnsEmptyConfig)
 {
     const std::string content = R"({
         "mode": "client"
@@ -279,7 +281,7 @@ TEST_F(config_test, ReadErrorReturnsEmptyConfig)
     EXPECT_FALSE(cfg_opt.has_value());
 }
 
-TEST_F(config_test, ReplayCacheMaxEntriesWrongTypeRejected)
+TEST_F(ConfigTest, ReplayCacheMaxEntriesWrongTypeRejected)
 {
     const std::string content = R"({
         "reality": {
@@ -292,7 +294,7 @@ TEST_F(config_test, ReplayCacheMaxEntriesWrongTypeRejected)
     EXPECT_FALSE(cfg_opt.has_value());
 }
 
-TEST_F(config_test, ParseConfigWithErrorReportsTypeErrorPath)
+TEST_F(ConfigTest, ParseConfigWithErrorReportsTypeErrorPath)
 {
     const std::string content = R"({
         "reality": {
@@ -307,7 +309,7 @@ TEST_F(config_test, ParseConfigWithErrorReportsTypeErrorPath)
     EXPECT_NE(parsed.error().reason.find("invalid type or value"), std::string::npos);
 }
 
-TEST_F(config_test, MissingFieldsUseDefaults)
+TEST_F(ConfigTest, MissingFieldsUseDefaults)
 {
     const std::string content = R"({})";
     write_config_file(content);
@@ -324,7 +326,7 @@ TEST_F(config_test, MissingFieldsUseDefaults)
     EXPECT_EQ(cfg_opt->queues.tproxy_udp_dispatch_queue_capacity, 512U);
 }
 
-TEST_F(config_test, InvalidPortRange)
+TEST_F(ConfigTest, InvalidPortRange)
 {
     const std::string content = R"({
         "inbound": {
@@ -337,7 +339,7 @@ TEST_F(config_test, InvalidPortRange)
     EXPECT_FALSE(cfg_opt.has_value());
 }
 
-TEST_F(config_test, NegativePortRejected)
+TEST_F(ConfigTest, NegativePortRejected)
 {
     const std::string content = R"({
         "inbound": {
@@ -350,7 +352,7 @@ TEST_F(config_test, NegativePortRejected)
     EXPECT_FALSE(cfg_opt.has_value());
 }
 
-TEST_F(config_test, NegativeWorkersRejected)
+TEST_F(ConfigTest, NegativeWorkersRejected)
 {
     const std::string content = R"({
         "workers": -1
@@ -361,7 +363,7 @@ TEST_F(config_test, NegativeWorkersRejected)
     EXPECT_FALSE(cfg_opt.has_value());
 }
 
-TEST_F(config_test, WorkersZeroUsesAutoDetection)
+TEST_F(ConfigTest, WorkersZeroUsesAutoDetection)
 {
     const std::string content = R"({
         "workers": 0
@@ -373,7 +375,7 @@ TEST_F(config_test, WorkersZeroUsesAutoDetection)
     EXPECT_EQ(cfg_opt->workers, 0U);
 }
 
-TEST_F(config_test, HeartbeatIntervalRangeRejected)
+TEST_F(ConfigTest, HeartbeatIntervalRangeRejected)
 {
     const std::string content = R"({
         "heartbeat": {
@@ -387,7 +389,7 @@ TEST_F(config_test, HeartbeatIntervalRangeRejected)
     EXPECT_FALSE(cfg_opt.has_value());
 }
 
-TEST_F(config_test, ParseConfigWithErrorReportsValidationPath)
+TEST_F(ConfigTest, ParseConfigWithErrorReportsValidationPath)
 {
     const std::string content = R"({
         "heartbeat": {
@@ -403,7 +405,7 @@ TEST_F(config_test, ParseConfigWithErrorReportsValidationPath)
     EXPECT_NE(parsed.error().reason.find("must be less than or equal to max_interval"), std::string::npos);
 }
 
-TEST_F(config_test, HeartbeatZeroIntervalRejected)
+TEST_F(ConfigTest, HeartbeatZeroIntervalRejected)
 {
     const std::string content = R"({
         "heartbeat": {
@@ -417,7 +419,7 @@ TEST_F(config_test, HeartbeatZeroIntervalRejected)
     EXPECT_FALSE(cfg_opt.has_value());
 }
 
-TEST_F(config_test, HeartbeatPaddingRangeRejected)
+TEST_F(ConfigTest, HeartbeatPaddingRangeRejected)
 {
     const std::string content = R"({
         "heartbeat": {
@@ -431,7 +433,7 @@ TEST_F(config_test, HeartbeatPaddingRangeRejected)
     EXPECT_FALSE(cfg_opt.has_value());
 }
 
-TEST_F(config_test, HeartbeatPaddingTooLargeRejected)
+TEST_F(ConfigTest, HeartbeatPaddingTooLargeRejected)
 {
     const auto too_large_padding = static_cast<std::uint64_t>(mux::kMaxPayload) + 1ULL;
     const std::string content = std::string(R"({
@@ -447,7 +449,7 @@ TEST_F(config_test, HeartbeatPaddingTooLargeRejected)
     EXPECT_FALSE(cfg_opt.has_value());
 }
 
-TEST_F(config_test, MaxConnectionsZeroNormalizedToOne)
+TEST_F(ConfigTest, MaxConnectionsZeroNormalizedToOne)
 {
     const std::string content = R"({
         "limits": {
@@ -461,7 +463,7 @@ TEST_F(config_test, MaxConnectionsZeroNormalizedToOne)
     EXPECT_EQ(cfg_opt->limits.max_connections, 1U);
 }
 
-TEST_F(config_test, MaxBufferZeroRejected)
+TEST_F(ConfigTest, MaxBufferZeroRejected)
 {
     const std::string content = R"({
         "limits": {
@@ -474,7 +476,7 @@ TEST_F(config_test, MaxBufferZeroRejected)
     EXPECT_FALSE(cfg_opt.has_value());
 }
 
-TEST_F(config_test, QueueCapacityOutOfRangeRejected)
+TEST_F(ConfigTest, QueueCapacityOutOfRangeRejected)
 {
     write_config_file(R"({
         "queues": {
@@ -499,7 +501,7 @@ TEST_F(config_test, QueueCapacityOutOfRangeRejected)
     EXPECT_NE(parsed.error().reason.find("must be between 1 and 65535"), std::string::npos);
 }
 
-TEST_F(config_test, EmptyHostAddress)
+TEST_F(ConfigTest, EmptyHostAddress)
 {
     const std::string content = R"({
         "inbound": {
@@ -513,7 +515,7 @@ TEST_F(config_test, EmptyHostAddress)
     EXPECT_TRUE(cfg_opt->inbound.host.empty());
 }
 
-TEST_F(config_test, DumpConfigIncludesHeartbeatIdleTimeout)
+TEST_F(ConfigTest, DumpConfigIncludesHeartbeatIdleTimeout)
 {
     mux::config cfg;
     cfg.heartbeat.idle_timeout = 77;
@@ -523,7 +525,7 @@ TEST_F(config_test, DumpConfigIncludesHeartbeatIdleTimeout)
     EXPECT_NE(dumped.find("\"heartbeat\""), std::string::npos);
 }
 
-TEST_F(config_test, ContractMatrixTimeoutRulesStayAlignedWithDocumentation)
+TEST_F(ConfigTest, ContractMatrixTimeoutRulesStayAlignedWithDocumentation)
 {
     const auto doc = load_configuration_doc();
     ASSERT_FALSE(doc.empty());
@@ -548,7 +550,7 @@ TEST_F(config_test, ContractMatrixTimeoutRulesStayAlignedWithDocumentation)
     EXPECT_EQ(parsed->timeout.idle, 0U);
 }
 
-TEST_F(config_test, ContractMatrixHeartbeatRulesStayAlignedWithDocumentation)
+TEST_F(ConfigTest, ContractMatrixHeartbeatRulesStayAlignedWithDocumentation)
 {
     const auto doc = load_configuration_doc();
     ASSERT_FALSE(doc.empty());
@@ -564,33 +566,30 @@ TEST_F(config_test, ContractMatrixHeartbeatRulesStayAlignedWithDocumentation)
     };
 
     const std::array<heartbeat_contract_case, 3> cases = {
-        heartbeat_contract_case{
-            R"({
+        heartbeat_contract_case{.json = R"({
                 "heartbeat": {
                     "min_interval": 30,
                     "max_interval": 10
                 }
             })",
-            "/heartbeat/min_interval",
-            "must be less than or equal to max_interval"},
-        heartbeat_contract_case{
-            R"({
+                                .expected_path = "/heartbeat/min_interval",
+                                .expected_reason_substr = "must be less than or equal to max_interval"},
+        heartbeat_contract_case{.json = R"({
                 "heartbeat": {
                     "min_interval": 1,
                     "max_interval": 0
                 }
             })",
-            "/heartbeat/max_interval",
-            "must be greater than 0"},
-        heartbeat_contract_case{
-            R"({
+                                .expected_path = "/heartbeat/max_interval",
+                                .expected_reason_substr = "must be greater than 0"},
+        heartbeat_contract_case{.json = R"({
                 "heartbeat": {
                     "min_padding": 1,
                     "max_padding": 70000
                 }
             })",
-            "/heartbeat/max_padding",
-            "max payload"}};
+                                .expected_path = "/heartbeat/max_padding",
+                                .expected_reason_substr = "max payload"}};
 
     for (const auto& c : cases)
     {
@@ -602,7 +601,7 @@ TEST_F(config_test, ContractMatrixHeartbeatRulesStayAlignedWithDocumentation)
     }
 }
 
-TEST_F(config_test, ContractMatrixLimitsRulesStayAlignedWithDocumentation)
+TEST_F(ConfigTest, ContractMatrixLimitsRulesStayAlignedWithDocumentation)
 {
     const auto doc = load_configuration_doc();
     ASSERT_FALSE(doc.empty());
@@ -630,7 +629,7 @@ TEST_F(config_test, ContractMatrixLimitsRulesStayAlignedWithDocumentation)
     EXPECT_NE(parsed.error().reason.find("must be greater than 0"), std::string::npos);
 }
 
-TEST_F(config_test, ContractMatrixQueueRulesStayAlignedWithDocumentation)
+TEST_F(ConfigTest, ContractMatrixQueueRulesStayAlignedWithDocumentation)
 {
     const auto doc = load_configuration_doc();
     ASSERT_FALSE(doc.empty());
@@ -659,7 +658,7 @@ TEST_F(config_test, ContractMatrixQueueRulesStayAlignedWithDocumentation)
     EXPECT_EQ(parsed.error().path, "/queues/udp_session_recv_channel_capacity");
 }
 
-TEST_F(config_test, ContractMatrixMonitorRulesStayAlignedWithDocumentation)
+TEST_F(ConfigTest, ContractMatrixMonitorRulesStayAlignedWithDocumentation)
 {
     const auto doc = load_configuration_doc();
     ASSERT_FALSE(doc.empty());
@@ -680,7 +679,7 @@ TEST_F(config_test, ContractMatrixMonitorRulesStayAlignedWithDocumentation)
     EXPECT_EQ(parsed->monitor.port, 19090);
 }
 
-TEST_F(config_test, SocksAuthEnabledRequiresNonEmptyCredentials)
+TEST_F(ConfigTest, SocksAuthEnabledRequiresNonEmptyCredentials)
 {
     write_config_file(R"({
         "socks": {
@@ -723,7 +722,7 @@ TEST_F(config_test, SocksAuthEnabledRequiresNonEmptyCredentials)
     EXPECT_EQ(parsed->socks.password, "pass");
 }
 
-TEST_F(config_test, ContractMatrixSocksAuthRulesStayAlignedWithDocumentation)
+TEST_F(ConfigTest, ContractMatrixSocksAuthRulesStayAlignedWithDocumentation)
 {
     const auto doc = load_configuration_doc();
     ASSERT_FALSE(doc.empty());
@@ -754,3 +753,5 @@ TEST_F(config_test, ContractMatrixSocksAuthRulesStayAlignedWithDocumentation)
     ASSERT_FALSE(parsed.has_value());
     EXPECT_EQ(parsed.error().path, "/socks/password");
 }
+// NOLINTEND(bugprone-unchecked-optional-access, misc-include-cleaner)
+// NOLINTEND(modernize-return-braced-init-list, modernize-use-nodiscard, readability-implicit-bool-conversion, readability-use-anyofallof)

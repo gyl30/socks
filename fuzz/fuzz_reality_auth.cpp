@@ -1,5 +1,4 @@
 #include <span>
-#include <vector>
 #include <cstddef>
 #include <cstdint>
 
@@ -12,7 +11,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
         return 0;
     }
 
-    std::span<const uint8_t> input(data, size);
+    const std::span<const uint8_t> input(data, size);
     auto payload = reality::parse_auth_payload(input);
     if (payload)
     {

@@ -1,3 +1,4 @@
+// NOLINTBEGIN(bugprone-unused-return-value, misc-include-cleaner)
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -59,7 +60,7 @@ tcp_socket_pair make_connected_tcp_socket_pair(boost::asio::io_context& io_conte
 
 }    // namespace
 
-TEST(timeout_io_test, ReadTimeoutCancelsSocketAndReturnsTimedOut)
+TEST(TimeoutIoTest, ReadTimeoutCancelsSocketAndReturnsTimedOut)
 {
     boost::asio::io_context io_context;
     auto pair = make_connected_tcp_socket_pair(io_context);
@@ -84,7 +85,7 @@ TEST(timeout_io_test, ReadTimeoutCancelsSocketAndReturnsTimedOut)
     EXPECT_FALSE(pair.client->is_open());
 }
 
-TEST(timeout_io_test, ZeroReadTimeoutDisablesStageTimeout)
+TEST(TimeoutIoTest, ZeroReadTimeoutDisablesStageTimeout)
 {
     boost::asio::io_context io_context;
     auto pair = make_connected_tcp_socket_pair(io_context);
@@ -132,7 +133,7 @@ TEST(timeout_io_test, ZeroReadTimeoutDisablesStageTimeout)
     EXPECT_EQ(read_buf[0], payload[0]);
 }
 
-TEST(timeout_io_test, ConnectFailureReturnsNonTimeoutError)
+TEST(TimeoutIoTest, ConnectFailureReturnsNonTimeoutError)
 {
     boost::asio::io_context io_context;
     boost::system::error_code ec;
@@ -166,3 +167,4 @@ TEST(timeout_io_test, ConnectFailureReturnsNonTimeoutError)
     EXPECT_TRUE(connect_res.ec);
     EXPECT_NE(connect_res.ec, boost::asio::error::timed_out);
 }
+// NOLINTEND(bugprone-unused-return-value, misc-include-cleaner)
