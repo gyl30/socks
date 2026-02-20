@@ -1,3 +1,4 @@
+// NOLINTBEGIN(misc-include-cleaner)
 #include <span>
 #include <vector>
 #include <cstddef>
@@ -6,6 +7,7 @@
 #include <system_error>
 
 #include <gtest/gtest.h>
+#include <boost/asio/error.hpp>
 
 extern "C"
 {
@@ -18,7 +20,7 @@ extern "C"
 namespace mux
 {
 
-class reality_engine_test : public ::testing::Test
+class RealityEngineTest : public ::testing::Test
 {
    protected:
     void SetUp() override
@@ -45,7 +47,7 @@ class reality_engine_test : public ::testing::Test
     std::vector<std::uint8_t> write_iv_;
 };
 
-TEST_F(reality_engine_test, EncryptEmptyData)
+TEST_F(RealityEngineTest, EncryptEmptyData)
 {
     reality_engine engine(read_key(), read_iv(), write_key(), write_iv(), cipher());
 
@@ -55,11 +57,11 @@ TEST_F(reality_engine_test, EncryptEmptyData)
     EXPECT_TRUE(result->empty());
 }
 
-TEST_F(reality_engine_test, EncryptProducesOutput)
+TEST_F(RealityEngineTest, EncryptProducesOutput)
 {
     reality_engine engine(read_key(), read_iv(), write_key(), write_iv(), cipher());
 
-    std::vector<std::uint8_t> plaintext = {'H', 'e', 'l', 'l', 'o'};
+    std::vector<std::uint8_t> const plaintext = {'H', 'e', 'l', 'l', 'o'};
     auto result = engine.encrypt(plaintext);
 
     ASSERT_TRUE(result.has_value());
@@ -68,7 +70,7 @@ TEST_F(reality_engine_test, EncryptProducesOutput)
     EXPECT_GE(result->size(), plaintext.size() + 5 + 16 + 1);
 }
 
-TEST_F(reality_engine_test, EncryptReturnsErrorOnInvalidWriteKeyLength)
+TEST_F(RealityEngineTest, EncryptReturnsErrorOnInvalidWriteKeyLength)
 {
     reality_engine engine(read_key(), read_iv(), std::vector<std::uint8_t>{0x01}, write_iv(), cipher());
     const std::vector<std::uint8_t> plaintext = {'x'};
@@ -76,7 +78,7 @@ TEST_F(reality_engine_test, EncryptReturnsErrorOnInvalidWriteKeyLength)
     EXPECT_FALSE(result.has_value());
 }
 
-TEST_F(reality_engine_test, DecryptInsufficientData)
+TEST_F(RealityEngineTest, DecryptInsufficientData)
 {
     reality_engine engine(read_key(), read_iv(), write_key(), write_iv(), cipher());
 
@@ -92,7 +94,7 @@ TEST_F(reality_engine_test, DecryptInsufficientData)
     EXPECT_FALSE(called);
 }
 
-TEST_F(reality_engine_test, DecryptWaitsForCompleteFrame)
+TEST_F(RealityEngineTest, DecryptWaitsForCompleteFrame)
 {
     reality_engine engine(read_key(), read_iv(), write_key(), write_iv(), cipher());
 
@@ -108,12 +110,12 @@ TEST_F(reality_engine_test, DecryptWaitsForCompleteFrame)
     EXPECT_FALSE(called);
 }
 
-TEST_F(reality_engine_test, EncryptDecryptRoundTrip)
+TEST_F(RealityEngineTest, EncryptDecryptRoundTrip)
 {
     reality_engine encrypt_engine(write_key(), write_iv(), read_key(), read_iv(), cipher());
     reality_engine decrypt_engine(read_key(), read_iv(), write_key(), write_iv(), cipher());
 
-    std::vector<std::uint8_t> plaintext = {'T', 'e', 's', 't', ' ', 'D', 'a', 't', 'a'};
+    std::vector<std::uint8_t> const plaintext = {'T', 'e', 's', 't', ' ', 'D', 'a', 't', 'a'};
 
     auto encrypted_res = encrypt_engine.encrypt(plaintext);
     ASSERT_TRUE(encrypted_res.has_value());
@@ -136,33 +138,33 @@ TEST_F(reality_engine_test, EncryptDecryptRoundTrip)
     EXPECT_EQ(decrypted, plaintext);
 }
 
-TEST_F(reality_engine_test, MultipleEncryptions)
+TEST_F(RealityEngineTest, MultipleEncryptions)
 {
     reality_engine engine(read_key(), read_iv(), write_key(), write_iv(), cipher());
 
-    std::vector<std::uint8_t> data1 = {'A', 'B', 'C'};
-    std::vector<std::uint8_t> data2 = {'D', 'E', 'F'};
+    std::vector<std::uint8_t> const data1 = {'A', 'B', 'C'};
+    std::vector<std::uint8_t> const data2 = {'D', 'E', 'F'};
 
     auto result1 = engine.encrypt(data1);
     EXPECT_TRUE(result1.has_value());
     EXPECT_FALSE(result1->empty());
 
-    std::vector<std::uint8_t> encrypted1(result1->begin(), result1->end());
+    std::vector<std::uint8_t> const encrypted1(result1->begin(), result1->end());
 
     auto result2 = engine.encrypt(data2);
     EXPECT_TRUE(result2.has_value());
     EXPECT_FALSE(result2->empty());
 
-    std::vector<std::uint8_t> encrypted2(result2->begin(), result2->end());
+    std::vector<std::uint8_t> const encrypted2(result2->begin(), result2->end());
 
     EXPECT_NE(encrypted1, encrypted2);
 }
 
-TEST_F(reality_engine_test, AlertContentType)
+TEST_F(RealityEngineTest, AlertContentType)
 {
     reality_engine decrypt_engine(read_key(), read_iv(), write_key(), write_iv(), cipher());
 
-    std::vector<uint8_t> alert_plaintext = {0x02, 0x32};
+    std::vector<uint8_t> const alert_plaintext = {0x02, 0x32};
     auto alert_rec = reality::tls_record_layer::encrypt_record(cipher(), read_key(), read_iv(), 0, alert_plaintext, reality::kContentTypeAlert);
     ASSERT_TRUE(alert_rec.has_value());
 
@@ -185,11 +187,11 @@ TEST_F(reality_engine_test, AlertContentType)
     EXPECT_TRUE(called);
 }
 
-TEST_F(reality_engine_test, DecryptError)
+TEST_F(RealityEngineTest, DecryptError)
 {
     reality_engine decrypt_engine(read_key(), read_iv(), write_key(), write_iv(), cipher());
 
-    std::vector<uint8_t> data = {0x01, 0x02};
+    std::vector<uint8_t> const data = {0x01, 0x02};
     auto rec = reality::tls_record_layer::encrypt_record(cipher(), read_key(), read_iv(), 0, data, reality::kContentTypeApplicationData);
     ASSERT_TRUE(rec.has_value());
 
@@ -207,7 +209,7 @@ TEST_F(reality_engine_test, DecryptError)
     EXPECT_FALSE(called);
 }
 
-TEST_F(reality_engine_test, ProcessAvailableRecordsStopsWhenCallbackSetsError)
+TEST_F(RealityEngineTest, ProcessAvailableRecordsStopsWhenCallbackSetsError)
 {
     reality_engine decrypt_engine(read_key(), read_iv(), write_key(), write_iv(), cipher());
 
@@ -228,7 +230,8 @@ TEST_F(reality_engine_test, ProcessAvailableRecordsStopsWhenCallbackSetsError)
         });
 
     EXPECT_TRUE(process_res.has_value());
-    EXPECT_EQ(callback_calls, 1u);
+    EXPECT_EQ(callback_calls, 1U);
 }
 
 }    // namespace mux
+// NOLINTEND(misc-include-cleaner)

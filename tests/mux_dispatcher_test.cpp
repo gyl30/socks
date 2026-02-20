@@ -1,3 +1,4 @@
+// NOLINTBEGIN(performance-unnecessary-value-param)
 #include <span>
 #include <vector>
 #include <cstdint>
@@ -88,3 +89,4 @@ TEST(MuxDispatcherTest, PartialPayloadWaitsForCompletion)
                                                                packed.size() - (mux::kHeaderSize + 1)));
     EXPECT_EQ(call_count, 1);
 }
+// NOLINTEND(performance-unnecessary-value-param)

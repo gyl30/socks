@@ -1,3 +1,4 @@
+// NOLINTBEGIN(misc-include-cleaner)
 #include <vector>
 #include <cstdint>
 
@@ -16,14 +17,14 @@ namespace reality
 TEST(TranscriptTest, SetProtocolHash)
 {
     transcript trans;
-    std::vector<uint8_t> data1 = {0x01, 0x02, 0x03};
+    std::vector<uint8_t> const data1 = {0x01, 0x02, 0x03};
     trans.update(data1);
 
     auto hash1 = trans.finish();
     EXPECT_EQ(hash1.size(), 32);
 
     trans.set_protocol_hash(EVP_sha384());
-    std::vector<uint8_t> data2 = {0x04, 0x05};
+    std::vector<uint8_t> const data2 = {0x04, 0x05};
     trans.update(data2);
 
     auto hash2 = trans.finish();
@@ -46,3 +47,4 @@ TEST(TranscriptTest, SameHashNoOp)
 }
 
 }    // namespace reality
+// NOLINTEND(misc-include-cleaner)
