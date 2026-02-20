@@ -1,3 +1,4 @@
+// NOLINTBEGIN(misc-include-cleaner)
 #include <atomic>
 #include <chrono>
 #include <memory>
@@ -71,8 +72,8 @@ TEST(HeartbeatTest, HeartbeatSendReceive)
     mux::config::heartbeat_t hb_s;
     hb_s.enabled = false;
 
-    std::vector<std::uint8_t> key(16, 0);
-    std::vector<std::uint8_t> iv(12, 0);
+    std::vector<std::uint8_t> const key(16, 0);
+    std::vector<std::uint8_t> const iv(12, 0);
 
     auto conn_c = std::make_shared<mux::mux_connection>(std::move(*socket_client),
                                                         io_ctx,
@@ -113,3 +114,4 @@ TEST(HeartbeatTest, HeartbeatSendReceive)
 }
 
 }    // namespace
+// NOLINTEND(misc-include-cleaner)

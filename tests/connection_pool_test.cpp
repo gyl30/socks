@@ -1,7 +1,10 @@
+// NOLINTBEGIN(readability-isolate-declaration)
+// NOLINTBEGIN(bugprone-unused-return-value, misc-include-cleaner)
 #include <atomic>
 #include <chrono>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 #include <cstdint>
 
@@ -18,7 +21,7 @@
 namespace
 {
 
-class connection_pool_test : public ::testing::Test
+class ConnectionPoolTest : public ::testing::Test
 {
    protected:
     void SetUp() override
@@ -38,15 +41,15 @@ class connection_pool_test : public ::testing::Test
     std::string client_pub_key_;
 };
 
-TEST_F(connection_pool_test, TunnelReuse)
+TEST_F(ConnectionPoolTest, TunnelReuse)
 {
     boost::system::error_code ec;
     mux::io_context_pool pool(2);
     ASSERT_FALSE(ec);
 
-    uint16_t server_port = 31081;
-    uint16_t local_socks_port = 31082;
-    std::string sni = "www.google.com";
+    uint16_t const server_port = 31081;
+    uint16_t const local_socks_port = 31082;
+    std::string const sni = "www.google.com";
 
     mux::config server_cfg;
     server_cfg.inbound.host = "127.0.0.1";
@@ -54,7 +57,7 @@ TEST_F(connection_pool_test, TunnelReuse)
     server_cfg.reality.private_key = server_priv_key();
     server_cfg.reality.short_id = "0102030405060708";
     auto server = std::make_shared<mux::remote_server>(pool, server_cfg);
-    reality::server_fingerprint fp;
+    reality::server_fingerprint const fp;
     server->set_certificate(sni, reality::construct_certificate({0x01, 0x02, 0x03}), fp);
     server->start();
 
@@ -94,3 +97,5 @@ TEST_F(connection_pool_test, TunnelReuse)
 }
 
 }    // namespace
+// NOLINTEND(bugprone-unused-return-value, misc-include-cleaner)
+// NOLINTEND(readability-isolate-declaration)

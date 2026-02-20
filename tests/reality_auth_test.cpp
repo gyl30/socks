@@ -1,3 +1,4 @@
+// NOLINTBEGIN(bugprone-unchecked-optional-access)
 #include <span>
 #include <array>
 #include <vector>
@@ -77,3 +78,4 @@ TEST(RealityAuthTest, ParseRejectsInvalidLength)
         std::span<const std::uint8_t>(short_payload.data(), short_payload.size()));
     EXPECT_FALSE(parsed.has_value());
 }
+// NOLINTEND(bugprone-unchecked-optional-access)
