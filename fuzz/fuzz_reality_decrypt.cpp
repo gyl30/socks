@@ -1,16 +1,18 @@
+#include <span>
 #include <vector>
 #include <cstdint>
 #include <cstring>
-#include <stddef.h>
+#include <cstddef>
 
 #include <openssl/evp.h>
+#include <openssl/types.h>
 
 #include "reality_engine.h"
 
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
 {
-    std::vector<uint8_t> key(16, 0x42);
-    std::vector<uint8_t> iv(12, 0x99);
+    const std::vector<uint8_t> key(16, 0x42);
+    const std::vector<uint8_t> iv(12, 0x99);
 
     const EVP_CIPHER* cipher = EVP_aes_128_gcm();
 

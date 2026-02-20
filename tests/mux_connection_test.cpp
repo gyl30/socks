@@ -1,3 +1,5 @@
+// NOLINTBEGIN(google-build-using-namespace, misc-unused-parameters, readability-container-contains, readability-function-cognitive-complexity, readability-static-accessed-through-instance)
+// NOLINTBEGIN(bugprone-unused-return-value, misc-include-cleaner)
 #include <memory>
 #include <atomic>
 #include <array>
@@ -29,7 +31,7 @@
 #undef private
 #include "mux_stream_interface.h"
 
-extern "C" int __real_RAND_bytes(unsigned char* buf, int num);
+extern "C" int __real_RAND_bytes(unsigned char* buf, int num);  // NOLINT(bugprone-reserved-identifier)
 
 namespace
 {
@@ -38,13 +40,13 @@ std::atomic<bool> g_force_rand_bytes_failure{false};
 
 }    // namespace
 
-extern "C" int __wrap_RAND_bytes(unsigned char* buf, int num)
+extern "C" int __wrap_RAND_bytes(unsigned char* buf, int num)  // NOLINT(bugprone-reserved-identifier)
 {
     if (g_force_rand_bytes_failure.exchange(false, std::memory_order_acq_rel))
     {
         return 0;
     }
-    return __real_RAND_bytes(buf, num);
+    return __real_RAND_bytes(buf, num);  // NOLINT(bugprone-reserved-identifier)
 }
 
 namespace
@@ -116,7 +118,7 @@ void insert_stream_for_test(const std::shared_ptr<mux_connection>& conn,
     return snapshot_streams_for_test(conn)->size();
 }
 
-class mux_connection_integration_test : public ::testing::Test
+class MuxConnectionIntegrationTest : public ::testing::Test
 
 {
    protected:
@@ -158,7 +160,7 @@ boost::system::error_code setup_loopback_acceptor_with_retry(boost::asio::ip::tc
     return last_ec;
 }
 
-TEST_F(mux_connection_integration_test, StreamDataExchange)
+TEST_F(MuxConnectionIntegrationTest, StreamDataExchange)
 
 {
     boost::asio::ip::tcp::acceptor acceptor(io_ctx());
@@ -235,7 +237,7 @@ TEST_F(mux_connection_integration_test, StreamDataExchange)
     io_ctx().run();
 }
 
-TEST_F(mux_connection_integration_test, ReadTimeoutHandling)
+TEST_F(MuxConnectionIntegrationTest, ReadTimeoutHandling)
 {
     boost::asio::ip::tcp::acceptor acceptor(io_ctx());
     const auto setup_ec = setup_loopback_acceptor_with_retry(acceptor);
@@ -265,7 +267,7 @@ TEST_F(mux_connection_integration_test, ReadTimeoutHandling)
     EXPECT_FALSE(conn_s->is_open());
 }
 
-TEST_F(mux_connection_integration_test, WriteTimeoutHandling)
+TEST_F(MuxConnectionIntegrationTest, WriteTimeoutHandling)
 {
     boost::asio::ip::tcp::acceptor acceptor(io_ctx());
     const auto setup_ec = setup_loopback_acceptor_with_retry(acceptor);
@@ -295,7 +297,7 @@ TEST_F(mux_connection_integration_test, WriteTimeoutHandling)
     EXPECT_FALSE(conn_s->is_open());
 }
 
-TEST_F(mux_connection_integration_test, HeartbeatRandFailureStopsConnection)
+TEST_F(MuxConnectionIntegrationTest, HeartbeatRandFailureStopsConnection)
 {
     boost::asio::ip::tcp::acceptor acceptor(io_ctx());
     const auto setup_ec = setup_loopback_acceptor_with_retry(acceptor);
@@ -365,7 +367,7 @@ TEST_F(mux_connection_integration_test, HeartbeatRandFailureStopsConnection)
     }
 }
 
-TEST_F(mux_connection_integration_test, TryRegisterStreamRejectsDuplicateId)
+TEST_F(MuxConnectionIntegrationTest, TryRegisterStreamRejectsDuplicateId)
 {
     boost::asio::ip::tcp::socket socket(io_ctx());
     reality_engine engine{{}, {}, {}, {}, EVP_aes_128_gcm()};
@@ -379,7 +381,7 @@ TEST_F(mux_connection_integration_test, TryRegisterStreamRejectsDuplicateId)
     EXPECT_TRUE(conn->has_stream(100));
 }
 
-TEST_F(mux_connection_integration_test, ClosedStateGuardsAndUnlimitedCheck)
+TEST_F(MuxConnectionIntegrationTest, ClosedStateGuardsAndUnlimitedCheck)
 {
     boost::asio::ip::tcp::socket socket(io_ctx());
     reality_engine engine{{}, {}, {}, {}, EVP_aes_128_gcm()};
@@ -401,7 +403,7 @@ TEST_F(mux_connection_integration_test, ClosedStateGuardsAndUnlimitedCheck)
     EXPECT_FALSE(unlimited->can_accept_stream());
 }
 
-TEST_F(mux_connection_integration_test, IsOpenTreatsDrainingAsOpen)
+TEST_F(MuxConnectionIntegrationTest, IsOpenTreatsDrainingAsOpen)
 {
     auto conn = std::make_shared<mux_connection>(
         boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 10);
@@ -417,7 +419,7 @@ TEST_F(mux_connection_integration_test, IsOpenTreatsDrainingAsOpen)
     EXPECT_FALSE(conn->is_open());
 }
 
-TEST_F(mux_connection_integration_test, SendAsyncAllowedWhenDraining)
+TEST_F(MuxConnectionIntegrationTest, SendAsyncAllowedWhenDraining)
 {
     auto conn = std::make_shared<mux_connection>(
         boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 13);
@@ -435,7 +437,7 @@ TEST_F(mux_connection_integration_test, SendAsyncAllowedWhenDraining)
     EXPECT_EQ(future.get(), boost::system::error_code{});
 }
 
-TEST_F(mux_connection_integration_test, OffThreadRegisterAndQueryPaths)
+TEST_F(MuxConnectionIntegrationTest, OffThreadRegisterAndQueryPaths)
 {
     auto conn = std::make_shared<mux_connection>(
         boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 4);
@@ -459,7 +461,7 @@ TEST_F(mux_connection_integration_test, OffThreadRegisterAndQueryPaths)
     io_ctx().restart();
 }
 
-TEST_F(mux_connection_integration_test, OffThreadCanAcceptStreamFalsePath)
+TEST_F(MuxConnectionIntegrationTest, OffThreadCanAcceptStreamFalsePath)
 {
     config::limits_t limits_cfg;
     limits_cfg.max_streams = 1;
@@ -491,7 +493,7 @@ TEST_F(mux_connection_integration_test, OffThreadCanAcceptStreamFalsePath)
     io_ctx().restart();
 }
 
-TEST_F(mux_connection_integration_test, OffThreadConcurrentCreateStreamRespectsLimit)
+TEST_F(MuxConnectionIntegrationTest, OffThreadConcurrentCreateStreamRespectsLimit)
 {
     config::limits_t limits_cfg;
     limits_cfg.max_streams = 1;
@@ -558,7 +560,7 @@ TEST_F(mux_connection_integration_test, OffThreadConcurrentCreateStreamRespectsL
     io_ctx().restart();
 }
 
-TEST_F(mux_connection_integration_test, OffThreadSyncQueriesReturnWhenIoQueueBusy)
+TEST_F(MuxConnectionIntegrationTest, OffThreadSyncQueriesReturnWhenIoQueueBusy)
 {
     auto conn = std::make_shared<mux_connection>(
         boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 15);
@@ -617,7 +619,7 @@ TEST_F(mux_connection_integration_test, OffThreadSyncQueriesReturnWhenIoQueueBus
     io_ctx().restart();
 }
 
-TEST_F(mux_connection_integration_test, OffThreadSyncQueryTimeoutDoesNotMutateAfterStopAndRestart)
+TEST_F(MuxConnectionIntegrationTest, OffThreadSyncQueryTimeoutDoesNotMutateAfterStopAndRestart)
 {
     auto conn = std::make_shared<mux_connection>(
         boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 18);
@@ -672,7 +674,7 @@ TEST_F(mux_connection_integration_test, OffThreadSyncQueryTimeoutDoesNotMutateAf
     EXPECT_FALSE(has_stream_for_test(conn, 201));
 }
 
-TEST_F(mux_connection_integration_test, OffThreadTryRegisterTimeoutDoesNotMutateAfterStopAndRestart)
+TEST_F(MuxConnectionIntegrationTest, OffThreadTryRegisterTimeoutDoesNotMutateAfterStopAndRestart)
 {
     auto conn = std::make_shared<mux_connection>(
         boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 19);
@@ -727,7 +729,7 @@ TEST_F(mux_connection_integration_test, OffThreadTryRegisterTimeoutDoesNotMutate
     EXPECT_FALSE(has_stream_for_test(conn, 202));
 }
 
-TEST_F(mux_connection_integration_test, MarkStartedForExternalCallsPreventsPreStartInlineMutation)
+TEST_F(MuxConnectionIntegrationTest, MarkStartedForExternalCallsPreventsPreStartInlineMutation)
 {
     auto conn = std::make_shared<mux_connection>(
         boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 20);
@@ -739,7 +741,7 @@ TEST_F(mux_connection_integration_test, MarkStartedForExternalCallsPreventsPreSt
     EXPECT_FALSE(has_stream_for_test(conn, 303));
 }
 
-TEST_F(mux_connection_integration_test, StoppedIoContextUsesInlineQueryPaths)
+TEST_F(MuxConnectionIntegrationTest, StoppedIoContextUsesInlineQueryPaths)
 {
     config::limits_t limits_cfg;
     limits_cfg.max_streams = 2;
@@ -767,7 +769,7 @@ TEST_F(mux_connection_integration_test, StoppedIoContextUsesInlineQueryPaths)
     io_ctx().restart();
 }
 
-TEST_F(mux_connection_integration_test, StopRunsInlineWhenIoContextStopped)
+TEST_F(MuxConnectionIntegrationTest, StopRunsInlineWhenIoContextStopped)
 {
     auto conn = std::make_shared<mux_connection>(
         boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 14);
@@ -781,7 +783,7 @@ TEST_F(mux_connection_integration_test, StopRunsInlineWhenIoContextStopped)
     io_ctx().restart();
 }
 
-TEST_F(mux_connection_integration_test, StopRunsWhenIoContextNotRunning)
+TEST_F(MuxConnectionIntegrationTest, StopRunsWhenIoContextNotRunning)
 {
     auto conn = std::make_shared<mux_connection>(
         boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 16);
@@ -792,7 +794,7 @@ TEST_F(mux_connection_integration_test, StopRunsWhenIoContextNotRunning)
     EXPECT_EQ(conn->connection_state_.load(std::memory_order_acquire), mux_connection_state::kClosed);
 }
 
-TEST_F(mux_connection_integration_test, StopRunsWhenIoQueueBlocked)
+TEST_F(MuxConnectionIntegrationTest, StopRunsWhenIoQueueBlocked)
 {
     auto conn = std::make_shared<mux_connection>(
         boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 18);
@@ -850,7 +852,7 @@ TEST_F(mux_connection_integration_test, StopRunsWhenIoQueueBlocked)
     }
 }
 
-TEST_F(mux_connection_integration_test, RemoveStreamRunsWhenIoContextNotRunning)
+TEST_F(MuxConnectionIntegrationTest, RemoveStreamRunsWhenIoContextNotRunning)
 {
     config::limits_t limits_cfg;
     limits_cfg.max_streams = 4;
@@ -873,7 +875,7 @@ TEST_F(mux_connection_integration_test, RemoveStreamRunsWhenIoContextNotRunning)
     EXPECT_FALSE(has_stream_for_test(conn, 77));
 }
 
-TEST_F(mux_connection_integration_test, RemoveStreamRunsInlineWhenIoContextStopped)
+TEST_F(MuxConnectionIntegrationTest, RemoveStreamRunsInlineWhenIoContextStopped)
 {
     config::limits_t limits_cfg;
     limits_cfg.max_streams = 4;
@@ -897,7 +899,7 @@ TEST_F(mux_connection_integration_test, RemoveStreamRunsInlineWhenIoContextStopp
     EXPECT_FALSE(has_stream_for_test(conn, 78));
 }
 
-TEST_F(mux_connection_integration_test, RemoveStreamRunsWhenIoQueueBlocked)
+TEST_F(MuxConnectionIntegrationTest, RemoveStreamRunsWhenIoQueueBlocked)
 {
     config::limits_t limits_cfg;
     limits_cfg.max_streams = 4;
@@ -962,7 +964,7 @@ TEST_F(mux_connection_integration_test, RemoveStreamRunsWhenIoQueueBlocked)
     }
 }
 
-TEST_F(mux_connection_integration_test, StopConcurrentRegisterAndTryRegisterWhenIoQueueBlocked)
+TEST_F(MuxConnectionIntegrationTest, StopConcurrentRegisterAndTryRegisterWhenIoQueueBlocked)
 {
     config::limits_t limits_cfg;
     limits_cfg.max_streams = 8;
@@ -1064,7 +1066,7 @@ TEST_F(mux_connection_integration_test, StopConcurrentRegisterAndTryRegisterWhen
     }
 }
 
-TEST_F(mux_connection_integration_test, StopConcurrentRemoveWhenIoQueueBlocked)
+TEST_F(MuxConnectionIntegrationTest, StopConcurrentRemoveWhenIoQueueBlocked)
 {
     config::limits_t limits_cfg;
     limits_cfg.max_streams = 8;
@@ -1152,7 +1154,7 @@ TEST_F(mux_connection_integration_test, StopConcurrentRemoveWhenIoQueueBlocked)
     }
 }
 
-TEST_F(mux_connection_integration_test, StopDrainingAndInternalErrorBranches)
+TEST_F(MuxConnectionIntegrationTest, StopDrainingAndInternalErrorBranches)
 {
     auto conn = std::make_shared<mux_connection>(
         boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 5);
@@ -1173,7 +1175,7 @@ TEST_F(mux_connection_integration_test, StopDrainingAndInternalErrorBranches)
     EXPECT_TRUE(conn->has_dispatch_failure(std::make_error_code(std::errc::protocol_error)));
 }
 
-TEST_F(mux_connection_integration_test, HandleStreamAndUnknownStreamBranches)
+TEST_F(MuxConnectionIntegrationTest, HandleStreamAndUnknownStreamBranches)
 {
     auto conn = std::make_shared<mux_connection>(
         boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 6);
@@ -1181,7 +1183,7 @@ TEST_F(mux_connection_integration_test, HandleStreamAndUnknownStreamBranches)
     auto stream = std::make_shared<simple_mock_stream>();
     EXPECT_TRUE(conn->register_stream_local(100, stream));
 
-    std::vector<std::uint8_t> ack_payload = {1, 2, 3};
+    std::vector<std::uint8_t> const ack_payload = {1, 2, 3};
     const frame_header ack_header{
         .stream_id = 100,
         .length = static_cast<std::uint16_t>(ack_payload.size()),
@@ -1205,7 +1207,7 @@ TEST_F(mux_connection_integration_test, HandleStreamAndUnknownStreamBranches)
     io_ctx().poll();
 }
 
-TEST_F(mux_connection_integration_test, SynCallbackAndReadGuardBranches)
+TEST_F(MuxConnectionIntegrationTest, SynCallbackAndReadGuardBranches)
 {
     auto conn = std::make_shared<mux_connection>(
         boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 7);
@@ -1240,7 +1242,7 @@ TEST_F(mux_connection_integration_test, SynCallbackAndReadGuardBranches)
     EXPECT_TRUE(conn->should_stop_read(boost::asio::error::operation_aborted, 0));
 }
 
-TEST_F(mux_connection_integration_test, ResetStreamsAndDispatchFailureBranches)
+TEST_F(MuxConnectionIntegrationTest, ResetStreamsAndDispatchFailureBranches)
 {
     auto conn = std::make_shared<mux_connection>(
         boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 8);
@@ -1257,7 +1259,7 @@ TEST_F(mux_connection_integration_test, ResetStreamsAndDispatchFailureBranches)
     EXPECT_TRUE(conn->has_dispatch_failure(std::make_error_code(std::errc::protocol_error)));
 }
 
-TEST_F(mux_connection_integration_test, TryRegisterNullAndCloseSocketErrorBranches)
+TEST_F(MuxConnectionIntegrationTest, TryRegisterNullAndCloseSocketErrorBranches)
 {
     auto conn = std::make_shared<mux_connection>(
         boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 9);
@@ -1281,7 +1283,7 @@ TEST_F(mux_connection_integration_test, TryRegisterNullAndCloseSocketErrorBranch
     EXPECT_EQ(conn->connection_state_.load(std::memory_order_acquire), mux_connection_state::kClosed);
 }
 
-TEST_F(mux_connection_integration_test, StreamStorageNullFallbackPaths)
+TEST_F(MuxConnectionIntegrationTest, StreamStorageNullFallbackPaths)
 {
     auto conn = std::make_shared<mux_connection>(
         boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 23);
@@ -1301,7 +1303,7 @@ TEST_F(mux_connection_integration_test, StreamStorageNullFallbackPaths)
     EXPECT_TRUE(conn->has_stream_local(501));
 }
 
-TEST_F(mux_connection_integration_test, TryRegisterLocalNullStorageAndLimitBranches)
+TEST_F(MuxConnectionIntegrationTest, TryRegisterLocalNullStorageAndLimitBranches)
 {
     config::limits_t limits_cfg;
     limits_cfg.max_streams = 1;
@@ -1324,7 +1326,7 @@ TEST_F(mux_connection_integration_test, TryRegisterLocalNullStorageAndLimitBranc
     EXPECT_FALSE(conn->has_stream_local(602));
 }
 
-TEST_F(mux_connection_integration_test, CanAcceptStreamLocalAndPublicLimitBranches)
+TEST_F(MuxConnectionIntegrationTest, CanAcceptStreamLocalAndPublicLimitBranches)
 {
     config::limits_t unlimited_limits;
     unlimited_limits.max_streams = 0;
@@ -1347,3 +1349,5 @@ TEST_F(mux_connection_integration_test, CanAcceptStreamLocalAndPublicLimitBranch
 }
 
 }    // namespace
+// NOLINTEND(bugprone-unused-return-value, misc-include-cleaner)
+// NOLINTEND(google-build-using-namespace, misc-unused-parameters, readability-container-contains, readability-function-cognitive-complexity, readability-static-accessed-through-instance)

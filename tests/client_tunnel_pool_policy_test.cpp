@@ -1,3 +1,5 @@
+// NOLINTBEGIN(bugprone-implicit-widening-of-multiplication-result)
+// NOLINTBEGIN(misc-include-cleaner)
 #include <chrono>
 #include <memory>
 #include <string>
@@ -145,7 +147,7 @@ class scoped_pool_runner
     return cert_der;
 }
 
-class client_tunnel_pool_policy_test : public ::testing::Test
+class ClientTunnelPoolPolicyTest : public ::testing::Test
 {
    protected:
     void SetUp() override
@@ -165,12 +167,12 @@ class client_tunnel_pool_policy_test : public ::testing::Test
     std::string client_public_key_;
 };
 
-TEST_F(client_tunnel_pool_policy_test, DummyCertificateAllowedWhenStrictVerifyDisabled)
+TEST_F(ClientTunnelPoolPolicyTest, DummyCertificateAllowedWhenStrictVerifyDisabled)
 {
-    boost::system::error_code ec;
+    boost::system::error_code const ec;
     mux::io_context_pool pool(2);
     ASSERT_FALSE(ec);
-    scoped_pool_runner runner(pool);
+    scoped_pool_runner const runner(pool);
 
     const std::string sni = "www.google.com";
     const std::string short_id = "0102030405060708";
@@ -210,12 +212,12 @@ TEST_F(client_tunnel_pool_policy_test, DummyCertificateAllowedWhenStrictVerifyDi
     server->stop();
 }
 
-TEST_F(client_tunnel_pool_policy_test, DummyCertificateRejectedWhenStrictVerifyEnabled)
+TEST_F(ClientTunnelPoolPolicyTest, DummyCertificateRejectedWhenStrictVerifyEnabled)
 {
-    boost::system::error_code ec;
+    boost::system::error_code const ec;
     mux::io_context_pool pool(2);
     ASSERT_FALSE(ec);
-    scoped_pool_runner runner(pool);
+    scoped_pool_runner const runner(pool);
 
     const std::string sni = "www.google.com";
     const std::string short_id = "0102030405060708";
@@ -255,12 +257,12 @@ TEST_F(client_tunnel_pool_policy_test, DummyCertificateRejectedWhenStrictVerifyE
     server->stop();
 }
 
-TEST_F(client_tunnel_pool_policy_test, StrictVerifyEnabledWithValidCertificateChainShouldPass)
+TEST_F(ClientTunnelPoolPolicyTest, StrictVerifyEnabledWithValidCertificateChainShouldPass)
 {
-    boost::system::error_code ec;
+    boost::system::error_code const ec;
     mux::io_context_pool pool(2);
     ASSERT_FALSE(ec);
-    scoped_pool_runner runner(pool);
+    scoped_pool_runner const runner(pool);
 
     const std::string sni = "www.google.com";
     const std::string short_id = "0102030405060708";
@@ -303,3 +305,5 @@ TEST_F(client_tunnel_pool_policy_test, StrictVerifyEnabledWithValidCertificateCh
 }
 
 }    // namespace
+// NOLINTEND(misc-include-cleaner)
+// NOLINTEND(bugprone-implicit-widening-of-multiplication-result)

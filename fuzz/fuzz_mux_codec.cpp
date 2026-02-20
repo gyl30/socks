@@ -3,6 +3,7 @@
 #include <cstdint>
 
 #include "mux_codec.h"
+#include "mux_protocol.h"
 
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
 {

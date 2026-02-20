@@ -1,3 +1,5 @@
+// NOLINTBEGIN(bugprone-narrowing-conversions)
+// NOLINTBEGIN(bugprone-unused-return-value, misc-include-cleaner)
 #include <atomic>
 #include <chrono>
 #include <memory>
@@ -8,6 +10,7 @@
 #include <optional>
 
 #include <gtest/gtest.h>
+#include <boost/asio/read.hpp>
 #include <boost/asio/write.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/ip/udp.hpp>
@@ -18,9 +21,11 @@
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/cancellation_signal.hpp>
+#include <boost/asio/bind_cancellation_slot.hpp>
 
 #include "mux_codec.h"
 #include "protocol.h"
+#include "log.h"
 #include "crypto_util.h"
 #include "context_pool.h"
 #include "socks_client.h"
@@ -31,7 +36,7 @@ using mux::io_context_pool;
 using mux::socks_client;
 using mux::remote_server;
 
-class udp_integration_test : public ::testing::Test
+class UdpIntegrationTest : public ::testing::Test
 {
    protected:
     void SetUp() override
@@ -332,7 +337,7 @@ static boost::asio::awaitable<void> run_udp_associate_echo_flow(const std::uint1
     test_failed = !echo_ok;
 }
 
-TEST_F(udp_integration_test, UdpAssociateAndEcho)
+TEST_F(UdpIntegrationTest, UdpAssociateAndEcho)
 {
     boost::system::error_code ec;
     io_context_pool pool(4);
@@ -351,7 +356,7 @@ TEST_F(udp_integration_test, UdpAssociateAndEcho)
 
     auto server = std::make_shared<remote_server>(pool, cfg);
     const auto dummy_cert = reality::construct_certificate({0x01, 0x02, 0x03});
-    reality::server_fingerprint dummy_fp;
+    reality::server_fingerprint const dummy_fp;
     server->set_certificate(sni, dummy_cert, dummy_fp);
     server->start();
     const auto server_port = server->listen_port();
@@ -431,7 +436,7 @@ TEST_F(udp_integration_test, UdpAssociateAndEcho)
     EXPECT_FALSE(test_failed.load());
 }
 
-TEST_F(udp_integration_test, UdpAssociateIgnoresFragmentedPacketAndKeepsSessionAlive)
+TEST_F(UdpIntegrationTest, UdpAssociateIgnoresFragmentedPacketAndKeepsSessionAlive)
 {
     boost::system::error_code ec;
     io_context_pool pool(4);
@@ -449,7 +454,7 @@ TEST_F(udp_integration_test, UdpAssociateIgnoresFragmentedPacketAndKeepsSessionA
     server_cfg.timeout.idle = 10;
     auto server = std::make_shared<remote_server>(pool, server_cfg);
     const auto dummy_cert = reality::construct_certificate({0x01, 0x02, 0x03});
-    reality::server_fingerprint dummy_fp;
+    reality::server_fingerprint const dummy_fp;
     server->set_certificate(sni, dummy_cert, dummy_fp);
     server->start();
     const auto server_port = server->listen_port();
@@ -600,3 +605,5 @@ TEST_F(udp_integration_test, UdpAssociateIgnoresFragmentedPacketAndKeepsSessionA
         pool_thread.join();
     }
 }
+// NOLINTEND(bugprone-unused-return-value, misc-include-cleaner)
+// NOLINTEND(bugprone-narrowing-conversions)

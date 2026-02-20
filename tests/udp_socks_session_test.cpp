@@ -1,3 +1,5 @@
+// NOLINTBEGIN(performance-unnecessary-value-param)
+// NOLINTBEGIN(bugprone-unused-return-value, misc-include-cleaner)
 #include <thread>
 #include <chrono>
 #include <future>
@@ -89,32 +91,32 @@ void mock_next_getsockname_ipv6_any()
     g_mock_getsockname_ipv6_any_once.store(true, std::memory_order_release);
 }
 
-extern "C" int __real_close(int fd);
-extern "C" int __real_bind(int sockfd, const sockaddr* addr, socklen_t addrlen);
-extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);
-extern "C" int __real_getsockname(int sockfd, sockaddr* addr, socklen_t* addrlen);
+extern "C" int __real_close(int fd);  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_bind(int sockfd, const sockaddr* addr, socklen_t addrlen);  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_getsockname(int sockfd, sockaddr* addr, socklen_t* addrlen);  // NOLINT(bugprone-reserved-identifier)
 
-extern "C" int __wrap_close(int fd)
+extern "C" int __wrap_close(int fd)  // NOLINT(bugprone-reserved-identifier)
 {
     if (g_fail_close_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_close_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_close(fd);
+    return __real_close(fd);  // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_bind(int sockfd, const sockaddr* addr, socklen_t addrlen)
+extern "C" int __wrap_bind(int sockfd, const sockaddr* addr, socklen_t addrlen)  // NOLINT(bugprone-reserved-identifier)
 {
     if (g_fail_bind_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_bind_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_bind(sockfd, addr, addrlen);
+    return __real_bind(sockfd, addr, addrlen);  // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)
+extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)  // NOLINT(bugprone-reserved-identifier)
 {
     if (g_fail_setsockopt_once.exchange(false, std::memory_order_acq_rel)
         && level == g_fail_setsockopt_level.load(std::memory_order_acquire))
@@ -122,15 +124,15 @@ extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void*
         const int configured_optname = g_fail_setsockopt_optname.load(std::memory_order_acquire);
         if (configured_optname >= 0 && optname != configured_optname)
         {
-            return __real_setsockopt(sockfd, level, optname, optval, optlen);
+            return __real_setsockopt(sockfd, level, optname, optval, optlen);  // NOLINT(bugprone-reserved-identifier)
         }
         errno = g_fail_setsockopt_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_setsockopt(sockfd, level, optname, optval, optlen);
+    return __real_setsockopt(sockfd, level, optname, optval, optlen);  // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_getsockname(int sockfd, sockaddr* addr, socklen_t* addrlen)
+extern "C" int __wrap_getsockname(int sockfd, sockaddr* addr, socklen_t* addrlen)  // NOLINT(bugprone-reserved-identifier)
 {
     if (g_mock_getsockname_ipv6_any_once.exchange(false, std::memory_order_acq_rel))
     {
@@ -158,7 +160,7 @@ extern "C" int __wrap_getsockname(int sockfd, sockaddr* addr, socklen_t* addrlen
             return -1;
         }
     }
-    return __real_getsockname(sockfd, addr, addrlen);
+    return __real_getsockname(sockfd, addr, addrlen);  // NOLINT(bugprone-reserved-identifier)
 }
 
 struct tcp_socket_pair
@@ -172,7 +174,7 @@ tcp_socket_pair make_tcp_socket_pair(boost::asio::io_context& ctx)
     boost::asio::ip::tcp::acceptor acceptor(ctx);
     if (!mux::test::open_ephemeral_tcp_acceptor(acceptor))
     {
-        return tcp_socket_pair{boost::asio::ip::tcp::socket(ctx), boost::asio::ip::tcp::socket(ctx)};
+        return tcp_socket_pair{.client = boost::asio::ip::tcp::socket(ctx), .server = boost::asio::ip::tcp::socket(ctx)};
     }
     boost::asio::ip::tcp::socket client(ctx);
     boost::asio::ip::tcp::socket server(ctx);
@@ -181,14 +183,14 @@ tcp_socket_pair make_tcp_socket_pair(boost::asio::io_context& ctx)
     client.connect(acceptor.local_endpoint(), ec);
     if (ec)
     {
-        return tcp_socket_pair{boost::asio::ip::tcp::socket(ctx), boost::asio::ip::tcp::socket(ctx)};
+        return tcp_socket_pair{.client = boost::asio::ip::tcp::socket(ctx), .server = boost::asio::ip::tcp::socket(ctx)};
     }
     acceptor.accept(server, ec);
     if (ec)
     {
-        return tcp_socket_pair{boost::asio::ip::tcp::socket(ctx), boost::asio::ip::tcp::socket(ctx)};
+        return tcp_socket_pair{.client = boost::asio::ip::tcp::socket(ctx), .server = boost::asio::ip::tcp::socket(ctx)};
     }
-    return tcp_socket_pair{std::move(client), std::move(server)};
+    return tcp_socket_pair{.client = std::move(client), .server = std::move(server)};
 }
 
 std::shared_ptr<mux::mux_tunnel_impl<boost::asio::ip::tcp::socket>> make_test_tunnel(boost::asio::io_context& io_context,
@@ -203,7 +205,7 @@ std::shared_ptr<mux::mux_tunnel_impl<boost::asio::ip::tcp::socket>> make_test_tu
 TEST(UdpSocksSessionTest, PrepareUdpAssociateFailureBranches)
 {
     boost::asio::io_context ctx;
-    mux::config::timeout_t timeout_cfg;
+    mux::config::timeout_t const timeout_cfg;
 
     auto session_with_closed_tcp =
         std::make_shared<mux::udp_socks_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, 1, timeout_cfg);
@@ -251,7 +253,7 @@ TEST(UdpSocksSessionTest, PrepareUdpAssociateFailureBranches)
 TEST(UdpSocksSessionTest, ShouldStopStreamToUdpCoversExpectedAndUnexpectedErrors)
 {
     boost::asio::io_context ctx;
-    mux::config::timeout_t timeout_cfg;
+    mux::config::timeout_t const timeout_cfg;
     auto session = std::make_shared<mux::udp_socks_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, 30, timeout_cfg);
 
     EXPECT_FALSE(session->should_stop_stream_to_udp(boost::system::error_code{}, std::vector<std::uint8_t>{0x01}));
@@ -264,7 +266,7 @@ TEST(UdpSocksSessionTest, ShouldStopStreamToUdpCoversExpectedAndUnexpectedErrors
 TEST(UdpSocksSessionTest, ForwardAndReceiveStopBranches)
 {
     boost::asio::io_context ctx;
-    mux::config::timeout_t timeout_cfg;
+    mux::config::timeout_t const timeout_cfg;
     auto session = std::make_shared<mux::udp_socks_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, 3, timeout_cfg);
 
     EXPECT_TRUE(session->should_stop_stream_to_udp(boost::asio::error::connection_reset, {}));
@@ -286,7 +288,7 @@ TEST(UdpSocksSessionTest, ForwardAndReceiveStopBranches)
 TEST(UdpSocksSessionTest, StreamToUdpSockForwardsDataToTrackedEndpoint)
 {
     boost::asio::io_context ctx;
-    mux::config::timeout_t timeout_cfg;
+    mux::config::timeout_t const timeout_cfg;
     auto session = std::make_shared<mux::udp_socks_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, 31, timeout_cfg);
 
     boost::system::error_code ec;
@@ -328,7 +330,7 @@ TEST(UdpSocksSessionTest, StreamToUdpSockForwardsDataToTrackedEndpoint)
 TEST(UdpSocksSessionTest, ForwardStreamDataToClientHandlesZeroPortAndSendError)
 {
     boost::asio::io_context ctx;
-    mux::config::timeout_t timeout_cfg;
+    mux::config::timeout_t const timeout_cfg;
     auto session = std::make_shared<mux::udp_socks_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, 32, timeout_cfg);
 
     session->has_client_ep_ = true;
@@ -342,7 +344,7 @@ TEST(UdpSocksSessionTest, ForwardStreamDataToClientHandlesZeroPortAndSendError)
 TEST(UdpSocksSessionTest, UdpSockToStreamValidationBranches)
 {
     boost::asio::io_context ctx;
-    mux::config::timeout_t timeout_cfg;
+    mux::config::timeout_t const timeout_cfg;
     auto session = std::make_shared<mux::udp_socks_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, 4, timeout_cfg);
 
     boost::system::error_code ec;
@@ -430,7 +432,7 @@ TEST(UdpSocksSessionTest, UdpSockToStreamValidationBranches)
 
 TEST(UdpSocksSessionTest, KeepTcpAliveCoversExpectedErrorCodes)
 {
-    mux::config::timeout_t timeout_cfg;
+    mux::config::timeout_t const timeout_cfg;
 
     {
         boost::asio::io_context ctx;
@@ -507,7 +509,7 @@ TEST(UdpSocksSessionTest, IdleWatchdogDisabledWhenIdleTimeoutZero)
 TEST(UdpSocksSessionTest, PrepareUdpAssociateHandlesBindFailureAndStartPath)
 {
     boost::asio::io_context ctx;
-    mux::config::timeout_t timeout_cfg;
+    mux::config::timeout_t const timeout_cfg;
     auto pair = make_tcp_socket_pair(ctx);
     ASSERT_TRUE(pair.client.is_open());
     ASSERT_TRUE(pair.server.is_open());
@@ -531,7 +533,7 @@ TEST(UdpSocksSessionTest, PrepareUdpAssociateHandlesBindFailureAndStartPath)
 TEST(UdpSocksSessionTest, PrepareUdpAssociateHandlesUdpLocalEndpointFailure)
 {
     boost::asio::io_context ctx;
-    mux::config::timeout_t timeout_cfg;
+    mux::config::timeout_t const timeout_cfg;
     auto pair = make_tcp_socket_pair(ctx);
     ASSERT_TRUE(pair.client.is_open());
     ASSERT_TRUE(pair.server.is_open());
@@ -555,7 +557,7 @@ TEST(UdpSocksSessionTest, PrepareUdpAssociateHandlesUdpLocalEndpointFailure)
 TEST(UdpSocksSessionTest, PrepareUdpAssociateHandlesIpv6V6OnlyOptionFailure)
 {
     boost::asio::io_context ctx;
-    mux::config::timeout_t timeout_cfg;
+    mux::config::timeout_t const timeout_cfg;
     auto pair = make_tcp_socket_pair(ctx);
     ASSERT_TRUE(pair.client.is_open());
     ASSERT_TRUE(pair.server.is_open());
@@ -580,7 +582,7 @@ TEST(UdpSocksSessionTest, PrepareUdpAssociateHandlesIpv6V6OnlyOptionFailure)
 TEST(UdpSocksSessionTest, PrepareUdpAssociateHandlesNullTunnelConnection)
 {
     boost::asio::io_context ctx;
-    mux::config::timeout_t timeout_cfg;
+    mux::config::timeout_t const timeout_cfg;
     auto pair = make_tcp_socket_pair(ctx);
     ASSERT_TRUE(pair.client.is_open());
     ASSERT_TRUE(pair.server.is_open());
@@ -603,7 +605,7 @@ TEST(UdpSocksSessionTest, PrepareUdpAssociateHandlesNullTunnelConnection)
 TEST(UdpSocksSessionTest, PrepareUdpAssociateHandlesClosedTunnelConnection)
 {
     boost::asio::io_context ctx;
-    mux::config::timeout_t timeout_cfg;
+    mux::config::timeout_t const timeout_cfg;
     auto pair = make_tcp_socket_pair(ctx);
     ASSERT_TRUE(pair.client.is_open());
     ASSERT_TRUE(pair.server.is_open());
@@ -628,7 +630,7 @@ TEST(UdpSocksSessionTest, PrepareUdpAssociateHandlesClosedTunnelConnection)
 TEST(UdpSocksSessionTest, PrepareUdpAssociateSynFailureRemovesCreatedStream)
 {
     boost::asio::io_context ctx;
-    mux::config::timeout_t timeout_cfg;
+    mux::config::timeout_t const timeout_cfg;
     auto pair = make_tcp_socket_pair(ctx);
     ASSERT_TRUE(pair.client.is_open());
     ASSERT_TRUE(pair.server.is_open());
@@ -662,7 +664,7 @@ TEST(UdpSocksSessionTest, PrepareUdpAssociateSynFailureRemovesCreatedStream)
 TEST(UdpSocksSessionTest, PrepareUdpAssociateAckFailureRemovesCreatedStream)
 {
     boost::asio::io_context ctx;
-    mux::config::timeout_t timeout_cfg;
+    mux::config::timeout_t const timeout_cfg;
     auto pair = make_tcp_socket_pair(ctx);
     ASSERT_TRUE(pair.client.is_open());
     ASSERT_TRUE(pair.server.is_open());
@@ -705,7 +707,7 @@ TEST(UdpSocksSessionTest, PrepareUdpAssociateAckFailureRemovesCreatedStream)
 TEST(UdpSocksSessionTest, PrepareUdpAssociateSuccessReplyFailureCleansUpSessionAndStream)
 {
     boost::asio::io_context ctx;
-    mux::config::timeout_t timeout_cfg;
+    mux::config::timeout_t const timeout_cfg;
     auto pair = make_tcp_socket_pair(ctx);
     ASSERT_TRUE(pair.client.is_open());
     ASSERT_TRUE(pair.server.is_open());
@@ -759,7 +761,7 @@ TEST(UdpSocksSessionTest, PrepareUdpAssociateSuccessReplyFailureCleansUpSessionA
 TEST(UdpSocksSessionTest, StartSpawnsRunAndWritesHostUnreachWhenTunnelUnavailable)
 {
     boost::asio::io_context ctx;
-    mux::config::timeout_t timeout_cfg;
+    mux::config::timeout_t const timeout_cfg;
     auto pair = make_tcp_socket_pair(ctx);
     ASSERT_TRUE(pair.client.is_open());
     ASSERT_TRUE(pair.server.is_open());
@@ -777,7 +779,7 @@ TEST(UdpSocksSessionTest, StartSpawnsRunAndWritesHostUnreachWhenTunnelUnavailabl
 TEST(UdpSocksSessionTest, RunReturnsWhenAlreadyClosed)
 {
     boost::asio::io_context ctx;
-    mux::config::timeout_t timeout_cfg;
+    mux::config::timeout_t const timeout_cfg;
     auto pair = make_tcp_socket_pair(ctx);
     ASSERT_TRUE(pair.client.is_open());
     ASSERT_TRUE(pair.server.is_open());
@@ -801,7 +803,7 @@ TEST(UdpSocksSessionTest, RunReturnsWhenAlreadyClosed)
 
 TEST(UdpSocksSessionTest, PrepareAndFinalizeUdpAssociateSuccess)
 {
-    mux::config::timeout_t timeout_cfg;
+    mux::config::timeout_t const timeout_cfg;
     boost::asio::io_context ctx;
     auto pair = make_tcp_socket_pair(ctx);
     ASSERT_TRUE(pair.client.is_open());
@@ -831,7 +833,7 @@ TEST(UdpSocksSessionTest, PrepareAndFinalizeUdpAssociateSuccess)
                       boost::asio::post(ctx, [stream, ack_data]() { stream->on_data(ack_data); });
                       return true;
                   });
-    testing::Sequence cleanup_seq;
+    testing::Sequence const cleanup_seq;
     EXPECT_CALL(*mock_conn, mock_send_async(testing::_, mux::kCmdFin, std::vector<std::uint8_t>{}))
         .InSequence(cleanup_seq)
         .WillOnce(testing::Return(boost::system::error_code{}));
@@ -855,7 +857,7 @@ TEST(UdpSocksSessionTest, PrepareAndFinalizeUdpAssociateSuccess)
 TEST(UdpSocksSessionTest, CloseImplLogsCloseFailureBranch)
 {
     boost::asio::io_context ctx;
-    mux::config::timeout_t timeout_cfg;
+    mux::config::timeout_t const timeout_cfg;
     auto session = std::make_shared<mux::udp_socks_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, 5, timeout_cfg);
 
     boost::system::error_code ec;
@@ -881,7 +883,7 @@ TEST(UdpSocksSessionTest, CloseImplLogsCloseFailureBranch)
 TEST(UdpSocksSessionTest, OnCloseRunsInlineWhenIoContextStopped)
 {
     boost::asio::io_context ctx;
-    mux::config::timeout_t timeout_cfg;
+    mux::config::timeout_t const timeout_cfg;
     auto session = std::make_shared<mux::udp_socks_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, 45, timeout_cfg);
 
     boost::system::error_code ec;
@@ -900,7 +902,7 @@ TEST(UdpSocksSessionTest, OnCloseRunsInlineWhenIoContextStopped)
 TEST(UdpSocksSessionTest, OnDataTriggersCloseWhenIoContextStopped)
 {
     boost::asio::io_context ctx;
-    mux::config::timeout_t timeout_cfg;
+    mux::config::timeout_t const timeout_cfg;
     auto session = std::make_shared<mux::udp_socks_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, 48, timeout_cfg);
 
     boost::system::error_code ec;
@@ -921,7 +923,7 @@ TEST(UdpSocksSessionTest, OnDataTriggersCloseWhenIoContextStopped)
 TEST(UdpSocksSessionTest, OnDataDispatchesFromForeignThread)
 {
     boost::asio::io_context ctx;
-    mux::config::timeout_t timeout_cfg;
+    mux::config::timeout_t const timeout_cfg;
     auto session = std::make_shared<mux::udp_socks_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, 58, timeout_cfg);
 
     std::promise<std::vector<std::uint8_t>> received_promise;
@@ -962,7 +964,7 @@ TEST(UdpSocksSessionTest, OnDataDispatchesFromForeignThread)
 TEST(UdpSocksSessionTest, OnCloseRunsWhenIoContextNotRunning)
 {
     boost::asio::io_context ctx;
-    mux::config::timeout_t timeout_cfg;
+    mux::config::timeout_t const timeout_cfg;
     auto session = std::make_shared<mux::udp_socks_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, 46, timeout_cfg);
 
     boost::system::error_code ec;
@@ -980,7 +982,7 @@ TEST(UdpSocksSessionTest, OnCloseRunsWhenIoContextNotRunning)
 TEST(UdpSocksSessionTest, OnDataTriggersCloseWhenIoContextNotRunning)
 {
     boost::asio::io_context ctx;
-    mux::config::timeout_t timeout_cfg;
+    mux::config::timeout_t const timeout_cfg;
     auto session = std::make_shared<mux::udp_socks_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, 50, timeout_cfg);
 
     boost::system::error_code ec;
@@ -1000,7 +1002,7 @@ TEST(UdpSocksSessionTest, OnDataTriggersCloseWhenIoContextNotRunning)
 TEST(UdpSocksSessionTest, OnDataTriggersCloseWhenIoQueueBlocked)
 {
     boost::asio::io_context ctx;
-    mux::config::timeout_t timeout_cfg;
+    mux::config::timeout_t const timeout_cfg;
     auto session = std::make_shared<mux::udp_socks_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, 49, timeout_cfg);
 
     boost::system::error_code ec;
@@ -1062,7 +1064,7 @@ TEST(UdpSocksSessionTest, OnDataTriggersCloseWhenIoQueueBlocked)
 TEST(UdpSocksSessionTest, OnCloseRunsWhenIoQueueBlocked)
 {
     boost::asio::io_context ctx;
-    mux::config::timeout_t timeout_cfg;
+    mux::config::timeout_t const timeout_cfg;
     auto session = std::make_shared<mux::udp_socks_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, 47, timeout_cfg);
 
     boost::system::error_code ec;
@@ -1118,3 +1120,5 @@ TEST(UdpSocksSessionTest, OnCloseRunsWhenIoQueueBlocked)
         io_thread.join();
     }
 }
+// NOLINTEND(bugprone-unused-return-value, misc-include-cleaner)
+// NOLINTEND(performance-unnecessary-value-param)

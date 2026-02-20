@@ -1,3 +1,4 @@
+// NOLINTBEGIN(bugprone-unchecked-optional-access, misc-include-cleaner)
 #include <cerrno>
 #include <array>
 #include <atomic>
@@ -16,7 +17,7 @@
 
 #include "net_utils.h"
 
-extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);
+extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);  // NOLINT(bugprone-reserved-identifier)
 
 namespace
 {
@@ -57,7 +58,7 @@ bool is_force_success_option(const int level, const int optname)
 
 }    // namespace
 
-extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)
+extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)  // NOLINT(bugprone-reserved-identifier)
 {
     if (g_fail_setsockopt_once.load(std::memory_order_acquire) && g_fail_level.load(std::memory_order_acquire) == level
         && g_fail_optname.load(std::memory_order_acquire) == optname)
@@ -70,13 +71,13 @@ extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void*
     {
         return 0;
     }
-    return __real_setsockopt(sockfd, level, optname, optval, optlen);
+    return __real_setsockopt(sockfd, level, optname, optval, optlen);  // NOLINT(bugprone-reserved-identifier)
 }
 
 namespace mux::net
 {
 
-TEST(net_utils_test, endpoint_from_sockaddr_ipv4)
+TEST(NetUtilsTest, EndpointFromSockaddrIpv4)
 {
     sockaddr_in addr4{};
     addr4.sin_family = AF_INET;
@@ -91,7 +92,7 @@ TEST(net_utils_test, endpoint_from_sockaddr_ipv4)
     EXPECT_EQ(endpoint.port(), 1080);
 }
 
-TEST(net_utils_test, endpoint_from_sockaddr_ipv6)
+TEST(NetUtilsTest, EndpointFromSockaddrIpv6)
 {
     sockaddr_in6 addr6{};
     addr6.sin6_family = AF_INET6;
@@ -106,7 +107,7 @@ TEST(net_utils_test, endpoint_from_sockaddr_ipv6)
     EXPECT_EQ(endpoint.port(), 5353);
 }
 
-TEST(net_utils_test, endpoint_from_sockaddr_ipv4_truncated_len)
+TEST(NetUtilsTest, EndpointFromSockaddrIpv4TruncatedLen)
 {
     sockaddr_in addr4{};
     addr4.sin_family = AF_INET;
@@ -121,7 +122,7 @@ TEST(net_utils_test, endpoint_from_sockaddr_ipv4_truncated_len)
     EXPECT_EQ(endpoint.port(), 0);
 }
 
-TEST(net_utils_test, endpoint_from_sockaddr_ipv6_truncated_len)
+TEST(NetUtilsTest, EndpointFromSockaddrIpv6TruncatedLen)
 {
     sockaddr_in6 addr6{};
     addr6.sin6_family = AF_INET6;
@@ -136,7 +137,7 @@ TEST(net_utils_test, endpoint_from_sockaddr_ipv6_truncated_len)
     EXPECT_EQ(endpoint.port(), 0);
 }
 
-TEST(net_utils_test, endpoint_from_sockaddr_unknown_family)
+TEST(NetUtilsTest, EndpointFromSockaddrUnknownFamily)
 {
     sockaddr_storage storage{};
     storage.ss_family = AF_UNSPEC;
@@ -146,7 +147,7 @@ TEST(net_utils_test, endpoint_from_sockaddr_unknown_family)
     EXPECT_EQ(endpoint.port(), 0);
 }
 
-TEST(net_utils_test, set_socket_mark_zero_short_circuit)
+TEST(NetUtilsTest, SetSocketMarkZeroShortCircuit)
 {
     const auto result = set_socket_mark(-1, 0);
 #ifdef __linux__
@@ -157,7 +158,7 @@ TEST(net_utils_test, set_socket_mark_zero_short_circuit)
 #endif
 }
 
-TEST(net_utils_test, set_socket_mark_invalid_fd)
+TEST(NetUtilsTest, SetSocketMarkInvalidFd)
 {
     const auto result = set_socket_mark(-1, 1);
     EXPECT_FALSE(result.has_value());
@@ -168,7 +169,7 @@ TEST(net_utils_test, set_socket_mark_invalid_fd)
 #endif
 }
 
-TEST(net_utils_test, set_socket_transparent_invalid_fd)
+TEST(NetUtilsTest, SetSocketTransparentInvalidFd)
 {
     const auto result = set_socket_transparent(-1, true);
     EXPECT_FALSE(result.has_value());
@@ -179,7 +180,7 @@ TEST(net_utils_test, set_socket_transparent_invalid_fd)
 #endif
 }
 
-TEST(net_utils_test, set_socket_recv_origdst_invalid_fd)
+TEST(NetUtilsTest, SetSocketRecvOrigdstInvalidFd)
 {
     const auto result = set_socket_recv_origdst(-1, true);
     EXPECT_FALSE(result.has_value());
@@ -190,7 +191,7 @@ TEST(net_utils_test, set_socket_recv_origdst_invalid_fd)
 #endif
 }
 
-TEST(net_utils_test, normalize_address_v4_mapped_v6)
+TEST(NetUtilsTest, NormalizeAddressV4MappedV6)
 {
     const auto mapped = boost::asio::ip::make_address("::ffff:127.0.0.1");
     const auto normalized = normalize_address(mapped);
@@ -199,7 +200,7 @@ TEST(net_utils_test, normalize_address_v4_mapped_v6)
     EXPECT_EQ(normalized.to_string(), "127.0.0.1");
 }
 
-TEST(net_utils_test, parse_original_dst_no_control_message)
+TEST(NetUtilsTest, ParseOriginalDstNoControlMessage)
 {
     msghdr msg{};
     msg.msg_control = nullptr;
@@ -210,7 +211,7 @@ TEST(net_utils_test, parse_original_dst_no_control_message)
 }
 
 #ifdef __linux__
-TEST(net_utils_test, parse_original_dst_ipv4_success)
+TEST(NetUtilsTest, ParseOriginalDstIpv4Success)
 {
     std::array<std::byte, CMSG_SPACE(sizeof(sockaddr_in))> control{};
     msghdr msg{};
@@ -235,7 +236,7 @@ TEST(net_utils_test, parse_original_dst_ipv4_success)
     EXPECT_EQ(parsed->port(), 5353);
 }
 
-TEST(net_utils_test, parse_original_dst_ipv6_success)
+TEST(NetUtilsTest, ParseOriginalDstIpv6Success)
 {
     std::array<std::byte, CMSG_SPACE(sizeof(sockaddr_in6))> control{};
     msghdr msg{};
@@ -260,7 +261,7 @@ TEST(net_utils_test, parse_original_dst_ipv6_success)
     EXPECT_EQ(parsed->port(), 5353);
 }
 
-TEST(net_utils_test, parse_original_dst_truncated_control_payload)
+TEST(NetUtilsTest, ParseOriginalDstTruncatedControlPayload)
 {
     std::array<std::byte, CMSG_SPACE(sizeof(sockaddr_in6))> control{};
     msghdr msg{};
@@ -277,7 +278,7 @@ TEST(net_utils_test, parse_original_dst_truncated_control_payload)
     EXPECT_FALSE(parsed.has_value());
 }
 
-TEST(net_utils_test, parse_original_dst_ipv4_truncated_control_payload)
+TEST(NetUtilsTest, ParseOriginalDstIpv4TruncatedControlPayload)
 {
     std::array<std::byte, CMSG_SPACE(sizeof(sockaddr_in))> control{};
     msghdr msg{};
@@ -294,7 +295,7 @@ TEST(net_utils_test, parse_original_dst_ipv4_truncated_control_payload)
     EXPECT_FALSE(parsed.has_value());
 }
 
-TEST(net_utils_test, set_socket_transparent_ipv6_second_setsockopt_failure)
+TEST(NetUtilsTest, SetSocketTransparentIpv6SecondSetsockoptFailure)
 {
     reset_setsockopt_hooks();
     g_force_linux_first_opt_success.store(true, std::memory_order_release);
@@ -307,7 +308,7 @@ TEST(net_utils_test, set_socket_transparent_ipv6_second_setsockopt_failure)
     reset_setsockopt_hooks();
 }
 
-TEST(net_utils_test, set_socket_recv_origdst_ipv6_second_setsockopt_failure)
+TEST(NetUtilsTest, SetSocketRecvOrigdstIpv6SecondSetsockoptFailure)
 {
     reset_setsockopt_hooks();
     g_force_linux_first_opt_success.store(true, std::memory_order_release);
@@ -320,7 +321,7 @@ TEST(net_utils_test, set_socket_recv_origdst_ipv6_second_setsockopt_failure)
     reset_setsockopt_hooks();
 }
 
-TEST(net_utils_test, parse_original_dst_unknown_control_message)
+TEST(NetUtilsTest, ParseOriginalDstUnknownControlMessage)
 {
     std::array<std::byte, CMSG_SPACE(sizeof(sockaddr_in))> control{};
     msghdr msg{};
@@ -339,3 +340,4 @@ TEST(net_utils_test, parse_original_dst_unknown_control_message)
 #endif
 
 }    // namespace mux::net
+// NOLINTEND(bugprone-unchecked-optional-access, misc-include-cleaner)

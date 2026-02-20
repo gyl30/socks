@@ -1,3 +1,5 @@
+// NOLINTBEGIN(google-runtime-int, misc-const-correctness, modernize-use-std-numbers)
+// NOLINTBEGIN(misc-include-cleaner)
 #include <map>
 #include <string>
 #include <vector>
@@ -53,7 +55,7 @@ TEST(ReflectTest, FullRoundTrip)
     t.opt_i = 42;
     t.vec_i = {1, 2, 3};
 
-    std::string json = reflect::serialize_struct(t);
+    std::string const json = reflect::serialize_struct(t);
     reflect::test_struct t2;
     ASSERT_TRUE(reflect::deserialize_struct(t2, json));
 
@@ -78,7 +80,7 @@ TEST(ReflectTest, OptionalMissing)
 {
     reflect::test_struct t{};
     t.opt_i = std::nullopt;
-    std::string json = reflect::serialize_struct(t);
+    std::string const json = reflect::serialize_struct(t);
 
     EXPECT_EQ(json.find("opt_i"), std::string::npos);
 
@@ -91,7 +93,7 @@ TEST(ReflectTest, OptionalMissing)
 TEST(ReflectTest, OptionalExplicitNull)
 {
     reflect::test_struct t;
-    std::string json = R"({"opt_i": null})";
+    std::string const json = R"({"opt_i": null})";
     reflect::test_struct t2;
     t2.opt_i = 100;
     ASSERT_TRUE(reflect::deserialize_struct(t2, json));
@@ -126,8 +128,8 @@ TEST(ReflectTest, TypeMismatch)
 
 TEST(ReflectTest, JsonNullType)
 {
-    reflect::JsonNull n;
-    std::string json = reflect::serialize_struct(n);
+    reflect::JsonNull const n;
+    std::string const json = reflect::serialize_struct(n);
     EXPECT_EQ(json, "null");
 
     reflect::JsonNull n2;
@@ -139,11 +141,11 @@ TEST(ReflectTest, JsonNullType)
 
 TEST(ReflectTest, StringViewSerialize)
 {
-    std::string_view sv = "test view";
+    std::string_view const sv = "test view";
     std::string json = reflect::serialize_struct(sv);
     EXPECT_EQ(json, R"("test view")");
 
-    std::string_view empty_sv;
+    std::string_view const empty_sv;
     json = reflect::serialize_struct(empty_sv);
     EXPECT_EQ(json, R"("")");
 }
@@ -151,7 +153,7 @@ TEST(ReflectTest, StringViewSerialize)
 TEST(ReflectTest, CharPointerDeserialize)
 {
     reflect::test_struct t;
-    std::string json = R"({"i": 123})";
+    std::string const json = R"({"i": 123})";
     ASSERT_TRUE(reflect::deserialize_struct(t, json.c_str(), json.size()));
     EXPECT_EQ(t.i, 123);
 }
@@ -165,9 +167,11 @@ TEST(ReflectTest, CharPointerDeserializeInvalidJson)
 
 TEST(ReflectTest, OptionalDirectSerializeCoversNullBranch)
 {
-    std::optional<int> empty_opt;
+    std::optional<int> const empty_opt;
     EXPECT_EQ(reflect::serialize_struct(empty_opt), "null");
 
-    std::optional<int> value_opt = 7;
+    std::optional<int> const value_opt = 7;
     EXPECT_EQ(reflect::serialize_struct(value_opt), "7");
 }
+// NOLINTEND(misc-include-cleaner)
+// NOLINTEND(google-runtime-int, misc-const-correctness, modernize-use-std-numbers)

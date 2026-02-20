@@ -1,3 +1,5 @@
+// NOLINTBEGIN(misc-non-private-member-variables-in-classes, modernize-use-ranges, performance-unnecessary-value-param, readability-function-cognitive-complexity)
+// NOLINTBEGIN(bugprone-unused-return-value, misc-include-cleaner)
 #include <memory>
 #include <string>
 #include <thread>
@@ -206,9 +208,9 @@ tcp_socket_pair make_tcp_socket_pair(boost::asio::io_context& io_context)
             std::this_thread::sleep_for(std::chrono::milliseconds(25));
             continue;
         }
-        return tcp_socket_pair{std::move(client), std::move(server)};
+        return tcp_socket_pair{.client = std::move(client), .server = std::move(server)};
     }
-    return tcp_socket_pair{boost::asio::ip::tcp::socket(io_context), boost::asio::ip::tcp::socket(io_context)};
+    return tcp_socket_pair{.client = boost::asio::ip::tcp::socket(io_context), .server = boost::asio::ip::tcp::socket(io_context)};
 }
 
 std::shared_ptr<mux::tcp_socks_session> make_tcp_session(boost::asio::io_context& io_context,
@@ -246,7 +248,7 @@ TEST(TcpSocksSessionTest, CreateBackendReturnsNullForBlockRoute)
 {
     boost::asio::io_context io_context;
     auto router = std::make_shared<mux::router>();
-    mux::config::timeout_t timeout_cfg{};
+    mux::config::timeout_t const timeout_cfg{};
 
     auto session = std::make_shared<mux::tcp_socks_session>(
         boost::asio::ip::tcp::socket(io_context), io_context, nullptr, std::move(router), 1, timeout_cfg);
@@ -254,34 +256,34 @@ TEST(TcpSocksSessionTest, CreateBackendReturnsNullForBlockRoute)
     EXPECT_EQ(session->create_backend(mux::route_type::kBlock), nullptr);
 }
 
-extern "C" int __real_shutdown(int fd, int how);
-extern "C" int __real_close(int fd);
+extern "C" int __real_shutdown(int fd, int how);  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_close(int fd);  // NOLINT(bugprone-reserved-identifier)
 
-extern "C" int __wrap_shutdown(int fd, int how)
+extern "C" int __wrap_shutdown(int fd, int how)  // NOLINT(bugprone-reserved-identifier)
 {
     if (g_fail_shutdown_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_shutdown_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_shutdown(fd, how);
+    return __real_shutdown(fd, how);  // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_close(int fd)
+extern "C" int __wrap_close(int fd)  // NOLINT(bugprone-reserved-identifier)
 {
     if (g_fail_close_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_close_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_close(fd);
+    return __real_close(fd);  // NOLINT(bugprone-reserved-identifier)
 }
 
 TEST(TcpSocksSessionTest, CreateBackendReturnsDirectAndProxy)
 {
     boost::asio::io_context io_context;
     auto router = std::make_shared<mux::router>();
-    mux::config::timeout_t timeout_cfg{};
+    mux::config::timeout_t const timeout_cfg{};
 
     auto session = std::make_shared<mux::tcp_socks_session>(
         boost::asio::ip::tcp::socket(io_context), io_context, nullptr, std::move(router), 1, timeout_cfg);
@@ -474,7 +476,7 @@ TEST(TcpSocksSessionTest, RunReturnsGeneralFailureWhenRouterMissing)
 {
     boost::asio::io_context io_context;
     auto pair = make_tcp_socket_pair(io_context);
-    mux::config::timeout_t timeout_cfg{};
+    mux::config::timeout_t const timeout_cfg{};
     auto session = std::make_shared<mux::tcp_socks_session>(
         std::move(pair.server), io_context, nullptr, nullptr, 1, timeout_cfg);
 
@@ -877,3 +879,5 @@ TEST(TcpSocksSessionTest, RunProxyPathRepliesSuccessWhenAckAccepted)
 }
 
 }    // namespace
+// NOLINTEND(bugprone-unused-return-value, misc-include-cleaner)
+// NOLINTEND(misc-non-private-member-variables-in-classes, modernize-use-ranges, performance-unnecessary-value-param, readability-function-cognitive-complexity)

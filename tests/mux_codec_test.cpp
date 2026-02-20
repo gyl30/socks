@@ -1,3 +1,5 @@
+// NOLINTBEGIN(readability-function-cognitive-complexity)
+// NOLINTBEGIN(misc-include-cleaner)
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -6,7 +8,7 @@
 
 #include "mux_codec.h"
 
-TEST(MuxCodecTest, FrameHeader_RoundTrip)
+TEST(MuxCodecTest, FrameHeaderRoundTrip)
 {
     mux::frame_header input;
     input.stream_id = 0x12345678;
@@ -29,7 +31,7 @@ TEST(MuxCodecTest, FrameHeader_RoundTrip)
     EXPECT_EQ(buffer[6], 0xCC);
 
     mux::frame_header output;
-    bool success = mux::mux_codec::decode_header(buffer.data(), buffer.size(), output);
+    bool const success = mux::mux_codec::decode_header(buffer.data(), buffer.size(), output);
     ASSERT_TRUE(success);
 
     EXPECT_EQ(output.stream_id, input.stream_id);
@@ -37,7 +39,7 @@ TEST(MuxCodecTest, FrameHeader_RoundTrip)
     EXPECT_EQ(output.command, input.command);
 }
 
-TEST(MuxCodecTest, SynPayload_RoundTrip)
+TEST(MuxCodecTest, SynPayloadRoundTrip)
 {
     mux::syn_payload input;
     input.socks_cmd = 0x01;
@@ -51,7 +53,7 @@ TEST(MuxCodecTest, SynPayload_RoundTrip)
     ASSERT_EQ(buffer.size(), 30);
 
     mux::syn_payload output;
-    bool success = mux::mux_codec::decode_syn(buffer.data(), buffer.size(), output);
+    bool const success = mux::mux_codec::decode_syn(buffer.data(), buffer.size(), output);
 
     ASSERT_TRUE(success);
     EXPECT_EQ(output.socks_cmd, input.socks_cmd);
@@ -60,7 +62,7 @@ TEST(MuxCodecTest, SynPayload_RoundTrip)
     EXPECT_EQ(output.trace_id, input.trace_id);
 }
 
-TEST(MuxCodecTest, SynPayload_NoTraceId)
+TEST(MuxCodecTest, SynPayloadNoTraceId)
 {
     mux::syn_payload input;
     input.socks_cmd = 0x01;
@@ -72,21 +74,21 @@ TEST(MuxCodecTest, SynPayload_NoTraceId)
     mux::mux_codec::encode_syn(input, buffer);
 
     mux::syn_payload output;
-    bool success = mux::mux_codec::decode_syn(buffer.data(), buffer.size(), output);
+    bool const success = mux::mux_codec::decode_syn(buffer.data(), buffer.size(), output);
 
     ASSERT_TRUE(success);
     EXPECT_EQ(output.addr, input.addr);
     EXPECT_TRUE(output.trace_id.empty());
 }
 
-TEST(MuxCodecTest, SynPayload_Decode_TooShort)
+TEST(MuxCodecTest, SynPayloadDecodeTooShort)
 {
     std::vector<std::uint8_t> buffer = {0x01};
     mux::syn_payload output;
     EXPECT_FALSE(mux::mux_codec::decode_syn(buffer.data(), buffer.size(), output));
 }
 
-TEST(MuxCodecTest, SynPayload_Decode_InvalidAddrLen)
+TEST(MuxCodecTest, SynPayloadDecodeInvalidAddrLen)
 {
     std::vector<std::uint8_t> buffer;
     buffer.push_back(0x01);
@@ -99,7 +101,7 @@ TEST(MuxCodecTest, SynPayload_Decode_InvalidAddrLen)
     EXPECT_FALSE(mux::mux_codec::decode_syn(buffer.data(), buffer.size(), output));
 }
 
-TEST(MuxCodecTest, SynPayload_Decode_InvalidTraceIdLen)
+TEST(MuxCodecTest, SynPayloadDecodeInvalidTraceIdLen)
 {
     mux::syn_payload input;
     input.socks_cmd = 0x01;
@@ -117,7 +119,7 @@ TEST(MuxCodecTest, SynPayload_Decode_InvalidTraceIdLen)
     EXPECT_FALSE(mux::mux_codec::decode_syn(buffer.data(), buffer.size(), output));
 }
 
-TEST(MuxCodecTest, AckPayload_RoundTrip)
+TEST(MuxCodecTest, AckPayloadRoundTrip)
 {
     mux::ack_payload input;
     input.socks_rep = 0x00;
@@ -128,7 +130,7 @@ TEST(MuxCodecTest, AckPayload_RoundTrip)
     mux::mux_codec::encode_ack(input, buffer);
 
     mux::ack_payload output;
-    bool success = mux::mux_codec::decode_ack(buffer.data(), buffer.size(), output);
+    bool const success = mux::mux_codec::decode_ack(buffer.data(), buffer.size(), output);
 
     ASSERT_TRUE(success);
     EXPECT_EQ(output.socks_rep, input.socks_rep);
@@ -136,21 +138,21 @@ TEST(MuxCodecTest, AckPayload_RoundTrip)
     EXPECT_EQ(output.bnd_port, input.bnd_port);
 }
 
-TEST(MuxCodecTest, AckPayload_Decode_TooShort)
+TEST(MuxCodecTest, AckPayloadDecodeTooShort)
 {
     std::vector<std::uint8_t> buffer = {0x00};
     mux::ack_payload output;
     EXPECT_FALSE(mux::mux_codec::decode_ack(buffer.data(), buffer.size(), output));
 }
 
-TEST(MuxCodecTest, AckPayload_Decode_InvalidAddrLen)
+TEST(MuxCodecTest, AckPayloadDecodeInvalidAddrLen)
 {
     std::vector<std::uint8_t> buffer = {0x00, 0x10, 0x01, 0x02};
     mux::ack_payload output;
     EXPECT_FALSE(mux::mux_codec::decode_ack(buffer.data(), buffer.size(), output));
 }
 
-TEST(MuxCodecTest, SynPayload_TruncateLongAddress)
+TEST(MuxCodecTest, SynPayloadTruncateLongAddress)
 {
     mux::syn_payload input;
     input.socks_cmd = 0x01;
@@ -162,14 +164,14 @@ TEST(MuxCodecTest, SynPayload_TruncateLongAddress)
     mux::mux_codec::encode_syn(input, buffer);
 
     mux::syn_payload output;
-    bool success = mux::mux_codec::decode_syn(buffer.data(), buffer.size(), output);
+    bool const success = mux::mux_codec::decode_syn(buffer.data(), buffer.size(), output);
 
     ASSERT_TRUE(success);
 
     EXPECT_EQ(output.addr.size(), 255);
 }
 
-TEST(MuxCodecTest, FrameHeader_Limits)
+TEST(MuxCodecTest, FrameHeaderLimits)
 {
     mux::frame_header input;
     input.stream_id = 0xFFFFFFFF;
@@ -180,14 +182,14 @@ TEST(MuxCodecTest, FrameHeader_Limits)
     mux::mux_codec::encode_header(input, buffer);
 
     mux::frame_header output;
-    bool success = mux::mux_codec::decode_header(buffer.data(), buffer.size(), output);
+    bool const success = mux::mux_codec::decode_header(buffer.data(), buffer.size(), output);
     ASSERT_TRUE(success);
     EXPECT_EQ(output.stream_id, 0xFFFFFFFF);
     EXPECT_EQ(output.length, 0xFFFF);
     EXPECT_EQ(output.command, 0xFF);
 }
 
-TEST(MuxCodecTest, SynPayload_EmptyAddr)
+TEST(MuxCodecTest, SynPayloadEmptyAddr)
 {
     mux::syn_payload input;
     input.socks_cmd = 0x01;
@@ -204,7 +206,7 @@ TEST(MuxCodecTest, SynPayload_EmptyAddr)
     EXPECT_EQ(output.addr, "");
 }
 
-TEST(MuxCodecTest, SynPayload_NullBytesInAddr)
+TEST(MuxCodecTest, SynPayloadNullBytesInAddr)
 {
     mux::syn_payload input;
     input.socks_cmd = 0x01;
@@ -220,7 +222,7 @@ TEST(MuxCodecTest, SynPayload_NullBytesInAddr)
     EXPECT_EQ(output.addr[1], '\0');
 }
 
-TEST(MuxCodecTest, SynPayload_MaxFieldLengths)
+TEST(MuxCodecTest, SynPayloadMaxFieldLengths)
 {
     mux::syn_payload input;
     input.socks_cmd = 0x01;
@@ -238,7 +240,7 @@ TEST(MuxCodecTest, SynPayload_MaxFieldLengths)
     EXPECT_EQ(output.port, 65535);
 }
 
-TEST(MuxCodecTest, SynPayload_Fuzz_Truncation)
+TEST(MuxCodecTest, SynPayloadFuzzTruncation)
 {
     mux::syn_payload input;
     input.socks_cmd = 0x01;
@@ -253,9 +255,9 @@ TEST(MuxCodecTest, SynPayload_Fuzz_Truncation)
     {
         mux::syn_payload output;
 
-        bool result = mux::mux_codec::decode_syn(valid_buffer.data(), len, output);
+        bool const result = mux::mux_codec::decode_syn(valid_buffer.data(), len, output);
 
-        std::size_t pos_after_port = 1 + 1 + 9 + 2;
+        std::size_t const pos_after_port = 1 + 1 + 9 + 2;
 
         if (len == pos_after_port)
         {
@@ -272,7 +274,7 @@ TEST(MuxCodecTest, SynPayload_Fuzz_Truncation)
     }
 }
 
-TEST(MuxCodecTest, AckPayload_EmptyAddr_MaxPort)
+TEST(MuxCodecTest, AckPayloadEmptyAddrMaxPort)
 {
     mux::ack_payload input;
     input.socks_rep = 0xFF;
@@ -288,7 +290,7 @@ TEST(MuxCodecTest, AckPayload_EmptyAddr_MaxPort)
     EXPECT_EQ(output.bnd_port, 65535);
 }
 
-TEST(MuxCodecTest, FrameHeader_ZeroLength)
+TEST(MuxCodecTest, FrameHeaderZeroLength)
 {
     mux::frame_header input;
     input.stream_id = 1;
@@ -304,9 +306,11 @@ TEST(MuxCodecTest, FrameHeader_ZeroLength)
     EXPECT_EQ(output.length, 0);
 }
 
-TEST(MuxCodecTest, FrameHeader_DecodeShortBuffer)
+TEST(MuxCodecTest, FrameHeaderDecodeShortBuffer)
 {
     std::vector<std::uint8_t> buffer = {0x00, 0x00, 0x00, 0x01, 0x00, 0x00};
     mux::frame_header output;
     EXPECT_FALSE(mux::mux_codec::decode_header(buffer.data(), buffer.size(), output));
 }
+// NOLINTEND(misc-include-cleaner)
+// NOLINTEND(readability-function-cognitive-complexity)

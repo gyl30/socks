@@ -1,3 +1,4 @@
+// NOLINTBEGIN(misc-include-cleaner)
 #include <memory>
 #include <string>
 
@@ -43,7 +44,7 @@ class test_router : public mux::router
     void add_direct_domain(const std::string& domain) { direct_domain_matcher()->add(domain); }
 };
 
-class router_test : public ::testing::Test
+class RouterTest : public ::testing::Test
 {
    protected:
     void SetUp() override { test_router_ = std::make_shared<test_router>(); }
@@ -70,7 +71,7 @@ class router_test : public ::testing::Test
     std::shared_ptr<test_router> test_router_;
 };
 
-TEST_F(router_test, BlockIP)
+TEST_F(RouterTest, BlockIP)
 {
     router_instance()->add_block_ip("10.0.0.0/8");
     EXPECT_EQ(run_decision("10.1.2.3"), mux::route_type::kBlock);
@@ -78,13 +79,13 @@ TEST_F(router_test, BlockIP)
     EXPECT_EQ(run_decision("192.168.1.1"), mux::route_type::kProxy);
 }
 
-TEST_F(router_test, DirectIP)
+TEST_F(RouterTest, DirectIP)
 {
     router_instance()->add_direct_ip("192.168.0.0/16");
     EXPECT_EQ(run_decision("192.168.1.100"), mux::route_type::kDirect);
 }
 
-TEST_F(router_test, BlockPrioritizesOverDirect)
+TEST_F(RouterTest, BlockPrioritizesOverDirect)
 {
     router_instance()->add_block_ip("1.1.1.1/32");
     router_instance()->add_direct_ip("1.1.1.0/24");
@@ -93,27 +94,27 @@ TEST_F(router_test, BlockPrioritizesOverDirect)
     EXPECT_EQ(run_decision("1.1.1.2"), mux::route_type::kDirect);
 }
 
-TEST_F(router_test, BlockDomain)
+TEST_F(RouterTest, BlockDomain)
 {
     router_instance()->add_block_domain("ad.com");
     EXPECT_EQ(run_decision("ad.com"), mux::route_type::kBlock);
     EXPECT_EQ(run_decision("sub.ad.com"), mux::route_type::kBlock);
 }
 
-TEST_F(router_test, DirectDomain)
+TEST_F(RouterTest, DirectDomain)
 {
     router_instance()->add_direct_domain("google.com");
     EXPECT_EQ(run_decision("google.com"), mux::route_type::kDirect);
     EXPECT_EQ(run_decision("www.google.com"), mux::route_type::kDirect);
 }
 
-TEST_F(router_test, ProxyDomain)
+TEST_F(RouterTest, ProxyDomain)
 {
     router_instance()->add_proxy_domain("netflix.com");
     EXPECT_EQ(run_decision("netflix.com"), mux::route_type::kProxy);
 }
 
-TEST_F(router_test, DomainPriority)
+TEST_F(RouterTest, DomainPriority)
 {
     router_instance()->add_block_domain("bad.example.com");
     router_instance()->add_direct_domain("example.com");
@@ -123,3 +124,4 @@ TEST_F(router_test, DomainPriority)
 
     EXPECT_EQ(run_decision("unknown.com"), mux::route_type::kDirect);
 }
+// NOLINTEND(misc-include-cleaner)

@@ -1,3 +1,5 @@
+// NOLINTBEGIN(performance-enum-size, readability-avoid-nested-conditional-operator)
+// NOLINTBEGIN(bugprone-unchecked-optional-access, misc-include-cleaner)
 #include <cstdio>
 #include <array>
 #include <atomic>
@@ -29,16 +31,16 @@ extern "C"
 using reality::message_builder;
 namespace tls_consts = reality::tls_consts;
 
-extern "C" int __real_RAND_bytes(unsigned char* buf, int num);
-extern "C" EVP_PKEY_CTX* __real_EVP_PKEY_CTX_new_id(int id, ENGINE* e);
-extern "C" int __real_EVP_PKEY_keygen(EVP_PKEY_CTX* ctx, EVP_PKEY** ppkey);
-extern "C" int __real_EVP_PKEY_get_octet_string_param(const EVP_PKEY* pkey,
+extern "C" int __real_RAND_bytes(unsigned char* buf, int num);  // NOLINT(bugprone-reserved-identifier)
+extern "C" EVP_PKEY_CTX* __real_EVP_PKEY_CTX_new_id(int id, ENGINE* e);  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_EVP_PKEY_keygen(EVP_PKEY_CTX* ctx, EVP_PKEY** ppkey);  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_EVP_PKEY_get_octet_string_param(const EVP_PKEY* pkey,  // NOLINT(bugprone-reserved-identifier)
                                                        const char* key_name,
                                                        unsigned char* buf,
                                                        std::size_t max_buf_sz,
                                                        std::size_t* out_len);
-extern "C" EVP_MD_CTX* __real_EVP_MD_CTX_new();
-extern "C" int __real_EVP_DigestSign(EVP_MD_CTX* ctx, unsigned char* sigret, std::size_t* siglen, const unsigned char* tbs, std::size_t tbslen);
+extern "C" EVP_MD_CTX* __real_EVP_MD_CTX_new();  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_EVP_DigestSign(EVP_MD_CTX* ctx, unsigned char* sigret, std::size_t* siglen, const unsigned char* tbs, std::size_t tbslen);  // NOLINT(bugprone-reserved-identifier)
 
 namespace
 {
@@ -150,7 +152,7 @@ std::optional<std::vector<std::uint8_t>> extract_extension_data_by_type(const st
     {
         return std::nullopt;
     }
-    const std::uint16_t cipher_len = static_cast<std::uint16_t>((ch[pos] << 8) | ch[pos + 1]);
+    const auto cipher_len = static_cast<std::uint16_t>((ch[pos] << 8) | ch[pos + 1]);
     pos += 2;
     if (pos + cipher_len > ch.size())
     {
@@ -173,7 +175,7 @@ std::optional<std::vector<std::uint8_t>> extract_extension_data_by_type(const st
     {
         return std::nullopt;
     }
-    const std::uint16_t exts_len = static_cast<std::uint16_t>((ch[pos] << 8) | ch[pos + 1]);
+    const auto exts_len = static_cast<std::uint16_t>((ch[pos] << 8) | ch[pos + 1]);
     pos += 2;
     if (pos + exts_len > ch.size())
     {
@@ -183,8 +185,8 @@ std::optional<std::vector<std::uint8_t>> extract_extension_data_by_type(const st
     const std::size_t exts_end = pos + exts_len;
     while (pos + 4 <= exts_end)
     {
-        const std::uint16_t ext_type = static_cast<std::uint16_t>((ch[pos] << 8) | ch[pos + 1]);
-        const std::uint16_t ext_len = static_cast<std::uint16_t>((ch[pos + 2] << 8) | ch[pos + 3]);
+        const auto ext_type = static_cast<std::uint16_t>((ch[pos] << 8) | ch[pos + 1]);
+        const auto ext_len = static_cast<std::uint16_t>((ch[pos + 2] << 8) | ch[pos + 3]);
         pos += 4;
         if (pos + ext_len > exts_end)
         {
@@ -211,7 +213,7 @@ std::optional<std::vector<std::uint8_t>> extract_key_share_data_by_group(const s
     }
 
     const auto& ext = *key_share_ext;
-    const std::uint16_t share_list_len = static_cast<std::uint16_t>((ext[0] << 8) | ext[1]);
+    const auto share_list_len = static_cast<std::uint16_t>((ext[0] << 8) | ext[1]);
     if (static_cast<std::size_t>(2 + share_list_len) > ext.size())
     {
         return std::nullopt;
@@ -221,8 +223,8 @@ std::optional<std::vector<std::uint8_t>> extract_key_share_data_by_group(const s
     const std::size_t share_end = 2 + share_list_len;
     while (share_pos + 4 <= share_end)
     {
-        const std::uint16_t group = static_cast<std::uint16_t>((ext[share_pos] << 8) | ext[share_pos + 1]);
-        const std::uint16_t key_len = static_cast<std::uint16_t>((ext[share_pos + 2] << 8) | ext[share_pos + 3]);
+        const auto group = static_cast<std::uint16_t>((ext[share_pos] << 8) | ext[share_pos + 1]);
+        const auto key_len = static_cast<std::uint16_t>((ext[share_pos + 2] << 8) | ext[share_pos + 3]);
         share_pos += 4;
         if (share_pos + key_len > share_end)
         {
@@ -259,7 +261,7 @@ std::size_t expected_boring_padding_len(const std::size_t unpadded_len)
 
 }    // namespace
 
-extern "C" int __wrap_RAND_bytes(unsigned char* buf, int num)
+extern "C" int __wrap_RAND_bytes(unsigned char* buf, int num)  // NOLINT(bugprone-reserved-identifier)
 {
     if (g_force_rand_fail.load(std::memory_order_acquire))
     {
@@ -267,10 +269,10 @@ extern "C" int __wrap_RAND_bytes(unsigned char* buf, int num)
         (void)num;
         return 0;
     }
-    return __real_RAND_bytes(buf, num);
+    return __real_RAND_bytes(buf, num);  // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" EVP_PKEY_CTX* __wrap_EVP_PKEY_CTX_new_id(int id, ENGINE* e)
+extern "C" EVP_PKEY_CTX* __wrap_EVP_PKEY_CTX_new_id(int id, ENGINE* e)  // NOLINT(bugprone-reserved-identifier)
 {
     if (g_force_pkey_ctx_new_null.load(std::memory_order_acquire))
     {
@@ -278,10 +280,10 @@ extern "C" EVP_PKEY_CTX* __wrap_EVP_PKEY_CTX_new_id(int id, ENGINE* e)
         (void)e;
         return nullptr;
     }
-    return __real_EVP_PKEY_CTX_new_id(id, e);
+    return __real_EVP_PKEY_CTX_new_id(id, e);  // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_EVP_PKEY_keygen(EVP_PKEY_CTX* ctx, EVP_PKEY** ppkey)
+extern "C" int __wrap_EVP_PKEY_keygen(EVP_PKEY_CTX* ctx, EVP_PKEY** ppkey)  // NOLINT(bugprone-reserved-identifier)
 {
     if (g_force_pkey_keygen_fail.load(std::memory_order_acquire))
     {
@@ -291,10 +293,10 @@ extern "C" int __wrap_EVP_PKEY_keygen(EVP_PKEY_CTX* ctx, EVP_PKEY** ppkey)
         }
         return 0;
     }
-    return __real_EVP_PKEY_keygen(ctx, ppkey);
+    return __real_EVP_PKEY_keygen(ctx, ppkey);  // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_EVP_PKEY_get_octet_string_param(const EVP_PKEY* pkey,
+extern "C" int __wrap_EVP_PKEY_get_octet_string_param(const EVP_PKEY* pkey,  // NOLINT(bugprone-reserved-identifier)
                                                        const char* key_name,
                                                        unsigned char* buf,
                                                        std::size_t max_buf_sz,
@@ -336,25 +338,25 @@ extern "C" int __wrap_EVP_PKEY_get_octet_string_param(const EVP_PKEY* pkey,
         }
         return 1;
     }
-    return __real_EVP_PKEY_get_octet_string_param(pkey, key_name, buf, max_buf_sz, out_len);
+    return __real_EVP_PKEY_get_octet_string_param(pkey, key_name, buf, max_buf_sz, out_len);  // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" EVP_MD_CTX* __wrap_EVP_MD_CTX_new()
+extern "C" EVP_MD_CTX* __wrap_EVP_MD_CTX_new()  // NOLINT(bugprone-reserved-identifier)
 {
     if (g_force_md_ctx_new_null.load(std::memory_order_acquire))
     {
         return nullptr;
     }
-    return __real_EVP_MD_CTX_new();
+    return __real_EVP_MD_CTX_new();  // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_EVP_DigestSign(EVP_MD_CTX* ctx, unsigned char* sigret, std::size_t* siglen, const unsigned char* tbs, std::size_t tbslen)
+extern "C" int __wrap_EVP_DigestSign(EVP_MD_CTX* ctx, unsigned char* sigret, std::size_t* siglen, const unsigned char* tbs, std::size_t tbslen)  // NOLINT(bugprone-reserved-identifier)
 {
     if (g_force_digest_sign_fail.load(std::memory_order_acquire))
     {
         return 0;
     }
-    return __real_EVP_DigestSign(ctx, sigret, siglen, tbs, tbslen);
+    return __real_EVP_DigestSign(ctx, sigret, siglen, tbs, tbslen);  // NOLINT(bugprone-reserved-identifier)
 }
 
 TEST(RealityMessagesTest, RecordHeader)
@@ -429,7 +431,7 @@ TEST(RealityMessagesTest, ExtractServerKeyShareRejectsOversizedExtensionsLength)
     EXPECT_TRUE(reality::extract_server_public_key(hello).empty());
 }
 
-TEST(RealityMessagesTest, client_hello_builderFirefox)
+TEST(RealityMessagesTest, ClientHelloBuilderFirefox)
 {
     const auto spec = reality::fingerprint_factory::get(reality::fingerprint_type::kFirefox120);
     const std::vector<std::uint8_t> session_id(32, 0xEE);
@@ -443,7 +445,7 @@ TEST(RealityMessagesTest, client_hello_builderFirefox)
     EXPECT_EQ(ch[0], 0x01);
 }
 
-TEST(RealityMessagesTest, client_hello_builderChrome)
+TEST(RealityMessagesTest, ClientHelloBuilderChrome)
 {
     const auto spec = reality::fingerprint_factory::get(reality::fingerprint_type::kChrome120);
     const std::vector<std::uint8_t> session_id(32, 0xEE);
@@ -535,7 +537,7 @@ TEST(RealityMessagesTest, CipherSuiteShort)
 
 TEST(RealityMessagesTest, ExtractALPNMalformed)
 {
-    std::vector<std::uint8_t> bad_msg = {0x08, 0x00, 0x00, 0x0A, 0x00, 0x00, 0x00, 0x10, 0x00, 0x02, 0x00, 0x05, 0x01, 0x61};
+    std::vector<std::uint8_t> const bad_msg = {0x08, 0x00, 0x00, 0x0A, 0x00, 0x00, 0x00, 0x10, 0x00, 0x02, 0x00, 0x05, 0x01, 0x61};
     EXPECT_FALSE(reality::extract_alpn_from_encrypted_extensions(bad_msg).has_value());
 }
 
@@ -561,7 +563,7 @@ TEST(RealityMessagesTest, CertificateVerifyParse)
 
 TEST(RealityMessagesTest, CertificateVerifyReturnsEmptyWhenMdCtxCreationFails)
 {
-    hook_reset_guard guard;
+    hook_reset_guard const guard;
 
     std::array<std::uint8_t, 32> priv{};
     ASSERT_EQ(RAND_bytes(priv.data(), static_cast<int>(priv.size())), 1);
@@ -576,7 +578,7 @@ TEST(RealityMessagesTest, CertificateVerifyReturnsEmptyWhenMdCtxCreationFails)
 
 TEST(RealityMessagesTest, CertificateVerifyReturnsEmptyWhenDigestSignFails)
 {
-    hook_reset_guard guard;
+    hook_reset_guard const guard;
 
     std::array<std::uint8_t, 32> priv{};
     ASSERT_EQ(RAND_bytes(priv.data(), static_cast<int>(priv.size())), 1);
@@ -632,11 +634,11 @@ TEST(RealityMessagesTest, ClientHelloSkipsUnknownGenericExtension)
     std::size_t pos = 4 + 2 + 32;
     const std::uint8_t sid_len = ch[pos++];
     pos += sid_len;
-    const std::uint16_t cipher_len = static_cast<std::uint16_t>((ch[pos] << 8) | ch[pos + 1]);
+    const auto cipher_len = static_cast<std::uint16_t>((ch[pos] << 8) | ch[pos + 1]);
     pos += 2 + cipher_len;
     const std::uint8_t comp_len = ch[pos++];
     pos += comp_len;
-    const std::uint16_t exts_len = static_cast<std::uint16_t>((ch[pos] << 8) | ch[pos + 1]);
+    const auto exts_len = static_cast<std::uint16_t>((ch[pos] << 8) | ch[pos + 1]);
     EXPECT_EQ(exts_len, 0);
 }
 
@@ -655,7 +657,7 @@ TEST(RealityMessagesTest, ClientHelloKeyShareUnknownGroupUsesEmptyData)
 
 TEST(RealityMessagesTest, ClientHelloGreaseEchHandlesRandFailure)
 {
-    hook_reset_guard guard;
+    hook_reset_guard const guard;
     reality::fingerprint_spec spec;
     spec.client_version = tls_consts::kVer12;
     spec.cipher_suites = {tls_consts::cipher::kTlsAes128GcmSha256};
@@ -673,7 +675,7 @@ TEST(RealityMessagesTest, ClientHelloGreaseEchHandlesRandFailure)
 
 TEST(RealityMessagesTest, ClientHelloPreSharedKeySkipsExtensionWhenRandFails)
 {
-    hook_reset_guard guard;
+    hook_reset_guard const guard;
     reality::fingerprint_spec spec;
     spec.client_version = tls_consts::kVer12;
     spec.cipher_suites = {tls_consts::cipher::kTlsAes128GcmSha256};
@@ -691,7 +693,7 @@ TEST(RealityMessagesTest, ClientHelloPreSharedKeySkipsExtensionWhenRandFails)
 
 TEST(RealityMessagesTest, Secp256r1KeyShareFallsBackWhenCtxCreationFails)
 {
-    hook_reset_guard guard;
+    hook_reset_guard const guard;
     g_force_pkey_ctx_new_null.store(true, std::memory_order_release);
 
     const auto spec = make_minimal_key_share_spec(tls_consts::group::kSecp256r1);
@@ -706,7 +708,7 @@ TEST(RealityMessagesTest, Secp256r1KeyShareFallsBackWhenCtxCreationFails)
 
 TEST(RealityMessagesTest, Secp256r1KeyShareFallsBackWhenKeygenFails)
 {
-    hook_reset_guard guard;
+    hook_reset_guard const guard;
     g_force_pkey_keygen_fail.store(true, std::memory_order_release);
 
     const auto spec = make_minimal_key_share_spec(tls_consts::group::kSecp256r1);
@@ -721,7 +723,7 @@ TEST(RealityMessagesTest, Secp256r1KeyShareFallsBackWhenKeygenFails)
 
 TEST(RealityMessagesTest, Secp256r1KeyShareFallsBackWhenOctetLengthMismatch)
 {
-    hook_reset_guard guard;
+    hook_reset_guard const guard;
     g_pkey_octet_mode.store(static_cast<int>(pkey_octet_mode::kSecondCallMismatchedLength), std::memory_order_release);
 
     const auto spec = make_minimal_key_share_spec(tls_consts::group::kSecp256r1);
@@ -736,7 +738,7 @@ TEST(RealityMessagesTest, Secp256r1KeyShareFallsBackWhenOctetLengthMismatch)
 
 TEST(RealityMessagesTest, Secp256r1KeyShareUsesGeneratedOctetStringWhenAvailable)
 {
-    hook_reset_guard guard;
+    hook_reset_guard const guard;
     g_pkey_octet_mode.store(static_cast<int>(pkey_octet_mode::kForceSuccessUncompressed), std::memory_order_release);
 
     const auto spec = make_minimal_key_share_spec(tls_consts::group::kSecp256r1);
@@ -999,13 +1001,13 @@ TEST(RealityMessagesTest, ChromeGreaseEchMatchesBoringShape)
 
     std::size_t pos = 6;
     ASSERT_GE(data.size(), pos + 2);
-    const std::uint16_t enc_len = static_cast<std::uint16_t>((data[pos] << 8) | data[pos + 1]);
+    const auto enc_len = static_cast<std::uint16_t>((data[pos] << 8) | data[pos + 1]);
     EXPECT_EQ(enc_len, 32);
     pos += 2;
 
     ASSERT_GE(data.size(), pos + enc_len + 2);
     pos += enc_len;
-    const std::uint16_t payload_len = static_cast<std::uint16_t>((data[pos] << 8) | data[pos + 1]);
+    const auto payload_len = static_cast<std::uint16_t>((data[pos] << 8) | data[pos + 1]);
     pos += 2;
     ASSERT_EQ(data.size(), pos + payload_len);
     EXPECT_TRUE(payload_len == 144 || payload_len == 176 || payload_len == 208 || payload_len == 240);
@@ -1119,3 +1121,5 @@ TEST(RealityMessagesTest, PaddingDisabledForOversizedClientHello)
     ASSERT_TRUE(padding.has_value());
     EXPECT_EQ(padding->size(), 0);
 }
+// NOLINTEND(bugprone-unchecked-optional-access, misc-include-cleaner)
+// NOLINTEND(performance-enum-size, readability-avoid-nested-conditional-operator)

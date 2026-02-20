@@ -1,3 +1,4 @@
+// NOLINTBEGIN(misc-include-cleaner)
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -75,3 +76,4 @@ TEST(SocksProtocolTest, DecodeSocks5AuthRequestPaths)
 }
 
 }    // namespace
+// NOLINTEND(misc-include-cleaner)

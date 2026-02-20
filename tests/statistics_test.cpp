@@ -1,3 +1,5 @@
+// NOLINTBEGIN(clang-analyzer-optin.core.EnumCastOutOfRange)
+// NOLINTBEGIN(misc-include-cleaner)
 #include <chrono>
 #include <string>
 #include <string_view>
@@ -345,3 +347,5 @@ TEST(StatisticsTest, HandshakeFailureMetricsSortsAcrossDifferentReasons)
 }
 
 }    // namespace mux
+// NOLINTEND(misc-include-cleaner)
+// NOLINTEND(clang-analyzer-optin.core.EnumCastOutOfRange)

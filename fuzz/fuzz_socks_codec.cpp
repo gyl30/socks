@@ -1,6 +1,5 @@
-#include <vector>
 #include <cstdint>
-#include <stddef.h>
+#include <cstddef>
 
 #include "protocol.h"
 
