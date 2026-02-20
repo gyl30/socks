@@ -17,7 +17,7 @@ namespace mux
 class mock_mux_connection : public mux_connection
 {
    public:
-    mock_mux_connection(boost::asio::io_context& ctx)
+    explicit mock_mux_connection(boost::asio::io_context& ctx)
         : mux_connection(boost::asio::ip::tcp::socket(ctx), ctx, reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 0)
     {
     }
@@ -37,6 +37,6 @@ class mock_mux_connection : public mux_connection
     MOCK_METHOD(boost::system::error_code, mock_send_async, (uint32_t stream_id, uint8_t cmd, const std::vector<uint8_t>& payload));
 };
 
-}                    
+}    // namespace mux
 
 #endif
