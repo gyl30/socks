@@ -1,3 +1,5 @@
+// NOLINTBEGIN(misc-include-cleaner)
+#include <boost/system/error_code.hpp>
 #include <tuple>
 #include <memory>
 #include <string>
@@ -5,7 +7,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <utility>
-#include <system_error>
 
 #include <boost/asio/error.hpp>
 #include <boost/asio/as_tuple.hpp>
@@ -40,7 +41,7 @@ std::uint32_t mux_stream::id() const { return id_; }
 
 boost::asio::awaitable<std::tuple<boost::system::error_code, std::vector<std::uint8_t>>> mux_stream::async_read_some()
 {
-    const auto [ec, data] = co_await recv_channel_.async_receive(boost::asio::as_tuple(boost::asio::use_awaitable));
+    auto [ec, data] = co_await recv_channel_.async_receive(boost::asio::as_tuple(boost::asio::use_awaitable));
     if (ec)
     {
         co_return std::make_tuple(ec, std::vector<std::uint8_t>{});
@@ -50,7 +51,7 @@ boost::asio::awaitable<std::tuple<boost::system::error_code, std::vector<std::ui
         co_return std::make_tuple(boost::asio::error::eof, std::vector<std::uint8_t>{});
     }
     rx_bytes_ += data.size();
-    co_return std::make_tuple(boost::system::error_code{}, std::move(data));
+    co_return std::make_tuple(boost::system::error_code{}, data);
 }
 
 boost::asio::awaitable<boost::system::error_code> mux_stream::async_write_some(const void* data, std::size_t len)
@@ -140,3 +141,4 @@ void mux_stream::close_internal()
 }
 
 }    // namespace mux
+// NOLINTEND(misc-include-cleaner)

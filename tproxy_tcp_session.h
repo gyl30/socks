@@ -2,13 +2,12 @@
 #define TPROXY_TCP_SESSION_H
 
 #include <atomic>
-#include <chrono>
+#include <boost/system/error_code.hpp>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 #include <cstdint>
-#include <system_error>
 
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/io_context.hpp>
@@ -33,7 +32,7 @@ class tproxy_tcp_session : public std::enable_shared_from_this<tproxy_tcp_sessio
                        std::shared_ptr<router> router,
                        std::uint32_t sid,
                        const config& cfg,
-                       const boost::asio::ip::tcp::endpoint& dst_ep);
+                       boost::asio::ip::tcp::endpoint dst_ep);
 
     void start();
 

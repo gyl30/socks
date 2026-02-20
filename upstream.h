@@ -1,6 +1,7 @@
 #ifndef UPSTREAM_H
 #define UPSTREAM_H
 
+#include <boost/system/error_code.hpp>
 #include <memory>
 #include <string>
 #include <vector>
@@ -8,12 +9,12 @@
 #include <cstddef>
 #include <expected>
 #include <utility>
-#include <system_error>
 
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/awaitable.hpp>
 
+#include "mux_stream.h"
 #include "mux_tunnel.h"
 #include "log_context.h"
 

@@ -1,20 +1,27 @@
+// NOLINTBEGIN(misc-include-cleaner)
+#include <boost/asio/ip/udp.hpp>
+#include <boost/asio/io_context.hpp>
+#include <atomic>
+#include <boost/asio/awaitable.hpp>
+#include <boost/system/error_code.hpp>
+#include <boost/asio/ip/v6_only.hpp>
 #include <chrono>
+#include <cstddef>
 #include <memory>
 #include <string>
 #include <vector>
 #include <cstdint>
 #include <utility>
-#include <system_error>
 
 #include <boost/asio/error.hpp>
 #include <boost/asio/buffer.hpp>
 #include <boost/asio/as_tuple.hpp>
-#include <boost/asio/co_spawn.hpp>
 #include <boost/asio/dispatch.hpp>
 #include <boost/asio/ip/address_v6.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
 
+#include "config.h"
 #include "log.h"
 #include "protocol.h"
 #include "mux_codec.h"
@@ -53,12 +60,17 @@ namespace
     v6_bytes[13] = v4_bytes[1];
     v6_bytes[14] = v4_bytes[2];
     v6_bytes[15] = v4_bytes[3];
-    return boost::asio::ip::udp::endpoint(boost::asio::ip::address_v6(v6_bytes), endpoint.port());
+    return {boost::asio::ip::address_v6(v6_bytes), endpoint.port()};
+}
+
+void log_remote_udp_recv_channel_unavailable_on_data(const connection_context& ctx)
+{
+    LOG_CTX_WARN(ctx, "{} recv channel unavailable on data", log_event::kMux);
 }
 
 }    // namespace
 
-remote_udp_session::remote_udp_session(std::shared_ptr<mux_connection> connection,
+remote_udp_session::remote_udp_session(const std::shared_ptr<mux_connection>& connection,
                                        const std::uint32_t id,
                                        boost::asio::io_context& io_context,
                                        const connection_context& ctx,
@@ -70,7 +82,7 @@ remote_udp_session::remote_udp_session(std::shared_ptr<mux_connection> connectio
       idle_timer_(io_context_),
       udp_socket_(io_context_),
       udp_resolver_(io_context_),
-      connection_(std::move(connection)),
+      connection_(connection),
       read_timeout_ms_(static_cast<std::uint64_t>(timeout_cfg.read) * 1000ULL),
       write_timeout_ms_(static_cast<std::uint64_t>(timeout_cfg.write) * 1000ULL),
       idle_timeout_ms_(static_cast<std::uint64_t>(timeout_cfg.idle) * 1000ULL),
@@ -91,7 +103,7 @@ boost::asio::awaitable<void> remote_udp_session::start()
 }
 
 boost::asio::awaitable<boost::system::error_code> remote_udp_session::send_ack_payload(const std::shared_ptr<mux_connection>& conn,
-                                                                      const ack_payload& ack)
+                                                                      const ack_payload& ack) const
 {
     std::vector<std::uint8_t> ack_data;
     mux_codec::encode_ack(ack, ack_data);
@@ -326,7 +338,7 @@ void remote_udp_session::on_data(std::vector<std::uint8_t> data)
         {
             if (!self->recv_channel_.try_send(boost::system::error_code(), std::move(data)))
             {
-                LOG_CTX_WARN(self->ctx_, "{} recv channel unavailable on data", log_event::kMux);
+                log_remote_udp_recv_channel_unavailable_on_data(self->ctx_);
                 self->request_stop();
             }
         });
@@ -505,3 +517,4 @@ boost::asio::awaitable<void> remote_udp_session::idle_watchdog()
 }
 
 }    // namespace mux
+// NOLINTEND(misc-include-cleaner)
