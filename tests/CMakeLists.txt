@@ -17,6 +17,7 @@ macro(add_socks_test NAME)
     if(CMAKE_CXX_FLAGS MATCHES "-fsanitize=memory")
         gtest_discover_tests(
             ${NAME}
+            DISCOVERY_MODE PRE_TEST
             DISCOVERY_TIMEOUT 60
             PROPERTIES
                 ENVIRONMENT "MSAN_OPTIONS=${MSAN_UMR_NOISE_OPTIONS}"
@@ -25,6 +26,7 @@ macro(add_socks_test NAME)
     else()
         gtest_discover_tests(
             ${NAME}
+            DISCOVERY_MODE PRE_TEST
             DISCOVERY_TIMEOUT 60
             PROPERTIES
                 RESOURCE_LOCK "net_ports"
@@ -43,6 +45,7 @@ macro(add_socks_locked_test NAME LOCK_NAME)
     if(CMAKE_CXX_FLAGS MATCHES "-fsanitize=memory")
         gtest_discover_tests(
             ${NAME}
+            DISCOVERY_MODE PRE_TEST
             DISCOVERY_TIMEOUT 60
             PROPERTIES
                 ENVIRONMENT "MSAN_OPTIONS=${MSAN_UMR_NOISE_OPTIONS}"
@@ -51,6 +54,7 @@ macro(add_socks_locked_test NAME LOCK_NAME)
     else()
         gtest_discover_tests(
             ${NAME}
+            DISCOVERY_MODE PRE_TEST
             DISCOVERY_TIMEOUT 60
             PROPERTIES
                 RESOURCE_LOCK "${LOCK_NAME}"
