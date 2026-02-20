@@ -38,21 +38,19 @@ class tcp_socks_session : public std::enable_shared_from_this<tcp_socks_session>
 
     [[nodiscard]] boost::asio::awaitable<void> reply_error(std::uint8_t code);
     [[nodiscard]] boost::asio::awaitable<bool> connect_backend(const std::shared_ptr<upstream>& backend,
-                                                        const std::string& host,
-                                                        std::uint16_t port,
-                                                        route_type route);
+                                                               const std::string& host,
+                                                               std::uint16_t port,
+                                                               route_type route);
     [[nodiscard]] boost::asio::awaitable<bool> reply_success();
 
-    [[nodiscard]] static boost::asio::awaitable<void> run_detached(std::shared_ptr<tcp_socks_session> self,
-                                                            std::string host,
-                                                            std::uint16_t port);
+    [[nodiscard]] static boost::asio::awaitable<void> run_detached(std::shared_ptr<tcp_socks_session> self, std::string host, std::uint16_t port);
 
     [[nodiscard]] boost::asio::awaitable<void> client_to_upstream(std::shared_ptr<upstream> backend);
 
     [[nodiscard]] boost::asio::awaitable<void> upstream_to_client(std::shared_ptr<upstream> backend);
     [[nodiscard]] boost::asio::awaitable<void> idle_watchdog(std::shared_ptr<upstream> backend);
     [[nodiscard]] static boost::asio::awaitable<void> idle_watchdog_detached(std::shared_ptr<tcp_socks_session> self,
-                                                                      std::shared_ptr<upstream> backend);
+                                                                             std::shared_ptr<upstream> backend);
     [[nodiscard]] boost::asio::awaitable<void> close_backend_once(const std::shared_ptr<upstream>& backend);
     [[nodiscard]] std::shared_ptr<upstream> create_backend(route_type route) const;
 

@@ -62,8 +62,8 @@ class tproxy_udp_session : public mux_stream_interface, public std::enable_share
     void touch();
     boost::asio::awaitable<void> handle_packet_inner(boost::asio::ip::udp::endpoint dst_ep, std::vector<std::uint8_t> data);
 
-    [[nodiscard]] boost::asio::awaitable<bool> negotiate_proxy_stream(
-        const std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>>& tunnel, const std::shared_ptr<mux_stream>& stream) const;
+    [[nodiscard]] boost::asio::awaitable<bool> negotiate_proxy_stream(const std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>>& tunnel,
+                                                                      const std::shared_ptr<mux_stream>& stream) const;
 
     [[nodiscard]] static boost::asio::awaitable<void> cleanup_proxy_stream(
         const std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>>& tunnel, const std::shared_ptr<mux_stream>& stream);
@@ -83,8 +83,7 @@ class tproxy_udp_session : public mux_stream_interface, public std::enable_share
                                           const std::uint8_t* data,
                                           std::size_t len,
                                           std::vector<std::uint8_t>& packet);
-    boost::asio::awaitable<void> handle_proxy_write_failure(const std::shared_ptr<mux_stream>& stream,
-                                                            const boost::system::error_code& write_ec);
+    boost::asio::awaitable<void> handle_proxy_write_failure(const std::shared_ptr<mux_stream>& stream, const boost::system::error_code& write_ec);
 
     boost::asio::awaitable<void> send_direct(const boost::asio::ip::udp::endpoint& dst_ep, const std::uint8_t* data, std::size_t len);
 

@@ -92,7 +92,7 @@ class proxy_upstream : public upstream
 
     boost::asio::awaitable<void> close() override;
 
-  private:
+   private:
     [[nodiscard]] bool is_tunnel_ready() const;
     boost::asio::awaitable<bool> send_syn_request(const std::shared_ptr<mux_stream>& stream, const std::string& host, std::uint16_t port);
     boost::asio::awaitable<bool> wait_connect_ack(const std::shared_ptr<mux_stream>& stream, const std::string& host, std::uint16_t port);

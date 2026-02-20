@@ -126,23 +126,22 @@ bool run_sync_bool_query(boost::asio::io_context& io_context, const std::uint32_
     auto cancelled = std::make_shared<std::atomic<bool>>(false);
     std::promise<bool> promise;
     auto future = promise.get_future();
-    boost::asio::post(
-        io_context,
-        [started, cancelled, promise = std::move(promise), fn = std::forward<Fn>(fn)]() mutable
-        {
-            if (cancelled->load(std::memory_order_acquire))
-            {
-                promise.set_value(false);
-                return;
-            }
-            started->store(true, std::memory_order_release);
-            if (cancelled->load(std::memory_order_acquire))
-            {
-                promise.set_value(false);
-                return;
-            }
-            promise.set_value(fn());
-        });
+    boost::asio::post(io_context,
+                      [started, cancelled, promise = std::move(promise), fn = std::forward<Fn>(fn)]() mutable
+                      {
+                          if (cancelled->load(std::memory_order_acquire))
+                          {
+                              promise.set_value(false);
+                              return;
+                          }
+                          started->store(true, std::memory_order_release);
+                          if (cancelled->load(std::memory_order_acquire))
+                          {
+                              promise.set_value(false);
+                              return;
+                          }
+                          promise.set_value(fn());
+                      });
 
     if (future.wait_for(kSyncQueryWaitTimeout) != std::future_status::ready)
     {
@@ -179,24 +178,23 @@ bool run_sync_void_query(boost::asio::io_context& io_context, const std::uint32_
     auto cancelled = std::make_shared<std::atomic<bool>>(false);
     std::promise<bool> promise;
     auto future = promise.get_future();
-    boost::asio::post(
-        io_context,
-        [started, cancelled, promise = std::move(promise), fn = std::forward<Fn>(fn)]() mutable
-        {
-            if (cancelled->load(std::memory_order_acquire))
-            {
-                promise.set_value(false);
-                return;
-            }
-            started->store(true, std::memory_order_release);
-            if (cancelled->load(std::memory_order_acquire))
-            {
-                promise.set_value(false);
-                return;
-            }
-            fn();
-            promise.set_value(true);
-        });
+    boost::asio::post(io_context,
+                      [started, cancelled, promise = std::move(promise), fn = std::forward<Fn>(fn)]() mutable
+                      {
+                          if (cancelled->load(std::memory_order_acquire))
+                          {
+                              promise.set_value(false);
+                              return;
+                          }
+                          started->store(true, std::memory_order_release);
+                          if (cancelled->load(std::memory_order_acquire))
+                          {
+                              promise.set_value(false);
+                              return;
+                          }
+                          fn();
+                          promise.set_value(true);
+                      });
 
     if (future.wait_for(kSyncQueryWaitTimeout) != std::future_status::ready)
     {
@@ -299,8 +297,7 @@ std::shared_ptr<mux_connection::stream_map_t> mux_connection::detach_streams()
         auto current = std::atomic_load_explicit(&streams_, std::memory_order_acquire);
         auto updated = std::make_shared<stream_map_t>();
         auto expected = current;
-        if (std::atomic_compare_exchange_weak_explicit(
-                &streams_, &expected, updated, std::memory_order_acq_rel, std::memory_order_acquire))
+        if (std::atomic_compare_exchange_weak_explicit(&streams_, &expected, updated, std::memory_order_acq_rel, std::memory_order_acquire))
         {
             if (current != nullptr)
             {
@@ -338,8 +335,7 @@ bool mux_connection::register_stream_local(const std::uint32_t id, const std::sh
         (*updated)[id] = stream;
 
         auto expected = current;
-        if (std::atomic_compare_exchange_weak_explicit(
-                &streams_, &expected, updated, std::memory_order_acq_rel, std::memory_order_acquire))
+        if (std::atomic_compare_exchange_weak_explicit(&streams_, &expected, updated, std::memory_order_acq_rel, std::memory_order_acquire))
         {
             LOG_DEBUG("mux {} stream {} registered", cid_, id);
             return true;
@@ -381,8 +377,7 @@ bool mux_connection::try_register_stream_local(const std::uint32_t id, const std
         }
 
         auto expected = current;
-        if (std::atomic_compare_exchange_weak_explicit(
-                &streams_, &expected, updated, std::memory_order_acq_rel, std::memory_order_acquire))
+        if (std::atomic_compare_exchange_weak_explicit(&streams_, &expected, updated, std::memory_order_acq_rel, std::memory_order_acquire))
         {
             LOG_DEBUG("mux {} stream {} registered", cid_, id);
             return true;
@@ -404,8 +399,7 @@ void mux_connection::remove_stream_local(const std::uint32_t id)
         auto updated = std::make_shared<stream_map_t>(*current);
         updated->erase(id);
         auto expected = current;
-        if (std::atomic_compare_exchange_weak_explicit(
-                &streams_, &expected, updated, std::memory_order_acq_rel, std::memory_order_acquire))
+        if (std::atomic_compare_exchange_weak_explicit(&streams_, &expected, updated, std::memory_order_acq_rel, std::memory_order_acquire))
         {
             LOG_DEBUG("mux {} stream {} removed", cid_, id);
             return;
@@ -452,12 +446,10 @@ void mux_connection::handle_unknown_stream(const std::uint32_t stream_id, const 
 
     LOG_DEBUG("mux {} recv frame for unknown stream {}", cid_, stream_id);
     const auto self = shared_from_this();
-    boost::asio::co_spawn(io_context_,
-                   [self, stream_id]() -> boost::asio::awaitable<void>
-                   {
-                       (void)co_await self->send_async(stream_id, kCmdRst, {});
-                   },
-                   boost::asio::detached);
+    boost::asio::co_spawn(
+        io_context_,
+        [self, stream_id]() -> boost::asio::awaitable<void> { (void)co_await self->send_async(stream_id, kCmdRst, {}); },
+        boost::asio::detached);
 }
 
 void mux_connection::handle_stream_frame(const mux::frame_header& header, std::vector<std::uint8_t> payload)
@@ -507,14 +499,11 @@ bool mux_connection::register_stream_checked(const std::uint32_t id, std::shared
     {
         return register_stream_local(id, stream);
     }
-    return run_sync_bool_query(
-        io_context_,
-        cid_,
-        "register_stream",
-        [self = shared_from_this(), id, stream = std::move(stream)]() mutable
-        {
-            return self->register_stream_local(id, stream);
-        });
+    return run_sync_bool_query(io_context_,
+                               cid_,
+                               "register_stream",
+                               [self = shared_from_this(), id, stream = std::move(stream)]() mutable
+                               { return self->register_stream_local(id, stream); });
 }
 
 bool mux_connection::try_register_stream(const std::uint32_t id, std::shared_ptr<mux_stream_interface> stream)
@@ -532,14 +521,11 @@ bool mux_connection::try_register_stream(const std::uint32_t id, std::shared_ptr
     {
         return try_register_stream_local(id, stream);
     }
-    return run_sync_bool_query(
-        io_context_,
-        cid_,
-        "try_register_stream",
-        [self = shared_from_this(), id, stream = std::move(stream)]() mutable
-        {
-            return self->try_register_stream_local(id, stream);
-        });
+    return run_sync_bool_query(io_context_,
+                               cid_,
+                               "try_register_stream",
+                               [self = shared_from_this(), id, stream = std::move(stream)]() mutable
+                               { return self->try_register_stream_local(id, stream); });
 }
 
 void mux_connection::remove_stream(const std::uint32_t id)
@@ -550,15 +536,14 @@ void mux_connection::remove_stream(const std::uint32_t id)
         return;
     }
 
-    detail::dispatch_cleanup_or_run_inline(
-        io_context_,
-        [weak_self = weak_from_this(), id]()
-        {
-            if (const auto self = weak_self.lock())
-            {
-                self->remove_stream_local(id);
-            }
-        });
+    detail::dispatch_cleanup_or_run_inline(io_context_,
+                                           [weak_self = weak_from_this(), id]()
+                                           {
+                                               if (const auto self = weak_self.lock())
+                                               {
+                                                   self->remove_stream_local(id);
+                                               }
+                                           });
 }
 
 boost::asio::awaitable<void> mux_connection::start()
@@ -580,7 +565,9 @@ boost::asio::awaitable<void> mux_connection::start_impl()
     stop();
 }
 
-boost::asio::awaitable<boost::system::error_code> mux_connection::send_async(const std::uint32_t stream_id, const std::uint8_t cmd, std::vector<std::uint8_t> payload)
+boost::asio::awaitable<boost::system::error_code> mux_connection::send_async(const std::uint32_t stream_id,
+                                                                             const std::uint8_t cmd,
+                                                                             std::vector<std::uint8_t> payload)
 {
     if (!is_open())
     {
@@ -599,7 +586,8 @@ boost::asio::awaitable<boost::system::error_code> mux_connection::send_async(con
     }
 
     mux_write_msg msg{.command = cmd, .stream_id = stream_id, .payload = std::move(payload)};
-    const auto [ec] = co_await write_channel_->async_send(boost::system::error_code{}, std::move(msg), boost::asio::as_tuple(boost::asio::use_awaitable));
+    const auto [ec] =
+        co_await write_channel_->async_send(boost::system::error_code{}, std::move(msg), boost::asio::as_tuple(boost::asio::use_awaitable));
 
     if (ec)
     {
@@ -632,15 +620,14 @@ void mux_connection::stop()
         return;
     }
 
-    detail::dispatch_cleanup_or_run_inline(
-        io_context_,
-        [weak_self = weak_from_this()]()
-        {
-            if (const auto self = weak_self.lock())
-            {
-                self->stop_impl();
-            }
-        });
+    detail::dispatch_cleanup_or_run_inline(io_context_,
+                                           [weak_self = weak_from_this()]()
+                                           {
+                                               if (const auto self = weak_self.lock())
+                                               {
+                                                   self->stop_impl();
+                                               }
+                                           });
 }
 
 void mux_connection::stop_impl()
@@ -659,10 +646,7 @@ void mux_connection::stop_impl()
     finalize_stop_state();
 }
 
-void mux_connection::release_resources()
-{
-    stop();
-}
+void mux_connection::release_resources() { stop(); }
 
 void mux_connection::reset_streams_on_stop(const stream_map_t& streams_to_clear)
 {
@@ -812,8 +796,8 @@ boost::asio::awaitable<void> mux_connection::write_loop()
 
         const auto ciphertext_span = *encrypt_result;
 
-        const auto [wec, n] =
-            co_await boost::asio::async_write(socket_, boost::asio::buffer(ciphertext_span.data(), ciphertext_span.size()), boost::asio::as_tuple(boost::asio::use_awaitable));
+        const auto [wec, n] = co_await boost::asio::async_write(
+            socket_, boost::asio::buffer(ciphertext_span.data(), ciphertext_span.size()), boost::asio::as_tuple(boost::asio::use_awaitable));
 
         if (wec)
         {
@@ -964,14 +948,7 @@ bool mux_connection::can_accept_stream()
     {
         return can_accept_stream_local();
     }
-    return run_sync_bool_query(
-        io_context_,
-        cid_,
-        "can_accept_stream",
-        [self = shared_from_this()]()
-        {
-            return self->can_accept_stream_local();
-        });
+    return run_sync_bool_query(io_context_, cid_, "can_accept_stream", [self = shared_from_this()]() { return self->can_accept_stream_local(); });
 }
 
 bool mux_connection::has_stream(const std::uint32_t id)
@@ -985,14 +962,7 @@ bool mux_connection::has_stream(const std::uint32_t id)
     {
         return has_stream_local(id);
     }
-    return run_sync_bool_query(
-        io_context_,
-        cid_,
-        "has_stream",
-        [self = shared_from_this(), id]()
-        {
-            return self->has_stream_local(id);
-        });
+    return run_sync_bool_query(io_context_, cid_, "has_stream", [self = shared_from_this(), id]() { return self->has_stream_local(id); });
 }
 
 std::shared_ptr<mux_stream> mux_connection::create_stream(const std::string& trace_id)

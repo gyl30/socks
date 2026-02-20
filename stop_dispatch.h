@@ -54,17 +54,16 @@ void dispatch_cleanup_or_run_inline(boost::asio::io_context& io_context,
     auto state = std::make_shared<dispatch_state>(std::forward<Fn>(fn));
     auto future = state->dispatch_done().get_future();
 
-    boost::asio::dispatch(
-        io_context,
-        [state]()
-        {
-            bool expected = false;
-            if (state->executed().compare_exchange_strong(expected, true, std::memory_order_acq_rel))
-            {
-                state->handler()();
-            }
-            state->dispatch_done().set_value();
-        });
+    boost::asio::dispatch(io_context,
+                          [state]()
+                          {
+                              bool expected = false;
+                              if (state->executed().compare_exchange_strong(expected, true, std::memory_order_acq_rel))
+                              {
+                                  state->handler()();
+                              }
+                              state->dispatch_done().set_value();
+                          });
 
     if (future.wait_for(kStopDispatchWaitTimeout) == std::future_status::ready)
     {

@@ -62,8 +62,8 @@ boost::asio::awaitable<void> remote_server::send_stream_reset(const std::shared_
 }
 
 boost::asio::awaitable<void> remote_server::reject_stream_for_limit(const std::shared_ptr<mux_connection>& connection,
-                                                             const connection_context& ctx,
-                                                             const std::uint32_t stream_id)
+                                                                    const connection_context& ctx,
+                                                                    const std::uint32_t stream_id)
 {
     statistics::instance().inc_stream_limit_rejected();
     LOG_CTX_WARN(ctx, "{} stream limit reached", log_event::kMux);
@@ -75,13 +75,14 @@ boost::asio::awaitable<void> remote_server::reject_stream_for_limit(const std::s
 }
 
 boost::asio::awaitable<void> remote_server::handle_tcp_connect_stream(const std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>>& tunnel,
-                                                               const connection_context& stream_ctx,
-                                                               const std::uint32_t stream_id,
-                                                               const syn_payload& syn,
-                                                               const std::size_t payload_size,
-                                                               boost::asio::io_context& io_context)
+                                                                      const connection_context& stream_ctx,
+                                                                      const std::uint32_t stream_id,
+                                                                      const syn_payload& syn,
+                                                                      const std::size_t payload_size,
+                                                                      boost::asio::io_context& io_context)
 {
-    LOG_CTX_INFO(stream_ctx, "{} stream {} type tcp connect target {} {} payload size {}", log_event::kMux, stream_id, syn.addr, syn.port, payload_size);
+    LOG_CTX_INFO(
+        stream_ctx, "{} stream {} type tcp connect target {} {} payload size {}", log_event::kMux, stream_id, syn.addr, syn.port, payload_size);
     const auto connection = tunnel->connection();
     const auto sess = std::make_shared<remote_session>(connection, stream_id, io_context, stream_ctx);
     sess->set_manager(tunnel);
@@ -95,9 +96,9 @@ boost::asio::awaitable<void> remote_server::handle_tcp_connect_stream(const std:
 }
 
 boost::asio::awaitable<void> remote_server::handle_udp_associate_stream(const std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>>& tunnel,
-                                                                 const connection_context& stream_ctx,
-                                                                 const std::uint32_t stream_id,
-                                                                 boost::asio::io_context& io_context) const
+                                                                        const connection_context& stream_ctx,
+                                                                        const std::uint32_t stream_id,
+                                                                        boost::asio::io_context& io_context) const
 {
     LOG_CTX_INFO(stream_ctx, "{} stream {} type udp associate associated via tcp", log_event::kMux, stream_id);
     const auto connection = tunnel->connection();
@@ -114,10 +115,10 @@ boost::asio::awaitable<void> remote_server::handle_udp_associate_stream(const st
 }
 
 boost::asio::awaitable<void> remote_server::process_stream_request(std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> tunnel,
-                                                            const connection_context& ctx,
-                                                            const std::uint32_t stream_id,
-                                                            std::vector<std::uint8_t> payload,
-                                                            boost::asio::io_context& io_context) const
+                                                                   const connection_context& ctx,
+                                                                   const std::uint32_t stream_id,
+                                                                   std::vector<std::uint8_t> payload,
+                                                                   boost::asio::io_context& io_context) const
 {
     const auto connection = tunnel->connection();
     if (!connection->can_accept_stream())

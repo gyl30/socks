@@ -28,8 +28,8 @@ namespace reality
 class tls_key_schedule
 {
    public:
-    [[nodiscard]] static std::expected<std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>, boost::system::error_code> derive_traffic_keys(
-        const std::vector<std::uint8_t>& secret, std::size_t key_len = 16, std::size_t iv_len = 12, const EVP_MD* md = EVP_sha256())
+    [[nodiscard]] static std::expected<std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>, boost::system::error_code>
+    derive_traffic_keys(const std::vector<std::uint8_t>& secret, std::size_t key_len = 16, std::size_t iv_len = 12, const EVP_MD* md = EVP_sha256())
     {
         auto key = crypto_util::hkdf_expand_label(secret, "key", {}, key_len, md);
         if (!key)
@@ -45,9 +45,7 @@ class tls_key_schedule
     }
 
     [[nodiscard]] static std::expected<handshake_keys, boost::system::error_code> derive_handshake_keys(
-        const std::vector<std::uint8_t>& shared_secret,
-        const std::vector<std::uint8_t>& server_hello_hash,
-        const EVP_MD* md)
+        const std::vector<std::uint8_t>& shared_secret, const std::vector<std::uint8_t>& server_hello_hash, const EVP_MD* md)
     {
         const auto hash_len_result = hash_size(md);
         if (!hash_len_result)
@@ -83,25 +81,22 @@ class tls_key_schedule
         auto derived_secret_2 = crypto_util::hkdf_expand_label(*handshake_secret, "derived", empty_hash, hash_len, md);
         auto master_secret = crypto_util::hkdf_extract(*derived_secret_2, zero_ikm, md);
 
-        return handshake_keys{
-            .client_handshake_traffic_secret = c_hs_secret.value_or(std::vector<std::uint8_t>{}),
-            .server_handshake_traffic_secret = s_hs_secret.value_or(std::vector<std::uint8_t>{}),
-            .master_secret = master_secret.value_or(std::vector<std::uint8_t>{})};
+        return handshake_keys{.client_handshake_traffic_secret = c_hs_secret.value_or(std::vector<std::uint8_t>{}),
+                              .server_handshake_traffic_secret = s_hs_secret.value_or(std::vector<std::uint8_t>{}),
+                              .master_secret = master_secret.value_or(std::vector<std::uint8_t>{})};
     }
 
-    [[nodiscard]] static std::expected<std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>, boost::system::error_code> derive_application_secrets(
-        const std::vector<std::uint8_t>& master_secret, const std::vector<std::uint8_t>& handshake_hash, const EVP_MD* md)
+    [[nodiscard]] static std::expected<std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>, boost::system::error_code>
+    derive_application_secrets(const std::vector<std::uint8_t>& master_secret, const std::vector<std::uint8_t>& handshake_hash, const EVP_MD* md)
     {
         const auto hash_len_result = hash_size(md);
         if (!hash_len_result)
         {
             return std::pair{std::vector<std::uint8_t>{}, std::vector<std::uint8_t>{}};
         }
-        const std::size_t hash_len = *hash_len_result;    // GCOVR_EXCL_LINE
-        auto c_app_secret =
-            crypto_util::hkdf_expand_label(master_secret, "c ap traffic", handshake_hash, hash_len, md);    // GCOVR_EXCL_LINE
-        auto s_app_secret =
-            crypto_util::hkdf_expand_label(master_secret, "s ap traffic", handshake_hash, hash_len, md);    // GCOVR_EXCL_LINE
+        const std::size_t hash_len = *hash_len_result;                                                                      // GCOVR_EXCL_LINE
+        auto c_app_secret = crypto_util::hkdf_expand_label(master_secret, "c ap traffic", handshake_hash, hash_len, md);    // GCOVR_EXCL_LINE
+        auto s_app_secret = crypto_util::hkdf_expand_label(master_secret, "s ap traffic", handshake_hash, hash_len, md);    // GCOVR_EXCL_LINE
         return std::pair{c_app_secret.value_or(std::vector<std::uint8_t>{}),
                          s_app_secret.value_or(std::vector<std::uint8_t>{})};    // GCOVR_EXCL_LINE
     }
@@ -123,9 +118,14 @@ class tls_key_schedule
 
         std::uint8_t hmac_out[EVP_MAX_MD_SIZE] = {};
         unsigned int hmac_len = 0;
-        if (HMAC(md, finished_key->data(), static_cast<int>(finished_key->size()), handshake_hash.data(), handshake_hash.size(), hmac_out, &hmac_len)
-            == nullptr
-            || hmac_len == 0)
+        if (HMAC(md,
+                 finished_key->data(),
+                 static_cast<int>(finished_key->size()),
+                 handshake_hash.data(),
+                 handshake_hash.size(),
+                 hmac_out,
+                 &hmac_len) == nullptr ||
+            hmac_len == 0)
         {
             return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
         }

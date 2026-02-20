@@ -141,20 +141,11 @@ std::string build_metrics_payload()
     return metrics_payload;
 }
 
-void log_monitor_read_failure(const boost::system::error_code& ec)
-{
-    LOG_WARN("monitor read failed {}", ec.message());
-}
+void log_monitor_read_failure(const boost::system::error_code& ec) { LOG_WARN("monitor read failed {}", ec.message()); }
 
-void log_monitor_write_failure(const boost::system::error_code& ec)
-{
-    LOG_WARN("monitor write failed {}", ec.message());
-}
+void log_monitor_write_failure(const boost::system::error_code& ec) { LOG_WARN("monitor write failed {}", ec.message()); }
 
-void log_monitor_accept_failure(const boost::system::error_code& ec)
-{
-    LOG_WARN("monitor accept failed {}", ec.message());
-}
+void log_monitor_accept_failure(const boost::system::error_code& ec) { LOG_WARN("monitor accept failed {}", ec.message()); }
 
 http::response<http::string_body> make_text_response(const http::status status,
                                                      const unsigned version,
@@ -205,8 +196,7 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
     {
         if (request_.method() != http::verb::get)
         {
-            response_ = make_text_response(
-                http::status::method_not_allowed, request_.version(), "method not allowed\n", "text/plain; charset=utf-8");
+            response_ = make_text_response(http::status::method_not_allowed, request_.version(), "method not allowed\n", "text/plain; charset=utf-8");
             write_response();
             return;
         }
@@ -218,17 +208,16 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
             return;
         }
 
-        response_ = make_text_response(http::status::ok,
-                                       request_.version(),
-                                       build_metrics_payload(),
-                                       "text/plain; version=0.0.4; charset=utf-8");
+        response_ = make_text_response(http::status::ok, request_.version(), build_metrics_payload(), "text/plain; version=0.0.4; charset=utf-8");
         write_response();
     }
 
     void write_response()
     {
         auto self = shared_from_this();
-        http::async_write(stream_, response_, [this, self](boost::system::error_code ec, std::size_t)
+        http::async_write(stream_,
+                          response_,
+                          [this, self](boost::system::error_code ec, std::size_t)
                           {
                               if (ec && ec != boost::asio::error::operation_aborted)
                               {
@@ -252,15 +241,9 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
     http::response<http::string_body> response_;
 };
 
-monitor_server::monitor_server(boost::asio::io_context& ioc, const std::uint16_t port)
-    : monitor_server(ioc, "127.0.0.1", port)
-{
-}
+monitor_server::monitor_server(boost::asio::io_context& ioc, const std::uint16_t port) : monitor_server(ioc, "127.0.0.1", port) {}
 
-monitor_server::monitor_server(boost::asio::io_context& ioc,
-                               std::string bind_host,
-                               const std::uint16_t port)
-    : acceptor_(ioc)
+monitor_server::monitor_server(boost::asio::io_context& ioc, std::string bind_host, const std::uint16_t port) : acceptor_(ioc)
 {
     auto close_acceptor_on_failure = [this]()
     {
@@ -324,15 +307,14 @@ void monitor_server::stop()
     started_.store(false, std::memory_order_release);
 
     auto& io_context = static_cast<boost::asio::io_context&>(acceptor_.get_executor().context());
-    detail::dispatch_cleanup_or_run_inline(
-        io_context,
-        [weak_self = weak_from_this()]()
-        {
-            if (const auto self = weak_self.lock())
-            {
-                self->stop_local();
-            }
-        });
+    detail::dispatch_cleanup_or_run_inline(io_context,
+                                           [weak_self = weak_from_this()]()
+                                           {
+                                               if (const auto self = weak_self.lock())
+                                               {
+                                                   self->stop_local();
+                                               }
+                                           });
 }
 
 void monitor_server::stop_local()

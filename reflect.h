@@ -123,8 +123,7 @@ bool read_signed_integer(JsonReader& vis, T& out)
         return false;
     }
     const auto value = vis.m->GetInt64();
-    if (value < static_cast<std::int64_t>(std::numeric_limits<T>::min())
-        || value > static_cast<std::int64_t>(std::numeric_limits<T>::max()))
+    if (value < static_cast<std::int64_t>(std::numeric_limits<T>::min()) || value > static_cast<std::int64_t>(std::numeric_limits<T>::max()))
     {
         vis.set_invalid();
         return false;
@@ -160,47 +159,17 @@ inline void reflect(JsonReader& vis, bool& v)
     }
     v = vis.m->GetBool();
 }
-inline void reflect(JsonReader& vis, unsigned char& v)
-{
-    (void)read_unsigned_integer(vis, v);
-}
+inline void reflect(JsonReader& vis, unsigned char& v) { (void)read_unsigned_integer(vis, v); }
 // NOLINTBEGIN(google-runtime-int)
-inline void reflect(JsonReader& vis, short& v)
-{
-    (void)read_signed_integer(vis, v);
-}
-inline void reflect(JsonReader& vis, unsigned short& v)
-{
-    (void)read_unsigned_integer(vis, v);
-}
-inline void reflect(JsonReader& vis, int8_t& v)
-{
-    (void)read_signed_integer(vis, v);
-}
-inline void reflect(JsonReader& vis, int& v)
-{
-    (void)read_signed_integer(vis, v);
-}
-inline void reflect(JsonReader& vis, unsigned& v)
-{
-    (void)read_unsigned_integer(vis, v);
-}
-inline void reflect(JsonReader& vis, long& v)
-{
-    (void)read_signed_integer(vis, v);
-}
-inline void reflect(JsonReader& vis, unsigned long& v)
-{
-    (void)read_unsigned_integer(vis, v);
-}
-inline void reflect(JsonReader& vis, long long& v)
-{
-    (void)read_signed_integer(vis, v);
-}
-inline void reflect(JsonReader& vis, unsigned long long& v)
-{
-    (void)read_unsigned_integer(vis, v);
-}
+inline void reflect(JsonReader& vis, short& v) { (void)read_signed_integer(vis, v); }
+inline void reflect(JsonReader& vis, unsigned short& v) { (void)read_unsigned_integer(vis, v); }
+inline void reflect(JsonReader& vis, int8_t& v) { (void)read_signed_integer(vis, v); }
+inline void reflect(JsonReader& vis, int& v) { (void)read_signed_integer(vis, v); }
+inline void reflect(JsonReader& vis, unsigned& v) { (void)read_unsigned_integer(vis, v); }
+inline void reflect(JsonReader& vis, long& v) { (void)read_signed_integer(vis, v); }
+inline void reflect(JsonReader& vis, unsigned long& v) { (void)read_unsigned_integer(vis, v); }
+inline void reflect(JsonReader& vis, long long& v) { (void)read_signed_integer(vis, v); }
+inline void reflect(JsonReader& vis, unsigned long long& v) { (void)read_unsigned_integer(vis, v); }
 // NOLINTEND(google-runtime-int)
 inline void reflect(JsonReader& vis, double& v)
 {
@@ -421,13 +390,13 @@ inline void JsonReader::member(const char* name, const std::function<void()>& fn
 
 #define MAPPABLE_REFLECT_MEMBER(name) REFLECT_MEMBER(name);
 
-#define REFLECT_STRUCT(type, ...)                        \
-    template <typename Vis>                              \
-    void reflect(Vis& vis, type& v)                      \
-    {                                                    \
-        reflectMemberStart(vis);                         \
+#define REFLECT_STRUCT(type, ...)                       \
+    template <typename Vis>                             \
+    void reflect(Vis& vis, type& v)                     \
+    {                                                   \
+        reflectMemberStart(vis);                        \
         MACRO_MAP(MAPPABLE_REFLECT_MEMBER, __VA_ARGS__) \
-        reflectMemberEnd(vis);                           \
+        reflectMemberEnd(vis);                          \
     }
 
 template <typename T>

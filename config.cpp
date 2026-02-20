@@ -31,18 +31,17 @@ REFLECT_STRUCT(mux::config::fallback_entry, sni, host, port);
 REFLECT_STRUCT(mux::config::timeout_t, read, write, idle);
 REFLECT_STRUCT(mux::config::queues_t, udp_session_recv_channel_capacity, tproxy_udp_dispatch_queue_capacity);
 REFLECT_STRUCT(mux::config::reality_t::fallback_guard_t, enabled, rate_per_sec, burst, circuit_fail_threshold, circuit_open_sec, state_ttl_sec);
-REFLECT_STRUCT(
-    mux::config::reality_t,
-    fallback_guard,
-    sni,
-    fingerprint,
-    dest,
-    type,
-    strict_cert_verify,
-    replay_cache_max_entries,
-    private_key,
-    public_key,
-    short_id);
+REFLECT_STRUCT(mux::config::reality_t,
+               fallback_guard,
+               sni,
+               fingerprint,
+               dest,
+               type,
+               strict_cert_verify,
+               replay_cache_max_entries,
+               private_key,
+               public_key,
+               short_id);
 REFLECT_STRUCT(mux::config::limits_t, max_connections, max_connections_per_source, source_prefix_v4, source_prefix_v6, max_buffer, max_streams);
 REFLECT_STRUCT(mux::config::heartbeat_t, enabled, idle_timeout, min_interval, max_interval, min_padding, max_padding);
 REFLECT_STRUCT(mux::config::monitor_t, enabled, port);
@@ -105,13 +104,11 @@ constexpr std::uint32_t kQueueCapacityMax = 65535;
 {
     if (queues.udp_session_recv_channel_capacity < kQueueCapacityMin || queues.udp_session_recv_channel_capacity > kQueueCapacityMax)
     {
-        return std::unexpected(
-            make_config_error("/queues/udp_session_recv_channel_capacity", "must be between 1 and 65535"));
+        return std::unexpected(make_config_error("/queues/udp_session_recv_channel_capacity", "must be between 1 and 65535"));
     }
     if (queues.tproxy_udp_dispatch_queue_capacity < kQueueCapacityMin || queues.tproxy_udp_dispatch_queue_capacity > kQueueCapacityMax)
     {
-        return std::unexpected(
-            make_config_error("/queues/tproxy_udp_dispatch_queue_capacity", "must be between 1 and 65535"));
+        return std::unexpected(make_config_error("/queues/tproxy_udp_dispatch_queue_capacity", "must be between 1 and 65535"));
     }
     return {};
 }
@@ -203,8 +200,8 @@ constexpr std::uint32_t kQueueCapacityMax = 65535;
     const rapidjson::ParseResult parse_result = reader.Parse(text.c_str());
     if (parse_result.IsError())
     {
-        return std::unexpected(
-            make_config_error("/", "json parse error at offset " + std::to_string(parse_result.Offset()) + ": " + rapidjson::GetParseError_En(parse_result.Code())));
+        return std::unexpected(make_config_error(
+            "/", "json parse error at offset " + std::to_string(parse_result.Offset()) + ": " + rapidjson::GetParseError_En(parse_result.Code())));
     }
 
     config cfg;

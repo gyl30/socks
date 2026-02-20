@@ -39,7 +39,7 @@ class socks_client : public std::enable_shared_from_this<socks_client>
     [[nodiscard]] static boost::asio::awaitable<void> accept_local_loop_detached(std::shared_ptr<socks_client> self);
     boost::asio::awaitable<void> accept_local_loop();
 
-  private:
+   private:
     std::atomic<bool> stop_{false};
     std::atomic<bool> started_{false};
     std::atomic<std::uint16_t> listen_port_{0};
@@ -47,8 +47,7 @@ class socks_client : public std::enable_shared_from_this<socks_client>
     boost::asio::ip::tcp::acceptor acceptor_;
     std::shared_ptr<mux::router> router_;
     std::shared_ptr<client_tunnel_pool> tunnel_pool_;
-    std::shared_ptr<std::vector<std::weak_ptr<socks_session>>> sessions_ =
-        std::make_shared<std::vector<std::weak_ptr<socks_session>>>();
+    std::shared_ptr<std::vector<std::weak_ptr<socks_session>>> sessions_ = std::make_shared<std::vector<std::weak_ptr<socks_session>>>();
     config::timeout_t timeout_config_;
     config::queues_t queue_config_;
     config::socks_t socks_config_;
