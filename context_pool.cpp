@@ -1,8 +1,10 @@
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/executor_work_guard.hpp>
+#include <atomic>
 #include <memory>
 #include <thread>
 #include <vector>
 #include <cstddef>
-#include <system_error>
 
 #include "log.h"
 #include "context_pool.h"

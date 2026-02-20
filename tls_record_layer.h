@@ -1,6 +1,8 @@
 #ifndef TLS_RECORD_LAYER_H
 #define TLS_RECORD_LAYER_H
 
+#include <boost/system/error_code.hpp>
+#include <openssl/types.h>
 #include <span>
 #include <vector>
 #include <cstddef>
@@ -8,9 +10,7 @@
 #include <cstring>
 #include <expected>
 
-#include <boost/system/error_code.hpp>
-
-#include "crypto_util.h"
+#include "cipher_context.h"
 
 namespace reality
 {

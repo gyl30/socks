@@ -1,11 +1,14 @@
+// NOLINTBEGIN(misc-include-cleaner)
+#include <openssl/types.h>
+#include <boost/system/error_code.hpp>
+#include <expected>
+#include <boost/asio/io_context.hpp>
 #include <span>
 #include <string>
 #include <vector>
 #include <cstddef>
 #include <cstdint>
-#include <chrono>
 #include <cstring>
-#include <memory>
 #include <utility>
 #include <optional>
 #include <system_error>
@@ -15,16 +18,16 @@
 #include <boost/asio/write.hpp>
 #include <boost/asio/buffer.hpp>
 #include <boost/asio/ip/tcp.hpp>
-#include <boost/asio/connect.hpp>
 #include <boost/asio/as_tuple.hpp>
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/use_awaitable.hpp>
+#include "transcript.h"
 
 extern "C"
 {
 #include <openssl/evp.h>
 #include <openssl/rand.h>
-}
+}    // namespace
 
 #include "log.h"
 #include "crypto_util.h"
@@ -68,7 +71,7 @@ bool extract_server_hello_message(const std::vector<std::uint8_t>& sh_body, std:
 
     sh_real.assign(sh_body.begin(), sh_body.begin() + static_cast<std::ptrdiff_t>(full_msg_len));
     return true;
-}
+}    // namespace
 
 bool parse_server_hello_cipher_suite(const std::vector<std::uint8_t>& sh_real, std::uint16_t& cipher_suite)
 {
@@ -87,7 +90,7 @@ bool parse_server_hello_cipher_suite(const std::vector<std::uint8_t>& sh_real, s
 
     cipher_suite = static_cast<std::uint16_t>((sh_real[cipher_offset] << 8) | sh_real[cipher_offset + 1]);
     return true;
-}
+}    // namespace
 
 std::optional<negotiated_suite> select_negotiated_suite(const std::uint16_t cipher_suite, const mux::connection_context& ctx)
 {
@@ -164,7 +167,7 @@ boost::system::error_code derive_server_record_protection(const std::vector<std:
     dec_iv = std::move(s_hs_keys->second);
     return boost::system::error_code{};
 }
-}
+}    // namespace
 
 void handshake_reassembler::append(std::span<const std::uint8_t> data) { buffer_.insert(buffer_.end(), data.begin(), data.end()); }
 
@@ -413,7 +416,7 @@ boost::asio::awaitable<std::expected<void, boost::system::error_code>> cert_fetc
 
     auto [type, pt_data] = *read_res;
 
-    if (type == kContentTypeChangeCipherSpec || type != kContentTypeHandshake)
+    if (type != kContentTypeHandshake)
     {
         co_return std::expected<void, boost::system::error_code>{};
     }
@@ -532,7 +535,7 @@ boost::asio::awaitable<std::pair<boost::system::error_code, std::vector<std::uin
     co_return std::make_pair(boost::system::error_code{}, std::move(body));
 }
 
-std::expected<void, boost::system::error_code> cert_fetcher::fetch_session::validate_record_length(const std::uint16_t len) const
+std::expected<void, boost::system::error_code> cert_fetcher::fetch_session::validate_record_length(const std::uint16_t len)
 {
     if (len <= kMaxEncryptedRecordLen)
     {
@@ -617,3 +620,4 @@ boost::asio::awaitable<std::expected<std::pair<std::uint8_t, std::span<std::uint
 }
 
 }    // namespace reality
+// NOLINTEND(misc-include-cleaner)

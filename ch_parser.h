@@ -1,13 +1,10 @@
 #ifndef CH_PARSER_H
 #define CH_PARSER_H
 
-#include <span>
 #include <string>
 #include <vector>
 #include <cstddef>
 #include <cstdint>
-
-#include "reality_core.h"
 
 namespace mux
 {
@@ -89,7 +86,7 @@ class ch_parser
         {
             if (!has(n))
             {
-                return reader(nullptr, 0, nullptr);
+                return {nullptr, 0, nullptr};
             }
             reader s(ptr_, n, start_);
             ptr_ += n;
