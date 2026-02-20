@@ -1,13 +1,14 @@
+// NOLINTBEGIN(misc-include-cleaner)
+#include <boost/system/error_code.hpp>
 #include <memory>
 #include <string>
 #include <thread>
 #include <vector>
 #include <csignal>
 #include <cstdint>
+#include <exception>
 #include <iostream>
-#include <system_error>
 
-#include <boost/asio/io_context.hpp>
 #include <boost/asio/signal_set.hpp>
 
 #include "log.h"
@@ -35,7 +36,7 @@ struct runtime_services
     std::shared_ptr<mux::monitor_server> monitor = nullptr;
 };
 
-static void print_usage(const char* prog)
+void print_usage(const char* prog)
 {
     std::cout << "Usage:\n";
     std::cout << prog << " -c <config>  Run with configuration file\n";
@@ -43,7 +44,7 @@ static void print_usage(const char* prog)
     std::cout << prog << " config       Dump default configuration\n";
 }
 
-static void dump_x25519()
+void dump_x25519()
 {
     std::uint8_t pub[32];
     std::uint8_t priv[32];
@@ -58,7 +59,7 @@ static void dump_x25519()
     std::cout << "public key:  " << reality::crypto_util::bytes_to_hex(vec_pub) << '\n';
 }
 
-static int parse_config_from_file(const std::string& file, mux::config& cfg)
+int parse_config_from_file(const std::string& file, mux::config& cfg)
 {
     const auto parsed = mux::parse_config_with_error(file);
     if (!parsed)
@@ -300,7 +301,7 @@ int run_with_config(const char* prog, const std::string& config_path)
 
 }    // namespace
 
-int main(int argc, char** argv)
+int main(int argc, char** argv)    // NOLINT(bugprone-exception-escape)
 {
     if (argc < 2)
     {
@@ -334,3 +335,4 @@ int main(int argc, char** argv)
     }
     return run_with_config(argv[0], argv[2]);
 }
+// NOLINTEND(misc-include-cleaner)
