@@ -67,21 +67,21 @@ inline bool open_ephemeral_tcp_acceptor(boost::asio::ip::tcp::acceptor& acceptor
         boost::system::error_code ec;
         if (acceptor.is_open())
         {
-            acceptor.close(ec);
+            ec = acceptor.close(ec);
         }
         const auto protocol = bind_addr.is_v6() ? boost::asio::ip::tcp::v6() : boost::asio::ip::tcp::v4();
-        acceptor.open(protocol, ec);
+        ec = acceptor.open(protocol, ec);
         if (!ec)
         {
-            acceptor.set_option(boost::asio::socket_base::reuse_address(true), ec);
+            ec = acceptor.set_option(boost::asio::socket_base::reuse_address(true), ec);
         }
         if (!ec)
         {
-            acceptor.bind(boost::asio::ip::tcp::endpoint(bind_addr, 0), ec);
+            ec = acceptor.bind(boost::asio::ip::tcp::endpoint(bind_addr, 0), ec);
         }
         if (!ec)
         {
-            acceptor.listen(boost::asio::socket_base::max_listen_connections, ec);
+            ec = acceptor.listen(boost::asio::socket_base::max_listen_connections, ec);
         }
         if (!ec)
         {
@@ -100,7 +100,7 @@ inline bool bind_ephemeral_tcp_socket(boost::asio::ip::tcp::socket& socket,
     for (std::uint32_t attempt = 0; attempt < max_attempts; ++attempt)
     {
         boost::system::error_code ec;
-        socket.bind(boost::asio::ip::tcp::endpoint(bind_addr, 0), ec);
+        ec = socket.bind(boost::asio::ip::tcp::endpoint(bind_addr, 0), ec);
         if (!ec)
         {
             return true;
@@ -114,6 +114,6 @@ inline bool bind_ephemeral_tcp_socket(boost::asio::ip::tcp::socket& socket,
     return false;
 }
 
-}                          
+}    // namespace mux::test
 
 #endif
