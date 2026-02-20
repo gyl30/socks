@@ -49,17 +49,16 @@ void fail_next_tcp_nodelay_setsockopt(const int err)
     g_fail_tcp_nodelay_setsockopt_once.store(true, std::memory_order_release);
 }
 
-extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);    // NOLINT(bugprone-reserved-identifier)
 
-extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)    // NOLINT(bugprone-reserved-identifier)
 {
-    if (level == IPPROTO_TCP && optname == TCP_NODELAY &&
-        g_fail_tcp_nodelay_setsockopt_once.exchange(false, std::memory_order_acq_rel))
+    if (level == IPPROTO_TCP && optname == TCP_NODELAY && g_fail_tcp_nodelay_setsockopt_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_tcp_nodelay_setsockopt_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_setsockopt(sockfd, level, optname, optval, optlen);  // NOLINT(bugprone-reserved-identifier)
+    return __real_setsockopt(sockfd, level, optname, optval, optlen);    // NOLINT(bugprone-reserved-identifier)
 }
 
 namespace
@@ -115,7 +114,7 @@ mux::syn_payload make_syn(const std::string& host, const std::uint16_t port)
 }
 
 std::shared_ptr<mux::mux_tunnel_impl<boost::asio::ip::tcp::socket>> make_manager(boost::asio::io_context& io_context,
-                                                                            const std::uint32_t conn_id = 301)
+                                                                                 const std::uint32_t conn_id = 301)
 {
     return std::make_shared<mux::mux_tunnel_impl<boost::asio::ip::tcp::socket>>(
         boost::asio::ip::tcp::socket(io_context), io_context, mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, conn_id);
@@ -162,11 +161,12 @@ TEST(RemoteSessionTest, RunResolveFailureSendsHostUnreachAckAndReset)
 
     std::vector<std::uint8_t> ack_payload;
     EXPECT_CALL(*conn, mock_send_async(9, mux::kCmdAck, _))
-        .WillOnce([&ack_payload](const std::uint32_t, const std::uint8_t, const std::vector<std::uint8_t>& payload)
-                  {
-                      ack_payload = payload;
-                      return boost::system::error_code{};
-                  });
+        .WillOnce(
+            [&ack_payload](const std::uint32_t, const std::uint8_t, const std::vector<std::uint8_t>& payload)
+            {
+                ack_payload = payload;
+                return boost::system::error_code{};
+            });
     EXPECT_CALL(*conn, mock_send_async(9, mux::kCmdRst, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(boost::system::error_code{}));
 
     mux::test::run_awaitable_void(io_context, session->run(make_syn("non-existent.invalid", 443)));
@@ -231,11 +231,12 @@ TEST(RemoteSessionTest, RunConnectFailureSendsConnRefusedAckAndReset)
 
     std::vector<std::uint8_t> ack_payload;
     EXPECT_CALL(*conn, mock_send_async(11, mux::kCmdAck, _))
-        .WillOnce([&ack_payload](const std::uint32_t, const std::uint8_t, const std::vector<std::uint8_t>& payload)
-                  {
-                      ack_payload = payload;
-                      return boost::system::error_code{};
-                  });
+        .WillOnce(
+            [&ack_payload](const std::uint32_t, const std::uint8_t, const std::vector<std::uint8_t>& payload)
+            {
+                ack_payload = payload;
+                return boost::system::error_code{};
+            });
     EXPECT_CALL(*conn, mock_send_async(11, mux::kCmdRst, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(boost::system::error_code{}));
 
     mux::test::run_awaitable_void(io_context, session->run(make_syn("127.0.0.1", closed_port)));
@@ -276,11 +277,12 @@ TEST(RemoteSessionTest, RunConnectTimeoutSendsConnRefusedAckAndReset)
 
     std::vector<std::uint8_t> ack_payload;
     EXPECT_CALL(*conn, mock_send_async(35, mux::kCmdAck, _))
-        .WillOnce([&ack_payload](const std::uint32_t, const std::uint8_t, const std::vector<std::uint8_t>& payload)
-                  {
-                      ack_payload = payload;
-                      return boost::system::error_code{};
-                  });
+        .WillOnce(
+            [&ack_payload](const std::uint32_t, const std::uint8_t, const std::vector<std::uint8_t>& payload)
+            {
+                ack_payload = payload;
+                return boost::system::error_code{};
+            });
     EXPECT_CALL(*conn, mock_send_async(35, mux::kCmdRst, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(boost::system::error_code{}));
 
     const auto start = std::chrono::steady_clock::now();
@@ -356,11 +358,12 @@ TEST(RemoteSessionTest, RunSuccessWhenSetNoDelayFailsStillSendsAckAndFin)
     {
         ::testing::InSequence const seq;
         EXPECT_CALL(*conn, mock_send_async(29, mux::kCmdAck, _))
-            .WillOnce([&ack_payload](const std::uint32_t, const std::uint8_t, const std::vector<std::uint8_t>& payload)
-                      {
-                          ack_payload = payload;
-                          return boost::system::error_code{};
-                      });
+            .WillOnce(
+                [&ack_payload](const std::uint32_t, const std::uint8_t, const std::vector<std::uint8_t>& payload)
+                {
+                    ack_payload = payload;
+                    return boost::system::error_code{};
+                });
         EXPECT_CALL(*conn, mock_send_async(29, mux::kCmdFin, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(boost::system::error_code{}));
     }
     fail_next_tcp_nodelay_setsockopt(EPERM);
@@ -492,18 +495,16 @@ TEST(RemoteSessionTest, DownstreamMuxSendFailureUnblocksUpstreamLoop)
         EXPECT_CALL(*conn, mock_send_async(38, mux::kCmdFin, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(boost::system::error_code{}));
     }
 
-    auto future = std::async(
-        std::launch::async,
-        [&io_context, session]()
-        {
-            mux::test::run_awaitable_void(
-                io_context,
-                [session]() -> boost::asio::awaitable<void>
-                {
-                    using boost::asio::experimental::awaitable_operators::operator&&;
-                    co_await (session->upstream() && session->downstream());
-                }());
-        });
+    auto future = std::async(std::launch::async,
+                             [&io_context, session]()
+                             {
+                                 mux::test::run_awaitable_void(io_context,
+                                                               [session]() -> boost::asio::awaitable<void>
+                                                               {
+                                                                   using boost::asio::experimental::awaitable_operators::operator&&;
+                                                                   co_await (session->upstream() && session->downstream());
+                                                               }());
+                             });
 
     const bool completed = future.wait_for(std::chrono::milliseconds(500)) == std::future_status::ready;
     if (!completed)
@@ -563,11 +564,12 @@ TEST(RemoteSessionTest, DownstreamStopsWhenTargetReadOperationAbortedStillSendsF
 
     boost::asio::steady_timer cancel_timer(io_context);
     cancel_timer.expires_after(std::chrono::milliseconds(10));
-    cancel_timer.async_wait([session](const boost::system::error_code&)
-                            {
-                                boost::system::error_code ec;
-                                session->target_socket_.cancel(ec);
-                            });
+    cancel_timer.async_wait(
+        [session](const boost::system::error_code&)
+        {
+            boost::system::error_code ec;
+            session->target_socket_.cancel(ec);
+        });
 
     EXPECT_CALL(*conn, mock_send_async(28, mux::kCmdFin, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(boost::system::error_code{}));
     mux::test::run_awaitable_void(io_context, session->downstream());
@@ -622,7 +624,8 @@ TEST(RemoteSessionTest, OnDataDispatchEnqueuesFrame)
     auto session = std::make_shared<mux::remote_session>(conn, 20, io_context, ctx);
 
     session->on_data({0x55});
-    const auto [ec, data] = mux::test::run_awaitable(io_context, session->recv_channel_.async_receive(boost::asio::as_tuple(boost::asio::use_awaitable)));
+    const auto [ec, data] =
+        mux::test::run_awaitable(io_context, session->recv_channel_.async_receive(boost::asio::as_tuple(boost::asio::use_awaitable)));
     EXPECT_FALSE(ec);
     ASSERT_EQ(data.size(), 1U);
     EXPECT_EQ(data[0], 0x55);
@@ -677,16 +680,15 @@ TEST(RemoteSessionTest, OnDataRunsCleanupWhenIoQueueBlocked)
 
     std::atomic<bool> blocker_started{false};
     std::atomic<bool> release_blocker{false};
-    boost::asio::post(
-        io_context,
-        [&blocker_started, &release_blocker]()
-        {
-            blocker_started.store(true, std::memory_order_release);
-            while (!release_blocker.load(std::memory_order_acquire))
-            {
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            }
-        });
+    boost::asio::post(io_context,
+                      [&blocker_started, &release_blocker]()
+                      {
+                          blocker_started.store(true, std::memory_order_release);
+                          while (!release_blocker.load(std::memory_order_acquire))
+                          {
+                              std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                          }
+                      });
 
     std::thread io_thread([&]() { io_context.run(); });
     for (int i = 0; i < 100 && !blocker_started.load(std::memory_order_acquire); ++i)
@@ -796,16 +798,15 @@ TEST(RemoteSessionTest, OnCloseAndOnResetRunWhenIoQueueBlocked)
 
     std::atomic<bool> blocker_started{false};
     std::atomic<bool> release_blocker{false};
-    boost::asio::post(
-        io_context,
-        [&blocker_started, &release_blocker]()
-        {
-            blocker_started.store(true, std::memory_order_release);
-            while (!release_blocker.load(std::memory_order_acquire))
-            {
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            }
-        });
+    boost::asio::post(io_context,
+                      [&blocker_started, &release_blocker]()
+                      {
+                          blocker_started.store(true, std::memory_order_release);
+                          while (!release_blocker.load(std::memory_order_acquire))
+                          {
+                              std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                          }
+                      });
 
     std::thread io_thread([&]() { io_context.run(); });
     for (int i = 0; i < 100 && !blocker_started.load(std::memory_order_acquire); ++i)
