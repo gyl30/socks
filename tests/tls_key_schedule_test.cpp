@@ -30,13 +30,13 @@ void fail_evp_pkey_derive_on_call(const int call_index)
 
 }    // namespace
 
-extern "C" int __real_EVP_PKEY_derive(EVP_PKEY_CTX* ctx, unsigned char* key, size_t* keylen);  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_EVP_PKEY_derive(EVP_PKEY_CTX* ctx, unsigned char* key, size_t* keylen);    // NOLINT(bugprone-reserved-identifier)
 
-extern "C" int __wrap_EVP_PKEY_derive(EVP_PKEY_CTX* ctx, unsigned char* key, size_t* keylen)  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_EVP_PKEY_derive(EVP_PKEY_CTX* ctx, unsigned char* key, size_t* keylen)    // NOLINT(bugprone-reserved-identifier)
 {
     if (key == nullptr || keylen == nullptr)
     {
-        return __real_EVP_PKEY_derive(ctx, key, keylen);  // NOLINT(bugprone-reserved-identifier)
+        return __real_EVP_PKEY_derive(ctx, key, keylen);    // NOLINT(bugprone-reserved-identifier)
     }
 
     const int call_index = g_tls_key_schedule_derive_call_counter.fetch_add(1, std::memory_order_acq_rel) + 1;
@@ -46,7 +46,7 @@ extern "C" int __wrap_EVP_PKEY_derive(EVP_PKEY_CTX* ctx, unsigned char* key, siz
         g_tls_key_schedule_fail_derive_call.store(0, std::memory_order_release);
         return 0;
     }
-    return __real_EVP_PKEY_derive(ctx, key, keylen);  // NOLINT(bugprone-reserved-identifier)
+    return __real_EVP_PKEY_derive(ctx, key, keylen);    // NOLINT(bugprone-reserved-identifier)
 }
 
 TEST(TlsKeyScheduleTest, DeriveTrafficKeysInvalidSecret)
@@ -66,16 +66,14 @@ TEST(TlsKeyScheduleTest, DeriveHandshakeKeysInvalidSecret)
 TEST(TlsKeyScheduleTest, DeriveHandshakeKeysCoversEarlySecretFailureBranch)
 {
     fail_evp_pkey_derive_on_call(1);
-    const auto keys =
-        tls_key_schedule::derive_handshake_keys(std::vector<std::uint8_t>(32, 0x11), std::vector<std::uint8_t>(32, 0x22), EVP_sha256());
+    const auto keys = tls_key_schedule::derive_handshake_keys(std::vector<std::uint8_t>(32, 0x11), std::vector<std::uint8_t>(32, 0x22), EVP_sha256());
     EXPECT_FALSE(keys.has_value());
 }
 
 TEST(TlsKeyScheduleTest, DeriveHandshakeKeysCoversDerivedSecretFailureBranch)
 {
     fail_evp_pkey_derive_on_call(2);
-    const auto keys =
-        tls_key_schedule::derive_handshake_keys(std::vector<std::uint8_t>(32, 0x31), std::vector<std::uint8_t>(32, 0x42), EVP_sha256());
+    const auto keys = tls_key_schedule::derive_handshake_keys(std::vector<std::uint8_t>(32, 0x31), std::vector<std::uint8_t>(32, 0x42), EVP_sha256());
     EXPECT_FALSE(keys.has_value());
 }
 

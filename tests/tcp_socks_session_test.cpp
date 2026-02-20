@@ -1,5 +1,5 @@
-// NOLINTBEGIN(misc-non-private-member-variables-in-classes, modernize-use-ranges, performance-unnecessary-value-param, readability-function-cognitive-complexity)
-// NOLINTBEGIN(bugprone-unused-return-value, misc-include-cleaner)
+// NOLINTBEGIN(misc-non-private-member-variables-in-classes, modernize-use-ranges, performance-unnecessary-value-param,
+// readability-function-cognitive-complexity) NOLINTBEGIN(bugprone-unused-return-value, misc-include-cleaner)
 #include <memory>
 #include <string>
 #include <thread>
@@ -126,20 +126,11 @@ class configured_router final : public mux::router
         direct_domain_matcher() = std::make_shared<mux::domain_matcher>();
     }
 
-    void add_block_domain(const std::string& domain)
-    {
-        block_domain_matcher()->add(domain);
-    }
+    void add_block_domain(const std::string& domain) { block_domain_matcher()->add(domain); }
 
-    void add_direct_cidr(const std::string& cidr)
-    {
-        direct_ip_matcher()->add_rule(cidr);
-    }
+    void add_direct_cidr(const std::string& cidr) { direct_ip_matcher()->add_rule(cidr); }
 
-    void add_proxy_domain(const std::string& domain)
-    {
-        proxy_domain_matcher()->add(domain);
-    }
+    void add_proxy_domain(const std::string& domain) { proxy_domain_matcher()->add(domain); }
 };
 
 struct tcp_socket_pair
@@ -148,10 +139,9 @@ struct tcp_socket_pair
     boost::asio::ip::tcp::socket server;
 };
 
-bool open_ephemeral_tcp_acceptor(
-    boost::asio::ip::tcp::acceptor& acceptor,
-    const std::uint32_t max_attempts = 120,
-    const std::chrono::milliseconds backoff = std::chrono::milliseconds(25))
+bool open_ephemeral_tcp_acceptor(boost::asio::ip::tcp::acceptor& acceptor,
+                                 const std::uint32_t max_attempts = 120,
+                                 const std::chrono::milliseconds backoff = std::chrono::milliseconds(25))
 {
     for (std::uint32_t attempt = 0; attempt < max_attempts; ++attempt)
     {
@@ -220,25 +210,24 @@ std::shared_ptr<mux::tcp_socks_session> make_tcp_session(boost::asio::io_context
     auto router = std::make_shared<mux::router>();
     mux::config::timeout_t timeout_cfg{};
     timeout_cfg.idle = 1;
-    return std::make_shared<mux::tcp_socks_session>(
-        std::move(socket), io_context, std::move(tunnel), std::move(router), 1, timeout_cfg);
+    return std::make_shared<mux::tcp_socks_session>(std::move(socket), io_context, std::move(tunnel), std::move(router), 1, timeout_cfg);
 }
 
-std::shared_ptr<mux::tcp_socks_session> make_tcp_session_with_router(boost::asio::io_context& io_context,
-                                                                     boost::asio::ip::tcp::socket socket,
-                                                                     std::shared_ptr<mux::router> router,
-                                                                     std::shared_ptr<mux::mux_tunnel_impl<boost::asio::ip::tcp::socket>> tunnel = nullptr,
-                                                                     const std::uint32_t sid = 1,
-                                                                     const std::uint16_t idle_timeout_sec = 1)
+std::shared_ptr<mux::tcp_socks_session> make_tcp_session_with_router(
+    boost::asio::io_context& io_context,
+    boost::asio::ip::tcp::socket socket,
+    std::shared_ptr<mux::router> router,
+    std::shared_ptr<mux::mux_tunnel_impl<boost::asio::ip::tcp::socket>> tunnel = nullptr,
+    const std::uint32_t sid = 1,
+    const std::uint16_t idle_timeout_sec = 1)
 {
     mux::config::timeout_t timeout_cfg{};
     timeout_cfg.idle = idle_timeout_sec;
-    return std::make_shared<mux::tcp_socks_session>(
-        std::move(socket), io_context, std::move(tunnel), std::move(router), sid, timeout_cfg);
+    return std::make_shared<mux::tcp_socks_session>(std::move(socket), io_context, std::move(tunnel), std::move(router), sid, timeout_cfg);
 }
 
 std::shared_ptr<mux::mux_tunnel_impl<boost::asio::ip::tcp::socket>> make_test_tunnel(boost::asio::io_context& io_context,
-                                                                                const std::uint32_t conn_id = 9)
+                                                                                     const std::uint32_t conn_id = 9)
 {
     return std::make_shared<mux::mux_tunnel_impl<boost::asio::ip::tcp::socket>>(
         boost::asio::ip::tcp::socket(io_context), io_context, mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, conn_id);
@@ -250,33 +239,33 @@ TEST(TcpSocksSessionTest, CreateBackendReturnsNullForBlockRoute)
     auto router = std::make_shared<mux::router>();
     mux::config::timeout_t const timeout_cfg{};
 
-    auto session = std::make_shared<mux::tcp_socks_session>(
-        boost::asio::ip::tcp::socket(io_context), io_context, nullptr, std::move(router), 1, timeout_cfg);
+    auto session =
+        std::make_shared<mux::tcp_socks_session>(boost::asio::ip::tcp::socket(io_context), io_context, nullptr, std::move(router), 1, timeout_cfg);
 
     EXPECT_EQ(session->create_backend(mux::route_type::kBlock), nullptr);
 }
 
-extern "C" int __real_shutdown(int fd, int how);  // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_close(int fd);  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_shutdown(int fd, int how);    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_close(int fd);                // NOLINT(bugprone-reserved-identifier)
 
-extern "C" int __wrap_shutdown(int fd, int how)  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_shutdown(int fd, int how)    // NOLINT(bugprone-reserved-identifier)
 {
     if (g_fail_shutdown_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_shutdown_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_shutdown(fd, how);  // NOLINT(bugprone-reserved-identifier)
+    return __real_shutdown(fd, how);    // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_close(int fd)  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_close(int fd)    // NOLINT(bugprone-reserved-identifier)
 {
     if (g_fail_close_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_close_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_close(fd);  // NOLINT(bugprone-reserved-identifier)
+    return __real_close(fd);    // NOLINT(bugprone-reserved-identifier)
 }
 
 TEST(TcpSocksSessionTest, CreateBackendReturnsDirectAndProxy)
@@ -285,8 +274,8 @@ TEST(TcpSocksSessionTest, CreateBackendReturnsDirectAndProxy)
     auto router = std::make_shared<mux::router>();
     mux::config::timeout_t const timeout_cfg{};
 
-    auto session = std::make_shared<mux::tcp_socks_session>(
-        boost::asio::ip::tcp::socket(io_context), io_context, nullptr, std::move(router), 1, timeout_cfg);
+    auto session =
+        std::make_shared<mux::tcp_socks_session>(boost::asio::ip::tcp::socket(io_context), io_context, nullptr, std::move(router), 1, timeout_cfg);
 
     EXPECT_NE(session->create_backend(mux::route_type::kDirect), nullptr);
     EXPECT_NE(session->create_backend(mux::route_type::kProxy), nullptr);
@@ -299,8 +288,8 @@ TEST(TcpSocksSessionTest, CreateBackendDirectUsesConfiguredReadTimeout)
     mux::config::timeout_t timeout_cfg{};
     timeout_cfg.read = 7;
 
-    auto session = std::make_shared<mux::tcp_socks_session>(
-        boost::asio::ip::tcp::socket(io_context), io_context, nullptr, std::move(router), 1, timeout_cfg);
+    auto session =
+        std::make_shared<mux::tcp_socks_session>(boost::asio::ip::tcp::socket(io_context), io_context, nullptr, std::move(router), 1, timeout_cfg);
 
     const auto backend = session->create_backend(mux::route_type::kDirect);
     const auto direct_backend = std::dynamic_pointer_cast<mux::direct_upstream>(backend);
@@ -315,8 +304,8 @@ TEST(TcpSocksSessionTest, CreateBackendDirectKeepsReadTimeoutZeroAsDisabled)
     mux::config::timeout_t timeout_cfg{};
     timeout_cfg.read = 0;
 
-    auto session = std::make_shared<mux::tcp_socks_session>(
-        boost::asio::ip::tcp::socket(io_context), io_context, nullptr, std::move(router), 1, timeout_cfg);
+    auto session =
+        std::make_shared<mux::tcp_socks_session>(boost::asio::ip::tcp::socket(io_context), io_context, nullptr, std::move(router), 1, timeout_cfg);
 
     const auto backend = session->create_backend(mux::route_type::kDirect);
     const auto direct_backend = std::dynamic_pointer_cast<mux::direct_upstream>(backend);
@@ -356,13 +345,11 @@ TEST(TcpSocksSessionTest, ConnectBackendSuccessAndFailure)
 
     auto backend_ok = std::make_shared<fake_upstream>();
     backend_ok->connect_result = true;
-    EXPECT_TRUE(mux::test::run_awaitable(
-        io_context, session->connect_backend(backend_ok, "example.com", 443, mux::route_type::kDirect)));
+    EXPECT_TRUE(mux::test::run_awaitable(io_context, session->connect_backend(backend_ok, "example.com", 443, mux::route_type::kDirect)));
 
     auto backend_fail = std::make_shared<fake_upstream>();
     backend_fail->connect_result = false;
-    EXPECT_FALSE(mux::test::run_awaitable(
-        io_context, session->connect_backend(backend_fail, "example.com", 443, mux::route_type::kProxy)));
+    EXPECT_FALSE(mux::test::run_awaitable(io_context, session->connect_backend(backend_fail, "example.com", 443, mux::route_type::kProxy)));
 
     std::uint8_t res[10] = {0};
     boost::asio::read(pair.client, boost::asio::buffer(res));
@@ -477,8 +464,7 @@ TEST(TcpSocksSessionTest, RunReturnsGeneralFailureWhenRouterMissing)
     boost::asio::io_context io_context;
     auto pair = make_tcp_socket_pair(io_context);
     mux::config::timeout_t const timeout_cfg{};
-    auto session = std::make_shared<mux::tcp_socks_session>(
-        std::move(pair.server), io_context, nullptr, nullptr, 1, timeout_cfg);
+    auto session = std::make_shared<mux::tcp_socks_session>(std::move(pair.server), io_context, nullptr, nullptr, 1, timeout_cfg);
 
     mux::test::run_awaitable_void(io_context, session->run("example.test", 80));
 
@@ -639,10 +625,7 @@ TEST(TcpSocksSessionTest, IdleWatchdogBreaksWhenTimerCanceled)
 
     boost::asio::steady_timer cancel_timer(io_context);
     cancel_timer.expires_after(std::chrono::milliseconds(10));
-    cancel_timer.async_wait([session](const boost::system::error_code&)
-                            {
-                                session->idle_timer_.cancel();
-                            });
+    cancel_timer.async_wait([session](const boost::system::error_code&) { session->idle_timer_.cancel(); });
 
     mux::test::run_awaitable_void(io_context, session->idle_watchdog(backend));
 
@@ -659,11 +642,12 @@ TEST(TcpSocksSessionTest, StartIdleWatchdogSpawnsAndHandlesCancel)
 
     boost::asio::steady_timer cancel_timer(io_context);
     cancel_timer.expires_after(std::chrono::milliseconds(10));
-    cancel_timer.async_wait([session](const boost::system::error_code&)
-                            {
-                                session->idle_timer_.cancel();
-                                session->socket_.close();
-                            });
+    cancel_timer.async_wait(
+        [session](const boost::system::error_code&)
+        {
+            session->idle_timer_.cancel();
+            session->socket_.close();
+        });
 
     session->start_idle_watchdog(backend);
     io_context.run();
@@ -707,8 +691,7 @@ TEST(TcpSocksSessionTest, IdleWatchdogDisabledWhenIdleTimeoutZero)
     auto router = std::make_shared<mux::router>();
     mux::config::timeout_t timeout_cfg{};
     timeout_cfg.idle = 0;
-    auto session =
-        std::make_shared<mux::tcp_socks_session>(std::move(pair.server), io_context, nullptr, std::move(router), 88, timeout_cfg);
+    auto session = std::make_shared<mux::tcp_socks_session>(std::move(pair.server), io_context, nullptr, std::move(router), 88, timeout_cfg);
     auto backend = std::make_shared<fake_upstream>();
 
     session->last_activity_time_ms_.store(0, std::memory_order_release);
@@ -751,7 +734,8 @@ TEST(TcpSocksSessionTest, RunDirectPathRepliesSuccessAndForwardsPayload)
                 co_await backend_socket.async_read_some(boost::asio::buffer(buf), boost::asio::redirect_error(boost::asio::use_awaitable, read_ec));
             if (!read_ec && n > 0)
             {
-                (void)co_await boost::asio::async_write(backend_socket, boost::asio::buffer(buf.data(), n), boost::asio::as_tuple(boost::asio::use_awaitable));
+                (void)co_await boost::asio::async_write(
+                    backend_socket, boost::asio::buffer(buf.data(), n), boost::asio::as_tuple(boost::asio::use_awaitable));
             }
             boost::system::error_code ignore;
             backend_socket.close(ignore);
@@ -832,31 +816,33 @@ TEST(TcpSocksSessionTest, RunProxyPathRepliesSuccessWhenAckAccepted)
     std::vector<std::uint8_t> dat_payload;
     EXPECT_CALL(*mock_conn, mock_send_async(_, mux::kCmdSyn, _)).WillOnce(::testing::Return(boost::system::error_code{}));
     EXPECT_CALL(*mock_conn, register_stream(_, _))
-        .WillOnce([&io_context](const std::uint32_t, std::shared_ptr<mux::mux_stream_interface> stream_iface) -> bool
-                  {
-                      auto stream = std::dynamic_pointer_cast<mux::mux_stream>(stream_iface);
-                      EXPECT_NE(stream, nullptr);
-                      if (stream == nullptr)
-                      {
-                          return false;
-                      }
+        .WillOnce(
+            [&io_context](const std::uint32_t, std::shared_ptr<mux::mux_stream_interface> stream_iface) -> bool
+            {
+                auto stream = std::dynamic_pointer_cast<mux::mux_stream>(stream_iface);
+                EXPECT_NE(stream, nullptr);
+                if (stream == nullptr)
+                {
+                    return false;
+                }
 
-                      mux::ack_payload ack{};
-                      ack.socks_rep = socks::kRepSuccess;
-                      std::vector<std::uint8_t> ack_data;
-                      mux::mux_codec::encode_ack(ack, ack_data);
-                      boost::asio::post(io_context, [stream, ack_data]() { stream->on_data(ack_data); });
+                mux::ack_payload ack{};
+                ack.socks_rep = socks::kRepSuccess;
+                std::vector<std::uint8_t> ack_data;
+                mux::mux_codec::encode_ack(ack, ack_data);
+                boost::asio::post(io_context, [stream, ack_data]() { stream->on_data(ack_data); });
 
-                      boost::asio::post(io_context, [stream]() { stream->on_data(std::vector<std::uint8_t>{0xBE, 0xEF}); });
-                      boost::asio::post(io_context, [stream]() { stream->on_close(); });
-                      return true;
-                  });
+                boost::asio::post(io_context, [stream]() { stream->on_data(std::vector<std::uint8_t>{0xBE, 0xEF}); });
+                boost::asio::post(io_context, [stream]() { stream->on_close(); });
+                return true;
+            });
     EXPECT_CALL(*mock_conn, mock_send_async(_, mux::kCmdDat, _))
-        .WillOnce([&dat_payload](const std::uint32_t, const std::uint8_t, const std::vector<std::uint8_t>& payload)
-                  {
-                      dat_payload = payload;
-                      return boost::system::error_code{};
-                  });
+        .WillOnce(
+            [&dat_payload](const std::uint32_t, const std::uint8_t, const std::vector<std::uint8_t>& payload)
+            {
+                dat_payload = payload;
+                return boost::system::error_code{};
+            });
     EXPECT_CALL(*mock_conn, mock_send_async(_, mux::kCmdFin, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(boost::system::error_code{}));
 
     const auto session = make_tcp_session_with_router(io_context, std::move(pair.server), router, tunnel);
@@ -880,4 +866,5 @@ TEST(TcpSocksSessionTest, RunProxyPathRepliesSuccessWhenAckAccepted)
 
 }    // namespace
 // NOLINTEND(bugprone-unused-return-value, misc-include-cleaner)
-// NOLINTEND(misc-non-private-member-variables-in-classes, modernize-use-ranges, performance-unnecessary-value-param, readability-function-cognitive-complexity)
+// NOLINTEND(misc-non-private-member-variables-in-classes, modernize-use-ranges, performance-unnecessary-value-param,
+// readability-function-cognitive-complexity)

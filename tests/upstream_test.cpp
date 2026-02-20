@@ -1,14 +1,16 @@
 // NOLINTBEGIN(bugprone-use-after-move, performance-unnecessary-value-param)
 // NOLINTBEGIN(bugprone-unused-return-value, misc-include-cleaner)
+#include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <memory>
 #include <thread>
 #include <vector>
-#include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <sys/socket.h>
 #include <system_error>
-#include <cerrno>
+#include <netinet/tcp.h>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -18,9 +20,6 @@
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/io_context.hpp>
 
-#include <sys/socket.h>
-#include <netinet/tcp.h>
-
 extern "C"
 {
 #include <openssl/evp.h>
@@ -28,13 +27,15 @@ extern "C"
 
 #include "log.h"
 #include "statistics.h"
+
 #define private public
 #include "upstream.h"
+
 #undef private
+#include "protocol.h"
+#include "mux_codec.h"
 #include "test_util.h"
 #include "mux_tunnel.h"
-#include "mux_codec.h"
-#include "protocol.h"
 #include "log_context.h"
 #include "mock_mux_connection.h"
 
@@ -58,9 +59,9 @@ void fail_next_tcp_nodelay_setsockopt(const int err)
     g_fail_tcp_nodelay_setsockopt_once.store(true, std::memory_order_release);
 }
 
-extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);    // NOLINT(bugprone-reserved-identifier)
 
-extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)    // NOLINT(bugprone-reserved-identifier)
 {
 #ifdef SO_MARK
     if (level == SOL_SOCKET && optname == SO_MARK && g_fail_so_mark_setsockopt_once.exchange(false, std::memory_order_acq_rel))
@@ -69,40 +70,38 @@ extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void*
         return -1;
     }
 #endif
-    if (level == IPPROTO_TCP && optname == TCP_NODELAY &&
-        g_fail_tcp_nodelay_setsockopt_once.exchange(false, std::memory_order_acq_rel))
+    if (level == IPPROTO_TCP && optname == TCP_NODELAY && g_fail_tcp_nodelay_setsockopt_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_tcp_nodelay_setsockopt_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_setsockopt(sockfd, level, optname, optval, optlen);  // NOLINT(bugprone-reserved-identifier)
+    return __real_setsockopt(sockfd, level, optname, optval, optlen);    // NOLINT(bugprone-reserved-identifier)
 }
 
-std::shared_ptr<mux::mux_tunnel_impl<boost::asio::ip::tcp::socket>> make_test_tunnel(
-    boost::asio::io_context& io_context, const mux::config::limits_t& limits = {})
+std::shared_ptr<mux::mux_tunnel_impl<boost::asio::ip::tcp::socket>> make_test_tunnel(boost::asio::io_context& io_context,
+                                                                                     const mux::config::limits_t& limits = {})
 {
-    return std::make_shared<mux::mux_tunnel_impl<boost::asio::ip::tcp::socket>>(
-        boost::asio::ip::tcp::socket(io_context),
-        io_context,
-        mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()},
-        true,
-        9,
-        "",
-        mux::config::timeout_t{},
-        limits,
-        mux::config::heartbeat_t{});
+    return std::make_shared<mux::mux_tunnel_impl<boost::asio::ip::tcp::socket>>(boost::asio::ip::tcp::socket(io_context),
+                                                                                io_context,
+                                                                                mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()},
+                                                                                true,
+                                                                                9,
+                                                                                "",
+                                                                                mux::config::timeout_t{},
+                                                                                limits,
+                                                                                mux::config::heartbeat_t{});
 }
 
 std::shared_ptr<mux::mux_stream> make_mock_stream(boost::asio::io_context& io_context,
-                                                   const std::shared_ptr<mux::mock_mux_connection>& connection,
-                                                   const std::uint32_t stream_id = 1)
+                                                  const std::shared_ptr<mux::mock_mux_connection>& connection,
+                                                  const std::uint32_t stream_id = 1)
 {
     return std::make_shared<mux::mux_stream>(stream_id, 100, "trace-upstream", connection, io_context);
 }
 
 }    // namespace
 
-class UpstreamTest : public ::testing::Test
+class upstream_test_fixture : public ::testing::Test
 {
    protected:
     void TearDown() override { ctx_.stop(); }
@@ -152,10 +151,10 @@ class echo_server
         acceptor_.async_accept(*socket,
                                [this, socket](const boost::system::error_code ec)
                                {
-                                    if (!ec)
-                                    {
-                                        do_echo(socket);
-                                    }
+                                   if (!ec)
+                                   {
+                                       do_echo(socket);
+                                   }
                                    if (!stopped_.load(std::memory_order_acquire))
                                    {
                                        do_accept();
@@ -172,14 +171,14 @@ class echo_server
                                     if (!ec)
                                     {
                                         boost::asio::async_write(*socket,
-                                                          boost::asio::buffer(*buf, n),
-                                                          [this, socket, buf](const boost::system::error_code ec_write, std::size_t)
-                                                          {
-                                                              if (!ec_write)
-                                                              {
-                                                                  do_echo(socket);
-                                                              }
-                                                          });
+                                                                 boost::asio::buffer(*buf, n),
+                                                                 [this, socket, buf](const boost::system::error_code ec_write, std::size_t)
+                                                                 {
+                                                                     if (!ec_write)
+                                                                     {
+                                                                         do_echo(socket);
+                                                                     }
+                                                                 });
                                     }
                                 });
     }
@@ -190,7 +189,7 @@ class echo_server
     std::atomic<bool> stopped_{false};
 };
 
-TEST_F(UpstreamTest, DirectUpstreamConnectSuccess)
+TEST_F(upstream_test_fixture, DirectUpstreamConnectSuccess)
 {
     echo_server server;
     const std::uint16_t port = server.port();
@@ -214,7 +213,7 @@ TEST_F(UpstreamTest, DirectUpstreamConnectSuccess)
     server.stop();
 }
 
-TEST_F(UpstreamTest, DirectUpstreamConnectFail)
+TEST_F(upstream_test_fixture, DirectUpstreamConnectFail)
 {
     auto& stats = mux::statistics::instance();
     const auto connect_errors_before = stats.direct_upstream_connect_errors();
@@ -225,7 +224,7 @@ TEST_F(UpstreamTest, DirectUpstreamConnectFail)
     EXPECT_GE(stats.direct_upstream_connect_errors(), connect_errors_before + 1);
 }
 
-TEST_F(UpstreamTest, DirectUpstreamConnectTimeoutWhenBacklogSaturated)
+TEST_F(upstream_test_fixture, DirectUpstreamConnectTimeoutWhenBacklogSaturated)
 {
     auto& stats = mux::statistics::instance();
     const auto connect_timeouts_before = stats.direct_upstream_connect_timeouts();
@@ -263,7 +262,7 @@ TEST_F(UpstreamTest, DirectUpstreamConnectTimeoutWhenBacklogSaturated)
     saturated_acceptor.close(close_ec);
 }
 
-TEST_F(UpstreamTest, DirectUpstreamResolveFail)
+TEST_F(upstream_test_fixture, DirectUpstreamResolveFail)
 {
     auto& stats = mux::statistics::instance();
     const auto resolve_errors_before = stats.direct_upstream_resolve_errors();
@@ -274,7 +273,7 @@ TEST_F(UpstreamTest, DirectUpstreamResolveFail)
     EXPECT_GE(stats.direct_upstream_resolve_errors(), resolve_errors_before + 1);
 }
 
-TEST_F(UpstreamTest, DirectUpstreamReconnectSuccess)
+TEST_F(upstream_test_fixture, DirectUpstreamReconnectSuccess)
 {
     echo_server server;
     const std::uint16_t port = server.port();
@@ -297,7 +296,7 @@ TEST_F(UpstreamTest, DirectUpstreamReconnectSuccess)
     server.stop();
 }
 
-TEST_F(UpstreamTest, DirectUpstreamConnectWithSocketMark)
+TEST_F(upstream_test_fixture, DirectUpstreamConnectWithSocketMark)
 {
     echo_server server;
     const std::uint16_t port = server.port();
@@ -318,7 +317,7 @@ TEST_F(UpstreamTest, DirectUpstreamConnectWithSocketMark)
     server.stop();
 }
 
-TEST_F(UpstreamTest, DirectUpstreamConnectWithSocketMarkFailureStillSucceeds)
+TEST_F(upstream_test_fixture, DirectUpstreamConnectWithSocketMarkFailureStillSucceeds)
 {
     echo_server server;
     const std::uint16_t port = server.port();
@@ -338,7 +337,7 @@ TEST_F(UpstreamTest, DirectUpstreamConnectWithSocketMarkFailureStillSucceeds)
     server.stop();
 }
 
-TEST_F(UpstreamTest, DirectUpstreamConnectWithNoDelayFailureStillSucceeds)
+TEST_F(upstream_test_fixture, DirectUpstreamConnectWithNoDelayFailureStillSucceeds)
 {
     echo_server server;
     const std::uint16_t port = server.port();
@@ -358,7 +357,7 @@ TEST_F(UpstreamTest, DirectUpstreamConnectWithNoDelayFailureStillSucceeds)
     server.stop();
 }
 
-TEST_F(UpstreamTest, DirectUpstreamWriteError)
+TEST_F(upstream_test_fixture, DirectUpstreamWriteError)
 {
     auto acceptor = std::make_shared<boost::asio::ip::tcp::acceptor>(ctx(), boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 0));
     std::uint16_t const port = acceptor->local_endpoint().port();
@@ -388,14 +387,14 @@ TEST_F(UpstreamTest, DirectUpstreamWriteError)
     EXPECT_EQ(write_n, 0);
 }
 
-TEST_F(UpstreamTest, DirectUpstreamClose)
+TEST_F(upstream_test_fixture, DirectUpstreamClose)
 {
     mux::direct_upstream upstream(ctx(), mux::connection_context{});
 
     mux::test::run_awaitable_void(ctx(), upstream.close());
 }
 
-TEST_F(UpstreamTest, DirectUpstreamReadAfterCloseReturnsError)
+TEST_F(upstream_test_fixture, DirectUpstreamReadAfterCloseReturnsError)
 {
     echo_server server;
     const std::uint16_t port = server.port();
@@ -411,7 +410,7 @@ TEST_F(UpstreamTest, DirectUpstreamReadAfterCloseReturnsError)
     server.stop();
 }
 
-TEST_F(UpstreamTest, ProxyUpstreamReadWriteWithoutConnect)
+TEST_F(upstream_test_fixture, ProxyUpstreamReadWriteWithoutConnect)
 {
     mux::proxy_upstream upstream(nullptr, mux::connection_context{});
 
@@ -426,7 +425,7 @@ TEST_F(UpstreamTest, ProxyUpstreamReadWriteWithoutConnect)
     mux::test::run_awaitable_void(ctx(), upstream.close());
 }
 
-TEST_F(UpstreamTest, ProxyUpstreamConnectFailsWhenTunnelStopped)
+TEST_F(upstream_test_fixture, ProxyUpstreamConnectFailsWhenTunnelStopped)
 {
     auto tunnel = make_test_tunnel(ctx());
     tunnel->connection()->stop();
@@ -436,7 +435,7 @@ TEST_F(UpstreamTest, ProxyUpstreamConnectFailsWhenTunnelStopped)
     EXPECT_FALSE(success);
 }
 
-TEST_F(UpstreamTest, ProxyUpstreamIsTunnelReadyCoversShortCircuitBranches)
+TEST_F(upstream_test_fixture, ProxyUpstreamIsTunnelReadyCoversShortCircuitBranches)
 {
     mux::proxy_upstream const null_tunnel_upstream(nullptr, mux::connection_context{});
     EXPECT_FALSE(null_tunnel_upstream.is_tunnel_ready());
@@ -456,7 +455,7 @@ TEST_F(UpstreamTest, ProxyUpstreamIsTunnelReadyCoversShortCircuitBranches)
     EXPECT_TRUE(ready_upstream.is_tunnel_ready());
 }
 
-TEST_F(UpstreamTest, ProxyUpstreamConnectFailsWhenCreateStreamRejectedByLimit)
+TEST_F(upstream_test_fixture, ProxyUpstreamConnectFailsWhenCreateStreamRejectedByLimit)
 {
     mux::config::limits_t limits;
     limits.max_streams = 1;
@@ -468,7 +467,7 @@ TEST_F(UpstreamTest, ProxyUpstreamConnectFailsWhenCreateStreamRejectedByLimit)
     EXPECT_FALSE(success);
 }
 
-TEST_F(UpstreamTest, ProxyUpstreamConnectSuccessSetsStream)
+TEST_F(upstream_test_fixture, ProxyUpstreamConnectSuccessSetsStream)
 {
     auto tunnel = make_test_tunnel(ctx());
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
@@ -502,7 +501,7 @@ TEST_F(UpstreamTest, ProxyUpstreamConnectSuccessSetsStream)
     EXPECT_NE(upstream.stream_, nullptr);
 }
 
-TEST_F(UpstreamTest, ProxyUpstreamConnectFailsWhenSendSynFailsAndCleansStream)
+TEST_F(upstream_test_fixture, ProxyUpstreamConnectFailsWhenSendSynFailsAndCleansStream)
 {
     auto tunnel = make_test_tunnel(ctx());
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
@@ -512,12 +511,13 @@ TEST_F(UpstreamTest, ProxyUpstreamConnectFailsWhenSendSynFailsAndCleansStream)
 
     std::uint32_t stream_id = 0;
     EXPECT_CALL(*mock_conn, register_stream(::testing::_, ::testing::_))
-        .WillOnce([&stream_id](const std::uint32_t id, std::shared_ptr<mux::mux_stream_interface> stream)
-                  {
-                      (void)stream;
-                      stream_id = id;
-                      return true;
-                  });
+        .WillOnce(
+            [&stream_id](const std::uint32_t id, std::shared_ptr<mux::mux_stream_interface> stream)
+            {
+                (void)stream;
+                stream_id = id;
+                return true;
+            });
     EXPECT_CALL(*mock_conn, mock_send_async(::testing::_, mux::kCmdSyn, ::testing::_)).WillOnce(::testing::Return(boost::asio::error::broken_pipe));
     EXPECT_CALL(*mock_conn, mock_send_async(::testing::_, mux::kCmdFin, ::testing::_)).WillOnce(::testing::Return(boost::system::error_code{}));
     EXPECT_CALL(*mock_conn, remove_stream(::testing::_)).Times(1);
@@ -528,7 +528,7 @@ TEST_F(UpstreamTest, ProxyUpstreamConnectFailsWhenSendSynFailsAndCleansStream)
     EXPECT_NE(stream_id, 0U);
 }
 
-TEST_F(UpstreamTest, ProxyUpstreamConnectFailsWhenAckRejectedAndCleansStream)
+TEST_F(upstream_test_fixture, ProxyUpstreamConnectFailsWhenAckRejectedAndCleansStream)
 {
     auto tunnel = make_test_tunnel(ctx());
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
@@ -564,7 +564,7 @@ TEST_F(UpstreamTest, ProxyUpstreamConnectFailsWhenAckRejectedAndCleansStream)
     EXPECT_EQ(upstream.stream_, nullptr);
 }
 
-TEST_F(UpstreamTest, ProxyUpstreamSendSynRequestSuccess)
+TEST_F(upstream_test_fixture, ProxyUpstreamSendSynRequestSuccess)
 {
     auto tunnel = make_test_tunnel(ctx());
     auto stream = tunnel->create_stream("trace");
@@ -574,7 +574,7 @@ TEST_F(UpstreamTest, ProxyUpstreamSendSynRequestSuccess)
     EXPECT_TRUE(mux::test::run_awaitable(ctx(), upstream.send_syn_request(stream, "example.com", 443)));
 }
 
-TEST_F(UpstreamTest, ProxyUpstreamSendSynRequestFailureWhenConnectionStopped)
+TEST_F(upstream_test_fixture, ProxyUpstreamSendSynRequestFailureWhenConnectionStopped)
 {
     auto tunnel = make_test_tunnel(ctx());
     auto stream = tunnel->create_stream("trace");
@@ -585,7 +585,7 @@ TEST_F(UpstreamTest, ProxyUpstreamSendSynRequestFailureWhenConnectionStopped)
     EXPECT_FALSE(mux::test::run_awaitable(ctx(), upstream.send_syn_request(stream, "example.com", 443)));
 }
 
-TEST_F(UpstreamTest, ProxyUpstreamWaitConnectAckSuccess)
+TEST_F(upstream_test_fixture, ProxyUpstreamWaitConnectAckSuccess)
 {
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
     auto stream = make_mock_stream(ctx(), mock_conn);
@@ -600,7 +600,7 @@ TEST_F(UpstreamTest, ProxyUpstreamWaitConnectAckSuccess)
     EXPECT_TRUE(mux::test::run_awaitable(ctx(), upstream.wait_connect_ack(stream, "example.com", 443)));
 }
 
-TEST_F(UpstreamTest, ProxyUpstreamWaitConnectAckReadError)
+TEST_F(upstream_test_fixture, ProxyUpstreamWaitConnectAckReadError)
 {
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
     auto stream = make_mock_stream(ctx(), mock_conn);
@@ -610,7 +610,7 @@ TEST_F(UpstreamTest, ProxyUpstreamWaitConnectAckReadError)
     EXPECT_FALSE(mux::test::run_awaitable(ctx(), upstream.wait_connect_ack(stream, "example.com", 443)));
 }
 
-TEST_F(UpstreamTest, ProxyUpstreamWaitConnectAckDecodeFailure)
+TEST_F(upstream_test_fixture, ProxyUpstreamWaitConnectAckDecodeFailure)
 {
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
     auto stream = make_mock_stream(ctx(), mock_conn);
@@ -620,7 +620,7 @@ TEST_F(UpstreamTest, ProxyUpstreamWaitConnectAckDecodeFailure)
     EXPECT_FALSE(mux::test::run_awaitable(ctx(), upstream.wait_connect_ack(stream, "example.com", 443)));
 }
 
-TEST_F(UpstreamTest, ProxyUpstreamWaitConnectAckRemoteReject)
+TEST_F(upstream_test_fixture, ProxyUpstreamWaitConnectAckRemoteReject)
 {
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
     auto stream = make_mock_stream(ctx(), mock_conn);
@@ -635,24 +635,23 @@ TEST_F(UpstreamTest, ProxyUpstreamWaitConnectAckRemoteReject)
     EXPECT_FALSE(mux::test::run_awaitable(ctx(), upstream.wait_connect_ack(stream, "example.com", 443)));
 }
 
-TEST_F(UpstreamTest, ProxyUpstreamCleanupNullStreamNoop)
+TEST_F(upstream_test_fixture, ProxyUpstreamCleanupNullStreamNoop)
 {
     mux::proxy_upstream upstream(nullptr, mux::connection_context{});
     mux::test::run_awaitable_void(ctx(), upstream.cleanup_stream(nullptr));
 }
 
-TEST_F(UpstreamTest, ProxyUpstreamCleanupStreamWithoutTunnelStillClosesStream)
+TEST_F(upstream_test_fixture, ProxyUpstreamCleanupStreamWithoutTunnelStillClosesStream)
 {
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
     auto stream = make_mock_stream(ctx(), mock_conn, 23);
     mux::proxy_upstream upstream(nullptr, mux::connection_context{});
 
-    EXPECT_CALL(*mock_conn, mock_send_async(23, mux::kCmdFin, std::vector<std::uint8_t>{}))
-        .WillOnce(::testing::Return(boost::system::error_code{}));
+    EXPECT_CALL(*mock_conn, mock_send_async(23, mux::kCmdFin, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(boost::system::error_code{}));
     mux::test::run_awaitable_void(ctx(), upstream.cleanup_stream(stream));
 }
 
-TEST_F(UpstreamTest, ProxyUpstreamCleanupStreamRemovesFromTunnel)
+TEST_F(upstream_test_fixture, ProxyUpstreamCleanupStreamRemovesFromTunnel)
 {
     auto tunnel = make_test_tunnel(ctx());
     auto stream = tunnel->create_stream("trace");
@@ -664,7 +663,7 @@ TEST_F(UpstreamTest, ProxyUpstreamCleanupStreamRemovesFromTunnel)
     EXPECT_FALSE(tunnel->connection()->has_stream(stream->id()));
 }
 
-TEST_F(UpstreamTest, ProxyUpstreamReadCopiesDataAndResizesBuffer)
+TEST_F(upstream_test_fixture, ProxyUpstreamReadCopiesDataAndResizesBuffer)
 {
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
     auto stream = make_mock_stream(ctx(), mock_conn);
@@ -682,7 +681,7 @@ TEST_F(UpstreamTest, ProxyUpstreamReadCopiesDataAndResizesBuffer)
     EXPECT_EQ(std::vector<std::uint8_t>(buf.begin(), buf.begin() + static_cast<std::ptrdiff_t>(n)), payload);
 }
 
-TEST_F(UpstreamTest, ProxyUpstreamReadReturnsZeroWhenStreamReportsEof)
+TEST_F(upstream_test_fixture, ProxyUpstreamReadReturnsZeroWhenStreamReportsEof)
 {
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
     auto stream = make_mock_stream(ctx(), mock_conn);
@@ -696,7 +695,7 @@ TEST_F(UpstreamTest, ProxyUpstreamReadReturnsZeroWhenStreamReportsEof)
     EXPECT_EQ(n, 0U);
 }
 
-TEST_F(UpstreamTest, ProxyUpstreamReadReturnsZeroWhenPayloadEmpty)
+TEST_F(upstream_test_fixture, ProxyUpstreamReadReturnsZeroWhenPayloadEmpty)
 {
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
     auto stream = make_mock_stream(ctx(), mock_conn);
@@ -710,7 +709,7 @@ TEST_F(UpstreamTest, ProxyUpstreamReadReturnsZeroWhenPayloadEmpty)
     EXPECT_EQ(n, 0U);
 }
 
-TEST_F(UpstreamTest, ProxyUpstreamWriteSuccess)
+TEST_F(upstream_test_fixture, ProxyUpstreamWriteSuccess)
 {
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
     auto stream = make_mock_stream(ctx(), mock_conn, 7);
@@ -723,7 +722,7 @@ TEST_F(UpstreamTest, ProxyUpstreamWriteSuccess)
     EXPECT_EQ(mux::test::run_awaitable(ctx(), upstream.write(data)), data.size());
 }
 
-TEST_F(UpstreamTest, ProxyUpstreamWriteErrorReturnsZero)
+TEST_F(upstream_test_fixture, ProxyUpstreamWriteErrorReturnsZero)
 {
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
     auto stream = make_mock_stream(ctx(), mock_conn, 8);
@@ -736,7 +735,7 @@ TEST_F(UpstreamTest, ProxyUpstreamWriteErrorReturnsZero)
     EXPECT_EQ(mux::test::run_awaitable(ctx(), upstream.write(data)), 0U);
 }
 
-TEST_F(UpstreamTest, ProxyUpstreamCloseWithStreamNoTunnel)
+TEST_F(upstream_test_fixture, ProxyUpstreamCloseWithStreamNoTunnel)
 {
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
     auto stream = make_mock_stream(ctx(), mock_conn, 9);
@@ -748,7 +747,7 @@ TEST_F(UpstreamTest, ProxyUpstreamCloseWithStreamNoTunnel)
     EXPECT_EQ(upstream.stream_, nullptr);
 }
 
-TEST_F(UpstreamTest, ProxyUpstreamCloseWithStreamAndTunnelRemovesStream)
+TEST_F(upstream_test_fixture, ProxyUpstreamCloseWithStreamAndTunnelRemovesStream)
 {
     auto tunnel = make_test_tunnel(ctx());
     auto stream = tunnel->create_stream("trace-close");
@@ -763,7 +762,7 @@ TEST_F(UpstreamTest, ProxyUpstreamCloseWithStreamAndTunnelRemovesStream)
     EXPECT_FALSE(tunnel->connection()->has_stream(stream->id()));
 }
 
-TEST_F(UpstreamTest, MovedFromTunnelReturnsNullAndRejectsRegister)
+TEST_F(upstream_test_fixture, MovedFromTunnelReturnsNullAndRejectsRegister)
 {
     mux::mux_tunnel_impl<boost::asio::ip::tcp::socket> tunnel(
         boost::asio::ip::tcp::socket(ctx()), ctx(), mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 7);
