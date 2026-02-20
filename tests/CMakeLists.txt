@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
-set(MSAN_UMR_NOISE_OPTIONS
-    "intercept_strlen=0:intercept_strcmp=0:intercept_strndup=0:intercept_strchr=0:intercept_memcmp=0:intercept_strstr=0:intercept_strspn=0:intercept_strtok=0:intercept_strpbrk=0:intercept_memmem=0")
+set(MSAN_UMR_NOISE_OPTIONS "intercept_strlen=0:intercept_strcmp=0:intercept_strndup=0:intercept_strchr=0:intercept_memcmp=0:intercept_strstr=0:intercept_strspn=0:intercept_strtok=0:intercept_strpbrk=0:intercept_memmem=0")
+set(SOCKS_TEST_TIMEOUT_SECONDS 120)
 
 function(register_socks_gtest_target TARGET_NAME LOCK_NAME)
     add_test(
@@ -12,11 +12,8 @@ function(register_socks_gtest_target TARGET_NAME LOCK_NAME)
             env
             --unset=DART_TEST_FROM_DART
             --unset=CTEST_INTERACTIVE_DEBUG_MODE
-            /bin/bash
-            -c
-            "exec 3>&-; \"\$1\" --gtest_brief=1"
-            __socks_test_runner__
             $<TARGET_FILE:${TARGET_NAME}>
+            --gtest_brief=1
     )
 
     if(CMAKE_CXX_FLAGS MATCHES "-fsanitize=memory")
@@ -38,7 +35,7 @@ endfunction()
 macro(add_socks_test NAME)
     add_executable(${NAME} ${NAME}.cpp)
     target_link_libraries(${NAME} PRIVATE
-        socks_core
+        core
         GTest::gtest_main
         GTest::gmock_main
     )
@@ -48,7 +45,7 @@ endmacro()
 macro(add_socks_locked_test NAME LOCK_NAME)
     add_executable(${NAME} ${NAME}.cpp)
     target_link_libraries(${NAME} PRIVATE
-        socks_core
+        core
         GTest::gtest_main
         GTest::gmock_main
     )
@@ -375,4 +372,9 @@ if(Python3_Interpreter_FOUND)
         NAME valgrind_script_args_test
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/script/valgrind_test.py --self-test-args
     )
+endif()
+
+get_property(REGISTERED_TESTS DIRECTORY PROPERTY TESTS)
+if(REGISTERED_TESTS)
+    set_tests_properties(${REGISTERED_TESTS} PROPERTIES TIMEOUT "${SOCKS_TEST_TIMEOUT_SECONDS}")
 endif()
