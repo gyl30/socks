@@ -20,7 +20,7 @@ extern "C"
 namespace mux
 {
 
-class RealityEngineTest : public ::testing::Test
+class reality_engine_test_fixture : public ::testing::Test
 {
    protected:
     void SetUp() override
@@ -47,7 +47,7 @@ class RealityEngineTest : public ::testing::Test
     std::vector<std::uint8_t> write_iv_;
 };
 
-TEST_F(RealityEngineTest, EncryptEmptyData)
+TEST_F(reality_engine_test_fixture, EncryptEmptyData)
 {
     reality_engine engine(read_key(), read_iv(), write_key(), write_iv(), cipher());
 
@@ -57,7 +57,7 @@ TEST_F(RealityEngineTest, EncryptEmptyData)
     EXPECT_TRUE(result->empty());
 }
 
-TEST_F(RealityEngineTest, EncryptProducesOutput)
+TEST_F(reality_engine_test_fixture, EncryptProducesOutput)
 {
     reality_engine engine(read_key(), read_iv(), write_key(), write_iv(), cipher());
 
@@ -70,7 +70,7 @@ TEST_F(RealityEngineTest, EncryptProducesOutput)
     EXPECT_GE(result->size(), plaintext.size() + 5 + 16 + 1);
 }
 
-TEST_F(RealityEngineTest, EncryptReturnsErrorOnInvalidWriteKeyLength)
+TEST_F(reality_engine_test_fixture, EncryptReturnsErrorOnInvalidWriteKeyLength)
 {
     reality_engine engine(read_key(), read_iv(), std::vector<std::uint8_t>{0x01}, write_iv(), cipher());
     const std::vector<std::uint8_t> plaintext = {'x'};
@@ -78,7 +78,7 @@ TEST_F(RealityEngineTest, EncryptReturnsErrorOnInvalidWriteKeyLength)
     EXPECT_FALSE(result.has_value());
 }
 
-TEST_F(RealityEngineTest, DecryptInsufficientData)
+TEST_F(reality_engine_test_fixture, DecryptInsufficientData)
 {
     reality_engine engine(read_key(), read_iv(), write_key(), write_iv(), cipher());
 
@@ -94,7 +94,7 @@ TEST_F(RealityEngineTest, DecryptInsufficientData)
     EXPECT_FALSE(called);
 }
 
-TEST_F(RealityEngineTest, DecryptWaitsForCompleteFrame)
+TEST_F(reality_engine_test_fixture, DecryptWaitsForCompleteFrame)
 {
     reality_engine engine(read_key(), read_iv(), write_key(), write_iv(), cipher());
 
@@ -110,7 +110,7 @@ TEST_F(RealityEngineTest, DecryptWaitsForCompleteFrame)
     EXPECT_FALSE(called);
 }
 
-TEST_F(RealityEngineTest, EncryptDecryptRoundTrip)
+TEST_F(reality_engine_test_fixture, EncryptDecryptRoundTrip)
 {
     reality_engine encrypt_engine(write_key(), write_iv(), read_key(), read_iv(), cipher());
     reality_engine decrypt_engine(read_key(), read_iv(), write_key(), write_iv(), cipher());
@@ -138,7 +138,7 @@ TEST_F(RealityEngineTest, EncryptDecryptRoundTrip)
     EXPECT_EQ(decrypted, plaintext);
 }
 
-TEST_F(RealityEngineTest, MultipleEncryptions)
+TEST_F(reality_engine_test_fixture, MultipleEncryptions)
 {
     reality_engine engine(read_key(), read_iv(), write_key(), write_iv(), cipher());
 
@@ -160,7 +160,7 @@ TEST_F(RealityEngineTest, MultipleEncryptions)
     EXPECT_NE(encrypted1, encrypted2);
 }
 
-TEST_F(RealityEngineTest, AlertContentType)
+TEST_F(reality_engine_test_fixture, AlertContentType)
 {
     reality_engine decrypt_engine(read_key(), read_iv(), write_key(), write_iv(), cipher());
 
@@ -187,7 +187,7 @@ TEST_F(RealityEngineTest, AlertContentType)
     EXPECT_TRUE(called);
 }
 
-TEST_F(RealityEngineTest, DecryptError)
+TEST_F(reality_engine_test_fixture, DecryptError)
 {
     reality_engine decrypt_engine(read_key(), read_iv(), write_key(), write_iv(), cipher());
 
@@ -209,13 +209,12 @@ TEST_F(RealityEngineTest, DecryptError)
     EXPECT_FALSE(called);
 }
 
-TEST_F(RealityEngineTest, ProcessAvailableRecordsStopsWhenCallbackSetsError)
+TEST_F(reality_engine_test_fixture, ProcessAvailableRecordsStopsWhenCallbackSetsError)
 {
     reality_engine decrypt_engine(read_key(), read_iv(), write_key(), write_iv(), cipher());
 
     const std::vector<std::uint8_t> payload = {0x10, 0x20, 0x30};
-    const auto rec =
-        reality::tls_record_layer::encrypt_record(cipher(), read_key(), read_iv(), 0, payload, reality::kContentTypeApplicationData);
+    const auto rec = reality::tls_record_layer::encrypt_record(cipher(), read_key(), read_iv(), 0, payload, reality::kContentTypeApplicationData);
     ASSERT_TRUE(rec.has_value());
 
     auto buf = decrypt_engine.read_buffer(rec->size());
@@ -223,11 +222,8 @@ TEST_F(RealityEngineTest, ProcessAvailableRecordsStopsWhenCallbackSetsError)
     decrypt_engine.commit_read(rec->size());
 
     std::size_t callback_calls = 0;
-    const auto process_res = decrypt_engine.process_available_records(
-        [&callback_calls](std::uint8_t, std::span<const std::uint8_t>)
-        {
-            ++callback_calls;
-        });
+    const auto process_res =
+        decrypt_engine.process_available_records([&callback_calls](std::uint8_t, std::span<const std::uint8_t>) { ++callback_calls; });
 
     EXPECT_TRUE(process_res.has_value());
     EXPECT_EQ(callback_calls, 1U);

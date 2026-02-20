@@ -23,9 +23,9 @@
 #include <boost/asio/cancellation_signal.hpp>
 #include <boost/asio/bind_cancellation_slot.hpp>
 
-#include "mux_codec.h"
-#include "protocol.h"
 #include "log.h"
+#include "protocol.h"
+#include "mux_codec.h"
 #include "crypto_util.h"
 #include "context_pool.h"
 #include "socks_client.h"
@@ -36,7 +36,7 @@ using mux::io_context_pool;
 using mux::socks_client;
 using mux::remote_server;
 
-class UdpIntegrationTest : public ::testing::Test
+class udp_integration_test_fixture : public ::testing::Test
 {
    protected:
     void SetUp() override
@@ -60,8 +60,8 @@ class UdpIntegrationTest : public ::testing::Test
 };
 
 static boost::asio::awaitable<void> run_udp_echo_server(std::shared_ptr<boost::asio::ip::udp::socket> socket,
-                                                 const std::uint16_t port,
-                                                 const std::shared_ptr<std::atomic<bool>>& stopped)
+                                                        const std::uint16_t port,
+                                                        const std::shared_ptr<std::atomic<bool>>& stopped)
 {
     const auto mark_stopped = [&stopped]()
     {
@@ -92,7 +92,8 @@ static boost::asio::awaitable<void> run_udp_echo_server(std::shared_ptr<boost::a
 
     for (;;)
     {
-        auto [receive_ec, n] = co_await socket->async_receive_from(boost::asio::buffer(data), sender_ep, boost::asio::as_tuple(boost::asio::use_awaitable));
+        auto [receive_ec, n] =
+            co_await socket->async_receive_from(boost::asio::buffer(data), sender_ep, boost::asio::as_tuple(boost::asio::use_awaitable));
         if (receive_ec)
         {
             if (receive_ec != boost::asio::error::operation_aborted)
@@ -102,7 +103,8 @@ static boost::asio::awaitable<void> run_udp_echo_server(std::shared_ptr<boost::a
             break;
         }
 
-        auto [send_ec, sn] = co_await socket->async_send_to(boost::asio::buffer(data, n), sender_ep, boost::asio::as_tuple(boost::asio::use_awaitable));
+        auto [send_ec, sn] =
+            co_await socket->async_send_to(boost::asio::buffer(data, n), sender_ep, boost::asio::as_tuple(boost::asio::use_awaitable));
         if (send_ec)
         {
             LOG_ERROR("echo server send error: {}", send_ec.message());
@@ -179,7 +181,8 @@ static boost::asio::awaitable<void> wait_socks_retry(boost::asio::steady_timer& 
 static boost::asio::awaitable<bool> send_socks_method_no_auth(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket)
 {
     std::uint8_t method_req[] = {0x05, 0x01, 0x00};
-    auto [write_ec, write_n] = co_await boost::asio::async_write(*socket, boost::asio::buffer(method_req), boost::asio::as_tuple(boost::asio::use_awaitable));
+    auto [write_ec, write_n] =
+        co_await boost::asio::async_write(*socket, boost::asio::buffer(method_req), boost::asio::as_tuple(boost::asio::use_awaitable));
     (void)write_n;
     if (write_ec)
     {
@@ -187,7 +190,8 @@ static boost::asio::awaitable<bool> send_socks_method_no_auth(const std::shared_
     }
 
     std::uint8_t method_res[2];
-    auto [read_ec, read_n] = co_await boost::asio::async_read(*socket, boost::asio::buffer(method_res), boost::asio::as_tuple(boost::asio::use_awaitable));
+    auto [read_ec, read_n] =
+        co_await boost::asio::async_read(*socket, boost::asio::buffer(method_res), boost::asio::as_tuple(boost::asio::use_awaitable));
     if (read_ec || read_n != sizeof(method_res))
     {
         co_return false;
@@ -195,8 +199,7 @@ static boost::asio::awaitable<bool> send_socks_method_no_auth(const std::shared_
     co_return method_res[0] == 0x05 && method_res[1] == 0x00;
 }
 
-static boost::asio::awaitable<std::optional<std::uint16_t>> request_udp_associate_port(
-    const std::shared_ptr<boost::asio::ip::tcp::socket>& socket)
+static boost::asio::awaitable<std::optional<std::uint16_t>> request_udp_associate_port(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket)
 {
     std::uint8_t associate_req[] = {0x05, 0x03, 0x00, 0x01, 0, 0, 0, 0, 0, 0};
     auto [assoc_write_ec, assoc_write_n] =
@@ -224,7 +227,7 @@ struct udp_associate_ready
 };
 
 static boost::asio::awaitable<std::optional<udp_associate_ready>> establish_udp_associate_channel(const std::uint16_t local_socks_port,
-                                                                                            const int max_attempts = 60)
+                                                                                                  const int max_attempts = 60)
 {
     auto exec = co_await boost::asio::this_coro::executor;
     boost::asio::steady_timer retry_timer(exec);
@@ -232,8 +235,8 @@ static boost::asio::awaitable<std::optional<udp_associate_ready>> establish_udp_
     for (int attempt = 0; attempt < max_attempts; ++attempt)
     {
         auto socket = std::make_shared<boost::asio::ip::tcp::socket>(exec);
-        auto [connect_ec] =
-            co_await socket->async_connect({boost::asio::ip::make_address("127.0.0.1"), local_socks_port}, boost::asio::as_tuple(boost::asio::use_awaitable));
+        auto [connect_ec] = co_await socket->async_connect({boost::asio::ip::make_address("127.0.0.1"), local_socks_port},
+                                                           boost::asio::as_tuple(boost::asio::use_awaitable));
         if (connect_ec)
         {
             co_await wait_socks_retry(retry_timer);
@@ -280,13 +283,14 @@ static std::vector<std::uint8_t> build_udp_packet(const std::uint16_t echo_serve
 }
 
 static boost::asio::awaitable<bool> send_udp_echo_and_validate(const std::shared_ptr<boost::asio::ip::udp::socket>& udp_socket,
-                                                        const std::uint16_t proxy_bind_port,
-                                                        const std::uint16_t echo_server_port,
-                                                        const std::string& payload_data)
+                                                               const std::uint16_t proxy_bind_port,
+                                                               const std::uint16_t echo_server_port,
+                                                               const std::string& payload_data)
 {
     const auto packet = build_udp_packet(echo_server_port, payload_data);
     const boost::asio::ip::udp::endpoint proxy_ep(boost::asio::ip::make_address("127.0.0.1"), proxy_bind_port);
-    auto [send_ec, send_n] = co_await udp_socket->async_send_to(boost::asio::buffer(packet), proxy_ep, boost::asio::as_tuple(boost::asio::use_awaitable));
+    auto [send_ec, send_n] =
+        co_await udp_socket->async_send_to(boost::asio::buffer(packet), proxy_ep, boost::asio::as_tuple(boost::asio::use_awaitable));
     (void)send_n;
     if (send_ec)
     {
@@ -295,7 +299,8 @@ static boost::asio::awaitable<bool> send_udp_echo_and_validate(const std::shared
 
     std::vector<std::uint8_t> recv_buf(4096);
     boost::asio::ip::udp::endpoint sender_ep;
-    auto [recv_ec, recv_n] = co_await udp_socket->async_receive_from(boost::asio::buffer(recv_buf), sender_ep, boost::asio::as_tuple(boost::asio::use_awaitable));
+    auto [recv_ec, recv_n] =
+        co_await udp_socket->async_receive_from(boost::asio::buffer(recv_buf), sender_ep, boost::asio::as_tuple(boost::asio::use_awaitable));
     if (recv_ec || recv_n <= 10)
     {
         co_return false;
@@ -306,11 +311,11 @@ static boost::asio::awaitable<bool> send_udp_echo_and_validate(const std::shared
 }
 
 static boost::asio::awaitable<void> run_udp_associate_echo_flow(const std::uint16_t local_socks_port,
-                                                         const std::uint16_t echo_server_port,
-                                                         std::atomic<bool>& test_passed,
-                                                         std::atomic<bool>& test_failed,
-                                                         std::shared_ptr<boost::asio::ip::tcp::socket>& client_tcp,
-                                                         std::shared_ptr<boost::asio::ip::udp::socket>& client_udp)
+                                                                const std::uint16_t echo_server_port,
+                                                                std::atomic<bool>& test_passed,
+                                                                std::atomic<bool>& test_failed,
+                                                                std::shared_ptr<boost::asio::ip::tcp::socket>& client_tcp,
+                                                                std::shared_ptr<boost::asio::ip::udp::socket>& client_udp)
 {
     const auto ready = co_await establish_udp_associate_channel(local_socks_port);
     if (!ready.has_value())
@@ -337,7 +342,7 @@ static boost::asio::awaitable<void> run_udp_associate_echo_flow(const std::uint1
     test_failed = !echo_ok;
 }
 
-TEST_F(UdpIntegrationTest, UdpAssociateAndEcho)
+TEST_F(udp_integration_test_fixture, UdpAssociateAndEcho)
 {
     boost::system::error_code ec;
     io_context_pool pool(4);
@@ -395,10 +400,9 @@ TEST_F(UdpIntegrationTest, UdpAssociateAndEcho)
     std::shared_ptr<boost::asio::ip::udp::socket> client_udp;
 
     boost::asio::cancellation_signal cancel_sig;
-    boost::asio::co_spawn(
-        pool.get_io_context(),
-        run_udp_associate_echo_flow(local_socks_port, echo_server_port, test_passed, test_failed, client_tcp, client_udp),
-        boost::asio::bind_cancellation_slot(cancel_sig.slot(), boost::asio::detached));
+    boost::asio::co_spawn(pool.get_io_context(),
+                          run_udp_associate_echo_flow(local_socks_port, echo_server_port, test_passed, test_failed, client_tcp, client_udp),
+                          boost::asio::bind_cancellation_slot(cancel_sig.slot(), boost::asio::detached));
 
     for (int i = 0; i < 200; ++i)
     {
@@ -436,7 +440,7 @@ TEST_F(UdpIntegrationTest, UdpAssociateAndEcho)
     EXPECT_FALSE(test_failed.load());
 }
 
-TEST_F(UdpIntegrationTest, UdpAssociateIgnoresFragmentedPacketAndKeepsSessionAlive)
+TEST_F(udp_integration_test_fixture, UdpAssociateIgnoresFragmentedPacketAndKeepsSessionAlive)
 {
     boost::system::error_code ec;
     io_context_pool pool(4);

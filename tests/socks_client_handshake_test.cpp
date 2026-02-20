@@ -9,8 +9,8 @@
 #include <utility>
 #include <system_error>
 
-#include <boost/asio/read.hpp>
 #include <gtest/gtest.h>
+#include <boost/asio/read.hpp>
 #include <boost/asio/write.hpp>
 #include <boost/asio/buffer.hpp>
 #include <boost/asio/ip/tcp.hpp>
@@ -30,7 +30,7 @@ namespace
 
 using boost::asio::ip::tcp;
 
-class LocalClientHandshakeTest : public ::testing::Test
+class local_client_handshake_test_fixture : public ::testing::Test
 {
    protected:
     void SetUp() override
@@ -62,7 +62,7 @@ boost::asio::awaitable<void> mock_server_silent(tcp::acceptor& acceptor)
     co_await timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
 }
 
-TEST_F(LocalClientHandshakeTest, HandshakeTimeout)
+TEST_F(local_client_handshake_test_fixture, HandshakeTimeout)
 {
     boost::system::error_code const ec;
     mux::io_context_pool pool(1);
@@ -120,7 +120,7 @@ boost::asio::awaitable<void> mock_server_invalid_sh(tcp::acceptor& acceptor)
     co_await boost::asio::async_write(socket, boost::asio::buffer(garbage), boost::asio::as_tuple(boost::asio::use_awaitable));
 }
 
-TEST_F(LocalClientHandshakeTest, InvalidServerHello)
+TEST_F(local_client_handshake_test_fixture, InvalidServerHello)
 {
     boost::system::error_code const ec;
     mux::io_context_pool pool(1);
@@ -151,7 +151,7 @@ TEST_F(LocalClientHandshakeTest, InvalidServerHello)
     }
 }
 
-boost::asio::awaitable<void> mock_server_unsupported_scheme(tcp::acceptor& acceptor, const std::string& server_priv_hex)
+boost::asio::awaitable<void> mock_server_unsupported_scheme(tcp::acceptor& acceptor)
 {
     auto [ec, socket] = co_await acceptor.async_accept(boost::asio::as_tuple(boost::asio::use_awaitable));
     if (ec)
@@ -189,7 +189,7 @@ boost::asio::awaitable<void> mock_server_unsupported_scheme(tcp::acceptor& accep
     co_await boost::asio::async_write(socket, boost::asio::buffer(*enc), boost::asio::as_tuple(boost::asio::use_awaitable));
 }
 
-TEST_F(LocalClientHandshakeTest, UnsupportedVerifyScheme)
+TEST_F(local_client_handshake_test_fixture, UnsupportedVerifyScheme)
 {
     boost::system::error_code const ec;
     mux::io_context_pool pool(1);
@@ -198,7 +198,7 @@ TEST_F(LocalClientHandshakeTest, UnsupportedVerifyScheme)
     tcp::acceptor acceptor(pool.get_io_context(), tcp::endpoint(tcp::v4(), 0));
     std::uint16_t const port = acceptor.local_endpoint().port();
 
-    boost::asio::co_spawn(pool.get_io_context(), mock_server_unsupported_scheme(acceptor, server_pub_hex()), boost::asio::detached);
+    boost::asio::co_spawn(pool.get_io_context(), mock_server_unsupported_scheme(acceptor), boost::asio::detached);
 
     mux::config client_cfg;
     client_cfg.outbound.host = "127.0.0.1";

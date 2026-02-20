@@ -48,10 +48,7 @@ std::atomic<int> g_fail_close_errno{EIO};
 class monitor_fail_guard
 {
    public:
-    explicit monitor_fail_guard(const monitor_fail_mode mode)
-    {
-        g_monitor_fail_mode.store(static_cast<int>(mode), std::memory_order_release);
-    }
+    explicit monitor_fail_guard(const monitor_fail_mode mode) { g_monitor_fail_mode.store(static_cast<int>(mode), std::memory_order_release); }
 
     ~monitor_fail_guard() { g_monitor_fail_mode.store(static_cast<int>(monitor_fail_mode::kNone), std::memory_order_release); }
 };
@@ -167,10 +164,7 @@ std::string request_with_retry(std::uint16_t port, const std::string& request)
     return read_response(port, request);
 }
 
-std::string request_metrics_with_retry(const std::uint16_t port)
-{
-    return request_with_retry(port, std::string(k_metrics_get_request));
-}
+std::string request_metrics_with_retry(const std::uint16_t port) { return request_with_retry(port, std::string(k_metrics_get_request)); }
 
 std::optional<std::uint64_t> parse_metric_value(const std::string& response, const std::string_view metric_name)
 {
@@ -227,12 +221,7 @@ class monitor_server_env
         auto ctor_args = std::make_tuple(std::forward<Args>(args)...);
         for (std::uint32_t attempt = 0; attempt < 120; ++attempt)
         {
-            server_ = std::apply(
-                [this](auto&&... unpacked)
-                {
-                    return std::make_shared<mux::monitor_server>(ioc_, unpacked...);
-                },
-                ctor_args);
+            server_ = std::apply([this](auto&&... unpacked) { return std::make_shared<mux::monitor_server>(ioc_, unpacked...); }, ctor_args);
             server_->start();
             if (server_->acceptor_.is_open())
             {
@@ -280,72 +269,72 @@ class monitor_server_env
 
 }    // namespace
 
-extern "C" int __real_socket(int domain, int type, int protocol);  // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);  // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_listen(int sockfd, int backlog);  // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_accept(int sockfd, struct sockaddr* addr, socklen_t* addrlen);  // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_accept4(int sockfd, struct sockaddr* addr, socklen_t* addrlen, int flags);  // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_close(int fd);  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_socket(int domain, int type, int protocol);                                              // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_listen(int sockfd, int backlog);                                                         // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_accept(int sockfd, struct sockaddr* addr, socklen_t* addrlen);                           // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_accept4(int sockfd, struct sockaddr* addr, socklen_t* addrlen, int flags);               // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_close(int fd);                                                                           // NOLINT(bugprone-reserved-identifier)
 
-extern "C" int __wrap_socket(int domain, int type, int protocol)  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_socket(int domain, int type, int protocol)    // NOLINT(bugprone-reserved-identifier)
 {
     if (should_fail_monitor_mode(monitor_fail_mode::kSocket, monitor_fail_mode::kSocketAlways))
     {
         errno = EMFILE;
         return -1;
     }
-    return __real_socket(domain, type, protocol);  // NOLINT(bugprone-reserved-identifier)
+    return __real_socket(domain, type, protocol);    // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)    // NOLINT(bugprone-reserved-identifier)
 {
-    if (level == SOL_SOCKET && optname == SO_REUSEADDR
-        && should_fail_monitor_mode(monitor_fail_mode::kReuseAddr, monitor_fail_mode::kReuseAddrAlways))
+    if (level == SOL_SOCKET && optname == SO_REUSEADDR &&
+        should_fail_monitor_mode(monitor_fail_mode::kReuseAddr, monitor_fail_mode::kReuseAddrAlways))
     {
         errno = EPERM;
         return -1;
     }
-    return __real_setsockopt(sockfd, level, optname, optval, optlen);  // NOLINT(bugprone-reserved-identifier)
+    return __real_setsockopt(sockfd, level, optname, optval, optlen);    // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_listen(int sockfd, int backlog)  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_listen(int sockfd, int backlog)    // NOLINT(bugprone-reserved-identifier)
 {
     if (should_fail_monitor_mode(monitor_fail_mode::kListen, monitor_fail_mode::kListenAlways))
     {
         errno = EACCES;
         return -1;
     }
-    return __real_listen(sockfd, backlog);  // NOLINT(bugprone-reserved-identifier)
+    return __real_listen(sockfd, backlog);    // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_accept(int sockfd, struct sockaddr* addr, socklen_t* addrlen)  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_accept(int sockfd, struct sockaddr* addr, socklen_t* addrlen)    // NOLINT(bugprone-reserved-identifier)
 {
     if (g_fail_accept_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_accept_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_accept(sockfd, addr, addrlen);  // NOLINT(bugprone-reserved-identifier)
+    return __real_accept(sockfd, addr, addrlen);    // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_accept4(int sockfd, struct sockaddr* addr, socklen_t* addrlen, int flags)  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_accept4(int sockfd, struct sockaddr* addr, socklen_t* addrlen, int flags)    // NOLINT(bugprone-reserved-identifier)
 {
     if (g_fail_accept_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_accept_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_accept4(sockfd, addr, addrlen, flags);  // NOLINT(bugprone-reserved-identifier)
+    return __real_accept4(sockfd, addr, addrlen, flags);    // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_close(int fd)  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_close(int fd)    // NOLINT(bugprone-reserved-identifier)
 {
     if (g_fail_close_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_close_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_close(fd);  // NOLINT(bugprone-reserved-identifier)
+    return __real_close(fd);    // NOLINT(bugprone-reserved-identifier)
 }
 
 namespace mux
@@ -373,12 +362,11 @@ TEST(MonitorServerTest, SupportsMetricsPathQueryString)
     const auto port = env.port();
     ASSERT_NE(port, 0);
 
-    const auto resp = request_with_retry(
-        port,
-        "GET /metrics?debug=1 HTTP/1.1\r\n"
-        "Host: 127.0.0.1\r\n"
-        "Connection: close\r\n"
-        "\r\n");
+    const auto resp = request_with_retry(port,
+                                         "GET /metrics?debug=1 HTTP/1.1\r\n"
+                                         "Host: 127.0.0.1\r\n"
+                                         "Connection: close\r\n"
+                                         "\r\n");
     EXPECT_EQ(resp.rfind("HTTP/1.1 200 OK\r\n", 0), 0U);
     EXPECT_NE(resp.find("socks_uptime_seconds "), std::string::npos);
 }
@@ -389,12 +377,11 @@ TEST(MonitorServerTest, RejectsNonGetMethod)
     const auto port = env.port();
     ASSERT_NE(port, 0);
 
-    const auto resp = request_with_retry(
-        port,
-        "POST /metrics HTTP/1.1\r\n"
-        "Host: 127.0.0.1\r\n"
-        "Connection: close\r\n"
-        "\r\n");
+    const auto resp = request_with_retry(port,
+                                         "POST /metrics HTTP/1.1\r\n"
+                                         "Host: 127.0.0.1\r\n"
+                                         "Connection: close\r\n"
+                                         "\r\n");
     EXPECT_EQ(resp.rfind("HTTP/1.1 405 ", 0), 0U);
 }
 
@@ -404,12 +391,11 @@ TEST(MonitorServerTest, RejectsNonMetricsPath)
     const auto port = env.port();
     ASSERT_NE(port, 0);
 
-    const auto resp = request_with_retry(
-        port,
-        "GET /status HTTP/1.1\r\n"
-        "Host: 127.0.0.1\r\n"
-        "Connection: close\r\n"
-        "\r\n");
+    const auto resp = request_with_retry(port,
+                                         "GET /status HTTP/1.1\r\n"
+                                         "Host: 127.0.0.1\r\n"
+                                         "Connection: close\r\n"
+                                         "\r\n");
     EXPECT_EQ(resp.rfind("HTTP/1.1 404 ", 0), 0U);
 }
 
@@ -735,16 +721,15 @@ TEST(MonitorServerTest, StopRunsWhenIoQueueBlocked)
 
     std::atomic<bool> blocker_started{false};
     std::atomic<bool> release_blocker{false};
-    boost::asio::post(
-        ioc,
-        [&blocker_started, &release_blocker]()
-        {
-            blocker_started.store(true, std::memory_order_release);
-            while (!release_blocker.load(std::memory_order_acquire))
-            {
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            }
-        });
+    boost::asio::post(ioc,
+                      [&blocker_started, &release_blocker]()
+                      {
+                          blocker_started.store(true, std::memory_order_release);
+                          while (!release_blocker.load(std::memory_order_acquire))
+                          {
+                              std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                          }
+                      });
 
     std::thread runner([&ioc]() { ioc.run(); });
     for (int i = 0; i < 100 && !blocker_started.load(std::memory_order_acquire); ++i)

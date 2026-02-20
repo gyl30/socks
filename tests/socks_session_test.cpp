@@ -1,32 +1,34 @@
 // NOLINTBEGIN(google-build-using-namespace, misc-use-internal-linkage)
 // NOLINTBEGIN(bugprone-unchecked-optional-access, bugprone-unused-return-value, misc-include-cleaner)
+#include <array>
 #include <atomic>
+#include <cerrno>
 #include <future>
 #include <memory>
 #include <string>
 #include <thread>
 #include <vector>
-#include <array>
 #include <cstdint>
 #include <utility>
+#include <unistd.h>
+#include <sys/socket.h>
 #include <system_error>
-#include <cerrno>
 
-#include <boost/asio/read.hpp>
 #include <gtest/gtest.h>
+#include <boost/asio/read.hpp>
 #include <boost/asio/write.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/use_future.hpp>
 #include <boost/asio/executor_work_guard.hpp>
-#include <sys/socket.h>
-#include <unistd.h>
 
 #include "protocol.h"
 #include "statistics.h"
+
 #define private public
 #include "socks_session.h"
+
 #undef private
 #include "test_util.h"
 
@@ -47,27 +49,27 @@ void fail_next_close(const int err)
     g_fail_close_once.store(true, std::memory_order_release);
 }
 
-extern "C" int __real_shutdown(int sockfd, int how);  // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_close(int fd);  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_shutdown(int sockfd, int how);    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_close(int fd);                    // NOLINT(bugprone-reserved-identifier)
 
-extern "C" int __wrap_shutdown(int sockfd, int how)  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_shutdown(int sockfd, int how)    // NOLINT(bugprone-reserved-identifier)
 {
     if (g_fail_shutdown_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_shutdown_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_shutdown(sockfd, how);  // NOLINT(bugprone-reserved-identifier)
+    return __real_shutdown(sockfd, how);    // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_close(int fd)  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_close(int fd)    // NOLINT(bugprone-reserved-identifier)
 {
     if (g_fail_close_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_close_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_close(fd);  // NOLINT(bugprone-reserved-identifier)
+    return __real_close(fd);    // NOLINT(bugprone-reserved-identifier)
 }
 
 namespace mux
@@ -116,7 +118,7 @@ tcp_socket_pair make_tcp_socket_pair(boost::asio::io_context& io_context)
     return tcp_socket_pair{.client = std::move(client), .server = std::move(server)};
 }
 
-class SocksSessionTest : public ::testing::Test
+class socks_session_test_fixture : public ::testing::Test
 {
    protected:
     boost::asio::io_context& io_ctx() { return io_ctx_; }
@@ -125,7 +127,7 @@ class SocksSessionTest : public ::testing::Test
     boost::asio::io_context io_ctx_;
 };
 
-TEST_F(SocksSessionTest, ActiveConnectionGuardOutlivesSessionObject)
+TEST_F(socks_session_test_fixture, ActiveConnectionGuardOutlivesSessionObject)
 {
     auto& stats = mux::statistics::instance();
     const auto active_before = stats.active_connections();
@@ -147,7 +149,7 @@ TEST_F(SocksSessionTest, ActiveConnectionGuardOutlivesSessionObject)
     EXPECT_EQ(stats.active_connections(), active_before);
 }
 
-TEST_F(SocksSessionTest, HandshakeNoAuthSuccess)
+TEST_F(socks_session_test_fixture, HandshakeNoAuthSuccess)
 {
     boost::asio::ip::tcp::socket client_sock(io_ctx());
     boost::asio::ip::tcp::socket server_sock(io_ctx());
@@ -179,7 +181,7 @@ TEST_F(SocksSessionTest, HandshakeNoAuthSuccess)
     t.join();
 }
 
-TEST_F(SocksSessionTest, HandshakePasswordAuthSuccess)
+TEST_F(socks_session_test_fixture, HandshakePasswordAuthSuccess)
 {
     boost::asio::ip::tcp::socket client_sock(io_ctx());
     boost::asio::ip::tcp::socket server_sock(io_ctx());
@@ -222,7 +224,7 @@ TEST_F(SocksSessionTest, HandshakePasswordAuthSuccess)
     t.join();
 }
 
-TEST_F(SocksSessionTest, ReadConnectRequestDomain)
+TEST_F(socks_session_test_fixture, ReadConnectRequestDomain)
 {
     boost::asio::ip::tcp::socket client_sock(io_ctx());
     boost::asio::ip::tcp::socket server_sock(io_ctx());
@@ -252,7 +254,7 @@ TEST_F(SocksSessionTest, ReadConnectRequestDomain)
     t.join();
 }
 
-TEST_F(SocksSessionTest, HandshakeNoAcceptableMethod)
+TEST_F(socks_session_test_fixture, HandshakeNoAcceptableMethod)
 {
     auto pair = make_tcp_socket_pair(io_ctx());
     ASSERT_TRUE(pair.client.is_open());
@@ -282,7 +284,7 @@ TEST_F(SocksSessionTest, HandshakeNoAcceptableMethod)
     t.join();
 }
 
-TEST_F(SocksSessionTest, HandshakePasswordAuthWrongPassword)
+TEST_F(socks_session_test_fixture, HandshakePasswordAuthWrongPassword)
 {
     auto pair = make_tcp_socket_pair(io_ctx());
     ASSERT_TRUE(pair.client.is_open());
@@ -323,7 +325,7 @@ TEST_F(SocksSessionTest, HandshakePasswordAuthWrongPassword)
     t.join();
 }
 
-TEST_F(SocksSessionTest, HandshakePasswordAuthInvalidVersion)
+TEST_F(socks_session_test_fixture, HandshakePasswordAuthInvalidVersion)
 {
     boost::asio::ip::tcp::socket client_sock(io_ctx());
     boost::asio::ip::tcp::socket server_sock(io_ctx());
@@ -359,7 +361,7 @@ TEST_F(SocksSessionTest, HandshakePasswordAuthInvalidVersion)
     t.join();
 }
 
-TEST_F(SocksSessionTest, ReadRequestInvalidHeaderRejected)
+TEST_F(socks_session_test_fixture, ReadRequestInvalidHeaderRejected)
 {
     boost::asio::ip::tcp::socket client_sock(io_ctx());
     boost::asio::ip::tcp::socket server_sock(io_ctx());
@@ -389,7 +391,7 @@ TEST_F(SocksSessionTest, ReadRequestInvalidHeaderRejected)
     t.join();
 }
 
-TEST_F(SocksSessionTest, ReadRequestUnsupportedCmdRejected)
+TEST_F(socks_session_test_fixture, ReadRequestUnsupportedCmdRejected)
 {
     boost::asio::ip::tcp::socket client_sock(io_ctx());
     boost::asio::ip::tcp::socket server_sock(io_ctx());
@@ -419,7 +421,7 @@ TEST_F(SocksSessionTest, ReadRequestUnsupportedCmdRejected)
     t.join();
 }
 
-TEST_F(SocksSessionTest, ReadRequestUnsupportedAtypRejected)
+TEST_F(socks_session_test_fixture, ReadRequestUnsupportedAtypRejected)
 {
     boost::asio::ip::tcp::socket client_sock(io_ctx());
     boost::asio::ip::tcp::socket server_sock(io_ctx());
@@ -449,7 +451,7 @@ TEST_F(SocksSessionTest, ReadRequestUnsupportedAtypRejected)
     t.join();
 }
 
-TEST_F(SocksSessionTest, ReadConnectRequestIPv4)
+TEST_F(socks_session_test_fixture, ReadConnectRequestIPv4)
 {
     auto pair = make_tcp_socket_pair(io_ctx());
     ASSERT_TRUE(pair.client.is_open());
@@ -477,7 +479,7 @@ TEST_F(SocksSessionTest, ReadConnectRequestIPv4)
     t.join();
 }
 
-TEST_F(SocksSessionTest, ReadConnectRequestIPv6)
+TEST_F(socks_session_test_fixture, ReadConnectRequestIPv6)
 {
     boost::asio::ip::tcp::socket client_sock(io_ctx());
     boost::asio::ip::tcp::socket server_sock(io_ctx());
@@ -507,7 +509,7 @@ TEST_F(SocksSessionTest, ReadConnectRequestIPv6)
     t.join();
 }
 
-TEST_F(SocksSessionTest, HelperBranchesSelectMethodAndVerifyCredential)
+TEST_F(socks_session_test_fixture, HelperBranchesSelectMethodAndVerifyCredential)
 {
     config::socks_t auth_cfg;
     auth_cfg.auth = true;
@@ -536,7 +538,7 @@ TEST_F(SocksSessionTest, HelperBranchesSelectMethodAndVerifyCredential)
     EXPECT_FALSE(socks_session::is_supported_atyp(0x09));
 }
 
-TEST_F(SocksSessionTest, ReadGreetingAndMethodsCoversSuccessAndFailures)
+TEST_F(socks_session_test_fixture, ReadGreetingAndMethodsCoversSuccessAndFailures)
 {
     {
         auto pair = make_tcp_socket_pair(io_ctx());
@@ -579,7 +581,7 @@ TEST_F(SocksSessionTest, ReadGreetingAndMethodsCoversSuccessAndFailures)
     }
 }
 
-TEST_F(SocksSessionTest, AuthVersionFieldAndResultBranches)
+TEST_F(socks_session_test_fixture, AuthVersionFieldAndResultBranches)
 {
     {
         auto pair = make_tcp_socket_pair(io_ctx());
@@ -660,7 +662,7 @@ TEST_F(SocksSessionTest, AuthVersionFieldAndResultBranches)
     }
 }
 
-TEST_F(SocksSessionTest, ReadTargetHostPortAndValidationBranches)
+TEST_F(socks_session_test_fixture, ReadTargetHostPortAndValidationBranches)
 {
     {
         auto pair = make_tcp_socket_pair(io_ctx());
@@ -749,7 +751,7 @@ TEST_F(SocksSessionTest, ReadTargetHostPortAndValidationBranches)
     }
 }
 
-TEST_F(SocksSessionTest, RequestHeaderValidationAndRejectRequestBranches)
+TEST_F(socks_session_test_fixture, RequestHeaderValidationAndRejectRequestBranches)
 {
     {
         auto pair = make_tcp_socket_pair(io_ctx());
@@ -856,7 +858,7 @@ TEST_F(SocksSessionTest, RequestHeaderValidationAndRejectRequestBranches)
     }
 }
 
-TEST_F(SocksSessionTest, StartAndStopLifecycleWithInvalidGreeting)
+TEST_F(socks_session_test_fixture, StartAndStopLifecycleWithInvalidGreeting)
 {
     auto pair = make_tcp_socket_pair(io_ctx());
     auto session = std::make_shared<socks_session>(std::move(pair.server), io_ctx(), nullptr, nullptr, 1);
@@ -876,14 +878,25 @@ TEST_F(SocksSessionTest, StartAndStopLifecycleWithInvalidGreeting)
     EXPECT_FALSE(session->socket_.is_open());
 }
 
-TEST_F(SocksSessionTest, StartLifecycleWithUnsupportedCommand)
+TEST_F(socks_session_test_fixture, StartLifecycleWithUnsupportedCommand)
 {
     auto pair = make_tcp_socket_pair(io_ctx());
     auto session = std::make_shared<socks_session>(std::move(pair.server), io_ctx(), nullptr, nullptr, 2);
 
     const std::vector<std::uint8_t> req = {
-        0x05, 0x01, 0x00,    // greeting
-        0x05, 0x09, 0x00, 0x01, 127, 0, 0, 1, 0x00, 0x50    // unsupported cmd
+        0x05,
+        0x01,
+        0x00,    // greeting
+        0x05,
+        0x09,
+        0x00,
+        0x01,
+        127,
+        0,
+        0,
+        1,
+        0x00,
+        0x50    // unsupported cmd
     };
     boost::asio::write(pair.client, boost::asio::buffer(req));
 
@@ -905,7 +918,7 @@ TEST_F(SocksSessionTest, StartLifecycleWithUnsupportedCommand)
     session->stop();
 }
 
-TEST_F(SocksSessionTest, StopHandlesUnexpectedShutdownAndCloseErrors)
+TEST_F(socks_session_test_fixture, StopHandlesUnexpectedShutdownAndCloseErrors)
 {
     auto pair = make_tcp_socket_pair(io_ctx());
     auto session = std::make_shared<socks_session>(std::move(pair.server), io_ctx(), nullptr, nullptr, 3);
@@ -919,7 +932,7 @@ TEST_F(SocksSessionTest, StopHandlesUnexpectedShutdownAndCloseErrors)
     pair.client.close();
 }
 
-TEST_F(SocksSessionTest, StopIgnoresExpectedShutdownAndCloseErrors)
+TEST_F(socks_session_test_fixture, StopIgnoresExpectedShutdownAndCloseErrors)
 {
     auto pair = make_tcp_socket_pair(io_ctx());
     auto session = std::make_shared<socks_session>(std::move(pair.server), io_ctx(), nullptr, nullptr, 4);

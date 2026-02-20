@@ -20,14 +20,15 @@ T run_awaitable(boost::asio::io_context& ctx, boost::asio::awaitable<T> awaitabl
 {
     std::optional<T> result;
     bool done = false;
-    boost::asio::co_spawn(ctx,
-                   [awaitable = std::move(awaitable), &result, &done]() mutable -> boost::asio::awaitable<void>
-                   {
-                       result.emplace(co_await std::move(awaitable));
-                       done = true;
-                       co_return;
-                   },
-                   boost::asio::detached);
+    boost::asio::co_spawn(
+        ctx,
+        [awaitable = std::move(awaitable), &result, &done]() mutable -> boost::asio::awaitable<void>
+        {
+            result.emplace(co_await std::move(awaitable));
+            done = true;
+            co_return;
+        },
+        boost::asio::detached);
     ctx.run();
     ctx.restart();
     if (!done || !result.has_value())
@@ -41,14 +42,15 @@ T run_awaitable(boost::asio::io_context& ctx, boost::asio::awaitable<T> awaitabl
 inline void run_awaitable_void(boost::asio::io_context& ctx, boost::asio::awaitable<void> awaitable)
 {
     bool done = false;
-    boost::asio::co_spawn(ctx,
-                   [awaitable = std::move(awaitable), &done]() mutable -> boost::asio::awaitable<void>
-                   {
-                       co_await std::move(awaitable);
-                       done = true;
-                       co_return;
-                   },
-                   boost::asio::detached);
+    boost::asio::co_spawn(
+        ctx,
+        [awaitable = std::move(awaitable), &done]() mutable -> boost::asio::awaitable<void>
+        {
+            co_await std::move(awaitable);
+            done = true;
+            co_return;
+        },
+        boost::asio::detached);
     ctx.run();
     ctx.restart();
     if (!done)

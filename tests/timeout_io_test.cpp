@@ -53,9 +53,7 @@ tcp_socket_pair make_connected_tcp_socket_pair(boost::asio::io_context& io_conte
         ADD_FAILURE() << "accept failed: " << ec.message();
         return {};
     }
-    return tcp_socket_pair{
-        .client = std::move(client),
-        .server = std::move(server)};
+    return tcp_socket_pair{.client = std::move(client), .server = std::move(server)};
 }
 
 }    // namespace
@@ -69,14 +67,14 @@ TEST(TimeoutIoTest, ReadTimeoutCancelsSocketAndReturnsTimedOut)
 
     std::array<std::uint8_t, 1> read_buf = {};
     mux::timeout_io::timed_tcp_read_result read_res;
-    boost::asio::co_spawn(io_context,
-                   [&]() -> boost::asio::awaitable<void>
-                   {
-                       read_res = co_await mux::timeout_io::async_read_with_timeout(
-                           pair.client, boost::asio::buffer(read_buf), 1, true, "timeout-io-test");
-                       co_return;
-                   },
-                   boost::asio::detached);
+    boost::asio::co_spawn(
+        io_context,
+        [&]() -> boost::asio::awaitable<void>
+        {
+            read_res = co_await mux::timeout_io::async_read_with_timeout(pair.client, boost::asio::buffer(read_buf), 1, true, "timeout-io-test");
+            co_return;
+        },
+        boost::asio::detached);
     io_context.run();
 
     EXPECT_FALSE(read_res.ok);
@@ -96,31 +94,32 @@ TEST(TimeoutIoTest, ZeroReadTimeoutDisablesStageTimeout)
     boost::system::error_code delayed_wait_ec;
     boost::system::error_code delayed_write_ec;
     std::size_t delayed_write_n = 0;
-    boost::asio::co_spawn(io_context,
-                   [&]() -> boost::asio::awaitable<void>
-                   {
-                       boost::asio::steady_timer delayed_writer(io_context);
-                       delayed_writer.expires_after(std::chrono::milliseconds(1200));
-                       const auto [wait_ec] = co_await delayed_writer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
-                       delayed_wait_ec = wait_ec;
-                       const auto [write_ec, write_n] =
-                           co_await boost::asio::async_write(*pair.server, boost::asio::buffer(payload), boost::asio::as_tuple(boost::asio::use_awaitable));
-                       delayed_write_ec = write_ec;
-                       delayed_write_n = write_n;
-                       co_return;
-                   },
-                   boost::asio::detached);
+    boost::asio::co_spawn(
+        io_context,
+        [&]() -> boost::asio::awaitable<void>
+        {
+            boost::asio::steady_timer delayed_writer(io_context);
+            delayed_writer.expires_after(std::chrono::milliseconds(1200));
+            const auto [wait_ec] = co_await delayed_writer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
+            delayed_wait_ec = wait_ec;
+            const auto [write_ec, write_n] =
+                co_await boost::asio::async_write(*pair.server, boost::asio::buffer(payload), boost::asio::as_tuple(boost::asio::use_awaitable));
+            delayed_write_ec = write_ec;
+            delayed_write_n = write_n;
+            co_return;
+        },
+        boost::asio::detached);
 
     std::array<std::uint8_t, 1> read_buf = {};
     mux::timeout_io::timed_tcp_read_result read_res;
-    boost::asio::co_spawn(io_context,
-                   [&]() -> boost::asio::awaitable<void>
-                   {
-                       read_res = co_await mux::timeout_io::async_read_with_timeout(
-                           pair.client, boost::asio::buffer(read_buf), 0, true, "timeout-io-test");
-                       co_return;
-                   },
-                   boost::asio::detached);
+    boost::asio::co_spawn(
+        io_context,
+        [&]() -> boost::asio::awaitable<void>
+        {
+            read_res = co_await mux::timeout_io::async_read_with_timeout(pair.client, boost::asio::buffer(read_buf), 0, true, "timeout-io-test");
+            co_return;
+        },
+        boost::asio::detached);
 
     io_context.run();
 
@@ -149,17 +148,15 @@ TEST(TimeoutIoTest, ConnectFailureReturnsNonTimeoutError)
     ASSERT_FALSE(ec);
 
     mux::timeout_io::timed_tcp_connect_result connect_res;
-    boost::asio::co_spawn(io_context,
-                   [&]() -> boost::asio::awaitable<void>
-                   {
-                       connect_res = co_await mux::timeout_io::async_connect_with_timeout(
-                           socket,
-                           boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address("127.0.0.1"), port),
-                           3,
-                           "timeout-io-test");
-                       co_return;
-                   },
-                   boost::asio::detached);
+    boost::asio::co_spawn(
+        io_context,
+        [&]() -> boost::asio::awaitable<void>
+        {
+            connect_res = co_await mux::timeout_io::async_connect_with_timeout(
+                socket, boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address("127.0.0.1"), port), 3, "timeout-io-test");
+            co_return;
+        },
+        boost::asio::detached);
     io_context.run();
 
     EXPECT_FALSE(connect_res.ok);

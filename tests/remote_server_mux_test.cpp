@@ -7,8 +7,8 @@
 #include <vector>
 #include <cstdint>
 
-#include <boost/asio/read.hpp>
 #include <gtest/gtest.h>
+#include <boost/asio/read.hpp>
 #include <boost/asio/write.hpp>
 #include <boost/asio/buffer.hpp>
 #include <boost/asio/ip/tcp.hpp>
@@ -45,7 +45,7 @@ class scoped_pool
     std::thread thread_;
 };
 
-class RemoteServerMuxTest : public ::testing::Test
+class remote_server_mux_test_fixture : public ::testing::Test
 {
    protected:
     void SetUp() override
@@ -123,7 +123,7 @@ static bool connect_proxy_with_retry(boost::asio::ip::tcp::socket& socket, const
     return false;
 }
 
-TEST_F(RemoteServerMuxTest, ProcessTcpConnectRequest)
+TEST_F(remote_server_mux_test_fixture, ProcessTcpConnectRequest)
 {
     mux::io_context_pool pool(2);
     scoped_pool const sp(pool);
@@ -173,7 +173,7 @@ TEST_F(RemoteServerMuxTest, ProcessTcpConnectRequest)
     std::this_thread::sleep_for(std::chrono::milliseconds(2000));
 }
 
-TEST_F(RemoteServerMuxTest, ProcessUdpAssociateRequest)
+TEST_F(remote_server_mux_test_fixture, ProcessUdpAssociateRequest)
 {
     mux::io_context_pool pool(2);
     scoped_pool const sp(pool);
@@ -221,7 +221,7 @@ TEST_F(RemoteServerMuxTest, ProcessUdpAssociateRequest)
     std::this_thread::sleep_for(std::chrono::milliseconds(2000));
 }
 
-TEST_F(RemoteServerMuxTest, TargetConnectFail)
+TEST_F(remote_server_mux_test_fixture, TargetConnectFail)
 {
     mux::io_context_pool pool(2);
     scoped_pool const sp(pool);
@@ -267,7 +267,7 @@ TEST_F(RemoteServerMuxTest, TargetConnectFail)
     std::this_thread::sleep_for(std::chrono::milliseconds(2000));
 }
 
-TEST_F(RemoteServerMuxTest, TargetResolveFail)
+TEST_F(remote_server_mux_test_fixture, TargetResolveFail)
 {
     mux::io_context_pool pool(2);
     scoped_pool const sp(pool);

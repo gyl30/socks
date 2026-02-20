@@ -47,8 +47,7 @@ TEST(SocksProtocolTest, DecodeSocks5RequestIPv4AndErrorPaths)
 
 TEST(SocksProtocolTest, DecodeSocks5RequestDomain)
 {
-    const std::vector<std::uint8_t> req = {0x05, 0x01, 0x00, 0x03, 0x0b, 'e',  'x',  'a',  'm',
-                                           'p',  'l',  'e',  '.',  'c',  'o',  'm',  0x00, 0x50};
+    const std::vector<std::uint8_t> req = {0x05, 0x01, 0x00, 0x03, 0x0b, 'e', 'x', 'a', 'm', 'p', 'l', 'e', '.', 'c', 'o', 'm', 0x00, 0x50};
     socks5_request out;
     ASSERT_TRUE(socks_codec::decode_socks5_request(req.data(), req.size(), out));
     EXPECT_EQ(out.addr, "example.com");

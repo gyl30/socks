@@ -9,13 +9,15 @@
 #include <boost/asio/io_context.hpp>
 
 #include "test_util.h"
+
 #define private public
 #include "mux_stream.h"
+
 #undef private
 #include "mux_protocol.h"
 #include "mock_mux_connection.h"
 
-class MuxStreamTest : public ::testing::Test
+class mux_stream_test_fixture : public ::testing::Test
 {
    protected:
     boost::asio::io_context& ctx() { return ctx_; }
@@ -24,7 +26,7 @@ class MuxStreamTest : public ::testing::Test
     boost::asio::io_context ctx_;
 };
 
-TEST_F(MuxStreamTest, WriteSomeSuccess)
+TEST_F(mux_stream_test_fixture, WriteSomeSuccess)
 {
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
     auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx());
@@ -37,7 +39,7 @@ TEST_F(MuxStreamTest, WriteSomeSuccess)
     EXPECT_FALSE(ec);
 }
 
-TEST_F(MuxStreamTest, WriteSomeFailurePropagatesError)
+TEST_F(mux_stream_test_fixture, WriteSomeFailurePropagatesError)
 {
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
     auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx());
@@ -49,7 +51,7 @@ TEST_F(MuxStreamTest, WriteSomeFailurePropagatesError)
     EXPECT_EQ(ec, boost::asio::error::broken_pipe);
 }
 
-TEST_F(MuxStreamTest, ReadSomeSuccess)
+TEST_F(mux_stream_test_fixture, ReadSomeSuccess)
 {
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
     auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx());
@@ -62,7 +64,7 @@ TEST_F(MuxStreamTest, ReadSomeSuccess)
     EXPECT_EQ(read_data, data);
 }
 
-TEST_F(MuxStreamTest, CloseSendsFin)
+TEST_F(mux_stream_test_fixture, CloseSendsFin)
 {
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
     auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx());
@@ -72,18 +74,20 @@ TEST_F(MuxStreamTest, CloseSendsFin)
     mux::test::run_awaitable_void(ctx(), stream->close());
 }
 
-TEST_F(MuxStreamTest, CloseIsIdempotent)
+TEST_F(mux_stream_test_fixture, CloseIsIdempotent)
 {
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
     auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx());
 
-    EXPECT_CALL(*mock_conn, mock_send_async(1, mux::kCmdFin, std::vector<std::uint8_t>())).Times(1).WillOnce(::testing::Return(boost::system::error_code()));
+    EXPECT_CALL(*mock_conn, mock_send_async(1, mux::kCmdFin, std::vector<std::uint8_t>()))
+        .Times(1)
+        .WillOnce(::testing::Return(boost::system::error_code()));
 
     mux::test::run_awaitable_void(ctx(), stream->close());
     mux::test::run_awaitable_void(ctx(), stream->close());
 }
 
-TEST_F(MuxStreamTest, CloseWithoutConnection)
+TEST_F(mux_stream_test_fixture, CloseWithoutConnection)
 {
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
     auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx());
@@ -92,7 +96,7 @@ TEST_F(MuxStreamTest, CloseWithoutConnection)
     mux::test::run_awaitable_void(ctx(), stream->close());
 }
 
-TEST_F(MuxStreamTest, OnCloseUnblocksReader)
+TEST_F(mux_stream_test_fixture, OnCloseUnblocksReader)
 {
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
     auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx());
@@ -104,7 +108,7 @@ TEST_F(MuxStreamTest, OnCloseUnblocksReader)
     EXPECT_EQ(ec, boost::asio::error::eof);
 }
 
-TEST_F(MuxStreamTest, OnCloseSecondCallDoesNotInjectExtraEOF)
+TEST_F(mux_stream_test_fixture, OnCloseSecondCallDoesNotInjectExtraEOF)
 {
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
     auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx());
@@ -123,7 +127,7 @@ TEST_F(MuxStreamTest, OnCloseSecondCallDoesNotInjectExtraEOF)
     EXPECT_EQ(second_data, payload);
 }
 
-TEST_F(MuxStreamTest, WriteAfterClose)
+TEST_F(mux_stream_test_fixture, WriteAfterClose)
 {
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
     auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx());
@@ -136,7 +140,7 @@ TEST_F(MuxStreamTest, WriteAfterClose)
     EXPECT_EQ(ec, boost::asio::error::operation_aborted);
 }
 
-TEST_F(MuxStreamTest, WriteAfterConnectionDestroyed)
+TEST_F(mux_stream_test_fixture, WriteAfterConnectionDestroyed)
 {
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
     auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx());
@@ -148,7 +152,7 @@ TEST_F(MuxStreamTest, WriteAfterConnectionDestroyed)
     EXPECT_EQ(ec, boost::asio::error::connection_aborted);
 }
 
-TEST_F(MuxStreamTest, OnReset)
+TEST_F(mux_stream_test_fixture, OnReset)
 {
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
     auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx());
@@ -159,7 +163,7 @@ TEST_F(MuxStreamTest, OnReset)
     EXPECT_TRUE(ec);
 }
 
-TEST_F(MuxStreamTest, OnDataIgnoredAfterReset)
+TEST_F(mux_stream_test_fixture, OnDataIgnoredAfterReset)
 {
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
     auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx());
@@ -172,7 +176,7 @@ TEST_F(MuxStreamTest, OnDataIgnoredAfterReset)
     EXPECT_TRUE(read_data.empty());
 }
 
-TEST_F(MuxStreamTest, OnDataChannelFullClosesStream)
+TEST_F(mux_stream_test_fixture, OnDataChannelFullClosesStream)
 {
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
     auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx());
@@ -189,7 +193,7 @@ TEST_F(MuxStreamTest, OnDataChannelFullClosesStream)
     EXPECT_EQ(ec, boost::asio::error::operation_aborted);
 }
 
-TEST_F(MuxStreamTest, OnCloseChannelFullClosesStream)
+TEST_F(mux_stream_test_fixture, OnCloseChannelFullClosesStream)
 {
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
     auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx());
@@ -206,7 +210,7 @@ TEST_F(MuxStreamTest, OnCloseChannelFullClosesStream)
     EXPECT_EQ(ec, boost::asio::error::operation_aborted);
 }
 
-TEST_F(MuxStreamTest, OnDataClosedChannelTriggersUnavailableBranch)
+TEST_F(mux_stream_test_fixture, OnDataClosedChannelTriggersUnavailableBranch)
 {
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
     auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx());
@@ -217,7 +221,7 @@ TEST_F(MuxStreamTest, OnDataClosedChannelTriggersUnavailableBranch)
     EXPECT_TRUE(stream->is_closed_.load(std::memory_order_acquire));
 }
 
-TEST_F(MuxStreamTest, OnCloseClosedChannelTriggersUnavailableBranch)
+TEST_F(mux_stream_test_fixture, OnCloseClosedChannelTriggersUnavailableBranch)
 {
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
     auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx());

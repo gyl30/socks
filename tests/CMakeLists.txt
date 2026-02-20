@@ -3,8 +3,37 @@ cmake_minimum_required(VERSION 3.16)
 set(MSAN_UMR_NOISE_OPTIONS
     "intercept_strlen=0:intercept_strcmp=0:intercept_strndup=0:intercept_strchr=0:intercept_memcmp=0:intercept_strstr=0:intercept_strspn=0:intercept_strtok=0:intercept_strpbrk=0:intercept_memmem=0")
 
-find_package(Python3 COMPONENTS Interpreter QUIET)
-find_program(RG_EXECUTABLE rg)
+function(register_socks_gtest_target TARGET_NAME LOCK_NAME)
+    add_test(
+        NAME ${TARGET_NAME}
+        COMMAND
+            ${CMAKE_COMMAND}
+            -E
+            env
+            --unset=DART_TEST_FROM_DART
+            --unset=CTEST_INTERACTIVE_DEBUG_MODE
+            /bin/bash
+            -c
+            "exec 3>&-; \"\$1\" --gtest_brief=1"
+            __socks_test_runner__
+            $<TARGET_FILE:${TARGET_NAME}>
+    )
+
+    if(CMAKE_CXX_FLAGS MATCHES "-fsanitize=memory")
+        set_tests_properties(
+            ${TARGET_NAME}
+            PROPERTIES
+                ENVIRONMENT "MSAN_OPTIONS=${MSAN_UMR_NOISE_OPTIONS}"
+                RESOURCE_LOCK "${LOCK_NAME}"
+        )
+    else()
+        set_tests_properties(
+            ${TARGET_NAME}
+            PROPERTIES
+                RESOURCE_LOCK "${LOCK_NAME}"
+        )
+    endif()
+endfunction()
 
 macro(add_socks_test NAME)
     add_executable(${NAME} ${NAME}.cpp)
@@ -13,25 +42,7 @@ macro(add_socks_test NAME)
         GTest::gtest_main
         GTest::gmock_main
     )
-    include(GoogleTest)
-    if(CMAKE_CXX_FLAGS MATCHES "-fsanitize=memory")
-        gtest_discover_tests(
-            ${NAME}
-            DISCOVERY_MODE PRE_TEST
-            DISCOVERY_TIMEOUT 60
-            PROPERTIES
-                ENVIRONMENT "MSAN_OPTIONS=${MSAN_UMR_NOISE_OPTIONS}"
-                RESOURCE_LOCK "net_ports"
-        )
-    else()
-        gtest_discover_tests(
-            ${NAME}
-            DISCOVERY_MODE PRE_TEST
-            DISCOVERY_TIMEOUT 60
-            PROPERTIES
-                RESOURCE_LOCK "net_ports"
-        )
-    endif()
+    register_socks_gtest_target(${NAME} "net_ports")
 endmacro()
 
 macro(add_socks_locked_test NAME LOCK_NAME)
@@ -41,25 +52,7 @@ macro(add_socks_locked_test NAME LOCK_NAME)
         GTest::gtest_main
         GTest::gmock_main
     )
-    include(GoogleTest)
-    if(CMAKE_CXX_FLAGS MATCHES "-fsanitize=memory")
-        gtest_discover_tests(
-            ${NAME}
-            DISCOVERY_MODE PRE_TEST
-            DISCOVERY_TIMEOUT 60
-            PROPERTIES
-                ENVIRONMENT "MSAN_OPTIONS=${MSAN_UMR_NOISE_OPTIONS}"
-                RESOURCE_LOCK "${LOCK_NAME}"
-        )
-    else()
-        gtest_discover_tests(
-            ${NAME}
-            DISCOVERY_MODE PRE_TEST
-            DISCOVERY_TIMEOUT 60
-            PROPERTIES
-                RESOURCE_LOCK "${LOCK_NAME}"
-        )
-    endif()
+    register_socks_gtest_target(${NAME} "${LOCK_NAME}")
 endmacro()
 
 add_socks_test(cert_manager_test)
