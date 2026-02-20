@@ -1,6 +1,7 @@
 #ifndef REALITY_MESSAGES_H
 #define REALITY_MESSAGES_H
 
+#include <openssl/types.h>
 #include <string>
 #include <vector>
 #include <cstddef>
@@ -10,10 +11,8 @@
 
 extern "C"
 {
-#include <openssl/evp.h>
 }
 
-#include "reality_core.h"
 #include "reality_fingerprint.h"
 
 namespace reality

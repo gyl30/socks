@@ -1,20 +1,25 @@
+// NOLINTBEGIN(misc-include-cleaner)
+#include <boost/system/error_code.hpp>
+#include <boost/asio/awaitable.hpp>
+#include <cstdint>
+#include <boost/system/errc.hpp>
+#include <boost/system/detail/errc.hpp>
 #include <string>
 #include <vector>
 #include <cstring>
 #include <memory>
 #include <expected>
 #include <utility>
-#include <system_error>
 
 #include <boost/asio/error.hpp>
 #include <boost/asio/write.hpp>
 #include <boost/asio/buffer.hpp>
 #include <boost/asio/ip/tcp.hpp>
-#include <boost/asio/connect.hpp>
 #include <boost/asio/as_tuple.hpp>
 #include <boost/asio/use_awaitable.hpp>
 
 #include "log.h"
+#include "mux_tunnel.h"
 #include "protocol.h"
 #include "upstream.h"
 #include "mux_codec.h"
@@ -33,7 +38,7 @@ std::expected<void, boost::system::error_code> direct_upstream::open_socket_for_
     if (socket_.is_open())
     {
         boost::system::error_code close_ec;
-        socket_.close(close_ec);
+        close_ec = socket_.close(close_ec);
     }
     boost::system::error_code ec;
     ec = socket_.open(endpoint.protocol(), ec);
@@ -338,3 +343,4 @@ boost::asio::awaitable<void> proxy_upstream::close()
 }
 
 }    // namespace mux
+// NOLINTEND(misc-include-cleaner)

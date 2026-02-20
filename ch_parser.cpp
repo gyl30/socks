@@ -83,20 +83,12 @@ bool ch_parser::skip_cipher_suites_and_compression(reader& r)
 
 bool ch_parser::read_extension_header(reader& r, std::uint16_t& type, std::uint16_t& len)
 {
-    if (!r.read_u16(type) || !r.read_u16(len))
-    {
-        return false;
-    }
-    return true;
+    return r.read_u16(type) && r.read_u16(len);
 }
 
 bool ch_parser::read_sni_item_header(reader& r, std::uint8_t& type, std::uint16_t& len)
 {
-    if (!r.read_u8(type) || !r.read_u16(len))
-    {
-        return false;
-    }
-    return true;
+    return r.read_u8(type) && r.read_u16(len);
 }
 
 bool ch_parser::handle_sni_item(reader& r, const std::uint8_t type, const std::uint16_t len, client_hello_info& info)
@@ -119,11 +111,7 @@ bool ch_parser::handle_sni_item(reader& r, const std::uint8_t type, const std::u
 
 bool ch_parser::read_key_share_item_header(reader& r, std::uint16_t& group, std::uint16_t& len)
 {
-    if (!r.read_u16(group) || !r.read_u16(len))
-    {
-        return false;
-    }
-    return true;
+    return r.read_u16(group) && r.read_u16(len);
 }
 
 void ch_parser::handle_key_share_item(reader& r, const std::uint16_t group, const std::uint16_t len, client_hello_info& info)

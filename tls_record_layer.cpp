@@ -1,17 +1,19 @@
+// NOLINTBEGIN(misc-include-cleaner)
+#include <boost/system/error_code.hpp>
+#include <boost/system/detail/errc.hpp>
+#include <openssl/types.h>
 #include <span>
 #include <array>
-#include <vector>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <utility>
+#include <vector>
 #include <expected>
 
 #include <boost/system/errc.hpp>
 
 extern "C"
 {
-#include <openssl/evp.h>
 #include <openssl/rand.h>
 }
 
@@ -74,24 +76,20 @@ std::expected<void, boost::system::error_code> tls_record_layer::encrypt_record_
 {
     ensure_openssl_initialized();
 
-    std::vector<std::uint8_t> nonce = iv;
-    for (int i = 0; i < 8; ++i)
-    {
-        nonce[nonce.size() - 1 - i] ^= static_cast<std::uint8_t>((seq >> (8 * i)) & 0xFF);
-    }
+    const auto nonce = make_record_nonce(iv, seq);
 
     std::vector<std::uint8_t> inner_plaintext;
     std::size_t padding_len = 0;
 
     if (content_type == kContentTypeApplicationData)
     {
-        std::uint8_t r;
-        if (RAND_bytes(&r, 1) != 1)
+        std::uint8_t padding_seed = 0;
+        if (RAND_bytes(&padding_seed, 1) != 1)
         {
             return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::operation_canceled));
         }
 
-        padding_len = static_cast<std::size_t>(r % 64);
+        padding_len = static_cast<std::size_t>(padding_seed % 64);
     }
 
     inner_plaintext.reserve(plaintext.size() + 1 + padding_len);
@@ -125,10 +123,10 @@ std::expected<std::vector<std::uint8_t>, boost::system::error_code> tls_record_l
 {
     const cipher_context ctx;
     std::vector<std::uint8_t> out;
-    auto r = encrypt_record_append(ctx, cipher, key, iv, seq, plaintext, content_type, out);
-    if (!r)
+    auto encrypt_result = encrypt_record_append(ctx, cipher, key, iv, seq, plaintext, content_type, out);
+    if (!encrypt_result)
     {
-        return std::unexpected(r.error());
+        return std::unexpected(encrypt_result.error());
     }
     return out;
 }
@@ -144,9 +142,9 @@ std::expected<std::size_t, boost::system::error_code> tls_record_layer::decrypt_
 {
     ensure_openssl_initialized();
 
-    if (auto r = validate_record_for_decrypt(record_data); !r)
+    if (auto validate_result = validate_record_for_decrypt(record_data); !validate_result)
     {
-        return std::unexpected(r.error());
+        return std::unexpected(validate_result.error());
     }
 
     const auto aad = record_data.subspan(0, kTlsRecordHeaderSize);
@@ -174,12 +172,13 @@ std::expected<std::vector<std::uint8_t>, boost::system::error_code> tls_record_l
         return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::message_size));
     }
     std::vector<std::uint8_t> out(ciphertext_with_header.size() - kTlsRecordHeaderSize - kAeadTagSize);
-    auto n = decrypt_record(ctx, cipher, key, iv, seq, ciphertext_with_header, out, out_content_type);
-    if (!n)
+    auto decrypt_result = decrypt_record(ctx, cipher, key, iv, seq, ciphertext_with_header, out, out_content_type);
+    if (!decrypt_result)
     {
-        return std::unexpected(n.error());
+        return std::unexpected(decrypt_result.error());
     }
-    out.resize(*n);
+    out.resize(*decrypt_result);
     return out;
 }
 }    // namespace reality
+// NOLINTEND(misc-include-cleaner)

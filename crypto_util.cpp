@@ -1,3 +1,7 @@
+// NOLINTBEGIN(misc-include-cleaner)
+#include <boost/system/error_code.hpp>
+#include <openssl/types.h>
+#include <boost/system/detail/errc.hpp>
 #include <span>
 #include <array>
 #include <string>
@@ -7,9 +11,9 @@
 #include <mutex>
 #include <utility>
 #include <expected>
-#include <algorithm>
 
 #include <boost/system/errc.hpp>
+#include "reality_core.h"
 
 extern "C"
 {
@@ -239,7 +243,7 @@ std::string crypto_util::bytes_to_hex(const std::vector<std::uint8_t>& bytes)
     {
         const auto value = bytes[i];
         hex[2 * i] = kHexTable[(value >> 4) & 0x0F];
-        hex[2 * i + 1] = kHexTable[value & 0x0F];
+        hex[(2 * i) + 1] = kHexTable[value & 0x0F];
     }
     return hex;
 }
@@ -248,7 +252,7 @@ std::vector<std::uint8_t> crypto_util::hex_to_bytes(const std::string& hex)
 {
     ensure_openssl_initialized();
 
-    long len = 0;
+    long len = 0;    // NOLINT(google-runtime-int): OpenSSL API requires long.
     std::uint8_t* buf = OPENSSL_hexstr2buf(hex.c_str(), &len);
     if (buf == nullptr)
     {
@@ -560,7 +564,7 @@ std::expected<void, boost::system::error_code> crypto_util::aead_encrypt_append(
     int out_len = 0;
     int len = 0;
 
-    std::size_t current_size = output_buffer.size();
+    const std::size_t current_size = output_buffer.size();
     output_buffer.resize(current_size + plaintext.size() + kAeadTagSize);
     std::uint8_t* out_ptr = output_buffer.data() + current_size;
 
@@ -602,6 +606,7 @@ std::expected<openssl_ptrs::evp_pkey_ptr, boost::system::error_code> crypto_util
 
     const std::uint8_t* p = cert_der.data();
 
+    // NOLINTNEXTLINE(google-runtime-int): OpenSSL API requires long length.
     const openssl_ptrs::x509_ptr x509(d2i_X509(nullptr, &p, static_cast<long>(cert_der.size())));
     if (x509 == nullptr)
     {
@@ -655,3 +660,4 @@ std::expected<void, boost::system::error_code> crypto_util::verify_tls13_signatu
 }
 
 }    // namespace reality
+// NOLINTEND(misc-include-cleaner)

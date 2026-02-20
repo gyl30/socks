@@ -5,6 +5,7 @@
 #include <atomic>
 #include <algorithm>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <mutex>
@@ -22,9 +23,9 @@ class statistics
     enum class handshake_failure_reason : std::uint8_t
     {
         kShortId = 0,
-        kClockSkew = 1,
-        kReplay = 2,
-        kCertVerify = 3,
+        kClockSkew,
+        kReplay,
+        kCertVerify,
         kCount
     };
 
@@ -195,7 +196,7 @@ class statistics
         }
 
         const std::string_view key = normalize_sni_metric_key(sni);    // GCOVR_EXCL_LINE
-        std::lock_guard<std::mutex> lock(handshake_failure_sni_mu_);    // GCOVR_EXCL_LINE
+        const std::lock_guard<std::mutex> lock(handshake_failure_sni_mu_);    // GCOVR_EXCL_LINE
         auto& counters = handshake_failure_sni_counters_[reason_index];
         const auto it = counters.by_sni.find(key);    // GCOVR_EXCL_LINE
         if (it != counters.by_sni.end())
@@ -214,7 +215,7 @@ class statistics
     std::vector<handshake_failure_sni_metric> handshake_failure_sni_metrics() const
     {
         std::vector<handshake_failure_sni_metric> out;
-        std::lock_guard<std::mutex> lock(handshake_failure_sni_mu_);
+        const std::lock_guard<std::mutex> lock(handshake_failure_sni_mu_);
         std::size_t total_metrics = 0;
         for (std::size_t i = 0; i < static_cast<std::size_t>(handshake_failure_reason::kCount); ++i)
         {
@@ -240,20 +241,19 @@ class statistics
                 out.push_back({.reason = reason_label, .sni = "others", .count = counters.others});    // GCOVR_EXCL_LINE
             }
         }
-        std::sort(out.begin(),
-                  out.end(),
-                  [](const handshake_failure_sni_metric& a, const handshake_failure_sni_metric& b)
-                  {
-                      if (a.reason != b.reason)
-                      {
-                          return a.reason < b.reason;
-                      }
-                      if (a.count != b.count)
-                      {
-                          return a.count > b.count;
-                      }
-                      return a.sni < b.sni;
-                  });
+        std::ranges::sort(out,
+                          [](const handshake_failure_sni_metric& a, const handshake_failure_sni_metric& b)
+                          {
+                              if (a.reason != b.reason)
+                              {
+                                  return a.reason < b.reason;
+                              }
+                              if (a.count != b.count)
+                              {
+                                  return a.count > b.count;
+                              }
+                              return a.sni < b.sni;
+                          });
         return out;
     }
 

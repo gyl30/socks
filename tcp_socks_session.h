@@ -2,7 +2,6 @@
 #define TCP_SOCKS_SESSION_H
 
 #include <atomic>
-#include <chrono>
 #include <memory>
 #include <string>
 #include <cstdint>
@@ -12,8 +11,8 @@
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/steady_timer.hpp>
 
+#include "config.h"
 #include "router.h"
-#include "protocol.h"
 #include "upstream.h"
 #include "mux_tunnel.h"
 #include "log_context.h"
@@ -28,16 +27,16 @@ class tcp_socks_session : public std::enable_shared_from_this<tcp_socks_session>
                       boost::asio::io_context& io_context,
                       std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> tunnel_manager,
                       std::shared_ptr<router> router,
-                      const std::uint32_t sid,
+                      std::uint32_t sid,
                       const config::timeout_t& timeout_cfg,
                       std::shared_ptr<void> active_connection_guard = nullptr);
 
-    void start(const std::string& host, const std::uint16_t port);
+    void start(const std::string& host, std::uint16_t port);
 
    private:
-    [[nodiscard]] boost::asio::awaitable<void> run(const std::string& host, const std::uint16_t port);
+    [[nodiscard]] boost::asio::awaitable<void> run(const std::string& host, std::uint16_t port);
 
-    [[nodiscard]] boost::asio::awaitable<void> reply_error(const std::uint8_t code);
+    [[nodiscard]] boost::asio::awaitable<void> reply_error(std::uint8_t code);
     [[nodiscard]] boost::asio::awaitable<bool> connect_backend(const std::shared_ptr<upstream>& backend,
                                                         const std::string& host,
                                                         std::uint16_t port,

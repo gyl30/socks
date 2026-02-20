@@ -1,6 +1,9 @@
 #ifndef TLS_KEY_SCHEDULE_H
 #define TLS_KEY_SCHEDULE_H
 
+#include <boost/system/error_code.hpp>
+#include <openssl/types.h>
+#include <boost/system/detail/errc.hpp>
 #include <string>
 #include <vector>
 #include <cstddef>
@@ -10,13 +13,11 @@
 #include <expected>
 
 #include <boost/system/errc.hpp>
-#include <boost/system/error_code.hpp>
 
 extern "C"
 {
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
-#include <openssl/x509.h>
 }
 
 #include "crypto_util.h"

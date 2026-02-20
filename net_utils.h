@@ -1,11 +1,11 @@
 #ifndef NET_UTILS_H
 #define NET_UTILS_H
 
+#include <boost/system/error_code.hpp>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <optional>
-#include <system_error>
 
 #include <boost/asio/ip/udp.hpp>
 #include <boost/asio/ip/address.hpp>

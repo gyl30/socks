@@ -1,4 +1,16 @@
+// NOLINTBEGIN(misc-include-cleaner)
+#include <boost/asio/co_spawn.hpp>    // NOLINT(misc-include-cleaner): required for co_spawn declarations.
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/awaitable.hpp>
+#include <boost/system/error_code.hpp>
+#include <boost/asio/buffer.hpp>
+#include <chrono>
+#include <boost/asio/ip/address_v4.hpp>
+#include <boost/asio/ip/address_v6.hpp>
+#include <array>
+#include <netinet/in.h>
 #include <memory>
+#include <optional>
 #include <random>
 #include <string>
 #include <vector>
@@ -11,10 +23,10 @@
 #include <boost/asio/write.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/as_tuple.hpp>
-#include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/use_awaitable.hpp>
+#include "config.h"
 
 extern "C"
 {
@@ -38,13 +50,12 @@ namespace
 
 std::shared_ptr<void> make_active_connection_guard()
 {
-    return std::shared_ptr<void>(
-        new int(0),
-        [](void* ptr)
-        {
-            delete static_cast<int*>(ptr);
-            statistics::instance().dec_active_connections();
-        });
+    return {new int(0),
+            [](void* ptr)
+            {
+                delete static_cast<int*>(ptr);
+                statistics::instance().dec_active_connections();
+            }};
 }
 
 }    // namespace
@@ -208,14 +219,14 @@ std::uint8_t socks_session::select_auth_method(const std::vector<std::uint8_t>& 
 {
     if (auth_enabled_)
     {
-        if (std::find(methods.begin(), methods.end(), socks::kMethodPassword) != methods.end())
+        if (std::ranges::find(methods, socks::kMethodPassword) != methods.end())
         {
             return socks::kMethodPassword;
         }
     }
     else
     {
-        if (std::find(methods.begin(), methods.end(), socks::kMethodNoAuth) != methods.end())
+        if (std::ranges::find(methods, socks::kMethodNoAuth) != methods.end())
         {
             return socks::kMethodNoAuth;
         }
@@ -539,3 +550,4 @@ boost::asio::awaitable<void> socks_session::reply_error(std::uint8_t code)
 }
 
 }    // namespace mux
+// NOLINTEND(misc-include-cleaner)
