@@ -82,8 +82,8 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     [[nodiscard]] boost::asio::awaitable<void> start();
 
     [[nodiscard]] virtual boost::asio::awaitable<boost::system::error_code> send_async(std::uint32_t stream_id,
-                                                                      std::uint8_t cmd,
-                                                                      std::vector<std::uint8_t> payload);
+                                                                                       std::uint8_t cmd,
+                                                                                       std::vector<std::uint8_t> payload);
 
     void stop();
     void release_resources();

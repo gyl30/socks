@@ -103,7 +103,7 @@ boost::asio::awaitable<void> remote_udp_session::start()
 }
 
 boost::asio::awaitable<boost::system::error_code> remote_udp_session::send_ack_payload(const std::shared_ptr<mux_connection>& conn,
-                                                                      const ack_payload& ack) const
+                                                                                       const ack_payload& ack) const
 {
     std::vector<std::uint8_t> ack_data;
     mux_codec::encode_ack(ack, ack_data);
@@ -111,8 +111,8 @@ boost::asio::awaitable<boost::system::error_code> remote_udp_session::send_ack_p
 }
 
 boost::asio::awaitable<void> remote_udp_session::handle_start_failure(const std::shared_ptr<mux_connection>& conn,
-                                                               const char* step,
-                                                               const boost::system::error_code& ec)
+                                                                      const char* step,
+                                                                      const boost::system::error_code& ec)
 {
     LOG_CTX_ERROR(ctx_, "{} {} failed {}", log_event::kMux, step, ec.message());
     const ack_payload ack{.socks_rep = socks::kRepGenFail, .bnd_addr = "", .bnd_port = 0};
@@ -170,39 +170,24 @@ boost::asio::awaitable<void> remote_udp_session::forward_mux_payload(const std::
     if (header.header_len >= data.size())
     {
         LOG_CTX_WARN(
-            ctx_,
-            "{} stage=decode_header error=invalid_header_len header_len={} packet_len={}",
-            log_event::kMux,
-            header.header_len,
-            data.size());
+            ctx_, "{} stage=decode_header error=invalid_header_len header_len={} packet_len={}", log_event::kMux, header.header_len, data.size());
         co_return;
     }
 
     const auto resolve_timeout_ms = read_timeout_ms_;
-    const auto resolve_res = co_await timeout_io::async_resolve_with_timeout(udp_resolver_, header.addr, std::to_string(header.port), resolve_timeout_ms);
+    const auto resolve_res =
+        co_await timeout_io::async_resolve_with_timeout(udp_resolver_, header.addr, std::to_string(header.port), resolve_timeout_ms);
     if (!resolve_res.ok)
     {
         if (resolve_res.timed_out)
         {
             statistics::instance().inc_remote_udp_session_resolve_timeouts();
-            LOG_CTX_WARN(
-                ctx_,
-                "{} stage=resolve target={}:{} timeout={}ms",
-                log_event::kMux,
-                header.addr,
-                header.port,
-                resolve_timeout_ms);
+            LOG_CTX_WARN(ctx_, "{} stage=resolve target={}:{} timeout={}ms", log_event::kMux, header.addr, header.port, resolve_timeout_ms);
         }
         else
         {
             statistics::instance().inc_remote_udp_session_resolve_errors();
-            LOG_CTX_WARN(
-                ctx_,
-                "{} stage=resolve target={}:{} error={}",
-                log_event::kMux,
-                header.addr,
-                header.port,
-                resolve_res.ec.message());
+            LOG_CTX_WARN(ctx_, "{} stage=resolve target={}:{} error={}", log_event::kMux, header.addr, header.port, resolve_res.ec.message());
         }
         co_return;
     }
@@ -222,12 +207,7 @@ boost::asio::awaitable<void> remote_udp_session::forward_mux_payload(const std::
     if (send_ec)
     {
         LOG_CTX_WARN(
-            ctx_,
-            "{} stage=send target={}:{} error={}",
-            log_event::kMux,
-            target_ep.address().to_string(),
-            target_ep.port(),
-            send_ec.message());
+            ctx_, "{} stage=send target={}:{} error={}", log_event::kMux, target_ep.address().to_string(), target_ep.port(), send_ec.message());
         co_return;
     }
 
@@ -332,16 +312,15 @@ boost::asio::awaitable<void> remote_udp_session::start_impl(std::shared_ptr<remo
 
 void remote_udp_session::on_data(std::vector<std::uint8_t> data)
 {
-    detail::dispatch_cleanup_or_run_inline(
-        io_context_,
-        [self = shared_from_this(), data = std::move(data)]() mutable
-        {
-            if (!self->recv_channel_.try_send(boost::system::error_code(), std::move(data)))
-            {
-                log_remote_udp_recv_channel_unavailable_on_data(self->ctx_);
-                self->request_stop();
-            }
-        });
+    detail::dispatch_cleanup_or_run_inline(io_context_,
+                                           [self = shared_from_this(), data = std::move(data)]() mutable
+                                           {
+                                               if (!self->recv_channel_.try_send(boost::system::error_code(), std::move(data)))
+                                               {
+                                                   log_remote_udp_recv_channel_unavailable_on_data(self->ctx_);
+                                                   self->request_stop();
+                                               }
+                                           });
 }
 
 void remote_udp_session::request_stop()
@@ -376,15 +355,14 @@ void remote_udp_session::close_socket()
 
 void remote_udp_session::on_close()
 {
-    detail::dispatch_cleanup_or_run_inline(
-        io_context_,
-        [weak_self = weak_from_this()]()
-        {
-            if (const auto self = weak_self.lock())
-            {
-                self->request_stop();
-            }
-        });
+    detail::dispatch_cleanup_or_run_inline(io_context_,
+                                           [weak_self = weak_from_this()]()
+                                           {
+                                               if (const auto self = weak_self.lock())
+                                               {
+                                                   self->request_stop();
+                                               }
+                                           });
 }
 
 void remote_udp_session::on_reset() { on_close(); }
@@ -445,7 +423,8 @@ boost::asio::awaitable<void> remote_udp_session::udp_to_mux()
     bool has_cached_header = false;
     for (;;)
     {
-        const auto [recv_ec, n] = co_await udp_socket_.async_receive_from(boost::asio::buffer(buf), ep, boost::asio::as_tuple(boost::asio::use_awaitable));
+        const auto [recv_ec, n] =
+            co_await udp_socket_.async_receive_from(boost::asio::buffer(buf), ep, boost::asio::as_tuple(boost::asio::use_awaitable));
         if (recv_ec)
         {
             if (recv_ec != boost::asio::error::operation_aborted)
