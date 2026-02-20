@@ -40,9 +40,10 @@ std::expected<void, boost::system::error_code> validate_record_for_decrypt(const
 std::vector<std::uint8_t> make_record_nonce(const std::vector<std::uint8_t>& iv, const std::uint64_t seq)
 {
     std::vector<std::uint8_t> nonce = iv;
-    for (int i = 0; i < 8; ++i)
+    for (std::size_t i = 0; i < 8; ++i)
     {
-        nonce[nonce.size() - 1 - i] ^= static_cast<std::uint8_t>((seq >> (8 * i)) & 0xFF);
+        const auto shift = static_cast<unsigned int>(8U * i);
+        nonce[nonce.size() - 1 - i] ^= static_cast<std::uint8_t>((seq >> shift) & 0xFFU);
     }
     return nonce;
 }

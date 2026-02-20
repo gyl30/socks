@@ -492,7 +492,7 @@ TEST_F(RemoteServerTest, AuthFailureTriggersFallback)
     boost::asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context(), boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), fallback_port));
     std::atomic<bool> fallback_triggered{false};
     fallback_acceptor.async_accept(
-        [&](boost::system::error_code ec, boost::asio::ip::tcp::socket peer)
+        [&](boost::system::error_code ec, [[maybe_unused]] boost::asio::ip::tcp::socket peer)
         {
             if (!ec)
             {
@@ -535,7 +535,7 @@ TEST_F(RemoteServerTest, AuthFailShortIdMismatch)
     boost::asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context(), boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), fallback_port));
     std::atomic<bool> fallback_triggered{false};
     fallback_acceptor.async_accept(
-        [&](boost::system::error_code ec, boost::asio::ip::tcp::socket peer)
+        [&](boost::system::error_code ec, [[maybe_unused]] boost::asio::ip::tcp::socket peer)
         {
             if (!ec)
             {
@@ -578,7 +578,7 @@ TEST_F(RemoteServerTest, ClockSkewDetected)
     boost::asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context(), boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), fallback_port));
     std::atomic<bool> fallback_triggered{false};
     fallback_acceptor.async_accept(
-        [&](boost::system::error_code ec, boost::asio::ip::tcp::socket peer)
+        [&](boost::system::error_code ec, [[maybe_unused]] boost::asio::ip::tcp::socket peer)
         {
             if (!ec)
             {
@@ -621,7 +621,7 @@ TEST_F(RemoteServerTest, AuthFailInvalidTLSHeader)
     boost::asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context(), boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), fallback_port));
     std::atomic<bool> fallback_triggered{false};
     fallback_acceptor.async_accept(
-        [&](boost::system::error_code ec, boost::asio::ip::tcp::socket peer)
+        [&](boost::system::error_code ec, [[maybe_unused]] boost::asio::ip::tcp::socket peer)
         {
             if (!ec)
             {
@@ -662,7 +662,7 @@ TEST_F(RemoteServerTest, AuthFailBufferTooShort)
     boost::asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context(), boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), fallback_port));
     std::atomic<bool> fallback_triggered{false};
     fallback_acceptor.async_accept(
-        [&](boost::system::error_code ec, boost::asio::ip::tcp::socket peer)
+        [&](boost::system::error_code ec, [[maybe_unused]] boost::asio::ip::tcp::socket peer)
         {
             if (!ec)
             {
@@ -706,7 +706,7 @@ TEST_F(RemoteServerTest, AuthFailBufferTooShortPreservesPartialHeaderForFallback
     auto fallback_payload_promise = std::make_shared<std::promise<std::vector<std::uint8_t>>>();
     auto fallback_payload_future = fallback_payload_promise->get_future();
     fallback_acceptor.async_accept(
-        [fallback_payload_promise](boost::system::error_code accept_ec, boost::asio::ip::tcp::socket peer)
+        [fallback_payload_promise](boost::system::error_code accept_ec, [[maybe_unused]] boost::asio::ip::tcp::socket peer)
         {
             if (accept_ec)
             {
@@ -950,7 +950,7 @@ TEST_F(RemoteServerTest, FallbackWriteFailIncrementsMetric)
     auto fallback_accepted = std::make_shared<std::promise<void>>();
     auto fallback_accepted_future = fallback_accepted->get_future();
     fallback_acceptor.async_accept(
-        [fallback_peer, fallback_accepted](boost::system::error_code accept_ec, boost::asio::ip::tcp::socket peer)
+        [fallback_peer, fallback_accepted](boost::system::error_code accept_ec, [[maybe_unused]] boost::asio::ip::tcp::socket peer)
         {
             if (!accept_ec)
             {
@@ -1020,7 +1020,7 @@ TEST_F(RemoteServerTest, HandleFallbackWriteTimeoutIncrementsMetric)
     auto fallback_accepted = std::make_shared<std::promise<void>>();
     auto fallback_accepted_future = fallback_accepted->get_future();
     fallback_acceptor.async_accept(
-        [fallback_peer, fallback_accepted](boost::system::error_code accept_ec, boost::asio::ip::tcp::socket peer)
+        [fallback_peer, fallback_accepted](boost::system::error_code accept_ec, [[maybe_unused]] boost::asio::ip::tcp::socket peer)
         {
             if (!accept_ec)
             {
@@ -1096,7 +1096,7 @@ TEST_F(RemoteServerTest, StartRejectsInvalidAuthConfig)
     boost::asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context(), boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), fallback_port));
     std::atomic<bool> fallback_triggered{false};
     fallback_acceptor.async_accept(
-        [&](boost::system::error_code ec, boost::asio::ip::tcp::socket peer)
+        [&](boost::system::error_code ec, [[maybe_unused]] boost::asio::ip::tcp::socket peer)
         {
             if (!ec)
             {
@@ -1180,7 +1180,7 @@ TEST_F(RemoteServerTest, MultiSNIFallback)
     std::atomic<int> fallback_b_count{0};
 
     acceptor_a.async_accept(
-        [&](boost::system::error_code ec, boost::asio::ip::tcp::socket peer)
+        [&](boost::system::error_code ec, [[maybe_unused]] boost::asio::ip::tcp::socket peer)
         {
             if (!ec)
             {
@@ -1188,7 +1188,7 @@ TEST_F(RemoteServerTest, MultiSNIFallback)
             }
         });
     acceptor_b.async_accept(
-        [&](boost::system::error_code ec, boost::asio::ip::tcp::socket peer)
+        [&](boost::system::error_code ec, [[maybe_unused]] boost::asio::ip::tcp::socket peer)
         {
             if (!ec)
             {
@@ -1242,7 +1242,7 @@ TEST_F(RemoteServerTest, WildcardStarFallback)
     boost::asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context(), boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), fallback_port));
     std::atomic<bool> fallback_triggered{false};
     fallback_acceptor.async_accept(
-        [&](boost::system::error_code accept_ec, boost::asio::ip::tcp::socket peer)
+        [&](boost::system::error_code accept_ec, [[maybe_unused]] boost::asio::ip::tcp::socket peer)
         {
             if (!accept_ec)
             {
@@ -1284,7 +1284,7 @@ TEST_F(RemoteServerTest, RealityDestFallbackUsedWhenNoFallbackEntries)
     boost::asio::ip::tcp::acceptor dest_acceptor(pool.get_io_context(), boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), dest_port));
     std::atomic<bool> dest_triggered{false};
     dest_acceptor.async_accept(
-        [&](boost::system::error_code accept_ec, boost::asio::ip::tcp::socket peer)
+        [&](boost::system::error_code accept_ec, [[maybe_unused]] boost::asio::ip::tcp::socket peer)
         {
             if (!accept_ec)
             {
@@ -1350,7 +1350,7 @@ TEST_F(RemoteServerTest, ExactSniFallbackPreferredOverRealityDest)
     std::atomic<int> exact_count{0};
     std::atomic<int> dest_count{0};
     exact_acceptor.async_accept(
-        [&](boost::system::error_code accept_ec, boost::asio::ip::tcp::socket peer)
+        [&](boost::system::error_code accept_ec, [[maybe_unused]] boost::asio::ip::tcp::socket peer)
         {
             if (!accept_ec)
             {
@@ -1358,7 +1358,7 @@ TEST_F(RemoteServerTest, ExactSniFallbackPreferredOverRealityDest)
             }
         });
     dest_acceptor.async_accept(
-        [&](boost::system::error_code accept_ec, boost::asio::ip::tcp::socket peer)
+        [&](boost::system::error_code accept_ec, [[maybe_unused]] boost::asio::ip::tcp::socket peer)
         {
             if (!accept_ec)
             {
@@ -1446,7 +1446,7 @@ TEST_F(RemoteServerTest, FallbackGuardRateLimitBlocksFallbackDial)
     const auto fallback_port = fallback_acceptor.local_endpoint().port();
     std::atomic<bool> fallback_triggered{false};
     fallback_acceptor.async_accept(
-        [&](boost::system::error_code accept_ec, boost::asio::ip::tcp::socket peer)
+        [&](boost::system::error_code accept_ec, [[maybe_unused]] boost::asio::ip::tcp::socket peer)
         {
             if (!accept_ec)
             {

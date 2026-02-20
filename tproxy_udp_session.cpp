@@ -315,7 +315,11 @@ void tproxy_udp_session::on_close_local()
 boost::asio::awaitable<bool> tproxy_udp_session::negotiate_proxy_stream(
     const std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>>& tunnel, const std::shared_ptr<mux_stream>& stream) const
 {
-    const syn_payload syn{.socks_cmd = socks::kCmdUdpAssociate, .addr = "0.0.0.0", .port = 0};
+    const syn_payload syn{
+        .socks_cmd = socks::kCmdUdpAssociate,
+        .addr = "0.0.0.0",
+        .port = 0,
+        .trace_id = ctx_.trace_id()};
     std::vector<std::uint8_t> syn_data;
     mux_codec::encode_syn(syn, syn_data);
     if (const auto ec = co_await tunnel->connection()->send_async(stream->id(), kCmdSyn, std::move(syn_data)))

@@ -62,7 +62,9 @@ bool extract_server_hello_message(const std::vector<std::uint8_t>& sh_body, std:
         return false;
     }
 
-    const std::uint32_t msg_len = (sh_body[1] << 16) | (sh_body[2] << 8) | sh_body[3];
+    const std::uint32_t msg_len = (static_cast<std::uint32_t>(sh_body[1]) << 16)
+                                | (static_cast<std::uint32_t>(sh_body[2]) << 8)
+                                | static_cast<std::uint32_t>(sh_body[3]);
     const std::uint32_t full_msg_len = msg_len + 4;
     if (sh_body.size() < full_msg_len)
     {
@@ -452,7 +454,9 @@ std::expected<bool, boost::system::error_code> cert_fetcher::fetch_session::cons
 bool cert_fetcher::fetch_session::process_handshake_message(const std::vector<std::uint8_t>& msg, std::vector<std::uint8_t>& cert_msg)
 {
     const std::uint8_t msg_type = msg[0];
-    const std::uint32_t msg_len = (msg[1] << 16) | (msg[2] << 8) | msg[3];
+    const std::uint32_t msg_len = (static_cast<std::uint32_t>(msg[1]) << 16)
+                                | (static_cast<std::uint32_t>(msg[2]) << 8)
+                                | static_cast<std::uint32_t>(msg[3]);
     LOG_CTX_INFO(ctx_, "{} found handshake 0x{:02x} len {}", mux::log_event::kCert, msg_type, msg_len);
 
     if (msg_type == 0x08)
@@ -523,7 +527,8 @@ boost::asio::awaitable<std::pair<boost::system::error_code, std::vector<std::uin
         co_return std::make_pair(boost::asio::error::fault, std::vector<std::uint8_t>{});
     }
 
-    const std::uint16_t len = (head[3] << 8) | head[4];
+    const std::uint16_t len = static_cast<std::uint16_t>(
+        (static_cast<std::uint16_t>(head[3]) << 8) | static_cast<std::uint16_t>(head[4]));
     std::vector<std::uint8_t> body(len);
     auto [ec2, n2] = co_await boost::asio::async_read(socket_, boost::asio::buffer(body), boost::asio::as_tuple(boost::asio::use_awaitable));
     if (ec2)
@@ -570,7 +575,7 @@ std::expected<std::pair<std::uint8_t, std::span<std::uint8_t>>, boost::system::e
     {
         return std::unexpected(decrypted.error());
     }
-    const std::uint32_t pt_len = *decrypted;
+    const std::size_t pt_len = *decrypted;
     return std::make_pair(type, std::span<std::uint8_t>(pt_buf.data(), pt_len));
 }
 
@@ -605,7 +610,8 @@ boost::asio::awaitable<std::expected<std::pair<std::uint8_t, std::span<std::uint
         co_return std::unexpected(ec);
     }
 
-    const std::uint16_t len = (head[3] << 8) | head[4];
+    const std::uint16_t len = static_cast<std::uint16_t>(
+        (static_cast<std::uint16_t>(head[3]) << 8) | static_cast<std::uint16_t>(head[4]));
     if (const auto res = validate_record_length(len); !res)
     {
         co_return std::unexpected(res.error());
