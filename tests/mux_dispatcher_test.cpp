@@ -85,8 +85,7 @@ TEST(MuxDispatcherTest, PartialPayloadWaitsForCompletion)
     dispatcher.on_plaintext_data(std::span<const std::uint8_t>(packed.data(), mux::kHeaderSize + 1));
     EXPECT_EQ(call_count, 0);
 
-    dispatcher.on_plaintext_data(std::span<const std::uint8_t>(packed.data() + mux::kHeaderSize + 1,
-                                                               packed.size() - (mux::kHeaderSize + 1)));
+    dispatcher.on_plaintext_data(std::span<const std::uint8_t>(packed.data() + mux::kHeaderSize + 1, packed.size() - (mux::kHeaderSize + 1)));
     EXPECT_EQ(call_count, 1);
 }
 // NOLINTEND(performance-unnecessary-value-param)

@@ -21,7 +21,7 @@
 namespace
 {
 
-class ConnectionPoolTest : public ::testing::Test
+class connection_pool_test_fixture : public ::testing::Test
 {
    protected:
     void SetUp() override
@@ -41,7 +41,7 @@ class ConnectionPoolTest : public ::testing::Test
     std::string client_pub_key_;
 };
 
-TEST_F(ConnectionPoolTest, TunnelReuse)
+TEST_F(connection_pool_test_fixture, TunnelReuse)
 {
     boost::system::error_code ec;
     mux::io_context_pool pool(2);

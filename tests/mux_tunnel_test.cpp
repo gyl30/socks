@@ -34,12 +34,7 @@ class noop_stream : public mux::mux_stream_interface
 std::shared_ptr<tunnel_t> make_tunnel(boost::asio::io_context& io_context, const std::uint32_t conn_id = 1)
 {
     return std::make_shared<tunnel_t>(
-        boost::asio::ip::tcp::socket(io_context),
-        io_context,
-        mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()},
-        true,
-        conn_id,
-        "base-trace");
+        boost::asio::ip::tcp::socket(io_context), io_context, mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, conn_id, "base-trace");
 }
 
 TEST(MuxTunnelTest, NullConnectionGuardsAllPublicMethods)

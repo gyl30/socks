@@ -53,8 +53,8 @@ bool consume_udp_sender_socket_fail_once()
 
 bool force_udp_sender_setsockopt_success()
 {
-    return static_cast<udp_sender_fail_mode>(g_udp_sender_fail_mode.load(std::memory_order_acquire))
-           == udp_sender_fail_mode::kSetsockoptAlwaysSuccess;
+    return static_cast<udp_sender_fail_mode>(g_udp_sender_fail_mode.load(std::memory_order_acquire)) ==
+           udp_sender_fail_mode::kSetsockoptAlwaysSuccess;
 }
 
 std::shared_ptr<boost::asio::ip::udp::socket> make_bound_udp_v4_socket(boost::asio::io_context& ctx)
@@ -79,26 +79,26 @@ std::shared_ptr<boost::asio::ip::udp::socket> make_open_udp_v6_socket(boost::asi
 
 }    // namespace
 
-extern "C" int __real_socket(int domain, int type, int protocol);  // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_socket(int domain, int type, int protocol);                                              // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);    // NOLINT(bugprone-reserved-identifier)
 
-extern "C" int __wrap_socket(int domain, int type, int protocol)  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_socket(int domain, int type, int protocol)    // NOLINT(bugprone-reserved-identifier)
 {
     if (consume_udp_sender_socket_fail_once())
     {
         errno = EMFILE;
         return -1;
     }
-    return __real_socket(domain, type, protocol);  // NOLINT(bugprone-reserved-identifier)
+    return __real_socket(domain, type, protocol);    // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)    // NOLINT(bugprone-reserved-identifier)
 {
     if (force_udp_sender_setsockopt_success())
     {
         return 0;
     }
-    return __real_setsockopt(sockfd, level, optname, optval, optlen);  // NOLINT(bugprone-reserved-identifier)
+    return __real_setsockopt(sockfd, level, optname, optval, optlen);    // NOLINT(bugprone-reserved-identifier)
 }
 
 TEST(TproxyUdpSenderTest, CacheMaintenanceBranches)
