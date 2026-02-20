@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <span>
 #include <array>
 #include <vector>

@@ -8,10 +8,8 @@
 #include <cstring>
 #include <functional>
 
-#include <boost/asio/buffer.hpp>
 #include <boost/asio/streambuf.hpp>
 
-#include "mux_codec.h"
 #include "log_context.h"
 #include "mux_protocol.h"
 

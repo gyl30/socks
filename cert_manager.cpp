@@ -1,3 +1,8 @@
+#include <cstddef>
+#include <mutex>
+#include <cstdint>
+#include <list>
+#include <iterator>
 #include <string>
 #include <vector>
 #include <utility>
@@ -15,7 +20,7 @@ cert_manager::cert_manager(const std::size_t capacity) : capacity_(capacity > 0 
 
 std::optional<cert_entry> cert_manager::get_certificate(const std::string& sni)
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    const std::lock_guard<std::mutex> lock(mutex_);
     if (auto it = index_.find(sni); it != index_.end())
     {
         touch(it->second);
@@ -34,7 +39,7 @@ void cert_manager::set_certificate(const std::string& sni, std::vector<std::uint
 {
     cert_entry cached_entry;
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        const std::lock_guard<std::mutex> lock(mutex_);
         cert_entry new_entry{.cert_msg = std::move(cert_msg), .fingerprint = std::move(fp)};
         if (auto it = index_.find(sni); it != index_.end())
         {

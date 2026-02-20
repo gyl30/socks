@@ -1,12 +1,21 @@
+// NOLINTBEGIN(misc-include-cleaner)
+#include <boost/asio/co_spawn.hpp>    // NOLINT(misc-include-cleaner): required for co_spawn declarations.
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/awaitable.hpp>
+#include <cstddef>
+#include <boost/asio/io_context.hpp>
 #include <cstdint>
 #include <memory>
 #include <utility>
 #include <vector>
 
-#include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
 
 #include "log.h"
+#include "mux_tunnel.h"
+#include "log_context.h"
+#include "mux_protocol.h"
+#include "protocol.h"
 #include "statistics.h"
 #include "mux_codec.h"
 #include "remote_server.h"
@@ -18,7 +27,7 @@ namespace mux
 
 void remote_server::install_syn_callback(const std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>>& tunnel, const connection_context& ctx)
 {
-    std::weak_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> weak_tunnel = tunnel;
+    const std::weak_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> weak_tunnel = tunnel;
     tunnel->connection()->set_syn_callback(
         [weak_self = std::weak_ptr<remote_server>(shared_from_this()), weak_tunnel, ctx](const std::uint32_t id, std::vector<std::uint8_t> p)
         {
@@ -47,14 +56,14 @@ connection_context remote_server::build_stream_context(const connection_context&
     return stream_ctx;
 }
 
-boost::asio::awaitable<void> remote_server::send_stream_reset(const std::shared_ptr<mux_connection>& connection, const std::uint32_t stream_id) const
+boost::asio::awaitable<void> remote_server::send_stream_reset(const std::shared_ptr<mux_connection>& connection, const std::uint32_t stream_id)
 {
     (void)co_await connection->send_async(stream_id, kCmdRst, {});
 }
 
 boost::asio::awaitable<void> remote_server::reject_stream_for_limit(const std::shared_ptr<mux_connection>& connection,
                                                              const connection_context& ctx,
-                                                             const std::uint32_t stream_id) const
+                                                             const std::uint32_t stream_id)
 {
     statistics::instance().inc_stream_limit_rejected();
     LOG_CTX_WARN(ctx, "{} stream limit reached", log_event::kMux);
@@ -70,7 +79,7 @@ boost::asio::awaitable<void> remote_server::handle_tcp_connect_stream(const std:
                                                                const std::uint32_t stream_id,
                                                                const syn_payload& syn,
                                                                const std::size_t payload_size,
-                                                               boost::asio::io_context& io_context) const
+                                                               boost::asio::io_context& io_context)
 {
     LOG_CTX_INFO(stream_ctx, "{} stream {} type tcp connect target {} {} payload size {}", log_event::kMux, stream_id, syn.addr, syn.port, payload_size);
     const auto connection = tunnel->connection();
@@ -147,3 +156,4 @@ boost::asio::awaitable<void> remote_server::process_stream_request(std::shared_p
 }
 
 }    // namespace mux
+// NOLINTEND(misc-include-cleaner)

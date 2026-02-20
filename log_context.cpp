@@ -147,17 +147,17 @@ std::string format_bytes(std::uint64_t bytes)
     if (bytes >= kGib)
     {
         std::snprintf(number_buf, sizeof(number_buf), "%.2fGB", bytes_d / static_cast<double>(kGib));
-        return std::string(number_buf);
+        return {number_buf};
     }
     if (bytes >= kMib)
     {
         std::snprintf(number_buf, sizeof(number_buf), "%.2fMB", bytes_d / static_cast<double>(kMib));
-        return std::string(number_buf);
+        return {number_buf};
     }
     if (bytes >= kKib)
     {
         std::snprintf(number_buf, sizeof(number_buf), "%.2fKB", bytes_d / static_cast<double>(kKib));
-        return std::string(number_buf);
+        return {number_buf};
     }
     std::string out;
     out.reserve(24);

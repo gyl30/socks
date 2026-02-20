@@ -6,7 +6,6 @@
 #include <vector>
 #include <cstddef>
 #include <utility>
-#include <system_error>
 
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/executor_work_guard.hpp>

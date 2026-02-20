@@ -4,6 +4,8 @@
 #include <vector>
 #include <cstdint>
 #include <cstdlib>
+#include "spdlog/common.h"
+#include "spdlog/logger.h"
 
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/rotating_file_sink.h>
@@ -37,8 +39,8 @@ void shutdown_log()
 
 static void init_default_log(const std::string& filename)
 {
-    std::uint32_t file_size = get_log_file_size();
-    std::uint32_t file_count = get_log_file_count();
+    const std::uint32_t file_size = get_log_file_size();
+    const std::uint32_t file_count = get_log_file_count();
     std::vector<spdlog::sink_ptr> sinks;
     sinks.push_back(std::make_shared<spdlog::sinks::stdout_color_sink_mt>());
     sinks.push_back(std::make_shared<spdlog::sinks::rotating_file_sink_mt>(filename, file_size, file_count));
@@ -71,12 +73,12 @@ static spdlog::level::level_enum parse_level_name(const std::string& level)
     };
 
     static constexpr level_alias kLevels[] = {
-        {"debug", spdlog::level::debug},
-        {"warn", spdlog::level::warn},
-        {"warning", spdlog::level::warn},
-        {"err", spdlog::level::err},
-        {"error", spdlog::level::err},
-        {"trace", spdlog::level::trace},
+        {.name = "debug", .value = spdlog::level::debug},
+        {.name = "warn", .value = spdlog::level::warn},
+        {.name = "warning", .value = spdlog::level::warn},
+        {.name = "err", .value = spdlog::level::err},
+        {.name = "error", .value = spdlog::level::err},
+        {.name = "trace", .value = spdlog::level::trace},
     };
 
     for (const auto& entry : kLevels)

@@ -1,20 +1,31 @@
+// NOLINTBEGIN(misc-include-cleaner)
+#include <boost/asio/co_spawn.hpp>    // NOLINT(misc-include-cleaner): required for co_spawn declarations.
+#include <chrono>
+#include <boost/system/error_code.hpp>
+#include <boost/asio/awaitable.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/ip/udp.hpp>
+#include <boost/asio/ip/address.hpp>
+#include <boost/asio/ip/v6_only.hpp>
+#include <cstddef>
+#include <boost/asio/io_context.hpp>
+#include <atomic>
 #include <memory>
 #include <string>
 #include <vector>
 #include <cstdint>
 #include <utility>
-#include <system_error>
 
 #include <boost/asio/error.hpp>
 #include <boost/asio/write.hpp>
 #include <boost/asio/buffer.hpp>
 #include <boost/asio/as_tuple.hpp>
-#include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/experimental/channel_error.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
 
+#include "config.h"
 #include "log.h"
 #include "protocol.h"
 #include "mux_codec.h"
@@ -48,6 +59,11 @@ namespace
     return ec == boost::asio::error::eof || ec == boost::asio::error::operation_aborted || ec == boost::asio::error::bad_descriptor || ec == boost::asio::error::not_connected;
 }
 
+void log_udp_recv_channel_unavailable_on_data(const connection_context& ctx)
+{
+    LOG_CTX_WARN(ctx, "{} recv channel unavailable on data", log_event::kSocks);
+}
+
 boost::asio::awaitable<void> write_socks_error_reply(boost::asio::ip::tcp::socket& socket, const std::uint8_t rep)
 {
     std::uint8_t err[] = {socks::kVer, rep, 0, socks::kAtypIpv4, 0, 0, 0, 0, 0, 0};
@@ -57,7 +73,7 @@ boost::asio::awaitable<void> write_socks_error_reply(boost::asio::ip::tcp::socke
 void close_udp_socket_on_prepare_failure(boost::asio::ip::udp::socket& udp_socket, const connection_context& ctx)
 {
     boost::system::error_code close_ec;
-    udp_socket.close(close_ec);
+    close_ec = udp_socket.close(close_ec);
     if (close_ec && close_ec != boost::asio::error::bad_descriptor)
     {
         LOG_CTX_WARN(ctx, "{} close udp socket failed {}", log_event::kSocks, close_ec.message());
@@ -356,7 +372,7 @@ void udp_socks_session::on_data(std::vector<std::uint8_t> data)
         {
             if (!self->recv_channel_.try_send(boost::system::error_code(), std::move(data)))
             {
-                LOG_CTX_WARN(self->ctx_, "{} recv channel unavailable on data", log_event::kSocks);
+                log_udp_recv_channel_unavailable_on_data(self->ctx_);
                 self->on_close();
             }
         });
@@ -387,7 +403,7 @@ void udp_socks_session::close_impl()
     timer_.cancel();
     idle_timer_.cancel();
     boost::system::error_code close_ec;
-    udp_socket_.close(close_ec);
+    close_ec = udp_socket_.close(close_ec);
     if (close_ec && close_ec != boost::asio::error::bad_descriptor)
     {
         LOG_CTX_WARN(ctx_, "{} close udp socket failed {}", log_event::kSocks, close_ec.message());
@@ -618,3 +634,4 @@ boost::asio::awaitable<void> udp_socks_session::idle_watchdog()
 }
 
 }    // namespace mux
+// NOLINTEND(misc-include-cleaner)

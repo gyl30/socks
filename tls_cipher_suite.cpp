@@ -2,6 +2,7 @@
 #include <cstdint>
 
 #include "tls_cipher_suite.h"
+#include <openssl/evp.h>
 
 namespace reality
 {

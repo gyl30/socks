@@ -1,14 +1,14 @@
 #ifndef TXTREADER_SCOPED_EXIT_H
 #define TXTREADER_SCOPED_EXIT_H
 
+#include <type_traits>
 #include <utility>
 
 template <typename Callback>
 class scoped_exit
 {
    public:
-    template <typename C>
-    explicit scoped_exit(C&& c) : callback_(std::forward<C>(c))
+    explicit scoped_exit(Callback callback) : callback_(std::move(callback))
     {
     }
 
@@ -35,9 +35,9 @@ class scoped_exit
 };
 
 template <typename Callback>
-scoped_exit<Callback> make_scoped_exit(Callback&& c)
+scoped_exit<std::decay_t<Callback>> make_scoped_exit(Callback&& c)
 {
-    return scoped_exit<Callback>(std::forward<Callback>(c));
+    return scoped_exit<std::decay_t<Callback>>(std::forward<Callback>(c));
 }
 #define SCOPED_CONCAT_INNER(x, y) x##y
 #define SCOPED_CONCAT(x, y) SCOPED_CONCAT_INNER(x, y)

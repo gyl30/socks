@@ -36,28 +36,34 @@ void dispatch_cleanup_or_run_inline(boost::asio::io_context& io_context,
 
     using fn_type = std::decay_t<Fn>;
 
-    struct dispatch_state
+    class dispatch_state
     {
-        std::atomic<bool> executed{false};
-        std::promise<void> dispatch_done;
-        fn_type handler;
+       public:
+        explicit dispatch_state(fn_type&& handler) : handler_(std::move(handler)) {}
 
-        explicit dispatch_state(fn_type&& h) : handler(std::move(h)) {}
+        std::atomic<bool>& executed() { return executed_; }
+        std::promise<void>& dispatch_done() { return dispatch_done_; }
+        fn_type& handler() { return handler_; }
+
+       private:
+        std::atomic<bool> executed_{false};
+        std::promise<void> dispatch_done_;
+        fn_type handler_;
     };
 
     auto state = std::make_shared<dispatch_state>(std::forward<Fn>(fn));
-    auto future = state->dispatch_done.get_future();
+    auto future = state->dispatch_done().get_future();
 
     boost::asio::dispatch(
         io_context,
         [state]()
         {
             bool expected = false;
-            if (state->executed.compare_exchange_strong(expected, true, std::memory_order_acq_rel))
+            if (state->executed().compare_exchange_strong(expected, true, std::memory_order_acq_rel))
             {
-                state->handler();
+                state->handler()();
             }
-            state->dispatch_done.set_value();
+            state->dispatch_done().set_value();
         });
 
     if (future.wait_for(kStopDispatchWaitTimeout) == std::future_status::ready)
@@ -70,9 +76,9 @@ void dispatch_cleanup_or_run_inline(boost::asio::io_context& io_context,
     }
 
     bool expected = false;
-    if (state->executed.compare_exchange_strong(expected, true, std::memory_order_acq_rel))
+    if (state->executed().compare_exchange_strong(expected, true, std::memory_order_acq_rel))
     {
-        state->handler();
+        state->handler()();
     }
 }
 

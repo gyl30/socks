@@ -2,14 +2,15 @@
 #define MUX_CONNECTION_H
 
 #include <atomic>
-#include <chrono>
+#include <boost/system/error_code.hpp>
+#include <cstddef>
+#include <expected>
 #include <memory>
 #include <string>
 #include <vector>
 #include <cstdint>
 #include <utility>
 #include <functional>
-#include <system_error>
 #include <unordered_map>
 
 #include <boost/asio/ip/tcp.hpp>
@@ -68,11 +69,11 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
 
     void set_syn_callback(syn_callback_t cb) { syn_callback_ = std::move(cb); }
 
-    virtual bool register_stream(const std::uint32_t id, std::shared_ptr<mux_stream_interface> stream);
-    [[nodiscard]] virtual bool register_stream_checked(const std::uint32_t id, std::shared_ptr<mux_stream_interface> stream);
-    [[nodiscard]] bool try_register_stream(const std::uint32_t id, std::shared_ptr<mux_stream_interface> stream);
+    virtual bool register_stream(std::uint32_t id, std::shared_ptr<mux_stream_interface> stream);
+    [[nodiscard]] virtual bool register_stream_checked(std::uint32_t id, std::shared_ptr<mux_stream_interface> stream);
+    [[nodiscard]] bool try_register_stream(std::uint32_t id, std::shared_ptr<mux_stream_interface> stream);
 
-    virtual void remove_stream(const std::uint32_t id);
+    virtual void remove_stream(std::uint32_t id);
 
     [[nodiscard]] std::uint32_t acquire_next_id() { return next_stream_id_.fetch_add(2, std::memory_order_relaxed); }
     [[nodiscard]] virtual std::uint32_t id() const { return cid_; }
@@ -80,8 +81,8 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
 
     [[nodiscard]] boost::asio::awaitable<void> start();
 
-    [[nodiscard]] virtual boost::asio::awaitable<boost::system::error_code> send_async(const std::uint32_t stream_id,
-                                                                      const std::uint8_t cmd,
+    [[nodiscard]] virtual boost::asio::awaitable<boost::system::error_code> send_async(std::uint32_t stream_id,
+                                                                      std::uint8_t cmd,
                                                                       std::vector<std::uint8_t> payload);
 
     void stop();
@@ -110,8 +111,8 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     [[nodiscard]] bool run_inline() const;
     [[nodiscard]] std::shared_ptr<stream_map_t> snapshot_streams() const;
     [[nodiscard]] std::shared_ptr<stream_map_t> detach_streams();
-    [[nodiscard]] bool register_stream_local(std::uint32_t id, std::shared_ptr<mux_stream_interface> stream);
-    [[nodiscard]] bool try_register_stream_local(std::uint32_t id, std::shared_ptr<mux_stream_interface> stream);
+    [[nodiscard]] bool register_stream_local(std::uint32_t id, const std::shared_ptr<mux_stream_interface>& stream);
+    [[nodiscard]] bool try_register_stream_local(std::uint32_t id, const std::shared_ptr<mux_stream_interface>& stream);
     void remove_stream_local(std::uint32_t id);
     [[nodiscard]] bool can_accept_stream_local() const;
     [[nodiscard]] bool has_stream_local(std::uint32_t id) const;
@@ -121,7 +122,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     void handle_stream_frame(const mux::frame_header& header, std::vector<std::uint8_t> payload);
     void on_mux_frame(mux::frame_header header, std::vector<std::uint8_t> payload);
     void stop_impl();
-    void reset_streams_on_stop(const stream_map_t& streams_to_clear);
+    static void reset_streams_on_stop(const stream_map_t& streams_to_clear);
     void close_socket_on_stop();
     void finalize_stop_state();
     [[nodiscard]] bool should_stop_read(const boost::system::error_code& read_ec, std::size_t n) const;

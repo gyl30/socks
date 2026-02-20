@@ -2,6 +2,8 @@
 #define UDP_SOCKS_SESSION_H
 
 #include <atomic>
+#include <boost/asio/ip/address.hpp>
+#include <boost/system/error_code.hpp>
 #include <memory>
 #include <string>
 #include <vector>
@@ -15,8 +17,7 @@
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/experimental/concurrent_channel.hpp>
 
-#include "router.h"
-#include "protocol.h"
+#include "config.h"
 #include "mux_tunnel.h"
 #include "log_context.h"
 #include "mux_stream_interface.h"

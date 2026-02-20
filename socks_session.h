@@ -2,21 +2,19 @@
 #define SOCKS_SESSION_H
 
 #include <array>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/awaitable.hpp>
 #include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 #include <cstdint>
 
-#include <boost/asio.hpp>
-
 #include "config.h"
 #include "router.h"
-#include "protocol.h"
 #include "mux_tunnel.h"
 #include "log_context.h"
-#include "tcp_socks_session.h"
-#include "udp_socks_session.h"
 
 namespace mux
 {

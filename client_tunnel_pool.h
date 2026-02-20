@@ -1,28 +1,32 @@
 #ifndef CLIENT_TUNNEL_POOL_H
 #define CLIENT_TUNNEL_POOL_H
 
+#include <openssl/types.h>
 #include <array>
 #include <atomic>
-#include <memory>
-#include <string>
-#include <vector>
+#include <boost/asio/io_context.hpp>
+#include <boost/system/error_code.hpp>
+#include <cstddef>
 #include <cstdint>
-#include <optional>
 #include <expected>
+#include <memory>
+#include <optional>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/awaitable.hpp>
+#include "reality_fingerprint.h"
 
 extern "C"
 {
-#include <openssl/evp.h>
 }
 
 #include "config.h"
 #include "mux_tunnel.h"
 #include "context_pool.h"
 #include "reality_core.h"
-#include "reality_messages.h"
 
 namespace reality
 {
@@ -50,7 +54,7 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
     [[nodiscard]] std::uint32_t next_session_id();
 
    private:
-    enum class connect_loop_action
+    enum class connect_loop_action : std::uint8_t
     {
         kRunTunnel,
         kRetryLater,
@@ -80,20 +84,21 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
         std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>>& tunnel);
 
     boost::asio::awaitable<void> handle_connection_failure(std::uint32_t index,
-                                                    const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
-                                                    const boost::system::error_code& ec,
-                                                    const char* stage,
-                                                    const connection_context& ctx,
-                                                    boost::asio::io_context& io_context);
+                                                           const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
+                                                           const boost::system::error_code& ec,
+                                                           const char* stage,
+                                                           const connection_context& ctx,
+                                                           boost::asio::io_context& io_context);
 
     [[nodiscard]] boost::asio::awaitable<std::expected<void, boost::system::error_code>> tcp_connect(
         boost::asio::io_context& io_context, boost::asio::ip::tcp::socket& socket, const connection_context& ctx) const;
     [[nodiscard]] boost::asio::awaitable<std::expected<void, boost::system::error_code>> tcp_connect(
         boost::asio::io_context& io_context, boost::asio::ip::tcp::socket& socket) const;
-    [[nodiscard]] boost::asio::awaitable<std::expected<void, boost::system::error_code>> try_connect_endpoint(boost::asio::ip::tcp::socket& socket,
-                                                                                             const boost::asio::ip::tcp::endpoint& endpoint) const;
+    [[nodiscard]] boost::asio::awaitable<std::expected<void, boost::system::error_code>> try_connect_endpoint(
+        boost::asio::ip::tcp::socket& socket, const boost::asio::ip::tcp::endpoint& endpoint) const;
 
-    [[nodiscard]] boost::asio::awaitable<std::expected<handshake_result, boost::system::error_code>> perform_reality_handshake(boost::asio::ip::tcp::socket& socket) const;
+    [[nodiscard]] boost::asio::awaitable<std::expected<handshake_result, boost::system::error_code>> perform_reality_handshake(
+        boost::asio::ip::tcp::socket& socket) const;
     [[nodiscard]] boost::asio::awaitable<std::expected<handshake_result, boost::system::error_code>> perform_reality_handshake_with_timeout(
         const std::shared_ptr<boost::asio::ip::tcp::socket>& socket, const connection_context& ctx) const;
     [[nodiscard]] boost::asio::awaitable<std::expected<handshake_result, boost::system::error_code>> perform_reality_handshake_with_timeout(
@@ -109,14 +114,13 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
         boost::asio::ip::tcp::socket socket, boost::asio::io_context& io_context, std::uint32_t cid, const handshake_result& handshake_ret, const std::string& trace_id) const;
 
     [[nodiscard]] boost::asio::awaitable<std::expected<void, boost::system::error_code>> generate_and_send_client_hello(boost::asio::ip::tcp::socket& socket,
-                                                                       const std::uint8_t* public_key,
-                                                                       const std::uint8_t* private_key,
-                                                                       const reality::fingerprint_spec& spec,
-                                                                       reality::transcript& trans) const;
+                                                                                                                           const std::uint8_t* public_key,
+                                                                                                                           const std::uint8_t* private_key,
+                                                                                                                           const reality::fingerprint_spec& spec,
+                                                                                                                           reality::transcript& trans) const;
 
     struct server_hello_res
     {
-        bool ok = false;
         reality::handshake_keys hs_keys;
         const EVP_MD* negotiated_md = nullptr;
         const EVP_CIPHER* negotiated_cipher = nullptr;
@@ -131,7 +135,7 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
         boost::asio::ip::tcp::socket& socket,
         const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& s_hs_keys,
         const reality::handshake_keys& hs_keys,
-        const bool strict_cert_verify,
+        bool strict_cert_verify,
         const std::string& sni,
         reality::transcript& trans,
         const EVP_CIPHER* cipher,

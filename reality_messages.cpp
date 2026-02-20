@@ -1,3 +1,6 @@
+#include <openssl/ec.h>
+#include <openssl/obj_mac.h>
+#include <openssl/types.h>
 #include <ctime>
 #include <array>
 #include <algorithm>
@@ -76,7 +79,7 @@ bool fill_random_bytes(std::vector<std::uint8_t>& buffer)
     }
     if (RAND_bytes(buffer.data(), static_cast<int>(buffer.size())) != 1)
     {
-        std::fill(buffer.begin(), buffer.end(), 0x00);
+        std::ranges::fill(buffer, 0x00);
         return false;
     }
     return true;
@@ -453,19 +456,21 @@ bool build_simple_extension(extension_type type, std::vector<std::uint8_t>& ext_
 using contextual_extension_builder =
     bool (*)(const std::shared_ptr<extension_blueprint>&, std::vector<std::uint8_t>&, std::uint16_t&, const extension_build_context&);
 
-bool build_contextual_grease(const std::shared_ptr<extension_blueprint>&,
+bool build_contextual_grease(const std::shared_ptr<extension_blueprint>& ext_ptr,
                              std::vector<std::uint8_t>& ext_buffer,
                              std::uint16_t& ext_type,
                              const extension_build_context& ctx)
 {
+    static_cast<void>(ext_ptr);
     return build_grease_ext(ext_buffer, ext_type, ctx);
 }
 
-bool build_contextual_sni(const std::shared_ptr<extension_blueprint>&,
+bool build_contextual_sni(const std::shared_ptr<extension_blueprint>& ext_ptr,
                           std::vector<std::uint8_t>& ext_buffer,
                           std::uint16_t& ext_type,
                           const extension_build_context& ctx)
 {
+    static_cast<void>(ext_ptr);
     return build_sni_ext(ext_buffer, ext_type, ctx);
 }
 
@@ -493,11 +498,12 @@ bool build_contextual_supported_versions(const std::shared_ptr<extension_bluepri
     return build_supported_versions_ext(ext_ptr, ext_buffer, ext_type, ctx);
 }
 
-bool build_contextual_padding(const std::shared_ptr<extension_blueprint>&,
+bool build_contextual_padding(const std::shared_ptr<extension_blueprint>& ext_ptr,
                               std::vector<std::uint8_t>& ext_buffer,
                               std::uint16_t& ext_type,
                               const extension_build_context& ctx)
 {
+    static_cast<void>(ext_ptr);
     return build_padding_ext(ext_buffer, ext_type, ctx);
 }
 
@@ -510,12 +516,12 @@ std::optional<contextual_extension_builder> find_contextual_extension_builder(co
     };
 
     static constexpr std::array<builder_entry, 6> entries = {{
-        {extension_type::kGrease, build_contextual_grease},
-        {extension_type::kSni, build_contextual_sni},
-        {extension_type::kSupportedGroups, build_contextual_supported_groups},
-        {extension_type::kKeyShare, build_contextual_key_share},
-        {extension_type::kSupportedVersions, build_contextual_supported_versions},
-        {extension_type::kPadding, build_contextual_padding},
+        {.type = extension_type::kGrease, .fn = build_contextual_grease},
+        {.type = extension_type::kSni, .fn = build_contextual_sni},
+        {.type = extension_type::kSupportedGroups, .fn = build_contextual_supported_groups},
+        {.type = extension_type::kKeyShare, .fn = build_contextual_key_share},
+        {.type = extension_type::kSupportedVersions, .fn = build_contextual_supported_versions},
+        {.type = extension_type::kPadding, .fn = build_contextual_padding},
     }};
 
     for (const auto& entry : entries)
@@ -916,7 +922,7 @@ std::vector<std::uint8_t> construct_finished(const std::vector<std::uint8_t>& ve
     return msg;
 }
 
-bool parse_certificate_verify_payload_length(const std::vector<std::uint8_t>& msg, std::uint32_t& payload_len)
+static bool parse_certificate_verify_payload_length(const std::vector<std::uint8_t>& msg, std::uint32_t& payload_len)
 {
     if (msg.size() < 8 || msg[0] != 0x0f)
     {
@@ -927,7 +933,7 @@ bool parse_certificate_verify_payload_length(const std::vector<std::uint8_t>& ms
     return msg.size() >= 4 + payload_len;
 }
 
-bool read_certificate_verify_u16(const std::vector<std::uint8_t>& msg, std::size_t& pos, std::uint16_t& value)
+static bool read_certificate_verify_u16(const std::vector<std::uint8_t>& msg, std::size_t& pos, std::uint16_t& value)
 {
     if (pos + 2 > msg.size())
     {
@@ -1016,7 +1022,7 @@ std::optional<std::uint16_t> extract_cipher_suite_from_server_hello(const std::v
     return static_cast<std::uint16_t>((server_hello[pos] << 8) | server_hello[pos + 1]);
 }
 
-bool locate_server_hello_extensions(const std::vector<std::uint8_t>& server_hello, std::size_t& pos, std::size_t& end)
+static bool locate_server_hello_extensions(const std::vector<std::uint8_t>& server_hello, std::size_t& pos, std::size_t& end)
 {
     if (server_hello[pos] != 0x02)
     {
@@ -1041,14 +1047,12 @@ bool locate_server_hello_extensions(const std::vector<std::uint8_t>& server_hell
     pos += 2;
 
     end = pos + ext_len;
-    if (end < pos || end > server_hello.size())
-    {
-        return false;
-    }
-    return true;
+    return end >= pos && end <= server_hello.size();
 }
 
-std::optional<server_key_share_info> parse_server_key_share_entry(const std::vector<std::uint8_t>& server_hello, const std::size_t pos, const std::size_t end)
+static std::optional<server_key_share_info> parse_server_key_share_entry(const std::vector<std::uint8_t>& server_hello,
+                                                                          const std::size_t pos,
+                                                                          const std::size_t end)
 {
     if (pos + 4 > end)
     {
@@ -1068,7 +1072,7 @@ std::optional<server_key_share_info> parse_server_key_share_entry(const std::vec
     return info;
 }
 
-bool skip_server_hello_prefix(const std::vector<std::uint8_t>& server_hello, std::size_t& pos)
+static bool skip_server_hello_prefix(const std::vector<std::uint8_t>& server_hello, std::size_t& pos)
 {
     if (server_hello.size() < 4)
     {
@@ -1081,11 +1085,11 @@ bool skip_server_hello_prefix(const std::vector<std::uint8_t>& server_hello, std
     return pos + 4 <= server_hello.size();
 }
 
-bool parse_extension_header(const std::vector<std::uint8_t>& server_hello,
-                            const std::size_t end,
-                            std::size_t& pos,
-                            std::uint16_t& type,
-                            std::uint16_t& ext_len)
+static bool parse_extension_header(const std::vector<std::uint8_t>& server_hello,
+                                   const std::size_t end,
+                                   std::size_t& pos,
+                                   std::uint16_t& type,
+                                   std::uint16_t& ext_len)
 {
     if (pos + 4 > end)
     {
@@ -1097,7 +1101,7 @@ bool parse_extension_header(const std::vector<std::uint8_t>& server_hello,
     return true;
 }
 
-bool advance_extension_payload(std::size_t& pos, const std::size_t end, const std::uint16_t ext_len)
+static bool advance_extension_payload(std::size_t& pos, const std::size_t end, const std::uint16_t ext_len)
 {
     if (pos + ext_len > end)
     {
@@ -1107,9 +1111,9 @@ bool advance_extension_payload(std::size_t& pos, const std::size_t end, const st
     return true;
 }
 
-std::optional<server_key_share_info> find_server_key_share_in_extensions(const std::vector<std::uint8_t>& server_hello,
-                                                                         std::size_t pos,
-                                                                         const std::size_t end)
+static std::optional<server_key_share_info> find_server_key_share_in_extensions(const std::vector<std::uint8_t>& server_hello,
+                                                                                std::size_t pos,
+                                                                                const std::size_t end)
 {
     while (pos + 4 <= end)
     {
@@ -1153,7 +1157,7 @@ struct encrypted_extensions_range
     std::size_t end = 0;
 };
 
-std::optional<encrypted_extensions_range> parse_encrypted_extensions_range(const std::vector<std::uint8_t>& ee_msg)
+static std::optional<encrypted_extensions_range> parse_encrypted_extensions_range(const std::vector<std::uint8_t>& ee_msg)
 {
     if (ee_msg.size() < 6 || ee_msg[0] != 0x08)
     {
@@ -1161,7 +1165,7 @@ std::optional<encrypted_extensions_range> parse_encrypted_extensions_range(const
     }
 
     const std::size_t ext_len_pos = 4;
-    const std::uint16_t total_ext_len = static_cast<std::uint16_t>((ee_msg[ext_len_pos] << 8) | ee_msg[ext_len_pos + 1]);
+    const auto total_ext_len = static_cast<std::uint16_t>((ee_msg[ext_len_pos] << 8) | ee_msg[ext_len_pos + 1]);
     const std::size_t ext_start = ext_len_pos + 2;
     const std::size_t ext_end = ext_start + total_ext_len;
     if (ext_end > ee_msg.size())
@@ -1172,7 +1176,11 @@ std::optional<encrypted_extensions_range> parse_encrypted_extensions_range(const
     return encrypted_extensions_range{.pos = ext_start, .end = ext_end};
 }
 
-bool read_extension_header(const std::vector<std::uint8_t>& msg, std::size_t& pos, const std::size_t end, std::uint16_t& type, std::uint16_t& len)
+static bool read_extension_header(const std::vector<std::uint8_t>& msg,
+                                  std::size_t& pos,
+                                  const std::size_t end,
+                                  std::uint16_t& type,
+                                  std::uint16_t& len)
 {
     if (pos + 4 > end)
     {
@@ -1181,14 +1189,12 @@ bool read_extension_header(const std::vector<std::uint8_t>& msg, std::size_t& po
     type = static_cast<std::uint16_t>((msg[pos] << 8) | msg[pos + 1]);
     len = static_cast<std::uint16_t>((msg[pos + 2] << 8) | msg[pos + 3]);
     pos += 4;
-    if (pos + len > end)
-    {
-        return false;
-    }
-    return true;
+    return pos + len <= end;
 }
 
-std::optional<std::string> parse_alpn_extension_body(const std::vector<std::uint8_t>& ee_msg, const std::size_t pos, const std::uint16_t len)
+static std::optional<std::string> parse_alpn_extension_body(const std::vector<std::uint8_t>& ee_msg,
+                                                            const std::size_t pos,
+                                                            const std::uint16_t len)
 {
     if (len < 3)
     {
@@ -1196,7 +1202,7 @@ std::optional<std::string> parse_alpn_extension_body(const std::vector<std::uint
     }
 
     const std::size_t ext_end = pos + len;
-    const std::uint16_t list_len = static_cast<std::uint16_t>((ee_msg[pos] << 8) | ee_msg[pos + 1]);
+    const auto list_len = static_cast<std::uint16_t>((ee_msg[pos] << 8) | ee_msg[pos + 1]);
     if (list_len == 0 || pos + 3 > ext_end)
     {
         return std::nullopt;
