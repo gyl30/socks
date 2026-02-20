@@ -1,3 +1,4 @@
+// NOLINTBEGIN(bugprone-unchecked-optional-access, misc-include-cleaner)
 #include <string>
 #include <vector>
 
@@ -16,7 +17,7 @@ TEST(CertManagerTest, BasicCache)
     fp.alpn = "h2";
     fp.cipher_suite = 0x1301;
 
-    std::vector<uint8_t> cert = {0x01, 0x02};
+    std::vector<uint8_t> const cert = {0x01, 0x02};
     manager.set_certificate("example.com", cert, fp, "trace-1");
 
     auto entry = manager.get_certificate("example.com");
@@ -28,8 +29,8 @@ TEST(CertManagerTest, BasicCache)
 TEST(CertManagerTest, DefaultSNI)
 {
     cert_manager manager;
-    server_fingerprint fp;
-    std::vector<uint8_t> cert = {0x01};
+    server_fingerprint const fp;
+    std::vector<uint8_t> const cert = {0x01};
 
     manager.set_certificate("", cert, fp, "trace-2");
 
@@ -70,8 +71,8 @@ TEST(CertManagerTest, ExactSniPreferredOverDefault)
 TEST(CertManagerTest, CacheEviction)
 {
     cert_manager manager;
-    server_fingerprint fp;
-    std::vector<uint8_t> cert = {0x01};
+    server_fingerprint const fp;
+    std::vector<uint8_t> const cert = {0x01};
 
     for (int i = 0; i < 105; ++i)
     {
@@ -91,8 +92,8 @@ TEST(CertManagerTest, CacheEviction)
 TEST(CertManagerTest, LruEvictionRespectsRecentUse)
 {
     cert_manager manager(3);
-    server_fingerprint fp;
-    std::vector<uint8_t> cert = {0x01};
+    server_fingerprint const fp;
+    std::vector<uint8_t> const cert = {0x01};
 
     manager.set_certificate("sni0", cert, fp, "trace");
     manager.set_certificate("sni1", cert, fp, "trace");
@@ -110,9 +111,9 @@ TEST(CertManagerTest, LruEvictionRespectsRecentUse)
 TEST(CertManagerTest, UpdateExistingEntryDoesNotEvictOthers)
 {
     cert_manager manager(2);
-    server_fingerprint fp;
-    std::vector<uint8_t> cert1 = {0x01};
-    std::vector<uint8_t> cert2 = {0x02};
+    server_fingerprint const fp;
+    std::vector<uint8_t> const cert1 = {0x01};
+    std::vector<uint8_t> const cert2 = {0x02};
 
     manager.set_certificate("a", cert1, fp, "trace");
     manager.set_certificate("b", cert1, fp, "trace");
@@ -127,7 +128,7 @@ TEST(CertManagerTest, UpdateExistingEntryDoesNotEvictOthers)
 TEST(CertManagerTest, ZeroCapacityClampedToOne)
 {
     cert_manager manager(0);
-    server_fingerprint fp;
+    server_fingerprint const fp;
     const std::vector<uint8_t> cert_a = {0x01};
     const std::vector<uint8_t> cert_b = {0x02};
 
@@ -143,7 +144,7 @@ TEST(CertManagerTest, ZeroCapacityClampedToOne)
 TEST(CertManagerTest, MissingSniWithoutDefaultReturnsNullopt)
 {
     cert_manager manager;
-    server_fingerprint fp;
+    server_fingerprint const fp;
     const std::vector<uint8_t> cert = {0x01};
     manager.set_certificate("known.example.com", cert, fp, "trace-known");
 
@@ -151,3 +152,4 @@ TEST(CertManagerTest, MissingSniWithoutDefaultReturnsNullopt)
 }
 
 }    // namespace reality
+// NOLINTEND(bugprone-unchecked-optional-access, misc-include-cleaner)

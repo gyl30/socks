@@ -1,3 +1,4 @@
+// NOLINTBEGIN(misc-include-cleaner)
 #include <memory>
 #include <cstdint>
 
@@ -82,7 +83,7 @@ TEST(RealityFingerprintTest, Android11Basic)
     EXPECT_FALSE(spec.extensions.empty());
 }
 
-TEST(RealityFingerprintTest, get_chrome120Direct)
+TEST(RealityFingerprintTest, GetChrome120Direct)
 {
     auto spec = fingerprint_factory::get_chrome120();
     EXPECT_EQ(spec.client_version, tls_consts::kVer12);
@@ -95,3 +96,4 @@ TEST(RealityFingerprintTest, CompressionMethods)
     ASSERT_EQ(spec.compression_methods.size(), 1);
     EXPECT_EQ(spec.compression_methods[0], 0x00);
 }
+// NOLINTEND(misc-include-cleaner)

@@ -1,3 +1,4 @@
+// NOLINTBEGIN(bugprone-unused-return-value, misc-include-cleaner)
 #include <chrono>
 #include <memory>
 #include <string>
@@ -96,24 +97,24 @@ bool is_ephemeral_bind(const struct sockaddr* addr, const socklen_t addrlen)
     return false;
 }
 
-extern "C" int __real_socket(int domain, int type, int protocol);
-extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);
-extern "C" int __real_bind(int sockfd, const struct sockaddr* addr, socklen_t addrlen);
-extern "C" int __real_accept(int sockfd, struct sockaddr* addr, socklen_t* addrlen);
-extern "C" int __real_accept4(int sockfd, struct sockaddr* addr, socklen_t* addrlen, int flags);
-extern "C" int __real_close(int fd);
+extern "C" int __real_socket(int domain, int type, int protocol);  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_bind(int sockfd, const struct sockaddr* addr, socklen_t addrlen);  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_accept(int sockfd, struct sockaddr* addr, socklen_t* addrlen);  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_accept4(int sockfd, struct sockaddr* addr, socklen_t* addrlen, int flags);  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_close(int fd);  // NOLINT(bugprone-reserved-identifier)
 
-extern "C" int __wrap_socket(int domain, int type, int protocol)
+extern "C" int __wrap_socket(int domain, int type, int protocol)  // NOLINT(bugprone-reserved-identifier)
 {
     if (g_fail_socket_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_socket_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_socket(domain, type, protocol);
+    return __real_socket(domain, type, protocol);  // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)
+extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)  // NOLINT(bugprone-reserved-identifier)
 {
     if (level == SOL_SOCKET && optname == SO_REUSEADDR && g_fail_reuse_setsockopt_once.exchange(false, std::memory_order_acq_rel))
     {
@@ -125,47 +126,47 @@ extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void*
         errno = g_fail_tcp_nodelay_setsockopt_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_setsockopt(sockfd, level, optname, optval, optlen);
+    return __real_setsockopt(sockfd, level, optname, optval, optlen);  // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_bind(int sockfd, const struct sockaddr* addr, socklen_t addrlen)
+extern "C" int __wrap_bind(int sockfd, const struct sockaddr* addr, socklen_t addrlen)  // NOLINT(bugprone-reserved-identifier)
 {
     if (is_ephemeral_bind(addr, addrlen) && g_fail_ephemeral_bind_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_bind_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_bind(sockfd, addr, addrlen);
+    return __real_bind(sockfd, addr, addrlen);  // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_accept(int sockfd, struct sockaddr* addr, socklen_t* addrlen)
+extern "C" int __wrap_accept(int sockfd, struct sockaddr* addr, socklen_t* addrlen)  // NOLINT(bugprone-reserved-identifier)
 {
     if (g_fail_accept_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_accept_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_accept(sockfd, addr, addrlen);
+    return __real_accept(sockfd, addr, addrlen);  // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_accept4(int sockfd, struct sockaddr* addr, socklen_t* addrlen, int flags)
+extern "C" int __wrap_accept4(int sockfd, struct sockaddr* addr, socklen_t* addrlen, int flags)  // NOLINT(bugprone-reserved-identifier)
 {
     if (g_fail_accept_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_accept_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_accept4(sockfd, addr, addrlen, flags);
+    return __real_accept4(sockfd, addr, addrlen, flags);  // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_close(int fd)
+extern "C" int __wrap_close(int fd)  // NOLINT(bugprone-reserved-identifier)
 {
     if (g_fail_close_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_close_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_close(fd);
+    return __real_close(fd);  // NOLINT(bugprone-reserved-identifier)
 }
 
 class failing_router final : public mux::router
@@ -1015,3 +1016,4 @@ TEST(LocalClientTest, AcceptLoopHandlesNoDelaySetOptionFailure)
         runner.join();
     }
 }
+// NOLINTEND(bugprone-unused-return-value, misc-include-cleaner)
