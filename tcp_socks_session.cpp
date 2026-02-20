@@ -209,7 +209,7 @@ boost::asio::awaitable<void> tcp_socks_session::client_to_upstream(std::shared_p
     for (;;)
     {
         boost::system::error_code ec;
-        const std::uint32_t n = co_await socket_.async_read_some(boost::asio::buffer(buf), boost::asio::redirect_error(boost::asio::use_awaitable, ec));
+        const std::size_t n = co_await socket_.async_read_some(boost::asio::buffer(buf), boost::asio::redirect_error(boost::asio::use_awaitable, ec));
         if (ec || n == 0)
         {
             LOG_CTX_WARN(ctx_, "{} failed to read from client {}", log_event::kSocks, ec.message());
@@ -220,7 +220,7 @@ boost::asio::awaitable<void> tcp_socks_session::client_to_upstream(std::shared_p
         bool write_failed = false;
         while (total_written < n)
         {
-            const auto remaining = static_cast<std::size_t>(n - total_written);
+            const auto remaining = n - total_written;
             const auto written = co_await backend->write(buf.data() + total_written, remaining);
             if (written == 0 || written > remaining)
             {
