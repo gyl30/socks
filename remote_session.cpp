@@ -1,18 +1,27 @@
-#include <optional>
+#include <boost/asio/awaitable.hpp>
+#include <cstdint>
+#include <boost/asio/buffer.hpp>
+#include <boost/asio/error.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/redirect_error.hpp>
 #include <atomic>
-#include <chrono>
 #include <cstring>
 #include <memory>
 
 #include <boost/asio/write.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/as_tuple.hpp>
-#include <boost/asio/co_spawn.hpp>
 #include <boost/asio/dispatch.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
+#include <string>
+#include <vector>
+#include <utility>
 
 #include "log.h"
+#include "mux_connection.h"
+#include "mux_protocol.h"
+#include "mux_tunnel.h"
 #include "protocol.h"
 #include "mux_codec.h"
 #include "log_context.h"
@@ -30,6 +39,11 @@ namespace
 using resolve_results = boost::asio::ip::tcp::resolver::results_type;
 using timed_resolve_result = timeout_io::timed_tcp_resolve_result;
 using timed_connect_result = timeout_io::timed_tcp_connect_result;
+
+void log_remote_session_recv_channel_unavailable_on_data(const connection_context& ctx)
+{
+    LOG_CTX_WARN(ctx, "{} recv channel unavailable on data", log_event::kMux);
+}
 
 boost::asio::awaitable<bool> send_ack(std::shared_ptr<mux_connection> conn,
                                const std::uint32_t stream_id,
@@ -61,7 +75,7 @@ boost::asio::awaitable<void> remove_stream_and_reset(std::weak_ptr<mux_tunnel_im
     (void)co_await conn->send_async(stream_id, kCmdRst, {});
 }
 
-void remove_stream(std::weak_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> manager, const std::uint32_t stream_id)
+void remove_stream(const std::weak_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>>& manager, const std::uint32_t stream_id)
 {
     if (auto mgr = manager.lock())
     {
@@ -280,7 +294,7 @@ boost::asio::awaitable<bool> prepare_remote_target_connection(boost::asio::ip::t
 
 }    // namespace
 
-remote_session::remote_session(std::shared_ptr<mux_connection> connection,
+remote_session::remote_session(const std::shared_ptr<mux_connection>& connection,
                                const std::uint32_t id,
                                boost::asio::io_context& io_context,
                                const connection_context& ctx,
@@ -289,7 +303,7 @@ remote_session::remote_session(std::shared_ptr<mux_connection> connection,
       io_context_(io_context),
       resolver_(io_context_),
       target_socket_(io_context_),
-      connection_(std::move(connection)),
+      connection_(connection),
       recv_channel_(io_context_, 128),
       connect_timeout_sec_(connect_timeout_sec)
 {
@@ -352,7 +366,7 @@ void remote_session::on_data(std::vector<std::uint8_t> data)
         {
             if (!self->recv_channel_.try_send(boost::system::error_code(), std::move(data)))
             {
-                LOG_CTX_WARN(self->ctx_, "{} recv channel unavailable on data", log_event::kMux);
+                log_remote_session_recv_channel_unavailable_on_data(self->ctx_);
                 self->close_from_reset();
             }
         });

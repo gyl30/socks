@@ -3,15 +3,12 @@
 
 #include <array>
 #include <memory>
-#include <random>
 #include <string>
 #include <vector>
 #include <cstdint>
-#include <algorithm>
 
 extern "C"
 {
-#include <openssl/rand.h>
 }
 
 #include "reality_core.h"
@@ -19,7 +16,7 @@ extern "C"
 namespace reality
 {
 
-enum class fingerprint_type
+enum class fingerprint_type : std::uint8_t
 {
     kChrome120,
     kFirefox120,
@@ -27,7 +24,7 @@ enum class fingerprint_type
     kAndroid11OkHttp
 };
 
-enum class extension_type
+enum class extension_type : std::uint8_t
 {
     kGrease,
     kSni,

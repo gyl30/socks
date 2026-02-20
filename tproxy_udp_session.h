@@ -2,6 +2,8 @@
 #define TPROXY_UDP_SESSION_H
 
 #include <atomic>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/system/error_code.hpp>
 #include <memory>
 #include <vector>
 #include <optional>
@@ -15,7 +17,6 @@
 
 #include "config.h"
 #include "router.h"
-#include "protocol.h"
 #include "mux_tunnel.h"
 #include "log_context.h"
 #include "tproxy_udp_sender.h"
@@ -36,7 +37,7 @@ class tproxy_udp_session : public mux_stream_interface, public std::enable_share
                        std::shared_ptr<tproxy_udp_sender> sender,
                        std::uint32_t sid,
                        const config& cfg,
-                       boost::asio::ip::udp::endpoint client_ep);
+                       const boost::asio::ip::udp::endpoint& client_ep);
 
     bool start();
 
@@ -64,8 +65,8 @@ class tproxy_udp_session : public mux_stream_interface, public std::enable_share
     [[nodiscard]] boost::asio::awaitable<bool> negotiate_proxy_stream(
         const std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>>& tunnel, const std::shared_ptr<mux_stream>& stream) const;
 
-    [[nodiscard]] boost::asio::awaitable<void> cleanup_proxy_stream(
-        const std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>>& tunnel, const std::shared_ptr<mux_stream>& stream) const;
+    [[nodiscard]] static boost::asio::awaitable<void> cleanup_proxy_stream(
+        const std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>>& tunnel, const std::shared_ptr<mux_stream>& stream);
 
     bool install_proxy_stream(const std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>>& tunnel,
                               const std::shared_ptr<mux_stream>& stream,

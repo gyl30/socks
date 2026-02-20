@@ -1,9 +1,23 @@
+// NOLINTBEGIN(misc-include-cleaner)
+#include <boost/asio/co_spawn.hpp>    // NOLINT(misc-include-cleaner): required for co_spawn declarations.
+#include <boost/system/error_code.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/awaitable.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/ip/address.hpp>
+#include <boost/asio/ip/address_v6.hpp>
+#include <boost/asio/socket_base.hpp>
+#include <openssl/types.h>
+#include <boost/asio/ip/address_v4.hpp>
+#include <boost/system/detail/errc.hpp>
 #include <ctime>
-#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <expected>
 #include <memory>
+#include <optional>
+#include <mutex>
 #include <random>
 #include <string>
 #include <thread>
@@ -13,18 +27,25 @@
 #include <utility>
 #include <charconv>
 #include <system_error>
+#include <algorithm>
 
-#include <boost/asio/read.hpp>
-#include <boost/asio/error.hpp>
-#include <boost/asio/write.hpp>
-#include <boost/asio/buffer.hpp>
 #include <boost/asio/as_tuple.hpp>
-#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/buffer.hpp>
 #include <boost/asio/detached.hpp>
-#include <boost/asio/dispatch.hpp>
+#include <boost/asio/error.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/use_awaitable.hpp>
+#include <boost/asio/write.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
+#include <boost/system/errc.hpp>
+#include "reality_core.h"
+#include "transcript.h"
+#include "reality_messages.h"
+#include "tls_key_schedule.h"
+#include "tls_record_layer.h"
+#include "replay_cache.h"
+#include "context_pool.h"
+#include "cert_fetcher.h"
 
 extern "C"
 {
@@ -39,19 +60,15 @@ extern "C"
 #include "ch_parser.h"
 #include "constants.h"
 #include "statistics.h"
-#include "mux_codec.h"
 #include "mux_tunnel.h"
 #include "crypto_util.h"
 #include "log_context.h"
-#include "mux_protocol.h"
 #include "reality_auth.h"
 #include "stop_dispatch.h"
 #include "timeout_io.h"
 #include "tls_record_validation.h"
 #include "remote_server.h"
 #include "reality_engine.h"
-#include "remote_session.h"
-#include "remote_udp_session.h"
 
 namespace mux
 {
@@ -151,10 +168,6 @@ using timed_socket_resolve_res = timeout_io::timed_tcp_resolve_result;
 using timed_socket_connect_res = timeout_io::timed_tcp_connect_result;
 
 [[nodiscard]] bool should_skip_fallback_after_read_failure(const boost::system::error_code& read_ec, const std::atomic<bool>& stop_flag);
-boost::asio::awaitable<timed_socket_read_res> read_socket_with_timeout(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
-                                                                const boost::asio::mutable_buffer buffer,
-                                                                const std::uint32_t timeout_sec,
-                                                                const bool require_full_buffer);
 
 struct initial_read_outcome
 {
@@ -236,7 +249,7 @@ boost::asio::awaitable<initial_read_outcome> fill_tls_record_header(const std::s
             co_return make_initial_read_error(boost::asio::error::operation_aborted);
         }
         std::vector<std::uint8_t> header_remaining(kTlsRecordHeaderSize - buf.size());
-        const auto header_read = co_await read_socket_with_timeout(socket, boost::asio::buffer(header_remaining), timeout_sec, true);
+        const auto header_read = co_await timeout_io::async_read_with_timeout(socket, boost::asio::buffer(header_remaining), timeout_sec, true);
         if (!header_read.ok)
         {
             if (header_read.read_size > 0)
@@ -266,7 +279,7 @@ boost::asio::awaitable<initial_read_outcome> fill_tls_record_body(const std::sha
             co_return make_initial_read_error(boost::asio::error::operation_aborted);
         }
         std::vector<std::uint8_t> extra(kTlsRecordHeaderSize + payload_len - buf.size());
-        const auto extra_read = co_await read_socket_with_timeout(socket, boost::asio::buffer(extra), timeout_sec, true);
+        const auto extra_read = co_await timeout_io::async_read_with_timeout(socket, boost::asio::buffer(extra), timeout_sec, true);
         if (!extra_read.ok)
         {
             co_return classify_body_read_failure(extra_read, ctx, timeout_sec, stop_flag);
@@ -284,14 +297,6 @@ boost::asio::awaitable<initial_read_outcome> fill_tls_record_body(const std::sha
         return true;
     }
     return read_ec == boost::asio::error::operation_aborted || read_ec == boost::asio::error::bad_descriptor || read_ec == boost::asio::error::timed_out;
-}
-
-boost::asio::awaitable<timed_socket_read_res> read_socket_with_timeout(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
-                                                                const boost::asio::mutable_buffer buffer,
-                                                                const std::uint32_t timeout_sec,
-                                                                const bool require_full_buffer)
-{
-    co_return co_await timeout_io::async_read_with_timeout(socket, buffer, timeout_sec, require_full_buffer);
 }
 
 boost::asio::awaitable<timed_socket_read_res> read_socket_exact_with_timeout(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
@@ -363,7 +368,7 @@ boost::asio::ip::tcp::endpoint resolve_inbound_endpoint(const config::inbound_t&
         LOG_ERROR("parse inbound host {} failed {}", inbound.host, ec.message());
         addr = boost::asio::ip::address_v6::any();
     }
-    return boost::asio::ip::tcp::endpoint(addr, inbound.port);
+    return {addr, inbound.port};
 }
 
 bool setup_server_acceptor(boost::asio::ip::tcp::acceptor& acceptor, const boost::asio::ip::tcp::endpoint& ep)
@@ -376,7 +381,7 @@ bool setup_server_acceptor(boost::asio::ip::tcp::acceptor& acceptor, const boost
         auto close_on_failure = [&acceptor]()
         {
             boost::system::error_code close_ec;
-            acceptor.close(close_ec);
+            close_ec = acceptor.close(close_ec);
         };
 
         boost::system::error_code ec;
@@ -439,16 +444,16 @@ void apply_reality_dest_config(const config::reality_t& reality_cfg,
 
 std::uint16_t parse_fallback_port(const std::string& port_text)
 {
-    std::uint16_t fetch_port = 443;
-    const auto begin = port_text.data();
-    const auto end = begin + port_text.size();
-    auto [ptr, from_ec] = std::from_chars(begin, end, fetch_port);
-    if (from_ec != std::errc() || ptr != end)
+    std::uint16_t parsed_port = 443;
+    const char* const begin = port_text.data();
+    const char* const end = begin + port_text.size();
+    auto [parse_end, parse_ec] = std::from_chars(begin, end, parsed_port);
+    if (parse_ec != std::errc() || parse_end != end)
     {
         LOG_WARN("invalid fallback port {} defaulting to 443", port_text);
         return 443;
     }
-    return fetch_port;
+    return parsed_port;
 }
 
 std::uint16_t normalize_cipher_suite(std::uint16_t cipher_suite)
@@ -586,18 +591,18 @@ std::expected<auth_inputs, boost::system::error_code> build_auth_decrypt_inputs(
     const auto& shared = *shared_result;
 
     const auto salt = std::vector<std::uint8_t>(info.random.begin(), info.random.begin() + 20);
-    const auto r_info = reality::crypto_util::hex_to_bytes("5245414c495459");
-    auto prk_result = reality::crypto_util::hkdf_extract(salt, shared, EVP_sha256());
-    if (!prk_result)
+    const auto reality_label_info = reality::crypto_util::hex_to_bytes("5245414c495459");
+    auto pseudo_random_key_result = reality::crypto_util::hkdf_extract(salt, shared, EVP_sha256());
+    if (!pseudo_random_key_result)
     {
-        return std::unexpected(prk_result.error());
+        return std::unexpected(pseudo_random_key_result.error());
     }
-    auto auth_key_result = reality::crypto_util::hkdf_expand(*prk_result, r_info, 16, EVP_sha256());
+    auto auth_key_result = reality::crypto_util::hkdf_expand(*pseudo_random_key_result, reality_label_info, 16, EVP_sha256());
     if (!auth_key_result)
     {
         return std::unexpected(auth_key_result.error());
     }
-    
+
     auth_inputs out;
     out.auth_key = std::move(*auth_key_result);
     out.nonce.assign(info.random.begin() + 20, info.random.end());
@@ -606,7 +611,7 @@ std::expected<auth_inputs, boost::system::error_code> build_auth_decrypt_inputs(
     if (info.sid_offset < 5)
     {
         LOG_CTX_ERROR(ctx, "{} auth fail invalid sid offset {}", log_event::kAuth, info.sid_offset);
-        return std::unexpected(std::make_error_code(std::errc::invalid_argument));
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
     }
 
     out.aad.assign(buf.begin() + 5, buf.end());
@@ -614,7 +619,7 @@ std::expected<auth_inputs, boost::system::error_code> build_auth_decrypt_inputs(
     if (aad_sid_offset + constants::auth::kSessionIdLen > out.aad.size())
     {
         LOG_CTX_ERROR(ctx, "{} auth fail aad size mismatch", log_event::kAuth);
-        return std::unexpected(std::make_error_code(std::errc::invalid_argument));
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
     }
     std::fill_n(out.aad.begin() + aad_sid_offset, constants::auth::kSessionIdLen, 0);
     return out;
@@ -637,7 +642,7 @@ bool verify_auth_payload_fields(const reality::auth_payload& auth,
     }
 
     std::array<std::uint8_t, reality::kShortIdMaxLen> expected_short_id = {};
-    std::copy(short_id_bytes.begin(), short_id_bytes.end(), expected_short_id.begin());
+    std::ranges::copy(short_id_bytes, expected_short_id.begin());
     if (CRYPTO_memcmp(auth.short_id.data(), expected_short_id.data(), expected_short_id.size()) != 0)
     {
         auto& stats = statistics::instance();
@@ -860,13 +865,13 @@ std::expected<reality::auth_payload, boost::system::error_code> decrypt_auth_pay
     if (!pt || pt->size() != 16)
     {
         LOG_CTX_ERROR(ctx, "{} auth fail decrypt failed tag mismatch pt size {}", log_event::kAuth, pt ? pt->size() : 0);
-        return std::unexpected(std::make_error_code(std::errc::bad_message));
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::bad_message));
     }
 
     auto payload = reality::parse_auth_payload(*pt);
     if (!payload)
     {
-        return std::unexpected(std::make_error_code(std::errc::bad_message));
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::bad_message));
     }
     return *payload;
 }
@@ -890,7 +895,7 @@ std::expected<std::vector<std::uint8_t>, boost::system::error_code> generate_ser
     std::vector<std::uint8_t> server_random(32, 0);
     if (RAND_bytes(server_random.data(), 32) != 1)
     {
-        return std::unexpected(std::make_error_code(std::errc::operation_canceled));
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::operation_canceled));
     }
     return server_random;
 }
@@ -938,7 +943,7 @@ boost::asio::awaitable<boost::system::error_code> consume_tls13_compat_ccs(const
     {
         statistics::instance().inc_client_finished_failures();
         LOG_CTX_ERROR(ctx, "{} invalid ccs body {}", log_event::kHandshake, ccs_body[0]);
-        co_return std::make_error_code(std::errc::bad_message);
+        co_return boost::system::errc::make_error_code(boost::system::errc::bad_message);
     }
 
     const auto read_header_after_ccs = co_await read_socket_exact_with_timeout(socket, boost::asio::buffer(header), timeout_sec);
@@ -970,7 +975,7 @@ boost::asio::awaitable<boost::system::error_code> read_tls_record_header_allow_c
     {
         statistics::instance().inc_client_finished_failures();
         LOG_CTX_ERROR(ctx, "{} invalid ccs length {}", log_event::kHandshake, ccs_len);
-        co_return std::make_error_code(std::errc::bad_message);
+        co_return boost::system::errc::make_error_code(boost::system::errc::bad_message);
     }
     co_return co_await consume_tls13_compat_ccs(socket, header, ctx, timeout_sec);
 }
@@ -1234,7 +1239,7 @@ void remote_server::start()
     {
         LOG_ERROR("remote server start failed invalid auth config");
         boost::system::error_code close_ec;
-        acceptor_.close(close_ec);
+        close_ec = acceptor_.close(close_ec);
         if (close_ec)
         {
             LOG_ERROR("remote server close acceptor failed {}", close_ec.message());
@@ -1273,7 +1278,7 @@ void remote_server::drain()
         detail::dispatch_timeout_policy::kRunInline);
 }
 
-void remote_server::set_certificate(std::string sni,
+void remote_server::set_certificate(const std::string& sni,
                                     std::vector<std::uint8_t> cert_msg,
                                     reality::server_fingerprint fp,
                                     const std::string& trace_id)
@@ -1397,7 +1402,7 @@ void remote_server::track_connection_socket(const std::shared_ptr<boost::asio::i
         return;
     }
 
-    std::lock_guard<std::mutex> lock(tracked_connection_socket_mu_);
+    const std::lock_guard<std::mutex> lock(tracked_connection_socket_mu_);
     tracked_connection_sockets_[socket.get()] = socket;
 }
 
@@ -1408,14 +1413,14 @@ void remote_server::untrack_connection_socket(const std::shared_ptr<boost::asio:
         return;
     }
 
-    std::lock_guard<std::mutex> lock(tracked_connection_socket_mu_);
+    const std::lock_guard<std::mutex> lock(tracked_connection_socket_mu_);
     tracked_connection_sockets_.erase(socket.get());
 }
 
 std::vector<std::shared_ptr<boost::asio::ip::tcp::socket>> remote_server::snapshot_tracked_connection_sockets()
 {
     std::vector<std::shared_ptr<boost::asio::ip::tcp::socket>> sockets;
-    std::lock_guard<std::mutex> lock(tracked_connection_socket_mu_);
+    const std::lock_guard<std::mutex> lock(tracked_connection_socket_mu_);
     for (auto it = tracked_connection_sockets_.begin(); it != tracked_connection_sockets_.end();)
     {
         const auto socket = it->second.lock();
@@ -1516,7 +1521,7 @@ boost::asio::awaitable<void> remote_server::accept_loop()
 
 bool remote_server::try_reserve_connection_slot(const std::string& source_key)
 {
-    std::lock_guard<std::mutex> lock(connection_slot_mu_);
+    const std::lock_guard<std::mutex> lock(connection_slot_mu_);
     const auto current = active_connection_slots_.load(std::memory_order_acquire);
     if (current >= limits_config_.max_connections)
     {
@@ -1539,7 +1544,7 @@ bool remote_server::try_reserve_connection_slot(const std::string& source_key)
 
 void remote_server::release_connection_slot(const std::string& source_key)
 {
-    std::lock_guard<std::mutex> lock(connection_slot_mu_);
+    const std::lock_guard<std::mutex> lock(connection_slot_mu_);
     const auto current = active_connection_slots_.load(std::memory_order_acquire);
     if (current > 0)
     {
@@ -1674,7 +1679,7 @@ client_hello_info remote_server::parse_client_hello(const std::vector<std::uint8
 
 bool remote_server::init_handshake_transcript(const std::vector<std::uint8_t>& initial_buf,
                                               reality::transcript& trans,
-                                              const connection_context& ctx) const
+                                              const connection_context& ctx)
 {
     if (initial_buf.size() <= 5)
     {
@@ -1770,7 +1775,7 @@ boost::asio::awaitable<remote_server::server_handshake_res> remote_server::negot
 }
 
 std::expected<remote_server::app_keys, boost::system::error_code> remote_server::derive_application_traffic_keys(
-    const server_handshake_res& sh_res) const
+    const server_handshake_res& sh_res)
 {
     auto app_sec =
         reality::tls_key_schedule::derive_application_secrets(sh_res.hs_keys.master_secret, sh_res.handshake_hash, sh_res.negotiated_md);
@@ -1829,7 +1834,7 @@ boost::asio::awaitable<remote_server::initial_read_res> remote_server::read_init
     }
 
     buf.resize(constants::net::kBufferSize);
-    const auto first_read = co_await read_socket_with_timeout(s, boost::asio::buffer(buf), timeout_sec, false);
+    const auto first_read = co_await timeout_io::async_read_with_timeout(s, boost::asio::buffer(buf), timeout_sec, false);
     if (!first_read.ok)
     {
         co_return to_member_result(classify_initial_read_failure(first_read, ctx, timeout_sec, stop_));
@@ -1856,7 +1861,7 @@ boost::asio::awaitable<remote_server::initial_read_res> remote_server::read_init
     co_return initial_read_res{.ok = true};
 }
 
-std::optional<remote_server::selected_key_share> remote_server::select_key_share(const client_hello_info& info, const connection_context& ctx) const
+std::optional<remote_server::selected_key_share> remote_server::select_key_share(const client_hello_info& info, const connection_context& ctx)
 {
     if (info.has_x25519_share && info.x25519_pub.size() == 32)
     {
@@ -1976,12 +1981,12 @@ std::expected<remote_server::key_share_result, boost::system::error_code> remote
     const client_hello_info& info,
     const std::uint8_t* public_key,
     const std::uint8_t* private_key,
-    const connection_context& ctx) const
+    const connection_context& ctx)
 {
     const auto selected = select_key_share(info, ctx);
     if (!selected.has_value())
     {
-        return std::unexpected(std::make_error_code(std::errc::invalid_argument));
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
     }
 
     auto sh_shared_result = reality::crypto_util::x25519_derive(std::vector<std::uint8_t>(private_key, private_key + 32), selected->x25519_pub);
@@ -2050,7 +2055,7 @@ boost::asio::awaitable<boost::system::error_code> remote_server::send_server_hel
     const std::vector<std::uint8_t>& sh_msg,
     const std::vector<std::uint8_t>& flight2_enc,
     const connection_context& ctx,
-    const std::uint32_t timeout_sec) const
+    const std::uint32_t timeout_sec)
 {
     LOG_CTX_INFO(ctx, "generated sh msg size {}", sh_msg.size());
     const auto out_sh = compose_server_hello_flight(sh_msg, flight2_enc);
@@ -2116,7 +2121,7 @@ boost::asio::awaitable<boost::system::error_code> remote_server::verify_client_f
     
     if (!verify_client_finished_plaintext(*plaintext_result, ctype, *expected_fin_verify, ctx))
     {
-        co_return std::make_error_code(std::errc::bad_message);
+        co_return boost::system::errc::make_error_code(boost::system::errc::bad_message);
     }
     co_return boost::system::error_code{};
 }
@@ -2138,7 +2143,7 @@ std::pair<std::string, std::string> remote_server::find_fallback_target_by_sni(c
     return {};
 }
 
-std::string remote_server::fallback_guard_key(const connection_context& ctx) const
+std::string remote_server::fallback_guard_key(const connection_context& ctx)
 {
     if (!ctx.remote_addr().empty())
     {
@@ -2207,7 +2212,7 @@ void remote_server::refill_fallback_tokens_locked(
     }
 
     const auto burst = static_cast<double>(fallback_guard_config_.burst);
-    state.tokens = std::min(burst, state.tokens + elapsed * rate_per_sec);
+    state.tokens = std::min(burst, state.tokens + (elapsed * rate_per_sec));
     state.last_refill = now;
 }
 
@@ -2240,7 +2245,7 @@ bool remote_server::consume_fallback_token(const connection_context& ctx)
     }
 
     const auto now = std::chrono::steady_clock::now();
-    std::lock_guard<std::mutex> lock(fallback_guard_mu_);
+    const std::lock_guard<std::mutex> lock(fallback_guard_mu_);
     cleanup_fallback_guard_state_locked(now);
 
     const auto source_key = fallback_guard_key(ctx);
@@ -2258,7 +2263,7 @@ void remote_server::record_fallback_result(const connection_context& ctx, const 
     }
 
     const auto now = std::chrono::steady_clock::now();
-    std::lock_guard<std::mutex> lock(fallback_guard_mu_);
+    const std::lock_guard<std::mutex> lock(fallback_guard_mu_);
     auto it = fallback_guard_states_.find(fallback_guard_key(ctx));
     if (it == fallback_guard_states_.end())
     {
@@ -2336,3 +2341,4 @@ boost::asio::awaitable<void> remote_server::handle_fallback(const std::shared_pt
 }
 
 }    // namespace mux
+// NOLINTEND(misc-include-cleaner)

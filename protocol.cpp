@@ -1,9 +1,10 @@
+// NOLINTBEGIN(misc-include-cleaner)
+#include <boost/system/error_code.hpp>
 #include <string>
 #include <vector>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <system_error>
 
 #include <boost/asio/ip/address.hpp>
 #include <boost/asio/ip/address_v4.hpp>
@@ -21,7 +22,7 @@ namespace
         return false;
     }
     return len - pos >= need;
-}
+}    // namespace
 
 bool parse_ipv4_address(const std::uint8_t* data, const std::size_t len, std::size_t& pos, std::string& addr)
 {
@@ -34,7 +35,7 @@ bool parse_ipv4_address(const std::uint8_t* data, const std::size_t len, std::si
     addr = boost::asio::ip::address_v4(bytes).to_string();
     pos += 4;
     return true;
-}
+}    // namespace
 
 bool parse_domain_address(const std::uint8_t* data, const std::size_t len, std::size_t& pos, std::string& addr)
 {
@@ -51,7 +52,7 @@ bool parse_domain_address(const std::uint8_t* data, const std::size_t len, std::
     addr = std::string(reinterpret_cast<const char*>(data) + pos, domain_len);
     pos += domain_len;
     return true;
-}
+}    // namespace
 
 bool parse_ipv6_address(const std::uint8_t* data, const std::size_t len, std::size_t& pos, std::string& addr)
 {
@@ -156,7 +157,7 @@ void append_udp_target_address(std::vector<std::uint8_t>& buf, const std::string
     append_udp_domain_address(buf, host);
 }
 
-}
+}    // namespace
 
 boost::asio::ip::address socks_codec::normalize_ip_address(const boost::asio::ip::address& addr)
 {
@@ -245,3 +246,4 @@ bool socks_codec::decode_socks5_auth_request(const std::uint8_t* data, std::size
     out.password = std::string(reinterpret_cast<const char*>(data) + pos, plen);
     return true;
 }
+// NOLINTEND(misc-include-cleaner)

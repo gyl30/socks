@@ -1,6 +1,7 @@
 #ifndef MUX_STREAM_H
 #define MUX_STREAM_H
 
+#include <boost/system/error_code.hpp>
 #include <tuple>
 #include <atomic>
 #include <memory>
@@ -8,7 +9,6 @@
 #include <vector>
 #include <cstddef>
 #include <cstdint>
-#include <system_error>
 
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/io_context.hpp>

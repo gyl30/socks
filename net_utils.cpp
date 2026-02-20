@@ -1,15 +1,21 @@
+// NOLINTBEGIN(misc-include-cleaner)
 #include <array>
+#include <boost/asio/ip/address_v4.hpp>
+#include <boost/asio/ip/address_v6.hpp>
+#include <boost/system/error_code.hpp>
+#include <boost/system/detail/system_category.hpp>
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
 #include <expected>
+#include <linux/in.h>
+#include <linux/in6.h>
+#include <asm-generic/socket.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
-#include <system_error>
+#include <optional>
 
 #ifdef __linux__
-#include <linux/netfilter_ipv4.h>
-#include <linux/netfilter_ipv6.h>
 
 #endif
 
@@ -33,14 +39,14 @@ boost::asio::ip::udp::endpoint make_v4_endpoint(const in_addr& addr, const in_po
 {
     boost::asio::ip::address_v4::bytes_type bytes{};
     std::memcpy(bytes.data(), &addr, bytes.size());
-    return boost::asio::ip::udp::endpoint(boost::asio::ip::address_v4(bytes), ntohs(port));
+    return {boost::asio::ip::address_v4(bytes), ntohs(port)};
 }
 
 boost::asio::ip::udp::endpoint make_v6_endpoint(const in6_addr& addr, const in_port_t port)
 {
     boost::asio::ip::address_v6::bytes_type bytes{};
     std::memcpy(bytes.data(), &addr, bytes.size());
-    return boost::asio::ip::udp::endpoint(boost::asio::ip::address_v6(bytes), ntohs(port));
+    return {boost::asio::ip::address_v6(bytes), ntohs(port)};
 }
 
 std::optional<boost::asio::ip::udp::endpoint> parse_ipv4_original_dst(const cmsghdr* cm)
@@ -82,7 +88,7 @@ boost::asio::ip::udp::endpoint endpoint_from_sockaddr_v4(const sockaddr_storage&
 {
     if (len < sizeof(sockaddr_in))
     {
-        return boost::asio::ip::udp::endpoint();
+        return {};
     }
     const auto* v4 = reinterpret_cast<const sockaddr_in*>(&addr);
     return make_v4_endpoint(v4->sin_addr, v4->sin_port);
@@ -92,7 +98,7 @@ boost::asio::ip::udp::endpoint endpoint_from_sockaddr_v6(const sockaddr_storage&
 {
     if (len < sizeof(sockaddr_in6))
     {
-        return boost::asio::ip::udp::endpoint();
+        return {};
     }
     const auto* v6 = reinterpret_cast<const sockaddr_in6*>(&addr);
     return make_v6_endpoint(v6->sin6_addr, v6->sin6_port);
@@ -173,7 +179,7 @@ boost::asio::ip::address normalize_address(const boost::asio::ip::address& addr)
         if (v6.is_v4_mapped())
         {
             const auto bytes = v6.to_bytes();
-            boost::asio::ip::address_v4::bytes_type v4_bytes = {bytes[12], bytes[13], bytes[14], bytes[15]};
+            const boost::asio::ip::address_v4::bytes_type v4_bytes = {bytes[12], bytes[13], bytes[14], bytes[15]};
             return boost::asio::ip::address_v4(v4_bytes);
         }
     }
@@ -182,7 +188,7 @@ boost::asio::ip::address normalize_address(const boost::asio::ip::address& addr)
 
 boost::asio::ip::udp::endpoint normalize_endpoint(const boost::asio::ip::udp::endpoint& ep)
 {
-    return boost::asio::ip::udp::endpoint(normalize_address(ep.address()), ep.port());
+    return {normalize_address(ep.address()), ep.port()};
 }
 
 std::optional<boost::asio::ip::udp::endpoint> parse_original_dst(const msghdr& msg)
@@ -213,7 +219,8 @@ boost::asio::ip::udp::endpoint endpoint_from_sockaddr(const sockaddr_storage& ad
     {
         return endpoint_from_sockaddr_v6(addr, len);
     }
-    return boost::asio::ip::udp::endpoint();
+    return {};
 }
 
 }    // namespace mux::net
+// NOLINTEND(misc-include-cleaner)

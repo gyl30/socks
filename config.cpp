@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <cstdio>
 #include <cerrno>
 #include <cstring>
@@ -5,10 +6,12 @@
 #include <optional>
 #include <expected>
 #include <utility>
+#include <vector>
 
 #include <openssl/crypto.h>
 
 #include "config.h"
+#include "rapidjson/error/error.h"
 #include "reflect.h"
 #include "crypto_util.h"
 #include "mux_protocol.h"
@@ -198,7 +201,7 @@ constexpr std::uint32_t kQueueCapacityMax = 65535;
 {
     rapidjson::Document reader;
     const rapidjson::ParseResult parse_result = reader.Parse(text.c_str());
-    if (!parse_result)
+    if (parse_result.IsError())
     {
         return std::unexpected(
             make_config_error("/", "json parse error at offset " + std::to_string(parse_result.Offset()) + ": " + rapidjson::GetParseError_En(parse_result.Code())));

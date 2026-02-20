@@ -1,16 +1,17 @@
+// NOLINTBEGIN(misc-include-cleaner)
 #include <array>
+#include <boost/system/error_code.hpp>
+#include <fstream>
+#include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
-#include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <utility>
 #include <charconv>
 #include <string_view>
 #include <system_error>
 
-#include <boost/asio.hpp>
 #include <boost/asio/ip/address.hpp>
 #include <boost/asio/ip/address_v4.hpp>
 #include <boost/asio/ip/address_v6.hpp>
@@ -38,6 +39,40 @@ bool get_bit_v6(const std::array<std::uint8_t, 16>& bytes, int index)
     const int byte_index = index / 8;
     const int bit_index = 7 - (index % 8);
     return ((bytes[static_cast<std::size_t>(byte_index)] >> bit_index) & 1U) != 0U;
+}
+
+void trim_ascii_whitespace(std::string& line)
+{
+    line.erase(0, line.find_first_not_of(" \t\r\n"));
+    const auto last = line.find_last_not_of(" \t\r\n");
+    if (last == std::string::npos)
+    {
+        line.clear();
+        return;
+    }
+    line.erase(last + 1);
+}
+
+std::string sanitize_ip_rule_line(const std::string_view raw_line)
+{
+    std::string line(raw_line);
+    const auto comment_pos = line.find('#');
+    if (comment_pos != std::string::npos)
+    {
+        line.erase(comment_pos);
+    }
+    trim_ascii_whitespace(line);
+    return line;
+}
+
+bool read_ip_rule_line(std::ifstream& ip_file, std::string& line)
+{
+    if (!std::getline(ip_file, line))
+    {
+        return false;
+    }
+    line = sanitize_ip_rule_line(line);
+    return true;
 }
 }    // namespace
 
@@ -193,49 +228,19 @@ ip_matcher::~ip_matcher() = default;
 
 bool ip_matcher::load(const std::string& filename)
 {
-    struct file_guard
-    {
-        FILE* file = nullptr;
-        ~file_guard()
-        {
-            if (file != nullptr)
-            {
-                (void)std::fclose(file);
-            }
-        }
-    };
-
-    file_guard guard{std::fopen(filename.c_str(), "r")};
-    if (guard.file == nullptr)
+    std::ifstream ip_file(filename);
+    if (!ip_file.is_open())
     {
         LOG_WARN("failed to open direct ip file {}", filename);
         return false;
     }
 
-    char* raw_line = nullptr;
-    std::size_t raw_line_capacity = 0;
-    struct line_buffer_guard
+    std::string line;
+    while (read_ip_rule_line(ip_file, line))
     {
-        char*& raw_line;
-        ~line_buffer_guard() { std::free(raw_line); }
-    } raw_line_guard{raw_line};
-
-    while (true)
-    {
-        const ssize_t line_size = ::getline(&raw_line, &raw_line_capacity, guard.file);
-        if (line_size < 0)
-        {
-            break;
-        }
-
-        std::string line(raw_line, static_cast<std::size_t>(line_size));
-        if (line.empty() || line[0] == '#')
+        if (line.empty())
         {
             continue;
-        }
-        if (line.back() == '\r')
-        {
-            line.pop_back();
         }
         add_rule(line);
     }
@@ -377,3 +382,4 @@ void ip_matcher::optimize_node(const std::unique_ptr<trie_node>& node)
 }
 
 }    // namespace mux
+// NOLINTEND(misc-include-cleaner)

@@ -1,21 +1,30 @@
+// NOLINTBEGIN(misc-include-cleaner)
+#include <boost/asio/co_spawn.hpp>    // NOLINT(misc-include-cleaner): required for co_spawn declarations.
+#include <chrono>
+#include <boost/system/error_code.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/io_context.hpp>
+#include <atomic>
+#include <boost/asio/awaitable.hpp>
+#include <cstddef>
 #include <memory>
 #include <string>
 #include <vector>
 #include <cstdint>
 #include <utility>
-#include <system_error>
 
 #include <boost/asio/error.hpp>
 #include <boost/asio/write.hpp>
 #include <boost/asio/buffer.hpp>
 #include <boost/asio/as_tuple.hpp>
-#include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/redirect_error.hpp>
 #include <boost/asio/experimental/channel_error.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
 
+#include "client_tunnel_pool.h"
+#include "config.h"
 #include "log.h"
 #include "router.h"
 #include "upstream.h"
@@ -63,13 +72,13 @@ tproxy_tcp_session::tproxy_tcp_session(boost::asio::ip::tcp::socket socket,
                                        std::shared_ptr<router> router,
                                        const std::uint32_t sid,
                                        const config& cfg,
-                                       const boost::asio::ip::tcp::endpoint& dst_ep)
+                                       boost::asio::ip::tcp::endpoint dst_ep)
     : io_context_(io_context),
       socket_(std::move(socket)),
       idle_timer_(io_context_),
       tunnel_pool_(std::move(tunnel_pool)),
       router_(std::move(router)),
-      dst_ep_(dst_ep),
+      dst_ep_(std::move(dst_ep)),
       timeout_config_(cfg.timeout),
       mark_(cfg.tproxy.mark)
 {
@@ -371,3 +380,4 @@ boost::asio::awaitable<void> tproxy_tcp_session::idle_watchdog(std::shared_ptr<u
 }
 
 }    // namespace mux
+// NOLINTEND(misc-include-cleaner)
