@@ -47,13 +47,12 @@ class cert_fetcher
     static std::string hex(const std::vector<std::uint8_t>& data);
     static std::string hex(const std::uint8_t* data, std::size_t len);
 
-    static boost::asio::awaitable<std::optional<fetch_result>> fetch(
-        boost::asio::io_context& io_context,
-        std::string host,
-        std::uint16_t port,
-        std::string sni,
-        const std::string& trace_id = "",
-        std::uint32_t connect_timeout_sec = 10);
+    static boost::asio::awaitable<std::optional<fetch_result>> fetch(boost::asio::io_context& io_context,
+                                                                     std::string host,
+                                                                     std::uint16_t port,
+                                                                     std::string sni,
+                                                                     const std::string& trace_id = "",
+                                                                     std::uint32_t connect_timeout_sec = 10);
 
    private:
     class fetch_session
@@ -78,11 +77,11 @@ class cert_fetcher
 
         boost::asio::awaitable<std::vector<std::uint8_t>> find_certificate();
         boost::asio::awaitable<std::expected<void, boost::system::error_code>> append_next_handshake_record(handshake_reassembler& assembler,
-                                                                                           std::vector<std::uint8_t>& pt_buf,
-                                                                                           int record_index);
+                                                                                                            std::vector<std::uint8_t>& pt_buf,
+                                                                                                            int record_index);
         std::expected<bool, boost::system::error_code> consume_handshake_messages(handshake_reassembler& assembler,
-                                                                        std::vector<std::uint8_t>& msg,
-                                                                        std::vector<std::uint8_t>& cert_msg);
+                                                                                  std::vector<std::uint8_t>& msg,
+                                                                                  std::vector<std::uint8_t>& cert_msg);
         bool process_handshake_message(const std::vector<std::uint8_t>& msg, std::vector<std::uint8_t>& cert_msg);
 
         boost::system::error_code process_server_hello(const std::vector<std::uint8_t>& sh_body);
@@ -92,13 +91,9 @@ class cert_fetcher
         static std::expected<void, boost::system::error_code> validate_record_length(std::uint16_t len);
         boost::asio::awaitable<std::expected<void, boost::system::error_code>> read_record_body(std::uint16_t len, std::vector<std::uint8_t>& rec);
         std::expected<std::pair<std::uint8_t, std::span<std::uint8_t>>, boost::system::error_code> decrypt_application_record(
-            const std::uint8_t head[5],
-            const std::vector<std::uint8_t>& rec,
-            std::vector<std::uint8_t>& pt_buf);
+            const std::uint8_t head[5], const std::vector<std::uint8_t>& rec, std::vector<std::uint8_t>& pt_buf);
         std::expected<std::pair<std::uint8_t, std::span<std::uint8_t>>, boost::system::error_code> handle_record_by_content_type(
-            const std::uint8_t head[5],
-            const std::vector<std::uint8_t>& rec,
-            std::vector<std::uint8_t>& pt_buf);
+            const std::uint8_t head[5], const std::vector<std::uint8_t>& rec, std::vector<std::uint8_t>& pt_buf);
 
         boost::asio::awaitable<std::expected<std::pair<std::uint8_t, std::span<std::uint8_t>>, boost::system::error_code>> read_record(
             std::vector<std::uint8_t>& pt_buf);
