@@ -1,6 +1,8 @@
 #ifndef CRYPTO_UTIL_H
 #define CRYPTO_UTIL_H
 
+#include <boost/system/error_code.hpp>
+#include <openssl/types.h>
 #include <span>
 #include <string>
 #include <vector>
@@ -9,12 +11,8 @@
 #include <cstring>
 #include <expected>
 
-#include <boost/system/error_code.hpp>
-
 extern "C"
 {
-#include <openssl/evp.h>
-#include <openssl/kdf.h>
 }
 
 #include "reality_core.h"

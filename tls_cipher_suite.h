@@ -1,12 +1,12 @@
 #ifndef TLS_CIPHER_SUITE_H
 #define TLS_CIPHER_SUITE_H
 
+#include <openssl/types.h>
 #include <optional>
 #include <cstdint>
 
 extern "C"
 {
-#include <openssl/evp.h>
 }
 
 namespace reality

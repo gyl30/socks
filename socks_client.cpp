@@ -1,21 +1,31 @@
+// NOLINTBEGIN(misc-include-cleaner)
+#include <boost/asio/co_spawn.hpp>    // NOLINT(misc-include-cleaner): required for co_spawn declarations.
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/system/error_code.hpp>
+#include <boost/asio/ip/address.hpp>
+#include <boost/asio/socket_base.hpp>
+#include <boost/asio/awaitable.hpp>
+#include <boost/asio/io_context.hpp>
+#include <atomic>
 #include <chrono>
 #include <memory>
 #include <thread>
 #include <string>
+#include <utility>
 #include <vector>
 #include <cstdint>
-#include <system_error>
 
 #include <boost/asio/error.hpp>
 #include <boost/asio/as_tuple.hpp>
-#include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
-#include <boost/asio/dispatch.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/use_awaitable.hpp>
 
+#include "client_tunnel_pool.h"
+#include "context_pool.h"
 #include "log.h"
 #include "config.h"
+#include "mux_tunnel.h"
 #include "router.h"
 #include "stop_dispatch.h"
 #include "socks_client.h"
@@ -128,7 +138,7 @@ boost::asio::awaitable<void> wait_retry_delay(boost::asio::io_context& io_contex
     (void)co_await retry_timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
 }
 
-enum class local_accept_status
+enum class local_accept_status : std::uint8_t
 {
     kAccepted,
     kRetry,
@@ -545,3 +555,4 @@ boost::asio::awaitable<void> socks_client::accept_local_loop()
 }
 
 }    // namespace mux
+// NOLINTEND(misc-include-cleaner)
