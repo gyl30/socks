@@ -1,3 +1,5 @@
+// NOLINTBEGIN(performance-unnecessary-value-param, readability-function-cognitive-complexity, readability-static-accessed-through-instance)
+// NOLINTBEGIN(bugprone-unused-return-value, misc-include-cleaner)
 #include <chrono>
 #include <array>
 #include <atomic>
@@ -26,6 +28,7 @@ extern "C"
 #define private public
 #include "cert_fetcher.h"
 #undef private
+#include "crypto_util.h"
 
 namespace
 {
@@ -48,29 +51,29 @@ void fail_rand_bytes_on_call(const int call_index)
     g_fail_rand_bytes_on_call.store(call_index, std::memory_order_release);
 }
 
-extern "C" int __real_EVP_PKEY_CTX_set_hkdf_md(EVP_PKEY_CTX* ctx, const EVP_MD* md);
-extern "C" int __real_EVP_PKEY_keygen(EVP_PKEY_CTX* ctx, EVP_PKEY** ppkey);
-extern "C" int __real_RAND_bytes(unsigned char* buf, int num);
+extern "C" int __real_EVP_PKEY_CTX_set_hkdf_md(EVP_PKEY_CTX* ctx, const EVP_MD* md);  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_EVP_PKEY_keygen(EVP_PKEY_CTX* ctx, EVP_PKEY** ppkey);  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_RAND_bytes(unsigned char* buf, int num);  // NOLINT(bugprone-reserved-identifier)
 
-extern "C" int __wrap_EVP_PKEY_CTX_set_hkdf_md(EVP_PKEY_CTX* ctx, const EVP_MD* md)
+extern "C" int __wrap_EVP_PKEY_CTX_set_hkdf_md(EVP_PKEY_CTX* ctx, const EVP_MD* md)  // NOLINT(bugprone-reserved-identifier)
 {
     if (g_fail_hkdf_md_once.exchange(false, std::memory_order_acq_rel))
     {
         return 0;
     }
-    return __real_EVP_PKEY_CTX_set_hkdf_md(ctx, md);
+    return __real_EVP_PKEY_CTX_set_hkdf_md(ctx, md);  // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_EVP_PKEY_keygen(EVP_PKEY_CTX* ctx, EVP_PKEY** ppkey)
+extern "C" int __wrap_EVP_PKEY_keygen(EVP_PKEY_CTX* ctx, EVP_PKEY** ppkey)  // NOLINT(bugprone-reserved-identifier)
 {
     if (g_fail_keygen_once.exchange(false, std::memory_order_acq_rel))
     {
         return 0;
     }
-    return __real_EVP_PKEY_keygen(ctx, ppkey);
+    return __real_EVP_PKEY_keygen(ctx, ppkey);  // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_RAND_bytes(unsigned char* buf, int num)
+extern "C" int __wrap_RAND_bytes(unsigned char* buf, int num)  // NOLINT(bugprone-reserved-identifier)
 {
     const int target_call = g_fail_rand_bytes_on_call.load(std::memory_order_acquire);
     if (target_call > 0)
@@ -82,7 +85,7 @@ extern "C" int __wrap_RAND_bytes(unsigned char* buf, int num)
             return 0;
         }
     }
-    return __real_RAND_bytes(buf, num);
+    return __real_RAND_bytes(buf, num);  // NOLINT(bugprone-reserved-identifier)
 }
 
 constexpr char kTestCertPem[] =
@@ -148,7 +151,7 @@ class local_tls_server
         SSL_CTX_set_min_proto_version(ssl_ctx_.native_handle(), TLS1_3_VERSION);
 #endif
 
-        boost::asio::ip::tcp::endpoint ep(boost::asio::ip::make_address("127.0.0.1"), 0);
+        boost::asio::ip::tcp::endpoint const ep(boost::asio::ip::make_address("127.0.0.1"), 0);
         boost::system::error_code ec;
         acceptor_.open(ep.protocol(), ec);
         acceptor_.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true), ec);
@@ -306,7 +309,7 @@ TEST(CertFetcherTest, MockServerScenarios)
     auto run_mock_server = [&](std::vector<std::uint8_t> data_to_send)
     {
         auto acceptor = std::make_shared<tcp::acceptor>(ctx, tcp::endpoint(tcp::v4(), 0));
-        std::uint16_t port = acceptor->local_endpoint().port();
+        std::uint16_t const port = acceptor->local_endpoint().port();
 
         boost::asio::co_spawn(
             ctx,
@@ -322,7 +325,7 @@ TEST(CertFetcherTest, MockServerScenarios)
     };
 
     {
-        std::vector<std::uint8_t> bad_rec = {0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x32};
+        std::vector<std::uint8_t> const bad_rec = {0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x32};
         std::uint16_t port = run_mock_server(bad_rec);
 
         boost::asio::co_spawn(
@@ -339,7 +342,7 @@ TEST(CertFetcherTest, MockServerScenarios)
     }
 
     {
-        std::vector<std::uint8_t> unexpected_type = {0x17, 0x03, 0x03, 0x00, 0x05, 0x01, 0x02, 0x03, 0x04, 0x05};
+        std::vector<std::uint8_t> const unexpected_type = {0x17, 0x03, 0x03, 0x00, 0x05, 0x01, 0x02, 0x03, 0x04, 0x05};
         std::uint16_t port = run_mock_server(unexpected_type);
 
         boost::asio::co_spawn(
@@ -356,7 +359,7 @@ TEST(CertFetcherTest, MockServerScenarios)
     }
 
     {
-        std::vector<std::uint8_t> short_sh = {0x16, 0x03, 0x03, 0x00, 0x05, 0x02, 0x00, 0x00, 0x00, 0x01};
+        std::vector<std::uint8_t> const short_sh = {0x16, 0x03, 0x03, 0x00, 0x05, 0x02, 0x00, 0x00, 0x00, 0x01};
         std::uint16_t port = run_mock_server(short_sh);
 
         boost::asio::co_spawn(
@@ -373,7 +376,7 @@ TEST(CertFetcherTest, MockServerScenarios)
     }
 
     {
-        std::vector<std::uint8_t> too_short_sh = {0x16, 0x03, 0x03, 0x00, 0x03, 0x02, 0x00, 0x00};
+        std::vector<std::uint8_t> const too_short_sh = {0x16, 0x03, 0x03, 0x00, 0x03, 0x02, 0x00, 0x00};
         std::uint16_t port = run_mock_server(too_short_sh);
 
         boost::asio::co_spawn(
@@ -390,7 +393,7 @@ TEST(CertFetcherTest, MockServerScenarios)
     }
 
     {
-        std::vector<std::uint8_t> long_rec = {0x16, 0x03, 0x03, 0x48, 0x01};
+        std::vector<std::uint8_t> const long_rec = {0x16, 0x03, 0x03, 0x48, 0x01};
         std::uint16_t port = run_mock_server(long_rec);
 
         boost::asio::co_spawn(
@@ -407,9 +410,9 @@ TEST(CertFetcherTest, MockServerScenarios)
     }
 
     {
-        std::vector<uint8_t> bad_cs_sh = {0x16, 0x03, 0x03, 0x00, 0x30, 0x02, 0x00, 0x00, 0x2c, 0x03, 0x03, 0,    0,    0,    0,   0,
-                                          0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,   0,
-                                          0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0x00, 0x00, 0x00, 0x00};
+        std::vector<uint8_t> const bad_cs_sh = {0x16, 0x03, 0x03, 0x00, 0x30, 0x02, 0x00, 0x00, 0x2c, 0x03, 0x03, 0,    0,    0,    0,   0,
+                                                0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,   0,
+                                                0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0x00, 0x00, 0x00, 0x00};
         uint16_t port = run_mock_server(bad_cs_sh);
 
         boost::asio::co_spawn(
@@ -426,8 +429,8 @@ TEST(CertFetcherTest, MockServerScenarios)
     }
 
     {
-        std::vector<uint8_t> short_sid_sh = {0x16, 0x03, 0x03, 0x00, 0x26, 0x02, 0x00, 0x00, 0x22, 0x03, 0x03, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                                             0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+        std::vector<uint8_t> const short_sid_sh = {0x16, 0x03, 0x03, 0x00, 0x26, 0x02, 0x00, 0x00, 0x22, 0x03, 0x03, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                                                   0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 
         };
         uint16_t port = run_mock_server(short_sid_sh);
@@ -446,9 +449,9 @@ TEST(CertFetcherTest, MockServerScenarios)
     }
 
     {
-        std::vector<uint8_t> sh_1302 = {0x16, 0x03, 0x03, 0x00, 0x2a, 0x02, 0x00, 0x00, 0x26, 0x03, 0x03, 0,    0,    0,    0,   0,
-                                        0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,   0,
-                                        0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0x00, 0x13, 0x02, 0x00};
+        std::vector<uint8_t> const sh_1302 = {0x16, 0x03, 0x03, 0x00, 0x2a, 0x02, 0x00, 0x00, 0x26, 0x03, 0x03, 0,    0,    0,    0,   0,
+                                              0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,   0,
+                                              0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0x00, 0x13, 0x02, 0x00};
         uint16_t port = run_mock_server(sh_1302);
 
         boost::asio::co_spawn(
@@ -465,9 +468,9 @@ TEST(CertFetcherTest, MockServerScenarios)
     }
 
     {
-        std::vector<uint8_t> sh_1303 = {0x16, 0x03, 0x03, 0x00, 0x2a, 0x02, 0x00, 0x00, 0x26, 0x03, 0x03, 0,    0,    0,    0,   0,
-                                        0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,   0,
-                                        0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0x00, 0x13, 0x03, 0x00};
+        std::vector<uint8_t> const sh_1303 = {0x16, 0x03, 0x03, 0x00, 0x2a, 0x02, 0x00, 0x00, 0x26, 0x03, 0x03, 0,    0,    0,    0,   0,
+                                              0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,   0,
+                                              0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0x00, 0x13, 0x03, 0x00};
         uint16_t port = run_mock_server(sh_1303);
 
         boost::asio::co_spawn(
@@ -484,9 +487,9 @@ TEST(CertFetcherTest, MockServerScenarios)
     }
 
     {
-        std::vector<uint8_t> short_sh_for_cs = {0x16, 0x03, 0x03, 0x00, 0x27, 0x02, 0x00, 0x00, 0x23, 0x03, 0x03, 0, 0, 0,   0,
-                                                0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0, 0, 0,   0,
-                                                0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0, 0, 0x00
+        std::vector<uint8_t> const short_sh_for_cs = {0x16, 0x03, 0x03, 0x00, 0x27, 0x02, 0x00, 0x00, 0x23, 0x03, 0x03, 0, 0, 0,   0,
+                                                      0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0, 0, 0,   0,
+                                                      0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0, 0, 0x00
 
         };
         uint16_t port = run_mock_server(short_sh_for_cs);
@@ -505,7 +508,7 @@ TEST(CertFetcherTest, MockServerScenarios)
     }
 
     {
-        std::vector<std::uint8_t> invalid_type = {0x99, 0x03, 0x03, 0x00, 0x01, 0x00};
+        std::vector<std::uint8_t> const invalid_type = {0x99, 0x03, 0x03, 0x00, 0x01, 0x00};
         uint16_t port = run_mock_server(invalid_type);
 
         boost::asio::co_spawn(
@@ -600,7 +603,7 @@ TEST(CertFetcherTest, WhiteBoxHelpersAndRecordTypeBranches)
     EXPECT_FALSE(len_res.has_value());
     EXPECT_EQ(len_res.error(), std::errc::message_size);
 
-    std::vector<std::uint8_t> rec = {0xaa, 0xbb, 0xcc};
+    std::vector<std::uint8_t> const rec = {0xaa, 0xbb, 0xcc};
     std::vector<std::uint8_t> pt_buf(1, 0);
 
     std::uint8_t alert_head[5] = {reality::kContentTypeAlert, 0x03, 0x03, 0x00, 0x03};
@@ -625,7 +628,7 @@ TEST(CertFetcherTest, WhiteBoxHelpersAndRecordTypeBranches)
     session.dec_key_.clear();
 
     std::uint8_t app_head[5] = {reality::kContentTypeApplicationData, 0x03, 0x03, 0x00, 0x10};
-    std::vector<std::uint8_t> app_rec(16, 0);
+    std::vector<std::uint8_t> const app_rec(16, 0);
     auto app_ret = session.decrypt_application_record(app_head, app_rec, pt_buf);
     EXPECT_FALSE(app_ret.has_value());
     EXPECT_EQ(app_ret.error(), std::errc::invalid_argument);
@@ -689,7 +692,9 @@ TEST(CertFetcherTest, ProcessServerHelloTruncatedMessageLength)
     boost::asio::io_context ctx;
     reality::cert_fetcher::fetch_session session(ctx, "127.0.0.1", 443, "example.com", "trace");
 
-    std::vector<std::uint8_t> server_hello = {0x02, 0x00, 0x00, 0x20, 0x01};
+    std::vector<std::uint8_t> const server_hello = {0x02, 0x00, 0x00, 0x20, 0x01};
     const auto ec = session.process_server_hello(server_hello);
     EXPECT_EQ(ec, boost::asio::error::fault);
 }
+// NOLINTEND(bugprone-unused-return-value, misc-include-cleaner)
+// NOLINTEND(performance-unnecessary-value-param, readability-function-cognitive-complexity, readability-static-accessed-through-instance)

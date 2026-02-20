@@ -1,3 +1,4 @@
+// NOLINTBEGIN(misc-include-cleaner)
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -9,7 +10,7 @@
 
 #include "ip_matcher.h"
 
-class ip_matcher_test : public ::testing::Test
+class IpMatcherTest : public ::testing::Test
 {
    protected:
     void SetUp() override
@@ -36,7 +37,7 @@ class ip_matcher_test : public ::testing::Test
     std::string rule_file_;
 };
 
-TEST_F(ip_matcher_test, MatchIPv4Basic)
+TEST_F(IpMatcherTest, MatchIPv4Basic)
 {
     WriteRules({"192.168.1.0/24", "10.0.0.0/8"});
 
@@ -54,7 +55,7 @@ TEST_F(ip_matcher_test, MatchIPv4Basic)
     EXPECT_FALSE(matcher.match(boost::asio::ip::make_address("11.0.0.1", ec)));
 }
 
-TEST_F(ip_matcher_test, MatchIPv6Basic)
+TEST_F(IpMatcherTest, MatchIPv6Basic)
 {
     WriteRules({"2001:db8::/32", "fe80::/10", "::1/128"});
 
@@ -75,7 +76,7 @@ TEST_F(ip_matcher_test, MatchIPv6Basic)
     EXPECT_FALSE(matcher.match(boost::asio::ip::make_address("::2", ec)));
 }
 
-TEST_F(ip_matcher_test, MatchIPv6ComplexMasks)
+TEST_F(IpMatcherTest, MatchIPv6ComplexMasks)
 {
     WriteRules({"2400:cb00::/32", "2606:4700:4700::/96"});
 
@@ -88,7 +89,7 @@ TEST_F(ip_matcher_test, MatchIPv6ComplexMasks)
     EXPECT_FALSE(matcher.match(boost::asio::ip::make_address("2606:4700:4700:1::1", ec)));
 }
 
-TEST_F(ip_matcher_test, EdgeCasesOptimization)
+TEST_F(IpMatcherTest, EdgeCasesOptimization)
 {
     WriteRules({"192.168.1.0/24", "192.168.1.0/25", "192.168.2.0/24", "2001:db8::/32", "2001:db8:8000::/33"});
 
@@ -106,7 +107,7 @@ TEST_F(ip_matcher_test, EdgeCasesOptimization)
     EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("2001:db8::1", ec)));
 }
 
-TEST_F(ip_matcher_test, EdgeCasesInvalidInputs)
+TEST_F(IpMatcherTest, EdgeCasesInvalidInputs)
 {
     WriteRules({"1.2.3.4/24", "invalid_ip", "999.999.999.999/24", "10.0.0.1/33", "fe80::1/129", "# Comments should be ignored", "   ", "8.8.8.8/32"});
 
@@ -121,7 +122,7 @@ TEST_F(ip_matcher_test, EdgeCasesInvalidInputs)
     EXPECT_FALSE(matcher.match(boost::asio::ip::make_address("10.0.0.1", ec)));
 }
 
-TEST_F(ip_matcher_test, MatchIPv4MatchAll)
+TEST_F(IpMatcherTest, MatchIPv4MatchAll)
 {
     WriteRules({"0.0.0.0/0"});
     mux::ip_matcher matcher;
@@ -132,7 +133,7 @@ TEST_F(ip_matcher_test, MatchIPv4MatchAll)
     EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("255.255.255.255", ec)));
 }
 
-TEST_F(ip_matcher_test, MatchIPv6MatchAll)
+TEST_F(IpMatcherTest, MatchIPv6MatchAll)
 {
     WriteRules({"::/0"});
     mux::ip_matcher matcher;
@@ -143,7 +144,7 @@ TEST_F(ip_matcher_test, MatchIPv6MatchAll)
     EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("::1", ec)));
 }
 
-TEST_F(ip_matcher_test, PrefixWithSpaces)
+TEST_F(IpMatcherTest, PrefixWithSpaces)
 {
     WriteRules({"192.168.1.0/24 ", "192.168.2.0/ 24"});
     mux::ip_matcher matcher;
@@ -155,7 +156,7 @@ TEST_F(ip_matcher_test, PrefixWithSpaces)
     EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("192.168.2.1", ec)));
 }
 
-TEST_F(ip_matcher_test, PrefixLeadingZero)
+TEST_F(IpMatcherTest, PrefixLeadingZero)
 {
     WriteRules({"10.0.0.0/08"});
     mux::ip_matcher matcher;
@@ -165,7 +166,7 @@ TEST_F(ip_matcher_test, PrefixLeadingZero)
     EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("10.1.1.1", ec)));
 }
 
-TEST_F(ip_matcher_test, PrefixOutOfRange)
+TEST_F(IpMatcherTest, PrefixOutOfRange)
 {
     WriteRules({"192.168.1.0/999"});
     mux::ip_matcher matcher;
@@ -175,7 +176,7 @@ TEST_F(ip_matcher_test, PrefixOutOfRange)
     EXPECT_FALSE(matcher.match(boost::asio::ip::make_address("192.168.1.1", ec)));
 }
 
-TEST_F(ip_matcher_test, IPv6Exact128BitBoundary)
+TEST_F(IpMatcherTest, IPv6Exact128BitBoundary)
 {
     WriteRules({"2001:db8::1/128"});
     mux::ip_matcher matcher;
@@ -186,7 +187,7 @@ TEST_F(ip_matcher_test, IPv6Exact128BitBoundary)
     EXPECT_FALSE(matcher.match(boost::asio::ip::make_address("2001:db8::2", ec)));
 }
 
-TEST_F(ip_matcher_test, LargeRuleSet)
+TEST_F(IpMatcherTest, LargeRuleSet)
 {
     std::vector<std::string> rules;
 
@@ -212,7 +213,7 @@ TEST_F(ip_matcher_test, LargeRuleSet)
     EXPECT_FALSE(matcher.match(boost::asio::ip::make_address("10.5.0.1", ec)));
 }
 
-TEST_F(ip_matcher_test, IPv6OddBitPrefix)
+TEST_F(IpMatcherTest, IPv6OddBitPrefix)
 {
     WriteRules({"2001:db8::/65"});
     mux::ip_matcher matcher;
@@ -223,7 +224,7 @@ TEST_F(ip_matcher_test, IPv6OddBitPrefix)
     EXPECT_FALSE(matcher.match(boost::asio::ip::make_address("2001:db8:0:0:8000::1", ec)));
 }
 
-TEST_F(ip_matcher_test, IPv6NonCanonicalNetwork)
+TEST_F(IpMatcherTest, IPv6NonCanonicalNetwork)
 {
     WriteRules({"2001:db8::8000/65"});
     mux::ip_matcher matcher;
@@ -234,7 +235,7 @@ TEST_F(ip_matcher_test, IPv6NonCanonicalNetwork)
     EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("2001:db8::1", ec)));
 }
 
-TEST_F(ip_matcher_test, AttackMixedIPv4IPv6Massive)
+TEST_F(IpMatcherTest, AttackMixedIPv4IPv6Massive)
 {
     std::vector<std::string> rules;
 
@@ -260,7 +261,7 @@ TEST_F(ip_matcher_test, AttackMixedIPv4IPv6Massive)
     EXPECT_FALSE(matcher.match(boost::asio::ip::make_address("10.255.1.1", ec)));
 }
 
-TEST_F(ip_matcher_test, DoSNestedSubnets)
+TEST_F(IpMatcherTest, DoSNestedSubnets)
 {
     std::vector<std::string> rules;
 
@@ -280,7 +281,7 @@ TEST_F(ip_matcher_test, DoSNestedSubnets)
     EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("10.128.0.1", ec)));
 }
 
-TEST_F(ip_matcher_test, CarriageReturnAndPrefixParsingBranches)
+TEST_F(IpMatcherTest, CarriageReturnAndPrefixParsingBranches)
 {
     {
         std::ofstream f(rule_file(), std::ios::binary);
@@ -301,3 +302,4 @@ TEST_F(ip_matcher_test, CarriageReturnAndPrefixParsingBranches)
     EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("11.1.1.1", ec)));
     EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("2001:db8::1", ec)));
 }
+// NOLINTEND(misc-include-cleaner)

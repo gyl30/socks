@@ -1,3 +1,4 @@
+// NOLINTBEGIN(bugprone-implicit-widening-of-multiplication-result)
 #include <chrono>
 #include <thread>
 
@@ -17,9 +18,9 @@ TEST(LogContextTest, TargetInfo)
 
 TEST(LogContextTest, DurationSeconds)
 {
-    connection_context ctx;
+    connection_context const ctx;
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    double duration = ctx.duration_seconds();
+    double const duration = ctx.duration_seconds();
     EXPECT_GE(duration, 0.1);
     EXPECT_LT(duration, 1.0);
 }
@@ -29,7 +30,7 @@ TEST(LogContextTest, StatsSummary)
     connection_context ctx;
     ctx.tx_bytes(1024);
     ctx.rx_bytes(2048);
-    std::string summary = ctx.stats_summary();
+    std::string const summary = ctx.stats_summary();
     EXPECT_TRUE(summary.find("tx 1024") != std::string::npos);
     EXPECT_TRUE(summary.find("rx 2048") != std::string::npos);
     EXPECT_TRUE(summary.find("duration") != std::string::npos);
@@ -59,3 +60,4 @@ TEST(LogContextTest, FormatBytes)
 TEST(LogContextTest, FormatLatency) { EXPECT_EQ(format_latency_ms(123), "123ms"); }
 
 }    // namespace mux
+// NOLINTEND(bugprone-implicit-widening-of-multiplication-result)
