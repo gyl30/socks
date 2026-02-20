@@ -1,25 +1,26 @@
 #ifndef CERT_FETCHER_H
 #define CERT_FETCHER_H
 
+#include <expected>
+#include <boost/system/error_code.hpp>
+#include <openssl/types.h>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <optional>
-#include <system_error>
 
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/awaitable.hpp>
 
+#include "cipher_context.h"
 #include "transcript.h"
 #include "log_context.h"
-#include "reality_core.h"
 #include "reality_messages.h"
-#include "tls_key_schedule.h"
-#include "tls_record_layer.h"
 
 namespace reality
 {
@@ -73,7 +74,7 @@ class cert_fetcher
         boost::asio::awaitable<boost::system::error_code> perform_handshake_start();
         bool init_handshake_material(std::vector<std::uint8_t>& client_random, std::vector<std::uint8_t>& session_id);
         boost::asio::awaitable<boost::system::error_code> send_client_hello_record(const std::vector<std::uint8_t>& client_hello);
-        bool validate_server_hello_body(const std::vector<std::uint8_t>& sh_body) const;
+        [[nodiscard]] bool validate_server_hello_body(const std::vector<std::uint8_t>& sh_body) const;
 
         boost::asio::awaitable<std::vector<std::uint8_t>> find_certificate();
         boost::asio::awaitable<std::expected<void, boost::system::error_code>> append_next_handshake_record(handshake_reassembler& assembler,
@@ -88,7 +89,7 @@ class cert_fetcher
 
         boost::asio::awaitable<std::pair<boost::system::error_code, std::vector<std::uint8_t>>> read_record_plaintext();
 
-        std::expected<void, boost::system::error_code> validate_record_length(std::uint16_t len) const;
+        static std::expected<void, boost::system::error_code> validate_record_length(std::uint16_t len);
         boost::asio::awaitable<std::expected<void, boost::system::error_code>> read_record_body(std::uint16_t len, std::vector<std::uint8_t>& rec);
         std::expected<std::pair<std::uint8_t, std::span<std::uint8_t>>, boost::system::error_code> decrypt_application_record(
             const std::uint8_t head[5],

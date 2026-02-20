@@ -1,48 +1,42 @@
 #ifndef REMOTE_SERVER_H
 #define REMOTE_SERVER_H
 
-#include <array>
+#include <openssl/types.h>
 #include <atomic>
+#include <boost/system/error_code.hpp>
 #include <chrono>
 #include <memory>
-#include <random>
 #include <string>
 #include <vector>
 #include <cstdint>
 #include <cstddef>
 #include <utility>
 #include <optional>
-#include <system_error>
 #include <expected>
 #include <unordered_map>
-#include <unordered_set>
 #include <mutex>
 
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/awaitable.hpp>
-#include <boost/asio/steady_timer.hpp>
+#include "reality_core.h"
+#include "mux_protocol.h"
+#include "mux_connection.h"
 
 extern "C"
 {
-#include <openssl/evp.h>
 }
 
 #include "config.h"
-#include "protocol.h"
 #include "ch_parser.h"
-#include "constants.h"
 #include "mux_tunnel.h"
 #include "transcript.h"
 #include "key_rotator.h"
 #include "log_context.h"
-#include "cert_fetcher.h"
 #include "cert_manager.h"
 #include "context_pool.h"
 #include "replay_cache.h"
 #include "reality_messages.h"
-#include "tls_key_schedule.h"
-#include "tls_record_layer.h"
 
 namespace mux
 {
@@ -79,7 +73,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         return started_.load(std::memory_order_acquire) && !stop_.load(std::memory_order_acquire) && acceptor_.is_open();
     }
 
-    void set_certificate(std::string sni,
+    void set_certificate(const std::string& sni,
                          std::vector<std::uint8_t> cert_msg,
                          reality::server_fingerprint fp,
                          const std::string& trace_id = "");
@@ -112,8 +106,8 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> s_app_keys;
     };
 
-    [[nodiscard]] std::expected<app_keys, boost::system::error_code> derive_application_traffic_keys(
-        const server_handshake_res& sh_res) const;
+    [[nodiscard]] static std::expected<app_keys, boost::system::error_code> derive_application_traffic_keys(
+        const server_handshake_res& sh_res);
 
     std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> create_tunnel(
         const std::shared_ptr<boost::asio::ip::tcp::socket>& s,
@@ -126,7 +120,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
 
     boost::asio::awaitable<void> process_stream_request(std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> tunnel,
                                                  const connection_context& ctx,
-                                                 const std::uint32_t stream_id,
+                                                 std::uint32_t stream_id,
                                                  std::vector<std::uint8_t> payload,
                                                  boost::asio::io_context& io_context) const;
 
@@ -149,7 +143,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         std::vector<std::uint8_t> x25519_pub;
     };
 
-    [[nodiscard]] std::optional<selected_key_share> select_key_share(const client_hello_info& info, const connection_context& ctx) const;
+    [[nodiscard]] static std::optional<selected_key_share> select_key_share(const client_hello_info& info, const connection_context& ctx);
 
     struct server_handshake_res
     {
@@ -184,23 +178,23 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     [[nodiscard]] static connection_context build_connection_context(const std::shared_ptr<boost::asio::ip::tcp::socket>& s, std::uint32_t conn_id);
     [[nodiscard]] static connection_context build_stream_context(const connection_context& ctx, const syn_payload& syn);
     [[nodiscard]] static client_hello_info parse_client_hello(const std::vector<std::uint8_t>& initial_buf, std::string& client_sni);
-    [[nodiscard]] bool init_handshake_transcript(const std::vector<std::uint8_t>& initial_buf,
-                                                 reality::transcript& trans,
-                                                 const connection_context& ctx) const;
+    [[nodiscard]] static bool init_handshake_transcript(const std::vector<std::uint8_t>& initial_buf,
+                                                        reality::transcript& trans,
+                                                        const connection_context& ctx);
     boost::asio::awaitable<server_handshake_res> delay_and_fallback(std::shared_ptr<boost::asio::ip::tcp::socket> s,
                                                              const std::vector<std::uint8_t>& initial_buf,
                                                              const connection_context& ctx,
                                                              const std::string& client_sni);
-    boost::asio::awaitable<void> send_stream_reset(const std::shared_ptr<mux_connection>& connection, std::uint32_t stream_id) const;
-    boost::asio::awaitable<void> reject_stream_for_limit(const std::shared_ptr<mux_connection>& connection,
-                                                  const connection_context& ctx,
-                                                  std::uint32_t stream_id) const;
-    boost::asio::awaitable<void> handle_tcp_connect_stream(const std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>>& tunnel,
-                                                    const connection_context& stream_ctx,
-                                                    std::uint32_t stream_id,
-                                                    const syn_payload& syn,
-                                                    std::size_t payload_size,
-                                                    boost::asio::io_context& io_context) const;
+    static boost::asio::awaitable<void> send_stream_reset(const std::shared_ptr<mux_connection>& connection, std::uint32_t stream_id);
+    static boost::asio::awaitable<void> reject_stream_for_limit(const std::shared_ptr<mux_connection>& connection,
+                                                         const connection_context& ctx,
+                                                         std::uint32_t stream_id);
+    static boost::asio::awaitable<void> handle_tcp_connect_stream(const std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>>& tunnel,
+                                                           const connection_context& stream_ctx,
+                                                           std::uint32_t stream_id,
+                                                           const syn_payload& syn,
+                                                           std::size_t payload_size,
+                                                           boost::asio::io_context& io_context);
     boost::asio::awaitable<void> handle_udp_associate_stream(const std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>>& tunnel,
                                                       const connection_context& stream_ctx,
                                                       std::uint32_t stream_id,
@@ -213,10 +207,11 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         std::uint16_t key_share_group;
     };
 
-    [[nodiscard]] std::expected<key_share_result, boost::system::error_code> derive_server_key_share(const client_hello_info& info,
-                                                                                           const std::uint8_t* public_key,
-                                                                                           const std::uint8_t* private_key,
-                                                                                           const connection_context& ctx) const;
+    [[nodiscard]] static std::expected<key_share_result, boost::system::error_code> derive_server_key_share(
+        const client_hello_info& info,
+        const std::uint8_t* public_key,
+        const std::uint8_t* private_key,
+        const connection_context& ctx);
 
     boost::asio::awaitable<server_handshake_res> perform_handshake_response(std::shared_ptr<boost::asio::ip::tcp::socket> s,
                                                                      const client_hello_info& info,
@@ -225,11 +220,11 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     [[nodiscard]] certificate_target resolve_certificate_target(const client_hello_info& info) const;
     boost::asio::awaitable<std::optional<certificate_material>> load_certificate_material(const certificate_target& target,
                                                                                    const connection_context& ctx);
-    boost::asio::awaitable<boost::system::error_code> send_server_hello_flight(const std::shared_ptr<boost::asio::ip::tcp::socket>& s,
-                                                              const std::vector<std::uint8_t>& sh_msg,
-                                                              const std::vector<std::uint8_t>& flight2_enc,
-                                                              const connection_context& ctx,
-                                                              std::uint32_t timeout_sec = 0) const;
+    static boost::asio::awaitable<boost::system::error_code> send_server_hello_flight(const std::shared_ptr<boost::asio::ip::tcp::socket>& s,
+                                                                                       const std::vector<std::uint8_t>& sh_msg,
+                                                                                       const std::vector<std::uint8_t>& flight2_enc,
+                                                                                       const connection_context& ctx,
+                                                                                       std::uint32_t timeout_sec = 0);
 
     [[nodiscard]] static boost::asio::awaitable<boost::system::error_code> verify_client_finished(
         std::shared_ptr<boost::asio::ip::tcp::socket> s,
@@ -258,10 +253,10 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         const std::string& source_key,
         const std::chrono::steady_clock::time_point& now);
     void refill_fallback_tokens_locked(fallback_guard_state& state, const std::chrono::steady_clock::time_point& now) const;
-    [[nodiscard]] bool fallback_guard_allows_request_locked(
+    [[nodiscard]] static bool fallback_guard_allows_request_locked(
         fallback_guard_state& state,
         const std::chrono::steady_clock::time_point& now);
-    [[nodiscard]] std::string fallback_guard_key(const connection_context& ctx) const;
+    [[nodiscard]] static std::string fallback_guard_key(const connection_context& ctx);
     [[nodiscard]] std::string connection_limit_source_key(const std::shared_ptr<boost::asio::ip::tcp::socket>& s) const;
 
    private:
@@ -269,9 +264,9 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     {
         double tokens = 0;
         std::uint32_t consecutive_failures = 0;
-        std::chrono::steady_clock::time_point last_refill{};
-        std::chrono::steady_clock::time_point last_seen{};
-        std::chrono::steady_clock::time_point circuit_open_until{};
+        std::chrono::steady_clock::time_point last_refill;
+        std::chrono::steady_clock::time_point last_seen;
+        std::chrono::steady_clock::time_point circuit_open_until;
     };
 
     boost::asio::io_context& io_context_;

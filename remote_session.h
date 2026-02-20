@@ -1,6 +1,7 @@
 #ifndef REMOTE_SESSION_H
 #define REMOTE_SESSION_H
 
+#include <boost/system/error_code.hpp>
 #include <memory>
 #include <vector>
 #include <atomic>
@@ -11,7 +12,9 @@
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/experimental/concurrent_channel.hpp>
 
-#include "protocol.h"
+#include "mux_stream_interface.h"
+#include "mux_connection.h"
+#include "mux_protocol.h"
 #include "mux_tunnel.h"
 #include "log_context.h"
 
@@ -21,7 +24,7 @@ namespace mux
 class remote_session : public mux_stream_interface, public std::enable_shared_from_this<remote_session>
 {
    public:
-    remote_session(std::shared_ptr<mux_connection> connection,
+    remote_session(const std::shared_ptr<mux_connection>& connection,
                    std::uint32_t id,
                    boost::asio::io_context& io_context,
                    const connection_context& ctx,

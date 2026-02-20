@@ -1,8 +1,17 @@
+// NOLINTBEGIN(misc-include-cleaner)
+#include <boost/asio/awaitable.hpp>
+#include <boost/system/error_code.hpp>
+#include <boost/asio/ip/address.hpp>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 #include <cstdlib>
+#include "ip_matcher.h"
+#include "log.h"
+#include "domain_matcher.h"
+#include "log_context.h"
 
 #include "router.h"
 
@@ -31,7 +40,7 @@ std::optional<std::string> resolve_rule_path(const std::string& filename)
     namespace fs = std::filesystem;
     for (const auto& dir : rule_search_dirs())
     {
-        fs::path path = (dir == ".") ? fs::path(filename) : fs::path(dir) / filename;
+        const fs::path path = (dir == ".") ? fs::path(filename) : fs::path(dir) / filename;
         if (fs::exists(path) && fs::is_regular_file(path))
         {
             return path.string();
@@ -148,3 +157,4 @@ boost::asio::awaitable<route_type> router::decide_domain(const connection_contex
 }
 
 }    // namespace mux
+// NOLINTEND(misc-include-cleaner)

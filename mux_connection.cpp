@@ -1,3 +1,10 @@
+// NOLINTBEGIN(misc-include-cleaner)
+#include <boost/asio/co_spawn.hpp>    // NOLINT(misc-include-cleaner): required for co_spawn declarations.
+#include <boost/system/error_code.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/awaitable.hpp>
+#include <cstddef>
+#include <expected>
 #include <span>
 #include <atomic>
 #include <chrono>
@@ -6,18 +13,15 @@
 #include <random>
 #include <ranges>
 #include <string>
-#include <thread>
 #include <vector>
 #include <cstdint>
 #include <utility>
-#include <system_error>
 
 #include <boost/asio/error.hpp>
 #include <boost/asio/write.hpp>
 #include <boost/asio/buffer.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/as_tuple.hpp>
-#include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
 #include <boost/asio/post.hpp>
 #include <boost/asio/dispatch.hpp>
@@ -25,6 +29,10 @@
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/redirect_error.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
+#include "config.h"
+#include "reality_engine.h"
+#include "log_context.h"
+#include "mux_stream_interface.h"
 
 extern "C"
 {
@@ -303,7 +311,7 @@ std::shared_ptr<mux_connection::stream_map_t> mux_connection::detach_streams()
     }
 }
 
-bool mux_connection::register_stream_local(const std::uint32_t id, std::shared_ptr<mux_stream_interface> stream)
+bool mux_connection::register_stream_local(const std::uint32_t id, const std::shared_ptr<mux_stream_interface>& stream)
 {
     static const stream_map_t k_empty_streams{};
     for (;;)
@@ -339,7 +347,7 @@ bool mux_connection::register_stream_local(const std::uint32_t id, std::shared_p
     }
 }
 
-bool mux_connection::try_register_stream_local(const std::uint32_t id, std::shared_ptr<mux_stream_interface> stream)
+bool mux_connection::try_register_stream_local(const std::uint32_t id, const std::shared_ptr<mux_stream_interface>& stream)
 {
     static const stream_map_t k_empty_streams{};
     for (;;)
@@ -360,7 +368,7 @@ bool mux_connection::try_register_stream_local(const std::uint32_t id, std::shar
         {
             return false;
         }
-        if (current_map->find(id) != current_map->end())
+        if (current_map->contains(id))
         {
             return false;
         }
@@ -387,7 +395,7 @@ void mux_connection::remove_stream_local(const std::uint32_t id)
     for (;;)
     {
         auto current = std::atomic_load_explicit(&streams_, std::memory_order_acquire);
-        if (current == nullptr || current->find(id) == current->end())
+        if (current == nullptr || !current->contains(id))
         {
             LOG_DEBUG("mux {} stream {} removed", cid_, id);
             return;
@@ -421,7 +429,7 @@ bool mux_connection::can_accept_stream_local() const
 bool mux_connection::has_stream_local(const std::uint32_t id) const
 {
     const auto snapshot = snapshot_streams();
-    return snapshot->find(id) != snapshot->end();
+    return snapshot->contains(id);
 }
 
 std::shared_ptr<mux_stream_interface> mux_connection::find_stream(const std::uint32_t stream_id) const
@@ -497,7 +505,7 @@ bool mux_connection::register_stream_checked(const std::uint32_t id, std::shared
 
     if (run_inline())
     {
-        return register_stream_local(id, std::move(stream));
+        return register_stream_local(id, stream);
     }
     return run_sync_bool_query(
         io_context_,
@@ -505,7 +513,7 @@ bool mux_connection::register_stream_checked(const std::uint32_t id, std::shared
         "register_stream",
         [self = shared_from_this(), id, stream = std::move(stream)]() mutable
         {
-            return self->register_stream_local(id, std::move(stream));
+            return self->register_stream_local(id, stream);
         });
 }
 
@@ -522,7 +530,7 @@ bool mux_connection::try_register_stream(const std::uint32_t id, std::shared_ptr
 
     if (run_inline())
     {
-        return try_register_stream_local(id, std::move(stream));
+        return try_register_stream_local(id, stream);
     }
     return run_sync_bool_query(
         io_context_,
@@ -530,7 +538,7 @@ bool mux_connection::try_register_stream(const std::uint32_t id, std::shared_ptr
         "try_register_stream",
         [self = shared_from_this(), id, stream = std::move(stream)]() mutable
         {
-            return self->try_register_stream_local(id, std::move(stream));
+            return self->try_register_stream_local(id, stream);
         });
 }
 
@@ -1015,3 +1023,4 @@ std::shared_ptr<mux_stream> mux_connection::create_stream(const std::string& tra
 }
 
 }    // namespace mux
+// NOLINTEND(misc-include-cleaner)

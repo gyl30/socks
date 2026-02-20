@@ -2,7 +2,10 @@
 #define TIMEOUT_IO_H
 
 #include <atomic>
+#include <boost/system/error_code.hpp>
+#include <boost/asio/error.hpp>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -19,6 +22,7 @@
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/write.hpp>
+#include <utility>
 
 #include "log.h"
 
@@ -97,11 +101,11 @@ inline void log_socket_timeout_failure(const std::string_view scope, const char*
 inline void cancel_and_close_socket(boost::asio::ip::tcp::socket& socket, const std::string_view scope)
 {
     boost::system::error_code cancel_ec;
-    socket.cancel(cancel_ec);
+    cancel_ec = socket.cancel(cancel_ec);
     log_socket_timeout_failure(scope, "cancel", cancel_ec);
 
     boost::system::error_code close_ec;
-    socket.close(close_ec);
+    close_ec = socket.close(close_ec);
     log_socket_timeout_failure(scope, "close", close_ec);
 }
 

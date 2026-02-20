@@ -1,10 +1,16 @@
+// NOLINTBEGIN(misc-include-cleaner)
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/ip/udp.hpp>
+#include <boost/system/error_code.hpp>
+#include <boost/asio/socket_base.hpp>
 #include <chrono>
+#include <cstddef>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
 #include <cstdint>
 #include <iterator>
-#include <system_error>
 
 #include <boost/asio/buffer.hpp>
 #include <boost/asio/as_tuple.hpp>
@@ -71,7 +77,7 @@ std::size_t tproxy_udp_sender::endpoint_hash::operator()(const endpoint_key& key
 std::shared_ptr<boost::asio::ip::udp::socket> tproxy_udp_sender::get_socket(const boost::asio::ip::udp::endpoint& src_ep)
 {
     const auto now = now_ms();
-    const endpoint_key key{src_ep.address(), src_ep.port()};
+    const endpoint_key key{.addr = src_ep.address(), .port = src_ep.port()};
     if (last_prune_ms_ == 0 || now >= (last_prune_ms_ + kSocketPruneIntervalMs))
     {
         prune_sockets(now);
@@ -88,7 +94,7 @@ std::shared_ptr<boost::asio::ip::udp::socket> tproxy_udp_sender::get_socket(cons
     }
 
     const bool ipv6 = src_ep.address().is_v6();
-    const auto socket = create_bound_socket(src_ep, ipv6);
+    auto socket = create_bound_socket(src_ep, ipv6);
     if (socket == nullptr)
     {
         return nullptr;
@@ -112,7 +118,7 @@ std::shared_ptr<boost::asio::ip::udp::socket> tproxy_udp_sender::create_bound_so
 {
     auto socket = std::make_shared<boost::asio::ip::udp::socket>(io_context_);
     boost::system::error_code ec;
-    socket->open(ipv6 ? boost::asio::ip::udp::v6() : boost::asio::ip::udp::v4(), ec);
+    ec = socket->open(ipv6 ? boost::asio::ip::udp::v6() : boost::asio::ip::udp::v4(), ec);
     if (ec)
     {
         LOG_WARN("tproxy udp open failed {}", ec.message());
@@ -294,10 +300,10 @@ boost::asio::awaitable<void> tproxy_udp_sender::send_to_client(const boost::asio
     if (ec)
     {
         LOG_WARN("tproxy udp send to client failed {}", ec.message());
-        drop_cached_socket_if_match(endpoint_key{norm_src.address(), norm_src.port()}, socket);
+        drop_cached_socket_if_match(endpoint_key{.addr = norm_src.address(), .port = norm_src.port()}, socket);
         co_return;
     }
-    refresh_cached_socket_timestamp(endpoint_key{norm_src.address(), norm_src.port()}, socket);
+    refresh_cached_socket_timestamp(endpoint_key{.addr = norm_src.address(), .port = norm_src.port()}, socket);
 }
 
 boost::asio::awaitable<void> tproxy_udp_sender::send_to_client(const boost::asio::ip::udp::endpoint& client_ep,
@@ -308,3 +314,4 @@ boost::asio::awaitable<void> tproxy_udp_sender::send_to_client(const boost::asio
 }
 
 }    // namespace mux
+// NOLINTEND(misc-include-cleaner)

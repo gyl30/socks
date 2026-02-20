@@ -86,9 +86,9 @@ class connection_context
 
     [[nodiscard]] std::string stats_summary() const;
 
-    [[nodiscard]] connection_context with_stream(const std::uint32_t sid) const;
+    [[nodiscard]] connection_context with_stream(std::uint32_t sid) const;
 
-    void set_target(const std::string& host, const std::uint16_t port);
+    void set_target(const std::string& host, std::uint16_t port);
 
     void new_trace_id();
 

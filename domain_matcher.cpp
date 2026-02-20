@@ -1,9 +1,9 @@
 #include <cctype>
-#include <string>
-#include <cstddef>
-#include <cstdio>
-#include <cstdlib>
 #include <algorithm>
+#include <cstddef>
+#include <fstream>
+#include <string>
+#include <string_view>
 
 #include "log.h"
 #include "domain_matcher.h"
@@ -11,61 +11,57 @@
 namespace mux
 {
 
+namespace
+{
+
+void trim_ascii_whitespace(std::string& line)
+{
+    line.erase(0, line.find_first_not_of(" \t\r\n"));
+    const auto last = line.find_last_not_of(" \t\r\n");
+    if (last == std::string::npos)
+    {
+        line.clear();
+        return;
+    }
+    line.erase(last + 1);
+}
+
+std::string sanitize_domain_rule_line(const std::string_view raw_line)
+{
+    std::string line(raw_line);
+    const auto comment_pos = line.find('#');
+    if (comment_pos != std::string::npos)
+    {
+        line.erase(comment_pos);
+    }
+    trim_ascii_whitespace(line);
+    return line;
+}
+
+bool read_domain_rule_line(std::ifstream& domain_file, std::string& line)
+{
+    if (!std::getline(domain_file, line))
+    {
+        return false;
+    }
+    line = sanitize_domain_rule_line(line);
+    return true;
+}
+
+}    // namespace
+
 bool domain_matcher::load(const std::string& filename)
 {
-    struct file_guard
-    {
-        FILE* file = nullptr;
-        ~file_guard()
-        {
-            if (file != nullptr)
-            {
-                (void)std::fclose(file);
-            }
-        }
-    };
-
-    file_guard guard{std::fopen(filename.c_str(), "r")};
-    if (guard.file == nullptr)
+    std::ifstream domain_file(filename);
+    if (!domain_file.is_open())
     {
         LOG_WARN("failed to open domain file {}", filename);
         return false;
     }
 
-    char* raw_line = nullptr;
-    std::size_t raw_line_capacity = 0;
-    struct line_buffer_guard
+    std::string line;
+    while (read_domain_rule_line(domain_file, line))
     {
-        char*& raw_line;
-        ~line_buffer_guard() { std::free(raw_line); }
-    } raw_line_guard{raw_line};
-
-    while (true)
-    {
-        const ssize_t line_size = ::getline(&raw_line, &raw_line_capacity, guard.file);
-        if (line_size < 0)
-        {
-            break;
-        }
-
-        std::string line(raw_line, static_cast<std::size_t>(line_size));
-        const auto comment_pos = line.find('#');
-        if (comment_pos != std::string::npos)
-        {
-            line = line.substr(0, comment_pos);
-        }
-
-        line.erase(0, line.find_first_not_of(" \t\r\n"));
-        const auto last = line.find_last_not_of(" \t\r\n");
-        if (last != std::string::npos)
-        {
-            line.erase(last + 1);
-        }
-        else
-        {
-            line.clear();
-        }
-
         if (line.empty())
         {
             continue;

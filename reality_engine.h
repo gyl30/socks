@@ -1,6 +1,8 @@
 #ifndef REALITY_ENGINE_H
 #define REALITY_ENGINE_H
 
+#include <openssl/types.h>
+#include <boost/system/error_code.hpp>
 #include <span>
 #include <memory>
 #include <vector>
@@ -8,12 +10,9 @@
 #include <cstdint>
 #include <expected>
 #include <functional>
-#include <system_error>
 
-#include <boost/asio/error.hpp>
 #include <boost/asio/streambuf.hpp>
 
-#include "reality_core.h"
 #include "cipher_context.h"
 
 namespace mux
