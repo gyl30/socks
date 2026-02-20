@@ -31,16 +31,20 @@ extern "C"
 using reality::message_builder;
 namespace tls_consts = reality::tls_consts;
 
-extern "C" int __real_RAND_bytes(unsigned char* buf, int num);  // NOLINT(bugprone-reserved-identifier)
-extern "C" EVP_PKEY_CTX* __real_EVP_PKEY_CTX_new_id(int id, ENGINE* e);  // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_EVP_PKEY_keygen(EVP_PKEY_CTX* ctx, EVP_PKEY** ppkey);  // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_EVP_PKEY_get_octet_string_param(const EVP_PKEY* pkey,  // NOLINT(bugprone-reserved-identifier)
-                                                       const char* key_name,
-                                                       unsigned char* buf,
-                                                       std::size_t max_buf_sz,
-                                                       std::size_t* out_len);
-extern "C" EVP_MD_CTX* __real_EVP_MD_CTX_new();  // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_EVP_DigestSign(EVP_MD_CTX* ctx, unsigned char* sigret, std::size_t* siglen, const unsigned char* tbs, std::size_t tbslen);  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_RAND_bytes(unsigned char* buf, int num);                 // NOLINT(bugprone-reserved-identifier)
+extern "C" EVP_PKEY_CTX* __real_EVP_PKEY_CTX_new_id(int id, ENGINE* e);        // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_EVP_PKEY_keygen(EVP_PKEY_CTX* ctx, EVP_PKEY** ppkey);    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_EVP_PKEY_get_octet_string_param(const EVP_PKEY* pkey,    // NOLINT(bugprone-reserved-identifier)
+                                                      const char* key_name,
+                                                      unsigned char* buf,
+                                                      std::size_t max_buf_sz,
+                                                      std::size_t* out_len);
+extern "C" EVP_MD_CTX* __real_EVP_MD_CTX_new();    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_EVP_DigestSign(EVP_MD_CTX* ctx,
+                                     unsigned char* sigret,
+                                     std::size_t* siglen,
+                                     const unsigned char* tbs,
+                                     std::size_t tbslen);    // NOLINT(bugprone-reserved-identifier)
 
 namespace
 {
@@ -195,8 +199,7 @@ std::optional<std::vector<std::uint8_t>> extract_extension_data_by_type(const st
 
         if (ext_type == target_ext_type)
         {
-            return std::vector<std::uint8_t>(ch.begin() + static_cast<std::ptrdiff_t>(pos),
-                                             ch.begin() + static_cast<std::ptrdiff_t>(pos + ext_len));
+            return std::vector<std::uint8_t>(ch.begin() + static_cast<std::ptrdiff_t>(pos), ch.begin() + static_cast<std::ptrdiff_t>(pos + ext_len));
         }
 
         pos += ext_len;
@@ -261,7 +264,7 @@ std::size_t expected_boring_padding_len(const std::size_t unpadded_len)
 
 }    // namespace
 
-extern "C" int __wrap_RAND_bytes(unsigned char* buf, int num)  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_RAND_bytes(unsigned char* buf, int num)    // NOLINT(bugprone-reserved-identifier)
 {
     if (g_force_rand_fail.load(std::memory_order_acquire))
     {
@@ -269,10 +272,10 @@ extern "C" int __wrap_RAND_bytes(unsigned char* buf, int num)  // NOLINT(bugpron
         (void)num;
         return 0;
     }
-    return __real_RAND_bytes(buf, num);  // NOLINT(bugprone-reserved-identifier)
+    return __real_RAND_bytes(buf, num);    // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" EVP_PKEY_CTX* __wrap_EVP_PKEY_CTX_new_id(int id, ENGINE* e)  // NOLINT(bugprone-reserved-identifier)
+extern "C" EVP_PKEY_CTX* __wrap_EVP_PKEY_CTX_new_id(int id, ENGINE* e)    // NOLINT(bugprone-reserved-identifier)
 {
     if (g_force_pkey_ctx_new_null.load(std::memory_order_acquire))
     {
@@ -280,10 +283,10 @@ extern "C" EVP_PKEY_CTX* __wrap_EVP_PKEY_CTX_new_id(int id, ENGINE* e)  // NOLIN
         (void)e;
         return nullptr;
     }
-    return __real_EVP_PKEY_CTX_new_id(id, e);  // NOLINT(bugprone-reserved-identifier)
+    return __real_EVP_PKEY_CTX_new_id(id, e);    // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_EVP_PKEY_keygen(EVP_PKEY_CTX* ctx, EVP_PKEY** ppkey)  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_EVP_PKEY_keygen(EVP_PKEY_CTX* ctx, EVP_PKEY** ppkey)    // NOLINT(bugprone-reserved-identifier)
 {
     if (g_force_pkey_keygen_fail.load(std::memory_order_acquire))
     {
@@ -293,14 +296,14 @@ extern "C" int __wrap_EVP_PKEY_keygen(EVP_PKEY_CTX* ctx, EVP_PKEY** ppkey)  // N
         }
         return 0;
     }
-    return __real_EVP_PKEY_keygen(ctx, ppkey);  // NOLINT(bugprone-reserved-identifier)
+    return __real_EVP_PKEY_keygen(ctx, ppkey);    // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_EVP_PKEY_get_octet_string_param(const EVP_PKEY* pkey,  // NOLINT(bugprone-reserved-identifier)
-                                                       const char* key_name,
-                                                       unsigned char* buf,
-                                                       std::size_t max_buf_sz,
-                                                       std::size_t* out_len)
+extern "C" int __wrap_EVP_PKEY_get_octet_string_param(const EVP_PKEY* pkey,    // NOLINT(bugprone-reserved-identifier)
+                                                      const char* key_name,
+                                                      unsigned char* buf,
+                                                      std::size_t max_buf_sz,
+                                                      std::size_t* out_len)
 {
     const auto mode = static_cast<pkey_octet_mode>(g_pkey_octet_mode.load(std::memory_order_acquire));
     if (mode == pkey_octet_mode::kSecondCallMismatchedLength)
@@ -338,25 +341,29 @@ extern "C" int __wrap_EVP_PKEY_get_octet_string_param(const EVP_PKEY* pkey,  // 
         }
         return 1;
     }
-    return __real_EVP_PKEY_get_octet_string_param(pkey, key_name, buf, max_buf_sz, out_len);  // NOLINT(bugprone-reserved-identifier)
+    return __real_EVP_PKEY_get_octet_string_param(pkey, key_name, buf, max_buf_sz, out_len);    // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" EVP_MD_CTX* __wrap_EVP_MD_CTX_new()  // NOLINT(bugprone-reserved-identifier)
+extern "C" EVP_MD_CTX* __wrap_EVP_MD_CTX_new()    // NOLINT(bugprone-reserved-identifier)
 {
     if (g_force_md_ctx_new_null.load(std::memory_order_acquire))
     {
         return nullptr;
     }
-    return __real_EVP_MD_CTX_new();  // NOLINT(bugprone-reserved-identifier)
+    return __real_EVP_MD_CTX_new();    // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_EVP_DigestSign(EVP_MD_CTX* ctx, unsigned char* sigret, std::size_t* siglen, const unsigned char* tbs, std::size_t tbslen)  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_EVP_DigestSign(EVP_MD_CTX* ctx,
+                                     unsigned char* sigret,
+                                     std::size_t* siglen,
+                                     const unsigned char* tbs,
+                                     std::size_t tbslen)    // NOLINT(bugprone-reserved-identifier)
 {
     if (g_force_digest_sign_fail.load(std::memory_order_acquire))
     {
         return 0;
     }
-    return __real_EVP_DigestSign(ctx, sigret, siglen, tbs, tbslen);  // NOLINT(bugprone-reserved-identifier)
+    return __real_EVP_DigestSign(ctx, sigret, siglen, tbs, tbslen);    // NOLINT(bugprone-reserved-identifier)
 }
 
 TEST(RealityMessagesTest, RecordHeader)
@@ -804,8 +811,11 @@ TEST(RealityMessagesTest, ExtractServerKeyShareRejectsExtensionPayloadOverflow)
 
 TEST(RealityMessagesTest, ExtractServerPublicKeyRejectsWrongX25519Length)
 {
-    const auto sh = reality::construct_server_hello(
-        std::vector<std::uint8_t>(32, 0x10), std::vector<std::uint8_t>(32, 0x20), 0x1301, tls_consts::group::kX25519, std::vector<std::uint8_t>(31, 0x30));
+    const auto sh = reality::construct_server_hello(std::vector<std::uint8_t>(32, 0x10),
+                                                    std::vector<std::uint8_t>(32, 0x20),
+                                                    0x1301,
+                                                    tls_consts::group::kX25519,
+                                                    std::vector<std::uint8_t>(31, 0x30));
     EXPECT_TRUE(reality::extract_server_public_key(sh).empty());
 }
 
@@ -1017,10 +1027,7 @@ TEST(RealityMessagesTest, PaddingUsesBoringStyleFormula)
 {
     auto spec_no_padding = reality::fingerprint_factory::get(reality::fingerprint_type::kFirefox120);
     std::erase_if(spec_no_padding.extensions,
-                  [](const std::shared_ptr<reality::extension_blueprint>& ext)
-                  {
-                      return ext->type() == reality::extension_type::kPadding;
-                  });
+                  [](const std::shared_ptr<reality::extension_blueprint>& ext) { return ext->type() == reality::extension_type::kPadding; });
 
     auto spec_with_padding = spec_no_padding;
     spec_with_padding.extensions.push_back(std::make_shared<reality::padding_blueprint>());

@@ -76,79 +76,91 @@ void fail_next_getsockname(const int err = ENOTSOCK)
     g_fail_getsockname_once.store(true, std::memory_order_release);
 }
 
-extern "C" int __real_RAND_bytes(unsigned char* buf, int num);  // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_EVP_PKEY_CTX_add1_hkdf_info(EVP_PKEY_CTX* ctx, const unsigned char* info, int infolen);  // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_EVP_CIPHER_CTX_ctrl(EVP_CIPHER_CTX* ctx, int type, int arg, void* ptr);  // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_EVP_EncryptInit_ex(  // NOLINT(bugprone-reserved-identifier)
-    EVP_CIPHER_CTX* ctx, const EVP_CIPHER* type, ENGINE* impl, const unsigned char* key, const unsigned char* iv);
-extern "C" int __real_EVP_PKEY_derive(EVP_PKEY_CTX* ctx, unsigned char* key, size_t* keylen);  // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_socket(int domain, int type, int protocol);  // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_getsockname(int sockfd, sockaddr* addr, socklen_t* addrlen);  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_RAND_bytes(unsigned char* buf, int num);    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_EVP_PKEY_CTX_add1_hkdf_info(EVP_PKEY_CTX* ctx,
+                                                  const unsigned char* info,
+                                                  int infolen);                                  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_EVP_CIPHER_CTX_ctrl(EVP_CIPHER_CTX* ctx, int type, int arg, void* ptr);    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_EVP_EncryptInit_ex(                                                        // NOLINT(bugprone-reserved-identifier)
+    EVP_CIPHER_CTX* ctx,
+    const EVP_CIPHER* type,
+    ENGINE* impl,
+    const unsigned char* key,
+    const unsigned char* iv);
+extern "C" int __real_EVP_PKEY_derive(EVP_PKEY_CTX* ctx, unsigned char* key, size_t* keylen);    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_socket(int domain, int type, int protocol);                                // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_getsockname(int sockfd, sockaddr* addr, socklen_t* addrlen);               // NOLINT(bugprone-reserved-identifier)
 
-extern "C" int __wrap_RAND_bytes(unsigned char* buf, int num)  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_RAND_bytes(unsigned char* buf, int num)    // NOLINT(bugprone-reserved-identifier)
 {
     if (g_fail_rand_bytes_once.exchange(false, std::memory_order_acq_rel))
     {
         return 0;
     }
-    return __real_RAND_bytes(buf, num);  // NOLINT(bugprone-reserved-identifier)
+    return __real_RAND_bytes(buf, num);    // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_EVP_PKEY_CTX_add1_hkdf_info(EVP_PKEY_CTX* ctx, const unsigned char* info, int infolen)  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_EVP_PKEY_CTX_add1_hkdf_info(EVP_PKEY_CTX* ctx,
+                                                  const unsigned char* info,
+                                                  int infolen)    // NOLINT(bugprone-reserved-identifier)
 {
     if (g_fail_hkdf_add_info_once.exchange(false, std::memory_order_acq_rel))
     {
         return 0;
     }
-    return __real_EVP_PKEY_CTX_add1_hkdf_info(ctx, info, infolen);  // NOLINT(bugprone-reserved-identifier)
+    return __real_EVP_PKEY_CTX_add1_hkdf_info(ctx, info, infolen);    // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_EVP_CIPHER_CTX_ctrl(EVP_CIPHER_CTX* ctx, int type, int arg, void* ptr)  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_EVP_CIPHER_CTX_ctrl(EVP_CIPHER_CTX* ctx, int type, int arg, void* ptr)    // NOLINT(bugprone-reserved-identifier)
 {
     if (type == EVP_CTRL_GCM_GET_TAG && g_fail_cipher_ctx_ctrl_once.exchange(false, std::memory_order_acq_rel))
     {
         return 0;
     }
-    return __real_EVP_CIPHER_CTX_ctrl(ctx, type, arg, ptr);  // NOLINT(bugprone-reserved-identifier)
+    return __real_EVP_CIPHER_CTX_ctrl(ctx, type, arg, ptr);    // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_EVP_EncryptInit_ex(  // NOLINT(bugprone-reserved-identifier)
-    EVP_CIPHER_CTX* ctx, const EVP_CIPHER* type, ENGINE* impl, const unsigned char* key, const unsigned char* iv)
+extern "C" int __wrap_EVP_EncryptInit_ex(    // NOLINT(bugprone-reserved-identifier)
+    EVP_CIPHER_CTX* ctx,
+    const EVP_CIPHER* type,
+    ENGINE* impl,
+    const unsigned char* key,
+    const unsigned char* iv)
 {
     if (g_fail_encrypt_init_once.exchange(false, std::memory_order_acq_rel))
     {
         return 0;
     }
-    return __real_EVP_EncryptInit_ex(ctx, type, impl, key, iv);  // NOLINT(bugprone-reserved-identifier)
+    return __real_EVP_EncryptInit_ex(ctx, type, impl, key, iv);    // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_EVP_PKEY_derive(EVP_PKEY_CTX* ctx, unsigned char* key, size_t* keylen)  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_EVP_PKEY_derive(EVP_PKEY_CTX* ctx, unsigned char* key, size_t* keylen)    // NOLINT(bugprone-reserved-identifier)
 {
     if (g_fail_pkey_derive_once.exchange(false, std::memory_order_acq_rel))
     {
         return 0;
     }
-    return __real_EVP_PKEY_derive(ctx, key, keylen);  // NOLINT(bugprone-reserved-identifier)
+    return __real_EVP_PKEY_derive(ctx, key, keylen);    // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_socket(int domain, int type, int protocol)  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_socket(int domain, int type, int protocol)    // NOLINT(bugprone-reserved-identifier)
 {
     if (g_fail_socket_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_socket_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_socket(domain, type, protocol);  // NOLINT(bugprone-reserved-identifier)
+    return __real_socket(domain, type, protocol);    // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_getsockname(int sockfd, sockaddr* addr, socklen_t* addrlen)  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_getsockname(int sockfd, sockaddr* addr, socklen_t* addrlen)    // NOLINT(bugprone-reserved-identifier)
 {
     if (g_fail_getsockname_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_getsockname_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_getsockname(sockfd, addr, addrlen);  // NOLINT(bugprone-reserved-identifier)
+    return __real_getsockname(sockfd, addr, addrlen);    // NOLINT(bugprone-reserved-identifier)
 }
 
 mux::config make_base_cfg()
@@ -176,11 +188,20 @@ std::string generate_public_key_hex()
 std::vector<std::uint8_t> build_minimal_valid_certificate_message()
 {
     return {
-        0x0b, 0x00, 0x00, 0x0a,    // handshake header (msg_len = 10)
-        0x00,                      // certificate_request_context length
-        0x00, 0x00, 0x06,          // certificate_list length
-        0x00, 0x00, 0x03,          // first certificate length
-        0x01, 0x02, 0x03           // first certificate bytes
+        0x0b,
+        0x00,
+        0x00,
+        0x0a,    // handshake header (msg_len = 10)
+        0x00,    // certificate_request_context length
+        0x00,
+        0x00,
+        0x06,    // certificate_list length
+        0x00,
+        0x00,
+        0x03,    // first certificate length
+        0x01,
+        0x02,
+        0x03    // first certificate bytes
     };
 }
 
@@ -201,63 +222,59 @@ std::vector<std::uint8_t> build_certificate_verify_message()
 }
 
 std::expected<std::vector<std::uint8_t>, boost::system::error_code> encrypt_record_expected(const EVP_CIPHER* cipher,
-                                                                                   const std::vector<std::uint8_t>& key,
-                                                                                   const std::vector<std::uint8_t>& iv,
-                                                                                   const std::uint64_t seq,
-                                                                                   const std::vector<std::uint8_t>& plaintext,
-                                                                                   const std::uint8_t content_type)
+                                                                                            const std::vector<std::uint8_t>& key,
+                                                                                            const std::vector<std::uint8_t>& iv,
+                                                                                            const std::uint64_t seq,
+                                                                                            const std::vector<std::uint8_t>& plaintext,
+                                                                                            const std::uint8_t content_type)
 {
     return reality::tls_record_layer::encrypt_record(cipher, key, iv, seq, plaintext, content_type);
 }
 
 boost::asio::awaitable<std::expected<void, boost::system::error_code>> tcp_connect_expected(mux::client_tunnel_pool& pool,
-                                                                            boost::asio::io_context& io_context,
-                                                                            boost::asio::ip::tcp::socket& socket)
+                                                                                            boost::asio::io_context& io_context,
+                                                                                            boost::asio::ip::tcp::socket& socket)
 {
     co_return co_await pool.tcp_connect(io_context, socket);
 }
 
 boost::asio::awaitable<std::expected<void, boost::system::error_code>> generate_and_send_client_hello_expected(mux::client_tunnel_pool& pool,
-                                                                                                boost::asio::ip::tcp::socket& socket,
-                                                                                                const std::uint8_t* public_key,
-                                                                                                const std::uint8_t* private_key,
-                                                                                                const reality::fingerprint_spec& spec,
-                                                                                                reality::transcript& trans)
+                                                                                                               boost::asio::ip::tcp::socket& socket,
+                                                                                                               const std::uint8_t* public_key,
+                                                                                                               const std::uint8_t* private_key,
+                                                                                                               const reality::fingerprint_spec& spec,
+                                                                                                               reality::transcript& trans)
 {
     co_return co_await pool.generate_and_send_client_hello(socket, public_key, private_key, spec, trans);
 }
 
 boost::asio::awaitable<std::expected<mux::client_tunnel_pool::server_hello_res, boost::system::error_code>> process_server_hello_expected(
-    boost::asio::ip::tcp::socket& socket,
-    const std::uint8_t* private_key,
-    reality::transcript& trans)
+    boost::asio::ip::tcp::socket& socket, const std::uint8_t* private_key, reality::transcript& trans)
 {
     co_return co_await mux::client_tunnel_pool::process_server_hello(socket, private_key, trans);
 }
 
 boost::asio::awaitable<std::expected<mux::client_tunnel_pool::handshake_result, boost::system::error_code>> perform_reality_handshake_expected(
-    mux::client_tunnel_pool& pool,
-    boost::asio::ip::tcp::socket& socket)
+    mux::client_tunnel_pool& pool, boost::asio::ip::tcp::socket& socket)
 {
     co_return co_await pool.perform_reality_handshake(socket);
 }
 
-boost::asio::awaitable<std::expected<mux::client_tunnel_pool::handshake_result, boost::system::error_code>> perform_reality_handshake_with_timeout_expected(
-    mux::client_tunnel_pool& pool,
-    const std::shared_ptr<boost::asio::ip::tcp::socket>& socket)
+boost::asio::awaitable<std::expected<mux::client_tunnel_pool::handshake_result, boost::system::error_code>>
+perform_reality_handshake_with_timeout_expected(mux::client_tunnel_pool& pool, const std::shared_ptr<boost::asio::ip::tcp::socket>& socket)
 {
     co_return co_await pool.perform_reality_handshake_with_timeout(socket);
 }
 
-boost::asio::awaitable<std::expected<std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>, boost::system::error_code>> handshake_read_loop_expected(
-    boost::asio::ip::tcp::socket& socket,
-    const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& s_hs_keys,
-    const reality::handshake_keys& hs_keys,
-    const bool strict_cert_verify,
-    const std::string& sni,
-    reality::transcript& trans,
-    const EVP_CIPHER* cipher,
-    const EVP_MD* md)
+boost::asio::awaitable<std::expected<std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>, boost::system::error_code>>
+handshake_read_loop_expected(boost::asio::ip::tcp::socket& socket,
+                             const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& s_hs_keys,
+                             const reality::handshake_keys& hs_keys,
+                             const bool strict_cert_verify,
+                             const std::string& sni,
+                             reality::transcript& trans,
+                             const EVP_CIPHER* cipher,
+                             const EVP_MD* md)
 {
     co_return co_await mux::client_tunnel_pool::handshake_read_loop(socket, s_hs_keys, hs_keys, strict_cert_verify, sni, trans, cipher, md);
 }
@@ -362,11 +379,7 @@ TEST(ClientTunnelPoolWhiteboxTest, PublishTunnelRejectedWhenStopping)
     tunnel_pool->tunnel_pool_.resize(1);
     boost::asio::io_context io_context;
     auto tunnel = std::make_shared<mux::mux_tunnel_impl<boost::asio::ip::tcp::socket>>(
-        boost::asio::ip::tcp::socket(io_context),
-        io_context,
-        mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()},
-        true,
-        1101);
+        boost::asio::ip::tcp::socket(io_context), io_context, mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 1101);
 
     tunnel_pool->stop_.store(true, std::memory_order_release);
     EXPECT_FALSE(tunnel_pool->publish_tunnel(0, tunnel));
@@ -390,7 +403,7 @@ TEST(ClientTunnelPoolWhiteboxTest, ClosePendingSocketRunsWhenIoContextNotRunning
 
     boost::asio::io_context tunnel_io_context;
     auto pending_socket = std::make_shared<boost::asio::ip::tcp::socket>(tunnel_io_context);
-    (void)    pending_socket->open(boost::asio::ip::tcp::v4(), ec);
+    (void)pending_socket->open(boost::asio::ip::tcp::v4(), ec);
     ASSERT_FALSE(ec);
     ASSERT_TRUE(pending_socket->is_open());
 
@@ -411,7 +424,7 @@ TEST(ClientTunnelPoolWhiteboxTest, ClosePendingSocketRunsInlineWhenIoContextStop
 
     boost::asio::io_context tunnel_io_context;
     auto pending_socket = std::make_shared<boost::asio::ip::tcp::socket>(tunnel_io_context);
-    (void)    pending_socket->open(boost::asio::ip::tcp::v4(), ec);
+    (void)pending_socket->open(boost::asio::ip::tcp::v4(), ec);
     ASSERT_FALSE(ec);
     ASSERT_TRUE(pending_socket->is_open());
 
@@ -433,7 +446,7 @@ TEST(ClientTunnelPoolWhiteboxTest, StopClosesPendingSocketWhenIoContextNotRunnin
 
     boost::asio::io_context tunnel_io_context;
     auto pending_socket = std::make_shared<boost::asio::ip::tcp::socket>(tunnel_io_context);
-    (void)    pending_socket->open(boost::asio::ip::tcp::v4(), ec);
+    (void)pending_socket->open(boost::asio::ip::tcp::v4(), ec);
     ASSERT_FALSE(ec);
     ASSERT_TRUE(pending_socket->is_open());
 
@@ -460,7 +473,7 @@ TEST(ClientTunnelPoolWhiteboxTest, StopClosesPendingSocketWhenIoContextStopped)
 
     boost::asio::io_context tunnel_io_context;
     auto pending_socket = std::make_shared<boost::asio::ip::tcp::socket>(tunnel_io_context);
-    (void)    pending_socket->open(boost::asio::ip::tcp::v4(), ec);
+    (void)pending_socket->open(boost::asio::ip::tcp::v4(), ec);
     ASSERT_FALSE(ec);
     ASSERT_TRUE(pending_socket->is_open());
 
@@ -488,7 +501,7 @@ TEST(ClientTunnelPoolWhiteboxTest, StopClosesPendingSocketWhenIoQueueBlocked)
 
     boost::asio::io_context tunnel_io_context;
     auto pending_socket = std::make_shared<boost::asio::ip::tcp::socket>(tunnel_io_context);
-    (void)    pending_socket->open(boost::asio::ip::tcp::v4(), ec);
+    (void)pending_socket->open(boost::asio::ip::tcp::v4(), ec);
     ASSERT_FALSE(ec);
     ASSERT_TRUE(pending_socket->is_open());
 
@@ -498,16 +511,15 @@ TEST(ClientTunnelPoolWhiteboxTest, StopClosesPendingSocketWhenIoQueueBlocked)
 
     std::atomic<bool> blocker_started{false};
     std::atomic<bool> release_blocker{false};
-    boost::asio::post(
-        tunnel_io_context,
-        [&blocker_started, &release_blocker]()
-        {
-            blocker_started.store(true, std::memory_order_release);
-            while (!release_blocker.load(std::memory_order_acquire))
-            {
-                std::this_thread::yield();
-            }
-        });
+    boost::asio::post(tunnel_io_context,
+                      [&blocker_started, &release_blocker]()
+                      {
+                          blocker_started.store(true, std::memory_order_release);
+                          while (!release_blocker.load(std::memory_order_acquire))
+                          {
+                              std::this_thread::yield();
+                          }
+                      });
 
     std::thread io_thread([&tunnel_io_context]() { tunnel_io_context.run(); });
     bool started = false;
@@ -575,13 +587,14 @@ TEST(ClientTunnelPoolWhiteboxTest, BuildTunnelAndWaitRetryBranches)
     ASSERT_NE(good_tunnel, nullptr);
 
     tunnel_pool->stop_.store(true, std::memory_order_release);
-    boost::asio::co_spawn(io_context,
-                   [tunnel_pool, &io_context]() -> boost::asio::awaitable<void>
-                   {
-                       co_await tunnel_pool->wait_remote_retry(io_context);
-                       co_return;
-                   },
-                   boost::asio::detached);
+    boost::asio::co_spawn(
+        io_context,
+        [tunnel_pool, &io_context]() -> boost::asio::awaitable<void>
+        {
+            co_await tunnel_pool->wait_remote_retry(io_context);
+            co_return;
+        },
+        boost::asio::detached);
     io_context.run();
 }
 
@@ -627,13 +640,14 @@ TEST(ClientTunnelPoolWhiteboxTest, TcpConnectAndHandshakeErrorBranches)
 
     boost::asio::ip::tcp::socket socket(io_context);
     std::expected<void, boost::system::error_code> connect_res;
-    boost::asio::co_spawn(io_context,
-                   [tunnel_pool, &io_context, &socket, &connect_res]() -> boost::asio::awaitable<void>
-                   {
-                       connect_res = co_await tcp_connect_expected(*tunnel_pool, io_context, socket);
-                       co_return;
-                   },
-                   boost::asio::detached);
+    boost::asio::co_spawn(
+        io_context,
+        [tunnel_pool, &io_context, &socket, &connect_res]() -> boost::asio::awaitable<void>
+        {
+            connect_res = co_await tcp_connect_expected(*tunnel_pool, io_context, socket);
+            co_return;
+        },
+        boost::asio::detached);
     io_context.run();
     EXPECT_FALSE(connect_res.has_value());
     EXPECT_TRUE(connect_res.error());
@@ -650,13 +664,14 @@ TEST(ClientTunnelPoolWhiteboxTest, TcpConnectAndHandshakeErrorBranches)
 
     boost::asio::ip::tcp::socket try_socket(io_context);
     std::expected<void, boost::system::error_code> connect_error_res;
-    boost::asio::co_spawn(io_context,
-                   [connect_error_pool, &io_context, &try_socket, &connect_error_res]() -> boost::asio::awaitable<void>
-                   {
-                       connect_error_res = co_await tcp_connect_expected(*connect_error_pool, io_context, try_socket);
-                       co_return;
-                   },
-                   boost::asio::detached);
+    boost::asio::co_spawn(
+        io_context,
+        [connect_error_pool, &io_context, &try_socket, &connect_error_res]() -> boost::asio::awaitable<void>
+        {
+            connect_error_res = co_await tcp_connect_expected(*connect_error_pool, io_context, try_socket);
+            co_return;
+        },
+        boost::asio::detached);
     io_context.run();
     EXPECT_FALSE(connect_error_res.has_value());
     EXPECT_TRUE(connect_error_res.error());
@@ -681,21 +696,22 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeTimeoutCancelsSocketAndReturnsTimedO
     ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
 
     auto client_socket = std::make_shared<boost::asio::ip::tcp::socket>(io_context);
-    (void)    client_socket->connect(acceptor.local_endpoint(), ec);
+    (void)client_socket->connect(acceptor.local_endpoint(), ec);
     ASSERT_FALSE(ec);
 
     boost::asio::ip::tcp::socket server_socket(io_context);
-    (void)    acceptor.accept(server_socket, ec);
+    (void)acceptor.accept(server_socket, ec);
     ASSERT_FALSE(ec);
 
     std::expected<mux::client_tunnel_pool::handshake_result, boost::system::error_code> handshake_res;
-    boost::asio::co_spawn(io_context,
-                   [tunnel_pool, client_socket, &handshake_res]() -> boost::asio::awaitable<void>
-                   {
-                       handshake_res = co_await perform_reality_handshake_with_timeout_expected(*tunnel_pool, client_socket);
-                       co_return;
-                   },
-                   boost::asio::detached);
+    boost::asio::co_spawn(
+        io_context,
+        [tunnel_pool, client_socket, &handshake_res]() -> boost::asio::awaitable<void>
+        {
+            handshake_res = co_await perform_reality_handshake_with_timeout_expected(*tunnel_pool, client_socket);
+            co_return;
+        },
+        boost::asio::detached);
     io_context.run();
 
     ASSERT_FALSE(handshake_res.has_value());
@@ -720,13 +736,14 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeIoErrorIncrementsHandshakeErrorMetri
     boost::asio::io_context io_context;
     auto disconnected_socket = std::make_shared<boost::asio::ip::tcp::socket>(io_context);
     std::expected<mux::client_tunnel_pool::handshake_result, boost::system::error_code> handshake_res;
-    boost::asio::co_spawn(io_context,
-                   [tunnel_pool, disconnected_socket, &handshake_res]() -> boost::asio::awaitable<void>
-                   {
-                       handshake_res = co_await perform_reality_handshake_with_timeout_expected(*tunnel_pool, disconnected_socket);
-                       co_return;
-                   },
-                   boost::asio::detached);
+    boost::asio::co_spawn(
+        io_context,
+        [tunnel_pool, disconnected_socket, &handshake_res]() -> boost::asio::awaitable<void>
+        {
+            handshake_res = co_await perform_reality_handshake_with_timeout_expected(*tunnel_pool, disconnected_socket);
+            co_return;
+        },
+        boost::asio::detached);
     io_context.run();
 
     ASSERT_FALSE(handshake_res.has_value());
@@ -751,13 +768,14 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeNullSocketReturnsInvalidArgument)
     boost::asio::io_context io_context;
     std::shared_ptr<boost::asio::ip::tcp::socket> const null_socket;
     std::expected<mux::client_tunnel_pool::handshake_result, boost::system::error_code> handshake_res;
-    boost::asio::co_spawn(io_context,
-                   [tunnel_pool, null_socket, &handshake_res]() -> boost::asio::awaitable<void>
-                   {
-                       handshake_res = co_await perform_reality_handshake_with_timeout_expected(*tunnel_pool, null_socket);
-                       co_return;
-                   },
-                   boost::asio::detached);
+    boost::asio::co_spawn(
+        io_context,
+        [tunnel_pool, null_socket, &handshake_res]() -> boost::asio::awaitable<void>
+        {
+            handshake_res = co_await perform_reality_handshake_with_timeout_expected(*tunnel_pool, null_socket);
+            co_return;
+        },
+        boost::asio::detached);
     io_context.run();
 
     ASSERT_FALSE(handshake_res.has_value());
@@ -786,10 +804,10 @@ TEST(ClientTunnelPoolWhiteboxTest, TcpConnectTimeoutReturnsTimedOutAndClosesSock
 
     const auto target_port = saturated_acceptor.local_endpoint().port();
     boost::asio::ip::tcp::socket queued_client_a(io_context);
-    (void)    queued_client_a.connect({boost::asio::ip::make_address("127.0.0.1"), target_port}, ec);
+    (void)queued_client_a.connect({boost::asio::ip::make_address("127.0.0.1"), target_port}, ec);
     ASSERT_FALSE(ec);
     boost::asio::ip::tcp::socket queued_client_b(io_context);
-    (void)    queued_client_b.connect({boost::asio::ip::make_address("127.0.0.1"), target_port}, ec);
+    (void)queued_client_b.connect({boost::asio::ip::make_address("127.0.0.1"), target_port}, ec);
     ASSERT_FALSE(ec);
 
     auto cfg = make_base_cfg();
@@ -801,13 +819,14 @@ TEST(ClientTunnelPoolWhiteboxTest, TcpConnectTimeoutReturnsTimedOutAndClosesSock
 
     boost::asio::ip::tcp::socket client_socket(io_context);
     std::expected<void, boost::system::error_code> connect_res;
-    boost::asio::co_spawn(io_context,
-                   [tunnel_pool, &io_context, &client_socket, &connect_res]() -> boost::asio::awaitable<void>
-                   {
-                       connect_res = co_await tcp_connect_expected(*tunnel_pool, io_context, client_socket);
-                       co_return;
-                   },
-                   boost::asio::detached);
+    boost::asio::co_spawn(
+        io_context,
+        [tunnel_pool, &io_context, &client_socket, &connect_res]() -> boost::asio::awaitable<void>
+        {
+            connect_res = co_await tcp_connect_expected(*tunnel_pool, io_context, client_socket);
+            co_return;
+        },
+        boost::asio::detached);
     io_context.run();
 
     ASSERT_FALSE(connect_res.has_value());
@@ -816,9 +835,9 @@ TEST(ClientTunnelPoolWhiteboxTest, TcpConnectTimeoutReturnsTimedOutAndClosesSock
     EXPECT_GE(stats.client_tunnel_pool_connect_timeouts(), connect_timeouts_before + 1);
 
     boost::system::error_code close_ec;
-    (void)    queued_client_a.close(close_ec);
-    (void)    queued_client_b.close(close_ec);
-    (void)    saturated_acceptor.close(close_ec);
+    (void)queued_client_a.close(close_ec);
+    (void)queued_client_b.close(close_ec);
+    (void)saturated_acceptor.close(close_ec);
 }
 
 TEST(ClientTunnelPoolWhiteboxTest, ClientHelloAndServerHelloIoErrorBranches)
@@ -842,14 +861,15 @@ TEST(ClientTunnelPoolWhiteboxTest, ClientHelloAndServerHelloIoErrorBranches)
     reality::transcript trans;
 
     std::expected<void, boost::system::error_code> hello_res;
-    boost::asio::co_spawn(io_context,
-                   [tunnel_pool, &disconnected_socket, ephemeral_pub, ephemeral_priv, spec, &trans, &hello_res]() mutable -> boost::asio::awaitable<void>
-                   {
-                       hello_res = co_await generate_and_send_client_hello_expected(
-                           *tunnel_pool, disconnected_socket, ephemeral_pub.data(), ephemeral_priv.data(), spec, trans);
-                       co_return;
-                   },
-                   boost::asio::detached);
+    boost::asio::co_spawn(
+        io_context,
+        [tunnel_pool, &disconnected_socket, ephemeral_pub, ephemeral_priv, spec, &trans, &hello_res]() mutable -> boost::asio::awaitable<void>
+        {
+            hello_res = co_await generate_and_send_client_hello_expected(
+                *tunnel_pool, disconnected_socket, ephemeral_pub.data(), ephemeral_priv.data(), spec, trans);
+            co_return;
+        },
+        boost::asio::detached);
     io_context.run();
     EXPECT_FALSE(hello_res.has_value());
     EXPECT_TRUE(hello_res.error());
@@ -857,13 +877,14 @@ TEST(ClientTunnelPoolWhiteboxTest, ClientHelloAndServerHelloIoErrorBranches)
     io_context.restart();
 
     std::expected<mux::client_tunnel_pool::server_hello_res, boost::system::error_code> sh_res;
-    boost::asio::co_spawn(io_context,
-                   [&disconnected_socket, ephemeral_priv, &trans, &sh_res]() -> boost::asio::awaitable<void>
-                   {
-                       sh_res = co_await process_server_hello_expected(disconnected_socket, ephemeral_priv.data(), trans);
-                       co_return;
-                   },
-                   boost::asio::detached);
+    boost::asio::co_spawn(
+        io_context,
+        [&disconnected_socket, ephemeral_priv, &trans, &sh_res]() -> boost::asio::awaitable<void>
+        {
+            sh_res = co_await process_server_hello_expected(disconnected_socket, ephemeral_priv.data(), trans);
+            co_return;
+        },
+        boost::asio::detached);
     io_context.run();
     EXPECT_FALSE(sh_res.has_value());
     EXPECT_TRUE(sh_res.error());
@@ -879,10 +900,10 @@ TEST(ClientTunnelPoolWhiteboxTest, ProcessServerHelloRejectsUnsupportedCipherAnd
         boost::asio::ip::tcp::acceptor acceptor(io_context);
         ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
         boost::asio::ip::tcp::socket writer(io_context);
-        (void)        writer.connect(acceptor.local_endpoint(), ec);
+        (void)writer.connect(acceptor.local_endpoint(), ec);
         ASSERT_FALSE(ec);
         boost::asio::ip::tcp::socket reader(io_context);
-        (void)        acceptor.accept(reader, ec);
+        (void)acceptor.accept(reader, ec);
         ASSERT_FALSE(ec);
 
         std::vector<std::uint8_t> const server_random(32, 0x42);
@@ -893,7 +914,7 @@ TEST(ClientTunnelPoolWhiteboxTest, ProcessServerHelloRejectsUnsupportedCipherAnd
         record.insert(record.end(), sh.begin(), sh.end());
         boost::asio::write(writer, boost::asio::buffer(record), ec);
         ASSERT_FALSE(ec);
-        (void)        writer.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
+        (void)writer.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
 
         std::uint8_t peer_pub[32];
         std::uint8_t peer_priv[32];
@@ -901,13 +922,14 @@ TEST(ClientTunnelPoolWhiteboxTest, ProcessServerHelloRejectsUnsupportedCipherAnd
 
         reality::transcript trans;
         std::expected<mux::client_tunnel_pool::server_hello_res, boost::system::error_code> sh_res;
-        boost::asio::co_spawn(io_context,
-                       [&]() -> boost::asio::awaitable<void>
-                       {
-                           sh_res = co_await process_server_hello_expected(reader, peer_priv, trans);
-                           co_return;
-                       },
-                       boost::asio::detached);
+        boost::asio::co_spawn(
+            io_context,
+            [&]() -> boost::asio::awaitable<void>
+            {
+                sh_res = co_await process_server_hello_expected(reader, peer_priv, trans);
+                co_return;
+            },
+            boost::asio::detached);
         io_context.run();
         EXPECT_FALSE(sh_res.has_value());
         EXPECT_TRUE(sh_res.error());
@@ -926,10 +948,10 @@ TEST(ClientTunnelPoolWhiteboxTest, ProcessServerHelloRejectsTruncatedSessionData
     boost::asio::ip::tcp::acceptor acceptor(io_context);
     ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
     boost::asio::ip::tcp::socket writer(io_context);
-    (void)    writer.connect(acceptor.local_endpoint(), ec);
+    (void)writer.connect(acceptor.local_endpoint(), ec);
     ASSERT_FALSE(ec);
     boost::asio::ip::tcp::socket reader(io_context);
-    (void)    acceptor.accept(reader, ec);
+    (void)acceptor.accept(reader, ec);
     ASSERT_FALSE(ec);
 
     std::vector<std::uint8_t> truncated_sh(39, 0x00);
@@ -941,7 +963,7 @@ TEST(ClientTunnelPoolWhiteboxTest, ProcessServerHelloRejectsTruncatedSessionData
     record.insert(record.end(), truncated_sh.begin(), truncated_sh.end());
     boost::asio::write(writer, boost::asio::buffer(record), ec);
     ASSERT_FALSE(ec);
-    (void)    writer.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
+    (void)writer.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
 
     std::uint8_t peer_pub[32];
     std::uint8_t peer_priv[32];
@@ -949,13 +971,14 @@ TEST(ClientTunnelPoolWhiteboxTest, ProcessServerHelloRejectsTruncatedSessionData
 
     reality::transcript trans;
     std::expected<mux::client_tunnel_pool::server_hello_res, boost::system::error_code> sh_res;
-    boost::asio::co_spawn(io_context,
-                   [&]() -> boost::asio::awaitable<void>
-                   {
-                       sh_res = co_await process_server_hello_expected(reader, peer_priv, trans);
-                       co_return;
-                   },
-                   boost::asio::detached);
+    boost::asio::co_spawn(
+        io_context,
+        [&]() -> boost::asio::awaitable<void>
+        {
+            sh_res = co_await process_server_hello_expected(reader, peer_priv, trans);
+            co_return;
+        },
+        boost::asio::detached);
     io_context.run();
     EXPECT_FALSE(sh_res.has_value());
     EXPECT_TRUE(sh_res.error());
@@ -969,10 +992,10 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsCertVerifyBeforeCerti
     boost::asio::ip::tcp::acceptor acceptor(io_context);
     ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
     boost::asio::ip::tcp::socket writer(io_context);
-    (void)    writer.connect(acceptor.local_endpoint(), ec);
+    (void)writer.connect(acceptor.local_endpoint(), ec);
     ASSERT_FALSE(ec);
     boost::asio::ip::tcp::socket reader(io_context);
-    (void)    acceptor.accept(reader, ec);
+    (void)acceptor.accept(reader, ec);
     ASSERT_FALSE(ec);
 
     const std::vector<std::uint8_t> key(16, 0x11);
@@ -982,19 +1005,20 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsCertVerifyBeforeCerti
     ASSERT_TRUE(record.has_value());
     boost::asio::write(writer, boost::asio::buffer(*record), ec);
     ASSERT_FALSE(ec);
-    (void)    writer.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
+    (void)writer.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
 
     reality::transcript trans;
     reality::handshake_keys hs_keys;
     std::expected<std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>, boost::system::error_code> loop_res;
-    boost::asio::co_spawn(io_context,
-                   [&]() -> boost::asio::awaitable<void>
-                   {
-                       loop_res = co_await handshake_read_loop_expected(
-                           reader, {key, iv}, hs_keys, false, "verify-before-cert", trans, EVP_aes_128_gcm(), EVP_sha256());
-                       co_return;
-                   },
-                   boost::asio::detached);
+    boost::asio::co_spawn(
+        io_context,
+        [&]() -> boost::asio::awaitable<void>
+        {
+            loop_res = co_await handshake_read_loop_expected(
+                reader, {key, iv}, hs_keys, false, "verify-before-cert", trans, EVP_aes_128_gcm(), EVP_sha256());
+            co_return;
+        },
+        boost::asio::detached);
     io_context.run();
     EXPECT_FALSE(loop_res.has_value());
     EXPECT_TRUE(loop_res.error());
@@ -1008,10 +1032,10 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsFinishedBeforeCertifi
     boost::asio::ip::tcp::acceptor acceptor(io_context);
     ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
     boost::asio::ip::tcp::socket writer(io_context);
-    (void)    writer.connect(acceptor.local_endpoint(), ec);
+    (void)writer.connect(acceptor.local_endpoint(), ec);
     ASSERT_FALSE(ec);
     boost::asio::ip::tcp::socket reader(io_context);
-    (void)    acceptor.accept(reader, ec);
+    (void)acceptor.accept(reader, ec);
     ASSERT_FALSE(ec);
 
     const std::vector<std::uint8_t> key(16, 0x31);
@@ -1021,19 +1045,20 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsFinishedBeforeCertifi
     ASSERT_TRUE(record.has_value());
     boost::asio::write(writer, boost::asio::buffer(*record), ec);
     ASSERT_FALSE(ec);
-    (void)    writer.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
+    (void)writer.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
 
     reality::transcript trans;
     reality::handshake_keys hs_keys;
     std::expected<std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>, boost::system::error_code> loop_res;
-    boost::asio::co_spawn(io_context,
-                   [&]() -> boost::asio::awaitable<void>
-                   {
-                       loop_res = co_await handshake_read_loop_expected(
-                           reader, {key, iv}, hs_keys, false, "finished-before-verify", trans, EVP_aes_128_gcm(), EVP_sha256());
-                       co_return;
-                   },
-                   boost::asio::detached);
+    boost::asio::co_spawn(
+        io_context,
+        [&]() -> boost::asio::awaitable<void>
+        {
+            loop_res = co_await handshake_read_loop_expected(
+                reader, {key, iv}, hs_keys, false, "finished-before-verify", trans, EVP_aes_128_gcm(), EVP_sha256());
+            co_return;
+        },
+        boost::asio::detached);
     io_context.run();
     EXPECT_FALSE(loop_res.has_value());
     EXPECT_TRUE(loop_res.error());
@@ -1047,10 +1072,10 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsMalformedCertificateM
     boost::asio::ip::tcp::acceptor acceptor(io_context);
     ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
     boost::asio::ip::tcp::socket writer(io_context);
-    (void)    writer.connect(acceptor.local_endpoint(), ec);
+    (void)writer.connect(acceptor.local_endpoint(), ec);
     ASSERT_FALSE(ec);
     boost::asio::ip::tcp::socket reader(io_context);
-    (void)    acceptor.accept(reader, ec);
+    (void)acceptor.accept(reader, ec);
     ASSERT_FALSE(ec);
 
     const std::vector<std::uint8_t> key(16, 0x51);
@@ -1060,19 +1085,20 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsMalformedCertificateM
     ASSERT_TRUE(record.has_value());
     boost::asio::write(writer, boost::asio::buffer(*record), ec);
     ASSERT_FALSE(ec);
-    (void)    writer.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
+    (void)writer.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
 
     reality::transcript trans;
     reality::handshake_keys hs_keys;
     std::expected<std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>, boost::system::error_code> loop_res;
-    boost::asio::co_spawn(io_context,
-                   [&]() -> boost::asio::awaitable<void>
-                   {
-                       loop_res = co_await handshake_read_loop_expected(
-                           reader, {key, iv}, hs_keys, false, "bad-cert-msg", trans, EVP_aes_128_gcm(), EVP_sha256());
-                       co_return;
-                   },
-                   boost::asio::detached);
+    boost::asio::co_spawn(
+        io_context,
+        [&]() -> boost::asio::awaitable<void>
+        {
+            loop_res =
+                co_await handshake_read_loop_expected(reader, {key, iv}, hs_keys, false, "bad-cert-msg", trans, EVP_aes_128_gcm(), EVP_sha256());
+            co_return;
+        },
+        boost::asio::detached);
     io_context.run();
     EXPECT_FALSE(loop_res.has_value());
     EXPECT_TRUE(loop_res.error());
@@ -1096,14 +1122,16 @@ TEST(ClientTunnelPoolWhiteboxTest, ClientHelloBuildFailureBranchesForAuthMateria
     boost::asio::ip::tcp::socket disconnected_socket_1(io_context);
     reality::transcript trans_1;
     std::expected<void, boost::system::error_code> hello_res_1;
-    boost::asio::co_spawn(io_context,
-                   [missing_pub_pool, &disconnected_socket_1, ephemeral_pub, ephemeral_priv, spec, &trans_1, &hello_res_1]() mutable -> boost::asio::awaitable<void>
-                   {
-                       hello_res_1 = co_await generate_and_send_client_hello_expected(
-                           *missing_pub_pool, disconnected_socket_1, ephemeral_pub, ephemeral_priv, spec, trans_1);
-                       co_return;
-                   },
-                   boost::asio::detached);
+    boost::asio::co_spawn(
+        io_context,
+        [missing_pub_pool, &disconnected_socket_1, ephemeral_pub, ephemeral_priv, spec, &trans_1, &hello_res_1]() mutable
+            -> boost::asio::awaitable<void>
+        {
+            hello_res_1 = co_await generate_and_send_client_hello_expected(
+                *missing_pub_pool, disconnected_socket_1, ephemeral_pub, ephemeral_priv, spec, trans_1);
+            co_return;
+        },
+        boost::asio::detached);
     io_context.run();
     EXPECT_FALSE(hello_res_1.has_value());
     EXPECT_TRUE(hello_res_1.error());
@@ -1117,14 +1145,16 @@ TEST(ClientTunnelPoolWhiteboxTest, ClientHelloBuildFailureBranchesForAuthMateria
     boost::asio::ip::tcp::socket disconnected_socket_2(io_context);
     reality::transcript trans_2;
     std::expected<void, boost::system::error_code> hello_res_2;
-    boost::asio::co_spawn(io_context,
-                   [invalid_short_id_pool, &disconnected_socket_2, ephemeral_pub, ephemeral_priv, spec, &trans_2, &hello_res_2]() mutable -> boost::asio::awaitable<void>
-                   {
-                       hello_res_2 = co_await generate_and_send_client_hello_expected(
-                           *invalid_short_id_pool, disconnected_socket_2, ephemeral_pub, ephemeral_priv, spec, trans_2);
-                       co_return;
-                   },
-                   boost::asio::detached);
+    boost::asio::co_spawn(
+        io_context,
+        [invalid_short_id_pool, &disconnected_socket_2, ephemeral_pub, ephemeral_priv, spec, &trans_2, &hello_res_2]() mutable
+            -> boost::asio::awaitable<void>
+        {
+            hello_res_2 = co_await generate_and_send_client_hello_expected(
+                *invalid_short_id_pool, disconnected_socket_2, ephemeral_pub, ephemeral_priv, spec, trans_2);
+            co_return;
+        },
+        boost::asio::detached);
     io_context.run();
     EXPECT_FALSE(hello_res_2.has_value());
     EXPECT_EQ(hello_res_2.error(), std::errc::invalid_argument);
@@ -1138,10 +1168,10 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsMalformedCertificateV
     boost::asio::ip::tcp::acceptor acceptor(io_context);
     ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
     boost::asio::ip::tcp::socket writer(io_context);
-    (void)    writer.connect(acceptor.local_endpoint(), ec);
+    (void)writer.connect(acceptor.local_endpoint(), ec);
     ASSERT_FALSE(ec);
     boost::asio::ip::tcp::socket reader(io_context);
-    (void)    acceptor.accept(reader, ec);
+    (void)acceptor.accept(reader, ec);
     ASSERT_FALSE(ec);
 
     const std::vector<std::uint8_t> key(16, 0x81);
@@ -1154,19 +1184,20 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsMalformedCertificateV
     ASSERT_TRUE(record.has_value());
     boost::asio::write(writer, boost::asio::buffer(*record), ec);
     ASSERT_FALSE(ec);
-    (void)    writer.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
+    (void)writer.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
 
     reality::transcript trans;
     reality::handshake_keys hs_keys;
     std::expected<std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>, boost::system::error_code> loop_res;
-    boost::asio::co_spawn(io_context,
-                   [&]() -> boost::asio::awaitable<void>
-                   {
-                       loop_res = co_await handshake_read_loop_expected(
-                           reader, {key, iv}, hs_keys, false, "bad-cert-verify-payload", trans, EVP_aes_128_gcm(), EVP_sha256());
-                       co_return;
-                   },
-                   boost::asio::detached);
+    boost::asio::co_spawn(
+        io_context,
+        [&]() -> boost::asio::awaitable<void>
+        {
+            loop_res = co_await handshake_read_loop_expected(
+                reader, {key, iv}, hs_keys, false, "bad-cert-verify-payload", trans, EVP_aes_128_gcm(), EVP_sha256());
+            co_return;
+        },
+        boost::asio::detached);
     io_context.run();
     EXPECT_FALSE(loop_res.has_value());
     EXPECT_EQ(loop_res.error(), boost::asio::error::invalid_argument);
@@ -1180,10 +1211,10 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsUnsupportedCertificat
     boost::asio::ip::tcp::acceptor acceptor(io_context);
     ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
     boost::asio::ip::tcp::socket writer(io_context);
-    (void)    writer.connect(acceptor.local_endpoint(), ec);
+    (void)writer.connect(acceptor.local_endpoint(), ec);
     ASSERT_FALSE(ec);
     boost::asio::ip::tcp::socket reader(io_context);
-    (void)    acceptor.accept(reader, ec);
+    (void)acceptor.accept(reader, ec);
     ASSERT_FALSE(ec);
 
     const std::vector<std::uint8_t> key(16, 0xa1);
@@ -1196,19 +1227,20 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsUnsupportedCertificat
     ASSERT_TRUE(record.has_value());
     boost::asio::write(writer, boost::asio::buffer(*record), ec);
     ASSERT_FALSE(ec);
-    (void)    writer.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
+    (void)writer.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
 
     reality::transcript trans;
     reality::handshake_keys hs_keys;
     std::expected<std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>, boost::system::error_code> loop_res;
-    boost::asio::co_spawn(io_context,
-                   [&]() -> boost::asio::awaitable<void>
-                   {
-                       loop_res = co_await handshake_read_loop_expected(
-                           reader, {key, iv}, hs_keys, false, "unsupported-cert-verify-scheme", trans, EVP_aes_128_gcm(), EVP_sha256());
-                       co_return;
-                   },
-                   boost::asio::detached);
+    boost::asio::co_spawn(
+        io_context,
+        [&]() -> boost::asio::awaitable<void>
+        {
+            loop_res = co_await handshake_read_loop_expected(
+                reader, {key, iv}, hs_keys, false, "unsupported-cert-verify-scheme", trans, EVP_aes_128_gcm(), EVP_sha256());
+            co_return;
+        },
+        boost::asio::detached);
     io_context.run();
     EXPECT_FALSE(loop_res.has_value());
     EXPECT_EQ(loop_res.error(), boost::asio::error::no_protocol_option);
@@ -1216,9 +1248,7 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsUnsupportedCertificat
 
 TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopCertificateRangeAndFinishedBranches)
 {
-    auto run_case = [](const std::vector<std::uint8_t>& plaintext,
-                       const reality::handshake_keys& hs_keys,
-                       boost::system::error_code& loop_ec) -> bool
+    auto run_case = [](const std::vector<std::uint8_t>& plaintext, const reality::handshake_keys& hs_keys, boost::system::error_code& loop_ec) -> bool
     {
         boost::asio::io_context io_context;
         boost::system::error_code ec;
@@ -1231,10 +1261,10 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopCertificateRangeAndFinishedB
             return false;
         }
         boost::asio::ip::tcp::socket writer(io_context);
-        (void)        writer.connect(acceptor.local_endpoint(), ec);
+        (void)writer.connect(acceptor.local_endpoint(), ec);
         EXPECT_FALSE(ec);
         boost::asio::ip::tcp::socket reader(io_context);
-        (void)        acceptor.accept(reader, ec);
+        (void)acceptor.accept(reader, ec);
         EXPECT_FALSE(ec);
 
         const std::vector<std::uint8_t> key(16, 0x12);
@@ -1243,18 +1273,19 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopCertificateRangeAndFinishedB
         EXPECT_TRUE(record.has_value());
         boost::asio::write(writer, boost::asio::buffer(*record), ec);
         EXPECT_FALSE(ec);
-        (void)        writer.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
+        (void)writer.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
 
         reality::transcript trans;
         std::expected<std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>, boost::system::error_code> loop_res;
-        boost::asio::co_spawn(io_context,
-                       [&]() -> boost::asio::awaitable<void>
-                       {
-                           loop_res = co_await handshake_read_loop_expected(
-                               reader, {key, iv}, hs_keys, false, "whitebox-finished", trans, EVP_aes_128_gcm(), EVP_sha256());
-                           co_return;
-                       },
-                       boost::asio::detached);
+        boost::asio::co_spawn(
+            io_context,
+            [&]() -> boost::asio::awaitable<void>
+            {
+                loop_res = co_await handshake_read_loop_expected(
+                    reader, {key, iv}, hs_keys, false, "whitebox-finished", trans, EVP_aes_128_gcm(), EVP_sha256());
+                co_return;
+            },
+            boost::asio::detached);
         io_context.run();
         if (!loop_res.has_value())
         {
@@ -1277,22 +1308,14 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopCertificateRangeAndFinishedB
 
     // Hit parse_first_certificate_range branch where cert_list length overflows message size.
     {
-        const std::vector<std::uint8_t> bad_list_len = {
-            0x0b, 0x00, 0x00, 0x07,
-            0x00,
-            0x00, 0x00, 0x0a,
-            0x00, 0x00, 0x00};
+        const std::vector<std::uint8_t> bad_list_len = {0x0b, 0x00, 0x00, 0x07, 0x00, 0x00, 0x00, 0x0a, 0x00, 0x00, 0x00};
         EXPECT_FALSE(run_case(bad_list_len, hs_keys_ok, case_ec));
         EXPECT_TRUE(case_ec);
     }
 
     // Hit parse_first_certificate_range branch where cert length overflows message size.
     {
-        const std::vector<std::uint8_t> bad_cert_len = {
-            0x0b, 0x00, 0x00, 0x07,
-            0x00,
-            0x00, 0x00, 0x00,
-            0x00, 0x00, 0x03};
+        const std::vector<std::uint8_t> bad_cert_len = {0x0b, 0x00, 0x00, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03};
         EXPECT_FALSE(run_case(bad_cert_len, hs_keys_ok, case_ec));
         EXPECT_TRUE(case_ec);
     }
@@ -1361,13 +1384,14 @@ TEST(ClientTunnelPoolWhiteboxTest, ClientHelloAndSocketPreparationFailureBranche
     {
         boost::asio::ip::tcp::socket disconnected(io_context);
         std::expected<mux::client_tunnel_pool::handshake_result, boost::system::error_code> hs_res;
-        boost::asio::co_spawn(io_context,
-                       [&]() -> boost::asio::awaitable<void>
-                       {
-                           hs_res = co_await perform_reality_handshake_expected(*tunnel_pool, disconnected);
-                           co_return;
-                       },
-                       boost::asio::detached);
+        boost::asio::co_spawn(
+            io_context,
+            [&]() -> boost::asio::awaitable<void>
+            {
+                hs_res = co_await perform_reality_handshake_expected(*tunnel_pool, disconnected);
+                co_return;
+            },
+            boost::asio::detached);
         io_context.run();
         EXPECT_FALSE(hs_res.has_value());
         EXPECT_TRUE(hs_res.error());
@@ -1381,14 +1405,14 @@ TEST(ClientTunnelPoolWhiteboxTest, ClientHelloAndSocketPreparationFailureBranche
         boost::asio::ip::tcp::socket disconnected(io_context);
         reality::transcript trans;
         std::expected<void, boost::system::error_code> hello_res;
-        boost::asio::co_spawn(io_context,
-                       [&]() -> boost::asio::awaitable<void>
-                       {
-                           hello_res = co_await generate_and_send_client_hello_expected(
-                               *tunnel_pool, disconnected, ephemeral_pub, ephemeral_priv, spec, trans);
-                           co_return;
-                       },
-                       boost::asio::detached);
+        boost::asio::co_spawn(
+            io_context,
+            [&]() -> boost::asio::awaitable<void>
+            {
+                hello_res = co_await generate_and_send_client_hello_expected(*tunnel_pool, disconnected, ephemeral_pub, ephemeral_priv, spec, trans);
+                co_return;
+            },
+            boost::asio::detached);
         io_context.run();
         EXPECT_FALSE(hello_res.has_value());
         EXPECT_EQ(hello_res.error(), std::errc::operation_canceled);
@@ -1402,14 +1426,14 @@ TEST(ClientTunnelPoolWhiteboxTest, ClientHelloAndSocketPreparationFailureBranche
         boost::asio::ip::tcp::socket disconnected(io_context);
         reality::transcript trans;
         std::expected<void, boost::system::error_code> hello_res;
-        boost::asio::co_spawn(io_context,
-                       [&]() -> boost::asio::awaitable<void>
-                       {
-                           hello_res = co_await generate_and_send_client_hello_expected(
-                               *tunnel_pool, disconnected, ephemeral_pub, ephemeral_priv, spec, trans);
-                           co_return;
-                       },
-                       boost::asio::detached);
+        boost::asio::co_spawn(
+            io_context,
+            [&]() -> boost::asio::awaitable<void>
+            {
+                hello_res = co_await generate_and_send_client_hello_expected(*tunnel_pool, disconnected, ephemeral_pub, ephemeral_priv, spec, trans);
+                co_return;
+            },
+            boost::asio::detached);
         io_context.run();
         EXPECT_FALSE(hello_res.has_value());
         EXPECT_TRUE(hello_res.error());
@@ -1424,14 +1448,14 @@ TEST(ClientTunnelPoolWhiteboxTest, ClientHelloAndSocketPreparationFailureBranche
         boost::asio::ip::tcp::socket disconnected(io_context);
         reality::transcript trans;
         std::expected<void, boost::system::error_code> hello_res;
-        boost::asio::co_spawn(io_context,
-                       [&]() -> boost::asio::awaitable<void>
-                       {
-                           hello_res = co_await generate_and_send_client_hello_expected(
-                               *tunnel_pool, disconnected, ephemeral_pub, ephemeral_priv, spec, trans);
-                           co_return;
-                       },
-                       boost::asio::detached);
+        boost::asio::co_spawn(
+            io_context,
+            [&]() -> boost::asio::awaitable<void>
+            {
+                hello_res = co_await generate_and_send_client_hello_expected(*tunnel_pool, disconnected, ephemeral_pub, ephemeral_priv, spec, trans);
+                co_return;
+            },
+            boost::asio::detached);
         io_context.run();
         EXPECT_FALSE(hello_res.has_value());
         EXPECT_TRUE(hello_res.error());
@@ -1444,13 +1468,14 @@ TEST(ClientTunnelPoolWhiteboxTest, ClientHelloAndSocketPreparationFailureBranche
         fail_next_socket(EMFILE);
         boost::asio::ip::tcp::socket sock(io_context);
         std::expected<void, boost::system::error_code> connect_res;
-        boost::asio::co_spawn(io_context,
-                       [&]() -> boost::asio::awaitable<void>
-                       {
-                           connect_res = co_await tcp_connect_expected(*tunnel_pool, io_context, sock);
-                           co_return;
-                       },
-                       boost::asio::detached);
+        boost::asio::co_spawn(
+            io_context,
+            [&]() -> boost::asio::awaitable<void>
+            {
+                connect_res = co_await tcp_connect_expected(*tunnel_pool, io_context, sock);
+                co_return;
+            },
+            boost::asio::detached);
         io_context.run();
         EXPECT_FALSE(connect_res.has_value());
         EXPECT_TRUE(connect_res.error());
@@ -1462,16 +1487,17 @@ TEST(ClientTunnelPoolWhiteboxTest, ClientHelloAndSocketPreparationFailureBranche
     {
         boost::asio::ip::tcp::socket sock(io_context);
         boost::system::error_code open_ec;
-        (void)        sock.open(boost::asio::ip::tcp::v4(), open_ec);
+        (void)sock.open(boost::asio::ip::tcp::v4(), open_ec);
         ASSERT_FALSE(open_ec);
         std::expected<void, boost::system::error_code> connect_res;
-        boost::asio::co_spawn(io_context,
-                       [&]() -> boost::asio::awaitable<void>
-                       {
-                           connect_res = co_await tcp_connect_expected(*tunnel_pool, io_context, sock);
-                           co_return;
-                       },
-                       boost::asio::detached);
+        boost::asio::co_spawn(
+            io_context,
+            [&]() -> boost::asio::awaitable<void>
+            {
+                connect_res = co_await tcp_connect_expected(*tunnel_pool, io_context, sock);
+                co_return;
+            },
+            boost::asio::detached);
         io_context.run();
         EXPECT_FALSE(connect_res.has_value());
     }
@@ -1485,10 +1511,10 @@ TEST(ClientTunnelPoolWhiteboxTest, ProcessServerHelloCoversX25519DeriveFailure)
     boost::asio::ip::tcp::acceptor acceptor(io_context);
     ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
     boost::asio::ip::tcp::socket writer(io_context);
-    (void)    writer.connect(acceptor.local_endpoint(), ec);
+    (void)writer.connect(acceptor.local_endpoint(), ec);
     ASSERT_FALSE(ec);
     boost::asio::ip::tcp::socket reader(io_context);
-    (void)    acceptor.accept(reader, ec);
+    (void)acceptor.accept(reader, ec);
     ASSERT_FALSE(ec);
 
     std::vector<std::uint8_t> const server_random(32, 0x52);
@@ -1499,7 +1525,7 @@ TEST(ClientTunnelPoolWhiteboxTest, ProcessServerHelloCoversX25519DeriveFailure)
     record.insert(record.end(), sh.begin(), sh.end());
     boost::asio::write(writer, boost::asio::buffer(record), ec);
     ASSERT_FALSE(ec);
-    (void)    writer.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
+    (void)writer.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
 
     std::uint8_t peer_pub[32];
     std::uint8_t peer_priv[32];
@@ -1509,13 +1535,14 @@ TEST(ClientTunnelPoolWhiteboxTest, ProcessServerHelloCoversX25519DeriveFailure)
 
     reality::transcript trans;
     std::expected<mux::client_tunnel_pool::server_hello_res, boost::system::error_code> sh_res;
-    boost::asio::co_spawn(io_context,
-                   [&]() -> boost::asio::awaitable<void>
-                   {
-                       sh_res = co_await process_server_hello_expected(reader, peer_priv, trans);
-                       co_return;
-                   },
-                   boost::asio::detached);
+    boost::asio::co_spawn(
+        io_context,
+        [&]() -> boost::asio::awaitable<void>
+        {
+            sh_res = co_await process_server_hello_expected(reader, peer_priv, trans);
+            co_return;
+        },
+        boost::asio::detached);
     io_context.run();
     EXPECT_FALSE(sh_res.has_value());
     EXPECT_TRUE(sh_res.error());
@@ -1539,20 +1566,19 @@ TEST(ClientTunnelPoolWhiteboxTest, TcpConnectSuccessCoversLocalEndpointFailureLo
     auto tunnel_pool = std::make_shared<mux::client_tunnel_pool>(pool, cfg, 0);
 
     std::shared_ptr<boost::asio::ip::tcp::socket> const accepted_peer = std::make_shared<boost::asio::ip::tcp::socket>(io_context);
-    acceptor.async_accept(
-        *accepted_peer,
-        [&](const boost::system::error_code&) {});
+    acceptor.async_accept(*accepted_peer, [&](const boost::system::error_code&) {});
 
     boost::asio::ip::tcp::socket client_socket(io_context);
     std::expected<void, boost::system::error_code> connect_res;
     fail_next_getsockname(ENOTSOCK);
-    boost::asio::co_spawn(io_context,
-                   [&]() -> boost::asio::awaitable<void>
-                   {
-                       connect_res = co_await tcp_connect_expected(*tunnel_pool, io_context, client_socket);
-                       co_return;
-                   },
-                   boost::asio::detached);
+    boost::asio::co_spawn(
+        io_context,
+        [&]() -> boost::asio::awaitable<void>
+        {
+            connect_res = co_await tcp_connect_expected(*tunnel_pool, io_context, client_socket);
+            co_return;
+        },
+        boost::asio::detached);
 
     io_context.run();
     EXPECT_TRUE(connect_res.has_value());
