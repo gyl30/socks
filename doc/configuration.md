@@ -16,7 +16,7 @@
 - `socks.host` / `socks.port`：本地 SOCKS5 监听地址与端口。
 - `socks.auth` / `socks.username` / `socks.password`：SOCKS5 认证配置。
   - 当 `socks.auth = true` 时，`socks.username` 与 `socks.password` 必须均为非空字符串。
-  - 任一为空会在配置解析阶段直接报错。
+  - 任一为空会在配置解析阶段直接报错，不会降级为无认证模式。
 - `tproxy.enabled`：是否启用 TPROXY 入站（默认 `false`）。
 - `tproxy.listen_host`：TPROXY 监听地址（默认 `::`）。
 - `tproxy.tcp_port` / `tproxy.udp_port`：TPROXY TCP/UDP 端口。`udp_port = 0` 表示跟随 `tcp_port`。
@@ -57,7 +57,7 @@
 2. 服务端在 `accept` 成功后、REALITY 握手前预占连接槽；达到全局上限或来源上限时直接拒绝该连接，不进入握手路径。
 3. 流量进入 mux 后，若 `max_streams` 已达上限，服务端必须先返回 `ACK(rep=general failure)`，再发送 `RST`。
 4. SOCKS5 请求中，目标主机为空必须拒绝；`CONNECT` 请求目标端口为 `0` 必须拒绝；`UDP ASSOCIATE` 允许端口 `0`。
-5. 监控接口仅支持 HTTP `GET /metrics`，返回 Prometheus 文本格式指标。
+5. 监控接口仅支持 HTTP `GET /metrics`，返回 Prometheus 文本格式指标；当前实现不提供监控鉴权与监控限流能力。
 6. 客户端配置变更不支持热加载，修改配置后必须重启客户端进程生效。
 7. `timeout.read = 0` 与 `timeout.write = 0` 必须表示禁用对应阶段超时，不得隐式归一化为最小正值。
 
@@ -84,6 +84,7 @@
 
 - `monitor.enabled`：是否启用监控接口。
 - `monitor.port`：监控端口（仅本机）。
+- 当前实现不提供监控鉴权与监控限流能力，建议仅绑定本机或部署在受控内网。
 
 ### fallback 失败原因指标
 
