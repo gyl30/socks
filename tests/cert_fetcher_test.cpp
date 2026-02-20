@@ -38,10 +38,7 @@ std::atomic<bool> g_fail_keygen_once{false};
 std::atomic<int> g_fail_rand_bytes_on_call{0};
 std::atomic<int> g_rand_bytes_call_count{0};
 
-void fail_next_hkdf_md()
-{
-    g_fail_hkdf_md_once.store(true, std::memory_order_release);
-}
+void fail_next_hkdf_md() { g_fail_hkdf_md_once.store(true, std::memory_order_release); }
 
 void fail_next_keygen() { g_fail_keygen_once.store(true, std::memory_order_release); }
 
@@ -51,29 +48,29 @@ void fail_rand_bytes_on_call(const int call_index)
     g_fail_rand_bytes_on_call.store(call_index, std::memory_order_release);
 }
 
-extern "C" int __real_EVP_PKEY_CTX_set_hkdf_md(EVP_PKEY_CTX* ctx, const EVP_MD* md);  // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_EVP_PKEY_keygen(EVP_PKEY_CTX* ctx, EVP_PKEY** ppkey);  // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_RAND_bytes(unsigned char* buf, int num);  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_EVP_PKEY_CTX_set_hkdf_md(EVP_PKEY_CTX* ctx, const EVP_MD* md);    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_EVP_PKEY_keygen(EVP_PKEY_CTX* ctx, EVP_PKEY** ppkey);             // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_RAND_bytes(unsigned char* buf, int num);                          // NOLINT(bugprone-reserved-identifier)
 
-extern "C" int __wrap_EVP_PKEY_CTX_set_hkdf_md(EVP_PKEY_CTX* ctx, const EVP_MD* md)  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_EVP_PKEY_CTX_set_hkdf_md(EVP_PKEY_CTX* ctx, const EVP_MD* md)    // NOLINT(bugprone-reserved-identifier)
 {
     if (g_fail_hkdf_md_once.exchange(false, std::memory_order_acq_rel))
     {
         return 0;
     }
-    return __real_EVP_PKEY_CTX_set_hkdf_md(ctx, md);  // NOLINT(bugprone-reserved-identifier)
+    return __real_EVP_PKEY_CTX_set_hkdf_md(ctx, md);    // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_EVP_PKEY_keygen(EVP_PKEY_CTX* ctx, EVP_PKEY** ppkey)  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_EVP_PKEY_keygen(EVP_PKEY_CTX* ctx, EVP_PKEY** ppkey)    // NOLINT(bugprone-reserved-identifier)
 {
     if (g_fail_keygen_once.exchange(false, std::memory_order_acq_rel))
     {
         return 0;
     }
-    return __real_EVP_PKEY_keygen(ctx, ppkey);  // NOLINT(bugprone-reserved-identifier)
+    return __real_EVP_PKEY_keygen(ctx, ppkey);    // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_RAND_bytes(unsigned char* buf, int num)  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_RAND_bytes(unsigned char* buf, int num)    // NOLINT(bugprone-reserved-identifier)
 {
     const int target_call = g_fail_rand_bytes_on_call.load(std::memory_order_acquire);
     if (target_call > 0)
@@ -85,7 +82,7 @@ extern "C" int __wrap_RAND_bytes(unsigned char* buf, int num)  // NOLINT(bugpron
             return 0;
         }
     }
-    return __real_RAND_bytes(buf, num);  // NOLINT(bugprone-reserved-identifier)
+    return __real_RAND_bytes(buf, num);    // NOLINT(bugprone-reserved-identifier)
 }
 
 constexpr char kTestCertPem[] =
