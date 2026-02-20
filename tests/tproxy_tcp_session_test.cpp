@@ -33,8 +33,8 @@
 #include "tproxy_tcp_session.h"
 #undef private
 
-extern "C" int __real_shutdown(int sockfd, int how);  // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_close(int fd);  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_shutdown(int sockfd, int how);    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_close(int fd);                    // NOLINT(bugprone-reserved-identifier)
 
 namespace
 {
@@ -62,10 +62,9 @@ struct tcp_socket_pair
     boost::asio::ip::tcp::socket server;
 };
 
-bool open_ephemeral_tcp_acceptor(
-    boost::asio::ip::tcp::acceptor& acceptor,
-    const std::uint32_t max_attempts = 120,
-    const std::chrono::milliseconds backoff = std::chrono::milliseconds(25))
+bool open_ephemeral_tcp_acceptor(boost::asio::ip::tcp::acceptor& acceptor,
+                                 const std::uint32_t max_attempts = 120,
+                                 const std::chrono::milliseconds backoff = std::chrono::milliseconds(25))
 {
     for (std::uint32_t attempt = 0; attempt < max_attempts; ++attempt)
     {
@@ -215,24 +214,24 @@ class mock_upstream final : public mux::upstream
 
 }    // namespace
 
-extern "C" int __wrap_shutdown(int sockfd, int how)  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_shutdown(int sockfd, int how)    // NOLINT(bugprone-reserved-identifier)
 {
     if (g_fail_shutdown_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_shutdown_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_shutdown(sockfd, how);  // NOLINT(bugprone-reserved-identifier)
+    return __real_shutdown(sockfd, how);    // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_close(int fd)  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_close(int fd)    // NOLINT(bugprone-reserved-identifier)
 {
     if (g_fail_close_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_close_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_close(fd);  // NOLINT(bugprone-reserved-identifier)
+    return __real_close(fd);    // NOLINT(bugprone-reserved-identifier)
 }
 
 TEST(TproxyTcpSessionTest, DirectEcho)
@@ -250,7 +249,8 @@ TEST(TproxyTcpSessionTest, DirectEcho)
         {
             boost::asio::ip::tcp::socket echo_socket = co_await echo_acceptor.async_accept(boost::asio::use_awaitable);
             std::array<char, 64> buf = {};
-            const auto [read_ec, n] = co_await echo_socket.async_read_some(boost::asio::buffer(buf), boost::asio::as_tuple(boost::asio::use_awaitable));
+            const auto [read_ec, n] =
+                co_await echo_socket.async_read_some(boost::asio::buffer(buf), boost::asio::as_tuple(boost::asio::use_awaitable));
             if (!read_ec && n > 0)
             {
                 co_await boost::asio::async_write(echo_socket, boost::asio::buffer(buf.data(), n), boost::asio::use_awaitable);
@@ -289,7 +289,8 @@ TEST(TproxyTcpSessionTest, DirectEcho)
         {
             boost::asio::ip::tcp::socket client(ctx);
             boost::system::error_code ec;
-            co_await client.async_connect({boost::asio::ip::make_address("127.0.0.1"), tproxy_port}, boost::asio::redirect_error(boost::asio::use_awaitable, ec));
+            co_await client.async_connect({boost::asio::ip::make_address("127.0.0.1"), tproxy_port},
+                                          boost::asio::redirect_error(boost::asio::use_awaitable, ec));
             if (ec)
             {
                 done = true;
@@ -344,8 +345,7 @@ TEST(TproxyTcpSessionTest, StopReadDecisionBranches)
     mux::config const cfg;
     const boost::asio::ip::tcp::endpoint dst_ep(boost::asio::ip::make_address("127.0.0.1"), 80);
 
-    auto session =
-        std::make_shared<mux::tproxy_tcp_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, std::move(router), 2, cfg, dst_ep);
+    auto session = std::make_shared<mux::tproxy_tcp_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, std::move(router), 2, cfg, dst_ep);
 
     EXPECT_FALSE(session->should_stop_client_read(boost::system::error_code(), 1));
     EXPECT_TRUE(session->should_stop_client_read(boost::system::error_code(), 0));
@@ -364,8 +364,7 @@ TEST(TproxyTcpSessionTest, StopReadDecisionExpectedErrors)
     mux::config const cfg;
     const boost::asio::ip::tcp::endpoint dst_ep(boost::asio::ip::make_address("127.0.0.1"), 80);
 
-    auto session =
-        std::make_shared<mux::tproxy_tcp_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, std::move(router), 3, cfg, dst_ep);
+    auto session = std::make_shared<mux::tproxy_tcp_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, std::move(router), 3, cfg, dst_ep);
 
     EXPECT_TRUE(session->should_stop_client_read(boost::asio::error::eof, 0));
     EXPECT_TRUE(session->should_stop_client_read(boost::asio::error::operation_aborted, 0));
@@ -382,8 +381,7 @@ TEST(TproxyTcpSessionTest, CloseBackendOnceIsIdempotent)
     auto router = std::make_shared<direct_router>();
     mux::config const cfg;
     const boost::asio::ip::tcp::endpoint dst_ep(boost::asio::ip::make_address("127.0.0.1"), 80);
-    auto session =
-        std::make_shared<mux::tproxy_tcp_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, std::move(router), 4, cfg, dst_ep);
+    auto session = std::make_shared<mux::tproxy_tcp_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, std::move(router), 4, cfg, dst_ep);
 
     auto backend = std::make_shared<mock_upstream>();
     mux::test::run_awaitable_void(ctx, session->close_backend_once(backend));
@@ -397,8 +395,7 @@ TEST(TproxyTcpSessionTest, WriteClientChunkToBackendTracksActivity)
     auto router = std::make_shared<direct_router>();
     mux::config const cfg;
     const boost::asio::ip::tcp::endpoint dst_ep(boost::asio::ip::make_address("127.0.0.1"), 80);
-    auto session =
-        std::make_shared<mux::tproxy_tcp_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, std::move(router), 5, cfg, dst_ep);
+    auto session = std::make_shared<mux::tproxy_tcp_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, std::move(router), 5, cfg, dst_ep);
 
     auto backend = std::make_shared<mock_upstream>();
     const std::vector<std::uint8_t> buf = {0x01, 0x02, 0x03, 0x04};
@@ -463,18 +460,15 @@ TEST(TproxyTcpSessionTest, ConnectBackendReflectsUpstreamResult)
     auto router = std::make_shared<direct_router>();
     mux::config const cfg;
     const boost::asio::ip::tcp::endpoint dst_ep(boost::asio::ip::make_address("127.0.0.1"), 80);
-    auto session =
-        std::make_shared<mux::tproxy_tcp_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, std::move(router), 6, cfg, dst_ep);
+    auto session = std::make_shared<mux::tproxy_tcp_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, std::move(router), 6, cfg, dst_ep);
 
     auto backend = std::make_shared<mock_upstream>();
     backend->connect_result = true;
-    const auto connect_ok =
-        mux::test::run_awaitable(ctx, session->connect_backend(backend, "127.0.0.1", 80, mux::route_type::kDirect));
+    const auto connect_ok = mux::test::run_awaitable(ctx, session->connect_backend(backend, "127.0.0.1", 80, mux::route_type::kDirect));
     EXPECT_TRUE(connect_ok);
 
     backend->connect_result = false;
-    const auto connect_fail =
-        mux::test::run_awaitable(ctx, session->connect_backend(backend, "127.0.0.1", 80, mux::route_type::kDirect));
+    const auto connect_fail = mux::test::run_awaitable(ctx, session->connect_backend(backend, "127.0.0.1", 80, mux::route_type::kDirect));
     EXPECT_FALSE(connect_fail);
 }
 
@@ -485,8 +479,7 @@ TEST(TproxyTcpSessionTest, SelectBackendDirectUsesConfiguredReadTimeout)
     mux::config cfg;
     cfg.timeout.read = 9;
     const boost::asio::ip::tcp::endpoint dst_ep(boost::asio::ip::make_address("127.0.0.1"), 80);
-    auto session =
-        std::make_shared<mux::tproxy_tcp_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, std::move(router), 26, cfg, dst_ep);
+    auto session = std::make_shared<mux::tproxy_tcp_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, std::move(router), 26, cfg, dst_ep);
 
     const auto [route, backend] = mux::test::run_awaitable(ctx, session->select_backend("127.0.0.1"));
     EXPECT_EQ(route, mux::route_type::kDirect);
@@ -502,8 +495,7 @@ TEST(TproxyTcpSessionTest, SelectBackendDirectKeepsReadTimeoutZeroAsDisabled)
     mux::config cfg;
     cfg.timeout.read = 0;
     const boost::asio::ip::tcp::endpoint dst_ep(boost::asio::ip::make_address("127.0.0.1"), 80);
-    auto session =
-        std::make_shared<mux::tproxy_tcp_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, std::move(router), 27, cfg, dst_ep);
+    auto session = std::make_shared<mux::tproxy_tcp_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, std::move(router), 27, cfg, dst_ep);
 
     const auto [route, backend] = mux::test::run_awaitable(ctx, session->select_backend("127.0.0.1"));
     EXPECT_EQ(route, mux::route_type::kDirect);
@@ -518,8 +510,7 @@ TEST(TproxyTcpSessionTest, SelectBackendProxyWithoutTunnelPoolReturnsNull)
     auto router = std::make_shared<proxy_router>();
     mux::config const cfg;
     const boost::asio::ip::tcp::endpoint dst_ep(boost::asio::ip::make_address("127.0.0.1"), 80);
-    auto session =
-        std::make_shared<mux::tproxy_tcp_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, std::move(router), 28, cfg, dst_ep);
+    auto session = std::make_shared<mux::tproxy_tcp_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, std::move(router), 28, cfg, dst_ep);
 
     const auto [route, backend] = mux::test::run_awaitable(ctx, session->select_backend("127.0.0.1"));
     EXPECT_EQ(route, mux::route_type::kProxy);
@@ -531,8 +522,7 @@ TEST(TproxyTcpSessionTest, SelectBackendReturnsBlockedWhenRouterMissing)
     boost::asio::io_context ctx;
     mux::config const cfg;
     const boost::asio::ip::tcp::endpoint dst_ep(boost::asio::ip::make_address("127.0.0.1"), 80);
-    auto session =
-        std::make_shared<mux::tproxy_tcp_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, nullptr, 29, cfg, dst_ep);
+    auto session = std::make_shared<mux::tproxy_tcp_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, nullptr, 29, cfg, dst_ep);
 
     const auto [route, backend] = mux::test::run_awaitable(ctx, session->select_backend("127.0.0.1"));
     EXPECT_EQ(route, mux::route_type::kBlock);
@@ -663,12 +653,13 @@ TEST(TproxyTcpSessionTest, StartIdleWatchdogSpawnsAndHandlesCancel)
 
     boost::asio::steady_timer cancel_timer(ctx);
     cancel_timer.expires_after(std::chrono::milliseconds(10));
-    cancel_timer.async_wait([session](const boost::system::error_code&)
-                            {
-                                session->idle_timer_.cancel();
-                                boost::system::error_code ignore;
-                                session->socket_.close(ignore);
-                            });
+    cancel_timer.async_wait(
+        [session](const boost::system::error_code&)
+        {
+            session->idle_timer_.cancel();
+            boost::system::error_code ignore;
+            session->socket_.close(ignore);
+        });
 
     session->start_idle_watchdog(backend);
     ctx.run();

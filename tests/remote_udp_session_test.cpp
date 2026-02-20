@@ -47,12 +47,12 @@ void delay_next_getaddrinfo(const int delay_ms)
     g_delay_getaddrinfo_once.store(true, std::memory_order_release);
 }
 
-extern "C" int __real_getaddrinfo(const char* node,  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_getaddrinfo(const char* node,    // NOLINT(bugprone-reserved-identifier)
                                   const char* service,
                                   const struct addrinfo* hints,
                                   struct addrinfo** res);
 
-extern "C" int __wrap_getaddrinfo(const char* node,  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_getaddrinfo(const char* node,    // NOLINT(bugprone-reserved-identifier)
                                   const char* service,
                                   const struct addrinfo* hints,
                                   struct addrinfo** res)
@@ -65,7 +65,7 @@ extern "C" int __wrap_getaddrinfo(const char* node,  // NOLINT(bugprone-reserved
             std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
         }
     }
-    return __real_getaddrinfo(node, service, hints, res);  // NOLINT(bugprone-reserved-identifier)
+    return __real_getaddrinfo(node, service, hints, res);    // NOLINT(bugprone-reserved-identifier)
 }
 
 class noop_stream : public mux::mux_stream_interface
@@ -76,9 +76,7 @@ class noop_stream : public mux::mux_stream_interface
     void on_reset() override {}
 };
 
-std::vector<std::uint8_t> make_mux_udp_packet(const std::string& host,
-                                              const std::uint16_t port,
-                                              const std::vector<std::uint8_t>& payload)
+std::vector<std::uint8_t> make_mux_udp_packet(const std::string& host, const std::uint16_t port, const std::vector<std::uint8_t>& payload)
 {
     socks_udp_header header{};
     header.addr = host;
@@ -142,11 +140,12 @@ TEST(RemoteUdpSessionTest, SetupUdpSocketAlreadyOpenTriggersFailureAckAndReset)
 
     std::vector<std::uint8_t> ack_payload;
     EXPECT_CALL(*conn, mock_send_async(11, mux::kCmdAck, _))
-        .WillOnce([&ack_payload](const std::uint32_t, const std::uint8_t, const std::vector<std::uint8_t>& payload)
-                  {
-                      ack_payload = payload;
-                      return boost::system::error_code{};
-                  });
+        .WillOnce(
+            [&ack_payload](const std::uint32_t, const std::uint8_t, const std::vector<std::uint8_t>& payload)
+            {
+                ack_payload = payload;
+                return boost::system::error_code{};
+            });
     EXPECT_CALL(*conn, mock_send_async(11, mux::kCmdRst, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(boost::system::error_code{}));
 
     const bool ok = mux::test::run_awaitable(io_context, session->setup_udp_socket(conn));
@@ -374,17 +373,19 @@ TEST(RemoteUdpSessionTest, UdpToMuxForwardsAndStopsOnSendFailure)
     sender.open(boost::asio::ip::udp::v4(), ec);
     ASSERT_FALSE(ec);
     const std::vector<std::uint8_t> source_payload = {0xAA, 0xBB};
-    const auto target_ep = boost::asio::ip::udp::endpoint(boost::asio::ip::make_address_v4("127.0.0.1"), session->udp_socket_.local_endpoint().port());
+    const auto target_ep =
+        boost::asio::ip::udp::endpoint(boost::asio::ip::make_address_v4("127.0.0.1"), session->udp_socket_.local_endpoint().port());
     sender.send_to(boost::asio::buffer(source_payload), target_ep, 0, ec);
     ASSERT_FALSE(ec);
 
     std::vector<std::uint8_t> dat_payload;
     EXPECT_CALL(*conn, mock_send_async(18, mux::kCmdDat, _))
-        .WillOnce([&dat_payload](const std::uint32_t, const std::uint8_t, const std::vector<std::uint8_t>& payload)
-                  {
-                      dat_payload = payload;
-                      return boost::asio::error::broken_pipe;
-                  });
+        .WillOnce(
+            [&dat_payload](const std::uint32_t, const std::uint8_t, const std::vector<std::uint8_t>& payload)
+            {
+                dat_payload = payload;
+                return boost::asio::error::broken_pipe;
+            });
 
     mux::test::run_awaitable_void(io_context, session->udp_to_mux());
 
@@ -407,7 +408,8 @@ TEST(RemoteUdpSessionTest, UdpToMuxStopsWhenConnectionExpired)
     boost::system::error_code ec;
     sender.open(boost::asio::ip::udp::v4(), ec);
     ASSERT_FALSE(ec);
-    const auto target_ep = boost::asio::ip::udp::endpoint(boost::asio::ip::make_address_v4("127.0.0.1"), session->udp_socket_.local_endpoint().port());
+    const auto target_ep =
+        boost::asio::ip::udp::endpoint(boost::asio::ip::make_address_v4("127.0.0.1"), session->udp_socket_.local_endpoint().port());
     sender.send_to(boost::asio::buffer(std::vector<std::uint8_t>{0xEE}), target_ep, 0, ec);
     ASSERT_FALSE(ec);
 
@@ -421,7 +423,8 @@ TEST(RemoteUdpSessionTest, OnDataDispatchesPayload)
     auto session = make_session(io_context, conn, 20);
 
     session->on_data(std::vector<std::uint8_t>{0x10, 0x20});
-    const auto [recv_ec, data] = mux::test::run_awaitable(io_context, session->recv_channel_.async_receive(boost::asio::as_tuple(boost::asio::use_awaitable)));
+    const auto [recv_ec, data] =
+        mux::test::run_awaitable(io_context, session->recv_channel_.async_receive(boost::asio::as_tuple(boost::asio::use_awaitable)));
     EXPECT_FALSE(recv_ec);
     ASSERT_EQ(data.size(), 2U);
     EXPECT_EQ(data[0], 0x10);
@@ -478,24 +481,19 @@ TEST(RemoteUdpSessionTest, OnDataRunsStopWhenIoQueueBlocked)
     std::promise<boost::system::error_code> timer_wait_done;
     auto timer_wait_future = timer_wait_done.get_future();
     session->timer_.expires_after(std::chrono::seconds(30));
-    session->timer_.async_wait(
-        [done = std::move(timer_wait_done)](const boost::system::error_code& ec) mutable
-        {
-            done.set_value(ec);
-        });
+    session->timer_.async_wait([done = std::move(timer_wait_done)](const boost::system::error_code& ec) mutable { done.set_value(ec); });
 
     std::atomic<bool> blocker_started{false};
     std::atomic<bool> release_blocker{false};
-    boost::asio::post(
-        io_context,
-        [&blocker_started, &release_blocker]()
-        {
-            blocker_started.store(true, std::memory_order_release);
-            while (!release_blocker.load(std::memory_order_acquire))
-            {
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            }
-        });
+    boost::asio::post(io_context,
+                      [&blocker_started, &release_blocker]()
+                      {
+                          blocker_started.store(true, std::memory_order_release);
+                          while (!release_blocker.load(std::memory_order_acquire))
+                          {
+                              std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                          }
+                      });
 
     std::thread io_thread([&]() { io_context.run(); });
     for (int i = 0; i < 100 && !blocker_started.load(std::memory_order_acquire); ++i)
@@ -539,7 +537,8 @@ TEST(RemoteUdpSessionTest, OnCloseAndOnResetCloseReceiveChannel)
     io_context.run();
     io_context.restart();
 
-    const auto [recv_ec, recv_data] = mux::test::run_awaitable(io_context, session->recv_channel_.async_receive(boost::asio::as_tuple(boost::asio::use_awaitable)));
+    const auto [recv_ec, recv_data] =
+        mux::test::run_awaitable(io_context, session->recv_channel_.async_receive(boost::asio::as_tuple(boost::asio::use_awaitable)));
     EXPECT_TRUE(recv_ec);
     EXPECT_TRUE(recv_data.empty());
     session->close_socket();
@@ -613,16 +612,15 @@ TEST(RemoteUdpSessionTest, OnCloseAndOnResetRunWhenIoQueueBlocked)
 
     std::atomic<bool> blocker_started{false};
     std::atomic<bool> release_blocker{false};
-    boost::asio::post(
-        io_context,
-        [&blocker_started, &release_blocker]()
-        {
-            blocker_started.store(true, std::memory_order_release);
-            while (!release_blocker.load(std::memory_order_acquire))
-            {
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            }
-        });
+    boost::asio::post(io_context,
+                      [&blocker_started, &release_blocker]()
+                      {
+                          blocker_started.store(true, std::memory_order_release);
+                          while (!release_blocker.load(std::memory_order_acquire))
+                          {
+                              std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                          }
+                      });
 
     std::thread io_thread([&]() { io_context.run(); });
     for (int i = 0; i < 100 && !blocker_started.load(std::memory_order_acquire); ++i)
@@ -659,11 +657,12 @@ TEST(RemoteUdpSessionTest, StartImplSendsAckAndCleansUpManager)
 
     std::vector<std::uint8_t> ack_payload;
     EXPECT_CALL(*conn, mock_send_async(22, mux::kCmdAck, _))
-        .WillOnce([&ack_payload](const std::uint32_t, const std::uint8_t, const std::vector<std::uint8_t>& payload)
-                  {
-                      ack_payload = payload;
-                      return boost::system::error_code{};
-                  });
+        .WillOnce(
+            [&ack_payload](const std::uint32_t, const std::uint8_t, const std::vector<std::uint8_t>& payload)
+            {
+                ack_payload = payload;
+                return boost::system::error_code{};
+            });
     EXPECT_CALL(*conn, mock_send_async(22, mux::kCmdRst, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(boost::system::error_code{}));
 
     boost::asio::co_spawn(

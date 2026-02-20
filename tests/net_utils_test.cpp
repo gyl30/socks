@@ -17,7 +17,7 @@
 
 #include "net_utils.h"
 
-extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);    // NOLINT(bugprone-reserved-identifier)
 
 namespace
 {
@@ -58,10 +58,10 @@ bool is_force_success_option(const int level, const int optname)
 
 }    // namespace
 
-extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)    // NOLINT(bugprone-reserved-identifier)
 {
-    if (g_fail_setsockopt_once.load(std::memory_order_acquire) && g_fail_level.load(std::memory_order_acquire) == level
-        && g_fail_optname.load(std::memory_order_acquire) == optname)
+    if (g_fail_setsockopt_once.load(std::memory_order_acquire) && g_fail_level.load(std::memory_order_acquire) == level &&
+        g_fail_optname.load(std::memory_order_acquire) == optname)
     {
         g_fail_setsockopt_once.store(false, std::memory_order_release);
         errno = g_fail_errno.load(std::memory_order_acquire);
@@ -71,7 +71,7 @@ extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void*
     {
         return 0;
     }
-    return __real_setsockopt(sockfd, level, optname, optval, optlen);  // NOLINT(bugprone-reserved-identifier)
+    return __real_setsockopt(sockfd, level, optname, optval, optlen);    // NOLINT(bugprone-reserved-identifier)
 }
 
 namespace mux::net

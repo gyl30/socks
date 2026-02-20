@@ -13,18 +13,18 @@
 
 extern "C"
 {
-#include <openssl/asn1.h>
 #include <openssl/evp.h>
+#include <openssl/asn1.h>
 #include <openssl/x509.h>
 }
 
 #include "config.h"
-#include "crypto_util.h"
-#include "remote_server.h"
-#include "context_pool.h"
 #include "mux_tunnel.h"
-#include "reality_messages.h"
+#include "crypto_util.h"
+#include "context_pool.h"
 #include "reality_core.h"
+#include "remote_server.h"
+#include "reality_messages.h"
 #include "client_tunnel_pool.h"
 
 namespace
@@ -117,9 +117,7 @@ class scoped_pool_runner
     {
         return cert_der;
     }
-    if (X509_NAME_add_entry_by_txt(
-            name, "CN", MBSTRING_ASC, reinterpret_cast<const unsigned char*>(common_name), -1, -1, 0)
-        != 1)
+    if (X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, reinterpret_cast<const unsigned char*>(common_name), -1, -1, 0) != 1)
     {
         return cert_der;
     }
@@ -147,7 +145,7 @@ class scoped_pool_runner
     return cert_der;
 }
 
-class ClientTunnelPoolPolicyTest : public ::testing::Test
+class client_tunnel_pool_policy_test_fixture : public ::testing::Test
 {
    protected:
     void SetUp() override
@@ -167,7 +165,7 @@ class ClientTunnelPoolPolicyTest : public ::testing::Test
     std::string client_public_key_;
 };
 
-TEST_F(ClientTunnelPoolPolicyTest, DummyCertificateAllowedWhenStrictVerifyDisabled)
+TEST_F(client_tunnel_pool_policy_test_fixture, DummyCertificateAllowedWhenStrictVerifyDisabled)
 {
     boost::system::error_code const ec;
     mux::io_context_pool pool(2);
@@ -212,7 +210,7 @@ TEST_F(ClientTunnelPoolPolicyTest, DummyCertificateAllowedWhenStrictVerifyDisabl
     server->stop();
 }
 
-TEST_F(ClientTunnelPoolPolicyTest, DummyCertificateRejectedWhenStrictVerifyEnabled)
+TEST_F(client_tunnel_pool_policy_test_fixture, DummyCertificateRejectedWhenStrictVerifyEnabled)
 {
     boost::system::error_code const ec;
     mux::io_context_pool pool(2);
@@ -257,7 +255,7 @@ TEST_F(ClientTunnelPoolPolicyTest, DummyCertificateRejectedWhenStrictVerifyEnabl
     server->stop();
 }
 
-TEST_F(ClientTunnelPoolPolicyTest, StrictVerifyEnabledWithValidCertificateChainShouldPass)
+TEST_F(client_tunnel_pool_policy_test_fixture, StrictVerifyEnabledWithValidCertificateChainShouldPass)
 {
     boost::system::error_code const ec;
     mux::io_context_pool pool(2);

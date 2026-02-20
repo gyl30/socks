@@ -70,8 +70,8 @@ std::vector<std::uint8_t> build_self_signed_cert_der()
     {
         return {};
     }
-    if (EVP_PKEY_keygen_init(key_ctx) != 1 || EVP_PKEY_CTX_set_rsa_keygen_bits(key_ctx, 1024) != 1 || EVP_PKEY_keygen(key_ctx, &raw_key) != 1
-        || raw_key == nullptr)
+    if (EVP_PKEY_keygen_init(key_ctx) != 1 || EVP_PKEY_CTX_set_rsa_keygen_bits(key_ctx, 1024) != 1 || EVP_PKEY_keygen(key_ctx, &raw_key) != 1 ||
+        raw_key == nullptr)
     {
         EVP_PKEY_CTX_free(key_ctx);
         if (raw_key != nullptr)
@@ -89,21 +89,14 @@ std::vector<std::uint8_t> build_self_signed_cert_der()
         return {};
     }
 
-    const bool setup_ok = X509_set_version(cert, 2) == 1 && ASN1_INTEGER_set(X509_get_serialNumber(cert), 1) == 1
-                          && X509_gmtime_adj(X509_get_notBefore(cert), 0) != nullptr && X509_gmtime_adj(X509_get_notAfter(cert), 60) != nullptr
-                          && X509_set_pubkey(cert, raw_key) == 1;
+    const bool setup_ok = X509_set_version(cert, 2) == 1 && ASN1_INTEGER_set(X509_get_serialNumber(cert), 1) == 1 &&
+                          X509_gmtime_adj(X509_get_notBefore(cert), 0) != nullptr && X509_gmtime_adj(X509_get_notAfter(cert), 60) != nullptr &&
+                          X509_set_pubkey(cert, raw_key) == 1;
 
     X509_NAME* name = X509_get_subject_name(cert);
-    const bool name_ok = name != nullptr
-                         && X509_NAME_add_entry_by_txt(name,
-                                                       "CN",
-                                                       MBSTRING_ASC,
-                                                       reinterpret_cast<const unsigned char*>("with-key"),
-                                                       -1,
-                                                       -1,
-                                                       0)
-                                == 1
-                         && X509_set_issuer_name(cert, name) == 1;
+    const bool name_ok = name != nullptr &&
+                         X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, reinterpret_cast<const unsigned char*>("with-key"), -1, -1, 0) == 1 &&
+                         X509_set_issuer_name(cert, name) == 1;
 
     const bool sign_ok = X509_sign(cert, raw_key, EVP_sha256()) > 0;
     EVP_PKEY_free(raw_key);
@@ -133,72 +126,84 @@ std::vector<std::uint8_t> build_self_signed_cert_der()
 
 }    // namespace
 
-extern "C" int __real_EVP_PKEY_CTX_set1_hkdf_key(EVP_PKEY_CTX* ctx, const unsigned char* key, int keylen);  // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_EVP_PKEY_CTX_set1_hkdf_salt(EVP_PKEY_CTX* ctx, const unsigned char* salt, int saltlen);  // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_EVP_CIPHER_CTX_ctrl(EVP_CIPHER_CTX* ctx, int type, int arg, void* ptr);  // NOLINT(bugprone-reserved-identifier)
-extern "C" EVP_PKEY* __real_X509_get_pubkey(X509* x);  // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_RAND_bytes(unsigned char* buf, int num);  // NOLINT(bugprone-reserved-identifier)
-extern "C" EVP_PKEY_CTX* __real_EVP_PKEY_CTX_new_id(int id, ENGINE* e);  // NOLINT(bugprone-reserved-identifier)
-extern "C" EVP_PKEY* __real_EVP_PKEY_new_raw_private_key(int type, ENGINE* e, const unsigned char* key, size_t keylen);  // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_EVP_PKEY_CTX_add1_hkdf_info(EVP_PKEY_CTX* ctx, const unsigned char* info, int infolen);  // NOLINT(bugprone-reserved-identifier)
-extern "C" EVP_MD_CTX* __real_EVP_MD_CTX_new();  // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_EVP_PKEY_derive(EVP_PKEY_CTX* ctx, unsigned char* key, size_t* keylen);  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_EVP_PKEY_CTX_set1_hkdf_key(EVP_PKEY_CTX* ctx, const unsigned char* key, int keylen);    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_EVP_PKEY_CTX_set1_hkdf_salt(EVP_PKEY_CTX* ctx,
+                                                  const unsigned char* salt,
+                                                  int saltlen);                                  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_EVP_CIPHER_CTX_ctrl(EVP_CIPHER_CTX* ctx, int type, int arg, void* ptr);    // NOLINT(bugprone-reserved-identifier)
+extern "C" EVP_PKEY* __real_X509_get_pubkey(X509* x);                                            // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_RAND_bytes(unsigned char* buf, int num);                                   // NOLINT(bugprone-reserved-identifier)
+extern "C" EVP_PKEY_CTX* __real_EVP_PKEY_CTX_new_id(int id, ENGINE* e);                          // NOLINT(bugprone-reserved-identifier)
+extern "C" EVP_PKEY* __real_EVP_PKEY_new_raw_private_key(int type,
+                                                         ENGINE* e,
+                                                         const unsigned char* key,
+                                                         size_t keylen);    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_EVP_PKEY_CTX_add1_hkdf_info(EVP_PKEY_CTX* ctx,
+                                                  const unsigned char* info,
+                                                  int infolen);                                  // NOLINT(bugprone-reserved-identifier)
+extern "C" EVP_MD_CTX* __real_EVP_MD_CTX_new();                                                  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_EVP_PKEY_derive(EVP_PKEY_CTX* ctx, unsigned char* key, size_t* keylen);    // NOLINT(bugprone-reserved-identifier)
 
-extern "C" int __wrap_EVP_PKEY_CTX_set1_hkdf_key(EVP_PKEY_CTX* ctx, const unsigned char* key, int keylen)  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_EVP_PKEY_CTX_set1_hkdf_key(EVP_PKEY_CTX* ctx, const unsigned char* key, int keylen)    // NOLINT(bugprone-reserved-identifier)
 {
     if (g_fail_hkdf_set_key.exchange(false, std::memory_order_acq_rel))
     {
         return 0;
     }
-    return __real_EVP_PKEY_CTX_set1_hkdf_key(ctx, key, keylen);  // NOLINT(bugprone-reserved-identifier)
+    return __real_EVP_PKEY_CTX_set1_hkdf_key(ctx, key, keylen);    // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_EVP_PKEY_CTX_set1_hkdf_salt(EVP_PKEY_CTX* ctx, const unsigned char* salt, int saltlen)  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_EVP_PKEY_CTX_set1_hkdf_salt(EVP_PKEY_CTX* ctx,
+                                                  const unsigned char* salt,
+                                                  int saltlen)    // NOLINT(bugprone-reserved-identifier)
 {
     if (g_fail_hkdf_set_salt.exchange(false, std::memory_order_acq_rel))
     {
         return 0;
     }
-    return __real_EVP_PKEY_CTX_set1_hkdf_salt(ctx, salt, saltlen);  // NOLINT(bugprone-reserved-identifier)
+    return __real_EVP_PKEY_CTX_set1_hkdf_salt(ctx, salt, saltlen);    // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_EVP_CIPHER_CTX_ctrl(EVP_CIPHER_CTX* ctx, int type, int arg, void* ptr)  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_EVP_CIPHER_CTX_ctrl(EVP_CIPHER_CTX* ctx, int type, int arg, void* ptr)    // NOLINT(bugprone-reserved-identifier)
 {
     if (type == EVP_CTRL_GCM_SET_TAG && g_fail_set_gcm_tag.exchange(false, std::memory_order_acq_rel))
     {
         return 0;
     }
-    return __real_EVP_CIPHER_CTX_ctrl(ctx, type, arg, ptr);  // NOLINT(bugprone-reserved-identifier)
+    return __real_EVP_CIPHER_CTX_ctrl(ctx, type, arg, ptr);    // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" EVP_PKEY* __wrap_X509_get_pubkey(X509* x)  // NOLINT(bugprone-reserved-identifier)
+extern "C" EVP_PKEY* __wrap_X509_get_pubkey(X509* x)    // NOLINT(bugprone-reserved-identifier)
 {
     if (g_fail_x509_get_pubkey.exchange(false, std::memory_order_acq_rel))
     {
         return nullptr;
     }
-    return __real_X509_get_pubkey(x);  // NOLINT(bugprone-reserved-identifier)
+    return __real_X509_get_pubkey(x);    // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_RAND_bytes(unsigned char* buf, int num)  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_RAND_bytes(unsigned char* buf, int num)    // NOLINT(bugprone-reserved-identifier)
 {
     if (g_fail_rand_bytes.exchange(false, std::memory_order_acq_rel))
     {
         return 0;
     }
-    return __real_RAND_bytes(buf, num);  // NOLINT(bugprone-reserved-identifier)
+    return __real_RAND_bytes(buf, num);    // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" EVP_PKEY_CTX* __wrap_EVP_PKEY_CTX_new_id(int id, ENGINE* e)  // NOLINT(bugprone-reserved-identifier)
+extern "C" EVP_PKEY_CTX* __wrap_EVP_PKEY_CTX_new_id(int id, ENGINE* e)    // NOLINT(bugprone-reserved-identifier)
 {
     if (id == EVP_PKEY_X25519 && g_fail_x25519_ctx_new_id.exchange(false, std::memory_order_acq_rel))
     {
         return nullptr;
     }
-    return __real_EVP_PKEY_CTX_new_id(id, e);  // NOLINT(bugprone-reserved-identifier)
+    return __real_EVP_PKEY_CTX_new_id(id, e);    // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" EVP_PKEY* __wrap_EVP_PKEY_new_raw_private_key(int type, ENGINE* e, const unsigned char* key, size_t keylen)  // NOLINT(bugprone-reserved-identifier)
+extern "C" EVP_PKEY* __wrap_EVP_PKEY_new_raw_private_key(int type,
+                                                         ENGINE* e,
+                                                         const unsigned char* key,
+                                                         size_t keylen)    // NOLINT(bugprone-reserved-identifier)
 {
     if (type == EVP_PKEY_X25519 && g_fail_x25519_raw_private_key.exchange(false, std::memory_order_acq_rel))
     {
@@ -208,34 +213,36 @@ extern "C" EVP_PKEY* __wrap_EVP_PKEY_new_raw_private_key(int type, ENGINE* e, co
     {
         return nullptr;
     }
-    return __real_EVP_PKEY_new_raw_private_key(type, e, key, keylen);  // NOLINT(bugprone-reserved-identifier)
+    return __real_EVP_PKEY_new_raw_private_key(type, e, key, keylen);    // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_EVP_PKEY_CTX_add1_hkdf_info(EVP_PKEY_CTX* ctx, const unsigned char* info, int infolen)  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_EVP_PKEY_CTX_add1_hkdf_info(EVP_PKEY_CTX* ctx,
+                                                  const unsigned char* info,
+                                                  int infolen)    // NOLINT(bugprone-reserved-identifier)
 {
     if (g_fail_hkdf_add_info.exchange(false, std::memory_order_acq_rel))
     {
         return 0;
     }
-    return __real_EVP_PKEY_CTX_add1_hkdf_info(ctx, info, infolen);  // NOLINT(bugprone-reserved-identifier)
+    return __real_EVP_PKEY_CTX_add1_hkdf_info(ctx, info, infolen);    // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" EVP_MD_CTX* __wrap_EVP_MD_CTX_new()  // NOLINT(bugprone-reserved-identifier)
+extern "C" EVP_MD_CTX* __wrap_EVP_MD_CTX_new()    // NOLINT(bugprone-reserved-identifier)
 {
     if (g_fail_md_ctx_new.exchange(false, std::memory_order_acq_rel))
     {
         return nullptr;
     }
-    return __real_EVP_MD_CTX_new();  // NOLINT(bugprone-reserved-identifier)
+    return __real_EVP_MD_CTX_new();    // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_EVP_PKEY_derive(EVP_PKEY_CTX* ctx, unsigned char* key, size_t* keylen)  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_EVP_PKEY_derive(EVP_PKEY_CTX* ctx, unsigned char* key, size_t* keylen)    // NOLINT(bugprone-reserved-identifier)
 {
     if (g_fail_pkey_derive.exchange(false, std::memory_order_acq_rel))
     {
         return 0;
     }
-    return __real_EVP_PKEY_derive(ctx, key, keylen);  // NOLINT(bugprone-reserved-identifier)
+    return __real_EVP_PKEY_derive(ctx, key, keylen);    // NOLINT(bugprone-reserved-identifier)
 }
 
 TEST(CryptoUtilTest, HexConversion)
@@ -684,14 +691,8 @@ TEST(CryptoUtilTest, AEADDecryptLowLevelFailureBranches)
     const std::vector<std::uint8_t> long_nonce(16, 0x33);
     const std::vector<std::uint8_t> fake_ciphertext(32, 0x44);
     out.assign(32, 0);
-    const auto n2 =
-        crypto_util::aead_decrypt(cbc_ctx,
-                                  EVP_aes_256_cbc(),
-                                  key,
-                                  std::span<const std::uint8_t>(long_nonce.data(), 12),
-                                  fake_ciphertext,
-                                  std::vector<std::uint8_t>{0xaa},
-                                  out);
+    const auto n2 = crypto_util::aead_decrypt(
+        cbc_ctx, EVP_aes_256_cbc(), key, std::span<const std::uint8_t>(long_nonce.data(), 12), fake_ciphertext, std::vector<std::uint8_t>{0xaa}, out);
     EXPECT_FALSE(n2.has_value());
     EXPECT_EQ(n2.error(), std::make_error_code(std::errc::bad_message));
 }

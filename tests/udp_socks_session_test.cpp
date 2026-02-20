@@ -86,53 +86,49 @@ void fail_getsockname_on_call(const int nth_call, const int err)
     g_fail_getsockname_on_call.store(nth_call, std::memory_order_release);
 }
 
-void mock_next_getsockname_ipv6_any()
-{
-    g_mock_getsockname_ipv6_any_once.store(true, std::memory_order_release);
-}
+void mock_next_getsockname_ipv6_any() { g_mock_getsockname_ipv6_any_once.store(true, std::memory_order_release); }
 
-extern "C" int __real_close(int fd);  // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_bind(int sockfd, const sockaddr* addr, socklen_t addrlen);  // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);  // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_getsockname(int sockfd, sockaddr* addr, socklen_t* addrlen);  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_close(int fd);                                                                           // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_bind(int sockfd, const sockaddr* addr, socklen_t addrlen);                               // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_getsockname(int sockfd, sockaddr* addr, socklen_t* addrlen);                             // NOLINT(bugprone-reserved-identifier)
 
-extern "C" int __wrap_close(int fd)  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_close(int fd)    // NOLINT(bugprone-reserved-identifier)
 {
     if (g_fail_close_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_close_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_close(fd);  // NOLINT(bugprone-reserved-identifier)
+    return __real_close(fd);    // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_bind(int sockfd, const sockaddr* addr, socklen_t addrlen)  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_bind(int sockfd, const sockaddr* addr, socklen_t addrlen)    // NOLINT(bugprone-reserved-identifier)
 {
     if (g_fail_bind_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_bind_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_bind(sockfd, addr, addrlen);  // NOLINT(bugprone-reserved-identifier)
+    return __real_bind(sockfd, addr, addrlen);    // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)    // NOLINT(bugprone-reserved-identifier)
 {
-    if (g_fail_setsockopt_once.exchange(false, std::memory_order_acq_rel)
-        && level == g_fail_setsockopt_level.load(std::memory_order_acquire))
+    if (g_fail_setsockopt_once.exchange(false, std::memory_order_acq_rel) && level == g_fail_setsockopt_level.load(std::memory_order_acquire))
     {
         const int configured_optname = g_fail_setsockopt_optname.load(std::memory_order_acquire);
         if (configured_optname >= 0 && optname != configured_optname)
         {
-            return __real_setsockopt(sockfd, level, optname, optval, optlen);  // NOLINT(bugprone-reserved-identifier)
+            return __real_setsockopt(sockfd, level, optname, optval, optlen);    // NOLINT(bugprone-reserved-identifier)
         }
         errno = g_fail_setsockopt_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_setsockopt(sockfd, level, optname, optval, optlen);  // NOLINT(bugprone-reserved-identifier)
+    return __real_setsockopt(sockfd, level, optname, optval, optlen);    // NOLINT(bugprone-reserved-identifier)
 }
 
-extern "C" int __wrap_getsockname(int sockfd, sockaddr* addr, socklen_t* addrlen)  // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_getsockname(int sockfd, sockaddr* addr, socklen_t* addrlen)    // NOLINT(bugprone-reserved-identifier)
 {
     if (g_mock_getsockname_ipv6_any_once.exchange(false, std::memory_order_acq_rel))
     {
@@ -160,7 +156,7 @@ extern "C" int __wrap_getsockname(int sockfd, sockaddr* addr, socklen_t* addrlen
             return -1;
         }
     }
-    return __real_getsockname(sockfd, addr, addrlen);  // NOLINT(bugprone-reserved-identifier)
+    return __real_getsockname(sockfd, addr, addrlen);    // NOLINT(bugprone-reserved-identifier)
 }
 
 struct tcp_socket_pair
@@ -194,7 +190,7 @@ tcp_socket_pair make_tcp_socket_pair(boost::asio::io_context& ctx)
 }
 
 std::shared_ptr<mux::mux_tunnel_impl<boost::asio::ip::tcp::socket>> make_test_tunnel(boost::asio::io_context& io_context,
-                                                                                const std::uint32_t conn_id = 100)
+                                                                                     const std::uint32_t conn_id = 100)
 {
     return std::make_shared<mux::mux_tunnel_impl<boost::asio::ip::tcp::socket>>(
         boost::asio::ip::tcp::socket(io_context), io_context, mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, conn_id);
@@ -207,8 +203,7 @@ TEST(UdpSocksSessionTest, PrepareUdpAssociateFailureBranches)
     boost::asio::io_context ctx;
     mux::config::timeout_t const timeout_cfg;
 
-    auto session_with_closed_tcp =
-        std::make_shared<mux::udp_socks_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, 1, timeout_cfg);
+    auto session_with_closed_tcp = std::make_shared<mux::udp_socks_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, 1, timeout_cfg);
 
     bool done = false;
     boost::asio::co_spawn(
@@ -230,8 +225,7 @@ TEST(UdpSocksSessionTest, PrepareUdpAssociateFailureBranches)
     auto pair = make_tcp_socket_pair(ctx);
     ASSERT_TRUE(pair.server.is_open());
 
-    auto session_without_tunnel =
-        std::make_shared<mux::udp_socks_session>(std::move(pair.server), ctx, nullptr, 2, timeout_cfg);
+    auto session_without_tunnel = std::make_shared<mux::udp_socks_session>(std::move(pair.server), ctx, nullptr, 2, timeout_cfg);
 
     done = false;
     boost::asio::co_spawn(
@@ -465,11 +459,12 @@ TEST(UdpSocksSessionTest, KeepTcpAliveCoversExpectedErrorCodes)
         auto session = std::make_shared<mux::udp_socks_session>(std::move(pair.server), ctx, nullptr, 35, timeout_cfg);
         boost::asio::steady_timer timer(ctx);
         timer.expires_after(std::chrono::milliseconds(10));
-        timer.async_wait([session](const boost::system::error_code&)
-                         {
-                             boost::system::error_code close_ec;
-                             session->socket_.close(close_ec);
-                         });
+        timer.async_wait(
+            [session](const boost::system::error_code&)
+            {
+                boost::system::error_code close_ec;
+                session->socket_.close(close_ec);
+            });
         mux::test::run_awaitable_void(ctx, session->keep_tcp_alive());
     }
 }
@@ -678,17 +673,18 @@ TEST(UdpSocksSessionTest, PrepareUdpAssociateAckFailureRemovesCreatedStream)
 
     EXPECT_CALL(*mock_conn, mock_send_async(testing::_, mux::kCmdSyn, testing::_)).WillOnce(testing::Return(boost::system::error_code{}));
     EXPECT_CALL(*mock_conn, register_stream(testing::_, testing::_))
-        .WillOnce([&ctx](const std::uint32_t, std::shared_ptr<mux::mux_stream_interface> iface) -> bool
-                  {
-                      auto stream = std::dynamic_pointer_cast<mux::mux_stream>(iface);
-                      EXPECT_NE(stream, nullptr);
-                      if (stream == nullptr)
-                      {
-                          return false;
-                      }
-                      boost::asio::post(ctx, [stream]() { stream->on_reset(); });
-                      return true;
-                  });
+        .WillOnce(
+            [&ctx](const std::uint32_t, std::shared_ptr<mux::mux_stream_interface> iface) -> bool
+            {
+                auto stream = std::dynamic_pointer_cast<mux::mux_stream>(iface);
+                EXPECT_NE(stream, nullptr);
+                if (stream == nullptr)
+                {
+                    return false;
+                }
+                boost::asio::post(ctx, [stream]() { stream->on_reset(); });
+                return true;
+            });
     EXPECT_CALL(*mock_conn, mock_send_async(testing::_, mux::kCmdFin, std::vector<std::uint8_t>{})).Times(0);
     EXPECT_CALL(*mock_conn, remove_stream(testing::_)).Times(1);
 
@@ -723,29 +719,30 @@ TEST(UdpSocksSessionTest, PrepareUdpAssociateSuccessReplyFailureCleansUpSessionA
 
     EXPECT_CALL(*mock_conn, mock_send_async(testing::_, mux::kCmdSyn, testing::_)).WillOnce(testing::Return(boost::system::error_code{}));
     EXPECT_CALL(*mock_conn, register_stream(testing::_, testing::_))
-        .WillOnce([&ctx, session_raw](const std::uint32_t, std::shared_ptr<mux::mux_stream_interface> iface) -> bool
-                  {
-                      auto stream = std::dynamic_pointer_cast<mux::mux_stream>(iface);
-                      EXPECT_NE(stream, nullptr);
-                      if (stream == nullptr)
-                      {
-                          return false;
-                      }
+        .WillOnce(
+            [&ctx, session_raw](const std::uint32_t, std::shared_ptr<mux::mux_stream_interface> iface) -> bool
+            {
+                auto stream = std::dynamic_pointer_cast<mux::mux_stream>(iface);
+                EXPECT_NE(stream, nullptr);
+                if (stream == nullptr)
+                {
+                    return false;
+                }
 
-                      boost::asio::post(ctx,
-                                 [session_raw]()
-                                 {
-                                     boost::system::error_code close_ec;
-                                     session_raw->socket_.close(close_ec);
-                                 });
+                boost::asio::post(ctx,
+                                  [session_raw]()
+                                  {
+                                      boost::system::error_code close_ec;
+                                      session_raw->socket_.close(close_ec);
+                                  });
 
-                      mux::ack_payload ack{};
-                      ack.socks_rep = socks::kRepSuccess;
-                      std::vector<std::uint8_t> ack_data;
-                      mux::mux_codec::encode_ack(ack, ack_data);
-                      boost::asio::post(ctx, [stream, ack_data]() { stream->on_data(ack_data); });
-                      return true;
-                  });
+                mux::ack_payload ack{};
+                ack.socks_rep = socks::kRepSuccess;
+                std::vector<std::uint8_t> ack_data;
+                mux::mux_codec::encode_ack(ack, ack_data);
+                boost::asio::post(ctx, [stream, ack_data]() { stream->on_data(ack_data); });
+                return true;
+            });
     EXPECT_CALL(*mock_conn, mock_send_async(testing::_, mux::kCmdFin, std::vector<std::uint8_t>{}))
         .WillOnce(testing::Return(boost::system::error_code{}));
     EXPECT_CALL(*mock_conn, remove_stream(testing::_)).Times(1);
@@ -818,27 +815,27 @@ TEST(UdpSocksSessionTest, PrepareAndFinalizeUdpAssociateSuccess)
 
     EXPECT_CALL(*mock_conn, mock_send_async(testing::_, mux::kCmdSyn, testing::_)).WillOnce(testing::Return(boost::system::error_code{}));
     EXPECT_CALL(*mock_conn, register_stream(testing::_, testing::_))
-        .WillOnce([&ctx](const std::uint32_t, std::shared_ptr<mux::mux_stream_interface> iface) -> bool
-                  {
-                      auto stream = std::dynamic_pointer_cast<mux::mux_stream>(iface);
-                      EXPECT_NE(stream, nullptr);
-                      if (stream == nullptr)
-                      {
-                          return false;
-                      }
-                      mux::ack_payload ack{};
-                      ack.socks_rep = socks::kRepSuccess;
-                      std::vector<std::uint8_t> ack_data;
-                      mux::mux_codec::encode_ack(ack, ack_data);
-                      boost::asio::post(ctx, [stream, ack_data]() { stream->on_data(ack_data); });
-                      return true;
-                  });
+        .WillOnce(
+            [&ctx](const std::uint32_t, std::shared_ptr<mux::mux_stream_interface> iface) -> bool
+            {
+                auto stream = std::dynamic_pointer_cast<mux::mux_stream>(iface);
+                EXPECT_NE(stream, nullptr);
+                if (stream == nullptr)
+                {
+                    return false;
+                }
+                mux::ack_payload ack{};
+                ack.socks_rep = socks::kRepSuccess;
+                std::vector<std::uint8_t> ack_data;
+                mux::mux_codec::encode_ack(ack, ack_data);
+                boost::asio::post(ctx, [stream, ack_data]() { stream->on_data(ack_data); });
+                return true;
+            });
     testing::Sequence const cleanup_seq;
     EXPECT_CALL(*mock_conn, mock_send_async(testing::_, mux::kCmdFin, std::vector<std::uint8_t>{}))
         .InSequence(cleanup_seq)
         .WillOnce(testing::Return(boost::system::error_code{}));
-    EXPECT_CALL(*mock_conn, remove_stream(testing::_))
-        .InSequence(cleanup_seq);
+    EXPECT_CALL(*mock_conn, remove_stream(testing::_)).InSequence(cleanup_seq);
 
     auto session = std::make_shared<mux::udp_socks_session>(std::move(pair.server), ctx, tunnel, 38, timeout_cfg);
     boost::asio::ip::address local_addr;
@@ -1016,16 +1013,15 @@ TEST(UdpSocksSessionTest, OnDataTriggersCloseWhenIoQueueBlocked)
 
     std::atomic<bool> blocker_started{false};
     std::atomic<bool> release_blocker{false};
-    boost::asio::post(
-        ctx,
-        [&blocker_started, &release_blocker]()
-        {
-            blocker_started.store(true, std::memory_order_release);
-            while (!release_blocker.load(std::memory_order_acquire))
-            {
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            }
-        });
+    boost::asio::post(ctx,
+                      [&blocker_started, &release_blocker]()
+                      {
+                          blocker_started.store(true, std::memory_order_release);
+                          while (!release_blocker.load(std::memory_order_acquire))
+                          {
+                              std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                          }
+                      });
 
     std::thread io_thread([&]() { ctx.run(); });
     bool started = false;
@@ -1076,16 +1072,15 @@ TEST(UdpSocksSessionTest, OnCloseRunsWhenIoQueueBlocked)
 
     std::atomic<bool> blocker_started{false};
     std::atomic<bool> release_blocker{false};
-    boost::asio::post(
-        ctx,
-        [&blocker_started, &release_blocker]()
-        {
-            blocker_started.store(true, std::memory_order_release);
-            while (!release_blocker.load(std::memory_order_acquire))
-            {
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            }
-        });
+    boost::asio::post(ctx,
+                      [&blocker_started, &release_blocker]()
+                      {
+                          blocker_started.store(true, std::memory_order_release);
+                          while (!release_blocker.load(std::memory_order_acquire))
+                          {
+                              std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                          }
+                      });
 
     std::thread io_thread([&]() { ctx.run(); });
     bool started = false;

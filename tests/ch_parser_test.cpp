@@ -132,10 +132,7 @@ class client_hello_builder
         buffer_[pos + 1] = static_cast<std::uint8_t>(v & 0xFFU);
     }
 
-    [[nodiscard]] static std::uint16_t to_u16(const std::size_t value)
-    {
-        return static_cast<std::uint16_t>(value);
-    }
+    [[nodiscard]] static std::uint16_t to_u16(const std::size_t value) { return static_cast<std::uint16_t>(value); }
 };
 
 TEST(CHParserTest, ValidTLS13)

@@ -2,11 +2,11 @@
 // NOLINTBEGIN(misc-include-cleaner)
 #include <string>
 #include <cstdint>
-#include <fstream>
 #include <cstdlib>
-#include <system_error>
+#include <fstream>
 #include <unistd.h>
 #include <filesystem>
+#include <system_error>
 
 #include <gtest/gtest.h>
 #include <boost/asio/io_context.hpp>
@@ -47,7 +47,7 @@ class env_var_guard
     std::string old_value_;
 };
 
-class RouterFileTest : public ::testing::Test
+class router_file_test_fixture : public ::testing::Test
 {
    protected:
     void SetUp() override
@@ -91,7 +91,7 @@ class RouterFileTest : public ::testing::Test
 
 }    // namespace
 
-TEST_F(RouterFileTest, EmptyDirectIpDefaultsProxy)
+TEST_F(router_file_test_fixture, EmptyDirectIpDefaultsProxy)
 {
     mux::router router;
     ASSERT_TRUE(router.load());
@@ -104,7 +104,7 @@ TEST_F(RouterFileTest, EmptyDirectIpDefaultsProxy)
     EXPECT_EQ(result, mux::route_type::kProxy);
 }
 
-TEST_F(RouterFileTest, MissingRuleFileCausesLoadFailure)
+TEST_F(router_file_test_fixture, MissingRuleFileCausesLoadFailure)
 {
     std::filesystem::remove("direct_ip.txt");
 
@@ -112,7 +112,7 @@ TEST_F(RouterFileTest, MissingRuleFileCausesLoadFailure)
     EXPECT_FALSE(router.load());
 }
 
-TEST_F(RouterFileTest, MissingDomainRuleFileCausesLoadFailure)
+TEST_F(router_file_test_fixture, MissingDomainRuleFileCausesLoadFailure)
 {
     std::filesystem::remove("block_domain.txt");
 
@@ -120,7 +120,7 @@ TEST_F(RouterFileTest, MissingDomainRuleFileCausesLoadFailure)
     EXPECT_FALSE(router.load());
 }
 
-TEST_F(RouterFileTest, UnreadableIpRuleFileCausesLoadFailure)
+TEST_F(router_file_test_fixture, UnreadableIpRuleFileCausesLoadFailure)
 {
     boost::system::error_code ec;
     std::filesystem::permissions("direct_ip.txt", std::filesystem::perms::none, std::filesystem::perm_options::replace, ec);
@@ -130,14 +130,11 @@ TEST_F(RouterFileTest, UnreadableIpRuleFileCausesLoadFailure)
     EXPECT_FALSE(router.load());
 
     std::filesystem::permissions(
-        "direct_ip.txt",
-        std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
-        std::filesystem::perm_options::replace,
-        ec);
+        "direct_ip.txt", std::filesystem::perms::owner_read | std::filesystem::perms::owner_write, std::filesystem::perm_options::replace, ec);
     EXPECT_FALSE(ec) << ec.message();
 }
 
-TEST_F(RouterFileTest, UnreadableDomainRuleFileCausesLoadFailure)
+TEST_F(router_file_test_fixture, UnreadableDomainRuleFileCausesLoadFailure)
 {
     boost::system::error_code ec;
     std::filesystem::permissions("block_domain.txt", std::filesystem::perms::none, std::filesystem::perm_options::replace, ec);
@@ -147,14 +144,11 @@ TEST_F(RouterFileTest, UnreadableDomainRuleFileCausesLoadFailure)
     EXPECT_FALSE(router.load());
 
     std::filesystem::permissions(
-        "block_domain.txt",
-        std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
-        std::filesystem::perm_options::replace,
-        ec);
+        "block_domain.txt", std::filesystem::perms::owner_read | std::filesystem::perms::owner_write, std::filesystem::perm_options::replace, ec);
     EXPECT_FALSE(ec) << ec.message();
 }
 
-TEST_F(RouterFileTest, LoadRuleFilesFromSocksConfigDir)
+TEST_F(router_file_test_fixture, LoadRuleFilesFromSocksConfigDir)
 {
     const auto cfg_dir = std::filesystem::path("env_config");
     std::filesystem::create_directories(cfg_dir);
