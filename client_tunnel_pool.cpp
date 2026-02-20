@@ -186,7 +186,9 @@ bool read_u24_field(const std::vector<std::uint8_t>& data, const std::size_t pos
     {
         return false;
     }
-    value = (data[pos] << 16) | (data[pos + 1] << 8) | data[pos + 2];
+    value = (static_cast<std::uint32_t>(data[pos]) << 16)
+          | (static_cast<std::uint32_t>(data[pos + 1]) << 8)
+          | static_cast<std::uint32_t>(data[pos + 2]);
     return true;
 }
 
@@ -254,7 +256,9 @@ bool read_handshake_message_bounds(const std::vector<std::uint8_t>& handshake_bu
         return false;
     }
     msg_type = handshake_buffer[offset];
-    msg_len = (handshake_buffer[offset + 1] << 16) | (handshake_buffer[offset + 2] << 8) | handshake_buffer[offset + 3];
+    msg_len = (static_cast<std::uint32_t>(handshake_buffer[offset + 1]) << 16)
+            | (static_cast<std::uint32_t>(handshake_buffer[offset + 2]) << 8)
+            | static_cast<std::uint32_t>(handshake_buffer[offset + 3]);
     return offset + 4 + msg_len <= handshake_buffer.size();
 }
 
@@ -342,7 +346,9 @@ std::expected<void, boost::system::error_code> verify_server_finished_message(co
                                                                                const reality::transcript& trans)
 {
     // handshake_read_loop only calls this helper after message type and bounds validation.
-    const std::uint32_t msg_len = (msg_data[1] << 16) | (msg_data[2] << 8) | msg_data[3];
+    const std::uint32_t msg_len = (static_cast<std::uint32_t>(msg_data[1]) << 16)
+                                | (static_cast<std::uint32_t>(msg_data[2]) << 8)
+                                | static_cast<std::uint32_t>(msg_data[3]);
 
     const auto expected_verify_data =
         reality::tls_key_schedule::compute_finished_verify_data(hs_keys.server_handshake_traffic_secret, trans.finish(), md);
@@ -684,7 +690,8 @@ std::expected<std::vector<std::uint8_t>, boost::system::error_code> build_authen
     }
     auto [client_random, auth_key] = std::move(*auth_material_result);
 
-    const std::uint32_t now = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    const auto now_seconds = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    const std::uint32_t now = static_cast<std::uint32_t>(now_seconds);
     std::array<std::uint8_t, reality::kAuthPayloadLen> payload{};
     if (!reality::build_auth_payload(short_id_bytes, client_ver, now, payload))
     {

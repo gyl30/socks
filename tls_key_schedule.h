@@ -49,7 +49,12 @@ class tls_key_schedule
         const std::vector<std::uint8_t>& server_hello_hash,
         const EVP_MD* md)
     {
-        const std::size_t hash_len = EVP_MD_size(md);
+        const auto hash_len_result = hash_size(md);
+        if (!hash_len_result)
+        {
+            return std::unexpected(hash_len_result.error());
+        }
+        const std::size_t hash_len = *hash_len_result;
         const std::vector<std::uint8_t> zero_ikm(hash_len, 0);
         auto early_secret = crypto_util::hkdf_extract(zero_ikm, zero_ikm, md);
         if (!early_secret)
@@ -87,7 +92,12 @@ class tls_key_schedule
     [[nodiscard]] static std::expected<std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>, boost::system::error_code> derive_application_secrets(
         const std::vector<std::uint8_t>& master_secret, const std::vector<std::uint8_t>& handshake_hash, const EVP_MD* md)
     {
-        const std::size_t hash_len = EVP_MD_size(md);    // GCOVR_EXCL_LINE
+        const auto hash_len_result = hash_size(md);
+        if (!hash_len_result)
+        {
+            return std::pair{std::vector<std::uint8_t>{}, std::vector<std::uint8_t>{}};
+        }
+        const std::size_t hash_len = *hash_len_result;    // GCOVR_EXCL_LINE
         auto c_app_secret =
             crypto_util::hkdf_expand_label(master_secret, "c ap traffic", handshake_hash, hash_len, md);    // GCOVR_EXCL_LINE
         auto s_app_secret =
@@ -99,7 +109,12 @@ class tls_key_schedule
     [[nodiscard]] static std::expected<std::vector<std::uint8_t>, boost::system::error_code> compute_finished_verify_data(
         const std::vector<std::uint8_t>& base_key, const std::vector<std::uint8_t>& handshake_hash, const EVP_MD* md)
     {
-        const std::size_t hash_len = EVP_MD_size(md);
+        const auto hash_len_result = hash_size(md);
+        if (!hash_len_result)
+        {
+            return std::unexpected(hash_len_result.error());
+        }
+        const std::size_t hash_len = *hash_len_result;
         auto finished_key = crypto_util::hkdf_expand_label(base_key, "finished", {}, hash_len, md);
         if (!finished_key)
         {
@@ -115,6 +130,17 @@ class tls_key_schedule
             return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
         }
         return std::vector<std::uint8_t>{hmac_out, hmac_out + hmac_len};
+    }
+
+   private:
+    [[nodiscard]] static std::expected<std::size_t, boost::system::error_code> hash_size(const EVP_MD* md)
+    {
+        const int hash_len = EVP_MD_size(md);
+        if (hash_len <= 0)
+        {
+            return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        }
+        return static_cast<std::size_t>(hash_len);
     }
 };
 }    // namespace reality
