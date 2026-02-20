@@ -52,8 +52,7 @@ class tproxy_client : public std::enable_shared_from_this<tproxy_client>
     [[nodiscard]] std::uint16_t udp_port() const { return udp_port_; }
     [[nodiscard]] bool running() const
     {
-        return started_.load(std::memory_order_acquire) && !stop_.load(std::memory_order_acquire) && tcp_acceptor_.is_open()
-               && udp_socket_.is_open();
+        return started_.load(std::memory_order_acquire) && !stop_.load(std::memory_order_acquire) && tcp_acceptor_.is_open() && udp_socket_.is_open();
     }
 
     [[nodiscard]] static bool enqueue_udp_packet(tproxy_udp_dispatch_channel& dispatch_channel,
@@ -73,8 +72,7 @@ class tproxy_client : public std::enable_shared_from_this<tproxy_client>
 
     [[nodiscard]] static std::string endpoint_key(const boost::asio::ip::udp::endpoint& ep);
     void rollback_start_state();
-    [[nodiscard]] bool validate_start_prerequisites(std::shared_ptr<client_tunnel_pool>& tunnel_pool,
-                                                    std::shared_ptr<router>& router);
+    [[nodiscard]] bool validate_start_prerequisites(std::shared_ptr<client_tunnel_pool>& tunnel_pool, std::shared_ptr<router>& router);
     [[nodiscard]] bool setup_runtime_sockets(std::string& tcp_listen_host, std::string& udp_listen_host);
     void start_runtime_loops(const std::shared_ptr<client_tunnel_pool>& tunnel_pool,
                              const std::string& tcp_listen_host,

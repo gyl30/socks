@@ -128,21 +128,19 @@ boost::asio::awaitable<void> socks_session::run()
 
     if (cmd == socks::kCmdConnect)
     {
-        const auto tcp_sess =
-            std::make_shared<tcp_socks_session>(
-                std::move(socket_), io_context_, tunnel_manager_, router_, sid_, timeout_config_, std::move(active_connection_guard_));
+        const auto tcp_sess = std::make_shared<tcp_socks_session>(
+            std::move(socket_), io_context_, tunnel_manager_, router_, sid_, timeout_config_, std::move(active_connection_guard_));
         tcp_sess->start(host, port);
     }
     else if (cmd == socks::kCmdUdpAssociate)
     {
-        const auto udp_sess = std::make_shared<udp_socks_session>(
-            std::move(socket_),
-            io_context_,
-            tunnel_manager_,
-            sid_,
-            timeout_config_,
-            std::move(active_connection_guard_),
-            queue_config_.udp_session_recv_channel_capacity);
+        const auto udp_sess = std::make_shared<udp_socks_session>(std::move(socket_),
+                                                                  io_context_,
+                                                                  tunnel_manager_,
+                                                                  sid_,
+                                                                  timeout_config_,
+                                                                  std::move(active_connection_guard_),
+                                                                  queue_config_.udp_session_recv_channel_capacity);
         udp_sess->start(host, port);
     }
     else
@@ -191,7 +189,8 @@ boost::asio::awaitable<bool> socks_session::handshake()
 boost::asio::awaitable<bool> socks_session::read_socks_greeting(std::uint8_t& method_count)
 {
     std::uint8_t ver_nmethods[2] = {0};
-    const auto [read_ec, read_n] = co_await boost::asio::async_read(socket_, boost::asio::buffer(ver_nmethods, 2), boost::asio::as_tuple(boost::asio::use_awaitable));
+    const auto [read_ec, read_n] =
+        co_await boost::asio::async_read(socket_, boost::asio::buffer(ver_nmethods, 2), boost::asio::as_tuple(boost::asio::use_awaitable));
     (void)read_n;
     if (read_ec || ver_nmethods[0] != socks::kVer)
     {
@@ -205,7 +204,8 @@ boost::asio::awaitable<bool> socks_session::read_socks_greeting(std::uint8_t& me
 boost::asio::awaitable<bool> socks_session::read_auth_methods(const std::uint8_t method_count, std::vector<std::uint8_t>& methods)
 {
     methods.assign(method_count, 0);
-    const auto [method_ec, method_n] = co_await boost::asio::async_read(socket_, boost::asio::buffer(methods), boost::asio::as_tuple(boost::asio::use_awaitable));
+    const auto [method_ec, method_n] =
+        co_await boost::asio::async_read(socket_, boost::asio::buffer(methods), boost::asio::as_tuple(boost::asio::use_awaitable));
     (void)method_n;
     if (method_ec)
     {
@@ -237,7 +237,8 @@ std::uint8_t socks_session::select_auth_method(const std::vector<std::uint8_t>& 
 boost::asio::awaitable<bool> socks_session::write_selected_method(const std::uint8_t method)
 {
     std::uint8_t resp[] = {socks::kVer, method};
-    const auto [write_ec, write_n] = co_await boost::asio::async_write(socket_, boost::asio::buffer(resp), boost::asio::as_tuple(boost::asio::use_awaitable));
+    const auto [write_ec, write_n] =
+        co_await boost::asio::async_write(socket_, boost::asio::buffer(resp), boost::asio::as_tuple(boost::asio::use_awaitable));
     (void)write_n;
     if (write_ec)
     {
@@ -288,7 +289,8 @@ boost::asio::awaitable<bool> socks_session::do_password_auth()
 boost::asio::awaitable<bool> socks_session::read_auth_version()
 {
     std::uint8_t ver = 0;
-    const auto [read_ec, read_n] = co_await boost::asio::async_read(socket_, boost::asio::buffer(&ver, 1), boost::asio::as_tuple(boost::asio::use_awaitable));
+    const auto [read_ec, read_n] =
+        co_await boost::asio::async_read(socket_, boost::asio::buffer(&ver, 1), boost::asio::as_tuple(boost::asio::use_awaitable));
     (void)read_n;
     if (read_ec || ver != 0x01)
     {
@@ -301,7 +303,8 @@ boost::asio::awaitable<bool> socks_session::read_auth_version()
 boost::asio::awaitable<bool> socks_session::read_auth_field(std::string& out, const char* field_name)
 {
     std::uint8_t field_len = 0;
-    auto [len_ec, len_n] = co_await boost::asio::async_read(socket_, boost::asio::buffer(&field_len, 1), boost::asio::as_tuple(boost::asio::use_awaitable));
+    auto [len_ec, len_n] =
+        co_await boost::asio::async_read(socket_, boost::asio::buffer(&field_len, 1), boost::asio::as_tuple(boost::asio::use_awaitable));
     if (len_ec)
     {
         LOG_ERROR("socks session {} read {} len failed", sid_, field_name);
@@ -322,17 +325,16 @@ boost::asio::awaitable<bool> socks_session::read_auth_field(std::string& out, co
 
 bool socks_session::verify_credentials(const std::string& username, const std::string& password) const
 {
-    const bool user_match =
-        (username.size() == username_.size()) && (CRYPTO_memcmp(username.data(), username_.data(), username.size()) == 0);
-    const bool pass_match =
-        (password.size() == password_.size()) && (CRYPTO_memcmp(password.data(), password_.data(), password.size()) == 0);
+    const bool user_match = (username.size() == username_.size()) && (CRYPTO_memcmp(username.data(), username_.data(), username.size()) == 0);
+    const bool pass_match = (password.size() == password_.size()) && (CRYPTO_memcmp(password.data(), password_.data(), password.size()) == 0);
     return user_match && pass_match;
 }
 
 boost::asio::awaitable<bool> socks_session::write_auth_result(const bool success)
 {
     std::uint8_t result[] = {0x01, success ? static_cast<std::uint8_t>(0x00) : static_cast<std::uint8_t>(0x01)};
-    const auto [write_ec, write_n] = co_await boost::asio::async_write(socket_, boost::asio::buffer(result), boost::asio::as_tuple(boost::asio::use_awaitable));
+    const auto [write_ec, write_n] =
+        co_await boost::asio::async_write(socket_, boost::asio::buffer(result), boost::asio::as_tuple(boost::asio::use_awaitable));
     (void)write_n;
     if (write_ec)
     {
@@ -361,7 +363,8 @@ bool socks_session::is_supported_atyp(const std::uint8_t atyp)
 boost::asio::awaitable<bool> socks_session::read_request_ipv4(std::string& host)
 {
     boost::asio::ip::address_v4::bytes_type bytes_v4;
-    const auto [read_ec, read_n] = co_await boost::asio::async_read(socket_, boost::asio::buffer(bytes_v4), boost::asio::as_tuple(boost::asio::use_awaitable));
+    const auto [read_ec, read_n] =
+        co_await boost::asio::async_read(socket_, boost::asio::buffer(bytes_v4), boost::asio::as_tuple(boost::asio::use_awaitable));
     (void)read_n;
     if (read_ec)
     {
@@ -376,7 +379,8 @@ boost::asio::awaitable<bool> socks_session::read_request_ipv4(std::string& host)
 boost::asio::awaitable<bool> socks_session::read_request_domain(std::string& host)
 {
     std::uint8_t domain_len = 0;
-    const auto [len_ec, len_n] = co_await boost::asio::async_read(socket_, boost::asio::buffer(&domain_len, 1), boost::asio::as_tuple(boost::asio::use_awaitable));
+    const auto [len_ec, len_n] =
+        co_await boost::asio::async_read(socket_, boost::asio::buffer(&domain_len, 1), boost::asio::as_tuple(boost::asio::use_awaitable));
     (void)len_n;
     if (len_ec)
     {
@@ -385,7 +389,8 @@ boost::asio::awaitable<bool> socks_session::read_request_domain(std::string& hos
         co_return false;
     }
     host.resize(domain_len);
-    const auto [host_ec, host_n] = co_await boost::asio::async_read(socket_, boost::asio::buffer(host), boost::asio::as_tuple(boost::asio::use_awaitable));
+    const auto [host_ec, host_n] =
+        co_await boost::asio::async_read(socket_, boost::asio::buffer(host), boost::asio::as_tuple(boost::asio::use_awaitable));
     (void)host_n;
     if (host_ec)
     {
@@ -399,7 +404,8 @@ boost::asio::awaitable<bool> socks_session::read_request_domain(std::string& hos
 boost::asio::awaitable<bool> socks_session::read_request_ipv6(std::string& host)
 {
     boost::asio::ip::address_v6::bytes_type bytes_v6;
-    const auto [read_ec, read_n] = co_await boost::asio::async_read(socket_, boost::asio::buffer(bytes_v6), boost::asio::as_tuple(boost::asio::use_awaitable));
+    const auto [read_ec, read_n] =
+        co_await boost::asio::async_read(socket_, boost::asio::buffer(bytes_v6), boost::asio::as_tuple(boost::asio::use_awaitable));
     (void)read_n;
     if (read_ec)
     {
@@ -444,7 +450,8 @@ boost::asio::awaitable<socks_session::request_info> socks_session::reject_reques
 
 boost::asio::awaitable<bool> socks_session::read_request_header(std::array<std::uint8_t, 4>& head)
 {
-    const auto [read_ec, read_n] = co_await boost::asio::async_read(socket_, boost::asio::buffer(head), boost::asio::as_tuple(boost::asio::use_awaitable));
+    const auto [read_ec, read_n] =
+        co_await boost::asio::async_read(socket_, boost::asio::buffer(head), boost::asio::as_tuple(boost::asio::use_awaitable));
     (void)read_n;
     if (read_ec)
     {
@@ -458,7 +465,8 @@ boost::asio::awaitable<bool> socks_session::read_request_header(std::array<std::
 boost::asio::awaitable<bool> socks_session::read_request_port(std::uint16_t& port)
 {
     std::uint16_t port_n = 0;
-    const auto [read_ec, read_n] = co_await boost::asio::async_read(socket_, boost::asio::buffer(&port_n, 2), boost::asio::as_tuple(boost::asio::use_awaitable));
+    const auto [read_ec, read_n] =
+        co_await boost::asio::async_read(socket_, boost::asio::buffer(&port_n, 2), boost::asio::as_tuple(boost::asio::use_awaitable));
     (void)read_n;
     if (read_ec)
     {

@@ -197,7 +197,8 @@ void tproxy_udp_sender::apply_socket_mark(const std::shared_ptr<boost::asio::ip:
     }
 }
 
-bool tproxy_udp_sender::bind_socket_to_source(const std::shared_ptr<boost::asio::ip::udp::socket>& socket, const boost::asio::ip::udp::endpoint& src_ep)
+bool tproxy_udp_sender::bind_socket_to_source(const std::shared_ptr<boost::asio::ip::udp::socket>& socket,
+                                              const boost::asio::ip::udp::endpoint& src_ep)
 {
     boost::system::error_code ec;
     ec = socket->bind(src_ep, ec);
@@ -283,8 +284,8 @@ void tproxy_udp_sender::refresh_cached_socket_timestamp(const endpoint_key& key,
 }
 
 boost::asio::awaitable<void> tproxy_udp_sender::send_to_client(const boost::asio::ip::udp::endpoint& client_ep,
-                                                        const boost::asio::ip::udp::endpoint& src_ep,
-                                                        const boost::asio::const_buffer payload)
+                                                               const boost::asio::ip::udp::endpoint& src_ep,
+                                                               const boost::asio::const_buffer payload)
 {
     co_await boost::asio::dispatch(io_context_, boost::asio::use_awaitable);
 
@@ -307,8 +308,8 @@ boost::asio::awaitable<void> tproxy_udp_sender::send_to_client(const boost::asio
 }
 
 boost::asio::awaitable<void> tproxy_udp_sender::send_to_client(const boost::asio::ip::udp::endpoint& client_ep,
-                                                        const boost::asio::ip::udp::endpoint& src_ep,
-                                                        const std::vector<std::uint8_t>& payload)
+                                                               const boost::asio::ip::udp::endpoint& src_ep,
+                                                               const std::vector<std::uint8_t>& payload)
 {
     co_await send_to_client(client_ep, src_ep, boost::asio::buffer(payload));
 }

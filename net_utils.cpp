@@ -30,10 +30,7 @@ namespace mux::net
 namespace
 {
 
-bool has_valid_cmsg_payload(const cmsghdr* cm, const std::size_t payload_len)
-{
-    return cm->cmsg_len >= CMSG_LEN(payload_len);
-}
+bool has_valid_cmsg_payload(const cmsghdr* cm, const std::size_t payload_len) { return cm->cmsg_len >= CMSG_LEN(payload_len); }
 
 boost::asio::ip::udp::endpoint make_v4_endpoint(const in_addr& addr, const in_port_t port)
 {
@@ -186,10 +183,7 @@ boost::asio::ip::address normalize_address(const boost::asio::ip::address& addr)
     return addr;
 }
 
-boost::asio::ip::udp::endpoint normalize_endpoint(const boost::asio::ip::udp::endpoint& ep)
-{
-    return {normalize_address(ep.address()), ep.port()};
-}
+boost::asio::ip::udp::endpoint normalize_endpoint(const boost::asio::ip::udp::endpoint& ep) { return {normalize_address(ep.address()), ep.port()}; }
 
 std::optional<boost::asio::ip::udp::endpoint> parse_original_dst(const msghdr& msg)
 {

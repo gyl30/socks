@@ -134,10 +134,7 @@ bool ip_matcher::match_v6(const boost::asio::ip::address_v6& addr, const std::un
     return false;
 }
 
-bool ip_matcher::is_valid_prefix_length(const int prefix_len, const int max_prefix_len)
-{
-    return prefix_len >= 0 && prefix_len <= max_prefix_len;
-}
+bool ip_matcher::is_valid_prefix_length(const int prefix_len, const int max_prefix_len) { return prefix_len >= 0 && prefix_len <= max_prefix_len; }
 
 ip_matcher::trie_node* ip_matcher::ensure_root(std::unique_ptr<trie_node>& root)
 {

@@ -26,10 +26,7 @@ void init_log(const std::string& filename)
     set_log_level();
 }
 
-void set_level(const std::string& level)
-{
-    spdlog::set_level(parse_level_name(level));
-}
+void set_level(const std::string& level) { spdlog::set_level(parse_level_name(level)); }
 
 void shutdown_log()
 {

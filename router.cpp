@@ -118,8 +118,8 @@ boost::asio::awaitable<route_type> router::decide(const connection_context& ctx,
 }
 
 boost::asio::awaitable<route_type> router::decide_ip(const connection_context& ctx,
-                                              const std::string& host,
-                                              const boost::asio::ip::address& addr) const
+                                                     const std::string& host,
+                                                     const boost::asio::ip::address& addr) const
 {
     if (block_ip_matcher_->match(addr))
     {

@@ -47,7 +47,9 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
     boost::asio::awaitable<void> start_impl(std::shared_ptr<remote_udp_session> self);
     boost::asio::awaitable<bool> setup_udp_socket(const std::shared_ptr<mux_connection>& conn);
     boost::asio::awaitable<boost::system::error_code> send_ack_payload(const std::shared_ptr<mux_connection>& conn, const ack_payload& ack) const;
-    boost::asio::awaitable<void> handle_start_failure(const std::shared_ptr<mux_connection>& conn, const char* step, const boost::system::error_code& ec);
+    boost::asio::awaitable<void> handle_start_failure(const std::shared_ptr<mux_connection>& conn,
+                                                      const char* step,
+                                                      const boost::system::error_code& ec);
     boost::asio::awaitable<void> forward_mux_payload(const std::vector<std::uint8_t>& data);
     void log_udp_local_endpoint();
     boost::asio::awaitable<void> run_udp_session_loops();

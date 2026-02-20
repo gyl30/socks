@@ -59,10 +59,7 @@ namespace
     return ec == boost::asio::error::eof || ec == boost::asio::error::operation_aborted || ec == boost::asio::experimental::error::channel_closed;
 }
 
-[[nodiscard]] const char* route_name(const route_type route)
-{
-    return route == route_type::kDirect ? "direct" : "proxy";
-}
+[[nodiscard]] const char* route_name(const route_type route) { return route == route_type::kDirect ? "direct" : "proxy"; }
 
 }    // namespace
 
@@ -87,15 +84,9 @@ tproxy_tcp_session::tproxy_tcp_session(boost::asio::ip::tcp::socket socket,
     last_activity_time_ms_.store(now_ms(), std::memory_order_release);
 }
 
-void tproxy_tcp_session::start()
-{
-    boost::asio::co_spawn(io_context_, run_detached(shared_from_this()), boost::asio::detached);
-}
+void tproxy_tcp_session::start() { boost::asio::co_spawn(io_context_, run_detached(shared_from_this()), boost::asio::detached); }
 
-boost::asio::awaitable<void> tproxy_tcp_session::run_detached(std::shared_ptr<tproxy_tcp_session> self)
-{
-    co_await self->run();
-}
+boost::asio::awaitable<void> tproxy_tcp_session::run_detached(std::shared_ptr<tproxy_tcp_session> self) { co_await self->run(); }
 
 boost::asio::awaitable<void> tproxy_tcp_session::run()
 {
@@ -165,9 +156,9 @@ boost::asio::awaitable<std::pair<route_type, std::shared_ptr<upstream>>> tproxy_
 }
 
 boost::asio::awaitable<bool> tproxy_tcp_session::connect_backend(const std::shared_ptr<upstream>& backend,
-                                                          const std::string& host,
-                                                          const std::uint16_t port,
-                                                          const route_type route)
+                                                                 const std::string& host,
+                                                                 const std::uint16_t port,
+                                                                 const route_type route)
 {
     LOG_CTX_INFO(ctx_, "{} connecting {} {} via {}", log_event::kConnInit, host, port, route_name(route));
     if (co_await backend->connect(host, port))
@@ -184,8 +175,7 @@ void tproxy_tcp_session::start_idle_watchdog(const std::shared_ptr<upstream>& ba
     boost::asio::co_spawn(io_context_, idle_watchdog_detached(shared_from_this(), backend), boost::asio::detached);
 }
 
-boost::asio::awaitable<void> tproxy_tcp_session::idle_watchdog_detached(std::shared_ptr<tproxy_tcp_session> self,
-                                                                  std::shared_ptr<upstream> backend)
+boost::asio::awaitable<void> tproxy_tcp_session::idle_watchdog_detached(std::shared_ptr<tproxy_tcp_session> self, std::shared_ptr<upstream> backend)
 {
     co_await self->idle_watchdog(std::move(backend));
 }
@@ -228,8 +218,8 @@ bool tproxy_tcp_session::should_stop_client_read(const boost::system::error_code
 }
 
 boost::asio::awaitable<bool> tproxy_tcp_session::write_client_chunk_to_backend(const std::shared_ptr<upstream>& backend,
-                                                                         const std::vector<std::uint8_t>& buf,
-                                                                         const std::size_t n)
+                                                                               const std::vector<std::uint8_t>& buf,
+                                                                               const std::size_t n)
 {
     std::size_t total_written = 0;
     while (total_written < n)
@@ -313,7 +303,8 @@ bool tproxy_tcp_session::should_stop_backend_read(const boost::system::error_cod
 
 boost::asio::awaitable<bool> tproxy_tcp_session::write_backend_chunk_to_client(const std::vector<std::uint8_t>& buf, const std::size_t n)
 {
-    const auto [write_ec, write_n] = co_await boost::asio::async_write(socket_, boost::asio::buffer(buf.data(), n), boost::asio::as_tuple(boost::asio::use_awaitable));
+    const auto [write_ec, write_n] =
+        co_await boost::asio::async_write(socket_, boost::asio::buffer(buf.data(), n), boost::asio::as_tuple(boost::asio::use_awaitable));
     (void)write_n;
     if (write_ec)
     {

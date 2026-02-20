@@ -91,8 +91,7 @@ template <typename t>
 bool atomic_clear_if_match(std::shared_ptr<t>& slot, const std::shared_ptr<t>& expected_value)
 {
     auto expected = expected_value;
-    return std::atomic_compare_exchange_strong_explicit(
-        &slot, &expected, std::shared_ptr<t>{}, std::memory_order_acq_rel, std::memory_order_acquire);
+    return std::atomic_compare_exchange_strong_explicit(&slot, &expected, std::shared_ptr<t>{}, std::memory_order_acq_rel, std::memory_order_acquire);
 }
 
 bool parse_hex_to_bytes(const std::string& hex, std::vector<std::uint8_t>& out, const std::size_t max_len, const char* label)
@@ -186,9 +185,8 @@ bool read_u24_field(const std::vector<std::uint8_t>& data, const std::size_t pos
     {
         return false;
     }
-    value = (static_cast<std::uint32_t>(data[pos]) << 16)
-          | (static_cast<std::uint32_t>(data[pos + 1]) << 8)
-          | static_cast<std::uint32_t>(data[pos + 2]);
+    value =
+        (static_cast<std::uint32_t>(data[pos]) << 16) | (static_cast<std::uint32_t>(data[pos + 1]) << 8) | static_cast<std::uint32_t>(data[pos + 2]);
     return true;
 }
 
@@ -256,9 +254,8 @@ bool read_handshake_message_bounds(const std::vector<std::uint8_t>& handshake_bu
         return false;
     }
     msg_type = handshake_buffer[offset];
-    msg_len = (static_cast<std::uint32_t>(handshake_buffer[offset + 1]) << 16)
-            | (static_cast<std::uint32_t>(handshake_buffer[offset + 2]) << 8)
-            | static_cast<std::uint32_t>(handshake_buffer[offset + 3]);
+    msg_len = (static_cast<std::uint32_t>(handshake_buffer[offset + 1]) << 16) | (static_cast<std::uint32_t>(handshake_buffer[offset + 2]) << 8) |
+              static_cast<std::uint32_t>(handshake_buffer[offset + 3]);
     return offset + 4 + msg_len <= handshake_buffer.size();
 }
 
@@ -271,7 +268,7 @@ struct handshake_validation_state
 };
 
 std::expected<void, boost::system::error_code> load_server_public_key_from_certificate(const std::vector<std::uint8_t>& msg_data,
-                                                                             handshake_validation_state& validation_state)
+                                                                                       handshake_validation_state& validation_state)
 {
     LOG_DEBUG("received certificate message size {}", msg_data.size());
     if (validation_state.cert_checked)
@@ -301,8 +298,8 @@ std::expected<void, boost::system::error_code> load_server_public_key_from_certi
 }
 
 std::expected<void, boost::system::error_code> verify_server_certificate_verify_message(const std::vector<std::uint8_t>& msg_data,
-                                                                              const reality::transcript& trans,
-                                                                              handshake_validation_state& validation_state)
+                                                                                        const reality::transcript& trans,
+                                                                                        handshake_validation_state& validation_state)
 {
     if (!validation_state.cert_checked)
     {
@@ -325,7 +322,8 @@ std::expected<void, boost::system::error_code> verify_server_certificate_verify_
     if (validation_state.server_pub_key != nullptr)
     {
         const auto transcript_hash = trans.finish();
-        auto verify_result = reality::crypto_util::verify_tls13_signature(validation_state.server_pub_key.get(), transcript_hash, cert_verify->signature);
+        auto verify_result =
+            reality::crypto_util::verify_tls13_signature(validation_state.server_pub_key.get(), transcript_hash, cert_verify->signature);
         if (!verify_result)
         {
             LOG_WARN("certificate verify signature check skipped code {}", verify_result.error().value());
@@ -341,14 +339,13 @@ std::expected<void, boost::system::error_code> verify_server_certificate_verify_
 }
 
 std::expected<void, boost::system::error_code> verify_server_finished_message(const std::vector<std::uint8_t>& msg_data,
-                                                                               const reality::handshake_keys& hs_keys,
-                                                                               const EVP_MD* md,
-                                                                               const reality::transcript& trans)
+                                                                              const reality::handshake_keys& hs_keys,
+                                                                              const EVP_MD* md,
+                                                                              const reality::transcript& trans)
 {
     // handshake_read_loop only calls this helper after message type and bounds validation.
-    const std::uint32_t msg_len = (static_cast<std::uint32_t>(msg_data[1]) << 16)
-                                | (static_cast<std::uint32_t>(msg_data[2]) << 8)
-                                | static_cast<std::uint32_t>(msg_data[3]);
+    const std::uint32_t msg_len =
+        (static_cast<std::uint32_t>(msg_data[1]) << 16) | (static_cast<std::uint32_t>(msg_data[2]) << 8) | static_cast<std::uint32_t>(msg_data[3]);
 
     const auto expected_verify_data =
         reality::tls_key_schedule::compute_finished_verify_data(hs_keys.server_handshake_traffic_secret, trans.finish(), md);
@@ -432,12 +429,12 @@ boost::asio::awaitable<std::expected<encrypted_record, boost::system::error_code
 }
 
 std::expected<void, boost::system::error_code> handle_handshake_message(const std::uint8_t msg_type,
-                                                                         const std::vector<std::uint8_t>& msg_data,
-                                                                         handshake_validation_state& validation_state,
-                                                                         bool& handshake_fin,
-                                                                         const reality::handshake_keys& hs_keys,
-                                                                         const EVP_MD* md,
-                                                                         reality::transcript& trans)
+                                                                        const std::vector<std::uint8_t>& msg_data,
+                                                                        handshake_validation_state& validation_state,
+                                                                        bool& handshake_fin,
+                                                                        const reality::handshake_keys& hs_keys,
+                                                                        const EVP_MD* md,
+                                                                        reality::transcript& trans)
 {
     if (msg_type == 0x0b)
     {
@@ -470,11 +467,11 @@ std::expected<void, boost::system::error_code> handle_handshake_message(const st
 }
 
 std::expected<std::uint32_t, boost::system::error_code> consume_handshake_buffer(std::vector<std::uint8_t>& handshake_buffer,
-                                                                                  handshake_validation_state& validation_state,
-                                                                                  bool& handshake_fin,
-                                                                                  const reality::handshake_keys& hs_keys,
-                                                                                  const EVP_MD* md,
-                                                                                  reality::transcript& trans)
+                                                                                 handshake_validation_state& validation_state,
+                                                                                 bool& handshake_fin,
+                                                                                 const reality::handshake_keys& hs_keys,
+                                                                                 const EVP_MD* md,
+                                                                                 reality::transcript& trans)
 {
     std::uint32_t offset = 0;
     while (offset + 4 <= handshake_buffer.size())
@@ -498,12 +495,12 @@ std::expected<std::uint32_t, boost::system::error_code> consume_handshake_buffer
 }
 
 std::expected<void, boost::system::error_code> consume_handshake_plaintext(const std::vector<std::uint8_t>& plaintext,
-                                                                            std::vector<std::uint8_t>& handshake_buffer,
-                                                                            handshake_validation_state& validation_state,
-                                                                            bool& handshake_fin,
-                                                                            const reality::handshake_keys& hs_keys,
-                                                                            const EVP_MD* md,
-                                                                            reality::transcript& trans)
+                                                                           std::vector<std::uint8_t>& handshake_buffer,
+                                                                           handshake_validation_state& validation_state,
+                                                                           bool& handshake_fin,
+                                                                           const reality::handshake_keys& hs_keys,
+                                                                           const EVP_MD* md,
+                                                                           reality::transcript& trans)
 {
     handshake_buffer.insert(handshake_buffer.end(), plaintext.begin(), plaintext.end());
     const auto consumed = consume_handshake_buffer(handshake_buffer, validation_state, handshake_fin, hs_keys, md, trans);
@@ -516,8 +513,8 @@ std::expected<void, boost::system::error_code> consume_handshake_plaintext(const
 }
 
 std::expected<void, boost::system::error_code> validate_server_handshake_chain(const handshake_validation_state& validation_state,
-                                                                                const bool strict_cert_verify,
-                                                                                const std::string& sni)
+                                                                               const bool strict_cert_verify,
+                                                                               const std::string& sni)
 {
     if (!validation_state.cert_checked || !validation_state.cert_verify_checked)
     {
@@ -539,11 +536,12 @@ std::expected<void, boost::system::error_code> validate_server_handshake_chain(c
     return {};
 }
 
-boost::asio::awaitable<std::expected<std::vector<std::uint8_t>, boost::system::error_code>> read_handshake_record_body(boost::asio::ip::tcp::socket& socket,
-                                                                                                                         const char* step)
+boost::asio::awaitable<std::expected<std::vector<std::uint8_t>, boost::system::error_code>> read_handshake_record_body(
+    boost::asio::ip::tcp::socket& socket, const char* step)
 {
     std::uint8_t header[5];
-    auto [read_header_ec, read_header_n] = co_await boost::asio::async_read(socket, boost::asio::buffer(header, 5), boost::asio::as_tuple(boost::asio::use_awaitable));
+    auto [read_header_ec, read_header_n] =
+        co_await boost::asio::async_read(socket, boost::asio::buffer(header, 5), boost::asio::as_tuple(boost::asio::use_awaitable));
     if (read_header_ec)
     {
         LOG_ERROR("error reading {} header {}", step, read_header_ec.message());
@@ -552,7 +550,8 @@ boost::asio::awaitable<std::expected<std::vector<std::uint8_t>, boost::system::e
 
     const auto body_len = static_cast<std::uint16_t>((header[3] << 8) | header[4]);
     std::vector<std::uint8_t> body(body_len);
-    auto [read_body_ec, read_body_n] = co_await boost::asio::async_read(socket, boost::asio::buffer(body), boost::asio::as_tuple(boost::asio::use_awaitable));
+    auto [read_body_ec, read_body_n] =
+        co_await boost::asio::async_read(socket, boost::asio::buffer(body), boost::asio::as_tuple(boost::asio::use_awaitable));
     if (read_body_ec)
     {
         LOG_ERROR("error reading {} body {}", step, read_body_ec.message());
@@ -592,8 +591,7 @@ std::expected<std::uint16_t, boost::system::error_code> parse_server_hello_ciphe
 }
 
 std::expected<std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>, boost::system::error_code> derive_client_auth_key_material(
-    const std::uint8_t* private_key,
-    const std::vector<std::uint8_t>& server_pub_key)
+    const std::uint8_t* private_key, const std::vector<std::uint8_t>& server_pub_key)
 {
     auto shared_result = reality::crypto_util::x25519_derive(std::vector<std::uint8_t>(private_key, private_key + 32), server_pub_key);
     LOG_DEBUG("using server pub key size {}", server_pub_key.size());
@@ -661,11 +659,12 @@ std::expected<std::vector<std::uint8_t>, boost::system::error_code> encrypt_clie
     const std::array<std::uint8_t, reality::kAuthPayloadLen>& payload,
     const std::vector<std::uint8_t>& hello_body)
 {
-    auto sid_result = reality::crypto_util::aead_encrypt(EVP_aes_128_gcm(),
-                                             auth_key,
-                                             std::vector<std::uint8_t>(client_random.begin() + constants::auth::kSaltLen, client_random.end()),
-                                             std::vector<std::uint8_t>(payload.begin(), payload.end()),
-                                             hello_body);
+    auto sid_result =
+        reality::crypto_util::aead_encrypt(EVP_aes_128_gcm(),
+                                           auth_key,
+                                           std::vector<std::uint8_t>(client_random.begin() + constants::auth::kSaltLen, client_random.end()),
+                                           std::vector<std::uint8_t>(payload.begin(), payload.end()),
+                                           hello_body);
     if (!sid_result || sid_result->size() != 32)
     {
         LOG_ERROR("auth encryption failed ct size {}", sid_result ? sid_result->size() : 0);
@@ -674,14 +673,13 @@ std::expected<std::vector<std::uint8_t>, boost::system::error_code> encrypt_clie
     return std::move(*sid_result);
 }
 
-std::expected<std::vector<std::uint8_t>, boost::system::error_code> build_authenticated_client_hello(
-    const std::uint8_t* public_key,
-    const std::uint8_t* private_key,
-    const std::vector<std::uint8_t>& server_pub_key,
-    const std::vector<std::uint8_t>& short_id_bytes,
-    const std::array<std::uint8_t, 3>& client_ver,
-    const reality::fingerprint_spec& spec,
-    const std::string& sni)
+std::expected<std::vector<std::uint8_t>, boost::system::error_code> build_authenticated_client_hello(const std::uint8_t* public_key,
+                                                                                                     const std::uint8_t* private_key,
+                                                                                                     const std::vector<std::uint8_t>& server_pub_key,
+                                                                                                     const std::vector<std::uint8_t>& short_id_bytes,
+                                                                                                     const std::array<std::uint8_t, 3>& client_ver,
+                                                                                                     const reality::fingerprint_spec& spec,
+                                                                                                     const std::string& sni)
 {
     auto auth_material_result = derive_client_auth_key_material(private_key, server_pub_key);
     if (!auth_material_result)
@@ -740,11 +738,10 @@ struct handshake_traffic_keys
 };
 
 std::expected<handshake_traffic_keys, boost::system::error_code> derive_handshake_traffic_keys(const reality::handshake_keys& hs_keys,
-                                                                                                const std::uint16_t cipher_suite,
-                                                                                                const EVP_MD* negotiated_md)
+                                                                                               const std::uint16_t cipher_suite,
+                                                                                               const EVP_MD* negotiated_md)
 {
-    const std::size_t key_len =
-        (cipher_suite == 0x1302 || cipher_suite == 0x1303) ? constants::crypto::kKeyLen256 : constants::crypto::kKeyLen128;
+    const std::size_t key_len = (cipher_suite == 0x1302 || cipher_suite == 0x1303) ? constants::crypto::kKeyLen256 : constants::crypto::kKeyLen128;
     constexpr std::size_t iv_len = constants::crypto::kIvLen;
     auto c_hs = reality::tls_key_schedule::derive_traffic_keys(hs_keys.client_handshake_traffic_secret, key_len, iv_len, negotiated_md);
     auto s_hs = reality::tls_key_schedule::derive_traffic_keys(hs_keys.server_handshake_traffic_secret, key_len, iv_len, negotiated_md);
@@ -752,16 +749,11 @@ std::expected<handshake_traffic_keys, boost::system::error_code> derive_handshak
     {
         return std::unexpected(c_hs ? s_hs.error() : c_hs.error());
     }
-    return handshake_traffic_keys{
-        .c_hs_keys = std::move(*c_hs),
-        .s_hs_keys = std::move(*s_hs)};
+    return handshake_traffic_keys{.c_hs_keys = std::move(*c_hs), .s_hs_keys = std::move(*s_hs)};
 }
 
-std::expected<void, boost::system::error_code> prepare_server_hello_crypto(const std::vector<std::uint8_t>& sh_data,
-                                 reality::transcript& trans,
-                                 std::uint16_t& cipher_suite,
-                                 const EVP_MD*& md,
-                                 const EVP_CIPHER*& cipher)
+std::expected<void, boost::system::error_code> prepare_server_hello_crypto(
+    const std::vector<std::uint8_t>& sh_data, reality::transcript& trans, std::uint16_t& cipher_suite, const EVP_MD*& md, const EVP_CIPHER*& cipher)
 {
     trans.update(sh_data);
     const auto parse_suite_res = parse_server_hello_cipher_suite(sh_data);
@@ -783,10 +775,9 @@ std::expected<void, boost::system::error_code> prepare_server_hello_crypto(const
     return {};
 }
 
-std::expected<std::vector<std::uint8_t>, boost::system::error_code> derive_server_hello_shared_secret(
-    const std::uint8_t* private_key,
-    const std::uint16_t key_share_group,
-    const std::vector<std::uint8_t>& key_share_data)
+std::expected<std::vector<std::uint8_t>, boost::system::error_code> derive_server_hello_shared_secret(const std::uint8_t* private_key,
+                                                                                                      const std::uint16_t key_share_group,
+                                                                                                      const std::vector<std::uint8_t>& key_share_data)
 {
     if (key_share_group != reality::tls_consts::group::kX25519)
     {
@@ -808,16 +799,17 @@ std::expected<std::vector<std::uint8_t>, boost::system::error_code> derive_serve
     return std::move(*hs_shared_result);
 }
 
-boost::asio::awaitable<std::expected<void, boost::system::error_code>> process_handshake_record(boost::asio::ip::tcp::socket& socket,
-                                               const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& s_hs_keys,
-                                               reality::transcript& trans,
-                                               const EVP_CIPHER* cipher,
-                                               std::vector<std::uint8_t>& handshake_buffer,
-                                               handshake_validation_state& validation_state,
-                                               bool& handshake_fin,
-                                               const reality::handshake_keys& hs_keys,
-                                               const EVP_MD* md,
-                                               std::uint64_t& seq)
+boost::asio::awaitable<std::expected<void, boost::system::error_code>> process_handshake_record(
+    boost::asio::ip::tcp::socket& socket,
+    const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& s_hs_keys,
+    reality::transcript& trans,
+    const EVP_CIPHER* cipher,
+    std::vector<std::uint8_t>& handshake_buffer,
+    handshake_validation_state& validation_state,
+    bool& handshake_fin,
+    const reality::handshake_keys& hs_keys,
+    const EVP_MD* md,
+    std::uint64_t& seq)
 {
     const auto record_res = co_await read_encrypted_record(socket);
     if (!record_res)
@@ -852,34 +844,33 @@ boost::asio::awaitable<std::expected<void, boost::system::error_code>> process_h
     co_return std::expected<void, boost::system::error_code>{};
 }
 
-boost::asio::awaitable<std::expected<boost::asio::ip::tcp::resolver::results_type, boost::system::error_code>> resolve_remote_endpoints(boost::asio::io_context& io_context,
-                                                                                                 const std::string& remote_host,
-                                                                                                 const std::string& remote_port,
-                                                                                                 const std::uint32_t timeout_sec,
-                                                                                                 const connection_context& ctx)
+boost::asio::awaitable<std::expected<boost::asio::ip::tcp::resolver::results_type, boost::system::error_code>> resolve_remote_endpoints(
+    boost::asio::io_context& io_context,
+    const std::string& remote_host,
+    const std::string& remote_port,
+    const std::uint32_t timeout_sec,
+    const connection_context& ctx)
 {
     boost::asio::ip::tcp::resolver resolver(io_context);
     const auto resolve_res = co_await timeout_io::async_resolve_with_timeout(resolver, remote_host, remote_port, timeout_sec);
     if (resolve_res.timed_out)
     {
         statistics::instance().inc_client_tunnel_pool_resolve_timeouts();
-        LOG_CTX_ERROR(
-            ctx, "{} stage=resolve target={}:{} timeout={}s", log_event::kConnInit, remote_host, remote_port, timeout_sec);
+        LOG_CTX_ERROR(ctx, "{} stage=resolve target={}:{} timeout={}s", log_event::kConnInit, remote_host, remote_port, timeout_sec);
         co_return std::unexpected(boost::asio::error::timed_out);
     }
     if (!resolve_res.ok)
     {
         statistics::instance().inc_client_tunnel_pool_resolve_errors();
-        LOG_CTX_ERROR(
-            ctx, "{} stage=resolve target={}:{} error={}", log_event::kConnInit, remote_host, remote_port, resolve_res.ec.message());
+        LOG_CTX_ERROR(ctx, "{} stage=resolve target={}:{} error={}", log_event::kConnInit, remote_host, remote_port, resolve_res.ec.message());
         co_return std::unexpected(resolve_res.ec);
     }
     co_return resolve_res.endpoints;
 }
 
 std::expected<void, boost::system::error_code> prepare_socket_for_connect(boost::asio::ip::tcp::socket& socket,
-                                const boost::asio::ip::tcp::endpoint& endpoint,
-                                const std::uint32_t mark)
+                                                                          const boost::asio::ip::tcp::endpoint& endpoint,
+                                                                          const std::uint32_t mark)
 {
     boost::system::error_code socket_ec;
     if (socket.is_open())
@@ -1050,7 +1041,8 @@ std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> client_tunnel_poo
 
 std::uint32_t client_tunnel_pool::next_session_id() { return next_session_id_++; }
 
-std::shared_ptr<boost::asio::ip::tcp::socket> client_tunnel_pool::create_pending_socket(boost::asio::io_context& io_context, const std::uint32_t index)
+std::shared_ptr<boost::asio::ip::tcp::socket> client_tunnel_pool::create_pending_socket(boost::asio::io_context& io_context,
+                                                                                        const std::uint32_t index)
 {
     const auto socket = std::make_shared<boost::asio::ip::tcp::socket>(io_context);
     if (index < pending_sockets_.size())
@@ -1100,13 +1092,13 @@ void client_tunnel_pool::clear_tunnel_if_match(const std::uint32_t index,
 }
 
 std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> client_tunnel_pool::build_tunnel(boost::asio::ip::tcp::socket socket,
-                                                                                           boost::asio::io_context& io_context,
-                                                                                           const std::uint32_t cid,
-                                                                                           const handshake_result& handshake_ret,
-                                                                                           const std::string& trace_id) const
+                                                                                                boost::asio::io_context& io_context,
+                                                                                                const std::uint32_t cid,
+                                                                                                const handshake_result& handshake_ret,
+                                                                                                const std::string& trace_id) const
 {
     const std::size_t key_len = (handshake_ret.cipher_suite == 0x1302 || handshake_ret.cipher_suite == 0x1303) ? constants::crypto::kKeyLen256
-                                                                                                                   : constants::crypto::kKeyLen128;
+                                                                                                               : constants::crypto::kKeyLen128;
     auto c_app_keys =
         reality::tls_key_schedule::derive_traffic_keys(handshake_ret.c_app_secret, key_len, constants::crypto::kIvLen, handshake_ret.md);
     auto s_app_keys =
@@ -1117,21 +1109,17 @@ std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> client_tunnel_poo
         return nullptr;
     }
 
-    reality_engine re(s_app_keys->first,
-                      s_app_keys->second,
-                      c_app_keys->first,
-                      c_app_keys->second,
-                      handshake_ret.cipher);
+    reality_engine re(s_app_keys->first, s_app_keys->second, c_app_keys->first, c_app_keys->second, handshake_ret.cipher);
     return std::make_shared<mux_tunnel_impl<boost::asio::ip::tcp::socket>>(
         std::move(socket), io_context, std::move(re), true, cid, trace_id, timeout_config_, limits_config_, heartbeat_config_);
 }
 
 boost::asio::awaitable<void> client_tunnel_pool::handle_connection_failure(const std::uint32_t index,
-                                                                    const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
-                                                                    const boost::system::error_code& ec,
-                                                                    const char* stage,
-                                                                    const connection_context& ctx,
-                                                                    boost::asio::io_context& io_context)
+                                                                           const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
+                                                                           const boost::system::error_code& ec,
+                                                                           const char* stage,
+                                                                           const connection_context& ctx,
+                                                                           boost::asio::io_context& io_context)
 {
     clear_pending_socket_if_match(index, socket);
     LOG_CTX_ERROR(ctx,
@@ -1185,22 +1173,21 @@ boost::asio::awaitable<bool> client_tunnel_pool::establish_tunnel_for_connection
     co_return true;
 }
 
-boost::asio::awaitable<std::expected<client_tunnel_pool::handshake_result, boost::system::error_code>> client_tunnel_pool::perform_reality_handshake_with_timeout(
-    const std::shared_ptr<boost::asio::ip::tcp::socket>& socket) const
+boost::asio::awaitable<std::expected<client_tunnel_pool::handshake_result, boost::system::error_code>>
+client_tunnel_pool::perform_reality_handshake_with_timeout(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket) const
 {
     const connection_context ctx;
     co_return co_await perform_reality_handshake_with_timeout(socket, ctx);
 }
 
-boost::asio::awaitable<std::expected<client_tunnel_pool::handshake_result, boost::system::error_code>> client_tunnel_pool::perform_reality_handshake_with_timeout(
-    const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
-    const connection_context& ctx) const
+boost::asio::awaitable<std::expected<client_tunnel_pool::handshake_result, boost::system::error_code>>
+client_tunnel_pool::perform_reality_handshake_with_timeout(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
+                                                           const connection_context& ctx) const
 {
     if (!socket)
     {
         statistics::instance().inc_client_tunnel_pool_handshake_errors();
-        LOG_CTX_ERROR(
-            ctx, "{} stage=handshake target={}:{} error=invalid_socket", log_event::kHandshake, remote_host_, remote_port_);
+        LOG_CTX_ERROR(ctx, "{} stage=handshake target={}:{} error=invalid_socket", log_event::kHandshake, remote_host_, remote_port_);
         co_return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
     }
     const auto timeout_sec = timeout_config_.read;
@@ -1210,8 +1197,7 @@ boost::asio::awaitable<std::expected<client_tunnel_pool::handshake_result, boost
     if (timeout_io::disarm_timeout(timeout_state))
     {
         statistics::instance().inc_client_tunnel_pool_handshake_timeouts();
-        LOG_CTX_ERROR(
-            ctx, "{} stage=handshake target={}:{} timeout={}s", log_event::kHandshake, remote_host_, remote_port_, timeout_sec);
+        LOG_CTX_ERROR(ctx, "{} stage=handshake target={}:{} timeout={}s", log_event::kHandshake, remote_host_, remote_port_, timeout_sec);
         co_return std::unexpected(boost::asio::error::timed_out);
     }
     if (!handshake_res)
@@ -1220,19 +1206,13 @@ boost::asio::awaitable<std::expected<client_tunnel_pool::handshake_result, boost
         if (handshake_res.error() == boost::asio::error::timed_out)
         {
             stats.inc_client_tunnel_pool_handshake_timeouts();
-            LOG_CTX_ERROR(
-                ctx, "{} stage=handshake target={}:{} timeout={}s", log_event::kHandshake, remote_host_, remote_port_, timeout_sec);
+            LOG_CTX_ERROR(ctx, "{} stage=handshake target={}:{} timeout={}s", log_event::kHandshake, remote_host_, remote_port_, timeout_sec);
         }
         else
         {
             stats.inc_client_tunnel_pool_handshake_errors();
             LOG_CTX_ERROR(
-                ctx,
-                "{} stage=handshake target={}:{} error={}",
-                log_event::kHandshake,
-                remote_host_,
-                remote_port_,
-                handshake_res.error().message());
+                ctx, "{} stage=handshake target={}:{} error={}", log_event::kHandshake, remote_host_, remote_port_, handshake_res.error().message());
         }
     }
     co_return handshake_res;
@@ -1316,15 +1296,15 @@ client_tunnel_pool::connect_loop_action client_tunnel_pool::prepare_tunnel_for_r
 }
 
 boost::asio::awaitable<std::expected<void, boost::system::error_code>> client_tunnel_pool::tcp_connect(boost::asio::io_context& io_context,
-                                                                                       boost::asio::ip::tcp::socket& socket) const
+                                                                                                       boost::asio::ip::tcp::socket& socket) const
 {
     const connection_context ctx;
     co_return co_await tcp_connect(io_context, socket, ctx);
 }
 
 boost::asio::awaitable<std::expected<void, boost::system::error_code>> client_tunnel_pool::tcp_connect(boost::asio::io_context& io_context,
-                                                                                       boost::asio::ip::tcp::socket& socket,
-                                                                                       const connection_context& ctx) const
+                                                                                                       boost::asio::ip::tcp::socket& socket,
+                                                                                                       const connection_context& ctx) const
 {
     const auto timeout_sec = timeout_config_.read;
     const auto resolve_endpoints = co_await resolve_remote_endpoints(io_context, remote_host_, remote_port_, timeout_sec, ctx);
@@ -1358,20 +1338,18 @@ boost::asio::awaitable<std::expected<void, boost::system::error_code>> client_tu
     if (last_ec == boost::asio::error::timed_out)
     {
         stats.inc_client_tunnel_pool_connect_timeouts();
-        LOG_CTX_ERROR(
-            ctx, "{} stage=connect target={}:{} timeout={}s", log_event::kConnInit, remote_host_, remote_port_, timeout_sec);
+        LOG_CTX_ERROR(ctx, "{} stage=connect target={}:{} timeout={}s", log_event::kConnInit, remote_host_, remote_port_, timeout_sec);
     }
     else
     {
         stats.inc_client_tunnel_pool_connect_errors();
-        LOG_CTX_ERROR(
-            ctx, "{} stage=connect target={}:{} error={}", log_event::kConnInit, remote_host_, remote_port_, last_ec.message());
+        LOG_CTX_ERROR(ctx, "{} stage=connect target={}:{} error={}", log_event::kConnInit, remote_host_, remote_port_, last_ec.message());
     }
     co_return std::unexpected(last_ec);
 }
 
-boost::asio::awaitable<std::expected<void, boost::system::error_code>> client_tunnel_pool::try_connect_endpoint(boost::asio::ip::tcp::socket& socket,
-                                                               const boost::asio::ip::tcp::endpoint& endpoint) const
+boost::asio::awaitable<std::expected<void, boost::system::error_code>> client_tunnel_pool::try_connect_endpoint(
+    boost::asio::ip::tcp::socket& socket, const boost::asio::ip::tcp::endpoint& endpoint) const
 {
     const auto timeout_sec = timeout_config_.read;
     const auto connect_res = co_await timeout_io::async_connect_with_timeout(socket, endpoint, timeout_sec, "connect");
@@ -1394,7 +1372,8 @@ boost::asio::awaitable<std::expected<void, boost::system::error_code>> client_tu
     co_return std::expected<void, boost::system::error_code>{};
 }
 
-boost::asio::awaitable<std::expected<client_tunnel_pool::handshake_result, boost::system::error_code>> client_tunnel_pool::perform_reality_handshake(boost::asio::ip::tcp::socket& socket) const
+boost::asio::awaitable<std::expected<client_tunnel_pool::handshake_result, boost::system::error_code>> client_tunnel_pool::perform_reality_handshake(
+    boost::asio::ip::tcp::socket& socket) const
 {
     std::uint8_t public_key[32];
     std::uint8_t private_key[32];
@@ -1441,34 +1420,34 @@ boost::asio::awaitable<std::expected<client_tunnel_pool::handshake_result, boost
     }
     auto [c_app_secret, s_app_secret] = std::move(*handshake_read_result);
 
-    if (const auto res = co_await send_client_finished(
-            socket,
-            hs_keys.c_hs_keys,
-            server_hello_result->hs_keys.client_handshake_traffic_secret,
-            trans,
-            server_hello_result->negotiated_cipher,
-            server_hello_result->negotiated_md);
+    if (const auto res = co_await send_client_finished(socket,
+                                                       hs_keys.c_hs_keys,
+                                                       server_hello_result->hs_keys.client_handshake_traffic_secret,
+                                                       trans,
+                                                       server_hello_result->negotiated_cipher,
+                                                       server_hello_result->negotiated_md);
         !res)
     {
         co_return std::unexpected(res.error());
     }
 
-    handshake_result result{
-        .c_app_secret = std::move(c_app_secret),
-        .s_app_secret = std::move(s_app_secret),
-        .cipher_suite = server_hello_result->cipher_suite,
-        .md = server_hello_result->negotiated_md,
-        .cipher = server_hello_result->negotiated_cipher};
+    handshake_result result{.c_app_secret = std::move(c_app_secret),
+                            .s_app_secret = std::move(s_app_secret),
+                            .cipher_suite = server_hello_result->cipher_suite,
+                            .md = server_hello_result->negotiated_md,
+                            .cipher = server_hello_result->negotiated_cipher};
     co_return result;
 }
 
-boost::asio::awaitable<std::expected<void, boost::system::error_code>> client_tunnel_pool::generate_and_send_client_hello(boost::asio::ip::tcp::socket& socket,
-                                                                                                                           const std::uint8_t* public_key,
-                                                                                                                           const std::uint8_t* private_key,
-                                                                                                                           const reality::fingerprint_spec& spec,
-                                                                                                                           reality::transcript& trans) const
+boost::asio::awaitable<std::expected<void, boost::system::error_code>> client_tunnel_pool::generate_and_send_client_hello(
+    boost::asio::ip::tcp::socket& socket,
+    const std::uint8_t* public_key,
+    const std::uint8_t* private_key,
+    const reality::fingerprint_spec& spec,
+    reality::transcript& trans) const
 {
-    auto client_hello_body_result = build_authenticated_client_hello(public_key, private_key, server_pub_key_, short_id_bytes_, client_ver_, spec, sni_);
+    auto client_hello_body_result =
+        build_authenticated_client_hello(public_key, private_key, server_pub_key_, short_id_bytes_, client_ver_, spec, sni_);
     if (!client_hello_body_result)
     {
         co_return std::unexpected(client_hello_body_result.error());
@@ -1495,9 +1474,8 @@ boost::asio::awaitable<std::expected<void, boost::system::error_code>> client_tu
     co_return std::expected<void, boost::system::error_code>{};
 }
 
-boost::asio::awaitable<std::expected<client_tunnel_pool::server_hello_res, boost::system::error_code>> client_tunnel_pool::process_server_hello(boost::asio::ip::tcp::socket& socket,
-                                                                                                                         const std::uint8_t* private_key,
-                                                                                                                         reality::transcript& trans)
+boost::asio::awaitable<std::expected<client_tunnel_pool::server_hello_res, boost::system::error_code>> client_tunnel_pool::process_server_hello(
+    boost::asio::ip::tcp::socket& socket, const std::uint8_t* private_key, reality::transcript& trans)
 {
     const auto server_hello_data_result = co_await read_handshake_record_body(socket, "server hello");
     if (!server_hello_data_result)
@@ -1539,15 +1517,15 @@ boost::asio::awaitable<std::expected<client_tunnel_pool::server_hello_res, boost
     co_return server_hello_res{.hs_keys = *hs_keys, .negotiated_md = md, .negotiated_cipher = cipher, .cipher_suite = cipher_suite};
 }
 
-boost::asio::awaitable<std::expected<std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>, boost::system::error_code>> client_tunnel_pool::handshake_read_loop(
-    boost::asio::ip::tcp::socket& socket,
-    const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& s_hs_keys,
-    const reality::handshake_keys& hs_keys,
-    const bool strict_cert_verify,
-    const std::string& sni,
-    reality::transcript& trans,
-    const EVP_CIPHER* cipher,
-    const EVP_MD* md)
+boost::asio::awaitable<std::expected<std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>, boost::system::error_code>>
+client_tunnel_pool::handshake_read_loop(boost::asio::ip::tcp::socket& socket,
+                                        const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& s_hs_keys,
+                                        const reality::handshake_keys& hs_keys,
+                                        const bool strict_cert_verify,
+                                        const std::string& sni,
+                                        reality::transcript& trans,
+                                        const EVP_CIPHER* cipher,
+                                        const EVP_MD* md)
 {
     bool handshake_fin = false;
     handshake_validation_state validation_state;
@@ -1557,7 +1535,8 @@ boost::asio::awaitable<std::expected<std::pair<std::vector<std::uint8_t>, std::v
     while (!handshake_fin)
     {
         if (const auto res = co_await process_handshake_record(
-                socket, s_hs_keys, trans, cipher, handshake_buffer, validation_state, handshake_fin, hs_keys, md, seq); !res)
+                socket, s_hs_keys, trans, cipher, handshake_buffer, validation_state, handshake_fin, hs_keys, md, seq);
+            !res)
         {
             co_return std::unexpected(res.error());
         }
@@ -1577,12 +1556,13 @@ boost::asio::awaitable<std::expected<std::pair<std::vector<std::uint8_t>, std::v
     co_return *app_sec;
 }
 
-boost::asio::awaitable<std::expected<void, boost::system::error_code>> client_tunnel_pool::send_client_finished(boost::asio::ip::tcp::socket& socket,
-                                                                   const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& c_hs_keys,
-                                                                   const std::vector<std::uint8_t>& c_hs_secret,
-                                                                   const reality::transcript& trans,
-                                                                   const EVP_CIPHER* cipher,
-                                                                   const EVP_MD* md)
+boost::asio::awaitable<std::expected<void, boost::system::error_code>> client_tunnel_pool::send_client_finished(
+    boost::asio::ip::tcp::socket& socket,
+    const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& c_hs_keys,
+    const std::vector<std::uint8_t>& c_hs_secret,
+    const reality::transcript& trans,
+    const EVP_CIPHER* cipher,
+    const EVP_MD* md)
 {
     auto fin_verify_result = reality::tls_key_schedule::compute_finished_verify_data(c_hs_secret, trans.finish(), md);
     if (!fin_verify_result)
@@ -1600,7 +1580,8 @@ boost::asio::awaitable<std::expected<void, boost::system::error_code>> client_tu
     std::vector<std::uint8_t> out_flight = {0x14, 0x03, 0x03, 0x00, 0x01, 0x01};
     out_flight.insert(out_flight.end(), fin_rec_result->begin(), fin_rec_result->end());
 
-    auto [write_error, write_len] = co_await boost::asio::async_write(socket, boost::asio::buffer(out_flight), boost::asio::as_tuple(boost::asio::use_awaitable));
+    auto [write_error, write_len] =
+        co_await boost::asio::async_write(socket, boost::asio::buffer(out_flight), boost::asio::as_tuple(boost::asio::use_awaitable));
     if (write_error)
     {
         LOG_ERROR("send client finished flight error {}", write_error.message());

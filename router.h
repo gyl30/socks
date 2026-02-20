@@ -32,8 +32,8 @@ class router
     [[nodiscard]] boost::asio::awaitable<route_type> decide(const connection_context& ctx, const std::string& host) const;
 
     [[nodiscard]] boost::asio::awaitable<route_type> decide_ip(const connection_context& ctx,
-                                                        const std::string& host,
-                                                        const boost::asio::ip::address& addr) const;
+                                                               const std::string& host,
+                                                               const boost::asio::ip::address& addr) const;
     [[nodiscard]] boost::asio::awaitable<route_type> decide_domain(const connection_context& ctx, const std::string& host) const;
 
    protected:

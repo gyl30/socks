@@ -82,14 +82,12 @@ boost::asio::awaitable<bool> direct_upstream::connect(const std::string& host, c
         if (resolve_res.timed_out)
         {
             stats.inc_direct_upstream_resolve_timeouts();
-            LOG_CTX_WARN(
-                ctx_, "{} stage=resolve target={}:{} timeout={}s", log_event::kRoute, host, port, timeout_sec);
+            LOG_CTX_WARN(ctx_, "{} stage=resolve target={}:{} timeout={}s", log_event::kRoute, host, port, timeout_sec);
         }
         else
         {
             stats.inc_direct_upstream_resolve_errors();
-            LOG_CTX_WARN(
-                ctx_, "{} stage=resolve target={}:{} error={}", log_event::kRoute, host, port, resolve_res.ec.message());
+            LOG_CTX_WARN(ctx_, "{} stage=resolve target={}:{} error={}", log_event::kRoute, host, port, resolve_res.ec.message());
         }
         co_return false;
     }
@@ -126,8 +124,7 @@ boost::asio::awaitable<bool> direct_upstream::connect(const std::string& host, c
     if (err == boost::asio::error::timed_out)
     {
         stats.inc_direct_upstream_connect_timeouts();
-        LOG_CTX_WARN(
-            ctx_, "{} stage=connect target={}:{} timeout={}s", log_event::kRoute, host, port, timeout_sec);
+        LOG_CTX_WARN(ctx_, "{} stage=connect target={}:{} timeout={}s", log_event::kRoute, host, port, timeout_sec);
     }
     else
     {
@@ -185,14 +182,11 @@ proxy_upstream::proxy_upstream(std::shared_ptr<mux_tunnel_impl<boost::asio::ip::
 {
 }
 
-bool proxy_upstream::is_tunnel_ready() const
-{
-    return tunnel_ != nullptr && tunnel_->connection() != nullptr && tunnel_->connection()->is_open();
-}
+bool proxy_upstream::is_tunnel_ready() const { return tunnel_ != nullptr && tunnel_->connection() != nullptr && tunnel_->connection()->is_open(); }
 
 boost::asio::awaitable<bool> proxy_upstream::send_syn_request(const std::shared_ptr<mux_stream>& stream,
-                                                       const std::string& host,
-                                                       const std::uint16_t port)
+                                                              const std::string& host,
+                                                              const std::uint16_t port)
 {
     const auto stream_ctx = ctx_.with_stream(stream->id());
     const syn_payload syn{.socks_cmd = socks::kCmdConnect, .addr = host, .port = port, .trace_id = ctx_.trace_id()};
@@ -208,8 +202,8 @@ boost::asio::awaitable<bool> proxy_upstream::send_syn_request(const std::shared_
 }
 
 boost::asio::awaitable<bool> proxy_upstream::wait_connect_ack(const std::shared_ptr<mux_stream>& stream,
-                                                       const std::string& host,
-                                                       const std::uint16_t port)
+                                                              const std::string& host,
+                                                              const std::uint16_t port)
 {
     const auto stream_ctx = ctx_.with_stream(stream->id());
     auto [ack_ec, ack_data] = co_await stream->async_read_some();
@@ -227,8 +221,7 @@ boost::asio::awaitable<bool> proxy_upstream::wait_connect_ack(const std::shared_
     }
     if (ack.socks_rep != socks::kRepSuccess)
     {
-        LOG_CTX_WARN(
-            stream_ctx, "{} stage=wait_ack target={}:{} remote_rep={}", log_event::kRoute, host, port, ack.socks_rep);
+        LOG_CTX_WARN(stream_ctx, "{} stage=wait_ack target={}:{} remote_rep={}", log_event::kRoute, host, port, ack.socks_rep);
         co_return false;
     }
     co_return true;

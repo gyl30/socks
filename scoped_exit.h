@@ -8,9 +8,7 @@ template <typename Callback>
 class scoped_exit
 {
    public:
-    explicit scoped_exit(Callback callback) : callback_(std::move(callback))
-    {
-    }
+    explicit scoped_exit(Callback callback) : callback_(std::move(callback)) {}
 
     scoped_exit(scoped_exit&& mv) noexcept : callback_(std::move(mv.callback_)), canceled_(mv.canceled_) { mv.canceled_ = true; }
 

@@ -228,10 +228,7 @@ std::uint32_t resolve_worker_threads(const mux::config& cfg)
     return 4;
 }
 
-bool is_supported_runtime_mode(const std::string& mode)
-{
-    return mode == "client" || mode == "server";
-}
+bool is_supported_runtime_mode(const std::string& mode) { return mode == "client" || mode == "server"; }
 
 bool register_shutdown_signals(boost::asio::signal_set& signals, mux::io_context_pool& pool, const runtime_services& services)
 {

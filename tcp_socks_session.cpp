@@ -44,10 +44,7 @@ namespace
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
 }
 
-[[nodiscard]] const char* route_name(const route_type route)
-{
-    return route == route_type::kDirect ? "direct" : "proxy";
-}
+[[nodiscard]] const char* route_name(const route_type route) { return route == route_type::kDirect ? "direct" : "proxy"; }
 
 }    // namespace
 
@@ -76,9 +73,7 @@ void tcp_socks_session::start(const std::string& host, const std::uint16_t port)
     boost::asio::co_spawn(io_context_, run_detached(shared_from_this(), host, port), boost::asio::detached);
 }
 
-boost::asio::awaitable<void> tcp_socks_session::run_detached(std::shared_ptr<tcp_socks_session> self,
-                                                      std::string host,
-                                                      const std::uint16_t port)
+boost::asio::awaitable<void> tcp_socks_session::run_detached(std::shared_ptr<tcp_socks_session> self, std::string host, const std::uint16_t port)
 {
     co_await self->run(host, port);
 }
@@ -141,9 +136,9 @@ std::shared_ptr<upstream> tcp_socks_session::create_backend(const route_type rou
 }
 
 boost::asio::awaitable<bool> tcp_socks_session::connect_backend(const std::shared_ptr<upstream>& backend,
-                                                         const std::string& host,
-                                                         const std::uint16_t port,
-                                                         const route_type route)
+                                                                const std::string& host,
+                                                                const std::uint16_t port,
+                                                                const route_type route)
 {
     LOG_CTX_INFO(ctx_, "{} connecting {} {} via {}", log_event::kConnInit, host, port, route_name(route));
     if (co_await backend->connect(host, port))
@@ -252,7 +247,8 @@ boost::asio::awaitable<void> tcp_socks_session::upstream_to_client(std::shared_p
             break;
         }
 
-        const auto [we, wn] = co_await boost::asio::async_write(socket_, boost::asio::buffer(buf.data(), n), boost::asio::as_tuple(boost::asio::use_awaitable));
+        const auto [we, wn] =
+            co_await boost::asio::async_write(socket_, boost::asio::buffer(buf.data(), n), boost::asio::as_tuple(boost::asio::use_awaitable));
         if (we)
         {
             LOG_CTX_WARN(ctx_, "{} failed to write to client {}", log_event::kSocks, we.message());
