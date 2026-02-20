@@ -49,8 +49,7 @@ add_compile_options(
   -fstack-clash-protection
   -fstack-protector-strong
   -fno-delete-null-pointer-checks
-  -fno-strict-overflow
-  -ftrivial-auto-var-init=zero)
+  -fno-strict-overflow)
 
 check_cxx_compiler_flag("-fcf-protection=full" HAS_CF_PROTECTION)
 if(HAS_CF_PROTECTION)
@@ -78,11 +77,19 @@ if(ENABLE_TSAN)
   add_compile_options(-fsanitize=thread)
   add_link_options(-fsanitize=thread)
 elseif(ENABLE_ASAN)
+  if(NOT (CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR CMAKE_CXX_COMPILER_ID MATCHES
+                                                   "AppleClang"))
+    message(FATAL_ERROR "ENABLE_ASAN requires Clang toolchain.")
+  endif()
   add_compile_options(-fsanitize=address,undefined)
   add_link_options(-fsanitize=address,undefined)
 else()
   add_compile_options("$<$<NOT:$<CONFIG:Debug>>:-U_FORTIFY_SOURCE>")
   add_compile_options("$<$<NOT:$<CONFIG:Debug>>:-D_FORTIFY_SOURCE=3>")
+endif()
+
+if(NOT ENABLE_TSAN AND NOT ENABLE_ASAN)
+  add_compile_options(-ftrivial-auto-var-init=zero)
 endif()
 
 option(ENABLE_COVERAGE "Enable code coverage" OFF)
@@ -146,21 +153,20 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
        tproxy_udp_session.cpp tproxy_udp_sender.cpp)
 endif()
 
-add_library(socks_core STATIC ${SOCKS_SOURCES})
+add_library(core STATIC ${SOCKS_SOURCES})
 
-target_include_directories(socks_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 target_include_directories(
-  socks_core SYSTEM
+  core SYSTEM
   PUBLIC ${OPENSSL_INCLUDE_DIR} ${Boost_INCLUDE_DIRS}
          ${CMAKE_CURRENT_SOURCE_DIR}/third/spdlog/include
          ${CMAKE_CURRENT_SOURCE_DIR}/third/rapidjson/include)
 
-target_link_libraries(socks_core PUBLIC OpenSSL::SSL OpenSSL::Crypto
-                                        Threads::Threads)
+target_link_libraries(core PUBLIC OpenSSL::SSL OpenSSL::Crypto Threads::Threads)
 
 add_executable(socks main.cpp)
-target_link_libraries(socks PRIVATE socks_core)
+target_link_libraries(socks PRIVATE core)
 
 find_package(GTest)
 if(NOT GTest_FOUND)
@@ -187,7 +193,7 @@ if(ENABLE_FUZZING)
     add_executable(${NAME} fuzz/${NAME}.cpp)
     target_compile_options(${NAME} PRIVATE -fsanitize=fuzzer)
     target_link_options(${NAME} PRIVATE -fsanitize=fuzzer)
-    target_link_libraries(${NAME} PRIVATE socks_core)
+    target_link_libraries(${NAME} PRIVATE core)
   endmacro()
 
   add_fuzz_test(fuzz_mux_codec)
