@@ -2,13 +2,14 @@
 #define TPROXY_CLIENT_H
 
 #include <atomic>
+#include <boost/system/error_code.hpp>
+#include <cstddef>
 #include <mutex>
 #include <memory>
 #include <string>
 #include <vector>
 #include <cstdint>
 #include <unordered_map>
-#include <system_error>
 
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/ip/udp.hpp>
@@ -21,7 +22,6 @@
 #include "context_pool.h"
 #include "tproxy_udp_sender.h"
 #include "client_tunnel_pool.h"
-#include "tproxy_tcp_session.h"
 #include "tproxy_udp_session.h"
 
 namespace mux
@@ -71,7 +71,7 @@ class tproxy_client : public std::enable_shared_from_this<tproxy_client>
 
     boost::asio::awaitable<void> udp_dispatch_loop();
 
-    [[nodiscard]] std::string endpoint_key(const boost::asio::ip::udp::endpoint& ep) const;
+    [[nodiscard]] static std::string endpoint_key(const boost::asio::ip::udp::endpoint& ep);
     void rollback_start_state();
     [[nodiscard]] bool validate_start_prerequisites(std::shared_ptr<client_tunnel_pool>& tunnel_pool,
                                                     std::shared_ptr<router>& router);

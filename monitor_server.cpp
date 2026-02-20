@@ -1,10 +1,15 @@
+// NOLINTBEGIN(misc-include-cleaner)
+#include <atomic>
 #include <array>
 #include <charconv>
+#include <cstddef>
+#include <cstdint>
 #include <string>
 #include <string_view>
+#include <utility>
 
-#include <boost/beast/core.hpp>
-#include <boost/beast/http.hpp>
+#include <boost/beast/core.hpp>    // NOLINT(misc-include-cleaner): beast facade header is required.
+#include <boost/beast/http.hpp>    // NOLINT(misc-include-cleaner): beast facade header is required.
 
 #include "log.h"
 #include "monitor_server.h"
@@ -136,6 +141,21 @@ std::string build_metrics_payload()
     return metrics_payload;
 }
 
+void log_monitor_read_failure(const boost::system::error_code& ec)
+{
+    LOG_WARN("monitor read failed {}", ec.message());
+}
+
+void log_monitor_write_failure(const boost::system::error_code& ec)
+{
+    LOG_WARN("monitor write failed {}", ec.message());
+}
+
+void log_monitor_accept_failure(const boost::system::error_code& ec)
+{
+    LOG_WARN("monitor accept failed {}", ec.message());
+}
+
 http::response<http::string_body> make_text_response(const http::status status,
                                                      const unsigned version,
                                                      std::string body,
@@ -172,7 +192,7 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
                              {
                                  if (ec != http::error::end_of_stream && ec != boost::asio::error::operation_aborted)
                                  {
-                                     LOG_WARN("monitor read failed {}", ec.message());
+                                     log_monitor_read_failure(ec);
                                  }
                                  close_socket();
                                  return;
@@ -212,7 +232,7 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
                           {
                               if (ec && ec != boost::asio::error::operation_aborted)
                               {
-                                  LOG_WARN("monitor write failed {}", ec.message());
+                                  log_monitor_write_failure(ec);
                               }
                               close_socket();
                           });
@@ -221,8 +241,8 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
     void close_socket()
     {
         boost::system::error_code ignored_ec;
-        stream_.socket().shutdown(tcp::socket::shutdown_both, ignored_ec);
-        stream_.socket().close(ignored_ec);
+        ignored_ec = stream_.socket().shutdown(tcp::socket::shutdown_both, ignored_ec);
+        ignored_ec = stream_.socket().close(ignored_ec);
     }
 
    private:
@@ -245,7 +265,7 @@ monitor_server::monitor_server(boost::asio::io_context& ioc,
     auto close_acceptor_on_failure = [this]()
     {
         boost::system::error_code close_ec;
-        acceptor_.close(close_ec);
+        close_ec = acceptor_.close(close_ec);
     };
 
     boost::asio::ip::tcp::endpoint endpoint;
@@ -345,7 +365,7 @@ void monitor_server::do_accept()
             {
                 if (ec != boost::asio::error::operation_aborted && ec != boost::asio::error::bad_descriptor)
                 {
-                    LOG_WARN("monitor accept failed {}", ec.message());
+                    log_monitor_accept_failure(ec);
                     self->do_accept();
                 }
                 return;
@@ -357,3 +377,4 @@ void monitor_server::do_accept()
 }
 
 }    // namespace mux
+// NOLINTEND(misc-include-cleaner)
