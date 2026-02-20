@@ -102,7 +102,7 @@ TEST(KeyRotatorTest, ThreadSafety)
     std::vector<std::shared_ptr<reality::x25519_keypair>> keys(100);
     std::vector<std::thread> threads;
 
-    for (int i = 0; i < 100; ++i)
+    for (std::size_t i = 0; i < keys.size(); ++i)
     {
         threads.emplace_back([&rotator, &keys, i]() { keys[i] = rotator.get_current_key(); });
     }
@@ -115,7 +115,7 @@ TEST(KeyRotatorTest, ThreadSafety)
         }
     }
 
-    for (int i = 1; i < 100; ++i)
+    for (std::size_t i = 1; i < keys.size(); ++i)
     {
         EXPECT_EQ(keys[0], keys[i]);
     }

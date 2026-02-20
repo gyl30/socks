@@ -47,7 +47,12 @@ class statistics
     std::uint64_t uptime_seconds() const
     {
         const auto now = std::chrono::steady_clock::now();
-        return std::chrono::duration_cast<std::chrono::seconds>(now - start_time_).count();
+        const auto uptime = std::chrono::duration_cast<std::chrono::seconds>(now - start_time_).count();
+        if (uptime <= 0)
+        {
+            return 0;
+        }
+        return static_cast<std::uint64_t>(uptime);
     }
 
     void inc_active_connections() { active_connections_++; }

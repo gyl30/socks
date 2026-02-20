@@ -63,16 +63,16 @@ class client_hello_builder
         add_u16(0);
 
         add_u8(0);
-        add_u16(hostname.size());
+        add_u16(to_u16(hostname.size()));
         for (const char c : hostname)
         {
-            add_u8(c);
+            add_u8(static_cast<std::uint8_t>(static_cast<unsigned char>(c)));
         }
 
-        const uint16_t total_len = buffer_.size() - list_len_pos - 2;
+        const uint16_t total_len = to_u16(buffer_.size() - list_len_pos - 2);
         poke_u16(list_len_pos, total_len);
 
-        const uint16_t ext_len = buffer_.size() - len_pos - 2;
+        const uint16_t ext_len = to_u16(buffer_.size() - len_pos - 2);
         poke_u16(len_pos, ext_len);
     }
 
@@ -92,10 +92,10 @@ class client_hello_builder
             add_u8(0xBB);
         }
 
-        const uint16_t list_len = buffer_.size() - share_len_pos - 2;
+        const uint16_t list_len = to_u16(buffer_.size() - share_len_pos - 2);
         poke_u16(share_len_pos, list_len);
 
-        const uint16_t ext_len = buffer_.size() - len_pos - 2;
+        const uint16_t ext_len = to_u16(buffer_.size() - len_pos - 2);
         poke_u16(len_pos, ext_len);
     }
 
@@ -103,17 +103,17 @@ class client_hello_builder
     {
         if (ext_len_pos_ > 0)
         {
-            const uint16_t ext_len = buffer_.size() - ext_len_pos_ - 2;
+            const uint16_t ext_len = to_u16(buffer_.size() - ext_len_pos_ - 2);
             poke_u16(ext_len_pos_, ext_len);
         }
 
         const size_t handshake_len = buffer_.size() - 5 - 4;
-        buffer_[6] = (handshake_len >> 16) & 0xFF;
-        buffer_[7] = (handshake_len >> 8) & 0xFF;
-        buffer_[8] = handshake_len & 0xFF;
+        buffer_[6] = static_cast<std::uint8_t>((handshake_len >> 16) & 0xFFU);
+        buffer_[7] = static_cast<std::uint8_t>((handshake_len >> 8) & 0xFFU);
+        buffer_[8] = static_cast<std::uint8_t>(handshake_len & 0xFFU);
 
         const size_t record_len = buffer_.size() - 5;
-        poke_u16(3, record_len);
+        poke_u16(3, to_u16(record_len));
     }
 
    private:
@@ -128,8 +128,13 @@ class client_hello_builder
     }
     void poke_u16(size_t pos, uint16_t v)
     {
-        buffer_[pos] = (v >> 8) & 0xFF;
-        buffer_[pos + 1] = v & 0xFF;
+        buffer_[pos] = static_cast<std::uint8_t>((v >> 8) & 0xFFU);
+        buffer_[pos + 1] = static_cast<std::uint8_t>(v & 0xFFU);
+    }
+
+    [[nodiscard]] static std::uint16_t to_u16(const std::size_t value)
+    {
+        return static_cast<std::uint16_t>(value);
     }
 };
 
@@ -244,9 +249,9 @@ TEST(CHParserTest, MalformedExtensionTruncated)
     builder.get_mutable_buffer().push_back(0);
     builder.get_mutable_buffer().push_back(10);
 
-    const uint16_t total = builder.get_buffer().size() - pos - 2;
-    builder.get_mutable_buffer()[pos] = (total >> 8);
-    builder.get_mutable_buffer()[pos + 1] = total & 0xFF;
+    const std::size_t total = builder.get_buffer().size() - pos - 2;
+    builder.get_mutable_buffer()[pos] = static_cast<std::uint8_t>((total >> 8) & 0xFFU);
+    builder.get_mutable_buffer()[pos + 1] = static_cast<std::uint8_t>(total & 0xFFU);
 
     auto info = ch_parser::parse(builder.get_buffer());
 
@@ -271,9 +276,9 @@ TEST(CHParserTest, SNIMalformedList)
     builder.get_mutable_buffer().push_back(10);
     builder.get_mutable_buffer().push_back(0);
 
-    const uint16_t total = builder.get_buffer().size() - pos - 2;
-    builder.get_mutable_buffer()[pos] = (total >> 8);
-    builder.get_mutable_buffer()[pos + 1] = total & 0xFF;
+    const std::size_t total = builder.get_buffer().size() - pos - 2;
+    builder.get_mutable_buffer()[pos] = static_cast<std::uint8_t>((total >> 8) & 0xFFU);
+    builder.get_mutable_buffer()[pos + 1] = static_cast<std::uint8_t>(total & 0xFFU);
 
     auto info = ch_parser::parse(builder.get_buffer());
     EXPECT_TRUE(info.sni.empty());
@@ -301,9 +306,9 @@ TEST(CHParserTest, KeyShareWrongGroup)
     builder.get_mutable_buffer().push_back(0);
     builder.get_mutable_buffer().push_back(0);
 
-    const uint16_t total = builder.get_buffer().size() - pos - 2;
-    builder.get_mutable_buffer()[pos] = (total >> 8);
-    builder.get_mutable_buffer()[pos + 1] = total & 0xFF;
+    const std::size_t total = builder.get_buffer().size() - pos - 2;
+    builder.get_mutable_buffer()[pos] = static_cast<std::uint8_t>((total >> 8) & 0xFFU);
+    builder.get_mutable_buffer()[pos + 1] = static_cast<std::uint8_t>(total & 0xFFU);
 
     auto info = ch_parser::parse(builder.get_buffer());
     EXPECT_FALSE(info.is_tls13);
@@ -513,9 +518,9 @@ TEST(CHParserTest, SNINonHostName)
     builder.get_mutable_buffer().push_back('b');
     builder.get_mutable_buffer().push_back('c');
 
-    const uint16_t total = builder.get_buffer().size() - pos - 2;
-    builder.get_mutable_buffer()[pos] = (total >> 8);
-    builder.get_mutable_buffer()[pos + 1] = total & 0xFF;
+    const std::size_t total = builder.get_buffer().size() - pos - 2;
+    builder.get_mutable_buffer()[pos] = static_cast<std::uint8_t>((total >> 8) & 0xFFU);
+    builder.get_mutable_buffer()[pos + 1] = static_cast<std::uint8_t>(total & 0xFFU);
 
     auto info = ch_parser::parse(builder.get_buffer());
     EXPECT_TRUE(info.sni.empty());
@@ -629,9 +634,9 @@ TEST(CHParserTest, KeyShareWrongLength)
         builder.get_mutable_buffer().push_back(0xEE);
     }
 
-    const uint16_t total = builder.get_buffer().size() - pos - 2;
-    builder.get_mutable_buffer()[pos] = (total >> 8);
-    builder.get_mutable_buffer()[pos + 1] = total & 0xFF;
+    const std::size_t total = builder.get_buffer().size() - pos - 2;
+    builder.get_mutable_buffer()[pos] = static_cast<std::uint8_t>((total >> 8) & 0xFFU);
+    builder.get_mutable_buffer()[pos + 1] = static_cast<std::uint8_t>(total & 0xFFU);
 
     auto info = ch_parser::parse(builder.get_buffer());
     EXPECT_TRUE(info.x25519_pub.empty());

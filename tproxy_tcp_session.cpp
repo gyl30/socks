@@ -207,7 +207,7 @@ void tproxy_tcp_session::close_client_socket()
     }
 }
 
-bool tproxy_tcp_session::should_stop_client_read(const boost::system::error_code& ec, const std::uint32_t n) const
+bool tproxy_tcp_session::should_stop_client_read(const boost::system::error_code& ec, const std::size_t n) const
 {
     if (!ec && n > 0)
     {
@@ -229,7 +229,7 @@ bool tproxy_tcp_session::should_stop_client_read(const boost::system::error_code
 
 boost::asio::awaitable<bool> tproxy_tcp_session::write_client_chunk_to_backend(const std::shared_ptr<upstream>& backend,
                                                                          const std::vector<std::uint8_t>& buf,
-                                                                         const std::uint32_t n)
+                                                                         const std::size_t n)
 {
     std::size_t total_written = 0;
     while (total_written < n)
@@ -258,7 +258,7 @@ boost::asio::awaitable<void> tproxy_tcp_session::client_to_upstream(std::shared_
     for (;;)
     {
         boost::system::error_code ec;
-        const std::uint32_t n = co_await socket_.async_read_some(boost::asio::buffer(buf), boost::asio::redirect_error(boost::asio::use_awaitable, ec));
+        const std::size_t n = co_await socket_.async_read_some(boost::asio::buffer(buf), boost::asio::redirect_error(boost::asio::use_awaitable, ec));
         if (should_stop_client_read(ec, n))
         {
             break;
@@ -291,7 +291,7 @@ boost::asio::awaitable<void> tproxy_tcp_session::upstream_to_client(std::shared_
     shutdown_client_send();
 }
 
-bool tproxy_tcp_session::should_stop_backend_read(const boost::system::error_code& ec, const std::uint32_t n) const
+bool tproxy_tcp_session::should_stop_backend_read(const boost::system::error_code& ec, const std::size_t n) const
 {
     if (!ec && n > 0)
     {
@@ -311,7 +311,7 @@ bool tproxy_tcp_session::should_stop_backend_read(const boost::system::error_cod
     return true;
 }
 
-boost::asio::awaitable<bool> tproxy_tcp_session::write_backend_chunk_to_client(const std::vector<std::uint8_t>& buf, const std::uint32_t n)
+boost::asio::awaitable<bool> tproxy_tcp_session::write_backend_chunk_to_client(const std::vector<std::uint8_t>& buf, const std::size_t n)
 {
     const auto [write_ec, write_n] = co_await boost::asio::async_write(socket_, boost::asio::buffer(buf.data(), n), boost::asio::as_tuple(boost::asio::use_awaitable));
     (void)write_n;

@@ -262,7 +262,7 @@ boost::asio::awaitable<initial_read_outcome> fill_tls_record_header(const std::s
         header_remaining.resize(header_read.read_size);
         buf.insert(buf.end(), header_remaining.begin(), header_remaining.end());
     }
-    co_return initial_read_outcome{.ok = true};
+    co_return initial_read_outcome{true, false, {}};
 }
 
 boost::asio::awaitable<initial_read_outcome> fill_tls_record_body(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
@@ -287,7 +287,7 @@ boost::asio::awaitable<initial_read_outcome> fill_tls_record_body(const std::sha
         extra.resize(extra_read.read_size);
         buf.insert(buf.end(), extra.begin(), extra.end());
     }
-    co_return initial_read_outcome{.ok = true};
+    co_return initial_read_outcome{true, false, {}};
 }
 
 [[nodiscard]] bool should_skip_fallback_after_read_failure(const boost::system::error_code& read_ec, const std::atomic<bool>& stop_flag)
@@ -1022,7 +1022,9 @@ bool verify_client_finished_plaintext(const std::vector<std::uint8_t>& plaintext
         return false;
     }
 
-    const std::uint32_t msg_len = (plaintext[1] << 16) | (plaintext[2] << 8) | plaintext[3];
+    const std::uint32_t msg_len = (static_cast<std::uint32_t>(plaintext[1]) << 16)
+                                | (static_cast<std::uint32_t>(plaintext[2]) << 8)
+                                | static_cast<std::uint32_t>(plaintext[3]);
     if (msg_len != expected_verify.size() || plaintext.size() != 4 + msg_len)
     {
         statistics::instance().inc_client_finished_failures();
@@ -1698,7 +1700,7 @@ boost::asio::awaitable<remote_server::server_handshake_res> remote_server::delay
     if (stop_.load(std::memory_order_acquire))
     {
         close_socket_quietly(s);
-        co_return server_handshake_res{.ok = false, .ec = boost::asio::error::operation_aborted};
+        co_return server_handshake_res{false, boost::asio::error::operation_aborted, {}, {}, {}, nullptr, nullptr, {}};
     }
 
     static thread_local std::mt19937 delay_gen(std::random_device{}());
@@ -1713,10 +1715,10 @@ boost::asio::awaitable<remote_server::server_handshake_res> remote_server::delay
     if (stop_.load(std::memory_order_acquire))
     {
         close_socket_quietly(s);
-        co_return server_handshake_res{.ok = false, .ec = boost::asio::error::operation_aborted};
+        co_return server_handshake_res{false, boost::asio::error::operation_aborted, {}, {}, {}, nullptr, nullptr, {}};
     }
     co_await handle_fallback(s, initial_buf, ctx, client_sni);
-    co_return server_handshake_res{.ok = false};
+    co_return server_handshake_res{false, {}, {}, {}, {}, nullptr, nullptr, {}};
 }
 
 boost::asio::awaitable<remote_server::server_handshake_res> remote_server::negotiate_reality(std::shared_ptr<boost::asio::ip::tcp::socket> s,
@@ -1728,7 +1730,7 @@ boost::asio::awaitable<remote_server::server_handshake_res> remote_server::negot
     {
         if (!read_res.allow_fallback || stop_.load(std::memory_order_acquire))
         {
-            co_return server_handshake_res{.ok = false, .ec = read_res.ec};
+            co_return server_handshake_res{false, read_res.ec, {}, {}, {}, nullptr, nullptr, {}};
         }
         std::string client_sni;
         (void)parse_client_hello(initial_buf, client_sni);
@@ -1742,7 +1744,7 @@ boost::asio::awaitable<remote_server::server_handshake_res> remote_server::negot
     {
         if (stop_.load(std::memory_order_acquire))
         {
-            co_return server_handshake_res{.ok = false, .ec = boost::asio::error::operation_aborted};
+            co_return server_handshake_res{false, boost::asio::error::operation_aborted, {}, {}, {}, nullptr, nullptr, {}};
         }
         LOG_CTX_WARN(ctx, "{} auth failed sni {}", log_event::kAuth, client_sni);
         co_return co_await delay_and_fallback(s, initial_buf, ctx, client_sni);
@@ -1752,14 +1754,14 @@ boost::asio::awaitable<remote_server::server_handshake_res> remote_server::negot
     reality::transcript trans;
     if (!init_handshake_transcript(initial_buf, trans, ctx))
     {
-        co_return server_handshake_res{.ok = false};
+        co_return server_handshake_res{false, {}, {}, {}, {}, nullptr, nullptr, {}};
     }
 
     auto sh_res = co_await perform_handshake_response(s, info, trans, ctx);
     if (!sh_res.ok)
     {
         LOG_CTX_ERROR(ctx, "{} response error {}", log_event::kHandshake, sh_res.ec.message());
-        co_return server_handshake_res{.ok = false};
+        co_return server_handshake_res{false, {}, {}, {}, {}, nullptr, nullptr, {}};
     }
 
     const auto verify_timeout_sec = timeout_config_.read;
@@ -1767,7 +1769,7 @@ boost::asio::awaitable<remote_server::server_handshake_res> remote_server::negot
             co_await verify_client_finished(s, sh_res.c_hs_keys, sh_res.hs_keys, trans, sh_res.cipher, sh_res.negotiated_md, ctx, verify_timeout_sec);
         ec)
     {
-        co_return server_handshake_res{.ok = false};
+        co_return server_handshake_res{false, {}, {}, {}, {}, nullptr, nullptr, {}};
     }
 
     sh_res.handshake_hash = trans.finish();
@@ -1784,7 +1786,12 @@ std::expected<remote_server::app_keys, boost::system::error_code> remote_server:
         return std::unexpected(app_sec.error());
     }
 
-    const std::size_t key_len = EVP_CIPHER_key_length(sh_res.cipher);
+    const int key_len_raw = EVP_CIPHER_key_length(sh_res.cipher);
+    if (key_len_raw <= 0)
+    {
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+    }
+    const std::size_t key_len = static_cast<std::size_t>(key_len_raw);
     constexpr std::size_t iv_len = 12;
     auto c_keys = reality::tls_key_schedule::derive_traffic_keys(app_sec->first, key_len, iv_len, sh_res.negotiated_md);
     if (!c_keys)
@@ -1825,12 +1832,12 @@ boost::asio::awaitable<remote_server::initial_read_res> remote_server::read_init
 {
     const auto to_member_result = [](const initial_read_outcome& outcome)
     {
-        return initial_read_res{.ok = outcome.ok, .allow_fallback = outcome.allow_fallback, .ec = outcome.ec};
+        return initial_read_res{outcome.ok, outcome.allow_fallback, outcome.ec};
     };
     const auto timeout_sec = timeout_config_.read;
     if (stop_.load(std::memory_order_acquire))
     {
-        co_return initial_read_res{.ok = false, .allow_fallback = false, .ec = boost::asio::error::operation_aborted};
+        co_return initial_read_res{false, false, boost::asio::error::operation_aborted};
     }
 
     buf.resize(constants::net::kBufferSize);
@@ -1849,7 +1856,7 @@ boost::asio::awaitable<remote_server::initial_read_res> remote_server::read_init
     if (buf[0] != 0x16)
     {
         LOG_CTX_WARN(ctx, "{} invalid tls header 0x{:02x}", log_event::kHandshake, buf[0]);
-        co_return initial_read_res{.ok = false, .allow_fallback = true};
+        co_return initial_read_res{false, true, {}};
     }
     const std::size_t len = static_cast<std::uint16_t>((buf[3] << 8) | buf[4]);
     const auto body_read = co_await fill_tls_record_body(s, ctx, buf, static_cast<std::uint32_t>(len), timeout_sec, stop_);
@@ -1858,7 +1865,7 @@ boost::asio::awaitable<remote_server::initial_read_res> remote_server::read_init
         co_return to_member_result(body_read);
     }
     LOG_CTX_DEBUG(ctx, "{} received client hello record size {}", log_event::kHandshake, buf.size());
-    co_return initial_read_res{.ok = true};
+    co_return initial_read_res{true, false, {}};
 }
 
 std::optional<remote_server::selected_key_share> remote_server::select_key_share(const client_hello_info& info, const connection_context& ctx)
@@ -1916,7 +1923,7 @@ boost::asio::awaitable<remote_server::server_handshake_res> remote_server::perfo
     if (key_pair == nullptr)
     {
         LOG_CTX_ERROR(ctx, "{} key rotation unavailable", log_event::kHandshake);
-        co_return server_handshake_res{.ok = false, .ec = boost::asio::error::fault};
+        co_return server_handshake_res{false, boost::asio::error::fault, {}, {}, {}, nullptr, nullptr, {}};
     }
     const std::uint8_t* public_key = key_pair->public_key;
     const std::uint8_t* private_key = key_pair->private_key;
@@ -1924,7 +1931,7 @@ boost::asio::awaitable<remote_server::server_handshake_res> remote_server::perfo
     auto server_random_result = generate_server_random();
     if (!server_random_result)
     {
-        co_return server_handshake_res{.ok = false, .ec = server_random_result.error()};
+        co_return server_handshake_res{false, server_random_result.error(), {}, {}, {}, nullptr, nullptr, {}};
     }
     const auto& server_random = *server_random_result;
 
@@ -1933,7 +1940,7 @@ boost::asio::awaitable<remote_server::server_handshake_res> remote_server::perfo
     auto key_share_res = derive_server_key_share(info, public_key, private_key, ctx);
     if (!key_share_res)
     {
-        co_return server_handshake_res{.ok = false, .ec = key_share_res.error()};
+        co_return server_handshake_res{false, key_share_res.error(), {}, {}, {}, nullptr, nullptr, {}};
     }
     const auto& ks = *key_share_res;
 
@@ -1941,7 +1948,7 @@ boost::asio::awaitable<remote_server::server_handshake_res> remote_server::perfo
     const auto cert = co_await load_certificate_material(target, ctx);
     if (!cert.has_value())
     {
-        co_return server_handshake_res{.ok = false, .ec = boost::asio::error::connection_refused};
+        co_return server_handshake_res{false, boost::asio::error::connection_refused, {}, {}, {}, nullptr, nullptr, {}};
     }
 
     const std::uint16_t cipher_suite = select_cipher_suite_from_fingerprint(cert->fingerprint);
@@ -1958,23 +1965,17 @@ boost::asio::awaitable<remote_server::server_handshake_res> remote_server::perfo
                                                 ctx);
     if (!crypto_result)
     {
-        co_return server_handshake_res{.ok = false, .ec = crypto_result.error()};
+        co_return server_handshake_res{false, crypto_result.error(), {}, {}, {}, nullptr, nullptr, {}};
     }
     const auto& crypto = *crypto_result;
 
     const auto write_timeout_sec = timeout_config_.write;
     if (const auto ec = co_await send_server_hello_flight(s, crypto.sh_msg, crypto.flight2_enc, ctx, write_timeout_sec); ec)
     {
-        co_return server_handshake_res{.ok = false, .ec = ec};
+        co_return server_handshake_res{false, ec, {}, {}, {}, nullptr, nullptr, {}};
     }
 
-    co_return server_handshake_res{
-        .ok = true,
-        .hs_keys = crypto.hs_keys,
-        .s_hs_keys = crypto.s_hs_keys,
-        .c_hs_keys = crypto.c_hs_keys,
-        .cipher = crypto.cipher,
-        .negotiated_md = crypto.md};
+    co_return server_handshake_res{true, {}, crypto.hs_keys, crypto.s_hs_keys, crypto.c_hs_keys, crypto.cipher, crypto.md, {}};
 }
 
 std::expected<remote_server::key_share_result, boost::system::error_code> remote_server::derive_server_key_share(

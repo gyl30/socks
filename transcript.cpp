@@ -59,7 +59,12 @@ std::vector<std::uint8_t> transcript::finish() const
 {
     const std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> c(create_digest_context(), EVP_MD_CTX_free);
     (void)EVP_MD_CTX_copy(c.get(), ctx_.get());
-    std::vector<std::uint8_t> h(EVP_MD_size(md_));
+    const int hash_len = EVP_MD_size(md_);
+    if (hash_len <= 0)
+    {
+        return {};
+    }
+    std::vector<std::uint8_t> h(static_cast<std::size_t>(hash_len));
     unsigned int l;
     (void)EVP_DigestFinal_ex(c.get(), h.data(), &l);
     return h;

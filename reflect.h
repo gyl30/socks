@@ -108,7 +108,11 @@ inline void JsonWriter::key(const char* name) const { m->Key(name); }
 inline void JsonWriter::null_() const { m->Null(); }
 inline void JsonWriter::int64(std::int64_t v) const { m->Int64(v); }
 inline void JsonWriter::string(const char* s) const { m->String(s); }
-inline void JsonWriter::string(const char* s, std::size_t len) const { m->String(s, len); }
+inline void JsonWriter::string(const char* s, std::size_t len) const
+{
+    assert(len <= static_cast<std::size_t>(std::numeric_limits<rapidjson::SizeType>::max()));
+    m->String(s, static_cast<rapidjson::SizeType>(len));
+}
 
 template <typename T>
 bool read_signed_integer(JsonReader& vis, T& out)

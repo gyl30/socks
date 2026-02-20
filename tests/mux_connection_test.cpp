@@ -173,7 +173,7 @@ TEST_F(MuxConnectionIntegrationTest, StreamDataExchange)
 
     std::atomic<bool> accepted{false};
 
-    acceptor.async_accept(*socket_server, [&](boost::system::error_code ec) { accepted = true; });
+    acceptor.async_accept(*socket_server, [&](boost::system::error_code) { accepted = true; });
 
     socket_client->connect(acceptor.local_endpoint());
 
