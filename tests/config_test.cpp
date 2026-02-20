@@ -27,9 +27,9 @@ bool is_hex_string(const std::string& value)
         return false;
     }
 
-    for (const unsigned char ch : value)
+    for (const char ch : value)
     {
-        if (!std::isxdigit(ch))
+        if (!std::isxdigit(static_cast<unsigned char>(ch)))
         {
             return false;
         }

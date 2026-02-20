@@ -7,6 +7,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <cstddef>
 #include <cstdint>
 
 #include <boost/asio/ip/tcp.hpp>
@@ -46,14 +47,14 @@ class tproxy_tcp_session : public std::enable_shared_from_this<tproxy_tcp_sessio
                                                         route_type route);
 
     [[nodiscard]] boost::asio::awaitable<void> client_to_upstream(std::shared_ptr<upstream> backend);
-    [[nodiscard]] bool should_stop_client_read(const boost::system::error_code& ec, std::uint32_t n) const;
+    [[nodiscard]] bool should_stop_client_read(const boost::system::error_code& ec, std::size_t n) const;
     [[nodiscard]] boost::asio::awaitable<bool> write_client_chunk_to_backend(const std::shared_ptr<upstream>& backend,
                                                                       const std::vector<std::uint8_t>& buf,
-                                                                      std::uint32_t n);
+                                                                      std::size_t n);
 
     [[nodiscard]] boost::asio::awaitable<void> upstream_to_client(std::shared_ptr<upstream> backend);
-    [[nodiscard]] bool should_stop_backend_read(const boost::system::error_code& ec, std::uint32_t n) const;
-    [[nodiscard]] boost::asio::awaitable<bool> write_backend_chunk_to_client(const std::vector<std::uint8_t>& buf, std::uint32_t n);
+    [[nodiscard]] bool should_stop_backend_read(const boost::system::error_code& ec, std::size_t n) const;
+    [[nodiscard]] boost::asio::awaitable<bool> write_backend_chunk_to_client(const std::vector<std::uint8_t>& buf, std::size_t n);
     void shutdown_client_send();
 
     [[nodiscard]] static boost::asio::awaitable<void> idle_watchdog_detached(std::shared_ptr<tproxy_tcp_session> self,
