@@ -200,7 +200,7 @@ class statistics
             return;
         }
 
-        const std::string_view key = normalize_sni_metric_key(sni);    // GCOVR_EXCL_LINE
+        const std::string_view key = normalize_sni_metric_key(sni);           // GCOVR_EXCL_LINE
         const std::lock_guard<std::mutex> lock(handshake_failure_sni_mu_);    // GCOVR_EXCL_LINE
         auto& counters = handshake_failure_sni_counters_[reason_index];
         const auto it = counters.by_sni.find(key);    // GCOVR_EXCL_LINE
@@ -293,20 +293,14 @@ class statistics
     {
         using is_transparent = void;
 
-        [[nodiscard]] std::size_t operator()(const std::string_view value) const noexcept
-        {
-            return std::hash<std::string_view>{}(value);
-        }
+        [[nodiscard]] std::size_t operator()(const std::string_view value) const noexcept { return std::hash<std::string_view>{}(value); }
     };
 
     struct transparent_string_equal
     {
         using is_transparent = void;
 
-        [[nodiscard]] bool operator()(const std::string_view lhs, const std::string_view rhs) const noexcept
-        {
-            return lhs == rhs;
-        }
+        [[nodiscard]] bool operator()(const std::string_view lhs, const std::string_view rhs) const noexcept { return lhs == rhs; }
     };
 
     struct handshake_failure_sni_counter

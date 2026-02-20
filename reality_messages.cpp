@@ -33,10 +33,9 @@ namespace
 
 std::vector<std::uint8_t> fallback_secp256r1_public_key()
 {
-    return {0x04, 0x6b, 0x17, 0xd1, 0xf2, 0xe1, 0x2c, 0x42, 0x47, 0xf8, 0xbc, 0xe6, 0xe5, 0x63, 0xa4, 0x40, 0xf2,
-            0x77, 0x03, 0x7d, 0x81, 0x2d, 0xeb, 0x33, 0xa0, 0xf4, 0xa1, 0x39, 0x45, 0xd8, 0x98, 0xc2, 0x96, 0x4f,
-            0xe3, 0x42, 0xe2, 0xfe, 0x1a, 0x7f, 0x9b, 0x8e, 0xe7, 0xeb, 0x4a, 0x7c, 0x0f, 0x9e, 0x16, 0x2b, 0xce,
-            0x33, 0x57, 0x6b, 0x31, 0x5e, 0xce, 0xcb, 0xb6, 0x40, 0x68, 0x37, 0xbf, 0x51, 0xf5};
+    return {0x04, 0x6b, 0x17, 0xd1, 0xf2, 0xe1, 0x2c, 0x42, 0x47, 0xf8, 0xbc, 0xe6, 0xe5, 0x63, 0xa4, 0x40, 0xf2, 0x77, 0x03, 0x7d, 0x81, 0x2d,
+            0xeb, 0x33, 0xa0, 0xf4, 0xa1, 0x39, 0x45, 0xd8, 0x98, 0xc2, 0x96, 0x4f, 0xe3, 0x42, 0xe2, 0xfe, 0x1a, 0x7f, 0x9b, 0x8e, 0xe7, 0xeb,
+            0x4a, 0x7c, 0x0f, 0x9e, 0x16, 0x2b, 0xce, 0x33, 0x57, 0x6b, 0x31, 0x5e, 0xce, 0xcb, 0xb6, 0x40, 0x68, 0x37, 0xbf, 0x51, 0xf5};
 }
 
 std::vector<std::uint8_t> generate_secp256r1_public_key()
@@ -453,8 +452,10 @@ bool build_simple_extension(extension_type type, std::vector<std::uint8_t>& ext_
     }
 }
 
-using contextual_extension_builder =
-    bool (*)(const std::shared_ptr<extension_blueprint>&, std::vector<std::uint8_t>&, std::uint16_t&, const extension_build_context&);
+using contextual_extension_builder = bool (*)(const std::shared_ptr<extension_blueprint>&,
+                                              std::vector<std::uint8_t>&,
+                                              std::uint16_t&,
+                                              const extension_build_context&);
 
 bool build_contextual_grease(const std::shared_ptr<extension_blueprint>& ext_ptr,
                              std::vector<std::uint8_t>& ext_buffer,
@@ -928,8 +929,7 @@ static bool parse_certificate_verify_payload_length(const std::vector<std::uint8
     {
         return false;
     }
-    payload_len =
-        (static_cast<std::uint32_t>(msg[1]) << 16) | (static_cast<std::uint32_t>(msg[2]) << 8) | static_cast<std::uint32_t>(msg[3]);
+    payload_len = (static_cast<std::uint32_t>(msg[1]) << 16) | (static_cast<std::uint32_t>(msg[2]) << 8) | static_cast<std::uint32_t>(msg[3]);
     return msg.size() >= 4 + payload_len;
 }
 
@@ -991,15 +991,15 @@ bool is_supported_certificate_verify_scheme(std::uint16_t scheme)
     using reality::tls_consts::sig_alg::kRsaPssRsaeSha512;
 
     constexpr std::array<std::uint16_t, 10> supported_schemes = {kEd25519,
-                                                                  kEcdsaSecp256r1Sha256,
-                                                                  kEcdsaSecp384r1Sha384,
-                                                                  kEcdsaSecp521r1Sha512,
-                                                                  kRsaPkcs1Sha256,
-                                                                  kRsaPkcs1Sha384,
-                                                                  kRsaPkcs1Sha512,
-                                                                  kRsaPssRsaeSha256,
-                                                                  kRsaPssRsaeSha384,
-                                                                  kRsaPssRsaeSha512};
+                                                                 kEcdsaSecp256r1Sha256,
+                                                                 kEcdsaSecp384r1Sha384,
+                                                                 kEcdsaSecp521r1Sha512,
+                                                                 kRsaPkcs1Sha256,
+                                                                 kRsaPkcs1Sha384,
+                                                                 kRsaPkcs1Sha512,
+                                                                 kRsaPssRsaeSha256,
+                                                                 kRsaPssRsaeSha384,
+                                                                 kRsaPssRsaeSha512};
     return std::ranges::find(supported_schemes, scheme) != supported_schemes.end();
 }
 
@@ -1051,8 +1051,8 @@ static bool locate_server_hello_extensions(const std::vector<std::uint8_t>& serv
 }
 
 static std::optional<server_key_share_info> parse_server_key_share_entry(const std::vector<std::uint8_t>& server_hello,
-                                                                          const std::size_t pos,
-                                                                          const std::size_t end)
+                                                                         const std::size_t pos,
+                                                                         const std::size_t end)
 {
     if (pos + 4 > end)
     {
@@ -1085,11 +1085,8 @@ static bool skip_server_hello_prefix(const std::vector<std::uint8_t>& server_hel
     return pos + 4 <= server_hello.size();
 }
 
-static bool parse_extension_header(const std::vector<std::uint8_t>& server_hello,
-                                   const std::size_t end,
-                                   std::size_t& pos,
-                                   std::uint16_t& type,
-                                   std::uint16_t& ext_len)
+static bool parse_extension_header(
+    const std::vector<std::uint8_t>& server_hello, const std::size_t end, std::size_t& pos, std::uint16_t& type, std::uint16_t& ext_len)
 {
     if (pos + 4 > end)
     {
@@ -1176,11 +1173,8 @@ static std::optional<encrypted_extensions_range> parse_encrypted_extensions_rang
     return encrypted_extensions_range{.pos = ext_start, .end = ext_end};
 }
 
-static bool read_extension_header(const std::vector<std::uint8_t>& msg,
-                                  std::size_t& pos,
-                                  const std::size_t end,
-                                  std::uint16_t& type,
-                                  std::uint16_t& len)
+static bool read_extension_header(
+    const std::vector<std::uint8_t>& msg, std::size_t& pos, const std::size_t end, std::uint16_t& type, std::uint16_t& len)
 {
     if (pos + 4 > end)
     {
@@ -1192,9 +1186,7 @@ static bool read_extension_header(const std::vector<std::uint8_t>& msg,
     return pos + len <= end;
 }
 
-static std::optional<std::string> parse_alpn_extension_body(const std::vector<std::uint8_t>& ee_msg,
-                                                            const std::size_t pos,
-                                                            const std::uint16_t len)
+static std::optional<std::string> parse_alpn_extension_body(const std::vector<std::uint8_t>& ee_msg, const std::size_t pos, const std::uint16_t len)
 {
     if (len < 3)
     {
