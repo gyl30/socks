@@ -9,6 +9,7 @@ env:
   BOOST_ARCHIVE: "boost_1_89_0.tar.bz2"
   BOOST_SRC_DIR: "boost_1_89_0"
   BOOST_INSTALL_PREFIX: "/home/runner/.local/boost-1.89"
+  CLANG_VERSION: "18"
 
 jobs:
   guard-expected-assertion-style:
@@ -74,16 +75,25 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y cmake ninja-build libssl-dev ripgrep wget curl gnupg ca-certificates
 
-    - name: Install Latest Clang
+    - name: Install Clang
       run: |
         set -euo pipefail
-        sudo rm -f /usr/share/keyrings/llvm-archive-keyring.gpg
+        sudo rm -f /etc/apt/sources.list.d/llvm.list /usr/share/keyrings/llvm-archive-keyring.gpg
         curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
-        echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] https://apt.llvm.org/jammy/ llvm-toolchain-jammy main" | sudo tee /etc/apt/sources.list.d/llvm.list >/dev/null
-        sudo apt-get update
-        sudo apt-get install -y clang lld
-        clang --version
-        clang++ --version
+        echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] https://apt.llvm.org/jammy/ llvm-toolchain-jammy-${CLANG_VERSION} main" | sudo tee /etc/apt/sources.list.d/llvm.list >/dev/null
+        for attempt in 1 2 3; do
+          sudo apt-get update
+          if sudo apt-get install -y "clang-${CLANG_VERSION}" "lld-${CLANG_VERSION}"; then
+            break
+          fi
+          if [ "${attempt}" -eq 3 ]; then
+            echo "failed to install clang-${CLANG_VERSION} after retries" >&2
+            exit 1
+          fi
+          sleep 5
+        done
+        "clang-${CLANG_VERSION}" --version
+        "clang++-${CLANG_VERSION}" --version
 
     - name: Cache Boost 1.89
       id: cache-boost
@@ -111,8 +121,8 @@ jobs:
       run: |
         cmake -S . -B build_tier -GNinja \
           -DCMAKE_BUILD_TYPE=Debug \
-          -DCMAKE_C_COMPILER=clang \
-          -DCMAKE_CXX_COMPILER=clang++ \
+          -DCMAKE_C_COMPILER="clang-${CLANG_VERSION}" \
+          -DCMAKE_CXX_COMPILER="clang++-${CLANG_VERSION}" \
           -DENABLE_TSAN=OFF \
           -DENABLE_ASAN=ON \
           -DCMAKE_PREFIX_PATH="${BOOST_INSTALL_PREFIX}"
@@ -123,7 +133,7 @@ jobs:
     - name: Run Tiered Regression
       run: |
         set -euo pipefail
-        bash script/run_test_tier.sh --tier "${{ matrix.tier }}" --build-dir build_tier --jobs 8
+        bash script/run_test_tier.sh --tier "${{ matrix.tier }}" --build-dir build_tier --jobs 20
 
   tsan:
     name: TSAN (${{ matrix.suite }})
@@ -170,16 +180,25 @@ jobs:
         ./bootstrap.sh --prefix="${BOOST_INSTALL_PREFIX}"
         ./b2 install -j15
 
-    - name: Install Latest Clang
+    - name: Install Clang
       run: |
         set -euo pipefail
-        sudo rm -f /usr/share/keyrings/llvm-archive-keyring.gpg
+        sudo rm -f /etc/apt/sources.list.d/llvm.list /usr/share/keyrings/llvm-archive-keyring.gpg
         curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
-        echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] https://apt.llvm.org/jammy/ llvm-toolchain-jammy main" | sudo tee /etc/apt/sources.list.d/llvm.list >/dev/null
-        sudo apt-get update
-        sudo apt-get install -y clang lld
-        clang --version
-        clang++ --version
+        echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] https://apt.llvm.org/jammy/ llvm-toolchain-jammy-${CLANG_VERSION} main" | sudo tee /etc/apt/sources.list.d/llvm.list >/dev/null
+        for attempt in 1 2 3; do
+          sudo apt-get update
+          if sudo apt-get install -y "clang-${CLANG_VERSION}" "lld-${CLANG_VERSION}"; then
+            break
+          fi
+          if [ "${attempt}" -eq 3 ]; then
+            echo "failed to install clang-${CLANG_VERSION} after retries" >&2
+            exit 1
+          fi
+          sleep 5
+        done
+        "clang-${CLANG_VERSION}" --version
+        "clang++-${CLANG_VERSION}" --version
 
     - name: Prepare Artifact Directory
       run: mkdir -p "$CI_ARTIFACT_DIR"
@@ -188,22 +207,22 @@ jobs:
       run: |
         cmake -S . -B build_tsan -GNinja \
           -DCMAKE_BUILD_TYPE=Debug \
-          -DCMAKE_C_COMPILER=clang \
-          -DCMAKE_CXX_COMPILER=clang++ \
+          -DCMAKE_C_COMPILER="clang-${CLANG_VERSION}" \
+          -DCMAKE_CXX_COMPILER="clang++-${CLANG_VERSION}" \
           -DENABLE_TSAN=ON \
           -DENABLE_ASAN=OFF \
           -DCMAKE_PREFIX_PATH="${BOOST_INSTALL_PREFIX}"
 
     - name: Build TSAN
-      run: cmake --build build_tsan
+      run: cmake --build build_tsan -j15
 
     - name: Run TSAN Unit Test Suite
       if: matrix.suite == 'unit'
-      run: ctest --test-dir build_tsan --parallel --output-on-failure --output-log "$CI_ARTIFACT_DIR/ctest_tsan_unit.log" -E "$INTEGRATION_TEST_REGEX"
+      run: ctest --test-dir build_tsan --parallel 20 --output-on-failure --output-log "$CI_ARTIFACT_DIR/ctest_tsan_unit.log" -E "$INTEGRATION_TEST_REGEX"
 
     - name: Run TSAN Integration Tests
       if: matrix.suite == 'integration'
-      run: ctest --test-dir build_tsan --parallel --output-on-failure --output-log "$CI_ARTIFACT_DIR/ctest_tsan_integration.log" -R "$INTEGRATION_TEST_REGEX"
+      run: ctest --test-dir build_tsan --parallel 20 --output-on-failure --output-log "$CI_ARTIFACT_DIR/ctest_tsan_integration.log" -R "$INTEGRATION_TEST_REGEX"
 
     - name: Upload TSAN Artifacts
       if: always()
@@ -434,22 +453,31 @@ jobs:
         ./bootstrap.sh --prefix="${BOOST_INSTALL_PREFIX}"
         ./b2 install -j15
 
-    - name: Install Latest Clang
+    - name: Install Clang
       run: |
         set -euo pipefail
-        sudo rm -f /usr/share/keyrings/llvm-archive-keyring.gpg
+        sudo rm -f /etc/apt/sources.list.d/llvm.list /usr/share/keyrings/llvm-archive-keyring.gpg
         curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
-        echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] https://apt.llvm.org/jammy/ llvm-toolchain-jammy main" | sudo tee /etc/apt/sources.list.d/llvm.list >/dev/null
-        sudo apt-get update
-        sudo apt-get install -y clang lld
-        clang --version
-        clang++ --version
+        echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] https://apt.llvm.org/jammy/ llvm-toolchain-jammy-${CLANG_VERSION} main" | sudo tee /etc/apt/sources.list.d/llvm.list >/dev/null
+        for attempt in 1 2 3; do
+          sudo apt-get update
+          if sudo apt-get install -y "clang-${CLANG_VERSION}" "lld-${CLANG_VERSION}"; then
+            break
+          fi
+          if [ "${attempt}" -eq 3 ]; then
+            echo "failed to install clang-${CLANG_VERSION} after retries" >&2
+            exit 1
+          fi
+          sleep 5
+        done
+        "clang-${CLANG_VERSION}" --version
+        "clang++-${CLANG_VERSION}" --version
 
     - name: Configure CMake (Fuzzing)
-      run: cmake -S . -B build_fuzz -DENABLE_FUZZING=ON -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_COMPILER=clang -DCMAKE_PREFIX_PATH="${BOOST_INSTALL_PREFIX}" -GNinja
+      run: cmake -S . -B build_fuzz -DENABLE_FUZZING=ON -DCMAKE_CXX_COMPILER="clang++-${CLANG_VERSION}" -DCMAKE_C_COMPILER="clang-${CLANG_VERSION}" -DCMAKE_PREFIX_PATH="${BOOST_INSTALL_PREFIX}" -GNinja
 
     - name: Build Fuzzers
-      run: cmake --build build_fuzz
+      run: cmake --build build_fuzz -j15
 
     - name: Smoke Test Fuzzers
       run: |
