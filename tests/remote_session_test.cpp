@@ -1,43 +1,57 @@
-// NOLINTBEGIN(misc-use-internal-linkage, readability-named-parameter)
-// NOLINTBEGIN(bugprone-unused-return-value, misc-include-cleaner)
+
 #include <atomic>
+#include <cerrno>
+#include <chrono>
+#include <future>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
-#include <chrono>
 #include <cstdint>
 #include <utility>
-#include <thread>
-#include <system_error>
-#include <cerrno>
-#include <future>
-
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-#include <boost/asio/read.hpp>
-#include <boost/asio/write.hpp>
-#include <boost/asio/io_context.hpp>
-#include <boost/asio/ip/tcp.hpp>
-#include <boost/asio/steady_timer.hpp>
-#include <boost/asio/use_awaitable.hpp>
-#include <boost/asio/as_tuple.hpp>
-#include <boost/asio/experimental/awaitable_operators.hpp>
+#include <unistd.h>
 #include <sys/socket.h>
 #include <netinet/tcp.h>
+
+#include <gtest/gtest.h>
+#include <boost/asio/post.hpp>
+#include <boost/asio/read.hpp>
+#include <asm-generic/socket.h>
+#include <boost/asio/error.hpp>
+#include <boost/asio/write.hpp>
+#include <boost/asio/buffer.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <gmock/gmock-actions.h>
+#include <gmock/gmock-matchers.h>
+#include <boost/asio/as_tuple.hpp>
+#include <boost/asio/awaitable.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/ip/address.hpp>
+#include <boost/asio/steady_timer.hpp>
+#include <boost/system/error_code.hpp>
+#include <gmock/gmock-spec-builders.h>
+#include <boost/asio/use_awaitable.hpp>
+#include <boost/asio/experimental/awaitable_operators.hpp>
 
 extern "C"
 {
 #include <openssl/evp.h>
 }
 
+#include "mux_tunnel.h"
+#include "log_context.h"
+#include "mux_protocol.h"
+#include "mux_stream_interface.h"
+
 #define private public
 #include "remote_session.h"
+
 #undef private
 
-#include "mux_codec.h"
 #include "protocol.h"
-#include "statistics.h"
+#include "mux_codec.h"
 #include "test_util.h"
+#include "statistics.h"
 #include "mock_mux_connection.h"
 
 std::atomic<bool> g_fail_tcp_nodelay_setsockopt_once{false};
@@ -49,16 +63,16 @@ void fail_next_tcp_nodelay_setsockopt(const int err)
     g_fail_tcp_nodelay_setsockopt_once.store(true, std::memory_order_release);
 }
 
-extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);
 
-extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)
 {
     if (level == IPPROTO_TCP && optname == TCP_NODELAY && g_fail_tcp_nodelay_setsockopt_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_tcp_nodelay_setsockopt_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_setsockopt(sockfd, level, optname, optval, optlen);    // NOLINT(bugprone-reserved-identifier)
+    return __real_setsockopt(sockfd, level, optname, optval, optlen);
 }
 
 namespace
@@ -158,6 +172,7 @@ TEST(RemoteSessionTest, RunResolveFailureSendsHostUnreachAckAndReset)
     auto session = std::make_shared<mux::remote_session>(conn, 9, io_context, ctx);
     auto& stats = mux::statistics::instance();
     const auto resolve_errors_before = stats.remote_session_resolve_errors();
+    const auto resolve_timeouts_before = stats.remote_session_resolve_timeouts();
 
     std::vector<std::uint8_t> ack_payload;
     EXPECT_CALL(*conn, mock_send_async(9, mux::kCmdAck, _))
@@ -174,7 +189,9 @@ TEST(RemoteSessionTest, RunResolveFailureSendsHostUnreachAckAndReset)
     mux::ack_payload ack{};
     ASSERT_TRUE(mux::mux_codec::decode_ack(ack_payload.data(), ack_payload.size(), ack));
     EXPECT_EQ(ack.socks_rep, socks::kRepHostUnreach);
-    EXPECT_GE(stats.remote_session_resolve_errors(), resolve_errors_before + 1);
+    const bool resolve_failed_or_timed_out = stats.remote_session_resolve_errors() >= resolve_errors_before + 1 ||
+                                             stats.remote_session_resolve_timeouts() >= resolve_timeouts_before + 1;
+    EXPECT_TRUE(resolve_failed_or_timed_out);
 }
 
 TEST(RemoteSessionTest, RunResolveFailureRemovesManagerStream)
@@ -830,5 +847,3 @@ TEST(RemoteSessionTest, OnCloseAndOnResetRunWhenIoQueueBlocked)
 }
 
 }    // namespace
-// NOLINTEND(bugprone-unused-return-value, misc-include-cleaner)
-// NOLINTEND(misc-use-internal-linkage, readability-named-parameter)

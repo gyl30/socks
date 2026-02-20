@@ -1,18 +1,41 @@
-// NOLINTBEGIN(performance-inefficient-vector-operation, readability-named-parameter)
-// NOLINTBEGIN(misc-include-cleaner)
-#include <atomic>
-#include <cstdlib>
-#include <cstdint>
+
 #include <new>
+#include <atomic>
+#include <chrono>
+#include <memory>
 #include <thread>
 #include <vector>
+#include <cstdint>
+#include <cstdlib>
 
 #include <gtest/gtest.h>
 
 #include "crypto_util.h"
+
 #define private public
 #include "key_rotator.h"
+
 #undef private
+
+#if defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+#define SOCKS_HAS_TSAN 1
+#endif
+#endif
+
+#if defined(__SANITIZE_THREAD__)
+#define SOCKS_HAS_TSAN 1
+#endif
+
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define SOCKS_HAS_ASAN 1
+#endif
+#endif
+
+#if defined(__SANITIZE_ADDRESS__)
+#define SOCKS_HAS_ASAN 1
+#endif
 
 namespace
 {
@@ -25,21 +48,13 @@ enum class keygen_mode : std::uint8_t
 
 std::atomic<keygen_mode> g_keygen_mode{keygen_mode::kSuccess};
 std::atomic<std::uint8_t> g_seed{1};
+#if !defined(SOCKS_HAS_TSAN) && !defined(SOCKS_HAS_ASAN)
 std::atomic<bool> g_fail_nothrow_new_once{false};
+#endif
 
 }    // namespace
 
-#if defined(__has_feature)
-#if __has_feature(thread_sanitizer)
-#define SOCKS_HAS_TSAN 1
-#endif
-#endif
-
-#if defined(__SANITIZE_THREAD__)
-#define SOCKS_HAS_TSAN 1
-#endif
-
-#if !defined(SOCKS_HAS_TSAN)
+#if !defined(SOCKS_HAS_TSAN) && !defined(SOCKS_HAS_ASAN)
 void* operator new(std::size_t size, const std::nothrow_t&) noexcept
 {
     if (g_fail_nothrow_new_once.exchange(false, std::memory_order_acq_rel))
@@ -99,9 +114,10 @@ TEST(KeyRotatorTest, ThreadSafety)
     std::vector<std::shared_ptr<reality::x25519_keypair>> keys(100);
     std::vector<std::thread> threads;
 
-    for (std::size_t i = 0; i < keys.size(); ++i)
+    for (auto& key : keys)
     {
-        threads.emplace_back([&rotator, &keys, i]() { keys[i] = rotator.get_current_key(); });
+        auto* key_slot = &key;
+        threads.emplace_back([&rotator, key_slot]() { *key_slot = rotator.get_current_key(); });
     }
 
     for (auto& t : threads)
@@ -188,8 +204,8 @@ TEST(KeyRotatorTest, FallbackCompareExchangeFailureReturnsNullWhenStillRotating)
 
 TEST(KeyRotatorTest, RotateReturnsFalseWhenKeyAllocationFails)
 {
-#if defined(SOCKS_HAS_TSAN)
-    GTEST_SKIP() << "tsan runtime overrides nothrow operator new/delete";
+#if defined(SOCKS_HAS_TSAN) || defined(SOCKS_HAS_ASAN)
+    GTEST_SKIP() << "sanitizer runtime overrides nothrow operator new/delete";
 #else
     g_keygen_mode.store(keygen_mode::kSuccess, std::memory_order_relaxed);
     reality::key_rotator rotator(std::chrono::seconds(60));
@@ -204,5 +220,3 @@ TEST(KeyRotatorTest, RotateReturnsFalseWhenKeyAllocationFails)
     EXPECT_EQ(after, before);
 #endif
 }
-// NOLINTEND(misc-include-cleaner)
-// NOLINTEND(performance-inefficient-vector-operation, readability-named-parameter)

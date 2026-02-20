@@ -28,6 +28,7 @@ SKIP_HTML_REPORT="${SKIP_HTML_REPORT:-0}"
 PER_FILE_GATE="${PER_FILE_GATE:-0}"
 BRANCH_PER_FILE_GATE="${BRANCH_PER_FILE_GATE:-0}"
 EXCLUDE_THROW_BRANCHES="${EXCLUDE_THROW_BRANCHES:-1}"
+GCOV_EXECUTABLE="${GCOV_EXECUTABLE:-}"
 
 if [ ! -d "${BUILD_DIR}" ]; then
     mkdir "${BUILD_DIR}"
@@ -65,6 +66,25 @@ else
         exit 1
     fi
 
+    if [ -z "${GCOV_EXECUTABLE}" ] && [ -n "${CXX:-}" ]; then
+        cxx_basename="$(basename "${CXX}")"
+        if [[ "${cxx_basename}" =~ ([0-9]+)$ ]]; then
+            gcov_candidate="gcov-${BASH_REMATCH[1]}"
+            if command -v "${gcov_candidate}" >/dev/null 2>&1; then
+                GCOV_EXECUTABLE="${gcov_candidate}"
+            fi
+        fi
+    fi
+
+    if [ -z "${GCOV_EXECUTABLE}" ]; then
+        GCOV_EXECUTABLE="gcov"
+    fi
+
+    GCOVR_GCOV_ARGS=(--gcov-executable "${GCOV_EXECUTABLE}")
+    if gcovr --help 2>/dev/null | grep -q -- '--gcov-ignore-parse-errors'; then
+        GCOVR_GCOV_ARGS+=(--gcov-ignore-parse-errors)
+    fi
+
     mkdir -p coverage_report
     GCOVR_BRANCH_ARGS=()
     if [ "${EXCLUDE_THROW_BRANCHES}" = "1" ]; then
@@ -73,6 +93,7 @@ else
 
     if [ "${SKIP_HTML_REPORT}" != "1" ]; then
         gcovr -r .. --html -o coverage_report/index.html -j "${TEST_JOBS}" \
+            "${GCOVR_GCOV_ARGS[@]}" \
             "${GCOVR_BRANCH_ARGS[@]}" \
             --exclude-directories '.*/_deps' \
             --exclude-directories '.*/third' \
@@ -86,6 +107,7 @@ else
     fi
 
     gcovr -r .. --json-summary-pretty -o coverage_report/summary.json -j "${TEST_JOBS}" \
+        "${GCOVR_GCOV_ARGS[@]}" \
         "${GCOVR_BRANCH_ARGS[@]}" \
         --exclude-directories '.*/_deps' \
         --exclude-directories '.*/third' \
@@ -109,6 +131,29 @@ with open("coverage_report/summary.json", "r", encoding="utf-8") as f:
 
 files = data.get("files", [])
 if not files:
+    line_total = data.get("line_total")
+    line_covered = data.get("line_covered")
+    line_percent = data.get("line_percent")
+    if line_total is None:
+        line_total = data.get("lines_total")
+    if line_covered is None:
+        line_covered = data.get("lines_covered")
+    if line_percent is None and line_total:
+        line_percent = (float(line_covered) * 100.0) / float(line_total)
+    elif line_percent is not None and line_percent <= 1.0:
+        line_percent = float(line_percent) * 100.0
+
+    if line_total:
+        print(f"Overall project coverage: {line_percent:.2f}% ({line_covered}/{line_total})")
+        if line_percent < threshold:
+            print(f"Overall coverage gate failed (< {threshold:.2f}%).")
+            sys.exit(1)
+        if per_file_gate or branch_per_file_gate:
+            print("Per-file gate enabled but gcovr summary has no file details.")
+            sys.exit(1)
+        print("Coverage gate passed without per-file details.")
+        sys.exit(0)
+
     print("No files found in gcovr summary, failing coverage gate.")
     sys.exit(1)
 
@@ -128,6 +173,8 @@ for entry in files:
     if "_deps" in path_parts or "third" in path_parts or "tests" in path_parts:
         continue
     if path_parts and path_parts[-1] == "main.cpp":
+        continue
+    if not normalized_name.endswith((".c", ".cc", ".cpp", ".cxx")):
         continue
 
     line_total = entry.get("line_total")

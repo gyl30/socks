@@ -9,6 +9,7 @@ env:
   BOOST_ARCHIVE: "boost_1_89_0.tar.bz2"
   BOOST_SRC_DIR: "boost_1_89_0"
   BOOST_INSTALL_PREFIX: "/home/runner/.local/boost-1.89"
+  CLANG_VERSION: "20"
 
 jobs:
   guard-expected-assertion-style:
@@ -74,16 +75,14 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y cmake ninja-build libssl-dev ripgrep wget curl gnupg ca-certificates
 
-    - name: Install Latest Clang
+    - name: Install Clang
       run: |
         set -euo pipefail
-        sudo rm -f /usr/share/keyrings/llvm-archive-keyring.gpg
-        curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
-        echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] https://apt.llvm.org/jammy/ llvm-toolchain-jammy main" | sudo tee /etc/apt/sources.list.d/llvm.list >/dev/null
-        sudo apt-get update
-        sudo apt-get install -y clang lld
-        clang --version
-        clang++ --version
+        wget -q https://apt.llvm.org/llvm.sh -O /tmp/llvm.sh
+        chmod +x /tmp/llvm.sh
+        sudo /tmp/llvm.sh "${CLANG_VERSION}"
+        "clang-${CLANG_VERSION}" --version
+        "clang++-${CLANG_VERSION}" --version
 
     - name: Cache Boost 1.89
       id: cache-boost
@@ -105,25 +104,66 @@ jobs:
         tar xf "$HOME/.cache/${BOOST_ARCHIVE}" -C "$HOME/.cache"
         cd "$HOME/.cache/${BOOST_SRC_DIR}"
         ./bootstrap.sh --prefix="${BOOST_INSTALL_PREFIX}"
-        ./b2 install -j15
+        ./b2 install -j"$(nproc)"
 
     - name: Configure Tiered Build
       run: |
         cmake -S . -B build_tier -GNinja \
           -DCMAKE_BUILD_TYPE=Debug \
-          -DCMAKE_C_COMPILER=clang \
-          -DCMAKE_CXX_COMPILER=clang++ \
+          -DCMAKE_C_COMPILER="clang-${CLANG_VERSION}" \
+          -DCMAKE_CXX_COMPILER="clang++-${CLANG_VERSION}" \
           -DENABLE_TSAN=OFF \
           -DENABLE_ASAN=ON \
           -DCMAKE_PREFIX_PATH="${BOOST_INSTALL_PREFIX}"
 
     - name: Build Tiered Tests
-      run: cmake --build build_tier -j15
+      run: cmake --build build_tier -j"$(nproc)"
 
     - name: Run Tiered Regression
       run: |
         set -euo pipefail
-        bash script/run_test_tier.sh --tier "${{ matrix.tier }}" --build-dir build_tier --jobs 8
+        bash script/run_test_tier.sh --tier "${{ matrix.tier }}" --build-dir build_tier --jobs "$(nproc)"
+
+  macos-unit:
+    name: macOS Unit Regression
+    runs-on: macos-14
+    env:
+      INTEGRATION_TEST_REGEX: integration|tproxy_integration|udp_integration|mux_connection_integration_test
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install System Dependencies
+      run: |
+        set -euo pipefail
+        brew update
+        brew install cmake ninja openssl@3 ripgrep llvm@20 boost
+
+    - name: Configure macOS Build
+      run: |
+        set -euo pipefail
+        OPENSSL_ROOT="$(brew --prefix openssl@3)"
+        LLVM_ROOT="$(brew --prefix llvm@20)"
+        BOOST_ROOT="$(brew --prefix boost)"
+        cmake -S . -B build_macos -GNinja \
+          -DCMAKE_BUILD_TYPE=Debug \
+          -DCMAKE_C_COMPILER="${LLVM_ROOT}/bin/clang" \
+          -DCMAKE_CXX_COMPILER="${LLVM_ROOT}/bin/clang++" \
+          -DENABLE_TSAN=OFF \
+          -DENABLE_ASAN=ON \
+          -DOPENSSL_ROOT_DIR="${OPENSSL_ROOT}" \
+          -DCMAKE_CXX_FLAGS="-D_LIBCPP_DISABLE_AVAILABILITY" \
+          -DCMAKE_EXE_LINKER_FLAGS="-L${LLVM_ROOT}/lib/c++ -Wl,-rpath,${LLVM_ROOT}/lib/c++" \
+          -DCMAKE_SHARED_LINKER_FLAGS="-L${LLVM_ROOT}/lib/c++ -Wl,-rpath,${LLVM_ROOT}/lib/c++" \
+          -DCMAKE_PREFIX_PATH="${BOOST_ROOT};${OPENSSL_ROOT};${LLVM_ROOT}"
+
+    - name: Build macOS
+      run: cmake --build build_macos -j"$(sysctl -n hw.ncpu)"
+
+    - name: Run macOS Unit Tests
+      run: ctest --test-dir build_macos --parallel "$(sysctl -n hw.ncpu)" --output-on-failure -E "$INTEGRATION_TEST_REGEX"
 
   tsan:
     name: TSAN (${{ matrix.suite }})
@@ -168,18 +208,16 @@ jobs:
         tar xf "$HOME/.cache/${BOOST_ARCHIVE}" -C "$HOME/.cache"
         cd "$HOME/.cache/${BOOST_SRC_DIR}"
         ./bootstrap.sh --prefix="${BOOST_INSTALL_PREFIX}"
-        ./b2 install -j15
+        ./b2 install -j"$(nproc)"
 
-    - name: Install Latest Clang
+    - name: Install Clang
       run: |
         set -euo pipefail
-        sudo rm -f /usr/share/keyrings/llvm-archive-keyring.gpg
-        curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
-        echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] https://apt.llvm.org/jammy/ llvm-toolchain-jammy main" | sudo tee /etc/apt/sources.list.d/llvm.list >/dev/null
-        sudo apt-get update
-        sudo apt-get install -y clang lld
-        clang --version
-        clang++ --version
+        wget -q https://apt.llvm.org/llvm.sh -O /tmp/llvm.sh
+        chmod +x /tmp/llvm.sh
+        sudo /tmp/llvm.sh "${CLANG_VERSION}"
+        "clang-${CLANG_VERSION}" --version
+        "clang++-${CLANG_VERSION}" --version
 
     - name: Prepare Artifact Directory
       run: mkdir -p "$CI_ARTIFACT_DIR"
@@ -188,22 +226,22 @@ jobs:
       run: |
         cmake -S . -B build_tsan -GNinja \
           -DCMAKE_BUILD_TYPE=Debug \
-          -DCMAKE_C_COMPILER=clang \
-          -DCMAKE_CXX_COMPILER=clang++ \
+          -DCMAKE_C_COMPILER="clang-${CLANG_VERSION}" \
+          -DCMAKE_CXX_COMPILER="clang++-${CLANG_VERSION}" \
           -DENABLE_TSAN=ON \
           -DENABLE_ASAN=OFF \
           -DCMAKE_PREFIX_PATH="${BOOST_INSTALL_PREFIX}"
 
     - name: Build TSAN
-      run: cmake --build build_tsan
+      run: cmake --build build_tsan -j"$(nproc)"
 
     - name: Run TSAN Unit Test Suite
       if: matrix.suite == 'unit'
-      run: ctest --test-dir build_tsan --parallel --output-on-failure --output-log "$CI_ARTIFACT_DIR/ctest_tsan_unit.log" -E "$INTEGRATION_TEST_REGEX"
+      run: ctest --test-dir build_tsan --parallel "$(nproc)" --output-on-failure --output-log "$CI_ARTIFACT_DIR/ctest_tsan_unit.log" -E "$INTEGRATION_TEST_REGEX"
 
     - name: Run TSAN Integration Tests
       if: matrix.suite == 'integration'
-      run: ctest --test-dir build_tsan --parallel --output-on-failure --output-log "$CI_ARTIFACT_DIR/ctest_tsan_integration.log" -R "$INTEGRATION_TEST_REGEX"
+      run: ctest --test-dir build_tsan --parallel "$(nproc)" --output-on-failure --output-log "$CI_ARTIFACT_DIR/ctest_tsan_integration.log" -R "$INTEGRATION_TEST_REGEX"
 
     - name: Upload TSAN Artifacts
       if: always()
@@ -278,7 +316,7 @@ jobs:
         tar xf "$HOME/.cache/${BOOST_ARCHIVE}" -C "$HOME/.cache"
         cd "$HOME/.cache/${BOOST_SRC_DIR}"
         ./bootstrap.sh --prefix="${BOOST_INSTALL_PREFIX}"
-        ./b2 install -j15
+        ./b2 install -j"$(nproc)"
 
     - name: Prepare Artifact Directory
       run: mkdir -p "$CI_ARTIFACT_DIR"
@@ -292,7 +330,7 @@ jobs:
           -DCMAKE_PREFIX_PATH="${BOOST_INSTALL_PREFIX}"
 
     - name: Build Valgrind
-      run: cmake --build build_valgrind
+      run: cmake --build build_valgrind -j"$(nproc)"
 
     - name: Validate Valgrind Script Args
       run: python3 script/valgrind_test.py --self-test-args
@@ -377,7 +415,7 @@ jobs:
         tar xf "$HOME/.cache/${BOOST_ARCHIVE}" -C "$HOME/.cache"
         cd "$HOME/.cache/${BOOST_SRC_DIR}"
         ./bootstrap.sh --prefix="${BOOST_INSTALL_PREFIX}"
-        ./b2 install -j15
+        ./b2 install -j"$(nproc)"
 
     - name: Prepare Artifact Directory
       run: mkdir -p "$CI_ARTIFACT_DIR"
@@ -432,24 +470,22 @@ jobs:
         tar xf "$HOME/.cache/${BOOST_ARCHIVE}" -C "$HOME/.cache"
         cd "$HOME/.cache/${BOOST_SRC_DIR}"
         ./bootstrap.sh --prefix="${BOOST_INSTALL_PREFIX}"
-        ./b2 install -j15
+        ./b2 install -j"$(nproc)"
 
-    - name: Install Latest Clang
+    - name: Install Clang
       run: |
         set -euo pipefail
-        sudo rm -f /usr/share/keyrings/llvm-archive-keyring.gpg
-        curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
-        echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] https://apt.llvm.org/jammy/ llvm-toolchain-jammy main" | sudo tee /etc/apt/sources.list.d/llvm.list >/dev/null
-        sudo apt-get update
-        sudo apt-get install -y clang lld
-        clang --version
-        clang++ --version
+        wget -q https://apt.llvm.org/llvm.sh -O /tmp/llvm.sh
+        chmod +x /tmp/llvm.sh
+        sudo /tmp/llvm.sh "${CLANG_VERSION}"
+        "clang-${CLANG_VERSION}" --version
+        "clang++-${CLANG_VERSION}" --version
 
     - name: Configure CMake (Fuzzing)
-      run: cmake -S . -B build_fuzz -DENABLE_FUZZING=ON -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_COMPILER=clang -DCMAKE_PREFIX_PATH="${BOOST_INSTALL_PREFIX}" -GNinja
+      run: cmake -S . -B build_fuzz -DENABLE_FUZZING=ON -DCMAKE_CXX_COMPILER="clang++-${CLANG_VERSION}" -DCMAKE_C_COMPILER="clang-${CLANG_VERSION}" -DCMAKE_PREFIX_PATH="${BOOST_INSTALL_PREFIX}" -GNinja
 
     - name: Build Fuzzers
-      run: cmake --build build_fuzz
+      run: cmake --build build_fuzz -j"$(nproc)"
 
     - name: Smoke Test Fuzzers
       run: |
