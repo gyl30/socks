@@ -58,6 +58,9 @@ jobs:
   tiered-regression:
     name: Tiered Regression (${{ matrix.tier }})
     runs-on: ubuntu-22.04
+    env:
+      CC: gcc-13
+      CXX: g++-13
     strategy:
       fail-fast: false
       matrix:
@@ -73,6 +76,30 @@ jobs:
         set -euo pipefail
         sudo apt-get update
         sudo apt-get install -y cmake ninja-build libssl-dev ripgrep wget
+
+    - name: Install GCC/G++ 13
+      run: |
+        set -euo pipefail
+        if ! apt-cache show gcc-13 >/dev/null 2>&1; then
+          sudo apt-get install -y software-properties-common
+          sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
+          sudo apt-get update
+        fi
+        sudo apt-get install -y gcc-13 g++-13
+
+    - name: Verify GCC/G++ Version >= 13
+      run: |
+        set -euo pipefail
+        gcc_major="$("${CC}" -dumpfullversion | cut -d. -f1)"
+        gxx_major="$("${CXX}" -dumpfullversion | cut -d. -f1)"
+        if [ "${gcc_major}" -lt 13 ] || [ "${gxx_major}" -lt 13 ]; then
+          echo "gcc or g++ version is below 13"
+          "${CC}" --version
+          "${CXX}" --version
+          exit 1
+        fi
+        "${CC}" --version
+        "${CXX}" --version
 
     - name: Cache Boost 1.89
       id: cache-boost
@@ -207,6 +234,8 @@ jobs:
 
     env:
       CI_ARTIFACT_DIR: ci_artifacts
+      CC: gcc-13
+      CXX: g++-13
 
     steps:
     - uses: actions/checkout@v4
@@ -218,6 +247,30 @@ jobs:
         set -euo pipefail
         sudo apt-get update
         sudo apt-get install -y cmake ninja-build libssl-dev python3 valgrind openssl wget
+
+    - name: Install GCC/G++ 13
+      run: |
+        set -euo pipefail
+        if ! apt-cache show gcc-13 >/dev/null 2>&1; then
+          sudo apt-get install -y software-properties-common
+          sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
+          sudo apt-get update
+        fi
+        sudo apt-get install -y gcc-13 g++-13
+
+    - name: Verify GCC/G++ Version >= 13
+      run: |
+        set -euo pipefail
+        gcc_major="$("${CC}" -dumpfullversion | cut -d. -f1)"
+        gxx_major="$("${CXX}" -dumpfullversion | cut -d. -f1)"
+        if [ "${gcc_major}" -lt 13 ] || [ "${gxx_major}" -lt 13 ]; then
+          echo "gcc or g++ version is below 13"
+          "${CC}" --version
+          "${CXX}" --version
+          exit 1
+        fi
+        "${CC}" --version
+        "${CXX}" --version
 
     - name: Cache Boost 1.89
       id: cache-boost
@@ -280,6 +333,8 @@ jobs:
 
     env:
       CI_ARTIFACT_DIR: ci_artifacts
+      CC: gcc-13
+      CXX: g++-13
 
     steps:
     - uses: actions/checkout@v4
@@ -291,6 +346,30 @@ jobs:
         set -euo pipefail
         sudo apt-get update
         sudo apt-get install -y cmake ninja-build libssl-dev python3 python3-pip gcovr ripgrep wget
+
+    - name: Install GCC/G++ 13
+      run: |
+        set -euo pipefail
+        if ! apt-cache show gcc-13 >/dev/null 2>&1; then
+          sudo apt-get install -y software-properties-common
+          sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
+          sudo apt-get update
+        fi
+        sudo apt-get install -y gcc-13 g++-13
+
+    - name: Verify GCC/G++ Version >= 13
+      run: |
+        set -euo pipefail
+        gcc_major="$("${CC}" -dumpfullversion | cut -d. -f1)"
+        gxx_major="$("${CXX}" -dumpfullversion | cut -d. -f1)"
+        if [ "${gcc_major}" -lt 13 ] || [ "${gxx_major}" -lt 13 ]; then
+          echo "gcc or g++ version is below 13"
+          "${CC}" --version
+          "${CXX}" --version
+          exit 1
+        fi
+        "${CC}" --version
+        "${CXX}" --version
 
     - name: Cache Boost 1.89
       id: cache-boost
