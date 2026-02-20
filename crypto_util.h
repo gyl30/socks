@@ -36,7 +36,8 @@ class crypto_util
 
     [[nodiscard]] static bool generate_x25519_keypair(std::uint8_t out_public[32], std::uint8_t out_private[32]);
 
-    [[nodiscard]] static std::expected<std::vector<std::uint8_t>, boost::system::error_code> extract_public_key(const std::vector<std::uint8_t>& private_key);
+    [[nodiscard]] static std::expected<std::vector<std::uint8_t>, boost::system::error_code> extract_public_key(
+        const std::vector<std::uint8_t>& private_key);
 
     [[nodiscard]] static std::expected<std::vector<std::uint8_t>, boost::system::error_code> extract_ed25519_public_key(
         const std::vector<std::uint8_t>& private_key);
@@ -44,11 +45,14 @@ class crypto_util
     [[nodiscard]] static std::expected<std::vector<std::uint8_t>, boost::system::error_code> x25519_derive(
         const std::vector<std::uint8_t>& private_key, const std::vector<std::uint8_t>& peer_public_key);
 
-    [[nodiscard]] static std::expected<std::vector<std::uint8_t>, boost::system::error_code> hkdf_extract(
-        const std::vector<std::uint8_t>& salt, const std::vector<std::uint8_t>& ikm, const EVP_MD* md);
+    [[nodiscard]] static std::expected<std::vector<std::uint8_t>, boost::system::error_code> hkdf_extract(const std::vector<std::uint8_t>& salt,
+                                                                                                          const std::vector<std::uint8_t>& ikm,
+                                                                                                          const EVP_MD* md);
 
-    [[nodiscard]] static std::expected<std::vector<std::uint8_t>, boost::system::error_code> hkdf_expand(
-        const std::vector<std::uint8_t>& prk, const std::vector<std::uint8_t>& info, std::size_t len, const EVP_MD* md);
+    [[nodiscard]] static std::expected<std::vector<std::uint8_t>, boost::system::error_code> hkdf_expand(const std::vector<std::uint8_t>& prk,
+                                                                                                         const std::vector<std::uint8_t>& info,
+                                                                                                         std::size_t len,
+                                                                                                         const EVP_MD* md);
 
     [[nodiscard]] static std::expected<std::vector<std::uint8_t>, boost::system::error_code> hkdf_expand_label(
         const std::vector<std::uint8_t>& secret,
@@ -58,40 +62,39 @@ class crypto_util
         const EVP_MD* md);
 
     [[nodiscard]] static std::expected<std::size_t, boost::system::error_code> aead_decrypt(const cipher_context& ctx,
-                                                                                              const EVP_CIPHER* cipher,
-                                                                                              const std::vector<std::uint8_t>& key,
-                                                                                              std::span<const std::uint8_t> nonce,
-                                                                                              std::span<const std::uint8_t> ciphertext,
-                                                                                              std::span<const std::uint8_t> aad,
-                                                                                              std::span<std::uint8_t> output_buffer);
+                                                                                            const EVP_CIPHER* cipher,
+                                                                                            const std::vector<std::uint8_t>& key,
+                                                                                            std::span<const std::uint8_t> nonce,
+                                                                                            std::span<const std::uint8_t> ciphertext,
+                                                                                            std::span<const std::uint8_t> aad,
+                                                                                            std::span<std::uint8_t> output_buffer);
 
-    [[nodiscard]] static std::expected<std::vector<std::uint8_t>, boost::system::error_code> aead_decrypt(
-        const EVP_CIPHER* cipher,
-        const std::vector<std::uint8_t>& key,
-        const std::vector<std::uint8_t>& nonce,
-        const std::vector<std::uint8_t>& ciphertext,
-        const std::vector<std::uint8_t>& aad);
+    [[nodiscard]] static std::expected<std::vector<std::uint8_t>, boost::system::error_code> aead_decrypt(const EVP_CIPHER* cipher,
+                                                                                                          const std::vector<std::uint8_t>& key,
+                                                                                                          const std::vector<std::uint8_t>& nonce,
+                                                                                                          const std::vector<std::uint8_t>& ciphertext,
+                                                                                                          const std::vector<std::uint8_t>& aad);
 
     [[nodiscard]] static std::expected<void, boost::system::error_code> aead_encrypt_append(const cipher_context& ctx,
-                                                                                              const EVP_CIPHER* cipher,
-                                                                                              const std::vector<std::uint8_t>& key,
-                                                                                              const std::vector<std::uint8_t>& nonce,
-                                                                                              const std::vector<std::uint8_t>& plaintext,
-                                                                                              std::span<const std::uint8_t> aad,
-                                                                                              std::vector<std::uint8_t>& output_buffer);
+                                                                                            const EVP_CIPHER* cipher,
+                                                                                            const std::vector<std::uint8_t>& key,
+                                                                                            const std::vector<std::uint8_t>& nonce,
+                                                                                            const std::vector<std::uint8_t>& plaintext,
+                                                                                            std::span<const std::uint8_t> aad,
+                                                                                            std::vector<std::uint8_t>& output_buffer);
 
-    [[nodiscard]] static std::expected<std::vector<std::uint8_t>, boost::system::error_code> aead_encrypt(
-        const EVP_CIPHER* cipher,
-        const std::vector<std::uint8_t>& key,
-        const std::vector<std::uint8_t>& nonce,
-        const std::vector<std::uint8_t>& plaintext,
-        const std::vector<std::uint8_t>& aad);
+    [[nodiscard]] static std::expected<std::vector<std::uint8_t>, boost::system::error_code> aead_encrypt(const EVP_CIPHER* cipher,
+                                                                                                          const std::vector<std::uint8_t>& key,
+                                                                                                          const std::vector<std::uint8_t>& nonce,
+                                                                                                          const std::vector<std::uint8_t>& plaintext,
+                                                                                                          const std::vector<std::uint8_t>& aad);
 
     [[nodiscard]] static std::expected<openssl_ptrs::evp_pkey_ptr, boost::system::error_code> extract_pubkey_from_cert(
         const std::vector<std::uint8_t>& cert_der);
 
-    [[nodiscard]] static std::expected<void, boost::system::error_code> verify_tls13_signature(
-        EVP_PKEY* pub_key, const std::vector<std::uint8_t>& transcript_hash, const std::vector<std::uint8_t>& signature);
+    [[nodiscard]] static std::expected<void, boost::system::error_code> verify_tls13_signature(EVP_PKEY* pub_key,
+                                                                                               const std::vector<std::uint8_t>& transcript_hash,
+                                                                                               const std::vector<std::uint8_t>& signature);
 };
 
 }    // namespace reality

@@ -43,7 +43,6 @@ std::string fixed_hex_16(std::uint64_t value)
 
 }    // namespace
 
-
 std::string generate_trace_id()
 {
     static thread_local std::mt19937_64 gen(std::random_device{}());

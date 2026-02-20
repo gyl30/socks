@@ -126,10 +126,7 @@ bool prepare_local_listener(boost::asio::ip::tcp::acceptor& acceptor, const std:
     return false;
 }
 
-void log_accept_error(const boost::system::error_code& ec)
-{
-    LOG_ERROR("local accept failed {}", ec.message());
-}
+void log_accept_error(const boost::system::error_code& ec) { LOG_ERROR("local accept failed {}", ec.message()); }
 
 boost::asio::awaitable<void> wait_retry_delay(boost::asio::io_context& io_context)
 {
@@ -146,8 +143,8 @@ enum class local_accept_status : std::uint8_t
 };
 
 boost::asio::awaitable<local_accept_status> accept_local_socket(boost::asio::ip::tcp::acceptor& acceptor,
-                                                         boost::asio::ip::tcp::socket& socket,
-                                                         boost::asio::io_context& io_context)
+                                                                boost::asio::ip::tcp::socket& socket,
+                                                                boost::asio::io_context& io_context)
 {
     const auto [accept_ec] = co_await acceptor.async_accept(socket, boost::asio::as_tuple(boost::asio::use_awaitable));
     if (!accept_ec)
@@ -198,8 +195,7 @@ void append_session(std::shared_ptr<session_list_t>& sessions, const std::shared
             }
         }
         updated->push_back(session);
-        if (std::atomic_compare_exchange_weak_explicit(
-                &sessions, &current, updated, std::memory_order_acq_rel, std::memory_order_acquire))
+        if (std::atomic_compare_exchange_weak_explicit(&sessions, &current, updated, std::memory_order_acq_rel, std::memory_order_acquire))
         {
             return;
         }
@@ -212,8 +208,7 @@ std::shared_ptr<session_list_t> detach_sessions(std::shared_ptr<session_list_t>&
     for (;;)
     {
         auto current = snapshot_sessions(sessions);
-        if (std::atomic_compare_exchange_weak_explicit(
-                &sessions, &current, empty, std::memory_order_acq_rel, std::memory_order_acquire))
+        if (std::atomic_compare_exchange_weak_explicit(&sessions, &current, empty, std::memory_order_acq_rel, std::memory_order_acquire))
         {
             return current;
         }
@@ -221,8 +216,8 @@ std::shared_ptr<session_list_t> detach_sessions(std::shared_ptr<session_list_t>&
 }
 
 boost::asio::awaitable<std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>>> wait_for_tunnel_ready(boost::asio::io_context& io_context,
-                                                                                                std::shared_ptr<client_tunnel_pool> pool,
-                                                                                                const std::atomic<bool>& stop)
+                                                                                                             std::shared_ptr<client_tunnel_pool> pool,
+                                                                                                             const std::atomic<bool>& stop)
 {
     if (pool == nullptr)
     {
@@ -263,14 +258,14 @@ void log_tunnel_selection(const std::uint32_t sid, const std::shared_ptr<mux_tun
 }
 
 boost::asio::awaitable<bool> start_local_session(boost::asio::ip::tcp::socket socket,
-                                          boost::asio::io_context& io_context,
-                                          const std::shared_ptr<client_tunnel_pool>& tunnel_pool,
-                                          const std::shared_ptr<router>& router,
-                                          std::shared_ptr<session_list_t>& sessions,
-                                          const config::socks_t& socks_config,
-                                          const config::timeout_t& timeout_config,
-                                          const config::queues_t& queue_config,
-                                          const std::atomic<bool>& stop)
+                                                 boost::asio::io_context& io_context,
+                                                 const std::shared_ptr<client_tunnel_pool>& tunnel_pool,
+                                                 const std::shared_ptr<router>& router,
+                                                 std::shared_ptr<session_list_t>& sessions,
+                                                 const config::socks_t& socks_config,
+                                                 const config::timeout_t& timeout_config,
+                                                 const config::queues_t& queue_config,
+                                                 const std::atomic<bool>& stop)
 {
     if (tunnel_pool == nullptr)
     {
@@ -317,14 +312,14 @@ boost::asio::awaitable<bool> start_local_session(boost::asio::ip::tcp::socket so
 }
 
 boost::asio::awaitable<bool> run_accept_iteration(boost::asio::ip::tcp::acceptor& acceptor,
-                                           boost::asio::io_context& io_context,
-                                           const std::shared_ptr<client_tunnel_pool>& tunnel_pool,
-                                           const std::shared_ptr<router>& router,
-                                           std::shared_ptr<session_list_t>& sessions,
-                                           const config::socks_t& socks_config,
-                                           const config::timeout_t& timeout_config,
-                                           const config::queues_t& queue_config,
-                                           const std::atomic<bool>& stop)
+                                                  boost::asio::io_context& io_context,
+                                                  const std::shared_ptr<client_tunnel_pool>& tunnel_pool,
+                                                  const std::shared_ptr<router>& router,
+                                                  std::shared_ptr<session_list_t>& sessions,
+                                                  const config::socks_t& socks_config,
+                                                  const config::timeout_t& timeout_config,
+                                                  const config::queues_t& queue_config,
+                                                  const std::atomic<bool>& stop)
 {
     boost::asio::ip::tcp::socket socket(io_context);
     const auto accept_status = co_await accept_local_socket(acceptor, socket, io_context);
@@ -471,10 +466,7 @@ void socks_client::start()
     boost::asio::co_spawn(io_context_, accept_local_loop_detached(shared_from_this()), boost::asio::detached);
 }
 
-boost::asio::awaitable<void> socks_client::accept_local_loop_detached(std::shared_ptr<socks_client> self)
-{
-    co_await self->accept_local_loop();
-}
+boost::asio::awaitable<void> socks_client::accept_local_loop_detached(std::shared_ptr<socks_client> self) { co_await self->accept_local_loop(); }
 
 void socks_client::stop()
 {
@@ -482,15 +474,14 @@ void socks_client::stop()
     stop_.store(true, std::memory_order_release);
     started_.store(false, std::memory_order_release);
 
-    detail::dispatch_cleanup_or_run_inline(
-        io_context_,
-        [weak_self = weak_from_this()]()
-        {
-            if (const auto self = weak_self.lock())
-            {
-                stop_local_resources(self->acceptor_, self->sessions_);
-            }
-        });
+    detail::dispatch_cleanup_or_run_inline(io_context_,
+                                           [weak_self = weak_from_this()]()
+                                           {
+                                               if (const auto self = weak_self.lock())
+                                               {
+                                                   stop_local_resources(self->acceptor_, self->sessions_);
+                                               }
+                                           });
 
     if (tunnel_pool_ != nullptr)
     {
@@ -545,7 +536,7 @@ boost::asio::awaitable<void> socks_client::accept_local_loop()
     while (!stop_.load(std::memory_order_acquire))
     {
         if (!(co_await run_accept_iteration(
-                  acceptor_, io_context_, tunnel_pool, router, sessions_, socks_config_, timeout_config_, queue_config_, stop_)))
+                acceptor_, io_context_, tunnel_pool, router, sessions_, socks_config_, timeout_config_, queue_config_, stop_)))
         {
             break;
         }
