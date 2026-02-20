@@ -808,6 +808,58 @@ void close_socket_quietly(const std::shared_ptr<boost::asio::ip::tcp::socket>& s
     }
 }
 
+[[nodiscard]] bool is_expected_fallback_read_stop_error(const boost::system::error_code& ec)
+{
+    return ec == boost::asio::error::eof || ec == boost::asio::error::operation_aborted || ec == boost::asio::error::bad_descriptor;
+}
+
+[[nodiscard]] bool is_expected_fallback_write_stop_error(const boost::system::error_code& ec)
+{
+    return ec == boost::asio::error::operation_aborted || ec == boost::asio::error::bad_descriptor || ec == boost::asio::error::not_connected;
+}
+
+[[nodiscard]] bool log_fallback_read_failure_if_needed(const timeout_io::timed_tcp_read_result& read_res, const connection_context& ctx)
+{
+    if (read_res.timed_out)
+    {
+        LOG_CTX_WARN(ctx, "{} proxy read timeout", log_event::kFallback);
+        return true;
+    }
+    if (!is_expected_fallback_read_stop_error(read_res.ec))
+    {
+        LOG_CTX_WARN(ctx, "{} proxy read failed {}", log_event::kFallback, read_res.ec.message());
+        return true;
+    }
+    return false;
+}
+
+[[nodiscard]] bool log_fallback_write_failure_if_needed(const timeout_io::timed_tcp_write_result& write_res, const connection_context& ctx)
+{
+    if (write_res.timed_out)
+    {
+        LOG_CTX_WARN(ctx, "{} proxy write timeout", log_event::kFallback);
+        return true;
+    }
+    if (!is_expected_fallback_write_stop_error(write_res.ec))
+    {
+        LOG_CTX_WARN(ctx, "{} proxy write failed {}", log_event::kFallback, write_res.ec.message());
+        return true;
+    }
+    return false;
+}
+
+[[nodiscard]] bool shutdown_fallback_send_socket(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket, const connection_context& ctx)
+{
+    boost::system::error_code ec;
+    ec = socket->shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
+    if (ec && ec != boost::asio::error::not_connected && ec != boost::asio::error::bad_descriptor)
+    {
+        LOG_CTX_WARN(ctx, "{} shutdown send failed {}", log_event::kFallback, ec.message());
+        return false;
+    }
+    return true;
+}
+
 boost::asio::awaitable<bool> proxy_half(const std::shared_ptr<boost::asio::ip::tcp::socket>& from,
                                         const std::shared_ptr<boost::asio::ip::tcp::socket>& to,
                                         const connection_context& ctx,
@@ -822,15 +874,8 @@ boost::asio::awaitable<bool> proxy_half(const std::shared_ptr<boost::asio::ip::t
             co_await timeout_io::async_read_with_timeout(from, boost::asio::buffer(data), read_timeout_sec, false, "fallback proxy");
         if (!read_res.ok)
         {
-            if (read_res.timed_out)
+            if (log_fallback_read_failure_if_needed(read_res, ctx))
             {
-                LOG_CTX_WARN(ctx, "{} proxy read timeout", log_event::kFallback);
-                success = false;
-            }
-            else if (read_res.ec != boost::asio::error::eof && read_res.ec != boost::asio::error::operation_aborted &&
-                     read_res.ec != boost::asio::error::bad_descriptor)
-            {
-                LOG_CTX_WARN(ctx, "{} proxy read failed {}", log_event::kFallback, read_res.ec.message());
                 success = false;
             }
             break;
@@ -843,25 +888,15 @@ boost::asio::awaitable<bool> proxy_half(const std::shared_ptr<boost::asio::ip::t
             co_await timeout_io::async_write_with_timeout(to, boost::asio::buffer(data, read_res.read_size), write_timeout_sec, "fallback proxy");
         if (!write_res.ok)
         {
-            if (write_res.timed_out)
+            if (log_fallback_write_failure_if_needed(write_res, ctx))
             {
-                LOG_CTX_WARN(ctx, "{} proxy write timeout", log_event::kFallback);
-                success = false;
-            }
-            else if (write_res.ec != boost::asio::error::operation_aborted && write_res.ec != boost::asio::error::bad_descriptor &&
-                     write_res.ec != boost::asio::error::not_connected)
-            {
-                LOG_CTX_WARN(ctx, "{} proxy write failed {}", log_event::kFallback, write_res.ec.message());
                 success = false;
             }
             break;
         }
     }
-    boost::system::error_code ec;
-    ec = to->shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
-    if (ec && ec != boost::asio::error::not_connected && ec != boost::asio::error::bad_descriptor)
+    if (!shutdown_fallback_send_socket(to, ctx))
     {
-        LOG_CTX_WARN(ctx, "{} shutdown send failed {}", log_event::kFallback, ec.message());
         success = false;
     }
     co_return success;
