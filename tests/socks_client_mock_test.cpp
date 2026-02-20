@@ -1,3 +1,5 @@
+// NOLINTBEGIN(readability-isolate-declaration)
+// NOLINTBEGIN(bugprone-unused-return-value, misc-include-cleaner)
 #include <chrono>
 #include <memory>
 #include <string>
@@ -38,13 +40,13 @@ TEST(LocalClientMockTest, HandshakeFailurePaths)
 
     auto run_mock_server_and_test = [&](std::vector<std::uint8_t> data_to_send)
     {
-        boost::system::error_code ec;
+        boost::system::error_code const ec;
         mux::io_context_pool pool(1);
         ASSERT_FALSE(ec);
 
         boost::asio::io_context server_ctx;
         tcp::acceptor acceptor(server_ctx, tcp::endpoint(tcp::v4(), 0));
-        std::uint16_t port = acceptor.local_endpoint().port();
+        std::uint16_t const port = acceptor.local_endpoint().port();
 
         std::thread server_thread(
             [&]()
@@ -90,13 +92,15 @@ TEST(LocalClientMockTest, HandshakeFailurePaths)
     };
 
     {
-        std::vector<std::uint8_t> short_sh = {0x16, 0x03, 0x03, 0x00, 0x01};
+        std::vector<std::uint8_t> const short_sh = {0x16, 0x03, 0x03, 0x00, 0x01};
         run_mock_server_and_test(short_sh);
     }
 
     {
-        std::vector<uint8_t> short_sid_sh = {0x16, 0x03, 0x03, 0x00, 0x26, 0x02, 0x00, 0x00, 0x22, 0x03, 0x03, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                                             0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+        std::vector<uint8_t> const short_sid_sh = {0x16, 0x03, 0x03, 0x00, 0x26, 0x02, 0x00, 0x00, 0x22, 0x03, 0x03, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                                                   0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
         run_mock_server_and_test(short_sid_sh);
     }
 }
+// NOLINTEND(bugprone-unused-return-value, misc-include-cleaner)
+// NOLINTEND(readability-isolate-declaration)
