@@ -35,9 +35,9 @@ class reality_engine
     reality_engine(reality_engine&&) = default;
     reality_engine& operator=(reality_engine&&) = delete;
 
-    [[nodiscard]] auto read_buffer(const std::size_t size_hint = 4096) { return rx_buf_->prepare(size_hint); }
+    [[nodiscard]] auto read_buffer(const std::size_t size_hint = 4096) const { return rx_buf_->prepare(size_hint); }
 
-    void commit_read(const std::size_t n) { rx_buf_->commit(n); }
+    void commit_read(const std::size_t n) const { rx_buf_->commit(n); }
 
     [[nodiscard]] std::expected<void, boost::system::error_code> process_available_records(const record_callback& callback);
 
