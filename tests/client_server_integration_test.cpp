@@ -9,19 +9,19 @@
 #include <functional>
 #include <system_error>
 
-#include <boost/asio/read.hpp>
 #include <gtest/gtest.h>
+#include <boost/asio/read.hpp>
 #include <boost/asio/write.hpp>
 #include <boost/asio/buffer.hpp>
 #include <boost/asio/ip/tcp.hpp>
 
 #include "config.h"
 #include "protocol.h"
+#include "test_util.h"
 #include "crypto_util.h"
 #include "context_pool.h"
 #include "socks_client.h"
 #include "remote_server.h"
-#include "test_util.h"
 
 class scoped_pool
 {
@@ -41,7 +41,7 @@ class scoped_pool
     std::thread thread_;
 };
 
-class IntegrationTest : public ::testing::Test
+class integration_test_fixture : public ::testing::Test
 {
    protected:
     struct stack_handles
@@ -63,9 +63,7 @@ class IntegrationTest : public ::testing::Test
     [[nodiscard]] const std::string& server_priv_key() const { return server_priv_key_; }
     [[nodiscard]] const std::string& client_pub_key() const { return client_pub_key_; }
     [[nodiscard]] const std::string& short_id() const { return short_id_; }
-    [[nodiscard]] stack_handles make_stack(mux::io_context_pool& pool,
-                                           const std::uint16_t local_socks_port,
-                                           const std::uint16_t timeout_s = 10) const
+    [[nodiscard]] stack_handles make_stack(mux::io_context_pool& pool, const std::uint16_t local_socks_port, const std::uint16_t timeout_s = 10) const
     {
         const std::string sni = "www.google.com";
         mux::config::timeout_t timeouts;
@@ -110,10 +108,9 @@ class IntegrationTest : public ::testing::Test
 namespace
 {
 
-std::shared_ptr<boost::asio::ip::tcp::acceptor> create_ephemeral_acceptor(
-    boost::asio::io_context& io_context,
-    const std::uint32_t max_attempts = 120,
-    const std::chrono::milliseconds backoff = std::chrono::milliseconds(25))
+std::shared_ptr<boost::asio::ip::tcp::acceptor> create_ephemeral_acceptor(boost::asio::io_context& io_context,
+                                                                          const std::uint32_t max_attempts = 120,
+                                                                          const std::chrono::milliseconds backoff = std::chrono::milliseconds(25))
 {
     auto acceptor = std::make_shared<boost::asio::ip::tcp::acceptor>(io_context);
     for (std::uint32_t attempt = 0; attempt < max_attempts; ++attempt)
@@ -164,9 +161,7 @@ bool wait_for_socks_listen(const std::uint16_t socks_port, const int attempts = 
     return false;
 }
 
-bool wait_for_socks_listen(const std::shared_ptr<mux::socks_client>& client,
-                           std::uint16_t& socks_port,
-                           const int attempts = 60)
+bool wait_for_socks_listen(const std::shared_ptr<mux::socks_client>& client, std::uint16_t& socks_port, const int attempts = 60)
 {
     for (int i = 0; i < attempts; ++i)
     {
@@ -183,7 +178,7 @@ bool wait_for_socks_listen(const std::shared_ptr<mux::socks_client>& client,
 
 }    // namespace
 
-TEST_F(IntegrationTest, FullHandshakeAndMux)
+TEST_F(integration_test_fixture, FullHandshakeAndMux)
 {
     boost::system::error_code ec;
     mux::io_context_pool pool(2);
@@ -249,7 +244,7 @@ TEST_F(IntegrationTest, FullHandshakeAndMux)
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
 }
 
-TEST_F(IntegrationTest, FullDataTransfer)
+TEST_F(integration_test_fixture, FullDataTransfer)
 {
     boost::system::error_code ec;
     mux::io_context_pool pool(2);
@@ -258,31 +253,35 @@ TEST_F(IntegrationTest, FullDataTransfer)
     ASSERT_NE(echo_acceptor, nullptr);
     const std::uint16_t echo_port = echo_acceptor->local_endpoint().port();
 
-    struct echo_session : std::enable_shared_from_this<echo_session>
+    class echo_session : public std::enable_shared_from_this<echo_session>
     {
-        boost::asio::ip::tcp::socket socket;
-        std::vector<uint8_t> data;
-        echo_session(boost::asio::ip::tcp::socket s) : socket(std::move(s)), data(1024) {}
+       public:
+        explicit echo_session(boost::asio::ip::tcp::socket s) : socket_(std::move(s)), data_(1024) {}
+
         void start()
         {
             auto self = shared_from_this();
-            socket.async_read_some(boost::asio::buffer(data),
-                                   [self](boost::system::error_code ec, std::size_t n)
-                                   {
-                                       if (!ec)
-                                       {
-                                           boost::asio::async_write(self->socket,
-                                                             boost::asio::buffer(self->data, n),
-                                                             [self](boost::system::error_code ec, std::size_t)
-                                                             {
-                                                                 if (!ec)
-                                                                 {
-                                                                     self->start();
-                                                                 }
-                                                             });
-                                       }
-                                   });
+            socket_.async_read_some(boost::asio::buffer(data_),
+                                    [self](boost::system::error_code ec, std::size_t n)
+                                    {
+                                        if (!ec)
+                                        {
+                                            boost::asio::async_write(self->socket_,
+                                                                     boost::asio::buffer(self->data_, n),
+                                                                     [self](boost::system::error_code ec, std::size_t)
+                                                                     {
+                                                                         if (!ec)
+                                                                         {
+                                                                             self->start();
+                                                                         }
+                                                                     });
+                                        }
+                                    });
         }
+
+       private:
+        boost::asio::ip::tcp::socket socket_;
+        std::vector<uint8_t> data_;
     };
 
     auto acceptor_handler = std::make_shared<std::function<void()>>();
@@ -382,7 +381,7 @@ TEST_F(IntegrationTest, FullDataTransfer)
     std::this_thread::sleep_for(std::chrono::milliseconds(2000));
 }
 
-TEST_F(IntegrationTest, SocksRejectsUnsupportedMethod)
+TEST_F(integration_test_fixture, SocksRejectsUnsupportedMethod)
 {
     boost::system::error_code ec;
     mux::io_context_pool pool(2);
@@ -417,7 +416,7 @@ TEST_F(IntegrationTest, SocksRejectsUnsupportedMethod)
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
 }
 
-TEST_F(IntegrationTest, SocksUnsupportedCommandReturnsCmdNotSupported)
+TEST_F(integration_test_fixture, SocksUnsupportedCommandReturnsCmdNotSupported)
 {
     boost::system::error_code ec;
     mux::io_context_pool pool(2);
@@ -462,7 +461,7 @@ TEST_F(IntegrationTest, SocksUnsupportedCommandReturnsCmdNotSupported)
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
 }
 
-TEST_F(IntegrationTest, SocksConnectClosedPortReturnsFailure)
+TEST_F(integration_test_fixture, SocksConnectClosedPortReturnsFailure)
 {
     boost::system::error_code ec;
     mux::io_context_pool pool(2);

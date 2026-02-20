@@ -9,8 +9,8 @@
 #include <functional>
 #include <system_error>
 
-#include <boost/asio/read.hpp>
 #include <gtest/gtest.h>
+#include <boost/asio/read.hpp>
 #include <boost/asio/write.hpp>
 #include <boost/asio/buffer.hpp>
 #include <boost/asio/ip/tcp.hpp>
@@ -23,7 +23,7 @@
 #include "remote_server.h"
 #include "reality_messages.h"
 
-class LimitsTest : public ::testing::Test
+class limits_test_fixture : public ::testing::Test
 {
    protected:
     void SetUp() override
@@ -46,13 +46,13 @@ class LimitsTest : public ::testing::Test
     std::string short_id_;
 };
 
-TEST_F(LimitsTest, ContextPoolInvalidSize)
+TEST_F(limits_test_fixture, ContextPoolInvalidSize)
 {
     const mux::io_context_pool pool(0);
     // Should remain usable with fallback worker count
 }
 
-TEST_F(LimitsTest, ConnectionPoolCapacity)
+TEST_F(limits_test_fixture, ConnectionPoolCapacity)
 {
     boost::system::error_code const ec;
 
