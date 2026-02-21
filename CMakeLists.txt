@@ -172,9 +172,9 @@ endif()
 add_library(core STATIC ${SOCKS_SOURCES})
 
 if(SOCKS_HAS_TPROXY)
-  target_compile_definitions(core PUBLIC SOCKS_HAS_TPROXY=1 FMT_HEADER_ONLY=1)
+  target_compile_definitions(core PUBLIC SOCKS_HAS_TPROXY=1)
 else()
-  target_compile_definitions(core PUBLIC SOCKS_HAS_TPROXY=0 FMT_HEADER_ONLY=1)
+  target_compile_definitions(core PUBLIC SOCKS_HAS_TPROXY=0)
 endif()
 
 target_include_directories(core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
