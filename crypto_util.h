@@ -1,15 +1,16 @@
 #ifndef CRYPTO_UTIL_H
 #define CRYPTO_UTIL_H
 
-#include <boost/system/error_code.hpp>
-#include <openssl/types.h>
 #include <span>
 #include <string>
 #include <vector>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+
 #include <expected>
+#include <openssl/types.h>
+#include <boost/system/error_code.hpp>
 
 extern "C"
 {

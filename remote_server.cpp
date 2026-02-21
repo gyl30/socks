@@ -1,23 +1,9 @@
-// NOLINTBEGIN(misc-include-cleaner)
-#include <boost/asio/co_spawn.hpp>    // NOLINT(misc-include-cleaner): required for co_spawn declarations.
-#include <boost/system/error_code.hpp>
-#include <boost/asio/ip/tcp.hpp>
-#include <boost/asio/awaitable.hpp>
-#include <boost/asio/io_context.hpp>
-#include <boost/asio/ip/address.hpp>
-#include <boost/asio/ip/address_v6.hpp>
-#include <boost/asio/socket_base.hpp>
-#include <openssl/types.h>
-#include <boost/asio/ip/address_v4.hpp>
-#include <boost/system/detail/errc.hpp>
-#include <ctime>
 #include <array>
+#include <ctime>
+#include <mutex>
 #include <atomic>
 #include <chrono>
-#include <expected>
 #include <memory>
-#include <optional>
-#include <mutex>
 #include <random>
 #include <string>
 #include <thread>
@@ -26,26 +12,31 @@
 #include <cstring>
 #include <utility>
 #include <charconv>
-#include <system_error>
+#include <optional>
 #include <algorithm>
+#include <system_error>
 
-#include <boost/asio/as_tuple.hpp>
-#include <boost/asio/buffer.hpp>
-#include <boost/asio/detached.hpp>
+#include <expected>
+#include <openssl/types.h>
 #include <boost/asio/error.hpp>
-#include <boost/asio/steady_timer.hpp>
-#include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/write.hpp>
-#include <boost/asio/experimental/awaitable_operators.hpp>
+#include <boost/asio/buffer.hpp>
+#include <boost/asio/ip/tcp.hpp>
 #include <boost/system/errc.hpp>
-#include "reality_core.h"
-#include "transcript.h"
-#include "reality_messages.h"
-#include "tls_key_schedule.h"
-#include "tls_record_layer.h"
-#include "replay_cache.h"
-#include "context_pool.h"
-#include "cert_fetcher.h"
+#include <boost/asio/as_tuple.hpp>
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/detached.hpp>
+#include <boost/asio/awaitable.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/ip/address.hpp>
+#include <boost/asio/socket_base.hpp>
+#include <boost/asio/steady_timer.hpp>
+#include <boost/system/error_code.hpp>
+#include <boost/asio/ip/address_v4.hpp>
+#include <boost/asio/ip/address_v6.hpp>
+#include <boost/asio/use_awaitable.hpp>
+#include <boost/system/detail/errc.hpp>
+#include <boost/asio/experimental/awaitable_operators.hpp>
 
 extern "C"
 {
@@ -59,16 +50,24 @@ extern "C"
 #include "protocol.h"
 #include "ch_parser.h"
 #include "constants.h"
-#include "statistics.h"
 #include "mux_tunnel.h"
+#include "statistics.h"
+#include "timeout_io.h"
+#include "transcript.h"
 #include "crypto_util.h"
 #include "log_context.h"
+#include "cert_fetcher.h"
+#include "context_pool.h"
 #include "reality_auth.h"
-#include "stop_dispatch.h"
-#include "timeout_io.h"
-#include "tls_record_validation.h"
+#include "reality_core.h"
+#include "replay_cache.h"
 #include "remote_server.h"
+#include "stop_dispatch.h"
 #include "reality_engine.h"
+#include "reality_messages.h"
+#include "tls_key_schedule.h"
+#include "tls_record_layer.h"
+#include "tls_record_validation.h"
 
 namespace mux
 {
@@ -2291,4 +2290,3 @@ boost::asio::awaitable<void> remote_server::handle_fallback(const std::shared_pt
 }
 
 }    // namespace mux
-// NOLINTEND(misc-include-cleaner)

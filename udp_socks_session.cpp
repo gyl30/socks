@@ -1,32 +1,31 @@
-// NOLINTBEGIN(misc-include-cleaner)
-#include <boost/asio/co_spawn.hpp>    // NOLINT(misc-include-cleaner): required for co_spawn declarations.
-#include <chrono>
-#include <boost/system/error_code.hpp>
-#include <boost/asio/awaitable.hpp>
-#include <boost/asio/ip/tcp.hpp>
-#include <boost/asio/ip/udp.hpp>
-#include <boost/asio/ip/address.hpp>
-#include <boost/asio/ip/v6_only.hpp>
-#include <cstddef>
-#include <boost/asio/io_context.hpp>
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include <string>
 #include <vector>
+#include <cstddef>
 #include <cstdint>
 #include <utility>
 
 #include <boost/asio/error.hpp>
 #include <boost/asio/write.hpp>
 #include <boost/asio/buffer.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/ip/udp.hpp>
 #include <boost/asio/as_tuple.hpp>
+#include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
+#include <boost/asio/awaitable.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/ip/address.hpp>
+#include <boost/asio/ip/v6_only.hpp>
+#include <boost/system/error_code.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/experimental/channel_error.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
 
-#include "config.h"
 #include "log.h"
+#include "config.h"
 #include "protocol.h"
 #include "mux_codec.h"
 #include "mux_stream.h"
@@ -638,4 +637,3 @@ boost::asio::awaitable<void> udp_socks_session::idle_watchdog()
 }
 
 }    // namespace mux
-// NOLINTEND(misc-include-cleaner)

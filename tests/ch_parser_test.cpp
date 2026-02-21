@@ -7,6 +7,7 @@
 
 #define private public
 #include "ch_parser.h"
+
 #undef private
 #include "reality_core.h"
 

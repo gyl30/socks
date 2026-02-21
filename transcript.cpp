@@ -1,7 +1,8 @@
-#include <openssl/types.h>
 #include <memory>
 #include <vector>
 #include <cstdint>
+
+#include <openssl/types.h>
 
 extern "C"
 {

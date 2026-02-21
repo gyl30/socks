@@ -1,14 +1,14 @@
 #ifndef NET_UTILS_H
 #define NET_UTILS_H
 
-#include <boost/system/error_code.hpp>
 #include <cstddef>
 #include <cstdint>
-#include <expected>
 #include <optional>
 
+#include <expected>
 #include <boost/asio/ip/udp.hpp>
 #include <boost/asio/ip/address.hpp>
+#include <boost/system/error_code.hpp>
 
 struct msghdr;
 struct sockaddr_storage;

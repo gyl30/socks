@@ -1,5 +1,4 @@
-// NOLINTBEGIN(bugprone-narrowing-conversions)
-// NOLINTBEGIN(bugprone-unused-return-value, misc-include-cleaner)
+
 #include <atomic>
 #include <chrono>
 #include <memory>
@@ -610,5 +609,3 @@ TEST_F(udp_integration_test_fixture, UdpAssociateIgnoresFragmentedPacketAndKeeps
         pool_thread.join();
     }
 }
-// NOLINTEND(bugprone-unused-return-value, misc-include-cleaner)
-// NOLINTEND(bugprone-narrowing-conversions)

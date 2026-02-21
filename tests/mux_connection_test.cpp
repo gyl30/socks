@@ -1,5 +1,3 @@
-// NOLINTBEGIN(google-build-using-namespace, misc-unused-parameters, readability-container-contains, readability-function-cognitive-complexity,
-// readability-static-accessed-through-instance) NOLINTBEGIN(bugprone-unused-return-value, misc-include-cleaner)
 #include <array>
 #include <atomic>
 #include <future>
@@ -370,8 +368,6 @@ TEST_F(mux_connection_integration_test_fixture, HeartbeatRandFailureStopsConnect
     }
 }
 #endif
-
-
 
 TEST_F(mux_connection_integration_test_fixture, TryRegisterStreamRejectsDuplicateId)
 {
@@ -1343,6 +1339,5 @@ TEST_F(mux_connection_integration_test_fixture, CanAcceptStreamLocalAndPublicLim
 }
 
 }    // namespace
-// NOLINTEND(bugprone-unused-return-value, misc-include-cleaner)
-// NOLINTEND(google-build-using-namespace, misc-unused-parameters, readability-container-contains, readability-function-cognitive-complexity,
+
 // readability-static-accessed-through-instance)

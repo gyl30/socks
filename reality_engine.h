@@ -1,17 +1,17 @@
 #ifndef REALITY_ENGINE_H
 #define REALITY_ENGINE_H
 
-#include <openssl/types.h>
-#include <boost/system/error_code.hpp>
 #include <span>
 #include <memory>
 #include <vector>
 #include <cstddef>
 #include <cstdint>
-#include <expected>
 #include <functional>
 
+#include <expected>
+#include <openssl/types.h>
 #include <boost/asio/streambuf.hpp>
+#include <boost/system/error_code.hpp>
 
 #include "cipher_context.h"
 

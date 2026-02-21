@@ -1,50 +1,49 @@
-// NOLINTBEGIN(misc-include-cleaner)
 #include <array>
+#include <mutex>
 #include <atomic>
-#include <boost/asio/co_spawn.hpp>    // NOLINT(misc-include-cleaner): required for co_spawn declarations.
-#include <boost/asio/ip/tcp.hpp>
-#include <boost/system/error_code.hpp>
-#include <boost/asio/ip/udp.hpp>
-#include <boost/asio/ip/address.hpp>
-#include <boost/asio/socket_base.hpp>
-#include <boost/asio/awaitable.hpp>
-#include <boost/asio/io_context.hpp>
-#include <charconv>
 #include <cerrno>
 #include <chrono>
-#include <expected>
 #include <memory>
-#include <mutex>
 #include <string>
-#include <unordered_map>
-#include <utility>
 #include <vector>
 #include <cstdint>
 #include <cstring>
-#include <bits/types/struct_iovec.h>
+#include <utility>
+#include <charconv>
 #include <sys/socket.h>
 #include <system_error>
+#include <unordered_map>
 
+#include <expected>
 #include <boost/asio/error.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/ip/udp.hpp>
 #include <boost/asio/as_tuple.hpp>
+#include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
-#include <boost/asio/experimental/channel_error.hpp>
+#include <boost/asio/awaitable.hpp>
+#include <bits/types/struct_iovec.h>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/ip/address.hpp>
 #include <boost/asio/ip/v6_only.hpp>
+#include <boost/asio/socket_base.hpp>
 #include <boost/asio/steady_timer.hpp>
+#include <boost/system/error_code.hpp>
 #include <boost/asio/use_awaitable.hpp>
+#include <boost/asio/experimental/channel_error.hpp>
 
-#include "client_tunnel_pool.h"
-#include "config.h"
-#include "context_pool.h"
 #include "log.h"
-#include "net_utils.h"
+#include "config.h"
 #include "router.h"
+#include "net_utils.h"
 #include "statistics.h"
+#include "context_pool.h"
 #include "stop_dispatch.h"
+#include "tproxy_client.h"
+#include "tproxy_udp_sender.h"
+#include "client_tunnel_pool.h"
 #include "tproxy_tcp_session.h"
 #include "tproxy_udp_session.h"
-#include "tproxy_udp_sender.h"
-#include "tproxy_client.h"
 
 namespace mux
 {
@@ -1394,4 +1393,3 @@ boost::asio::awaitable<void> tproxy_client::udp_cleanup_loop()
 }
 
 }    // namespace mux
-// NOLINTEND(misc-include-cleaner)

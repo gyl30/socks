@@ -1,19 +1,19 @@
-// NOLINTBEGIN(misc-include-cleaner)
-#include <boost/asio/awaitable.hpp>
-#include <boost/system/error_code.hpp>
-#include <boost/asio/ip/address.hpp>
-#include <filesystem>
 #include <memory>
-#include <optional>
 #include <string>
 #include <vector>
 #include <cstdlib>
-#include "ip_matcher.h"
-#include "log.h"
-#include "domain_matcher.h"
-#include "log_context.h"
+#include <optional>
+#include <filesystem>
 
+#include <boost/asio/awaitable.hpp>
+#include <boost/asio/ip/address.hpp>
+#include <boost/system/error_code.hpp>
+
+#include "log.h"
 #include "router.h"
+#include "ip_matcher.h"
+#include "log_context.h"
+#include "domain_matcher.h"
 
 namespace mux
 {
@@ -158,4 +158,3 @@ boost::asio::awaitable<route_type> router::decide_domain(const connection_contex
 }
 
 }    // namespace mux
-// NOLINTEND(misc-include-cleaner)

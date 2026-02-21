@@ -1,17 +1,19 @@
-// NOLINTBEGIN(misc-include-cleaner)
 #include <array>
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
-#include <expected>
 #include <optional>
-#include <sys/socket.h>
 #include <netinet/in.h>
+#include <sys/socket.h>
+
+#include <expected>
 
 #ifdef __linux__
 #include <linux/in.h>
 #include <linux/in6.h>
+
 #include <asm-generic/socket.h>
+
 #endif
 
 #include <boost/asio/ip/udp.hpp>
@@ -22,7 +24,6 @@
 #include <boost/system/detail/system_category.hpp>
 
 #include "net_utils.h"
-
 
 namespace mux::net
 {
@@ -217,4 +218,3 @@ boost::asio::ip::udp::endpoint endpoint_from_sockaddr(const sockaddr_storage& ad
 }
 
 }    // namespace mux::net
-// NOLINTEND(misc-include-cleaner)
