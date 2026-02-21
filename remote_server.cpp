@@ -136,6 +136,23 @@ bool parse_plain_dest_target(const std::string& text, std::string& host, std::st
     return true;
 }
 
+bool valid_port_text(const std::string& text)
+{
+    if (text.empty())
+    {
+        return false;
+    }
+    std::uint32_t parsed_port = 0;
+    const char* const begin = text.data();
+    const char* const end = begin + text.size();
+    const auto [parse_end, parse_ec] = std::from_chars(begin, end, parsed_port);
+    if (parse_ec != std::errc() || parse_end != end)
+    {
+        return false;
+    }
+    return parsed_port > 0 && parsed_port <= 65535;
+}
+
 bool parse_dest_target(const std::string& input, std::string& host, std::string& port)
 {
     if (input.empty())
@@ -145,7 +162,7 @@ bool parse_dest_target(const std::string& input, std::string& host, std::string&
     host.clear();
     port.clear();
     const bool parsed = (input.front() == '[') ? parse_bracket_dest_target(input, host, port) : parse_plain_dest_target(input, host, port);
-    return parsed && !host.empty() && !port.empty();
+    return parsed && !host.empty() && valid_port_text(port);
 }
 
 bool should_stop_accept_loop_on_error(const boost::system::error_code& accept_ec,
@@ -914,6 +931,11 @@ bool validate_auth_inputs(const client_hello_info& info, const bool auth_config_
     if (!info.is_tls13 || info.session_id.size() != 32)
     {
         LOG_CTX_ERROR(ctx, "{} auth fail is tls13 {} sid len {}", log_event::kAuth, info.is_tls13, info.session_id.size());
+        return false;
+    }
+    if (info.random.size() != 32)
+    {
+        LOG_CTX_ERROR(ctx, "{} auth fail random len {}", log_event::kAuth, info.random.size());
         return false;
     }
     return true;
@@ -1886,7 +1908,7 @@ boost::asio::awaitable<remote_server::initial_read_res> remote_server::read_init
         co_return initial_read_res{false, false, boost::asio::error::operation_aborted};
     }
 
-    buf.resize(constants::net::kBufferSize);
+    buf.resize(1);
     const auto first_read = co_await timeout_io::async_read_with_timeout(s, boost::asio::buffer(buf), timeout_sec, false);
     if (!first_read.ok)
     {

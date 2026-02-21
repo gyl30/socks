@@ -1613,6 +1613,36 @@ TEST(TproxyUdpSessionTest, SendProxyWriteFailureClearsInstalledStream)
     EXPECT_TRUE(session->tunnel_.expired());
 }
 
+TEST(TproxyUdpSessionTest, SendProxyDropsMessageSizeWithoutClearingStream)
+{
+    boost::asio::io_context ctx;
+    auto router = std::make_shared<proxy_router>();
+    mux::config cfg;
+    cfg.tproxy.mark = 0;
+    const boost::asio::ip::udp::endpoint client_ep(boost::asio::ip::make_address("127.0.0.1"), 12410);
+    auto session = std::make_shared<mux::tproxy_udp_session>(ctx, nullptr, router, nullptr, 14, cfg, client_ep);
+
+    auto tunnel = std::make_shared<mux::mux_tunnel_impl<boost::asio::ip::tcp::socket>>(
+        boost::asio::ip::tcp::socket(ctx), ctx, mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 106);
+    auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx);
+    tunnel->connection_ = mock_conn;
+    auto stream = std::make_shared<mux::mux_stream>(18, 106, "trace", mock_conn, ctx);
+
+    session->stream_ = stream;
+    session->tunnel_ = tunnel;
+
+    EXPECT_CALL(*mock_conn, mock_send_async(18, mux::kCmdDat, testing::_)).WillOnce(testing::Return(boost::asio::error::message_size));
+    EXPECT_CALL(*mock_conn, mock_send_async(18, mux::kCmdFin, testing::_)).Times(0);
+    EXPECT_CALL(*mock_conn, remove_stream(18)).Times(0);
+
+    std::vector<std::uint8_t> payload(17000, 0xab);
+    const auto target_ep = boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("1.1.1.1"), 53);
+    mux::test::run_awaitable_void(ctx, session->send_proxy(target_ep, payload.data(), payload.size()));
+
+    EXPECT_EQ(session->stream_, stream);
+    EXPECT_EQ(session->tunnel_.lock(), tunnel);
+}
+
 TEST(TproxyUdpSessionTest, EnsureProxyStreamReturnsFalseWhenTunnelPoolMissing)
 {
     boost::asio::io_context ctx;

@@ -29,6 +29,7 @@
 #include "test_util.h"
 #include "mux_stream.h"
 #include "mux_protocol.h"
+#include "reality_core.h"
 
 #define private public
 #include "mux_tunnel.h"
@@ -438,6 +439,69 @@ TEST(UdpSocksSessionTest, UdpSockToStreamValidationBranches)
 
     EXPECT_TRUE(session->has_client_ep_);
     EXPECT_NE(session->client_ep_.port(), 0);
+}
+
+TEST(UdpSocksSessionTest, UdpSockToStreamDropsMessageSizeAndContinues)
+{
+    boost::asio::io_context ctx;
+    mux::config::timeout_t const timeout_cfg;
+    auto session = std::make_shared<mux::udp_socks_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, 40, timeout_cfg);
+
+    boost::system::error_code ec;
+    session->udp_socket_.open(boost::asio::ip::udp::v4(), ec);
+    ASSERT_FALSE(ec);
+    session->udp_socket_.bind({boost::asio::ip::make_address("127.0.0.1"), 0}, ec);
+    ASSERT_FALSE(ec);
+    const auto recv_ep = session->udp_socket_.local_endpoint(ec);
+    ASSERT_FALSE(ec);
+
+    auto conn = std::make_shared<mux::mock_mux_connection>(ctx);
+    EXPECT_CALL(*conn, mock_send_async(2, mux::kCmdDat, testing::_))
+        .Times(2)
+        .WillOnce(testing::Return(boost::asio::error::message_size))
+        .WillOnce(testing::Return(boost::system::error_code{}));
+
+    auto stream = std::make_shared<mux::mux_stream>(2, 2, "trace", conn, ctx);
+    boost::asio::co_spawn(
+        ctx,
+        [session, stream]() -> boost::asio::awaitable<void>
+        {
+            co_await session->udp_sock_to_stream(stream);
+            co_return;
+        },
+        boost::asio::detached);
+
+    std::thread runner([&ctx]() { ctx.run(); });
+
+    boost::asio::io_context send_ctx;
+    boost::asio::ip::udp::socket sender(send_ctx);
+    sender.open(boost::asio::ip::udp::v4(), ec);
+    ASSERT_FALSE(ec);
+    sender.bind({boost::asio::ip::make_address("127.0.0.1"), 0}, ec);
+    ASSERT_FALSE(ec);
+
+    socks_udp_header header;
+    header.frag = 0x00;
+    header.addr = "1.1.1.1";
+    header.port = 53;
+
+    auto too_large_packet = socks_codec::encode_udp_header(header);
+    too_large_packet.resize(reality::kMaxTlsPlaintextLen - mux::kHeaderSize + 1U, 0x6a);
+    sender.send_to(boost::asio::buffer(too_large_packet), recv_ep, 0, ec);
+    ASSERT_FALSE(ec);
+
+    auto valid_packet = socks_codec::encode_udp_header(header);
+    valid_packet.push_back(0x33);
+    sender.send_to(boost::asio::buffer(valid_packet), recv_ep, 0, ec);
+    ASSERT_FALSE(ec);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(80));
+    session->on_close();
+
+    if (runner.joinable())
+    {
+        runner.join();
+    }
 }
 
 TEST(UdpSocksSessionTest, KeepTcpAliveCoversExpectedErrorCodes)

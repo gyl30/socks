@@ -23,7 +23,9 @@
 #include <boost/asio/use_awaitable.hpp>
 
 #include "mux_codec.h"
+#include "test_util.h"
 #include "mux_protocol.h"
+#include "reality_core.h"
 
 #define private public
 #include "mux_connection.h"
@@ -303,6 +305,86 @@ TEST_F(mux_connection_integration_test_fixture, WriteTimeoutHandling)
     EXPECT_FALSE(conn_s->is_open());
 }
 
+TEST_F(mux_connection_integration_test_fixture, ZeroReadTimeoutDoesNotCloseConnection)
+{
+    boost::asio::ip::tcp::acceptor acceptor(io_ctx());
+    const auto setup_ec = setup_loopback_acceptor_with_retry(acceptor);
+    ASSERT_FALSE(setup_ec) << setup_ec.message();
+    auto socket_server = std::make_shared<boost::asio::ip::tcp::socket>(io_ctx());
+    auto socket_client = std::make_shared<boost::asio::ip::tcp::socket>(io_ctx());
+
+    socket_client->connect(acceptor.local_endpoint());
+    acceptor.accept(*socket_server);
+
+    config::timeout_t timeout_cfg;
+    timeout_cfg.read = 0;
+    timeout_cfg.write = 100;
+
+    auto conn_s = std::make_shared<mux_connection>(
+        std::move(*socket_server), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, false, 23, "zero_read_timeout", timeout_cfg);
+
+    boost::asio::co_spawn(io_ctx(), [conn_s]() -> boost::asio::awaitable<void> { co_await conn_s->start(); }, boost::asio::detached);
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(2500);
+    while (std::chrono::steady_clock::now() < deadline)
+    {
+        io_ctx().poll();
+        if (!conn_s->is_open())
+        {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    EXPECT_TRUE(conn_s->is_open());
+
+    conn_s->stop();
+    for (int i = 0; i < 20 && conn_s->is_open(); ++i)
+    {
+        io_ctx().poll();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+}
+
+TEST_F(mux_connection_integration_test_fixture, ZeroWriteTimeoutDoesNotCloseConnection)
+{
+    boost::asio::ip::tcp::acceptor acceptor(io_ctx());
+    const auto setup_ec = setup_loopback_acceptor_with_retry(acceptor);
+    ASSERT_FALSE(setup_ec) << setup_ec.message();
+    auto socket_server = std::make_shared<boost::asio::ip::tcp::socket>(io_ctx());
+    auto socket_client = std::make_shared<boost::asio::ip::tcp::socket>(io_ctx());
+
+    socket_client->connect(acceptor.local_endpoint());
+    acceptor.accept(*socket_server);
+
+    config::timeout_t timeout_cfg;
+    timeout_cfg.read = 100;
+    timeout_cfg.write = 0;
+
+    auto conn_s = std::make_shared<mux_connection>(
+        std::move(*socket_server), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, false, 24, "zero_write_timeout", timeout_cfg);
+
+    boost::asio::co_spawn(io_ctx(), [conn_s]() -> boost::asio::awaitable<void> { co_await conn_s->start(); }, boost::asio::detached);
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(2500);
+    while (std::chrono::steady_clock::now() < deadline)
+    {
+        io_ctx().poll();
+        if (!conn_s->is_open())
+        {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    EXPECT_TRUE(conn_s->is_open());
+
+    conn_s->stop();
+    for (int i = 0; i < 20 && conn_s->is_open(); ++i)
+    {
+        io_ctx().poll();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+}
+
 #ifdef __linux__
 TEST_F(mux_connection_integration_test_fixture, HeartbeatRandFailureStopsConnection)
 {
@@ -446,6 +528,40 @@ TEST_F(mux_connection_integration_test_fixture, SendAsyncAllowedWhenDraining)
 
     io_ctx().run();
     EXPECT_EQ(future.get(), boost::system::error_code{});
+}
+
+TEST_F(mux_connection_integration_test_fixture, SendAsyncRejectsUnknownCommand)
+{
+    auto conn = std::make_shared<mux_connection>(
+        boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 14);
+
+    conn->connection_state_.store(mux_connection_state::kConnected, std::memory_order_release);
+    auto future = boost::asio::co_spawn(
+        io_ctx(),
+        [conn]() -> boost::asio::awaitable<boost::system::error_code> { co_return co_await conn->send_async(1, 0xFE, {}); },
+        boost::asio::use_future);
+
+    io_ctx().run();
+    EXPECT_EQ(future.get(), boost::asio::error::invalid_argument);
+}
+
+TEST_F(mux_connection_integration_test_fixture, SendAsyncRejectsPayloadLargerThanSingleRecordLimit)
+{
+    auto conn = std::make_shared<mux_connection>(
+        boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 15);
+
+    conn->connection_state_.store(mux_connection_state::kConnected, std::memory_order_release);
+    std::vector<std::uint8_t> payload(reality::kMaxTlsPlaintextLen - mux::kHeaderSize + 1U, 0x7a);
+    auto future = boost::asio::co_spawn(
+        io_ctx(),
+        [conn, payload = std::move(payload)]() mutable -> boost::asio::awaitable<boost::system::error_code>
+        {
+            co_return co_await conn->send_async(1, kCmdDat, std::move(payload));
+        },
+        boost::asio::use_future);
+
+    io_ctx().run();
+    EXPECT_EQ(future.get(), boost::asio::error::message_size);
 }
 
 TEST_F(mux_connection_integration_test_fixture, OffThreadRegisterAndQueryPaths)
@@ -1207,6 +1323,15 @@ TEST_F(mux_connection_integration_test_fixture, HandleStreamAndUnknownStreamBran
     EXPECT_EQ(stream->received_data(), expected);
     EXPECT_EQ(stream->data_events(), 2U);
 
+    const frame_header unknown_header{
+        .stream_id = 100,
+        .length = 0,
+        .command = 0xFF,
+    };
+    conn->handle_stream_frame(unknown_header, {});
+    EXPECT_TRUE(stream->reset());
+    EXPECT_FALSE(has_stream_for_test(conn, 100));
+
     conn->handle_unknown_stream(1000, kCmdRst);
     conn->handle_unknown_stream(1001, kCmdDat);
     io_ctx().poll();
@@ -1224,6 +1349,12 @@ TEST_F(mux_connection_integration_test_fixture, SynCallbackAndReadGuardBranches)
     };
 
     conn->on_mux_frame(syn_header, {7});
+    const auto [no_cb_ec, no_cb_msg] =
+        mux::test::run_awaitable(io_ctx(), conn->write_channel_->async_receive(boost::asio::as_tuple(boost::asio::use_awaitable)));
+    EXPECT_FALSE(no_cb_ec);
+    EXPECT_EQ(no_cb_msg.stream_id, 88U);
+    EXPECT_EQ(no_cb_msg.command, kCmdRst);
+    EXPECT_TRUE(no_cb_msg.payload.empty());
 
     bool syn_called = false;
     std::uint32_t syn_stream_id = 0;

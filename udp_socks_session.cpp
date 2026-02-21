@@ -581,6 +581,11 @@ boost::asio::awaitable<void> udp_socks_session::udp_sock_to_stream(std::shared_p
         const auto write_ec = co_await stream->async_write_some(buf.data(), n);
         if (write_ec)
         {
+            if (write_ec == boost::asio::error::message_size)
+            {
+                LOG_CTX_WARN(ctx_, "{} drop oversized udp packet size {}", log_event::kSocks, n);
+                continue;
+            }
             LOG_CTX_ERROR(ctx_, "{} write to stream failed {}", log_event::kSocks, write_ec.message());
             break;
         }

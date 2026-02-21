@@ -79,6 +79,44 @@ TEST(MuxDispatcherTest, BufferOverflowSetsFlagAndDropsFrame)
     EXPECT_EQ(call_count, 0);
 }
 
+TEST(MuxDispatcherTest, LargeBufferedFrameAcrossChunksDoesNotOverflowInternalBuffer)
+{
+    mux::mux_dispatcher dispatcher;
+    dispatcher.set_max_buffer(2U * 1024U * 1024U);
+
+    int call_count = 0;
+    std::vector<mux::frame_header> headers;
+    dispatcher.set_callback(
+        [&](const mux::frame_header header, std::vector<std::uint8_t>)
+        {
+            call_count++;
+            headers.push_back(header);
+        });
+
+    std::vector<std::uint8_t> payload_first(mux::kMaxPayload, 0x31);
+    std::vector<std::uint8_t> payload_second(256, 0x32);
+    const auto packed_first = mux::mux_dispatcher::pack(0x88, mux::kCmdDat, payload_first);
+    const auto packed_second = mux::mux_dispatcher::pack(0x99, mux::kCmdDat, payload_second);
+    ASSERT_FALSE(packed_first.empty());
+    ASSERT_FALSE(packed_second.empty());
+    ASSERT_GT(packed_first.size(), 1U);
+
+    const std::size_t split_size = packed_first.size() - 1U;
+    std::vector<std::uint8_t> tail_chunk;
+    tail_chunk.reserve(1U + packed_second.size());
+    tail_chunk.push_back(packed_first.back());
+    tail_chunk.insert(tail_chunk.end(), packed_second.begin(), packed_second.end());
+
+    EXPECT_NO_THROW(dispatcher.on_plaintext_data(std::span<const std::uint8_t>(packed_first.data(), split_size)));
+    EXPECT_NO_THROW(dispatcher.on_plaintext_data(std::span<const std::uint8_t>(tail_chunk.data(), tail_chunk.size())));
+
+    EXPECT_FALSE(dispatcher.overflowed());
+    EXPECT_EQ(call_count, 2);
+    ASSERT_EQ(headers.size(), 2U);
+    EXPECT_EQ(headers[0].stream_id, 0x88U);
+    EXPECT_EQ(headers[1].stream_id, 0x99U);
+}
+
 TEST(MuxDispatcherTest, PartialPayloadWaitsForCompletion)
 {
     mux::mux_dispatcher dispatcher;
