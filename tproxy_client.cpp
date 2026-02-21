@@ -328,6 +328,11 @@ boost::asio::awaitable<void> wait_retry_delay(boost::asio::io_context& io_contex
     (void)co_await retry_timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
 }
 
+[[nodiscard]] bool is_socket_stop_error(const boost::system::error_code& ec)
+{
+    return ec == boost::asio::error::operation_aborted || ec == boost::asio::error::bad_descriptor || ec == boost::asio::error::not_socket;
+}
+
 enum class tcp_accept_status : std::uint8_t
 {
     kAccepted,
@@ -344,7 +349,7 @@ boost::asio::awaitable<tcp_accept_status> accept_tcp_connection(boost::asio::ip:
     {
         co_return tcp_accept_status::kAccepted;
     }
-    if (accept_ec == boost::asio::error::operation_aborted)
+    if (is_socket_stop_error(accept_ec))
     {
         co_return tcp_accept_status::kStop;
     }
@@ -602,7 +607,7 @@ boost::asio::awaitable<udp_wait_status> wait_udp_readable(boost::asio::ip::udp::
     {
         co_return udp_wait_status::kReady;
     }
-    if (wait_ec == boost::asio::error::operation_aborted)
+    if (is_socket_stop_error(wait_ec))
     {
         co_return udp_wait_status::kStop;
     }
@@ -1235,6 +1240,7 @@ boost::asio::awaitable<void> tproxy_client::accept_tcp_loop()
         {
             LOG_ERROR("tproxy tcp setup failed {}", res.error().message());
             stop_.store(true, std::memory_order_release);
+            started_.store(false, std::memory_order_release);
             co_return;
         }
         if (stop_.load(std::memory_order_acquire))
@@ -1270,6 +1276,7 @@ boost::asio::awaitable<void> tproxy_client::udp_loop()
         {
             LOG_ERROR("tproxy udp setup failed {}", res.error().message());
             stop_.store(true, std::memory_order_release);
+            started_.store(false, std::memory_order_release);
             co_return;
         }
         if (stop_.load(std::memory_order_acquire))
@@ -1287,6 +1294,7 @@ boost::asio::awaitable<void> tproxy_client::udp_loop()
     {
         LOG_ERROR("tproxy udp dispatch channel unavailable");
         stop_.store(true, std::memory_order_release);
+        started_.store(false, std::memory_order_release);
         co_return;
     }
     bool expected = false;
