@@ -45,6 +45,26 @@ namespace
 
 [[nodiscard]] const char* route_name(const route_type route) { return route == route_type::kDirect ? "direct" : "proxy"; }
 
+[[nodiscard]] bool is_expected_read_stop_error(const boost::system::error_code& ec)
+{
+    return ec == boost::asio::error::eof || ec == boost::asio::error::operation_aborted;
+}
+
+void log_read_stop(const connection_context& ctx, const char* source, const boost::system::error_code& ec)
+{
+    if (!ec)
+    {
+        LOG_CTX_DEBUG(ctx, "{} {} read stopped", log_event::kSocks, source);
+        return;
+    }
+    if (is_expected_read_stop_error(ec))
+    {
+        LOG_CTX_DEBUG(ctx, "{} {} read stopped {}", log_event::kSocks, source, ec.message());
+        return;
+    }
+    LOG_CTX_WARN(ctx, "{} failed to read from {} {}", log_event::kSocks, source, ec.message());
+}
+
 }    // namespace
 
 tcp_socks_session::tcp_socks_session(boost::asio::ip::tcp::socket socket,
@@ -206,7 +226,7 @@ boost::asio::awaitable<void> tcp_socks_session::client_to_upstream(std::shared_p
         const std::size_t n = co_await socket_.async_read_some(boost::asio::buffer(buf), boost::asio::redirect_error(boost::asio::use_awaitable, ec));
         if (ec || n == 0)
         {
-            LOG_CTX_WARN(ctx_, "{} failed to read from client {}", log_event::kSocks, ec.message());
+            log_read_stop(ctx_, "client", ec);
             break;
         }
 
@@ -242,7 +262,7 @@ boost::asio::awaitable<void> tcp_socks_session::upstream_to_client(std::shared_p
         const auto [ec, n] = co_await backend->read(buf);
         if (ec || n == 0)
         {
-            LOG_CTX_WARN(ctx_, "{} failed to read from backend {}", log_event::kSocks, ec.message());
+            log_read_stop(ctx_, "backend", ec);
             break;
         }
 
