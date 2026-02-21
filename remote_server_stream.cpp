@@ -55,6 +55,15 @@ connection_context remote_server::build_stream_context(const connection_context&
     return stream_ctx;
 }
 
+bool remote_server::invalid_syn_target(const syn_payload& syn)
+{
+    if (syn.addr.empty())
+    {
+        return true;
+    }
+    return syn.socks_cmd == socks::kCmdConnect && syn.port == 0;
+}
+
 boost::asio::awaitable<void> remote_server::send_stream_reset(const std::shared_ptr<mux_connection>& connection, const std::uint32_t stream_id)
 {
     (void)co_await connection->send_async(stream_id, kCmdRst, {});
@@ -73,6 +82,43 @@ boost::asio::awaitable<void> remote_server::reject_stream_for_limit(const std::s
     co_await send_stream_reset(connection, stream_id);
 }
 
+boost::asio::awaitable<bool> remote_server::handle_stream_register_failure(const std::shared_ptr<mux_connection>& connection,
+                                                                           const connection_context& ctx,
+                                                                           const std::uint32_t stream_id,
+                                                                           const stream_register_result register_result)
+{
+    if (register_result == stream_register_result::kSuccess)
+    {
+        co_return false;
+    }
+    if (register_result == stream_register_result::kLimitReached)
+    {
+        co_await reject_stream_for_limit(connection, ctx, stream_id);
+        co_return true;
+    }
+    if (register_result == stream_register_result::kIdConflict)
+    {
+        LOG_CTX_WARN(ctx, "{} stream id conflict {}", log_event::kMux, stream_id);
+        co_await send_stream_reset(connection, stream_id);
+        co_return true;
+    }
+    if (register_result == stream_register_result::kClosed)
+    {
+        LOG_CTX_WARN(ctx, "{} stream register failed closed {}", log_event::kMux, stream_id);
+        co_await send_stream_reset(connection, stream_id);
+        co_return true;
+    }
+    if (register_result == stream_register_result::kInvalidStream)
+    {
+        LOG_CTX_WARN(ctx, "{} stream register failed invalid stream {}", log_event::kMux, stream_id);
+        co_await send_stream_reset(connection, stream_id);
+        co_return true;
+    }
+    LOG_CTX_WARN(ctx, "{} stream register failed {}", log_event::kMux, stream_id);
+    co_await send_stream_reset(connection, stream_id);
+    co_return true;
+}
+
 boost::asio::awaitable<void> remote_server::handle_tcp_connect_stream(const std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>>& tunnel,
                                                                       const connection_context& stream_ctx,
                                                                       const std::uint32_t stream_id,
@@ -85,10 +131,9 @@ boost::asio::awaitable<void> remote_server::handle_tcp_connect_stream(const std:
     const auto connection = tunnel->connection();
     const auto sess = std::make_shared<remote_session>(connection, stream_id, io_context, stream_ctx);
     sess->set_manager(tunnel);
-    if (!tunnel->try_register_stream(stream_id, sess))
+    const auto register_result = connection->try_register_stream_with_reason(stream_id, sess);
+    if (co_await handle_stream_register_failure(connection, stream_ctx, stream_id, register_result))
     {
-        LOG_CTX_WARN(stream_ctx, "{} stream id conflict {}", log_event::kMux, stream_id);
-        co_await send_stream_reset(connection, stream_id);
         co_return;
     }
     co_await sess->start(syn);
@@ -104,10 +149,9 @@ boost::asio::awaitable<void> remote_server::handle_udp_associate_stream(const st
     const auto sess = std::make_shared<remote_udp_session>(
         connection, stream_id, io_context, stream_ctx, timeout_config_, queues_config_.udp_session_recv_channel_capacity);
     sess->set_manager(tunnel);
-    if (!tunnel->try_register_stream(stream_id, sess))
+    const auto register_result = connection->try_register_stream_with_reason(stream_id, sess);
+    if (co_await handle_stream_register_failure(connection, stream_ctx, stream_id, register_result))
     {
-        LOG_CTX_WARN(stream_ctx, "{} stream id conflict {}", log_event::kMux, stream_id);
-        co_await send_stream_reset(connection, stream_id);
         co_return;
     }
     co_await sess->start();
@@ -138,6 +182,12 @@ boost::asio::awaitable<void> remote_server::process_stream_request(std::shared_p
     if (!syn.trace_id.empty())
     {
         LOG_CTX_DEBUG(stream_ctx, "{} linked client trace id {}", log_event::kMux, syn.trace_id);
+    }
+    if (invalid_syn_target(syn))
+    {
+        LOG_CTX_WARN(stream_ctx, "{} stream {} invalid target {} {}", log_event::kMux, stream_id, syn.addr, syn.port);
+        co_await send_stream_reset(connection, stream_id);
+        co_return;
     }
 
     if (syn.socks_cmd == socks::kCmdConnect)

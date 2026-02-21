@@ -539,8 +539,14 @@ boost::asio::awaitable<void> tproxy_udp_session::send_proxy(const boost::asio::i
         co_return;
     }
 
-    if (const auto write_ec = co_await stream->async_write_some(std::move(pkt)))
+    const auto write_ec = co_await stream->async_write_some(std::move(pkt));
+    if (write_ec)
     {
+        if (write_ec == boost::asio::error::message_size)
+        {
+            LOG_CTX_WARN(ctx_, "{} udp drop oversized proxy packet size {}", log_event::kSocks, len);
+            co_return;
+        }
         co_await handle_proxy_write_failure(stream, write_ec);
     }
 }

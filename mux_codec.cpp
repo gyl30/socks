@@ -77,20 +77,20 @@ bool mux_codec::decode_syn(const std::uint8_t* data, const std::size_t len, syn_
     out.port = static_cast<std::uint16_t>((static_cast<std::uint16_t>(port_ptr[0]) << 8) | static_cast<std::uint16_t>(port_ptr[1]));
 
     std::size_t current_pos = 2 + addr_len + 2;
-    if (len > current_pos)
+    if (len == current_pos)
     {
-        const std::uint8_t trace_id_len = data[current_pos];
-        current_pos++;
-        if (len >= current_pos + trace_id_len)
-        {
-            out.trace_id = std::string(reinterpret_cast<const char*>(&data[current_pos]), trace_id_len);
-        }
-        else
-        {
-            LOG_WARN("syn payload length invalid for trace len {}", trace_id_len);
-            return false;
-        }
+        return true;
     }
+
+    const std::uint8_t trace_id_len = data[current_pos];
+    current_pos++;
+    const std::size_t expected_len = current_pos + trace_id_len;
+    if (len != expected_len)
+    {
+        LOG_WARN("syn payload length invalid expected {} got {}", expected_len, len);
+        return false;
+    }
+    out.trace_id = std::string(reinterpret_cast<const char*>(&data[current_pos]), trace_id_len);
     return true;
 }
 
@@ -115,9 +115,10 @@ bool mux_codec::decode_ack(const std::uint8_t* data, const std::size_t len, ack_
     }
     out.socks_rep = data[0];
     const std::uint8_t addr_len = data[1];
-    if (len < 2 + static_cast<std::size_t>(addr_len) + 2)
+    const std::size_t expected_len = 2 + static_cast<std::size_t>(addr_len) + 2;
+    if (len != expected_len)
     {
-        LOG_WARN("ack payload length invalid for addr len {}", addr_len);
+        LOG_WARN("ack payload length invalid expected {} got {}", expected_len, len);
         return false;
     }
     out.bnd_addr = std::string(reinterpret_cast<const char*>(&data[2]), addr_len);
