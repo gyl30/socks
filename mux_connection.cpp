@@ -64,6 +64,8 @@ struct timeout_snapshot
 {
     std::uint64_t read_elapsed_ms = 0;
     std::uint64_t write_elapsed_ms = 0;
+    bool read_timeout_enabled = false;
+    bool write_timeout_enabled = false;
     std::uint64_t read_timeout_ms = 0;
     std::uint64_t write_timeout_ms = 0;
 };
@@ -90,9 +92,13 @@ timeout_snapshot collect_timeout_snapshot(const std::atomic<std::uint64_t>& last
                                           const config::timeout_t& timeout_config)
 {
     const auto current_ms = now_ms();
+    const bool read_timeout_enabled = timeout_config.read != 0;
+    const bool write_timeout_enabled = timeout_config.write != 0;
     return timeout_snapshot{
         .read_elapsed_ms = current_ms - last_read_time_ms.load(std::memory_order_acquire),
         .write_elapsed_ms = current_ms - last_write_time_ms.load(std::memory_order_acquire),
+        .read_timeout_enabled = read_timeout_enabled,
+        .write_timeout_enabled = write_timeout_enabled,
         .read_timeout_ms = static_cast<std::uint64_t>(timeout_config.read) * 1000ULL,
         .write_timeout_ms = static_cast<std::uint64_t>(timeout_config.write) * 1000ULL,
     };
@@ -100,7 +106,9 @@ timeout_snapshot collect_timeout_snapshot(const std::atomic<std::uint64_t>& last
 
 [[nodiscard]] bool is_timeout_exceeded(const timeout_snapshot& snapshot)
 {
-    return snapshot.read_elapsed_ms > snapshot.read_timeout_ms || snapshot.write_elapsed_ms > snapshot.write_timeout_ms;
+    const bool read_timeout_exceeded = snapshot.read_timeout_enabled && snapshot.read_elapsed_ms > snapshot.read_timeout_ms;
+    const bool write_timeout_exceeded = snapshot.write_timeout_enabled && snapshot.write_elapsed_ms > snapshot.write_timeout_ms;
+    return read_timeout_exceeded || write_timeout_exceeded;
 }
 
 [[nodiscard]] std::uint32_t pick_draining_delay_seconds(std::mt19937& rng)
@@ -213,6 +221,60 @@ bool run_sync_void_query(boost::asio::io_context& io_context, const std::uint32_
     return future.get();
 }
 
+template <typename Fn>
+stream_register_result run_sync_stream_register_query(boost::asio::io_context& io_context,
+                                                      const std::uint32_t cid,
+                                                      const char* query_name,
+                                                      Fn&& fn)
+{
+    if (io_context.stopped())
+    {
+        return stream_register_result::kClosed;
+    }
+    if (io_context.get_executor().running_in_this_thread())
+    {
+        return std::forward<Fn>(fn)();
+    }
+
+    auto started = std::make_shared<std::atomic<bool>>(false);
+    auto cancelled = std::make_shared<std::atomic<bool>>(false);
+    std::promise<stream_register_result> promise;
+    auto future = promise.get_future();
+    boost::asio::post(io_context,
+                      [started, cancelled, promise = std::move(promise), fn = std::forward<Fn>(fn)]() mutable
+                      {
+                          if (cancelled->load(std::memory_order_acquire))
+                          {
+                              promise.set_value(stream_register_result::kClosed);
+                              return;
+                          }
+                          started->store(true, std::memory_order_release);
+                          if (cancelled->load(std::memory_order_acquire))
+                          {
+                              promise.set_value(stream_register_result::kClosed);
+                              return;
+                          }
+                          promise.set_value(fn());
+                      });
+
+    if (future.wait_for(kSyncQueryWaitTimeout) != std::future_status::ready)
+    {
+        cancelled->store(true, std::memory_order_release);
+        if (!started->load(std::memory_order_acquire))
+        {
+            LOG_WARN("mux {} sync query {} timeout {}ms", cid, query_name, kSyncQueryWaitTimeout.count());
+            return stream_register_result::kClosed;
+        }
+        if (future.wait_for(kSyncQueryWaitTimeout) != std::future_status::ready)
+        {
+            LOG_WARN("mux {} sync query {} timeout while executing {}ms", cid, query_name, (kSyncQueryWaitTimeout * 2).count());
+            return stream_register_result::kClosed;
+        }
+    }
+
+    return future.get();
+}
+
 boost::asio::awaitable<void> wait_draining_delay(boost::asio::steady_timer& timer, const std::uint32_t delay_seconds, const std::uint32_t cid)
 {
     timer.expires_after(std::chrono::seconds(delay_seconds));
@@ -222,6 +284,13 @@ boost::asio::awaitable<void> wait_draining_delay(boost::asio::steady_timer& time
         LOG_DEBUG("mux {} draining complete after {}s", cid, delay_seconds);
     }
 }
+
+[[nodiscard]] bool is_valid_mux_command(const std::uint8_t command)
+{
+    return command == mux::kCmdSyn || command == mux::kCmdAck || command == mux::kCmdDat || command == mux::kCmdFin || command == mux::kCmdRst;
+}
+
+constexpr std::size_t kMaxMuxPayloadPerRecord = reality::kMaxTlsPlaintextLen - mux::kHeaderSize;
 
 }    // namespace
 
@@ -344,12 +413,18 @@ bool mux_connection::register_stream_local(const std::uint32_t id, const std::sh
 
 bool mux_connection::try_register_stream_local(const std::uint32_t id, const std::shared_ptr<mux_stream_interface>& stream)
 {
+    return try_register_stream_local_with_reason(id, stream) == stream_register_result::kSuccess;
+}
+
+stream_register_result mux_connection::try_register_stream_local_with_reason(const std::uint32_t id,
+                                                                             const std::shared_ptr<mux_stream_interface>& stream)
+{
     static const stream_map_t k_empty_streams{};
     for (;;)
     {
         if (connection_state_.load(std::memory_order_acquire) != mux_connection_state::kConnected)
         {
-            return false;
+            return stream_register_result::kClosed;
         }
 
         auto current = std::atomic_load_explicit(&streams_, std::memory_order_acquire);
@@ -359,27 +434,27 @@ bool mux_connection::try_register_stream_local(const std::uint32_t id, const std
             current_map = &k_empty_streams;
         }
 
-        if (limits_config_.max_streams > 0 && current_map->size() >= limits_config_.max_streams)
-        {
-            return false;
-        }
         if (current_map->contains(id))
         {
-            return false;
+            return stream_register_result::kIdConflict;
+        }
+        if (limits_config_.max_streams > 0 && current_map->size() >= limits_config_.max_streams)
+        {
+            return stream_register_result::kLimitReached;
         }
 
         auto updated = std::make_shared<stream_map_t>(*current_map);
         const auto [it, inserted] = updated->try_emplace(id, stream);
         if (!inserted)
         {
-            return false;
+            return stream_register_result::kIdConflict;
         }
 
         auto expected = current;
         if (std::atomic_compare_exchange_weak_explicit(&streams_, &expected, updated, std::memory_order_acq_rel, std::memory_order_acquire))
         {
             LOG_DEBUG("mux {} stream {} registered", cid_, id);
-            return true;
+            return stream_register_result::kSuccess;
         }
     }
 }
@@ -485,7 +560,20 @@ void mux_connection::handle_stream_frame(const mux::frame_header& header, std::v
     if (header.command == mux::kCmdAck)
     {
         stream->on_data(std::move(payload));
+        return;
     }
+
+    LOG_WARN("mux {} recv unknown cmd {} stream {}", cid_, header.command, header.stream_id);
+    stream->on_reset();
+    remove_stream(header.stream_id);
+    const auto self = shared_from_this();
+    boost::asio::co_spawn(
+        io_context_,
+        [self, stream_id = header.stream_id]() -> boost::asio::awaitable<void>
+        {
+            (void)co_await self->send_async(stream_id, kCmdRst, {});
+        },
+        boost::asio::detached);
 }
 
 bool mux_connection::register_stream(const std::uint32_t id, std::shared_ptr<mux_stream_interface> stream)
@@ -515,26 +603,32 @@ bool mux_connection::register_stream_checked(const std::uint32_t id, std::shared
                                { return self->register_stream_local(id, stream); });
 }
 
-bool mux_connection::try_register_stream(const std::uint32_t id, std::shared_ptr<mux_stream_interface> stream)
+stream_register_result mux_connection::try_register_stream_with_reason(const std::uint32_t id,
+                                                                       std::shared_ptr<mux_stream_interface> stream)
 {
     if (stream == nullptr)
     {
-        return false;
+        return stream_register_result::kInvalidStream;
     }
     if (!is_open())
     {
-        return false;
+        return stream_register_result::kClosed;
     }
 
     if (run_inline())
     {
-        return try_register_stream_local(id, stream);
+        return try_register_stream_local_with_reason(id, stream);
     }
-    return run_sync_bool_query(io_context_,
-                               cid_,
-                               "try_register_stream",
-                               [self = shared_from_this(), id, stream = std::move(stream)]() mutable
-                               { return self->try_register_stream_local(id, stream); });
+    return run_sync_stream_register_query(
+        io_context_,
+        cid_,
+        "try_register_stream_with_reason",
+        [self = shared_from_this(), id, stream = std::move(stream)]() mutable { return self->try_register_stream_local_with_reason(id, stream); });
+}
+
+bool mux_connection::try_register_stream(const std::uint32_t id, std::shared_ptr<mux_stream_interface> stream)
+{
+    return try_register_stream_with_reason(id, std::move(stream)) == stream_register_result::kSuccess;
 }
 
 void mux_connection::remove_stream(const std::uint32_t id)
@@ -587,6 +681,16 @@ boost::asio::awaitable<boost::system::error_code> mux_connection::send_async(con
     {
         LOG_ERROR("mux {} payload too large {}", cid_, payload.size());
         co_return boost::asio::error::message_size;
+    }
+    if (payload.size() > kMaxMuxPayloadPerRecord)
+    {
+        LOG_ERROR("mux {} payload too large for single record {} max {}", cid_, payload.size(), kMaxMuxPayloadPerRecord);
+        co_return boost::asio::error::message_size;
+    }
+    if (!is_valid_mux_command(cmd))
+    {
+        LOG_ERROR("mux {} invalid command {}", cid_, cmd);
+        co_return boost::asio::error::invalid_argument;
     }
 
     if (cmd != mux::kCmdDat || payload.size() < 128)
@@ -702,9 +806,14 @@ void mux_connection::finalize_stop_state()
 
 bool mux_connection::should_stop_read(const boost::system::error_code& read_ec, const std::size_t n) const
 {
-    if (!read_ec && n != 0)
+    if (!read_ec)
     {
-        return false;
+        if (n != 0)
+        {
+            return false;
+        }
+        LOG_DEBUG("mux {} peer closed read side", cid_);
+        return true;
     }
     if (read_ec != boost::asio::error::eof && read_ec != boost::asio::error::operation_aborted)
     {
@@ -931,7 +1040,10 @@ void mux_connection::on_mux_frame(const mux::frame_header header, std::vector<st
         if (syn_callback_ != nullptr)
         {
             syn_callback_(header.stream_id, std::move(payload));
+            return;
         }
+        LOG_WARN("mux {} recv syn without callback stream {}", cid_, header.stream_id);
+        handle_unknown_stream(header.stream_id, header.command);
         return;
     }
 

@@ -1,6 +1,7 @@
 #include <span>
 #include <atomic>
 #include <vector>
+#include <limits>
 #include <cstdint>
 #include <cstring>
 #include <utility>
@@ -16,7 +17,7 @@
 namespace mux
 {
 
-mux_dispatcher::mux_dispatcher() : buffer_(64L * 1024) { LOG_DEBUG("mux dispatcher initialized"); }
+mux_dispatcher::mux_dispatcher() : buffer_(std::numeric_limits<std::size_t>::max()) { LOG_DEBUG("mux dispatcher initialized"); }
 
 void mux_dispatcher::set_callback(frame_callback_t cb) { callback_ = std::move(cb); }
 
@@ -42,7 +43,6 @@ void mux_dispatcher::on_plaintext_data(std::span<const std::uint8_t> data)
     auto mutable_bufs = buffer_.prepare(data.size());
     const std::size_t n = boost::asio::buffer_copy(mutable_bufs, boost::asio::buffer(data.data(), data.size()));
     buffer_.commit(n);
-
     process_frames();
 }
 
