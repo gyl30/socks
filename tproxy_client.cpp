@@ -12,6 +12,7 @@
 #include <charconv>
 #include <expected>
 #include <sys/socket.h>
+#include <sys/uio.h>
 #include <system_error>
 #include <unordered_map>
 
@@ -22,7 +23,6 @@
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
 #include <boost/asio/awaitable.hpp>
-#include <bits/types/struct_iovec.h>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/address.hpp>
 #include <boost/asio/ip/v6_only.hpp>
