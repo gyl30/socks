@@ -35,7 +35,9 @@
 
 namespace
 {
+#ifdef __linux__
 std::atomic<bool> g_force_rand_bytes_failure{false};
+#endif
 }    // namespace
 
 #ifdef __linux__
