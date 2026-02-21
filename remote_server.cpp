@@ -12,12 +12,11 @@
 #include <cstring>
 #include <utility>
 #include <charconv>
+#include <expected>
 #include <optional>
 #include <algorithm>
 #include <system_error>
 
-#include <expected>
-#include <openssl/types.h>
 #include <boost/asio/error.hpp>
 #include <boost/asio/write.hpp>
 #include <boost/asio/buffer.hpp>
@@ -42,6 +41,7 @@ extern "C"
 {
 #include <openssl/evp.h>
 #include <openssl/rand.h>
+#include <openssl/types.h>
 #include <openssl/crypto.h>
 }
 
@@ -261,7 +261,7 @@ boost::asio::awaitable<initial_read_outcome> fill_tls_record_header(const std::s
         header_remaining.resize(header_read.read_size);
         buf.insert(buf.end(), header_remaining.begin(), header_remaining.end());
     }
-    co_return initial_read_outcome{true, false, {}};
+    co_return initial_read_outcome{.ok = true, .allow_fallback = false, .ec = {}};
 }
 
 boost::asio::awaitable<initial_read_outcome> fill_tls_record_body(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
@@ -286,7 +286,7 @@ boost::asio::awaitable<initial_read_outcome> fill_tls_record_body(const std::sha
         extra.resize(extra_read.read_size);
         buf.insert(buf.end(), extra.begin(), extra.end());
     }
-    co_return initial_read_outcome{true, false, {}};
+    co_return initial_read_outcome{.ok = true, .allow_fallback = false, .ec = {}};
 }
 
 [[nodiscard]] bool should_skip_fallback_after_read_failure(const boost::system::error_code& read_ec, const std::atomic<bool>& stop_flag)
@@ -1667,7 +1667,14 @@ boost::asio::awaitable<remote_server::server_handshake_res> remote_server::delay
     if (stop_.load(std::memory_order_acquire))
     {
         close_socket_quietly(s);
-        co_return server_handshake_res{false, boost::asio::error::operation_aborted, {}, {}, {}, nullptr, nullptr, {}};
+        co_return server_handshake_res{.ok = false,
+                                       .ec = boost::asio::error::operation_aborted,
+                                       .hs_keys = {},
+                                       .s_hs_keys = {},
+                                       .c_hs_keys = {},
+                                       .cipher = nullptr,
+                                       .negotiated_md = nullptr,
+                                       .handshake_hash = {}};
     }
 
     static thread_local std::mt19937 delay_gen(std::random_device{}());

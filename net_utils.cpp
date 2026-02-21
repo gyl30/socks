@@ -2,11 +2,10 @@
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
+#include <expected>
 #include <optional>
 #include <netinet/in.h>
 #include <sys/socket.h>
-
-#include <expected>
 
 #ifdef __linux__
 #include <linux/in.h>

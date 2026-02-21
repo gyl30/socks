@@ -9,9 +9,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <utility>
-
 #include <expected>
-#include <openssl/types.h>
+
 #include <boost/system/errc.hpp>
 #include <boost/system/detail/errc.hpp>
 #include <boost/system/detail/error_code.hpp>
@@ -23,6 +22,7 @@ extern "C"
 #include <openssl/kdf.h>
 #include <openssl/rand.h>
 #include <openssl/x509.h>
+#include <openssl/types.h>
 #include <openssl/crypto.h>
 }
 

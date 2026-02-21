@@ -5,12 +5,12 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <barrier>
 #include <cstdint>
 #include <utility>
 #include <unistd.h>
 #include <system_error>
 
-#include <barrier>
 #include <gtest/gtest.h>
 #include <boost/asio/read.hpp>
 #include <boost/asio/write.hpp>

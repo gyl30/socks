@@ -11,11 +11,10 @@
 #include <cstdlib>
 #include <cstring>
 #include <utility>
+#include <expected>
 #include <optional>
 #include <algorithm>
 
-#include <expected>
-#include <openssl/types.h>
 #include <boost/asio/read.hpp>
 #include <boost/asio/error.hpp>
 #include <boost/asio/write.hpp>
@@ -36,6 +35,7 @@ extern "C"
 {
 #include <openssl/evp.h>
 #include <openssl/rand.h>
+#include <openssl/types.h>
 #include <openssl/crypto.h>
 }
 

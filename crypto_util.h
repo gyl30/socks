@@ -7,8 +7,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-
 #include <expected>
+
 #include <openssl/types.h>
 #include <boost/system/error_code.hpp>
 

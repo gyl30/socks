@@ -5,11 +5,10 @@
 #include <cstdint>
 #include <cstring>
 #include <utility>
+#include <expected>
 #include <optional>
 #include <system_error>
 
-#include <expected>
-#include <openssl/types.h>
 #include <boost/asio/read.hpp>
 #include <boost/asio/error.hpp>
 #include <boost/asio/write.hpp>
@@ -25,7 +24,8 @@ extern "C"
 {
 #include <openssl/evp.h>
 #include <openssl/rand.h>
-}    // namespace
+#include <openssl/types.h>
+}
 
 #include "log.h"
 #include "timeout_io.h"

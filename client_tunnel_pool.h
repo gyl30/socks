@@ -9,9 +9,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <utility>
+#include <expected>
 #include <optional>
 
-#include <expected>
 #include <openssl/types.h>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/awaitable.hpp>

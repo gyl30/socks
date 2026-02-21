@@ -6,9 +6,9 @@
 #include <vector>
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <functional>
 
-#include <expected>
 #include <openssl/types.h>
 #include <boost/asio/streambuf.hpp>
 #include <boost/system/error_code.hpp>

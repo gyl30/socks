@@ -11,14 +11,13 @@
 #include <optional>
 #include <algorithm>
 
-#include <openssl/ec.h>
-#include <openssl/types.h>
-#include <openssl/obj_mac.h>
-
 extern "C"
 {
+#include <openssl/ec.h>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
+#include <openssl/types.h>
+#include <openssl/obj_mac.h>
 #include <openssl/core_names.h>
 }
 

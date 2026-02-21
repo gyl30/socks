@@ -10,11 +10,11 @@
 #include <cstring>
 #include <utility>
 #include <charconv>
+#include <expected>
 #include <sys/socket.h>
 #include <system_error>
 #include <unordered_map>
 
-#include <expected>
 #include <boost/asio/error.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/ip/udp.hpp>

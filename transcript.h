@@ -5,11 +5,10 @@
 #include <vector>
 #include <cstdint>
 
-#include <openssl/types.h>
-
 extern "C"
 {
 #include <openssl/evp.h>
+#include <openssl/types.h>
 }
 
 namespace reality

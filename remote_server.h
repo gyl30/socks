@@ -10,10 +10,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <utility>
+#include <expected>
 #include <optional>
 #include <unordered_map>
 
-#include <expected>
 #include <openssl/types.h>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/awaitable.hpp>

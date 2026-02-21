@@ -4,8 +4,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <utility>
-
 #include <expected>
+
 #include <openssl/types.h>
 #include <boost/asio/error.hpp>
 #include <boost/asio/streambuf.hpp>

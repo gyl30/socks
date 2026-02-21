@@ -7,9 +7,8 @@
 #include <cstdint>
 #include <cstring>
 #include <utility>
-
 #include <expected>
-#include <openssl/types.h>
+
 #include <boost/system/errc.hpp>
 #include <boost/system/error_code.hpp>
 #include <boost/system/detail/errc.hpp>
@@ -18,6 +17,7 @@ extern "C"
 {
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
+#include <openssl/types.h>
 }
 
 #include "crypto_util.h"

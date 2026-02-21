@@ -10,8 +10,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <utility>
-
 #include <expected>
+
 #include <boost/asio/post.hpp>
 #include <boost/asio/error.hpp>
 #include <boost/asio/write.hpp>

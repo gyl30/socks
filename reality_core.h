@@ -6,12 +6,11 @@
 #include <cstddef>
 #include <cstdint>
 
-#include <openssl/types.h>
-
 extern "C"
 {
 #include <openssl/evp.h>
 #include <openssl/x509.h>
+#include <openssl/types.h>
 }
 
 namespace reality
