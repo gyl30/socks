@@ -2,17 +2,17 @@
 #define STATISTICS_H
 
 #include <array>
+#include <mutex>
 #include <atomic>
-#include <algorithm>
 #include <chrono>
+#include <string>
+#include <vector>
 #include <cstddef>
 #include <cstdint>
+#include <algorithm>
 #include <functional>
-#include <mutex>
-#include <string>
 #include <string_view>
 #include <unordered_map>
-#include <vector>
 
 namespace mux
 {

@@ -5,9 +5,9 @@
 #include <chrono>
 #include <future>
 #include <memory>
-#include <type_traits>
-#include <utility>
 #include <cstdint>
+#include <utility>
+#include <type_traits>
 
 #include <boost/asio/dispatch.hpp>
 #include <boost/asio/io_context.hpp>

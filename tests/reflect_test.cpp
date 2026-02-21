@@ -1,5 +1,4 @@
-// NOLINTBEGIN(google-runtime-int, misc-const-correctness, modernize-use-std-numbers)
-// NOLINTBEGIN(misc-include-cleaner)
+
 #include <map>
 #include <string>
 #include <vector>
@@ -173,5 +172,3 @@ TEST(ReflectTest, OptionalDirectSerializeCoversNullBranch)
     std::optional<int> const value_opt = 7;
     EXPECT_EQ(reflect::serialize_struct(value_opt), "7");
 }
-// NOLINTEND(misc-include-cleaner)
-// NOLINTEND(google-runtime-int, misc-const-correctness, modernize-use-std-numbers)
