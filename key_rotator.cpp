@@ -1,7 +1,7 @@
+#include <new>
 #include <atomic>
 #include <chrono>
 #include <memory>
-#include <new>
 
 extern "C"
 {

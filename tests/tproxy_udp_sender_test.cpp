@@ -1,11 +1,10 @@
-// NOLINTBEGIN(performance-enum-size, readability-static-accessed-through-instance)
-// NOLINTBEGIN(bugprone-unused-return-value, misc-include-cleaner)
+
+#include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <memory>
 #include <vector>
 #include <cstdint>
-#include <atomic>
-#include <cerrno>
 #include <sys/socket.h>
 
 #include <gtest/gtest.h>
@@ -13,8 +12,10 @@
 #include <boost/asio/io_context.hpp>
 
 #include "test_util.h"
+
 #define private public
 #include "tproxy_udp_sender.h"
+
 #undef private
 
 namespace
@@ -79,26 +80,26 @@ std::shared_ptr<boost::asio::ip::udp::socket> make_open_udp_v6_socket(boost::asi
 
 }    // namespace
 
-extern "C" int __real_socket(int domain, int type, int protocol);                                              // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_socket(int domain, int type, int protocol);                                              
+extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);    
 
-extern "C" int __wrap_socket(int domain, int type, int protocol)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_socket(int domain, int type, int protocol)    
 {
     if (consume_udp_sender_socket_fail_once())
     {
         errno = EMFILE;
         return -1;
     }
-    return __real_socket(domain, type, protocol);    // NOLINT(bugprone-reserved-identifier)
+    return __real_socket(domain, type, protocol);    
 }
 
-extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)    
 {
     if (force_udp_sender_setsockopt_success())
     {
         return 0;
     }
-    return __real_setsockopt(sockfd, level, optname, optval, optlen);    // NOLINT(bugprone-reserved-identifier)
+    return __real_setsockopt(sockfd, level, optname, optval, optlen);    
 }
 
 TEST(TproxyUdpSenderTest, CacheMaintenanceBranches)
@@ -244,5 +245,3 @@ TEST(TproxyUdpSenderTest, CreateBoundSocketBindFailureAfterPrepareSuccess)
     const auto impossible_src = boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("203.0.113.99"), 34567);
     EXPECT_EQ(sender.create_bound_socket(impossible_src, false), nullptr);
 }
-// NOLINTEND(bugprone-unused-return-value, misc-include-cleaner)
-// NOLINTEND(performance-enum-size, readability-static-accessed-through-instance)
