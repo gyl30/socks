@@ -1,8 +1,9 @@
-#include <optional>
 #include <cstdint>
+#include <optional>
+
+#include <openssl/evp.h>
 
 #include "tls_cipher_suite.h"
-#include <openssl/evp.h>
 
 namespace reality
 {

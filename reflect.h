@@ -160,17 +160,19 @@ inline void reflect(JsonReader& vis, bool& v)
     v = vis.m->GetBool();
 }
 inline void reflect(JsonReader& vis, unsigned char& v) { (void)read_unsigned_integer(vis, v); }
-// NOLINTBEGIN(google-runtime-int)
-inline void reflect(JsonReader& vis, short& v) { (void)read_signed_integer(vis, v); }
-inline void reflect(JsonReader& vis, unsigned short& v) { (void)read_unsigned_integer(vis, v); }
-inline void reflect(JsonReader& vis, int8_t& v) { (void)read_signed_integer(vis, v); }
-inline void reflect(JsonReader& vis, int& v) { (void)read_signed_integer(vis, v); }
-inline void reflect(JsonReader& vis, unsigned& v) { (void)read_unsigned_integer(vis, v); }
-inline void reflect(JsonReader& vis, long& v) { (void)read_signed_integer(vis, v); }
-inline void reflect(JsonReader& vis, unsigned long& v) { (void)read_unsigned_integer(vis, v); }
-inline void reflect(JsonReader& vis, long long& v) { (void)read_signed_integer(vis, v); }
-inline void reflect(JsonReader& vis, unsigned long long& v) { (void)read_unsigned_integer(vis, v); }
-// NOLINTEND(google-runtime-int)
+template <typename T, std::enable_if_t<std::is_integral_v<T> && std::is_signed_v<T> && !std::is_same_v<T, bool> && !std::is_same_v<T, char>, int> = 0>
+inline void reflect(JsonReader& vis, T& v)
+{
+    (void)read_signed_integer(vis, v);
+}
+template <typename T,
+          std::enable_if_t<std::is_integral_v<T> && std::is_unsigned_v<T> && !std::is_same_v<T, bool> && !std::is_same_v<T, char> &&
+                               !std::is_same_v<T, unsigned char>,
+                           int> = 0>
+inline void reflect(JsonReader& vis, T& v)
+{
+    (void)read_unsigned_integer(vis, v);
+}
 inline void reflect(JsonReader& vis, double& v)
 {
     if (!vis.m->IsDouble())
@@ -191,17 +193,19 @@ inline void reflect(JsonReader& vis, std::string& v)
 }
 inline void reflect(JsonWriter& vis, bool& v) { vis.m->Bool(v); }
 inline void reflect(JsonWriter& vis, unsigned char& v) { vis.m->Int(v); }
-// NOLINTBEGIN(google-runtime-int)
-inline void reflect(JsonWriter& vis, short& v) { vis.m->Int(v); }
-inline void reflect(JsonWriter& vis, unsigned short& v) { vis.m->Int(v); }
-inline void reflect(JsonWriter& vis, int& v) { vis.m->Int(v); }
-inline void reflect(JsonWriter& vis, int8_t& v) { vis.m->Int(v); }
-inline void reflect(JsonWriter& vis, unsigned& v) { vis.m->Uint64(v); }
-inline void reflect(JsonWriter& vis, long& v) { vis.m->Int64(v); }
-inline void reflect(JsonWriter& vis, unsigned long& v) { vis.m->Uint64(v); }
-inline void reflect(JsonWriter& vis, long long& v) { vis.m->Int64(v); }
-inline void reflect(JsonWriter& vis, unsigned long long& v) { vis.m->Uint64(v); }
-// NOLINTEND(google-runtime-int)
+template <typename T, std::enable_if_t<std::is_integral_v<T> && std::is_signed_v<T> && !std::is_same_v<T, bool> && !std::is_same_v<T, char>, int> = 0>
+inline void reflect(JsonWriter& vis, T& v)
+{
+    vis.m->Int64(static_cast<std::int64_t>(v));
+}
+template <typename T,
+          std::enable_if_t<std::is_integral_v<T> && std::is_unsigned_v<T> && !std::is_same_v<T, bool> && !std::is_same_v<T, char> &&
+                               !std::is_same_v<T, unsigned char>,
+                           int> = 0>
+inline void reflect(JsonWriter& vis, T& v)
+{
+    vis.m->Uint64(static_cast<std::uint64_t>(v));
+}
 inline void reflect(JsonWriter& vis, double& v) { vis.m->Double(v); }
 inline void reflect(JsonWriter& vis, std::string& v) { vis.string(v.c_str(), v.size()); }
 inline void reflect(JsonReader& vis, JsonNull& value)

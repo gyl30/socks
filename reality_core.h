@@ -1,7 +1,6 @@
 #ifndef REALITY_CORE_H
 #define REALITY_CORE_H
 
-#include <openssl/types.h>
 #include <memory>
 #include <vector>
 #include <cstddef>
@@ -11,6 +10,7 @@ extern "C"
 {
 #include <openssl/evp.h>
 #include <openssl/x509.h>
+#include <openssl/types.h>
 }
 
 namespace reality

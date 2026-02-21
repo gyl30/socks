@@ -1,5 +1,4 @@
-// NOLINTBEGIN(bugprone-narrowing-conversions)
-// NOLINTBEGIN(bugprone-unused-return-value, misc-include-cleaner)
+
 #include <atomic>
 #include <chrono>
 #include <memory>
@@ -306,7 +305,8 @@ static boost::asio::awaitable<bool> send_udp_echo_and_validate(const std::shared
         co_return false;
     }
 
-    const std::string recv_payload(recv_buf.begin() + 10, recv_buf.begin() + recv_n);
+    const auto recv_size = static_cast<std::vector<std::uint8_t>::difference_type>(recv_n);
+    const std::string recv_payload(recv_buf.begin() + 10, recv_buf.begin() + recv_size);
     co_return recv_payload == payload_data;
 }
 
@@ -609,5 +609,3 @@ TEST_F(udp_integration_test_fixture, UdpAssociateIgnoresFragmentedPacketAndKeeps
         pool_thread.join();
     }
 }
-// NOLINTEND(bugprone-unused-return-value, misc-include-cleaner)
-// NOLINTEND(bugprone-narrowing-conversions)
