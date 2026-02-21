@@ -1,4 +1,4 @@
-// NOLINTBEGIN(misc-include-cleaner)
+
 #include <vector>
 #include <cstdint>
 
@@ -47,4 +47,3 @@ TEST(TranscriptTest, SameHashNoOp)
 }
 
 }    // namespace reality
-// NOLINTEND(misc-include-cleaner)

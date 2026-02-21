@@ -1,9 +1,8 @@
-// NOLINTBEGIN(google-build-using-namespace)
-// NOLINTBEGIN(misc-include-cleaner)
-#include <vector>
-#include <system_error>
+
 #include <atomic>
+#include <vector>
 #include <cstdint>
+#include <system_error>
 
 #include <gtest/gtest.h>
 
@@ -30,13 +29,13 @@ void fail_evp_pkey_derive_on_call(const int call_index)
 
 }    // namespace
 
-extern "C" int __real_EVP_PKEY_derive(EVP_PKEY_CTX* ctx, unsigned char* key, size_t* keylen);    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_EVP_PKEY_derive(EVP_PKEY_CTX* ctx, unsigned char* key, size_t* keylen);    
 
-extern "C" int __wrap_EVP_PKEY_derive(EVP_PKEY_CTX* ctx, unsigned char* key, size_t* keylen)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_EVP_PKEY_derive(EVP_PKEY_CTX* ctx, unsigned char* key, size_t* keylen)    
 {
     if (key == nullptr || keylen == nullptr)
     {
-        return __real_EVP_PKEY_derive(ctx, key, keylen);    // NOLINT(bugprone-reserved-identifier)
+        return __real_EVP_PKEY_derive(ctx, key, keylen);    
     }
 
     const int call_index = g_tls_key_schedule_derive_call_counter.fetch_add(1, std::memory_order_acq_rel) + 1;
@@ -46,7 +45,7 @@ extern "C" int __wrap_EVP_PKEY_derive(EVP_PKEY_CTX* ctx, unsigned char* key, siz
         g_tls_key_schedule_fail_derive_call.store(0, std::memory_order_release);
         return 0;
     }
-    return __real_EVP_PKEY_derive(ctx, key, keylen);    // NOLINT(bugprone-reserved-identifier)
+    return __real_EVP_PKEY_derive(ctx, key, keylen);    
 }
 
 TEST(TlsKeyScheduleTest, DeriveTrafficKeysInvalidSecret)
@@ -151,5 +150,3 @@ TEST(TlsKeyScheduleTest, ComputeFinishedVerifyDataSuccess)
     ASSERT_TRUE(verify.has_value());
     EXPECT_EQ(verify->size(), 32U);
 }
-// NOLINTEND(misc-include-cleaner)
-// NOLINTEND(google-build-using-namespace)

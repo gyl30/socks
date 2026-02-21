@@ -1,5 +1,5 @@
-#include <atomic>
 #include <span>
+#include <atomic>
 #include <vector>
 #include <cstdint>
 #include <cstring>

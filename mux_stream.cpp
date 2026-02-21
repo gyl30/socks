@@ -1,5 +1,3 @@
-// NOLINTBEGIN(misc-include-cleaner)
-#include <boost/system/error_code.hpp>
 #include <tuple>
 #include <memory>
 #include <string>
@@ -11,8 +9,9 @@
 #include <boost/asio/error.hpp>
 #include <boost/asio/as_tuple.hpp>
 #include <boost/asio/awaitable.hpp>
-#include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/io_context.hpp>
+#include <boost/system/error_code.hpp>
+#include <boost/asio/use_awaitable.hpp>
 
 #include "log.h"
 #include "mux_stream.h"
@@ -141,4 +140,3 @@ void mux_stream::close_internal()
 }
 
 }    // namespace mux
-// NOLINTEND(misc-include-cleaner)

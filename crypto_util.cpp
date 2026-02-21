@@ -1,31 +1,34 @@
-// NOLINTBEGIN(misc-include-cleaner)
-#include <boost/system/error_code.hpp>
-#include <openssl/types.h>
-#include <boost/system/detail/errc.hpp>
 #include <span>
 #include <array>
+#include <mutex>
+#include <cctype>
+#include <limits>
+#include <memory>
 #include <string>
 #include <vector>
 #include <cstddef>
 #include <cstdint>
-#include <mutex>
 #include <utility>
 #include <expected>
 
 #include <boost/system/errc.hpp>
-#include "reality_core.h"
+#include <boost/system/detail/errc.hpp>
+#include <boost/system/detail/error_code.hpp>
 
 extern "C"
 {
+#include <openssl/bio.h>
 #include <openssl/evp.h>
 #include <openssl/kdf.h>
 #include <openssl/rand.h>
 #include <openssl/x509.h>
+#include <openssl/types.h>
 #include <openssl/crypto.h>
 }
 
 #include "log.h"
 #include "crypto_util.h"
+#include "reality_core.h"
 #include "cipher_context.h"
 
 namespace reality
@@ -73,6 +76,30 @@ std::size_t base64_real_length(const std::string& padded_input, const std::size_
         real_len--;
     }
     return real_len;
+}
+
+int hex_nibble(const char ch)
+{
+    const auto value = static_cast<unsigned char>(ch);
+    if (value >= static_cast<unsigned char>('0') && value <= static_cast<unsigned char>('9'))
+    {
+        return value - static_cast<unsigned char>('0');
+    }
+    if (value >= static_cast<unsigned char>('a') && value <= static_cast<unsigned char>('f'))
+    {
+        return 10 + (value - static_cast<unsigned char>('a'));
+    }
+    if (value >= static_cast<unsigned char>('A') && value <= static_cast<unsigned char>('F'))
+    {
+        return 10 + (value - static_cast<unsigned char>('A'));
+    }
+    return -1;
+}
+
+bool is_hex_separator(const char ch)
+{
+    const auto value = static_cast<unsigned char>(ch);
+    return ch == ':' || ch == '-' || std::isspace(value) != 0;
 }
 
 std::expected<openssl_ptrs::evp_pkey_ctx_ptr, boost::system::error_code> create_hkdf_context(const EVP_MD* md, const int mode)
@@ -244,16 +271,37 @@ std::string crypto_util::bytes_to_hex(const std::vector<std::uint8_t>& bytes)
 
 std::vector<std::uint8_t> crypto_util::hex_to_bytes(const std::string& hex)
 {
-    ensure_openssl_initialized();
+    std::vector<std::uint8_t> result;
+    result.reserve(hex.size() / 2);
 
-    long len = 0;    // NOLINT(google-runtime-int): OpenSSL API requires long.
-    std::uint8_t* buf = OPENSSL_hexstr2buf(hex.c_str(), &len);
-    if (buf == nullptr)
+    int high_nibble = -1;
+    for (const char ch : hex)
+    {
+        if (is_hex_separator(ch))
+        {
+            continue;
+        }
+
+        const int nibble = hex_nibble(ch);
+        if (nibble < 0)
+        {
+            return {};
+        }
+        if (high_nibble < 0)
+        {
+            high_nibble = nibble;
+            continue;
+        }
+
+        const auto byte = static_cast<std::uint8_t>((high_nibble << 4) | nibble);
+        result.push_back(byte);
+        high_nibble = -1;
+    }
+
+    if (high_nibble >= 0)
     {
         return {};
     }
-    const std::vector<std::uint8_t> result{buf, buf + len};
-    OPENSSL_free(buf);
     return result;
 }
 
@@ -423,7 +471,7 @@ std::expected<std::vector<std::uint8_t>, boost::system::error_code> crypto_util:
     {
         return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
     }
-    std::size_t out_len = static_cast<std::size_t>(md_size);
+    auto out_len = static_cast<std::size_t>(md_size);
     std::vector<std::uint8_t> prk(out_len);
     if (EVP_PKEY_derive(evp_pkey_ctx->get(), prk.data(), &out_len) <= 0)
     {
@@ -607,10 +655,24 @@ std::expected<openssl_ptrs::evp_pkey_ptr, boost::system::error_code> crypto_util
 {
     ensure_openssl_initialized();
 
-    const std::uint8_t* p = cert_der.data();
+    if (cert_der.empty())
+    {
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
+    }
 
-    // NOLINTNEXTLINE(google-runtime-int): OpenSSL API requires long length.
-    const openssl_ptrs::x509_ptr x509(d2i_X509(nullptr, &p, static_cast<long>(cert_der.size())));
+    if (cert_der.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+    {
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
+    }
+
+    using bio_ptr = std::unique_ptr<BIO, decltype(&BIO_free)>;
+    const bio_ptr cert_bio(BIO_new_mem_buf(cert_der.data(), static_cast<int>(cert_der.size())), &BIO_free);
+    if (cert_bio == nullptr)
+    {
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::not_enough_memory));
+    }
+
+    const openssl_ptrs::x509_ptr x509(d2i_X509_bio(cert_bio.get(), nullptr));
     if (x509 == nullptr)
     {
         return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
@@ -663,4 +725,3 @@ std::expected<void, boost::system::error_code> crypto_util::verify_tls13_signatu
 }
 
 }    // namespace reality
-// NOLINTEND(misc-include-cleaner)

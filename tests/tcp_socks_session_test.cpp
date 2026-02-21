@@ -1,33 +1,30 @@
-// NOLINTBEGIN(misc-non-private-member-variables-in-classes, modernize-use-ranges, performance-unnecessary-value-param,
-// readability-function-cognitive-complexity) NOLINTBEGIN(bugprone-unused-return-value, misc-include-cleaner)
+#include <array>
+#include <atomic>
+#include <cerrno>
+#include <chrono>
 #include <memory>
 #include <string>
 #include <thread>
 #include <vector>
-#include <array>
-#include <chrono>
-#include <algorithm>
 #include <cstdint>
 #include <utility>
+#include <unistd.h>
+#include <algorithm>
 #include <system_error>
-#include <atomic>
-#include <cerrno>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <boost/asio/post.hpp>
 #include <boost/asio/read.hpp>
 #include <boost/asio/write.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/as_tuple.hpp>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
-#include <boost/asio/as_tuple.hpp>
 #include <boost/asio/io_context.hpp>
-#include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/redirect_error.hpp>
-
-#include <unistd.h>
 
 extern "C"
 {
@@ -36,12 +33,13 @@ extern "C"
 
 #define private public
 #include "tcp_socks_session.h"
+
 #undef private
 
 #include "protocol.h"
 #include "mux_codec.h"
-#include "mux_tunnel.h"
 #include "test_util.h"
+#include "mux_tunnel.h"
 #include "mock_mux_connection.h"
 
 namespace
@@ -245,27 +243,27 @@ TEST(TcpSocksSessionTest, CreateBackendReturnsNullForBlockRoute)
     EXPECT_EQ(session->create_backend(mux::route_type::kBlock), nullptr);
 }
 
-extern "C" int __real_shutdown(int fd, int how);    // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_close(int fd);                // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_shutdown(int fd, int how);    
+extern "C" int __real_close(int fd);                
 
-extern "C" int __wrap_shutdown(int fd, int how)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_shutdown(int fd, int how)    
 {
     if (g_fail_shutdown_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_shutdown_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_shutdown(fd, how);    // NOLINT(bugprone-reserved-identifier)
+    return __real_shutdown(fd, how);    
 }
 
-extern "C" int __wrap_close(int fd)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_close(int fd)    
 {
     if (g_fail_close_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_close_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_close(fd);    // NOLINT(bugprone-reserved-identifier)
+    return __real_close(fd);    
 }
 
 TEST(TcpSocksSessionTest, CreateBackendReturnsDirectAndProxy)
@@ -865,6 +863,5 @@ TEST(TcpSocksSessionTest, RunProxyPathRepliesSuccessWhenAckAccepted)
 }
 
 }    // namespace
-// NOLINTEND(bugprone-unused-return-value, misc-include-cleaner)
-// NOLINTEND(misc-non-private-member-variables-in-classes, modernize-use-ranges, performance-unnecessary-value-param,
+
 // readability-function-cognitive-complexity)

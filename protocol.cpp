@@ -1,5 +1,3 @@
-// NOLINTBEGIN(misc-include-cleaner)
-#include <boost/system/error_code.hpp>
 #include <string>
 #include <vector>
 #include <cstddef>
@@ -7,6 +5,7 @@
 #include <cstring>
 
 #include <boost/asio/ip/address.hpp>
+#include <boost/system/error_code.hpp>
 #include <boost/asio/ip/address_v4.hpp>
 #include <boost/asio/ip/address_v6.hpp>
 
@@ -246,4 +245,3 @@ bool socks_codec::decode_socks5_auth_request(const std::uint8_t* data, std::size
     out.password = std::string(reinterpret_cast<const char*>(data) + pos, plen);
     return true;
 }
-// NOLINTEND(misc-include-cleaner)

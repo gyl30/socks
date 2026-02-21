@@ -1,9 +1,5 @@
-#include <openssl/ec.h>
-#include <openssl/obj_mac.h>
-#include <openssl/types.h>
-#include <ctime>
 #include <array>
-#include <algorithm>
+#include <ctime>
 #include <memory>
 #include <random>
 #include <string>
@@ -13,12 +9,16 @@
 #include <cstring>
 #include <iterator>
 #include <optional>
+#include <algorithm>
 
 extern "C"
 {
-#include <openssl/core_names.h>
+#include <openssl/ec.h>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
+#include <openssl/types.h>
+#include <openssl/obj_mac.h>
+#include <openssl/core_names.h>
 }
 
 #include "reality_core.h"

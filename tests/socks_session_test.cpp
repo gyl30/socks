@@ -1,5 +1,4 @@
-// NOLINTBEGIN(google-build-using-namespace, misc-use-internal-linkage)
-// NOLINTBEGIN(bugprone-unchecked-optional-access, bugprone-unused-return-value, misc-include-cleaner)
+
 #include <array>
 #include <atomic>
 #include <cerrno>
@@ -49,27 +48,27 @@ void fail_next_close(const int err)
     g_fail_close_once.store(true, std::memory_order_release);
 }
 
-extern "C" int __real_shutdown(int sockfd, int how);    // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_close(int fd);                    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_shutdown(int sockfd, int how);    
+extern "C" int __real_close(int fd);                    
 
-extern "C" int __wrap_shutdown(int sockfd, int how)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_shutdown(int sockfd, int how)    
 {
     if (g_fail_shutdown_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_shutdown_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_shutdown(sockfd, how);    // NOLINT(bugprone-reserved-identifier)
+    return __real_shutdown(sockfd, how);    
 }
 
-extern "C" int __wrap_close(int fd)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_close(int fd)    
 {
     if (g_fail_close_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_close_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_close(fd);    // NOLINT(bugprone-reserved-identifier)
+    return __real_close(fd);    
 }
 
 namespace mux
@@ -946,5 +945,3 @@ TEST_F(socks_session_test_fixture, StopIgnoresExpectedShutdownAndCloseErrors)
 }
 
 }    // namespace
-// NOLINTEND(bugprone-unchecked-optional-access, bugprone-unused-return-value, misc-include-cleaner)
-// NOLINTEND(google-build-using-namespace, misc-use-internal-linkage)

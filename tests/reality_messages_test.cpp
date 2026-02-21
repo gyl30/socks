@@ -1,17 +1,16 @@
-// NOLINTBEGIN(performance-enum-size, readability-avoid-nested-conditional-operator)
-// NOLINTBEGIN(bugprone-unchecked-optional-access, misc-include-cleaner)
-#include <cstdio>
+
 #include <array>
 #include <atomic>
+#include <cstdio>
+#include <memory>
 #include <string>
 #include <vector>
-#include <cstring>
-#include <cstdint>
-#include <iostream>
-#include <memory>
 #include <cstddef>
-#include <algorithm>
+#include <cstdint>
+#include <cstring>
+#include <iostream>
 #include <optional>
+#include <algorithm>
 #include <system_error>
 
 #include <gtest/gtest.h>
@@ -31,20 +30,20 @@ extern "C"
 using reality::message_builder;
 namespace tls_consts = reality::tls_consts;
 
-extern "C" int __real_RAND_bytes(unsigned char* buf, int num);                 // NOLINT(bugprone-reserved-identifier)
-extern "C" EVP_PKEY_CTX* __real_EVP_PKEY_CTX_new_id(int id, ENGINE* e);        // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_EVP_PKEY_keygen(EVP_PKEY_CTX* ctx, EVP_PKEY** ppkey);    // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_EVP_PKEY_get_octet_string_param(const EVP_PKEY* pkey,    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_RAND_bytes(unsigned char* buf, int num);                 
+extern "C" EVP_PKEY_CTX* __real_EVP_PKEY_CTX_new_id(int id, ENGINE* e);        
+extern "C" int __real_EVP_PKEY_keygen(EVP_PKEY_CTX* ctx, EVP_PKEY** ppkey);    
+extern "C" int __real_EVP_PKEY_get_octet_string_param(const EVP_PKEY* pkey,    
                                                       const char* key_name,
                                                       unsigned char* buf,
                                                       std::size_t max_buf_sz,
                                                       std::size_t* out_len);
-extern "C" EVP_MD_CTX* __real_EVP_MD_CTX_new();    // NOLINT(bugprone-reserved-identifier)
+extern "C" EVP_MD_CTX* __real_EVP_MD_CTX_new();    
 extern "C" int __real_EVP_DigestSign(EVP_MD_CTX* ctx,
                                      unsigned char* sigret,
                                      std::size_t* siglen,
                                      const unsigned char* tbs,
-                                     std::size_t tbslen);    // NOLINT(bugprone-reserved-identifier)
+                                     std::size_t tbslen);    
 
 namespace
 {
@@ -264,7 +263,7 @@ std::size_t expected_boring_padding_len(const std::size_t unpadded_len)
 
 }    // namespace
 
-extern "C" int __wrap_RAND_bytes(unsigned char* buf, int num)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_RAND_bytes(unsigned char* buf, int num)    
 {
     if (g_force_rand_fail.load(std::memory_order_acquire))
     {
@@ -272,10 +271,10 @@ extern "C" int __wrap_RAND_bytes(unsigned char* buf, int num)    // NOLINT(bugpr
         (void)num;
         return 0;
     }
-    return __real_RAND_bytes(buf, num);    // NOLINT(bugprone-reserved-identifier)
+    return __real_RAND_bytes(buf, num);    
 }
 
-extern "C" EVP_PKEY_CTX* __wrap_EVP_PKEY_CTX_new_id(int id, ENGINE* e)    // NOLINT(bugprone-reserved-identifier)
+extern "C" EVP_PKEY_CTX* __wrap_EVP_PKEY_CTX_new_id(int id, ENGINE* e)    
 {
     if (g_force_pkey_ctx_new_null.load(std::memory_order_acquire))
     {
@@ -283,10 +282,10 @@ extern "C" EVP_PKEY_CTX* __wrap_EVP_PKEY_CTX_new_id(int id, ENGINE* e)    // NOL
         (void)e;
         return nullptr;
     }
-    return __real_EVP_PKEY_CTX_new_id(id, e);    // NOLINT(bugprone-reserved-identifier)
+    return __real_EVP_PKEY_CTX_new_id(id, e);    
 }
 
-extern "C" int __wrap_EVP_PKEY_keygen(EVP_PKEY_CTX* ctx, EVP_PKEY** ppkey)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_EVP_PKEY_keygen(EVP_PKEY_CTX* ctx, EVP_PKEY** ppkey)    
 {
     if (g_force_pkey_keygen_fail.load(std::memory_order_acquire))
     {
@@ -296,10 +295,10 @@ extern "C" int __wrap_EVP_PKEY_keygen(EVP_PKEY_CTX* ctx, EVP_PKEY** ppkey)    //
         }
         return 0;
     }
-    return __real_EVP_PKEY_keygen(ctx, ppkey);    // NOLINT(bugprone-reserved-identifier)
+    return __real_EVP_PKEY_keygen(ctx, ppkey);    
 }
 
-extern "C" int __wrap_EVP_PKEY_get_octet_string_param(const EVP_PKEY* pkey,    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_EVP_PKEY_get_octet_string_param(const EVP_PKEY* pkey,    
                                                       const char* key_name,
                                                       unsigned char* buf,
                                                       std::size_t max_buf_sz,
@@ -341,29 +340,29 @@ extern "C" int __wrap_EVP_PKEY_get_octet_string_param(const EVP_PKEY* pkey,    /
         }
         return 1;
     }
-    return __real_EVP_PKEY_get_octet_string_param(pkey, key_name, buf, max_buf_sz, out_len);    // NOLINT(bugprone-reserved-identifier)
+    return __real_EVP_PKEY_get_octet_string_param(pkey, key_name, buf, max_buf_sz, out_len);    
 }
 
-extern "C" EVP_MD_CTX* __wrap_EVP_MD_CTX_new()    // NOLINT(bugprone-reserved-identifier)
+extern "C" EVP_MD_CTX* __wrap_EVP_MD_CTX_new()    
 {
     if (g_force_md_ctx_new_null.load(std::memory_order_acquire))
     {
         return nullptr;
     }
-    return __real_EVP_MD_CTX_new();    // NOLINT(bugprone-reserved-identifier)
+    return __real_EVP_MD_CTX_new();    
 }
 
 extern "C" int __wrap_EVP_DigestSign(EVP_MD_CTX* ctx,
                                      unsigned char* sigret,
                                      std::size_t* siglen,
                                      const unsigned char* tbs,
-                                     std::size_t tbslen)    // NOLINT(bugprone-reserved-identifier)
+                                     std::size_t tbslen)    
 {
     if (g_force_digest_sign_fail.load(std::memory_order_acquire))
     {
         return 0;
     }
-    return __real_EVP_DigestSign(ctx, sigret, siglen, tbs, tbslen);    // NOLINT(bugprone-reserved-identifier)
+    return __real_EVP_DigestSign(ctx, sigret, siglen, tbs, tbslen);    
 }
 
 TEST(RealityMessagesTest, RecordHeader)
@@ -1128,5 +1127,3 @@ TEST(RealityMessagesTest, PaddingDisabledForOversizedClientHello)
     ASSERT_TRUE(padding.has_value());
     EXPECT_EQ(padding->size(), 0);
 }
-// NOLINTEND(bugprone-unchecked-optional-access, misc-include-cleaner)
-// NOLINTEND(performance-enum-size, readability-avoid-nested-conditional-operator)

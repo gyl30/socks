@@ -1,4 +1,4 @@
-// NOLINTBEGIN(misc-include-cleaner)
+
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -302,4 +302,3 @@ TEST_F(ip_matcher_test_fixture, CarriageReturnAndPrefixParsingBranches)
     EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("11.1.1.1", ec)));
     EXPECT_TRUE(matcher.match(boost::asio::ip::make_address("2001:db8::1", ec)));
 }
-// NOLINTEND(misc-include-cleaner)

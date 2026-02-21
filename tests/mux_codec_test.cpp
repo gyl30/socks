@@ -1,5 +1,4 @@
-// NOLINTBEGIN(readability-function-cognitive-complexity)
-// NOLINTBEGIN(misc-include-cleaner)
+
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -312,5 +311,3 @@ TEST(MuxCodecTest, FrameHeaderDecodeShortBuffer)
     mux::frame_header output;
     EXPECT_FALSE(mux::mux_codec::decode_header(buffer.data(), buffer.size(), output));
 }
-// NOLINTEND(misc-include-cleaner)
-// NOLINTEND(readability-function-cognitive-complexity)

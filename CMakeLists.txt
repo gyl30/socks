@@ -51,11 +51,21 @@ endif()
 
 add_compile_options(
   -D_GLIBCXX_ASSERTIONS
-  -fstrict-flex-arrays=3
-  -fstack-clash-protection
   -fstack-protector-strong
   -fno-delete-null-pointer-checks
   -fno-strict-overflow)
+
+check_cxx_compiler_flag("-fstrict-flex-arrays=3" HAS_STRICT_FLEX_ARRAYS)
+if(HAS_STRICT_FLEX_ARRAYS)
+  add_compile_options(-fstrict-flex-arrays=3)
+endif()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  check_cxx_compiler_flag("-fstack-clash-protection" HAS_STACK_CLASH_PROTECTION)
+  if(HAS_STACK_CLASH_PROTECTION)
+    add_compile_options(-fstack-clash-protection)
+  endif()
+endif()
 
 check_cxx_compiler_flag("-fcf-protection=full" HAS_CF_PROTECTION)
 if(HAS_CF_PROTECTION)

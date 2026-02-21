@@ -1,4 +1,4 @@
-// NOLINTBEGIN(misc-include-cleaner)
+
 #include <atomic>
 #include <chrono>
 #include <memory>
@@ -7,12 +7,12 @@
 #include <vector>
 
 #include <gtest/gtest.h>
-#include <boost/asio/ip/tcp.hpp>
 #include <spdlog/spdlog.h>
+#include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
-#include <boost/asio/io_context.hpp>
 #include <spdlog/sinks/base_sink.h>
+#include <boost/asio/io_context.hpp>
 #include <boost/asio/executor_work_guard.hpp>
 
 #include "mux_protocol.h"
@@ -114,4 +114,3 @@ TEST(HeartbeatTest, HeartbeatSendReceive)
 }
 
 }    // namespace
-// NOLINTEND(misc-include-cleaner)

@@ -2,15 +2,15 @@
 #define SOCKS_TEST_UTIL_H
 
 #include <chrono>
-#include <vector>
 #include <thread>
+#include <vector>
+#include <cstdint>
 #include <utility>
 #include <optional>
-#include <cstdint>
 #include <system_error>
 
-#include <boost/asio.hpp>
 #include <gtest/gtest.h>
+#include <boost/asio.hpp>
 
 namespace mux::test
 {

@@ -1,8 +1,3 @@
-// NOLINTBEGIN(misc-include-cleaner)
-#include <openssl/types.h>
-#include <boost/system/error_code.hpp>
-#include <expected>
-#include <boost/asio/io_context.hpp>
 #include <span>
 #include <string>
 #include <vector>
@@ -10,6 +5,7 @@
 #include <cstdint>
 #include <cstring>
 #include <utility>
+#include <expected>
 #include <optional>
 #include <system_error>
 
@@ -20,16 +16,20 @@
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/as_tuple.hpp>
 #include <boost/asio/awaitable.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/system/error_code.hpp>
 #include <boost/asio/use_awaitable.hpp>
-#include "transcript.h"
 
 extern "C"
 {
 #include <openssl/evp.h>
 #include <openssl/rand.h>
-}    // namespace
+#include <openssl/types.h>
+}
 
 #include "log.h"
+#include "timeout_io.h"
+#include "transcript.h"
 #include "crypto_util.h"
 #include "log_context.h"
 #include "cert_fetcher.h"
@@ -38,7 +38,6 @@ extern "C"
 #include "tls_key_schedule.h"
 #include "tls_record_layer.h"
 #include "reality_fingerprint.h"
-#include "timeout_io.h"
 
 namespace reality
 {
@@ -611,4 +610,3 @@ cert_fetcher::fetch_session::read_record(std::vector<std::uint8_t>& pt_buf)
 }
 
 }    // namespace reality
-// NOLINTEND(misc-include-cleaner)

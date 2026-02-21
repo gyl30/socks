@@ -1,5 +1,4 @@
-// NOLINTBEGIN(readability-isolate-declaration)
-// NOLINTBEGIN(bugprone-unused-return-value, misc-include-cleaner)
+
 #include <atomic>
 #include <chrono>
 #include <memory>
@@ -97,5 +96,3 @@ TEST_F(connection_pool_test_fixture, TunnelReuse)
 }
 
 }    // namespace
-// NOLINTEND(bugprone-unused-return-value, misc-include-cleaner)
-// NOLINTEND(readability-isolate-declaration)

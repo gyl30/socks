@@ -1,20 +1,19 @@
-// NOLINTBEGIN(misc-include-cleaner)
-#include <atomic>
 #include <array>
-#include <charconv>
+#include <atomic>
+#include <string>
 #include <cstddef>
 #include <cstdint>
-#include <string>
-#include <string_view>
 #include <utility>
+#include <charconv>
+#include <string_view>
 
-#include <boost/beast/core.hpp>    // NOLINT(misc-include-cleaner): beast facade header is required.
-#include <boost/beast/http.hpp>    // NOLINT(misc-include-cleaner): beast facade header is required.
+#include <boost/beast/core.hpp>
+#include <boost/beast/http.hpp>
 
 #include "log.h"
-#include "monitor_server.h"
 #include "statistics.h"
 #include "stop_dispatch.h"
+#include "monitor_server.h"
 
 namespace mux
 {
@@ -359,4 +358,3 @@ void monitor_server::do_accept()
 }
 
 }    // namespace mux
-// NOLINTEND(misc-include-cleaner)

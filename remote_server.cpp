@@ -1,23 +1,9 @@
-// NOLINTBEGIN(misc-include-cleaner)
-#include <boost/asio/co_spawn.hpp>    // NOLINT(misc-include-cleaner): required for co_spawn declarations.
-#include <boost/system/error_code.hpp>
-#include <boost/asio/ip/tcp.hpp>
-#include <boost/asio/awaitable.hpp>
-#include <boost/asio/io_context.hpp>
-#include <boost/asio/ip/address.hpp>
-#include <boost/asio/ip/address_v6.hpp>
-#include <boost/asio/socket_base.hpp>
-#include <openssl/types.h>
-#include <boost/asio/ip/address_v4.hpp>
-#include <boost/system/detail/errc.hpp>
-#include <ctime>
 #include <array>
+#include <ctime>
+#include <mutex>
 #include <atomic>
 #include <chrono>
-#include <expected>
 #include <memory>
-#include <optional>
-#include <mutex>
 #include <random>
 #include <string>
 #include <thread>
@@ -26,31 +12,36 @@
 #include <cstring>
 #include <utility>
 #include <charconv>
-#include <system_error>
+#include <expected>
+#include <optional>
 #include <algorithm>
+#include <system_error>
 
-#include <boost/asio/as_tuple.hpp>
-#include <boost/asio/buffer.hpp>
-#include <boost/asio/detached.hpp>
 #include <boost/asio/error.hpp>
-#include <boost/asio/steady_timer.hpp>
-#include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/write.hpp>
-#include <boost/asio/experimental/awaitable_operators.hpp>
+#include <boost/asio/buffer.hpp>
+#include <boost/asio/ip/tcp.hpp>
 #include <boost/system/errc.hpp>
-#include "reality_core.h"
-#include "transcript.h"
-#include "reality_messages.h"
-#include "tls_key_schedule.h"
-#include "tls_record_layer.h"
-#include "replay_cache.h"
-#include "context_pool.h"
-#include "cert_fetcher.h"
+#include <boost/asio/as_tuple.hpp>
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/detached.hpp>
+#include <boost/asio/awaitable.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/ip/address.hpp>
+#include <boost/asio/socket_base.hpp>
+#include <boost/asio/steady_timer.hpp>
+#include <boost/system/error_code.hpp>
+#include <boost/asio/ip/address_v4.hpp>
+#include <boost/asio/ip/address_v6.hpp>
+#include <boost/asio/use_awaitable.hpp>
+#include <boost/system/detail/errc.hpp>
+#include <boost/asio/experimental/awaitable_operators.hpp>
 
 extern "C"
 {
 #include <openssl/evp.h>
 #include <openssl/rand.h>
+#include <openssl/types.h>
 #include <openssl/crypto.h>
 }
 
@@ -59,16 +50,24 @@ extern "C"
 #include "protocol.h"
 #include "ch_parser.h"
 #include "constants.h"
-#include "statistics.h"
 #include "mux_tunnel.h"
+#include "statistics.h"
+#include "timeout_io.h"
+#include "transcript.h"
 #include "crypto_util.h"
 #include "log_context.h"
+#include "cert_fetcher.h"
+#include "context_pool.h"
 #include "reality_auth.h"
-#include "stop_dispatch.h"
-#include "timeout_io.h"
-#include "tls_record_validation.h"
+#include "reality_core.h"
+#include "replay_cache.h"
 #include "remote_server.h"
+#include "stop_dispatch.h"
 #include "reality_engine.h"
+#include "reality_messages.h"
+#include "tls_key_schedule.h"
+#include "tls_record_layer.h"
+#include "tls_record_validation.h"
 
 namespace mux
 {
@@ -262,7 +261,7 @@ boost::asio::awaitable<initial_read_outcome> fill_tls_record_header(const std::s
         header_remaining.resize(header_read.read_size);
         buf.insert(buf.end(), header_remaining.begin(), header_remaining.end());
     }
-    co_return initial_read_outcome{true, false, {}};
+    co_return initial_read_outcome{.ok = true, .allow_fallback = false, .ec = {}};
 }
 
 boost::asio::awaitable<initial_read_outcome> fill_tls_record_body(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
@@ -287,7 +286,7 @@ boost::asio::awaitable<initial_read_outcome> fill_tls_record_body(const std::sha
         extra.resize(extra_read.read_size);
         buf.insert(buf.end(), extra.begin(), extra.end());
     }
-    co_return initial_read_outcome{true, false, {}};
+    co_return initial_read_outcome{.ok = true, .allow_fallback = false, .ec = {}};
 }
 
 [[nodiscard]] bool should_skip_fallback_after_read_failure(const boost::system::error_code& read_ec, const std::atomic<bool>& stop_flag)
@@ -1668,7 +1667,14 @@ boost::asio::awaitable<remote_server::server_handshake_res> remote_server::delay
     if (stop_.load(std::memory_order_acquire))
     {
         close_socket_quietly(s);
-        co_return server_handshake_res{false, boost::asio::error::operation_aborted, {}, {}, {}, nullptr, nullptr, {}};
+        co_return server_handshake_res{.ok = false,
+                                       .ec = boost::asio::error::operation_aborted,
+                                       .hs_keys = {},
+                                       .s_hs_keys = {},
+                                       .c_hs_keys = {},
+                                       .cipher = nullptr,
+                                       .negotiated_md = nullptr,
+                                       .handshake_hash = {}};
     }
 
     static thread_local std::mt19937 delay_gen(std::random_device{}());
@@ -2291,4 +2297,3 @@ boost::asio::awaitable<void> remote_server::handle_fallback(const std::shared_pt
 }
 
 }    // namespace mux
-// NOLINTEND(misc-include-cleaner)

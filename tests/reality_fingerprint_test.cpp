@@ -1,4 +1,4 @@
-// NOLINTBEGIN(misc-include-cleaner)
+
 #include <memory>
 #include <cstdint>
 
@@ -96,4 +96,3 @@ TEST(RealityFingerprintTest, CompressionMethods)
     ASSERT_EQ(spec.compression_methods.size(), 1);
     EXPECT_EQ(spec.compression_methods[0], 0x00);
 }
-// NOLINTEND(misc-include-cleaner)

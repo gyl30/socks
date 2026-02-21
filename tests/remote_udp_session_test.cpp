@@ -1,14 +1,14 @@
-// NOLINTBEGIN(readability-named-parameter)
-// NOLINTBEGIN(bugprone-unused-return-value, misc-include-cleaner)
+
+#include <chrono>
+#include <future>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 #include <cstdint>
+#include <netdb.h>
 #include <utility>
-#include <thread>
-#include <future>
 #include <system_error>
-#include <chrono>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -20,17 +20,17 @@
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/use_awaitable.hpp>
-#include <netdb.h>
 
 #define private public
 #include "remote_udp_session.h"
+
 #undef private
 
 #include "protocol.h"
 #include "mux_codec.h"
+#include "test_util.h"
 #include "mux_tunnel.h"
 #include "statistics.h"
-#include "test_util.h"
 #include "mock_mux_connection.h"
 
 namespace
@@ -47,12 +47,12 @@ void delay_next_getaddrinfo(const int delay_ms)
     g_delay_getaddrinfo_once.store(true, std::memory_order_release);
 }
 
-extern "C" int __real_getaddrinfo(const char* node,    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_getaddrinfo(const char* node,    
                                   const char* service,
                                   const struct addrinfo* hints,
                                   struct addrinfo** res);
 
-extern "C" int __wrap_getaddrinfo(const char* node,    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_getaddrinfo(const char* node,    
                                   const char* service,
                                   const struct addrinfo* hints,
                                   struct addrinfo** res)
@@ -65,7 +65,7 @@ extern "C" int __wrap_getaddrinfo(const char* node,    // NOLINT(bugprone-reserv
             std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
         }
     }
-    return __real_getaddrinfo(node, service, hints, res);    // NOLINT(bugprone-reserved-identifier)
+    return __real_getaddrinfo(node, service, hints, res);    
 }
 
 class noop_stream : public mux::mux_stream_interface
@@ -791,5 +791,3 @@ TEST(RemoteUdpSessionTest, IdleWatchdogStopsWhenIdleTimedOut)
 }
 
 }    // namespace
-// NOLINTEND(bugprone-unused-return-value, misc-include-cleaner)
-// NOLINTEND(readability-named-parameter)

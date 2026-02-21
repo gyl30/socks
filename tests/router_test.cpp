@@ -1,4 +1,4 @@
-// NOLINTBEGIN(misc-include-cleaner)
+
 #include <memory>
 #include <string>
 
@@ -122,4 +122,3 @@ TEST_F(router_test_fixture, DomainPriority)
 
     EXPECT_EQ(run_decision("unknown.com"), mux::route_type::kDirect);
 }
-// NOLINTEND(misc-include-cleaner)

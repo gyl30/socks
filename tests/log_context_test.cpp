@@ -1,4 +1,4 @@
-// NOLINTBEGIN(bugprone-implicit-widening-of-multiplication-result)
+
 #include <chrono>
 #include <thread>
 
@@ -60,4 +60,3 @@ TEST(LogContextTest, FormatBytes)
 TEST(LogContextTest, FormatLatency) { EXPECT_EQ(format_latency_ms(123), "123ms"); }
 
 }    // namespace mux
-// NOLINTEND(bugprone-implicit-widening-of-multiplication-result)

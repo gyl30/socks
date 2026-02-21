@@ -1,13 +1,14 @@
 #ifndef IP_MATCHER_H
 #define IP_MATCHER_H
 
-#include <boost/asio/ip/address.hpp>
-#include <boost/asio/ip/address_v4.hpp>
-#include <boost/asio/ip/address_v6.hpp>
 #include <memory>
 #include <string>
 #include <vector>
 #include <utility>
+
+#include <boost/asio/ip/address.hpp>
+#include <boost/asio/ip/address_v4.hpp>
+#include <boost/asio/ip/address_v6.hpp>
 
 namespace mux
 {

@@ -1,5 +1,4 @@
-// NOLINTBEGIN(readability-isolate-declaration)
-// NOLINTBEGIN(bugprone-unused-return-value, misc-include-cleaner)
+
 #include <chrono>
 #include <memory>
 #include <string>
@@ -102,5 +101,3 @@ TEST(LocalClientMockTest, HandshakeFailurePaths)
         run_mock_server_and_test(short_sid_sh);
     }
 }
-// NOLINTEND(bugprone-unused-return-value, misc-include-cleaner)
-// NOLINTEND(readability-isolate-declaration)

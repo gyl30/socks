@@ -1,5 +1,4 @@
-// NOLINTBEGIN(bugprone-use-after-move, performance-unnecessary-value-param)
-// NOLINTBEGIN(bugprone-unused-return-value, misc-include-cleaner)
+
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -59,9 +58,9 @@ void fail_next_tcp_nodelay_setsockopt(const int err)
     g_fail_tcp_nodelay_setsockopt_once.store(true, std::memory_order_release);
 }
 
-extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);    
 
-extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)    
 {
 #ifdef SO_MARK
     if (level == SOL_SOCKET && optname == SO_MARK && g_fail_so_mark_setsockopt_once.exchange(false, std::memory_order_acq_rel))
@@ -75,7 +74,7 @@ extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void*
         errno = g_fail_tcp_nodelay_setsockopt_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_setsockopt(sockfd, level, optname, optval, optlen);    // NOLINT(bugprone-reserved-identifier)
+    return __real_setsockopt(sockfd, level, optname, optval, optlen);    
 }
 
 std::shared_ptr<mux::mux_tunnel_impl<boost::asio::ip::tcp::socket>> make_test_tunnel(boost::asio::io_context& io_context,
@@ -772,5 +771,3 @@ TEST_F(upstream_test_fixture, MovedFromTunnelReturnsNullAndRejectsRegister)
     EXPECT_FALSE(tunnel.try_register_stream(1, nullptr));
     EXPECT_EQ(tunnel.create_stream("moved"), nullptr);
 }
-// NOLINTEND(bugprone-unused-return-value, misc-include-cleaner)
-// NOLINTEND(bugprone-use-after-move, performance-unnecessary-value-param)

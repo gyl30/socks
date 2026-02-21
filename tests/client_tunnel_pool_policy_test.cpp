@@ -1,5 +1,4 @@
-// NOLINTBEGIN(bugprone-implicit-widening-of-multiplication-result)
-// NOLINTBEGIN(misc-include-cleaner)
+
 #include <chrono>
 #include <memory>
 #include <string>
@@ -303,5 +302,3 @@ TEST_F(client_tunnel_pool_policy_test_fixture, StrictVerifyEnabledWithValidCerti
 }
 
 }    // namespace
-// NOLINTEND(misc-include-cleaner)
-// NOLINTEND(bugprone-implicit-widening-of-multiplication-result)

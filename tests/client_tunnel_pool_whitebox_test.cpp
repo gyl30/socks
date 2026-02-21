@@ -1,26 +1,24 @@
-// NOLINTBEGIN(modernize-return-braced-init-list, readability-function-cognitive-complexity)
-// NOLINTBEGIN(bugprone-unused-return-value, misc-include-cleaner)
+
 #include <array>
 #include <atomic>
 #include <cerrno>
 #include <memory>
-#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
 #include <cstdint>
+#include <optional>
+#include <sys/socket.h>
 #include <system_error>
 
 #include <gtest/gtest.h>
-#include <boost/asio/as_tuple.hpp>
-#include <boost/asio/awaitable.hpp>
-#include <boost/asio/co_spawn.hpp>
-#include <boost/asio/detached.hpp>
 #include <boost/asio/write.hpp>
 #include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/as_tuple.hpp>
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/detached.hpp>
+#include <boost/asio/awaitable.hpp>
 #include <boost/asio/use_awaitable.hpp>
-
-#include <sys/socket.h>
 
 extern "C"
 {
@@ -29,15 +27,17 @@ extern "C"
 }
 
 #include "config.h"
-#include "context_pool.h"
+#include "statistics.h"
+#include "transcript.h"
 #include "crypto_util.h"
+#include "context_pool.h"
 #include "reality_messages.h"
 #include "tls_record_layer.h"
-#include "transcript.h"
 #include "reality_fingerprint.h"
-#include "statistics.h"
+
 #define private public
 #include "client_tunnel_pool.h"
+
 #undef private
 #include "test_util.h"
 
@@ -76,51 +76,51 @@ void fail_next_getsockname(const int err = ENOTSOCK)
     g_fail_getsockname_once.store(true, std::memory_order_release);
 }
 
-extern "C" int __real_RAND_bytes(unsigned char* buf, int num);    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_RAND_bytes(unsigned char* buf, int num);    
 extern "C" int __real_EVP_PKEY_CTX_add1_hkdf_info(EVP_PKEY_CTX* ctx,
                                                   const unsigned char* info,
-                                                  int infolen);                                  // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_EVP_CIPHER_CTX_ctrl(EVP_CIPHER_CTX* ctx, int type, int arg, void* ptr);    // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_EVP_EncryptInit_ex(                                                        // NOLINT(bugprone-reserved-identifier)
+                                                  int infolen);                                  
+extern "C" int __real_EVP_CIPHER_CTX_ctrl(EVP_CIPHER_CTX* ctx, int type, int arg, void* ptr);    
+extern "C" int __real_EVP_EncryptInit_ex(                                                        
     EVP_CIPHER_CTX* ctx,
     const EVP_CIPHER* type,
     ENGINE* impl,
     const unsigned char* key,
     const unsigned char* iv);
-extern "C" int __real_EVP_PKEY_derive(EVP_PKEY_CTX* ctx, unsigned char* key, size_t* keylen);    // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_socket(int domain, int type, int protocol);                                // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_getsockname(int sockfd, sockaddr* addr, socklen_t* addrlen);               // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_EVP_PKEY_derive(EVP_PKEY_CTX* ctx, unsigned char* key, size_t* keylen);    
+extern "C" int __real_socket(int domain, int type, int protocol);                                
+extern "C" int __real_getsockname(int sockfd, sockaddr* addr, socklen_t* addrlen);               
 
-extern "C" int __wrap_RAND_bytes(unsigned char* buf, int num)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_RAND_bytes(unsigned char* buf, int num)    
 {
     if (g_fail_rand_bytes_once.exchange(false, std::memory_order_acq_rel))
     {
         return 0;
     }
-    return __real_RAND_bytes(buf, num);    // NOLINT(bugprone-reserved-identifier)
+    return __real_RAND_bytes(buf, num);    
 }
 
 extern "C" int __wrap_EVP_PKEY_CTX_add1_hkdf_info(EVP_PKEY_CTX* ctx,
                                                   const unsigned char* info,
-                                                  int infolen)    // NOLINT(bugprone-reserved-identifier)
+                                                  int infolen)    
 {
     if (g_fail_hkdf_add_info_once.exchange(false, std::memory_order_acq_rel))
     {
         return 0;
     }
-    return __real_EVP_PKEY_CTX_add1_hkdf_info(ctx, info, infolen);    // NOLINT(bugprone-reserved-identifier)
+    return __real_EVP_PKEY_CTX_add1_hkdf_info(ctx, info, infolen);    
 }
 
-extern "C" int __wrap_EVP_CIPHER_CTX_ctrl(EVP_CIPHER_CTX* ctx, int type, int arg, void* ptr)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_EVP_CIPHER_CTX_ctrl(EVP_CIPHER_CTX* ctx, int type, int arg, void* ptr)    
 {
     if (type == EVP_CTRL_GCM_GET_TAG && g_fail_cipher_ctx_ctrl_once.exchange(false, std::memory_order_acq_rel))
     {
         return 0;
     }
-    return __real_EVP_CIPHER_CTX_ctrl(ctx, type, arg, ptr);    // NOLINT(bugprone-reserved-identifier)
+    return __real_EVP_CIPHER_CTX_ctrl(ctx, type, arg, ptr);    
 }
 
-extern "C" int __wrap_EVP_EncryptInit_ex(    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_EVP_EncryptInit_ex(    
     EVP_CIPHER_CTX* ctx,
     const EVP_CIPHER* type,
     ENGINE* impl,
@@ -131,36 +131,36 @@ extern "C" int __wrap_EVP_EncryptInit_ex(    // NOLINT(bugprone-reserved-identif
     {
         return 0;
     }
-    return __real_EVP_EncryptInit_ex(ctx, type, impl, key, iv);    // NOLINT(bugprone-reserved-identifier)
+    return __real_EVP_EncryptInit_ex(ctx, type, impl, key, iv);    
 }
 
-extern "C" int __wrap_EVP_PKEY_derive(EVP_PKEY_CTX* ctx, unsigned char* key, size_t* keylen)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_EVP_PKEY_derive(EVP_PKEY_CTX* ctx, unsigned char* key, size_t* keylen)    
 {
     if (g_fail_pkey_derive_once.exchange(false, std::memory_order_acq_rel))
     {
         return 0;
     }
-    return __real_EVP_PKEY_derive(ctx, key, keylen);    // NOLINT(bugprone-reserved-identifier)
+    return __real_EVP_PKEY_derive(ctx, key, keylen);    
 }
 
-extern "C" int __wrap_socket(int domain, int type, int protocol)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_socket(int domain, int type, int protocol)    
 {
     if (g_fail_socket_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_socket_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_socket(domain, type, protocol);    // NOLINT(bugprone-reserved-identifier)
+    return __real_socket(domain, type, protocol);    
 }
 
-extern "C" int __wrap_getsockname(int sockfd, sockaddr* addr, socklen_t* addrlen)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_getsockname(int sockfd, sockaddr* addr, socklen_t* addrlen)    
 {
     if (g_fail_getsockname_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_getsockname_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_getsockname(sockfd, addr, addrlen);    // NOLINT(bugprone-reserved-identifier)
+    return __real_getsockname(sockfd, addr, addrlen);    
 }
 
 mux::config make_base_cfg()
@@ -1583,5 +1583,3 @@ TEST(ClientTunnelPoolWhiteboxTest, TcpConnectSuccessCoversLocalEndpointFailureLo
     io_context.run();
     EXPECT_TRUE(connect_res.has_value());
 }
-// NOLINTEND(bugprone-unused-return-value, misc-include-cleaner)
-// NOLINTEND(modernize-return-braced-init-list, readability-function-cognitive-complexity)

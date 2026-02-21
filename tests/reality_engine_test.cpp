@@ -1,4 +1,4 @@
-// NOLINTBEGIN(misc-include-cleaner)
+
 #include <span>
 #include <vector>
 #include <cstddef>
@@ -230,4 +230,3 @@ TEST_F(reality_engine_test_fixture, ProcessAvailableRecordsStopsWhenCallbackSets
 }
 
 }    // namespace mux
-// NOLINTEND(misc-include-cleaner)

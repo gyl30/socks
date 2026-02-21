@@ -1,13 +1,14 @@
 #ifndef REALITY_MESSAGES_H
 #define REALITY_MESSAGES_H
 
-#include <openssl/types.h>
 #include <string>
 #include <vector>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <optional>
+
+#include <openssl/types.h>
 
 extern "C"
 {

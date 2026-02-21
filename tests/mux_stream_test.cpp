@@ -1,4 +1,4 @@
-// NOLINTBEGIN(misc-include-cleaner)
+
 #include <memory>
 #include <vector>
 #include <cstdint>
@@ -232,4 +232,3 @@ TEST_F(mux_stream_test_fixture, OnCloseClosedChannelTriggersUnavailableBranch)
     EXPECT_TRUE(stream->is_closed_.load(std::memory_order_acquire));
     EXPECT_TRUE(stream->fin_received_.load(std::memory_order_acquire));
 }
-// NOLINTEND(misc-include-cleaner)

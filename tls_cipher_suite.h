@@ -1,9 +1,10 @@
 #ifndef TLS_CIPHER_SUITE_H
 #define TLS_CIPHER_SUITE_H
 
-#include <openssl/types.h>
-#include <optional>
 #include <cstdint>
+#include <optional>
+
+#include <openssl/types.h>
 
 extern "C"
 {

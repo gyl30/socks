@@ -1,47 +1,47 @@
-// NOLINTBEGIN(performance-unnecessary-value-param)
-// NOLINTBEGIN(bugprone-unused-return-value, misc-include-cleaner)
-#include <thread>
+
+#include <array>
+#include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <future>
 #include <memory>
+#include <thread>
 #include <vector>
-#include <array>
 #include <cstdint>
-#include <system_error>
-#include <atomic>
-#include <cerrno>
 #include <cstring>
+#include <unistd.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <system_error>
 
-#include <gtest/gtest.h>
 #include <gmock/gmock.h>
+#include <gtest/gtest.h>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/ip/udp.hpp>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/io_context.hpp>
-#include <boost/asio/ip/tcp.hpp>
-#include <boost/asio/ip/udp.hpp>
 #include <boost/asio/use_awaitable.hpp>
 
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <unistd.h>
-
 #include "protocol.h"
-#include "mux_stream.h"
 #include "mux_codec.h"
-#include "mux_protocol.h"
 #include "test_util.h"
-#define private public
-#include "mux_connection.h"
-#include "mux_tunnel.h"
-#include "udp_socks_session.h"
-#undef private
-#include "mock_mux_connection.h"
+#include "mux_stream.h"
+#include "mux_protocol.h"
 
+#define private public
+#include "mux_tunnel.h"
+#include "mux_connection.h"
+#include "udp_socks_session.h"
+
+#undef private
 extern "C"
 {
 #include <openssl/evp.h>
 }
+
+#include "mock_mux_connection.h"
 
 namespace
 {
@@ -88,47 +88,47 @@ void fail_getsockname_on_call(const int nth_call, const int err)
 
 void mock_next_getsockname_ipv6_any() { g_mock_getsockname_ipv6_any_once.store(true, std::memory_order_release); }
 
-extern "C" int __real_close(int fd);                                                                           // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_bind(int sockfd, const sockaddr* addr, socklen_t addrlen);                               // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);    // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_getsockname(int sockfd, sockaddr* addr, socklen_t* addrlen);                             // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_close(int fd);                                                                           
+extern "C" int __real_bind(int sockfd, const sockaddr* addr, socklen_t addrlen);                               
+extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);    
+extern "C" int __real_getsockname(int sockfd, sockaddr* addr, socklen_t* addrlen);                             
 
-extern "C" int __wrap_close(int fd)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_close(int fd)    
 {
     if (g_fail_close_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_close_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_close(fd);    // NOLINT(bugprone-reserved-identifier)
+    return __real_close(fd);    
 }
 
-extern "C" int __wrap_bind(int sockfd, const sockaddr* addr, socklen_t addrlen)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_bind(int sockfd, const sockaddr* addr, socklen_t addrlen)    
 {
     if (g_fail_bind_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_bind_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_bind(sockfd, addr, addrlen);    // NOLINT(bugprone-reserved-identifier)
+    return __real_bind(sockfd, addr, addrlen);    
 }
 
-extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)    
 {
     if (g_fail_setsockopt_once.exchange(false, std::memory_order_acq_rel) && level == g_fail_setsockopt_level.load(std::memory_order_acquire))
     {
         const int configured_optname = g_fail_setsockopt_optname.load(std::memory_order_acquire);
         if (configured_optname >= 0 && optname != configured_optname)
         {
-            return __real_setsockopt(sockfd, level, optname, optval, optlen);    // NOLINT(bugprone-reserved-identifier)
+            return __real_setsockopt(sockfd, level, optname, optval, optlen);    
         }
         errno = g_fail_setsockopt_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_setsockopt(sockfd, level, optname, optval, optlen);    // NOLINT(bugprone-reserved-identifier)
+    return __real_setsockopt(sockfd, level, optname, optval, optlen);    
 }
 
-extern "C" int __wrap_getsockname(int sockfd, sockaddr* addr, socklen_t* addrlen)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_getsockname(int sockfd, sockaddr* addr, socklen_t* addrlen)    
 {
     if (g_mock_getsockname_ipv6_any_once.exchange(false, std::memory_order_acq_rel))
     {
@@ -156,7 +156,7 @@ extern "C" int __wrap_getsockname(int sockfd, sockaddr* addr, socklen_t* addrlen
             return -1;
         }
     }
-    return __real_getsockname(sockfd, addr, addrlen);    // NOLINT(bugprone-reserved-identifier)
+    return __real_getsockname(sockfd, addr, addrlen);    
 }
 
 struct tcp_socket_pair
@@ -1115,5 +1115,3 @@ TEST(UdpSocksSessionTest, OnCloseRunsWhenIoQueueBlocked)
         io_thread.join();
     }
 }
-// NOLINTEND(bugprone-unused-return-value, misc-include-cleaner)
-// NOLINTEND(performance-unnecessary-value-param)

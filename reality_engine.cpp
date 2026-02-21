@@ -1,17 +1,18 @@
-// NOLINTBEGIN(misc-include-cleaner)
-#include "reality_engine.h"
-#include <vector>
-#include <cstdint>
-#include <openssl/types.h>
-#include <utility>
-#include <memory>
-#include <boost/asio/streambuf.hpp>
-#include <expected>
 #include <span>
-#include <boost/system/error_code.hpp>
-#include "reality_core.h"
+#include <memory>
+#include <vector>
 #include <cstddef>
+#include <cstdint>
+#include <utility>
+#include <expected>
+
+#include <openssl/types.h>
 #include <boost/asio/error.hpp>
+#include <boost/asio/streambuf.hpp>
+#include <boost/system/error_code.hpp>
+
+#include "reality_core.h"
+#include "reality_engine.h"
 #include "tls_record_layer.h"
 
 namespace mux
@@ -116,4 +117,3 @@ std::expected<bool, boost::system::error_code> reality_engine::try_decrypt_next_
 }
 
 }    // namespace mux
-// NOLINTEND(misc-include-cleaner)

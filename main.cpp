@@ -1,15 +1,15 @@
-// NOLINTBEGIN(misc-include-cleaner)
-#include <boost/system/error_code.hpp>
 #include <memory>
 #include <string>
 #include <thread>
 #include <vector>
 #include <csignal>
 #include <cstdint>
-#include <exception>
+#include <cstring>
 #include <iostream>
 
+#include <boost/system/errc.hpp>
 #include <boost/asio/signal_set.hpp>
+#include <boost/system/detail/errc.hpp>
 
 #include "log.h"
 #include "config.h"
@@ -18,8 +18,10 @@
 #include "context_pool.h"
 #include "socks_client.h"
 #include "remote_server.h"
+
 #if SOCKS_HAS_TPROXY
 #include "tproxy_client.h"
+
 #endif
 #include "monitor_server.h"
 
@@ -180,7 +182,7 @@ bool start_runtime_services(mux::io_context_pool& pool, const mux::config& cfg, 
 
 bool register_signal(boost::asio::signal_set& signals, const int signal, const char* signal_name)
 {
-    boost::system::error_code ec;
+    auto ec = boost::system::errc::make_error_code(boost::system::errc::success);
     ec = signals.add(signal, ec);
     if (!ec)
     {
@@ -242,7 +244,7 @@ bool register_shutdown_signals(boost::asio::signal_set& signals, mux::io_context
     }
 
     signals.async_wait(
-        [&pool, services](const boost::system::error_code& error, int)
+        [&pool, services](const auto& error, int)
         {
             if (error)
             {
@@ -253,7 +255,7 @@ bool register_shutdown_signals(boost::asio::signal_set& signals, mux::io_context
     return true;
 }
 
-int run_with_config(const char* prog, const std::string& config_path)
+int run_with_config(const char* prog, const char* config_path)
 {
     mux::config cfg;
     if (parse_config_from_file(config_path, cfg) != 0)
@@ -298,7 +300,7 @@ int run_with_config(const char* prog, const std::string& config_path)
 
 }    // namespace
 
-int main(int argc, char** argv)    // NOLINT(bugprone-exception-escape)
+int main(int argc, char** argv)
 {
     if (argc < 2)
     {
@@ -306,20 +308,20 @@ int main(int argc, char** argv)    // NOLINT(bugprone-exception-escape)
         return 1;
     }
 
-    const std::string mode = argv[1];
-    if (mode == "x25519")
+    const char* mode = argv[1];
+    if (std::strcmp(mode, "x25519") == 0)
     {
         dump_x25519();
         return 0;
     }
 
-    if (mode == "config")
+    if (std::strcmp(mode, "config") == 0)
     {
         std::cout << mux::dump_default_config() << '\n';
         return 0;
     }
 
-    if (mode != "-c")
+    if (std::strcmp(mode, "-c") != 0)
     {
         print_usage(argv[0]);
         return -1;
@@ -332,4 +334,3 @@ int main(int argc, char** argv)    // NOLINT(bugprone-exception-escape)
     }
     return run_with_config(argv[0], argv[2]);
 }
-// NOLINTEND(misc-include-cleaner)

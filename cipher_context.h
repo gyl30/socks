@@ -1,10 +1,11 @@
 #ifndef CIPHER_CONTEXT_H
 #define CIPHER_CONTEXT_H
 
-#include <openssl/evp.h>
-#include <openssl/types.h>
 #include <cstddef>
 #include <cstdint>
+
+#include <openssl/evp.h>
+#include <openssl/types.h>
 
 #include "reality_core.h"
 

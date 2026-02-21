@@ -1,5 +1,4 @@
-// NOLINTBEGIN(modernize-use-nodiscard)
-// NOLINTBEGIN(misc-include-cleaner)
+
 #include <array>
 #include <atomic>
 #include <vector>
@@ -18,7 +17,7 @@ extern "C"
 
 using reality::tls_record_layer;
 
-extern "C" int __real_RAND_bytes(unsigned char* buf, int num);    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_RAND_bytes(unsigned char* buf, int num);    
 
 namespace
 {
@@ -31,7 +30,7 @@ void reset_rand_bytes_hook() { g_force_rand_bytes_fail_once.store(false, std::me
 
 }    // namespace
 
-extern "C" int __wrap_RAND_bytes(unsigned char* buf, int num)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_RAND_bytes(unsigned char* buf, int num)    
 {
     if (g_force_rand_bytes_fail_once.exchange(false, std::memory_order_acq_rel))
     {
@@ -39,7 +38,7 @@ extern "C" int __wrap_RAND_bytes(unsigned char* buf, int num)    // NOLINT(bugpr
         (void)num;
         return 0;
     }
-    return __real_RAND_bytes(buf, num);    // NOLINT(bugprone-reserved-identifier)
+    return __real_RAND_bytes(buf, num);    
 }
 
 class tls_record_layer_test_fixture : public ::testing::Test
@@ -175,5 +174,3 @@ TEST_F(tls_record_layer_test_fixture, ShortMessage)
     EXPECT_FALSE(dec.has_value());
     EXPECT_EQ(dec.error(), std::make_error_code(std::errc::message_size));
 }
-// NOLINTEND(misc-include-cleaner)
-// NOLINTEND(modernize-use-nodiscard)

@@ -1,44 +1,43 @@
-// NOLINTBEGIN(misc-include-cleaner)
-#include <boost/asio/co_spawn.hpp>    // NOLINT(misc-include-cleaner): required for co_spawn declarations.
-#include <boost/asio/ip/udp.hpp>
-#include <boost/system/error_code.hpp>
-#include <boost/asio/ip/address_v6.hpp>
-#include <boost/asio/io_context.hpp>
 #include <atomic>
-#include <boost/asio/awaitable.hpp>
-#include <boost/asio/ip/tcp.hpp>
-#include <boost/asio/ip/address.hpp>
 #include <chrono>
 #include <memory>
-#include <optional>
 #include <string>
-#include <utility>
 #include <vector>
 #include <cstddef>
 #include <cstdint>
+#include <utility>
+#include <optional>
 
 #include <boost/asio/error.hpp>
 #include <boost/asio/buffer.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/ip/udp.hpp>
 #include <boost/asio/as_tuple.hpp>
+#include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
 #include <boost/asio/dispatch.hpp>
+#include <boost/asio/awaitable.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/ip/address.hpp>
 #include <boost/asio/ip/v6_only.hpp>
+#include <boost/system/error_code.hpp>
+#include <boost/asio/ip/address_v6.hpp>
 #include <boost/asio/use_awaitable.hpp>
 
-#include "client_tunnel_pool.h"
-#include "config.h"
 #include "log.h"
-#include "log_context.h"
-#include "mux_codec.h"
-#include "mux_tunnel.h"
-#include "net_utils.h"
-#include "mux_stream.h"
-#include "mux_protocol.h"
+#include "config.h"
 #include "router.h"
 #include "protocol.h"
+#include "mux_codec.h"
+#include "net_utils.h"
+#include "mux_stream.h"
+#include "mux_tunnel.h"
 #include "statistics.h"
+#include "log_context.h"
+#include "mux_protocol.h"
 #include "stop_dispatch.h"
 #include "tproxy_udp_sender.h"
+#include "client_tunnel_pool.h"
 #include "tproxy_udp_session.h"
 
 namespace mux
@@ -639,4 +638,3 @@ bool tproxy_udp_session::decode_proxy_packet(const std::vector<std::uint8_t>& da
 }
 
 }    // namespace mux
-// NOLINTEND(misc-include-cleaner)

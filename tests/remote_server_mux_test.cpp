@@ -1,5 +1,4 @@
-// NOLINTBEGIN(google-build-using-namespace, modernize-use-nodiscard, readability-isolate-declaration)
-// NOLINTBEGIN(bugprone-unused-return-value, misc-include-cleaner)
+
 #include <chrono>
 #include <memory>
 #include <string>
@@ -317,5 +316,3 @@ TEST_F(remote_server_mux_test_fixture, TargetResolveFail)
     server->stop();
     std::this_thread::sleep_for(std::chrono::milliseconds(2000));
 }
-// NOLINTEND(bugprone-unused-return-value, misc-include-cleaner)
-// NOLINTEND(google-build-using-namespace, modernize-use-nodiscard, readability-isolate-declaration)
