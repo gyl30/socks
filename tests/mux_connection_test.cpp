@@ -66,15 +66,21 @@ class simple_mock_stream : public mux_stream_interface
 {
    public:
     [[nodiscard]] const std::vector<uint8_t>& received_data() const { return received_data_; }
+    [[nodiscard]] std::size_t data_events() const { return data_events_; }
     [[nodiscard]] bool closed() const { return closed_; }
     [[nodiscard]] bool reset() const { return reset_; }
 
-    void on_data(std::vector<uint8_t> data) override { received_data_.insert(received_data_.end(), data.begin(), data.end()); }
+    void on_data(std::vector<uint8_t> data) override
+    {
+        data_events_++;
+        received_data_.insert(received_data_.end(), data.begin(), data.end());
+    }
     void on_close() override { closed_ = true; }
     void on_reset() override { reset_ = true; }
 
    private:
     std::vector<uint8_t> received_data_;
+    std::size_t data_events_ = 0;
     bool closed_ = false;
     bool reset_ = false;
 };
@@ -1189,10 +1195,17 @@ TEST_F(mux_connection_integration_test_fixture, HandleStreamAndUnknownStreamBran
         .command = kCmdDat,
     };
     conn->handle_stream_frame(dat_header, dat_payload);
+    const frame_header empty_dat_header{
+        .stream_id = 100,
+        .length = 0,
+        .command = kCmdDat,
+    };
+    conn->handle_stream_frame(empty_dat_header, {});
 
     std::vector<std::uint8_t> expected = ack_payload;
     expected.insert(expected.end(), dat_payload.begin(), dat_payload.end());
     EXPECT_EQ(stream->received_data(), expected);
+    EXPECT_EQ(stream->data_events(), 2U);
 
     conn->handle_unknown_stream(1000, kCmdRst);
     conn->handle_unknown_stream(1001, kCmdDat);

@@ -472,7 +472,17 @@ void mux_connection::handle_stream_frame(const mux::frame_header& header, std::v
         remove_stream(header.stream_id);
         return;
     }
-    if (header.command == mux::kCmdDat || header.command == mux::kCmdAck)
+    if (header.command == mux::kCmdDat)
+    {
+        if (payload.empty())
+        {
+            LOG_WARN("mux {} drop empty dat frame stream {}", cid_, header.stream_id);
+            return;
+        }
+        stream->on_data(std::move(payload));
+        return;
+    }
+    if (header.command == mux::kCmdAck)
     {
         stream->on_data(std::move(payload));
     }
