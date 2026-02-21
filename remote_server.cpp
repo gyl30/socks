@@ -782,7 +782,7 @@ void close_fallback_socket(const std::shared_ptr<boost::asio::ip::tcp::socket>& 
 {
     boost::system::error_code close_ec;
     close_ec = socket->shutdown(boost::asio::ip::tcp::socket::shutdown_both, close_ec);
-    if (close_ec && close_ec != boost::asio::error::not_connected)
+    if (close_ec && close_ec != boost::asio::error::not_connected && close_ec != boost::asio::error::bad_descriptor)
     {
         LOG_CTX_WARN(ctx, "{} shutdown failed {}", log_event::kFallback, close_ec.message());
     }
@@ -809,24 +809,55 @@ void close_socket_quietly(const std::shared_ptr<boost::asio::ip::tcp::socket>& s
 }
 
 boost::asio::awaitable<void> proxy_half(const std::shared_ptr<boost::asio::ip::tcp::socket>& from,
-                                        const std::shared_ptr<boost::asio::ip::tcp::socket>& to)
+                                        const std::shared_ptr<boost::asio::ip::tcp::socket>& to,
+                                        const connection_context& ctx,
+                                        const std::uint32_t read_timeout_sec,
+                                        const std::uint32_t write_timeout_sec)
 {
     std::vector<std::uint8_t> data(constants::net::kBufferSize);
     for (;;)
     {
-        auto [read_ec, n] = co_await from->async_read_some(boost::asio::buffer(data), boost::asio::as_tuple(boost::asio::use_awaitable));
-        if (read_ec)
+        const auto read_res =
+            co_await timeout_io::async_read_with_timeout(from, boost::asio::buffer(data), read_timeout_sec, false, "fallback proxy");
+        if (!read_res.ok)
+        {
+            if (read_res.timed_out)
+            {
+                LOG_CTX_WARN(ctx, "{} proxy read timeout", log_event::kFallback);
+            }
+            else if (read_res.ec != boost::asio::error::eof && read_res.ec != boost::asio::error::operation_aborted &&
+                     read_res.ec != boost::asio::error::bad_descriptor)
+            {
+                LOG_CTX_WARN(ctx, "{} proxy read failed {}", log_event::kFallback, read_res.ec.message());
+            }
+            break;
+        }
+        if (read_res.read_size == 0)
         {
             break;
         }
-        auto [write_ec, wn] = co_await boost::asio::async_write(*to, boost::asio::buffer(data, n), boost::asio::as_tuple(boost::asio::use_awaitable));
-        if (write_ec)
+        const auto write_res =
+            co_await timeout_io::async_write_with_timeout(to, boost::asio::buffer(data, read_res.read_size), write_timeout_sec, "fallback proxy");
+        if (!write_res.ok)
         {
+            if (write_res.timed_out)
+            {
+                LOG_CTX_WARN(ctx, "{} proxy write timeout", log_event::kFallback);
+            }
+            else if (write_res.ec != boost::asio::error::operation_aborted && write_res.ec != boost::asio::error::bad_descriptor &&
+                     write_res.ec != boost::asio::error::not_connected)
+            {
+                LOG_CTX_WARN(ctx, "{} proxy write failed {}", log_event::kFallback, write_res.ec.message());
+            }
             break;
         }
     }
     boost::system::error_code ec;
     ec = to->shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
+    if (ec && ec != boost::asio::error::not_connected && ec != boost::asio::error::bad_descriptor)
+    {
+        LOG_CTX_WARN(ctx, "{} shutdown send failed {}", log_event::kFallback, ec.message());
+    }
 }
 
 bool validate_auth_inputs(const client_hello_info& info, const bool auth_config_valid, const connection_context& ctx)
@@ -1728,14 +1759,15 @@ boost::asio::awaitable<remote_server::server_handshake_res> remote_server::negot
     reality::transcript trans;
     if (!init_handshake_transcript(initial_buf, trans, ctx))
     {
-        co_return server_handshake_res{false, {}, {}, {}, {}, nullptr, nullptr, {}};
+        co_return server_handshake_res{
+            false, boost::system::errc::make_error_code(boost::system::errc::protocol_error), {}, {}, {}, nullptr, nullptr, {}};
     }
 
     auto sh_res = co_await perform_handshake_response(s, info, trans, ctx);
     if (!sh_res.ok)
     {
         LOG_CTX_ERROR(ctx, "{} response error {}", log_event::kHandshake, sh_res.ec.message());
-        co_return server_handshake_res{false, {}, {}, {}, {}, nullptr, nullptr, {}};
+        co_return server_handshake_res{false, sh_res.ec, {}, {}, {}, nullptr, nullptr, {}};
     }
 
     const auto verify_timeout_sec = timeout_config_.read;
@@ -1743,7 +1775,7 @@ boost::asio::awaitable<remote_server::server_handshake_res> remote_server::negot
             co_await verify_client_finished(s, sh_res.c_hs_keys, sh_res.hs_keys, trans, sh_res.cipher, sh_res.negotiated_md, ctx, verify_timeout_sec);
         ec)
     {
-        co_return server_handshake_res{false, {}, {}, {}, {}, nullptr, nullptr, {}};
+        co_return server_handshake_res{false, ec, {}, {}, {}, nullptr, nullptr, {}};
     }
 
     sh_res.handshake_hash = trans.finish();
@@ -2291,7 +2323,10 @@ boost::asio::awaitable<void> remote_server::handle_fallback(const std::shared_pt
     }
 
     using boost::asio::experimental::awaitable_operators::operator&&;
-    co_await (proxy_half(s, t) && proxy_half(t, s));
+    const auto read_timeout_sec = timeout_config_.read;
+    co_await (proxy_half(s, t, ctx, read_timeout_sec, write_timeout_sec) && proxy_half(t, s, ctx, read_timeout_sec, write_timeout_sec));
+    close_fallback_socket(t, ctx);
+    close_fallback_socket(s, ctx);
     record_fallback_result(ctx, true);
     LOG_CTX_INFO(ctx, "{} session finished", log_event::kFallback);
 }
