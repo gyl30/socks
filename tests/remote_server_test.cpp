@@ -448,6 +448,14 @@ std::shared_ptr<mux::remote_server> construct_server_until_acceptor_ready(mux::i
     return nullptr;
 }
 
+class noop_mux_stream final : public mux::mux_stream_interface
+{
+   public:
+    void on_data(std::vector<std::uint8_t>) override {}
+    void on_close() override {}
+    void on_reset() override {}
+};
+
 }    // namespace
 
 class remote_server_test_fixture : public ::testing::Test
@@ -2599,6 +2607,10 @@ TEST_F(remote_server_test_fixture, AuthenticateClientFailureBranches)
     mux::client_hello_info aad_mismatch_info = sid_offset_info;
     aad_mismatch_info.sid_offset = 200;
     EXPECT_FALSE(server->authenticate_client(aad_mismatch_info, std::vector<std::uint8_t>(40, 0x44), ctx));
+
+    mux::client_hello_info short_random_info = sid_offset_info;
+    short_random_info.random.assign(16, 0x55);
+    EXPECT_FALSE(server->authenticate_client(short_random_info, std::vector<std::uint8_t>(64, 0x66), ctx));
 }
 
 TEST_F(remote_server_test_fixture, AuthenticateClientShortIdAndTimestampFailureBranches)
@@ -2649,6 +2661,53 @@ TEST_F(remote_server_test_fixture, DeriveShareAndFallbackHelperBranches)
     server->record_fallback_result(ctx, false);
 }
 
+TEST_F(remote_server_test_fixture, InvalidSynTargetRejectsEmptyHostAndConnectPortZero)
+{
+    mux::syn_payload syn{};
+    syn.socks_cmd = socks::kCmdConnect;
+    syn.addr = "";
+    syn.port = 443;
+    EXPECT_TRUE(mux::remote_server::invalid_syn_target(syn));
+
+    syn.addr = "example.com";
+    syn.port = 0;
+    EXPECT_TRUE(mux::remote_server::invalid_syn_target(syn));
+
+    syn.socks_cmd = socks::kCmdUdpAssociate;
+    EXPECT_FALSE(mux::remote_server::invalid_syn_target(syn));
+
+    syn.addr.clear();
+    EXPECT_TRUE(mux::remote_server::invalid_syn_target(syn));
+}
+
+TEST_F(remote_server_test_fixture, TryRegisterStreamWithReasonClassifiesLimitAndConflict)
+{
+    boost::asio::io_context io_context;
+    mux::config::limits_t limits_cfg;
+    limits_cfg.max_streams = 1;
+    auto connection = std::make_shared<mux::mux_connection>(
+        boost::asio::ip::tcp::socket(io_context),
+        io_context,
+        mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()},
+        true,
+        99,
+        "",
+        mux::config::timeout_t{},
+        limits_cfg);
+    ASSERT_TRUE(connection->try_register_stream(1, std::make_shared<noop_mux_stream>()));
+
+    EXPECT_EQ(connection->try_register_stream_with_reason(1, std::make_shared<noop_mux_stream>()), mux::stream_register_result::kIdConflict);
+    EXPECT_EQ(connection->try_register_stream_with_reason(3, std::make_shared<noop_mux_stream>()), mux::stream_register_result::kLimitReached);
+
+    connection->remove_stream(1);
+    EXPECT_EQ(connection->try_register_stream_with_reason(1, std::make_shared<noop_mux_stream>()), mux::stream_register_result::kSuccess);
+    connection->remove_stream(1);
+
+    connection->stop();
+    EXPECT_EQ(connection->try_register_stream_with_reason(3, std::make_shared<noop_mux_stream>()), mux::stream_register_result::kClosed);
+    EXPECT_EQ(connection->try_register_stream_with_reason(5, nullptr), mux::stream_register_result::kInvalidStream);
+}
+
 TEST_F(remote_server_test_fixture, RejectStreamForLimitSendsAckAndReset)
 {
     boost::system::error_code const ec;
@@ -2680,6 +2739,43 @@ TEST_F(remote_server_test_fixture, RejectStreamForLimitSendsAckAndReset)
         [server, conn, ctx, &done]() mutable -> boost::asio::awaitable<void>
         {
             co_await server->reject_stream_for_limit(conn, ctx, 42);
+            done.set_value();
+            co_return;
+        },
+        boost::asio::detached);
+
+    std::thread runner([&pool]() { pool.run(); });
+    auto runner_guard = make_pool_thread_guard(pool, runner);
+    EXPECT_EQ(done_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    pool.stop();
+    runner.join();
+}
+
+TEST_F(remote_server_test_fixture, HandleStreamRegisterFailureSendsResetForClosedAndInvalidStream)
+{
+    boost::system::error_code const ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(0, {}, "0102030405060708"));
+    auto conn = std::make_shared<mux::mock_mux_connection>(pool.get_io_context());
+
+    mux::connection_context ctx;
+    ctx.conn_id(9);
+    ctx.trace_id("register-failure");
+
+    EXPECT_CALL(*conn, mock_send_async(43, mux::kCmdRst, testing::_)).WillOnce(testing::Return(boost::system::error_code{}));
+    EXPECT_CALL(*conn, mock_send_async(44, mux::kCmdRst, testing::_)).WillOnce(testing::Return(boost::system::error_code{}));
+
+    std::promise<void> done;
+    auto done_future = done.get_future();
+    boost::asio::co_spawn(
+        pool.get_io_context(),
+        [server, conn, ctx, &done]() mutable -> boost::asio::awaitable<void>
+        {
+            EXPECT_TRUE(co_await server->handle_stream_register_failure(conn, ctx, 43, mux::stream_register_result::kClosed));
+            EXPECT_TRUE(co_await server->handle_stream_register_failure(conn, ctx, 44, mux::stream_register_result::kInvalidStream));
+            EXPECT_FALSE(co_await server->handle_stream_register_failure(conn, ctx, 45, mux::stream_register_result::kSuccess));
             done.set_value();
             co_return;
         },
@@ -2816,6 +2912,34 @@ TEST_F(remote_server_test_fixture, ConstructorCoversMalformedBracketDestParseBra
     ASSERT_NE(server_missing_colon, nullptr);
     EXPECT_FALSE(server_missing_colon->fallback_dest_valid_);
     EXPECT_FALSE(server_missing_colon->auth_config_valid_);
+}
+
+TEST_F(remote_server_test_fixture, ConstructorRejectsInvalidDestPortBranches)
+{
+    boost::system::error_code const ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    auto cfg_non_numeric_port = make_server_cfg(0, {}, "0102030405060708");
+    cfg_non_numeric_port.reality.dest = "example.com:not-a-port";
+    auto server_non_numeric_port = construct_server_until_acceptor_ready(pool, cfg_non_numeric_port);
+    ASSERT_NE(server_non_numeric_port, nullptr);
+    EXPECT_FALSE(server_non_numeric_port->fallback_dest_valid_);
+    EXPECT_FALSE(server_non_numeric_port->auth_config_valid_);
+
+    auto cfg_zero_port = make_server_cfg(0, {}, "0102030405060708");
+    cfg_zero_port.reality.dest = "example.com:0";
+    auto server_zero_port = construct_server_until_acceptor_ready(pool, cfg_zero_port);
+    ASSERT_NE(server_zero_port, nullptr);
+    EXPECT_FALSE(server_zero_port->fallback_dest_valid_);
+    EXPECT_FALSE(server_zero_port->auth_config_valid_);
+
+    auto cfg_overflow_port = make_server_cfg(0, {}, "0102030405060708");
+    cfg_overflow_port.reality.dest = "[::1]:70000";
+    auto server_overflow_port = construct_server_until_acceptor_ready(pool, cfg_overflow_port);
+    ASSERT_NE(server_overflow_port, nullptr);
+    EXPECT_FALSE(server_overflow_port->fallback_dest_valid_);
+    EXPECT_FALSE(server_overflow_port->auth_config_valid_);
 }
 
 TEST_F(remote_server_test_fixture, ConstructorAcceptorSetupFailureBranchesWithWrappers)
@@ -3470,6 +3594,62 @@ TEST_F(remote_server_test_fixture, ReadInitialAndValidateAcceptsFragmentedTlsHea
     EXPECT_TRUE(res.ok);
     EXPECT_FALSE(res.allow_fallback);
     EXPECT_FALSE(res.ec);
+}
+
+TEST_F(remote_server_test_fixture, ReadInitialAndValidateKeepsOnlyClientHelloRecord)
+{
+    boost::system::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+    std::thread runner([&pool]() { pool.run(); });
+    auto runner_guard = make_pool_thread_guard(pool, runner);
+
+    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(0, {}, "0102030405060708"));
+
+    boost::asio::ip::tcp::acceptor acceptor(pool.get_io_context());
+    ASSERT_TRUE(open_ephemeral_acceptor_until_ready(acceptor));
+
+    boost::asio::ip::tcp::socket client_socket(pool.get_io_context());
+    // NOLINTNEXTLINE(bugprone-unused-return-value)
+    (void)client_socket.connect(acceptor.local_endpoint(), ec);
+    ASSERT_FALSE(ec);
+
+    auto server_socket = std::make_shared<boost::asio::ip::tcp::socket>(pool.get_io_context());
+    // NOLINTNEXTLINE(bugprone-unused-return-value)
+    (void)acceptor.accept(*server_socket, ec);
+    ASSERT_FALSE(ec);
+
+    std::vector<std::uint8_t> sid;
+    auto record = build_valid_sid_ch("www.google.com", "0102030405060708", static_cast<std::uint32_t>(time(nullptr)), sid);
+    ASSERT_GT(record.size(), 5U);
+
+    std::vector<std::uint8_t> wire = record;
+    wire.insert(wire.end(), 64, 0xAA);
+    boost::asio::write(client_socket, boost::asio::buffer(wire), ec);
+    ASSERT_FALSE(ec);
+
+    std::promise<std::pair<mux::remote_server::initial_read_res, std::size_t>> done;
+    auto done_future = done.get_future();
+    boost::asio::co_spawn(
+        pool.get_io_context(),
+        [server, server_socket, &done]() -> boost::asio::awaitable<void>
+        {
+            mux::connection_context ctx;
+            ctx.conn_id(9002);
+            ctx.trace_id("trim-client-hello-record");
+            std::vector<std::uint8_t> initial_buf;
+            auto res = co_await server->read_initial_and_validate(server_socket, ctx, initial_buf);
+            done.set_value(std::make_pair(res, initial_buf.size()));
+            co_return;
+        },
+        boost::asio::detached);
+
+    ASSERT_EQ(done_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    const auto [res, buf_size] = done_future.get();
+    EXPECT_TRUE(res.ok);
+    EXPECT_FALSE(res.allow_fallback);
+    EXPECT_FALSE(res.ec);
+    EXPECT_EQ(buf_size, record.size());
 }
 
 TEST_F(remote_server_test_fixture, DelayAndFallbackShortCircuitsWhenStopRequested)

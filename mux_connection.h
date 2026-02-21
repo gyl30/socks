@@ -39,6 +39,15 @@ enum class mux_connection_state : std::uint8_t
     kClosed
 };
 
+enum class stream_register_result : std::uint8_t
+{
+    kSuccess,
+    kInvalidStream,
+    kClosed,
+    kLimitReached,
+    kIdConflict
+};
+
 struct mux_write_msg
 {
     std::uint8_t command = 0;
@@ -71,6 +80,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
 
     virtual bool register_stream(std::uint32_t id, std::shared_ptr<mux_stream_interface> stream);
     [[nodiscard]] virtual bool register_stream_checked(std::uint32_t id, std::shared_ptr<mux_stream_interface> stream);
+    [[nodiscard]] stream_register_result try_register_stream_with_reason(std::uint32_t id, std::shared_ptr<mux_stream_interface> stream);
     [[nodiscard]] bool try_register_stream(std::uint32_t id, std::shared_ptr<mux_stream_interface> stream);
 
     virtual void remove_stream(std::uint32_t id);
@@ -112,6 +122,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     [[nodiscard]] std::shared_ptr<stream_map_t> snapshot_streams() const;
     [[nodiscard]] std::shared_ptr<stream_map_t> detach_streams();
     [[nodiscard]] bool register_stream_local(std::uint32_t id, const std::shared_ptr<mux_stream_interface>& stream);
+    [[nodiscard]] stream_register_result try_register_stream_local_with_reason(std::uint32_t id, const std::shared_ptr<mux_stream_interface>& stream);
     [[nodiscard]] bool try_register_stream_local(std::uint32_t id, const std::shared_ptr<mux_stream_interface>& stream);
     void remove_stream_local(std::uint32_t id);
     [[nodiscard]] bool can_accept_stream_local() const;
