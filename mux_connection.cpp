@@ -1,10 +1,3 @@
-// NOLINTBEGIN(misc-include-cleaner)
-#include <boost/asio/co_spawn.hpp>    // NOLINT(misc-include-cleaner): required for co_spawn declarations.
-#include <boost/system/error_code.hpp>
-#include <boost/asio/io_context.hpp>
-#include <boost/asio/awaitable.hpp>
-#include <cstddef>
-#include <expected>
 #include <span>
 #include <atomic>
 #include <chrono>
@@ -14,25 +7,27 @@
 #include <ranges>
 #include <string>
 #include <vector>
+#include <cstddef>
 #include <cstdint>
 #include <utility>
+#include <expected>
 
+#include <boost/asio/post.hpp>
 #include <boost/asio/error.hpp>
 #include <boost/asio/write.hpp>
 #include <boost/asio/buffer.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/as_tuple.hpp>
+#include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
-#include <boost/asio/post.hpp>
 #include <boost/asio/dispatch.hpp>
+#include <boost/asio/awaitable.hpp>
+#include <boost/asio/io_context.hpp>
 #include <boost/asio/steady_timer.hpp>
+#include <boost/system/error_code.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/redirect_error.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
-#include "config.h"
-#include "reality_engine.h"
-#include "log_context.h"
-#include "mux_stream_interface.h"
 
 extern "C"
 {
@@ -40,12 +35,16 @@ extern "C"
 }
 
 #include "log.h"
+#include "config.h"
+#include "mux_stream.h"
 #include "statistics.h"
+#include "log_context.h"
 #include "mux_protocol.h"
 #include "reality_core.h"
-#include "mux_stream.h"
 #include "stop_dispatch.h"
 #include "mux_connection.h"
+#include "reality_engine.h"
+#include "mux_stream_interface.h"
 
 namespace mux
 {
@@ -473,7 +472,17 @@ void mux_connection::handle_stream_frame(const mux::frame_header& header, std::v
         remove_stream(header.stream_id);
         return;
     }
-    if (header.command == mux::kCmdDat || header.command == mux::kCmdAck)
+    if (header.command == mux::kCmdDat)
+    {
+        if (payload.empty())
+        {
+            LOG_WARN("mux {} drop empty dat frame stream {}", cid_, header.stream_id);
+            return;
+        }
+        stream->on_data(std::move(payload));
+        return;
+    }
+    if (header.command == mux::kCmdAck)
     {
         stream->on_data(std::move(payload));
     }
@@ -993,4 +1002,3 @@ std::shared_ptr<mux_stream> mux_connection::create_stream(const std::string& tra
 }
 
 }    // namespace mux
-// NOLINTEND(misc-include-cleaner)

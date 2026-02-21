@@ -1,37 +1,34 @@
-// NOLINTBEGIN(modernize-use-starts-ends-with, performance-enum-size, readability-container-contains, readability-function-cognitive-complexity,
-// readability-static-accessed-through-instance) NOLINTBEGIN(bugprone-unused-return-value, misc-include-cleaner)
 #include <array>
-#include <charconv>
-#include <chrono>
-#include <memory>
-#include <optional>
-#include <string>
-#include <vector>
-#include <thread>
-#include <atomic>
 #include <mutex>
-#include <cstring>
+#include <atomic>
 #include <cerrno>
-#include <algorithm>
+#include <chrono>
 #include <future>
+#include <memory>
+#include <string>
+#include <thread>
+#include <vector>
+#include <cstring>
+#include <charconv>
+#include <optional>
+#include <algorithm>
 #include <string_view>
-
-#include <netinet/in.h>
-#include <netinet/tcp.h>
-#include <sys/socket.h>
 #include <sys/types.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <netinet/tcp.h>
 #include <linux/netfilter_ipv4.h>
 
-#include <gtest/gtest.h>
 #include <gmock/gmock.h>
+#include <gtest/gtest.h>
+#include <spdlog/spdlog.h>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/ip/udp.hpp>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
 #include <boost/asio/awaitable.hpp>
-#include <boost/asio/io_context.hpp>
-#include <boost/asio/ip/tcp.hpp>
-#include <boost/asio/ip/udp.hpp>
-#include <spdlog/spdlog.h>
 #include <spdlog/sinks/base_sink.h>
+#include <boost/asio/io_context.hpp>
 
 extern "C"
 {
@@ -39,29 +36,31 @@ extern "C"
 }
 
 #include "router.h"
-#include "ip_matcher.h"
-#include "domain_matcher.h"
-#include "mux_codec.h"
-#include "mux_stream.h"
 #include "protocol.h"
-#include "statistics.h"
+#include "mux_codec.h"
 #include "test_util.h"
+#include "ip_matcher.h"
+#include "mux_stream.h"
+#include "statistics.h"
 #include "context_pool.h"
+#include "domain_matcher.h"
+
 #define private public
-#include "tproxy_udp_session.h"
 #include "tproxy_client.h"
 #include "monitor_server.h"
+#include "tproxy_udp_session.h"
+
 #undef private
 #include "mock_mux_connection.h"
 
-extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);    // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_bind(int sockfd, const sockaddr* addr, socklen_t addrlen);                               // NOLINT(bugprone-reserved-identifier)
-extern "C" ssize_t __real_recvmsg(int sockfd, msghdr* msg, int flags);                                         // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_socket(int domain, int type, int protocol);                                              // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_accept(int sockfd, sockaddr* addr, socklen_t* addrlen);                                  // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_accept4(int sockfd, sockaddr* addr, socklen_t* addrlen, int flags);                      // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_getsockname(int sockfd, sockaddr* addr, socklen_t* addrlen);                             // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_close(int fd);                                                                           // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);    
+extern "C" int __real_bind(int sockfd, const sockaddr* addr, socklen_t addrlen);                               
+extern "C" ssize_t __real_recvmsg(int sockfd, msghdr* msg, int flags);                                         
+extern "C" int __real_socket(int domain, int type, int protocol);                                              
+extern "C" int __real_accept(int sockfd, sockaddr* addr, socklen_t* addrlen);                                  
+extern "C" int __real_accept4(int sockfd, sockaddr* addr, socklen_t* addrlen, int flags);                      
+extern "C" int __real_getsockname(int sockfd, sockaddr* addr, socklen_t* addrlen);                             
+extern "C" int __real_close(int fd);                                                                           
 
 namespace
 {
@@ -556,7 +555,7 @@ class scoped_default_logger_override
 
 }    // namespace
 
-extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)    
 {
     const bool level_match = (g_fail_setsockopt_level.load(std::memory_order_acquire) == level);
     const bool optname_match = (g_fail_setsockopt_optname.load(std::memory_order_acquire) == optname);
@@ -576,64 +575,64 @@ extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void*
         return 0;
     }
 
-    return __real_setsockopt(sockfd, level, optname, optval, optlen);    // NOLINT(bugprone-reserved-identifier)
+    return __real_setsockopt(sockfd, level, optname, optval, optlen);    
 }
 
-extern "C" int __wrap_socket(int domain, int type, int protocol)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_socket(int domain, int type, int protocol)    
 {
     if (g_force_ipv6_socket_compat.load(std::memory_order_acquire) && domain == AF_INET6)
     {
-        return __real_socket(AF_INET, type, protocol);    // NOLINT(bugprone-reserved-identifier)
+        return __real_socket(AF_INET, type, protocol);    
     }
     if (g_fail_socket_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_socket_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_socket(domain, type, protocol);    // NOLINT(bugprone-reserved-identifier)
+    return __real_socket(domain, type, protocol);    
 }
 
-extern "C" int __wrap_accept(int sockfd, sockaddr* addr, socklen_t* addrlen)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_accept(int sockfd, sockaddr* addr, socklen_t* addrlen)    
 {
     if (g_fail_accept_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_accept_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_accept(sockfd, addr, addrlen);    // NOLINT(bugprone-reserved-identifier)
+    return __real_accept(sockfd, addr, addrlen);    
 }
 
-extern "C" int __wrap_accept4(int sockfd, sockaddr* addr, socklen_t* addrlen, int flags)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_accept4(int sockfd, sockaddr* addr, socklen_t* addrlen, int flags)    
 {
     if (g_fail_accept_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_accept_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_accept4(sockfd, addr, addrlen, flags);    // NOLINT(bugprone-reserved-identifier)
+    return __real_accept4(sockfd, addr, addrlen, flags);    
 }
 
-extern "C" int __wrap_getsockname(int sockfd, sockaddr* addr, socklen_t* addrlen)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_getsockname(int sockfd, sockaddr* addr, socklen_t* addrlen)    
 {
     if (g_fail_getsockname_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_getsockname_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_getsockname(sockfd, addr, addrlen);    // NOLINT(bugprone-reserved-identifier)
+    return __real_getsockname(sockfd, addr, addrlen);    
 }
 
-extern "C" int __wrap_close(int fd)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_close(int fd)    
 {
     if (g_fail_close_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_close_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_close(fd);    // NOLINT(bugprone-reserved-identifier)
+    return __real_close(fd);    
 }
 
-extern "C" int __wrap_bind(int sockfd, const sockaddr* addr, socklen_t addrlen)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_bind(int sockfd, const sockaddr* addr, socklen_t addrlen)    
 {
     if (g_force_ipv6_socket_compat.load(std::memory_order_acquire) && addr != nullptr && addr->sa_family == AF_INET6)
     {
@@ -644,10 +643,10 @@ extern "C" int __wrap_bind(int sockfd, const sockaddr* addr, socklen_t addrlen) 
         errno = g_fail_bind_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_bind(sockfd, addr, addrlen);    // NOLINT(bugprone-reserved-identifier)
+    return __real_bind(sockfd, addr, addrlen);    
 }
 
-extern "C" ssize_t __wrap_recvmsg(int sockfd, msghdr* msg, int flags)    // NOLINT(bugprone-reserved-identifier)
+extern "C" ssize_t __wrap_recvmsg(int sockfd, msghdr* msg, int flags)    
 {
     const wrapped_recvmsg_mode mode =
         g_recvmsg_mode_sticky.load(std::memory_order_acquire)
@@ -655,7 +654,7 @@ extern "C" ssize_t __wrap_recvmsg(int sockfd, msghdr* msg, int flags)    // NOLI
             : static_cast<wrapped_recvmsg_mode>(g_recvmsg_mode.exchange(static_cast<int>(wrapped_recvmsg_mode::kReal), std::memory_order_acq_rel));
     if (mode == wrapped_recvmsg_mode::kReal)
     {
-        return __real_recvmsg(sockfd, msg, flags);    // NOLINT(bugprone-reserved-identifier)
+        return __real_recvmsg(sockfd, msg, flags);    
     }
     if (mode == wrapped_recvmsg_mode::kEagain)
     {
@@ -3523,7 +3522,7 @@ TEST(TproxyClientTest, UdpLoopCoversRetryBranchAfterNativeFdInvalidation)
                           const int fd = client->udp_socket_.native_handle();
                           if (fd >= 0)
                           {
-                              (void)__real_close(fd);    // NOLINT(bugprone-reserved-identifier)
+                              (void)__real_close(fd);    
                           }
                       });
 
@@ -4319,6 +4318,5 @@ TEST(TproxyClientTest, UdpCleanupLoopPrunesTerminatedSessionsWhenIdleDisabled)
     pool.stop();
     runner.join();
 }
-// NOLINTEND(bugprone-unused-return-value, misc-include-cleaner)
-// NOLINTEND(modernize-use-starts-ends-with, performance-enum-size, readability-container-contains, readability-function-cognitive-complexity,
+
 // readability-static-accessed-through-instance)

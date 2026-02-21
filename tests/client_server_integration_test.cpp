@@ -1,5 +1,4 @@
-// NOLINTBEGIN(google-explicit-constructor, misc-non-private-member-variables-in-classes)
-// NOLINTBEGIN(bugprone-unused-return-value, misc-include-cleaner)
+
 #include <chrono>
 #include <memory>
 #include <string>
@@ -516,5 +515,3 @@ TEST_F(integration_test_fixture, SocksConnectClosedPortReturnsFailure)
     stack.server->stop();
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
 }
-// NOLINTEND(bugprone-unused-return-value, misc-include-cleaner)
-// NOLINTEND(google-explicit-constructor, misc-non-private-member-variables-in-classes)

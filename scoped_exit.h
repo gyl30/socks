@@ -1,8 +1,8 @@
 #ifndef TXTREADER_SCOPED_EXIT_H
 #define TXTREADER_SCOPED_EXIT_H
 
-#include <type_traits>
 #include <utility>
+#include <type_traits>
 
 template <typename Callback>
 class scoped_exit

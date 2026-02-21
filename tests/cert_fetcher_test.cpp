@@ -1,16 +1,15 @@
-// NOLINTBEGIN(performance-unnecessary-value-param, readability-function-cognitive-complexity, readability-static-accessed-through-instance)
-// NOLINTBEGIN(bugprone-unused-return-value, misc-include-cleaner)
-#include <chrono>
+
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include <string>
 #include <vector>
 #include <cstdint>
 #include <system_error>
 
-#include <boost/asio/ssl.hpp>
 #include <gtest/gtest.h>
+#include <boost/asio/ssl.hpp>
 #include <boost/asio/write.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/co_spawn.hpp>
@@ -27,6 +26,7 @@ extern "C"
 
 #define private public
 #include "cert_fetcher.h"
+
 #undef private
 #include "crypto_util.h"
 
@@ -48,29 +48,29 @@ void fail_rand_bytes_on_call(const int call_index)
     g_fail_rand_bytes_on_call.store(call_index, std::memory_order_release);
 }
 
-extern "C" int __real_EVP_PKEY_CTX_set_hkdf_md(EVP_PKEY_CTX* ctx, const EVP_MD* md);    // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_EVP_PKEY_keygen(EVP_PKEY_CTX* ctx, EVP_PKEY** ppkey);             // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_RAND_bytes(unsigned char* buf, int num);                          // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_EVP_PKEY_CTX_set_hkdf_md(EVP_PKEY_CTX* ctx, const EVP_MD* md);    
+extern "C" int __real_EVP_PKEY_keygen(EVP_PKEY_CTX* ctx, EVP_PKEY** ppkey);             
+extern "C" int __real_RAND_bytes(unsigned char* buf, int num);                          
 
-extern "C" int __wrap_EVP_PKEY_CTX_set_hkdf_md(EVP_PKEY_CTX* ctx, const EVP_MD* md)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_EVP_PKEY_CTX_set_hkdf_md(EVP_PKEY_CTX* ctx, const EVP_MD* md)    
 {
     if (g_fail_hkdf_md_once.exchange(false, std::memory_order_acq_rel))
     {
         return 0;
     }
-    return __real_EVP_PKEY_CTX_set_hkdf_md(ctx, md);    // NOLINT(bugprone-reserved-identifier)
+    return __real_EVP_PKEY_CTX_set_hkdf_md(ctx, md);    
 }
 
-extern "C" int __wrap_EVP_PKEY_keygen(EVP_PKEY_CTX* ctx, EVP_PKEY** ppkey)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_EVP_PKEY_keygen(EVP_PKEY_CTX* ctx, EVP_PKEY** ppkey)    
 {
     if (g_fail_keygen_once.exchange(false, std::memory_order_acq_rel))
     {
         return 0;
     }
-    return __real_EVP_PKEY_keygen(ctx, ppkey);    // NOLINT(bugprone-reserved-identifier)
+    return __real_EVP_PKEY_keygen(ctx, ppkey);    
 }
 
-extern "C" int __wrap_RAND_bytes(unsigned char* buf, int num)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_RAND_bytes(unsigned char* buf, int num)    
 {
     const int target_call = g_fail_rand_bytes_on_call.load(std::memory_order_acquire);
     if (target_call > 0)
@@ -82,7 +82,7 @@ extern "C" int __wrap_RAND_bytes(unsigned char* buf, int num)    // NOLINT(bugpr
             return 0;
         }
     }
-    return __real_RAND_bytes(buf, num);    // NOLINT(bugprone-reserved-identifier)
+    return __real_RAND_bytes(buf, num);    
 }
 
 constexpr char kTestCertPem[] =
@@ -693,5 +693,3 @@ TEST(CertFetcherTest, ProcessServerHelloTruncatedMessageLength)
     const auto ec = session.process_server_hello(server_hello);
     EXPECT_EQ(ec, boost::asio::error::fault);
 }
-// NOLINTEND(bugprone-unused-return-value, misc-include-cleaner)
-// NOLINTEND(performance-unnecessary-value-param, readability-function-cognitive-complexity, readability-static-accessed-through-instance)

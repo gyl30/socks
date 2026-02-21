@@ -1,4 +1,3 @@
-#include <openssl/types.h>
 #include <memory>
 #include <vector>
 #include <cstdint>
@@ -6,6 +5,7 @@
 extern "C"
 {
 #include <openssl/evp.h>
+#include <openssl/types.h>
 }
 
 #include "transcript.h"

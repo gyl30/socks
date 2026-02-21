@@ -2,13 +2,13 @@
 #define CERT_MANAGER_H
 
 #include <list>
+#include <mutex>
 #include <string>
 #include <vector>
-#include <cstdint>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <unordered_map>
-#include <mutex>
 
 #include "reality_messages.h"
 

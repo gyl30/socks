@@ -7,6 +7,7 @@
 
 #define private public
 #include "ch_parser.h"
+
 #undef private
 #include "reality_core.h"
 
@@ -123,8 +124,8 @@ class client_hello_builder
     void add_u8(uint8_t v) { buffer_.push_back(v); }
     void add_u16(uint16_t v)
     {
-        buffer_.push_back((v >> 8) & 0xFF);
-        buffer_.push_back(v & 0xFF);
+        buffer_.push_back(static_cast<std::uint8_t>((v >> 8) & 0xFFU));
+        buffer_.push_back(static_cast<std::uint8_t>(v & 0xFFU));
     }
     void poke_u16(size_t pos, uint16_t v)
     {

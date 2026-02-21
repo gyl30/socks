@@ -1,15 +1,14 @@
-// NOLINTBEGIN(bugprone-use-after-move, clang-analyzer-cplusplus.Move)
-// NOLINTBEGIN(misc-include-cleaner)
+
+#include <atomic>
+#include <limits>
 #include <string>
 #include <vector>
 #include <cstddef>
 #include <cstdint>
 #include <fstream>
 #include <iterator>
-#include <limits>
-#include <atomic>
-#include <system_error>
 #include <algorithm>
+#include <system_error>
 
 #include <gtest/gtest.h>
 
@@ -126,84 +125,84 @@ std::vector<std::uint8_t> build_self_signed_cert_der()
 
 }    // namespace
 
-extern "C" int __real_EVP_PKEY_CTX_set1_hkdf_key(EVP_PKEY_CTX* ctx, const unsigned char* key, int keylen);    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_EVP_PKEY_CTX_set1_hkdf_key(EVP_PKEY_CTX* ctx, const unsigned char* key, int keylen);    
 extern "C" int __real_EVP_PKEY_CTX_set1_hkdf_salt(EVP_PKEY_CTX* ctx,
                                                   const unsigned char* salt,
-                                                  int saltlen);                                  // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_EVP_CIPHER_CTX_ctrl(EVP_CIPHER_CTX* ctx, int type, int arg, void* ptr);    // NOLINT(bugprone-reserved-identifier)
-extern "C" EVP_PKEY* __real_X509_get_pubkey(X509* x);                                            // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_RAND_bytes(unsigned char* buf, int num);                                   // NOLINT(bugprone-reserved-identifier)
-extern "C" EVP_PKEY_CTX* __real_EVP_PKEY_CTX_new_id(int id, ENGINE* e);                          // NOLINT(bugprone-reserved-identifier)
+                                                  int saltlen);                                  
+extern "C" int __real_EVP_CIPHER_CTX_ctrl(EVP_CIPHER_CTX* ctx, int type, int arg, void* ptr);    
+extern "C" EVP_PKEY* __real_X509_get_pubkey(X509* x);                                            
+extern "C" int __real_RAND_bytes(unsigned char* buf, int num);                                   
+extern "C" EVP_PKEY_CTX* __real_EVP_PKEY_CTX_new_id(int id, ENGINE* e);                          
 extern "C" EVP_PKEY* __real_EVP_PKEY_new_raw_private_key(int type,
                                                          ENGINE* e,
                                                          const unsigned char* key,
-                                                         size_t keylen);    // NOLINT(bugprone-reserved-identifier)
+                                                         size_t keylen);    
 extern "C" int __real_EVP_PKEY_CTX_add1_hkdf_info(EVP_PKEY_CTX* ctx,
                                                   const unsigned char* info,
-                                                  int infolen);                                  // NOLINT(bugprone-reserved-identifier)
-extern "C" EVP_MD_CTX* __real_EVP_MD_CTX_new();                                                  // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_EVP_PKEY_derive(EVP_PKEY_CTX* ctx, unsigned char* key, size_t* keylen);    // NOLINT(bugprone-reserved-identifier)
+                                                  int infolen);                                  
+extern "C" EVP_MD_CTX* __real_EVP_MD_CTX_new();                                                  
+extern "C" int __real_EVP_PKEY_derive(EVP_PKEY_CTX* ctx, unsigned char* key, size_t* keylen);    
 
-extern "C" int __wrap_EVP_PKEY_CTX_set1_hkdf_key(EVP_PKEY_CTX* ctx, const unsigned char* key, int keylen)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_EVP_PKEY_CTX_set1_hkdf_key(EVP_PKEY_CTX* ctx, const unsigned char* key, int keylen)    
 {
     if (g_fail_hkdf_set_key.exchange(false, std::memory_order_acq_rel))
     {
         return 0;
     }
-    return __real_EVP_PKEY_CTX_set1_hkdf_key(ctx, key, keylen);    // NOLINT(bugprone-reserved-identifier)
+    return __real_EVP_PKEY_CTX_set1_hkdf_key(ctx, key, keylen);    
 }
 
 extern "C" int __wrap_EVP_PKEY_CTX_set1_hkdf_salt(EVP_PKEY_CTX* ctx,
                                                   const unsigned char* salt,
-                                                  int saltlen)    // NOLINT(bugprone-reserved-identifier)
+                                                  int saltlen)    
 {
     if (g_fail_hkdf_set_salt.exchange(false, std::memory_order_acq_rel))
     {
         return 0;
     }
-    return __real_EVP_PKEY_CTX_set1_hkdf_salt(ctx, salt, saltlen);    // NOLINT(bugprone-reserved-identifier)
+    return __real_EVP_PKEY_CTX_set1_hkdf_salt(ctx, salt, saltlen);    
 }
 
-extern "C" int __wrap_EVP_CIPHER_CTX_ctrl(EVP_CIPHER_CTX* ctx, int type, int arg, void* ptr)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_EVP_CIPHER_CTX_ctrl(EVP_CIPHER_CTX* ctx, int type, int arg, void* ptr)    
 {
     if (type == EVP_CTRL_GCM_SET_TAG && g_fail_set_gcm_tag.exchange(false, std::memory_order_acq_rel))
     {
         return 0;
     }
-    return __real_EVP_CIPHER_CTX_ctrl(ctx, type, arg, ptr);    // NOLINT(bugprone-reserved-identifier)
+    return __real_EVP_CIPHER_CTX_ctrl(ctx, type, arg, ptr);    
 }
 
-extern "C" EVP_PKEY* __wrap_X509_get_pubkey(X509* x)    // NOLINT(bugprone-reserved-identifier)
+extern "C" EVP_PKEY* __wrap_X509_get_pubkey(X509* x)    
 {
     if (g_fail_x509_get_pubkey.exchange(false, std::memory_order_acq_rel))
     {
         return nullptr;
     }
-    return __real_X509_get_pubkey(x);    // NOLINT(bugprone-reserved-identifier)
+    return __real_X509_get_pubkey(x);    
 }
 
-extern "C" int __wrap_RAND_bytes(unsigned char* buf, int num)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_RAND_bytes(unsigned char* buf, int num)    
 {
     if (g_fail_rand_bytes.exchange(false, std::memory_order_acq_rel))
     {
         return 0;
     }
-    return __real_RAND_bytes(buf, num);    // NOLINT(bugprone-reserved-identifier)
+    return __real_RAND_bytes(buf, num);    
 }
 
-extern "C" EVP_PKEY_CTX* __wrap_EVP_PKEY_CTX_new_id(int id, ENGINE* e)    // NOLINT(bugprone-reserved-identifier)
+extern "C" EVP_PKEY_CTX* __wrap_EVP_PKEY_CTX_new_id(int id, ENGINE* e)    
 {
     if (id == EVP_PKEY_X25519 && g_fail_x25519_ctx_new_id.exchange(false, std::memory_order_acq_rel))
     {
         return nullptr;
     }
-    return __real_EVP_PKEY_CTX_new_id(id, e);    // NOLINT(bugprone-reserved-identifier)
+    return __real_EVP_PKEY_CTX_new_id(id, e);    
 }
 
 extern "C" EVP_PKEY* __wrap_EVP_PKEY_new_raw_private_key(int type,
                                                          ENGINE* e,
                                                          const unsigned char* key,
-                                                         size_t keylen)    // NOLINT(bugprone-reserved-identifier)
+                                                         size_t keylen)    
 {
     if (type == EVP_PKEY_X25519 && g_fail_x25519_raw_private_key.exchange(false, std::memory_order_acq_rel))
     {
@@ -213,36 +212,36 @@ extern "C" EVP_PKEY* __wrap_EVP_PKEY_new_raw_private_key(int type,
     {
         return nullptr;
     }
-    return __real_EVP_PKEY_new_raw_private_key(type, e, key, keylen);    // NOLINT(bugprone-reserved-identifier)
+    return __real_EVP_PKEY_new_raw_private_key(type, e, key, keylen);    
 }
 
 extern "C" int __wrap_EVP_PKEY_CTX_add1_hkdf_info(EVP_PKEY_CTX* ctx,
                                                   const unsigned char* info,
-                                                  int infolen)    // NOLINT(bugprone-reserved-identifier)
+                                                  int infolen)    
 {
     if (g_fail_hkdf_add_info.exchange(false, std::memory_order_acq_rel))
     {
         return 0;
     }
-    return __real_EVP_PKEY_CTX_add1_hkdf_info(ctx, info, infolen);    // NOLINT(bugprone-reserved-identifier)
+    return __real_EVP_PKEY_CTX_add1_hkdf_info(ctx, info, infolen);    
 }
 
-extern "C" EVP_MD_CTX* __wrap_EVP_MD_CTX_new()    // NOLINT(bugprone-reserved-identifier)
+extern "C" EVP_MD_CTX* __wrap_EVP_MD_CTX_new()    
 {
     if (g_fail_md_ctx_new.exchange(false, std::memory_order_acq_rel))
     {
         return nullptr;
     }
-    return __real_EVP_MD_CTX_new();    // NOLINT(bugprone-reserved-identifier)
+    return __real_EVP_MD_CTX_new();    
 }
 
-extern "C" int __wrap_EVP_PKEY_derive(EVP_PKEY_CTX* ctx, unsigned char* key, size_t* keylen)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_EVP_PKEY_derive(EVP_PKEY_CTX* ctx, unsigned char* key, size_t* keylen)    
 {
     if (g_fail_pkey_derive.exchange(false, std::memory_order_acq_rel))
     {
         return 0;
     }
-    return __real_EVP_PKEY_derive(ctx, key, keylen);    // NOLINT(bugprone-reserved-identifier)
+    return __real_EVP_PKEY_derive(ctx, key, keylen);    
 }
 
 TEST(CryptoUtilTest, HexConversion)
@@ -859,5 +858,3 @@ TEST(CryptoUtilTest, VerifyTls13SignatureHandlesMdCtxCreationFailure)
 
     EVP_PKEY_free(pkey);
 }
-// NOLINTEND(misc-include-cleaner)
-// NOLINTEND(bugprone-use-after-move, clang-analyzer-cplusplus.Move)

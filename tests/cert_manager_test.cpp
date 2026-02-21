@@ -1,4 +1,4 @@
-// NOLINTBEGIN(bugprone-unchecked-optional-access, misc-include-cleaner)
+
 #include <string>
 #include <vector>
 
@@ -152,4 +152,3 @@ TEST(CertManagerTest, MissingSniWithoutDefaultReturnsNullopt)
 }
 
 }    // namespace reality
-// NOLINTEND(bugprone-unchecked-optional-access, misc-include-cleaner)

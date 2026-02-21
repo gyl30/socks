@@ -1,22 +1,23 @@
 #ifndef CLIENT_TUNNEL_POOL_H
 #define CLIENT_TUNNEL_POOL_H
 
-#include <openssl/types.h>
 #include <array>
 #include <atomic>
-#include <boost/asio/io_context.hpp>
-#include <boost/system/error_code.hpp>
+#include <memory>
+#include <string>
+#include <vector>
 #include <cstddef>
 #include <cstdint>
-#include <expected>
-#include <memory>
-#include <optional>
-#include <string>
 #include <utility>
-#include <vector>
+#include <expected>
+#include <optional>
 
+#include <openssl/types.h>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/awaitable.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/system/error_code.hpp>
+
 #include "reality_fingerprint.h"
 
 extern "C"

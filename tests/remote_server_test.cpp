@@ -1,6 +1,5 @@
-// NOLINTBEGIN(bugprone-implicit-widening-of-multiplication-result, misc-unused-parameters, modernize-use-ranges,
 // readability-function-cognitive-complexity, readability-isolate-declaration, readability-static-accessed-through-instance)
-// NOLINTBEGIN(bugprone-unused-return-value, misc-include-cleaner)
+
 #include <array>
 #include <atomic>
 #include <cerrno>
@@ -114,126 +113,126 @@ void fail_hkdf_add_info_on_call(const int call_index)
     g_fail_hkdf_add_info_on_call.store(call_index, std::memory_order_release);
 }
 
-extern "C" int __real_socket(int domain, int type, int protocol);                                              // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);    // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_listen(int sockfd, int backlog);                                                         // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_shutdown(int sockfd, int how);                                                           // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_close(int fd);                                                                           // NOLINT(bugprone-reserved-identifier)
-extern "C" ssize_t __real_send(int sockfd, const void* buf, size_t len, int flags);                            // NOLINT(bugprone-reserved-identifier)
-extern "C" ssize_t __real_sendmsg(int sockfd, const struct msghdr* msg, int flags);                            // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_RAND_bytes(unsigned char* buf, int num);                                                 // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_socket(int domain, int type, int protocol);                                              
+extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);    
+extern "C" int __real_listen(int sockfd, int backlog);                                                         
+extern "C" int __real_shutdown(int sockfd, int how);                                                           
+extern "C" int __real_close(int fd);                                                                           
+extern "C" ssize_t __real_send(int sockfd, const void* buf, size_t len, int flags);                            
+extern "C" ssize_t __real_sendmsg(int sockfd, const struct msghdr* msg, int flags);                            
+extern "C" int __real_RAND_bytes(unsigned char* buf, int num);                                                 
 extern "C" EVP_PKEY* __real_EVP_PKEY_new_raw_private_key(int type,
                                                          ENGINE* e,
                                                          const unsigned char* key,
-                                                         size_t keylen);                         // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_EVP_PKEY_derive(EVP_PKEY_CTX* ctx, unsigned char* key, size_t* keylen);    // NOLINT(bugprone-reserved-identifier)
+                                                         size_t keylen);                         
+extern "C" int __real_EVP_PKEY_derive(EVP_PKEY_CTX* ctx, unsigned char* key, size_t* keylen);    
 extern "C" int __real_EVP_PKEY_CTX_add1_hkdf_info(EVP_PKEY_CTX* ctx,
                                                   const unsigned char* info,
-                                                  int infolen);    // NOLINT(bugprone-reserved-identifier)
+                                                  int infolen);    
 
-extern "C" int __wrap_socket(int domain, int type, int protocol)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_socket(int domain, int type, int protocol)    
 {
     if (g_fail_socket_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_socket_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_socket(domain, type, protocol);    // NOLINT(bugprone-reserved-identifier)
+    return __real_socket(domain, type, protocol);    
 }
 
-extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)    
 {
     if (level == SOL_SOCKET && optname == SO_REUSEADDR && g_fail_reuse_setsockopt_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_reuse_setsockopt_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_setsockopt(sockfd, level, optname, optval, optlen);    // NOLINT(bugprone-reserved-identifier)
+    return __real_setsockopt(sockfd, level, optname, optval, optlen);    
 }
 
-extern "C" int __wrap_listen(int sockfd, int backlog)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_listen(int sockfd, int backlog)    
 {
     if (g_fail_listen_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_listen_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_listen(sockfd, backlog);    // NOLINT(bugprone-reserved-identifier)
+    return __real_listen(sockfd, backlog);    
 }
 
-extern "C" int __wrap_shutdown(int sockfd, int how)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_shutdown(int sockfd, int how)    
 {
     if (g_fail_shutdown_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_shutdown_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_shutdown(sockfd, how);    // NOLINT(bugprone-reserved-identifier)
+    return __real_shutdown(sockfd, how);    
 }
 
-extern "C" int __wrap_close(int fd)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_close(int fd)    
 {
     if (g_fail_close_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_close_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_close(fd);    // NOLINT(bugprone-reserved-identifier)
+    return __real_close(fd);    
 }
 
-extern "C" ssize_t __wrap_send(int sockfd, const void* buf, size_t len, int flags)    // NOLINT(bugprone-reserved-identifier)
+extern "C" ssize_t __wrap_send(int sockfd, const void* buf, size_t len, int flags)    
 {
     if (g_fail_send_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_send_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_send(sockfd, buf, len, flags);    // NOLINT(bugprone-reserved-identifier)
+    return __real_send(sockfd, buf, len, flags);    
 }
 
-extern "C" ssize_t __wrap_sendmsg(int sockfd, const struct msghdr* msg, int flags)    // NOLINT(bugprone-reserved-identifier)
+extern "C" ssize_t __wrap_sendmsg(int sockfd, const struct msghdr* msg, int flags)    
 {
     if (g_fail_send_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_send_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_sendmsg(sockfd, msg, flags);    // NOLINT(bugprone-reserved-identifier)
+    return __real_sendmsg(sockfd, msg, flags);    
 }
 
-extern "C" int __wrap_RAND_bytes(unsigned char* buf, int num)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_RAND_bytes(unsigned char* buf, int num)    
 {
     if (g_fail_rand_bytes_once.exchange(false, std::memory_order_acq_rel))
     {
         return 0;
     }
-    return __real_RAND_bytes(buf, num);    // NOLINT(bugprone-reserved-identifier)
+    return __real_RAND_bytes(buf, num);    
 }
 
 extern "C" EVP_PKEY* __wrap_EVP_PKEY_new_raw_private_key(int type,
                                                          ENGINE* e,
                                                          const unsigned char* key,
-                                                         size_t keylen)    // NOLINT(bugprone-reserved-identifier)
+                                                         size_t keylen)    
 {
     if (type == EVP_PKEY_ED25519 && g_fail_ed25519_raw_private_key_once.exchange(false, std::memory_order_acq_rel))
     {
         return nullptr;
     }
-    return __real_EVP_PKEY_new_raw_private_key(type, e, key, keylen);    // NOLINT(bugprone-reserved-identifier)
+    return __real_EVP_PKEY_new_raw_private_key(type, e, key, keylen);    
 }
 
-extern "C" int __wrap_EVP_PKEY_derive(EVP_PKEY_CTX* ctx, unsigned char* key, size_t* keylen)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_EVP_PKEY_derive(EVP_PKEY_CTX* ctx, unsigned char* key, size_t* keylen)    
 {
     if (g_fail_pkey_derive_once.exchange(false, std::memory_order_acq_rel))
     {
         return 0;
     }
-    return __real_EVP_PKEY_derive(ctx, key, keylen);    // NOLINT(bugprone-reserved-identifier)
+    return __real_EVP_PKEY_derive(ctx, key, keylen);    
 }
 
 extern "C" int __wrap_EVP_PKEY_CTX_add1_hkdf_info(EVP_PKEY_CTX* ctx,
                                                   const unsigned char* info,
-                                                  int infolen)    // NOLINT(bugprone-reserved-identifier)
+                                                  int infolen)    
 {
     const int call_no = g_hkdf_add_info_call_counter.fetch_add(1, std::memory_order_acq_rel) + 1;
     const int fail_on = g_fail_hkdf_add_info_on_call.load(std::memory_order_acquire);
@@ -242,7 +241,7 @@ extern "C" int __wrap_EVP_PKEY_CTX_add1_hkdf_info(EVP_PKEY_CTX* ctx,
         g_fail_hkdf_add_info_on_call.store(0, std::memory_order_release);
         return 0;
     }
-    return __real_EVP_PKEY_CTX_add1_hkdf_info(ctx, info, infolen);    // NOLINT(bugprone-reserved-identifier)
+    return __real_EVP_PKEY_CTX_add1_hkdf_info(ctx, info, infolen);    
 }
 
 std::uint16_t pick_free_port()
@@ -3421,6 +3420,5 @@ TEST_F(remote_server_test_fixture, HandleFallbackCoversCloseSocketErrorBranches)
     pool.stop();
     runner.join();
 }
-// NOLINTEND(bugprone-unused-return-value, misc-include-cleaner)
-// NOLINTEND(bugprone-implicit-widening-of-multiplication-result, misc-unused-parameters, modernize-use-ranges,
+
 // readability-function-cognitive-complexity, readability-isolate-declaration, readability-static-accessed-through-instance)

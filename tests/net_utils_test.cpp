@@ -1,7 +1,7 @@
-// NOLINTBEGIN(bugprone-unchecked-optional-access, misc-include-cleaner)
-#include <cerrno>
+
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -11,13 +11,14 @@
 #ifdef __linux__
 #include <linux/netfilter_ipv4.h>
 #include <linux/netfilter_ipv6.h>
+
 #endif
 
 #include <gtest/gtest.h>
 
 #include "net_utils.h"
 
-extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);    
 
 namespace
 {
@@ -58,7 +59,7 @@ bool is_force_success_option(const int level, const int optname)
 
 }    // namespace
 
-extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)    
 {
     if (g_fail_setsockopt_once.load(std::memory_order_acquire) && g_fail_level.load(std::memory_order_acquire) == level &&
         g_fail_optname.load(std::memory_order_acquire) == optname)
@@ -71,7 +72,7 @@ extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void*
     {
         return 0;
     }
-    return __real_setsockopt(sockfd, level, optname, optval, optlen);    // NOLINT(bugprone-reserved-identifier)
+    return __real_setsockopt(sockfd, level, optname, optval, optlen);    
 }
 
 namespace mux::net
@@ -340,4 +341,3 @@ TEST(NetUtilsTest, ParseOriginalDstUnknownControlMessage)
 #endif
 
 }    // namespace mux::net
-// NOLINTEND(bugprone-unchecked-optional-access, misc-include-cleaner)

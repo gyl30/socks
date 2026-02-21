@@ -1,34 +1,33 @@
-// NOLINTBEGIN(misc-include-cleaner)
-#include <boost/system/error_code.hpp>
-#include <boost/asio/awaitable.hpp>
-#include <cstdint>
-#include <boost/system/errc.hpp>
-#include <boost/system/detail/errc.hpp>
+#include <memory>
 #include <string>
 #include <vector>
+#include <cstdint>
 #include <cstring>
-#include <memory>
-#include <expected>
 #include <utility>
+#include <expected>
 
 #include <boost/asio/error.hpp>
 #include <boost/asio/write.hpp>
 #include <boost/asio/buffer.hpp>
 #include <boost/asio/ip/tcp.hpp>
+#include <boost/system/errc.hpp>
 #include <boost/asio/as_tuple.hpp>
+#include <boost/asio/awaitable.hpp>
+#include <boost/system/error_code.hpp>
 #include <boost/asio/use_awaitable.hpp>
+#include <boost/system/detail/errc.hpp>
 
 #include "log.h"
-#include "mux_tunnel.h"
 #include "protocol.h"
 #include "upstream.h"
 #include "mux_codec.h"
 #include "net_utils.h"
 #include "mux_stream.h"
+#include "mux_tunnel.h"
 #include "statistics.h"
+#include "timeout_io.h"
 #include "log_context.h"
 #include "mux_protocol.h"
-#include "timeout_io.h"
 
 namespace mux
 {
@@ -336,4 +335,3 @@ boost::asio::awaitable<void> proxy_upstream::close()
 }
 
 }    // namespace mux
-// NOLINTEND(misc-include-cleaner)

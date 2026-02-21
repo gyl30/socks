@@ -1,32 +1,30 @@
-// NOLINTBEGIN(misc-include-cleaner)
-#include <boost/asio/co_spawn.hpp>    // NOLINT(misc-include-cleaner): required for co_spawn declarations.
-#include <boost/asio/io_context.hpp>
-#include <boost/asio/awaitable.hpp>
-#include <boost/system/error_code.hpp>
-#include <boost/asio/buffer.hpp>
-#include <chrono>
-#include <boost/asio/ip/address_v4.hpp>
-#include <boost/asio/ip/address_v6.hpp>
 #include <array>
-#include <netinet/in.h>
+#include <chrono>
 #include <memory>
-#include <optional>
 #include <random>
 #include <string>
 #include <vector>
 #include <cstdint>
 #include <utility>
+#include <optional>
 #include <algorithm>
+#include <netinet/in.h>
 
 #include <boost/asio/read.hpp>
 #include <boost/asio/error.hpp>
 #include <boost/asio/write.hpp>
+#include <boost/asio/buffer.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/as_tuple.hpp>
+#include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
+#include <boost/asio/awaitable.hpp>
+#include <boost/asio/io_context.hpp>
 #include <boost/asio/steady_timer.hpp>
+#include <boost/system/error_code.hpp>
+#include <boost/asio/ip/address_v4.hpp>
+#include <boost/asio/ip/address_v6.hpp>
 #include <boost/asio/use_awaitable.hpp>
-#include "config.h"
 
 extern "C"
 {
@@ -34,6 +32,7 @@ extern "C"
 }
 
 #include "log.h"
+#include "config.h"
 #include "protocol.h"
 #include "mux_tunnel.h"
 #include "statistics.h"
@@ -558,4 +557,3 @@ boost::asio::awaitable<void> socks_session::reply_error(std::uint8_t code)
 }
 
 }    // namespace mux
-// NOLINTEND(misc-include-cleaner)

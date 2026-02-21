@@ -1,13 +1,12 @@
-// NOLINTBEGIN(misc-non-private-member-variables-in-classes)
-// NOLINTBEGIN(bugprone-unused-return-value, misc-include-cleaner)
+
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <memory>
 #include <string>
 #include <thread>
 #include <vector>
-#include <cerrno>
 #include <cstdint>
 #include <system_error>
 
@@ -26,15 +25,17 @@
 #include <boost/asio/experimental/channel_error.hpp>
 
 #include "router.h"
+#include "test_util.h"
 #include "ip_matcher.h"
 #include "domain_matcher.h"
-#include "test_util.h"
+
 #define private public
 #include "tproxy_tcp_session.h"
+
 #undef private
 
-extern "C" int __real_shutdown(int sockfd, int how);    // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_close(int fd);                    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_shutdown(int sockfd, int how);    
+extern "C" int __real_close(int fd);                    
 
 namespace
 {
@@ -214,24 +215,24 @@ class mock_upstream final : public mux::upstream
 
 }    // namespace
 
-extern "C" int __wrap_shutdown(int sockfd, int how)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_shutdown(int sockfd, int how)    
 {
     if (g_fail_shutdown_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_shutdown_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_shutdown(sockfd, how);    // NOLINT(bugprone-reserved-identifier)
+    return __real_shutdown(sockfd, how);    
 }
 
-extern "C" int __wrap_close(int fd)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_close(int fd)    
 {
     if (g_fail_close_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_close_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_close(fd);    // NOLINT(bugprone-reserved-identifier)
+    return __real_close(fd);    
 }
 
 TEST(TproxyTcpSessionTest, DirectEcho)
@@ -692,5 +693,3 @@ TEST(TproxyTcpSessionTest, IdleWatchdogDisabledWhenIdleTimeoutZero)
     session->close_client_socket();
     pair.client.close();
 }
-// NOLINTEND(bugprone-unused-return-value, misc-include-cleaner)
-// NOLINTEND(misc-non-private-member-variables-in-classes)

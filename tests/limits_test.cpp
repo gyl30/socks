@@ -1,4 +1,4 @@
-// NOLINTBEGIN(bugprone-unused-return-value, misc-include-cleaner)
+
 #include <chrono>
 #include <memory>
 #include <string>
@@ -194,4 +194,3 @@ TEST_F(limits_test_fixture, ConnectionPoolCapacity)
     target_acceptor.close();
     pool_thread.join();
 }
-// NOLINTEND(bugprone-unused-return-value, misc-include-cleaner)

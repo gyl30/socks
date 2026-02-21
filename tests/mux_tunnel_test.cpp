@@ -1,12 +1,11 @@
-// NOLINTBEGIN(readability-named-parameter)
-// NOLINTBEGIN(misc-include-cleaner)
+
 #include <memory>
 #include <string>
 #include <cstdint>
 
 #include <gtest/gtest.h>
-#include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/io_context.hpp>
 
 extern "C"
 {
@@ -14,8 +13,10 @@ extern "C"
 }
 
 #include "test_util.h"
+
 #define private public
 #include "mux_tunnel.h"
+
 #undef private
 
 namespace
@@ -105,5 +106,3 @@ TEST(MuxTunnelTest, CreateStreamReturnsNullWhenClosedOrAtCapacity)
 }
 
 }    // namespace
-// NOLINTEND(misc-include-cleaner)
-// NOLINTEND(readability-named-parameter)

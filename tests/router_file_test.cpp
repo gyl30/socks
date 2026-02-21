@@ -1,5 +1,4 @@
-// NOLINTBEGIN(google-runtime-int)
-// NOLINTBEGIN(misc-include-cleaner)
+
 #include <string>
 #include <cstdint>
 #include <cstdlib>
@@ -176,5 +175,3 @@ TEST_F(router_file_test_fixture, LoadRuleFilesFromSocksConfigDir)
     const auto result = mux::test::run_awaitable(ctx, router.decide_ip(conn_ctx, "8.8.8.8", addr));
     EXPECT_EQ(result, mux::route_type::kDirect);
 }
-// NOLINTEND(misc-include-cleaner)
-// NOLINTEND(google-runtime-int)

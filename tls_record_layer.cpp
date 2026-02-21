@@ -1,20 +1,19 @@
-// NOLINTBEGIN(misc-include-cleaner)
-#include <boost/system/error_code.hpp>
-#include <boost/system/detail/errc.hpp>
-#include <openssl/types.h>
 #include <span>
 #include <array>
+#include <vector>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <vector>
 #include <expected>
 
 #include <boost/system/errc.hpp>
+#include <boost/system/error_code.hpp>
+#include <boost/system/detail/errc.hpp>
 
 extern "C"
 {
 #include <openssl/rand.h>
+#include <openssl/types.h>
 }
 
 #include "crypto_util.h"
@@ -183,4 +182,3 @@ std::expected<std::vector<std::uint8_t>, boost::system::error_code> tls_record_l
     return out;
 }
 }    // namespace reality
-// NOLINTEND(misc-include-cleaner)

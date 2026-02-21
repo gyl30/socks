@@ -1,26 +1,26 @@
-// NOLINTBEGIN(modernize-use-starts-ends-with, performance-enum-size)
-// NOLINTBEGIN(bugprone-unchecked-optional-access, bugprone-unused-return-value, misc-include-cleaner)
-#include <array>
-#include <atomic>
-#include <charconv>
-#include <chrono>
-#include <cerrno>
-#include <cstdint>
-#include <optional>
-#include <string>
-#include <string_view>
-#include <thread>
-#include <tuple>
-#include <utility>
-#include <vector>
-#include <sys/socket.h>
-#include <unistd.h>
 
-#include <boost/asio.hpp>
+#include <array>
+#include <tuple>
+#include <atomic>
+#include <cerrno>
+#include <chrono>
+#include <string>
+#include <thread>
+#include <vector>
+#include <cstdint>
+#include <utility>
+#include <charconv>
+#include <optional>
+#include <unistd.h>
+#include <string_view>
+#include <sys/socket.h>
+
 #include <gtest/gtest.h>
+#include <boost/asio.hpp>
 
 #define private public
 #include "monitor_server.h"
+
 #undef private
 #include "statistics.h"
 #include "tproxy_client.h"
@@ -269,24 +269,24 @@ class monitor_server_env
 
 }    // namespace
 
-extern "C" int __real_socket(int domain, int type, int protocol);                                              // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);    // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_listen(int sockfd, int backlog);                                                         // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_accept(int sockfd, struct sockaddr* addr, socklen_t* addrlen);                           // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_accept4(int sockfd, struct sockaddr* addr, socklen_t* addrlen, int flags);               // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_close(int fd);                                                                           // NOLINT(bugprone-reserved-identifier)
+extern "C" int __real_socket(int domain, int type, int protocol);                                              
+extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);    
+extern "C" int __real_listen(int sockfd, int backlog);                                                         
+extern "C" int __real_accept(int sockfd, struct sockaddr* addr, socklen_t* addrlen);                           
+extern "C" int __real_accept4(int sockfd, struct sockaddr* addr, socklen_t* addrlen, int flags);               
+extern "C" int __real_close(int fd);                                                                           
 
-extern "C" int __wrap_socket(int domain, int type, int protocol)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_socket(int domain, int type, int protocol)    
 {
     if (should_fail_monitor_mode(monitor_fail_mode::kSocket, monitor_fail_mode::kSocketAlways))
     {
         errno = EMFILE;
         return -1;
     }
-    return __real_socket(domain, type, protocol);    // NOLINT(bugprone-reserved-identifier)
+    return __real_socket(domain, type, protocol);    
 }
 
-extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)    
 {
     if (level == SOL_SOCKET && optname == SO_REUSEADDR &&
         should_fail_monitor_mode(monitor_fail_mode::kReuseAddr, monitor_fail_mode::kReuseAddrAlways))
@@ -294,47 +294,47 @@ extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void*
         errno = EPERM;
         return -1;
     }
-    return __real_setsockopt(sockfd, level, optname, optval, optlen);    // NOLINT(bugprone-reserved-identifier)
+    return __real_setsockopt(sockfd, level, optname, optval, optlen);    
 }
 
-extern "C" int __wrap_listen(int sockfd, int backlog)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_listen(int sockfd, int backlog)    
 {
     if (should_fail_monitor_mode(monitor_fail_mode::kListen, monitor_fail_mode::kListenAlways))
     {
         errno = EACCES;
         return -1;
     }
-    return __real_listen(sockfd, backlog);    // NOLINT(bugprone-reserved-identifier)
+    return __real_listen(sockfd, backlog);    
 }
 
-extern "C" int __wrap_accept(int sockfd, struct sockaddr* addr, socklen_t* addrlen)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_accept(int sockfd, struct sockaddr* addr, socklen_t* addrlen)    
 {
     if (g_fail_accept_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_accept_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_accept(sockfd, addr, addrlen);    // NOLINT(bugprone-reserved-identifier)
+    return __real_accept(sockfd, addr, addrlen);    
 }
 
-extern "C" int __wrap_accept4(int sockfd, struct sockaddr* addr, socklen_t* addrlen, int flags)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_accept4(int sockfd, struct sockaddr* addr, socklen_t* addrlen, int flags)    
 {
     if (g_fail_accept_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_accept_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_accept4(sockfd, addr, addrlen, flags);    // NOLINT(bugprone-reserved-identifier)
+    return __real_accept4(sockfd, addr, addrlen, flags);    
 }
 
-extern "C" int __wrap_close(int fd)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_close(int fd)    
 {
     if (g_fail_close_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_close_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_close(fd);    // NOLINT(bugprone-reserved-identifier)
+    return __real_close(fd);    
 }
 
 namespace mux
@@ -818,5 +818,3 @@ TEST(MonitorServerTest, DoAcceptReturnsImmediatelyWhenStopped)
 }
 
 }    // namespace mux
-// NOLINTEND(bugprone-unchecked-optional-access, bugprone-unused-return-value, misc-include-cleaner)
-// NOLINTEND(modernize-use-starts-ends-with, performance-enum-size)

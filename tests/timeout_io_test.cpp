@@ -1,20 +1,20 @@
-// NOLINTBEGIN(bugprone-unused-return-value, misc-include-cleaner)
+
 #include <array>
 #include <chrono>
-#include <cstdint>
 #include <memory>
+#include <cstdint>
 #include <system_error>
 
+#include <gtest/gtest.h>
+#include <boost/asio/write.hpp>
+#include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/as_tuple.hpp>
-#include <boost/asio/awaitable.hpp>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
+#include <boost/asio/awaitable.hpp>
 #include <boost/asio/ip/address.hpp>
-#include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/use_awaitable.hpp>
-#include <boost/asio/write.hpp>
-#include <gtest/gtest.h>
 
 #include "test_util.h"
 #include "timeout_io.h"
@@ -164,4 +164,3 @@ TEST(TimeoutIoTest, ConnectFailureReturnsNonTimeoutError)
     EXPECT_TRUE(connect_res.ec);
     EXPECT_NE(connect_res.ec, boost::asio::error::timed_out);
 }
-// NOLINTEND(bugprone-unused-return-value, misc-include-cleaner)

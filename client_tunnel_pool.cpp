@@ -1,19 +1,12 @@
-// NOLINTBEGIN(misc-include-cleaner)
-#include <openssl/types.h>
 #include <array>
 #include <atomic>
-#include <boost/asio/co_spawn.hpp>    // NOLINT(misc-include-cleaner): required for co_spawn declarations.
-#include <boost/system/error_code.hpp>
-#include <boost/system/detail/errc.hpp>
-#include <boost/asio/awaitable.hpp>
-#include <boost/asio/io_context.hpp>
 #include <cctype>
 #include <chrono>
-#include <cstddef>
 #include <memory>
 #include <random>
 #include <string>
 #include <vector>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -22,24 +15,27 @@
 #include <optional>
 #include <algorithm>
 
-#include <boost/asio/as_tuple.hpp>
-#include <boost/asio/buffer.hpp>
-#include <boost/asio/detached.hpp>
-#include <boost/asio/error.hpp>
-#include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/read.hpp>
-#include <boost/asio/steady_timer.hpp>
-#include <boost/asio/use_awaitable.hpp>
+#include <boost/asio/error.hpp>
 #include <boost/asio/write.hpp>
+#include <boost/asio/buffer.hpp>
+#include <boost/asio/ip/tcp.hpp>
 #include <boost/system/errc.hpp>
-#include "reality_core.h"
-#include "context_pool.h"
-#include "mux_tunnel.h"
+#include <boost/asio/as_tuple.hpp>
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/detached.hpp>
+#include <boost/asio/awaitable.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/steady_timer.hpp>
+#include <boost/system/error_code.hpp>
+#include <boost/asio/use_awaitable.hpp>
+#include <boost/system/detail/errc.hpp>
 
 extern "C"
 {
 #include <openssl/evp.h>
 #include <openssl/rand.h>
+#include <openssl/types.h>
 #include <openssl/crypto.h>
 }
 
@@ -48,12 +44,15 @@ extern "C"
 #include "ch_parser.h"
 #include "constants.h"
 #include "net_utils.h"
+#include "mux_tunnel.h"
+#include "statistics.h"
 #include "timeout_io.h"
+#include "transcript.h"
 #include "crypto_util.h"
 #include "log_context.h"
-#include "statistics.h"
-#include "transcript.h"
+#include "context_pool.h"
 #include "reality_auth.h"
+#include "reality_core.h"
 #include "stop_dispatch.h"
 #include "reality_engine.h"
 #include "reality_messages.h"
@@ -1607,4 +1606,3 @@ boost::asio::awaitable<void> client_tunnel_pool::wait_remote_retry(boost::asio::
 }
 
 }    // namespace mux
-// NOLINTEND(misc-include-cleaner)

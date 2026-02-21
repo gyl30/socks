@@ -1,4 +1,4 @@
-// NOLINTBEGIN(bugprone-unchecked-optional-access)
+
 #include <gtest/gtest.h>
 
 extern "C"
@@ -31,4 +31,3 @@ TEST(TlsCipherSuiteTest, UnknownTls13SuiteRejected)
     const auto suite = reality::select_tls13_suite(0x1310);
     EXPECT_FALSE(suite.has_value());
 }
-// NOLINTEND(bugprone-unchecked-optional-access)

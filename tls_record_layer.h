@@ -1,14 +1,15 @@
 #ifndef TLS_RECORD_LAYER_H
 #define TLS_RECORD_LAYER_H
 
-#include <boost/system/error_code.hpp>
-#include <openssl/types.h>
 #include <span>
 #include <vector>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <expected>
+
+#include <openssl/types.h>
+#include <boost/system/error_code.hpp>
 
 #include "cipher_context.h"
 

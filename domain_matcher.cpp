@@ -1,8 +1,8 @@
 #include <cctype>
-#include <algorithm>
+#include <string>
 #include <cstddef>
 #include <fstream>
-#include <string>
+#include <algorithm>
 #include <string_view>
 
 #include "log.h"

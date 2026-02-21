@@ -1,5 +1,4 @@
-// NOLINTBEGIN(modernize-return-braced-init-list, modernize-use-nodiscard, readability-implicit-bool-conversion, readability-use-anyofallof)
-// NOLINTBEGIN(bugprone-unchecked-optional-access, misc-include-cleaner)
+
 #include <array>
 #include <atomic>
 #include <cctype>
@@ -62,10 +61,10 @@ std::string load_configuration_doc()
 
 }    // namespace
 
-extern "C" std::size_t __real_fread(void* ptr, std::size_t size, std::size_t count, FILE* stream);    // NOLINT(bugprone-reserved-identifier)
-extern "C" int __real_ferror(FILE* stream);                                                           // NOLINT(bugprone-reserved-identifier)
+extern "C" std::size_t __real_fread(void* ptr, std::size_t size, std::size_t count, FILE* stream);    
+extern "C" int __real_ferror(FILE* stream);                                                           
 
-extern "C" std::size_t __wrap_fread(void* ptr, std::size_t size, std::size_t count, FILE* stream)    // NOLINT(bugprone-reserved-identifier)
+extern "C" std::size_t __wrap_fread(void* ptr, std::size_t size, std::size_t count, FILE* stream)    
 {
     if (g_force_fread_error.exchange(false))
     {
@@ -73,16 +72,16 @@ extern "C" std::size_t __wrap_fread(void* ptr, std::size_t size, std::size_t cou
         errno = EIO;
         return 0;
     }
-    return __real_fread(ptr, size, count, stream);    // NOLINT(bugprone-reserved-identifier)
+    return __real_fread(ptr, size, count, stream);    
 }
 
-extern "C" int __wrap_ferror(FILE* stream)    // NOLINT(bugprone-reserved-identifier)
+extern "C" int __wrap_ferror(FILE* stream)    
 {
     if (g_injected_fread_error.exchange(false))
     {
         return 1;
     }
-    return __real_ferror(stream);    // NOLINT(bugprone-reserved-identifier)
+    return __real_ferror(stream);    
 }
 
 class config_test_fixture : public ::testing::Test
@@ -753,5 +752,3 @@ TEST_F(config_test_fixture, ContractMatrixSocksAuthRulesStayAlignedWithDocumenta
     ASSERT_FALSE(parsed.has_value());
     EXPECT_EQ(parsed.error().path, "/socks/password");
 }
-// NOLINTEND(bugprone-unchecked-optional-access, misc-include-cleaner)
-// NOLINTEND(modernize-return-braced-init-list, modernize-use-nodiscard, readability-implicit-bool-conversion, readability-use-anyofallof)
