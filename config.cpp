@@ -132,7 +132,7 @@ constexpr std::uint32_t kQueueCapacityMax = 65535;
 
 [[nodiscard]] bool has_enabled_client_inbound(const config& cfg)
 {
-#ifdef __linux__
+#if SOCKS_HAS_TPROXY
     return cfg.socks.enabled || cfg.tproxy.enabled;
 #else
     return cfg.socks.enabled;
@@ -157,9 +157,19 @@ constexpr std::uint32_t kQueueCapacityMax = 65535;
     {
         return std::unexpected(socks_result.error());
     }
+#if !SOCKS_HAS_TPROXY
+    if (cfg.tproxy.enabled)
+    {
+        return std::unexpected(make_config_error("/tproxy/enabled", "tproxy inbound is only supported on linux"));
+    }
+#endif
     if (cfg.mode == "client" && !has_enabled_client_inbound(cfg))
     {
+#if SOCKS_HAS_TPROXY
         return std::unexpected(make_config_error("/mode", "client mode requires socks or tproxy inbound"));
+#else
+        return std::unexpected(make_config_error("/mode", "client mode requires socks inbound"));
+#endif
     }
     return {};
 }
