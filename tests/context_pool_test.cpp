@@ -1,5 +1,4 @@
-// NOLINTBEGIN(performance-inefficient-vector-operation)
-// NOLINTBEGIN(misc-include-cleaner)
+
 #include <thread>
 #include <vector>
 #include <cstddef>
@@ -103,5 +102,3 @@ TEST(ContextPoolTest, RunAndStop)
 }
 
 }    // namespace mux
-// NOLINTEND(misc-include-cleaner)
-// NOLINTEND(performance-inefficient-vector-operation)

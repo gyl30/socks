@@ -19,7 +19,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import Iterable, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 try:
     from clang import cindex
@@ -64,6 +64,7 @@ STANDARD_HEADERS = {
     "cwchar",
     "cwctype",
     "deque",
+    "expected",
     "exception",
     "filesystem",
     "forward_list",
@@ -158,6 +159,14 @@ EXCLUDE_BASENAMES = {"log.cpp", "log.h", "reflect.h"}
 INCLUDE_RE = re.compile(r'^\s*#\s*include\s*([<"])([^>"]+)[>"]')
 
 
+def is_extern_syntax_line(stripped_line: str) -> bool:
+    return (
+        stripped_line.startswith('extern "C"')
+        or stripped_line.startswith("{")
+        or stripped_line.startswith("}")
+    )
+
+
 def repo_root() -> Path:
     here = Path(__file__).resolve()
     return here.parent.parent
@@ -233,8 +242,11 @@ def fallback_extern_c_blocks(lines: List[str]) -> List[Tuple[int, int]]:
     return blocks
 
 
-def find_extern_c_blocks(path: Path, lines: List[str], clang_args: List[str]) -> List[Tuple[int, int]]:
-    index = cindex.Index.create()
+def find_extern_c_blocks(
+    path: Path, lines: List[str], clang_args: List[str], index: Optional[cindex.Index] = None
+) -> List[Tuple[int, int]]:
+    if index is None:
+        index = cindex.Index.create()
     options = (
         cindex.TranslationUnit.PARSE_DETAILED_PROCESSING_RECORD
         | cindex.TranslationUnit.PARSE_SKIP_FUNCTION_BODIES
@@ -275,13 +287,22 @@ def classify_include(path: str, quoted: bool) -> int:
         return 2
     if "/" in path:
         return 2
-    return 2
+    # Angle-bracket headers without slash are usually standard/system headers.
+    return 1
 
 
 def include_len(path: str, quoted: bool) -> int:
     if quoted:
         return len(f'#include "{path}"')
     return len(f"#include <{path}>")
+
+
+def include_root(path: str, quoted: bool) -> Optional[str]:
+    if quoted:
+        return None
+    if "/" not in path:
+        return None
+    return path.split("/", 1)[0]
 
 
 class IncludeItem:
@@ -365,7 +386,7 @@ def parse_include_blocks(
                         include_items.append(IncludeItem(raw.strip(), m.group(2), m.group(1) == '"'))
                     else:
                         stripped = raw.strip()
-                        if stripped and stripped not in ('extern "C"', "{", "}"):
+                        if stripped and not is_extern_syntax_line(stripped):
                             other_lines.append(raw)
                 if other_lines:
                     # Keep raw block untouched if it contains other tokens.
@@ -386,9 +407,23 @@ def parse_include_blocks(
 
 
 def rebuild_block(items: List[object]) -> List[str]:
+    extern_root_map: Dict[str, ExternBlockItem] = {}
+    for item in items:
+        if isinstance(item, ExternBlockItem):
+            for inc in item.includes:
+                root = include_root(inc.path, inc.quoted)
+                if root is None:
+                    continue
+                if root not in extern_root_map:
+                    extern_root_map[root] = item
+
     groups = {1: [], 2: [], 3: [], 4: []}
     for item in items:
         if isinstance(item, IncludeItem):
+            root = include_root(item.path, item.quoted)
+            if root is not None and root in extern_root_map:
+                extern_root_map[root].includes.append(item)
+                continue
             group = classify_include(item.path, item.quoted)
             if group == 3:
                 groups[4].append(item)
@@ -419,13 +454,115 @@ def rebuild_block(items: List[object]) -> List[str]:
     return rendered
 
 
-def rewrite_includes(path: Path, clang_args: List[str], write: bool) -> bool:
+def group_name(group: int) -> str:
+    if group == 1:
+        return "standard"
+    if group == 2:
+        return "third_party"
+    if group == 3:
+        return "extern_c"
+    if group == 4:
+        return "project"
+    return "unknown"
+
+
+def include_group(item: object) -> int:
+    if isinstance(item, IncludeItem):
+        group = classify_include(item.path, item.quoted)
+        if group == 3:
+            return 4
+        return group
+    if isinstance(item, ExternBlockItem):
+        return 3
+    if isinstance(item, dict) and "raw" in item:
+        return 3
+    return 0
+
+
+def detect_order_issues(include_blocks: List[Tuple[int, int, List[object]]]) -> List[str]:
+    issues: List[str] = []
+    for block_index, (_, _, items) in enumerate(include_blocks, start=1):
+        prev_group = 0
+        seen_groups: Set[int] = set()
+        group_items: Dict[int, List[object]] = {1: [], 2: [], 3: [], 4: []}
+
+        for item_index, item in enumerate(items, start=1):
+            group = include_group(item)
+            if group == 0:
+                continue
+            if group < prev_group:
+                issues.append(
+                    f"include block {block_index}: group order broken near item {item_index}"
+                )
+            if group != prev_group:
+                if group in seen_groups:
+                    issues.append(
+                        f"include block {block_index}: group {group_name(group)} is split into multiple segments"
+                    )
+                seen_groups.add(group)
+            prev_group = group
+            group_items[group].append(item)
+
+            if isinstance(item, dict) and "raw" in item:
+                issues.append(
+                    f"include block {block_index}: extern-c raw block contains non-include tokens"
+                )
+
+        for group in (1, 2, 4):
+            includes = [it for it in group_items[group] if isinstance(it, IncludeItem)]
+            keys = [it.sort_key() for it in includes]
+            if keys != sorted(keys):
+                issues.append(
+                    f"include block {block_index}: group {group_name(group)} is not sorted by length"
+                )
+
+        extern_blocks = [it for it in group_items[3] if isinstance(it, ExternBlockItem)]
+        extern_keys = [it.sort_key() for it in extern_blocks]
+        if extern_keys != sorted(extern_keys):
+            issues.append(f"include block {block_index}: group extern_c blocks are not sorted")
+        for extern_index, extern_block in enumerate(extern_blocks, start=1):
+            include_keys = [inc.sort_key() for inc in extern_block.includes]
+            if include_keys != sorted(include_keys):
+                issues.append(
+                    f"include block {block_index}: extern_c block {extern_index} includes are not sorted by length"
+                )
+    return issues
+
+
+def detect_mixed_extern_roots(lines: List[str], extern_blocks: List[Tuple[int, int]]) -> List[str]:
+    roots_state: Dict[str, Set[str]] = {}
+
+    def in_extern(line_no: int) -> bool:
+        for start, end in extern_blocks:
+            if start <= line_no <= end:
+                return True
+        return False
+
+    for idx, line in enumerate(lines, start=1):
+        match = INCLUDE_RE.match(line)
+        if not match:
+            continue
+        root = include_root(match.group(2), match.group(1) == '"')
+        if root is None:
+            continue
+        state = "in" if in_extern(idx) else "out"
+        if root not in roots_state:
+            roots_state[root] = set()
+        roots_state[root].add(state)
+
+    return sorted(root for root, state in roots_state.items() if len(state) > 1)
+
+
+def rewrite_includes(
+    path: Path, clang_args: List[str], write: bool, index: Optional[cindex.Index] = None
+) -> Tuple[bool, List[str], List[str]]:
     text = path.read_text(encoding="utf-8")
     lines = text.splitlines()
-    extern_blocks = find_extern_c_blocks(path, lines, clang_args)
+    extern_blocks = find_extern_c_blocks(path, lines, clang_args, index=index)
     include_blocks = parse_include_blocks(lines, extern_blocks)
     if not include_blocks:
-        return False
+        mixed = detect_mixed_extern_roots(lines, extern_blocks)
+        return (False, mixed, [])
 
     new_lines: List[str] = []
     last_end = 0
@@ -448,11 +585,15 @@ def rewrite_includes(path: Path, clang_args: List[str], write: bool) -> bool:
         collapsed.append(line)
 
     new_text = "\n".join(collapsed).rstrip() + "\n"
+    new_extern_blocks = fallback_extern_c_blocks(collapsed)
+    new_include_blocks = parse_include_blocks(collapsed, new_extern_blocks)
+    mixed = detect_mixed_extern_roots(collapsed, new_extern_blocks)
+    order_issues = detect_order_issues(new_include_blocks)
     if new_text != text:
         if write:
             path.write_text(new_text, encoding="utf-8")
-        return True
-    return False
+        return (True, mixed, order_issues)
+    return (False, mixed, order_issues)
 
 
 def collect_files(root: Path, paths: Optional[List[str]]) -> List[Path]:
@@ -476,23 +617,45 @@ def collect_files(root: Path, paths: Optional[List[str]]) -> List[Path]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Sort include order using libclang.")
-    parser.add_argument("--check", action="store_true", help="only report files that would change")
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="only report files that would change or still violate include order rules",
+    )
     parser.add_argument("files", nargs="*", help="optional file list; defaults to tracked .h/.cpp")
     args = parser.parse_args()
 
     root = repo_root()
     clang_args = build_clang_args(root)
     files = collect_files(root, args.files)
+    index = cindex.Index.create()
 
     changed = []
+    mixed_issues: List[str] = []
+    order_issues: List[str] = []
     for path in files:
-        if rewrite_includes(path, clang_args, write=not args.check):
+        changed_file, mixed_roots, per_file_order_issues = rewrite_includes(
+            path, clang_args, write=not args.check, index=index
+        )
+        if changed_file:
             changed.append(str(path.relative_to(root)))
+        if mixed_roots:
+            mixed_issues.append(
+                f"{path.relative_to(root)}: mixed extern-c include roots: {', '.join(mixed_roots)}"
+            )
+        for issue in per_file_order_issues:
+            order_issues.append(f"{path.relative_to(root)}: {issue}")
 
     if changed:
         print("\n".join(changed))
-        if args.check:
-            return 2
+    if mixed_issues:
+        print("\n".join(mixed_issues), file=sys.stderr)
+    if order_issues:
+        print("\n".join(order_issues), file=sys.stderr)
+    if args.check and (changed or mixed_issues or order_issues):
+        return 2
+    if mixed_issues or order_issues:
+        return 3
     return 0
 
 

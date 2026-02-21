@@ -1,18 +1,17 @@
-// NOLINTBEGIN(misc-include-cleaner)
 #include <array>
-#include <boost/system/error_code.hpp>
-#include <fstream>
-#include <cstddef>
-#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
+#include <cstddef>
+#include <cstdint>
+#include <fstream>
 #include <utility>
 #include <charconv>
 #include <string_view>
 #include <system_error>
 
 #include <boost/asio/ip/address.hpp>
+#include <boost/system/error_code.hpp>
 #include <boost/asio/ip/address_v4.hpp>
 #include <boost/asio/ip/address_v6.hpp>
 
@@ -379,4 +378,3 @@ void ip_matcher::optimize_node(const std::unique_ptr<trie_node>& node)
 }
 
 }    // namespace mux
-// NOLINTEND(misc-include-cleaner)

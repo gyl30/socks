@@ -2,14 +2,15 @@
 #define SOCKS_SESSION_H
 
 #include <array>
-#include <boost/asio/ip/tcp.hpp>
-#include <boost/asio/io_context.hpp>
-#include <boost/asio/awaitable.hpp>
 #include <memory>
-#include <optional>
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <optional>
+
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/awaitable.hpp>
+#include <boost/asio/io_context.hpp>
 
 #include "config.h"
 #include "router.h"
