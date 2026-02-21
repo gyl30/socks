@@ -135,6 +135,65 @@ jobs:
         set -euo pipefail
         bash script/run_test_tier.sh --tier "${{ matrix.tier }}" --build-dir build_tier --jobs 20
 
+  macos-unit:
+    name: macOS Unit Regression
+    runs-on: macos-14
+    env:
+      BOOST_INSTALL_PREFIX: /Users/runner/.local/boost-1.89
+      INTEGRATION_TEST_REGEX: integration|tproxy_integration|udp_integration|mux_connection_integration_test
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install System Dependencies
+      run: |
+        set -euo pipefail
+        brew update
+        brew install cmake ninja openssl@3 ripgrep
+
+    - name: Cache Boost 1.89
+      id: cache-boost
+      uses: actions/cache@v4
+      with:
+        key: boost-1.89.0-${{ runner.os }}-v1
+        path: |
+          ~/.cache/boost_1_89_0.tar.bz2
+          ~/.cache/boost_1_89_0
+          ~/.local/boost-1.89
+
+    - name: Install Boost 1.89 from source
+      if: steps.cache-boost.outputs.cache-hit != 'true'
+      run: |
+        set -euo pipefail
+        mkdir -p "$HOME/.cache" "$HOME/.local"
+        curl -fL --retry 3 --retry-delay 5 -o "$HOME/.cache/${BOOST_ARCHIVE}" "https://archives.boost.io/release/${BOOST_VERSION}/source/${BOOST_ARCHIVE}"
+        rm -rf "$HOME/.cache/${BOOST_SRC_DIR}"
+        tar xf "$HOME/.cache/${BOOST_ARCHIVE}" -C "$HOME/.cache"
+        cd "$HOME/.cache/${BOOST_SRC_DIR}"
+        ./bootstrap.sh --prefix="${BOOST_INSTALL_PREFIX}"
+        ./b2 install -j15
+
+    - name: Configure macOS Build
+      run: |
+        set -euo pipefail
+        OPENSSL_ROOT="$(brew --prefix openssl@3)"
+        cmake -S . -B build_macos -GNinja \
+          -DCMAKE_BUILD_TYPE=Debug \
+          -DCMAKE_C_COMPILER=clang \
+          -DCMAKE_CXX_COMPILER=clang++ \
+          -DENABLE_TSAN=OFF \
+          -DENABLE_ASAN=ON \
+          -DOPENSSL_ROOT_DIR="${OPENSSL_ROOT}" \
+          -DCMAKE_PREFIX_PATH="${BOOST_INSTALL_PREFIX};${OPENSSL_ROOT}"
+
+    - name: Build macOS
+      run: cmake --build build_macos -j15
+
+    - name: Run macOS Unit Tests
+      run: ctest --test-dir build_macos --parallel 20 --output-on-failure -E "$INTEGRATION_TEST_REGEX"
+
   tsan:
     name: TSAN (${{ matrix.suite }})
     runs-on: ubuntu-22.04
