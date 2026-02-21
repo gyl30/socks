@@ -118,6 +118,36 @@ TEST(MuxCodecTest, SynPayloadDecodeInvalidTraceIdLen)
     EXPECT_FALSE(mux::mux_codec::decode_syn(buffer.data(), buffer.size(), output));
 }
 
+TEST(MuxCodecTest, SynPayloadDecodeRejectsTrailingBytesWithoutTrace)
+{
+    std::vector<std::uint8_t> buffer;
+    buffer.push_back(0x01);
+    buffer.push_back(0x09);
+    buffer.insert(buffer.end(), {'1', '2', '7', '.', '0', '.', '0', '.', '1'});
+    buffer.push_back(0x00);
+    buffer.push_back(0x50);
+    buffer.push_back(0xAA);
+
+    mux::syn_payload output;
+    EXPECT_FALSE(mux::mux_codec::decode_syn(buffer.data(), buffer.size(), output));
+}
+
+TEST(MuxCodecTest, SynPayloadDecodeRejectsTrailingBytesAfterTrace)
+{
+    mux::syn_payload input;
+    input.socks_cmd = 0x01;
+    input.addr = "127.0.0.1";
+    input.port = 80;
+    input.trace_id = "trace";
+
+    std::vector<std::uint8_t> buffer;
+    mux::mux_codec::encode_syn(input, buffer);
+    buffer.push_back(0xAB);
+
+    mux::syn_payload output;
+    EXPECT_FALSE(mux::mux_codec::decode_syn(buffer.data(), buffer.size(), output));
+}
+
 TEST(MuxCodecTest, AckPayloadRoundTrip)
 {
     mux::ack_payload input;
@@ -147,6 +177,21 @@ TEST(MuxCodecTest, AckPayloadDecodeTooShort)
 TEST(MuxCodecTest, AckPayloadDecodeInvalidAddrLen)
 {
     std::vector<std::uint8_t> buffer = {0x00, 0x10, 0x01, 0x02};
+    mux::ack_payload output;
+    EXPECT_FALSE(mux::mux_codec::decode_ack(buffer.data(), buffer.size(), output));
+}
+
+TEST(MuxCodecTest, AckPayloadDecodeRejectsTrailingBytes)
+{
+    mux::ack_payload input;
+    input.socks_rep = 0x00;
+    input.bnd_addr = "10.0.0.1";
+    input.bnd_port = 8080;
+
+    std::vector<std::uint8_t> buffer;
+    mux::mux_codec::encode_ack(input, buffer);
+    buffer.push_back(0xEE);
+
     mux::ack_payload output;
     EXPECT_FALSE(mux::mux_codec::decode_ack(buffer.data(), buffer.size(), output));
 }
