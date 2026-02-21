@@ -121,6 +121,7 @@ boost::asio::awaitable<route_type> router::decide_ip(const connection_context& c
                                                      const std::string& host,
                                                      const boost::asio::ip::address& addr) const
 {
+    (void)host;
     if (block_ip_matcher_->match(addr))
     {
         LOG_CTX_DEBUG(ctx, "{} matched ip rule block", log_event::kRoute);

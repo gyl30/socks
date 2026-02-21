@@ -254,6 +254,7 @@ boost::asio::awaitable<void> remote_udp_session::cleanup_after_stop()
 
 boost::asio::awaitable<void> remote_udp_session::start_impl(std::shared_ptr<remote_udp_session> self)
 {
+    (void)self;
     auto conn = connection_.lock();
     if (!conn)
     {
