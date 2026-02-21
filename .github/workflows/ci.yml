@@ -9,7 +9,7 @@ env:
   BOOST_ARCHIVE: "boost_1_89_0.tar.bz2"
   BOOST_SRC_DIR: "boost_1_89_0"
   BOOST_INSTALL_PREFIX: "/home/runner/.local/boost-1.89"
-  CLANG_VERSION: "21"
+  CLANG_VERSION: "20"
 
 jobs:
   guard-expected-assertion-style:
@@ -80,7 +80,7 @@ jobs:
         set -euo pipefail
         wget -q https://apt.llvm.org/llvm.sh -O /tmp/llvm.sh
         chmod +x /tmp/llvm.sh
-        sudo /tmp/llvm.sh "${CLANG_VERSION}" -n=jammy -m=https://apt.llvm.org
+        sudo /tmp/llvm.sh "${CLANG_VERSION}"
         "clang-${CLANG_VERSION}" --version
         "clang++-${CLANG_VERSION}" --version
 
@@ -139,13 +139,13 @@ jobs:
       run: |
         set -euo pipefail
         brew update
-        brew install cmake ninja openssl@3 ripgrep llvm boost
+        brew install cmake ninja openssl@3 ripgrep llvm@20 boost
 
     - name: Configure macOS Build
       run: |
         set -euo pipefail
         OPENSSL_ROOT="$(brew --prefix openssl@3)"
-        LLVM_ROOT="$(brew --prefix llvm)"
+        LLVM_ROOT="$(brew --prefix llvm@20)"
         BOOST_ROOT="$(brew --prefix boost)"
         cmake -S . -B build_macos -GNinja \
           -DCMAKE_BUILD_TYPE=Debug \
@@ -154,6 +154,9 @@ jobs:
           -DENABLE_TSAN=OFF \
           -DENABLE_ASAN=ON \
           -DOPENSSL_ROOT_DIR="${OPENSSL_ROOT}" \
+          -DCMAKE_CXX_FLAGS="-D_LIBCPP_DISABLE_AVAILABILITY" \
+          -DCMAKE_EXE_LINKER_FLAGS="-L${LLVM_ROOT}/lib/c++ -Wl,-rpath,${LLVM_ROOT}/lib/c++" \
+          -DCMAKE_SHARED_LINKER_FLAGS="-L${LLVM_ROOT}/lib/c++ -Wl,-rpath,${LLVM_ROOT}/lib/c++" \
           -DCMAKE_PREFIX_PATH="${BOOST_ROOT};${OPENSSL_ROOT};${LLVM_ROOT}"
 
     - name: Build macOS
@@ -212,7 +215,7 @@ jobs:
         set -euo pipefail
         wget -q https://apt.llvm.org/llvm.sh -O /tmp/llvm.sh
         chmod +x /tmp/llvm.sh
-        sudo /tmp/llvm.sh "${CLANG_VERSION}" -n=jammy -m=https://apt.llvm.org
+        sudo /tmp/llvm.sh "${CLANG_VERSION}"
         "clang-${CLANG_VERSION}" --version
         "clang++-${CLANG_VERSION}" --version
 
@@ -474,7 +477,7 @@ jobs:
         set -euo pipefail
         wget -q https://apt.llvm.org/llvm.sh -O /tmp/llvm.sh
         chmod +x /tmp/llvm.sh
-        sudo /tmp/llvm.sh "${CLANG_VERSION}" -n=jammy -m=https://apt.llvm.org
+        sudo /tmp/llvm.sh "${CLANG_VERSION}"
         "clang-${CLANG_VERSION}" --version
         "clang++-${CLANG_VERSION}" --version
 
