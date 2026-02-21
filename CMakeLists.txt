@@ -22,6 +22,12 @@ endif()
 
 include(CheckCXXCompilerFlag)
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  set(SOCKS_HAS_TPROXY ON)
+else()
+  set(SOCKS_HAS_TPROXY OFF)
+endif()
+
 add_compile_options(
   -Wall
   -Wextra
@@ -61,8 +67,10 @@ if(HAS_BRANCH_PROTECTION)
   add_compile_options(-mbranch-protection=standard)
 endif()
 
-add_link_options(-Wl,-z,nodlopen -Wl,-z,noexecstack -Wl,-z,relro -Wl,-z,now
-                 -Wl,--as-needed -Wl,--no-copy-dt-needed-entries)
+if(SOCKS_HAS_TPROXY)
+  add_link_options(-Wl,-z,nodlopen -Wl,-z,noexecstack -Wl,-z,relro -Wl,-z,now
+                   -Wl,--as-needed -Wl,--no-copy-dt-needed-entries)
+endif()
 
 option(ENABLE_TSAN "Enable ThreadSanitizer" OFF)
 option(ENABLE_ASAN "Enable AddressSanitizer" ON)
@@ -148,12 +156,18 @@ set(SOCKS_SOURCES
     reality_auth.cpp
     monitor_server.cpp)
 
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+if(SOCKS_HAS_TPROXY)
   list(APPEND SOCKS_SOURCES tproxy_client.cpp tproxy_tcp_session.cpp
        tproxy_udp_session.cpp tproxy_udp_sender.cpp)
 endif()
 
 add_library(core STATIC ${SOCKS_SOURCES})
+
+if(SOCKS_HAS_TPROXY)
+  target_compile_definitions(core PUBLIC SOCKS_HAS_TPROXY=1)
+else()
+  target_compile_definitions(core PUBLIC SOCKS_HAS_TPROXY=0)
+endif()
 
 target_include_directories(core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 

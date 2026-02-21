@@ -304,12 +304,14 @@ if(LINUX)
     )
 endif()
 
-add_socks_test(remote_udp_session_test)
-target_link_options(
-    remote_udp_session_test
-    PRIVATE
-        -Wl,--wrap=getaddrinfo
-)
+if(LINUX)
+    add_socks_test(remote_udp_session_test)
+    target_link_options(
+        remote_udp_session_test
+        PRIVATE
+            -Wl,--wrap=getaddrinfo
+    )
+endif()
 add_socks_test(router_file_test)
 
 if(LINUX)

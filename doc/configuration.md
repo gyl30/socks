@@ -17,10 +17,11 @@
 - `socks.auth` / `socks.username` / `socks.password`：SOCKS5 认证配置。
   - 当 `socks.auth = true` 时，`socks.username` 与 `socks.password` 必须均为非空字符串。
   - 任一为空会在配置解析阶段直接报错，不会降级为无认证模式。
-- `tproxy.enabled`：是否启用 TPROXY 入站（默认 `false`）。
+- `tproxy.enabled`：是否启用 TPROXY 入站（默认 `false`，仅 Linux 支持）。
 - `tproxy.listen_host`：TPROXY 监听地址（默认 `::`）。
 - `tproxy.tcp_port` / `tproxy.udp_port`：TPROXY TCP/UDP 端口。`udp_port = 0` 表示跟随 `tcp_port`。
 - `tproxy.mark`：TPROXY `SO_MARK`，用于路由/回避回环（默认 `0x11`）。
+- 非 Linux 平台若设置 `tproxy.enabled = true`，配置解析会直接报错。
 - 所有端口字段均要求 `0-65535` 的无符号整数；超出范围或负数会在解析阶段直接报错。
 
 ## 传输与超时
@@ -28,7 +29,7 @@
 - `timeout.read` / `timeout.write` / `timeout.idle`：读写与空闲超时秒数。
 - `timeout.read = 0` 与 `timeout.write = 0`：表示禁用对应读写阶段超时。
 - `timeout.idle = 0`：表示禁用空闲超时。
-- `queues.udp_session_recv_channel_capacity`：UDP 会话接收队列深度（用于 `udp_socks_session`、`remote_udp_session`、`tproxy_udp_session`，默认 `512`）。
+- `queues.udp_session_recv_channel_capacity`：UDP 会话接收队列深度（用于 `udp_socks_session`、`remote_udp_session`，Linux 下还用于 `tproxy_udp_session`，默认 `512`）。
 - `queues.tproxy_udp_dispatch_queue_capacity`：TPROXY UDP 分发队列深度（默认 `512`）。
 - `queues.udp_session_recv_channel_capacity` 与 `queues.tproxy_udp_dispatch_queue_capacity` 必须在 `1-65535`，否则配置解析失败。
 - `heartbeat.enabled`：是否启用心跳。
