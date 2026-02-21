@@ -18,7 +18,7 @@
 #include "context_pool.h"
 #include "socks_client.h"
 #include "remote_server.h"
-#ifdef __linux__
+#if SOCKS_HAS_TPROXY
 #include "tproxy_client.h"
 #endif
 #include "monitor_server.h"
@@ -30,7 +30,7 @@ struct runtime_services
 {
     std::shared_ptr<mux::remote_server> server = nullptr;
     std::shared_ptr<mux::socks_client> socks = nullptr;
-#ifdef __linux__
+#if SOCKS_HAS_TPROXY
     std::shared_ptr<mux::tproxy_client> tproxy = nullptr;
 #endif
     std::shared_ptr<mux::monitor_server> monitor = nullptr;
@@ -102,7 +102,7 @@ bool start_server_mode(mux::io_context_pool& pool, const mux::config& cfg, runti
 
 bool has_client_inbound_enabled(const mux::config& cfg)
 {
-#ifdef __linux__
+#if SOCKS_HAS_TPROXY
     return cfg.socks.enabled || cfg.tproxy.enabled;
 #else
     return cfg.socks.enabled;
@@ -125,7 +125,7 @@ bool start_socks_inbound_if_enabled(mux::io_context_pool& pool, const mux::confi
     return true;
 }
 
-#ifdef __linux__
+#if SOCKS_HAS_TPROXY
 bool start_tproxy_inbound_if_enabled(mux::io_context_pool& pool, const mux::config& cfg, runtime_services& services)
 {
     if (!cfg.tproxy.enabled)
@@ -149,7 +149,7 @@ bool start_client_mode(mux::io_context_pool& pool, const mux::config& cfg, runti
     {
         return false;
     }
-#ifdef __linux__
+#if SOCKS_HAS_TPROXY
     if (!start_tproxy_inbound_if_enabled(pool, cfg, services))
     {
         return false;
@@ -200,7 +200,7 @@ void stop_runtime_services(mux::io_context_pool& pool, const runtime_services& s
     {
         services.socks->stop();
     }
-#ifdef __linux__
+#if SOCKS_HAS_TPROXY
     if (services.tproxy != nullptr)
     {
         services.tproxy->stop();
