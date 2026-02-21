@@ -129,6 +129,8 @@ constexpr std::uint32_t kQueueCapacityMax = 65535;
     return {};
 }
 
+[[nodiscard]] bool is_supported_mode(const std::string& mode) { return mode == "client" || mode == "server"; }
+
 [[nodiscard]] bool has_enabled_client_inbound(const config& cfg)
 {
 #if SOCKS_HAS_TPROXY
@@ -140,6 +142,10 @@ constexpr std::uint32_t kQueueCapacityMax = 65535;
 
 [[nodiscard]] std::expected<void, config_error> validate_config(const config& cfg)
 {
+    if (!is_supported_mode(cfg.mode))
+    {
+        return std::unexpected(make_config_error("/mode", "must be client or server"));
+    }
     if (const auto limits_result = validate_limits_config(cfg.limits); !limits_result)
     {
         return std::unexpected(limits_result.error());
