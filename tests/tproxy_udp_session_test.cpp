@@ -385,6 +385,31 @@ bool open_ephemeral_tcp_acceptor(boost::asio::ip::tcp::acceptor& acceptor,
     return false;
 }
 
+bool open_ephemeral_udp_socket(boost::asio::ip::udp::socket& socket,
+                               const std::uint32_t max_attempts = 120,
+                               const std::chrono::milliseconds backoff = std::chrono::milliseconds(25))
+{
+    for (std::uint32_t attempt = 0; attempt < max_attempts; ++attempt)
+    {
+        boost::system::error_code ec;
+        if (socket.is_open())
+        {
+            (void)socket.close(ec);
+        }
+        ec = socket.open(boost::asio::ip::udp::v4(), ec);
+        if (!ec)
+        {
+            ec = socket.bind(boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0), ec);
+        }
+        if (!ec)
+        {
+            return true;
+        }
+        std::this_thread::sleep_for(backoff);
+    }
+    return false;
+}
+
 std::uint16_t pick_free_tcp_port()
 {
     boost::asio::io_context io_context;
@@ -394,6 +419,17 @@ std::uint16_t pick_free_tcp_port()
         return 0;
     }
     return acceptor.local_endpoint().port();
+}
+
+std::uint16_t pick_free_udp_port()
+{
+    boost::asio::io_context io_context;
+    boost::asio::ip::udp::socket socket(io_context);
+    if (!open_ephemeral_udp_socket(socket))
+    {
+        return 0;
+    }
+    return socket.local_endpoint().port();
 }
 
 std::string read_monitor_response(const std::uint16_t port, const std::string& request)
@@ -2451,13 +2487,15 @@ TEST(TproxyClientTest, UdpSetupFailureAfterTcpSetupStopsClient)
 
     const auto tcp_port = pick_free_tcp_port();
     ASSERT_NE(tcp_port, 0);
+    const auto udp_port = pick_free_udp_port();
+    ASSERT_NE(udp_port, 0);
 
     mux::config cfg;
     cfg.tproxy.enabled = true;
     cfg.tproxy.listen_host = "127.0.0.1";
     cfg.tproxy.mark = 0;
     cfg.tproxy.tcp_port = tcp_port;
-    cfg.tproxy.udp_port = static_cast<std::uint16_t>(tcp_port + 1);
+    cfg.tproxy.udp_port = udp_port;
     cfg.reality.public_key = std::string(64, 'a');
 
     auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
@@ -3916,13 +3954,15 @@ TEST(TproxyClientTest, ConcurrentStartDuringStopKeepsTunnelPoolStateConsistent)
 
     const auto tcp_port = pick_free_tcp_port();
     ASSERT_NE(tcp_port, 0);
+    const auto udp_port = pick_free_udp_port();
+    ASSERT_NE(udp_port, 0);
 
     mux::config cfg;
     cfg.tproxy.enabled = true;
     cfg.tproxy.listen_host = "127.0.0.1";
     cfg.tproxy.mark = 0;
     cfg.tproxy.tcp_port = tcp_port;
-    cfg.tproxy.udp_port = static_cast<std::uint16_t>(tcp_port + 1);
+    cfg.tproxy.udp_port = udp_port;
     cfg.reality.public_key = std::string(64, 'a');
 
     auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
