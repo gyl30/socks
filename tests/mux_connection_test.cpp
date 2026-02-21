@@ -48,7 +48,7 @@ extern "C"
 {
 int __wrap_RAND_bytes(unsigned char* buf, int num)
 {
-    if (g_force_rand_bytes_failure.load(std::memory_order_relaxed))
+    if (g_force_rand_bytes_failure.exchange(false, std::memory_order_acq_rel))
     {
         return 0;
     }
@@ -296,6 +296,78 @@ TEST_F(mux_connection_integration_test_fixture, WriteTimeoutHandling)
     }
     EXPECT_FALSE(conn_s->is_open());
 }
+
+#ifdef __linux__
+TEST_F(mux_connection_integration_test_fixture, HeartbeatRandFailureStopsConnection)
+{
+    boost::asio::ip::tcp::acceptor acceptor(io_ctx());
+    const auto setup_ec = setup_loopback_acceptor_with_retry(acceptor);
+    ASSERT_FALSE(setup_ec) << setup_ec.message();
+    auto socket_server = std::make_shared<boost::asio::ip::tcp::socket>(io_ctx());
+    auto socket_client = std::make_shared<boost::asio::ip::tcp::socket>(io_ctx());
+
+    socket_client->connect(acceptor.local_endpoint());
+    acceptor.accept(*socket_server);
+
+    config::timeout_t timeout_cfg;
+    timeout_cfg.read = 100;
+    timeout_cfg.write = 100;
+
+    config::heartbeat_t heartbeat_client;
+    heartbeat_client.enabled = true;
+    heartbeat_client.idle_timeout = 0;
+    heartbeat_client.min_interval = 1;
+    heartbeat_client.max_interval = 1;
+    heartbeat_client.min_padding = 16;
+    heartbeat_client.max_padding = 16;
+
+    config::heartbeat_t heartbeat_server;
+    heartbeat_server.enabled = false;
+
+    auto conn_c = std::make_shared<mux_connection>(std::move(*socket_client),
+                                                   io_ctx(),
+                                                   reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()},
+                                                   true,
+                                                   21,
+                                                   "heartbeat_rand_fail_c",
+                                                   timeout_cfg,
+                                                   config::limits_t{},
+                                                   heartbeat_client);
+    auto conn_s = std::make_shared<mux_connection>(std::move(*socket_server),
+                                                   io_ctx(),
+                                                   reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()},
+                                                   false,
+                                                   22,
+                                                   "heartbeat_rand_fail_s",
+                                                   timeout_cfg,
+                                                   config::limits_t{},
+                                                   heartbeat_server);
+
+    g_force_rand_bytes_failure.store(true, std::memory_order_release);
+
+    boost::asio::co_spawn(io_ctx(), [conn_c]() -> boost::asio::awaitable<void> { co_await conn_c->start(); }, boost::asio::detached);
+    boost::asio::co_spawn(io_ctx(), [conn_s]() -> boost::asio::awaitable<void> { co_await conn_s->start(); }, boost::asio::detached);
+
+    std::thread io_thread([this]() { io_ctx().run(); });
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(4);
+    while (conn_c->is_open() && std::chrono::steady_clock::now() < deadline)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+
+    EXPECT_FALSE(conn_c->is_open());
+
+    g_force_rand_bytes_failure.store(false, std::memory_order_release);
+    conn_c->stop();
+    conn_s->stop();
+    io_ctx().stop();
+    if (io_thread.joinable())
+    {
+        io_thread.join();
+    }
+}
+#endif
 
 
 
