@@ -752,3 +752,18 @@ TEST_F(config_test_fixture, ContractMatrixSocksAuthRulesStayAlignedWithDocumenta
     ASSERT_FALSE(parsed.has_value());
     EXPECT_EQ(parsed.error().path, "/socks/password");
 }
+
+TEST_F(config_test_fixture, UnsupportedModeRejectedAtParseStage)
+{
+    write_config_file(R"({
+        "mode": "invalid"
+    })");
+
+    const auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/mode");
+    EXPECT_NE(parsed.error().reason.find("must be client or server"), std::string::npos);
+
+    const auto cfg_opt = mux::parse_config(tmp_file());
+    EXPECT_FALSE(cfg_opt.has_value());
+}
