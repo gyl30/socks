@@ -1207,6 +1207,15 @@ TEST_F(mux_connection_integration_test_fixture, HandleStreamAndUnknownStreamBran
     EXPECT_EQ(stream->received_data(), expected);
     EXPECT_EQ(stream->data_events(), 2U);
 
+    const frame_header unknown_header{
+        .stream_id = 100,
+        .length = 0,
+        .command = 0xFF,
+    };
+    conn->handle_stream_frame(unknown_header, {});
+    EXPECT_TRUE(stream->reset());
+    EXPECT_FALSE(has_stream_for_test(conn, 100));
+
     conn->handle_unknown_stream(1000, kCmdRst);
     conn->handle_unknown_stream(1001, kCmdDat);
     io_ctx().poll();
