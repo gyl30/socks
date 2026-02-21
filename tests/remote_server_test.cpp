@@ -1145,6 +1145,100 @@ TEST_F(remote_server_test_fixture, HandleFallbackReadTimeoutTerminatesProxySessi
     EXPECT_TRUE(wait_for_condition([source_server_socket]() { return !source_server_socket->is_open(); }, std::chrono::milliseconds(2000)));
 }
 
+TEST_F(remote_server_test_fixture, HandleFallbackReadTimeoutRecordedAsGuardFailure)
+{
+    boost::system::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+    std::thread pool_thread([&pool] { pool.run(); });
+    auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
+
+    boost::asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context());
+    ASSERT_TRUE(open_ephemeral_acceptor_until_ready(fallback_acceptor));
+    const auto fallback_port = fallback_acceptor.local_endpoint().port();
+
+    auto cfg = make_server_cfg(0, {{.sni = "timeout.test", .host = "127.0.0.1", .port = std::to_string(fallback_port)}}, "0102030405060708");
+    cfg.timeout.read = 1;
+    cfg.timeout.write = 1;
+    cfg.reality.fallback_guard.enabled = true;
+    cfg.reality.fallback_guard.rate_per_sec = 0;
+    cfg.reality.fallback_guard.burst = 1;
+    cfg.reality.fallback_guard.circuit_fail_threshold = 2;
+    cfg.reality.fallback_guard.state_ttl_sec = 3600;
+    auto server = std::make_shared<mux::remote_server>(pool, cfg);
+
+    auto fallback_peer = std::make_shared<std::shared_ptr<boost::asio::ip::tcp::socket>>();
+    auto fallback_accepted = std::make_shared<std::promise<void>>();
+    auto fallback_accepted_future = fallback_accepted->get_future();
+    fallback_acceptor.async_accept(
+        [fallback_peer, fallback_accepted](boost::system::error_code accept_ec, boost::asio::ip::tcp::socket peer)
+        {
+            if (!accept_ec)
+            {
+                *fallback_peer = std::make_shared<boost::asio::ip::tcp::socket>(std::move(peer));
+            }
+            fallback_accepted->set_value();
+        });
+
+    boost::asio::ip::tcp::acceptor source_acceptor(pool.get_io_context());
+    ASSERT_TRUE(open_ephemeral_acceptor_until_ready(source_acceptor));
+    boost::asio::ip::tcp::socket source_client(pool.get_io_context());
+    (void)source_client.connect(source_acceptor.local_endpoint(), ec);
+    ASSERT_FALSE(ec);
+    auto source_server_socket = std::make_shared<boost::asio::ip::tcp::socket>(pool.get_io_context());
+    (void)source_acceptor.accept(*source_server_socket, ec);
+    ASSERT_FALSE(ec);
+
+    auto close_all = make_scoped_exit(
+        [&]()
+        {
+            boost::system::error_code close_ec;
+            (void)source_client.shutdown(boost::asio::ip::tcp::socket::shutdown_both, close_ec);
+            (void)source_client.close(close_ec);
+            (void)source_acceptor.cancel(close_ec);
+            (void)source_acceptor.close(close_ec);
+            (void)fallback_acceptor.cancel(close_ec);
+            (void)fallback_acceptor.close(close_ec);
+            if (source_server_socket != nullptr && source_server_socket->is_open())
+            {
+                (void)source_server_socket->shutdown(boost::asio::ip::tcp::socket::shutdown_both, close_ec);
+                (void)source_server_socket->close(close_ec);
+            }
+            if (*fallback_peer != nullptr && (*fallback_peer)->is_open())
+            {
+                (void)(*fallback_peer)->shutdown(boost::asio::ip::tcp::socket::shutdown_both, close_ec);
+                (void)(*fallback_peer)->close(close_ec);
+            }
+        });
+
+    mux::connection_context ctx;
+    ctx.conn_id(558);
+    ctx.remote_addr("127.0.0.12");
+    ctx.trace_id("fallback-read-timeout-guard");
+
+    std::promise<void> done;
+    auto done_future = done.get_future();
+    boost::asio::co_spawn(
+        pool.get_io_context(),
+        [server, source_server_socket, ctx, &done]() mutable -> boost::asio::awaitable<void>
+        {
+            co_await server->handle_fallback(source_server_socket, std::vector<std::uint8_t>{0x16, 0x03, 0x03, 0x00}, ctx, "timeout.test");
+            done.set_value();
+            co_return;
+        },
+        boost::asio::detached);
+
+    EXPECT_EQ(fallback_accepted_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_EQ(done_future.wait_for(std::chrono::seconds(6)), std::future_status::ready);
+
+    {
+        std::lock_guard<std::mutex> const lock(server->fallback_guard_mu_);
+        const auto it = server->fallback_guard_states_.find("127.0.0.12");
+        ASSERT_NE(it, server->fallback_guard_states_.end());
+        EXPECT_EQ(it->second.consecutive_failures, 1U);
+    }
+}
+
 TEST_F(remote_server_test_fixture, StartRejectsInvalidAuthConfig)
 {
     boost::system::error_code const ec;
