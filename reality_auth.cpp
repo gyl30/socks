@@ -1,10 +1,10 @@
-#include <algorithm>
 #include <span>
 #include <array>
 #include <vector>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <algorithm>
 
 #include "reality_auth.h"
 

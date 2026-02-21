@@ -6,8 +6,8 @@
 #include <cstdint>
 #include <system_error>
 
-#include <boost/asio.hpp>
 #include <gmock/gmock.h>
+#include <boost/asio.hpp>
 
 #include "mux_connection.h"
 

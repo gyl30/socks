@@ -1,25 +1,25 @@
 #ifndef CERT_FETCHER_H
 #define CERT_FETCHER_H
 
-#include <expected>
-#include <boost/system/error_code.hpp>
-#include <openssl/types.h>
 #include <span>
 #include <string>
-#include <utility>
 #include <vector>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <utility>
+#include <expected>
 #include <optional>
 
+#include <openssl/types.h>
 #include <boost/asio/ip/tcp.hpp>
-#include <boost/asio/io_context.hpp>
 #include <boost/asio/awaitable.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/system/error_code.hpp>
 
-#include "cipher_context.h"
 #include "transcript.h"
 #include "log_context.h"
+#include "cipher_context.h"
 #include "reality_messages.h"
 
 namespace reality
