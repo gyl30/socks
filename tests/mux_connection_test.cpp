@@ -448,6 +448,21 @@ TEST_F(mux_connection_integration_test_fixture, SendAsyncAllowedWhenDraining)
     EXPECT_EQ(future.get(), boost::system::error_code{});
 }
 
+TEST_F(mux_connection_integration_test_fixture, SendAsyncRejectsUnknownCommand)
+{
+    auto conn = std::make_shared<mux_connection>(
+        boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 14);
+
+    conn->connection_state_.store(mux_connection_state::kConnected, std::memory_order_release);
+    auto future = boost::asio::co_spawn(
+        io_ctx(),
+        [conn]() -> boost::asio::awaitable<boost::system::error_code> { co_return co_await conn->send_async(1, 0xFE, {}); },
+        boost::asio::use_future);
+
+    io_ctx().run();
+    EXPECT_EQ(future.get(), boost::asio::error::invalid_argument);
+}
+
 TEST_F(mux_connection_integration_test_fixture, OffThreadRegisterAndQueryPaths)
 {
     auto conn = std::make_shared<mux_connection>(

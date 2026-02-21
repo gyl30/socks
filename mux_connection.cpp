@@ -223,6 +223,11 @@ boost::asio::awaitable<void> wait_draining_delay(boost::asio::steady_timer& time
     }
 }
 
+[[nodiscard]] bool is_valid_mux_command(const std::uint8_t command)
+{
+    return command == mux::kCmdSyn || command == mux::kCmdAck || command == mux::kCmdDat || command == mux::kCmdFin || command == mux::kCmdRst;
+}
+
 }    // namespace
 
 mux_connection::mux_connection(boost::asio::ip::tcp::socket socket,
@@ -600,6 +605,11 @@ boost::asio::awaitable<boost::system::error_code> mux_connection::send_async(con
     {
         LOG_ERROR("mux {} payload too large {}", cid_, payload.size());
         co_return boost::asio::error::message_size;
+    }
+    if (!is_valid_mux_command(cmd))
+    {
+        LOG_ERROR("mux {} invalid command {}", cid_, cmd);
+        co_return boost::asio::error::invalid_argument;
     }
 
     if (cmd != mux::kCmdDat || payload.size() < 128)
