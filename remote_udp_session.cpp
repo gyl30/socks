@@ -170,8 +170,18 @@ boost::asio::awaitable<void> remote_udp_session::forward_mux_payload(const std::
         LOG_CTX_WARN(ctx_, "{} stage=decode_header error=unsupported_frag frag={}", log_event::kMux, header.frag);
         co_return;
     }
+    if (header.addr.empty())
+    {
+        LOG_CTX_WARN(ctx_, "{} stage=decode_header error=empty_target_host", log_event::kMux);
+        co_return;
+    }
+    if (header.port == 0)
+    {
+        LOG_CTX_WARN(ctx_, "{} stage=decode_header error=invalid_target_port", log_event::kMux);
+        co_return;
+    }
 
-    if (header.header_len >= data.size())
+    if (header.header_len > data.size())
     {
         LOG_CTX_WARN(
             ctx_, "{} stage=decode_header error=invalid_header_len header_len={} packet_len={}", log_event::kMux, header.header_len, data.size());
@@ -462,10 +472,19 @@ boost::asio::awaitable<void> remote_udp_session::udp_to_mux()
 
         if (auto conn = connection_.lock())
         {
-            if (co_await conn->send_async(id_, kCmdDat, std::move(pkt)))
+            const auto pkt_size = pkt.size();
+            const auto send_ec = co_await conn->send_async(id_, kCmdDat, std::move(pkt));
+            if (!send_ec)
             {
-                break;
+                continue;
             }
+            if (send_ec == boost::asio::error::message_size)
+            {
+                LOG_CTX_WARN(ctx_, "{} drop oversized udp packet size {}", log_event::kMux, pkt_size);
+                continue;
+            }
+            LOG_CTX_WARN(ctx_, "{} send udp packet to mux failed {}", log_event::kMux, send_ec.message());
+            break;
         }
         else
         {
