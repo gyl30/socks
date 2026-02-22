@@ -150,11 +150,9 @@ TEST(SocksCodecTest, DecodeTruncatedDomainBody)
     EXPECT_FALSE(socks_codec::decode_udp_header(data.data(), data.size(), out));
 }
 
-TEST(SocksCodecTest, DecodeDomainEmpty)
+TEST(SocksCodecTest, DecodeDomainEmptyRejected)
 {
     const std::vector<std::uint8_t> data = {0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x50};
     socks_udp_header out;
-    EXPECT_TRUE(socks_codec::decode_udp_header(data.data(), data.size(), out));
-    EXPECT_EQ(out.addr, "");
-    EXPECT_EQ(out.port, 80);
+    EXPECT_FALSE(socks_codec::decode_udp_header(data.data(), data.size(), out));
 }

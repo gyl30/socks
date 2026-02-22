@@ -340,6 +340,47 @@ TEST_F(socks_session_test_fixture, HandshakePasswordAuthWrongPassword)
     t.join();
 }
 
+TEST_F(socks_session_test_fixture, HandshakePasswordAuthRejectsEmptyUsername)
+{
+    auto pair = make_tcp_socket_pair(io_ctx());
+    ASSERT_TRUE(pair.client.is_open());
+    ASSERT_TRUE(pair.server.is_open());
+    boost::asio::ip::tcp::socket client_sock(std::move(pair.client));
+    boost::asio::ip::tcp::socket server_sock(std::move(pair.server));
+
+    config::socks_t cfg;
+    cfg.auth = true;
+    cfg.username = "user";
+    cfg.password = "pass";
+    auto session = std::make_shared<socks_session>(std::move(server_sock), io_ctx(), nullptr, nullptr, 2, cfg);
+
+    std::uint8_t req[] = {0x05, 0x01, 0x02};
+    boost::asio::write(client_sock, boost::asio::buffer(req));
+
+    auto work = boost::asio::make_work_guard(io_ctx());
+    std::thread t([&io_ctx = this->io_ctx()] { io_ctx.run(); });
+
+    auto handshake_future = boost::asio::co_spawn(io_ctx(), socks_session_tester::handshake(*session), boost::asio::use_future);
+
+    std::uint8_t method_res[2];
+    boost::asio::read(client_sock, boost::asio::buffer(method_res));
+    EXPECT_EQ(method_res[0], 0x05);
+    EXPECT_EQ(method_res[1], 0x02);
+
+    std::uint8_t auth_req[] = {0x01, 0x00, 0x04, 'p', 'a', 's', 's'};
+    boost::asio::write(client_sock, boost::asio::buffer(auth_req));
+
+    EXPECT_FALSE(handshake_future.get());
+
+    std::uint8_t auth_res[2];
+    boost::asio::read(client_sock, boost::asio::buffer(auth_res));
+    EXPECT_EQ(auth_res[0], 0x01);
+    EXPECT_EQ(auth_res[1], 0x01);
+
+    work.reset();
+    t.join();
+}
+
 TEST_F(socks_session_test_fixture, HandshakePasswordAuthInvalidVersion)
 {
     boost::asio::ip::tcp::socket client_sock(io_ctx());
@@ -633,6 +674,15 @@ TEST_F(socks_session_test_fixture, AuthVersionFieldAndResultBranches)
 
     {
         auto pair = make_tcp_socket_pair(io_ctx());
+        auto session = std::make_shared<socks_session>(std::move(pair.server), io_ctx(), nullptr, nullptr, 10);
+        const std::uint8_t zero_len = 0x00;
+        boost::asio::write(pair.client, boost::asio::buffer(&zero_len, 1));
+        std::string out;
+        EXPECT_FALSE(mux::test::run_awaitable(io_ctx(), session->read_auth_field(out, "username")));
+    }
+
+    {
+        auto pair = make_tcp_socket_pair(io_ctx());
         auto session = std::make_shared<socks_session>(std::move(pair.server), io_ctx(), nullptr, nullptr, 5);
         pair.client.close();
         std::string out;
@@ -711,6 +761,19 @@ TEST_F(socks_session_test_fixture, ReadTargetHostPortAndValidationBranches)
         auto req = mux::test::run_awaitable(io_ctx(), session->read_request_target(socks::kCmdConnect, socks::kAtypDomain));
         EXPECT_FALSE(req.ok);
         EXPECT_EQ(req.cmd, socks::kCmdConnect);
+        std::uint8_t err[10] = {0};
+        boost::asio::read(pair.client, boost::asio::buffer(err));
+        EXPECT_EQ(err[1], socks::kRepGenFail);
+    }
+
+    {
+        auto pair = make_tcp_socket_pair(io_ctx());
+        auto session = std::make_shared<socks_session>(std::move(pair.server), io_ctx(), nullptr, nullptr, 31);
+        const std::uint8_t empty_domain[] = {0x00, 0x00, 0x35};
+        boost::asio::write(pair.client, boost::asio::buffer(empty_domain));
+        auto req = mux::test::run_awaitable(io_ctx(), session->read_request_target(socks::kCmdUdpAssociate, socks::kAtypDomain));
+        EXPECT_FALSE(req.ok);
+        EXPECT_EQ(req.cmd, socks::kCmdUdpAssociate);
         std::uint8_t err[10] = {0};
         boost::asio::read(pair.client, boost::asio::buffer(err));
         EXPECT_EQ(err[1], socks::kRepGenFail);

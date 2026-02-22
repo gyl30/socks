@@ -485,6 +485,63 @@ TEST(UdpSocksSessionTest, KeepTcpAliveCoversExpectedErrorCodes)
     }
 }
 
+TEST(UdpSocksSessionTest, KeepTcpAliveDoesNotStopWhenTcpDataArrives)
+{
+    boost::asio::io_context ctx;
+    mux::config::timeout_t const timeout_cfg;
+    auto pair = make_tcp_socket_pair(ctx);
+    ASSERT_TRUE(pair.client.is_open());
+    ASSERT_TRUE(pair.server.is_open());
+
+    auto session = std::make_shared<mux::udp_socks_session>(std::move(pair.server), ctx, nullptr, 59, timeout_cfg);
+    std::atomic<bool> keepalive_done{false};
+    std::atomic<bool> sent_data{false};
+
+    boost::asio::steady_timer send_timer(ctx);
+    send_timer.expires_after(std::chrono::milliseconds(20));
+    send_timer.async_wait(
+        [&pair, &sent_data](const boost::system::error_code&)
+        {
+            const std::array<std::uint8_t, 1> data = {0x01};
+            boost::system::error_code send_ec;
+            (void)pair.client.send(boost::asio::buffer(data), 0, send_ec);
+            sent_data.store(true, std::memory_order_release);
+        });
+
+    boost::asio::steady_timer close_timer(ctx);
+    close_timer.expires_after(std::chrono::milliseconds(150));
+    close_timer.async_wait(
+        [&pair](const boost::system::error_code&)
+        {
+            boost::system::error_code close_ec;
+            pair.client.close(close_ec);
+        });
+
+    boost::asio::co_spawn(
+        ctx,
+        [session, &keepalive_done]() -> boost::asio::awaitable<void>
+        {
+            co_await session->keep_tcp_alive();
+            keepalive_done.store(true, std::memory_order_release);
+            co_return;
+        },
+        boost::asio::detached);
+
+    std::thread runner([&ctx]() { ctx.run(); });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(80));
+    EXPECT_TRUE(sent_data.load(std::memory_order_acquire));
+    EXPECT_FALSE(keepalive_done.load(std::memory_order_acquire));
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(220));
+    EXPECT_TRUE(keepalive_done.load(std::memory_order_acquire));
+
+    if (runner.joinable())
+    {
+        runner.join();
+    }
+}
+
 TEST(UdpSocksSessionTest, PrepareUdpAssociateIPv6PathBranches)
 {
     const auto rep = mux::detail::build_udp_associate_reply(boost::asio::ip::make_address("::1"), 5353);

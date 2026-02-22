@@ -43,6 +43,12 @@ TEST(SocksProtocolTest, DecodeSocks5RequestIPv4AndErrorPaths)
 
     const std::vector<std::uint8_t> port_truncated = {0x05, 0x01, 0x00, 0x01, 127, 0, 0, 1, 0x01};
     EXPECT_FALSE(socks_codec::decode_socks5_request(port_truncated.data(), port_truncated.size(), out));
+
+    const std::vector<std::uint8_t> invalid_version = {0x04, 0x01, 0x00, 0x01, 127, 0, 0, 1, 0x01, 0xbb};
+    EXPECT_FALSE(socks_codec::decode_socks5_request(invalid_version.data(), invalid_version.size(), out));
+
+    const std::vector<std::uint8_t> invalid_rsv = {0x05, 0x01, 0x01, 0x01, 127, 0, 0, 1, 0x01, 0xbb};
+    EXPECT_FALSE(socks_codec::decode_socks5_request(invalid_rsv.data(), invalid_rsv.size(), out));
 }
 
 TEST(SocksProtocolTest, DecodeSocks5RequestDomain)
@@ -52,6 +58,16 @@ TEST(SocksProtocolTest, DecodeSocks5RequestDomain)
     ASSERT_TRUE(socks_codec::decode_socks5_request(req.data(), req.size(), out));
     EXPECT_EQ(out.addr, "example.com");
     EXPECT_EQ(out.port, 80);
+
+    const std::vector<std::uint8_t> zero_domain_len = {0x05, 0x01, 0x00, 0x03, 0x00, 0x00, 0x50};
+    EXPECT_FALSE(socks_codec::decode_socks5_request(zero_domain_len.data(), zero_domain_len.size(), out));
+}
+
+TEST(SocksProtocolTest, DecodeSocks5RequestRejectsTrailingBytes)
+{
+    const std::vector<std::uint8_t> req = {0x05, 0x01, 0x00, 0x01, 127, 0, 0, 1, 0x00, 0x50, 0xff};
+    socks5_request out;
+    EXPECT_FALSE(socks_codec::decode_socks5_request(req.data(), req.size(), out));
 }
 
 TEST(SocksProtocolTest, DecodeSocks5AuthRequestPaths)
@@ -72,6 +88,18 @@ TEST(SocksProtocolTest, DecodeSocks5AuthRequestPaths)
 
     const std::vector<std::uint8_t> password_truncated = {0x01, 0x01, 'u', 0x03, 'p'};
     EXPECT_FALSE(socks_codec::decode_socks5_auth_request(password_truncated.data(), password_truncated.size(), auth_out));
+
+    const std::vector<std::uint8_t> invalid_version = {0x02, 0x01, 'u', 0x01, 'p'};
+    EXPECT_FALSE(socks_codec::decode_socks5_auth_request(invalid_version.data(), invalid_version.size(), auth_out));
+
+    const std::vector<std::uint8_t> zero_username_len = {0x01, 0x00, 0x01, 'p'};
+    EXPECT_FALSE(socks_codec::decode_socks5_auth_request(zero_username_len.data(), zero_username_len.size(), auth_out));
+
+    const std::vector<std::uint8_t> zero_password_len = {0x01, 0x01, 'u', 0x00};
+    EXPECT_FALSE(socks_codec::decode_socks5_auth_request(zero_password_len.data(), zero_password_len.size(), auth_out));
+
+    const std::vector<std::uint8_t> trailing_bytes = {0x01, 0x01, 'u', 0x01, 'p', 0x00};
+    EXPECT_FALSE(socks_codec::decode_socks5_auth_request(trailing_bytes.data(), trailing_bytes.size(), auth_out));
 }
 
 }    // namespace
