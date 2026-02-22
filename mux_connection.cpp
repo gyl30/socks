@@ -725,9 +725,14 @@ void mux_connection::finalize_stop_state()
 
 bool mux_connection::should_stop_read(const boost::system::error_code& read_ec, const std::size_t n) const
 {
-    if (!read_ec && n != 0)
+    if (!read_ec)
     {
-        return false;
+        if (n != 0)
+        {
+            return false;
+        }
+        LOG_DEBUG("mux {} peer closed read side", cid_);
+        return true;
     }
     if (read_ec != boost::asio::error::eof && read_ec != boost::asio::error::operation_aborted)
     {
