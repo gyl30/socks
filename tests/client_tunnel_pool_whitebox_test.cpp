@@ -1042,7 +1042,7 @@ TEST(ClientTunnelPoolWhiteboxTest, ProcessServerHelloRejectsOversizedRecordBodyL
     (void)acceptor.accept(reader, ec);
     ASSERT_FALSE(ec);
 
-    const std::array<std::uint8_t, 5> oversized_header = {reality::kContentTypeHandshake, 0x03, 0x03, 0x40, 0x01};
+    const std::array<std::uint8_t, 5> oversized_header = {reality::kContentTypeHandshake, 0x03, 0x03, 0x41, 0x01};
     boost::asio::write(writer, boost::asio::buffer(oversized_header), ec);
     ASSERT_FALSE(ec);
     (void)writer.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
@@ -1065,6 +1065,86 @@ TEST(ClientTunnelPoolWhiteboxTest, ProcessServerHelloRejectsOversizedRecordBodyL
 
     EXPECT_FALSE(sh_res.has_value());
     EXPECT_EQ(sh_res.error(), std::errc::message_size);
+}
+
+TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsOversizedHandshakeMessageLength)
+{
+    boost::asio::io_context io_context;
+    boost::system::error_code ec;
+
+    boost::asio::ip::tcp::acceptor acceptor(io_context);
+    ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
+    boost::asio::ip::tcp::socket writer(io_context);
+    (void)writer.connect(acceptor.local_endpoint(), ec);
+    ASSERT_FALSE(ec);
+    boost::asio::ip::tcp::socket reader(io_context);
+    (void)acceptor.accept(reader, ec);
+    ASSERT_FALSE(ec);
+
+    const std::vector<std::uint8_t> key(16, 0x66);
+    const std::vector<std::uint8_t> iv(12, 0x77);
+    const std::vector<std::uint8_t> plaintext = {0x0b, 0x10, 0x00, 0x00};
+    const auto record = encrypt_record_expected(EVP_aes_128_gcm(), key, iv, 0, plaintext, reality::kContentTypeHandshake);
+    ASSERT_TRUE(record.has_value());
+    boost::asio::write(writer, boost::asio::buffer(*record), ec);
+    ASSERT_FALSE(ec);
+    (void)writer.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
+
+    reality::transcript trans;
+    reality::handshake_keys hs_keys;
+    std::expected<std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>, boost::system::error_code> loop_res;
+    boost::asio::co_spawn(
+        io_context,
+        [&]() -> boost::asio::awaitable<void>
+        {
+            loop_res = co_await handshake_read_loop_expected(
+                reader, {key, iv}, hs_keys, false, "oversized-handshake-message", trans, EVP_aes_128_gcm(), EVP_sha256());
+            co_return;
+        },
+        boost::asio::detached);
+    io_context.run();
+    EXPECT_FALSE(loop_res.has_value());
+    EXPECT_EQ(loop_res.error(), std::errc::message_size);
+}
+
+TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopHandlesPartialHandshakeMessageWithoutOverflow)
+{
+    boost::asio::io_context io_context;
+    boost::system::error_code ec;
+
+    boost::asio::ip::tcp::acceptor acceptor(io_context);
+    ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
+    boost::asio::ip::tcp::socket writer(io_context);
+    (void)writer.connect(acceptor.local_endpoint(), ec);
+    ASSERT_FALSE(ec);
+    boost::asio::ip::tcp::socket reader(io_context);
+    (void)acceptor.accept(reader, ec);
+    ASSERT_FALSE(ec);
+
+    const std::vector<std::uint8_t> key(16, 0x19);
+    const std::vector<std::uint8_t> iv(12, 0x29);
+    const std::vector<std::uint8_t> plaintext = {0x0b, 0x00, 0x00, 0x08, 0xaa, 0xbb};
+    const auto record = encrypt_record_expected(EVP_aes_128_gcm(), key, iv, 0, plaintext, reality::kContentTypeHandshake);
+    ASSERT_TRUE(record.has_value());
+    boost::asio::write(writer, boost::asio::buffer(*record), ec);
+    ASSERT_FALSE(ec);
+    (void)writer.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
+
+    reality::transcript trans;
+    reality::handshake_keys hs_keys;
+    std::expected<std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>, boost::system::error_code> loop_res;
+    boost::asio::co_spawn(
+        io_context,
+        [&]() -> boost::asio::awaitable<void>
+        {
+            loop_res = co_await handshake_read_loop_expected(
+                reader, {key, iv}, hs_keys, false, "partial-handshake-message", trans, EVP_aes_128_gcm(), EVP_sha256());
+            co_return;
+        },
+        boost::asio::detached);
+    io_context.run();
+    EXPECT_FALSE(loop_res.has_value());
+    EXPECT_TRUE(loop_res.error());
 }
 
 TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsCertVerifyBeforeCertificate)
