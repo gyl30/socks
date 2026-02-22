@@ -136,11 +136,13 @@ bool build_grease_ext(std::vector<std::uint8_t>& ext_buffer, std::uint16_t& ext_
 
 bool build_sni_ext(std::vector<std::uint8_t>& ext_buffer, std::uint16_t& ext_type, const extension_build_context& ctx)
 {
+    constexpr std::size_t kMaxSniHostLen = 65526;
     ext_type = tls_consts::ext::kSni;
     std::vector<std::uint8_t> server_name_list;
+    const auto host_len = std::min(ctx.hostname.size(), kMaxSniHostLen);
     message_builder::push_u8(server_name_list, 0x00);
-    message_builder::push_u16(server_name_list, static_cast<std::uint16_t>(ctx.hostname.size()));
-    message_builder::push_string(server_name_list, ctx.hostname);
+    message_builder::push_u16(server_name_list, static_cast<std::uint16_t>(host_len));
+    server_name_list.insert(server_name_list.end(), ctx.hostname.begin(), ctx.hostname.begin() + static_cast<std::ptrdiff_t>(host_len));
     message_builder::push_vector_u16(ext_buffer, server_name_list);
     return true;
 }
@@ -679,14 +681,18 @@ void message_builder::push_string(std::vector<std::uint8_t>& buf, const std::str
 
 void message_builder::push_vector_u8(std::vector<std::uint8_t>& buf, const std::vector<std::uint8_t>& data)
 {
-    push_u8(buf, static_cast<std::uint8_t>(data.size()));
-    push_bytes(buf, data);
+    constexpr std::size_t kMaxVectorLen = 255;
+    const auto vector_len = std::min(data.size(), kMaxVectorLen);
+    push_u8(buf, static_cast<std::uint8_t>(vector_len));
+    buf.insert(buf.end(), data.begin(), data.begin() + static_cast<std::ptrdiff_t>(vector_len));
 }
 
 void message_builder::push_vector_u16(std::vector<std::uint8_t>& buf, const std::vector<std::uint8_t>& data)
 {
-    push_u16(buf, static_cast<std::uint16_t>(data.size()));
-    push_bytes(buf, data);
+    constexpr std::size_t kMaxVectorLen = 65535;
+    const auto vector_len = std::min(data.size(), kMaxVectorLen);
+    push_u16(buf, static_cast<std::uint16_t>(vector_len));
+    buf.insert(buf.end(), data.begin(), data.begin() + static_cast<std::ptrdiff_t>(vector_len));
 }
 
 std::vector<std::uint8_t> client_hello_builder::build(const fingerprint_spec& spec,
@@ -773,6 +779,12 @@ std::vector<std::uint8_t> construct_server_hello(const std::vector<std::uint8_t>
                                                  std::uint16_t key_share_group,
                                                  const std::vector<std::uint8_t>& key_share_data)
 {
+    constexpr std::size_t kMaxSessionIdLen = 255;
+    constexpr std::size_t kMaxExtensionsLen = 65535;
+    constexpr std::size_t kSupportedVersionsExtLen = 6;
+    constexpr std::size_t kKeyShareOverheadLen = 8;
+    constexpr std::size_t kMaxKeyShareLen = kMaxExtensionsLen - kSupportedVersionsExtLen - kKeyShareOverheadLen;
+
     std::vector<std::uint8_t> hello;
     hello.push_back(0x02);
     hello.push_back(0);
@@ -780,8 +792,9 @@ std::vector<std::uint8_t> construct_server_hello(const std::vector<std::uint8_t>
     hello.push_back(0);
     message_builder::push_u16(hello, tls_consts::kVer12);
     message_builder::push_bytes(hello, server_random);
-    hello.push_back(static_cast<std::uint8_t>(session_id.size()));
-    message_builder::push_bytes(hello, session_id);
+    const auto sid_len = std::min(session_id.size(), kMaxSessionIdLen);
+    hello.push_back(static_cast<std::uint8_t>(sid_len));
+    hello.insert(hello.end(), session_id.begin(), session_id.begin() + static_cast<std::ptrdiff_t>(sid_len));
     message_builder::push_u16(hello, cipher_suite);
     hello.push_back(0x00);
 
@@ -791,11 +804,12 @@ std::vector<std::uint8_t> construct_server_hello(const std::vector<std::uint8_t>
     message_builder::push_u16(extensions, tls_consts::kVer13);
 
     message_builder::push_u16(extensions, tls_consts::ext::kKeyShare);
-    const auto ext_len = static_cast<std::uint16_t>(2 + 2 + key_share_data.size());
+    const auto key_share_len = std::min(key_share_data.size(), kMaxKeyShareLen);
+    const auto ext_len = static_cast<std::uint16_t>(2 + 2 + key_share_len);
     message_builder::push_u16(extensions, ext_len);
     message_builder::push_u16(extensions, key_share_group);
-    message_builder::push_u16(extensions, static_cast<std::uint16_t>(key_share_data.size()));
-    message_builder::push_bytes(extensions, key_share_data);
+    message_builder::push_u16(extensions, static_cast<std::uint16_t>(key_share_len));
+    extensions.insert(extensions.end(), key_share_data.begin(), key_share_data.begin() + static_cast<std::ptrdiff_t>(key_share_len));
 
     message_builder::push_u16(hello, static_cast<std::uint16_t>(extensions.size()));
     message_builder::push_bytes(hello, extensions);
@@ -1052,16 +1066,16 @@ static bool locate_server_hello_extensions(const std::vector<std::uint8_t>& serv
 
 static std::optional<server_key_share_info> parse_server_key_share_entry(const std::vector<std::uint8_t>& server_hello,
                                                                          const std::size_t pos,
-                                                                         const std::size_t end)
+                                                                         const std::size_t ext_end)
 {
-    if (pos + 4 > end)
+    if (pos + 4 > ext_end)
     {
         return std::nullopt;
     }
     const auto group = static_cast<std::uint16_t>((server_hello[pos] << 8) | server_hello[pos + 1]);
     const auto len = static_cast<std::uint16_t>((server_hello[pos + 2] << 8) | server_hello[pos + 3]);
     const auto data_start = pos + 4;
-    if (data_start + len > end)
+    if (data_start + len != ext_end)
     {
         return std::nullopt;
     }
@@ -1120,9 +1134,13 @@ static std::optional<server_key_share_info> find_server_key_share_in_extensions(
         {
             return std::nullopt;
         }
+        if (pos + ext_len > end)
+        {
+            return std::nullopt;
+        }
         if (type == tls_consts::ext::kKeyShare && ext_len >= 4)
         {
-            return parse_server_key_share_entry(server_hello, pos, end);
+            return parse_server_key_share_entry(server_hello, pos, pos + ext_len);
         }
         if (!advance_extension_payload(pos, end, ext_len))
         {
@@ -1161,11 +1179,26 @@ static std::optional<encrypted_extensions_range> parse_encrypted_extensions_rang
         return std::nullopt;
     }
 
+    const std::uint32_t payload_len =
+        (static_cast<std::uint32_t>(ee_msg[1]) << 16) | (static_cast<std::uint32_t>(ee_msg[2]) << 8) | static_cast<std::uint32_t>(ee_msg[3]);
+    if (payload_len < 2)
+    {
+        return std::nullopt;
+    }
+    if (static_cast<std::size_t>(payload_len) + 4 != ee_msg.size())
+    {
+        return std::nullopt;
+    }
+
     const std::size_t ext_len_pos = 4;
     const auto total_ext_len = static_cast<std::uint16_t>((ee_msg[ext_len_pos] << 8) | ee_msg[ext_len_pos + 1]);
     const std::size_t ext_start = ext_len_pos + 2;
     const std::size_t ext_end = ext_start + total_ext_len;
-    if (ext_end > ee_msg.size())
+    if (ext_end != ee_msg.size())
+    {
+        return std::nullopt;
+    }
+    if (static_cast<std::size_t>(payload_len) != static_cast<std::size_t>(total_ext_len) + 2U)
     {
         return std::nullopt;
     }
@@ -1195,12 +1228,20 @@ static std::optional<std::string> parse_alpn_extension_body(const std::vector<st
 
     const std::size_t ext_end = pos + len;
     const auto list_len = static_cast<std::uint16_t>((ee_msg[pos] << 8) | ee_msg[pos + 1]);
-    if (list_len == 0 || pos + 3 > ext_end)
+    if (list_len < 2 || pos + 3 > ext_end)
+    {
+        return std::nullopt;
+    }
+    if (pos + 2 + list_len != ext_end)
     {
         return std::nullopt;
     }
 
     const std::uint8_t proto_len = ee_msg[pos + 2];
+    if (proto_len == 0 || static_cast<std::size_t>(proto_len) + 1 > list_len)
+    {
+        return std::nullopt;
+    }
     if (pos + 3 + proto_len > ext_end)
     {
         return std::nullopt;

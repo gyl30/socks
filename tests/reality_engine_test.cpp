@@ -110,6 +110,23 @@ TEST_F(reality_engine_test_fixture, DecryptWaitsForCompleteFrame)
     EXPECT_FALSE(called);
 }
 
+TEST_F(reality_engine_test_fixture, DecryptRejectsOversizedRecordLengthPrefix)
+{
+    reality_engine engine(read_key(), read_iv(), write_key(), write_iv(), cipher());
+
+    auto buf = engine.read_buffer(5);
+    const std::uint8_t oversized_header[] = {0x17, 0x03, 0x03, 0xFF, 0xFF};
+    std::memcpy(buf.data(), oversized_header, sizeof(oversized_header));
+    engine.commit_read(sizeof(oversized_header));
+
+    bool called = false;
+    const auto process_res = engine.process_available_records([&called](std::uint8_t, std::span<const std::uint8_t>) { called = true; });
+
+    ASSERT_FALSE(process_res.has_value());
+    EXPECT_EQ(process_res.error(), std::errc::message_size);
+    EXPECT_FALSE(called);
+}
+
 TEST_F(reality_engine_test_fixture, EncryptDecryptRoundTrip)
 {
     reality_engine encrypt_engine(write_key(), write_iv(), read_key(), read_iv(), cipher());
