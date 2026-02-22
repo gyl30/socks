@@ -243,7 +243,7 @@ TEST(LocalClientTest, BasicStartStop)
     mux::config cfg;
     cfg.outbound.host = "127.0.0.1";
     cfg.outbound.port = 12345;
-    cfg.socks.port = 10081;
+    cfg.socks.port = 0;
     cfg.reality.public_key = std::string(64, 'a');
     cfg.reality.sni = "example.com";
 
@@ -266,7 +266,7 @@ TEST(LocalClientTest, InvalidHexConfig)
     mux::config cfg1;
     cfg1.outbound.host = "127.0.0.1";
     cfg1.outbound.port = 12345;
-    cfg1.socks.port = 10083;
+    cfg1.socks.port = 0;
     cfg1.reality.public_key = server_pub_key;
     cfg1.reality.sni = "example.com";
     cfg1.reality.short_id = bad_hex_odd;
@@ -275,7 +275,7 @@ TEST(LocalClientTest, InvalidHexConfig)
     mux::config cfg2;
     cfg2.outbound.host = "127.0.0.1";
     cfg2.outbound.port = 12345;
-    cfg2.socks.port = 10084;
+    cfg2.socks.port = 0;
     cfg2.reality.public_key = server_pub_key;
     cfg2.reality.sni = "example.com";
     cfg2.reality.short_id = bad_hex_chars;
@@ -284,7 +284,7 @@ TEST(LocalClientTest, InvalidHexConfig)
     mux::config cfg3;
     cfg3.outbound.host = "127.0.0.1";
     cfg3.outbound.port = 12345;
-    cfg3.socks.port = 10085;
+    cfg3.socks.port = 0;
     cfg3.reality.public_key = server_pub_key;
     cfg3.reality.sni = "example.com";
     cfg3.reality.short_id = "0102";
@@ -297,7 +297,7 @@ TEST(LocalClientTest, InvalidMaxConnectionsFallback)
     mux::config cfg;
     cfg.outbound.host = "127.0.0.1";
     cfg.outbound.port = 12345;
-    cfg.socks.port = 10089;
+    cfg.socks.port = 0;
     cfg.reality.public_key = std::string(64, 'a');
     cfg.reality.sni = "example.com";
     cfg.limits.max_connections = 0;
@@ -314,7 +314,7 @@ TEST(LocalClientTest, InvalidAuthConfigAborts)
     mux::config cfg;
     cfg.outbound.host = "127.0.0.1";
     cfg.outbound.port = 12345;
-    cfg.socks.port = 1080;
+    cfg.socks.port = 0;
     cfg.reality.public_key = std::string(64, 'a');
     cfg.reality.sni = "example.com";
     cfg.reality.short_id = bad_hex_odd;
@@ -344,7 +344,7 @@ TEST(LocalClientTest, RunningRequiresStartedFlag)
     mux::config cfg;
     cfg.outbound.host = "127.0.0.1";
     cfg.outbound.port = 12345;
-    cfg.socks.port = 10083;
+    cfg.socks.port = 0;
     cfg.reality.public_key = std::string(64, 'a');
     cfg.reality.sni = "example.com";
 
@@ -373,7 +373,7 @@ TEST(LocalClientTest, StopWhenNotStarted)
     mux::config cfg;
     cfg.outbound.host = "127.0.0.1";
     cfg.outbound.port = 12345;
-    cfg.socks.port = 10086;
+    cfg.socks.port = 0;
     cfg.reality.public_key = std::string(64, 'a');
     cfg.reality.sni = "example.com";
 
@@ -416,7 +416,7 @@ TEST(LocalClientTest, StopRunsInlineWhenIoContextStopped)
     mux::config cfg;
     cfg.outbound.host = "127.0.0.1";
     cfg.outbound.port = 12345;
-    cfg.socks.port = 10089;
+    cfg.socks.port = 0;
     cfg.reality.public_key = std::string(64, 'a');
     cfg.reality.sni = "example.com";
 
@@ -438,7 +438,7 @@ TEST(LocalClientTest, StopRunsWhenIoQueueBlocked)
     mux::config cfg;
     cfg.outbound.host = "127.0.0.1";
     cfg.outbound.port = 12345;
-    cfg.socks.port = 10096;
+    cfg.socks.port = 0;
     cfg.reality.public_key = std::string(64, 'a');
     cfg.reality.sni = "example.com";
 
@@ -485,7 +485,7 @@ TEST(LocalClientTest, StopRunsWhenIoContextNotRunning)
     mux::config cfg;
     cfg.outbound.host = "127.0.0.1";
     cfg.outbound.port = 12345;
-    cfg.socks.port = 10095;
+    cfg.socks.port = 0;
     cfg.reality.public_key = std::string(64, 'a');
     cfg.reality.sni = "example.com";
 
@@ -507,7 +507,7 @@ TEST(LocalClientTest, DoubleStop)
     mux::config cfg;
     cfg.outbound.host = "127.0.0.1";
     cfg.outbound.port = 12345;
-    cfg.socks.port = 10087;
+    cfg.socks.port = 0;
     cfg.reality.public_key = std::string(64, 'a');
     cfg.reality.sni = "example.com";
 
@@ -524,7 +524,7 @@ TEST(LocalClientTest, StartWhileRunningIsIgnored)
     mux::config cfg;
     cfg.outbound.host = "127.0.0.1";
     cfg.outbound.port = 12345;
-    cfg.socks.port = 10098;
+    cfg.socks.port = 0;
     cfg.reality.public_key = std::string(64, 'a');
     cfg.reality.sni = "example.com";
 
@@ -550,7 +550,7 @@ TEST(LocalClientTest, StartAfterStopResetsStopFlag)
     mux::config cfg;
     cfg.outbound.host = "127.0.0.1";
     cfg.outbound.port = 12345;
-    cfg.socks.port = 10097;
+    cfg.socks.port = 0;
     cfg.reality.public_key = std::string(64, 'a');
     cfg.reality.sni = "example.com";
 
@@ -571,7 +571,7 @@ TEST(LocalClientTest, HandshakeFailInvalidServerPubKey)
     mux::config cfg;
     cfg.outbound.host = "127.0.0.1";
     cfg.outbound.port = 12345;
-    cfg.socks.port = 10090;
+    cfg.socks.port = 0;
     cfg.reality.public_key = bad_pub;
     cfg.reality.sni = "example.com";
 
@@ -587,7 +587,7 @@ TEST(LocalClientTest, ConnectFailureLoop)
     mux::config cfg;
     cfg.outbound.host = "127.0.0.1";
     cfg.outbound.port = 1;
-    cfg.socks.port = 10088;
+    cfg.socks.port = 0;
     cfg.reality.public_key = std::string(64, 'a');
     cfg.reality.sni = "example.com";
 

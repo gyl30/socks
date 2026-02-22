@@ -300,8 +300,9 @@ TEST(StatisticsTest, InvalidReasonIsIgnoredAndLabelsCovered)
 {
     auto& stats = statistics::instance();
     const auto before = stats.handshake_failure_sni_metrics();
+    const auto invalid_reason = statistics::handshake_failure_reason::kCount;
 
-    stats.inc_handshake_failure_by_sni(static_cast<statistics::handshake_failure_reason>(99), "ignored");
+    stats.inc_handshake_failure_by_sni(invalid_reason, "ignored");
     const auto after = stats.handshake_failure_sni_metrics();
     EXPECT_EQ(after.size(), before.size());
 
@@ -309,7 +310,7 @@ TEST(StatisticsTest, InvalidReasonIsIgnoredAndLabelsCovered)
     EXPECT_STREQ(statistics::handshake_failure_reason_label(statistics::handshake_failure_reason::kClockSkew), "clock_skew");
     EXPECT_STREQ(statistics::handshake_failure_reason_label(statistics::handshake_failure_reason::kReplay), "replay");
     EXPECT_STREQ(statistics::handshake_failure_reason_label(statistics::handshake_failure_reason::kCertVerify), "cert_verify");
-    EXPECT_STREQ(statistics::handshake_failure_reason_label(static_cast<statistics::handshake_failure_reason>(99)), "unknown");
+    EXPECT_STREQ(statistics::handshake_failure_reason_label(invalid_reason), "unknown");
 }
 
 TEST(StatisticsTest, HandshakeFailureMetricsSortsAcrossDifferentReasons)
