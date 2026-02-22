@@ -50,6 +50,11 @@ std::size_t hash_bytes(const ByteContainer& bytes)
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
 }
 
+[[nodiscard]] bool is_valid_udp_endpoint(const boost::asio::ip::udp::endpoint& endpoint)
+{
+    return !endpoint.address().is_unspecified() && endpoint.port() != 0;
+}
+
 }    // namespace
 
 tproxy_udp_sender::tproxy_udp_sender(boost::asio::io_context& io_context, const std::uint32_t mark) : io_context_(io_context), mark_(mark) {}
@@ -290,6 +295,11 @@ boost::asio::awaitable<void> tproxy_udp_sender::send_to_client(const boost::asio
 
     const auto norm_src = net::normalize_endpoint(src_ep);
     const auto norm_client = net::normalize_endpoint(client_ep);
+    if (!is_valid_udp_endpoint(norm_src) || !is_valid_udp_endpoint(norm_client))
+    {
+        LOG_WARN("tproxy udp invalid endpoint src {} {} dst {} {}", norm_src.address().to_string(), norm_src.port(), norm_client.address().to_string(), norm_client.port());
+        co_return;
+    }
     auto socket = get_socket(norm_src);
     if (socket == nullptr)
     {

@@ -27,6 +27,7 @@
 #include "router.h"
 #include "test_util.h"
 #include "ip_matcher.h"
+#include "statistics.h"
 #include "domain_matcher.h"
 
 #define private public
@@ -562,6 +563,35 @@ TEST(TproxyTcpSessionTest, RunClosesClientSocketWhenRouteBlocked)
 
     mux::test::run_awaitable_void(ctx, session->run());
     EXPECT_FALSE(session->socket_.is_open());
+}
+
+TEST(TproxyTcpSessionTest, RunRejectsInvalidDestinationBeforeRouting)
+{
+    boost::asio::io_context ctx;
+    auto& stats = mux::statistics::instance();
+    const auto blocked_before = stats.routing_blocked();
+
+    {
+        auto pair = make_tcp_socket_pair(ctx);
+        auto router = std::make_shared<block_router>();
+        mux::config const cfg;
+        const boost::asio::ip::tcp::endpoint dst_ep(boost::asio::ip::make_address("0.0.0.0"), 80);
+        auto session = std::make_shared<mux::tproxy_tcp_session>(std::move(pair.server), ctx, nullptr, std::move(router), 130, cfg, dst_ep);
+        mux::test::run_awaitable_void(ctx, session->run());
+        EXPECT_FALSE(session->socket_.is_open());
+    }
+
+    {
+        auto pair = make_tcp_socket_pair(ctx);
+        auto router = std::make_shared<block_router>();
+        mux::config const cfg;
+        const boost::asio::ip::tcp::endpoint dst_ep(boost::asio::ip::make_address("127.0.0.1"), 0);
+        auto session = std::make_shared<mux::tproxy_tcp_session>(std::move(pair.server), ctx, nullptr, std::move(router), 131, cfg, dst_ep);
+        mux::test::run_awaitable_void(ctx, session->run());
+        EXPECT_FALSE(session->socket_.is_open());
+    }
+
+    EXPECT_EQ(stats.routing_blocked(), blocked_before);
 }
 
 TEST(TproxyTcpSessionTest, CloseClientSocketIgnoresExpectedErrors)

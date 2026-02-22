@@ -351,7 +351,7 @@ TEST(UdpSocksSessionTest, UdpSockToStreamValidationBranches)
 
     auto conn = std::make_shared<mux::mock_mux_connection>(ctx);
     EXPECT_CALL(*conn, mock_send_async(1, mux::kCmdDat, testing::_))
-        .Times(testing::AtLeast(1))
+        .Times(2)
         .WillRepeatedly(testing::Return(boost::system::error_code{}));
 
     auto stream = std::make_shared<mux::mux_stream>(1, 1, "trace", conn, ctx);
@@ -393,6 +393,22 @@ TEST(UdpSocksSessionTest, UdpSockToStreamValidationBranches)
     auto frag_packet = socks_codec::encode_udp_header(frag_header);
     frag_packet.push_back(0x11);
     send_packet(sender1, frag_packet);
+
+    socks_udp_header empty_host_header;
+    empty_host_header.frag = 0x00;
+    empty_host_header.addr = "";
+    empty_host_header.port = 53;
+    auto empty_host_packet = socks_codec::encode_udp_header(empty_host_header);
+    empty_host_packet.push_back(0x44);
+    send_packet(sender1, empty_host_packet);
+
+    socks_udp_header zero_port_header;
+    zero_port_header.frag = 0x00;
+    zero_port_header.addr = "1.1.1.1";
+    zero_port_header.port = 0;
+    auto zero_port_packet = socks_codec::encode_udp_header(zero_port_header);
+    zero_port_packet.push_back(0x45);
+    send_packet(sender1, zero_port_packet);
 
     socks_udp_header huge_header;
     huge_header.frag = 0x00;

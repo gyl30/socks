@@ -398,6 +398,11 @@ void log_udp_recv_error(const std::string& error_text)
     LOG_ERROR("tproxy udp recvmsg failed {}", error_text);
 }
 
+[[nodiscard]] bool is_valid_udp_dispatch_endpoint(const boost::asio::ip::udp::endpoint& endpoint)
+{
+    return endpoint.port() != 0 && !endpoint.address().is_unspecified();
+}
+
 std::shared_ptr<udp_session_map_t> snapshot_udp_sessions(const std::shared_ptr<udp_session_map_t>& sessions)
 {
     auto snapshot = std::atomic_load_explicit(&sessions, std::memory_order_acquire);
@@ -823,11 +828,6 @@ boost::asio::awaitable<udp_dispatch_receive_action> receive_dispatch_packet(tpro
         co_return udp_dispatch_receive_action::kBreak;
     }
 
-    if (received_packet.payload.empty())
-    {
-        co_return udp_dispatch_receive_action::kContinue;
-    }
-
     packet = std::move(received_packet);
     co_return udp_dispatch_receive_action::kPacketReady;
 }
@@ -1189,6 +1189,14 @@ bool tproxy_client::enqueue_udp_packet(tproxy_udp_dispatch_channel& dispatch_cha
                                        const std::vector<std::uint8_t>& buffer,
                                        const std::size_t packet_len)
 {
+    if (!is_valid_udp_dispatch_endpoint(src_ep) || !is_valid_udp_dispatch_endpoint(dst_ep))
+    {
+        LOG_WARN("tproxy udp invalid endpoint src {} {} dst {} {}", src_ep.address().to_string(), src_ep.port(), dst_ep.address().to_string(), dst_ep.port());
+        statistics::instance().inc_tproxy_udp_dispatch_dropped();
+        maybe_log_udp_dispatch_drop(statistics::instance().tproxy_udp_dispatch_dropped());
+        return false;
+    }
+
     if (packet_len > buffer.size())
     {
         LOG_WARN("tproxy udp invalid packet length {} buffer size {}", packet_len, buffer.size());
