@@ -37,6 +37,10 @@ namespace
 
 std::uint8_t map_connect_error_to_socks_reply(const boost::system::error_code& ec)
 {
+    if (ec == boost::asio::error::timed_out)
+    {
+        return socks::kRepConnRefused;
+    }
     if (ec == boost::asio::error::connection_refused)
     {
         return socks::kRepConnRefused;

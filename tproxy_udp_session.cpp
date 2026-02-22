@@ -477,7 +477,7 @@ bool tproxy_udp_session::build_proxy_packet(const boost::asio::ip::udp::endpoint
                                             std::vector<std::uint8_t>& packet)
 {
     refresh_cached_proxy_header(dst_ep);
-    if (cached_proxy_header_.size() + len > mux::kMaxPayload)
+    if (cached_proxy_header_.size() + len > mux::kMaxPayloadPerRecord)
     {
         LOG_CTX_WARN(ctx_, "{} udp packet too large {}", log_event::kSocks, len);
         return false;

@@ -8,6 +8,7 @@
 #include <expected>
 #include <optional>
 
+#include <boost/asio/ip/address.hpp>
 #include <openssl/crypto.h>
 
 #include "config.h"
@@ -83,9 +84,9 @@ constexpr std::uint32_t kQueueCapacityMax = 65535;
     {
         return std::unexpected(make_config_error("/heartbeat/min_padding", "must be less than or equal to max_padding"));
     }
-    if (heartbeat.max_padding > kMaxPayload)
+    if (heartbeat.max_padding > mux::kMaxPayloadPerRecord)
     {
-        return std::unexpected(make_config_error("/heartbeat/max_padding", "must be less than or equal to max payload"));
+        return std::unexpected(make_config_error("/heartbeat/max_padding", "must be less than or equal to max mux single record payload"));
     }
     return {};
 }
@@ -129,6 +130,21 @@ constexpr std::uint32_t kQueueCapacityMax = 65535;
     return {};
 }
 
+[[nodiscard]] std::expected<void, config_error> validate_inbound_config(const config::inbound_t& inbound)
+{
+    if (inbound.host.empty())
+    {
+        return std::unexpected(make_config_error("/inbound/host", "must be non-empty ip address"));
+    }
+    boost::system::error_code ec;
+    (void)boost::asio::ip::make_address(inbound.host, ec);
+    if (ec)
+    {
+        return std::unexpected(make_config_error("/inbound/host", "must be valid ip address"));
+    }
+    return {};
+}
+
 [[nodiscard]] bool is_supported_mode(const std::string& mode) { return mode == "client" || mode == "server"; }
 
 [[nodiscard]] bool has_enabled_client_inbound(const config& cfg)
@@ -161,6 +177,10 @@ constexpr std::uint32_t kQueueCapacityMax = 65535;
     if (const auto socks_result = validate_socks_config(cfg.socks); !socks_result)
     {
         return std::unexpected(socks_result.error());
+    }
+    if (const auto inbound_result = validate_inbound_config(cfg.inbound); !inbound_result)
+    {
+        return std::unexpected(inbound_result.error());
     }
 #if !SOCKS_HAS_TPROXY
     if (cfg.tproxy.enabled)

@@ -486,7 +486,7 @@ TEST(UdpSocksSessionTest, UdpSockToStreamDropsMessageSizeAndContinues)
     header.port = 53;
 
     auto too_large_packet = socks_codec::encode_udp_header(header);
-    too_large_packet.resize(reality::kMaxTlsPlaintextLen - mux::kHeaderSize + 1U, 0x6a);
+    too_large_packet.resize(mux::kMaxPayloadPerRecord, 0x6a);
     sender.send_to(boost::asio::buffer(too_large_packet), recv_ep, 0, ec);
     ASSERT_FALSE(ec);
 

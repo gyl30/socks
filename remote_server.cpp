@@ -377,16 +377,15 @@ std::optional<std::pair<std::string, std::string>> find_wildcard_fallback(const 
     return std::nullopt;
 }
 
-boost::asio::ip::tcp::endpoint resolve_inbound_endpoint(const config::inbound_t& inbound)
+std::expected<boost::asio::ip::tcp::endpoint, std::string> resolve_inbound_endpoint(const config::inbound_t& inbound)
 {
     boost::system::error_code ec;
     auto addr = boost::asio::ip::make_address(inbound.host, ec);
     if (ec)
     {
-        LOG_ERROR("parse inbound host {} failed {}", inbound.host, ec.message());
-        addr = boost::asio::ip::address_v6::any();
+        return std::unexpected(ec.message());
     }
-    return {addr, inbound.port};
+    return boost::asio::ip::tcp::endpoint{addr, inbound.port};
 }
 
 bool setup_server_acceptor(boost::asio::ip::tcp::acceptor& acceptor, const boost::asio::ip::tcp::endpoint& ep)
@@ -1251,7 +1250,7 @@ boost::asio::awaitable<bool> write_fallback_initial_buffer(const std::shared_ptr
 remote_server::remote_server(io_context_pool& pool, const config& cfg)
     : io_context_(pool.get_io_context()),
       acceptor_(io_context_),
-      inbound_endpoint_(resolve_inbound_endpoint(cfg.inbound)),
+      inbound_endpoint_(),
       replay_cache_(static_cast<std::size_t>(cfg.reality.replay_cache_max_entries)),
       fallbacks_(cfg.fallbacks),
       fallback_guard_config_(cfg.reality.fallback_guard),
@@ -1278,6 +1277,15 @@ remote_server::remote_server(io_context_pool& pool, const config& cfg)
         LOG_WARN("source prefix v6 {} out of range using {}", limits_config_.source_prefix_v6, normalized_prefix_v6);
     }
     limits_config_.source_prefix_v6 = normalized_prefix_v6;
+
+    const auto inbound_endpoint = resolve_inbound_endpoint(cfg.inbound);
+    if (!inbound_endpoint)
+    {
+        LOG_ERROR("parse inbound host {} failed {}", cfg.inbound.host, inbound_endpoint.error());
+        inbound_config_valid_ = false;
+        return;
+    }
+    inbound_endpoint_ = *inbound_endpoint;
 
     if (!setup_server_acceptor(acceptor_, inbound_endpoint_))
     {
@@ -1314,6 +1322,20 @@ void remote_server::start()
     if (!started_.compare_exchange_strong(expected, true, std::memory_order_acq_rel))
     {
         LOG_WARN("remote server already started");
+        return;
+    }
+
+    if (!inbound_config_valid_)
+    {
+        LOG_ERROR("remote server start failed invalid inbound config");
+        boost::system::error_code close_ec;
+        close_ec = acceptor_.close(close_ec);
+        if (close_ec)
+        {
+            LOG_ERROR("remote server close acceptor failed {}", close_ec.message());
+        }
+        stop_.store(true, std::memory_order_release);
+        started_.store(false, std::memory_order_release);
         return;
     }
 

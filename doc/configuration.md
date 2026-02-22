@@ -38,7 +38,7 @@
 - `heartbeat.min_padding` / `heartbeat.max_padding`：心跳填充长度范围。
 - `heartbeat.min_interval <= heartbeat.max_interval` 且 `heartbeat.min_padding <= heartbeat.max_padding`，否则配置解析失败。
 - `heartbeat.min_interval` 和 `heartbeat.max_interval` 必须大于 `0`，否则配置解析失败，避免出现零间隔忙轮询。
-- `heartbeat.max_padding` 必须小于等于 `65408`（`kMaxPayload`），否则配置解析失败，避免心跳分配超大缓冲区。
+- `heartbeat.max_padding` 必须小于等于 `16377`（`kMaxPayloadPerRecord`，即 `TLS 单记录明文上限 16384 - mux 头 7`），否则配置解析失败，避免心跳在发送路径被记录层上限拒绝。
 
 ## 限制与保护
 

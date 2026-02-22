@@ -451,7 +451,7 @@ TEST_F(config_test_fixture, HeartbeatPaddingRangeRejected)
 
 TEST_F(config_test_fixture, HeartbeatPaddingTooLargeRejected)
 {
-    const auto too_large_padding = static_cast<std::uint64_t>(mux::kMaxPayload) + 1ULL;
+    const auto too_large_padding = static_cast<std::uint64_t>(mux::kMaxPayloadPerRecord) + 1ULL;
     const std::string content = std::string(R"({
         "heartbeat": {
             "min_padding": 16,
@@ -521,7 +521,7 @@ TEST_F(config_test_fixture, QueueCapacityOutOfRangeRejected)
     EXPECT_NE(parsed.error().reason.find("must be between 1 and 65535"), std::string::npos);
 }
 
-TEST_F(config_test_fixture, EmptyHostAddress)
+TEST_F(config_test_fixture, EmptyHostAddressRejected)
 {
     const std::string content = R"({
         "inbound": {
@@ -530,13 +530,24 @@ TEST_F(config_test_fixture, EmptyHostAddress)
     })";
     write_config_file(content);
 
-    const auto cfg_opt = mux::parse_config(tmp_file());
-    ASSERT_TRUE(cfg_opt.has_value());
-    if (!cfg_opt.has_value())
-    {
-        return;
-    }
-    EXPECT_TRUE(cfg_opt->inbound.host.empty());
+    const auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/inbound/host");
+    EXPECT_NE(parsed.error().reason.find("non-empty ip address"), std::string::npos);
+}
+
+TEST_F(config_test_fixture, InvalidInboundHostRejectedAtParseStage)
+{
+    write_config_file(R"({
+        "inbound": {
+            "host": "not-a-valid-ip"
+        }
+    })");
+
+    const auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/inbound/host");
+    EXPECT_NE(parsed.error().reason.find("valid ip address"), std::string::npos);
 }
 
 TEST_F(config_test_fixture, DumpConfigIncludesHeartbeatIdleTimeout)
@@ -613,7 +624,7 @@ TEST_F(config_test_fixture, ContractMatrixHeartbeatRulesStayAlignedWithDocumenta
                 }
             })",
                                 .expected_path = "/heartbeat/max_padding",
-                                .expected_reason_substr = "max payload"}};
+                                .expected_reason_substr = "single record payload"}};
 
     for (const auto& c : cases)
     {

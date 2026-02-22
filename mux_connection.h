@@ -85,7 +85,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
 
     virtual void remove_stream(std::uint32_t id);
 
-    [[nodiscard]] std::uint32_t acquire_next_id() { return next_stream_id_.fetch_add(2, std::memory_order_relaxed); }
+    [[nodiscard]] std::uint32_t acquire_next_id();
     [[nodiscard]] virtual std::uint32_t id() const { return cid_; }
     void mark_started_for_external_calls();
 

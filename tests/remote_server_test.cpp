@@ -1868,9 +1868,15 @@ TEST_F(remote_server_test_fixture, ConstructorHandlesInvalidInboundHostAndUnsupp
 
     auto invalid_host_cfg = make_server_cfg(0, {}, "0102030405060708");
     invalid_host_cfg.inbound.host = "not-a-valid-ip";
-    auto invalid_host_server = construct_server_until_acceptor_ready(pool, invalid_host_cfg);
+    auto invalid_host_server = std::make_shared<mux::remote_server>(pool, invalid_host_cfg);
     ASSERT_NE(invalid_host_server, nullptr);
-    EXPECT_TRUE(invalid_host_server->inbound_endpoint_.address().is_v6());
+    EXPECT_FALSE(invalid_host_server->inbound_config_valid_);
+    EXPECT_FALSE(invalid_host_server->acceptor_.is_open());
+
+    invalid_host_server->start();
+    EXPECT_FALSE(invalid_host_server->running());
+    EXPECT_FALSE(invalid_host_server->started_.load(std::memory_order_acquire));
+    EXPECT_TRUE(invalid_host_server->stop_.load(std::memory_order_acquire));
 }
 
 TEST_F(remote_server_test_fixture, ConstructorNormalizesZeroMaxConnections)

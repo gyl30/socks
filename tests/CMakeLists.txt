@@ -76,7 +76,7 @@ add_socks_test(socks_codec_test)
 add_socks_test(timeout_io_test)
 
 if(LINUX)
-  add_socks_test(socks_session_test)
+  add_socks_locked_test(socks_session_test net_ports)
   target_link_options(socks_session_test PRIVATE -Wl,--wrap=shutdown
                       -Wl,--wrap=close)
   add_socks_test(crypto_util_test)
@@ -224,13 +224,13 @@ if(LINUX)
     -Wl,--wrap=accept4
     -Wl,--wrap=getsockname
     -Wl,--wrap=close)
-  add_socks_test(tproxy_tcp_session_test)
+  add_socks_locked_test(tproxy_tcp_session_test net_ports)
   target_link_options(tproxy_tcp_session_test PRIVATE -Wl,--wrap=shutdown
                       -Wl,--wrap=close)
   add_socks_test(tproxy_udp_sender_test)
   target_link_options(tproxy_udp_sender_test PRIVATE -Wl,--wrap=socket
                       -Wl,--wrap=setsockopt)
-  add_socks_test(udp_socks_session_test)
+  add_socks_locked_test(udp_socks_session_test net_ports)
   target_link_options(
     udp_socks_session_test PRIVATE -Wl,--wrap=bind -Wl,--wrap=setsockopt
     -Wl,--wrap=getsockname -Wl,--wrap=close)
