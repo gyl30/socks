@@ -38,7 +38,7 @@ namespace
 #ifdef __linux__
 std::atomic<bool> g_force_rand_bytes_failure{false};
 #endif
-}    // namespace
+}
 
 #ifdef __linux__
 extern "C"
@@ -564,6 +564,22 @@ TEST_F(mux_connection_integration_test_fixture, SendAsyncRejectsPayloadLargerTha
     EXPECT_EQ(future.get(), boost::asio::error::message_size);
 }
 
+TEST_F(mux_connection_integration_test_fixture, AcquireNextIdSkipsHeartbeatReservedIdAfterWrap)
+{
+    auto conn = std::make_shared<mux_connection>(
+        boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, false, 16);
+
+    conn->connection_state_.store(mux_connection_state::kConnected, std::memory_order_release);
+    conn->next_stream_id_.store(mux::kStreamIdHeartbeat, std::memory_order_release);
+
+    EXPECT_EQ(conn->acquire_next_id(), 2U);
+    EXPECT_EQ(conn->acquire_next_id(), 4U);
+
+    auto stream = conn->create_stream("wrap-around");
+    ASSERT_NE(stream, nullptr);
+    EXPECT_FALSE(conn->has_stream(mux::kStreamIdHeartbeat));
+}
+
 TEST_F(mux_connection_integration_test_fixture, OffThreadRegisterAndQueryPaths)
 {
     auto conn = std::make_shared<mux_connection>(
@@ -685,7 +701,7 @@ TEST_F(mux_connection_integration_test_fixture, OffThreadConcurrentCreateStreamR
     io_ctx().restart();
 }
 
-TEST_F(mux_connection_integration_test_fixture, OffThreadSyncQueriesReturnWhenIoQueueBusy)
+TEST_F(mux_connection_integration_test_fixture, OffThreadSyncQueriesFallbackInlineWhenIoQueueBusy)
 {
     auto conn = std::make_shared<mux_connection>(
         boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 15);
@@ -731,10 +747,10 @@ TEST_F(mux_connection_integration_test_fixture, OffThreadSyncQueriesReturnWhenIo
         caller.join();
     }
 
-    EXPECT_FALSE(try_register_ok);
-    EXPECT_TRUE(create_stream_is_null);
-    EXPECT_FALSE(conn->has_stream(101));
-    EXPECT_FALSE(conn->has_stream(102));
+    EXPECT_TRUE(try_register_ok);
+    EXPECT_FALSE(create_stream_is_null);
+    EXPECT_TRUE(conn->has_stream(101));
+    EXPECT_TRUE(conn->has_stream(102));
 
     io_ctx().stop();
     if (io_thread.joinable())
@@ -744,7 +760,7 @@ TEST_F(mux_connection_integration_test_fixture, OffThreadSyncQueriesReturnWhenIo
     io_ctx().restart();
 }
 
-TEST_F(mux_connection_integration_test_fixture, OffThreadSyncQueryTimeoutDoesNotMutateAfterStopAndRestart)
+TEST_F(mux_connection_integration_test_fixture, OffThreadSyncQueryTimeoutFallsBackInlineBeforeStopAndRestart)
 {
     auto conn = std::make_shared<mux_connection>(
         boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 18);
@@ -791,15 +807,15 @@ TEST_F(mux_connection_integration_test_fixture, OffThreadSyncQueryTimeoutDoesNot
     {
         io_thread.join();
     }
-    EXPECT_FALSE(register_ok);
-    EXPECT_FALSE(has_stream_for_test(conn, 201));
+    EXPECT_TRUE(register_ok);
+    EXPECT_TRUE(has_stream_for_test(conn, 201));
 
     io_ctx().restart();
     io_ctx().poll();
-    EXPECT_FALSE(has_stream_for_test(conn, 201));
+    EXPECT_TRUE(has_stream_for_test(conn, 201));
 }
 
-TEST_F(mux_connection_integration_test_fixture, OffThreadTryRegisterTimeoutDoesNotMutateAfterStopAndRestart)
+TEST_F(mux_connection_integration_test_fixture, OffThreadTryRegisterTimeoutFallsBackInlineBeforeStopAndRestart)
 {
     auto conn = std::make_shared<mux_connection>(
         boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 19);
@@ -846,15 +862,15 @@ TEST_F(mux_connection_integration_test_fixture, OffThreadTryRegisterTimeoutDoesN
     {
         io_thread.join();
     }
-    EXPECT_FALSE(try_register_ok);
-    EXPECT_FALSE(has_stream_for_test(conn, 202));
+    EXPECT_TRUE(try_register_ok);
+    EXPECT_TRUE(has_stream_for_test(conn, 202));
 
     io_ctx().restart();
     io_ctx().poll();
-    EXPECT_FALSE(has_stream_for_test(conn, 202));
+    EXPECT_TRUE(has_stream_for_test(conn, 202));
 }
 
-TEST_F(mux_connection_integration_test_fixture, MarkStartedForExternalCallsPreventsPreStartInlineMutation)
+TEST_F(mux_connection_integration_test_fixture, MarkStartedForExternalCallsAllowsTimeoutInlineMutation)
 {
     auto conn = std::make_shared<mux_connection>(
         boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 20);
@@ -862,8 +878,8 @@ TEST_F(mux_connection_integration_test_fixture, MarkStartedForExternalCallsPreve
     conn->mark_started_for_external_calls();
 
     auto stream = std::make_shared<simple_mock_stream>();
-    EXPECT_FALSE(conn->try_register_stream(303, stream));
-    EXPECT_FALSE(has_stream_for_test(conn, 303));
+    EXPECT_TRUE(conn->try_register_stream(303, stream));
+    EXPECT_TRUE(has_stream_for_test(conn, 303));
 }
 TEST_F(mux_connection_integration_test_fixture, StoppedIoContextUsesInlineQueryPaths)
 {
@@ -1378,6 +1394,21 @@ TEST_F(mux_connection_integration_test_fixture, SynCallbackAndReadGuardBranches)
     EXPECT_TRUE(conn->should_stop_read(boost::asio::error::operation_aborted, 0));
 }
 
+TEST_F(mux_connection_integration_test_fixture, RejectsNonDatHeartbeatCommand)
+{
+    auto conn = std::make_shared<mux_connection>(
+        boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 19);
+
+    const frame_header invalid_heartbeat{
+        .stream_id = mux::kStreamIdHeartbeat,
+        .length = 0,
+        .command = kCmdSyn,
+    };
+
+    conn->on_mux_frame(invalid_heartbeat, {});
+    EXPECT_FALSE(conn->is_open());
+}
+
 TEST_F(mux_connection_integration_test_fixture, ResetStreamsAndDispatchFailureBranches)
 {
     auto conn = std::make_shared<mux_connection>(
@@ -1393,6 +1424,19 @@ TEST_F(mux_connection_integration_test_fixture, ResetStreamsAndDispatchFailureBr
     EXPECT_EQ(streams_to_clear.size(), 2U);
     EXPECT_FALSE(conn->has_dispatch_failure(boost::system::error_code{}));
     EXPECT_TRUE(conn->has_dispatch_failure(std::make_error_code(std::errc::protocol_error)));
+}
+
+TEST_F(mux_connection_integration_test_fixture, DispatchFailureOnOversizedFrameHeader)
+{
+    auto conn = std::make_shared<mux_connection>(
+        boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 24);
+
+    std::vector<std::uint8_t> oversized_header = {0x00, 0x00, 0x00, 0x2a, 0xff, 0xff, kCmdDat};
+    conn->mux_dispatcher_.on_plaintext_data(std::span<const std::uint8_t>(oversized_header.data(), oversized_header.size()));
+
+    EXPECT_TRUE(conn->mux_dispatcher_.has_fatal_error());
+    EXPECT_EQ(conn->mux_dispatcher_.fatal_error_reason(), mux_dispatcher_fatal_reason::kOversizedFrame);
+    EXPECT_TRUE(conn->has_dispatch_failure(boost::system::error_code{}));
 }
 
 TEST_F(mux_connection_integration_test_fixture, TryRegisterNullAndCloseSocketErrorBranches)
@@ -1482,6 +1526,4 @@ TEST_F(mux_connection_integration_test_fixture, CanAcceptStreamLocalAndPublicLim
     EXPECT_FALSE(unlimited_conn->can_accept_stream_local());
 }
 
-}    // namespace
-
-// readability-static-accessed-through-instance)
+}

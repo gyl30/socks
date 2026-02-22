@@ -266,6 +266,93 @@ TEST_F(remote_server_mux_test_fixture, TargetConnectFail)
     std::this_thread::sleep_for(std::chrono::milliseconds(2000));
 }
 
+TEST_F(remote_server_mux_test_fixture, TargetConnectTimeoutUsesConfiguredReadTimeout)
+{
+    mux::io_context_pool pool(2);
+    scoped_pool const sp(pool);
+
+    auto server_cfg = make_server_cfg(0);
+    server_cfg.timeout.read = 1;
+    auto server = std::make_shared<mux::remote_server>(pool, server_cfg);
+
+    reality::server_fingerprint fp;
+    fp.cipher_suite = 0x1301;
+    fp.alpn = "h2";
+    server->set_certificate("www.google.com", reality::construct_certificate({0x01, 0x02, 0x03}), fp);
+
+    server->start();
+    const std::uint16_t server_port = server->listen_port();
+    ASSERT_NE(server_port, 0);
+
+    mux::config::timeout_t client_timeouts;
+    client_timeouts.read = 10;
+    client_timeouts.write = 10;
+    auto client = std::make_shared<mux::socks_client>(pool, make_client_cfg(server_port, "www.google.com", client_timeouts));
+    client->start();
+
+    const std::uint16_t local_socks_port = wait_for_socks_listen_port(client);
+    ASSERT_NE(local_socks_port, 0);
+
+    boost::system::error_code ec;
+    boost::asio::ip::tcp::acceptor saturated_acceptor(pool.get_io_context());
+    saturated_acceptor.open(boost::asio::ip::tcp::v4(), ec);
+    ASSERT_FALSE(ec);
+    saturated_acceptor.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true), ec);
+    ASSERT_FALSE(ec);
+    saturated_acceptor.bind(boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 0), ec);
+    ASSERT_FALSE(ec);
+    saturated_acceptor.listen(1, ec);
+    ASSERT_FALSE(ec);
+
+    const auto target_port = saturated_acceptor.local_endpoint().port();
+    boost::asio::ip::tcp::socket queued_client_a(pool.get_io_context());
+    queued_client_a.connect({boost::asio::ip::make_address("127.0.0.1"), target_port}, ec);
+    ASSERT_FALSE(ec);
+    boost::asio::ip::tcp::socket queued_client_b(pool.get_io_context());
+    queued_client_b.connect({boost::asio::ip::make_address("127.0.0.1"), target_port}, ec);
+    ASSERT_FALSE(ec);
+
+    {
+        boost::asio::ip::tcp::socket proxy_sock(pool.get_io_context());
+        ASSERT_TRUE(connect_proxy_with_retry(proxy_sock, local_socks_port));
+
+        std::uint8_t handshake[] = {0x05, 0x01, 0x00};
+        boost::asio::write(proxy_sock, boost::asio::buffer(handshake));
+        std::uint8_t resp[2];
+        boost::asio::read(proxy_sock, boost::asio::buffer(resp, 2));
+
+        std::uint8_t conn_req[] = {0x05,
+                                   0x01,
+                                   0x00,
+                                   0x01,
+                                   127,
+                                   0,
+                                   0,
+                                   1,
+                                   static_cast<std::uint8_t>(target_port >> 8),
+                                   static_cast<std::uint8_t>(target_port & 0xFF)};
+
+        const auto start = std::chrono::steady_clock::now();
+        boost::asio::write(proxy_sock, boost::asio::buffer(conn_req));
+
+        std::uint8_t conn_resp[10];
+        boost::asio::read(proxy_sock, boost::asio::buffer(conn_resp, 10));
+        const auto elapsed = std::chrono::steady_clock::now() - start;
+
+        EXPECT_EQ(conn_resp[0], 0x05);
+        EXPECT_EQ(conn_resp[1], socks::kRepConnRefused);
+        EXPECT_LT(std::chrono::duration_cast<std::chrono::seconds>(elapsed).count(), 5);
+    }
+
+    boost::system::error_code close_ec;
+    queued_client_a.close(close_ec);
+    queued_client_b.close(close_ec);
+    saturated_acceptor.close(close_ec);
+    client->stop();
+    server->stop();
+    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+}
+
 TEST_F(remote_server_mux_test_fixture, TargetResolveFail)
 {
     mux::io_context_pool pool(2);

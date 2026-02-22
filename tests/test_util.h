@@ -61,8 +61,8 @@ inline void run_awaitable_void(boost::asio::io_context& ctx, boost::asio::awaita
 
 inline bool open_ephemeral_tcp_acceptor(boost::asio::ip::tcp::acceptor& acceptor,
                                         const boost::asio::ip::address& bind_addr = boost::asio::ip::make_address("127.0.0.1"),
-                                        const std::uint32_t max_attempts = 128,
-                                        const std::chrono::milliseconds backoff = std::chrono::milliseconds(2))
+                                        const std::uint32_t max_attempts = 256,
+                                        const std::chrono::milliseconds backoff = std::chrono::milliseconds(4))
 {
     for (std::uint32_t attempt = 0; attempt < max_attempts; ++attempt)
     {
@@ -96,8 +96,8 @@ inline bool open_ephemeral_tcp_acceptor(boost::asio::ip::tcp::acceptor& acceptor
 
 inline bool bind_ephemeral_tcp_socket(boost::asio::ip::tcp::socket& socket,
                                       const boost::asio::ip::address& bind_addr = boost::asio::ip::make_address("127.0.0.1"),
-                                      const std::uint32_t max_attempts = 128,
-                                      const std::chrono::milliseconds backoff = std::chrono::milliseconds(2))
+                                      const std::uint32_t max_attempts = 256,
+                                      const std::chrono::milliseconds backoff = std::chrono::milliseconds(4))
 {
     for (std::uint32_t attempt = 0; attempt < max_attempts; ++attempt)
     {

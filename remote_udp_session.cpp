@@ -469,10 +469,15 @@ boost::asio::awaitable<void> remote_udp_session::udp_to_mux()
         pkt.reserve(cached_header.size() + n);
         pkt.insert(pkt.end(), cached_header.begin(), cached_header.end());
         pkt.insert(pkt.end(), buf.begin(), buf.begin() + static_cast<std::uint32_t>(n));
+        const auto pkt_size = pkt.size();
+        if (pkt_size > mux::kMaxPayloadPerRecord)
+        {
+            LOG_CTX_WARN(ctx_, "{} drop oversized udp packet size {}", log_event::kMux, pkt_size);
+            continue;
+        }
 
         if (auto conn = connection_.lock())
         {
-            const auto pkt_size = pkt.size();
             const auto send_ec = co_await conn->send_async(id_, kCmdDat, std::move(pkt));
             if (!send_ec)
             {

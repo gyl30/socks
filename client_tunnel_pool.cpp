@@ -440,6 +440,11 @@ boost::asio::awaitable<std::expected<encrypted_record, boost::system::error_code
             co_return std::unexpected(boost::asio::error::invalid_argument);
         }
     }
+    else if (record_header[0] != reality::kContentTypeApplicationData)
+    {
+        LOG_ERROR("unexpected encrypted record type {}", static_cast<int>(record_header[0]));
+        co_return std::unexpected(boost::asio::error::invalid_argument);
+    }
 
     std::vector<std::uint8_t> ciphertext(record_header.size() + record_body_size);
     std::memcpy(ciphertext.data(), record_header.data(), record_header.size());
