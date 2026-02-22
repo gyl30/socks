@@ -25,8 +25,19 @@ void mux_dispatcher::set_context(connection_context ctx) { ctx_ = std::move(ctx)
 
 void mux_dispatcher::set_max_buffer(const std::size_t max_buffer) { max_buffer_ = max_buffer; }
 
+void mux_dispatcher::set_fatal_error(const mux_dispatcher_fatal_reason reason)
+{
+    auto expected = mux_dispatcher_fatal_reason::kNone;
+    (void)fatal_reason_.compare_exchange_strong(expected, reason, std::memory_order_acq_rel, std::memory_order_acquire);
+}
+
 void mux_dispatcher::on_plaintext_data(std::span<const std::uint8_t> data)
 {
+    if (has_fatal_error())
+    {
+        return;
+    }
+
     if (data.empty())
     {
         return;
@@ -37,6 +48,7 @@ void mux_dispatcher::on_plaintext_data(std::span<const std::uint8_t> data)
         LOG_CTX_ERROR(ctx_, "{} mux dispatcher buffer overflow", log_event::kMux);
         buffer_.consume(buffer_.size());
         overflowed_.store(true, std::memory_order_release);
+        set_fatal_error(mux_dispatcher_fatal_reason::kBufferOverflow);
         return;
     }
 
@@ -83,6 +95,7 @@ void mux_dispatcher::process_frames()
         {
             LOG_CTX_ERROR(ctx_, "{} received oversized frame length {} stream {}", log_event::kMux, header.length, header.stream_id);
             buffer_.consume(buffer_.size());
+            set_fatal_error(mux_dispatcher_fatal_reason::kOversizedFrame);
             break;
         }
 

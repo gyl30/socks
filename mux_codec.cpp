@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <algorithm>
+#include <atomic>
 
 #include "log.h"
 #include "mux_codec.h"
@@ -10,6 +11,21 @@
 
 namespace mux
 {
+
+namespace
+{
+
+constexpr std::uint64_t kDecodeWarnLogSample = 256;
+std::atomic<std::uint64_t> g_decode_warn_total{0};
+
+[[nodiscard]] std::uint64_t next_decode_warn_total() { return g_decode_warn_total.fetch_add(1, std::memory_order_relaxed) + 1; }
+
+[[nodiscard]] bool should_log_decode_warn(const std::uint64_t total)
+{
+    return total == 1 || (total % kDecodeWarnLogSample) == 0;
+}
+
+}    // namespace
 
 void mux_codec::encode_header(const frame_header& h, std::vector<std::uint8_t>& buf)
 {
@@ -61,7 +77,11 @@ bool mux_codec::decode_syn(const std::uint8_t* data, const std::size_t len, syn_
 {
     if (len < 4)
     {
-        LOG_WARN("syn payload too short size {}", len);
+        const auto warn_total = next_decode_warn_total();
+        if (should_log_decode_warn(warn_total))
+        {
+            LOG_WARN("syn payload too short size {} warn_total {}", len, warn_total);
+        }
         return false;
     }
     out.socks_cmd = data[0];
@@ -69,7 +89,11 @@ bool mux_codec::decode_syn(const std::uint8_t* data, const std::size_t len, syn_
     const std::uint8_t addr_len = data[1];
     if (len < 2 + static_cast<std::size_t>(addr_len) + 2)
     {
-        LOG_WARN("syn payload length invalid for addr len {}", addr_len);
+        const auto warn_total = next_decode_warn_total();
+        if (should_log_decode_warn(warn_total))
+        {
+            LOG_WARN("syn payload length invalid for addr len {} warn_total {}", addr_len, warn_total);
+        }
         return false;
     }
     out.addr = std::string(reinterpret_cast<const char*>(&data[2]), addr_len);
@@ -87,7 +111,11 @@ bool mux_codec::decode_syn(const std::uint8_t* data, const std::size_t len, syn_
     const std::size_t expected_len = current_pos + trace_id_len;
     if (len != expected_len)
     {
-        LOG_WARN("syn payload length invalid expected {} got {}", expected_len, len);
+        const auto warn_total = next_decode_warn_total();
+        if (should_log_decode_warn(warn_total))
+        {
+            LOG_WARN("syn payload length invalid expected {} got {} warn_total {}", expected_len, len, warn_total);
+        }
         return false;
     }
     out.trace_id = std::string(reinterpret_cast<const char*>(&data[current_pos]), trace_id_len);
@@ -110,7 +138,11 @@ bool mux_codec::decode_ack(const std::uint8_t* data, const std::size_t len, ack_
 {
     if (len < 4)
     {
-        LOG_WARN("ack payload too short size {}", len);
+        const auto warn_total = next_decode_warn_total();
+        if (should_log_decode_warn(warn_total))
+        {
+            LOG_WARN("ack payload too short size {} warn_total {}", len, warn_total);
+        }
         return false;
     }
     out.socks_rep = data[0];
@@ -118,7 +150,11 @@ bool mux_codec::decode_ack(const std::uint8_t* data, const std::size_t len, ack_
     const std::size_t expected_len = 2 + static_cast<std::size_t>(addr_len) + 2;
     if (len != expected_len)
     {
-        LOG_WARN("ack payload length invalid expected {} got {}", expected_len, len);
+        const auto warn_total = next_decode_warn_total();
+        if (should_log_decode_warn(warn_total))
+        {
+            LOG_WARN("ack payload length invalid expected {} got {} warn_total {}", expected_len, len, warn_total);
+        }
         return false;
     }
     out.bnd_addr = std::string(reinterpret_cast<const char*>(&data[2]), addr_len);
