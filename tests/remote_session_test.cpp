@@ -54,10 +54,10 @@ extern "C"
 #include "statistics.h"
 #include "mock_mux_connection.h"
 
-std::atomic<bool> g_fail_tcp_nodelay_setsockopt_once{false};
-std::atomic<int> g_fail_tcp_nodelay_setsockopt_errno{EPERM};
+static std::atomic<bool> g_fail_tcp_nodelay_setsockopt_once{false};
+static std::atomic<int> g_fail_tcp_nodelay_setsockopt_errno{EPERM};
 
-void fail_next_tcp_nodelay_setsockopt(const int err)
+static void fail_next_tcp_nodelay_setsockopt(const int err)
 {
     g_fail_tcp_nodelay_setsockopt_errno.store(err, std::memory_order_release);
     g_fail_tcp_nodelay_setsockopt_once.store(true, std::memory_order_release);

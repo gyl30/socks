@@ -984,6 +984,89 @@ TEST(ClientTunnelPoolWhiteboxTest, ProcessServerHelloRejectsTruncatedSessionData
     EXPECT_TRUE(sh_res.error());
 }
 
+TEST(ClientTunnelPoolWhiteboxTest, ProcessServerHelloRejectsUnexpectedRecordType)
+{
+    boost::asio::io_context io_context;
+    boost::system::error_code ec;
+
+    boost::asio::ip::tcp::acceptor acceptor(io_context);
+    ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
+    boost::asio::ip::tcp::socket writer(io_context);
+    (void)writer.connect(acceptor.local_endpoint(), ec);
+    ASSERT_FALSE(ec);
+    boost::asio::ip::tcp::socket reader(io_context);
+    (void)acceptor.accept(reader, ec);
+    ASSERT_FALSE(ec);
+
+    std::vector<std::uint8_t> const server_random(32, 0x24);
+    std::vector<std::uint8_t> const session_id(32, 0x11);
+    std::vector<std::uint8_t> const key_share(32, 0x22);
+    auto sh = reality::construct_server_hello(server_random, session_id, 0x1301, reality::tls_consts::group::kX25519, key_share);
+    auto record = reality::write_record_header(reality::kContentTypeAlert, static_cast<std::uint16_t>(sh.size()));
+    record.insert(record.end(), sh.begin(), sh.end());
+    boost::asio::write(writer, boost::asio::buffer(record), ec);
+    ASSERT_FALSE(ec);
+    (void)writer.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
+
+    std::uint8_t peer_pub[32];
+    std::uint8_t peer_priv[32];
+    ASSERT_TRUE(reality::crypto_util::generate_x25519_keypair(peer_pub, peer_priv));
+
+    reality::transcript trans;
+    std::expected<mux::client_tunnel_pool::server_hello_res, boost::system::error_code> sh_res;
+    boost::asio::co_spawn(
+        io_context,
+        [&]() -> boost::asio::awaitable<void>
+        {
+            sh_res = co_await process_server_hello_expected(reader, peer_priv, trans);
+            co_return;
+        },
+        boost::asio::detached);
+    io_context.run();
+
+    EXPECT_FALSE(sh_res.has_value());
+    EXPECT_EQ(sh_res.error(), boost::asio::error::invalid_argument);
+}
+
+TEST(ClientTunnelPoolWhiteboxTest, ProcessServerHelloRejectsOversizedRecordBodyLength)
+{
+    boost::asio::io_context io_context;
+    boost::system::error_code ec;
+
+    boost::asio::ip::tcp::acceptor acceptor(io_context);
+    ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
+    boost::asio::ip::tcp::socket writer(io_context);
+    (void)writer.connect(acceptor.local_endpoint(), ec);
+    ASSERT_FALSE(ec);
+    boost::asio::ip::tcp::socket reader(io_context);
+    (void)acceptor.accept(reader, ec);
+    ASSERT_FALSE(ec);
+
+    const std::array<std::uint8_t, 5> oversized_header = {reality::kContentTypeHandshake, 0x03, 0x03, 0x40, 0x01};
+    boost::asio::write(writer, boost::asio::buffer(oversized_header), ec);
+    ASSERT_FALSE(ec);
+    (void)writer.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
+
+    std::uint8_t peer_pub[32];
+    std::uint8_t peer_priv[32];
+    ASSERT_TRUE(reality::crypto_util::generate_x25519_keypair(peer_pub, peer_priv));
+
+    reality::transcript trans;
+    std::expected<mux::client_tunnel_pool::server_hello_res, boost::system::error_code> sh_res;
+    boost::asio::co_spawn(
+        io_context,
+        [&]() -> boost::asio::awaitable<void>
+        {
+            sh_res = co_await process_server_hello_expected(reader, peer_priv, trans);
+            co_return;
+        },
+        boost::asio::detached);
+    io_context.run();
+
+    EXPECT_FALSE(sh_res.has_value());
+    EXPECT_EQ(sh_res.error(), std::errc::message_size);
+}
+
 TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsCertVerifyBeforeCertificate)
 {
     boost::asio::io_context io_context;
@@ -1158,6 +1241,41 @@ TEST(ClientTunnelPoolWhiteboxTest, ClientHelloBuildFailureBranchesForAuthMateria
     io_context.run();
     EXPECT_FALSE(hello_res_2.has_value());
     EXPECT_EQ(hello_res_2.error(), std::errc::invalid_argument);
+}
+
+TEST(ClientTunnelPoolWhiteboxTest, GenerateAndSendClientHelloRejectsOversizedPayload)
+{
+    boost::system::error_code const ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+    boost::asio::io_context io_context;
+
+    auto cfg = make_base_cfg();
+    cfg.reality.public_key = generate_public_key_hex();
+    cfg.reality.sni = std::string(70000, 'a');
+    auto tunnel_pool = std::make_shared<mux::client_tunnel_pool>(pool, cfg, 0);
+
+    std::uint8_t ephemeral_pub[32];
+    std::uint8_t ephemeral_priv[32];
+    ASSERT_TRUE(reality::crypto_util::generate_x25519_keypair(ephemeral_pub, ephemeral_priv));
+    const auto spec = reality::fingerprint_factory::get(reality::fingerprint_type::kChrome120);
+
+    boost::asio::ip::tcp::socket disconnected_socket(io_context);
+    reality::transcript trans;
+    std::expected<void, boost::system::error_code> hello_res;
+    boost::asio::co_spawn(
+        io_context,
+        [tunnel_pool, &disconnected_socket, ephemeral_pub, ephemeral_priv, spec, &trans, &hello_res]() mutable -> boost::asio::awaitable<void>
+        {
+            hello_res = co_await generate_and_send_client_hello_expected(
+                *tunnel_pool, disconnected_socket, ephemeral_pub, ephemeral_priv, spec, trans);
+            co_return;
+        },
+        boost::asio::detached);
+    io_context.run();
+
+    EXPECT_FALSE(hello_res.has_value());
+    EXPECT_EQ(hello_res.error(), std::errc::message_size);
 }
 
 TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsMalformedCertificateVerifyAfterCertificate)
