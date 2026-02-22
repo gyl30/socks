@@ -1,4 +1,5 @@
 #include <vector>
+#include <string>
 #include <cstdint>
 
 #include <gtest/gtest.h>
@@ -77,9 +78,38 @@ TEST(SocksCodecTest, UDPHeaderRoundTripDomain)
     EXPECT_EQ(output.port, input.port);
 }
 
+TEST(SocksCodecTest, UDPHeaderRoundTripTooLongDomainTruncatesTo255Bytes)
+{
+    socks_udp_header input;
+    input.frag = 0;
+    input.addr = std::string(300, 'a');
+    input.port = 53;
+
+    const auto buffer = socks_codec::encode_udp_header(input);
+
+    ASSERT_EQ(buffer[3], socks::kAtypDomain);
+    ASSERT_EQ(buffer[4], 0xFF);
+    ASSERT_EQ(buffer.size(), 262U);
+
+    socks_udp_header output;
+    const bool success = socks_codec::decode_udp_header(buffer.data(), buffer.size(), output);
+
+    ASSERT_TRUE(success);
+    EXPECT_EQ(output.frag, input.frag);
+    EXPECT_EQ(output.addr, std::string(255, 'a'));
+    EXPECT_EQ(output.port, input.port);
+}
+
 TEST(SocksCodecTest, DecodeTooShort)
 {
     const std::vector<std::uint8_t> data = {0x00, 0x00, 0x00};
+    socks_udp_header out;
+    EXPECT_FALSE(socks_codec::decode_udp_header(data.data(), data.size(), out));
+}
+
+TEST(SocksCodecTest, DecodeRejectsNonZeroReservedBytes)
+{
+    const std::vector<std::uint8_t> data = {0x00, 0x01, 0x00, 0x01, 0x7F, 0x00, 0x00, 0x01, 0x00, 0x50};
     socks_udp_header out;
     EXPECT_FALSE(socks_codec::decode_udp_header(data.data(), data.size(), out));
 }

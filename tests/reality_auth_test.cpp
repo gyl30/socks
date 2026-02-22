@@ -19,6 +19,10 @@ TEST(RealityAuthTest, BuildAndParseRoundTrip)
 
     auto parsed = reality::parse_auth_payload(std::span<const std::uint8_t>(payload.data(), payload.size()));
     ASSERT_TRUE(parsed.has_value());
+    if (!parsed.has_value())
+    {
+        return;
+    }
     const auto& p = *parsed;
     EXPECT_EQ(p.version_x, 1);
     EXPECT_EQ(p.version_y, 0);
@@ -49,6 +53,10 @@ TEST(RealityAuthTest, ParsePayloadLayout)
 
     auto parsed = reality::parse_auth_payload(std::span<const std::uint8_t>(payload.data(), payload.size()));
     ASSERT_TRUE(parsed.has_value());
+    if (!parsed.has_value())
+    {
+        return;
+    }
     const auto& p = *parsed;
     EXPECT_EQ(p.version_x, 0x01);
     EXPECT_EQ(p.version_y, 0x02);
@@ -65,6 +73,10 @@ TEST(RealityAuthTest, ParseAllowsNonOneVersion)
 
     auto parsed = reality::parse_auth_payload(std::span<const std::uint8_t>(payload.data(), payload.size()));
     ASSERT_TRUE(parsed.has_value());
+    if (!parsed.has_value())
+    {
+        return;
+    }
     const auto& p = *parsed;
     EXPECT_EQ(p.version_x, 0x1a);
     EXPECT_EQ(p.version_y, 0x02);
