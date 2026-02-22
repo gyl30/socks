@@ -1,11 +1,12 @@
 
 #include <thread>
 #include <vector>
+#include <chrono>
 #include <cstddef>
-#include <system_error>
 #include <unordered_set>
 
 #include <gtest/gtest.h>
+#include <boost/system/error_code.hpp>
 
 #include "context_pool.h"
 
@@ -41,6 +42,7 @@ TEST(ContextPoolTest, MultipleContextsRoundRobin)
     EXPECT_FALSE(ec);
 
     std::vector<boost::asio::io_context*> contexts;
+    contexts.reserve(6);
     for (int i = 0; i < 6; ++i)
     {
         contexts.push_back(&pool.get_io_context());

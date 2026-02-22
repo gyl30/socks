@@ -6,7 +6,10 @@
 #include <cstdio>
 #include <string>
 #include <fstream>
+#include <cstdint>
+#include <iterator>
 #include <unistd.h>
+#include <algorithm>
 
 #include <gtest/gtest.h>
 
@@ -25,15 +28,13 @@ bool is_hex_string(const std::string& value)
     {
         return false;
     }
-
-    for (const char ch : value)
-    {
-        if (!std::isxdigit(static_cast<unsigned char>(ch)))
+    return std::all_of(
+        value.begin(),
+        value.end(),
+        [](const char ch)
         {
-            return false;
-        }
-    }
-    return true;
+            return std::isxdigit(static_cast<unsigned char>(ch)) != 0;
+        });
 }
 
 std::string read_text_file(const char* path)
@@ -43,7 +44,7 @@ std::string read_text_file(const char* path)
     {
         return {};
     }
-    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    return {(std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>()};
 }
 
 std::string load_configuration_doc()
@@ -61,10 +62,10 @@ std::string load_configuration_doc()
 
 }    // namespace
 
-extern "C" std::size_t __real_fread(void* ptr, std::size_t size, std::size_t count, FILE* stream);    
-extern "C" int __real_ferror(FILE* stream);                                                           
+extern "C" std::size_t __real_fread(void* ptr, std::size_t size, std::size_t count, FILE* stream);
+extern "C" int __real_ferror(FILE* stream);
 
-extern "C" std::size_t __wrap_fread(void* ptr, std::size_t size, std::size_t count, FILE* stream)    
+extern "C" std::size_t __wrap_fread(void* ptr, std::size_t size, std::size_t count, FILE* stream)
 {
     if (g_force_fread_error.exchange(false))
     {
@@ -72,16 +73,16 @@ extern "C" std::size_t __wrap_fread(void* ptr, std::size_t size, std::size_t cou
         errno = EIO;
         return 0;
     }
-    return __real_fread(ptr, size, count, stream);    
+    return __real_fread(ptr, size, count, stream);
 }
 
-extern "C" int __wrap_ferror(FILE* stream)    
+extern "C" int __wrap_ferror(FILE* stream)
 {
     if (g_injected_fread_error.exchange(false))
     {
         return 1;
     }
-    return __real_ferror(stream);    
+    return __real_ferror(stream);
 }
 
 class config_test_fixture : public ::testing::Test
@@ -102,7 +103,7 @@ class config_test_fixture : public ::testing::Test
         out.close();
     }
 
-    const std::string& tmp_file() const { return tmp_file_; }
+    [[nodiscard]] const std::string& tmp_file() const { return tmp_file_; }
 
    private:
     std::string tmp_file_;
@@ -124,6 +125,10 @@ TEST_F(config_test_fixture, DumpDefaultConfigGeneratesRealityKeyPair)
 
     const auto cfg_opt = mux::parse_config(tmp_file());
     ASSERT_TRUE(cfg_opt.has_value());
+    if (!cfg_opt.has_value())
+    {
+        return;
+    }
     EXPECT_EQ(cfg_opt->reality.private_key.size(), 64U);
     EXPECT_EQ(cfg_opt->reality.public_key.size(), 64U);
     EXPECT_TRUE(is_hex_string(cfg_opt->reality.private_key));
@@ -247,6 +252,10 @@ TEST_F(config_test_fixture, ClientWithTproxyOnlyAccepted)
 
     const auto cfg_opt = mux::parse_config(tmp_file());
     ASSERT_TRUE(cfg_opt.has_value());
+    if (!cfg_opt.has_value())
+    {
+        return;
+    }
     EXPECT_TRUE(cfg_opt->tproxy.enabled);
     EXPECT_FALSE(cfg_opt->socks.enabled);
 }
@@ -315,6 +324,10 @@ TEST_F(config_test_fixture, MissingFieldsUseDefaults)
 
     const auto cfg_opt = mux::parse_config(tmp_file());
     ASSERT_TRUE(cfg_opt.has_value());
+    if (!cfg_opt.has_value())
+    {
+        return;
+    }
     EXPECT_EQ(cfg_opt->mode, "server");
     EXPECT_FALSE(cfg_opt->reality.strict_cert_verify);
     EXPECT_EQ(cfg_opt->reality.replay_cache_max_entries, 100000);
@@ -371,6 +384,10 @@ TEST_F(config_test_fixture, WorkersZeroUsesAutoDetection)
 
     const auto cfg_opt = mux::parse_config(tmp_file());
     ASSERT_TRUE(cfg_opt.has_value());
+    if (!cfg_opt.has_value())
+    {
+        return;
+    }
     EXPECT_EQ(cfg_opt->workers, 0U);
 }
 
@@ -459,6 +476,10 @@ TEST_F(config_test_fixture, MaxConnectionsZeroNormalizedToOne)
 
     const auto cfg_opt = mux::parse_config(tmp_file());
     ASSERT_TRUE(cfg_opt.has_value());
+    if (!cfg_opt.has_value())
+    {
+        return;
+    }
     EXPECT_EQ(cfg_opt->limits.max_connections, 1U);
 }
 
@@ -511,6 +532,10 @@ TEST_F(config_test_fixture, EmptyHostAddress)
 
     const auto cfg_opt = mux::parse_config(tmp_file());
     ASSERT_TRUE(cfg_opt.has_value());
+    if (!cfg_opt.has_value())
+    {
+        return;
+    }
     EXPECT_TRUE(cfg_opt->inbound.host.empty());
 }
 

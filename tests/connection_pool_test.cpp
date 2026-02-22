@@ -46,19 +46,30 @@ TEST_F(connection_pool_test_fixture, TunnelReuse)
     mux::io_context_pool pool(2);
     ASSERT_FALSE(ec);
 
-    uint16_t const server_port = 31081;
-    uint16_t const local_socks_port = 31082;
     std::string const sni = "www.google.com";
 
     mux::config server_cfg;
     server_cfg.inbound.host = "127.0.0.1";
-    server_cfg.inbound.port = server_port;
+    server_cfg.inbound.port = 0;
     server_cfg.reality.private_key = server_priv_key();
     server_cfg.reality.short_id = "0102030405060708";
     auto server = std::make_shared<mux::remote_server>(pool, server_cfg);
     reality::server_fingerprint const fp;
     server->set_certificate(sni, reality::construct_certificate({0x01, 0x02, 0x03}), fp);
+
+    std::thread t([&pool] { pool.run(); });
     server->start();
+
+    std::uint16_t server_port = 0;
+    for (int i = 0; i < 150 && server_port == 0; ++i)
+    {
+        server_port = server->listen_port();
+        if (server_port == 0)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+    }
+    ASSERT_NE(server_port, 0);
 
     mux::config::limits_t limits;
     limits.max_connections = 1;
@@ -66,7 +77,7 @@ TEST_F(connection_pool_test_fixture, TunnelReuse)
     mux::config client_cfg;
     client_cfg.outbound.host = "127.0.0.1";
     client_cfg.outbound.port = server_port;
-    client_cfg.socks.port = local_socks_port;
+    client_cfg.socks.port = 0;
     client_cfg.reality.public_key = client_pub_key();
     client_cfg.reality.sni = sni;
     client_cfg.reality.short_id = "0102030405060708";
@@ -75,9 +86,18 @@ TEST_F(connection_pool_test_fixture, TunnelReuse)
     auto client = std::make_shared<mux::socks_client>(pool, client_cfg);
     client->start();
 
-    std::thread t([&pool] { pool.run(); });
+    std::uint16_t local_socks_port = 0;
+    for (int i = 0; i < 150 && local_socks_port == 0; ++i)
+    {
+        local_socks_port = client->listen_port();
+        if (local_socks_port == 0)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+    }
+    ASSERT_NE(local_socks_port, 0);
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
     boost::asio::io_context client_ctx;
     boost::asio::ip::tcp::socket s1(client_ctx);

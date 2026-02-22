@@ -269,6 +269,7 @@ boost::asio::awaitable<bool> prepare_remote_target_connection(boost::asio::ip::t
         {
             co_return false;
         }
+        // Keep timeout mapping compatible with existing clients.
         co_await send_failure_ack_and_reset(manager, conn, stream_id, socks::kRepConnRefused, ctx);
         co_return false;
     }

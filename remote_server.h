@@ -16,17 +16,9 @@
 
 #include <openssl/types.h>
 #include <boost/asio/ip/tcp.hpp>
+#include <boost/system/error_code.hpp>
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/io_context.hpp>
-#include <boost/system/error_code.hpp>
-
-#include "mux_protocol.h"
-#include "reality_core.h"
-#include "mux_connection.h"
-
-extern "C"
-{
-}
 
 #include "config.h"
 #include "ch_parser.h"
@@ -36,7 +28,10 @@ extern "C"
 #include "log_context.h"
 #include "cert_manager.h"
 #include "context_pool.h"
+#include "mux_protocol.h"
+#include "reality_core.h"
 #include "replay_cache.h"
+#include "mux_connection.h"
 #include "reality_messages.h"
 
 namespace mux

@@ -50,6 +50,13 @@ TEST(MuxDispatcherTest, OversizedFrame)
     EXPECT_EQ(call_count, 0);
 }
 
+TEST(MuxDispatcherTest, PackRejectsOversizedPayload)
+{
+    std::vector<std::uint8_t> oversized_payload(mux::kMaxPayload + 1, 0x5a);
+    const auto packed = mux::mux_dispatcher::pack(0x77, mux::kCmdDat, oversized_payload);
+    EXPECT_TRUE(packed.empty());
+}
+
 TEST(MuxDispatcherTest, EmptyData)
 {
     mux::mux_dispatcher dispatcher;

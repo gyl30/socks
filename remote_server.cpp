@@ -19,22 +19,22 @@
 
 #include <boost/asio/error.hpp>
 #include <boost/asio/write.hpp>
+#include <boost/system/errc.hpp>
 #include <boost/asio/buffer.hpp>
 #include <boost/asio/ip/tcp.hpp>
-#include <boost/system/errc.hpp>
 #include <boost/asio/as_tuple.hpp>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
+#include <boost/system/error_code.hpp>
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/address.hpp>
+#include <boost/system/detail/errc.hpp>
 #include <boost/asio/socket_base.hpp>
 #include <boost/asio/steady_timer.hpp>
-#include <boost/system/error_code.hpp>
 #include <boost/asio/ip/address_v4.hpp>
 #include <boost/asio/ip/address_v6.hpp>
 #include <boost/asio/use_awaitable.hpp>
-#include <boost/system/detail/errc.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
 
 extern "C"
@@ -50,13 +50,13 @@ extern "C"
 #include "protocol.h"
 #include "ch_parser.h"
 #include "constants.h"
+#include "timeout_io.h"
 #include "mux_tunnel.h"
 #include "statistics.h"
-#include "timeout_io.h"
 #include "transcript.h"
+#include "cert_fetcher.h"
 #include "crypto_util.h"
 #include "log_context.h"
-#include "cert_fetcher.h"
 #include "context_pool.h"
 #include "reality_auth.h"
 #include "reality_core.h"
@@ -79,6 +79,8 @@ constexpr std::uint32_t kEphemeralServerBindRetryAttempts = 120;
 const auto kEphemeralServerBindRetryDelay = std::chrono::milliseconds(25);
 constexpr std::size_t kFallbackGuardMaxSources = 4096;
 constexpr std::size_t kTlsRecordHeaderSize = 5;
+constexpr std::uint16_t kMaxTlsPlaintextRecordLen = static_cast<std::uint16_t>(reality::kMaxTlsPlaintextLen);
+constexpr std::uint16_t kMaxTlsCiphertextRecordLen = static_cast<std::uint16_t>(reality::kMaxTlsPlaintextLen + 256);
 
 bool parse_hex_to_bytes(const std::string& hex, std::vector<std::uint8_t>& out, const std::size_t max_len, const char* label)
 {
@@ -447,7 +449,7 @@ std::uint16_t parse_fallback_port(const std::string& port_text)
     const char* const begin = port_text.data();
     const char* const end = begin + port_text.size();
     auto [parse_end, parse_ec] = std::from_chars(begin, end, parsed_port);
-    if (parse_ec != std::errc() || parse_end != end)
+    if (parse_ec != std::errc() || parse_end != end || parsed_port == 0)
     {
         LOG_WARN("invalid fallback port {} defaulting to 443", port_text);
         return 443;
@@ -1903,6 +1905,11 @@ boost::asio::awaitable<remote_server::initial_read_res> remote_server::read_init
         co_return initial_read_res{false, true, {}};
     }
     const std::size_t len = static_cast<std::uint16_t>((buf[3] << 8) | buf[4]);
+    if (len > kMaxTlsPlaintextRecordLen)
+    {
+        LOG_CTX_ERROR(ctx, "{} client hello record too large {}", log_event::kHandshake, len);
+        co_return initial_read_res{false, false, boost::system::errc::make_error_code(boost::system::errc::message_size)};
+    }
     const auto body_read = co_await fill_tls_record_body(s, ctx, buf, static_cast<std::uint32_t>(len), timeout_sec, stop_);
     if (!body_read.ok)
     {
@@ -2130,6 +2137,12 @@ boost::asio::awaitable<boost::system::error_code> remote_server::verify_client_f
     }
 
     const auto body_len = static_cast<std::uint16_t>((header[3] << 8) | header[4]);
+    if (body_len > kMaxTlsCiphertextRecordLen)
+    {
+        statistics::instance().inc_client_finished_failures();
+        LOG_CTX_ERROR(ctx, "{} client finished record too large {}", log_event::kHandshake, body_len);
+        co_return boost::system::errc::make_error_code(boost::system::errc::message_size);
+    }
     std::vector<std::uint8_t> body;
     if (const auto body_ec = co_await read_tls_record_body(s, body_len, body, ctx, timeout_sec); body_ec)
     {

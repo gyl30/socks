@@ -619,6 +619,11 @@ bool tproxy_udp_session::decode_proxy_packet(const std::vector<std::uint8_t>& da
         LOG_CTX_WARN(ctx_, "{} udp decode header failed", log_event::kSocks);
         return false;
     }
+    if (h.frag != 0x00)
+    {
+        LOG_CTX_WARN(ctx_, "{} udp unsupported frag {}", log_event::kSocks, h.frag);
+        return false;
+    }
     if (h.header_len > data.size())
     {
         LOG_CTX_WARN(ctx_, "{} udp header len invalid", log_event::kSocks);
