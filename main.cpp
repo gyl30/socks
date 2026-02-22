@@ -2,10 +2,10 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <cstdio>
 #include <csignal>
 #include <cstdint>
 #include <cstring>
-#include <iostream>
 
 #include <boost/system/errc.hpp>
 #include <boost/asio/signal_set.hpp>
@@ -40,10 +40,10 @@ struct runtime_services
 
 void print_usage(const char* prog)
 {
-    std::cout << "Usage:\n";
-    std::cout << prog << " -c <config>  Run with configuration file\n";
-    std::cout << prog << " x25519       Generate key pair for kX25519 key exchange\n";
-    std::cout << prog << " config       Dump default configuration\n";
+    std::fputs("Usage:\n", stdout);
+    std::fprintf(stdout, "%s -c <config>  Run with configuration file\n", prog);
+    std::fprintf(stdout, "%s x25519       Generate key pair for kX25519 key exchange\n", prog);
+    std::fprintf(stdout, "%s config       Dump default configuration\n", prog);
 }
 
 void dump_x25519()
@@ -52,13 +52,15 @@ void dump_x25519()
     std::uint8_t priv[32];
     if (!reality::crypto_util::generate_x25519_keypair(pub, priv))
     {
-        std::cout << "failed to generate keypair\n";
+        std::fputs("failed to generate keypair\n", stdout);
         return;
     }
     const std::vector<std::uint8_t> vec_priv(priv, priv + 32);
     const std::vector<std::uint8_t> vec_pub(pub, pub + 32);
-    std::cout << "private key: " << reality::crypto_util::bytes_to_hex(vec_priv) << '\n';
-    std::cout << "public key:  " << reality::crypto_util::bytes_to_hex(vec_pub) << '\n';
+    const std::string priv_hex = reality::crypto_util::bytes_to_hex(vec_priv);
+    const std::string pub_hex = reality::crypto_util::bytes_to_hex(vec_pub);
+    std::fprintf(stdout, "private key: %s\n", priv_hex.c_str());
+    std::fprintf(stdout, "public key:  %s\n", pub_hex.c_str());
 }
 
 int parse_config_from_file(const std::string& file, mux::config& cfg)
@@ -67,7 +69,7 @@ int parse_config_from_file(const std::string& file, mux::config& cfg)
     if (!parsed)
     {
         const auto& error = parsed.error();
-        std::cerr << "parse config failed path " << error.path << " reason " << error.reason << '\n';
+        std::fprintf(stderr, "parse config failed path %s reason %s\n", error.path.c_str(), error.reason.c_str());
         return -1;
     }
     cfg = *parsed;
@@ -317,7 +319,9 @@ int main(int argc, char** argv)
 
     if (std::strcmp(mode, "config") == 0)
     {
-        std::cout << mux::dump_default_config() << '\n';
+        const std::string default_config = mux::dump_default_config();
+        std::fputs(default_config.c_str(), stdout);
+        std::fputc('\n', stdout);
         return 0;
     }
 

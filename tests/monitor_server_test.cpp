@@ -4,9 +4,11 @@
 #include <atomic>
 #include <cerrno>
 #include <chrono>
+#include <memory>
 #include <string>
 #include <thread>
 #include <vector>
+#include <cstddef>
 #include <cstdint>
 #include <utility>
 #include <charconv>
@@ -14,21 +16,32 @@
 #include <unistd.h>
 #include <string_view>
 #include <sys/socket.h>
+#include <system_error>
 
 #include <gtest/gtest.h>
-#include <boost/asio.hpp>
+#include <boost/asio/post.hpp>
+#include <boost/asio/error.hpp>
+#include <boost/asio/write.hpp>
+#include <boost/asio/buffer.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/ip/udp.hpp>
+#include <boost/system/error_code.hpp>
+#include <boost/asio/ip/address.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/socket_base.hpp>
+
+#include "statistics.h"
+#include "tproxy_client.h"
 
 #define private public
 #include "monitor_server.h"
 
 #undef private
-#include "statistics.h"
-#include "tproxy_client.h"
 
 namespace
 {
 
-enum class monitor_fail_mode
+enum class monitor_fail_mode : std::uint8_t
 {
     kNone = 0,
     kSocket,
@@ -39,30 +52,53 @@ enum class monitor_fail_mode
     kListenAlways,
 };
 
-std::atomic<int> g_monitor_fail_mode{static_cast<int>(monitor_fail_mode::kNone)};
+std::atomic<monitor_fail_mode> g_monitor_fail_mode{monitor_fail_mode::kNone};
 std::atomic<bool> g_fail_accept_once{false};
 std::atomic<int> g_fail_accept_errno{EIO};
 std::atomic<bool> g_fail_close_once{false};
 std::atomic<int> g_fail_close_errno{EIO};
 
+void reset_monitor_failure_injections()
+{
+    g_monitor_fail_mode.store(monitor_fail_mode::kNone, std::memory_order_release);
+    g_fail_accept_once.store(false, std::memory_order_release);
+    g_fail_accept_errno.store(EIO, std::memory_order_release);
+    g_fail_close_once.store(false, std::memory_order_release);
+    g_fail_close_errno.store(EIO, std::memory_order_release);
+}
+
+class monitor_fail_reset_listener : public ::testing::EmptyTestEventListener
+{
+   public:
+    void OnTestStart(const ::testing::TestInfo&) override { reset_monitor_failure_injections(); }
+
+    void OnTestEnd(const ::testing::TestInfo&) override { reset_monitor_failure_injections(); }
+};
+
+const bool g_monitor_fail_reset_listener_registered = []()
+{
+    ::testing::UnitTest::GetInstance()->listeners().Append(new monitor_fail_reset_listener());
+    return true;
+}();
+
 class monitor_fail_guard
 {
    public:
-    explicit monitor_fail_guard(const monitor_fail_mode mode) { g_monitor_fail_mode.store(static_cast<int>(mode), std::memory_order_release); }
+    explicit monitor_fail_guard(const monitor_fail_mode mode) { g_monitor_fail_mode.store(mode, std::memory_order_release); }
 
-    ~monitor_fail_guard() { g_monitor_fail_mode.store(static_cast<int>(monitor_fail_mode::kNone), std::memory_order_release); }
+    ~monitor_fail_guard() { g_monitor_fail_mode.store(monitor_fail_mode::kNone, std::memory_order_release); }
 };
 
 bool should_fail_monitor_mode(const monitor_fail_mode once_mode, const monitor_fail_mode always_mode)
 {
-    const auto current = static_cast<monitor_fail_mode>(g_monitor_fail_mode.load(std::memory_order_acquire));
+    const auto current = g_monitor_fail_mode.load(std::memory_order_acquire);
     if (current == always_mode)
     {
         return true;
     }
     if (current == once_mode)
     {
-        g_monitor_fail_mode.store(static_cast<int>(monitor_fail_mode::kNone), std::memory_order_release);
+        g_monitor_fail_mode.store(monitor_fail_mode::kNone, std::memory_order_release);
         return true;
     }
     return false;
@@ -106,18 +142,21 @@ std::string read_response(std::uint16_t port,
         {
             return {};
         }
-        socket.open(local_addr.is_v6() ? boost::asio::ip::tcp::v6() : boost::asio::ip::tcp::v4(), ec);
+        // NOLINTNEXTLINE(bugprone-unused-return-value)
+        static_cast<void>(socket.open(local_addr.is_v6() ? boost::asio::ip::tcp::v6() : boost::asio::ip::tcp::v4(), ec));
         if (ec)
         {
             return {};
         }
-        socket.bind(boost::asio::ip::tcp::endpoint(local_addr, 0), ec);
+        // NOLINTNEXTLINE(bugprone-unused-return-value)
+        static_cast<void>(socket.bind(boost::asio::ip::tcp::endpoint(local_addr, 0), ec));
         if (ec)
         {
             return {};
         }
     }
-    socket.connect(boost::asio::ip::tcp::endpoint(remote_addr, port), ec);
+    // NOLINTNEXTLINE(bugprone-unused-return-value)
+    static_cast<void>(socket.connect(boost::asio::ip::tcp::endpoint(remote_addr, port), ec));
     if (ec)
     {
         return {};
@@ -178,7 +217,7 @@ std::optional<std::uint64_t> parse_metric_value(const std::string& response, con
             line_end = response.size();
         }
         const std::string_view line(response.data() + pos, line_end - pos);
-        if (line.size() >= prefix.size() && line.substr(0, prefix.size()) == prefix)
+        if (line.starts_with(prefix))
         {
             std::uint64_t value = 0;
             const char* first = line.data() + prefix.size();
@@ -204,11 +243,13 @@ void connect_and_close_without_payload(const std::uint16_t port)
     boost::asio::io_context ioc;
     boost::asio::ip::tcp::socket socket(ioc);
     boost::system::error_code ec;
-    socket.connect(boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address("127.0.0.1"), port), ec);
+    // NOLINTNEXTLINE(bugprone-unused-return-value)
+    static_cast<void>(socket.connect(boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address("127.0.0.1"), port), ec));
     if (ec)
     {
         return;
     }
+    // NOLINTNEXTLINE(bugprone-unused-return-value)
     socket.close(ec);
 }
 
@@ -218,6 +259,7 @@ class monitor_server_env
     template <typename... Args>
     explicit monitor_server_env(Args&&... args)
     {
+        reset_monitor_failure_injections();
         auto ctor_args = std::make_tuple(std::forward<Args>(args)...);
         for (std::uint32_t attempt = 0; attempt < 120; ++attempt)
         {
@@ -259,6 +301,7 @@ class monitor_server_env
         {
             thread_.join();
         }
+        reset_monitor_failure_injections();
     }
 
    private:
@@ -269,24 +312,26 @@ class monitor_server_env
 
 }    // namespace
 
-extern "C" int __real_socket(int domain, int type, int protocol);                                              
-extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);    
-extern "C" int __real_listen(int sockfd, int backlog);                                                         
-extern "C" int __real_accept(int sockfd, struct sockaddr* addr, socklen_t* addrlen);                           
-extern "C" int __real_accept4(int sockfd, struct sockaddr* addr, socklen_t* addrlen, int flags);               
-extern "C" int __real_close(int fd);                                                                           
+// NOLINTBEGIN(bugprone-reserved-identifier)
+// GNU ld --wrap requires __real_ / __wrap_ symbol names.
+extern "C" int __real_socket(int domain, int type, int protocol);
+extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);
+extern "C" int __real_listen(int sockfd, int backlog);
+extern "C" int __real_accept(int sockfd, struct sockaddr* addr, socklen_t* addrlen);
+extern "C" int __real_accept4(int sockfd, struct sockaddr* addr, socklen_t* addrlen, int flags);
+extern "C" int __real_close(int fd);
 
-extern "C" int __wrap_socket(int domain, int type, int protocol)    
+extern "C" int __wrap_socket(int domain, int type, int protocol)
 {
     if (should_fail_monitor_mode(monitor_fail_mode::kSocket, monitor_fail_mode::kSocketAlways))
     {
         errno = EMFILE;
         return -1;
     }
-    return __real_socket(domain, type, protocol);    
+    return __real_socket(domain, type, protocol);
 }
 
-extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)    
+extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)
 {
     if (level == SOL_SOCKET && optname == SO_REUSEADDR &&
         should_fail_monitor_mode(monitor_fail_mode::kReuseAddr, monitor_fail_mode::kReuseAddrAlways))
@@ -294,48 +339,52 @@ extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void*
         errno = EPERM;
         return -1;
     }
-    return __real_setsockopt(sockfd, level, optname, optval, optlen);    
+    return __real_setsockopt(sockfd, level, optname, optval, optlen);
 }
 
-extern "C" int __wrap_listen(int sockfd, int backlog)    
+extern "C" int __wrap_listen(int sockfd, int backlog)
 {
     if (should_fail_monitor_mode(monitor_fail_mode::kListen, monitor_fail_mode::kListenAlways))
     {
         errno = EACCES;
         return -1;
     }
-    return __real_listen(sockfd, backlog);    
+    return __real_listen(sockfd, backlog);
 }
 
-extern "C" int __wrap_accept(int sockfd, struct sockaddr* addr, socklen_t* addrlen)    
+extern "C" int __wrap_accept(int sockfd, struct sockaddr* addr, socklen_t* addrlen)
 {
     if (g_fail_accept_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_accept_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_accept(sockfd, addr, addrlen);    
+    return __real_accept(sockfd, addr, addrlen);
 }
 
-extern "C" int __wrap_accept4(int sockfd, struct sockaddr* addr, socklen_t* addrlen, int flags)    
+extern "C" int __wrap_accept4(int sockfd, struct sockaddr* addr, socklen_t* addrlen, int flags)
 {
     if (g_fail_accept_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_accept_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_accept4(sockfd, addr, addrlen, flags);    
+    return __real_accept4(sockfd, addr, addrlen, flags);
 }
 
-extern "C" int __wrap_close(int fd)    
+extern "C" int __wrap_close(int fd)
 {
     if (g_fail_close_once.exchange(false, std::memory_order_acq_rel))
     {
-        errno = g_fail_close_errno.load(std::memory_order_acquire);
+        const int injected_errno = g_fail_close_errno.load(std::memory_order_acquire);
+        // Keep fd lifecycle realistic while still surfacing close failure to caller.
+        (void)__real_close(fd);
+        errno = injected_errno;
         return -1;
     }
-    return __real_close(fd);    
+    return __real_close(fd);
 }
+// NOLINTEND(bugprone-reserved-identifier)
 
 namespace mux
 {
@@ -408,7 +457,8 @@ TEST(MonitorServerTest, SupportsFragmentedHttpRequest)
     boost::asio::io_context ioc;
     boost::asio::ip::tcp::socket socket(ioc);
     boost::system::error_code ec;
-    socket.connect(boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address("127.0.0.1"), port), ec);
+    // NOLINTNEXTLINE(bugprone-unused-return-value)
+    static_cast<void>(socket.connect(boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address("127.0.0.1"), port), ec));
     ASSERT_FALSE(ec);
 
     const std::string first_chunk = "GET /metrics HTTP/1.1\r\n";
@@ -477,6 +527,10 @@ TEST(MonitorServerTest, TproxyUdpDispatchDropMetricReflectsDroppedPackets)
     const auto resp = request_metrics_with_retry(port);
     const auto metric_value = parse_metric_value(resp, "socks_tproxy_udp_dispatch_dropped_total");
     ASSERT_TRUE(metric_value.has_value());
+    if (!metric_value.has_value())
+    {
+        return;
+    }
     EXPECT_GE(*metric_value, before + dropped);
 
     dispatch_channel.close();
@@ -523,6 +577,10 @@ TEST(MonitorServerTest, TproxyUdpDispatchMetricsCanDeriveDropRatio)
     const auto dropped_metric = parse_metric_value(resp, "socks_tproxy_udp_dispatch_dropped_total");
     ASSERT_TRUE(enqueued_metric.has_value());
     ASSERT_TRUE(dropped_metric.has_value());
+    if (!enqueued_metric.has_value() || !dropped_metric.has_value())
+    {
+        return;
+    }
     ASSERT_GE(*enqueued_metric, enqueued_before);
     ASSERT_GE(*dropped_metric, dropped_before);
 
@@ -559,13 +617,17 @@ TEST(MonitorServerTest, ConstructWhenPortAlreadyInUse)
     boost::asio::io_context guard_ioc;
     boost::asio::ip::tcp::acceptor guard(guard_ioc);
     boost::system::error_code ec;
-    guard.open(boost::asio::ip::tcp::v4(), ec);
+    // NOLINTNEXTLINE(bugprone-unused-return-value)
+    static_cast<void>(guard.open(boost::asio::ip::tcp::v4(), ec));
     ASSERT_FALSE(ec);
-    guard.set_option(boost::asio::socket_base::reuse_address(true), ec);
+    // NOLINTNEXTLINE(bugprone-unused-return-value)
+    static_cast<void>(guard.set_option(boost::asio::socket_base::reuse_address(true), ec));
     ASSERT_FALSE(ec);
-    guard.bind(boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 0), ec);
+    // NOLINTNEXTLINE(bugprone-unused-return-value)
+    static_cast<void>(guard.bind(boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 0), ec));
     ASSERT_FALSE(ec);
-    guard.listen(boost::asio::socket_base::max_listen_connections, ec);
+    // NOLINTNEXTLINE(bugprone-unused-return-value)
+    static_cast<void>(guard.listen(boost::asio::socket_base::max_listen_connections, ec));
     ASSERT_FALSE(ec);
     const auto port = guard.local_endpoint(ec).port();
     ASSERT_FALSE(ec);
