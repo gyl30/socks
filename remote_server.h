@@ -188,12 +188,12 @@ class remote_server : public std::enable_shared_from_this<remote_server>
                                                                        const connection_context& ctx,
                                                                        std::uint32_t stream_id,
                                                                        stream_register_result register_result);
-    static boost::asio::awaitable<void> handle_tcp_connect_stream(const std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>>& tunnel,
-                                                                  const connection_context& stream_ctx,
-                                                                  std::uint32_t stream_id,
-                                                                  const syn_payload& syn,
-                                                                  std::size_t payload_size,
-                                                                  boost::asio::io_context& io_context);
+    boost::asio::awaitable<void> handle_tcp_connect_stream(const std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>>& tunnel,
+                                                           const connection_context& stream_ctx,
+                                                           std::uint32_t stream_id,
+                                                           const syn_payload& syn,
+                                                           std::size_t payload_size,
+                                                           boost::asio::io_context& io_context) const;
     boost::asio::awaitable<void> handle_udp_associate_stream(const std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>>& tunnel,
                                                              const connection_context& stream_ctx,
                                                              std::uint32_t stream_id,
@@ -270,6 +270,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     std::vector<std::uint8_t> private_key_;
     std::vector<std::uint8_t> short_id_bytes_;
     bool auth_config_valid_ = true;
+    bool inbound_config_valid_ = true;
     reality::cert_manager cert_manager_;
     std::atomic<std::uint32_t> next_conn_id_{1};
     replay_cache replay_cache_;

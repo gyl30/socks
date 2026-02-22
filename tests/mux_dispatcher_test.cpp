@@ -48,6 +48,8 @@ TEST(MuxDispatcherTest, OversizedFrame)
 
     dispatcher.on_plaintext_data(bad_packed);
     EXPECT_EQ(call_count, 0);
+    EXPECT_TRUE(dispatcher.has_fatal_error());
+    EXPECT_EQ(dispatcher.fatal_error_reason(), mux::mux_dispatcher_fatal_reason::kOversizedFrame);
 }
 
 TEST(MuxDispatcherTest, PackRejectsOversizedPayload)
@@ -77,6 +79,8 @@ TEST(MuxDispatcherTest, BufferOverflowSetsFlagAndDropsFrame)
     dispatcher.on_plaintext_data(packed);
     EXPECT_TRUE(dispatcher.overflowed());
     EXPECT_EQ(call_count, 0);
+    EXPECT_TRUE(dispatcher.has_fatal_error());
+    EXPECT_EQ(dispatcher.fatal_error_reason(), mux::mux_dispatcher_fatal_reason::kBufferOverflow);
 }
 
 TEST(MuxDispatcherTest, LargeBufferedFrameAcrossChunksDoesNotOverflowInternalBuffer)
@@ -111,6 +115,8 @@ TEST(MuxDispatcherTest, LargeBufferedFrameAcrossChunksDoesNotOverflowInternalBuf
     EXPECT_NO_THROW(dispatcher.on_plaintext_data(std::span<const std::uint8_t>(tail_chunk.data(), tail_chunk.size())));
 
     EXPECT_FALSE(dispatcher.overflowed());
+    EXPECT_FALSE(dispatcher.has_fatal_error());
+    EXPECT_EQ(dispatcher.fatal_error_reason(), mux::mux_dispatcher_fatal_reason::kNone);
     EXPECT_EQ(call_count, 2);
     ASSERT_EQ(headers.size(), 2U);
     EXPECT_EQ(headers[0].stream_id, 0x88U);
