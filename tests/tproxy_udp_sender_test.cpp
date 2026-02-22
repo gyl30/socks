@@ -1,4 +1,5 @@
 
+#include <array>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -206,6 +207,28 @@ TEST(TproxyUdpSenderTest, SendToClientSuccessAndErrorPaths)
     const boost::asio::ip::udp::endpoint v6_client_ep(boost::asio::ip::make_address("::1"), client_ep.port());
     mux::test::run_awaitable_void(ctx, sender.send_to_client(v6_client_ep, src_ep, std::vector<std::uint8_t>{0xAA}));
     EXPECT_TRUE(sender.sockets_.empty());
+}
+
+TEST(TproxyUdpSenderTest, SendToClientRejectsInvalidSourceEndpoint)
+{
+    boost::asio::io_context ctx;
+    mux::tproxy_udp_sender sender(ctx, 0);
+
+    boost::asio::ip::udp::socket receiver(ctx, boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 0));
+    receiver.non_blocking(true);
+
+    const auto client_ep = receiver.local_endpoint();
+    const boost::asio::ip::udp::endpoint invalid_src_ep(boost::asio::ip::make_address("127.0.0.1"), 0);
+
+    mux::test::run_awaitable_void(ctx, sender.send_to_client(client_ep, invalid_src_ep, std::vector<std::uint8_t>{0x5A}));
+    EXPECT_TRUE(sender.sockets_.empty());
+
+    std::array<std::uint8_t, 8> recv_buf = {0};
+    boost::asio::ip::udp::endpoint from_ep;
+    boost::system::error_code ec;
+    const auto n = receiver.receive_from(boost::asio::buffer(recv_buf), from_ep, 0, ec);
+    EXPECT_EQ(n, 0U);
+    EXPECT_TRUE(ec == boost::asio::error::would_block || ec == boost::asio::error::try_again);
 }
 
 TEST(TproxyUdpSenderTest, GetSocketEvictsWhenCacheLooksFull)
