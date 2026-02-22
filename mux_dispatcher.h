@@ -16,6 +16,13 @@
 namespace mux
 {
 
+enum class mux_dispatcher_fatal_reason : std::uint8_t
+{
+    kNone = 0,
+    kBufferOverflow = 1,
+    kOversizedFrame = 2,
+};
+
 class mux_dispatcher
 {
    public:
@@ -31,8 +38,11 @@ class mux_dispatcher
 
     [[nodiscard]] static std::vector<std::uint8_t> pack(std::uint32_t stream_id, std::uint8_t cmd, const std::vector<std::uint8_t>& payload);
     [[nodiscard]] bool overflowed() const { return overflowed_.load(std::memory_order_acquire); }
+    [[nodiscard]] bool has_fatal_error() const { return fatal_reason_.load(std::memory_order_acquire) != mux_dispatcher_fatal_reason::kNone; }
+    [[nodiscard]] mux_dispatcher_fatal_reason fatal_error_reason() const { return fatal_reason_.load(std::memory_order_acquire); }
 
    private:
+    void set_fatal_error(mux_dispatcher_fatal_reason reason);
     void process_frames();
 
    private:
@@ -41,6 +51,7 @@ class mux_dispatcher
     connection_context ctx_;
     std::size_t max_buffer_ = 0;
     std::atomic<bool> overflowed_{false};
+    std::atomic<mux_dispatcher_fatal_reason> fatal_reason_{mux_dispatcher_fatal_reason::kNone};
 };
 
 }    // namespace mux
