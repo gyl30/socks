@@ -604,18 +604,30 @@ boost::asio::awaitable<void> udp_socks_session::stream_to_udp_sock(std::shared_p
 
 boost::asio::awaitable<void> udp_socks_session::keep_tcp_alive()
 {
-    char b[1];
-    const auto [ec, n] = co_await socket_.async_read_some(boost::asio::buffer(b), boost::asio::as_tuple(boost::asio::use_awaitable));
-    if (ec)
+    for (;;)
     {
-        if (is_expected_keepalive_error(ec))
+        char b[1];
+        const auto [ec, n] = co_await socket_.async_read_some(boost::asio::buffer(b), boost::asio::as_tuple(boost::asio::use_awaitable));
+        if (!ec && n > 0)
         {
-            LOG_CTX_DEBUG(ctx_, "{} keep tcp alive stopped {}", log_event::kSocks, ec.message());
+            continue;
+        }
+        if (ec)
+        {
+            if (is_expected_keepalive_error(ec))
+            {
+                LOG_CTX_DEBUG(ctx_, "{} keep tcp alive stopped {}", log_event::kSocks, ec.message());
+            }
+            else
+            {
+                LOG_CTX_ERROR(ctx_, "{} keep tcp alive error {}", log_event::kSocks, ec.message());
+            }
         }
         else
         {
-            LOG_CTX_ERROR(ctx_, "{} keep tcp alive error {}", log_event::kSocks, ec.message());
+            LOG_CTX_DEBUG(ctx_, "{} keep tcp alive stopped", log_event::kSocks);
         }
+        break;
     }
 }
 
