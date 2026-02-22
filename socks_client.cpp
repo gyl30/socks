@@ -387,7 +387,8 @@ void stop_local_resources(boost::asio::ip::tcp::acceptor& acceptor, std::shared_
 }    // namespace
 
 socks_client::socks_client(io_context_pool& pool, const config& cfg)
-    : listen_port_(cfg.socks.port),
+    : configured_listen_port_(cfg.socks.port),
+      listen_port_(cfg.socks.port),
       io_context_(pool.get_io_context()),
       acceptor_(io_context_),
       router_(std::make_shared<mux::router>()),
@@ -448,7 +449,7 @@ void socks_client::start()
         return;
     }
 
-    const std::uint16_t configured_port = listen_port_.load(std::memory_order_acquire);
+    const std::uint16_t configured_port = configured_listen_port_;
     std::uint16_t bound_port = 0;
     if (!prepare_local_listener(acceptor_, socks_config_.host, configured_port, bound_port))
     {
@@ -515,7 +516,7 @@ boost::asio::awaitable<void> socks_client::accept_local_loop()
 
     if (!acceptor_.is_open())
     {
-        const std::uint16_t configured_port = listen_port_.load(std::memory_order_acquire);
+        const std::uint16_t configured_port = configured_listen_port_;
         std::uint16_t bound_port = 0;
         if (!prepare_local_listener(acceptor_, socks_config_.host, configured_port, bound_port))
         {

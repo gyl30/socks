@@ -255,30 +255,30 @@ monitor_server::monitor_server(boost::asio::io_context& ioc, std::string bind_ho
     endpoint.address(boost::asio::ip::make_address(bind_host, ec));
     if (ec)
     {
-        LOG_ERROR("failed to parse address: {}", ec.message());
+        LOG_ERROR("failed to parse address {}", ec.message());
         return;
     }
     endpoint.port(port);
     if (acceptor_.open(endpoint.protocol(), ec); ec)
     {
-        LOG_ERROR("failed to open acceptor: {}", ec.message());
+        LOG_ERROR("failed to open acceptor {}", ec.message());
         return;
     }
     if (acceptor_.set_option(boost::asio::socket_base::reuse_address(true), ec); ec)
     {
-        LOG_ERROR("failed to set reuse_address: {}", ec.message());
+        LOG_ERROR("failed to set reuse_address {}", ec.message());
         close_acceptor_on_failure();
         return;
     }
     if (acceptor_.bind(endpoint, ec); ec)
     {
-        LOG_ERROR("failed to bind: {}", ec.message());
+        LOG_ERROR("failed to bind {}", ec.message());
         close_acceptor_on_failure();
         return;
     }
     if (acceptor_.listen(boost::asio::socket_base::max_listen_connections, ec); ec)
     {
-        LOG_ERROR("failed to listen: {}", ec.message());
+        LOG_ERROR("failed to listen {}", ec.message());
         close_acceptor_on_failure();
         return;
     }

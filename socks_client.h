@@ -42,6 +42,7 @@ class socks_client : public std::enable_shared_from_this<socks_client>
    private:
     std::atomic<bool> stop_{false};
     std::atomic<bool> started_{false};
+    const std::uint16_t configured_listen_port_ = 0;
     std::atomic<std::uint16_t> listen_port_{0};
     boost::asio::io_context& io_context_;
     boost::asio::ip::tcp::acceptor acceptor_;

@@ -165,6 +165,11 @@ boost::asio::awaitable<void> remote_udp_session::forward_mux_payload(const std::
         LOG_CTX_WARN(ctx_, "{} stage=decode_header error=invalid_udp_header", log_event::kMux);
         co_return;
     }
+    if (header.frag != 0x00)
+    {
+        LOG_CTX_WARN(ctx_, "{} stage=decode_header error=unsupported_frag frag={}", log_event::kMux, header.frag);
+        co_return;
+    }
 
     if (header.header_len >= data.size())
     {

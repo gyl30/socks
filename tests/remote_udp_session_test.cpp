@@ -240,6 +240,40 @@ TEST(RemoteUdpSessionTest, ForwardMuxPayloadRejectsInvalidPackets)
     EXPECT_GE(stats.remote_udp_session_resolve_errors(), resolve_errors_before + 1);
 }
 
+TEST(RemoteUdpSessionTest, ForwardMuxPayloadDropsFragmentedPackets)
+{
+    boost::asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    auto session = make_session(io_context, conn, 141);
+    ASSERT_TRUE(mux::test::run_awaitable(io_context, session->setup_udp_socket(conn)));
+
+    boost::asio::ip::udp::socket receiver(io_context);
+    boost::system::error_code ec;
+    receiver.open(boost::asio::ip::udp::v6(), ec);
+    ASSERT_FALSE(ec);
+    receiver.set_option(boost::asio::ip::v6_only(false), ec);
+    ASSERT_FALSE(ec);
+    receiver.bind(boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v6(), 0), ec);
+    ASSERT_FALSE(ec);
+    receiver.non_blocking(true, ec);
+    ASSERT_FALSE(ec);
+
+    socks_udp_header header{};
+    header.frag = 0x01;
+    header.addr = "127.0.0.1";
+    header.port = receiver.local_endpoint().port();
+    auto packet = socks_codec::encode_udp_header(header);
+    packet.push_back(0x5A);
+
+    mux::test::run_awaitable_void(io_context, session->forward_mux_payload(packet));
+
+    std::array<std::uint8_t, 8> recv = {0};
+    boost::asio::ip::udp::endpoint from_ep;
+    const auto n = receiver.receive_from(boost::asio::buffer(recv), from_ep, 0, ec);
+    EXPECT_EQ(n, 0U);
+    EXPECT_TRUE(ec == boost::asio::error::would_block || ec == boost::asio::error::try_again);
+}
+
 TEST(RemoteUdpSessionTest, ForwardMuxPayloadSendsIpv4AndIpv6Payloads)
 {
     boost::asio::io_context io_context;

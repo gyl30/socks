@@ -36,6 +36,14 @@ std::atomic<int> g_fail_shutdown_errno{EPERM};
 std::atomic<bool> g_fail_close_once{false};
 std::atomic<int> g_fail_close_errno{EIO};
 
+void reset_failure_injections()
+{
+    g_fail_shutdown_once.store(false, std::memory_order_release);
+    g_fail_shutdown_errno.store(EPERM, std::memory_order_release);
+    g_fail_close_once.store(false, std::memory_order_release);
+    g_fail_close_errno.store(EIO, std::memory_order_release);
+}
+
 void fail_next_shutdown(const int err)
 {
     g_fail_shutdown_errno.store(err, std::memory_order_release);
@@ -48,28 +56,34 @@ void fail_next_close(const int err)
     g_fail_close_once.store(true, std::memory_order_release);
 }
 
-extern "C" int __real_shutdown(int sockfd, int how);    
-extern "C" int __real_close(int fd);                    
+// NOLINTBEGIN(bugprone-reserved-identifier)
+// GNU ld --wrap requires __real_ / __wrap_ symbol names.
+extern "C" int __real_shutdown(int sockfd, int how);
+extern "C" int __real_close(int fd);
 
-extern "C" int __wrap_shutdown(int sockfd, int how)    
+extern "C" int __wrap_shutdown(int sockfd, int how)
 {
     if (g_fail_shutdown_once.exchange(false, std::memory_order_acq_rel))
     {
         errno = g_fail_shutdown_errno.load(std::memory_order_acquire);
         return -1;
     }
-    return __real_shutdown(sockfd, how);    
+    return __real_shutdown(sockfd, how);
 }
 
-extern "C" int __wrap_close(int fd)    
+extern "C" int __wrap_close(int fd)
 {
     if (g_fail_close_once.exchange(false, std::memory_order_acq_rel))
     {
-        errno = g_fail_close_errno.load(std::memory_order_acquire);
+        const int injected_errno = g_fail_close_errno.load(std::memory_order_acquire);
+        // Keep fd lifecycle realistic while still surfacing close failure to caller.
+        (void)__real_close(fd);
+        errno = injected_errno;
         return -1;
     }
-    return __real_close(fd);    
+    return __real_close(fd);
 }
+// NOLINTEND(bugprone-reserved-identifier)
 
 namespace mux
 {
@@ -120,6 +134,8 @@ tcp_socket_pair make_tcp_socket_pair(boost::asio::io_context& io_context)
 class socks_session_test_fixture : public ::testing::Test
 {
    protected:
+    void SetUp() override { reset_failure_injections(); }
+    void TearDown() override { reset_failure_injections(); }
     boost::asio::io_context& io_ctx() { return io_ctx_; }
 
    private:

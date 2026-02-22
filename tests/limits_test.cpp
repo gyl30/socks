@@ -22,6 +22,45 @@
 #include "socks_client.h"
 #include "remote_server.h"
 #include "reality_messages.h"
+#include "scoped_exit.h"
+
+namespace
+{
+
+bool open_ephemeral_tcp_acceptor(boost::asio::ip::tcp::acceptor& acceptor,
+                                 const std::uint32_t max_attempts = 120,
+                                 const std::chrono::milliseconds backoff = std::chrono::milliseconds(25))
+{
+    for (std::uint32_t attempt = 0; attempt < max_attempts; ++attempt)
+    {
+        boost::system::error_code ec;
+        if (acceptor.is_open())
+        {
+            (void)acceptor.close(ec);
+        }
+        ec = acceptor.open(boost::asio::ip::tcp::v4(), ec);
+        if (!ec)
+        {
+            ec = acceptor.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true), ec);
+        }
+        if (!ec)
+        {
+            ec = acceptor.bind(boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 0), ec);
+        }
+        if (!ec)
+        {
+            ec = acceptor.listen(boost::asio::socket_base::max_listen_connections, ec);
+        }
+        if (!ec)
+        {
+            return true;
+        }
+        std::this_thread::sleep_for(backoff);
+    }
+    return false;
+}
+
+}    // namespace
 
 class limits_test_fixture : public ::testing::Test
 {
@@ -60,9 +99,16 @@ TEST_F(limits_test_fixture, ConnectionPoolCapacity)
     ASSERT_FALSE(ec);
 
     std::thread pool_thread([&pool] { pool.run(); });
+    auto pool_thread_guard = make_scoped_exit(
+        [&pool, &pool_thread]()
+        {
+            pool.stop();
+            if (pool_thread.joinable())
+            {
+                pool_thread.join();
+            }
+        });
 
-    const uint16_t server_port = 28844;
-    const uint16_t local_socks_port = 21080;
     const std::string sni = "www.google.com";
 
     mux::config::limits_t limits;
@@ -74,7 +120,7 @@ TEST_F(limits_test_fixture, ConnectionPoolCapacity)
 
     mux::config server_cfg;
     server_cfg.inbound.host = "127.0.0.1";
-    server_cfg.inbound.port = server_port;
+    server_cfg.inbound.port = 0;
     server_cfg.reality.private_key = server_priv_key();
     server_cfg.reality.short_id = short_id();
     server_cfg.timeout = timeouts;
@@ -87,8 +133,24 @@ TEST_F(limits_test_fixture, ConnectionPoolCapacity)
 
     server->start();
 
-    const uint16_t target_port = 30080;
-    boost::asio::ip::tcp::acceptor target_acceptor(pool.get_io_context(), boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), target_port));
+    std::uint16_t server_port = 0;
+    for (int i = 0; i < 200 && server_port == 0; ++i)
+    {
+        server_port = server->listen_port();
+        if (server_port == 0)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+    }
+    ASSERT_NE(server_port, 0);
+
+    boost::asio::ip::tcp::acceptor target_acceptor(pool.get_io_context());
+    ASSERT_TRUE(open_ephemeral_tcp_acceptor(target_acceptor));
+    boost::system::error_code target_ep_ec;
+    const auto target_ep = target_acceptor.local_endpoint(target_ep_ec);
+    ASSERT_FALSE(target_ep_ec);
+    const std::uint16_t target_port = target_ep.port();
+    ASSERT_NE(target_port, 0);
     std::vector<std::shared_ptr<boost::asio::ip::tcp::socket>> target_sockets;
 
     std::function<void()> accept_target = [&]()
@@ -109,7 +171,7 @@ TEST_F(limits_test_fixture, ConnectionPoolCapacity)
     mux::config client_cfg;
     client_cfg.outbound.host = "127.0.0.1";
     client_cfg.outbound.port = server_port;
-    client_cfg.socks.port = local_socks_port;
+    client_cfg.socks.port = 0;
     client_cfg.reality.public_key = client_pub_key();
     client_cfg.reality.sni = sni;
     client_cfg.reality.short_id = short_id();
@@ -118,6 +180,17 @@ TEST_F(limits_test_fixture, ConnectionPoolCapacity)
     client_cfg.limits = limits;
     auto client = std::make_shared<mux::socks_client>(pool, client_cfg);
     client->start();
+
+    std::uint16_t local_socks_port = 0;
+    for (int i = 0; i < 200 && local_socks_port == 0; ++i)
+    {
+        local_socks_port = client->listen_port();
+        if (local_socks_port == 0)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+    }
+    ASSERT_NE(local_socks_port, 0);
 
     std::this_thread::sleep_for(std::chrono::seconds(1));
 
@@ -192,5 +265,4 @@ TEST_F(limits_test_fixture, ConnectionPoolCapacity)
     pool.stop();
 
     target_acceptor.close();
-    pool_thread.join();
 }

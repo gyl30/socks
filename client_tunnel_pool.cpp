@@ -13,6 +13,7 @@
 #include <utility>
 #include <expected>
 #include <optional>
+#include <limits>
 #include <algorithm>
 
 #include <boost/asio/read.hpp>
@@ -546,8 +547,19 @@ boost::asio::awaitable<std::expected<std::vector<std::uint8_t>, boost::system::e
         LOG_ERROR("error reading {} header {}", step, read_header_ec.message());
         co_return std::unexpected(read_header_ec);
     }
+    if (header[0] != reality::kContentTypeHandshake)
+    {
+        LOG_ERROR("unexpected record type for {} {}", step, header[0]);
+        co_return std::unexpected(boost::asio::error::invalid_argument);
+    }
 
     const auto body_len = static_cast<std::uint16_t>((header[3] << 8) | header[4]);
+    if (body_len > reality::kMaxTlsPlaintextLen)
+    {
+        LOG_ERROR("oversized {} body {}", step, body_len);
+        co_return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::message_size));
+    }
+
     std::vector<std::uint8_t> body(body_len);
     auto [read_body_ec, read_body_n] =
         co_await boost::asio::async_read(socket, boost::asio::buffer(body), boost::asio::as_tuple(boost::asio::use_awaitable));
@@ -621,16 +633,21 @@ std::expected<std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>, b
     return std::make_pair(std::move(client_random), std::move(*auth_key_result));
 }
 
-bool build_client_hello_with_placeholder_sid(const reality::fingerprint_spec& spec,
-                                             const std::vector<std::uint8_t>& client_random,
-                                             const std::uint8_t* public_key,
-                                             const std::string& sni,
-                                             std::vector<std::uint8_t>& hello_body,
-                                             std::uint32_t& absolute_sid_offset)
+std::expected<void, boost::system::error_code> build_client_hello_with_placeholder_sid(const reality::fingerprint_spec& spec,
+                                                                                        const std::vector<std::uint8_t>& client_random,
+                                                                                        const std::uint8_t* public_key,
+                                                                                        const std::string& sni,
+                                                                                        std::vector<std::uint8_t>& hello_body,
+                                                                                        std::uint32_t& absolute_sid_offset)
 {
     const std::vector<std::uint8_t> placeholder_session_id(32, 0);
     hello_body = reality::client_hello_builder::build(
         spec, placeholder_session_id, client_random, std::vector<std::uint8_t>(public_key, public_key + 32), sni);
+    if (hello_body.size() > std::numeric_limits<std::uint16_t>::max())
+    {
+        LOG_ERROR("generated client hello body too large {}", hello_body.size());
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::message_size));
+    }
 
     std::vector<std::uint8_t> dummy_record =
         reality::write_record_header(reality::kContentTypeHandshake, static_cast<std::uint16_t>(hello_body.size()));
@@ -640,16 +657,16 @@ bool build_client_hello_with_placeholder_sid(const reality::fingerprint_spec& sp
     if (ch_info.sid_offset < 5)
     {
         LOG_ERROR("generated client hello session id offset invalid {}", ch_info.sid_offset);
-        return false;
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
     }
 
     absolute_sid_offset = ch_info.sid_offset - 5;
     if (absolute_sid_offset + 32 > hello_body.size())
     {
         LOG_ERROR("session id offset out of bounds {} {}", absolute_sid_offset, hello_body.size());
-        return false;
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
     }
-    return true;
+    return std::expected<void, boost::system::error_code>{};
 }
 
 std::expected<std::vector<std::uint8_t>, boost::system::error_code> encrypt_client_session_id(
@@ -697,9 +714,10 @@ std::expected<std::vector<std::uint8_t>, boost::system::error_code> build_authen
 
     std::vector<std::uint8_t> hello_body;
     std::uint32_t absolute_sid_offset = 0;
-    if (!build_client_hello_with_placeholder_sid(spec, client_random, public_key, sni, hello_body, absolute_sid_offset))
+    const auto build_hello_result = build_client_hello_with_placeholder_sid(spec, client_random, public_key, sni, hello_body, absolute_sid_offset);
+    if (!build_hello_result)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
+        return std::unexpected(build_hello_result.error());
     }
 
     auto sid_result = encrypt_client_session_id(auth_key, client_random, payload, hello_body);
@@ -1452,6 +1470,11 @@ boost::asio::awaitable<std::expected<void, boost::system::error_code>> client_tu
         co_return std::unexpected(client_hello_body_result.error());
     }
     const auto& hello_body = *client_hello_body_result;
+    if (hello_body.size() > std::numeric_limits<std::uint16_t>::max())
+    {
+        LOG_ERROR("client hello too large {}", hello_body.size());
+        co_return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::message_size));
+    }
 
     auto client_hello_record = reality::write_record_header(reality::kContentTypeHandshake, static_cast<std::uint16_t>(hello_body.size()));
     client_hello_record.insert(client_hello_record.end(), hello_body.begin(), hello_body.end());
