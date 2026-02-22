@@ -14,6 +14,8 @@
 namespace
 {
 
+constexpr std::uint8_t kSocks5AuthVer = 0x01;
+
 [[nodiscard]] bool has_remaining(const std::size_t len, const std::size_t pos, const std::size_t need)
 {
     if (pos > len)
@@ -44,6 +46,10 @@ bool parse_domain_address(const std::uint8_t* data, const std::size_t len, std::
     }
     const std::uint8_t domain_len = data[pos];
     ++pos;
+    if (domain_len == 0)
+    {
+        return false;
+    }
     if (!has_remaining(len, pos, domain_len))
     {
         return false;
@@ -219,7 +225,15 @@ bool socks_codec::decode_socks5_request(const std::uint8_t* data, std::size_t le
     out.cmd = data[1];
     out.rsv = data[2];
     out.atyp = data[3];
-    return parse_address_and_port(data, len, out.atyp, 4, out.addr, out.port, out.header_len);
+    if (out.ver != socks::kVer || out.rsv != 0)
+    {
+        return false;
+    }
+    if (!parse_address_and_port(data, len, out.atyp, 4, out.addr, out.port, out.header_len))
+    {
+        return false;
+    }
+    return out.header_len == len;
 }
 
 bool socks_codec::decode_socks5_auth_request(const std::uint8_t* data, std::size_t len, socks5_auth_request& out)
@@ -231,7 +245,15 @@ bool socks_codec::decode_socks5_auth_request(const std::uint8_t* data, std::size
     }
 
     out.ver = data[pos++];
+    if (out.ver != kSocks5AuthVer)
+    {
+        return false;
+    }
     const std::uint8_t ulen = data[pos++];
+    if (ulen == 0)
+    {
+        return false;
+    }
 
     if (len < pos + ulen + 1)
     {
@@ -242,8 +264,12 @@ bool socks_codec::decode_socks5_auth_request(const std::uint8_t* data, std::size
     pos += ulen;
 
     const std::uint8_t plen = data[pos++];
+    if (plen == 0)
+    {
+        return false;
+    }
 
-    if (len < pos + plen)
+    if (len != pos + plen)
     {
         return false;
     }

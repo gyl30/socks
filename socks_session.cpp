@@ -257,12 +257,14 @@ boost::asio::awaitable<bool> socks_session::do_password_auth()
     std::string username;
     if (!co_await read_auth_field(username, "username"))
     {
+        (void)co_await write_auth_result(false);
         co_return false;
     }
 
     std::string password;
     if (!co_await read_auth_field(password, "password"))
     {
+        (void)co_await write_auth_result(false);
         co_return false;
     }
 
@@ -307,6 +309,11 @@ boost::asio::awaitable<bool> socks_session::read_auth_field(std::string& out, co
     if (len_ec)
     {
         LOG_ERROR("socks session {} read {} len failed", sid_, field_name);
+        co_return false;
+    }
+    if (field_len == 0)
+    {
+        LOG_ERROR("socks session {} read {} len invalid 0", sid_, field_name);
         co_return false;
     }
 
@@ -514,7 +521,7 @@ boost::asio::awaitable<socks_session::request_info> socks_session::read_request_
         co_return make_invalid_request(cmd);
     }
 
-    if (cmd == socks::kCmdConnect && host.empty())
+    if (host.empty())
     {
         LOG_WARN("socks session {} request empty host", sid_);
         co_return co_await reject_request(cmd, socks::kRepGenFail);
