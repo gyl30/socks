@@ -326,9 +326,9 @@ boost::asio::awaitable<bool> send_udp_associate_success_reply(boost::asio::ip::t
         return false;
     }
 
-    if (packet_len > mux::kMaxPayload)
+    if (packet_len > mux::kMaxPayloadPerRecord)
     {
-        LOG_CTX_WARN(ctx, "{} udp packet too large {}", log_event::kSocks, packet_len);
+        LOG_CTX_WARN(ctx, "{} udp packet too large for single record {}", log_event::kSocks, packet_len);
         return false;
     }
 

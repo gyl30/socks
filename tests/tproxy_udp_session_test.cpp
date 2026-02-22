@@ -1635,7 +1635,7 @@ TEST(TproxyUdpSessionTest, SendProxyDropsMessageSizeWithoutClearingStream)
     EXPECT_CALL(*mock_conn, mock_send_async(18, mux::kCmdFin, testing::_)).Times(0);
     EXPECT_CALL(*mock_conn, remove_stream(18)).Times(0);
 
-    std::vector<std::uint8_t> payload(17000, 0xab);
+    std::vector<std::uint8_t> payload(64, 0xab);
     const auto target_ep = boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("1.1.1.1"), 53);
     mux::test::run_awaitable_void(ctx, session->send_proxy(target_ep, payload.data(), payload.size()));
 
