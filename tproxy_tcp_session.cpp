@@ -60,6 +60,11 @@ namespace
 
 [[nodiscard]] const char* route_name(const route_type route) { return route == route_type::kDirect ? "direct" : "proxy"; }
 
+[[nodiscard]] bool is_valid_destination_endpoint(const boost::asio::ip::tcp::endpoint& dst_ep)
+{
+    return !dst_ep.address().is_unspecified() && dst_ep.port() != 0;
+}
+
 }    // namespace
 
 tproxy_tcp_session::tproxy_tcp_session(boost::asio::ip::tcp::socket socket,
@@ -89,6 +94,13 @@ boost::asio::awaitable<void> tproxy_tcp_session::run_detached(std::shared_ptr<tp
 
 boost::asio::awaitable<void> tproxy_tcp_session::run()
 {
+    if (!is_valid_destination_endpoint(dst_ep_))
+    {
+        LOG_CTX_WARN(ctx_, "{} invalid tcp target {} {}", log_event::kSocks, dst_ep_.address().to_string(), dst_ep_.port());
+        close_client_socket();
+        co_return;
+    }
+
     const auto host = dst_ep_.address().to_string();
     const auto port = dst_ep_.port();
     const auto [route, backend] = co_await select_backend(host);

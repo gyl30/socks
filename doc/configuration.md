@@ -57,7 +57,7 @@
 1. `limits.max_connections = 0` 视为配置错误输入并归一化为 `1`，客户端和服务端一致执行。
 2. 服务端在 `accept` 成功后、REALITY 握手前预占连接槽；达到全局上限或来源上限时直接拒绝该连接，不进入握手路径。
 3. 流量进入 mux 后，若 `max_streams` 已达上限，服务端必须先返回 `ACK(rep=general failure)`，再发送 `RST`。
-4. SOCKS5 请求中，目标主机为空必须拒绝；`CONNECT` 请求目标端口为 `0` 必须拒绝；`UDP ASSOCIATE` 允许端口 `0`。
+4. SOCKS5 请求中，目标主机为空必须拒绝；`CONNECT` 请求目标端口为 `0` 必须拒绝；`UDP ASSOCIATE` 允许端口 `0`；UDP 数据报目标端口为 `0` 必须拒绝。
 5. 监控接口仅支持 HTTP `GET /metrics`，返回 Prometheus 文本格式指标；当前实现不提供监控鉴权与监控限流能力。
 6. 客户端配置变更不支持热加载，修改配置后必须重启客户端进程生效。
 7. `timeout.read = 0` 与 `timeout.write = 0` 必须表示禁用对应阶段超时，不得隐式归一化为最小正值。

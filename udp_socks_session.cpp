@@ -315,6 +315,16 @@ boost::asio::awaitable<bool> send_udp_associate_success_reply(boost::asio::ip::t
         LOG_CTX_WARN(ctx, "{} received a fragmented packet ignore it", log_event::kSocks);
         return false;
     }
+    if (udp_header.addr.empty())
+    {
+        LOG_CTX_WARN(ctx, "{} received udp packet with empty target host", log_event::kSocks);
+        return false;
+    }
+    if (udp_header.port == 0)
+    {
+        LOG_CTX_WARN(ctx, "{} received udp packet with invalid target port 0", log_event::kSocks);
+        return false;
+    }
 
     if (packet_len > mux::kMaxPayload)
     {

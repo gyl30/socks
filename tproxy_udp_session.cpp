@@ -164,6 +164,12 @@ boost::asio::awaitable<void> tproxy_udp_session::handle_packet_inner(boost::asio
     {
         co_return;
     }
+    dst_ep = net::normalize_endpoint(dst_ep);
+    if (dst_ep.address().is_unspecified() || dst_ep.port() == 0)
+    {
+        LOG_CTX_WARN(ctx_, "{} udp invalid target {} {}", log_event::kSocks, dst_ep.address().to_string(), dst_ep.port());
+        co_return;
+    }
     touch();
     if (router_ == nullptr)
     {
@@ -624,6 +630,11 @@ bool tproxy_udp_session::decode_proxy_packet(const std::vector<std::uint8_t>& da
         LOG_CTX_WARN(ctx_, "{} udp unsupported frag {}", log_event::kSocks, h.frag);
         return false;
     }
+    if (h.port == 0)
+    {
+        LOG_CTX_WARN(ctx_, "{} udp target port invalid 0", log_event::kSocks);
+        return false;
+    }
     if (h.header_len > data.size())
     {
         LOG_CTX_WARN(ctx_, "{} udp header len invalid", log_event::kSocks);
@@ -635,6 +646,11 @@ bool tproxy_udp_session::decode_proxy_packet(const std::vector<std::uint8_t>& da
     if (addr_ec)
     {
         LOG_CTX_WARN(ctx_, "{} udp parse addr failed {}", log_event::kSocks, addr_ec.message());
+        return false;
+    }
+    if (addr.is_unspecified())
+    {
+        LOG_CTX_WARN(ctx_, "{} udp source addr unspecified", log_event::kSocks);
         return false;
     }
     src_ep = boost::asio::ip::udp::endpoint(addr, h.port);

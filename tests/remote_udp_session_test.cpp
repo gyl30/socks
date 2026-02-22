@@ -240,6 +240,36 @@ TEST(RemoteUdpSessionTest, ForwardMuxPayloadRejectsInvalidPackets)
     EXPECT_GE(stats.remote_udp_session_resolve_errors(), resolve_errors_before + 1);
 }
 
+TEST(RemoteUdpSessionTest, ForwardMuxPayloadDropsEmptyTargetHost)
+{
+    boost::asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    auto session = make_session(io_context, conn, 140);
+    auto& stats = mux::statistics::instance();
+    const auto resolve_errors_before = stats.remote_udp_session_resolve_errors();
+    ASSERT_TRUE(mux::test::run_awaitable(io_context, session->setup_udp_socket(conn)));
+
+    const auto packet = make_mux_udp_packet("", 5353, std::vector<std::uint8_t>{0x42});
+    mux::test::run_awaitable_void(io_context, session->forward_mux_payload(packet));
+
+    EXPECT_EQ(stats.remote_udp_session_resolve_errors(), resolve_errors_before);
+}
+
+TEST(RemoteUdpSessionTest, ForwardMuxPayloadDropsTargetPortZero)
+{
+    boost::asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    auto session = make_session(io_context, conn, 142);
+    auto& stats = mux::statistics::instance();
+    const auto resolve_errors_before = stats.remote_udp_session_resolve_errors();
+    ASSERT_TRUE(mux::test::run_awaitable(io_context, session->setup_udp_socket(conn)));
+
+    const auto packet = make_mux_udp_packet("127.0.0.1", 0, std::vector<std::uint8_t>{0x42});
+    mux::test::run_awaitable_void(io_context, session->forward_mux_payload(packet));
+
+    EXPECT_EQ(stats.remote_udp_session_resolve_errors(), resolve_errors_before);
+}
+
 TEST(RemoteUdpSessionTest, ForwardMuxPayloadDropsFragmentedPackets)
 {
     boost::asio::io_context io_context;
@@ -318,6 +348,47 @@ TEST(RemoteUdpSessionTest, ForwardMuxPayloadSendsIpv4AndIpv6Payloads)
 
     const auto v6_packet = make_mux_udp_packet("::1", port, std::vector<std::uint8_t>{0x33, 0x44, 0x55});
     mux::test::run_awaitable_void(io_context, session->forward_mux_payload(v6_packet));
+}
+
+TEST(RemoteUdpSessionTest, ForwardMuxPayloadAllowsHeaderOnlyPacket)
+{
+    boost::asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    auto session = make_session(io_context, conn, 151);
+    ASSERT_TRUE(mux::test::run_awaitable(io_context, session->setup_udp_socket(conn)));
+
+    boost::asio::ip::udp::socket receiver(io_context);
+    boost::system::error_code ec;
+    receiver.open(boost::asio::ip::udp::v6(), ec);
+    ASSERT_FALSE(ec);
+    receiver.set_option(boost::asio::ip::v6_only(false), ec);
+    ASSERT_FALSE(ec);
+    receiver.bind(boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v6(), 0), ec);
+    ASSERT_FALSE(ec);
+    receiver.non_blocking(true, ec);
+    ASSERT_FALSE(ec);
+
+    const auto packet = make_mux_udp_packet("127.0.0.1", receiver.local_endpoint().port(), {});
+    mux::test::run_awaitable_void(io_context, session->forward_mux_payload(packet));
+
+    std::array<std::uint8_t, 1> recv = {0};
+    boost::asio::ip::udp::endpoint from_ep;
+    std::size_t recv_n = 0;
+    for (int i = 0; i < 50; ++i)
+    {
+        recv_n = receiver.receive_from(boost::asio::buffer(recv), from_ep, 0, ec);
+        if (!ec)
+        {
+            break;
+        }
+        if (ec != boost::asio::error::would_block && ec != boost::asio::error::try_again)
+        {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_FALSE(ec);
+    EXPECT_EQ(recv_n, 0U);
 }
 
 TEST(RemoteUdpSessionTest, ForwardMuxPayloadStopsWhenSocketClosed)
@@ -428,6 +499,55 @@ TEST(RemoteUdpSessionTest, UdpToMuxForwardsAndStopsOnSendFailure)
     ASSERT_LT(decoded.header_len, dat_payload.size());
     EXPECT_EQ(dat_payload[decoded.header_len], 0xAA);
     EXPECT_EQ(dat_payload[decoded.header_len + 1], 0xBB);
+}
+
+TEST(RemoteUdpSessionTest, UdpToMuxContinuesAfterMessageSizeError)
+{
+    boost::asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    auto session = make_session(io_context, conn, 118);
+    ASSERT_TRUE(mux::test::run_awaitable(io_context, session->setup_udp_socket(conn)));
+
+    boost::asio::ip::udp::socket sender(io_context);
+    boost::system::error_code ec;
+    sender.open(boost::asio::ip::udp::v4(), ec);
+    ASSERT_FALSE(ec);
+    const auto target_ep =
+        boost::asio::ip::udp::endpoint(boost::asio::ip::make_address_v4("127.0.0.1"), session->udp_socket_.local_endpoint().port());
+    sender.send_to(boost::asio::buffer(std::vector<std::uint8_t>{0xA1}), target_ep, 0, ec);
+    ASSERT_FALSE(ec);
+    sender.send_to(boost::asio::buffer(std::vector<std::uint8_t>{0xB2}), target_ep, 0, ec);
+    ASSERT_FALSE(ec);
+
+    std::vector<std::vector<std::uint8_t>> forwarded_payloads;
+    EXPECT_CALL(*conn, mock_send_async(118, mux::kCmdDat, _))
+        .WillOnce(
+            [&forwarded_payloads](const std::uint32_t, const std::uint8_t, const std::vector<std::uint8_t>& payload)
+            {
+                forwarded_payloads.push_back(payload);
+                return boost::asio::error::message_size;
+            })
+        .WillOnce(
+            [&forwarded_payloads](const std::uint32_t, const std::uint8_t, const std::vector<std::uint8_t>& payload)
+            {
+                forwarded_payloads.push_back(payload);
+                return boost::asio::error::broken_pipe;
+            });
+
+    mux::test::run_awaitable_void(io_context, session->udp_to_mux());
+
+    ASSERT_EQ(forwarded_payloads.size(), 2U);
+    std::vector<std::uint8_t> forwarded_bytes;
+    for (const auto& payload : forwarded_payloads)
+    {
+        socks_udp_header decoded{};
+        ASSERT_TRUE(socks_codec::decode_udp_header(payload.data(), payload.size(), decoded));
+        ASSERT_LT(decoded.header_len, payload.size());
+        forwarded_bytes.push_back(payload[decoded.header_len]);
+    }
+    ASSERT_EQ(forwarded_bytes.size(), 2U);
+    EXPECT_TRUE((forwarded_bytes[0] == 0xA1 && forwarded_bytes[1] == 0xB2) ||
+                (forwarded_bytes[0] == 0xB2 && forwarded_bytes[1] == 0xA1));
 }
 
 TEST(RemoteUdpSessionTest, UdpToMuxStopsWhenConnectionExpired)
