@@ -23,6 +23,7 @@
 #include <boost/asio/use_awaitable.hpp>
 
 #include "mux_codec.h"
+#include "test_util.h"
 #include "mux_protocol.h"
 
 #define private public
@@ -1248,6 +1249,12 @@ TEST_F(mux_connection_integration_test_fixture, SynCallbackAndReadGuardBranches)
     };
 
     conn->on_mux_frame(syn_header, {7});
+    const auto [no_cb_ec, no_cb_msg] =
+        mux::test::run_awaitable(io_ctx(), conn->write_channel_->async_receive(boost::asio::as_tuple(boost::asio::use_awaitable)));
+    EXPECT_FALSE(no_cb_ec);
+    EXPECT_EQ(no_cb_msg.stream_id, 88U);
+    EXPECT_EQ(no_cb_msg.command, kCmdRst);
+    EXPECT_TRUE(no_cb_msg.payload.empty());
 
     bool syn_called = false;
     std::uint32_t syn_stream_id = 0;

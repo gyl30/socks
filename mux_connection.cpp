@@ -954,7 +954,10 @@ void mux_connection::on_mux_frame(const mux::frame_header header, std::vector<st
         if (syn_callback_ != nullptr)
         {
             syn_callback_(header.stream_id, std::move(payload));
+            return;
         }
+        LOG_WARN("mux {} recv syn without callback stream {}", cid_, header.stream_id);
+        handle_unknown_stream(header.stream_id, header.command);
         return;
     }
 
