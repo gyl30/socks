@@ -29,6 +29,7 @@ class transcript
     const EVP_MD* md_;
     std::vector<std::uint8_t> buffer_;
     std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> ctx_;
+    bool valid_ = false;
 };
 
 }    // namespace reality

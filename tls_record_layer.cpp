@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstring>
 #include <expected>
+#include <limits>
 
 #include <boost/system/errc.hpp>
 #include <boost/system/error_code.hpp>
@@ -76,6 +77,11 @@ std::expected<void, boost::system::error_code> tls_record_layer::encrypt_record_
 {
     ensure_openssl_initialized();
 
+    if (plaintext.size() > kMaxTlsPlaintextLen)
+    {
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::message_size));
+    }
+
     const auto nonce = make_record_nonce(iv, seq);
 
     std::vector<std::uint8_t> inner_plaintext;
@@ -101,7 +107,12 @@ std::expected<void, boost::system::error_code> tls_record_layer::encrypt_record_
         inner_plaintext.insert(inner_plaintext.end(), padding_len, 0x00);
     }
 
-    const auto ciphertext_len = static_cast<std::uint16_t>(inner_plaintext.size() + kAeadTagSize);
+    const auto total_ciphertext_len = inner_plaintext.size() + kAeadTagSize;
+    if (total_ciphertext_len > std::numeric_limits<std::uint16_t>::max())
+    {
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::message_size));
+    }
+    const auto ciphertext_len = static_cast<std::uint16_t>(total_ciphertext_len);
 
     std::array<std::uint8_t, 5> temp_header;
     temp_header[0] = kContentTypeApplicationData;

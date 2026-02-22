@@ -584,6 +584,51 @@ TEST(CertFetcherTest, ConnectTimeout)
     saturated_acceptor.close(close_ec);
 }
 
+TEST(CertFetcherTest, ReadRecordPlaintextRejectsOversizedLength)
+{
+    using boost::asio::ip::tcp;
+    boost::asio::io_context ctx;
+
+    auto acceptor = std::make_shared<tcp::acceptor>(ctx, tcp::endpoint(tcp::v4(), 0));
+    const std::uint16_t port = acceptor->local_endpoint().port();
+
+    boost::asio::co_spawn(
+        ctx,
+        [acceptor]() -> boost::asio::awaitable<void>
+        {
+            auto socket = co_await acceptor->async_accept(boost::asio::use_awaitable);
+            const std::array<std::uint8_t, 5> oversized_header = {0x16, 0x03, 0x03, 0x48, 0x01};
+            co_await boost::asio::async_write(socket, boost::asio::buffer(oversized_header), boost::asio::use_awaitable);
+            boost::system::error_code close_ec;
+            socket.close(close_ec);
+            co_return;
+        },
+        boost::asio::detached);
+
+    reality::cert_fetcher::fetch_session session(ctx, "127.0.0.1", port, "example.com", "trace");
+    boost::system::error_code read_ec;
+    bool finished = false;
+
+    boost::asio::co_spawn(
+        ctx,
+        [&]() -> boost::asio::awaitable<void>
+        {
+            const auto connect_ec = co_await session.connect();
+            EXPECT_FALSE(connect_ec);
+
+            const auto [ec, body] = co_await session.read_record_plaintext();
+            read_ec = ec;
+            EXPECT_TRUE(body.empty());
+            finished = true;
+            co_return;
+        },
+        boost::asio::detached);
+
+    ctx.run();
+    EXPECT_TRUE(finished);
+    EXPECT_EQ(read_ec, std::errc::message_size);
+}
+
 TEST(CertFetcherTest, WhiteBoxHelpersAndRecordTypeBranches)
 {
     std::array<std::uint8_t, 3> raw = {0x01, 0xab, 0xff};
@@ -692,4 +737,27 @@ TEST(CertFetcherTest, ProcessServerHelloTruncatedMessageLength)
     std::vector<std::uint8_t> const server_hello = {0x02, 0x00, 0x00, 0x20, 0x01};
     const auto ec = session.process_server_hello(server_hello);
     EXPECT_EQ(ec, boost::asio::error::fault);
+}
+
+TEST(CertFetcherTest, SendClientHelloRejectsOversizedPayload)
+{
+    boost::asio::io_context ctx;
+    reality::cert_fetcher::fetch_session session(ctx, "127.0.0.1", 443, "example.com", "trace");
+
+    boost::system::error_code write_ec;
+    bool finished = false;
+    boost::asio::co_spawn(
+        ctx,
+        [&]() -> boost::asio::awaitable<void>
+        {
+            const std::vector<std::uint8_t> oversized_client_hello(70000, 0x42);
+            write_ec = co_await session.send_client_hello_record(oversized_client_hello);
+            finished = true;
+            co_return;
+        },
+        boost::asio::detached);
+    ctx.run();
+
+    EXPECT_TRUE(finished);
+    EXPECT_EQ(write_ec, std::errc::message_size);
 }

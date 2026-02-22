@@ -15,6 +15,7 @@ class cipher_context
 {
    public:
     cipher_context() : ctx_(EVP_CIPHER_CTX_new()) {}
+    explicit cipher_context(std::nullptr_t) : ctx_(nullptr) {}
 
     cipher_context(const cipher_context&) = delete;
     cipher_context& operator=(const cipher_context&) = delete;

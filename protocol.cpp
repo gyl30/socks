@@ -128,9 +128,11 @@ void append_udp_ipv6_address(std::vector<std::uint8_t>& buf, const boost::asio::
 
 void append_udp_domain_address(std::vector<std::uint8_t>& buf, const std::string& host)
 {
+    constexpr std::size_t kMaxDomainLen = 255;
+    const auto domain_len = host.size() > kMaxDomainLen ? kMaxDomainLen : host.size();
     buf.push_back(socks::kAtypDomain);
-    buf.push_back(static_cast<std::uint8_t>(host.size()));
-    buf.insert(buf.end(), host.begin(), host.end());
+    buf.push_back(static_cast<std::uint8_t>(domain_len));
+    buf.insert(buf.end(), host.begin(), host.begin() + static_cast<std::ptrdiff_t>(domain_len));
 }
 
 void append_udp_target_address(std::vector<std::uint8_t>& buf, const std::string& host)
@@ -193,6 +195,10 @@ std::vector<std::uint8_t> socks_codec::encode_udp_header(const socks_udp_header&
 bool socks_codec::decode_udp_header(const std::uint8_t* data, std::size_t len, socks_udp_header& out)
 {
     if (len < 4)
+    {
+        return false;
+    }
+    if (data[0] != 0x00 || data[1] != 0x00)
     {
         return false;
     }

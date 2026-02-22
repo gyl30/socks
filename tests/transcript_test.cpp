@@ -46,4 +46,25 @@ TEST(TranscriptTest, SameHashNoOp)
     EXPECT_EQ(trans.finish().size(), 32);
 }
 
+TEST(TranscriptTest, NullProtocolHashMarksTranscriptInvalid)
+{
+    transcript trans;
+    trans.update({0x01, 0x02});
+    trans.set_protocol_hash(nullptr);
+    trans.update({0x03});
+    EXPECT_TRUE(trans.finish().empty());
+}
+
+TEST(TranscriptTest, TranscriptCanRecoverAfterInvalidProtocolHash)
+{
+    transcript trans;
+    trans.update({0x10});
+    trans.set_protocol_hash(nullptr);
+    EXPECT_TRUE(trans.finish().empty());
+
+    trans.set_protocol_hash(EVP_sha256());
+    trans.update({0x11});
+    EXPECT_EQ(trans.finish().size(), 32);
+}
+
 }    // namespace reality

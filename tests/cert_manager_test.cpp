@@ -22,6 +22,10 @@ TEST(CertManagerTest, BasicCache)
 
     auto entry = manager.get_certificate("example.com");
     ASSERT_TRUE(entry.has_value());
+    if (!entry.has_value())
+    {
+        return;
+    }
     EXPECT_EQ(entry->cert_msg, cert);
     EXPECT_EQ(entry->fingerprint.alpn, "h2");
 }
@@ -36,6 +40,10 @@ TEST(CertManagerTest, DefaultSNI)
 
     auto entry = manager.get_certificate("anything.com");
     ASSERT_TRUE(entry.has_value());
+    if (!entry.has_value())
+    {
+        return;
+    }
     EXPECT_EQ(entry->cert_msg, cert);
 }
 
@@ -57,12 +65,20 @@ TEST(CertManagerTest, ExactSniPreferredOverDefault)
 
     const auto exact_entry = manager.get_certificate("api.example.com");
     ASSERT_TRUE(exact_entry.has_value());
+    if (!exact_entry.has_value())
+    {
+        return;
+    }
     EXPECT_EQ(exact_entry->cert_msg, exact_cert);
     EXPECT_EQ(exact_entry->fingerprint.alpn, "http/1.1");
     EXPECT_EQ(exact_entry->fingerprint.cipher_suite, 0x1302);
 
     const auto fallback_entry = manager.get_certificate("other.example.com");
     ASSERT_TRUE(fallback_entry.has_value());
+    if (!fallback_entry.has_value())
+    {
+        return;
+    }
     EXPECT_EQ(fallback_entry->cert_msg, default_cert);
     EXPECT_EQ(fallback_entry->fingerprint.alpn, "h2");
     EXPECT_EQ(fallback_entry->fingerprint.cipher_suite, 0x1301);
@@ -121,6 +137,10 @@ TEST(CertManagerTest, UpdateExistingEntryDoesNotEvictOthers)
 
     auto entry_a = manager.get_certificate("a");
     ASSERT_TRUE(entry_a.has_value());
+    if (!entry_a.has_value())
+    {
+        return;
+    }
     EXPECT_EQ(entry_a->cert_msg, cert2);
     EXPECT_TRUE(manager.get_certificate("b").has_value());
 }
@@ -138,6 +158,10 @@ TEST(CertManagerTest, ZeroCapacityClampedToOne)
     EXPECT_FALSE(manager.get_certificate("a.example.com").has_value());
     const auto entry_b = manager.get_certificate("b.example.com");
     ASSERT_TRUE(entry_b.has_value());
+    if (!entry_b.has_value())
+    {
+        return;
+    }
     EXPECT_EQ(entry_b->cert_msg, cert_b);
 }
 

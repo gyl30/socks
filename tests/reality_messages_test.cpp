@@ -8,10 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <iostream>
 #include <optional>
-#include <algorithm>
-#include <system_error>
 
 #include <gtest/gtest.h>
 
@@ -20,9 +17,10 @@ extern "C"
 #include <openssl/ec.h>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
+#include <openssl/types.h>
+#include <openssl/obj_mac.h>
 }
 
-#include "crypto_util.h"
 #include "reality_core.h"
 #include "reality_messages.h"
 #include "reality_fingerprint.h"
@@ -30,25 +28,25 @@ extern "C"
 using reality::message_builder;
 namespace tls_consts = reality::tls_consts;
 
-extern "C" int __real_RAND_bytes(unsigned char* buf, int num);                 
-extern "C" EVP_PKEY_CTX* __real_EVP_PKEY_CTX_new_id(int id, ENGINE* e);        
-extern "C" int __real_EVP_PKEY_keygen(EVP_PKEY_CTX* ctx, EVP_PKEY** ppkey);    
-extern "C" int __real_EVP_PKEY_get_octet_string_param(const EVP_PKEY* pkey,    
+extern "C" int __real_RAND_bytes(unsigned char* buf, int num);
+extern "C" EVP_PKEY_CTX* __real_EVP_PKEY_CTX_new_id(int id, ENGINE* e);
+extern "C" int __real_EVP_PKEY_keygen(EVP_PKEY_CTX* ctx, EVP_PKEY** ppkey);
+extern "C" int __real_EVP_PKEY_get_octet_string_param(const EVP_PKEY* pkey,
                                                       const char* key_name,
                                                       unsigned char* buf,
                                                       std::size_t max_buf_sz,
                                                       std::size_t* out_len);
-extern "C" EVP_MD_CTX* __real_EVP_MD_CTX_new();    
+extern "C" EVP_MD_CTX* __real_EVP_MD_CTX_new();
 extern "C" int __real_EVP_DigestSign(EVP_MD_CTX* ctx,
                                      unsigned char* sigret,
                                      std::size_t* siglen,
                                      const unsigned char* tbs,
-                                     std::size_t tbslen);    
+                                     std::size_t tbslen);
 
 namespace
 {
 
-enum class pkey_octet_mode : int
+enum class pkey_octet_mode : std::uint8_t
 {
     kPassThrough = 0,
     kSecondCallMismatchedLength = 1,
@@ -60,7 +58,7 @@ std::atomic<bool> g_force_pkey_ctx_new_null{false};
 std::atomic<bool> g_force_pkey_keygen_fail{false};
 std::atomic<bool> g_force_md_ctx_new_null{false};
 std::atomic<bool> g_force_digest_sign_fail{false};
-std::atomic<int> g_pkey_octet_mode{static_cast<int>(pkey_octet_mode::kPassThrough)};
+std::atomic<pkey_octet_mode> g_pkey_octet_mode{pkey_octet_mode::kPassThrough};
 
 void reset_reality_message_hooks()
 {
@@ -69,7 +67,7 @@ void reset_reality_message_hooks()
     g_force_pkey_keygen_fail.store(false, std::memory_order_release);
     g_force_md_ctx_new_null.store(false, std::memory_order_release);
     g_force_digest_sign_fail.store(false, std::memory_order_release);
-    g_pkey_octet_mode.store(static_cast<int>(pkey_octet_mode::kPassThrough), std::memory_order_release);
+    g_pkey_octet_mode.store(pkey_octet_mode::kPassThrough, std::memory_order_release);
 }
 
 class hook_reset_guard
@@ -295,21 +293,28 @@ extern "C" int __wrap_EVP_PKEY_keygen(EVP_PKEY_CTX* ctx, EVP_PKEY** ppkey)
         }
         return 0;
     }
-    return __real_EVP_PKEY_keygen(ctx, ppkey);    
+    return __real_EVP_PKEY_keygen(ctx, ppkey);
 }
 
-extern "C" int __wrap_EVP_PKEY_get_octet_string_param(const EVP_PKEY* pkey,    
+extern "C" int __wrap_EVP_PKEY_get_octet_string_param(const EVP_PKEY* pkey,
                                                       const char* key_name,
                                                       unsigned char* buf,
                                                       std::size_t max_buf_sz,
                                                       std::size_t* out_len)
 {
-    const auto mode = static_cast<pkey_octet_mode>(g_pkey_octet_mode.load(std::memory_order_acquire));
+    const auto mode = g_pkey_octet_mode.load(std::memory_order_acquire);
     if (mode == pkey_octet_mode::kSecondCallMismatchedLength)
     {
         if (out_len != nullptr)
         {
-            *out_len = (buf == nullptr) ? 65U : (max_buf_sz > 0 ? max_buf_sz - 1 : 0U);
+            if (buf == nullptr)
+            {
+                *out_len = 65U;
+            }
+            else
+            {
+                *out_len = (max_buf_sz > 0) ? (max_buf_sz - 1) : 0U;
+            }
         }
         if (buf != nullptr && max_buf_sz > 0)
         {
@@ -387,10 +392,53 @@ TEST(RealityMessagesTest, ServerHelloRoundTrip)
 
     const auto extracted_cipher = reality::extract_cipher_suite_from_server_hello(sh);
     ASSERT_TRUE(extracted_cipher.has_value());
+    if (!extracted_cipher.has_value())
+    {
+        return;
+    }
     EXPECT_EQ(*extracted_cipher, cipher);
 
     const auto extracted_pub = reality::extract_server_public_key(sh);
     EXPECT_EQ(extracted_pub, pubkey);
+}
+
+TEST(RealityMessagesTest, ServerHelloTruncatesOversizedSessionId)
+{
+    const auto sh = reality::construct_server_hello(std::vector<std::uint8_t>(32, 0x11),
+                                                    std::vector<std::uint8_t>(300, 0x22),
+                                                    tls_consts::cipher::kTlsAes128GcmSha256,
+                                                    tls_consts::group::kX25519,
+                                                    std::vector<std::uint8_t>(32, 0x33));
+    ASSERT_GT(sh.size(), 4 + 2 + 32 + 1);
+    EXPECT_EQ(sh[4 + 2 + 32], 0xFF);
+
+    const auto cipher = reality::extract_cipher_suite_from_server_hello(sh);
+    ASSERT_TRUE(cipher.has_value());
+    if (!cipher.has_value())
+    {
+        return;
+    }
+    EXPECT_EQ(*cipher, tls_consts::cipher::kTlsAes128GcmSha256);
+}
+
+TEST(RealityMessagesTest, ServerHelloTruncatesOversizedKeyShareData)
+{
+    constexpr std::size_t kMaxServerHelloKeyShareLen = 65521;
+    const auto sh = reality::construct_server_hello(std::vector<std::uint8_t>(32, 0x11),
+                                                    std::vector<std::uint8_t>(32, 0x22),
+                                                    tls_consts::cipher::kTlsAes128GcmSha256,
+                                                    tls_consts::group::kX25519,
+                                                    std::vector<std::uint8_t>(70000, 0x44));
+    const auto key_share = reality::extract_server_key_share(sh);
+    ASSERT_TRUE(key_share.has_value());
+    if (!key_share.has_value())
+    {
+        return;
+    }
+    ASSERT_EQ(key_share->group, tls_consts::group::kX25519);
+    ASSERT_EQ(key_share->data.size(), kMaxServerHelloKeyShareLen);
+    EXPECT_EQ(key_share->data.front(), 0x44);
+    EXPECT_EQ(key_share->data.back(), 0x44);
 }
 
 TEST(RealityMessagesTest, EncryptedExtensionsALPN)
@@ -400,6 +448,10 @@ TEST(RealityMessagesTest, EncryptedExtensionsALPN)
 
     const auto extracted_alpn = reality::extract_alpn_from_encrypted_extensions(msg);
     ASSERT_TRUE(extracted_alpn.has_value());
+    if (!extracted_alpn.has_value())
+    {
+        return;
+    }
     EXPECT_EQ(*extracted_alpn, alpn);
 }
 
@@ -462,6 +514,37 @@ TEST(RealityMessagesTest, ClientHelloBuilderChrome)
     const auto ch = reality::client_hello_builder::build(spec, session_id, random, pubkey, host);
     ASSERT_GT(ch.size(), 100);
     EXPECT_EQ(ch[0], 0x01);
+}
+
+TEST(RealityMessagesTest, ClientHelloSniTruncatesOversizedHostnameConsistently)
+{
+    constexpr std::size_t kMaxSniHostLen = 65526;
+    reality::fingerprint_spec spec;
+    spec.client_version = tls_consts::kVer12;
+    spec.cipher_suites = {tls_consts::cipher::kTlsAes128GcmSha256};
+    spec.compression_methods = {0x00};
+    spec.extensions.push_back(std::make_shared<reality::sni_blueprint>());
+
+    const std::vector<std::uint8_t> session_id(32, 0x51);
+    const std::vector<std::uint8_t> random(32, 0x52);
+    const std::vector<std::uint8_t> pubkey(32, 0x53);
+    const auto ch = reality::client_hello_builder::build(spec, session_id, random, pubkey, std::string(70000, 'a'));
+
+    const auto sni_ext = extract_extension_data_by_type(ch, tls_consts::ext::kSni);
+    ASSERT_TRUE(sni_ext.has_value());
+    if (!sni_ext.has_value())
+    {
+        return;
+    }
+    ASSERT_GE(sni_ext->size(), 5U);
+
+    const auto list_len = static_cast<std::uint16_t>(((*sni_ext)[0] << 8) | (*sni_ext)[1]);
+    EXPECT_EQ(static_cast<std::size_t>(list_len) + 2, sni_ext->size());
+    EXPECT_EQ((*sni_ext)[2], 0x00);
+
+    const auto name_len = static_cast<std::uint16_t>(((*sni_ext)[3] << 8) | (*sni_ext)[4]);
+    EXPECT_EQ(name_len, kMaxSniHostLen);
+    EXPECT_EQ(static_cast<std::size_t>(name_len) + 5, sni_ext->size());
 }
 
 TEST(RealityMessagesTest, ExtractServerPublicKeyNoKeyShare)
@@ -623,6 +706,35 @@ TEST(RealityMessagesTest, MessageBuilderPushBytesFromPointer)
     EXPECT_EQ(buf, expected);
 }
 
+TEST(RealityMessagesTest, MessageBuilderPushVectorU8TruncatesOversizedPayload)
+{
+    std::vector<std::uint8_t> buf;
+    const std::vector<std::uint8_t> data(300, 0x5A);
+    message_builder::push_vector_u8(buf, data);
+
+    ASSERT_EQ(buf.size(), 256U);
+    EXPECT_EQ(buf[0], 0xFF);
+    for (std::size_t i = 1; i < buf.size(); ++i)
+    {
+        EXPECT_EQ(buf[i], 0x5A);
+    }
+}
+
+TEST(RealityMessagesTest, MessageBuilderPushVectorU16TruncatesOversizedPayload)
+{
+    std::vector<std::uint8_t> buf;
+    const std::vector<std::uint8_t> data(70000, 0x3C);
+    message_builder::push_vector_u16(buf, data);
+
+    ASSERT_EQ(buf.size(), 65537U);
+    EXPECT_EQ(buf[0], 0xFF);
+    EXPECT_EQ(buf[1], 0xFF);
+    for (std::size_t i = 2; i < buf.size(); ++i)
+    {
+        EXPECT_EQ(buf[i], 0x3C);
+    }
+}
+
 TEST(RealityMessagesTest, ClientHelloSkipsUnknownGenericExtension)
 {
     reality::fingerprint_spec spec;
@@ -658,6 +770,10 @@ TEST(RealityMessagesTest, ClientHelloKeyShareUnknownGroupUsesEmptyData)
 
     const auto key_share = extract_key_share_data_by_group(ch, 0x9999);
     ASSERT_TRUE(key_share.has_value());
+    if (!key_share.has_value())
+    {
+        return;
+    }
     EXPECT_TRUE(key_share->empty());
 }
 
@@ -709,6 +825,10 @@ TEST(RealityMessagesTest, Secp256r1KeyShareFallsBackWhenCtxCreationFails)
     const auto ch = reality::client_hello_builder::build(spec, session_id, random, pubkey, "example.com");
     const auto key_share = extract_key_share_data_by_group(ch, tls_consts::group::kSecp256r1);
     ASSERT_TRUE(key_share.has_value());
+    if (!key_share.has_value())
+    {
+        return;
+    }
     EXPECT_EQ(key_share->size(), 65U);
 }
 
@@ -724,13 +844,17 @@ TEST(RealityMessagesTest, Secp256r1KeyShareFallsBackWhenKeygenFails)
     const auto ch = reality::client_hello_builder::build(spec, session_id, random, pubkey, "example.com");
     const auto key_share = extract_key_share_data_by_group(ch, tls_consts::group::kSecp256r1);
     ASSERT_TRUE(key_share.has_value());
+    if (!key_share.has_value())
+    {
+        return;
+    }
     EXPECT_EQ(key_share->size(), 65U);
 }
 
 TEST(RealityMessagesTest, Secp256r1KeyShareFallsBackWhenOctetLengthMismatch)
 {
     hook_reset_guard const guard;
-    g_pkey_octet_mode.store(static_cast<int>(pkey_octet_mode::kSecondCallMismatchedLength), std::memory_order_release);
+    g_pkey_octet_mode.store(pkey_octet_mode::kSecondCallMismatchedLength, std::memory_order_release);
 
     const auto spec = make_minimal_key_share_spec(tls_consts::group::kSecp256r1);
     const std::vector<std::uint8_t> session_id(32, 0x51);
@@ -739,13 +863,17 @@ TEST(RealityMessagesTest, Secp256r1KeyShareFallsBackWhenOctetLengthMismatch)
     const auto ch = reality::client_hello_builder::build(spec, session_id, random, pubkey, "example.com");
     const auto key_share = extract_key_share_data_by_group(ch, tls_consts::group::kSecp256r1);
     ASSERT_TRUE(key_share.has_value());
+    if (!key_share.has_value())
+    {
+        return;
+    }
     EXPECT_EQ(key_share->size(), 65U);
 }
 
 TEST(RealityMessagesTest, Secp256r1KeyShareUsesGeneratedOctetStringWhenAvailable)
 {
     hook_reset_guard const guard;
-    g_pkey_octet_mode.store(static_cast<int>(pkey_octet_mode::kForceSuccessUncompressed), std::memory_order_release);
+    g_pkey_octet_mode.store(pkey_octet_mode::kForceSuccessUncompressed, std::memory_order_release);
 
     const auto spec = make_minimal_key_share_spec(tls_consts::group::kSecp256r1);
     const std::vector<std::uint8_t> session_id(32, 0x61);
@@ -754,6 +882,10 @@ TEST(RealityMessagesTest, Secp256r1KeyShareUsesGeneratedOctetStringWhenAvailable
     const auto ch = reality::client_hello_builder::build(spec, session_id, random, pubkey, "example.com");
     const auto key_share = extract_key_share_data_by_group(ch, tls_consts::group::kSecp256r1);
     ASSERT_TRUE(key_share.has_value());
+    if (!key_share.has_value())
+    {
+        return;
+    }
     ASSERT_EQ(key_share->size(), 65U);
     EXPECT_EQ((*key_share)[0], 0x04);
 }
@@ -808,6 +940,36 @@ TEST(RealityMessagesTest, ExtractServerKeyShareRejectsExtensionPayloadOverflow)
     EXPECT_FALSE(reality::extract_server_key_share(hello).has_value());
 }
 
+TEST(RealityMessagesTest, ExtractServerKeyShareRejectsCrossExtensionDataRead)
+{
+    std::vector<std::uint8_t> extensions;
+    message_builder::push_u16(extensions, tls_consts::ext::kKeyShare);
+    message_builder::push_u16(extensions, 4);
+    message_builder::push_u16(extensions, tls_consts::group::kX25519);
+    message_builder::push_u16(extensions, 32);
+
+    message_builder::push_u16(extensions, tls_consts::ext::kPadding);
+    message_builder::push_u16(extensions, 32);
+    extensions.insert(extensions.end(), 32, 0xAB);
+
+    const auto hello = build_server_hello_with_extensions(extensions);
+    EXPECT_FALSE(reality::extract_server_key_share(hello).has_value());
+}
+
+TEST(RealityMessagesTest, ExtractServerKeyShareRejectsTrailingGarbageInExtension)
+{
+    std::vector<std::uint8_t> extensions;
+    message_builder::push_u16(extensions, tls_consts::ext::kKeyShare);
+    message_builder::push_u16(extensions, 6);
+    message_builder::push_u16(extensions, tls_consts::group::kX25519);
+    message_builder::push_u16(extensions, 1);
+    extensions.push_back(0x7A);
+    extensions.push_back(0xFF);
+
+    const auto hello = build_server_hello_with_extensions(extensions);
+    EXPECT_FALSE(reality::extract_server_key_share(hello).has_value());
+}
+
 TEST(RealityMessagesTest, ExtractServerPublicKeyRejectsWrongX25519Length)
 {
     const auto sh = reality::construct_server_hello(std::vector<std::uint8_t>(32, 0x10),
@@ -840,6 +1002,42 @@ TEST(RealityMessagesTest, ExtractAlpnRejectsOversizedExtensionsRange)
     EXPECT_FALSE(reality::extract_alpn_from_encrypted_extensions(bad_msg).has_value());
 }
 
+TEST(RealityMessagesTest, ExtractAlpnRejectsHandshakeLengthMismatch)
+{
+    std::vector<std::uint8_t> extensions;
+    message_builder::push_u16(extensions, tls_consts::ext::kAlpn);
+    message_builder::push_u16(extensions, 5);
+    extensions.push_back(0x00);
+    extensions.push_back(0x03);
+    extensions.push_back(0x02);
+    extensions.push_back(0x68);
+    extensions.push_back(0x32);
+
+    auto msg = build_encrypted_extensions_with_raw_extensions(extensions);
+    msg[1] = 0x00;
+    msg[2] = 0x00;
+    msg[3] = 0x02;
+
+    EXPECT_FALSE(reality::extract_alpn_from_encrypted_extensions(msg).has_value());
+}
+
+TEST(RealityMessagesTest, ExtractAlpnRejectsHandshakeTrailingGarbage)
+{
+    std::vector<std::uint8_t> extensions;
+    message_builder::push_u16(extensions, tls_consts::ext::kAlpn);
+    message_builder::push_u16(extensions, 5);
+    extensions.push_back(0x00);
+    extensions.push_back(0x03);
+    extensions.push_back(0x02);
+    extensions.push_back(0x68);
+    extensions.push_back(0x32);
+
+    auto msg = build_encrypted_extensions_with_raw_extensions(extensions);
+    msg.push_back(0xFF);
+
+    EXPECT_FALSE(reality::extract_alpn_from_encrypted_extensions(msg).has_value());
+}
+
 TEST(RealityMessagesTest, ExtractAlpnBreaksOnExtensionLengthOverflow)
 {
     std::vector<std::uint8_t> extensions;
@@ -869,6 +1067,32 @@ TEST(RealityMessagesTest, ExtractAlpnRejectsZeroLengthProtocolList)
     extensions.push_back(0x00);
     extensions.push_back(0x00);
     extensions.push_back(0x01);
+    const auto msg = build_encrypted_extensions_with_raw_extensions(extensions);
+    EXPECT_FALSE(reality::extract_alpn_from_encrypted_extensions(msg).has_value());
+}
+
+TEST(RealityMessagesTest, ExtractAlpnRejectsListLengthMismatch)
+{
+    std::vector<std::uint8_t> extensions;
+    message_builder::push_u16(extensions, tls_consts::ext::kAlpn);
+    message_builder::push_u16(extensions, 5);
+    extensions.push_back(0x00);
+    extensions.push_back(0x04);
+    extensions.push_back(0x02);
+    extensions.push_back(0x68);
+    extensions.push_back(0x32);
+    const auto msg = build_encrypted_extensions_with_raw_extensions(extensions);
+    EXPECT_FALSE(reality::extract_alpn_from_encrypted_extensions(msg).has_value());
+}
+
+TEST(RealityMessagesTest, ExtractAlpnRejectsZeroLengthProtocolName)
+{
+    std::vector<std::uint8_t> extensions;
+    message_builder::push_u16(extensions, tls_consts::ext::kAlpn);
+    message_builder::push_u16(extensions, 3);
+    extensions.push_back(0x00);
+    extensions.push_back(0x01);
+    extensions.push_back(0x00);
     const auto msg = build_encrypted_extensions_with_raw_extensions(extensions);
     EXPECT_FALSE(reality::extract_alpn_from_encrypted_extensions(msg).has_value());
 }
@@ -981,6 +1205,10 @@ TEST(RealityMessagesTest, FirefoxSecp256r1KeyShareIsValidPoint)
 
     const auto key_share = extract_key_share_data_by_group(ch, tls_consts::group::kSecp256r1);
     ASSERT_TRUE(key_share.has_value());
+    if (!key_share.has_value())
+    {
+        return;
+    }
     ASSERT_EQ(key_share->size(), 65);
     EXPECT_EQ((*key_share)[0], 0x04);
 
@@ -1001,6 +1229,10 @@ TEST(RealityMessagesTest, ChromeGreaseEchMatchesBoringShape)
 
     const auto ech = extract_extension_data_by_type(ch, tls_consts::ext::kGreaseEch);
     ASSERT_TRUE(ech.has_value());
+    if (!ech.has_value())
+    {
+        return;
+    }
     ASSERT_GE(ech->size(), 1 + 2 + 2 + 1 + 2 + 32 + 2 + 144);
     const auto& data = *ech;
 
@@ -1039,6 +1271,10 @@ TEST(RealityMessagesTest, PaddingUsesBoringStyleFormula)
 
     const auto padding = extract_extension_data_by_type(with_pad, tls_consts::ext::kPadding);
     ASSERT_TRUE(padding.has_value());
+    if (!padding.has_value())
+    {
+        return;
+    }
 
     const std::size_t unpadded_len = no_pad.size() + 4;
     EXPECT_EQ(padding->size(), expected_boring_padding_len(unpadded_len));
@@ -1063,6 +1299,10 @@ TEST(RealityMessagesTest, PaddingDisabledForShortClientHello)
     ASSERT_LT(no_pad.size() + 4, 0x100);
     const auto padding = extract_extension_data_by_type(with_pad, tls_consts::ext::kPadding);
     ASSERT_TRUE(padding.has_value());
+    if (!padding.has_value())
+    {
+        return;
+    }
     EXPECT_EQ(padding->size(), 0);
 }
 
@@ -1097,9 +1337,17 @@ TEST(RealityMessagesTest, PaddingNearUpperBoundUsesSingleByte)
     }
 
     ASSERT_TRUE(near_upper_bound_host.has_value());
+    if (!near_upper_bound_host.has_value())
+    {
+        return;
+    }
     const auto with_pad = reality::client_hello_builder::build(spec_with_padding, session_id, random, pubkey, *near_upper_bound_host);
     const auto padding = extract_extension_data_by_type(with_pad, tls_consts::ext::kPadding);
     ASSERT_TRUE(padding.has_value());
+    if (!padding.has_value())
+    {
+        return;
+    }
     EXPECT_EQ(expected_boring_padding_len(near_upper_bound_unpadded_len), 1);
     EXPECT_EQ(padding->size(), 1);
 }
@@ -1125,5 +1373,9 @@ TEST(RealityMessagesTest, PaddingDisabledForOversizedClientHello)
     ASSERT_GT(no_pad.size() + 4, 0x1ff);
     const auto padding = extract_extension_data_by_type(with_pad, tls_consts::ext::kPadding);
     ASSERT_TRUE(padding.has_value());
+    if (!padding.has_value())
+    {
+        return;
+    }
     EXPECT_EQ(padding->size(), 0);
 }

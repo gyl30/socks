@@ -273,6 +273,34 @@ TEST(MuxCodecTest, SynPayloadFuzzTruncation)
     }
 }
 
+TEST(MuxCodecTest, SynPayloadLegacyWithoutTraceClearsPreviousTraceId)
+{
+    mux::syn_payload with_trace_input;
+    with_trace_input.socks_cmd = 0x01;
+    with_trace_input.addr = "127.0.0.1";
+    with_trace_input.port = 443;
+    with_trace_input.trace_id = "trace-old";
+
+    std::vector<std::uint8_t> with_trace_buffer;
+    mux::mux_codec::encode_syn(with_trace_input, with_trace_buffer);
+
+    mux::syn_payload output;
+    ASSERT_TRUE(mux::mux_codec::decode_syn(with_trace_buffer.data(), with_trace_buffer.size(), output));
+    ASSERT_EQ(output.trace_id, "trace-old");
+
+    std::vector<std::uint8_t> legacy_buffer;
+    legacy_buffer.push_back(with_trace_input.socks_cmd);
+    legacy_buffer.push_back(static_cast<std::uint8_t>(with_trace_input.addr.size()));
+    legacy_buffer.insert(legacy_buffer.end(), with_trace_input.addr.begin(), with_trace_input.addr.end());
+    legacy_buffer.push_back(static_cast<std::uint8_t>((with_trace_input.port >> 8) & 0xFF));
+    legacy_buffer.push_back(static_cast<std::uint8_t>(with_trace_input.port & 0xFF));
+
+    ASSERT_TRUE(mux::mux_codec::decode_syn(legacy_buffer.data(), legacy_buffer.size(), output));
+    EXPECT_TRUE(output.trace_id.empty());
+    EXPECT_EQ(output.addr, with_trace_input.addr);
+    EXPECT_EQ(output.port, with_trace_input.port);
+}
+
 TEST(MuxCodecTest, AckPayloadEmptyAddrMaxPort)
 {
     mux::ack_payload input;

@@ -9,6 +9,7 @@
 #include <openssl/types.h>
 #include <boost/asio/error.hpp>
 #include <boost/asio/streambuf.hpp>
+#include <boost/system/errc.hpp>
 #include <boost/system/error_code.hpp>
 
 #include "reality_core.h"
@@ -17,6 +18,11 @@
 
 namespace mux
 {
+
+namespace
+{
+constexpr std::size_t kMaxTlsCiphertextRecordLen = reality::kMaxTlsPlaintextLen + 256;
+}    // namespace
 
 reality_engine::reality_engine(std::vector<std::uint8_t> r_key,
                                std::vector<std::uint8_t> r_iv,
@@ -91,6 +97,11 @@ std::expected<bool, boost::system::error_code> reality_engine::try_decrypt_next_
 
     const auto* p = static_cast<const std::uint8_t*>(rx_buf_->data().data());
     const auto record_len = static_cast<std::uint16_t>((static_cast<std::uint16_t>(p[3]) << 8) | p[4]);
+    if (record_len > kMaxTlsCiphertextRecordLen)
+    {
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::message_size));
+    }
+
     const std::uint32_t frame_size = reality::kTlsRecordHeaderSize + record_len;
 
     if (rx_buf_->size() < frame_size)
