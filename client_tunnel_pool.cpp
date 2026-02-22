@@ -60,6 +60,7 @@ extern "C"
 #include "tls_cipher_suite.h"
 #include "tls_key_schedule.h"
 #include "tls_record_layer.h"
+#include "tls_record_validation.h"
 #include "client_tunnel_pool.h"
 #include "reality_fingerprint.h"
 
@@ -429,6 +430,15 @@ boost::asio::awaitable<std::expected<encrypted_record, boost::system::error_code
         const auto ec = boost::asio::error::fault;
         LOG_ERROR("short read record payload {} of {}", read_body_size, record_body_size);
         co_return std::unexpected(ec);
+    }
+    if (record_header[0] == reality::kContentTypeChangeCipherSpec)
+    {
+        const std::uint8_t ccs_body = record_body_size == 1 ? record_body[0] : 0;
+        if (!reality::is_valid_tls13_compat_ccs(record_header, ccs_body))
+        {
+            LOG_ERROR("invalid tls13 compat ccs len {} body {}", record_body_size, ccs_body);
+            co_return std::unexpected(boost::asio::error::invalid_argument);
+        }
     }
 
     std::vector<std::uint8_t> ciphertext(record_header.size() + record_body_size);
@@ -874,9 +884,15 @@ boost::asio::awaitable<std::expected<void, boost::system::error_code>> process_h
         LOG_ERROR("error decrypting record {}", plaintext_result.error().message());
         co_return std::unexpected(plaintext_result.error());
     }
+    if (type == reality::kContentTypeAlert)
+    {
+        LOG_ERROR("received alert during handshake");
+        co_return std::unexpected(boost::asio::error::eof);
+    }
     if (type != reality::kContentTypeHandshake)
     {
-        co_return std::expected<void, boost::system::error_code>{};
+        LOG_ERROR("unexpected record content type during handshake {}", type);
+        co_return std::unexpected(boost::asio::error::invalid_argument);
     }
 
     if (const auto consume_res =
