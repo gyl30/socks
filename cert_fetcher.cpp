@@ -7,6 +7,7 @@
 #include <utility>
 #include <expected>
 #include <optional>
+#include <limits>
 #include <system_error>
 
 #include <boost/asio/read.hpp>
@@ -343,6 +344,12 @@ bool cert_fetcher::fetch_session::init_handshake_material(std::vector<std::uint8
 
 boost::asio::awaitable<boost::system::error_code> cert_fetcher::fetch_session::send_client_hello_record(const std::vector<std::uint8_t>& client_hello)
 {
+    if (client_hello.size() > std::numeric_limits<std::uint16_t>::max())
+    {
+        LOG_CTX_ERROR(ctx_, "{} client hello too large {}", mux::log_event::kCert, client_hello.size());
+        co_return std::make_error_code(std::errc::message_size);
+    }
+
     auto ch_record = write_record_header(kContentTypeHandshake, static_cast<std::uint16_t>(client_hello.size()));
     ch_record.insert(ch_record.end(), client_hello.begin(), client_hello.end());
 
@@ -519,6 +526,12 @@ boost::asio::awaitable<std::pair<boost::system::error_code, std::vector<std::uin
     }
 
     const std::uint16_t len = static_cast<std::uint16_t>((static_cast<std::uint16_t>(head[3]) << 8) | static_cast<std::uint16_t>(head[4]));
+    if (const auto len_res = validate_record_length(len); !len_res)
+    {
+        LOG_CTX_ERROR(ctx_, "{} plaintext record too large {}", mux::log_event::kCert, len);
+        co_return std::make_pair(len_res.error(), std::vector<std::uint8_t>{});
+    }
+
     std::vector<std::uint8_t> body(len);
     auto [ec2, n2] = co_await boost::asio::async_read(socket_, boost::asio::buffer(body), boost::asio::as_tuple(boost::asio::use_awaitable));
     if (ec2)

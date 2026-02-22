@@ -61,8 +61,11 @@ class tls_key_schedule
         }
 
         std::vector<std::uint8_t> empty_hash(hash_len);
-        unsigned int hl;
-        EVP_Digest(nullptr, 0, empty_hash.data(), &hl, md, nullptr);
+        unsigned int hl = 0;
+        if (EVP_Digest(nullptr, 0, empty_hash.data(), &hl, md, nullptr) != 1 || hl != hash_len)
+        {
+            return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        }
 
         auto derived_secret = crypto_util::hkdf_expand_label(*early_secret, "derived", empty_hash, hash_len, md);
         if (!derived_secret)
@@ -76,14 +79,30 @@ class tls_key_schedule
         }
 
         auto c_hs_secret = crypto_util::hkdf_expand_label(*handshake_secret, "c hs traffic", server_hello_hash, hash_len, md);
+        if (!c_hs_secret)
+        {
+            return std::unexpected(c_hs_secret.error());
+        }
         auto s_hs_secret = crypto_util::hkdf_expand_label(*handshake_secret, "s hs traffic", server_hello_hash, hash_len, md);
+        if (!s_hs_secret)
+        {
+            return std::unexpected(s_hs_secret.error());
+        }
 
         auto derived_secret_2 = crypto_util::hkdf_expand_label(*handshake_secret, "derived", empty_hash, hash_len, md);
+        if (!derived_secret_2)
+        {
+            return std::unexpected(derived_secret_2.error());
+        }
         auto master_secret = crypto_util::hkdf_extract(*derived_secret_2, zero_ikm, md);
+        if (!master_secret)
+        {
+            return std::unexpected(master_secret.error());
+        }
 
-        return handshake_keys{.client_handshake_traffic_secret = c_hs_secret.value_or(std::vector<std::uint8_t>{}),
-                              .server_handshake_traffic_secret = s_hs_secret.value_or(std::vector<std::uint8_t>{}),
-                              .master_secret = master_secret.value_or(std::vector<std::uint8_t>{})};
+        return handshake_keys{.client_handshake_traffic_secret = std::move(*c_hs_secret),
+                              .server_handshake_traffic_secret = std::move(*s_hs_secret),
+                              .master_secret = std::move(*master_secret)};
     }
 
     [[nodiscard]] static std::expected<std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>, boost::system::error_code>

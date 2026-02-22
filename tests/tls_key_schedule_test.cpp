@@ -76,6 +76,17 @@ TEST(TlsKeyScheduleTest, DeriveHandshakeKeysCoversDerivedSecretFailureBranch)
     EXPECT_FALSE(keys.has_value());
 }
 
+TEST(TlsKeyScheduleTest, DeriveHandshakeKeysRejectsAllLateStageDeriveFailures)
+{
+    for (const int call_index : {3, 4, 5, 6, 7})
+    {
+        fail_evp_pkey_derive_on_call(call_index);
+        const auto keys =
+            tls_key_schedule::derive_handshake_keys(std::vector<std::uint8_t>(32, 0x51), std::vector<std::uint8_t>(32, 0x62), EVP_sha256());
+        EXPECT_FALSE(keys.has_value());
+    }
+}
+
 TEST(TlsKeyScheduleTest, DeriveApplicationSecretsCoversServerSecretFailureBranch)
 {
     fail_evp_pkey_derive_on_call(2);

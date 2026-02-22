@@ -65,6 +65,7 @@ bool mux_codec::decode_syn(const std::uint8_t* data, const std::size_t len, syn_
         return false;
     }
     out.socks_cmd = data[0];
+    out.trace_id.clear();
     const std::uint8_t addr_len = data[1];
     if (len < 2 + static_cast<std::size_t>(addr_len) + 2)
     {

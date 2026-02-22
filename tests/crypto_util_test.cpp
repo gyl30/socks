@@ -1,11 +1,15 @@
 
 #include <atomic>
-#include <limits>
+#include <ios>
+#include <span>
 #include <string>
 #include <vector>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
+#include <limits>
+#include <utility>
 #include <iterator>
 #include <algorithm>
 #include <system_error>
@@ -38,6 +42,11 @@ std::atomic<bool> g_fail_ed25519_raw_private_key{false};
 std::atomic<bool> g_fail_hkdf_add_info{false};
 std::atomic<bool> g_fail_md_ctx_new{false};
 std::atomic<bool> g_fail_pkey_derive{false};
+std::atomic<bool> g_fail_get_gcm_tag{false};
+std::atomic<bool> g_fail_encrypt_update{false};
+std::atomic<bool> g_fail_encrypt_final{false};
+std::atomic<bool> g_fail_x25519_get_raw_public_key{false};
+std::atomic<bool> g_fail_x25519_get_raw_private_key{false};
 
 void fail_next_hkdf_set_key() { g_fail_hkdf_set_key.store(true, std::memory_order_release); }
 
@@ -60,6 +69,16 @@ void fail_next_hkdf_add_info() { g_fail_hkdf_add_info.store(true, std::memory_or
 void fail_next_md_ctx_new() { g_fail_md_ctx_new.store(true, std::memory_order_release); }
 
 void fail_next_pkey_derive() { g_fail_pkey_derive.store(true, std::memory_order_release); }
+
+void fail_next_get_gcm_tag() { g_fail_get_gcm_tag.store(true, std::memory_order_release); }
+
+void fail_next_encrypt_update() { g_fail_encrypt_update.store(true, std::memory_order_release); }
+
+void fail_next_encrypt_final() { g_fail_encrypt_final.store(true, std::memory_order_release); }
+
+void fail_next_x25519_get_raw_public_key() { g_fail_x25519_get_raw_public_key.store(true, std::memory_order_release); }
+
+void fail_next_x25519_get_raw_private_key() { g_fail_x25519_get_raw_private_key.store(true, std::memory_order_release); }
 
 std::vector<std::uint8_t> build_self_signed_cert_der()
 {
@@ -142,6 +161,14 @@ extern "C" int __real_EVP_PKEY_CTX_add1_hkdf_info(EVP_PKEY_CTX* ctx,
                                                   int infolen);                                  
 extern "C" EVP_MD_CTX* __real_EVP_MD_CTX_new();                                                  
 extern "C" int __real_EVP_PKEY_derive(EVP_PKEY_CTX* ctx, unsigned char* key, size_t* keylen);    
+extern "C" int __real_EVP_EncryptUpdate(EVP_CIPHER_CTX* ctx,
+                                        unsigned char* out,
+                                        int* outl,
+                                        const unsigned char* in,
+                                        int inl);    
+extern "C" int __real_EVP_EncryptFinal_ex(EVP_CIPHER_CTX* ctx, unsigned char* outm, int* outl);    
+extern "C" int __real_EVP_PKEY_get_raw_public_key(const EVP_PKEY* pkey, unsigned char* pub, size_t* len);    
+extern "C" int __real_EVP_PKEY_get_raw_private_key(const EVP_PKEY* pkey, unsigned char* priv, size_t* len);    
 
 extern "C" int __wrap_EVP_PKEY_CTX_set1_hkdf_key(EVP_PKEY_CTX* ctx, const unsigned char* key, int keylen)    
 {
@@ -166,6 +193,10 @@ extern "C" int __wrap_EVP_PKEY_CTX_set1_hkdf_salt(EVP_PKEY_CTX* ctx,
 extern "C" int __wrap_EVP_CIPHER_CTX_ctrl(EVP_CIPHER_CTX* ctx, int type, int arg, void* ptr)    
 {
     if (type == EVP_CTRL_GCM_SET_TAG && g_fail_set_gcm_tag.exchange(false, std::memory_order_acq_rel))
+    {
+        return 0;
+    }
+    if (type == EVP_CTRL_GCM_GET_TAG && g_fail_get_gcm_tag.exchange(false, std::memory_order_acq_rel))
     {
         return 0;
     }
@@ -242,6 +273,46 @@ extern "C" int __wrap_EVP_PKEY_derive(EVP_PKEY_CTX* ctx, unsigned char* key, siz
         return 0;
     }
     return __real_EVP_PKEY_derive(ctx, key, keylen);    
+}
+
+extern "C" int __wrap_EVP_EncryptUpdate(EVP_CIPHER_CTX* ctx,
+                                        unsigned char* out,
+                                        int* outl,
+                                        const unsigned char* in,
+                                        int inl)    
+{
+    if (g_fail_encrypt_update.exchange(false, std::memory_order_acq_rel))
+    {
+        return 0;
+    }
+    return __real_EVP_EncryptUpdate(ctx, out, outl, in, inl);    
+}
+
+extern "C" int __wrap_EVP_EncryptFinal_ex(EVP_CIPHER_CTX* ctx, unsigned char* outm, int* outl)    
+{
+    if (g_fail_encrypt_final.exchange(false, std::memory_order_acq_rel))
+    {
+        return 0;
+    }
+    return __real_EVP_EncryptFinal_ex(ctx, outm, outl);    
+}
+
+extern "C" int __wrap_EVP_PKEY_get_raw_public_key(const EVP_PKEY* pkey, unsigned char* pub, size_t* len)    
+{
+    if (g_fail_x25519_get_raw_public_key.exchange(false, std::memory_order_acq_rel))
+    {
+        return 0;
+    }
+    return __real_EVP_PKEY_get_raw_public_key(pkey, pub, len);    
+}
+
+extern "C" int __wrap_EVP_PKEY_get_raw_private_key(const EVP_PKEY* pkey, unsigned char* priv, size_t* len)    
+{
+    if (g_fail_x25519_get_raw_private_key.exchange(false, std::memory_order_acq_rel))
+    {
+        return 0;
+    }
+    return __real_EVP_PKEY_get_raw_private_key(pkey, priv, len);    
 }
 
 TEST(CryptoUtilTest, HexConversion)
@@ -457,6 +528,24 @@ TEST(CryptoUtilTest, HKDFExpandLabel)
     EXPECT_EQ(out->size(), 16);
 }
 
+TEST(CryptoUtilTest, HKDFExpandLabelRejectsOversizedFields)
+{
+    const std::vector<std::uint8_t> secret(32, 0x01);
+    const auto oversized_label =
+        crypto_util::hkdf_expand_label(secret, std::string(300, 'a'), std::vector<std::uint8_t>{0x01}, 16, EVP_sha256());
+    EXPECT_FALSE(oversized_label.has_value());
+    EXPECT_EQ(oversized_label.error(), std::make_error_code(std::errc::invalid_argument));
+
+    const auto oversized_context =
+        crypto_util::hkdf_expand_label(secret, "ok", std::vector<std::uint8_t>(300, 0x02), 16, EVP_sha256());
+    EXPECT_FALSE(oversized_context.has_value());
+    EXPECT_EQ(oversized_context.error(), std::make_error_code(std::errc::invalid_argument));
+
+    const auto oversized_length = crypto_util::hkdf_expand_label(secret, "ok", std::vector<std::uint8_t>{0x01}, 70000, EVP_sha256());
+    EXPECT_FALSE(oversized_length.has_value());
+    EXPECT_EQ(oversized_length.error(), std::make_error_code(std::errc::invalid_argument));
+}
+
 TEST(CryptoUtilTest, InvalidInputs)
 {
     auto result1 = crypto_util::extract_public_key(std::vector<uint8_t>(31));
@@ -587,6 +676,20 @@ TEST(CryptoUtilTest, AEADInvalidArguments)
     EXPECT_EQ(r3.error(), std::make_error_code(std::errc::invalid_argument));
 }
 
+TEST(CryptoUtilTest, AEADNullCipherRejected)
+{
+    const std::vector<uint8_t> key(32, 0x11);
+    const std::vector<uint8_t> nonce(12, 0x22);
+
+    const auto enc = crypto_util::aead_encrypt(nullptr, key, nonce, std::vector<uint8_t>{0x01}, {});
+    EXPECT_FALSE(enc.has_value());
+    EXPECT_EQ(enc.error(), std::make_error_code(std::errc::invalid_argument));
+
+    const auto dec = crypto_util::aead_decrypt(nullptr, key, nonce, std::vector<uint8_t>(17, 0x00), {});
+    EXPECT_FALSE(dec.has_value());
+    EXPECT_EQ(dec.error(), std::make_error_code(std::errc::invalid_argument));
+}
+
 TEST(CryptoUtilTest, HKDFInvalidArguments)
 {
     const std::vector<uint8_t> salt(1, 0x01);
@@ -624,7 +727,7 @@ TEST(CryptoUtilTest, NonGCMCipherContext)
     ASSERT_EQ(EVP_EncryptFinal_ex(ctx.get(), ciphertext.data() + out_len, &final_len), 1);
     ASSERT_GE(out_len, 0);
     ASSERT_GE(final_len, 0);
-    ciphertext.resize(static_cast<std::size_t>(out_len + final_len));
+    ciphertext.resize(static_cast<std::size_t>(out_len) + static_cast<std::size_t>(final_len));
 
     const reality::cipher_context ctx_dec;
     ASSERT_TRUE(ctx_dec.init(false, EVP_aes_128_cbc(), key.data(), iv.data(), 16));
@@ -634,21 +737,22 @@ TEST(CryptoUtilTest, NonGCMCipherContext)
     ASSERT_EQ(EVP_DecryptFinal_ex(ctx_dec.get(), decrypted.data() + out_len, &final_len), 1);
     ASSERT_GE(out_len, 0);
     ASSERT_GE(final_len, 0);
-    decrypted.resize(static_cast<std::size_t>(out_len + final_len));
+    decrypted.resize(static_cast<std::size_t>(out_len) + static_cast<std::size_t>(final_len));
 
     EXPECT_EQ(decrypted, plaintext);
 }
 
 TEST(CryptoUtilTest, CipherContextMovedFromBecomesInvalid)
 {
-    reality::cipher_context ctx;
-    reality::cipher_context const moved(std::move(ctx));
-    EXPECT_TRUE(moved.valid());
-    EXPECT_FALSE(ctx.valid());
+    reality::cipher_context source_ctx;
+    reality::cipher_context const moved_ctx(std::move(source_ctx));
+    EXPECT_TRUE(moved_ctx.valid());
 
     const std::vector<std::uint8_t> key(32, 0x11);
     const std::vector<std::uint8_t> iv(12, 0x22);
-    EXPECT_FALSE(ctx.init(true, EVP_aes_256_gcm(), key.data(), iv.data(), iv.size()));
+    reality::cipher_context const invalid_ctx(nullptr);
+    EXPECT_FALSE(invalid_ctx.valid());
+    EXPECT_FALSE(invalid_ctx.init(true, EVP_aes_256_gcm(), key.data(), iv.data(), iv.size()));
 }
 
 TEST(CryptoUtilTest, CipherContextRejectsInvalidGcmIvLength)
@@ -678,11 +782,10 @@ TEST(CryptoUtilTest, AEADDecryptLowLevelFailureBranches)
     const auto ciphertext = crypto_util::aead_encrypt(EVP_aes_256_gcm(), key, nonce, plaintext, {});
     ASSERT_TRUE(ciphertext.has_value());
 
-    reality::cipher_context moved_from_ctx;
-    reality::cipher_context const valid_ctx(std::move(moved_from_ctx));
-    (void)valid_ctx;
+    reality::cipher_context const invalid_ctx(nullptr);
+    ASSERT_FALSE(invalid_ctx.valid());
     std::vector<std::uint8_t> out(plaintext.size());
-    const auto n1 = crypto_util::aead_decrypt(moved_from_ctx, EVP_aes_256_gcm(), key, nonce, *ciphertext, {}, out);
+    const auto n1 = crypto_util::aead_decrypt(invalid_ctx, EVP_aes_256_gcm(), key, nonce, *ciphertext, {}, out);
     EXPECT_FALSE(n1.has_value());
     EXPECT_EQ(n1.error(), std::make_error_code(std::errc::protocol_error));
 
@@ -702,15 +805,43 @@ TEST(CryptoUtilTest, AEADEncryptAppendMovedFromContextFails)
     const std::vector<std::uint8_t> nonce(12, 0x22);
     const std::vector<std::uint8_t> plaintext = {0x01, 0x02, 0x03};
 
-    reality::cipher_context moved_from_ctx;
-    reality::cipher_context const valid_ctx(std::move(moved_from_ctx));
-    (void)valid_ctx;
+    reality::cipher_context const invalid_ctx(nullptr);
+    ASSERT_FALSE(invalid_ctx.valid());
 
     std::vector<std::uint8_t> out;
-    auto enc_result = crypto_util::aead_encrypt_append(moved_from_ctx, EVP_aes_256_gcm(), key, nonce, plaintext, {}, out);
+    auto enc_result = crypto_util::aead_encrypt_append(invalid_ctx, EVP_aes_256_gcm(), key, nonce, plaintext, {}, out);
     EXPECT_FALSE(enc_result.has_value());
     EXPECT_EQ(enc_result.error(), std::make_error_code(std::errc::protocol_error));
     EXPECT_TRUE(out.empty());
+}
+
+TEST(CryptoUtilTest, AEADEncryptAppendLowLevelFailureBranches)
+{
+    const std::vector<std::uint8_t> key(32, 0x11);
+    const std::vector<std::uint8_t> nonce(12, 0x22);
+    const std::vector<std::uint8_t> plaintext = {0x01, 0x02, 0x03};
+    const reality::cipher_context ctx;
+
+    std::vector<std::uint8_t> out = {0xAA};
+    fail_next_encrypt_update();
+    auto result = crypto_util::aead_encrypt_append(ctx, EVP_aes_256_gcm(), key, nonce, plaintext, {}, out);
+    EXPECT_FALSE(result.has_value());
+    EXPECT_EQ(result.error(), std::make_error_code(std::errc::protocol_error));
+    EXPECT_EQ(out, std::vector<std::uint8_t>({0xAA}));
+
+    out = {0xBB};
+    fail_next_encrypt_final();
+    result = crypto_util::aead_encrypt_append(ctx, EVP_aes_256_gcm(), key, nonce, plaintext, {}, out);
+    EXPECT_FALSE(result.has_value());
+    EXPECT_EQ(result.error(), std::make_error_code(std::errc::protocol_error));
+    EXPECT_EQ(out, std::vector<std::uint8_t>({0xBB}));
+
+    out = {0xCC};
+    fail_next_get_gcm_tag();
+    result = crypto_util::aead_encrypt_append(ctx, EVP_aes_256_gcm(), key, nonce, plaintext, {}, out);
+    EXPECT_FALSE(result.has_value());
+    EXPECT_EQ(result.error(), std::make_error_code(std::errc::protocol_error));
+    EXPECT_EQ(out, std::vector<std::uint8_t>({0xCC}));
 }
 
 TEST(CryptoUtilTest, VerifySignatureNullKeyFails)
@@ -797,6 +928,32 @@ TEST(CryptoUtilTest, GenerateX25519KeypairFailureCleansesOutput)
     std::fill_n(priv, 32, 0xBB);
 
     fail_next_x25519_ctx_new_id();
+    EXPECT_FALSE(crypto_util::generate_x25519_keypair(pub, priv));
+    for (std::size_t i = 0; i < 32; ++i)
+    {
+        EXPECT_EQ(pub[i], 0U);
+        EXPECT_EQ(priv[i], 0U);
+    }
+}
+
+TEST(CryptoUtilTest, GenerateX25519KeypairRawExportFailureCleansesOutput)
+{
+    std::uint8_t pub[32];
+    std::uint8_t priv[32];
+    std::fill_n(pub, 32, 0xAA);
+    std::fill_n(priv, 32, 0xBB);
+
+    fail_next_x25519_get_raw_public_key();
+    EXPECT_FALSE(crypto_util::generate_x25519_keypair(pub, priv));
+    for (std::size_t i = 0; i < 32; ++i)
+    {
+        EXPECT_EQ(pub[i], 0U);
+        EXPECT_EQ(priv[i], 0U);
+    }
+
+    std::fill_n(pub, 32, 0xAA);
+    std::fill_n(priv, 32, 0xBB);
+    fail_next_x25519_get_raw_private_key();
     EXPECT_FALSE(crypto_util::generate_x25519_keypair(pub, priv));
     for (std::size_t i = 0; i < 32; ++i)
     {
