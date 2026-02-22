@@ -69,6 +69,9 @@ namespace mux
 namespace
 {
 
+constexpr std::size_t kMaxHandshakeBufferSize = 1024 * 1024;
+constexpr std::uint32_t kMaxHandshakeMessageSize = static_cast<std::uint32_t>(kMaxHandshakeBufferSize - 4);
+
 template <typename t>
 [[nodiscard]] std::shared_ptr<t> atomic_load_shared(const std::shared_ptr<t>& slot)
 {
@@ -244,19 +247,19 @@ bool parse_first_certificate_range(const std::vector<std::uint8_t>& cert_msg, st
     return true;
 }
 
-bool read_handshake_message_bounds(const std::vector<std::uint8_t>& handshake_buffer,
-                                   const std::uint32_t offset,
+bool read_handshake_message_header(const std::vector<std::uint8_t>& handshake_buffer,
+                                   const std::size_t offset,
                                    std::uint8_t& msg_type,
                                    std::uint32_t& msg_len)
 {
-    if (offset + 4 > handshake_buffer.size())
+    if (offset > handshake_buffer.size() || handshake_buffer.size() - offset < 4)
     {
         return false;
     }
     msg_type = handshake_buffer[offset];
     msg_len = (static_cast<std::uint32_t>(handshake_buffer[offset + 1]) << 16) | (static_cast<std::uint32_t>(handshake_buffer[offset + 2]) << 8) |
               static_cast<std::uint32_t>(handshake_buffer[offset + 3]);
-    return offset + 4 + msg_len <= handshake_buffer.size();
+    return true;
 }
 
 struct handshake_validation_state
@@ -407,6 +410,12 @@ boost::asio::awaitable<std::expected<encrypted_record, boost::system::error_code
     }
 
     const auto record_body_size = static_cast<std::uint16_t>((record_header[3] << 8) | record_header[4]);
+    constexpr std::size_t kMaxRecordBodySize = reality::kMaxTlsPlaintextLen + 256;
+    if (record_body_size > kMaxRecordBodySize)
+    {
+        LOG_ERROR("record body too large {}", record_body_size);
+        co_return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::message_size));
+    }
     std::vector<std::uint8_t> record_body(record_body_size);
     auto [read_body_ec, read_body_size] =
         co_await boost::asio::async_read(socket, boost::asio::buffer(record_body), boost::asio::as_tuple(boost::asio::use_awaitable));
@@ -466,30 +475,43 @@ std::expected<void, boost::system::error_code> handle_handshake_message(const st
     return {};
 }
 
-std::expected<std::uint32_t, boost::system::error_code> consume_handshake_buffer(std::vector<std::uint8_t>& handshake_buffer,
-                                                                                 handshake_validation_state& validation_state,
-                                                                                 bool& handshake_fin,
-                                                                                 const reality::handshake_keys& hs_keys,
-                                                                                 const EVP_MD* md,
-                                                                                 reality::transcript& trans)
+std::expected<std::size_t, boost::system::error_code> consume_handshake_buffer(std::vector<std::uint8_t>& handshake_buffer,
+                                                                               handshake_validation_state& validation_state,
+                                                                               bool& handshake_fin,
+                                                                               const reality::handshake_keys& hs_keys,
+                                                                               const EVP_MD* md,
+                                                                               reality::transcript& trans)
 {
-    std::uint32_t offset = 0;
-    while (offset + 4 <= handshake_buffer.size())
+    std::size_t offset = 0;
+    while (offset <= handshake_buffer.size() && handshake_buffer.size() - offset >= 4)
     {
         std::uint8_t msg_type = 0;
         std::uint32_t msg_len = 0;
-        if (!read_handshake_message_bounds(handshake_buffer, offset, msg_type, msg_len))
+        if (!read_handshake_message_header(handshake_buffer, offset, msg_type, msg_len))
+        {
+            break;
+        }
+        if (msg_len > kMaxHandshakeMessageSize)
+        {
+            LOG_ERROR("handshake message too large {}", msg_len);
+            return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::message_size));
+        }
+
+        const auto full_msg_len = static_cast<std::size_t>(msg_len) + 4;
+        if (handshake_buffer.size() - offset < full_msg_len)
         {
             break;
         }
 
-        const std::vector<std::uint8_t> msg_data(handshake_buffer.begin() + offset, handshake_buffer.begin() + offset + 4 + msg_len);
+        const auto msg_begin = handshake_buffer.begin() + static_cast<std::ptrdiff_t>(offset);
+        const auto msg_end = msg_begin + static_cast<std::ptrdiff_t>(full_msg_len);
+        const std::vector<std::uint8_t> msg_data(msg_begin, msg_end);
         if (const auto res = handle_handshake_message(msg_type, msg_data, validation_state, handshake_fin, hs_keys, md, trans); !res)
         {
             return std::unexpected(res.error());
         }
         trans.update(msg_data);
-        offset += 4 + msg_len;
+        offset += full_msg_len;
     }
     return offset;
 }
@@ -502,6 +524,11 @@ std::expected<void, boost::system::error_code> consume_handshake_plaintext(const
                                                                            const EVP_MD* md,
                                                                            reality::transcript& trans)
 {
+    if (plaintext.size() > kMaxHandshakeBufferSize || handshake_buffer.size() > kMaxHandshakeBufferSize - plaintext.size())
+    {
+        LOG_ERROR("handshake buffer too large {} {}", handshake_buffer.size(), plaintext.size());
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::message_size));
+    }
     handshake_buffer.insert(handshake_buffer.end(), plaintext.begin(), plaintext.end());
     const auto consumed = consume_handshake_buffer(handshake_buffer, validation_state, handshake_fin, hs_keys, md, trans);
     if (!consumed)

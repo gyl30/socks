@@ -175,6 +175,30 @@ TEST_F(tls_record_layer_test_fixture, ShortMessage)
     EXPECT_EQ(dec.error(), std::make_error_code(std::errc::message_size));
 }
 
+TEST_F(tls_record_layer_test_fixture, EncryptRejectsShortIv)
+{
+    const std::vector<uint8_t> short_iv(7, 0x22);
+    const std::vector<uint8_t> plaintext = {0x01, 0x02, 0x03};
+    const auto enc = tls_record_layer::encrypt_record(cipher(), key(), short_iv, 0, plaintext, reality::kContentTypeHandshake);
+
+    ASSERT_FALSE(enc.has_value());
+    EXPECT_EQ(enc.error(), std::errc::invalid_argument);
+}
+
+TEST_F(tls_record_layer_test_fixture, DecryptRejectsShortIv)
+{
+    const std::vector<uint8_t> plaintext = {0xAB, 0xCD};
+    const auto enc = tls_record_layer::encrypt_record(cipher(), key(), iv(), 1, plaintext, reality::kContentTypeHandshake);
+    ASSERT_TRUE(enc.has_value());
+
+    std::uint8_t out_type = 0;
+    const std::vector<uint8_t> short_iv(7, 0x22);
+    const auto dec = tls_record_layer::decrypt_record(cipher(), key(), short_iv, 1, *enc, out_type);
+
+    ASSERT_FALSE(dec.has_value());
+    EXPECT_EQ(dec.error(), std::errc::invalid_argument);
+}
+
 TEST_F(tls_record_layer_test_fixture, EncryptRejectsOversizedPlaintextLength)
 {
     const std::vector<uint8_t> plaintext(65519, 0xAB);

@@ -28,6 +28,8 @@ namespace reality
 namespace
 {
 
+constexpr std::size_t kNonceSeqXorBytes = 8;
+
 std::expected<void, boost::system::error_code> validate_record_for_decrypt(const std::span<const std::uint8_t> record_data)
 {
     if (record_data.size() >= kTlsRecordHeaderSize + kAeadTagSize)
@@ -37,10 +39,19 @@ std::expected<void, boost::system::error_code> validate_record_for_decrypt(const
     return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::message_size));
 }
 
-std::vector<std::uint8_t> make_record_nonce(const std::vector<std::uint8_t>& iv, const std::uint64_t seq)
+std::expected<void, boost::system::error_code> validate_nonce_iv_size(const std::span<const std::uint8_t> iv)
 {
-    std::vector<std::uint8_t> nonce = iv;
-    for (std::size_t i = 0; i < 8; ++i)
+    if (iv.size() >= kNonceSeqXorBytes)
+    {
+        return {};
+    }
+    return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
+}
+
+std::vector<std::uint8_t> make_record_nonce(const std::span<const std::uint8_t> iv, const std::uint64_t seq)
+{
+    std::vector<std::uint8_t> nonce(iv.begin(), iv.end());
+    for (std::size_t i = 0; i < kNonceSeqXorBytes; ++i)
     {
         const auto shift = static_cast<unsigned int>(8U * i);
         nonce[nonce.size() - 1 - i] ^= static_cast<std::uint8_t>((seq >> shift) & 0xFFU);
@@ -80,6 +91,10 @@ std::expected<void, boost::system::error_code> tls_record_layer::encrypt_record_
     if (plaintext.size() > kMaxTlsPlaintextLen)
     {
         return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::message_size));
+    }
+    if (auto validate_iv_result = validate_nonce_iv_size(iv); !validate_iv_result)
+    {
+        return std::unexpected(validate_iv_result.error());
     }
 
     const auto nonce = make_record_nonce(iv, seq);
@@ -156,6 +171,10 @@ std::expected<std::size_t, boost::system::error_code> tls_record_layer::decrypt_
     if (auto validate_result = validate_record_for_decrypt(record_data); !validate_result)
     {
         return std::unexpected(validate_result.error());
+    }
+    if (auto validate_iv_result = validate_nonce_iv_size(iv); !validate_iv_result)
+    {
+        return std::unexpected(validate_iv_result.error());
     }
 
     const auto aad = record_data.subspan(0, kTlsRecordHeaderSize);
