@@ -1,4 +1,6 @@
 ---
+# Keep bugprone-reserved-identifier enabled globally.
+# Test wrappers using __wrap_/__real_ must use local NOLINT suppression.
 Checks: '-*,
   bugprone-*,
   google-*,
