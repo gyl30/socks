@@ -191,6 +191,10 @@ std::expected<void, boost::system::error_code> validate_aead_decrypt_inputs(cons
                                                                             const std::span<std::uint8_t> output_buffer,
                                                                             std::size_t& plaintext_len)
 {
+    if (cipher == nullptr)
+    {
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
+    }
     if (key.size() != static_cast<std::size_t>(EVP_CIPHER_key_length(cipher)))
     {
         return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
@@ -205,6 +209,10 @@ std::expected<void, boost::system::error_code> validate_aead_decrypt_inputs(cons
     }
 
     plaintext_len = ciphertext.size() - kAeadTagSize;
+    if (plaintext_len > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+    {
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::message_size));
+    }
     if (output_buffer.size() < plaintext_len)
     {
         return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::no_buffer_space));
@@ -230,6 +238,12 @@ std::expected<std::size_t, boost::system::error_code> decrypt_aead_payload(const
                                                                            const std::size_t plaintext_len,
                                                                            const std::span<std::uint8_t> output_buffer)
 {
+    if (aad.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()) ||
+        plaintext_len > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+    {
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::message_size));
+    }
+
     int update_len = 0;
     int plaintext_update_len = 0;
 
@@ -364,9 +378,19 @@ bool crypto_util::generate_x25519_keypair(std::uint8_t out_public[32], std::uint
         {
             const openssl_ptrs::evp_pkey_ptr pkey(raw_pkey);
             std::size_t len = 32;
-            EVP_PKEY_get_raw_public_key(pkey.get(), out_public, &len);
+            if (EVP_PKEY_get_raw_public_key(pkey.get(), out_public, &len) != 1 || len != 32)
+            {
+                OPENSSL_cleanse(out_public, 32);
+                OPENSSL_cleanse(out_private, 32);
+                return false;
+            }
             len = 32;
-            EVP_PKEY_get_raw_private_key(pkey.get(), out_private, &len);
+            if (EVP_PKEY_get_raw_private_key(pkey.get(), out_private, &len) != 1 || len != 32)
+            {
+                OPENSSL_cleanse(out_public, 32);
+                OPENSSL_cleanse(out_private, 32);
+                return false;
+            }
             return true;
         }
     }
@@ -523,6 +547,11 @@ std::expected<std::vector<std::uint8_t>, boost::system::error_code> crypto_util:
     const std::vector<std::uint8_t>& secret, const std::string& label, const std::vector<std::uint8_t>& context, std::size_t length, const EVP_MD* md)
 {
     std::string full_label = "tls13 " + label;
+    if (length > std::numeric_limits<std::uint16_t>::max() || full_label.size() > std::numeric_limits<std::uint8_t>::max() ||
+        context.size() > std::numeric_limits<std::uint8_t>::max())
+    {
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
+    }
     std::vector<std::uint8_t> hkdf_label;
     hkdf_label.reserve(2 + 1 + full_label.size() + 1 + context.size());
     hkdf_label.push_back(static_cast<std::uint8_t>((length >> 8) & 0xFF));
@@ -595,6 +624,10 @@ std::expected<void, boost::system::error_code> crypto_util::aead_encrypt_append(
 {
     ensure_openssl_initialized();
 
+    if (cipher == nullptr)
+    {
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
+    }
     if (key.size() != static_cast<std::size_t>(EVP_CIPHER_key_length(cipher)))
     {
         return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
@@ -602,6 +635,11 @@ std::expected<void, boost::system::error_code> crypto_util::aead_encrypt_append(
     if (nonce.size() != 12)
     {
         return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
+    }
+    if (aad.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()) ||
+        plaintext.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+    {
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::message_size));
     }
     if (!ctx.init(true, cipher, key.data(), nonce.data(), nonce.size()))
     {
@@ -614,21 +652,41 @@ std::expected<void, boost::system::error_code> crypto_util::aead_encrypt_append(
     const std::size_t current_size = output_buffer.size();
     output_buffer.resize(current_size + plaintext.size() + kAeadTagSize);
     std::uint8_t* out_ptr = output_buffer.data() + current_size;
+    const auto rollback_output = [&output_buffer, current_size]()
+    {
+        output_buffer.resize(current_size);
+    };
 
     if (!aad.empty())
     {
-        EVP_EncryptUpdate(ctx.get(), nullptr, &len, aad.data(), static_cast<int>(aad.size()));
+        if (EVP_EncryptUpdate(ctx.get(), nullptr, &len, aad.data(), static_cast<int>(aad.size())) != 1)
+        {
+            rollback_output();
+            return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        }
     }
 
-    EVP_EncryptUpdate(ctx.get(), out_ptr, &out_len, plaintext.data(), static_cast<int>(plaintext.size()));
+    if (EVP_EncryptUpdate(ctx.get(), out_ptr, &out_len, plaintext.data(), static_cast<int>(plaintext.size())) != 1)
+    {
+        rollback_output();
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+    }
 
     int final_len = 0;
-    EVP_EncryptFinal_ex(ctx.get(), out_ptr + out_len, &final_len);
-
-    EVP_CIPHER_CTX_ctrl(ctx.get(), EVP_CTRL_GCM_GET_TAG, kAeadTagSize, out_ptr + out_len + final_len);
+    if (EVP_EncryptFinal_ex(ctx.get(), out_ptr + out_len, &final_len) != 1)
+    {
+        rollback_output();
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+    }
 
     if (out_len < 0 || final_len < 0)
     {
+        rollback_output();
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+    }
+    if (EVP_CIPHER_CTX_ctrl(ctx.get(), EVP_CTRL_GCM_GET_TAG, kAeadTagSize, out_ptr + out_len + final_len) != 1)
+    {
+        rollback_output();
         return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
     }
     output_buffer.resize(current_size + static_cast<std::size_t>(out_len) + static_cast<std::size_t>(final_len) + kAeadTagSize);
