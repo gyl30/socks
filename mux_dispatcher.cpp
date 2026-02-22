@@ -48,6 +48,12 @@ void mux_dispatcher::on_plaintext_data(std::span<const std::uint8_t> data)
 
 std::vector<std::uint8_t> mux_dispatcher::pack(std::uint32_t stream_id, std::uint8_t cmd, const std::vector<std::uint8_t>& payload)
 {
+    if (payload.size() > mux::kMaxPayload)
+    {
+        LOG_ERROR("mux dispatcher pack payload too large {}", payload.size());
+        return {};
+    }
+
     std::vector<std::uint8_t> frame;
     frame.reserve(mux::kHeaderSize + payload.size());
 
