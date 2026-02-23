@@ -122,6 +122,46 @@ constexpr std::string_view k_metrics_get_request =
     "Connection: close\r\n"
     "\r\n";
 
+constexpr std::uint32_t k_bind_retry_attempts = 120;
+const auto k_bind_retry_delay = std::chrono::milliseconds(25);
+
+bool open_ephemeral_loopback_acceptor(boost::asio::ip::tcp::acceptor& acceptor)
+{
+    boost::system::error_code ec;
+    static_cast<void>(acceptor.open(boost::asio::ip::tcp::v4(), ec));
+    if (ec)
+    {
+        return false;
+    }
+
+    static_cast<void>(acceptor.set_option(boost::asio::socket_base::reuse_address(true), ec));
+    if (ec)
+    {
+        return false;
+    }
+
+    for (std::uint32_t attempt = 0; attempt < k_bind_retry_attempts; ++attempt)
+    {
+        static_cast<void>(acceptor.bind(boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 0), ec));
+        if (!ec)
+        {
+            break;
+        }
+        if (ec != boost::asio::error::address_in_use || (attempt + 1) >= k_bind_retry_attempts)
+        {
+            return false;
+        }
+        std::this_thread::sleep_for(k_bind_retry_delay);
+    }
+
+    static_cast<void>(acceptor.listen(boost::asio::socket_base::max_listen_connections, ec));
+    if (ec)
+    {
+        return false;
+    }
+    return true;
+}
+
 std::string read_response(std::uint16_t port,
                           const std::string& request,
                           const std::string& remote_host = "127.0.0.1",
@@ -616,19 +656,8 @@ TEST(MonitorServerTest, ConstructWhenPortAlreadyInUse)
 {
     boost::asio::io_context guard_ioc;
     boost::asio::ip::tcp::acceptor guard(guard_ioc);
+    ASSERT_TRUE(open_ephemeral_loopback_acceptor(guard));
     boost::system::error_code ec;
-    // NOLINTNEXTLINE(bugprone-unused-return-value)
-    static_cast<void>(guard.open(boost::asio::ip::tcp::v4(), ec));
-    ASSERT_FALSE(ec);
-    // NOLINTNEXTLINE(bugprone-unused-return-value)
-    static_cast<void>(guard.set_option(boost::asio::socket_base::reuse_address(true), ec));
-    ASSERT_FALSE(ec);
-    // NOLINTNEXTLINE(bugprone-unused-return-value)
-    static_cast<void>(guard.bind(boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 0), ec));
-    ASSERT_FALSE(ec);
-    // NOLINTNEXTLINE(bugprone-unused-return-value)
-    static_cast<void>(guard.listen(boost::asio::socket_base::max_listen_connections, ec));
-    ASSERT_FALSE(ec);
     const auto port = guard.local_endpoint(ec).port();
     ASSERT_FALSE(ec);
     ASSERT_NE(port, 0);
