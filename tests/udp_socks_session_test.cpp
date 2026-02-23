@@ -575,6 +575,23 @@ TEST(UdpSocksSessionTest, UdpSockToStreamRespectsExpectedClientEndpointOnFirstPa
     EXPECT_EQ(session->client_ep_.port(), expected_ep.port());
 }
 
+TEST(UdpSocksSessionTest, ApplyExpectedClientConstraintFallsBackToTcpPeerAddress)
+{
+    boost::asio::io_context ctx;
+    mux::config::timeout_t const timeout_cfg;
+    auto pair = make_tcp_socket_pair(ctx);
+    ASSERT_TRUE(pair.client.is_open());
+    ASSERT_TRUE(pair.server.is_open());
+
+    auto session = std::make_shared<mux::udp_socks_session>(std::move(pair.server), ctx, nullptr, 42, timeout_cfg);
+    session->apply_expected_client_constraint("0.0.0.0", 0);
+
+    ASSERT_TRUE(session->expected_client_addr_.has_value());
+    const auto peer_addr = socks_codec::normalize_ip_address(pair.client.local_endpoint().address());
+    EXPECT_EQ(*session->expected_client_addr_, peer_addr);
+    EXPECT_FALSE(session->expected_client_port_.has_value());
+}
+
 TEST(UdpSocksSessionTest, KeepTcpAliveCoversExpectedErrorCodes)
 {
     mux::config::timeout_t const timeout_cfg;
