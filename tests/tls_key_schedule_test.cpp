@@ -11,6 +11,7 @@ extern "C"
 #include <openssl/evp.h>
 }
 
+#include "crypto_util.h"
 #include "tls_key_schedule.h"
 
 using namespace reality;
@@ -25,6 +26,68 @@ void fail_evp_pkey_derive_on_call(const int call_index)
 {
     g_tls_key_schedule_derive_call_counter.store(0, std::memory_order_release);
     g_tls_key_schedule_fail_derive_call.store(call_index, std::memory_order_release);
+}
+
+std::expected<handshake_keys, boost::system::error_code> derive_handshake_keys_reference_no_psk(const std::vector<std::uint8_t>& shared_secret,
+                                                                                                 const std::vector<std::uint8_t>& server_hello_hash,
+                                                                                                 const EVP_MD* md)
+{
+    const int hash_len_i = EVP_MD_size(md);
+    if (hash_len_i <= 0)
+    {
+        return std::unexpected(std::make_error_code(std::errc::protocol_error));
+    }
+    const auto hash_len = static_cast<std::size_t>(hash_len_i);
+    const std::vector<std::uint8_t> zero_ikm(hash_len, 0);
+    auto early_secret = crypto_util::hkdf_extract(zero_ikm, zero_ikm, md);
+    if (!early_secret)
+    {
+        return std::unexpected(early_secret.error());
+    }
+
+    std::vector<std::uint8_t> empty_hash(hash_len);
+    unsigned int digest_len = 0;
+    if (EVP_Digest(nullptr, 0, empty_hash.data(), &digest_len, md, nullptr) != 1 || digest_len != hash_len)
+    {
+        return std::unexpected(std::make_error_code(std::errc::protocol_error));
+    }
+
+    auto derived_secret = crypto_util::hkdf_expand_label(*early_secret, "derived", empty_hash, hash_len, md);
+    if (!derived_secret)
+    {
+        return std::unexpected(derived_secret.error());
+    }
+    auto handshake_secret = crypto_util::hkdf_extract(*derived_secret, shared_secret, md);
+    if (!handshake_secret)
+    {
+        return std::unexpected(handshake_secret.error());
+    }
+
+    auto c_hs_secret = crypto_util::hkdf_expand_label(*handshake_secret, "c hs traffic", server_hello_hash, hash_len, md);
+    if (!c_hs_secret)
+    {
+        return std::unexpected(c_hs_secret.error());
+    }
+    auto s_hs_secret = crypto_util::hkdf_expand_label(*handshake_secret, "s hs traffic", server_hello_hash, hash_len, md);
+    if (!s_hs_secret)
+    {
+        return std::unexpected(s_hs_secret.error());
+    }
+
+    auto derived_secret_2 = crypto_util::hkdf_expand_label(*handshake_secret, "derived", empty_hash, hash_len, md);
+    if (!derived_secret_2)
+    {
+        return std::unexpected(derived_secret_2.error());
+    }
+    auto master_secret = crypto_util::hkdf_extract(*derived_secret_2, zero_ikm, md);
+    if (!master_secret)
+    {
+        return std::unexpected(master_secret.error());
+    }
+
+    return handshake_keys{.client_handshake_traffic_secret = std::move(*c_hs_secret),
+                          .server_handshake_traffic_secret = std::move(*s_hs_secret),
+                          .master_secret = std::move(*master_secret)};
 }
 
 }    // namespace
@@ -78,7 +141,7 @@ TEST(TlsKeyScheduleTest, DeriveHandshakeKeysCoversDerivedSecretFailureBranch)
 
 TEST(TlsKeyScheduleTest, DeriveHandshakeKeysRejectsAllLateStageDeriveFailures)
 {
-    for (const int call_index : {3, 4, 5, 6})
+    for (const int call_index : {3, 4, 5, 6, 7})
     {
         fail_evp_pkey_derive_on_call(call_index);
         const auto keys =
@@ -146,6 +209,22 @@ TEST(TlsKeyScheduleTest, DeriveHandshakeAndApplicationSecretsSuccess)
     ASSERT_TRUE(app.has_value());
     EXPECT_EQ(app->first.size(), 32U);
     EXPECT_EQ(app->second.size(), 32U);
+}
+
+TEST(TlsKeyScheduleTest, DeriveHandshakeKeysMatchesReferenceNoPskSchedule)
+{
+    const std::vector<std::uint8_t> shared_secret(32, 0x5a);
+    const std::vector<std::uint8_t> server_hello_hash(32, 0x6b);
+
+    const auto derived = tls_key_schedule::derive_handshake_keys(shared_secret, server_hello_hash, EVP_sha256());
+    ASSERT_TRUE(derived.has_value());
+
+    const auto expected = derive_handshake_keys_reference_no_psk(shared_secret, server_hello_hash, EVP_sha256());
+    ASSERT_TRUE(expected.has_value());
+
+    EXPECT_EQ(derived->client_handshake_traffic_secret, expected->client_handshake_traffic_secret);
+    EXPECT_EQ(derived->server_handshake_traffic_secret, expected->server_handshake_traffic_secret);
+    EXPECT_EQ(derived->master_secret, expected->master_secret);
 }
 
 TEST(TlsKeyScheduleTest, ComputeFinishedVerifyDataSuccess)

@@ -53,22 +53,12 @@ class tls_key_schedule
             return std::unexpected(hash_len_result.error());
         }
         const std::size_t hash_len = *hash_len_result;
-        const std::vector<std::uint8_t> zero_salt(hash_len, 0);
         const std::vector<std::uint8_t> zero_ikm(hash_len, 0);
-        std::uint8_t hmac_out[EVP_MAX_MD_SIZE] = {};
-        unsigned int hmac_len = 0;
-        if (HMAC(md,
-                 zero_salt.data(),
-                 static_cast<int>(zero_salt.size()),
-                 nullptr,
-                 0,
-                 hmac_out,
-                 &hmac_len) == nullptr ||
-            hmac_len != hash_len)
+        auto early_secret = crypto_util::hkdf_extract(zero_ikm, zero_ikm, md);
+        if (!early_secret)
         {
-            return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+            return std::unexpected(early_secret.error());
         }
-        std::vector<std::uint8_t> early_secret(hmac_out, hmac_out + hmac_len);
 
         std::vector<std::uint8_t> empty_hash(hash_len);
         unsigned int hl = 0;
@@ -77,7 +67,7 @@ class tls_key_schedule
             return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
         }
 
-        auto derived_secret = crypto_util::hkdf_expand_label(early_secret, "derived", empty_hash, hash_len, md);
+        auto derived_secret = crypto_util::hkdf_expand_label(*early_secret, "derived", empty_hash, hash_len, md);
         if (!derived_secret)
         {
             return std::unexpected(derived_secret.error());
