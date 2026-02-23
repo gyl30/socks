@@ -32,6 +32,24 @@
 namespace mux
 {
 
+namespace
+{
+
+std::uint8_t map_connect_error_to_socks_reply(const boost::system::error_code& ec)
+{
+    if (ec == boost::asio::error::connection_refused)
+    {
+        return socks::kRepConnRefused;
+    }
+    if (ec == boost::asio::error::network_unreachable)
+    {
+        return socks::kRepNetUnreach;
+    }
+    return socks::kRepHostUnreach;
+}
+
+}
+
 std::expected<void, boost::system::error_code> direct_upstream::open_socket_for_endpoint(const boost::asio::ip::tcp::endpoint& endpoint)
 {
     if (socket_.is_open())
@@ -73,6 +91,7 @@ void direct_upstream::apply_no_delay()
 
 boost::asio::awaitable<bool> direct_upstream::connect(const std::string& host, const std::uint16_t port)
 {
+    last_connect_reply_ = socks::kRepHostUnreach;
     const auto timeout_sec = timeout_sec_;
     const auto resolve_res = co_await timeout_io::async_resolve_with_timeout(resolver_, host, std::to_string(port), timeout_sec);
     if (!resolve_res.ok)
@@ -119,6 +138,7 @@ boost::asio::awaitable<bool> direct_upstream::connect(const std::string& host, c
     }
 
     const auto err = last_ec ? last_ec : boost::system::errc::make_error_code(boost::system::errc::host_unreachable);
+    last_connect_reply_ = map_connect_error_to_socks_reply(err);
     auto& stats = statistics::instance();
     if (err == boost::asio::error::timed_out)
     {
@@ -131,6 +151,11 @@ boost::asio::awaitable<bool> direct_upstream::connect(const std::string& host, c
         LOG_CTX_WARN(ctx_, "{} stage=connect target={}:{} error={}", log_event::kRoute, host, port, err.message());
     }
     co_return false;
+}
+
+std::uint8_t direct_upstream::connect_failure_reply() const
+{
+    return last_connect_reply_;
 }
 
 boost::asio::awaitable<std::pair<boost::system::error_code, std::size_t>> direct_upstream::read(std::vector<std::uint8_t>& buf)
@@ -220,6 +245,7 @@ boost::asio::awaitable<bool> proxy_upstream::wait_connect_ack(const std::shared_
     }
     if (ack.socks_rep != socks::kRepSuccess)
     {
+        last_connect_reply_ = ack.socks_rep;
         LOG_CTX_WARN(stream_ctx, "{} stage=wait_ack target={}:{} remote_rep={}", log_event::kRoute, host, port, ack.socks_rep);
         co_return false;
     }
@@ -242,6 +268,7 @@ boost::asio::awaitable<void> proxy_upstream::cleanup_stream(const std::shared_pt
 
 boost::asio::awaitable<bool> proxy_upstream::connect(const std::string& host, const std::uint16_t port)
 {
+    last_connect_reply_ = socks::kRepHostUnreach;
     if (!is_tunnel_ready())
     {
         LOG_CTX_WARN(ctx_, "{} proxy tunnel unavailable", log_event::kRoute);
@@ -270,6 +297,11 @@ boost::asio::awaitable<bool> proxy_upstream::connect(const std::string& host, co
     stream_ = std::move(stream);
 
     co_return true;
+}
+
+std::uint8_t proxy_upstream::connect_failure_reply() const
+{
+    return last_connect_reply_;
 }
 
 boost::asio::awaitable<std::pair<boost::system::error_code, std::size_t>> proxy_upstream::read(std::vector<std::uint8_t>& buf)
