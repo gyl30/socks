@@ -78,7 +78,7 @@ TEST(TlsKeyScheduleTest, DeriveHandshakeKeysCoversDerivedSecretFailureBranch)
 
 TEST(TlsKeyScheduleTest, DeriveHandshakeKeysRejectsAllLateStageDeriveFailures)
 {
-    for (const int call_index : {3, 4, 5, 6, 7})
+    for (const int call_index : {3, 4, 5, 6})
     {
         fail_evp_pkey_derive_on_call(call_index);
         const auto keys =
@@ -94,10 +94,7 @@ TEST(TlsKeyScheduleTest, DeriveApplicationSecretsCoversServerSecretFailureBranch
     const std::vector<std::uint8_t> handshake_hash(32, 0x8a);
 
     const auto app = tls_key_schedule::derive_application_secrets(master_secret, handshake_hash, EVP_sha256());
-    // value_or is used internally, so this still returns a value with partial results
-    ASSERT_TRUE(app.has_value());
-    EXPECT_EQ(app->first.size(), 32U);
-    EXPECT_TRUE(app->second.empty());
+    EXPECT_FALSE(app.has_value());
 }
 
 TEST(TlsKeyScheduleTest, DeriveApplicationSecretsNullDigestReturnsError)
@@ -106,10 +103,9 @@ TEST(TlsKeyScheduleTest, DeriveApplicationSecretsNullDigestReturnsError)
     const std::vector<std::uint8_t> handshake_hash(32, 0xac);
 
     const auto app = tls_key_schedule::derive_application_secrets(master_secret, handshake_hash, nullptr);
-    // With null digest, EVP_MD_size returns 0, so hash_len will be 0 and results will be empty
-    ASSERT_TRUE(app.has_value());
-    EXPECT_TRUE(app->first.empty());
-    EXPECT_TRUE(app->second.empty());
+    EXPECT_FALSE(app.has_value());
+    ASSERT_FALSE(app.has_value());
+    EXPECT_EQ(app.error(), std::make_error_code(std::errc::protocol_error));
 }
 
 TEST(TlsKeyScheduleTest, ComputeFinishedVerifyDataInvalidBaseKey)
