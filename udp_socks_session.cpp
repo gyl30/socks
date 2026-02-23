@@ -470,6 +470,29 @@ void udp_socks_session::close_impl()
     }
 }
 
+void udp_socks_session::apply_expected_client_constraint(const std::string& host, const std::uint16_t port)
+{
+    configure_expected_client_constraint(host, port, expected_client_addr_, expected_client_port_);
+    if (expected_client_addr_.has_value())
+    {
+        return;
+    }
+
+    boost::system::error_code peer_ec;
+    const auto peer_ep = socket_.remote_endpoint(peer_ec);
+    if (peer_ec)
+    {
+        return;
+    }
+
+    const auto peer_addr = socks_codec::normalize_ip_address(peer_ep.address());
+    if (peer_addr.is_unspecified())
+    {
+        return;
+    }
+    expected_client_addr_ = peer_addr;
+}
+
 boost::asio::awaitable<std::shared_ptr<mux_stream>> udp_socks_session::prepare_udp_associate(boost::asio::ip::address& local_addr,
                                                                                              std::uint16_t& udp_bind_port)
 {
@@ -571,7 +594,7 @@ void udp_socks_session::on_reset() { on_close(); }
 
 boost::asio::awaitable<void> udp_socks_session::run(const std::string& host, const std::uint16_t port)
 {
-    configure_expected_client_constraint(host, port, expected_client_addr_, expected_client_port_);
+    apply_expected_client_constraint(host, port);
 
     if (closed_.load(std::memory_order_acquire))
     {
