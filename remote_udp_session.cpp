@@ -403,13 +403,21 @@ boost::asio::awaitable<void> remote_udp_session::watchdog()
         const auto current_ms = now_ms();
         const auto read_elapsed_ms = current_ms - last_read_time_ms_.load(std::memory_order_acquire);
         const auto write_elapsed_ms = current_ms - last_write_time_ms_.load(std::memory_order_acquire);
+        bool timeout_triggered = false;
         if (read_timeout_ms_ > 0 && read_elapsed_ms > read_timeout_ms_)
         {
             LOG_CTX_WARN(ctx_, "{} read idle {}s", log_event::kTimeout, read_elapsed_ms / 1000ULL);
+            timeout_triggered = true;
         }
         if (write_timeout_ms_ > 0 && write_elapsed_ms > write_timeout_ms_)
         {
             LOG_CTX_WARN(ctx_, "{} write idle {}s", log_event::kTimeout, write_elapsed_ms / 1000ULL);
+            timeout_triggered = true;
+        }
+        if (timeout_triggered)
+        {
+            request_stop();
+            break;
         }
     }
     LOG_CTX_DEBUG(ctx_, "{} watchdog finished", log_event::kMux);
