@@ -56,6 +56,8 @@ extern "C"
 
 static std::atomic<bool> g_fail_tcp_nodelay_setsockopt_once{false};
 static std::atomic<int> g_fail_tcp_nodelay_setsockopt_errno{EPERM};
+static std::atomic<bool> g_fail_connect_once{false};
+static std::atomic<int> g_fail_connect_errno{ENETUNREACH};
 
 static void fail_next_tcp_nodelay_setsockopt(const int err)
 {
@@ -63,7 +65,14 @@ static void fail_next_tcp_nodelay_setsockopt(const int err)
     g_fail_tcp_nodelay_setsockopt_once.store(true, std::memory_order_release);
 }
 
+static void fail_next_connect(const int err)
+{
+    g_fail_connect_errno.store(err, std::memory_order_release);
+    g_fail_connect_once.store(true, std::memory_order_release);
+}
+
 extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);
+extern "C" int __real_connect(int sockfd, const sockaddr* addr, socklen_t addrlen);
 
 extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)
 {
@@ -73,6 +82,16 @@ extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void*
         return -1;
     }
     return __real_setsockopt(sockfd, level, optname, optval, optlen);
+}
+
+extern "C" int __wrap_connect(int sockfd, const sockaddr* addr, socklen_t addrlen)
+{
+    if (g_fail_connect_once.exchange(false, std::memory_order_acq_rel))
+    {
+        errno = g_fail_connect_errno.load(std::memory_order_acquire);
+        return -1;
+    }
+    return __real_connect(sockfd, addr, addrlen);
 }
 
 namespace
@@ -261,6 +280,39 @@ TEST(RemoteSessionTest, RunConnectFailureSendsConnRefusedAckAndReset)
     mux::ack_payload ack{};
     ASSERT_TRUE(mux::mux_codec::decode_ack(ack_payload.data(), ack_payload.size(), ack));
     EXPECT_EQ(ack.socks_rep, socks::kRepConnRefused);
+    EXPECT_GE(stats.remote_session_connect_errors(), connect_errors_before + 1);
+}
+
+TEST(RemoteSessionTest, RunConnectNetworkUnreachableSendsNetUnreachAckAndReset)
+{
+    boost::asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    mux::connection_context const ctx;
+    auto session = std::make_shared<mux::remote_session>(conn, 44, io_context, ctx);
+    auto& stats = mux::statistics::instance();
+    const auto connect_errors_before = stats.remote_session_connect_errors();
+
+    boost::asio::ip::tcp::acceptor acceptor(io_context);
+    ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
+    const std::uint16_t target_port = acceptor.local_endpoint().port();
+    acceptor.close();
+
+    std::vector<std::uint8_t> ack_payload;
+    EXPECT_CALL(*conn, mock_send_async(44, mux::kCmdAck, _))
+        .WillOnce(
+            [&ack_payload](const std::uint32_t, const std::uint8_t, const std::vector<std::uint8_t>& payload)
+            {
+                ack_payload = payload;
+                return boost::system::error_code{};
+            });
+    EXPECT_CALL(*conn, mock_send_async(44, mux::kCmdRst, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(boost::system::error_code{}));
+
+    fail_next_connect(ENETUNREACH);
+    mux::test::run_awaitable_void(io_context, session->run(make_syn("127.0.0.1", target_port)));
+
+    mux::ack_payload ack{};
+    ASSERT_TRUE(mux::mux_codec::decode_ack(ack_payload.data(), ack_payload.size(), ack));
+    EXPECT_EQ(ack.socks_rep, socks::kRepNetUnreach);
     EXPECT_GE(stats.remote_session_connect_errors(), connect_errors_before + 1);
 }
 

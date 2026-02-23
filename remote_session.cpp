@@ -135,6 +135,23 @@ boost::asio::awaitable<timed_connect_result> connect_target_endpoint(boost::asio
     co_return connect_res;
 }
 
+std::uint8_t map_connect_failure_reply(const timed_connect_result& connect_res)
+{
+    if (connect_res.timed_out)
+    {
+        return socks::kRepConnRefused;
+    }
+    if (connect_res.ec == boost::asio::error::connection_refused)
+    {
+        return socks::kRepConnRefused;
+    }
+    if (connect_res.ec == boost::asio::error::network_unreachable)
+    {
+        return socks::kRepNetUnreach;
+    }
+    return socks::kRepHostUnreach;
+}
+
 void set_target_socket_no_delay(boost::asio::ip::tcp::socket& target_socket, const connection_context& ctx)
 {
     boost::system::error_code ec_sock;
@@ -269,8 +286,8 @@ boost::asio::awaitable<bool> prepare_remote_target_connection(boost::asio::ip::t
         {
             co_return false;
         }
-        // Keep timeout mapping compatible with existing clients.
-        co_await send_failure_ack_and_reset(manager, conn, stream_id, socks::kRepConnRefused, ctx);
+        const auto rep = map_connect_failure_reply(connect_res);
+        co_await send_failure_ack_and_reset(manager, conn, stream_id, rep, ctx);
         co_return false;
     }
 
