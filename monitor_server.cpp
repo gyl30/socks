@@ -1,6 +1,8 @@
 #include <array>
 #include <atomic>
 #include <string>
+#include <thread>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <utility>
@@ -24,6 +26,9 @@ using tcp = boost::asio::ip::tcp;
 
 namespace
 {
+
+constexpr std::uint32_t kEphemeralMonitorBindRetryAttempts = 120;
+const auto kEphemeralMonitorBindRetryDelay = std::chrono::milliseconds(25);
 
 std::string escape_prometheus_label(const std::string_view value)
 {
@@ -259,30 +264,50 @@ monitor_server::monitor_server(boost::asio::io_context& ioc, std::string bind_ho
         return;
     }
     endpoint.port(port);
-    if (acceptor_.open(endpoint.protocol(), ec); ec)
+    const bool retry_ephemeral_bind = (port == 0);
+    const std::uint32_t max_attempts = retry_ephemeral_bind ? kEphemeralMonitorBindRetryAttempts : 1;
+    for (std::uint32_t attempt = 0; attempt < max_attempts; ++attempt)
     {
-        LOG_ERROR("failed to open acceptor {}", ec.message());
+        if (acceptor_.open(endpoint.protocol(), ec); ec)
+        {
+            LOG_ERROR("failed to open acceptor {}", ec.message());
+            return;
+        }
+        if (acceptor_.set_option(boost::asio::socket_base::reuse_address(true), ec); ec)
+        {
+            LOG_ERROR("failed to set reuse_address {}", ec.message());
+            close_acceptor_on_failure();
+            return;
+        }
+        if (acceptor_.bind(endpoint, ec); ec)
+        {
+            const bool can_retry = retry_ephemeral_bind && ec == boost::asio::error::address_in_use && (attempt + 1) < max_attempts;
+            close_acceptor_on_failure();
+            if (can_retry)
+            {
+                std::this_thread::sleep_for(kEphemeralMonitorBindRetryDelay);
+                continue;
+            }
+            LOG_ERROR("failed to bind {}", ec.message());
+            return;
+        }
+        if (acceptor_.listen(boost::asio::socket_base::max_listen_connections, ec); ec)
+        {
+            LOG_ERROR("failed to listen {}", ec.message());
+            close_acceptor_on_failure();
+            return;
+        }
+
+        std::uint16_t bound_port = port;
+        boost::system::error_code local_ep_ec;
+        const auto local_ep = acceptor_.local_endpoint(local_ep_ec);
+        if (!local_ep_ec)
+        {
+            bound_port = local_ep.port();
+        }
+        LOG_INFO("monitor server listening on {}:{}", bind_host, bound_port);
         return;
     }
-    if (acceptor_.set_option(boost::asio::socket_base::reuse_address(true), ec); ec)
-    {
-        LOG_ERROR("failed to set reuse_address {}", ec.message());
-        close_acceptor_on_failure();
-        return;
-    }
-    if (acceptor_.bind(endpoint, ec); ec)
-    {
-        LOG_ERROR("failed to bind {}", ec.message());
-        close_acceptor_on_failure();
-        return;
-    }
-    if (acceptor_.listen(boost::asio::socket_base::max_listen_connections, ec); ec)
-    {
-        LOG_ERROR("failed to listen {}", ec.message());
-        close_acceptor_on_failure();
-        return;
-    }
-    LOG_INFO("monitor server listening on {}:{}", bind_host, port);
 }
 
 void monitor_server::start()
