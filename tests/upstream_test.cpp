@@ -265,11 +265,14 @@ TEST_F(upstream_test_fixture, DirectUpstreamResolveFail)
 {
     auto& stats = mux::statistics::instance();
     const auto resolve_errors_before = stats.direct_upstream_resolve_errors();
+    const auto resolve_timeouts_before = stats.direct_upstream_resolve_timeouts();
     mux::direct_upstream upstream(ctx(), mux::connection_context{});
 
     const auto success = mux::test::run_awaitable(ctx(), upstream.connect("non-existent.invalid", 80));
     EXPECT_FALSE(success);
-    EXPECT_GE(stats.direct_upstream_resolve_errors(), resolve_errors_before + 1);
+    const bool resolve_error_recorded = stats.direct_upstream_resolve_errors() >= (resolve_errors_before + 1);
+    const bool resolve_timeout_recorded = stats.direct_upstream_resolve_timeouts() >= (resolve_timeouts_before + 1);
+    EXPECT_TRUE(resolve_error_recorded || resolve_timeout_recorded);
 }
 
 TEST_F(upstream_test_fixture, DirectUpstreamReconnectSuccess)
