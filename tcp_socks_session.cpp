@@ -166,7 +166,7 @@ boost::asio::awaitable<bool> tcp_socks_session::connect_backend(const std::share
     }
 
     LOG_CTX_WARN(ctx_, "{} connect failed {} {} via {}", log_event::kConnInit, host, port, route_name(route));
-    co_await reply_error(socks::kRepHostUnreach);
+    co_await reply_error(backend->connect_failure_reply());
     co_return false;
 }
 

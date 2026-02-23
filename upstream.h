@@ -17,6 +17,7 @@
 #include "mux_stream.h"
 #include "mux_tunnel.h"
 #include "log_context.h"
+#include "protocol.h"
 
 namespace mux
 {
@@ -27,6 +28,7 @@ class upstream
     virtual ~upstream() = default;
 
     [[nodiscard]] virtual boost::asio::awaitable<bool> connect(const std::string& host, std::uint16_t port) = 0;
+    [[nodiscard]] virtual std::uint8_t connect_failure_reply() const = 0;
 
     [[nodiscard]] virtual boost::asio::awaitable<std::pair<boost::system::error_code, std::size_t>> read(std::vector<std::uint8_t>& buf) = 0;
 
@@ -57,6 +59,7 @@ class direct_upstream : public upstream
     }
 
     boost::asio::awaitable<bool> connect(const std::string& host, std::uint16_t port) override;
+    std::uint8_t connect_failure_reply() const override;
 
     boost::asio::awaitable<std::pair<boost::system::error_code, std::size_t>> read(std::vector<std::uint8_t>& buf) override;
 
@@ -76,6 +79,7 @@ class direct_upstream : public upstream
     connection_context ctx_;
     std::uint32_t mark_ = 0;
     std::uint32_t timeout_sec_ = 10;
+    std::uint8_t last_connect_reply_ = socks::kRepHostUnreach;
 };
 
 class proxy_upstream : public upstream
@@ -84,6 +88,7 @@ class proxy_upstream : public upstream
     explicit proxy_upstream(std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> tunnel, connection_context ctx);
 
     boost::asio::awaitable<bool> connect(const std::string& host, std::uint16_t port) override;
+    std::uint8_t connect_failure_reply() const override;
 
     boost::asio::awaitable<std::pair<boost::system::error_code, std::size_t>> read(std::vector<std::uint8_t>& buf) override;
 
@@ -102,6 +107,7 @@ class proxy_upstream : public upstream
     connection_context ctx_;
     std::shared_ptr<mux_stream> stream_;
     std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> tunnel_;
+    std::uint8_t last_connect_reply_ = socks::kRepHostUnreach;
 };
 
 }    // namespace mux

@@ -179,6 +179,7 @@ class mock_upstream final : public mux::upstream
 {
    public:
     bool connect_result = true;
+    std::uint8_t connect_failure_reply_code = socks::kRepHostUnreach;
     std::pair<boost::system::error_code, std::size_t> read_result = {boost::asio::error::eof, 0};
     std::size_t write_result = 0;
     int close_calls = 0;
@@ -192,6 +193,8 @@ class mock_upstream final : public mux::upstream
         (void)port;
         co_return connect_result;
     }
+
+    std::uint8_t connect_failure_reply() const override { return connect_failure_reply_code; }
 
     boost::asio::awaitable<std::pair<boost::system::error_code, std::size_t>> read(std::vector<std::uint8_t>& buf) override
     {

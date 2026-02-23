@@ -68,6 +68,7 @@ class fake_upstream final : public mux::upstream
 {
    public:
     bool connect_result = true;
+    std::uint8_t connect_failure_reply_code = socks::kRepHostUnreach;
     std::size_t write_result = 0;
     std::size_t close_calls = 0;
     std::vector<std::vector<std::uint8_t>> writes;
@@ -79,6 +80,8 @@ class fake_upstream final : public mux::upstream
         (void)port;
         co_return connect_result;
     }
+
+    std::uint8_t connect_failure_reply() const override { return connect_failure_reply_code; }
 
     boost::asio::awaitable<std::pair<boost::system::error_code, std::size_t>> read(std::vector<std::uint8_t>& buf) override
     {
@@ -347,12 +350,13 @@ TEST(TcpSocksSessionTest, ConnectBackendSuccessAndFailure)
 
     auto backend_fail = std::make_shared<fake_upstream>();
     backend_fail->connect_result = false;
+    backend_fail->connect_failure_reply_code = socks::kRepConnRefused;
     EXPECT_FALSE(mux::test::run_awaitable(io_context, session->connect_backend(backend_fail, "example.com", 443, mux::route_type::kProxy)));
 
     std::uint8_t res[10] = {0};
     boost::asio::read(pair.client, boost::asio::buffer(res));
     EXPECT_EQ(res[0], socks::kVer);
-    EXPECT_EQ(res[1], socks::kRepHostUnreach);
+    EXPECT_EQ(res[1], socks::kRepConnRefused);
 }
 
 TEST(TcpSocksSessionTest, CloseBackendOnceIsIdempotentAndHandlesNull)
