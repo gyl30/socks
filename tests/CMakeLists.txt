@@ -238,7 +238,8 @@ if(LINUX)
   target_link_options(tcp_socks_session_test PRIVATE -Wl,--wrap=shutdown
                       -Wl,--wrap=close)
   add_socks_test(remote_session_test)
-  target_link_options(remote_session_test PRIVATE -Wl,--wrap=setsockopt)
+  target_link_options(remote_session_test PRIVATE -Wl,--wrap=setsockopt
+                      -Wl,--wrap=connect)
 endif()
 
 if(LINUX)
