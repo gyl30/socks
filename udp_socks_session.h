@@ -64,6 +64,7 @@ class udp_socks_session : public mux_stream_interface, public std::enable_shared
 
     boost::asio::awaitable<void> keep_tcp_alive();
     boost::asio::awaitable<void> idle_watchdog();
+    void apply_expected_client_constraint(const std::string& host, std::uint16_t port);
     void close_impl();
 
    private:
