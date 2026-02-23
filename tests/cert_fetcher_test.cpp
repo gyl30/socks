@@ -193,10 +193,13 @@ TEST(CertFetcherTest, BasicFetch)
         [&]() -> boost::asio::awaitable<void>
         {
             const auto res = co_await reality::cert_fetcher::fetch(ctx, "127.0.0.1", server.port(), "example.com");
-            if (res.has_value())
+            EXPECT_TRUE(res.has_value());
+            if (!res.has_value())
             {
-                EXPECT_FALSE(res->cert_msg.empty());
+                finished = true;
+                co_return;
             }
+            EXPECT_FALSE(res->cert_msg.empty());
             finished = true;
             co_return;
         },
