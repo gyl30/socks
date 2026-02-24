@@ -296,12 +296,13 @@ TEST(TcpSocksSessionTest, CreateBackendReturnsDirectAndProxy)
     EXPECT_NE(session->create_backend(mux::route_type::kProxy), nullptr);
 }
 
-TEST(TcpSocksSessionTest, CreateBackendDirectUsesConfiguredReadTimeout)
+TEST(TcpSocksSessionTest, CreateBackendDirectUsesConfiguredConnectTimeout)
 {
     boost::asio::io_context io_context;
     auto router = std::make_shared<mux::router>();
     mux::config::timeout_t timeout_cfg{};
-    timeout_cfg.read = 7;
+    timeout_cfg.connect = 7;
+    timeout_cfg.write = 13;
 
     auto session =
         std::make_shared<mux::tcp_socks_session>(boost::asio::ip::tcp::socket(io_context), io_context, nullptr, std::move(router), 1, timeout_cfg);
@@ -309,15 +310,17 @@ TEST(TcpSocksSessionTest, CreateBackendDirectUsesConfiguredReadTimeout)
     const auto backend = session->create_backend(mux::route_type::kDirect);
     const auto direct_backend = std::dynamic_pointer_cast<mux::direct_upstream>(backend);
     ASSERT_NE(direct_backend, nullptr);
-    EXPECT_EQ(direct_backend->timeout_sec_, 7U);
+    EXPECT_EQ(direct_backend->connect_timeout_sec_, 7U);
+    EXPECT_EQ(direct_backend->write_timeout_sec_, 13U);
 }
 
-TEST(TcpSocksSessionTest, CreateBackendDirectKeepsReadTimeoutZeroAsDisabled)
+TEST(TcpSocksSessionTest, CreateBackendDirectKeepsConnectTimeoutZeroAsDisabled)
 {
     boost::asio::io_context io_context;
     auto router = std::make_shared<mux::router>();
     mux::config::timeout_t timeout_cfg{};
-    timeout_cfg.read = 0;
+    timeout_cfg.connect = 0;
+    timeout_cfg.write = 5;
 
     auto session =
         std::make_shared<mux::tcp_socks_session>(boost::asio::ip::tcp::socket(io_context), io_context, nullptr, std::move(router), 1, timeout_cfg);
@@ -325,7 +328,8 @@ TEST(TcpSocksSessionTest, CreateBackendDirectKeepsReadTimeoutZeroAsDisabled)
     const auto backend = session->create_backend(mux::route_type::kDirect);
     const auto direct_backend = std::dynamic_pointer_cast<mux::direct_upstream>(backend);
     ASSERT_NE(direct_backend, nullptr);
-    EXPECT_EQ(direct_backend->timeout_sec_, 0U);
+    EXPECT_EQ(direct_backend->connect_timeout_sec_, 0U);
+    EXPECT_EQ(direct_backend->write_timeout_sec_, 5U);
 }
 
 TEST(TcpSocksSessionTest, ReplySuccessWritesSocksResponse)
