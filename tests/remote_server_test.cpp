@@ -2945,6 +2945,13 @@ TEST_F(remote_server_test_fixture, ConstructorCoversMalformedBracketDestParseBra
     ASSERT_NE(server_missing_colon, nullptr);
     EXPECT_FALSE(server_missing_colon->fallback_dest_valid_);
     EXPECT_FALSE(server_missing_colon->auth_config_valid_);
+
+    auto cfg_unbracketed_ipv6 = make_server_cfg(0, {}, "0102030405060708");
+    cfg_unbracketed_ipv6.reality.dest = "::1:8443";
+    auto server_unbracketed_ipv6 = construct_server_until_acceptor_ready(pool, cfg_unbracketed_ipv6);
+    ASSERT_NE(server_unbracketed_ipv6, nullptr);
+    EXPECT_FALSE(server_unbracketed_ipv6->fallback_dest_valid_);
+    EXPECT_FALSE(server_unbracketed_ipv6->auth_config_valid_);
 }
 
 TEST_F(remote_server_test_fixture, ConstructorRejectsInvalidDestPortBranches)
