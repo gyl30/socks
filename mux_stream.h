@@ -40,6 +40,7 @@ class mux_stream : public mux_stream_interface, public std::enable_shared_from_t
     [[nodiscard]] boost::asio::awaitable<boost::system::error_code> async_write_some(const void* data, std::size_t len);
     [[nodiscard]] boost::asio::awaitable<boost::system::error_code> async_write_some(std::vector<std::uint8_t> payload);
 
+    boost::asio::awaitable<void> shutdown_send();
     boost::asio::awaitable<void> close();
 
     [[nodiscard]] bool accept_ack() const override
@@ -54,6 +55,7 @@ class mux_stream : public mux_stream_interface, public std::enable_shared_from_t
     void on_reset() override;
 
    private:
+    boost::asio::awaitable<void> send_fin_if_needed();
     void close_internal();
 
    private:

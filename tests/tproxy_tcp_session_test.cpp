@@ -182,6 +182,7 @@ class mock_upstream final : public mux::upstream
     std::uint8_t connect_failure_reply_code = socks::kRepHostUnreach;
     std::pair<boost::system::error_code, std::size_t> read_result = {boost::asio::error::eof, 0};
     std::size_t write_result = 0;
+    int shutdown_send_calls = 0;
     int close_calls = 0;
     std::size_t write_calls = 0;
     std::vector<std::uint8_t> last_write;
@@ -208,6 +209,12 @@ class mock_upstream final : public mux::upstream
         last_write = data;
         writes.push_back(data);
         co_return write_result;
+    }
+
+    boost::asio::awaitable<void> shutdown_send() override
+    {
+        ++shutdown_send_calls;
+        co_return;
     }
 
     boost::asio::awaitable<void> close() override
@@ -456,6 +463,47 @@ TEST(TproxyTcpSessionTest, ClientToUpstreamClosesBackendWhenWriteFails)
     mux::test::run_awaitable_void(ctx, session->client_to_upstream(backend));
     ASSERT_EQ(backend->writes.size(), 1U);
     EXPECT_EQ(backend->writes[0], std::vector<std::uint8_t>({0x21, 0x43, 0x65}));
+    EXPECT_EQ(backend->close_calls, 1);
+}
+
+TEST(TproxyTcpSessionTest, ClientToUpstreamShutsDownBackendSendOnClientEof)
+{
+    boost::asio::io_context ctx;
+    auto pair = make_tcp_socket_pair(ctx);
+    auto router = std::make_shared<direct_router>();
+    mux::config const cfg;
+    const boost::asio::ip::tcp::endpoint dst_ep(boost::asio::ip::make_address("127.0.0.1"), 80);
+    auto session = std::make_shared<mux::tproxy_tcp_session>(std::move(pair.server), ctx, nullptr, std::move(router), 34, cfg, dst_ep);
+
+    auto backend = std::make_shared<mock_upstream>();
+    backend->write_result = 3;
+
+    const std::uint8_t payload[] = {0x11, 0x22, 0x33};
+    boost::asio::write(pair.client, boost::asio::buffer(payload));
+    pair.client.shutdown(boost::asio::ip::tcp::socket::shutdown_send);
+
+    mux::test::run_awaitable_void(ctx, session->client_to_upstream(backend));
+    ASSERT_EQ(backend->writes.size(), 1U);
+    EXPECT_EQ(backend->writes[0], std::vector<std::uint8_t>({0x11, 0x22, 0x33}));
+    EXPECT_EQ(backend->shutdown_send_calls, 1);
+    EXPECT_EQ(backend->close_calls, 0);
+}
+
+TEST(TproxyTcpSessionTest, ClientToUpstreamClosesBackendOnClientReadError)
+{
+    boost::asio::io_context ctx;
+    auto pair = make_tcp_socket_pair(ctx);
+    auto router = std::make_shared<direct_router>();
+    mux::config const cfg;
+    const boost::asio::ip::tcp::endpoint dst_ep(boost::asio::ip::make_address("127.0.0.1"), 80);
+    auto session = std::make_shared<mux::tproxy_tcp_session>(std::move(pair.server), ctx, nullptr, std::move(router), 35, cfg, dst_ep);
+
+    auto backend = std::make_shared<mock_upstream>();
+    backend->write_result = 3;
+    session->socket_.close();
+
+    mux::test::run_awaitable_void(ctx, session->client_to_upstream(backend));
+    EXPECT_EQ(backend->shutdown_send_calls, 0);
     EXPECT_EQ(backend->close_calls, 1);
 }
 

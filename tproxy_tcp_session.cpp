@@ -262,6 +262,14 @@ boost::asio::awaitable<void> tproxy_tcp_session::client_to_upstream(std::shared_
         const std::size_t n = co_await socket_.async_read_some(boost::asio::buffer(buf), boost::asio::redirect_error(boost::asio::use_awaitable, ec));
         if (should_stop_client_read(ec, n))
         {
+            if (!ec || ec == boost::asio::error::eof)
+            {
+                co_await backend->shutdown_send();
+            }
+            else
+            {
+                co_await close_backend_once(backend);
+            }
             break;
         }
         if (!co_await write_client_chunk_to_backend(backend, buf, n))

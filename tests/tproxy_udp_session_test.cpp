@@ -1658,6 +1658,62 @@ TEST(TproxyUdpSessionTest, EnsureProxyStreamReturnsFalseWhenTunnelPoolMissing)
     EXPECT_TRUE(session->tunnel_.expired());
 }
 
+TEST(TproxyUdpSessionTest, EnsureProxyStreamReturnsFalseOnInvalidAckPayload)
+{
+    boost::asio::io_context ctx;
+    mux::io_context_pool pool(1);
+    auto router = std::make_shared<proxy_router>();
+    mux::config cfg;
+    cfg.reality.public_key = std::string(64, 'a');
+    cfg.timeout.idle = 3;
+    cfg.tproxy.mark = 0;
+
+    auto tunnel_pool = std::make_shared<mux::client_tunnel_pool>(pool, cfg, 0);
+    auto session = std::make_shared<mux::tproxy_udp_session>(
+        ctx, tunnel_pool, router, nullptr, 32, cfg, boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 12437));
+
+    auto tunnel = std::make_shared<mux::mux_tunnel_impl<boost::asio::ip::tcp::socket>>(
+        boost::asio::ip::tcp::socket(ctx), ctx, mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 131);
+    auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx);
+    tunnel->connection_ = mock_conn;
+    tunnel_pool->tunnel_pool_.resize(1);
+    tunnel_pool->tunnel_pool_[0] = tunnel;
+
+    std::shared_ptr<mux::mux_stream> handshake_stream;
+    ON_CALL(*mock_conn, id()).WillByDefault(testing::Return(131));
+    ON_CALL(*mock_conn, register_stream(testing::_, testing::_))
+        .WillByDefault(
+            [&handshake_stream](const std::uint32_t /*id*/, const std::shared_ptr<mux::mux_stream_interface>& stream)
+            {
+                if (const auto mux_stream = std::dynamic_pointer_cast<mux::mux_stream>(stream))
+                {
+                    handshake_stream = mux_stream;
+                }
+                return true;
+            });
+    ON_CALL(*mock_conn, remove_stream(testing::_)).WillByDefault([](const std::uint32_t /*id*/) {});
+    ON_CALL(*mock_conn, mock_send_async(testing::_, testing::_, testing::_)).WillByDefault(testing::Return(boost::system::error_code{}));
+
+    EXPECT_CALL(*mock_conn, remove_stream(testing::_)).Times(1);
+
+    bool ensure_ok = true;
+    boost::asio::co_spawn(
+        ctx, [session, &ensure_ok]() -> boost::asio::awaitable<void> { ensure_ok = co_await session->ensure_proxy_stream(); }, boost::asio::detached);
+
+    for (int i = 0; i < 200 && handshake_stream == nullptr; ++i)
+    {
+        ctx.poll_one();
+    }
+    ASSERT_NE(handshake_stream, nullptr);
+
+    handshake_stream->on_data(std::vector<std::uint8_t>{0x01, 0x00});
+    ctx.run();
+
+    EXPECT_FALSE(ensure_ok);
+    EXPECT_EQ(session->stream_, nullptr);
+    EXPECT_TRUE(session->tunnel_.expired());
+}
+
 TEST(TproxyUdpSessionTest, EnsureProxyStreamSucceedsWhenConcurrentInstallAlreadyCompleted)
 {
     boost::asio::io_context ctx;
