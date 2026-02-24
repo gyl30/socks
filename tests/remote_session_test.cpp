@@ -397,6 +397,19 @@ TEST(RemoteSessionTest, RunSkipsHandshakeWhenResetAlreadyRequested)
     mux::test::run_awaitable_void(io_context, session->run(make_syn("non-existent.invalid", 443)));
 }
 
+TEST(RemoteSessionTest, RunSkipsHandshakeWhenFinAlreadyRequested)
+{
+    boost::asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    mux::connection_context const ctx;
+    auto session = std::make_shared<mux::remote_session>(conn, 41, io_context, ctx);
+
+    session->on_close();
+
+    EXPECT_CALL(*conn, mock_send_async(_, _, _)).Times(0);
+    mux::test::run_awaitable_void(io_context, session->run(make_syn("non-existent.invalid", 443)));
+}
+
 TEST(RemoteSessionTest, RunSuccessWhenSetNoDelayFailsStillSendsAckAndFin)
 {
     boost::asio::io_context io_context;
@@ -639,6 +652,45 @@ TEST(RemoteSessionTest, DownstreamStopsWhenTargetReadOperationAbortedStillSendsF
 
     EXPECT_CALL(*conn, mock_send_async(28, mux::kCmdFin, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(boost::system::error_code{}));
     mux::test::run_awaitable_void(io_context, session->downstream());
+}
+
+TEST(RemoteSessionTest, OnCloseDoesNotAbortPendingDownstreamRead)
+{
+    boost::asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    mux::connection_context const ctx;
+    auto session = std::make_shared<mux::remote_session>(conn, 43, io_context, ctx);
+
+    auto pair = make_tcp_socket_pair(io_context);
+    session->target_socket_ = std::move(pair.server);
+
+    const std::vector<std::uint8_t> payload = {0xFA, 0xCE, 0x01};
+    {
+        ::testing::InSequence const seq;
+        EXPECT_CALL(*conn, mock_send_async(43, mux::kCmdDat, payload)).WillOnce(::testing::Return(boost::system::error_code{}));
+        EXPECT_CALL(*conn, mock_send_async(43, mux::kCmdFin, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(boost::system::error_code{}));
+    }
+
+    auto future = std::async(std::launch::async,
+                             [&io_context, session]()
+                             {
+                                 mux::test::run_awaitable_void(io_context, session->downstream());
+                             });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    session->on_close();
+    boost::asio::write(pair.client, boost::asio::buffer(payload));
+    pair.client.shutdown(boost::asio::ip::tcp::socket::shutdown_send);
+
+    const bool completed = future.wait_for(std::chrono::milliseconds(500)) == std::future_status::ready;
+    if (!completed)
+    {
+        boost::system::error_code close_ec;
+        session->target_socket_.close(close_ec);
+        pair.client.close(close_ec);
+    }
+    future.wait();
+    EXPECT_TRUE(completed);
 }
 
 TEST(RemoteSessionTest, DownstreamStopsWhenTargetReadConnectionResetStillSendsFin)

@@ -54,6 +54,7 @@ class remote_session : public mux_stream_interface, public std::enable_shared_fr
     boost::asio::experimental::concurrent_channel<void(boost::system::error_code, std::vector<std::uint8_t>)> recv_channel_;
     std::weak_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> manager_;
     std::atomic<bool> reset_requested_{false};
+    std::atomic<bool> fin_requested_{false};
     std::uint32_t connect_timeout_sec_ = 10;
 };
 
