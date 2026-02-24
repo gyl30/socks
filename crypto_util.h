@@ -94,6 +94,7 @@ class crypto_util
         const std::vector<std::uint8_t>& cert_der);
 
     [[nodiscard]] static std::expected<void, boost::system::error_code> verify_tls13_signature(EVP_PKEY* pub_key,
+                                                                                               std::uint16_t signature_scheme,
                                                                                                const std::vector<std::uint8_t>& transcript_hash,
                                                                                                const std::vector<std::uint8_t>& signature);
 };

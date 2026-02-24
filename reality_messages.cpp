@@ -944,7 +944,7 @@ static bool parse_certificate_verify_payload_length(const std::vector<std::uint8
         return false;
     }
     payload_len = (static_cast<std::uint32_t>(msg[1]) << 16) | (static_cast<std::uint32_t>(msg[2]) << 8) | static_cast<std::uint32_t>(msg[3]);
-    return msg.size() >= 4 + payload_len;
+    return msg.size() == 4 + payload_len;
 }
 
 static bool read_certificate_verify_u16(const std::vector<std::uint8_t>& msg, std::size_t& pos, std::uint16_t& value)
@@ -979,6 +979,10 @@ std::optional<certificate_verify_info> parse_certificate_verify(const std::vecto
     }
 
     if (pos + sig_len > msg.size())
+    {
+        return std::nullopt;
+    }
+    if (pos + sig_len != 4 + payload_len)
     {
         return std::nullopt;
     }

@@ -20,6 +20,7 @@ extern "C"
 #include <openssl/bio.h>
 #include <openssl/evp.h>
 #include <openssl/kdf.h>
+#include <openssl/rsa.h>
 #include <openssl/rand.h>
 #include <openssl/x509.h>
 #include <openssl/types.h>
@@ -100,6 +101,82 @@ bool is_hex_separator(const char ch)
 {
     const auto value = static_cast<unsigned char>(ch);
     return ch == ':' || ch == '-' || std::isspace(value) != 0;
+}
+
+std::expected<const EVP_MD*, boost::system::error_code> tls13_signature_digest(const std::uint16_t signature_scheme)
+{
+    using reality::tls_consts::sig_alg::kEcdsaSecp256r1Sha256;
+    using reality::tls_consts::sig_alg::kEcdsaSecp384r1Sha384;
+    using reality::tls_consts::sig_alg::kEcdsaSecp521r1Sha512;
+    using reality::tls_consts::sig_alg::kEd25519;
+    using reality::tls_consts::sig_alg::kRsaPkcs1Sha256;
+    using reality::tls_consts::sig_alg::kRsaPkcs1Sha384;
+    using reality::tls_consts::sig_alg::kRsaPkcs1Sha512;
+    using reality::tls_consts::sig_alg::kRsaPssRsaeSha256;
+    using reality::tls_consts::sig_alg::kRsaPssRsaeSha384;
+    using reality::tls_consts::sig_alg::kRsaPssRsaeSha512;
+
+    switch (signature_scheme)
+    {
+        case kEd25519:
+            return nullptr;
+        case kEcdsaSecp256r1Sha256:
+        case kRsaPkcs1Sha256:
+        case kRsaPssRsaeSha256:
+            return EVP_sha256();
+        case kEcdsaSecp384r1Sha384:
+        case kRsaPkcs1Sha384:
+        case kRsaPssRsaeSha384:
+            return EVP_sha384();
+        case kEcdsaSecp521r1Sha512:
+        case kRsaPkcs1Sha512:
+        case kRsaPssRsaeSha512:
+            return EVP_sha512();
+        default:
+            return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+    }
+}
+
+bool tls13_signature_scheme_matches_key(const std::uint16_t signature_scheme, const EVP_PKEY* pub_key)
+{
+    using reality::tls_consts::sig_alg::kEcdsaSecp256r1Sha256;
+    using reality::tls_consts::sig_alg::kEcdsaSecp384r1Sha384;
+    using reality::tls_consts::sig_alg::kEcdsaSecp521r1Sha512;
+    using reality::tls_consts::sig_alg::kEd25519;
+    using reality::tls_consts::sig_alg::kRsaPkcs1Sha256;
+    using reality::tls_consts::sig_alg::kRsaPkcs1Sha384;
+    using reality::tls_consts::sig_alg::kRsaPkcs1Sha512;
+    using reality::tls_consts::sig_alg::kRsaPssRsaeSha256;
+    using reality::tls_consts::sig_alg::kRsaPssRsaeSha384;
+    using reality::tls_consts::sig_alg::kRsaPssRsaeSha512;
+
+    const int key_type = EVP_PKEY_base_id(pub_key);
+    switch (signature_scheme)
+    {
+        case kEd25519:
+            return key_type == EVP_PKEY_ED25519;
+        case kEcdsaSecp256r1Sha256:
+        case kEcdsaSecp384r1Sha384:
+        case kEcdsaSecp521r1Sha512:
+            return key_type == EVP_PKEY_EC;
+        case kRsaPkcs1Sha256:
+        case kRsaPkcs1Sha384:
+        case kRsaPkcs1Sha512:
+        case kRsaPssRsaeSha256:
+        case kRsaPssRsaeSha384:
+        case kRsaPssRsaeSha512:
+            return key_type == EVP_PKEY_RSA || key_type == EVP_PKEY_RSA_PSS;
+        default:
+            return false;
+    }
+}
+
+bool tls13_signature_scheme_is_rsa_pss(const std::uint16_t signature_scheme)
+{
+    using reality::tls_consts::sig_alg::kRsaPssRsaeSha256;
+    using reality::tls_consts::sig_alg::kRsaPssRsaeSha384;
+    using reality::tls_consts::sig_alg::kRsaPssRsaeSha512;
+    return signature_scheme == kRsaPssRsaeSha256 || signature_scheme == kRsaPssRsaeSha384 || signature_scheme == kRsaPssRsaeSha512;
 }
 
 std::expected<openssl_ptrs::evp_pkey_ctx_ptr, boost::system::error_code> create_hkdf_context(const EVP_MD* md, const int mode)
@@ -746,10 +823,24 @@ std::expected<openssl_ptrs::evp_pkey_ptr, boost::system::error_code> crypto_util
 }
 
 std::expected<void, boost::system::error_code> crypto_util::verify_tls13_signature(EVP_PKEY* pub_key,
+                                                                                   const std::uint16_t signature_scheme,
                                                                                    const std::vector<std::uint8_t>& transcript_hash,
                                                                                    const std::vector<std::uint8_t>& signature)
 {
     ensure_openssl_initialized();
+    if (pub_key == nullptr || signature.empty())
+    {
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+    }
+    if (!tls13_signature_scheme_matches_key(signature_scheme, pub_key))
+    {
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+    }
+    auto md = tls13_signature_digest(signature_scheme);
+    if (!md)
+    {
+        return std::unexpected(md.error());
+    }
 
     std::vector<std::uint8_t> to_verify(64, 0x20);
 
@@ -766,9 +857,25 @@ std::expected<void, boost::system::error_code> crypto_util::verify_tls13_signatu
         return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::not_enough_memory));
     }
 
-    if (EVP_DigestVerifyInit(mctx.get(), nullptr, nullptr, nullptr, pub_key) <= 0)
+    EVP_PKEY_CTX* pctx = nullptr;
+    if (EVP_DigestVerifyInit(mctx.get(), &pctx, *md, nullptr, pub_key) <= 0)
     {
         return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+    }
+    if (tls13_signature_scheme_is_rsa_pss(signature_scheme))
+    {
+        if (pctx == nullptr)
+        {
+            return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        }
+        if (EVP_PKEY_CTX_set_rsa_padding(pctx, RSA_PKCS1_PSS_PADDING) <= 0)
+        {
+            return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        }
+        if (EVP_PKEY_CTX_set_rsa_pss_saltlen(pctx, RSA_PSS_SALTLEN_DIGEST) <= 0)
+        {
+            return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        }
     }
 
     const int res = EVP_DigestVerify(mctx.get(), signature.data(), signature.size(), to_verify.data(), to_verify.size());
