@@ -24,6 +24,7 @@
 #include "config.h"
 #include "protocol.h"
 #include "mux_codec.h"
+#include "net_utils.h"
 #include "statistics.h"
 #include "timeout_io.h"
 #include "log_context.h"
@@ -463,13 +464,14 @@ boost::asio::awaitable<void> remote_udp_session::udp_to_mux()
         ctx_.add_rx_bytes(n);
         last_activity_time_ms_.store(ts, std::memory_order_release);
 
-        if (!has_cached_header || cached_ep != ep)
+        const auto normalized_ep = net::normalize_endpoint(ep);
+        if (!has_cached_header || cached_ep != normalized_ep)
         {
             socks_udp_header h;
-            h.addr = ep.address().to_string();
-            h.port = ep.port();
+            h.addr = normalized_ep.address().to_string();
+            h.port = normalized_ep.port();
             cached_header = socks_codec::encode_udp_header(h);
-            cached_ep = ep;
+            cached_ep = normalized_ep;
             has_cached_header = true;
         }
 
