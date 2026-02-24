@@ -490,6 +490,30 @@ TEST_F(mux_connection_integration_test_fixture, TryRegisterStreamRejectsDuplicat
     EXPECT_TRUE(conn->has_stream(100));
 }
 
+TEST_F(mux_connection_integration_test_fixture, RegisterStreamRejectsDuplicateIdWithoutReplacingExistingStream)
+{
+    boost::asio::ip::tcp::socket socket(io_ctx());
+    reality_engine engine{{}, {}, {}, {}, EVP_aes_128_gcm()};
+    auto conn = std::make_shared<mux_connection>(std::move(socket), io_ctx(), std::move(engine), true, 101);
+
+    auto stream_a = std::make_shared<simple_mock_stream>();
+    auto stream_b = std::make_shared<simple_mock_stream>();
+
+    EXPECT_TRUE(conn->register_stream(100, stream_a));
+    EXPECT_FALSE(conn->register_stream(100, stream_b));
+    EXPECT_EQ(stream_count_for_test(conn), 1U);
+
+    const frame_header dat_header{
+        .stream_id = 100,
+        .length = 1,
+        .command = kCmdDat,
+    };
+    conn->handle_stream_frame(dat_header, {0x7f});
+
+    EXPECT_EQ(stream_a->data_events(), 1U);
+    EXPECT_EQ(stream_b->data_events(), 0U);
+}
+
 TEST_F(mux_connection_integration_test_fixture, ClosedStateGuardsAndUnlimitedCheck)
 {
     boost::asio::ip::tcp::socket socket(io_ctx());
