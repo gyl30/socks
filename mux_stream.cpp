@@ -55,12 +55,24 @@ boost::asio::awaitable<std::tuple<boost::system::error_code, std::vector<std::ui
 
 boost::asio::awaitable<boost::system::error_code> mux_stream::async_write_some(const void* data, std::size_t len)
 {
+    if (len == 0)
+    {
+        co_return boost::asio::error::invalid_argument;
+    }
+    if (data == nullptr)
+    {
+        co_return boost::asio::error::invalid_argument;
+    }
     std::vector<std::uint8_t> payload(static_cast<const std::uint8_t*>(data), static_cast<const std::uint8_t*>(data) + len);
     co_return co_await async_write_some(std::move(payload));
 }
 
 boost::asio::awaitable<boost::system::error_code> mux_stream::async_write_some(std::vector<std::uint8_t> payload)
 {
+    if (payload.empty())
+    {
+        co_return boost::asio::error::invalid_argument;
+    }
     if (is_closed_.load(std::memory_order_acquire) || fin_sent_.load(std::memory_order_acquire))
     {
         co_return boost::asio::error::operation_aborted;
