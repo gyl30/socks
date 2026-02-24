@@ -70,6 +70,23 @@ boost::asio::awaitable<timeout_io::timed_tcp_read_result> read_exact_with_option
     co_return co_await timeout_io::async_read_with_timeout(socket, buffer, timeout_sec, true, "socks session");
 }
 
+boost::asio::awaitable<timeout_io::timed_tcp_write_result> write_exact_with_optional_timeout(boost::asio::ip::tcp::socket& socket,
+                                                                                              const boost::asio::const_buffer& buffer,
+                                                                                              const std::uint32_t timeout_sec)
+{
+    if (timeout_sec == 0)
+    {
+        const auto [write_ec, write_size] = co_await boost::asio::async_write(socket, buffer, boost::asio::as_tuple(boost::asio::use_awaitable));
+        co_return timeout_io::timed_tcp_write_result{
+            .ok = !write_ec,
+            .timed_out = false,
+            .write_size = write_size,
+            .ec = write_ec,
+        };
+    }
+    co_return co_await timeout_io::async_write_with_timeout(socket, buffer, timeout_sec, "socks session");
+}
+
 bool secure_string_equals(const std::string& lhs, const std::string& rhs)
 {
     const auto max_len = std::max(lhs.size(), rhs.size());
@@ -279,12 +296,17 @@ std::uint8_t socks_session::select_auth_method(const std::vector<std::uint8_t>& 
 boost::asio::awaitable<bool> socks_session::write_selected_method(const std::uint8_t method)
 {
     std::uint8_t resp[] = {socks::kVer, method};
-    const auto [write_ec, write_n] =
-        co_await boost::asio::async_write(socket_, boost::asio::buffer(resp), boost::asio::as_tuple(boost::asio::use_awaitable));
-    (void)write_n;
-    if (write_ec)
+    const auto write_res = co_await write_exact_with_optional_timeout(socket_, boost::asio::buffer(resp), timeout_config_.write);
+    if (!write_res.ok)
     {
-        LOG_ERROR("socks session {} handshake failed {}", sid_, write_ec.message());
+        if (write_res.timed_out)
+        {
+            LOG_ERROR("socks session {} write selected method timeout {}s", sid_, timeout_config_.write);
+        }
+        else
+        {
+            LOG_ERROR("socks session {} handshake failed {}", sid_, write_res.ec.message());
+        }
         co_return false;
     }
     co_return true;
@@ -396,12 +418,17 @@ bool socks_session::verify_credentials(const std::string& username, const std::s
 boost::asio::awaitable<bool> socks_session::write_auth_result(const bool success)
 {
     std::uint8_t result[] = {0x01, success ? static_cast<std::uint8_t>(0x00) : static_cast<std::uint8_t>(0x01)};
-    const auto [write_ec, write_n] =
-        co_await boost::asio::async_write(socket_, boost::asio::buffer(result), boost::asio::as_tuple(boost::asio::use_awaitable));
-    (void)write_n;
-    if (write_ec)
+    const auto write_res = co_await write_exact_with_optional_timeout(socket_, boost::asio::buffer(result), timeout_config_.write);
+    if (!write_res.ok)
     {
-        LOG_ERROR("socks session {} write auth result failed", sid_);
+        if (write_res.timed_out)
+        {
+            LOG_ERROR("socks session {} write auth result timeout {}s", sid_, timeout_config_.write);
+        }
+        else
+        {
+            LOG_ERROR("socks session {} write auth result failed {}", sid_, write_res.ec.message());
+        }
         co_return false;
     }
     co_return true;
@@ -659,10 +686,17 @@ boost::asio::awaitable<socks_session::request_info> socks_session::read_request(
 boost::asio::awaitable<void> socks_session::reply_error(std::uint8_t code)
 {
     std::uint8_t err[] = {socks::kVer, code, 0, socks::kAtypIpv4, 0, 0, 0, 0, 0, 0};
-    const auto [we, wn] = co_await boost::asio::async_write(socket_, boost::asio::buffer(err), boost::asio::as_tuple(boost::asio::use_awaitable));
-    if (we)
+    const auto write_res = co_await write_exact_with_optional_timeout(socket_, boost::asio::buffer(err), timeout_config_.write);
+    if (!write_res.ok)
     {
-        LOG_ERROR("socks session {} write error response failed {}", sid_, we.message());
+        if (write_res.timed_out)
+        {
+            LOG_ERROR("socks session {} write error response timeout {}s", sid_, timeout_config_.write);
+        }
+        else
+        {
+            LOG_ERROR("socks session {} write error response failed {}", sid_, write_res.ec.message());
+        }
     }
 }
 
