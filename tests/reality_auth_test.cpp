@@ -89,3 +89,12 @@ TEST(RealityAuthTest, ParseRejectsInvalidLength)
     const auto parsed = reality::parse_auth_payload(std::span<const std::uint8_t>(short_payload.data(), short_payload.size()));
     EXPECT_FALSE(parsed.has_value());
 }
+
+TEST(RealityAuthTest, ParseRejectsNonZeroReservedByte)
+{
+    std::array<std::uint8_t, reality::kAuthPayloadLen> payload = {
+        0x01, 0x02, 0x03, 0x7f, 0x11, 0x22, 0x33, 0x44, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x11};
+
+    const auto parsed = reality::parse_auth_payload(std::span<const std::uint8_t>(payload.data(), payload.size()));
+    EXPECT_FALSE(parsed.has_value());
+}
