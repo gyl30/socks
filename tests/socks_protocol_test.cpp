@@ -61,6 +61,9 @@ TEST(SocksProtocolTest, DecodeSocks5RequestDomain)
 
     const std::vector<std::uint8_t> zero_domain_len = {0x05, 0x01, 0x00, 0x03, 0x00, 0x00, 0x50};
     EXPECT_FALSE(socks_codec::decode_socks5_request(zero_domain_len.data(), zero_domain_len.size(), out));
+
+    const std::vector<std::uint8_t> domain_contains_nul = {0x05, 0x01, 0x00, 0x03, 0x04, 't', 'e', 0x00, 't', 0x00, 0x50};
+    EXPECT_FALSE(socks_codec::decode_socks5_request(domain_contains_nul.data(), domain_contains_nul.size(), out));
 }
 
 TEST(SocksProtocolTest, DecodeSocks5RequestRejectsTrailingBytes)

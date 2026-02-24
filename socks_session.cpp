@@ -424,7 +424,7 @@ bool socks_session::is_supported_atyp(const std::uint8_t cmd, const std::uint8_t
     {
         return true;
     }
-    return atyp == socks::kAtypDomain && cmd == socks::kCmdConnect;
+    return atyp == socks::kAtypDomain && (cmd == socks::kCmdConnect || cmd == socks::kCmdUdpAssociate);
 }
 
 boost::asio::awaitable<bool> socks_session::read_request_ipv4(std::string& host)
@@ -465,6 +465,12 @@ boost::asio::awaitable<bool> socks_session::read_request_domain(std::string& hos
         co_await reply_error(socks::kRepGenFail);
         co_return false;
     }
+    if (domain_len == 0)
+    {
+        LOG_ERROR("socks session {} request domain len invalid 0", sid_);
+        co_await reply_error(socks::kRepGenFail);
+        co_return false;
+    }
     host.resize(domain_len);
     const auto host_res = co_await read_exact_with_optional_timeout(socket_, boost::asio::buffer(host), timeout_config_.read);
     if (!host_res.ok)
@@ -477,6 +483,12 @@ boost::asio::awaitable<bool> socks_session::read_request_domain(std::string& hos
         {
             LOG_ERROR("socks session {} request read domain failed {}", sid_, host_res.ec.message());
         }
+        co_await reply_error(socks::kRepGenFail);
+        co_return false;
+    }
+    if (host.find('\0') != std::string::npos)
+    {
+        LOG_ERROR("socks session {} request domain contains nul", sid_);
         co_await reply_error(socks::kRepGenFail);
         co_return false;
     }
@@ -512,12 +524,6 @@ boost::asio::awaitable<bool> socks_session::read_request_host(const std::uint8_t
     }
     if (atyp == socks::kAtypDomain)
     {
-        if (cmd != socks::kCmdConnect)
-        {
-            LOG_WARN("socks session {} request unsupported atyp {} cmd {}", sid_, atyp, cmd);
-            co_await reply_error(socks::kRepAddrTypeNotSupported);
-            co_return false;
-        }
         co_return co_await read_request_domain(host);
     }
     if (atyp == socks::kAtypIpv6)

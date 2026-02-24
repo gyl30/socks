@@ -650,7 +650,7 @@ TEST_F(socks_session_test_fixture, HelperBranchesSelectMethodAndVerifyCredential
     EXPECT_TRUE(socks_session::is_supported_atyp(socks::kCmdConnect, socks::kAtypIpv6));
     EXPECT_TRUE(socks_session::is_supported_atyp(socks::kCmdUdpAssociate, socks::kAtypIpv4));
     EXPECT_TRUE(socks_session::is_supported_atyp(socks::kCmdUdpAssociate, socks::kAtypIpv6));
-    EXPECT_FALSE(socks_session::is_supported_atyp(socks::kCmdUdpAssociate, socks::kAtypDomain));
+    EXPECT_TRUE(socks_session::is_supported_atyp(socks::kCmdUdpAssociate, socks::kAtypDomain));
     EXPECT_FALSE(socks_session::is_supported_atyp(socks::kCmdConnect, 0x09));
 }
 
@@ -807,11 +807,36 @@ TEST_F(socks_session_test_fixture, ReadTargetHostPortAndValidationBranches)
         const std::uint8_t domain[] = {0x04, 't', 'e', 's', 't', 0x00, 0x50};
         boost::asio::write(pair.client, boost::asio::buffer(domain));
         auto req = mux::test::run_awaitable(io_ctx(), session->read_request_target(socks::kCmdUdpAssociate, socks::kAtypDomain));
-        EXPECT_FALSE(req.ok);
+        EXPECT_TRUE(req.ok);
+        EXPECT_EQ(req.host, "test");
+        EXPECT_EQ(req.port, 80);
         EXPECT_EQ(req.cmd, socks::kCmdUdpAssociate);
+    }
+
+    {
+        auto pair = make_tcp_socket_pair(io_ctx());
+        auto session = std::make_shared<socks_session>(std::move(pair.server), io_ctx(), nullptr, nullptr, 32);
+        const std::uint8_t empty_domain_len = 0x00;
+        boost::asio::write(pair.client, boost::asio::buffer(&empty_domain_len, 1));
+        std::string host;
+        EXPECT_FALSE(mux::test::run_awaitable(io_ctx(), session->read_request_domain(host)));
+        EXPECT_TRUE(host.empty());
         std::uint8_t err[10] = {0};
         boost::asio::read(pair.client, boost::asio::buffer(err));
-        EXPECT_EQ(err[1], socks::kRepAddrTypeNotSupported);
+        EXPECT_EQ(err[1], socks::kRepGenFail);
+    }
+
+    {
+        auto pair = make_tcp_socket_pair(io_ctx());
+        auto session = std::make_shared<socks_session>(std::move(pair.server), io_ctx(), nullptr, nullptr, 33);
+        const std::uint8_t domain_with_nul[] = {0x04, 't', 'e', '\0', 't', 0x00, 0x50};
+        boost::asio::write(pair.client, boost::asio::buffer(domain_with_nul));
+        auto req = mux::test::run_awaitable(io_ctx(), session->read_request_target(socks::kCmdConnect, socks::kAtypDomain));
+        EXPECT_FALSE(req.ok);
+        EXPECT_EQ(req.cmd, socks::kCmdConnect);
+        std::uint8_t err[10] = {0};
+        boost::asio::read(pair.client, boost::asio::buffer(err));
+        EXPECT_EQ(err[1], socks::kRepGenFail);
     }
 
     {
@@ -837,7 +862,7 @@ TEST_F(socks_session_test_fixture, ReadTargetHostPortAndValidationBranches)
         EXPECT_EQ(req.cmd, socks::kCmdUdpAssociate);
         std::uint8_t err[10] = {0};
         boost::asio::read(pair.client, boost::asio::buffer(err));
-        EXPECT_EQ(err[1], socks::kRepAddrTypeNotSupported);
+        EXPECT_EQ(err[1], socks::kRepGenFail);
     }
 
     {
@@ -944,12 +969,7 @@ TEST_F(socks_session_test_fixture, RequestHeaderValidationAndRejectRequestBranch
         auto session = std::make_shared<socks_session>(std::move(pair.server), io_ctx(), nullptr, nullptr, 41);
         std::array<std::uint8_t, 4> const head = {socks::kVer, socks::kCmdUdpAssociate, 0, socks::kAtypDomain};
         auto result = mux::test::run_awaitable(io_ctx(), session->validate_request_head(head));
-        ASSERT_TRUE(result.has_value());
-        EXPECT_FALSE(result->ok);
-        EXPECT_EQ(result->cmd, socks::kCmdUdpAssociate);
-        std::uint8_t err[10] = {0};
-        boost::asio::read(pair.client, boost::asio::buffer(err));
-        EXPECT_EQ(err[1], socks::kRepAddrTypeNotSupported);
+        EXPECT_FALSE(result.has_value());
     }
 
     {
