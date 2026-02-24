@@ -129,6 +129,8 @@ std::string build_metrics_payload()
     append_metric_line(metrics_payload, "socks_monitor_rate_limited_total", stats.monitor_rate_limited());
     append_metric_line(metrics_payload, "socks_tproxy_udp_dispatch_enqueued_total", stats.tproxy_udp_dispatch_enqueued());
     append_metric_line(metrics_payload, "socks_tproxy_udp_dispatch_dropped_total", stats.tproxy_udp_dispatch_dropped());
+    append_metric_line(metrics_payload, "socks_tproxy_udp_origdst_truncated_total", stats.tproxy_udp_origdst_truncated());
+    append_metric_line(metrics_payload, "socks_tproxy_udp_payload_truncated_total", stats.tproxy_udp_payload_truncated());
 
     const auto handshake_failure_sni_metrics = stats.handshake_failure_sni_metrics();
     for (const auto& metric : handshake_failure_sni_metrics)

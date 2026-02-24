@@ -71,6 +71,8 @@ enum class wrapped_recvmsg_mode
     kEagain,
     kError,
     kMissingOrigdst,
+    kOrigdstTruncated,
+    kPayloadTruncated,
     kSyntheticValid,
     kSyntheticValidSticky
 };
@@ -679,6 +681,7 @@ extern "C" ssize_t __wrap_recvmsg(int sockfd, msghdr* msg, int flags)
     static const std::array<std::uint8_t, 4> payload = {0xde, 0xad, 0xbe, 0xef};
     const auto n = std::min<std::size_t>(msg->msg_iov[0].iov_len, payload.size());
     std::memcpy(msg->msg_iov[0].iov_base, payload.data(), n);
+    msg->msg_flags = 0;
 
     if (msg->msg_name != nullptr && msg->msg_namelen >= sizeof(sockaddr_in))
     {
@@ -692,6 +695,16 @@ extern "C" ssize_t __wrap_recvmsg(int sockfd, msghdr* msg, int flags)
     if (mode == wrapped_recvmsg_mode::kMissingOrigdst)
     {
         msg->msg_controllen = 0;
+        return static_cast<ssize_t>(n);
+    }
+    if (mode == wrapped_recvmsg_mode::kOrigdstTruncated)
+    {
+        msg->msg_flags |= MSG_CTRUNC;
+        return static_cast<ssize_t>(n);
+    }
+    if (mode == wrapped_recvmsg_mode::kPayloadTruncated)
+    {
+        msg->msg_flags |= MSG_TRUNC;
         return static_cast<ssize_t>(n);
     }
 
@@ -3583,6 +3596,9 @@ TEST(TproxyClientTest, WrappedRecvmsgCoversUdpReadErrorBranches)
     cfg.tproxy.tcp_port = pick_free_tcp_port();
     cfg.tproxy.udp_port = pick_free_tcp_port();
     auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
+    auto& stats = mux::statistics::instance();
+    const auto origdst_truncated_before = stats.tproxy_udp_origdst_truncated();
+    const auto payload_truncated_before = stats.tproxy_udp_payload_truncated();
 
     boost::asio::co_spawn(
         pool.get_io_context(),
@@ -3619,6 +3635,16 @@ TEST(TproxyClientTest, WrappedRecvmsgCoversUdpReadErrorBranches)
     ASSERT_FALSE(ec);
     std::this_thread::sleep_for(std::chrono::milliseconds(60));
 
+    set_recvmsg_mode_once(wrapped_recvmsg_mode::kOrigdstTruncated);
+    sender.send_to(boost::asio::buffer(payload), dst, 0, ec);
+    ASSERT_FALSE(ec);
+    std::this_thread::sleep_for(std::chrono::milliseconds(60));
+
+    set_recvmsg_mode_once(wrapped_recvmsg_mode::kPayloadTruncated);
+    sender.send_to(boost::asio::buffer(payload), dst, 0, ec);
+    ASSERT_FALSE(ec);
+    std::this_thread::sleep_for(std::chrono::milliseconds(60));
+
     set_recvmsg_mode_once(wrapped_recvmsg_mode::kError);
     sender.send_to(boost::asio::buffer(payload), dst, 0, ec);
     ASSERT_FALSE(ec);
@@ -3627,6 +3653,9 @@ TEST(TproxyClientTest, WrappedRecvmsgCoversUdpReadErrorBranches)
     client->stop();
     pool.stop();
     runner.join();
+
+    EXPECT_GE(stats.tproxy_udp_origdst_truncated(), origdst_truncated_before + 1);
+    EXPECT_GE(stats.tproxy_udp_payload_truncated(), payload_truncated_before + 1);
 
     reset_socket_wrappers();
 }
