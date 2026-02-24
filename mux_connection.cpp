@@ -555,16 +555,6 @@ void mux_connection::handle_stream_frame(const mux::frame_header& header, std::v
         if (payload.empty())
         {
             LOG_WARN("mux {} recv empty dat frame stream {}", cid_, header.stream_id);
-            stream->on_reset();
-            remove_stream(header.stream_id);
-            const auto self = shared_from_this();
-            boost::asio::co_spawn(
-                io_context_,
-                [self, stream_id = header.stream_id]() -> boost::asio::awaitable<void>
-                {
-                    (void)co_await self->send_async(stream_id, kCmdRst, {});
-                },
-                boost::asio::detached);
             return;
         }
         stream->on_data(std::move(payload));
