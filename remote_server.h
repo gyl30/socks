@@ -236,10 +236,10 @@ class remote_server : public std::enable_shared_from_this<remote_server>
 
     [[nodiscard]] std::pair<std::string, std::string> find_fallback_target_by_sni(const std::string& sni) const;
 
-    boost::asio::awaitable<void> handle_fallback(const std::shared_ptr<boost::asio::ip::tcp::socket>& s,
-                                                 const std::vector<std::uint8_t>& buf,
-                                                 const connection_context& ctx,
-                                                 const std::string& sni);
+    boost::asio::awaitable<boost::system::error_code> handle_fallback(const std::shared_ptr<boost::asio::ip::tcp::socket>& s,
+                                                                      const std::vector<std::uint8_t>& buf,
+                                                                      const connection_context& ctx,
+                                                                      const std::string& sni);
 
     struct fallback_guard_state;
 
