@@ -129,7 +129,7 @@ boost::asio::awaitable<void> remote_server::handle_tcp_connect_stream(const std:
     LOG_CTX_INFO(
         stream_ctx, "{} stream {} type tcp connect target {} {} payload size {}", log_event::kMux, stream_id, syn.addr, syn.port, payload_size);
     const auto connection = tunnel->connection();
-    const auto sess = std::make_shared<remote_session>(connection, stream_id, io_context, stream_ctx, timeout_config_.read);
+    const auto sess = std::make_shared<remote_session>(connection, stream_id, io_context, stream_ctx, timeout_config_.read, timeout_config_.write);
     sess->set_manager(tunnel);
     const auto register_result = connection->try_register_stream_with_reason(stream_id, sess);
     if (co_await handle_stream_register_failure(connection, stream_ctx, stream_id, register_result))
