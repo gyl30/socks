@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <algorithm>
 
 #include <boost/asio/ip/address.hpp>
 #include <boost/system/error_code.hpp>
@@ -54,7 +55,13 @@ bool parse_domain_address(const std::uint8_t* data, const std::size_t len, std::
     {
         return false;
     }
-    addr = std::string(reinterpret_cast<const char*>(data) + pos, domain_len);
+    const auto* domain_begin = data + pos;
+    const auto* domain_end = domain_begin + domain_len;
+    if (std::find(domain_begin, domain_end, static_cast<std::uint8_t>(0x00)) != domain_end)
+    {
+        return false;
+    }
+    addr = std::string(reinterpret_cast<const char*>(domain_begin), domain_len);
     pos += domain_len;
     return true;
 }    // namespace
