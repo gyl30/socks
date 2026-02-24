@@ -12,14 +12,20 @@
 
 - `inbound.host` / `inbound.port`：服务端监听地址与端口。
 - `outbound.host` / `outbound.port`：客户端连接地址与端口。
+  - 当 `mode = client` 时，`outbound.host` 必须为非空字符串。
+  - 当 `mode = client` 时，`outbound.port` 必须大于 `0`。
 - `socks.enabled`：是否启用 SOCKS5 入站（默认 `true`）。
 - `socks.host` / `socks.port`：本地 SOCKS5 监听地址与端口。
 - `socks.auth` / `socks.username` / `socks.password`：SOCKS5 认证配置。
+  - 当 `socks.enabled = true` 时，`socks.host` 必须是非空且合法的 IP 地址。
   - 当 `socks.auth = true` 时，`socks.username` 与 `socks.password` 必须均为非空字符串。
   - 任一为空会在配置解析阶段直接报错，不会降级为无认证模式。
+  - 两者长度均不得超过 `255` 字节（对应 SOCKS5 用户名/密码子协商单字节长度字段）。
 - `tproxy.enabled`：是否启用 TPROXY 入站（默认 `false`，仅 Linux 支持）。
 - `tproxy.listen_host`：TPROXY 监听地址（默认 `::`）。
 - `tproxy.tcp_port` / `tproxy.udp_port`：TPROXY TCP/UDP 端口。`udp_port = 0` 表示跟随 `tcp_port`。
+  - 当 `tproxy.enabled = true` 时，`tproxy.listen_host` 必须是非空且合法的 IP 地址。
+  - 当 `tproxy.enabled = true` 时，`tproxy.tcp_port` 必须大于 `0`。
 - `tproxy.mark`：TPROXY `SO_MARK`，用于路由/回避回环（默认 `0x11`）。
 - 非 Linux 平台若设置 `tproxy.enabled = true`，配置解析会直接报错。
 - 所有端口字段均要求 `0-65535` 的无符号整数；超出范围或负数会在解析阶段直接报错。
@@ -67,13 +73,18 @@
 - `reality.sni`：伪装 SNI。
 - `reality.fingerprint`：客户端指纹（默认 `random`）。
   - 可选值：`random`、`chrome`、`firefox`、`ios`、`android`（分别映射到 `chrome_120` / `firefox_120` / `ios_14` / `android_11_okhttp`）。
+  - 当 `mode = client` 时，`reality.fingerprint` 仅允许上述值及其版本别名（如 `chrome_120`）。
 - `reality.dest`：回落目标（格式 `host:port`）。
+  - 在提供时必须符合 `host:port` 或 `[ipv6]:port`，且端口范围必须在 `1-65535`。
 - `reality.type`：回落网络类型（默认 `tcp`）。
 - `reality.strict_cert_verify`：是否严格校验证书签名（默认 `false`）。
   - 仅当服务端证书公钥与 `CertificateVerify` 签名密钥一致时可开启；使用真实站点 fallback 证书时通常不满足该条件。
 - `reality.replay_cache_max_entries`：重放缓存最大条目数（默认 `100000`，用于控制窗口内内存占用）。
 - `reality.private_key` / `reality.public_key`：REALITY 密钥对（结构体默认空值；`socks config` 输出时会生成随机密钥对）。
+  - 两者在提供时必须是合法十六进制字符串，且解码后长度必须为 `32` 字节。
+  - 当 `mode = client` 时，`reality.public_key` 必须为非空值。
 - `reality.short_id`：短 ID。
+  - 在提供时必须是合法偶数长度十六进制字符串，且解码后长度不得超过 `8` 字节。
 - `reality.fallback_guard.enabled`：是否启用 fallback 防护（默认 `true`）。
 - `reality.fallback_guard.rate_per_sec`：每 IP 每秒允许 fallback 次数（默认 `2`）。
 - `reality.fallback_guard.burst`：每 IP 令牌桶突发上限（默认 `10`）。
