@@ -1586,11 +1586,14 @@ TEST(TproxyUdpSessionTest, ProxyStreamLifecycleCoversInstallCleanupAndReaderStar
     EXPECT_TRUE(session->install_proxy_stream(tunnel, stream, should_start_reader));
     EXPECT_TRUE(should_start_reader);
 
+    mux::test::run_awaitable_void(ctx, session->cleanup_proxy_stream(tunnel, stream));
+
     session->stream_.reset();
     session->tunnel_.reset();
     session->proxy_reader_started_ = true;
+    auto stream_reinstalled = std::make_shared<mux::mux_stream>(15, tunnel->connection()->id(), "trace", tunnel->connection(), ctx);
     should_start_reader = false;
-    EXPECT_TRUE(session->install_proxy_stream(tunnel, stream, should_start_reader));
+    EXPECT_TRUE(session->install_proxy_stream(tunnel, stream_reinstalled, should_start_reader));
     EXPECT_FALSE(should_start_reader);
 
     session->recv_channel_.close();
@@ -1598,7 +1601,7 @@ TEST(TproxyUdpSessionTest, ProxyStreamLifecycleCoversInstallCleanupAndReaderStar
     ctx.poll();
     ctx.restart();
 
-    mux::test::run_awaitable_void(ctx, session->cleanup_proxy_stream(tunnel, stream));
+    mux::test::run_awaitable_void(ctx, session->cleanup_proxy_stream(tunnel, stream_reinstalled));
 }
 
 TEST(TproxyUdpSessionTest, InstallProxyStreamRejectsWhenSessionAlreadyTerminated)
@@ -4659,7 +4662,7 @@ TEST(TproxyClientTest, UdpDispatchLoopDoesNotCreateSessionAfterStopRequested)
     reset_socket_wrappers();
 }
 
-TEST(TproxyClientTest, UdpDispatchLoopCreatesSessionForEmptyPayload)
+TEST(TproxyClientTest, UdpDispatchLoopRejectsEmptyPayload)
 {
     reset_socket_wrappers();
 
@@ -4678,19 +4681,9 @@ TEST(TproxyClientTest, UdpDispatchLoopCreatesSessionForEmptyPayload)
     const boost::asio::ip::udp::endpoint dst_ep(boost::asio::ip::make_address("8.8.8.8"), 53);
     const std::vector<std::uint8_t> packet = {};
 
-    ASSERT_TRUE(mux::tproxy_client::enqueue_udp_packet(*client->udp_dispatch_channel_, src_ep, dst_ep, packet, packet.size()));
-
-    bool created = false;
-    for (int i = 0; i < 100; ++i)
-    {
-        if (!udp_sessions_empty(client))
-        {
-            created = true;
-            break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    EXPECT_TRUE(created);
+    ASSERT_FALSE(mux::tproxy_client::enqueue_udp_packet(*client->udp_dispatch_channel_, src_ep, dst_ep, packet, packet.size()));
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    EXPECT_TRUE(udp_sessions_empty(client));
 
     if (client->udp_dispatch_channel_ != nullptr)
     {
