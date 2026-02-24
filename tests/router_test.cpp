@@ -92,6 +92,15 @@ TEST_F(router_test_fixture, BlockPrioritizesOverDirect)
     EXPECT_EQ(run_decision("1.1.1.2"), mux::route_type::kDirect);
 }
 
+TEST_F(router_test_fixture, IPv4MappedIPv6MatchesIPv4Rules)
+{
+    router_instance()->add_block_ip("1.1.1.1/32");
+    router_instance()->add_direct_ip("203.0.113.0/24");
+
+    EXPECT_EQ(run_decision("::ffff:1.1.1.1"), mux::route_type::kBlock);
+    EXPECT_EQ(run_decision("::ffff:203.0.113.7"), mux::route_type::kDirect);
+}
+
 TEST_F(router_test_fixture, BlockDomain)
 {
     router_instance()->add_block_domain("ad.com");

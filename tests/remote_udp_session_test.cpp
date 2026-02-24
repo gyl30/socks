@@ -496,6 +496,7 @@ TEST(RemoteUdpSessionTest, UdpToMuxForwardsAndStopsOnSendFailure)
 
     socks_udp_header decoded{};
     ASSERT_TRUE(socks_codec::decode_udp_header(dat_payload.data(), dat_payload.size(), decoded));
+    EXPECT_EQ(decoded.addr, "127.0.0.1");
     ASSERT_LT(decoded.header_len, dat_payload.size());
     EXPECT_EQ(dat_payload[decoded.header_len], 0xAA);
     EXPECT_EQ(dat_payload[decoded.header_len + 1], 0xBB);
