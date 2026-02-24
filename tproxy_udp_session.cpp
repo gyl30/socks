@@ -121,6 +121,9 @@ bool tproxy_udp_session::start()
     if (ec)
     {
         LOG_CTX_WARN(ctx_, "{} udp v6 only failed {}", log_event::kSocks, ec.message());
+        terminated_.store(true, std::memory_order_release);
+        close_start_failed_socket(direct_socket_, ctx_);
+        return false;
     }
     if (mark_ != 0)
     {
