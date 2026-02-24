@@ -163,6 +163,7 @@ TEST_F(config_test_fixture, ParseValues)
         },
         "reality": {
             "sni": "google.com",
+            "public_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "strict_cert_verify": true,
             "replay_cache_max_entries": 4096
         },
@@ -201,6 +202,7 @@ TEST_F(config_test_fixture, ParseValues)
         EXPECT_EQ(cfg.tproxy.udp_port, 18081);
         EXPECT_EQ(cfg.tproxy.mark, 17);
         EXPECT_EQ(cfg.reality.sni, "google.com");
+        EXPECT_EQ(cfg.reality.public_key, std::string(64, 'a'));
         EXPECT_TRUE(cfg.reality.strict_cert_verify);
         EXPECT_EQ(cfg.reality.replay_cache_max_entries, 4096);
         EXPECT_EQ(cfg.heartbeat.idle_timeout, 42);
@@ -246,6 +248,9 @@ TEST_F(config_test_fixture, ClientWithTproxyOnlyAccepted)
         "tproxy": {
             "enabled": true,
             "tcp_port": 18080
+        },
+        "reality": {
+            "public_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         }
     })";
     write_config_file(content);
@@ -258,6 +263,258 @@ TEST_F(config_test_fixture, ClientWithTproxyOnlyAccepted)
     }
     EXPECT_TRUE(cfg_opt->tproxy.enabled);
     EXPECT_FALSE(cfg_opt->socks.enabled);
+    EXPECT_EQ(cfg_opt->reality.public_key, std::string(64, 'a'));
+}
+
+TEST_F(config_test_fixture, ClientModeRequiresRealityPublicKey)
+{
+    write_config_file(R"({
+        "mode": "client",
+        "socks": {
+            "enabled": true
+        },
+        "reality": {
+            "public_key": ""
+        }
+    })");
+    auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/reality/public_key");
+    EXPECT_NE(parsed.error().reason.find("must be non-empty in client mode"), std::string::npos);
+
+    write_config_file(R"({
+        "mode": "client",
+        "socks": {
+            "enabled": true
+        },
+        "reality": {
+            "public_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+    })");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_EQ(parsed->reality.public_key, std::string(64, 'a'));
+}
+
+TEST_F(config_test_fixture, ClientModeRequiresSupportedRealityFingerprint)
+{
+    write_config_file(R"({
+        "mode": "client",
+        "socks": {
+            "enabled": true
+        },
+        "reality": {
+            "public_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "fingerprint": "not-supported"
+        }
+    })");
+    auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/reality/fingerprint");
+    EXPECT_NE(parsed.error().reason.find("must be random/chrome/firefox/ios/android"), std::string::npos);
+
+    write_config_file(R"({
+        "mode": "client",
+        "socks": {
+            "enabled": true
+        },
+        "reality": {
+            "public_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "fingerprint": "firefox-120"
+        }
+    })");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_EQ(parsed->reality.fingerprint, "firefox-120");
+}
+
+TEST_F(config_test_fixture, ClientModeRequiresOutboundHostAndPort)
+{
+    write_config_file(R"({
+        "mode": "client",
+        "outbound": {
+            "host": "",
+            "port": 8844
+        },
+        "socks": {
+            "enabled": true
+        },
+        "reality": {
+            "public_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+    })");
+    auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/outbound/host");
+    EXPECT_NE(parsed.error().reason.find("must be non-empty in client mode"), std::string::npos);
+
+    write_config_file(R"({
+        "mode": "client",
+        "outbound": {
+            "host": "example.com",
+            "port": 0
+        },
+        "socks": {
+            "enabled": true
+        },
+        "reality": {
+            "public_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+    })");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/outbound/port");
+    EXPECT_NE(parsed.error().reason.find("must be non-zero in client mode"), std::string::npos);
+
+    write_config_file(R"({
+        "mode": "client",
+        "outbound": {
+            "host": "example.com",
+            "port": 443
+        },
+        "socks": {
+            "enabled": true
+        },
+        "reality": {
+            "public_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+    })");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_EQ(parsed->outbound.host, "example.com");
+    EXPECT_EQ(parsed->outbound.port, 443);
+}
+
+TEST_F(config_test_fixture, SocksEnabledRequiresValidListenHost)
+{
+    write_config_file(R"({
+        "mode": "client",
+        "socks": {
+            "enabled": true,
+            "host": "",
+            "port": 1080
+        }
+    })");
+    auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/socks/host");
+    EXPECT_NE(parsed.error().reason.find("must be non-empty ip address when socks is enabled"), std::string::npos);
+
+    write_config_file(R"({
+        "mode": "client",
+        "socks": {
+            "enabled": true,
+            "host": "not-an-ip",
+            "port": 1080
+        }
+    })");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/socks/host");
+    EXPECT_NE(parsed.error().reason.find("must be valid ip address when socks is enabled"), std::string::npos);
+
+    write_config_file(R"({
+        "mode": "server",
+        "socks": {
+            "enabled": false,
+            "host": "not-an-ip",
+            "port": 1080
+        }
+    })");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_FALSE(parsed->socks.enabled);
+
+    write_config_file(R"({
+        "mode": "client",
+        "socks": {
+            "enabled": true,
+            "host": "::1",
+            "port": 1080
+        },
+        "reality": {
+            "public_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+    })");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_TRUE(parsed->socks.enabled);
+    EXPECT_EQ(parsed->socks.host, "::1");
+}
+
+TEST_F(config_test_fixture, TproxyEnabledRequiresValidListenHostAndNonZeroTcpPort)
+{
+#if SOCKS_HAS_TPROXY
+    write_config_file(R"({
+        "mode": "client",
+        "socks": {
+            "enabled": false
+        },
+        "tproxy": {
+            "enabled": true,
+            "listen_host": "",
+            "tcp_port": 18080
+        }
+    })");
+    auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/tproxy/listen_host");
+    EXPECT_NE(parsed.error().reason.find("must be non-empty ip address when tproxy is enabled"), std::string::npos);
+
+    write_config_file(R"({
+        "mode": "client",
+        "socks": {
+            "enabled": false
+        },
+        "tproxy": {
+            "enabled": true,
+            "listen_host": "not-an-ip",
+            "tcp_port": 18080
+        }
+    })");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/tproxy/listen_host");
+    EXPECT_NE(parsed.error().reason.find("must be valid ip address when tproxy is enabled"), std::string::npos);
+
+    write_config_file(R"({
+        "mode": "client",
+        "socks": {
+            "enabled": false
+        },
+        "tproxy": {
+            "enabled": true,
+            "listen_host": "::1",
+            "tcp_port": 0
+        }
+    })");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/tproxy/tcp_port");
+    EXPECT_NE(parsed.error().reason.find("must be non-zero when tproxy is enabled"), std::string::npos);
+
+    write_config_file(R"({
+        "mode": "client",
+        "socks": {
+            "enabled": false
+        },
+        "tproxy": {
+            "enabled": true,
+            "listen_host": "::1",
+            "tcp_port": 18080,
+            "udp_port": 0
+        },
+        "reality": {
+            "public_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+    })");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_TRUE(parsed->tproxy.enabled);
+    EXPECT_EQ(parsed->tproxy.listen_host, "::1");
+    EXPECT_EQ(parsed->tproxy.tcp_port, 18080);
+    EXPECT_EQ(parsed->tproxy.udp_port, 0);
+#endif
 }
 
 TEST_F(config_test_fixture, InvalidJson)
@@ -315,6 +572,99 @@ TEST_F(config_test_fixture, ParseConfigWithErrorReportsTypeErrorPath)
     ASSERT_FALSE(parsed.has_value());
     EXPECT_EQ(parsed.error().path, "/reality/replay_cache_max_entries");
     EXPECT_NE(parsed.error().reason.find("invalid type or value"), std::string::npos);
+}
+
+TEST_F(config_test_fixture, RealityHexFieldsWhenProvidedMustBeValid)
+{
+    write_config_file(R"({
+        "reality": {
+            "private_key": "abc"
+        }
+    })");
+    auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/reality/private_key");
+    EXPECT_NE(parsed.error().reason.find("must be even-length hex when provided"), std::string::npos);
+
+    write_config_file(R"({
+        "reality": {
+            "public_key": "zz"
+        }
+    })");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/reality/public_key");
+    EXPECT_NE(parsed.error().reason.find("must be valid hex when provided"), std::string::npos);
+
+    write_config_file(R"({
+        "reality": {
+            "short_id": "010203040506070809"
+        }
+    })");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/reality/short_id");
+    EXPECT_NE(parsed.error().reason.find("must be at most 8 bytes when provided"), std::string::npos);
+
+    write_config_file(R"({
+        "reality": {
+            "private_key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "public_key": "abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+            "short_id": "01020304"
+        }
+    })");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_EQ(parsed->reality.short_id, "01020304");
+}
+
+TEST_F(config_test_fixture, RealityDestWhenProvidedMustBeValid)
+{
+    write_config_file(R"({
+        "reality": {
+            "dest": "example.com"
+        }
+    })");
+    auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/reality/dest");
+    EXPECT_NE(parsed.error().reason.find("must be host:port or [ipv6]:port"), std::string::npos);
+
+    write_config_file(R"({
+        "reality": {
+            "dest": "example.com:0"
+        }
+    })");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/reality/dest");
+
+    write_config_file(R"({
+        "reality": {
+            "dest": "[::1]443"
+        }
+    })");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/reality/dest");
+
+    write_config_file(R"({
+        "reality": {
+            "dest": "example.com:443"
+        }
+    })");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_EQ(parsed->reality.dest, "example.com:443");
+
+    write_config_file(R"({
+        "reality": {
+            "dest": "[::1]:443"
+        }
+    })");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_EQ(parsed->reality.dest, "[::1]:443");
 }
 
 TEST_F(config_test_fixture, MissingFieldsUseDefaults)
@@ -714,6 +1064,246 @@ TEST_F(config_test_fixture, ContractMatrixMonitorRulesStayAlignedWithDocumentati
     EXPECT_EQ(parsed->monitor.port, 19090);
 }
 
+TEST_F(config_test_fixture, ContractMatrixTproxyRulesStayAlignedWithDocumentation)
+{
+    const auto doc = load_configuration_doc();
+    ASSERT_FALSE(doc.empty());
+    EXPECT_NE(doc.find("当 `tproxy.enabled = true` 时，`tproxy.listen_host` 必须是非空且合法的 IP 地址"), std::string::npos);
+    EXPECT_NE(doc.find("当 `tproxy.enabled = true` 时，`tproxy.tcp_port` 必须大于 `0`"), std::string::npos);
+
+#if SOCKS_HAS_TPROXY
+    write_config_file(R"({
+        "mode": "client",
+        "socks": {
+            "enabled": false
+        },
+        "tproxy": {
+            "enabled": true,
+            "listen_host": "",
+            "tcp_port": 18080
+        }
+    })");
+    auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/tproxy/listen_host");
+
+    write_config_file(R"({
+        "mode": "client",
+        "socks": {
+            "enabled": false
+        },
+        "tproxy": {
+            "enabled": true,
+            "listen_host": "::1",
+            "tcp_port": 0
+        }
+    })");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/tproxy/tcp_port");
+#endif
+}
+
+TEST_F(config_test_fixture, ContractMatrixSocksHostRulesStayAlignedWithDocumentation)
+{
+    const auto doc = load_configuration_doc();
+    ASSERT_FALSE(doc.empty());
+    EXPECT_NE(doc.find("当 `socks.enabled = true` 时，`socks.host` 必须是非空且合法的 IP 地址"), std::string::npos);
+
+    write_config_file(R"({
+        "mode": "client",
+        "socks": {
+            "enabled": true,
+            "host": "",
+            "port": 1080
+        }
+    })");
+    auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/socks/host");
+
+    write_config_file(R"({
+        "mode": "client",
+        "socks": {
+            "enabled": true,
+            "host": "127.0.0.1",
+            "port": 1080
+        },
+        "reality": {
+            "public_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+    })");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_EQ(parsed->socks.host, "127.0.0.1");
+}
+
+TEST_F(config_test_fixture, ContractMatrixClientRealityPublicKeyRuleStayAlignedWithDocumentation)
+{
+    const auto doc = load_configuration_doc();
+    ASSERT_FALSE(doc.empty());
+    EXPECT_NE(doc.find("当 `mode = client` 时，`reality.public_key` 必须为非空值"), std::string::npos);
+
+    write_config_file(R"({
+        "mode": "client",
+        "socks": {
+            "enabled": true
+        },
+        "reality": {
+            "public_key": ""
+        }
+    })");
+    auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/reality/public_key");
+
+    write_config_file(R"({
+        "mode": "client",
+        "socks": {
+            "enabled": true
+        },
+        "reality": {
+            "public_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+    })");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_EQ(parsed->reality.public_key, std::string(64, 'a'));
+}
+
+TEST_F(config_test_fixture, ContractMatrixClientOutboundRulesStayAlignedWithDocumentation)
+{
+    const auto doc = load_configuration_doc();
+    ASSERT_FALSE(doc.empty());
+    EXPECT_NE(doc.find("当 `mode = client` 时，`outbound.host` 必须为非空字符串"), std::string::npos);
+    EXPECT_NE(doc.find("当 `mode = client` 时，`outbound.port` 必须大于 `0`"), std::string::npos);
+
+    write_config_file(R"({
+        "mode": "client",
+        "outbound": {
+            "host": "",
+            "port": 443
+        },
+        "socks": {
+            "enabled": true
+        },
+        "reality": {
+            "public_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+    })");
+    auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/outbound/host");
+
+    write_config_file(R"({
+        "mode": "client",
+        "outbound": {
+            "host": "example.com",
+            "port": 443
+        },
+        "socks": {
+            "enabled": true
+        },
+        "reality": {
+            "public_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+    })");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_EQ(parsed->outbound.host, "example.com");
+    EXPECT_EQ(parsed->outbound.port, 443);
+}
+
+TEST_F(config_test_fixture, ContractMatrixClientRealityFingerprintRuleStayAlignedWithDocumentation)
+{
+    const auto doc = load_configuration_doc();
+    ASSERT_FALSE(doc.empty());
+    EXPECT_NE(doc.find("可选值：`random`、`chrome`、`firefox`、`ios`、`android`"), std::string::npos);
+    EXPECT_NE(doc.find("当 `mode = client` 时，`reality.fingerprint` 仅允许上述值"), std::string::npos);
+
+    write_config_file(R"({
+        "mode": "client",
+        "socks": {
+            "enabled": true
+        },
+        "reality": {
+            "public_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "fingerprint": "bad-fp"
+        }
+    })");
+    auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/reality/fingerprint");
+
+    write_config_file(R"({
+        "mode": "client",
+        "socks": {
+            "enabled": true
+        },
+        "reality": {
+            "public_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "fingerprint": "android"
+        }
+    })");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_EQ(parsed->reality.fingerprint, "android");
+}
+
+TEST_F(config_test_fixture, ContractMatrixRealityDestRuleStayAlignedWithDocumentation)
+{
+    const auto doc = load_configuration_doc();
+    ASSERT_FALSE(doc.empty());
+    EXPECT_NE(doc.find("在提供时必须符合 `host:port` 或 `[ipv6]:port`"), std::string::npos);
+    EXPECT_NE(doc.find("端口范围必须在 `1-65535`"), std::string::npos);
+
+    write_config_file(R"({
+        "reality": {
+            "dest": "example.com"
+        }
+    })");
+    auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/reality/dest");
+
+    write_config_file(R"({
+        "reality": {
+            "dest": "example.com:443"
+        }
+    })");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_EQ(parsed->reality.dest, "example.com:443");
+}
+
+TEST_F(config_test_fixture, ContractMatrixRealityHexRulesStayAlignedWithDocumentation)
+{
+    const auto doc = load_configuration_doc();
+    ASSERT_FALSE(doc.empty());
+    EXPECT_NE(doc.find("解码后长度必须为 `32` 字节"), std::string::npos);
+    EXPECT_NE(doc.find("解码后长度不得超过 `8` 字节"), std::string::npos);
+
+    write_config_file(R"({
+        "reality": {
+            "public_key": "zz"
+        }
+    })");
+    auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/reality/public_key");
+
+    write_config_file(R"({
+        "reality": {
+            "private_key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "public_key": "abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+            "short_id": "01020304"
+        }
+    })");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_EQ(parsed->reality.short_id, "01020304");
+}
+
 TEST_F(config_test_fixture, SocksAuthEnabledRequiresNonEmptyCredentials)
 {
     write_config_file(R"({
@@ -755,6 +1345,20 @@ TEST_F(config_test_fixture, SocksAuthEnabledRequiresNonEmptyCredentials)
     EXPECT_TRUE(parsed->socks.auth);
     EXPECT_EQ(parsed->socks.username, "user");
     EXPECT_EQ(parsed->socks.password, "pass");
+
+    const std::string too_long_username(256, 'u');
+    write_config_file("{\"socks\":{\"enabled\":true,\"auth\":true,\"username\":\"" + too_long_username + "\",\"password\":\"pass\"}}");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/socks/username");
+    EXPECT_NE(parsed.error().reason.find("must be at most 255 bytes when auth is enabled"), std::string::npos);
+
+    const std::string too_long_password(256, 'p');
+    write_config_file("{\"socks\":{\"enabled\":true,\"auth\":true,\"username\":\"user\",\"password\":\"" + too_long_password + "\"}}");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/socks/password");
+    EXPECT_NE(parsed.error().reason.find("must be at most 255 bytes when auth is enabled"), std::string::npos);
 }
 
 TEST_F(config_test_fixture, ContractMatrixSocksAuthRulesStayAlignedWithDocumentation)
@@ -763,6 +1367,7 @@ TEST_F(config_test_fixture, ContractMatrixSocksAuthRulesStayAlignedWithDocumenta
     ASSERT_FALSE(doc.empty());
     EXPECT_NE(doc.find("当 `socks.auth = true` 时，`socks.username` 与 `socks.password` 必须均为非空字符串"), std::string::npos);
     EXPECT_NE(doc.find("任一为空会在配置解析阶段直接报错"), std::string::npos);
+    EXPECT_NE(doc.find("两者长度均不得超过 `255` 字节"), std::string::npos);
 
     write_config_file(R"({
         "socks": {

@@ -5,8 +5,12 @@
 #include <cstdint>
 #include <cstring>
 #include <utility>
+#include <array>
 #include <expected>
 #include <optional>
+#include <algorithm>
+#include <cctype>
+#include <charconv>
 
 #include <boost/asio/ip/address.hpp>
 #include <openssl/crypto.h>
@@ -115,7 +119,22 @@ constexpr std::uint32_t kQueueCapacityMax = 65535;
 
 [[nodiscard]] std::expected<void, config_error> validate_socks_config(const config::socks_t& socks)
 {
-    if (!socks.enabled || !socks.auth)
+    constexpr std::size_t kSocksAuthFieldMaxLen = 255;
+    if (!socks.enabled)
+    {
+        return {};
+    }
+    if (socks.host.empty())
+    {
+        return std::unexpected(make_config_error("/socks/host", "must be non-empty ip address when socks is enabled"));
+    }
+    boost::system::error_code ec;
+    (void)boost::asio::ip::make_address(socks.host, ec);
+    if (ec)
+    {
+        return std::unexpected(make_config_error("/socks/host", "must be valid ip address when socks is enabled"));
+    }
+    if (!socks.auth)
     {
         return {};
     }
@@ -126,6 +145,199 @@ constexpr std::uint32_t kQueueCapacityMax = 65535;
     if (socks.password.empty())
     {
         return std::unexpected(make_config_error("/socks/password", "must be non-empty when auth is enabled"));
+    }
+    if (socks.username.size() > kSocksAuthFieldMaxLen)
+    {
+        return std::unexpected(make_config_error("/socks/username", "must be at most 255 bytes when auth is enabled"));
+    }
+    if (socks.password.size() > kSocksAuthFieldMaxLen)
+    {
+        return std::unexpected(make_config_error("/socks/password", "must be at most 255 bytes when auth is enabled"));
+    }
+    return {};
+}
+
+[[nodiscard]] std::expected<void, config_error> validate_tproxy_config(const config::tproxy_t& tproxy)
+{
+    if (!tproxy.enabled)
+    {
+        return {};
+    }
+    if (tproxy.listen_host.empty())
+    {
+        return std::unexpected(make_config_error("/tproxy/listen_host", "must be non-empty ip address when tproxy is enabled"));
+    }
+    boost::system::error_code ec;
+    (void)boost::asio::ip::make_address(tproxy.listen_host, ec);
+    if (ec)
+    {
+        return std::unexpected(make_config_error("/tproxy/listen_host", "must be valid ip address when tproxy is enabled"));
+    }
+    if (tproxy.tcp_port == 0)
+    {
+        return std::unexpected(make_config_error("/tproxy/tcp_port", "must be non-zero when tproxy is enabled"));
+    }
+    return {};
+}
+
+[[nodiscard]] std::expected<std::vector<std::uint8_t>, config_error> decode_optional_hex_field(const std::string& hex, const std::string& path)
+{
+    if (hex.empty())
+    {
+        return std::vector<std::uint8_t>{};
+    }
+    if (hex.size() % 2 != 0)
+    {
+        return std::unexpected(make_config_error(path, "must be even-length hex when provided"));
+    }
+    auto bytes = reality::crypto_util::hex_to_bytes(hex);
+    if (bytes.empty())
+    {
+        return std::unexpected(make_config_error(path, "must be valid hex when provided"));
+    }
+    return bytes;
+}
+
+[[nodiscard]] bool parse_bracket_dest_target(const std::string& text, std::string& host, std::string& port)
+{
+    const auto end = text.find(']');
+    if (end == std::string::npos)
+    {
+        return false;
+    }
+    host = text.substr(1, end - 1);
+    if (end + 1 >= text.size() || text[end + 1] != ':')
+    {
+        return false;
+    }
+    port = text.substr(end + 2);
+    return true;
+}
+
+[[nodiscard]] bool parse_plain_dest_target(const std::string& text, std::string& host, std::string& port)
+{
+    const auto pos = text.rfind(':');
+    if (pos == std::string::npos)
+    {
+        return false;
+    }
+    host = text.substr(0, pos);
+    port = text.substr(pos + 1);
+    return true;
+}
+
+[[nodiscard]] bool valid_port_text(const std::string& text)
+{
+    if (text.empty())
+    {
+        return false;
+    }
+    std::uint32_t parsed_port = 0;
+    const char* const begin = text.data();
+    const char* const end = begin + text.size();
+    const auto [parse_end, parse_ec] = std::from_chars(begin, end, parsed_port);
+    if (parse_ec != std::errc() || parse_end != end)
+    {
+        return false;
+    }
+    return parsed_port > 0 && parsed_port <= 65535;
+}
+
+[[nodiscard]] bool is_valid_reality_dest(const std::string& input)
+{
+    if (input.empty())
+    {
+        return false;
+    }
+    std::string host;
+    std::string port;
+    const bool parsed = (input.front() == '[') ? parse_bracket_dest_target(input, host, port) : parse_plain_dest_target(input, host, port);
+    return parsed && !host.empty() && valid_port_text(port);
+}
+
+[[nodiscard]] std::expected<void, config_error> validate_reality_config(const config::reality_t& reality)
+{
+    constexpr std::size_t kRealityKeyLen = 32;
+    constexpr std::size_t kRealityShortIdMaxLen = 8;
+
+    const auto private_key_bytes = decode_optional_hex_field(reality.private_key, "/reality/private_key");
+    if (!private_key_bytes)
+    {
+        return std::unexpected(private_key_bytes.error());
+    }
+    if (!private_key_bytes->empty() && private_key_bytes->size() != kRealityKeyLen)
+    {
+        return std::unexpected(make_config_error("/reality/private_key", "must be 32-byte hex when provided"));
+    }
+
+    const auto public_key_bytes = decode_optional_hex_field(reality.public_key, "/reality/public_key");
+    if (!public_key_bytes)
+    {
+        return std::unexpected(public_key_bytes.error());
+    }
+    if (!public_key_bytes->empty() && public_key_bytes->size() != kRealityKeyLen)
+    {
+        return std::unexpected(make_config_error("/reality/public_key", "must be 32-byte hex when provided"));
+    }
+
+    const auto short_id_bytes = decode_optional_hex_field(reality.short_id, "/reality/short_id");
+    if (!short_id_bytes)
+    {
+        return std::unexpected(short_id_bytes.error());
+    }
+    if (short_id_bytes->size() > kRealityShortIdMaxLen)
+    {
+        return std::unexpected(make_config_error("/reality/short_id", "must be at most 8 bytes when provided"));
+    }
+    if (!reality.dest.empty() && !is_valid_reality_dest(reality.dest))
+    {
+        return std::unexpected(make_config_error("/reality/dest", "must be host:port or [ipv6]:port with port in 1-65535 when provided"));
+    }
+
+    return {};
+}
+
+[[nodiscard]] std::expected<void, config_error> validate_mode_reality_dependencies(const config& cfg)
+{
+    if (cfg.mode == "client" && cfg.outbound.host.empty())
+    {
+        return std::unexpected(make_config_error("/outbound/host", "must be non-empty in client mode"));
+    }
+    if (cfg.mode == "client" && cfg.outbound.port == 0)
+    {
+        return std::unexpected(make_config_error("/outbound/port", "must be non-zero in client mode"));
+    }
+    if (cfg.mode == "client" && cfg.reality.public_key.empty())
+    {
+        return std::unexpected(make_config_error("/reality/public_key", "must be non-empty in client mode"));
+    }
+    if (cfg.mode == "client")
+    {
+        std::string normalized_fingerprint;
+        normalized_fingerprint.reserve(cfg.reality.fingerprint.size());
+        for (const char ch : cfg.reality.fingerprint)
+        {
+            if (ch == '-' || ch == ' ')
+            {
+                normalized_fingerprint.push_back('_');
+                continue;
+            }
+            normalized_fingerprint.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+        }
+        static constexpr std::array<const char*, 8> kSupportedFingerprints = {
+            "chrome",
+            "chrome_120",
+            "firefox",
+            "firefox_120",
+            "ios",
+            "ios_14",
+            "android",
+            "android_11_okhttp"};
+        if (!normalized_fingerprint.empty() && normalized_fingerprint != "random" &&
+            std::find(kSupportedFingerprints.begin(), kSupportedFingerprints.end(), normalized_fingerprint) == kSupportedFingerprints.end())
+        {
+            return std::unexpected(make_config_error("/reality/fingerprint", "must be random/chrome/firefox/ios/android (or version aliases) in client mode"));
+        }
     }
     return {};
 }
@@ -178,6 +390,10 @@ constexpr std::uint32_t kQueueCapacityMax = 65535;
     {
         return std::unexpected(socks_result.error());
     }
+    if (const auto reality_result = validate_reality_config(cfg.reality); !reality_result)
+    {
+        return std::unexpected(reality_result.error());
+    }
     if (const auto inbound_result = validate_inbound_config(cfg.inbound); !inbound_result)
     {
         return std::unexpected(inbound_result.error());
@@ -188,6 +404,10 @@ constexpr std::uint32_t kQueueCapacityMax = 65535;
         return std::unexpected(make_config_error("/tproxy/enabled", "tproxy inbound is only supported on linux"));
     }
 #endif
+    if (const auto tproxy_result = validate_tproxy_config(cfg.tproxy); !tproxy_result)
+    {
+        return std::unexpected(tproxy_result.error());
+    }
     if (cfg.mode == "client" && !has_enabled_client_inbound(cfg))
     {
 #if SOCKS_HAS_TPROXY
@@ -195,6 +415,10 @@ constexpr std::uint32_t kQueueCapacityMax = 65535;
 #else
         return std::unexpected(make_config_error("/mode", "client mode requires socks inbound"));
 #endif
+    }
+    if (const auto mode_reality_result = validate_mode_reality_dependencies(cfg); !mode_reality_result)
+    {
+        return std::unexpected(mode_reality_result.error());
     }
     return {};
 }
