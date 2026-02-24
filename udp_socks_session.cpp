@@ -33,6 +33,7 @@
 #include "log_context.h"
 #include "mux_protocol.h"
 #include "stop_dispatch.h"
+#include "timeout_io.h"
 #include "udp_socks_session.h"
 
 namespace mux
@@ -64,10 +65,23 @@ void log_udp_recv_channel_unavailable_on_data(const connection_context& ctx)
     LOG_CTX_WARN(ctx, "{} recv channel unavailable on data", log_event::kSocks);
 }
 
-boost::asio::awaitable<void> write_socks_error_reply(boost::asio::ip::tcp::socket& socket, const std::uint8_t rep)
+boost::asio::awaitable<void> write_socks_error_reply(boost::asio::ip::tcp::socket& socket,
+                                                     const std::uint8_t rep,
+                                                     const connection_context& ctx,
+                                                     const std::uint32_t timeout_sec)
 {
     std::uint8_t err[] = {socks::kVer, rep, 0, socks::kAtypIpv4, 0, 0, 0, 0, 0, 0};
-    co_await boost::asio::async_write(socket, boost::asio::buffer(err), boost::asio::as_tuple(boost::asio::use_awaitable));
+    const auto write_res = co_await timeout_io::async_write_with_timeout(socket, boost::asio::buffer(err), timeout_sec, "udp socks session");
+    if (write_res.ok)
+    {
+        co_return;
+    }
+    if (write_res.timed_out)
+    {
+        LOG_CTX_WARN(ctx, "{} write error reply timeout {}s", log_event::kSocks, timeout_sec);
+        co_return;
+    }
+    LOG_CTX_WARN(ctx, "{} write error reply failed {}", log_event::kSocks, write_res.ec.message());
 }
 
 void close_udp_socket_on_prepare_failure(boost::asio::ip::udp::socket& udp_socket, const connection_context& ctx)
@@ -294,15 +308,21 @@ namespace
 boost::asio::awaitable<bool> send_udp_associate_success_reply(boost::asio::ip::tcp::socket& socket,
                                                               const boost::asio::ip::address& local_addr,
                                                               const std::uint16_t udp_bind_port,
-                                                              const connection_context& ctx)
+                                                              const connection_context& ctx,
+                                                              const std::uint32_t timeout_sec)
 {
     const auto final_rep = detail::build_udp_associate_reply(local_addr, udp_bind_port);
-    const auto [write_ec, write_n] =
-        co_await boost::asio::async_write(socket, boost::asio::buffer(final_rep), boost::asio::as_tuple(boost::asio::use_awaitable));
-    (void)write_n;
-    if (write_ec)
+    const auto write_res = co_await timeout_io::async_write_with_timeout(socket, boost::asio::buffer(final_rep), timeout_sec, "udp socks session");
+    if (!write_res.ok)
     {
-        LOG_CTX_WARN(ctx, "{} write failed {}", log_event::kSocks, write_ec.message());
+        if (write_res.timed_out)
+        {
+            LOG_CTX_WARN(ctx, "{} write timeout {}s", log_event::kSocks, timeout_sec);
+        }
+        else
+        {
+            LOG_CTX_WARN(ctx, "{} write failed {}", log_event::kSocks, write_res.ec.message());
+        }
         co_return false;
     }
     co_return true;
@@ -485,6 +505,13 @@ void udp_socks_session::apply_expected_client_constraint(const std::string& host
         return;
     }
 
+    boost::system::error_code host_parse_ec;
+    (void)boost::asio::ip::make_address(host, host_parse_ec);
+    if (host_parse_ec)
+    {
+        expected_client_port_.reset();
+    }
+
     boost::system::error_code peer_ec;
     const auto peer_ep = socket_.remote_endpoint(peer_ec);
     if (peer_ec)
@@ -510,7 +537,7 @@ boost::asio::awaitable<std::shared_ptr<mux_stream>> udp_socks_session::prepare_u
 
     if (!bind_udp_socket_for_associate(socket_, udp_socket_, ctx_, local_addr, udp_bind_port))
     {
-        co_await write_socks_error_reply(socket_, socks::kRepGenFail);
+        co_await write_socks_error_reply(socket_, socks::kRepGenFail, ctx_, timeout_config_.write);
         on_close();
         co_return nullptr;
     }
@@ -523,7 +550,7 @@ boost::asio::awaitable<std::shared_ptr<mux_stream>> udp_socks_session::prepare_u
 
     if (!is_tunnel_available(tunnel_manager_, ctx_))
     {
-        co_await write_socks_error_reply(socket_, socks::kRepHostUnreach);
+        co_await write_socks_error_reply(socket_, socks::kRepHostUnreach, ctx_, timeout_config_.write);
         on_close();
         co_return nullptr;
     }
@@ -531,7 +558,7 @@ boost::asio::awaitable<std::shared_ptr<mux_stream>> udp_socks_session::prepare_u
     const auto stream = co_await establish_udp_associate_stream(tunnel_manager_, ctx_);
     if (stream == nullptr)
     {
-        co_await write_socks_error_reply(socket_, socks::kRepGenFail);
+        co_await write_socks_error_reply(socket_, socks::kRepGenFail, ctx_, timeout_config_.write);
         on_close();
         co_return nullptr;
     }
@@ -543,7 +570,7 @@ boost::asio::awaitable<std::shared_ptr<mux_stream>> udp_socks_session::prepare_u
         co_return nullptr;
     }
 
-    if (!co_await send_udp_associate_success_reply(socket_, local_addr, udp_bind_port, ctx_))
+    if (!co_await send_udp_associate_success_reply(socket_, local_addr, udp_bind_port, ctx_, timeout_config_.write))
     {
         co_await close_and_remove_stream(tunnel_manager_, stream);
         on_close();
