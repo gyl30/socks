@@ -73,12 +73,14 @@ struct socket_timeout_state
 {
     std::shared_ptr<boost::asio::steady_timer> timer;
     std::shared_ptr<std::atomic<bool>> timed_out;
+    std::shared_ptr<std::atomic<bool>> completed;
 };
 
 struct resolver_timeout_state
 {
     std::shared_ptr<boost::asio::steady_timer> timer;
     std::shared_ptr<std::atomic<bool>> timed_out;
+    std::shared_ptr<std::atomic<bool>> completed;
 };
 
 namespace detail
@@ -122,18 +124,24 @@ inline socket_timeout_state arm_socket_timeout(boost::asio::ip::tcp::socket& soc
 
     auto timer = std::make_shared<boost::asio::steady_timer>(socket.get_executor());
     auto timed_out = std::make_shared<std::atomic<bool>>(false);
+    auto completed = std::make_shared<std::atomic<bool>>(false);
     timer->expires_after(timeout);
     timer->async_wait(
-        [&socket, timed_out, scope](const boost::system::error_code& timer_ec)
+        [&socket, timed_out, completed, scope](const boost::system::error_code& timer_ec)
         {
             if (timer_ec)
+            {
+                return;
+            }
+            bool expected = false;
+            if (!completed->compare_exchange_strong(expected, true, std::memory_order_acq_rel, std::memory_order_acquire))
             {
                 return;
             }
             timed_out->store(true, std::memory_order_release);
             detail::cancel_and_close_socket(socket, scope);
         });
-    return socket_timeout_state{.timer = std::move(timer), .timed_out = std::move(timed_out)};
+    return socket_timeout_state{.timer = std::move(timer), .timed_out = std::move(timed_out), .completed = std::move(completed)};
 }
 
 inline socket_timeout_state arm_socket_timeout(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
@@ -151,27 +159,37 @@ inline socket_timeout_state arm_socket_timeout(const std::shared_ptr<boost::asio
 
     auto timer = std::make_shared<boost::asio::steady_timer>(socket->get_executor());
     auto timed_out = std::make_shared<std::atomic<bool>>(false);
+    auto completed = std::make_shared<std::atomic<bool>>(false);
     timer->expires_after(timeout);
     timer->async_wait(
-        [socket, timed_out, scope](const boost::system::error_code& timer_ec)
+        [socket, timed_out, completed, scope](const boost::system::error_code& timer_ec)
         {
             if (timer_ec)
+            {
+                return;
+            }
+            bool expected = false;
+            if (!completed->compare_exchange_strong(expected, true, std::memory_order_acq_rel, std::memory_order_acquire))
             {
                 return;
             }
             timed_out->store(true, std::memory_order_release);
             detail::cancel_and_close_socket(*socket, scope);
         });
-    return socket_timeout_state{.timer = std::move(timer), .timed_out = std::move(timed_out)};
+    return socket_timeout_state{.timer = std::move(timer), .timed_out = std::move(timed_out), .completed = std::move(completed)};
 }
 
 inline bool disarm_timeout(const socket_timeout_state& state)
 {
-    if (!state.timer || !state.timed_out)
+    if (!state.timer || !state.timed_out || !state.completed)
     {
         return false;
     }
-    (void)state.timer->cancel();
+    bool expected = false;
+    if (state.completed->compare_exchange_strong(expected, true, std::memory_order_acq_rel, std::memory_order_acquire))
+    {
+        (void)state.timer->cancel();
+    }
     return state.timed_out->load(std::memory_order_acquire);
 }
 
@@ -184,18 +202,24 @@ inline resolver_timeout_state arm_resolver_timeout(boost::asio::ip::tcp::resolve
 
     auto timer = std::make_shared<boost::asio::steady_timer>(resolver.get_executor());
     auto timed_out = std::make_shared<std::atomic<bool>>(false);
+    auto completed = std::make_shared<std::atomic<bool>>(false);
     timer->expires_after(timeout);
     timer->async_wait(
-        [&resolver, timed_out](const boost::system::error_code& timer_ec)
+        [&resolver, timed_out, completed](const boost::system::error_code& timer_ec)
         {
             if (timer_ec)
+            {
+                return;
+            }
+            bool expected = false;
+            if (!completed->compare_exchange_strong(expected, true, std::memory_order_acq_rel, std::memory_order_acquire))
             {
                 return;
             }
             timed_out->store(true, std::memory_order_release);
             resolver.cancel();
         });
-    return resolver_timeout_state{.timer = std::move(timer), .timed_out = std::move(timed_out)};
+    return resolver_timeout_state{.timer = std::move(timer), .timed_out = std::move(timed_out), .completed = std::move(completed)};
 }
 
 inline resolver_timeout_state arm_resolver_timeout(boost::asio::ip::udp::resolver& resolver, const std::chrono::milliseconds timeout)
@@ -207,27 +231,37 @@ inline resolver_timeout_state arm_resolver_timeout(boost::asio::ip::udp::resolve
 
     auto timer = std::make_shared<boost::asio::steady_timer>(resolver.get_executor());
     auto timed_out = std::make_shared<std::atomic<bool>>(false);
+    auto completed = std::make_shared<std::atomic<bool>>(false);
     timer->expires_after(timeout);
     timer->async_wait(
-        [&resolver, timed_out](const boost::system::error_code& timer_ec)
+        [&resolver, timed_out, completed](const boost::system::error_code& timer_ec)
         {
             if (timer_ec)
+            {
+                return;
+            }
+            bool expected = false;
+            if (!completed->compare_exchange_strong(expected, true, std::memory_order_acq_rel, std::memory_order_acquire))
             {
                 return;
             }
             timed_out->store(true, std::memory_order_release);
             resolver.cancel();
         });
-    return resolver_timeout_state{.timer = std::move(timer), .timed_out = std::move(timed_out)};
+    return resolver_timeout_state{.timer = std::move(timer), .timed_out = std::move(timed_out), .completed = std::move(completed)};
 }
 
 inline bool disarm_timeout(const resolver_timeout_state& state)
 {
-    if (!state.timer || !state.timed_out)
+    if (!state.timer || !state.timed_out || !state.completed)
     {
         return false;
     }
-    (void)state.timer->cancel();
+    bool expected = false;
+    if (state.completed->compare_exchange_strong(expected, true, std::memory_order_acq_rel, std::memory_order_acquire))
+    {
+        (void)state.timer->cancel();
+    }
     return state.timed_out->load(std::memory_order_acquire);
 }
 
