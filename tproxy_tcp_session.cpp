@@ -27,6 +27,7 @@
 #include "router.h"
 #include "upstream.h"
 #include "statistics.h"
+#include "timeout_io.h"
 #include "log_context.h"
 #include "client_tunnel_pool.h"
 #include "tproxy_tcp_session.h"
@@ -65,7 +66,25 @@ namespace
     return !dst_ep.address().is_unspecified() && dst_ep.port() != 0;
 }
 
-}    // namespace
+boost::asio::awaitable<timeout_io::timed_tcp_write_result> write_client_with_optional_timeout(boost::asio::ip::tcp::socket& socket,
+                                                                                               const boost::asio::const_buffer& buffer,
+                                                                                               const std::uint32_t timeout_sec)
+{
+    if (timeout_sec == 0)
+    {
+        const auto [write_ec, write_size] = co_await boost::asio::async_write(socket, buffer, boost::asio::as_tuple(boost::asio::use_awaitable));
+        co_return timeout_io::timed_tcp_write_result{
+            .ok = !write_ec,
+            .timed_out = false,
+            .write_size = write_size,
+            .ec = write_ec,
+        };
+    }
+
+    co_return co_await timeout_io::async_write_with_timeout(socket, buffer, timeout_sec, "tproxy tcp session");
+}
+
+}
 
 tproxy_tcp_session::tproxy_tcp_session(boost::asio::ip::tcp::socket socket,
                                        boost::asio::io_context& io_context,
@@ -157,7 +176,7 @@ boost::asio::awaitable<std::pair<route_type, std::shared_ptr<upstream>>> tproxy_
             co_return std::make_pair(route, std::shared_ptr<upstream>(nullptr));
         }
 
-        const std::shared_ptr<upstream> backend = std::make_shared<proxy_upstream>(tunnel, ctx_);
+        const std::shared_ptr<upstream> backend = std::make_shared<proxy_upstream>(tunnel, ctx_, timeout_config_.read);
         co_return std::make_pair(route, backend);
     }
 
@@ -322,12 +341,17 @@ bool tproxy_tcp_session::should_stop_backend_read(const boost::system::error_cod
 
 boost::asio::awaitable<bool> tproxy_tcp_session::write_backend_chunk_to_client(const std::vector<std::uint8_t>& buf, const std::size_t n)
 {
-    const auto [write_ec, write_n] =
-        co_await boost::asio::async_write(socket_, boost::asio::buffer(buf.data(), n), boost::asio::as_tuple(boost::asio::use_awaitable));
-    (void)write_n;
-    if (write_ec)
+    const auto write_res = co_await write_client_with_optional_timeout(socket_, boost::asio::buffer(buf.data(), n), timeout_config_.write);
+    if (!write_res.ok)
     {
-        LOG_CTX_WARN(ctx_, "{} failed to write to client {}", log_event::kSocks, write_ec.message());
+        if (write_res.timed_out)
+        {
+            LOG_CTX_WARN(ctx_, "{} failed to write to client timeout {}s", log_event::kSocks, timeout_config_.write);
+        }
+        else
+        {
+            LOG_CTX_WARN(ctx_, "{} failed to write to client {}", log_event::kSocks, write_res.ec.message());
+        }
         co_return false;
     }
     last_activity_time_ms_.store(now_ms(), std::memory_order_release);
@@ -389,4 +413,4 @@ boost::asio::awaitable<void> tproxy_tcp_session::idle_watchdog(std::shared_ptr<u
     }
 }
 
-}    // namespace mux
+}

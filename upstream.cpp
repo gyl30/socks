@@ -1,3 +1,5 @@
+#include <atomic>
+#include <chrono>
 #include <memory>
 #include <string>
 #include <vector>
@@ -13,6 +15,8 @@
 #include <boost/system/errc.hpp>
 #include <boost/asio/as_tuple.hpp>
 #include <boost/asio/awaitable.hpp>
+#include <boost/asio/this_coro.hpp>
+#include <boost/asio/steady_timer.hpp>
 #include <boost/system/error_code.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/system/detail/errc.hpp>
@@ -234,8 +238,10 @@ boost::asio::awaitable<void> direct_upstream::shutdown_send()
     co_return;
 }
 
-proxy_upstream::proxy_upstream(std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> tunnel, connection_context ctx)
-    : ctx_(std::move(ctx)), tunnel_(std::move(tunnel))
+proxy_upstream::proxy_upstream(std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> tunnel,
+                               connection_context ctx,
+                               const std::uint32_t timeout_sec)
+    : ctx_(std::move(ctx)), tunnel_(std::move(tunnel)), timeout_sec_(timeout_sec)
 {
 }
 
@@ -263,7 +269,44 @@ boost::asio::awaitable<bool> proxy_upstream::wait_connect_ack(const std::shared_
                                                               const std::uint16_t port)
 {
     const auto stream_ctx = ctx_.with_stream(stream->id());
+    auto timeout_fired = std::make_shared<std::atomic<bool>>(false);
+    auto wait_done = std::make_shared<std::atomic<bool>>(false);
+    auto ex = co_await boost::asio::this_coro::executor;
+    boost::asio::steady_timer ack_timer(ex);
+    if (timeout_sec_ > 0)
+    {
+        ack_timer.expires_after(std::chrono::seconds(timeout_sec_));
+        ack_timer.async_wait(
+            [stream, timeout_fired, wait_done](const boost::system::error_code& timer_ec)
+            {
+                if (timer_ec)
+                {
+                    return;
+                }
+                bool expected = false;
+                if (!wait_done->compare_exchange_strong(expected, true, std::memory_order_acq_rel, std::memory_order_acquire))
+                {
+                    return;
+                }
+                timeout_fired->store(true, std::memory_order_release);
+                stream->on_reset();
+            });
+    }
+
     auto [ack_ec, ack_data] = co_await stream->async_read_some();
+    if (timeout_sec_ > 0)
+    {
+        bool expected = false;
+        (void)wait_done->compare_exchange_strong(expected, true, std::memory_order_acq_rel, std::memory_order_acquire);
+        ack_timer.cancel();
+    }
+    if (timeout_fired->load(std::memory_order_acquire))
+    {
+        last_connect_reply_ = socks::kRepConnRefused;
+        LOG_CTX_WARN(stream_ctx, "{} stage=wait_ack target={}:{} timeout={}s", log_event::kRoute, host, port, timeout_sec_);
+        co_return false;
+    }
+
     if (ack_ec)
     {
         LOG_CTX_ERROR(stream_ctx, "{} stage=wait_ack target={}:{} error={}", log_event::kRoute, host, port, ack_ec.message());
@@ -416,4 +459,4 @@ boost::asio::awaitable<void> proxy_upstream::shutdown_send()
     }
 }
 
-}    // namespace mux
+}

@@ -98,7 +98,7 @@ std::shared_ptr<mux::mux_stream> make_mock_stream(boost::asio::io_context& io_co
     return std::make_shared<mux::mux_stream>(stream_id, 100, "trace-upstream", connection, io_context);
 }
 
-}    // namespace
+}
 
 class upstream_test_fixture : public ::testing::Test
 {
@@ -570,6 +570,29 @@ TEST_F(upstream_test_fixture, ProxyUpstreamConnectFailsWhenAckRejectedAndCleansS
     EXPECT_EQ(upstream.stream_, nullptr);
 }
 
+TEST_F(upstream_test_fixture, ProxyUpstreamConnectFailsWhenAckTimeoutAndCleansStream)
+{
+    auto tunnel = make_test_tunnel(ctx());
+    auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
+    ON_CALL(*mock_conn, id()).WillByDefault(::testing::Return(9));
+    ON_CALL(*mock_conn, mock_send_async(::testing::_, ::testing::_, ::testing::_)).WillByDefault(::testing::Return(boost::system::error_code{}));
+    tunnel->connection_ = mock_conn;
+
+    EXPECT_CALL(*mock_conn, register_stream(::testing::_, ::testing::_)).WillOnce(::testing::Return(true));
+    EXPECT_CALL(*mock_conn, mock_send_async(::testing::_, mux::kCmdSyn, ::testing::_)).WillOnce(::testing::Return(boost::system::error_code{}));
+    EXPECT_CALL(*mock_conn, mock_send_async(::testing::_, mux::kCmdFin, ::testing::_)).Times(0);
+    EXPECT_CALL(*mock_conn, remove_stream(::testing::_)).Times(1);
+
+    mux::proxy_upstream upstream(tunnel, mux::connection_context{}, 1);
+    const auto start = std::chrono::steady_clock::now();
+    EXPECT_FALSE(mux::test::run_awaitable(ctx(), upstream.connect("example.com", 443)));
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
+    EXPECT_GE(elapsed.count(), 900);
+    EXPECT_LT(elapsed.count(), 4000);
+    EXPECT_EQ(upstream.connect_failure_reply(), socks::kRepConnRefused);
+    EXPECT_EQ(upstream.stream_, nullptr);
+}
+
 TEST_F(upstream_test_fixture, ProxyUpstreamSendSynRequestSuccess)
 {
     auto tunnel = make_test_tunnel(ctx());
@@ -639,6 +662,20 @@ TEST_F(upstream_test_fixture, ProxyUpstreamWaitConnectAckRemoteReject)
     stream->on_data(ack_data);
 
     EXPECT_FALSE(mux::test::run_awaitable(ctx(), upstream.wait_connect_ack(stream, "example.com", 443)));
+}
+
+TEST_F(upstream_test_fixture, ProxyUpstreamWaitConnectAckTimeout)
+{
+    auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
+    auto stream = make_mock_stream(ctx(), mock_conn);
+    mux::proxy_upstream upstream(nullptr, mux::connection_context{}, 1);
+
+    const auto start = std::chrono::steady_clock::now();
+    EXPECT_FALSE(mux::test::run_awaitable(ctx(), upstream.wait_connect_ack(stream, "example.com", 443)));
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
+    EXPECT_GE(elapsed.count(), 900);
+    EXPECT_LT(elapsed.count(), 4000);
+    EXPECT_EQ(upstream.connect_failure_reply(), socks::kRepConnRefused);
 }
 
 TEST_F(upstream_test_fixture, ProxyUpstreamCleanupNullStreamNoop)
