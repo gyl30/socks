@@ -16,7 +16,9 @@
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
 #include <boost/asio/awaitable.hpp>
+#include <boost/asio/this_coro.hpp>
 #include <boost/asio/io_context.hpp>
+#include <boost/asio/steady_timer.hpp>
 #include <boost/asio/ip/address.hpp>
 #include <boost/asio/ip/v6_only.hpp>
 #include <boost/system/error_code.hpp>
@@ -213,7 +215,7 @@ boost::asio::awaitable<void> close_and_remove_stream(const std::shared_ptr<mux_t
 }
 
 boost::asio::awaitable<std::shared_ptr<mux_stream>> establish_udp_associate_stream(
-    std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> tunnel_manager, const connection_context& ctx)
+    std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> tunnel_manager, const connection_context& ctx, const std::uint32_t timeout_sec)
 {
     const auto stream = tunnel_manager->create_stream();
     if (stream == nullptr)
@@ -233,7 +235,43 @@ boost::asio::awaitable<std::shared_ptr<mux_stream>> establish_udp_associate_stre
         co_return nullptr;
     }
 
+    auto timeout_fired = std::make_shared<std::atomic<bool>>(false);
+    auto wait_done = std::make_shared<std::atomic<bool>>(false);
+    auto ex = co_await boost::asio::this_coro::executor;
+    boost::asio::steady_timer ack_timer(ex);
+    if (timeout_sec > 0)
+    {
+        ack_timer.expires_after(std::chrono::seconds(timeout_sec));
+        ack_timer.async_wait(
+            [stream, timeout_fired, wait_done](const boost::system::error_code& timer_ec)
+            {
+                if (timer_ec)
+                {
+                    return;
+                }
+                bool expected = false;
+                if (!wait_done->compare_exchange_strong(expected, true, std::memory_order_acq_rel, std::memory_order_acquire))
+                {
+                    return;
+                }
+                timeout_fired->store(true, std::memory_order_release);
+                stream->on_reset();
+            });
+    }
+
     auto [ack_ec, ack_data] = co_await stream->async_read_some();
+    if (timeout_sec > 0)
+    {
+        bool expected = false;
+        (void)wait_done->compare_exchange_strong(expected, true, std::memory_order_acq_rel, std::memory_order_acquire);
+        ack_timer.cancel();
+    }
+    if (timeout_fired->load(std::memory_order_acquire))
+    {
+        LOG_CTX_WARN(ctx, "{} ack timeout {}s", log_event::kSocks, timeout_sec);
+        co_await close_and_remove_stream(tunnel_manager, stream);
+        co_return nullptr;
+    }
     if (ack_ec)
     {
         LOG_CTX_WARN(ctx, "{} ack failed {}", log_event::kSocks, ack_ec.message());
@@ -511,7 +549,6 @@ void udp_socks_session::apply_expected_client_constraint(const std::string& host
     {
         expected_client_port_.reset();
     }
-
     boost::system::error_code peer_ec;
     const auto peer_ep = socket_.remote_endpoint(peer_ec);
     if (peer_ec)
@@ -555,7 +592,7 @@ boost::asio::awaitable<std::shared_ptr<mux_stream>> udp_socks_session::prepare_u
         co_return nullptr;
     }
 
-    const auto stream = co_await establish_udp_associate_stream(tunnel_manager_, ctx_);
+    const auto stream = co_await establish_udp_associate_stream(tunnel_manager_, ctx_, timeout_config_.read);
     if (stream == nullptr)
     {
         co_await write_socks_error_reply(socket_, socks::kRepGenFail, ctx_, timeout_config_.write);
