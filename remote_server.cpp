@@ -1179,12 +1179,13 @@ boost::asio::awaitable<void> handle_fallback_without_target(const std::shared_pt
     LOG_CTX_INFO(ctx, "{} done", log_event::kFallback);
 }
 
-boost::asio::awaitable<bool> resolve_and_connect_fallback_target(const std::shared_ptr<boost::asio::ip::tcp::socket>& target_socket,
-                                                                 boost::asio::io_context& io_context,
-                                                                 const std::string& target_host,
-                                                                 const std::string& target_port,
-                                                                 const connection_context& ctx,
-                                                                 const std::uint32_t timeout_sec)
+boost::asio::awaitable<boost::system::error_code> resolve_and_connect_fallback_target(
+    const std::shared_ptr<boost::asio::ip::tcp::socket>& target_socket,
+    boost::asio::io_context& io_context,
+    const std::string& target_host,
+    const std::string& target_port,
+    const connection_context& ctx,
+    const std::uint32_t timeout_sec)
 {
     const auto resolve_res = co_await resolve_socket_with_timeout(io_context, target_host, target_port, timeout_sec);
     if (!resolve_res.ok)
@@ -1195,13 +1196,18 @@ boost::asio::awaitable<bool> resolve_and_connect_fallback_target(const std::shar
         {
             stats.inc_fallback_resolve_timeouts();
             LOG_CTX_WARN(ctx, "{} stage=resolve target={}:{} timeout={}s", log_event::kFallback, target_host, target_port, timeout_sec);
+            co_return boost::asio::error::timed_out;
         }
         else
         {
             stats.inc_fallback_resolve_errors();
             LOG_CTX_WARN(ctx, "{} stage=resolve target={}:{} error={}", log_event::kFallback, target_host, target_port, resolve_res.ec.message());
+            if (resolve_res.ec)
+            {
+                co_return resolve_res.ec;
+            }
+            co_return boost::asio::error::host_not_found;
         }
-        co_return false;
     }
 
     const auto connect_res = co_await connect_socket_with_timeout(target_socket, resolve_res.endpoints, timeout_sec);
@@ -1213,27 +1219,32 @@ boost::asio::awaitable<bool> resolve_and_connect_fallback_target(const std::shar
         {
             stats.inc_fallback_connect_timeouts();
             LOG_CTX_WARN(ctx, "{} stage=connect target={}:{} timeout={}s", log_event::kFallback, target_host, target_port, timeout_sec);
+            co_return boost::asio::error::timed_out;
         }
         else
         {
             stats.inc_fallback_connect_errors();
             LOG_CTX_WARN(ctx, "{} stage=connect target={}:{} error={}", log_event::kFallback, target_host, target_port, connect_res.ec.message());
+            if (connect_res.ec)
+            {
+                co_return connect_res.ec;
+            }
+            co_return boost::asio::error::host_unreachable;
         }
-        co_return false;
     }
-    co_return true;
+    co_return boost::system::error_code{};
 }
 
-boost::asio::awaitable<bool> write_fallback_initial_buffer(const std::shared_ptr<boost::asio::ip::tcp::socket>& target_socket,
-                                                           const std::vector<std::uint8_t>& buf,
-                                                           const std::string& target_host,
-                                                           const std::string& target_port,
-                                                           const connection_context& ctx,
-                                                           const std::uint32_t timeout_sec)
+boost::asio::awaitable<boost::system::error_code> write_fallback_initial_buffer(const std::shared_ptr<boost::asio::ip::tcp::socket>& target_socket,
+                                                                                 const std::vector<std::uint8_t>& buf,
+                                                                                 const std::string& target_host,
+                                                                                 const std::string& target_port,
+                                                                                 const connection_context& ctx,
+                                                                                 const std::uint32_t timeout_sec)
 {
     if (buf.empty())
     {
-        co_return true;
+        co_return boost::system::error_code{};
     }
 
     const auto write_res = co_await write_socket_with_timeout(target_socket, boost::asio::buffer(buf), timeout_sec);
@@ -1245,13 +1256,17 @@ boost::asio::awaitable<bool> write_fallback_initial_buffer(const std::shared_ptr
         {
             stats.inc_fallback_write_timeouts();
             LOG_CTX_WARN(ctx, "{} stage=write target={}:{} timeout={}s", log_event::kFallback, target_host, target_port, timeout_sec);
-            co_return false;
+            co_return boost::asio::error::timed_out;
         }
         stats.inc_fallback_write_errors();
         LOG_CTX_WARN(ctx, "{} stage=write target={}:{} error={}", log_event::kFallback, target_host, target_port, write_res.ec.message());
-        co_return false;
+        if (write_res.ec)
+        {
+            co_return write_res.ec;
+        }
+        co_return boost::asio::error::broken_pipe;
     }
-    co_return true;
+    co_return boost::system::error_code{};
 }
 
 }    // namespace
@@ -1819,8 +1834,12 @@ boost::asio::awaitable<remote_server::server_handshake_res> remote_server::delay
         close_socket_quietly(s);
         co_return server_handshake_res{false, boost::asio::error::operation_aborted, {}, {}, {}, nullptr, nullptr, {}};
     }
-    co_await handle_fallback(s, initial_buf, ctx, client_sni);
-    co_return server_handshake_res{false, {}, {}, {}, {}, nullptr, nullptr, {}};
+    const auto fallback_ec = co_await handle_fallback(s, initial_buf, ctx, client_sni);
+    if (fallback_ec)
+    {
+        co_return server_handshake_res{false, fallback_ec, {}, {}, {}, nullptr, nullptr, {}};
+    }
+    co_return server_handshake_res{false, boost::asio::error::operation_aborted, {}, {}, {}, nullptr, nullptr, {}};
 }
 
 boost::asio::awaitable<remote_server::server_handshake_res> remote_server::negotiate_reality(std::shared_ptr<boost::asio::ip::tcp::socket> s,
@@ -2383,22 +2402,22 @@ void remote_server::record_fallback_result(const connection_context& ctx, const 
     }
 }
 
-boost::asio::awaitable<void> remote_server::handle_fallback(const std::shared_ptr<boost::asio::ip::tcp::socket>& s,
-                                                            const std::vector<std::uint8_t>& buf,
-                                                            const connection_context& ctx,
-                                                            const std::string& sni)
+boost::asio::awaitable<boost::system::error_code> remote_server::handle_fallback(const std::shared_ptr<boost::asio::ip::tcp::socket>& s,
+                                                                                 const std::vector<std::uint8_t>& buf,
+                                                                                 const connection_context& ctx,
+                                                                                 const std::string& sni)
 {
     if (stop_.load(std::memory_order_acquire))
     {
         close_fallback_socket(s, ctx);
-        co_return;
+        co_return boost::asio::error::operation_aborted;
     }
 
     if (!consume_fallback_token(ctx))
     {
         LOG_CTX_WARN(ctx, "{} blocked by fallback guard", log_event::kFallback);
         co_await fallback_wait_and_close_socket(s, ctx, io_context_);
-        co_return;
+        co_return boost::asio::error::operation_aborted;
     }
 
     const auto fallback_target = find_fallback_target_by_sni(sni);
@@ -2406,7 +2425,7 @@ boost::asio::awaitable<void> remote_server::handle_fallback(const std::shared_pt
     {
         co_await handle_fallback_without_target(s, ctx, sni, io_context_);
         record_fallback_result(ctx, false);
-        co_return;
+        co_return boost::asio::error::host_not_found;
     }
 
     const auto target_host = fallback_target.first;
@@ -2414,20 +2433,21 @@ boost::asio::awaitable<void> remote_server::handle_fallback(const std::shared_pt
     const auto connect_timeout_sec = timeout_config_.read;
     auto t = std::make_shared<boost::asio::ip::tcp::socket>(io_context_);
     LOG_CTX_INFO(ctx, "{} proxying sni {} to {} {}", log_event::kFallback, sni, target_host, target_port);
-    if (!co_await resolve_and_connect_fallback_target(t, io_context_, target_host, target_port, ctx, connect_timeout_sec))
+    if (const auto connect_ec = co_await resolve_and_connect_fallback_target(t, io_context_, target_host, target_port, ctx, connect_timeout_sec);
+        connect_ec)
     {
         record_fallback_result(ctx, false);
         close_fallback_socket(t, ctx);
         co_await fallback_wait_and_close_socket(s, ctx, io_context_);
-        co_return;
+        co_return connect_ec;
     }
     const auto write_timeout_sec = timeout_config_.write;
-    if (!co_await write_fallback_initial_buffer(t, buf, target_host, target_port, ctx, write_timeout_sec))
+    if (const auto write_ec = co_await write_fallback_initial_buffer(t, buf, target_host, target_port, ctx, write_timeout_sec); write_ec)
     {
         record_fallback_result(ctx, false);
         close_fallback_socket(t, ctx);
         co_await fallback_wait_and_close_socket(s, ctx, io_context_);
-        co_return;
+        co_return write_ec;
     }
 
     using boost::asio::experimental::awaitable_operators::operator&&;
@@ -2442,11 +2462,10 @@ boost::asio::awaitable<void> remote_server::handle_fallback(const std::shared_pt
     if (proxy_success)
     {
         LOG_CTX_INFO(ctx, "{} session finished", log_event::kFallback);
+        co_return boost::system::error_code{};
     }
-    else
-    {
-        LOG_CTX_WARN(ctx, "{} session finished with proxy errors", log_event::kFallback);
-    }
+    LOG_CTX_WARN(ctx, "{} session finished with proxy errors", log_event::kFallback);
+    co_return boost::asio::error::connection_reset;
 }
 
 }    // namespace mux

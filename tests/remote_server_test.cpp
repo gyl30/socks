@@ -3736,6 +3736,48 @@ TEST_F(remote_server_test_fixture, DelayAndFallbackShortCircuitsWhenStopRequeste
     }
 }
 
+TEST_F(remote_server_test_fixture, DelayAndFallbackReturnsHostNotFoundWhenNoFallbackTarget)
+{
+    boost::system::error_code const ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+    std::thread runner([&pool]() { pool.run(); });
+    auto runner_guard = make_pool_thread_guard(pool, runner);
+
+    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(0, {}, "0102030405060708"));
+    auto socket = std::make_shared<boost::asio::ip::tcp::socket>(pool.get_io_context());
+    mux::connection_context ctx;
+    ctx.conn_id(6061);
+    ctx.trace_id("delay-no-fallback-target");
+
+    std::promise<std::pair<mux::remote_server::server_handshake_res, boost::system::error_code>> done;
+    auto done_future = done.get_future();
+    boost::asio::co_spawn(
+        pool.get_io_context(),
+        [server, socket, ctx, &done]() mutable -> boost::asio::awaitable<void>
+        {
+            auto res = co_await server->delay_and_fallback(socket, std::vector<std::uint8_t>{0x16, 0x03, 0x03, 0x00}, ctx, "none.test");
+            done.set_value(std::make_pair(std::move(res), boost::system::error_code{}));
+            co_return;
+        },
+        boost::asio::detached);
+
+    EXPECT_EQ(done_future.wait_for(std::chrono::seconds(4)), std::future_status::ready);
+    if (done_future.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+    {
+        const auto [res, spawn_ec] = done_future.get();
+        EXPECT_FALSE(spawn_ec);
+        EXPECT_FALSE(res.ok);
+        EXPECT_EQ(res.ec, boost::asio::error::host_not_found);
+    }
+
+    pool.stop();
+    if (runner.joinable())
+    {
+        runner.join();
+    }
+}
+
 TEST_F(remote_server_test_fixture, StopRunsInlineWhenIoContextStopped)
 {
     boost::system::error_code const ec;
