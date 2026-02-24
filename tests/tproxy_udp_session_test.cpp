@@ -1047,15 +1047,16 @@ TEST(TproxyUdpSessionTest, StartHandlesAlreadyOpenedSocket)
 
 TEST(TproxyUdpSessionTest, StartCoversV6OnlyAndMarkFailure)
 {
-    auto run_once = [](const mux::config& cfg)
+    auto run_once = [](const mux::config& cfg) -> bool
     {
         boost::asio::io_context ctx;
         auto router = std::make_shared<direct_router>();
         const boost::asio::ip::udp::endpoint client_ep(boost::asio::ip::make_address("127.0.0.1"), 12402);
         auto session = std::make_shared<mux::tproxy_udp_session>(ctx, nullptr, router, nullptr, 6, cfg, client_ep);
-        session->start();
+        const bool started = session->start();
         session->stop();
         ctx.poll();
+        return started;
     };
 
     reset_socket_wrappers();
@@ -1063,7 +1064,7 @@ TEST(TproxyUdpSessionTest, StartCoversV6OnlyAndMarkFailure)
     mux::config v6_cfg;
     v6_cfg.tproxy.mark = 0;
     fail_setsockopt_once(SOL_IPV6, IPV6_V6ONLY, EPERM);
-    run_once(v6_cfg);
+    EXPECT_FALSE(run_once(v6_cfg));
 #endif
 
     reset_socket_wrappers();
@@ -1072,7 +1073,7 @@ TEST(TproxyUdpSessionTest, StartCoversV6OnlyAndMarkFailure)
 #ifdef SO_MARK
     fail_setsockopt_once(SOL_SOCKET, SO_MARK, EPERM);
 #endif
-    run_once(mark_cfg);
+    EXPECT_TRUE(run_once(mark_cfg));
     reset_socket_wrappers();
 }
 
