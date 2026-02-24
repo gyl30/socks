@@ -32,6 +32,7 @@
 
 #undef private
 #include "mux_stream_interface.h"
+#include "mux_stream.h"
 
 namespace
 {
@@ -512,6 +513,28 @@ TEST_F(mux_connection_integration_test_fixture, RegisterStreamRejectsDuplicateId
 
     EXPECT_EQ(stream_a->data_events(), 1U);
     EXPECT_EQ(stream_b->data_events(), 0U);
+}
+
+TEST_F(mux_connection_integration_test_fixture, RegisterStreamAllowsTakeoverFromMuxPlaceholder)
+{
+    boost::asio::ip::tcp::socket socket(io_ctx());
+    reality_engine engine{{}, {}, {}, {}, EVP_aes_128_gcm()};
+    auto conn = std::make_shared<mux_connection>(std::move(socket), io_ctx(), std::move(engine), true, 102);
+
+    auto placeholder = std::make_shared<mux_stream>(100, conn->id(), "takeover", conn, io_ctx());
+    auto stream_handler = std::make_shared<simple_mock_stream>();
+
+    EXPECT_TRUE(conn->register_stream(100, placeholder));
+    EXPECT_TRUE(conn->register_stream(100, stream_handler));
+
+    const frame_header dat_header{
+        .stream_id = 100,
+        .length = 1,
+        .command = kCmdDat,
+    };
+    conn->handle_stream_frame(dat_header, {0x5a});
+
+    EXPECT_EQ(stream_handler->data_events(), 1U);
 }
 
 TEST_F(mux_connection_integration_test_fixture, ClosedStateGuardsAndUnlimitedCheck)
