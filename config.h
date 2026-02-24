@@ -64,6 +64,7 @@ struct config
     {
         std::uint32_t read = 100;
         std::uint32_t write = 100;
+        std::uint32_t connect = 10;
         std::uint32_t idle = 300;
     } timeout;
 
