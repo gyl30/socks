@@ -1404,7 +1404,7 @@ TEST_F(mux_connection_integration_test_fixture, UnexpectedAckResetsNonAckStream)
     EXPECT_TRUE(stream->received_data().empty());
 }
 
-TEST_F(mux_connection_integration_test_fixture, EmptyDatResetsStreamAndSendsRst)
+TEST_F(mux_connection_integration_test_fixture, EmptyDatIgnoredWithoutReset)
 {
     auto conn = std::make_shared<mux_connection>(
         boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 28);
@@ -1419,15 +1419,10 @@ TEST_F(mux_connection_integration_test_fixture, EmptyDatResetsStreamAndSendsRst)
     };
     conn->handle_stream_frame(empty_dat_header, {});
 
-    EXPECT_TRUE(stream->reset());
-    EXPECT_FALSE(has_stream_for_test(conn, 103));
-
-    const auto [rst_ec, rst_msg] =
-        mux::test::run_awaitable(io_ctx(), conn->write_channel_->async_receive(boost::asio::as_tuple(boost::asio::use_awaitable)));
-    EXPECT_FALSE(rst_ec);
-    EXPECT_EQ(rst_msg.stream_id, 103U);
-    EXPECT_EQ(rst_msg.command, kCmdRst);
-    EXPECT_TRUE(rst_msg.payload.empty());
+    EXPECT_FALSE(stream->reset());
+    EXPECT_TRUE(has_stream_for_test(conn, 103));
+    EXPECT_EQ(stream->data_events(), 0U);
+    EXPECT_TRUE(stream->received_data().empty());
 }
 
 TEST_F(mux_connection_integration_test_fixture, UnexpectedRepeatedAckResetsAckStream)
