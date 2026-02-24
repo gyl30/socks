@@ -227,8 +227,14 @@ boost::asio::awaitable<std::shared_ptr<mux_stream>> establish_udp_associate_stre
         co_return nullptr;
     }
 
-    ack_payload ack_pl;
-    if (!mux_codec::decode_ack(ack_data.data(), ack_data.size(), ack_pl) || ack_pl.socks_rep != socks::kRepSuccess)
+    ack_payload ack_pl{};
+    if (!mux_codec::decode_ack(ack_data.data(), ack_data.size(), ack_pl))
+    {
+        LOG_CTX_WARN(ctx, "{} ack invalid payload", log_event::kSocks);
+        co_await close_and_remove_stream(tunnel_manager, stream);
+        co_return nullptr;
+    }
+    if (ack_pl.socks_rep != socks::kRepSuccess)
     {
         LOG_CTX_WARN(ctx, "{} ack rejected {}", log_event::kSocks, ack_pl.socks_rep);
         co_await close_and_remove_stream(tunnel_manager, stream);

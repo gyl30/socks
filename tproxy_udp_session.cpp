@@ -319,8 +319,13 @@ boost::asio::awaitable<bool> tproxy_udp_session::negotiate_proxy_stream(const st
         co_return false;
     }
 
-    ack_payload ack_pl;
-    if (!mux_codec::decode_ack(ack_data.data(), ack_data.size(), ack_pl) || ack_pl.socks_rep != socks::kRepSuccess)
+    ack_payload ack_pl{};
+    if (!mux_codec::decode_ack(ack_data.data(), ack_data.size(), ack_pl))
+    {
+        LOG_CTX_WARN(ctx_, "{} udp ack invalid payload", log_event::kSocks);
+        co_return false;
+    }
+    if (ack_pl.socks_rep != socks::kRepSuccess)
     {
         LOG_CTX_WARN(ctx_, "{} udp ack rejected {}", log_event::kSocks, ack_pl.socks_rep);
         co_return false;

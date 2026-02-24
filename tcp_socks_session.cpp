@@ -227,6 +227,14 @@ boost::asio::awaitable<void> tcp_socks_session::client_to_upstream(std::shared_p
         if (ec || n == 0)
         {
             log_read_stop(ctx_, "client", ec);
+            if (!ec || ec == boost::asio::error::eof)
+            {
+                co_await backend->shutdown_send();
+            }
+            else
+            {
+                co_await close_backend_once(backend);
+            }
             break;
         }
 
