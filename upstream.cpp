@@ -162,6 +162,24 @@ std::uint8_t direct_upstream::connect_failure_reply() const
     return last_connect_reply_;
 }
 
+std::optional<upstream::bind_endpoint> direct_upstream::connected_bind_endpoint() const
+{
+    if (!socket_.is_open())
+    {
+        return std::nullopt;
+    }
+
+    boost::system::error_code endpoint_ec;
+    const auto local_ep = socket_.local_endpoint(endpoint_ec);
+    if (endpoint_ec)
+    {
+        return std::nullopt;
+    }
+
+    const auto bind_addr = socks_codec::normalize_ip_address(local_ep.address());
+    return upstream::bind_endpoint{.addr = bind_addr.to_string(), .port = local_ep.port()};
+}
+
 boost::asio::awaitable<std::pair<boost::system::error_code, std::size_t>> direct_upstream::read(std::vector<std::uint8_t>& buf)
 {
     auto [ec, n] = co_await socket_.async_read_some(boost::asio::buffer(buf), boost::asio::as_tuple(boost::asio::use_awaitable));
@@ -264,6 +282,7 @@ boost::asio::awaitable<bool> proxy_upstream::wait_connect_ack(const std::shared_
         LOG_CTX_WARN(stream_ctx, "{} stage=wait_ack target={}:{} remote_rep={}", log_event::kRoute, host, port, ack.socks_rep);
         co_return false;
     }
+    bind_endpoint_ = upstream::bind_endpoint{.addr = ack.bnd_addr, .port = ack.bnd_port};
     co_return true;
 }
 
@@ -284,6 +303,7 @@ boost::asio::awaitable<void> proxy_upstream::cleanup_stream(const std::shared_pt
 boost::asio::awaitable<bool> proxy_upstream::connect(const std::string& host, const std::uint16_t port)
 {
     last_connect_reply_ = socks::kRepHostUnreach;
+    bind_endpoint_.reset();
     if (!is_tunnel_ready())
     {
         LOG_CTX_WARN(ctx_, "{} proxy tunnel unavailable", log_event::kRoute);
@@ -317,6 +337,11 @@ boost::asio::awaitable<bool> proxy_upstream::connect(const std::string& host, co
 std::uint8_t proxy_upstream::connect_failure_reply() const
 {
     return last_connect_reply_;
+}
+
+std::optional<upstream::bind_endpoint> proxy_upstream::connected_bind_endpoint() const
+{
+    return bind_endpoint_;
 }
 
 boost::asio::awaitable<std::pair<boost::system::error_code, std::size_t>> proxy_upstream::read(std::vector<std::uint8_t>& buf)
@@ -370,6 +395,7 @@ boost::asio::awaitable<void> proxy_upstream::close()
 {
     auto stream = stream_;
     stream_.reset();
+    bind_endpoint_.reset();
 
     if (stream != nullptr)
     {
