@@ -339,6 +339,40 @@ bool open_ephemeral_acceptor(boost::asio::ip::tcp::acceptor& acceptor,
     return false;
 }
 
+bool open_ephemeral_acceptor_with_backlog(boost::asio::ip::tcp::acceptor& acceptor,
+                                          const int backlog,
+                                          const std::uint32_t max_attempts = 120,
+                                          const std::chrono::milliseconds backoff = std::chrono::milliseconds(25))
+{
+    for (std::uint32_t attempt = 0; attempt < max_attempts; ++attempt)
+    {
+        boost::system::error_code ec;
+        if (acceptor.is_open())
+        {
+            (void)acceptor.close(ec);
+        }
+        ec = acceptor.open(boost::asio::ip::tcp::v4(), ec);
+        if (!ec)
+        {
+            ec = acceptor.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true), ec);
+        }
+        if (!ec)
+        {
+            ec = acceptor.bind(boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 0), ec);
+        }
+        if (!ec)
+        {
+            ec = acceptor.listen(backlog, ec);
+        }
+        if (!ec)
+        {
+            return true;
+        }
+        std::this_thread::sleep_for(backoff);
+    }
+    return false;
+}
+
 template <typename Predicate>
 bool wait_for_condition(Predicate predicate,
                         const std::chrono::milliseconds timeout = std::chrono::milliseconds(1500),
@@ -574,8 +608,8 @@ TEST_F(remote_server_test_fixture, AuthFailureTriggersFallback)
     std::thread pool_thread([&pool] { pool.run(); });
     auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
 
-    boost::asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context(),
-                                                     boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 0));
+    boost::asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context());
+    ASSERT_TRUE(open_ephemeral_acceptor(fallback_acceptor));
     const auto fallback_port = fallback_acceptor.local_endpoint().port();
     ASSERT_NE(fallback_port, static_cast<std::uint16_t>(0));
     std::atomic<bool> fallback_triggered{false};
@@ -619,8 +653,8 @@ TEST_F(remote_server_test_fixture, AuthFailShortIdMismatch)
     std::thread pool_thread([&pool] { pool.run(); });
     auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
 
-    boost::asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context(),
-                                                     boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 0));
+    boost::asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context());
+    ASSERT_TRUE(open_ephemeral_acceptor(fallback_acceptor));
     const auto fallback_port = fallback_acceptor.local_endpoint().port();
     ASSERT_NE(fallback_port, static_cast<std::uint16_t>(0));
     std::atomic<bool> fallback_triggered{false};
@@ -664,8 +698,8 @@ TEST_F(remote_server_test_fixture, ClockSkewDetected)
     std::thread pool_thread([&pool] { pool.run(); });
     auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
 
-    boost::asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context(),
-                                                     boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 0));
+    boost::asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context());
+    ASSERT_TRUE(open_ephemeral_acceptor(fallback_acceptor));
     const auto fallback_port = fallback_acceptor.local_endpoint().port();
     ASSERT_NE(fallback_port, static_cast<std::uint16_t>(0));
     std::atomic<bool> fallback_triggered{false};
@@ -709,8 +743,8 @@ TEST_F(remote_server_test_fixture, AuthFailInvalidTLSHeader)
     std::thread pool_thread([&pool] { pool.run(); });
     auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
 
-    boost::asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context(),
-                                                     boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 0));
+    boost::asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context());
+    ASSERT_TRUE(open_ephemeral_acceptor(fallback_acceptor));
     const auto fallback_port = fallback_acceptor.local_endpoint().port();
     ASSERT_NE(fallback_port, static_cast<std::uint16_t>(0));
     std::atomic<bool> fallback_triggered{false};
@@ -752,8 +786,8 @@ TEST_F(remote_server_test_fixture, AuthFailBufferTooShort)
     std::thread pool_thread([&pool] { pool.run(); });
     auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
 
-    boost::asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context(),
-                                                     boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 0));
+    boost::asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context());
+    ASSERT_TRUE(open_ephemeral_acceptor(fallback_acceptor));
     const auto fallback_port = fallback_acceptor.local_endpoint().port();
     ASSERT_NE(fallback_port, static_cast<std::uint16_t>(0));
     std::atomic<bool> fallback_triggered{false};
@@ -797,8 +831,8 @@ TEST_F(remote_server_test_fixture, AuthFailBufferTooShortPreservesPartialHeaderF
     std::thread pool_thread([&pool] { pool.run(); });
     auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
 
-    boost::asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context(),
-                                                     boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 0));
+    boost::asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context());
+    ASSERT_TRUE(open_ephemeral_acceptor(fallback_acceptor));
     const auto fallback_port = fallback_acceptor.local_endpoint().port();
     ASSERT_NE(fallback_port, static_cast<std::uint16_t>(0));
     auto fallback_payload_promise = std::make_shared<std::promise<std::vector<std::uint8_t>>>();
@@ -933,14 +967,7 @@ TEST_F(remote_server_test_fixture, FallbackConnectTimeoutIncrementsMetricWhenBac
     auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
 
     boost::asio::ip::tcp::acceptor saturated_acceptor(pool.get_io_context());
-    ec = saturated_acceptor.open(boost::asio::ip::tcp::v4(), ec);
-    ASSERT_FALSE(ec);
-    ec = saturated_acceptor.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true), ec);
-    ASSERT_FALSE(ec);
-    ec = saturated_acceptor.bind(boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 0), ec);
-    ASSERT_FALSE(ec);
-    ec = saturated_acceptor.listen(1, ec);
-    ASSERT_FALSE(ec);
+    ASSERT_TRUE(open_ephemeral_acceptor_with_backlog(saturated_acceptor, 1));
     const auto saturated_port = saturated_acceptor.local_endpoint().port();
 
     boost::asio::ip::tcp::socket queued_client_a(pool.get_io_context());
@@ -1371,8 +1398,8 @@ TEST_F(remote_server_test_fixture, StartRejectsInvalidAuthConfig)
     std::thread pool_thread([&pool] { pool.run(); });
     auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
 
-    boost::asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context(),
-                                                     boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 0));
+    boost::asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context());
+    ASSERT_TRUE(open_ephemeral_acceptor(fallback_acceptor));
     const auto fallback_port = fallback_acceptor.local_endpoint().port();
     ASSERT_NE(fallback_port, static_cast<std::uint16_t>(0));
     std::atomic<bool> fallback_triggered{false};
