@@ -194,15 +194,34 @@ bool read_u24_field(const std::vector<std::uint8_t>& data, const std::size_t pos
     return true;
 }
 
+bool read_u16_field(const std::vector<std::uint8_t>& data, const std::size_t pos, std::uint16_t& value)
+{
+    if (pos + 2 > data.size())
+    {
+        return false;
+    }
+    value = static_cast<std::uint16_t>((static_cast<std::uint16_t>(data[pos]) << 8U) | static_cast<std::uint16_t>(data[pos + 1]));
+    return true;
+}
+
 std::optional<std::vector<std::uint8_t>> extract_first_cert_der(const std::vector<std::uint8_t>& cert_msg);
 
 bool is_certificate_message_header_valid(const std::vector<std::uint8_t>& cert_msg)
 {
-    if (cert_msg.size() < 11)
+    if (cert_msg.size() < 8)
     {
         return false;
     }
-    return cert_msg[0] == 0x0b;
+    if (cert_msg[0] != 0x0b)
+    {
+        return false;
+    }
+    std::uint32_t msg_len = 0;
+    if (!read_u24_field(cert_msg, 1, msg_len))
+    {
+        return false;
+    }
+    return cert_msg.size() == static_cast<std::size_t>(msg_len) + 4U;
 }
 
 bool read_u24_and_advance(const std::vector<std::uint8_t>& data, std::size_t& pos, std::uint32_t& value)
@@ -222,13 +241,31 @@ bool parse_first_certificate_range(const std::vector<std::uint8_t>& cert_msg, st
         return false;
     }
 
-    std::size_t pos = 5;
+    std::size_t pos = 4;
+    if (pos >= cert_msg.size())
+    {
+        return false;
+    }
+    const std::uint8_t request_context_len = cert_msg[pos];
+    pos += 1;
+    if (pos + request_context_len > cert_msg.size())
+    {
+        return false;
+    }
+    pos += request_context_len;
+
     std::uint32_t list_len = 0;
     if (!read_u24_and_advance(cert_msg, pos, list_len))
     {
         return false;
     }
-    if (pos + list_len > cert_msg.size())
+    const auto list_len_size = static_cast<std::size_t>(list_len);
+    if (pos + list_len_size > cert_msg.size())
+    {
+        return false;
+    }
+    const auto list_end = pos + list_len_size;
+    if (list_end != cert_msg.size())
     {
         return false;
     }
@@ -238,14 +275,68 @@ bool parse_first_certificate_range(const std::vector<std::uint8_t>& cert_msg, st
     {
         return false;
     }
-    if (pos + parsed_cert_len > cert_msg.size())
+    const auto parsed_cert_len_size = static_cast<std::size_t>(parsed_cert_len);
+    if (parsed_cert_len_size == 0)
+    {
+        return false;
+    }
+    if (pos + parsed_cert_len_size > list_end)
+    {
+        return false;
+    }
+    if (pos + parsed_cert_len_size + 2 > list_end)
     {
         return false;
     }
 
-    cert_start = pos;
-    cert_len = static_cast<std::size_t>(parsed_cert_len);
-    return true;
+    const auto first_cert_start = pos;
+    pos += parsed_cert_len_size;
+    std::uint16_t first_ext_len = 0;
+    if (!read_u16_field(cert_msg, pos, first_ext_len))
+    {
+        return false;
+    }
+    pos += 2;
+    if (pos + first_ext_len > list_end)
+    {
+        return false;
+    }
+    pos += first_ext_len;
+
+    cert_start = first_cert_start;
+    cert_len = parsed_cert_len_size;
+    while (pos < list_end)
+    {
+        std::uint32_t next_cert_len = 0;
+        if (!read_u24_and_advance(cert_msg, pos, next_cert_len))
+        {
+            return false;
+        }
+        const auto next_cert_len_size = static_cast<std::size_t>(next_cert_len);
+        if (next_cert_len_size == 0)
+        {
+            return false;
+        }
+        if (pos + next_cert_len_size + 2 > list_end)
+        {
+            return false;
+        }
+
+        pos += next_cert_len_size;
+
+        std::uint16_t next_ext_len = 0;
+        if (!read_u16_field(cert_msg, pos, next_ext_len))
+        {
+            return false;
+        }
+        pos += 2;
+        if (pos + next_ext_len > list_end)
+        {
+            return false;
+        }
+        pos += next_ext_len;
+    }
+    return pos == list_end;
 }
 
 bool read_handshake_message_header(const std::vector<std::uint8_t>& handshake_buffer,
@@ -327,7 +418,7 @@ std::expected<void, boost::system::error_code> verify_server_certificate_verify_
     {
         const auto transcript_hash = trans.finish();
         auto verify_result =
-            reality::crypto_util::verify_tls13_signature(validation_state.server_pub_key.get(), transcript_hash, cert_verify->signature);
+            reality::crypto_util::verify_tls13_signature(validation_state.server_pub_key.get(), cert_verify->scheme, transcript_hash, cert_verify->signature);
         if (!verify_result)
         {
             LOG_WARN("certificate verify signature check skipped code {}", verify_result.error().value());

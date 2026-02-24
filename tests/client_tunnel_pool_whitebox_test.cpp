@@ -191,17 +191,48 @@ std::vector<std::uint8_t> build_minimal_valid_certificate_message()
         0x0b,
         0x00,
         0x00,
-        0x0a,    // handshake header (msg_len = 10)
+        0x0c,    // handshake header (msg_len = 12)
         0x00,    // certificate_request_context length
         0x00,
         0x00,
-        0x06,    // certificate_list length
+        0x08,    // certificate_list length
         0x00,
         0x00,
         0x03,    // first certificate length
         0x01,
         0x02,
-        0x03    // first certificate bytes
+        0x03,    // first certificate bytes
+        0x00,
+        0x00    // first certificate extensions length
+    };
+}
+
+std::vector<std::uint8_t> build_valid_certificate_message_with_second_entry()
+{
+    return {
+        0x0b,
+        0x00,
+        0x00,
+        0x13,
+        0x00,
+        0x00,
+        0x00,
+        0x0f,
+        0x00,
+        0x00,
+        0x03,
+        0x01,
+        0x02,
+        0x03,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x02,
+        0x04,
+        0x05,
+        0x00,
+        0x00
     };
 }
 
@@ -1547,7 +1578,7 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsMalformedCertificateV
 
     const std::vector<std::uint8_t> key(16, 0x81);
     const std::vector<std::uint8_t> iv(12, 0x91);
-    const std::vector<std::uint8_t> cert_msg = {0x0b, 0x00, 0x00, 0x07, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00};
+    const auto cert_msg = build_minimal_valid_certificate_message();
     const std::vector<std::uint8_t> malformed_cert_verify = {0x0f, 0x00, 0x00, 0x00};
     std::vector<std::uint8_t> plaintext = cert_msg;
     plaintext.insert(plaintext.end(), malformed_cert_verify.begin(), malformed_cert_verify.end());
@@ -1590,7 +1621,7 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsUnsupportedCertificat
 
     const std::vector<std::uint8_t> key(16, 0xa1);
     const std::vector<std::uint8_t> iv(12, 0xb1);
-    const std::vector<std::uint8_t> cert_msg = {0x0b, 0x00, 0x00, 0x07, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00};
+    const auto cert_msg = build_minimal_valid_certificate_message();
     const std::vector<std::uint8_t> unsupported_cert_verify = {0x0f, 0x00, 0x00, 0x04, 0x00, 0x01, 0x00, 0x00};
     std::vector<std::uint8_t> plaintext = cert_msg;
     plaintext.insert(plaintext.end(), unsupported_cert_verify.begin(), unsupported_cert_verify.end());
@@ -1686,9 +1717,33 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopCertificateRangeAndFinishedB
 
     // Hit parse_first_certificate_range branch where cert length overflows message size.
     {
-        const std::vector<std::uint8_t> bad_cert_len = {0x0b, 0x00, 0x00, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03};
+        const std::vector<std::uint8_t> bad_cert_len = {0x0b, 0x00, 0x00, 0x07, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x03};
         EXPECT_FALSE(run_case(bad_cert_len, hs_keys_ok, case_ec));
         EXPECT_TRUE(case_ec);
+    }
+
+    {
+        const std::vector<std::uint8_t> missing_ext_len = {0x0b, 0x00, 0x00, 0x0a, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x03, 0x01, 0x02, 0x03};
+        EXPECT_FALSE(run_case(missing_ext_len, hs_keys_ok, case_ec));
+        EXPECT_TRUE(case_ec);
+    }
+
+    {
+        const std::vector<std::uint8_t> malformed_second_entry = {0x0b, 0x00, 0x00, 0x0f, 0x00, 0x00, 0x00, 0x0b, 0x00, 0x00, 0x03,
+                                                                  0x01, 0x02, 0x03, 0x00, 0x00, 0x00, 0x00, 0x01};
+        EXPECT_FALSE(run_case(malformed_second_entry, hs_keys_ok, case_ec));
+        EXPECT_TRUE(case_ec);
+    }
+
+    {
+        std::vector<std::uint8_t> plaintext = build_valid_certificate_message_with_second_entry();
+        plaintext.insert(plaintext.end(), cert_verify_msg.begin(), cert_verify_msg.end());
+        std::vector<std::uint8_t> wrong_finished(4 + 32, 0x00);
+        wrong_finished[0] = 0x14;
+        wrong_finished[3] = 0x20;
+        plaintext.insert(plaintext.end(), wrong_finished.begin(), wrong_finished.end());
+        EXPECT_FALSE(run_case(plaintext, hs_keys_ok, case_ec));
+        EXPECT_EQ(case_ec, std::errc::permission_denied);
     }
 
     // Hit finished verify size mismatch branch.

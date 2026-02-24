@@ -896,6 +896,18 @@ TEST(RealityMessagesTest, ParseCertificateVerifyRejectsSignatureLengthOverflow)
     EXPECT_FALSE(reality::parse_certificate_verify(bad_cv).has_value());
 }
 
+TEST(RealityMessagesTest, ParseCertificateVerifyRejectsTrailingBytesAfterSignature)
+{
+    const std::vector<std::uint8_t> bad_cv = {0x0f, 0x00, 0x00, 0x06, 0x08, 0x07, 0x00, 0x01, 0xAA, 0xBB};
+    EXPECT_FALSE(reality::parse_certificate_verify(bad_cv).has_value());
+}
+
+TEST(RealityMessagesTest, ParseCertificateVerifyRejectsRecordBodyLengthMismatch)
+{
+    const std::vector<std::uint8_t> bad_cv = {0x0f, 0x00, 0x00, 0x04, 0x08, 0x07, 0x00, 0x00, 0xFF};
+    EXPECT_FALSE(reality::parse_certificate_verify(bad_cv).has_value());
+}
+
 TEST(RealityMessagesTest, ExtractServerKeyShareRejectsTooShortPrefix)
 {
     const std::vector<std::uint8_t> short_msg = {0x16, 0x03, 0x03};

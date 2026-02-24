@@ -621,12 +621,47 @@ TEST(CryptoUtilTest, TLS13SignatureVerification)
     EVP_DigestSign(mctx, signature.data(), &sig_len, to_sign.data(), to_sign.size());
     EVP_MD_CTX_free(mctx);
 
-    auto verify_result = crypto_util::verify_tls13_signature(pkey, transcript_hash, signature);
+    auto verify_result = crypto_util::verify_tls13_signature(pkey, reality::tls_consts::sig_alg::kEd25519, transcript_hash, signature);
     EXPECT_TRUE(verify_result.has_value());
 
     signature[0] ^= 0xFF;
-    verify_result = crypto_util::verify_tls13_signature(pkey, transcript_hash, signature);
+    verify_result = crypto_util::verify_tls13_signature(pkey, reality::tls_consts::sig_alg::kEd25519, transcript_hash, signature);
     EXPECT_FALSE(verify_result.has_value());
+
+    EVP_PKEY_free(pkey);
+}
+
+TEST(CryptoUtilTest, TLS13SignatureVerificationRejectsSchemeKeyMismatch)
+{
+    EVP_PKEY* pkey = nullptr;
+    EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_ED25519, nullptr);
+    ASSERT_NE(ctx, nullptr);
+    ASSERT_EQ(EVP_PKEY_keygen_init(ctx), 1);
+    ASSERT_EQ(EVP_PKEY_keygen(ctx, &pkey), 1);
+    EVP_PKEY_CTX_free(ctx);
+    ASSERT_NE(pkey, nullptr);
+
+    const std::vector<std::uint8_t> transcript_hash(32, 0x55);
+    std::vector<std::uint8_t> to_sign(64, 0x20);
+    const std::string context_str = "TLS 1.3, server CertificateVerify";
+    to_sign.insert(to_sign.end(), context_str.begin(), context_str.end());
+    to_sign.push_back(0x00);
+    to_sign.insert(to_sign.end(), transcript_hash.begin(), transcript_hash.end());
+
+    std::size_t sig_len = 0;
+    EVP_MD_CTX* mctx = EVP_MD_CTX_new();
+    ASSERT_NE(mctx, nullptr);
+    ASSERT_EQ(EVP_DigestSignInit(mctx, nullptr, nullptr, nullptr, pkey), 1);
+    ASSERT_EQ(EVP_DigestSign(mctx, nullptr, &sig_len, to_sign.data(), to_sign.size()), 1);
+    ASSERT_GT(sig_len, 0U);
+    std::vector<std::uint8_t> signature(sig_len);
+    ASSERT_EQ(EVP_DigestSign(mctx, signature.data(), &sig_len, to_sign.data(), to_sign.size()), 1);
+    EVP_MD_CTX_free(mctx);
+
+    const auto verify_result =
+        crypto_util::verify_tls13_signature(pkey, reality::tls_consts::sig_alg::kRsaPkcs1Sha256, transcript_hash, signature);
+    EXPECT_FALSE(verify_result.has_value());
+    EXPECT_EQ(verify_result.error(), std::make_error_code(std::errc::protocol_error));
 
     EVP_PKEY_free(pkey);
 }
@@ -846,7 +881,8 @@ TEST(CryptoUtilTest, AEADEncryptAppendLowLevelFailureBranches)
 
 TEST(CryptoUtilTest, VerifySignatureNullKeyFails)
 {
-    const auto result = crypto_util::verify_tls13_signature(nullptr, std::vector<std::uint8_t>(32, 0x55), std::vector<std::uint8_t>(64, 0x11));
+    const auto result = crypto_util::verify_tls13_signature(
+        nullptr, reality::tls_consts::sig_alg::kEd25519, std::vector<std::uint8_t>(32, 0x55), std::vector<std::uint8_t>(64, 0x11));
     EXPECT_FALSE(result.has_value());
     EXPECT_EQ(result.error(), std::make_error_code(std::errc::protocol_error));
 }
@@ -1009,7 +1045,8 @@ TEST(CryptoUtilTest, VerifyTls13SignatureHandlesMdCtxCreationFailure)
     ASSERT_NE(pkey, nullptr);
 
     fail_next_md_ctx_new();
-    const auto result = crypto_util::verify_tls13_signature(pkey, std::vector<std::uint8_t>(32, 0x77), std::vector<std::uint8_t>(64, 0x88));
+    const auto result = crypto_util::verify_tls13_signature(
+        pkey, reality::tls_consts::sig_alg::kEd25519, std::vector<std::uint8_t>(32, 0x77), std::vector<std::uint8_t>(64, 0x88));
     EXPECT_FALSE(result.has_value());
     EXPECT_EQ(result.error(), std::make_error_code(std::errc::not_enough_memory));
 
