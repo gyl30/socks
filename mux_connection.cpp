@@ -554,7 +554,17 @@ void mux_connection::handle_stream_frame(const mux::frame_header& header, std::v
     {
         if (payload.empty())
         {
-            LOG_WARN("mux {} drop empty dat frame stream {}", cid_, header.stream_id);
+            LOG_WARN("mux {} recv empty dat frame stream {}", cid_, header.stream_id);
+            stream->on_reset();
+            remove_stream(header.stream_id);
+            const auto self = shared_from_this();
+            boost::asio::co_spawn(
+                io_context_,
+                [self, stream_id = header.stream_id]() -> boost::asio::awaitable<void>
+                {
+                    (void)co_await self->send_async(stream_id, kCmdRst, {});
+                },
+                boost::asio::detached);
             return;
         }
         stream->on_data(std::move(payload));
@@ -562,7 +572,21 @@ void mux_connection::handle_stream_frame(const mux::frame_header& header, std::v
     }
     if (header.command == mux::kCmdAck)
     {
-        stream->on_data(std::move(payload));
+        if (!stream->accept_ack() || !stream->on_ack(std::move(payload)))
+        {
+            LOG_WARN("mux {} recv unexpected ack stream {}", cid_, header.stream_id);
+            stream->on_reset();
+            remove_stream(header.stream_id);
+            const auto self = shared_from_this();
+            boost::asio::co_spawn(
+                io_context_,
+                [self, stream_id = header.stream_id]() -> boost::asio::awaitable<void>
+                {
+                    (void)co_await self->send_async(stream_id, kCmdRst, {});
+                },
+                boost::asio::detached);
+            return;
+        }
         return;
     }
 
@@ -1136,14 +1160,27 @@ std::shared_ptr<mux_stream> mux_connection::create_stream(const std::string& tra
         stream_trace_id = this->trace_id();
     }
 
-    const std::uint32_t stream_id = acquire_next_id();
-    auto stream = std::make_shared<mux_stream>(stream_id, id(), std::move(stream_trace_id), shared_from_this(), io_context_);
-    if (!register_stream_checked(stream_id, stream))
+    for (;;)
     {
-        LOG_WARN("mux {} create stream {} register failed", cid_, stream_id);
+        const std::uint32_t stream_id = acquire_next_id();
+        auto stream = std::make_shared<mux_stream>(stream_id, id(), stream_trace_id, shared_from_this(), io_context_);
+        const auto register_result = try_register_stream_with_reason(stream_id, stream);
+        if (register_result == stream_register_result::kSuccess)
+        {
+            return stream;
+        }
+        if (register_result == stream_register_result::kIdConflict)
+        {
+            LOG_WARN("mux {} create stream {} id conflict", cid_, stream_id);
+            if (!is_open() || !can_accept_stream())
+            {
+                return nullptr;
+            }
+            continue;
+        }
+        LOG_WARN("mux {} create stream {} register failed {}", cid_, stream_id, static_cast<std::uint32_t>(register_result));
         return nullptr;
     }
-    return stream;
 }
 
 }

@@ -80,7 +80,8 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
 
     virtual bool register_stream(std::uint32_t id, std::shared_ptr<mux_stream_interface> stream);
     [[nodiscard]] virtual bool register_stream_checked(std::uint32_t id, std::shared_ptr<mux_stream_interface> stream);
-    [[nodiscard]] stream_register_result try_register_stream_with_reason(std::uint32_t id, std::shared_ptr<mux_stream_interface> stream);
+    [[nodiscard]] virtual stream_register_result try_register_stream_with_reason(std::uint32_t id,
+                                                                                 std::shared_ptr<mux_stream_interface> stream);
     [[nodiscard]] bool try_register_stream(std::uint32_t id, std::shared_ptr<mux_stream_interface> stream);
 
     virtual void remove_stream(std::uint32_t id);

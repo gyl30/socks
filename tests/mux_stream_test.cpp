@@ -64,6 +64,50 @@ TEST_F(mux_stream_test_fixture, ReadSomeSuccess)
     EXPECT_EQ(read_data, data);
 }
 
+TEST_F(mux_stream_test_fixture, AckAcceptedOnlyOnce)
+{
+    auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
+    auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx());
+
+    EXPECT_TRUE(stream->accept_ack());
+    EXPECT_TRUE(stream->on_ack({0xA1}));
+    EXPECT_FALSE(stream->accept_ack());
+    EXPECT_FALSE(stream->on_ack({0xB2}));
+
+    const auto [first_ec, first_data] = mux::test::run_awaitable(ctx(), stream->async_read_some());
+    EXPECT_FALSE(first_ec);
+    EXPECT_EQ(first_data, std::vector<std::uint8_t>({0xA1}));
+
+    stream->on_close();
+    const auto [second_ec, second_data] = mux::test::run_awaitable(ctx(), stream->async_read_some());
+    EXPECT_EQ(second_ec, boost::asio::error::eof);
+    EXPECT_TRUE(second_data.empty());
+}
+
+TEST_F(mux_stream_test_fixture, AckAfterDataIsRejected)
+{
+    auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
+    auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx());
+
+    stream->on_data({0x11, 0x22});
+    EXPECT_FALSE(stream->accept_ack());
+    EXPECT_FALSE(stream->on_ack({0x33}));
+
+    const auto [ec, read_data] = mux::test::run_awaitable(ctx(), stream->async_read_some());
+    EXPECT_FALSE(ec);
+    EXPECT_EQ(read_data, std::vector<std::uint8_t>({0x11, 0x22}));
+}
+
+TEST_F(mux_stream_test_fixture, AckUnavailableChannelClosesStream)
+{
+    auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
+    auto stream = std::make_shared<mux::mux_stream>(1, 100, "trace-1", mock_conn, ctx());
+
+    stream->recv_channel_.close();
+    EXPECT_FALSE(stream->on_ack({0x77}));
+    EXPECT_TRUE(stream->is_closed_.load(std::memory_order_acquire));
+}
+
 TEST_F(mux_stream_test_fixture, CloseSendsFin)
 {
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());

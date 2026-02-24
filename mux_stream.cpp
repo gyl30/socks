@@ -101,12 +101,35 @@ boost::asio::awaitable<void> mux_stream::close()
     close_internal();
 }
 
+bool mux_stream::on_ack(std::vector<std::uint8_t> data)
+{
+    if (is_closed_.load(std::memory_order_acquire))
+    {
+        return false;
+    }
+
+    bool expected = true;
+    if (!ack_pending_.compare_exchange_strong(expected, false, std::memory_order_acq_rel, std::memory_order_acquire))
+    {
+        return false;
+    }
+
+    if (!recv_channel_.try_send(boost::system::error_code{}, std::move(data)))
+    {
+        LOG_CTX_WARN(ctx_, "{} stream {} recv channel unavailable on ack", log_event::kMux, id_);
+        close_internal();
+        return false;
+    }
+    return true;
+}
+
 void mux_stream::on_data(std::vector<std::uint8_t> data)
 {
-    if (is_closed_)
+    if (is_closed_.load(std::memory_order_acquire))
     {
         return;
     }
+    ack_pending_.store(false, std::memory_order_release);
     if (!recv_channel_.try_send(boost::system::error_code{}, std::move(data)))
     {
         LOG_CTX_WARN(ctx_, "{} stream {} recv channel unavailable on data", log_event::kMux, id_);
@@ -116,6 +139,7 @@ void mux_stream::on_data(std::vector<std::uint8_t> data)
 
 void mux_stream::on_close()
 {
+    ack_pending_.store(false, std::memory_order_release);
     if (!fin_received_.exchange(true))
     {
         LOG_CTX_DEBUG(ctx_, "{} stream {} received fin", log_event::kMux, id_);
@@ -129,13 +153,15 @@ void mux_stream::on_close()
 
 void mux_stream::on_reset()
 {
-    is_closed_ = true;
+    is_closed_.store(true, std::memory_order_release);
+    ack_pending_.store(false, std::memory_order_release);
     recv_channel_.close();
 }
 
 void mux_stream::close_internal()
 {
-    is_closed_ = true;
+    is_closed_.store(true, std::memory_order_release);
+    ack_pending_.store(false, std::memory_order_release);
     recv_channel_.close();
 }
 

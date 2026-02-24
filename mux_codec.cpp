@@ -15,14 +15,17 @@ namespace mux
 namespace
 {
 
-constexpr std::uint64_t kDecodeWarnLogSample = 256;
 std::atomic<std::uint64_t> g_decode_warn_total{0};
 
 [[nodiscard]] std::uint64_t next_decode_warn_total() { return g_decode_warn_total.fetch_add(1, std::memory_order_relaxed) + 1; }
 
 [[nodiscard]] bool should_log_decode_warn(const std::uint64_t total)
 {
-    return total == 1 || (total % kDecodeWarnLogSample) == 0;
+    if (total <= 4)
+    {
+        return true;
+    }
+    return (total & (total - 1)) == 0;
 }
 
 }    // namespace
