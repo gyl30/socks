@@ -15,10 +15,10 @@
 #include <boost/asio/io_context.hpp>
 #include <boost/system/error_code.hpp>
 
+#include "protocol.h"
 #include "mux_stream.h"
 #include "mux_tunnel.h"
 #include "log_context.h"
-#include "protocol.h"
 
 namespace mux
 {
@@ -96,7 +96,9 @@ class direct_upstream : public upstream
 class proxy_upstream : public upstream
 {
    public:
-    explicit proxy_upstream(std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> tunnel, connection_context ctx);
+    explicit proxy_upstream(std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> tunnel,
+                            connection_context ctx,
+                            std::uint32_t timeout_sec = 10);
 
     boost::asio::awaitable<bool> connect(const std::string& host, std::uint16_t port) override;
     std::uint8_t connect_failure_reply() const override;
@@ -120,10 +122,11 @@ class proxy_upstream : public upstream
     connection_context ctx_;
     std::shared_ptr<mux_stream> stream_;
     std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> tunnel_;
+    std::uint32_t timeout_sec_ = 10;
     std::uint8_t last_connect_reply_ = socks::kRepHostUnreach;
     std::optional<bind_endpoint> bind_endpoint_;
 };
 
-}    // namespace mux
+}
 
 #endif
