@@ -421,14 +421,22 @@ TEST(RemoteSessionTest, RunSuccessWhenSetNoDelayFailsStillSendsAckAndFin)
     boost::asio::ip::tcp::acceptor acceptor(io_context);
     ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
     const std::uint16_t port = acceptor.local_endpoint().port();
+    std::string expected_bind_addr;
+    std::uint16_t expected_bind_port = 0;
     std::thread accept_thread(
-        [&io_context, &acceptor]()
+        [&io_context, &acceptor, &expected_bind_addr, &expected_bind_port]()
         {
             boost::asio::ip::tcp::socket accepted(io_context);
             boost::system::error_code ec;
             acceptor.accept(accepted, ec);
             if (!ec)
             {
+                const auto remote_ep = accepted.remote_endpoint(ec);
+                if (!ec)
+                {
+                    expected_bind_addr = remote_ep.address().to_string();
+                    expected_bind_port = remote_ep.port();
+                }
                 accepted.close(ec);
             }
         });
@@ -457,6 +465,37 @@ TEST(RemoteSessionTest, RunSuccessWhenSetNoDelayFailsStillSendsAckAndFin)
     mux::ack_payload ack{};
     ASSERT_TRUE(mux::mux_codec::decode_ack(ack_payload.data(), ack_payload.size(), ack));
     EXPECT_EQ(ack.socks_rep, socks::kRepSuccess);
+    EXPECT_EQ(ack.bnd_addr, expected_bind_addr);
+    EXPECT_EQ(ack.bnd_port, expected_bind_port);
+}
+
+TEST(RemoteSessionTest, UpstreamWriteTimeoutStopsWhenTargetBackpressured)
+{
+    boost::asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    mux::connection_context const ctx;
+    auto session = std::make_shared<mux::remote_session>(conn, 45, io_context, ctx, 10, 1);
+
+    auto pair = make_tcp_socket_pair(io_context);
+    session->target_socket_ = std::move(pair.server);
+
+    boost::system::error_code ec;
+    pair.client.set_option(boost::asio::socket_base::receive_buffer_size(1024), ec);
+    ASSERT_FALSE(ec);
+    session->target_socket_.set_option(boost::asio::socket_base::send_buffer_size(1024), ec);
+    ASSERT_FALSE(ec);
+
+    std::vector<std::uint8_t> payload(32 * 1024 * 1024, 0x7A);
+    ASSERT_TRUE(session->recv_channel_.try_send(boost::system::error_code{}, payload));
+    session->recv_channel_.close();
+
+    const auto start = std::chrono::steady_clock::now();
+    mux::test::run_awaitable_void(io_context, session->upstream());
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
+
+    EXPECT_GE(elapsed.count(), 900);
+    EXPECT_LT(elapsed.count(), 5000);
+    EXPECT_FALSE(session->target_socket_.is_open());
 }
 
 TEST(RemoteSessionTest, UpstreamWritesPayloadAndStopsOnEmptyFrame)
