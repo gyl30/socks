@@ -7,7 +7,6 @@
 #include <vector>
 #include <cstddef>
 #include <cstdint>
-#include <stdexcept>
 #include <sys/socket.h>
 #include <system_error>
 #include <netinet/tcp.h>
@@ -118,7 +117,9 @@ class echo_server
     {
         if (!mux::test::open_ephemeral_tcp_acceptor(acceptor_))
         {
-            throw std::runtime_error("failed to open ephemeral acceptor");
+            ADD_FAILURE() << "failed to open ephemeral acceptor";
+            stopped_.store(true, std::memory_order_release);
+            return;
         }
         do_accept();
         thread_ = std::thread([this] { ctx_.run(); });
