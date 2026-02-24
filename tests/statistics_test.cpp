@@ -234,6 +234,14 @@ TEST(StatisticsTest, CountersAndUptime)
     const auto dispatch_dropped_before = stats.tproxy_udp_dispatch_dropped();
     stats.inc_tproxy_udp_dispatch_dropped();
     EXPECT_EQ(stats.tproxy_udp_dispatch_dropped(), dispatch_dropped_before + 1);
+
+    const auto origdst_truncated_before = stats.tproxy_udp_origdst_truncated();
+    stats.inc_tproxy_udp_origdst_truncated();
+    EXPECT_EQ(stats.tproxy_udp_origdst_truncated(), origdst_truncated_before + 1);
+
+    const auto payload_truncated_before = stats.tproxy_udp_payload_truncated();
+    stats.inc_tproxy_udp_payload_truncated();
+    EXPECT_EQ(stats.tproxy_udp_payload_truncated(), payload_truncated_before + 1);
 }
 
 TEST(StatisticsTest, HandshakeFailureMetricsTracksAndSorts)
