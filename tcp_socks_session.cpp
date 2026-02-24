@@ -3,6 +3,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <utility>
@@ -10,6 +11,7 @@
 #include <boost/asio/error.hpp>
 #include <boost/asio/write.hpp>
 #include <boost/asio/buffer.hpp>
+#include <boost/asio/ip/address.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/as_tuple.hpp>
 #include <boost/asio/co_spawn.hpp>
@@ -48,6 +50,43 @@ namespace
 [[nodiscard]] bool is_expected_read_stop_error(const boost::system::error_code& ec)
 {
     return ec == boost::asio::error::eof || ec == boost::asio::error::operation_aborted;
+}
+
+bool append_bind_endpoint(std::vector<std::uint8_t>& rep, const upstream::bind_endpoint& bind_endpoint)
+{
+    boost::system::error_code addr_ec;
+    auto bind_addr = boost::asio::ip::make_address(bind_endpoint.addr, addr_ec);
+    if (!addr_ec)
+    {
+        bind_addr = socks_codec::normalize_ip_address(bind_addr);
+        if (bind_addr.is_v4())
+        {
+            rep.push_back(socks::kAtypIpv4);
+            const auto bytes = bind_addr.to_v4().to_bytes();
+            rep.insert(rep.end(), bytes.begin(), bytes.end());
+        }
+        else
+        {
+            rep.push_back(socks::kAtypIpv6);
+            const auto bytes = bind_addr.to_v6().to_bytes();
+            rep.insert(rep.end(), bytes.begin(), bytes.end());
+        }
+    }
+    else
+    {
+        if (bind_endpoint.addr.empty() || bind_endpoint.addr.size() > 255 ||
+            std::find(bind_endpoint.addr.begin(), bind_endpoint.addr.end(), '\0') != bind_endpoint.addr.end())
+        {
+            return false;
+        }
+        rep.push_back(socks::kAtypDomain);
+        rep.push_back(static_cast<std::uint8_t>(bind_endpoint.addr.size()));
+        rep.insert(rep.end(), bind_endpoint.addr.begin(), bind_endpoint.addr.end());
+    }
+
+    rep.push_back(static_cast<std::uint8_t>((bind_endpoint.port >> 8) & 0xFF));
+    rep.push_back(static_cast<std::uint8_t>(bind_endpoint.port & 0xFF));
+    return true;
 }
 
 void log_read_stop(const connection_context& ctx, const char* source, const boost::system::error_code& ec)
@@ -125,7 +164,7 @@ boost::asio::awaitable<void> tcp_socks_session::run(const std::string& host, con
         co_return;
     }
 
-    if (!co_await reply_success())
+    if (!co_await reply_success(backend))
     {
         co_await close_backend_once(backend);
         close_client_socket();
@@ -170,9 +209,34 @@ boost::asio::awaitable<bool> tcp_socks_session::connect_backend(const std::share
     co_return false;
 }
 
-boost::asio::awaitable<bool> tcp_socks_session::reply_success()
+boost::asio::awaitable<bool> tcp_socks_session::reply_success(const std::shared_ptr<upstream>& backend)
 {
-    std::uint8_t rep[] = {socks::kVer, socks::kRepSuccess, 0, socks::kAtypIpv4, 0, 0, 0, 0, 0, 0};
+    std::vector<std::uint8_t> rep;
+    rep.reserve(22);
+    rep.push_back(socks::kVer);
+    rep.push_back(socks::kRepSuccess);
+    rep.push_back(0x00);
+
+    bool appended_bind = false;
+    if (backend != nullptr)
+    {
+        const auto bind_endpoint = backend->connected_bind_endpoint();
+        if (bind_endpoint.has_value())
+        {
+            appended_bind = append_bind_endpoint(rep, *bind_endpoint);
+            if (!appended_bind)
+            {
+                LOG_CTX_WARN(ctx_, "{} invalid backend bind endpoint {} {}", log_event::kSocks, bind_endpoint->addr, bind_endpoint->port);
+            }
+        }
+    }
+    if (!appended_bind)
+    {
+        LOG_CTX_WARN(ctx_, "{} backend bind endpoint unavailable fallback zero", log_event::kSocks);
+        rep.push_back(socks::kAtypIpv4);
+        rep.insert(rep.end(), {0, 0, 0, 0, 0, 0});
+    }
+
     const auto [we, wn] = co_await boost::asio::async_write(socket_, boost::asio::buffer(rep), boost::asio::as_tuple(boost::asio::use_awaitable));
     (void)wn;
     if (!we)
