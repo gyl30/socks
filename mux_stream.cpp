@@ -61,7 +61,7 @@ boost::asio::awaitable<boost::system::error_code> mux_stream::async_write_some(c
 
 boost::asio::awaitable<boost::system::error_code> mux_stream::async_write_some(std::vector<std::uint8_t> payload)
 {
-    if (is_closed_)
+    if (is_closed_.load(std::memory_order_acquire) || fin_sent_.load(std::memory_order_acquire))
     {
         co_return boost::asio::error::operation_aborted;
     }
@@ -83,22 +83,37 @@ boost::asio::awaitable<boost::system::error_code> mux_stream::async_write_some(s
 
 boost::asio::awaitable<void> mux_stream::close()
 {
-    if (is_closed_.exchange(true))
+    if (is_closed_.exchange(true, std::memory_order_acq_rel))
     {
         co_return;
     }
 
-    const auto connection = connection_.lock();
-    if (connection)
-    {
-        if (!fin_sent_.exchange(true))
-        {
-            LOG_CTX_DEBUG(ctx_, "{} stream {} sending fin", log_event::kMux, id_);
-            (void)co_await connection->send_async(id_, kCmdFin, {});
-        }
-    }
-
+    co_await send_fin_if_needed();
     close_internal();
+}
+
+boost::asio::awaitable<void> mux_stream::shutdown_send()
+{
+    if (is_closed_.load(std::memory_order_acquire))
+    {
+        co_return;
+    }
+    co_await send_fin_if_needed();
+}
+
+boost::asio::awaitable<void> mux_stream::send_fin_if_needed()
+{
+    if (fin_sent_.exchange(true, std::memory_order_acq_rel))
+    {
+        co_return;
+    }
+    const auto connection = connection_.lock();
+    if (!connection)
+    {
+        co_return;
+    }
+    LOG_CTX_DEBUG(ctx_, "{} stream {} sending fin", log_event::kMux, id_);
+    (void)co_await connection->send_async(id_, kCmdFin, {});
 }
 
 bool mux_stream::on_ack(std::vector<std::uint8_t> data)

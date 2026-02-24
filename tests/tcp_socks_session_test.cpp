@@ -70,6 +70,7 @@ class fake_upstream final : public mux::upstream
     bool connect_result = true;
     std::uint8_t connect_failure_reply_code = socks::kRepHostUnreach;
     std::size_t write_result = 0;
+    std::size_t shutdown_send_calls = 0;
     std::size_t close_calls = 0;
     std::vector<std::vector<std::uint8_t>> writes;
     std::vector<std::pair<boost::system::error_code, std::vector<std::uint8_t>>> read_sequence;
@@ -106,6 +107,12 @@ class fake_upstream final : public mux::upstream
     {
         writes.push_back(data);
         co_return write_result;
+    }
+
+    boost::asio::awaitable<void> shutdown_send() override
+    {
+        ++shutdown_send_calls;
+        co_return;
     }
 
     boost::asio::awaitable<void> close() override
@@ -389,7 +396,23 @@ TEST(TcpSocksSessionTest, ClientToUpstreamWritesDataAndStopsOnEof)
     mux::test::run_awaitable_void(io_context, session->client_to_upstream(backend));
     ASSERT_EQ(backend->writes.size(), 1U);
     EXPECT_EQ(backend->writes[0], std::vector<std::uint8_t>({0x10, 0x20, 0x30}));
+    EXPECT_EQ(backend->shutdown_send_calls, 1U);
     EXPECT_EQ(backend->close_calls, 0U);
+}
+
+TEST(TcpSocksSessionTest, ClientToUpstreamClosesBackendOnClientReadError)
+{
+    boost::asio::io_context io_context;
+    auto pair = make_tcp_socket_pair(io_context);
+    auto session = make_tcp_session(io_context, std::move(pair.server));
+    auto backend = std::make_shared<fake_upstream>();
+    backend->write_result = 3;
+
+    session->socket_.close();
+    mux::test::run_awaitable_void(io_context, session->client_to_upstream(backend));
+
+    EXPECT_EQ(backend->shutdown_send_calls, 0U);
+    EXPECT_EQ(backend->close_calls, 1U);
 }
 
 TEST(TcpSocksSessionTest, ClientToUpstreamStopsWhenBackendWriteFails)
@@ -425,6 +448,7 @@ TEST(TcpSocksSessionTest, ClientToUpstreamHandlesPartialBackendWrites)
     ASSERT_EQ(backend->writes.size(), 2U);
     EXPECT_EQ(backend->writes[0], std::vector<std::uint8_t>({0xA1, 0xB2, 0xC3, 0xD4}));
     EXPECT_EQ(backend->writes[1], std::vector<std::uint8_t>({0xC3, 0xD4}));
+    EXPECT_EQ(backend->shutdown_send_calls, 1U);
 }
 
 TEST(TcpSocksSessionTest, UpstreamToClientWritesDataThenStopsOnError)

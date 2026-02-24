@@ -205,6 +205,17 @@ boost::asio::awaitable<void> direct_upstream::close()
     co_return;
 }
 
+boost::asio::awaitable<void> direct_upstream::shutdown_send()
+{
+    boost::system::error_code ec;
+    ec = socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
+    if (ec && ec != boost::asio::error::not_connected && ec != boost::asio::error::bad_descriptor)
+    {
+        LOG_WARN("direct upstream shutdown send failed error {}", ec.message());
+    }
+    co_return;
+}
+
 proxy_upstream::proxy_upstream(std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> tunnel, connection_context ctx)
     : ctx_(std::move(ctx)), tunnel_(std::move(tunnel))
 {
@@ -367,6 +378,15 @@ boost::asio::awaitable<void> proxy_upstream::close()
         {
             tunnel_->remove_stream(stream->id());
         }
+    }
+}
+
+boost::asio::awaitable<void> proxy_upstream::shutdown_send()
+{
+    auto stream = stream_;
+    if (stream != nullptr)
+    {
+        co_await stream->shutdown_send();
     }
 }
 
