@@ -993,6 +993,43 @@ TEST(UdpSocksSessionTest, PrepareUdpAssociateAckFailureRemovesCreatedStream)
     EXPECT_EQ(err[1], socks::kRepGenFail);
 }
 
+TEST(UdpSocksSessionTest, PrepareUdpAssociateAckTimeoutRemovesCreatedStream)
+{
+    boost::asio::io_context ctx;
+    mux::config::timeout_t timeout_cfg;
+    timeout_cfg.read = 1;
+    auto pair = make_tcp_socket_pair(ctx);
+    ASSERT_TRUE(pair.client.is_open());
+    ASSERT_TRUE(pair.server.is_open());
+
+    auto tunnel = make_test_tunnel(ctx, 207);
+    auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx);
+    tunnel->connection_ = mock_conn;
+
+    ON_CALL(*mock_conn, id()).WillByDefault(testing::Return(207));
+    ON_CALL(*mock_conn, mock_send_async(testing::_, testing::_, testing::_)).WillByDefault(testing::Return(boost::system::error_code{}));
+
+    EXPECT_CALL(*mock_conn, mock_send_async(testing::_, mux::kCmdSyn, testing::_)).WillOnce(testing::Return(boost::system::error_code{}));
+    EXPECT_CALL(*mock_conn, register_stream(testing::_, testing::_)).WillOnce(testing::Return(true));
+    EXPECT_CALL(*mock_conn, mock_send_async(testing::_, mux::kCmdFin, std::vector<std::uint8_t>{})).Times(0);
+    EXPECT_CALL(*mock_conn, remove_stream(testing::_)).Times(1);
+
+    auto session = std::make_shared<mux::udp_socks_session>(std::move(pair.server), ctx, tunnel, 47, timeout_cfg);
+    boost::asio::ip::address local_addr;
+    std::uint16_t udp_bind_port = 0;
+    const auto start = std::chrono::steady_clock::now();
+    const auto stream = mux::test::run_awaitable(ctx, session->prepare_udp_associate(local_addr, udp_bind_port));
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
+    EXPECT_EQ(stream, nullptr);
+    EXPECT_GE(elapsed.count(), 900);
+    EXPECT_LT(elapsed.count(), 4000);
+
+    std::uint8_t err[10] = {0};
+    boost::asio::read(pair.client, boost::asio::buffer(err));
+    EXPECT_EQ(err[0], socks::kVer);
+    EXPECT_EQ(err[1], socks::kRepGenFail);
+}
+
 TEST(UdpSocksSessionTest, PrepareUdpAssociateInvalidAckPayloadRemovesCreatedStream)
 {
     boost::asio::io_context ctx;
