@@ -183,16 +183,36 @@ bool should_stop_upstream(const boost::system::error_code& recv_ec,
 
 boost::asio::awaitable<bool> write_to_target(boost::asio::ip::tcp::socket& target_socket,
                                              const std::vector<std::uint8_t>& data,
-                                             connection_context& ctx)
+                                             connection_context& ctx,
+                                             const std::uint32_t timeout_sec)
 {
-    const auto [write_ec, write_size] =
-        co_await boost::asio::async_write(target_socket, boost::asio::buffer(data), boost::asio::as_tuple(boost::asio::use_awaitable));
-    if (write_ec)
+    if (timeout_sec == 0)
     {
-        LOG_CTX_WARN(ctx, "{} failed to write to target {}", log_event::kDataSend, write_ec.message());
+        const auto [write_ec, write_size] =
+            co_await boost::asio::async_write(target_socket, boost::asio::buffer(data), boost::asio::as_tuple(boost::asio::use_awaitable));
+        if (write_ec)
+        {
+            LOG_CTX_WARN(ctx, "{} failed to write to target {}", log_event::kDataSend, write_ec.message());
+            co_return false;
+        }
+        ctx.add_rx_bytes(write_size);
+        co_return true;
+    }
+
+    const auto write_res = co_await timeout_io::async_write_with_timeout(target_socket, boost::asio::buffer(data), timeout_sec, "remote session");
+    if (!write_res.ok)
+    {
+        if (write_res.timed_out)
+        {
+            LOG_CTX_WARN(ctx, "{} write to target timeout {}s", log_event::kDataSend, timeout_sec);
+        }
+        else
+        {
+            LOG_CTX_WARN(ctx, "{} failed to write to target {}", log_event::kDataSend, write_res.ec.message());
+        }
         co_return false;
     }
-    ctx.add_rx_bytes(write_size);
+    ctx.add_rx_bytes(write_res.write_size);
     co_return true;
 }
 
@@ -306,7 +326,16 @@ boost::asio::awaitable<bool> prepare_remote_target_connection(boost::asio::ip::t
 
     set_target_socket_no_delay(target_socket, ctx);
     LOG_CTX_INFO(ctx, "{} connected {} {}", log_event::kConnEstablished, syn.addr, syn.port);
-    if (!co_await send_ack(conn, stream_id, socks::kRepSuccess, connect_res.endpoint.address().to_string(), connect_res.endpoint.port(), ctx))
+    boost::system::error_code local_ep_ec;
+    const auto local_ep = target_socket.local_endpoint(local_ep_ec);
+    std::string bind_addr = connect_res.endpoint.address().to_string();
+    std::uint16_t bind_port = connect_res.endpoint.port();
+    if (!local_ep_ec)
+    {
+        bind_addr = local_ep.address().to_string();
+        bind_port = local_ep.port();
+    }
+    if (!co_await send_ack(conn, stream_id, socks::kRepSuccess, bind_addr, bind_port, ctx))
     {
         close_target_socket(target_socket);
         remove_stream(manager, stream_id);
@@ -321,14 +350,16 @@ remote_session::remote_session(const std::shared_ptr<mux_connection>& connection
                                const std::uint32_t id,
                                boost::asio::io_context& io_context,
                                const connection_context& ctx,
-                               const std::uint32_t connect_timeout_sec)
+                               const std::uint32_t connect_timeout_sec,
+                               const std::uint32_t write_timeout_sec)
     : id_(id),
       io_context_(io_context),
       resolver_(io_context_),
       target_socket_(io_context_),
       connection_(connection),
       recv_channel_(io_context_, 128),
-      connect_timeout_sec_(connect_timeout_sec)
+      connect_timeout_sec_(connect_timeout_sec),
+      write_timeout_sec_(write_timeout_sec)
 {
     ctx_ = ctx;
     ctx_.stream_id(id);
@@ -456,7 +487,7 @@ boost::asio::awaitable<void> remote_session::upstream()
         {
             break;
         }
-        if (!co_await write_to_target(target_socket_, data, ctx_))
+        if (!co_await write_to_target(target_socket_, data, ctx_, write_timeout_sec_))
         {
             break;
         }
