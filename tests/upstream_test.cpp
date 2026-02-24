@@ -582,7 +582,7 @@ TEST_F(upstream_test_fixture, ProxyUpstreamConnectFailsWhenSendSynFailsAndCleans
                 return true;
             });
     EXPECT_CALL(*mock_conn, mock_send_async(::testing::_, mux::kCmdSyn, ::testing::_)).WillOnce(::testing::Return(boost::asio::error::broken_pipe));
-    EXPECT_CALL(*mock_conn, mock_send_async(::testing::_, mux::kCmdFin, ::testing::_)).WillOnce(::testing::Return(boost::system::error_code{}));
+    EXPECT_CALL(*mock_conn, mock_send_async(::testing::_, mux::kCmdRst, ::testing::_)).WillOnce(::testing::Return(boost::system::error_code{}));
     EXPECT_CALL(*mock_conn, remove_stream(::testing::_)).Times(1);
 
     mux::proxy_upstream upstream(tunnel, mux::connection_context{});
@@ -619,7 +619,7 @@ TEST_F(upstream_test_fixture, ProxyUpstreamConnectFailsWhenAckRejectedAndCleansS
                 return true;
             });
     EXPECT_CALL(*mock_conn, mock_send_async(::testing::_, mux::kCmdSyn, ::testing::_)).WillOnce(::testing::Return(boost::system::error_code{}));
-    EXPECT_CALL(*mock_conn, mock_send_async(::testing::_, mux::kCmdFin, ::testing::_)).WillOnce(::testing::Return(boost::system::error_code{}));
+    EXPECT_CALL(*mock_conn, mock_send_async(::testing::_, mux::kCmdRst, ::testing::_)).WillOnce(::testing::Return(boost::system::error_code{}));
     EXPECT_CALL(*mock_conn, remove_stream(::testing::_)).Times(1);
 
     mux::proxy_upstream upstream(tunnel, mux::connection_context{});
@@ -638,6 +638,7 @@ TEST_F(upstream_test_fixture, ProxyUpstreamConnectFailsWhenAckTimeoutAndCleansSt
     EXPECT_CALL(*mock_conn, register_stream(::testing::_, ::testing::_)).WillOnce(::testing::Return(true));
     EXPECT_CALL(*mock_conn, mock_send_async(::testing::_, mux::kCmdSyn, ::testing::_)).WillOnce(::testing::Return(boost::system::error_code{}));
     EXPECT_CALL(*mock_conn, mock_send_async(::testing::_, mux::kCmdFin, ::testing::_)).Times(0);
+    EXPECT_CALL(*mock_conn, mock_send_async(::testing::_, mux::kCmdRst, ::testing::_)).WillOnce(::testing::Return(boost::system::error_code{}));
     EXPECT_CALL(*mock_conn, remove_stream(::testing::_)).Times(1);
 
     mux::proxy_upstream upstream(tunnel, mux::connection_context{}, 1);

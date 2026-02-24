@@ -354,11 +354,26 @@ boost::asio::awaitable<void> proxy_upstream::cleanup_stream(const std::shared_pt
         co_return;
     }
 
-    co_await stream->close();
-    if (tunnel_ != nullptr)
+    if (tunnel_ == nullptr)
     {
-        tunnel_->remove_stream(stream->id());
+        co_await stream->close();
+        co_return;
     }
+
+    const auto conn = tunnel_->connection();
+    if (conn == nullptr)
+    {
+        co_await stream->close();
+        co_return;
+    }
+
+    const auto reset_ec = co_await conn->send_async(stream->id(), kCmdRst, {});
+    if (reset_ec)
+    {
+        LOG_CTX_WARN(ctx_, "{} reset stream {} failed {}", log_event::kRoute, stream->id(), reset_ec.message());
+    }
+    stream->on_reset();
+    tunnel_->remove_stream(stream->id());
 }
 
 boost::asio::awaitable<bool> proxy_upstream::connect(const std::string& host, const std::uint16_t port)
