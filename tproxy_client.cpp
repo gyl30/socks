@@ -1223,6 +1223,13 @@ bool tproxy_client::enqueue_udp_packet(tproxy_udp_dispatch_channel& dispatch_cha
         return false;
     }
 
+    if (packet_len == 0)
+    {
+        statistics::instance().inc_tproxy_udp_dispatch_dropped();
+        maybe_log_udp_dispatch_drop(statistics::instance().tproxy_udp_dispatch_dropped());
+        return false;
+    }
+
     if (packet_len > buffer.size())
     {
         LOG_WARN("tproxy udp invalid packet length {} buffer size {}", packet_len, buffer.size());
