@@ -157,6 +157,32 @@ bool bind_udp_socket_for_associate(boost::asio::ip::tcp::socket& tcp_socket,
     return true;
 }
 
+void configure_expected_client_constraint(const std::string& host,
+                                          const std::uint16_t port,
+                                          std::optional<boost::asio::ip::address>& expected_addr,
+                                          std::optional<std::uint16_t>& expected_port)
+{
+    expected_addr.reset();
+    expected_port.reset();
+    if (port != 0)
+    {
+        expected_port = port;
+    }
+
+    boost::system::error_code addr_ec;
+    auto parsed_addr = boost::asio::ip::make_address(host, addr_ec);
+    if (addr_ec)
+    {
+        return;
+    }
+
+    parsed_addr = socks_codec::normalize_ip_address(parsed_addr);
+    if (!parsed_addr.is_unspecified())
+    {
+        expected_addr = parsed_addr;
+    }
+}
+
 boost::asio::awaitable<void> close_and_remove_stream(const std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>>& tunnel_manager,
                                                      const std::shared_ptr<mux_stream>& stream)
 {
@@ -279,10 +305,32 @@ boost::asio::awaitable<bool> send_udp_associate_success_reply(boost::asio::ip::t
 [[nodiscard]] bool validate_and_track_client_endpoint(const boost::asio::ip::udp::endpoint& sender,
                                                       boost::asio::ip::udp::endpoint& client_ep,
                                                       bool& has_client_ep,
+                                                      const std::optional<boost::asio::ip::address>& expected_client_addr,
+                                                      const std::optional<std::uint16_t>& expected_client_port,
                                                       const connection_context& ctx)
 {
     if (!has_client_ep)
     {
+        if (expected_client_addr.has_value())
+        {
+            const auto normalized_sender = socks_codec::normalize_ip_address(sender.address());
+            const auto normalized_expected = socks_codec::normalize_ip_address(*expected_client_addr);
+            if (normalized_sender != normalized_expected)
+            {
+                LOG_CTX_WARN(ctx,
+                             "{} udp client endpoint mismatch expected addr {} got {}",
+                             log_event::kSocks,
+                             normalized_expected.to_string(),
+                             normalized_sender.to_string());
+                return false;
+            }
+        }
+        if (expected_client_port.has_value() && sender.port() != *expected_client_port)
+        {
+            LOG_CTX_WARN(
+                ctx, "{} udp client endpoint mismatch expected port {} got {}", log_event::kSocks, *expected_client_port, sender.port());
+            return false;
+        }
         client_ep = sender;
         has_client_ep = true;
         return true;
@@ -301,6 +349,8 @@ boost::asio::awaitable<bool> send_udp_associate_success_reply(boost::asio::ip::t
                                               const boost::asio::ip::udp::endpoint& sender,
                                               boost::asio::ip::udp::endpoint& client_ep,
                                               bool& has_client_ep,
+                                              const std::optional<boost::asio::ip::address>& expected_client_addr,
+                                              const std::optional<std::uint16_t>& expected_client_port,
                                               const connection_context& ctx)
 {
     socks_udp_header udp_header;
@@ -332,7 +382,7 @@ boost::asio::awaitable<bool> send_udp_associate_success_reply(boost::asio::ip::t
         return false;
     }
 
-    return validate_and_track_client_endpoint(sender, client_ep, has_client_ep, ctx);
+    return validate_and_track_client_endpoint(sender, client_ep, has_client_ep, expected_client_addr, expected_client_port, ctx);
 }
 
 [[nodiscard]] bool has_valid_client_endpoint(const bool has_client_ep, const boost::asio::ip::udp::endpoint& client_ep, const connection_context& ctx)
@@ -521,8 +571,7 @@ void udp_socks_session::on_reset() { on_close(); }
 
 boost::asio::awaitable<void> udp_socks_session::run(const std::string& host, const std::uint16_t port)
 {
-    (void)host;
-    (void)port;
+    configure_expected_client_constraint(host, port, expected_client_addr_, expected_client_port_);
 
     if (closed_.load(std::memory_order_acquire))
     {
@@ -573,7 +622,7 @@ boost::asio::awaitable<void> udp_socks_session::udp_sock_to_stream(std::shared_p
             }
             break;
         }
-        if (!validate_udp_client_packet(buf, n, sender, client_ep_, has_client_ep_, ctx_))
+        if (!validate_udp_client_packet(buf, n, sender, client_ep_, has_client_ep_, expected_client_addr_, expected_client_port_, ctx_))
         {
             continue;
         }

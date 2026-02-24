@@ -504,6 +504,77 @@ TEST(UdpSocksSessionTest, UdpSockToStreamDropsMessageSizeAndContinues)
     }
 }
 
+TEST(UdpSocksSessionTest, UdpSockToStreamRespectsExpectedClientEndpointOnFirstPacket)
+{
+    boost::asio::io_context ctx;
+    mux::config::timeout_t const timeout_cfg;
+    auto session = std::make_shared<mux::udp_socks_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, 41, timeout_cfg);
+
+    boost::system::error_code ec;
+    session->udp_socket_.open(boost::asio::ip::udp::v4(), ec);
+    ASSERT_FALSE(ec);
+    session->udp_socket_.bind({boost::asio::ip::make_address("127.0.0.1"), 0}, ec);
+    ASSERT_FALSE(ec);
+    const auto recv_ep = session->udp_socket_.local_endpoint(ec);
+    ASSERT_FALSE(ec);
+
+    boost::asio::io_context send_ctx;
+    boost::asio::ip::udp::socket sender_ok(send_ctx);
+    boost::asio::ip::udp::socket sender_bad(send_ctx);
+    sender_ok.open(boost::asio::ip::udp::v4(), ec);
+    ASSERT_FALSE(ec);
+    sender_bad.open(boost::asio::ip::udp::v4(), ec);
+    ASSERT_FALSE(ec);
+    sender_ok.bind({boost::asio::ip::make_address("127.0.0.1"), 0}, ec);
+    ASSERT_FALSE(ec);
+    sender_bad.bind({boost::asio::ip::make_address("127.0.0.1"), 0}, ec);
+    ASSERT_FALSE(ec);
+
+    const auto expected_ep = sender_ok.local_endpoint(ec);
+    ASSERT_FALSE(ec);
+    session->expected_client_addr_ = boost::asio::ip::make_address("127.0.0.1");
+    session->expected_client_port_ = expected_ep.port();
+
+    auto conn = std::make_shared<mux::mock_mux_connection>(ctx);
+    EXPECT_CALL(*conn, mock_send_async(3, mux::kCmdDat, testing::_)).Times(1).WillOnce(testing::Return(boost::system::error_code{}));
+    auto stream = std::make_shared<mux::mux_stream>(3, 3, "trace", conn, ctx);
+
+    boost::asio::co_spawn(
+        ctx,
+        [session, stream]() -> boost::asio::awaitable<void>
+        {
+            co_await session->udp_sock_to_stream(stream);
+            co_return;
+        },
+        boost::asio::detached);
+
+    std::thread runner([&ctx]() { ctx.run(); });
+
+    socks_udp_header header;
+    header.frag = 0x00;
+    header.addr = "1.1.1.1";
+    header.port = 53;
+    auto packet = socks_codec::encode_udp_header(header);
+    packet.push_back(0x33);
+
+    sender_bad.send_to(boost::asio::buffer(packet), recv_ep, 0, ec);
+    ASSERT_FALSE(ec);
+    sender_ok.send_to(boost::asio::buffer(packet), recv_ep, 0, ec);
+    ASSERT_FALSE(ec);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(80));
+    session->on_close();
+
+    if (runner.joinable())
+    {
+        runner.join();
+    }
+
+    EXPECT_TRUE(session->has_client_ep_);
+    EXPECT_EQ(session->client_ep_.address(), expected_ep.address());
+    EXPECT_EQ(session->client_ep_.port(), expected_ep.port());
+}
+
 TEST(UdpSocksSessionTest, KeepTcpAliveCoversExpectedErrorCodes)
 {
     mux::config::timeout_t const timeout_cfg;

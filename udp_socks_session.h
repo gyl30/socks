@@ -3,6 +3,7 @@
 
 #include <atomic>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 #include <cstddef>
@@ -78,6 +79,8 @@ class udp_socks_session : public mux_stream_interface, public std::enable_shared
     std::atomic<bool> closed_{false};
     boost::asio::ip::udp::endpoint client_ep_;
     bool has_client_ep_ = false;
+    std::optional<boost::asio::ip::address> expected_client_addr_;
+    std::optional<std::uint16_t> expected_client_port_;
     std::shared_ptr<void> active_connection_guard_;
     config::timeout_t timeout_config_;
 };

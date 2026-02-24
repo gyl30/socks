@@ -69,7 +69,7 @@ class socks_session : public std::enable_shared_from_this<socks_session>
 
     [[nodiscard]] static bool is_supported_cmd(std::uint8_t cmd);
 
-    [[nodiscard]] static bool is_supported_atyp(std::uint8_t atyp);
+    [[nodiscard]] static bool is_supported_atyp(std::uint8_t cmd, std::uint8_t atyp);
 
     boost::asio::awaitable<bool> read_request_ipv4(std::string& host);
 

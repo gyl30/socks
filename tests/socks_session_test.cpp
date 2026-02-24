@@ -196,6 +196,63 @@ TEST_F(socks_session_test_fixture, HandshakeNoAuthSuccess)
     t.join();
 }
 
+TEST_F(socks_session_test_fixture, HandshakeGreetingReadTimesOutWhenIncomplete)
+{
+    auto pair = make_tcp_socket_pair(io_ctx());
+    ASSERT_TRUE(pair.client.is_open());
+    ASSERT_TRUE(pair.server.is_open());
+    boost::asio::ip::tcp::socket client_sock(std::move(pair.client));
+    boost::asio::ip::tcp::socket server_sock(std::move(pair.server));
+
+    config::timeout_t timeout_cfg;
+    timeout_cfg.read = 1;
+    auto session = std::make_shared<socks_session>(std::move(server_sock), io_ctx(), nullptr, nullptr, 1001, config::socks_t{}, timeout_cfg);
+
+    const std::uint8_t partial_greeting = socks::kVer;
+    boost::asio::write(client_sock, boost::asio::buffer(&partial_greeting, 1));
+
+    auto work = boost::asio::make_work_guard(io_ctx());
+    std::thread t([&io_ctx = this->io_ctx()] { io_ctx.run(); });
+
+    const auto start = std::chrono::steady_clock::now();
+    auto handshake_future = boost::asio::co_spawn(io_ctx(), socks_session_tester::handshake(*session), boost::asio::use_future);
+    EXPECT_FALSE(handshake_future.get());
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    EXPECT_LT(std::chrono::duration_cast<std::chrono::seconds>(elapsed).count(), 4);
+
+    work.reset();
+    t.join();
+}
+
+TEST_F(socks_session_test_fixture, HandshakeGreetingReadWithoutTimeoutKeepsWaiting)
+{
+    auto pair = make_tcp_socket_pair(io_ctx());
+    ASSERT_TRUE(pair.client.is_open());
+    ASSERT_TRUE(pair.server.is_open());
+    boost::asio::ip::tcp::socket client_sock(std::move(pair.client));
+    boost::asio::ip::tcp::socket server_sock(std::move(pair.server));
+
+    config::timeout_t timeout_cfg;
+    timeout_cfg.read = 0;
+    auto session = std::make_shared<socks_session>(std::move(server_sock), io_ctx(), nullptr, nullptr, 1002, config::socks_t{}, timeout_cfg);
+
+    const std::uint8_t partial_greeting = socks::kVer;
+    boost::asio::write(client_sock, boost::asio::buffer(&partial_greeting, 1));
+
+    auto work = boost::asio::make_work_guard(io_ctx());
+    std::thread t([&io_ctx = this->io_ctx()] { io_ctx.run(); });
+
+    auto handshake_future = boost::asio::co_spawn(io_ctx(), socks_session_tester::handshake(*session), boost::asio::use_future);
+    EXPECT_EQ(handshake_future.wait_for(std::chrono::milliseconds(300)), std::future_status::timeout);
+
+    boost::system::error_code close_ec;
+    client_sock.close(close_ec);
+    EXPECT_FALSE(handshake_future.get());
+
+    work.reset();
+    t.join();
+}
+
 TEST_F(socks_session_test_fixture, HandshakePasswordAuthSuccess)
 {
     boost::asio::ip::tcp::socket client_sock(io_ctx());
@@ -588,10 +645,13 @@ TEST_F(socks_session_test_fixture, HelperBranchesSelectMethodAndVerifyCredential
     EXPECT_TRUE(socks_session::is_supported_cmd(socks::kCmdConnect));
     EXPECT_TRUE(socks_session::is_supported_cmd(socks::kCmdUdpAssociate));
     EXPECT_FALSE(socks_session::is_supported_cmd(0x09));
-    EXPECT_TRUE(socks_session::is_supported_atyp(socks::kAtypIpv4));
-    EXPECT_TRUE(socks_session::is_supported_atyp(socks::kAtypDomain));
-    EXPECT_TRUE(socks_session::is_supported_atyp(socks::kAtypIpv6));
-    EXPECT_FALSE(socks_session::is_supported_atyp(0x09));
+    EXPECT_TRUE(socks_session::is_supported_atyp(socks::kCmdConnect, socks::kAtypIpv4));
+    EXPECT_TRUE(socks_session::is_supported_atyp(socks::kCmdConnect, socks::kAtypDomain));
+    EXPECT_TRUE(socks_session::is_supported_atyp(socks::kCmdConnect, socks::kAtypIpv6));
+    EXPECT_TRUE(socks_session::is_supported_atyp(socks::kCmdUdpAssociate, socks::kAtypIpv4));
+    EXPECT_TRUE(socks_session::is_supported_atyp(socks::kCmdUdpAssociate, socks::kAtypIpv6));
+    EXPECT_FALSE(socks_session::is_supported_atyp(socks::kCmdUdpAssociate, socks::kAtypDomain));
+    EXPECT_FALSE(socks_session::is_supported_atyp(socks::kCmdConnect, 0x09));
 }
 
 TEST_F(socks_session_test_fixture, ReadGreetingAndMethodsCoversSuccessAndFailures)
@@ -747,10 +807,11 @@ TEST_F(socks_session_test_fixture, ReadTargetHostPortAndValidationBranches)
         const std::uint8_t domain[] = {0x04, 't', 'e', 's', 't', 0x00, 0x50};
         boost::asio::write(pair.client, boost::asio::buffer(domain));
         auto req = mux::test::run_awaitable(io_ctx(), session->read_request_target(socks::kCmdUdpAssociate, socks::kAtypDomain));
-        EXPECT_TRUE(req.ok);
-        EXPECT_EQ(req.host, "test");
-        EXPECT_EQ(req.port, 80);
+        EXPECT_FALSE(req.ok);
         EXPECT_EQ(req.cmd, socks::kCmdUdpAssociate);
+        std::uint8_t err[10] = {0};
+        boost::asio::read(pair.client, boost::asio::buffer(err));
+        EXPECT_EQ(err[1], socks::kRepAddrTypeNotSupported);
     }
 
     {
@@ -776,7 +837,7 @@ TEST_F(socks_session_test_fixture, ReadTargetHostPortAndValidationBranches)
         EXPECT_EQ(req.cmd, socks::kCmdUdpAssociate);
         std::uint8_t err[10] = {0};
         boost::asio::read(pair.client, boost::asio::buffer(err));
-        EXPECT_EQ(err[1], socks::kRepGenFail);
+        EXPECT_EQ(err[1], socks::kRepAddrTypeNotSupported);
     }
 
     {
@@ -873,6 +934,19 @@ TEST_F(socks_session_test_fixture, RequestHeaderValidationAndRejectRequestBranch
         ASSERT_TRUE(result.has_value());
         EXPECT_FALSE(result->ok);
         EXPECT_EQ(result->cmd, socks::kCmdConnect);
+        std::uint8_t err[10] = {0};
+        boost::asio::read(pair.client, boost::asio::buffer(err));
+        EXPECT_EQ(err[1], socks::kRepAddrTypeNotSupported);
+    }
+
+    {
+        auto pair = make_tcp_socket_pair(io_ctx());
+        auto session = std::make_shared<socks_session>(std::move(pair.server), io_ctx(), nullptr, nullptr, 41);
+        std::array<std::uint8_t, 4> const head = {socks::kVer, socks::kCmdUdpAssociate, 0, socks::kAtypDomain};
+        auto result = mux::test::run_awaitable(io_ctx(), session->validate_request_head(head));
+        ASSERT_TRUE(result.has_value());
+        EXPECT_FALSE(result->ok);
+        EXPECT_EQ(result->cmd, socks::kCmdUdpAssociate);
         std::uint8_t err[10] = {0};
         boost::asio::read(pair.client, boost::asio::buffer(err));
         EXPECT_EQ(err[1], socks::kRepAddrTypeNotSupported);

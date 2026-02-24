@@ -26,11 +26,6 @@
 #include <boost/asio/ip/address_v6.hpp>
 #include <boost/asio/use_awaitable.hpp>
 
-extern "C"
-{
-#include <openssl/crypto.h>
-}
-
 #include "log.h"
 #include "config.h"
 #include "protocol.h"
@@ -40,6 +35,7 @@ extern "C"
 #include "socks_session.h"
 #include "tcp_socks_session.h"
 #include "udp_socks_session.h"
+#include "timeout_io.h"
 
 namespace mux
 {
@@ -55,6 +51,36 @@ std::shared_ptr<void> make_active_connection_guard()
                 delete static_cast<int*>(ptr);
                 statistics::instance().dec_active_connections();
             }};
+}
+
+boost::asio::awaitable<timeout_io::timed_tcp_read_result> read_exact_with_optional_timeout(boost::asio::ip::tcp::socket& socket,
+                                                                                            const boost::asio::mutable_buffer& buffer,
+                                                                                            const std::uint32_t timeout_sec)
+{
+    if (timeout_sec == 0)
+    {
+        const auto [read_ec, read_size] = co_await boost::asio::async_read(socket, buffer, boost::asio::as_tuple(boost::asio::use_awaitable));
+        co_return timeout_io::timed_tcp_read_result{
+            .ok = !read_ec,
+            .timed_out = false,
+            .read_size = read_size,
+            .ec = read_ec,
+        };
+    }
+    co_return co_await timeout_io::async_read_with_timeout(socket, buffer, timeout_sec, true, "socks session");
+}
+
+bool secure_string_equals(const std::string& lhs, const std::string& rhs)
+{
+    const auto max_len = std::max(lhs.size(), rhs.size());
+    std::uint8_t diff = static_cast<std::uint8_t>(lhs.size() ^ rhs.size());
+    for (std::size_t i = 0; i < max_len; ++i)
+    {
+        const std::uint8_t lhs_byte = i < lhs.size() ? static_cast<std::uint8_t>(lhs[i]) : 0;
+        const std::uint8_t rhs_byte = i < rhs.size() ? static_cast<std::uint8_t>(rhs[i]) : 0;
+        diff = static_cast<std::uint8_t>(diff | (lhs_byte ^ rhs_byte));
+    }
+    return diff == 0;
 }
 
 }    // namespace
@@ -188,12 +214,24 @@ boost::asio::awaitable<bool> socks_session::handshake()
 boost::asio::awaitable<bool> socks_session::read_socks_greeting(std::uint8_t& method_count)
 {
     std::uint8_t ver_nmethods[2] = {0};
-    const auto [read_ec, read_n] =
-        co_await boost::asio::async_read(socket_, boost::asio::buffer(ver_nmethods, 2), boost::asio::as_tuple(boost::asio::use_awaitable));
-    (void)read_n;
-    if (read_ec || ver_nmethods[0] != socks::kVer)
+    const auto read_res = co_await read_exact_with_optional_timeout(socket_, boost::asio::buffer(ver_nmethods, 2), timeout_config_.read);
+    if (!read_res.ok || ver_nmethods[0] != socks::kVer)
     {
-        LOG_ERROR("socks session {} handshake failed", sid_);
+        if (!read_res.ok)
+        {
+            if (read_res.timed_out)
+            {
+                LOG_ERROR("socks session {} handshake timeout {}s", sid_, timeout_config_.read);
+            }
+            else
+            {
+                LOG_ERROR("socks session {} handshake failed {}", sid_, read_res.ec.message());
+            }
+        }
+        else
+        {
+            LOG_ERROR("socks session {} handshake failed", sid_);
+        }
         co_return false;
     }
     method_count = ver_nmethods[1];
@@ -203,12 +241,17 @@ boost::asio::awaitable<bool> socks_session::read_socks_greeting(std::uint8_t& me
 boost::asio::awaitable<bool> socks_session::read_auth_methods(const std::uint8_t method_count, std::vector<std::uint8_t>& methods)
 {
     methods.assign(method_count, 0);
-    const auto [method_ec, method_n] =
-        co_await boost::asio::async_read(socket_, boost::asio::buffer(methods), boost::asio::as_tuple(boost::asio::use_awaitable));
-    (void)method_n;
-    if (method_ec)
+    const auto method_res = co_await read_exact_with_optional_timeout(socket_, boost::asio::buffer(methods), timeout_config_.read);
+    if (!method_res.ok)
     {
-        LOG_ERROR("socks methods read failed {}", method_ec.message());
+        if (method_res.timed_out)
+        {
+            LOG_ERROR("socks session {} methods read timeout {}s", sid_, timeout_config_.read);
+        }
+        else
+        {
+            LOG_ERROR("socks methods read failed {}", method_res.ec.message());
+        }
         co_return false;
     }
     co_return true;
@@ -290,11 +333,14 @@ boost::asio::awaitable<bool> socks_session::do_password_auth()
 boost::asio::awaitable<bool> socks_session::read_auth_version()
 {
     std::uint8_t ver = 0;
-    const auto [read_ec, read_n] =
-        co_await boost::asio::async_read(socket_, boost::asio::buffer(&ver, 1), boost::asio::as_tuple(boost::asio::use_awaitable));
-    (void)read_n;
-    if (read_ec || ver != 0x01)
+    const auto read_res = co_await read_exact_with_optional_timeout(socket_, boost::asio::buffer(&ver, 1), timeout_config_.read);
+    if (!read_res.ok || ver != 0x01)
     {
+        if (!read_res.ok && read_res.timed_out)
+        {
+            LOG_ERROR("socks session {} read auth version timeout {}s", sid_, timeout_config_.read);
+            co_return false;
+        }
         LOG_ERROR("socks session {} invalid auth version {}", sid_, ver);
         co_return false;
     }
@@ -304,11 +350,17 @@ boost::asio::awaitable<bool> socks_session::read_auth_version()
 boost::asio::awaitable<bool> socks_session::read_auth_field(std::string& out, const char* field_name)
 {
     std::uint8_t field_len = 0;
-    auto [len_ec, len_n] =
-        co_await boost::asio::async_read(socket_, boost::asio::buffer(&field_len, 1), boost::asio::as_tuple(boost::asio::use_awaitable));
-    if (len_ec)
+    const auto len_res = co_await read_exact_with_optional_timeout(socket_, boost::asio::buffer(&field_len, 1), timeout_config_.read);
+    if (!len_res.ok)
     {
-        LOG_ERROR("socks session {} read {} len failed", sid_, field_name);
+        if (len_res.timed_out)
+        {
+            LOG_ERROR("socks session {} read {} len timeout {}s", sid_, field_name, timeout_config_.read);
+        }
+        else
+        {
+            LOG_ERROR("socks session {} read {} len failed", sid_, field_name);
+        }
         co_return false;
     }
     if (field_len == 0)
@@ -318,21 +370,26 @@ boost::asio::awaitable<bool> socks_session::read_auth_field(std::string& out, co
     }
 
     out.assign(field_len, '\0');
-    auto [field_ec, field_n] = co_await boost::asio::async_read(socket_, boost::asio::buffer(out), boost::asio::as_tuple(boost::asio::use_awaitable));
-    if (field_ec)
+    const auto field_res = co_await read_exact_with_optional_timeout(socket_, boost::asio::buffer(out), timeout_config_.read);
+    if (!field_res.ok)
     {
-        LOG_ERROR("socks session {} read {} failed", sid_, field_name);
+        if (field_res.timed_out)
+        {
+            LOG_ERROR("socks session {} read {} timeout {}s", sid_, field_name, timeout_config_.read);
+        }
+        else
+        {
+            LOG_ERROR("socks session {} read {} failed", sid_, field_name);
+        }
         co_return false;
     }
-    (void)len_n;
-    (void)field_n;
     co_return true;
 }
 
 bool socks_session::verify_credentials(const std::string& username, const std::string& password) const
 {
-    const bool user_match = (username.size() == username_.size()) && (CRYPTO_memcmp(username.data(), username_.data(), username.size()) == 0);
-    const bool pass_match = (password.size() == password_.size()) && (CRYPTO_memcmp(password.data(), password_.data(), password.size()) == 0);
+    const bool user_match = secure_string_equals(username, username_);
+    const bool pass_match = secure_string_equals(password, password_);
     return user_match && pass_match;
 }
 
@@ -361,20 +418,29 @@ boost::asio::awaitable<void> socks_session::delay_invalid_request() const
 
 bool socks_session::is_supported_cmd(const std::uint8_t cmd) { return cmd == socks::kCmdConnect || cmd == socks::kCmdUdpAssociate; }
 
-bool socks_session::is_supported_atyp(const std::uint8_t atyp)
+bool socks_session::is_supported_atyp(const std::uint8_t cmd, const std::uint8_t atyp)
 {
-    return atyp == socks::kAtypIpv4 || atyp == socks::kAtypDomain || atyp == socks::kAtypIpv6;
+    if (atyp == socks::kAtypIpv4 || atyp == socks::kAtypIpv6)
+    {
+        return true;
+    }
+    return atyp == socks::kAtypDomain && cmd == socks::kCmdConnect;
 }
 
 boost::asio::awaitable<bool> socks_session::read_request_ipv4(std::string& host)
 {
     boost::asio::ip::address_v4::bytes_type bytes_v4;
-    const auto [read_ec, read_n] =
-        co_await boost::asio::async_read(socket_, boost::asio::buffer(bytes_v4), boost::asio::as_tuple(boost::asio::use_awaitable));
-    (void)read_n;
-    if (read_ec)
+    const auto read_res = co_await read_exact_with_optional_timeout(socket_, boost::asio::buffer(bytes_v4), timeout_config_.read);
+    if (!read_res.ok)
     {
-        LOG_ERROR("socks session {} request read ipv4 failed {}", sid_, read_ec.message());
+        if (read_res.timed_out)
+        {
+            LOG_ERROR("socks session {} request read ipv4 timeout {}s", sid_, timeout_config_.read);
+        }
+        else
+        {
+            LOG_ERROR("socks session {} request read ipv4 failed {}", sid_, read_res.ec.message());
+        }
         co_await reply_error(socks::kRepGenFail);
         co_return false;
     }
@@ -385,22 +451,32 @@ boost::asio::awaitable<bool> socks_session::read_request_ipv4(std::string& host)
 boost::asio::awaitable<bool> socks_session::read_request_domain(std::string& host)
 {
     std::uint8_t domain_len = 0;
-    const auto [len_ec, len_n] =
-        co_await boost::asio::async_read(socket_, boost::asio::buffer(&domain_len, 1), boost::asio::as_tuple(boost::asio::use_awaitable));
-    (void)len_n;
-    if (len_ec)
+    const auto len_res = co_await read_exact_with_optional_timeout(socket_, boost::asio::buffer(&domain_len, 1), timeout_config_.read);
+    if (!len_res.ok)
     {
-        LOG_ERROR("socks session {} request read domain len failed {}", sid_, len_ec.message());
+        if (len_res.timed_out)
+        {
+            LOG_ERROR("socks session {} request read domain len timeout {}s", sid_, timeout_config_.read);
+        }
+        else
+        {
+            LOG_ERROR("socks session {} request read domain len failed {}", sid_, len_res.ec.message());
+        }
         co_await reply_error(socks::kRepGenFail);
         co_return false;
     }
     host.resize(domain_len);
-    const auto [host_ec, host_n] =
-        co_await boost::asio::async_read(socket_, boost::asio::buffer(host), boost::asio::as_tuple(boost::asio::use_awaitable));
-    (void)host_n;
-    if (host_ec)
+    const auto host_res = co_await read_exact_with_optional_timeout(socket_, boost::asio::buffer(host), timeout_config_.read);
+    if (!host_res.ok)
     {
-        LOG_ERROR("socks session {} request read domain failed {}", sid_, host_ec.message());
+        if (host_res.timed_out)
+        {
+            LOG_ERROR("socks session {} request read domain timeout {}s", sid_, timeout_config_.read);
+        }
+        else
+        {
+            LOG_ERROR("socks session {} request read domain failed {}", sid_, host_res.ec.message());
+        }
         co_await reply_error(socks::kRepGenFail);
         co_return false;
     }
@@ -410,12 +486,17 @@ boost::asio::awaitable<bool> socks_session::read_request_domain(std::string& hos
 boost::asio::awaitable<bool> socks_session::read_request_ipv6(std::string& host)
 {
     boost::asio::ip::address_v6::bytes_type bytes_v6;
-    const auto [read_ec, read_n] =
-        co_await boost::asio::async_read(socket_, boost::asio::buffer(bytes_v6), boost::asio::as_tuple(boost::asio::use_awaitable));
-    (void)read_n;
-    if (read_ec)
+    const auto read_res = co_await read_exact_with_optional_timeout(socket_, boost::asio::buffer(bytes_v6), timeout_config_.read);
+    if (!read_res.ok)
     {
-        LOG_ERROR("socks session {} request read ipv6 failed {}", sid_, read_ec.message());
+        if (read_res.timed_out)
+        {
+            LOG_ERROR("socks session {} request read ipv6 timeout {}s", sid_, timeout_config_.read);
+        }
+        else
+        {
+            LOG_ERROR("socks session {} request read ipv6 failed {}", sid_, read_res.ec.message());
+        }
         co_await reply_error(socks::kRepGenFail);
         co_return false;
     }
@@ -431,6 +512,12 @@ boost::asio::awaitable<bool> socks_session::read_request_host(const std::uint8_t
     }
     if (atyp == socks::kAtypDomain)
     {
+        if (cmd != socks::kCmdConnect)
+        {
+            LOG_WARN("socks session {} request unsupported atyp {} cmd {}", sid_, atyp, cmd);
+            co_await reply_error(socks::kRepAddrTypeNotSupported);
+            co_return false;
+        }
         co_return co_await read_request_domain(host);
     }
     if (atyp == socks::kAtypIpv6)
@@ -456,12 +543,17 @@ boost::asio::awaitable<socks_session::request_info> socks_session::reject_reques
 
 boost::asio::awaitable<bool> socks_session::read_request_header(std::array<std::uint8_t, 4>& head)
 {
-    const auto [read_ec, read_n] =
-        co_await boost::asio::async_read(socket_, boost::asio::buffer(head), boost::asio::as_tuple(boost::asio::use_awaitable));
-    (void)read_n;
-    if (read_ec)
+    const auto read_res = co_await read_exact_with_optional_timeout(socket_, boost::asio::buffer(head), timeout_config_.read);
+    if (!read_res.ok)
     {
-        LOG_ERROR("socks session {} request read failed {}", sid_, read_ec.message());
+        if (read_res.timed_out)
+        {
+            LOG_ERROR("socks session {} request read timeout {}s", sid_, timeout_config_.read);
+        }
+        else
+        {
+            LOG_ERROR("socks session {} request read failed {}", sid_, read_res.ec.message());
+        }
         co_await reply_error(socks::kRepGenFail);
         co_return false;
     }
@@ -471,12 +563,17 @@ boost::asio::awaitable<bool> socks_session::read_request_header(std::array<std::
 boost::asio::awaitable<bool> socks_session::read_request_port(std::uint16_t& port)
 {
     std::uint16_t port_n = 0;
-    const auto [read_ec, read_n] =
-        co_await boost::asio::async_read(socket_, boost::asio::buffer(&port_n, 2), boost::asio::as_tuple(boost::asio::use_awaitable));
-    (void)read_n;
-    if (read_ec)
+    const auto read_res = co_await read_exact_with_optional_timeout(socket_, boost::asio::buffer(&port_n, 2), timeout_config_.read);
+    if (!read_res.ok)
     {
-        LOG_ERROR("socks session {} request read port failed {}", sid_, read_ec.message());
+        if (read_res.timed_out)
+        {
+            LOG_ERROR("socks session {} request read port timeout {}s", sid_, timeout_config_.read);
+        }
+        else
+        {
+            LOG_ERROR("socks session {} request read port failed {}", sid_, read_res.ec.message());
+        }
         co_await reply_error(socks::kRepGenFail);
         co_return false;
     }
@@ -498,9 +595,9 @@ boost::asio::awaitable<std::optional<socks_session::request_info>> socks_session
         co_return co_await reject_request(head[1], socks::kRepCmdNotSupported);
     }
 
-    if (!is_supported_atyp(head[3]))
+    if (!is_supported_atyp(head[1], head[3]))
     {
-        LOG_WARN("socks session {} request unsupported atyp {}", sid_, head[3]);
+        LOG_WARN("socks session {} request unsupported atyp {} cmd {}", sid_, head[3], head[1]);
         co_return co_await reject_request(head[1], socks::kRepAddrTypeNotSupported);
     }
 
