@@ -17,6 +17,7 @@
 #include <boost/asio/write.hpp>
 #include <boost/asio/buffer.hpp>
 #include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/socket_base.hpp>
 #include <boost/asio/io_context.hpp>
 
 extern "C"
@@ -391,6 +392,62 @@ TEST_F(upstream_test_fixture, DirectUpstreamWriteError)
     }
 
     EXPECT_EQ(write_n, 0);
+}
+
+TEST_F(upstream_test_fixture, DirectUpstreamWriteTimeoutWhenTargetBackpressured)
+{
+    boost::asio::io_context server_context;
+    boost::asio::ip::tcp::acceptor acceptor(server_context);
+    ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
+    const auto port = acceptor.local_endpoint().port();
+
+    std::thread server_thread(
+        [&]()
+        {
+            boost::system::error_code accept_ec;
+            boost::asio::ip::tcp::socket peer(server_context);
+            acceptor.accept(peer, accept_ec);
+            if (accept_ec)
+            {
+                return;
+            }
+
+            boost::system::error_code recv_buf_ec;
+            peer.set_option(boost::asio::socket_base::receive_buffer_size(1024), recv_buf_ec);
+            (void)recv_buf_ec;
+            std::this_thread::sleep_for(std::chrono::seconds(4));
+            boost::system::error_code close_ec;
+            peer.close(close_ec);
+        });
+    const std::shared_ptr<void> cleanup(
+        nullptr,
+        [&](void*)
+        {
+            boost::system::error_code close_ec;
+            acceptor.close(close_ec);
+            if (server_thread.joinable())
+            {
+                server_thread.join();
+            }
+        });
+
+    mux::direct_upstream upstream(ctx(), mux::connection_context{}, 0, 1, 1);
+    ASSERT_TRUE(mux::test::run_awaitable(ctx(), upstream.connect("127.0.0.1", port)));
+
+    boost::system::error_code send_buf_ec;
+    upstream.socket_.set_option(boost::asio::socket_base::send_buffer_size(1024), send_buf_ec);
+    (void)send_buf_ec;
+
+    std::vector<std::uint8_t> payload(32 * 1024 * 1024, 0x5A);
+    const auto start = std::chrono::steady_clock::now();
+    const auto write_n = mux::test::run_awaitable(ctx(), upstream.write(payload));
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
+
+    EXPECT_EQ(write_n, 0U);
+    EXPECT_GE(elapsed.count(), 800);
+    EXPECT_LT(elapsed.count(), 5000);
+
+    mux::test::run_awaitable_void(ctx(), upstream.close());
 }
 
 TEST_F(upstream_test_fixture, DirectUpstreamClose)

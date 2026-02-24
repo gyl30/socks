@@ -32,8 +32,8 @@
 
 ## 传输与超时
 
-- `timeout.read` / `timeout.write` / `timeout.idle`：读写与空闲超时秒数。
-- `timeout.read = 0` 与 `timeout.write = 0`：表示禁用对应读写阶段超时。
+- `timeout.read` / `timeout.write` / `timeout.connect` / `timeout.idle`：读写、建连与空闲超时秒数。
+- `timeout.read = 0`、`timeout.write = 0` 与 `timeout.connect = 0`：表示禁用对应阶段超时。
 - `timeout.idle = 0`：表示禁用空闲超时。
 - `queues.udp_session_recv_channel_capacity`：UDP 会话接收队列深度（用于 `udp_socks_session`、`remote_udp_session`，Linux 下还用于 `tproxy_udp_session`，默认 `512`）。
 - `queues.tproxy_udp_dispatch_queue_capacity`：TPROXY UDP 分发队列深度（默认 `512`）。
@@ -66,7 +66,7 @@
 4. SOCKS5 请求中，目标主机为空必须拒绝；`CONNECT` 请求目标端口为 `0` 必须拒绝；`UDP ASSOCIATE` 允许端口 `0`；`UDP ASSOCIATE` 请求地址类型允许 IP（IPv4/IPv6）和域名；UDP 会话来源约束优先使用请求中的可解析地址，若地址不可解析或未指定则回退到控制连接对端地址；UDP 数据报目标端口为 `0` 必须拒绝。
 5. 监控接口仅支持 HTTP `GET /metrics`，返回 Prometheus 文本格式指标；当前实现不提供监控鉴权与监控限流能力。
 6. 客户端配置变更不支持热加载，修改配置后必须重启客户端进程生效。
-7. `timeout.read = 0` 与 `timeout.write = 0` 必须表示禁用对应阶段超时，不得隐式归一化为最小正值。
+7. `timeout.read = 0`、`timeout.write = 0` 与 `timeout.connect = 0` 必须表示禁用对应阶段超时，不得隐式归一化为最小正值。
 
 ## REALITY
 

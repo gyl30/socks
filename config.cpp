@@ -32,7 +32,7 @@ REFLECT_STRUCT(mux::config::outbound_t, host, port);
 REFLECT_STRUCT(mux::config::socks_t, enabled, host, port, auth, username, password);
 REFLECT_STRUCT(mux::config::tproxy_t, enabled, listen_host, tcp_port, udp_port, mark);
 REFLECT_STRUCT(mux::config::fallback_entry, sni, host, port);
-REFLECT_STRUCT(mux::config::timeout_t, read, write, idle);
+REFLECT_STRUCT(mux::config::timeout_t, read, write, connect, idle);
 REFLECT_STRUCT(mux::config::queues_t, udp_session_recv_channel_capacity, tproxy_udp_dispatch_queue_capacity);
 REFLECT_STRUCT(mux::config::reality_t::fallback_guard_t, enabled, rate_per_sec, burst, circuit_fail_threshold, circuit_open_sec, state_ttl_sec);
 REFLECT_STRUCT(mux::config::reality_t,

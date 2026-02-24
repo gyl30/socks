@@ -203,7 +203,7 @@ std::shared_ptr<upstream> tcp_socks_session::create_backend(const route_type rou
 {
     if (route == route_type::kDirect)
     {
-        return std::make_shared<direct_upstream>(io_context_, ctx_, 0, timeout_config_.read);
+        return std::make_shared<direct_upstream>(io_context_, ctx_, 0, timeout_config_.connect, timeout_config_.write);
     }
     if (route == route_type::kProxy)
     {

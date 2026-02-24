@@ -154,7 +154,22 @@ boost::asio::awaitable<void> tproxy_udp_session::handle_packet(const boost::asio
                                                                const std::uint8_t* data,
                                                                const std::size_t len)
 {
-    auto payload = std::vector<std::uint8_t>(data, data + len);
+    if (len == 0)
+    {
+        LOG_CTX_DEBUG(ctx_, "{} udp empty packet ignored", log_event::kSocks);
+        co_return;
+    }
+    if (data == nullptr && len > 0)
+    {
+        LOG_CTX_WARN(ctx_, "{} udp packet data is null len {}", log_event::kSocks, len);
+        co_return;
+    }
+
+    std::vector<std::uint8_t> payload;
+    if (data != nullptr && len > 0)
+    {
+        payload.assign(data, data + len);
+    }
     co_await handle_packet(dst_ep, std::move(payload));
 }
 
@@ -168,6 +183,11 @@ boost::asio::awaitable<void> tproxy_udp_session::handle_packet_inner(boost::asio
     if (dst_ep.address().is_unspecified() || dst_ep.port() == 0)
     {
         LOG_CTX_WARN(ctx_, "{} udp invalid target {} {}", log_event::kSocks, dst_ep.address().to_string(), dst_ep.port());
+        co_return;
+    }
+    if (data.empty())
+    {
+        LOG_CTX_DEBUG(ctx_, "{} udp empty packet ignored", log_event::kSocks);
         co_return;
     }
     touch();
@@ -477,6 +497,11 @@ bool tproxy_udp_session::build_proxy_packet(const boost::asio::ip::udp::endpoint
                                             const std::size_t len,
                                             std::vector<std::uint8_t>& packet)
 {
+    if (data == nullptr || len == 0)
+    {
+        LOG_CTX_DEBUG(ctx_, "{} udp empty proxy packet ignored", log_event::kSocks);
+        return false;
+    }
     refresh_cached_proxy_header(dst_ep);
     if (cached_proxy_header_.size() + len > mux::kMaxPayloadPerRecord)
     {

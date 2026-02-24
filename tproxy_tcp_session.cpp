@@ -158,7 +158,8 @@ boost::asio::awaitable<std::pair<route_type, std::shared_ptr<upstream>>> tproxy_
     const auto route = co_await router_->decide_ip(ctx_, host, dst_ep_.address());
     if (route == route_type::kDirect)
     {
-        const std::shared_ptr<upstream> backend = std::make_shared<direct_upstream>(io_context_, ctx_, mark_, timeout_config_.read);
+        const std::shared_ptr<upstream> backend =
+            std::make_shared<direct_upstream>(io_context_, ctx_, mark_, timeout_config_.connect, timeout_config_.write);
         co_return std::make_pair(route, backend);
     }
 

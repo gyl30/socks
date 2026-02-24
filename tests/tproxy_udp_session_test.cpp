@@ -828,6 +828,66 @@ TEST(TproxyUdpSessionTest, HandlePacketRejectsInvalidTargetEndpointBeforeRouting
     EXPECT_EQ(stats.routing_blocked(), blocked_before);
 }
 
+TEST(TproxyUdpSessionTest, HandlePacketPointerOverloadRejectsNullPayload)
+{
+    boost::asio::io_context ctx;
+    auto router = std::make_shared<direct_router>();
+
+    mux::config cfg;
+    cfg.tproxy.mark = 0;
+
+    const boost::asio::ip::udp::endpoint client_ep(boost::asio::ip::make_address("127.0.0.1"), 12367);
+    auto session = std::make_shared<mux::tproxy_udp_session>(ctx, nullptr, router, nullptr, 39, cfg, client_ep);
+
+    const boost::asio::ip::udp::endpoint dst_ep(boost::asio::ip::make_address("127.0.0.1"), 53);
+    mux::test::run_awaitable_void(ctx, session->handle_packet(dst_ep, nullptr, 8));
+
+    EXPECT_FALSE(session->terminated());
+}
+
+TEST(TproxyUdpSessionTest, HandlePacketPointerOverloadDropsEmptyPayloadBeforeRouting)
+{
+    boost::asio::io_context ctx;
+    auto router = std::make_shared<block_router>();
+
+    mux::config cfg;
+    cfg.tproxy.mark = 0;
+
+    auto& stats = mux::statistics::instance();
+    const auto blocked_before = stats.routing_blocked();
+
+    const boost::asio::ip::udp::endpoint client_ep(boost::asio::ip::make_address("127.0.0.1"), 12368);
+    auto session = std::make_shared<mux::tproxy_udp_session>(ctx, nullptr, router, nullptr, 40, cfg, client_ep);
+
+    const boost::asio::ip::udp::endpoint dst_ep(boost::asio::ip::make_address("127.0.0.1"), 53);
+    const std::array<std::uint8_t, 1> data = {0x11};
+    mux::test::run_awaitable_void(ctx, session->handle_packet(dst_ep, data.data(), 0));
+
+    EXPECT_EQ(stats.routing_blocked(), blocked_before);
+    EXPECT_FALSE(session->terminated());
+}
+
+TEST(TproxyUdpSessionTest, HandlePacketVectorOverloadDropsEmptyPayloadBeforeRouting)
+{
+    boost::asio::io_context ctx;
+    auto router = std::make_shared<block_router>();
+
+    mux::config cfg;
+    cfg.tproxy.mark = 0;
+
+    auto& stats = mux::statistics::instance();
+    const auto blocked_before = stats.routing_blocked();
+
+    const boost::asio::ip::udp::endpoint client_ep(boost::asio::ip::make_address("127.0.0.1"), 12369);
+    auto session = std::make_shared<mux::tproxy_udp_session>(ctx, nullptr, router, nullptr, 41, cfg, client_ep);
+
+    const boost::asio::ip::udp::endpoint dst_ep(boost::asio::ip::make_address("127.0.0.1"), 53);
+    mux::test::run_awaitable_void(ctx, session->handle_packet(dst_ep, std::vector<std::uint8_t>{}));
+
+    EXPECT_EQ(stats.routing_blocked(), blocked_before);
+    EXPECT_FALSE(session->terminated());
+}
+
 TEST(TproxyUdpSessionTest, HandlePacketStopsWhenRouterMissing)
 {
     boost::asio::io_context ctx;

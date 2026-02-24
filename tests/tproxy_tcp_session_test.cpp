@@ -530,12 +530,13 @@ TEST(TproxyTcpSessionTest, ConnectBackendReflectsUpstreamResult)
     EXPECT_FALSE(connect_fail);
 }
 
-TEST(TproxyTcpSessionTest, SelectBackendDirectUsesConfiguredReadTimeout)
+TEST(TproxyTcpSessionTest, SelectBackendDirectUsesConfiguredConnectTimeout)
 {
     boost::asio::io_context ctx;
     auto router = std::make_shared<direct_router>();
     mux::config cfg;
-    cfg.timeout.read = 9;
+    cfg.timeout.connect = 9;
+    cfg.timeout.write = 12;
     const boost::asio::ip::tcp::endpoint dst_ep(boost::asio::ip::make_address("127.0.0.1"), 80);
     auto session = std::make_shared<mux::tproxy_tcp_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, std::move(router), 26, cfg, dst_ep);
 
@@ -543,15 +544,17 @@ TEST(TproxyTcpSessionTest, SelectBackendDirectUsesConfiguredReadTimeout)
     EXPECT_EQ(route, mux::route_type::kDirect);
     const auto direct_backend = std::dynamic_pointer_cast<mux::direct_upstream>(backend);
     ASSERT_NE(direct_backend, nullptr);
-    EXPECT_EQ(direct_backend->timeout_sec_, 9U);
+    EXPECT_EQ(direct_backend->connect_timeout_sec_, 9U);
+    EXPECT_EQ(direct_backend->write_timeout_sec_, 12U);
 }
 
-TEST(TproxyTcpSessionTest, SelectBackendDirectKeepsReadTimeoutZeroAsDisabled)
+TEST(TproxyTcpSessionTest, SelectBackendDirectKeepsConnectTimeoutZeroAsDisabled)
 {
     boost::asio::io_context ctx;
     auto router = std::make_shared<direct_router>();
     mux::config cfg;
-    cfg.timeout.read = 0;
+    cfg.timeout.connect = 0;
+    cfg.timeout.write = 6;
     const boost::asio::ip::tcp::endpoint dst_ep(boost::asio::ip::make_address("127.0.0.1"), 80);
     auto session = std::make_shared<mux::tproxy_tcp_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, std::move(router), 27, cfg, dst_ep);
 
@@ -559,7 +562,8 @@ TEST(TproxyTcpSessionTest, SelectBackendDirectKeepsReadTimeoutZeroAsDisabled)
     EXPECT_EQ(route, mux::route_type::kDirect);
     const auto direct_backend = std::dynamic_pointer_cast<mux::direct_upstream>(backend);
     ASSERT_NE(direct_backend, nullptr);
-    EXPECT_EQ(direct_backend->timeout_sec_, 0U);
+    EXPECT_EQ(direct_backend->connect_timeout_sec_, 0U);
+    EXPECT_EQ(direct_backend->write_timeout_sec_, 6U);
 }
 
 TEST(TproxyTcpSessionTest, SelectBackendProxyWithoutTunnelPoolReturnsNull)
