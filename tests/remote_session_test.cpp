@@ -259,11 +259,7 @@ TEST(RemoteSessionTest, RunConnectFailureSendsConnRefusedAckAndReset)
     auto session = std::make_shared<mux::remote_session>(conn, 11, io_context, ctx);
     auto& stats = mux::statistics::instance();
     const auto connect_errors_before = stats.remote_session_connect_errors();
-
-    boost::asio::ip::tcp::acceptor acceptor(io_context);
-    ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
-    const std::uint16_t closed_port = acceptor.local_endpoint().port();
-    acceptor.close();
+    const std::uint16_t target_port = 18080;
 
     std::vector<std::uint8_t> ack_payload;
     EXPECT_CALL(*conn, mock_send_async(11, mux::kCmdAck, _))
@@ -275,7 +271,8 @@ TEST(RemoteSessionTest, RunConnectFailureSendsConnRefusedAckAndReset)
             });
     EXPECT_CALL(*conn, mock_send_async(11, mux::kCmdRst, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(boost::system::error_code{}));
 
-    mux::test::run_awaitable_void(io_context, session->run(make_syn("127.0.0.1", closed_port)));
+    fail_next_connect(ECONNREFUSED);
+    mux::test::run_awaitable_void(io_context, session->run(make_syn("127.0.0.1", target_port)));
 
     mux::ack_payload ack{};
     ASSERT_TRUE(mux::mux_codec::decode_ack(ack_payload.data(), ack_payload.size(), ack));
