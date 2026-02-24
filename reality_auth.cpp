@@ -47,6 +47,10 @@ std::optional<auth_payload> parse_auth_payload(std::span<const std::uint8_t> pay
     {
         return std::nullopt;
     }
+    if (payload[3] != 0x00)
+    {
+        return std::nullopt;
+    }
 
     auth_payload out;
 
