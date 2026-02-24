@@ -209,6 +209,11 @@ bool should_stop_downstream(const boost::system::error_code& read_ec, const std:
     return true;
 }
 
+bool stream_shutdown_requested(const std::atomic<bool>& reset_requested, const std::atomic<bool>& fin_requested)
+{
+    return reset_requested.load(std::memory_order_acquire) || fin_requested.load(std::memory_order_acquire);
+}
+
 boost::asio::awaitable<bool> send_downstream_payload(const std::weak_ptr<mux_connection>& connection,
                                                      const std::uint32_t stream_id,
                                                      const std::vector<std::uint8_t>& buf,
@@ -257,10 +262,11 @@ boost::asio::awaitable<bool> prepare_remote_target_connection(boost::asio::ip::t
                                                               const std::uint32_t stream_id,
                                                               connection_context& ctx,
                                                               const std::atomic<bool>& reset_requested,
+                                                              const std::atomic<bool>& fin_requested,
                                                               const std::uint32_t connect_timeout_sec)
 {
     const auto timeout_sec = connect_timeout_sec;
-    if (reset_requested.load(std::memory_order_acquire))
+    if (stream_shutdown_requested(reset_requested, fin_requested))
     {
         co_return false;
     }
@@ -271,7 +277,7 @@ boost::asio::awaitable<bool> prepare_remote_target_connection(boost::asio::ip::t
     const auto resolve_res = co_await resolve_target_endpoints(resolver, syn, ctx, timeout_sec);
     if (!resolve_res.ok)
     {
-        if (reset_requested.load(std::memory_order_acquire))
+        if (stream_shutdown_requested(reset_requested, fin_requested))
         {
             co_return false;
         }
@@ -282,7 +288,7 @@ boost::asio::awaitable<bool> prepare_remote_target_connection(boost::asio::ip::t
     const auto connect_res = co_await connect_target_endpoint(target_socket, resolve_res.endpoints, ctx, timeout_sec);
     if (!connect_res.ok)
     {
-        if (reset_requested.load(std::memory_order_acquire))
+        if (stream_shutdown_requested(reset_requested, fin_requested))
         {
             co_return false;
         }
@@ -291,7 +297,7 @@ boost::asio::awaitable<bool> prepare_remote_target_connection(boost::asio::ip::t
         co_return false;
     }
 
-    if (reset_requested.load(std::memory_order_acquire))
+    if (stream_shutdown_requested(reset_requested, fin_requested))
     {
         close_target_socket(target_socket);
         remove_stream(manager, stream_id);
@@ -336,8 +342,9 @@ boost::asio::awaitable<void> remote_session::start(const syn_payload& syn)
 
 boost::asio::awaitable<void> remote_session::run(const syn_payload& syn)
 {
-    if (reset_requested_.load(std::memory_order_acquire))
+    if (stream_shutdown_requested(reset_requested_, fin_requested_))
     {
+        close_target_socket(target_socket_);
         remove_stream(manager_, id_);
         co_return;
     }
@@ -349,9 +356,10 @@ boost::asio::awaitable<void> remote_session::run(const syn_payload& syn)
         remove_stream(manager_, id_);
         co_return;
     }
-    if (!co_await prepare_remote_target_connection(resolver_, target_socket_, syn, conn, manager_, id_, ctx_, reset_requested_, connect_timeout_sec_))
+    if (!co_await prepare_remote_target_connection(
+            resolver_, target_socket_, syn, conn, manager_, id_, ctx_, reset_requested_, fin_requested_, connect_timeout_sec_))
     {
-        if (reset_requested_.load(std::memory_order_acquire))
+        if (stream_shutdown_requested(reset_requested_, fin_requested_))
         {
             close_target_socket(target_socket_);
             remove_stream(manager_, id_);
@@ -359,7 +367,7 @@ boost::asio::awaitable<void> remote_session::run(const syn_payload& syn)
         co_return;
     }
 
-    if (reset_requested_.load(std::memory_order_acquire))
+    if (stream_shutdown_requested(reset_requested_, fin_requested_))
     {
         close_target_socket(target_socket_);
         remove_stream(manager_, id_);
@@ -413,8 +421,14 @@ void remote_session::on_reset()
 
 void remote_session::close_from_fin()
 {
+    const auto already_requested = fin_requested_.exchange(true, std::memory_order_acq_rel);
+    if (already_requested)
+    {
+        return;
+    }
     LOG_CTX_DEBUG(ctx_, "{} received fin from client", log_event::kMux);
     recv_channel_.close();
+    resolver_.cancel();
     boost::system::error_code ec;
     ec = target_socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
 }
