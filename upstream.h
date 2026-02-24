@@ -62,8 +62,14 @@ class direct_upstream : public upstream
     explicit direct_upstream(boost::asio::io_context& io_context,
                              connection_context ctx,
                              const std::uint32_t mark = 0,
-                             const std::uint32_t timeout_sec = 10)
-        : socket_(io_context), resolver_(io_context), ctx_(std::move(ctx)), mark_(mark), timeout_sec_(timeout_sec)
+                             const std::uint32_t connect_timeout_sec = 10,
+                             const std::uint32_t write_timeout_sec = 0)
+        : socket_(io_context),
+          resolver_(io_context),
+          ctx_(std::move(ctx)),
+          mark_(mark),
+          connect_timeout_sec_(connect_timeout_sec),
+          write_timeout_sec_(write_timeout_sec)
     {
     }
 
@@ -89,7 +95,8 @@ class direct_upstream : public upstream
     boost::asio::ip::tcp::resolver resolver_;
     connection_context ctx_;
     std::uint32_t mark_ = 0;
-    std::uint32_t timeout_sec_ = 10;
+    std::uint32_t connect_timeout_sec_ = 10;
+    std::uint32_t write_timeout_sec_ = 0;
     std::uint8_t last_connect_reply_ = socks::kRepHostUnreach;
 };
 

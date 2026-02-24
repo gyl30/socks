@@ -100,7 +100,7 @@ void direct_upstream::apply_no_delay()
 boost::asio::awaitable<bool> direct_upstream::connect(const std::string& host, const std::uint16_t port)
 {
     last_connect_reply_ = socks::kRepHostUnreach;
-    const auto timeout_sec = timeout_sec_;
+    const auto timeout_sec = connect_timeout_sec_;
     const auto resolve_res = co_await timeout_io::async_resolve_with_timeout(resolver_, host, std::to_string(port), timeout_sec);
     if (!resolve_res.ok)
     {
@@ -202,13 +202,31 @@ boost::asio::awaitable<std::size_t> direct_upstream::write(const std::uint8_t* d
         co_return 0;
     }
 
-    auto [ec, n] = co_await boost::asio::async_write(socket_, boost::asio::buffer(data, len), boost::asio::as_tuple(boost::asio::use_awaitable));
-    if (ec)
+    if (write_timeout_sec_ == 0)
     {
-        LOG_CTX_ERROR(ctx_, "{} write error {}", log_event::kRoute, ec.message());
+        auto [ec, n] = co_await boost::asio::async_write(socket_, boost::asio::buffer(data, len), boost::asio::as_tuple(boost::asio::use_awaitable));
+        if (ec)
+        {
+            LOG_CTX_ERROR(ctx_, "{} write error {}", log_event::kRoute, ec.message());
+            co_return 0;
+        }
+        co_return n;
+    }
+
+    const auto write_res = co_await timeout_io::async_write_with_timeout(socket_, boost::asio::buffer(data, len), write_timeout_sec_, "direct upstream");
+    if (!write_res.ok)
+    {
+        if (write_res.timed_out)
+        {
+            LOG_CTX_WARN(ctx_, "{} write timeout {}s", log_event::kRoute, write_timeout_sec_);
+        }
+        else
+        {
+            LOG_CTX_ERROR(ctx_, "{} write error {}", log_event::kRoute, write_res.ec.message());
+        }
         co_return 0;
     }
-    co_return n;
+    co_return write_res.write_size;
 }
 
 boost::asio::awaitable<void> direct_upstream::close()
