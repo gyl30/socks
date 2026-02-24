@@ -27,6 +27,14 @@ class mock_mux_connection : public mux_connection
     {
         return register_stream(id, std::move(stream));
     }
+    stream_register_result try_register_stream_with_reason(uint32_t id, std::shared_ptr<mux_stream_interface> stream) override
+    {
+        if (register_stream(id, std::move(stream)))
+        {
+            return stream_register_result::kSuccess;
+        }
+        return stream_register_result::kClosed;
+    }
     MOCK_METHOD(void, remove_stream, (uint32_t id), (override));
     MOCK_METHOD(uint32_t, id, (), (const, override));
 

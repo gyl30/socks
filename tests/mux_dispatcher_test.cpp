@@ -54,7 +54,7 @@ TEST(MuxDispatcherTest, OversizedFrame)
 
 TEST(MuxDispatcherTest, PackRejectsOversizedPayload)
 {
-    std::vector<std::uint8_t> oversized_payload(mux::kMaxPayload + 1, 0x5a);
+    std::vector<std::uint8_t> oversized_payload(mux::kMaxPayloadPerRecord + 1, 0x5a);
     const auto packed = mux::mux_dispatcher::pack(0x77, mux::kCmdDat, oversized_payload);
     EXPECT_TRUE(packed.empty());
 }
@@ -97,7 +97,7 @@ TEST(MuxDispatcherTest, LargeBufferedFrameAcrossChunksDoesNotOverflowInternalBuf
             headers.push_back(header);
         });
 
-    std::vector<std::uint8_t> payload_first(mux::kMaxPayload, 0x31);
+    std::vector<std::uint8_t> payload_first(mux::kMaxPayloadPerRecord, 0x31);
     std::vector<std::uint8_t> payload_second(256, 0x32);
     const auto packed_first = mux::mux_dispatcher::pack(0x88, mux::kCmdDat, payload_first);
     const auto packed_second = mux::mux_dispatcher::pack(0x99, mux::kCmdDat, payload_second);
@@ -138,4 +138,25 @@ TEST(MuxDispatcherTest, PartialPayloadWaitsForCompletion)
 
     dispatcher.on_plaintext_data(std::span<const std::uint8_t>(packed.data() + mux::kHeaderSize + 1, packed.size() - (mux::kHeaderSize + 1)));
     EXPECT_EQ(call_count, 1);
+}
+
+TEST(MuxDispatcherTest, OversizedFrameBeyondSingleRecordLimit)
+{
+    mux::mux_dispatcher dispatcher;
+    int call_count = 0;
+    dispatcher.set_callback([&](const mux::frame_header, std::vector<std::uint8_t>) { call_count++; });
+
+    const auto oversized_len = static_cast<std::uint16_t>(mux::kMaxPayloadPerRecord + 1);
+    std::vector<std::uint8_t> bad_packed = {0x12,
+                                            0x34,
+                                            0x56,
+                                            0x78,
+                                            static_cast<std::uint8_t>((oversized_len >> 8) & 0xFF),
+                                            static_cast<std::uint8_t>(oversized_len & 0xFF),
+                                            mux::kCmdDat};
+
+    dispatcher.on_plaintext_data(bad_packed);
+    EXPECT_EQ(call_count, 0);
+    EXPECT_TRUE(dispatcher.has_fatal_error());
+    EXPECT_EQ(dispatcher.fatal_error_reason(), mux::mux_dispatcher_fatal_reason::kOversizedFrame);
 }

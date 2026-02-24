@@ -87,6 +87,25 @@ class simple_mock_stream : public mux_stream_interface
     bool reset_ = false;
 };
 
+class ack_mock_stream : public simple_mock_stream
+{
+   public:
+    [[nodiscard]] bool accept_ack() const override { return ack_pending_; }
+    bool on_ack(std::vector<std::uint8_t> data) override
+    {
+        if (!ack_pending_)
+        {
+            return false;
+        }
+        ack_pending_ = false;
+        on_data(std::move(data));
+        return true;
+    }
+
+   private:
+    bool ack_pending_ = true;
+};
+
 std::shared_ptr<mux_connection::stream_map_t> snapshot_streams_for_test(const std::shared_ptr<mux_connection>& conn)
 {
     auto snapshot = std::atomic_load_explicit(&conn->streams_, std::memory_order_acquire);
@@ -578,6 +597,23 @@ TEST_F(mux_connection_integration_test_fixture, AcquireNextIdSkipsHeartbeatReser
     auto stream = conn->create_stream("wrap-around");
     ASSERT_NE(stream, nullptr);
     EXPECT_FALSE(conn->has_stream(mux::kStreamIdHeartbeat));
+}
+
+TEST_F(mux_connection_integration_test_fixture, CreateStreamRetriesOnIdConflict)
+{
+    auto conn = std::make_shared<mux_connection>(
+        boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 17);
+
+    conn->connection_state_.store(mux_connection_state::kConnected, std::memory_order_release);
+    conn->next_stream_id_.store(1, std::memory_order_release);
+
+    auto existing = std::make_shared<simple_mock_stream>();
+    ASSERT_TRUE(conn->try_register_stream(1, existing));
+
+    auto stream = conn->create_stream("id-conflict");
+    ASSERT_NE(stream, nullptr);
+    EXPECT_TRUE(conn->has_stream(1));
+    EXPECT_TRUE(conn->has_stream(3));
 }
 
 TEST_F(mux_connection_integration_test_fixture, OffThreadRegisterAndQueryPaths)
@@ -1310,7 +1346,7 @@ TEST_F(mux_connection_integration_test_fixture, HandleStreamAndUnknownStreamBran
     auto conn = std::make_shared<mux_connection>(
         boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 6);
 
-    auto stream = std::make_shared<simple_mock_stream>();
+    auto stream = std::make_shared<ack_mock_stream>();
     EXPECT_TRUE(conn->register_stream_local(100, stream));
 
     std::vector<std::uint8_t> const ack_payload = {1, 2, 3};
@@ -1327,12 +1363,6 @@ TEST_F(mux_connection_integration_test_fixture, HandleStreamAndUnknownStreamBran
         .command = kCmdDat,
     };
     conn->handle_stream_frame(dat_header, dat_payload);
-    const frame_header empty_dat_header{
-        .stream_id = 100,
-        .length = 0,
-        .command = kCmdDat,
-    };
-    conn->handle_stream_frame(empty_dat_header, {});
 
     std::vector<std::uint8_t> expected = ack_payload;
     expected.insert(expected.end(), dat_payload.begin(), dat_payload.end());
@@ -1351,6 +1381,85 @@ TEST_F(mux_connection_integration_test_fixture, HandleStreamAndUnknownStreamBran
     conn->handle_unknown_stream(1000, kCmdRst);
     conn->handle_unknown_stream(1001, kCmdDat);
     io_ctx().poll();
+}
+
+TEST_F(mux_connection_integration_test_fixture, UnexpectedAckResetsNonAckStream)
+{
+    auto conn = std::make_shared<mux_connection>(
+        boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 26);
+
+    auto stream = std::make_shared<simple_mock_stream>();
+    EXPECT_TRUE(conn->register_stream_local(101, stream));
+
+    const frame_header ack_header{
+        .stream_id = 101,
+        .length = 1,
+        .command = kCmdAck,
+    };
+    conn->handle_stream_frame(ack_header, {0x42});
+
+    EXPECT_TRUE(stream->reset());
+    EXPECT_FALSE(has_stream_for_test(conn, 101));
+    EXPECT_EQ(stream->data_events(), 0U);
+    EXPECT_TRUE(stream->received_data().empty());
+}
+
+TEST_F(mux_connection_integration_test_fixture, EmptyDatResetsStreamAndSendsRst)
+{
+    auto conn = std::make_shared<mux_connection>(
+        boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 28);
+
+    auto stream = std::make_shared<simple_mock_stream>();
+    EXPECT_TRUE(conn->register_stream_local(103, stream));
+
+    const frame_header empty_dat_header{
+        .stream_id = 103,
+        .length = 0,
+        .command = kCmdDat,
+    };
+    conn->handle_stream_frame(empty_dat_header, {});
+
+    EXPECT_TRUE(stream->reset());
+    EXPECT_FALSE(has_stream_for_test(conn, 103));
+
+    const auto [rst_ec, rst_msg] =
+        mux::test::run_awaitable(io_ctx(), conn->write_channel_->async_receive(boost::asio::as_tuple(boost::asio::use_awaitable)));
+    EXPECT_FALSE(rst_ec);
+    EXPECT_EQ(rst_msg.stream_id, 103U);
+    EXPECT_EQ(rst_msg.command, kCmdRst);
+    EXPECT_TRUE(rst_msg.payload.empty());
+}
+
+TEST_F(mux_connection_integration_test_fixture, UnexpectedRepeatedAckResetsAckStream)
+{
+    auto conn = std::make_shared<mux_connection>(
+        boost::asio::ip::tcp::socket(io_ctx()), io_ctx(), reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 27);
+
+    auto stream = std::make_shared<ack_mock_stream>();
+    EXPECT_TRUE(conn->register_stream_local(102, stream));
+
+    const frame_header first_ack_header{
+        .stream_id = 102,
+        .length = 1,
+        .command = kCmdAck,
+    };
+    conn->handle_stream_frame(first_ack_header, {0x11});
+
+    EXPECT_EQ(stream->data_events(), 1U);
+    EXPECT_FALSE(stream->reset());
+    EXPECT_TRUE(has_stream_for_test(conn, 102));
+
+    const frame_header second_ack_header{
+        .stream_id = 102,
+        .length = 1,
+        .command = kCmdAck,
+    };
+    conn->handle_stream_frame(second_ack_header, {0x22});
+
+    EXPECT_TRUE(stream->reset());
+    EXPECT_FALSE(has_stream_for_test(conn, 102));
+    EXPECT_EQ(stream->data_events(), 1U);
+    EXPECT_EQ(stream->received_data(), std::vector<std::uint8_t>({0x11}));
 }
 
 TEST_F(mux_connection_integration_test_fixture, SynCallbackAndReadGuardBranches)
