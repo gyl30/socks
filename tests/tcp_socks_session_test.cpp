@@ -8,6 +8,7 @@
 #include <vector>
 #include <cstdint>
 #include <utility>
+#include <optional>
 #include <unistd.h>
 #include <algorithm>
 #include <system_error>
@@ -74,6 +75,7 @@ class fake_upstream final : public mux::upstream
     std::size_t close_calls = 0;
     std::vector<std::vector<std::uint8_t>> writes;
     std::vector<std::pair<boost::system::error_code, std::vector<std::uint8_t>>> read_sequence;
+    std::optional<mux::upstream::bind_endpoint> bind_endpoint_info;
 
     boost::asio::awaitable<bool> connect(const std::string& host, std::uint16_t port) override
     {
@@ -83,6 +85,11 @@ class fake_upstream final : public mux::upstream
     }
 
     std::uint8_t connect_failure_reply() const override { return connect_failure_reply_code; }
+
+    std::optional<mux::upstream::bind_endpoint> connected_bind_endpoint() const override
+    {
+        return bind_endpoint_info;
+    }
 
     boost::asio::awaitable<std::pair<boost::system::error_code, std::size_t>> read(std::vector<std::uint8_t>& buf) override
     {
@@ -326,13 +333,23 @@ TEST(TcpSocksSessionTest, ReplySuccessWritesSocksResponse)
     boost::asio::io_context io_context;
     auto pair = make_tcp_socket_pair(io_context);
     auto session = make_tcp_session(io_context, std::move(pair.server));
+    auto backend = std::make_shared<fake_upstream>();
+    backend->bind_endpoint_info = mux::upstream::bind_endpoint{.addr = "203.0.113.9", .port = 45678};
 
-    EXPECT_TRUE(mux::test::run_awaitable(io_context, session->reply_success()));
+    EXPECT_TRUE(mux::test::run_awaitable(io_context, session->reply_success(backend)));
 
     std::uint8_t res[10] = {0};
     boost::asio::read(pair.client, boost::asio::buffer(res));
     EXPECT_EQ(res[0], socks::kVer);
     EXPECT_EQ(res[1], socks::kRepSuccess);
+    EXPECT_EQ(res[3], socks::kAtypIpv4);
+    EXPECT_EQ(res[4], 203);
+    EXPECT_EQ(res[5], 0);
+    EXPECT_EQ(res[6], 113);
+    EXPECT_EQ(res[7], 9);
+
+    const std::uint16_t bind_port = static_cast<std::uint16_t>((static_cast<std::uint16_t>(res[8]) << 8U) | res[9]);
+    EXPECT_EQ(bind_port, 45678);
 }
 
 TEST(TcpSocksSessionTest, ReplySuccessFailsWhenServerSocketClosed)
@@ -340,9 +357,11 @@ TEST(TcpSocksSessionTest, ReplySuccessFailsWhenServerSocketClosed)
     boost::asio::io_context io_context;
     auto pair = make_tcp_socket_pair(io_context);
     auto session = make_tcp_session(io_context, std::move(pair.server));
+    auto backend = std::make_shared<fake_upstream>();
+    backend->bind_endpoint_info = mux::upstream::bind_endpoint{.addr = "203.0.113.9", .port = 45678};
     session->socket_.close();
 
-    EXPECT_FALSE(mux::test::run_awaitable(io_context, session->reply_success()));
+    EXPECT_FALSE(mux::test::run_awaitable(io_context, session->reply_success(backend)));
 }
 
 TEST(TcpSocksSessionTest, ConnectBackendSuccessAndFailure)

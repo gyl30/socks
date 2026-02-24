@@ -41,7 +41,7 @@ class tcp_socks_session : public std::enable_shared_from_this<tcp_socks_session>
                                                                const std::string& host,
                                                                std::uint16_t port,
                                                                route_type route);
-    [[nodiscard]] boost::asio::awaitable<bool> reply_success();
+    [[nodiscard]] boost::asio::awaitable<bool> reply_success(const std::shared_ptr<upstream>& backend);
 
     [[nodiscard]] static boost::asio::awaitable<void> run_detached(std::shared_ptr<tcp_socks_session> self, std::string host, std::uint16_t port);
 

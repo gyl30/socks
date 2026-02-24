@@ -197,6 +197,11 @@ class mock_upstream final : public mux::upstream
 
     std::uint8_t connect_failure_reply() const override { return connect_failure_reply_code; }
 
+    std::optional<mux::upstream::bind_endpoint> connected_bind_endpoint() const override
+    {
+        return std::nullopt;
+    }
+
     boost::asio::awaitable<std::pair<boost::system::error_code, std::size_t>> read(std::vector<std::uint8_t>& buf) override
     {
         (void)buf;

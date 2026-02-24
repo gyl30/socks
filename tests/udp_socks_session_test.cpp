@@ -575,6 +575,74 @@ TEST(UdpSocksSessionTest, UdpSockToStreamRespectsExpectedClientEndpointOnFirstPa
     EXPECT_EQ(session->client_ep_.port(), expected_ep.port());
 }
 
+TEST(UdpSocksSessionTest, UdpSockToStreamAcceptsMappedAndUnmappedSameClientEndpoint)
+{
+    boost::asio::io_context ctx;
+    mux::config::timeout_t const timeout_cfg;
+    auto session = std::make_shared<mux::udp_socks_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, 60, timeout_cfg);
+
+    boost::system::error_code ec;
+    session->udp_socket_.open(boost::asio::ip::udp::v4(), ec);
+    ASSERT_FALSE(ec);
+    session->udp_socket_.bind({boost::asio::ip::make_address("127.0.0.1"), 0}, ec);
+    ASSERT_FALSE(ec);
+    const auto recv_ep = session->udp_socket_.local_endpoint(ec);
+    ASSERT_FALSE(ec);
+
+    boost::asio::io_context send_ctx;
+    boost::asio::ip::udp::socket sender(send_ctx);
+    sender.open(boost::asio::ip::udp::v4(), ec);
+    ASSERT_FALSE(ec);
+    sender.bind({boost::asio::ip::make_address("127.0.0.1"), 0}, ec);
+    ASSERT_FALSE(ec);
+    const auto sender_ep = sender.local_endpoint(ec);
+    ASSERT_FALSE(ec);
+
+    const auto v4_bytes = sender_ep.address().to_v4().to_bytes();
+    boost::asio::ip::address_v6::bytes_type mapped_bytes{};
+    mapped_bytes[10] = 0xFF;
+    mapped_bytes[11] = 0xFF;
+    mapped_bytes[12] = v4_bytes[0];
+    mapped_bytes[13] = v4_bytes[1];
+    mapped_bytes[14] = v4_bytes[2];
+    mapped_bytes[15] = v4_bytes[3];
+    session->client_ep_ = boost::asio::ip::udp::endpoint(boost::asio::ip::address_v6(mapped_bytes), sender_ep.port());
+    session->has_client_ep_ = true;
+
+    auto conn = std::make_shared<mux::mock_mux_connection>(ctx);
+    EXPECT_CALL(*conn, mock_send_async(4, mux::kCmdDat, testing::_)).Times(1).WillOnce(testing::Return(boost::system::error_code{}));
+    auto stream = std::make_shared<mux::mux_stream>(4, 4, "trace", conn, ctx);
+
+    boost::asio::co_spawn(
+        ctx,
+        [session, stream]() -> boost::asio::awaitable<void>
+        {
+            co_await session->udp_sock_to_stream(stream);
+            co_return;
+        },
+        boost::asio::detached);
+
+    std::thread runner([&ctx]() { ctx.run(); });
+
+    socks_udp_header header;
+    header.frag = 0x00;
+    header.addr = "8.8.8.8";
+    header.port = 53;
+    auto packet = socks_codec::encode_udp_header(header);
+    packet.push_back(0x44);
+
+    sender.send_to(boost::asio::buffer(packet), recv_ep, 0, ec);
+    ASSERT_FALSE(ec);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(80));
+    session->on_close();
+
+    if (runner.joinable())
+    {
+        runner.join();
+    }
+}
+
 TEST(UdpSocksSessionTest, ApplyExpectedClientConstraintFallsBackToTcpPeerAddress)
 {
     boost::asio::io_context ctx;

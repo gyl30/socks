@@ -315,19 +315,19 @@ boost::asio::awaitable<bool> send_udp_associate_success_reply(boost::asio::ip::t
                                                       const std::optional<std::uint16_t>& expected_client_port,
                                                       const connection_context& ctx)
 {
+    const auto normalized_sender_addr = socks_codec::normalize_ip_address(sender.address());
     if (!has_client_ep)
     {
         if (expected_client_addr.has_value())
         {
-            const auto normalized_sender = socks_codec::normalize_ip_address(sender.address());
             const auto normalized_expected = socks_codec::normalize_ip_address(*expected_client_addr);
-            if (normalized_sender != normalized_expected)
+            if (normalized_sender_addr != normalized_expected)
             {
                 LOG_CTX_WARN(ctx,
                              "{} udp client endpoint mismatch expected addr {} got {}",
                              log_event::kSocks,
                              normalized_expected.to_string(),
-                             normalized_sender.to_string());
+                             normalized_sender_addr.to_string());
                 return false;
             }
         }
@@ -337,12 +337,13 @@ boost::asio::awaitable<bool> send_udp_associate_success_reply(boost::asio::ip::t
                 ctx, "{} udp client endpoint mismatch expected port {} got {}", log_event::kSocks, *expected_client_port, sender.port());
             return false;
         }
-        client_ep = sender;
+        client_ep = boost::asio::ip::udp::endpoint(normalized_sender_addr, sender.port());
         has_client_ep = true;
         return true;
     }
 
-    if (sender.address() != client_ep.address() || sender.port() != client_ep.port())
+    const auto normalized_client_addr = socks_codec::normalize_ip_address(client_ep.address());
+    if (normalized_sender_addr != normalized_client_addr || sender.port() != client_ep.port())
     {
         LOG_CTX_WARN(ctx, "{} udp client endpoint mismatch ignore", log_event::kSocks);
         return false;
