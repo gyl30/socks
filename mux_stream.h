@@ -42,6 +42,11 @@ class mux_stream : public mux_stream_interface, public std::enable_shared_from_t
 
     boost::asio::awaitable<void> close();
 
+    [[nodiscard]] bool accept_ack() const override
+    {
+        return !is_closed_.load(std::memory_order_acquire) && ack_pending_.load(std::memory_order_acquire);
+    }
+    bool on_ack(std::vector<std::uint8_t> data) override;
     void on_data(std::vector<std::uint8_t> data) override;
 
     void on_close() override;
@@ -57,6 +62,7 @@ class mux_stream : public mux_stream_interface, public std::enable_shared_from_t
     std::weak_ptr<mux_connection> connection_;
     boost::asio::experimental::concurrent_channel<void(boost::system::error_code, std::vector<std::uint8_t>)> recv_channel_;
     std::atomic<bool> is_closed_{false};
+    std::atomic<bool> ack_pending_{true};
     std::atomic<bool> fin_sent_{false};
     std::atomic<bool> fin_received_{false};
     std::atomic<std::uint64_t> tx_bytes_{0};
