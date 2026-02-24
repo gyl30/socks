@@ -438,7 +438,6 @@ std::expected<void, boost::system::error_code> verify_server_finished_message(co
                                                                               const EVP_MD* md,
                                                                               const reality::transcript& trans)
 {
-    // handshake_read_loop only calls this helper after message type and bounds validation.
     const std::uint32_t msg_len =
         (static_cast<std::uint32_t>(msg_data[1]) << 16) | (static_cast<std::uint32_t>(msg_data[2]) << 8) | static_cast<std::uint32_t>(msg_data[3]);
 

@@ -288,8 +288,6 @@ void tproxy_udp_session::stop_local(const bool allow_async_stream_close)
         }
         else
         {
-            // io_context may not be running yet. Keep close asynchronous so FIN can
-            // still be sent once the event loop starts.
             boost::asio::co_spawn(io_context_, [stream]() -> boost::asio::awaitable<void> { co_await stream->close(); }, boost::asio::detached);
         }
     }
@@ -449,8 +447,6 @@ boost::asio::awaitable<bool> tproxy_udp_session::ensure_proxy_stream()
     }
     if (!open_result.value())
     {
-        // Another coroutine may have installed a stream while this coroutine was
-        // waiting for SYN/ACK. Treat it as success if stream_ is now available.
         if (stream_ != nullptr)
         {
             co_return true;
