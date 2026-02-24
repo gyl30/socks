@@ -395,8 +395,11 @@ bool mux_connection::register_stream_local(const std::uint32_t id, const std::sh
             current_map = &k_empty_streams;
         }
 
-        const auto it = current_map->find(id);
-        if (it == current_map->end() && limits_config_.max_streams > 0 && current_map->size() >= limits_config_.max_streams)
+        if (current_map->contains(id))
+        {
+            return false;
+        }
+        if (limits_config_.max_streams > 0 && current_map->size() >= limits_config_.max_streams)
         {
             return false;
         }
