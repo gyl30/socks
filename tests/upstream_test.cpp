@@ -7,6 +7,7 @@
 #include <vector>
 #include <cstddef>
 #include <cstdint>
+#include <stdexcept>
 #include <sys/socket.h>
 #include <system_error>
 #include <netinet/tcp.h>
@@ -113,8 +114,12 @@ class upstream_test_fixture : public ::testing::Test
 class echo_server
 {
    public:
-    echo_server() : acceptor_(ctx_, boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 0))
+    echo_server() : acceptor_(ctx_)
     {
+        if (!mux::test::open_ephemeral_tcp_acceptor(acceptor_))
+        {
+            throw std::runtime_error("failed to open ephemeral acceptor");
+        }
         do_accept();
         thread_ = std::thread([this] { ctx_.run(); });
     }
@@ -227,17 +232,14 @@ TEST_F(upstream_test_fixture, DirectUpstreamConnectTimeoutWhenBacklogSaturated)
 {
     auto& stats = mux::statistics::instance();
     const auto connect_timeouts_before = stats.direct_upstream_connect_timeouts();
-    boost::system::error_code ec;
     boost::asio::ip::tcp::acceptor saturated_acceptor(ctx());
-    ec = saturated_acceptor.open(boost::asio::ip::tcp::v4(), ec);
-    ASSERT_FALSE(ec);
-    ec = saturated_acceptor.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true), ec);
-    ASSERT_FALSE(ec);
-    ec = saturated_acceptor.bind(boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 0), ec);
-    ASSERT_FALSE(ec);
-    ec = saturated_acceptor.listen(1, ec);
-    ASSERT_FALSE(ec);
+    ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(saturated_acceptor,
+                                                       boost::asio::ip::make_address("127.0.0.1"),
+                                                       256,
+                                                       std::chrono::milliseconds(4),
+                                                       1));
 
+    boost::system::error_code ec;
     const auto target_port = saturated_acceptor.local_endpoint().port();
     boost::asio::ip::tcp::socket queued_client_a(ctx());
     queued_client_a.connect({boost::asio::ip::make_address("127.0.0.1"), target_port}, ec);
@@ -361,7 +363,8 @@ TEST_F(upstream_test_fixture, DirectUpstreamConnectWithNoDelayFailureStillSuccee
 
 TEST_F(upstream_test_fixture, DirectUpstreamWriteError)
 {
-    auto acceptor = std::make_shared<boost::asio::ip::tcp::acceptor>(ctx(), boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 0));
+    auto acceptor = std::make_shared<boost::asio::ip::tcp::acceptor>(ctx());
+    ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(*acceptor));
     std::uint16_t const port = acceptor->local_endpoint().port();
 
     boost::asio::co_spawn(

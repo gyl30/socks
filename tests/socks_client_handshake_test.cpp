@@ -23,6 +23,7 @@
 #include "socks_client.h"
 #include "reality_messages.h"
 #include "tls_record_layer.h"
+#include "test_util.h"
 
 namespace
 {
@@ -67,7 +68,8 @@ TEST_F(local_client_handshake_test_fixture, HandshakeTimeout)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
-    tcp::acceptor acceptor(pool.get_io_context(), tcp::endpoint(tcp::v4(), 0));
+    tcp::acceptor acceptor(pool.get_io_context());
+    ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
     std::uint16_t const port = acceptor.local_endpoint().port();
 
     boost::asio::co_spawn(pool.get_io_context(), mock_server_silent(acceptor), boost::asio::detached);
@@ -125,7 +127,8 @@ TEST_F(local_client_handshake_test_fixture, InvalidServerHello)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
-    tcp::acceptor acceptor(pool.get_io_context(), tcp::endpoint(tcp::v4(), 0));
+    tcp::acceptor acceptor(pool.get_io_context());
+    ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
     std::uint16_t const port = acceptor.local_endpoint().port();
 
     boost::asio::co_spawn(pool.get_io_context(), mock_server_invalid_sh(acceptor), boost::asio::detached);
@@ -194,7 +197,8 @@ TEST_F(local_client_handshake_test_fixture, UnsupportedVerifyScheme)
     mux::io_context_pool pool(1);
     ASSERT_FALSE(ec);
 
-    tcp::acceptor acceptor(pool.get_io_context(), tcp::endpoint(tcp::v4(), 0));
+    tcp::acceptor acceptor(pool.get_io_context());
+    ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
     std::uint16_t const port = acceptor.local_endpoint().port();
 
     boost::asio::co_spawn(pool.get_io_context(), mock_server_unsupported_scheme(acceptor), boost::asio::detached);
