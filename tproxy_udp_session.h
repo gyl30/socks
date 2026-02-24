@@ -105,6 +105,7 @@ class tproxy_udp_session : public mux_stream_interface, public std::enable_share
     boost::asio::experimental::concurrent_channel<void(boost::system::error_code, std::vector<std::uint8_t>)> recv_channel_;
     boost::asio::ip::udp::endpoint client_ep_;
     std::uint32_t mark_ = 0;
+    std::uint32_t read_timeout_sec_ = 0;
     std::atomic<std::uint64_t> last_activity_ms_{0};
     std::atomic<bool> terminated_{false};
     bool proxy_reader_started_ = false;
