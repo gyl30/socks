@@ -660,6 +660,15 @@ TEST_F(config_test_fixture, RealityDestWhenProvidedMustBeValid)
 
     write_config_file(R"({
         "reality": {
+            "dest": "::1:443"
+        }
+    })");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/reality/dest");
+
+    write_config_file(R"({
+        "reality": {
             "dest": "example.com:443"
         }
     })");
