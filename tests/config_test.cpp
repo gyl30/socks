@@ -161,6 +161,12 @@ TEST_F(config_test_fixture, ParseValues)
             "udp_session_recv_channel_capacity": 256,
             "tproxy_udp_dispatch_queue_capacity": 4096
         },
+        "timeout": {
+            "read": 21,
+            "write": 22,
+            "connect": 23,
+            "idle": 24
+        },
         "reality": {
             "sni": "google.com",
             "public_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -207,6 +213,10 @@ TEST_F(config_test_fixture, ParseValues)
         EXPECT_EQ(cfg.reality.replay_cache_max_entries, 4096);
         EXPECT_EQ(cfg.heartbeat.idle_timeout, 42);
         EXPECT_EQ(cfg.heartbeat.max_padding, 128);
+        EXPECT_EQ(cfg.timeout.read, 21U);
+        EXPECT_EQ(cfg.timeout.write, 22U);
+        EXPECT_EQ(cfg.timeout.connect, 23U);
+        EXPECT_EQ(cfg.timeout.idle, 24U);
         EXPECT_EQ(cfg.queues.udp_session_recv_channel_capacity, 256U);
         EXPECT_EQ(cfg.queues.tproxy_udp_dispatch_queue_capacity, 4096U);
         EXPECT_EQ(cfg.limits.max_connections_per_source, 3U);
@@ -684,6 +694,7 @@ TEST_F(config_test_fixture, MissingFieldsUseDefaults)
     EXPECT_TRUE(cfg_opt->reality.private_key.empty());
     EXPECT_TRUE(cfg_opt->reality.public_key.empty());
     EXPECT_TRUE(cfg_opt->reality.fallback_guard.enabled);
+    EXPECT_EQ(cfg_opt->timeout.connect, 10U);
     EXPECT_EQ(cfg_opt->queues.udp_session_recv_channel_capacity, 512U);
     EXPECT_EQ(cfg_opt->queues.tproxy_udp_dispatch_queue_capacity, 512U);
 }
@@ -916,14 +927,16 @@ TEST_F(config_test_fixture, ContractMatrixTimeoutRulesStayAlignedWithDocumentati
     ASSERT_FALSE(doc.empty());
     EXPECT_NE(doc.find("timeout.read"), std::string::npos);
     EXPECT_NE(doc.find("timeout.write"), std::string::npos);
+    EXPECT_NE(doc.find("timeout.connect"), std::string::npos);
     EXPECT_NE(doc.find("timeout.idle"), std::string::npos);
-    EXPECT_NE(doc.find("timeout.read = 0` 与 `timeout.write = 0`"), std::string::npos);
+    EXPECT_NE(doc.find("timeout.read = 0`、`timeout.write = 0` 与 `timeout.connect = 0`"), std::string::npos);
     EXPECT_NE(doc.find("timeout.idle = 0`：表示禁用空闲超时"), std::string::npos);
 
     write_config_file(R"({
         "timeout": {
             "read": 0,
             "write": 0,
+            "connect": 0,
             "idle": 0
         }
     })");
@@ -932,6 +945,7 @@ TEST_F(config_test_fixture, ContractMatrixTimeoutRulesStayAlignedWithDocumentati
     ASSERT_TRUE(parsed.has_value());
     EXPECT_EQ(parsed->timeout.read, 0U);
     EXPECT_EQ(parsed->timeout.write, 0U);
+    EXPECT_EQ(parsed->timeout.connect, 0U);
     EXPECT_EQ(parsed->timeout.idle, 0U);
 }
 
