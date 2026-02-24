@@ -44,6 +44,7 @@ class upstream
         co_return co_await write(payload);
     }
 
+    virtual boost::asio::awaitable<void> shutdown_send() = 0;
     virtual boost::asio::awaitable<void> close() = 0;
 };
 
@@ -66,6 +67,7 @@ class direct_upstream : public upstream
     boost::asio::awaitable<std::size_t> write(const std::vector<std::uint8_t>& data) override;
     boost::asio::awaitable<std::size_t> write(const std::uint8_t* data, std::size_t len) override;
 
+    boost::asio::awaitable<void> shutdown_send() override;
     boost::asio::awaitable<void> close() override;
 
    private:
@@ -95,6 +97,7 @@ class proxy_upstream : public upstream
     boost::asio::awaitable<std::size_t> write(const std::vector<std::uint8_t>& data) override;
     boost::asio::awaitable<std::size_t> write(const std::uint8_t* data, std::size_t len) override;
 
+    boost::asio::awaitable<void> shutdown_send() override;
     boost::asio::awaitable<void> close() override;
 
    private:

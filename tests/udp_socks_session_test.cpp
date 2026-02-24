@@ -925,6 +925,51 @@ TEST(UdpSocksSessionTest, PrepareUdpAssociateAckFailureRemovesCreatedStream)
     EXPECT_EQ(err[1], socks::kRepGenFail);
 }
 
+TEST(UdpSocksSessionTest, PrepareUdpAssociateInvalidAckPayloadRemovesCreatedStream)
+{
+    boost::asio::io_context ctx;
+    mux::config::timeout_t const timeout_cfg;
+    auto pair = make_tcp_socket_pair(ctx);
+    ASSERT_TRUE(pair.client.is_open());
+    ASSERT_TRUE(pair.server.is_open());
+
+    auto tunnel = make_test_tunnel(ctx, 208);
+    auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx);
+    tunnel->connection_ = mock_conn;
+
+    ON_CALL(*mock_conn, id()).WillByDefault(testing::Return(208));
+    ON_CALL(*mock_conn, mock_send_async(testing::_, testing::_, testing::_)).WillByDefault(testing::Return(boost::system::error_code{}));
+
+    EXPECT_CALL(*mock_conn, mock_send_async(testing::_, mux::kCmdSyn, testing::_)).WillOnce(testing::Return(boost::system::error_code{}));
+    EXPECT_CALL(*mock_conn, register_stream(testing::_, testing::_))
+        .WillOnce(
+            [&ctx](const std::uint32_t, std::shared_ptr<mux::mux_stream_interface> iface) -> bool
+            {
+                auto stream = std::dynamic_pointer_cast<mux::mux_stream>(iface);
+                EXPECT_NE(stream, nullptr);
+                if (stream == nullptr)
+                {
+                    return false;
+                }
+                boost::asio::post(ctx, [stream]() { stream->on_data(std::vector<std::uint8_t>{0x01, 0x00}); });
+                return true;
+            });
+    EXPECT_CALL(*mock_conn, mock_send_async(testing::_, mux::kCmdFin, std::vector<std::uint8_t>{}))
+        .WillOnce(testing::Return(boost::system::error_code{}));
+    EXPECT_CALL(*mock_conn, remove_stream(testing::_)).Times(1);
+
+    auto session = std::make_shared<mux::udp_socks_session>(std::move(pair.server), ctx, tunnel, 48, timeout_cfg);
+    boost::asio::ip::address local_addr;
+    std::uint16_t udp_bind_port = 0;
+    const auto stream = mux::test::run_awaitable(ctx, session->prepare_udp_associate(local_addr, udp_bind_port));
+    EXPECT_EQ(stream, nullptr);
+
+    std::uint8_t err[10] = {0};
+    boost::asio::read(pair.client, boost::asio::buffer(err));
+    EXPECT_EQ(err[0], socks::kVer);
+    EXPECT_EQ(err[1], socks::kRepGenFail);
+}
+
 TEST(UdpSocksSessionTest, PrepareUdpAssociateSuccessReplyFailureCleansUpSessionAndStream)
 {
     boost::asio::io_context ctx;
