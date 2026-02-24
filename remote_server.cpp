@@ -161,8 +161,17 @@ bool parse_dest_target(const std::string& input, std::string& host, std::string&
     }
     host.clear();
     port.clear();
-    const bool parsed = (input.front() == '[') ? parse_bracket_dest_target(input, host, port) : parse_plain_dest_target(input, host, port);
-    return parsed && !host.empty() && valid_port_text(port);
+    const bool bracketed = input.front() == '[';
+    const bool parsed = bracketed ? parse_bracket_dest_target(input, host, port) : parse_plain_dest_target(input, host, port);
+    if (!parsed || host.empty() || !valid_port_text(port))
+    {
+        return false;
+    }
+    if (!bracketed && host.find(':') != std::string::npos)
+    {
+        return false;
+    }
+    return true;
 }
 
 bool should_stop_accept_loop_on_error(const boost::system::error_code& accept_ec,
