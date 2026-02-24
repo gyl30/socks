@@ -543,12 +543,6 @@ void udp_socks_session::apply_expected_client_constraint(const std::string& host
         return;
     }
 
-    boost::system::error_code host_parse_ec;
-    (void)boost::asio::ip::make_address(host, host_parse_ec);
-    if (host_parse_ec)
-    {
-        expected_client_port_.reset();
-    }
     boost::system::error_code peer_ec;
     const auto peer_ep = socket_.remote_endpoint(peer_ec);
     if (peer_ec)
