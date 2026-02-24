@@ -17,7 +17,9 @@
 #include <boost/asio/detached.hpp>
 #include <boost/asio/dispatch.hpp>
 #include <boost/asio/awaitable.hpp>
+#include <boost/asio/this_coro.hpp>
 #include <boost/asio/io_context.hpp>
+#include <boost/asio/steady_timer.hpp>
 #include <boost/asio/ip/address.hpp>
 #include <boost/asio/ip/v6_only.hpp>
 #include <boost/system/error_code.hpp>
@@ -95,7 +97,8 @@ tproxy_udp_session::tproxy_udp_session(boost::asio::io_context& io_context,
       sender_(std::move(sender)),
       recv_channel_(io_context_, cfg.queues.udp_session_recv_channel_capacity),
       client_ep_(net::normalize_endpoint(client_ep)),
-      mark_(cfg.tproxy.mark)
+      mark_(cfg.tproxy.mark),
+      read_timeout_sec_(cfg.timeout.read)
 {
     ctx_.new_trace_id();
     ctx_.conn_id(sid);
@@ -330,7 +333,42 @@ boost::asio::awaitable<bool> tproxy_udp_session::negotiate_proxy_stream(const st
         co_return false;
     }
 
+    auto timeout_fired = std::make_shared<std::atomic<bool>>(false);
+    auto wait_done = std::make_shared<std::atomic<bool>>(false);
+    auto ex = co_await boost::asio::this_coro::executor;
+    boost::asio::steady_timer ack_timer(ex);
+    if (read_timeout_sec_ > 0)
+    {
+        ack_timer.expires_after(std::chrono::seconds(read_timeout_sec_));
+        ack_timer.async_wait(
+            [stream, timeout_fired, wait_done](const boost::system::error_code& timer_ec)
+            {
+                if (timer_ec)
+                {
+                    return;
+                }
+                bool expected = false;
+                if (!wait_done->compare_exchange_strong(expected, true, std::memory_order_acq_rel, std::memory_order_acquire))
+                {
+                    return;
+                }
+                timeout_fired->store(true, std::memory_order_release);
+                stream->on_reset();
+            });
+    }
+
     auto [ack_ec, ack_data] = co_await stream->async_read_some();
+    if (read_timeout_sec_ > 0)
+    {
+        bool expected = false;
+        (void)wait_done->compare_exchange_strong(expected, true, std::memory_order_acq_rel, std::memory_order_acquire);
+        ack_timer.cancel();
+    }
+    if (timeout_fired->load(std::memory_order_acquire))
+    {
+        LOG_CTX_WARN(ctx_, "{} udp ack timeout {}s", log_event::kSocks, read_timeout_sec_);
+        co_return false;
+    }
     if (ack_ec)
     {
         LOG_CTX_WARN(ctx_, "{} udp ack failed {}", log_event::kSocks, ack_ec.message());
