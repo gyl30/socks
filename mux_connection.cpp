@@ -55,6 +55,22 @@ namespace
 
 constexpr auto kSyncQueryWaitTimeout = std::chrono::milliseconds(200);
 
+bool can_take_over_registered_mux_stream(const std::shared_ptr<mux_stream_interface>& existing_stream,
+                                         const std::shared_ptr<mux_stream_interface>& replacement_stream)
+{
+    if (existing_stream == nullptr || replacement_stream == nullptr)
+    {
+        return false;
+    }
+    const bool existing_is_mux_stream = std::dynamic_pointer_cast<mux_stream>(existing_stream) != nullptr;
+    if (!existing_is_mux_stream)
+    {
+        return false;
+    }
+    const bool replacement_is_mux_stream = std::dynamic_pointer_cast<mux_stream>(replacement_stream) != nullptr;
+    return !replacement_is_mux_stream;
+}
+
 [[nodiscard]] std::uint64_t now_ms()
 {
     return static_cast<std::uint64_t>(
@@ -395,11 +411,13 @@ bool mux_connection::register_stream_local(const std::uint32_t id, const std::sh
             current_map = &k_empty_streams;
         }
 
-        if (current_map->contains(id))
+        const auto existing_it = current_map->find(id);
+        const bool has_existing = existing_it != current_map->end();
+        if (has_existing && !can_take_over_registered_mux_stream(existing_it->second, stream))
         {
             return false;
         }
-        if (limits_config_.max_streams > 0 && current_map->size() >= limits_config_.max_streams)
+        if (!has_existing && limits_config_.max_streams > 0 && current_map->size() >= limits_config_.max_streams)
         {
             return false;
         }
