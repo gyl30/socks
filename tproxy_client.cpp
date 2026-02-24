@@ -54,6 +54,9 @@ namespace
 constexpr std::size_t k_udp_dispatch_worker_count = 4;
 constexpr std::uint64_t k_udp_dispatch_drop_log_sample = 256;
 constexpr std::size_t k_udp_dispatch_src_key_cache_capacity = 256;
+constexpr auto k_udp_recv_error_missing_origdst = "missing origdst";
+constexpr auto k_udp_recv_error_origdst_truncated = "origdst truncated";
+constexpr auto k_udp_recv_error_payload_truncated = "payload truncated";
 using udp_session_map_t = tproxy_client::udp_session_map_t;
 std::atomic<std::uint64_t> g_udp_dispatch_drop_last_logged_total{0};
 
@@ -390,9 +393,21 @@ void start_tcp_session(boost::asio::ip::tcp::socket s,
 
 void log_udp_recv_error(const std::string& error_text)
 {
-    if (error_text == "missing origdst")
+    if (error_text == k_udp_recv_error_missing_origdst)
     {
         LOG_WARN("tproxy udp missing origdst");
+        return;
+    }
+    if (error_text == k_udp_recv_error_origdst_truncated)
+    {
+        statistics::instance().inc_tproxy_udp_origdst_truncated();
+        LOG_WARN("tproxy udp origdst truncated");
+        return;
+    }
+    if (error_text == k_udp_recv_error_payload_truncated)
+    {
+        statistics::instance().inc_tproxy_udp_payload_truncated();
+        LOG_WARN("tproxy udp payload truncated");
         return;
     }
     LOG_ERROR("tproxy udp recvmsg failed {}", error_text);
@@ -589,12 +604,23 @@ udp_recv_status recv_udp_packet(boost::asio::ip::udp::socket& socket,
         return udp_recv_status::kError;
     }
 
+    if ((msg.msg_flags & MSG_CTRUNC) != 0)
+    {
+        error_text = k_udp_recv_error_origdst_truncated;
+        return udp_recv_status::kError;
+    }
+    if ((msg.msg_flags & MSG_TRUNC) != 0)
+    {
+        error_text = k_udp_recv_error_payload_truncated;
+        return udp_recv_status::kError;
+    }
+
     auto parsed_src = net::endpoint_from_sockaddr(src_addr, msg.msg_namelen);
     parsed_src = net::normalize_endpoint(parsed_src);
     const auto parsed_dst = net::parse_original_dst(msg);
     if (!parsed_dst.has_value())
     {
-        error_text = "missing origdst";
+        error_text = k_udp_recv_error_missing_origdst;
         return udp_recv_status::kError;
     }
 
