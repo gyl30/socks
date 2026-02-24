@@ -81,6 +81,20 @@ bool load_domain_rule(const std::shared_ptr<domain_matcher>& matcher, const std:
     return true;
 }
 
+boost::asio::ip::address normalize_route_address(const boost::asio::ip::address& addr)
+{
+    if (!addr.is_v6())
+    {
+        return addr;
+    }
+    const auto v6 = addr.to_v6();
+    if (!v6.is_v4_mapped())
+    {
+        return addr;
+    }
+    return boost::asio::ip::make_address_v4(boost::asio::ip::v4_mapped, v6);
+}
+
 }    // namespace
 
 bool router::load()
@@ -122,12 +136,13 @@ boost::asio::awaitable<route_type> router::decide_ip(const connection_context& c
                                                      const boost::asio::ip::address& addr) const
 {
     (void)host;
-    if (block_ip_matcher_->match(addr))
+    const auto normalized_addr = normalize_route_address(addr);
+    if (block_ip_matcher_->match(normalized_addr))
     {
         LOG_CTX_DEBUG(ctx, "{} matched ip rule block", log_event::kRoute);
         co_return route_type::kBlock;
     }
-    if (direct_ip_matcher_->match(addr))
+    if (direct_ip_matcher_->match(normalized_addr))
     {
         LOG_CTX_DEBUG(ctx, "{} matched ip rule direct", log_event::kRoute);
         co_return route_type::kDirect;
