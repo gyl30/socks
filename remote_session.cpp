@@ -480,7 +480,6 @@ void remote_session::close_from_fin()
     LOG_CTX_DEBUG(ctx_, "{} received fin from client", log_event::kMux);
     recv_channel_.close();
     resolver_.cancel();
-    idle_timer_.cancel();
     boost::system::error_code ec;
     ec = target_socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
 }
@@ -552,7 +551,7 @@ boost::asio::awaitable<void> remote_session::idle_watchdog()
         co_return;
     }
 
-    while (!reset_requested_.load(std::memory_order_acquire) && !fin_requested_.load(std::memory_order_acquire))
+    while (!reset_requested_.load(std::memory_order_acquire))
     {
         idle_timer_.expires_after(std::chrono::seconds(1));
         const auto [wait_ec] = co_await idle_timer_.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
