@@ -1,4 +1,5 @@
 #include <span>
+#include <array>
 #include <memory>
 #include <vector>
 #include <cstddef>
@@ -7,6 +8,7 @@
 #include <expected>
 
 #include <openssl/types.h>
+#include <boost/asio/buffer.hpp>
 #include <boost/asio/error.hpp>
 #include <boost/asio/streambuf.hpp>
 #include <boost/system/errc.hpp>
@@ -39,6 +41,7 @@ reality_engine::reality_engine(std::vector<std::uint8_t> r_key,
     rx_buf_->prepare(kInitialBufSize);
     scratch_buf_.resize(kMaxBufSize);
     tx_buf_.reserve(kMaxBufSize);
+    record_buf_.reserve(kMaxBufSize);
 }
 
 std::expected<std::span<const std::uint8_t>, boost::system::error_code> reality_engine::encrypt(const std::vector<std::uint8_t>& plaintext)
@@ -95,8 +98,14 @@ std::expected<bool, boost::system::error_code> reality_engine::try_decrypt_next_
         return false;
     }
 
-    const auto* p = static_cast<const std::uint8_t*>(rx_buf_->data().data());
-    const auto record_len = static_cast<std::uint16_t>((static_cast<std::uint16_t>(p[3]) << 8) | p[4]);
+    const auto data_buffers = rx_buf_->data();
+    std::array<std::uint8_t, reality::kTlsRecordHeaderSize> record_header{};
+    if (boost::asio::buffer_copy(boost::asio::buffer(record_header), data_buffers) < reality::kTlsRecordHeaderSize)
+    {
+        return false;
+    }
+
+    const auto record_len = static_cast<std::uint16_t>((static_cast<std::uint16_t>(record_header[3]) << 8) | record_header[4]);
     if (record_len > kMaxTlsCiphertextRecordLen)
     {
         return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::message_size));
@@ -109,7 +118,13 @@ std::expected<bool, boost::system::error_code> reality_engine::try_decrypt_next_
         return false;
     }
 
-    const std::span<const std::uint8_t> record_data(p, frame_size);
+    record_buf_.resize(frame_size);
+    if (boost::asio::buffer_copy(boost::asio::buffer(record_buf_), data_buffers) < frame_size)
+    {
+        return std::unexpected(boost::asio::error::fault);
+    }
+
+    const std::span<const std::uint8_t> record_data(record_buf_.data(), frame_size);
 
     auto decrypted = reality::tls_record_layer::decrypt_record(
         decrypt_ctx_, cipher_, read_key_, read_iv_, read_seq_, record_data, std::span<std::uint8_t>(scratch_buf_), content_type);

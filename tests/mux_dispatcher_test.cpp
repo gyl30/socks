@@ -140,6 +140,31 @@ TEST(MuxDispatcherTest, PartialPayloadWaitsForCompletion)
     EXPECT_EQ(call_count, 1);
 }
 
+TEST(MuxDispatcherTest, ByteByByteChunksStillDecodeFrame)
+{
+    mux::mux_dispatcher dispatcher;
+    std::size_t call_count = 0;
+    std::vector<std::uint8_t> received_payload;
+    dispatcher.set_callback(
+        [&](const mux::frame_header, std::vector<std::uint8_t> payload)
+        {
+            call_count++;
+            received_payload = std::move(payload);
+        });
+
+    const std::vector<std::uint8_t> payload = {0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98};
+    const auto packed = mux::mux_dispatcher::pack(0x3344, mux::kCmdDat, payload);
+    ASSERT_FALSE(packed.empty());
+
+    for (std::size_t i = 0; i < packed.size(); ++i)
+    {
+        dispatcher.on_plaintext_data(std::span<const std::uint8_t>(&packed[i], 1));
+    }
+
+    EXPECT_EQ(call_count, 1U);
+    EXPECT_EQ(received_payload, payload);
+}
+
 TEST(MuxDispatcherTest, OversizedFrameBeyondSingleRecordLimit)
 {
     mux::mux_dispatcher dispatcher;
