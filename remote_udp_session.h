@@ -52,6 +52,7 @@ class remote_udp_session : public mux_stream_interface, public std::enable_share
                                                       const boost::system::error_code& ec);
     boost::asio::awaitable<void> forward_mux_payload(const std::vector<std::uint8_t>& data);
     bool switch_udp_socket_to_v4();
+    bool switch_udp_socket_to_v6();
     void log_udp_local_endpoint();
     boost::asio::awaitable<void> run_udp_session_loops();
     boost::asio::awaitable<void> cleanup_after_stop();
