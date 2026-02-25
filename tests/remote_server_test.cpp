@@ -2224,10 +2224,20 @@ TEST_F(remote_server_test_fixture, FallbackSelectionAndCertificateTargetBranches
     const auto exact = server->find_fallback_target_by_sni("www.exact.test");
     EXPECT_EQ(exact.first, "127.0.0.1");
     EXPECT_EQ(exact.second, std::to_string(exact_port));
+    const auto exact_case = server->find_fallback_target_by_sni("WWW.Exact.Test.");
+    EXPECT_EQ(exact_case.first, "127.0.0.1");
+    EXPECT_EQ(exact_case.second, std::to_string(exact_port));
 
     const auto wildcard = server->find_fallback_target_by_sni("other.domain");
     EXPECT_EQ(wildcard.first, "127.0.0.1");
     EXPECT_EQ(wildcard.second, std::to_string(wildcard_port));
+
+    mux::client_hello_info exact_info{};
+    exact_info.sni = "WWW.Exact.Test.";
+    const auto exact_target = server->resolve_certificate_target(exact_info);
+    EXPECT_EQ(exact_target.fetch_host, "127.0.0.1");
+    EXPECT_EQ(exact_target.fetch_port, exact_port);
+    EXPECT_EQ(exact_target.cert_sni, "www.exact.test");
 
     server->fallbacks_.clear();
     const auto dest = server->find_fallback_target_by_sni("none");
@@ -2343,6 +2353,7 @@ TEST_F(remote_server_test_fixture, FallbackGuardKeyModeIpSniSeparatesBuckets)
     ctx.remote_addr("127.0.0.3");
 
     EXPECT_EQ(server->fallback_guard_key(ctx, "WWW.Example.Com"), "127.0.0.3|www.example.com");
+    EXPECT_EQ(server->fallback_guard_key(ctx, "WWW.Example.Com."), "127.0.0.3|www.example.com");
 
     EXPECT_TRUE(server->consume_fallback_token(ctx, "www.example.com"));
     EXPECT_FALSE(server->consume_fallback_token(ctx, "www.example.com"));
