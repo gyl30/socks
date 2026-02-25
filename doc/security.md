@@ -93,6 +93,66 @@ increase(socks_remote_session_connect_errors_total[10m]) > 30
 
 6. 基线阈值需结合部署规模按实例数线性放大，并在上线后一周依据真实流量回放修订。
 
+## 代码审查问题追踪（2026-02-25）
+
+以下问题按严重度排序，均已修复并通过测试回归。
+
+### P0: fallback 精确 SNI 匹配未做规范化，导致错误回落目标
+
+- 触发时机或场景：
+  - 服务端 `fallbacks.sni` 配置为包含大写或尾点形式，例如 `WWW.Example.COM.`。
+  - 客户端握手 SNI 使用语义等价但大小写或尾点不同的形式，例如 `www.example.com`。
+- 表现出的现象：
+  - 本应命中的精确 fallback 规则未命中。
+  - 流量被错误地路由到 wildcard fallback、`reality.dest`，或在无可用回落目标时直接失败。
+  - 外部表现为 fallback 目标错误、连接失败率升高、行为与配置不一致。
+- 根因：
+  - 精确匹配路径使用原始字符串逐字节比较，未进行 SNI 语义规范化。
+- 修复方案：
+  - 在 fallback 精确匹配路径引入统一 SNI 规范化（ASCII 小写化，去除尾随 `.`）。
+  - 匹配时对配置侧和请求侧都使用规范化值比较。
+- 影响范围：
+  - `remote_server` 的 `find_exact_sni_fallback` 与 `find_fallback_target_by_sni` 相关路径。
+- 验证：
+  - 单测补充并通过：`tests/remote_server_test.cpp` 中 `FallbackSelectionAndCertificateTargetBranches` 新增大小写和尾点覆盖断言。
+
+### P1: fallback_guard 在 `ip_sni` 维度未去尾点，存在限流/熔断桶分裂
+
+- 触发时机或场景：
+  - `reality.fallback_guard.key_mode = ip_sni`。
+  - 同一来源地址使用 `www.example.com` 与 `www.example.com.` 交替发起 fallback 触发流量。
+- 表现出的现象：
+  - 同一逻辑域名被分配到不同 bucket，令牌桶和熔断状态分裂。
+  - 结果为限流与熔断效果被弱化，监控上同源同域行为出现异常离散。
+- 根因：
+  - bucket key 仅做了小写化，未对尾点进行规范化。
+- 修复方案：
+  - fallback_guard key 与 fallback 精确匹配复用同一 SNI 规范化策略（小写 + 去尾点）。
+- 影响范围：
+  - `remote_server::fallback_guard_key`、`consume_fallback_token`、`record_fallback_result` 相关状态聚合行为。
+- 验证：
+  - 单测补充并通过：`tests/remote_server_test.cpp` 中 `FallbackGuardKeyModeIpSniSeparatesBuckets` 新增尾点归一化断言。
+
+### P1: 证书缓存 SNI 键未规范化，导致缓存分裂与额外证书抓取
+
+- 触发时机或场景：
+  - 不同客户端使用大小写不同或尾点不同但语义等价的 SNI。
+  - 服务端按 SNI 从 `cert_manager` 查询证书缓存。
+- 表现出的现象：
+  - 语义等价 SNI 产生多份缓存条目，命中率下降。
+  - 证书抓取请求次数增加，带来额外延迟和外连开销。
+  - 在极端情况下更早触发 LRU 淘汰，挤出热点证书条目。
+- 根因：
+  - `cert_manager` 对 `set/get` 采用原始 SNI 字符串作为 map key。
+- 修复方案：
+  - `cert_manager` 在读写缓存键时统一进行 SNI 规范化（小写 + 去尾点）。
+  - `remote_server::resolve_certificate_target` 的 `cert_sni` 也同步使用规范化值，避免上游路径产生非规范键。
+- 影响范围：
+  - `cert_manager` 的缓存索引行为与 `remote_server` 的证书目标解析路径。
+- 验证：
+  - 单测补充并通过：`tests/cert_manager_test.cpp` 新增 `SniLookupNormalizesCaseAndTrailingDot`。
+  - `tests/remote_server_test.cpp` 在证书目标分支新增 `cert_sni` 规范化断言。
+
 ## 每步验证要求
 
 1. 编译：`cmake --build build -j15`
