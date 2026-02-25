@@ -302,6 +302,26 @@ constexpr std::uint32_t kQueueCapacityMax = 65535;
     {
         return std::unexpected(make_config_error("/reality/dest", "must be host:port or [ipv6]:port with port in 1-65535 when provided"));
     }
+    if (reality.fallback_guard.enabled)
+    {
+        if (reality.fallback_guard.rate_per_sec == 0)
+        {
+            return std::unexpected(make_config_error("/reality/fallback_guard/rate_per_sec", "must be greater than 0 when fallback guard is enabled"));
+        }
+        if (reality.fallback_guard.burst == 0)
+        {
+            return std::unexpected(make_config_error("/reality/fallback_guard/burst", "must be greater than 0 when fallback guard is enabled"));
+        }
+        if (reality.fallback_guard.state_ttl_sec == 0)
+        {
+            return std::unexpected(make_config_error("/reality/fallback_guard/state_ttl_sec", "must be greater than 0 when fallback guard is enabled"));
+        }
+        if (reality.fallback_guard.circuit_fail_threshold > 0 && reality.fallback_guard.circuit_open_sec == 0)
+        {
+            return std::unexpected(
+                make_config_error("/reality/fallback_guard/circuit_open_sec", "must be greater than 0 when circuit fail threshold is enabled"));
+        }
+    }
 
     return {};
 }
@@ -403,9 +423,12 @@ constexpr std::uint32_t kQueueCapacityMax = 65535;
     {
         return std::unexpected(reality_result.error());
     }
-    if (const auto inbound_result = validate_inbound_config(cfg.inbound); !inbound_result)
+    if (cfg.mode == "server")
     {
-        return std::unexpected(inbound_result.error());
+        if (const auto inbound_result = validate_inbound_config(cfg.inbound); !inbound_result)
+        {
+            return std::unexpected(inbound_result.error());
+        }
     }
 #if !SOCKS_HAS_TPROXY
     if (cfg.tproxy.enabled)
