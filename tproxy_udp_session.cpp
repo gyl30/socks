@@ -109,6 +109,7 @@ bool tproxy_udp_session::start()
 {
     terminated_.store(false, std::memory_order_release);
     direct_socket_use_v6_ = true;
+    direct_socket_dual_stack_ = true;
 
     const auto apply_mark = [&]()
     {
@@ -124,8 +125,10 @@ bool tproxy_udp_session::start()
     const auto setup_socket = [&](const boost::asio::ip::udp protocol,
                                   const boost::asio::ip::udp::endpoint& bind_ep,
                                   const bool use_v6,
-                                  const bool dual_stack) -> bool
+                                  const bool dual_stack,
+                                  bool& dual_stack_option_failed) -> bool
     {
+        dual_stack_option_failed = false;
         boost::system::error_code ec;
         ec = direct_socket_.open(protocol, ec);
         if (ec)
@@ -140,6 +143,7 @@ bool tproxy_udp_session::start()
             if (ec)
             {
                 LOG_CTX_WARN(ctx_, "{} udp v6 only failed {}", log_event::kSocks, ec.message());
+                dual_stack_option_failed = true;
                 close_start_failed_socket(direct_socket_, ctx_);
                 return false;
             }
@@ -153,12 +157,34 @@ bool tproxy_udp_session::start()
             return false;
         }
         direct_socket_use_v6_ = use_v6;
+        direct_socket_dual_stack_ = use_v6 && dual_stack;
         return true;
     };
 
-    if (!setup_socket(boost::asio::ip::udp::v6(), boost::asio::ip::udp::endpoint(boost::asio::ip::address_v6::any(), 0), true, true))
+    bool dual_stack_option_failed = false;
+    if (!setup_socket(boost::asio::ip::udp::v6(),
+                      boost::asio::ip::udp::endpoint(boost::asio::ip::address_v6::any(), 0),
+                      true,
+                      true,
+                      dual_stack_option_failed))
     {
-        if (!setup_socket(boost::asio::ip::udp::v4(), boost::asio::ip::udp::endpoint(boost::asio::ip::address_v4::any(), 0), false, false))
+        if (dual_stack_option_failed)
+        {
+            if (setup_socket(boost::asio::ip::udp::v6(),
+                             boost::asio::ip::udp::endpoint(boost::asio::ip::address_v6::any(), 0),
+                             true,
+                             false,
+                             dual_stack_option_failed))
+            {
+                boost::asio::co_spawn(io_context_, direct_read_loop_detached(shared_from_this()), boost::asio::detached);
+                return true;
+            }
+        }
+        if (!setup_socket(boost::asio::ip::udp::v4(),
+                          boost::asio::ip::udp::endpoint(boost::asio::ip::address_v4::any(), 0),
+                          false,
+                          false,
+                          dual_stack_option_failed))
         {
             terminated_.store(true, std::memory_order_release);
             return false;
@@ -663,7 +689,15 @@ boost::asio::awaitable<void> tproxy_udp_session::send_direct(const boost::asio::
     auto target = dst_ep;
     if (direct_socket_use_v6_)
     {
-        target = map_v4_to_v6(dst_ep);
+        if (dst_ep.address().is_v4())
+        {
+            if (!direct_socket_dual_stack_)
+            {
+                LOG_CTX_WARN(ctx_, "{} udp direct send skipped ipv4 target on ipv6-only socket", log_event::kSocks);
+                co_return;
+            }
+            target = map_v4_to_v6(dst_ep);
+        }
     }
     else if (dst_ep.address().is_v6())
     {
