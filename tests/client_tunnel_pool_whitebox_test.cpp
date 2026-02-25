@@ -277,13 +277,13 @@ boost::asio::awaitable<std::expected<void, boost::system::error_code>> generate_
                                                                                                                const reality::fingerprint_spec& spec,
                                                                                                                reality::transcript& trans)
 {
-    co_return co_await pool.generate_and_send_client_hello(socket, public_key, private_key, spec, trans);
+    co_return co_await pool.generate_and_send_client_hello(socket, public_key, private_key, spec, trans, 0);
 }
 
 boost::asio::awaitable<std::expected<mux::client_tunnel_pool::server_hello_res, boost::system::error_code>> process_server_hello_expected(
     boost::asio::ip::tcp::socket& socket, const std::uint8_t* private_key, reality::transcript& trans)
 {
-    co_return co_await mux::client_tunnel_pool::process_server_hello(socket, private_key, trans);
+    co_return co_await mux::client_tunnel_pool::process_server_hello(socket, private_key, trans, 0);
 }
 
 boost::asio::awaitable<std::expected<mux::client_tunnel_pool::handshake_result, boost::system::error_code>> perform_reality_handshake_expected(
@@ -308,7 +308,7 @@ handshake_read_loop_expected(boost::asio::ip::tcp::socket& socket,
                              const EVP_CIPHER* cipher,
                              const EVP_MD* md)
 {
-    co_return co_await mux::client_tunnel_pool::handshake_read_loop(socket, s_hs_keys, hs_keys, strict_cert_verify, sni, trans, cipher, md);
+    co_return co_await mux::client_tunnel_pool::handshake_read_loop(socket, s_hs_keys, hs_keys, strict_cert_verify, sni, trans, cipher, md, 0);
 }
 
 }    // namespace

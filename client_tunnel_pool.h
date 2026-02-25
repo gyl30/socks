@@ -123,7 +123,8 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
         const std::uint8_t* public_key,
         const std::uint8_t* private_key,
         const reality::fingerprint_spec& spec,
-        reality::transcript& trans) const;
+        reality::transcript& trans,
+        std::uint32_t write_timeout_sec) const;
 
     struct server_hello_res
     {
@@ -134,7 +135,7 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
     };
 
     [[nodiscard]] static boost::asio::awaitable<std::expected<server_hello_res, boost::system::error_code>> process_server_hello(
-        boost::asio::ip::tcp::socket& socket, const std::uint8_t* private_key, reality::transcript& trans);
+        boost::asio::ip::tcp::socket& socket, const std::uint8_t* private_key, reality::transcript& trans, std::uint32_t read_timeout_sec);
 
     [[nodiscard]] static boost::asio::awaitable<
         std::expected<std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>, boost::system::error_code>>
@@ -145,7 +146,8 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
                         const std::string& sni,
                         reality::transcript& trans,
                         const EVP_CIPHER* cipher,
-                        const EVP_MD* md);
+                        const EVP_MD* md,
+                        std::uint32_t read_timeout_sec);
 
     [[nodiscard]] static boost::asio::awaitable<std::expected<void, boost::system::error_code>> send_client_finished(
         boost::asio::ip::tcp::socket& socket,
@@ -153,7 +155,8 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
         const std::vector<std::uint8_t>& c_hs_secret,
         const reality::transcript& trans,
         const EVP_CIPHER* cipher,
-        const EVP_MD* md);
+        const EVP_MD* md,
+        std::uint32_t write_timeout_sec);
 
     boost::asio::awaitable<void> wait_remote_retry(boost::asio::io_context& io_context);
 
