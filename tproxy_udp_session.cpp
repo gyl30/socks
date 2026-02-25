@@ -557,6 +557,11 @@ void tproxy_udp_session::refresh_cached_proxy_header(const boost::asio::ip::udp:
     h.addr = dst_ep.address().to_string();
     h.port = dst_ep.port();
     cached_proxy_header_ = socks_codec::encode_udp_header(h);
+    if (cached_proxy_header_.empty())
+    {
+        has_cached_proxy_header_ = false;
+        return;
+    }
     cached_proxy_dst_ep_ = dst_ep;
     has_cached_proxy_header_ = true;
 }
@@ -572,6 +577,11 @@ bool tproxy_udp_session::build_proxy_packet(const boost::asio::ip::udp::endpoint
         return false;
     }
     refresh_cached_proxy_header(dst_ep);
+    if (!has_cached_proxy_header_)
+    {
+        LOG_CTX_WARN(ctx_, "{} udp encode proxy header failed", log_event::kSocks);
+        return false;
+    }
     if (cached_proxy_header_.size() + len > mux::kMaxPayloadPerRecord)
     {
         LOG_CTX_WARN(ctx_, "{} udp packet too large {}", log_event::kSocks, len);
