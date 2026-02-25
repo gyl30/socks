@@ -106,11 +106,13 @@ bool open_and_bind_udp_socket(boost::asio::ip::udp::socket& udp_socket, const bo
     {
         failed_step = "open";
     }
-    if (!ec && local_addr.is_v6())
+    if (!ec && local_addr.is_v6() && local_addr.to_v6().is_unspecified())
     {
-        ec = udp_socket.set_option(boost::asio::ip::v6_only(false), ec);
-        if (ec)
+        boost::system::error_code dual_stack_ec;
+        dual_stack_ec = udp_socket.set_option(boost::asio::ip::v6_only(false), dual_stack_ec);
+        if (dual_stack_ec)
         {
+            ec = dual_stack_ec;
             failed_step = "set v6 only";
         }
     }
