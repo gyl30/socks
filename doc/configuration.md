@@ -219,6 +219,10 @@ groups:
 
 `fallbacks`：SNI 伪装回退列表（`sni` / `host` / `port`）。
 
+- `fallbacks[*].host` 必须为非空字符串。
+- `fallbacks[*].port` 必须是 `1-65535` 的十进制文本。
+- `fallbacks[*].sni` 允许空串或 `*`（通配）；若提供精确值，规范化（小写并去尾随 `.`）后不得为空。
+
 ## 测试脚本参数
 
 `script/valgrind_test.py` 支持以下关键参数：
