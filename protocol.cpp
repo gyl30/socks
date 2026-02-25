@@ -139,36 +139,40 @@ void append_udp_ipv6_address(std::vector<std::uint8_t>& buf, const boost::asio::
     buf.insert(buf.end(), bytes.begin(), bytes.end());
 }
 
-void append_udp_domain_address(std::vector<std::uint8_t>& buf, const std::string& host)
+bool append_udp_domain_address(std::vector<std::uint8_t>& buf, const std::string& host)
 {
     constexpr std::size_t kMaxDomainLen = 255;
-    const auto domain_len = host.size() > kMaxDomainLen ? kMaxDomainLen : host.size();
+    if (host.empty() || host.size() > kMaxDomainLen)
+    {
+        return false;
+    }
+    const auto domain_len = host.size();
     buf.push_back(socks::kAtypDomain);
     buf.push_back(static_cast<std::uint8_t>(domain_len));
     buf.insert(buf.end(), host.begin(), host.begin() + static_cast<std::ptrdiff_t>(domain_len));
+    return true;
 }
 
-void append_udp_target_address(std::vector<std::uint8_t>& buf, const std::string& host)
+bool append_udp_target_address(std::vector<std::uint8_t>& buf, const std::string& host)
 {
     boost::system::error_code ec;
     auto address = boost::asio::ip::make_address(host, ec);
     if (ec)
     {
-        append_udp_domain_address(buf, host);
-        return;
+        return append_udp_domain_address(buf, host);
     }
     address = socks_codec::normalize_ip_address(address);
     if (address.is_v4())
     {
         append_udp_ipv4_address(buf, address.to_v4());
-        return;
+        return true;
     }
     if (address.is_v6())
     {
         append_udp_ipv6_address(buf, address.to_v6());
-        return;
+        return true;
     }
-    append_udp_domain_address(buf, host);
+    return append_udp_domain_address(buf, host);
 }
 
 }    // namespace
@@ -198,7 +202,10 @@ std::vector<std::uint8_t> socks_codec::encode_udp_header(const socks_udp_header&
     buf.push_back(0x00);
     buf.push_back(0x00);
     buf.push_back(h.frag);
-    append_udp_target_address(buf, h.addr);
+    if (!append_udp_target_address(buf, h.addr))
+    {
+        return {};
+    }
 
     buf.push_back(static_cast<std::uint8_t>((h.port >> 8) & 0xFF));
     buf.push_back(static_cast<std::uint8_t>(h.port & 0xFF));

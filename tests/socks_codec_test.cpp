@@ -78,7 +78,7 @@ TEST(SocksCodecTest, UDPHeaderRoundTripDomain)
     EXPECT_EQ(output.port, input.port);
 }
 
-TEST(SocksCodecTest, UDPHeaderRoundTripTooLongDomainTruncatesTo255Bytes)
+TEST(SocksCodecTest, EncodeUdpHeaderRejectsTooLongDomain)
 {
     socks_udp_header input;
     input.frag = 0;
@@ -86,18 +86,18 @@ TEST(SocksCodecTest, UDPHeaderRoundTripTooLongDomainTruncatesTo255Bytes)
     input.port = 53;
 
     const auto buffer = socks_codec::encode_udp_header(input);
+    EXPECT_TRUE(buffer.empty());
+}
 
-    ASSERT_EQ(buffer[3], socks::kAtypDomain);
-    ASSERT_EQ(buffer[4], 0xFF);
-    ASSERT_EQ(buffer.size(), 262U);
+TEST(SocksCodecTest, EncodeUdpHeaderRejectsEmptyDomain)
+{
+    socks_udp_header input;
+    input.frag = 0;
+    input.addr.clear();
+    input.port = 53;
 
-    socks_udp_header output;
-    const bool success = socks_codec::decode_udp_header(buffer.data(), buffer.size(), output);
-
-    ASSERT_TRUE(success);
-    EXPECT_EQ(output.frag, input.frag);
-    EXPECT_EQ(output.addr, std::string(255, 'a'));
-    EXPECT_EQ(output.port, input.port);
+    const auto buffer = socks_codec::encode_udp_header(input);
+    EXPECT_TRUE(buffer.empty());
 }
 
 TEST(SocksCodecTest, DecodeTooShort)
