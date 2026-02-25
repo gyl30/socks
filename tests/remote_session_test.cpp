@@ -525,6 +525,65 @@ TEST(RemoteSessionTest, RunIdleWatchdogClosesInactiveSession)
     EXPECT_TRUE(session->reset_requested_.load(std::memory_order_acquire));
 }
 
+TEST(RemoteSessionTest, RunOnCloseKeepsDownstreamUntilTargetFinWhenIdleWatchdogEnabled)
+{
+    boost::asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    mux::connection_context const ctx;
+    auto session = std::make_shared<mux::remote_session>(conn, 48, io_context, ctx, 10, 10, 2);
+
+    boost::asio::ip::tcp::acceptor acceptor(io_context);
+    ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
+    const auto port = acceptor.local_endpoint().port();
+    const std::vector<std::uint8_t> payload = {0xF1, 0xF2, 0xF3};
+
+    std::thread accept_thread(
+        [&io_context, &acceptor, payload]()
+        {
+            boost::asio::ip::tcp::socket accepted(io_context);
+            boost::system::error_code ec;
+            acceptor.accept(accepted, ec);
+            if (!ec)
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(150));
+                boost::asio::write(accepted, boost::asio::buffer(payload), ec);
+                if (!ec)
+                {
+                    accepted.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
+                }
+                accepted.close(ec);
+            }
+        });
+
+    {
+        ::testing::InSequence const seq;
+        EXPECT_CALL(*conn, mock_send_async(48, mux::kCmdAck, _))
+            .WillOnce(
+                [&io_context, session](const std::uint32_t, const std::uint8_t, const std::vector<std::uint8_t>&)
+                {
+                    boost::asio::post(
+                        io_context,
+                        [session]()
+                        {
+                            session->on_close();
+                        });
+                    return boost::system::error_code{};
+                });
+        EXPECT_CALL(*conn, mock_send_async(48, mux::kCmdDat, payload)).WillOnce(::testing::Return(boost::system::error_code{}));
+        EXPECT_CALL(*conn, mock_send_async(48, mux::kCmdFin, std::vector<std::uint8_t>{})).WillOnce(::testing::Return(boost::system::error_code{}));
+    }
+
+    mux::test::run_awaitable_void(io_context, session->run(make_syn("127.0.0.1", port)));
+
+    if (accept_thread.joinable())
+    {
+        accept_thread.join();
+    }
+
+    EXPECT_FALSE(session->reset_requested_.load(std::memory_order_acquire));
+    EXPECT_TRUE(session->fin_requested_.load(std::memory_order_acquire));
+}
+
 TEST(RemoteSessionTest, UpstreamWriteTimeoutStopsWhenTargetBackpressured)
 {
     boost::asio::io_context io_context;
