@@ -39,6 +39,7 @@ extern "C"
 
 #define private public
 #include "remote_server.h"
+#include "remote_session.h"
 
 #undef private
 #include "statistics.h"
@@ -980,7 +981,8 @@ TEST_F(remote_server_test_fixture, FallbackConnectTimeoutIncrementsMetricWhenBac
     ASSERT_FALSE(ec);
 
     auto cfg = make_server_cfg(0, {{.sni = "", .host = "127.0.0.1", .port = std::to_string(saturated_port)}}, "0102030405060708");
-    cfg.timeout.read = 1;
+    cfg.timeout.read = 8;
+    cfg.timeout.connect = 1;
     cfg.timeout.write = 100;
     auto server = std::make_shared<mux::remote_server>(pool, cfg);
 
@@ -994,6 +996,7 @@ TEST_F(remote_server_test_fixture, FallbackConnectTimeoutIncrementsMetricWhenBac
 
     std::promise<void> done;
     auto done_future = done.get_future();
+    const auto start = std::chrono::steady_clock::now();
     boost::asio::co_spawn(
         pool.get_io_context(),
         [server, fallback_socket, ctx, &done]() mutable -> boost::asio::awaitable<void>
@@ -1005,11 +1008,13 @@ TEST_F(remote_server_test_fixture, FallbackConnectTimeoutIncrementsMetricWhenBac
         boost::asio::detached);
 
     EXPECT_EQ(done_future.wait_for(std::chrono::seconds(8)), std::future_status::ready);
+    const auto elapsed = std::chrono::steady_clock::now() - start;
     EXPECT_TRUE(wait_for_condition([connect_fail_before]() { return mux::statistics::instance().fallback_connect_failures() > connect_fail_before; },
                                    std::chrono::milliseconds(3000)));
     EXPECT_TRUE(wait_for_condition([connect_timeout_before]()
                                    { return mux::statistics::instance().fallback_connect_timeouts() > connect_timeout_before; },
                                    std::chrono::milliseconds(3000)));
+    EXPECT_LT(std::chrono::duration_cast<std::chrono::seconds>(elapsed).count(), 6);
 
     boost::system::error_code close_ec;
     // NOLINTNEXTLINE(bugprone-unused-return-value)
@@ -2817,6 +2822,64 @@ TEST_F(remote_server_test_fixture, HandleStreamRegisterFailureSendsResetForClose
     std::thread runner([&pool]() { pool.run(); });
     auto runner_guard = make_pool_thread_guard(pool, runner);
     EXPECT_EQ(done_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    pool.stop();
+    runner.join();
+}
+
+TEST_F(remote_server_test_fixture, HandleTcpConnectStreamUsesConfiguredConnectTimeout)
+{
+    boost::system::error_code const ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    auto cfg = make_server_cfg(0, {}, "0102030405060708");
+    cfg.timeout.connect = 9;
+    cfg.timeout.read = 27;
+    cfg.timeout.write = 11;
+    auto server = std::make_shared<mux::remote_server>(pool, cfg);
+    auto conn = std::make_shared<mux::mock_mux_connection>(pool.get_io_context());
+    auto tunnel = std::make_shared<mux::mux_tunnel_impl<boost::asio::ip::tcp::socket>>(
+        boost::asio::ip::tcp::socket(pool.get_io_context()),
+        pool.get_io_context(),
+        mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()},
+        false,
+        3003);
+    tunnel->connection_ = conn;
+
+    std::shared_ptr<mux::mux_stream_interface> registered_stream;
+    EXPECT_CALL(*conn, register_stream(77, testing::_))
+        .WillOnce(testing::DoAll(testing::SaveArg<1>(&registered_stream), testing::Return(false)));
+    EXPECT_CALL(*conn, mock_send_async(77, mux::kCmdRst, testing::_)).WillOnce(testing::Return(boost::system::error_code{}));
+
+    mux::connection_context stream_ctx;
+    stream_ctx.conn_id(17);
+    stream_ctx.trace_id("tcp-connect-timeout");
+    mux::syn_payload syn{};
+    syn.socks_cmd = socks::kCmdConnect;
+    syn.addr = "198.51.100.1";
+    syn.port = 443;
+
+    auto* stream_io_context = &pool.get_io_context();
+    std::promise<void> done;
+    auto done_future = done.get_future();
+    boost::asio::co_spawn(
+        *stream_io_context,
+        [server, tunnel, stream_ctx, syn, stream_io_context, &done]() mutable -> boost::asio::awaitable<void>
+        {
+            co_await server->handle_tcp_connect_stream(tunnel, stream_ctx, 77, syn, 0, *stream_io_context);
+            done.set_value();
+            co_return;
+        },
+        boost::asio::detached);
+
+    std::thread runner([&pool]() { pool.run(); });
+    auto runner_guard = make_pool_thread_guard(pool, runner);
+    EXPECT_EQ(done_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    ASSERT_NE(registered_stream, nullptr);
+    const auto remote_sess = std::dynamic_pointer_cast<mux::remote_session>(registered_stream);
+    ASSERT_NE(remote_sess, nullptr);
+    EXPECT_EQ(remote_sess->connect_timeout_sec_, 9U);
+    EXPECT_EQ(remote_sess->write_timeout_sec_, 11U);
     pool.stop();
     runner.join();
 }

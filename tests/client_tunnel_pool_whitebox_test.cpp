@@ -2,6 +2,7 @@
 #include <array>
 #include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <memory>
 #include <string>
 #include <thread>
@@ -845,11 +846,13 @@ TEST(ClientTunnelPoolWhiteboxTest, TcpConnectTimeoutReturnsTimedOutAndClosesSock
     cfg.outbound.host = "127.0.0.1";
     cfg.outbound.port = target_port;
     cfg.reality.public_key = generate_public_key_hex();
-    cfg.timeout.read = 1;
+    cfg.timeout.read = 8;
+    cfg.timeout.connect = 1;
     auto tunnel_pool = std::make_shared<mux::client_tunnel_pool>(pool, cfg, 0);
 
     boost::asio::ip::tcp::socket client_socket(io_context);
     std::expected<void, boost::system::error_code> connect_res;
+    const auto start = std::chrono::steady_clock::now();
     boost::asio::co_spawn(
         io_context,
         [tunnel_pool, &io_context, &client_socket, &connect_res]() -> boost::asio::awaitable<void>
@@ -859,9 +862,11 @@ TEST(ClientTunnelPoolWhiteboxTest, TcpConnectTimeoutReturnsTimedOutAndClosesSock
         },
         boost::asio::detached);
     io_context.run();
+    const auto elapsed = std::chrono::steady_clock::now() - start;
 
     ASSERT_FALSE(connect_res.has_value());
     EXPECT_EQ(connect_res.error(), boost::asio::error::timed_out);
+    EXPECT_LT(std::chrono::duration_cast<std::chrono::seconds>(elapsed).count(), 6);
     EXPECT_FALSE(client_socket.is_open());
     EXPECT_GE(stats.client_tunnel_pool_connect_timeouts(), connect_timeouts_before + 1);
 
