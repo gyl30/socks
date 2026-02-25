@@ -112,7 +112,9 @@ std::expected<std::pair<std::string, boost::asio::ip::address>, boost::system::e
     return std::make_pair(listen_host, listen_addr);
 }
 
-std::expected<void, boost::system::error_code> setup_tcp_listener_options(boost::asio::ip::tcp::acceptor& acceptor, const bool is_v6)
+std::expected<void, boost::system::error_code> setup_tcp_listener_options(boost::asio::ip::tcp::acceptor& acceptor,
+                                                                          const bool is_v6,
+                                                                          const bool enable_dual_stack)
 {
     boost::system::error_code ec;
     ec = acceptor.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true), ec);
@@ -120,7 +122,7 @@ std::expected<void, boost::system::error_code> setup_tcp_listener_options(boost:
     {
         return std::unexpected(ec);
     }
-    if (is_v6)
+    if (enable_dual_stack)
     {
         ec = acceptor.set_option(boost::asio::ip::v6_only(false), ec);
         if (ec)
@@ -140,13 +142,15 @@ std::expected<void, boost::system::error_code> setup_tcp_listener(boost::asio::i
                                                                   const std::uint16_t port)
 {
     const boost::asio::ip::tcp::endpoint ep{listen_addr, port};
+    const bool is_v6 = listen_addr.is_v6();
+    const bool enable_dual_stack = is_v6 && listen_addr.to_v6().is_unspecified();
     boost::system::error_code ec;
     ec = acceptor.open(ep.protocol(), ec);
     if (ec)
     {
         return std::unexpected(ec);
     }
-    if (const auto res = setup_tcp_listener_options(acceptor, listen_addr.is_v6()); !res)
+    if (const auto res = setup_tcp_listener_options(acceptor, is_v6, enable_dual_stack); !res)
     {
         close_acceptor_on_setup_failure(acceptor);
         return std::unexpected(res.error());
@@ -176,9 +180,9 @@ void set_udp_reuse_option(boost::asio::ip::udp::socket& socket)
     }
 }
 
-std::expected<void, boost::system::error_code> set_udp_dual_stack_if_needed(boost::asio::ip::udp::socket& socket, const bool is_v6)
+std::expected<void, boost::system::error_code> set_udp_dual_stack_if_needed(boost::asio::ip::udp::socket& socket, const bool enable_dual_stack)
 {
-    if (!is_v6)
+    if (!enable_dual_stack)
     {
         return {};
     }
@@ -223,6 +227,7 @@ std::expected<void, boost::system::error_code> setup_udp_listener(boost::asio::i
                                                                   const std::uint32_t mark)
 {
     const bool is_v6 = listen_addr.is_v6();
+    const bool enable_dual_stack = is_v6 && listen_addr.to_v6().is_unspecified();
     const boost::asio::ip::udp::endpoint ep{listen_addr, port};
     boost::system::error_code ec;
     ec = socket.open(ep.protocol(), ec);
@@ -231,7 +236,7 @@ std::expected<void, boost::system::error_code> setup_udp_listener(boost::asio::i
         return std::unexpected(ec);
     }
     set_udp_reuse_option(socket);
-    if (auto res = set_udp_dual_stack_if_needed(socket, is_v6); !res)
+    if (auto res = set_udp_dual_stack_if_needed(socket, enable_dual_stack); !res)
     {
         close_udp_socket_on_setup_failure(socket);
         return std::unexpected(res.error());
