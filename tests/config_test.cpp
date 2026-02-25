@@ -738,6 +738,54 @@ TEST_F(config_test_fixture, RealityDestWhenProvidedMustBeValid)
     EXPECT_EQ(parsed->reality.dest, "[::1]:443");
 }
 
+TEST_F(config_test_fixture, FallbackEntryRequiresNonEmptyHostAndValidPort)
+{
+    write_config_file(R"({
+        "fallbacks": [
+            {
+                "sni": "www.example.com",
+                "host": "",
+                "port": "443"
+            }
+        ]
+    })");
+    auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/fallbacks/0/host");
+    EXPECT_NE(parsed.error().reason.find("must be non-empty"), std::string::npos);
+
+    write_config_file(R"({
+        "fallbacks": [
+            {
+                "sni": "www.example.com",
+                "host": "127.0.0.1",
+                "port": "0"
+            }
+        ]
+    })");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/fallbacks/0/port");
+    EXPECT_NE(parsed.error().reason.find("must be in 1-65535"), std::string::npos);
+}
+
+TEST_F(config_test_fixture, FallbackSniMustRemainNonEmptyAfterNormalization)
+{
+    write_config_file(R"({
+        "fallbacks": [
+            {
+                "sni": ".",
+                "host": "127.0.0.1",
+                "port": "443"
+            }
+        ]
+    })");
+    const auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/fallbacks/0/sni");
+    EXPECT_NE(parsed.error().reason.find("must be non-empty after normalization"), std::string::npos);
+}
+
 TEST_F(config_test_fixture, MissingFieldsUseDefaults)
 {
     const std::string content = R"({

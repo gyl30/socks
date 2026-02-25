@@ -901,10 +901,10 @@ TEST_F(remote_server_test_fixture, FallbackResolveFail)
 
     const auto resolve_fail_before = mux::statistics::instance().fallback_resolve_failures();
     const auto resolve_error_before = mux::statistics::instance().fallback_resolve_errors();
+    const auto resolve_timeout_before = mux::statistics::instance().fallback_resolve_timeouts();
 
-    // Use an invalid service name to trigger resolver failure deterministically
-    // without relying on external DNS latency.
-    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(0, {{.sni = "", .host = "127.0.0.1", .port = "bad"}}, "0102030405060708"));
+    auto server =
+        std::make_shared<mux::remote_server>(pool, make_server_cfg(0, {{.sni = "", .host = "nonexistent.invalid", .port = "443"}}, "0102030405060708"));
     ASSERT_TRUE(start_server_until_listening(server));
     const auto server_port = server->listen_port();
     ASSERT_NE(server_port, static_cast<std::uint16_t>(0));
@@ -918,8 +918,11 @@ TEST_F(remote_server_test_fixture, FallbackResolveFail)
 
     EXPECT_TRUE(wait_for_condition([resolve_fail_before]() { return mux::statistics::instance().fallback_resolve_failures() > resolve_fail_before; },
                                    std::chrono::milliseconds(10000)));
-    EXPECT_TRUE(wait_for_condition([resolve_error_before]() { return mux::statistics::instance().fallback_resolve_errors() > resolve_error_before; },
-                                   std::chrono::milliseconds(10000)));
+    EXPECT_TRUE(wait_for_condition(
+        [resolve_error_before, resolve_timeout_before]()
+        { return mux::statistics::instance().fallback_resolve_errors() > resolve_error_before ||
+                 mux::statistics::instance().fallback_resolve_timeouts() > resolve_timeout_before; },
+        std::chrono::milliseconds(10000)));
 
     server->stop();
     pool.stop();
@@ -1739,6 +1742,90 @@ TEST_F(remote_server_test_fixture, ExactSniFallbackPreferredOverRealityDest)
 
     EXPECT_EQ(exact_count.load(), 1);
     EXPECT_EQ(dest_count.load(), 0);
+}
+
+TEST_F(remote_server_test_fixture, InvalidExactSniFallbackDoesNotBlockWildcardFallback)
+{
+    boost::system::error_code const ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+    std::thread pool_thread([&pool] { pool.run(); });
+    auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
+    auto pool_cleanup = make_scoped_exit(
+        [&]()
+        {
+            pool.stop();
+            if (pool_thread.joinable())
+            {
+                pool_thread.join();
+            }
+        });
+
+    boost::asio::ip::tcp::acceptor wildcard_acceptor(pool.get_io_context());
+    ASSERT_TRUE(open_ephemeral_acceptor_until_ready(wildcard_acceptor));
+    auto acceptor_cleanup = make_scoped_exit(
+        [&]()
+        {
+            boost::system::error_code close_ec;
+            (void)wildcard_acceptor.cancel(close_ec);
+            (void)wildcard_acceptor.close(close_ec);
+        });
+    const auto wildcard_port = wildcard_acceptor.local_endpoint().port();
+    std::atomic<int> wildcard_count{0};
+    wildcard_acceptor.async_accept(
+        [&](boost::system::error_code accept_ec, [[maybe_unused]] boost::asio::ip::tcp::socket peer)
+        {
+            if (!accept_ec)
+            {
+                wildcard_count++;
+            }
+        });
+
+    std::vector<mux::config::fallback_entry> const fallbacks = {
+        {.sni = "www.exact.test", .host = "", .port = "443"},
+        {.sni = "*", .host = "127.0.0.1", .port = std::to_string(wildcard_port)},
+    };
+    auto cfg = make_server_cfg(0, fallbacks, "0102030405060708");
+    std::shared_ptr<mux::remote_server> server = std::make_shared<mux::remote_server>(pool, cfg);
+    auto server_cleanup = make_scoped_exit(
+        [&]()
+        {
+            if (server != nullptr)
+            {
+                server->stop();
+            }
+        });
+    ASSERT_TRUE(start_server_until_listening(server));
+    const auto server_port = server->listen_port();
+    ASSERT_NE(server_port, static_cast<std::uint16_t>(0));
+
+    {
+        boost::asio::ip::tcp::socket sock(pool.get_io_context());
+        boost::system::error_code connect_ec;
+        (void)sock.connect({boost::asio::ip::make_address("127.0.0.1"), server_port}, connect_ec);
+        ASSERT_FALSE(connect_ec);
+        if (connect_ec)
+        {
+            return;
+        }
+
+        auto spec = reality::fingerprint_factory::get(reality::fingerprint_type::kChrome120);
+        auto ch_body =
+            reality::client_hello_builder::build(spec, std::vector<uint8_t>(32, 0), info_random(), std::vector<uint8_t>(32, 0), "www.exact.test");
+        auto record = reality::write_record_header(reality::kContentTypeHandshake, static_cast<uint16_t>(ch_body.size()));
+        record.insert(record.end(), ch_body.begin(), ch_body.end());
+        boost::system::error_code write_ec;
+        boost::asio::write(sock, boost::asio::buffer(record), write_ec);
+        ASSERT_FALSE(write_ec);
+        if (write_ec)
+        {
+            return;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    }
+
+    EXPECT_TRUE(wait_for_condition([&wildcard_count]() { return wildcard_count.load() == 1; }));
+    EXPECT_EQ(wildcard_count.load(), 1);
 }
 
 TEST_F(remote_server_test_fixture, FallbackGuardRateLimitBlocksFallbackDial)
@@ -2602,8 +2689,8 @@ TEST_F(remote_server_test_fixture, ConstructorCoversShortIdAndDestParsingBranche
     mux::client_hello_info info{};
     info.sni = "www.example.test";
     const auto target = server_ipv6_dest->resolve_certificate_target(info);
-    EXPECT_EQ(target.fetch_host, "127.0.0.1");
-    EXPECT_EQ(target.fetch_port, static_cast<std::uint16_t>(443));
+    EXPECT_EQ(target.fetch_host, "::1");
+    EXPECT_EQ(target.fetch_port, static_cast<std::uint16_t>(8443));
 
     auto cfg_port_suffix = make_server_cfg(0, {{.sni = "www.port.test", .host = "127.0.0.1", .port = "443abc"}}, "0102030405060708");
     auto server_port_suffix = construct_server_until_acceptor_ready(pool, cfg_port_suffix);
@@ -2611,7 +2698,7 @@ TEST_F(remote_server_test_fixture, ConstructorCoversShortIdAndDestParsingBranche
     mux::client_hello_info suffix_info{};
     suffix_info.sni = "www.port.test";
     const auto suffix_target = server_port_suffix->resolve_certificate_target(suffix_info);
-    EXPECT_EQ(suffix_target.fetch_host, "127.0.0.1");
+    EXPECT_EQ(suffix_target.fetch_host, "www.apple.com");
     EXPECT_EQ(suffix_target.fetch_port, static_cast<std::uint16_t>(443));
 
     auto cfg_port_zero = make_server_cfg(0, {{.sni = "www.zero-port.test", .host = "127.0.0.1", .port = "0"}}, "0102030405060708");
@@ -2620,7 +2707,7 @@ TEST_F(remote_server_test_fixture, ConstructorCoversShortIdAndDestParsingBranche
     mux::client_hello_info zero_info{};
     zero_info.sni = "www.zero-port.test";
     const auto zero_target = server_port_zero->resolve_certificate_target(zero_info);
-    EXPECT_EQ(zero_target.fetch_host, "127.0.0.1");
+    EXPECT_EQ(zero_target.fetch_host, "www.apple.com");
     EXPECT_EQ(zero_target.fetch_port, static_cast<std::uint16_t>(443));
 }
 

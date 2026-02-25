@@ -1,6 +1,7 @@
 #include <cerrno>
 #include <cstdio>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <cstdint>
 #include <cstring>
@@ -243,6 +244,51 @@ constexpr std::uint32_t kQueueCapacityMax = 65535;
     return parsed_port > 0 && parsed_port <= 65535;
 }
 
+[[nodiscard]] std::string normalize_sni_key(std::string_view sni)
+{
+    std::string normalized;
+    normalized.reserve(sni.size());
+    for (const char ch : sni)
+    {
+        normalized.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+    }
+    while (!normalized.empty() && normalized.back() == '.')
+    {
+        normalized.pop_back();
+    }
+    return normalized;
+}
+
+[[nodiscard]] std::expected<void, config_error> validate_fallbacks_config(const std::vector<config::fallback_entry>& fallbacks)
+{
+    for (std::size_t i = 0; i < fallbacks.size(); ++i)
+    {
+        const auto& entry = fallbacks[i];
+        const auto index_path = "/fallbacks/" + std::to_string(i);
+        if (entry.host.empty())
+        {
+            return std::unexpected(make_config_error(index_path + "/host", "must be non-empty"));
+        }
+        if (entry.host.find('\0') != std::string::npos)
+        {
+            return std::unexpected(make_config_error(index_path + "/host", "must not contain nul"));
+        }
+        if (!valid_port_text(entry.port))
+        {
+            return std::unexpected(make_config_error(index_path + "/port", "must be in 1-65535"));
+        }
+        if (entry.sni.find('\0') != std::string::npos)
+        {
+            return std::unexpected(make_config_error(index_path + "/sni", "must not contain nul"));
+        }
+        if (!entry.sni.empty() && entry.sni != "*" && normalize_sni_key(entry.sni).empty())
+        {
+            return std::unexpected(make_config_error(index_path + "/sni", "must be non-empty after normalization when provided"));
+        }
+    }
+    return {};
+}
+
 [[nodiscard]] bool is_valid_reality_dest(const std::string& input)
 {
     if (input.empty())
@@ -451,6 +497,10 @@ constexpr std::uint32_t kQueueCapacityMax = 65535;
     if (const auto reality_result = validate_reality_config(cfg.reality); !reality_result)
     {
         return std::unexpected(reality_result.error());
+    }
+    if (const auto fallback_result = validate_fallbacks_config(cfg.fallbacks); !fallback_result)
+    {
+        return std::unexpected(fallback_result.error());
     }
     if (cfg.mode == "server")
     {
