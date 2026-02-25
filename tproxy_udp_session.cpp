@@ -693,23 +693,32 @@ boost::asio::awaitable<void> tproxy_udp_session::send_direct(const boost::asio::
                                                              const std::uint8_t* data,
                                                              const std::size_t len)
 {
-    auto target = dst_ep;
-    if (direct_socket_use_v6_)
+    if (dst_ep.address().is_v4() && direct_socket_use_v6_ && !direct_socket_dual_stack_)
     {
-        if (dst_ep.address().is_v4())
+        if (!switch_direct_socket_to_v4())
         {
-            if (!direct_socket_dual_stack_)
-            {
-                LOG_CTX_WARN(ctx_, "{} udp direct send skipped ipv4 target on ipv6-only socket", log_event::kSocks);
-                co_return;
-            }
-            target = map_v4_to_v6(dst_ep);
+            LOG_CTX_WARN(ctx_, "{} udp direct send failed to switch to ipv4 socket", log_event::kSocks);
+            co_return;
         }
     }
-    else if (dst_ep.address().is_v6())
+    if (dst_ep.address().is_v6() && !direct_socket_use_v6_)
     {
-        LOG_CTX_WARN(ctx_, "{} udp direct send skipped ipv6 target on ipv4 socket", log_event::kSocks);
-        co_return;
+        if (!switch_direct_socket_to_v6())
+        {
+            LOG_CTX_WARN(ctx_, "{} udp direct send failed to switch to ipv6 socket", log_event::kSocks);
+            co_return;
+        }
+    }
+
+    auto target = dst_ep;
+    if (dst_ep.address().is_v4() && direct_socket_use_v6_)
+    {
+        if (!direct_socket_dual_stack_)
+        {
+            LOG_CTX_WARN(ctx_, "{} udp direct send skipped ipv4 target on ipv6-only socket", log_event::kSocks);
+            co_return;
+        }
+        target = map_v4_to_v6(dst_ep);
     }
     const auto [ec, n] =
         co_await direct_socket_.async_send_to(boost::asio::buffer(data, len), target, boost::asio::as_tuple(boost::asio::use_awaitable));
@@ -717,6 +726,82 @@ boost::asio::awaitable<void> tproxy_udp_session::send_direct(const boost::asio::
     {
         LOG_CTX_WARN(ctx_, "{} udp direct send failed {}", log_event::kSocks, ec.message());
     }
+}
+
+bool tproxy_udp_session::switch_direct_socket_to_v4()
+{
+    boost::system::error_code ec;
+    if (direct_socket_.is_open())
+    {
+        ec = direct_socket_.close(ec);
+    }
+
+    ec = direct_socket_.open(boost::asio::ip::udp::v4(), ec);
+    if (ec)
+    {
+        LOG_CTX_WARN(ctx_, "{} udp direct switch ipv4 open failed {}", log_event::kSocks, ec.message());
+        close_start_failed_socket(direct_socket_, ctx_);
+        return false;
+    }
+    if (mark_ != 0)
+    {
+        if (auto r = net::set_socket_mark(direct_socket_.native_handle(), mark_); !r)
+        {
+            LOG_CTX_WARN(ctx_, "{} udp set mark failed {}", log_event::kSocks, r.error().message());
+        }
+    }
+    ec = direct_socket_.bind(boost::asio::ip::udp::endpoint(boost::asio::ip::address_v4::any(), 0), ec);
+    if (ec)
+    {
+        LOG_CTX_WARN(ctx_, "{} udp direct switch ipv4 bind failed {}", log_event::kSocks, ec.message());
+        close_start_failed_socket(direct_socket_, ctx_);
+        return false;
+    }
+    direct_socket_use_v6_ = false;
+    direct_socket_dual_stack_ = false;
+    return true;
+}
+
+bool tproxy_udp_session::switch_direct_socket_to_v6()
+{
+    boost::system::error_code ec;
+    if (direct_socket_.is_open())
+    {
+        ec = direct_socket_.close(ec);
+    }
+
+    ec = direct_socket_.open(boost::asio::ip::udp::v6(), ec);
+    if (ec)
+    {
+        LOG_CTX_WARN(ctx_, "{} udp direct switch ipv6 open failed {}", log_event::kSocks, ec.message());
+        close_start_failed_socket(direct_socket_, ctx_);
+        return false;
+    }
+    bool dual_stack = true;
+    ec = direct_socket_.set_option(boost::asio::ip::v6_only(false), ec);
+    if (ec)
+    {
+        LOG_CTX_WARN(ctx_, "{} udp direct switch ipv6 dual-stack failed {}", log_event::kSocks, ec.message());
+        dual_stack = false;
+        ec.clear();
+    }
+    if (mark_ != 0)
+    {
+        if (auto r = net::set_socket_mark(direct_socket_.native_handle(), mark_); !r)
+        {
+            LOG_CTX_WARN(ctx_, "{} udp set mark failed {}", log_event::kSocks, r.error().message());
+        }
+    }
+    ec = direct_socket_.bind(boost::asio::ip::udp::endpoint(boost::asio::ip::address_v6::any(), 0), ec);
+    if (ec)
+    {
+        LOG_CTX_WARN(ctx_, "{} udp direct switch ipv6 bind failed {}", log_event::kSocks, ec.message());
+        close_start_failed_socket(direct_socket_, ctx_);
+        return false;
+    }
+    direct_socket_use_v6_ = true;
+    direct_socket_dual_stack_ = dual_stack;
+    return true;
 }
 
 boost::asio::awaitable<void> tproxy_udp_session::direct_read_loop()
@@ -729,6 +814,10 @@ boost::asio::awaitable<void> tproxy_udp_session::direct_read_loop()
             co_await direct_socket_.async_receive_from(boost::asio::buffer(buf), sender, boost::asio::as_tuple(boost::asio::use_awaitable));
         if (recv_ec)
         {
+            if (recv_ec == boost::asio::error::operation_aborted && direct_socket_.is_open() && !terminated_.load(std::memory_order_acquire))
+            {
+                continue;
+            }
             if (recv_ec != boost::asio::error::operation_aborted)
             {
                 LOG_CTX_WARN(ctx_, "{} udp direct recv failed {}", log_event::kSocks, recv_ec.message());
