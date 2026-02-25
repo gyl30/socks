@@ -3165,6 +3165,13 @@ TEST_F(remote_server_test_fixture, ConstructorRejectsInvalidDestPortBranches)
     ASSERT_NE(server_overflow_port, nullptr);
     EXPECT_FALSE(server_overflow_port->fallback_dest_valid_);
     EXPECT_FALSE(server_overflow_port->auth_config_valid_);
+
+    auto cfg_host_with_nul = make_server_cfg(0, {}, "0102030405060708");
+    cfg_host_with_nul.reality.dest = std::string("example.com\0:443", 16);
+    auto server_host_with_nul = construct_server_until_acceptor_ready(pool, cfg_host_with_nul);
+    ASSERT_NE(server_host_with_nul, nullptr);
+    EXPECT_FALSE(server_host_with_nul->fallback_dest_valid_);
+    EXPECT_FALSE(server_host_with_nul->auth_config_valid_);
 }
 
 TEST_F(remote_server_test_fixture, ConstructorAcceptorSetupFailureBranchesWithWrappers)

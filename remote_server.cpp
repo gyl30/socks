@@ -183,6 +183,10 @@ bool parse_dest_target(const std::string& input, std::string& host, std::string&
     {
         return false;
     }
+    if (host.find('\0') != std::string::npos)
+    {
+        return false;
+    }
     if (!bracketed && host.find(':') != std::string::npos)
     {
         return false;
@@ -383,7 +387,8 @@ std::optional<std::pair<std::string, std::string>> find_exact_sni_fallback(const
     }
     for (const auto& fb : fallbacks)
     {
-        if (normalize_sni_key(fb.sni) == normalized_sni && !fb.host.empty() && valid_port_text(fb.port))
+        if (normalize_sni_key(fb.sni) == normalized_sni && !fb.host.empty() && valid_port_text(fb.port) &&
+            fb.host.find('\0') == std::string::npos)
         {
             return std::make_pair(fb.host, fb.port);
         }
@@ -395,7 +400,7 @@ std::optional<std::pair<std::string, std::string>> find_wildcard_fallback(const 
 {
     for (const auto& fb : fallbacks)
     {
-        if ((fb.sni.empty() || fb.sni == "*") && !fb.host.empty() && valid_port_text(fb.port))
+        if ((fb.sni.empty() || fb.sni == "*") && !fb.host.empty() && valid_port_text(fb.port) && fb.host.find('\0') == std::string::npos)
         {
             return std::make_pair(fb.host, fb.port);
         }
