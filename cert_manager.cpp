@@ -1,6 +1,7 @@
 #include <list>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <cstddef>
 #include <cstdint>
@@ -16,12 +17,33 @@
 namespace reality
 {
 
+namespace
+{
+
+std::string normalize_sni_key(std::string_view sni)
+{
+    std::string normalized;
+    normalized.reserve(sni.size());
+    for (const char ch : sni)
+    {
+        normalized.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+    }
+    while (!normalized.empty() && normalized.back() == '.')
+    {
+        normalized.pop_back();
+    }
+    return normalized;
+}
+
+}    // namespace
+
 cert_manager::cert_manager(const std::size_t capacity) : capacity_(capacity > 0 ? capacity : 1) {}
 
 std::optional<cert_entry> cert_manager::get_certificate(const std::string& sni)
 {
     const std::lock_guard<std::mutex> lock(mutex_);
-    if (auto it = index_.find(sni); it != index_.end())
+    const auto key = normalize_sni_key(sni);
+    if (auto it = index_.find(key); it != index_.end())
     {
         touch(it->second);
         return it->second->entry;
@@ -37,29 +59,30 @@ std::optional<cert_entry> cert_manager::get_certificate(const std::string& sni)
 
 void cert_manager::set_certificate(const std::string& sni, std::vector<std::uint8_t> cert_msg, server_fingerprint fp, const std::string& trace_id)
 {
+    const auto key = normalize_sni_key(sni);
     cert_entry cached_entry;
     {
         const std::lock_guard<std::mutex> lock(mutex_);
         cert_entry new_entry{.cert_msg = std::move(cert_msg), .fingerprint = std::move(fp)};
-        if (auto it = index_.find(sni); it != index_.end())
+        if (auto it = index_.find(key); it != index_.end())
         {
             it->second->entry = std::move(new_entry);
             touch(it->second);
         }
         else
         {
-            lru_.push_front({.sni = sni, .entry = std::move(new_entry)});
-            index_[sni] = lru_.begin();
+            lru_.push_front({.sni = key, .entry = std::move(new_entry)});
+            index_[key] = lru_.begin();
             evict_if_needed();
         }
 
-        const auto cache_it = index_.find(sni);
+        const auto cache_it = index_.find(key);
         cached_entry = cache_it->second->entry;
     }
 
     mux::connection_context ctx;
     ctx.trace_id(trace_id);
-    ctx.sni(sni);
+    ctx.sni(key);
 
     LOG_CTX_INFO(ctx,
                  "{} cached cert size {} alpn '{}' cipher 0x{:04x}",

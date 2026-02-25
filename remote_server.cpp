@@ -6,6 +6,7 @@
 #include <memory>
 #include <random>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 #include <cstdint>
@@ -81,6 +82,21 @@ constexpr std::size_t kFallbackGuardMaxSources = 4096;
 constexpr std::size_t kTlsRecordHeaderSize = 5;
 constexpr std::uint16_t kMaxTlsPlaintextRecordLen = static_cast<std::uint16_t>(reality::kMaxTlsPlaintextLen);
 constexpr std::uint16_t kMaxTlsCiphertextRecordLen = static_cast<std::uint16_t>(reality::kMaxTlsPlaintextLen + 256);
+
+std::string normalize_sni_key(std::string_view sni)
+{
+    std::string normalized;
+    normalized.reserve(sni.size());
+    for (const char ch : sni)
+    {
+        normalized.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+    }
+    while (!normalized.empty() && normalized.back() == '.')
+    {
+        normalized.pop_back();
+    }
+    return normalized;
+}
 
 bool parse_hex_to_bytes(const std::string& hex, std::vector<std::uint8_t>& out, const std::size_t max_len, const char* label)
 {
@@ -360,13 +376,14 @@ boost::asio::awaitable<timed_socket_connect_res> connect_socket_with_timeout(con
 std::optional<std::pair<std::string, std::string>> find_exact_sni_fallback(const std::vector<config::fallback_entry>& fallbacks,
                                                                            const std::string& sni)
 {
-    if (sni.empty())
+    const auto normalized_sni = normalize_sni_key(sni);
+    if (normalized_sni.empty())
     {
         return std::nullopt;
     }
     for (const auto& fb : fallbacks)
     {
-        if (fb.sni == sni)
+        if (normalize_sni_key(fb.sni) == normalized_sni)
         {
             return std::make_pair(fb.host, fb.port);
         }
@@ -2138,7 +2155,7 @@ std::expected<remote_server::key_share_result, boost::system::error_code> remote
 remote_server::certificate_target remote_server::resolve_certificate_target(const client_hello_info& info) const
 {
     certificate_target target;
-    target.cert_sni = info.sni;
+    target.cert_sni = normalize_sni_key(info.sni);
     target.fetch_host = "www.apple.com";
     target.fetch_port = 443;
 
@@ -2149,7 +2166,7 @@ remote_server::certificate_target remote_server::resolve_certificate_target(cons
         target.fetch_port = parse_fallback_port(fb.second);
         if (target.cert_sni.empty())
         {
-            target.cert_sni = fb.first;
+            target.cert_sni = normalize_sni_key(fb.first);
         }
     }
     return target;
@@ -2305,12 +2322,7 @@ std::string remote_server::fallback_guard_key(const connection_context& ctx, con
     {
         return source;
     }
-    std::string normalized_sni;
-    normalized_sni.reserve(sni.size());
-    for (const char ch : sni)
-    {
-        normalized_sni.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
-    }
+    std::string normalized_sni = normalize_sni_key(sni);
     if (normalized_sni.empty())
     {
         normalized_sni = "_";
