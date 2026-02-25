@@ -383,7 +383,7 @@ std::optional<std::pair<std::string, std::string>> find_exact_sni_fallback(const
     }
     for (const auto& fb : fallbacks)
     {
-        if (normalize_sni_key(fb.sni) == normalized_sni)
+        if (normalize_sni_key(fb.sni) == normalized_sni && !fb.host.empty() && valid_port_text(fb.port))
         {
             return std::make_pair(fb.host, fb.port);
         }
@@ -395,7 +395,7 @@ std::optional<std::pair<std::string, std::string>> find_wildcard_fallback(const 
 {
     for (const auto& fb : fallbacks)
     {
-        if (fb.sni.empty() || fb.sni == "*")
+        if ((fb.sni.empty() || fb.sni == "*") && !fb.host.empty() && valid_port_text(fb.port))
         {
             return std::make_pair(fb.host, fb.port);
         }
