@@ -109,6 +109,7 @@ class tproxy_udp_session : public mux_stream_interface, public std::enable_share
     std::atomic<std::uint64_t> last_activity_ms_{0};
     std::atomic<bool> terminated_{false};
     bool direct_socket_use_v6_ = true;
+    bool direct_socket_dual_stack_ = true;
     bool proxy_reader_started_ = false;
     bool has_cached_proxy_header_ = false;
     boost::asio::ip::udp::endpoint cached_proxy_dst_ep_;
