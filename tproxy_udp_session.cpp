@@ -110,6 +110,7 @@ bool tproxy_udp_session::start()
     terminated_.store(false, std::memory_order_release);
     direct_socket_use_v6_ = true;
     direct_socket_dual_stack_ = true;
+    const bool prefer_v4_socket = client_ep_.address().is_v4();
 
     const auto apply_mark = [&]()
     {
@@ -168,23 +169,29 @@ bool tproxy_udp_session::start()
                       true,
                       dual_stack_option_failed))
     {
-        if (dual_stack_option_failed)
+        const auto setup_v6_only = [&]() -> bool
         {
-            if (setup_socket(boost::asio::ip::udp::v6(),
-                             boost::asio::ip::udp::endpoint(boost::asio::ip::address_v6::any(), 0),
-                             true,
-                             false,
-                             dual_stack_option_failed))
+            if (!dual_stack_option_failed)
             {
-                boost::asio::co_spawn(io_context_, direct_read_loop_detached(shared_from_this()), boost::asio::detached);
-                return true;
+                return false;
             }
-        }
-        if (!setup_socket(boost::asio::ip::udp::v4(),
-                          boost::asio::ip::udp::endpoint(boost::asio::ip::address_v4::any(), 0),
-                          false,
-                          false,
-                          dual_stack_option_failed))
+            return setup_socket(boost::asio::ip::udp::v6(),
+                                boost::asio::ip::udp::endpoint(boost::asio::ip::address_v6::any(), 0),
+                                true,
+                                false,
+                                dual_stack_option_failed);
+        };
+        const auto setup_v4 = [&]() -> bool
+        {
+            return setup_socket(boost::asio::ip::udp::v4(),
+                                boost::asio::ip::udp::endpoint(boost::asio::ip::address_v4::any(), 0),
+                                false,
+                                false,
+                                dual_stack_option_failed);
+        };
+
+        const bool started = prefer_v4_socket ? (setup_v4() || setup_v6_only()) : (setup_v6_only() || setup_v4());
+        if (!started)
         {
             terminated_.store(true, std::memory_order_release);
             return false;

@@ -1140,6 +1140,40 @@ TEST(TproxyUdpSessionTest, StartKeepsIpv6ModeWhenDualStackUnavailableForIpv6Clie
 #endif
 }
 
+TEST(TproxyUdpSessionTest, StartPrefersIpv4SocketForIpv4ClientWhenDualStackUnavailable)
+{
+#ifndef IPV6_V6ONLY
+    GTEST_SKIP() << "IPV6_V6ONLY unsupported";
+#else
+    reset_socket_wrappers();
+    force_tproxy_setsockopt_success(true);
+    force_ipv6_socket_compat(true);
+
+    boost::asio::io_context ctx;
+    auto router = std::make_shared<direct_router>();
+
+    mux::config cfg;
+    cfg.tproxy.mark = 0;
+    const boost::asio::ip::udp::endpoint client_ep(boost::asio::ip::make_address("127.0.0.1"), 12411);
+    auto session = std::make_shared<mux::tproxy_udp_session>(ctx, nullptr, router, nullptr, 9, cfg, client_ep);
+
+    fail_setsockopt_once(SOL_IPV6, IPV6_V6ONLY, EPERM);
+    EXPECT_TRUE(session->start());
+    EXPECT_TRUE(session->direct_socket_.is_open());
+    EXPECT_FALSE(session->direct_socket_use_v6_);
+
+    boost::system::error_code ec;
+    const auto local_ep = session->direct_socket_.local_endpoint(ec);
+    ASSERT_FALSE(ec);
+    EXPECT_TRUE(local_ep.address().is_v4());
+
+    session->stop();
+    ctx.poll();
+    force_ipv6_socket_compat(false);
+    reset_socket_wrappers();
+#endif
+}
+
 TEST(TproxyUdpSessionTest, SendDirectIPv6AndCloseResetBranches)
 {
     boost::asio::io_context ctx;
