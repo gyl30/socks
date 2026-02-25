@@ -1221,6 +1221,25 @@ TEST_F(config_test_fixture, FallbackGuardEnabledRequiresPositiveParameters)
     parsed = mux::parse_config_with_error(tmp_file());
     ASSERT_FALSE(parsed.has_value());
     EXPECT_EQ(parsed.error().path, "/reality/fallback_guard/key_mode");
+
+    write_config_file(R"({
+        "mode": "client",
+        "socks": {
+            "enabled": true
+        },
+        "reality": {
+            "public_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "fallback_guard": {
+                "enabled": true,
+                "rate_per_sec": 1,
+                "burst": 1,
+                "key_mode": ""
+            }
+        }
+    })");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/reality/fallback_guard/key_mode");
 }
 
 TEST_F(config_test_fixture, FallbackGuardAllowsZeroCircuitOpenWhenThresholdDisabled)
