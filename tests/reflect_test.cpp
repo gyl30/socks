@@ -149,6 +149,18 @@ TEST(ReflectTest, StringViewSerialize)
     EXPECT_EQ(json, R"("")");
 }
 
+TEST(ReflectTest, DeserializeStringWithEmbeddedNulKeepsLength)
+{
+    reflect::test_struct t{};
+    ASSERT_TRUE(reflect::deserialize_struct(t, R"({"str":"ab\u0000cd"})"));
+    ASSERT_EQ(t.str.size(), 5U);
+    EXPECT_EQ(t.str[0], 'a');
+    EXPECT_EQ(t.str[1], 'b');
+    EXPECT_EQ(t.str[2], '\0');
+    EXPECT_EQ(t.str[3], 'c');
+    EXPECT_EQ(t.str[4], 'd');
+}
+
 TEST(ReflectTest, CharPointerDeserialize)
 {
     reflect::test_struct t;
