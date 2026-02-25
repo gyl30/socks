@@ -1481,6 +1481,7 @@ TEST_F(config_test_fixture, ContractMatrixTproxyRulesStayAlignedWithDocumentatio
     ASSERT_FALSE(doc.empty());
     EXPECT_NE(doc.find("当 `tproxy.enabled = true` 时，`tproxy.listen_host` 必须是非空且合法的 IP 地址"), std::string::npos);
     EXPECT_NE(doc.find("当 `tproxy.enabled = true` 时，`tproxy.tcp_port` 必须大于 `0`"), std::string::npos);
+    EXPECT_NE(doc.find("`tproxy` 入站仅在 `mode = client` 时生效"), std::string::npos);
 
 #if SOCKS_HAS_TPROXY
     write_config_file(R"({
@@ -1515,11 +1516,31 @@ TEST_F(config_test_fixture, ContractMatrixTproxyRulesStayAlignedWithDocumentatio
 #endif
 }
 
+TEST_F(config_test_fixture, ServerModeRejectsTproxyInbound)
+{
+    write_config_file(R"({
+        "mode": "server",
+        "tproxy": {
+            "enabled": true,
+            "listen_host": "::",
+            "tcp_port": 18080
+        },
+        "reality": {
+            "private_key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        }
+    })");
+    const auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/tproxy/enabled");
+    EXPECT_NE(parsed.error().reason.find("server mode does not support tproxy inbound"), std::string::npos);
+}
+
 TEST_F(config_test_fixture, ContractMatrixSocksHostRulesStayAlignedWithDocumentation)
 {
     const auto doc = load_configuration_doc();
     ASSERT_FALSE(doc.empty());
     EXPECT_NE(doc.find("当 `socks.enabled = true` 时，`socks.host` 必须是非空且合法的 IP 地址"), std::string::npos);
+    EXPECT_NE(doc.find("该约束仅在 `mode = client` 下生效"), std::string::npos);
 
     write_config_file(R"({
         "mode": "client",
@@ -1547,6 +1568,26 @@ TEST_F(config_test_fixture, ContractMatrixSocksHostRulesStayAlignedWithDocumenta
     parsed = mux::parse_config_with_error(tmp_file());
     ASSERT_TRUE(parsed.has_value());
     EXPECT_EQ(parsed->socks.host, "127.0.0.1");
+}
+
+TEST_F(config_test_fixture, ServerModeSkipsSocksValidation)
+{
+    write_config_file(R"({
+        "mode": "server",
+        "socks": {
+            "enabled": true,
+            "host": "not-an-ip",
+            "auth": true,
+            "username": "",
+            "password": ""
+        },
+        "reality": {
+            "private_key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        }
+    })");
+    const auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_EQ(parsed->mode, "server");
 }
 
 TEST_F(config_test_fixture, ContractMatrixClientRealityPublicKeyRuleStayAlignedWithDocumentation)
@@ -1768,11 +1809,15 @@ TEST_F(config_test_fixture, ContractMatrixFallbackGuardRulesStayAlignedWithDocum
 TEST_F(config_test_fixture, SocksAuthEnabledRequiresNonEmptyCredentials)
 {
     write_config_file(R"({
+        "mode": "client",
         "socks": {
             "enabled": true,
             "auth": true,
             "username": "",
             "password": "pass"
+        },
+        "reality": {
+            "public_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         }
     })");
     auto parsed = mux::parse_config_with_error(tmp_file());
@@ -1781,11 +1826,15 @@ TEST_F(config_test_fixture, SocksAuthEnabledRequiresNonEmptyCredentials)
     EXPECT_NE(parsed.error().reason.find("must be non-empty when auth is enabled"), std::string::npos);
 
     write_config_file(R"({
+        "mode": "client",
         "socks": {
             "enabled": true,
             "auth": true,
             "username": "user",
             "password": ""
+        },
+        "reality": {
+            "public_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         }
     })");
     parsed = mux::parse_config_with_error(tmp_file());
@@ -1794,6 +1843,7 @@ TEST_F(config_test_fixture, SocksAuthEnabledRequiresNonEmptyCredentials)
     EXPECT_NE(parsed.error().reason.find("must be non-empty when auth is enabled"), std::string::npos);
 
     write_config_file(R"({
+        "mode": "client",
         "socks": {
             "enabled": true,
             "auth": true,
@@ -1801,7 +1851,7 @@ TEST_F(config_test_fixture, SocksAuthEnabledRequiresNonEmptyCredentials)
             "password": "pass"
         },
         "reality": {
-            "private_key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+            "public_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         }
     })");
     parsed = mux::parse_config_with_error(tmp_file());
@@ -1811,14 +1861,16 @@ TEST_F(config_test_fixture, SocksAuthEnabledRequiresNonEmptyCredentials)
     EXPECT_EQ(parsed->socks.password, "pass");
 
     const std::string too_long_username(256, 'u');
-    write_config_file("{\"socks\":{\"enabled\":true,\"auth\":true,\"username\":\"" + too_long_username + "\",\"password\":\"pass\"}}");
+    write_config_file("{\"mode\":\"client\",\"socks\":{\"enabled\":true,\"auth\":true,\"username\":\"" + too_long_username +
+                      "\",\"password\":\"pass\"},\"reality\":{\"public_key\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}}");
     parsed = mux::parse_config_with_error(tmp_file());
     ASSERT_FALSE(parsed.has_value());
     EXPECT_EQ(parsed.error().path, "/socks/username");
     EXPECT_NE(parsed.error().reason.find("must be at most 255 bytes when auth is enabled"), std::string::npos);
 
     const std::string too_long_password(256, 'p');
-    write_config_file("{\"socks\":{\"enabled\":true,\"auth\":true,\"username\":\"user\",\"password\":\"" + too_long_password + "\"}}");
+    write_config_file("{\"mode\":\"client\",\"socks\":{\"enabled\":true,\"auth\":true,\"username\":\"user\",\"password\":\"" + too_long_password +
+                      "\"},\"reality\":{\"public_key\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}}");
     parsed = mux::parse_config_with_error(tmp_file());
     ASSERT_FALSE(parsed.has_value());
     EXPECT_EQ(parsed.error().path, "/socks/password");
@@ -1834,11 +1886,15 @@ TEST_F(config_test_fixture, ContractMatrixSocksAuthRulesStayAlignedWithDocumenta
     EXPECT_NE(doc.find("两者长度均不得超过 `255` 字节"), std::string::npos);
 
     write_config_file(R"({
+        "mode": "client",
         "socks": {
             "enabled": true,
             "auth": true,
             "username": "",
             "password": "pass"
+        },
+        "reality": {
+            "public_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         }
     })");
     auto parsed = mux::parse_config_with_error(tmp_file());
@@ -1846,11 +1902,15 @@ TEST_F(config_test_fixture, ContractMatrixSocksAuthRulesStayAlignedWithDocumenta
     EXPECT_EQ(parsed.error().path, "/socks/username");
 
     write_config_file(R"({
+        "mode": "client",
         "socks": {
             "enabled": true,
             "auth": true,
             "username": "user",
             "password": ""
+        },
+        "reality": {
+            "public_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         }
     })");
     parsed = mux::parse_config_with_error(tmp_file());

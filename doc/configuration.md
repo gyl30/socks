@@ -19,16 +19,19 @@
 - `socks.host` / `socks.port`：本地 SOCKS5 监听地址与端口。
 - `socks.auth` / `socks.username` / `socks.password`：SOCKS5 认证配置。
   - 当 `socks.enabled = true` 时，`socks.host` 必须是非空且合法的 IP 地址。
+  - 该约束仅在 `mode = client` 下生效。
   - 当 `socks.auth = true` 时，`socks.username` 与 `socks.password` 必须均为非空字符串。
   - 任一为空会在配置解析阶段直接报错，不会降级为无认证模式。
   - 两者长度均不得超过 `255` 字节（对应 SOCKS5 用户名/密码子协商单字节长度字段）。
   - 两者均不得包含 `NUL` 字节（例如 `\u0000`）。
+  - `mode = server` 时不会启动 SOCKS5 入站，也不会对 `socks` 字段做入站校验。
 - `tproxy.enabled`：是否启用 TPROXY 入站（默认 `false`，仅 Linux 支持）。
 - `tproxy.listen_host`：TPROXY 监听地址（默认 `::`）。
 - `tproxy.tcp_port` / `tproxy.udp_port`：TPROXY TCP/UDP 端口。`udp_port = 0` 表示跟随 `tcp_port`。
   - 当 `tproxy.enabled = true` 时，`tproxy.listen_host` 必须是非空且合法的 IP 地址。
   - 当 `tproxy.enabled = true` 时，`tproxy.tcp_port` 必须大于 `0`。
 - `tproxy.mark`：TPROXY `SO_MARK`，用于路由/回避回环（默认 `0x11`）。
+- `tproxy` 入站仅在 `mode = client` 时生效；`mode = server` 若设置 `tproxy.enabled = true` 会在配置解析阶段报错。
 - 非 Linux 平台若设置 `tproxy.enabled = true`，配置解析会直接报错。
 - 所有端口字段均要求 `0-65535` 的无符号整数；超出范围或负数会在解析阶段直接报错。
 

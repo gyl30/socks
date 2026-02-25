@@ -502,9 +502,12 @@ constexpr std::uint32_t kQueueCapacityMax = 65535;
     {
         return std::unexpected(queues_result.error());
     }
-    if (const auto socks_result = validate_socks_config(cfg.socks); !socks_result)
+    if (cfg.mode == "client")
     {
-        return std::unexpected(socks_result.error());
+        if (const auto socks_result = validate_socks_config(cfg.socks); !socks_result)
+        {
+            return std::unexpected(socks_result.error());
+        }
     }
     if (const auto reality_result = validate_reality_config(cfg.reality); !reality_result)
     {
@@ -516,28 +519,35 @@ constexpr std::uint32_t kQueueCapacityMax = 65535;
     }
     if (cfg.mode == "server")
     {
+        if (cfg.tproxy.enabled)
+        {
+            return std::unexpected(make_config_error("/tproxy/enabled", "server mode does not support tproxy inbound"));
+        }
         if (const auto inbound_result = validate_inbound_config(cfg.inbound); !inbound_result)
         {
             return std::unexpected(inbound_result.error());
         }
     }
+    if (cfg.mode == "client")
+    {
 #if !SOCKS_HAS_TPROXY
-    if (cfg.tproxy.enabled)
-    {
-        return std::unexpected(make_config_error("/tproxy/enabled", "tproxy inbound is only supported on linux"));
-    }
+        if (cfg.tproxy.enabled)
+        {
+            return std::unexpected(make_config_error("/tproxy/enabled", "tproxy inbound is only supported on linux"));
+        }
 #endif
-    if (const auto tproxy_result = validate_tproxy_config(cfg.tproxy); !tproxy_result)
-    {
-        return std::unexpected(tproxy_result.error());
-    }
-    if (cfg.mode == "client" && !has_enabled_client_inbound(cfg))
-    {
+        if (const auto tproxy_result = validate_tproxy_config(cfg.tproxy); !tproxy_result)
+        {
+            return std::unexpected(tproxy_result.error());
+        }
+        if (!has_enabled_client_inbound(cfg))
+        {
 #if SOCKS_HAS_TPROXY
-        return std::unexpected(make_config_error("/mode", "client mode requires socks or tproxy inbound"));
+            return std::unexpected(make_config_error("/mode", "client mode requires socks or tproxy inbound"));
 #else
-        return std::unexpected(make_config_error("/mode", "client mode requires socks inbound"));
+            return std::unexpected(make_config_error("/mode", "client mode requires socks inbound"));
 #endif
+        }
     }
     if (const auto mode_reality_result = validate_mode_reality_dependencies(cfg); !mode_reality_result)
     {
