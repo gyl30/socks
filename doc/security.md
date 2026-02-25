@@ -153,6 +153,67 @@ increase(socks_remote_session_connect_errors_total[10m]) > 30
   - 单测补充并通过：`tests/cert_manager_test.cpp` 新增 `SniLookupNormalizesCaseAndTrailingDot`。
   - `tests/remote_server_test.cpp` 在证书目标分支新增 `cert_sni` 规范化断言。
 
+## 代码审查问题追踪（2026-02-26）
+
+以下问题按严重度排序，均已修复并通过测试回归。
+
+### P0: fallback 配置缺少结构化校验，错误规则会在运行期造成错误回落
+
+- 触发时机或场景：
+  - 配置 `fallbacks` 中存在无效条目，例如 `host` 为空、`port` 为 `0` 或非端口文本。
+  - 精确 `sni` 规则命中，但该条目本身无效；同时存在 wildcard 规则或 `reality.dest`。
+- 表现出的现象：
+  - 配置阶段不报错，服务启动后才在 fallback 路径出现 `resolve/connect` 失败。
+  - 命中无效精确规则后直接返回空目标，导致 wildcard 或 `reality.dest` 不再被尝试。
+  - 外部表现为回落目标丢失、连接失败率上升、行为与配置预期不一致。
+- 根因：
+  - `config` 未对 `fallbacks[*]` 的 `host/port/sni` 做完整合法性校验。
+  - `remote_server` 精确匹配命中后未跳过无效条目。
+- 修复方案：
+  - 在配置解析阶段新增 `fallbacks` 校验：`host` 非空、`port` 为 `1-65535`、`sni` 规范化后不为空（通配场景除外）。
+  - 在 `remote_server` fallback 选择路径中跳过无效精确/通配条目，避免坏规则遮蔽后续可用目标。
+- 影响范围：
+  - `config::validate_config`、`remote_server::find_exact_sni_fallback`、`remote_server::find_wildcard_fallback`。
+- 验证：
+  - 新增并通过：`tests/config_test.cpp` 中 `FallbackEntryRequiresNonEmptyHostAndValidPort`、`FallbackSniMustRemainNonEmptyAfterNormalization`。
+  - 新增并通过：`tests/remote_server_test.cpp` 中 `InvalidExactSniFallbackDoesNotBlockWildcardFallback`。
+
+### P1: 客户端 REALITY 握手超时语义偏向 `timeout.read`，写阶段超时控制不明确
+
+- 触发时机或场景：
+  - 客户端握手阶段包含 `ClientHello` 发送与 `ClientFinished` 发送等写操作。
+  - 配置中读写超时策略不同，或写路径阻塞明显。
+- 表现出的现象：
+  - 握手整体超时判定主要受 `timeout.read` 影响，写阶段缺少同等粒度超时约束。
+  - 指标与日志更容易归因到 read 方向，降低写阻塞定位效率。
+- 根因：
+  - 握手外层使用统一 socket 超时守护，内部读写步骤未统一走分阶段 `timeout_io` 超时路径。
+- 修复方案：
+  - 握手读路径改为显式使用 `timeout.read`：`read_handshake_record_body`、`read_encrypted_record`、`process_handshake_record`。
+  - 握手写路径改为显式使用 `timeout.write`：`generate_and_send_client_hello`、`send_client_finished`。
+  - 外层握手函数仅负责错误分类，不再覆盖内部分阶段超时语义。
+- 影响范围：
+  - `client_tunnel_pool` 握手读写链路与相关 whitebox 接口签名。
+- 验证：
+  - 相关 whitebox 与握手回归测试通过：`tests/client_tunnel_pool_whitebox_test.cpp`、`tests/socks_client_handshake_test.cpp`。
+
+### P2: SOCKS5 UDP 头编码对超长域名静默截断，存在错误目标投递风险
+
+- 触发时机或场景：
+  - 进入 `encode_udp_header` 的目标域名长度超过 255，或域名为空。
+- 表现出的现象：
+  - 旧行为会把超长域名截断后继续编码，导致数据被发送到错误目标。
+  - 外部表现为“解析到了非预期主机”或“间歇性解析失败”，难以直接关联到编码截断。
+- 根因：
+  - `append_udp_domain_address` 默认截断到 255 字节，无显式错误返回。
+- 修复方案：
+  - 域名为空或超长时编码直接失败，`encode_udp_header` 返回空结果表示失败。
+  - 运行路径增加防御：`remote_udp_session` 与 `tproxy_udp_session` 在头编码失败时记录并丢弃该报文。
+- 影响范围：
+  - `protocol` UDP 头编码逻辑、`remote_udp_session`、`tproxy_udp_session`。
+- 验证：
+  - 单测更新并通过：`tests/socks_codec_test.cpp` 中 `EncodeUdpHeaderRejectsTooLongDomain`、`EncodeUdpHeaderRejectsEmptyDomain`。
+
 ## 每步验证要求
 
 1. 编译：`cmake --build build -j15`
