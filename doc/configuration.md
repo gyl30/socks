@@ -22,6 +22,7 @@
   - 当 `socks.auth = true` 时，`socks.username` 与 `socks.password` 必须均为非空字符串。
   - 任一为空会在配置解析阶段直接报错，不会降级为无认证模式。
   - 两者长度均不得超过 `255` 字节（对应 SOCKS5 用户名/密码子协商单字节长度字段）。
+  - 两者均不得包含 `NUL` 字节（例如 `\u0000`）。
 - `tproxy.enabled`：是否启用 TPROXY 入站（默认 `false`，仅 Linux 支持）。
 - `tproxy.listen_host`：TPROXY 监听地址（默认 `::`）。
 - `tproxy.tcp_port` / `tproxy.udp_port`：TPROXY TCP/UDP 端口。`udp_port = 0` 表示跟随 `tcp_port`。
@@ -77,6 +78,7 @@
   - 当 `mode = client` 时，`reality.fingerprint` 仅允许上述值及其版本别名（如 `chrome_120`）。
 - `reality.dest`：回落目标（格式 `host:port`）。
   - 在提供时必须符合 `host:port` 或 `[ipv6]:port`，且端口范围必须在 `1-65535`。
+  - 在提供时不得包含 `NUL` 字节（例如 `\u0000`）。
 - `reality.type`：回落网络类型（默认 `tcp`）。
   - 在提供时仅支持 `tcp`，否则配置解析失败。
 - `reality.strict_cert_verify`：是否严格校验证书签名（默认 `false`）。
@@ -222,6 +224,7 @@ groups:
 - `fallbacks[*].host` 必须为非空字符串。
 - `fallbacks[*].port` 必须是 `1-65535` 的十进制文本。
 - `fallbacks[*].sni` 允许空串或 `*`（通配）；若提供精确值，规范化（小写并去尾随 `.`）后不得为空。
+- `fallbacks[*].host` 与 `fallbacks[*].sni` 均不得包含 `NUL` 字节（例如 `\u0000`）。
 
 ## 测试脚本参数
 

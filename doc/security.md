@@ -214,6 +214,86 @@ increase(socks_remote_session_connect_errors_total[10m]) > 30
 - 验证：
   - 单测更新并通过：`tests/socks_codec_test.cpp` 中 `EncodeUdpHeaderRejectsTooLongDomain`、`EncodeUdpHeaderRejectsEmptyDomain`。
 
+## 代码审查问题追踪（2026-02-26 第三轮）
+
+以下问题按严重度排序，均已修复并通过测试回归。
+
+### P0: 配置文件包含真实 `NUL` 字节时会发生静默截断解析，后缀内容被忽略
+
+- 触发时机或场景：
+  - 配置文件被编辑器、脚本或链路污染，出现真实 `NUL` 字节。
+  - 典型输入形态为 `{"mode":"client"}\0{"mode":"server"}` 或在合法 JSON 后拼接 `NUL + 额外对象`。
+- 表现出的现象：
+  - 解析阶段不会明确报出 “配置文件包含非法控制字节”，而是只按前缀 JSON 生效。
+  - 后缀配置被静默忽略，运行行为与文件肉眼观察不一致。
+  - 外部表现可能是启动后出现与预期不符的模式/参数，排查时日志仅显示后续参数缺失。
+- 根因：
+  - 反序列化入口使用按 C 字符串终止语义的解析路径，遇到 `NUL` 可能提前结束。
+- 修复方案：
+  - 在 `deserialize_config_with_error` 入口显式检测 `NUL` 字节并返回结构化错误（包含偏移）。
+  - JSON 解析调用改为显式长度版本，避免 C 字符串语义截断。
+- 影响范围：
+  - `config::deserialize_config_with_error` 与所有配置加载入口。
+- 验证：
+  - 新增并通过：`tests/config_test.cpp` 中 `ParseConfigWithErrorRejectsEmbeddedNulInFileContent`。
+
+### P0: 反序列化字符串按 C 字符串读取，导致 `\u0000` 被截断并绕过字段级 `NUL` 校验
+
+- 触发时机或场景：
+  - JSON 字符串字段含 `\u0000`，例如 `socks.username`、`fallbacks[*].host/sni`、`reality.dest`。
+- 表现出的现象：
+  - 反序列化后字符串在首个 `NUL` 截断，后缀字节丢失。
+  - 配置层的 “不得包含 `NUL`” 校验无法触发，错误输入被误判为合法输入。
+  - 外部表现为配置值“被吃掉后半段”、运行期行为不稳定且与配置文件不一致。
+- 根因：
+  - `reflect::JsonReader::getString()` 使用 `GetString()`，未使用 `GetStringLength()` 保留完整字节序列。
+- 修复方案：
+  - 改为按 `GetStringLength()` 构造 `std::string`，完整保留字符串内容。
+- 影响范围：
+  - 全部基于 `reflect` 的 `std::string` 字段反序列化路径。
+- 验证：
+  - 新增并通过：`tests/reflect_test.cpp` 中 `DeserializeStringWithEmbeddedNulKeepsLength`。
+
+### P1: MUX `SYN/ACK` 字段接受 `NUL`，可能造成策略匹配与实际目标不一致
+
+- 触发时机或场景：
+  - 对端发送 `SYN.addr`、`SYN.trace_id` 或 `ACK.bnd_addr` 含 `NUL` 的帧。
+  - 或本端编码阶段收到含 `NUL` 的上游字段并直接发送。
+- 表现出的现象：
+  - 字段在按长度语义与按 C 字符串语义的处理路径中产生分歧。
+  - 可能表现为路由判定命中与实际连接目标不一致、日志字段截断、问题复现不稳定。
+- 根因：
+  - `mux_codec` 仅约束长度上限，未禁止地址与追踪字段中的 `NUL` 字节。
+- 修复方案：
+  - 在 `encode_syn/decode_syn` 与 `encode_ack/decode_ack` 增加 `NUL` 拒绝。
+  - 命中时返回失败并记录采样告警日志。
+- 影响范围：
+  - `mux_codec` 与依赖其编解码的 client/server MUX 通路。
+- 验证：
+  - 更新并通过：`tests/mux_codec_test.cpp` 中 `SynPayloadNullBytesInAddr`（改为拒绝）。
+  - 新增并通过：`SynPayloadNullBytesInTraceIdRejected`、`SynPayloadDecodeRejectsNullBytesInAddr`、`AckPayloadRejectsNullBytesInAddress`。
+
+### P1: 配置与运行期对 `NUL` 输入约束不完整，SOCKS 认证与 REALITY 回落目标存在异常输入通道
+
+- 触发时机或场景：
+  - 配置中 `socks.username/password` 或 `reality.dest` 含 `\u0000`。
+  - 运行期 fallback 主机字符串出现 `NUL`（配置污染或外部注入）。
+- 表现出的现象：
+  - SOCKS 认证阶段可能出现“配置值与实际比对值不一致”的疑难失败。
+  - REALITY fallback 目标解析与连接表现异常，可能出现不可解释的 `resolve/connect` 失败。
+  - 外部表现为连接偶发失败、指标抖动且难以通过常规日志直接定位输入源。
+- 根因：
+  - 配置校验对上述字段缺少统一 `NUL` 防御；运行期 fallback 目标选择路径缺少防御式过滤。
+- 修复方案：
+  - 配置层新增拒绝：`/socks/username`、`/socks/password`、`/reality/dest` 含 `NUL` 直接报错。
+  - 运行层新增防御：`parse_dest_target` 与 fallback 精确/通配选择均过滤含 `NUL` 主机。
+- 影响范围：
+  - `config::validate_socks_config`、`config::validate_reality_config`、`remote_server` fallback 目标解析/选择路径。
+- 验证：
+  - 新增并通过：`tests/config_test.cpp` 中 `SocksAuthCredentialsMustNotContainNul`、`FallbackEntryRejectsNulInHostOrSni`。
+  - 更新并通过：`tests/config_test.cpp` 中 `RealityDestWhenProvidedMustBeValid` 增加 `NUL` 分支。
+  - 新增并通过：`tests/remote_server_test.cpp` 中 `ConstructorRejectsInvalidDestPortBranches` 增加 `NUL` 目标分支。
+
 ## 每步验证要求
 
 1. 编译：`cmake --build build -j15`
