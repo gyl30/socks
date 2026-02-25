@@ -1110,6 +1110,36 @@ TEST(TproxyUdpSessionTest, StartCoversV6OnlyAndMarkFailure)
     reset_socket_wrappers();
 }
 
+TEST(TproxyUdpSessionTest, StartKeepsIpv6ModeWhenDualStackUnavailableForIpv6Client)
+{
+#ifndef IPV6_V6ONLY
+    GTEST_SKIP() << "IPV6_V6ONLY unsupported";
+#else
+    reset_socket_wrappers();
+    force_tproxy_setsockopt_success(true);
+    force_ipv6_socket_compat(true);
+
+    boost::asio::io_context ctx;
+    auto router = std::make_shared<direct_router>();
+
+    mux::config cfg;
+    cfg.tproxy.mark = 0;
+    const boost::asio::ip::udp::endpoint client_ep(boost::asio::ip::make_address("::1"), 12402);
+    auto session = std::make_shared<mux::tproxy_udp_session>(ctx, nullptr, router, nullptr, 6, cfg, client_ep);
+
+    fail_setsockopt_once(SOL_IPV6, IPV6_V6ONLY, EPERM);
+    EXPECT_TRUE(session->start());
+    EXPECT_TRUE(session->direct_socket_.is_open());
+    EXPECT_TRUE(session->direct_socket_use_v6_);
+    EXPECT_FALSE(session->direct_socket_dual_stack_);
+
+    session->stop();
+    ctx.poll();
+    force_ipv6_socket_compat(false);
+    reset_socket_wrappers();
+#endif
+}
+
 TEST(TproxyUdpSessionTest, SendDirectIPv6AndCloseResetBranches)
 {
     boost::asio::io_context ctx;
@@ -4135,6 +4165,91 @@ TEST(TproxyClientTest, SetupCoversV6DualStackSuccessBranches)
 
     force_ipv6_socket_compat(false);
     reset_socket_wrappers();
+}
+
+TEST(TproxyClientTest, SetupDoesNotRequireDualStackForSpecificIpv6Host)
+{
+#ifndef IPV6_V6ONLY
+    GTEST_SKIP() << "IPV6_V6ONLY unsupported";
+#else
+    reset_socket_wrappers();
+    force_tproxy_setsockopt_success(true);
+    force_ipv6_socket_compat(true);
+
+    mux::config cfg;
+    cfg.tproxy.enabled = true;
+    cfg.tproxy.listen_host = "::1";
+    cfg.tproxy.tcp_port = pick_free_tcp_port();
+    cfg.tproxy.udp_port = pick_free_tcp_port();
+    cfg.tproxy.mark = 0;
+
+    {
+        boost::system::error_code const ec;
+        mux::io_context_pool pool(1);
+        ASSERT_FALSE(ec);
+        auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
+
+        fail_setsockopt_once(SOL_IPV6, IPV6_V6ONLY, EPERM);
+        boost::asio::co_spawn(
+            pool.get_io_context(),
+            [client]() -> boost::asio::awaitable<void>
+            {
+                co_await client->accept_tcp_loop();
+                co_return;
+            },
+            boost::asio::detached);
+
+        std::thread runner([&pool]() { pool.run(); });
+        bool tcp_opened = false;
+        for (int i = 0; i < 50 && !(tcp_opened = tcp_acceptor_is_open(pool.get_io_context(), client)); ++i)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        ASSERT_TRUE(tcp_opened);
+        EXPECT_TRUE(g_fail_setsockopt_once.load(std::memory_order_acquire));
+
+        client->stop();
+        pool.stop();
+        runner.join();
+    }
+
+    reset_socket_wrappers();
+    force_tproxy_setsockopt_success(true);
+    force_ipv6_socket_compat(true);
+
+    {
+        boost::system::error_code const ec;
+        mux::io_context_pool pool(1);
+        ASSERT_FALSE(ec);
+        auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
+
+        fail_setsockopt_once(SOL_IPV6, IPV6_V6ONLY, EPERM);
+        boost::asio::co_spawn(
+            pool.get_io_context(),
+            [client]() -> boost::asio::awaitable<void>
+            {
+                co_await client->udp_loop();
+                co_return;
+            },
+            boost::asio::detached);
+
+        std::thread runner([&pool]() { pool.run(); });
+        bool udp_opened = false;
+        for (int i = 0; i < 50 && !(udp_opened = udp_socket_is_open(pool.get_io_context(), client)); ++i)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        ASSERT_TRUE(udp_opened);
+        EXPECT_TRUE(g_fail_setsockopt_once.load(std::memory_order_acquire));
+
+        client->stop();
+        pool.stop();
+        runner.join();
+    }
+
+    force_ipv6_socket_compat(false);
+    reset_socket_wrappers();
+#endif
 }
 
 TEST(TproxyClientTest, SetupFallsBackToIpv4WhenUnspecifiedIpv6DualStackUnavailable)
