@@ -135,6 +135,14 @@ constexpr std::uint32_t kQueueCapacityMax = 65535;
     {
         return std::unexpected(make_config_error("/socks/host", "must be valid ip address when socks is enabled"));
     }
+    if (socks.username.find('\0') != std::string::npos)
+    {
+        return std::unexpected(make_config_error("/socks/username", "must not contain nul"));
+    }
+    if (socks.password.find('\0') != std::string::npos)
+    {
+        return std::unexpected(make_config_error("/socks/password", "must not contain nul"));
+    }
     if (!socks.auth)
     {
         return {};
@@ -360,6 +368,10 @@ constexpr std::uint32_t kQueueCapacityMax = 65535;
     {
         return std::unexpected(make_config_error("/reality/short_id", "must be at most 8 bytes when provided"));
     }
+    if (reality.dest.find('\0') != std::string::npos)
+    {
+        return std::unexpected(make_config_error("/reality/dest", "must not contain nul when provided"));
+    }
     if (!reality.dest.empty() && !is_valid_reality_dest(reality.dest))
     {
         return std::unexpected(make_config_error("/reality/dest", "must be host:port or [ipv6]:port with port in 1-65535 when provided"));
@@ -566,8 +578,12 @@ constexpr std::uint32_t kQueueCapacityMax = 65535;
 
 [[nodiscard]] std::expected<config, config_error> deserialize_config_with_error(const std::string& text)
 {
+    if (const auto nul_pos = text.find('\0'); nul_pos != std::string::npos)
+    {
+        return std::unexpected(make_config_error("/", "json parse error at offset " + std::to_string(nul_pos) + ": embedded nul byte"));
+    }
     rapidjson::Document reader;
-    const rapidjson::ParseResult parse_result = reader.Parse(text.c_str());
+    const rapidjson::ParseResult parse_result = reader.Parse(text.data(), text.size());
     if (parse_result.IsError())
     {
         return std::unexpected(make_config_error(

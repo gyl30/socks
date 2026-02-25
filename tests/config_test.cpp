@@ -502,6 +502,43 @@ TEST_F(config_test_fixture, SocksEnabledRequiresValidListenHost)
     EXPECT_EQ(parsed->socks.host, "::1");
 }
 
+TEST_F(config_test_fixture, SocksAuthCredentialsMustNotContainNul)
+{
+    write_config_file(R"({
+        "mode": "client",
+        "socks": {
+            "enabled": true,
+            "auth": true,
+            "username": "user\u0000name",
+            "password": "pass"
+        },
+        "reality": {
+            "public_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+    })");
+    auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/socks/username");
+    EXPECT_NE(parsed.error().reason.find("must not contain nul"), std::string::npos);
+
+    write_config_file(R"({
+        "mode": "client",
+        "socks": {
+            "enabled": true,
+            "auth": true,
+            "username": "user",
+            "password": "pass\u0000word"
+        },
+        "reality": {
+            "public_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+    })");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/socks/password");
+    EXPECT_NE(parsed.error().reason.find("must not contain nul"), std::string::npos);
+}
+
 TEST_F(config_test_fixture, TproxyEnabledRequiresValidListenHostAndNonZeroTcpPort)
 {
 #if SOCKS_HAS_TPROXY
@@ -587,6 +624,19 @@ TEST_F(config_test_fixture, InvalidJson)
 TEST_F(config_test_fixture, ParseConfigWithErrorReportsJsonSyntax)
 {
     write_config_file("{ invalid_json }");
+
+    const auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/");
+    EXPECT_NE(parsed.error().reason.find("json parse error"), std::string::npos);
+}
+
+TEST_F(config_test_fixture, ParseConfigWithErrorRejectsEmbeddedNulInFileContent)
+{
+    std::string content = R"({"mode":"client"})";
+    content.push_back('\0');
+    content += R"({"mode":"server"})";
+    write_config_file(content);
 
     const auto parsed = mux::parse_config_with_error(tmp_file());
     ASSERT_FALSE(parsed.has_value());
@@ -736,6 +786,17 @@ TEST_F(config_test_fixture, RealityDestWhenProvidedMustBeValid)
     parsed = mux::parse_config_with_error(tmp_file());
     ASSERT_TRUE(parsed.has_value());
     EXPECT_EQ(parsed->reality.dest, "[::1]:443");
+
+    write_config_file(R"({
+        "reality": {
+            "dest": "example.com\u0000:443",
+            "private_key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        }
+    })");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/reality/dest");
+    EXPECT_NE(parsed.error().reason.find("must not contain nul"), std::string::npos);
 }
 
 TEST_F(config_test_fixture, FallbackEntryRequiresNonEmptyHostAndValidPort)
@@ -767,6 +828,37 @@ TEST_F(config_test_fixture, FallbackEntryRequiresNonEmptyHostAndValidPort)
     ASSERT_FALSE(parsed.has_value());
     EXPECT_EQ(parsed.error().path, "/fallbacks/0/port");
     EXPECT_NE(parsed.error().reason.find("must be in 1-65535"), std::string::npos);
+}
+
+TEST_F(config_test_fixture, FallbackEntryRejectsNulInHostOrSni)
+{
+    write_config_file(R"({
+        "fallbacks": [
+            {
+                "sni": "www.example.com",
+                "host": "127.0.0.1\u0000x",
+                "port": "443"
+            }
+        ]
+    })");
+    auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/fallbacks/0/host");
+    EXPECT_NE(parsed.error().reason.find("must not contain nul"), std::string::npos);
+
+    write_config_file(R"({
+        "fallbacks": [
+            {
+                "sni": "www.exa\u0000mple.com",
+                "host": "127.0.0.1",
+                "port": "443"
+            }
+        ]
+    })");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/fallbacks/0/sni");
+    EXPECT_NE(parsed.error().reason.find("must not contain nul"), std::string::npos);
 }
 
 TEST_F(config_test_fixture, FallbackSniMustRemainNonEmptyAfterNormalization)
