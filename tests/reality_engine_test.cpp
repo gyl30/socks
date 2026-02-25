@@ -155,6 +155,39 @@ TEST_F(reality_engine_test_fixture, EncryptDecryptRoundTrip)
     EXPECT_EQ(decrypted, plaintext);
 }
 
+TEST_F(reality_engine_test_fixture, EncryptDecryptRoundTripAcrossByteByByteInput)
+{
+    reality_engine encrypt_engine(write_key(), write_iv(), read_key(), read_iv(), cipher());
+    reality_engine decrypt_engine(read_key(), read_iv(), write_key(), write_iv(), cipher());
+
+    const std::vector<std::uint8_t> plaintext = {'B', 'y', 't', 'e', '-', 'C', 'h', 'u', 'n', 'k'};
+    auto encrypted_res = encrypt_engine.encrypt(plaintext);
+    ASSERT_TRUE(encrypted_res.has_value());
+    const std::vector<std::uint8_t> encrypted(encrypted_res->begin(), encrypted_res->end());
+    ASSERT_FALSE(encrypted.empty());
+
+    std::vector<std::uint8_t> decrypted;
+    std::size_t callback_calls = 0;
+    for (std::size_t i = 0; i < encrypted.size(); ++i)
+    {
+        auto buf = decrypt_engine.read_buffer(1);
+        std::memcpy(buf.data(), encrypted.data() + static_cast<std::ptrdiff_t>(i), 1);
+        decrypt_engine.commit_read(1);
+
+        const auto process_res = decrypt_engine.process_available_records(
+            [&](const std::uint8_t content_type, std::span<const std::uint8_t> data)
+            {
+                EXPECT_EQ(content_type, reality::kContentTypeApplicationData);
+                callback_calls++;
+                decrypted.assign(data.begin(), data.end());
+            });
+        ASSERT_TRUE(process_res.has_value());
+    }
+
+    EXPECT_EQ(callback_calls, 1U);
+    EXPECT_EQ(decrypted, plaintext);
+}
+
 TEST_F(reality_engine_test_fixture, MultipleEncryptions)
 {
     reality_engine engine(read_key(), read_iv(), write_key(), write_iv(), cipher());
