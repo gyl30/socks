@@ -586,7 +586,7 @@ boost::asio::awaitable<std::shared_ptr<mux_stream>> udp_socks_session::prepare_u
         co_return nullptr;
     }
 
-    const auto stream = co_await establish_udp_associate_stream(tunnel_manager_, ctx_, timeout_config_.read);
+    const auto stream = co_await establish_udp_associate_stream(tunnel_manager_, ctx_, timeout_config_.connect);
     if (stream == nullptr)
     {
         co_await write_socks_error_reply(socket_, socks::kRepGenFail, ctx_, timeout_config_.write);
