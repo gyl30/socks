@@ -30,6 +30,36 @@ TEST(CertManagerTest, BasicCache)
     EXPECT_EQ(entry->fingerprint.alpn, "h2");
 }
 
+TEST(CertManagerTest, SniLookupNormalizesCaseAndTrailingDot)
+{
+    cert_manager manager;
+    server_fingerprint fp;
+    fp.alpn = "h2";
+    fp.cipher_suite = 0x1301;
+
+    const std::vector<uint8_t> cert = {0xAA, 0xBB};
+    manager.set_certificate("WWW.Example.COM.", cert, fp, "trace-case");
+
+    const auto by_lower = manager.get_certificate("www.example.com");
+    ASSERT_TRUE(by_lower.has_value());
+    if (!by_lower.has_value())
+    {
+        return;
+    }
+    EXPECT_EQ(by_lower->cert_msg, cert);
+
+    const std::vector<uint8_t> updated_cert = {0xCC};
+    manager.set_certificate("www.example.com", updated_cert, fp, "trace-update");
+
+    const auto by_upper_dot = manager.get_certificate("WWW.EXAMPLE.COM.");
+    ASSERT_TRUE(by_upper_dot.has_value());
+    if (!by_upper_dot.has_value())
+    {
+        return;
+    }
+    EXPECT_EQ(by_upper_dot->cert_msg, updated_cert);
+}
+
 TEST(CertManagerTest, DefaultSNI)
 {
     cert_manager manager;
