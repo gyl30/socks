@@ -566,6 +566,35 @@ TEST(TproxyTcpSessionTest, SelectBackendDirectKeepsConnectTimeoutZeroAsDisabled)
     EXPECT_EQ(direct_backend->write_timeout_sec_, 6U);
 }
 
+TEST(TproxyTcpSessionTest, SelectBackendProxyUsesConfiguredConnectTimeout)
+{
+    boost::asio::io_context ctx;
+    auto router = std::make_shared<proxy_router>();
+
+    mux::config pool_cfg;
+    pool_cfg.outbound.host = "127.0.0.1";
+    pool_cfg.outbound.port = 443;
+    pool_cfg.reality.public_key = std::string(64, '0');
+    pool_cfg.limits.max_connections = 1;
+    mux::io_context_pool io_pool(1);
+    auto tunnel_pool = std::make_shared<mux::client_tunnel_pool>(io_pool, pool_cfg, 0);
+    tunnel_pool->tunnel_pool_.resize(1);
+    tunnel_pool->tunnel_pool_[0] = std::make_shared<mux::mux_tunnel_impl<boost::asio::ip::tcp::socket>>(
+        boost::asio::ip::tcp::socket(ctx), ctx, mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, 3001);
+
+    mux::config cfg;
+    cfg.timeout.connect = 7;
+    cfg.timeout.read = 29;
+    const boost::asio::ip::tcp::endpoint dst_ep(boost::asio::ip::make_address("127.0.0.1"), 80);
+    auto session = std::make_shared<mux::tproxy_tcp_session>(boost::asio::ip::tcp::socket(ctx), ctx, tunnel_pool, std::move(router), 31, cfg, dst_ep);
+
+    const auto [route, backend] = mux::test::run_awaitable(ctx, session->select_backend("127.0.0.1"));
+    EXPECT_EQ(route, mux::route_type::kProxy);
+    const auto proxy_backend = std::dynamic_pointer_cast<mux::proxy_upstream>(backend);
+    ASSERT_NE(proxy_backend, nullptr);
+    EXPECT_EQ(proxy_backend->timeout_sec_, 7U);
+}
+
 TEST(TproxyTcpSessionTest, SelectBackendProxyWithoutTunnelPoolReturnsNull)
 {
     boost::asio::io_context ctx;

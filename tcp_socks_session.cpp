@@ -207,7 +207,7 @@ std::shared_ptr<upstream> tcp_socks_session::create_backend(const route_type rou
     }
     if (route == route_type::kProxy)
     {
-        return std::make_shared<proxy_upstream>(tunnel_manager_, ctx_, timeout_config_.read);
+        return std::make_shared<proxy_upstream>(tunnel_manager_, ctx_, timeout_config_.connect);
     }
     return nullptr;
 }
