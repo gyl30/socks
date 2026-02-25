@@ -136,41 +136,83 @@ boost::asio::awaitable<bool> remote_udp_session::setup_udp_socket(const std::sha
     }
 
     boost::system::error_code ec;
-    ec = udp_socket_.open(boost::asio::ip::udp::v6(), ec);
+    bool dual_stack_option_failed = false;
+    const auto setup_v6 = [&](const bool dual_stack) -> bool
+    {
+        dual_stack_option_failed = false;
+        ec = udp_socket_.open(boost::asio::ip::udp::v6(), ec);
+        if (ec == boost::asio::error::already_open)
+        {
+            return false;
+        }
+        if (ec)
+        {
+            close_socket();
+            return false;
+        }
+        if (dual_stack)
+        {
+            ec = udp_socket_.set_option(boost::asio::ip::v6_only(false), ec);
+            if (ec)
+            {
+                dual_stack_option_failed = true;
+                close_socket();
+                return false;
+            }
+        }
+        ec = udp_socket_.bind(boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v6(), 0), ec);
+        if (ec)
+        {
+            close_socket();
+            return false;
+        }
+        udp_socket_use_v6_ = true;
+        udp_socket_dual_stack_ = dual_stack;
+        return true;
+    };
+    const auto setup_v4 = [&]() -> bool
+    {
+        ec = udp_socket_.open(boost::asio::ip::udp::v4(), ec);
+        if (ec)
+        {
+            close_socket();
+            return false;
+        }
+        ec = udp_socket_.bind(boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0), ec);
+        if (ec)
+        {
+            close_socket();
+            return false;
+        }
+        udp_socket_use_v6_ = false;
+        udp_socket_dual_stack_ = false;
+        return true;
+    };
+
+    if (setup_v6(true))
+    {
+        co_return true;
+    }
     if (ec == boost::asio::error::already_open)
     {
         co_await handle_start_failure(conn, "udp open", ec);
         co_return false;
     }
-    if (!ec)
+    const auto dual_stack_failure_ec = ec;
+    if (dual_stack_option_failed && setup_v6(false))
     {
-        ec = udp_socket_.set_option(boost::asio::ip::v6_only(false), ec);
-    }
-    if (!ec)
-    {
-        ec = udp_socket_.bind(boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v6(), 0), ec);
-    }
-    if (!ec)
-    {
-        udp_socket_use_v6_ = true;
+        LOG_CTX_WARN(
+            ctx_, "{} udp ipv6 dual-stack setup failed {} fallback to ipv6-only", log_event::kMux, dual_stack_failure_ec.message());
         co_return true;
     }
 
-    LOG_CTX_WARN(ctx_, "{} udp ipv6 dual-stack setup failed {} fallback to ipv4", log_event::kMux, ec.message());
-    close_socket();
-
-    ec = udp_socket_.open(boost::asio::ip::udp::v4(), ec);
-    if (!ec)
-    {
-        ec = udp_socket_.bind(boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0), ec);
-    }
-    if (ec)
+    LOG_CTX_WARN(ctx_, "{} udp ipv6 setup failed {} fallback to ipv4", log_event::kMux, ec.message());
+    if (!setup_v4())
     {
         co_await handle_start_failure(conn, "udp bind", ec);
         co_return false;
     }
 
-    udp_socket_use_v6_ = false;
     co_return true;
 }
 
@@ -239,12 +281,30 @@ boost::asio::awaitable<void> remote_udp_session::forward_mux_payload(const std::
 
     boost::asio::ip::udp::endpoint target_ep;
     bool has_compatible_endpoint = false;
+    bool has_ipv4_candidate = false;
+    boost::asio::ip::udp::endpoint first_ipv4_candidate;
     for (const auto& endpoint : resolve_res.endpoints)
     {
         const auto candidate = boost::asio::ip::udp::endpoint(endpoint.endpoint().address(), endpoint.endpoint().port());
+        if (candidate.address().is_v4() && !has_ipv4_candidate)
+        {
+            first_ipv4_candidate = candidate;
+            has_ipv4_candidate = true;
+        }
         if (udp_socket_use_v6_)
         {
-            target_ep = normalize_target_endpoint(candidate);
+            if (candidate.address().is_v4())
+            {
+                if (!udp_socket_dual_stack_)
+                {
+                    continue;
+                }
+                target_ep = normalize_target_endpoint(candidate);
+            }
+            else
+            {
+                target_ep = candidate;
+            }
             has_compatible_endpoint = true;
             break;
         }
@@ -253,6 +313,14 @@ boost::asio::awaitable<void> remote_udp_session::forward_mux_payload(const std::
             target_ep = candidate;
             has_compatible_endpoint = true;
             break;
+        }
+    }
+    if (!has_compatible_endpoint && udp_socket_use_v6_ && !udp_socket_dual_stack_ && has_ipv4_candidate)
+    {
+        if (switch_udp_socket_to_v4())
+        {
+            target_ep = first_ipv4_candidate;
+            has_compatible_endpoint = true;
         }
     }
     if (!has_compatible_endpoint)
@@ -279,6 +347,30 @@ boost::asio::awaitable<void> remote_udp_session::forward_mux_payload(const std::
     }
 
     record_udp_write(sent_len);
+}
+
+bool remote_udp_session::switch_udp_socket_to_v4()
+{
+    boost::system::error_code ec;
+    close_socket();
+    ec = udp_socket_.open(boost::asio::ip::udp::v4(), ec);
+    if (ec)
+    {
+        LOG_CTX_WARN(ctx_, "{} udp ipv4 switch open failed {}", log_event::kMux, ec.message());
+        close_socket();
+        return false;
+    }
+    ec = udp_socket_.bind(boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0), ec);
+    if (ec)
+    {
+        LOG_CTX_WARN(ctx_, "{} udp ipv4 switch bind failed {}", log_event::kMux, ec.message());
+        close_socket();
+        return false;
+    }
+    udp_socket_use_v6_ = false;
+    udp_socket_dual_stack_ = false;
+    LOG_CTX_WARN(ctx_, "{} udp switched from ipv6-only to ipv4 for target compatibility", log_event::kMux);
+    return true;
 }
 
 void remote_udp_session::log_udp_local_endpoint()
@@ -503,6 +595,11 @@ boost::asio::awaitable<void> remote_udp_session::udp_to_mux()
             co_await udp_socket_.async_receive_from(boost::asio::buffer(buf), ep, boost::asio::as_tuple(boost::asio::use_awaitable));
         if (recv_ec)
         {
+            if (recv_ec == boost::asio::error::operation_aborted && udp_socket_.is_open() &&
+                !terminated_.load(std::memory_order_acquire))
+            {
+                continue;
+            }
             if (recv_ec != boost::asio::error::operation_aborted)
             {
                 LOG_CTX_WARN(ctx_, "{} udp receive error {}", log_event::kMux, recv_ec.message());
