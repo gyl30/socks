@@ -1,4 +1,5 @@
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include <string>
 #include <vector>
@@ -14,6 +15,7 @@
 #include <boost/asio/dispatch.hpp>
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/io_context.hpp>
+#include <boost/asio/steady_timer.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/redirect_error.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
@@ -39,6 +41,12 @@ namespace
 using resolve_results = boost::asio::ip::tcp::resolver::results_type;
 using timed_resolve_result = timeout_io::timed_tcp_resolve_result;
 using timed_connect_result = timeout_io::timed_tcp_connect_result;
+
+[[nodiscard]] std::uint64_t now_ms()
+{
+    return static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+}
 
 void log_remote_session_recv_channel_unavailable_on_data(const connection_context& ctx)
 {
@@ -351,18 +359,22 @@ remote_session::remote_session(const std::shared_ptr<mux_connection>& connection
                                boost::asio::io_context& io_context,
                                const connection_context& ctx,
                                const std::uint32_t connect_timeout_sec,
-                               const std::uint32_t write_timeout_sec)
+                               const std::uint32_t write_timeout_sec,
+                               const std::uint32_t idle_timeout_sec)
     : id_(id),
       io_context_(io_context),
       resolver_(io_context_),
       target_socket_(io_context_),
+      idle_timer_(io_context_),
       connection_(connection),
       recv_channel_(io_context_, 128),
       connect_timeout_sec_(connect_timeout_sec),
-      write_timeout_sec_(write_timeout_sec)
+      write_timeout_sec_(write_timeout_sec),
+      idle_timeout_sec_(idle_timeout_sec)
 {
     ctx_ = ctx;
     ctx_.stream_id(id);
+    last_activity_time_ms_.store(now_ms(), std::memory_order_release);
 }
 
 boost::asio::awaitable<void> remote_session::start(const syn_payload& syn)
@@ -406,7 +418,15 @@ boost::asio::awaitable<void> remote_session::run(const syn_payload& syn)
     }
 
     using boost::asio::experimental::awaitable_operators::operator&&;
-    co_await (upstream() && downstream());
+    using boost::asio::experimental::awaitable_operators::operator||;
+    if (idle_timeout_sec_ == 0)
+    {
+        co_await (upstream() && downstream());
+    }
+    else
+    {
+        co_await ((upstream() && downstream()) || idle_watchdog());
+    }
 
     close_target_socket(target_socket_);
     remove_stream(manager_, id_);
@@ -460,6 +480,7 @@ void remote_session::close_from_fin()
     LOG_CTX_DEBUG(ctx_, "{} received fin from client", log_event::kMux);
     recv_channel_.close();
     resolver_.cancel();
+    idle_timer_.cancel();
     boost::system::error_code ec;
     ec = target_socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
 }
@@ -473,6 +494,7 @@ void remote_session::close_from_reset()
     }
     recv_channel_.close();
     resolver_.cancel();
+    idle_timer_.cancel();
     boost::system::error_code ec;
     ec = target_socket_.close(ec);
     remove_stream(manager_, id_);
@@ -491,6 +513,7 @@ boost::asio::awaitable<void> remote_session::upstream()
         {
             break;
         }
+        last_activity_time_ms_.store(now_ms(), std::memory_order_release);
     }
     LOG_CTX_INFO(ctx_, "{} mux to target finished", log_event::kDataSend);
 }
@@ -507,16 +530,44 @@ boost::asio::awaitable<void> remote_session::downstream()
         {
             break;
         }
+        last_activity_time_ms_.store(now_ms(), std::memory_order_release);
         if (!co_await send_downstream_payload(connection_, id_, buf, n, ctx_))
         {
             recv_channel_.close();
             break;
         }
+        last_activity_time_ms_.store(now_ms(), std::memory_order_release);
     }
     LOG_CTX_INFO(ctx_, "{} target to mux finished", log_event::kDataRecv);
     if (!reset_requested_.load(std::memory_order_acquire))
     {
         co_await send_fin_to_connection(connection_, id_);
+    }
+}
+
+boost::asio::awaitable<void> remote_session::idle_watchdog()
+{
+    if (idle_timeout_sec_ == 0)
+    {
+        co_return;
+    }
+
+    while (!reset_requested_.load(std::memory_order_acquire) && !fin_requested_.load(std::memory_order_acquire))
+    {
+        idle_timer_.expires_after(std::chrono::seconds(1));
+        const auto [wait_ec] = co_await idle_timer_.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
+        if (wait_ec)
+        {
+            break;
+        }
+        const auto elapsed_ms = now_ms() - last_activity_time_ms_.load(std::memory_order_acquire);
+        const auto idle_timeout_ms = static_cast<std::uint64_t>(idle_timeout_sec_) * 1000ULL;
+        if (elapsed_ms > idle_timeout_ms)
+        {
+            LOG_CTX_WARN(ctx_, "{} idle timeout {}s", log_event::kTimeout, idle_timeout_sec_);
+            close_from_reset();
+            break;
+        }
     }
 }
 
