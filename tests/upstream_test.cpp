@@ -230,7 +230,7 @@ TEST_F(upstream_test_fixture, DirectUpstreamConnectFail)
     EXPECT_GE(stats.direct_upstream_connect_errors(), connect_errors_before + 1);
 }
 
-TEST_F(upstream_test_fixture, DirectUpstreamConnectTimeoutWhenBacklogSaturated)
+TEST_F(upstream_test_fixture, DirectUpstreamConnectTimeoutReturnsHostUnreachWhenBacklogSaturated)
 {
     auto& stats = mux::statistics::instance();
     const auto connect_timeouts_before = stats.direct_upstream_connect_timeouts();
@@ -257,6 +257,7 @@ TEST_F(upstream_test_fixture, DirectUpstreamConnectTimeoutWhenBacklogSaturated)
 
     EXPECT_FALSE(success);
     EXPECT_LT(std::chrono::duration_cast<std::chrono::seconds>(elapsed).count(), 5);
+    EXPECT_EQ(upstream.connect_failure_reply(), socks::kRepHostUnreach);
     EXPECT_GE(stats.direct_upstream_connect_timeouts(), connect_timeouts_before + 1);
 
     boost::system::error_code close_ec;
@@ -627,7 +628,7 @@ TEST_F(upstream_test_fixture, ProxyUpstreamConnectFailsWhenAckRejectedAndCleansS
     EXPECT_EQ(upstream.stream_, nullptr);
 }
 
-TEST_F(upstream_test_fixture, ProxyUpstreamConnectFailsWhenAckTimeoutAndCleansStream)
+TEST_F(upstream_test_fixture, ProxyUpstreamConnectAckTimeoutReturnsHostUnreachAndCleansStream)
 {
     auto tunnel = make_test_tunnel(ctx());
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
@@ -647,7 +648,7 @@ TEST_F(upstream_test_fixture, ProxyUpstreamConnectFailsWhenAckTimeoutAndCleansSt
     const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
     EXPECT_GE(elapsed.count(), 900);
     EXPECT_LT(elapsed.count(), 4000);
-    EXPECT_EQ(upstream.connect_failure_reply(), socks::kRepConnRefused);
+    EXPECT_EQ(upstream.connect_failure_reply(), socks::kRepHostUnreach);
     EXPECT_EQ(upstream.stream_, nullptr);
 }
 
@@ -722,7 +723,7 @@ TEST_F(upstream_test_fixture, ProxyUpstreamWaitConnectAckRemoteReject)
     EXPECT_FALSE(mux::test::run_awaitable(ctx(), upstream.wait_connect_ack(stream, "example.com", 443)));
 }
 
-TEST_F(upstream_test_fixture, ProxyUpstreamWaitConnectAckTimeout)
+TEST_F(upstream_test_fixture, ProxyUpstreamWaitConnectAckTimeoutSetsHostUnreach)
 {
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx());
     auto stream = make_mock_stream(ctx(), mock_conn);
@@ -733,7 +734,7 @@ TEST_F(upstream_test_fixture, ProxyUpstreamWaitConnectAckTimeout)
     const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
     EXPECT_GE(elapsed.count(), 900);
     EXPECT_LT(elapsed.count(), 4000);
-    EXPECT_EQ(upstream.connect_failure_reply(), socks::kRepConnRefused);
+    EXPECT_EQ(upstream.connect_failure_reply(), socks::kRepHostUnreach);
 }
 
 TEST_F(upstream_test_fixture, ProxyUpstreamCleanupNullStreamNoop)
