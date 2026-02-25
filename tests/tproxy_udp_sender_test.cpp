@@ -5,6 +5,7 @@
 #include <chrono>
 #include <memory>
 #include <vector>
+#include <thread>
 #include <cstdint>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -259,6 +260,52 @@ TEST(TproxyUdpSenderTest, SendToClientRejectsInvalidSourceEndpoint)
     const auto n = receiver.receive_from(boost::asio::buffer(recv_buf), from_ep, 0, ec);
     EXPECT_EQ(n, 0U);
     EXPECT_TRUE(ec == boost::asio::error::would_block || ec == boost::asio::error::try_again);
+}
+
+TEST(TproxyUdpSenderTest, SendToClientVectorPayloadUsesSnapshotAtCallTime)
+{
+    boost::asio::io_context ctx;
+    mux::tproxy_udp_sender sender(ctx, 0);
+
+    boost::asio::ip::udp::socket receiver(ctx, boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 0));
+    receiver.non_blocking(true);
+
+    const auto client_ep = receiver.local_endpoint();
+    const boost::asio::ip::udp::endpoint src_ep(boost::asio::ip::make_address("127.0.0.1"), 18081);
+
+    auto src_socket = make_bound_udp_v4_socket(ctx);
+    const auto now_ms = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+    sender.update_cached_socket({.addr = src_ep.address(), .port = src_ep.port()}, src_socket, now_ms);
+
+    std::vector<std::uint8_t> payload = {0x11, 0x22, 0x33};
+    auto send_task = sender.send_to_client(client_ep, src_ep, payload);
+    payload.assign({0x99});
+    mux::test::run_awaitable_void(ctx, std::move(send_task));
+
+    std::array<std::uint8_t, 16> recv_buf = {0};
+    boost::asio::ip::udp::endpoint from_ep;
+    boost::system::error_code ec;
+    std::size_t n = 0;
+    for (int i = 0; i < 50; ++i)
+    {
+        n = receiver.receive_from(boost::asio::buffer(recv_buf), from_ep, 0, ec);
+        if (!ec)
+        {
+            break;
+        }
+        if (ec != boost::asio::error::would_block && ec != boost::asio::error::try_again)
+        {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+
+    ASSERT_FALSE(ec);
+    ASSERT_EQ(n, 3U);
+    EXPECT_EQ(recv_buf[0], 0x11);
+    EXPECT_EQ(recv_buf[1], 0x22);
+    EXPECT_EQ(recv_buf[2], 0x33);
 }
 
 TEST(TproxyUdpSenderTest, GetSocketEvictsWhenCacheLooksFull)
