@@ -34,7 +34,7 @@ REFLECT_STRUCT(mux::config::tproxy_t, enabled, listen_host, tcp_port, udp_port, 
 REFLECT_STRUCT(mux::config::fallback_entry, sni, host, port);
 REFLECT_STRUCT(mux::config::timeout_t, read, write, connect, idle);
 REFLECT_STRUCT(mux::config::queues_t, udp_session_recv_channel_capacity, tproxy_udp_dispatch_queue_capacity);
-REFLECT_STRUCT(mux::config::reality_t::fallback_guard_t, enabled, rate_per_sec, burst, circuit_fail_threshold, circuit_open_sec, state_ttl_sec);
+REFLECT_STRUCT(mux::config::reality_t::fallback_guard_t, enabled, rate_per_sec, burst, key_mode, circuit_fail_threshold, circuit_open_sec, state_ttl_sec);
 REFLECT_STRUCT(mux::config::reality_t,
                fallback_guard,
                sni,
@@ -264,6 +264,22 @@ constexpr std::uint32_t kQueueCapacityMax = 65535;
     return true;
 }
 
+[[nodiscard]] std::string normalize_fallback_guard_key_mode(const std::string& key_mode)
+{
+    std::string normalized;
+    normalized.reserve(key_mode.size());
+    for (const char ch : key_mode)
+    {
+        if (ch == '-' || ch == ' ')
+        {
+            normalized.push_back('_');
+            continue;
+        }
+        normalized.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+    }
+    return normalized;
+}
+
 [[nodiscard]] std::expected<void, config_error> validate_reality_config(const config::reality_t& reality)
 {
     constexpr std::size_t kRealityKeyLen = 32;
@@ -302,6 +318,10 @@ constexpr std::uint32_t kQueueCapacityMax = 65535;
     {
         return std::unexpected(make_config_error("/reality/dest", "must be host:port or [ipv6]:port with port in 1-65535 when provided"));
     }
+    if (!reality.type.empty() && reality.type != "tcp")
+    {
+        return std::unexpected(make_config_error("/reality/type", "must be tcp when provided"));
+    }
     if (reality.fallback_guard.enabled)
     {
         if (reality.fallback_guard.rate_per_sec == 0)
@@ -311,6 +331,11 @@ constexpr std::uint32_t kQueueCapacityMax = 65535;
         if (reality.fallback_guard.burst == 0)
         {
             return std::unexpected(make_config_error("/reality/fallback_guard/burst", "must be greater than 0 when fallback guard is enabled"));
+        }
+        const auto key_mode = normalize_fallback_guard_key_mode(reality.fallback_guard.key_mode);
+        if (!key_mode.empty() && key_mode != "ip" && key_mode != "ip_sni")
+        {
+            return std::unexpected(make_config_error("/reality/fallback_guard/key_mode", "must be ip or ip_sni when fallback guard is enabled"));
         }
         if (reality.fallback_guard.state_ttl_sec == 0)
         {
@@ -339,6 +364,10 @@ constexpr std::uint32_t kQueueCapacityMax = 65535;
     if (cfg.mode == "client" && cfg.reality.public_key.empty())
     {
         return std::unexpected(make_config_error("/reality/public_key", "must be non-empty in client mode"));
+    }
+    if (cfg.mode == "server" && cfg.reality.private_key.empty())
+    {
+        return std::unexpected(make_config_error("/reality/private_key", "must be non-empty in server mode"));
     }
     if (cfg.mode == "client")
     {

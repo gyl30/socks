@@ -554,7 +554,7 @@ TEST_F(upstream_test_fixture, ProxyUpstreamConnectSuccessSetsStream)
                 mux::ack_payload ack{};
                 ack.socks_rep = socks::kRepSuccess;
                 std::vector<std::uint8_t> ack_data;
-                mux::mux_codec::encode_ack(ack, ack_data);
+                (void)mux::mux_codec::encode_ack(ack, ack_data);
                 boost::asio::post(this->ctx(), [stream, ack_data]() { stream->on_data(ack_data); });
                 return true;
             });
@@ -614,7 +614,7 @@ TEST_F(upstream_test_fixture, ProxyUpstreamConnectFailsWhenAckRejectedAndCleansS
                 mux::ack_payload ack{};
                 ack.socks_rep = socks::kRepConnRefused;
                 std::vector<std::uint8_t> ack_data;
-                mux::mux_codec::encode_ack(ack, ack_data);
+                (void)mux::mux_codec::encode_ack(ack, ack_data);
                 boost::asio::post(this->ctx(), [stream, ack_data]() { stream->on_data(ack_data); });
                 return true;
             });
@@ -681,7 +681,7 @@ TEST_F(upstream_test_fixture, ProxyUpstreamWaitConnectAckSuccess)
     mux::ack_payload ack{};
     ack.socks_rep = socks::kRepSuccess;
     std::vector<std::uint8_t> ack_data;
-    mux::mux_codec::encode_ack(ack, ack_data);
+    (void)mux::mux_codec::encode_ack(ack, ack_data);
     stream->on_data(ack_data);
 
     EXPECT_TRUE(mux::test::run_awaitable(ctx(), upstream.wait_connect_ack(stream, "example.com", 443)));
@@ -716,7 +716,7 @@ TEST_F(upstream_test_fixture, ProxyUpstreamWaitConnectAckRemoteReject)
     mux::ack_payload ack{};
     ack.socks_rep = socks::kRepConnRefused;
     std::vector<std::uint8_t> ack_data;
-    mux::mux_codec::encode_ack(ack, ack_data);
+    (void)mux::mux_codec::encode_ack(ack, ack_data);
     stream->on_data(ack_data);
 
     EXPECT_FALSE(mux::test::run_awaitable(ctx(), upstream.wait_connect_ack(stream, "example.com", 443)));

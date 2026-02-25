@@ -306,6 +306,53 @@ TEST_F(config_test_fixture, ClientModeRequiresRealityPublicKey)
     EXPECT_EQ(parsed->reality.public_key, std::string(64, 'a'));
 }
 
+TEST_F(config_test_fixture, ServerModeRequiresRealityPrivateKey)
+{
+    write_config_file(R"({
+        "mode": "server",
+        "reality": {
+            "private_key": ""
+        }
+    })");
+    auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/reality/private_key");
+    EXPECT_NE(parsed.error().reason.find("must be non-empty in server mode"), std::string::npos);
+
+    write_config_file(R"({
+        "mode": "server",
+        "reality": {
+            "private_key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        }
+    })");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_EQ(parsed->reality.private_key, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
+}
+
+TEST_F(config_test_fixture, RealityTypeOnlySupportsTcp)
+{
+    write_config_file(R"({
+        "reality": {
+            "type": "udp"
+        }
+    })");
+    auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/reality/type");
+    EXPECT_NE(parsed.error().reason.find("must be tcp when provided"), std::string::npos);
+
+    write_config_file(R"({
+        "reality": {
+            "private_key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "type": "tcp"
+        }
+    })");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_EQ(parsed->reality.type, "tcp");
+}
+
 TEST_F(config_test_fixture, ClientModeRequiresSupportedRealityFingerprint)
 {
     write_config_file(R"({
@@ -429,6 +476,9 @@ TEST_F(config_test_fixture, SocksEnabledRequiresValidListenHost)
             "enabled": false,
             "host": "not-an-ip",
             "port": 1080
+        },
+        "reality": {
+            "private_key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
         }
     })");
     parsed = mux::parse_config_with_error(tmp_file());
@@ -669,7 +719,8 @@ TEST_F(config_test_fixture, RealityDestWhenProvidedMustBeValid)
 
     write_config_file(R"({
         "reality": {
-            "dest": "example.com:443"
+            "dest": "example.com:443",
+            "private_key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
         }
     })");
     parsed = mux::parse_config_with_error(tmp_file());
@@ -678,7 +729,8 @@ TEST_F(config_test_fixture, RealityDestWhenProvidedMustBeValid)
 
     write_config_file(R"({
         "reality": {
-            "dest": "[::1]:443"
+            "dest": "[::1]:443",
+            "private_key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
         }
     })");
     parsed = mux::parse_config_with_error(tmp_file());
@@ -688,7 +740,11 @@ TEST_F(config_test_fixture, RealityDestWhenProvidedMustBeValid)
 
 TEST_F(config_test_fixture, MissingFieldsUseDefaults)
 {
-    const std::string content = R"({})";
+    const std::string content = R"({
+        "reality": {
+            "private_key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        }
+    })";
     write_config_file(content);
 
     const auto cfg_opt = mux::parse_config(tmp_file());
@@ -700,7 +756,7 @@ TEST_F(config_test_fixture, MissingFieldsUseDefaults)
     EXPECT_EQ(cfg_opt->mode, "server");
     EXPECT_FALSE(cfg_opt->reality.strict_cert_verify);
     EXPECT_EQ(cfg_opt->reality.replay_cache_max_entries, 100000);
-    EXPECT_TRUE(cfg_opt->reality.private_key.empty());
+    EXPECT_EQ(cfg_opt->reality.private_key, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
     EXPECT_TRUE(cfg_opt->reality.public_key.empty());
     EXPECT_TRUE(cfg_opt->reality.fallback_guard.enabled);
     EXPECT_EQ(cfg_opt->timeout.connect, 10U);
@@ -748,7 +804,10 @@ TEST_F(config_test_fixture, NegativeWorkersRejected)
 TEST_F(config_test_fixture, WorkersZeroUsesAutoDetection)
 {
     const std::string content = R"({
-        "workers": 0
+        "workers": 0,
+        "reality": {
+            "private_key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        }
     })";
     write_config_file(content);
 
@@ -840,6 +899,9 @@ TEST_F(config_test_fixture, MaxConnectionsZeroNormalizedToOne)
     const std::string content = R"({
         "limits": {
             "max_connections": 0
+        },
+        "reality": {
+            "private_key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
         }
     })";
     write_config_file(content);
@@ -1000,12 +1062,32 @@ TEST_F(config_test_fixture, FallbackGuardEnabledRequiresPositiveParameters)
     parsed = mux::parse_config_with_error(tmp_file());
     ASSERT_FALSE(parsed.has_value());
     EXPECT_EQ(parsed.error().path, "/reality/fallback_guard/circuit_open_sec");
+
+    write_config_file(R"({
+        "mode": "client",
+        "socks": {
+            "enabled": true
+        },
+        "reality": {
+            "public_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "fallback_guard": {
+                "enabled": true,
+                "rate_per_sec": 1,
+                "burst": 1,
+                "key_mode": "bad-mode"
+            }
+        }
+    })");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/reality/fallback_guard/key_mode");
 }
 
 TEST_F(config_test_fixture, FallbackGuardAllowsZeroCircuitOpenWhenThresholdDisabled)
 {
     write_config_file(R"({
         "reality": {
+            "private_key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
             "fallback_guard": {
                 "enabled": true,
                 "rate_per_sec": 1,
@@ -1021,6 +1103,7 @@ TEST_F(config_test_fixture, FallbackGuardAllowsZeroCircuitOpenWhenThresholdDisab
 
     write_config_file(R"({
         "reality": {
+            "private_key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
             "fallback_guard": {
                 "enabled": false,
                 "rate_per_sec": 0,
@@ -1033,6 +1116,25 @@ TEST_F(config_test_fixture, FallbackGuardAllowsZeroCircuitOpenWhenThresholdDisab
     })");
     parsed = mux::parse_config_with_error(tmp_file());
     ASSERT_TRUE(parsed.has_value());
+
+    write_config_file(R"({
+        "mode": "client",
+        "socks": {
+            "enabled": true
+        },
+        "reality": {
+            "public_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "fallback_guard": {
+                "enabled": true,
+                "rate_per_sec": 1,
+                "burst": 1,
+                "key_mode": "ip_sni"
+            }
+        }
+    })");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_EQ(parsed->reality.fallback_guard.key_mode, "ip_sni");
 }
 
 TEST_F(config_test_fixture, DumpConfigIncludesHeartbeatIdleTimeout)
@@ -1062,6 +1164,9 @@ TEST_F(config_test_fixture, ContractMatrixTimeoutRulesStayAlignedWithDocumentati
             "write": 0,
             "connect": 0,
             "idle": 0
+        },
+        "reality": {
+            "private_key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
         }
     })");
 
@@ -1135,6 +1240,9 @@ TEST_F(config_test_fixture, ContractMatrixLimitsRulesStayAlignedWithDocumentatio
     write_config_file(R"({
         "limits": {
             "max_connections": 0
+        },
+        "reality": {
+            "private_key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
         }
     })");
     auto parsed = mux::parse_config_with_error(tmp_file());
@@ -1164,6 +1272,9 @@ TEST_F(config_test_fixture, ContractMatrixQueueRulesStayAlignedWithDocumentation
         "queues": {
             "udp_session_recv_channel_capacity": 1024,
             "tproxy_udp_dispatch_queue_capacity": 8192
+        },
+        "reality": {
+            "private_key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
         }
     })");
     auto parsed = mux::parse_config_with_error(tmp_file());
@@ -1193,6 +1304,9 @@ TEST_F(config_test_fixture, ContractMatrixMonitorRulesStayAlignedWithDocumentati
         "monitor": {
             "enabled": true,
             "port": 19090
+        },
+        "reality": {
+            "private_key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
         }
     })");
 
@@ -1433,7 +1547,8 @@ TEST_F(config_test_fixture, ContractMatrixRealityDestRuleStayAlignedWithDocument
 
     write_config_file(R"({
         "reality": {
-            "dest": "example.com:443"
+            "dest": "example.com:443",
+            "private_key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
         }
     })");
     parsed = mux::parse_config_with_error(tmp_file());
@@ -1525,6 +1640,9 @@ TEST_F(config_test_fixture, SocksAuthEnabledRequiresNonEmptyCredentials)
             "auth": true,
             "username": "user",
             "password": "pass"
+        },
+        "reality": {
+            "private_key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
         }
     })");
     parsed = mux::parse_config_with_error(tmp_file());

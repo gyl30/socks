@@ -108,37 +108,61 @@ tproxy_udp_session::tproxy_udp_session(boost::asio::io_context& io_context,
 bool tproxy_udp_session::start()
 {
     terminated_.store(false, std::memory_order_release);
-    boost::system::error_code ec;
-    ec = direct_socket_.open(boost::asio::ip::udp::v6(), ec);
-    if (ec)
+    direct_socket_use_v6_ = true;
+
+    const auto apply_mark = [&]()
     {
-        LOG_CTX_WARN(ctx_, "{} udp open failed {}", log_event::kSocks, ec.message());
-        terminated_.store(true, std::memory_order_release);
-        close_start_failed_socket(direct_socket_, ctx_);
-        return false;
-    }
-    ec = direct_socket_.set_option(boost::asio::ip::v6_only(false), ec);
-    if (ec)
-    {
-        LOG_CTX_WARN(ctx_, "{} udp v6 only failed {}", log_event::kSocks, ec.message());
-        terminated_.store(true, std::memory_order_release);
-        close_start_failed_socket(direct_socket_, ctx_);
-        return false;
-    }
-    if (mark_ != 0)
-    {
-        if (auto r = net::set_socket_mark(direct_socket_.native_handle(), mark_); !r)
+        if (mark_ != 0)
         {
-            LOG_CTX_WARN(ctx_, "{} udp set mark failed {}", log_event::kSocks, r.error().message());
+            if (auto r = net::set_socket_mark(direct_socket_.native_handle(), mark_); !r)
+            {
+                LOG_CTX_WARN(ctx_, "{} udp set mark failed {}", log_event::kSocks, r.error().message());
+            }
         }
-    }
-    ec = direct_socket_.bind(boost::asio::ip::udp::endpoint(boost::asio::ip::address_v6::any(), 0), ec);
-    if (ec)
+    };
+
+    const auto setup_socket = [&](const boost::asio::ip::udp protocol,
+                                  const boost::asio::ip::udp::endpoint& bind_ep,
+                                  const bool use_v6,
+                                  const bool dual_stack) -> bool
     {
-        LOG_CTX_WARN(ctx_, "{} udp bind failed {}", log_event::kSocks, ec.message());
-        terminated_.store(true, std::memory_order_release);
-        close_start_failed_socket(direct_socket_, ctx_);
-        return false;
+        boost::system::error_code ec;
+        ec = direct_socket_.open(protocol, ec);
+        if (ec)
+        {
+            LOG_CTX_WARN(ctx_, "{} udp open failed {}", log_event::kSocks, ec.message());
+            close_start_failed_socket(direct_socket_, ctx_);
+            return false;
+        }
+        if (dual_stack)
+        {
+            ec = direct_socket_.set_option(boost::asio::ip::v6_only(false), ec);
+            if (ec)
+            {
+                LOG_CTX_WARN(ctx_, "{} udp v6 only failed {}", log_event::kSocks, ec.message());
+                close_start_failed_socket(direct_socket_, ctx_);
+                return false;
+            }
+        }
+        apply_mark();
+        ec = direct_socket_.bind(bind_ep, ec);
+        if (ec)
+        {
+            LOG_CTX_WARN(ctx_, "{} udp bind failed {}", log_event::kSocks, ec.message());
+            close_start_failed_socket(direct_socket_, ctx_);
+            return false;
+        }
+        direct_socket_use_v6_ = use_v6;
+        return true;
+    };
+
+    if (!setup_socket(boost::asio::ip::udp::v6(), boost::asio::ip::udp::endpoint(boost::asio::ip::address_v6::any(), 0), true, true))
+    {
+        if (!setup_socket(boost::asio::ip::udp::v4(), boost::asio::ip::udp::endpoint(boost::asio::ip::address_v4::any(), 0), false, false))
+        {
+            terminated_.store(true, std::memory_order_release);
+            return false;
+        }
     }
 
     boost::asio::co_spawn(io_context_, direct_read_loop_detached(shared_from_this()), boost::asio::detached);
@@ -329,7 +353,11 @@ boost::asio::awaitable<bool> tproxy_udp_session::negotiate_proxy_stream(const st
 {
     const syn_payload syn{.socks_cmd = socks::kCmdUdpAssociate, .addr = "0.0.0.0", .port = 0, .trace_id = ctx_.trace_id()};
     std::vector<std::uint8_t> syn_data;
-    mux_codec::encode_syn(syn, syn_data);
+    if (!mux_codec::encode_syn(syn, syn_data))
+    {
+        LOG_CTX_WARN(ctx_, "{} udp syn encode failed", log_event::kSocks);
+        co_return false;
+    }
     if (const auto ec = co_await tunnel->connection()->send_async(stream->id(), kCmdSyn, std::move(syn_data)))
     {
         LOG_CTX_WARN(ctx_, "{} udp syn failed {}", log_event::kSocks, ec.message());
@@ -622,7 +650,16 @@ boost::asio::awaitable<void> tproxy_udp_session::send_direct(const boost::asio::
                                                              const std::uint8_t* data,
                                                              const std::size_t len)
 {
-    const auto target = map_v4_to_v6(dst_ep);
+    auto target = dst_ep;
+    if (direct_socket_use_v6_)
+    {
+        target = map_v4_to_v6(dst_ep);
+    }
+    else if (dst_ep.address().is_v6())
+    {
+        LOG_CTX_WARN(ctx_, "{} udp direct send skipped ipv6 target on ipv4 socket", log_event::kSocks);
+        co_return;
+    }
     const auto [ec, n] =
         co_await direct_socket_.async_send_to(boost::asio::buffer(data, len), target, boost::asio::as_tuple(boost::asio::use_awaitable));
     if (ec)

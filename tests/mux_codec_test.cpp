@@ -47,7 +47,7 @@ TEST(MuxCodecTest, SynPayloadRoundTrip)
     input.trace_id = "trace-12345";
 
     std::vector<std::uint8_t> buffer;
-    mux::mux_codec::encode_syn(input, buffer);
+    ASSERT_TRUE(mux::mux_codec::encode_syn(input, buffer));
 
     ASSERT_EQ(buffer.size(), 30);
 
@@ -70,7 +70,7 @@ TEST(MuxCodecTest, SynPayloadNoTraceId)
     input.trace_id = "";
 
     std::vector<std::uint8_t> buffer;
-    mux::mux_codec::encode_syn(input, buffer);
+    ASSERT_TRUE(mux::mux_codec::encode_syn(input, buffer));
 
     mux::syn_payload output;
     bool const success = mux::mux_codec::decode_syn(buffer.data(), buffer.size(), output);
@@ -109,7 +109,7 @@ TEST(MuxCodecTest, SynPayloadDecodeInvalidTraceIdLen)
     input.trace_id = "";
 
     std::vector<std::uint8_t> buffer;
-    mux::mux_codec::encode_syn(input, buffer);
+    ASSERT_TRUE(mux::mux_codec::encode_syn(input, buffer));
 
     buffer.back() = 10;
 
@@ -141,7 +141,7 @@ TEST(MuxCodecTest, SynPayloadDecodeRejectsTrailingBytesAfterTrace)
     input.trace_id = "trace";
 
     std::vector<std::uint8_t> buffer;
-    mux::mux_codec::encode_syn(input, buffer);
+    ASSERT_TRUE(mux::mux_codec::encode_syn(input, buffer));
     buffer.push_back(0xAB);
 
     mux::syn_payload output;
@@ -156,7 +156,7 @@ TEST(MuxCodecTest, AckPayloadRoundTrip)
     input.bnd_port = 12345;
 
     std::vector<std::uint8_t> buffer;
-    mux::mux_codec::encode_ack(input, buffer);
+    ASSERT_TRUE(mux::mux_codec::encode_ack(input, buffer));
 
     mux::ack_payload output;
     bool const success = mux::mux_codec::decode_ack(buffer.data(), buffer.size(), output);
@@ -189,14 +189,14 @@ TEST(MuxCodecTest, AckPayloadDecodeRejectsTrailingBytes)
     input.bnd_port = 8080;
 
     std::vector<std::uint8_t> buffer;
-    mux::mux_codec::encode_ack(input, buffer);
+    ASSERT_TRUE(mux::mux_codec::encode_ack(input, buffer));
     buffer.push_back(0xEE);
 
     mux::ack_payload output;
     EXPECT_FALSE(mux::mux_codec::decode_ack(buffer.data(), buffer.size(), output));
 }
 
-TEST(MuxCodecTest, SynPayloadTruncateLongAddress)
+TEST(MuxCodecTest, SynPayloadRejectsLongAddress)
 {
     mux::syn_payload input;
     input.socks_cmd = 0x01;
@@ -205,14 +205,20 @@ TEST(MuxCodecTest, SynPayloadTruncateLongAddress)
     input.port = 80;
 
     std::vector<std::uint8_t> buffer;
-    mux::mux_codec::encode_syn(input, buffer);
+    EXPECT_FALSE(mux::mux_codec::encode_syn(input, buffer));
+    EXPECT_TRUE(buffer.empty());
+}
 
-    mux::syn_payload output;
-    bool const success = mux::mux_codec::decode_syn(buffer.data(), buffer.size(), output);
+TEST(MuxCodecTest, AckPayloadRejectsLongAddress)
+{
+    mux::ack_payload input;
+    input.socks_rep = 0x00;
+    input.bnd_addr = std::string(300, 'B');
+    input.bnd_port = 8080;
 
-    ASSERT_TRUE(success);
-
-    EXPECT_EQ(output.addr.size(), 255);
+    std::vector<std::uint8_t> buffer;
+    EXPECT_FALSE(mux::mux_codec::encode_ack(input, buffer));
+    EXPECT_TRUE(buffer.empty());
 }
 
 TEST(MuxCodecTest, FrameHeaderLimits)
@@ -241,7 +247,7 @@ TEST(MuxCodecTest, SynPayloadEmptyAddr)
     input.port = 80;
 
     std::vector<std::uint8_t> buffer;
-    mux::mux_codec::encode_syn(input, buffer);
+    ASSERT_TRUE(mux::mux_codec::encode_syn(input, buffer));
 
     ASSERT_EQ(buffer.size(), 5);
 
@@ -258,7 +264,7 @@ TEST(MuxCodecTest, SynPayloadNullBytesInAddr)
     input.port = 80;
 
     std::vector<std::uint8_t> buffer;
-    mux::mux_codec::encode_syn(input, buffer);
+    ASSERT_TRUE(mux::mux_codec::encode_syn(input, buffer));
 
     mux::syn_payload output;
     ASSERT_TRUE(mux::mux_codec::decode_syn(buffer.data(), buffer.size(), output));
@@ -275,7 +281,7 @@ TEST(MuxCodecTest, SynPayloadMaxFieldLengths)
     input.trace_id = std::string(255, 'T');
 
     std::vector<std::uint8_t> buffer;
-    mux::mux_codec::encode_syn(input, buffer);
+    ASSERT_TRUE(mux::mux_codec::encode_syn(input, buffer));
 
     mux::syn_payload output;
     ASSERT_TRUE(mux::mux_codec::decode_syn(buffer.data(), buffer.size(), output));
@@ -293,7 +299,7 @@ TEST(MuxCodecTest, SynPayloadFuzzTruncation)
     input.trace_id = "trace";
 
     std::vector<std::uint8_t> valid_buffer;
-    mux::mux_codec::encode_syn(input, valid_buffer);
+    ASSERT_TRUE(mux::mux_codec::encode_syn(input, valid_buffer));
 
     for (std::size_t len = 0; len < valid_buffer.size(); ++len)
     {
@@ -327,7 +333,7 @@ TEST(MuxCodecTest, SynPayloadLegacyWithoutTraceClearsPreviousTraceId)
     with_trace_input.trace_id = "trace-old";
 
     std::vector<std::uint8_t> with_trace_buffer;
-    mux::mux_codec::encode_syn(with_trace_input, with_trace_buffer);
+    ASSERT_TRUE(mux::mux_codec::encode_syn(with_trace_input, with_trace_buffer));
 
     mux::syn_payload output;
     ASSERT_TRUE(mux::mux_codec::decode_syn(with_trace_buffer.data(), with_trace_buffer.size(), output));
@@ -354,7 +360,7 @@ TEST(MuxCodecTest, AckPayloadEmptyAddrMaxPort)
     input.bnd_port = 65535;
 
     std::vector<std::uint8_t> buffer;
-    mux::mux_codec::encode_ack(input, buffer);
+    ASSERT_TRUE(mux::mux_codec::encode_ack(input, buffer));
 
     mux::ack_payload output;
     ASSERT_TRUE(mux::mux_codec::decode_ack(buffer.data(), buffer.size(), output));

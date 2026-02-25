@@ -1133,7 +1133,7 @@ TEST(UdpSocksSessionTest, PrepareUdpAssociateSuccessReplyFailureCleansUpSessionA
                 mux::ack_payload ack{};
                 ack.socks_rep = socks::kRepSuccess;
                 std::vector<std::uint8_t> ack_data;
-                mux::mux_codec::encode_ack(ack, ack_data);
+                (void)mux::mux_codec::encode_ack(ack, ack_data);
                 boost::asio::post(ctx, [stream, ack_data]() { stream->on_data(ack_data); });
                 return true;
             });
@@ -1221,7 +1221,7 @@ TEST(UdpSocksSessionTest, PrepareAndFinalizeUdpAssociateSuccess)
                 mux::ack_payload ack{};
                 ack.socks_rep = socks::kRepSuccess;
                 std::vector<std::uint8_t> ack_data;
-                mux::mux_codec::encode_ack(ack, ack_data);
+                (void)mux::mux_codec::encode_ack(ack, ack_data);
                 boost::asio::post(ctx, [stream, ack_data]() { stream->on_data(ack_data); });
                 return true;
             });

@@ -653,6 +653,14 @@ bool verify_auth_payload_fields(const reality::auth_payload& auth,
                                 const std::string& sni,
                                 const connection_context& ctx)
 {
+    if (auth.version_x != 1 || auth.version_y != 0 || auth.version_z != 0)
+    {
+        auto& stats = statistics::instance();
+        stats.inc_auth_failures();
+        LOG_CTX_WARN(ctx, "{} auth fail version mismatch {}.{}.{}", log_event::kAuth, auth.version_x, auth.version_y, auth.version_z);
+        return false;
+    }
+
     if (short_id_bytes.empty())
     {
         return true;
@@ -1278,6 +1286,7 @@ remote_server::remote_server(io_context_pool& pool, const config& cfg)
       replay_cache_(static_cast<std::size_t>(cfg.reality.replay_cache_max_entries)),
       fallbacks_(cfg.fallbacks),
       fallback_guard_config_(cfg.reality.fallback_guard),
+      fallback_guard_key_mode_(resolve_fallback_guard_key_mode(cfg.reality.fallback_guard.key_mode)),
       timeout_config_(cfg.timeout),
       queues_config_(cfg.queues),
       limits_config_(cfg.limits),
@@ -2265,13 +2274,48 @@ std::pair<std::string, std::string> remote_server::find_fallback_target_by_sni(c
     return {};
 }
 
-std::string remote_server::fallback_guard_key(const connection_context& ctx)
+remote_server::fallback_guard_key_mode remote_server::resolve_fallback_guard_key_mode(const std::string& key_mode)
 {
+    std::string normalized;
+    normalized.reserve(key_mode.size());
+    for (const char ch : key_mode)
+    {
+        if (ch == '-' || ch == ' ')
+        {
+            normalized.push_back('_');
+            continue;
+        }
+        normalized.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+    }
+    if (normalized == "ip_sni")
+    {
+        return fallback_guard_key_mode::kIpSni;
+    }
+    return fallback_guard_key_mode::kIp;
+}
+
+std::string remote_server::fallback_guard_key(const connection_context& ctx, const std::string& sni) const
+{
+    std::string source = "unknown";
     if (!ctx.remote_addr().empty())
     {
-        return ctx.remote_addr();
+        source = ctx.remote_addr();
     }
-    return "unknown";
+    if (fallback_guard_key_mode_ == fallback_guard_key_mode::kIp)
+    {
+        return source;
+    }
+    std::string normalized_sni;
+    normalized_sni.reserve(sni.size());
+    for (const char ch : sni)
+    {
+        normalized_sni.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+    }
+    if (normalized_sni.empty())
+    {
+        normalized_sni = "_";
+    }
+    return source + "|" + normalized_sni;
 }
 
 void remote_server::cleanup_fallback_guard_state_locked(const std::chrono::steady_clock::time_point& now)
@@ -2352,7 +2396,7 @@ bool remote_server::fallback_guard_allows_request_locked(fallback_guard_state& s
     return true;
 }
 
-bool remote_server::consume_fallback_token(const connection_context& ctx)
+bool remote_server::consume_fallback_token(const connection_context& ctx, const std::string& sni)
 {
     if (!fallback_guard_config_.enabled)
     {
@@ -2363,14 +2407,14 @@ bool remote_server::consume_fallback_token(const connection_context& ctx)
     const std::lock_guard<std::mutex> lock(fallback_guard_mu_);
     cleanup_fallback_guard_state_locked(now);
 
-    const auto source_key = fallback_guard_key(ctx);
+    const auto source_key = fallback_guard_key(ctx, sni);
     evict_fallback_guard_source_if_needed_locked(source_key);
     auto& state = get_or_init_fallback_guard_state_locked(source_key, now);
     refill_fallback_tokens_locked(state, now);
     return fallback_guard_allows_request_locked(state, now);
 }
 
-void remote_server::record_fallback_result(const connection_context& ctx, const bool success)
+void remote_server::record_fallback_result(const connection_context& ctx, const std::string& sni, const bool success)
 {
     if (!fallback_guard_config_.enabled)
     {
@@ -2379,7 +2423,7 @@ void remote_server::record_fallback_result(const connection_context& ctx, const 
 
     const auto now = std::chrono::steady_clock::now();
     const std::lock_guard<std::mutex> lock(fallback_guard_mu_);
-    auto it = fallback_guard_states_.find(fallback_guard_key(ctx));
+    auto it = fallback_guard_states_.find(fallback_guard_key(ctx, sni));
     if (it == fallback_guard_states_.end())
     {
         return;
@@ -2413,7 +2457,7 @@ boost::asio::awaitable<boost::system::error_code> remote_server::handle_fallback
         co_return boost::asio::error::operation_aborted;
     }
 
-    if (!consume_fallback_token(ctx))
+    if (!consume_fallback_token(ctx, sni))
     {
         LOG_CTX_WARN(ctx, "{} blocked by fallback guard", log_event::kFallback);
         co_await fallback_wait_and_close_socket(s, ctx, io_context_);
@@ -2424,7 +2468,7 @@ boost::asio::awaitable<boost::system::error_code> remote_server::handle_fallback
     if (fallback_target.first.empty())
     {
         co_await handle_fallback_without_target(s, ctx, sni, io_context_);
-        record_fallback_result(ctx, false);
+        record_fallback_result(ctx, sni, false);
         co_return boost::asio::error::host_not_found;
     }
 
@@ -2436,7 +2480,7 @@ boost::asio::awaitable<boost::system::error_code> remote_server::handle_fallback
     if (const auto connect_ec = co_await resolve_and_connect_fallback_target(t, io_context_, target_host, target_port, ctx, connect_timeout_sec);
         connect_ec)
     {
-        record_fallback_result(ctx, false);
+        record_fallback_result(ctx, sni, false);
         close_fallback_socket(t, ctx);
         co_await fallback_wait_and_close_socket(s, ctx, io_context_);
         co_return connect_ec;
@@ -2444,7 +2488,7 @@ boost::asio::awaitable<boost::system::error_code> remote_server::handle_fallback
     const auto write_timeout_sec = timeout_config_.write;
     if (const auto write_ec = co_await write_fallback_initial_buffer(t, buf, target_host, target_port, ctx, write_timeout_sec); write_ec)
     {
-        record_fallback_result(ctx, false);
+        record_fallback_result(ctx, sni, false);
         close_fallback_socket(t, ctx);
         co_await fallback_wait_and_close_socket(s, ctx, io_context_);
         co_return write_ec;
@@ -2458,7 +2502,7 @@ boost::asio::awaitable<boost::system::error_code> remote_server::handle_fallback
     close_fallback_socket(t, ctx);
     close_fallback_socket(s, ctx);
     const bool proxy_success = source_to_target_ok && target_to_source_ok;
-    record_fallback_result(ctx, proxy_success);
+    record_fallback_result(ctx, sni, proxy_success);
     if (proxy_success)
     {
         LOG_CTX_INFO(ctx, "{} session finished", log_event::kFallback);
