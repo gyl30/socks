@@ -492,6 +492,92 @@ TEST(RemoteUdpSessionTest, ForwardMuxPayloadSwitchesToIpv4WhenIpv6OnlySocketCann
     EXPECT_FALSE(session->udp_socket_use_v6_);
 }
 
+TEST(RemoteUdpSessionTest, ForwardMuxPayloadSwitchesBackToIpv6AfterIpv4Fallback)
+{
+    boost::asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    auto session = make_session(io_context, conn, 164);
+    fail_next_setsockopt_v6only();
+    ASSERT_TRUE(mux::test::run_awaitable(io_context, session->setup_udp_socket(conn)));
+
+    if (!(session->udp_socket_use_v6_ && !session->udp_socket_dual_stack_))
+    {
+        GTEST_SKIP();
+    }
+
+    boost::asio::ip::udp::socket receiver_v4(io_context);
+    boost::system::error_code ec;
+    receiver_v4.open(boost::asio::ip::udp::v4(), ec);
+    ASSERT_FALSE(ec);
+    receiver_v4.bind(boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 0), ec);
+    ASSERT_FALSE(ec);
+    receiver_v4.non_blocking(true, ec);
+    ASSERT_FALSE(ec);
+
+    const auto v4_packet = make_mux_udp_packet("127.0.0.1", receiver_v4.local_endpoint().port(), std::vector<std::uint8_t>{0xAA});
+    mux::test::run_awaitable_void(io_context, session->forward_mux_payload(v4_packet));
+
+    std::array<std::uint8_t, 4> recv_v4 = {0};
+    boost::asio::ip::udp::endpoint from_ep_v4;
+    std::size_t recv_v4_n = 0;
+    for (int i = 0; i < 50; ++i)
+    {
+        recv_v4_n = receiver_v4.receive_from(boost::asio::buffer(recv_v4), from_ep_v4, 0, ec);
+        if (!ec)
+        {
+            break;
+        }
+        if (ec != boost::asio::error::would_block && ec != boost::asio::error::try_again)
+        {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_FALSE(ec);
+    ASSERT_EQ(recv_v4_n, 1U);
+    EXPECT_EQ(recv_v4[0], 0xAA);
+    EXPECT_FALSE(session->udp_socket_use_v6_);
+
+    boost::asio::ip::udp::socket receiver_v6(io_context);
+    receiver_v6.open(boost::asio::ip::udp::v6(), ec);
+    if (ec)
+    {
+        GTEST_SKIP();
+    }
+    receiver_v6.bind(boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("::1"), 0), ec);
+    if (ec)
+    {
+        GTEST_SKIP();
+    }
+    receiver_v6.non_blocking(true, ec);
+    ASSERT_FALSE(ec);
+
+    const auto v6_packet = make_mux_udp_packet("::1", receiver_v6.local_endpoint().port(), std::vector<std::uint8_t>{0xBB});
+    mux::test::run_awaitable_void(io_context, session->forward_mux_payload(v6_packet));
+
+    std::array<std::uint8_t, 4> recv_v6 = {0};
+    boost::asio::ip::udp::endpoint from_ep_v6;
+    std::size_t recv_v6_n = 0;
+    for (int i = 0; i < 50; ++i)
+    {
+        recv_v6_n = receiver_v6.receive_from(boost::asio::buffer(recv_v6), from_ep_v6, 0, ec);
+        if (!ec)
+        {
+            break;
+        }
+        if (ec != boost::asio::error::would_block && ec != boost::asio::error::try_again)
+        {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_FALSE(ec);
+    ASSERT_EQ(recv_v6_n, 1U);
+    EXPECT_EQ(recv_v6[0], 0xBB);
+    EXPECT_TRUE(session->udp_socket_use_v6_);
+    EXPECT_FALSE(session->udp_socket_dual_stack_);
+}
+
 TEST(RemoteUdpSessionTest, ForwardMuxPayloadResolveTimeoutDropsPayload)
 {
     boost::asio::io_context io_context;

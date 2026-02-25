@@ -282,7 +282,9 @@ boost::asio::awaitable<void> remote_udp_session::forward_mux_payload(const std::
     boost::asio::ip::udp::endpoint target_ep;
     bool has_compatible_endpoint = false;
     bool has_ipv4_candidate = false;
+    bool has_ipv6_candidate = false;
     boost::asio::ip::udp::endpoint first_ipv4_candidate;
+    boost::asio::ip::udp::endpoint first_ipv6_candidate;
     for (const auto& endpoint : resolve_res.endpoints)
     {
         const auto candidate = boost::asio::ip::udp::endpoint(endpoint.endpoint().address(), endpoint.endpoint().port());
@@ -290,6 +292,11 @@ boost::asio::awaitable<void> remote_udp_session::forward_mux_payload(const std::
         {
             first_ipv4_candidate = candidate;
             has_ipv4_candidate = true;
+        }
+        if (candidate.address().is_v6() && !has_ipv6_candidate)
+        {
+            first_ipv6_candidate = candidate;
+            has_ipv6_candidate = true;
         }
         if (udp_socket_use_v6_)
         {
@@ -320,6 +327,14 @@ boost::asio::awaitable<void> remote_udp_session::forward_mux_payload(const std::
         if (switch_udp_socket_to_v4())
         {
             target_ep = first_ipv4_candidate;
+            has_compatible_endpoint = true;
+        }
+    }
+    if (!has_compatible_endpoint && !udp_socket_use_v6_ && has_ipv6_candidate)
+    {
+        if (switch_udp_socket_to_v6())
+        {
+            target_ep = first_ipv6_candidate;
             has_compatible_endpoint = true;
         }
     }
@@ -370,6 +385,30 @@ bool remote_udp_session::switch_udp_socket_to_v4()
     udp_socket_use_v6_ = false;
     udp_socket_dual_stack_ = false;
     LOG_CTX_WARN(ctx_, "{} udp switched from ipv6-only to ipv4 for target compatibility", log_event::kMux);
+    return true;
+}
+
+bool remote_udp_session::switch_udp_socket_to_v6()
+{
+    boost::system::error_code ec;
+    close_socket();
+    ec = udp_socket_.open(boost::asio::ip::udp::v6(), ec);
+    if (ec)
+    {
+        LOG_CTX_WARN(ctx_, "{} udp ipv6 switch open failed {}", log_event::kMux, ec.message());
+        close_socket();
+        return false;
+    }
+    ec = udp_socket_.bind(boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v6(), 0), ec);
+    if (ec)
+    {
+        LOG_CTX_WARN(ctx_, "{} udp ipv6 switch bind failed {}", log_event::kMux, ec.message());
+        close_socket();
+        return false;
+    }
+    udp_socket_use_v6_ = true;
+    udp_socket_dual_stack_ = false;
+    LOG_CTX_WARN(ctx_, "{} udp switched from ipv4 to ipv6-only for target compatibility", log_event::kMux);
     return true;
 }
 
