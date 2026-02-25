@@ -1,5 +1,6 @@
 #include <string>
 #include <vector>
+#include <string_view>
 #include <cstddef>
 #include <cstdint>
 #include <algorithm>
@@ -27,6 +28,8 @@ std::atomic<std::uint64_t> g_decode_warn_total{0};
     }
     return (total & (total - 1)) == 0;
 }
+
+[[nodiscard]] bool contains_nul(const std::string_view value) { return value.find('\0') != std::string_view::npos; }
 
 }    // namespace
 
@@ -59,12 +62,12 @@ bool mux_codec::decode_header(const std::uint8_t* buf, std::size_t len, frame_he
 
 bool mux_codec::encode_syn(const syn_payload& p, std::vector<std::uint8_t>& buf)
 {
-    if (p.addr.size() > 255 || p.trace_id.size() > 255)
+    if (p.addr.size() > 255 || p.trace_id.size() > 255 || contains_nul(p.addr) || contains_nul(p.trace_id))
     {
         const auto warn_total = next_decode_warn_total();
         if (should_log_decode_warn(warn_total))
         {
-            LOG_WARN("syn payload encode length invalid addr {} trace {} warn_total {}", p.addr.size(), p.trace_id.size(), warn_total);
+            LOG_WARN("syn payload encode invalid field addr_len {} trace_len {} warn_total {}", p.addr.size(), p.trace_id.size(), warn_total);
         }
         return false;
     }
@@ -110,6 +113,15 @@ bool mux_codec::decode_syn(const std::uint8_t* data, const std::size_t len, syn_
         return false;
     }
     out.addr = std::string(reinterpret_cast<const char*>(&data[2]), addr_len);
+    if (contains_nul(out.addr))
+    {
+        const auto warn_total = next_decode_warn_total();
+        if (should_log_decode_warn(warn_total))
+        {
+            LOG_WARN("syn payload contains nul in addr warn_total {}", warn_total);
+        }
+        return false;
+    }
     const std::uint8_t* port_ptr = &data[2 + addr_len];
     out.port = static_cast<std::uint16_t>((static_cast<std::uint16_t>(port_ptr[0]) << 8) | static_cast<std::uint16_t>(port_ptr[1]));
 
@@ -132,17 +144,26 @@ bool mux_codec::decode_syn(const std::uint8_t* data, const std::size_t len, syn_
         return false;
     }
     out.trace_id = std::string(reinterpret_cast<const char*>(&data[current_pos]), trace_id_len);
+    if (contains_nul(out.trace_id))
+    {
+        const auto warn_total = next_decode_warn_total();
+        if (should_log_decode_warn(warn_total))
+        {
+            LOG_WARN("syn payload contains nul in trace id warn_total {}", warn_total);
+        }
+        return false;
+    }
     return true;
 }
 
 bool mux_codec::encode_ack(const ack_payload& p, std::vector<std::uint8_t>& buf)
 {
-    if (p.bnd_addr.size() > 255)
+    if (p.bnd_addr.size() > 255 || contains_nul(p.bnd_addr))
     {
         const auto warn_total = next_decode_warn_total();
         if (should_log_decode_warn(warn_total))
         {
-            LOG_WARN("ack payload encode length invalid addr {} warn_total {}", p.bnd_addr.size(), warn_total);
+            LOG_WARN("ack payload encode invalid addr len {} warn_total {}", p.bnd_addr.size(), warn_total);
         }
         return false;
     }
@@ -181,6 +202,15 @@ bool mux_codec::decode_ack(const std::uint8_t* data, const std::size_t len, ack_
         return false;
     }
     out.bnd_addr = std::string(reinterpret_cast<const char*>(&data[2]), addr_len);
+    if (contains_nul(out.bnd_addr))
+    {
+        const auto warn_total = next_decode_warn_total();
+        if (should_log_decode_warn(warn_total))
+        {
+            LOG_WARN("ack payload contains nul in addr warn_total {}", warn_total);
+        }
+        return false;
+    }
     const std::uint8_t* port_ptr = &data[2 + addr_len];
     out.bnd_port = static_cast<std::uint16_t>((static_cast<std::uint16_t>(port_ptr[0]) << 8) | static_cast<std::uint16_t>(port_ptr[1]));
     return true;
