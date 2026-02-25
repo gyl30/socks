@@ -266,7 +266,7 @@ TEST_F(remote_server_mux_test_fixture, TargetConnectFail)
     std::this_thread::sleep_for(std::chrono::milliseconds(2000));
 }
 
-TEST_F(remote_server_mux_test_fixture, TargetConnectTimeoutUsesConfiguredConnectTimeout)
+TEST_F(remote_server_mux_test_fixture, TargetConnectTimeoutUsesConfiguredConnectTimeoutAndReturnsHostUnreach)
 {
     mux::io_context_pool pool(2);
     scoped_pool const sp(pool);
@@ -341,7 +341,7 @@ TEST_F(remote_server_mux_test_fixture, TargetConnectTimeoutUsesConfiguredConnect
         const auto elapsed = std::chrono::steady_clock::now() - start;
 
         EXPECT_EQ(conn_resp[0], 0x05);
-        EXPECT_EQ(conn_resp[1], socks::kRepConnRefused);
+        EXPECT_EQ(conn_resp[1], socks::kRepHostUnreach);
         EXPECT_LT(std::chrono::duration_cast<std::chrono::seconds>(elapsed).count(), 5);
     }
 
