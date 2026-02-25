@@ -221,6 +221,18 @@ TEST(MuxCodecTest, AckPayloadRejectsLongAddress)
     EXPECT_TRUE(buffer.empty());
 }
 
+TEST(MuxCodecTest, AckPayloadRejectsNullBytesInAddress)
+{
+    mux::ack_payload input;
+    input.socks_rep = 0x00;
+    input.bnd_addr = std::string("a\0b", 3);
+    input.bnd_port = 8080;
+
+    std::vector<std::uint8_t> buffer;
+    EXPECT_FALSE(mux::mux_codec::encode_ack(input, buffer));
+    EXPECT_TRUE(buffer.empty());
+}
+
 TEST(MuxCodecTest, FrameHeaderLimits)
 {
     mux::frame_header input;
@@ -264,12 +276,36 @@ TEST(MuxCodecTest, SynPayloadNullBytesInAddr)
     input.port = 80;
 
     std::vector<std::uint8_t> buffer;
-    ASSERT_TRUE(mux::mux_codec::encode_syn(input, buffer));
+    EXPECT_FALSE(mux::mux_codec::encode_syn(input, buffer));
+    EXPECT_TRUE(buffer.empty());
+}
+
+TEST(MuxCodecTest, SynPayloadNullBytesInTraceIdRejected)
+{
+    mux::syn_payload input;
+    input.socks_cmd = 0x01;
+    input.addr = "example.com";
+    input.port = 80;
+    input.trace_id = std::string("t\0id", 4);
+
+    std::vector<std::uint8_t> buffer;
+    EXPECT_FALSE(mux::mux_codec::encode_syn(input, buffer));
+    EXPECT_TRUE(buffer.empty());
+}
+
+TEST(MuxCodecTest, SynPayloadDecodeRejectsNullBytesInAddr)
+{
+    std::vector<std::uint8_t> buffer;
+    buffer.push_back(0x01);
+    buffer.push_back(0x03);
+    buffer.push_back('a');
+    buffer.push_back(0x00);
+    buffer.push_back('b');
+    buffer.push_back(0x00);
+    buffer.push_back(0x50);
 
     mux::syn_payload output;
-    ASSERT_TRUE(mux::mux_codec::decode_syn(buffer.data(), buffer.size(), output));
-    EXPECT_EQ(output.addr.size(), 3);
-    EXPECT_EQ(output.addr[1], '\0');
+    EXPECT_FALSE(mux::mux_codec::decode_syn(buffer.data(), buffer.size(), output));
 }
 
 TEST(MuxCodecTest, SynPayloadMaxFieldLengths)
