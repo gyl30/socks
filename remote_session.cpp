@@ -151,7 +151,7 @@ std::uint8_t map_connect_failure_reply(const timed_connect_result& connect_res)
 {
     if (connect_res.timed_out)
     {
-        return socks::kRepConnRefused;
+        return socks::kRepHostUnreach;
     }
     if (connect_res.ec == boost::asio::error::connection_refused)
     {

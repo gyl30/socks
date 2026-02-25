@@ -313,7 +313,7 @@ TEST(RemoteSessionTest, RunConnectNetworkUnreachableSendsNetUnreachAckAndReset)
     EXPECT_GE(stats.remote_session_connect_errors(), connect_errors_before + 1);
 }
 
-TEST(RemoteSessionTest, RunConnectTimeoutSendsConnRefusedAckAndReset)
+TEST(RemoteSessionTest, RunConnectTimeoutSendsHostUnreachAckAndReset)
 {
     boost::asio::io_context io_context;
     auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
@@ -357,7 +357,7 @@ TEST(RemoteSessionTest, RunConnectTimeoutSendsConnRefusedAckAndReset)
 
     mux::ack_payload ack{};
     ASSERT_TRUE(mux::mux_codec::decode_ack(ack_payload.data(), ack_payload.size(), ack));
-    EXPECT_EQ(ack.socks_rep, socks::kRepConnRefused);
+    EXPECT_EQ(ack.socks_rep, socks::kRepHostUnreach);
     EXPECT_LT(std::chrono::duration_cast<std::chrono::seconds>(elapsed).count(), 5);
     EXPECT_GE(stats.remote_session_connect_timeouts(), connect_timeouts_before + 1);
 
