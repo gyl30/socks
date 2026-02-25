@@ -391,7 +391,7 @@ constexpr std::uint32_t kQueueCapacityMax = 65535;
             return std::unexpected(make_config_error("/reality/fallback_guard/burst", "must be greater than 0 when fallback guard is enabled"));
         }
         const auto key_mode = normalize_fallback_guard_key_mode(reality.fallback_guard.key_mode);
-        if (!key_mode.empty() && key_mode != "ip" && key_mode != "ip_sni")
+        if (key_mode.empty() || (key_mode != "ip" && key_mode != "ip_sni"))
         {
             return std::unexpected(make_config_error("/reality/fallback_guard/key_mode", "must be ip or ip_sni when fallback guard is enabled"));
         }
