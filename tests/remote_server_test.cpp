@@ -35,6 +35,7 @@ extern "C"
 #include "context_pool.h"
 #include "reality_auth.h"
 #include "tls_record_layer.h"
+#include "tls_key_schedule.h"
 #include "mock_mux_connection.h"
 
 #define private public
@@ -3429,6 +3430,70 @@ TEST_F(remote_server_test_fixture, VerifyClientFinishedCoversPlaintextValidation
     wrong_hmac[0] = 0x14;
     wrong_hmac[3] = 0x20;
     EXPECT_FALSE(run_case(wrong_hmac, reality::kContentTypeHandshake));
+}
+
+TEST_F(remote_server_test_fixture, VerifyClientFinishedAcceptsMultipleCompatibilityCcsRecords)
+{
+    boost::asio::io_context io_context;
+    boost::system::error_code ec;
+
+    boost::asio::ip::tcp::acceptor acceptor(io_context);
+    ASSERT_TRUE(open_ephemeral_acceptor_until_ready(acceptor));
+
+    boost::asio::ip::tcp::socket writer(io_context);
+    // NOLINTNEXTLINE(bugprone-unused-return-value)
+    (void)writer.connect(acceptor.local_endpoint(), ec);
+    ASSERT_FALSE(ec);
+
+    auto reader = std::make_shared<boost::asio::ip::tcp::socket>(io_context);
+    // NOLINTNEXTLINE(bugprone-unused-return-value)
+    (void)acceptor.accept(*reader, ec);
+    ASSERT_FALSE(ec);
+
+    const std::vector<std::uint8_t> key(16, 0x41);
+    const std::vector<std::uint8_t> iv(12, 0x62);
+
+    reality::handshake_keys hs_keys;
+    hs_keys.client_handshake_traffic_secret.assign(32, 0x55);
+    reality::transcript trans;
+    const auto verify_data =
+        reality::tls_key_schedule::compute_finished_verify_data(hs_keys.client_handshake_traffic_secret, trans.finish(), EVP_sha256());
+    ASSERT_TRUE(verify_data.has_value());
+
+    const auto finished_plaintext = reality::construct_finished(*verify_data);
+    const auto encrypted =
+        reality::tls_record_layer::encrypt_record(EVP_aes_128_gcm(), key, iv, 0, finished_plaintext, reality::kContentTypeHandshake);
+    ASSERT_TRUE(encrypted.has_value());
+
+    const std::vector<std::uint8_t> ccs_record = {0x14, 0x03, 0x03, 0x00, 0x01, 0x01};
+    std::vector<std::uint8_t> wire;
+    wire.reserve(ccs_record.size() * 2 + encrypted->size());
+    wire.insert(wire.end(), ccs_record.begin(), ccs_record.end());
+    wire.insert(wire.end(), ccs_record.begin(), ccs_record.end());
+    wire.insert(wire.end(), encrypted->begin(), encrypted->end());
+
+    boost::asio::write(writer, boost::asio::buffer(wire), ec);
+    ASSERT_FALSE(ec);
+    // NOLINTNEXTLINE(bugprone-unused-return-value)
+    (void)writer.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
+
+    mux::connection_context ctx;
+    ctx.conn_id(110);
+    ctx.trace_id("verify-client-finished-multi-ccs");
+
+    boost::system::error_code verify_ec;
+    boost::asio::co_spawn(
+        io_context,
+        [&]() -> boost::asio::awaitable<void>
+        {
+            verify_ec =
+                co_await mux::remote_server::verify_client_finished(reader, {key, iv}, hs_keys, trans, EVP_aes_128_gcm(), EVP_sha256(), ctx);
+            co_return;
+        },
+        boost::asio::detached);
+
+    io_context.run();
+    EXPECT_FALSE(verify_ec);
 }
 
 TEST_F(remote_server_test_fixture, VerifyClientFinishedTimeoutWhenPeerStalls)

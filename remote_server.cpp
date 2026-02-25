@@ -82,6 +82,7 @@ constexpr std::size_t kFallbackGuardMaxSources = 4096;
 constexpr std::size_t kTlsRecordHeaderSize = 5;
 constexpr std::uint16_t kMaxTlsPlaintextRecordLen = static_cast<std::uint16_t>(reality::kMaxTlsPlaintextLen);
 constexpr std::uint16_t kMaxTlsCiphertextRecordLen = static_cast<std::uint16_t>(reality::kMaxTlsPlaintextLen + 256);
+constexpr std::uint32_t kMaxTlsCompatCcsRecords = 8;
 
 std::string normalize_sni_key(std::string_view sni)
 {
@@ -1064,7 +1065,7 @@ boost::system::error_code classify_client_finished_read_failure(const timed_sock
 }
 
 boost::asio::awaitable<boost::system::error_code> consume_tls13_compat_ccs(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
-                                                                           std::array<std::uint8_t, 5>& header,
+                                                                           const std::array<std::uint8_t, 5>& header,
                                                                            const connection_context& ctx,
                                                                            const std::uint32_t timeout_sec)
 {
@@ -1080,12 +1081,6 @@ boost::asio::awaitable<boost::system::error_code> consume_tls13_compat_ccs(const
         LOG_CTX_ERROR(ctx, "{} invalid ccs body {}", log_event::kHandshake, ccs_body[0]);
         co_return boost::system::errc::make_error_code(boost::system::errc::bad_message);
     }
-
-    const auto read_header_after_ccs = co_await read_socket_exact_with_timeout(socket, boost::asio::buffer(header), timeout_sec);
-    if (!read_header_after_ccs.ok)
-    {
-        co_return classify_client_finished_read_failure(read_header_after_ccs, ctx, timeout_sec, "client finished header after ccs");
-    }
     co_return boost::system::error_code{};
 }
 
@@ -1100,19 +1095,37 @@ boost::asio::awaitable<boost::system::error_code> read_tls_record_header_allow_c
         co_return classify_client_finished_read_failure(read_header, ctx, timeout_sec, "client finished header");
     }
 
-    if (header[0] != 0x14)
+    std::uint32_t ccs_count = 0;
+    while (header[0] == 0x14)
     {
-        co_return boost::system::error_code{};
+        if (ccs_count >= kMaxTlsCompatCcsRecords)
+        {
+            statistics::instance().inc_client_finished_failures();
+            LOG_CTX_ERROR(ctx, "{} too many ccs records {}", log_event::kHandshake, ccs_count);
+            co_return boost::system::errc::make_error_code(boost::system::errc::bad_message);
+        }
+        ccs_count++;
+
+        const auto ccs_len = static_cast<std::uint16_t>((header[3] << 8) | header[4]);
+        if (ccs_len != 1)
+        {
+            statistics::instance().inc_client_finished_failures();
+            LOG_CTX_ERROR(ctx, "{} invalid ccs length {}", log_event::kHandshake, ccs_len);
+            co_return boost::system::errc::make_error_code(boost::system::errc::bad_message);
+        }
+        if (const auto ccs_ec = co_await consume_tls13_compat_ccs(socket, header, ctx, timeout_sec); ccs_ec)
+        {
+            co_return ccs_ec;
+        }
+
+        const auto read_header_after_ccs = co_await read_socket_exact_with_timeout(socket, boost::asio::buffer(header), timeout_sec);
+        if (!read_header_after_ccs.ok)
+        {
+            co_return classify_client_finished_read_failure(read_header_after_ccs, ctx, timeout_sec, "client finished header after ccs");
+        }
     }
 
-    const auto ccs_len = static_cast<std::uint16_t>((header[3] << 8) | header[4]);
-    if (ccs_len != 1)
-    {
-        statistics::instance().inc_client_finished_failures();
-        LOG_CTX_ERROR(ctx, "{} invalid ccs length {}", log_event::kHandshake, ccs_len);
-        co_return boost::system::errc::make_error_code(boost::system::errc::bad_message);
-    }
-    co_return co_await consume_tls13_compat_ccs(socket, header, ctx, timeout_sec);
+    co_return boost::system::error_code{};
 }
 
 boost::asio::awaitable<boost::system::error_code> read_tls_record_body(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
