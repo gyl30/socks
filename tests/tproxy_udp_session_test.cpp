@@ -1039,8 +1039,9 @@ TEST(TproxyUdpSessionTest, StartHandlesAlreadyOpenedSocket)
     (void)session->direct_socket_.open(boost::asio::ip::udp::v6(), ec);
     ASSERT_FALSE(ec);
 
-    session->start();
-    EXPECT_FALSE(session->direct_socket_.is_open());
+    EXPECT_TRUE(session->start());
+    EXPECT_TRUE(session->direct_socket_.is_open());
+    EXPECT_FALSE(session->direct_socket_use_v6_);
     session->stop();
     ctx.poll();
 }
@@ -1064,7 +1065,7 @@ TEST(TproxyUdpSessionTest, StartCoversV6OnlyAndMarkFailure)
     mux::config v6_cfg;
     v6_cfg.tproxy.mark = 0;
     fail_setsockopt_once(SOL_IPV6, IPV6_V6ONLY, EPERM);
-    EXPECT_FALSE(run_once(v6_cfg));
+    EXPECT_TRUE(run_once(v6_cfg));
 #endif
 
     reset_socket_wrappers();
@@ -1143,8 +1144,9 @@ TEST(TproxyUdpSessionTest, StartCoversBindFailureBranch)
     auto session = std::make_shared<mux::tproxy_udp_session>(ctx, nullptr, router, nullptr, 8, cfg, client_ep);
 
     fail_bind_once(EADDRINUSE);
-    session->start();
-    EXPECT_FALSE(session->direct_socket_.is_open());
+    EXPECT_TRUE(session->start());
+    EXPECT_TRUE(session->direct_socket_.is_open());
+    EXPECT_FALSE(session->direct_socket_use_v6_);
 
     session->stop();
     ctx.poll();
@@ -1901,7 +1903,7 @@ TEST(TproxyUdpSessionTest, EnsureProxyStreamSucceedsWhenConcurrentInstallAlready
 
     mux::ack_payload const ack{.socks_rep = socks::kRepSuccess, .bnd_addr = "0.0.0.0", .bnd_port = 0};
     std::vector<std::uint8_t> ack_data;
-    mux::mux_codec::encode_ack(ack, ack_data);
+    (void)mux::mux_codec::encode_ack(ack, ack_data);
     handshake_stream->on_data(std::move(ack_data));
 
     ctx.run();
@@ -3700,6 +3702,7 @@ TEST(TproxyClientTest, UdpLoopSessionStartFailureDoesNotCacheBrokenSession)
     const boost::asio::ip::udp::endpoint dst(boost::asio::ip::make_address("127.0.0.1"), listen_port);
 
     fail_socket_once();
+    fail_bind_once(EADDRINUSE);
     set_recvmsg_mode_once(wrapped_recvmsg_mode::kSyntheticValid);
     sender.send_to(boost::asio::buffer(payload), dst, 0, ec);
     ASSERT_FALSE(ec);

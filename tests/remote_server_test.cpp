@@ -2258,16 +2258,16 @@ TEST_F(remote_server_test_fixture, FallbackGuardStateMachineBranches)
     auto server = std::make_shared<mux::remote_server>(pool, cfg);
 
     mux::connection_context ctx;
-    EXPECT_EQ(server->fallback_guard_key(ctx), "unknown");
+    EXPECT_EQ(server->fallback_guard_key(ctx, ""), "unknown");
     ctx.remote_addr("127.0.0.2");
-    EXPECT_EQ(server->fallback_guard_key(ctx), "127.0.0.2");
+    EXPECT_EQ(server->fallback_guard_key(ctx, ""), "127.0.0.2");
 
-    EXPECT_TRUE(server->consume_fallback_token(ctx));
-    EXPECT_FALSE(server->consume_fallback_token(ctx));
+    EXPECT_TRUE(server->consume_fallback_token(ctx, ""));
+    EXPECT_FALSE(server->consume_fallback_token(ctx, ""));
 
-    server->record_fallback_result(ctx, false);
-    EXPECT_FALSE(server->consume_fallback_token(ctx));
-    server->record_fallback_result(ctx, true);
+    server->record_fallback_result(ctx, "", false);
+    EXPECT_FALSE(server->consume_fallback_token(ctx, ""));
+    server->record_fallback_result(ctx, "", true);
 
     {
         std::lock_guard<std::mutex> const lock(server->fallback_guard_mu_);
@@ -2283,7 +2283,7 @@ TEST_F(remote_server_test_fixture, FallbackGuardStateMachineBranches)
 
     mux::connection_context unknown_ctx;
     unknown_ctx.remote_addr("127.0.0.9");
-    server->record_fallback_result(unknown_ctx, false);
+    server->record_fallback_result(unknown_ctx, "", false);
 }
 
 TEST_F(remote_server_test_fixture, FallbackGuardCapsTrackedSources)
@@ -2316,13 +2316,37 @@ TEST_F(remote_server_test_fixture, FallbackGuardCapsTrackedSources)
 
     mux::connection_context new_ctx;
     new_ctx.remote_addr("source-new");
-    EXPECT_TRUE(server->consume_fallback_token(new_ctx));
+    EXPECT_TRUE(server->consume_fallback_token(new_ctx, ""));
 
     {
         std::lock_guard<std::mutex> const lock(server->fallback_guard_mu_);
         EXPECT_EQ(server->fallback_guard_states_.size(), kMaxFallbackGuardSources);
         EXPECT_NE(server->fallback_guard_states_.find("source-new"), server->fallback_guard_states_.end());
     }
+}
+
+TEST_F(remote_server_test_fixture, FallbackGuardKeyModeIpSniSeparatesBuckets)
+{
+    boost::system::error_code const ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    auto cfg = make_server_cfg(0, {}, "0102030405060708");
+    cfg.reality.fallback_guard.enabled = true;
+    cfg.reality.fallback_guard.rate_per_sec = 0;
+    cfg.reality.fallback_guard.burst = 1;
+    cfg.reality.fallback_guard.state_ttl_sec = 3600;
+    cfg.reality.fallback_guard.key_mode = "ip_sni";
+    auto server = std::make_shared<mux::remote_server>(pool, cfg);
+
+    mux::connection_context ctx;
+    ctx.remote_addr("127.0.0.3");
+
+    EXPECT_EQ(server->fallback_guard_key(ctx, "WWW.Example.Com"), "127.0.0.3|www.example.com");
+
+    EXPECT_TRUE(server->consume_fallback_token(ctx, "www.example.com"));
+    EXPECT_FALSE(server->consume_fallback_token(ctx, "www.example.com"));
+    EXPECT_TRUE(server->consume_fallback_token(ctx, "api.example.com"));
 }
 
 TEST_F(remote_server_test_fixture, SetCertificateAsyncPathAfterStart)
@@ -2696,7 +2720,7 @@ TEST_F(remote_server_test_fixture, DeriveShareAndFallbackHelperBranches)
     EXPECT_TRUE(app_keys_res.error());
 
     mux::connection_context const ctx;
-    server->record_fallback_result(ctx, false);
+    server->record_fallback_result(ctx, "", false);
 }
 
 TEST_F(remote_server_test_fixture, InvalidSynTargetRejectsEmptyHostAndConnectPortZero)
@@ -2896,8 +2920,8 @@ TEST_F(remote_server_test_fixture, FallbackFailedAndGuardDisabledBranches)
 
     mux::connection_context guard_ctx;
     guard_ctx.remote_addr("127.0.0.8");
-    EXPECT_TRUE(server->consume_fallback_token(guard_ctx));
-    server->record_fallback_result(guard_ctx, false);
+    EXPECT_TRUE(server->consume_fallback_token(guard_ctx, ""));
+    server->record_fallback_result(guard_ctx, "", false);
 }
 
 TEST_F(remote_server_test_fixture, PerformHandshakeResponseCoversCipherSuiteSelectionBranches)

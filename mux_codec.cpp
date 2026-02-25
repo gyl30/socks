@@ -57,23 +57,33 @@ bool mux_codec::decode_header(const std::uint8_t* buf, std::size_t len, frame_he
     return true;
 }
 
-void mux_codec::encode_syn(const syn_payload& p, std::vector<std::uint8_t>& buf)
+bool mux_codec::encode_syn(const syn_payload& p, std::vector<std::uint8_t>& buf)
 {
+    if (p.addr.size() > 255 || p.trace_id.size() > 255)
+    {
+        const auto warn_total = next_decode_warn_total();
+        if (should_log_decode_warn(warn_total))
+        {
+            LOG_WARN("syn payload encode length invalid addr {} trace {} warn_total {}", p.addr.size(), p.trace_id.size(), warn_total);
+        }
+        return false;
+    }
     buf.push_back(p.socks_cmd);
 
-    const std::uint8_t addr_len = static_cast<std::uint8_t>(std::min(p.addr.size(), static_cast<std::size_t>(255)));
+    const auto addr_len = static_cast<std::uint8_t>(p.addr.size());
     buf.push_back(addr_len);
     buf.insert(buf.end(), p.addr.begin(), p.addr.begin() + addr_len);
 
     buf.push_back(static_cast<std::uint8_t>((p.port >> 8) & 0xFF));
     buf.push_back(static_cast<std::uint8_t>(p.port & 0xFF));
 
-    const std::uint8_t trace_id_len = static_cast<std::uint8_t>(std::min(p.trace_id.size(), static_cast<std::size_t>(255)));
+    const auto trace_id_len = static_cast<std::uint8_t>(p.trace_id.size());
     buf.push_back(trace_id_len);
     if (trace_id_len > 0)
     {
         buf.insert(buf.end(), p.trace_id.begin(), p.trace_id.begin() + trace_id_len);
     }
+    return true;
 }
 
 bool mux_codec::decode_syn(const std::uint8_t* data, const std::size_t len, syn_payload& out)
@@ -125,16 +135,26 @@ bool mux_codec::decode_syn(const std::uint8_t* data, const std::size_t len, syn_
     return true;
 }
 
-void mux_codec::encode_ack(const ack_payload& p, std::vector<std::uint8_t>& buf)
+bool mux_codec::encode_ack(const ack_payload& p, std::vector<std::uint8_t>& buf)
 {
+    if (p.bnd_addr.size() > 255)
+    {
+        const auto warn_total = next_decode_warn_total();
+        if (should_log_decode_warn(warn_total))
+        {
+            LOG_WARN("ack payload encode length invalid addr {} warn_total {}", p.bnd_addr.size(), warn_total);
+        }
+        return false;
+    }
     buf.push_back(p.socks_rep);
 
-    const std::uint8_t addr_len = static_cast<std::uint8_t>(std::min(p.bnd_addr.size(), static_cast<std::size_t>(255)));
+    const auto addr_len = static_cast<std::uint8_t>(p.bnd_addr.size());
     buf.push_back(addr_len);
     buf.insert(buf.end(), p.bnd_addr.begin(), p.bnd_addr.begin() + addr_len);
 
     buf.push_back(static_cast<std::uint8_t>((p.bnd_port >> 8) & 0xFF));
     buf.push_back(static_cast<std::uint8_t>(p.bnd_port & 0xFF));
+    return true;
 }
 
 bool mux_codec::decode_ack(const std::uint8_t* data, const std::size_t len, ack_payload& out)
