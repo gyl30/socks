@@ -61,7 +61,11 @@ struct JsonWriter
     void string(const char* s, std::size_t len) const;
 };
 
-inline std::string JsonReader::getString() const { return m->GetString(); }
+inline std::string JsonReader::getString() const
+{
+    const auto length = static_cast<std::size_t>(m->GetStringLength());
+    return std::string(m->GetString(), length);
+}
 inline bool JsonReader::isNull() const { return m->IsNull(); }
 inline void JsonReader::set_invalid()
 {
