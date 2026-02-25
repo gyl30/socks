@@ -469,6 +469,62 @@ TEST(RemoteSessionTest, RunSuccessWhenSetNoDelayFailsStillSendsAckAndFin)
     EXPECT_EQ(ack.bnd_port, expected_bind_port);
 }
 
+TEST(RemoteSessionTest, IdleWatchdogReturnsImmediatelyWhenIdleDisabled)
+{
+    boost::asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    mux::connection_context const ctx;
+    auto session = std::make_shared<mux::remote_session>(conn, 46, io_context, ctx, 10, 10, 0);
+
+    const auto start = std::chrono::steady_clock::now();
+    mux::test::run_awaitable_void(io_context, session->idle_watchdog());
+    const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
+
+    EXPECT_LT(elapsed_ms, 200);
+    EXPECT_FALSE(session->reset_requested_.load(std::memory_order_acquire));
+}
+
+TEST(RemoteSessionTest, RunIdleWatchdogClosesInactiveSession)
+{
+    boost::asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    mux::connection_context const ctx;
+    auto session = std::make_shared<mux::remote_session>(conn, 47, io_context, ctx, 10, 10, 1);
+
+    boost::asio::ip::tcp::acceptor acceptor(io_context);
+    ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
+    const auto port = acceptor.local_endpoint().port();
+
+    std::thread accept_thread(
+        [&io_context, &acceptor]()
+        {
+            boost::asio::ip::tcp::socket accepted(io_context);
+            boost::system::error_code ec;
+            acceptor.accept(accepted, ec);
+            if (!ec)
+            {
+                std::this_thread::sleep_for(std::chrono::seconds(3));
+                accepted.close(ec);
+            }
+        });
+
+    EXPECT_CALL(*conn, mock_send_async(47, mux::kCmdAck, _)).WillOnce(::testing::Return(boost::system::error_code{}));
+    EXPECT_CALL(*conn, mock_send_async(47, mux::kCmdFin, std::vector<std::uint8_t>{})).Times(0);
+
+    const auto start = std::chrono::steady_clock::now();
+    mux::test::run_awaitable_void(io_context, session->run(make_syn("127.0.0.1", port)));
+    const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
+
+    if (accept_thread.joinable())
+    {
+        accept_thread.join();
+    }
+
+    EXPECT_GE(elapsed_ms, 900);
+    EXPECT_LT(elapsed_ms, 5000);
+    EXPECT_TRUE(session->reset_requested_.load(std::memory_order_acquire));
+}
+
 TEST(RemoteSessionTest, UpstreamWriteTimeoutStopsWhenTargetBackpressured)
 {
     boost::asio::io_context io_context;
