@@ -107,6 +107,7 @@ struct config
             bool enabled = true;
             std::uint32_t rate_per_sec = 2;
             std::uint32_t burst = 10;
+            std::string key_mode = "ip";
             std::uint32_t circuit_fail_threshold = 5;
             std::uint32_t circuit_open_sec = 30;
             std::uint32_t state_ttl_sec = 600;

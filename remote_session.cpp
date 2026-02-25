@@ -62,7 +62,11 @@ boost::asio::awaitable<bool> send_ack(std::shared_ptr<mux_connection> conn,
 {
     const ack_payload ack{.socks_rep = rep, .bnd_addr = addr, .bnd_port = port};
     std::vector<std::uint8_t> ack_data;
-    mux_codec::encode_ack(ack, ack_data);
+    if (!mux_codec::encode_ack(ack, ack_data))
+    {
+        LOG_CTX_WARN(ctx, "{} send ack encode failed", log_event::kMux);
+        co_return false;
+    }
     const auto ack_ec = co_await conn->send_async(stream_id, kCmdAck, std::move(ack_data));
     if (ack_ec)
     {

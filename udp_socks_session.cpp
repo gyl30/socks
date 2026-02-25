@@ -226,7 +226,12 @@ boost::asio::awaitable<std::shared_ptr<mux_stream>> establish_udp_associate_stre
 
     const syn_payload syn{.socks_cmd = socks::kCmdUdpAssociate, .addr = "0.0.0.0", .port = 0, .trace_id = ctx.trace_id()};
     std::vector<std::uint8_t> syn_data;
-    mux_codec::encode_syn(syn, syn_data);
+    if (!mux_codec::encode_syn(syn, syn_data))
+    {
+        LOG_CTX_WARN(ctx, "{} syn encode failed", log_event::kSocks);
+        co_await close_and_remove_stream(tunnel_manager, stream);
+        co_return nullptr;
+    }
     auto ec = co_await tunnel_manager->connection()->send_async(stream->id(), kCmdSyn, std::move(syn_data));
     if (ec)
     {

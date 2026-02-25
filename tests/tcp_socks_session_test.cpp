@@ -895,7 +895,7 @@ TEST(TcpSocksSessionTest, RunProxyPathRepliesSuccessWhenAckAccepted)
                 mux::ack_payload ack{};
                 ack.socks_rep = socks::kRepSuccess;
                 std::vector<std::uint8_t> ack_data;
-                mux::mux_codec::encode_ack(ack, ack_data);
+                (void)mux::mux_codec::encode_ack(ack, ack_data);
                 boost::asio::post(io_context, [stream, ack_data]() { stream->on_data(ack_data); });
 
                 boost::asio::post(io_context, [stream]() { stream->on_data(std::vector<std::uint8_t>{0xBE, 0xEF}); });

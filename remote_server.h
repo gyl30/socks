@@ -242,19 +242,26 @@ class remote_server : public std::enable_shared_from_this<remote_server>
                                                                       const std::string& sni);
 
     struct fallback_guard_state;
+    enum class fallback_guard_key_mode : std::uint8_t;
 
-    [[nodiscard]] bool consume_fallback_token(const connection_context& ctx);
-    void record_fallback_result(const connection_context& ctx, bool success);
+    [[nodiscard]] bool consume_fallback_token(const connection_context& ctx, const std::string& sni);
+    void record_fallback_result(const connection_context& ctx, const std::string& sni, bool success);
     void cleanup_fallback_guard_state_locked(const std::chrono::steady_clock::time_point& now);
     void evict_fallback_guard_source_if_needed_locked(const std::string& source_key);
     [[nodiscard]] fallback_guard_state& get_or_init_fallback_guard_state_locked(const std::string& source_key,
                                                                                 const std::chrono::steady_clock::time_point& now);
     void refill_fallback_tokens_locked(fallback_guard_state& state, const std::chrono::steady_clock::time_point& now) const;
     [[nodiscard]] static bool fallback_guard_allows_request_locked(fallback_guard_state& state, const std::chrono::steady_clock::time_point& now);
-    [[nodiscard]] static std::string fallback_guard_key(const connection_context& ctx);
+    [[nodiscard]] std::string fallback_guard_key(const connection_context& ctx, const std::string& sni) const;
+    [[nodiscard]] static fallback_guard_key_mode resolve_fallback_guard_key_mode(const std::string& key_mode);
     [[nodiscard]] std::string connection_limit_source_key(const std::shared_ptr<boost::asio::ip::tcp::socket>& s) const;
 
-   private:
+    enum class fallback_guard_key_mode : std::uint8_t
+    {
+        kIp,
+        kIpSni,
+    };
+
     struct fallback_guard_state
     {
         double tokens = 0;
@@ -281,6 +288,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     std::string fallback_type_;
     bool fallback_dest_valid_ = false;
     config::reality_t::fallback_guard_t fallback_guard_config_;
+    fallback_guard_key_mode fallback_guard_key_mode_ = fallback_guard_key_mode::kIp;
     std::mutex fallback_guard_mu_;
     std::unordered_map<std::string, fallback_guard_state> fallback_guard_states_;
     config::timeout_t timeout_config_;

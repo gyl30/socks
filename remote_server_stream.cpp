@@ -77,8 +77,10 @@ boost::asio::awaitable<void> remote_server::reject_stream_for_limit(const std::s
     LOG_CTX_WARN(ctx, "{} stream limit reached", log_event::kMux);
     const ack_payload ack{.socks_rep = socks::kRepGenFail, .bnd_addr = "", .bnd_port = 0};
     std::vector<std::uint8_t> ack_data;
-    mux_codec::encode_ack(ack, ack_data);
-    (void)co_await connection->send_async(stream_id, kCmdAck, std::move(ack_data));
+    if (mux_codec::encode_ack(ack, ack_data))
+    {
+        (void)co_await connection->send_async(stream_id, kCmdAck, std::move(ack_data));
+    }
     co_await send_stream_reset(connection, stream_id);
 }
 

@@ -78,21 +78,25 @@
 - `reality.dest`：回落目标（格式 `host:port`）。
   - 在提供时必须符合 `host:port` 或 `[ipv6]:port`，且端口范围必须在 `1-65535`。
 - `reality.type`：回落网络类型（默认 `tcp`）。
+  - 在提供时仅支持 `tcp`，否则配置解析失败。
 - `reality.strict_cert_verify`：是否严格校验证书签名（默认 `false`）。
   - 仅当服务端证书公钥与 `CertificateVerify` 签名密钥一致时可开启；使用真实站点 fallback 证书时通常不满足该条件。
 - `reality.replay_cache_max_entries`：重放缓存最大条目数（默认 `100000`，用于控制窗口内内存占用）。
 - `reality.private_key` / `reality.public_key`：REALITY 密钥对（结构体默认空值；`socks config` 输出时会生成随机密钥对）。
   - 两者在提供时必须是合法十六进制字符串，且解码后长度必须为 `32` 字节。
+  - 当 `mode = server` 时，`reality.private_key` 必须为非空值。
   - 当 `mode = client` 时，`reality.public_key` 必须为非空值。
 - `reality.short_id`：短 ID。
   - 在提供时必须是合法偶数长度十六进制字符串，且解码后长度不得超过 `8` 字节。
 - `reality.fallback_guard.enabled`：是否启用 fallback 防护（默认 `true`）。
 - `reality.fallback_guard.rate_per_sec`：每 IP 每秒允许 fallback 次数（默认 `2`）。
 - `reality.fallback_guard.burst`：每 IP 令牌桶突发上限（默认 `10`）。
+- `reality.fallback_guard.key_mode`：fallback 防护聚合维度（默认 `ip`，可选 `ip` / `ip_sni`）。
 - `reality.fallback_guard.circuit_fail_threshold`：触发熔断前连续失败次数（默认 `5`）。
 - `reality.fallback_guard.circuit_open_sec`：熔断持续秒数（默认 `30`）。
 - `reality.fallback_guard.state_ttl_sec`：fallback 防护状态保留秒数（默认 `600`）。
   - 当 `reality.fallback_guard.enabled = true` 时，`rate_per_sec` 与 `burst` 必须大于 `0`。
+  - 当 `reality.fallback_guard.enabled = true` 时，`key_mode` 必须是 `ip` 或 `ip_sni`。
   - 当 `reality.fallback_guard.enabled = true` 时，`state_ttl_sec` 必须大于 `0`。
   - 当 `reality.fallback_guard.enabled = true` 且 `circuit_fail_threshold > 0` 时，`circuit_open_sec` 必须大于 `0`。
 

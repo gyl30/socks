@@ -106,7 +106,10 @@ boost::asio::awaitable<boost::system::error_code> remote_udp_session::send_ack_p
                                                                                        const ack_payload& ack) const
 {
     std::vector<std::uint8_t> ack_data;
-    mux_codec::encode_ack(ack, ack_data);
+    if (!mux_codec::encode_ack(ack, ack_data))
+    {
+        co_return boost::asio::error::invalid_argument;
+    }
     co_return co_await conn->send_async(id_, kCmdAck, std::move(ack_data));
 }
 

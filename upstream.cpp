@@ -272,7 +272,11 @@ boost::asio::awaitable<bool> proxy_upstream::send_syn_request(const std::shared_
     const auto stream_ctx = ctx_.with_stream(stream->id());
     const syn_payload syn{.socks_cmd = socks::kCmdConnect, .addr = host, .port = port, .trace_id = ctx_.trace_id()};
     std::vector<std::uint8_t> syn_data;
-    mux_codec::encode_syn(syn, syn_data);
+    if (!mux_codec::encode_syn(syn, syn_data))
+    {
+        LOG_CTX_ERROR(stream_ctx, "{} stage=send_syn target={}:{} encode failed", log_event::kRoute, host, port);
+        co_return false;
+    }
     const auto ec = co_await tunnel_->connection()->send_async(stream->id(), kCmdSyn, std::move(syn_data));
     if (ec)
     {
