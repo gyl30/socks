@@ -177,7 +177,7 @@ boost::asio::awaitable<std::pair<route_type, std::shared_ptr<upstream>>> tproxy_
             co_return std::make_pair(route, std::shared_ptr<upstream>(nullptr));
         }
 
-        const std::shared_ptr<upstream> backend = std::make_shared<proxy_upstream>(tunnel, ctx_, timeout_config_.read);
+        const std::shared_ptr<upstream> backend = std::make_shared<proxy_upstream>(tunnel, ctx_, timeout_config_.connect);
         co_return std::make_pair(route, backend);
     }
 

@@ -2430,7 +2430,7 @@ boost::asio::awaitable<boost::system::error_code> remote_server::handle_fallback
 
     const auto target_host = fallback_target.first;
     const auto target_port = fallback_target.second;
-    const auto connect_timeout_sec = timeout_config_.read;
+    const auto connect_timeout_sec = timeout_config_.connect;
     auto t = std::make_shared<boost::asio::ip::tcp::socket>(io_context_);
     LOG_CTX_INFO(ctx, "{} proxying sni {} to {} {}", log_event::kFallback, sni, target_host, target_port);
     if (const auto connect_ec = co_await resolve_and_connect_fallback_target(t, io_context_, target_host, target_port, ctx, connect_timeout_sec);

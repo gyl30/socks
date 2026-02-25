@@ -332,6 +332,23 @@ TEST(TcpSocksSessionTest, CreateBackendDirectKeepsConnectTimeoutZeroAsDisabled)
     EXPECT_EQ(direct_backend->write_timeout_sec_, 5U);
 }
 
+TEST(TcpSocksSessionTest, CreateBackendProxyUsesConfiguredConnectTimeout)
+{
+    boost::asio::io_context io_context;
+    auto router = std::make_shared<mux::router>();
+    mux::config::timeout_t timeout_cfg{};
+    timeout_cfg.connect = 9;
+    timeout_cfg.read = 31;
+
+    auto session =
+        std::make_shared<mux::tcp_socks_session>(boost::asio::ip::tcp::socket(io_context), io_context, nullptr, std::move(router), 1, timeout_cfg);
+
+    const auto backend = session->create_backend(mux::route_type::kProxy);
+    const auto proxy_backend = std::dynamic_pointer_cast<mux::proxy_upstream>(backend);
+    ASSERT_NE(proxy_backend, nullptr);
+    EXPECT_EQ(proxy_backend->timeout_sec_, 9U);
+}
+
 TEST(TcpSocksSessionTest, ReplySuccessWritesSocksResponse)
 {
     boost::asio::io_context io_context;

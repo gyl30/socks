@@ -1461,7 +1461,7 @@ boost::asio::awaitable<std::expected<void, boost::system::error_code>> client_tu
                                                                                                        boost::asio::ip::tcp::socket& socket,
                                                                                                        const connection_context& ctx) const
 {
-    const auto timeout_sec = timeout_config_.read;
+    const auto timeout_sec = timeout_config_.connect;
     const auto resolve_endpoints = co_await resolve_remote_endpoints(io_context, remote_host_, remote_port_, timeout_sec, ctx);
     if (!resolve_endpoints)
     {
@@ -1506,7 +1506,7 @@ boost::asio::awaitable<std::expected<void, boost::system::error_code>> client_tu
 boost::asio::awaitable<std::expected<void, boost::system::error_code>> client_tunnel_pool::try_connect_endpoint(
     boost::asio::ip::tcp::socket& socket, const boost::asio::ip::tcp::endpoint& endpoint) const
 {
-    const auto timeout_sec = timeout_config_.read;
+    const auto timeout_sec = timeout_config_.connect;
     const auto connect_res = co_await timeout_io::async_connect_with_timeout(socket, endpoint, timeout_sec, "connect");
     if (connect_res.timed_out)
     {

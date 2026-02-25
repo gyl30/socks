@@ -266,13 +266,14 @@ TEST_F(remote_server_mux_test_fixture, TargetConnectFail)
     std::this_thread::sleep_for(std::chrono::milliseconds(2000));
 }
 
-TEST_F(remote_server_mux_test_fixture, TargetConnectTimeoutUsesConfiguredReadTimeout)
+TEST_F(remote_server_mux_test_fixture, TargetConnectTimeoutUsesConfiguredConnectTimeout)
 {
     mux::io_context_pool pool(2);
     scoped_pool const sp(pool);
 
     auto server_cfg = make_server_cfg(0);
-    server_cfg.timeout.read = 1;
+    server_cfg.timeout.connect = 1;
+    server_cfg.timeout.read = 10;
     auto server = std::make_shared<mux::remote_server>(pool, server_cfg);
 
     reality::server_fingerprint fp;
