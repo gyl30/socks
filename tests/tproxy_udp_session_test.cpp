@@ -1791,14 +1791,15 @@ TEST(TproxyUdpSessionTest, EnsureProxyStreamReturnsFalseOnInvalidAckPayload)
     EXPECT_TRUE(session->tunnel_.expired());
 }
 
-TEST(TproxyUdpSessionTest, EnsureProxyStreamReturnsFalseOnAckTimeout)
+TEST(TproxyUdpSessionTest, EnsureProxyStreamReturnsFalseOnAckTimeoutUsesConnectTimeout)
 {
     boost::asio::io_context ctx;
     mux::io_context_pool pool(1);
     auto router = std::make_shared<proxy_router>();
     mux::config cfg;
     cfg.reality.public_key = std::string(64, 'a');
-    cfg.timeout.read = 1;
+    cfg.timeout.read = 8;
+    cfg.timeout.connect = 1;
     cfg.timeout.idle = 3;
     cfg.tproxy.mark = 0;
 

@@ -98,7 +98,7 @@ tproxy_udp_session::tproxy_udp_session(boost::asio::io_context& io_context,
       recv_channel_(io_context_, cfg.queues.udp_session_recv_channel_capacity),
       client_ep_(net::normalize_endpoint(client_ep)),
       mark_(cfg.tproxy.mark),
-      read_timeout_sec_(cfg.timeout.read)
+      connect_timeout_sec_(cfg.timeout.connect)
 {
     ctx_.new_trace_id();
     ctx_.conn_id(sid);
@@ -340,9 +340,9 @@ boost::asio::awaitable<bool> tproxy_udp_session::negotiate_proxy_stream(const st
     auto wait_done = std::make_shared<std::atomic<bool>>(false);
     auto ex = co_await boost::asio::this_coro::executor;
     boost::asio::steady_timer ack_timer(ex);
-    if (read_timeout_sec_ > 0)
+    if (connect_timeout_sec_ > 0)
     {
-        ack_timer.expires_after(std::chrono::seconds(read_timeout_sec_));
+        ack_timer.expires_after(std::chrono::seconds(connect_timeout_sec_));
         ack_timer.async_wait(
             [stream, timeout_fired, wait_done](const boost::system::error_code& timer_ec)
             {
@@ -361,7 +361,7 @@ boost::asio::awaitable<bool> tproxy_udp_session::negotiate_proxy_stream(const st
     }
 
     auto [ack_ec, ack_data] = co_await stream->async_read_some();
-    if (read_timeout_sec_ > 0)
+    if (connect_timeout_sec_ > 0)
     {
         bool expected = false;
         (void)wait_done->compare_exchange_strong(expected, true, std::memory_order_acq_rel, std::memory_order_acquire);
@@ -369,7 +369,7 @@ boost::asio::awaitable<bool> tproxy_udp_session::negotiate_proxy_stream(const st
     }
     if (timeout_fired->load(std::memory_order_acquire))
     {
-        LOG_CTX_WARN(ctx_, "{} udp ack timeout {}s", log_event::kSocks, read_timeout_sec_);
+        LOG_CTX_WARN(ctx_, "{} udp ack timeout {}s", log_event::kSocks, connect_timeout_sec_);
         co_return false;
     }
     if (ack_ec)
