@@ -86,6 +86,8 @@ class tproxy_udp_session : public mux_stream_interface, public std::enable_share
     boost::asio::awaitable<void> handle_proxy_write_failure(const std::shared_ptr<mux_stream>& stream, const boost::system::error_code& write_ec);
 
     boost::asio::awaitable<void> send_direct(const boost::asio::ip::udp::endpoint& dst_ep, const std::uint8_t* data, std::size_t len);
+    bool switch_direct_socket_to_v4();
+    bool switch_direct_socket_to_v6();
 
     boost::asio::awaitable<void> direct_read_loop();
 
