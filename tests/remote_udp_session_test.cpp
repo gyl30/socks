@@ -452,24 +452,10 @@ TEST(RemoteUdpSessionTest, ForwardMuxPayloadDropsIpv6OnlyTargetOnIpv4Socket)
     fail_next_setsockopt_v6only();
     ASSERT_TRUE(mux::test::run_awaitable(io_context, session->setup_udp_socket(conn)));
     ASSERT_FALSE(session->udp_socket_use_v6_);
-
-    boost::asio::ip::udp::socket receiver(io_context);
-    boost::system::error_code ec;
-    receiver.open(boost::asio::ip::udp::v6(), ec);
-    ASSERT_FALSE(ec);
-    receiver.bind(boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("::1"), 0), ec);
-    ASSERT_FALSE(ec);
-    receiver.non_blocking(true, ec);
-    ASSERT_FALSE(ec);
-
-    const auto packet = make_mux_udp_packet("::1", receiver.local_endpoint().port(), std::vector<std::uint8_t>{0x42});
+    const auto tx_before = session->ctx_.tx_bytes();
+    const auto packet = make_mux_udp_packet("::1", 53, std::vector<std::uint8_t>{0x42});
     mux::test::run_awaitable_void(io_context, session->forward_mux_payload(packet));
-
-    std::array<std::uint8_t, 8> recv_buf = {0};
-    boost::asio::ip::udp::endpoint from_ep;
-    const auto recv_n = receiver.receive_from(boost::asio::buffer(recv_buf), from_ep, 0, ec);
-    EXPECT_EQ(recv_n, 0U);
-    EXPECT_TRUE(ec == boost::asio::error::would_block || ec == boost::asio::error::try_again);
+    EXPECT_EQ(session->ctx_.tx_bytes(), tx_before);
 }
 
 TEST(RemoteUdpSessionTest, ForwardMuxPayloadResolveTimeoutDropsPayload)
