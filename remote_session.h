@@ -9,6 +9,7 @@
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/io_context.hpp>
+#include <boost/asio/steady_timer.hpp>
 #include <boost/system/error_code.hpp>
 #include <boost/asio/experimental/concurrent_channel.hpp>
 
@@ -29,7 +30,8 @@ class remote_session : public mux_stream_interface, public std::enable_shared_fr
                    boost::asio::io_context& io_context,
                    const connection_context& ctx,
                    std::uint32_t connect_timeout_sec = 10,
-                   std::uint32_t write_timeout_sec = 10);
+                   std::uint32_t write_timeout_sec = 10,
+                   std::uint32_t idle_timeout_sec = 0);
 
     [[nodiscard]] boost::asio::awaitable<void> start(const syn_payload& syn);
 
@@ -42,6 +44,7 @@ class remote_session : public mux_stream_interface, public std::enable_shared_fr
     [[nodiscard]] boost::asio::awaitable<void> run(const syn_payload& syn);
     [[nodiscard]] boost::asio::awaitable<void> upstream();
     [[nodiscard]] boost::asio::awaitable<void> downstream();
+    [[nodiscard]] boost::asio::awaitable<void> idle_watchdog();
     void close_from_fin();
     void close_from_reset();
 
@@ -51,13 +54,16 @@ class remote_session : public mux_stream_interface, public std::enable_shared_fr
     boost::asio::io_context& io_context_;
     boost::asio::ip::tcp::resolver resolver_;
     boost::asio::ip::tcp::socket target_socket_;
+    boost::asio::steady_timer idle_timer_;
     std::weak_ptr<mux_connection> connection_;
     boost::asio::experimental::concurrent_channel<void(boost::system::error_code, std::vector<std::uint8_t>)> recv_channel_;
     std::weak_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> manager_;
     std::atomic<bool> reset_requested_{false};
     std::atomic<bool> fin_requested_{false};
+    std::atomic<std::uint64_t> last_activity_time_ms_{0};
     std::uint32_t connect_timeout_sec_ = 10;
     std::uint32_t write_timeout_sec_ = 10;
+    std::uint32_t idle_timeout_sec_ = 0;
 };
 
 }    // namespace mux
