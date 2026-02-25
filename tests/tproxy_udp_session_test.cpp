@@ -235,6 +235,38 @@ bool udp_socket_is_open(boost::asio::io_context& io_context, const std::shared_p
     return run_on_io_context(io_context, [client]() { return client->udp_socket_.is_open(); });
 }
 
+bool tcp_acceptor_local_is_v4(boost::asio::io_context& io_context, const std::shared_ptr<mux::tproxy_client>& client)
+{
+    return run_on_io_context(
+        io_context,
+        [client]()
+        {
+            if (!client->tcp_acceptor_.is_open())
+            {
+                return false;
+            }
+            boost::system::error_code ec;
+            const auto ep = client->tcp_acceptor_.local_endpoint(ec);
+            return !ec && ep.address().is_v4();
+        });
+}
+
+bool udp_socket_local_is_v4(boost::asio::io_context& io_context, const std::shared_ptr<mux::tproxy_client>& client)
+{
+    return run_on_io_context(
+        io_context,
+        [client]()
+        {
+            if (!client->udp_socket_.is_open())
+            {
+                return false;
+            }
+            boost::system::error_code ec;
+            const auto ep = client->udp_socket_.local_endpoint(ec);
+            return !ec && ep.address().is_v4();
+        });
+}
+
 std::shared_ptr<mux::tproxy_client::udp_session_map_t> snapshot_udp_sessions(const std::shared_ptr<mux::tproxy_client>& client)
 {
     auto snapshot = std::atomic_load_explicit(&client->udp_sessions_, std::memory_order_acquire);
@@ -4102,6 +4134,86 @@ TEST(TproxyClientTest, SetupCoversV6DualStackSuccessBranches)
     }
 
     force_ipv6_socket_compat(false);
+    reset_socket_wrappers();
+}
+
+TEST(TproxyClientTest, SetupFallsBackToIpv4WhenUnspecifiedIpv6DualStackUnavailable)
+{
+    reset_socket_wrappers();
+    force_tproxy_setsockopt_success(true);
+
+    mux::config cfg;
+    cfg.tproxy.enabled = true;
+    cfg.tproxy.listen_host = "";
+    cfg.tproxy.tcp_port = pick_free_tcp_port();
+    cfg.tproxy.udp_port = pick_free_tcp_port();
+    cfg.tproxy.mark = 0;
+
+#ifdef IPV6_V6ONLY
+    {
+        boost::system::error_code const ec;
+        mux::io_context_pool pool(1);
+        ASSERT_FALSE(ec);
+        auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
+
+        fail_setsockopt_once(SOL_IPV6, IPV6_V6ONLY, EPERM);
+        boost::asio::co_spawn(
+            pool.get_io_context(),
+            [client]() -> boost::asio::awaitable<void>
+            {
+                co_await client->accept_tcp_loop();
+                co_return;
+            },
+            boost::asio::detached);
+
+        std::thread runner([&pool]() { pool.run(); });
+        bool tcp_opened = false;
+        for (int i = 0; i < 50 && !(tcp_opened = tcp_acceptor_is_open(pool.get_io_context(), client)); ++i)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        ASSERT_TRUE(tcp_opened);
+        EXPECT_TRUE(tcp_acceptor_local_is_v4(pool.get_io_context(), client));
+
+        client->stop();
+        pool.stop();
+        runner.join();
+    }
+
+    reset_socket_wrappers();
+    force_tproxy_setsockopt_success(true);
+
+    {
+        boost::system::error_code const ec;
+        mux::io_context_pool pool(1);
+        ASSERT_FALSE(ec);
+        auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
+
+        fail_setsockopt_once(SOL_IPV6, IPV6_V6ONLY, EPERM);
+        boost::asio::co_spawn(
+            pool.get_io_context(),
+            [client]() -> boost::asio::awaitable<void>
+            {
+                co_await client->udp_loop();
+                co_return;
+            },
+            boost::asio::detached);
+
+        std::thread runner([&pool]() { pool.run(); });
+        bool udp_opened = false;
+        for (int i = 0; i < 50 && !(udp_opened = udp_socket_is_open(pool.get_io_context(), client)); ++i)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        ASSERT_TRUE(udp_opened);
+        EXPECT_TRUE(udp_socket_local_is_v4(pool.get_io_context(), client));
+
+        client->stop();
+        pool.stop();
+        runner.join();
+    }
+#endif
+
     reset_socket_wrappers();
 }
 

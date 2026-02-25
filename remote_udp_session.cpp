@@ -128,8 +128,20 @@ boost::asio::awaitable<void> remote_udp_session::handle_start_failure(const std:
 
 boost::asio::awaitable<bool> remote_udp_session::setup_udp_socket(const std::shared_ptr<mux_connection>& conn)
 {
+    if (udp_socket_.is_open())
+    {
+        const boost::system::error_code already_open_ec = boost::asio::error::already_open;
+        co_await handle_start_failure(conn, "udp open", already_open_ec);
+        co_return false;
+    }
+
     boost::system::error_code ec;
     ec = udp_socket_.open(boost::asio::ip::udp::v6(), ec);
+    if (ec == boost::asio::error::already_open)
+    {
+        co_await handle_start_failure(conn, "udp open", ec);
+        co_return false;
+    }
     if (!ec)
     {
         ec = udp_socket_.set_option(boost::asio::ip::v6_only(false), ec);

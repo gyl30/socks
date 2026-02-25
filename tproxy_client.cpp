@@ -25,6 +25,7 @@
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/address.hpp>
+#include <boost/asio/ip/address_v4.hpp>
 #include <boost/asio/ip/v6_only.hpp>
 #include <boost/asio/socket_base.hpp>
 #include <boost/asio/steady_timer.hpp>
@@ -765,8 +766,24 @@ std::expected<void, boost::system::error_code> setup_tproxy_tcp_runtime(boost::a
     }
     const auto& [host, addr] = *addr_res;
     listen_host = host;
+    const auto setup_res = setup_tcp_listener(tcp_acceptor, addr, tcp_port);
+    if (setup_res)
+    {
+        return {};
+    }
+    if (!addr.is_v6() || !addr.to_v6().is_unspecified())
+    {
+        return std::unexpected(setup_res.error());
+    }
 
-    return setup_tcp_listener(tcp_acceptor, addr, tcp_port);
+    LOG_WARN("tproxy tcp ipv6 dual-stack setup failed {} fallback to ipv4", setup_res.error().message());
+    const auto fallback_addr = boost::asio::ip::address_v4::any();
+    if (auto fallback_res = setup_tcp_listener(tcp_acceptor, fallback_addr, tcp_port); !fallback_res)
+    {
+        return std::unexpected(fallback_res.error());
+    }
+    listen_host = fallback_addr.to_string();
+    return {};
 }
 
 boost::asio::awaitable<bool> run_tcp_accept_iteration(boost::asio::ip::tcp::acceptor& tcp_acceptor,
@@ -803,8 +820,24 @@ std::expected<void, boost::system::error_code> setup_tproxy_udp_runtime(boost::a
     }
     const auto& [host, addr] = *addr_res;
     listen_host = host;
+    const auto setup_res = setup_udp_listener(udp_socket, addr, udp_port, tproxy_config.mark);
+    if (setup_res)
+    {
+        return {};
+    }
+    if (!addr.is_v6() || !addr.to_v6().is_unspecified())
+    {
+        return std::unexpected(setup_res.error());
+    }
 
-    return setup_udp_listener(udp_socket, addr, udp_port, tproxy_config.mark);
+    LOG_WARN("tproxy udp ipv6 dual-stack setup failed {} fallback to ipv4", setup_res.error().message());
+    const auto fallback_addr = boost::asio::ip::address_v4::any();
+    if (auto fallback_res = setup_udp_listener(udp_socket, fallback_addr, udp_port, tproxy_config.mark); !fallback_res)
+    {
+        return std::unexpected(fallback_res.error());
+    }
+    listen_host = fallback_addr.to_string();
+    return {};
 }
 
 boost::asio::awaitable<udp_loop_action> run_udp_iteration(boost::asio::ip::udp::socket& udp_socket,
