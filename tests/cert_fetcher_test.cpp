@@ -151,14 +151,45 @@ class local_tls_server
         boost::asio::ip::tcp::endpoint const ep(boost::asio::ip::make_address("127.0.0.1"), 0);
         boost::system::error_code ec;
         acceptor_.open(ep.protocol(), ec);
+        if (ec)
+        {
+            init_error_ = ec;
+            return;
+        }
         acceptor_.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true), ec);
+        if (ec)
+        {
+            init_error_ = ec;
+            return;
+        }
         acceptor_.bind(ep, ec);
+        if (ec)
+        {
+            init_error_ = ec;
+            return;
+        }
         acceptor_.listen(boost::asio::socket_base::max_listen_connections, ec);
-        port_ = acceptor_.local_endpoint(ec).port();
+        if (ec)
+        {
+            init_error_ = ec;
+            return;
+        }
+        const auto local_ep = acceptor_.local_endpoint(ec);
+        if (ec)
+        {
+            init_error_ = ec;
+            return;
+        }
+        port_ = local_ep.port();
+        ready_ = true;
     }
 
     void start()
     {
+        if (!ready_)
+        {
+            return;
+        }
         acceptor_.async_accept(
             [this](const boost::system::error_code& ec, boost::asio::ip::tcp::socket socket)
             {
@@ -171,12 +202,18 @@ class local_tls_server
             });
     }
 
+    [[nodiscard]] bool ready() const { return ready_; }
+
+    [[nodiscard]] const boost::system::error_code& init_error() const { return init_error_; }
+
     [[nodiscard]] std::uint16_t port() const { return port_; }
 
    private:
     boost::asio::ssl::context ssl_ctx_;
     boost::asio::ip::tcp::acceptor acceptor_;
     std::uint16_t port_ = 0;
+    bool ready_ = false;
+    boost::system::error_code init_error_{};
 };
 
 }    // namespace
@@ -185,6 +222,7 @@ TEST(CertFetcherTest, BasicFetch)
 {
     boost::asio::io_context ctx;
     local_tls_server server(ctx);
+    ASSERT_TRUE(server.ready()) << server.init_error().message();
     server.start();
     bool finished = false;
 

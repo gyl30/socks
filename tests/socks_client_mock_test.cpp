@@ -39,13 +39,22 @@ TEST(LocalClientMockTest, HandshakeFailurePaths)
 
     auto run_mock_server_and_test = [&](std::vector<std::uint8_t> data_to_send)
     {
-        boost::system::error_code const ec;
         mux::io_context_pool pool(1);
-        ASSERT_FALSE(ec);
 
         boost::asio::io_context server_ctx;
-        tcp::acceptor acceptor(server_ctx, tcp::endpoint(tcp::v4(), 0));
-        std::uint16_t const port = acceptor.local_endpoint().port();
+        tcp::acceptor acceptor(server_ctx);
+        boost::system::error_code ec;
+        acceptor.open(tcp::v4(), ec);
+        ASSERT_FALSE(ec);
+        acceptor.set_option(tcp::acceptor::reuse_address(true), ec);
+        ASSERT_FALSE(ec);
+        acceptor.bind(tcp::endpoint(tcp::v4(), 0), ec);
+        ASSERT_FALSE(ec);
+        acceptor.listen(boost::asio::socket_base::max_listen_connections, ec);
+        ASSERT_FALSE(ec);
+        const auto local_ep = acceptor.local_endpoint(ec);
+        ASSERT_FALSE(ec);
+        std::uint16_t const port = local_ep.port();
 
         std::thread server_thread(
             [&]()
