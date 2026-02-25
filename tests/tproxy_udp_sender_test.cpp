@@ -7,6 +7,7 @@
 #include <vector>
 #include <cstdint>
 #include <sys/socket.h>
+#include <netinet/in.h>
 
 #include <gtest/gtest.h>
 #include <boost/asio/ip/udp.hpp>
@@ -27,9 +28,11 @@ enum class udp_sender_fail_mode
     kNone = 0,
     kSocketOnce,
     kSetsockoptAlwaysSuccess,
+    kSetsockoptIpv6OnlyFailOnceOtherwiseSuccess,
 };
 
 std::atomic<int> g_udp_sender_fail_mode{static_cast<int>(udp_sender_fail_mode::kNone)};
+std::atomic<bool> g_udp_sender_ipv6_only_failed_once{false};
 
 class udp_sender_fail_guard
 {
@@ -37,9 +40,14 @@ class udp_sender_fail_guard
     explicit udp_sender_fail_guard(const udp_sender_fail_mode mode)
     {
         g_udp_sender_fail_mode.store(static_cast<int>(mode), std::memory_order_release);
+        g_udp_sender_ipv6_only_failed_once.store(false, std::memory_order_release);
     }
 
-    ~udp_sender_fail_guard() { g_udp_sender_fail_mode.store(static_cast<int>(udp_sender_fail_mode::kNone), std::memory_order_release); }
+    ~udp_sender_fail_guard()
+    {
+        g_udp_sender_fail_mode.store(static_cast<int>(udp_sender_fail_mode::kNone), std::memory_order_release);
+        g_udp_sender_ipv6_only_failed_once.store(false, std::memory_order_release);
+    }
 };
 
 bool consume_udp_sender_socket_fail_once()
@@ -57,6 +65,24 @@ bool force_udp_sender_setsockopt_success()
 {
     return static_cast<udp_sender_fail_mode>(g_udp_sender_fail_mode.load(std::memory_order_acquire)) ==
            udp_sender_fail_mode::kSetsockoptAlwaysSuccess;
+}
+
+bool force_udp_sender_setsockopt_success_except_ipv6_only_once(const int level, const int optname)
+{
+    const auto mode = static_cast<udp_sender_fail_mode>(g_udp_sender_fail_mode.load(std::memory_order_acquire));
+    if (mode != udp_sender_fail_mode::kSetsockoptIpv6OnlyFailOnceOtherwiseSuccess)
+    {
+        return false;
+    }
+    if (level == SOL_IPV6 && optname == IPV6_V6ONLY)
+    {
+        if (!g_udp_sender_ipv6_only_failed_once.exchange(true, std::memory_order_acq_rel))
+        {
+            errno = EPERM;
+            return false;
+        }
+    }
+    return true;
 }
 
 std::shared_ptr<boost::asio::ip::udp::socket> make_bound_udp_v4_socket(boost::asio::io_context& ctx)
@@ -96,6 +122,10 @@ extern "C" int __wrap_socket(int domain, int type, int protocol)
 
 extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)    
 {
+    if (force_udp_sender_setsockopt_success_except_ipv6_only_once(level, optname))
+    {
+        return 0;
+    }
     if (force_udp_sender_setsockopt_success())
     {
         return 0;
@@ -267,4 +297,14 @@ TEST(TproxyUdpSenderTest, CreateBoundSocketBindFailureAfterPrepareSuccess)
 
     const auto impossible_src = boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("203.0.113.99"), 34567);
     EXPECT_EQ(sender.create_bound_socket(impossible_src, false), nullptr);
+}
+
+TEST(TproxyUdpSenderTest, CreateBoundSocketFailsWhenIpv6DualStackOptionFails)
+{
+    boost::asio::io_context ctx;
+    mux::tproxy_udp_sender sender(ctx, 0);
+    udp_sender_fail_guard const guard(udp_sender_fail_mode::kSetsockoptIpv6OnlyFailOnceOtherwiseSuccess);
+
+    const auto src_ep = boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("::1"), 0);
+    EXPECT_EQ(sender.create_bound_socket(src_ep, true), nullptr);
 }
