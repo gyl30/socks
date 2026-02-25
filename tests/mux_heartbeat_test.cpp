@@ -49,16 +49,30 @@ TEST(HeartbeatTest, HeartbeatSendReceive)
     boost::asio::io_context io_ctx;
     auto work = boost::asio::make_work_guard(io_ctx);
 
-    boost::asio::ip::tcp::acceptor acceptor(io_ctx, boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 0));
+    boost::asio::ip::tcp::acceptor acceptor(io_ctx);
+    boost::system::error_code ec;
+    acceptor.open(boost::asio::ip::tcp::v4(), ec);
+    ASSERT_FALSE(ec);
+    acceptor.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true), ec);
+    ASSERT_FALSE(ec);
+    acceptor.bind(boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 0), ec);
+    ASSERT_FALSE(ec);
+    acceptor.listen(boost::asio::socket_base::max_listen_connections, ec);
+    ASSERT_FALSE(ec);
     auto socket_server = std::make_shared<boost::asio::ip::tcp::socket>(io_ctx);
     auto socket_client = std::make_shared<boost::asio::ip::tcp::socket>(io_ctx);
 
-    socket_client->connect(acceptor.local_endpoint());
-    acceptor.accept(*socket_server);
+    const auto listen_ep = acceptor.local_endpoint(ec);
+    ASSERT_FALSE(ec);
+    socket_client->connect(listen_ep, ec);
+    ASSERT_FALSE(ec);
+    acceptor.accept(*socket_server, ec);
+    ASSERT_FALSE(ec);
 
     auto sink = std::make_shared<custom_sink_t>();
     auto logger = std::make_shared<spdlog::logger>("test", sink);
     logger->set_level(spdlog::level::debug);
+    auto previous_logger = spdlog::default_logger();
     spdlog::set_default_logger(logger);
 
     mux::config::heartbeat_t hb_c;
@@ -109,6 +123,7 @@ TEST(HeartbeatTest, HeartbeatSendReceive)
 
     conn_c->stop();
     conn_s->stop();
+    spdlog::set_default_logger(previous_logger);
     work.reset();
     t.join();
 }
