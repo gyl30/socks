@@ -57,6 +57,7 @@ class reality_engine
     std::unique_ptr<boost::asio::streambuf> rx_buf_;
     const EVP_CIPHER* cipher_;
     std::vector<std::uint8_t> tx_buf_;
+    std::vector<std::uint8_t> record_buf_;
     std::vector<std::uint8_t> scratch_buf_;
 };
 

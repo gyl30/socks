@@ -1,4 +1,5 @@
 #include <span>
+#include <array>
 #include <atomic>
 #include <vector>
 #include <limits>
@@ -83,9 +84,14 @@ void mux_dispatcher::process_frames()
 {
     while (buffer_.size() >= mux::kHeaderSize)
     {
-        const auto* ptr = static_cast<const std::uint8_t*>(buffer_.data().data());
+        const auto data_buffers = buffer_.data();
+        std::array<std::uint8_t, mux::kHeaderSize> header_bytes{};
+        if (boost::asio::buffer_copy(boost::asio::buffer(header_bytes), data_buffers) < mux::kHeaderSize)
+        {
+            break;
+        }
         mux::frame_header header;
-        if (!mux::mux_codec::decode_header(ptr, buffer_.size(), header))
+        if (!mux::mux_codec::decode_header(header_bytes.data(), header_bytes.size(), header))
         {
             break;
         }
@@ -104,7 +110,17 @@ void mux_dispatcher::process_frames()
             break;
         }
 
-        std::vector<std::uint8_t> payload(ptr + mux::kHeaderSize, ptr + total_frame_len);
+        std::vector<std::uint8_t> frame_bytes(total_frame_len);
+        if (boost::asio::buffer_copy(boost::asio::buffer(frame_bytes), data_buffers) < total_frame_len)
+        {
+            break;
+        }
+
+        std::vector<std::uint8_t> payload;
+        if (header.length > 0)
+        {
+            payload.assign(frame_bytes.begin() + static_cast<std::vector<std::uint8_t>::difference_type>(mux::kHeaderSize), frame_bytes.end());
+        }
 
         buffer_.consume(total_frame_len);
 
