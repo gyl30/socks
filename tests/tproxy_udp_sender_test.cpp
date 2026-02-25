@@ -346,12 +346,14 @@ TEST(TproxyUdpSenderTest, CreateBoundSocketBindFailureAfterPrepareSuccess)
     EXPECT_EQ(sender.create_bound_socket(impossible_src, false), nullptr);
 }
 
-TEST(TproxyUdpSenderTest, CreateBoundSocketFailsWhenIpv6DualStackOptionFails)
+TEST(TproxyUdpSenderTest, CreateBoundSocketKeepsWorkingWhenIpv6DualStackOptionFails)
 {
     boost::asio::io_context ctx;
     mux::tproxy_udp_sender sender(ctx, 0);
     udp_sender_fail_guard const guard(udp_sender_fail_mode::kSetsockoptIpv6OnlyFailOnceOtherwiseSuccess);
 
     const auto src_ep = boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("::1"), 0);
-    EXPECT_EQ(sender.create_bound_socket(src_ep, true), nullptr);
+    const auto socket = sender.create_bound_socket(src_ep, true);
+    ASSERT_NE(socket, nullptr);
+    EXPECT_TRUE(socket->is_open());
 }
