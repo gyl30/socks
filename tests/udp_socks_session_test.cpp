@@ -1011,11 +1011,12 @@ TEST(UdpSocksSessionTest, PrepareUdpAssociateAckFailureRemovesCreatedStream)
     EXPECT_EQ(err[1], socks::kRepGenFail);
 }
 
-TEST(UdpSocksSessionTest, PrepareUdpAssociateAckTimeoutRemovesCreatedStream)
+TEST(UdpSocksSessionTest, PrepareUdpAssociateAckTimeoutUsesConnectTimeoutAndRemovesCreatedStream)
 {
     boost::asio::io_context ctx;
     mux::config::timeout_t timeout_cfg;
-    timeout_cfg.read = 1;
+    timeout_cfg.read = 8;
+    timeout_cfg.connect = 1;
     auto pair = make_tcp_socket_pair(ctx);
     ASSERT_TRUE(pair.client.is_open());
     ASSERT_TRUE(pair.server.is_open());
