@@ -27,7 +27,7 @@ class tproxy_udp_sender
 
     boost::asio::awaitable<void> send_to_client(const boost::asio::ip::udp::endpoint& client_ep,
                                                 const boost::asio::ip::udp::endpoint& src_ep,
-                                                const std::vector<std::uint8_t>& payload);
+                                                std::vector<std::uint8_t> payload);
 
    private:
     struct endpoint_key

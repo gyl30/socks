@@ -321,7 +321,7 @@ boost::asio::awaitable<void> tproxy_udp_sender::send_to_client(const boost::asio
 
 boost::asio::awaitable<void> tproxy_udp_sender::send_to_client(const boost::asio::ip::udp::endpoint& client_ep,
                                                                const boost::asio::ip::udp::endpoint& src_ep,
-                                                               const std::vector<std::uint8_t>& payload)
+                                                               std::vector<std::uint8_t> payload)
 {
     co_await send_to_client(client_ep, src_ep, boost::asio::buffer(payload));
 }
