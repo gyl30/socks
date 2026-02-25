@@ -5,10 +5,13 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <cerrno>
 #include <cstdint>
 #include <netdb.h>
 #include <utility>
 #include <system_error>
+#include <sys/socket.h>
+#include <netinet/in.h>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -40,6 +43,7 @@ using ::testing::_;
 
 std::atomic<bool> g_delay_getaddrinfo_once{false};
 std::atomic<int> g_delay_getaddrinfo_ms{0};
+std::atomic<bool> g_fail_setsockopt_v6only_once{false};
 
 void delay_next_getaddrinfo(const int delay_ms)
 {
@@ -47,10 +51,16 @@ void delay_next_getaddrinfo(const int delay_ms)
     g_delay_getaddrinfo_once.store(true, std::memory_order_release);
 }
 
+void fail_next_setsockopt_v6only()
+{
+    g_fail_setsockopt_v6only_once.store(true, std::memory_order_release);
+}
+
 extern "C" int __real_getaddrinfo(const char* node,    
                                   const char* service,
                                   const struct addrinfo* hints,
                                   struct addrinfo** res);
+extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);
 
 extern "C" int __wrap_getaddrinfo(const char* node,    
                                   const char* service,
@@ -66,6 +76,16 @@ extern "C" int __wrap_getaddrinfo(const char* node,
         }
     }
     return __real_getaddrinfo(node, service, hints, res);    
+}
+
+extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)
+{
+    if (level == SOL_IPV6 && optname == IPV6_V6ONLY && g_fail_setsockopt_v6only_once.exchange(false, std::memory_order_acq_rel))
+    {
+        errno = EPERM;
+        return -1;
+    }
+    return __real_setsockopt(sockfd, level, optname, optval, optlen);
 }
 
 class noop_stream : public mux::mux_stream_interface
@@ -184,6 +204,27 @@ TEST(RemoteUdpSessionTest, SetupUdpSocketSuccessAndCloseSocket)
     const bool ok = mux::test::run_awaitable(io_context, session->setup_udp_socket(conn));
     ASSERT_TRUE(ok);
     ASSERT_TRUE(session->udp_socket_.is_open());
+
+    session->close_socket();
+    EXPECT_FALSE(session->udp_socket_.is_open());
+}
+
+TEST(RemoteUdpSessionTest, SetupUdpSocketFallsBackToIpv4WhenDualStackUnavailable)
+{
+    boost::asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    auto session = make_session(io_context, conn, 130);
+
+    fail_next_setsockopt_v6only();
+    const bool ok = mux::test::run_awaitable(io_context, session->setup_udp_socket(conn));
+    ASSERT_TRUE(ok);
+    ASSERT_TRUE(session->udp_socket_.is_open());
+    EXPECT_FALSE(session->udp_socket_use_v6_);
+
+    boost::system::error_code ec;
+    const auto local_ep = session->udp_socket_.local_endpoint(ec);
+    ASSERT_FALSE(ec);
+    EXPECT_TRUE(local_ep.address().is_v4());
 
     session->close_socket();
     EXPECT_FALSE(session->udp_socket_.is_open());
@@ -401,6 +442,34 @@ TEST(RemoteUdpSessionTest, ForwardMuxPayloadStopsWhenSocketClosed)
 
     const auto packet = make_mux_udp_packet("127.0.0.1", 53, std::vector<std::uint8_t>{0x99});
     mux::test::run_awaitable_void(io_context, session->forward_mux_payload(packet));
+}
+
+TEST(RemoteUdpSessionTest, ForwardMuxPayloadDropsIpv6OnlyTargetOnIpv4Socket)
+{
+    boost::asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    auto session = make_session(io_context, conn, 163);
+    fail_next_setsockopt_v6only();
+    ASSERT_TRUE(mux::test::run_awaitable(io_context, session->setup_udp_socket(conn)));
+    ASSERT_FALSE(session->udp_socket_use_v6_);
+
+    boost::asio::ip::udp::socket receiver(io_context);
+    boost::system::error_code ec;
+    receiver.open(boost::asio::ip::udp::v6(), ec);
+    ASSERT_FALSE(ec);
+    receiver.bind(boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("::1"), 0), ec);
+    ASSERT_FALSE(ec);
+    receiver.non_blocking(true, ec);
+    ASSERT_FALSE(ec);
+
+    const auto packet = make_mux_udp_packet("::1", receiver.local_endpoint().port(), std::vector<std::uint8_t>{0x42});
+    mux::test::run_awaitable_void(io_context, session->forward_mux_payload(packet));
+
+    std::array<std::uint8_t, 8> recv_buf = {0};
+    boost::asio::ip::udp::endpoint from_ep;
+    const auto recv_n = receiver.receive_from(boost::asio::buffer(recv_buf), from_ep, 0, ec);
+    EXPECT_EQ(recv_n, 0U);
+    EXPECT_TRUE(ec == boost::asio::error::would_block || ec == boost::asio::error::try_again);
 }
 
 TEST(RemoteUdpSessionTest, ForwardMuxPayloadResolveTimeoutDropsPayload)

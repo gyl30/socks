@@ -130,26 +130,35 @@ boost::asio::awaitable<bool> remote_udp_session::setup_udp_socket(const std::sha
 {
     boost::system::error_code ec;
     ec = udp_socket_.open(boost::asio::ip::udp::v6(), ec);
-    if (ec)
+    if (!ec)
     {
-        co_await handle_start_failure(conn, "udp open", ec);
-        co_return false;
+        ec = udp_socket_.set_option(boost::asio::ip::v6_only(false), ec);
+    }
+    if (!ec)
+    {
+        ec = udp_socket_.bind(boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v6(), 0), ec);
+    }
+    if (!ec)
+    {
+        udp_socket_use_v6_ = true;
+        co_return true;
     }
 
-    ec = udp_socket_.set_option(boost::asio::ip::v6_only(false), ec);
-    if (ec)
-    {
-        co_await handle_start_failure(conn, "udp v4 and v6", ec);
-        co_return false;
-    }
+    LOG_CTX_WARN(ctx_, "{} udp ipv6 dual-stack setup failed {} fallback to ipv4", log_event::kMux, ec.message());
+    close_socket();
 
-    ec = udp_socket_.bind(boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v6(), 0), ec);
+    ec = udp_socket_.open(boost::asio::ip::udp::v4(), ec);
+    if (!ec)
+    {
+        ec = udp_socket_.bind(boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0), ec);
+    }
     if (ec)
     {
         co_await handle_start_failure(conn, "udp bind", ec);
         co_return false;
     }
 
+    udp_socket_use_v6_ = false;
     co_return true;
 }
 
@@ -216,7 +225,35 @@ boost::asio::awaitable<void> remote_udp_session::forward_mux_payload(const std::
         co_return;
     }
 
-    const auto target_ep = normalize_target_endpoint(resolve_res.endpoints.begin()->endpoint());
+    boost::asio::ip::udp::endpoint target_ep;
+    bool has_compatible_endpoint = false;
+    for (const auto& endpoint : resolve_res.endpoints)
+    {
+        const auto candidate = boost::asio::ip::udp::endpoint(endpoint.endpoint().address(), endpoint.endpoint().port());
+        if (udp_socket_use_v6_)
+        {
+            target_ep = normalize_target_endpoint(candidate);
+            has_compatible_endpoint = true;
+            break;
+        }
+        if (candidate.address().is_v4())
+        {
+            target_ep = candidate;
+            has_compatible_endpoint = true;
+            break;
+        }
+    }
+    if (!has_compatible_endpoint)
+    {
+        LOG_CTX_WARN(ctx_,
+                     "{} stage=resolve target={}:{} error=no_compatible_endpoint socket_family={}",
+                     log_event::kMux,
+                     header.addr,
+                     header.port,
+                     udp_socket_use_v6_ ? "v6" : "v4");
+        co_return;
+    }
+
     const auto payload_len = data.size() - header.header_len;
     LOG_CTX_DEBUG(ctx_, "{} udp forwarding {} bytes to {}", log_event::kMux, payload_len, target_ep.address().to_string());
 
