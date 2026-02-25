@@ -43,7 +43,7 @@ std::uint8_t map_connect_error_to_socks_reply(const boost::system::error_code& e
 {
     if (ec == boost::asio::error::timed_out)
     {
-        return socks::kRepConnRefused;
+        return socks::kRepHostUnreach;
     }
     if (ec == boost::asio::error::connection_refused)
     {
@@ -324,7 +324,7 @@ boost::asio::awaitable<bool> proxy_upstream::wait_connect_ack(const std::shared_
     }
     if (timeout_fired->load(std::memory_order_acquire))
     {
-        last_connect_reply_ = socks::kRepConnRefused;
+        last_connect_reply_ = socks::kRepHostUnreach;
         LOG_CTX_WARN(stream_ctx, "{} stage=wait_ack target={}:{} timeout={}s", log_event::kRoute, host, port, timeout_sec_);
         co_return false;
     }
