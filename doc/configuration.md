@@ -11,6 +11,7 @@
 ## 网络入口
 
 - `inbound.host` / `inbound.port`：服务端监听地址与端口。
+  - `inbound.host` 仅在 `mode = server` 时作为服务端监听地址参与校验。
 - `outbound.host` / `outbound.port`：客户端连接地址与端口。
   - 当 `mode = client` 时，`outbound.host` 必须为非空字符串。
   - 当 `mode = client` 时，`outbound.port` 必须大于 `0`。
@@ -91,6 +92,9 @@
 - `reality.fallback_guard.circuit_fail_threshold`：触发熔断前连续失败次数（默认 `5`）。
 - `reality.fallback_guard.circuit_open_sec`：熔断持续秒数（默认 `30`）。
 - `reality.fallback_guard.state_ttl_sec`：fallback 防护状态保留秒数（默认 `600`）。
+  - 当 `reality.fallback_guard.enabled = true` 时，`rate_per_sec` 与 `burst` 必须大于 `0`。
+  - 当 `reality.fallback_guard.enabled = true` 时，`state_ttl_sec` 必须大于 `0`。
+  - 当 `reality.fallback_guard.enabled = true` 且 `circuit_fail_threshold > 0` 时，`circuit_open_sec` 必须大于 `0`。
 
 ## 监控
 

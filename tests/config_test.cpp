@@ -920,6 +920,121 @@ TEST_F(config_test_fixture, InvalidInboundHostRejectedAtParseStage)
     EXPECT_NE(parsed.error().reason.find("valid ip address"), std::string::npos);
 }
 
+TEST_F(config_test_fixture, ClientModeAllowsEmptyInboundHost)
+{
+    write_config_file(R"({
+        "mode": "client",
+        "inbound": {
+            "host": ""
+        },
+        "outbound": {
+            "host": "127.0.0.1",
+            "port": 443
+        },
+        "reality": {
+            "public_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "socks": {
+            "enabled": true
+        }
+    })");
+
+    const auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_EQ(parsed->mode, "client");
+}
+
+TEST_F(config_test_fixture, FallbackGuardEnabledRequiresPositiveParameters)
+{
+    write_config_file(R"({
+        "reality": {
+            "fallback_guard": {
+                "enabled": true,
+                "rate_per_sec": 0
+            }
+        }
+    })");
+    auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/reality/fallback_guard/rate_per_sec");
+
+    write_config_file(R"({
+        "reality": {
+            "fallback_guard": {
+                "enabled": true,
+                "rate_per_sec": 1,
+                "burst": 0
+            }
+        }
+    })");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/reality/fallback_guard/burst");
+
+    write_config_file(R"({
+        "reality": {
+            "fallback_guard": {
+                "enabled": true,
+                "rate_per_sec": 1,
+                "burst": 1,
+                "state_ttl_sec": 0
+            }
+        }
+    })");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/reality/fallback_guard/state_ttl_sec");
+
+    write_config_file(R"({
+        "reality": {
+            "fallback_guard": {
+                "enabled": true,
+                "rate_per_sec": 1,
+                "burst": 1,
+                "state_ttl_sec": 1,
+                "circuit_fail_threshold": 1,
+                "circuit_open_sec": 0
+            }
+        }
+    })");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/reality/fallback_guard/circuit_open_sec");
+}
+
+TEST_F(config_test_fixture, FallbackGuardAllowsZeroCircuitOpenWhenThresholdDisabled)
+{
+    write_config_file(R"({
+        "reality": {
+            "fallback_guard": {
+                "enabled": true,
+                "rate_per_sec": 1,
+                "burst": 1,
+                "state_ttl_sec": 1,
+                "circuit_fail_threshold": 0,
+                "circuit_open_sec": 0
+            }
+        }
+    })");
+    auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_TRUE(parsed.has_value());
+
+    write_config_file(R"({
+        "reality": {
+            "fallback_guard": {
+                "enabled": false,
+                "rate_per_sec": 0,
+                "burst": 0,
+                "state_ttl_sec": 0,
+                "circuit_fail_threshold": 0,
+                "circuit_open_sec": 0
+            }
+        }
+    })");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_TRUE(parsed.has_value());
+}
+
 TEST_F(config_test_fixture, DumpConfigIncludesHeartbeatIdleTimeout)
 {
     mux::config cfg;
@@ -1237,6 +1352,33 @@ TEST_F(config_test_fixture, ContractMatrixClientOutboundRulesStayAlignedWithDocu
     EXPECT_EQ(parsed->outbound.port, 443);
 }
 
+TEST_F(config_test_fixture, ContractMatrixClientInboundRulesStayAlignedWithDocumentation)
+{
+    const auto doc = load_configuration_doc();
+    ASSERT_FALSE(doc.empty());
+    EXPECT_NE(doc.find("`inbound.host` 仅在 `mode = server` 时作为服务端监听地址参与校验"), std::string::npos);
+
+    write_config_file(R"({
+        "mode": "client",
+        "inbound": {
+            "host": ""
+        },
+        "outbound": {
+            "host": "example.com",
+            "port": 443
+        },
+        "socks": {
+            "enabled": true
+        },
+        "reality": {
+            "public_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+    })");
+    const auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_EQ(parsed->mode, "client");
+}
+
 TEST_F(config_test_fixture, ContractMatrixClientRealityFingerprintRuleStayAlignedWithDocumentation)
 {
     const auto doc = load_configuration_doc();
@@ -1325,6 +1467,28 @@ TEST_F(config_test_fixture, ContractMatrixRealityHexRulesStayAlignedWithDocument
     parsed = mux::parse_config_with_error(tmp_file());
     ASSERT_TRUE(parsed.has_value());
     EXPECT_EQ(parsed->reality.short_id, "01020304");
+}
+
+TEST_F(config_test_fixture, ContractMatrixFallbackGuardRulesStayAlignedWithDocumentation)
+{
+    const auto doc = load_configuration_doc();
+    ASSERT_FALSE(doc.empty());
+    EXPECT_NE(doc.find("当 `reality.fallback_guard.enabled = true` 时"), std::string::npos);
+    EXPECT_NE(doc.find("`rate_per_sec` 与 `burst` 必须大于 `0`"), std::string::npos);
+    EXPECT_NE(doc.find("`state_ttl_sec` 必须大于 `0`"), std::string::npos);
+    EXPECT_NE(doc.find("`circuit_fail_threshold > 0` 时，`circuit_open_sec` 必须大于 `0`"), std::string::npos);
+
+    write_config_file(R"({
+        "reality": {
+            "fallback_guard": {
+                "enabled": true,
+                "rate_per_sec": 0
+            }
+        }
+    })");
+    const auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/reality/fallback_guard/rate_per_sec");
 }
 
 TEST_F(config_test_fixture, SocksAuthEnabledRequiresNonEmptyCredentials)
