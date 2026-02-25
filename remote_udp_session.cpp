@@ -474,6 +474,12 @@ boost::asio::awaitable<void> remote_udp_session::udp_to_mux()
             h.addr = normalized_ep.address().to_string();
             h.port = normalized_ep.port();
             cached_header = socks_codec::encode_udp_header(h);
+            if (cached_header.empty())
+            {
+                LOG_CTX_WARN(ctx_, "{} failed to encode udp header for {}", log_event::kMux, h.addr);
+                has_cached_header = false;
+                continue;
+            }
             cached_ep = normalized_ep;
             has_cached_header = true;
         }
