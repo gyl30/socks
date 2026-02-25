@@ -146,10 +146,7 @@ bool tproxy_udp_sender::prepare_socket_options(const std::shared_ptr<boost::asio
 {
     if (ipv6)
     {
-        if (!set_ipv6_dual_stack_option(socket))
-        {
-            return false;
-        }
+        (void)set_ipv6_dual_stack_option(socket);
     }
     set_reuse_address_option(socket);
     if (!set_transparent_option(socket, ipv6))
