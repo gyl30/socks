@@ -2203,7 +2203,11 @@ std::expected<remote_server::key_share_result, boost::system::error_code> remote
 remote_server::certificate_target remote_server::resolve_certificate_target(const client_hello_info& info) const
 {
     certificate_target target;
-    target.cert_sni = normalize_sni_key(info.sni);
+    const auto normalized_client_sni = normalize_sni_key(info.sni);
+    if (normalized_client_sni.find('\0') == std::string::npos)
+    {
+        target.cert_sni = normalized_client_sni;
+    }
     target.fetch_host = "www.apple.com";
     target.fetch_port = 443;
 
@@ -2212,10 +2216,6 @@ remote_server::certificate_target remote_server::resolve_certificate_target(cons
     {
         target.fetch_host = fb.first;
         target.fetch_port = parse_fallback_port(fb.second);
-        if (target.cert_sni.empty())
-        {
-            target.cert_sni = normalize_sni_key(fb.first);
-        }
     }
     return target;
 }
