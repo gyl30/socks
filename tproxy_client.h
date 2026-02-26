@@ -81,6 +81,7 @@ class tproxy_client : public std::enable_shared_from_this<tproxy_client>
    private:
     std::atomic<bool> stop_{false};
     std::atomic<bool> started_{false};
+    std::atomic<std::uint64_t> lifecycle_epoch_{0};
     boost::asio::io_context& io_context_;
     boost::asio::ip::tcp::acceptor tcp_acceptor_;
     boost::asio::ip::udp::socket udp_socket_;
