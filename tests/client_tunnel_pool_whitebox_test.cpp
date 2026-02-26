@@ -237,6 +237,13 @@ std::vector<std::uint8_t> build_valid_certificate_message_with_second_entry()
     };
 }
 
+std::vector<std::uint8_t> prepend_encrypted_extensions(std::vector<std::uint8_t> payload)
+{
+    std::vector<std::uint8_t> out = {0x08, 0x00, 0x00, 0x00};
+    out.insert(out.end(), payload.begin(), payload.end());
+    return out;
+}
+
 std::vector<std::uint8_t> build_certificate_verify_message()
 {
     std::array<std::uint8_t, 32> sign_key_bytes{};
@@ -1408,6 +1415,97 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsAlertRecordDuringHand
     EXPECT_EQ(loop_res.error(), boost::asio::error::eof);
 }
 
+TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsCertificateBeforeEncryptedExtensions)
+{
+    boost::asio::io_context io_context;
+    boost::system::error_code ec;
+
+    boost::asio::ip::tcp::acceptor acceptor(io_context);
+    ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
+    boost::asio::ip::tcp::socket writer(io_context);
+    (void)writer.connect(acceptor.local_endpoint(), ec);
+    ASSERT_FALSE(ec);
+    boost::asio::ip::tcp::socket reader(io_context);
+    (void)acceptor.accept(reader, ec);
+    ASSERT_FALSE(ec);
+
+    const std::vector<std::uint8_t> key(16, 0x21);
+    const std::vector<std::uint8_t> iv(12, 0x32);
+    const auto plaintext = build_minimal_valid_certificate_message();
+    const auto record = encrypt_record_expected(EVP_aes_128_gcm(), key, iv, 0, plaintext, reality::kContentTypeHandshake);
+    ASSERT_TRUE(record.has_value());
+    boost::asio::write(writer, boost::asio::buffer(*record), ec);
+    ASSERT_FALSE(ec);
+    (void)writer.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
+
+    reality::transcript trans;
+    reality::handshake_keys hs_keys;
+    std::expected<std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>, boost::system::error_code> loop_res;
+    boost::asio::co_spawn(
+        io_context,
+        [&]() -> boost::asio::awaitable<void>
+        {
+            loop_res = co_await handshake_read_loop_expected(
+                reader, {key, iv}, hs_keys, false, "cert-before-encrypted-extensions", trans, EVP_aes_128_gcm(), EVP_sha256());
+            co_return;
+        },
+        boost::asio::detached);
+    io_context.run();
+
+    EXPECT_FALSE(loop_res.has_value());
+    EXPECT_EQ(loop_res.error(), boost::asio::error::invalid_argument);
+}
+
+TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsDuplicateEncryptedExtensions)
+{
+    boost::asio::io_context io_context;
+    boost::system::error_code ec;
+
+    boost::asio::ip::tcp::acceptor acceptor(io_context);
+    ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
+    boost::asio::ip::tcp::socket writer(io_context);
+    (void)writer.connect(acceptor.local_endpoint(), ec);
+    ASSERT_FALSE(ec);
+    boost::asio::ip::tcp::socket reader(io_context);
+    (void)acceptor.accept(reader, ec);
+    ASSERT_FALSE(ec);
+
+    const std::vector<std::uint8_t> key(16, 0x41);
+    const std::vector<std::uint8_t> iv(12, 0x52);
+    const std::vector<std::uint8_t> plaintext = {
+        0x08,
+        0x00,
+        0x00,
+        0x00,
+        0x08,
+        0x00,
+        0x00,
+        0x00,
+    };
+    const auto record = encrypt_record_expected(EVP_aes_128_gcm(), key, iv, 0, plaintext, reality::kContentTypeHandshake);
+    ASSERT_TRUE(record.has_value());
+    boost::asio::write(writer, boost::asio::buffer(*record), ec);
+    ASSERT_FALSE(ec);
+    (void)writer.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
+
+    reality::transcript trans;
+    reality::handshake_keys hs_keys;
+    std::expected<std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>, boost::system::error_code> loop_res;
+    boost::asio::co_spawn(
+        io_context,
+        [&]() -> boost::asio::awaitable<void>
+        {
+            loop_res = co_await handshake_read_loop_expected(
+                reader, {key, iv}, hs_keys, false, "duplicate-encrypted-extensions", trans, EVP_aes_128_gcm(), EVP_sha256());
+            co_return;
+        },
+        boost::asio::detached);
+    io_context.run();
+
+    EXPECT_FALSE(loop_res.has_value());
+    EXPECT_EQ(loop_res.error(), boost::asio::error::invalid_argument);
+}
+
 TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsCertVerifyBeforeCertificate)
 {
     boost::asio::io_context io_context;
@@ -1545,7 +1643,7 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsMalformedCertificateM
 
     const std::vector<std::uint8_t> key(16, 0x51);
     const std::vector<std::uint8_t> iv(12, 0x61);
-    const std::vector<std::uint8_t> plaintext = {0x0b, 0x00, 0x00, 0x01, 0x00};
+    const std::vector<std::uint8_t> plaintext = prepend_encrypted_extensions({0x0b, 0x00, 0x00, 0x01, 0x00});
     const auto record = encrypt_record_expected(EVP_aes_128_gcm(), key, iv, 0, plaintext, reality::kContentTypeHandshake);
     ASSERT_TRUE(record.has_value());
     boost::asio::write(writer, boost::asio::buffer(*record), ec);
@@ -1678,7 +1776,7 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsMalformedCertificateV
     const std::vector<std::uint8_t> iv(12, 0x91);
     const auto cert_msg = build_minimal_valid_certificate_message();
     const std::vector<std::uint8_t> malformed_cert_verify = {0x0f, 0x00, 0x00, 0x00};
-    std::vector<std::uint8_t> plaintext = cert_msg;
+    std::vector<std::uint8_t> plaintext = prepend_encrypted_extensions(cert_msg);
     plaintext.insert(plaintext.end(), malformed_cert_verify.begin(), malformed_cert_verify.end());
     const auto record = encrypt_record_expected(EVP_aes_128_gcm(), key, iv, 0, plaintext, reality::kContentTypeHandshake);
     ASSERT_TRUE(record.has_value());
@@ -1721,7 +1819,7 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsUnsupportedCertificat
     const std::vector<std::uint8_t> iv(12, 0xb1);
     const auto cert_msg = build_minimal_valid_certificate_message();
     const std::vector<std::uint8_t> unsupported_cert_verify = {0x0f, 0x00, 0x00, 0x04, 0x00, 0x01, 0x00, 0x00};
-    std::vector<std::uint8_t> plaintext = cert_msg;
+    std::vector<std::uint8_t> plaintext = prepend_encrypted_extensions(cert_msg);
     plaintext.insert(plaintext.end(), unsupported_cert_verify.begin(), unsupported_cert_verify.end());
     const auto record = encrypt_record_expected(EVP_aes_128_gcm(), key, iv, 0, plaintext, reality::kContentTypeHandshake);
     ASSERT_TRUE(record.has_value());
@@ -1809,32 +1907,32 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopCertificateRangeAndFinishedB
     // Hit parse_first_certificate_range branch where cert_list length overflows message size.
     {
         const std::vector<std::uint8_t> bad_list_len = {0x0b, 0x00, 0x00, 0x07, 0x00, 0x00, 0x00, 0x0a, 0x00, 0x00, 0x00};
-        EXPECT_FALSE(run_case(bad_list_len, hs_keys_ok, case_ec));
+        EXPECT_FALSE(run_case(prepend_encrypted_extensions(bad_list_len), hs_keys_ok, case_ec));
         EXPECT_TRUE(case_ec);
     }
 
     // Hit parse_first_certificate_range branch where cert length overflows message size.
     {
         const std::vector<std::uint8_t> bad_cert_len = {0x0b, 0x00, 0x00, 0x07, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x03};
-        EXPECT_FALSE(run_case(bad_cert_len, hs_keys_ok, case_ec));
+        EXPECT_FALSE(run_case(prepend_encrypted_extensions(bad_cert_len), hs_keys_ok, case_ec));
         EXPECT_TRUE(case_ec);
     }
 
     {
         const std::vector<std::uint8_t> missing_ext_len = {0x0b, 0x00, 0x00, 0x0a, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x03, 0x01, 0x02, 0x03};
-        EXPECT_FALSE(run_case(missing_ext_len, hs_keys_ok, case_ec));
+        EXPECT_FALSE(run_case(prepend_encrypted_extensions(missing_ext_len), hs_keys_ok, case_ec));
         EXPECT_TRUE(case_ec);
     }
 
     {
         const std::vector<std::uint8_t> malformed_second_entry = {0x0b, 0x00, 0x00, 0x0f, 0x00, 0x00, 0x00, 0x0b, 0x00, 0x00, 0x03,
                                                                   0x01, 0x02, 0x03, 0x00, 0x00, 0x00, 0x00, 0x01};
-        EXPECT_FALSE(run_case(malformed_second_entry, hs_keys_ok, case_ec));
+        EXPECT_FALSE(run_case(prepend_encrypted_extensions(malformed_second_entry), hs_keys_ok, case_ec));
         EXPECT_TRUE(case_ec);
     }
 
     {
-        std::vector<std::uint8_t> plaintext = build_valid_certificate_message_with_second_entry();
+        std::vector<std::uint8_t> plaintext = prepend_encrypted_extensions(build_valid_certificate_message_with_second_entry());
         plaintext.insert(plaintext.end(), cert_verify_msg.begin(), cert_verify_msg.end());
         std::vector<std::uint8_t> wrong_finished(4 + 32, 0x00);
         wrong_finished[0] = 0x14;
@@ -1846,7 +1944,7 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopCertificateRangeAndFinishedB
 
     // Hit finished verify size mismatch branch.
     {
-        std::vector<std::uint8_t> plaintext = cert_msg;
+        std::vector<std::uint8_t> plaintext = prepend_encrypted_extensions(cert_msg);
         plaintext.insert(plaintext.end(), cert_verify_msg.begin(), cert_verify_msg.end());
         const std::vector<std::uint8_t> bad_finished = {0x14, 0x00, 0x00, 0x01, 0x00};
         plaintext.insert(plaintext.end(), bad_finished.begin(), bad_finished.end());
@@ -1856,7 +1954,7 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopCertificateRangeAndFinishedB
 
     // Hit repeated certificate short-circuit + finished hmac mismatch branch.
     {
-        std::vector<std::uint8_t> plaintext = cert_msg;
+        std::vector<std::uint8_t> plaintext = prepend_encrypted_extensions(cert_msg);
         plaintext.insert(plaintext.end(), cert_msg.begin(), cert_msg.end());
         plaintext.insert(plaintext.end(), cert_verify_msg.begin(), cert_verify_msg.end());
         std::vector<std::uint8_t> wrong_finished(4 + 32, 0x00);
@@ -1864,14 +1962,14 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopCertificateRangeAndFinishedB
         wrong_finished[3] = 0x20;
         plaintext.insert(plaintext.end(), wrong_finished.begin(), wrong_finished.end());
         EXPECT_FALSE(run_case(plaintext, hs_keys_ok, case_ec));
-        EXPECT_EQ(case_ec, std::errc::permission_denied);
+        EXPECT_EQ(case_ec, boost::asio::error::invalid_argument);
     }
 
     // Hit finished verify derive-failed branch (empty secret).
     {
         reality::handshake_keys hs_keys_fail{};
         hs_keys_fail.master_secret.assign(32, 0x67);
-        std::vector<std::uint8_t> plaintext = cert_msg;
+        std::vector<std::uint8_t> plaintext = prepend_encrypted_extensions(cert_msg);
         plaintext.insert(plaintext.end(), cert_verify_msg.begin(), cert_verify_msg.end());
         const std::vector<std::uint8_t> finished = {0x14, 0x00, 0x00, 0x00};
         plaintext.insert(plaintext.end(), finished.begin(), finished.end());
@@ -1881,7 +1979,8 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopCertificateRangeAndFinishedB
 
     // Hit read_handshake_message_bounds incomplete-message break branch.
     {
-        const std::vector<std::uint8_t> partial = {0x0b, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x00};
+        std::vector<std::uint8_t> partial = {0x0b, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x00};
+        partial = prepend_encrypted_extensions(std::move(partial));
         EXPECT_FALSE(run_case(partial, hs_keys_ok, case_ec));
         EXPECT_TRUE(case_ec);
     }
