@@ -721,6 +721,49 @@ TEST(CHParserTest, ParseSniRejectsTrailingBytes)
     EXPECT_TRUE(info.malformed_sni);
 }
 
+TEST(CHParserTest, ParseSniRejectsTruncatedEntryAfterHostName)
+{
+    std::vector<std::uint8_t> const buf = {
+        0x00,
+        0x07,
+        0x00,
+        0x00,
+        0x01,
+        0x61,
+        0x01,
+        0x00,
+        0x01,
+    };
+    ch_parser::reader r(buf);
+    mux::client_hello_info info;
+
+    ch_parser::parse_sni(r, info);
+    EXPECT_EQ(info.sni, "a");
+    EXPECT_TRUE(info.malformed_sni);
+}
+
+TEST(CHParserTest, ParseSniRejectsDuplicateHostNameItems)
+{
+    std::vector<std::uint8_t> const buf = {
+        0x00,
+        0x08,
+        0x00,
+        0x00,
+        0x01,
+        0x61,
+        0x00,
+        0x00,
+        0x01,
+        0x62,
+    };
+    ch_parser::reader r(buf);
+    mux::client_hello_info info;
+
+    ch_parser::parse_sni(r, info);
+    EXPECT_EQ(info.sni, "a");
+    EXPECT_TRUE(info.malformed_sni);
+}
+
 TEST(CHParserTest, ParseKeyShareX25519Len32ButInsufficientData)
 {
     std::vector<std::uint8_t> const buf = {
@@ -739,6 +782,39 @@ TEST(CHParserTest, ParseKeyShareX25519Len32ButInsufficientData)
     mux::client_hello_info info;
 
     ch_parser::parse_key_share(r, info);
+    EXPECT_FALSE(info.has_x25519_share);
+    EXPECT_TRUE(info.x25519_pub.empty());
+    EXPECT_FALSE(info.is_tls13);
+}
+
+TEST(CHParserTest, ParseKeyShareRejectsTrailingBytesAfterShareList)
+{
+    std::vector<std::uint8_t> buf = {0x00, 0x24, 0x00, 0x1d, 0x00, 0x20};
+    buf.insert(buf.end(), 32, 0x11);
+    buf.push_back(0xAA);
+    ch_parser::reader r(buf);
+    mux::client_hello_info info;
+
+    ch_parser::parse_key_share(r, info);
+    EXPECT_TRUE(info.malformed_key_share);
+    EXPECT_FALSE(info.has_x25519_share);
+    EXPECT_TRUE(info.x25519_pub.empty());
+    EXPECT_FALSE(info.is_tls13);
+}
+
+TEST(CHParserTest, ParseKeyShareRejectsTruncatedSecondEntryAfterValidShare)
+{
+    std::vector<std::uint8_t> buf = {0x00, 0x28, 0x00, 0x1d, 0x00, 0x20};
+    buf.insert(buf.end(), 32, 0x22);
+    buf.push_back(0x00);
+    buf.push_back(0x1d);
+    buf.push_back(0x00);
+    buf.push_back(0x20);
+    ch_parser::reader r(buf);
+    mux::client_hello_info info;
+
+    ch_parser::parse_key_share(r, info);
+    EXPECT_TRUE(info.malformed_key_share);
     EXPECT_FALSE(info.has_x25519_share);
     EXPECT_TRUE(info.x25519_pub.empty());
     EXPECT_FALSE(info.is_tls13);
