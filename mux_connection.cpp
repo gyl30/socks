@@ -160,11 +160,6 @@ bool run_sync_bool_query(boost::asio::io_context& io_context, const std::uint32_
                               return;
                           }
                           started->store(true, std::memory_order_release);
-                          if (cancelled->load(std::memory_order_acquire))
-                          {
-                              promise.set_value(false);
-                              return;
-                          }
                           promise.set_value((*operation)());
                       });
 
@@ -176,11 +171,8 @@ bool run_sync_bool_query(boost::asio::io_context& io_context, const std::uint32_
             LOG_WARN("mux {} sync query {} timeout {}ms", cid, query_name, kSyncQueryWaitTimeout.count());
             return false;
         }
-        if (future.wait_for(kSyncQueryWaitTimeout) != std::future_status::ready)
-        {
-            LOG_WARN("mux {} sync query {} timeout while executing {}ms", cid, query_name, (kSyncQueryWaitTimeout * 2).count());
-            return false;
-        }
+        LOG_WARN("mux {} sync query {} timeout while executing {}ms", cid, query_name, kSyncQueryWaitTimeout.count());
+        future.wait();
     }
 
     return future.get();
@@ -213,11 +205,6 @@ bool run_sync_void_query(boost::asio::io_context& io_context, const std::uint32_
                               return;
                           }
                           started->store(true, std::memory_order_release);
-                          if (cancelled->load(std::memory_order_acquire))
-                          {
-                              promise.set_value(false);
-                              return;
-                          }
                           (*operation)();
                           promise.set_value(true);
                       });
@@ -230,11 +217,8 @@ bool run_sync_void_query(boost::asio::io_context& io_context, const std::uint32_
             LOG_WARN("mux {} sync query {} timeout {}ms", cid, query_name, kSyncQueryWaitTimeout.count());
             return false;
         }
-        if (future.wait_for(kSyncQueryWaitTimeout) != std::future_status::ready)
-        {
-            LOG_WARN("mux {} sync query {} timeout while executing {}ms", cid, query_name, (kSyncQueryWaitTimeout * 2).count());
-            return false;
-        }
+        LOG_WARN("mux {} sync query {} timeout while executing {}ms", cid, query_name, kSyncQueryWaitTimeout.count());
+        future.wait();
     }
 
     return future.get();
@@ -269,11 +253,6 @@ stream_register_result run_sync_stream_register_query(boost::asio::io_context& i
                               return;
                           }
                           started->store(true, std::memory_order_release);
-                          if (cancelled->load(std::memory_order_acquire))
-                          {
-                              promise.set_value(stream_register_result::kClosed);
-                              return;
-                          }
                           promise.set_value((*operation)());
                       });
 
@@ -285,11 +264,8 @@ stream_register_result run_sync_stream_register_query(boost::asio::io_context& i
             LOG_WARN("mux {} sync query {} timeout {}ms", cid, query_name, kSyncQueryWaitTimeout.count());
             return stream_register_result::kClosed;
         }
-        if (future.wait_for(kSyncQueryWaitTimeout) != std::future_status::ready)
-        {
-            LOG_WARN("mux {} sync query {} timeout while executing {}ms", cid, query_name, (kSyncQueryWaitTimeout * 2).count());
-            return stream_register_result::kClosed;
-        }
+        LOG_WARN("mux {} sync query {} timeout while executing {}ms", cid, query_name, kSyncQueryWaitTimeout.count());
+        future.wait();
     }
 
     return future.get();
