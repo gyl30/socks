@@ -489,36 +489,37 @@ bool try_publish_udp_session(std::shared_ptr<udp_session_map_t>& sessions,
                              const std::string& key,
                              const std::shared_ptr<tproxy_udp_session>& prepared_session)
 {
+    const auto existing = current->find(key);
+    if (existing != current->end() && existing->second != nullptr && !existing->second->terminated())
+    {
+        return false;
+    }
     auto updated = std::make_shared<udp_session_map_t>(*current);
     (*updated)[key] = prepared_session;
     return std::atomic_compare_exchange_weak_explicit(&sessions, &current, updated, std::memory_order_acq_rel, std::memory_order_acquire);
 }
 
-std::shared_ptr<tproxy_udp_session> start_udp_session_or_rollback(std::shared_ptr<udp_session_map_t>& sessions,
-                                                                  const std::string& key,
-                                                                  const std::shared_ptr<tproxy_udp_session>& prepared_session,
-                                                                  const std::atomic<bool>& stop_flag)
+bool start_prepared_udp_session(const std::shared_ptr<tproxy_udp_session>& prepared_session,
+                                const std::string& key,
+                                const std::atomic<bool>& stop_flag)
 {
     if (stop_requested(stop_flag))
     {
-        erase_udp_session_if_same(sessions, key, prepared_session);
-        return nullptr;
+        return false;
     }
 
     if (!prepared_session->start())
     {
         LOG_WARN("tproxy udp session {} start failed", key);
-        erase_udp_session_if_same(sessions, key, prepared_session);
-        return nullptr;
+        return false;
     }
 
     if (stop_requested(stop_flag))
     {
         prepared_session->stop();
-        erase_udp_session_if_same(sessions, key, prepared_session);
-        return nullptr;
+        return false;
     }
-    return prepared_session;
+    return true;
 }
 
 std::shared_ptr<tproxy_udp_session> get_or_create_udp_session(std::shared_ptr<udp_session_map_t>& sessions,
@@ -537,27 +538,53 @@ std::shared_ptr<tproxy_udp_session> get_or_create_udp_session(std::shared_ptr<ud
     }
 
     std::shared_ptr<tproxy_udp_session> prepared_session = nullptr;
+    bool prepared_session_started = false;
     for (;;)
     {
         if (stop_requested(stop_flag))
         {
+            if (prepared_session_started && prepared_session != nullptr)
+            {
+                prepared_session->stop();
+            }
             return nullptr;
         }
 
         auto current = snapshot_udp_sessions(sessions);
         if (auto existing = find_live_udp_session(current, key); existing != nullptr)
         {
+            if (prepared_session_started && prepared_session != nullptr && prepared_session != existing)
+            {
+                prepared_session->stop();
+            }
             return existing;
         }
 
         ensure_prepared_udp_session(prepared_session, io_context, tunnel_pool, router, sender, cfg, src_ep);
+        if (!prepared_session_started)
+        {
+            if (!start_prepared_udp_session(prepared_session, key, stop_flag))
+            {
+                return nullptr;
+            }
+            prepared_session_started = true;
+        }
+
         if (try_publish_udp_session(sessions, current, key, prepared_session))
         {
-            break;
+            return prepared_session;
+        }
+
+        auto latest = snapshot_udp_sessions(sessions);
+        if (auto existing = find_live_udp_session(latest, key); existing != nullptr)
+        {
+            if (prepared_session != existing)
+            {
+                prepared_session->stop();
+            }
+            return existing;
         }
     }
-
-    return start_udp_session_or_rollback(sessions, key, prepared_session, stop_flag);
 }
 
 enum class udp_recv_status : std::uint8_t
@@ -1099,6 +1126,7 @@ void tproxy_client::start()
         LOG_WARN("tproxy client already started");
         return;
     }
+    lifecycle_epoch_.fetch_add(1, std::memory_order_acq_rel);
     stop_.store(false, std::memory_order_release);
     if (!tproxy_config_.enabled)
     {
@@ -1220,14 +1248,20 @@ void tproxy_client::stop()
     const std::lock_guard<std::mutex> lock(lifecycle_mu_);
 
     LOG_INFO("tproxy client stopping closing resources");
+    const auto stop_epoch = lifecycle_epoch_.load(std::memory_order_acquire);
     stop_.store(true, std::memory_order_release);
     started_.store(false, std::memory_order_release);
 
     detail::dispatch_cleanup_or_run_inline(io_context_,
-                                           [weak_self = weak_from_this()]()
+                                           [weak_self = weak_from_this(), stop_epoch]()
                                            {
                                                if (const auto self = weak_self.lock())
                                                {
+                                                   if (self->lifecycle_epoch_.load(std::memory_order_acquire) != stop_epoch ||
+                                                       !self->stop_.load(std::memory_order_acquire))
+                                                   {
+                                                       return;
+                                                   }
                                                    if (self->udp_dispatch_channel_ != nullptr)
                                                    {
                                                        self->udp_dispatch_channel_->close();
@@ -1239,7 +1273,7 @@ void tproxy_client::stop()
                                                }
                                            });
 
-    if (tunnel_pool_ != nullptr)
+    if (tunnel_pool_ != nullptr && lifecycle_epoch_.load(std::memory_order_acquire) == stop_epoch && stop_.load(std::memory_order_acquire))
     {
         tunnel_pool_->stop();
     }
