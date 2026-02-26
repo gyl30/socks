@@ -184,7 +184,8 @@ TEST_F(config_test_fixture, ParseValues)
         "limits": {
             "max_connections_per_source": 3,
             "source_prefix_v4": 24,
-            "source_prefix_v6": 64
+            "source_prefix_v6": 64,
+            "max_handshake_records": 512
         }
     })";
     write_config_file(content);
@@ -222,6 +223,7 @@ TEST_F(config_test_fixture, ParseValues)
         EXPECT_EQ(cfg.limits.max_connections_per_source, 3U);
         EXPECT_EQ(cfg.limits.source_prefix_v4, 24U);
         EXPECT_EQ(cfg.limits.source_prefix_v6, 64U);
+        EXPECT_EQ(cfg.limits.max_handshake_records, 512U);
     }
 }
 
@@ -927,6 +929,7 @@ TEST_F(config_test_fixture, MissingFieldsUseDefaults)
     EXPECT_EQ(cfg_opt->timeout.connect, 10U);
     EXPECT_EQ(cfg_opt->queues.udp_session_recv_channel_capacity, 512U);
     EXPECT_EQ(cfg_opt->queues.tproxy_udp_dispatch_queue_capacity, 512U);
+    EXPECT_EQ(cfg_opt->limits.max_handshake_records, 256U);
 }
 
 TEST_F(config_test_fixture, InvalidPortRange)
@@ -1420,6 +1423,7 @@ TEST_F(config_test_fixture, ContractMatrixLimitsRulesStayAlignedWithDocumentatio
     EXPECT_NE(doc.find("limits.max_connections"), std::string::npos);
     EXPECT_NE(doc.find("`0` 会在加载与运行时归一化为 `1`"), std::string::npos);
     EXPECT_NE(doc.find("limits.max_buffer` 必须大于 `0`"), std::string::npos);
+    EXPECT_NE(doc.find("limits.max_handshake_records"), std::string::npos);
 
     write_config_file(R"({
         "limits": {
@@ -1442,6 +1446,16 @@ TEST_F(config_test_fixture, ContractMatrixLimitsRulesStayAlignedWithDocumentatio
     ASSERT_FALSE(parsed.has_value());
     EXPECT_EQ(parsed.error().path, "/limits/max_buffer");
     EXPECT_NE(parsed.error().reason.find("must be greater than 0"), std::string::npos);
+
+    write_config_file(R"({
+        "limits": {
+            "max_handshake_records": 0
+        }
+    })");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/limits/max_handshake_records");
+    EXPECT_NE(parsed.error().reason.find("between 1 and 4096"), std::string::npos);
 }
 
 TEST_F(config_test_fixture, ContractMatrixQueueRulesStayAlignedWithDocumentation)
