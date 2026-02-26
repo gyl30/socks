@@ -339,6 +339,28 @@ TEST(CertFetcherTest, InitHandshakeMaterialFailureBranches)
     EXPECT_FALSE(session.init_handshake_material(client_random, session_id));
 }
 
+TEST(CertFetcherTest, PerformHandshakeStartRejectsInvalidSni)
+{
+    boost::asio::io_context ctx;
+    reality::cert_fetcher::fetch_session session(ctx, "127.0.0.1", 443, std::string(70000, 'a'), "trace");
+    boost::system::error_code handshake_ec;
+    bool finished = false;
+
+    boost::asio::co_spawn(
+        ctx,
+        [&]() -> boost::asio::awaitable<void>
+        {
+            handshake_ec = co_await session.perform_handshake_start();
+            finished = true;
+            co_return;
+        },
+        boost::asio::detached);
+
+    ctx.run();
+    EXPECT_TRUE(finished);
+    EXPECT_EQ(handshake_ec, boost::asio::error::invalid_argument);
+}
+
 TEST(CertFetcherTest, MockServerScenarios)
 {
     using boost::asio::ip::tcp;

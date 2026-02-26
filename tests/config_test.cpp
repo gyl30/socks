@@ -728,6 +728,31 @@ TEST_F(config_test_fixture, RealityHexFieldsWhenProvidedMustBeValid)
     EXPECT_EQ(parsed->reality.short_id, "01020304");
 }
 
+TEST_F(config_test_fixture, RealitySniWhenProvidedMustBeValid)
+{
+    write_config_file(R"({
+        "reality": {
+            "sni": "www.exa\u0000mple.com"
+        }
+    })");
+    auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/reality/sni");
+    EXPECT_NE(parsed.error().reason.find("must not contain nul"), std::string::npos);
+
+    write_config_file(std::string("{\"reality\":{\"sni\":\"") + std::string(70000, 'a') + "\"}}");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/reality/sni");
+    EXPECT_NE(parsed.error().reason.find("must be at most 65530 bytes"), std::string::npos);
+
+    write_config_file(std::string("{\"reality\":{\"sni\":\"") + std::string(65530, 'a') +
+                      "\",\"private_key\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}}");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_EQ(parsed->reality.sni.size(), 65530U);
+}
+
 TEST_F(config_test_fixture, RealityDestWhenProvidedMustBeValid)
 {
     write_config_file(R"({
@@ -1754,6 +1779,29 @@ TEST_F(config_test_fixture, ContractMatrixRealityDestRuleStayAlignedWithDocument
     parsed = mux::parse_config_with_error(tmp_file());
     ASSERT_TRUE(parsed.has_value());
     EXPECT_EQ(parsed->reality.dest, "example.com:443");
+}
+
+TEST_F(config_test_fixture, ContractMatrixRealitySniRuleStayAlignedWithDocumentation)
+{
+    const auto doc = load_configuration_doc();
+    ASSERT_FALSE(doc.empty());
+    EXPECT_NE(doc.find("在提供时不得包含 `NUL` 字节"), std::string::npos);
+    EXPECT_NE(doc.find("在提供时长度不得超过 `65530` 字节"), std::string::npos);
+
+    write_config_file(R"({
+        "reality": {
+            "sni": "www.exa\u0000mple.com"
+        }
+    })");
+    auto parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().path, "/reality/sni");
+
+    write_config_file(std::string("{\"reality\":{\"sni\":\"") + std::string(65530, 'a') +
+                      "\",\"private_key\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}}");
+    parsed = mux::parse_config_with_error(tmp_file());
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_EQ(parsed->reality.sni.size(), 65530U);
 }
 
 TEST_F(config_test_fixture, ContractMatrixRealityHexRulesStayAlignedWithDocumentation)
