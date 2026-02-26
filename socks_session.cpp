@@ -90,12 +90,12 @@ boost::asio::awaitable<timeout_io::timed_tcp_write_result> write_exact_with_opti
 bool secure_string_equals(const std::string& lhs, const std::string& rhs)
 {
     const auto max_len = std::max(lhs.size(), rhs.size());
-    std::uint8_t diff = static_cast<std::uint8_t>(lhs.size() ^ rhs.size());
+    std::size_t diff = lhs.size() ^ rhs.size();
     for (std::size_t i = 0; i < max_len; ++i)
     {
         const std::uint8_t lhs_byte = i < lhs.size() ? static_cast<std::uint8_t>(lhs[i]) : 0;
         const std::uint8_t rhs_byte = i < rhs.size() ? static_cast<std::uint8_t>(rhs[i]) : 0;
-        diff = static_cast<std::uint8_t>(diff | (lhs_byte ^ rhs_byte));
+        diff |= static_cast<std::size_t>(lhs_byte ^ rhs_byte);
     }
     return diff == 0;
 }
