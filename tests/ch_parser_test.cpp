@@ -147,6 +147,7 @@ TEST(CHParserTest, ValidTLS13)
     auto info = ch_parser::parse(builder.get_buffer());
 
     EXPECT_EQ(info.sni, "example.com");
+    EXPECT_FALSE(info.malformed_sni);
     EXPECT_TRUE(info.is_tls13);
     EXPECT_EQ(info.random.size(), 32);
 
@@ -167,6 +168,7 @@ TEST(CHParserTest, ValidTLS12)
     auto info = ch_parser::parse(builder.get_buffer());
 
     EXPECT_EQ(info.sni, "legacy.com");
+    EXPECT_FALSE(info.malformed_sni);
     EXPECT_FALSE(info.is_tls13);
 }
 
@@ -180,6 +182,7 @@ TEST(CHParserTest, NoSNI)
     auto info = ch_parser::parse(builder.get_buffer());
 
     EXPECT_TRUE(info.sni.empty());
+    EXPECT_FALSE(info.malformed_sni);
     EXPECT_TRUE(info.is_tls13);
 }
 
@@ -382,6 +385,7 @@ TEST(CHParserTest, InternalSNIAndExtensionBranches)
         mux::client_hello_info info;
         EXPECT_TRUE(ch_parser::handle_sni_item(r, 0x00, 2, info));
         EXPECT_TRUE(info.sni.empty());
+        EXPECT_TRUE(info.malformed_sni);
     }
 
     {
@@ -389,6 +393,7 @@ TEST(CHParserTest, InternalSNIAndExtensionBranches)
         ch_parser::reader r(buf);
         mux::client_hello_info info;
         EXPECT_TRUE(ch_parser::handle_sni_item(r, 0x01, 2, info));
+        EXPECT_TRUE(info.malformed_sni);
     }
 
     {
@@ -396,6 +401,7 @@ TEST(CHParserTest, InternalSNIAndExtensionBranches)
         ch_parser::reader r(buf);
         mux::client_hello_info info;
         EXPECT_FALSE(ch_parser::handle_sni_item(r, 0x01, 2, info));
+        EXPECT_FALSE(info.malformed_sni);
     }
 
     {
@@ -420,6 +426,7 @@ TEST(CHParserTest, InternalSNIAndExtensionBranches)
         mux::client_hello_info info;
         ch_parser::parse_sni(r, info);
         EXPECT_TRUE(info.sni.empty());
+        EXPECT_TRUE(info.malformed_sni);
     }
 
     {
@@ -428,6 +435,7 @@ TEST(CHParserTest, InternalSNIAndExtensionBranches)
         mux::client_hello_info info;
         ch_parser::parse_sni(r, info);
         EXPECT_TRUE(info.sni.empty());
+        EXPECT_TRUE(info.malformed_sni);
     }
 }
 
@@ -664,6 +672,7 @@ TEST(CHParserTest, ParseSniHandlesShortListWithoutItems)
 
     ch_parser::parse_sni(r, info);
     EXPECT_TRUE(info.sni.empty());
+    EXPECT_TRUE(info.malformed_sni);
 }
 
 TEST(CHParserTest, ParseSniContinuesAfterSkippingNonHostNameItem)
@@ -687,6 +696,29 @@ TEST(CHParserTest, ParseSniContinuesAfterSkippingNonHostNameItem)
 
     ch_parser::parse_sni(r, info);
     EXPECT_EQ(info.sni, "abc");
+    EXPECT_FALSE(info.malformed_sni);
+}
+
+TEST(CHParserTest, ParseSniRejectsZeroLengthHostName)
+{
+    std::vector<std::uint8_t> const buf = {0x00, 0x03, 0x00, 0x00, 0x00};
+    ch_parser::reader r(buf);
+    mux::client_hello_info info;
+
+    ch_parser::parse_sni(r, info);
+    EXPECT_TRUE(info.sni.empty());
+    EXPECT_TRUE(info.malformed_sni);
+}
+
+TEST(CHParserTest, ParseSniRejectsTrailingBytes)
+{
+    std::vector<std::uint8_t> const buf = {0x00, 0x04, 0x00, 0x00, 0x01, 0x61, 0xAA};
+    ch_parser::reader r(buf);
+    mux::client_hello_info info;
+
+    ch_parser::parse_sni(r, info);
+    EXPECT_TRUE(info.sni.empty());
+    EXPECT_TRUE(info.malformed_sni);
 }
 
 TEST(CHParserTest, ParseKeyShareX25519Len32ButInsufficientData)

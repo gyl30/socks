@@ -89,15 +89,18 @@ bool ch_parser::handle_sni_item(reader& r, const std::uint8_t type, const std::u
 {
     if (type == 0x00)
     {
-        if (r.has(len))
+        if (len == 0 || !r.has(len))
         {
-            info.sni.assign(reinterpret_cast<const char*>(r.data()), len);
+            info.malformed_sni = true;
+            return true;
         }
+        info.sni.assign(reinterpret_cast<const char*>(r.data()), len);
         return true;
     }
 
     if (!r.skip(len))
     {
+        info.malformed_sni = true;
         return true;
     }
     return false;
@@ -207,12 +210,19 @@ void ch_parser::parse_sni(reader& r, client_hello_info& info)
     std::uint16_t list_len = 0;
     if (!r.read_u16(list_len))
     {
+        info.malformed_sni = true;
         return;
     }
 
     reader list_r = r.slice(list_len);
     if (!list_r.valid())
     {
+        info.malformed_sni = true;
+        return;
+    }
+    if (r.remaining() != 0)
+    {
+        info.malformed_sni = true;
         return;
     }
 
@@ -228,6 +238,10 @@ void ch_parser::parse_sni(reader& r, client_hello_info& info)
         {
             return;
         }
+    }
+    if (list_r.remaining() != 0)
+    {
+        info.malformed_sni = true;
     }
 }
 

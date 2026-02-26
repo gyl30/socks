@@ -978,6 +978,11 @@ bool validate_auth_inputs(const client_hello_info& info, const bool auth_config_
         LOG_CTX_ERROR(ctx, "{} invalid auth config", log_event::kAuth);
         return false;
     }
+    if (info.malformed_sni)
+    {
+        LOG_CTX_ERROR(ctx, "{} auth fail malformed sni extension", log_event::kAuth);
+        return false;
+    }
     if (!info.is_tls13 || info.session_id.size() != 32)
     {
         LOG_CTX_ERROR(ctx, "{} auth fail is tls13 {} sid len {}", log_event::kAuth, info.is_tls13, info.session_id.size());
