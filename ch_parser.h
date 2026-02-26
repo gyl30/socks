@@ -16,6 +16,7 @@ struct client_hello_info
     std::vector<std::uint8_t> x25519_pub;
     std::string sni;
     bool malformed_sni = false;
+    bool malformed_key_share = false;
     bool is_tls13 = false;
     bool has_x25519_share = false;
     std::uint16_t key_share_group = 0;
