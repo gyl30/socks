@@ -316,6 +316,7 @@ boost::asio::awaitable<bool> socks_session::do_password_auth()
 {
     if (!(co_await read_auth_version()))
     {
+        (void)co_await write_auth_result(false);
         co_return false;
     }
 
@@ -356,13 +357,20 @@ boost::asio::awaitable<bool> socks_session::read_auth_version()
 {
     std::uint8_t ver = 0;
     const auto read_res = co_await read_exact_with_optional_timeout(socket_, boost::asio::buffer(&ver, 1), timeout_config_.read);
-    if (!read_res.ok || ver != 0x01)
+    if (!read_res.ok)
     {
-        if (!read_res.ok && read_res.timed_out)
+        if (read_res.timed_out)
         {
             LOG_ERROR("socks session {} read auth version timeout {}s", sid_, timeout_config_.read);
-            co_return false;
         }
+        else
+        {
+            LOG_ERROR("socks session {} read auth version failed {}", sid_, read_res.ec.message());
+        }
+        co_return false;
+    }
+    if (ver != 0x01)
+    {
         LOG_ERROR("socks session {} invalid auth version {}", sid_, ver);
         co_return false;
     }
