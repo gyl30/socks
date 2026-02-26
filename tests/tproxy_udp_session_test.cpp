@@ -95,6 +95,8 @@ std::atomic<int> g_fail_close_errno{EIO};
 std::atomic<int> g_recvmsg_mode{static_cast<int>(wrapped_recvmsg_mode::kReal)};
 std::atomic<bool> g_recvmsg_mode_sticky{false};
 std::atomic<bool> g_force_ipv6_socket_compat{false};
+std::atomic<int> g_socket_delay_ms{0};
+std::atomic<int> g_socket_delay_entered{0};
 
 void reset_socket_wrappers()
 {
@@ -116,6 +118,8 @@ void reset_socket_wrappers()
     g_recvmsg_mode.store(static_cast<int>(wrapped_recvmsg_mode::kReal), std::memory_order_release);
     g_recvmsg_mode_sticky.store(false, std::memory_order_release);
     g_force_ipv6_socket_compat.store(false, std::memory_order_release);
+    g_socket_delay_ms.store(0, std::memory_order_release);
+    g_socket_delay_entered.store(0, std::memory_order_release);
 }
 
 void force_tproxy_setsockopt_success(const bool enable) { g_force_tproxy_sockopt_success.store(enable, std::memory_order_release); }
@@ -602,6 +606,33 @@ class drop_log_sink : public spdlog::sinks::base_sink<Mutex>
 
 using drop_log_sink_t = drop_log_sink<std::mutex>;
 
+template <typename Mutex>
+class text_match_log_sink : public spdlog::sinks::base_sink<Mutex>
+{
+   public:
+    explicit text_match_log_sink(std::string text) : text_(std::move(text)) {}
+
+    [[nodiscard]] std::size_t match_count() const { return match_count_.load(std::memory_order_acquire); }
+
+   protected:
+    void sink_it_(const spdlog::details::log_msg& msg) override
+    {
+        const std::string_view payload(msg.payload.data(), msg.payload.size());
+        if (!text_.empty() && payload.find(text_) != std::string_view::npos)
+        {
+            match_count_.fetch_add(1, std::memory_order_acq_rel);
+        }
+    }
+
+    void flush_() override {}
+
+   private:
+    std::string text_;
+    std::atomic<std::size_t> match_count_{0};
+};
+
+using text_match_log_sink_t = text_match_log_sink<std::mutex>;
+
 class scoped_default_logger_override
 {
    public:
@@ -643,6 +674,12 @@ extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void*
 
 extern "C" int __wrap_socket(int domain, int type, int protocol)    
 {
+    const auto delay_ms = g_socket_delay_ms.load(std::memory_order_acquire);
+    if (delay_ms > 0)
+    {
+        g_socket_delay_entered.fetch_add(1, std::memory_order_acq_rel);
+        std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
+    }
     if (g_force_ipv6_socket_compat.load(std::memory_order_acquire) && domain == AF_INET6)
     {
         return __real_socket(AF_INET, type, protocol);    
@@ -5197,6 +5234,73 @@ TEST(TproxyClientTest, UdpDispatchLoopDoesNotCreateSessionAfterStopRequested)
     {
         client->udp_dispatch_channel_->close();
     }
+    pool.stop();
+    if (runner.joinable())
+    {
+        runner.join();
+    }
+    reset_socket_wrappers();
+}
+
+TEST(TproxyClientTest, UdpDispatchLoopConcurrentCreateDoesNotDropFirstBurst)
+{
+    reset_socket_wrappers();
+
+    mux::io_context_pool pool(2);
+    mux::config cfg;
+    cfg.tproxy.enabled = true;
+    auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
+    client->router_ = std::make_shared<direct_router>();
+    client->udp_dispatch_channel_ = std::make_shared<mux::tproxy_udp_dispatch_channel>(pool.get_io_context(), 16);
+    client->stop_.store(false, std::memory_order_release);
+    client->started_.store(true, std::memory_order_release);
+
+    boost::asio::co_spawn(pool.get_io_context(), [client]() { return client->udp_dispatch_loop(); }, boost::asio::detached);
+    boost::asio::co_spawn(pool.get_io_context(), [client]() { return client->udp_dispatch_loop(); }, boost::asio::detached);
+
+    auto warn_sink = std::make_shared<text_match_log_sink_t>("udp direct send failed");
+    auto logger = std::make_shared<spdlog::logger>("tproxy_start_order_logger", warn_sink);
+    logger->set_level(spdlog::level::trace);
+    scoped_default_logger_override logger_override(logger);
+
+    std::thread runner([&pool]() { pool.run(); });
+
+    fail_socket_once(EPERM);
+
+    g_socket_delay_entered.store(0, std::memory_order_release);
+    g_socket_delay_ms.store(120, std::memory_order_release);
+
+    const boost::asio::ip::udp::endpoint src_ep(boost::asio::ip::make_address("127.0.0.1"), 33445);
+    const boost::asio::ip::udp::endpoint dst_ep(boost::asio::ip::make_address("127.0.0.1"), 53535);
+    const std::vector<std::uint8_t> packet_one = {0x11, 0x22, 0x33, 0x44};
+    const std::vector<std::uint8_t> packet_two = {0x55, 0x66, 0x77, 0x88};
+
+    ASSERT_TRUE(mux::tproxy_client::enqueue_udp_packet(*client->udp_dispatch_channel_, src_ep, dst_ep, packet_one, packet_one.size()));
+
+    bool delay_entered = false;
+    for (int i = 0; i < 200; ++i)
+    {
+        if (g_socket_delay_entered.load(std::memory_order_acquire) > 0)
+        {
+            delay_entered = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    ASSERT_TRUE(delay_entered);
+
+    ASSERT_TRUE(mux::tproxy_client::enqueue_udp_packet(*client->udp_dispatch_channel_, src_ep, dst_ep, packet_two, packet_two.size()));
+    g_socket_delay_ms.store(0, std::memory_order_release);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    EXPECT_EQ(warn_sink->match_count(), 0U);
+
+    client->stop_.store(true, std::memory_order_release);
+    if (client->udp_dispatch_channel_ != nullptr)
+    {
+        client->udp_dispatch_channel_->close();
+    }
+    client->stop();
     pool.stop();
     if (runner.joinable())
     {

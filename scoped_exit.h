@@ -1,5 +1,5 @@
-#ifndef TXTREADER_SCOPED_EXIT_H
-#define TXTREADER_SCOPED_EXIT_H
+#ifndef SCOPED_EXIT_H
+#define SCOPED_EXIT_H
 
 #include <utility>
 #include <type_traits>
