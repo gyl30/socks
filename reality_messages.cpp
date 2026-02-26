@@ -3,6 +3,7 @@
 #include <memory>
 #include <random>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <cstddef>
 #include <cstdint>
@@ -124,6 +125,26 @@ struct extension_build_context
     std::size_t exts_size;
 };
 
+constexpr std::size_t kMaxSniHostLen = 65530;
+
+bool contains_nul(std::string_view text)
+{
+    return text.find('\0') != std::string_view::npos;
+}
+
+bool valid_sni_hostname(std::string_view hostname)
+{
+    if (hostname.empty())
+    {
+        return false;
+    }
+    if (hostname.size() > kMaxSniHostLen)
+    {
+        return false;
+    }
+    return !contains_nul(hostname);
+}
+
 bool build_grease_ext(std::vector<std::uint8_t>& ext_buffer, std::uint16_t& ext_type, const extension_build_context& ctx)
 {
     ext_type = ctx.grease_ctx.get_extension_grease(ctx.grease_ext_count++);
@@ -136,13 +157,16 @@ bool build_grease_ext(std::vector<std::uint8_t>& ext_buffer, std::uint16_t& ext_
 
 bool build_sni_ext(std::vector<std::uint8_t>& ext_buffer, std::uint16_t& ext_type, const extension_build_context& ctx)
 {
-    constexpr std::size_t kMaxSniHostLen = 65526;
+    if (!valid_sni_hostname(ctx.hostname))
+    {
+        return false;
+    }
     ext_type = tls_consts::ext::kSni;
     std::vector<std::uint8_t> server_name_list;
-    const auto host_len = std::min(ctx.hostname.size(), kMaxSniHostLen);
+    const auto host_len = ctx.hostname.size();
     message_builder::push_u8(server_name_list, 0x00);
     message_builder::push_u16(server_name_list, static_cast<std::uint16_t>(host_len));
-    server_name_list.insert(server_name_list.end(), ctx.hostname.begin(), ctx.hostname.begin() + static_cast<std::ptrdiff_t>(host_len));
+    server_name_list.insert(server_name_list.end(), ctx.hostname.begin(), ctx.hostname.end());
     message_builder::push_vector_u16(ext_buffer, server_name_list);
     return true;
 }
@@ -701,6 +725,12 @@ std::vector<std::uint8_t> client_hello_builder::build(const fingerprint_spec& sp
                                                       const std::vector<std::uint8_t>& x25519_pubkey,
                                                       const std::string& hostname)
 {
+    const bool has_hostname = !hostname.empty();
+    if (has_hostname && !valid_sni_hostname(hostname))
+    {
+        return {};
+    }
+
     std::vector<std::uint8_t> hello;
     const grease_context grease_ctx;
     int grease_ext_count = 0;
@@ -733,6 +763,11 @@ std::vector<std::uint8_t> client_hello_builder::build(const fingerprint_spec& sp
 
     for (const auto& ext_ptr : spec_copy.extensions)
     {
+        if (ext_ptr->type() == extension_type::kSni && !has_hostname)
+        {
+            continue;
+        }
+
         std::vector<std::uint8_t> ext_buffer;
         std::uint16_t ext_type = 0;
         const extension_build_context ctx{
@@ -745,6 +780,10 @@ std::vector<std::uint8_t> client_hello_builder::build(const fingerprint_spec& sp
         };
         if (!build_extension(ext_ptr, ext_buffer, ext_type, ctx))
         {
+            if (ext_ptr->type() == extension_type::kSni)
+            {
+                return {};
+            }
             continue;
         }
 
