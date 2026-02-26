@@ -168,12 +168,6 @@ boost::asio::awaitable<void> remote_server::process_stream_request(std::shared_p
                                                                    boost::asio::io_context& io_context) const
 {
     const auto connection = tunnel->connection();
-    if (!connection->can_accept_stream())
-    {
-        co_await reject_stream_for_limit(connection, ctx, stream_id);
-        co_return;
-    }
-
     syn_payload syn;
     if (!mux_codec::decode_syn(payload.data(), payload.size(), syn))
     {
