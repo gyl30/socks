@@ -338,6 +338,7 @@ constexpr std::uint32_t kQueueCapacityMax = 65535;
 {
     constexpr std::size_t kRealityKeyLen = 32;
     constexpr std::size_t kRealityShortIdMaxLen = 8;
+    constexpr std::size_t kRealitySniMaxLen = 65530;
 
     const auto private_key_bytes = decode_optional_hex_field(reality.private_key, "/reality/private_key");
     if (!private_key_bytes)
@@ -367,6 +368,14 @@ constexpr std::uint32_t kQueueCapacityMax = 65535;
     if (short_id_bytes->size() > kRealityShortIdMaxLen)
     {
         return std::unexpected(make_config_error("/reality/short_id", "must be at most 8 bytes when provided"));
+    }
+    if (reality.sni.find('\0') != std::string::npos)
+    {
+        return std::unexpected(make_config_error("/reality/sni", "must not contain nul when provided"));
+    }
+    if (reality.sni.size() > kRealitySniMaxLen)
+    {
+        return std::unexpected(make_config_error("/reality/sni", "must be at most 65530 bytes when provided"));
     }
     if (reality.dest.find('\0') != std::string::npos)
     {
