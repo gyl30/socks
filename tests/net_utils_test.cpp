@@ -181,9 +181,53 @@ TEST(NetUtilsTest, SetSocketTransparentInvalidFd)
 #endif
 }
 
+TEST(NetUtilsTest, SetSocketTransparentV4InvalidFd)
+{
+    const auto result = set_socket_transparent_v4(-1);
+    EXPECT_FALSE(result.has_value());
+#ifdef __linux__
+    EXPECT_EQ(result.error().value(), EBADF);
+#else
+    EXPECT_EQ(result.error(), std::make_error_code(std::errc::not_supported));
+#endif
+}
+
+TEST(NetUtilsTest, SetSocketTransparentV6InvalidFd)
+{
+    const auto result = set_socket_transparent_v6(-1);
+    EXPECT_FALSE(result.has_value());
+#ifdef __linux__
+    EXPECT_EQ(result.error().value(), EBADF);
+#else
+    EXPECT_EQ(result.error(), std::make_error_code(std::errc::not_supported));
+#endif
+}
+
 TEST(NetUtilsTest, SetSocketRecvOrigdstInvalidFd)
 {
     const auto result = set_socket_recv_origdst(-1, true);
+    EXPECT_FALSE(result.has_value());
+#ifdef __linux__
+    EXPECT_EQ(result.error().value(), EBADF);
+#else
+    EXPECT_EQ(result.error(), std::make_error_code(std::errc::not_supported));
+#endif
+}
+
+TEST(NetUtilsTest, SetSocketRecvOrigdstV4InvalidFd)
+{
+    const auto result = set_socket_recv_origdst_v4(-1);
+    EXPECT_FALSE(result.has_value());
+#ifdef __linux__
+    EXPECT_EQ(result.error().value(), EBADF);
+#else
+    EXPECT_EQ(result.error(), std::make_error_code(std::errc::not_supported));
+#endif
+}
+
+TEST(NetUtilsTest, SetSocketRecvOrigdstV6InvalidFd)
+{
+    const auto result = set_socket_recv_origdst_v6(-1);
     EXPECT_FALSE(result.has_value());
 #ifdef __linux__
     EXPECT_EQ(result.error().value(), EBADF);

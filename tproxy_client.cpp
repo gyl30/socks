@@ -195,18 +195,98 @@ std::expected<void, boost::system::error_code> set_udp_dual_stack_if_needed(boos
     return {};
 }
 
-std::expected<void, boost::system::error_code> configure_udp_transparent_options(boost::asio::ip::udp::socket& socket, const bool is_v6)
+std::expected<void, boost::system::error_code> configure_udp_transparent_options(boost::asio::ip::udp::socket& socket,
+                                                                                 const bool is_v6,
+                                                                                 const bool enable_dual_stack)
 {
-    if (auto r = net::set_socket_transparent(socket.native_handle(), is_v6); !r)
+    if (!is_v6)
     {
-        return std::unexpected(r.error());
+        if (auto r = net::set_socket_transparent_v4(socket.native_handle()); !r)
+        {
+            return std::unexpected(r.error());
+        }
+        if (auto r = net::set_socket_recv_origdst_v4(socket.native_handle()); !r)
+        {
+            return std::unexpected(r.error());
+        }
+        return {};
     }
 
-    if (auto r = net::set_socket_recv_origdst(socket.native_handle(), is_v6); !r)
+    std::optional<boost::system::error_code> ipv6_option_ec;
+    std::optional<boost::system::error_code> ipv4_option_ec;
+    bool ipv6_ready = false;
+    bool ipv4_ready = false;
+
+    if (auto r = net::set_socket_transparent_v6(socket.native_handle()); !r)
     {
-        return std::unexpected(r.error());
+        ipv6_option_ec = r.error();
     }
-    return {};
+    else if (auto r = net::set_socket_recv_origdst_v6(socket.native_handle()); !r)
+    {
+        ipv6_option_ec = r.error();
+    }
+    else
+    {
+        ipv6_ready = true;
+    }
+
+    if (enable_dual_stack)
+    {
+        if (auto r = net::set_socket_transparent_v4(socket.native_handle()); !r)
+        {
+            ipv4_option_ec = r.error();
+        }
+        else if (auto r = net::set_socket_recv_origdst_v4(socket.native_handle()); !r)
+        {
+            ipv4_option_ec = r.error();
+        }
+        else
+        {
+            ipv4_ready = true;
+        }
+    }
+
+    if (!enable_dual_stack)
+    {
+        if (ipv6_ready)
+        {
+            return {};
+        }
+        return std::unexpected(ipv6_option_ec.value_or(boost::asio::error::operation_not_supported));
+    }
+
+    if (ipv6_ready && ipv4_ready)
+    {
+        return {};
+    }
+
+    if (ipv6_ready && !ipv4_ready)
+    {
+        boost::system::error_code v6_only_ec;
+        v6_only_ec = socket.set_option(boost::asio::ip::v6_only(true), v6_only_ec);
+        if (v6_only_ec)
+        {
+            return std::unexpected(v6_only_ec);
+        }
+        LOG_WARN("tproxy udp ipv4 transparent capability unavailable fallback to ipv6 only");
+        return {};
+    }
+
+    if (!ipv6_ready && ipv4_ready)
+    {
+        LOG_WARN("tproxy udp ipv6 transparent capability unavailable fallback to ipv4");
+        return std::unexpected(ipv6_option_ec.value_or(boost::asio::error::operation_not_supported));
+    }
+
+    if (ipv6_option_ec.has_value())
+    {
+        return std::unexpected(*ipv6_option_ec);
+    }
+    if (ipv4_option_ec.has_value())
+    {
+        return std::unexpected(*ipv4_option_ec);
+    }
+    return std::unexpected(boost::asio::error::operation_not_supported);
 }
 
 void maybe_set_udp_mark(boost::asio::ip::udp::socket& socket, const std::uint32_t mark)
@@ -241,7 +321,7 @@ std::expected<void, boost::system::error_code> setup_udp_listener(boost::asio::i
         close_udp_socket_on_setup_failure(socket);
         return std::unexpected(res.error());
     }
-    if (auto res = configure_udp_transparent_options(socket, is_v6); !res)
+    if (auto res = configure_udp_transparent_options(socket, is_v6, enable_dual_stack); !res)
     {
         close_udp_socket_on_setup_failure(socket);
         return std::unexpected(res.error());

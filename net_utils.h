@@ -18,7 +18,15 @@ namespace mux::net
 
 [[nodiscard]] std::expected<void, boost::system::error_code> set_socket_mark(int fd, std::uint32_t mark);
 
+[[nodiscard]] std::expected<void, boost::system::error_code> set_socket_transparent_v4(int fd);
+
+[[nodiscard]] std::expected<void, boost::system::error_code> set_socket_transparent_v6(int fd);
+
 [[nodiscard]] std::expected<void, boost::system::error_code> set_socket_transparent(int fd, bool ipv6);
+
+[[nodiscard]] std::expected<void, boost::system::error_code> set_socket_recv_origdst_v4(int fd);
+
+[[nodiscard]] std::expected<void, boost::system::error_code> set_socket_recv_origdst_v6(int fd);
 
 [[nodiscard]] std::expected<void, boost::system::error_code> set_socket_recv_origdst(int fd, bool ipv6);
 
