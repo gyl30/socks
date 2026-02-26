@@ -1295,6 +1295,111 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsTooManyTls13CompatCcs
     EXPECT_EQ(loop_res.error(), std::errc::bad_message);
 }
 
+TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsTooManyEmptyHandshakeRecords)
+{
+    boost::asio::io_context io_context;
+    boost::system::error_code ec;
+
+    boost::asio::ip::tcp::acceptor acceptor(io_context);
+    ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
+    boost::asio::ip::tcp::socket writer(io_context);
+    (void)writer.connect(acceptor.local_endpoint(), ec);
+    ASSERT_FALSE(ec);
+    boost::asio::ip::tcp::socket reader(io_context);
+    (void)acceptor.accept(reader, ec);
+    ASSERT_FALSE(ec);
+
+    const std::vector<std::uint8_t> key(16, 0x83);
+    const std::vector<std::uint8_t> iv(12, 0x93);
+    std::vector<std::uint8_t> wire;
+    for (std::uint64_t seq = 0; seq < 64; ++seq)
+    {
+        const auto record = encrypt_record_expected(EVP_aes_128_gcm(), key, iv, seq, {}, reality::kContentTypeHandshake);
+        ASSERT_TRUE(record.has_value());
+        wire.insert(wire.end(), record->begin(), record->end());
+    }
+    boost::asio::write(writer, boost::asio::buffer(wire), ec);
+    ASSERT_FALSE(ec);
+    (void)writer.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
+
+    reality::transcript trans;
+    reality::handshake_keys hs_keys;
+    std::expected<std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>, boost::system::error_code> loop_res;
+    boost::asio::co_spawn(
+        io_context,
+        [&]() -> boost::asio::awaitable<void>
+        {
+            loop_res = co_await handshake_read_loop_expected(
+                reader, {key, iv}, hs_keys, false, "too-many-empty-handshake-records", trans, EVP_aes_128_gcm(), EVP_sha256());
+            co_return;
+        },
+        boost::asio::detached);
+    io_context.run();
+
+    EXPECT_FALSE(loop_res.has_value());
+    EXPECT_EQ(loop_res.error(), std::errc::bad_message);
+}
+
+TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsMixedCcsAndEmptyHandshakeRecordsByTotalLimit)
+{
+    boost::asio::io_context io_context;
+    boost::system::error_code ec;
+
+    boost::asio::ip::tcp::acceptor acceptor(io_context);
+    ASSERT_TRUE(mux::test::open_ephemeral_tcp_acceptor(acceptor));
+    boost::asio::ip::tcp::socket writer(io_context);
+    (void)writer.connect(acceptor.local_endpoint(), ec);
+    ASSERT_FALSE(ec);
+    boost::asio::ip::tcp::socket reader(io_context);
+    (void)acceptor.accept(reader, ec);
+    ASSERT_FALSE(ec);
+
+    const std::array<std::uint8_t, 6> ccs = {
+        reality::kContentTypeChangeCipherSpec,
+        0x03,
+        0x03,
+        0x00,
+        0x01,
+        0x01,
+    };
+    std::vector<std::uint8_t> wire;
+    wire.reserve(ccs.size() * 8);
+    for (std::size_t i = 0; i < 8; ++i)
+    {
+        wire.insert(wire.end(), ccs.begin(), ccs.end());
+    }
+
+    const std::vector<std::uint8_t> key(16, 0xa3);
+    const std::vector<std::uint8_t> iv(12, 0xb3);
+    for (std::uint64_t seq = 0; seq < 56; ++seq)
+    {
+        const auto record = encrypt_record_expected(EVP_aes_128_gcm(), key, iv, seq, {}, reality::kContentTypeHandshake);
+        ASSERT_TRUE(record.has_value());
+        wire.insert(wire.end(), record->begin(), record->end());
+    }
+
+    boost::asio::write(writer, boost::asio::buffer(wire), ec);
+    ASSERT_FALSE(ec);
+    (void)writer.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
+
+    reality::transcript trans;
+    reality::handshake_keys hs_keys;
+    std::expected<std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>, boost::system::error_code> loop_res;
+    boost::asio::co_spawn(
+        io_context,
+        [&]() -> boost::asio::awaitable<void>
+        {
+            loop_res = co_await handshake_read_loop_expected(
+                reader, {key, iv}, hs_keys, false, "too-many-mixed-records", trans, EVP_aes_128_gcm(), EVP_sha256());
+            co_return;
+        },
+        boost::asio::detached);
+    io_context.run();
+
+    EXPECT_FALSE(loop_res.has_value());
+    EXPECT_EQ(loop_res.error(), std::errc::bad_message);
+}
+
 TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopHandlesPartialHandshakeMessageWithoutOverflow)
 {
     boost::asio::io_context io_context;
