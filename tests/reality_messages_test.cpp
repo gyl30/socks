@@ -516,9 +516,8 @@ TEST(RealityMessagesTest, ClientHelloBuilderChrome)
     EXPECT_EQ(ch[0], 0x01);
 }
 
-TEST(RealityMessagesTest, ClientHelloSniTruncatesOversizedHostnameConsistently)
+TEST(RealityMessagesTest, ClientHelloSniRejectsOversizedHostname)
 {
-    constexpr std::size_t kMaxSniHostLen = 65526;
     reality::fingerprint_spec spec;
     spec.client_version = tls_consts::kVer12;
     spec.cipher_suites = {tls_consts::cipher::kTlsAes128GcmSha256};
@@ -529,22 +528,24 @@ TEST(RealityMessagesTest, ClientHelloSniTruncatesOversizedHostnameConsistently)
     const std::vector<std::uint8_t> random(32, 0x52);
     const std::vector<std::uint8_t> pubkey(32, 0x53);
     const auto ch = reality::client_hello_builder::build(spec, session_id, random, pubkey, std::string(70000, 'a'));
+    EXPECT_TRUE(ch.empty());
+}
 
+TEST(RealityMessagesTest, ClientHelloSkipsSniExtensionWhenHostnameIsEmpty)
+{
+    reality::fingerprint_spec spec;
+    spec.client_version = tls_consts::kVer12;
+    spec.cipher_suites = {tls_consts::cipher::kTlsAes128GcmSha256};
+    spec.compression_methods = {0x00};
+    spec.extensions.push_back(std::make_shared<reality::sni_blueprint>());
+
+    const std::vector<std::uint8_t> session_id(32, 0x51);
+    const std::vector<std::uint8_t> random(32, 0x52);
+    const std::vector<std::uint8_t> pubkey(32, 0x53);
+    const auto ch = reality::client_hello_builder::build(spec, session_id, random, pubkey, "");
+    ASSERT_FALSE(ch.empty());
     const auto sni_ext = extract_extension_data_by_type(ch, tls_consts::ext::kSni);
-    ASSERT_TRUE(sni_ext.has_value());
-    if (!sni_ext.has_value())
-    {
-        return;
-    }
-    ASSERT_GE(sni_ext->size(), 5U);
-
-    const auto list_len = static_cast<std::uint16_t>(((*sni_ext)[0] << 8) | (*sni_ext)[1]);
-    EXPECT_EQ(static_cast<std::size_t>(list_len) + 2, sni_ext->size());
-    EXPECT_EQ((*sni_ext)[2], 0x00);
-
-    const auto name_len = static_cast<std::uint16_t>(((*sni_ext)[3] << 8) | (*sni_ext)[4]);
-    EXPECT_EQ(name_len, kMaxSniHostLen);
-    EXPECT_EQ(static_cast<std::size_t>(name_len) + 5, sni_ext->size());
+    EXPECT_FALSE(sni_ext.has_value());
 }
 
 TEST(RealityMessagesTest, ExtractServerPublicKeyNoKeyShare)

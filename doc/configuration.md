@@ -77,6 +77,8 @@
 ## REALITY
 
 - `reality.sni`：伪装 SNI。
+  - 在提供时不得包含 `NUL` 字节（例如 `\u0000`）。
+  - 在提供时长度不得超过 `65530` 字节（TLS SNI 可编码上限）。
 - `reality.fingerprint`：客户端指纹（默认 `random`）。
   - 可选值：`random`、`chrome`、`firefox`、`ios`、`android`（分别映射到 `chrome_120` / `firefox_120` / `ios_14` / `android_11_okhttp`）。
   - 当 `mode = client` 时，`reality.fingerprint` 仅允许上述值及其版本别名（如 `chrome_120`）。

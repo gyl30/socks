@@ -304,6 +304,11 @@ boost::asio::awaitable<boost::system::error_code> cert_fetcher::fetch_session::p
 
     auto spec = fingerprint_factory::get(fingerprint_type::kChrome120);
     auto ch = client_hello_builder::build(spec, session_id, client_random, std::vector<std::uint8_t>(client_public_, client_public_ + 32), sni_);
+    if (ch.empty())
+    {
+        LOG_CTX_ERROR(ctx_, "{} invalid client hello for sni '{}'", mux::log_event::kCert, sni_);
+        co_return boost::asio::error::invalid_argument;
+    }
 
     if (const auto write_ec = co_await send_client_hello_record(ch); write_ec)
     {
