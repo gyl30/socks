@@ -489,6 +489,10 @@ TEST_F(socks_session_test_fixture, HandshakePasswordAuthInvalidVersion)
     std::uint8_t invalid_auth_ver[] = {0x02};
     boost::asio::write(client_sock, boost::asio::buffer(invalid_auth_ver));
     EXPECT_FALSE(handshake_future.get());
+    std::uint8_t auth_res[2];
+    boost::asio::read(client_sock, boost::asio::buffer(auth_res));
+    EXPECT_EQ(auth_res[0], 0x01);
+    EXPECT_EQ(auth_res[1], 0x01);
 
     work.reset();
     t.join();
