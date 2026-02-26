@@ -313,9 +313,11 @@ handshake_read_loop_expected(boost::asio::ip::tcp::socket& socket,
                              const std::string& sni,
                              reality::transcript& trans,
                              const EVP_CIPHER* cipher,
-                             const EVP_MD* md)
+                             const EVP_MD* md,
+                             const std::uint32_t max_handshake_records = 256)
 {
-    co_return co_await mux::client_tunnel_pool::handshake_read_loop(socket, s_hs_keys, hs_keys, strict_cert_verify, sni, trans, cipher, md, 0);
+    co_return co_await mux::client_tunnel_pool::handshake_read_loop(
+        socket, s_hs_keys, hs_keys, strict_cert_verify, sni, trans, cipher, md, max_handshake_records, 0);
 }
 
 }    // namespace
@@ -1333,7 +1335,15 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsTooManyEmptyHandshake
         [&]() -> boost::asio::awaitable<void>
         {
             loop_res = co_await handshake_read_loop_expected(
-                reader, {key, iv}, hs_keys, false, "too-many-empty-handshake-records", trans, EVP_aes_128_gcm(), EVP_sha256());
+                reader,
+                {key, iv},
+                hs_keys,
+                false,
+                "too-many-empty-handshake-records",
+                trans,
+                EVP_aes_128_gcm(),
+                EVP_sha256(),
+                64);
             co_return;
         },
         boost::asio::detached);
@@ -1393,7 +1403,15 @@ TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsMixedCcsAndEmptyHands
         [&]() -> boost::asio::awaitable<void>
         {
             loop_res = co_await handshake_read_loop_expected(
-                reader, {key, iv}, hs_keys, false, "too-many-mixed-records", trans, EVP_aes_128_gcm(), EVP_sha256());
+                reader,
+                {key, iv},
+                hs_keys,
+                false,
+                "too-many-mixed-records",
+                trans,
+                EVP_aes_128_gcm(),
+                EVP_sha256(),
+                64);
             co_return;
         },
         boost::asio::detached);

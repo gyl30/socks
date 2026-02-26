@@ -47,7 +47,14 @@ REFLECT_STRUCT(mux::config::reality_t,
                private_key,
                public_key,
                short_id);
-REFLECT_STRUCT(mux::config::limits_t, max_connections, max_connections_per_source, source_prefix_v4, source_prefix_v6, max_buffer, max_streams);
+REFLECT_STRUCT(mux::config::limits_t,
+               max_connections,
+               max_connections_per_source,
+               source_prefix_v4,
+               source_prefix_v6,
+               max_buffer,
+               max_streams,
+               max_handshake_records);
 REFLECT_STRUCT(mux::config::heartbeat_t, enabled, idle_timeout, min_interval, max_interval, min_padding, max_padding);
 REFLECT_STRUCT(mux::config::monitor_t, enabled, port);
 REFLECT_STRUCT(mux::config, mode, workers, log, inbound, outbound, socks, tproxy, fallbacks, timeout, queues, reality, limits, heartbeat, monitor);
@@ -62,6 +69,8 @@ namespace
 
 constexpr std::uint32_t kQueueCapacityMin = 1;
 constexpr std::uint32_t kQueueCapacityMax = 65535;
+constexpr std::uint32_t kHandshakeRecordsLimitMin = 1;
+constexpr std::uint32_t kHandshakeRecordsLimitMax = 4096;
 
 [[nodiscard]] config_error make_config_error(std::string path, std::string reason)
 {
@@ -101,6 +110,10 @@ constexpr std::uint32_t kQueueCapacityMax = 65535;
     if (limits.max_buffer == 0)
     {
         return std::unexpected(make_config_error("/limits/max_buffer", "must be greater than 0"));
+    }
+    if (limits.max_handshake_records < kHandshakeRecordsLimitMin || limits.max_handshake_records > kHandshakeRecordsLimitMax)
+    {
+        return std::unexpected(make_config_error("/limits/max_handshake_records", "must be between 1 and 4096"));
     }
     return {};
 }
