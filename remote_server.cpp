@@ -1397,12 +1397,15 @@ remote_server::~remote_server()
 
 void remote_server::start()
 {
+    const std::lock_guard<std::mutex> lock(lifecycle_mu_);
+
     bool expected = false;
     if (!started_.compare_exchange_strong(expected, true, std::memory_order_acq_rel))
     {
         LOG_WARN("remote server already started");
         return;
     }
+    lifecycle_epoch_.fetch_add(1, std::memory_order_acq_rel);
 
     if (!inbound_config_valid_)
     {
@@ -1446,15 +1449,23 @@ void remote_server::start()
 
 void remote_server::drain()
 {
+    const std::lock_guard<std::mutex> lock(lifecycle_mu_);
+
+    const auto stop_epoch = lifecycle_epoch_.load(std::memory_order_acquire);
     stop_.store(true, std::memory_order_release);
     LOG_INFO("remote server draining");
 
     detail::dispatch_cleanup_or_run_inline(
         io_context_,
-        [weak_self = weak_from_this()]()
+        [weak_self = weak_from_this(), stop_epoch]()
         {
             if (const auto self = weak_self.lock())
             {
+                if (self->lifecycle_epoch_.load(std::memory_order_acquire) != stop_epoch ||
+                    !self->stop_.load(std::memory_order_acquire))
+                {
+                    return;
+                }
                 self->stop_local(false);
             }
         },
@@ -1471,15 +1482,23 @@ void remote_server::set_certificate(const std::string& sni,
 
 void remote_server::stop()
 {
+    const std::lock_guard<std::mutex> lock(lifecycle_mu_);
+
+    const auto stop_epoch = lifecycle_epoch_.load(std::memory_order_acquire);
     stop_.store(true, std::memory_order_release);
     LOG_INFO("remote server stopping");
 
     detail::dispatch_cleanup_or_run_inline(
         io_context_,
-        [weak_self = weak_from_this()]()
+        [weak_self = weak_from_this(), stop_epoch]()
         {
             if (const auto self = weak_self.lock())
             {
+                if (self->lifecycle_epoch_.load(std::memory_order_acquire) != stop_epoch ||
+                    !self->stop_.load(std::memory_order_acquire))
+                {
+                    return;
+                }
                 self->stop_local(true);
             }
         },
