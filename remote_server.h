@@ -301,6 +301,8 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     std::shared_ptr<tunnel_list_t> active_tunnels_ = std::make_shared<tunnel_list_t>();
     config::limits_t limits_config_;
     config::heartbeat_t heartbeat_config_;
+    std::atomic<std::uint64_t> lifecycle_epoch_{0};
+    std::mutex lifecycle_mu_;
     std::atomic<bool> started_{false};
     std::atomic<bool> stop_{false};
 };
