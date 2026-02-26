@@ -869,14 +869,33 @@ void mux_connection::update_read_statistics(const std::size_t n)
 
 std::expected<void, boost::system::error_code> mux_connection::process_decrypted_records()
 {
-    return reality_engine_.process_available_records(
-        [this](const std::uint8_t type, const std::span<const std::uint8_t> plaintext)
+    bool unexpected_content_type = false;
+    const auto process_res = reality_engine_.process_available_records(
+        [this, &unexpected_content_type](const std::uint8_t type, const std::span<const std::uint8_t> plaintext)
         {
-            if (type == reality::kContentTypeApplicationData && !plaintext.empty())
+            if (type == reality::kContentTypeApplicationData)
             {
-                mux_dispatcher_.on_plaintext_data(plaintext);
+                if (!plaintext.empty())
+                {
+                    mux_dispatcher_.on_plaintext_data(plaintext);
+                }
+                return;
             }
+            if (type == reality::kContentTypeAlert)
+            {
+                return;
+            }
+            unexpected_content_type = true;
         });
+    if (!process_res)
+    {
+        return std::unexpected(process_res.error());
+    }
+    if (unexpected_content_type)
+    {
+        return std::unexpected(boost::asio::error::invalid_argument);
+    }
+    return {};
 }
 
 bool mux_connection::has_dispatch_failure(const boost::system::error_code& decrypt_ec) const
