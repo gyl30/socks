@@ -1349,6 +1349,7 @@ TEST(TproxyUdpSessionTest, SendDirectSwitchesToIpv6WhenSocketIsIpv4)
     fail_setsockopt_once(SOL_IPV6, IPV6_V6ONLY, EPERM);
     ASSERT_TRUE(session->start());
     ASSERT_FALSE(session->direct_socket_use_v6_);
+    force_ipv6_socket_compat(false);
 
     boost::asio::ip::udp::socket receiver(ctx);
     if (!open_ephemeral_udp_socket_v6(receiver))
