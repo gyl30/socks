@@ -276,8 +276,14 @@ struct initial_read_outcome
     if (read_res.timed_out)
     {
         LOG_CTX_WARN(ctx, "{} handshake body read timed out {}s", log_event::kHandshake, timeout_sec);
+        return make_initial_read_error(read_res.ec);
     }
-    else if (!should_skip_fallback_after_read_failure(read_res.ec, stop_flag))
+    if (read_res.ec == boost::asio::error::eof)
+    {
+        LOG_CTX_WARN(ctx, "{} handshake body short read", log_event::kHandshake);
+        return make_initial_read_error(read_res.ec, true);
+    }
+    if (!should_skip_fallback_after_read_failure(read_res.ec, stop_flag))
     {
         LOG_CTX_ERROR(ctx, "{} handshake body read error {}", log_event::kHandshake, read_res.ec.message());
     }
@@ -330,6 +336,11 @@ boost::asio::awaitable<initial_read_outcome> fill_tls_record_body(const std::sha
         const auto extra_read = co_await timeout_io::async_read_with_timeout(socket, boost::asio::buffer(extra), timeout_sec, true);
         if (!extra_read.ok)
         {
+            if (extra_read.read_size > 0)
+            {
+                extra.resize(extra_read.read_size);
+                buf.insert(buf.end(), extra.begin(), extra.end());
+            }
             co_return classify_body_read_failure(extra_read, ctx, timeout_sec, stop_flag);
         }
         extra.resize(extra_read.read_size);

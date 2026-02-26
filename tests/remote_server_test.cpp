@@ -892,6 +892,68 @@ TEST_F(remote_server_test_fixture, AuthFailBufferTooShortPreservesPartialHeaderF
     pool_thread.join();
 }
 
+TEST_F(remote_server_test_fixture, AuthFailBodyTooShortPreservesPartialBodyForFallback)
+{
+    boost::system::error_code ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+    std::thread pool_thread([&pool] { pool.run(); });
+    auto pool_thread_guard = make_pool_thread_guard(pool, pool_thread);
+
+    boost::asio::ip::tcp::acceptor fallback_acceptor(pool.get_io_context());
+    ASSERT_TRUE(open_ephemeral_acceptor(fallback_acceptor));
+    const auto fallback_port = fallback_acceptor.local_endpoint().port();
+    ASSERT_NE(fallback_port, static_cast<std::uint16_t>(0));
+    auto fallback_payload_promise = std::make_shared<std::promise<std::vector<std::uint8_t>>>();
+    auto fallback_payload_future = fallback_payload_promise->get_future();
+    fallback_acceptor.async_accept(
+        [fallback_payload_promise](boost::system::error_code accept_ec, [[maybe_unused]] boost::asio::ip::tcp::socket peer)
+        {
+            if (accept_ec)
+            {
+                fallback_payload_promise->set_value({});
+                return;
+            }
+            auto peer_socket = std::make_shared<boost::asio::ip::tcp::socket>(std::move(peer));
+            auto read_buf = std::make_shared<std::array<std::uint8_t, 7>>();
+            boost::asio::async_read(*peer_socket,
+                                    boost::asio::buffer(*read_buf),
+                                    [peer_socket, read_buf, fallback_payload_promise](boost::system::error_code, const std::size_t n)
+                                    {
+                                        std::vector<std::uint8_t> payload(read_buf->begin(), read_buf->begin() + n);
+                                        fallback_payload_promise->set_value(std::move(payload));
+                                    });
+        });
+
+    auto server =
+        std::make_shared<mux::remote_server>(pool, make_server_cfg(0, {{.sni = "", .host = "127.0.0.1", .port = std::to_string(fallback_port)}}, "0102030405060708"));
+    ASSERT_TRUE(start_server_until_listening(server));
+    const auto server_port = server->listen_port();
+    ASSERT_NE(server_port, static_cast<std::uint16_t>(0));
+
+    {
+        boost::asio::ip::tcp::socket sock(pool.get_io_context());
+        sock.connect({boost::asio::ip::make_address("127.0.0.1"), server_port});
+
+        const std::array<std::uint8_t, 7> partial = {0x16, 0x03, 0x03, 0x00, 0x06, 0x01, 0x02};
+        boost::asio::write(sock, boost::asio::buffer(partial), ec);
+        ASSERT_FALSE(ec);
+        (void)sock.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
+        ASSERT_FALSE(ec);
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
+
+    EXPECT_EQ(fallback_payload_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    if (fallback_payload_future.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+    {
+        const auto fallback_payload = fallback_payload_future.get();
+        EXPECT_EQ(fallback_payload, std::vector<std::uint8_t>({0x16, 0x03, 0x03, 0x00, 0x06, 0x01, 0x02}));
+    }
+    server->stop();
+    pool.stop();
+    pool_thread.join();
+}
+
 TEST_F(remote_server_test_fixture, FallbackResolveFail)
 {
     boost::system::error_code const ec;
