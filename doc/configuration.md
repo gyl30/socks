@@ -72,6 +72,7 @@
 5. 监控接口仅支持 HTTP `GET /metrics`，返回 Prometheus 文本格式指标；当前实现不提供监控鉴权与监控限流能力。
 6. 客户端配置变更不支持热加载，修改配置后必须重启客户端进程生效。
 7. `timeout.read = 0`、`timeout.write = 0` 与 `timeout.connect = 0` 必须表示禁用对应阶段超时，不得隐式归一化为最小正值。
+8. 当前不支持同一进程内 `stop/start` 或 `drain/start` 热重启流程，运行时变更应采用进程级重启。
 
 ## REALITY
 
