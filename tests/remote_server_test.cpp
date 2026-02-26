@@ -2821,6 +2821,13 @@ TEST_F(remote_server_test_fixture, AuthenticateClientFailureBranches)
     malformed_sni_info.random.assign(32, 0x05);
     EXPECT_FALSE(server->authenticate_client(malformed_sni_info, std::vector<std::uint8_t>(64, 0x00), ctx));
 
+    mux::client_hello_info malformed_key_share_info{};
+    malformed_key_share_info.malformed_key_share = true;
+    malformed_key_share_info.is_tls13 = true;
+    malformed_key_share_info.session_id.assign(32, 0x06);
+    malformed_key_share_info.random.assign(32, 0x07);
+    EXPECT_FALSE(server->authenticate_client(malformed_key_share_info, std::vector<std::uint8_t>(64, 0x00), ctx));
+
     std::uint8_t peer_pub[32];
     std::uint8_t peer_priv[32];
     ASSERT_TRUE(reality::crypto_util::generate_x25519_keypair(peer_pub, peer_priv));
