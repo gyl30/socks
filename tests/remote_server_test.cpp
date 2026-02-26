@@ -2399,7 +2399,7 @@ TEST_F(remote_server_test_fixture, FallbackSelectionAndCertificateTargetBranches
     const auto target = server->resolve_certificate_target(info);
     EXPECT_EQ(target.fetch_host, "127.0.0.1");
     EXPECT_EQ(target.fetch_port, static_cast<std::uint16_t>(dest_port));
-    EXPECT_EQ(target.cert_sni, "127.0.0.1");
+    EXPECT_TRUE(target.cert_sni.empty());
 }
 
 TEST_F(remote_server_test_fixture, FallbackGuardStateMachineBranches)
