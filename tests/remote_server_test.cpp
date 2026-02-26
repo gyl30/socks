@@ -3496,6 +3496,59 @@ TEST_F(remote_server_test_fixture, VerifyClientFinishedAcceptsMultipleCompatibil
     EXPECT_FALSE(verify_ec);
 }
 
+TEST_F(remote_server_test_fixture, VerifyClientFinishedRejectsTooManyCompatibilityCcsRecords)
+{
+    boost::asio::io_context io_context;
+    boost::system::error_code ec;
+
+    boost::asio::ip::tcp::acceptor acceptor(io_context);
+    ASSERT_TRUE(open_ephemeral_acceptor_until_ready(acceptor));
+
+    boost::asio::ip::tcp::socket writer(io_context);
+    (void)writer.connect(acceptor.local_endpoint(), ec);
+    ASSERT_FALSE(ec);
+
+    auto reader = std::make_shared<boost::asio::ip::tcp::socket>(io_context);
+    (void)acceptor.accept(*reader, ec);
+    ASSERT_FALSE(ec);
+
+    const std::vector<std::uint8_t> ccs_record = {0x14, 0x03, 0x03, 0x00, 0x01, 0x01};
+    std::vector<std::uint8_t> wire;
+    wire.reserve(ccs_record.size() * 9);
+    for (std::size_t i = 0; i < 9; ++i)
+    {
+        wire.insert(wire.end(), ccs_record.begin(), ccs_record.end());
+    }
+
+    boost::asio::write(writer, boost::asio::buffer(wire), ec);
+    ASSERT_FALSE(ec);
+    (void)writer.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
+
+    const std::vector<std::uint8_t> key(16, 0x41);
+    const std::vector<std::uint8_t> iv(12, 0x62);
+    reality::handshake_keys hs_keys;
+    hs_keys.client_handshake_traffic_secret.assign(32, 0x55);
+    reality::transcript trans;
+
+    mux::connection_context ctx;
+    ctx.conn_id(111);
+    ctx.trace_id("verify-client-finished-overlimit-ccs");
+
+    boost::system::error_code verify_ec;
+    boost::asio::co_spawn(
+        io_context,
+        [&]() -> boost::asio::awaitable<void>
+        {
+            verify_ec =
+                co_await mux::remote_server::verify_client_finished(reader, {key, iv}, hs_keys, trans, EVP_aes_128_gcm(), EVP_sha256(), ctx);
+            co_return;
+        },
+        boost::asio::detached);
+
+    io_context.run();
+    EXPECT_EQ(verify_ec, std::errc::bad_message);
+}
+
 TEST_F(remote_server_test_fixture, VerifyClientFinishedTimeoutWhenPeerStalls)
 {
     const auto client_finished_failures_before = mux::statistics::instance().client_finished_failures();

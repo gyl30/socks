@@ -72,6 +72,7 @@ namespace
 
 constexpr std::size_t kMaxHandshakeBufferSize = 1024 * 1024;
 constexpr std::uint32_t kMaxHandshakeMessageSize = static_cast<std::uint32_t>(kMaxHandshakeBufferSize - 4);
+constexpr std::uint32_t kMaxTlsCompatCcsRecords = 8;
 
 template <typename t>
 [[nodiscard]] std::shared_ptr<t> atomic_load_shared(const std::shared_ptr<t>& slot)
@@ -559,12 +560,17 @@ std::expected<void, boost::system::error_code> handle_handshake_message(const st
                                                                         const EVP_MD* md,
                                                                         reality::transcript& trans)
 {
+    if (msg_type == 0x08)
+    {
+        return {};
+    }
     if (msg_type == 0x0b)
     {
         if (const auto res = load_server_public_key_from_certificate(msg_data, validation_state); !res)
         {
             return std::unexpected(res.error());
         }
+        return {};
     }
     else if (msg_type == 0x0f)
     {
@@ -572,6 +578,7 @@ std::expected<void, boost::system::error_code> handle_handshake_message(const st
         {
             return std::unexpected(res.error());
         }
+        return {};
     }
     else if (msg_type == 0x14)
     {
@@ -585,8 +592,10 @@ std::expected<void, boost::system::error_code> handle_handshake_message(const st
             return std::unexpected(res.error());
         }
         handshake_fin = true;
+        return {};
     }
-    return {};
+    LOG_ERROR("unexpected handshake message type {}", msg_type);
+    return std::unexpected(boost::asio::error::invalid_argument);
 }
 
 std::expected<std::size_t, boost::system::error_code> consume_handshake_buffer(std::vector<std::uint8_t>& handshake_buffer,
@@ -974,6 +983,7 @@ boost::asio::awaitable<std::expected<void, boost::system::error_code>> process_h
     const reality::handshake_keys& hs_keys,
     const EVP_MD* md,
     std::uint64_t& seq,
+    std::uint32_t& tls13_compat_ccs_count,
     const std::uint32_t timeout_sec)
 {
     const auto record_res = co_await read_encrypted_record(socket, timeout_sec);
@@ -984,7 +994,13 @@ boost::asio::awaitable<std::expected<void, boost::system::error_code>> process_h
     const auto& record = *record_res;
     if (record.content_type == reality::kContentTypeChangeCipherSpec)
     {
-        LOG_DEBUG("received change cipher spec skip");
+        if (tls13_compat_ccs_count >= kMaxTlsCompatCcsRecords)
+        {
+            LOG_ERROR("received too many tls13 compat ccs records {}", tls13_compat_ccs_count);
+            co_return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::bad_message));
+        }
+        tls13_compat_ccs_count++;
+        LOG_DEBUG("received change cipher spec skip count {}", tls13_compat_ccs_count);
         co_return std::expected<void, boost::system::error_code>{};
     }
 
@@ -1711,12 +1727,24 @@ client_tunnel_pool::handshake_read_loop(boost::asio::ip::tcp::socket& socket,
     bool handshake_fin = false;
     handshake_validation_state validation_state;
     std::uint64_t seq = 0;
+    std::uint32_t tls13_compat_ccs_count = 0;
     std::vector<std::uint8_t> handshake_buffer;
 
     while (!handshake_fin)
     {
         if (const auto res = co_await process_handshake_record(
-                socket, s_hs_keys, trans, cipher, handshake_buffer, validation_state, handshake_fin, hs_keys, md, seq, read_timeout_sec);
+                socket,
+                s_hs_keys,
+                trans,
+                cipher,
+                handshake_buffer,
+                validation_state,
+                handshake_fin,
+                hs_keys,
+                md,
+                seq,
+                tls13_compat_ccs_count,
+                read_timeout_sec);
             !res)
         {
             co_return std::unexpected(res.error());
