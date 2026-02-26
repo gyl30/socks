@@ -73,6 +73,7 @@ namespace
 constexpr std::size_t kMaxHandshakeBufferSize = 1024 * 1024;
 constexpr std::uint32_t kMaxHandshakeMessageSize = static_cast<std::uint32_t>(kMaxHandshakeBufferSize - 4);
 constexpr std::uint32_t kMaxTlsCompatCcsRecords = 8;
+constexpr std::uint32_t kMaxHandshakeRecords = 64;
 
 template <typename t>
 [[nodiscard]] std::shared_ptr<t> atomic_load_shared(const std::shared_ptr<t>& slot)
@@ -1755,10 +1756,16 @@ client_tunnel_pool::handshake_read_loop(boost::asio::ip::tcp::socket& socket,
     handshake_validation_state validation_state;
     std::uint64_t seq = 0;
     std::uint32_t tls13_compat_ccs_count = 0;
+    std::uint32_t handshake_record_count = 0;
     std::vector<std::uint8_t> handshake_buffer;
 
     while (!handshake_fin)
     {
+        if (handshake_record_count >= kMaxHandshakeRecords)
+        {
+            LOG_ERROR("too many handshake records {}", handshake_record_count);
+            co_return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::bad_message));
+        }
         if (const auto res = co_await process_handshake_record(
                 socket,
                 s_hs_keys,
@@ -1776,6 +1783,7 @@ client_tunnel_pool::handshake_read_loop(boost::asio::ip::tcp::socket& socket,
         {
             co_return std::unexpected(res.error());
         }
+        handshake_record_count++;
     }
 
     if (const auto res = validate_server_handshake_chain(validation_state, strict_cert_verify, sni); !res)
