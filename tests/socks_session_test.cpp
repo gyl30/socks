@@ -93,6 +93,10 @@ class socks_session_tester
    public:
     static boost::asio::awaitable<bool> handshake(socks_session& session) { return session.handshake(); }
     static boost::asio::awaitable<socks_session::request_info> read_request(socks_session& session) { return session.read_request(); }
+    static bool verify_credentials(socks_session& session, const std::string& username, const std::string& password)
+    {
+        return session.verify_credentials(username, password);
+    }
 };
 
 }    // namespace mux
@@ -294,6 +298,22 @@ TEST_F(socks_session_test_fixture, HandshakePasswordAuthSuccess)
 
     work.reset();
     t.join();
+}
+
+TEST_F(socks_session_test_fixture, VerifyCredentialsRejectsLengthDifferenceBeyondEightBits)
+{
+    auto pair = make_tcp_socket_pair(io_ctx());
+    ASSERT_TRUE(pair.client.is_open());
+    ASSERT_TRUE(pair.server.is_open());
+
+    config::socks_t cfg;
+    cfg.auth = true;
+    cfg.username = std::string(257, '\0');
+    cfg.username[0] = 'u';
+    cfg.password = "pass";
+
+    socks_session session(std::move(pair.server), io_ctx(), nullptr, nullptr, 9001, cfg);
+    EXPECT_FALSE(socks_session_tester::verify_credentials(session, "u", "pass"));
 }
 
 TEST_F(socks_session_test_fixture, ReadConnectRequestDomain)
