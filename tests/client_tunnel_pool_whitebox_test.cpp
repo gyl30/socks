@@ -1831,7 +1831,7 @@ TEST(ClientTunnelPoolWhiteboxTest, ClientHelloBuildFailureBranchesForAuthMateria
     EXPECT_EQ(hello_res_2.error(), std::errc::invalid_argument);
 }
 
-TEST(ClientTunnelPoolWhiteboxTest, GenerateAndSendClientHelloRejectsOversizedPayload)
+TEST(ClientTunnelPoolWhiteboxTest, GenerateAndSendClientHelloRejectsInvalidSni)
 {
     boost::system::error_code const ec;
     mux::io_context_pool pool(1);
@@ -1863,7 +1863,7 @@ TEST(ClientTunnelPoolWhiteboxTest, GenerateAndSendClientHelloRejectsOversizedPay
     io_context.run();
 
     EXPECT_FALSE(hello_res.has_value());
-    EXPECT_EQ(hello_res.error(), std::errc::message_size);
+    EXPECT_EQ(hello_res.error(), std::errc::invalid_argument);
 }
 
 TEST(ClientTunnelPoolWhiteboxTest, HandshakeReadLoopRejectsMalformedCertificateVerifyAfterCertificate)

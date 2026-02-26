@@ -827,6 +827,11 @@ std::expected<void, boost::system::error_code> build_client_hello_with_placehold
     const std::vector<std::uint8_t> placeholder_session_id(32, 0);
     hello_body = reality::client_hello_builder::build(
         spec, placeholder_session_id, client_random, std::vector<std::uint8_t>(public_key, public_key + 32), sni);
+    if (hello_body.empty())
+    {
+        LOG_ERROR("generated client hello body invalid for configured sni");
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
+    }
     if (hello_body.size() > std::numeric_limits<std::uint16_t>::max())
     {
         LOG_ERROR("generated client hello body too large {}", hello_body.size());
