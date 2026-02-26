@@ -357,6 +357,7 @@ bool read_handshake_message_header(const std::vector<std::uint8_t>& handshake_bu
 
 struct handshake_validation_state
 {
+    bool encrypted_extensions_checked = false;
     bool cert_checked = false;
     bool cert_verify_checked = false;
     bool cert_verify_signature_checked = false;
@@ -562,10 +563,26 @@ std::expected<void, boost::system::error_code> handle_handshake_message(const st
 {
     if (msg_type == 0x08)
     {
+        if (validation_state.encrypted_extensions_checked || validation_state.cert_checked || validation_state.cert_verify_checked || handshake_fin)
+        {
+            LOG_ERROR("unexpected encrypted extensions order");
+            return std::unexpected(boost::asio::error::invalid_argument);
+        }
+        validation_state.encrypted_extensions_checked = true;
         return {};
     }
     if (msg_type == 0x0b)
     {
+        if (!validation_state.encrypted_extensions_checked)
+        {
+            LOG_ERROR("certificate received before encrypted extensions");
+            return std::unexpected(boost::asio::error::invalid_argument);
+        }
+        if (validation_state.cert_checked || validation_state.cert_verify_checked || handshake_fin)
+        {
+            LOG_ERROR("unexpected certificate message order");
+            return std::unexpected(boost::asio::error::invalid_argument);
+        }
         if (const auto res = load_server_public_key_from_certificate(msg_data, validation_state); !res)
         {
             return std::unexpected(res.error());
@@ -574,6 +591,11 @@ std::expected<void, boost::system::error_code> handle_handshake_message(const st
     }
     else if (msg_type == 0x0f)
     {
+        if (validation_state.cert_verify_checked || handshake_fin)
+        {
+            LOG_ERROR("unexpected certificate verify message order");
+            return std::unexpected(boost::asio::error::invalid_argument);
+        }
         if (const auto res = verify_server_certificate_verify_message(msg_data, trans, validation_state); !res)
         {
             return std::unexpected(res.error());
@@ -582,6 +604,11 @@ std::expected<void, boost::system::error_code> handle_handshake_message(const st
     }
     else if (msg_type == 0x14)
     {
+        if (handshake_fin)
+        {
+            LOG_ERROR("duplicate server finished");
+            return std::unexpected(boost::asio::error::invalid_argument);
+        }
         if (!validation_state.cert_verify_checked)
         {
             LOG_ERROR("server finished before certificate verify");
