@@ -82,6 +82,7 @@ struct config
         std::uint8_t source_prefix_v6 = 128;
         std::uint64_t max_buffer = 10L * 1024 * 1024;
         std::uint32_t max_streams = 1024;
+        std::uint32_t max_handshake_records = 256;
     } limits;
 
     struct heartbeat_t

@@ -147,6 +147,7 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
                         reality::transcript& trans,
                         const EVP_CIPHER* cipher,
                         const EVP_MD* md,
+                        std::uint32_t max_handshake_records,
                         std::uint32_t read_timeout_sec);
 
     [[nodiscard]] static boost::asio::awaitable<std::expected<void, boost::system::error_code>> send_client_finished(
@@ -182,6 +183,7 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
     config::timeout_t timeout_config_;
     config::limits_t limits_config_;
     config::heartbeat_t heartbeat_config_;
+    std::uint32_t max_handshake_records_ = 256;
 };
 
 }    // namespace mux

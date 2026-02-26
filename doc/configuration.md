@@ -59,7 +59,9 @@
 - `limits.source_prefix_v6`：IPv6 来源聚合前缀（`0-128`），默认 `128`（按单 IP 限制）。
 - `limits.max_streams`：单连接 stream 最大数量。
 - `limits.max_buffer`：mux dispatcher 最大缓冲区。
+- `limits.max_handshake_records`：客户端 REALITY 握手阶段允许处理的最大 TLS 记录数（默认 `256`）。
 - `limits.max_buffer` 必须大于 `0`，否则配置解析失败。
+- `limits.max_handshake_records` 必须在 `1-4096`，否则配置解析失败。
 
 ## 协议契约（兼容性红线）
 
