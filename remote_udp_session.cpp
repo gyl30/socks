@@ -367,19 +367,29 @@ boost::asio::awaitable<void> remote_udp_session::forward_mux_payload(const std::
 bool remote_udp_session::switch_udp_socket_to_v4()
 {
     boost::system::error_code ec;
-    close_socket();
+    auto previous_socket = boost::asio::ip::udp::socket(std::move(udp_socket_));
+    const bool previous_use_v6 = udp_socket_use_v6_;
+    const bool previous_dual_stack = udp_socket_dual_stack_;
+    const auto restore_previous_socket = [&]()
+    {
+        close_socket();
+        udp_socket_ = std::move(previous_socket);
+        udp_socket_use_v6_ = previous_use_v6;
+        udp_socket_dual_stack_ = previous_dual_stack;
+    };
+
     ec = udp_socket_.open(boost::asio::ip::udp::v4(), ec);
     if (ec)
     {
         LOG_CTX_WARN(ctx_, "{} udp ipv4 switch open failed {}", log_event::kMux, ec.message());
-        close_socket();
+        restore_previous_socket();
         return false;
     }
     ec = udp_socket_.bind(boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0), ec);
     if (ec)
     {
         LOG_CTX_WARN(ctx_, "{} udp ipv4 switch bind failed {}", log_event::kMux, ec.message());
-        close_socket();
+        restore_previous_socket();
         return false;
     }
     udp_socket_use_v6_ = false;
@@ -391,19 +401,29 @@ bool remote_udp_session::switch_udp_socket_to_v4()
 bool remote_udp_session::switch_udp_socket_to_v6()
 {
     boost::system::error_code ec;
-    close_socket();
+    auto previous_socket = boost::asio::ip::udp::socket(std::move(udp_socket_));
+    const bool previous_use_v6 = udp_socket_use_v6_;
+    const bool previous_dual_stack = udp_socket_dual_stack_;
+    const auto restore_previous_socket = [&]()
+    {
+        close_socket();
+        udp_socket_ = std::move(previous_socket);
+        udp_socket_use_v6_ = previous_use_v6;
+        udp_socket_dual_stack_ = previous_dual_stack;
+    };
+
     ec = udp_socket_.open(boost::asio::ip::udp::v6(), ec);
     if (ec)
     {
         LOG_CTX_WARN(ctx_, "{} udp ipv6 switch open failed {}", log_event::kMux, ec.message());
-        close_socket();
+        restore_previous_socket();
         return false;
     }
     ec = udp_socket_.bind(boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v6(), 0), ec);
     if (ec)
     {
         LOG_CTX_WARN(ctx_, "{} udp ipv6 switch bind failed {}", log_event::kMux, ec.message());
-        close_socket();
+        restore_previous_socket();
         return false;
     }
     udp_socket_use_v6_ = true;
