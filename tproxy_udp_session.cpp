@@ -730,17 +730,23 @@ boost::asio::awaitable<void> tproxy_udp_session::send_direct(const boost::asio::
 
 bool tproxy_udp_session::switch_direct_socket_to_v4()
 {
-    boost::system::error_code ec;
-    if (direct_socket_.is_open())
+    auto previous_socket = boost::asio::ip::udp::socket(std::move(direct_socket_));
+    const bool previous_use_v6 = direct_socket_use_v6_;
+    const bool previous_dual_stack = direct_socket_dual_stack_;
+    const auto restore_previous_socket = [&]()
     {
-        ec = direct_socket_.close(ec);
-    }
+        close_start_failed_socket(direct_socket_, ctx_);
+        direct_socket_ = std::move(previous_socket);
+        direct_socket_use_v6_ = previous_use_v6;
+        direct_socket_dual_stack_ = previous_dual_stack;
+    };
 
+    boost::system::error_code ec;
     ec = direct_socket_.open(boost::asio::ip::udp::v4(), ec);
     if (ec)
     {
         LOG_CTX_WARN(ctx_, "{} udp direct switch ipv4 open failed {}", log_event::kSocks, ec.message());
-        close_start_failed_socket(direct_socket_, ctx_);
+        restore_previous_socket();
         return false;
     }
     if (mark_ != 0)
@@ -754,7 +760,7 @@ bool tproxy_udp_session::switch_direct_socket_to_v4()
     if (ec)
     {
         LOG_CTX_WARN(ctx_, "{} udp direct switch ipv4 bind failed {}", log_event::kSocks, ec.message());
-        close_start_failed_socket(direct_socket_, ctx_);
+        restore_previous_socket();
         return false;
     }
     direct_socket_use_v6_ = false;
@@ -764,17 +770,23 @@ bool tproxy_udp_session::switch_direct_socket_to_v4()
 
 bool tproxy_udp_session::switch_direct_socket_to_v6()
 {
-    boost::system::error_code ec;
-    if (direct_socket_.is_open())
+    auto previous_socket = boost::asio::ip::udp::socket(std::move(direct_socket_));
+    const bool previous_use_v6 = direct_socket_use_v6_;
+    const bool previous_dual_stack = direct_socket_dual_stack_;
+    const auto restore_previous_socket = [&]()
     {
-        ec = direct_socket_.close(ec);
-    }
+        close_start_failed_socket(direct_socket_, ctx_);
+        direct_socket_ = std::move(previous_socket);
+        direct_socket_use_v6_ = previous_use_v6;
+        direct_socket_dual_stack_ = previous_dual_stack;
+    };
 
+    boost::system::error_code ec;
     ec = direct_socket_.open(boost::asio::ip::udp::v6(), ec);
     if (ec)
     {
         LOG_CTX_WARN(ctx_, "{} udp direct switch ipv6 open failed {}", log_event::kSocks, ec.message());
-        close_start_failed_socket(direct_socket_, ctx_);
+        restore_previous_socket();
         return false;
     }
     bool dual_stack = true;
@@ -796,7 +808,7 @@ bool tproxy_udp_session::switch_direct_socket_to_v6()
     if (ec)
     {
         LOG_CTX_WARN(ctx_, "{} udp direct switch ipv6 bind failed {}", log_event::kSocks, ec.message());
-        close_start_failed_socket(direct_socket_, ctx_);
+        restore_previous_socket();
         return false;
     }
     direct_socket_use_v6_ = true;

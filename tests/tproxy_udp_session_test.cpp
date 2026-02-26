@@ -1414,6 +1414,97 @@ TEST(TproxyUdpSessionTest, SendDirectSwitchesToIpv6WhenSocketIsIpv4)
 #endif
 }
 
+TEST(TproxyUdpSessionTest, SwitchDirectSocketToIpv4FailureRestoresPreviousIpv6OnlySocket)
+{
+#ifndef IPV6_V6ONLY
+    GTEST_SKIP() << "IPV6_V6ONLY unsupported";
+#else
+    reset_socket_wrappers();
+    force_tproxy_setsockopt_success(true);
+    force_ipv6_socket_compat(true);
+
+    boost::asio::io_context ctx;
+    auto router = std::make_shared<direct_router>();
+    mux::config cfg;
+    cfg.tproxy.mark = 0;
+    const boost::asio::ip::udp::endpoint client_ep(boost::asio::ip::make_address("::1"), 12414);
+    auto session = std::make_shared<mux::tproxy_udp_session>(ctx, nullptr, router, nullptr, 14, cfg, client_ep);
+
+    fail_setsockopt_once(SOL_IPV6, IPV6_V6ONLY, EPERM);
+    ASSERT_TRUE(session->start());
+    ASSERT_TRUE(session->direct_socket_.is_open());
+    ASSERT_TRUE(session->direct_socket_use_v6_);
+    ASSERT_FALSE(session->direct_socket_dual_stack_);
+
+    force_ipv6_socket_compat(false);
+
+    fail_socket_once(EMFILE);
+    EXPECT_FALSE(session->switch_direct_socket_to_v4());
+    EXPECT_TRUE(session->direct_socket_.is_open());
+    EXPECT_TRUE(session->direct_socket_use_v6_);
+    EXPECT_FALSE(session->direct_socket_dual_stack_);
+
+    boost::asio::ip::udp::socket receiver(ctx);
+    if (!open_ephemeral_udp_socket_v6(receiver))
+    {
+        session->stop();
+        ctx.poll();
+        force_ipv6_socket_compat(false);
+        reset_socket_wrappers();
+        GTEST_SKIP() << "ipv6 udp loopback unavailable";
+    }
+    receiver.non_blocking(true);
+
+    const auto dst_ep = receiver.local_endpoint();
+    const std::array<std::uint8_t, 3> payload = {0x55, 0x56, 0x57};
+    bool done = false;
+    boost::asio::co_spawn(
+        ctx,
+        [&]() -> boost::asio::awaitable<void>
+        {
+            co_await session->send_direct(dst_ep, payload.data(), payload.size());
+            done = true;
+            co_return;
+        },
+        boost::asio::detached);
+
+    for (int i = 0; i < 60 && !done; ++i)
+    {
+        ctx.poll();
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    ASSERT_TRUE(done);
+
+    std::array<std::uint8_t, 16> recv_buf = {0};
+    boost::asio::ip::udp::endpoint from_ep;
+    boost::system::error_code ec;
+    std::size_t n = 0;
+    for (int i = 0; i < 60; ++i)
+    {
+        n = receiver.receive_from(boost::asio::buffer(recv_buf), from_ep, 0, ec);
+        if (!ec)
+        {
+            break;
+        }
+        if (ec != boost::asio::error::would_block && ec != boost::asio::error::try_again)
+        {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    ASSERT_FALSE(ec);
+    ASSERT_EQ(n, payload.size());
+    EXPECT_EQ(recv_buf[0], payload[0]);
+    EXPECT_EQ(recv_buf[1], payload[1]);
+    EXPECT_EQ(recv_buf[2], payload[2]);
+
+    session->stop();
+    ctx.poll();
+    force_ipv6_socket_compat(false);
+    reset_socket_wrappers();
+#endif
+}
+
 TEST(TproxyUdpSessionTest, StartCoversBindFailureBranch)
 {
     reset_socket_wrappers();
