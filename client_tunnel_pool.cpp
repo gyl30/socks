@@ -73,7 +73,6 @@ namespace
 constexpr std::size_t kMaxHandshakeBufferSize = 1024 * 1024;
 constexpr std::uint32_t kMaxHandshakeMessageSize = static_cast<std::uint32_t>(kMaxHandshakeBufferSize - 4);
 constexpr std::uint32_t kMaxTlsCompatCcsRecords = 8;
-constexpr std::uint32_t kMaxHandshakeRecords = 64;
 
 template <typename t>
 [[nodiscard]] std::shared_ptr<t> atomic_load_shared(const std::shared_ptr<t>& slot)
@@ -1135,7 +1134,8 @@ client_tunnel_pool::client_tunnel_pool(io_context_pool& pool, const config& cfg,
       pool_(pool),
       timeout_config_(cfg.timeout),
       limits_config_(cfg.limits),
-      heartbeat_config_(cfg.heartbeat)
+      heartbeat_config_(cfg.heartbeat),
+      max_handshake_records_(cfg.limits.max_handshake_records)
 {
     server_pub_key_ = reality::crypto_util::hex_to_bytes(cfg.reality.public_key);
     if (server_pub_key_.size() != 32)
@@ -1628,6 +1628,7 @@ boost::asio::awaitable<std::expected<client_tunnel_pool::handshake_result, boost
                                                               trans,
                                                               server_hello_result->negotiated_cipher,
                                                               server_hello_result->negotiated_md,
+                                                              max_handshake_records_,
                                                               read_timeout_sec);
     if (!handshake_read_result)
     {
@@ -1755,6 +1756,7 @@ client_tunnel_pool::handshake_read_loop(boost::asio::ip::tcp::socket& socket,
                                         reality::transcript& trans,
                                         const EVP_CIPHER* cipher,
                                         const EVP_MD* md,
+                                        const std::uint32_t max_handshake_records,
                                         const std::uint32_t read_timeout_sec)
 {
     bool handshake_fin = false;
@@ -1766,9 +1768,9 @@ client_tunnel_pool::handshake_read_loop(boost::asio::ip::tcp::socket& socket,
 
     while (!handshake_fin)
     {
-        if (handshake_record_count >= kMaxHandshakeRecords)
+        if (handshake_record_count >= max_handshake_records)
         {
-            LOG_ERROR("too many handshake records {}", handshake_record_count);
+            LOG_ERROR("too many handshake records {} limit {}", handshake_record_count, max_handshake_records);
             co_return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::bad_message));
         }
         if (const auto res = co_await process_handshake_record(
