@@ -226,16 +226,35 @@ void ch_parser::parse_sni(reader& r, client_hello_info& info)
         return;
     }
 
+    bool host_name_seen = false;
     while (list_r.remaining() >= 3)
     {
         std::uint8_t type = 0;
         std::uint16_t len = 0;
         if (!read_sni_item_header(list_r, type, len))
         {
-            break;
+            info.malformed_sni = true;
+            return;
         }
-        if (handle_sni_item(list_r, type, len, info))
+        if (type == 0x00)
         {
+            if (host_name_seen || len == 0 || !list_r.has(len))
+            {
+                info.malformed_sni = true;
+                return;
+            }
+            info.sni.assign(reinterpret_cast<const char*>(list_r.data()), len);
+            host_name_seen = true;
+            if (!list_r.skip(len))
+            {
+                info.malformed_sni = true;
+                return;
+            }
+            continue;
+        }
+        if (!list_r.skip(len))
+        {
+            info.malformed_sni = true;
             return;
         }
     }
@@ -250,11 +269,18 @@ void ch_parser::parse_key_share(reader& r, client_hello_info& info)
     std::uint16_t share_len = 0;
     if (!r.read_u16(share_len))
     {
+        info.malformed_key_share = true;
         return;
     }
     reader shares_r = r.slice(share_len);
     if (!shares_r.valid())
     {
+        info.malformed_key_share = true;
+        return;
+    }
+    if (r.remaining() != 0)
+    {
+        info.malformed_key_share = true;
         return;
     }
 
@@ -264,13 +290,32 @@ void ch_parser::parse_key_share(reader& r, client_hello_info& info)
         std::uint16_t len = 0;
         if (!read_key_share_item_header(shares_r, group, len))
         {
+            info.malformed_key_share = true;
+            break;
+        }
+        if (group == reality::tls_consts::group::kX25519 && len != 32)
+        {
+            info.malformed_key_share = true;
             break;
         }
         handle_key_share_item(shares_r, group, len, info);
         if (!shares_r.skip(len))
         {
+            info.malformed_key_share = true;
             break;
         }
+    }
+    if (shares_r.remaining() != 0)
+    {
+        info.malformed_key_share = true;
+    }
+    if (info.malformed_key_share)
+    {
+        info.has_x25519_share = false;
+        info.x25519_pub.clear();
+        info.is_tls13 = false;
+        info.key_share_group = 0;
+        return;
     }
     finalize_key_share_info(info);
 }
