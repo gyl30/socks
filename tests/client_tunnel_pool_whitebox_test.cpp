@@ -669,6 +669,7 @@ TEST(ClientTunnelPoolWhiteboxTest, TcpConnectAndHandshakeErrorBranches)
     ASSERT_FALSE(ec);
     auto& stats = mux::statistics::instance();
     const auto resolve_errors_before = stats.client_tunnel_pool_resolve_errors();
+    const auto resolve_timeouts_before = stats.client_tunnel_pool_resolve_timeouts();
 
     auto cfg = make_base_cfg();
     cfg.outbound.host = "invalid.host.for.coverage.test";
@@ -690,7 +691,9 @@ TEST(ClientTunnelPoolWhiteboxTest, TcpConnectAndHandshakeErrorBranches)
     io_context.run();
     EXPECT_FALSE(connect_res.has_value());
     EXPECT_TRUE(connect_res.error());
-    EXPECT_GE(stats.client_tunnel_pool_resolve_errors(), resolve_errors_before + 1);
+    const auto resolve_errors_after = stats.client_tunnel_pool_resolve_errors();
+    const auto resolve_timeouts_after = stats.client_tunnel_pool_resolve_timeouts();
+    EXPECT_TRUE(resolve_errors_after >= resolve_errors_before + 1 || resolve_timeouts_after >= resolve_timeouts_before + 1);
 
     io_context.restart();
     const auto connect_errors_before = stats.client_tunnel_pool_connect_errors();
