@@ -244,8 +244,9 @@ endif()
 
 if(LINUX)
   add_socks_test(remote_udp_session_test)
-  target_link_options(remote_udp_session_test PRIVATE -Wl,--wrap=getaddrinfo
-                      -Wl,--wrap=setsockopt)
+  target_link_options(
+    remote_udp_session_test PRIVATE -Wl,--wrap=getaddrinfo -Wl,--wrap=setsockopt
+    -Wl,--wrap=socket -Wl,--wrap=bind)
 endif()
 add_socks_test(router_file_test)
 
