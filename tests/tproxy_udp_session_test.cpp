@@ -3745,6 +3745,90 @@ TEST(TproxyClientTest, WrappedSetsockoptCoversSetupFailureBranches)
     reset_socket_wrappers();
 }
 
+#ifdef IP_TRANSPARENT
+#ifdef IPV6_TRANSPARENT
+TEST(TproxyClientTest, DualStackKeepsIpv6OnlyWhenIpv4TransparentCapabilityUnavailable)
+{
+    reset_socket_wrappers();
+    force_tproxy_setsockopt_success(true);
+
+    mux::io_context_pool pool(1);
+    mux::config cfg;
+    cfg.tproxy.enabled = true;
+    cfg.tproxy.listen_host = "::";
+    cfg.tproxy.tcp_port = pick_free_tcp_port();
+    cfg.tproxy.udp_port = pick_free_tcp_port();
+    cfg.tproxy.mark = 0;
+
+    fail_setsockopt_once(SOL_IP, IP_TRANSPARENT, EPERM);
+
+    auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
+    boost::asio::co_spawn(
+        pool.get_io_context(),
+        [client]() -> boost::asio::awaitable<void>
+        {
+            co_await client->udp_loop();
+            co_return;
+        },
+        boost::asio::detached);
+
+    std::thread runner([&pool]() { pool.run(); });
+    for (int i = 0; i < 80 && !udp_socket_is_open(pool.get_io_context(), client); ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    ASSERT_TRUE(udp_socket_is_open(pool.get_io_context(), client));
+    EXPECT_FALSE(udp_socket_local_is_v4(pool.get_io_context(), client));
+
+    client->stop();
+    pool.stop();
+    runner.join();
+    reset_socket_wrappers();
+}
+
+TEST(TproxyClientTest, DualStackFallsBackToIpv4WhenIpv6TransparentCapabilityUnavailable)
+{
+    reset_socket_wrappers();
+    force_tproxy_setsockopt_success(true);
+
+    mux::io_context_pool pool(1);
+    mux::config cfg;
+    cfg.tproxy.enabled = true;
+    cfg.tproxy.listen_host = "::";
+    cfg.tproxy.tcp_port = pick_free_tcp_port();
+    cfg.tproxy.udp_port = pick_free_tcp_port();
+    cfg.tproxy.mark = 0;
+
+    fail_setsockopt_once(SOL_IPV6, IPV6_TRANSPARENT, EPERM);
+
+    auto client = std::make_shared<mux::tproxy_client>(pool, cfg);
+    boost::asio::co_spawn(
+        pool.get_io_context(),
+        [client]() -> boost::asio::awaitable<void>
+        {
+            co_await client->udp_loop();
+            co_return;
+        },
+        boost::asio::detached);
+
+    std::thread runner([&pool]() { pool.run(); });
+    for (int i = 0; i < 80 && !udp_socket_is_open(pool.get_io_context(), client); ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    ASSERT_TRUE(udp_socket_is_open(pool.get_io_context(), client));
+    EXPECT_TRUE(udp_socket_local_is_v4(pool.get_io_context(), client));
+
+    client->stop();
+    pool.stop();
+    runner.join();
+    reset_socket_wrappers();
+}
+#endif
+#endif
+
 TEST(TproxyClientTest, SetupFailureClosesAcceptTcpLoopAcceptor)
 {
     reset_socket_wrappers();
