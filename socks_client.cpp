@@ -401,12 +401,15 @@ socks_client::socks_client(io_context_pool& pool, const config& cfg)
 
 void socks_client::start()
 {
+    const std::lock_guard<std::mutex> lock(lifecycle_mu_);
+
     bool expected = false;
     if (!started_.compare_exchange_strong(expected, true, std::memory_order_acq_rel))
     {
         LOG_WARN("socks client already started");
         return;
     }
+    lifecycle_epoch_.fetch_add(1, std::memory_order_acq_rel);
     stop_.store(false, std::memory_order_release);
 
     auto tunnel_pool = tunnel_pool_;
@@ -470,20 +473,28 @@ boost::asio::awaitable<void> socks_client::accept_local_loop_detached(std::share
 
 void socks_client::stop()
 {
+    const std::lock_guard<std::mutex> lock(lifecycle_mu_);
+
     LOG_INFO("client stopping closing resources");
+    const auto stop_epoch = lifecycle_epoch_.load(std::memory_order_acquire);
     stop_.store(true, std::memory_order_release);
     started_.store(false, std::memory_order_release);
 
     detail::dispatch_cleanup_or_run_inline(io_context_,
-                                           [weak_self = weak_from_this()]()
+                                           [weak_self = weak_from_this(), stop_epoch]()
                                            {
                                                if (const auto self = weak_self.lock())
                                                {
+                                                   if (self->lifecycle_epoch_.load(std::memory_order_acquire) != stop_epoch ||
+                                                       !self->stop_.load(std::memory_order_acquire))
+                                                   {
+                                                       return;
+                                                   }
                                                    stop_local_resources(self->acceptor_, self->sessions_);
                                                }
                                            });
 
-    if (tunnel_pool_ != nullptr)
+    if (tunnel_pool_ != nullptr && lifecycle_epoch_.load(std::memory_order_acquire) == stop_epoch && stop_.load(std::memory_order_acquire))
     {
         tunnel_pool_->stop();
     }
