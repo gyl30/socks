@@ -12,6 +12,7 @@
 #include <system_error>
 
 #include <gtest/gtest.h>
+#include <boost/asio/buffer.hpp>
 #include <boost/asio/read.hpp>
 #include <boost/asio/write.hpp>
 #include <boost/asio/ip/tcp.hpp>
@@ -26,6 +27,7 @@
 #include "test_util.h"
 #include "mux_protocol.h"
 #include "reality_core.h"
+#include "tls_record_layer.h"
 
 #define private public
 #include "mux_connection.h"
@@ -1577,6 +1579,34 @@ TEST_F(mux_connection_integration_test_fixture, ResetStreamsAndDispatchFailureBr
     EXPECT_EQ(streams_to_clear.size(), 2U);
     EXPECT_FALSE(conn->has_dispatch_failure(boost::system::error_code{}));
     EXPECT_TRUE(conn->has_dispatch_failure(std::make_error_code(std::errc::protocol_error)));
+}
+
+TEST_F(mux_connection_integration_test_fixture, ProcessDecryptedRecordsRejectsUnexpectedContentType)
+{
+    std::vector<std::uint8_t> read_key(16, 0x11);
+    std::vector<std::uint8_t> read_iv(12, 0x22);
+    std::vector<std::uint8_t> write_key(16, 0x33);
+    std::vector<std::uint8_t> write_iv(12, 0x44);
+
+    auto conn = std::make_shared<mux_connection>(boost::asio::ip::tcp::socket(io_ctx()),
+                                                 io_ctx(),
+                                                 reality_engine(read_key, read_iv, write_key, write_iv, EVP_aes_128_gcm()),
+                                                 true,
+                                                 29);
+
+    const std::vector<std::uint8_t> payload = {0x01, 0x02, 0x03};
+    auto encrypted = reality::tls_record_layer::encrypt_record(
+        EVP_aes_128_gcm(), read_key, read_iv, 0, payload, reality::kContentTypeHandshake);
+    ASSERT_TRUE(encrypted.has_value());
+
+    auto write_buf = conn->reality_engine_.read_buffer(encrypted->size());
+    const auto copied = boost::asio::buffer_copy(write_buf, boost::asio::buffer(*encrypted));
+    ASSERT_EQ(copied, encrypted->size());
+    conn->reality_engine_.commit_read(copied);
+
+    const auto process_res = conn->process_decrypted_records();
+    ASSERT_FALSE(process_res.has_value());
+    EXPECT_EQ(process_res.error(), boost::asio::error::invalid_argument);
 }
 
 TEST_F(mux_connection_integration_test_fixture, DispatchFailureOnOversizedFrameHeader)
