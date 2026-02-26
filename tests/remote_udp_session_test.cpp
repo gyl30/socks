@@ -44,6 +44,10 @@ using ::testing::_;
 std::atomic<bool> g_delay_getaddrinfo_once{false};
 std::atomic<int> g_delay_getaddrinfo_ms{0};
 std::atomic<bool> g_fail_setsockopt_v6only_once{false};
+std::atomic<bool> g_fail_socket_once{false};
+std::atomic<int> g_fail_socket_errno{EMFILE};
+std::atomic<bool> g_fail_bind_once{false};
+std::atomic<int> g_fail_bind_errno{EADDRINUSE};
 
 void delay_next_getaddrinfo(const int delay_ms)
 {
@@ -56,11 +60,33 @@ void fail_next_setsockopt_v6only()
     g_fail_setsockopt_v6only_once.store(true, std::memory_order_release);
 }
 
+void fail_next_socket(const int err = EMFILE)
+{
+    g_fail_socket_errno.store(err, std::memory_order_release);
+    g_fail_socket_once.store(true, std::memory_order_release);
+}
+
+void fail_next_bind(const int err = EADDRINUSE)
+{
+    g_fail_bind_errno.store(err, std::memory_order_release);
+    g_fail_bind_once.store(true, std::memory_order_release);
+}
+
+void reset_socket_failures()
+{
+    g_fail_socket_once.store(false, std::memory_order_release);
+    g_fail_socket_errno.store(EMFILE, std::memory_order_release);
+    g_fail_bind_once.store(false, std::memory_order_release);
+    g_fail_bind_errno.store(EADDRINUSE, std::memory_order_release);
+}
+
 extern "C" int __real_getaddrinfo(const char* node,    
                                   const char* service,
                                   const struct addrinfo* hints,
                                   struct addrinfo** res);
 extern "C" int __real_setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);
+extern "C" int __real_socket(int domain, int type, int protocol);
+extern "C" int __real_bind(int sockfd, const sockaddr* addr, socklen_t addrlen);
 
 extern "C" int __wrap_getaddrinfo(const char* node,    
                                   const char* service,
@@ -86,6 +112,26 @@ extern "C" int __wrap_setsockopt(int sockfd, int level, int optname, const void*
         return -1;
     }
     return __real_setsockopt(sockfd, level, optname, optval, optlen);
+}
+
+extern "C" int __wrap_socket(int domain, int type, int protocol)
+{
+    if (g_fail_socket_once.exchange(false, std::memory_order_acq_rel))
+    {
+        errno = g_fail_socket_errno.load(std::memory_order_acquire);
+        return -1;
+    }
+    return __real_socket(domain, type, protocol);
+}
+
+extern "C" int __wrap_bind(int sockfd, const sockaddr* addr, socklen_t addrlen)
+{
+    if (g_fail_bind_once.exchange(false, std::memory_order_acq_rel))
+    {
+        errno = g_fail_bind_errno.load(std::memory_order_acquire);
+        return -1;
+    }
+    return __real_bind(sockfd, addr, addrlen);
 }
 
 class noop_stream : public mux::mux_stream_interface
@@ -576,6 +622,84 @@ TEST(RemoteUdpSessionTest, ForwardMuxPayloadSwitchesBackToIpv6AfterIpv4Fallback)
     EXPECT_EQ(recv_v6[0], 0xBB);
     EXPECT_TRUE(session->udp_socket_use_v6_);
     EXPECT_FALSE(session->udp_socket_dual_stack_);
+}
+
+TEST(RemoteUdpSessionTest, SwitchUdpSocketToIpv4FailureRestoresPreviousIpv6OnlySocket)
+{
+    reset_socket_failures();
+
+    boost::asio::io_context io_context;
+    auto conn = std::make_shared<mux::mock_mux_connection>(io_context);
+    auto session = make_session(io_context, conn, 165);
+    fail_next_setsockopt_v6only();
+    ASSERT_TRUE(mux::test::run_awaitable(io_context, session->setup_udp_socket(conn)));
+
+    if (!(session->udp_socket_use_v6_ && !session->udp_socket_dual_stack_))
+    {
+        session->close_socket();
+        reset_socket_failures();
+        GTEST_SKIP();
+    }
+
+    ASSERT_TRUE(session->udp_socket_.is_open());
+    fail_next_socket(EMFILE);
+    EXPECT_FALSE(session->switch_udp_socket_to_v4());
+    EXPECT_TRUE(session->udp_socket_.is_open());
+    EXPECT_TRUE(session->udp_socket_use_v6_);
+    EXPECT_FALSE(session->udp_socket_dual_stack_);
+
+    fail_next_bind(EADDRINUSE);
+    EXPECT_FALSE(session->switch_udp_socket_to_v4());
+    EXPECT_TRUE(session->udp_socket_.is_open());
+    EXPECT_TRUE(session->udp_socket_use_v6_);
+    EXPECT_FALSE(session->udp_socket_dual_stack_);
+
+    boost::asio::ip::udp::socket receiver(io_context);
+    boost::system::error_code ec;
+    receiver.open(boost::asio::ip::udp::v6(), ec);
+    if (ec)
+    {
+        session->close_socket();
+        reset_socket_failures();
+        GTEST_SKIP();
+    }
+    receiver.bind(boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("::1"), 0), ec);
+    if (ec)
+    {
+        session->close_socket();
+        reset_socket_failures();
+        GTEST_SKIP();
+    }
+    receiver.non_blocking(true, ec);
+    ASSERT_FALSE(ec);
+
+    const auto packet = make_mux_udp_packet("::1", receiver.local_endpoint().port(), std::vector<std::uint8_t>{0xCC});
+    mux::test::run_awaitable_void(io_context, session->forward_mux_payload(packet));
+
+    std::array<std::uint8_t, 4> recv = {0};
+    boost::asio::ip::udp::endpoint from_ep;
+    std::size_t recv_n = 0;
+    for (int i = 0; i < 50; ++i)
+    {
+        recv_n = receiver.receive_from(boost::asio::buffer(recv), from_ep, 0, ec);
+        if (!ec)
+        {
+            break;
+        }
+        if (ec != boost::asio::error::would_block && ec != boost::asio::error::try_again)
+        {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_FALSE(ec);
+    ASSERT_EQ(recv_n, 1U);
+    EXPECT_EQ(recv[0], 0xCC);
+    EXPECT_TRUE(session->udp_socket_use_v6_);
+    EXPECT_FALSE(session->udp_socket_dual_stack_);
+
+    session->close_socket();
+    reset_socket_failures();
 }
 
 TEST(RemoteUdpSessionTest, ForwardMuxPayloadResolveTimeoutDropsPayload)
