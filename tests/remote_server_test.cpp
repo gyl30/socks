@@ -3011,6 +3011,65 @@ TEST_F(remote_server_test_fixture, HandleStreamRegisterFailureSendsResetForClose
     runner.join();
 }
 
+TEST_F(remote_server_test_fixture, ProcessStreamRequestOnClosedConnectionSendsResetOnly)
+{
+    boost::system::error_code const ec;
+    mux::io_context_pool pool(1);
+    ASSERT_FALSE(ec);
+
+    auto server = std::make_shared<mux::remote_server>(pool, make_server_cfg(0, {}, "0102030405060708"));
+    auto conn = std::make_shared<mux::mock_mux_connection>(pool.get_io_context());
+    conn->stop();
+
+    EXPECT_CALL(*conn, register_stream(testing::_, testing::_)).WillRepeatedly(testing::Return(false));
+    EXPECT_CALL(*conn, mock_send_async(55, mux::kCmdAck, testing::_)).Times(0);
+    EXPECT_CALL(*conn, mock_send_async(55, mux::kCmdRst, testing::_)).WillOnce(testing::Return(boost::system::error_code{}));
+
+    auto tunnel = std::make_shared<mux::mux_tunnel_impl<boost::asio::ip::tcp::socket>>(
+        boost::asio::ip::tcp::socket(pool.get_io_context()),
+        pool.get_io_context(),
+        mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()},
+        false,
+        321,
+        "",
+        mux::config::timeout_t{},
+        mux::config::limits_t{},
+        mux::config::heartbeat_t{});
+    tunnel->connection_ = conn;
+
+    mux::syn_payload syn{
+        .socks_cmd = socks::kCmdConnect,
+        .addr = "1.1.1.1",
+        .port = 443,
+        .trace_id = "closed-conn",
+    };
+    std::vector<std::uint8_t> payload;
+    ASSERT_TRUE(mux::mux_codec::encode_syn(syn, payload));
+
+    mux::connection_context ctx;
+    ctx.conn_id(321);
+    ctx.trace_id("closed-conn");
+
+    auto& io_context = pool.get_io_context();
+    std::promise<void> done;
+    auto done_future = done.get_future();
+    boost::asio::co_spawn(
+        io_context,
+        [server, tunnel, ctx, payload = std::move(payload), &io_context, &done]() mutable -> boost::asio::awaitable<void>
+        {
+            co_await server->process_stream_request(tunnel, ctx, 55, std::move(payload), io_context);
+            done.set_value();
+            co_return;
+        },
+        boost::asio::detached);
+
+    std::thread runner([&pool]() { pool.run(); });
+    auto runner_guard = make_pool_thread_guard(pool, runner);
+    EXPECT_EQ(done_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    pool.stop();
+    runner.join();
+}
+
 TEST_F(remote_server_test_fixture, HandleTcpConnectStreamUsesConfiguredConnectTimeout)
 {
     boost::system::error_code const ec;
