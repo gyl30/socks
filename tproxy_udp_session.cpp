@@ -1,4 +1,3 @@
-#include <atomic>
 #include <chrono>
 #include <memory>
 #include <string>
@@ -20,11 +19,13 @@
 #include <boost/asio/this_coro.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/steady_timer.hpp>
+#include <boost/asio/redirect_error.hpp>
 #include <boost/asio/ip/address.hpp>
 #include <boost/asio/ip/v6_only.hpp>
 #include <boost/system/error_code.hpp>
 #include <boost/asio/ip/address_v6.hpp>
 #include <boost/asio/use_awaitable.hpp>
+#include <boost/asio/experimental/awaitable_operators.hpp>
 
 #include "log.h"
 #include "config.h"
@@ -361,18 +362,7 @@ void tproxy_udp_session::stop_local(const bool allow_async_stream_close)
 
     if (stream != nullptr && allow_async_stream_close)
     {
-        if (io_context_.stopped())
-        {
-            stream->on_reset();
-        }
-        else if (io_context_.get_executor().running_in_this_thread())
-        {
-            boost::asio::co_spawn(io_context_, [stream]() -> boost::asio::awaitable<void> { co_await stream->close(); }, boost::asio::detached);
-        }
-        else
-        {
-            boost::asio::co_spawn(io_context_, [stream]() -> boost::asio::awaitable<void> { co_await stream->close(); }, boost::asio::detached);
-        }
+        boost::asio::co_spawn(io_context_, [stream]() -> boost::asio::awaitable<void> { co_await stream->close(); }, boost::asio::detached);
     }
 
     boost::system::error_code ignore;
@@ -397,41 +387,42 @@ boost::asio::awaitable<bool> tproxy_udp_session::negotiate_proxy_stream(const st
         co_return false;
     }
 
-    auto timeout_fired = std::make_shared<std::atomic<bool>>(false);
-    auto wait_done = std::make_shared<std::atomic<bool>>(false);
-    auto ex = co_await boost::asio::this_coro::executor;
-    boost::asio::steady_timer ack_timer(ex);
+    boost::system::error_code ack_ec;
+    std::vector<std::uint8_t> ack_data;
     if (connect_timeout_sec_ > 0)
     {
-        ack_timer.expires_after(std::chrono::seconds(connect_timeout_sec_));
-        ack_timer.async_wait(
-            [stream, timeout_fired, wait_done](const boost::system::error_code& timer_ec)
-            {
-                if (timer_ec)
-                {
-                    return;
-                }
-                bool expected = false;
-                if (!wait_done->compare_exchange_strong(expected, true, std::memory_order_acq_rel, std::memory_order_acquire))
-                {
-                    return;
-                }
-                timeout_fired->store(true, std::memory_order_release);
-                stream->on_reset();
-            });
-    }
+        using boost::asio::experimental::awaitable_operators::operator||;
+        auto timeout_wait = [this]() -> boost::asio::awaitable<boost::system::error_code>
+        {
+            auto executor = co_await boost::asio::this_coro::executor;
+            boost::asio::steady_timer timer(executor);
+            timer.expires_after(std::chrono::seconds(connect_timeout_sec_));
+            boost::system::error_code wait_ec;
+            co_await timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, wait_ec));
+            co_return wait_ec;
+        };
 
-    auto [ack_ec, ack_data] = co_await stream->async_read_some();
-    if (connect_timeout_sec_ > 0)
-    {
-        bool expected = false;
-        (void)wait_done->compare_exchange_strong(expected, true, std::memory_order_acq_rel, std::memory_order_acquire);
-        ack_timer.cancel();
+        auto ack_or_timeout = co_await (stream->async_read_some() || timeout_wait());
+        if (ack_or_timeout.index() == 1)
+        {
+            const auto wait_ec = std::get<1>(ack_or_timeout);
+            if (!wait_ec)
+            {
+                stream->on_reset();
+                LOG_CTX_WARN(ctx_, "{} udp ack timeout {}s", log_event::kSocks, connect_timeout_sec_);
+            }
+            else
+            {
+                LOG_CTX_WARN(ctx_, "{} udp ack wait failed {}", log_event::kSocks, wait_ec.message());
+            }
+            co_return false;
+        }
+
+        std::tie(ack_ec, ack_data) = std::move(std::get<0>(ack_or_timeout));
     }
-    if (timeout_fired->load(std::memory_order_acquire))
+    else
     {
-        LOG_CTX_WARN(ctx_, "{} udp ack timeout {}s", log_event::kSocks, connect_timeout_sec_);
-        co_return false;
+        std::tie(ack_ec, ack_data) = co_await stream->async_read_some();
     }
     if (ack_ec)
     {

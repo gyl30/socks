@@ -136,6 +136,19 @@ tcp_socket_pair make_tcp_socket_pair(boost::asio::io_context& io_context)
     return tcp_socket_pair{.client = std::move(client), .server = std::move(server)};
 }
 
+void drain_io_context(boost::asio::io_context& io_context, const int rounds = 32)
+{
+    io_context.restart();
+    for (int i = 0; i < rounds; ++i)
+    {
+        if (io_context.poll() == 0)
+        {
+            break;
+        }
+    }
+    io_context.restart();
+}
+
 mux::syn_payload make_syn(const std::string& host, const std::uint16_t port)
 {
     mux::syn_payload syn{};
@@ -882,6 +895,8 @@ TEST(RemoteSessionTest, DownstreamSkipsFinWhenResetRequested)
     ASSERT_TRUE(session->target_socket_.is_open());
 
     session->on_reset();
+    EXPECT_TRUE(session->target_socket_.is_open());
+    drain_io_context(io_context);
     EXPECT_FALSE(session->target_socket_.is_open());
 
     EXPECT_CALL(*conn, mock_send_async(36, mux::kCmdFin, std::vector<std::uint8_t>{})).Times(0);
@@ -918,6 +933,8 @@ TEST(RemoteSessionTest, OnDataRunsCleanupWhenIoContextStopped)
     io_context.stop();
 
     session->on_data({0x55});
+    EXPECT_TRUE(session->target_socket_.is_open());
+    drain_io_context(io_context);
     EXPECT_FALSE(session->target_socket_.is_open());
 }
 
@@ -934,6 +951,8 @@ TEST(RemoteSessionTest, OnDataRunsCleanupWhenIoContextNotRunning)
 
     session->recv_channel_.close();
     session->on_data({0x55});
+    EXPECT_TRUE(session->target_socket_.is_open());
+    drain_io_context(io_context);
     EXPECT_FALSE(session->target_socket_.is_open());
 }
 
@@ -970,14 +989,15 @@ TEST(RemoteSessionTest, OnDataRunsCleanupWhenIoQueueBlocked)
     ASSERT_TRUE(blocker_started.load(std::memory_order_acquire));
 
     session->on_data({0x55});
-    EXPECT_FALSE(session->target_socket_.is_open());
+    EXPECT_TRUE(session->target_socket_.is_open());
 
     release_blocker.store(true, std::memory_order_release);
-    io_context.stop();
     if (io_thread.joinable())
     {
         io_thread.join();
     }
+    drain_io_context(io_context);
+    EXPECT_FALSE(session->target_socket_.is_open());
 }
 
 TEST(RemoteSessionTest, OnCloseAndOnResetDispatchCleanup)
@@ -1033,9 +1053,12 @@ TEST(RemoteSessionTest, OnCloseAndOnResetRunInlineWhenIoContextStopped)
 
     io_context.stop();
     session->on_close();
-    EXPECT_FALSE(session->recv_channel_.try_send(boost::system::error_code{}, std::vector<std::uint8_t>{0x01}));
+    EXPECT_TRUE(session->recv_channel_.try_send(boost::system::error_code{}, std::vector<std::uint8_t>{0x01}));
 
     session->on_reset();
+    EXPECT_TRUE(session->target_socket_.is_open());
+    drain_io_context(io_context);
+    EXPECT_FALSE(session->recv_channel_.try_send(boost::system::error_code{}, std::vector<std::uint8_t>{0x02}));
     EXPECT_FALSE(session->target_socket_.is_open());
 }
 
@@ -1051,9 +1074,12 @@ TEST(RemoteSessionTest, OnCloseAndOnResetRunWhenIoContextNotRunning)
     ASSERT_TRUE(session->target_socket_.is_open());
 
     session->on_close();
-    EXPECT_FALSE(session->recv_channel_.try_send(boost::system::error_code{}, std::vector<std::uint8_t>{0x01}));
+    EXPECT_TRUE(session->recv_channel_.try_send(boost::system::error_code{}, std::vector<std::uint8_t>{0x01}));
 
     session->on_reset();
+    EXPECT_TRUE(session->target_socket_.is_open());
+    drain_io_context(io_context);
+    EXPECT_FALSE(session->recv_channel_.try_send(boost::system::error_code{}, std::vector<std::uint8_t>{0x02}));
     EXPECT_FALSE(session->target_socket_.is_open());
 }
 
@@ -1088,17 +1114,19 @@ TEST(RemoteSessionTest, OnCloseAndOnResetRunWhenIoQueueBlocked)
     ASSERT_TRUE(blocker_started.load(std::memory_order_acquire));
 
     session->on_close();
-    EXPECT_FALSE(session->recv_channel_.try_send(boost::system::error_code{}, std::vector<std::uint8_t>{0x01}));
+    EXPECT_TRUE(session->recv_channel_.try_send(boost::system::error_code{}, std::vector<std::uint8_t>{0x01}));
 
     session->on_reset();
-    EXPECT_FALSE(session->target_socket_.is_open());
+    EXPECT_TRUE(session->target_socket_.is_open());
 
     release_blocker.store(true, std::memory_order_release);
-    io_context.stop();
     if (io_thread.joinable())
     {
         io_thread.join();
     }
+    drain_io_context(io_context);
+    EXPECT_FALSE(session->recv_channel_.try_send(boost::system::error_code{}, std::vector<std::uint8_t>{0x02}));
+    EXPECT_FALSE(session->target_socket_.is_open());
 }
 
 }    // namespace

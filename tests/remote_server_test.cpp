@@ -4,7 +4,6 @@
 #include <atomic>
 #include <cerrno>
 #include <chrono>
-#include <future>
 #include <memory>
 #include <string>
 #include <thread>
@@ -30,6 +29,7 @@ extern "C"
 #include "protocol.h"
 #include "ch_parser.h"
 #include "mux_codec.h"
+#include "test_util.h"
 #include "crypto_util.h"
 #include "scoped_exit.h"
 #include "context_pool.h"
@@ -134,6 +134,122 @@ void fail_hkdf_add_info_on_call(const int call_index)
 {
     g_hkdf_add_info_call_counter.store(0, std::memory_order_release);
     g_fail_hkdf_add_info_on_call.store(call_index, std::memory_order_release);
+}
+
+std::shared_ptr<mux::remote_server::connection_slot_state> remote_server_slot_snapshot(const std::shared_ptr<mux::remote_server>& server)
+{
+    auto snapshot = std::atomic_load_explicit(&server->connection_slots_, std::memory_order_acquire);
+    if (snapshot != nullptr)
+    {
+        return snapshot;
+    }
+    return std::make_shared<mux::remote_server::connection_slot_state>();
+}
+
+std::uint32_t remote_server_active_connection_slots(const std::shared_ptr<mux::remote_server>& server)
+{
+    return remote_server_slot_snapshot(server)->total;
+}
+
+std::uint32_t remote_server_source_slots(const std::shared_ptr<mux::remote_server>& server, const std::string& source_key)
+{
+    const auto snapshot = remote_server_slot_snapshot(server);
+    const auto it = snapshot->by_source.find(source_key);
+    if (it == snapshot->by_source.end())
+    {
+        return 0;
+    }
+    return it->second;
+}
+
+void remote_server_set_slot_state(const std::shared_ptr<mux::remote_server>& server,
+                                  const std::uint32_t total,
+                                  const std::unordered_map<std::string, std::uint32_t>& by_source)
+{
+    for (;;)
+    {
+        auto current = std::atomic_load_explicit(&server->connection_slots_, std::memory_order_acquire);
+        if (current == nullptr)
+        {
+            current = std::make_shared<mux::remote_server::connection_slot_state>();
+        }
+
+        auto updated = std::make_shared<mux::remote_server::connection_slot_state>();
+        updated->total = total;
+        updated->by_source = by_source;
+
+        auto expected = current;
+        if (std::atomic_compare_exchange_weak_explicit(
+                &server->connection_slots_, &expected, updated, std::memory_order_acq_rel, std::memory_order_acquire))
+        {
+            return;
+        }
+    }
+}
+
+std::size_t remote_server_tracked_socket_count(const std::shared_ptr<mux::remote_server>& server)
+{
+    auto snapshot = std::atomic_load_explicit(&server->tracked_connection_sockets_, std::memory_order_acquire);
+    if (snapshot == nullptr)
+    {
+        return 0;
+    }
+    return snapshot->size();
+}
+
+void remote_server_add_expired_tracked_socket(const std::shared_ptr<mux::remote_server>& server, boost::asio::ip::tcp::socket* socket_ptr)
+{
+    for (;;)
+    {
+        auto current = std::atomic_load_explicit(&server->tracked_connection_sockets_, std::memory_order_acquire);
+        if (current == nullptr)
+        {
+            current = std::make_shared<mux::remote_server::tracked_socket_map_t>();
+        }
+        auto updated = std::make_shared<mux::remote_server::tracked_socket_map_t>(*current);
+        (*updated)[socket_ptr] = std::weak_ptr<boost::asio::ip::tcp::socket>{};
+
+        auto expected = current;
+        if (std::atomic_compare_exchange_weak_explicit(
+                &server->tracked_connection_sockets_, &expected, updated, std::memory_order_acq_rel, std::memory_order_acquire))
+        {
+            return;
+        }
+    }
+}
+
+const mux::remote_server::fallback_guard_map_t& remote_server_fallback_guard_snapshot(const std::shared_ptr<mux::remote_server>& server)
+{
+    return server->fallback_guard_states_;
+}
+
+std::size_t remote_server_fallback_guard_size(const std::shared_ptr<mux::remote_server>& server)
+{
+    return remote_server_fallback_guard_snapshot(server).size();
+}
+
+std::optional<mux::remote_server::fallback_guard_state> remote_server_find_fallback_guard_state(const std::shared_ptr<mux::remote_server>& server,
+                                                                                                const std::string& source_key)
+{
+    const auto snapshot = remote_server_fallback_guard_snapshot(server);
+    const auto it = snapshot.find(source_key);
+    if (it == snapshot.end())
+    {
+        return std::nullopt;
+    }
+    return it->second;
+}
+
+void remote_server_set_fallback_guard_states(const std::shared_ptr<mux::remote_server>& server,
+                                             const mux::remote_server::fallback_guard_map_t& states)
+{
+    server->fallback_guard_states_ = states;
+}
+
+void remote_server_cleanup_fallback_guard_state(const std::shared_ptr<mux::remote_server>& server,
+                                                const std::chrono::steady_clock::time_point& now)
+{
+    server->cleanup_fallback_guard_state_locked(server->fallback_guard_states_, now);
 }
 
 // NOLINTBEGIN(bugprone-reserved-identifier)
@@ -390,6 +506,19 @@ bool wait_for_condition(Predicate predicate,
         std::this_thread::sleep_for(interval);
     }
     return predicate();
+}
+
+void drain_io_context(boost::asio::io_context& io_context, const int rounds = 32)
+{
+    io_context.restart();
+    for (int i = 0; i < rounds; ++i)
+    {
+        if (io_context.poll() == 0)
+        {
+            break;
+        }
+    }
+    io_context.restart();
 }
 
 auto make_thread_join_guard(std::thread& worker)
@@ -837,24 +966,25 @@ TEST_F(remote_server_test_fixture, AuthFailBufferTooShortPreservesPartialHeaderF
     ASSERT_TRUE(open_ephemeral_acceptor(fallback_acceptor));
     const auto fallback_port = fallback_acceptor.local_endpoint().port();
     ASSERT_NE(fallback_port, static_cast<std::uint16_t>(0));
-    auto fallback_payload_promise = std::make_shared<std::promise<std::vector<std::uint8_t>>>();
-    auto fallback_payload_future = fallback_payload_promise->get_future();
+    auto fallback_payload = std::make_shared<std::vector<std::uint8_t>>();
+    auto fallback_payload_ready = std::make_shared<std::atomic<bool>>(false);
     fallback_acceptor.async_accept(
-        [fallback_payload_promise](boost::system::error_code accept_ec, [[maybe_unused]] boost::asio::ip::tcp::socket peer)
+        [fallback_payload, fallback_payload_ready](boost::system::error_code accept_ec, [[maybe_unused]] boost::asio::ip::tcp::socket peer)
         {
             if (accept_ec)
             {
-                fallback_payload_promise->set_value({});
+                fallback_payload->clear();
+                fallback_payload_ready->store(true, std::memory_order_release);
                 return;
             }
             auto peer_socket = std::make_shared<boost::asio::ip::tcp::socket>(std::move(peer));
             auto read_buf = std::make_shared<std::array<std::uint8_t, 4>>();
             boost::asio::async_read(*peer_socket,
                                     boost::asio::buffer(*read_buf),
-                                    [peer_socket, read_buf, fallback_payload_promise](boost::system::error_code, const std::size_t n)
+                                    [peer_socket, read_buf, fallback_payload, fallback_payload_ready](boost::system::error_code, const std::size_t n)
                                     {
-                                        std::vector<std::uint8_t> payload(read_buf->begin(), read_buf->begin() + n);
-                                        fallback_payload_promise->set_value(std::move(payload));
+                                        fallback_payload->assign(read_buf->begin(), read_buf->begin() + n);
+                                        fallback_payload_ready->store(true, std::memory_order_release);
                                     });
         });
 
@@ -881,11 +1011,11 @@ TEST_F(remote_server_test_fixture, AuthFailBufferTooShortPreservesPartialHeaderF
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
 
-    EXPECT_EQ(fallback_payload_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
-    if (fallback_payload_future.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+    EXPECT_TRUE(mux::test::co_wait_until(
+        [fallback_payload_ready]() { return fallback_payload_ready->load(std::memory_order_acquire); }, std::chrono::seconds(2)));
+    if (fallback_payload_ready->load(std::memory_order_acquire))
     {
-        const auto fallback_payload = fallback_payload_future.get();
-        EXPECT_EQ(fallback_payload, std::vector<std::uint8_t>({0x16, 0x03, 0x03, 0x00}));
+        EXPECT_EQ(*fallback_payload, std::vector<std::uint8_t>({0x16, 0x03, 0x03, 0x00}));
     }
     server->stop();
     pool.stop();
@@ -904,24 +1034,25 @@ TEST_F(remote_server_test_fixture, AuthFailBodyTooShortPreservesPartialBodyForFa
     ASSERT_TRUE(open_ephemeral_acceptor(fallback_acceptor));
     const auto fallback_port = fallback_acceptor.local_endpoint().port();
     ASSERT_NE(fallback_port, static_cast<std::uint16_t>(0));
-    auto fallback_payload_promise = std::make_shared<std::promise<std::vector<std::uint8_t>>>();
-    auto fallback_payload_future = fallback_payload_promise->get_future();
+    auto fallback_payload = std::make_shared<std::vector<std::uint8_t>>();
+    auto fallback_payload_ready = std::make_shared<std::atomic<bool>>(false);
     fallback_acceptor.async_accept(
-        [fallback_payload_promise](boost::system::error_code accept_ec, [[maybe_unused]] boost::asio::ip::tcp::socket peer)
+        [fallback_payload, fallback_payload_ready](boost::system::error_code accept_ec, [[maybe_unused]] boost::asio::ip::tcp::socket peer)
         {
             if (accept_ec)
             {
-                fallback_payload_promise->set_value({});
+                fallback_payload->clear();
+                fallback_payload_ready->store(true, std::memory_order_release);
                 return;
             }
             auto peer_socket = std::make_shared<boost::asio::ip::tcp::socket>(std::move(peer));
             auto read_buf = std::make_shared<std::array<std::uint8_t, 7>>();
             boost::asio::async_read(*peer_socket,
                                     boost::asio::buffer(*read_buf),
-                                    [peer_socket, read_buf, fallback_payload_promise](boost::system::error_code, const std::size_t n)
+                                    [peer_socket, read_buf, fallback_payload, fallback_payload_ready](boost::system::error_code, const std::size_t n)
                                     {
-                                        std::vector<std::uint8_t> payload(read_buf->begin(), read_buf->begin() + n);
-                                        fallback_payload_promise->set_value(std::move(payload));
+                                        fallback_payload->assign(read_buf->begin(), read_buf->begin() + n);
+                                        fallback_payload_ready->store(true, std::memory_order_release);
                                     });
         });
 
@@ -943,11 +1074,11 @@ TEST_F(remote_server_test_fixture, AuthFailBodyTooShortPreservesPartialBodyForFa
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
 
-    EXPECT_EQ(fallback_payload_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
-    if (fallback_payload_future.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+    EXPECT_TRUE(mux::test::co_wait_until(
+        [fallback_payload_ready]() { return fallback_payload_ready->load(std::memory_order_acquire); }, std::chrono::seconds(2)));
+    if (fallback_payload_ready->load(std::memory_order_acquire))
     {
-        const auto fallback_payload = fallback_payload_future.get();
-        EXPECT_EQ(fallback_payload, std::vector<std::uint8_t>({0x16, 0x03, 0x03, 0x00, 0x06, 0x01, 0x02}));
+        EXPECT_EQ(*fallback_payload, std::vector<std::uint8_t>({0x16, 0x03, 0x03, 0x00, 0x06, 0x01, 0x02}));
     }
     server->stop();
     pool.stop();
@@ -1060,20 +1191,20 @@ TEST_F(remote_server_test_fixture, FallbackConnectTimeoutIncrementsMetricWhenBac
     ctx.remote_addr("127.0.0.20");
     ctx.trace_id("fallback-connect-timeout");
 
-    std::promise<void> done;
-    auto done_future = done.get_future();
+    std::atomic<bool> done_ready{false};
     const auto start = std::chrono::steady_clock::now();
     boost::asio::co_spawn(
         pool.get_io_context(),
-        [server, fallback_socket, ctx, &done]() mutable -> boost::asio::awaitable<void>
+        [server, fallback_socket, ctx, &done_ready]() mutable -> boost::asio::awaitable<void>
         {
             co_await server->handle_fallback(fallback_socket, std::vector<std::uint8_t>{0x16}, ctx, "backlog.test");
-            done.set_value();
+            done_ready.store(true, std::memory_order_release);
             co_return;
         },
         boost::asio::detached);
 
-    EXPECT_EQ(done_future.wait_for(std::chrono::seconds(8)), std::future_status::ready);
+    EXPECT_TRUE(mux::test::co_wait_until(
+        [&done_ready]() { return done_ready.load(std::memory_order_acquire); }, std::chrono::seconds(8)));
     const auto elapsed = std::chrono::steady_clock::now() - start;
     EXPECT_TRUE(wait_for_condition([connect_fail_before]() { return mux::statistics::instance().fallback_connect_failures() > connect_fail_before; },
                                    std::chrono::milliseconds(3000)));
@@ -1131,8 +1262,7 @@ TEST_F(remote_server_test_fixture, FallbackWriteFailIncrementsMetric)
     const auto server_port = server->listen_port();
 
     auto fallback_peer = std::make_shared<std::shared_ptr<boost::asio::ip::tcp::socket>>();
-    auto fallback_accepted = std::make_shared<std::promise<void>>();
-    auto fallback_accepted_future = fallback_accepted->get_future();
+    auto fallback_accepted = std::make_shared<std::atomic<bool>>(false);
     fallback_acceptor.async_accept(
         [fallback_peer, fallback_accepted](boost::system::error_code accept_ec, [[maybe_unused]] boost::asio::ip::tcp::socket peer)
         {
@@ -1140,7 +1270,7 @@ TEST_F(remote_server_test_fixture, FallbackWriteFailIncrementsMetric)
             {
                 *fallback_peer = std::make_shared<boost::asio::ip::tcp::socket>(std::move(peer));
             }
-            fallback_accepted->set_value();
+            fallback_accepted->store(true, std::memory_order_release);
         });
     auto acceptor_cleanup = make_scoped_exit(
         [&]()
@@ -1174,7 +1304,8 @@ TEST_F(remote_server_test_fixture, FallbackWriteFailIncrementsMetric)
         ASSERT_GT(wrote, 0);
     }
 
-    EXPECT_EQ(fallback_accepted_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_TRUE(mux::test::co_wait_until(
+        [fallback_accepted]() { return fallback_accepted->load(std::memory_order_acquire); }, std::chrono::seconds(2)));
     EXPECT_TRUE(wait_for_condition([write_fail_before]() { return mux::statistics::instance().fallback_write_failures() > write_fail_before; },
                                    std::chrono::milliseconds(3000)));
     EXPECT_TRUE(wait_for_condition([write_error_before]() { return mux::statistics::instance().fallback_write_errors() > write_error_before; },
@@ -1198,8 +1329,7 @@ TEST_F(remote_server_test_fixture, HandleFallbackWriteTimeoutIncrementsMetric)
     auto server = std::make_shared<mux::remote_server>(pool, cfg);
 
     auto fallback_peer = std::make_shared<std::shared_ptr<boost::asio::ip::tcp::socket>>();
-    auto fallback_accepted = std::make_shared<std::promise<void>>();
-    auto fallback_accepted_future = fallback_accepted->get_future();
+    auto fallback_accepted = std::make_shared<std::atomic<bool>>(false);
     fallback_acceptor.async_accept(
         [fallback_peer, fallback_accepted](boost::system::error_code accept_ec, [[maybe_unused]] boost::asio::ip::tcp::socket peer)
         {
@@ -1211,7 +1341,7 @@ TEST_F(remote_server_test_fixture, HandleFallbackWriteTimeoutIncrementsMetric)
                 (void)option_ec;
                 *fallback_peer = std::make_shared<boost::asio::ip::tcp::socket>(std::move(peer));
             }
-            fallback_accepted->set_value();
+            fallback_accepted->store(true, std::memory_order_release);
         });
 
     auto close_all = make_scoped_exit(
@@ -1239,21 +1369,22 @@ TEST_F(remote_server_test_fixture, HandleFallbackWriteTimeoutIncrementsMetric)
     ctx.remote_addr("127.0.0.10");
     ctx.trace_id("fallback-write-timeout");
 
-    std::promise<void> done;
-    auto done_future = done.get_future();
+    std::atomic<bool> done_ready{false};
     boost::asio::co_spawn(
         pool.get_io_context(),
-        [server, fallback_socket, ctx, &done]() mutable -> boost::asio::awaitable<void>
+        [server, fallback_socket, ctx, &done_ready]() mutable -> boost::asio::awaitable<void>
         {
             std::vector<std::uint8_t> const buf(16 * 1024 * 1024, 0x5a);
             co_await server->handle_fallback(fallback_socket, buf, ctx, "timeout.test");
-            done.set_value();
+            done_ready.store(true, std::memory_order_release);
             co_return;
         },
         boost::asio::detached);
 
-    EXPECT_EQ(fallback_accepted_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
-    EXPECT_EQ(done_future.wait_for(std::chrono::seconds(6)), std::future_status::ready);
+    EXPECT_TRUE(mux::test::co_wait_until(
+        [fallback_accepted]() { return fallback_accepted->load(std::memory_order_acquire); }, std::chrono::seconds(2)));
+    EXPECT_TRUE(mux::test::co_wait_until(
+        [&done_ready]() { return done_ready.load(std::memory_order_acquire); }, std::chrono::seconds(6)));
     EXPECT_TRUE(wait_for_condition([write_fail_before]() { return mux::statistics::instance().fallback_write_failures() > write_fail_before; },
                                    std::chrono::milliseconds(2000)));
     EXPECT_TRUE(wait_for_condition([write_timeout_before]() { return mux::statistics::instance().fallback_write_timeouts() > write_timeout_before; },
@@ -1278,8 +1409,7 @@ TEST_F(remote_server_test_fixture, HandleFallbackReadTimeoutTerminatesProxySessi
     auto server = std::make_shared<mux::remote_server>(pool, cfg);
 
     auto fallback_peer = std::make_shared<std::shared_ptr<boost::asio::ip::tcp::socket>>();
-    auto fallback_accepted = std::make_shared<std::promise<void>>();
-    auto fallback_accepted_future = fallback_accepted->get_future();
+    auto fallback_accepted = std::make_shared<std::atomic<bool>>(false);
     fallback_acceptor.async_accept(
         [fallback_peer, fallback_accepted](boost::system::error_code accept_ec, boost::asio::ip::tcp::socket peer)
         {
@@ -1287,7 +1417,7 @@ TEST_F(remote_server_test_fixture, HandleFallbackReadTimeoutTerminatesProxySessi
             {
                 *fallback_peer = std::make_shared<boost::asio::ip::tcp::socket>(std::move(peer));
             }
-            fallback_accepted->set_value();
+            fallback_accepted->store(true, std::memory_order_release);
         });
 
     boost::asio::ip::tcp::acceptor source_acceptor(pool.get_io_context());
@@ -1338,20 +1468,21 @@ TEST_F(remote_server_test_fixture, HandleFallbackReadTimeoutTerminatesProxySessi
     ctx.remote_addr("127.0.0.11");
     ctx.trace_id("fallback-read-timeout");
 
-    std::promise<void> done;
-    auto done_future = done.get_future();
+    std::atomic<bool> done_ready{false};
     boost::asio::co_spawn(
         pool.get_io_context(),
-        [server, source_server_socket, ctx, &done]() mutable -> boost::asio::awaitable<void>
+        [server, source_server_socket, ctx, &done_ready]() mutable -> boost::asio::awaitable<void>
         {
             co_await server->handle_fallback(source_server_socket, std::vector<std::uint8_t>{0x16, 0x03, 0x03, 0x00}, ctx, "timeout.test");
-            done.set_value();
+            done_ready.store(true, std::memory_order_release);
             co_return;
         },
         boost::asio::detached);
 
-    EXPECT_EQ(fallback_accepted_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
-    EXPECT_EQ(done_future.wait_for(std::chrono::seconds(6)), std::future_status::ready);
+    EXPECT_TRUE(mux::test::co_wait_until(
+        [fallback_accepted]() { return fallback_accepted->load(std::memory_order_acquire); }, std::chrono::seconds(2)));
+    EXPECT_TRUE(mux::test::co_wait_until(
+        [&done_ready]() { return done_ready.load(std::memory_order_acquire); }, std::chrono::seconds(6)));
     EXPECT_TRUE(wait_for_condition([source_server_socket]() { return !source_server_socket->is_open(); }, std::chrono::milliseconds(2000)));
 }
 
@@ -1378,8 +1509,7 @@ TEST_F(remote_server_test_fixture, HandleFallbackReadTimeoutRecordedAsGuardFailu
     auto server = std::make_shared<mux::remote_server>(pool, cfg);
 
     auto fallback_peer = std::make_shared<std::shared_ptr<boost::asio::ip::tcp::socket>>();
-    auto fallback_accepted = std::make_shared<std::promise<void>>();
-    auto fallback_accepted_future = fallback_accepted->get_future();
+    auto fallback_accepted = std::make_shared<std::atomic<bool>>(false);
     fallback_acceptor.async_accept(
         [fallback_peer, fallback_accepted](boost::system::error_code accept_ec, boost::asio::ip::tcp::socket peer)
         {
@@ -1387,7 +1517,7 @@ TEST_F(remote_server_test_fixture, HandleFallbackReadTimeoutRecordedAsGuardFailu
             {
                 *fallback_peer = std::make_shared<boost::asio::ip::tcp::socket>(std::move(peer));
             }
-            fallback_accepted->set_value();
+            fallback_accepted->store(true, std::memory_order_release);
         });
 
     boost::asio::ip::tcp::acceptor source_acceptor(pool.get_io_context());
@@ -1438,27 +1568,25 @@ TEST_F(remote_server_test_fixture, HandleFallbackReadTimeoutRecordedAsGuardFailu
     ctx.remote_addr("127.0.0.12");
     ctx.trace_id("fallback-read-timeout-guard");
 
-    std::promise<void> done;
-    auto done_future = done.get_future();
+    std::atomic<bool> done_ready{false};
     boost::asio::co_spawn(
         pool.get_io_context(),
-        [server, source_server_socket, ctx, &done]() mutable -> boost::asio::awaitable<void>
+        [server, source_server_socket, ctx, &done_ready]() mutable -> boost::asio::awaitable<void>
         {
             co_await server->handle_fallback(source_server_socket, std::vector<std::uint8_t>{0x16, 0x03, 0x03, 0x00}, ctx, "timeout.test");
-            done.set_value();
+            done_ready.store(true, std::memory_order_release);
             co_return;
         },
         boost::asio::detached);
 
-    EXPECT_EQ(fallback_accepted_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
-    EXPECT_EQ(done_future.wait_for(std::chrono::seconds(6)), std::future_status::ready);
+    EXPECT_TRUE(mux::test::co_wait_until(
+        [fallback_accepted]() { return fallback_accepted->load(std::memory_order_acquire); }, std::chrono::seconds(2)));
+    EXPECT_TRUE(mux::test::co_wait_until(
+        [&done_ready]() { return done_ready.load(std::memory_order_acquire); }, std::chrono::seconds(6)));
 
-    {
-        std::lock_guard<std::mutex> const lock(server->fallback_guard_mu_);
-        const auto it = server->fallback_guard_states_.find("127.0.0.12");
-        ASSERT_NE(it, server->fallback_guard_states_.end());
-        EXPECT_EQ(it->second.consecutive_failures, 1U);
-    }
+    const auto state = remote_server_find_fallback_guard_state(server, "127.0.0.12");
+    ASSERT_TRUE(state.has_value());
+    EXPECT_EQ(state->consecutive_failures, 1U);
 }
 
 TEST_F(remote_server_test_fixture, StartRejectsInvalidAuthConfig)
@@ -2088,18 +2216,18 @@ TEST_F(remote_server_test_fixture, ConnectionSlotReservationPreHandshakeLimit)
     EXPECT_TRUE(server->try_reserve_connection_slot(source_key));
     EXPECT_TRUE(server->try_reserve_connection_slot(source_key));
     EXPECT_FALSE(server->try_reserve_connection_slot(source_key));
-    EXPECT_EQ(server->active_connection_slots_.load(std::memory_order_acquire), 2U);
+    EXPECT_EQ(remote_server_active_connection_slots(server), 2U);
 
     server->release_connection_slot(source_key);
-    EXPECT_EQ(server->active_connection_slots_.load(std::memory_order_acquire), 1U);
+    EXPECT_EQ(remote_server_active_connection_slots(server), 1U);
 
     EXPECT_TRUE(server->try_reserve_connection_slot(source_key));
-    EXPECT_EQ(server->active_connection_slots_.load(std::memory_order_acquire), 2U);
+    EXPECT_EQ(remote_server_active_connection_slots(server), 2U);
 
     server->release_connection_slot(source_key);
     server->release_connection_slot(source_key);
     server->release_connection_slot(source_key);
-    EXPECT_EQ(server->active_connection_slots_.load(std::memory_order_acquire), 0U);
+    EXPECT_EQ(remote_server_active_connection_slots(server), 0U);
 }
 
 TEST_F(remote_server_test_fixture, ConnectionSlotReservationRespectsPerSourceLimit)
@@ -2116,11 +2244,11 @@ TEST_F(remote_server_test_fixture, ConnectionSlotReservationRespectsPerSourceLim
     EXPECT_TRUE(server->try_reserve_connection_slot("10.0.0.1/32"));
     EXPECT_FALSE(server->try_reserve_connection_slot("10.0.0.1/32"));
     EXPECT_TRUE(server->try_reserve_connection_slot("10.0.0.2/32"));
-    EXPECT_EQ(server->active_connection_slots_.load(std::memory_order_acquire), 2U);
+    EXPECT_EQ(remote_server_active_connection_slots(server), 2U);
 
     server->release_connection_slot("10.0.0.1/32");
     server->release_connection_slot("10.0.0.2/32");
-    EXPECT_EQ(server->active_connection_slots_.load(std::memory_order_acquire), 0U);
+    EXPECT_EQ(remote_server_active_connection_slots(server), 0U);
 }
 
 TEST_F(remote_server_test_fixture, ConstructorClampsSourcePrefixRange)
@@ -2180,13 +2308,10 @@ TEST_F(remote_server_test_fixture, SnapshotAndTrackedSocketNullBranches)
     server->track_connection_socket(nullptr);
     server->untrack_connection_socket(nullptr);
 
-    {
-        std::lock_guard<std::mutex> const lock(server->tracked_connection_socket_mu_);
-        server->tracked_connection_sockets_[reinterpret_cast<boost::asio::ip::tcp::socket*>(0x1)] = std::weak_ptr<boost::asio::ip::tcp::socket>{};
-    }
+    remote_server_add_expired_tracked_socket(server, reinterpret_cast<boost::asio::ip::tcp::socket*>(0x1));
     const auto tracked = server->snapshot_tracked_connection_sockets();
     EXPECT_TRUE(tracked.empty());
-    EXPECT_TRUE(server->tracked_connection_sockets_.empty());
+    EXPECT_EQ(remote_server_tracked_socket_count(server), 0U);
 }
 
 TEST_F(remote_server_test_fixture, ReleaseConnectionSlotMissingAndDecrementBranches)
@@ -2200,16 +2325,15 @@ TEST_F(remote_server_test_fixture, ReleaseConnectionSlotMissingAndDecrementBranc
     cfg.limits.max_connections_per_source = 4;
     auto server = std::make_shared<mux::remote_server>(pool, cfg);
 
-    server->active_connection_slots_.store(2, std::memory_order_release);
-    server->active_source_connection_slots_["existing"] = 2;
+    remote_server_set_slot_state(server, 2, {{"existing", 2}});
 
     server->release_connection_slot("missing");
-    EXPECT_EQ(server->active_connection_slots_.load(std::memory_order_acquire), 1U);
-    EXPECT_EQ(server->active_source_connection_slots_["existing"], 2U);
+    EXPECT_EQ(remote_server_active_connection_slots(server), 1U);
+    EXPECT_EQ(remote_server_source_slots(server, "existing"), 2U);
 
     server->release_connection_slot("existing");
-    EXPECT_EQ(server->active_connection_slots_.load(std::memory_order_acquire), 0U);
-    EXPECT_EQ(server->active_source_connection_slots_["existing"], 1U);
+    EXPECT_EQ(remote_server_active_connection_slots(server), 0U);
+    EXPECT_EQ(remote_server_source_slots(server, "existing"), 1U);
 }
 
 TEST_F(remote_server_test_fixture, ConnectionLimitSourceKeyUnknownAndZeroPrefixBranches)
@@ -2429,17 +2553,10 @@ TEST_F(remote_server_test_fixture, FallbackGuardStateMachineBranches)
     EXPECT_FALSE(server->consume_fallback_token(ctx, ""));
     server->record_fallback_result(ctx, "", true);
 
-    {
-        std::lock_guard<std::mutex> const lock(server->fallback_guard_mu_);
-        ASSERT_FALSE(server->fallback_guard_states_.empty());
-        const auto future = std::chrono::steady_clock::now() + std::chrono::seconds(3);
-        server->cleanup_fallback_guard_state_locked(future);
-    }
-
-    {
-        std::lock_guard<std::mutex> const lock(server->fallback_guard_mu_);
-        EXPECT_TRUE(server->fallback_guard_states_.empty());
-    }
+    ASSERT_GT(remote_server_fallback_guard_size(server), 0U);
+    const auto future = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    remote_server_cleanup_fallback_guard_state(server, future);
+    EXPECT_EQ(remote_server_fallback_guard_size(server), 0U);
 
     mux::connection_context unknown_ctx;
     unknown_ctx.remote_addr("127.0.0.9");
@@ -2461,28 +2578,26 @@ TEST_F(remote_server_test_fixture, FallbackGuardCapsTrackedSources)
 
     constexpr std::size_t kMaxFallbackGuardSources = 4096;
     const auto ts = std::chrono::steady_clock::now();
+    mux::remote_server::fallback_guard_map_t states;
+    states.reserve(kMaxFallbackGuardSources);
+    for (std::size_t i = 0; i < kMaxFallbackGuardSources; ++i)
     {
-        std::lock_guard<std::mutex> const lock(server->fallback_guard_mu_);
-        for (std::size_t i = 0; i < kMaxFallbackGuardSources; ++i)
-        {
-            mux::remote_server::fallback_guard_state state{};
-            state.tokens = 1.0;
-            state.last_refill = ts;
-            state.last_seen = ts;
-            server->fallback_guard_states_.emplace("source-" + std::to_string(i), state);
-        }
-        ASSERT_EQ(server->fallback_guard_states_.size(), kMaxFallbackGuardSources);
+        mux::remote_server::fallback_guard_state state{};
+        state.tokens = 1.0;
+        state.last_refill = ts;
+        state.last_seen = ts;
+        states.emplace("source-" + std::to_string(i), state);
     }
+    remote_server_set_fallback_guard_states(server, states);
+    ASSERT_EQ(remote_server_fallback_guard_size(server), kMaxFallbackGuardSources);
 
     mux::connection_context new_ctx;
     new_ctx.remote_addr("source-new");
     EXPECT_TRUE(server->consume_fallback_token(new_ctx, ""));
 
-    {
-        std::lock_guard<std::mutex> const lock(server->fallback_guard_mu_);
-        EXPECT_EQ(server->fallback_guard_states_.size(), kMaxFallbackGuardSources);
-        EXPECT_NE(server->fallback_guard_states_.find("source-new"), server->fallback_guard_states_.end());
-    }
+    const auto& snapshot = remote_server_fallback_guard_snapshot(server);
+    EXPECT_EQ(snapshot.size(), kMaxFallbackGuardSources);
+    EXPECT_NE(snapshot.find("source-new"), snapshot.end());
 }
 
 TEST_F(remote_server_test_fixture, FallbackGuardKeyModeIpSniSeparatesBuckets)
@@ -2602,55 +2717,59 @@ TEST_F(remote_server_test_fixture, SetCertificateReturnsWhenAsyncQueueBusy)
     auto server = std::make_shared<mux::remote_server>(pool, cfg);
     server->start();
 
-    std::promise<void> blocker_started;
-    auto blocker_started_future = blocker_started.get_future();
+    std::atomic<bool> blocker_started{false};
     std::atomic<bool> release_blocker{false};
     boost::asio::post(io_context,
                       [&blocker_started, &release_blocker]()
                       {
-                          blocker_started.set_value();
+                          blocker_started.store(true, std::memory_order_release);
                           while (!release_blocker.load(std::memory_order_acquire))
                           {
                               std::this_thread::sleep_for(std::chrono::milliseconds(10));
                           }
                       });
-    EXPECT_EQ(blocker_started_future.wait_for(std::chrono::seconds(1)), std::future_status::ready);
+    EXPECT_TRUE(mux::test::co_wait_until(
+        [&blocker_started]() { return blocker_started.load(std::memory_order_acquire); }, std::chrono::seconds(1)));
 
     reality::server_fingerprint fingerprint;
     fingerprint.cipher_suite = 0x1301;
     fingerprint.alpn = "h2";
     const std::string sni = "busy.queue.test";
 
-    std::promise<void> setter_done;
-    auto setter_done_future = setter_done.get_future();
+    std::atomic<bool> setter_done{false};
     std::thread setter(
         [&]()
         {
             server->set_certificate(sni, reality::construct_certificate({0x01, 0x02, 0x03}), fingerprint, "trace-busy");
-            setter_done.set_value();
+            setter_done.store(true, std::memory_order_release);
         });
     auto setter_guard = make_thread_join_guard(setter);
 
-    const auto setter_status = setter_done_future.wait_for(std::chrono::milliseconds(500));
+    const bool setter_status = mux::test::co_wait_until(
+        [&setter_done]() { return setter_done.load(std::memory_order_acquire); }, std::chrono::milliseconds(500));
     release_blocker.store(true, std::memory_order_release);
     if (setter.joinable())
     {
         setter.join();
     }
 
-    EXPECT_EQ(setter_status, std::future_status::ready);
+    EXPECT_TRUE(setter_status);
 
     bool cert_ready = false;
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
     while (std::chrono::steady_clock::now() < deadline)
     {
-        std::promise<bool> cert_query_done;
-        auto cert_query_done_future = cert_query_done.get_future();
+        std::atomic<bool> cert_query_done{false};
+        bool cert_query_result = false;
         boost::asio::post(io_context,
-                          [server, sni, cert_query_done = std::move(cert_query_done)]() mutable
-                          { cert_query_done.set_value(server->cert_manager_.get_certificate(sni).has_value()); });
-        EXPECT_EQ(cert_query_done_future.wait_for(std::chrono::seconds(1)), std::future_status::ready);
-        if (cert_query_done_future.get())
+                          [server, sni, &cert_query_done, &cert_query_result]()
+                          {
+                              cert_query_result = server->cert_manager_.get_certificate(sni).has_value();
+                              cert_query_done.store(true, std::memory_order_release);
+                          });
+        EXPECT_TRUE(mux::test::co_wait_until(
+            [&cert_query_done]() { return cert_query_done.load(std::memory_order_acquire); }, std::chrono::seconds(1)));
+        if (cert_query_result)
         {
             cert_ready = true;
             break;
@@ -2677,36 +2796,36 @@ TEST_F(remote_server_test_fixture, SetCertificateRunsWhenAsyncQueueBlockedThenIo
     auto server = std::make_shared<mux::remote_server>(pool, cfg);
     server->start();
 
-    std::promise<void> blocker_started;
-    auto blocker_started_future = blocker_started.get_future();
+    std::atomic<bool> blocker_started{false};
     std::atomic<bool> release_blocker{false};
     boost::asio::post(io_context,
                       [&blocker_started, &release_blocker]()
                       {
-                          blocker_started.set_value();
+                          blocker_started.store(true, std::memory_order_release);
                           while (!release_blocker.load(std::memory_order_acquire))
                           {
                               std::this_thread::sleep_for(std::chrono::milliseconds(10));
                           }
                       });
-    EXPECT_EQ(blocker_started_future.wait_for(std::chrono::seconds(1)), std::future_status::ready);
+    EXPECT_TRUE(mux::test::co_wait_until(
+        [&blocker_started]() { return blocker_started.load(std::memory_order_acquire); }, std::chrono::seconds(1)));
 
     reality::server_fingerprint fingerprint;
     fingerprint.cipher_suite = 0x1301;
     fingerprint.alpn = "h2";
     const std::string sni = "blocked.then.stop.test";
 
-    std::promise<void> setter_done;
-    auto setter_done_future = setter_done.get_future();
+    std::atomic<bool> setter_done{false};
     std::thread setter(
         [&]()
         {
             server->set_certificate(sni, reality::construct_certificate({0x01, 0x02, 0x03}), fingerprint, "trace-stop-race");
-            setter_done.set_value();
+            setter_done.store(true, std::memory_order_release);
         });
     auto setter_guard = make_thread_join_guard(setter);
 
-    EXPECT_EQ(setter_done_future.wait_for(std::chrono::seconds(1)), std::future_status::ready);
+    EXPECT_TRUE(mux::test::co_wait_until(
+        [&setter_done]() { return setter_done.load(std::memory_order_acquire); }, std::chrono::seconds(1)));
 
     server->stop();
     pool.stop();
@@ -2937,8 +3056,11 @@ TEST_F(remote_server_test_fixture, TryRegisterStreamWithReasonClassifiesLimitAnd
     EXPECT_EQ(connection->try_register_stream_with_reason(3, std::make_shared<noop_mux_stream>()), mux::stream_register_result::kLimitReached);
 
     connection->remove_stream(1);
+    EXPECT_EQ(connection->try_register_stream_with_reason(1, std::make_shared<noop_mux_stream>()), mux::stream_register_result::kIdConflict);
+    drain_io_context(io_context);
     EXPECT_EQ(connection->try_register_stream_with_reason(1, std::make_shared<noop_mux_stream>()), mux::stream_register_result::kSuccess);
     connection->remove_stream(1);
+    drain_io_context(io_context);
 
     connection->stop();
     EXPECT_EQ(connection->try_register_stream_with_reason(3, std::make_shared<noop_mux_stream>()), mux::stream_register_result::kClosed);
@@ -2969,21 +3091,21 @@ TEST_F(remote_server_test_fixture, RejectStreamForLimitSendsAckAndReset)
             });
     EXPECT_CALL(*conn, mock_send_async(42, mux::kCmdRst, testing::_)).WillOnce(testing::Return(boost::system::error_code{}));
 
-    std::promise<void> done;
-    auto done_future = done.get_future();
+    std::atomic<bool> done_ready{false};
     boost::asio::co_spawn(
         pool.get_io_context(),
-        [server, conn, ctx, &done]() mutable -> boost::asio::awaitable<void>
+        [server, conn, ctx, &done_ready]() mutable -> boost::asio::awaitable<void>
         {
             co_await server->reject_stream_for_limit(conn, ctx, 42);
-            done.set_value();
+            done_ready.store(true, std::memory_order_release);
             co_return;
         },
         boost::asio::detached);
 
     std::thread runner([&pool]() { pool.run(); });
     auto runner_guard = make_pool_thread_guard(pool, runner);
-    EXPECT_EQ(done_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_TRUE(mux::test::co_wait_until(
+        [&done_ready]() { return done_ready.load(std::memory_order_acquire); }, std::chrono::seconds(2)));
     pool.stop();
     runner.join();
 }
@@ -3004,23 +3126,23 @@ TEST_F(remote_server_test_fixture, HandleStreamRegisterFailureSendsResetForClose
     EXPECT_CALL(*conn, mock_send_async(43, mux::kCmdRst, testing::_)).WillOnce(testing::Return(boost::system::error_code{}));
     EXPECT_CALL(*conn, mock_send_async(44, mux::kCmdRst, testing::_)).WillOnce(testing::Return(boost::system::error_code{}));
 
-    std::promise<void> done;
-    auto done_future = done.get_future();
+    std::atomic<bool> done_ready{false};
     boost::asio::co_spawn(
         pool.get_io_context(),
-        [server, conn, ctx, &done]() mutable -> boost::asio::awaitable<void>
+        [server, conn, ctx, &done_ready]() mutable -> boost::asio::awaitable<void>
         {
             EXPECT_TRUE(co_await server->handle_stream_register_failure(conn, ctx, 43, mux::stream_register_result::kClosed));
             EXPECT_TRUE(co_await server->handle_stream_register_failure(conn, ctx, 44, mux::stream_register_result::kInvalidStream));
             EXPECT_FALSE(co_await server->handle_stream_register_failure(conn, ctx, 45, mux::stream_register_result::kSuccess));
-            done.set_value();
+            done_ready.store(true, std::memory_order_release);
             co_return;
         },
         boost::asio::detached);
 
     std::thread runner([&pool]() { pool.run(); });
     auto runner_guard = make_pool_thread_guard(pool, runner);
-    EXPECT_EQ(done_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_TRUE(mux::test::co_wait_until(
+        [&done_ready]() { return done_ready.load(std::memory_order_acquire); }, std::chrono::seconds(2)));
     pool.stop();
     runner.join();
 }
@@ -3065,21 +3187,21 @@ TEST_F(remote_server_test_fixture, ProcessStreamRequestOnClosedConnectionSendsRe
     ctx.trace_id("closed-conn");
 
     auto& io_context = pool.get_io_context();
-    std::promise<void> done;
-    auto done_future = done.get_future();
+    std::atomic<bool> done_ready{false};
     boost::asio::co_spawn(
         io_context,
-        [server, tunnel, ctx, payload = std::move(payload), &io_context, &done]() mutable -> boost::asio::awaitable<void>
+        [server, tunnel, ctx, payload = std::move(payload), &io_context, &done_ready]() mutable -> boost::asio::awaitable<void>
         {
             co_await server->process_stream_request(tunnel, ctx, 55, std::move(payload), io_context);
-            done.set_value();
+            done_ready.store(true, std::memory_order_release);
             co_return;
         },
         boost::asio::detached);
 
     std::thread runner([&pool]() { pool.run(); });
     auto runner_guard = make_pool_thread_guard(pool, runner);
-    EXPECT_EQ(done_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_TRUE(mux::test::co_wait_until(
+        [&done_ready]() { return done_ready.load(std::memory_order_acquire); }, std::chrono::seconds(2)));
     pool.stop();
     runner.join();
 }
@@ -3118,21 +3240,21 @@ TEST_F(remote_server_test_fixture, HandleTcpConnectStreamUsesConfiguredConnectTi
     syn.port = 443;
 
     auto* stream_io_context = &pool.get_io_context();
-    std::promise<void> done;
-    auto done_future = done.get_future();
+    std::atomic<bool> done_ready{false};
     boost::asio::co_spawn(
         *stream_io_context,
-        [server, tunnel, stream_ctx, syn, stream_io_context, &done]() mutable -> boost::asio::awaitable<void>
+        [server, tunnel, stream_ctx, syn, stream_io_context, &done_ready]() mutable -> boost::asio::awaitable<void>
         {
             co_await server->handle_tcp_connect_stream(tunnel, stream_ctx, 77, syn, 0, *stream_io_context);
-            done.set_value();
+            done_ready.store(true, std::memory_order_release);
             co_return;
         },
         boost::asio::detached);
 
     std::thread runner([&pool]() { pool.run(); });
     auto runner_guard = make_pool_thread_guard(pool, runner);
-    EXPECT_EQ(done_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_TRUE(mux::test::co_wait_until(
+        [&done_ready]() { return done_ready.load(std::memory_order_acquire); }, std::chrono::seconds(2)));
     ASSERT_NE(registered_stream, nullptr);
     const auto remote_sess = std::dynamic_pointer_cast<mux::remote_session>(registered_stream);
     ASSERT_NE(remote_sess, nullptr);
@@ -3210,21 +3332,24 @@ TEST_F(remote_server_test_fixture, PerformHandshakeResponseCoversCipherSuiteSele
         ctx.conn_id(conn_id);
         ctx.trace_id(sni);
 
-        std::promise<std::pair<mux::remote_server::server_handshake_res, boost::system::error_code>> done;
-        auto done_future = done.get_future();
+        std::pair<mux::remote_server::server_handshake_res, boost::system::error_code> done_result{};
+        std::atomic<bool> done_ready{false};
         boost::asio::co_spawn(
             pool.get_io_context(),
-            [server, server_socket, info, ctx, &done]() mutable -> boost::asio::awaitable<void>
+            [server, server_socket, info, ctx, &done_result, &done_ready]() mutable -> boost::asio::awaitable<void>
             {
                 reality::transcript trans;
                 auto res = co_await server->perform_handshake_response(server_socket, info, trans, ctx);
-                done.set_value({std::move(res), res.ec});
+                const auto res_ec = res.ec;
+                done_result = {std::move(res), res_ec};
+                done_ready.store(true, std::memory_order_release);
                 co_return;
             },
             boost::asio::detached);
 
-        EXPECT_EQ(done_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
-        auto [result, hs_ec] = done_future.get();
+        EXPECT_TRUE(mux::test::co_wait_until(
+            [&done_ready]() { return done_ready.load(std::memory_order_acquire); }, std::chrono::seconds(2)));
+        auto [result, hs_ec] = done_result;
         if (expect_ok)
         {
             EXPECT_FALSE(hs_ec);
@@ -3465,21 +3590,24 @@ TEST_F(remote_server_test_fixture, PerformHandshakeResponseCoversRandomAndSignKe
             fail_next_ed25519_raw_private_key();
         }
 
-        std::promise<std::pair<mux::remote_server::server_handshake_res, boost::system::error_code>> done;
-        auto done_future = done.get_future();
+        std::pair<mux::remote_server::server_handshake_res, boost::system::error_code> done_result{};
+        std::atomic<bool> done_ready{false};
         boost::asio::co_spawn(
             pool.get_io_context(),
-            [server, server_socket, info, ctx, &done]() mutable -> boost::asio::awaitable<void>
+            [server, server_socket, info, ctx, &done_result, &done_ready]() mutable -> boost::asio::awaitable<void>
             {
                 reality::transcript trans;
                 auto res = co_await server->perform_handshake_response(server_socket, info, trans, ctx);
-                done.set_value({std::move(res), res.ec});
+                const auto res_ec = res.ec;
+                done_result = {std::move(res), res_ec};
+                done_ready.store(true, std::memory_order_release);
                 co_return;
             },
             boost::asio::detached);
 
-        EXPECT_EQ(done_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
-        auto [result, hs_ec] = done_future.get();
+        EXPECT_TRUE(mux::test::co_wait_until(
+            [&done_ready]() { return done_ready.load(std::memory_order_acquire); }, std::chrono::seconds(2)));
+        auto [result, hs_ec] = done_result;
         return {result.ok, hs_ec};
     };
 
@@ -3757,11 +3885,11 @@ TEST_F(remote_server_test_fixture, SendServerHelloFlightTimeoutWhenPeerStalls)
     (void)server_socket->set_option(boost::asio::socket_base::send_buffer_size(1024), ec);
     ASSERT_FALSE(ec);
 
-    std::promise<boost::system::error_code> done;
-    auto done_future = done.get_future();
+    boost::system::error_code done_ec;
+    std::atomic<bool> done_ready{false};
     boost::asio::co_spawn(
         *io_context,
-        [server, server_socket, &done]() -> boost::asio::awaitable<void>
+        [server, server_socket, &done_ec, &done_ready]() -> boost::asio::awaitable<void>
         {
             mux::connection_context ctx;
             ctx.conn_id(110);
@@ -3770,13 +3898,15 @@ TEST_F(remote_server_test_fixture, SendServerHelloFlightTimeoutWhenPeerStalls)
             const std::vector<std::uint8_t> sh_msg = {0x02, 0x00, 0x00, 0x00};
             std::vector<std::uint8_t> const flight2_enc(8 * 1024 * 1024, 0x5a);
             const auto write_ec = co_await server->send_server_hello_flight(server_socket, sh_msg, flight2_enc, ctx, 1);
-            done.set_value(write_ec);
+            done_ec = write_ec;
+            done_ready.store(true, std::memory_order_release);
             co_return;
         },
         boost::asio::detached);
 
-    ASSERT_EQ(done_future.wait_for(std::chrono::seconds(4)), std::future_status::ready);
-    EXPECT_EQ(done_future.get(), boost::asio::error::timed_out);
+    ASSERT_TRUE(mux::test::co_wait_until(
+        [&done_ready]() { return done_ready.load(std::memory_order_acquire); }, std::chrono::seconds(4)));
+    EXPECT_EQ(done_ec, boost::asio::error::timed_out);
 
     // NOLINTNEXTLINE(bugprone-unused-return-value)
     (void)client_socket.close(ec);
@@ -3896,24 +4026,16 @@ TEST_F(remote_server_test_fixture, StopClosesInFlightHandshakeConnections)
     ASSERT_FALSE(ec);
 
     const auto tracked_non_empty = wait_for_condition(
-        [&server]()
-        {
-            std::lock_guard<std::mutex> const lock(server->tracked_connection_socket_mu_);
-            return !server->tracked_connection_sockets_.empty();
-        });
+        [&server]() { return remote_server_tracked_socket_count(server) > 0; });
     EXPECT_TRUE(tracked_non_empty);
 
     server->stop();
 
     const auto tracked_cleared = wait_for_condition(
-        [&server]()
-        {
-            std::lock_guard<std::mutex> const lock(server->tracked_connection_socket_mu_);
-            return server->tracked_connection_sockets_.empty();
-        });
+        [&server]() { return remote_server_tracked_socket_count(server) == 0; });
     EXPECT_TRUE(tracked_cleared);
 
-    const auto slots_released = wait_for_condition([&server]() { return server->active_connection_slots_.load(std::memory_order_acquire) == 0; });
+    const auto slots_released = wait_for_condition([&server]() { return remote_server_active_connection_slots(server) == 0; });
     EXPECT_TRUE(slots_released);
 
     // NOLINTNEXTLINE(bugprone-unused-return-value)
@@ -3981,10 +4103,10 @@ TEST_F(remote_server_test_fixture, HandshakeReadTimeoutReleasesSlotWithoutFallba
     boost::asio::write(client_socket, boost::asio::buffer(partial_client_hello), ec);
     ASSERT_FALSE(ec);
 
-    const auto slot_reserved = wait_for_condition([&server]() { return server->active_connection_slots_.load(std::memory_order_acquire) > 0; });
+    const auto slot_reserved = wait_for_condition([&server]() { return remote_server_active_connection_slots(server) > 0; });
     EXPECT_TRUE(slot_reserved);
 
-    const auto slot_released = wait_for_condition([&server]() { return server->active_connection_slots_.load(std::memory_order_acquire) == 0; },
+    const auto slot_released = wait_for_condition([&server]() { return remote_server_active_connection_slots(server) == 0; },
                                                   std::chrono::milliseconds(4000),
                                                   std::chrono::milliseconds(20));
     EXPECT_TRUE(slot_released);
@@ -4052,18 +4174,19 @@ TEST_F(remote_server_test_fixture, ReadInitialAndValidateAcceptsFragmentedTlsHea
     auto record = build_valid_sid_ch("www.google.com", "0102030405060708", static_cast<std::uint32_t>(time(nullptr)), sid);
     ASSERT_GT(record.size(), 5U);
 
-    std::promise<mux::remote_server::initial_read_res> done;
-    auto done_future = done.get_future();
+    mux::remote_server::initial_read_res done_res{};
+    std::atomic<bool> done_ready{false};
     boost::asio::co_spawn(
         pool.get_io_context(),
-        [server, server_socket, &done]() -> boost::asio::awaitable<void>
+        [server, server_socket, &done_res, &done_ready]() -> boost::asio::awaitable<void>
         {
             mux::connection_context ctx;
             ctx.conn_id(9001);
             ctx.trace_id("fragmented-header");
             std::vector<std::uint8_t> initial_buf;
             auto res = co_await server->read_initial_and_validate(server_socket, ctx, initial_buf);
-            done.set_value(res);
+            done_res = res;
+            done_ready.store(true, std::memory_order_release);
             co_return;
         },
         boost::asio::detached);
@@ -4074,8 +4197,9 @@ TEST_F(remote_server_test_fixture, ReadInitialAndValidateAcceptsFragmentedTlsHea
     boost::asio::write(client_socket, boost::asio::buffer(record.data() + 2, record.size() - 2), ec);
     ASSERT_FALSE(ec);
 
-    ASSERT_EQ(done_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
-    const auto res = done_future.get();
+    ASSERT_TRUE(mux::test::co_wait_until(
+        [&done_ready]() { return done_ready.load(std::memory_order_acquire); }, std::chrono::seconds(2)));
+    const auto res = done_res;
     EXPECT_TRUE(res.ok);
     EXPECT_FALSE(res.allow_fallback);
     EXPECT_FALSE(res.ec);
@@ -4113,24 +4237,26 @@ TEST_F(remote_server_test_fixture, ReadInitialAndValidateKeepsOnlyClientHelloRec
     boost::asio::write(client_socket, boost::asio::buffer(wire), ec);
     ASSERT_FALSE(ec);
 
-    std::promise<std::pair<mux::remote_server::initial_read_res, std::size_t>> done;
-    auto done_future = done.get_future();
+    std::pair<mux::remote_server::initial_read_res, std::size_t> done_res{};
+    std::atomic<bool> done_ready{false};
     boost::asio::co_spawn(
         pool.get_io_context(),
-        [server, server_socket, &done]() -> boost::asio::awaitable<void>
+        [server, server_socket, &done_res, &done_ready]() -> boost::asio::awaitable<void>
         {
             mux::connection_context ctx;
             ctx.conn_id(9002);
             ctx.trace_id("trim-client-hello-record");
             std::vector<std::uint8_t> initial_buf;
             auto res = co_await server->read_initial_and_validate(server_socket, ctx, initial_buf);
-            done.set_value(std::make_pair(res, initial_buf.size()));
+            done_res = std::make_pair(res, initial_buf.size());
+            done_ready.store(true, std::memory_order_release);
             co_return;
         },
         boost::asio::detached);
 
-    ASSERT_EQ(done_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
-    const auto [res, buf_size] = done_future.get();
+    ASSERT_TRUE(mux::test::co_wait_until(
+        [&done_ready]() { return done_ready.load(std::memory_order_acquire); }, std::chrono::seconds(2)));
+    const auto [res, buf_size] = done_res;
     EXPECT_TRUE(res.ok);
     EXPECT_FALSE(res.allow_fallback);
     EXPECT_FALSE(res.ec);
@@ -4151,24 +4277,26 @@ TEST_F(remote_server_test_fixture, DelayAndFallbackShortCircuitsWhenStopRequeste
     ctx.conn_id(6060);
     ctx.trace_id("delay-stop-short-circuit");
 
-    std::promise<std::pair<mux::remote_server::server_handshake_res, boost::system::error_code>> done;
-    auto done_future = done.get_future();
+    std::pair<mux::remote_server::server_handshake_res, boost::system::error_code> done_res{};
+    std::atomic<bool> done_ready{false};
     server->stop_.store(true, std::memory_order_release);
     boost::asio::co_spawn(
         pool.get_io_context(),
-        [server, socket, ctx, &done]() mutable -> boost::asio::awaitable<void>
+        [server, socket, ctx, &done_res, &done_ready]() mutable -> boost::asio::awaitable<void>
         {
             auto res = co_await server->delay_and_fallback(
                 socket, std::vector<std::uint8_t>{0x16}, ctx, "stop.test");
-            done.set_value(std::make_pair(std::move(res), boost::system::error_code{}));
+            done_res = std::make_pair(std::move(res), boost::system::error_code{});
+            done_ready.store(true, std::memory_order_release);
             co_return;
         },
         boost::asio::detached);
 
-    EXPECT_EQ(done_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
-    if (done_future.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+    EXPECT_TRUE(mux::test::co_wait_until(
+        [&done_ready]() { return done_ready.load(std::memory_order_acquire); }, std::chrono::seconds(2)));
+    if (done_ready.load(std::memory_order_acquire))
     {
-        const auto [res, spawn_ec] = done_future.get();
+        const auto [res, spawn_ec] = done_res;
         EXPECT_FALSE(spawn_ec);
         EXPECT_FALSE(res.ok);
         EXPECT_EQ(res.ec, boost::asio::error::operation_aborted);
@@ -4195,22 +4323,24 @@ TEST_F(remote_server_test_fixture, DelayAndFallbackReturnsHostNotFoundWhenNoFall
     ctx.conn_id(6061);
     ctx.trace_id("delay-no-fallback-target");
 
-    std::promise<std::pair<mux::remote_server::server_handshake_res, boost::system::error_code>> done;
-    auto done_future = done.get_future();
+    std::pair<mux::remote_server::server_handshake_res, boost::system::error_code> done_res{};
+    std::atomic<bool> done_ready{false};
     boost::asio::co_spawn(
         pool.get_io_context(),
-        [server, socket, ctx, &done]() mutable -> boost::asio::awaitable<void>
+        [server, socket, ctx, &done_res, &done_ready]() mutable -> boost::asio::awaitable<void>
         {
             auto res = co_await server->delay_and_fallback(socket, std::vector<std::uint8_t>{0x16, 0x03, 0x03, 0x00}, ctx, "none.test");
-            done.set_value(std::make_pair(std::move(res), boost::system::error_code{}));
+            done_res = std::make_pair(std::move(res), boost::system::error_code{});
+            done_ready.store(true, std::memory_order_release);
             co_return;
         },
         boost::asio::detached);
 
-    EXPECT_EQ(done_future.wait_for(std::chrono::seconds(4)), std::future_status::ready);
-    if (done_future.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+    EXPECT_TRUE(mux::test::co_wait_until(
+        [&done_ready]() { return done_ready.load(std::memory_order_acquire); }, std::chrono::seconds(4)));
+    if (done_ready.load(std::memory_order_acquire))
     {
-        const auto [res, spawn_ec] = done_future.get();
+        const auto [res, spawn_ec] = done_res;
         EXPECT_FALSE(spawn_ec);
         EXPECT_FALSE(res.ok);
         EXPECT_EQ(res.ec, boost::asio::error::host_not_found);
@@ -4248,6 +4378,10 @@ TEST_F(remote_server_test_fixture, StopRunsInlineWhenIoContextStopped)
     server->stop();
 
     EXPECT_TRUE(server->stop_.load(std::memory_order_acquire));
+    EXPECT_TRUE(server->acceptor_.is_open());
+    EXPECT_TRUE(conn->is_open());
+    EXPECT_GT(server->active_tunnel_count(), 0U);
+    drain_io_context(pool.get_io_context());
     EXPECT_FALSE(server->acceptor_.is_open());
     EXPECT_FALSE(conn->is_open());
     EXPECT_EQ(server->active_tunnel_count(), 0U);
@@ -4310,11 +4444,17 @@ TEST_F(remote_server_test_fixture, StopRunsWhenIoQueueBlocked)
     EXPECT_TRUE(server->acceptor_.is_open());
     server->stop();
     EXPECT_TRUE(server->stop_.load(std::memory_order_acquire));
+    EXPECT_TRUE(server->acceptor_.is_open());
+    EXPECT_TRUE(conn->is_open());
+    EXPECT_GT(server->active_tunnel_count(), 0U);
+
+    release_blocker.store(true, std::memory_order_release);
+    EXPECT_TRUE(wait_for_condition(
+        [&server, &conn]() { return !server->acceptor_.is_open() && !conn->is_open() && server->active_tunnel_count() == 0; },
+        std::chrono::seconds(2)));
     EXPECT_FALSE(server->acceptor_.is_open());
     EXPECT_FALSE(conn->is_open());
     EXPECT_EQ(server->active_tunnel_count(), 0U);
-
-    release_blocker.store(true, std::memory_order_release);
     pool.stop();
     if (runner.joinable())
     {
@@ -4345,6 +4485,10 @@ TEST_F(remote_server_test_fixture, StopRunsWhenIoContextNotRunning)
     server->stop();
 
     EXPECT_TRUE(server->stop_.load(std::memory_order_acquire));
+    EXPECT_TRUE(server->acceptor_.is_open());
+    EXPECT_TRUE(conn->is_open());
+    EXPECT_GT(server->active_tunnel_count(), 0U);
+    drain_io_context(pool.get_io_context());
     EXPECT_FALSE(server->acceptor_.is_open());
     EXPECT_FALSE(conn->is_open());
     EXPECT_EQ(server->active_tunnel_count(), 0U);
@@ -4374,11 +4518,16 @@ TEST_F(remote_server_test_fixture, DrainClosesAcceptorButKeepsActiveTunnels)
     server->drain();
 
     EXPECT_TRUE(server->stop_.load(std::memory_order_acquire));
+    EXPECT_TRUE(server->acceptor_.is_open());
+    drain_io_context(pool.get_io_context());
     EXPECT_FALSE(server->acceptor_.is_open());
     EXPECT_TRUE(conn->is_open());
     EXPECT_GT(server->active_tunnel_count(), 0U);
 
     server->stop();
+    EXPECT_TRUE(conn->is_open());
+    EXPECT_GT(server->active_tunnel_count(), 0U);
+    drain_io_context(pool.get_io_context());
     EXPECT_FALSE(conn->is_open());
     EXPECT_EQ(server->active_tunnel_count(), 0U);
     pool.stop();
@@ -4457,22 +4606,22 @@ TEST_F(remote_server_test_fixture, HandleFallbackCoversCloseSocketErrorBranches)
     ctx.remote_addr("127.0.0.10");
     ctx.trace_id("fallback-close-errors");
 
-    std::promise<void> done;
-    auto done_future = done.get_future();
+    std::atomic<bool> done_ready{false};
 
     fail_next_shutdown(EIO);
     fail_next_close(EIO);
     boost::asio::co_spawn(
         pool.get_io_context(),
-        [server, fallback_socket, ctx, &done]() mutable -> boost::asio::awaitable<void>
+        [server, fallback_socket, ctx, &done_ready]() mutable -> boost::asio::awaitable<void>
         {
             co_await server->handle_fallback(fallback_socket, std::vector<std::uint8_t>{0x16}, ctx, "blocked.test");
-            done.set_value();
+            done_ready.store(true, std::memory_order_release);
             co_return;
         },
         boost::asio::detached);
 
-    EXPECT_EQ(done_future.wait_for(std::chrono::seconds(5)), std::future_status::ready);
+    EXPECT_TRUE(mux::test::co_wait_until(
+        [&done_ready]() { return done_ready.load(std::memory_order_acquire); }, std::chrono::seconds(5)));
 
     server->stop();
     pool.stop();

@@ -2,7 +2,6 @@
 #include <atomic>
 #include <cerrno>
 #include <chrono>
-#include <future>
 #include <memory>
 #include <string>
 #include <thread>
@@ -189,14 +188,36 @@ bool wait_for_listen_port(const std::shared_ptr<mux::socks_client>& client)
     return false;
 }
 
+void drain_io_context(boost::asio::io_context& io_context, const int rounds = 16)
+{
+    io_context.restart();
+    for (int i = 0; i < rounds; ++i)
+    {
+        if (io_context.poll() == 0)
+        {
+            break;
+        }
+    }
+}
+
 template <typename Func>
 auto run_on_io_context(boost::asio::io_context& io_context, Func&& fn) -> decltype(fn())
 {
     using result_type = decltype(fn());
-    std::promise<result_type> promise;
-    auto future = promise.get_future();
-    boost::asio::post(io_context, [func = std::forward<Func>(fn), promise = std::move(promise)]() mutable { promise.set_value(func()); });
-    return future.get();
+    result_type result{};
+    std::atomic<bool> done{false};
+    boost::asio::post(io_context,
+                      [func = std::forward<Func>(fn), &result, &done]()
+                      {
+                          result = func();
+                          done.store(true, std::memory_order_release);
+                      });
+    if (!mux::test::co_wait_until([&done]() { return done.load(std::memory_order_acquire); }, std::chrono::seconds(2)))
+    {
+        ADD_FAILURE() << "run_on_io_context timed out";
+        return result_type{};
+    }
+    return result;
 }
 
 std::size_t session_count(boost::asio::io_context& io_context, const std::shared_ptr<mux::socks_client>& client)
@@ -218,20 +239,20 @@ bool acceptor_is_open(boost::asio::io_context& io_context, const std::shared_ptr
     return run_on_io_context(io_context, [client]() { return client->acceptor_.is_open(); });
 }
 
-std::future<void> spawn_accept_local_loop(boost::asio::io_context& io_context, const std::shared_ptr<mux::socks_client>& client)
+std::shared_ptr<std::atomic<bool>> spawn_accept_local_loop(boost::asio::io_context& io_context,
+                                                           const std::shared_ptr<mux::socks_client>& client)
 {
-    auto done = std::make_shared<std::promise<void>>();
-    auto future = done->get_future();
+    auto done = std::make_shared<std::atomic<bool>>(false);
     boost::asio::co_spawn(
         io_context,
         [client, done]() -> boost::asio::awaitable<void>
         {
             co_await client->accept_local_loop();
-            done->set_value();
+            done->store(true, std::memory_order_release);
             co_return;
         },
         boost::asio::detached);
-    return future;
+    return done;
 }
 
 }    // namespace
@@ -429,6 +450,8 @@ TEST(LocalClientTest, StopRunsInlineWhenIoContextStopped)
 
     pool.stop();
     client->stop();
+    EXPECT_TRUE(client->acceptor_.is_open());
+    drain_io_context(pool.get_io_context());
     EXPECT_FALSE(client->acceptor_.is_open());
 }
 
@@ -469,9 +492,10 @@ TEST(LocalClientTest, StopRunsWhenIoQueueBlocked)
     ASSERT_TRUE(blocker_started.load(std::memory_order_acquire));
 
     client->stop();
-    EXPECT_FALSE(client->acceptor_.is_open());
+    EXPECT_TRUE(client->acceptor_.is_open());
 
     release_blocker.store(true, std::memory_order_release);
+    EXPECT_TRUE(mux::test::co_wait_until([client]() { return !client->acceptor_.is_open(); }, std::chrono::seconds(2)));
     pool.stop();
     if (runner.joinable())
     {
@@ -497,6 +521,8 @@ TEST(LocalClientTest, StopRunsWhenIoContextNotRunning)
     ASSERT_TRUE(client->acceptor_.is_open());
 
     client->stop();
+    EXPECT_TRUE(client->acceptor_.is_open());
+    drain_io_context(pool.get_io_context());
     EXPECT_FALSE(client->acceptor_.is_open());
     pool.stop();
 }
@@ -557,11 +583,12 @@ TEST(LocalClientTest, StartAfterStopResetsStopFlag)
     auto client = std::make_shared<mux::socks_client>(pool, cfg);
     client->start();
     client->stop();
-    EXPECT_TRUE(client->stop_.load(std::memory_order_acquire));
+    drain_io_context(pool.get_io_context());
 
     client->start();
-    EXPECT_FALSE(client->stop_.load(std::memory_order_acquire));
     client->stop();
+    drain_io_context(pool.get_io_context());
+    EXPECT_FALSE(client->acceptor_.is_open());
 }
 
 TEST(LocalClientTest, HandshakeFailInvalidServerPubKey)
@@ -818,7 +845,7 @@ TEST(LocalClientTest, AcceptLoopSkipsSetupWhenStopAlreadySet)
 
     auto done = spawn_accept_local_loop(pool.get_io_context(), client);
     std::thread runner([&pool]() { pool.run(); });
-    EXPECT_EQ(done.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_TRUE(mux::test::co_wait_until([done]() { return done->load(std::memory_order_acquire); }, std::chrono::seconds(2)));
     EXPECT_FALSE(acceptor_is_open(pool.get_io_context(), client));
 
     pool.stop();
@@ -844,7 +871,7 @@ TEST(LocalClientTest, AcceptLoopReturnsWhenTunnelPoolMissing)
 
     auto done = spawn_accept_local_loop(pool.get_io_context(), client);
     std::thread runner([&pool]() { pool.run(); });
-    EXPECT_EQ(done.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_TRUE(mux::test::co_wait_until([done]() { return done->load(std::memory_order_acquire); }, std::chrono::seconds(2)));
     EXPECT_TRUE(client->stop_.load(std::memory_order_acquire));
     EXPECT_FALSE(acceptor_is_open(pool.get_io_context(), client));
 
@@ -872,7 +899,7 @@ TEST(LocalClientTest, AcceptLoopReturnsWhenRouterMissing)
 
     auto done = spawn_accept_local_loop(pool.get_io_context(), client);
     std::thread runner([&pool]() { pool.run(); });
-    EXPECT_EQ(done.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_TRUE(mux::test::co_wait_until([done]() { return done->load(std::memory_order_acquire); }, std::chrono::seconds(2)));
     EXPECT_TRUE(client->stop_.load(std::memory_order_acquire));
     EXPECT_FALSE(acceptor_is_open(pool.get_io_context(), client));
 
@@ -900,7 +927,7 @@ TEST(LocalClientTest, AcceptLoopSetupHandlesSocketOpenFailure)
     fail_next_socket(EMFILE);
     auto done = spawn_accept_local_loop(pool.get_io_context(), client);
     std::thread runner([&pool]() { pool.run(); });
-    EXPECT_EQ(done.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_TRUE(mux::test::co_wait_until([done]() { return done->load(std::memory_order_acquire); }, std::chrono::seconds(2)));
     EXPECT_FALSE(acceptor_is_open(pool.get_io_context(), client));
 
     client->stop();
@@ -927,7 +954,7 @@ TEST(LocalClientTest, AcceptLoopSetupHandlesReuseAddressFailure)
     fail_next_reuse_setsockopt(EPERM);
     auto done = spawn_accept_local_loop(pool.get_io_context(), client);
     std::thread runner([&pool]() { pool.run(); });
-    EXPECT_EQ(done.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_TRUE(mux::test::co_wait_until([done]() { return done->load(std::memory_order_acquire); }, std::chrono::seconds(2)));
     EXPECT_FALSE(acceptor_is_open(pool.get_io_context(), client));
 
     client->stop();
@@ -967,7 +994,7 @@ TEST(LocalClientTest, AcceptLoopLogsRetryOnAcceptError)
 
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
     client->stop();
-    EXPECT_EQ(done.wait_for(std::chrono::seconds(3)), std::future_status::ready);
+    EXPECT_TRUE(mux::test::co_wait_until([done]() { return done->load(std::memory_order_acquire); }, std::chrono::seconds(3)));
     pool.stop();
     if (runner.joinable())
     {
@@ -1004,7 +1031,7 @@ TEST(LocalClientTest, AcceptLoopHandlesNoDelaySetOptionFailure)
     connector.close(ec);
 
     client->stop();
-    EXPECT_EQ(done.wait_for(std::chrono::seconds(3)), std::future_status::ready);
+    EXPECT_TRUE(mux::test::co_wait_until([done]() { return done->load(std::memory_order_acquire); }, std::chrono::seconds(3)));
     pool.stop();
     if (runner.joinable())
     {

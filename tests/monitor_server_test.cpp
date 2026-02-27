@@ -243,6 +243,18 @@ std::string request_with_retry(std::uint16_t port, const std::string& request)
     return read_response(port, request);
 }
 
+void drain_io_context(boost::asio::io_context& io_context, const int rounds = 32)
+{
+    io_context.restart();
+    for (int i = 0; i < rounds; ++i)
+    {
+        if (io_context.poll() == 0)
+        {
+            break;
+        }
+    }
+}
+
 std::string request_metrics_with_retry(const std::uint16_t port) { return request_with_retry(port, std::string(k_metrics_get_request)); }
 
 std::optional<std::uint64_t> parse_metric_value(const std::string& response, const std::string_view metric_name)
@@ -800,6 +812,8 @@ TEST(MonitorServerTest, StopRunsInlineWhenIoContextStopped)
 
     ioc.stop();
     server->stop();
+    EXPECT_TRUE(server->acceptor_.is_open());
+    drain_io_context(ioc);
     EXPECT_FALSE(server->acceptor_.is_open());
 }
 
@@ -830,14 +844,15 @@ TEST(MonitorServerTest, StopRunsWhenIoQueueBlocked)
     ASSERT_TRUE(blocker_started.load(std::memory_order_acquire));
 
     server->stop();
-    EXPECT_FALSE(server->acceptor_.is_open());
+    EXPECT_TRUE(server->acceptor_.is_open());
 
     release_blocker.store(true, std::memory_order_release);
-    ioc.stop();
     if (runner.joinable())
     {
         runner.join();
     }
+    drain_io_context(ioc);
+    EXPECT_FALSE(server->acceptor_.is_open());
 }
 
 TEST(MonitorServerTest, StopRunsWhenIoContextNotRunning)
@@ -848,6 +863,8 @@ TEST(MonitorServerTest, StopRunsWhenIoContextNotRunning)
     ASSERT_TRUE(server->acceptor_.is_open());
 
     server->stop();
+    EXPECT_TRUE(server->acceptor_.is_open());
+    drain_io_context(ioc);
     EXPECT_FALSE(server->acceptor_.is_open());
 }
 

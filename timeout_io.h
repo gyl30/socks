@@ -1,13 +1,14 @@
 #ifndef TIMEOUT_IO_H
 #define TIMEOUT_IO_H
 
-#include <atomic>
 #include <chrono>
 #include <memory>
 #include <string>
 #include <cstddef>
 #include <cstdint>
 #include <utility>
+#include <variant>
+#include <tuple>
 #include <string_view>
 #include <system_error>
 
@@ -20,9 +21,12 @@
 #include <boost/asio/connect.hpp>
 #include <boost/asio/as_tuple.hpp>
 #include <boost/asio/awaitable.hpp>
+#include <boost/asio/this_coro.hpp>
 #include <boost/asio/steady_timer.hpp>
+#include <boost/asio/redirect_error.hpp>
 #include <boost/system/error_code.hpp>
 #include <boost/asio/use_awaitable.hpp>
+#include <boost/asio/experimental/awaitable_operators.hpp>
 
 #include "log.h"
 
@@ -69,20 +73,6 @@ struct timed_udp_resolve_result
     boost::system::error_code ec;
 };
 
-struct socket_timeout_state
-{
-    std::shared_ptr<boost::asio::steady_timer> timer;
-    std::shared_ptr<std::atomic<bool>> timed_out;
-    std::shared_ptr<std::atomic<bool>> completed;
-};
-
-struct resolver_timeout_state
-{
-    std::shared_ptr<boost::asio::steady_timer> timer;
-    std::shared_ptr<std::atomic<bool>> timed_out;
-    std::shared_ptr<std::atomic<bool>> completed;
-};
-
 namespace detail
 {
 
@@ -111,159 +101,17 @@ inline void cancel_and_close_socket(boost::asio::ip::tcp::socket& socket, const 
     log_socket_timeout_failure(scope, "close", close_ec);
 }
 
+inline boost::asio::awaitable<boost::system::error_code> async_timeout_wait(const std::chrono::steady_clock::duration timeout)
+{
+    auto executor = co_await boost::asio::this_coro::executor;
+    boost::asio::steady_timer timer(executor);
+    timer.expires_after(timeout);
+    boost::system::error_code wait_ec;
+    co_await timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, wait_ec));
+    co_return wait_ec;
+}
+
 }    // namespace detail
-
-inline socket_timeout_state arm_socket_timeout(boost::asio::ip::tcp::socket& socket,
-                                               const std::chrono::milliseconds timeout,
-                                               const std::string_view scope = {})
-{
-    if (timeout.count() <= 0)
-    {
-        return {};
-    }
-
-    auto timer = std::make_shared<boost::asio::steady_timer>(socket.get_executor());
-    auto timed_out = std::make_shared<std::atomic<bool>>(false);
-    auto completed = std::make_shared<std::atomic<bool>>(false);
-    timer->expires_after(timeout);
-    timer->async_wait(
-        [&socket, timed_out, completed, scope](const boost::system::error_code& timer_ec)
-        {
-            if (timer_ec)
-            {
-                return;
-            }
-            bool expected = false;
-            if (!completed->compare_exchange_strong(expected, true, std::memory_order_acq_rel, std::memory_order_acquire))
-            {
-                return;
-            }
-            timed_out->store(true, std::memory_order_release);
-            detail::cancel_and_close_socket(socket, scope);
-        });
-    return socket_timeout_state{.timer = std::move(timer), .timed_out = std::move(timed_out), .completed = std::move(completed)};
-}
-
-inline socket_timeout_state arm_socket_timeout(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
-                                               const std::chrono::milliseconds timeout,
-                                               const std::string_view scope = {})
-{
-    if (!socket)
-    {
-        return {};
-    }
-    if (timeout.count() <= 0)
-    {
-        return {};
-    }
-
-    auto timer = std::make_shared<boost::asio::steady_timer>(socket->get_executor());
-    auto timed_out = std::make_shared<std::atomic<bool>>(false);
-    auto completed = std::make_shared<std::atomic<bool>>(false);
-    timer->expires_after(timeout);
-    timer->async_wait(
-        [socket, timed_out, completed, scope](const boost::system::error_code& timer_ec)
-        {
-            if (timer_ec)
-            {
-                return;
-            }
-            bool expected = false;
-            if (!completed->compare_exchange_strong(expected, true, std::memory_order_acq_rel, std::memory_order_acquire))
-            {
-                return;
-            }
-            timed_out->store(true, std::memory_order_release);
-            detail::cancel_and_close_socket(*socket, scope);
-        });
-    return socket_timeout_state{.timer = std::move(timer), .timed_out = std::move(timed_out), .completed = std::move(completed)};
-}
-
-inline bool disarm_timeout(const socket_timeout_state& state)
-{
-    if (!state.timer || !state.timed_out || !state.completed)
-    {
-        return false;
-    }
-    bool expected = false;
-    if (state.completed->compare_exchange_strong(expected, true, std::memory_order_acq_rel, std::memory_order_acquire))
-    {
-        (void)state.timer->cancel();
-    }
-    return state.timed_out->load(std::memory_order_acquire);
-}
-
-inline resolver_timeout_state arm_resolver_timeout(boost::asio::ip::tcp::resolver& resolver, const std::chrono::milliseconds timeout)
-{
-    if (timeout.count() <= 0)
-    {
-        return {};
-    }
-
-    auto timer = std::make_shared<boost::asio::steady_timer>(resolver.get_executor());
-    auto timed_out = std::make_shared<std::atomic<bool>>(false);
-    auto completed = std::make_shared<std::atomic<bool>>(false);
-    timer->expires_after(timeout);
-    timer->async_wait(
-        [&resolver, timed_out, completed](const boost::system::error_code& timer_ec)
-        {
-            if (timer_ec)
-            {
-                return;
-            }
-            bool expected = false;
-            if (!completed->compare_exchange_strong(expected, true, std::memory_order_acq_rel, std::memory_order_acquire))
-            {
-                return;
-            }
-            timed_out->store(true, std::memory_order_release);
-            resolver.cancel();
-        });
-    return resolver_timeout_state{.timer = std::move(timer), .timed_out = std::move(timed_out), .completed = std::move(completed)};
-}
-
-inline resolver_timeout_state arm_resolver_timeout(boost::asio::ip::udp::resolver& resolver, const std::chrono::milliseconds timeout)
-{
-    if (timeout.count() <= 0)
-    {
-        return {};
-    }
-
-    auto timer = std::make_shared<boost::asio::steady_timer>(resolver.get_executor());
-    auto timed_out = std::make_shared<std::atomic<bool>>(false);
-    auto completed = std::make_shared<std::atomic<bool>>(false);
-    timer->expires_after(timeout);
-    timer->async_wait(
-        [&resolver, timed_out, completed](const boost::system::error_code& timer_ec)
-        {
-            if (timer_ec)
-            {
-                return;
-            }
-            bool expected = false;
-            if (!completed->compare_exchange_strong(expected, true, std::memory_order_acq_rel, std::memory_order_acquire))
-            {
-                return;
-            }
-            timed_out->store(true, std::memory_order_release);
-            resolver.cancel();
-        });
-    return resolver_timeout_state{.timer = std::move(timer), .timed_out = std::move(timed_out), .completed = std::move(completed)};
-}
-
-inline bool disarm_timeout(const resolver_timeout_state& state)
-{
-    if (!state.timer || !state.timed_out || !state.completed)
-    {
-        return false;
-    }
-    bool expected = false;
-    if (state.completed->compare_exchange_strong(expected, true, std::memory_order_acq_rel, std::memory_order_acquire))
-    {
-        (void)state.timer->cancel();
-    }
-    return state.timed_out->load(std::memory_order_acquire);
-}
 
 inline boost::asio::awaitable<timed_tcp_read_result> async_read_with_timeout(boost::asio::ip::tcp::socket& socket,
                                                                              const boost::asio::mutable_buffer buffer,
@@ -271,32 +119,44 @@ inline boost::asio::awaitable<timed_tcp_read_result> async_read_with_timeout(boo
                                                                              const bool require_full_buffer,
                                                                              const std::string_view scope = {})
 {
-    auto timeout_state = arm_socket_timeout(socket, std::chrono::seconds(timeout_sec), scope);
-    boost::system::error_code read_ec;
-    std::size_t read_size = 0;
-    if (require_full_buffer)
+    auto do_read = [&]() -> boost::asio::awaitable<std::tuple<boost::system::error_code, std::size_t>>
     {
-        const auto [exact_read_ec, exact_read_size] =
-            co_await boost::asio::async_read(socket, buffer, boost::asio::as_tuple(boost::asio::use_awaitable));
-        read_ec = exact_read_ec;
-        read_size = exact_read_size;
-    }
-    else
+        if (require_full_buffer)
+        {
+            co_return co_await boost::asio::async_read(socket, buffer, boost::asio::as_tuple(boost::asio::use_awaitable));
+        }
+        co_return co_await socket.async_read_some(buffer, boost::asio::as_tuple(boost::asio::use_awaitable));
+    };
+
+    if (timeout_sec == 0)
     {
-        const auto [read_some_ec, read_some_size] = co_await socket.async_read_some(buffer, boost::asio::as_tuple(boost::asio::use_awaitable));
-        read_ec = read_some_ec;
-        read_size = read_some_size;
+        const auto [read_ec, read_size] = co_await do_read();
+        if (read_ec)
+        {
+            co_return timed_tcp_read_result{.ok = false, .timed_out = false, .read_size = read_size, .ec = read_ec};
+        }
+        co_return timed_tcp_read_result{.ok = true, .timed_out = false, .read_size = read_size, .ec = {}};
     }
 
-    if (disarm_timeout(timeout_state))
+    using boost::asio::experimental::awaitable_operators::operator||;
+    auto read_or_timeout = co_await (do_read() || detail::async_timeout_wait(std::chrono::seconds(timeout_sec)));
+    if (read_or_timeout.index() == 0)
     {
-        co_return timed_tcp_read_result{.ok = false, .timed_out = true, .read_size = read_size, .ec = boost::asio::error::timed_out};
+        const auto [read_ec, read_size] = std::get<0>(read_or_timeout);
+        if (read_ec)
+        {
+            co_return timed_tcp_read_result{.ok = false, .timed_out = false, .read_size = read_size, .ec = read_ec};
+        }
+        co_return timed_tcp_read_result{.ok = true, .timed_out = false, .read_size = read_size, .ec = {}};
     }
-    if (read_ec)
+
+    const auto wait_ec = std::get<1>(read_or_timeout);
+    if (wait_ec)
     {
-        co_return timed_tcp_read_result{.ok = false, .timed_out = false, .read_size = read_size, .ec = read_ec};
+        co_return timed_tcp_read_result{.ok = false, .timed_out = false, .read_size = 0, .ec = wait_ec};
     }
-    co_return timed_tcp_read_result{.ok = true, .timed_out = false, .read_size = read_size, .ec = {}};
+    detail::cancel_and_close_socket(socket, scope);
+    co_return timed_tcp_read_result{.ok = false, .timed_out = true, .read_size = 0, .ec = boost::asio::error::timed_out};
 }
 
 inline boost::asio::awaitable<timed_tcp_read_result> async_read_with_timeout(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
@@ -317,17 +177,40 @@ inline boost::asio::awaitable<timed_tcp_write_result> async_write_with_timeout(b
                                                                                const std::uint32_t timeout_sec,
                                                                                const std::string_view scope = {})
 {
-    auto timeout_state = arm_socket_timeout(socket, std::chrono::seconds(timeout_sec), scope);
-    const auto [write_ec, write_size] = co_await boost::asio::async_write(socket, buffer, boost::asio::as_tuple(boost::asio::use_awaitable));
-    if (disarm_timeout(timeout_state))
+    auto do_write = [&]() -> boost::asio::awaitable<std::tuple<boost::system::error_code, std::size_t>>
     {
-        co_return timed_tcp_write_result{.ok = false, .timed_out = true, .write_size = write_size, .ec = boost::asio::error::timed_out};
-    }
-    if (write_ec)
+        co_return co_await boost::asio::async_write(socket, buffer, boost::asio::as_tuple(boost::asio::use_awaitable));
+    };
+
+    if (timeout_sec == 0)
     {
-        co_return timed_tcp_write_result{.ok = false, .timed_out = false, .write_size = write_size, .ec = write_ec};
+        const auto [write_ec, write_size] = co_await do_write();
+        if (write_ec)
+        {
+            co_return timed_tcp_write_result{.ok = false, .timed_out = false, .write_size = write_size, .ec = write_ec};
+        }
+        co_return timed_tcp_write_result{.ok = true, .timed_out = false, .write_size = write_size, .ec = {}};
     }
-    co_return timed_tcp_write_result{.ok = true, .timed_out = false, .write_size = write_size, .ec = {}};
+
+    using boost::asio::experimental::awaitable_operators::operator||;
+    auto write_or_timeout = co_await (do_write() || detail::async_timeout_wait(std::chrono::seconds(timeout_sec)));
+    if (write_or_timeout.index() == 0)
+    {
+        const auto [write_ec, write_size] = std::get<0>(write_or_timeout);
+        if (write_ec)
+        {
+            co_return timed_tcp_write_result{.ok = false, .timed_out = false, .write_size = write_size, .ec = write_ec};
+        }
+        co_return timed_tcp_write_result{.ok = true, .timed_out = false, .write_size = write_size, .ec = {}};
+    }
+
+    const auto wait_ec = std::get<1>(write_or_timeout);
+    if (wait_ec)
+    {
+        co_return timed_tcp_write_result{.ok = false, .timed_out = false, .write_size = 0, .ec = wait_ec};
+    }
+    detail::cancel_and_close_socket(socket, scope);
+    co_return timed_tcp_write_result{.ok = false, .timed_out = true, .write_size = 0, .ec = boost::asio::error::timed_out};
 }
 
 inline boost::asio::awaitable<timed_tcp_write_result> async_write_with_timeout(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
@@ -347,17 +230,41 @@ inline boost::asio::awaitable<timed_tcp_resolve_result> async_resolve_with_timeo
                                                                                    const std::string& port,
                                                                                    const std::uint32_t timeout_sec)
 {
-    auto timeout_state = arm_resolver_timeout(resolver, std::chrono::seconds(timeout_sec));
-    const auto [resolve_ec, endpoints] = co_await resolver.async_resolve(host, port, boost::asio::as_tuple(boost::asio::use_awaitable));
-    if (disarm_timeout(timeout_state))
+    auto do_resolve =
+        [&]() -> boost::asio::awaitable<std::tuple<boost::system::error_code, boost::asio::ip::tcp::resolver::results_type>>
     {
-        co_return timed_tcp_resolve_result{.ok = false, .timed_out = true, .endpoints = {}, .ec = boost::asio::error::timed_out};
-    }
-    if (resolve_ec)
+        co_return co_await resolver.async_resolve(host, port, boost::asio::as_tuple(boost::asio::use_awaitable));
+    };
+
+    if (timeout_sec == 0)
     {
-        co_return timed_tcp_resolve_result{.ok = false, .timed_out = false, .endpoints = {}, .ec = resolve_ec};
+        const auto [resolve_ec, endpoints] = co_await do_resolve();
+        if (resolve_ec)
+        {
+            co_return timed_tcp_resolve_result{.ok = false, .timed_out = false, .endpoints = {}, .ec = resolve_ec};
+        }
+        co_return timed_tcp_resolve_result{.ok = true, .timed_out = false, .endpoints = endpoints, .ec = {}};
     }
-    co_return timed_tcp_resolve_result{.ok = true, .timed_out = false, .endpoints = endpoints, .ec = {}};
+
+    using boost::asio::experimental::awaitable_operators::operator||;
+    auto resolve_or_timeout = co_await (do_resolve() || detail::async_timeout_wait(std::chrono::seconds(timeout_sec)));
+    if (resolve_or_timeout.index() == 0)
+    {
+        const auto [resolve_ec, endpoints] = std::get<0>(resolve_or_timeout);
+        if (resolve_ec)
+        {
+            co_return timed_tcp_resolve_result{.ok = false, .timed_out = false, .endpoints = {}, .ec = resolve_ec};
+        }
+        co_return timed_tcp_resolve_result{.ok = true, .timed_out = false, .endpoints = endpoints, .ec = {}};
+    }
+
+    const auto wait_ec = std::get<1>(resolve_or_timeout);
+    if (wait_ec)
+    {
+        co_return timed_tcp_resolve_result{.ok = false, .timed_out = false, .endpoints = {}, .ec = wait_ec};
+    }
+    resolver.cancel();
+    co_return timed_tcp_resolve_result{.ok = false, .timed_out = true, .endpoints = {}, .ec = boost::asio::error::timed_out};
 }
 
 inline boost::asio::awaitable<timed_tcp_connect_result> async_connect_with_timeout(boost::asio::ip::tcp::socket& socket,
@@ -365,17 +272,40 @@ inline boost::asio::awaitable<timed_tcp_connect_result> async_connect_with_timeo
                                                                                    const std::uint32_t timeout_sec,
                                                                                    const std::string_view scope = {})
 {
-    auto timeout_state = arm_socket_timeout(socket, std::chrono::seconds(timeout_sec), scope);
-    const auto [connect_ec, endpoint] = co_await boost::asio::async_connect(socket, endpoints, boost::asio::as_tuple(boost::asio::use_awaitable));
-    if (disarm_timeout(timeout_state))
+    auto do_connect = [&]() -> boost::asio::awaitable<std::tuple<boost::system::error_code, boost::asio::ip::tcp::endpoint>>
     {
-        co_return timed_tcp_connect_result{.ok = false, .timed_out = true, .endpoint = {}, .ec = boost::asio::error::timed_out};
-    }
-    if (connect_ec)
+        co_return co_await boost::asio::async_connect(socket, endpoints, boost::asio::as_tuple(boost::asio::use_awaitable));
+    };
+
+    if (timeout_sec == 0)
     {
-        co_return timed_tcp_connect_result{.ok = false, .timed_out = false, .endpoint = {}, .ec = connect_ec};
+        const auto [connect_ec, endpoint] = co_await do_connect();
+        if (connect_ec)
+        {
+            co_return timed_tcp_connect_result{.ok = false, .timed_out = false, .endpoint = {}, .ec = connect_ec};
+        }
+        co_return timed_tcp_connect_result{.ok = true, .timed_out = false, .endpoint = endpoint, .ec = {}};
     }
-    co_return timed_tcp_connect_result{.ok = true, .timed_out = false, .endpoint = endpoint, .ec = {}};
+
+    using boost::asio::experimental::awaitable_operators::operator||;
+    auto connect_or_timeout = co_await (do_connect() || detail::async_timeout_wait(std::chrono::seconds(timeout_sec)));
+    if (connect_or_timeout.index() == 0)
+    {
+        const auto [connect_ec, endpoint] = std::get<0>(connect_or_timeout);
+        if (connect_ec)
+        {
+            co_return timed_tcp_connect_result{.ok = false, .timed_out = false, .endpoint = {}, .ec = connect_ec};
+        }
+        co_return timed_tcp_connect_result{.ok = true, .timed_out = false, .endpoint = endpoint, .ec = {}};
+    }
+
+    const auto wait_ec = std::get<1>(connect_or_timeout);
+    if (wait_ec)
+    {
+        co_return timed_tcp_connect_result{.ok = false, .timed_out = false, .endpoint = {}, .ec = wait_ec};
+    }
+    detail::cancel_and_close_socket(socket, scope);
+    co_return timed_tcp_connect_result{.ok = false, .timed_out = true, .endpoint = {}, .ec = boost::asio::error::timed_out};
 }
 
 inline boost::asio::awaitable<timed_tcp_connect_result> async_connect_with_timeout(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
@@ -395,17 +325,40 @@ inline boost::asio::awaitable<timed_tcp_connect_result> async_connect_with_timeo
                                                                                    const std::uint32_t timeout_sec,
                                                                                    const std::string_view scope = {})
 {
-    auto timeout_state = arm_socket_timeout(socket, std::chrono::seconds(timeout_sec), scope);
-    const auto [connect_ec] = co_await socket.async_connect(endpoint, boost::asio::as_tuple(boost::asio::use_awaitable));
-    if (disarm_timeout(timeout_state))
+    auto do_connect = [&]() -> boost::asio::awaitable<std::tuple<boost::system::error_code>>
     {
-        co_return timed_tcp_connect_result{.ok = false, .timed_out = true, .endpoint = {}, .ec = boost::asio::error::timed_out};
-    }
-    if (connect_ec)
+        co_return co_await socket.async_connect(endpoint, boost::asio::as_tuple(boost::asio::use_awaitable));
+    };
+
+    if (timeout_sec == 0)
     {
-        co_return timed_tcp_connect_result{.ok = false, .timed_out = false, .endpoint = {}, .ec = connect_ec};
+        const auto [connect_ec] = co_await do_connect();
+        if (connect_ec)
+        {
+            co_return timed_tcp_connect_result{.ok = false, .timed_out = false, .endpoint = {}, .ec = connect_ec};
+        }
+        co_return timed_tcp_connect_result{.ok = true, .timed_out = false, .endpoint = endpoint, .ec = {}};
     }
-    co_return timed_tcp_connect_result{.ok = true, .timed_out = false, .endpoint = endpoint, .ec = {}};
+
+    using boost::asio::experimental::awaitable_operators::operator||;
+    auto connect_or_timeout = co_await (do_connect() || detail::async_timeout_wait(std::chrono::seconds(timeout_sec)));
+    if (connect_or_timeout.index() == 0)
+    {
+        const auto [connect_ec] = std::get<0>(connect_or_timeout);
+        if (connect_ec)
+        {
+            co_return timed_tcp_connect_result{.ok = false, .timed_out = false, .endpoint = {}, .ec = connect_ec};
+        }
+        co_return timed_tcp_connect_result{.ok = true, .timed_out = false, .endpoint = endpoint, .ec = {}};
+    }
+
+    const auto wait_ec = std::get<1>(connect_or_timeout);
+    if (wait_ec)
+    {
+        co_return timed_tcp_connect_result{.ok = false, .timed_out = false, .endpoint = {}, .ec = wait_ec};
+    }
+    detail::cancel_and_close_socket(socket, scope);
+    co_return timed_tcp_connect_result{.ok = false, .timed_out = true, .endpoint = {}, .ec = boost::asio::error::timed_out};
 }
 
 inline boost::asio::awaitable<timed_udp_resolve_result> async_resolve_with_timeout(boost::asio::ip::udp::resolver& resolver,
@@ -413,17 +366,41 @@ inline boost::asio::awaitable<timed_udp_resolve_result> async_resolve_with_timeo
                                                                                    const std::string& port,
                                                                                    const std::uint64_t timeout_ms)
 {
-    auto timeout_state = arm_resolver_timeout(resolver, std::chrono::milliseconds(timeout_ms));
-    const auto [resolve_ec, endpoints] = co_await resolver.async_resolve(host, port, boost::asio::as_tuple(boost::asio::use_awaitable));
-    if (disarm_timeout(timeout_state))
+    auto do_resolve =
+        [&]() -> boost::asio::awaitable<std::tuple<boost::system::error_code, boost::asio::ip::udp::resolver::results_type>>
     {
-        co_return timed_udp_resolve_result{.ok = false, .timed_out = true, .endpoints = {}, .ec = boost::asio::error::timed_out};
-    }
-    if (resolve_ec)
+        co_return co_await resolver.async_resolve(host, port, boost::asio::as_tuple(boost::asio::use_awaitable));
+    };
+
+    if (timeout_ms == 0)
     {
-        co_return timed_udp_resolve_result{.ok = false, .timed_out = false, .endpoints = {}, .ec = resolve_ec};
+        const auto [resolve_ec, endpoints] = co_await do_resolve();
+        if (resolve_ec)
+        {
+            co_return timed_udp_resolve_result{.ok = false, .timed_out = false, .endpoints = {}, .ec = resolve_ec};
+        }
+        co_return timed_udp_resolve_result{.ok = true, .timed_out = false, .endpoints = endpoints, .ec = {}};
     }
-    co_return timed_udp_resolve_result{.ok = true, .timed_out = false, .endpoints = endpoints, .ec = {}};
+
+    using boost::asio::experimental::awaitable_operators::operator||;
+    auto resolve_or_timeout = co_await (do_resolve() || detail::async_timeout_wait(std::chrono::milliseconds(timeout_ms)));
+    if (resolve_or_timeout.index() == 0)
+    {
+        const auto [resolve_ec, endpoints] = std::get<0>(resolve_or_timeout);
+        if (resolve_ec)
+        {
+            co_return timed_udp_resolve_result{.ok = false, .timed_out = false, .endpoints = {}, .ec = resolve_ec};
+        }
+        co_return timed_udp_resolve_result{.ok = true, .timed_out = false, .endpoints = endpoints, .ec = {}};
+    }
+
+    const auto wait_ec = std::get<1>(resolve_or_timeout);
+    if (wait_ec)
+    {
+        co_return timed_udp_resolve_result{.ok = false, .timed_out = false, .endpoints = {}, .ec = wait_ec};
+    }
+    resolver.cancel();
+    co_return timed_udp_resolve_result{.ok = false, .timed_out = true, .endpoints = {}, .ec = boost::asio::error::timed_out};
 }
 
 inline std::uint64_t timeout_seconds_to_milliseconds(const std::uint32_t timeout_sec) { return static_cast<std::uint64_t>(timeout_sec) * 1000ULL; }

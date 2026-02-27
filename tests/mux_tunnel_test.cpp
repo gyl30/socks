@@ -38,6 +38,18 @@ std::shared_ptr<tunnel_t> make_tunnel(boost::asio::io_context& io_context, const
         boost::asio::ip::tcp::socket(io_context), io_context, mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, conn_id, "base-trace");
 }
 
+void drain_io_context(boost::asio::io_context& io_context, const int rounds = 16)
+{
+    io_context.restart();
+    for (int i = 0; i < rounds; ++i)
+    {
+        if (io_context.poll() == 0)
+        {
+            break;
+        }
+    }
+}
+
 TEST(MuxTunnelTest, NullConnectionGuardsAllPublicMethods)
 {
     boost::asio::io_context io_context;
@@ -77,6 +89,9 @@ TEST(MuxTunnelTest, CreateStreamAndRegisterPaths)
 
     tunnel->remove_stream(9001);
     tunnel->remove_stream(9002);
+    EXPECT_TRUE(tunnel->connection_->has_stream(9001));
+    EXPECT_TRUE(tunnel->connection_->has_stream(9002));
+    drain_io_context(io_context);
     EXPECT_FALSE(tunnel->connection_->has_stream(9001));
     EXPECT_FALSE(tunnel->connection_->has_stream(9002));
 }

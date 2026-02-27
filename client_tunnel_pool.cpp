@@ -1195,8 +1195,7 @@ void client_tunnel_pool::close_pending_socket(const std::size_t index, std::shar
                 boost::system::error_code ec;
                 ec = pending_socket->cancel(ec);
                 ec = pending_socket->close(ec);
-            },
-            detail::dispatch_timeout_policy::kRunInline);
+            });
         return;
     }
 

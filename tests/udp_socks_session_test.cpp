@@ -3,7 +3,6 @@
 #include <atomic>
 #include <cerrno>
 #include <chrono>
-#include <future>
 #include <memory>
 #include <thread>
 #include <vector>
@@ -195,6 +194,18 @@ std::shared_ptr<mux::mux_tunnel_impl<boost::asio::ip::tcp::socket>> make_test_tu
 {
     return std::make_shared<mux::mux_tunnel_impl<boost::asio::ip::tcp::socket>>(
         boost::asio::ip::tcp::socket(io_context), io_context, mux::reality_engine{{}, {}, {}, {}, EVP_aes_128_gcm()}, true, conn_id);
+}
+
+void drain_io_context(boost::asio::io_context& io_context, const int rounds = 16)
+{
+    io_context.restart();
+    for (int i = 0; i < rounds; ++i)
+    {
+        if (io_context.poll() == 0)
+        {
+            break;
+        }
+    }
 }
 
 }    // namespace
@@ -1287,6 +1298,8 @@ TEST(UdpSocksSessionTest, OnCloseRunsInlineWhenIoContextStopped)
     ctx.stop();
     session->on_close();
     EXPECT_TRUE(session->closed_.load(std::memory_order_acquire));
+    EXPECT_TRUE(session->udp_socket_.is_open());
+    drain_io_context(ctx);
     EXPECT_FALSE(session->udp_socket_.is_open());
 }
 
@@ -1307,6 +1320,9 @@ TEST(UdpSocksSessionTest, OnDataTriggersCloseWhenIoContextStopped)
     ctx.stop();
 
     session->on_data({0x11});
+    EXPECT_FALSE(session->closed_.load(std::memory_order_acquire));
+    EXPECT_TRUE(session->udp_socket_.is_open());
+    drain_io_context(ctx);
     EXPECT_TRUE(session->closed_.load(std::memory_order_acquire));
     EXPECT_FALSE(session->udp_socket_.is_open());
 }
@@ -1317,28 +1333,31 @@ TEST(UdpSocksSessionTest, OnDataDispatchesFromForeignThread)
     mux::config::timeout_t const timeout_cfg;
     auto session = std::make_shared<mux::udp_socks_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, 58, timeout_cfg);
 
-    std::promise<std::vector<std::uint8_t>> received_promise;
-    auto received_future = received_promise.get_future();
+    std::vector<std::uint8_t> received;
+    std::atomic<bool> received_ready{false};
 
     boost::asio::co_spawn(
         ctx,
-        [session, &received_promise]() -> boost::asio::awaitable<void>
+        [session, &received, &received_ready]() -> boost::asio::awaitable<void>
         {
             const auto [ec, data] = co_await session->recv_channel_.async_receive(boost::asio::as_tuple(boost::asio::use_awaitable));
             if (ec)
             {
-                received_promise.set_value({});
+                received.clear();
+                received_ready.store(true, std::memory_order_release);
                 co_return;
             }
-            received_promise.set_value(data);
+            received = data;
+            received_ready.store(true, std::memory_order_release);
         },
         boost::asio::detached);
 
     std::thread io_thread([&ctx]() { ctx.run(); });
     session->on_data({0x21, 0x22});
 
-    ASSERT_EQ(received_future.wait_for(std::chrono::seconds(1)), std::future_status::ready);
-    const auto data = received_future.get();
+    ASSERT_TRUE(mux::test::co_wait_until(
+        [&received_ready]() { return received_ready.load(std::memory_order_acquire); }, std::chrono::seconds(1)));
+    const auto data = received;
     ASSERT_EQ(data.size(), 2U);
     EXPECT_EQ(data[0], 0x21);
     EXPECT_EQ(data[1], 0x22);
@@ -1367,6 +1386,8 @@ TEST(UdpSocksSessionTest, OnCloseRunsWhenIoContextNotRunning)
 
     session->on_close();
     EXPECT_TRUE(session->closed_.load(std::memory_order_acquire));
+    EXPECT_TRUE(session->udp_socket_.is_open());
+    drain_io_context(ctx);
     EXPECT_FALSE(session->udp_socket_.is_open());
 }
 
@@ -1386,6 +1407,9 @@ TEST(UdpSocksSessionTest, OnDataTriggersCloseWhenIoContextNotRunning)
     session->recv_channel_.close();
     session->on_data({0x11});
 
+    EXPECT_FALSE(session->closed_.load(std::memory_order_acquire));
+    EXPECT_TRUE(session->udp_socket_.is_open());
+    drain_io_context(ctx);
     EXPECT_TRUE(session->closed_.load(std::memory_order_acquire));
     EXPECT_FALSE(session->udp_socket_.is_open());
 }
@@ -1440,15 +1464,19 @@ TEST(UdpSocksSessionTest, OnDataTriggersCloseWhenIoQueueBlocked)
     }
 
     session->on_data({0x11});
-    EXPECT_TRUE(session->closed_.load(std::memory_order_acquire));
-    EXPECT_FALSE(session->udp_socket_.is_open());
+    EXPECT_FALSE(session->closed_.load(std::memory_order_acquire));
+    EXPECT_TRUE(session->udp_socket_.is_open());
 
     release_blocker.store(true, std::memory_order_release);
+    EXPECT_TRUE(mux::test::co_wait_until(
+        [session]() { return session->closed_.load(std::memory_order_acquire) && !session->udp_socket_.is_open(); }, std::chrono::seconds(2)));
     ctx.stop();
     if (io_thread.joinable())
     {
         io_thread.join();
     }
+    EXPECT_TRUE(session->closed_.load(std::memory_order_acquire));
+    EXPECT_FALSE(session->udp_socket_.is_open());
 }
 
 TEST(UdpSocksSessionTest, OnCloseRunsWhenIoQueueBlocked)
@@ -1500,12 +1528,14 @@ TEST(UdpSocksSessionTest, OnCloseRunsWhenIoQueueBlocked)
 
     session->on_close();
     EXPECT_TRUE(session->closed_.load(std::memory_order_acquire));
-    EXPECT_FALSE(session->udp_socket_.is_open());
+    EXPECT_TRUE(session->udp_socket_.is_open());
 
     release_blocker.store(true, std::memory_order_release);
+    EXPECT_TRUE(mux::test::co_wait_until([session]() { return !session->udp_socket_.is_open(); }, std::chrono::seconds(2)));
     ctx.stop();
     if (io_thread.joinable())
     {
         io_thread.join();
     }
+    EXPECT_FALSE(session->udp_socket_.is_open());
 }

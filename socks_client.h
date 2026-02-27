@@ -2,7 +2,6 @@
 #define SOCKS_CLIENT_H
 
 #include <atomic>
-#include <mutex>
 #include <memory>
 #include <vector>
 #include <cstdint>
@@ -44,7 +43,6 @@ class socks_client : public std::enable_shared_from_this<socks_client>
     std::atomic<bool> stop_{false};
     std::atomic<bool> started_{false};
     std::atomic<std::uint64_t> lifecycle_epoch_{0};
-    std::mutex lifecycle_mu_;
     const std::uint16_t configured_listen_port_ = 0;
     std::atomic<std::uint16_t> listen_port_{0};
     boost::asio::io_context& io_context_;

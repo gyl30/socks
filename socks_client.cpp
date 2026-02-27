@@ -2,7 +2,6 @@
 #include <chrono>
 #include <memory>
 #include <string>
-#include <thread>
 #include <vector>
 #include <cstdint>
 #include <utility>
@@ -38,7 +37,6 @@ namespace
 
 using session_list_t = std::vector<std::weak_ptr<socks_session>>;
 constexpr std::uint32_t kEphemeralBindRetryAttempts = 120;
-const auto kEphemeralBindRetryDelay = std::chrono::milliseconds(25);
 
 void close_local_socket(boost::asio::ip::tcp::socket& socket)
 {
@@ -118,7 +116,6 @@ bool prepare_local_listener(boost::asio::ip::tcp::acceptor& acceptor, const std:
         {
             break;
         }
-        std::this_thread::sleep_for(kEphemeralBindRetryDelay);
     }
 
     LOG_ERROR("local acceptor setup failed {}", setup_ec.message());
@@ -401,8 +398,6 @@ socks_client::socks_client(io_context_pool& pool, const config& cfg)
 
 void socks_client::start()
 {
-    const std::lock_guard<std::mutex> lock(lifecycle_mu_);
-
     bool expected = false;
     if (!started_.compare_exchange_strong(expected, true, std::memory_order_acq_rel))
     {
@@ -473,8 +468,6 @@ boost::asio::awaitable<void> socks_client::accept_local_loop_detached(std::share
 
 void socks_client::stop()
 {
-    const std::lock_guard<std::mutex> lock(lifecycle_mu_);
-
     LOG_INFO("client stopping closing resources");
     const auto stop_epoch = lifecycle_epoch_.load(std::memory_order_acquire);
     stop_.store(true, std::memory_order_release);
