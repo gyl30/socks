@@ -17,13 +17,13 @@
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/this_coro.hpp>
 #include <boost/asio/io_context.hpp>
-#include <boost/asio/bind_cancellation_slot.hpp>
-#include <boost/asio/steady_timer.hpp>
-#include <boost/asio/redirect_error.hpp>
 #include <boost/asio/ip/address.hpp>
 #include <boost/asio/ip/v6_only.hpp>
+#include <boost/asio/steady_timer.hpp>
 #include <boost/system/error_code.hpp>
 #include <boost/asio/use_awaitable.hpp>
+#include <boost/asio/redirect_error.hpp>
+#include <boost/asio/bind_cancellation_slot.hpp>
 #include <boost/asio/experimental/channel_error.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
 
@@ -33,10 +33,10 @@
 #include "mux_codec.h"
 #include "mux_stream.h"
 #include "mux_tunnel.h"
+#include "timeout_io.h"
 #include "log_context.h"
 #include "mux_protocol.h"
 #include "stop_dispatch.h"
-#include "timeout_io.h"
 #include "udp_socks_session.h"
 
 namespace mux
@@ -511,10 +511,6 @@ void udp_socks_session::start(const std::string& host, const std::uint16_t port)
 
 void udp_socks_session::stop()
 {
-    if (stop_signal_ != nullptr)
-    {
-        stop_signal_->emit(boost::asio::cancellation_type::all);
-    }
     on_close();
 }
 
