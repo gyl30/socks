@@ -18,6 +18,7 @@
 #include <boost/system/error_code.hpp>
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/io_context.hpp>
+#include <boost/asio/cancellation_signal.hpp>
 
 #include "config.h"
 #include "ch_parser.h"
@@ -306,6 +307,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     std::shared_ptr<connection_slot_state> connection_slots_ = std::make_shared<connection_slot_state>();
     std::shared_ptr<tracked_socket_map_t> tracked_connection_sockets_ = std::make_shared<tracked_socket_map_t>();
     std::shared_ptr<tunnel_list_t> active_tunnels_ = std::make_shared<tunnel_list_t>();
+    std::shared_ptr<boost::asio::cancellation_signal> stop_signal_ = std::make_shared<boost::asio::cancellation_signal>();
     config::limits_t limits_config_;
     config::heartbeat_t heartbeat_config_;
     std::atomic<std::uint64_t> lifecycle_epoch_{0};

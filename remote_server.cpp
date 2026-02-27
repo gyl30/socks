@@ -25,6 +25,7 @@
 #include <boost/asio/as_tuple.hpp>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
+#include <boost/asio/bind_cancellation_slot.hpp>
 #include <boost/system/error_code.hpp>
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/io_context.hpp>
@@ -1449,7 +1450,9 @@ void remote_server::start()
     }
 
     stop_.store(false, std::memory_order_release);
-    boost::asio::co_spawn(io_context_, [self = shared_from_this()] { return self->accept_loop(); }, boost::asio::detached);
+    boost::asio::co_spawn(io_context_,
+                          [self = shared_from_this()] { return self->accept_loop(); },
+                          boost::asio::bind_cancellation_slot(stop_signal_->slot(), boost::asio::detached));
 }
 
 void remote_server::drain()
@@ -1486,6 +1489,7 @@ void remote_server::stop()
 {
     const auto stop_epoch = lifecycle_epoch_.load(std::memory_order_acquire);
     stop_.store(true, std::memory_order_release);
+    stop_signal_->emit(boost::asio::cancellation_type::all);
     LOG_INFO("remote server stopping");
 
     detail::dispatch_cleanup_or_run_inline(
@@ -2618,6 +2622,9 @@ boost::asio::awaitable<boost::system::error_code> remote_server::handle_fallback
     const auto target_port = fallback_target.second;
     const auto connect_timeout_sec = timeout_config_.connect;
     auto t = std::make_shared<boost::asio::ip::tcp::socket>(io_context_);
+    track_connection_socket(t);
+    [[maybe_unused]] const std::shared_ptr<void> tracked_target_guard(
+        nullptr, [self = shared_from_this(), t](void*) mutable { self->untrack_connection_socket(t); });
     LOG_CTX_INFO(ctx, "{} proxying sni {} to {} {}", log_event::kFallback, sni, target_host, target_port);
     if (const auto connect_ec = co_await resolve_and_connect_fallback_target(t, io_context_, target_host, target_port, ctx, connect_timeout_sec);
         connect_ec)

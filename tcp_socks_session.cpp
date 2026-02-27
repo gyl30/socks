@@ -18,6 +18,7 @@
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/address.hpp>
+#include <boost/asio/bind_cancellation_slot.hpp>
 #include <boost/system/error_code.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/redirect_error.hpp>
@@ -131,13 +132,15 @@ tcp_socks_session::tcp_socks_session(boost::asio::ip::tcp::socket socket,
                                      std::shared_ptr<router> router,
                                      const std::uint32_t sid,
                                      const config::timeout_t& timeout_cfg,
-                                     std::shared_ptr<void> active_connection_guard)
+                                     std::shared_ptr<void> active_connection_guard,
+                                     std::shared_ptr<boost::asio::cancellation_signal> stop_signal)
     : io_context_(io_context),
       socket_(std::move(socket)),
       idle_timer_(io_context_),
       router_(std::move(router)),
       tunnel_manager_(std::move(tunnel_manager)),
       active_connection_guard_(std::move(active_connection_guard)),
+      stop_signal_(std::move(stop_signal)),
       timeout_config_(timeout_cfg)
 {
     ctx_.new_trace_id();
@@ -147,7 +150,23 @@ tcp_socks_session::tcp_socks_session(boost::asio::ip::tcp::socket socket,
 
 void tcp_socks_session::start(const std::string& host, const std::uint16_t port)
 {
+    if (stop_signal_ != nullptr)
+    {
+        boost::asio::co_spawn(io_context_,
+                              run_detached(shared_from_this(), host, port),
+                              boost::asio::bind_cancellation_slot(stop_signal_->slot(), boost::asio::detached));
+        return;
+    }
     boost::asio::co_spawn(io_context_, run_detached(shared_from_this(), host, port), boost::asio::detached);
+}
+
+void tcp_socks_session::stop()
+{
+    if (stop_signal_ != nullptr)
+    {
+        stop_signal_->emit(boost::asio::cancellation_type::all);
+    }
+    close_client_socket();
 }
 
 boost::asio::awaitable<void> tcp_socks_session::run_detached(std::shared_ptr<tcp_socks_session> self, std::string host, const std::uint16_t port)

@@ -29,6 +29,7 @@
 #include <boost/asio/socket_base.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/system/error_code.hpp>
+#include <boost/asio/bind_cancellation_slot.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/experimental/channel_error.hpp>
 
@@ -470,9 +471,10 @@ void start_tcp_session(boost::asio::ip::tcp::socket s,
                        const std::shared_ptr<router>& router,
                        const std::uint32_t sid,
                        const config& cfg,
-                       const boost::asio::ip::tcp::endpoint& dst_ep)
+                       const boost::asio::ip::tcp::endpoint& dst_ep,
+                       const std::shared_ptr<boost::asio::cancellation_signal>& stop_signal)
 {
-    auto session = std::make_shared<tproxy_tcp_session>(std::move(s), io_context, tunnel_pool, router, sid, cfg, dst_ep);
+    auto session = std::make_shared<tproxy_tcp_session>(std::move(s), io_context, tunnel_pool, router, sid, cfg, dst_ep, stop_signal);
     session->start();
 }
 
@@ -792,6 +794,7 @@ tcp_socket_action handle_accepted_tcp_socket(boost::asio::ip::tcp::socket& socke
                                              boost::asio::io_context& io_context,
                                              const std::shared_ptr<client_tunnel_pool>& tunnel_pool,
                                              const std::shared_ptr<router>& router,
+                                             const std::shared_ptr<boost::asio::cancellation_signal>& stop_signal,
                                              const config& cfg)
 {
     if (stop_flag.load(std::memory_order_acquire))
@@ -808,7 +811,7 @@ tcp_socket_action handle_accepted_tcp_socket(boost::asio::ip::tcp::socket& socke
     }
 
     const std::uint32_t sid = tunnel_pool->next_session_id();
-    start_tcp_session(std::move(socket), io_context, tunnel_pool, router, sid, cfg, *dst_ep_res);
+    start_tcp_session(std::move(socket), io_context, tunnel_pool, router, sid, cfg, *dst_ep_res, stop_signal);
     return tcp_socket_action::kContinue;
 }
 
@@ -902,6 +905,7 @@ boost::asio::awaitable<bool> run_tcp_accept_iteration(boost::asio::ip::tcp::acce
                                                       std::atomic<bool>& stop_flag,
                                                       const std::shared_ptr<client_tunnel_pool>& tunnel_pool,
                                                       const std::shared_ptr<router>& router,
+                                                      const std::shared_ptr<boost::asio::cancellation_signal>& stop_signal,
                                                       const config& cfg)
 {
     boost::asio::ip::tcp::socket socket(io_context);
@@ -915,7 +919,7 @@ boost::asio::awaitable<bool> run_tcp_accept_iteration(boost::asio::ip::tcp::acce
         co_return true;
     }
 
-    const auto socket_action = handle_accepted_tcp_socket(socket, stop_flag, io_context, tunnel_pool, router, cfg);
+    const auto socket_action = handle_accepted_tcp_socket(socket, stop_flag, io_context, tunnel_pool, router, stop_signal, cfg);
     co_return socket_action != tcp_socket_action::kBreak;
 }
 
@@ -1314,9 +1318,7 @@ void tproxy_client::start_runtime_loops(const std::shared_ptr<client_tunnel_pool
     auto self = shared_from_this();
 
     boost::asio::co_spawn(io_context_, [self]() { return self->accept_tcp_loop(); }, boost::asio::detached);
-
     boost::asio::co_spawn(io_context_, [self]() { return self->udp_loop(); }, boost::asio::detached);
-
     boost::asio::co_spawn(io_context_, [self]() { return self->udp_cleanup_loop(); }, boost::asio::detached);
 }
 
@@ -1326,6 +1328,7 @@ void tproxy_client::stop()
     const auto stop_epoch = lifecycle_epoch_.load(std::memory_order_acquire);
     stop_.store(true, std::memory_order_release);
     started_.store(false, std::memory_order_release);
+    stop_signal_->emit(boost::asio::cancellation_type::all);
 
     detail::dispatch_cleanup_or_run_inline(io_context_,
                                            [weak_self = weak_from_this(), stop_epoch]()
@@ -1440,7 +1443,8 @@ boost::asio::awaitable<void> tproxy_client::accept_tcp_loop()
 
     while (!stop_.load(std::memory_order_acquire))
     {
-        if (!co_await run_tcp_accept_iteration(tcp_acceptor_, io_context_, stop_, tunnel_pool, router, cfg_))
+        if (!co_await run_tcp_accept_iteration(
+                tcp_acceptor_, io_context_, stop_, tunnel_pool, router, std::shared_ptr<boost::asio::cancellation_signal>{}, cfg_))
         {
             break;
         }
