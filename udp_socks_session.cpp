@@ -17,6 +17,7 @@
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/this_coro.hpp>
 #include <boost/asio/io_context.hpp>
+#include <boost/asio/bind_cancellation_slot.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/redirect_error.hpp>
 #include <boost/asio/ip/address.hpp>
@@ -219,7 +220,7 @@ boost::asio::awaitable<void> close_and_remove_stream(const std::shared_ptr<mux_t
 boost::asio::awaitable<std::shared_ptr<mux_stream>> establish_udp_associate_stream(
     std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> tunnel_manager, const connection_context& ctx, const std::uint32_t timeout_sec)
 {
-    const auto stream = tunnel_manager->create_stream();
+    const auto stream = co_await tunnel_manager->create_stream_async();
     if (stream == nullptr)
     {
         LOG_CTX_ERROR(ctx, "{} failed to create stream", log_event::kSocks);
@@ -476,7 +477,8 @@ udp_socks_session::udp_socks_session(boost::asio::ip::tcp::socket socket,
                                      const std::uint32_t sid,
                                      const config::timeout_t& timeout_cfg,
                                      std::shared_ptr<void> active_connection_guard,
-                                     const std::size_t recv_channel_capacity)
+                                     const std::size_t recv_channel_capacity,
+                                     std::shared_ptr<boost::asio::cancellation_signal> stop_signal)
     : io_context_(io_context),
       timer_(io_context_),
       idle_timer_(io_context_),
@@ -485,6 +487,7 @@ udp_socks_session::udp_socks_session(boost::asio::ip::tcp::socket socket,
       tunnel_manager_(std::move(tunnel_manager)),
       recv_channel_(io_context_, recv_channel_capacity),
       active_connection_guard_(std::move(active_connection_guard)),
+      stop_signal_(std::move(stop_signal)),
       timeout_config_(timeout_cfg)
 {
     ctx_.new_trace_id();
@@ -495,8 +498,24 @@ udp_socks_session::udp_socks_session(boost::asio::ip::tcp::socket socket,
 void udp_socks_session::start(const std::string& host, const std::uint16_t port)
 {
     const auto self = shared_from_this();
+    if (stop_signal_ != nullptr)
+    {
+        boost::asio::co_spawn(io_context_,
+                              [self, host, port]() -> boost::asio::awaitable<void> { co_await self->run(host, port); },
+                              boost::asio::bind_cancellation_slot(stop_signal_->slot(), boost::asio::detached));
+        return;
+    }
     boost::asio::co_spawn(
         io_context_, [self, host, port]() -> boost::asio::awaitable<void> { co_await self->run(host, port); }, boost::asio::detached);
+}
+
+void udp_socks_session::stop()
+{
+    if (stop_signal_ != nullptr)
+    {
+        stop_signal_->emit(boost::asio::cancellation_type::all);
+    }
+    on_close();
 }
 
 void udp_socks_session::on_data(std::vector<std::uint8_t> data)
@@ -535,6 +554,10 @@ void udp_socks_session::close_impl()
     recv_channel_.close();
     timer_.cancel();
     idle_timer_.cancel();
+    boost::system::error_code tcp_close_ec;
+    tcp_close_ec = socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, tcp_close_ec);
+    tcp_close_ec = socket_.close(tcp_close_ec);
+    (void)tcp_close_ec;
     boost::system::error_code close_ec;
     close_ec = udp_socket_.close(close_ec);
     if (close_ec && close_ec != boost::asio::error::bad_descriptor)

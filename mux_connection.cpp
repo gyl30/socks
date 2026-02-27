@@ -205,6 +205,95 @@ std::shared_ptr<mux_connection::stream_map_t> mux_connection::snapshot_streams()
     return std::make_shared<stream_map_t>();
 }
 
+std::shared_ptr<mux_connection::pending_remove_map_t> mux_connection::snapshot_pending_remove_ids() const
+{
+    auto snapshot = std::atomic_load_explicit(&pending_remove_ids_, std::memory_order_acquire);
+    if (snapshot != nullptr)
+    {
+        return snapshot;
+    }
+    return std::make_shared<pending_remove_map_t>();
+}
+
+void mux_connection::add_pending_remove_id(const std::uint32_t id)
+{
+    for (;;)
+    {
+        auto current = snapshot_pending_remove_ids();
+        auto updated = std::make_shared<pending_remove_map_t>(*current);
+        auto it = updated->find(id);
+        if (it == updated->end())
+        {
+            updated->emplace(id, 1);
+        }
+        else
+        {
+            it->second += 1;
+        }
+        auto expected = current;
+        if (std::atomic_compare_exchange_weak_explicit(
+                &pending_remove_ids_, &expected, updated, std::memory_order_acq_rel, std::memory_order_acquire))
+        {
+            return;
+        }
+    }
+}
+
+void mux_connection::clear_pending_remove_id(const std::uint32_t id)
+{
+    for (;;)
+    {
+        auto current = snapshot_pending_remove_ids();
+        const auto it = current->find(id);
+        if (it == current->end())
+        {
+            return;
+        }
+
+        auto updated = std::make_shared<pending_remove_map_t>(*current);
+        auto updated_it = updated->find(id);
+        if (updated_it != updated->end())
+        {
+            if (updated_it->second > 1)
+            {
+                updated_it->second -= 1;
+            }
+            else
+            {
+                updated->erase(updated_it);
+            }
+        }
+
+        auto expected = current;
+        if (std::atomic_compare_exchange_weak_explicit(
+                &pending_remove_ids_, &expected, updated, std::memory_order_acq_rel, std::memory_order_acquire))
+        {
+            return;
+        }
+    }
+}
+
+std::size_t mux_connection::count_pending_in_streams(const stream_map_t& streams, const pending_remove_map_t& pending_remove_ids)
+{
+    if (streams.empty() || pending_remove_ids.empty())
+    {
+        return 0;
+    }
+    std::size_t pending_count = 0;
+    for (const auto& [stream_id, pending_count_for_id] : pending_remove_ids)
+    {
+        if (pending_count_for_id == 0)
+        {
+            continue;
+        }
+        if (streams.contains(stream_id))
+        {
+            pending_count += 1;
+        }
+    }
+    return pending_count;
+}
+
 std::shared_ptr<mux_connection::stream_map_t> mux_connection::detach_streams()
 {
     for (;;)
@@ -286,25 +375,52 @@ stream_register_result mux_connection::try_register_stream_local_with_reason(con
             current_map = &k_empty_streams;
         }
 
-        if (current_map->contains(id))
+        const auto pending_remove_ids = snapshot_pending_remove_ids();
+        const bool id_pending_remove = pending_remove_ids->contains(id);
+        if (current_map->contains(id) && !id_pending_remove)
         {
             return stream_register_result::kIdConflict;
         }
-        if (limits_config_.max_streams > 0 && current_map->size() >= limits_config_.max_streams)
+        if (limits_config_.max_streams > 0)
         {
-            return stream_register_result::kLimitReached;
+            std::size_t effective_size = current_map->size();
+            const auto pending_count = count_pending_in_streams(*current_map, *pending_remove_ids);
+            if (effective_size > pending_count)
+            {
+                effective_size -= pending_count;
+            }
+            else
+            {
+                effective_size = 0;
+            }
+
+            if ((!current_map->contains(id) || id_pending_remove) && effective_size >= limits_config_.max_streams)
+            {
+                return stream_register_result::kLimitReached;
+            }
         }
 
         auto updated = std::make_shared<stream_map_t>(*current_map);
-        const auto [it, inserted] = updated->try_emplace(id, stream);
-        if (!inserted)
+        if (id_pending_remove)
         {
-            return stream_register_result::kIdConflict;
+            (*updated)[id] = stream;
+        }
+        else
+        {
+            const auto [it, inserted] = updated->try_emplace(id, stream);
+            if (!inserted)
+            {
+                return stream_register_result::kIdConflict;
+            }
         }
 
         auto expected = current;
         if (std::atomic_compare_exchange_weak_explicit(&streams_, &expected, updated, std::memory_order_acq_rel, std::memory_order_acquire))
         {
+            if (id_pending_remove)
+            {
+                clear_pending_remove_id(id);
+            }
             LOG_DEBUG("mux {} stream {} registered", cid_, id);
             return stream_register_result::kSuccess;
         }
@@ -333,6 +449,40 @@ void mux_connection::remove_stream_local(const std::uint32_t id)
     }
 }
 
+void mux_connection::remove_stream_local_if_match(const std::uint32_t id, const std::shared_ptr<mux_stream_interface>& expected_stream)
+{
+    for (;;)
+    {
+        auto current = std::atomic_load_explicit(&streams_, std::memory_order_acquire);
+        if (current == nullptr)
+        {
+            LOG_DEBUG("mux {} stream {} removed", cid_, id);
+            return;
+        }
+
+        const auto it = current->find(id);
+        if (it == current->end())
+        {
+            LOG_DEBUG("mux {} stream {} removed", cid_, id);
+            return;
+        }
+        if (expected_stream != nullptr && it->second != expected_stream)
+        {
+            LOG_DEBUG("mux {} stream {} remove skipped", cid_, id);
+            return;
+        }
+
+        auto updated = std::make_shared<stream_map_t>(*current);
+        updated->erase(id);
+        auto expected = current;
+        if (std::atomic_compare_exchange_weak_explicit(&streams_, &expected, updated, std::memory_order_acq_rel, std::memory_order_acquire))
+        {
+            LOG_DEBUG("mux {} stream {} removed", cid_, id);
+            return;
+        }
+    }
+}
+
 bool mux_connection::can_accept_stream_local() const
 {
     if (connection_state_.load(std::memory_order_acquire) != mux_connection_state::kConnected)
@@ -343,13 +493,32 @@ bool mux_connection::can_accept_stream_local() const
     {
         return true;
     }
-    return snapshot_streams()->size() < limits_config_.max_streams;
+    const auto streams = snapshot_streams();
+    return streams->size() < limits_config_.max_streams;
 }
 
 bool mux_connection::has_stream_local(const std::uint32_t id) const
 {
     const auto snapshot = snapshot_streams();
     return snapshot->contains(id);
+}
+
+bool mux_connection::is_stream_id_cached_in_use(const std::uint32_t id) const
+{
+    if (id == mux::kStreamIdHeartbeat)
+    {
+        return true;
+    }
+
+    const auto streams = snapshot_streams();
+    if (streams->contains(id))
+    {
+        return true;
+    }
+
+    const auto pending_remove_ids = snapshot_pending_remove_ids();
+    const auto pending_it = pending_remove_ids->find(id);
+    return pending_it != pending_remove_ids->end() && pending_it->second > 0;
 }
 
 std::shared_ptr<mux_stream_interface> mux_connection::find_stream(const std::uint32_t stream_id) const
@@ -483,12 +652,22 @@ bool mux_connection::try_register_stream(const std::uint32_t id, std::shared_ptr
 
 void mux_connection::remove_stream(const std::uint32_t id)
 {
+    const auto streams = snapshot_streams();
+    std::shared_ptr<mux_stream_interface> expected_stream;
+    const auto it = streams->find(id);
+    if (it != streams->end())
+    {
+        expected_stream = it->second;
+    }
+
+    add_pending_remove_id(id);
     detail::dispatch_cleanup_or_run_inline(io_context_,
-                                           [weak_self = weak_from_this(), id]()
+                                           [weak_self = weak_from_this(), id, expected_stream = std::move(expected_stream)]()
                                            {
                                                if (const auto self = weak_self.lock())
                                                {
-                                                   self->remove_stream_local(id);
+                                                   self->remove_stream_local_if_match(id, expected_stream);
+                                                   self->clear_pending_remove_id(id);
                                                }
                                            });
 }
@@ -953,6 +1132,53 @@ bool mux_connection::has_stream(const std::uint32_t id)
     return has_stream_local(id);
 }
 
+boost::asio::awaitable<std::shared_ptr<mux_stream>> mux_connection::create_stream_async(const std::string& trace_id)
+{
+    if (!is_open())
+    {
+        co_return nullptr;
+    }
+
+    co_await boost::asio::dispatch(io_context_, boost::asio::use_awaitable);
+    if (!is_open())
+    {
+        co_return nullptr;
+    }
+
+    std::string stream_trace_id = trace_id;
+    if (stream_trace_id.empty())
+    {
+        stream_trace_id = this->trace_id();
+    }
+
+    for (;;)
+    {
+        const std::uint32_t stream_id = acquire_next_id();
+        if (is_stream_id_cached_in_use(stream_id))
+        {
+            continue;
+        }
+
+        auto stream = std::make_shared<mux_stream>(stream_id, id(), stream_trace_id, shared_from_this(), io_context_);
+        const auto register_result = try_register_stream_with_reason(stream_id, stream);
+        if (register_result == stream_register_result::kSuccess)
+        {
+            co_return stream;
+        }
+        if (register_result == stream_register_result::kIdConflict)
+        {
+            LOG_WARN("mux {} create stream {} id conflict", cid_, stream_id);
+            if (!is_open())
+            {
+                co_return nullptr;
+            }
+            continue;
+        }
+        LOG_WARN("mux {} create stream {} register failed {}", cid_, stream_id, static_cast<std::uint32_t>(register_result));
+        co_return nullptr;
+    }
+}
+
 std::uint32_t mux_connection::acquire_next_id()
 {
     for (;;)
@@ -971,10 +1197,6 @@ std::shared_ptr<mux_stream> mux_connection::create_stream(const std::string& tra
     {
         return nullptr;
     }
-    if (!can_accept_stream())
-    {
-        return nullptr;
-    }
 
     std::string stream_trace_id = trace_id;
     if (stream_trace_id.empty())
@@ -985,6 +1207,11 @@ std::shared_ptr<mux_stream> mux_connection::create_stream(const std::string& tra
     for (;;)
     {
         const std::uint32_t stream_id = acquire_next_id();
+        if (is_stream_id_cached_in_use(stream_id))
+        {
+            continue;
+        }
+
         auto stream = std::make_shared<mux_stream>(stream_id, id(), stream_trace_id, shared_from_this(), io_context_);
         const auto register_result = try_register_stream_with_reason(stream_id, stream);
         if (register_result == stream_register_result::kSuccess)
@@ -994,7 +1221,7 @@ std::shared_ptr<mux_stream> mux_connection::create_stream(const std::string& tra
         if (register_result == stream_register_result::kIdConflict)
         {
             LOG_WARN("mux {} create stream {} id conflict", cid_, stream_id);
-            if (!is_open() || !can_accept_stream())
+            if (!is_open())
             {
                 return nullptr;
             }

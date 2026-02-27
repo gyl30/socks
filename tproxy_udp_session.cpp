@@ -501,7 +501,7 @@ boost::asio::awaitable<std::optional<bool>> tproxy_udp_session::open_proxy_strea
         co_return std::nullopt;
     }
 
-    const auto stream = tunnel->create_stream(ctx_.trace_id());
+    const auto stream = co_await tunnel->create_stream_async(ctx_.trace_id());
     if (stream == nullptr)
     {
         LOG_CTX_WARN(ctx_, "{} udp proxy create stream failed", log_event::kSocks);
