@@ -78,6 +78,15 @@ class mux_tunnel_impl : public std::enable_shared_from_this<mux_tunnel_impl<stre
         return connection_->create_stream(trace_id);
     }
 
+    [[nodiscard]] boost::asio::awaitable<std::shared_ptr<mux_stream>> create_stream_async(const std::string& trace_id = "")
+    {
+        if (connection_ == nullptr)
+        {
+            co_return nullptr;
+        }
+        co_return co_await connection_->create_stream_async(trace_id);
+    }
+
     void remove_stream(std::uint32_t id) const
     {
         if (connection_ != nullptr)
