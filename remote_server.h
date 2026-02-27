@@ -1,7 +1,6 @@
 #ifndef REMOTE_SERVER_H
 #define REMOTE_SERVER_H
 
-#include <mutex>
 #include <atomic>
 #include <chrono>
 #include <memory>
@@ -243,13 +242,17 @@ class remote_server : public std::enable_shared_from_this<remote_server>
 
     struct fallback_guard_state;
     enum class fallback_guard_key_mode : std::uint8_t;
+    using fallback_guard_map_t = std::unordered_map<std::string, fallback_guard_state>;
 
     [[nodiscard]] bool consume_fallback_token(const connection_context& ctx, const std::string& sni);
     void record_fallback_result(const connection_context& ctx, const std::string& sni, bool success);
-    void cleanup_fallback_guard_state_locked(const std::chrono::steady_clock::time_point& now);
-    void evict_fallback_guard_source_if_needed_locked(const std::string& source_key);
-    [[nodiscard]] fallback_guard_state& get_or_init_fallback_guard_state_locked(const std::string& source_key,
-                                                                                const std::chrono::steady_clock::time_point& now);
+    void cleanup_fallback_guard_state_locked(fallback_guard_map_t& states,
+                                             const std::chrono::steady_clock::time_point& now) const;
+    void evict_fallback_guard_source_if_needed_locked(fallback_guard_map_t& states,
+                                                      const std::string& source_key) const;
+    [[nodiscard]] fallback_guard_state& get_or_init_fallback_guard_state_locked(fallback_guard_map_t& states,
+                                                                                const std::string& source_key,
+                                                                                const std::chrono::steady_clock::time_point& now) const;
     void refill_fallback_tokens_locked(fallback_guard_state& state, const std::chrono::steady_clock::time_point& now) const;
     [[nodiscard]] static bool fallback_guard_allows_request_locked(fallback_guard_state& state, const std::chrono::steady_clock::time_point& now);
     [[nodiscard]] std::string fallback_guard_key(const connection_context& ctx, const std::string& sni) const;
@@ -271,6 +274,14 @@ class remote_server : public std::enable_shared_from_this<remote_server>
         std::chrono::steady_clock::time_point circuit_open_until;
     };
 
+    struct connection_slot_state
+    {
+        std::uint32_t total = 0;
+        std::unordered_map<std::string, std::uint32_t> by_source;
+    };
+
+    using tracked_socket_map_t = std::unordered_map<boost::asio::ip::tcp::socket*, std::weak_ptr<boost::asio::ip::tcp::socket>>;
+
     boost::asio::io_context& io_context_;
     boost::asio::ip::tcp::acceptor acceptor_;
     boost::asio::ip::tcp::endpoint inbound_endpoint_;
@@ -289,20 +300,15 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     bool fallback_dest_valid_ = false;
     config::reality_t::fallback_guard_t fallback_guard_config_;
     fallback_guard_key_mode fallback_guard_key_mode_ = fallback_guard_key_mode::kIp;
-    std::mutex fallback_guard_mu_;
-    std::unordered_map<std::string, fallback_guard_state> fallback_guard_states_;
+    fallback_guard_map_t fallback_guard_states_;
     config::timeout_t timeout_config_;
     config::queues_t queues_config_;
-    std::atomic<std::uint32_t> active_connection_slots_{0};
-    std::mutex connection_slot_mu_;
-    std::unordered_map<std::string, std::uint32_t> active_source_connection_slots_;
-    std::mutex tracked_connection_socket_mu_;
-    std::unordered_map<boost::asio::ip::tcp::socket*, std::weak_ptr<boost::asio::ip::tcp::socket>> tracked_connection_sockets_;
+    std::shared_ptr<connection_slot_state> connection_slots_ = std::make_shared<connection_slot_state>();
+    std::shared_ptr<tracked_socket_map_t> tracked_connection_sockets_ = std::make_shared<tracked_socket_map_t>();
     std::shared_ptr<tunnel_list_t> active_tunnels_ = std::make_shared<tunnel_list_t>();
     config::limits_t limits_config_;
     config::heartbeat_t heartbeat_config_;
     std::atomic<std::uint64_t> lifecycle_epoch_{0};
-    std::mutex lifecycle_mu_;
     std::atomic<bool> started_{false};
     std::atomic<bool> stop_{false};
 };

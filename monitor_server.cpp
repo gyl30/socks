@@ -1,7 +1,6 @@
 #include <array>
 #include <atomic>
 #include <string>
-#include <thread>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -28,7 +27,6 @@ namespace
 {
 
 constexpr std::uint32_t kEphemeralMonitorBindRetryAttempts = 120;
-const auto kEphemeralMonitorBindRetryDelay = std::chrono::milliseconds(25);
 
 std::string escape_prometheus_label(const std::string_view value)
 {
@@ -287,7 +285,6 @@ monitor_server::monitor_server(boost::asio::io_context& ioc, std::string bind_ho
             close_acceptor_on_failure();
             if (can_retry)
             {
-                std::this_thread::sleep_for(kEphemeralMonitorBindRetryDelay);
                 continue;
             }
             LOG_ERROR("failed to bind {}", ec.message());

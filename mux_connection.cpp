@@ -1,19 +1,16 @@
 #include <span>
 #include <atomic>
 #include <chrono>
-#include <future>
 #include <memory>
 #include <random>
 #include <ranges>
 #include <string>
-#include <type_traits>
 #include <vector>
 #include <cstddef>
 #include <cstdint>
 #include <utility>
 #include <expected>
 
-#include <boost/asio/post.hpp>
 #include <boost/asio/error.hpp>
 #include <boost/asio/write.hpp>
 #include <boost/asio/buffer.hpp>
@@ -52,8 +49,6 @@ namespace mux
 
 namespace
 {
-
-constexpr auto kSyncQueryWaitTimeout = std::chrono::milliseconds(200);
 
 bool can_take_over_registered_mux_stream(const std::shared_ptr<mux_stream_interface>& existing_stream,
                                          const std::shared_ptr<mux_stream_interface>& replacement_stream)
@@ -134,143 +129,6 @@ timeout_snapshot collect_timeout_snapshot(const std::atomic<std::uint64_t>& last
     return delay_dist(rng);
 }
 
-template <typename Fn>
-bool run_sync_bool_query(boost::asio::io_context& io_context, const std::uint32_t cid, const char* query_name, Fn&& fn)
-{
-    if (io_context.stopped())
-    {
-        return false;
-    }
-    if (io_context.get_executor().running_in_this_thread())
-    {
-        return std::forward<Fn>(fn)();
-    }
-
-    auto operation = std::make_shared<std::decay_t<Fn>>(std::forward<Fn>(fn));
-    auto started = std::make_shared<std::atomic<bool>>(false);
-    auto cancelled = std::make_shared<std::atomic<bool>>(false);
-    std::promise<bool> promise;
-    auto future = promise.get_future();
-    boost::asio::post(io_context,
-                      [started, cancelled, promise = std::move(promise), operation]() mutable
-                      {
-                          if (cancelled->load(std::memory_order_acquire))
-                          {
-                              promise.set_value(false);
-                              return;
-                          }
-                          started->store(true, std::memory_order_release);
-                          promise.set_value((*operation)());
-                      });
-
-    if (future.wait_for(kSyncQueryWaitTimeout) != std::future_status::ready)
-    {
-        cancelled->store(true, std::memory_order_release);
-        if (!started->load(std::memory_order_acquire))
-        {
-            LOG_WARN("mux {} sync query {} timeout {}ms", cid, query_name, kSyncQueryWaitTimeout.count());
-            return false;
-        }
-        LOG_WARN("mux {} sync query {} timeout while executing {}ms", cid, query_name, kSyncQueryWaitTimeout.count());
-        future.wait();
-    }
-
-    return future.get();
-}
-
-template <typename Fn>
-bool run_sync_void_query(boost::asio::io_context& io_context, const std::uint32_t cid, const char* query_name, Fn&& fn)
-{
-    if (io_context.stopped())
-    {
-        return false;
-    }
-    if (io_context.get_executor().running_in_this_thread())
-    {
-        std::forward<Fn>(fn)();
-        return true;
-    }
-
-    auto operation = std::make_shared<std::decay_t<Fn>>(std::forward<Fn>(fn));
-    auto started = std::make_shared<std::atomic<bool>>(false);
-    auto cancelled = std::make_shared<std::atomic<bool>>(false);
-    std::promise<bool> promise;
-    auto future = promise.get_future();
-    boost::asio::post(io_context,
-                      [started, cancelled, promise = std::move(promise), operation]() mutable
-                      {
-                          if (cancelled->load(std::memory_order_acquire))
-                          {
-                              promise.set_value(false);
-                              return;
-                          }
-                          started->store(true, std::memory_order_release);
-                          (*operation)();
-                          promise.set_value(true);
-                      });
-
-    if (future.wait_for(kSyncQueryWaitTimeout) != std::future_status::ready)
-    {
-        cancelled->store(true, std::memory_order_release);
-        if (!started->load(std::memory_order_acquire))
-        {
-            LOG_WARN("mux {} sync query {} timeout {}ms", cid, query_name, kSyncQueryWaitTimeout.count());
-            return false;
-        }
-        LOG_WARN("mux {} sync query {} timeout while executing {}ms", cid, query_name, kSyncQueryWaitTimeout.count());
-        future.wait();
-    }
-
-    return future.get();
-}
-
-template <typename Fn>
-stream_register_result run_sync_stream_register_query(boost::asio::io_context& io_context,
-                                                      const std::uint32_t cid,
-                                                      const char* query_name,
-                                                      Fn&& fn)
-{
-    if (io_context.stopped())
-    {
-        return stream_register_result::kClosed;
-    }
-    if (io_context.get_executor().running_in_this_thread())
-    {
-        return std::forward<Fn>(fn)();
-    }
-
-    auto operation = std::make_shared<std::decay_t<Fn>>(std::forward<Fn>(fn));
-    auto started = std::make_shared<std::atomic<bool>>(false);
-    auto cancelled = std::make_shared<std::atomic<bool>>(false);
-    std::promise<stream_register_result> promise;
-    auto future = promise.get_future();
-    boost::asio::post(io_context,
-                      [started, cancelled, promise = std::move(promise), operation]() mutable
-                      {
-                          if (cancelled->load(std::memory_order_acquire))
-                          {
-                              promise.set_value(stream_register_result::kClosed);
-                              return;
-                          }
-                          started->store(true, std::memory_order_release);
-                          promise.set_value((*operation)());
-                      });
-
-    if (future.wait_for(kSyncQueryWaitTimeout) != std::future_status::ready)
-    {
-        cancelled->store(true, std::memory_order_release);
-        if (!started->load(std::memory_order_acquire))
-        {
-            LOG_WARN("mux {} sync query {} timeout {}ms", cid, query_name, kSyncQueryWaitTimeout.count());
-            return stream_register_result::kClosed;
-        }
-        LOG_WARN("mux {} sync query {} timeout while executing {}ms", cid, query_name, kSyncQueryWaitTimeout.count());
-        future.wait();
-    }
-
-    return future.get();
-}
-
 boost::asio::awaitable<void> wait_draining_delay(boost::asio::steady_timer& timer, const std::uint32_t delay_seconds, const std::uint32_t cid)
 {
     timer.expires_after(std::chrono::seconds(delay_seconds));
@@ -336,11 +194,6 @@ mux_connection::mux_connection(boost::asio::ip::tcp::socket socket,
 mux_connection::~mux_connection() { statistics::instance().dec_active_mux_sessions(); }
 
 void mux_connection::mark_started_for_external_calls() { started_.store(true, std::memory_order_release); }
-
-bool mux_connection::run_inline() const
-{
-    return !started_.load(std::memory_order_acquire) || io_context_.stopped() || io_context_.get_executor().running_in_this_thread();
-}
 
 std::shared_ptr<mux_connection::stream_map_t> mux_connection::snapshot_streams() const
 {
@@ -605,15 +458,7 @@ bool mux_connection::register_stream_checked(const std::uint32_t id, std::shared
         return false;
     }
 
-    if (run_inline())
-    {
-        return register_stream_local(id, stream);
-    }
-    return run_sync_bool_query(io_context_,
-                               cid_,
-                               "register_stream",
-                               [self = shared_from_this(), id, stream = std::move(stream)]() mutable
-                               { return self->register_stream_local(id, stream); });
+    return register_stream_local(id, stream);
 }
 
 stream_register_result mux_connection::try_register_stream_with_reason(const std::uint32_t id,
@@ -628,15 +473,7 @@ stream_register_result mux_connection::try_register_stream_with_reason(const std
         return stream_register_result::kClosed;
     }
 
-    if (run_inline())
-    {
-        return try_register_stream_local_with_reason(id, stream);
-    }
-    return run_sync_stream_register_query(
-        io_context_,
-        cid_,
-        "try_register_stream_with_reason",
-        [self = shared_from_this(), id, stream = std::move(stream)]() mutable { return self->try_register_stream_local_with_reason(id, stream); });
+    return try_register_stream_local_with_reason(id, stream);
 }
 
 bool mux_connection::try_register_stream(const std::uint32_t id, std::shared_ptr<mux_stream_interface> stream)
@@ -646,12 +483,6 @@ bool mux_connection::try_register_stream(const std::uint32_t id, std::shared_ptr
 
 void mux_connection::remove_stream(const std::uint32_t id)
 {
-    if (run_inline())
-    {
-        remove_stream_local(id);
-        return;
-    }
-
     detail::dispatch_cleanup_or_run_inline(io_context_,
                                            [weak_self = weak_from_this(), id]()
                                            {
@@ -738,12 +569,6 @@ void mux_connection::stop()
         {
             return;
         }
-    }
-
-    if (run_inline())
-    {
-        stop_impl();
-        return;
     }
 
     detail::dispatch_cleanup_or_run_inline(io_context_,
@@ -1115,11 +940,7 @@ bool mux_connection::can_accept_stream()
         return false;
     }
 
-    if (run_inline())
-    {
-        return can_accept_stream_local();
-    }
-    return run_sync_bool_query(io_context_, cid_, "can_accept_stream", [self = shared_from_this()]() { return self->can_accept_stream_local(); });
+    return can_accept_stream_local();
 }
 
 bool mux_connection::has_stream(const std::uint32_t id)
@@ -1129,11 +950,7 @@ bool mux_connection::has_stream(const std::uint32_t id)
         return false;
     }
 
-    if (run_inline())
-    {
-        return has_stream_local(id);
-    }
-    return run_sync_bool_query(io_context_, cid_, "has_stream", [self = shared_from_this(), id]() { return self->has_stream_local(id); });
+    return has_stream_local(id);
 }
 
 std::uint32_t mux_connection::acquire_next_id()

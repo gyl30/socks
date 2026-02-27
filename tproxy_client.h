@@ -1,7 +1,6 @@
 #ifndef TPROXY_CLIENT_H
 #define TPROXY_CLIENT_H
 
-#include <mutex>
 #include <atomic>
 #include <memory>
 #include <string>
@@ -91,7 +90,6 @@ class tproxy_client : public std::enable_shared_from_this<tproxy_client>
     std::shared_ptr<udp_session_map_t> udp_sessions_ = std::make_shared<udp_session_map_t>();
     std::shared_ptr<tproxy_udp_dispatch_channel> udp_dispatch_channel_;
     std::atomic<bool> udp_dispatch_started_{false};
-    std::mutex lifecycle_mu_;
     config cfg_;
     config::tproxy_t tproxy_config_;
     std::uint16_t tcp_port_ = 0;

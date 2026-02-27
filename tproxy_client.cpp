@@ -1,5 +1,4 @@
 #include <array>
-#include <mutex>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -1198,8 +1197,6 @@ tproxy_client::tproxy_client(io_context_pool& pool, const config& cfg)
 
 void tproxy_client::start()
 {
-    const std::lock_guard<std::mutex> lock(lifecycle_mu_);
-
     bool expected = false;
     if (!started_.compare_exchange_strong(expected, true, std::memory_order_acq_rel))
     {
@@ -1325,8 +1322,6 @@ void tproxy_client::start_runtime_loops(const std::shared_ptr<client_tunnel_pool
 
 void tproxy_client::stop()
 {
-    const std::lock_guard<std::mutex> lock(lifecycle_mu_);
-
     LOG_INFO("tproxy client stopping closing resources");
     const auto stop_epoch = lifecycle_epoch_.load(std::memory_order_acquire);
     stop_.store(true, std::memory_order_release);

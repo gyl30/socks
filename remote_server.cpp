@@ -7,7 +7,6 @@
 #include <random>
 #include <string>
 #include <string_view>
-#include <thread>
 #include <vector>
 #include <cstdint>
 #include <cstring>
@@ -77,7 +76,6 @@ namespace
 {
 
 constexpr std::uint32_t kEphemeralServerBindRetryAttempts = 120;
-const auto kEphemeralServerBindRetryDelay = std::chrono::milliseconds(25);
 constexpr std::size_t kFallbackGuardMaxSources = 4096;
 constexpr std::size_t kTlsRecordHeaderSize = 5;
 constexpr std::uint16_t kMaxTlsPlaintextRecordLen = static_cast<std::uint16_t>(reality::kMaxTlsPlaintextLen);
@@ -465,7 +463,6 @@ bool setup_server_acceptor(boost::asio::ip::tcp::acceptor& acceptor, const boost
             const bool can_retry = retry_ephemeral_bind && ec == boost::asio::error::address_in_use && (attempt + 1) < max_attempts;
             if (can_retry)
             {
-                std::this_thread::sleep_for(kEphemeralServerBindRetryDelay);
                 continue;
             }
             LOG_ERROR("acceptor bind failed {}", ec.message());
@@ -1407,8 +1404,6 @@ remote_server::~remote_server()
 
 void remote_server::start()
 {
-    const std::lock_guard<std::mutex> lock(lifecycle_mu_);
-
     bool expected = false;
     if (!started_.compare_exchange_strong(expected, true, std::memory_order_acq_rel))
     {
@@ -1459,8 +1454,6 @@ void remote_server::start()
 
 void remote_server::drain()
 {
-    const std::lock_guard<std::mutex> lock(lifecycle_mu_);
-
     const auto stop_epoch = lifecycle_epoch_.load(std::memory_order_acquire);
     stop_.store(true, std::memory_order_release);
     LOG_INFO("remote server draining");
@@ -1478,8 +1471,7 @@ void remote_server::drain()
                 }
                 self->stop_local(false);
             }
-        },
-        detail::dispatch_timeout_policy::kRunInline);
+        });
 }
 
 void remote_server::set_certificate(const std::string& sni,
@@ -1492,8 +1484,6 @@ void remote_server::set_certificate(const std::string& sni,
 
 void remote_server::stop()
 {
-    const std::lock_guard<std::mutex> lock(lifecycle_mu_);
-
     const auto stop_epoch = lifecycle_epoch_.load(std::memory_order_acquire);
     stop_.store(true, std::memory_order_release);
     LOG_INFO("remote server stopping");
@@ -1511,8 +1501,7 @@ void remote_server::stop()
                 }
                 self->stop_local(true);
             }
-        },
-        detail::dispatch_timeout_policy::kRunInline);
+        });
 }
 
 bool remote_server::ensure_acceptor_open()
@@ -1607,9 +1596,24 @@ void remote_server::track_connection_socket(const std::shared_ptr<boost::asio::i
     {
         return;
     }
+    for (;;)
+    {
+        auto current = std::atomic_load_explicit(&tracked_connection_sockets_, std::memory_order_acquire);
+        if (current == nullptr)
+        {
+            current = std::make_shared<tracked_socket_map_t>();
+        }
 
-    const std::lock_guard<std::mutex> lock(tracked_connection_socket_mu_);
-    tracked_connection_sockets_[socket.get()] = socket;
+        auto updated = std::make_shared<tracked_socket_map_t>(*current);
+        (*updated)[socket.get()] = socket;
+
+        auto expected = current;
+        if (std::atomic_compare_exchange_weak_explicit(
+                &tracked_connection_sockets_, &expected, updated, std::memory_order_acq_rel, std::memory_order_acquire))
+        {
+            return;
+        }
+    }
 }
 
 void remote_server::untrack_connection_socket(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket)
@@ -1618,27 +1622,65 @@ void remote_server::untrack_connection_socket(const std::shared_ptr<boost::asio:
     {
         return;
     }
+    for (;;)
+    {
+        auto current = std::atomic_load_explicit(&tracked_connection_sockets_, std::memory_order_acquire);
+        if (current == nullptr || !current->contains(socket.get()))
+        {
+            return;
+        }
 
-    const std::lock_guard<std::mutex> lock(tracked_connection_socket_mu_);
-    tracked_connection_sockets_.erase(socket.get());
+        auto updated = std::make_shared<tracked_socket_map_t>(*current);
+        updated->erase(socket.get());
+
+        auto expected = current;
+        if (std::atomic_compare_exchange_weak_explicit(
+                &tracked_connection_sockets_, &expected, updated, std::memory_order_acq_rel, std::memory_order_acquire))
+        {
+            return;
+        }
+    }
 }
 
 std::vector<std::shared_ptr<boost::asio::ip::tcp::socket>> remote_server::snapshot_tracked_connection_sockets()
 {
-    std::vector<std::shared_ptr<boost::asio::ip::tcp::socket>> sockets;
-    const std::lock_guard<std::mutex> lock(tracked_connection_socket_mu_);
-    for (auto it = tracked_connection_sockets_.begin(); it != tracked_connection_sockets_.end();)
+    for (;;)
     {
-        const auto socket = it->second.lock();
-        if (socket == nullptr)
+        auto current = std::atomic_load_explicit(&tracked_connection_sockets_, std::memory_order_acquire);
+        if (current == nullptr)
         {
-            it = tracked_connection_sockets_.erase(it);
-            continue;
+            current = std::make_shared<tracked_socket_map_t>();
         }
-        sockets.push_back(socket);
-        ++it;
+
+        std::vector<std::shared_ptr<boost::asio::ip::tcp::socket>> sockets;
+        sockets.reserve(current->size());
+        auto updated = std::make_shared<tracked_socket_map_t>();
+        updated->reserve(current->size());
+        bool changed = false;
+        for (const auto& [socket_ptr, weak_socket] : *current)
+        {
+            const auto socket = weak_socket.lock();
+            if (socket == nullptr)
+            {
+                changed = true;
+                continue;
+            }
+            sockets.push_back(socket);
+            updated->emplace(socket_ptr, socket);
+        }
+
+        if (!changed)
+        {
+            return sockets;
+        }
+
+        auto expected = current;
+        if (std::atomic_compare_exchange_weak_explicit(
+                &tracked_connection_sockets_, &expected, updated, std::memory_order_acq_rel, std::memory_order_acquire))
+        {
+            return sockets;
+        }
     }
-    return sockets;
 }
 
 std::size_t remote_server::close_tracked_connection_sockets()
@@ -1727,54 +1769,79 @@ boost::asio::awaitable<void> remote_server::accept_loop()
 
 bool remote_server::try_reserve_connection_slot(const std::string& source_key)
 {
-    const std::lock_guard<std::mutex> lock(connection_slot_mu_);
-    const auto current = active_connection_slots_.load(std::memory_order_acquire);
-    if (current >= limits_config_.max_connections)
+    for (;;)
     {
-        return false;
-    }
+        auto current = std::atomic_load_explicit(&connection_slots_, std::memory_order_acquire);
+        if (current == nullptr)
+        {
+            current = std::make_shared<connection_slot_state>();
+        }
 
-    if (limits_config_.max_connections_per_source > 0)
-    {
-        auto& source_slots = active_source_connection_slots_[source_key];
-        if (source_slots >= limits_config_.max_connections_per_source)
+        if (current->total >= limits_config_.max_connections)
         {
             return false;
         }
-        source_slots++;
-    }
 
-    active_connection_slots_.store(current + 1, std::memory_order_release);
-    return true;
+        auto updated = std::make_shared<connection_slot_state>(*current);
+        if (limits_config_.max_connections_per_source > 0)
+        {
+            auto& source_slots = updated->by_source[source_key];
+            if (source_slots >= limits_config_.max_connections_per_source)
+            {
+                return false;
+            }
+            source_slots++;
+        }
+
+        updated->total++;
+
+        auto expected = current;
+        if (std::atomic_compare_exchange_weak_explicit(
+                &connection_slots_, &expected, updated, std::memory_order_acq_rel, std::memory_order_acquire))
+        {
+            return true;
+        }
+    }
 }
 
 void remote_server::release_connection_slot(const std::string& source_key)
 {
-    const std::lock_guard<std::mutex> lock(connection_slot_mu_);
-    const auto current = active_connection_slots_.load(std::memory_order_acquire);
-    if (current > 0)
+    for (;;)
     {
-        active_connection_slots_.store(current - 1, std::memory_order_release);
-    }
+        auto current = std::atomic_load_explicit(&connection_slots_, std::memory_order_acquire);
+        if (current == nullptr)
+        {
+            return;
+        }
 
-    if (limits_config_.max_connections_per_source == 0)
-    {
-        return;
-    }
+        auto updated = std::make_shared<connection_slot_state>(*current);
+        if (updated->total > 0)
+        {
+            updated->total--;
+        }
 
-    const auto it = active_source_connection_slots_.find(source_key);
-    if (it == active_source_connection_slots_.end())
-    {
-        return;
-    }
+        if (limits_config_.max_connections_per_source > 0)
+        {
+            const auto it = updated->by_source.find(source_key);
+            if (it != updated->by_source.end())
+            {
+                if (it->second <= 1)
+                {
+                    updated->by_source.erase(it);
+                }
+                else
+                {
+                    it->second--;
+                }
+            }
+        }
 
-    if (it->second <= 1)
-    {
-        active_source_connection_slots_.erase(it);
-    }
-    else
-    {
-        it->second--;
+        auto expected = current;
+        if (std::atomic_compare_exchange_weak_explicit(
+                &connection_slots_, &expected, updated, std::memory_order_acq_rel, std::memory_order_acquire))
+        {
+            return;
+        }
     }
 }
 
@@ -2388,38 +2455,41 @@ std::string remote_server::fallback_guard_key(const connection_context& ctx, con
     return source + "|" + normalized_sni;
 }
 
-void remote_server::cleanup_fallback_guard_state_locked(const std::chrono::steady_clock::time_point& now)
+void remote_server::cleanup_fallback_guard_state_locked(fallback_guard_map_t& states,
+                                                        const std::chrono::steady_clock::time_point& now) const
 {
     const auto ttl_seconds = std::max<std::uint32_t>(1, fallback_guard_config_.state_ttl_sec);
     const auto ttl = std::chrono::seconds(ttl_seconds);
-    std::erase_if(fallback_guard_states_, [&](const auto& kv) { return now - kv.second.last_seen > ttl; });
+    std::erase_if(states, [&](const auto& kv) { return now - kv.second.last_seen > ttl; });
 }
 
-void remote_server::evict_fallback_guard_source_if_needed_locked(const std::string& source_key)
+void remote_server::evict_fallback_guard_source_if_needed_locked(fallback_guard_map_t& states, const std::string& source_key) const
 {
-    if (fallback_guard_states_.size() < kFallbackGuardMaxSources || fallback_guard_states_.contains(source_key))
+    if (states.size() < kFallbackGuardMaxSources || states.contains(source_key))
     {
         return;
     }
 
-    auto oldest_it = fallback_guard_states_.end();
-    for (auto it = fallback_guard_states_.begin(); it != fallback_guard_states_.end(); ++it)
+    auto oldest_it = states.end();
+    for (auto it = states.begin(); it != states.end(); ++it)
     {
-        if (oldest_it == fallback_guard_states_.end() || it->second.last_seen < oldest_it->second.last_seen)
+        if (oldest_it == states.end() || it->second.last_seen < oldest_it->second.last_seen)
         {
             oldest_it = it;
         }
     }
-    if (oldest_it != fallback_guard_states_.end())
+    if (oldest_it != states.end())
     {
-        fallback_guard_states_.erase(oldest_it);
+        states.erase(oldest_it);
     }
 }
 
-remote_server::fallback_guard_state& remote_server::get_or_init_fallback_guard_state_locked(const std::string& source_key,
-                                                                                            const std::chrono::steady_clock::time_point& now)
+remote_server::fallback_guard_state& remote_server::get_or_init_fallback_guard_state_locked(
+    fallback_guard_map_t& states,
+    const std::string& source_key,
+    const std::chrono::steady_clock::time_point& now) const
 {
-    auto& state = fallback_guard_states_[source_key];
+    auto& state = states[source_key];
     if (state.tokens == 0 && state.last_seen.time_since_epoch().count() == 0)
     {
         state.tokens = static_cast<double>(fallback_guard_config_.burst);
@@ -2452,13 +2522,11 @@ bool remote_server::fallback_guard_allows_request_locked(fallback_guard_state& s
     state.last_seen = now;
     if (state.circuit_open_until > now)
     {
-        statistics::instance().inc_fallback_rate_limited();
         return false;
     }
 
     if (state.tokens < 1.0)
     {
-        statistics::instance().inc_fallback_rate_limited();
         return false;
     }
 
@@ -2474,14 +2542,19 @@ bool remote_server::consume_fallback_token(const connection_context& ctx, const 
     }
 
     const auto now = std::chrono::steady_clock::now();
-    const std::lock_guard<std::mutex> lock(fallback_guard_mu_);
-    cleanup_fallback_guard_state_locked(now);
+    cleanup_fallback_guard_state_locked(fallback_guard_states_, now);
 
     const auto source_key = fallback_guard_key(ctx, sni);
-    evict_fallback_guard_source_if_needed_locked(source_key);
-    auto& state = get_or_init_fallback_guard_state_locked(source_key, now);
+    evict_fallback_guard_source_if_needed_locked(fallback_guard_states_, source_key);
+    auto& state = get_or_init_fallback_guard_state_locked(fallback_guard_states_, source_key, now);
     refill_fallback_tokens_locked(state, now);
-    return fallback_guard_allows_request_locked(state, now);
+    const bool allowed = fallback_guard_allows_request_locked(state, now);
+
+    if (!allowed)
+    {
+        statistics::instance().inc_fallback_rate_limited();
+    }
+    return allowed;
 }
 
 void remote_server::record_fallback_result(const connection_context& ctx, const std::string& sni, const bool success)
@@ -2492,7 +2565,6 @@ void remote_server::record_fallback_result(const connection_context& ctx, const 
     }
 
     const auto now = std::chrono::steady_clock::now();
-    const std::lock_guard<std::mutex> lock(fallback_guard_mu_);
     auto it = fallback_guard_states_.find(fallback_guard_key(ctx, sni));
     if (it == fallback_guard_states_.end())
     {

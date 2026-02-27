@@ -77,6 +77,18 @@ void fail_next_getsockname(const int err = ENOTSOCK)
     g_fail_getsockname_once.store(true, std::memory_order_release);
 }
 
+void drain_io_context(boost::asio::io_context& io_context, const int rounds = 32)
+{
+    io_context.restart();
+    for (int i = 0; i < rounds; ++i)
+    {
+        if (io_context.poll() == 0)
+        {
+            break;
+        }
+    }
+}
+
 extern "C" int __real_RAND_bytes(unsigned char* buf, int num);    
 extern "C" int __real_EVP_PKEY_CTX_add1_hkdf_info(EVP_PKEY_CTX* ctx,
                                                   const unsigned char* info,
@@ -450,6 +462,8 @@ TEST(ClientTunnelPoolWhiteboxTest, ClosePendingSocketRunsWhenIoContextNotRunning
 
     tunnel_pool->tunnel_io_contexts_.resize(1, &tunnel_io_context);
     tunnel_pool->close_pending_socket(0, pending_socket);
+    EXPECT_TRUE(pending_socket->is_open());
+    drain_io_context(tunnel_io_context);
     EXPECT_FALSE(pending_socket->is_open());
 }
 
@@ -472,6 +486,8 @@ TEST(ClientTunnelPoolWhiteboxTest, ClosePendingSocketRunsInlineWhenIoContextStop
     tunnel_pool->tunnel_io_contexts_.resize(1, &tunnel_io_context);
     tunnel_io_context.stop();
     tunnel_pool->close_pending_socket(0, pending_socket);
+    EXPECT_TRUE(pending_socket->is_open());
+    drain_io_context(tunnel_io_context);
     EXPECT_FALSE(pending_socket->is_open());
 }
 
@@ -498,8 +514,10 @@ TEST(ClientTunnelPoolWhiteboxTest, StopClosesPendingSocketWhenIoContextNotRunnin
     tunnel_pool->stop();
 
     EXPECT_TRUE(tunnel_pool->stop_.load(std::memory_order_acquire));
-    EXPECT_FALSE(pending_socket->is_open());
     EXPECT_EQ(tunnel_pool->pending_sockets_[0], nullptr);
+    EXPECT_TRUE(pending_socket->is_open());
+    drain_io_context(tunnel_io_context);
+    EXPECT_FALSE(pending_socket->is_open());
 }
 
 TEST(ClientTunnelPoolWhiteboxTest, StopClosesPendingSocketWhenIoContextStopped)
@@ -526,8 +544,10 @@ TEST(ClientTunnelPoolWhiteboxTest, StopClosesPendingSocketWhenIoContextStopped)
     tunnel_pool->stop();
 
     EXPECT_TRUE(tunnel_pool->stop_.load(std::memory_order_acquire));
-    EXPECT_FALSE(pending_socket->is_open());
     EXPECT_EQ(tunnel_pool->pending_sockets_[0], nullptr);
+    EXPECT_TRUE(pending_socket->is_open());
+    drain_io_context(tunnel_io_context);
+    EXPECT_FALSE(pending_socket->is_open());
 }
 
 TEST(ClientTunnelPoolWhiteboxTest, StopClosesPendingSocketWhenIoQueueBlocked)
@@ -586,15 +606,16 @@ TEST(ClientTunnelPoolWhiteboxTest, StopClosesPendingSocketWhenIoQueueBlocked)
 
     tunnel_pool->stop();
     EXPECT_TRUE(tunnel_pool->stop_.load(std::memory_order_acquire));
-    EXPECT_FALSE(pending_socket->is_open());
     EXPECT_EQ(tunnel_pool->pending_sockets_[0], nullptr);
+    EXPECT_TRUE(pending_socket->is_open());
 
     release_blocker.store(true, std::memory_order_release);
-    tunnel_io_context.stop();
     if (io_thread.joinable())
     {
         io_thread.join();
     }
+    drain_io_context(tunnel_io_context);
+    EXPECT_FALSE(pending_socket->is_open());
 }
 
 TEST(ClientTunnelPoolWhiteboxTest, BuildTunnelAndWaitRetryBranches)
