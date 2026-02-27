@@ -3056,7 +3056,9 @@ TEST_F(remote_server_test_fixture, TryRegisterStreamWithReasonClassifiesLimitAnd
     EXPECT_EQ(connection->try_register_stream_with_reason(3, std::make_shared<noop_mux_stream>()), mux::stream_register_result::kLimitReached);
 
     connection->remove_stream(1);
-    EXPECT_EQ(connection->try_register_stream_with_reason(1, std::make_shared<noop_mux_stream>()), mux::stream_register_result::kIdConflict);
+    EXPECT_EQ(connection->try_register_stream_with_reason(1, std::make_shared<noop_mux_stream>()), mux::stream_register_result::kSuccess);
+    EXPECT_EQ(connection->try_register_stream_with_reason(3, std::make_shared<noop_mux_stream>()), mux::stream_register_result::kLimitReached);
+    connection->remove_stream(1);
     drain_io_context(io_context);
     EXPECT_EQ(connection->try_register_stream_with_reason(1, std::make_shared<noop_mux_stream>()), mux::stream_register_result::kSuccess);
     connection->remove_stream(1);
