@@ -27,6 +27,7 @@
 
 #define private public
 #include "socks_session.h"
+#include "tcp_socks_session.h"
 
 #undef private
 #include "test_util.h"
@@ -1112,6 +1113,69 @@ TEST_F(socks_session_test_fixture, StartLifecycleWithUnsupportedCommand)
     EXPECT_FALSE(session->socket_.is_open());
 
     session->stop();
+}
+
+TEST_F(socks_session_test_fixture, RunSkipsTcpSessionStartWhenCallbackRejects)
+{
+    auto pair = make_tcp_socket_pair(io_ctx());
+    ASSERT_TRUE(pair.client.is_open());
+    ASSERT_TRUE(pair.server.is_open());
+
+    std::atomic<bool> callback_reported{false};
+    std::promise<std::shared_ptr<tcp_socks_session>> callback_promise;
+    auto callback_future = callback_promise.get_future();
+
+    auto session = std::make_shared<socks_session>(
+        std::move(pair.server),
+        io_ctx(),
+        nullptr,
+        nullptr,
+        3,
+        config::socks_t{},
+        config::timeout_t{},
+        config::queues_t{},
+        nullptr,
+        [&callback_reported, &callback_promise](const std::shared_ptr<tcp_socks_session>& tcp_session)
+        {
+            if (!callback_reported.exchange(true, std::memory_order_acq_rel))
+            {
+                callback_promise.set_value(tcp_session);
+            }
+            return false;
+        });
+
+    auto work = boost::asio::make_work_guard(io_ctx());
+    std::thread t([&io_ctx = this->io_ctx()] { io_ctx.run(); });
+
+    session->start();
+    const std::vector<std::uint8_t> req = {
+        0x05,
+        0x01,
+        0x00,
+        0x05,
+        0x01,
+        0x00,
+        0x01,
+        127,
+        0,
+        0,
+        1,
+        0x00,
+        0x50};
+    boost::asio::write(pair.client, boost::asio::buffer(req));
+
+    ASSERT_EQ(callback_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    auto rejected_tcp_session = callback_future.get();
+    ASSERT_NE(rejected_tcp_session, nullptr);
+    EXPECT_TRUE(rejected_tcp_session->socket_.is_open());
+
+    rejected_tcp_session->stop();
+    session->stop();
+    boost::system::error_code close_ec;
+    pair.client.close(close_ec);
+
+    work.reset();
+    t.join();
 }
 
 TEST_F(socks_session_test_fixture, StopHandlesUnexpectedShutdownAndCloseErrors)

@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <functional>
 #include <optional>
 
 #include <boost/asio/ip/tcp.hpp>
@@ -22,12 +23,17 @@ namespace mux
 {
 
 class router;
+class tcp_socks_session;
+class udp_socks_session;
 
 class socks_session : public std::enable_shared_from_this<socks_session>
 {
     friend class socks_session_tester;
 
    public:
+    using tcp_session_started_fn = std::function<bool(const std::shared_ptr<tcp_socks_session>&)>;
+    using udp_session_started_fn = std::function<bool(const std::shared_ptr<udp_socks_session>&)>;
+
     socks_session(boost::asio::ip::tcp::socket socket,
                   boost::asio::io_context& io_context,
                   std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> tunnel_manager,
@@ -36,7 +42,9 @@ class socks_session : public std::enable_shared_from_this<socks_session>
                   const config::socks_t& socks_cfg = {},
                   const config::timeout_t& timeout_cfg = {},
                   const config::queues_t& queue_cfg = {},
-                  std::shared_ptr<boost::asio::cancellation_signal> stop_signal = nullptr);
+                  std::shared_ptr<boost::asio::cancellation_signal> stop_signal = nullptr,
+                  tcp_session_started_fn on_tcp_session_started = {},
+                  udp_session_started_fn on_udp_session_started = {});
 
     ~socks_session();
 
@@ -117,6 +125,8 @@ class socks_session : public std::enable_shared_from_this<socks_session>
     std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> tunnel_manager_;
     std::shared_ptr<void> active_connection_guard_;
     std::shared_ptr<boost::asio::cancellation_signal> stop_signal_;
+    tcp_session_started_fn on_tcp_session_started_;
+    udp_session_started_fn on_udp_session_started_;
     config::timeout_t timeout_config_;
     config::queues_t queue_config_;
 };
