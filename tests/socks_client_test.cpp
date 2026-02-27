@@ -1,4 +1,5 @@
 
+#include <array>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -234,6 +235,28 @@ std::size_t session_count(boost::asio::io_context& io_context, const std::shared
                              });
 }
 
+std::size_t tcp_session_count(boost::asio::io_context& io_context, const std::shared_ptr<mux::socks_client>& client)
+{
+    (void)io_context;
+    auto snapshot = std::atomic_load_explicit(&client->tcp_sessions_, std::memory_order_acquire);
+    if (snapshot == nullptr)
+    {
+        return std::size_t{0};
+    }
+    return snapshot->size();
+}
+
+std::size_t udp_session_count(boost::asio::io_context& io_context, const std::shared_ptr<mux::socks_client>& client)
+{
+    (void)io_context;
+    auto snapshot = std::atomic_load_explicit(&client->udp_sessions_, std::memory_order_acquire);
+    if (snapshot == nullptr)
+    {
+        return std::size_t{0};
+    }
+    return snapshot->size();
+}
+
 bool acceptor_is_open(boost::asio::io_context& io_context, const std::shared_ptr<mux::socks_client>& client)
 {
     return run_on_io_context(io_context, [client]() { return client->acceptor_.is_open(); });
@@ -242,6 +265,10 @@ bool acceptor_is_open(boost::asio::io_context& io_context, const std::shared_ptr
 std::shared_ptr<std::atomic<bool>> spawn_accept_local_loop(boost::asio::io_context& io_context,
                                                            const std::shared_ptr<mux::socks_client>& client)
 {
+    if (client->state_.load(std::memory_order_acquire) == mux::socks_client_state::kStopped)
+    {
+        client->state_.store(mux::socks_client_state::kRunning, std::memory_order_release);
+    }
     auto done = std::make_shared<std::atomic<bool>>(false);
     boost::asio::co_spawn(
         io_context,
@@ -378,11 +405,10 @@ TEST(LocalClientTest, RunningRequiresStartedFlag)
     EXPECT_TRUE(client->acceptor_.is_open());
     EXPECT_FALSE(client->running());
 
-    client->started_.store(true, std::memory_order_release);
-    client->stop_.store(false, std::memory_order_release);
+    client->state_.store(mux::socks_client_state::kRunning, std::memory_order_release);
     EXPECT_TRUE(client->running());
 
-    client->stop_.store(true, std::memory_order_release);
+    client->state_.store(mux::socks_client_state::kStopping, std::memory_order_release);
     EXPECT_FALSE(client->running());
 
     client->acceptor_.close(ec);
@@ -556,14 +582,12 @@ TEST(LocalClientTest, StartWhileRunningIsIgnored)
 
     auto client = std::make_shared<mux::socks_client>(pool, cfg);
     client->start();
-    EXPECT_TRUE(client->started_.load(std::memory_order_acquire));
-    EXPECT_FALSE(client->stop_.load(std::memory_order_acquire));
+    EXPECT_EQ(client->state_.load(std::memory_order_acquire), mux::socks_client_state::kRunning);
     EXPECT_TRUE(client->acceptor_.is_open());
 
     const auto first_port = client->listen_port();
     client->start();
-    EXPECT_TRUE(client->started_.load(std::memory_order_acquire));
-    EXPECT_FALSE(client->stop_.load(std::memory_order_acquire));
+    EXPECT_EQ(client->state_.load(std::memory_order_acquire), mux::socks_client_state::kRunning);
     EXPECT_TRUE(client->acceptor_.is_open());
     EXPECT_EQ(client->listen_port(), first_port);
 
@@ -639,7 +663,7 @@ TEST(LocalClientTest, DisabledSocksStopsImmediately)
 
     const auto client = std::make_shared<mux::socks_client>(pool, cfg);
     client->start();
-    EXPECT_TRUE(client->stop_.load(std::memory_order_acquire));
+    EXPECT_NE(client->state_.load(std::memory_order_acquire), mux::socks_client_state::kRunning);
     client->stop();
 }
 
@@ -766,6 +790,110 @@ TEST(LocalClientTest, NoTunnelSelectionAndSessionPrunePath)
     }
 }
 
+TEST(LocalClientTest, StopCollectsUpgradedTcpSessions)
+{
+    io_context_pool pool(1);
+
+    mux::config cfg;
+    cfg.outbound.host = "127.0.0.1";
+    cfg.outbound.port = 1;
+    cfg.socks.host = "127.0.0.1";
+    cfg.socks.port = 0;
+    cfg.reality.public_key = std::string(64, 'a');
+    cfg.reality.sni = "example.com";
+
+    const auto client = std::make_shared<mux::socks_client>(pool, cfg);
+    std::thread pool_thread([&pool]() { pool.run(); });
+
+    client->start();
+    ASSERT_TRUE(wait_for_listen_port(client));
+
+    boost::asio::io_context connect_ctx;
+    boost::asio::ip::tcp::socket connector(connect_ctx);
+    boost::system::error_code ec;
+    connector.connect(boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address("127.0.0.1"), client->listen_port()), ec);
+    ASSERT_FALSE(ec);
+
+    const std::array<std::uint8_t, 3> greeting = {0x05, 0x01, 0x00};
+    boost::asio::write(connector, boost::asio::buffer(greeting), ec);
+    ASSERT_FALSE(ec);
+
+    std::array<std::uint8_t, 2> method_response = {0, 0};
+    boost::asio::read(connector, boost::asio::buffer(method_response), ec);
+    ASSERT_FALSE(ec);
+    ASSERT_EQ(method_response[0], 0x05);
+    ASSERT_EQ(method_response[1], 0x00);
+
+    const std::array<std::uint8_t, 10> connect_request = {0x05, 0x01, 0x00, 0x01, 127, 0, 0, 1, 0x00, 0x50};
+    boost::asio::write(connector, boost::asio::buffer(connect_request), ec);
+    ASSERT_FALSE(ec);
+
+    ASSERT_TRUE(mux::test::co_wait_until([&pool, client]() { return tcp_session_count(pool.get_io_context(), client) > 0; }, std::chrono::seconds(3)));
+
+    client->stop();
+    EXPECT_TRUE(mux::test::co_wait_until(
+        [&pool, client]() { return tcp_session_count(pool.get_io_context(), client) == 0 && udp_session_count(pool.get_io_context(), client) == 0; },
+        std::chrono::seconds(3)));
+
+    pool.stop();
+    if (pool_thread.joinable())
+    {
+        pool_thread.join();
+    }
+}
+
+TEST(LocalClientTest, StopCollectsUpgradedUdpSessions)
+{
+    io_context_pool pool(1);
+
+    mux::config cfg;
+    cfg.outbound.host = "127.0.0.1";
+    cfg.outbound.port = 1;
+    cfg.socks.host = "127.0.0.1";
+    cfg.socks.port = 0;
+    cfg.reality.public_key = std::string(64, 'a');
+    cfg.reality.sni = "example.com";
+
+    const auto client = std::make_shared<mux::socks_client>(pool, cfg);
+    std::thread pool_thread([&pool]() { pool.run(); });
+
+    client->start();
+    ASSERT_TRUE(wait_for_listen_port(client));
+
+    boost::asio::io_context connect_ctx;
+    boost::asio::ip::tcp::socket connector(connect_ctx);
+    boost::system::error_code ec;
+    connector.connect(boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address("127.0.0.1"), client->listen_port()), ec);
+    ASSERT_FALSE(ec);
+
+    const std::array<std::uint8_t, 3> greeting = {0x05, 0x01, 0x00};
+    boost::asio::write(connector, boost::asio::buffer(greeting), ec);
+    ASSERT_FALSE(ec);
+
+    std::array<std::uint8_t, 2> method_response = {0, 0};
+    boost::asio::read(connector, boost::asio::buffer(method_response), ec);
+    ASSERT_FALSE(ec);
+    ASSERT_EQ(method_response[0], 0x05);
+    ASSERT_EQ(method_response[1], 0x00);
+
+    const std::array<std::uint8_t, 10> udp_request = {0x05, 0x03, 0x00, 0x01, 127, 0, 0, 1, 0x00, 0x35};
+    boost::asio::write(connector, boost::asio::buffer(udp_request), ec);
+    ASSERT_FALSE(ec);
+
+    ASSERT_TRUE(mux::test::co_wait_until([&pool, client]() { return udp_session_count(pool.get_io_context(), client) > 0; }, std::chrono::seconds(3)));
+
+    client->stop();
+    EXPECT_TRUE(mux::test::co_wait_until(
+        [&pool, client]() { return tcp_session_count(pool.get_io_context(), client) == 0 && udp_session_count(pool.get_io_context(), client) == 0; },
+        std::chrono::seconds(3)));
+
+    pool.stop();
+    if (pool_thread.joinable())
+    {
+        pool_thread.join();
+    }
+}
+
 TEST(LocalClientTest, RouterLoadFailureStopsEarly)
 {
     io_context_pool pool(1);
@@ -781,7 +909,7 @@ TEST(LocalClientTest, RouterLoadFailureStopsEarly)
     const auto client = std::make_shared<mux::socks_client>(pool, cfg);
     client->router_ = std::make_shared<failing_router>();
     client->start();
-    EXPECT_TRUE(client->stop_.load(std::memory_order_acquire));
+    EXPECT_NE(client->state_.load(std::memory_order_acquire), mux::socks_client_state::kRunning);
     client->stop();
 }
 
@@ -801,8 +929,7 @@ TEST(LocalClientTest, StartWithNullTunnelPoolStopsEarly)
     client->tunnel_pool_.reset();
     client->start();
 
-    EXPECT_TRUE(client->stop_.load(std::memory_order_acquire));
-    EXPECT_FALSE(client->started_.load(std::memory_order_acquire));
+    EXPECT_NE(client->state_.load(std::memory_order_acquire), mux::socks_client_state::kRunning);
     EXPECT_FALSE(client->acceptor_.is_open());
     client->stop();
 }
@@ -823,8 +950,7 @@ TEST(LocalClientTest, StartWithNullRouterStopsEarly)
     client->router_.reset();
     client->start();
 
-    EXPECT_TRUE(client->stop_.load(std::memory_order_acquire));
-    EXPECT_FALSE(client->started_.load(std::memory_order_acquire));
+    EXPECT_NE(client->state_.load(std::memory_order_acquire), mux::socks_client_state::kRunning);
     EXPECT_FALSE(client->acceptor_.is_open());
     client->stop();
 }
@@ -841,7 +967,7 @@ TEST(LocalClientTest, AcceptLoopSkipsSetupWhenStopAlreadySet)
     cfg.reality.public_key = std::string(64, 'a');
     cfg.reality.sni = "example.com";
     const auto client = std::make_shared<mux::socks_client>(pool, cfg);
-    client->stop_.store(true, std::memory_order_release);
+    client->state_.store(mux::socks_client_state::kStopping, std::memory_order_release);
 
     auto done = spawn_accept_local_loop(pool.get_io_context(), client);
     std::thread runner([&pool]() { pool.run(); });
@@ -872,7 +998,7 @@ TEST(LocalClientTest, AcceptLoopReturnsWhenTunnelPoolMissing)
     auto done = spawn_accept_local_loop(pool.get_io_context(), client);
     std::thread runner([&pool]() { pool.run(); });
     EXPECT_TRUE(mux::test::co_wait_until([done]() { return done->load(std::memory_order_acquire); }, std::chrono::seconds(2)));
-    EXPECT_TRUE(client->stop_.load(std::memory_order_acquire));
+    EXPECT_NE(client->state_.load(std::memory_order_acquire), mux::socks_client_state::kRunning);
     EXPECT_FALSE(acceptor_is_open(pool.get_io_context(), client));
 
     client->stop();
@@ -900,7 +1026,7 @@ TEST(LocalClientTest, AcceptLoopReturnsWhenRouterMissing)
     auto done = spawn_accept_local_loop(pool.get_io_context(), client);
     std::thread runner([&pool]() { pool.run(); });
     EXPECT_TRUE(mux::test::co_wait_until([done]() { return done->load(std::memory_order_acquire); }, std::chrono::seconds(2)));
-    EXPECT_TRUE(client->stop_.load(std::memory_order_acquire));
+    EXPECT_NE(client->state_.load(std::memory_order_acquire), mux::socks_client_state::kRunning);
     EXPECT_FALSE(acceptor_is_open(pool.get_io_context(), client));
 
     client->stop();

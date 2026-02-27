@@ -17,9 +17,9 @@
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/system/error_code.hpp>
-#include <boost/asio/bind_cancellation_slot.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/redirect_error.hpp>
+#include <boost/asio/bind_cancellation_slot.hpp>
 #include <boost/asio/experimental/channel_error.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
 
@@ -124,10 +124,6 @@ void tproxy_tcp_session::start()
 
 void tproxy_tcp_session::stop()
 {
-    if (stop_signal_ != nullptr)
-    {
-        stop_signal_->emit(boost::asio::cancellation_type::all);
-    }
     close_client_socket();
 }
 

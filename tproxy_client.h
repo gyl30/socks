@@ -27,6 +27,15 @@
 namespace mux
 {
 
+class tproxy_tcp_session;
+
+enum class tproxy_client_state : std::uint8_t
+{
+    kStopped,
+    kRunning,
+    kStopping,
+};
+
 struct tproxy_udp_dispatch_item
 {
     boost::asio::ip::udp::endpoint src_ep;
@@ -52,7 +61,7 @@ class tproxy_client : public std::enable_shared_from_this<tproxy_client>
     [[nodiscard]] std::uint16_t udp_port() const { return udp_port_; }
     [[nodiscard]] bool running() const
     {
-        return started_.load(std::memory_order_acquire) && !stop_.load(std::memory_order_acquire) && tcp_acceptor_.is_open() && udp_socket_.is_open();
+        return state_.load(std::memory_order_acquire) == tproxy_client_state::kRunning && tcp_acceptor_.is_open() && udp_socket_.is_open();
     }
 
     [[nodiscard]] static bool enqueue_udp_packet(tproxy_udp_dispatch_channel& dispatch_channel,
@@ -79,9 +88,7 @@ class tproxy_client : public std::enable_shared_from_this<tproxy_client>
                              const std::string& udp_listen_host);
 
    private:
-    std::atomic<bool> stop_{false};
-    std::atomic<bool> started_{false};
-    std::atomic<std::uint64_t> lifecycle_epoch_{0};
+    std::atomic<tproxy_client_state> state_{tproxy_client_state::kStopped};
     boost::asio::io_context& io_context_;
     boost::asio::ip::tcp::acceptor tcp_acceptor_;
     boost::asio::ip::udp::socket udp_socket_;
@@ -90,6 +97,8 @@ class tproxy_client : public std::enable_shared_from_this<tproxy_client>
     std::shared_ptr<router> router_;
     std::shared_ptr<tproxy_udp_sender> sender_;
     std::shared_ptr<udp_session_map_t> udp_sessions_ = std::make_shared<udp_session_map_t>();
+    std::shared_ptr<std::vector<std::weak_ptr<tproxy_tcp_session>>> tcp_sessions_ =
+        std::make_shared<std::vector<std::weak_ptr<tproxy_tcp_session>>>();
     std::shared_ptr<tproxy_udp_dispatch_channel> udp_dispatch_channel_;
     std::atomic<bool> udp_dispatch_started_{false};
     config cfg_;

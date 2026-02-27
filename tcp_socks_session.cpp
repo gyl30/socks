@@ -18,10 +18,10 @@
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/address.hpp>
-#include <boost/asio/bind_cancellation_slot.hpp>
 #include <boost/system/error_code.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/redirect_error.hpp>
+#include <boost/asio/bind_cancellation_slot.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
 
 #include "log.h"
@@ -162,10 +162,6 @@ void tcp_socks_session::start(const std::string& host, const std::uint16_t port)
 
 void tcp_socks_session::stop()
 {
-    if (stop_signal_ != nullptr)
-    {
-        stop_signal_->emit(boost::asio::cancellation_type::all);
-    }
     close_client_socket();
 }
 
