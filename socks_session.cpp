@@ -111,7 +111,9 @@ socks_session::socks_session(boost::asio::ip::tcp::socket socket,
                              const config::socks_t& socks_cfg,
                              const config::timeout_t& timeout_cfg,
                              const config::queues_t& queue_cfg,
-                             std::shared_ptr<boost::asio::cancellation_signal> stop_signal)
+                             std::shared_ptr<boost::asio::cancellation_signal> stop_signal,
+                             tcp_session_started_fn on_tcp_session_started,
+                             udp_session_started_fn on_udp_session_started)
     : sid_(sid),
       username_(socks_cfg.username),
       password_(socks_cfg.password),
@@ -121,6 +123,8 @@ socks_session::socks_session(boost::asio::ip::tcp::socket socket,
       router_(std::move(router)),
       tunnel_manager_(std::move(tunnel_manager)),
       stop_signal_(std::move(stop_signal)),
+      on_tcp_session_started_(std::move(on_tcp_session_started)),
+      on_udp_session_started_(std::move(on_udp_session_started)),
       timeout_config_(timeout_cfg),
       queue_config_(queue_cfg)
 {
@@ -181,7 +185,23 @@ boost::asio::awaitable<void> socks_session::run()
     if (cmd == socks::kCmdConnect)
     {
         const auto tcp_sess = std::make_shared<tcp_socks_session>(
-            std::move(socket_), io_context_, tunnel_manager_, router_, sid_, timeout_config_, std::move(active_connection_guard_), stop_signal_);
+            std::move(socket_),
+            io_context_,
+            tunnel_manager_,
+            router_,
+            sid_,
+            timeout_config_,
+            std::move(active_connection_guard_),
+            std::shared_ptr<boost::asio::cancellation_signal>{});
+        bool allow_start = true;
+        if (on_tcp_session_started_)
+        {
+            allow_start = on_tcp_session_started_(tcp_sess);
+        }
+        if (!allow_start)
+        {
+            co_return;
+        }
         tcp_sess->start(host, port);
     }
     else if (cmd == socks::kCmdUdpAssociate)
@@ -193,7 +213,16 @@ boost::asio::awaitable<void> socks_session::run()
                                                                   timeout_config_,
                                                                   std::move(active_connection_guard_),
                                                                   queue_config_.udp_session_recv_channel_capacity,
-                                                                  stop_signal_);
+                                                                  std::shared_ptr<boost::asio::cancellation_signal>{});
+        bool allow_start = true;
+        if (on_udp_session_started_)
+        {
+            allow_start = on_udp_session_started_(udp_sess);
+        }
+        if (!allow_start)
+        {
+            co_return;
+        }
         udp_sess->start(host, port);
     }
     else

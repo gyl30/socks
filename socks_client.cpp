@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <functional>
 #include <utility>
 
 #include <boost/asio/error.hpp>
@@ -28,6 +29,8 @@
 #include "context_pool.h"
 #include "socks_client.h"
 #include "socks_session.h"
+#include "tcp_socks_session.h"
+#include "udp_socks_session.h"
 #include "stop_dispatch.h"
 #include "client_tunnel_pool.h"
 
@@ -37,8 +40,23 @@ namespace mux
 namespace
 {
 
-using session_list_t = std::vector<std::weak_ptr<socks_session>>;
+template <typename SessionT>
+using weak_session_list_t = std::vector<std::weak_ptr<SessionT>>;
+
+using session_list_t = weak_session_list_t<socks_session>;
+using tcp_session_list_t = weak_session_list_t<tcp_socks_session>;
+using udp_session_list_t = weak_session_list_t<udp_socks_session>;
 constexpr std::uint32_t kEphemeralBindRetryAttempts = 120;
+
+bool socks_client_running(const std::atomic<socks_client_state>& state)
+{
+    return state.load(std::memory_order_acquire) == socks_client_state::kRunning;
+}
+
+void socks_client_request_stop(std::atomic<socks_client_state>& state)
+{
+    state.store(socks_client_state::kStopping, std::memory_order_release);
+}
 
 void close_local_socket(boost::asio::ip::tcp::socket& socket)
 {
@@ -168,22 +186,24 @@ void set_no_delay_or_log(boost::asio::ip::tcp::socket& socket)
     }
 }
 
-std::shared_ptr<session_list_t> snapshot_sessions(const std::shared_ptr<session_list_t>& sessions)
+template <typename SessionT>
+std::shared_ptr<weak_session_list_t<SessionT>> snapshot_sessions(const std::shared_ptr<weak_session_list_t<SessionT>>& sessions)
 {
     auto snapshot = std::atomic_load_explicit(&sessions, std::memory_order_acquire);
     if (snapshot != nullptr)
     {
         return snapshot;
     }
-    return std::make_shared<session_list_t>();
+    return std::make_shared<weak_session_list_t<SessionT>>();
 }
 
-void append_session(std::shared_ptr<session_list_t>& sessions, const std::shared_ptr<socks_session>& session)
+template <typename SessionT>
+void append_session(std::shared_ptr<weak_session_list_t<SessionT>>& sessions, const std::shared_ptr<SessionT>& session)
 {
     for (;;)
     {
-        auto current = snapshot_sessions(sessions);
-        auto updated = std::make_shared<session_list_t>();
+        auto current = snapshot_sessions<SessionT>(sessions);
+        auto updated = std::make_shared<weak_session_list_t<SessionT>>();
         updated->reserve(current->size() + 1);
         for (const auto& weak_session : *current)
         {
@@ -200,12 +220,13 @@ void append_session(std::shared_ptr<session_list_t>& sessions, const std::shared
     }
 }
 
-std::shared_ptr<session_list_t> detach_sessions(std::shared_ptr<session_list_t>& sessions)
+template <typename SessionT>
+std::shared_ptr<weak_session_list_t<SessionT>> detach_sessions(std::shared_ptr<weak_session_list_t<SessionT>>& sessions)
 {
-    auto empty = std::make_shared<session_list_t>();
+    auto empty = std::make_shared<weak_session_list_t<SessionT>>();
     for (;;)
     {
-        auto current = snapshot_sessions(sessions);
+        auto current = snapshot_sessions<SessionT>(sessions);
         if (std::atomic_compare_exchange_weak_explicit(&sessions, &current, empty, std::memory_order_acq_rel, std::memory_order_acquire))
         {
             return current;
@@ -215,7 +236,7 @@ std::shared_ptr<session_list_t> detach_sessions(std::shared_ptr<session_list_t>&
 
 boost::asio::awaitable<std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>>> wait_for_tunnel_ready(boost::asio::io_context& io_context,
                                                                                                              std::shared_ptr<client_tunnel_pool> pool,
-                                                                                                             const std::atomic<bool>& stop)
+                                                                                                             const std::atomic<socks_client_state>& state)
 {
     if (pool == nullptr)
     {
@@ -230,7 +251,7 @@ boost::asio::awaitable<std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::soc
     }
 
     boost::asio::steady_timer tunnel_wait_timer(io_context);
-    for (std::uint32_t attempt = 0; attempt < 6 && !stop.load(std::memory_order_acquire) && selected_tunnel == nullptr; ++attempt)
+    for (std::uint32_t attempt = 0; attempt < 6 && socks_client_running(state) && selected_tunnel == nullptr; ++attempt)
     {
         tunnel_wait_timer.expires_after(std::chrono::milliseconds(200));
         const auto [wait_ec] = co_await tunnel_wait_timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
@@ -264,7 +285,9 @@ boost::asio::awaitable<bool> start_local_session(boost::asio::ip::tcp::socket so
                                                  const config::timeout_t& timeout_config,
                                                  const config::queues_t& queue_config,
                                                  const std::shared_ptr<boost::asio::cancellation_signal>& stop_signal,
-                                                 const std::atomic<bool>& stop)
+                                                 const socks_session::tcp_session_started_fn& on_tcp_session_started,
+                                                 const socks_session::udp_session_started_fn& on_udp_session_started,
+                                                 const std::atomic<socks_client_state>& state)
 {
     if (tunnel_pool == nullptr)
     {
@@ -279,7 +302,7 @@ boost::asio::awaitable<bool> start_local_session(boost::asio::ip::tcp::socket so
         co_return false;
     }
 
-    if (stop.load(std::memory_order_acquire))
+    if (!socks_client_running(state))
     {
         close_local_socket(socket);
         co_return false;
@@ -287,8 +310,8 @@ boost::asio::awaitable<bool> start_local_session(boost::asio::ip::tcp::socket so
 
     set_no_delay_or_log(socket);
 
-    auto selected_tunnel = co_await wait_for_tunnel_ready(io_context, tunnel_pool, stop);
-    if (stop.load(std::memory_order_acquire))
+    auto selected_tunnel = co_await wait_for_tunnel_ready(io_context, tunnel_pool, state);
+    if (!socks_client_running(state))
     {
         close_local_socket(socket);
         co_return false;
@@ -299,15 +322,35 @@ boost::asio::awaitable<bool> start_local_session(boost::asio::ip::tcp::socket so
 
     auto session =
         std::make_shared<socks_session>(
-            std::move(socket), io_context, selected_tunnel, router, sid, socks_config, timeout_config, queue_config, stop_signal);
-    if (stop.load(std::memory_order_acquire))
+            std::move(socket),
+            io_context,
+            selected_tunnel,
+            router,
+            sid,
+            socks_config,
+            timeout_config,
+            queue_config,
+            stop_signal,
+            on_tcp_session_started,
+            on_udp_session_started);
+    if (!socks_client_running(state))
     {
         session->stop();
         co_return false;
     }
 
     append_session(sessions, session);
+    if (!socks_client_running(state))
+    {
+        session->stop();
+        co_return false;
+    }
     session->start();
+    if (!socks_client_running(state))
+    {
+        session->stop();
+        co_return false;
+    }
     co_return true;
 }
 
@@ -320,7 +363,9 @@ boost::asio::awaitable<bool> run_accept_iteration(boost::asio::ip::tcp::acceptor
                                                   const config::timeout_t& timeout_config,
                                                   const config::queues_t& queue_config,
                                                   const std::shared_ptr<boost::asio::cancellation_signal>& stop_signal,
-                                                  const std::atomic<bool>& stop)
+                                                  const socks_session::tcp_session_started_fn& on_tcp_session_started,
+                                                  const socks_session::udp_session_started_fn& on_udp_session_started,
+                                                  const std::atomic<socks_client_state>& state)
 {
     boost::asio::ip::tcp::socket socket(io_context);
     const auto accept_status = co_await accept_local_socket(acceptor, socket, io_context);
@@ -333,14 +378,25 @@ boost::asio::awaitable<bool> run_accept_iteration(boost::asio::ip::tcp::acceptor
         co_return true;
     }
 
-    if (stop.load(std::memory_order_acquire))
+    if (!socks_client_running(state))
     {
         close_local_socket(socket);
         co_return false;
     }
 
     if (!(co_await start_local_session(
-            std::move(socket), io_context, tunnel_pool, router, sessions, socks_config, timeout_config, queue_config, stop_signal, stop)))
+            std::move(socket),
+            io_context,
+            tunnel_pool,
+            router,
+            sessions,
+            socks_config,
+            timeout_config,
+            queue_config,
+            stop_signal,
+            on_tcp_session_started,
+            on_udp_session_started,
+            state)))
     {
         co_return false;
     }
@@ -357,9 +413,10 @@ void close_acceptor_on_stop(boost::asio::ip::tcp::acceptor& acceptor)
     }
 }
 
-std::vector<std::shared_ptr<socks_session>> collect_sessions_to_stop(const std::shared_ptr<session_list_t>& sessions)
+template <typename SessionT>
+std::vector<std::shared_ptr<SessionT>> collect_sessions_to_stop(const std::shared_ptr<weak_session_list_t<SessionT>>& sessions)
 {
-    std::vector<std::shared_ptr<socks_session>> sessions_to_stop;
+    std::vector<std::shared_ptr<SessionT>> sessions_to_stop;
     sessions_to_stop.reserve(sessions->size());
     for (const auto& weak_session : *sessions)
     {
@@ -371,7 +428,8 @@ std::vector<std::shared_ptr<socks_session>> collect_sessions_to_stop(const std::
     return sessions_to_stop;
 }
 
-void stop_sessions(const std::vector<std::shared_ptr<socks_session>>& sessions)
+template <typename SessionT>
+void stop_sessions(const std::vector<std::shared_ptr<SessionT>>& sessions)
 {
     for (const auto& session : sessions)
     {
@@ -379,11 +437,19 @@ void stop_sessions(const std::vector<std::shared_ptr<socks_session>>& sessions)
     }
 }
 
-void stop_local_resources(boost::asio::ip::tcp::acceptor& acceptor, std::shared_ptr<session_list_t>& sessions)
+void stop_local_session_producers(boost::asio::ip::tcp::acceptor& acceptor, std::shared_ptr<session_list_t>& sessions)
 {
     close_acceptor_on_stop(acceptor);
-    auto sessions_to_stop = collect_sessions_to_stop(detach_sessions(sessions));
+    auto sessions_to_stop = collect_sessions_to_stop(detach_sessions<socks_session>(sessions));
     stop_sessions(sessions_to_stop);
+}
+
+void stop_local_session_consumers(std::shared_ptr<tcp_session_list_t>& tcp_sessions, std::shared_ptr<udp_session_list_t>& udp_sessions)
+{
+    auto tcp_sessions_to_stop = collect_sessions_to_stop(detach_sessions<tcp_socks_session>(tcp_sessions));
+    auto udp_sessions_to_stop = collect_sessions_to_stop(detach_sessions<udp_socks_session>(udp_sessions));
+    stop_sessions(tcp_sessions_to_stop);
+    stop_sessions(udp_sessions_to_stop);
 }
 
 }    // namespace
@@ -403,21 +469,18 @@ socks_client::socks_client(io_context_pool& pool, const config& cfg)
 
 void socks_client::start()
 {
-    bool expected = false;
-    if (!started_.compare_exchange_strong(expected, true, std::memory_order_acq_rel))
+    auto expected_state = socks_client_state::kStopped;
+    if (!state_.compare_exchange_strong(expected_state, socks_client_state::kRunning, std::memory_order_acq_rel, std::memory_order_acquire))
     {
         LOG_WARN("socks client already started");
         return;
     }
-    lifecycle_epoch_.fetch_add(1, std::memory_order_acq_rel);
-    stop_.store(false, std::memory_order_release);
 
     auto tunnel_pool = tunnel_pool_;
     if (tunnel_pool == nullptr)
     {
         LOG_ERROR("tunnel pool unavailable");
-        stop_.store(true, std::memory_order_release);
-        started_.store(false, std::memory_order_release);
+        state_.store(socks_client_state::kStopped, std::memory_order_release);
         return;
     }
 
@@ -425,30 +488,26 @@ void socks_client::start()
     if (router == nullptr)
     {
         LOG_ERROR("router unavailable");
-        stop_.store(true, std::memory_order_release);
-        started_.store(false, std::memory_order_release);
+        state_.store(socks_client_state::kStopped, std::memory_order_release);
         return;
     }
 
     if (!tunnel_pool->valid())
     {
         LOG_ERROR("invalid reality auth config");
-        stop_.store(true, std::memory_order_release);
-        started_.store(false, std::memory_order_release);
+        state_.store(socks_client_state::kStopped, std::memory_order_release);
         return;
     }
     if (!router->load())
     {
         LOG_ERROR("failed to load router data");
-        stop_.store(true, std::memory_order_release);
-        started_.store(false, std::memory_order_release);
+        state_.store(socks_client_state::kStopped, std::memory_order_release);
         return;
     }
     if (!socks_config_.enabled)
     {
         LOG_INFO("socks client disabled");
-        stop_.store(true, std::memory_order_release);
-        started_.store(false, std::memory_order_release);
+        state_.store(socks_client_state::kStopped, std::memory_order_release);
         return;
     }
 
@@ -457,8 +516,7 @@ void socks_client::start()
     if (!prepare_local_listener(acceptor_, socks_config_.host, configured_port, bound_port))
     {
         LOG_ERROR("local socks5 setup failed");
-        stop_.store(true, std::memory_order_release);
-        started_.store(false, std::memory_order_release);
+        state_.store(socks_client_state::kStopped, std::memory_order_release);
         return;
     }
     listen_port_.store(bound_port, std::memory_order_release);
@@ -476,26 +534,25 @@ boost::asio::awaitable<void> socks_client::accept_local_loop_detached(std::share
 void socks_client::stop()
 {
     LOG_INFO("client stopping closing resources");
-    const auto stop_epoch = lifecycle_epoch_.load(std::memory_order_acquire);
-    stop_.store(true, std::memory_order_release);
-    started_.store(false, std::memory_order_release);
+    socks_client_request_stop(state_);
     stop_signal_->emit(boost::asio::cancellation_type::all);
 
     detail::dispatch_cleanup_or_run_inline(io_context_,
-                                           [weak_self = weak_from_this(), stop_epoch]()
+                                           [weak_self = weak_from_this()]()
                                            {
                                                if (const auto self = weak_self.lock())
                                                {
-                                                   if (self->lifecycle_epoch_.load(std::memory_order_acquire) != stop_epoch ||
-                                                       !self->stop_.load(std::memory_order_acquire))
+                                                   if (self->state_.load(std::memory_order_acquire) != socks_client_state::kStopping)
                                                    {
                                                        return;
                                                    }
-                                                   stop_local_resources(self->acceptor_, self->sessions_);
+                                                   stop_local_session_producers(self->acceptor_, self->sessions_);
+                                                   stop_local_session_consumers(self->tcp_sessions_, self->udp_sessions_);
+                                                   self->state_.store(socks_client_state::kStopped, std::memory_order_release);
                                                }
                                            });
 
-    if (tunnel_pool_ != nullptr && lifecycle_epoch_.load(std::memory_order_acquire) == stop_epoch && stop_.load(std::memory_order_acquire))
+    if (tunnel_pool_ != nullptr)
     {
         tunnel_pool_->stop();
     }
@@ -503,9 +560,8 @@ void socks_client::stop()
 
 boost::asio::awaitable<void> socks_client::accept_local_loop()
 {
-    if (stop_.load(std::memory_order_acquire))
+    if (!socks_client_running(state_))
     {
-        started_.store(false, std::memory_order_release);
         co_return;
     }
 
@@ -513,16 +569,14 @@ boost::asio::awaitable<void> socks_client::accept_local_loop()
     if (tunnel_pool == nullptr)
     {
         LOG_ERROR("accept loop tunnel pool unavailable");
-        stop_.store(true, std::memory_order_release);
-        started_.store(false, std::memory_order_release);
+        socks_client_request_stop(state_);
         co_return;
     }
     auto router = router_;
     if (router == nullptr)
     {
         LOG_ERROR("accept loop router unavailable");
-        stop_.store(true, std::memory_order_release);
-        started_.store(false, std::memory_order_release);
+        socks_client_request_stop(state_);
         co_return;
     }
 
@@ -532,20 +586,61 @@ boost::asio::awaitable<void> socks_client::accept_local_loop()
         std::uint16_t bound_port = 0;
         if (!prepare_local_listener(acceptor_, socks_config_.host, configured_port, bound_port))
         {
-            stop_.store(true, std::memory_order_release);
-            started_.store(false, std::memory_order_release);
+            socks_client_request_stop(state_);
             co_return;
         }
-        if (stop_.load(std::memory_order_acquire))
+        if (!socks_client_running(state_))
         {
             close_local_acceptor_on_setup_failure(acceptor_);
-            started_.store(false, std::memory_order_release);
             co_return;
         }
         listen_port_.store(bound_port, std::memory_order_release);
         LOG_INFO("local socks5 listening on {}:{}", socks_config_.host, listen_port_.load(std::memory_order_acquire));
     }
-    while (!stop_.load(std::memory_order_acquire))
+    const auto weak_self = weak_from_this();
+    const socks_session::tcp_session_started_fn on_tcp_session_started =
+        [weak_self](const std::shared_ptr<tcp_socks_session>& session)
+    {
+        if (const auto self = weak_self.lock())
+        {
+            if (!socks_client_running(self->state_))
+            {
+                session->stop();
+                return false;
+            }
+            append_session(self->tcp_sessions_, session);
+            if (!socks_client_running(self->state_))
+            {
+                session->stop();
+                return false;
+            }
+            return true;
+        }
+        session->stop();
+        return false;
+    };
+    const socks_session::udp_session_started_fn on_udp_session_started =
+        [weak_self](const std::shared_ptr<udp_socks_session>& session)
+    {
+        if (const auto self = weak_self.lock())
+        {
+            if (!socks_client_running(self->state_))
+            {
+                session->stop();
+                return false;
+            }
+            append_session(self->udp_sessions_, session);
+            if (!socks_client_running(self->state_))
+            {
+                session->stop();
+                return false;
+            }
+            return true;
+        }
+        session->stop();
+        return false;
+    };
+    while (socks_client_running(state_))
     {
         if (!(co_await run_accept_iteration(
                 acceptor_,
@@ -557,12 +652,13 @@ boost::asio::awaitable<void> socks_client::accept_local_loop()
                 timeout_config_,
                 queue_config_,
                 std::shared_ptr<boost::asio::cancellation_signal>{},
-                stop_)))
+                on_tcp_session_started,
+                on_udp_session_started,
+                state_)))
         {
             break;
         }
     }
-    started_.store(false, std::memory_order_release);
     LOG_INFO("accept local loop exited");
 }
 
