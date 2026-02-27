@@ -137,12 +137,16 @@ boost::asio::awaitable<route_type> router::decide_ip(const connection_context& c
 {
     (void)host;
     const auto normalized_addr = normalize_route_address(addr);
-    if (block_ip_matcher_->match(normalized_addr))
+    if (block_ip_matcher_ == nullptr || direct_ip_matcher_ == nullptr)
+    {
+        LOG_CTX_WARN(ctx, "{} ip matcher unavailable fallback default proxy", log_event::kRoute);
+    }
+    if (block_ip_matcher_ != nullptr && block_ip_matcher_->match(normalized_addr))
     {
         LOG_CTX_DEBUG(ctx, "{} matched ip rule block", log_event::kRoute);
         co_return route_type::kBlock;
     }
-    if (direct_ip_matcher_->match(normalized_addr))
+    if (direct_ip_matcher_ != nullptr && direct_ip_matcher_->match(normalized_addr))
     {
         LOG_CTX_DEBUG(ctx, "{} matched ip rule direct", log_event::kRoute);
         co_return route_type::kDirect;
@@ -153,17 +157,21 @@ boost::asio::awaitable<route_type> router::decide_ip(const connection_context& c
 
 boost::asio::awaitable<route_type> router::decide_domain(const connection_context& ctx, const std::string& host) const
 {
-    if (block_domain_matcher_->match(host))
+    if (block_domain_matcher_ == nullptr || direct_domain_matcher_ == nullptr || proxy_domain_matcher_ == nullptr)
+    {
+        LOG_CTX_WARN(ctx, "{} domain matcher unavailable fallback default direct", log_event::kRoute);
+    }
+    if (block_domain_matcher_ != nullptr && block_domain_matcher_->match(host))
     {
         LOG_CTX_DEBUG(ctx, "{} matched domain rule block", log_event::kRoute);
         co_return route_type::kBlock;
     }
-    if (direct_domain_matcher_->match(host))
+    if (direct_domain_matcher_ != nullptr && direct_domain_matcher_->match(host))
     {
         LOG_CTX_DEBUG(ctx, "{} matched domain rule direct", log_event::kRoute);
         co_return route_type::kDirect;
     }
-    if (proxy_domain_matcher_->match(host))
+    if (proxy_domain_matcher_ != nullptr && proxy_domain_matcher_->match(host))
     {
         LOG_CTX_DEBUG(ctx, "{} matched domain rule proxy", log_event::kRoute);
         co_return route_type::kProxy;
