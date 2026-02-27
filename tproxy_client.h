@@ -14,6 +14,7 @@
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/system/error_code.hpp>
+#include <boost/asio/cancellation_signal.hpp>
 #include <boost/asio/experimental/concurrent_channel.hpp>
 
 #include "config.h"
@@ -84,6 +85,7 @@ class tproxy_client : public std::enable_shared_from_this<tproxy_client>
     boost::asio::io_context& io_context_;
     boost::asio::ip::tcp::acceptor tcp_acceptor_;
     boost::asio::ip::udp::socket udp_socket_;
+    std::shared_ptr<boost::asio::cancellation_signal> stop_signal_ = std::make_shared<boost::asio::cancellation_signal>();
     std::shared_ptr<client_tunnel_pool> tunnel_pool_;
     std::shared_ptr<router> router_;
     std::shared_ptr<tproxy_udp_sender> sender_;

@@ -17,6 +17,7 @@
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/system/error_code.hpp>
+#include <boost/asio/bind_cancellation_slot.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/redirect_error.hpp>
 #include <boost/asio/experimental/channel_error.hpp>
@@ -92,7 +93,8 @@ tproxy_tcp_session::tproxy_tcp_session(boost::asio::ip::tcp::socket socket,
                                        std::shared_ptr<router> router,
                                        const std::uint32_t sid,
                                        const config& cfg,
-                                       boost::asio::ip::tcp::endpoint dst_ep)
+                                       boost::asio::ip::tcp::endpoint dst_ep,
+                                       std::shared_ptr<boost::asio::cancellation_signal> stop_signal)
     : io_context_(io_context),
       socket_(std::move(socket)),
       idle_timer_(io_context_),
@@ -100,14 +102,34 @@ tproxy_tcp_session::tproxy_tcp_session(boost::asio::ip::tcp::socket socket,
       router_(std::move(router)),
       dst_ep_(std::move(dst_ep)),
       timeout_config_(cfg.timeout),
-      mark_(cfg.tproxy.mark)
+      mark_(cfg.tproxy.mark),
+      stop_signal_(std::move(stop_signal))
 {
     ctx_.new_trace_id();
     ctx_.conn_id(sid);
     last_activity_time_ms_.store(now_ms(), std::memory_order_release);
 }
 
-void tproxy_tcp_session::start() { boost::asio::co_spawn(io_context_, run_detached(shared_from_this()), boost::asio::detached); }
+void tproxy_tcp_session::start()
+{
+    if (stop_signal_ != nullptr)
+    {
+        boost::asio::co_spawn(io_context_,
+                              run_detached(shared_from_this()),
+                              boost::asio::bind_cancellation_slot(stop_signal_->slot(), boost::asio::detached));
+        return;
+    }
+    boost::asio::co_spawn(io_context_, run_detached(shared_from_this()), boost::asio::detached);
+}
+
+void tproxy_tcp_session::stop()
+{
+    if (stop_signal_ != nullptr)
+    {
+        stop_signal_->emit(boost::asio::cancellation_type::all);
+    }
+    close_client_socket();
+}
 
 boost::asio::awaitable<void> tproxy_tcp_session::run_detached(std::shared_ptr<tproxy_tcp_session> self) { co_await self->run(); }
 

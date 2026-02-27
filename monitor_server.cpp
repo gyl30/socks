@@ -2,6 +2,7 @@
 #include <atomic>
 #include <string>
 #include <chrono>
+#include <vector>
 #include <cstddef>
 #include <cstdint>
 #include <utility>
@@ -165,20 +166,99 @@ http::response<http::string_body> make_text_response(const http::status status,
     return response;
 }
 
+using tracked_socket_list_t = std::vector<std::weak_ptr<tcp::socket>>;
+
+std::shared_ptr<tracked_socket_list_t> snapshot_active_sockets(const std::shared_ptr<tracked_socket_list_t>& active_sockets)
+{
+    auto snapshot = std::atomic_load_explicit(&active_sockets, std::memory_order_acquire);
+    if (snapshot != nullptr)
+    {
+        return snapshot;
+    }
+    return std::make_shared<tracked_socket_list_t>();
+}
+
+void append_active_socket(std::shared_ptr<tracked_socket_list_t>& active_sockets, const std::shared_ptr<tcp::socket>& socket)
+{
+    for (;;)
+    {
+        auto current = snapshot_active_sockets(active_sockets);
+        auto updated = std::make_shared<tracked_socket_list_t>();
+        updated->reserve(current->size() + 1);
+        for (const auto& weak_socket : *current)
+        {
+            if (!weak_socket.expired())
+            {
+                updated->push_back(weak_socket);
+            }
+        }
+        updated->push_back(socket);
+        if (std::atomic_compare_exchange_weak_explicit(
+                &active_sockets, &current, updated, std::memory_order_acq_rel, std::memory_order_acquire))
+        {
+            return;
+        }
+    }
+}
+
+std::shared_ptr<tracked_socket_list_t> detach_active_sockets(std::shared_ptr<tracked_socket_list_t>& active_sockets)
+{
+    auto empty = std::make_shared<tracked_socket_list_t>();
+    for (;;)
+    {
+        auto current = snapshot_active_sockets(active_sockets);
+        if (std::atomic_compare_exchange_weak_explicit(
+                &active_sockets, &current, empty, std::memory_order_acq_rel, std::memory_order_acquire))
+        {
+            return current;
+        }
+    }
+}
+
+std::vector<std::shared_ptr<tcp::socket>> collect_active_sockets(const std::shared_ptr<tracked_socket_list_t>& active_sockets)
+{
+    std::vector<std::shared_ptr<tcp::socket>> sockets;
+    sockets.reserve(active_sockets->size());
+    for (const auto& weak_socket : *active_sockets)
+    {
+        if (const auto socket = weak_socket.lock())
+        {
+            sockets.push_back(socket);
+        }
+    }
+    return sockets;
+}
+
+void close_tracked_socket(const std::shared_ptr<tcp::socket>& socket)
+{
+    if (socket == nullptr)
+    {
+        return;
+    }
+    boost::system::error_code ec;
+    ec = socket->shutdown(tcp::socket::shutdown_both, ec);
+    ec = socket->close(ec);
+}
+
 }    // namespace
 
 class monitor_session : public std::enable_shared_from_this<monitor_session>
 {
    public:
-    explicit monitor_session(tcp::socket socket) : stream_(std::move(socket)) {}
+    explicit monitor_session(std::shared_ptr<tcp::socket> socket) : socket_(std::move(socket)) {}
 
     void start() { do_read(); }
+    void stop() { close_socket(); }
 
    private:
     void do_read()
     {
+        if (socket_ == nullptr)
+        {
+            return;
+        }
         auto self = shared_from_this();
-        http::async_read(stream_,
+        http::async_read(*socket_,
                          read_buffer_,
                          request_,
                          [this, self](boost::system::error_code ec, std::size_t)
@@ -218,8 +298,12 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
 
     void write_response()
     {
+        if (socket_ == nullptr)
+        {
+            return;
+        }
         auto self = shared_from_this();
-        http::async_write(stream_,
+        http::async_write(*socket_,
                           response_,
                           [this, self](boost::system::error_code ec, std::size_t)
                           {
@@ -233,13 +317,17 @@ class monitor_session : public std::enable_shared_from_this<monitor_session>
 
     void close_socket()
     {
+        if (socket_ == nullptr)
+        {
+            return;
+        }
         boost::system::error_code ignored_ec;
-        ignored_ec = stream_.socket().shutdown(tcp::socket::shutdown_both, ignored_ec);
-        ignored_ec = stream_.socket().close(ignored_ec);
+        ignored_ec = socket_->shutdown(tcp::socket::shutdown_both, ignored_ec);
+        ignored_ec = socket_->close(ignored_ec);
     }
 
    private:
-    beast::tcp_stream stream_;
+    std::shared_ptr<tcp::socket> socket_;
     beast::flat_buffer read_buffer_;
     http::request<http::string_body> request_;
     http::response<http::string_body> response_;
@@ -349,6 +437,12 @@ void monitor_server::stop_local()
     {
         LOG_WARN("monitor acceptor close failed {}", ec.message());
     }
+    auto active_sockets = detach_active_sockets(active_sockets_);
+    auto sockets_to_close = collect_active_sockets(active_sockets);
+    for (const auto& socket : sockets_to_close)
+    {
+        close_tracked_socket(socket);
+    }
 }
 
 void monitor_server::do_accept()
@@ -376,7 +470,9 @@ void monitor_server::do_accept()
                 return;
             }
 
-            std::make_shared<monitor_session>(std::move(socket))->start();
+            auto tracked_socket = std::make_shared<tcp::socket>(std::move(socket));
+            append_active_socket(self->active_sockets_, tracked_socket);
+            std::make_shared<monitor_session>(tracked_socket)->start();
             self->do_accept();
         });
 }

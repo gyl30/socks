@@ -1,8 +1,10 @@
 #include <memory>
 #include <string>
+#include <atomic>
 #include <thread>
 #include <vector>
 #include <cstdio>
+#include <chrono>
 #include <csignal>
 #include <cstdint>
 #include <cstring>
@@ -36,6 +38,15 @@ struct runtime_services
     std::shared_ptr<mux::tproxy_client> tproxy = nullptr;
 #endif
     std::shared_ptr<mux::monitor_server> monitor = nullptr;
+};
+
+struct shutdown_state
+{
+    std::atomic<bool> stop_requested = {false};
+    std::atomic<bool> force_stopped = {false};
+    std::atomic<bool> shutdown_completed = {false};
+    std::atomic<bool> watchdog_started = {false};
+    std::thread watchdog_thread;
 };
 
 void print_usage(const char* prog)
@@ -194,7 +205,7 @@ bool register_signal(boost::asio::signal_set& signals, const int signal, const c
     return false;
 }
 
-void stop_runtime_services(mux::io_context_pool& pool, const runtime_services& services)
+void request_stop_runtime_services(const runtime_services& services)
 {
     if (services.monitor != nullptr)
     {
@@ -214,7 +225,59 @@ void stop_runtime_services(mux::io_context_pool& pool, const runtime_services& s
     {
         services.server->stop();
     }
+}
+
+void start_shutdown_watchdog(mux::io_context_pool& pool, shutdown_state& state)
+{
+    bool expected = false;
+    if (!state.watchdog_started.compare_exchange_strong(expected, true, std::memory_order_acq_rel))
+    {
+        return;
+    }
+
+    state.watchdog_thread = std::thread(
+        [&pool, &state]()
+        {
+            constexpr auto k_step = std::chrono::milliseconds(100);
+            constexpr std::uint32_t k_step_count = 100;
+            for (std::uint32_t i = 0; i < k_step_count; ++i)
+            {
+                if (state.shutdown_completed.load(std::memory_order_acquire))
+                {
+                    return;
+                }
+                std::this_thread::sleep_for(k_step);
+            }
+            if (state.shutdown_completed.load(std::memory_order_acquire))
+            {
+                return;
+            }
+            state.force_stopped.store(true, std::memory_order_release);
+            LOG_ERROR("graceful shutdown timeout exceeded forcing stop");
+            pool.stop();
+        });
+}
+
+void begin_runtime_shutdown(mux::io_context_pool& pool, const runtime_services& services, shutdown_state& state)
+{
+    bool expected = false;
+    if (!state.stop_requested.compare_exchange_strong(expected, true, std::memory_order_acq_rel))
+    {
+        return;
+    }
+
+    request_stop_runtime_services(services);
     pool.shutdown();
+    start_shutdown_watchdog(pool, state);
+}
+
+void complete_runtime_shutdown(shutdown_state& state)
+{
+    state.shutdown_completed.store(true, std::memory_order_release);
+    if (state.watchdog_started.load(std::memory_order_acquire) && state.watchdog_thread.joinable())
+    {
+        state.watchdog_thread.join();
+    }
 }
 
 std::uint32_t resolve_worker_threads(const mux::config& cfg)
@@ -234,7 +297,10 @@ std::uint32_t resolve_worker_threads(const mux::config& cfg)
 
 bool is_supported_runtime_mode(const std::string& mode) { return mode == "client" || mode == "server"; }
 
-bool register_shutdown_signals(boost::asio::signal_set& signals, mux::io_context_pool& pool, const runtime_services& services)
+bool register_shutdown_signals(boost::asio::signal_set& signals,
+                               mux::io_context_pool& pool,
+                               const runtime_services& services,
+                               shutdown_state& state)
 {
     if (!register_signal(signals, SIGINT, "sigint"))
     {
@@ -246,13 +312,20 @@ bool register_shutdown_signals(boost::asio::signal_set& signals, mux::io_context
     }
 
     signals.async_wait(
-        [&pool, services](const auto& error, int)
+        [&pool, services, &state](const auto& error, int)
         {
             if (error)
             {
                 return;
             }
-            stop_runtime_services(pool, services);
+            if (state.stop_requested.load(std::memory_order_acquire))
+            {
+                state.force_stopped.store(true, std::memory_order_release);
+                LOG_ERROR("received extra shutdown signal forcing stop");
+                pool.stop();
+                return;
+            }
+            begin_runtime_shutdown(pool, services, state);
         });
     return true;
 }
@@ -271,6 +344,7 @@ int run_with_config(const char* prog, const char* config_path)
     mux::statistics::instance().start_time();
 
     mux::io_context_pool pool(resolve_worker_threads(cfg));
+    shutdown_state state;
 
     if (!is_supported_runtime_mode(cfg.mode))
     {
@@ -282,22 +356,27 @@ int run_with_config(const char* prog, const char* config_path)
     runtime_services services;
     if (!start_runtime_services(pool, cfg, services))
     {
-        stop_runtime_services(pool, services);
+        begin_runtime_shutdown(pool, services, state);
+        pool.run();
+        complete_runtime_shutdown(state);
         shutdown_log();
-        return 1;
+        return state.force_stopped.load(std::memory_order_acquire) ? 2 : 1;
     }
     boost::asio::signal_set signals(pool.get_io_context());
-    if (!register_shutdown_signals(signals, pool, services))
+    if (!register_shutdown_signals(signals, pool, services, state))
     {
-        stop_runtime_services(pool, services);
+        begin_runtime_shutdown(pool, services, state);
+        pool.run();
+        complete_runtime_shutdown(state);
         shutdown_log();
-        return 1;
+        return state.force_stopped.load(std::memory_order_acquire) ? 2 : 1;
     }
 
     pool.run();
+    complete_runtime_shutdown(state);
     LOG_INFO("{} {} shutdown", prog, cfg.mode);
     shutdown_log();
-    return 0;
+    return state.force_stopped.load(std::memory_order_acquire) ? 2 : 0;
 }
 
 }    // namespace

@@ -4,6 +4,7 @@
 #include <atomic>
 #include <memory>
 #include <string>
+#include <vector>
 #include <cstdint>
 
 #include <boost/asio/ip/tcp.hpp>
@@ -29,6 +30,8 @@ class monitor_server : public std::enable_shared_from_this<monitor_server>
     void do_accept();
 
     boost::asio::ip::tcp::acceptor acceptor_;
+    std::shared_ptr<std::vector<std::weak_ptr<boost::asio::ip::tcp::socket>>> active_sockets_ =
+        std::make_shared<std::vector<std::weak_ptr<boost::asio::ip::tcp::socket>>>();
     std::atomic<bool> started_ = {false};
     std::atomic<bool> stop_ = {false};
 };

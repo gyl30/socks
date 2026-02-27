@@ -9,6 +9,7 @@
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/io_context.hpp>
+#include <boost/asio/cancellation_signal.hpp>
 
 #include "config.h"
 #include "router.h"
@@ -47,6 +48,7 @@ class socks_client : public std::enable_shared_from_this<socks_client>
     std::atomic<std::uint16_t> listen_port_{0};
     boost::asio::io_context& io_context_;
     boost::asio::ip::tcp::acceptor acceptor_;
+    std::shared_ptr<boost::asio::cancellation_signal> stop_signal_ = std::make_shared<boost::asio::cancellation_signal>();
     std::shared_ptr<mux::router> router_;
     std::shared_ptr<client_tunnel_pool> tunnel_pool_;
     std::shared_ptr<std::vector<std::weak_ptr<socks_session>>> sessions_ = std::make_shared<std::vector<std::weak_ptr<socks_session>>>();

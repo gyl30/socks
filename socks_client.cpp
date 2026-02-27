@@ -16,6 +16,8 @@
 #include <boost/asio/ip/address.hpp>
 #include <boost/asio/socket_base.hpp>
 #include <boost/asio/steady_timer.hpp>
+#include <boost/asio/cancellation_signal.hpp>
+#include <boost/asio/bind_cancellation_slot.hpp>
 #include <boost/system/error_code.hpp>
 #include <boost/asio/use_awaitable.hpp>
 
@@ -261,6 +263,7 @@ boost::asio::awaitable<bool> start_local_session(boost::asio::ip::tcp::socket so
                                                  const config::socks_t& socks_config,
                                                  const config::timeout_t& timeout_config,
                                                  const config::queues_t& queue_config,
+                                                 const std::shared_ptr<boost::asio::cancellation_signal>& stop_signal,
                                                  const std::atomic<bool>& stop)
 {
     if (tunnel_pool == nullptr)
@@ -295,7 +298,8 @@ boost::asio::awaitable<bool> start_local_session(boost::asio::ip::tcp::socket so
     log_tunnel_selection(sid, selected_tunnel);
 
     auto session =
-        std::make_shared<socks_session>(std::move(socket), io_context, selected_tunnel, router, sid, socks_config, timeout_config, queue_config);
+        std::make_shared<socks_session>(
+            std::move(socket), io_context, selected_tunnel, router, sid, socks_config, timeout_config, queue_config, stop_signal);
     if (stop.load(std::memory_order_acquire))
     {
         session->stop();
@@ -315,6 +319,7 @@ boost::asio::awaitable<bool> run_accept_iteration(boost::asio::ip::tcp::acceptor
                                                   const config::socks_t& socks_config,
                                                   const config::timeout_t& timeout_config,
                                                   const config::queues_t& queue_config,
+                                                  const std::shared_ptr<boost::asio::cancellation_signal>& stop_signal,
                                                   const std::atomic<bool>& stop)
 {
     boost::asio::ip::tcp::socket socket(io_context);
@@ -335,7 +340,7 @@ boost::asio::awaitable<bool> run_accept_iteration(boost::asio::ip::tcp::acceptor
     }
 
     if (!(co_await start_local_session(
-            std::move(socket), io_context, tunnel_pool, router, sessions, socks_config, timeout_config, queue_config, stop)))
+            std::move(socket), io_context, tunnel_pool, router, sessions, socks_config, timeout_config, queue_config, stop_signal, stop)))
     {
         co_return false;
     }
@@ -461,7 +466,9 @@ void socks_client::start()
 
     tunnel_pool->start();
 
-    boost::asio::co_spawn(io_context_, accept_local_loop_detached(shared_from_this()), boost::asio::detached);
+    boost::asio::co_spawn(io_context_,
+                          accept_local_loop_detached(shared_from_this()),
+                          boost::asio::bind_cancellation_slot(stop_signal_->slot(), boost::asio::detached));
 }
 
 boost::asio::awaitable<void> socks_client::accept_local_loop_detached(std::shared_ptr<socks_client> self) { co_await self->accept_local_loop(); }
@@ -472,6 +479,7 @@ void socks_client::stop()
     const auto stop_epoch = lifecycle_epoch_.load(std::memory_order_acquire);
     stop_.store(true, std::memory_order_release);
     started_.store(false, std::memory_order_release);
+    stop_signal_->emit(boost::asio::cancellation_type::all);
 
     detail::dispatch_cleanup_or_run_inline(io_context_,
                                            [weak_self = weak_from_this(), stop_epoch]()
@@ -540,7 +548,16 @@ boost::asio::awaitable<void> socks_client::accept_local_loop()
     while (!stop_.load(std::memory_order_acquire))
     {
         if (!(co_await run_accept_iteration(
-                acceptor_, io_context_, tunnel_pool, router, sessions_, socks_config_, timeout_config_, queue_config_, stop_)))
+                acceptor_,
+                io_context_,
+                tunnel_pool,
+                router,
+                sessions_,
+                socks_config_,
+                timeout_config_,
+                queue_config_,
+                std::shared_ptr<boost::asio::cancellation_signal>{},
+                stop_)))
         {
             break;
         }
