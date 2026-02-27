@@ -131,3 +131,27 @@ TEST_F(router_test_fixture, DomainPriority)
 
     EXPECT_EQ(run_decision("unknown.com"), mux::route_type::kDirect);
 }
+
+TEST(RouterDefaultTest, UnloadedMatcherFallsBackToDefaultRoutes)
+{
+    auto router = std::make_shared<mux::router>();
+    mux::route_type ip_result = mux::route_type::kBlock;
+    mux::route_type domain_result = mux::route_type::kBlock;
+    boost::asio::io_context ctx;
+    mux::connection_context conn_ctx;
+
+    boost::asio::co_spawn(
+        ctx,
+        [&]() -> boost::asio::awaitable<void>
+        {
+            ip_result = co_await router->decide(conn_ctx, "203.0.113.7");
+            domain_result = co_await router->decide(conn_ctx, "example.invalid");
+            co_return;
+        },
+        boost::asio::detached);
+
+    ctx.run();
+
+    EXPECT_EQ(ip_result, mux::route_type::kProxy);
+    EXPECT_EQ(domain_result, mux::route_type::kDirect);
+}
