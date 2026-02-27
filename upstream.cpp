@@ -1,4 +1,3 @@
-#include <atomic>
 #include <chrono>
 #include <memory>
 #include <string>
@@ -17,6 +16,8 @@
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/this_coro.hpp>
 #include <boost/asio/steady_timer.hpp>
+#include <boost/asio/redirect_error.hpp>
+#include <boost/asio/experimental/awaitable_operators.hpp>
 #include <boost/system/error_code.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/system/detail/errc.hpp>
@@ -291,42 +292,44 @@ boost::asio::awaitable<bool> proxy_upstream::wait_connect_ack(const std::shared_
                                                               const std::uint16_t port)
 {
     const auto stream_ctx = ctx_.with_stream(stream->id());
-    auto timeout_fired = std::make_shared<std::atomic<bool>>(false);
-    auto wait_done = std::make_shared<std::atomic<bool>>(false);
-    auto ex = co_await boost::asio::this_coro::executor;
-    boost::asio::steady_timer ack_timer(ex);
-    if (timeout_sec_ > 0)
-    {
-        ack_timer.expires_after(std::chrono::seconds(timeout_sec_));
-        ack_timer.async_wait(
-            [stream, timeout_fired, wait_done](const boost::system::error_code& timer_ec)
-            {
-                if (timer_ec)
-                {
-                    return;
-                }
-                bool expected = false;
-                if (!wait_done->compare_exchange_strong(expected, true, std::memory_order_acq_rel, std::memory_order_acquire))
-                {
-                    return;
-                }
-                timeout_fired->store(true, std::memory_order_release);
-                stream->on_reset();
-            });
-    }
 
-    auto [ack_ec, ack_data] = co_await stream->async_read_some();
+    boost::system::error_code ack_ec;
+    std::vector<std::uint8_t> ack_data;
     if (timeout_sec_ > 0)
     {
-        bool expected = false;
-        (void)wait_done->compare_exchange_strong(expected, true, std::memory_order_acq_rel, std::memory_order_acquire);
-        ack_timer.cancel();
+        using boost::asio::experimental::awaitable_operators::operator||;
+
+        auto timeout_wait = [this]() -> boost::asio::awaitable<boost::system::error_code>
+        {
+            auto executor = co_await boost::asio::this_coro::executor;
+            boost::asio::steady_timer timer(executor);
+            timer.expires_after(std::chrono::seconds(timeout_sec_));
+            boost::system::error_code wait_ec;
+            co_await timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, wait_ec));
+            co_return wait_ec;
+        };
+
+        auto ack_or_timeout = co_await (stream->async_read_some() || timeout_wait());
+        if (ack_or_timeout.index() == 1)
+        {
+            const auto wait_ec = std::get<1>(ack_or_timeout);
+            if (!wait_ec)
+            {
+                stream->on_reset();
+                last_connect_reply_ = socks::kRepHostUnreach;
+                LOG_CTX_WARN(stream_ctx, "{} stage=wait_ack target={}:{} timeout={}s", log_event::kRoute, host, port, timeout_sec_);
+                co_return false;
+            }
+
+            LOG_CTX_ERROR(stream_ctx, "{} stage=wait_ack target={}:{} error={}", log_event::kRoute, host, port, wait_ec.message());
+            co_return false;
+        }
+
+        std::tie(ack_ec, ack_data) = std::move(std::get<0>(ack_or_timeout));
     }
-    if (timeout_fired->load(std::memory_order_acquire))
+    else
     {
-        last_connect_reply_ = socks::kRepHostUnreach;
-        LOG_CTX_WARN(stream_ctx, "{} stage=wait_ack target={}:{} timeout={}s", log_event::kRoute, host, port, timeout_sec_);
-        co_return false;
+        std::tie(ack_ec, ack_data) = co_await stream->async_read_some();
     }
 
     if (ack_ec)

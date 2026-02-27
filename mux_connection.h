@@ -119,7 +119,6 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
 
     boost::asio::awaitable<void> heartbeat_loop();
 
-    [[nodiscard]] bool run_inline() const;
     [[nodiscard]] std::shared_ptr<stream_map_t> snapshot_streams() const;
     [[nodiscard]] std::shared_ptr<stream_map_t> detach_streams();
     [[nodiscard]] bool register_stream_local(std::uint32_t id, const std::shared_ptr<mux_stream_interface>& stream);

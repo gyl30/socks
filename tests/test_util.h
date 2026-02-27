@@ -2,6 +2,7 @@
 #define SOCKS_TEST_UTIL_H
 
 #include <chrono>
+#include <functional>
 #include <thread>
 #include <vector>
 #include <cstdint>
@@ -11,6 +12,7 @@
 
 #include <gtest/gtest.h>
 #include <boost/asio.hpp>
+#include <boost/asio/experimental/awaitable_operators.hpp>
 
 namespace mux::test
 {
@@ -57,6 +59,66 @@ inline void run_awaitable_void(boost::asio::io_context& ctx, boost::asio::awaita
     {
         ADD_FAILURE() << "awaitable did not complete";
     }
+}
+
+inline boost::asio::awaitable<bool> co_wait_predicate(std::function<bool()> predicate, const std::chrono::milliseconds poll_interval)
+{
+    auto executor = co_await boost::asio::this_coro::executor;
+    if (predicate())
+    {
+        co_return true;
+    }
+
+    boost::asio::steady_timer timer(executor);
+    auto wait_step = std::chrono::duration_cast<std::chrono::steady_clock::duration>(poll_interval);
+    if (wait_step <= std::chrono::steady_clock::duration::zero())
+    {
+        wait_step = std::chrono::milliseconds(1);
+    }
+    while (!predicate())
+    {
+        timer.expires_after(wait_step);
+        boost::system::error_code ec;
+        co_await timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, ec));
+        if (ec && ec != boost::asio::error::operation_aborted)
+        {
+            co_return false;
+        }
+    }
+    co_return true;
+}
+
+template <typename Predicate, typename Rep, typename Period>
+bool co_wait_until(Predicate&& predicate,
+                   const std::chrono::duration<Rep, Period>& timeout,
+                   const std::chrono::milliseconds poll_interval = std::chrono::milliseconds(1))
+{
+    boost::asio::io_context ctx;
+    const auto cast_timeout = std::chrono::duration_cast<std::chrono::steady_clock::duration>(timeout);
+    return run_awaitable(ctx,
+                         [predicate = std::function<bool()>(std::forward<Predicate>(predicate)), cast_timeout, poll_interval]()
+                             mutable -> boost::asio::awaitable<bool>
+                         {
+                             using boost::asio::experimental::awaitable_operators::operator||;
+
+                             auto executor = co_await boost::asio::this_coro::executor;
+                             boost::asio::steady_timer timeout_timer(executor);
+                             timeout_timer.expires_after(cast_timeout);
+
+                             auto timeout_wait = [&timeout_timer]() -> boost::asio::awaitable<bool>
+                             {
+                                 boost::system::error_code ec;
+                                 co_await timeout_timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, ec));
+                                 co_return false;
+                             };
+
+                             auto wait_result = co_await (co_wait_predicate(predicate, poll_interval) || timeout_wait());
+                             if (wait_result.index() == 0)
+                             {
+                                 co_return std::get<0>(wait_result);
+                             }
+                             co_return std::get<1>(wait_result);
+                         }());
 }
 
 inline bool open_ephemeral_tcp_acceptor(boost::asio::ip::tcp::acceptor& acceptor,
