@@ -1222,10 +1222,18 @@ void client_tunnel_pool::release_all_tunnels()
     for (auto& tunnel : tunnel_pool_)
     {
         auto current_tunnel = atomic_exchange_shared(tunnel);
-        if (current_tunnel != nullptr && current_tunnel->connection() != nullptr)
+        if (current_tunnel == nullptr || current_tunnel->connection() == nullptr)
         {
-            current_tunnel->connection()->release_resources();
+            continue;
         }
+        auto connection = current_tunnel->connection();
+        auto* io_context = &connection->io_context();
+        detail::dispatch_cleanup_or_run_inline(
+            *io_context,
+            [connection = std::move(connection)]()
+            {
+                connection->release_resources();
+            });
     }
 }
 

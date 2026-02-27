@@ -13,6 +13,7 @@
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/steady_timer.hpp>
+#include <boost/asio/cancellation_signal.hpp>
 #include <boost/system/error_code.hpp>
 
 #include "config.h"
@@ -33,9 +34,11 @@ class tproxy_tcp_session : public std::enable_shared_from_this<tproxy_tcp_sessio
                        std::shared_ptr<router> router,
                        std::uint32_t sid,
                        const config& cfg,
-                       boost::asio::ip::tcp::endpoint dst_ep);
+                       boost::asio::ip::tcp::endpoint dst_ep,
+                       std::shared_ptr<boost::asio::cancellation_signal> stop_signal = nullptr);
 
     void start();
+    void stop();
 
    private:
     [[nodiscard]] static boost::asio::awaitable<void> run_detached(std::shared_ptr<tproxy_tcp_session> self);
@@ -77,6 +80,7 @@ class tproxy_tcp_session : public std::enable_shared_from_this<tproxy_tcp_sessio
     std::uint32_t mark_ = 0;
     std::atomic<std::uint64_t> last_activity_time_ms_{0};
     std::atomic<bool> backend_closed_{false};
+    std::shared_ptr<boost::asio::cancellation_signal> stop_signal_;
 };
 
 }    // namespace mux
