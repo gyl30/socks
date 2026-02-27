@@ -10,6 +10,7 @@
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/steady_timer.hpp>
+#include <boost/asio/cancellation_signal.hpp>
 
 #include "config.h"
 #include "router.h"
@@ -29,9 +30,11 @@ class tcp_socks_session : public std::enable_shared_from_this<tcp_socks_session>
                       std::shared_ptr<router> router,
                       std::uint32_t sid,
                       const config::timeout_t& timeout_cfg,
-                      std::shared_ptr<void> active_connection_guard = nullptr);
+                      std::shared_ptr<void> active_connection_guard = nullptr,
+                      std::shared_ptr<boost::asio::cancellation_signal> stop_signal = nullptr);
 
     void start(const std::string& host, std::uint16_t port);
+    void stop();
 
    private:
     [[nodiscard]] boost::asio::awaitable<void> run(const std::string& host, std::uint16_t port);
@@ -67,6 +70,7 @@ class tcp_socks_session : public std::enable_shared_from_this<tcp_socks_session>
     std::shared_ptr<router> router_;
     std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> tunnel_manager_;
     std::shared_ptr<void> active_connection_guard_;
+    std::shared_ptr<boost::asio::cancellation_signal> stop_signal_;
     config::timeout_t timeout_config_;
 };
 

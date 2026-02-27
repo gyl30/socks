@@ -15,6 +15,7 @@
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/address.hpp>
 #include <boost/asio/steady_timer.hpp>
+#include <boost/asio/cancellation_signal.hpp>
 #include <boost/system/error_code.hpp>
 #include <boost/asio/experimental/concurrent_channel.hpp>
 
@@ -41,9 +42,11 @@ class udp_socks_session : public mux_stream_interface, public std::enable_shared
                       std::uint32_t sid,
                       const config::timeout_t& timeout_cfg,
                       std::shared_ptr<void> active_connection_guard = nullptr,
-                      std::size_t recv_channel_capacity = 128);
+                      std::size_t recv_channel_capacity = 128,
+                      std::shared_ptr<boost::asio::cancellation_signal> stop_signal = nullptr);
 
     void start(const std::string& host, std::uint16_t port);
+    void stop();
 
    private:
     boost::asio::awaitable<void> run(const std::string& host, std::uint16_t port);
@@ -83,6 +86,7 @@ class udp_socks_session : public mux_stream_interface, public std::enable_shared
     std::optional<boost::asio::ip::address> expected_client_addr_;
     std::optional<std::uint16_t> expected_client_port_;
     std::shared_ptr<void> active_connection_guard_;
+    std::shared_ptr<boost::asio::cancellation_signal> stop_signal_;
     config::timeout_t timeout_config_;
 };
 
