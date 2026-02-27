@@ -107,6 +107,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
 
     [[nodiscard]] bool can_accept_stream();
     [[nodiscard]] bool has_stream(std::uint32_t id);
+    [[nodiscard]] boost::asio::awaitable<std::shared_ptr<mux_stream>> create_stream_async(const std::string& trace_id = "");
     [[nodiscard]] std::shared_ptr<mux_stream> create_stream(const std::string& trace_id = "");
 
    private:
@@ -121,12 +122,19 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
 
     [[nodiscard]] std::shared_ptr<stream_map_t> snapshot_streams() const;
     [[nodiscard]] std::shared_ptr<stream_map_t> detach_streams();
+    using pending_remove_map_t = std::unordered_map<std::uint32_t, std::uint32_t>;
+    [[nodiscard]] std::shared_ptr<pending_remove_map_t> snapshot_pending_remove_ids() const;
+    void add_pending_remove_id(std::uint32_t id);
+    void clear_pending_remove_id(std::uint32_t id);
+    [[nodiscard]] static std::size_t count_pending_in_streams(const stream_map_t& streams, const pending_remove_map_t& pending_remove_ids);
     [[nodiscard]] bool register_stream_local(std::uint32_t id, const std::shared_ptr<mux_stream_interface>& stream);
     [[nodiscard]] stream_register_result try_register_stream_local_with_reason(std::uint32_t id, const std::shared_ptr<mux_stream_interface>& stream);
     [[nodiscard]] bool try_register_stream_local(std::uint32_t id, const std::shared_ptr<mux_stream_interface>& stream);
     void remove_stream_local(std::uint32_t id);
+    void remove_stream_local_if_match(std::uint32_t id, const std::shared_ptr<mux_stream_interface>& expected_stream);
     [[nodiscard]] bool can_accept_stream_local() const;
     [[nodiscard]] bool has_stream_local(std::uint32_t id) const;
+    [[nodiscard]] bool is_stream_id_cached_in_use(std::uint32_t id) const;
 
     [[nodiscard]] std::shared_ptr<mux_stream_interface> find_stream(std::uint32_t stream_id) const;
     void handle_unknown_stream(std::uint32_t stream_id, std::uint8_t command);
@@ -148,6 +156,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     std::uint64_t read_bytes_ = 0;
     std::uint64_t write_bytes_ = 0;
     std::shared_ptr<stream_map_t> streams_ = std::make_shared<stream_map_t>();
+    std::shared_ptr<pending_remove_map_t> pending_remove_ids_ = std::make_shared<pending_remove_map_t>();
     boost::asio::io_context& io_context_;
     boost::asio::steady_timer timer_;
     syn_callback_t syn_callback_;

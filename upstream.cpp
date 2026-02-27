@@ -393,7 +393,7 @@ boost::asio::awaitable<bool> proxy_upstream::connect(const std::string& host, co
         co_return false;
     }
 
-    auto stream = tunnel_->create_stream(ctx_.trace_id());
+    auto stream = co_await tunnel_->create_stream_async(ctx_.trace_id());
     if (stream == nullptr)
     {
         LOG_CTX_ERROR(ctx_, "{} create stream failed", log_event::kRoute);
