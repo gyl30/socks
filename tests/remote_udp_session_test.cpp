@@ -1,6 +1,5 @@
 
 #include <chrono>
-#include <future>
 #include <memory>
 #include <string>
 #include <thread>
@@ -150,6 +149,18 @@ std::vector<std::uint8_t> make_mux_udp_packet(const std::string& host, const std
     auto packet = socks_codec::encode_udp_header(header);
     packet.insert(packet.end(), payload.begin(), payload.end());
     return packet;
+}
+
+void drain_io_context(boost::asio::io_context& io_context, const int rounds = 32)
+{
+    io_context.restart();
+    for (int i = 0; i < rounds; ++i)
+    {
+        if (io_context.poll() == 0)
+        {
+            break;
+        }
+    }
 }
 
 std::shared_ptr<mux::remote_udp_session> make_session(boost::asio::io_context& io_context,
@@ -900,8 +911,10 @@ TEST(RemoteUdpSessionTest, OnDataRunsStopWhenIoContextStopped)
     io_context.stop();
     session->on_data(std::vector<std::uint8_t>{0x10});
 
-    EXPECT_EQ(session->timer_.cancel(), 0U);
+    EXPECT_TRUE(session->udp_socket_.is_open());
+    drain_io_context(io_context);
     EXPECT_FALSE(session->udp_socket_.is_open());
+    EXPECT_FALSE(session->recv_channel_.try_send(boost::system::error_code{}, std::vector<std::uint8_t>{0x01}));
     session->close_socket();
 }
 
@@ -918,8 +931,10 @@ TEST(RemoteUdpSessionTest, OnDataRunsStopWhenIoContextNotRunning)
     session->timer_.async_wait([](const boost::system::error_code&) {});
 
     session->on_data(std::vector<std::uint8_t>{0x10});
-    EXPECT_EQ(session->timer_.cancel(), 0U);
+    EXPECT_TRUE(session->udp_socket_.is_open());
+    drain_io_context(io_context);
     EXPECT_FALSE(session->udp_socket_.is_open());
+    EXPECT_FALSE(session->recv_channel_.try_send(boost::system::error_code{}, std::vector<std::uint8_t>{0x01}));
     session->close_socket();
 }
 
@@ -932,10 +947,15 @@ TEST(RemoteUdpSessionTest, OnDataRunsStopWhenIoQueueBlocked)
 
     session->recv_channel_.close();
 
-    std::promise<boost::system::error_code> timer_wait_done;
-    auto timer_wait_future = timer_wait_done.get_future();
+    boost::system::error_code timer_wait_ec;
+    std::atomic<bool> timer_wait_done{false};
     session->timer_.expires_after(std::chrono::seconds(30));
-    session->timer_.async_wait([done = std::move(timer_wait_done)](const boost::system::error_code& ec) mutable { done.set_value(ec); });
+    session->timer_.async_wait(
+        [&timer_wait_ec, &timer_wait_done](const boost::system::error_code& ec)
+        {
+            timer_wait_ec = ec;
+            timer_wait_done.store(true, std::memory_order_release);
+        });
 
     std::atomic<bool> blocker_started{false};
     std::atomic<bool> release_blocker{false};
@@ -957,9 +977,11 @@ TEST(RemoteUdpSessionTest, OnDataRunsStopWhenIoQueueBlocked)
     ASSERT_TRUE(blocker_started.load(std::memory_order_acquire));
 
     session->on_data(std::vector<std::uint8_t>{0x10});
+    EXPECT_TRUE(session->udp_socket_.is_open());
 
     release_blocker.store(true, std::memory_order_release);
-    const bool timer_cancelled = timer_wait_future.wait_for(std::chrono::milliseconds(200)) == std::future_status::ready;
+    const bool timer_cancelled = mux::test::co_wait_until(
+        [&timer_wait_done]() { return timer_wait_done.load(std::memory_order_acquire); }, std::chrono::milliseconds(200));
     if (!timer_cancelled)
     {
         session->request_stop();
@@ -970,9 +992,10 @@ TEST(RemoteUdpSessionTest, OnDataRunsStopWhenIoQueueBlocked)
     {
         io_thread.join();
     }
+    drain_io_context(io_context);
 
     ASSERT_TRUE(timer_cancelled);
-    EXPECT_EQ(timer_wait_future.get(), boost::asio::error::operation_aborted);
+    EXPECT_EQ(timer_wait_ec, boost::asio::error::operation_aborted);
     EXPECT_FALSE(session->udp_socket_.is_open());
     session->close_socket();
 }
@@ -1033,11 +1056,14 @@ TEST(RemoteUdpSessionTest, OnCloseAndOnResetRunInlineWhenIoContextStopped)
 
     io_context.stop();
     session->on_close();
-    EXPECT_FALSE(session->recv_channel_.try_send(boost::system::error_code{}, std::vector<std::uint8_t>{0x01}));
-    EXPECT_FALSE(session->udp_socket_.is_open());
+    EXPECT_TRUE(session->recv_channel_.try_send(boost::system::error_code{}, std::vector<std::uint8_t>{0x01}));
+    EXPECT_TRUE(session->udp_socket_.is_open());
 
     session->on_reset();
-    EXPECT_FALSE(session->recv_channel_.try_send(boost::system::error_code{}, std::vector<std::uint8_t>{0x02}));
+    EXPECT_TRUE(session->recv_channel_.try_send(boost::system::error_code{}, std::vector<std::uint8_t>{0x02}));
+    drain_io_context(io_context);
+    EXPECT_FALSE(session->recv_channel_.try_send(boost::system::error_code{}, std::vector<std::uint8_t>{0x03}));
+    EXPECT_FALSE(session->udp_socket_.is_open());
     session->close_socket();
 }
 
@@ -1049,11 +1075,14 @@ TEST(RemoteUdpSessionTest, OnCloseAndOnResetRunWhenIoContextNotRunning)
     ASSERT_TRUE(mux::test::run_awaitable(io_context, session->setup_udp_socket(conn)));
 
     session->on_close();
-    EXPECT_FALSE(session->recv_channel_.try_send(boost::system::error_code{}, std::vector<std::uint8_t>{0x01}));
-    EXPECT_FALSE(session->udp_socket_.is_open());
+    EXPECT_TRUE(session->recv_channel_.try_send(boost::system::error_code{}, std::vector<std::uint8_t>{0x01}));
+    EXPECT_TRUE(session->udp_socket_.is_open());
 
     session->on_reset();
-    EXPECT_FALSE(session->recv_channel_.try_send(boost::system::error_code{}, std::vector<std::uint8_t>{0x02}));
+    EXPECT_TRUE(session->recv_channel_.try_send(boost::system::error_code{}, std::vector<std::uint8_t>{0x02}));
+    drain_io_context(io_context);
+    EXPECT_FALSE(session->recv_channel_.try_send(boost::system::error_code{}, std::vector<std::uint8_t>{0x03}));
+    EXPECT_FALSE(session->udp_socket_.is_open());
     session->close_socket();
 }
 
@@ -1084,18 +1113,20 @@ TEST(RemoteUdpSessionTest, OnCloseAndOnResetRunWhenIoQueueBlocked)
     ASSERT_TRUE(blocker_started.load(std::memory_order_acquire));
 
     session->on_close();
-    EXPECT_FALSE(session->recv_channel_.try_send(boost::system::error_code{}, std::vector<std::uint8_t>{0x01}));
-    EXPECT_FALSE(session->udp_socket_.is_open());
+    EXPECT_TRUE(session->recv_channel_.try_send(boost::system::error_code{}, std::vector<std::uint8_t>{0x01}));
+    EXPECT_TRUE(session->udp_socket_.is_open());
 
     session->on_reset();
-    EXPECT_FALSE(session->recv_channel_.try_send(boost::system::error_code{}, std::vector<std::uint8_t>{0x02}));
+    EXPECT_TRUE(session->recv_channel_.try_send(boost::system::error_code{}, std::vector<std::uint8_t>{0x02}));
 
     release_blocker.store(true, std::memory_order_release);
-    io_context.stop();
     if (io_thread.joinable())
     {
         io_thread.join();
     }
+    drain_io_context(io_context);
+    EXPECT_FALSE(session->recv_channel_.try_send(boost::system::error_code{}, std::vector<std::uint8_t>{0x03}));
+    EXPECT_FALSE(session->udp_socket_.is_open());
     session->close_socket();
 }
 
