@@ -1,4 +1,3 @@
-#include <atomic>
 #include <chrono>
 #include <memory>
 #include <string>
@@ -19,6 +18,7 @@
 #include <boost/asio/this_coro.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/steady_timer.hpp>
+#include <boost/asio/redirect_error.hpp>
 #include <boost/asio/ip/address.hpp>
 #include <boost/asio/ip/v6_only.hpp>
 #include <boost/system/error_code.hpp>
@@ -242,42 +242,43 @@ boost::asio::awaitable<std::shared_ptr<mux_stream>> establish_udp_associate_stre
         co_return nullptr;
     }
 
-    auto timeout_fired = std::make_shared<std::atomic<bool>>(false);
-    auto wait_done = std::make_shared<std::atomic<bool>>(false);
-    auto ex = co_await boost::asio::this_coro::executor;
-    boost::asio::steady_timer ack_timer(ex);
+    boost::system::error_code ack_ec;
+    std::vector<std::uint8_t> ack_data;
     if (timeout_sec > 0)
     {
-        ack_timer.expires_after(std::chrono::seconds(timeout_sec));
-        ack_timer.async_wait(
-            [stream, timeout_fired, wait_done](const boost::system::error_code& timer_ec)
-            {
-                if (timer_ec)
-                {
-                    return;
-                }
-                bool expected = false;
-                if (!wait_done->compare_exchange_strong(expected, true, std::memory_order_acq_rel, std::memory_order_acquire))
-                {
-                    return;
-                }
-                timeout_fired->store(true, std::memory_order_release);
-                stream->on_reset();
-            });
-    }
+        using boost::asio::experimental::awaitable_operators::operator||;
+        auto timeout_wait = [timeout_sec]() -> boost::asio::awaitable<boost::system::error_code>
+        {
+            auto executor = co_await boost::asio::this_coro::executor;
+            boost::asio::steady_timer timer(executor);
+            timer.expires_after(std::chrono::seconds(timeout_sec));
+            boost::system::error_code wait_ec;
+            co_await timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, wait_ec));
+            co_return wait_ec;
+        };
 
-    auto [ack_ec, ack_data] = co_await stream->async_read_some();
-    if (timeout_sec > 0)
-    {
-        bool expected = false;
-        (void)wait_done->compare_exchange_strong(expected, true, std::memory_order_acq_rel, std::memory_order_acquire);
-        ack_timer.cancel();
+        auto ack_or_timeout = co_await (stream->async_read_some() || timeout_wait());
+        if (ack_or_timeout.index() == 1)
+        {
+            const auto wait_ec = std::get<1>(ack_or_timeout);
+            if (!wait_ec)
+            {
+                stream->on_reset();
+                LOG_CTX_WARN(ctx, "{} ack timeout {}s", log_event::kSocks, timeout_sec);
+            }
+            else
+            {
+                LOG_CTX_WARN(ctx, "{} ack wait failed {}", log_event::kSocks, wait_ec.message());
+            }
+            co_await close_and_remove_stream(tunnel_manager, stream);
+            co_return nullptr;
+        }
+
+        std::tie(ack_ec, ack_data) = std::move(std::get<0>(ack_or_timeout));
     }
-    if (timeout_fired->load(std::memory_order_acquire))
+    else
     {
-        LOG_CTX_WARN(ctx, "{} ack timeout {}s", log_event::kSocks, timeout_sec);
-        co_await close_and_remove_stream(tunnel_manager, stream);
-        co_return nullptr;
+        std::tie(ack_ec, ack_data) = co_await stream->async_read_some();
     }
     if (ack_ec)
     {
