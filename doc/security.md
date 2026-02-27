@@ -28,10 +28,10 @@
 
 1. 每个异步对象绑定并只使用自己的 `io_context`，不使用 `strand`。
 2. 跨线程访问对象内部状态时，通过 `post/dispatch` 回到该对象的 `io_context` 执行。
-3. 任何同步等待回投递结果的路径都必须是有界等待，并覆盖 `running_in_this_thread` 与 `io_context.stopped()` 分支，避免自阻塞或停机阻塞。
-4. `stop` 语义要求在 `io_context` 已停止或当前线程即执行线程时可直接内联清理，避免清理逻辑因队列不再调度而丢失。
+3. `stop/remove/on_close` 清理路径统一使用 `post` 回对象所属 `io_context`，不做 `running_in_this_thread` 与 `io_context.stopped()` 的内联分支。
+4. 停机阶段先触发各模块 `stop`，再继续驱动 `io_context` 消费清理任务，保证协程自然收敛退出后再结束进程。
 5. `mux_connection::streams_` 采用“原子快照 + CAS”更新模型，发布后的快照必须视为只读，不允许对旧快照执行 `move/clear/erase` 等写操作。
-6. `mux_connection` 在 `stop/remove` 路径使用 `dispatch_cleanup_or_run_inline`，当队列阻塞或超时仍需内联完成清理，保证资源回收不丢失。
+6. `mux_connection` 在 `stop/remove` 路径通过 `dispatch_cleanup_or_run_inline` 回投递到所属 `io_context`，由事件循环顺序完成清理。
 
 ## 超时与空闲回收
 

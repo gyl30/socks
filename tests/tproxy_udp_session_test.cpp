@@ -3,7 +3,6 @@
 #include <atomic>
 #include <cerrno>
 #include <chrono>
-#include <future>
 #include <memory>
 #include <string>
 #include <thread>
@@ -223,10 +222,20 @@ template <typename Func>
 auto run_on_io_context(boost::asio::io_context& io_context, Func&& fn) -> decltype(fn())
 {
     using result_type = decltype(fn());
-    std::promise<result_type> promise;
-    auto future = promise.get_future();
-    boost::asio::post(io_context, [func = std::forward<Func>(fn), promise = std::move(promise)]() mutable { promise.set_value(func()); });
-    return future.get();
+    result_type result{};
+    std::atomic<bool> done{false};
+    boost::asio::post(io_context,
+                      [func = std::forward<Func>(fn), &result, &done]()
+                      {
+                          result = func();
+                          done.store(true, std::memory_order_release);
+                      });
+    if (!mux::test::co_wait_until([&done]() { return done.load(std::memory_order_acquire); }, std::chrono::seconds(2)))
+    {
+        ADD_FAILURE() << "run_on_io_context timed out";
+        return result_type{};
+    }
+    return result;
 }
 
 bool tcp_acceptor_is_open(boost::asio::io_context& io_context, const std::shared_ptr<mux::tproxy_client>& client)
@@ -323,6 +332,18 @@ std::size_t udp_session_count(boost::asio::io_context& io_context, const std::sh
 }
 
 bool udp_sessions_empty(const std::shared_ptr<mux::tproxy_client>& client) { return snapshot_udp_sessions(client)->empty(); }
+
+void drain_io_context(boost::asio::io_context& io_context, const int rounds = 32)
+{
+    io_context.restart();
+    for (int i = 0; i < rounds; ++i)
+    {
+        if (io_context.poll() == 0)
+        {
+            break;
+        }
+    }
+}
 
 class direct_router : public mux::router
 {
@@ -1275,7 +1296,7 @@ TEST(TproxyUdpSessionTest, SendDirectIPv6AndCloseResetBranches)
     session->stream_ = stream;
     session->tunnel_ = tunnel;
     session->on_close();
-    ctx.poll();
+    drain_io_context(ctx);
     EXPECT_EQ(session->stream_, nullptr);
     EXPECT_TRUE(session->tunnel_.expired());
 
@@ -1283,7 +1304,7 @@ TEST(TproxyUdpSessionTest, SendDirectIPv6AndCloseResetBranches)
     reset_session->stream_ = stream;
     reset_session->tunnel_ = tunnel;
     reset_session->on_reset();
-    ctx.poll();
+    drain_io_context(ctx);
     EXPECT_EQ(reset_session->stream_, nullptr);
     EXPECT_TRUE(reset_session->tunnel_.expired());
 
@@ -1614,9 +1635,10 @@ TEST(TproxyUdpSessionTest, OnDataRunsStopWhenIoQueueBlocked)
     }
 
     session->on_data({0x55});
-    EXPECT_FALSE(session->direct_socket_.is_open());
+    EXPECT_TRUE(session->direct_socket_.is_open());
 
     release_blocker.store(true, std::memory_order_release);
+    EXPECT_TRUE(mux::test::co_wait_until([session]() { return !session->direct_socket_.is_open(); }, std::chrono::seconds(2)));
     ctx.stop();
     if (io_thread.joinable())
     {
@@ -1642,6 +1664,8 @@ TEST(TproxyUdpSessionTest, OnDataRunsStopWhenIoContextStopped)
 
     ctx.stop();
     session->on_data({0x55});
+    EXPECT_TRUE(session->direct_socket_.is_open());
+    drain_io_context(ctx);
     EXPECT_FALSE(session->direct_socket_.is_open());
 }
 
@@ -1662,6 +1686,8 @@ TEST(TproxyUdpSessionTest, OnDataRunsStopWhenIoContextNotRunning)
     session->recv_channel_.close();
 
     session->on_data({0x55});
+    EXPECT_TRUE(session->direct_socket_.is_open());
+    drain_io_context(ctx);
     EXPECT_FALSE(session->direct_socket_.is_open());
 }
 
@@ -1720,11 +1746,16 @@ TEST(TproxyUdpSessionTest, StopAndOnCloseRunInlineWhenIoContextStopped)
 
     ctx.stop();
     session->stop();
+    EXPECT_NE(session->stream_, nullptr);
+    EXPECT_FALSE(session->tunnel_.expired());
+    EXPECT_TRUE(session->direct_socket_.is_open());
+    drain_io_context(ctx);
     EXPECT_EQ(session->stream_, nullptr);
     EXPECT_TRUE(session->tunnel_.expired());
     EXPECT_FALSE(session->direct_socket_.is_open());
 
     session->on_close();
+    drain_io_context(ctx);
     EXPECT_EQ(session->stream_, nullptr);
     EXPECT_TRUE(session->tunnel_.expired());
     EXPECT_FALSE(session->direct_socket_.is_open());
@@ -1746,7 +1777,8 @@ TEST(TproxyUdpSessionTest, StopAndOnCloseRunWhenIoQueueBlocked)
     auto stream = std::make_shared<mux::mux_stream>(21, 109, "trace", mock_conn, ctx);
 
     EXPECT_CALL(*mock_conn, remove_stream(21)).Times(1);
-    EXPECT_CALL(*mock_conn, mock_send_async(testing::_, testing::_, testing::_)).Times(0);
+    EXPECT_CALL(*mock_conn, mock_send_async(21, mux::kCmdFin, std::vector<std::uint8_t>{}))
+        .WillOnce(testing::Return(boost::system::error_code{}));
 
     boost::system::error_code ec;
     // NOLINTNEXTLINE(bugprone-unused-return-value)
@@ -1792,21 +1824,27 @@ TEST(TproxyUdpSessionTest, StopAndOnCloseRunWhenIoQueueBlocked)
     }
 
     session->stop();
-    EXPECT_EQ(session->stream_, nullptr);
-    EXPECT_TRUE(session->tunnel_.expired());
-    EXPECT_FALSE(session->direct_socket_.is_open());
+    EXPECT_NE(session->stream_, nullptr);
+    EXPECT_FALSE(session->tunnel_.expired());
+    EXPECT_TRUE(session->direct_socket_.is_open());
 
     session->on_close();
-    EXPECT_EQ(session->stream_, nullptr);
-    EXPECT_TRUE(session->tunnel_.expired());
-    EXPECT_FALSE(session->direct_socket_.is_open());
+    EXPECT_NE(session->stream_, nullptr);
+    EXPECT_FALSE(session->tunnel_.expired());
+    EXPECT_TRUE(session->direct_socket_.is_open());
 
     release_blocker.store(true, std::memory_order_release);
+    EXPECT_TRUE(mux::test::co_wait_until(
+        [session]() { return session->stream_ == nullptr && session->tunnel_.expired() && !session->direct_socket_.is_open(); },
+        std::chrono::seconds(2)));
     ctx.stop();
     if (io_thread.joinable())
     {
         io_thread.join();
     }
+    EXPECT_EQ(session->stream_, nullptr);
+    EXPECT_TRUE(session->tunnel_.expired());
+    EXPECT_FALSE(session->direct_socket_.is_open());
 }
 
 TEST(TproxyUdpSessionTest, OnCloseRunsWhenIoContextNotRunning)
@@ -1837,6 +1875,10 @@ TEST(TproxyUdpSessionTest, OnCloseRunsWhenIoContextNotRunning)
     session->tunnel_ = tunnel;
     session->on_close();
 
+    EXPECT_NE(session->stream_, nullptr);
+    EXPECT_FALSE(session->tunnel_.expired());
+    EXPECT_TRUE(session->direct_socket_.is_open());
+    drain_io_context(ctx);
     EXPECT_EQ(session->stream_, nullptr);
     EXPECT_TRUE(session->tunnel_.expired());
     EXPECT_FALSE(session->direct_socket_.is_open());
@@ -1864,6 +1906,9 @@ TEST(TproxyUdpSessionTest, StopRemovesStreamWhenIoContextNotRunning)
     session->tunnel_ = tunnel;
     session->stop();
 
+    EXPECT_NE(session->stream_, nullptr);
+    EXPECT_FALSE(session->tunnel_.expired());
+    drain_io_context(ctx);
     EXPECT_EQ(session->stream_, nullptr);
     EXPECT_TRUE(session->tunnel_.expired());
 }
@@ -1894,6 +1939,9 @@ TEST(TproxyUdpSessionTest, StopRemovesStreamWhenIoContextNotRunningWithStartedCo
     session->tunnel_ = tunnel;
     session->stop();
 
+    EXPECT_NE(session->stream_, nullptr);
+    EXPECT_FALSE(session->tunnel_.expired());
+    drain_io_context(ctx);
     EXPECT_EQ(session->stream_, nullptr);
     EXPECT_TRUE(session->tunnel_.expired());
     EXPECT_FALSE(connection_has_stream(conn, 19));
@@ -1910,7 +1958,7 @@ TEST(TproxyUdpSessionTest, StopResetsProxyStreamWhenIoContextStopped)
 
     auto mock_conn = std::make_shared<mux::mock_mux_connection>(ctx);
     auto stream = std::make_shared<mux::mux_stream>(20, 108, "trace", mock_conn, ctx);
-    EXPECT_CALL(*mock_conn, mock_send_async(testing::_, testing::_, testing::_)).Times(0);
+    ON_CALL(*mock_conn, mock_send_async(testing::_, testing::_, testing::_)).WillByDefault(testing::Return(boost::system::error_code{}));
 
     session->stream_ = stream;
     session->tunnel_.reset();
@@ -1918,11 +1966,13 @@ TEST(TproxyUdpSessionTest, StopResetsProxyStreamWhenIoContextStopped)
     ctx.stop();
     session->stop();
 
+    EXPECT_NE(session->stream_, nullptr);
+    drain_io_context(ctx);
     EXPECT_EQ(session->stream_, nullptr);
     EXPECT_TRUE(session->tunnel_.expired());
 
-    ctx.restart();
     const std::array<std::uint8_t, 1> payload = {0x42};
+    ctx.restart();
     const auto ec = mux::test::run_awaitable(ctx, stream->async_write_some(payload.data(), payload.size()));
     EXPECT_EQ(ec, boost::asio::error::operation_aborted);
 }
@@ -4924,6 +4974,9 @@ TEST(TproxyClientTest, StopRunsInlineWhenIoContextStopped)
 
     pool.stop();
     client->stop();
+    EXPECT_TRUE(client->tcp_acceptor_.is_open());
+    EXPECT_TRUE(client->udp_socket_.is_open());
+    drain_io_context(pool.get_io_context());
     EXPECT_FALSE(client->tcp_acceptor_.is_open());
     EXPECT_FALSE(client->udp_socket_.is_open());
 
@@ -4952,6 +5005,9 @@ TEST(TproxyClientTest, StopRunsWhenIoContextNotRunning)
     ASSERT_TRUE(client->udp_socket_.is_open());
 
     client->stop();
+    EXPECT_TRUE(client->tcp_acceptor_.is_open());
+    EXPECT_TRUE(client->udp_socket_.is_open());
+    drain_io_context(pool.get_io_context());
     EXPECT_FALSE(client->tcp_acceptor_.is_open());
     EXPECT_FALSE(client->udp_socket_.is_open());
     pool.stop();
@@ -5016,15 +5072,19 @@ TEST(TproxyClientTest, StopRunsWhenIoQueueBlocked)
     }
 
     client->stop();
-    EXPECT_FALSE(client->tcp_acceptor_.is_open());
-    EXPECT_FALSE(client->udp_socket_.is_open());
+    EXPECT_TRUE(client->tcp_acceptor_.is_open());
+    EXPECT_TRUE(client->udp_socket_.is_open());
 
     release_blocker.store(true, std::memory_order_release);
+    EXPECT_TRUE(mux::test::co_wait_until(
+        [client]() { return !client->tcp_acceptor_.is_open() && !client->udp_socket_.is_open(); }, std::chrono::seconds(2)));
     pool.stop();
     if (runner.joinable())
     {
         runner.join();
     }
+    EXPECT_FALSE(client->tcp_acceptor_.is_open());
+    EXPECT_FALSE(client->udp_socket_.is_open());
 
     reset_socket_wrappers();
 }
@@ -5156,6 +5216,9 @@ TEST(TproxyClientTest, StopClosesUdpSessionsWhenIoContextStopped)
     pool.stop();
     client->stop();
 
+    EXPECT_FALSE(udp_sessions_empty(client));
+    EXPECT_TRUE(session->direct_socket_.is_open());
+    drain_io_context(pool.get_io_context());
     EXPECT_TRUE(udp_sessions_empty(client));
     EXPECT_FALSE(session->direct_socket_.is_open());
     reset_socket_wrappers();
@@ -5186,6 +5249,9 @@ TEST(TproxyClientTest, StopClosesUdpSessionsWhenIoContextNotRunning)
 
     client->stop();
 
+    EXPECT_FALSE(udp_sessions_empty(client));
+    EXPECT_TRUE(session->direct_socket_.is_open());
+    drain_io_context(pool.get_io_context());
     EXPECT_TRUE(udp_sessions_empty(client));
     EXPECT_FALSE(session->direct_socket_.is_open());
     pool.stop();
@@ -5251,15 +5317,19 @@ TEST(TproxyClientTest, StopClosesUdpSessionsWhenIoQueueBlocked)
     }
 
     client->stop();
-    EXPECT_TRUE(udp_sessions_empty(client));
-    EXPECT_FALSE(session->direct_socket_.is_open());
+    EXPECT_FALSE(udp_sessions_empty(client));
+    EXPECT_TRUE(session->direct_socket_.is_open());
 
     release_blocker.store(true, std::memory_order_release);
+    EXPECT_TRUE(mux::test::co_wait_until([client, session]() { return udp_sessions_empty(client) && !session->direct_socket_.is_open(); },
+                                         std::chrono::seconds(2)));
     pool.stop();
     if (runner.joinable())
     {
         runner.join();
     }
+    EXPECT_TRUE(udp_sessions_empty(client));
+    EXPECT_FALSE(session->direct_socket_.is_open());
     reset_socket_wrappers();
 }
 
