@@ -58,6 +58,17 @@ TEST(CertManagerTest, SniLookupNormalizesCaseAndTrailingDot)
         return;
     }
     EXPECT_EQ(by_upper_dot->cert_msg, updated_cert);
+
+    std::string with_nul = "  WWW.EXAMPLE.COM. ";
+    with_nul.push_back('\0');
+    with_nul += "ignored";
+    const auto by_nul = manager.get_certificate(with_nul);
+    ASSERT_TRUE(by_nul.has_value());
+    if (!by_nul.has_value())
+    {
+        return;
+    }
+    EXPECT_EQ(by_nul->cert_msg, updated_cert);
 }
 
 TEST(CertManagerTest, DefaultSNI)

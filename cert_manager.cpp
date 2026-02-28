@@ -5,6 +5,7 @@
 #include <vector>
 #include <cstddef>
 #include <cstdint>
+#include <cctype>
 #include <utility>
 #include <iterator>
 #include <optional>
@@ -22,10 +23,25 @@ namespace
 
 std::string normalize_sni_key(std::string_view sni)
 {
-    std::string normalized;
-    normalized.reserve(sni.size());
-    for (const char ch : sni)
+    std::size_t begin = 0;
+    while (begin < sni.size() && std::isspace(static_cast<unsigned char>(sni[begin])) != 0)
     {
+        ++begin;
+    }
+    std::size_t end = sni.size();
+    while (end > begin && std::isspace(static_cast<unsigned char>(sni[end - 1])) != 0)
+    {
+        --end;
+    }
+    std::string normalized;
+    normalized.reserve(end - begin);
+    for (std::size_t i = begin; i < end; ++i)
+    {
+        const char ch = sni[i];
+        if (ch == '\0')
+        {
+            break;
+        }
         normalized.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
     }
     while (!normalized.empty() && normalized.back() == '.')
