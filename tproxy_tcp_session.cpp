@@ -287,6 +287,7 @@ boost::asio::awaitable<bool> tproxy_tcp_session::write_client_chunk_to_backend(c
         LOG_CTX_WARN(ctx_, "{} failed to write to backend", log_event::kSocks);
         co_return false;
     }
+    ctx_.add_tx_bytes(total_written);
     last_activity_time_ms_.store(now_ms(), std::memory_order_release);
     co_return true;
 }
@@ -373,6 +374,7 @@ boost::asio::awaitable<bool> tproxy_tcp_session::write_backend_chunk_to_client(c
         }
         co_return false;
     }
+    ctx_.add_rx_bytes(write_res.write_size);
     last_activity_time_ms_.store(now_ms(), std::memory_order_release);
     co_return true;
 }

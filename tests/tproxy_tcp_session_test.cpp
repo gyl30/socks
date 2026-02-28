@@ -423,12 +423,14 @@ TEST(TproxyTcpSessionTest, WriteClientChunkToBackendTracksActivity)
     const auto fail = mux::test::run_awaitable(ctx, session->write_client_chunk_to_backend(backend, buf, 3));
     EXPECT_FALSE(fail);
     ASSERT_EQ(backend->last_write.size(), 3U);
+    EXPECT_EQ(session->ctx_.tx_bytes(), 0U);
     EXPECT_EQ(session->last_activity_time_ms_.load(std::memory_order_acquire), 1U);
 
     backend->write_result = 3;
     backend->writes.clear();
     const auto ok = mux::test::run_awaitable(ctx, session->write_client_chunk_to_backend(backend, buf, 3));
     EXPECT_TRUE(ok);
+    EXPECT_EQ(session->ctx_.tx_bytes(), 3U);
     EXPECT_GT(session->last_activity_time_ms_.load(std::memory_order_acquire), 1U);
     ASSERT_EQ(backend->writes.size(), 1U);
     EXPECT_EQ(backend->writes[0], std::vector<std::uint8_t>({0x01, 0x02, 0x03}));
@@ -437,6 +439,7 @@ TEST(TproxyTcpSessionTest, WriteClientChunkToBackendTracksActivity)
     backend->writes.clear();
     const auto ok_full = mux::test::run_awaitable(ctx, session->write_client_chunk_to_backend(backend, buf, 4));
     EXPECT_TRUE(ok_full);
+    EXPECT_EQ(session->ctx_.tx_bytes(), 7U);
     EXPECT_GT(session->last_activity_time_ms_.load(std::memory_order_acquire), 1U);
     ASSERT_EQ(backend->writes.size(), 1U);
     EXPECT_EQ(backend->writes[0], std::vector<std::uint8_t>({0x01, 0x02, 0x03, 0x04}));
@@ -445,9 +448,36 @@ TEST(TproxyTcpSessionTest, WriteClientChunkToBackendTracksActivity)
     backend->writes.clear();
     const auto ok_partial = mux::test::run_awaitable(ctx, session->write_client_chunk_to_backend(backend, buf, 4));
     EXPECT_TRUE(ok_partial);
+    EXPECT_EQ(session->ctx_.tx_bytes(), 11U);
     ASSERT_EQ(backend->writes.size(), 2U);
     EXPECT_EQ(backend->writes[0], std::vector<std::uint8_t>({0x01, 0x02, 0x03, 0x04}));
     EXPECT_EQ(backend->writes[1], std::vector<std::uint8_t>({0x03, 0x04}));
+}
+
+TEST(TproxyTcpSessionTest, WriteBackendChunkToClientTracksRx)
+{
+    boost::asio::io_context ctx;
+    auto pair = make_tcp_socket_pair(ctx);
+    auto router = std::make_shared<direct_router>();
+    mux::config const cfg;
+    const boost::asio::ip::tcp::endpoint dst_ep(boost::asio::ip::make_address("127.0.0.1"), 80);
+    auto session = std::make_shared<mux::tproxy_tcp_session>(std::move(pair.server), ctx, nullptr, std::move(router), 36, cfg, dst_ep);
+
+    const std::vector<std::uint8_t> buf = {0x41, 0x42, 0x43};
+    session->last_activity_time_ms_.store(1, std::memory_order_release);
+    const auto ok = mux::test::run_awaitable(ctx, session->write_backend_chunk_to_client(buf, buf.size()));
+    EXPECT_TRUE(ok);
+    EXPECT_EQ(session->ctx_.rx_bytes(), 3U);
+    EXPECT_GT(session->last_activity_time_ms_.load(std::memory_order_acquire), 1U);
+
+    std::uint8_t got[3] = {0};
+    boost::asio::read(pair.client, boost::asio::buffer(got));
+    EXPECT_EQ(std::vector<std::uint8_t>(got, got + 3), buf);
+
+    session->socket_.close();
+    const auto fail = mux::test::run_awaitable(ctx, session->write_backend_chunk_to_client(buf, buf.size()));
+    EXPECT_FALSE(fail);
+    EXPECT_EQ(session->ctx_.rx_bytes(), 3U);
 }
 
 TEST(TproxyTcpSessionTest, ClientToUpstreamClosesBackendWhenWriteFails)
