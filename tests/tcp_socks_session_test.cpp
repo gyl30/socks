@@ -436,6 +436,7 @@ TEST(TcpSocksSessionTest, ClientToUpstreamWritesDataAndStopsOnEof)
     mux::test::run_awaitable_void(io_context, session->client_to_upstream(backend));
     ASSERT_EQ(backend->writes.size(), 1U);
     EXPECT_EQ(backend->writes[0], std::vector<std::uint8_t>({0x10, 0x20, 0x30}));
+    EXPECT_EQ(session->ctx_.tx_bytes(), 3U);
     EXPECT_EQ(backend->shutdown_send_calls, 1U);
     EXPECT_EQ(backend->close_calls, 0U);
 }
@@ -501,6 +502,7 @@ TEST(TcpSocksSessionTest, UpstreamToClientWritesDataThenStopsOnError)
     backend->read_sequence.push_back({boost::asio::error::eof, {}});
 
     mux::test::run_awaitable_void(io_context, session->upstream_to_client(backend));
+    EXPECT_EQ(session->ctx_.rx_bytes(), 2U);
 
     std::uint8_t buf[2] = {0};
     boost::asio::read(pair.client, boost::asio::buffer(buf));
