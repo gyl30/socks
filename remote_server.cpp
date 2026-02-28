@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <cstring>
 #include <utility>
+#include <cctype>
 #include <charconv>
 #include <expected>
 #include <optional>
@@ -85,10 +86,30 @@ constexpr std::uint32_t kMaxTlsCompatCcsRecords = 8;
 
 std::string normalize_sni_key(std::string_view sni)
 {
-    std::string normalized;
-    normalized.reserve(sni.size());
-    for (const char ch : sni)
+    std::size_t begin = 0;
+    while (begin < sni.size() && std::isspace(static_cast<unsigned char>(sni[begin])) != 0)
     {
+        ++begin;
+    }
+    std::size_t end = sni.size();
+    while (end > begin && std::isspace(static_cast<unsigned char>(sni[end - 1])) != 0)
+    {
+        --end;
+    }
+    const auto nul_pos = sni.find('\0', begin);
+    if (nul_pos != std::string_view::npos && nul_pos < end)
+    {
+        end = nul_pos;
+    }
+    while (end > begin && std::isspace(static_cast<unsigned char>(sni[end - 1])) != 0)
+    {
+        --end;
+    }
+    std::string normalized;
+    normalized.reserve(end - begin);
+    for (std::size_t i = begin; i < end; ++i)
+    {
+        const char ch = sni[i];
         normalized.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
     }
     while (!normalized.empty() && normalized.back() == '.')
@@ -2285,10 +2306,7 @@ remote_server::certificate_target remote_server::resolve_certificate_target(cons
 {
     certificate_target target;
     const auto normalized_client_sni = normalize_sni_key(info.sni);
-    if (normalized_client_sni.find('\0') == std::string::npos)
-    {
-        target.cert_sni = normalized_client_sni;
-    }
+    target.cert_sni = normalized_client_sni;
     target.fetch_host = "www.apple.com";
     target.fetch_port = 443;
 
