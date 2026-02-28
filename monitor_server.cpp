@@ -1,33 +1,26 @@
 #include <array>
-#include <atomic>
 #include <string>
 #include <chrono>
-#include <vector>
+#include <utility>
 #include <cstddef>
 #include <cstdint>
-#include <utility>
 #include <charconv>
 #include <string_view>
 
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
+#include <boost/asio/use_awaitable.hpp>
+#include <boost/asio/redirect_error.hpp>
 
 #include "log.h"
 #include "statistics.h"
-#include "stop_dispatch.h"
 #include "monitor_server.h"
 
 namespace mux
 {
 
-namespace beast = boost::beast;
-namespace http = beast::http;
-using tcp = boost::asio::ip::tcp;
-
 namespace
 {
-
-constexpr std::uint32_t kEphemeralMonitorBindRetryAttempts = 120;
 
 std::string escape_prometheus_label(const std::string_view value)
 {
@@ -69,10 +62,10 @@ void append_metric_line(std::string& out, const std::string_view metric_name, co
     out.push_back('\n');
 }
 
-bool is_metrics_target(const beast::string_view target)
+bool is_metrics_target(const boost::beast::string_view target)
 {
     const std::size_t query_pos = target.find('?');
-    const beast::string_view path = target.substr(0, query_pos);
+    const boost::beast::string_view path = target.substr(0, query_pos);
     return path == "/metrics";
 }
 
@@ -146,335 +139,144 @@ std::string build_metrics_payload()
     return metrics_payload;
 }
 
-void log_monitor_read_failure(const boost::system::error_code& ec) { LOG_WARN("monitor read failed {}", ec.message()); }
-
-void log_monitor_write_failure(const boost::system::error_code& ec) { LOG_WARN("monitor write failed {}", ec.message()); }
-
-void log_monitor_accept_failure(const boost::system::error_code& ec) { LOG_WARN("monitor accept failed {}", ec.message()); }
-
-http::response<http::string_body> make_text_response(const http::status status,
-                                                     const unsigned version,
-                                                     std::string body,
-                                                     const std::string_view content_type)
+boost::beast::http::response<boost::beast::http::string_body> make_text_response(uint32_t code,
+                                                                                 uint32_t version,
+                                                                                 std::string body,
+                                                                                 std::string_view content_type)
 {
-    http::response<http::string_body> response(status, version);
-    response.set(http::field::server, "socks-monitor");
-    response.set(http::field::content_type, content_type);
-    response.set(http::field::connection, "close");
+    auto status = boost::beast::http::int_to_status(code);
+    boost::beast::http::response<boost::beast::http::string_body> response(status, version);
+    response.set(boost::beast::http::field::server, "socks");
+    response.set(boost::beast::http::field::content_type, content_type);
+    response.set(boost::beast::http::field::connection, "close");
     response.body() = std::move(body);
     response.prepare_payload();
     return response;
 }
 
-using tracked_socket_list_t = std::vector<std::weak_ptr<tcp::socket>>;
-
-std::shared_ptr<tracked_socket_list_t> snapshot_active_sockets(const std::shared_ptr<tracked_socket_list_t>& active_sockets)
-{
-    auto snapshot = std::atomic_load_explicit(&active_sockets, std::memory_order_acquire);
-    if (snapshot != nullptr)
-    {
-        return snapshot;
-    }
-    return std::make_shared<tracked_socket_list_t>();
-}
-
-void append_active_socket(std::shared_ptr<tracked_socket_list_t>& active_sockets, const std::shared_ptr<tcp::socket>& socket)
-{
-    for (;;)
-    {
-        auto current = snapshot_active_sockets(active_sockets);
-        auto updated = std::make_shared<tracked_socket_list_t>();
-        updated->reserve(current->size() + 1);
-        for (const auto& weak_socket : *current)
-        {
-            if (!weak_socket.expired())
-            {
-                updated->push_back(weak_socket);
-            }
-        }
-        updated->push_back(socket);
-        if (std::atomic_compare_exchange_weak_explicit(
-                &active_sockets, &current, updated, std::memory_order_acq_rel, std::memory_order_acquire))
-        {
-            return;
-        }
-    }
-}
-
-std::shared_ptr<tracked_socket_list_t> detach_active_sockets(std::shared_ptr<tracked_socket_list_t>& active_sockets)
-{
-    auto empty = std::make_shared<tracked_socket_list_t>();
-    for (;;)
-    {
-        auto current = snapshot_active_sockets(active_sockets);
-        if (std::atomic_compare_exchange_weak_explicit(
-                &active_sockets, &current, empty, std::memory_order_acq_rel, std::memory_order_acquire))
-        {
-            return current;
-        }
-    }
-}
-
-std::vector<std::shared_ptr<tcp::socket>> collect_active_sockets(const std::shared_ptr<tracked_socket_list_t>& active_sockets)
-{
-    std::vector<std::shared_ptr<tcp::socket>> sockets;
-    sockets.reserve(active_sockets->size());
-    for (const auto& weak_socket : *active_sockets)
-    {
-        if (const auto socket = weak_socket.lock())
-        {
-            sockets.push_back(socket);
-        }
-    }
-    return sockets;
-}
-
-void close_tracked_socket(const std::shared_ptr<tcp::socket>& socket)
-{
-    if (socket == nullptr)
-    {
-        return;
-    }
-    boost::system::error_code ec;
-    ec = socket->shutdown(tcp::socket::shutdown_both, ec);
-    ec = socket->close(ec);
-}
-
 }    // namespace
 
-class monitor_session : public std::enable_shared_from_this<monitor_session>
+static boost::asio::awaitable<void> handle_request(boost::beast::tcp_stream stream_)
 {
-   public:
-    explicit monitor_session(std::shared_ptr<tcp::socket> socket) : socket_(std::move(socket)) {}
+    boost::system::error_code ec;
 
-    void start() { do_read(); }
-    void stop() { close_socket(); }
-
-   private:
-    void do_read()
+    auto local_addr = stream_.socket().local_endpoint(ec);
+    auto remote_addr = stream_.socket().remote_endpoint(ec);
+    auto local_addr_str = local_addr.address().to_string() + ":" + std::to_string(local_addr.port());
+    auto remote_addr_str = remote_addr.address().to_string() + ":" + std::to_string(remote_addr.port());
+    auto stream_id = local_addr_str + "<->" + remote_addr_str;
+    stream_.expires_after(std::chrono::seconds(30));
+    boost::beast::http::request<boost::beast::http::string_body> request;
+    boost::beast::flat_buffer buffer;
+    co_await boost::beast::http::async_read(stream_, buffer, request, boost::asio::redirect_error(boost::asio::use_awaitable, ec));
+    do
     {
-        if (socket_ == nullptr)
+        if (ec)
         {
-            return;
+            LOG_ERROR("{} read http request error {}", stream_id, ec.message());
+            break;
         }
-        auto self = shared_from_this();
-        http::async_read(*socket_,
-                         read_buffer_,
-                         request_,
-                         [this, self](boost::system::error_code ec, std::size_t)
-                         {
-                             if (ec)
-                             {
-                                 if (ec != http::error::end_of_stream && ec != boost::asio::error::operation_aborted)
-                                 {
-                                     log_monitor_read_failure(ec);
-                                 }
-                                 close_socket();
-                                 return;
-                             }
-                             handle_request();
-                         });
-    }
-
-    void handle_request()
+        if (request.method() == boost::beast::http::verb::get && is_metrics_target(request.target()))
+        {
+            auto response = make_text_response(200, request.version(), build_metrics_payload(), "text/plain; version=0.0.4; charset=utf-8");
+            co_await boost::beast::http::async_write(stream_, response, boost::asio::redirect_error(boost::asio::use_awaitable, ec));
+            if (ec)
+            {
+                LOG_ERROR("{} write metrics response error {}", stream_id, ec.message());
+                break;
+            }
+        }
+        else
+        {
+            auto response = make_text_response(404, request.version(), "Not Found\n", "text/plain; charset=utf-8");
+            co_await boost::beast::http::async_write(stream_, response, boost::asio::redirect_error(boost::asio::use_awaitable, ec));
+            if (ec)
+            {
+                LOG_ERROR("{} write not found response error {}", stream_id, ec.message());
+                break;
+            }
+        }
+    } while (false);
+    ec = stream_.socket().close(ec);
+    if (ec)
     {
-        if (request_.method() != http::verb::get)
-        {
-            response_ = make_text_response(http::status::method_not_allowed, request_.version(), "method not allowed\n", "text/plain; charset=utf-8");
-            write_response();
-            return;
-        }
-
-        if (!is_metrics_target(request_.target()))
-        {
-            response_ = make_text_response(http::status::not_found, request_.version(), "not found\n", "text/plain; charset=utf-8");
-            write_response();
-            return;
-        }
-
-        response_ = make_text_response(http::status::ok, request_.version(), build_metrics_payload(), "text/plain; version=0.0.4; charset=utf-8");
-        write_response();
+        LOG_ERROR("{} stream close error {}", stream_id, ec.message());
     }
-
-    void write_response()
-    {
-        if (socket_ == nullptr)
-        {
-            return;
-        }
-        auto self = shared_from_this();
-        http::async_write(*socket_,
-                          response_,
-                          [this, self](boost::system::error_code ec, std::size_t)
-                          {
-                              if (ec && ec != boost::asio::error::operation_aborted)
-                              {
-                                  log_monitor_write_failure(ec);
-                              }
-                              close_socket();
-                          });
-    }
-
-    void close_socket()
-    {
-        if (socket_ == nullptr)
-        {
-            return;
-        }
-        boost::system::error_code ignored_ec;
-        ignored_ec = socket_->shutdown(tcp::socket::shutdown_both, ignored_ec);
-        ignored_ec = socket_->close(ignored_ec);
-    }
-
-   private:
-    std::shared_ptr<tcp::socket> socket_;
-    beast::flat_buffer read_buffer_;
-    http::request<http::string_body> request_;
-    http::response<http::string_body> response_;
-};
+}
 
 monitor_server::monitor_server(boost::asio::io_context& ioc, const std::uint16_t port) : monitor_server(ioc, "127.0.0.1", port) {}
 
-monitor_server::monitor_server(boost::asio::io_context& ioc, std::string bind_host, const std::uint16_t port) : acceptor_(ioc)
+monitor_server::monitor_server(boost::asio::io_context& ioc, std::string bind_host, const std::uint16_t port)
+    : port_(port), host_(std::move(bind_host)), ioc_(ioc)
 {
-    auto close_acceptor_on_failure = [this]()
-    {
-        boost::system::error_code close_ec;
-        close_ec = acceptor_.close(close_ec);
-    };
+}
 
-    boost::asio::ip::tcp::endpoint endpoint;
+int monitor_server::start()
+{
     boost::system::error_code ec;
-    endpoint.address(boost::asio::ip::make_address(bind_host, ec));
+    boost::asio::ip::tcp::endpoint endpoint;
+    endpoint.address(boost::asio::ip::make_address(host_, ec));
     if (ec)
     {
         LOG_ERROR("failed to parse address {}", ec.message());
-        return;
+        return -1;
     }
-    endpoint.port(port);
-    const bool retry_ephemeral_bind = (port == 0);
-    const std::uint32_t max_attempts = retry_ephemeral_bind ? kEphemeralMonitorBindRetryAttempts : 1;
-    for (std::uint32_t attempt = 0; attempt < max_attempts; ++attempt)
+    endpoint.port(port_);
+    if (acceptor_.open(endpoint.protocol(), ec); ec)
     {
-        if (acceptor_.open(endpoint.protocol(), ec); ec)
-        {
-            LOG_ERROR("failed to open acceptor {}", ec.message());
-            return;
-        }
-        if (acceptor_.set_option(boost::asio::socket_base::reuse_address(true), ec); ec)
-        {
-            LOG_ERROR("failed to set reuse_address {}", ec.message());
-            close_acceptor_on_failure();
-            return;
-        }
-        if (acceptor_.bind(endpoint, ec); ec)
-        {
-            const bool can_retry = retry_ephemeral_bind && ec == boost::asio::error::address_in_use && (attempt + 1) < max_attempts;
-            close_acceptor_on_failure();
-            if (can_retry)
-            {
-                continue;
-            }
-            LOG_ERROR("failed to bind {}", ec.message());
-            return;
-        }
-        if (acceptor_.listen(boost::asio::socket_base::max_listen_connections, ec); ec)
-        {
-            LOG_ERROR("failed to listen {}", ec.message());
-            close_acceptor_on_failure();
-            return;
-        }
-
-        std::uint16_t bound_port = port;
-        boost::system::error_code local_ep_ec;
-        const auto local_ep = acceptor_.local_endpoint(local_ep_ec);
-        if (!local_ep_ec)
-        {
-            bound_port = local_ep.port();
-        }
-        LOG_INFO("monitor server listening on {}:{}", bind_host, bound_port);
-        return;
+        LOG_ERROR("failed to open acceptor {}", ec.message());
+        return -1;
     }
+    if (acceptor_.set_option(boost::asio::socket_base::reuse_address(true), ec); ec)
+    {
+        LOG_ERROR("failed to set reuse_address {}", ec.message());
+        return -1;
+    }
+    if (acceptor_.bind(endpoint, ec); ec)
+    {
+        LOG_ERROR("failed to bind {}", ec.message());
+        return -1;
+    }
+    if (acceptor_.listen(boost::asio::socket_base::max_listen_connections, ec); ec)
+    {
+        LOG_ERROR("failed to listen {}", ec.message());
+        return -1;
+    }
+
+    LOG_INFO("monitor server listening on {}:{}", host_, port_);
+    boost::asio::co_spawn(ioc_, accept_loop(), group_.adapt(::boost::asio::detached));
+    return 0;
 }
 
-void monitor_server::start()
-{
-    if (!acceptor_.is_open())
-    {
-        return;
-    }
-    bool expected = false;
-    if (!started_.compare_exchange_strong(expected, true, std::memory_order_acq_rel, std::memory_order_acquire))
-    {
-        return;
-    }
-    stop_.store(false, std::memory_order_release);
-    do_accept();
-}
+void monitor_server::stop() { boost::asio::co_spawn(ioc_, stop_accept(), boost::asio::detached); }
 
-void monitor_server::stop()
+boost::asio::awaitable<void> monitor_server::stop_accept()
 {
-    stop_.store(true, std::memory_order_release);
-    started_.store(false, std::memory_order_release);
-
-    auto& io_context = static_cast<boost::asio::io_context&>(acceptor_.get_executor().context());
-    detail::dispatch_cleanup_or_run_inline(io_context,
-                                           [weak_self = weak_from_this()]()
-                                           {
-                                               if (const auto self = weak_self.lock())
-                                               {
-                                                   self->stop_local();
-                                               }
-                                           });
-}
-
-void monitor_server::stop_local()
-{
-    started_.store(false, std::memory_order_release);
     boost::system::error_code ec;
     ec = acceptor_.close(ec);
-    if (ec && ec != boost::asio::error::bad_descriptor)
+    if (ec)
     {
-        LOG_WARN("monitor acceptor close failed {}", ec.message());
+        LOG_ERROR("acceptor close error {}", ec.message());
     }
-    auto active_sockets = detach_active_sockets(active_sockets_);
-    auto sockets_to_close = collect_active_sockets(active_sockets);
-    for (const auto& socket : sockets_to_close)
-    {
-        close_tracked_socket(socket);
-    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    group_.emit(::boost::asio::cancellation_type::all);
+    co_await group_.async_wait(::boost::asio::redirect_error(::boost::asio::use_awaitable, ec));
 }
 
-void monitor_server::do_accept()
+boost::asio::awaitable<void> monitor_server::accept_loop()
 {
-    if (stop_.load(std::memory_order_acquire) || !acceptor_.is_open())
-    {
-        return;
-    }
-
+    boost::system::error_code ec;
     const auto self = shared_from_this();
-    acceptor_.async_accept(
-        [self](boost::system::error_code ec, tcp::socket socket)
+    for (;;)
+    {
+        auto s = co_await acceptor_.async_accept(boost::asio::redirect_error(boost::asio::use_awaitable, ec));
+        if (ec)
         {
-            if (self->stop_.load(std::memory_order_acquire))
-            {
-                return;
-            }
-            if (ec)
-            {
-                if (ec != boost::asio::error::operation_aborted && ec != boost::asio::error::bad_descriptor)
-                {
-                    log_monitor_accept_failure(ec);
-                    self->do_accept();
-                }
-                return;
-            }
-
-            auto tracked_socket = std::make_shared<tcp::socket>(std::move(socket));
-            append_active_socket(self->active_sockets_, tracked_socket);
-            std::make_shared<monitor_session>(tracked_socket)->start();
-            self->do_accept();
-        });
+            LOG_ERROR("accept error {}", ec.message());
+            break;
+        }
+        boost::asio::co_spawn(ioc_, handle_request(boost::beast::tcp_stream(std::move(s))), group_.adapt(boost::asio::detached));
+    }
 }
 
 }    // namespace mux

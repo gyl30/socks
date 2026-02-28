@@ -2919,15 +2919,15 @@ TEST(TproxyClientTest, UdpLoopBackpressureMetricsVisibleViaMonitorEndpoint)
     for (int attempt = 0; attempt < 8; ++attempt)
     {
         monitor = std::make_shared<mux::monitor_server>(monitor_ioc, 0);
-        if (monitor != nullptr && monitor->acceptor_.is_open())
+        if (monitor != nullptr && monitor->start() == 0 && monitor->acceptor_.is_open())
         {
             break;
         }
+        monitor.reset();
         std::this_thread::sleep_for(std::chrono::milliseconds(25));
     }
     ASSERT_NE(monitor, nullptr);
     ASSERT_TRUE(monitor->acceptor_.is_open());
-    monitor->start();
     const auto monitor_port = monitor->acceptor_.local_endpoint(ec).port();
     ASSERT_FALSE(ec);
     ASSERT_NE(monitor_port, 0);
