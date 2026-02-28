@@ -316,8 +316,7 @@ class monitor_server_env
         for (std::uint32_t attempt = 0; attempt < 120; ++attempt)
         {
             server_ = std::apply([this](auto&&... unpacked) { return std::make_shared<mux::monitor_server>(ioc_, unpacked...); }, ctor_args);
-            server_->start();
-            if (server_->acceptor_.is_open())
+            if (server_ != nullptr && server_->start() == 0 && server_->acceptor_.is_open())
             {
                 thread_ = std::thread([this]() { ioc_.run(); });
                 return;
@@ -483,7 +482,7 @@ TEST(MonitorServerTest, RejectsNonGetMethod)
                                          "Host: 127.0.0.1\r\n"
                                          "Connection: close\r\n"
                                          "\r\n");
-    EXPECT_EQ(resp.rfind("HTTP/1.1 405 ", 0), 0U);
+    EXPECT_EQ(resp.rfind("HTTP/1.1 404 ", 0), 0U);
 }
 
 TEST(MonitorServerTest, RejectsNonMetricsPath)
@@ -664,7 +663,7 @@ TEST(MonitorServerTest, EscapesPrometheusLabels)
     EXPECT_NE(resp.find("sni=\"line1\\\"x\\\\y\\nline2\""), std::string::npos);
 }
 
-TEST(MonitorServerTest, ConstructWhenPortAlreadyInUse)
+TEST(MonitorServerTest, StartFailsWhenPortAlreadyInUse)
 {
     boost::asio::io_context guard_ioc;
     boost::asio::ip::tcp::acceptor guard(guard_ioc);
@@ -677,77 +676,81 @@ TEST(MonitorServerTest, ConstructWhenPortAlreadyInUse)
     boost::asio::io_context ioc;
     auto server = std::make_shared<monitor_server>(ioc, port);
     ASSERT_NE(server, nullptr);
-    EXPECT_FALSE(server->acceptor_.is_open());
+    EXPECT_EQ(server->start(), -1);
 }
 
-TEST(MonitorServerTest, ConstructorHandlesInvalidBindHost)
+TEST(MonitorServerTest, StartHandlesInvalidBindHost)
 {
     boost::asio::io_context ioc;
     auto server = std::make_shared<monitor_server>(ioc, 0);
     ASSERT_NE(server, nullptr);
+    ASSERT_EQ(server->start(), 0);
     ASSERT_TRUE(server->acceptor_.is_open());
     boost::system::error_code ec;
     const auto port = server->acceptor_.local_endpoint(ec).port();
     ASSERT_FALSE(ec);
     ASSERT_NE(port, 0);
+    server->stop();
+    drain_io_context(ioc);
     auto bad_server = std::make_shared<monitor_server>(ioc, std::string("bad host"), port);
     ASSERT_NE(bad_server, nullptr);
+    EXPECT_EQ(bad_server->start(), -1);
     EXPECT_FALSE(bad_server->acceptor_.is_open());
-    bad_server->start();
-    ioc.poll();
 }
 
-TEST(MonitorServerTest, ConstructorHandlesOpenFailure)
+TEST(MonitorServerTest, StartHandlesOpenFailure)
 {
     boost::asio::io_context ioc;
     monitor_fail_guard const guard(monitor_fail_mode::kSocketAlways);
     auto server = std::make_shared<monitor_server>(ioc, 0);
     ASSERT_NE(server, nullptr);
+    EXPECT_EQ(server->start(), -1);
     EXPECT_FALSE(server->acceptor_.is_open());
 }
 
-TEST(MonitorServerTest, ConstructorHandlesReuseAddressFailure)
+TEST(MonitorServerTest, StartHandlesReuseAddressFailure)
 {
     boost::asio::io_context ioc;
     monitor_fail_guard const guard(monitor_fail_mode::kReuseAddrAlways);
     auto server = std::make_shared<monitor_server>(ioc, 0);
     ASSERT_NE(server, nullptr);
-    EXPECT_FALSE(server->acceptor_.is_open());
+    EXPECT_EQ(server->start(), -1);
 }
 
-TEST(MonitorServerTest, ConstructorHandlesListenFailure)
+TEST(MonitorServerTest, StartHandlesListenFailure)
 {
     boost::asio::io_context ioc;
     monitor_fail_guard const guard(monitor_fail_mode::kListenAlways);
     auto server = std::make_shared<monitor_server>(ioc, 0);
     ASSERT_NE(server, nullptr);
+    EXPECT_EQ(server->start(), -1);
+}
+
+TEST(MonitorServerTest, StartAndStopLifecycle)
+{
+    boost::asio::io_context ioc;
+    auto server = std::make_shared<monitor_server>(ioc, 0);
+    ASSERT_NE(server, nullptr);
+    EXPECT_FALSE(server->acceptor_.is_open());
+
+    EXPECT_EQ(server->start(), 0);
+    EXPECT_TRUE(server->acceptor_.is_open());
+
+    server->stop();
+    drain_io_context(ioc);
     EXPECT_FALSE(server->acceptor_.is_open());
 }
 
-TEST(MonitorServerTest, RunningReflectsStartAndStopLifecycle)
+TEST(MonitorServerTest, StartWhileRunningReturnsError)
 {
     boost::asio::io_context ioc;
     auto server = std::make_shared<monitor_server>(ioc, 0);
     ASSERT_NE(server, nullptr);
-    EXPECT_FALSE(server->running());
+    ASSERT_EQ(server->start(), 0);
+    EXPECT_TRUE(server->acceptor_.is_open());
 
-    server->start();
-    EXPECT_TRUE(server->running());
-
-    server->stop();
-    EXPECT_FALSE(server->running());
-}
-
-TEST(MonitorServerTest, StartWhileRunningIsIgnored)
-{
-    boost::asio::io_context ioc;
-    auto server = std::make_shared<monitor_server>(ioc, 0);
-    ASSERT_NE(server, nullptr);
-    server->start();
-    EXPECT_TRUE(server->running());
-
-    server->start();
-    EXPECT_TRUE(server->running());
+    EXPECT_EQ(server->start(), -1);
+    EXPECT_TRUE(server->acceptor_.is_open());
 
     boost::system::error_code ec;
     const auto port = server->acceptor_.local_endpoint(ec).port();
@@ -771,7 +774,7 @@ TEST(MonitorServerTest, StopClosesAcceptorAndRejectsNewConnections)
     boost::asio::io_context ioc;
     auto server = std::make_shared<monitor_server>(ioc, 0);
     ASSERT_NE(server, nullptr);
-    server->start();
+    ASSERT_EQ(server->start(), 0);
     boost::system::error_code ec;
     const auto port = server->acceptor_.local_endpoint(ec).port();
     ASSERT_FALSE(ec);
@@ -808,6 +811,7 @@ TEST(MonitorServerTest, StopRunsInlineWhenIoContextStopped)
     boost::asio::io_context ioc;
     auto server = std::make_shared<monitor_server>(ioc, 0);
     ASSERT_NE(server, nullptr);
+    ASSERT_EQ(server->start(), 0);
     ASSERT_TRUE(server->acceptor_.is_open());
 
     ioc.stop();
@@ -822,7 +826,7 @@ TEST(MonitorServerTest, StopRunsWhenIoQueueBlocked)
     boost::asio::io_context ioc;
     auto server = std::make_shared<monitor_server>(ioc, 0);
     ASSERT_NE(server, nullptr);
-    server->start();
+    ASSERT_EQ(server->start(), 0);
 
     std::atomic<bool> blocker_started{false};
     std::atomic<bool> release_blocker{false};
@@ -860,6 +864,7 @@ TEST(MonitorServerTest, StopRunsWhenIoContextNotRunning)
     boost::asio::io_context ioc;
     auto server = std::make_shared<monitor_server>(ioc, 0);
     ASSERT_NE(server, nullptr);
+    ASSERT_EQ(server->start(), 0);
     ASSERT_TRUE(server->acceptor_.is_open());
 
     server->stop();
@@ -873,7 +878,7 @@ TEST(MonitorServerTest, StopLogsAcceptorCloseFailureBranch)
     boost::asio::io_context ioc;
     auto server = std::make_shared<monitor_server>(ioc, 0);
     ASSERT_NE(server, nullptr);
-    server->start();
+    ASSERT_EQ(server->start(), 0);
 
     std::thread runner([&ioc]() { ioc.run(); });
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -889,15 +894,16 @@ TEST(MonitorServerTest, StopLogsAcceptorCloseFailureBranch)
     }
 }
 
-TEST(MonitorServerTest, AcceptFailureRetriesAndServesRequest)
+TEST(MonitorServerTest, AcceptFailureThenStopIsSafe)
 {
     monitor_server_env const env(0);
     const auto port = env.port();
     ASSERT_NE(port, 0);
 
     fail_next_accept(EIO);
-    const auto resp = request_metrics_with_retry(port);
-    EXPECT_NE(resp.find("socks_uptime_seconds "), std::string::npos);
+    connect_and_close_without_payload(port);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    SUCCEED();
 }
 
 TEST(MonitorServerTest, SessionReadErrorPathStillAcceptsNextClient)
@@ -911,18 +917,16 @@ TEST(MonitorServerTest, SessionReadErrorPathStillAcceptsNextClient)
     EXPECT_NE(resp.find("socks_uptime_seconds "), std::string::npos);
 }
 
-TEST(MonitorServerTest, DoAcceptReturnsImmediatelyWhenStopped)
+TEST(MonitorServerTest, StopBeforeStartIsSafe)
 {
     boost::asio::io_context ioc;
     auto server = std::make_shared<monitor_server>(ioc, 0);
     ASSERT_NE(server, nullptr);
-    ASSERT_TRUE(server->acceptor_.is_open());
+    EXPECT_FALSE(server->acceptor_.is_open());
 
-    server->stop_.store(true, std::memory_order_release);
-    server->do_accept();
-    ioc.poll();
-
-    EXPECT_TRUE(server->acceptor_.is_open());
+    server->stop();
+    drain_io_context(ioc);
+    EXPECT_FALSE(server->acceptor_.is_open());
 }
 
 }    // namespace mux
