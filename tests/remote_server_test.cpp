@@ -2501,6 +2501,12 @@ TEST_F(remote_server_test_fixture, FallbackSelectionAndCertificateTargetBranches
     const auto exact_case = server->find_fallback_target_by_sni("WWW.Exact.Test.");
     EXPECT_EQ(exact_case.first, "127.0.0.1");
     EXPECT_EQ(exact_case.second, std::to_string(exact_port));
+    std::string exact_with_nul = "  WWW.Exact.Test. ";
+    exact_with_nul.push_back('\0');
+    exact_with_nul += "ignored";
+    const auto exact_nul = server->find_fallback_target_by_sni(exact_with_nul);
+    EXPECT_EQ(exact_nul.first, "127.0.0.1");
+    EXPECT_EQ(exact_nul.second, std::to_string(exact_port));
 
     const auto wildcard = server->find_fallback_target_by_sni("other.domain");
     EXPECT_EQ(wildcard.first, "127.0.0.1");
@@ -2512,6 +2518,12 @@ TEST_F(remote_server_test_fixture, FallbackSelectionAndCertificateTargetBranches
     EXPECT_EQ(exact_target.fetch_host, "127.0.0.1");
     EXPECT_EQ(exact_target.fetch_port, exact_port);
     EXPECT_EQ(exact_target.cert_sni, "www.exact.test");
+    mux::client_hello_info exact_info_nul{};
+    exact_info_nul.sni = exact_with_nul;
+    const auto exact_target_nul = server->resolve_certificate_target(exact_info_nul);
+    EXPECT_EQ(exact_target_nul.fetch_host, "127.0.0.1");
+    EXPECT_EQ(exact_target_nul.fetch_port, exact_port);
+    EXPECT_EQ(exact_target_nul.cert_sni, "www.exact.test");
 
     server->fallbacks_.clear();
     const auto dest = server->find_fallback_target_by_sni("none");
