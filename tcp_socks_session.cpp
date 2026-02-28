@@ -371,6 +371,7 @@ boost::asio::awaitable<void> tcp_socks_session::client_to_upstream(std::shared_p
             co_await close_backend_once(backend);
             break;
         }
+        ctx_.add_tx_bytes(total_written);
         last_activity_time_ms_.store(now_ms(), std::memory_order_release);
     }
     LOG_CTX_INFO(ctx_, "{} client to upstream finished", log_event::kSocks);
@@ -401,6 +402,7 @@ boost::asio::awaitable<void> tcp_socks_session::upstream_to_client(std::shared_p
             }
             break;
         }
+        ctx_.add_rx_bytes(write_res.write_size);
         last_activity_time_ms_.store(now_ms(), std::memory_order_release);
     }
     LOG_CTX_INFO(ctx_, "{} upstream to client finished", log_event::kSocks);
