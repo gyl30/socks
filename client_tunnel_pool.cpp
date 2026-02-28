@@ -423,7 +423,9 @@ std::expected<void, boost::system::error_code> verify_server_certificate_verify_
             reality::crypto_util::verify_tls13_signature(validation_state.server_pub_key.get(), cert_verify->scheme, transcript_hash, cert_verify->signature);
         if (!verify_result)
         {
-            LOG_WARN("certificate verify signature check skipped code {}", verify_result.error().value());
+            LOG_DEBUG("certificate verify signature check failed code {} message {}",
+                      verify_result.error().value(),
+                      verify_result.error().message());
         }
         else
         {
@@ -708,7 +710,7 @@ std::expected<void, boost::system::error_code> validate_server_handshake_chain(c
     }
     if (!strict_cert_verify && !validation_state.cert_verify_signature_checked)
     {
-        LOG_DEBUG("server certificate verify signature unchecked");
+        LOG_DEBUG("server certificate verify signature unchecked strict_cert_verify=false");
     }
     return {};
 }
