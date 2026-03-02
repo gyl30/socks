@@ -218,6 +218,7 @@ PY
 {
   "mode": "server",
   "log": { "level": "info", "file": "server_test.log" },
+  "socks": { "enabled": false },
   "inbound": { "host": "${SERVER_IP}", "port": ${REMOTE_PORT} },
   "fallbacks": [
     { "sni": "example.com", "host": "${SERVER_IP}", "port": "${TLS_PORT}" }
@@ -271,7 +272,7 @@ cat >"${TMPDIR}/config.json" <<EOF
     "enabled": true,
     "listen_host": "::",
     "tcp_port": ${TPROXY_PORT},
-    "udp_port": 0,
+    "udp_port": ${TPROXY_PORT},
     "mark": ${OUTBOUND_MARK_DEC}
   },
   "reality": {

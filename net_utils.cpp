@@ -216,16 +216,17 @@ std::expected<void, boost::system::error_code> set_socket_recv_origdst(const int
 
 boost::asio::ip::address normalize_address(const boost::asio::ip::address& addr)
 {
-    if (addr.is_v6())
+    if (!addr.is_v6())
     {
-        const auto v6 = addr.to_v6();
-        if (v6.is_v4_mapped())
-        {
-            const auto bytes = v6.to_bytes();
-            const boost::asio::ip::address_v4::bytes_type v4_bytes = {bytes[12], bytes[13], bytes[14], bytes[15]};
-            return boost::asio::ip::address_v4(v4_bytes);
-        }
+        return addr;
     }
+    const auto v6 = addr.to_v6();
+    if (!v6.is_v4_mapped())
+    {
+        return addr;
+    }
+    return boost::asio::ip::make_address_v4(boost::asio::ip::v4_mapped, v6);
+
     return addr;
 }
 
