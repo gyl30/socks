@@ -1,9 +1,9 @@
-#include <chrono>
 #include <memory>
 #include <string>
 #include <vector>
 #include <cstdint>
 #include <cstring>
+#include <algorithm>
 #include <utility>
 #include <expected>
 
@@ -16,11 +16,11 @@
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/this_coro.hpp>
 #include <boost/asio/steady_timer.hpp>
-#include <boost/asio/redirect_error.hpp>
-#include <boost/asio/experimental/awaitable_operators.hpp>
 #include <boost/system/error_code.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/system/detail/errc.hpp>
+#include <boost/asio/redirect_error.hpp>
+#include <boost/asio/experimental/awaitable_operators.hpp>
 
 #include "log.h"
 #include "protocol.h"
@@ -40,194 +40,85 @@ namespace mux
 namespace
 {
 
-std::uint8_t map_connect_error_to_socks_reply(const boost::system::error_code& ec)
+[[nodiscard]] const char* mux_command_name(const std::uint8_t cmd)
 {
-    if (ec == boost::asio::error::timed_out)
+    switch (cmd)
     {
-        return socks::kRepHostUnreach;
+        case mux::kCmdSyn:
+            return "syn";
+        case mux::kCmdAck:
+            return "ack";
+        case mux::kCmdDat:
+            return "dat";
+        case mux::kCmdFin:
+            return "fin";
+        case mux::kCmdRst:
+            return "rst";
+        default:
+            return "unknown";
     }
-    if (ec == boost::asio::error::connection_refused)
-    {
-        return socks::kRepConnRefused;
-    }
-    if (ec == boost::asio::error::network_unreachable)
-    {
-        return socks::kRepNetUnreach;
-    }
-    return socks::kRepHostUnreach;
 }
 
-}
+}    // namespace
 
-std::expected<void, boost::system::error_code> direct_upstream::open_socket_for_endpoint(const boost::asio::ip::tcp::endpoint& endpoint)
+boost::asio::awaitable<void> direct_upstream::connect(const std::string& host, const std::uint16_t port, boost::system::error_code& ec)
 {
-    if (socket_.is_open())
-    {
-        boost::system::error_code close_ec;
-        close_ec = socket_.close(close_ec);
-    }
-    boost::system::error_code ec;
-    ec = socket_.open(endpoint.protocol(), ec);
+    auto endpoints = co_await timeout_io::wait_resolve_with_timeout(resolver_, host, std::to_string(port), cfg_.timeout.connect, ec);
     if (ec)
-    {
-        return std::unexpected(ec);
-    }
-    return {};
-}
-
-void direct_upstream::apply_socket_mark()
-{
-    if (mark_ == 0)
-    {
-        return;
-    }
-
-    if (auto r = net::set_socket_mark(socket_.native_handle(), mark_); !r)
-    {
-        LOG_WARN("direct upstream set mark failed {}", r.error().message());
-    }
-}
-
-void direct_upstream::apply_no_delay()
-{
-    boost::system::error_code ec;
-    ec = socket_.set_option(boost::asio::ip::tcp::no_delay(true), ec);
-    if (ec)
-    {
-        LOG_WARN("direct upstream set no delay failed error {}", ec.message());
-    }
-}
-
-boost::asio::awaitable<bool> direct_upstream::connect(const std::string& host, const std::uint16_t port)
-{
-    last_connect_reply_ = socks::kRepHostUnreach;
-    const auto timeout_sec = connect_timeout_sec_;
-    const auto resolve_res = co_await timeout_io::async_resolve_with_timeout(resolver_, host, std::to_string(port), timeout_sec);
-    if (!resolve_res.ok)
     {
         auto& stats = statistics::instance();
-        if (resolve_res.timed_out)
-        {
-            stats.inc_direct_upstream_resolve_timeouts();
-            LOG_CTX_WARN(ctx_, "{} stage=resolve target={}:{} timeout={}s", log_event::kRoute, host, port, timeout_sec);
-        }
-        else
-        {
-            stats.inc_direct_upstream_resolve_errors();
-            LOG_CTX_WARN(ctx_, "{} stage=resolve target={}:{} error={}", log_event::kRoute, host, port, resolve_res.ec.message());
-        }
-        co_return false;
+        stats.inc_direct_upstream_resolve_errors();
+        LOG_CTX_WARN(ctx_, "{} stage=resolve target={}:{} error={}", log_event::kRoute, host, port, ec.message());
+        co_return;
     }
 
-    boost::system::error_code last_ec;
-    for (const auto& entry : resolve_res.endpoints)
+    boost::system::error_code last_ec = boost::asio::error::host_unreachable;
+    for (const auto& entry : endpoints)
     {
-        if (auto open_result = open_socket_for_endpoint(entry.endpoint()); !open_result)
+        if (socket_.is_open())
         {
-            last_ec = open_result.error();
+            boost::system::error_code close_ec;
+            close_ec = socket_.close(close_ec);
+        }
+        boost::system::error_code op_ec;
+        op_ec = socket_.open(entry.endpoint().protocol(), op_ec);
+        if (op_ec)
+        {
+            last_ec = op_ec;
+            continue;
+        }
+        if (auto r = net::set_socket_mark(socket_.native_handle(), cfg_.tproxy.mark); !r)
+        {
+            last_ec = r.error();
             continue;
         }
 
-        apply_socket_mark();
-
-        const auto connect_res = co_await timeout_io::async_connect_with_timeout(socket_, entry.endpoint(), timeout_sec, "direct upstream");
-        if (!connect_res.ok)
+        co_await timeout_io::wait_connect_with_timeout(socket_, entry.endpoint(), cfg_.timeout.connect, op_ec);
+        if (op_ec)
         {
-            if (connect_res.timed_out)
-            {
-                last_ec = boost::asio::error::timed_out;
-                continue;
-            }
-            last_ec = connect_res.ec;
+            last_ec = op_ec;
             continue;
         }
-
-        apply_no_delay();
-        co_return true;
-    }
-
-    const auto err = last_ec ? last_ec : boost::system::errc::make_error_code(boost::system::errc::host_unreachable);
-    last_connect_reply_ = map_connect_error_to_socks_reply(err);
-    auto& stats = statistics::instance();
-    if (err == boost::asio::error::timed_out)
-    {
-        stats.inc_direct_upstream_connect_timeouts();
-        LOG_CTX_WARN(ctx_, "{} stage=connect target={}:{} timeout={}s", log_event::kRoute, host, port, timeout_sec);
-    }
-    else
-    {
-        stats.inc_direct_upstream_connect_errors();
-        LOG_CTX_WARN(ctx_, "{} stage=connect target={}:{} error={}", log_event::kRoute, host, port, err.message());
-    }
-    co_return false;
-}
-
-std::uint8_t direct_upstream::connect_failure_reply() const
-{
-    return last_connect_reply_;
-}
-
-std::optional<upstream::bind_endpoint> direct_upstream::connected_bind_endpoint() const
-{
-    if (!socket_.is_open())
-    {
-        return std::nullopt;
-    }
-
-    boost::system::error_code endpoint_ec;
-    const auto local_ep = socket_.local_endpoint(endpoint_ec);
-    if (endpoint_ec)
-    {
-        return std::nullopt;
-    }
-
-    const auto bind_addr = socks_codec::normalize_ip_address(local_ep.address());
-    return upstream::bind_endpoint{.addr = bind_addr.to_string(), .port = local_ep.port()};
-}
-
-boost::asio::awaitable<std::pair<boost::system::error_code, std::size_t>> direct_upstream::read(std::vector<std::uint8_t>& buf)
-{
-    auto [ec, n] = co_await socket_.async_read_some(boost::asio::buffer(buf), boost::asio::as_tuple(boost::asio::use_awaitable));
-    co_return std::make_pair(ec, n);
-}
-
-boost::asio::awaitable<std::size_t> direct_upstream::write(const std::vector<std::uint8_t>& data)
-{
-    co_return co_await write(data.data(), data.size());
-}
-
-boost::asio::awaitable<std::size_t> direct_upstream::write(const std::uint8_t* data, const std::size_t len)
-{
-    if (data == nullptr || len == 0)
-    {
-        co_return 0;
-    }
-
-    if (write_timeout_sec_ == 0)
-    {
-        auto [ec, n] = co_await boost::asio::async_write(socket_, boost::asio::buffer(data, len), boost::asio::as_tuple(boost::asio::use_awaitable));
-        if (ec)
+        op_ec = socket_.set_option(boost::asio::ip::tcp::no_delay(true), op_ec);
+        if (op_ec)
         {
-            LOG_CTX_ERROR(ctx_, "{} write error {}", log_event::kRoute, ec.message());
-            co_return 0;
+            LOG_WARN("direct upstream set no delay failed error {}", op_ec.message());
         }
-        co_return n;
+        ec.clear();
+        co_return;
     }
+    ec = last_ec;
+}
 
-    const auto write_res = co_await timeout_io::async_write_with_timeout(socket_, boost::asio::buffer(data, len), write_timeout_sec_, "direct upstream");
-    if (!write_res.ok)
-    {
-        if (write_res.timed_out)
-        {
-            LOG_CTX_WARN(ctx_, "{} write timeout {}s", log_event::kRoute, write_timeout_sec_);
-        }
-        else
-        {
-            LOG_CTX_ERROR(ctx_, "{} write error {}", log_event::kRoute, write_res.ec.message());
-        }
-        co_return 0;
-    }
-    co_return write_res.write_size;
+boost::asio::awaitable<std::size_t> direct_upstream::read(std::vector<std::uint8_t>& buf, boost::system::error_code& ec)
+{
+    auto n = co_await socket_.async_read_some(boost::asio::buffer(buf), boost::asio::redirect_error(boost::asio::use_awaitable, ec));
+    co_return n;
+}
+
+boost::asio::awaitable<void> direct_upstream::write(const std::vector<std::uint8_t>& data, boost::system::error_code& ec)
+{
+    co_await timeout_io::wait_write_with_timeout(socket_, boost::asio::buffer(data), cfg_.timeout.write, ec);
 }
 
 boost::asio::awaitable<void> direct_upstream::close()
@@ -246,45 +137,42 @@ boost::asio::awaitable<void> direct_upstream::close()
     co_return;
 }
 
-boost::asio::awaitable<void> direct_upstream::shutdown_send()
-{
-    boost::system::error_code ec;
-    ec = socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
-    if (ec && ec != boost::asio::error::not_connected && ec != boost::asio::error::bad_descriptor)
-    {
-        LOG_WARN("direct upstream shutdown send failed error {}", ec.message());
-    }
-    co_return;
-}
-
-proxy_upstream::proxy_upstream(std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> tunnel,
-                               connection_context ctx,
-                               const std::uint32_t timeout_sec)
-    : ctx_(std::move(ctx)), tunnel_(std::move(tunnel)), timeout_sec_(timeout_sec)
+proxy_upstream::proxy_upstream(std::shared_ptr<mux_tunnel_impl> tunnel, connection_context ctx, const config& cfg)
+    : cfg_(cfg), ctx_(std::move(ctx)), tunnel_(std::move(tunnel))
 {
 }
 
-bool proxy_upstream::is_tunnel_ready() const { return tunnel_ != nullptr && tunnel_->connection() != nullptr && tunnel_->connection()->is_open(); }
-
-boost::asio::awaitable<bool> proxy_upstream::send_syn_request(const std::shared_ptr<mux_stream>& stream,
+boost::asio::awaitable<void> proxy_upstream::send_syn_request(const std::shared_ptr<mux_stream>& stream,
                                                               const std::string& host,
-                                                              const std::uint16_t port)
+                                                              const std::uint16_t port,
+                                                              boost::system::error_code& ec)
 {
     const auto stream_ctx = ctx_.with_stream(stream->id());
     const syn_payload syn{.socks_cmd = socks::kCmdConnect, .addr = host, .port = port, .trace_id = ctx_.trace_id()};
     std::vector<std::uint8_t> syn_data;
     if (!mux_codec::encode_syn(syn, syn_data))
     {
+        ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
         LOG_CTX_ERROR(stream_ctx, "{} stage=send_syn target={}:{} encode failed", log_event::kRoute, host, port);
-        co_return false;
+        co_return;
     }
-    const auto ec = co_await tunnel_->connection()->send_async(stream->id(), kCmdSyn, std::move(syn_data));
+    mux_frame syn_frame;
+    syn_frame.h.stream_id = stream->id();
+    syn_frame.h.command = kCmdSyn;
+    syn_frame.payload = std::move(syn_data);
+    LOG_CTX_DEBUG(stream_ctx,
+                  "{} stage=send_syn stream={} target={}:{} payload_size={}",
+                  log_event::kRoute,
+                  stream->id(),
+                  host,
+                  port,
+                  syn_frame.payload.size());
+    co_await stream->async_write(syn_frame, ec);
     if (ec)
     {
         LOG_CTX_ERROR(stream_ctx, "{} stage=send_syn target={}:{} error={}", log_event::kRoute, host, port, ec.message());
-        co_return false;
+        co_return;
     }
-    co_return true;
 }
 
 boost::asio::awaitable<bool> proxy_upstream::wait_connect_ack(const std::shared_ptr<mux_stream>& stream,
@@ -292,211 +180,142 @@ boost::asio::awaitable<bool> proxy_upstream::wait_connect_ack(const std::shared_
                                                               const std::uint16_t port)
 {
     const auto stream_ctx = ctx_.with_stream(stream->id());
-
     boost::system::error_code ack_ec;
-    std::vector<std::uint8_t> ack_data;
-    if (timeout_sec_ > 0)
-    {
-        using boost::asio::experimental::awaitable_operators::operator||;
-
-        auto timeout_wait = [this]() -> boost::asio::awaitable<boost::system::error_code>
-        {
-            auto executor = co_await boost::asio::this_coro::executor;
-            boost::asio::steady_timer timer(executor);
-            timer.expires_after(std::chrono::seconds(timeout_sec_));
-            boost::system::error_code wait_ec;
-            co_await timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, wait_ec));
-            co_return wait_ec;
-        };
-
-        auto ack_or_timeout = co_await (stream->async_read_some() || timeout_wait());
-        if (ack_or_timeout.index() == 1)
-        {
-            const auto wait_ec = std::get<1>(ack_or_timeout);
-            if (!wait_ec)
-            {
-                stream->on_reset();
-                last_connect_reply_ = socks::kRepHostUnreach;
-                LOG_CTX_WARN(stream_ctx, "{} stage=wait_ack target={}:{} timeout={}s", log_event::kRoute, host, port, timeout_sec_);
-                co_return false;
-            }
-
-            LOG_CTX_ERROR(stream_ctx, "{} stage=wait_ack target={}:{} error={}", log_event::kRoute, host, port, wait_ec.message());
-            co_return false;
-        }
-
-        std::tie(ack_ec, ack_data) = std::move(std::get<0>(ack_or_timeout));
-    }
-    else
-    {
-        std::tie(ack_ec, ack_data) = co_await stream->async_read_some();
-    }
-
+    auto ack_frame = co_await stream->async_read(ack_ec);
     if (ack_ec)
     {
         LOG_CTX_ERROR(stream_ctx, "{} stage=wait_ack target={}:{} error={}", log_event::kRoute, host, port, ack_ec.message());
         co_return false;
     }
+    if (ack_frame.h.command != kCmdAck)
+    {
+        LOG_CTX_WARN(stream_ctx,
+                     "{} stage=wait_ack target={}:{} unexpected_cmd={}({}) payload_size={}",
+                     log_event::kRoute,
+                     host,
+                     port,
+                     ack_frame.h.command,
+                     mux_command_name(ack_frame.h.command),
+                     ack_frame.payload.size());
+        co_return false;
+    }
 
     ack_payload ack{};
-    if (!mux_codec::decode_ack(ack_data.data(), ack_data.size(), ack))
+    if (!mux_codec::decode_ack(ack_frame.payload.data(), ack_frame.payload.size(), ack))
     {
         LOG_CTX_WARN(stream_ctx, "{} stage=decode_ack target={}:{} error=invalid_ack_payload", log_event::kRoute, host, port);
         co_return false;
     }
     if (ack.socks_rep != socks::kRepSuccess)
     {
-        last_connect_reply_ = ack.socks_rep;
         LOG_CTX_WARN(stream_ctx, "{} stage=wait_ack target={}:{} remote_rep={}", log_event::kRoute, host, port, ack.socks_rep);
         co_return false;
     }
-    bind_endpoint_ = upstream::bind_endpoint{.addr = ack.bnd_addr, .port = ack.bnd_port};
+    LOG_CTX_INFO(stream_ctx,
+                 "{} stage=wait_ack target={}:{} bind={}:{}",
+                 log_event::kRoute,
+                 host,
+                 port,
+                 ack.bnd_addr,
+                 ack.bnd_port);
     co_return true;
 }
 
-boost::asio::awaitable<void> proxy_upstream::cleanup_stream(const std::shared_ptr<mux_stream>& stream)
+boost::asio::awaitable<void> proxy_upstream::connect(const std::string& host, const std::uint16_t port, boost::system::error_code& ec)
 {
-    if (stream == nullptr)
-    {
-        co_return;
-    }
-
     if (tunnel_ == nullptr)
     {
-        co_await stream->close();
+        ec = boost::asio::error::not_connected;
+        LOG_CTX_ERROR(ctx_, "{} create stream failed no tunnel", log_event::kRoute);
         co_return;
     }
 
-    const auto conn = tunnel_->connection();
-    if (conn == nullptr)
-    {
-        co_await stream->close();
-        co_return;
-    }
-
-    const auto reset_ec = co_await conn->send_async(stream->id(), kCmdRst, {});
-    if (reset_ec)
-    {
-        LOG_CTX_WARN(ctx_, "{} reset stream {} failed {}", log_event::kRoute, stream->id(), reset_ec.message());
-    }
-    stream->on_reset();
-    tunnel_->remove_stream(stream->id());
-}
-
-boost::asio::awaitable<bool> proxy_upstream::connect(const std::string& host, const std::uint16_t port)
-{
-    last_connect_reply_ = socks::kRepHostUnreach;
-    bind_endpoint_.reset();
-    if (!is_tunnel_ready())
-    {
-        LOG_CTX_WARN(ctx_, "{} proxy tunnel unavailable", log_event::kRoute);
-        co_return false;
-    }
-
-    auto stream = co_await tunnel_->create_stream_async(ctx_.trace_id());
+    auto stream = tunnel_->create_stream();
     if (stream == nullptr)
     {
+        ec = boost::asio::error::connection_aborted;
         LOG_CTX_ERROR(ctx_, "{} create stream failed", log_event::kRoute);
-        co_return false;
+        co_return;
     }
-
-    if (!(co_await send_syn_request(stream, host, port)))
+    co_await send_syn_request(stream, host, port, ec);
+    if (ec)
     {
-        co_await cleanup_stream(stream);
-        co_return false;
+        tunnel_->remove_stream(stream);
+        co_return;
     }
 
     if (!(co_await wait_connect_ack(stream, host, port)))
     {
-        co_await cleanup_stream(stream);
-        co_return false;
+        ec = boost::asio::error::connection_refused;
+        tunnel_->remove_stream(stream);
+        co_return;
     }
 
     stream_ = std::move(stream);
-
-    co_return true;
 }
 
-std::uint8_t proxy_upstream::connect_failure_reply() const
+boost::asio::awaitable<std::size_t> proxy_upstream::read(std::vector<std::uint8_t>& buf, boost::system::error_code& ec)
 {
-    return last_connect_reply_;
-}
-
-std::optional<upstream::bind_endpoint> proxy_upstream::connected_bind_endpoint() const
-{
-    return bind_endpoint_;
-}
-
-boost::asio::awaitable<std::pair<boost::system::error_code, std::size_t>> proxy_upstream::read(std::vector<std::uint8_t>& buf)
-{
-    auto stream = stream_;
-    if (stream == nullptr)
+    if (stream_ == nullptr)
     {
-        co_return std::make_pair(boost::asio::error::operation_aborted, 0);
-    }
-
-    auto [ec, data] = co_await stream->async_read_some();
-    if (!ec && !data.empty())
-    {
-        if (buf.size() < data.size())
-        {
-            buf.resize(data.size());
-        }
-        std::memcpy(buf.data(), data.data(), data.size());
-        co_return std::make_pair(ec, data.size());
-    }
-    co_return std::make_pair(ec, 0);
-}
-
-boost::asio::awaitable<std::size_t> proxy_upstream::write(const std::vector<std::uint8_t>& data)
-{
-    co_return co_await write(data.data(), data.size());
-}
-
-boost::asio::awaitable<std::size_t> proxy_upstream::write(const std::uint8_t* data, const std::size_t len)
-{
-    auto stream = stream_;
-    if (stream == nullptr)
-    {
-        co_return 0;
-    }
-    if (data == nullptr || len == 0)
-    {
+        ec = boost::asio::error::not_connected;
         co_return 0;
     }
 
-    auto ec = co_await stream->async_write_some(data, len);
+    auto data_frame = co_await stream_->async_read(ec);
     if (ec)
     {
-        LOG_CTX_ERROR(ctx_, "{} write error {}", log_event::kRoute, ec.message());
+        LOG_CTX_WARN(ctx_.with_stream(stream_->id()), "{} stage=read_frame error={}", log_event::kRoute, ec.message());
         co_return 0;
     }
-    co_return len;
+    if (data_frame.h.command == mux::kCmdRst || data_frame.h.command == mux::kCmdFin)
+    {
+        LOG_CTX_INFO(ctx_.with_stream(stream_->id()),
+                     "{} stage=read_frame recv_control cmd={}({}) payload_size={}",
+                     log_event::kRoute,
+                     data_frame.h.command,
+                     mux_command_name(data_frame.h.command),
+                     data_frame.payload.size());
+        ec = boost::asio::error::eof;
+        co_return 0;
+    }
+    if (data_frame.h.command != mux::kCmdDat)
+    {
+        LOG_CTX_WARN(ctx_.with_stream(stream_->id()),
+                     "{} stage=read_frame unexpected_cmd={}({}) payload_size={}",
+                     log_event::kRoute,
+                     data_frame.h.command,
+                     mux_command_name(data_frame.h.command),
+                     data_frame.payload.size());
+        ec = boost::asio::error::invalid_argument;
+        co_return 0;
+    }
+
+    if (buf.size() < data_frame.payload.size())
+    {
+        buf.resize(data_frame.payload.size());
+    }
+    std::copy(data_frame.payload.begin(), data_frame.payload.end(), buf.begin());
+    co_return data_frame.payload.size();
+}
+
+boost::asio::awaitable<void> proxy_upstream::write(const std::vector<std::uint8_t>& data, boost::system::error_code& ec)
+{
+    mux_frame data_frame;
+    data_frame.h.stream_id = stream_->id();
+    data_frame.h.command = mux::kCmdDat;
+    data_frame.payload = data;
+    co_return co_await stream_->async_write(data_frame, ec);
 }
 
 boost::asio::awaitable<void> proxy_upstream::close()
 {
-    auto stream = stream_;
+    if (stream_ != nullptr && tunnel_ != nullptr)
+    {
+        tunnel_->remove_stream(stream_);
+    }
     stream_.reset();
-    bind_endpoint_.reset();
-
-    if (stream != nullptr)
-    {
-        co_await stream->close();
-        if (tunnel_ != nullptr)
-        {
-            tunnel_->remove_stream(stream->id());
-        }
-    }
+    co_return;
 }
 
-boost::asio::awaitable<void> proxy_upstream::shutdown_send()
-{
-    auto stream = stream_;
-    if (stream != nullptr)
-    {
-        co_await stream->shutdown_send();
-    }
-}
-
-}
+}    // namespace mux

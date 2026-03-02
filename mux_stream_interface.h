@@ -4,6 +4,10 @@
 #include <vector>
 #include <cstdint>
 
+#include <boost/asio/awaitable.hpp>
+
+#include "mux_protocol.h"
+
 namespace mux
 {
 
@@ -11,15 +15,11 @@ class mux_stream_interface
 {
    public:
     virtual ~mux_stream_interface() = default;
-    [[nodiscard]] virtual bool accept_ack() const { return false; }
-    virtual bool on_ack(std::vector<std::uint8_t> data)
-    {
-        (void)data;
-        return false;
-    }
-    virtual void on_data(std::vector<std::uint8_t> data) = 0;
-    virtual void on_close() = 0;
-    virtual void on_reset() = 0;
+
+   public:
+    virtual uint32_t id() = 0;
+    virtual boost::asio::awaitable<void> on_data(mux_frame) = 0;
+    virtual boost::asio::awaitable<void> write(const std::vector<uint8_t>&) = 0;
 };
 
 }    // namespace mux

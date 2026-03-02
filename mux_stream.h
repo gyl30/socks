@@ -2,7 +2,6 @@
 #define MUX_STREAM_H
 
 #include <tuple>
-#include <atomic>
 #include <memory>
 #include <string>
 #include <vector>
@@ -14,61 +13,34 @@
 #include <boost/system/error_code.hpp>
 #include <boost/asio/experimental/concurrent_channel.hpp>
 
+#include "config.h"
 #include "log_context.h"
-#include "mux_stream_interface.h"
+#include "mux_protocol.h"
 
 namespace mux
 {
 
 class mux_connection;
 
-class mux_stream : public mux_stream_interface, public std::enable_shared_from_this<mux_stream>
+class mux_stream : public std::enable_shared_from_this<mux_stream>
 {
    public:
-    mux_stream(std::uint32_t id,
-               std::uint32_t cid,
-               const std::string& trace_id,
-               const std::shared_ptr<mux_connection>& connection,
-               boost::asio::io_context& io_context);
+    mux_stream(std::uint32_t id, const config& cfg, boost::asio::io_context& io_context, const std::shared_ptr<mux_connection>& connection);
 
-    ~mux_stream() override;
+    ~mux_stream();
 
     [[nodiscard]] std::uint32_t id() const;
-
-    [[nodiscard]] boost::asio::awaitable<std::tuple<boost::system::error_code, std::vector<std::uint8_t>>> async_read_some();
-
-    [[nodiscard]] boost::asio::awaitable<boost::system::error_code> async_write_some(const void* data, std::size_t len);
-    [[nodiscard]] boost::asio::awaitable<boost::system::error_code> async_write_some(std::vector<std::uint8_t> payload);
-
-    boost::asio::awaitable<void> shutdown_send();
-    boost::asio::awaitable<void> close();
-
-    [[nodiscard]] bool accept_ack() const override
-    {
-        return !is_closed_.load(std::memory_order_acquire) && ack_pending_.load(std::memory_order_acquire);
-    }
-    bool on_ack(std::vector<std::uint8_t> data) override;
-    void on_data(std::vector<std::uint8_t> data) override;
-
-    void on_close() override;
-
-    void on_reset() override;
-
-   private:
-    boost::asio::awaitable<void> send_fin_if_needed();
-    void close_internal();
+    [[nodiscard]] boost::asio::awaitable<mux_frame> async_read(boost::system::error_code& ec);
+    [[nodiscard]] boost::asio::awaitable<void> on_frame(mux_frame, boost::system::error_code& ec);
+    [[nodiscard]] boost::asio::awaitable<void> async_write(mux_frame, boost::system::error_code& ec);
 
    private:
     std::uint32_t id_ = 0;
-    connection_context ctx_;
+    const config& cfg_;
+    std::uint64_t tx_bytes_{0};
+    std::uint64_t rx_bytes_{0};
     std::weak_ptr<mux_connection> connection_;
-    boost::asio::experimental::concurrent_channel<void(boost::system::error_code, std::vector<std::uint8_t>)> recv_channel_;
-    std::atomic<bool> is_closed_{false};
-    std::atomic<bool> ack_pending_{true};
-    std::atomic<bool> fin_sent_{false};
-    std::atomic<bool> fin_received_{false};
-    std::atomic<std::uint64_t> tx_bytes_{0};
-    std::atomic<std::uint64_t> rx_bytes_{0};
+    boost::asio::experimental::concurrent_channel<void(boost::system::error_code, mux_frame)> recv_channel_;
 };
 
 }    // namespace mux

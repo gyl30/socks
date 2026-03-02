@@ -6,7 +6,6 @@
 #include <vector>
 #include <cstdint>
 #include <utility>
-#include <optional>
 #include <algorithm>
 #include <netinet/in.h>
 
@@ -31,12 +30,12 @@
 #include "config.h"
 #include "protocol.h"
 #include "mux_tunnel.h"
+#include "timeout_io.h"
 #include "statistics.h"
 #include "log_context.h"
 #include "socks_session.h"
 #include "tcp_socks_session.h"
 #include "udp_socks_session.h"
-#include "timeout_io.h"
 
 namespace mux
 {
@@ -52,40 +51,6 @@ std::shared_ptr<void> make_active_connection_guard()
                 delete static_cast<int*>(ptr);
                 statistics::instance().dec_active_connections();
             }};
-}
-
-boost::asio::awaitable<timeout_io::timed_tcp_read_result> read_exact_with_optional_timeout(boost::asio::ip::tcp::socket& socket,
-                                                                                            const boost::asio::mutable_buffer& buffer,
-                                                                                            const std::uint32_t timeout_sec)
-{
-    if (timeout_sec == 0)
-    {
-        const auto [read_ec, read_size] = co_await boost::asio::async_read(socket, buffer, boost::asio::as_tuple(boost::asio::use_awaitable));
-        co_return timeout_io::timed_tcp_read_result{
-            .ok = !read_ec,
-            .timed_out = false,
-            .read_size = read_size,
-            .ec = read_ec,
-        };
-    }
-    co_return co_await timeout_io::async_read_with_timeout(socket, buffer, timeout_sec, true, "socks session");
-}
-
-boost::asio::awaitable<timeout_io::timed_tcp_write_result> write_exact_with_optional_timeout(boost::asio::ip::tcp::socket& socket,
-                                                                                              const boost::asio::const_buffer& buffer,
-                                                                                              const std::uint32_t timeout_sec)
-{
-    if (timeout_sec == 0)
-    {
-        const auto [write_ec, write_size] = co_await boost::asio::async_write(socket, buffer, boost::asio::as_tuple(boost::asio::use_awaitable));
-        co_return timeout_io::timed_tcp_write_result{
-            .ok = !write_ec,
-            .timed_out = false,
-            .write_size = write_size,
-            .ec = write_ec,
-        };
-    }
-    co_return co_await timeout_io::async_write_with_timeout(socket, buffer, timeout_sec, "socks session");
 }
 
 bool secure_string_equals(const std::string& lhs, const std::string& rhs)
@@ -105,34 +70,27 @@ bool secure_string_equals(const std::string& lhs, const std::string& rhs)
 
 socks_session::socks_session(boost::asio::ip::tcp::socket socket,
                              boost::asio::io_context& io_context,
-                             std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> tunnel_manager,
+                             std::shared_ptr<mux_tunnel_impl> tunnel_manager,
                              std::shared_ptr<router> router,
                              const std::uint32_t sid,
-                             const config::socks_t& socks_cfg,
-                             const config::timeout_t& timeout_cfg,
-                             const config::queues_t& queue_cfg,
-                             std::shared_ptr<boost::asio::cancellation_signal> stop_signal,
-                             tcp_session_started_fn on_tcp_session_started,
-                             udp_session_started_fn on_udp_session_started)
+                             const config& cfg,
+                             task_group& group)
     : sid_(sid),
-      username_(socks_cfg.username),
-      password_(socks_cfg.password),
-      auth_enabled_(socks_cfg.auth),
-      io_context_(io_context),
+      username_(cfg.socks.username),
+      password_(cfg.socks.password),
+      auth_enabled_(cfg.socks.auth),
+      cfg_(cfg),
+      group_(group),
+      ioc_(io_context),
       socket_(std::move(socket)),
       router_(std::move(router)),
-      tunnel_manager_(std::move(tunnel_manager)),
-      stop_signal_(std::move(stop_signal)),
-      on_tcp_session_started_(std::move(on_tcp_session_started)),
-      on_udp_session_started_(std::move(on_udp_session_started)),
-      timeout_config_(timeout_cfg),
-      queue_config_(queue_cfg)
+      tunnel_manager_(std::move(tunnel_manager))
 {
     ctx_.new_trace_id();
     ctx_.conn_id(sid);
     statistics::instance().inc_total_connections();
     statistics::instance().inc_active_connections();
-    active_connection_guard_ = make_active_connection_guard();
+    active_guard_ = make_active_connection_guard();
 }
 
 socks_session::~socks_session() = default;
@@ -140,32 +98,12 @@ socks_session::~socks_session() = default;
 void socks_session::start()
 {
     const auto self = shared_from_this();
-    if (stop_signal_ != nullptr)
-    {
-        boost::asio::co_spawn(io_context_,
-                              [self]() mutable -> boost::asio::awaitable<void> { co_await self->run(); },
-                              boost::asio::bind_cancellation_slot(stop_signal_->slot(), boost::asio::detached));
-        return;
-    }
-    boost::asio::co_spawn(io_context_, [self]() mutable -> boost::asio::awaitable<void> { co_await self->run(); }, boost::asio::detached);
+    boost::asio::co_spawn(ioc_, [self]() mutable -> boost::asio::awaitable<void> { co_await self->run_loop(); }, group_.adapt(boost::asio::detached));
 }
 
-void socks_session::stop()
-{
-    boost::system::error_code ec;
-    ec = socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
-    if (ec && ec != boost::asio::error::not_connected)
-    {
-        LOG_WARN("socks session {} shutdown failed {}", sid_, ec.message());
-    }
-    ec = socket_.close(ec);
-    if (ec && ec != boost::asio::error::bad_descriptor)
-    {
-        LOG_WARN("socks session {} close failed {}", sid_, ec.message());
-    }
-}
+void socks_session::stop() {}
 
-boost::asio::awaitable<void> socks_session::run()
+boost::asio::awaitable<void> socks_session::run_loop()
 {
     if (!co_await handshake())
     {
@@ -184,52 +122,20 @@ boost::asio::awaitable<void> socks_session::run()
 
     if (cmd == socks::kCmdConnect)
     {
-        const auto tcp_sess = std::make_shared<tcp_socks_session>(
-            std::move(socket_),
-            io_context_,
-            tunnel_manager_,
-            router_,
-            sid_,
-            timeout_config_,
-            std::move(active_connection_guard_),
-            std::shared_ptr<boost::asio::cancellation_signal>{});
-        bool allow_start = true;
-        if (on_tcp_session_started_)
-        {
-            allow_start = on_tcp_session_started_(tcp_sess);
-        }
-        if (!allow_start)
-        {
-            co_return;
-        }
+        const auto tcp_sess =
+            std::make_shared<tcp_socks_session>(std::move(socket_), ioc_, tunnel_manager_, router_, sid_, cfg_, group_, std::move(active_guard_));
         tcp_sess->start(host, port);
     }
     else if (cmd == socks::kCmdUdpAssociate)
     {
-        const auto udp_sess = std::make_shared<udp_socks_session>(std::move(socket_),
-                                                                  io_context_,
-                                                                  tunnel_manager_,
-                                                                  sid_,
-                                                                  timeout_config_,
-                                                                  std::move(active_connection_guard_),
-                                                                  queue_config_.udp_session_recv_channel_capacity,
-                                                                  std::shared_ptr<boost::asio::cancellation_signal>{});
-        bool allow_start = true;
-        if (on_udp_session_started_)
-        {
-            allow_start = on_udp_session_started_(udp_sess);
-        }
-        if (!allow_start)
-        {
-            co_return;
-        }
+        const auto udp_sess =
+            std::make_shared<udp_socks_session>(std::move(socket_), ioc_, tunnel_manager_, sid_, cfg_, group_, std::move(active_guard_));
         udp_sess->start(host, port);
     }
     else
     {
         LOG_WARN("socks session {} cmd {} unsupported", sid_, cmd);
         co_await reply_error(socks::kRepCmdNotSupported);
-        stop();
         co_return;
     }
 }
@@ -270,25 +176,17 @@ boost::asio::awaitable<bool> socks_session::handshake()
 
 boost::asio::awaitable<bool> socks_session::read_socks_greeting(std::uint8_t& method_count)
 {
+    boost::system::error_code ec;
     std::uint8_t ver_nmethods[2] = {0};
-    const auto read_res = co_await read_exact_with_optional_timeout(socket_, boost::asio::buffer(ver_nmethods, 2), timeout_config_.read);
-    if (!read_res.ok || ver_nmethods[0] != socks::kVer)
+    co_await timeout_io::wait_read_with_timeout(socket_, boost::asio::buffer(ver_nmethods, 2), cfg_.timeout.read, ec);
+    if (ec)
     {
-        if (!read_res.ok)
-        {
-            if (read_res.timed_out)
-            {
-                LOG_ERROR("socks session {} handshake timeout {}s", sid_, timeout_config_.read);
-            }
-            else
-            {
-                LOG_ERROR("socks session {} handshake failed {}", sid_, read_res.ec.message());
-            }
-        }
-        else
-        {
-            LOG_ERROR("socks session {} handshake failed", sid_);
-        }
+        LOG_ERROR("socks session {} handshake failed {}", sid_, ec.message());
+        co_return false;
+    }
+    if (ver_nmethods[0] != socks::kVer)
+    {
+        LOG_ERROR("socks session {} handshake method version {} failed", sid_, (int)ver_nmethods[0]);
         co_return false;
     }
     method_count = ver_nmethods[1];
@@ -298,17 +196,11 @@ boost::asio::awaitable<bool> socks_session::read_socks_greeting(std::uint8_t& me
 boost::asio::awaitable<bool> socks_session::read_auth_methods(const std::uint8_t method_count, std::vector<std::uint8_t>& methods)
 {
     methods.assign(method_count, 0);
-    const auto method_res = co_await read_exact_with_optional_timeout(socket_, boost::asio::buffer(methods), timeout_config_.read);
-    if (!method_res.ok)
+    boost::system::error_code ec;
+    co_await timeout_io::wait_read_with_timeout(socket_, boost::asio::buffer(methods), cfg_.timeout.read, ec);
+    if (ec)
     {
-        if (method_res.timed_out)
-        {
-            LOG_ERROR("socks session {} methods read timeout {}s", sid_, timeout_config_.read);
-        }
-        else
-        {
-            LOG_ERROR("socks methods read failed {}", method_res.ec.message());
-        }
+        LOG_ERROR("socks methods read failed {}", ec.message());
         co_return false;
     }
     co_return true;
@@ -336,17 +228,11 @@ std::uint8_t socks_session::select_auth_method(const std::vector<std::uint8_t>& 
 boost::asio::awaitable<bool> socks_session::write_selected_method(const std::uint8_t method)
 {
     std::uint8_t resp[] = {socks::kVer, method};
-    const auto write_res = co_await write_exact_with_optional_timeout(socket_, boost::asio::buffer(resp), timeout_config_.write);
-    if (!write_res.ok)
+    boost::system::error_code ec;
+    co_await timeout_io::wait_write_with_timeout(socket_, boost::asio::buffer(resp), cfg_.timeout.write, ec);
+    if (ec)
     {
-        if (write_res.timed_out)
-        {
-            LOG_ERROR("socks session {} write selected method timeout {}s", sid_, timeout_config_.write);
-        }
-        else
-        {
-            LOG_ERROR("socks session {} handshake failed {}", sid_, write_res.ec.message());
-        }
+        LOG_ERROR("socks session {} handshake failed {}", sid_, ec.message());
         co_return false;
     }
     co_return true;
@@ -396,19 +282,14 @@ boost::asio::awaitable<bool> socks_session::do_password_auth()
 boost::asio::awaitable<bool> socks_session::read_auth_version()
 {
     std::uint8_t ver = 0;
-    const auto read_res = co_await read_exact_with_optional_timeout(socket_, boost::asio::buffer(&ver, 1), timeout_config_.read);
-    if (!read_res.ok)
+    boost::system::error_code ec;
+    co_await timeout_io::wait_read_with_timeout(socket_, boost::asio::buffer(&ver, 1), cfg_.timeout.read, ec);
+    if (ec)
     {
-        if (read_res.timed_out)
-        {
-            LOG_ERROR("socks session {} read auth version timeout {}s", sid_, timeout_config_.read);
-        }
-        else
-        {
-            LOG_ERROR("socks session {} read auth version failed {}", sid_, read_res.ec.message());
-        }
+        LOG_ERROR("socks session {} read auth version failed {}", sid_, ec.message());
         co_return false;
     }
+
     if (ver != 0x01)
     {
         LOG_ERROR("socks session {} invalid auth version {}", sid_, ver);
@@ -420,17 +301,11 @@ boost::asio::awaitable<bool> socks_session::read_auth_version()
 boost::asio::awaitable<bool> socks_session::read_auth_field(std::string& out, const char* field_name)
 {
     std::uint8_t field_len = 0;
-    const auto len_res = co_await read_exact_with_optional_timeout(socket_, boost::asio::buffer(&field_len, 1), timeout_config_.read);
-    if (!len_res.ok)
+    boost::system::error_code ec;
+    co_await timeout_io::wait_read_with_timeout(socket_, boost::asio::buffer(&field_len, 1), cfg_.timeout.read, ec);
+    if (ec)
     {
-        if (len_res.timed_out)
-        {
-            LOG_ERROR("socks session {} read {} len timeout {}s", sid_, field_name, timeout_config_.read);
-        }
-        else
-        {
-            LOG_ERROR("socks session {} read {} len failed", sid_, field_name);
-        }
+        LOG_ERROR("socks session {} read {} len failed {}", sid_, field_name, ec.message());
         co_return false;
     }
     if (field_len == 0)
@@ -440,17 +315,10 @@ boost::asio::awaitable<bool> socks_session::read_auth_field(std::string& out, co
     }
 
     out.assign(field_len, '\0');
-    const auto field_res = co_await read_exact_with_optional_timeout(socket_, boost::asio::buffer(out), timeout_config_.read);
-    if (!field_res.ok)
+    co_await timeout_io::wait_read_with_timeout(socket_, boost::asio::buffer(out), cfg_.timeout.read, ec);
+    if (ec)
     {
-        if (field_res.timed_out)
-        {
-            LOG_ERROR("socks session {} read {} timeout {}s", sid_, field_name, timeout_config_.read);
-        }
-        else
-        {
-            LOG_ERROR("socks session {} read {} failed", sid_, field_name);
-        }
+        LOG_ERROR("socks session {} read {} failed {}", sid_, field_name, ec.message());
         co_return false;
     }
     co_return true;
@@ -466,17 +334,11 @@ bool socks_session::verify_credentials(const std::string& username, const std::s
 boost::asio::awaitable<bool> socks_session::write_auth_result(const bool success)
 {
     std::uint8_t result[] = {0x01, success ? static_cast<std::uint8_t>(0x00) : static_cast<std::uint8_t>(0x01)};
-    const auto write_res = co_await write_exact_with_optional_timeout(socket_, boost::asio::buffer(result), timeout_config_.write);
-    if (!write_res.ok)
+    boost::system::error_code ec;
+    co_await timeout_io::wait_write_with_timeout(socket_, boost::asio::buffer(result), cfg_.timeout.write, ec);
+    if (ec)
     {
-        if (write_res.timed_out)
-        {
-            LOG_ERROR("socks session {} write auth result timeout {}s", sid_, timeout_config_.write);
-        }
-        else
-        {
-            LOG_ERROR("socks session {} write auth result failed {}", sid_, write_res.ec.message());
-        }
+        LOG_ERROR("socks session {} write auth result failed {}", sid_, ec.message());
         co_return false;
     }
     co_return true;
@@ -486,7 +348,7 @@ boost::asio::awaitable<void> socks_session::delay_invalid_request() const
 {
     static thread_local std::mt19937 delay_gen(std::random_device{}());
     std::uniform_int_distribution<std::uint32_t> delay_dist(10, 50);
-    boost::asio::steady_timer delay_timer(io_context_);
+    boost::asio::steady_timer delay_timer(ioc_);
     delay_timer.expires_after(std::chrono::milliseconds(delay_dist(delay_gen)));
     co_await delay_timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
 }
@@ -504,18 +366,12 @@ bool socks_session::is_supported_atyp(const std::uint8_t cmd, const std::uint8_t
 
 boost::asio::awaitable<bool> socks_session::read_request_ipv4(std::string& host)
 {
+    boost::system::error_code ec;
     boost::asio::ip::address_v4::bytes_type bytes_v4;
-    const auto read_res = co_await read_exact_with_optional_timeout(socket_, boost::asio::buffer(bytes_v4), timeout_config_.read);
-    if (!read_res.ok)
+    co_await timeout_io::wait_read_with_timeout(socket_, boost::asio::buffer(bytes_v4), cfg_.timeout.read, ec);
+    if (ec)
     {
-        if (read_res.timed_out)
-        {
-            LOG_ERROR("socks session {} request read ipv4 timeout {}s", sid_, timeout_config_.read);
-        }
-        else
-        {
-            LOG_ERROR("socks session {} request read ipv4 failed {}", sid_, read_res.ec.message());
-        }
+        LOG_ERROR("socks session {} request read ipv4 failed {}", sid_, ec.message());
         co_await reply_error(socks::kRepGenFail);
         co_return false;
     }
@@ -526,17 +382,11 @@ boost::asio::awaitable<bool> socks_session::read_request_ipv4(std::string& host)
 boost::asio::awaitable<bool> socks_session::read_request_domain(std::string& host)
 {
     std::uint8_t domain_len = 0;
-    const auto len_res = co_await read_exact_with_optional_timeout(socket_, boost::asio::buffer(&domain_len, 1), timeout_config_.read);
-    if (!len_res.ok)
+    boost::system::error_code ec;
+    co_await timeout_io::wait_read_with_timeout(socket_, boost::asio::buffer(&domain_len, 1), cfg_.timeout.read, ec);
+    if (ec)
     {
-        if (len_res.timed_out)
-        {
-            LOG_ERROR("socks session {} request read domain len timeout {}s", sid_, timeout_config_.read);
-        }
-        else
-        {
-            LOG_ERROR("socks session {} request read domain len failed {}", sid_, len_res.ec.message());
-        }
+        LOG_ERROR("socks session {} request read domain len failed {}", sid_, ec.message());
         co_await reply_error(socks::kRepGenFail);
         co_return false;
     }
@@ -547,17 +397,10 @@ boost::asio::awaitable<bool> socks_session::read_request_domain(std::string& hos
         co_return false;
     }
     host.resize(domain_len);
-    const auto host_res = co_await read_exact_with_optional_timeout(socket_, boost::asio::buffer(host), timeout_config_.read);
-    if (!host_res.ok)
+    co_await timeout_io::wait_read_with_timeout(socket_, boost::asio::buffer(host), cfg_.timeout.read, ec);
+    if (ec)
     {
-        if (host_res.timed_out)
-        {
-            LOG_ERROR("socks session {} request read domain timeout {}s", sid_, timeout_config_.read);
-        }
-        else
-        {
-            LOG_ERROR("socks session {} request read domain failed {}", sid_, host_res.ec.message());
-        }
+        LOG_ERROR("socks session {} request read domain failed {}", sid_, ec.message());
         co_await reply_error(socks::kRepGenFail);
         co_return false;
     }
@@ -572,18 +415,12 @@ boost::asio::awaitable<bool> socks_session::read_request_domain(std::string& hos
 
 boost::asio::awaitable<bool> socks_session::read_request_ipv6(std::string& host)
 {
+    boost::system::error_code ec;
     boost::asio::ip::address_v6::bytes_type bytes_v6;
-    const auto read_res = co_await read_exact_with_optional_timeout(socket_, boost::asio::buffer(bytes_v6), timeout_config_.read);
-    if (!read_res.ok)
+    co_await timeout_io::wait_read_with_timeout(socket_, boost::asio::buffer(bytes_v6), cfg_.timeout.read, ec);
+    if (ec)
     {
-        if (read_res.timed_out)
-        {
-            LOG_ERROR("socks session {} request read ipv6 timeout {}s", sid_, timeout_config_.read);
-        }
-        else
-        {
-            LOG_ERROR("socks session {} request read ipv6 failed {}", sid_, read_res.ec.message());
-        }
+        LOG_ERROR("socks session {} request read ipv6 failed {}", sid_, ec.message());
         co_await reply_error(socks::kRepGenFail);
         co_return false;
     }
@@ -624,17 +461,11 @@ boost::asio::awaitable<socks_session::request_info> socks_session::reject_reques
 
 boost::asio::awaitable<bool> socks_session::read_request_header(std::array<std::uint8_t, 4>& head)
 {
-    const auto read_res = co_await read_exact_with_optional_timeout(socket_, boost::asio::buffer(head), timeout_config_.read);
-    if (!read_res.ok)
+    boost::system::error_code ec;
+    co_await timeout_io::wait_read_with_timeout(socket_, boost::asio::buffer(head), cfg_.timeout.read, ec);
+    if (ec)
     {
-        if (read_res.timed_out)
-        {
-            LOG_ERROR("socks session {} request read timeout {}s", sid_, timeout_config_.read);
-        }
-        else
-        {
-            LOG_ERROR("socks session {} request read failed {}", sid_, read_res.ec.message());
-        }
+        LOG_ERROR("socks session {} request read failed {}", sid_, ec.message());
         co_await reply_error(socks::kRepGenFail);
         co_return false;
     }
@@ -644,17 +475,11 @@ boost::asio::awaitable<bool> socks_session::read_request_header(std::array<std::
 boost::asio::awaitable<bool> socks_session::read_request_port(std::uint16_t& port)
 {
     std::uint16_t port_n = 0;
-    const auto read_res = co_await read_exact_with_optional_timeout(socket_, boost::asio::buffer(&port_n, 2), timeout_config_.read);
-    if (!read_res.ok)
+    boost::system::error_code ec;
+    co_await timeout_io::wait_read_with_timeout(socket_, boost::asio::buffer(&port_n, 2), cfg_.timeout.read, ec);
+    if (ec)
     {
-        if (read_res.timed_out)
-        {
-            LOG_ERROR("socks session {} request read port timeout {}s", sid_, timeout_config_.read);
-        }
-        else
-        {
-            LOG_ERROR("socks session {} request read port failed {}", sid_, read_res.ec.message());
-        }
+        LOG_ERROR("socks session {} request read port failed {}", sid_, ec.message());
         co_await reply_error(socks::kRepGenFail);
         co_return false;
     }
@@ -734,17 +559,12 @@ boost::asio::awaitable<socks_session::request_info> socks_session::read_request(
 boost::asio::awaitable<void> socks_session::reply_error(std::uint8_t code)
 {
     std::uint8_t err[] = {socks::kVer, code, 0, socks::kAtypIpv4, 0, 0, 0, 0, 0, 0};
-    const auto write_res = co_await write_exact_with_optional_timeout(socket_, boost::asio::buffer(err), timeout_config_.write);
-    if (!write_res.ok)
+
+    boost::system::error_code ec;
+    co_await timeout_io::wait_write_with_timeout(socket_, boost::asio::buffer(err), cfg_.timeout.write, ec);
+    if (ec)
     {
-        if (write_res.timed_out)
-        {
-            LOG_ERROR("socks session {} write error response timeout {}s", sid_, timeout_config_.write);
-        }
-        else
-        {
-            LOG_ERROR("socks session {} write error response failed {}", sid_, write_res.ec.message());
-        }
+        LOG_ERROR("socks session {} write error response failed {}", sid_, ec.message());
     }
 }
 

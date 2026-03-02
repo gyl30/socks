@@ -1,22 +1,16 @@
 #include <array>
 #include <ctime>
-#include <mutex>
-#include <atomic>
 #include <chrono>
 #include <memory>
-#include <random>
 #include <string>
-#include <string_view>
 #include <vector>
 #include <cstdint>
 #include <cstring>
 #include <utility>
 #include <cctype>
-#include <charconv>
 #include <expected>
 #include <optional>
 #include <algorithm>
-#include <system_error>
 
 #include <boost/asio/error.hpp>
 #include <boost/asio/write.hpp>
@@ -26,17 +20,17 @@
 #include <boost/asio/as_tuple.hpp>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
-#include <boost/asio/bind_cancellation_slot.hpp>
-#include <boost/system/error_code.hpp>
+#include <boost/algorithm/hex.hpp>
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/address.hpp>
-#include <boost/system/detail/errc.hpp>
 #include <boost/asio/socket_base.hpp>
+#include <boost/system/error_code.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/ip/address_v4.hpp>
 #include <boost/asio/ip/address_v6.hpp>
 #include <boost/asio/use_awaitable.hpp>
+#include <boost/system/detail/errc.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
 
 extern "C"
@@ -50,25 +44,27 @@ extern "C"
 #include "log.h"
 #include "config.h"
 #include "protocol.h"
+#include "mux_codec.h"
 #include "ch_parser.h"
 #include "constants.h"
 #include "timeout_io.h"
 #include "mux_tunnel.h"
 #include "statistics.h"
 #include "transcript.h"
-#include "cert_fetcher.h"
 #include "crypto_util.h"
 #include "log_context.h"
+#include "cert_fetcher.h"
 #include "context_pool.h"
 #include "reality_auth.h"
 #include "reality_core.h"
 #include "replay_cache.h"
 #include "remote_server.h"
-#include "stop_dispatch.h"
+#include "remote_session.h"
 #include "reality_engine.h"
 #include "reality_messages.h"
 #include "tls_key_schedule.h"
 #include "tls_record_layer.h"
+#include "remote_udp_session.h"
 #include "tls_record_validation.h"
 
 namespace mux
@@ -77,571 +73,48 @@ namespace mux
 namespace
 {
 
-constexpr std::uint32_t kEphemeralServerBindRetryAttempts = 120;
-constexpr std::size_t kFallbackGuardMaxSources = 4096;
 constexpr std::size_t kTlsRecordHeaderSize = 5;
 constexpr std::uint16_t kMaxTlsPlaintextRecordLen = static_cast<std::uint16_t>(reality::kMaxTlsPlaintextLen);
 constexpr std::uint16_t kMaxTlsCiphertextRecordLen = static_cast<std::uint16_t>(reality::kMaxTlsPlaintextLen + 256);
 constexpr std::uint32_t kMaxTlsCompatCcsRecords = 8;
 
-std::string normalize_sni_key(std::string_view sni)
-{
-    std::size_t begin = 0;
-    while (begin < sni.size() && std::isspace(static_cast<unsigned char>(sni[begin])) != 0)
-    {
-        ++begin;
-    }
-    std::size_t end = sni.size();
-    while (end > begin && std::isspace(static_cast<unsigned char>(sni[end - 1])) != 0)
-    {
-        --end;
-    }
-    const auto nul_pos = sni.find('\0', begin);
-    if (nul_pos != std::string_view::npos && nul_pos < end)
-    {
-        end = nul_pos;
-    }
-    while (end > begin && std::isspace(static_cast<unsigned char>(sni[end - 1])) != 0)
-    {
-        --end;
-    }
-    std::string normalized;
-    normalized.reserve(end - begin);
-    for (std::size_t i = begin; i < end; ++i)
-    {
-        const char ch = sni[i];
-        normalized.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
-    }
-    while (!normalized.empty() && normalized.back() == '.')
-    {
-        normalized.pop_back();
-    }
-    return normalized;
-}
-
-bool parse_hex_to_bytes(const std::string& hex, std::vector<std::uint8_t>& out, const std::size_t max_len, const char* label)
-{
-    out.clear();
-    if (hex.empty())
-    {
-        return true;
-    }
-    if (hex.size() % 2 != 0)
-    {
-        LOG_ERROR("{} hex length invalid", label);
-        return false;
-    }
-    out = reality::crypto_util::hex_to_bytes(hex);
-    if (out.empty())
-    {
-        LOG_ERROR("{} hex decode failed", label);
-        return false;
-    }
-    if (max_len > 0 && out.size() > max_len)
-    {
-        LOG_ERROR("{} length {} exceeds max {}", label, out.size(), max_len);
-        return false;
-    }
-    return true;
-}
-
-bool parse_bracket_dest_target(const std::string& text, std::string& host, std::string& port)
-{
-    const auto end = text.find(']');
-    if (end == std::string::npos)
-    {
-        return false;
-    }
-    host = text.substr(1, end - 1);
-    if (end + 1 >= text.size() || text[end + 1] != ':')
-    {
-        return false;
-    }
-    port = text.substr(end + 2);
-    return true;
-}
-
-bool parse_plain_dest_target(const std::string& text, std::string& host, std::string& port)
-{
-    const auto pos = text.rfind(':');
-    if (pos == std::string::npos)
-    {
-        return false;
-    }
-    host = text.substr(0, pos);
-    port = text.substr(pos + 1);
-    return true;
-}
-
-bool valid_port_text(const std::string& text)
-{
-    if (text.empty())
-    {
-        return false;
-    }
-    std::uint32_t parsed_port = 0;
-    const char* const begin = text.data();
-    const char* const end = begin + text.size();
-    const auto [parse_end, parse_ec] = std::from_chars(begin, end, parsed_port);
-    if (parse_ec != std::errc() || parse_end != end)
-    {
-        return false;
-    }
-    return parsed_port > 0 && parsed_port <= 65535;
-}
-
-bool parse_dest_target(const std::string& input, std::string& host, std::string& port)
-{
-    if (input.empty())
-    {
-        return false;
-    }
-    host.clear();
-    port.clear();
-    const bool bracketed = input.front() == '[';
-    const bool parsed = bracketed ? parse_bracket_dest_target(input, host, port) : parse_plain_dest_target(input, host, port);
-    if (!parsed || host.empty() || !valid_port_text(port))
-    {
-        return false;
-    }
-    if (host.find('\0') != std::string::npos)
-    {
-        return false;
-    }
-    if (!bracketed && host.find(':') != std::string::npos)
-    {
-        return false;
-    }
-    return true;
-}
-
-bool should_stop_accept_loop_on_error(const boost::system::error_code& accept_ec,
-                                      const std::atomic<bool>& stop_flag,
-                                      const boost::asio::ip::tcp::acceptor& acceptor)
-{
-    if (accept_ec == boost::asio::error::operation_aborted || accept_ec == boost::asio::error::bad_descriptor)
-    {
-        return true;
-    }
-    if (stop_flag.load(std::memory_order_acquire))
-    {
-        return true;
-    }
-    return !acceptor.is_open();
-}
-
-using timed_socket_read_res = timeout_io::timed_tcp_read_result;
-using timed_socket_write_res = timeout_io::timed_tcp_write_result;
-using timed_socket_resolve_res = timeout_io::timed_tcp_resolve_result;
-using timed_socket_connect_res = timeout_io::timed_tcp_connect_result;
-
-[[nodiscard]] bool should_skip_fallback_after_read_failure(const boost::system::error_code& read_ec, const std::atomic<bool>& stop_flag);
-
-struct initial_read_outcome
-{
-    bool ok = false;
-    bool allow_fallback = false;
-    boost::system::error_code ec;
-};
-
-[[nodiscard]] initial_read_outcome make_initial_read_error(const boost::system::error_code& ec, const bool allow_fallback = false)
-{
-    return initial_read_outcome{.ok = false, .allow_fallback = allow_fallback, .ec = ec};
-}
-
-[[nodiscard]] initial_read_outcome classify_initial_read_failure(const timed_socket_read_res& read_res,
-                                                                 const connection_context& ctx,
-                                                                 const std::uint32_t timeout_sec,
-                                                                 const std::atomic<bool>& stop_flag)
-{
-    if (read_res.timed_out)
-    {
-        LOG_CTX_WARN(ctx, "{} initial read timed out {}s", log_event::kHandshake, timeout_sec);
-    }
-    else if (!should_skip_fallback_after_read_failure(read_res.ec, stop_flag))
-    {
-        LOG_CTX_ERROR(ctx, "{} initial read error {}", log_event::kHandshake, read_res.ec.message());
-    }
-    return make_initial_read_error(read_res.ec);
-}
-
-[[nodiscard]] initial_read_outcome classify_header_read_failure(const timed_socket_read_res& read_res,
-                                                                const connection_context& ctx,
-                                                                const std::uint32_t timeout_sec,
-                                                                const std::size_t header_size,
-                                                                const std::atomic<bool>& stop_flag)
-{
-    if (read_res.timed_out)
-    {
-        LOG_CTX_WARN(ctx, "{} header read timed out {}s", log_event::kHandshake, timeout_sec);
-        return make_initial_read_error(read_res.ec);
-    }
-    if (read_res.ec == boost::asio::error::eof)
-    {
-        LOG_CTX_WARN(ctx, "{} invalid tls header short read {}", log_event::kHandshake, header_size);
-        return make_initial_read_error(read_res.ec, true);
-    }
-    if (!should_skip_fallback_after_read_failure(read_res.ec, stop_flag))
-    {
-        LOG_CTX_ERROR(ctx, "{} header read error {}", log_event::kHandshake, read_res.ec.message());
-    }
-    return make_initial_read_error(read_res.ec);
-}
-
-[[nodiscard]] initial_read_outcome classify_body_read_failure(const timed_socket_read_res& read_res,
-                                                              const connection_context& ctx,
-                                                              const std::uint32_t timeout_sec,
-                                                              const std::atomic<bool>& stop_flag)
-{
-    if (read_res.timed_out)
-    {
-        LOG_CTX_WARN(ctx, "{} handshake body read timed out {}s", log_event::kHandshake, timeout_sec);
-        return make_initial_read_error(read_res.ec);
-    }
-    if (read_res.ec == boost::asio::error::eof)
-    {
-        LOG_CTX_WARN(ctx, "{} handshake body short read", log_event::kHandshake);
-        return make_initial_read_error(read_res.ec, true);
-    }
-    if (!should_skip_fallback_after_read_failure(read_res.ec, stop_flag))
-    {
-        LOG_CTX_ERROR(ctx, "{} handshake body read error {}", log_event::kHandshake, read_res.ec.message());
-    }
-    return make_initial_read_error(read_res.ec);
-}
-
-boost::asio::awaitable<initial_read_outcome> fill_tls_record_header(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
-                                                                    const connection_context& ctx,
-                                                                    std::vector<std::uint8_t>& buf,
-                                                                    const std::uint32_t timeout_sec,
-                                                                    const std::atomic<bool>& stop_flag)
+boost::asio::awaitable<void> read_tls_record_header(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
+                                                    std::vector<std::uint8_t>& buf,
+                                                    std::uint32_t timeout,
+                                                    boost::system::error_code& ec)
 {
     while (buf.size() < kTlsRecordHeaderSize)
     {
-        if (stop_flag.load(std::memory_order_acquire))
-        {
-            co_return make_initial_read_error(boost::asio::error::operation_aborted);
-        }
         std::vector<std::uint8_t> header_remaining(kTlsRecordHeaderSize - buf.size());
-        const auto header_read = co_await timeout_io::async_read_with_timeout(socket, boost::asio::buffer(header_remaining), timeout_sec, true);
-        if (!header_read.ok)
+        auto read_size = co_await timeout_io::wait_read_with_timeout(*socket, boost::asio::buffer(header_remaining), timeout, ec);
+        if (ec)
         {
-            if (header_read.read_size > 0)
-            {
-                header_remaining.resize(header_read.read_size);
-                buf.insert(buf.end(), header_remaining.begin(), header_remaining.end());
-            }
-            co_return classify_header_read_failure(header_read, ctx, timeout_sec, buf.size(), stop_flag);
+            co_return;
         }
-        header_remaining.resize(header_read.read_size);
+        header_remaining.resize(read_size);
         buf.insert(buf.end(), header_remaining.begin(), header_remaining.end());
     }
-    co_return initial_read_outcome{.ok = true, .allow_fallback = false, .ec = {}};
+    co_return;
 }
 
-boost::asio::awaitable<initial_read_outcome> fill_tls_record_body(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
-                                                                  const connection_context& ctx,
-                                                                  std::vector<std::uint8_t>& buf,
-                                                                  const std::uint32_t payload_len,
-                                                                  const std::uint32_t timeout_sec,
-                                                                  const std::atomic<bool>& stop_flag)
+boost::asio::awaitable<void> read_tls_record_body(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
+                                                  std::vector<std::uint8_t>& buf,
+                                                  std::uint32_t payload_len,
+                                                  std::uint32_t timeout,
+                                                  boost::system::error_code& ec)
 {
     while (buf.size() < kTlsRecordHeaderSize + payload_len)
     {
-        if (stop_flag.load(std::memory_order_acquire))
-        {
-            co_return make_initial_read_error(boost::asio::error::operation_aborted);
-        }
         std::vector<std::uint8_t> extra(kTlsRecordHeaderSize + payload_len - buf.size());
-        const auto extra_read = co_await timeout_io::async_read_with_timeout(socket, boost::asio::buffer(extra), timeout_sec, true);
-        if (!extra_read.ok)
+        const auto read_size = co_await timeout_io::wait_read_with_timeout(*socket, boost::asio::buffer(extra), timeout, ec);
+        if (ec)
         {
-            if (extra_read.read_size > 0)
-            {
-                extra.resize(extra_read.read_size);
-                buf.insert(buf.end(), extra.begin(), extra.end());
-            }
-            co_return classify_body_read_failure(extra_read, ctx, timeout_sec, stop_flag);
+            co_return;
         }
-        extra.resize(extra_read.read_size);
+        extra.resize(read_size);
         buf.insert(buf.end(), extra.begin(), extra.end());
     }
-    co_return initial_read_outcome{.ok = true, .allow_fallback = false, .ec = {}};
-}
-
-[[nodiscard]] bool should_skip_fallback_after_read_failure(const boost::system::error_code& read_ec, const std::atomic<bool>& stop_flag)
-{
-    if (stop_flag.load(std::memory_order_acquire))
-    {
-        return true;
-    }
-    return read_ec == boost::asio::error::operation_aborted || read_ec == boost::asio::error::bad_descriptor ||
-           read_ec == boost::asio::error::timed_out;
-}
-
-boost::asio::awaitable<timed_socket_read_res> read_socket_exact_with_timeout(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
-                                                                             const boost::asio::mutable_buffer buffer,
-                                                                             const std::uint32_t timeout_sec)
-{
-    co_return co_await timeout_io::async_read_with_timeout(socket, buffer, timeout_sec, true);
-}
-
-boost::asio::awaitable<timed_socket_write_res> write_socket_with_timeout(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
-                                                                         const boost::asio::const_buffer buffer,
-                                                                         const std::uint32_t timeout_sec)
-{
-    co_return co_await timeout_io::async_write_with_timeout(socket, buffer, timeout_sec);
-}
-
-boost::asio::awaitable<timed_socket_resolve_res> resolve_socket_with_timeout(boost::asio::io_context& io_context,
-                                                                             const std::string& host,
-                                                                             const std::string& port,
-                                                                             const std::uint32_t timeout_sec)
-{
-    boost::asio::ip::tcp::resolver resolver(io_context);
-    co_return co_await timeout_io::async_resolve_with_timeout(resolver, host, port, timeout_sec);
-}
-
-boost::asio::awaitable<timed_socket_connect_res> connect_socket_with_timeout(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
-                                                                             const boost::asio::ip::tcp::resolver::results_type& endpoints,
-                                                                             const std::uint32_t timeout_sec)
-{
-    co_return co_await timeout_io::async_connect_with_timeout(socket, endpoints, timeout_sec);
-}
-
-std::optional<std::pair<std::string, std::string>> find_exact_sni_fallback(const std::vector<config::fallback_entry>& fallbacks,
-                                                                           const std::string& sni)
-{
-    const auto normalized_sni = normalize_sni_key(sni);
-    if (normalized_sni.empty())
-    {
-        return std::nullopt;
-    }
-    for (const auto& fb : fallbacks)
-    {
-        if (normalize_sni_key(fb.sni) == normalized_sni && !fb.host.empty() && valid_port_text(fb.port) &&
-            fb.host.find('\0') == std::string::npos)
-        {
-            return std::make_pair(fb.host, fb.port);
-        }
-    }
-    return std::nullopt;
-}
-
-std::optional<std::pair<std::string, std::string>> find_wildcard_fallback(const std::vector<config::fallback_entry>& fallbacks)
-{
-    for (const auto& fb : fallbacks)
-    {
-        if ((fb.sni.empty() || fb.sni == "*") && !fb.host.empty() && valid_port_text(fb.port) && fb.host.find('\0') == std::string::npos)
-        {
-            return std::make_pair(fb.host, fb.port);
-        }
-    }
-    return std::nullopt;
-}
-
-std::expected<boost::asio::ip::tcp::endpoint, std::string> resolve_inbound_endpoint(const config::inbound_t& inbound)
-{
-    boost::system::error_code ec;
-    auto addr = boost::asio::ip::make_address(inbound.host, ec);
-    if (ec)
-    {
-        return std::unexpected(ec.message());
-    }
-    return boost::asio::ip::tcp::endpoint{addr, inbound.port};
-}
-
-bool setup_server_acceptor(boost::asio::ip::tcp::acceptor& acceptor, const boost::asio::ip::tcp::endpoint& ep)
-{
-    const bool retry_ephemeral_bind = (ep.port() == 0);
-    const std::uint32_t max_attempts = retry_ephemeral_bind ? kEphemeralServerBindRetryAttempts : 1;
-
-    for (std::uint32_t attempt = 0; attempt < max_attempts; ++attempt)
-    {
-        auto close_on_failure = [&acceptor]()
-        {
-            boost::system::error_code close_ec;
-            close_ec = acceptor.close(close_ec);
-        };
-
-        boost::system::error_code ec;
-        ec = acceptor.open(ep.protocol(), ec);
-        if (ec)
-        {
-            LOG_ERROR("acceptor open failed {}", ec.message());
-            return false;
-        }
-        ec = acceptor.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true), ec);
-        if (ec)
-        {
-            LOG_ERROR("acceptor set reuse address failed {}", ec.message());
-            close_on_failure();
-            return false;
-        }
-        ec = acceptor.bind(ep, ec);
-        if (ec)
-        {
-            close_on_failure();
-            const bool can_retry = retry_ephemeral_bind && ec == boost::asio::error::address_in_use && (attempt + 1) < max_attempts;
-            if (can_retry)
-            {
-                continue;
-            }
-            LOG_ERROR("acceptor bind failed {}", ec.message());
-            return false;
-        }
-        ec = acceptor.listen(boost::asio::socket_base::max_listen_connections, ec);
-        if (ec)
-        {
-            LOG_ERROR("acceptor listen failed {}", ec.message());
-            close_on_failure();
-            return false;
-        }
-        return true;
-    }
-    return false;
-}
-
-void apply_reality_dest_config(const config::reality_t& reality_cfg,
-                               std::string& fallback_dest_host,
-                               std::string& fallback_dest_port,
-                               bool& fallback_dest_valid,
-                               bool& auth_config_valid)
-{
-    if (reality_cfg.dest.empty())
-    {
-        return;
-    }
-    if (!parse_dest_target(reality_cfg.dest, fallback_dest_host, fallback_dest_port))
-    {
-        LOG_ERROR("reality dest invalid {}", reality_cfg.dest);
-        auth_config_valid = false;
-        return;
-    }
-    fallback_dest_valid = true;
-}
-
-std::uint16_t parse_fallback_port(const std::string& port_text)
-{
-    std::uint16_t parsed_port = 443;
-    const char* const begin = port_text.data();
-    const char* const end = begin + port_text.size();
-    auto [parse_end, parse_ec] = std::from_chars(begin, end, parsed_port);
-    if (parse_ec != std::errc() || parse_end != end || parsed_port == 0)
-    {
-        LOG_WARN("invalid fallback port {} defaulting to 443", port_text);
-        return 443;
-    }
-    return parsed_port;
-}
-
-std::uint16_t normalize_cipher_suite(std::uint16_t cipher_suite)
-{
-    if (cipher_suite != 0x1301 && cipher_suite != 0x1302 && cipher_suite != 0x1303)
-    {
-        return 0x1301;
-    }
-    return cipher_suite;
-}
-
-const EVP_MD* digest_from_cipher_suite(const std::uint16_t cipher_suite)
-{
-    if (cipher_suite == 0x1302)
-    {
-        return EVP_sha384();
-    }
-    return EVP_sha256();
-}
-
-const EVP_CIPHER* cipher_from_cipher_suite(const std::uint16_t cipher_suite)
-{
-    if (cipher_suite == 0x1302)
-    {
-        return EVP_aes_256_gcm();
-    }
-    if (cipher_suite == 0x1303)
-    {
-        return EVP_chacha20_poly1305();
-    }
-    return EVP_aes_128_gcm();
-}
-
-std::size_t key_len_from_cipher_suite(const std::uint16_t cipher_suite) { return (cipher_suite == 0x1302) ? 32 : 16; }
-
-std::uint8_t clamp_prefix(const std::uint8_t prefix, const std::uint8_t max_prefix)
-{
-    if (prefix > max_prefix)
-    {
-        return max_prefix;
-    }
-    return prefix;
-}
-
-std::uint32_t mask_from_v4_prefix(const std::uint8_t prefix)
-{
-    if (prefix == 0)
-    {
-        return 0;
-    }
-    if (prefix >= 32)
-    {
-        return 0xFFFFFFFFU;
-    }
-    return 0xFFFFFFFFU << (32 - prefix);
-}
-
-std::string format_v4_subnet_key(const boost::asio::ip::address_v4& address, const std::uint8_t prefix)
-{
-    const auto mask = mask_from_v4_prefix(prefix);
-    const auto network = address.to_uint() & mask;
-    return boost::asio::ip::address_v4(network).to_string() + "/" + std::to_string(prefix);
-}
-
-std::string format_v6_subnet_key(const boost::asio::ip::address_v6& address, const std::uint8_t prefix)
-{
-    auto bytes = address.to_bytes();
-    if (prefix == 0)
-    {
-        bytes.fill(0);
-    }
-    else if (prefix < 128)
-    {
-        const std::size_t full_bytes = prefix / 8;
-        const std::uint8_t rem_bits = prefix % 8;
-        if (rem_bits == 0)
-        {
-            for (std::size_t i = full_bytes; i < bytes.size(); ++i)
-            {
-                bytes[i] = 0;
-            }
-        }
-        else
-        {
-            const auto mask = static_cast<std::uint8_t>(0xFFU << (8 - rem_bits));
-            bytes[full_bytes] &= mask;
-            for (std::size_t i = full_bytes + 1; i < bytes.size(); ++i)
-            {
-                bytes[i] = 0;
-            }
-        }
-    }
-    return boost::asio::ip::address_v6(bytes).to_string() + "/" + std::to_string(prefix);
-}
-
-std::string build_source_limit_key(const boost::asio::ip::address& address, const config::limits_t& limits)
-{
-    const auto normalized = socks_codec::normalize_ip_address(address);
-    if (normalized.is_v4())
-    {
-        const auto prefix_v4 = clamp_prefix(limits.source_prefix_v4, 32);
-        return format_v4_subnet_key(normalized.to_v4(), prefix_v4);
-    }
-    if (normalized.is_v6())
-    {
-        const auto prefix_v6 = clamp_prefix(limits.source_prefix_v6, 128);
-        return format_v6_subnet_key(normalized.to_v6(), prefix_v6);
-    }
-    return "unknown";
+    co_return;
 }
 
 struct auth_inputs
@@ -769,6 +242,38 @@ struct handshake_crypto_result
     std::vector<std::uint8_t> flight2_enc;
 };
 
+std::uint16_t normalize_cipher_suite(std::uint16_t cipher_suite)
+{
+    if (cipher_suite != 0x1301 && cipher_suite != 0x1302 && cipher_suite != 0x1303)
+    {
+        return 0x1301;
+    }
+    return cipher_suite;
+}
+
+const EVP_MD* digest_from_cipher_suite(const std::uint16_t cipher_suite)
+{
+    if (cipher_suite == 0x1302)
+    {
+        return EVP_sha384();
+    }
+    return EVP_sha256();
+}
+
+const EVP_CIPHER* cipher_from_cipher_suite(const std::uint16_t cipher_suite)
+{
+    if (cipher_suite == 0x1302)
+    {
+        return EVP_aes_256_gcm();
+    }
+    if (cipher_suite == 0x1303)
+    {
+        return EVP_chacha20_poly1305();
+    }
+    return EVP_aes_128_gcm();
+}
+std::size_t key_len_from_cipher_suite(const std::uint16_t cipher_suite) { return (cipher_suite == 0x1302) ? 32 : 16; }
+
 std::expected<handshake_crypto_result, boost::system::error_code> build_handshake_crypto(const std::vector<std::uint8_t>& server_random,
                                                                                          const std::vector<std::uint8_t>& session_id,
                                                                                          const std::uint16_t cipher_suite,
@@ -855,171 +360,6 @@ std::expected<handshake_crypto_result, boost::system::error_code> build_handshak
     return out;
 }
 
-std::vector<std::uint8_t> compose_server_hello_flight(const std::vector<std::uint8_t>& sh_msg, const std::vector<std::uint8_t>& flight2_enc)
-{
-    std::vector<std::uint8_t> out_sh;
-    const auto sh_rec = reality::write_record_header(reality::kContentTypeHandshake, static_cast<std::uint16_t>(sh_msg.size()));
-    out_sh.insert(out_sh.end(), sh_rec.begin(), sh_rec.end());
-    out_sh.insert(out_sh.end(), sh_msg.begin(), sh_msg.end());
-    out_sh.insert(out_sh.end(), {0x14, 0x03, 0x03, 0x00, 0x01, 0x01});
-    out_sh.insert(out_sh.end(), flight2_enc.begin(), flight2_enc.end());
-    return out_sh;
-}
-
-void close_fallback_socket(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket, const connection_context& ctx)
-{
-    boost::system::error_code close_ec;
-    close_ec = socket->shutdown(boost::asio::ip::tcp::socket::shutdown_both, close_ec);
-    if (close_ec && close_ec != boost::asio::error::not_connected && close_ec != boost::asio::error::bad_descriptor)
-    {
-        LOG_CTX_WARN(ctx, "{} shutdown failed {}", log_event::kFallback, close_ec.message());
-    }
-    close_ec = socket->close(close_ec);
-    if (close_ec && close_ec != boost::asio::error::bad_descriptor)
-    {
-        LOG_CTX_WARN(ctx, "{} close failed {}", log_event::kFallback, close_ec.message());
-    }
-}
-
-void close_socket_quietly(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket)
-{
-    boost::system::error_code ec;
-    ec = socket->shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
-    if (ec && ec != boost::asio::error::not_connected)
-    {
-        LOG_WARN("{} reject socket shutdown failed {}", log_event::kConnClose, ec.message());
-    }
-    ec = socket->close(ec);
-    if (ec && ec != boost::asio::error::bad_descriptor)
-    {
-        LOG_WARN("{} reject socket close failed {}", log_event::kConnClose, ec.message());
-    }
-}
-
-[[nodiscard]] bool is_expected_fallback_read_stop_error(const boost::system::error_code& ec)
-{
-    return ec == boost::asio::error::eof || ec == boost::asio::error::operation_aborted || ec == boost::asio::error::bad_descriptor;
-}
-
-[[nodiscard]] bool is_expected_fallback_write_stop_error(const boost::system::error_code& ec)
-{
-    return ec == boost::asio::error::operation_aborted || ec == boost::asio::error::bad_descriptor || ec == boost::asio::error::not_connected;
-}
-
-[[nodiscard]] bool log_fallback_read_failure_if_needed(const timeout_io::timed_tcp_read_result& read_res, const connection_context& ctx)
-{
-    if (read_res.timed_out)
-    {
-        LOG_CTX_WARN(ctx, "{} proxy read timeout", log_event::kFallback);
-        return true;
-    }
-    if (!is_expected_fallback_read_stop_error(read_res.ec))
-    {
-        LOG_CTX_WARN(ctx, "{} proxy read failed {}", log_event::kFallback, read_res.ec.message());
-        return true;
-    }
-    return false;
-}
-
-[[nodiscard]] bool log_fallback_write_failure_if_needed(const timeout_io::timed_tcp_write_result& write_res, const connection_context& ctx)
-{
-    if (write_res.timed_out)
-    {
-        LOG_CTX_WARN(ctx, "{} proxy write timeout", log_event::kFallback);
-        return true;
-    }
-    if (!is_expected_fallback_write_stop_error(write_res.ec))
-    {
-        LOG_CTX_WARN(ctx, "{} proxy write failed {}", log_event::kFallback, write_res.ec.message());
-        return true;
-    }
-    return false;
-}
-
-[[nodiscard]] bool shutdown_fallback_send_socket(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket, const connection_context& ctx)
-{
-    boost::system::error_code ec;
-    ec = socket->shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
-    if (ec && ec != boost::asio::error::not_connected && ec != boost::asio::error::bad_descriptor)
-    {
-        LOG_CTX_WARN(ctx, "{} shutdown send failed {}", log_event::kFallback, ec.message());
-        return false;
-    }
-    return true;
-}
-
-boost::asio::awaitable<bool> proxy_half(const std::shared_ptr<boost::asio::ip::tcp::socket>& from,
-                                        const std::shared_ptr<boost::asio::ip::tcp::socket>& to,
-                                        const connection_context& ctx,
-                                        const std::uint32_t read_timeout_sec,
-                                        const std::uint32_t write_timeout_sec)
-{
-    std::vector<std::uint8_t> data(constants::net::kBufferSize);
-    bool success = true;
-    for (;;)
-    {
-        const auto read_res =
-            co_await timeout_io::async_read_with_timeout(from, boost::asio::buffer(data), read_timeout_sec, false, "fallback proxy");
-        if (!read_res.ok)
-        {
-            if (log_fallback_read_failure_if_needed(read_res, ctx))
-            {
-                success = false;
-            }
-            break;
-        }
-        if (read_res.read_size == 0)
-        {
-            break;
-        }
-        const auto write_res =
-            co_await timeout_io::async_write_with_timeout(to, boost::asio::buffer(data, read_res.read_size), write_timeout_sec, "fallback proxy");
-        if (!write_res.ok)
-        {
-            if (log_fallback_write_failure_if_needed(write_res, ctx))
-            {
-                success = false;
-            }
-            break;
-        }
-    }
-    if (!shutdown_fallback_send_socket(to, ctx))
-    {
-        success = false;
-    }
-    co_return success;
-}
-
-bool validate_auth_inputs(const client_hello_info& info, const bool auth_config_valid, const connection_context& ctx)
-{
-    if (!auth_config_valid)
-    {
-        LOG_CTX_ERROR(ctx, "{} invalid auth config", log_event::kAuth);
-        return false;
-    }
-    if (info.malformed_sni)
-    {
-        LOG_CTX_ERROR(ctx, "{} auth fail malformed sni extension", log_event::kAuth);
-        return false;
-    }
-    if (info.malformed_key_share)
-    {
-        LOG_CTX_ERROR(ctx, "{} auth fail malformed key share extension", log_event::kAuth);
-        return false;
-    }
-    if (!info.is_tls13 || info.session_id.size() != 32)
-    {
-        LOG_CTX_ERROR(ctx, "{} auth fail is tls13 {} sid len {}", log_event::kAuth, info.is_tls13, info.session_id.size());
-        return false;
-    }
-    if (info.random.size() != 32)
-    {
-        LOG_CTX_ERROR(ctx, "{} auth fail random len {}", log_event::kAuth, info.random.size());
-        return false;
-    }
-    return true;
-}
-
 std::expected<reality::auth_payload, boost::system::error_code> decrypt_auth_payload(const client_hello_info& info,
                                                                                      const std::vector<std::uint8_t>& buf,
                                                                                      const std::vector<std::uint8_t>& private_key,
@@ -1076,63 +416,43 @@ std::expected<std::vector<std::uint8_t>, boost::system::error_code> generate_ser
     return server_random;
 }
 
-void log_ephemeral_public_key(const std::uint8_t* public_key, const connection_context& ctx)
-{
-    LOG_CTX_TRACE(ctx,
-                  "{} generated ephemeral key {}",
-                  log_event::kHandshake,
-                  reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(public_key, public_key + 32)));
-}
-
 std::uint16_t select_cipher_suite_from_fingerprint(const reality::server_fingerprint& fingerprint)
 {
     return normalize_cipher_suite(fingerprint.cipher_suite != 0 ? fingerprint.cipher_suite : 0x1301);
 }
 
-boost::system::error_code classify_client_finished_read_failure(const timed_socket_read_res& read_res,
-                                                                const connection_context& ctx,
-                                                                const std::uint32_t timeout_sec,
-                                                                const char* stage)
-{
-    statistics::instance().inc_client_finished_failures();
-    if (read_res.timed_out)
-    {
-        LOG_CTX_WARN(ctx, "{} read {} timed out {}s", log_event::kHandshake, stage, timeout_sec);
-        return boost::asio::error::timed_out;
-    }
-    LOG_CTX_ERROR(ctx, "{} read {} error {}", log_event::kHandshake, stage, read_res.ec.message());
-    return read_res.ec;
-}
-
-boost::asio::awaitable<boost::system::error_code> consume_tls13_compat_ccs(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
-                                                                           const std::array<std::uint8_t, 5>& header,
-                                                                           const connection_context& ctx,
-                                                                           const std::uint32_t timeout_sec)
+boost::asio::awaitable<void> consume_tls13_compat_ccs(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
+                                                      const std::array<std::uint8_t, 5>& header,
+                                                      const connection_context& ctx,
+                                                      const std::uint32_t timeout_sec,
+                                                      boost::system::error_code& ec)
 {
     std::array<std::uint8_t, 1> ccs_body = {0};
-    const auto read_ccs = co_await read_socket_exact_with_timeout(socket, boost::asio::buffer(ccs_body), timeout_sec);
-    if (!read_ccs.ok)
+    co_await timeout_io::wait_read_with_timeout(*socket, boost::asio::buffer(ccs_body), timeout_sec, ec);
+    if (ec)
     {
-        co_return classify_client_finished_read_failure(read_ccs, ctx, timeout_sec, "ccs");
+        co_return;
     }
     if (!reality::is_valid_tls13_compat_ccs(header, ccs_body[0]))
     {
         statistics::instance().inc_client_finished_failures();
         LOG_CTX_ERROR(ctx, "{} invalid ccs body {}", log_event::kHandshake, ccs_body[0]);
-        co_return boost::system::errc::make_error_code(boost::system::errc::bad_message);
+        ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
+        co_return;
     }
-    co_return boost::system::error_code{};
+    co_return;
 }
 
-boost::asio::awaitable<boost::system::error_code> read_tls_record_header_allow_ccs(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
-                                                                                   std::array<std::uint8_t, 5>& header,
-                                                                                   const connection_context& ctx,
-                                                                                   const std::uint32_t timeout_sec)
+boost::asio::awaitable<void> read_tls_record_header_allow_ccs(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
+                                                              std::array<std::uint8_t, 5>& header,
+                                                              const connection_context& ctx,
+                                                              const std::uint32_t timeout_sec,
+                                                              boost::system::error_code& ec)
 {
-    const auto read_header = co_await read_socket_exact_with_timeout(socket, boost::asio::buffer(header), timeout_sec);
-    if (!read_header.ok)
+    co_await timeout_io::wait_read_with_timeout(*socket, boost::asio::buffer(header), timeout_sec, ec);
+    if (ec)
     {
-        co_return classify_client_finished_read_failure(read_header, ctx, timeout_sec, "client finished header");
+        co_return;
     }
 
     std::uint32_t ccs_count = 0;
@@ -1142,7 +462,8 @@ boost::asio::awaitable<boost::system::error_code> read_tls_record_header_allow_c
         {
             statistics::instance().inc_client_finished_failures();
             LOG_CTX_ERROR(ctx, "{} too many ccs records {}", log_event::kHandshake, ccs_count);
-            co_return boost::system::errc::make_error_code(boost::system::errc::bad_message);
+            ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
+            co_return;
         }
         ccs_count++;
 
@@ -1151,43 +472,23 @@ boost::asio::awaitable<boost::system::error_code> read_tls_record_header_allow_c
         {
             statistics::instance().inc_client_finished_failures();
             LOG_CTX_ERROR(ctx, "{} invalid ccs length {}", log_event::kHandshake, ccs_len);
-            co_return boost::system::errc::make_error_code(boost::system::errc::bad_message);
+            ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
+            co_return;
         }
-        if (const auto ccs_ec = co_await consume_tls13_compat_ccs(socket, header, ctx, timeout_sec); ccs_ec)
+        co_await consume_tls13_compat_ccs(socket, header, ctx, timeout_sec, ec);
+        if (ec)
         {
-            co_return ccs_ec;
+            co_return;
         }
 
-        const auto read_header_after_ccs = co_await read_socket_exact_with_timeout(socket, boost::asio::buffer(header), timeout_sec);
-        if (!read_header_after_ccs.ok)
+        co_await timeout_io::wait_read_with_timeout(*socket, boost::asio::buffer(header), timeout_sec, ec);
+        if (ec)
         {
-            co_return classify_client_finished_read_failure(read_header_after_ccs, ctx, timeout_sec, "client finished header after ccs");
+            co_return;
         }
     }
 
-    co_return boost::system::error_code{};
-}
-
-boost::asio::awaitable<boost::system::error_code> read_tls_record_body(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
-                                                                       const std::uint16_t body_len,
-                                                                       std::vector<std::uint8_t>& body,
-                                                                       const connection_context& ctx,
-                                                                       const std::uint32_t timeout_sec)
-{
-    body.assign(body_len, 0);
-    const auto read_body = co_await read_socket_exact_with_timeout(socket, boost::asio::buffer(body), timeout_sec);
-    if (!read_body.ok)
-    {
-        statistics::instance().inc_client_finished_failures();
-        if (read_body.timed_out)
-        {
-            LOG_CTX_WARN(ctx, "{} read client finished body timed out {}s", log_event::kHandshake, timeout_sec);
-            co_return boost::asio::error::timed_out;
-        }
-        LOG_CTX_ERROR(ctx, "{} read client finished body error {}", log_event::kHandshake, read_body.ec.message());
-        co_return read_body.ec;
-    }
-    co_return boost::system::error_code{};
+    co_return;
 }
 
 std::vector<std::uint8_t> compose_tls_record(const std::array<std::uint8_t, 5>& header, const std::vector<std::uint8_t>& body)
@@ -1227,191 +528,56 @@ bool verify_client_finished_plaintext(const std::vector<std::uint8_t>& plaintext
     return true;
 }
 
-boost::asio::awaitable<void> fallback_wait_random_timer(const std::uint32_t conn_id, boost::asio::io_context& io_context)
+connection_context build_connection_context(const std::shared_ptr<boost::asio::ip::tcp::socket>& s, std::uint32_t conn_id)
 {
-    boost::asio::steady_timer fallback_timer(io_context);
-    constexpr std::uint32_t max_wait_ms = constants::fallback::kMaxWaitMs;
-    static thread_local std::mt19937 gen(std::random_device{}());
-    std::uniform_int_distribution<std::uint32_t> dist(0, max_wait_ms - 1);
-    const std::uint32_t wait_ms = dist(gen);
-    fallback_timer.expires_after(std::chrono::milliseconds(wait_ms));
-    const auto [wait_ec] = co_await fallback_timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
-    if (wait_ec)
+    connection_context ctx;
+    ctx.new_trace_id();
+    ctx.conn_id(conn_id);
+
+    boost::system::error_code local_ep_ec;
+    const auto local_ep = s->local_endpoint(local_ep_ec);
+    if (local_ep_ec)
     {
-        LOG_ERROR("{} fallback failed timer {} ms error {}", conn_id, wait_ms, wait_ec.message());
+        LOG_CTX_WARN(ctx, "{} query local endpoint failed {}", log_event::kConnInit, local_ep_ec.message());
+        ctx.local_addr("unknown");
+        ctx.local_port(0);
     }
-    LOG_DEBUG("{} fallback failed timer {} ms", conn_id, wait_ms);
-}
-
-boost::asio::awaitable<void> fallback_wait_and_close_socket(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
-                                                            const connection_context& ctx,
-                                                            boost::asio::io_context& io_context)
-{
-    co_await fallback_wait_random_timer(ctx.conn_id(), io_context);
-    close_fallback_socket(socket, ctx);
-}
-
-boost::asio::awaitable<void> handle_fallback_without_target(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
-                                                            const connection_context& ctx,
-                                                            const std::string& sni,
-                                                            boost::asio::io_context& io_context)
-{
-    LOG_CTX_INFO(ctx, "{} no target sni {}", log_event::kFallback, sni.empty() ? "empty" : sni);
-    statistics::instance().inc_fallback_no_target();
-    co_await fallback_wait_and_close_socket(socket, ctx, io_context);
-    LOG_CTX_INFO(ctx, "{} done", log_event::kFallback);
-}
-
-boost::asio::awaitable<boost::system::error_code> resolve_and_connect_fallback_target(
-    const std::shared_ptr<boost::asio::ip::tcp::socket>& target_socket,
-    boost::asio::io_context& io_context,
-    const std::string& target_host,
-    const std::string& target_port,
-    const connection_context& ctx,
-    const std::uint32_t timeout_sec)
-{
-    const auto resolve_res = co_await resolve_socket_with_timeout(io_context, target_host, target_port, timeout_sec);
-    if (!resolve_res.ok)
+    else
     {
-        auto& stats = statistics::instance();
-        stats.inc_fallback_resolve_failures();
-        if (resolve_res.timed_out)
-        {
-            stats.inc_fallback_resolve_timeouts();
-            LOG_CTX_WARN(ctx, "{} stage=resolve target={}:{} timeout={}s", log_event::kFallback, target_host, target_port, timeout_sec);
-            co_return boost::asio::error::timed_out;
-        }
-        else
-        {
-            stats.inc_fallback_resolve_errors();
-            LOG_CTX_WARN(ctx, "{} stage=resolve target={}:{} error={}", log_event::kFallback, target_host, target_port, resolve_res.ec.message());
-            if (resolve_res.ec)
-            {
-                co_return resolve_res.ec;
-            }
-            co_return boost::asio::error::host_not_found;
-        }
+        const auto local_addr = socks_codec::normalize_ip_address(local_ep.address());
+        ctx.local_addr(local_addr.to_string());
+        ctx.local_port(local_ep.port());
     }
 
-    const auto connect_res = co_await connect_socket_with_timeout(target_socket, resolve_res.endpoints, timeout_sec);
-    if (!connect_res.ok)
+    boost::system::error_code remote_ep_ec;
+    const auto remote_ep = s->remote_endpoint(remote_ep_ec);
+    if (remote_ep_ec)
     {
-        auto& stats = statistics::instance();
-        stats.inc_fallback_connect_failures();
-        if (connect_res.timed_out)
-        {
-            stats.inc_fallback_connect_timeouts();
-            LOG_CTX_WARN(ctx, "{} stage=connect target={}:{} timeout={}s", log_event::kFallback, target_host, target_port, timeout_sec);
-            co_return boost::asio::error::timed_out;
-        }
-        else
-        {
-            stats.inc_fallback_connect_errors();
-            LOG_CTX_WARN(ctx, "{} stage=connect target={}:{} error={}", log_event::kFallback, target_host, target_port, connect_res.ec.message());
-            if (connect_res.ec)
-            {
-                co_return connect_res.ec;
-            }
-            co_return boost::asio::error::host_unreachable;
-        }
+        LOG_CTX_WARN(ctx, "{} query remote endpoint failed {}", log_event::kConnInit, remote_ep_ec.message());
+        ctx.remote_addr("unknown");
+        ctx.remote_port(0);
     }
-    co_return boost::system::error_code{};
-}
-
-boost::asio::awaitable<boost::system::error_code> write_fallback_initial_buffer(const std::shared_ptr<boost::asio::ip::tcp::socket>& target_socket,
-                                                                                 const std::vector<std::uint8_t>& buf,
-                                                                                 const std::string& target_host,
-                                                                                 const std::string& target_port,
-                                                                                 const connection_context& ctx,
-                                                                                 const std::uint32_t timeout_sec)
-{
-    if (buf.empty())
+    else
     {
-        co_return boost::system::error_code{};
+        const auto remote_addr = socks_codec::normalize_ip_address(remote_ep.address());
+        ctx.remote_addr(remote_addr.to_string());
+        ctx.remote_port(remote_ep.port());
     }
-
-    const auto write_res = co_await write_socket_with_timeout(target_socket, boost::asio::buffer(buf), timeout_sec);
-    if (!write_res.ok)
-    {
-        auto& stats = statistics::instance();
-        stats.inc_fallback_write_failures();
-        if (write_res.timed_out)
-        {
-            stats.inc_fallback_write_timeouts();
-            LOG_CTX_WARN(ctx, "{} stage=write target={}:{} timeout={}s", log_event::kFallback, target_host, target_port, timeout_sec);
-            co_return boost::asio::error::timed_out;
-        }
-        stats.inc_fallback_write_errors();
-        LOG_CTX_WARN(ctx, "{} stage=write target={}:{} error={}", log_event::kFallback, target_host, target_port, write_res.ec.message());
-        if (write_res.ec)
-        {
-            co_return write_res.ec;
-        }
-        co_return boost::asio::error::broken_pipe;
-    }
-    co_return boost::system::error_code{};
+    return ctx;
 }
 
 }    // namespace
 
 remote_server::remote_server(io_context_pool& pool, const config& cfg)
-    : io_context_(pool.get_io_context()),
-      acceptor_(io_context_),
-      inbound_endpoint_(),
-      replay_cache_(static_cast<std::size_t>(cfg.reality.replay_cache_max_entries)),
-      fallbacks_(cfg.fallbacks),
-      fallback_guard_config_(cfg.reality.fallback_guard),
-      fallback_guard_key_mode_(resolve_fallback_guard_key_mode(cfg.reality.fallback_guard.key_mode)),
-      timeout_config_(cfg.timeout),
-      queues_config_(cfg.queues),
-      limits_config_(cfg.limits),
-      heartbeat_config_(cfg.heartbeat)
+    : cfg_(cfg), pool_(pool), io_context_(pool.get_io_context()), replay_cache_(static_cast<std::size_t>(cfg.reality.replay_cache_max_entries))
 {
-    const auto normalized_max_connections = normalize_max_connections(limits_config_.max_connections);
-    if (normalized_max_connections != limits_config_.max_connections)
-    {
-        LOG_WARN("max connections is 0 using 1");
-    }
-    limits_config_.max_connections = normalized_max_connections;
-    const auto normalized_prefix_v4 = clamp_prefix(limits_config_.source_prefix_v4, 32);
-    if (normalized_prefix_v4 != limits_config_.source_prefix_v4)
-    {
-        LOG_WARN("source prefix v4 {} out of range using {}", limits_config_.source_prefix_v4, normalized_prefix_v4);
-    }
-    limits_config_.source_prefix_v4 = normalized_prefix_v4;
-    const auto normalized_prefix_v6 = clamp_prefix(limits_config_.source_prefix_v6, 128);
-    if (normalized_prefix_v6 != limits_config_.source_prefix_v6)
-    {
-        LOG_WARN("source prefix v6 {} out of range using {}", limits_config_.source_prefix_v6, normalized_prefix_v6);
-    }
-    limits_config_.source_prefix_v6 = normalized_prefix_v6;
-
-    const auto inbound_endpoint = resolve_inbound_endpoint(cfg.inbound);
-    if (!inbound_endpoint)
-    {
-        LOG_ERROR("parse inbound host {} failed {}", cfg.inbound.host, inbound_endpoint.error());
-        inbound_config_valid_ = false;
-        return;
-    }
-    inbound_endpoint_ = *inbound_endpoint;
-
-    if (!setup_server_acceptor(acceptor_, inbound_endpoint_))
-    {
-        return;
-    }
     private_key_ = reality::crypto_util::hex_to_bytes(cfg.reality.private_key);
     if (private_key_.size() != 32)
     {
         LOG_ERROR("private key length invalid {}", private_key_.size());
-        auth_config_valid_ = false;
+        return;
     }
-    auth_config_valid_ = parse_hex_to_bytes(cfg.reality.short_id, short_id_bytes_, reality::kShortIdMaxLen, "short id") && auth_config_valid_;
-    fallback_type_ = cfg.reality.type;
-    if (!fallback_type_.empty() && fallback_type_ != "tcp")
-    {
-        LOG_WARN("reality fallback type not supported {}", fallback_type_);
-    }
-    apply_reality_dest_config(cfg.reality, fallback_dest_host_, fallback_dest_port_, fallback_dest_valid_, auth_config_valid_);
+    boost::algorithm::unhex(cfg.reality.short_id, std::back_inserter(short_id_bytes_));
     auto pub = reality::crypto_util::extract_public_key(private_key_);
     LOG_INFO("server public key size {}", pub ? pub->size() : 0);
 }
@@ -1426,802 +592,340 @@ remote_server::~remote_server()
 
 void remote_server::start()
 {
-    bool expected = false;
-    if (!started_.compare_exchange_strong(expected, true, std::memory_order_acq_rel))
-    {
-        LOG_WARN("remote server already started");
-        return;
-    }
-    lifecycle_epoch_.fetch_add(1, std::memory_order_acq_rel);
-
-    if (!inbound_config_valid_)
-    {
-        LOG_ERROR("remote server start failed invalid inbound config");
-        boost::system::error_code close_ec;
-        close_ec = acceptor_.close(close_ec);
-        if (close_ec)
-        {
-            LOG_ERROR("remote server close acceptor failed {}", close_ec.message());
-        }
-        stop_.store(true, std::memory_order_release);
-        started_.store(false, std::memory_order_release);
-        return;
-    }
-
-    if (!auth_config_valid_)
-    {
-        LOG_ERROR("remote server start failed invalid auth config");
-        boost::system::error_code close_ec;
-        close_ec = acceptor_.close(close_ec);
-        if (close_ec)
-        {
-            LOG_ERROR("remote server close acceptor failed {}", close_ec.message());
-        }
-        stop_.store(true, std::memory_order_release);
-        started_.store(false, std::memory_order_release);
-        return;
-    }
-
-    if (!ensure_acceptor_open())
-    {
-        LOG_ERROR("remote server start failed acceptor unavailable");
-        stop_.store(true, std::memory_order_release);
-        started_.store(false, std::memory_order_release);
-        return;
-    }
-
-    stop_.store(false, std::memory_order_release);
-    boost::asio::co_spawn(io_context_,
-                          [self = shared_from_this()] { return self->accept_loop(); },
-                          boost::asio::bind_cancellation_slot(stop_signal_->slot(), boost::asio::detached));
-}
-
-void remote_server::drain()
-{
-    const auto stop_epoch = lifecycle_epoch_.load(std::memory_order_acquire);
-    stop_.store(true, std::memory_order_release);
-    LOG_INFO("remote server draining");
-
-    detail::dispatch_cleanup_or_run_inline(
-        io_context_,
-        [weak_self = weak_from_this(), stop_epoch]()
-        {
-            if (const auto self = weak_self.lock())
-            {
-                if (self->lifecycle_epoch_.load(std::memory_order_acquire) != stop_epoch ||
-                    !self->stop_.load(std::memory_order_acquire))
-                {
-                    return;
-                }
-                self->stop_local(false);
-            }
-        });
-}
-
-void remote_server::set_certificate(const std::string& sni,
-                                    std::vector<std::uint8_t> cert_msg,
-                                    reality::server_fingerprint fp,
-                                    const std::string& trace_id)
-{
-    cert_manager_.set_certificate(sni, std::move(cert_msg), std::move(fp), trace_id);
+    boost::asio::co_spawn(io_context_, [self = shared_from_this()] { return self->accept_loop(); }, group_.adapt(boost::asio::detached));
 }
 
 void remote_server::stop()
 {
-    const auto stop_epoch = lifecycle_epoch_.load(std::memory_order_acquire);
-    stop_.store(true, std::memory_order_release);
-    stop_signal_->emit(boost::asio::cancellation_type::all);
-    LOG_INFO("remote server stopping");
-
-    detail::dispatch_cleanup_or_run_inline(
+    boost::asio::co_spawn(
         io_context_,
-        [weak_self = weak_from_this(), stop_epoch]()
+        [this, self = shared_from_this()]() -> boost::asio::awaitable<void>
         {
-            if (const auto self = weak_self.lock())
-            {
-                if (self->lifecycle_epoch_.load(std::memory_order_acquire) != stop_epoch ||
-                    !self->stop_.load(std::memory_order_acquire))
-                {
-                    return;
-                }
-                self->stop_local(true);
-            }
-        });
-}
-
-bool remote_server::ensure_acceptor_open()
-{
-    if (acceptor_.is_open())
-    {
-        return true;
-    }
-    return setup_server_acceptor(acceptor_, inbound_endpoint_);
-}
-
-std::shared_ptr<remote_server::tunnel_list_t> remote_server::snapshot_active_tunnels() const
-{
-    auto snapshot = std::atomic_load_explicit(&active_tunnels_, std::memory_order_acquire);
-    if (snapshot != nullptr)
-    {
-        return snapshot;
-    }
-    return std::make_shared<tunnel_list_t>();
-}
-
-std::size_t remote_server::prune_expired_tunnels()
-{
-    for (;;)
-    {
-        auto current = snapshot_active_tunnels();
-        auto pruned = std::make_shared<tunnel_list_t>();
-        pruned->reserve(current->size());
-        bool changed = false;
-        for (const auto& weak_tunnel : *current)
-        {
-            if (weak_tunnel.expired())
-            {
-                changed = true;
-                continue;
-            }
-            pruned->push_back(weak_tunnel);
-        }
-
-        if (!changed)
-        {
-            return current->size();
-        }
-
-        if (std::atomic_compare_exchange_weak_explicit(&active_tunnels_, &current, pruned, std::memory_order_acq_rel, std::memory_order_acquire))
-        {
-            return pruned->size();
-        }
-    }
-}
-
-std::size_t remote_server::active_tunnel_count() const { return snapshot_active_tunnels()->size(); }
-
-std::shared_ptr<remote_server::tunnel_list_t> remote_server::detach_active_tunnels()
-{
-    auto empty = std::make_shared<tunnel_list_t>();
-    for (;;)
-    {
-        auto current = snapshot_active_tunnels();
-        if (std::atomic_compare_exchange_weak_explicit(&active_tunnels_, &current, empty, std::memory_order_acq_rel, std::memory_order_acquire))
-        {
-            return current;
-        }
-    }
-}
-
-void remote_server::append_active_tunnel(const tunnel_ptr_t& tunnel)
-{
-    for (;;)
-    {
-        auto current = snapshot_active_tunnels();
-        auto updated = std::make_shared<tunnel_list_t>();
-        updated->reserve(current->size() + 1);
-        for (const auto& weak_tunnel : *current)
-        {
-            if (!weak_tunnel.expired())
-            {
-                updated->push_back(weak_tunnel);
-            }
-        }
-        updated->push_back(tunnel);
-        if (std::atomic_compare_exchange_weak_explicit(&active_tunnels_, &current, updated, std::memory_order_acq_rel, std::memory_order_acquire))
-        {
-            return;
-        }
-    }
-}
-
-void remote_server::track_connection_socket(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket)
-{
-    if (socket == nullptr)
-    {
-        return;
-    }
-    for (;;)
-    {
-        auto current = std::atomic_load_explicit(&tracked_connection_sockets_, std::memory_order_acquire);
-        if (current == nullptr)
-        {
-            current = std::make_shared<tracked_socket_map_t>();
-        }
-
-        auto updated = std::make_shared<tracked_socket_map_t>(*current);
-        (*updated)[socket.get()] = socket;
-
-        auto expected = current;
-        if (std::atomic_compare_exchange_weak_explicit(
-                &tracked_connection_sockets_, &expected, updated, std::memory_order_acq_rel, std::memory_order_acquire))
-        {
-            return;
-        }
-    }
-}
-
-void remote_server::untrack_connection_socket(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket)
-{
-    if (socket == nullptr)
-    {
-        return;
-    }
-    for (;;)
-    {
-        auto current = std::atomic_load_explicit(&tracked_connection_sockets_, std::memory_order_acquire);
-        if (current == nullptr || !current->contains(socket.get()))
-        {
-            return;
-        }
-
-        auto updated = std::make_shared<tracked_socket_map_t>(*current);
-        updated->erase(socket.get());
-
-        auto expected = current;
-        if (std::atomic_compare_exchange_weak_explicit(
-                &tracked_connection_sockets_, &expected, updated, std::memory_order_acq_rel, std::memory_order_acquire))
-        {
-            return;
-        }
-    }
-}
-
-std::vector<std::shared_ptr<boost::asio::ip::tcp::socket>> remote_server::snapshot_tracked_connection_sockets()
-{
-    for (;;)
-    {
-        auto current = std::atomic_load_explicit(&tracked_connection_sockets_, std::memory_order_acquire);
-        if (current == nullptr)
-        {
-            current = std::make_shared<tracked_socket_map_t>();
-        }
-
-        std::vector<std::shared_ptr<boost::asio::ip::tcp::socket>> sockets;
-        sockets.reserve(current->size());
-        auto updated = std::make_shared<tracked_socket_map_t>();
-        updated->reserve(current->size());
-        bool changed = false;
-        for (const auto& [socket_ptr, weak_socket] : *current)
-        {
-            const auto socket = weak_socket.lock();
-            if (socket == nullptr)
-            {
-                changed = true;
-                continue;
-            }
-            sockets.push_back(socket);
-            updated->emplace(socket_ptr, socket);
-        }
-
-        if (!changed)
-        {
-            return sockets;
-        }
-
-        auto expected = current;
-        if (std::atomic_compare_exchange_weak_explicit(
-                &tracked_connection_sockets_, &expected, updated, std::memory_order_acq_rel, std::memory_order_acquire))
-        {
-            return sockets;
-        }
-    }
-}
-
-std::size_t remote_server::close_tracked_connection_sockets()
-{
-    auto sockets = snapshot_tracked_connection_sockets();
-    for (const auto& socket : sockets)
-    {
-        close_socket_quietly(socket);
-    }
-    return sockets.size();
-}
-
-void remote_server::stop_local(const bool close_tunnels)
-{
-    started_.store(false, std::memory_order_release);
-
-    boost::system::error_code close_ec;
-    close_ec = acceptor_.close(close_ec);
-    if (close_ec && close_ec != boost::asio::error::bad_descriptor)
-    {
-        LOG_WARN("acceptor close failed {}", close_ec.message());
-    }
-
-    const auto closed_connection_sockets = close_tracked_connection_sockets();
-    if (closed_connection_sockets > 0)
-    {
-        LOG_INFO("closed {} in-flight sockets", closed_connection_sockets);
-    }
-
-    if (!close_tunnels)
-    {
-        LOG_INFO("drain mode active keeping {} active tunnels", prune_expired_tunnels());
-        return;
-    }
-
-    LOG_INFO("closing {} active tunnels", prune_expired_tunnels());
-    auto tunnels_to_close = detach_active_tunnels();
-
-    for (auto& weak_tunnel : *tunnels_to_close)
-    {
-        const auto tunnel = weak_tunnel.lock();
-        if (tunnel != nullptr && tunnel->connection() != nullptr)
-        {
-            tunnel->connection()->stop();
-        }
-    }
+            group_.emit(boost::asio::cancellation_type::all);
+            boost::system::error_code ec;
+            co_await group_.async_wait(::boost::asio::redirect_error(::boost::asio::use_awaitable, ec));
+        },
+        boost::asio::detached);
 }
 
 boost::asio::awaitable<void> remote_server::accept_loop()
 {
     LOG_INFO("remote server listening for connections");
-    while (!stop_.load(std::memory_order_acquire))
+    auto self = shared_from_this();
+    boost::system::error_code ec;
+    boost::asio::ip::tcp::acceptor acceptor{io_context_};
+    auto addr = boost::asio::ip::make_address(cfg_.inbound.host, ec);
+    if (ec)
+    {
+        co_return;
+    }
+    auto ep = boost::asio::ip::tcp::endpoint(addr, cfg_.inbound.port);
+    ec = acceptor.open(ep.protocol(), ec);
+    if (ec)
+    {
+        co_return;
+    }
+    ec = acceptor.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true), ec);
+    if (ec)
+    {
+        co_return;
+    }
+    ec = acceptor.bind(ep, ec);
+    if (ec)
+    {
+        co_return;
+    }
+    ec = acceptor.listen(boost::asio::socket_base::max_listen_connections, ec);
+    if (ec)
+    {
+        co_return;
+    }
+    while (true)
     {
         const auto s = std::make_shared<boost::asio::ip::tcp::socket>(io_context_);
-        const auto [accept_ec] = co_await acceptor_.async_accept(*s, boost::asio::as_tuple(boost::asio::use_awaitable));
+        const auto [accept_ec] = co_await acceptor.async_accept(*s, boost::asio::as_tuple(boost::asio::use_awaitable));
         if (accept_ec)
         {
-            if (should_stop_accept_loop_on_error(accept_ec, stop_, acceptor_))
-            {
-                LOG_INFO("acceptor closed stopping loop");
-                break;
-            }
             LOG_WARN("accept error {}", accept_ec.message());
-            continue;
+            break;
         }
 
         boost::system::error_code ec;
         ec = s->set_option(boost::asio::ip::tcp::no_delay(true), ec);
         (void)ec;
-        const std::uint32_t conn_id = next_conn_id_.fetch_add(1, std::memory_order_relaxed);
-        const auto source_key = connection_limit_source_key(s);
-        if (!try_reserve_connection_slot(source_key))
-        {
-            statistics::instance().inc_connection_limit_rejected();
-            LOG_WARN("{} connection limit reached rejecting before handshake conn {} source {}", log_event::kConnClose, conn_id, source_key);
-            close_socket_quietly(s);
-            continue;
-        }
-        track_connection_socket(s);
-        boost::asio::co_spawn(
-            io_context_,
-            [self = shared_from_this(), s, conn_id, source_key]() { return self->handle(s, conn_id, source_key); },
-            boost::asio::detached);
+        const std::uint32_t conn_id = next_conn_id_++;
+        boost::asio::co_spawn(io_context_, [this, self, s, conn_id]() { return handle(s, conn_id); }, group_.adapt(boost::asio::detached));
     }
 }
 
-bool remote_server::try_reserve_connection_slot(const std::string& source_key)
+boost::asio::awaitable<void> remote_server::handle(std::shared_ptr<boost::asio::ip::tcp::socket> s, std::uint32_t conn_id)
 {
-    for (;;)
-    {
-        auto current = std::atomic_load_explicit(&connection_slots_, std::memory_order_acquire);
-        if (current == nullptr)
-        {
-            current = std::make_shared<connection_slot_state>();
-        }
-
-        if (current->total >= limits_config_.max_connections)
-        {
-            return false;
-        }
-
-        auto updated = std::make_shared<connection_slot_state>(*current);
-        if (limits_config_.max_connections_per_source > 0)
-        {
-            auto& source_slots = updated->by_source[source_key];
-            if (source_slots >= limits_config_.max_connections_per_source)
-            {
-                return false;
-            }
-            source_slots++;
-        }
-
-        updated->total++;
-
-        auto expected = current;
-        if (std::atomic_compare_exchange_weak_explicit(
-                &connection_slots_, &expected, updated, std::memory_order_acq_rel, std::memory_order_acquire))
-        {
-            return true;
-        }
-    }
-}
-
-void remote_server::release_connection_slot(const std::string& source_key)
-{
-    for (;;)
-    {
-        auto current = std::atomic_load_explicit(&connection_slots_, std::memory_order_acquire);
-        if (current == nullptr)
-        {
-            return;
-        }
-
-        auto updated = std::make_shared<connection_slot_state>(*current);
-        if (updated->total > 0)
-        {
-            updated->total--;
-        }
-
-        if (limits_config_.max_connections_per_source > 0)
-        {
-            const auto it = updated->by_source.find(source_key);
-            if (it != updated->by_source.end())
-            {
-                if (it->second <= 1)
-                {
-                    updated->by_source.erase(it);
-                }
-                else
-                {
-                    it->second--;
-                }
-            }
-        }
-
-        auto expected = current;
-        if (std::atomic_compare_exchange_weak_explicit(
-                &connection_slots_, &expected, updated, std::memory_order_acq_rel, std::memory_order_acquire))
-        {
-            return;
-        }
-    }
-}
-
-std::string remote_server::connection_limit_source_key(const std::shared_ptr<boost::asio::ip::tcp::socket>& s) const
-{
-    boost::system::error_code remote_ep_ec;
-    const auto remote_ep = s->remote_endpoint(remote_ep_ec);
-    if (remote_ep_ec)
-    {
-        return "unknown";
-    }
-    return build_source_limit_key(remote_ep.address(), limits_config_);
-}
-
-boost::asio::awaitable<void> remote_server::handle(std::shared_ptr<boost::asio::ip::tcp::socket> s,
-                                                   const std::uint32_t conn_id,
-                                                   std::string source_key)
-{
-    [[maybe_unused]] const std::shared_ptr<void> slot_guard(
-        nullptr, [self = shared_from_this(), source_key = std::move(source_key)](void*) mutable { self->release_connection_slot(source_key); });
-    [[maybe_unused]] const std::shared_ptr<void> tracked_socket_guard(
-        nullptr, [self = shared_from_this(), s](void*) mutable { self->untrack_connection_socket(s); });
-
     auto ctx = build_connection_context(s, conn_id);
     LOG_CTX_INFO(ctx, "{} accepted {}", log_event::kConnInit, ctx.connection_info());
-
-    std::vector<std::uint8_t> initial_buf;
-    auto sh_res = co_await negotiate_reality(s, ctx, initial_buf);
-    if (!sh_res.ok)
+    boost::system::error_code ec;
+    std::vector<std::uint8_t> buf;
+    // tls handshake
+    // step 1 tls header
+    co_await read_tls_record_header(s, buf, cfg_.timeout.read, ec);
+    if (ec)
     {
+        LOG_CTX_ERROR(ctx, "{} read tls record header failed {}", log_event::kHandshake, ec.message());
         co_return;
     }
-
-    auto app_keys_result = derive_application_traffic_keys(sh_res);
-    if (!app_keys_result)
-    {
-        LOG_CTX_ERROR(ctx, "{} derive app keys failed {}", log_event::kHandshake, app_keys_result.error().message());
-        co_return;
-    }
-    const auto& app_keys = *app_keys_result;
-
-    LOG_CTX_INFO(ctx, "{} tunnel starting", log_event::kConnEstablished);
-
-    auto tunnel = create_tunnel(s, sh_res, app_keys.c_app_keys, app_keys.s_app_keys, conn_id, ctx);
-    untrack_connection_socket(s);
-    install_syn_callback(tunnel, ctx);
-
-    co_await tunnel->run();
-}
-
-connection_context remote_server::build_connection_context(const std::shared_ptr<boost::asio::ip::tcp::socket>& s, const std::uint32_t conn_id)
-{
-    connection_context ctx;
-    ctx.new_trace_id();
-    ctx.conn_id(conn_id);
-
-    boost::system::error_code local_ep_ec;
-    const auto local_ep = s->local_endpoint(local_ep_ec);
-    if (!local_ep_ec)
-    {
-        const auto local_addr = socks_codec::normalize_ip_address(local_ep.address());
-        ctx.local_addr(local_addr.to_string());
-        ctx.local_port(local_ep.port());
-    }
-    else
-    {
-        LOG_CTX_WARN(ctx, "{} query local endpoint failed {}", log_event::kConnInit, local_ep_ec.message());
-        ctx.local_addr("unknown");
-        ctx.local_port(0);
-    }
-
-    boost::system::error_code remote_ep_ec;
-    const auto remote_ep = s->remote_endpoint(remote_ep_ec);
-    if (!remote_ep_ec)
-    {
-        const auto remote_addr = socks_codec::normalize_ip_address(remote_ep.address());
-        ctx.remote_addr(remote_addr.to_string());
-        ctx.remote_port(remote_ep.port());
-    }
-    else
-    {
-        LOG_CTX_WARN(ctx, "{} query remote endpoint failed {}", log_event::kConnInit, remote_ep_ec.message());
-        ctx.remote_addr("unknown");
-        ctx.remote_port(0);
-    }
-    return ctx;
-}
-
-client_hello_info remote_server::parse_client_hello(const std::vector<std::uint8_t>& initial_buf, std::string& client_sni)
-{
-    client_sni.clear();
-    if (initial_buf.empty())
-    {
-        return {};
-    }
-    auto info = ch_parser::parse(initial_buf);
-    client_sni = info.sni;
-    return info;
-}
-
-bool remote_server::init_handshake_transcript(const std::vector<std::uint8_t>& initial_buf, reality::transcript& trans, const connection_context& ctx)
-{
-    if (initial_buf.size() <= 5)
-    {
-        LOG_CTX_ERROR(ctx, "{} buffer too short", log_event::kHandshake);
-        return false;
-    }
-    trans.update(std::vector<std::uint8_t>(initial_buf.begin() + 5, initial_buf.end()));
-    return true;
-}
-
-boost::asio::awaitable<remote_server::server_handshake_res> remote_server::delay_and_fallback(std::shared_ptr<boost::asio::ip::tcp::socket> s,
-                                                                                              const std::vector<std::uint8_t>& initial_buf,
-                                                                                              const connection_context& ctx,
-                                                                                              const std::string& client_sni)
-{
-    if (stop_.load(std::memory_order_acquire))
-    {
-        close_socket_quietly(s);
-        co_return server_handshake_res{.ok = false,
-                                       .ec = boost::asio::error::operation_aborted,
-                                       .hs_keys = {},
-                                       .s_hs_keys = {},
-                                       .c_hs_keys = {},
-                                       .cipher = nullptr,
-                                       .negotiated_md = nullptr,
-                                       .handshake_hash = {}};
-    }
-
-    static thread_local std::mt19937 delay_gen(std::random_device{}());
-    std::uniform_int_distribution<std::uint32_t> delay_dist(10, 50);
-    boost::asio::steady_timer delay_timer(io_context_);
-    delay_timer.expires_after(std::chrono::milliseconds(delay_dist(delay_gen)));
-    const auto [delay_ec] = co_await delay_timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
-    if (delay_ec && delay_ec != boost::asio::error::operation_aborted)
-    {
-        LOG_CTX_WARN(ctx, "{} fallback delay timer failed {}", log_event::kFallback, delay_ec.message());
-    }
-    if (stop_.load(std::memory_order_acquire))
-    {
-        close_socket_quietly(s);
-        co_return server_handshake_res{false, boost::asio::error::operation_aborted, {}, {}, {}, nullptr, nullptr, {}};
-    }
-    const auto fallback_ec = co_await handle_fallback(s, initial_buf, ctx, client_sni);
-    if (fallback_ec)
-    {
-        co_return server_handshake_res{false, fallback_ec, {}, {}, {}, nullptr, nullptr, {}};
-    }
-    co_return server_handshake_res{false, boost::asio::error::operation_aborted, {}, {}, {}, nullptr, nullptr, {}};
-}
-
-boost::asio::awaitable<remote_server::server_handshake_res> remote_server::negotiate_reality(std::shared_ptr<boost::asio::ip::tcp::socket> s,
-                                                                                             const connection_context& ctx,
-                                                                                             std::vector<std::uint8_t>& initial_buf)
-{
-    const auto read_res = co_await read_initial_and_validate(s, ctx, initial_buf);
-    if (!read_res.ok)
-    {
-        if (!read_res.allow_fallback || stop_.load(std::memory_order_acquire))
-        {
-            co_return server_handshake_res{false, read_res.ec, {}, {}, {}, nullptr, nullptr, {}};
-        }
-        std::string client_sni;
-        (void)parse_client_hello(initial_buf, client_sni);
-        co_return co_await delay_and_fallback(s, initial_buf, ctx, client_sni);
-    }
-
-    std::string client_sni;
-    auto info = parse_client_hello(initial_buf, client_sni);
-
-    if (!authenticate_client(info, initial_buf, ctx))
-    {
-        if (stop_.load(std::memory_order_acquire))
-        {
-            co_return server_handshake_res{false, boost::asio::error::operation_aborted, {}, {}, {}, nullptr, nullptr, {}};
-        }
-        LOG_CTX_WARN(ctx, "{} auth failed sni {}", log_event::kAuth, client_sni);
-        co_return co_await delay_and_fallback(s, initial_buf, ctx, client_sni);
-    }
-
-    LOG_CTX_INFO(ctx, "{} authorized sni {}", log_event::kAuth, info.sni);
-    reality::transcript trans;
-    if (!init_handshake_transcript(initial_buf, trans, ctx))
-    {
-        co_return server_handshake_res{
-            false, boost::system::errc::make_error_code(boost::system::errc::protocol_error), {}, {}, {}, nullptr, nullptr, {}};
-    }
-
-    auto sh_res = co_await perform_handshake_response(s, info, trans, ctx);
-    if (!sh_res.ok)
-    {
-        LOG_CTX_ERROR(ctx, "{} response error {}", log_event::kHandshake, sh_res.ec.message());
-        co_return server_handshake_res{false, sh_res.ec, {}, {}, {}, nullptr, nullptr, {}};
-    }
-
-    const auto verify_timeout_sec = timeout_config_.read;
-    if (const auto ec =
-            co_await verify_client_finished(s, sh_res.c_hs_keys, sh_res.hs_keys, trans, sh_res.cipher, sh_res.negotiated_md, ctx, verify_timeout_sec);
-        ec)
-    {
-        co_return server_handshake_res{false, ec, {}, {}, {}, nullptr, nullptr, {}};
-    }
-
-    sh_res.handshake_hash = trans.finish();
-    co_return sh_res;
-}
-
-std::expected<remote_server::app_keys, boost::system::error_code> remote_server::derive_application_traffic_keys(const server_handshake_res& sh_res)
-{
-    auto app_sec = reality::tls_key_schedule::derive_application_secrets(sh_res.hs_keys.master_secret, sh_res.handshake_hash, sh_res.negotiated_md);
-    if (!app_sec)
-    {
-        return std::unexpected(app_sec.error());
-    }
-
-    const int key_len_raw = EVP_CIPHER_key_length(sh_res.cipher);
-    if (key_len_raw <= 0)
-    {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
-    }
-    const std::size_t key_len = static_cast<std::size_t>(key_len_raw);
-    constexpr std::size_t iv_len = 12;
-    auto c_keys = reality::tls_key_schedule::derive_traffic_keys(app_sec->first, key_len, iv_len, sh_res.negotiated_md);
-    if (!c_keys)
-    {
-        return std::unexpected(c_keys.error());
-    }
-
-    auto s_keys = reality::tls_key_schedule::derive_traffic_keys(app_sec->second, key_len, iv_len, sh_res.negotiated_md);
-    if (!s_keys)
-    {
-        return std::unexpected(s_keys.error());
-    }
-
-    app_keys keys;
-    keys.c_app_keys = std::move(*c_keys);
-    keys.s_app_keys = std::move(*s_keys);
-    return keys;
-}
-
-std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> remote_server::create_tunnel(
-    const std::shared_ptr<boost::asio::ip::tcp::socket>& s,
-    const server_handshake_res& sh_res,
-    const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& c_app_keys,
-    const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& s_app_keys,
-    const std::uint32_t conn_id,
-    const connection_context& ctx)
-{
-    reality_engine engine(c_app_keys.first, c_app_keys.second, s_app_keys.first, s_app_keys.second, sh_res.cipher);
-    auto tunnel = std::make_shared<mux_tunnel_impl<boost::asio::ip::tcp::socket>>(
-        std::move(*s), io_context_, std::move(engine), false, conn_id, ctx.trace_id(), timeout_config_, limits_config_, heartbeat_config_);
-    append_active_tunnel(tunnel);
-    return tunnel;
-}
-
-boost::asio::awaitable<remote_server::initial_read_res> remote_server::read_initial_and_validate(std::shared_ptr<boost::asio::ip::tcp::socket> s,
-                                                                                                 const connection_context& ctx,
-                                                                                                 std::vector<std::uint8_t>& buf)
-{
-    const auto to_member_result = [](const initial_read_outcome& outcome)
-    { return initial_read_res{outcome.ok, outcome.allow_fallback, outcome.ec}; };
-    const auto timeout_sec = timeout_config_.read;
-    if (stop_.load(std::memory_order_acquire))
-    {
-        co_return initial_read_res{false, false, boost::asio::error::operation_aborted};
-    }
-
-    buf.resize(1);
-    const auto first_read = co_await timeout_io::async_read_with_timeout(s, boost::asio::buffer(buf), timeout_sec, false);
-    if (!first_read.ok)
-    {
-        co_return to_member_result(classify_initial_read_failure(first_read, ctx, timeout_sec, stop_));
-    }
-    buf.resize(first_read.read_size);
-    const auto header_read = co_await fill_tls_record_header(s, ctx, buf, timeout_sec, stop_);
-    if (!header_read.ok)
-    {
-        co_return to_member_result(header_read);
-    }
-
     if (buf[0] != 0x16)
     {
-        LOG_CTX_WARN(ctx, "{} invalid tls header 0x{:02x}", log_event::kHandshake, buf[0]);
-        co_return initial_read_res{false, true, {}};
+        LOG_CTX_ERROR(ctx, "{} unexpected tls record type {}", log_event::kHandshake, buf[0]);
+        co_return;
     }
-    const std::size_t len = static_cast<std::uint16_t>((buf[3] << 8) | buf[4]);
+    const uint32_t len = static_cast<std::uint16_t>((buf[3] << 8) | buf[4]);
     if (len > kMaxTlsPlaintextRecordLen)
     {
         LOG_CTX_ERROR(ctx, "{} client hello record too large {}", log_event::kHandshake, len);
-        co_return initial_read_res{false, false, boost::system::errc::make_error_code(boost::system::errc::message_size)};
+        co_return;
     }
-    const auto body_read = co_await fill_tls_record_body(s, ctx, buf, static_cast<std::uint32_t>(len), timeout_sec, stop_);
-    if (!body_read.ok)
+    // step 2 tls body
+    co_await read_tls_record_body(s, buf, len, cfg_.timeout.read, ec);
+    if (ec)
     {
-        co_return to_member_result(body_read);
+        statistics::instance().inc_client_finished_failures();
+        co_return;
     }
     LOG_CTX_DEBUG(ctx, "{} received client hello record size {}", log_event::kHandshake, buf.size());
-    co_return initial_read_res{true, false, {}};
-}
 
-std::optional<remote_server::selected_key_share> remote_server::select_key_share(const client_hello_info& info, const connection_context& ctx)
-{
-    if (info.has_x25519_share && info.x25519_pub.size() == 32)
+    auto client_info = ch_parser::parse(buf);
+    if (client_info.malformed_sni)
     {
-        selected_key_share sel;
+        LOG_CTX_ERROR(ctx, "{} auth fail malformed sni extension", log_event::kAuth);
+        co_return;
+    }
+    if (client_info.malformed_key_share)
+    {
+        LOG_CTX_ERROR(ctx, "{} auth fail malformed key share extension", log_event::kAuth);
+        co_return;
+    }
+    if (!client_info.is_tls13 || client_info.session_id.size() != 32)
+    {
+        LOG_CTX_ERROR(ctx, "{} auth fail is tls13 {} sid len {}", log_event::kAuth, client_info.is_tls13, client_info.session_id.size());
+        co_return;
+    }
+    if (client_info.random.size() != 32)
+    {
+        LOG_CTX_ERROR(ctx, "{} auth fail random len {}", log_event::kAuth, client_info.random.size());
+        co_return;
+    }
+    struct selected_key_share
+    {
+        std::uint16_t group = 0;
+        std::vector<std::uint8_t> x25519_pub;
+    } sel;
+    if (client_info.has_x25519_share && client_info.x25519_pub.size() == 32)
+    {
         sel.group = reality::tls_consts::group::kX25519;
-        sel.x25519_pub = info.x25519_pub;
-        return sel;
+        sel.x25519_pub = client_info.x25519_pub;
     }
-
-    LOG_CTX_ERROR(ctx, "{} no supported key share", log_event::kHandshake);
-    return std::nullopt;
-}
-
-bool remote_server::authenticate_client(const client_hello_info& info, const std::vector<std::uint8_t>& buf, const connection_context& ctx)
-{
-    if (!validate_auth_inputs(info, auth_config_valid_, ctx))
+    if (sel.x25519_pub.size() != 32)
     {
-        return false;
+        LOG_CTX_ERROR(ctx, "{} auth fail missing valid x25519 key share", log_event::kAuth);
+        co_return;
     }
-
-    const auto selected = select_key_share(info, ctx);
-    if (!selected.has_value())
-    {
-        return false;
-    }
-
-    const auto auth = decrypt_auth_payload(info, buf, private_key_, selected->x25519_pub, ctx);
+    auto auth = decrypt_auth_payload(client_info, buf, private_key_, sel.x25519_pub, ctx);
     if (!auth.has_value())
     {
-        return false;
+        co_return;
+    }
+    if (!verify_auth_payload_fields(*auth, short_id_bytes_, client_info.sni, ctx))
+    {
+        co_return;
+    }
+    if (!verify_auth_timestamp(auth->timestamp, client_info.sni, ctx))
+    {
+        co_return;
     }
 
-    if (!verify_auth_payload_fields(*auth, short_id_bytes_, info.sni, ctx))
+    if (!verify_replay_guard(replay_cache_, client_info.session_id, client_info.sni, ctx))
     {
-        return false;
+        LOG_CTX_WARN(ctx, "{} auth failed sni {}", log_event::kAuth, client_info.sni);
+        co_return;
     }
-    if (!verify_auth_timestamp(auth->timestamp, info.sni, ctx))
+    LOG_CTX_INFO(ctx, "{} authorized sni {}", log_event::kAuth, client_info.sni);
+    reality::transcript trans;
+    if (buf.size() <= 5)
     {
-        return false;
+        LOG_CTX_ERROR(ctx, "{} buffer too short", log_event::kHandshake);
+        co_return;
+    }
+    trans.update(std::vector<std::uint8_t>(buf.begin() + 5, buf.end()));
+    auto response = co_await perform_handshake_response(s, client_info, trans, ctx, ec);
+    if (ec)
+    {
+        co_return;
+    }
+    co_await verify_client_finished(s, response, trans, ctx, ec);
+    if (ec)
+    {
+        co_return;
+    }
+    response.handshake_hash = trans.finish();
+
+    auto app_sec =
+        reality::tls_key_schedule::derive_application_secrets(response.hs_keys.master_secret, response.handshake_hash, response.negotiated_md);
+    if (!app_sec)
+    {
+        ec = app_sec.error();
+        co_return;
     }
 
-    return verify_replay_guard(replay_cache_, info.session_id, info.sni, ctx);
+    const int key_len_raw = EVP_CIPHER_key_length(response.cipher);
+    if (key_len_raw <= 0)
+    {
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        co_return;
+    }
+    const auto key_len = static_cast<std::size_t>(key_len_raw);
+    constexpr std::size_t iv_len = 12;
+    auto c_keys = reality::tls_key_schedule::derive_traffic_keys(app_sec->first, key_len, iv_len, response.negotiated_md);
+    if (!c_keys)
+    {
+        ec = c_keys.error();
+        co_return;
+    }
+
+    auto s_keys = reality::tls_key_schedule::derive_traffic_keys(app_sec->second, key_len, iv_len, response.negotiated_md);
+    if (!s_keys)
+    {
+        ec = s_keys.error();
+        co_return;
+    }
+    struct app_keys
+    {
+        std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> c_app_keys;
+        std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> s_app_keys;
+    } keys;
+    keys.c_app_keys = std::move(*c_keys);
+    keys.s_app_keys = std::move(*s_keys);
+    LOG_CTX_INFO(ctx, "{} tunnel starting", log_event::kConnEstablished);
+    //
+    reality_engine engine(keys.c_app_keys.first, keys.c_app_keys.second, keys.s_app_keys.first, keys.s_app_keys.second, response.cipher);
+    auto tunnel = std::make_shared<mux_tunnel_impl>(std::move(*s), io_context_, std::move(engine), cfg_, group_, conn_id, ctx.trace_id());
+    auto self = shared_from_this();
+    tunnel->set_new_stream_cb([this, self, tunnel, ctx](mux_frame frame) -> boost::asio::awaitable<void>
+                              { co_await process_stream_request(tunnel, ctx, std::move(frame)); });
+    tunnel->run();
+    co_return;
+}
+
+static boost::asio::awaitable<void> send_stream_reset(const std::shared_ptr<mux_connection>& connection, mux_frame frame)
+{
+    frame.h.command = mux::kCmdRst;
+    boost::system::error_code ec;
+    co_await connection->send_async(std::move(frame), ec);
+    if (ec)
+    {
+    }
+}
+
+static boost::asio::awaitable<void> handle_tcp_connect_stream(const std::shared_ptr<mux_tunnel_impl>& tunnel,
+                                                              const connection_context& stream_ctx,
+                                                              mux_frame frame,
+                                                              const syn_payload& syn,
+                                                              const config& cfg,
+                                                              boost::asio::io_context& io_context)
+{
+    LOG_CTX_INFO(stream_ctx,
+                 "{} stream {} type tcp connect target {} {} payload size {}",
+                 log_event::kMux,
+                 frame.h.stream_id,
+                 syn.addr,
+                 syn.port,
+                 frame.payload.size());
+
+    const auto connection = tunnel->connection();
+    const auto sess = std::make_shared<remote_tcp_session>(connection, frame.h.stream_id, io_context, stream_ctx, cfg);
+    sess->set_manager(tunnel);
+    boost::asio::co_spawn(io_context, [sess, syn]() mutable -> boost::asio::awaitable<void> { co_await sess->start(syn); }, boost::asio::detached);
+    co_return;
+}
+
+static boost::asio::awaitable<void> handle_udp_associate_stream(const std::shared_ptr<mux_tunnel_impl>& tunnel,
+                                                                const connection_context& stream_ctx,
+                                                                mux_frame frame,
+                                                                const config& cfg,
+                                                                boost::asio::io_context& io_context)
+{
+    LOG_CTX_INFO(stream_ctx, "{} stream {} type udp associate associated via tcp", log_event::kMux, frame.h.stream_id);
+    const auto connection = tunnel->connection();
+    const auto sess = std::make_shared<remote_udp_session>(connection, frame.h.stream_id, io_context, stream_ctx, cfg);
+    sess->set_manager(tunnel);
+    boost::asio::co_spawn(io_context, [sess]() mutable -> boost::asio::awaitable<void> { co_await sess->start(); }, boost::asio::detached);
+    co_return;
+}
+
+boost::asio::awaitable<void> remote_server::process_stream_request(std::shared_ptr<mux_tunnel_impl> tunnel,
+                                                                   const connection_context& ctx,
+                                                                   mux_frame frame) const
+{
+    const auto connection = tunnel->connection();
+    syn_payload syn;
+    if (!mux_codec::decode_syn(frame.payload.data(), frame.payload.size(), syn))
+    {
+        LOG_CTX_WARN(ctx, "{} stream {} invalid syn", log_event::kMux, frame.h.stream_id);
+        co_await send_stream_reset(connection, std::move(frame));
+        co_return;
+    }
+
+    connection_context stream_ctx = ctx;
+    if (!syn.trace_id.empty())
+    {
+        stream_ctx.trace_id(syn.trace_id);
+    }
+    if (!syn.trace_id.empty())
+    {
+        LOG_CTX_DEBUG(stream_ctx, "{} linked client trace id {}", log_event::kMux, syn.trace_id);
+    }
+    if (syn.socks_cmd == socks::kCmdConnect && syn.port == 0)
+    {
+        LOG_CTX_WARN(stream_ctx, "{} stream {} invalid target {} {}", log_event::kMux, frame.h.stream_id, syn.addr, syn.port);
+        co_await send_stream_reset(connection, std::move(frame));
+        co_return;
+    }
+
+    if (syn.socks_cmd == socks::kCmdConnect)
+    {
+        co_return co_await handle_tcp_connect_stream(tunnel, stream_ctx, std::move(frame), syn, cfg_, pool_.get_io_context());
+    }
+    if (syn.socks_cmd == socks::kCmdUdpAssociate)
+    {
+        co_return co_await handle_udp_associate_stream(tunnel, stream_ctx, std::move(frame), cfg_, pool_.get_io_context());
+    }
+
+    LOG_CTX_WARN(stream_ctx, "{} stream {} unknown cmd {}", log_event::kMux, frame.h.stream_id, syn.socks_cmd);
+    co_await send_stream_reset(connection, std::move(frame));
+}
+
+static std::vector<std::uint8_t> compose_server_hello_flight(const std::vector<std::uint8_t>& sh_msg, const std::vector<std::uint8_t>& flight2_enc)
+{
+    std::vector<std::uint8_t> out_sh;
+    const auto sh_rec = reality::write_record_header(reality::kContentTypeHandshake, static_cast<std::uint16_t>(sh_msg.size()));
+    out_sh.insert(out_sh.end(), sh_rec.begin(), sh_rec.end());
+    out_sh.insert(out_sh.end(), sh_msg.begin(), sh_msg.end());
+    out_sh.insert(out_sh.end(), {0x14, 0x03, 0x03, 0x00, 0x01, 0x01});
+    out_sh.insert(out_sh.end(), flight2_enc.begin(), flight2_enc.end());
+    return out_sh;
 }
 
 boost::asio::awaitable<remote_server::server_handshake_res> remote_server::perform_handshake_response(std::shared_ptr<boost::asio::ip::tcp::socket> s,
                                                                                                       const client_hello_info& info,
                                                                                                       reality::transcript& trans,
-                                                                                                      const connection_context& ctx)
+                                                                                                      const connection_context& ctx,
+                                                                                                      boost::system::error_code& ec)
 {
+    server_handshake_res res;
     const auto key_pair = key_rotator_.get_current_key();
     if (key_pair == nullptr)
     {
         LOG_CTX_ERROR(ctx, "{} key rotation unavailable", log_event::kHandshake);
-        co_return server_handshake_res{false, boost::asio::error::fault, {}, {}, {}, nullptr, nullptr, {}};
+        ec = boost::asio::error::fault;
+        co_return res;
     }
     const std::uint8_t* public_key = key_pair->public_key;
     const std::uint8_t* private_key = key_pair->private_key;
@@ -2229,84 +933,41 @@ boost::asio::awaitable<remote_server::server_handshake_res> remote_server::perfo
     auto server_random_result = generate_server_random();
     if (!server_random_result)
     {
-        co_return server_handshake_res{false, server_random_result.error(), {}, {}, {}, nullptr, nullptr, {}};
+        ec = server_random_result.error();
+        co_return res;
     }
     const auto& server_random = *server_random_result;
 
-    log_ephemeral_public_key(public_key, ctx);
+    LOG_CTX_TRACE(ctx,
+                  "{} generated ephemeral key {}",
+                  log_event::kHandshake,
+                  reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(public_key, public_key + 32)));
 
-    auto key_share_res = derive_server_key_share(info, public_key, private_key, ctx);
-    if (!key_share_res)
-    {
-        co_return server_handshake_res{false, key_share_res.error(), {}, {}, {}, nullptr, nullptr, {}};
-    }
-    const auto& ks = *key_share_res;
+    //
 
-    const auto target = resolve_certificate_target(info);
-    const auto cert = co_await load_certificate_material(target, ctx);
-    if (!cert.has_value())
-    {
-        co_return server_handshake_res{false, boost::asio::error::connection_refused, {}, {}, {}, nullptr, nullptr, {}};
-    }
-
-    const std::uint16_t cipher_suite = select_cipher_suite_from_fingerprint(cert->fingerprint);
-    auto crypto_result = build_handshake_crypto(server_random,
-                                                info.session_id,
-                                                cipher_suite,
-                                                ks.key_share_group,
-                                                ks.key_share_data,
-                                                ks.sh_shared,
-                                                cert->cert_msg,
-                                                cert->fingerprint.alpn,
-                                                private_key_,
-                                                trans,
-                                                ctx);
-    if (!crypto_result)
-    {
-        co_return server_handshake_res{false, crypto_result.error(), {}, {}, {}, nullptr, nullptr, {}};
-    }
-    const auto& crypto = *crypto_result;
-
-    const auto write_timeout_sec = timeout_config_.write;
-    if (const auto ec = co_await send_server_hello_flight(s, crypto.sh_msg, crypto.flight2_enc, ctx, write_timeout_sec); ec)
-    {
-        co_return server_handshake_res{false, ec, {}, {}, {}, nullptr, nullptr, {}};
-    }
-
-    co_return server_handshake_res{true, {}, crypto.hs_keys, crypto.s_hs_keys, crypto.c_hs_keys, crypto.cipher, crypto.md, {}};
-}
-
-std::expected<remote_server::key_share_result, boost::system::error_code> remote_server::derive_server_key_share(const client_hello_info& info,
-                                                                                                                 const std::uint8_t* public_key,
-                                                                                                                 const std::uint8_t* private_key,
-                                                                                                                 const connection_context& ctx)
-{
-    const auto selected = select_key_share(info, ctx);
-    if (!selected.has_value())
-    {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
-    }
-
-    auto sh_shared_result = reality::crypto_util::x25519_derive(std::vector<std::uint8_t>(private_key, private_key + 32), selected->x25519_pub);
+    auto sh_shared_result = reality::crypto_util::x25519_derive(std::vector<std::uint8_t>(private_key, private_key + 32), info.x25519_pub);
     if (!sh_shared_result)
     {
-        const auto ec = sh_shared_result.error();
+        ec = sh_shared_result.error();
         LOG_CTX_ERROR(ctx, "{} x25519 derive failed", log_event::kHandshake);
-        return std::unexpected(ec);
+        co_return res;
     }
-
-    key_share_result res;
-    res.sh_shared = std::move(*sh_shared_result);
-    res.key_share_data.assign(public_key, public_key + 32);
-    res.key_share_group = selected->group;
-    return res;
-}
-
-remote_server::certificate_target remote_server::resolve_certificate_target(const client_hello_info& info) const
-{
-    certificate_target target;
-    const auto normalized_client_sni = normalize_sni_key(info.sni);
-    target.cert_sni = normalized_client_sni;
+    struct key_share_result
+    {
+        std::vector<std::uint8_t> sh_shared;
+        std::vector<std::uint8_t> key_share_data;
+        std::uint16_t key_share_group;
+    } ks;
+    ks.sh_shared = std::move(*sh_shared_result);
+    ks.key_share_data.assign(public_key, public_key + 32);
+    ks.key_share_group = reality::tls_consts::group::kX25519;
+    struct certificate_target
+    {
+        std::string cert_sni;
+        std::string fetch_host;
+        std::uint16_t fetch_port = 443;
+    } target;
+    target.cert_sni = info.sni;
     target.fetch_host = "www.apple.com";
     target.fetch_port = 443;
 
@@ -2314,71 +975,83 @@ remote_server::certificate_target remote_server::resolve_certificate_target(cons
     if (!fb.first.empty())
     {
         target.fetch_host = fb.first;
-        target.fetch_port = parse_fallback_port(fb.second);
+        target.fetch_port = static_cast<uint16_t>(atoi(fb.second.c_str()));
     }
-    return target;
-}
-
-boost::asio::awaitable<std::optional<remote_server::certificate_material>> remote_server::load_certificate_material(const certificate_target& target,
-                                                                                                                    const connection_context& ctx)
-{
+    struct certificate_material
+    {
+        std::vector<std::uint8_t> cert_msg;
+        reality::server_fingerprint fingerprint;
+    } cert;
     const auto cached_entry = cert_manager_.get_certificate(target.cert_sni);
     if (cached_entry.has_value())
     {
-        co_return certificate_material{.cert_msg = cached_entry->cert_msg, .fingerprint = cached_entry->fingerprint};
+        cert.cert_msg = cached_entry->cert_msg;
+        cert.fingerprint = cached_entry->fingerprint;
     }
-
-    LOG_CTX_INFO(ctx, "{} certificate miss fetching {} {}", log_event::kCert, target.fetch_host, target.fetch_port);
-    const auto res = co_await reality::cert_fetcher::fetch(io_context_, target.fetch_host, target.fetch_port, target.cert_sni, ctx.trace_id());
-    if (!res.has_value())
+    else
     {
-        LOG_CTX_ERROR(ctx, "{} fetch certificate failed", log_event::kCert);
-        co_return std::nullopt;
+        LOG_CTX_INFO(ctx, "{} certificate miss fetching {} {}", log_event::kCert, target.fetch_host, target.fetch_port);
+        const auto fetch_res =
+            co_await reality::cert_fetcher::fetch(io_context_, target.fetch_host, target.fetch_port, target.cert_sni, ctx.trace_id());
+        if (!fetch_res.has_value())
+        {
+            LOG_CTX_ERROR(ctx, "{} fetch certificate failed", log_event::kCert);
+            ec = boost::asio::error::connection_refused;
+            co_return res;
+        }
+        cert.cert_msg = fetch_res->cert_msg;
+        cert.fingerprint = fetch_res->fingerprint;
     }
 
-    certificate_material material{.cert_msg = res->cert_msg, .fingerprint = res->fingerprint};
-    set_certificate(target.cert_sni, material.cert_msg, material.fingerprint, ctx.trace_id());
-    co_return material;
-}
-
-boost::asio::awaitable<boost::system::error_code> remote_server::send_server_hello_flight(const std::shared_ptr<boost::asio::ip::tcp::socket>& s,
-                                                                                          const std::vector<std::uint8_t>& sh_msg,
-                                                                                          const std::vector<std::uint8_t>& flight2_enc,
-                                                                                          const connection_context& ctx,
-                                                                                          const std::uint32_t timeout_sec)
-{
+    const std::uint16_t cipher_suite = select_cipher_suite_from_fingerprint(cert.fingerprint);
+    auto crypto_result = build_handshake_crypto(server_random,
+                                                info.session_id,
+                                                cipher_suite,
+                                                ks.key_share_group,
+                                                ks.key_share_data,
+                                                ks.sh_shared,
+                                                cert.cert_msg,
+                                                cert.fingerprint.alpn,
+                                                private_key_,
+                                                trans,
+                                                ctx);
+    if (!crypto_result)
+    {
+        ec = crypto_result.error();
+        co_return res;
+    }
+    const auto& crypto = *crypto_result;
+    auto sh_msg = crypto.sh_msg;
+    auto flight2_enc = crypto.flight2_enc;
     LOG_CTX_INFO(ctx, "generated sh msg size {}", sh_msg.size());
     const auto out_sh = compose_server_hello_flight(sh_msg, flight2_enc);
     LOG_CTX_INFO(ctx, "total out sh size {}", out_sh.size());
     LOG_CTX_DEBUG(ctx, "{} sending server hello flight size {}", log_event::kHandshake, out_sh.size());
-    const auto write_res = co_await write_socket_with_timeout(s, boost::asio::buffer(out_sh), timeout_sec);
-    if (!write_res.ok)
+    co_await timeout_io::wait_write_with_timeout(*s, boost::asio::buffer(out_sh), cfg_.timeout.write, ec);
+    if (ec)
     {
-        if (write_res.timed_out)
-        {
-            LOG_CTX_WARN(ctx, "{} write server hello timed out {}s", log_event::kHandshake, timeout_sec);
-            co_return boost::asio::error::timed_out;
-        }
-        LOG_CTX_ERROR(ctx, "{} write server hello failed {}", log_event::kHandshake, write_res.ec.message());
-        co_return write_res.ec;
+        LOG_CTX_ERROR(ctx, "{} write server hello failed {}", log_event::kHandshake, ec.message());
+        co_return res;
     }
-    co_return boost::system::error_code{};
-}
 
-boost::asio::awaitable<boost::system::error_code> remote_server::verify_client_finished(
-    std::shared_ptr<boost::asio::ip::tcp::socket> s,
-    const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& c_hs_keys,
-    const reality::handshake_keys& hs_keys,
-    const reality::transcript& trans,
-    const EVP_CIPHER* cipher,
-    const EVP_MD* md,
-    const connection_context& ctx,
-    const std::uint32_t timeout_sec)
+    co_return server_handshake_res{.hs_keys = crypto.hs_keys,
+                                   .s_hs_keys = crypto.s_hs_keys,
+                                   .c_hs_keys = crypto.c_hs_keys,
+                                   .cipher = crypto.cipher,
+                                   .negotiated_md = crypto.md,
+                                   .handshake_hash = {}};
+}
+boost::asio::awaitable<void> remote_server::verify_client_finished(std::shared_ptr<boost::asio::ip::tcp::socket> s,
+                                                                   const server_handshake_res& response,
+                                                                   const reality::transcript& trans,
+                                                                   const connection_context& ctx,
+                                                                   boost::system::error_code& ec) const
 {
     std::array<std::uint8_t, 5> header = {0};
-    if (const auto header_ec = co_await read_tls_record_header_allow_ccs(s, header, ctx, timeout_sec); header_ec)
+    co_await read_tls_record_header_allow_ccs(s, header, ctx, cfg_.timeout.read, ec);
+    if (ec)
     {
-        co_return header_ec;
+        co_return;
     }
 
     const auto body_len = static_cast<std::uint16_t>((header[3] << 8) | header[4]);
@@ -2386,297 +1059,85 @@ boost::asio::awaitable<boost::system::error_code> remote_server::verify_client_f
     {
         statistics::instance().inc_client_finished_failures();
         LOG_CTX_ERROR(ctx, "{} client finished record too large {}", log_event::kHandshake, body_len);
-        co_return boost::system::errc::make_error_code(boost::system::errc::message_size);
+        ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
+        co_return;
     }
-    std::vector<std::uint8_t> body;
-    if (const auto body_ec = co_await read_tls_record_body(s, body_len, body, ctx, timeout_sec); body_ec)
+    std::vector<std::uint8_t> body(body_len);
+    co_await timeout_io::wait_read_with_timeout(*s, boost::asio::buffer(body), cfg_.timeout.read, ec);
+    if (ec)
     {
-        co_return body_ec;
+        co_return;
     }
 
     const auto record = compose_tls_record(header, body);
     std::uint8_t ctype = 0;
-    auto plaintext_result = reality::tls_record_layer::decrypt_record(cipher, c_hs_keys.first, c_hs_keys.second, 0, record, ctype);
+    auto plaintext_result =
+        reality::tls_record_layer::decrypt_record(response.cipher, response.c_hs_keys.first, response.c_hs_keys.second, 0, record, ctype);
     if (!plaintext_result)
     {
         const auto ec = plaintext_result.error();
         statistics::instance().inc_client_finished_failures();
         LOG_CTX_ERROR(ctx, "{} client finished decrypt failed {}", log_event::kHandshake, ec.message());
-        co_return ec;
+        co_return;
     }
 
-    auto expected_fin_verify = reality::tls_key_schedule::compute_finished_verify_data(hs_keys.client_handshake_traffic_secret, trans.finish(), md);
+    auto expected_fin_verify = reality::tls_key_schedule::compute_finished_verify_data(
+        response.hs_keys.client_handshake_traffic_secret, trans.finish(), response.negotiated_md);
     if (!expected_fin_verify)
     {
         const auto ec = expected_fin_verify.error();
         statistics::instance().inc_client_finished_failures();
         LOG_CTX_ERROR(ctx, "{} client finished verify data failed {}", log_event::kHandshake, ec.message());
-        co_return ec;
+        co_return;
     }
 
     if (!verify_client_finished_plaintext(*plaintext_result, ctype, *expected_fin_verify, ctx))
     {
-        co_return boost::system::errc::make_error_code(boost::system::errc::bad_message);
+        ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
+        co_return;
     }
-    co_return boost::system::error_code{};
+    co_return;
+}
+
+static std::optional<std::pair<std::string, std::string>> find_exact_sni_fallback(const std::vector<config::fallback_entry>& fallbacks,
+                                                                                  const std::string& sni)
+{
+    if (sni.empty())
+    {
+        return std::nullopt;
+    }
+    for (const auto& fb : fallbacks)
+    {
+        if (fb.sni == sni)
+        {
+            return std::make_pair(fb.host, fb.port);
+        }
+    }
+    return std::nullopt;
+}
+
+static std::optional<std::pair<std::string, std::string>> find_wildcard_fallback(const std::vector<config::fallback_entry>& fallbacks)
+{
+    for (const auto& fb : fallbacks)
+    {
+        if (fb.sni.empty() || fb.sni == "*")
+        {
+            return std::make_pair(fb.host, fb.port);
+        }
+    }
+    return std::nullopt;
 }
 
 std::pair<std::string, std::string> remote_server::find_fallback_target_by_sni(const std::string& sni) const
 {
-    if (const auto exact = find_exact_sni_fallback(fallbacks_, sni); exact.has_value())
+    if (const auto exact = find_exact_sni_fallback(cfg_.fallbacks, sni); exact.has_value())
     {
         return *exact;
     }
-    if (const auto wildcard = find_wildcard_fallback(fallbacks_); wildcard.has_value())
+    if (const auto wildcard = find_wildcard_fallback(cfg_.fallbacks); wildcard.has_value())
     {
         return *wildcard;
     }
-    if (fallback_dest_valid_)
-    {
-        return std::make_pair(fallback_dest_host_, fallback_dest_port_);
-    }
     return {};
 }
-
-remote_server::fallback_guard_key_mode remote_server::resolve_fallback_guard_key_mode(const std::string& key_mode)
-{
-    std::string normalized;
-    normalized.reserve(key_mode.size());
-    for (const char ch : key_mode)
-    {
-        if (ch == '-' || ch == ' ')
-        {
-            normalized.push_back('_');
-            continue;
-        }
-        normalized.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
-    }
-    if (normalized == "ip_sni")
-    {
-        return fallback_guard_key_mode::kIpSni;
-    }
-    return fallback_guard_key_mode::kIp;
-}
-
-std::string remote_server::fallback_guard_key(const connection_context& ctx, const std::string& sni) const
-{
-    std::string source = "unknown";
-    if (!ctx.remote_addr().empty())
-    {
-        source = ctx.remote_addr();
-    }
-    if (fallback_guard_key_mode_ == fallback_guard_key_mode::kIp)
-    {
-        return source;
-    }
-    std::string normalized_sni = normalize_sni_key(sni);
-    if (normalized_sni.empty())
-    {
-        normalized_sni = "_";
-    }
-    return source + "|" + normalized_sni;
-}
-
-void remote_server::cleanup_fallback_guard_state_locked(fallback_guard_map_t& states,
-                                                        const std::chrono::steady_clock::time_point& now) const
-{
-    const auto ttl_seconds = std::max<std::uint32_t>(1, fallback_guard_config_.state_ttl_sec);
-    const auto ttl = std::chrono::seconds(ttl_seconds);
-    std::erase_if(states, [&](const auto& kv) { return now - kv.second.last_seen > ttl; });
-}
-
-void remote_server::evict_fallback_guard_source_if_needed_locked(fallback_guard_map_t& states, const std::string& source_key) const
-{
-    if (states.size() < kFallbackGuardMaxSources || states.contains(source_key))
-    {
-        return;
-    }
-
-    auto oldest_it = states.end();
-    for (auto it = states.begin(); it != states.end(); ++it)
-    {
-        if (oldest_it == states.end() || it->second.last_seen < oldest_it->second.last_seen)
-        {
-            oldest_it = it;
-        }
-    }
-    if (oldest_it != states.end())
-    {
-        states.erase(oldest_it);
-    }
-}
-
-remote_server::fallback_guard_state& remote_server::get_or_init_fallback_guard_state_locked(
-    fallback_guard_map_t& states,
-    const std::string& source_key,
-    const std::chrono::steady_clock::time_point& now) const
-{
-    auto& state = states[source_key];
-    if (state.tokens == 0 && state.last_seen.time_since_epoch().count() == 0)
-    {
-        state.tokens = static_cast<double>(fallback_guard_config_.burst);
-        state.last_refill = now;
-    }
-    return state;
-}
-
-void remote_server::refill_fallback_tokens_locked(fallback_guard_state& state, const std::chrono::steady_clock::time_point& now) const
-{
-    const auto rate_per_sec = static_cast<double>(fallback_guard_config_.rate_per_sec);
-    if (rate_per_sec <= 0)
-    {
-        return;
-    }
-
-    const auto elapsed = std::chrono::duration<double>(now - state.last_refill).count();
-    if (elapsed <= 0)
-    {
-        return;
-    }
-
-    const auto burst = static_cast<double>(fallback_guard_config_.burst);
-    state.tokens = std::min(burst, state.tokens + (elapsed * rate_per_sec));
-    state.last_refill = now;
-}
-
-bool remote_server::fallback_guard_allows_request_locked(fallback_guard_state& state, const std::chrono::steady_clock::time_point& now)
-{
-    state.last_seen = now;
-    if (state.circuit_open_until > now)
-    {
-        return false;
-    }
-
-    if (state.tokens < 1.0)
-    {
-        return false;
-    }
-
-    state.tokens -= 1.0;
-    return true;
-}
-
-bool remote_server::consume_fallback_token(const connection_context& ctx, const std::string& sni)
-{
-    if (!fallback_guard_config_.enabled)
-    {
-        return true;
-    }
-
-    const auto now = std::chrono::steady_clock::now();
-    cleanup_fallback_guard_state_locked(fallback_guard_states_, now);
-
-    const auto source_key = fallback_guard_key(ctx, sni);
-    evict_fallback_guard_source_if_needed_locked(fallback_guard_states_, source_key);
-    auto& state = get_or_init_fallback_guard_state_locked(fallback_guard_states_, source_key, now);
-    refill_fallback_tokens_locked(state, now);
-    const bool allowed = fallback_guard_allows_request_locked(state, now);
-
-    if (!allowed)
-    {
-        statistics::instance().inc_fallback_rate_limited();
-    }
-    return allowed;
-}
-
-void remote_server::record_fallback_result(const connection_context& ctx, const std::string& sni, const bool success)
-{
-    if (!fallback_guard_config_.enabled)
-    {
-        return;
-    }
-
-    const auto now = std::chrono::steady_clock::now();
-    auto it = fallback_guard_states_.find(fallback_guard_key(ctx, sni));
-    if (it == fallback_guard_states_.end())
-    {
-        return;
-    }
-
-    auto& state = it->second;
-    state.last_seen = now;
-    if (success)
-    {
-        state.consecutive_failures = 0;
-        return;
-    }
-
-    state.consecutive_failures++;
-    if (fallback_guard_config_.circuit_fail_threshold > 0 && state.consecutive_failures >= fallback_guard_config_.circuit_fail_threshold)
-    {
-        const auto open_sec = std::max<std::uint32_t>(1, fallback_guard_config_.circuit_open_sec);
-        state.circuit_open_until = now + std::chrono::seconds(open_sec);
-        state.consecutive_failures = 0;
-    }
-}
-
-boost::asio::awaitable<boost::system::error_code> remote_server::handle_fallback(const std::shared_ptr<boost::asio::ip::tcp::socket>& s,
-                                                                                 const std::vector<std::uint8_t>& buf,
-                                                                                 const connection_context& ctx,
-                                                                                 const std::string& sni)
-{
-    if (stop_.load(std::memory_order_acquire))
-    {
-        close_fallback_socket(s, ctx);
-        co_return boost::asio::error::operation_aborted;
-    }
-
-    if (!consume_fallback_token(ctx, sni))
-    {
-        LOG_CTX_WARN(ctx, "{} blocked by fallback guard", log_event::kFallback);
-        co_await fallback_wait_and_close_socket(s, ctx, io_context_);
-        co_return boost::asio::error::operation_aborted;
-    }
-
-    const auto fallback_target = find_fallback_target_by_sni(sni);
-    if (fallback_target.first.empty())
-    {
-        co_await handle_fallback_without_target(s, ctx, sni, io_context_);
-        record_fallback_result(ctx, sni, false);
-        co_return boost::asio::error::host_not_found;
-    }
-
-    const auto target_host = fallback_target.first;
-    const auto target_port = fallback_target.second;
-    const auto connect_timeout_sec = timeout_config_.connect;
-    auto t = std::make_shared<boost::asio::ip::tcp::socket>(io_context_);
-    track_connection_socket(t);
-    [[maybe_unused]] const std::shared_ptr<void> tracked_target_guard(
-        nullptr, [self = shared_from_this(), t](void*) mutable { self->untrack_connection_socket(t); });
-    LOG_CTX_INFO(ctx, "{} proxying sni {} to {} {}", log_event::kFallback, sni, target_host, target_port);
-    if (const auto connect_ec = co_await resolve_and_connect_fallback_target(t, io_context_, target_host, target_port, ctx, connect_timeout_sec);
-        connect_ec)
-    {
-        record_fallback_result(ctx, sni, false);
-        close_fallback_socket(t, ctx);
-        co_await fallback_wait_and_close_socket(s, ctx, io_context_);
-        co_return connect_ec;
-    }
-    const auto write_timeout_sec = timeout_config_.write;
-    if (const auto write_ec = co_await write_fallback_initial_buffer(t, buf, target_host, target_port, ctx, write_timeout_sec); write_ec)
-    {
-        record_fallback_result(ctx, sni, false);
-        close_fallback_socket(t, ctx);
-        co_await fallback_wait_and_close_socket(s, ctx, io_context_);
-        co_return write_ec;
-    }
-
-    using boost::asio::experimental::awaitable_operators::operator&&;
-    const auto read_timeout_sec = timeout_config_.read;
-    const auto [source_to_target_ok, target_to_source_ok] =
-        co_await (proxy_half(s, t, ctx, read_timeout_sec, write_timeout_sec) &&
-                  proxy_half(t, s, ctx, read_timeout_sec, write_timeout_sec));
-    close_fallback_socket(t, ctx);
-    close_fallback_socket(s, ctx);
-    const bool proxy_success = source_to_target_ok && target_to_source_ok;
-    record_fallback_result(ctx, sni, proxy_success);
-    if (proxy_success)
-    {
-        LOG_CTX_INFO(ctx, "{} session finished", log_event::kFallback);
-        co_return boost::system::error_code{};
-    }
-    LOG_CTX_WARN(ctx, "{} session finished with proxy errors", log_event::kFallback);
-    co_return boost::asio::error::connection_reset;
-}
-
 }    // namespace mux

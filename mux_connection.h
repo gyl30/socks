@@ -1,17 +1,11 @@
 #ifndef MUX_CONNECTION_H
 #define MUX_CONNECTION_H
 
-#include <atomic>
 #include <memory>
 #include <string>
 #include <vector>
 #include <cstddef>
 #include <cstdint>
-#include <utility>
-#include <expected>
-#include <functional>
-#include <unordered_map>
-
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/io_context.hpp>
@@ -20,6 +14,7 @@
 #include <boost/asio/experimental/concurrent_channel.hpp>
 
 #include "config.h"
+#include "task_group.h"
 #include "log_context.h"
 #include "mux_protocol.h"
 #include "mux_dispatcher.h"
@@ -31,149 +26,67 @@ namespace mux
 
 class mux_stream;
 
-enum class mux_connection_state : std::uint8_t
-{
-    kConnected,
-    kDraining,
-    kClosing,
-    kClosed
-};
-
-enum class stream_register_result : std::uint8_t
-{
-    kSuccess,
-    kInvalidStream,
-    kClosed,
-    kLimitReached,
-    kIdConflict
-};
-
-struct mux_write_msg
-{
-    std::uint8_t command = 0;
-    std::uint32_t stream_id = 0;
-    std::vector<std::uint8_t> payload;
-};
-
 class mux_connection : public std::enable_shared_from_this<mux_connection>
 {
    public:
-    using stream_map_t = std::unordered_map<std::uint32_t, std::shared_ptr<mux_stream_interface>>;
-    using syn_callback_t = std::function<void(std::uint32_t, std::vector<std::uint8_t>)>;
-
     mux_connection(boost::asio::ip::tcp::socket socket,
                    boost::asio::io_context& io_context,
                    reality_engine engine,
-                   bool is_client,
+                   const config& cfg,
+                   task_group& group,
                    std::uint32_t conn_id,
-                   const std::string& trace_id = "",
-                   const config::timeout_t& timeout_cfg = {},
-                   const config::limits_t& limits_cfg = {},
-                   const config::heartbeat_t& heartbeat_cfg = {});
+                   const std::string& trace_id = "");
 
     virtual ~mux_connection();
 
-    [[nodiscard]] boost::asio::io_context& io_context() const { return io_context_; }
-    [[nodiscard]] std::string trace_id() const { return ctx_.trace_id(); }
-
-    void set_syn_callback(syn_callback_t cb) { syn_callback_ = std::move(cb); }
-
-    virtual bool register_stream(std::uint32_t id, std::shared_ptr<mux_stream_interface> stream);
-    [[nodiscard]] virtual bool register_stream_checked(std::uint32_t id, std::shared_ptr<mux_stream_interface> stream);
-    [[nodiscard]] virtual stream_register_result try_register_stream_with_reason(std::uint32_t id,
-                                                                                 std::shared_ptr<mux_stream_interface> stream);
-    [[nodiscard]] bool try_register_stream(std::uint32_t id, std::shared_ptr<mux_stream_interface> stream);
-
-    virtual void remove_stream(std::uint32_t id);
-
-    [[nodiscard]] std::uint32_t acquire_next_id();
-    [[nodiscard]] virtual std::uint32_t id() const { return cid_; }
-    void mark_started_for_external_calls();
-
-    [[nodiscard]] boost::asio::awaitable<void> start();
-
-    [[nodiscard]] virtual boost::asio::awaitable<boost::system::error_code> send_async(std::uint32_t stream_id,
-                                                                                       std::uint8_t cmd,
-                                                                                       std::vector<std::uint8_t> payload);
-
+   public:
+    void start();
     void stop();
-    void release_resources();
 
-    [[nodiscard]] bool is_open() const
-    {
-        const auto s = connection_state_.load(std::memory_order_acquire);
-        return s == mux_connection_state::kConnected || s == mux_connection_state::kDraining;
-    }
+   public:
+    using new_stream_cb = std::function<boost::asio::awaitable<void>(mux_frame)>;
+    void set_new_stream_cb(new_stream_cb cb) { cb_ = std::move(cb); }
 
-    [[nodiscard]] bool can_accept_stream();
-    [[nodiscard]] bool has_stream(std::uint32_t id);
-    [[nodiscard]] boost::asio::awaitable<std::shared_ptr<mux_stream>> create_stream_async(const std::string& trace_id = "");
-    [[nodiscard]] std::shared_ptr<mux_stream> create_stream(const std::string& trace_id = "");
+   public:
+    [[nodiscard]] bool is_active() const;
+    std::shared_ptr<mux_stream> create_stream();
+    void register_stream(const std::shared_ptr<mux_stream>& stream);
+    void remove_stream(const std::shared_ptr<mux_stream>&);
+    [[nodiscard]] std::shared_ptr<mux_stream> find_stream(std::uint32_t stream_id);
+    boost::asio::awaitable<void> send_async(mux_frame msg, boost::system::error_code& ec);
 
    private:
-    boost::asio::awaitable<void> start_impl();
+    boost::asio::awaitable<void> run_loop();
     boost::asio::awaitable<void> read_loop();
-
     boost::asio::awaitable<void> write_loop();
-
     boost::asio::awaitable<void> timeout_loop();
-
     boost::asio::awaitable<void> heartbeat_loop();
 
-    [[nodiscard]] std::shared_ptr<stream_map_t> snapshot_streams() const;
-    [[nodiscard]] std::shared_ptr<stream_map_t> detach_streams();
-    using pending_remove_map_t = std::unordered_map<std::uint32_t, std::uint32_t>;
-    [[nodiscard]] std::shared_ptr<pending_remove_map_t> snapshot_pending_remove_ids() const;
-    void add_pending_remove_id(std::uint32_t id);
-    void clear_pending_remove_id(std::uint32_t id);
-    [[nodiscard]] static std::size_t count_pending_in_streams(const stream_map_t& streams, const pending_remove_map_t& pending_remove_ids);
-    [[nodiscard]] bool register_stream_local(std::uint32_t id, const std::shared_ptr<mux_stream_interface>& stream);
-    [[nodiscard]] stream_register_result try_register_stream_local_with_reason(std::uint32_t id, const std::shared_ptr<mux_stream_interface>& stream);
-    [[nodiscard]] bool try_register_stream_local(std::uint32_t id, const std::shared_ptr<mux_stream_interface>& stream);
-    void remove_stream_local(std::uint32_t id);
-    void remove_stream_local_if_match(std::uint32_t id, const std::shared_ptr<mux_stream_interface>& expected_stream);
-    [[nodiscard]] bool can_accept_stream_local() const;
-    [[nodiscard]] bool has_stream_local(std::uint32_t id) const;
-    [[nodiscard]] bool is_stream_id_cached_in_use(std::uint32_t id) const;
-
-    [[nodiscard]] std::shared_ptr<mux_stream_interface> find_stream(std::uint32_t stream_id) const;
-    void handle_unknown_stream(std::uint32_t stream_id, std::uint8_t command);
-    void handle_stream_frame(const mux::frame_header& header, std::vector<std::uint8_t> payload);
-    void on_mux_frame(mux::frame_header header, std::vector<std::uint8_t> payload);
-    void stop_impl();
-    static void reset_streams_on_stop(const stream_map_t& streams_to_clear);
-    void close_socket_on_stop();
-    void finalize_stop_state();
-    [[nodiscard]] bool should_stop_read(const boost::system::error_code& read_ec, std::size_t n) const;
-    void update_read_statistics(std::size_t n);
-    std::expected<void, boost::system::error_code> process_decrypted_records();
-    [[nodiscard]] bool has_dispatch_failure(const boost::system::error_code& decrypt_ec) const;
-    [[nodiscard]] boost::asio::awaitable<bool> read_and_dispatch_once();
+   private:
+    boost::asio::awaitable<void> on_mux_frame(mux::frame_header header, std::vector<std::uint8_t> payload);
+    boost::asio::awaitable<void> handle_unknown_stream(mux::frame_header header, std::vector<std::uint8_t> payload);
+    boost::asio::awaitable<void> handle_stream_frame(const mux::frame_header& header, std::vector<std::uint8_t> payload);
+    [[nodiscard]] std::uint32_t acquire_next_id();
 
    private:
+    const config& cfg_;
+    std::uint32_t cid_ = 0;
     connection_context ctx_;
-    std::uint32_t cid_;
-    std::uint64_t read_bytes_ = 0;
-    std::uint64_t write_bytes_ = 0;
-    std::shared_ptr<stream_map_t> streams_ = std::make_shared<stream_map_t>();
-    std::shared_ptr<pending_remove_map_t> pending_remove_ids_ = std::make_shared<pending_remove_map_t>();
-    boost::asio::io_context& io_context_;
-    boost::asio::steady_timer timer_;
-    syn_callback_t syn_callback_;
-    boost::asio::ip::tcp::socket socket_;
+    task_group& group_;
+    std::mutex mutex_;
+    new_stream_cb cb_;
     reality_engine reality_engine_;
     mux_dispatcher mux_dispatcher_;
-    std::atomic<std::uint32_t> next_stream_id_;
-    std::atomic<bool> started_{false};
-    std::atomic<mux_connection_state> connection_state_;
-    std::atomic<std::uint64_t> last_read_time_ms_{0};
-    std::atomic<std::uint64_t> last_write_time_ms_{0};
-    config::timeout_t timeout_config_;
-    config::limits_t limits_config_;
-    config::heartbeat_t heartbeat_config_;
-
-    using channel_type = boost::asio::experimental::concurrent_channel<void(boost::system::error_code, mux_write_msg)>;
+    std::uint32_t next_stream_id_ = 0;
+    std::uint64_t read_bytes_ = 0;
+    std::uint64_t write_bytes_ = 0;
+    std::uint64_t last_read_time_ms_{0};
+    std::uint64_t last_write_time_ms_{0};
+    boost::asio::io_context& io_context_;
+    boost::asio::ip::tcp::socket socket_;
+    using channel_type = boost::asio::experimental::concurrent_channel<void(boost::system::error_code, mux_frame)>;
     std::unique_ptr<channel_type> write_channel_;
+    std::unordered_map<uint32_t, std::shared_ptr<mux_stream>> streams_;
 };
 
 }    // namespace mux

@@ -34,8 +34,9 @@ REFLECT_STRUCT(mux::config::socks_t, enabled, host, port, auth, username, passwo
 REFLECT_STRUCT(mux::config::tproxy_t, enabled, listen_host, tcp_port, udp_port, mark);
 REFLECT_STRUCT(mux::config::fallback_entry, sni, host, port);
 REFLECT_STRUCT(mux::config::timeout_t, read, write, connect, idle);
-REFLECT_STRUCT(mux::config::queues_t, udp_session_recv_channel_capacity, tproxy_udp_dispatch_queue_capacity);
-REFLECT_STRUCT(mux::config::reality_t::fallback_guard_t, enabled, rate_per_sec, burst, key_mode, circuit_fail_threshold, circuit_open_sec, state_ttl_sec);
+REFLECT_STRUCT(mux::config::queues_t, udp_channel_capacity);
+REFLECT_STRUCT(
+    mux::config::reality_t::fallback_guard_t, enabled, rate_per_sec, burst, key_mode, circuit_fail_threshold, circuit_open_sec, state_ttl_sec);
 REFLECT_STRUCT(mux::config::reality_t,
                fallback_guard,
                sni,
@@ -120,13 +121,9 @@ constexpr std::uint32_t kHandshakeRecordsLimitMax = 4096;
 
 [[nodiscard]] std::expected<void, config_error> validate_queues_config(const config::queues_t& queues)
 {
-    if (queues.udp_session_recv_channel_capacity < kQueueCapacityMin || queues.udp_session_recv_channel_capacity > kQueueCapacityMax)
+    if (queues.udp_channel_capacity < kQueueCapacityMin || queues.udp_channel_capacity > kQueueCapacityMax)
     {
         return std::unexpected(make_config_error("/queues/udp_session_recv_channel_capacity", "must be between 1 and 65535"));
-    }
-    if (queues.tproxy_udp_dispatch_queue_capacity < kQueueCapacityMin || queues.tproxy_udp_dispatch_queue_capacity > kQueueCapacityMax)
-    {
-        return std::unexpected(make_config_error("/queues/tproxy_udp_dispatch_queue_capacity", "must be between 1 and 65535"));
     }
     return {};
 }
@@ -421,7 +418,8 @@ constexpr std::uint32_t kHandshakeRecordsLimitMax = 4096;
     {
         if (reality.fallback_guard.rate_per_sec == 0)
         {
-            return std::unexpected(make_config_error("/reality/fallback_guard/rate_per_sec", "must be greater than 0 when fallback guard is enabled"));
+            return std::unexpected(
+                make_config_error("/reality/fallback_guard/rate_per_sec", "must be greater than 0 when fallback guard is enabled"));
         }
         if (reality.fallback_guard.burst == 0)
         {
@@ -434,7 +432,8 @@ constexpr std::uint32_t kHandshakeRecordsLimitMax = 4096;
         }
         if (reality.fallback_guard.state_ttl_sec == 0)
         {
-            return std::unexpected(make_config_error("/reality/fallback_guard/state_ttl_sec", "must be greater than 0 when fallback guard is enabled"));
+            return std::unexpected(
+                make_config_error("/reality/fallback_guard/state_ttl_sec", "must be greater than 0 when fallback guard is enabled"));
         }
         if (reality.fallback_guard.circuit_fail_threshold > 0 && reality.fallback_guard.circuit_open_sec == 0)
         {
@@ -478,18 +477,12 @@ constexpr std::uint32_t kHandshakeRecordsLimitMax = 4096;
             normalized_fingerprint.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
         }
         static constexpr std::array<const char*, 8> kSupportedFingerprints = {
-            "chrome",
-            "chrome_120",
-            "firefox",
-            "firefox_120",
-            "ios",
-            "ios_14",
-            "android",
-            "android_11_okhttp"};
+            "chrome", "chrome_120", "firefox", "firefox_120", "ios", "ios_14", "android", "android_11_okhttp"};
         if (!normalized_fingerprint.empty() && normalized_fingerprint != "random" &&
             std::find(kSupportedFingerprints.begin(), kSupportedFingerprints.end(), normalized_fingerprint) == kSupportedFingerprints.end())
         {
-            return std::unexpected(make_config_error("/reality/fingerprint", "must be random/chrome/firefox/ios/android (or version aliases) in client mode"));
+            return std::unexpected(
+                make_config_error("/reality/fingerprint", "must be random/chrome/firefox/ios/android (or version aliases) in client mode"));
         }
     }
     return {};

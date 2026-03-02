@@ -6,7 +6,6 @@
 #include <string>
 #include <vector>
 #include <cstdint>
-#include <functional>
 #include <optional>
 
 #include <boost/asio/ip/tcp.hpp>
@@ -16,6 +15,7 @@
 
 #include "config.h"
 #include "router.h"
+#include "task_group.h"
 #include "mux_tunnel.h"
 #include "log_context.h"
 
@@ -28,24 +28,14 @@ class udp_socks_session;
 
 class socks_session : public std::enable_shared_from_this<socks_session>
 {
-    friend class socks_session_tester;
-
    public:
-    using tcp_session_started_fn = std::function<bool(const std::shared_ptr<tcp_socks_session>&)>;
-    using udp_session_started_fn = std::function<bool(const std::shared_ptr<udp_socks_session>&)>;
-
     socks_session(boost::asio::ip::tcp::socket socket,
                   boost::asio::io_context& io_context,
-                  std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> tunnel_manager,
+                  std::shared_ptr<mux_tunnel_impl> tunnel_manager,
                   std::shared_ptr<router> router,
                   std::uint32_t sid,
-                  const config::socks_t& socks_cfg = {},
-                  const config::timeout_t& timeout_cfg = {},
-                  const config::queues_t& queue_cfg = {},
-                  std::shared_ptr<boost::asio::cancellation_signal> stop_signal = nullptr,
-                  tcp_session_started_fn on_tcp_session_started = {},
-                  udp_session_started_fn on_udp_session_started = {});
-
+                  const config& cfg,
+                  task_group& group);
     ~socks_session();
 
     void start();
@@ -53,7 +43,7 @@ class socks_session : public std::enable_shared_from_this<socks_session>
     void stop();
 
    private:
-    boost::asio::awaitable<void> run();
+    boost::asio::awaitable<void> run_loop();
 
     boost::asio::awaitable<bool> handshake();
 
@@ -118,17 +108,14 @@ class socks_session : public std::enable_shared_from_this<socks_session>
     std::string username_;
     std::string password_;
     bool auth_enabled_ = false;
+    const config& cfg_;
     connection_context ctx_;
-    boost::asio::io_context& io_context_;
-    boost::asio::ip::tcp::socket socket_;
+    task_group& group_;
+    boost::asio::io_context& ioc_;
+    boost::asio::ip::tcp::socket socket_{ioc_};
     std::shared_ptr<router> router_;
-    std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> tunnel_manager_;
-    std::shared_ptr<void> active_connection_guard_;
-    std::shared_ptr<boost::asio::cancellation_signal> stop_signal_;
-    tcp_session_started_fn on_tcp_session_started_;
-    udp_session_started_fn on_udp_session_started_;
-    config::timeout_t timeout_config_;
-    config::queues_t queue_config_;
+    std::shared_ptr<void> active_guard_;
+    std::shared_ptr<mux_tunnel_impl> tunnel_manager_;
 };
 
 }    // namespace mux

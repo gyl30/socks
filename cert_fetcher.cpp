@@ -263,34 +263,21 @@ boost::asio::awaitable<boost::system::error_code> cert_fetcher::fetch_session::c
 {
     boost::asio::ip::tcp::resolver resolver(io_context_);
     const auto timeout_sec = connect_timeout_sec_;
-    const auto resolve_res = co_await mux::timeout_io::async_resolve_with_timeout(resolver, host_, std::to_string(port_), timeout_sec);
-    if (!resolve_res.ok)
+    boost::system::error_code ec;
+    const auto resolve_res = co_await mux::timeout_io::wait_resolve_with_timeout(resolver, host_, std::to_string(port_), timeout_sec, ec);
+    if (ec)
     {
-        if (resolve_res.timed_out)
-        {
-            LOG_CTX_ERROR(ctx_, "{} stage=resolve target={}:{} timeout={}s", mux::log_event::kCert, host_, port_, timeout_sec);
-        }
-        else
-        {
-            LOG_CTX_ERROR(ctx_, "{} stage=resolve target={}:{} error={}", mux::log_event::kCert, host_, port_, resolve_res.ec.message());
-        }
-        co_return resolve_res.ec;
+        LOG_CTX_ERROR(ctx_, "{} stage=resolve target={}:{} error={}", mux::log_event::kCert, host_, port_, ec.message());
+        co_return ec;
     }
 
-    const auto connect_res = co_await mux::timeout_io::async_connect_with_timeout(socket_, resolve_res.endpoints, timeout_sec, "cert fetcher");
-    if (!connect_res.ok)
+    co_await mux::timeout_io::wait_connect_with_timeout(socket_, *resolve_res.begin(), timeout_sec, ec);
+    if (ec)
     {
-        if (connect_res.timed_out)
-        {
-            LOG_CTX_ERROR(ctx_, "{} stage=connect target={}:{} timeout={}s", mux::log_event::kCert, host_, port_, timeout_sec);
-        }
-        else
-        {
-            LOG_CTX_ERROR(ctx_, "{} stage=connect target={}:{} error={}", mux::log_event::kCert, host_, port_, connect_res.ec.message());
-        }
-        co_return connect_res.ec;
+        LOG_CTX_ERROR(ctx_, "{} stage=connect target={}:{} error={}", mux::log_event::kCert, host_, port_, ec.message());
+        co_return ec;
     }
-    co_return boost::system::error_code{};
+    co_return ec;
 }
 
 boost::asio::awaitable<boost::system::error_code> cert_fetcher::fetch_session::perform_handshake_start()
@@ -530,7 +517,7 @@ boost::asio::awaitable<std::pair<boost::system::error_code, std::vector<std::uin
         co_return std::make_pair(boost::asio::error::fault, std::vector<std::uint8_t>{});
     }
 
-    const std::uint16_t len = static_cast<std::uint16_t>((static_cast<std::uint16_t>(head[3]) << 8) | static_cast<std::uint16_t>(head[4]));
+    const auto len = static_cast<std::uint16_t>((static_cast<std::uint16_t>(head[3]) << 8) | static_cast<std::uint16_t>(head[4]));
     if (const auto len_res = validate_record_length(len); !len_res)
     {
         LOG_CTX_ERROR(ctx_, "{} plaintext record too large {}", mux::log_event::kCert, len);
@@ -613,7 +600,7 @@ cert_fetcher::fetch_session::read_record(std::vector<std::uint8_t>& pt_buf)
         co_return std::unexpected(ec);
     }
 
-    const std::uint16_t len = static_cast<std::uint16_t>((static_cast<std::uint16_t>(head[3]) << 8) | static_cast<std::uint16_t>(head[4]));
+    const auto len = static_cast<std::uint16_t>((static_cast<std::uint16_t>(head[3]) << 8) | static_cast<std::uint16_t>(head[4]));
     if (const auto res = validate_record_length(len); !res)
     {
         co_return std::unexpected(res.error());

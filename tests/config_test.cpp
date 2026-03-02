@@ -218,7 +218,7 @@ TEST_F(config_test_fixture, ParseValues)
         EXPECT_EQ(cfg.timeout.write, 22U);
         EXPECT_EQ(cfg.timeout.connect, 23U);
         EXPECT_EQ(cfg.timeout.idle, 24U);
-        EXPECT_EQ(cfg.queues.udp_session_recv_channel_capacity, 256U);
+        EXPECT_EQ(cfg.queues.udp_channel_capacity, 256U);
         EXPECT_EQ(cfg.queues.tproxy_udp_dispatch_queue_capacity, 4096U);
         EXPECT_EQ(cfg.limits.max_connections_per_source, 3U);
         EXPECT_EQ(cfg.limits.source_prefix_v4, 24U);
@@ -927,7 +927,7 @@ TEST_F(config_test_fixture, MissingFieldsUseDefaults)
     EXPECT_TRUE(cfg_opt->reality.public_key.empty());
     EXPECT_TRUE(cfg_opt->reality.fallback_guard.enabled);
     EXPECT_EQ(cfg_opt->timeout.connect, 10U);
-    EXPECT_EQ(cfg_opt->queues.udp_session_recv_channel_capacity, 512U);
+    EXPECT_EQ(cfg_opt->queues.udp_channel_capacity, 512U);
     EXPECT_EQ(cfg_opt->queues.tproxy_udp_dispatch_queue_capacity, 512U);
     EXPECT_EQ(cfg_opt->limits.max_handshake_records, 256U);
 }
@@ -1477,7 +1477,7 @@ TEST_F(config_test_fixture, ContractMatrixQueueRulesStayAlignedWithDocumentation
     })");
     auto parsed = mux::parse_config_with_error(tmp_file());
     ASSERT_TRUE(parsed.has_value());
-    EXPECT_EQ(parsed->queues.udp_session_recv_channel_capacity, 1024U);
+    EXPECT_EQ(parsed->queues.udp_channel_capacity, 1024U);
     EXPECT_EQ(parsed->queues.tproxy_udp_dispatch_queue_capacity, 8192U);
 
     write_config_file(R"({

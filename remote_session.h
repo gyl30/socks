@@ -11,34 +11,29 @@
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/system/error_code.hpp>
-#include <boost/asio/experimental/concurrent_channel.hpp>
 
+#include "config.h"
+#include "mux_stream.h"
 #include "mux_tunnel.h"
 #include "log_context.h"
 #include "mux_protocol.h"
 #include "mux_connection.h"
-#include "mux_stream_interface.h"
 
 namespace mux
 {
 
-class remote_session : public mux_stream_interface, public std::enable_shared_from_this<remote_session>
+class remote_tcp_session : std::enable_shared_from_this<remote_tcp_session>
 {
    public:
-    remote_session(const std::shared_ptr<mux_connection>& connection,
-                   std::uint32_t id,
-                   boost::asio::io_context& io_context,
-                   const connection_context& ctx,
-                   std::uint32_t connect_timeout_sec = 10,
-                   std::uint32_t write_timeout_sec = 10,
-                   std::uint32_t idle_timeout_sec = 0);
+    remote_tcp_session(const std::shared_ptr<mux_connection>& connection,
+                       std::uint32_t id,
+                       boost::asio::io_context& io_context,
+                       const connection_context& ctx,
+                       const config& cfg);
 
     [[nodiscard]] boost::asio::awaitable<void> start(const syn_payload& syn);
 
-    void on_data(std::vector<std::uint8_t> data) override;
-    void on_close() override;
-    void on_reset() override;
-    void set_manager(const std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>>& m) { manager_ = m; }
+    void set_manager(const std::shared_ptr<mux_tunnel_impl>& m) { manager_ = m; }
 
    private:
     [[nodiscard]] boost::asio::awaitable<void> run(const syn_payload& syn);
@@ -50,20 +45,15 @@ class remote_session : public mux_stream_interface, public std::enable_shared_fr
 
    private:
     std::uint32_t id_;
+    const config& cfg_;
     connection_context ctx_;
     boost::asio::io_context& io_context_;
-    boost::asio::ip::tcp::resolver resolver_;
-    boost::asio::ip::tcp::socket target_socket_;
+    boost::asio::ip::tcp::socket socket_;
     boost::asio::steady_timer idle_timer_;
+    std::shared_ptr<mux_stream> stream_;
     std::weak_ptr<mux_connection> connection_;
-    boost::asio::experimental::concurrent_channel<void(boost::system::error_code, std::vector<std::uint8_t>)> recv_channel_;
-    std::weak_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> manager_;
-    std::atomic<bool> reset_requested_{false};
-    std::atomic<bool> fin_requested_{false};
-    std::atomic<std::uint64_t> last_activity_time_ms_{0};
-    std::uint32_t connect_timeout_sec_ = 10;
-    std::uint32_t write_timeout_sec_ = 10;
-    std::uint32_t idle_timeout_sec_ = 0;
+    std::weak_ptr<mux_tunnel_impl> manager_;
+    std::uint64_t last_activity_time_ms_{0};
 };
 
 }    // namespace mux

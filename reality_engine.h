@@ -1,6 +1,7 @@
 #ifndef REALITY_ENGINE_H
 #define REALITY_ENGINE_H
 
+#include <boost/asio/awaitable.hpp>
 #include <span>
 #include <memory>
 #include <vector>
@@ -21,7 +22,7 @@ namespace mux
 class reality_engine
 {
    public:
-    using record_callback = std::function<void(std::uint8_t, std::span<const std::uint8_t>)>;
+    using record_callback = std::function<boost::asio::awaitable<void>(std::uint8_t, std::span<const std::uint8_t>, boost::system::error_code&)>;
 
     static constexpr auto kInitialBufSize = 16 * 1024;
     static constexpr auto kMaxBufSize = 64 * 1024;
@@ -39,12 +40,12 @@ class reality_engine
 
     void commit_read(const std::size_t n) const { rx_buf_->commit(n); }
 
-    [[nodiscard]] std::expected<void, boost::system::error_code> process_available_records(const record_callback& callback);
+    [[nodiscard]] boost::asio::awaitable<void> process_available_records(const record_callback& callback, boost::system::error_code& ec);
 
-    [[nodiscard]] std::expected<std::span<const std::uint8_t>, boost::system::error_code> encrypt(const std::vector<std::uint8_t>& plaintext);
+    [[nodiscard]] std::span<const std::uint8_t> encrypt(const std::vector<std::uint8_t>& plaintext, boost::system::error_code& ec);
 
    private:
-    [[nodiscard]] std::expected<bool, boost::system::error_code> try_decrypt_next_record(std::uint8_t& content_type, std::size_t& payload_len);
+    void try_decrypt_next_record(std::uint8_t& content_type, std::size_t& payload_len, boost::system::error_code& ec);
 
     std::vector<std::uint8_t> read_key_;
     std::vector<std::uint8_t> read_iv_;

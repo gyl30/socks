@@ -13,85 +13,56 @@
 #include "mux_stream.h"
 #include "mux_connection.h"
 #include "reality_engine.h"
-#include "mux_stream_interface.h"
 
 namespace mux
 {
 
-template <typename stream_layer>
-class mux_tunnel_impl : public std::enable_shared_from_this<mux_tunnel_impl<stream_layer>>
+class mux_tunnel_impl : public std::enable_shared_from_this<mux_tunnel_impl>
 {
    public:
-    explicit mux_tunnel_impl(stream_layer socket,
+    explicit mux_tunnel_impl(boost::asio::ip::tcp::socket socket,
                              boost::asio::io_context& io_context,
                              reality_engine engine,
-                             bool is_client,
+                             const config& cfg,
+                             task_group& group,
                              std::uint32_t conn_id,
-                             const std::string& trace_id = "",
-                             const config::timeout_t& timeout_cfg = {},
-                             const config::limits_t& limits_cfg = {},
-                             const config::heartbeat_t& heartbeat_cfg = {})
-        : connection_(std::make_shared<mux_connection>(
-              std::move(socket), io_context, std::move(engine), is_client, conn_id, trace_id, timeout_cfg, limits_cfg, heartbeat_cfg))
+                             const std::string& trace_id = "")
+        : connection_(std::make_shared<mux_connection>(std::move(socket), io_context, std::move(engine), cfg, group, conn_id, trace_id))
     {
     }
 
     [[nodiscard]] std::shared_ptr<mux_connection> connection() const { return connection_; }
 
-    [[nodiscard]] bool register_stream(std::uint32_t id, std::shared_ptr<mux_stream_interface> stream) const
+    void run()
     {
         if (connection_ == nullptr)
         {
-            return false;
+            return;
         }
-        return connection_->register_stream(id, std::move(stream));
+        connection_->start();
     }
-
-    [[nodiscard]] bool try_register_stream(std::uint32_t id, std::shared_ptr<mux_stream_interface> stream) const
+    void set_new_stream_cb(std::function<boost::asio::awaitable<void>(mux_frame)> cb)
     {
         if (connection_ == nullptr)
         {
-            return false;
+            return;
         }
-        if (connection_->try_register_stream(id, std::move(stream)))    // GCOVR_EXCL_LINE
-        {
-            return true;
-        }
-        return false;
+        connection_->set_new_stream_cb(std::move(cb));
     }
-
-    boost::asio::awaitable<void> run() const    // GCOVR_EXCL_LINE
-    {
-        if (connection_ == nullptr)
-        {
-            co_return;
-        }
-        co_await connection_->start();
-    }
-
-    [[nodiscard]] std::shared_ptr<mux_stream> create_stream(const std::string& trace_id = "")
+    [[nodiscard]] std::shared_ptr<mux_stream> create_stream()
     {
         if (connection_ == nullptr)
         {
             return nullptr;
         }
-        return connection_->create_stream(trace_id);
+        return connection_->create_stream();
     }
 
-    [[nodiscard]] boost::asio::awaitable<std::shared_ptr<mux_stream>> create_stream_async(const std::string& trace_id = "")
-    {
-        if (connection_ == nullptr)
-        {
-            co_return nullptr;
-        }
-        co_return co_await connection_->create_stream_async(trace_id);
-    }
-
-    void remove_stream(std::uint32_t id) const
+    void remove_stream(const std::shared_ptr<mux_stream>& stream) const
     {
         if (connection_ != nullptr)
         {
-            connection_->remove_stream(id);
+            connection_->remove_stream(stream);
         }
     }
 
