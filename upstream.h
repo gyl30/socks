@@ -7,8 +7,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <utility>
-#include <expected>
-#include <optional>
 
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/awaitable.hpp>
@@ -19,6 +17,7 @@
 #include "mux_stream.h"
 #include "mux_tunnel.h"
 #include "log_context.h"
+#include "mux_protocol.h"
 
 namespace mux
 {
@@ -26,114 +25,64 @@ namespace mux
 class upstream
 {
    public:
-    struct bind_endpoint
-    {
-        std::string addr;
-        std::uint16_t port = 0;
-    };
-
     virtual ~upstream() = default;
 
-    [[nodiscard]] virtual boost::asio::awaitable<bool> connect(const std::string& host, std::uint16_t port) = 0;
-    [[nodiscard]] virtual std::uint8_t connect_failure_reply() const = 0;
-    [[nodiscard]] virtual std::optional<bind_endpoint> connected_bind_endpoint() const = 0;
-
-    [[nodiscard]] virtual boost::asio::awaitable<std::pair<boost::system::error_code, std::size_t>> read(std::vector<std::uint8_t>& buf) = 0;
-
-    [[nodiscard]] virtual boost::asio::awaitable<std::size_t> write(const std::vector<std::uint8_t>& data) = 0;
-
-    [[nodiscard]] virtual boost::asio::awaitable<std::size_t> write(const std::uint8_t* data, const std::size_t len)
-    {
-        if (data == nullptr || len == 0)
-        {
-            co_return 0;
-        }
-        const std::vector<std::uint8_t> payload(data, data + len);
-        co_return co_await write(payload);
-    }
-
-    virtual boost::asio::awaitable<void> shutdown_send() = 0;
+   public:
     virtual boost::asio::awaitable<void> close() = 0;
+    virtual boost::asio::awaitable<void> connect(const std::string& host, std::uint16_t port, boost::system::error_code& ec) = 0;
+    virtual boost::asio::awaitable<void> write(const std::vector<std::uint8_t>& data, boost::system::error_code& ec) = 0;
+    [[nodiscard]] virtual boost::asio::awaitable<std::size_t> read(std::vector<std::uint8_t>& buf, boost::system::error_code& ec) = 0;
 };
 
 class direct_upstream : public upstream
 {
    public:
-    explicit direct_upstream(boost::asio::io_context& io_context,
-                             connection_context ctx,
-                             const std::uint32_t mark = 0,
-                             const std::uint32_t connect_timeout_sec = 10,
-                             const std::uint32_t write_timeout_sec = 0)
-        : socket_(io_context),
-          resolver_(io_context),
-          ctx_(std::move(ctx)),
-          mark_(mark),
-          connect_timeout_sec_(connect_timeout_sec),
-          write_timeout_sec_(write_timeout_sec)
+    explicit direct_upstream(boost::asio::io_context& io_context, connection_context ctx, const config& cfg)
+        : cfg_(cfg), ctx_(std::move(ctx)), socket_(io_context), resolver_(io_context)
     {
     }
 
-    boost::asio::awaitable<bool> connect(const std::string& host, std::uint16_t port) override;
-    std::uint8_t connect_failure_reply() const override;
-    std::optional<bind_endpoint> connected_bind_endpoint() const override;
-
-    boost::asio::awaitable<std::pair<boost::system::error_code, std::size_t>> read(std::vector<std::uint8_t>& buf) override;
-
-    boost::asio::awaitable<std::size_t> write(const std::vector<std::uint8_t>& data) override;
-    boost::asio::awaitable<std::size_t> write(const std::uint8_t* data, std::size_t len) override;
-
-    boost::asio::awaitable<void> shutdown_send() override;
+   public:
     boost::asio::awaitable<void> close() override;
+    boost::asio::awaitable<void> connect(const std::string& host, std::uint16_t port, boost::system::error_code& ec) override;
+    boost::asio::awaitable<void> write(const std::vector<std::uint8_t>& data, boost::system::error_code& ec) override;
+    [[nodiscard]] boost::asio::awaitable<std::size_t> read(std::vector<std::uint8_t>& buf, boost::system::error_code& ec) override;
 
    private:
-    std::expected<void, boost::system::error_code> open_socket_for_endpoint(const boost::asio::ip::tcp::endpoint& endpoint);
-    void apply_socket_mark();
-    void apply_no_delay();
-
-   private:
+    const config& cfg_;
+    connection_context ctx_;
     boost::asio::ip::tcp::socket socket_;
     boost::asio::ip::tcp::resolver resolver_;
-    connection_context ctx_;
-    std::uint32_t mark_ = 0;
-    std::uint32_t connect_timeout_sec_ = 10;
-    std::uint32_t write_timeout_sec_ = 0;
-    std::uint8_t last_connect_reply_ = socks::kRepHostUnreach;
 };
 
 class proxy_upstream : public upstream
 {
    public:
-    explicit proxy_upstream(std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> tunnel,
-                            connection_context ctx,
-                            std::uint32_t timeout_sec = 10);
+    explicit proxy_upstream(std::shared_ptr<mux_tunnel_impl> tunnel, connection_context ctx, const config& cfg);
 
-    boost::asio::awaitable<bool> connect(const std::string& host, std::uint16_t port) override;
-    std::uint8_t connect_failure_reply() const override;
-    std::optional<bind_endpoint> connected_bind_endpoint() const override;
-
-    boost::asio::awaitable<std::pair<boost::system::error_code, std::size_t>> read(std::vector<std::uint8_t>& buf) override;
-
-    boost::asio::awaitable<std::size_t> write(const std::vector<std::uint8_t>& data) override;
-    boost::asio::awaitable<std::size_t> write(const std::uint8_t* data, std::size_t len) override;
-
-    boost::asio::awaitable<void> shutdown_send() override;
+   public:
     boost::asio::awaitable<void> close() override;
+    boost::asio::awaitable<void> connect(const std::string& host, std::uint16_t port, boost::system::error_code& ec) override;
+    boost::asio::awaitable<void> write(const std::vector<std::uint8_t>& data, boost::system::error_code& ec) override;
+    [[nodiscard]] boost::asio::awaitable<std::size_t> read(std::vector<std::uint8_t>& buf, boost::system::error_code& ec) override;
 
    private:
-    [[nodiscard]] bool is_tunnel_ready() const;
-    boost::asio::awaitable<bool> send_syn_request(const std::shared_ptr<mux_stream>& stream, const std::string& host, std::uint16_t port);
+    boost::asio::awaitable<void> send_syn_request(const std::shared_ptr<mux_stream>& stream,
+                                                  const std::string& host,
+                                                  std::uint16_t port,
+                                                  boost::system::error_code& ec);
     boost::asio::awaitable<bool> wait_connect_ack(const std::shared_ptr<mux_stream>& stream, const std::string& host, std::uint16_t port);
-    boost::asio::awaitable<void> cleanup_stream(const std::shared_ptr<mux_stream>& stream);
 
    private:
+    const config& cfg_;
     connection_context ctx_;
     std::shared_ptr<mux_stream> stream_;
-    std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> tunnel_;
-    std::uint32_t timeout_sec_ = 10;
-    std::uint8_t last_connect_reply_ = socks::kRepHostUnreach;
-    std::optional<bind_endpoint> bind_endpoint_;
+    std::shared_ptr<mux_tunnel_impl> tunnel_;
+    using channel_type =
+        boost::asio::experimental::concurrent_channel<void(boost::system::error_code, std::pair<frame_header, std::vector<uint8_t>>)>;
+    std::unique_ptr<channel_type> recv_channel_;
 };
 
-}
+}    // namespace mux
 
 #endif

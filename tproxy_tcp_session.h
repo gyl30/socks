@@ -19,9 +19,9 @@
 #include "config.h"
 #include "router.h"
 #include "upstream.h"
+#include "task_group.h"
 #include "log_context.h"
 #include "client_tunnel_pool.h"
-
 namespace mux
 {
 
@@ -34,39 +34,17 @@ class tproxy_tcp_session : public std::enable_shared_from_this<tproxy_tcp_sessio
                        std::shared_ptr<router> router,
                        std::uint32_t sid,
                        const config& cfg,
-                       boost::asio::ip::tcp::endpoint dst_ep,
-                       std::shared_ptr<boost::asio::cancellation_signal> stop_signal = nullptr);
+                       task_group& group_);
 
     void start();
     void stop();
 
    private:
-    [[nodiscard]] static boost::asio::awaitable<void> run_detached(std::shared_ptr<tproxy_tcp_session> self);
     [[nodiscard]] boost::asio::awaitable<void> run();
-    [[nodiscard]] boost::asio::awaitable<std::pair<route_type, std::shared_ptr<upstream>>> select_backend(const std::string& host);
-    [[nodiscard]] boost::asio::awaitable<bool> connect_backend(const std::shared_ptr<upstream>& backend,
-                                                               const std::string& host,
-                                                               std::uint16_t port,
-                                                               route_type route);
-
+    [[nodiscard]] boost::asio::awaitable<std::pair<route_type, std::shared_ptr<upstream>>> select_backend(const boost::asio::ip::address& addr);
     [[nodiscard]] boost::asio::awaitable<void> client_to_upstream(std::shared_ptr<upstream> backend);
-    [[nodiscard]] bool should_stop_client_read(const boost::system::error_code& ec, std::size_t n) const;
-    [[nodiscard]] boost::asio::awaitable<bool> write_client_chunk_to_backend(const std::shared_ptr<upstream>& backend,
-                                                                             const std::vector<std::uint8_t>& buf,
-                                                                             std::size_t n);
-
     [[nodiscard]] boost::asio::awaitable<void> upstream_to_client(std::shared_ptr<upstream> backend);
-    [[nodiscard]] bool should_stop_backend_read(const boost::system::error_code& ec, std::size_t n) const;
-    [[nodiscard]] boost::asio::awaitable<bool> write_backend_chunk_to_client(const std::vector<std::uint8_t>& buf, std::size_t n);
-    void shutdown_client_send();
-
-    [[nodiscard]] static boost::asio::awaitable<void> idle_watchdog_detached(std::shared_ptr<tproxy_tcp_session> self,
-                                                                             std::shared_ptr<upstream> backend);
-    [[nodiscard]] boost::asio::awaitable<void> idle_watchdog(std::shared_ptr<upstream> backend);
-    [[nodiscard]] boost::asio::awaitable<void> close_backend_once(const std::shared_ptr<upstream>& backend);
-
-    void start_idle_watchdog(const std::shared_ptr<upstream>& backend);
-    void close_client_socket();
+    [[nodiscard]] boost::asio::awaitable<void> idle_watchdog();
 
    private:
     connection_context ctx_;
@@ -75,12 +53,10 @@ class tproxy_tcp_session : public std::enable_shared_from_this<tproxy_tcp_sessio
     boost::asio::steady_timer idle_timer_;
     std::shared_ptr<client_tunnel_pool> tunnel_pool_;
     std::shared_ptr<router> router_;
-    boost::asio::ip::tcp::endpoint dst_ep_;
-    config::timeout_t timeout_config_;
-    std::uint32_t mark_ = 0;
-    std::atomic<std::uint64_t> last_activity_time_ms_{0};
+    const config& cfg_;
+    task_group& group_;
+    std::uint64_t last_activity_time_ms_{0};
     std::atomic<bool> backend_closed_{false};
-    std::shared_ptr<boost::asio::cancellation_signal> stop_signal_;
 };
 
 }    // namespace mux
