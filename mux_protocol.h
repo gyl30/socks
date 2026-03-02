@@ -28,6 +28,12 @@ struct frame_header
     std::uint8_t command = 0;
 };
 
+struct mux_frame
+{
+    frame_header h;
+    std::vector<std::uint8_t> payload;
+};
+
 struct syn_payload
 {
     std::uint8_t socks_cmd = 0;
