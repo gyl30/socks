@@ -311,10 +311,10 @@ TEST(UdpSocksSessionTest, StreamToUdpSockForwardsDataToTrackedEndpoint)
     recv_socket.non_blocking(true, ec);
     ASSERT_FALSE(ec);
 
-    session->has_client_ep_ = true;
-    session->client_ep_ = recv_socket.local_endpoint(ec);
+    session->has_client_addr_ = true;
+    session->client_addr_ = recv_socket.local_endpoint(ec);
     ASSERT_FALSE(ec);
-    ASSERT_NE(session->client_ep_.port(), 0);
+    ASSERT_NE(session->client_addr_.port(), 0);
 
     session->on_data({0x51, 0x52, 0x53});
     boost::asio::steady_timer stop_timer(ctx);
@@ -339,11 +339,11 @@ TEST(UdpSocksSessionTest, ForwardStreamDataToClientHandlesZeroPortAndSendError)
     mux::config::timeout_t const timeout_cfg;
     auto session = std::make_shared<mux::udp_socks_session>(boost::asio::ip::tcp::socket(ctx), ctx, nullptr, 32, timeout_cfg);
 
-    session->has_client_ep_ = true;
-    session->client_ep_ = {boost::asio::ip::make_address("127.0.0.1"), 0};
+    session->has_client_addr_ = true;
+    session->client_addr_ = {boost::asio::ip::make_address("127.0.0.1"), 0};
     mux::test::run_awaitable_void(ctx, session->forward_stream_data_to_client(std::vector<std::uint8_t>{0x01}));
 
-    session->client_ep_ = {boost::asio::ip::make_address("127.0.0.1"), 5353};
+    session->client_addr_ = {boost::asio::ip::make_address("127.0.0.1"), 5353};
     mux::test::run_awaitable_void(ctx, session->forward_stream_data_to_client(std::vector<std::uint8_t>{0x02}));
 }
 
@@ -448,8 +448,8 @@ TEST(UdpSocksSessionTest, UdpSockToStreamValidationBranches)
         runner.join();
     }
 
-    EXPECT_TRUE(session->has_client_ep_);
-    EXPECT_NE(session->client_ep_.port(), 0);
+    EXPECT_TRUE(session->has_client_addr_);
+    EXPECT_NE(session->client_addr_.port(), 0);
 }
 
 TEST(UdpSocksSessionTest, UdpSockToStreamDropsMessageSizeAndContinues)
@@ -581,9 +581,9 @@ TEST(UdpSocksSessionTest, UdpSockToStreamRespectsExpectedClientEndpointOnFirstPa
         runner.join();
     }
 
-    EXPECT_TRUE(session->has_client_ep_);
-    EXPECT_EQ(session->client_ep_.address(), expected_ep.address());
-    EXPECT_EQ(session->client_ep_.port(), expected_ep.port());
+    EXPECT_TRUE(session->has_client_addr_);
+    EXPECT_EQ(session->client_addr_.address(), expected_ep.address());
+    EXPECT_EQ(session->client_addr_.port(), expected_ep.port());
 }
 
 TEST(UdpSocksSessionTest, UdpSockToStreamAcceptsMappedAndUnmappedSameClientEndpoint)
@@ -617,8 +617,8 @@ TEST(UdpSocksSessionTest, UdpSockToStreamAcceptsMappedAndUnmappedSameClientEndpo
     mapped_bytes[13] = v4_bytes[1];
     mapped_bytes[14] = v4_bytes[2];
     mapped_bytes[15] = v4_bytes[3];
-    session->client_ep_ = boost::asio::ip::udp::endpoint(boost::asio::ip::address_v6(mapped_bytes), sender_ep.port());
-    session->has_client_ep_ = true;
+    session->client_addr_ = boost::asio::ip::udp::endpoint(boost::asio::ip::address_v6(mapped_bytes), sender_ep.port());
+    session->has_client_addr_ = true;
 
     auto conn = std::make_shared<mux::mock_mux_connection>(ctx);
     EXPECT_CALL(*conn, mock_send_async(4, mux::kCmdDat, testing::_)).Times(1).WillOnce(testing::Return(boost::system::error_code{}));

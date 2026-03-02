@@ -1,4 +1,3 @@
-#include <atomic>
 #include <chrono>
 #include <memory>
 #include <string>
@@ -6,7 +5,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <utility>
-#include <algorithm>
 
 #include <boost/asio/error.hpp>
 #include <boost/asio/write.hpp>
@@ -32,6 +30,7 @@
 #include "mux_tunnel.h"
 #include "statistics.h"
 #include "timeout_io.h"
+#include "scoped_exit.h"
 #include "log_context.h"
 #include "tcp_socks_session.h"
 
@@ -47,170 +46,93 @@ namespace
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
 }
 
-[[nodiscard]] const char* route_name(const route_type route) { return route == route_type::kDirect ? "direct" : "proxy"; }
-
-[[nodiscard]] bool is_expected_read_stop_error(const boost::system::error_code& ec)
-{
-    return ec == boost::asio::error::eof || ec == boost::asio::error::operation_aborted;
-}
-
-bool append_bind_endpoint(std::vector<std::uint8_t>& rep, const upstream::bind_endpoint& bind_endpoint)
-{
-    boost::system::error_code addr_ec;
-    auto bind_addr = boost::asio::ip::make_address(bind_endpoint.addr, addr_ec);
-    if (!addr_ec)
-    {
-        bind_addr = socks_codec::normalize_ip_address(bind_addr);
-        if (bind_addr.is_v4())
-        {
-            rep.push_back(socks::kAtypIpv4);
-            const auto bytes = bind_addr.to_v4().to_bytes();
-            rep.insert(rep.end(), bytes.begin(), bytes.end());
-        }
-        else
-        {
-            rep.push_back(socks::kAtypIpv6);
-            const auto bytes = bind_addr.to_v6().to_bytes();
-            rep.insert(rep.end(), bytes.begin(), bytes.end());
-        }
-    }
-    else
-    {
-        if (bind_endpoint.addr.empty() || bind_endpoint.addr.size() > 255 ||
-            std::find(bind_endpoint.addr.begin(), bind_endpoint.addr.end(), '\0') != bind_endpoint.addr.end())
-        {
-            return false;
-        }
-        rep.push_back(socks::kAtypDomain);
-        rep.push_back(static_cast<std::uint8_t>(bind_endpoint.addr.size()));
-        rep.insert(rep.end(), bind_endpoint.addr.begin(), bind_endpoint.addr.end());
-    }
-
-    rep.push_back(static_cast<std::uint8_t>((bind_endpoint.port >> 8) & 0xFF));
-    rep.push_back(static_cast<std::uint8_t>(bind_endpoint.port & 0xFF));
-    return true;
-}
-
-void log_read_stop(const connection_context& ctx, const char* source, const boost::system::error_code& ec)
-{
-    if (!ec)
-    {
-        LOG_CTX_DEBUG(ctx, "{} {} read stopped", log_event::kSocks, source);
-        return;
-    }
-    if (is_expected_read_stop_error(ec))
-    {
-        LOG_CTX_DEBUG(ctx, "{} {} read stopped {}", log_event::kSocks, source, ec.message());
-        return;
-    }
-    LOG_CTX_WARN(ctx, "{} failed to read from {} {}", log_event::kSocks, source, ec.message());
-}
-
-boost::asio::awaitable<timeout_io::timed_tcp_write_result> write_client_with_optional_timeout(boost::asio::ip::tcp::socket& socket,
-                                                                                               const boost::asio::const_buffer& buffer,
-                                                                                               const std::uint32_t timeout_sec)
-{
-    if (timeout_sec == 0)
-    {
-        const auto [write_ec, write_size] = co_await boost::asio::async_write(socket, buffer, boost::asio::as_tuple(boost::asio::use_awaitable));
-        co_return timeout_io::timed_tcp_write_result{
-            .ok = !write_ec,
-            .timed_out = false,
-            .write_size = write_size,
-            .ec = write_ec,
-        };
-    }
-
-    co_return co_await timeout_io::async_write_with_timeout(socket, buffer, timeout_sec, "tcp socks session");
-}
-
-}
+}    // namespace
 
 tcp_socks_session::tcp_socks_session(boost::asio::ip::tcp::socket socket,
                                      boost::asio::io_context& io_context,
-                                     std::shared_ptr<mux_tunnel_impl<boost::asio::ip::tcp::socket>> tunnel_manager,
+                                     std::shared_ptr<mux_tunnel_impl> tunnel_manager,
                                      std::shared_ptr<router> router,
                                      const std::uint32_t sid,
-                                     const config::timeout_t& timeout_cfg,
-                                     std::shared_ptr<void> active_connection_guard,
-                                     std::shared_ptr<boost::asio::cancellation_signal> stop_signal)
-    : io_context_(io_context),
+                                     const config& cfg,
+                                     task_group& group,
+                                     std::shared_ptr<void> active_connection_guard)
+    : cfg_(cfg),
+      group_(group),
+      io_context_(io_context),
       socket_(std::move(socket)),
       idle_timer_(io_context_),
       router_(std::move(router)),
       tunnel_manager_(std::move(tunnel_manager)),
-      active_connection_guard_(std::move(active_connection_guard)),
-      stop_signal_(std::move(stop_signal)),
-      timeout_config_(timeout_cfg)
+      active_connection_guard_(std::move(active_connection_guard))
 {
     ctx_.new_trace_id();
     ctx_.conn_id(sid);
-    last_activity_time_ms_.store(now_ms(), std::memory_order_release);
+    last_activity_time_ms_ = now_ms();
 }
 
 void tcp_socks_session::start(const std::string& host, const std::uint16_t port)
 {
-    if (stop_signal_ != nullptr)
-    {
-        boost::asio::co_spawn(io_context_,
-                              run_detached(shared_from_this(), host, port),
-                              boost::asio::bind_cancellation_slot(stop_signal_->slot(), boost::asio::detached));
-        return;
-    }
-    boost::asio::co_spawn(io_context_, run_detached(shared_from_this(), host, port), boost::asio::detached);
+    boost::asio::co_spawn(
+        io_context_,
+        [self = shared_from_this(), host = host, port = port]() -> boost::asio::awaitable<void> { co_return co_await self->run(host, port); },
+        group_.adapt(boost::asio::detached));
 }
 
-void tcp_socks_session::stop()
-{
-    close_client_socket();
-}
-
-boost::asio::awaitable<void> tcp_socks_session::run_detached(std::shared_ptr<tcp_socks_session> self, std::string host, const std::uint16_t port)
-{
-    co_await self->run(host, port);
-}
+void tcp_socks_session::stop() {}
 
 boost::asio::awaitable<void> tcp_socks_session::run(const std::string& host, const std::uint16_t port)
 {
+    DEFER(close_client_socket());
+
     if (router_ == nullptr)
     {
         LOG_CTX_ERROR(ctx_, "{} router unavailable", log_event::kRoute);
         co_await reply_error(socks::kRepGenFail);
-        close_client_socket();
         co_return;
     }
 
-    const auto route = co_await router_->decide(ctx_, host);
+    boost::system::error_code parse_ec;
+    const auto target_addr = boost::asio::ip::make_address(host, parse_ec);
+    route_type route = route_type::kProxy;
+    if (parse_ec)
+    {
+        route = co_await router_->decide_domain(ctx_, host);
+    }
+    else
+    {
+        route = co_await router_->decide_ip(ctx_, target_addr);
+    }
+
     const auto backend = create_backend(route);
     if (backend == nullptr)
     {
         LOG_CTX_WARN(ctx_, "{} blocked host {}", log_event::kRoute, host);
         statistics::instance().inc_routing_blocked();
         co_await reply_error(socks::kRepNotAllowed);
-        close_client_socket();
         co_return;
     }
-
     if (!co_await connect_backend(backend, host, port, route))
     {
-        co_await close_backend_once(backend);
-        close_client_socket();
+        co_await backend->close();
         co_return;
     }
 
-    if (!co_await reply_success(backend))
+    if (!co_await reply_success())
     {
-        co_await close_backend_once(backend);
-        close_client_socket();
+        co_await backend->close();
         co_return;
     }
 
-    LOG_CTX_INFO(ctx_, "{} connected {} {} via {}", log_event::kConnEstablished, host, port, route_name(route));
-    start_idle_watchdog(backend);
+    LOG_CTX_INFO(ctx_, "{} connected {} {} via {}", log_event::kConnEstablished, host, port, mux::to_string(route));
+
+    if (cfg_.timeout.idle != 0)
+    {
+        boost::asio::co_spawn(io_context_, idle_watchdog_detached(shared_from_this(), backend), group_.adapt(boost::asio::detached));
+    }
     using boost::asio::experimental::awaitable_operators::operator&&;
     co_await (client_to_upstream(backend) && upstream_to_client(backend));
-    co_await close_backend_once(backend);
-    close_client_socket();
+
+    co_await backend->close();
     LOG_CTX_INFO(ctx_, "{} finished {}", log_event::kConnClose, ctx_.stats_summary());
 }
 
@@ -218,11 +140,11 @@ std::shared_ptr<upstream> tcp_socks_session::create_backend(const route_type rou
 {
     if (route == route_type::kDirect)
     {
-        return std::make_shared<direct_upstream>(io_context_, ctx_, 0, timeout_config_.connect, timeout_config_.write);
+        return std::make_shared<direct_upstream>(io_context_, ctx_, cfg_);
     }
     if (route == route_type::kProxy)
     {
-        return std::make_shared<proxy_upstream>(tunnel_manager_, ctx_, timeout_config_.connect);
+        return std::make_shared<proxy_upstream>(tunnel_manager_, ctx_, cfg_);
     }
     return nullptr;
 }
@@ -232,18 +154,32 @@ boost::asio::awaitable<bool> tcp_socks_session::connect_backend(const std::share
                                                                 const std::uint16_t port,
                                                                 const route_type route)
 {
-    LOG_CTX_INFO(ctx_, "{} connecting {} {} via {}", log_event::kConnInit, host, port, route_name(route));
-    if (co_await backend->connect(host, port))
+    LOG_CTX_INFO(ctx_, "{} connecting {} {} via {}", log_event::kConnInit, host, port, mux::to_string(route));
+    boost::system::error_code ec;
+    co_await backend->connect(host, port, ec);
+    if (!ec)
     {
         co_return true;
     }
 
-    LOG_CTX_WARN(ctx_, "{} connect failed {} {} via {}", log_event::kConnInit, host, port, route_name(route));
-    co_await reply_error(backend->connect_failure_reply());
+    LOG_CTX_WARN(ctx_, "{} connect failed {} {} via {}", log_event::kConnInit, host, port, mux::to_string(route));
+    co_await reply_error(socks::kRepHostUnreach);
     co_return false;
 }
 
-boost::asio::awaitable<bool> tcp_socks_session::reply_success(const std::shared_ptr<upstream>& backend)
+boost::asio::awaitable<void> tcp_socks_session::reply_error(const std::uint8_t code)
+{
+    std::uint8_t err[] = {socks::kVer, code, 0, socks::kAtypIpv4, 0, 0, 0, 0, 0, 0};
+    boost::system::error_code ec;
+    co_await timeout_io::wait_write_with_timeout(socket_, boost::asio::buffer(err), cfg_.timeout.write, ec);
+    if (!ec)
+    {
+        co_return;
+    }
+    LOG_CTX_WARN(ctx_, "{} write error response failed {}", log_event::kSocks, ec.message());
+}
+
+boost::asio::awaitable<bool> tcp_socks_session::reply_success()
 {
     std::vector<std::uint8_t> rep;
     rep.reserve(22);
@@ -251,51 +187,18 @@ boost::asio::awaitable<bool> tcp_socks_session::reply_success(const std::shared_
     rep.push_back(socks::kRepSuccess);
     rep.push_back(0x00);
 
-    bool appended_bind = false;
-    if (backend != nullptr)
-    {
-        const auto bind_endpoint = backend->connected_bind_endpoint();
-        if (bind_endpoint.has_value())
-        {
-            appended_bind = append_bind_endpoint(rep, *bind_endpoint);
-            if (!appended_bind)
-            {
-                LOG_CTX_WARN(ctx_, "{} invalid backend bind endpoint {} {}", log_event::kSocks, bind_endpoint->addr, bind_endpoint->port);
-            }
-        }
-    }
-    if (!appended_bind)
-    {
-        LOG_CTX_WARN(ctx_, "{} backend bind endpoint unavailable fallback zero", log_event::kSocks);
-        rep.push_back(socks::kAtypIpv4);
-        rep.insert(rep.end(), {0, 0, 0, 0, 0, 0});
-    }
+    LOG_CTX_WARN(ctx_, "{} backend bind endpoint unavailable fallback zero", log_event::kSocks);
+    rep.push_back(socks::kAtypIpv4);
+    rep.insert(rep.end(), {0, 0, 0, 0, 0, 0});
 
-    const auto write_res = co_await write_client_with_optional_timeout(socket_, boost::asio::buffer(rep), timeout_config_.write);
-    if (write_res.ok)
+    boost::system::error_code ec;
+    co_await timeout_io::wait_write_with_timeout(socket_, boost::asio::buffer(rep), cfg_.timeout.write, ec);
+    if (!ec)
     {
         co_return true;
     }
-
-    if (write_res.timed_out)
-    {
-        LOG_CTX_WARN(ctx_, "{} write to client timeout {}s", log_event::kDataSend, timeout_config_.write);
-    }
-    else
-    {
-        LOG_CTX_WARN(ctx_, "{} write to client failed {}", log_event::kDataSend, write_res.ec.message());
-    }
+    LOG_CTX_WARN(ctx_, "{} write to client failed {}", log_event::kDataSend, ec.message());
     co_return false;
-}
-
-void tcp_socks_session::start_idle_watchdog(const std::shared_ptr<upstream>& backend)
-{
-    boost::asio::co_spawn(io_context_, idle_watchdog_detached(shared_from_this(), backend), boost::asio::detached);
-}
-
-boost::asio::awaitable<void> tcp_socks_session::idle_watchdog_detached(std::shared_ptr<tcp_socks_session> self, std::shared_ptr<upstream> backend)
-{
-    co_await self->idle_watchdog(std::move(backend));
 }
 
 void tcp_socks_session::close_client_socket()
@@ -315,127 +218,62 @@ void tcp_socks_session::close_client_socket()
     }
 }
 
-boost::asio::awaitable<void> tcp_socks_session::reply_error(const std::uint8_t code)
-{
-    std::uint8_t err[] = {socks::kVer, code, 0, socks::kAtypIpv4, 0, 0, 0, 0, 0, 0};
-    const auto write_res = co_await write_client_with_optional_timeout(socket_, boost::asio::buffer(err), timeout_config_.write);
-    if (write_res.ok)
-    {
-        co_return;
-    }
-    if (write_res.timed_out)
-    {
-        LOG_CTX_WARN(ctx_, "{} write error response timeout {}s", log_event::kSocks, timeout_config_.write);
-        co_return;
-    }
-    LOG_CTX_WARN(ctx_, "{} write error response failed {}", log_event::kSocks, write_res.ec.message());
-}
-
 boost::asio::awaitable<void> tcp_socks_session::client_to_upstream(std::shared_ptr<upstream> backend)
 {
+    boost::system::error_code ec;
     std::vector<std::uint8_t> buf(8192);
     for (;;)
     {
-        boost::system::error_code ec;
         const std::size_t n = co_await socket_.async_read_some(boost::asio::buffer(buf), boost::asio::redirect_error(boost::asio::use_awaitable, ec));
-        if (ec || n == 0)
+        if (ec)
         {
-            log_read_stop(ctx_, "client", ec);
-            if (!ec || ec == boost::asio::error::eof)
-            {
-                co_await backend->shutdown_send();
-            }
-            else
-            {
-                co_await close_backend_once(backend);
-            }
+            LOG_CTX_WARN(ctx_, "client_to_upstream read failed {}", ec.message());
             break;
         }
-
-        std::size_t total_written = 0;
-        bool write_failed = false;
-        while (total_written < n)
+        std::vector<uint8_t> data(buf.begin(), buf.begin() + static_cast<int>(n));
+        co_await backend->write(data, ec);
+        if (ec)
         {
-            const auto remaining = n - total_written;
-            const auto written = co_await backend->write(buf.data() + total_written, remaining);
-            if (written == 0 || written > remaining)
-            {
-                write_failed = true;
-                break;
-            }
-            total_written += written;
-        }
-        if (write_failed)
-        {
-            LOG_CTX_WARN(ctx_, "{} failed to write to backend", log_event::kSocks);
-            co_await close_backend_once(backend);
+            LOG_CTX_WARN(ctx_, "client_to_upstream write to backend failed {}", ec.message());
             break;
         }
-        ctx_.add_tx_bytes(total_written);
-        last_activity_time_ms_.store(now_ms(), std::memory_order_release);
+        ctx_.add_tx_bytes(n);
+        last_activity_time_ms_ = now_ms();
     }
-    LOG_CTX_INFO(ctx_, "{} client to upstream finished", log_event::kSocks);
+    LOG_CTX_INFO(ctx_, "client_to_upstream finished");
 }
 
 boost::asio::awaitable<void> tcp_socks_session::upstream_to_client(std::shared_ptr<upstream> backend)
 {
+    boost::system::error_code ec;
     std::vector<std::uint8_t> buf(8192);
     for (;;)
     {
-        const auto [ec, n] = co_await backend->read(buf);
-        if (ec || n == 0)
+        const auto n = co_await backend->read(buf, ec);
+        if (ec)
         {
-            log_read_stop(ctx_, "backend", ec);
+            LOG_CTX_WARN(ctx_, "upstream_to_client read failed {}", ec.message());
             break;
         }
-
-        const auto write_res = co_await write_client_with_optional_timeout(socket_, boost::asio::buffer(buf.data(), n), timeout_config_.write);
-        if (!write_res.ok)
+        auto write_size = co_await timeout_io::wait_write_with_timeout(socket_, boost::asio::buffer(buf.data(), n), cfg_.timeout.write, ec);
+        if (ec)
         {
-            if (write_res.timed_out)
-            {
-                LOG_CTX_WARN(ctx_, "{} failed to write to client timeout {}s", log_event::kSocks, timeout_config_.write);
-            }
-            else
-            {
-                LOG_CTX_WARN(ctx_, "{} failed to write to client {}", log_event::kSocks, write_res.ec.message());
-            }
+            LOG_CTX_WARN(ctx_, "upstream_to_client write failed {}", ec.message());
             break;
         }
-        ctx_.add_rx_bytes(write_res.write_size);
-        last_activity_time_ms_.store(now_ms(), std::memory_order_release);
+        ctx_.add_rx_bytes(write_size);
+        last_activity_time_ms_ = now_ms();
     }
-    LOG_CTX_INFO(ctx_, "{} upstream to client finished", log_event::kSocks);
-    boost::system::error_code ignore;
-    ignore = socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ignore);
-    if (ignore)
-    {
-        LOG_CTX_WARN(ctx_, "{} failed to shutdown client {}", log_event::kSocks, ignore.message());
-    }
+    LOG_CTX_INFO(ctx_, "upstream_to_client finished");
 }
 
-boost::asio::awaitable<void> tcp_socks_session::close_backend_once(const std::shared_ptr<upstream>& backend)
+boost::asio::awaitable<void> tcp_socks_session::idle_watchdog_detached(std::shared_ptr<tcp_socks_session> self, std::shared_ptr<upstream> backend)
 {
-    if (backend == nullptr)
-    {
-        co_return;
-    }
-
-    bool expected = false;
-    if (!backend_closed_.compare_exchange_strong(expected, true, std::memory_order_acq_rel))
-    {
-        co_return;
-    }
-
-    co_await backend->close();
+    co_await self->idle_watchdog(std::move(backend));
 }
-
 boost::asio::awaitable<void> tcp_socks_session::idle_watchdog(std::shared_ptr<upstream> backend)
 {
-    if (timeout_config_.idle == 0)
-    {
-        co_return;
-    }
+    const auto idle_timeout_ms = static_cast<std::uint64_t>(cfg_.timeout.idle) * 1000ULL;
 
     while (socket_.is_open())
     {
@@ -445,13 +283,11 @@ boost::asio::awaitable<void> tcp_socks_session::idle_watchdog(std::shared_ptr<up
         {
             break;
         }
-        const auto current_ms = now_ms();
-        const auto elapsed_ms = current_ms - last_activity_time_ms_.load(std::memory_order_acquire);
-        const auto idle_timeout_ms = static_cast<std::uint64_t>(timeout_config_.idle) * 1000ULL;
+        const auto elapsed_ms = now_ms() - last_activity_time_ms_;
         if (elapsed_ms > idle_timeout_ms)
         {
             LOG_CTX_WARN(ctx_, "{} tcp session idle closing", log_event::kSocks);
-            co_await close_backend_once(backend);
+            co_await backend->close();
             boost::system::error_code ignore;
             ignore = socket_.close(ignore);
             break;
@@ -459,4 +295,4 @@ boost::asio::awaitable<void> tcp_socks_session::idle_watchdog(std::shared_ptr<up
     }
 }
 
-}
+}    // namespace mux
