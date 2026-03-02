@@ -18,10 +18,23 @@
 namespace mux
 {
 
-namespace
+std::string to_string(const route_type& t)
 {
-
-std::vector<std::string> rule_search_dirs()
+    if (t == route_type::kDirect)
+    {
+        return "direct";
+    }
+    if (t == route_type::kProxy)
+    {
+        return "proxy";
+    }
+    if (t == route_type::kBlock)
+    {
+        return "block";
+    }
+    return "unknown";
+}
+static std::vector<std::string> rule_search_dirs()
 {
     std::vector<std::string> dirs;
     if (const char* env_dir = std::getenv("SOCKS_CONFIG_DIR"); env_dir != nullptr && env_dir[0] != '\0')
@@ -35,7 +48,7 @@ std::vector<std::string> rule_search_dirs()
     return dirs;
 }
 
-std::optional<std::string> resolve_rule_path(const std::string& filename)
+static std::optional<std::string> resolve_rule_path(const std::string& filename)
 {
     namespace fs = std::filesystem;
     for (const auto& dir : rule_search_dirs())
@@ -49,7 +62,7 @@ std::optional<std::string> resolve_rule_path(const std::string& filename)
     return std::nullopt;
 }
 
-bool load_ip_rule(const std::shared_ptr<ip_matcher>& matcher, const std::string& filename, const char* rule_name)
+static bool load_ip_rule(const std::shared_ptr<ip_matcher>& matcher, const std::string& filename, const char* rule_name)
 {
     const auto path = resolve_rule_path(filename);
     if (!path.has_value())
@@ -65,7 +78,7 @@ bool load_ip_rule(const std::shared_ptr<ip_matcher>& matcher, const std::string&
     return true;
 }
 
-bool load_domain_rule(const std::shared_ptr<domain_matcher>& matcher, const std::string& filename, const char* rule_name)
+static bool load_domain_rule(const std::shared_ptr<domain_matcher>& matcher, const std::string& filename, const char* rule_name)
 {
     const auto path = resolve_rule_path(filename);
     if (!path.has_value())
@@ -80,22 +93,6 @@ bool load_domain_rule(const std::shared_ptr<domain_matcher>& matcher, const std:
     }
     return true;
 }
-
-boost::asio::ip::address normalize_route_address(const boost::asio::ip::address& addr)
-{
-    if (!addr.is_v6())
-    {
-        return addr;
-    }
-    const auto v6 = addr.to_v6();
-    if (!v6.is_v4_mapped())
-    {
-        return addr;
-    }
-    return boost::asio::ip::make_address_v4(boost::asio::ip::v4_mapped, v6);
-}
-
-}    // namespace
 
 bool router::load()
 {
@@ -119,34 +116,18 @@ bool router::load()
     return load_ok;
 }
 
-boost::asio::awaitable<route_type> router::decide(const connection_context& ctx, const std::string& host) const
+boost::asio::awaitable<route_type> router::decide_ip(const connection_context& ctx, const boost::asio::ip::address& addr) const
 {
-    boost::system::error_code ec;
-    const auto addr = boost::asio::ip::make_address(host, ec);
-    if (ec)
-    {
-        LOG_CTX_WARN(ctx, "{} parse host failed {}", log_event::kRoute, ec.message());
-        co_return co_await decide_domain(ctx, host);
-    }
-    co_return co_await decide_ip(ctx, host, addr);
-}
-
-boost::asio::awaitable<route_type> router::decide_ip(const connection_context& ctx,
-                                                     const std::string& host,
-                                                     const boost::asio::ip::address& addr) const
-{
-    (void)host;
-    const auto normalized_addr = normalize_route_address(addr);
     if (block_ip_matcher_ == nullptr || direct_ip_matcher_ == nullptr)
     {
         LOG_CTX_WARN(ctx, "{} ip matcher unavailable fallback default proxy", log_event::kRoute);
     }
-    if (block_ip_matcher_ != nullptr && block_ip_matcher_->match(normalized_addr))
+    if (block_ip_matcher_ != nullptr && block_ip_matcher_->match(addr))
     {
         LOG_CTX_DEBUG(ctx, "{} matched ip rule block", log_event::kRoute);
         co_return route_type::kBlock;
     }
-    if (direct_ip_matcher_ != nullptr && direct_ip_matcher_->match(normalized_addr))
+    if (direct_ip_matcher_ != nullptr && direct_ip_matcher_->match(addr))
     {
         LOG_CTX_DEBUG(ctx, "{} matched ip rule direct", log_event::kRoute);
         co_return route_type::kDirect;
