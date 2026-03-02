@@ -1,15 +1,12 @@
 #include <span>
-#include <atomic>
 #include <chrono>
 #include <memory>
 #include <random>
 #include <ranges>
 #include <string>
 #include <vector>
-#include <cstddef>
 #include <cstdint>
 #include <utility>
-#include <expected>
 
 #include <boost/asio/error.hpp>
 #include <boost/asio/write.hpp>
@@ -35,140 +32,35 @@ extern "C"
 #include "log.h"
 #include "config.h"
 #include "mux_stream.h"
+#include "timeout_io.h"
 #include "statistics.h"
 #include "log_context.h"
 #include "mux_protocol.h"
 #include "reality_core.h"
-#include "stop_dispatch.h"
 #include "mux_connection.h"
 #include "reality_engine.h"
-#include "mux_stream_interface.h"
 
 namespace mux
 {
 
-namespace
-{
-
-bool can_take_over_registered_mux_stream(const std::shared_ptr<mux_stream_interface>& existing_stream,
-                                         const std::shared_ptr<mux_stream_interface>& replacement_stream)
-{
-    if (existing_stream == nullptr || replacement_stream == nullptr)
-    {
-        return false;
-    }
-    const bool existing_is_mux_stream = std::dynamic_pointer_cast<mux_stream>(existing_stream) != nullptr;
-    if (!existing_is_mux_stream)
-    {
-        return false;
-    }
-    const bool replacement_is_mux_stream = std::dynamic_pointer_cast<mux_stream>(replacement_stream) != nullptr;
-    return !replacement_is_mux_stream;
-}
-
-[[nodiscard]] std::uint64_t now_ms()
-{
-    return static_cast<std::uint64_t>(
-        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
-}
-
-struct timeout_snapshot
-{
-    std::uint64_t read_elapsed_ms = 0;
-    std::uint64_t write_elapsed_ms = 0;
-    bool read_timeout_enabled = false;
-    bool write_timeout_enabled = false;
-    std::uint64_t read_timeout_ms = 0;
-    std::uint64_t write_timeout_ms = 0;
-};
-
-bool handle_timeout_wait_error(const boost::system::error_code& ec, const std::uint32_t cid)
-{
-    if (!ec)
-    {
-        return false;
-    }
-    if (ec == boost::asio::error::operation_aborted)
-    {
-        LOG_DEBUG("mux {} timeout timer cancelled", cid);
-    }
-    else
-    {
-        LOG_WARN("mux {} timeout error {}", cid, ec.message());
-    }
-    return true;
-}
-
-timeout_snapshot collect_timeout_snapshot(const std::atomic<std::uint64_t>& last_read_time_ms,
-                                          const std::atomic<std::uint64_t>& last_write_time_ms,
-                                          const config::timeout_t& timeout_config)
-{
-    const auto current_ms = now_ms();
-    const bool read_timeout_enabled = timeout_config.read != 0;
-    const bool write_timeout_enabled = timeout_config.write != 0;
-    return timeout_snapshot{
-        .read_elapsed_ms = current_ms - last_read_time_ms.load(std::memory_order_acquire),
-        .write_elapsed_ms = current_ms - last_write_time_ms.load(std::memory_order_acquire),
-        .read_timeout_enabled = read_timeout_enabled,
-        .write_timeout_enabled = write_timeout_enabled,
-        .read_timeout_ms = static_cast<std::uint64_t>(timeout_config.read) * 1000ULL,
-        .write_timeout_ms = static_cast<std::uint64_t>(timeout_config.write) * 1000ULL,
-    };
-}
-
-[[nodiscard]] bool is_timeout_exceeded(const timeout_snapshot& snapshot)
-{
-    const bool read_timeout_exceeded = snapshot.read_timeout_enabled && snapshot.read_elapsed_ms > snapshot.read_timeout_ms;
-    const bool write_timeout_exceeded = snapshot.write_timeout_enabled && snapshot.write_elapsed_ms > snapshot.write_timeout_ms;
-    return read_timeout_exceeded || write_timeout_exceeded;
-}
-
-[[nodiscard]] std::uint32_t pick_draining_delay_seconds(std::mt19937& rng)
-{
-    std::uniform_int_distribution<std::uint32_t> delay_dist(5, 30);
-    return delay_dist(rng);
-}
-
-boost::asio::awaitable<void> wait_draining_delay(boost::asio::steady_timer& timer, const std::uint32_t delay_seconds, const std::uint32_t cid)
-{
-    timer.expires_after(std::chrono::seconds(delay_seconds));
-    const auto [wait_ec] = co_await timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
-    if (!wait_ec)
-    {
-        LOG_DEBUG("mux {} draining complete after {}s", cid, delay_seconds);
-    }
-}
-
-[[nodiscard]] bool is_valid_mux_command(const std::uint8_t command)
-{
-    return command == mux::kCmdSyn || command == mux::kCmdAck || command == mux::kCmdDat || command == mux::kCmdFin || command == mux::kCmdRst;
-}
-
-}
-
 mux_connection::mux_connection(boost::asio::ip::tcp::socket socket,
                                boost::asio::io_context& io_context,
                                reality_engine engine,
-                               const bool is_client,
+                               const config& cfg,
+                               task_group& group,
                                const std::uint32_t conn_id,
-                               const std::string& trace_id,
-                               const config::timeout_t& timeout_cfg,
-                               const config::limits_t& limits_cfg,
-                               const config::heartbeat_t& heartbeat_cfg)
-    : cid_(conn_id),
-      io_context_(io_context),
-      timer_(io_context_),
-      socket_(std::move(socket)),
+                               const std::string& trace_id)
+    : cfg_(cfg),
+      cid_(conn_id),
+      group_(group),
       reality_engine_(std::move(engine)),
-      next_stream_id_(is_client ? 1 : 2),
-      connection_state_(mux_connection_state::kConnected),
-      timeout_config_(timeout_cfg),
-      limits_config_(limits_cfg),
-      heartbeat_config_(heartbeat_cfg),
+      io_context_(io_context),
+      socket_(std::move(socket)),
       write_channel_(std::make_unique<channel_type>(io_context_, 1024))
 {
     ctx_.trace_id(trace_id);
     ctx_.conn_id(conn_id);
+
     boost::system::error_code local_ep_ec;
     const auto local_ep = socket_.local_endpoint(local_ep_ec);
     if (!local_ep_ec)
@@ -184,837 +76,204 @@ mux_connection::mux_connection(boost::asio::ip::tcp::socket socket,
         ctx_.remote_addr(remote_ep.address().to_string());
         ctx_.remote_port(remote_ep.port());
     }
-    mux_dispatcher_.set_callback([this](const mux::frame_header h, std::vector<std::uint8_t> p) { this->on_mux_frame(h, std::move(p)); });
     mux_dispatcher_.set_context(ctx_);
-    mux_dispatcher_.set_max_buffer(limits_config_.max_buffer);
+    mux_dispatcher_.set_max_buffer(cfg_.limits.max_buffer);
+    mux_dispatcher_.set_callback([this](const auto h, auto p) -> boost::asio::awaitable<void> { co_return co_await on_mux_frame(h, std::move(p)); });
     statistics::instance().inc_active_mux_sessions();
     LOG_CTX_INFO(ctx_, "{} mux initialized {}", log_event::kConnInit, ctx_.connection_info());
 }
 
 mux_connection::~mux_connection() { statistics::instance().dec_active_mux_sessions(); }
 
-void mux_connection::mark_started_for_external_calls() { started_.store(true, std::memory_order_release); }
-
-std::shared_ptr<mux_connection::stream_map_t> mux_connection::snapshot_streams() const
+std::shared_ptr<mux_stream> mux_connection::find_stream(const std::uint32_t stream_id)
 {
-    auto snapshot = std::atomic_load_explicit(&streams_, std::memory_order_acquire);
-    if (snapshot != nullptr)
-    {
-        return snapshot;
-    }
-    return std::make_shared<stream_map_t>();
-}
-
-std::shared_ptr<mux_connection::pending_remove_map_t> mux_connection::snapshot_pending_remove_ids() const
-{
-    auto snapshot = std::atomic_load_explicit(&pending_remove_ids_, std::memory_order_acquire);
-    if (snapshot != nullptr)
-    {
-        return snapshot;
-    }
-    return std::make_shared<pending_remove_map_t>();
-}
-
-void mux_connection::add_pending_remove_id(const std::uint32_t id)
-{
-    for (;;)
-    {
-        auto current = snapshot_pending_remove_ids();
-        auto updated = std::make_shared<pending_remove_map_t>(*current);
-        auto it = updated->find(id);
-        if (it == updated->end())
-        {
-            updated->emplace(id, 1);
-        }
-        else
-        {
-            it->second += 1;
-        }
-        auto expected = current;
-        if (std::atomic_compare_exchange_weak_explicit(
-                &pending_remove_ids_, &expected, updated, std::memory_order_acq_rel, std::memory_order_acquire))
-        {
-            return;
-        }
-    }
-}
-
-void mux_connection::clear_pending_remove_id(const std::uint32_t id)
-{
-    for (;;)
-    {
-        auto current = snapshot_pending_remove_ids();
-        const auto it = current->find(id);
-        if (it == current->end())
-        {
-            return;
-        }
-
-        auto updated = std::make_shared<pending_remove_map_t>(*current);
-        auto updated_it = updated->find(id);
-        if (updated_it != updated->end())
-        {
-            if (updated_it->second > 1)
-            {
-                updated_it->second -= 1;
-            }
-            else
-            {
-                updated->erase(updated_it);
-            }
-        }
-
-        auto expected = current;
-        if (std::atomic_compare_exchange_weak_explicit(
-                &pending_remove_ids_, &expected, updated, std::memory_order_acq_rel, std::memory_order_acquire))
-        {
-            return;
-        }
-    }
-}
-
-std::size_t mux_connection::count_pending_in_streams(const stream_map_t& streams, const pending_remove_map_t& pending_remove_ids)
-{
-    if (streams.empty() || pending_remove_ids.empty())
-    {
-        return 0;
-    }
-    std::size_t pending_count = 0;
-    for (const auto& [stream_id, pending_count_for_id] : pending_remove_ids)
-    {
-        if (pending_count_for_id == 0)
-        {
-            continue;
-        }
-        if (streams.contains(stream_id))
-        {
-            pending_count += 1;
-        }
-    }
-    return pending_count;
-}
-
-std::shared_ptr<mux_connection::stream_map_t> mux_connection::detach_streams()
-{
-    for (;;)
-    {
-        auto current = std::atomic_load_explicit(&streams_, std::memory_order_acquire);
-        auto updated = std::make_shared<stream_map_t>();
-        auto expected = current;
-        if (std::atomic_compare_exchange_weak_explicit(&streams_, &expected, updated, std::memory_order_acq_rel, std::memory_order_acquire))
-        {
-            if (current != nullptr)
-            {
-                return current;
-            }
-            return std::make_shared<stream_map_t>();
-        }
-    }
-}
-
-bool mux_connection::register_stream_local(const std::uint32_t id, const std::shared_ptr<mux_stream_interface>& stream)
-{
-    static const stream_map_t k_empty_streams{};
-    for (;;)
-    {
-        if (connection_state_.load(std::memory_order_acquire) != mux_connection_state::kConnected)
-        {
-            return false;
-        }
-
-        auto current = std::atomic_load_explicit(&streams_, std::memory_order_acquire);
-        const auto* current_map = current.get();
-        if (current_map == nullptr)
-        {
-            current_map = &k_empty_streams;
-        }
-
-        const auto existing_it = current_map->find(id);
-        const bool has_existing = existing_it != current_map->end();
-        if (has_existing && !can_take_over_registered_mux_stream(existing_it->second, stream))
-        {
-            return false;
-        }
-        if (!has_existing && limits_config_.max_streams > 0 && current_map->size() >= limits_config_.max_streams)
-        {
-            return false;
-        }
-
-        auto updated = std::make_shared<stream_map_t>(*current_map);
-        (*updated)[id] = stream;
-
-        auto expected = current;
-        if (std::atomic_compare_exchange_weak_explicit(&streams_, &expected, updated, std::memory_order_acq_rel, std::memory_order_acquire))
-        {
-            LOG_DEBUG("mux {} stream {} registered", cid_, id);
-            return true;
-        }
-    }
-}
-
-bool mux_connection::try_register_stream_local(const std::uint32_t id, const std::shared_ptr<mux_stream_interface>& stream)
-{
-    return try_register_stream_local_with_reason(id, stream) == stream_register_result::kSuccess;
-}
-
-stream_register_result mux_connection::try_register_stream_local_with_reason(const std::uint32_t id,
-                                                                             const std::shared_ptr<mux_stream_interface>& stream)
-{
-    static const stream_map_t k_empty_streams{};
-    for (;;)
-    {
-        if (connection_state_.load(std::memory_order_acquire) != mux_connection_state::kConnected)
-        {
-            return stream_register_result::kClosed;
-        }
-
-        auto current = std::atomic_load_explicit(&streams_, std::memory_order_acquire);
-        const auto* current_map = current.get();
-        if (current_map == nullptr)
-        {
-            current_map = &k_empty_streams;
-        }
-
-        const auto pending_remove_ids = snapshot_pending_remove_ids();
-        const bool id_pending_remove = pending_remove_ids->contains(id);
-        if (current_map->contains(id) && !id_pending_remove)
-        {
-            return stream_register_result::kIdConflict;
-        }
-        if (limits_config_.max_streams > 0)
-        {
-            std::size_t effective_size = current_map->size();
-            const auto pending_count = count_pending_in_streams(*current_map, *pending_remove_ids);
-            if (effective_size > pending_count)
-            {
-                effective_size -= pending_count;
-            }
-            else
-            {
-                effective_size = 0;
-            }
-
-            if ((!current_map->contains(id) || id_pending_remove) && effective_size >= limits_config_.max_streams)
-            {
-                return stream_register_result::kLimitReached;
-            }
-        }
-
-        auto updated = std::make_shared<stream_map_t>(*current_map);
-        if (id_pending_remove)
-        {
-            (*updated)[id] = stream;
-        }
-        else
-        {
-            const auto [it, inserted] = updated->try_emplace(id, stream);
-            if (!inserted)
-            {
-                return stream_register_result::kIdConflict;
-            }
-        }
-
-        auto expected = current;
-        if (std::atomic_compare_exchange_weak_explicit(&streams_, &expected, updated, std::memory_order_acq_rel, std::memory_order_acquire))
-        {
-            if (id_pending_remove)
-            {
-                clear_pending_remove_id(id);
-            }
-            LOG_DEBUG("mux {} stream {} registered", cid_, id);
-            return stream_register_result::kSuccess;
-        }
-    }
-}
-
-void mux_connection::remove_stream_local(const std::uint32_t id)
-{
-    for (;;)
-    {
-        auto current = std::atomic_load_explicit(&streams_, std::memory_order_acquire);
-        if (current == nullptr || !current->contains(id))
-        {
-            LOG_DEBUG("mux {} stream {} removed", cid_, id);
-            return;
-        }
-
-        auto updated = std::make_shared<stream_map_t>(*current);
-        updated->erase(id);
-        auto expected = current;
-        if (std::atomic_compare_exchange_weak_explicit(&streams_, &expected, updated, std::memory_order_acq_rel, std::memory_order_acquire))
-        {
-            LOG_DEBUG("mux {} stream {} removed", cid_, id);
-            return;
-        }
-    }
-}
-
-void mux_connection::remove_stream_local_if_match(const std::uint32_t id, const std::shared_ptr<mux_stream_interface>& expected_stream)
-{
-    for (;;)
-    {
-        auto current = std::atomic_load_explicit(&streams_, std::memory_order_acquire);
-        if (current == nullptr)
-        {
-            LOG_DEBUG("mux {} stream {} removed", cid_, id);
-            return;
-        }
-
-        const auto it = current->find(id);
-        if (it == current->end())
-        {
-            LOG_DEBUG("mux {} stream {} removed", cid_, id);
-            return;
-        }
-        if (expected_stream != nullptr && it->second != expected_stream)
-        {
-            LOG_DEBUG("mux {} stream {} remove skipped", cid_, id);
-            return;
-        }
-
-        auto updated = std::make_shared<stream_map_t>(*current);
-        updated->erase(id);
-        auto expected = current;
-        if (std::atomic_compare_exchange_weak_explicit(&streams_, &expected, updated, std::memory_order_acq_rel, std::memory_order_acquire))
-        {
-            LOG_DEBUG("mux {} stream {} removed", cid_, id);
-            return;
-        }
-    }
-}
-
-bool mux_connection::can_accept_stream_local() const
-{
-    if (connection_state_.load(std::memory_order_acquire) != mux_connection_state::kConnected)
-    {
-        return false;
-    }
-    if (limits_config_.max_streams == 0)
-    {
-        return true;
-    }
-    const auto streams = snapshot_streams();
-    return streams->size() < limits_config_.max_streams;
-}
-
-bool mux_connection::has_stream_local(const std::uint32_t id) const
-{
-    const auto snapshot = snapshot_streams();
-    return snapshot->contains(id);
-}
-
-bool mux_connection::is_stream_id_cached_in_use(const std::uint32_t id) const
-{
-    if (id == mux::kStreamIdHeartbeat)
-    {
-        return true;
-    }
-
-    const auto streams = snapshot_streams();
-    if (streams->contains(id))
-    {
-        return true;
-    }
-
-    const auto pending_remove_ids = snapshot_pending_remove_ids();
-    const auto pending_it = pending_remove_ids->find(id);
-    return pending_it != pending_remove_ids->end() && pending_it->second > 0;
-}
-
-std::shared_ptr<mux_stream_interface> mux_connection::find_stream(const std::uint32_t stream_id) const
-{
-    const auto snapshot = snapshot_streams();
-    const auto it = snapshot->find(stream_id);
-    if (it != snapshot->end())
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto it = streams_.find(stream_id);
+    if (it != streams_.end())
     {
         return it->second;
     }
     return nullptr;
 }
 
-void mux_connection::handle_unknown_stream(const std::uint32_t stream_id, const std::uint8_t command)
+boost::asio::awaitable<void> mux_connection::handle_unknown_stream(mux::frame_header header, std::vector<std::uint8_t> payload)
 {
-    if (command == mux::kCmdRst)
+    if (header.command == mux::kCmdRst)
     {
-        return;
+        co_return;
     }
 
-    LOG_DEBUG("mux {} recv frame for unknown stream {}", cid_, stream_id);
-    const auto self = shared_from_this();
-    boost::asio::co_spawn(
-        io_context_,
-        [self, stream_id]() -> boost::asio::awaitable<void> { (void)co_await self->send_async(stream_id, kCmdRst, {}); },
-        boost::asio::detached);
+    if (header.command == mux::kCmdSyn)
+    {
+        if (cb_)
+        {
+            mux_frame frame;
+            frame.h = header;
+            frame.payload = std::move(payload);
+            co_return co_await cb_(std::move(frame));
+        }
+        co_return;
+    }
+
+    LOG_DEBUG("mux {} recv frame for unknown stream {}", cid_, header.stream_id);
+    mux_frame frame;
+    frame.h.command = mux::kCmdRst;
+    frame.h.stream_id = header.stream_id;
+    co_await write_channel_->async_send({}, frame, boost::asio::as_tuple(boost::asio::use_awaitable));
 }
 
-void mux_connection::handle_stream_frame(const mux::frame_header& header, std::vector<std::uint8_t> payload)
+boost::asio::awaitable<void> mux_connection::handle_stream_frame(const mux::frame_header& header, std::vector<std::uint8_t> payload)
 {
     auto stream = find_stream(header.stream_id);
     if (stream == nullptr)
     {
-        handle_unknown_stream(header.stream_id, header.command);
-        return;
+        co_return co_await handle_unknown_stream(header, std::move(payload));
     }
-
-    if (header.command == mux::kCmdFin)
-    {
-        stream->on_close();
-        remove_stream(header.stream_id);
-        return;
-    }
-    if (header.command == mux::kCmdRst)
-    {
-        stream->on_reset();
-        remove_stream(header.stream_id);
-        return;
-    }
-    if (header.command == mux::kCmdDat)
-    {
-        if (payload.empty())
-        {
-            LOG_WARN("mux {} recv empty dat frame stream {}", cid_, header.stream_id);
-            return;
-        }
-        stream->on_data(std::move(payload));
-        return;
-    }
-    if (header.command == mux::kCmdAck)
-    {
-        if (!stream->accept_ack() || !stream->on_ack(std::move(payload)))
-        {
-            LOG_WARN("mux {} recv unexpected ack stream {}", cid_, header.stream_id);
-            stream->on_reset();
-            remove_stream(header.stream_id);
-            const auto self = shared_from_this();
-            boost::asio::co_spawn(
-                io_context_,
-                [self, stream_id = header.stream_id]() -> boost::asio::awaitable<void>
-                {
-                    (void)co_await self->send_async(stream_id, kCmdRst, {});
-                },
-                boost::asio::detached);
-            return;
-        }
-        return;
-    }
-
-    LOG_WARN("mux {} recv unknown cmd {} stream {}", cid_, header.command, header.stream_id);
-    stream->on_reset();
-    remove_stream(header.stream_id);
-    const auto self = shared_from_this();
-    boost::asio::co_spawn(
-        io_context_,
-        [self, stream_id = header.stream_id]() -> boost::asio::awaitable<void>
-        {
-            (void)co_await self->send_async(stream_id, kCmdRst, {});
-        },
-        boost::asio::detached);
+    mux_frame frame;
+    frame.h = header;
+    frame.payload = std::move(payload);
+    boost::system::error_code ec;
+    co_await stream->on_frame(std::move(frame), ec);
 }
 
-bool mux_connection::register_stream(const std::uint32_t id, std::shared_ptr<mux_stream_interface> stream)
+void mux_connection::remove_stream(const std::shared_ptr<mux_stream>& stream)
 {
-    return register_stream_checked(id, std::move(stream));
+    std::lock_guard<std::mutex> lock(mutex_);
+    streams_.erase(stream->id());
 }
 
-bool mux_connection::register_stream_checked(const std::uint32_t id, std::shared_ptr<mux_stream_interface> stream)
+void mux_connection::start()
 {
-    if (stream == nullptr)
-    {
-        return false;
-    }
-    if (!is_open())
-    {
-        return false;
-    }
-
-    return register_stream_local(id, stream);
+    auto self = shared_from_this();
+    last_read_time_ms_ = timeout_io::now_ms();
+    last_write_time_ms_ = timeout_io::now_ms();
+    boost::asio::co_spawn(io_context_, [this, self]() -> boost::asio::awaitable<void> { co_await run_loop(); }, group_.adapt(boost::asio::detached));
 }
 
-stream_register_result mux_connection::try_register_stream_with_reason(const std::uint32_t id,
-                                                                       std::shared_ptr<mux_stream_interface> stream)
+boost::asio::awaitable<void> mux_connection::run_loop()
 {
-    if (stream == nullptr)
-    {
-        return stream_register_result::kInvalidStream;
-    }
-    if (!is_open())
-    {
-        return stream_register_result::kClosed;
-    }
-
-    return try_register_stream_local_with_reason(id, stream);
-}
-
-bool mux_connection::try_register_stream(const std::uint32_t id, std::shared_ptr<mux_stream_interface> stream)
-{
-    return try_register_stream_with_reason(id, std::move(stream)) == stream_register_result::kSuccess;
-}
-
-void mux_connection::remove_stream(const std::uint32_t id)
-{
-    const auto streams = snapshot_streams();
-    std::shared_ptr<mux_stream_interface> expected_stream;
-    const auto it = streams->find(id);
-    if (it != streams->end())
-    {
-        expected_stream = it->second;
-    }
-
-    add_pending_remove_id(id);
-    detail::dispatch_cleanup_or_run_inline(io_context_,
-                                           [weak_self = weak_from_this(), id, expected_stream = std::move(expected_stream)]()
-                                           {
-                                               if (const auto self = weak_self.lock())
-                                               {
-                                                   self->remove_stream_local_if_match(id, expected_stream);
-                                                   self->clear_pending_remove_id(id);
-                                               }
-                                           });
-}
-
-boost::asio::awaitable<void> mux_connection::start()
-{
-    co_await boost::asio::dispatch(io_context_, boost::asio::use_awaitable);
-    co_await start_impl();
-}
-
-boost::asio::awaitable<void> mux_connection::start_impl()
-{
-    started_.store(true, std::memory_order_release);
     LOG_DEBUG("mux {} started loops", cid_);
     using boost::asio::experimental::awaitable_operators::operator||;
-    const auto ts = now_ms();
-    last_read_time_ms_.store(ts, std::memory_order_release);
-    last_write_time_ms_.store(ts, std::memory_order_release);
     co_await (read_loop() || write_loop() || timeout_loop() || heartbeat_loop());
-    LOG_INFO("mux {} loops finished stopped", cid_);
     stop();
-}
-
-boost::asio::awaitable<boost::system::error_code> mux_connection::send_async(const std::uint32_t stream_id,
-                                                                             const std::uint8_t cmd,
-                                                                             std::vector<std::uint8_t> payload)
-{
-    if (!is_open())
-    {
-        co_return boost::asio::error::operation_aborted;
-    }
-
-    if (payload.size() > mux::kMaxPayload)
-    {
-        LOG_ERROR("mux {} payload too large {}", cid_, payload.size());
-        co_return boost::asio::error::message_size;
-    }
-    if (payload.size() > mux::kMaxPayloadPerRecord)
-    {
-        LOG_ERROR("mux {} payload too large for single record {} max {}", cid_, payload.size(), mux::kMaxPayloadPerRecord);
-        co_return boost::asio::error::message_size;
-    }
-    if (!is_valid_mux_command(cmd))
-    {
-        LOG_ERROR("mux {} invalid command {}", cid_, cmd);
-        co_return boost::asio::error::invalid_argument;
-    }
-
-    if (cmd != mux::kCmdDat || payload.size() < 128)
-    {
-        LOG_TRACE("mux {} send frame stream {} cmd {} size {}", cid_, stream_id, cmd, payload.size());
-    }
-
-    mux_write_msg msg{.command = cmd, .stream_id = stream_id, .payload = std::move(payload)};
-    const auto [ec] =
-        co_await write_channel_->async_send(boost::system::error_code{}, std::move(msg), boost::asio::as_tuple(boost::asio::use_awaitable));
-
-    if (ec)
-    {
-        LOG_ERROR("mux {} send failed error {}", cid_, ec.message());
-        stop();
-        co_return ec;
-    }
-    co_return boost::system::error_code();
+    LOG_INFO("mux {} loops finished stopped", cid_);
 }
 
 void mux_connection::stop()
 {
-    mux_connection_state expected = mux_connection_state::kConnected;
-    if (!connection_state_.compare_exchange_strong(expected, mux_connection_state::kClosing, std::memory_order_acq_rel))
+    if (write_channel_ != nullptr)
     {
-        if (expected != mux_connection_state::kDraining)
-        {
-            return;
-        }
-        expected = mux_connection_state::kDraining;
-        if (!connection_state_.compare_exchange_strong(expected, mux_connection_state::kClosing, std::memory_order_acq_rel))
-        {
-            return;
-        }
-    }
-
-    detail::dispatch_cleanup_or_run_inline(io_context_,
-                                           [weak_self = weak_from_this()]()
-                                           {
-                                               if (const auto self = weak_self.lock())
-                                               {
-                                                   self->stop_impl();
-                                               }
-                                           });
-}
-
-void mux_connection::stop_impl()
-{
-    if (connection_state_.load(std::memory_order_acquire) == mux_connection_state::kClosed)
-    {
-        return;
-    }
-    LOG_INFO("mux {} stopping", cid_);
-    const auto detached_streams = detach_streams();
-    if (detached_streams != nullptr)
-    {
-        reset_streams_on_stop(*detached_streams);
-    }
-    close_socket_on_stop();
-    finalize_stop_state();
-}
-
-void mux_connection::release_resources() { stop(); }
-
-void mux_connection::reset_streams_on_stop(const stream_map_t& streams_to_clear)
-{
-    for (const auto& stream : streams_to_clear | std::views::values)
-    {
-        if (stream != nullptr)
-        {
-            stream->on_reset();
-        }
-    }
-}
-
-void mux_connection::close_socket_on_stop()
-{
-    if (!socket_.is_open())
-    {
-        return;
+        write_channel_->close();
     }
 
     boost::system::error_code ec;
     ec = socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
-    if (ec)
-    {
-        LOG_WARN("mux {} shutdown failed error {}", cid_, ec.message());
-    }
     ec = socket_.close(ec);
-    if (ec)
-    {
-        LOG_WARN("mux {} close failed error {}", cid_, ec.message());
-    }
 }
 
-void mux_connection::finalize_stop_state()
-{
-    LOG_INFO("mux write channel {} close", cid_);
-    if (write_channel_)
-    {
-        write_channel_->close();
-    }
-    LOG_INFO("mux timer {} cancel", cid_);
-    timer_.cancel();
-    connection_state_.store(mux_connection_state::kClosed, std::memory_order_release);
-}
-
-bool mux_connection::should_stop_read(const boost::system::error_code& read_ec, const std::size_t n) const
-{
-    if (!read_ec)
-    {
-        if (n != 0)
-        {
-            return false;
-        }
-        LOG_DEBUG("mux {} peer closed read side", cid_);
-        return true;
-    }
-    if (read_ec != boost::asio::error::eof && read_ec != boost::asio::error::operation_aborted)
-    {
-        LOG_ERROR("mux {} read error {}", cid_, read_ec.message());
-    }
-    return true;
-}
-
-void mux_connection::update_read_statistics(const std::size_t n)
-{
-    read_bytes_ += n;
-    statistics::instance().add_bytes_read(n);
-    last_read_time_ms_.store(now_ms(), std::memory_order_release);
-    reality_engine_.commit_read(n);
-}
-
-std::expected<void, boost::system::error_code> mux_connection::process_decrypted_records()
-{
-    bool unexpected_content_type = false;
-    const auto process_res = reality_engine_.process_available_records(
-        [this, &unexpected_content_type](const std::uint8_t type, const std::span<const std::uint8_t> plaintext)
-        {
-            if (type == reality::kContentTypeApplicationData)
-            {
-                if (!plaintext.empty())
-                {
-                    mux_dispatcher_.on_plaintext_data(plaintext);
-                }
-                return;
-            }
-            if (type == reality::kContentTypeAlert)
-            {
-                return;
-            }
-            unexpected_content_type = true;
-        });
-    if (!process_res)
-    {
-        return std::unexpected(process_res.error());
-    }
-    if (unexpected_content_type)
-    {
-        return std::unexpected(boost::asio::error::invalid_argument);
-    }
-    return {};
-}
-
-bool mux_connection::has_dispatch_failure(const boost::system::error_code& decrypt_ec) const
-{
-    if (mux_dispatcher_.has_fatal_error())
-    {
-        const auto reason = mux_dispatcher_.fatal_error_reason();
-        if (reason == mux_dispatcher_fatal_reason::kBufferOverflow)
-        {
-            LOG_ERROR("mux {} dispatcher overflow stopping", cid_);
-        }
-        else if (reason == mux_dispatcher_fatal_reason::kOversizedFrame)
-        {
-            LOG_ERROR("mux {} dispatcher oversized frame stopping", cid_);
-        }
-        else
-        {
-            LOG_ERROR("mux {} dispatcher fatal error stopping", cid_);
-        }
-        return true;
-    }
-    if (decrypt_ec)
-    {
-        LOG_ERROR("mux {} decrypt protocol error {}", cid_, decrypt_ec.message());
-        return true;
-    }
-    return false;
-}
-
-boost::asio::awaitable<bool> mux_connection::read_and_dispatch_once()
-{
-    const auto buf = reality_engine_.read_buffer(8192);
-    const auto [read_ec, n] = co_await socket_.async_read_some(buf, boost::asio::as_tuple(boost::asio::use_awaitable));
-    if (should_stop_read(read_ec, n))
-    {
-        co_return false;
-    }
-    update_read_statistics(n);
-
-    auto decrypt_res = process_decrypted_records();
-    boost::system::error_code decrypt_ec;
-    if (!decrypt_res)
-    {
-        decrypt_ec = decrypt_res.error();
-    }
-    if (has_dispatch_failure(decrypt_ec))
-    {
-        co_return false;
-    }
-    co_return true;
-}
+bool mux_connection::is_active() const { return socket_.is_open(); }
 
 boost::asio::awaitable<void> mux_connection::read_loop()
 {
-    while (is_open())
+    boost::system::error_code ec;
+    while (true)
     {
-        if (!co_await read_and_dispatch_once())
+        const auto buf = reality_engine_.read_buffer(8192);
+        const auto n = co_await socket_.async_read_some(buf, boost::asio::redirect_error(boost::asio::use_awaitable, ec));
+        if (ec)
         {
+            LOG_ERROR("mux {} read error {}", cid_, ec.message());
+            break;
+        }
+
+        read_bytes_ += n;
+        statistics::instance().add_bytes_read(n);
+        last_read_time_ms_ = timeout_io::now_ms();
+        reality_engine_.commit_read(n);
+
+        co_await reality_engine_.process_available_records(
+            [this](
+                const std::uint8_t type, const std::span<const std::uint8_t> plaintext, boost::system::error_code& ec) -> boost::asio::awaitable<void>
+            {
+                if (type == reality::kContentTypeApplicationData)
+                {
+                    co_await mux_dispatcher_.on_plaintext_data(plaintext, ec);
+                    if (ec)
+                    {
+                        co_return;
+                    }
+                }
+                if (type == reality::kContentTypeAlert)
+                {
+                    co_return;
+                }
+            },
+            ec);
+        if (ec)
+        {
+            LOG_ERROR("mux {} process_decrypted_records error {}", cid_, ec.message());
             break;
         }
     }
     LOG_DEBUG("mux {} read loop finished", cid_);
-    stop();
 }
 
 boost::asio::awaitable<void> mux_connection::write_loop()
 {
-    while (is_open())
+    while (true)
     {
-        const auto [ec, msg] = co_await write_channel_->async_receive(boost::asio::as_tuple(boost::asio::use_awaitable));
-        if (ec)
+        const auto [re, msg] = co_await write_channel_->async_receive(boost::asio::as_tuple(boost::asio::use_awaitable));
+        if (re)
         {
             break;
         }
 
-        const auto mux_frame = mux_dispatcher::pack(msg.stream_id, msg.command, msg.payload);
-        const auto encrypt_result = reality_engine_.encrypt(mux_frame);
+        const auto mux_frame = mux_dispatcher::pack(msg.h.stream_id, msg.h.command, msg.payload);
 
-        if (!encrypt_result)
+        boost::system::error_code encrypt_ec;
+        const auto ct = reality_engine_.encrypt(mux_frame, encrypt_ec);
+        if (encrypt_ec)
         {
-            LOG_ERROR("mux {} encrypt error {}", cid_, encrypt_result.error().message());
+            LOG_ERROR("mux {} encrypt error {}", cid_, encrypt_ec.message());
             break;
         }
 
-        const auto ciphertext_span = *encrypt_result;
-
-        const auto [wec, n] = co_await boost::asio::async_write(
-            socket_, boost::asio::buffer(ciphertext_span.data(), ciphertext_span.size()), boost::asio::as_tuple(boost::asio::use_awaitable));
-
-        if (wec)
+        const auto [we, n] = co_await boost::asio::async_write(socket_, boost::asio::buffer(ct), boost::asio::as_tuple(boost::asio::use_awaitable));
+        if (we)
         {
-            LOG_ERROR("mux {} write error {}", cid_, wec.message());
+            LOG_ERROR("mux {} write error {}", cid_, we.message());
             break;
         }
         write_bytes_ += n;
         statistics::instance().add_bytes_written(n);
-        last_write_time_ms_.store(now_ms(), std::memory_order_release);
+        last_write_time_ms_ = timeout_io::now_ms();
     }
     LOG_DEBUG("mux {} write loop finished", cid_);
-    stop();
 }
 
 boost::asio::awaitable<void> mux_connection::timeout_loop()
 {
-    static thread_local std::mt19937 rng(std::random_device{}());
-
-    while (is_open())
+    if (cfg_.timeout.idle == 0)
     {
-        timer_.expires_after(std::chrono::seconds(1));
-        const auto [ec] = co_await timer_.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
-        if (handle_timeout_wait_error(ec, cid_))
+        co_return;
+    }
+
+    const auto idle_timeout_ms = static_cast<std::uint64_t>(cfg_.timeout.idle) * 1000ULL;
+    boost::system::error_code ec;
+    boost::asio::steady_timer timer{io_context_};
+    while (true)
+    {
+        timer.expires_after(std::chrono::seconds(1));
+        co_await timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, ec));
+        if (ec)
         {
             break;
         }
-
-        const auto state = connection_state_.load(std::memory_order_acquire);
-        if (state == mux_connection_state::kDraining)
+        const auto now_ms = timeout_io::now_ms();
+        const auto read_diff = now_ms - last_read_time_ms_;
+        const auto write_diff = now_ms - last_write_time_ms_;
+        if (read_diff > idle_timeout_ms || write_diff > idle_timeout_ms)
         {
-            continue;
-        }
-
-        const auto snapshot = collect_timeout_snapshot(last_read_time_ms_, last_write_time_ms_, timeout_config_);
-        if (is_timeout_exceeded(snapshot))
-        {
-            if (snapshot_streams()->empty())
-            {
-                LOG_DEBUG("mux {} timeout without streams, closing", cid_);
-                break;
-            }
-
-            mux_connection_state expected = mux_connection_state::kConnected;
-            if (!connection_state_.compare_exchange_strong(expected, mux_connection_state::kDraining, std::memory_order_acq_rel))
-            {
-                break;
-            }
-
-            LOG_DEBUG("mux {} entering draining mode", cid_);
-            const auto delay_seconds = pick_draining_delay_seconds(rng);
-            co_await wait_draining_delay(timer_, delay_seconds, cid_);
             break;
         }
     }
@@ -1025,39 +284,28 @@ boost::asio::awaitable<void> mux_connection::timeout_loop()
 
 boost::asio::awaitable<void> mux_connection::heartbeat_loop()
 {
-    if (!heartbeat_config_.enabled)
-    {
-        boost::asio::steady_timer timer(io_context_);
-        timer.expires_at(std::chrono::steady_clock::time_point::max());
-        boost::system::error_code ec;
-        co_await timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, ec));
-        co_return;
-    }
-
     static thread_local std::mt19937 rng(std::random_device{}());
     boost::asio::steady_timer heartbeat_timer(io_context_);
 
-    while (is_open())
+    while (true)
     {
-        std::uniform_int_distribution<std::uint32_t> interval_dist(heartbeat_config_.min_interval, heartbeat_config_.max_interval);
+        std::uniform_int_distribution<std::uint32_t> interval_dist(cfg_.heartbeat.min_interval, cfg_.heartbeat.max_interval);
         const auto interval = interval_dist(rng);
         heartbeat_timer.expires_after(std::chrono::seconds(interval));
-
         const auto [ec] = co_await heartbeat_timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
         if (ec)
         {
             break;
         }
 
-        const auto current_ms = now_ms();
-        const auto write_elapsed_ms = current_ms - last_write_time_ms_.load(std::memory_order_acquire);
-        const auto idle_timeout_ms = static_cast<std::uint64_t>(heartbeat_config_.idle_timeout) * 1000ULL;
+        const auto write_elapsed_ms = timeout_io::now_ms() - last_write_time_ms_;
+        const auto idle_timeout_ms = static_cast<std::uint64_t>(cfg_.heartbeat.idle_timeout) * 1000ULL;
         if (write_elapsed_ms < idle_timeout_ms)
         {
             continue;
         }
 
-        std::uniform_int_distribution<std::uint32_t> padding_dist(heartbeat_config_.min_padding, heartbeat_config_.max_padding);
+        std::uniform_int_distribution<std::uint32_t> padding_dist(cfg_.heartbeat.min_padding, cfg_.heartbeat.max_padding);
         const auto padding_len = padding_dist(rng);
         std::vector<std::uint8_t> padding(padding_len);
         if (padding_len > 0 && RAND_bytes(padding.data(), static_cast<int>(padding_len)) != 1)
@@ -1067,169 +315,90 @@ boost::asio::awaitable<void> mux_connection::heartbeat_loop()
         }
 
         LOG_DEBUG("mux {} sending heartbeat size {}", cid_, padding_len);
-        (void)co_await send_async(mux::kStreamIdHeartbeat, mux::kCmdDat, std::move(padding));
+        {
+            mux_frame msg;
+            msg.h.stream_id = mux::kStreamIdHeartbeat;
+            msg.h.command = mux::kCmdDat;
+            msg.payload = std::move(padding);
+            boost::system::error_code ec;
+            co_await send_async(std::move(msg), ec);
+        }
     }
 
     LOG_DEBUG("mux {} heartbeat loop finished", cid_);
 }
 
-void mux_connection::on_mux_frame(const mux::frame_header header, std::vector<std::uint8_t> payload)
+boost::asio::awaitable<void> mux_connection::on_mux_frame(const mux::frame_header header, std::vector<std::uint8_t> payload)
 {
     LOG_TRACE("mux {} recv frame stream {} cmd {} len {} payload size {}", cid_, header.stream_id, header.command, header.length, payload.size());
 
     if (header.stream_id == mux::kStreamIdHeartbeat)
     {
-        if (header.command != mux::kCmdDat)
-        {
-            LOG_WARN("mux {} invalid heartbeat command {}", cid_, header.command);
-            stop();
-            return;
-        }
         LOG_DEBUG("mux {} heartbeat received size {}", cid_, payload.size());
+        co_return;
+    }
+
+    co_return co_await handle_stream_frame(header, std::move(payload));
+}
+
+std::shared_ptr<mux_stream> mux_connection::create_stream()
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    const std::uint32_t stream_id = acquire_next_id();
+    auto stream = std::make_shared<mux_stream>(stream_id, cfg_, io_context_, shared_from_this());
+    streams_.emplace(stream_id, stream);
+    return stream;
+}
+
+void mux_connection::register_stream(const std::shared_ptr<mux_stream>& stream)
+{
+    if (stream == nullptr)
+    {
         return;
     }
-
-    if (header.command == mux::kCmdSyn)
-    {
-        if (syn_callback_ != nullptr)
-        {
-            syn_callback_(header.stream_id, std::move(payload));
-            return;
-        }
-        LOG_WARN("mux {} recv syn without callback stream {}", cid_, header.stream_id);
-        handle_unknown_stream(header.stream_id, header.command);
-        return;
-    }
-
-    handle_stream_frame(header, std::move(payload));
+    std::lock_guard<std::mutex> lock(mutex_);
+    streams_[stream->id()] = stream;
 }
 
-bool mux_connection::can_accept_stream()
+boost::asio::awaitable<void> mux_connection::send_async(mux_frame msg, boost::system::error_code& ec)
 {
-    if (connection_state_.load(std::memory_order_acquire) != mux_connection_state::kConnected)
+    if (msg.payload.size() > mux::kMaxPayload)
     {
-        return false;
+        LOG_ERROR("mux {} payload too large {}", cid_, msg.payload.size());
+        ec = boost::asio::error::message_size;
+        co_return;
     }
-    if (limits_config_.max_streams == 0)
+    if (msg.payload.size() > mux::kMaxPayloadPerRecord)
     {
-        return true;
-    }
-    if (!is_open())
-    {
-        return false;
-    }
-
-    return can_accept_stream_local();
-}
-
-bool mux_connection::has_stream(const std::uint32_t id)
-{
-    if (!is_open())
-    {
-        return false;
+        LOG_ERROR("mux {} payload too large for single record {} max {}", cid_, msg.payload.size(), mux::kMaxPayloadPerRecord);
+        ec = boost::asio::error::message_size;
+        co_return;
     }
 
-    return has_stream_local(id);
-}
-
-boost::asio::awaitable<std::shared_ptr<mux_stream>> mux_connection::create_stream_async(const std::string& trace_id)
-{
-    if (!is_open())
+    if (msg.h.command != mux::kCmdDat || msg.payload.size() < 128)
     {
-        co_return nullptr;
+        LOG_TRACE("mux {} send frame stream {} cmd {} size {}", cid_, msg.h.stream_id, msg.h.command, msg.payload.size());
     }
 
-    co_await boost::asio::dispatch(io_context_, boost::asio::use_awaitable);
-    if (!is_open())
+    co_await write_channel_->async_send(boost::system::error_code{}, std::move(msg), boost::asio::redirect_error(boost::asio::use_awaitable, ec));
+    if (ec)
     {
-        co_return nullptr;
+        LOG_ERROR("mux {} send failed error {}", cid_, ec.message());
+        co_return;
     }
-
-    std::string stream_trace_id = trace_id;
-    if (stream_trace_id.empty())
-    {
-        stream_trace_id = this->trace_id();
-    }
-
-    for (;;)
-    {
-        const std::uint32_t stream_id = acquire_next_id();
-        if (is_stream_id_cached_in_use(stream_id))
-        {
-            continue;
-        }
-
-        auto stream = std::make_shared<mux_stream>(stream_id, id(), stream_trace_id, shared_from_this(), io_context_);
-        const auto register_result = try_register_stream_with_reason(stream_id, stream);
-        if (register_result == stream_register_result::kSuccess)
-        {
-            co_return stream;
-        }
-        if (register_result == stream_register_result::kIdConflict)
-        {
-            LOG_WARN("mux {} create stream {} id conflict", cid_, stream_id);
-            if (!is_open())
-            {
-                co_return nullptr;
-            }
-            continue;
-        }
-        LOG_WARN("mux {} create stream {} register failed {}", cid_, stream_id, static_cast<std::uint32_t>(register_result));
-        co_return nullptr;
-    }
+    co_return;
 }
 
 std::uint32_t mux_connection::acquire_next_id()
 {
     for (;;)
     {
-        const std::uint32_t id = next_stream_id_.fetch_add(2, std::memory_order_relaxed);
-        if (id != mux::kStreamIdHeartbeat)
+        next_stream_id_ += 2;
+        if (next_stream_id_ != mux::kStreamIdHeartbeat)
         {
-            return id;
+            return next_stream_id_;
         }
     }
 }
 
-std::shared_ptr<mux_stream> mux_connection::create_stream(const std::string& trace_id)
-{
-    if (!is_open())
-    {
-        return nullptr;
-    }
-
-    std::string stream_trace_id = trace_id;
-    if (stream_trace_id.empty())
-    {
-        stream_trace_id = this->trace_id();
-    }
-
-    for (;;)
-    {
-        const std::uint32_t stream_id = acquire_next_id();
-        if (is_stream_id_cached_in_use(stream_id))
-        {
-            continue;
-        }
-
-        auto stream = std::make_shared<mux_stream>(stream_id, id(), stream_trace_id, shared_from_this(), io_context_);
-        const auto register_result = try_register_stream_with_reason(stream_id, stream);
-        if (register_result == stream_register_result::kSuccess)
-        {
-            return stream;
-        }
-        if (register_result == stream_register_result::kIdConflict)
-        {
-            LOG_WARN("mux {} create stream {} id conflict", cid_, stream_id);
-            if (!is_open())
-            {
-                return nullptr;
-            }
-            continue;
-        }
-        LOG_WARN("mux {} create stream {} register failed {}", cid_, stream_id, static_cast<std::uint32_t>(register_result));
-        return nullptr;
-    }
-}
-
-}
+}    // namespace mux

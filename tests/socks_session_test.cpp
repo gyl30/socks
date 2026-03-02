@@ -158,7 +158,7 @@ TEST_F(socks_session_test_fixture, ActiveConnectionGuardOutlivesSessionObject)
         auto session = std::make_shared<socks_session>(std::move(pair.server), io_ctx(), nullptr, nullptr, 999);
         EXPECT_EQ(stats.active_connections(), active_before + 1);
 
-        guard = std::move(session->active_connection_guard_);
+        guard = std::move(session->active_guard_);
         session.reset();
 
         ASSERT_NE(guard, nullptr);
