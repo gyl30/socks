@@ -154,6 +154,11 @@ boost::asio::awaitable<std::shared_ptr<mux_stream>> connect_remote_address(std::
         LOG_CTX_WARN(ctx, "{} ack failed {}", log_event::kSocks, ec.message());
         co_return nullptr;
     }
+    if (ack_frame.h.command != mux::kCmdAck)
+    {
+        LOG_CTX_WARN(ctx, "{} ack failed unexpected cmd {}", log_event::kSocks, ack_frame.h.command);
+        co_return nullptr;
+    }
 
     ack_payload ack_pl{};
     if (!mux_codec::decode_ack(ack_frame.payload.data(), ack_frame.payload.size(), ack_pl))
