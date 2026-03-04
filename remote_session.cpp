@@ -126,12 +126,31 @@ boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
         co_await send_fail_ack(socks::kRepHostUnreach);
         co_return;
     }
-    co_await timeout_io::wait_connect_with_timeout(socket_, *resolve_res.begin(), cfg_.timeout.connect, ec);
-    if (ec)
+    boost::system::error_code connect_ec = boost::asio::error::host_unreachable;
+    for (const auto& entry : resolve_res)
+    {
+        if (socket_.is_open())
+        {
+            boost::system::error_code close_ec;
+            close_ec = socket_.close(close_ec);
+        }
+        connect_ec = socket_.open(entry.endpoint().protocol(), connect_ec);
+        if (connect_ec)
+        {
+            continue;
+        }
+        co_await timeout_io::wait_connect_with_timeout(socket_, entry.endpoint(), cfg_.timeout.connect, connect_ec);
+        if (!connect_ec)
+        {
+            break;
+        }
+    }
+    if (connect_ec)
     {
         co_await send_fail_ack(socks::kRepHostUnreach);
         co_return;
     }
+    ec.clear();
 
     ec = socket_.set_option(boost::asio::ip::tcp::no_delay(true), ec);
     if (ec)
