@@ -97,20 +97,40 @@ boost::asio::awaitable<void> remote_udp_session::start_impl()
         co_await stream_->async_write(ack_frame, ack_ec);
     };
 
-    ec = udp_socket_.open(boost::asio::ip::udp::v6(), ec);
-    if (ec)
+    auto bind_udp_socket = [&]() -> bool
     {
-        co_await send_fail_ack(socks::kRepGenFail);
-        co_return;
-    }
-    ec = udp_socket_.set_option(boost::asio::ip::v6_only(false), ec);
-    if (ec)
-    {
-        co_await send_fail_ack(socks::kRepGenFail);
-        co_return;
-    }
-    ec = udp_socket_.bind(boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v6(), 0), ec);
-    if (ec)
+        ec = udp_socket_.open(boost::asio::ip::udp::v6(), ec);
+        if (!ec)
+        {
+            ec = udp_socket_.set_option(boost::asio::ip::v6_only(false), ec);
+            if (!ec)
+            {
+                ec = udp_socket_.bind(boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v6(), 0), ec);
+            }
+            if (!ec)
+            {
+                return true;
+            }
+
+            LOG_CTX_WARN(ctx_, "{} bind dual-stack udp failed {} fallback ipv4", log_event::kMux, ec.message());
+            boost::system::error_code close_ec;
+            close_ec = udp_socket_.close(close_ec);
+        }
+        else
+        {
+            LOG_CTX_WARN(ctx_, "{} open ipv6 udp failed {} fallback ipv4", log_event::kMux, ec.message());
+        }
+
+        ec = udp_socket_.open(boost::asio::ip::udp::v4(), ec);
+        if (ec)
+        {
+            return false;
+        }
+        ec = udp_socket_.bind(boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0), ec);
+        return !ec;
+    };
+
+    if (!bind_udp_socket())
     {
         co_await send_fail_ack(socks::kRepGenFail);
         co_return;
