@@ -125,12 +125,15 @@ boost::asio::awaitable<void> tcp_socks_session::run(const std::string& host, con
 
     LOG_CTX_INFO(ctx_, "{} connected {} {} via {}", log_event::kConnEstablished, host, port, mux::to_string(route));
 
-    if (cfg_.timeout.idle != 0)
+    using boost::asio::experimental::awaitable_operators::operator||;
+    if (cfg_.timeout.idle == 0)
     {
-        boost::asio::co_spawn(io_context_, idle_watchdog_detached(shared_from_this(), backend), group_.adapt(boost::asio::detached));
+        co_await (client_to_upstream(backend) || upstream_to_client(backend));
     }
-    using boost::asio::experimental::awaitable_operators::operator&&;
-    co_await (client_to_upstream(backend) && upstream_to_client(backend));
+    else
+    {
+        co_await (client_to_upstream(backend) || upstream_to_client(backend) || idle_watchdog(backend));
+    }
 
     co_await backend->close();
     LOG_CTX_INFO(ctx_, "{} finished {}", log_event::kConnClose, ctx_.stats_summary());
@@ -267,10 +270,6 @@ boost::asio::awaitable<void> tcp_socks_session::upstream_to_client(std::shared_p
     LOG_CTX_INFO(ctx_, "upstream_to_client finished");
 }
 
-boost::asio::awaitable<void> tcp_socks_session::idle_watchdog_detached(std::shared_ptr<tcp_socks_session> self, std::shared_ptr<upstream> backend)
-{
-    co_await self->idle_watchdog(std::move(backend));
-}
 boost::asio::awaitable<void> tcp_socks_session::idle_watchdog(std::shared_ptr<upstream> backend)
 {
     const auto idle_timeout_ms = static_cast<std::uint64_t>(cfg_.timeout.idle) * 1000ULL;

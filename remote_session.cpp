@@ -183,15 +183,14 @@ boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
     }
     LOG_CTX_INFO(ctx_, "{} ack sent stream {} bind {} {}", log_event::kMux, id_, bind_addr, bind_port);
 
-    using boost::asio::experimental::awaitable_operators::operator&&;
     using boost::asio::experimental::awaitable_operators::operator||;
     if (cfg_.timeout.idle == 0)
     {
-        co_await (upstream() && downstream());
+        co_await (upstream() || downstream());
     }
     else
     {
-        co_await ((upstream() && downstream()) || idle_watchdog());
+        co_await (upstream() || downstream() || idle_watchdog());
     }
 
     LOG_CTX_INFO(ctx_, "{} finished {}", log_event::kConnClose, ctx_.stats_summary());

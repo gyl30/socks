@@ -51,8 +51,6 @@ class tcp_socks_session : public std::enable_shared_from_this<tcp_socks_session>
 
     [[nodiscard]] boost::asio::awaitable<void> upstream_to_client(std::shared_ptr<upstream> backend);
     [[nodiscard]] boost::asio::awaitable<void> idle_watchdog(std::shared_ptr<upstream> backend);
-    [[nodiscard]] static boost::asio::awaitable<void> idle_watchdog_detached(std::shared_ptr<tcp_socks_session> self,
-                                                                             std::shared_ptr<upstream> backend);
     [[nodiscard]] std::shared_ptr<upstream> create_backend(route_type route) const;
 
     void close_client_socket();
