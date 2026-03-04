@@ -113,15 +113,14 @@ boost::asio::awaitable<void> tproxy_tcp_session::run()
 
     LOG_CTX_INFO(ctx_, "{} connected {} {} via {}", log_event::kConnEstablished, local_addr.to_string(), port, mux::to_string(route));
 
-    using boost::asio::experimental::awaitable_operators::operator&&;
     using boost::asio::experimental::awaitable_operators::operator||;
     if (cfg_.timeout.idle == 0)
     {
-        co_await (client_to_upstream(backend) && upstream_to_client(backend));
+        co_await (client_to_upstream(backend) || upstream_to_client(backend));
     }
     else
     {
-        co_await ((client_to_upstream(backend) && upstream_to_client(backend)) || idle_watchdog());
+        co_await (client_to_upstream(backend) || upstream_to_client(backend) || idle_watchdog());
     }
 
     co_await backend->close();
