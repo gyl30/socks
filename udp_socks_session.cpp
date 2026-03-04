@@ -391,6 +391,16 @@ boost::asio::awaitable<void> udp_socks_session::stream_to_udp_sock(std::shared_p
         {
             continue;
         }
+        if (data_frame.h.command == mux::kCmdRst || data_frame.h.command == mux::kCmdFin)
+        {
+            LOG_CTX_INFO(ctx_, "{} recv control cmd {} closing", log_event::kSocks, data_frame.h.command);
+            break;
+        }
+        if (data_frame.h.command != mux::kCmdDat)
+        {
+            LOG_CTX_WARN(ctx_, "{} recv unexpected cmd {} dropping session", log_event::kSocks, data_frame.h.command);
+            break;
+        }
 
         const auto [send_ec, send_n] = co_await udp_socket_.async_send_to(
             boost::asio::buffer(data_frame.payload), client_addr_, boost::asio::as_tuple(boost::asio::use_awaitable));
