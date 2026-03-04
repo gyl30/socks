@@ -87,10 +87,14 @@ boost::asio::awaitable<void> direct_upstream::connect(const std::string& host, c
             last_ec = op_ec;
             continue;
         }
-        if (auto r = net::set_socket_mark(socket_.native_handle(), cfg_.tproxy.mark); !r)
+        const auto connect_mark = cfg_.tproxy.enabled ? cfg_.tproxy.mark : 0U;
+        if (connect_mark != 0)
         {
-            last_ec = r.error();
-            continue;
+            if (auto r = net::set_socket_mark(socket_.native_handle(), connect_mark); !r)
+            {
+                last_ec = r.error();
+                continue;
+            }
         }
 
         co_await timeout_io::wait_connect_with_timeout(socket_, entry.endpoint(), cfg_.timeout.connect, op_ec);
