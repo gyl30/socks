@@ -105,6 +105,21 @@ boost::asio::awaitable<void> mux_connection::handle_unknown_stream(mux::frame_he
 
     if (header.command == mux::kCmdSyn)
     {
+        bool stream_limit_reached = false;
+        if (cfg_.limits.max_streams > 0)
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            stream_limit_reached = streams_.size() >= cfg_.limits.max_streams;
+        }
+        if (stream_limit_reached)
+        {
+            LOG_WARN("mux {} reject stream {} max_streams {}", cid_, header.stream_id, cfg_.limits.max_streams);
+            mux_frame rst;
+            rst.h.command = mux::kCmdRst;
+            rst.h.stream_id = header.stream_id;
+            co_await write_channel_->async_send({}, rst, boost::asio::as_tuple(boost::asio::use_awaitable));
+            co_return;
+        }
         if (cb_)
         {
             mux_frame frame;
@@ -344,6 +359,11 @@ boost::asio::awaitable<void> mux_connection::on_mux_frame(const mux::frame_heade
 std::shared_ptr<mux_stream> mux_connection::create_stream()
 {
     std::lock_guard<std::mutex> lock(mutex_);
+    if (cfg_.limits.max_streams > 0 && streams_.size() >= cfg_.limits.max_streams)
+    {
+        LOG_WARN("mux {} create stream rejected max_streams {}", cid_, cfg_.limits.max_streams);
+        return nullptr;
+    }
     const std::uint32_t stream_id = acquire_next_id();
     auto stream = std::make_shared<mux_stream>(stream_id, cfg_, io_context_, shared_from_this());
     streams_.emplace(stream_id, stream);
