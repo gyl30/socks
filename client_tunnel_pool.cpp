@@ -1201,7 +1201,8 @@ boost::asio::awaitable<void> client_tunnel_pool::tcp_connect_remote(boost::asio:
     for (const auto& entry : resolve_endpoints)
     {
         const auto endpoint = entry.endpoint();
-        prepare_socket_for_connect(socket, endpoint, cfg_.tproxy.mark, ec);
+        const auto connect_mark = cfg_.tproxy.enabled ? cfg_.tproxy.mark : 0U;
+        prepare_socket_for_connect(socket, endpoint, connect_mark, ec);
         if (ec)
         {
             continue;
