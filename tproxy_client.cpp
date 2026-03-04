@@ -152,7 +152,7 @@ boost::asio::awaitable<void> tproxy_client::accept_tcp_loop()
         co_return;
     }
     LOG_INFO("tproxy tcp listening on {}:{}", cfg_.tproxy.listen_host, cfg_.tproxy.tcp_port);
-    LOG_INFO("tproxy udp listening on {}:{}", cfg_.tproxy.listen_host, effective_udp_port(cfg_.tproxy));
+    LOG_INFO("tproxy udp is not implemented yet configured port {} ignored", effective_udp_port(cfg_.tproxy));
 
     tunnel_pool_->start();
 
