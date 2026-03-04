@@ -149,6 +149,11 @@ boost::asio::awaitable<void> mux_connection::handle_stream_frame(const mux::fram
     frame.payload = std::move(payload);
     boost::system::error_code ec;
     co_await stream->on_frame(std::move(frame), ec);
+    if (ec)
+    {
+        LOG_ERROR("mux {} deliver frame to stream {} failed {}", cid_, header.stream_id, ec.message());
+        stop();
+    }
 }
 
 void mux_connection::remove_stream(const std::shared_ptr<mux_stream>& stream)
