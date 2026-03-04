@@ -1010,6 +1010,7 @@ boost::asio::awaitable<remote_server::server_handshake_res> remote_server::perfo
         }
         cert.cert_msg = fetch_res->cert_msg;
         cert.fingerprint = fetch_res->fingerprint;
+        cert_manager_.set_certificate(target.cert_sni, cert.cert_msg, cert.fingerprint, ctx.trace_id());
     }
 
     const std::uint16_t cipher_suite = select_cipher_suite_from_fingerprint(cert.fingerprint);
