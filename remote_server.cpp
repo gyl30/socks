@@ -807,9 +807,18 @@ boost::asio::awaitable<void> remote_server::handle(std::shared_ptr<boost::asio::
     //
     reality_engine engine(keys.c_app_keys.first, keys.c_app_keys.second, keys.s_app_keys.first, keys.s_app_keys.second, response.cipher);
     auto tunnel = std::make_shared<mux_tunnel_impl>(std::move(*s), io_context_, std::move(engine), cfg_, group_, conn_id, ctx.trace_id());
-    auto self = shared_from_this();
-    tunnel->set_new_stream_cb([this, self, tunnel, ctx](mux_frame frame) -> boost::asio::awaitable<void>
-                              { co_await process_stream_request(tunnel, ctx, std::move(frame)); });
+    std::weak_ptr<remote_server> weak_self = weak_from_this();
+    std::weak_ptr<mux_tunnel_impl> weak_tunnel = tunnel;
+    tunnel->set_new_stream_cb([weak_self, weak_tunnel, ctx](mux_frame frame) -> boost::asio::awaitable<void>
+                              {
+                                  const auto self = weak_self.lock();
+                                  const auto tunnel_ref = weak_tunnel.lock();
+                                  if (self == nullptr || tunnel_ref == nullptr)
+                                  {
+                                      co_return;
+                                  }
+                                  co_await self->process_stream_request(tunnel_ref, ctx, std::move(frame));
+                              });
     tunnel->run();
     co_return;
 }
