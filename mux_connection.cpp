@@ -174,7 +174,14 @@ boost::asio::awaitable<void> mux_connection::run_loop()
 {
     LOG_DEBUG("mux {} started loops", cid_);
     using boost::asio::experimental::awaitable_operators::operator||;
-    co_await (read_loop() || write_loop() || timeout_loop() || heartbeat_loop());
+    if (cfg_.heartbeat.enabled)
+    {
+        co_await (read_loop() || write_loop() || timeout_loop() || heartbeat_loop());
+    }
+    else
+    {
+        co_await (read_loop() || write_loop() || timeout_loop());
+    }
     stop();
     LOG_INFO("mux {} loops finished stopped", cid_);
 }
