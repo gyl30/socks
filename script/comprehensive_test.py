@@ -147,9 +147,12 @@ def write_file(path, content):
 
 def start_socks_process(config_file, log_file):
     cmd = ["./socks", "-c", config_file]
-    
+    child_env = os.environ.copy()
+    if "SOCKS_CONFIG_DIR" not in child_env:
+        child_env["SOCKS_CONFIG_DIR"] = os.path.abspath(BUILD_DIR)
+
     with open(log_file, "w") as out:
-         proc = subprocess.Popen(cmd, stdout=out, stderr=out, cwd=BUILD_DIR)
+        proc = subprocess.Popen(cmd, stdout=out, stderr=out, cwd=BUILD_DIR, env=child_env)
     return proc
 
 def socks5_handshake(sock, username=None, password=None):
