@@ -177,6 +177,10 @@ constexpr std::uint32_t kHandshakeRecordsLimitMax = 4096;
     {
         return std::unexpected(make_config_error("/tproxy/tcp_port", "must be non-zero when tproxy is enabled"));
     }
+    if (tproxy.udp_port != 0)
+    {
+        return std::unexpected(make_config_error("/tproxy/udp_port", "udp tproxy is not implemented must be 0"));
+    }
     return {};
 }
 
