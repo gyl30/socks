@@ -640,14 +640,26 @@ boost::asio::awaitable<void> remote_server::accept_loop()
     {
         co_return;
     }
+    boost::asio::steady_timer retry_timer(io_context_);
     while (true)
     {
         const auto s = std::make_shared<boost::asio::ip::tcp::socket>(io_context_);
         const auto [accept_ec] = co_await acceptor.async_accept(*s, boost::asio::as_tuple(boost::asio::use_awaitable));
         if (accept_ec)
         {
-            LOG_WARN("accept error {}", accept_ec.message());
-            break;
+            if (accept_ec == boost::asio::error::operation_aborted || accept_ec == boost::asio::error::bad_descriptor)
+            {
+                LOG_INFO("accept loop stopped {}", accept_ec.message());
+                break;
+            }
+            LOG_WARN("accept error {} retrying", accept_ec.message());
+            retry_timer.expires_after(std::chrono::milliseconds(200));
+            const auto [wait_ec] = co_await retry_timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
+            if (wait_ec && wait_ec != boost::asio::error::operation_aborted)
+            {
+                LOG_WARN("accept retry wait error {}", wait_ec.message());
+            }
+            continue;
         }
 
         boost::system::error_code ec;
@@ -656,6 +668,7 @@ boost::asio::awaitable<void> remote_server::accept_loop()
         const std::uint32_t conn_id = next_conn_id_++;
         boost::asio::co_spawn(io_context_, [this, self, s, conn_id]() { return handle(s, conn_id); }, group_.adapt(boost::asio::detached));
     }
+    LOG_INFO("accept loop exited");
 }
 
 boost::asio::awaitable<void> remote_server::handle(std::shared_ptr<boost::asio::ip::tcp::socket> s, std::uint32_t conn_id)
