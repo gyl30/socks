@@ -122,6 +122,12 @@ void bind_local_udp_address(boost::asio::ip::tcp::socket& tcp_socket,
 boost::asio::awaitable<std::shared_ptr<mux_stream>> connect_remote_address(std::shared_ptr<mux_tunnel_impl> tunnel_manager,
                                                                            const connection_context& ctx)
 {
+    if (tunnel_manager == nullptr)
+    {
+        LOG_CTX_ERROR(ctx, "{} failed to create stream no tunnel", log_event::kSocks);
+        co_return nullptr;
+    }
+
     auto stream = tunnel_manager->create_stream();
     if (stream == nullptr)
     {
