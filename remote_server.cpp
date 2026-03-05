@@ -820,6 +820,7 @@ boost::asio::awaitable<void> remote_server::handle(std::shared_ptr<boost::asio::
     //
     reality_engine engine(keys.c_app_keys.first, keys.c_app_keys.second, keys.s_app_keys.first, keys.s_app_keys.second, response.cipher);
     auto tunnel = std::make_shared<mux_tunnel_impl>(std::move(*s), io_context_, std::move(engine), cfg_, group_, conn_id, ctx.trace_id());
+
     std::weak_ptr<remote_server> weak_self = weak_from_this();
     std::weak_ptr<mux_tunnel_impl> weak_tunnel = tunnel;
     tunnel->set_new_stream_cb([weak_self, weak_tunnel, ctx](mux_frame frame) -> boost::asio::awaitable<void>
@@ -833,6 +834,28 @@ boost::asio::awaitable<void> remote_server::handle(std::shared_ptr<boost::asio::
                                   co_await self->process_stream_request(tunnel_ref, ctx, std::move(frame));
                               });
     tunnel->run();
+
+    boost::asio::steady_timer hold_timer(io_context_);
+    while (true)
+    {
+        const auto tunnel_ref = weak_tunnel.lock();
+        if (tunnel_ref == nullptr)
+        {
+            break;
+        }
+        const auto connection = tunnel_ref->connection();
+        if (connection == nullptr || !connection->is_active())
+        {
+            break;
+        }
+
+        hold_timer.expires_after(std::chrono::seconds(1));
+        const auto [wait_ec] = co_await hold_timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
+        if (wait_ec)
+        {
+            break;
+        }
+    }
     co_return;
 }
 
