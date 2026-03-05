@@ -193,6 +193,19 @@ boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
         co_await (upstream() || downstream() || idle_watchdog());
     }
 
+    if (stream_ != nullptr)
+    {
+        mux_frame fin_frame;
+        fin_frame.h.stream_id = stream_->id();
+        fin_frame.h.command = mux::kCmdFin;
+        boost::system::error_code fin_ec;
+        co_await stream_->async_write(std::move(fin_frame), fin_ec);
+        if (fin_ec)
+        {
+            LOG_CTX_WARN(ctx_, "{} send fin failed {}", log_event::kMux, fin_ec.message());
+        }
+    }
+
     LOG_CTX_INFO(ctx_, "{} finished {}", log_event::kConnClose, ctx_.stats_summary());
 }
 
