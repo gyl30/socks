@@ -27,7 +27,7 @@ class key_rotator
 
    private:
     std::chrono::seconds interval_;
-    std::shared_ptr<x25519_keypair> current_key_;
+    std::atomic<std::shared_ptr<x25519_keypair>> current_key_{nullptr};
     std::atomic<bool> rotating_{false};
     std::atomic<std::chrono::steady_clock::time_point> next_rotate_time_{std::chrono::steady_clock::time_point::min()};
 };
