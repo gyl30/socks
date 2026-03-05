@@ -96,7 +96,6 @@ void open_tcp_listener(boost::asio::ip::tcp::acceptor& acceptor, const std::stri
 
 tproxy_client::tproxy_client(io_context_pool& pool, const config& cfg)
     : cfg_(cfg),
-      pool_(pool),
       io_context_(pool.get_io_context()),
       router_(std::make_shared<router>()),
       tunnel_pool_(std::make_shared<client_tunnel_pool>(pool, cfg, group_)),

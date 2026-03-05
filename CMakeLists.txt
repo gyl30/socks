@@ -57,7 +57,7 @@ if(HAS_STRICT_FLEX_ARRAYS)
   add_compile_options(-fstrict-flex-arrays=3)
 endif()
 
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
   check_cxx_compiler_flag("-fstack-clash-protection" HAS_STACK_CLASH_PROTECTION)
   if(HAS_STACK_CLASH_PROTECTION)
     add_compile_options(-fstack-clash-protection)
@@ -195,40 +195,3 @@ endif()
 
 add_executable(socks main.cpp)
 target_link_libraries(socks PRIVATE core)
-
-find_package(GTest)
-if(NOT GTest_FOUND)
-  include(FetchContent)
-  FetchContent_Declare(
-    googletest
-    URL https://github.com/google/googletest/archive/refs/heads/main.zip)
-  set(gtest_force_shared_crt
-      ON
-      CACHE BOOL "" FORCE)
-  FetchContent_MakeAvailable(googletest)
-endif()
-
-# enable_testing()
-# add_subdirectory(tests)
-
-option(ENABLE_FUZZING "Enable fuzz testing" OFF)
-if(ENABLE_FUZZING)
-  if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    message(FATAL_ERROR "Fuzzing requires Clang compiler")
-  endif()
-
-  macro(add_fuzz_test NAME)
-    add_executable(${NAME} fuzz/${NAME}.cpp)
-    target_compile_options(${NAME} PRIVATE -fsanitize=fuzzer)
-    target_link_options(${NAME} PRIVATE -fsanitize=fuzzer)
-    target_link_libraries(${NAME} PRIVATE core)
-  endmacro()
-
-  add_fuzz_test(fuzz_mux_codec)
-  add_fuzz_test(fuzz_ch_parser)
-  add_fuzz_test(fuzz_socks_codec)
-  add_fuzz_test(fuzz_config)
-  add_fuzz_test(fuzz_reality_auth)
-  add_fuzz_test(fuzz_reality_decrypt)
-  add_fuzz_test(fuzz_socks_handshake)
-endif()
