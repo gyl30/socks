@@ -54,6 +54,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     void remove_stream(const std::shared_ptr<mux_stream>&);
     [[nodiscard]] std::shared_ptr<mux_stream> find_stream(std::uint32_t stream_id);
     boost::asio::awaitable<void> send_async(mux_frame msg, boost::system::error_code& ec);
+    boost::asio::awaitable<void> send_async_with_timeout(mux_frame msg, std::uint32_t timeout_sec, boost::system::error_code& ec);
 
    private:
     boost::asio::awaitable<void> run_loop();
@@ -82,6 +83,8 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     std::uint64_t write_bytes_ = 0;
     std::uint64_t last_read_time_ms_{0};
     std::uint64_t last_write_time_ms_{0};
+    std::uint64_t last_non_heartbeat_read_time_ms_{0};
+    std::uint64_t last_non_heartbeat_write_time_ms_{0};
     boost::asio::io_context& io_context_;
     boost::asio::ip::tcp::socket socket_;
     using channel_type = boost::asio::experimental::concurrent_channel<void(boost::system::error_code, mux_frame)>;
