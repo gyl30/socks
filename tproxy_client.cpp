@@ -39,12 +39,6 @@ namespace mux
 
 namespace
 {
-
-std::uint16_t effective_udp_port(const config::tproxy_t& tproxy_cfg)
-{
-    return tproxy_cfg.udp_port == 0 ? tproxy_cfg.tcp_port : tproxy_cfg.udp_port;
-}
-
 void open_tcp_listener(boost::asio::ip::tcp::acceptor& acceptor, const std::string& host, std::uint16_t port, boost::system::error_code& ec)
 {
     auto listen_addr = boost::asio::ip::make_address(host, ec);
@@ -151,7 +145,7 @@ boost::asio::awaitable<void> tproxy_client::accept_tcp_loop()
         co_return;
     }
     LOG_INFO("tproxy tcp listening on {}:{}", cfg_.tproxy.listen_host, cfg_.tproxy.tcp_port);
-    LOG_INFO("tproxy udp is not implemented yet configured port {} ignored", effective_udp_port(cfg_.tproxy));
+    LOG_INFO("tproxy udp is not implemented only tcp listener is active");
 
     tunnel_pool_->start();
 
