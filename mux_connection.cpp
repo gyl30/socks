@@ -299,7 +299,7 @@ boost::asio::awaitable<void> mux_connection::timeout_loop()
         const auto now_ms = timeout_io::now_ms();
         const auto read_diff = now_ms - last_read_time_ms_;
         const auto write_diff = now_ms - last_write_time_ms_;
-        if (read_diff > idle_timeout_ms || write_diff > idle_timeout_ms)
+        if (read_diff > idle_timeout_ms && write_diff > idle_timeout_ms)
         {
             break;
         }
