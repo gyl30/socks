@@ -32,6 +32,7 @@ class upstream
     virtual boost::asio::awaitable<void> connect(const std::string& host, std::uint16_t port, boost::system::error_code& ec) = 0;
     virtual boost::asio::awaitable<void> write(const std::vector<std::uint8_t>& data, boost::system::error_code& ec) = 0;
     [[nodiscard]] virtual boost::asio::awaitable<std::size_t> read(std::vector<std::uint8_t>& buf, boost::system::error_code& ec) = 0;
+    [[nodiscard]] virtual bool get_bind_endpoint(boost::asio::ip::address& addr, std::uint16_t& port, boost::system::error_code& ec) const = 0;
 };
 
 class direct_upstream : public upstream
@@ -47,6 +48,7 @@ class direct_upstream : public upstream
     boost::asio::awaitable<void> connect(const std::string& host, std::uint16_t port, boost::system::error_code& ec) override;
     boost::asio::awaitable<void> write(const std::vector<std::uint8_t>& data, boost::system::error_code& ec) override;
     [[nodiscard]] boost::asio::awaitable<std::size_t> read(std::vector<std::uint8_t>& buf, boost::system::error_code& ec) override;
+    [[nodiscard]] bool get_bind_endpoint(boost::asio::ip::address& addr, std::uint16_t& port, boost::system::error_code& ec) const override;
 
    private:
     const config& cfg_;
@@ -65,6 +67,7 @@ class proxy_upstream : public upstream
     boost::asio::awaitable<void> connect(const std::string& host, std::uint16_t port, boost::system::error_code& ec) override;
     boost::asio::awaitable<void> write(const std::vector<std::uint8_t>& data, boost::system::error_code& ec) override;
     [[nodiscard]] boost::asio::awaitable<std::size_t> read(std::vector<std::uint8_t>& buf, boost::system::error_code& ec) override;
+    [[nodiscard]] bool get_bind_endpoint(boost::asio::ip::address& addr, std::uint16_t& port, boost::system::error_code& ec) const override;
 
    private:
     boost::asio::awaitable<void> send_syn_request(const std::shared_ptr<mux_stream>& stream,
@@ -77,6 +80,9 @@ class proxy_upstream : public upstream
     connection_context ctx_;
     std::shared_ptr<mux_stream> stream_;
     std::shared_ptr<mux_tunnel_impl> tunnel_;
+    boost::asio::ip::address bind_addr_;
+    std::uint16_t bind_port_ = 0;
+    bool has_bind_endpoint_ = false;
     using channel_type =
         boost::asio::experimental::concurrent_channel<void(boost::system::error_code, std::pair<frame_header, std::vector<uint8_t>>)>;
     std::unique_ptr<channel_type> recv_channel_;
