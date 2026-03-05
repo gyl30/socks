@@ -307,8 +307,7 @@ void udp_socks_session::close_impl()
 
 boost::asio::awaitable<void> udp_socks_session::run(const std::string& host, const std::uint16_t port)
 {
-    (void)host;
-    (void)port;
+    apply_request_peer_constraint(host, port);
     boost::system::error_code ec;
     std::uint16_t udp_port = 0;
     boost::asio::ip::address local_addr;
@@ -351,6 +350,63 @@ boost::asio::awaitable<void> udp_socks_session::run(const std::string& host, con
     LOG_CTX_INFO(ctx_, "{} finished", log_event::kSocks);
 }
 
+void udp_socks_session::apply_request_peer_constraint(const std::string& host, const std::uint16_t port)
+{
+    has_request_client_addr_ = false;
+    has_request_client_port_ = false;
+    request_client_port_ = 0;
+    if (port != 0)
+    {
+        has_request_client_port_ = true;
+        request_client_port_ = port;
+    }
+
+    boost::system::error_code ec;
+    const auto request_addr = boost::asio::ip::make_address(host, ec);
+    if (!ec)
+    {
+        const auto normalized_addr = socks_codec::normalize_ip_address(request_addr);
+        if (!normalized_addr.is_unspecified())
+        {
+            has_request_client_addr_ = true;
+            request_client_addr_ = normalized_addr;
+        }
+    }
+    else if (!host.empty())
+    {
+        LOG_CTX_WARN(ctx_,
+                     "{} udp associate request host {} is not ip ignore host constraint",
+                     log_event::kSocks,
+                     host);
+    }
+
+    if (has_request_client_addr_ || has_request_client_port_)
+    {
+        LOG_CTX_INFO(ctx_,
+                     "{} udp associate peer constraint host {} port {}",
+                     log_event::kSocks,
+                     has_request_client_addr_ ? request_client_addr_.to_string() : "*",
+                     has_request_client_port_ ? std::to_string(request_client_port_) : "*");
+    }
+}
+
+bool udp_socks_session::sender_matches_request_peer(const boost::asio::ip::udp::endpoint& sender) const
+{
+    if (has_request_client_addr_)
+    {
+        const auto sender_addr = socks_codec::normalize_ip_address(sender.address());
+        if (sender_addr != request_client_addr_)
+        {
+            return false;
+        }
+    }
+    if (has_request_client_port_ && sender.port() != request_client_port_)
+    {
+        return false;
+    }
+    return true;
+}
+
 boost::asio::awaitable<void> udp_socks_session::udp_sock_to_stream(std::shared_ptr<mux_stream> stream)
 {
     std::vector<std::uint8_t> buf(65535);
@@ -366,8 +422,24 @@ boost::asio::awaitable<void> udp_socks_session::udp_sock_to_stream(std::shared_p
         }
         if (!has_client_addr_)
         {
+            if (!sender_matches_request_peer(sender))
+            {
+                LOG_CTX_WARN(ctx_,
+                             "{} ignore udp packet from unexpected peer {}:{} request expects {}:{}",
+                             log_event::kSocks,
+                             sender.address().to_string(),
+                             sender.port(),
+                             has_request_client_addr_ ? request_client_addr_.to_string() : "*",
+                             has_request_client_port_ ? std::to_string(request_client_port_) : "*");
+                continue;
+            }
             client_addr_ = sender;
             has_client_addr_ = true;
+            LOG_CTX_INFO(ctx_,
+                         "{} udp peer bound to {}:{}",
+                         log_event::kSocks,
+                         client_addr_.address().to_string(),
+                         client_addr_.port());
         }
         if (sender != client_addr_)
         {
