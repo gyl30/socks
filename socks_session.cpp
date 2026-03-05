@@ -7,8 +7,6 @@
 #include <cstdint>
 #include <utility>
 #include <algorithm>
-#include <netinet/in.h>
-
 #include <boost/asio/read.hpp>
 #include <boost/asio/error.hpp>
 #include <boost/asio/write.hpp>
@@ -25,6 +23,7 @@
 #include <boost/asio/ip/address_v4.hpp>
 #include <boost/asio/ip/address_v6.hpp>
 #include <boost/asio/use_awaitable.hpp>
+#include <boost/endian/conversion.hpp>
 
 #include "log.h"
 #include "config.h"
@@ -483,7 +482,7 @@ boost::asio::awaitable<bool> socks_session::read_request_port(std::uint16_t& por
         co_await reply_error(socks::kRepGenFail);
         co_return false;
     }
-    port = ntohs(port_n);
+    port = boost::endian::big_to_native(port_n);
     co_return true;
 }
 

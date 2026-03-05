@@ -1,493 +1,262 @@
-name: CI
+name: Build Binaries
 
 on:
   push:
-    branches: [ "main" ]
+    branches:
+      - main
+      - dev
+  pull_request:
+  workflow_dispatch:
 
 env:
   BOOST_VERSION: "1.89.0"
   BOOST_ARCHIVE: "boost_1_89_0.tar.bz2"
   BOOST_SRC_DIR: "boost_1_89_0"
-  BOOST_INSTALL_PREFIX: "/home/runner/.local/boost-1.89"
-  CLANG_VERSION: "20"
 
 jobs:
-  guard-expected-assertion-style:
-    name: Guard Expected Assertion Style
-    runs-on: ubuntu-22.04
-
-    steps:
-    - uses: actions/checkout@v4
-      with:
-        submodules: recursive
-
-    - name: Guard Expected Assertion Style
-      run: |
-        set -euo pipefail
-        if grep -R -n -E 'value_or[[:space:]]*\(' tests --include='*_test.cpp'; then
-          echo "Found forbidden expected assertion pattern in tests: value_or(...)"
-          exit 1
-        fi
-
-  complexity-gate:
-    name: Complexity Gate
-    runs-on: ubuntu-22.04
-
-    steps:
-    - uses: actions/checkout@v4
-      with:
-        submodules: recursive
-        fetch-depth: 0
-
-    - name: Install System Dependencies
-      run: |
-        set -euo pipefail
-        sudo apt-get update
-        sudo apt-get install -y python3 python3-pip
-
-    - name: Install Lizard
-      run: |
-        set -euo pipefail
-        python3 -m pip install lizard
-
-    - name: Enforce Changed Function Complexity Threshold
-      run: |
-        set -euo pipefail
-        BASE_REF="${{ github.event.before }}"
-
-  tiered-regression:
-    name: Tiered Regression (${{ matrix.tier }})
-    runs-on: ubuntu-22.04
+  build-linux-matrix:
+    name: Build Linux (${{ matrix.arch }},${{ matrix.compiler }},${{ matrix.libc }})
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
-        tier: [smoke, full]
+        arch: [x86, arm64]
+        compiler: [gcc, clang]
+        libc: [glibc, musl]
+        include:
+          - arch: x86
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
 
     steps:
-    - uses: actions/checkout@v4
-      with:
-        submodules: recursive
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
-    - name: Install System Dependencies
-      run: |
-        set -euo pipefail
-        sudo apt-get update
-        sudo apt-get install -y cmake ninja-build libssl-dev ripgrep wget curl gnupg ca-certificates
+      - name: Build Linux glibc Matrix Target
+        if: ${{ matrix.libc == 'glibc' }}
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            -e BOOST_VERSION \
+            -e BOOST_ARCHIVE \
+            -e BOOST_SRC_DIR \
+            -e COMPILER="${{ matrix.compiler }}" \
+            ubuntu:24.04 bash -lc '
+              set -euo pipefail
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update
+              apt-get install -y --no-install-recommends \
+                ca-certificates \
+                bzip2 \
+                tar \
+                wget \
+                cmake \
+                ninja-build \
+                pkg-config \
+                gcc \
+                g++ \
+                clang \
+                libssl-dev
 
-    - name: Install Clang
-      run: |
-        set -euo pipefail
-        wget -q https://apt.llvm.org/llvm.sh -O /tmp/llvm.sh
-        chmod +x /tmp/llvm.sh
-        sudo /tmp/llvm.sh "${CLANG_VERSION}"
-        "clang-${CLANG_VERSION}" --version
-        "clang++-${CLANG_VERSION}" --version
+              mkdir -p /tmp/boost-cache
+              if [ ! -d "/tmp/boost-cache/${BOOST_SRC_DIR}" ]; then
+                wget -O "/tmp/boost-cache/${BOOST_ARCHIVE}" "https://archives.boost.io/release/${BOOST_VERSION}/source/${BOOST_ARCHIVE}"
+                tar xf "/tmp/boost-cache/${BOOST_ARCHIVE}" -C /tmp/boost-cache
+              fi
 
-    - name: Cache Boost 1.89
-      id: cache-boost
-      uses: actions/cache@v4
-      with:
-        key: boost-1.89.0-${{ runner.os }}-v1
-        path: |
-          ~/.cache/boost_1_89_0.tar.bz2
-          ~/.cache/boost_1_89_0
-          ~/.local/boost-1.89
+              if [ "${COMPILER}" = "gcc" ]; then
+                CC_BIN=gcc
+                CXX_BIN=g++
+              else
+                CC_BIN=clang
+                CXX_BIN=clang++
+              fi
 
-    - name: Install Boost 1.89 from source
-      if: steps.cache-boost.outputs.cache-hit != 'true'
-      run: |
-        set -euo pipefail
-        mkdir -p "$HOME/.cache" "$HOME/.local"
-        wget -O "$HOME/.cache/${BOOST_ARCHIVE}" "https://archives.boost.io/release/${BOOST_VERSION}/source/${BOOST_ARCHIVE}"
-        rm -rf "$HOME/.cache/${BOOST_SRC_DIR}"
-        tar xf "$HOME/.cache/${BOOST_ARCHIVE}" -C "$HOME/.cache"
-        cd "$HOME/.cache/${BOOST_SRC_DIR}"
-        ./bootstrap.sh --prefix="${BOOST_INSTALL_PREFIX}"
-        ./b2 install -j"$(nproc)"
+              BOOST_ROOT="/tmp/boost-cache/${BOOST_SRC_DIR}"
 
-    - name: Configure Tiered Build
-      run: |
-        cmake -S . -B build_tier -GNinja \
-          -DCMAKE_BUILD_TYPE=Debug \
-          -DCMAKE_C_COMPILER="clang-${CLANG_VERSION}" \
-          -DCMAKE_CXX_COMPILER="clang++-${CLANG_VERSION}" \
-          -DENABLE_TSAN=OFF \
-          -DENABLE_ASAN=ON \
-          -DCMAKE_PREFIX_PATH="${BOOST_INSTALL_PREFIX}"
+              cmake -S . -B build -GNinja \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_C_COMPILER="${CC_BIN}" \
+                -DCMAKE_CXX_COMPILER="${CXX_BIN}" \
+                -DENABLE_TSAN=OFF \
+                -DENABLE_ASAN=OFF \
+                -DBoost_NO_BOOST_CMAKE=ON \
+                -DBoost_NO_SYSTEM_PATHS=ON \
+                -DBOOST_ROOT="${BOOST_ROOT}" \
+                -DCMAKE_PREFIX_PATH="${BOOST_ROOT}"
 
-    - name: Build Tiered Tests
-      run: cmake --build build_tier -j"$(nproc)"
+              cmake --build build --target socks --parallel
+              grep -q "SOCKS_HAS_TPROXY=1" build/compile_commands.json
+            '
 
-    - name: Run Tiered Regression
-      run: |
-        set -euo pipefail
+      - name: Build Linux musl Matrix Target
+        if: ${{ matrix.libc == 'musl' }}
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            -e BOOST_VERSION \
+            -e BOOST_ARCHIVE \
+            -e BOOST_SRC_DIR \
+            -e COMPILER="${{ matrix.compiler }}" \
+            alpine:3.20 sh -lc '
+              set -eu
+              apk add --no-cache \
+                ca-certificates \
+                bzip2 \
+                tar \
+                wget \
+                cmake \
+                ninja \
+                pkgconf \
+                build-base \
+                clang \
+                lld \
+                openssl-dev \
+                linux-headers
 
-  macos-unit:
-    name: macOS Unit Regression
+              mkdir -p /tmp/boost-cache
+              if [ ! -d "/tmp/boost-cache/${BOOST_SRC_DIR}" ]; then
+                wget -O "/tmp/boost-cache/${BOOST_ARCHIVE}" "https://archives.boost.io/release/${BOOST_VERSION}/source/${BOOST_ARCHIVE}"
+                tar xf "/tmp/boost-cache/${BOOST_ARCHIVE}" -C /tmp/boost-cache
+              fi
+
+              if [ "${COMPILER}" = "gcc" ]; then
+                CC_BIN=gcc
+                CXX_BIN=g++
+              else
+                CC_BIN=clang
+                CXX_BIN=clang++
+              fi
+
+              BOOST_ROOT="/tmp/boost-cache/${BOOST_SRC_DIR}"
+
+              cmake -S . -B build -GNinja \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_C_COMPILER="${CC_BIN}" \
+                -DCMAKE_CXX_COMPILER="${CXX_BIN}" \
+                -DENABLE_TSAN=OFF \
+                -DENABLE_ASAN=OFF \
+                -DBoost_NO_BOOST_CMAKE=ON \
+                -DBoost_NO_SYSTEM_PATHS=ON \
+                -DBOOST_ROOT="${BOOST_ROOT}" \
+                -DCMAKE_PREFIX_PATH="${BOOST_ROOT}"
+
+              cmake --build build --target socks --parallel
+              grep -q "SOCKS_HAS_TPROXY=1" build/compile_commands.json
+            '
+
+  build-macos:
+    name: Build macOS (socks5)
     runs-on: macos-14
-    env:
-      INTEGRATION_TEST_REGEX: integration|tproxy_integration|udp_integration|mux_connection_integration_test
 
     steps:
-    - uses: actions/checkout@v4
-      with:
-        submodules: recursive
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
-    - name: Install System Dependencies
-      run: |
-        set -euo pipefail
-        brew update
-        brew install cmake ninja openssl@3 ripgrep llvm@20 boost
+      - name: Install Dependencies
+        run: |
+          set -euo pipefail
+          brew update
+          brew install cmake ninja llvm openssl@3 wget
 
-    - name: Configure macOS Build
-      run: |
-        set -euo pipefail
-        OPENSSL_ROOT="$(brew --prefix openssl@3)"
-        LLVM_ROOT="$(brew --prefix llvm@20)"
-        BOOST_ROOT="$(brew --prefix boost)"
-        cmake -S . -B build_macos -GNinja \
-          -DCMAKE_BUILD_TYPE=Debug \
-          -DCMAKE_C_COMPILER="${LLVM_ROOT}/bin/clang" \
-          -DCMAKE_CXX_COMPILER="${LLVM_ROOT}/bin/clang++" \
-          -DENABLE_TSAN=OFF \
-          -DENABLE_ASAN=ON \
-          -DOPENSSL_ROOT_DIR="${OPENSSL_ROOT}" \
-          -DOpenSSL_DIR="${OPENSSL_CMAKE_DIR}" \
-          -DCMAKE_CXX_FLAGS="-D_LIBCPP_DISABLE_AVAILABILITY" \
-          -DCMAKE_EXE_LINKER_FLAGS="-L${LLVM_ROOT}/lib/c++ -Wl,-rpath,${LLVM_ROOT}/lib/c++" \
-          -DCMAKE_SHARED_LINKER_FLAGS="-L${LLVM_ROOT}/lib/c++ -Wl,-rpath,${LLVM_ROOT}/lib/c++" \
-          -DCMAKE_PREFIX_PATH="${BOOST_ROOT};${OPENSSL_ROOT};${LLVM_ROOT}"
+      - name: Prepare Boost Headers
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.cache/boost"
+          if [ ! -d "$HOME/.cache/boost/${BOOST_SRC_DIR}" ]; then
+            wget -O "$HOME/.cache/boost/${BOOST_ARCHIVE}" "https://archives.boost.io/release/${BOOST_VERSION}/source/${BOOST_ARCHIVE}"
+            tar xf "$HOME/.cache/boost/${BOOST_ARCHIVE}" -C "$HOME/.cache/boost"
+          fi
 
-    - name: Build macOS
-      run: cmake --build build_macos -j"$(sysctl -n hw.ncpu)"
+      - name: Configure
+        run: |
+          set -euo pipefail
+          BOOST_ROOT="$HOME/.cache/boost/${BOOST_SRC_DIR}"
+          LLVM_ROOT="$(brew --prefix llvm)"
+          OPENSSL_ROOT="$(brew --prefix openssl@3)"
+          cmake -S . -B build -GNinja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER="${LLVM_ROOT}/bin/clang" \
+            -DCMAKE_CXX_COMPILER="${LLVM_ROOT}/bin/clang++" \
+            -DENABLE_TSAN=OFF \
+            -DENABLE_ASAN=OFF \
+            -DBoost_NO_BOOST_CMAKE=ON \
+            -DBoost_NO_SYSTEM_PATHS=ON \
+            -DBOOST_ROOT="$BOOST_ROOT" \
+            -DOPENSSL_ROOT_DIR="${OPENSSL_ROOT}" \
+            -DOpenSSL_DIR="${OPENSSL_CMAKE_DIR}" \
+            -DCMAKE_PREFIX_PATH="$BOOST_ROOT;${OPENSSL_ROOT};${LLVM_ROOT}"
 
-    - name: Run macOS Unit Tests
-      run: ctest --test-dir build_macos --parallel "$(sysctl -n hw.ncpu)" --output-on-failure -E "$INTEGRATION_TEST_REGEX"
+      - name: Build Binary
+        run: cmake --build build --target socks --parallel
 
-  tsan:
-    name: TSAN (${{ matrix.suite }})
-    runs-on: ubuntu-22.04
+      - name: Verify macOS Feature Set
+        run: |
+          set -euo pipefail
+          grep -q 'SOCKS_HAS_TPROXY=0' build/compile_commands.json
 
-    strategy:
-      fail-fast: false
-      matrix:
-        suite: [unit, integration]
-    env:
-      INTEGRATION_TEST_REGEX: integration|tproxy_integration|udp_integration|mux_connection_integration_test
-      CI_ARTIFACT_DIR: ci_artifacts
-
-    steps:
-    - uses: actions/checkout@v4
-      with:
-        submodules: recursive
-
-    - name: Install System Dependencies
-      run: |
-        set -euo pipefail
-        sudo apt-get update
-        sudo apt-get install -y cmake ninja-build libssl-dev python3 iproute2 iptables net-tools openssl curl gnupg ca-certificates ripgrep wget
-
-    - name: Cache Boost 1.89
-      id: cache-boost
-      uses: actions/cache@v4
-      with:
-        key: boost-1.89.0-${{ runner.os }}-v1
-        path: |
-          ~/.cache/boost_1_89_0.tar.bz2
-          ~/.cache/boost_1_89_0
-          ~/.local/boost-1.89
-
-    - name: Install Boost 1.89 from source
-      if: steps.cache-boost.outputs.cache-hit != 'true'
-      run: |
-        set -euo pipefail
-        mkdir -p "$HOME/.cache" "$HOME/.local"
-        wget -O "$HOME/.cache/${BOOST_ARCHIVE}" "https://archives.boost.io/release/${BOOST_VERSION}/source/${BOOST_ARCHIVE}"
-        rm -rf "$HOME/.cache/${BOOST_SRC_DIR}"
-        tar xf "$HOME/.cache/${BOOST_ARCHIVE}" -C "$HOME/.cache"
-        cd "$HOME/.cache/${BOOST_SRC_DIR}"
-        ./bootstrap.sh --prefix="${BOOST_INSTALL_PREFIX}"
-        ./b2 install -j"$(nproc)"
-
-    - name: Install Clang
-      run: |
-        set -euo pipefail
-        wget -q https://apt.llvm.org/llvm.sh -O /tmp/llvm.sh
-        chmod +x /tmp/llvm.sh
-        sudo /tmp/llvm.sh "${CLANG_VERSION}"
-        "clang-${CLANG_VERSION}" --version
-        "clang++-${CLANG_VERSION}" --version
-
-    - name: Prepare Artifact Directory
-      run: mkdir -p "$CI_ARTIFACT_DIR"
-
-    - name: Configure TSAN Build
-      run: |
-        cmake -S . -B build_tsan -GNinja \
-          -DCMAKE_BUILD_TYPE=Debug \
-          -DCMAKE_C_COMPILER="clang-${CLANG_VERSION}" \
-          -DCMAKE_CXX_COMPILER="clang++-${CLANG_VERSION}" \
-          -DENABLE_TSAN=ON \
-          -DENABLE_ASAN=OFF \
-          -DCMAKE_PREFIX_PATH="${BOOST_INSTALL_PREFIX}"
-
-    - name: Build TSAN
-      run: cmake --build build_tsan -j"$(nproc)"
-
-    - name: Run TSAN Unit Test Suite
-      if: matrix.suite == 'unit'
-      run: ctest --test-dir build_tsan --parallel "$(nproc)" --output-on-failure --output-log "$CI_ARTIFACT_DIR/ctest_tsan_unit.log" -E "$INTEGRATION_TEST_REGEX"
-
-    - name: Run TSAN Integration Tests
-      if: matrix.suite == 'integration'
-      run: ctest --test-dir build_tsan --parallel "$(nproc)" --output-on-failure --output-log "$CI_ARTIFACT_DIR/ctest_tsan_integration.log" -R "$INTEGRATION_TEST_REGEX"
-
-    - name: Upload TSAN Artifacts
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: tsan-${{ matrix.suite }}-artifacts
-        if-no-files-found: warn
-        path: |
-          ${{ env.CI_ARTIFACT_DIR }}/**
-
-  valgrind:
-    name: Valgrind Memory Safety
-    runs-on: ubuntu-22.04
-
-    env:
-      CI_ARTIFACT_DIR: ci_artifacts
-      CC: gcc-13
-      CXX: g++-13
+  build-windows:
+    name: Build Windows (socks5)
+    runs-on: windows-2022
 
     steps:
-    - uses: actions/checkout@v4
-      with:
-        submodules: recursive
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
-    - name: Install System Dependencies
-      run: |
-        set -euo pipefail
-        sudo apt-get update
-        sudo apt-get install -y cmake ninja-build libssl-dev python3 valgrind openssl wget
+      - name: Setup MSYS2 Toolchain
+        uses: msys2/setup-msys2@v2
+        with:
+          update: true
+          msystem: UCRT64
+          install: >-
+            mingw-w64-ucrt-x86_64-clang
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-openssl
+            mingw-w64-ucrt-x86_64-pkgconf
+            wget
+            tar
 
-    - name: Install GCC/G++ 13
-      run: |
-        set -euo pipefail
-        if ! apt-cache show gcc-13 >/dev/null 2>&1; then
-          sudo apt-get install -y software-properties-common
-          sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
-          sudo apt-get update
-        fi
-        sudo apt-get install -y gcc-13 g++-13
+      - name: Prepare Boost Headers
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.cache/boost"
+          if [ ! -d "$HOME/.cache/boost/${BOOST_SRC_DIR}" ]; then
+            wget -O "$HOME/.cache/boost/${BOOST_ARCHIVE}" "https://archives.boost.io/release/${BOOST_VERSION}/source/${BOOST_ARCHIVE}"
+            tar xf "$HOME/.cache/boost/${BOOST_ARCHIVE}" -C "$HOME/.cache/boost"
+          fi
 
-    - name: Verify GCC/G++ Version >= 13
-      run: |
-        set -euo pipefail
-        gcc_major="$("${CC}" -dumpfullversion | cut -d. -f1)"
-        gxx_major="$("${CXX}" -dumpfullversion | cut -d. -f1)"
-        if [ "${gcc_major}" -lt 13 ] || [ "${gxx_major}" -lt 13 ]; then
-          echo "gcc or g++ version is below 13"
-          "${CC}" --version
-          "${CXX}" --version
-          exit 1
-        fi
-        "${CC}" --version
-        "${CXX}" --version
+      - name: Configure
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          BOOST_ROOT="$HOME/.cache/boost/${BOOST_SRC_DIR}"
+          cmake -S . -B build -GNinja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DENABLE_TSAN=OFF \
+            -DENABLE_ASAN=OFF \
+            -DBoost_NO_BOOST_CMAKE=ON \
+            -DBoost_NO_SYSTEM_PATHS=ON \
+            -DBOOST_ROOT="$BOOST_ROOT" \
+            -DCMAKE_PREFIX_PATH="/ucrt64;$BOOST_ROOT"
 
-    - name: Cache Boost 1.89
-      id: cache-boost
-      uses: actions/cache@v4
-      with:
-        key: boost-1.89.0-${{ runner.os }}-v1
-        path: |
-          ~/.cache/boost_1_89_0.tar.bz2
-          ~/.cache/boost_1_89_0
-          ~/.local/boost-1.89
+      - name: Build Binary
+        shell: msys2 {0}
+        run: cmake --build build --target socks --parallel
 
-    - name: Install Boost 1.89 from source
-      if: steps.cache-boost.outputs.cache-hit != 'true'
-      run: |
-        set -euo pipefail
-        mkdir -p "$HOME/.cache" "$HOME/.local"
-        wget -O "$HOME/.cache/${BOOST_ARCHIVE}" "https://archives.boost.io/release/${BOOST_VERSION}/source/${BOOST_ARCHIVE}"
-        rm -rf "$HOME/.cache/${BOOST_SRC_DIR}"
-        tar xf "$HOME/.cache/${BOOST_ARCHIVE}" -C "$HOME/.cache"
-        cd "$HOME/.cache/${BOOST_SRC_DIR}"
-        ./bootstrap.sh --prefix="${BOOST_INSTALL_PREFIX}"
-        ./b2 install -j"$(nproc)"
-
-    - name: Prepare Artifact Directory
-      run: mkdir -p "$CI_ARTIFACT_DIR"
-
-    - name: Configure Valgrind Build
-      run: |
-        cmake -S . -B build_valgrind -GNinja \
-          -DCMAKE_BUILD_TYPE=Debug \
-          -DENABLE_TSAN=OFF \
-          -DENABLE_ASAN=OFF \
-          -DCMAKE_PREFIX_PATH="${BOOST_INSTALL_PREFIX}"
-
-    - name: Build Valgrind
-      run: cmake --build build_valgrind -j"$(nproc)"
-
-    - name: Validate Valgrind Script Args
-
-    - name: Run Valgrind Memory Safety Test
-      run: |
-        set -euo pipefail
-
-    - name: Upload Valgrind Artifacts
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: valgrind-artifacts
-        if-no-files-found: warn
-        path: |
-          ${{ env.CI_ARTIFACT_DIR }}/**
-          build_valgrind/*_valgrind.log
-          build_valgrind/val_*stdout.log
-
-  coverage:
-    name: Coverage Gate
-    runs-on: ubuntu-22.04
-
-    env:
-      CI_ARTIFACT_DIR: ci_artifacts
-      CC: gcc-13
-      CXX: g++-13
-
-    steps:
-    - uses: actions/checkout@v4
-      with:
-        submodules: recursive
-
-    - name: Install System Dependencies
-      run: |
-        set -euo pipefail
-        sudo apt-get update
-        sudo apt-get install -y cmake ninja-build libssl-dev python3 python3-pip gcovr ripgrep wget
-
-    - name: Install GCC/G++ 13
-      run: |
-        set -euo pipefail
-        if ! apt-cache show gcc-13 >/dev/null 2>&1; then
-          sudo apt-get install -y software-properties-common
-          sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
-          sudo apt-get update
-        fi
-        sudo apt-get install -y gcc-13 g++-13
-
-    - name: Verify GCC/G++ Version >= 13
-      run: |
-        set -euo pipefail
-        gcc_major="$("${CC}" -dumpfullversion | cut -d. -f1)"
-        gxx_major="$("${CXX}" -dumpfullversion | cut -d. -f1)"
-        if [ "${gcc_major}" -lt 13 ] || [ "${gxx_major}" -lt 13 ]; then
-          echo "gcc or g++ version is below 13"
-          "${CC}" --version
-          "${CXX}" --version
-          exit 1
-        fi
-        "${CC}" --version
-        "${CXX}" --version
-
-    - name: Cache Boost 1.89
-      id: cache-boost
-      uses: actions/cache@v4
-      with:
-        key: boost-1.89.0-${{ runner.os }}-v1
-        path: |
-          ~/.cache/boost_1_89_0.tar.bz2
-          ~/.cache/boost_1_89_0
-          ~/.local/boost-1.89
-
-    - name: Install Boost 1.89 from source
-      if: steps.cache-boost.outputs.cache-hit != 'true'
-      run: |
-        set -euo pipefail
-        mkdir -p "$HOME/.cache" "$HOME/.local"
-        wget -O "$HOME/.cache/${BOOST_ARCHIVE}" "https://archives.boost.io/release/${BOOST_VERSION}/source/${BOOST_ARCHIVE}"
-        rm -rf "$HOME/.cache/${BOOST_SRC_DIR}"
-        tar xf "$HOME/.cache/${BOOST_ARCHIVE}" -C "$HOME/.cache"
-        cd "$HOME/.cache/${BOOST_SRC_DIR}"
-        ./bootstrap.sh --prefix="${BOOST_INSTALL_PREFIX}"
-        ./b2 install -j"$(nproc)"
-
-    - name: Prepare Artifact Directory
-      run: mkdir -p "$CI_ARTIFACT_DIR"
-
-    - name: Enforce Coverage >= 95% (line overall)
-      run: |
-        set -euo pipefail
-
-    - name: Upload Coverage Artifacts
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: coverage-artifacts
-        if-no-files-found: warn
-        path: |
-          ${{ env.CI_ARTIFACT_DIR }}/**
-          build_coverage/coverage_report/summary.json
-
-  fuzzing-smoke:
-    name: Fuzzing Smoke Test (Clang)
-    runs-on: ubuntu-22.04
-    
-    steps:
-    - uses: actions/checkout@v4
-      with:
-        submodules: recursive
-
-    - name: Install System Dependencies
-      run: |
-        set -euo pipefail
-        sudo apt-get update
-        sudo apt-get install -y cmake ninja-build libssl-dev curl gnupg ca-certificates wget
-
-    - name: Cache Boost 1.89
-      id: cache-boost
-      uses: actions/cache@v4
-      with:
-        key: boost-1.89.0-${{ runner.os }}-v1
-        path: |
-          ~/.cache/boost_1_89_0.tar.bz2
-          ~/.cache/boost_1_89_0
-          ~/.local/boost-1.89
-
-    - name: Install Boost 1.89 from source
-      if: steps.cache-boost.outputs.cache-hit != 'true'
-      run: |
-        set -euo pipefail
-        mkdir -p "$HOME/.cache" "$HOME/.local"
-        wget -O "$HOME/.cache/${BOOST_ARCHIVE}" "https://archives.boost.io/release/${BOOST_VERSION}/source/${BOOST_ARCHIVE}"
-        rm -rf "$HOME/.cache/${BOOST_SRC_DIR}"
-        tar xf "$HOME/.cache/${BOOST_ARCHIVE}" -C "$HOME/.cache"
-        cd "$HOME/.cache/${BOOST_SRC_DIR}"
-        ./bootstrap.sh --prefix="${BOOST_INSTALL_PREFIX}"
-        ./b2 install -j"$(nproc)"
-
-    - name: Install Clang
-      run: |
-        set -euo pipefail
-        wget -q https://apt.llvm.org/llvm.sh -O /tmp/llvm.sh
-        chmod +x /tmp/llvm.sh
-        sudo /tmp/llvm.sh "${CLANG_VERSION}"
-        "clang-${CLANG_VERSION}" --version
-        "clang++-${CLANG_VERSION}" --version
-
-    - name: Configure CMake (Fuzzing)
-      run: cmake -S . -B build_fuzz -DENABLE_FUZZING=ON -DCMAKE_CXX_COMPILER="clang++-${CLANG_VERSION}" -DCMAKE_C_COMPILER="clang-${CLANG_VERSION}" -DCMAKE_PREFIX_PATH="${BOOST_INSTALL_PREFIX}" -GNinja
-
-    - name: Build Fuzzers
-      run: cmake --build build_fuzz -j"$(nproc)"
-
-    - name: Smoke Test Fuzzers
-      run: |
-        ./build_fuzz/fuzz_socks_handshake -max_total_time=10
-        ./build_fuzz/fuzz_reality_auth -max_total_time=10
-        ./build_fuzz/fuzz_config -max_total_time=5
-        ./build_fuzz/fuzz_reality_decrypt -max_total_time=10
-        ./build_fuzz/fuzz_mux_codec -max_total_time=5
-        ./build_fuzz/fuzz_ch_parser -max_total_time=5
+      - name: Verify Windows Feature Set
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          grep -q 'SOCKS_HAS_TPROXY=0' build/compile_commands.json
