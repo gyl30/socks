@@ -141,8 +141,8 @@ boost::asio::awaitable<void> direct_upstream::close()
     co_return;
 }
 
-proxy_upstream::proxy_upstream(std::shared_ptr<mux_tunnel_impl> tunnel, connection_context ctx, const config& cfg)
-    : cfg_(cfg), ctx_(std::move(ctx)), tunnel_(std::move(tunnel))
+proxy_upstream::proxy_upstream(std::shared_ptr<mux_tunnel_impl> tunnel, connection_context ctx)
+    : ctx_(std::move(ctx)), tunnel_(std::move(tunnel))
 {
 }
 

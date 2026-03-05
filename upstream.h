@@ -58,7 +58,7 @@ class direct_upstream : public upstream
 class proxy_upstream : public upstream
 {
    public:
-    explicit proxy_upstream(std::shared_ptr<mux_tunnel_impl> tunnel, connection_context ctx, const config& cfg);
+    explicit proxy_upstream(std::shared_ptr<mux_tunnel_impl> tunnel, connection_context ctx);
 
    public:
     boost::asio::awaitable<void> close() override;
@@ -74,7 +74,6 @@ class proxy_upstream : public upstream
     boost::asio::awaitable<bool> wait_connect_ack(const std::shared_ptr<mux_stream>& stream, const std::string& host, std::uint16_t port);
 
    private:
-    const config& cfg_;
     connection_context ctx_;
     std::shared_ptr<mux_stream> stream_;
     std::shared_ptr<mux_tunnel_impl> tunnel_;

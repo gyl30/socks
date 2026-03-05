@@ -39,7 +39,7 @@ std::shared_ptr<x25519_keypair> key_rotator::get_current_key()
         }
     }
 
-    auto key = std::atomic_load_explicit(&current_key_, std::memory_order_acquire);
+    auto key = current_key_.load(std::memory_order_acquire);
     if (key != nullptr)
     {
         return key;
@@ -51,7 +51,7 @@ std::shared_ptr<x25519_keypair> key_rotator::get_current_key()
         (void)rotate();
         rotating_.store(false, std::memory_order_release);
     }
-    return std::atomic_load_explicit(&current_key_, std::memory_order_acquire);
+    return current_key_.load(std::memory_order_acquire);
 }
 
 bool key_rotator::rotate()
@@ -80,7 +80,7 @@ bool key_rotator::rotate()
         return false;
     }
 
-    std::atomic_store_explicit(&current_key_, new_key, std::memory_order_release);
+    current_key_.store(new_key, std::memory_order_release);
     next_rotate_time_.store(std::chrono::steady_clock::now() + interval_, std::memory_order_relaxed);
     return true;
 }
