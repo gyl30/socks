@@ -161,7 +161,7 @@ boost::asio::awaitable<std::pair<route_type, std::shared_ptr<upstream>>> tproxy_
         {
             LOG_CTX_WARN(ctx_, "{} no active tunnel for proxy route", log_event::kRoute);
         }
-        const std::shared_ptr<upstream> backend = std::make_shared<proxy_upstream>(tunnel, ctx_, cfg_);
+        const std::shared_ptr<upstream> backend = std::make_shared<proxy_upstream>(tunnel, ctx_);
         co_return std::make_pair(route, backend);
     }
     co_return std::make_pair(route_type::kBlock, std::shared_ptr<upstream>(nullptr));
