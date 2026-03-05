@@ -34,6 +34,7 @@
 #include "mux_stream.h"
 #include "mux_tunnel.h"
 #include "timeout_io.h"
+#include "scoped_exit.h"
 #include "log_context.h"
 #include "mux_protocol.h"
 #include "udp_socks_session.h"
@@ -134,6 +135,12 @@ boost::asio::awaitable<std::shared_ptr<mux_stream>> connect_remote_address(std::
         LOG_CTX_ERROR(ctx, "{} failed to create stream", log_event::kSocks);
         co_return nullptr;
     }
+    bool keep_stream = false;
+    DEFER(
+        if (!keep_stream)
+        {
+            tunnel_manager->remove_stream(stream);
+        });
 
     const syn_payload syn{.socks_cmd = socks::kCmdUdpAssociate, .addr = "0.0.0.0", .port = 0, .trace_id = ctx.trace_id()};
     std::vector<std::uint8_t> syn_data;
@@ -178,6 +185,7 @@ boost::asio::awaitable<std::shared_ptr<mux_stream>> connect_remote_address(std::
         co_return nullptr;
     }
 
+    keep_stream = true;
     co_return stream;
 }
 
