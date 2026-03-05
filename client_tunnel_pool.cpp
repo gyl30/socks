@@ -73,6 +73,7 @@ constexpr std::uint32_t kMaxHandshakeMessageSize = static_cast<std::uint32_t>(kM
 constexpr std::uint32_t kMaxTlsCompatCcsRecords = 8;
 constexpr std::uint32_t kReconnectBaseDelayMs = 200;
 constexpr std::uint32_t kReconnectMaxDelayMs = 10000;
+constexpr std::uint32_t kReconnectStableDurationMs = 30000;
 
 reality::fingerprint_type parse_fingerprint_type(const std::string& name)
 {
@@ -1179,6 +1180,7 @@ boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::
         }
         // step 5 tunnel run
         tunnel->run();
+        const auto tunnel_start_ms = timeout_io::now_ms();
         {
             std::lock_guard<std::mutex> lock(tunnel_mutex_);
             tunnel_pool_.push_back(tunnel);
@@ -1205,7 +1207,17 @@ boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::
             std::lock_guard<std::mutex> lock(tunnel_mutex_);
             std::erase(tunnel_pool_, tunnel);
         }
-        retry_delay_ms = kReconnectBaseDelayMs;
+        const auto tunnel_alive_ms = timeout_io::now_ms() - tunnel_start_ms;
+        if (tunnel_alive_ms >= kReconnectStableDurationMs)
+        {
+            retry_delay_ms = kReconnectBaseDelayMs;
+            continue;
+        }
+        LOG_CTX_WARN(ctx,
+                     "{} stage=tunnel_closed short_lived={}ms backoff_before_retry",
+                     log_event::kConnInit,
+                     tunnel_alive_ms);
+        co_await wait_before_retry(ctx, "tunnel_closed");
     }
     LOG_INFO("{} connect remote loop {} exited", log_event::kConnClose, index);
 }
