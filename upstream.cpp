@@ -316,6 +316,15 @@ boost::asio::awaitable<void> proxy_upstream::close()
 {
     if (stream_ != nullptr && tunnel_ != nullptr)
     {
+        boost::system::error_code fin_ec;
+        mux_frame fin_frame;
+        fin_frame.h.stream_id = stream_->id();
+        fin_frame.h.command = mux::kCmdFin;
+        co_await stream_->async_write(fin_frame, fin_ec);
+        if (fin_ec)
+        {
+            LOG_CTX_WARN(ctx_.with_stream(stream_->id()), "{} stage=send_fin error={}", log_event::kRoute, fin_ec.message());
+        }
         tunnel_->remove_stream(stream_);
     }
     stream_.reset();

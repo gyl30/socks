@@ -337,6 +337,16 @@ boost::asio::awaitable<void> udp_socks_session::run(const std::string& host, con
     // step 4 forward data
     using boost::asio::experimental::awaitable_operators::operator||;
     co_await (udp_sock_to_stream(stream) || stream_to_udp_sock(stream) || keep_tcp_alive() || idle_watchdog());
+
+    mux_frame fin_frame;
+    fin_frame.h.stream_id = stream->id();
+    fin_frame.h.command = mux::kCmdFin;
+    boost::system::error_code fin_ec;
+    co_await stream->async_write(std::move(fin_frame), fin_ec);
+    if (fin_ec)
+    {
+        LOG_CTX_WARN(ctx_, "{} send fin failed {}", log_event::kSocks, fin_ec.message());
+    }
     tunnel_manager_->remove_stream(stream);
     LOG_CTX_INFO(ctx_, "{} finished", log_event::kSocks);
 }
