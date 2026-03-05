@@ -4,8 +4,14 @@
 #include <cstring>
 #include <expected>
 #include <optional>
+
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
 #include <netinet/in.h>
 #include <sys/socket.h>
+#endif
 
 #ifdef __linux__
 #include <linux/in.h>
@@ -21,6 +27,7 @@
 #include <boost/asio/ip/address_v4.hpp>
 #include <boost/asio/ip/address_v6.hpp>
 #include <boost/system/detail/system_category.hpp>
+#include <boost/endian/conversion.hpp>
 
 #include "net_utils.h"
 
@@ -30,21 +37,22 @@ namespace mux::net
 namespace
 {
 
-bool has_valid_cmsg_payload(const cmsghdr* cm, const std::size_t payload_len) { return cm->cmsg_len >= CMSG_LEN(payload_len); }
-
-boost::asio::ip::udp::endpoint make_v4_endpoint(const in_addr& addr, const in_port_t port)
+boost::asio::ip::udp::endpoint make_v4_endpoint(const in_addr& addr, const std::uint16_t port)
 {
     boost::asio::ip::address_v4::bytes_type bytes{};
     std::memcpy(bytes.data(), &addr, bytes.size());
-    return {boost::asio::ip::address_v4(bytes), ntohs(port)};
+    return {boost::asio::ip::address_v4(bytes), boost::endian::big_to_native(port)};
 }
 
-boost::asio::ip::udp::endpoint make_v6_endpoint(const in6_addr& addr, const in_port_t port)
+boost::asio::ip::udp::endpoint make_v6_endpoint(const in6_addr& addr, const std::uint16_t port)
 {
     boost::asio::ip::address_v6::bytes_type bytes{};
     std::memcpy(bytes.data(), &addr, bytes.size());
-    return {boost::asio::ip::address_v6(bytes), ntohs(port)};
+    return {boost::asio::ip::address_v6(bytes), boost::endian::big_to_native(port)};
 }
+
+#ifdef __linux__
+bool has_valid_cmsg_payload(const cmsghdr* cm, const std::size_t payload_len) { return cm->cmsg_len >= CMSG_LEN(payload_len); }
 
 std::optional<boost::asio::ip::udp::endpoint> parse_ipv4_original_dst(const cmsghdr* cm)
 {
@@ -65,6 +73,7 @@ std::optional<boost::asio::ip::udp::endpoint> parse_ipv6_original_dst(const cmsg
     const auto* addr = reinterpret_cast<const sockaddr_in6*>(CMSG_DATA(cm));
     return make_v6_endpoint(addr->sin6_addr, addr->sin6_port);
 }
+#endif
 
 #ifdef __linux__
 std::optional<boost::asio::ip::udp::endpoint> parse_original_dst_control_message(const cmsghdr* cm)
