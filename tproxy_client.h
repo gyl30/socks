@@ -33,7 +33,6 @@ class tproxy_client : public std::enable_shared_from_this<tproxy_client>
 
    private:
     config cfg_;
-    io_context_pool& pool_;
     boost::asio::io_context& io_context_;
     task_group group_{io_context_};
     std::shared_ptr<router> router_;
