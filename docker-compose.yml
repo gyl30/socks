@@ -7,7 +7,7 @@ services:
     container_name: socks-server
     command: ["-c", "/etc/socks/server.json"]
     volumes:
-      - ./docker/config/server.json:/etc/socks/server.json:ro
+      - ./docker/server.json:/etc/socks/server.json:ro
     networks:
       - socks-net
 
@@ -17,7 +17,7 @@ services:
     container_name: socks-client
     command: ["-c", "/etc/socks/client.json"]
     volumes:
-      - ./docker/config/client.json:/etc/socks/client.json:ro
+      - ./docker/client.json:/etc/socks/client.json:ro
     ports:
       - "10800:1080"
     depends_on:
