@@ -68,17 +68,9 @@ struct config
         std::uint32_t idle = 300;
     } timeout;
 
-    struct queues_t
-    {
-        std::uint32_t udp_channel_capacity = 512;
-    } queues;
-
     struct limits_t
     {
         std::uint32_t max_connections = 5;
-        std::uint32_t max_connections_per_source = 0;
-        std::uint8_t source_prefix_v4 = 32;
-        std::uint8_t source_prefix_v6 = 128;
         std::uint64_t max_buffer = 10L * 1024 * 1024;
         std::uint32_t max_streams = 1024;
         std::uint32_t max_handshake_records = 256;
@@ -102,20 +94,8 @@ struct config
 
     struct reality_t
     {
-        struct fallback_guard_t
-        {
-            bool enabled = true;
-            std::uint32_t rate_per_sec = 2;
-            std::uint32_t burst = 10;
-            std::string key_mode = "ip";
-            std::uint32_t circuit_fail_threshold = 5;
-            std::uint32_t circuit_open_sec = 30;
-            std::uint32_t state_ttl_sec = 600;
-        } fallback_guard;
-
         std::string sni = "www.apple.com";
         std::string fingerprint = "random";
-        std::string dest;
         std::string type = "tcp";
         bool strict_cert_verify = false;
         std::uint32_t replay_cache_max_entries = 100000;

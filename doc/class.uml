@@ -5,177 +5,216 @@ hide empty members
 package "Infrastructure" {
     class io_context_pool {
         + run()
-        + get_io_context() : io_context&
-        - work_guards_
+        + stop()
+        + get_io_context()
+    }
+
+    class task_group {
+        + emit(cancellation_type)
+        + async_wait()
     }
 
     class monitor_server {
-        - acceptor_
-        - token_
-        - rate_state_
         + start()
         + stop()
+        - accept_loop()
     }
 }
 
-note right of io_context_pool
-  每个异步对象绑定单一 io_context
-  不引入 strand
-end note
-
-package "Mux Protocol Layer" {
-    interface mux_stream_interface {
-        + {abstract} on_data()
-        + {abstract} on_close()
-        + {abstract} on_reset()
-    }
-
-    class mux_connection {
-        - socket_ : tcp::socket
-        - streams_ : map<id, stream>
-        - limits_config_
-        + send_async(cmd, payload)
-        + register_stream()
-        + can_accept_stream()
-        + has_stream()
-        - read_loop()
-        - write_loop()
-    }
-
-    class mux_dispatcher {
-        + on_plaintext_data()
-        + pack()
-        - max_buffer_
-    }
-
-    class mux_tunnel_impl<StreamLayer> {
-        - connection_ : shared_ptr<mux_connection>
-        + create_stream() : shared_ptr<mux_stream>
-    }
-
-    class mux_stream {
-        - id_ : uint32
-        - recv_channel_
-        + async_read_some()
-        + async_write_some()
-    }
-}
-
-package "Crypto Layer" {
-    class reality_engine {
-        - rx_buf_
-        - tx_buf_
-        + encrypt()
-        + process_available_records()
-    }
-}
-
-package "Client Side" {
-    class client_tunnel_pool {
-        - tunnel_pool_
-        + start()
-        + stop()
-        + select_tunnel()
-    }
-
+package "Client Inbound" {
     class socks_client {
-        - acceptor_
-        - tunnel_pool_ : shared_ptr<client_tunnel_pool>
-        + accept_local_loop()
         + start()
         + stop()
-    }
-
-    class tproxy_client {
-        - tcp_acceptor_
-        - udp_socket_
-        - tunnel_pool_ : shared_ptr<client_tunnel_pool>
-        + accept_tcp_loop()
-        + udp_loop()
-        + udp_cleanup_loop()
+        - accept_loop()
     }
 
     class socks_session {
-        - socket_ : tcp::socket
-        + handshake_socks5()
-        + run_tcp()
-        + run_udp()
+        + start()
+        - handshake()
+        - read_request()
     }
 
     class tcp_socks_session {
-        - idle_timer_
-        + idle_watchdog()
+        + start(host, port)
+        - run(host, port)
+        - idle_watchdog()
     }
 
     class udp_socks_session {
-        - idle_timer_
-        + idle_watchdog()
+        + start(host, port)
+        - run(host, port)
+        - udp_sock_to_stream()
+        - stream_to_udp_sock()
+    }
+
+    class tproxy_client {
+        + start()
+        + stop()
+        - accept_tcp_loop()
     }
 
     class tproxy_tcp_session {
-        - idle_timer_
-        + idle_watchdog()
+        + start()
+        - run()
+        - idle_watchdog()
     }
 
-    class tproxy_udp_session {
-        - idle_timer_
-        + idle_watchdog()
+    class router {
+        + load()
+        + decide_ip()
+        + decide_domain()
     }
+}
+
+package "Upstream" {
+    abstract class upstream {
+        + connect(host, port, ec)
+        + write(data, ec)
+        + read(buf, ec)
+        + close()
+    }
+
+    class direct_upstream
+    class proxy_upstream
+}
+
+package "Mux + Reality" {
+    class client_tunnel_pool {
+        + start()
+        + stop()
+        + select_tunnel()
+        + next_session_id()
+        - connect_remote_loop()
+        - perform_reality_handshake()
+    }
+
+    class mux_tunnel_impl {
+        + run()
+        + create_stream()
+        + set_new_stream_cb()
+    }
+
+    class mux_connection {
+        + start()
+        + stop()
+        + create_stream()
+        + send_async(frame, ec)
+        - read_loop()
+        - write_loop()
+        - timeout_loop()
+        - heartbeat_loop()
+    }
+
+    class mux_stream {
+        + id()
+        + async_read(ec)
+        + async_write(frame, ec)
+        + on_frame(frame, ec)
+    }
+
+    class mux_dispatcher {
+        + on_plaintext_data(data, ec)
+        + pack(stream_id, cmd, payload)
+    }
+
+    class reality_engine {
+        + encrypt(plaintext, ec)
+        + process_available_records(callback, ec)
+    }
+
+    interface mux_stream_interface
 }
 
 package "Server Side" {
     class remote_server {
-        - acceptor_
-        - active_tunnels_
-        - key_rotator_
-        + accept_loop()
-        + perform_handshake_response()
+        + start()
+        + stop()
+        - accept_loop()
+        - handle(socket, conn_id)
+        - perform_handshake_response()
+        - process_stream_request()
     }
 
-    class remote_session {
-        - target_socket_ : tcp::socket
-        + start()
-        + upstream()
-        + downstream()
+    class remote_tcp_session {
+        + start(syn)
+        - run(syn)
+        - upstream()
+        - downstream()
     }
-    
+
     class remote_udp_session {
-        - udp_socket_ : udp::socket
         + start()
-        + idle_watchdog()
+        - start_impl()
+        - mux_to_udp()
+        - udp_to_mux()
     }
+
+    class replay_cache
+    class key_rotator
+    class cert_manager
 }
 
-' Relations
+' Client relations
 socks_client o-- io_context_pool
-socks_client *-- client_tunnel_pool : uses >
-socks_client ..> socks_session : creates >
+socks_client *-- task_group
+socks_client *-- router
+socks_client *-- client_tunnel_pool
+socks_client ..> socks_session : creates
+
+socks_session ..> tcp_socks_session : CONNECT
+socks_session ..> udp_socks_session : UDP ASSOCIATE
+
+tcp_socks_session ..> router
+tcp_socks_session ..> upstream : create_backend
+udp_socks_session ..> mux_tunnel_impl
+
+upstream <|-- direct_upstream
+upstream <|-- proxy_upstream
+proxy_upstream ..> mux_tunnel_impl
 
 tproxy_client o-- io_context_pool
-tproxy_client *-- client_tunnel_pool : uses >
-tproxy_client ..> tproxy_tcp_session : creates >
-tproxy_client ..> tproxy_udp_session : creates >
+tproxy_client *-- task_group
+tproxy_client *-- router
+tproxy_client *-- client_tunnel_pool
+tproxy_client ..> tproxy_tcp_session : creates
 
-client_tunnel_pool ..> mux_tunnel_impl : manages >
-monitor_server o-- io_context_pool
+tproxy_tcp_session ..> router
+tproxy_tcp_session ..> upstream : select_backend
 
-socks_session ..> mux_stream : uses >
-tcp_socks_session ..> upstream : uses >
-udp_socks_session ..> mux_stream : uses >
-
-remote_server o-- io_context_pool
-remote_server ..> mux_tunnel_impl : creates >
-remote_server ..> remote_session : spawns >
+client_tunnel_pool o-- io_context_pool
+client_tunnel_pool *-- mux_tunnel_impl : pool items
 
 mux_tunnel_impl *-- mux_connection
-mux_connection *-- reality_engine : owns >
-mux_connection *-- mux_dispatcher : uses >
-mux_connection o-- mux_stream_interface : manages >
+mux_connection *-- mux_dispatcher
+mux_connection *-- reality_engine
+mux_connection *-- mux_stream : stream map
+mux_stream ..> mux_connection : weak ref
 
-mux_stream --|> mux_stream_interface
-remote_session --|> mux_stream_interface
-remote_udp_session --|> mux_stream_interface
+' Server relations
+remote_server o-- io_context_pool
+remote_server *-- task_group
+remote_server *-- replay_cache
+remote_server *-- key_rotator
+remote_server *-- cert_manager
+remote_server ..> mux_tunnel_impl : creates per tunnel
+remote_server ..> remote_tcp_session : on SYN CONNECT
+remote_server ..> remote_udp_session : on SYN UDP_ASSOCIATE
 
-mux_stream ..> mux_connection : weak_ptr backref >
+remote_tcp_session ..> mux_connection
+remote_udp_session ..> mux_connection
+
+monitor_server o-- io_context_pool
+monitor_server *-- task_group
+
+note right of tproxy_client
+  当前仅实现 TPROXY TCP。
+  udp_port 仅保留配置字段，
+  启动时会记录 UDP 未实现。
+end note
+
+note right of mux_stream_interface
+  接口文件仍在代码中，
+  当前版本没有实际实现类接入。
+end note
 
 @enduml

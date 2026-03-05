@@ -34,14 +34,9 @@ REFLECT_STRUCT(mux::config::socks_t, enabled, host, port, auth, username, passwo
 REFLECT_STRUCT(mux::config::tproxy_t, enabled, listen_host, tcp_port, udp_port, mark);
 REFLECT_STRUCT(mux::config::fallback_entry, sni, host, port);
 REFLECT_STRUCT(mux::config::timeout_t, read, write, connect, idle);
-REFLECT_STRUCT(mux::config::queues_t, udp_channel_capacity);
-REFLECT_STRUCT(
-    mux::config::reality_t::fallback_guard_t, enabled, rate_per_sec, burst, key_mode, circuit_fail_threshold, circuit_open_sec, state_ttl_sec);
 REFLECT_STRUCT(mux::config::reality_t,
-               fallback_guard,
                sni,
                fingerprint,
-               dest,
                type,
                strict_cert_verify,
                replay_cache_max_entries,
@@ -50,15 +45,12 @@ REFLECT_STRUCT(mux::config::reality_t,
                short_id);
 REFLECT_STRUCT(mux::config::limits_t,
                max_connections,
-               max_connections_per_source,
-               source_prefix_v4,
-               source_prefix_v6,
                max_buffer,
                max_streams,
                max_handshake_records);
 REFLECT_STRUCT(mux::config::heartbeat_t, enabled, idle_timeout, min_interval, max_interval, min_padding, max_padding);
 REFLECT_STRUCT(mux::config::monitor_t, enabled, port);
-REFLECT_STRUCT(mux::config, mode, workers, log, inbound, outbound, socks, tproxy, fallbacks, timeout, queues, reality, limits, heartbeat, monitor);
+REFLECT_STRUCT(mux::config, mode, workers, log, inbound, outbound, socks, tproxy, fallbacks, timeout, reality, limits, heartbeat, monitor);
 
 }    // namespace reflect
 
@@ -68,8 +60,6 @@ namespace mux
 namespace
 {
 
-constexpr std::uint32_t kQueueCapacityMin = 1;
-constexpr std::uint32_t kQueueCapacityMax = 65535;
 constexpr std::uint32_t kHandshakeRecordsLimitMin = 1;
 constexpr std::uint32_t kHandshakeRecordsLimitMax = 4096;
 
@@ -115,15 +105,6 @@ constexpr std::uint32_t kHandshakeRecordsLimitMax = 4096;
     if (limits.max_handshake_records < kHandshakeRecordsLimitMin || limits.max_handshake_records > kHandshakeRecordsLimitMax)
     {
         return std::unexpected(make_config_error("/limits/max_handshake_records", "must be between 1 and 4096"));
-    }
-    return {};
-}
-
-[[nodiscard]] std::expected<void, config_error> validate_queues_config(const config::queues_t& queues)
-{
-    if (queues.udp_channel_capacity < kQueueCapacityMin || queues.udp_channel_capacity > kQueueCapacityMax)
-    {
-        return std::unexpected(make_config_error("/queues/udp_session_recv_channel_capacity", "must be between 1 and 65535"));
     }
     return {};
 }
@@ -217,34 +198,6 @@ constexpr std::uint32_t kHandshakeRecordsLimitMax = 4096;
     return bytes;
 }
 
-[[nodiscard]] bool parse_bracket_dest_target(const std::string& text, std::string& host, std::string& port)
-{
-    const auto end = text.find(']');
-    if (end == std::string::npos)
-    {
-        return false;
-    }
-    host = text.substr(1, end - 1);
-    if (end + 1 >= text.size() || text[end + 1] != ':')
-    {
-        return false;
-    }
-    port = text.substr(end + 2);
-    return true;
-}
-
-[[nodiscard]] bool parse_plain_dest_target(const std::string& text, std::string& host, std::string& port)
-{
-    const auto pos = text.rfind(':');
-    if (pos == std::string::npos)
-    {
-        return false;
-    }
-    host = text.substr(0, pos);
-    port = text.substr(pos + 1);
-    return true;
-}
-
 [[nodiscard]] bool valid_port_text(const std::string& text)
 {
     if (text.empty())
@@ -322,43 +275,6 @@ constexpr std::uint32_t kHandshakeRecordsLimitMax = 4096;
     return {};
 }
 
-[[nodiscard]] bool is_valid_reality_dest(const std::string& input)
-{
-    if (input.empty())
-    {
-        return false;
-    }
-    std::string host;
-    std::string port;
-    const bool bracketed = input.front() == '[';
-    const bool parsed = bracketed ? parse_bracket_dest_target(input, host, port) : parse_plain_dest_target(input, host, port);
-    if (!parsed || host.empty() || !valid_port_text(port))
-    {
-        return false;
-    }
-    if (!bracketed && host.find(':') != std::string::npos)
-    {
-        return false;
-    }
-    return true;
-}
-
-[[nodiscard]] std::string normalize_fallback_guard_key_mode(const std::string& key_mode)
-{
-    std::string normalized;
-    normalized.reserve(key_mode.size());
-    for (const char ch : key_mode)
-    {
-        if (ch == '-' || ch == ' ')
-        {
-            normalized.push_back('_');
-            continue;
-        }
-        normalized.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
-    }
-    return normalized;
-}
-
 [[nodiscard]] std::expected<void, config_error> validate_reality_config(const config::reality_t& reality)
 {
     constexpr std::size_t kRealityKeyLen = 32;
@@ -402,44 +318,9 @@ constexpr std::uint32_t kHandshakeRecordsLimitMax = 4096;
     {
         return std::unexpected(make_config_error("/reality/sni", "must be at most 65530 bytes when provided"));
     }
-    if (reality.dest.find('\0') != std::string::npos)
-    {
-        return std::unexpected(make_config_error("/reality/dest", "must not contain nul when provided"));
-    }
-    if (!reality.dest.empty() && !is_valid_reality_dest(reality.dest))
-    {
-        return std::unexpected(make_config_error("/reality/dest", "must be host:port or [ipv6]:port with port in 1-65535 when provided"));
-    }
     if (!reality.type.empty() && reality.type != "tcp")
     {
         return std::unexpected(make_config_error("/reality/type", "must be tcp when provided"));
-    }
-    if (reality.fallback_guard.enabled)
-    {
-        if (reality.fallback_guard.rate_per_sec == 0)
-        {
-            return std::unexpected(
-                make_config_error("/reality/fallback_guard/rate_per_sec", "must be greater than 0 when fallback guard is enabled"));
-        }
-        if (reality.fallback_guard.burst == 0)
-        {
-            return std::unexpected(make_config_error("/reality/fallback_guard/burst", "must be greater than 0 when fallback guard is enabled"));
-        }
-        const auto key_mode = normalize_fallback_guard_key_mode(reality.fallback_guard.key_mode);
-        if (key_mode.empty() || (key_mode != "ip" && key_mode != "ip_sni"))
-        {
-            return std::unexpected(make_config_error("/reality/fallback_guard/key_mode", "must be ip or ip_sni when fallback guard is enabled"));
-        }
-        if (reality.fallback_guard.state_ttl_sec == 0)
-        {
-            return std::unexpected(
-                make_config_error("/reality/fallback_guard/state_ttl_sec", "must be greater than 0 when fallback guard is enabled"));
-        }
-        if (reality.fallback_guard.circuit_fail_threshold > 0 && reality.fallback_guard.circuit_open_sec == 0)
-        {
-            return std::unexpected(
-                make_config_error("/reality/fallback_guard/circuit_open_sec", "must be greater than 0 when circuit fail threshold is enabled"));
-        }
     }
 
     return {};
@@ -527,10 +408,6 @@ constexpr std::uint32_t kHandshakeRecordsLimitMax = 4096;
     if (const auto heartbeat_result = validate_heartbeat_config(cfg.heartbeat); !heartbeat_result)
     {
         return std::unexpected(heartbeat_result.error());
-    }
-    if (const auto queues_result = validate_queues_config(cfg.queues); !queues_result)
-    {
-        return std::unexpected(queues_result.error());
     }
     if (cfg.mode == "client")
     {

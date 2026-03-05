@@ -2,57 +2,83 @@
 !theme plain
 skinparam componentStyle uml2
 
-package "Local Machine (Client Side)" {
-    [User Application] as App
-    
-    node "Local Client Process" {
-        [Socks5 Listener] as SocksListener
-        [Socks Session Manager] as SocksSession
-        [Router] as Router
-        [Upstream Selector] as Upstream
-        [Mux Tunnel (Client)] as ClientTunnel
-        [Reality Engine (Encrypt)] as ClientCrypto
-    }
+package "Client Process" {
+    [SOCKS5 Listener] as SocksListener
+    [SOCKS Session] as SocksSession
+    [TPROXY TCP Listener] as TproxyListener
+    [TPROXY TCP Session] as TproxySession
+
+    [Router] as Router
+    [direct_upstream] as DirectUpstream
+    [proxy_upstream] as ProxyUpstream
+
+    [client_tunnel_pool] as TunnelPool
+    [mux_connection (client)] as ClientMux
+    [reality_engine (client)] as ClientReality
+
+    [monitor_server] as Monitor
 }
 
 cloud "Internet" {
-    [TCP Connection (Obfuscated)] as Network
+    [TLS-like TCP Tunnel] as Network
 }
 
-package "Remote Machine (Server Side)" {
-    node "Remote Server Process" {
-        [Reality Engine (Decrypt)] as ServerCrypto
-        [Mux Tunnel (Server)] as ServerTunnel
-        [Stream Dispatcher] as Dispatcher
-        [Remote Session (TCP/UDP)] as RemoteSession
-    }
-    
-    [Target Website/Service] as Target
+package "Server Process" {
+    [remote_server] as RemoteServer
+    [mux_connection (server)] as ServerMux
+    [reality_engine (server)] as ServerReality
+    [remote_tcp_session] as RemoteTcp
+    [remote_udp_session] as RemoteUdp
 }
 
-' Relationships
-App --> SocksListener : SOCKS5 Protocol
-SocksListener --> SocksSession : Create Session
-SocksSession --> Router : Decide Route
-Router --> Upstream : Direct / Proxy
-Upstream --> ClientTunnel : Request Stream
-ClientTunnel --> ClientCrypto : Encrypt Frame
-ClientCrypto <--> Network : REALITY Handshake & Data
-Network <--> ServerCrypto
-ServerCrypto --> ServerTunnel : Decrypt Frame
-ServerTunnel --> Dispatcher : Demultiplex
-Dispatcher --> RemoteSession : Create Handler
-RemoteSession --> Target : Raw TCP/UDP
+[User App] as App
+[Target Service] as Target
+[Prometheus / curl] as MetricsClient
 
-note right of Network
-  **REALITY Protocol**
-  看起来像 TLS 1.3 握手
-  实际上是 Mux 数据流
+App --> SocksListener : SOCKS5 TCP
+SocksListener --> SocksSession : create
+
+App --> TproxyListener : redirected TCP (Linux)
+TproxyListener --> TproxySession : create
+
+SocksSession --> Router : decide_ip / decide_domain
+TproxySession --> Router : decide_ip
+
+Router --> DirectUpstream : route=direct
+Router --> ProxyUpstream : route=proxy
+
+DirectUpstream --> Target : direct TCP
+
+ProxyUpstream --> TunnelPool : select_tunnel
+TunnelPool --> ClientMux : create/use tunnel
+ClientMux --> ClientReality : encrypt/decrypt mux frames
+ClientReality <--> Network
+Network <--> ServerReality
+ServerReality --> ServerMux : plaintext mux frame
+
+RemoteServer --> ServerReality : REALITY 握手
+RemoteServer --> ServerMux : set_new_stream_cb
+ServerMux --> RemoteTcp : SYN CONNECT
+ServerMux --> RemoteUdp : SYN UDP_ASSOCIATE
+
+RemoteTcp --> Target : TCP connect + relay
+RemoteUdp --> Target : UDP relay
+
+MetricsClient --> Monitor : GET /metrics
+
+note right of ProxyUpstream
+  route=proxy 时：
+  create_stream + SYN/ACK/DAT
 end note
 
-note bottom of Dispatcher
-  stream 数量与缓冲区受限
-  非法请求回 reset
+note right of RemoteServer
+  fallbacks 用于按 SNI 选取证书抓取目标。
+  不是透明转发流量 fallback。
+end note
+
+note bottom of TproxyListener
+  当前仅 TPROXY TCP。
+  UDP 尚未实现。
 end note
 
 @enduml
