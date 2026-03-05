@@ -165,8 +165,11 @@ void mux_connection::remove_stream(const std::shared_ptr<mux_stream>& stream)
 void mux_connection::start()
 {
     auto self = shared_from_this();
-    last_read_time_ms_ = timeout_io::now_ms();
-    last_write_time_ms_ = timeout_io::now_ms();
+    const auto now_ms = timeout_io::now_ms();
+    last_read_time_ms_ = now_ms;
+    last_write_time_ms_ = now_ms;
+    last_non_heartbeat_read_time_ms_ = now_ms;
+    last_non_heartbeat_write_time_ms_ = now_ms;
     boost::asio::co_spawn(io_context_, [this, self]() -> boost::asio::awaitable<void> { co_await run_loop(); }, group_.adapt(boost::asio::detached));
 }
 
@@ -274,6 +277,10 @@ boost::asio::awaitable<void> mux_connection::write_loop()
         write_bytes_ += n;
         statistics::instance().add_bytes_written(n);
         last_write_time_ms_ = timeout_io::now_ms();
+        if (msg.h.stream_id != mux::kStreamIdHeartbeat)
+        {
+            last_non_heartbeat_write_time_ms_ = last_write_time_ms_;
+        }
     }
     LOG_DEBUG("mux {} write loop finished", cid_);
 }
@@ -297,8 +304,8 @@ boost::asio::awaitable<void> mux_connection::timeout_loop()
             break;
         }
         const auto now_ms = timeout_io::now_ms();
-        const auto read_diff = now_ms - last_read_time_ms_;
-        const auto write_diff = now_ms - last_write_time_ms_;
+        const auto read_diff = now_ms - last_non_heartbeat_read_time_ms_;
+        const auto write_diff = now_ms - last_non_heartbeat_write_time_ms_;
         if (read_diff > idle_timeout_ms && write_diff > idle_timeout_ms)
         {
             break;
@@ -364,6 +371,7 @@ boost::asio::awaitable<void> mux_connection::on_mux_frame(const mux::frame_heade
         LOG_DEBUG("mux {} heartbeat received size {}", cid_, payload.size());
         co_return;
     }
+    last_non_heartbeat_read_time_ms_ = timeout_io::now_ms();
 
     co_return co_await handle_stream_frame(header, std::move(payload));
 }
@@ -394,6 +402,11 @@ void mux_connection::register_stream(const std::shared_ptr<mux_stream>& stream)
 
 boost::asio::awaitable<void> mux_connection::send_async(mux_frame msg, boost::system::error_code& ec)
 {
+    co_return co_await send_async_with_timeout(std::move(msg), 0, ec);
+}
+
+boost::asio::awaitable<void> mux_connection::send_async_with_timeout(mux_frame msg, const std::uint32_t timeout_sec, boost::system::error_code& ec)
+{
     if (msg.payload.size() > mux::kMaxPayload)
     {
         LOG_ERROR("mux {} payload too large {}", cid_, msg.payload.size());
@@ -412,7 +425,7 @@ boost::asio::awaitable<void> mux_connection::send_async(mux_frame msg, boost::sy
         LOG_TRACE("mux {} send frame stream {} cmd {} size {}", cid_, msg.h.stream_id, msg.h.command, msg.payload.size());
     }
 
-    co_await write_channel_->async_send(boost::system::error_code{}, std::move(msg), boost::asio::redirect_error(boost::asio::use_awaitable, ec));
+    co_await timeout_io::wait_send_with_timeout<mux_frame>(*write_channel_, std::move(msg), timeout_sec, ec);
     if (ec)
     {
         LOG_ERROR("mux {} send failed error {}", cid_, ec.message());

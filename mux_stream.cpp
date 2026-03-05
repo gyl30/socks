@@ -17,6 +17,13 @@
 namespace mux
 {
 
+namespace
+{
+
+constexpr std::uint32_t kControlFrameSendTimeoutSec = 1;
+
+}    // namespace
+
 mux_stream::mux_stream(std::uint32_t id, const config& cfg, boost::asio::io_context& io_context, const std::shared_ptr<mux_connection>& connection)
     : id_(id), cfg_(cfg), connection_(connection), recv_channel_(io_context, 1024)
 {
@@ -48,7 +55,14 @@ boost::asio::awaitable<void> mux_stream::async_write(mux_frame frame, boost::sys
 
     const auto len = frame.payload.size();
     frame.h.stream_id = id_;
-    co_await connection->send_async(frame, ec);
+    if (frame.h.command == mux::kCmdFin || frame.h.command == mux::kCmdRst)
+    {
+        co_await connection->send_async_with_timeout(std::move(frame), kControlFrameSendTimeoutSec, ec);
+    }
+    else
+    {
+        co_await connection->send_async(std::move(frame), ec);
+    }
     if (ec)
     {
         co_return;
