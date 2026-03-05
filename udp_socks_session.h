@@ -52,6 +52,8 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
     boost::asio::awaitable<void> run(const std::string& host, std::uint16_t port);
 
    private:
+    void apply_request_peer_constraint(const std::string& host, std::uint16_t port);
+    [[nodiscard]] bool sender_matches_request_peer(const boost::asio::ip::udp::endpoint& sender) const;
     boost::asio::awaitable<void> udp_sock_to_stream(std::shared_ptr<mux_stream> stream);
 
     boost::asio::awaitable<void> stream_to_udp_sock(std::shared_ptr<mux_stream> stream);
@@ -73,6 +75,10 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
     std::uint64_t last_activity_time_ms_{0};
     bool has_client_addr_ = false;
     boost::asio::ip::udp::endpoint client_addr_;
+    bool has_request_client_addr_ = false;
+    boost::asio::ip::address request_client_addr_;
+    bool has_request_client_port_ = false;
+    std::uint16_t request_client_port_ = 0;
     std::shared_ptr<void> active_connection_guard_;
 };
 
