@@ -104,7 +104,11 @@ else()
 endif()
 
 if(NOT ENABLE_TSAN AND NOT ENABLE_ASAN)
-  add_compile_options(-ftrivial-auto-var-init=zero)
+  check_cxx_compiler_flag("-ftrivial-auto-var-init=zero"
+                          HAS_TRIVIAL_AUTO_VAR_INIT_ZERO)
+  if(HAS_TRIVIAL_AUTO_VAR_INIT_ZERO)
+    add_compile_options(-ftrivial-auto-var-init=zero)
+  endif()
 endif()
 
 option(ENABLE_COVERAGE "Enable code coverage" OFF)
@@ -184,6 +188,10 @@ target_include_directories(
          ${CMAKE_CURRENT_SOURCE_DIR}/third/rapidjson/include)
 
 target_link_libraries(core PUBLIC OpenSSL::SSL OpenSSL::Crypto Threads::Threads)
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+  target_link_libraries(core PUBLIC ws2_32 mswsock)
+endif()
 
 add_executable(socks main.cpp)
 target_link_libraries(socks PRIVATE core)
