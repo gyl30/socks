@@ -71,6 +71,8 @@ namespace
 constexpr std::size_t kMaxHandshakeBufferSize = 1024L * 1024;
 constexpr std::uint32_t kMaxHandshakeMessageSize = static_cast<std::uint32_t>(kMaxHandshakeBufferSize - 4);
 constexpr std::uint32_t kMaxTlsCompatCcsRecords = 8;
+constexpr std::uint32_t kReconnectBaseDelayMs = 200;
+constexpr std::uint32_t kReconnectMaxDelayMs = 10000;
 
 reality::fingerprint_type parse_fingerprint_type(const std::string& name)
 {
@@ -1119,6 +1121,25 @@ client_tunnel_pool::perform_reality_handshake_with_timeout(const std::shared_ptr
 boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::uint32_t index, boost::asio::io_context& io_context)
 {
     boost::system::error_code ec;
+    static thread_local std::mt19937 reconnect_gen(std::random_device{}());
+    std::uint32_t retry_delay_ms = kReconnectBaseDelayMs;
+    const auto wait_before_retry = [&](const connection_context& ctx, const char* stage) -> boost::asio::awaitable<void>
+    {
+        std::uniform_int_distribution<std::uint32_t> jitter_dist(0, retry_delay_ms / 4);
+        const auto sleep_ms = retry_delay_ms + jitter_dist(reconnect_gen);
+        LOG_CTX_WARN(ctx, "{} stage={} retry_backoff={}ms", log_event::kConnInit, stage, sleep_ms);
+
+        boost::asio::steady_timer retry_timer(io_context);
+        retry_timer.expires_after(std::chrono::milliseconds(sleep_ms));
+        const auto [wait_ec] = co_await retry_timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
+        if (wait_ec && wait_ec != boost::asio::error::operation_aborted)
+        {
+            LOG_CTX_WARN(ctx, "{} stage={} retry_backoff_wait_failed {}", log_event::kConnInit, stage, wait_ec.message());
+        }
+        retry_delay_ms = std::min(retry_delay_ms * 2, kReconnectMaxDelayMs);
+        co_return;
+    };
+
     while (true)
     {
         const std::uint32_t cid = next_conn_id_.fetch_add(1, std::memory_order_relaxed);
@@ -1134,6 +1155,7 @@ boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::
         if (ec)
         {
             LOG_CTX_ERROR(ctx, "{} stage=connect target={}:{} error={}", log_event::kConnInit, remote_host_, remote_port_, ec.message());
+            co_await wait_before_retry(ctx, "connect");
             continue;
         }
         // step 3 handshake
@@ -1141,6 +1163,7 @@ boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::
         if (!handshake_res)
         {
             LOG_CTX_ERROR(ctx, "{} handshake error {}", log_event::kHandshake, handshake_res.error().message());
+            co_await wait_before_retry(ctx, "handshake");
             continue;
         }
         const auto& handshake_ret = *handshake_res;
@@ -1151,6 +1174,7 @@ boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::
         if (tunnel == nullptr)
         {
             LOG_CTX_ERROR(ctx, "{} build tunnel failed", log_event::kHandshake);
+            co_await wait_before_retry(ctx, "build_tunnel");
             continue;
         }
         // step 5 tunnel run
@@ -1181,6 +1205,7 @@ boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::
             std::lock_guard<std::mutex> lock(tunnel_mutex_);
             std::erase(tunnel_pool_, tunnel);
         }
+        retry_delay_ms = kReconnectBaseDelayMs;
     }
     LOG_INFO("{} connect remote loop {} exited", log_event::kConnClose, index);
 }
