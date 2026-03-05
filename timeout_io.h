@@ -36,6 +36,11 @@ inline std::uint64_t now_ms()
     return static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
 }
+inline std::uint64_t now_second()
+{
+    return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
 inline boost::asio::awaitable<void> wait_connect_with_timeout(boost::asio::ip::tcp::socket& socket,
                                                               const boost::asio::ip::tcp::endpoint& endpoint,
                                                               const std::uint32_t timeout_sec,
