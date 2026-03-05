@@ -117,7 +117,7 @@ boost::asio::awaitable<void> tcp_socks_session::run(const std::string& host, con
         co_return;
     }
 
-    if (!co_await reply_success())
+    if (!co_await reply_success(backend))
     {
         co_await backend->close();
         co_return;
@@ -182,17 +182,40 @@ boost::asio::awaitable<void> tcp_socks_session::reply_error(const std::uint8_t c
     LOG_CTX_WARN(ctx_, "{} write error response failed {}", log_event::kSocks, ec.message());
 }
 
-boost::asio::awaitable<bool> tcp_socks_session::reply_success()
+boost::asio::awaitable<bool> tcp_socks_session::reply_success(const std::shared_ptr<upstream>& backend)
 {
     std::vector<std::uint8_t> rep;
     rep.reserve(22);
     rep.push_back(socks::kVer);
     rep.push_back(socks::kRepSuccess);
     rep.push_back(0x00);
-
-    LOG_CTX_WARN(ctx_, "{} backend bind endpoint unavailable fallback zero", log_event::kSocks);
-    rep.push_back(socks::kAtypIpv4);
-    rep.insert(rep.end(), {0, 0, 0, 0, 0, 0});
+    boost::system::error_code bind_ec;
+    boost::asio::ip::address bind_addr;
+    std::uint16_t bind_port = 0;
+    if (backend == nullptr || !backend->get_bind_endpoint(bind_addr, bind_port, bind_ec))
+    {
+        LOG_CTX_WARN(ctx_, "{} backend bind endpoint unavailable fallback zero", log_event::kSocks);
+        rep.push_back(socks::kAtypIpv4);
+        rep.insert(rep.end(), {0, 0, 0, 0, 0, 0});
+    }
+    else
+    {
+        bind_addr = socks_codec::normalize_ip_address(bind_addr);
+        if (bind_addr.is_v4())
+        {
+            rep.push_back(socks::kAtypIpv4);
+            const auto bytes = bind_addr.to_v4().to_bytes();
+            rep.insert(rep.end(), bytes.begin(), bytes.end());
+        }
+        else
+        {
+            rep.push_back(socks::kAtypIpv6);
+            const auto bytes = bind_addr.to_v6().to_bytes();
+            rep.insert(rep.end(), bytes.begin(), bytes.end());
+        }
+        rep.push_back(static_cast<std::uint8_t>((bind_port >> 8) & 0xFF));
+        rep.push_back(static_cast<std::uint8_t>(bind_port & 0xFF));
+    }
 
     boost::system::error_code ec;
     co_await timeout_io::wait_write_with_timeout(socket_, boost::asio::buffer(rep), cfg_.timeout.write, ec);
