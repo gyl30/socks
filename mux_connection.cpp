@@ -151,6 +151,25 @@ boost::asio::awaitable<void> mux_connection::handle_stream_frame(const mux::fram
     co_await stream->on_frame(std::move(frame), ec);
     if (ec)
     {
+        if (ec == boost::asio::error::timed_out)
+        {
+            LOG_WARN("mux {} stream {} backpressure timeout reset only this stream", cid_, header.stream_id);
+            stream->close();
+            remove_stream(stream);
+
+            constexpr std::uint32_t kRstSendTimeoutSec = 1;
+            mux_frame rst_frame;
+            rst_frame.h.stream_id = header.stream_id;
+            rst_frame.h.command = mux::kCmdRst;
+            boost::system::error_code rst_ec;
+            co_await send_async_with_timeout(std::move(rst_frame), kRstSendTimeoutSec, rst_ec);
+            if (rst_ec)
+            {
+                LOG_WARN("mux {} stream {} send rst failed {}", cid_, header.stream_id, rst_ec.message());
+            }
+            co_return;
+        }
+
         LOG_ERROR("mux {} deliver frame to stream {} failed {}", cid_, header.stream_id, ec.message());
         stop();
     }
