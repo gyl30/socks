@@ -4,6 +4,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <array>
 #include <cstdint>
 #include <utility>
 
@@ -21,7 +22,6 @@
 #include "transcript.h"
 #include "key_rotator.h"
 #include "log_context.h"
-#include "cert_manager.h"
 #include "context_pool.h"
 #include "mux_protocol.h"
 #include "reality_core.h"
@@ -68,7 +68,6 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     boost::asio::awaitable<void> process_stream_request(std::shared_ptr<mux_tunnel_impl> tunnel,
                                                         const connection_context& ctx,
                                                         mux_frame frame) const;
-    std::pair<std::string, std::string> find_fallback_target_by_sni(const std::string& sni) const;
 
    private:
     const config& cfg_;
@@ -77,10 +76,12 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     task_group group_{io_context_};
     std::vector<std::uint8_t> private_key_;
     std::vector<std::uint8_t> short_id_bytes_;
+    std::array<std::uint8_t, 32> reality_cert_private_key_{};
+    std::vector<std::uint8_t> reality_cert_public_key_;
+    std::vector<std::uint8_t> reality_cert_template_;
     std::uint32_t next_conn_id_{1};
     replay_cache replay_cache_;
     reality::key_rotator key_rotator_;
-    reality::cert_manager cert_manager_;
 };
 
 }    // namespace mux

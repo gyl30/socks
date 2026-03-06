@@ -17,8 +17,10 @@
 
 extern "C"
 {
+#include <openssl/asn1.h>
 #include <openssl/bio.h>
 #include <openssl/evp.h>
+#include <openssl/hmac.h>
 #include <openssl/kdf.h>
 #include <openssl/rsa.h>
 #include <openssl/rand.h>
@@ -261,6 +263,66 @@ std::expected<std::vector<std::uint8_t>, boost::system::error_code> derive_x2551
     return shared;
 }
 
+std::expected<openssl_ptrs::evp_pkey_ptr, boost::system::error_code> create_ed25519_private_key(
+    const std::vector<std::uint8_t>& private_key)
+{
+    if (private_key.size() != 32)
+    {
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
+    }
+
+    openssl_ptrs::evp_pkey_ptr pkey(EVP_PKEY_new_raw_private_key(EVP_PKEY_ED25519, nullptr, private_key.data(), private_key.size()));
+    if (pkey == nullptr)
+    {
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+    }
+    return pkey;
+}
+
+std::expected<openssl_ptrs::x509_ptr, boost::system::error_code> parse_x509_from_der(const std::vector<std::uint8_t>& cert_der)
+{
+    if (cert_der.empty() || cert_der.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+    {
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
+    }
+
+    using bio_ptr = std::unique_ptr<BIO, decltype(&BIO_free)>;
+    const bio_ptr cert_bio(BIO_new_mem_buf(cert_der.data(), static_cast<int>(cert_der.size())), &BIO_free);
+    if (cert_bio == nullptr)
+    {
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::not_enough_memory));
+    }
+
+    openssl_ptrs::x509_ptr x509(d2i_X509_bio(cert_bio.get(), nullptr));
+    if (x509 == nullptr)
+    {
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+    }
+    return x509;
+}
+
+std::expected<std::vector<std::uint8_t>, boost::system::error_code> serialize_x509_to_der(X509* cert)
+{
+    if (cert == nullptr)
+    {
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
+    }
+
+    const int der_len = i2d_X509(cert, nullptr);
+    if (der_len <= 0)
+    {
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+    }
+
+    std::vector<std::uint8_t> der(static_cast<std::size_t>(der_len));
+    unsigned char* out = der.data();
+    if (i2d_X509(cert, &out) != der_len)
+    {
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+    }
+    return der;
+}
+
 std::expected<void, boost::system::error_code> validate_aead_decrypt_inputs(const EVP_CIPHER* cipher,
                                                                             const std::vector<std::uint8_t>& key,
                                                                             const std::span<const std::uint8_t> nonce,
@@ -448,6 +510,40 @@ bool crypto_util::generate_x25519_keypair(std::uint8_t out_public[32], std::uint
 
     const openssl_ptrs::evp_pkey_ctx_ptr pkey_ctx_ptr(EVP_PKEY_CTX_new_id(EVP_PKEY_X25519, nullptr));
 
+    if (pkey_ctx_ptr != nullptr && EVP_PKEY_keygen_init(pkey_ctx_ptr.get()) > 0)
+    {
+        EVP_PKEY* raw_pkey = nullptr;
+        if (EVP_PKEY_keygen(pkey_ctx_ptr.get(), &raw_pkey) > 0)
+        {
+            const openssl_ptrs::evp_pkey_ptr pkey(raw_pkey);
+            std::size_t len = 32;
+            if (EVP_PKEY_get_raw_public_key(pkey.get(), out_public, &len) != 1 || len != 32)
+            {
+                OPENSSL_cleanse(out_public, 32);
+                OPENSSL_cleanse(out_private, 32);
+                return false;
+            }
+            len = 32;
+            if (EVP_PKEY_get_raw_private_key(pkey.get(), out_private, &len) != 1 || len != 32)
+            {
+                OPENSSL_cleanse(out_public, 32);
+                OPENSSL_cleanse(out_private, 32);
+                return false;
+            }
+            return true;
+        }
+    }
+
+    OPENSSL_cleanse(out_public, 32);
+    OPENSSL_cleanse(out_private, 32);
+    return false;
+}
+
+bool crypto_util::generate_ed25519_keypair(std::uint8_t out_public[32], std::uint8_t out_private[32])
+{
+    ensure_openssl_initialized();
+
+    const openssl_ptrs::evp_pkey_ctx_ptr pkey_ctx_ptr(EVP_PKEY_CTX_new_id(EVP_PKEY_ED25519, nullptr));
     if (pkey_ctx_ptr != nullptr && EVP_PKEY_keygen_init(pkey_ctx_ptr.get()) > 0)
     {
         EVP_PKEY* raw_pkey = nullptr;
@@ -789,37 +885,168 @@ std::expected<std::vector<std::uint8_t>, boost::system::error_code> crypto_util:
 std::expected<openssl_ptrs::evp_pkey_ptr, boost::system::error_code> crypto_util::extract_pubkey_from_cert(const std::vector<std::uint8_t>& cert_der)
 {
     ensure_openssl_initialized();
-
-    if (cert_der.empty())
+    auto x509 = parse_x509_from_der(cert_der);
+    if (!x509)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
+        return std::unexpected(x509.error());
     }
 
-    if (cert_der.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
-    {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
-    }
-
-    using bio_ptr = std::unique_ptr<BIO, decltype(&BIO_free)>;
-    const bio_ptr cert_bio(BIO_new_mem_buf(cert_der.data(), static_cast<int>(cert_der.size())), &BIO_free);
-    if (cert_bio == nullptr)
-    {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::not_enough_memory));
-    }
-
-    const openssl_ptrs::x509_ptr x509(d2i_X509_bio(cert_bio.get(), nullptr));
-    if (x509 == nullptr)
-    {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
-    }
-
-    EVP_PKEY* pkey = X509_get_pubkey(x509.get());
+    EVP_PKEY* pkey = X509_get_pubkey(x509->get());
     if (pkey == nullptr)
     {
         return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
     }
 
     return openssl_ptrs::evp_pkey_ptr(pkey);
+}
+
+std::expected<std::vector<std::uint8_t>, boost::system::error_code> crypto_util::extract_raw_public_key(EVP_PKEY* key)
+{
+    ensure_openssl_initialized();
+
+    if (key == nullptr)
+    {
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
+    }
+
+    std::size_t key_len = 0;
+    if (EVP_PKEY_get_raw_public_key(key, nullptr, &key_len) != 1 || key_len == 0)
+    {
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+    }
+
+    std::vector<std::uint8_t> raw_key(key_len);
+    if (EVP_PKEY_get_raw_public_key(key, raw_key.data(), &key_len) != 1 || key_len == 0)
+    {
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+    }
+    raw_key.resize(key_len);
+    return raw_key;
+}
+
+std::expected<std::vector<std::uint8_t>, boost::system::error_code> crypto_util::extract_certificate_signature(
+    const std::vector<std::uint8_t>& cert_der)
+{
+    ensure_openssl_initialized();
+
+    auto x509 = parse_x509_from_der(cert_der);
+    if (!x509)
+    {
+        return std::unexpected(x509.error());
+    }
+
+    const ASN1_BIT_STRING* signature = nullptr;
+    const X509_ALGOR* algorithm = nullptr;
+    X509_get0_signature(&signature, &algorithm, x509->get());
+    (void)algorithm;
+    if (signature == nullptr || signature->data == nullptr || signature->length <= 0)
+    {
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+    }
+
+    return std::vector<std::uint8_t>(signature->data, signature->data + signature->length);
+}
+
+std::expected<std::vector<std::uint8_t>, boost::system::error_code> crypto_util::create_self_signed_ed25519_certificate(
+    const std::vector<std::uint8_t>& private_key)
+{
+    ensure_openssl_initialized();
+
+    auto pkey = create_ed25519_private_key(private_key);
+    if (!pkey)
+    {
+        return std::unexpected(pkey.error());
+    }
+
+    openssl_ptrs::x509_ptr cert(X509_new());
+    if (cert == nullptr)
+    {
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::not_enough_memory));
+    }
+    if (X509_set_version(cert.get(), 2) != 1)
+    {
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+    }
+    if (ASN1_INTEGER_set(X509_get_serialNumber(cert.get()), 1) != 1)
+    {
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+    }
+    if (X509_gmtime_adj(X509_getm_notBefore(cert.get()), -86400) == nullptr ||
+        X509_gmtime_adj(X509_getm_notAfter(cert.get()), 31536000L) == nullptr)
+    {
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+    }
+    if (X509_set_pubkey(cert.get(), pkey->get()) != 1)
+    {
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+    }
+
+    X509_NAME* subject = X509_get_subject_name(cert.get());
+    if (subject == nullptr)
+    {
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+    }
+    static constexpr unsigned char kCommonName[] = "REALITY";
+    if (X509_NAME_add_entry_by_txt(subject, "CN", MBSTRING_ASC, kCommonName, -1, -1, 0) != 1)
+    {
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+    }
+    if (X509_set_issuer_name(cert.get(), subject) != 1)
+    {
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+    }
+
+    const openssl_ptrs::evp_md_ctx_ptr mctx(EVP_MD_CTX_new());
+    if (mctx == nullptr)
+    {
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::not_enough_memory));
+    }
+    if (EVP_DigestSignInit(mctx.get(), nullptr, nullptr, nullptr, pkey->get()) != 1)
+    {
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+    }
+    if (X509_sign_ctx(cert.get(), mctx.get()) <= 0)
+    {
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+    }
+
+    auto cert_der = serialize_x509_to_der(cert.get());
+    if (!cert_der)
+    {
+        return std::unexpected(cert_der.error());
+    }
+    auto signature = extract_certificate_signature(*cert_der);
+    if (!signature)
+    {
+        return std::unexpected(signature.error());
+    }
+    if (signature->size() != 64)
+    {
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+    }
+    return cert_der;
+}
+
+std::expected<std::vector<std::uint8_t>, boost::system::error_code> crypto_util::hmac_sha512(const std::vector<std::uint8_t>& key,
+                                                                                              const std::vector<std::uint8_t>& data)
+{
+    ensure_openssl_initialized();
+
+    unsigned int out_len = 0;
+    std::array<std::uint8_t, EVP_MAX_MD_SIZE> out = {};
+    if (HMAC(EVP_sha512(),
+             key.data(),
+             static_cast<int>(key.size()),
+             data.data(),
+             data.size(),
+             out.data(),
+             &out_len) == nullptr ||
+        out_len == 0)
+    {
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+    }
+
+    return std::vector<std::uint8_t>(out.begin(), out.begin() + static_cast<std::ptrdiff_t>(out_len));
 }
 
 std::expected<void, boost::system::error_code> crypto_util::verify_tls13_signature(EVP_PKEY* pub_key,

@@ -37,6 +37,8 @@ class crypto_util
 
     [[nodiscard]] static bool generate_x25519_keypair(std::uint8_t out_public[32], std::uint8_t out_private[32]);
 
+    [[nodiscard]] static bool generate_ed25519_keypair(std::uint8_t out_public[32], std::uint8_t out_private[32]);
+
     [[nodiscard]] static std::expected<std::vector<std::uint8_t>, boost::system::error_code> extract_public_key(
         const std::vector<std::uint8_t>& private_key);
 
@@ -92,6 +94,17 @@ class crypto_util
 
     [[nodiscard]] static std::expected<openssl_ptrs::evp_pkey_ptr, boost::system::error_code> extract_pubkey_from_cert(
         const std::vector<std::uint8_t>& cert_der);
+
+    [[nodiscard]] static std::expected<std::vector<std::uint8_t>, boost::system::error_code> extract_raw_public_key(EVP_PKEY* key);
+
+    [[nodiscard]] static std::expected<std::vector<std::uint8_t>, boost::system::error_code> extract_certificate_signature(
+        const std::vector<std::uint8_t>& cert_der);
+
+    [[nodiscard]] static std::expected<std::vector<std::uint8_t>, boost::system::error_code> create_self_signed_ed25519_certificate(
+        const std::vector<std::uint8_t>& private_key);
+
+    [[nodiscard]] static std::expected<std::vector<std::uint8_t>, boost::system::error_code> hmac_sha512(const std::vector<std::uint8_t>& key,
+                                                                                                         const std::vector<std::uint8_t>& data);
 
     [[nodiscard]] static std::expected<void, boost::system::error_code> verify_tls13_signature(EVP_PKEY* pub_key,
                                                                                                std::uint16_t signature_scheme,

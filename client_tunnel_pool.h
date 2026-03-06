@@ -96,7 +96,8 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
         const std::uint8_t* public_key,
         const std::uint8_t* private_key,
         const reality::fingerprint_spec& spec,
-        reality::transcript& trans) const;
+        reality::transcript& trans,
+        std::vector<std::uint8_t>& auth_key) const;
 
     struct server_hello_res
     {
@@ -114,7 +115,7 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
     handshake_read_loop(boost::asio::ip::tcp::socket& socket,
                         const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& s_hs_keys,
                         const reality::handshake_keys& hs_keys,
-                        bool strict_cert_verify,
+                        const std::vector<std::uint8_t>& auth_key,
                         const std::string& sni,
                         reality::transcript& trans,
                         const EVP_CIPHER* cipher,
@@ -139,8 +140,6 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
     task_group& group_;
     io_context_pool& pool_;
     std::vector<std::uint8_t> short_id_bytes_;
-    bool strict_cert_verify_ = true;
-    bool config_valid_ = false;
     std::atomic<std::uint32_t> next_tunnel_index_{0};
     std::atomic<std::uint32_t> next_conn_id_{1};
     std::atomic<std::uint32_t> next_session_id_{1};

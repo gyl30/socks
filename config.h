@@ -52,14 +52,6 @@ struct config
         std::uint32_t mark = 0x11;
     } tproxy;
 
-    struct fallback_entry
-    {
-        std::string sni = "www.apple.com";
-        std::string host = "www.apple.com";
-        std::string port = "443";
-    };
-    std::vector<fallback_entry> fallbacks;
-
     struct timeout_t
     {
         std::uint32_t read = 100;
@@ -96,8 +88,6 @@ struct config
     {
         std::string sni = "www.apple.com";
         std::string fingerprint = "random";
-        std::string type = "tcp";
-        bool strict_cert_verify = false;
         std::uint32_t replay_cache_max_entries = 100000;
         std::string private_key;
         std::string public_key;
