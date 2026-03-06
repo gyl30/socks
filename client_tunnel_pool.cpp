@@ -716,44 +716,95 @@ boost::asio::awaitable<std::vector<std::uint8_t>> read_handshake_record_body(boo
                                                                              const std::uint32_t timeout_sec,
                                                                              boost::system::error_code& ec)
 {
-    std::uint8_t header[5];
     ec.clear();
-    auto read_size = co_await timeout_io::wait_read_with_timeout(socket, boost::asio::buffer(header, 5), timeout_sec, ec);
-    if (ec)
+    auto read_exact = [&](const boost::asio::mutable_buffer& buffer) -> boost::asio::awaitable<bool>
     {
-        LOG_ERROR("error reading {} header {}", step, ec.message());
-        co_return std::vector<std::uint8_t>{};
-    }
-    if (header[0] != reality::kContentTypeHandshake)
-    {
-        LOG_ERROR("unexpected record type for {} {}", step, header[0]);
-        ec = boost::asio::error::invalid_argument;
-        co_return std::vector<std::uint8_t>{};
-    }
+        auto* data = static_cast<std::uint8_t*>(buffer.data());
+        const auto size = buffer.size();
+        std::size_t total_read = 0;
+        while (total_read < size)
+        {
+            const auto read_size =
+                co_await timeout_io::wait_read_with_timeout(socket, boost::asio::buffer(data + total_read, size - total_read), timeout_sec, ec);
+            if (ec)
+            {
+                co_return false;
+            }
+            if (read_size == 0)
+            {
+                ec = boost::asio::error::eof;
+                co_return false;
+            }
+            total_read += read_size;
+        }
+        co_return true;
+    };
 
-    const auto body_len = static_cast<std::uint16_t>((header[3] << 8) | header[4]);
-    if (body_len > reality::kMaxTlsPlaintextLen)
+    std::vector<std::uint8_t> handshake_data;
+    while (true)
     {
-        LOG_ERROR("oversized {} body {}", step, body_len);
-        ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
-        co_return std::vector<std::uint8_t>{};
-    }
+        std::array<std::uint8_t, 5> header = {};
+        if (!(co_await read_exact(boost::asio::buffer(header))))
+        {
+            LOG_ERROR("error reading {} header {}", step, ec.message());
+            co_return std::vector<std::uint8_t>{};
+        }
+        if (header[0] != reality::kContentTypeHandshake)
+        {
+            LOG_ERROR("unexpected record type for {} {}", step, header[0]);
+            ec = boost::asio::error::invalid_argument;
+            co_return std::vector<std::uint8_t>{};
+        }
 
-    std::vector<std::uint8_t> body(body_len);
-    read_size = co_await timeout_io::wait_read_with_timeout(socket, boost::asio::buffer(body), timeout_sec, ec);
-    if (ec)
-    {
-        LOG_ERROR("error reading {} body {}", step, ec.message());
-        co_return std::vector<std::uint8_t>{};
-    }
-    if (read_size != body_len)
-    {
-        ec = boost::asio::error::fault;
-        LOG_ERROR("short read {} body {} of {}", step, read_size, body_len);
-        co_return std::vector<std::uint8_t>{};
-    }
+        const auto body_len = static_cast<std::uint16_t>((header[3] << 8) | header[4]);
+        if (body_len > reality::kMaxTlsPlaintextLen)
+        {
+            LOG_ERROR("oversized {} body {}", step, body_len);
+            ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
+            co_return std::vector<std::uint8_t>{};
+        }
 
-    co_return body;
+        std::vector<std::uint8_t> body(body_len);
+        if (!(co_await read_exact(boost::asio::buffer(body))))
+        {
+            LOG_ERROR("error reading {} body {}", step, ec.message());
+            co_return std::vector<std::uint8_t>{};
+        }
+        handshake_data.insert(handshake_data.end(), body.begin(), body.end());
+
+        if (handshake_data.size() < 4)
+        {
+            continue;
+        }
+        if (handshake_data[0] != 0x02)
+        {
+            LOG_ERROR("unexpected handshake type for {} {}", step, handshake_data[0]);
+            ec = boost::asio::error::invalid_argument;
+            co_return std::vector<std::uint8_t>{};
+        }
+
+        const auto msg_len = (static_cast<std::uint32_t>(handshake_data[1]) << 16) | (static_cast<std::uint32_t>(handshake_data[2]) << 8) |
+                             static_cast<std::uint32_t>(handshake_data[3]);
+        if (msg_len > kMaxHandshakeMessageSize)
+        {
+            LOG_ERROR("oversized {} message {}", step, msg_len);
+            ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
+            co_return std::vector<std::uint8_t>{};
+        }
+
+        const auto total_len = static_cast<std::size_t>(msg_len) + 4;
+        if (handshake_data.size() < total_len)
+        {
+            continue;
+        }
+        if (handshake_data.size() != total_len)
+        {
+            ec = boost::asio::error::invalid_argument;
+            LOG_ERROR("unexpected extra bytes in {} {}", step, handshake_data.size() - total_len);
+            co_return std::vector<std::uint8_t>{};
+        }
+        co_return handshake_data;
+    }
 }
 
 std::uint16_t parse_server_hello_cipher_suite(const std::vector<std::uint8_t>& sh_data, boost::system::error_code& ec)
@@ -840,19 +891,15 @@ void build_client_hello_with_placeholder_sid(const reality::fingerprint_spec& sp
         return;
     }
 
-    std::vector<std::uint8_t> dummy_record =
-        reality::write_record_header(reality::kContentTypeHandshake, static_cast<std::uint16_t>(hello_body.size()));
-    dummy_record.insert(dummy_record.end(), hello_body.begin(), hello_body.end());
-
-    const client_hello_info ch_info = ch_parser::parse(dummy_record);
-    if (ch_info.sid_offset < 5)
+    const client_hello_info ch_info = ch_parser::parse(hello_body);
+    if (ch_info.sid_offset == 0)
     {
         LOG_ERROR("generated client hello session id offset invalid {}", ch_info.sid_offset);
         ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
         return;
     }
 
-    absolute_sid_offset = ch_info.sid_offset - 5;
+    absolute_sid_offset = ch_info.sid_offset;
     if (absolute_sid_offset + 32 > hello_body.size())
     {
         LOG_ERROR("session id offset out of bounds {} {}", absolute_sid_offset, hello_body.size());
