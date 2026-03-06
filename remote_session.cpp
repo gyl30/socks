@@ -55,6 +55,22 @@ namespace
 
 }    // namespace
 
+boost::asio::awaitable<void> send_stream_control_frame(const std::shared_ptr<mux_stream>& stream,
+                                                       const std::uint8_t command,
+                                                       boost::system::error_code& ec)
+{
+    ec.clear();
+    if (stream == nullptr)
+    {
+        co_return;
+    }
+
+    mux_frame control_frame;
+    control_frame.h.stream_id = stream->id();
+    control_frame.h.command = command;
+    co_await stream->async_write(control_frame, ec);
+}
+
 remote_tcp_session::remote_tcp_session(const std::shared_ptr<mux_connection>& connection,
                                        const std::uint32_t id,
                                        boost::asio::io_context& io_context,
@@ -81,6 +97,26 @@ boost::asio::awaitable<void> remote_tcp_session::start(const syn_payload& syn)
 {
     co_await boost::asio::dispatch(io_context_, boost::asio::use_awaitable);
     co_await run(syn);
+}
+
+void remote_tcp_session::close_from_fin()
+{
+    boost::system::error_code ec;
+    ec = socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
+    if (ec && ec != boost::asio::error::not_connected)
+    {
+        LOG_CTX_WARN(ctx_, "{} shutdown target send failed {}", log_event::kMux, ec.message());
+    }
+}
+
+void remote_tcp_session::close_from_reset()
+{
+    boost::system::error_code ec;
+    ec = socket_.close(ec);
+    if (ec && ec != boost::asio::error::bad_descriptor)
+    {
+        LOG_CTX_WARN(ctx_, "{} close target failed {}", log_event::kMux, ec.message());
+    }
 }
 
 boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
@@ -189,27 +225,15 @@ boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
     }
     LOG_CTX_INFO(ctx_, "{} ack sent stream {} bind {} {}", log_event::kMux, id_, bind_addr, bind_port);
 
+    using boost::asio::experimental::awaitable_operators::operator&&;
     using boost::asio::experimental::awaitable_operators::operator||;
     if (cfg_.timeout.idle == 0)
     {
-        co_await (upstream() || downstream());
+        co_await (upstream() && downstream());
     }
     else
     {
-        co_await (upstream() || downstream() || idle_watchdog());
-    }
-
-    if (stream_ != nullptr)
-    {
-        mux_frame fin_frame;
-        fin_frame.h.stream_id = stream_->id();
-        fin_frame.h.command = mux::kCmdFin;
-        boost::system::error_code fin_ec;
-        co_await stream_->async_write(std::move(fin_frame), fin_ec);
-        if (fin_ec)
-        {
-            LOG_CTX_WARN(ctx_, "{} send fin failed {}", log_event::kMux, fin_ec.message());
-        }
+        co_await ((upstream() && downstream()) || idle_watchdog());
     }
 
     LOG_CTX_INFO(ctx_, "{} finished {}", log_event::kConnClose, ctx_.stats_summary());
@@ -226,7 +250,7 @@ boost::asio::awaitable<void> remote_tcp_session::upstream()
             LOG_CTX_INFO(ctx_, "{} upstream stream read finished {}", log_event::kMux, ec.message());
             break;
         }
-        if (frame.h.command == mux::kCmdRst || frame.h.command == mux::kCmdFin)
+        if (frame.h.command == mux::kCmdFin)
         {
             LOG_CTX_INFO(ctx_,
                          "{} upstream recv control cmd={}({}) payload_size={}",
@@ -234,6 +258,19 @@ boost::asio::awaitable<void> remote_tcp_session::upstream()
                          frame.h.command,
                          mux_command_name(frame.h.command),
                          frame.payload.size());
+            close_from_fin();
+            break;
+        }
+        if (frame.h.command == mux::kCmdRst)
+        {
+            LOG_CTX_INFO(ctx_,
+                         "{} upstream recv control cmd={}({}) payload_size={}",
+                         log_event::kMux,
+                         frame.h.command,
+                         mux_command_name(frame.h.command),
+                         frame.payload.size());
+            stream_->close();
+            close_from_reset();
             break;
         }
         if (frame.h.command != mux::kCmdDat)
@@ -244,13 +281,28 @@ boost::asio::awaitable<void> remote_tcp_session::upstream()
                          frame.h.command,
                          mux_command_name(frame.h.command),
                          frame.payload.size());
-            ec = boost::asio::error::invalid_argument;
+            boost::system::error_code rst_ec;
+            co_await send_stream_control_frame(stream_, mux::kCmdRst, rst_ec);
+            if (rst_ec)
+            {
+                LOG_CTX_WARN(ctx_, "{} upstream send rst failed {}", log_event::kMux, rst_ec.message());
+            }
+            stream_->close();
+            close_from_reset();
             break;
         }
         co_await timeout_io::wait_write_with_timeout(socket_, boost::asio::buffer(frame.payload), cfg_.timeout.write, ec);
         if (ec)
         {
             LOG_CTX_WARN(ctx_, "{} upstream write to target failed {}", log_event::kMux, ec.message());
+            boost::system::error_code rst_ec;
+            co_await send_stream_control_frame(stream_, mux::kCmdRst, rst_ec);
+            if (rst_ec)
+            {
+                LOG_CTX_WARN(ctx_, "{} upstream send rst failed {}", log_event::kMux, rst_ec.message());
+            }
+            stream_->close();
+            close_from_reset();
             break;
         }
         last_activity_time_ms_ = timeout_io::now_ms();
@@ -267,7 +319,27 @@ boost::asio::awaitable<void> remote_tcp_session::downstream()
         const std::size_t n = co_await socket_.async_read_some(boost::asio::buffer(buf), boost::asio::redirect_error(boost::asio::use_awaitable, ec));
         if (ec)
         {
-            LOG_CTX_INFO(ctx_, "{} downstream target read finished {}", log_event::kMux, ec.message());
+            if (ec == boost::asio::error::eof)
+            {
+                boost::system::error_code fin_ec;
+                co_await send_stream_control_frame(stream_, mux::kCmdFin, fin_ec);
+                if (fin_ec)
+                {
+                    LOG_CTX_WARN(ctx_, "{} downstream send fin failed {}", log_event::kMux, fin_ec.message());
+                }
+            }
+            else
+            {
+                LOG_CTX_INFO(ctx_, "{} downstream target read finished {}", log_event::kMux, ec.message());
+                boost::system::error_code rst_ec;
+                co_await send_stream_control_frame(stream_, mux::kCmdRst, rst_ec);
+                if (rst_ec)
+                {
+                    LOG_CTX_WARN(ctx_, "{} downstream send rst failed {}", log_event::kMux, rst_ec.message());
+                }
+                stream_->close();
+                close_from_reset();
+            }
             break;
         }
         last_activity_time_ms_ = timeout_io::now_ms();
@@ -279,6 +351,8 @@ boost::asio::awaitable<void> remote_tcp_session::downstream()
         if (ec)
         {
             LOG_CTX_WARN(ctx_, "{} downstream write to mux failed {}", log_event::kMux, ec.message());
+            stream_->close();
+            close_from_reset();
             break;
         }
         last_activity_time_ms_ = timeout_io::now_ms();
@@ -306,6 +380,8 @@ boost::asio::awaitable<void> remote_tcp_session::idle_watchdog()
         if (elapsed_ms > idle_timeout_ms)
         {
             LOG_CTX_WARN(ctx_, "{} idle timeout {}s", log_event::kTimeout, cfg_.timeout.idle);
+            stream_->close();
+            close_from_reset();
             break;
         }
     }
