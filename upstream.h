@@ -29,6 +29,7 @@ class upstream
 
    public:
     virtual boost::asio::awaitable<void> close() = 0;
+    virtual boost::asio::awaitable<void> shutdown_send(boost::system::error_code& ec) = 0;
     virtual boost::asio::awaitable<void> connect(const std::string& host, std::uint16_t port, boost::system::error_code& ec) = 0;
     virtual boost::asio::awaitable<void> write(const std::vector<std::uint8_t>& data, boost::system::error_code& ec) = 0;
     [[nodiscard]] virtual boost::asio::awaitable<std::size_t> read(std::vector<std::uint8_t>& buf, boost::system::error_code& ec) = 0;
@@ -46,6 +47,7 @@ class direct_upstream : public upstream
 
    public:
     boost::asio::awaitable<void> close() override;
+    boost::asio::awaitable<void> shutdown_send(boost::system::error_code& ec) override;
     boost::asio::awaitable<void> connect(const std::string& host, std::uint16_t port, boost::system::error_code& ec) override;
     boost::asio::awaitable<void> write(const std::vector<std::uint8_t>& data, boost::system::error_code& ec) override;
     [[nodiscard]] boost::asio::awaitable<std::size_t> read(std::vector<std::uint8_t>& buf, boost::system::error_code& ec) override;
@@ -66,6 +68,7 @@ class proxy_upstream : public upstream
 
    public:
     boost::asio::awaitable<void> close() override;
+    boost::asio::awaitable<void> shutdown_send(boost::system::error_code& ec) override;
     boost::asio::awaitable<void> connect(const std::string& host, std::uint16_t port, boost::system::error_code& ec) override;
     boost::asio::awaitable<void> write(const std::vector<std::uint8_t>& data, boost::system::error_code& ec) override;
     [[nodiscard]] boost::asio::awaitable<std::size_t> read(std::vector<std::uint8_t>& buf, boost::system::error_code& ec) override;
@@ -85,6 +88,8 @@ class proxy_upstream : public upstream
     std::shared_ptr<mux_tunnel_impl> tunnel_;
     boost::asio::ip::address bind_addr_;
     std::uint16_t bind_port_ = 0;
+    bool fin_sent_ = false;
+    bool reset_received_ = false;
     std::uint8_t last_remote_rep_ = socks::kRepSuccess;
     bool has_bind_endpoint_ = false;
     using channel_type =

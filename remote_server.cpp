@@ -799,10 +799,21 @@ boost::asio::awaitable<void> relay_fallback_data(boost::asio::ip::tcp::socket& s
         const auto n = co_await timeout_io::wait_read_some_with_timeout(src, boost::asio::buffer(buf), read_timeout, ec);
         if (ec)
         {
+            if (ec == boost::asio::error::eof)
+            {
+                boost::system::error_code shutdown_ec;
+                shutdown_ec = dst.shutdown(boost::asio::ip::tcp::socket::shutdown_send, shutdown_ec);
+                if (shutdown_ec && shutdown_ec != boost::asio::error::not_connected)
+                {
+                    LOG_CTX_WARN(ctx, "{} stage={} shutdown send error {}", log_event::kFallback, direction, shutdown_ec.message());
+                }
+                co_return;
+            }
             if (ec != boost::asio::error::eof && ec != boost::asio::error::operation_aborted && ec != boost::asio::error::connection_reset)
             {
                 LOG_CTX_WARN(ctx, "{} stage={} read error {}", log_event::kFallback, direction, ec.message());
             }
+            close_tcp_socket(dst);
             co_return;
         }
         if (n == 0)
@@ -1029,7 +1040,8 @@ boost::asio::awaitable<void> remote_server::fallback_to_target_site(reality_cont
     }
 
     using boost::asio::experimental::awaitable_operators::operator||;
-    co_await (relay_fallback_data(*reality_ctx.socket, upstream_socket, ctx, cfg_, "client_to_target") ||
+    using boost::asio::experimental::awaitable_operators::operator&&;
+    co_await (relay_fallback_data(*reality_ctx.socket, upstream_socket, ctx, cfg_, "client_to_target") &&
               relay_fallback_data(upstream_socket, *reality_ctx.socket, ctx, cfg_, "target_to_client"));
 
     LOG_CTX_INFO(ctx, "{} finished target={}:{}", log_event::kFallback, host, kFallbackTlsPort);

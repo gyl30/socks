@@ -113,14 +113,15 @@ boost::asio::awaitable<void> tproxy_tcp_session::run()
 
     LOG_CTX_INFO(ctx_, "{} connected {} {} via {}", log_event::kConnEstablished, local_addr.to_string(), port, mux::to_string(route));
 
+    using boost::asio::experimental::awaitable_operators::operator&&;
     using boost::asio::experimental::awaitable_operators::operator||;
     if (cfg_.timeout.idle == 0)
     {
-        co_await (client_to_upstream(backend) || upstream_to_client(backend));
+        co_await (client_to_upstream(backend) && upstream_to_client(backend));
     }
     else
     {
-        co_await (client_to_upstream(backend) || upstream_to_client(backend) || idle_watchdog());
+        co_await ((client_to_upstream(backend) && upstream_to_client(backend)) || idle_watchdog());
     }
 
     co_await backend->close();
@@ -176,7 +177,20 @@ boost::asio::awaitable<void> tproxy_tcp_session::client_to_upstream(std::shared_
         const std::size_t n = co_await socket_.async_read_some(boost::asio::buffer(buf), boost::asio::redirect_error(boost::asio::use_awaitable, ec));
         if (ec)
         {
-            LOG_CTX_INFO(ctx_, "{} client read finished {}", log_event::kSocks, ec.message());
+            if (ec == boost::asio::error::eof)
+            {
+                boost::system::error_code shutdown_ec;
+                co_await backend->shutdown_send(shutdown_ec);
+                if (shutdown_ec)
+                {
+                    LOG_CTX_WARN(ctx_, "{} shutdown backend send failed {}", log_event::kSocks, shutdown_ec.message());
+                }
+            }
+            else
+            {
+                LOG_CTX_INFO(ctx_, "{} client read finished {}", log_event::kSocks, ec.message());
+                co_await backend->close();
+            }
             break;
         }
         std::vector<std::uint8_t> data_buf(buf.begin(), buf.begin() + static_cast<int>(n));
@@ -184,6 +198,7 @@ boost::asio::awaitable<void> tproxy_tcp_session::client_to_upstream(std::shared_
         if (ec)
         {
             LOG_CTX_WARN(ctx_, "{} failed to write to backend {}", log_event::kSocks, ec.message());
+            co_await backend->close();
             break;
         }
         ctx_.add_tx_bytes(n);
@@ -201,7 +216,24 @@ boost::asio::awaitable<void> tproxy_tcp_session::upstream_to_client(std::shared_
         const auto n = co_await backend->read(buf, ec);
         if (ec)
         {
-            LOG_CTX_WARN(ctx_, "{} failed to read from backend {} code {}", log_event::kSocks, ec.message(), ec.value());
+            if (ec == boost::asio::error::eof)
+            {
+                boost::system::error_code shutdown_ec;
+                shutdown_ec = socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_send, shutdown_ec);
+                if (shutdown_ec && shutdown_ec != boost::asio::error::not_connected)
+                {
+                    LOG_CTX_WARN(ctx_, "{} shutdown client send failed {}", log_event::kSocks, shutdown_ec.message());
+                }
+            }
+            else
+            {
+                LOG_CTX_WARN(ctx_, "{} failed to read from backend {} code {}", log_event::kSocks, ec.message(), ec.value());
+                ec = socket_.close(ec);
+                if (ec)
+                {
+                    LOG_CTX_WARN(ctx_, "{} close client failed {}", log_event::kSocks, ec.message());
+                }
+            }
             break;
         }
         boost::system::error_code write_ec;
@@ -209,6 +241,7 @@ boost::asio::awaitable<void> tproxy_tcp_session::upstream_to_client(std::shared_
         if (write_ec)
         {
             LOG_CTX_WARN(ctx_, "{} failed to write to client {} bytes {} error {}", log_event::kSocks, n, write_ec.value(), write_ec.message());
+            co_await backend->close();
             break;
         }
         ctx_.add_rx_bytes(write_size);

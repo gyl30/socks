@@ -182,6 +182,17 @@ boost::asio::awaitable<void> direct_upstream::close()
     co_return;
 }
 
+boost::asio::awaitable<void> direct_upstream::shutdown_send(boost::system::error_code& ec)
+{
+    ec.clear();
+    ec = socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
+    if (ec == boost::asio::error::not_connected)
+    {
+        ec.clear();
+    }
+    co_return;
+}
+
 proxy_upstream::proxy_upstream(std::shared_ptr<mux_tunnel_impl> tunnel, connection_context ctx)
     : ctx_(std::move(ctx)), tunnel_(std::move(tunnel))
 {
@@ -299,6 +310,8 @@ boost::asio::awaitable<void> proxy_upstream::connect(const std::string& host, co
     }
     has_bind_endpoint_ = false;
     bind_port_ = 0;
+    fin_sent_ = false;
+    reset_received_ = false;
     last_remote_rep_ = socks::kRepSuccess;
     co_await send_syn_request(stream, host, port, ec);
     if (ec)
@@ -340,7 +353,15 @@ boost::asio::awaitable<std::size_t> proxy_upstream::read(std::vector<std::uint8_
                      data_frame.h.command,
                      mux_command_name(data_frame.h.command),
                      data_frame.payload.size());
-        ec = boost::asio::error::eof;
+        reset_received_ = data_frame.h.command == mux::kCmdRst;
+        if (data_frame.h.command == mux::kCmdFin)
+        {
+            ec = boost::asio::error::eof;
+        }
+        else
+        {
+            ec = boost::asio::error::connection_reset;
+        }
         co_return 0;
     }
     if (data_frame.h.command != mux::kCmdDat)
@@ -372,6 +393,24 @@ boost::asio::awaitable<void> proxy_upstream::write(const std::vector<std::uint8_
     co_return co_await stream_->async_write(data_frame, ec);
 }
 
+boost::asio::awaitable<void> proxy_upstream::shutdown_send(boost::system::error_code& ec)
+{
+    ec.clear();
+    if (stream_ == nullptr || fin_sent_)
+    {
+        co_return;
+    }
+
+    mux_frame fin_frame;
+    fin_frame.h.stream_id = stream_->id();
+    fin_frame.h.command = mux::kCmdFin;
+    co_await stream_->async_write(fin_frame, ec);
+    if (!ec)
+    {
+        fin_sent_ = true;
+    }
+}
+
 bool proxy_upstream::get_bind_endpoint(boost::asio::ip::address& addr, std::uint16_t& port, boost::system::error_code& ec) const
 {
     if (!has_bind_endpoint_)
@@ -398,17 +437,19 @@ boost::asio::awaitable<void> proxy_upstream::close()
 {
     if (stream_ != nullptr && tunnel_ != nullptr)
     {
-        boost::system::error_code fin_ec;
-        mux_frame fin_frame;
-        fin_frame.h.stream_id = stream_->id();
-        fin_frame.h.command = mux::kCmdFin;
-        co_await stream_->async_write(fin_frame, fin_ec);
-        if (fin_ec)
+        if (!fin_sent_ && !reset_received_)
         {
-            LOG_CTX_WARN(ctx_.with_stream(stream_->id()), "{} stage=send_fin error={}", log_event::kRoute, fin_ec.message());
+            boost::system::error_code fin_ec;
+            co_await shutdown_send(fin_ec);
+            if (fin_ec)
+            {
+                LOG_CTX_WARN(ctx_.with_stream(stream_->id()), "{} stage=send_fin error={}", log_event::kRoute, fin_ec.message());
+            }
         }
         tunnel_->remove_stream(stream_);
     }
+    fin_sent_ = false;
+    reset_received_ = false;
     stream_.reset();
     co_return;
 }
