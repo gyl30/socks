@@ -163,7 +163,9 @@ set(SOCKS_SOURCES
     domain_matcher.cpp
     key_rotator.cpp
     reality_auth.cpp
-    monitor_server.cpp)
+    monitor_server.cpp
+    cert_fetcher.cpp
+    cert_manager.cpp)
 
 if(SOCKS_HAS_TPROXY)
   list(APPEND SOCKS_SOURCES tproxy_client.cpp tproxy_tcp_session.cpp)
