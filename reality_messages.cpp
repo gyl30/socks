@@ -816,7 +816,8 @@ std::vector<std::uint8_t> construct_server_hello(const std::vector<std::uint8_t>
                                                  const std::vector<std::uint8_t>& session_id,
                                                  std::uint16_t cipher_suite,
                                                  std::uint16_t key_share_group,
-                                                 const std::vector<std::uint8_t>& key_share_data)
+                                                 const std::vector<std::uint8_t>& key_share_data,
+                                                 std::span<const std::uint16_t> extension_order)
 {
     constexpr std::size_t kMaxSessionIdLen = 255;
     constexpr std::size_t kMaxExtensionsLen = 65535;
@@ -837,18 +838,44 @@ std::vector<std::uint8_t> construct_server_hello(const std::vector<std::uint8_t>
     message_builder::push_u16(hello, cipher_suite);
     hello.push_back(0x00);
 
-    std::vector<std::uint8_t> extensions;
-    message_builder::push_u16(extensions, tls_consts::ext::kSupportedVersions);
-    message_builder::push_u16(extensions, 2);
-    message_builder::push_u16(extensions, tls_consts::kVer13);
+    std::vector<std::uint8_t> supported_versions_ext;
+    message_builder::push_u16(supported_versions_ext, tls_consts::ext::kSupportedVersions);
+    message_builder::push_u16(supported_versions_ext, 2);
+    message_builder::push_u16(supported_versions_ext, tls_consts::kVer13);
 
-    message_builder::push_u16(extensions, tls_consts::ext::kKeyShare);
+    std::vector<std::uint8_t> key_share_ext;
+    message_builder::push_u16(key_share_ext, tls_consts::ext::kKeyShare);
     const auto key_share_len = std::min(key_share_data.size(), kMaxKeyShareLen);
     const auto ext_len = static_cast<std::uint16_t>(2 + 2 + key_share_len);
-    message_builder::push_u16(extensions, ext_len);
-    message_builder::push_u16(extensions, key_share_group);
-    message_builder::push_u16(extensions, static_cast<std::uint16_t>(key_share_len));
-    extensions.insert(extensions.end(), key_share_data.begin(), key_share_data.begin() + static_cast<std::ptrdiff_t>(key_share_len));
+    message_builder::push_u16(key_share_ext, ext_len);
+    message_builder::push_u16(key_share_ext, key_share_group);
+    message_builder::push_u16(key_share_ext, static_cast<std::uint16_t>(key_share_len));
+    key_share_ext.insert(key_share_ext.end(), key_share_data.begin(), key_share_data.begin() + static_cast<std::ptrdiff_t>(key_share_len));
+
+    std::vector<std::uint8_t> extensions;
+    bool emitted_supported_versions = false;
+    bool emitted_key_share = false;
+    auto append_extension =
+        [&](const std::uint16_t ext_type)
+    {
+        if (ext_type == tls_consts::ext::kSupportedVersions && !emitted_supported_versions)
+        {
+            message_builder::push_bytes(extensions, supported_versions_ext);
+            emitted_supported_versions = true;
+        }
+        else if (ext_type == tls_consts::ext::kKeyShare && !emitted_key_share)
+        {
+            message_builder::push_bytes(extensions, key_share_ext);
+            emitted_key_share = true;
+        }
+    };
+
+    for (const auto ext_type : extension_order)
+    {
+        append_extension(ext_type);
+    }
+    append_extension(tls_consts::ext::kSupportedVersions);
+    append_extension(tls_consts::ext::kKeyShare);
 
     message_builder::push_u16(hello, static_cast<std::uint16_t>(extensions.size()));
     message_builder::push_bytes(hello, extensions);
@@ -860,7 +887,9 @@ std::vector<std::uint8_t> construct_server_hello(const std::vector<std::uint8_t>
     return hello;
 }
 
-std::vector<std::uint8_t> construct_encrypted_extensions(const std::string& alpn)
+std::vector<std::uint8_t> construct_encrypted_extensions(const std::string& alpn,
+                                                         std::span<const std::uint16_t> extension_order,
+                                                         const bool include_padding)
 {
     std::vector<std::uint8_t> msg;
     msg.push_back(0x08);
@@ -869,26 +898,55 @@ std::vector<std::uint8_t> construct_encrypted_extensions(const std::string& alpn
     msg.push_back(0x00);
 
     std::vector<std::uint8_t> extensions;
+    std::vector<std::uint8_t> alpn_ext;
     if (!alpn.empty())
     {
-        message_builder::push_u16(extensions, tls_consts::ext::kAlpn);
+        message_builder::push_u16(alpn_ext, tls_consts::ext::kAlpn);
         std::vector<std::uint8_t> proto;
         message_builder::push_vector_u8(proto, std::vector<std::uint8_t>(alpn.begin(), alpn.end()));
         std::vector<std::uint8_t> ext;
         message_builder::push_vector_u16(ext, proto);
-        message_builder::push_u16(extensions, static_cast<std::uint16_t>(ext.size()));
-        message_builder::push_bytes(extensions, ext);
+        message_builder::push_u16(alpn_ext, static_cast<std::uint16_t>(ext.size()));
+        message_builder::push_bytes(alpn_ext, ext);
     }
 
-    static thread_local std::mt19937 gen(std::random_device{}());
-    std::uniform_int_distribution<std::size_t> dist(10, 100);
-    const std::size_t padding_len = dist(gen);
-    message_builder::push_u16(extensions, tls_consts::ext::kPadding);
-    message_builder::push_u16(extensions, static_cast<std::uint16_t>(padding_len));
-    for (std::size_t i = 0; i < padding_len; ++i)
+    std::vector<std::uint8_t> padding_ext;
+    if (include_padding)
     {
-        extensions.push_back(0x00);
+        static thread_local std::mt19937 gen(std::random_device{}());
+        std::uniform_int_distribution<std::size_t> dist(10, 100);
+        const std::size_t padding_len = dist(gen);
+        message_builder::push_u16(padding_ext, tls_consts::ext::kPadding);
+        message_builder::push_u16(padding_ext, static_cast<std::uint16_t>(padding_len));
+        for (std::size_t i = 0; i < padding_len; ++i)
+        {
+            padding_ext.push_back(0x00);
+        }
     }
+
+    bool emitted_alpn = false;
+    bool emitted_padding = false;
+    auto append_extension =
+        [&](const std::uint16_t ext_type)
+    {
+        if (ext_type == tls_consts::ext::kAlpn && !emitted_alpn && !alpn_ext.empty())
+        {
+            message_builder::push_bytes(extensions, alpn_ext);
+            emitted_alpn = true;
+        }
+        else if (ext_type == tls_consts::ext::kPadding && !emitted_padding && !padding_ext.empty())
+        {
+            message_builder::push_bytes(extensions, padding_ext);
+            emitted_padding = true;
+        }
+    };
+
+    for (const auto ext_type : extension_order)
+    {
+        append_extension(ext_type);
+    }
+    append_extension(tls_consts::ext::kAlpn);
+    append_extension(tls_consts::ext::kPadding);
 
     message_builder::push_u16(msg, static_cast<std::uint16_t>(extensions.size()));
     message_builder::push_bytes(msg, extensions);

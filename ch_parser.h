@@ -14,6 +14,8 @@ struct client_hello_info
     std::vector<std::uint8_t> session_id;
     std::vector<std::uint8_t> random;
     std::vector<std::uint8_t> x25519_pub;
+    std::vector<std::uint16_t> cipher_suites;
+    std::vector<std::string> alpn_protocols;
     std::string sni;
     bool malformed_sni = false;
     bool malformed_key_share = false;
@@ -104,7 +106,7 @@ class ch_parser
     static bool read_tls_record_header(reader& r);
     static bool read_client_hello_prefix(reader& r, client_hello_info& info);
     static bool read_session_id(reader& r, client_hello_info& info);
-    static bool skip_cipher_suites_and_compression(reader& r);
+    static bool parse_cipher_suites_and_compression(reader& r, client_hello_info& info);
     static bool read_extension_header(reader& r, std::uint16_t& type, std::uint16_t& len);
     static bool read_sni_item_header(reader& r, std::uint8_t& type, std::uint16_t& len);
     static bool handle_sni_item(reader& r, std::uint8_t type, std::uint16_t len, client_hello_info& info);
@@ -116,6 +118,7 @@ class ch_parser
 
     static void parse_extensions(reader& r, client_hello_info& info);
     static void parse_sni(reader& r, client_hello_info& info);
+    static void parse_alpn(reader& r, client_hello_info& info);
     static void parse_key_share(reader& r, client_hello_info& info);
 };
 

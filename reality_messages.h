@@ -3,6 +3,7 @@
 
 #include <string>
 #include <vector>
+#include <span>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -63,9 +64,12 @@ std::vector<std::uint8_t> construct_server_hello(const std::vector<std::uint8_t>
                                                  const std::vector<std::uint8_t>& session_id,
                                                  std::uint16_t cipher_suite,
                                                  std::uint16_t key_share_group,
-                                                 const std::vector<std::uint8_t>& key_share_data);
+                                                 const std::vector<std::uint8_t>& key_share_data,
+                                                 std::span<const std::uint16_t> extension_order = {});
 
-std::vector<std::uint8_t> construct_encrypted_extensions(const std::string& alpn);
+std::vector<std::uint8_t> construct_encrypted_extensions(const std::string& alpn,
+                                                         std::span<const std::uint16_t> extension_order = {},
+                                                         bool include_padding = true);
 
 std::vector<std::uint8_t> construct_certificate(const std::vector<std::uint8_t>& cert_der);
 
