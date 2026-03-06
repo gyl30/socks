@@ -143,7 +143,6 @@ set(SOCKS_SOURCES
     reality_messages.cpp
     tls_cipher_suite.cpp
     tls_record_validation.cpp
-    cert_fetcher.cpp
     crypto_util.cpp
     reality_fingerprint.cpp
     ch_parser.cpp
@@ -162,7 +161,6 @@ set(SOCKS_SOURCES
     replay_cache.cpp
     reality_engine.cpp
     domain_matcher.cpp
-    cert_manager.cpp
     key_rotator.cpp
     reality_auth.cpp
     monitor_server.cpp)
