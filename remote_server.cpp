@@ -52,6 +52,7 @@ extern "C"
 #include "statistics.h"
 #include "transcript.h"
 #include "crypto_util.h"
+#include "scoped_exit.h"
 #include "log_context.h"
 #include "context_pool.h"
 #include "reality_auth.h"
@@ -92,6 +93,8 @@ constexpr std::size_t kTlsRecordHeaderSize = 5;
 constexpr std::uint16_t kMaxTlsPlaintextRecordLen = static_cast<std::uint16_t>(reality::kMaxTlsPlaintextLen);
 constexpr std::uint16_t kMaxTlsCiphertextRecordLen = static_cast<std::uint16_t>(reality::kMaxTlsPlaintextLen + 256);
 constexpr std::uint32_t kMaxTlsCompatCcsRecords = 8;
+constexpr std::uint16_t kFallbackTlsPort = 443;
+constexpr std::size_t kFallbackRelayBufferSize = 16 * 1024;
 
 boost::asio::awaitable<void> read_tls_record_header(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
                                                     std::vector<std::uint8_t>& buf,
@@ -472,6 +475,228 @@ std::uint16_t select_reality_cipher_suite()
     return normalize_cipher_suite(reality::tls_consts::cipher::kTlsAes128GcmSha256);
 }
 
+void close_tcp_socket(boost::asio::ip::tcp::socket& socket)
+{
+    boost::system::error_code ec;
+    ec = socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
+    ec = socket.close(ec);
+}
+
+void record_fallback_resolve_failure(const boost::system::error_code& ec)
+{
+    auto& stats = statistics::instance();
+    stats.inc_fallback_resolve_failures();
+    if (ec == boost::asio::error::timed_out)
+    {
+        stats.inc_fallback_resolve_timeouts();
+    }
+    else
+    {
+        stats.inc_fallback_resolve_errors();
+    }
+}
+
+void record_fallback_connect_failure(const boost::system::error_code& ec)
+{
+    auto& stats = statistics::instance();
+    stats.inc_fallback_connect_failures();
+    if (ec == boost::asio::error::timed_out)
+    {
+        stats.inc_fallback_connect_timeouts();
+    }
+    else
+    {
+        stats.inc_fallback_connect_errors();
+    }
+}
+
+void record_fallback_write_failure(const boost::system::error_code& ec)
+{
+    auto& stats = statistics::instance();
+    stats.inc_fallback_write_failures();
+    if (ec == boost::asio::error::timed_out)
+    {
+        stats.inc_fallback_write_timeouts();
+    }
+    else
+    {
+        stats.inc_fallback_write_errors();
+    }
+}
+
+std::string select_fallback_target_host(const reality_context& reality_ctx, const config& cfg)
+{
+    if (!cfg.reality.sni.empty())
+    {
+        return cfg.reality.sni;
+    }
+    return reality_ctx.client_hello.sni;
+}
+
+boost::asio::awaitable<void> connect_fallback_target(boost::asio::io_context& io_context,
+                                                     boost::asio::ip::tcp::socket& upstream_socket,
+                                                     const connection_context& ctx,
+                                                     const config& cfg,
+                                                     const std::string& host,
+                                                     const std::uint16_t port,
+                                                     boost::system::error_code& ec)
+{
+    boost::asio::ip::tcp::resolver resolver(io_context);
+    const auto endpoints = co_await timeout_io::wait_resolve_with_timeout(resolver, host, std::to_string(port), cfg.timeout.connect, ec);
+    if (ec)
+    {
+        record_fallback_resolve_failure(ec);
+        LOG_CTX_WARN(ctx, "{} stage=resolve target={}:{} error={}", log_event::kFallback, host, port, ec.message());
+        co_return;
+    }
+    if (endpoints.begin() == endpoints.end())
+    {
+        ec = boost::asio::error::host_not_found;
+        record_fallback_resolve_failure(ec);
+        LOG_CTX_WARN(ctx, "{} stage=resolve target={}:{} error={}", log_event::kFallback, host, port, ec.message());
+        co_return;
+    }
+
+    boost::system::error_code last_ec = boost::asio::error::host_unreachable;
+    for (const auto& entry : endpoints)
+    {
+        if (upstream_socket.is_open())
+        {
+            close_tcp_socket(upstream_socket);
+        }
+
+        boost::system::error_code op_ec;
+        op_ec = upstream_socket.open(entry.endpoint().protocol(), op_ec);
+        if (op_ec)
+        {
+            last_ec = op_ec;
+            continue;
+        }
+
+        op_ec = upstream_socket.set_option(boost::asio::ip::tcp::no_delay(true), op_ec);
+        if (op_ec)
+        {
+            last_ec = op_ec;
+            continue;
+        }
+
+        co_await timeout_io::wait_connect_with_timeout(upstream_socket, entry.endpoint(), cfg.timeout.connect, op_ec);
+        if (!op_ec)
+        {
+            ec.clear();
+            LOG_CTX_INFO(ctx, "{} stage=connect target={}:{} connected", log_event::kFallback, host, port);
+            co_return;
+        }
+
+        last_ec = op_ec;
+    }
+
+    ec = last_ec;
+    record_fallback_connect_failure(ec);
+    LOG_CTX_WARN(ctx, "{} stage=connect target={}:{} error={}", log_event::kFallback, host, port, ec.message());
+    co_return;
+}
+
+boost::asio::awaitable<void> relay_fallback_data(boost::asio::ip::tcp::socket& src,
+                                                 boost::asio::ip::tcp::socket& dst,
+                                                 const connection_context& ctx,
+                                                 const config& cfg,
+                                                 const char* direction)
+{
+    const auto read_timeout = cfg.timeout.idle;
+    boost::system::error_code ec;
+    std::vector<std::uint8_t> buf(kFallbackRelayBufferSize);
+    for (;;)
+    {
+        const auto n = co_await timeout_io::wait_read_some_with_timeout(src, boost::asio::buffer(buf), read_timeout, ec);
+        if (ec)
+        {
+            if (ec != boost::asio::error::eof && ec != boost::asio::error::operation_aborted && ec != boost::asio::error::connection_reset)
+            {
+                LOG_CTX_WARN(ctx, "{} stage={} read error {}", log_event::kFallback, direction, ec.message());
+            }
+            co_return;
+        }
+        if (n == 0)
+        {
+            co_return;
+        }
+
+        const auto written = co_await timeout_io::wait_write_with_timeout(dst, boost::asio::buffer(buf.data(), n), cfg.timeout.write, ec);
+        if (ec)
+        {
+            record_fallback_write_failure(ec);
+            LOG_CTX_WARN(ctx, "{} stage={} write error {}", log_event::kFallback, direction, ec.message());
+            co_return;
+        }
+        if (written != n)
+        {
+            ec = boost::asio::error::fault;
+            record_fallback_write_failure(ec);
+            LOG_CTX_WARN(ctx, "{} stage={} short write {} of {}", log_event::kFallback, direction, written, n);
+            co_return;
+        }
+    }
+}
+
+boost::asio::awaitable<void> fallback_to_target_site(reality_context& reality_ctx,
+                                                     boost::asio::io_context& io_context,
+                                                     const config& cfg,
+                                                     const char* reason)
+{
+    auto& ctx = reality_ctx.ctx;
+    const auto host = select_fallback_target_host(reality_ctx, cfg);
+    if (host.empty())
+    {
+        statistics::instance().inc_fallback_no_target();
+        LOG_CTX_WARN(ctx, "{} reason={} no fallback target", log_event::kFallback, reason);
+        co_return;
+    }
+
+    ctx.set_target(host, kFallbackTlsPort);
+    LOG_CTX_INFO(ctx,
+                 "{} reason={} target={}:{} client_hello_size={}",
+                 log_event::kFallback,
+                 reason,
+                 host,
+                 kFallbackTlsPort,
+                 reality_ctx.client_hello_record.size());
+
+    boost::asio::ip::tcp::socket upstream_socket(io_context);
+    DEFER(
+        if (reality_ctx.socket != nullptr)
+        {
+            close_tcp_socket(*reality_ctx.socket);
+        }
+        close_tcp_socket(upstream_socket););
+
+    boost::system::error_code ec;
+    co_await connect_fallback_target(io_context, upstream_socket, ctx, cfg, host, kFallbackTlsPort, ec);
+    if (ec)
+    {
+        co_return;
+    }
+
+    const auto initial_write = co_await timeout_io::wait_write_with_timeout(
+        upstream_socket, boost::asio::buffer(reality_ctx.client_hello_record), cfg.timeout.write, ec);
+    if (ec || initial_write != reality_ctx.client_hello_record.size())
+    {
+        if (!ec)
+        {
+            ec = boost::asio::error::fault;
+        }
+        record_fallback_write_failure(ec);
+        LOG_CTX_WARN(ctx, "{} stage=initial_write target={}:{} error={}", log_event::kFallback, host, kFallbackTlsPort, ec.message());
+        co_return;
+    }
+
+    using boost::asio::experimental::awaitable_operators::operator||;
+    co_await (relay_fallback_data(*reality_ctx.socket, upstream_socket, ctx, cfg, "client_to_target") ||
+              relay_fallback_data(upstream_socket, *reality_ctx.socket, ctx, cfg, "target_to_client"));
+
+    LOG_CTX_INFO(ctx, "{} finished target={}:{}", log_event::kFallback, host, kFallbackTlsPort);
+}
+
 boost::asio::awaitable<void> consume_tls13_compat_ccs(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
                                                       const std::array<std::uint8_t, 5>& header,
                                                       const connection_context& ctx,
@@ -780,26 +1005,36 @@ boost::asio::awaitable<void> remote_server::handle(std::shared_ptr<boost::asio::
     }
     LOG_CTX_DEBUG(ctx, "{} received client hello record size {}", log_event::kHandshake, buf.size());
 
+    auto fallback = [&](const char* reason) -> boost::asio::awaitable<void>
+    {
+        co_await fallback_to_target_site(reality_ctx, io_context_, cfg_, reason);
+    };
+
     reality_ctx.client_hello = ch_parser::parse(buf);
+    ctx.sni(reality_ctx.client_hello.sni);
     if (reality_ctx.client_hello.malformed_sni)
     {
         LOG_CTX_ERROR(ctx, "{} auth fail malformed sni extension", log_event::kAuth);
+        co_await fallback("malformed_sni");
         co_return;
     }
     if (reality_ctx.client_hello.malformed_key_share)
     {
         LOG_CTX_ERROR(ctx, "{} auth fail malformed key share extension", log_event::kAuth);
+        co_await fallback("malformed_key_share");
         co_return;
     }
     if (!reality_ctx.client_hello.is_tls13 || reality_ctx.client_hello.session_id.size() != 32)
     {
         LOG_CTX_ERROR(
             ctx, "{} auth fail is tls13 {} sid len {}", log_event::kAuth, reality_ctx.client_hello.is_tls13, reality_ctx.client_hello.session_id.size());
+        co_await fallback("invalid_tls13_client_hello");
         co_return;
     }
     if (reality_ctx.client_hello.random.size() != 32)
     {
         LOG_CTX_ERROR(ctx, "{} auth fail random len {}", log_event::kAuth, reality_ctx.client_hello.random.size());
+        co_await fallback("invalid_client_random");
         co_return;
     }
     if (reality_ctx.client_hello.has_x25519_share && reality_ctx.client_hello.x25519_pub.size() == 32)
@@ -810,31 +1045,37 @@ boost::asio::awaitable<void> remote_server::handle(std::shared_ptr<boost::asio::
     if (reality_ctx.x25519_peer_pub.size() != 32)
     {
         LOG_CTX_ERROR(ctx, "{} auth fail missing valid x25519 key share", log_event::kAuth);
+        co_await fallback("missing_x25519_share");
         co_return;
     }
     auto auth = decrypt_auth_payload(reality_ctx, private_key_, ec);
     if (ec)
     {
+        co_await fallback("decrypt_auth_payload_failed");
         co_return;
     }
     if (!verify_auth_payload_fields(auth, short_id_bytes_, reality_ctx))
     {
+        co_await fallback("verify_auth_payload_failed");
         co_return;
     }
     if (!verify_auth_timestamp(auth.timestamp, reality_ctx))
     {
+        co_await fallback("verify_auth_timestamp_failed");
         co_return;
     }
 
     if (!verify_replay_guard(replay_cache_, reality_ctx))
     {
         LOG_CTX_WARN(ctx, "{} auth failed sni {}", log_event::kAuth, reality_ctx.client_hello.sni);
+        co_await fallback("replay_guard_rejected");
         co_return;
     }
     LOG_CTX_INFO(ctx, "{} authorized sni {}", log_event::kAuth, reality_ctx.client_hello.sni);
     if (buf.size() <= 5)
     {
         LOG_CTX_ERROR(ctx, "{} buffer too short", log_event::kHandshake);
+        co_await fallback("client_hello_record_too_short");
         co_return;
     }
     reality_ctx.transcript.update(std::vector<std::uint8_t>(buf.begin() + 5, buf.end()));

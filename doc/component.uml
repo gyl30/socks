@@ -74,7 +74,9 @@ end note
 note right of RemoteServer
   REALITY 成功握手路径直接返回协议内临时证书。
   不再依赖按 SNI 抓取外部证书。
-  认证失败时当前直接断开，不做真实站点伪装回退。
+  首个 ClientHello 已完整读入时，认证失败会回退到
+  reality.sni 或客户端 SNI 的 443 做普通 TLS 中继。
+  更完整的站点素材拟态仍未实现。
 end note
 
 note bottom of TproxyListener
