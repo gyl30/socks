@@ -83,6 +83,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     io_context_pool& pool_;
     boost::asio::io_context& io_context_;
     task_group group_{io_context_};
+    boost::asio::ip::tcp::acceptor acceptor_{io_context_};
     std::vector<std::uint8_t> private_key_;
     std::vector<std::uint8_t> short_id_bytes_;
     std::array<std::uint8_t, 32> reality_cert_private_key_{};

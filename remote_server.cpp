@@ -1093,15 +1093,13 @@ void remote_server::start()
 
 void remote_server::stop()
 {
-    boost::asio::co_spawn(
-        io_context_,
-        [this, self = shared_from_this()]() -> boost::asio::awaitable<void>
-        {
-            group_.emit(boost::asio::cancellation_type::all);
-            boost::system::error_code ec;
-            co_await group_.async_wait(::boost::asio::redirect_error(::boost::asio::use_awaitable, ec));
-        },
-        boost::asio::detached);
+    boost::system::error_code ec;
+    acceptor_.close(ec);
+    if (ec && ec != boost::asio::error::bad_descriptor)
+    {
+        LOG_ERROR("remote acceptor close error {}", ec.message());
+    }
+    group_.emit(boost::asio::cancellation_type::all);
 }
 
 bool remote_server::try_acquire_fallback_budget(const connection_context& ctx, const char* reason)
@@ -1247,29 +1245,28 @@ boost::asio::awaitable<void> remote_server::accept_loop()
     LOG_INFO("remote server listening for connections");
     auto self = shared_from_this();
     boost::system::error_code ec;
-    boost::asio::ip::tcp::acceptor acceptor{io_context_};
     auto addr = boost::asio::ip::make_address(cfg_.inbound.host, ec);
     if (ec)
     {
         co_return;
     }
     auto ep = boost::asio::ip::tcp::endpoint(addr, cfg_.inbound.port);
-    ec = acceptor.open(ep.protocol(), ec);
+    ec = acceptor_.open(ep.protocol(), ec);
     if (ec)
     {
         co_return;
     }
-    ec = acceptor.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true), ec);
+    ec = acceptor_.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true), ec);
     if (ec)
     {
         co_return;
     }
-    ec = acceptor.bind(ep, ec);
+    ec = acceptor_.bind(ep, ec);
     if (ec)
     {
         co_return;
     }
-    ec = acceptor.listen(boost::asio::socket_base::max_listen_connections, ec);
+    ec = acceptor_.listen(boost::asio::socket_base::max_listen_connections, ec);
     if (ec)
     {
         co_return;
@@ -1278,7 +1275,7 @@ boost::asio::awaitable<void> remote_server::accept_loop()
     while (true)
     {
         const auto s = std::make_shared<boost::asio::ip::tcp::socket>(io_context_);
-        const auto [accept_ec] = co_await acceptor.async_accept(*s, boost::asio::as_tuple(boost::asio::use_awaitable));
+        const auto [accept_ec] = co_await acceptor_.async_accept(*s, boost::asio::as_tuple(boost::asio::use_awaitable));
         if (accept_ec)
         {
             if (accept_ec == boost::asio::error::operation_aborted || accept_ec == boost::asio::error::bad_descriptor)
