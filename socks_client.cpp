@@ -158,17 +158,22 @@ boost::asio::awaitable<void> socks_client::accept_loop()
 
 void socks_client::stop()
 {
-    boost::system::error_code ec;
-    ec = acceptor_.close(ec);
-    if (ec && ec != boost::asio::error::bad_descriptor)
-    {
-        LOG_ERROR("acceptor close error {}", ec.message());
-    }
-    if (tunnel_pool_ != nullptr)
-    {
-        tunnel_pool_->stop();
-    }
-    group_.emit(::boost::asio::cancellation_type::all);
+    boost::asio::post(
+        ioc_,
+        [self = shared_from_this()]()
+        {
+            boost::system::error_code ec;
+            ec = self->acceptor_.close(ec);
+            if (ec && ec != boost::asio::error::bad_descriptor)
+            {
+                LOG_ERROR("acceptor close error {}", ec.message());
+            }
+            if (self->tunnel_pool_ != nullptr)
+            {
+                self->tunnel_pool_->stop();
+            }
+            self->group_.emit(::boost::asio::cancellation_type::all);
+        });
 }
 
 }    // namespace mux
