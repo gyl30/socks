@@ -19,6 +19,9 @@ struct site_material
     std::vector<std::uint16_t> key_share_groups;
     std::vector<std::uint16_t> server_hello_extension_types;
     std::vector<std::uint16_t> encrypted_extension_types;
+    std::optional<std::uint16_t> encrypted_extensions_padding_len;
+    bool sends_change_cipher_spec = false;
+    std::vector<std::uint16_t> encrypted_handshake_record_sizes;
     std::uint64_t fetched_at_unix_seconds = 0;
 };
 

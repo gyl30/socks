@@ -69,7 +69,10 @@ std::vector<std::uint8_t> construct_server_hello(const std::vector<std::uint8_t>
 
 std::vector<std::uint8_t> construct_encrypted_extensions(const std::string& alpn,
                                                          std::span<const std::uint16_t> extension_order = {},
-                                                         bool include_padding = true);
+                                                         bool include_padding = true,
+                                                         std::optional<std::uint16_t> padding_len = std::nullopt);
+
+std::vector<std::uint8_t> construct_certificate(std::span<const std::vector<std::uint8_t>> cert_chain);
 
 std::vector<std::uint8_t> construct_certificate(const std::vector<std::uint8_t>& cert_der);
 
