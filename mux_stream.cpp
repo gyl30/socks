@@ -33,6 +33,8 @@ mux_stream::~mux_stream() {}
 
 std::uint32_t mux_stream::id() const { return id_; }
 
+void mux_stream::close() { recv_channel_.close(); }
+
 boost::asio::awaitable<void> mux_stream::on_frame(mux_frame frame, boost::system::error_code& ec)
 {
     co_await timeout_io::wait_send_with_timeout<mux_frame>(recv_channel_, std::move(frame), cfg_.timeout.write, ec);
