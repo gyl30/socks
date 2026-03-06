@@ -34,6 +34,7 @@
 #include "timeout_io.h"
 #include "log_context.h"
 #include "mux_protocol.h"
+#include "client_tunnel_pool.h"
 
 namespace mux
 {
@@ -193,8 +194,13 @@ boost::asio::awaitable<void> direct_upstream::shutdown_send(boost::system::error
     co_return;
 }
 
-proxy_upstream::proxy_upstream(std::shared_ptr<mux_tunnel_impl> tunnel, connection_context ctx)
-    : ctx_(std::move(ctx)), tunnel_(std::move(tunnel))
+proxy_upstream::proxy_upstream(std::shared_ptr<mux_tunnel_impl> tunnel, boost::asio::io_context& io_context, connection_context ctx)
+    : ctx_(std::move(ctx)), io_context_(io_context), tunnel_(std::move(tunnel))
+{
+}
+
+proxy_upstream::proxy_upstream(std::shared_ptr<client_tunnel_pool> tunnel_pool, boost::asio::io_context& io_context, connection_context ctx)
+    : ctx_(std::move(ctx)), io_context_(io_context), tunnel_pool_(std::move(tunnel_pool))
 {
 }
 
@@ -294,7 +300,21 @@ boost::asio::awaitable<bool> proxy_upstream::wait_connect_ack(const std::shared_
 
 boost::asio::awaitable<void> proxy_upstream::connect(const std::string& host, const std::uint16_t port, boost::system::error_code& ec)
 {
-    if (tunnel_ == nullptr)
+    if (tunnel_pool_ != nullptr)
+    {
+        tunnel_.reset();
+        tunnel_ = co_await tunnel_pool_->wait_for_tunnel(io_context_, ec);
+        if (ec || tunnel_ == nullptr)
+        {
+            if (!ec)
+            {
+                ec = boost::asio::error::not_connected;
+            }
+            LOG_CTX_ERROR(ctx_, "{} wait tunnel failed {}", log_event::kRoute, ec.message());
+            co_return;
+        }
+    }
+    else if (tunnel_ == nullptr)
     {
         ec = boost::asio::error::not_connected;
         LOG_CTX_ERROR(ctx_, "{} create stream failed no tunnel", log_event::kRoute);

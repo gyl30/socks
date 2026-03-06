@@ -21,6 +21,7 @@
 #include <boost/asio/ip/v6_only.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/system/error_code.hpp>
+#include <boost/system/errc.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/redirect_error.hpp>
 #include <boost/asio/bind_cancellation_slot.hpp>
@@ -38,6 +39,7 @@
 #include "scoped_exit.h"
 #include "log_context.h"
 #include "mux_protocol.h"
+#include "client_tunnel_pool.h"
 #include "udp_socks_session.h"
 
 namespace mux
@@ -51,6 +53,12 @@ namespace
     return static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
 }
+
+struct proxy_udp_stream
+{
+    std::shared_ptr<mux_tunnel_impl> tunnel;
+    std::shared_ptr<mux_stream> stream;
+};
 
 boost::asio::awaitable<void> write_socks_error_reply(boost::asio::ip::tcp::socket& socket,
                                                      const std::uint8_t rep,
@@ -121,73 +129,92 @@ void bind_local_udp_address(boost::asio::ip::tcp::socket& tcp_socket,
     LOG_CTX_INFO(ctx, "{} started bound at {} {}", log_event::kSocks, local_addr.to_string(), udp_bind_port);
 }
 
-boost::asio::awaitable<std::shared_ptr<mux_stream>> connect_remote_address(std::shared_ptr<mux_tunnel_impl> tunnel_manager,
-                                                                           const connection_context& ctx)
+boost::asio::awaitable<proxy_udp_stream> connect_remote_address(const std::shared_ptr<client_tunnel_pool>& tunnel_pool,
+                                                                boost::asio::io_context& io_context,
+                                                                const connection_context& ctx,
+                                                                boost::system::error_code& ec)
 {
-    if (tunnel_manager == nullptr)
+    ec.clear();
+    if (tunnel_pool == nullptr)
     {
-        LOG_CTX_ERROR(ctx, "{} failed to create stream no tunnel", log_event::kSocks);
-        co_return nullptr;
+        ec = boost::asio::error::not_connected;
+        LOG_CTX_ERROR(ctx, "{} failed to create stream no tunnel pool", log_event::kSocks);
+        co_return proxy_udp_stream{};
     }
 
-    auto stream = tunnel_manager->create_stream();
+    const auto tunnel = co_await tunnel_pool->wait_for_tunnel(io_context, ec);
+    if (ec || tunnel == nullptr)
+    {
+        if (!ec)
+        {
+            ec = boost::asio::error::not_connected;
+        }
+        LOG_CTX_ERROR(ctx, "{} wait tunnel failed {}", log_event::kSocks, ec.message());
+        co_return proxy_udp_stream{};
+    }
+
+    auto stream = tunnel->create_stream();
     if (stream == nullptr)
     {
+        ec = boost::asio::error::connection_aborted;
         LOG_CTX_ERROR(ctx, "{} failed to create stream", log_event::kSocks);
-        co_return nullptr;
+        co_return proxy_udp_stream{};
     }
     bool keep_stream = false;
     DEFER(
         if (!keep_stream)
         {
-            tunnel_manager->remove_stream(stream);
+            tunnel->remove_stream(stream);
         });
 
     const syn_payload syn{.socks_cmd = socks::kCmdUdpAssociate, .addr = "0.0.0.0", .port = 0, .trace_id = ctx.trace_id()};
     std::vector<std::uint8_t> syn_data;
     if (!mux_codec::encode_syn(syn, syn_data))
     {
+        ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
         LOG_CTX_WARN(ctx, "{} syn encode failed", log_event::kSocks);
-        co_return nullptr;
+        co_return proxy_udp_stream{};
     }
     mux_frame syn_frame;
     syn_frame.h.stream_id = stream->id();
     syn_frame.h.command = kCmdSyn;
     syn_frame.payload.swap(syn_data);
-    boost::system::error_code ec;
     co_await stream->async_write(syn_frame, ec);
     if (ec)
     {
         LOG_CTX_WARN(ctx, "{} syn failed {}", log_event::kSocks, ec.message());
-        co_return nullptr;
+        co_return proxy_udp_stream{};
     }
 
     auto ack_frame = co_await stream->async_read(ec);
     if (ec)
     {
         LOG_CTX_WARN(ctx, "{} ack failed {}", log_event::kSocks, ec.message());
-        co_return nullptr;
+        co_return proxy_udp_stream{};
     }
     if (ack_frame.h.command != mux::kCmdAck)
     {
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
         LOG_CTX_WARN(ctx, "{} ack failed unexpected cmd {}", log_event::kSocks, ack_frame.h.command);
-        co_return nullptr;
+        co_return proxy_udp_stream{};
     }
 
     ack_payload ack_pl{};
     if (!mux_codec::decode_ack(ack_frame.payload.data(), ack_frame.payload.size(), ack_pl))
     {
+        ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
         LOG_CTX_WARN(ctx, "{} ack invalid payload", log_event::kSocks);
-        co_return nullptr;
+        co_return proxy_udp_stream{};
     }
     if (ack_pl.socks_rep != socks::kRepSuccess)
     {
+        ec = boost::asio::error::connection_refused;
         LOG_CTX_WARN(ctx, "{} ack rejected {}", log_event::kSocks, ack_pl.socks_rep);
-        co_return nullptr;
+        co_return proxy_udp_stream{};
     }
 
     keep_stream = true;
-    co_return stream;
+    co_return proxy_udp_stream{.tunnel = tunnel, .stream = stream};
 }
 
 }    // namespace
@@ -260,7 +287,7 @@ namespace
 
 udp_socks_session::udp_socks_session(boost::asio::ip::tcp::socket socket,
                                      boost::asio::io_context& io_context,
-                                     std::shared_ptr<mux_tunnel_impl> tunnel_manager,
+                                     std::shared_ptr<client_tunnel_pool> tunnel_pool,
                                      std::shared_ptr<router> router,
                                      const std::uint32_t sid,
                                      const config& cfg,
@@ -274,7 +301,7 @@ udp_socks_session::udp_socks_session(boost::asio::ip::tcp::socket socket,
       socket_(std::move(socket)),
       udp_socket_(io_context_),
       router_(std::move(router)),
-      tunnel_manager_(std::move(tunnel_manager)),
+      tunnel_pool_(std::move(tunnel_pool)),
       active_connection_guard_(std::move(active_connection_guard))
 {
     ctx_.new_trace_id();
@@ -319,12 +346,14 @@ boost::asio::awaitable<void> udp_socks_session::run(const std::string& host, con
         co_return;
     }
     // step 2 connect remote address
-    const auto stream = co_await connect_remote_address(tunnel_manager_, ctx_);
-    if (stream == nullptr)
+    const auto proxy_stream = co_await connect_remote_address(tunnel_pool_, io_context_, ctx_, ec);
+    if (ec || proxy_stream.stream == nullptr || proxy_stream.tunnel == nullptr)
     {
         co_await write_socks_error_reply(socket_, socks::kRepGenFail, ctx_, cfg_.timeout.write);
         co_return;
     }
+    const auto& tunnel = proxy_stream.tunnel;
+    const auto& stream = proxy_stream.stream;
     // step 3 reply to tcp socket
     const auto final_rep = detail::build_udp_associate_reply(local_addr, udp_port);
     co_await timeout_io::wait_write_with_timeout(socket_, boost::asio::buffer(final_rep), cfg_.timeout.write, ec);
@@ -346,7 +375,7 @@ boost::asio::awaitable<void> udp_socks_session::run(const std::string& host, con
     {
         LOG_CTX_WARN(ctx_, "{} send fin failed {}", log_event::kSocks, fin_ec.message());
     }
-    tunnel_manager_->remove_stream(stream);
+    tunnel->remove_stream(stream);
     LOG_CTX_INFO(ctx_, "{} finished", log_event::kSocks);
 }
 

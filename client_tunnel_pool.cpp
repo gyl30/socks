@@ -74,6 +74,7 @@ constexpr std::uint32_t kMaxTlsCompatCcsRecords = 8;
 constexpr std::uint32_t kReconnectBaseDelayMs = 200;
 constexpr std::uint32_t kReconnectMaxDelayMs = 10000;
 constexpr std::uint32_t kReconnectStableDurationMs = 30000;
+constexpr std::chrono::milliseconds kTunnelPollInterval(200);
 
 reality::fingerprint_type parse_fingerprint_type(const std::string& name)
 {
@@ -1177,6 +1178,37 @@ std::shared_ptr<mux_tunnel_impl> client_tunnel_pool::select_tunnel()
     }
 
     return nullptr;
+}
+
+boost::asio::awaitable<std::shared_ptr<mux_tunnel_impl>> client_tunnel_pool::wait_for_tunnel(boost::asio::io_context& io_context,
+                                                                                              boost::system::error_code& ec)
+{
+    ec.clear();
+    const auto start_ms = timeout_io::now_ms();
+    const auto connect_timeout_ms = timeout_io::timeout_seconds_to_milliseconds(cfg_.timeout.connect);
+    boost::asio::steady_timer retry_timer(io_context);
+    for (;;)
+    {
+        const auto tunnel = select_tunnel();
+        if (tunnel != nullptr)
+        {
+            co_return tunnel;
+        }
+
+        if (connect_timeout_ms != 0 && timeout_io::now_ms() - start_ms >= connect_timeout_ms)
+        {
+            ec = boost::asio::error::timed_out;
+            co_return nullptr;
+        }
+
+        retry_timer.expires_after(kTunnelPollInterval);
+        const auto [wait_ec] = co_await retry_timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
+        if (wait_ec)
+        {
+            ec = wait_ec;
+            co_return nullptr;
+        }
+    }
 }
 
 std::uint32_t client_tunnel_pool::next_session_id() { return next_session_id_.fetch_add(1, std::memory_order_relaxed); }
