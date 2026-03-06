@@ -158,7 +158,6 @@ void stop_services(runtime_services& services)
     {
         services.server->stop();
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(300));
 }
 int run_with_config(const char* prog, const char* config_path)
 {
@@ -205,7 +204,7 @@ int run_with_config(const char* prog, const char* config_path)
         [&](boost::system::error_code, int)
         {
             stop_services(services);
-            pool.stop();
+            pool.shutdown();
         });
 
     pool.run();

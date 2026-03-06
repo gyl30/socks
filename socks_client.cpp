@@ -156,19 +156,19 @@ boost::asio::awaitable<void> socks_client::accept_loop()
     LOG_INFO("local socks5 acceptor stopped");
 }
 
-void socks_client::stop() { boost::asio::co_spawn(ioc_, stop_accept(), boost::asio::detached); }
-
-boost::asio::awaitable<void> socks_client::stop_accept()
+void socks_client::stop()
 {
     boost::system::error_code ec;
     ec = acceptor_.close(ec);
-    if (ec)
+    if (ec && ec != boost::asio::error::bad_descriptor)
     {
         LOG_ERROR("acceptor close error {}", ec.message());
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    if (tunnel_pool_ != nullptr)
+    {
+        tunnel_pool_->stop();
+    }
     group_.emit(::boost::asio::cancellation_type::all);
-    co_await group_.async_wait(::boost::asio::redirect_error(::boost::asio::use_awaitable, ec));
 }
 
 }    // namespace mux
