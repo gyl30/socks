@@ -139,40 +139,41 @@ struct auth_inputs
     std::vector<std::uint8_t> aad;
 };
 
-std::expected<auth_inputs, boost::system::error_code> build_auth_decrypt_inputs(const reality_context& reality_ctx,
-                                                                                const std::vector<std::uint8_t>& server_private_key)
+auth_inputs build_auth_decrypt_inputs(const reality_context& reality_ctx,
+                                      const std::vector<std::uint8_t>& server_private_key,
+                                      boost::system::error_code& ec)
 {
-    auto shared_result = reality::crypto_util::x25519_derive(server_private_key, reality_ctx.x25519_peer_pub);
-    if (!shared_result)
+    ec.clear();
+    auto shared = reality::crypto_util::x25519_derive(server_private_key, reality_ctx.x25519_peer_pub, ec);
+    if (ec)
     {
-        const auto ec = shared_result.error();
         LOG_CTX_ERROR(reality_ctx.ctx, "{} auth fail x25519 derive failed {}", log_event::kAuth, ec.message());
-        return std::unexpected(ec);
+        return {};
     }
-    const auto& shared = *shared_result;
 
     const auto salt = std::vector<std::uint8_t>(reality_ctx.client_hello.random.begin(), reality_ctx.client_hello.random.begin() + 20);
     const auto reality_label_info = reality::crypto_util::hex_to_bytes("5245414c495459");
-    auto pseudo_random_key_result = reality::crypto_util::hkdf_extract(salt, shared, EVP_sha256());
-    if (!pseudo_random_key_result)
+    auto pseudo_random_key = reality::crypto_util::hkdf_extract(salt, shared, EVP_sha256(), ec);
+    if (ec)
     {
-        return std::unexpected(pseudo_random_key_result.error());
+        return {};
     }
-    auto auth_key_result = reality::crypto_util::hkdf_expand(*pseudo_random_key_result, reality_label_info, 16, EVP_sha256());
-    if (!auth_key_result)
+    auto auth_key = reality::crypto_util::hkdf_expand(pseudo_random_key, reality_label_info, 16, EVP_sha256(), ec);
+    if (ec)
     {
-        return std::unexpected(auth_key_result.error());
+        return {};
     }
 
     auth_inputs out;
-    out.auth_key = std::move(*auth_key_result);
+    out.auth_key = std::move(auth_key);
     out.nonce.assign(reality_ctx.client_hello.random.begin() + 20, reality_ctx.client_hello.random.end());
     LOG_CTX_DEBUG(reality_ctx.ctx, "auth key derived");
 
     if (reality_ctx.client_hello.sid_offset < 5)
     {
         LOG_CTX_ERROR(reality_ctx.ctx, "{} auth fail invalid sid offset {}", log_event::kAuth, reality_ctx.client_hello.sid_offset);
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
+        ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
+        return {};
     }
 
     out.aad.assign(reality_ctx.client_hello_record.begin() + 5, reality_ctx.client_hello_record.end());
@@ -180,7 +181,8 @@ std::expected<auth_inputs, boost::system::error_code> build_auth_decrypt_inputs(
     if (aad_sid_offset + constants::auth::kSessionIdLen > out.aad.size())
     {
         LOG_CTX_ERROR(reality_ctx.ctx, "{} auth fail aad size mismatch", log_event::kAuth);
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
+        ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
+        return {};
     }
     std::fill_n(out.aad.begin() + aad_sid_offset, constants::auth::kSessionIdLen, 0);
     return out;
@@ -285,10 +287,12 @@ const EVP_CIPHER* cipher_from_cipher_suite(const std::uint16_t cipher_suite)
 }
 std::size_t key_len_from_cipher_suite(const std::uint16_t cipher_suite) { return (cipher_suite == 0x1302) ? 32 : 16; }
 
-std::expected<handshake_crypto_result, boost::system::error_code> build_handshake_crypto(reality_context& reality_ctx,
-                                                                                         const std::uint16_t cipher_suite,
-                                                                                         const std::vector<std::uint8_t>& sign_key_bytes)
+handshake_crypto_result build_handshake_crypto(reality_context& reality_ctx,
+                                               const std::uint16_t cipher_suite,
+                                               const std::vector<std::uint8_t>& sign_key_bytes,
+                                               boost::system::error_code& ec)
 {
+    ec.clear();
     handshake_crypto_result out;
     out.sh_msg = reality::construct_server_hello(reality_ctx.server_random,
                                                  reality_ctx.client_hello.session_id,
@@ -299,23 +303,24 @@ std::expected<handshake_crypto_result, boost::system::error_code> build_handshak
 
     out.md = digest_from_cipher_suite(cipher_suite);
     reality_ctx.transcript.set_protocol_hash(out.md);
-    auto hs_keys_result = reality::tls_key_schedule::derive_handshake_keys(reality_ctx.server_shared_secret, reality_ctx.transcript.finish(), out.md);
-    if (!hs_keys_result)
+    out.hs_keys = reality::tls_key_schedule::derive_handshake_keys(reality_ctx.server_shared_secret, reality_ctx.transcript.finish(), out.md, ec);
+    if (ec)
     {
-        return std::unexpected(hs_keys_result.error());
+        return {};
     }
-    out.hs_keys = std::move(*hs_keys_result);
 
     constexpr std::size_t iv_len = 12;
     const auto key_len = key_len_from_cipher_suite(cipher_suite);
-    auto c_hs = reality::tls_key_schedule::derive_traffic_keys(out.hs_keys.client_handshake_traffic_secret, key_len, iv_len, out.md);
-    auto s_hs = reality::tls_key_schedule::derive_traffic_keys(out.hs_keys.server_handshake_traffic_secret, key_len, iv_len, out.md);
-    if (!c_hs || !s_hs)
+    out.c_hs_keys = reality::tls_key_schedule::derive_traffic_keys(out.hs_keys.client_handshake_traffic_secret, ec, key_len, iv_len, out.md);
+    if (ec)
     {
-        return std::unexpected(c_hs ? s_hs.error() : c_hs.error());
+        return {};
     }
-    out.c_hs_keys = std::move(*c_hs);
-    out.s_hs_keys = std::move(*s_hs);
+    out.s_hs_keys = reality::tls_key_schedule::derive_traffic_keys(out.hs_keys.server_handshake_traffic_secret, ec, key_len, iv_len, out.md);
+    if (ec)
+    {
+        return {};
+    }
 
     const auto enc_ext = reality::construct_encrypted_extensions("");
     reality_ctx.transcript.update(enc_ext);
@@ -325,26 +330,26 @@ std::expected<handshake_crypto_result, boost::system::error_code> build_handshak
     if (sign_key == nullptr)
     {
         LOG_CTX_ERROR(reality_ctx.ctx, "{} failed to load private key", log_event::kHandshake);
-        return std::unexpected(boost::asio::error::fault);
+        ec = boost::asio::error::fault;
+        return {};
     }
 
     const auto cv = reality::construct_certificate_verify(sign_key.get(), reality_ctx.transcript.finish());
     if (cv.empty())
     {
         LOG_CTX_ERROR(reality_ctx.ctx, "{} certificate verify construct failed", log_event::kHandshake);
-        return std::unexpected(boost::asio::error::fault);
+        ec = boost::asio::error::fault;
+        return {};
     }
     reality_ctx.transcript.update(cv);
 
-    const auto s_fin_result =
-        reality::tls_key_schedule::compute_finished_verify_data(out.hs_keys.server_handshake_traffic_secret, reality_ctx.transcript.finish(), out.md);
-    if (!s_fin_result)
+    const auto s_fin =
+        reality::tls_key_schedule::compute_finished_verify_data(out.hs_keys.server_handshake_traffic_secret, reality_ctx.transcript.finish(), out.md, ec);
+    if (ec)
     {
-        const auto ec = s_fin_result.error();
         LOG_CTX_ERROR(reality_ctx.ctx, "{} compute server finished failed {}", log_event::kHandshake, ec.message());
-        return std::unexpected(ec);
+        return {};
     }
-    const auto s_fin = reality::construct_finished(*s_fin_result);
     reality_ctx.transcript.update(s_fin);
 
     std::vector<std::uint8_t> flight2_plain;
@@ -354,44 +359,45 @@ std::expected<handshake_crypto_result, boost::system::error_code> build_handshak
     flight2_plain.insert(flight2_plain.end(), s_fin.begin(), s_fin.end());
 
     out.cipher = cipher_from_cipher_suite(cipher_suite);
-    auto flight2_result = reality::tls_record_layer::encrypt_record(
-        out.cipher, out.s_hs_keys.first, out.s_hs_keys.second, 0, flight2_plain, reality::kContentTypeHandshake);
-    if (!flight2_result)
+    out.flight2_enc =
+        reality::tls_record_layer::encrypt_record(out.cipher, out.s_hs_keys.first, out.s_hs_keys.second, 0, flight2_plain, reality::kContentTypeHandshake, ec);
+    if (ec)
     {
-        const auto ec = flight2_result.error();
         LOG_CTX_ERROR(reality_ctx.ctx, "{} auth fail flight2 encrypt failed {}", log_event::kAuth, ec.message());
-        return std::unexpected(ec);
+        return {};
     }
-    out.flight2_enc = std::move(*flight2_result);
 
     return out;
 }
 
-std::expected<reality::auth_payload, boost::system::error_code> decrypt_auth_payload(reality_context& reality_ctx,
-                                                                                     const std::vector<std::uint8_t>& private_key)
+reality::auth_payload decrypt_auth_payload(reality_context& reality_ctx,
+                                           const std::vector<std::uint8_t>& private_key,
+                                           boost::system::error_code& ec)
 {
-    const auto inputs_result = build_auth_decrypt_inputs(reality_ctx, private_key);
-    if (!inputs_result)
+    ec.clear();
+    const auto inputs = build_auth_decrypt_inputs(reality_ctx, private_key, ec);
+    if (ec)
     {
-        return std::unexpected(inputs_result.error());
+        return {};
     }
-    const auto& inputs = *inputs_result;
     reality_ctx.auth_key = inputs.auth_key;
 
     const EVP_CIPHER* auth_cipher = EVP_aes_128_gcm();
-    auto pt =
-        reality::crypto_util::aead_decrypt(auth_cipher, inputs.auth_key, inputs.nonce, reality_ctx.client_hello.session_id, inputs.aad);
-    if (!pt || pt->size() != 16)
+    auto pt = reality::crypto_util::aead_decrypt(
+        auth_cipher, inputs.auth_key, inputs.nonce, reality_ctx.client_hello.session_id, inputs.aad, ec);
+    if (ec || pt.size() != 16)
     {
         LOG_CTX_ERROR(
-            reality_ctx.ctx, "{} auth fail decrypt failed tag mismatch pt size {}", log_event::kAuth, pt ? pt->size() : 0);
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::bad_message));
+            reality_ctx.ctx, "{} auth fail decrypt failed tag mismatch pt size {}", log_event::kAuth, pt.size());
+        ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
+        return {};
     }
 
-    auto payload = reality::parse_auth_payload(*pt);
+    auto payload = reality::parse_auth_payload(pt);
     if (!payload)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::bad_message));
+        ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
+        return {};
     }
     return *payload;
 }
@@ -410,48 +416,54 @@ bool verify_replay_guard(replay_cache& replay_cache, const reality_context& real
     return true;
 }
 
-std::expected<std::vector<std::uint8_t>, boost::system::error_code> generate_server_random()
+std::vector<std::uint8_t> generate_server_random(boost::system::error_code& ec)
 {
+    ec.clear();
     std::vector<std::uint8_t> server_random(32, 0);
     if (RAND_bytes(server_random.data(), 32) != 1)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::operation_canceled));
+        ec = boost::system::errc::make_error_code(boost::system::errc::operation_canceled);
+        return {};
     }
     return server_random;
 }
 
-std::expected<std::vector<std::uint8_t>, boost::system::error_code> build_reality_bound_certificate(
-    const std::vector<std::uint8_t>& cert_template,
-    const std::vector<std::uint8_t>& auth_key,
-    const std::vector<std::uint8_t>& cert_public_key)
+std::vector<std::uint8_t> build_reality_bound_certificate(const std::vector<std::uint8_t>& cert_template,
+                                                          const std::vector<std::uint8_t>& auth_key,
+                                                          const std::vector<std::uint8_t>& cert_public_key,
+                                                          boost::system::error_code& ec)
 {
-    auto template_signature = reality::crypto_util::extract_certificate_signature(cert_template);
-    if (!template_signature)
+    ec.clear();
+    auto template_signature = reality::crypto_util::extract_certificate_signature(cert_template, ec);
+    if (ec)
     {
-        return std::unexpected(template_signature.error());
+        return {};
     }
-    if (template_signature->size() != 64 || cert_template.size() < template_signature->size())
+    if (template_signature.size() != 64 || cert_template.size() < template_signature.size())
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return {};
     }
-    const auto signature_offset = cert_template.size() - template_signature->size();
-    if (!std::equal(template_signature->begin(), template_signature->end(), cert_template.begin() + static_cast<std::ptrdiff_t>(signature_offset)))
+    const auto signature_offset = cert_template.size() - template_signature.size();
+    if (!std::equal(template_signature.begin(), template_signature.end(), cert_template.begin() + static_cast<std::ptrdiff_t>(signature_offset)))
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return {};
     }
 
-    auto reality_signature = reality::crypto_util::hmac_sha512(auth_key, cert_public_key);
-    if (!reality_signature)
+    auto reality_signature = reality::crypto_util::hmac_sha512(auth_key, cert_public_key, ec);
+    if (ec)
     {
-        return std::unexpected(reality_signature.error());
+        return {};
     }
-    if (reality_signature->size() != template_signature->size())
+    if (reality_signature.size() != template_signature.size())
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return {};
     }
 
     std::vector<std::uint8_t> cert_der = cert_template;
-    std::copy(reality_signature->begin(), reality_signature->end(), cert_der.begin() + static_cast<std::ptrdiff_t>(signature_offset));
+    std::copy(reality_signature.begin(), reality_signature.end(), cert_der.begin() + static_cast<std::ptrdiff_t>(signature_offset));
     return cert_der;
 }
 
@@ -617,8 +629,9 @@ remote_server::remote_server(io_context_pool& pool, const config& cfg)
         return;
     }
     boost::algorithm::unhex(cfg.reality.short_id, std::back_inserter(short_id_bytes_));
-    auto pub = reality::crypto_util::extract_public_key(private_key_);
-    LOG_INFO("server public key size {}", pub ? pub->size() : 0);
+    boost::system::error_code ec;
+    auto pub = reality::crypto_util::extract_public_key(private_key_, ec);
+    LOG_INFO("server public key size {}", ec ? 0 : pub.size());
 
     std::uint8_t cert_public_key[32] = {};
     if (!reality::crypto_util::generate_ed25519_keypair(cert_public_key, reality_cert_private_key_.data()))
@@ -629,15 +642,15 @@ remote_server::remote_server(io_context_pool& pool, const config& cfg)
     }
     reality_cert_public_key_.assign(cert_public_key, cert_public_key + 32);
     auto cert_template = reality::crypto_util::create_self_signed_ed25519_certificate(
-        std::vector<std::uint8_t>(reality_cert_private_key_.begin(), reality_cert_private_key_.end()));
-    if (!cert_template)
+        std::vector<std::uint8_t>(reality_cert_private_key_.begin(), reality_cert_private_key_.end()), ec);
+    if (ec)
     {
-        LOG_ERROR("failed to build REALITY certificate template {}", cert_template.error().message());
+        LOG_ERROR("failed to build REALITY certificate template {}", ec.message());
         reality_cert_public_key_.clear();
         OPENSSL_cleanse(reality_cert_private_key_.data(), reality_cert_private_key_.size());
         return;
     }
-    reality_cert_template_ = std::move(*cert_template);
+    reality_cert_template_ = std::move(cert_template);
 }
 
 remote_server::~remote_server()
@@ -799,16 +812,16 @@ boost::asio::awaitable<void> remote_server::handle(std::shared_ptr<boost::asio::
         LOG_CTX_ERROR(ctx, "{} auth fail missing valid x25519 key share", log_event::kAuth);
         co_return;
     }
-    auto auth = decrypt_auth_payload(reality_ctx, private_key_);
-    if (!auth.has_value())
+    auto auth = decrypt_auth_payload(reality_ctx, private_key_, ec);
+    if (ec)
     {
         co_return;
     }
-    if (!verify_auth_payload_fields(*auth, short_id_bytes_, reality_ctx))
+    if (!verify_auth_payload_fields(auth, short_id_bytes_, reality_ctx))
     {
         co_return;
     }
-    if (!verify_auth_timestamp(auth->timestamp, reality_ctx))
+    if (!verify_auth_timestamp(auth.timestamp, reality_ctx))
     {
         co_return;
     }
@@ -837,11 +850,10 @@ boost::asio::awaitable<void> remote_server::handle(std::shared_ptr<boost::asio::
     }
     response.handshake_hash = reality_ctx.transcript.finish();
 
-    auto app_sec =
-        reality::tls_key_schedule::derive_application_secrets(response.hs_keys.master_secret, response.handshake_hash, response.negotiated_md);
-    if (!app_sec)
+    auto app_sec = reality::tls_key_schedule::derive_application_secrets(
+        response.hs_keys.master_secret, response.handshake_hash, response.negotiated_md, ec);
+    if (ec)
     {
-        ec = app_sec.error();
         co_return;
     }
 
@@ -853,17 +865,15 @@ boost::asio::awaitable<void> remote_server::handle(std::shared_ptr<boost::asio::
     }
     const auto key_len = static_cast<std::size_t>(key_len_raw);
     constexpr std::size_t iv_len = 12;
-    auto c_keys = reality::tls_key_schedule::derive_traffic_keys(app_sec->first, key_len, iv_len, response.negotiated_md);
-    if (!c_keys)
+    auto c_keys = reality::tls_key_schedule::derive_traffic_keys(app_sec.first, ec, key_len, iv_len, response.negotiated_md);
+    if (ec)
     {
-        ec = c_keys.error();
         co_return;
     }
 
-    auto s_keys = reality::tls_key_schedule::derive_traffic_keys(app_sec->second, key_len, iv_len, response.negotiated_md);
-    if (!s_keys)
+    auto s_keys = reality::tls_key_schedule::derive_traffic_keys(app_sec.second, ec, key_len, iv_len, response.negotiated_md);
+    if (ec)
     {
-        ec = s_keys.error();
         co_return;
     }
     struct app_keys
@@ -871,8 +881,8 @@ boost::asio::awaitable<void> remote_server::handle(std::shared_ptr<boost::asio::
         std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> c_app_keys;
         std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> s_app_keys;
     } keys;
-    keys.c_app_keys = std::move(*c_keys);
-    keys.s_app_keys = std::move(*s_keys);
+    keys.c_app_keys = std::move(c_keys);
+    keys.s_app_keys = std::move(s_keys);
     LOG_CTX_INFO(ctx, "{} tunnel starting", log_event::kConnEstablished);
     //
     reality_engine engine(keys.c_app_keys.first, keys.c_app_keys.second, keys.s_app_keys.first, keys.s_app_keys.second, response.cipher);
@@ -1031,28 +1041,24 @@ boost::asio::awaitable<remote_server::server_handshake_res> remote_server::perfo
     const std::uint8_t* public_key = key_pair->public_key;
     const std::uint8_t* private_key = key_pair->private_key;
 
-    const auto server_random_result = generate_server_random();
-    if (!server_random_result)
+    reality_ctx.server_random = generate_server_random(ec);
+    if (ec)
     {
-        ec = server_random_result.error();
         co_return res;
     }
-    reality_ctx.server_random = *server_random_result;
 
     LOG_CTX_TRACE(ctx,
                   "{} generated ephemeral key {}",
                   log_event::kHandshake,
                   reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(public_key, public_key + 32)));
 
-    auto sh_shared_result =
-        reality::crypto_util::x25519_derive(std::vector<std::uint8_t>(private_key, private_key + 32), reality_ctx.x25519_peer_pub);
-    if (!sh_shared_result)
+    reality_ctx.server_shared_secret =
+        reality::crypto_util::x25519_derive(std::vector<std::uint8_t>(private_key, private_key + 32), reality_ctx.x25519_peer_pub, ec);
+    if (ec)
     {
-        ec = sh_shared_result.error();
         LOG_CTX_ERROR(ctx, "{} x25519 derive failed", log_event::kHandshake);
         co_return res;
     }
-    reality_ctx.server_shared_secret = std::move(*sh_shared_result);
     reality_ctx.server_x25519_pub.assign(public_key, public_key + 32);
 
     if (reality_ctx.auth_key.empty() || reality_cert_public_key_.size() != 32 || reality_cert_template_.empty())
@@ -1062,24 +1068,21 @@ boost::asio::awaitable<remote_server::server_handshake_res> remote_server::perfo
         co_return res;
     }
 
-    auto cert_der = build_reality_bound_certificate(reality_cert_template_, reality_ctx.auth_key, reality_cert_public_key_);
-    if (!cert_der)
+    auto cert_der = build_reality_bound_certificate(reality_cert_template_, reality_ctx.auth_key, reality_cert_public_key_, ec);
+    if (ec)
     {
-        LOG_CTX_ERROR(ctx, "{} build REALITY certificate failed {}", log_event::kHandshake, cert_der.error().message());
-        ec = cert_der.error();
+        LOG_CTX_ERROR(ctx, "{} build REALITY certificate failed {}", log_event::kHandshake, ec.message());
         co_return res;
     }
-    reality_ctx.cert_msg = reality::construct_certificate(*cert_der);
+    reality_ctx.cert_msg = reality::construct_certificate(cert_der);
 
     const std::uint16_t cipher_suite = select_reality_cipher_suite();
-    auto crypto_result = build_handshake_crypto(
-        reality_ctx, cipher_suite, std::vector<std::uint8_t>(reality_cert_private_key_.begin(), reality_cert_private_key_.end()));
-    if (!crypto_result)
+    auto crypto = build_handshake_crypto(
+        reality_ctx, cipher_suite, std::vector<std::uint8_t>(reality_cert_private_key_.begin(), reality_cert_private_key_.end()), ec);
+    if (ec)
     {
-        ec = crypto_result.error();
         co_return res;
     }
-    const auto& crypto = *crypto_result;
     LOG_CTX_INFO(ctx, "generated sh msg size {}", crypto.sh_msg.size());
     const auto out_sh = compose_server_hello_flight(crypto.sh_msg, crypto.flight2_enc);
     LOG_CTX_INFO(ctx, "total out sh size {}", out_sh.size());
@@ -1128,29 +1131,25 @@ boost::asio::awaitable<void> remote_server::verify_client_finished(reality_conte
 
     const auto record = compose_tls_record(header, body);
     std::uint8_t ctype = 0;
-    auto plaintext_result =
-        reality::tls_record_layer::decrypt_record(response.cipher, response.c_hs_keys.first, response.c_hs_keys.second, 0, record, ctype);
-    if (!plaintext_result)
+    auto plaintext = reality::tls_record_layer::decrypt_record(
+        response.cipher, response.c_hs_keys.first, response.c_hs_keys.second, 0, record, ctype, ec);
+    if (ec)
     {
-        const auto decrypt_ec = plaintext_result.error();
         statistics::instance().inc_client_finished_failures();
-        LOG_CTX_ERROR(ctx, "{} client finished decrypt failed {}", log_event::kHandshake, decrypt_ec.message());
-        ec = decrypt_ec;
+        LOG_CTX_ERROR(ctx, "{} client finished decrypt failed {}", log_event::kHandshake, ec.message());
         co_return;
     }
 
     auto expected_fin_verify = reality::tls_key_schedule::compute_finished_verify_data(
-        response.hs_keys.client_handshake_traffic_secret, reality_ctx.transcript.finish(), response.negotiated_md);
-    if (!expected_fin_verify)
+        response.hs_keys.client_handshake_traffic_secret, reality_ctx.transcript.finish(), response.negotiated_md, ec);
+    if (ec)
     {
-        const auto verify_ec = expected_fin_verify.error();
         statistics::instance().inc_client_finished_failures();
-        LOG_CTX_ERROR(ctx, "{} client finished verify data failed {}", log_event::kHandshake, verify_ec.message());
-        ec = verify_ec;
+        LOG_CTX_ERROR(ctx, "{} client finished verify data failed {}", log_event::kHandshake, ec.message());
         co_return;
     }
 
-    if (!verify_client_finished_plaintext(*plaintext_result, ctype, *expected_fin_verify, ctx))
+    if (!verify_client_finished_plaintext(plaintext, ctype, expected_fin_verify, ctx))
     {
         ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
         co_return;

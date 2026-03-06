@@ -52,11 +52,11 @@ std::span<const std::uint8_t> reality_engine::encrypt(const std::vector<std::uin
     {
         return std::span<const std::uint8_t>{};
     }
-    auto r = reality::tls_record_layer::encrypt_record_append(
-        encrypt_ctx_, cipher_, write_key_, write_iv_, write_seq_, plaintext, reality::kContentTypeApplicationData, tx_buf_);
-    if (!r)
+    ec.clear();
+    reality::tls_record_layer::encrypt_record_append(
+        encrypt_ctx_, cipher_, write_key_, write_iv_, write_seq_, plaintext, reality::kContentTypeApplicationData, tx_buf_, ec);
+    if (ec)
     {
-        ec = r.error();
         return std::span<const std::uint8_t>{};
     }
 
@@ -133,20 +133,15 @@ void reality_engine::try_decrypt_next_record(std::uint8_t& content_type, std::si
 
     const std::span<const std::uint8_t> record_data(record_buf_.data(), frame_size);
 
-    auto decrypted = reality::tls_record_layer::decrypt_record(
-        decrypt_ctx_, cipher_, read_key_, read_iv_, read_seq_, record_data, std::span<std::uint8_t>(scratch_buf_), content_type);
-
-    if (!decrypted)
+    payload_len = reality::tls_record_layer::decrypt_record(
+        decrypt_ctx_, cipher_, read_key_, read_iv_, read_seq_, record_data, std::span<std::uint8_t>(scratch_buf_), content_type, ec);
+    if (ec)
     {
-        ec = decrypted.error();
         return;
     }
 
-    const std::size_t decrypted_len = *decrypted;
-
     read_seq_++;
     rx_buf_->consume(frame_size);
-    payload_len = decrypted_len;
 }
 
 }    // namespace mux

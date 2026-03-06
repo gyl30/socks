@@ -28,143 +28,159 @@ namespace reality
 class tls_key_schedule
 {
    public:
-    [[nodiscard]] static std::expected<std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>, boost::system::error_code>
-    derive_traffic_keys(const std::vector<std::uint8_t>& secret, std::size_t key_len = 16, std::size_t iv_len = 12, const EVP_MD* md = EVP_sha256())
+    [[nodiscard]] static std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>
+    derive_traffic_keys(const std::vector<std::uint8_t>& secret,
+                        boost::system::error_code& ec,
+                        std::size_t key_len = 16,
+                        std::size_t iv_len = 12,
+                        const EVP_MD* md = EVP_sha256())
     {
-        auto key = crypto_util::hkdf_expand_label(secret, "key", {}, key_len, md);
-        if (!key)
+        ec.clear();
+        auto key = crypto_util::hkdf_expand_label(secret, "key", {}, key_len, md, ec);
+        if (ec)
         {
-            return std::unexpected(key.error());
+            return {};
         }
-        auto iv = crypto_util::hkdf_expand_label(secret, "iv", {}, iv_len, md);
-        if (!iv)
+        auto iv = crypto_util::hkdf_expand_label(secret, "iv", {}, iv_len, md, ec);
+        if (ec)
         {
-            return std::unexpected(iv.error());
+            return {};
         }
-        return std::pair{std::move(*key), std::move(*iv)};
+        return std::pair{std::move(key), std::move(iv)};
     }
 
-    [[nodiscard]] static std::expected<handshake_keys, boost::system::error_code> derive_handshake_keys(
-        const std::vector<std::uint8_t>& shared_secret, const std::vector<std::uint8_t>& server_hello_hash, const EVP_MD* md)
+    [[nodiscard]] static handshake_keys derive_handshake_keys(const std::vector<std::uint8_t>& shared_secret,
+                                                              const std::vector<std::uint8_t>& server_hello_hash,
+                                                              const EVP_MD* md,
+                                                              boost::system::error_code& ec)
     {
-        const auto hash_len_result = hash_size(md);
-        if (!hash_len_result)
+        ec.clear();
+        const auto hash_len = hash_size(md, ec);
+        if (ec)
         {
-            return std::unexpected(hash_len_result.error());
+            return {};
         }
-        const std::size_t hash_len = *hash_len_result;
         const std::vector<std::uint8_t> zero_ikm(hash_len, 0);
-        auto early_secret = crypto_util::hkdf_extract(zero_ikm, zero_ikm, md);
-        if (!early_secret)
+        auto early_secret = crypto_util::hkdf_extract(zero_ikm, zero_ikm, md, ec);
+        if (ec)
         {
-            return std::unexpected(early_secret.error());
+            return {};
         }
 
         std::vector<std::uint8_t> empty_hash(hash_len);
         unsigned int hl = 0;
         if (EVP_Digest(nullptr, 0, empty_hash.data(), &hl, md, nullptr) != 1 || hl != hash_len)
         {
-            return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+            ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+            return {};
         }
 
-        auto derived_secret = crypto_util::hkdf_expand_label(*early_secret, "derived", empty_hash, hash_len, md);
-        if (!derived_secret)
+        auto derived_secret = crypto_util::hkdf_expand_label(early_secret, "derived", empty_hash, hash_len, md, ec);
+        if (ec)
         {
-            return std::unexpected(derived_secret.error());
+            return {};
         }
-        auto handshake_secret = crypto_util::hkdf_extract(*derived_secret, shared_secret, md);
-        if (!handshake_secret)
+        auto handshake_secret = crypto_util::hkdf_extract(derived_secret, shared_secret, md, ec);
+        if (ec)
         {
-            return std::unexpected(handshake_secret.error());
-        }
-
-        auto c_hs_secret = crypto_util::hkdf_expand_label(*handshake_secret, "c hs traffic", server_hello_hash, hash_len, md);
-        if (!c_hs_secret)
-        {
-            return std::unexpected(c_hs_secret.error());
-        }
-        auto s_hs_secret = crypto_util::hkdf_expand_label(*handshake_secret, "s hs traffic", server_hello_hash, hash_len, md);
-        if (!s_hs_secret)
-        {
-            return std::unexpected(s_hs_secret.error());
+            return {};
         }
 
-        auto derived_secret_2 = crypto_util::hkdf_expand_label(*handshake_secret, "derived", empty_hash, hash_len, md);
-        if (!derived_secret_2)
+        auto c_hs_secret = crypto_util::hkdf_expand_label(handshake_secret, "c hs traffic", server_hello_hash, hash_len, md, ec);
+        if (ec)
         {
-            return std::unexpected(derived_secret_2.error());
+            return {};
         }
-        auto master_secret = crypto_util::hkdf_extract(*derived_secret_2, zero_ikm, md);
-        if (!master_secret)
+        auto s_hs_secret = crypto_util::hkdf_expand_label(handshake_secret, "s hs traffic", server_hello_hash, hash_len, md, ec);
+        if (ec)
         {
-            return std::unexpected(master_secret.error());
+            return {};
         }
 
-        return handshake_keys{.client_handshake_traffic_secret = std::move(*c_hs_secret),
-                              .server_handshake_traffic_secret = std::move(*s_hs_secret),
-                              .master_secret = std::move(*master_secret)};
+        auto derived_secret_2 = crypto_util::hkdf_expand_label(handshake_secret, "derived", empty_hash, hash_len, md, ec);
+        if (ec)
+        {
+            return {};
+        }
+        auto master_secret = crypto_util::hkdf_extract(derived_secret_2, zero_ikm, md, ec);
+        if (ec)
+        {
+            return {};
+        }
+
+        return handshake_keys{.client_handshake_traffic_secret = std::move(c_hs_secret),
+                              .server_handshake_traffic_secret = std::move(s_hs_secret),
+                              .master_secret = std::move(master_secret)};
     }
 
-    [[nodiscard]] static std::expected<std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>, boost::system::error_code>
-    derive_application_secrets(const std::vector<std::uint8_t>& master_secret, const std::vector<std::uint8_t>& handshake_hash, const EVP_MD* md)
+    [[nodiscard]] static std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>
+    derive_application_secrets(const std::vector<std::uint8_t>& master_secret,
+                               const std::vector<std::uint8_t>& handshake_hash,
+                               const EVP_MD* md,
+                               boost::system::error_code& ec)
     {
-        const auto hash_len_result = hash_size(md);
-        if (!hash_len_result)
+        ec.clear();
+        const auto hash_len = hash_size(md, ec);
+        if (ec)
         {
-            return std::unexpected(hash_len_result.error());
+            return {};
         }
-        const std::size_t hash_len = *hash_len_result;
-        auto c_app_secret = crypto_util::hkdf_expand_label(master_secret, "c ap traffic", handshake_hash, hash_len, md);
-        if (!c_app_secret)
+        auto c_app_secret = crypto_util::hkdf_expand_label(master_secret, "c ap traffic", handshake_hash, hash_len, md, ec);
+        if (ec)
         {
-            return std::unexpected(c_app_secret.error());
+            return {};
         }
-        auto s_app_secret = crypto_util::hkdf_expand_label(master_secret, "s ap traffic", handshake_hash, hash_len, md);
-        if (!s_app_secret)
+        auto s_app_secret = crypto_util::hkdf_expand_label(master_secret, "s ap traffic", handshake_hash, hash_len, md, ec);
+        if (ec)
         {
-            return std::unexpected(s_app_secret.error());
+            return {};
         }
-        return std::pair{std::move(*c_app_secret), std::move(*s_app_secret)};
+        return std::pair{std::move(c_app_secret), std::move(s_app_secret)};
     }
 
-    [[nodiscard]] static std::expected<std::vector<std::uint8_t>, boost::system::error_code> compute_finished_verify_data(
-        const std::vector<std::uint8_t>& base_key, const std::vector<std::uint8_t>& handshake_hash, const EVP_MD* md)
+    [[nodiscard]] static std::vector<std::uint8_t> compute_finished_verify_data(const std::vector<std::uint8_t>& base_key,
+                                                                                const std::vector<std::uint8_t>& handshake_hash,
+                                                                                const EVP_MD* md,
+                                                                                boost::system::error_code& ec)
     {
-        const auto hash_len_result = hash_size(md);
-        if (!hash_len_result)
+        ec.clear();
+        const auto hash_len = hash_size(md, ec);
+        if (ec)
         {
-            return std::unexpected(hash_len_result.error());
+            return {};
         }
-        const std::size_t hash_len = *hash_len_result;
-        auto finished_key = crypto_util::hkdf_expand_label(base_key, "finished", {}, hash_len, md);
-        if (!finished_key)
+        auto finished_key = crypto_util::hkdf_expand_label(base_key, "finished", {}, hash_len, md, ec);
+        if (ec)
         {
-            return std::unexpected(finished_key.error());
+            return {};
         }
 
         std::uint8_t hmac_out[EVP_MAX_MD_SIZE] = {};
         unsigned int hmac_len = 0;
         if (HMAC(md,
-                 finished_key->data(),
-                 static_cast<int>(finished_key->size()),
+                 finished_key.data(),
+                 static_cast<int>(finished_key.size()),
                  handshake_hash.data(),
                  handshake_hash.size(),
                  hmac_out,
                  &hmac_len) == nullptr ||
             hmac_len == 0)
         {
-            return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+            ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+            return {};
         }
         return std::vector<std::uint8_t>{hmac_out, hmac_out + hmac_len};
     }
 
    private:
-    [[nodiscard]] static std::expected<std::size_t, boost::system::error_code> hash_size(const EVP_MD* md)
+    [[nodiscard]] static std::size_t hash_size(const EVP_MD* md, boost::system::error_code& ec)
     {
+        ec.clear();
         const int hash_len = EVP_MD_size(md);
         if (hash_len <= 0)
         {
-            return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+            ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+            return 0;
         }
         return static_cast<std::size_t>(hash_len);
     }
