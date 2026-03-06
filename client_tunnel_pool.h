@@ -46,7 +46,7 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
 
     void start();
 
-    void stop();
+    void stop() {};
 
     [[nodiscard]] std::shared_ptr<mux_tunnel_impl> select_tunnel();
 
@@ -70,13 +70,12 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
     };
 
     boost::asio::awaitable<void> connect_remote_loop(std::uint32_t index, boost::asio::io_context& io_context);
-    [[nodiscard]] boost::asio::awaitable<bool> establish_tunnel_for_connection(
-        std::uint32_t index,
-        boost::asio::io_context& io_context,
-        std::uint32_t cid,
-        const std::string& trace_id,
-        const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
-        std::shared_ptr<mux_tunnel_impl>& tunnel);
+    [[nodiscard]] boost::asio::awaitable<bool> establish_tunnel_for_connection(std::uint32_t index,
+                                                                               boost::asio::io_context& io_context,
+                                                                               std::uint32_t cid,
+                                                                               const std::string& trace_id,
+                                                                               const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
+                                                                               std::shared_ptr<mux_tunnel_impl>& tunnel);
 
     [[nodiscard]] boost::asio::awaitable<void> tcp_connect_remote(boost::asio::io_context& io_context,
                                                                   boost::asio::ip::tcp::socket& socket,
@@ -86,12 +85,11 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
         boost::asio::ip::tcp::socket& socket) const;
     [[nodiscard]] boost::asio::awaitable<std::expected<handshake_result, boost::system::error_code>> perform_reality_handshake_with_timeout(
         const std::shared_ptr<boost::asio::ip::tcp::socket>& socket, const connection_context& ctx) const;
-    [[nodiscard]] std::shared_ptr<boost::asio::ip::tcp::socket> create_pending_socket(boost::asio::io_context& io_context, std::uint32_t index);
     [[nodiscard]] std::shared_ptr<mux_tunnel_impl> build_tunnel(boost::asio::ip::tcp::socket socket,
-                                                                                              boost::asio::io_context& io_context,
-                                                                                              std::uint32_t cid,
-                                                                                              const handshake_result& handshake_ret,
-                                                                                              const std::string& trace_id) const;
+                                                                boost::asio::io_context& io_context,
+                                                                std::uint32_t cid,
+                                                                const handshake_result& handshake_ret,
+                                                                const std::string& trace_id) const;
 
     [[nodiscard]] boost::asio::awaitable<std::expected<void, boost::system::error_code>> generate_and_send_client_hello(
         boost::asio::ip::tcp::socket& socket,
@@ -149,9 +147,8 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
     std::uint32_t max_handshake_records_ = 256;
     std::vector<std::uint8_t> server_pub_key_;
     std::optional<reality::fingerprint_type> fingerprint_type_;
-    std::vector<std::shared_ptr<boost::asio::ip::tcp::socket>> pending_sockets_;
+    std::mutex tunnel_mutex_;
     std::vector<std::shared_ptr<mux_tunnel_impl>> tunnel_pool_;
-    mutable std::mutex tunnel_mutex_;
 };
 
 }    // namespace mux

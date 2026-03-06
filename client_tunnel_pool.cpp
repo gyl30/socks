@@ -1002,7 +1002,8 @@ client_tunnel_pool::client_tunnel_pool(io_context_pool& pool, const config& cfg,
       group_(group),
       pool_(pool),
       strict_cert_verify_(cfg.reality.strict_cert_verify),
-      max_handshake_records_(cfg.limits.max_handshake_records)
+      max_handshake_records_(cfg.limits.max_handshake_records),
+      tunnel_pool_(cfg.limits.max_connections)
 {
     boost::algorithm::unhex(cfg.reality.public_key, std::back_inserter(server_pub_key_));
     boost::algorithm::unhex(cfg.reality.short_id, std::back_inserter(short_id_bytes_));
@@ -1012,9 +1013,9 @@ client_tunnel_pool::client_tunnel_pool(io_context_pool& pool, const config& cfg,
 void client_tunnel_pool::start()
 {
     LOG_INFO("client pool starting target {} port {} with {} connections", remote_host_, remote_port_, cfg_.limits.max_connections);
-    pending_sockets_.resize(cfg_.limits.max_connections);
 
     auto self = shared_from_this();
+
     for (std::uint32_t i = 0; i < cfg_.limits.max_connections; ++i)
     {
         boost::asio::io_context& io = pool_.get_io_context();
@@ -1022,35 +1023,6 @@ void client_tunnel_pool::start()
             io,
             [this, i, io = &io, self]() -> boost::asio::awaitable<void> { co_await connect_remote_loop(i, *io); },
             group_.adapt(boost::asio::detached));
-    }
-}
-
-void client_tunnel_pool::stop()
-{
-    std::vector<std::shared_ptr<mux_tunnel_impl>> tunnels;
-    {
-        std::lock_guard<std::mutex> lock(tunnel_mutex_);
-        tunnels = tunnel_pool_;
-        tunnel_pool_.clear();
-    }
-
-    for (const auto& tunnel : tunnels)
-    {
-        if (tunnel == nullptr || tunnel->connection() == nullptr)
-        {
-            continue;
-        }
-        tunnel->connection()->stop();
-    }
-
-    for (auto& socket : pending_sockets_)
-    {
-        if (socket == nullptr)
-        {
-            continue;
-        }
-        boost::system::error_code ec;
-        ec = socket->close(ec);
     }
 }
 
@@ -1062,19 +1034,28 @@ std::shared_ptr<mux_tunnel_impl> client_tunnel_pool::select_tunnel()
         return nullptr;
     }
 
-    const auto index = next_tunnel_index_.fetch_add(1, std::memory_order_relaxed);
-    return tunnel_pool_[index % tunnel_pool_.size()];
+    const auto pool_size = tunnel_pool_.size();
+    const auto start_index = static_cast<std::size_t>(next_tunnel_index_.fetch_add(1, std::memory_order_relaxed) % pool_size);
+    for (std::size_t i = 0; i < pool_size; ++i)
+    {
+        const auto slot = (start_index + i) % pool_size;
+        const auto tunnel = tunnel_pool_[slot];
+        if (tunnel == nullptr)
+        {
+            continue;
+        }
+        const auto connection = tunnel->connection();
+        if (connection == nullptr || !connection->is_active())
+        {
+            continue;
+        }
+        return tunnel;
+    }
+
+    return nullptr;
 }
 
 std::uint32_t client_tunnel_pool::next_session_id() { return next_session_id_.fetch_add(1, std::memory_order_relaxed); }
-
-std::shared_ptr<boost::asio::ip::tcp::socket> client_tunnel_pool::create_pending_socket(boost::asio::io_context& io_context,
-                                                                                        const std::uint32_t index)
-{
-    const auto socket = std::make_shared<boost::asio::ip::tcp::socket>(io_context);
-    pending_sockets_[index] = socket;
-    return socket;
-}
 
 std::shared_ptr<mux_tunnel_impl> client_tunnel_pool::build_tunnel(boost::asio::ip::tcp::socket socket,
                                                                   boost::asio::io_context& io_context,
@@ -1150,7 +1131,6 @@ boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::
         LOG_CTX_INFO(ctx, "{} init conn {}/{} to {} {}", log_event::kConnInit, index + 1, cfg_.limits.max_connections, remote_host_, remote_port_);
         // step 1 create sockst
         const auto socket = std::make_shared<boost::asio::ip::tcp::socket>(io_context);
-        pending_sockets_[index] = socket;
         // step 2 connect remote
         co_await tcp_connect_remote(io_context, *socket, ctx, ec);
         if (ec)
@@ -1181,9 +1161,13 @@ boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::
         // step 5 tunnel run
         tunnel->run();
         const auto tunnel_start_ms = timeout_io::now_ms();
+
         {
             std::lock_guard<std::mutex> lock(tunnel_mutex_);
-            tunnel_pool_.push_back(tunnel);
+            if (index < tunnel_pool_.size())
+            {
+                tunnel_pool_[index] = tunnel;
+            }
         }
 
         while (true)
@@ -1205,18 +1189,19 @@ boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::
 
         {
             std::lock_guard<std::mutex> lock(tunnel_mutex_);
-            std::erase(tunnel_pool_, tunnel);
+            if (index < tunnel_pool_.size() && tunnel_pool_[index] == tunnel)
+            {
+                tunnel_pool_[index].reset();
+            }
         }
+
         const auto tunnel_alive_ms = timeout_io::now_ms() - tunnel_start_ms;
         if (tunnel_alive_ms >= kReconnectStableDurationMs)
         {
             retry_delay_ms = kReconnectBaseDelayMs;
             continue;
         }
-        LOG_CTX_WARN(ctx,
-                     "{} stage=tunnel_closed short_lived={}ms backoff_before_retry",
-                     log_event::kConnInit,
-                     tunnel_alive_ms);
+        LOG_CTX_WARN(ctx, "{} stage=tunnel_closed short_lived={}ms backoff_before_retry", log_event::kConnInit, tunnel_alive_ms);
         co_await wait_before_retry(ctx, "tunnel_closed");
     }
     LOG_INFO("{} connect remote loop {} exited", log_event::kConnClose, index);
