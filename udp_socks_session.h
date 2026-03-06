@@ -32,6 +32,7 @@ namespace mux
 {
 
 class mux_stream;
+class client_tunnel_pool;
 namespace detail
 {
 std::vector<std::uint8_t> build_udp_associate_reply(const boost::asio::ip::address& local_addr, std::uint16_t udp_bind_port);
@@ -42,7 +43,7 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
    public:
     udp_socks_session(boost::asio::ip::tcp::socket socket,
                       boost::asio::io_context& io_context,
-                      std::shared_ptr<mux_tunnel_impl> tunnel_manager,
+                      std::shared_ptr<client_tunnel_pool> tunnel_pool,
                       std::shared_ptr<router> router,
                       std::uint32_t sid,
                       const config& cfg,
@@ -84,7 +85,7 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
     boost::asio::ip::tcp::socket socket_;
     boost::asio::ip::udp::socket udp_socket_;
     std::shared_ptr<router> router_;
-    std::shared_ptr<mux_tunnel_impl> tunnel_manager_;
+    std::shared_ptr<client_tunnel_pool> tunnel_pool_;
     std::uint64_t last_activity_time_ms_{0};
     bool has_client_addr_ = false;
     boost::asio::ip::udp::endpoint client_addr_;
