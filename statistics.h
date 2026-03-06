@@ -123,6 +123,15 @@ class statistics
     void inc_fallback_write_errors() { fallback_write_errors_++; }
     std::uint64_t fallback_write_errors() const { return fallback_write_errors_.load(); }
 
+    void inc_site_material_fetch_attempts() { site_material_fetch_attempts_++; }
+    std::uint64_t site_material_fetch_attempts() const { return site_material_fetch_attempts_.load(); }
+
+    void inc_site_material_fetch_successes() { site_material_fetch_successes_++; }
+    std::uint64_t site_material_fetch_successes() const { return site_material_fetch_successes_.load(); }
+
+    void inc_site_material_fetch_failures() { site_material_fetch_failures_++; }
+    std::uint64_t site_material_fetch_failures() const { return site_material_fetch_failures_.load(); }
+
     void inc_direct_upstream_resolve_timeouts() { direct_upstream_resolve_timeouts_++; }
     std::uint64_t direct_upstream_resolve_timeouts() const { return direct_upstream_resolve_timeouts_.load(); }
 
@@ -339,6 +348,9 @@ class statistics
     std::atomic<std::uint64_t> fallback_write_failures_{0};
     std::atomic<std::uint64_t> fallback_write_timeouts_{0};
     std::atomic<std::uint64_t> fallback_write_errors_{0};
+    std::atomic<std::uint64_t> site_material_fetch_attempts_{0};
+    std::atomic<std::uint64_t> site_material_fetch_successes_{0};
+    std::atomic<std::uint64_t> site_material_fetch_failures_{0};
     std::atomic<std::uint64_t> direct_upstream_resolve_timeouts_{0};
     std::atomic<std::uint64_t> direct_upstream_resolve_errors_{0};
     std::atomic<std::uint64_t> direct_upstream_connect_timeouts_{0};
