@@ -1326,6 +1326,10 @@ boost::asio::awaitable<void> remote_server::handle(std::shared_ptr<boost::asio::
     reality_ctx.ctx = build_connection_context(reality_ctx.socket, conn_id);
     auto& ctx = reality_ctx.ctx;
     auto& buf = reality_ctx.client_hello_record;
+    auto fallback = [&](const char* reason) -> boost::asio::awaitable<void>
+    {
+        co_await fallback_to_target_site(reality_ctx, reason);
+    };
     LOG_CTX_INFO(ctx, "{} accepted {}", log_event::kConnInit, ctx.connection_info());
     boost::system::error_code ec;
     // tls handshake
@@ -1334,17 +1338,20 @@ boost::asio::awaitable<void> remote_server::handle(std::shared_ptr<boost::asio::
     if (ec)
     {
         LOG_CTX_ERROR(ctx, "{} read tls record header failed {}", log_event::kHandshake, ec.message());
+        co_await fallback("read_tls_record_header_failed");
         co_return;
     }
     if (buf[0] != 0x16)
     {
         LOG_CTX_ERROR(ctx, "{} unexpected tls record type {}", log_event::kHandshake, buf[0]);
+        co_await fallback("unexpected_tls_record_type");
         co_return;
     }
     const uint32_t len = static_cast<std::uint16_t>((buf[3] << 8) | buf[4]);
     if (len > kMaxTlsPlaintextRecordLen)
     {
         LOG_CTX_ERROR(ctx, "{} client hello record too large {}", log_event::kHandshake, len);
+        co_await fallback("client_hello_record_too_large");
         co_return;
     }
     // step 2 tls body
@@ -1352,14 +1359,11 @@ boost::asio::awaitable<void> remote_server::handle(std::shared_ptr<boost::asio::
     if (ec)
     {
         statistics::instance().inc_client_finished_failures();
+        LOG_CTX_ERROR(ctx, "{} read tls record body failed {}", log_event::kHandshake, ec.message());
+        co_await fallback("read_tls_record_body_failed");
         co_return;
     }
     LOG_CTX_DEBUG(ctx, "{} received client hello record size {}", log_event::kHandshake, buf.size());
-
-    auto fallback = [&](const char* reason) -> boost::asio::awaitable<void>
-    {
-        co_await fallback_to_target_site(reality_ctx, reason);
-    };
 
     reality_ctx.client_hello = ch_parser::parse(buf);
     ctx.sni(reality_ctx.client_hello.sni);
