@@ -2,6 +2,9 @@
 #define TPROXY_CLIENT_H
 
 #include <memory>
+#include <string>
+#include <vector>
+#include <unordered_map>
 
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/ip/udp.hpp>
@@ -18,6 +21,8 @@
 namespace mux
 {
 
+class tproxy_udp_session;
+
 class tproxy_client : public std::enable_shared_from_this<tproxy_client>
 {
    public:
@@ -29,7 +34,14 @@ class tproxy_client : public std::enable_shared_from_this<tproxy_client>
 
    private:
     boost::asio::awaitable<void> accept_tcp_loop();
+    boost::asio::awaitable<void> accept_udp_loop();
     void on_tcp_socket(boost::asio::ip::tcp::socket&& socket);
+    [[nodiscard]] boost::asio::awaitable<void> on_udp_packet(boost::asio::ip::udp::endpoint client_endpoint,
+                                                             boost::asio::ip::udp::endpoint target_endpoint,
+                                                             std::vector<std::uint8_t> payload);
+    void erase_udp_session(const std::string& key);
+    [[nodiscard]] static std::string make_udp_session_key(const boost::asio::ip::udp::endpoint& client_endpoint,
+                                                          const boost::asio::ip::udp::endpoint& target_endpoint);
 
    private:
     config cfg_;
@@ -38,6 +50,8 @@ class tproxy_client : public std::enable_shared_from_this<tproxy_client>
     std::shared_ptr<router> router_;
     std::shared_ptr<client_tunnel_pool> tunnel_pool_;
     boost::asio::ip::tcp::acceptor tcp_acceptor_{io_context_};
+    boost::asio::ip::udp::socket udp_socket_{io_context_};
+    std::unordered_map<std::string, std::shared_ptr<tproxy_udp_session>> udp_sessions_;
 };
 
 }    // namespace mux

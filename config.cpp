@@ -164,13 +164,9 @@ constexpr std::uint32_t kHandshakeRecordsLimitMax = 4096;
     {
         return std::unexpected(make_config_error("/tproxy/listen_host", "must be valid ip address when tproxy is enabled"));
     }
-    if (tproxy.tcp_port == 0)
+    if (tproxy.tcp_port == 0 && tproxy.udp_port == 0)
     {
-        return std::unexpected(make_config_error("/tproxy/tcp_port", "must be non-zero when tproxy is enabled"));
-    }
-    if (tproxy.udp_port != 0)
-    {
-        return std::unexpected(make_config_error("/tproxy/udp_port", "udp tproxy is not implemented must be 0"));
+        return std::unexpected(make_config_error("/tproxy", "tcp_port and udp_port cannot both be zero when tproxy is enabled"));
     }
     return {};
 }
