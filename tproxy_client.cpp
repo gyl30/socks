@@ -123,17 +123,26 @@ void tproxy_client::start()
 
 void tproxy_client::stop()
 {
-    LOG_INFO("tproxy client stopping closing resources");
+    boost::asio::post(
+        io_context_,
+        [self = shared_from_this()]()
+        {
+            LOG_INFO("tproxy client stopping closing resources");
 
-    boost::system::error_code ec;
-    ec = tcp_acceptor_.close(ec);
+            boost::system::error_code ec;
+            ec = self->tcp_acceptor_.close(ec);
+            if (ec && ec != boost::asio::error::bad_descriptor)
+            {
+                LOG_ERROR("tproxy tcp acceptor close error {}", ec.message());
+            }
 
-    if (tunnel_pool_ != nullptr)
-    {
-        tunnel_pool_->stop();
-    }
+            if (self->tunnel_pool_ != nullptr)
+            {
+                self->tunnel_pool_->stop();
+            }
 
-    group_.emit(boost::asio::cancellation_type::all);
+            self->group_.emit(boost::asio::cancellation_type::all);
+        });
 }
 
 boost::asio::awaitable<void> tproxy_client::accept_tcp_loop()
