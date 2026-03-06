@@ -287,11 +287,14 @@ boost::asio::awaitable<void> remote_udp_session::on_frame(const mux_frame& frame
         co_return;
     }
 
-    auto res = co_await timeout_io::wait_resolve_with_timeout(udp_resolver_, header.addr, std::to_string(header.port), cfg_.timeout.connect, ec);
-    if (ec)
+    boost::system::error_code resolve_ec;
+    auto res = co_await timeout_io::wait_resolve_with_timeout(
+        udp_resolver_, header.addr, std::to_string(header.port), cfg_.timeout.connect, resolve_ec);
+    if (resolve_ec)
     {
         statistics::instance().inc_remote_udp_session_resolve_errors();
-        LOG_CTX_WARN(ctx_, "{} stage=resolve target={}:{} error={}", log_event::kMux, header.addr, header.port, ec.message());
+        LOG_CTX_WARN(ctx_, "{} stage=resolve target={}:{} error={}", log_event::kMux, header.addr, header.port, resolve_ec.message());
+        ec.clear();
         co_return;
     }
     if (res.begin() == res.end())
