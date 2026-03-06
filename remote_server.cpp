@@ -313,6 +313,10 @@ std::size_t key_len_from_cipher_suite(const std::uint16_t cipher_suite) { return
 
 handshake_crypto_result build_handshake_crypto(reality_context& reality_ctx,
                                                const std::uint16_t cipher_suite,
+                                               const std::string& alpn,
+                                               std::span<const std::uint16_t> server_hello_extension_order,
+                                               std::span<const std::uint16_t> encrypted_extension_order,
+                                               const bool include_encrypted_extensions_padding,
                                                const std::vector<std::uint8_t>& sign_key_bytes,
                                                boost::system::error_code& ec)
 {
@@ -322,7 +326,8 @@ handshake_crypto_result build_handshake_crypto(reality_context& reality_ctx,
                                                  reality_ctx.client_hello.session_id,
                                                  cipher_suite,
                                                  reality_ctx.x25519_group,
-                                                 reality_ctx.server_x25519_pub);
+                                                 reality_ctx.server_x25519_pub,
+                                                 server_hello_extension_order);
     reality_ctx.transcript.update(out.sh_msg);
 
     out.md = digest_from_cipher_suite(cipher_suite);
@@ -346,7 +351,7 @@ handshake_crypto_result build_handshake_crypto(reality_context& reality_ctx,
         return {};
     }
 
-    const auto enc_ext = reality::construct_encrypted_extensions("");
+    const auto enc_ext = reality::construct_encrypted_extensions(alpn, encrypted_extension_order, include_encrypted_extensions_padding);
     reality_ctx.transcript.update(enc_ext);
     reality_ctx.transcript.update(reality_ctx.cert_msg);
 
@@ -367,11 +372,18 @@ handshake_crypto_result build_handshake_crypto(reality_context& reality_ctx,
     }
     reality_ctx.transcript.update(cv);
 
-    const auto s_fin =
+    const auto s_fin_verify =
         reality::tls_key_schedule::compute_finished_verify_data(out.hs_keys.server_handshake_traffic_secret, reality_ctx.transcript.finish(), out.md, ec);
     if (ec)
     {
         LOG_CTX_ERROR(reality_ctx.ctx, "{} compute server finished failed {}", log_event::kHandshake, ec.message());
+        return {};
+    }
+    const auto s_fin = reality::construct_finished(s_fin_verify);
+    if (s_fin.empty())
+    {
+        LOG_CTX_ERROR(reality_ctx.ctx, "{} server finished construct failed", log_event::kHandshake);
+        ec = boost::asio::error::fault;
         return {};
     }
     reality_ctx.transcript.update(s_fin);
@@ -491,9 +503,117 @@ std::vector<std::uint8_t> build_reality_bound_certificate(const std::vector<std:
     return cert_der;
 }
 
-std::uint16_t select_reality_cipher_suite()
+bool client_offers_cipher_suite(const client_hello_info& hello, const std::uint16_t cipher_suite)
 {
+    return std::find(hello.cipher_suites.begin(), hello.cipher_suites.end(), cipher_suite) != hello.cipher_suites.end();
+}
+
+bool client_offers_alpn(const client_hello_info& hello, const std::string& alpn)
+{
+    return std::find(hello.alpn_protocols.begin(), hello.alpn_protocols.end(), alpn) != hello.alpn_protocols.end();
+}
+
+std::optional<reality::site_material_snapshot> get_cached_site_material_snapshot(reality::site_material_manager& manager, const config& cfg)
+{
+    if (cfg.reality.sni.empty())
+    {
+        return std::nullopt;
+    }
+    const auto snapshot = manager.get_material_snapshot(cfg.reality.sni);
+    if (!snapshot.has_value() || !snapshot->material.has_value())
+    {
+        return std::nullopt;
+    }
+    return snapshot;
+}
+
+std::uint16_t select_reality_cipher_suite(const client_hello_info& hello,
+                                          const std::optional<reality::site_material_snapshot>& site_material_snapshot)
+{
+    if (site_material_snapshot.has_value())
+    {
+        const auto cached_cipher = normalize_cipher_suite(site_material_snapshot->material->fingerprint.cipher_suite);
+        if (client_offers_cipher_suite(hello, cached_cipher))
+        {
+            return cached_cipher;
+        }
+    }
+
+    constexpr std::array<std::uint16_t, 3> kFallbackCipherSuites = {
+        reality::tls_consts::cipher::kTlsAes128GcmSha256,
+        reality::tls_consts::cipher::kTlsAes256GcmSha384,
+        reality::tls_consts::cipher::kTlsChacha20Poly1305Sha256};
+    for (const auto cipher_suite : kFallbackCipherSuites)
+    {
+        if (client_offers_cipher_suite(hello, cipher_suite))
+        {
+            return cipher_suite;
+        }
+    }
     return normalize_cipher_suite(reality::tls_consts::cipher::kTlsAes128GcmSha256);
+}
+
+std::string select_reality_alpn(const client_hello_info& hello, const std::optional<reality::site_material_snapshot>& site_material_snapshot)
+{
+    if (!site_material_snapshot.has_value())
+    {
+        return {};
+    }
+    const auto& cached_alpn = site_material_snapshot->material->fingerprint.alpn;
+    if (cached_alpn.empty())
+    {
+        return {};
+    }
+    if (!client_offers_alpn(hello, cached_alpn))
+    {
+        return {};
+    }
+    return cached_alpn;
+}
+
+std::vector<std::uint16_t> select_server_hello_extension_order(const std::optional<reality::site_material_snapshot>& site_material_snapshot)
+{
+    if (!site_material_snapshot.has_value())
+    {
+        return {};
+    }
+    std::vector<std::uint16_t> out;
+    for (const auto ext_type : site_material_snapshot->material->server_hello_extension_types)
+    {
+        if (ext_type == reality::tls_consts::ext::kSupportedVersions || ext_type == reality::tls_consts::ext::kKeyShare)
+        {
+            out.push_back(ext_type);
+        }
+    }
+    return out;
+}
+
+std::vector<std::uint16_t> select_encrypted_extensions_order(const std::optional<reality::site_material_snapshot>& site_material_snapshot)
+{
+    if (!site_material_snapshot.has_value())
+    {
+        return {};
+    }
+    std::vector<std::uint16_t> out;
+    for (const auto ext_type : site_material_snapshot->material->encrypted_extension_types)
+    {
+        if (ext_type == reality::tls_consts::ext::kAlpn || ext_type == reality::tls_consts::ext::kPadding)
+        {
+            out.push_back(ext_type);
+        }
+    }
+    return out;
+}
+
+bool should_include_encrypted_extensions_padding(const std::optional<reality::site_material_snapshot>& site_material_snapshot)
+{
+    if (!site_material_snapshot.has_value())
+    {
+        return true;
+    }
+    return std::find(site_material_snapshot->material->encrypted_extension_types.begin(),
+                     site_material_snapshot->material->encrypted_extension_types.end(),
+                     reality::tls_consts::ext::kPadding) != site_material_snapshot->material->encrypted_extension_types.end();
 }
 
 void close_tcp_socket(boost::asio::ip::tcp::socket& socket)
@@ -1487,9 +1607,31 @@ boost::asio::awaitable<remote_server::server_handshake_res> remote_server::perfo
     }
     reality_ctx.cert_msg = reality::construct_certificate(cert_der);
 
-    const std::uint16_t cipher_suite = select_reality_cipher_suite();
+    const auto site_material_snapshot = get_cached_site_material_snapshot(site_material_manager_, cfg_);
+    const std::uint16_t cipher_suite = select_reality_cipher_suite(reality_ctx.client_hello, site_material_snapshot);
+    const std::string selected_alpn = select_reality_alpn(reality_ctx.client_hello, site_material_snapshot);
+    const auto server_hello_extension_order = select_server_hello_extension_order(site_material_snapshot);
+    const auto encrypted_extension_order = select_encrypted_extensions_order(site_material_snapshot);
+    const bool include_ee_padding = should_include_encrypted_extensions_padding(site_material_snapshot);
+    LOG_CTX_INFO(ctx,
+                 "{} success_path_material cache={} cipher=0x{:04x} alpn='{}' sh_exts={} ee_exts={} ee_padding={}",
+                 log_event::kHandshake,
+                 site_material_snapshot.has_value(),
+                 cipher_suite,
+                 selected_alpn,
+                 server_hello_extension_order.size(),
+                 encrypted_extension_order.size(),
+                 include_ee_padding);
+
     auto crypto = build_handshake_crypto(
-        reality_ctx, cipher_suite, std::vector<std::uint8_t>(reality_cert_private_key_.begin(), reality_cert_private_key_.end()), ec);
+        reality_ctx,
+        cipher_suite,
+        selected_alpn,
+        server_hello_extension_order,
+        encrypted_extension_order,
+        include_ee_padding,
+        std::vector<std::uint8_t>(reality_cert_private_key_.begin(), reality_cert_private_key_.end()),
+        ec);
     if (ec)
     {
         co_return res;
