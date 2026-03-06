@@ -165,7 +165,7 @@ boost::asio::awaitable<void> remote_udp_session::start_impl()
     }
 
     using boost::asio::experimental::awaitable_operators::operator||;
-    co_await (mux_to_udp() || udp_to_mux() || watchdog() || idle_watchdog());
+    co_await (mux_to_udp() || udp_to_mux() || idle_watchdog());
 
     if (stream_ != nullptr)
     {
