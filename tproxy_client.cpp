@@ -1,3 +1,4 @@
+#include <chrono>
 #include <cerrno>
 #include <memory>
 #include <cstdint>
@@ -153,10 +154,23 @@ boost::asio::awaitable<void> tproxy_client::accept_tcp_loop()
     {
         boost::asio::ip::tcp::socket socket(io_context_);
         co_await tcp_acceptor_.async_accept(socket, boost::asio::redirect_error(boost::asio::use_awaitable, ec));
+        if (ec == boost::asio::error::operation_aborted)
+        {
+            LOG_WARN("tproxy tcp accept cancelled {}", ec.message());
+            break;
+        }
         if (ec)
         {
-            LOG_ERROR("tproxy tcp accept failed {}", ec.message());
-            break;
+            LOG_ERROR("tproxy tcp accept failed {} retry", ec.message());
+            boost::asio::steady_timer retry_timer(io_context_);
+            retry_timer.expires_after(std::chrono::seconds(3));
+            co_await retry_timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, ec));
+            if (ec)
+            {
+                LOG_ERROR("tproxy accept retry timer error {}", ec.message());
+                break;
+            }
+            continue;
         }
         on_tcp_socket(std::move(socket));
     }
