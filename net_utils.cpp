@@ -19,6 +19,14 @@
 
 #include <asm-generic/socket.h>
 
+#ifndef SO_ORIGINAL_DST
+#define SO_ORIGINAL_DST 80
+#endif
+
+#ifndef IP6T_SO_ORIGINAL_DST
+#define IP6T_SO_ORIGINAL_DST 80
+#endif
+
 #endif
 
 #include <boost/asio/ip/udp.hpp>
@@ -289,6 +297,89 @@ boost::asio::ip::udp::endpoint endpoint_from_sockaddr(const sockaddr_storage& ad
         return endpoint_from_sockaddr_v6(addr, len);
     }
     return {};
+}
+
+bool get_original_tcp_dst(boost::asio::ip::tcp::socket& socket, boost::asio::ip::tcp::endpoint& endpoint, boost::system::error_code& ec)
+{
+    ec.clear();
+#ifdef __linux__
+    boost::system::error_code peer_ec;
+    const auto peer_endpoint = socket.remote_endpoint(peer_ec);
+    const bool prefer_ipv6 = !peer_ec && peer_endpoint.address().is_v6();
+    const auto try_local_endpoint_fallback = [&](boost::system::error_code& op_ec) -> bool
+    {
+        const auto local_endpoint = socket.local_endpoint(op_ec);
+        if (op_ec)
+        {
+            return false;
+        }
+        endpoint = local_endpoint;
+        return true;
+    };
+
+    const auto try_get_original_dst = [&](const int level, const int option, boost::system::error_code& op_ec) -> bool
+    {
+        sockaddr_storage addr{};
+        socklen_t addr_len = sizeof(addr);
+        if (getsockopt(socket.native_handle(), level, option, &addr, &addr_len) != 0)
+        {
+            op_ec = boost::system::error_code(errno, boost::system::system_category());
+            return false;
+        }
+
+        const auto udp_endpoint = endpoint_from_sockaddr(addr, addr_len);
+        if (udp_endpoint.port() == 0)
+        {
+            op_ec = boost::asio::error::address_family_not_supported;
+            return false;
+        }
+
+        endpoint = {udp_endpoint.address(), udp_endpoint.port()};
+        op_ec.clear();
+        return true;
+    };
+
+    boost::system::error_code last_ec;
+    if (prefer_ipv6)
+    {
+        if (try_get_original_dst(SOL_IPV6, IP6T_SO_ORIGINAL_DST, ec))
+        {
+            return true;
+        }
+        last_ec = ec;
+        if (try_get_original_dst(SOL_IP, SO_ORIGINAL_DST, ec))
+        {
+            return true;
+        }
+        ec = ec ? ec : last_ec;
+        if (ec.value() == ENOENT || ec.value() == ENOPROTOOPT || ec.value() == EOPNOTSUPP)
+        {
+            return try_local_endpoint_fallback(ec);
+        }
+        return false;
+    }
+
+    if (try_get_original_dst(SOL_IP, SO_ORIGINAL_DST, ec))
+    {
+        return true;
+    }
+    last_ec = ec;
+    if (try_get_original_dst(SOL_IPV6, IP6T_SO_ORIGINAL_DST, ec))
+    {
+        return true;
+    }
+    ec = ec ? ec : last_ec;
+    if (ec.value() == ENOENT || ec.value() == ENOPROTOOPT || ec.value() == EOPNOTSUPP)
+    {
+        return try_local_endpoint_fallback(ec);
+    }
+    return false;
+#else
+    (void)socket;
+    (void)endpoint;
+    ec = std::make_error_code(std::errc::not_supported);
+    return false;
+#endif
 }
 
 }    // namespace mux::net

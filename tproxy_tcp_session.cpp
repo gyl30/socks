@@ -67,18 +67,19 @@ void tproxy_tcp_session::stop() {}
 boost::asio::awaitable<void> tproxy_tcp_session::run()
 {
     boost::system::error_code ec;
-    const auto local_ep = socket_.local_endpoint(ec);
-    if (ec)
+    boost::asio::ip::tcp::endpoint target_ep;
+    if (!net::get_original_tcp_dst(socket_, target_ep, ec))
     {
-        LOG_ERROR("tproxy tcp local endpoint failed {}", ec.message());
+        LOG_ERROR("tproxy tcp original dst failed {}", ec.message());
         co_return;
     }
     boost::system::error_code peer_ec;
     const auto peer_ep = socket_.remote_endpoint(peer_ec);
-    auto local_addr = net::normalize_address(local_ep.address());
-    const auto port = local_ep.port();
-    ctx_.local_addr(local_addr.to_string());
-    ctx_.local_port(port);
+    auto target_addr = net::normalize_address(target_ep.address());
+    const auto target_port = target_ep.port();
+    ctx_.set_target(target_addr.to_string(), target_port);
+    ctx_.local_addr(target_addr.to_string());
+    ctx_.local_port(target_port);
     if (!peer_ec)
     {
         ctx_.remote_addr(peer_ep.address().to_string());
@@ -89,29 +90,29 @@ boost::asio::awaitable<void> tproxy_tcp_session::run()
                  log_event::kConnInit,
                  ctx_.remote_addr(),
                  ctx_.remote_port(),
-                 local_addr.to_string(),
-                 port);
-    const auto [route, backend] = co_await select_backend(local_addr);
+                 target_addr.to_string(),
+                 target_port);
+    const auto [route, backend] = co_await select_backend(target_addr);
     if (backend == nullptr)
     {
         co_return;
     }
     LOG_CTX_INFO(ctx_, "{} selecting backend route {}", log_event::kRoute, mux::to_string(route));
-    co_await backend->connect(local_addr.to_string(), port, ec);
+    co_await backend->connect(target_addr.to_string(), target_port, ec);
     if (ec)
     {
         LOG_CTX_WARN(ctx_,
                      "{} backend connect failed target {}:{} route {} error {}",
                      log_event::kConnInit,
-                     local_addr.to_string(),
-                     port,
+                     target_addr.to_string(),
+                     target_port,
                      mux::to_string(route),
                      ec.message());
         co_await backend->close();
         co_return;
     }
 
-    LOG_CTX_INFO(ctx_, "{} connected {} {} via {}", log_event::kConnEstablished, local_addr.to_string(), port, mux::to_string(route));
+    LOG_CTX_INFO(ctx_, "{} connected {} {} via {}", log_event::kConnEstablished, target_addr.to_string(), target_port, mux::to_string(route));
 
     using boost::asio::experimental::awaitable_operators::operator&&;
     using boost::asio::experimental::awaitable_operators::operator||;

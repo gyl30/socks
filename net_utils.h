@@ -6,6 +6,7 @@
 #include <expected>
 #include <optional>
 
+#include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/ip/udp.hpp>
 #include <boost/asio/ip/address.hpp>
 #include <boost/system/error_code.hpp>
@@ -37,6 +38,10 @@ void set_socket_recv_origdst(int fd, bool ipv6, boost::system::error_code& ec);
 [[nodiscard]] std::optional<boost::asio::ip::udp::endpoint> parse_original_dst(const msghdr& msg);
 
 [[nodiscard]] boost::asio::ip::udp::endpoint endpoint_from_sockaddr(const sockaddr_storage& addr, std::size_t len);
+
+[[nodiscard]] bool get_original_tcp_dst(boost::asio::ip::tcp::socket& socket,
+                                        boost::asio::ip::tcp::endpoint& endpoint,
+                                        boost::system::error_code& ec);
 
 }    // namespace mux::net
 
