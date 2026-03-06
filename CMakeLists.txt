@@ -168,7 +168,8 @@ set(SOCKS_SOURCES
     cert_manager.cpp)
 
 if(SOCKS_HAS_TPROXY)
-  list(APPEND SOCKS_SOURCES tproxy_client.cpp tproxy_tcp_session.cpp)
+  list(APPEND SOCKS_SOURCES tproxy_client.cpp tproxy_tcp_session.cpp
+       tproxy_udp_session.cpp)
 endif()
 
 add_library(core STATIC ${SOCKS_SOURCES})
