@@ -161,6 +161,12 @@ boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
 
     boost::system::error_code local_ep_ec;
     const auto local_ep = socket_.local_endpoint(local_ep_ec);
+    if (local_ep_ec)
+    {
+        LOG_CTX_WARN(ctx_, "{} local endpoint unavailable {}", log_event::kMux, local_ep_ec.message());
+        co_await send_fail_ack(socks::kRepGenFail);
+        co_return;
+    }
     std::string bind_addr = local_ep.address().to_string();
     uint16_t bind_port = local_ep.port();
 
