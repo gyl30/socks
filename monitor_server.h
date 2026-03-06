@@ -28,7 +28,6 @@ class monitor_server : public std::enable_shared_from_this<monitor_server>
 
    private:
     boost::asio::awaitable<void> accept_loop();
-    boost::asio::awaitable<void> stop_accept();
 
    private:
     uint16_t port_;

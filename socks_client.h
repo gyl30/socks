@@ -41,7 +41,6 @@ class socks_client : public std::enable_shared_from_this<socks_client>
 
    private:
     boost::asio::awaitable<void> accept_loop();
-    boost::asio::awaitable<void> stop_accept();
 
    private:
     const config& cfg_;

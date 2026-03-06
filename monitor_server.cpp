@@ -251,19 +251,15 @@ int monitor_server::start()
     return 0;
 }
 
-void monitor_server::stop() { boost::asio::co_spawn(ioc_, stop_accept(), boost::asio::detached); }
-
-boost::asio::awaitable<void> monitor_server::stop_accept()
+void monitor_server::stop()
 {
     boost::system::error_code ec;
     ec = acceptor_.close(ec);
-    if (ec)
+    if (ec && ec != boost::asio::error::bad_descriptor)
     {
         LOG_ERROR("acceptor close error {}", ec.message());
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
     group_.emit(::boost::asio::cancellation_type::all);
-    co_await group_.async_wait(::boost::asio::redirect_error(::boost::asio::use_awaitable, ec));
 }
 
 boost::asio::awaitable<void> monitor_server::accept_loop()
