@@ -5,8 +5,12 @@
 #include <string>
 #include <vector>
 #include <array>
+#include <deque>
+#include <mutex>
+#include <atomic>
 #include <cstdint>
 #include <utility>
+#include <unordered_map>
 
 #include <openssl/types.h>
 #include <boost/asio/ip/tcp.hpp>
@@ -59,7 +63,10 @@ class remote_server : public std::enable_shared_from_this<remote_server>
    private:
     boost::asio::awaitable<void> accept_loop();
     boost::asio::awaitable<void> refresh_site_material_loop();
+    boost::asio::awaitable<void> fallback_to_target_site(reality_context& reality_ctx, const char* reason);
     boost::asio::awaitable<void> handle(std::shared_ptr<boost::asio::ip::tcp::socket> s, std::uint32_t conn_id);
+    bool try_acquire_fallback_budget(const connection_context& ctx, const char* reason);
+    void release_fallback_budget();
 
     boost::asio::awaitable<server_handshake_res> perform_handshake_response(reality_context& reality_ctx, boost::system::error_code& ec);
 
@@ -85,6 +92,9 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     replay_cache replay_cache_;
     reality::key_rotator key_rotator_;
     reality::site_material_manager site_material_manager_;
+    std::atomic<std::uint32_t> active_fallbacks_{0};
+    std::mutex fallback_budget_mu_;
+    std::unordered_map<std::string, std::deque<std::uint64_t>> fallback_attempts_by_remote_;
 };
 
 }    // namespace mux

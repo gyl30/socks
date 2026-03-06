@@ -96,6 +96,10 @@ constexpr std::uint16_t kMaxTlsCiphertextRecordLen = static_cast<std::uint16_t>(
 constexpr std::uint32_t kMaxTlsCompatCcsRecords = 8;
 constexpr std::uint16_t kFallbackTlsPort = 443;
 constexpr std::size_t kFallbackRelayBufferSize = 16 * 1024;
+constexpr std::uint32_t kFallbackMaxConcurrent = 32;
+constexpr std::uint32_t kFallbackRateLimitWindowSec = 10;
+constexpr std::size_t kFallbackMaxAttemptsPerWindowPerSource = 8;
+constexpr std::size_t kFallbackAttemptTrackerMaxEntries = 4096;
 constexpr std::uint32_t kSiteMaterialFetchSuccessTtlSec = 6 * 60 * 60;
 constexpr std::uint32_t kSiteMaterialFetchFailureRetrySec = 5 * 60;
 constexpr std::size_t kSiteMaterialCacheCapacity = 4;
@@ -656,64 +660,6 @@ boost::asio::awaitable<void> relay_fallback_data(boost::asio::ip::tcp::socket& s
     }
 }
 
-boost::asio::awaitable<void> fallback_to_target_site(reality_context& reality_ctx,
-                                                     boost::asio::io_context& io_context,
-                                                     const config& cfg,
-                                                     const char* reason)
-{
-    auto& ctx = reality_ctx.ctx;
-    const auto host = select_fallback_target_host(reality_ctx, cfg);
-    if (host.empty())
-    {
-        statistics::instance().inc_fallback_no_target();
-        LOG_CTX_WARN(ctx, "{} reason={} no fallback target", log_event::kFallback, reason);
-        co_return;
-    }
-
-    ctx.set_target(host, kFallbackTlsPort);
-    LOG_CTX_INFO(ctx,
-                 "{} reason={} target={}:{} client_hello_size={}",
-                 log_event::kFallback,
-                 reason,
-                 host,
-                 kFallbackTlsPort,
-                 reality_ctx.client_hello_record.size());
-
-    boost::asio::ip::tcp::socket upstream_socket(io_context);
-    DEFER(
-        if (reality_ctx.socket != nullptr)
-        {
-            close_tcp_socket(*reality_ctx.socket);
-        }
-        close_tcp_socket(upstream_socket););
-
-    boost::system::error_code ec;
-    co_await connect_fallback_target(io_context, upstream_socket, ctx, cfg, host, kFallbackTlsPort, ec);
-    if (ec)
-    {
-        co_return;
-    }
-
-    const auto initial_write = co_await timeout_io::wait_write_with_timeout(
-        upstream_socket, boost::asio::buffer(reality_ctx.client_hello_record), cfg.timeout.write, ec);
-    if (ec || initial_write != reality_ctx.client_hello_record.size())
-    {
-        if (!ec)
-        {
-            ec = boost::asio::error::fault;
-        }
-        record_fallback_write_failure(ec);
-        LOG_CTX_WARN(ctx, "{} stage=initial_write target={}:{} error={}", log_event::kFallback, host, kFallbackTlsPort, ec.message());
-        co_return;
-    }
-
-    using boost::asio::experimental::awaitable_operators::operator||;
-    co_await (relay_fallback_data(*reality_ctx.socket, upstream_socket, ctx, cfg, "client_to_target") ||
-              relay_fallback_data(upstream_socket, *reality_ctx.socket, ctx, cfg, "target_to_client"));
-
-    LOG_CTX_INFO(ctx, "{} finished target={}:{}", log_event::kFallback, host, kFallbackTlsPort);
-}
-
 boost::asio::awaitable<void> consume_tls13_compat_ccs(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
                                                       const std::array<std::uint8_t, 5>& header,
                                                       const connection_context& ctx,
@@ -861,6 +807,67 @@ connection_context build_connection_context(const std::shared_ptr<boost::asio::i
 
 }    // namespace
 
+boost::asio::awaitable<void> remote_server::fallback_to_target_site(reality_context& reality_ctx, const char* reason)
+{
+    auto& ctx = reality_ctx.ctx;
+    const auto host = select_fallback_target_host(reality_ctx, cfg_);
+    if (host.empty())
+    {
+        statistics::instance().inc_fallback_no_target();
+        LOG_CTX_WARN(ctx, "{} reason={} no fallback target", log_event::kFallback, reason);
+        co_return;
+    }
+
+    if (!try_acquire_fallback_budget(ctx, reason))
+    {
+        co_return;
+    }
+
+    ctx.set_target(host, kFallbackTlsPort);
+    LOG_CTX_INFO(ctx,
+                 "{} reason={} target={}:{} client_hello_size={}",
+                 log_event::kFallback,
+                 reason,
+                 host,
+                 kFallbackTlsPort,
+                 reality_ctx.client_hello_record.size());
+
+    boost::asio::ip::tcp::socket upstream_socket(io_context_);
+    DEFER(
+        release_fallback_budget();
+        if (reality_ctx.socket != nullptr)
+        {
+            close_tcp_socket(*reality_ctx.socket);
+        }
+        close_tcp_socket(upstream_socket););
+
+    boost::system::error_code ec;
+    co_await connect_fallback_target(io_context_, upstream_socket, ctx, cfg_, host, kFallbackTlsPort, ec);
+    if (ec)
+    {
+        co_return;
+    }
+
+    const auto initial_write = co_await timeout_io::wait_write_with_timeout(
+        upstream_socket, boost::asio::buffer(reality_ctx.client_hello_record), cfg_.timeout.write, ec);
+    if (ec || initial_write != reality_ctx.client_hello_record.size())
+    {
+        if (!ec)
+        {
+            ec = boost::asio::error::fault;
+        }
+        record_fallback_write_failure(ec);
+        LOG_CTX_WARN(ctx, "{} stage=initial_write target={}:{} error={}", log_event::kFallback, host, kFallbackTlsPort, ec.message());
+        co_return;
+    }
+
+    using boost::asio::experimental::awaitable_operators::operator||;
+    co_await (relay_fallback_data(*reality_ctx.socket, upstream_socket, ctx, cfg_, "client_to_target") ||
+              relay_fallback_data(upstream_socket, *reality_ctx.socket, ctx, cfg_, "target_to_client"));
+
+    LOG_CTX_INFO(ctx, "{} finished target={}:{}", log_event::kFallback, host, kFallbackTlsPort);
+}
+
 remote_server::remote_server(io_context_pool& pool, const config& cfg)
     : cfg_(cfg),
       pool_(pool),
@@ -929,6 +936,86 @@ void remote_server::stop()
         },
         boost::asio::detached);
 }
+
+bool remote_server::try_acquire_fallback_budget(const connection_context& ctx, const char* reason)
+{
+    const auto now_sec = timeout_io::now_second();
+    const auto remote_addr = ctx.remote_addr().empty() ? std::string("unknown") : ctx.remote_addr();
+    std::lock_guard<std::mutex> lock(fallback_budget_mu_);
+
+    const auto current_active = active_fallbacks_.load(std::memory_order_relaxed);
+    if (current_active >= kFallbackMaxConcurrent)
+    {
+        statistics::instance().inc_fallback_rate_limited();
+        LOG_CTX_WARN(ctx,
+                     "{} reason={} stage=rate_limit mode=concurrency active={} limit={}",
+                     log_event::kFallback,
+                     reason,
+                     current_active,
+                     kFallbackMaxConcurrent);
+        return false;
+    }
+
+    auto it = fallback_attempts_by_remote_.find(remote_addr);
+    if (it == fallback_attempts_by_remote_.end() && fallback_attempts_by_remote_.size() >= kFallbackAttemptTrackerMaxEntries)
+    {
+        for (auto cleanup_it = fallback_attempts_by_remote_.begin(); cleanup_it != fallback_attempts_by_remote_.end();)
+        {
+            auto& entry_attempts = cleanup_it->second;
+            while (!entry_attempts.empty() && entry_attempts.front() + kFallbackRateLimitWindowSec <= now_sec)
+            {
+                entry_attempts.pop_front();
+            }
+            if (entry_attempts.empty())
+            {
+                cleanup_it = fallback_attempts_by_remote_.erase(cleanup_it);
+                continue;
+            }
+            ++cleanup_it;
+        }
+        if (fallback_attempts_by_remote_.size() >= kFallbackAttemptTrackerMaxEntries)
+        {
+            statistics::instance().inc_fallback_rate_limited();
+            LOG_CTX_WARN(ctx,
+                         "{} reason={} stage=rate_limit mode=tracker_capacity entries={} limit={}",
+                         log_event::kFallback,
+                         reason,
+                         fallback_attempts_by_remote_.size(),
+                         kFallbackAttemptTrackerMaxEntries);
+            return false;
+        }
+    }
+
+    if (it == fallback_attempts_by_remote_.end())
+    {
+        it = fallback_attempts_by_remote_.emplace(remote_addr, std::deque<std::uint64_t>{}).first;
+    }
+    auto& attempts = it->second;
+    while (!attempts.empty() && attempts.front() + kFallbackRateLimitWindowSec <= now_sec)
+    {
+        attempts.pop_front();
+    }
+
+    if (attempts.size() >= kFallbackMaxAttemptsPerWindowPerSource)
+    {
+        statistics::instance().inc_fallback_rate_limited();
+        LOG_CTX_WARN(ctx,
+                     "{} reason={} stage=rate_limit mode=per_source remote={} attempts={} window_sec={} limit={}",
+                     log_event::kFallback,
+                     reason,
+                     remote_addr,
+                     attempts.size(),
+                     kFallbackRateLimitWindowSec,
+                     kFallbackMaxAttemptsPerWindowPerSource);
+        return false;
+    }
+
+    attempts.push_back(now_sec);
+    active_fallbacks_.fetch_add(1, std::memory_order_relaxed);
+    return true;
+}
+
+void remote_server::release_fallback_budget() { active_fallbacks_.fetch_sub(1, std::memory_order_relaxed); }
 
 boost::asio::awaitable<void> remote_server::refresh_site_material_loop()
 {
@@ -1090,7 +1177,7 @@ boost::asio::awaitable<void> remote_server::handle(std::shared_ptr<boost::asio::
 
     auto fallback = [&](const char* reason) -> boost::asio::awaitable<void>
     {
-        co_await fallback_to_target_site(reality_ctx, io_context_, cfg_, reason);
+        co_await fallback_to_target_site(reality_ctx, reason);
     };
 
     reality_ctx.client_hello = ch_parser::parse(buf);
