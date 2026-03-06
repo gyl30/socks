@@ -62,6 +62,28 @@ namespace
 
 }    // namespace
 
+[[nodiscard]] std::uint8_t map_connect_error_to_socks_rep(const boost::system::error_code& ec)
+{
+    if (ec == boost::asio::error::connection_refused)
+    {
+        return socks::kRepConnRefused;
+    }
+    if (ec == boost::asio::error::network_unreachable)
+    {
+        return socks::kRepNetUnreach;
+    }
+    if (ec == boost::asio::error::host_unreachable || ec == boost::asio::error::host_not_found ||
+        ec == boost::asio::error::host_not_found_try_again)
+    {
+        return socks::kRepHostUnreach;
+    }
+    if (ec == boost::asio::error::timed_out)
+    {
+        return socks::kRepTtlExpired;
+    }
+    return socks::kRepGenFail;
+}
+
 boost::asio::awaitable<void> direct_upstream::connect(const std::string& host, const std::uint16_t port, boost::system::error_code& ec)
 {
     auto endpoints = co_await timeout_io::wait_resolve_with_timeout(resolver_, host, std::to_string(port), cfg_.timeout.connect, ec);
@@ -132,6 +154,11 @@ bool direct_upstream::get_bind_endpoint(boost::asio::ip::address& addr, std::uin
     addr = socks_codec::normalize_ip_address(local_ep.address());
     port = local_ep.port();
     return true;
+}
+
+std::uint8_t direct_upstream::suggested_socks_rep(const boost::system::error_code& ec) const
+{
+    return map_connect_error_to_socks_rep(ec);
 }
 
 boost::asio::awaitable<void> direct_upstream::write(const std::vector<std::uint8_t>& data, boost::system::error_code& ec)
@@ -224,6 +251,7 @@ boost::asio::awaitable<bool> proxy_upstream::wait_connect_ack(const std::shared_
         LOG_CTX_WARN(stream_ctx, "{} stage=decode_ack target={}:{} error=invalid_ack_payload", log_event::kRoute, host, port);
         co_return false;
     }
+    last_remote_rep_ = ack.socks_rep;
     if (ack.socks_rep != socks::kRepSuccess)
     {
         LOG_CTX_WARN(stream_ctx, "{} stage=wait_ack target={}:{} remote_rep={}", log_event::kRoute, host, port, ack.socks_rep);
@@ -271,6 +299,7 @@ boost::asio::awaitable<void> proxy_upstream::connect(const std::string& host, co
     }
     has_bind_endpoint_ = false;
     bind_port_ = 0;
+    last_remote_rep_ = socks::kRepSuccess;
     co_await send_syn_request(stream, host, port, ec);
     if (ec)
     {
@@ -278,6 +307,7 @@ boost::asio::awaitable<void> proxy_upstream::connect(const std::string& host, co
         co_return;
     }
 
+    last_remote_rep_ = socks::kRepGenFail;
     if (!(co_await wait_connect_ack(stream, host, port)))
     {
         ec = boost::asio::error::connection_refused;
@@ -353,6 +383,15 @@ bool proxy_upstream::get_bind_endpoint(boost::asio::ip::address& addr, std::uint
     addr = bind_addr_;
     port = bind_port_;
     return true;
+}
+
+std::uint8_t proxy_upstream::suggested_socks_rep(const boost::system::error_code& ec) const
+{
+    if (last_remote_rep_ != socks::kRepSuccess)
+    {
+        return last_remote_rep_;
+    }
+    return map_connect_error_to_socks_rep(ec);
 }
 
 boost::asio::awaitable<void> proxy_upstream::close()
