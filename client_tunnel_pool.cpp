@@ -281,10 +281,55 @@ struct handshake_validation_state
     bool cert_checked = false;
     bool cert_verify_checked = false;
     bool cert_verify_signature_checked = false;
+    bool reality_cert_verified = false;
     reality::openssl_ptrs::evp_pkey_ptr server_pub_key = nullptr;
 };
 
+std::expected<void, boost::system::error_code> verify_reality_bound_certificate(const std::vector<std::uint8_t>& cert_der,
+                                                                                const std::vector<std::uint8_t>& auth_key,
+                                                                                handshake_validation_state& validation_state)
+{
+    auto server_pub_key = reality::crypto_util::extract_pubkey_from_cert(cert_der);
+    if (!server_pub_key || *server_pub_key == nullptr)
+    {
+        LOG_ERROR("extract server pubkey failed");
+        return std::unexpected(server_pub_key ? boost::asio::error::invalid_argument : server_pub_key.error());
+    }
+    if (EVP_PKEY_base_id(server_pub_key->get()) != EVP_PKEY_ED25519)
+    {
+        LOG_ERROR("server certificate pubkey is not ed25519");
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::permission_denied));
+    }
+
+    auto raw_pub_key = reality::crypto_util::extract_raw_public_key(server_pub_key->get());
+    if (!raw_pub_key)
+    {
+        return std::unexpected(raw_pub_key.error());
+    }
+    auto cert_signature = reality::crypto_util::extract_certificate_signature(cert_der);
+    if (!cert_signature)
+    {
+        return std::unexpected(cert_signature.error());
+    }
+    auto expected_signature = reality::crypto_util::hmac_sha512(auth_key, *raw_pub_key);
+    if (!expected_signature)
+    {
+        return std::unexpected(expected_signature.error());
+    }
+    if (expected_signature->size() != cert_signature->size() ||
+        CRYPTO_memcmp(expected_signature->data(), cert_signature->data(), expected_signature->size()) != 0)
+    {
+        LOG_ERROR("server certificate reality binding mismatch");
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::permission_denied));
+    }
+
+    validation_state.server_pub_key = std::move(*server_pub_key);
+    validation_state.reality_cert_verified = true;
+    return {};
+}
+
 std::expected<void, boost::system::error_code> load_server_public_key_from_certificate(const std::vector<std::uint8_t>& msg_data,
+                                                                                       const std::vector<std::uint8_t>& auth_key,
                                                                                        handshake_validation_state& validation_state)
 {
     LOG_DEBUG("received certificate message size {}", msg_data.size());
@@ -299,15 +344,9 @@ std::expected<void, boost::system::error_code> load_server_public_key_from_certi
         LOG_ERROR("certificate message parse failed");
         return std::unexpected(boost::asio::error::invalid_argument);
     }
-
-    auto server_pub_key = reality::crypto_util::extract_pubkey_from_cert(*cert_der);
-    if (server_pub_key && *server_pub_key != nullptr)
+    if (const auto res = verify_reality_bound_certificate(*cert_der, auth_key, validation_state); !res)
     {
-        validation_state.server_pub_key = std::move(*server_pub_key);
-    }
-    else
-    {
-        LOG_DEBUG("extract server pubkey skipped");
+        return std::unexpected(res.error());
     }
 
     validation_state.cert_checked = true;
@@ -466,6 +505,7 @@ boost::asio::awaitable<std::expected<encrypted_record, boost::system::error_code
 
 std::expected<void, boost::system::error_code> handle_handshake_message(const std::uint8_t msg_type,
                                                                         const std::vector<std::uint8_t>& msg_data,
+                                                                        const std::vector<std::uint8_t>& auth_key,
                                                                         handshake_validation_state& validation_state,
                                                                         bool& handshake_fin,
                                                                         const reality::handshake_keys& hs_keys,
@@ -494,7 +534,7 @@ std::expected<void, boost::system::error_code> handle_handshake_message(const st
             LOG_ERROR("unexpected certificate message order");
             return std::unexpected(boost::asio::error::invalid_argument);
         }
-        if (const auto res = load_server_public_key_from_certificate(msg_data, validation_state); !res)
+        if (const auto res = load_server_public_key_from_certificate(msg_data, auth_key, validation_state); !res)
         {
             return std::unexpected(res.error());
         }
@@ -537,6 +577,7 @@ std::expected<void, boost::system::error_code> handle_handshake_message(const st
 }
 
 std::expected<std::size_t, boost::system::error_code> consume_handshake_buffer(std::vector<std::uint8_t>& handshake_buffer,
+                                                                               const std::vector<std::uint8_t>& auth_key,
                                                                                handshake_validation_state& validation_state,
                                                                                bool& handshake_fin,
                                                                                const reality::handshake_keys& hs_keys,
@@ -567,7 +608,7 @@ std::expected<std::size_t, boost::system::error_code> consume_handshake_buffer(s
         const auto msg_begin = handshake_buffer.begin() + static_cast<std::ptrdiff_t>(offset);
         const auto msg_end = msg_begin + static_cast<std::ptrdiff_t>(full_msg_len);
         const std::vector<std::uint8_t> msg_data(msg_begin, msg_end);
-        if (const auto res = handle_handshake_message(msg_type, msg_data, validation_state, handshake_fin, hs_keys, md, trans); !res)
+        if (const auto res = handle_handshake_message(msg_type, msg_data, auth_key, validation_state, handshake_fin, hs_keys, md, trans); !res)
         {
             return std::unexpected(res.error());
         }
@@ -579,6 +620,7 @@ std::expected<std::size_t, boost::system::error_code> consume_handshake_buffer(s
 
 std::expected<void, boost::system::error_code> consume_handshake_plaintext(const std::vector<std::uint8_t>& plaintext,
                                                                            std::vector<std::uint8_t>& handshake_buffer,
+                                                                           const std::vector<std::uint8_t>& auth_key,
                                                                            handshake_validation_state& validation_state,
                                                                            bool& handshake_fin,
                                                                            const reality::handshake_keys& hs_keys,
@@ -591,7 +633,7 @@ std::expected<void, boost::system::error_code> consume_handshake_plaintext(const
         return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::message_size));
     }
     handshake_buffer.insert(handshake_buffer.end(), plaintext.begin(), plaintext.end());
-    const auto consumed = consume_handshake_buffer(handshake_buffer, validation_state, handshake_fin, hs_keys, md, trans);
+    const auto consumed = consume_handshake_buffer(handshake_buffer, auth_key, validation_state, handshake_fin, hs_keys, md, trans);
     if (!consumed)
     {
         return std::unexpected(consumed.error());
@@ -602,7 +644,6 @@ std::expected<void, boost::system::error_code> consume_handshake_plaintext(const
 }
 
 std::expected<void, boost::system::error_code> validate_server_handshake_chain(const handshake_validation_state& validation_state,
-                                                                               const bool strict_cert_verify,
                                                                                const std::string& sni)
 {
     if (!validation_state.cert_checked || !validation_state.cert_verify_checked)
@@ -610,17 +651,21 @@ std::expected<void, boost::system::error_code> validate_server_handshake_chain(c
         LOG_ERROR("server auth chain incomplete");
         return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::permission_denied));
     }
-    if (strict_cert_verify && !validation_state.cert_verify_signature_checked)
+    if (!validation_state.reality_cert_verified)
     {
         auto& stats = statistics::instance();
         stats.inc_cert_verify_failures();
         stats.inc_handshake_failure_by_sni(statistics::handshake_failure_reason::kCertVerify, sni);
-        LOG_ERROR("server certificate verify signature required possible cert key mismatch");
+        LOG_ERROR("server certificate reality binding verification failed");
         return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::permission_denied));
     }
-    if (!strict_cert_verify && !validation_state.cert_verify_signature_checked)
+    if (!validation_state.cert_verify_signature_checked)
     {
-        LOG_DEBUG("server certificate verify signature unchecked strict_cert_verify=false");
+        auto& stats = statistics::instance();
+        stats.inc_cert_verify_failures();
+        stats.inc_handshake_failure_by_sni(statistics::handshake_failure_reason::kCertVerify, sni);
+        LOG_ERROR("server certificate verify signature check failed");
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::permission_denied));
     }
     return {};
 }
@@ -782,13 +827,19 @@ std::expected<std::vector<std::uint8_t>, boost::system::error_code> encrypt_clie
     return std::move(*sid_result);
 }
 
-std::expected<std::vector<std::uint8_t>, boost::system::error_code> build_authenticated_client_hello(const std::uint8_t* public_key,
-                                                                                                     const std::uint8_t* private_key,
-                                                                                                     const std::vector<std::uint8_t>& server_pub_key,
-                                                                                                     const std::vector<std::uint8_t>& short_id_bytes,
-                                                                                                     const std::array<std::uint8_t, 3>& client_ver,
-                                                                                                     const reality::fingerprint_spec& spec,
-                                                                                                     const std::string& sni)
+struct authenticated_client_hello
+{
+    std::vector<std::uint8_t> hello_body;
+    std::vector<std::uint8_t> auth_key;
+};
+
+std::expected<authenticated_client_hello, boost::system::error_code> build_authenticated_client_hello(const std::uint8_t* public_key,
+                                                                                                       const std::uint8_t* private_key,
+                                                                                                       const std::vector<std::uint8_t>& server_pub_key,
+                                                                                                       const std::vector<std::uint8_t>& short_id_bytes,
+                                                                                                       const std::array<std::uint8_t, 3>& client_ver,
+                                                                                                       const reality::fingerprint_spec& spec,
+                                                                                                       const std::string& sni)
 {
     auto auth_material_result = derive_client_auth_key_material(private_key, server_pub_key);
     if (!auth_material_result)
@@ -820,7 +871,7 @@ std::expected<std::vector<std::uint8_t>, boost::system::error_code> build_authen
     }
 
     std::memcpy(hello_body.data() + absolute_sid_offset, sid_result->data(), 32);
-    return hello_body;
+    return authenticated_client_hello{.hello_body = std::move(hello_body), .auth_key = std::move(auth_key)};
 }
 
 reality::fingerprint_spec select_fingerprint_spec(const std::optional<reality::fingerprint_type>& fingerprint_type)
@@ -912,6 +963,7 @@ std::expected<std::vector<std::uint8_t>, boost::system::error_code> derive_serve
 boost::asio::awaitable<std::expected<void, boost::system::error_code>> process_handshake_record(
     boost::asio::ip::tcp::socket& socket,
     const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& s_hs_keys,
+    const std::vector<std::uint8_t>& auth_key,
     reality::transcript& trans,
     const EVP_CIPHER* cipher,
     std::vector<std::uint8_t>& handshake_buffer,
@@ -960,7 +1012,7 @@ boost::asio::awaitable<std::expected<void, boost::system::error_code>> process_h
     }
 
     if (const auto consume_res =
-            consume_handshake_plaintext(*plaintext_result, handshake_buffer, validation_state, handshake_fin, hs_keys, md, trans);
+            consume_handshake_plaintext(*plaintext_result, handshake_buffer, auth_key, validation_state, handshake_fin, hs_keys, md, trans);
         !consume_res)
     {
         co_return std::unexpected(consume_res.error());
@@ -1001,7 +1053,6 @@ client_tunnel_pool::client_tunnel_pool(io_context_pool& pool, const config& cfg,
       cfg_(cfg),
       group_(group),
       pool_(pool),
-      strict_cert_verify_(cfg.reality.strict_cert_verify),
       max_handshake_records_(cfg.limits.max_handshake_records),
       tunnel_pool_(cfg.limits.max_connections)
 {
@@ -1265,7 +1316,8 @@ boost::asio::awaitable<std::expected<client_tunnel_pool::handshake_result, boost
 
     const auto spec = select_fingerprint_spec(fingerprint_type_);
     reality::transcript trans;
-    if (const auto res = co_await generate_and_send_client_hello(socket, public_key, private_key, spec, trans); !res)
+    std::vector<std::uint8_t> auth_key;
+    if (const auto res = co_await generate_and_send_client_hello(socket, public_key, private_key, spec, trans, auth_key); !res)
     {
         co_return std::unexpected(res.error());
     }
@@ -1287,7 +1339,7 @@ boost::asio::awaitable<std::expected<client_tunnel_pool::handshake_result, boost
     auto handshake_read_result = co_await handshake_read_loop(socket,
                                                               hs_keys.s_hs_keys,
                                                               server_hello_result->hs_keys,
-                                                              strict_cert_verify_,
+                                                              auth_key,
                                                               sni_,
                                                               trans,
                                                               server_hello_result->negotiated_cipher,
@@ -1325,16 +1377,17 @@ boost::asio::awaitable<std::expected<void, boost::system::error_code>> client_tu
     const std::uint8_t* public_key,
     const std::uint8_t* private_key,
     const reality::fingerprint_spec& spec,
-    reality::transcript& trans) const
+    reality::transcript& trans,
+    std::vector<std::uint8_t>& auth_key) const
 {
     std::array<std::uint8_t, 3> client_ver_{1, 0, 0};
-    auto client_hello_body_result =
+    auto client_hello_result =
         build_authenticated_client_hello(public_key, private_key, server_pub_key_, short_id_bytes_, client_ver_, spec, sni_);
-    if (!client_hello_body_result)
+    if (!client_hello_result)
     {
-        co_return std::unexpected(client_hello_body_result.error());
+        co_return std::unexpected(client_hello_result.error());
     }
-    const auto& hello_body = *client_hello_body_result;
+    const auto& hello_body = client_hello_result->hello_body;
     if (hello_body.size() > std::numeric_limits<std::uint16_t>::max())
     {
         LOG_ERROR("client hello too large {}", hello_body.size());
@@ -1356,6 +1409,7 @@ boost::asio::awaitable<std::expected<void, boost::system::error_code>> client_tu
         co_return std::unexpected(boost::asio::error::fault);
     }
     LOG_DEBUG("sending client hello record size {}", client_hello_record.size());
+    auth_key = std::move(client_hello_result->auth_key);
     trans.update(hello_body);
     co_return std::expected<void, boost::system::error_code>{};
 }
@@ -1407,7 +1461,7 @@ boost::asio::awaitable<std::expected<std::pair<std::vector<std::uint8_t>, std::v
 client_tunnel_pool::handshake_read_loop(boost::asio::ip::tcp::socket& socket,
                                         const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& s_hs_keys,
                                         const reality::handshake_keys& hs_keys,
-                                        const bool strict_cert_verify,
+                                        const std::vector<std::uint8_t>& auth_key,
                                         const std::string& sni,
                                         reality::transcript& trans,
                                         const EVP_CIPHER* cipher,
@@ -1431,6 +1485,7 @@ client_tunnel_pool::handshake_read_loop(boost::asio::ip::tcp::socket& socket,
         }
         if (const auto res = co_await process_handshake_record(socket,
                                                                s_hs_keys,
+                                                               auth_key,
                                                                trans,
                                                                cipher,
                                                                handshake_buffer,
@@ -1448,7 +1503,7 @@ client_tunnel_pool::handshake_read_loop(boost::asio::ip::tcp::socket& socket,
         handshake_record_count++;
     }
 
-    if (const auto res = validate_server_handshake_chain(validation_state, strict_cert_verify, sni); !res)
+    if (const auto res = validate_server_handshake_chain(validation_state, sni); !res)
     {
         co_return std::unexpected(res.error());
     }

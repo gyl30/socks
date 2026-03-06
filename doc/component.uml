@@ -72,8 +72,8 @@ note right of ProxyUpstream
 end note
 
 note right of RemoteServer
-  fallbacks 用于按 SNI 选取证书抓取目标。
-  不是透明转发流量 fallback。
+  REALITY 成功握手路径直接返回协议内临时证书。
+  不再依赖按 SNI 抓取外部证书。
 end note
 
 note bottom of TproxyListener
