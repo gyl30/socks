@@ -21,6 +21,7 @@
 #include "log_context.h"
 #include "cipher_context.h"
 #include "site_material.h"
+#include "reality_fingerprint.h"
 
 namespace reality
 {
@@ -69,6 +70,7 @@ class cert_fetcher
                       std::string host,
                       std::uint16_t port,
                       std::string sni,
+                      fingerprint_type fingerprint,
                       const std::string& trace_id,
                       std::uint32_t connect_timeout_sec = 10,
                       std::uint32_t read_timeout_sec = 10,
@@ -120,10 +122,13 @@ class cert_fetcher
         std::string host_;
         std::uint16_t port_;
         std::string sni_;
+        fingerprint_type fingerprint_ = fingerprint_type::kChrome120;
         std::uint32_t connect_timeout_sec_ = 10;
         std::uint32_t read_timeout_sec_ = 10;
         std::uint32_t write_timeout_sec_ = 10;
         site_material observed_material_;
+        bool saw_certificate_ = false;
+        bool saw_server_finished_ = false;
 
         transcript trans_;
         std::uint8_t client_public_[32] = {0};
