@@ -32,6 +32,8 @@
 namespace mux
 {
 
+struct reality_context;
+
 class remote_server : public std::enable_shared_from_this<remote_server>
 {
    public:
@@ -57,16 +59,10 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     boost::asio::awaitable<void> accept_loop();
     boost::asio::awaitable<void> handle(std::shared_ptr<boost::asio::ip::tcp::socket> s, std::uint32_t conn_id);
 
-    boost::asio::awaitable<server_handshake_res> perform_handshake_response(std::shared_ptr<boost::asio::ip::tcp::socket> s,
-                                                                            const client_hello_info& info,
-                                                                            reality::transcript& trans,
-                                                                            const connection_context& ctx,
-                                                                            boost::system::error_code& ec);
+    boost::asio::awaitable<server_handshake_res> perform_handshake_response(reality_context& reality_ctx, boost::system::error_code& ec);
 
-    boost::asio::awaitable<void> verify_client_finished(std::shared_ptr<boost::asio::ip::tcp::socket> s,
+    boost::asio::awaitable<void> verify_client_finished(reality_context& reality_ctx,
                                                         const server_handshake_res& response,
-                                                        const reality::transcript& trans,
-                                                        const connection_context& ctx,
                                                         boost::system::error_code& ec) const;
 
     boost::asio::awaitable<void> process_stream_request(std::shared_ptr<mux_tunnel_impl> tunnel,
