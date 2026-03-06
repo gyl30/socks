@@ -32,17 +32,8 @@ REFLECT_STRUCT(mux::config::inbound_t, host, port);
 REFLECT_STRUCT(mux::config::outbound_t, host, port);
 REFLECT_STRUCT(mux::config::socks_t, enabled, host, port, auth, username, password);
 REFLECT_STRUCT(mux::config::tproxy_t, enabled, listen_host, tcp_port, udp_port, mark);
-REFLECT_STRUCT(mux::config::fallback_entry, sni, host, port);
 REFLECT_STRUCT(mux::config::timeout_t, read, write, connect, idle);
-REFLECT_STRUCT(mux::config::reality_t,
-               sni,
-               fingerprint,
-               type,
-               strict_cert_verify,
-               replay_cache_max_entries,
-               private_key,
-               public_key,
-               short_id);
+REFLECT_STRUCT(mux::config::reality_t, sni, fingerprint, replay_cache_max_entries, private_key, public_key, short_id);
 REFLECT_STRUCT(mux::config::limits_t,
                max_connections,
                max_buffer,
@@ -50,7 +41,7 @@ REFLECT_STRUCT(mux::config::limits_t,
                max_handshake_records);
 REFLECT_STRUCT(mux::config::heartbeat_t, enabled, idle_timeout, min_interval, max_interval, min_padding, max_padding);
 REFLECT_STRUCT(mux::config::monitor_t, enabled, port);
-REFLECT_STRUCT(mux::config, mode, workers, log, inbound, outbound, socks, tproxy, fallbacks, timeout, reality, limits, heartbeat, monitor);
+REFLECT_STRUCT(mux::config, mode, workers, log, inbound, outbound, socks, tproxy, timeout, reality, limits, heartbeat, monitor);
 
 }    // namespace reflect
 
@@ -202,23 +193,6 @@ constexpr std::uint32_t kHandshakeRecordsLimitMax = 4096;
     return bytes;
 }
 
-[[nodiscard]] bool valid_port_text(const std::string& text)
-{
-    if (text.empty())
-    {
-        return false;
-    }
-    std::uint32_t parsed_port = 0;
-    const char* const begin = text.data();
-    const char* const end = begin + text.size();
-    const auto [parse_end, parse_ec] = std::from_chars(begin, end, parsed_port);
-    if (parse_ec != std::errc() || parse_end != end)
-    {
-        return false;
-    }
-    return parsed_port > 0 && parsed_port <= 65535;
-}
-
 [[nodiscard]] std::string normalize_sni_key(std::string_view sni)
 {
     std::size_t begin = 0;
@@ -247,36 +221,6 @@ constexpr std::uint32_t kHandshakeRecordsLimitMax = 4096;
         normalized.pop_back();
     }
     return normalized;
-}
-
-[[nodiscard]] std::expected<void, config_error> validate_fallbacks_config(const std::vector<config::fallback_entry>& fallbacks)
-{
-    for (std::size_t i = 0; i < fallbacks.size(); ++i)
-    {
-        const auto& entry = fallbacks[i];
-        const auto index_path = "/fallbacks/" + std::to_string(i);
-        if (entry.host.empty())
-        {
-            return std::unexpected(make_config_error(index_path + "/host", "must be non-empty"));
-        }
-        if (entry.host.find('\0') != std::string::npos)
-        {
-            return std::unexpected(make_config_error(index_path + "/host", "must not contain nul"));
-        }
-        if (!valid_port_text(entry.port))
-        {
-            return std::unexpected(make_config_error(index_path + "/port", "must be in 1-65535"));
-        }
-        if (entry.sni.find('\0') != std::string::npos)
-        {
-            return std::unexpected(make_config_error(index_path + "/sni", "must not contain nul"));
-        }
-        if (!entry.sni.empty() && entry.sni != "*" && normalize_sni_key(entry.sni).empty())
-        {
-            return std::unexpected(make_config_error(index_path + "/sni", "must be non-empty after normalization when provided"));
-        }
-    }
-    return {};
 }
 
 [[nodiscard]] std::expected<void, config_error> validate_reality_config(const config::reality_t& reality)
@@ -322,9 +266,9 @@ constexpr std::uint32_t kHandshakeRecordsLimitMax = 4096;
     {
         return std::unexpected(make_config_error("/reality/sni", "must be at most 65530 bytes when provided"));
     }
-    if (!reality.type.empty() && reality.type != "tcp")
+    if (!reality.sni.empty() && normalize_sni_key(reality.sni).empty())
     {
-        return std::unexpected(make_config_error("/reality/type", "must be tcp when provided"));
+        return std::unexpected(make_config_error("/reality/sni", "must be non-empty after normalization when provided"));
     }
 
     return {};
@@ -424,10 +368,6 @@ constexpr std::uint32_t kHandshakeRecordsLimitMax = 4096;
     {
         return std::unexpected(reality_result.error());
     }
-    if (const auto fallback_result = validate_fallbacks_config(cfg.fallbacks); !fallback_result)
-    {
-        return std::unexpected(fallback_result.error());
-    }
     if (cfg.mode == "server")
     {
         if (cfg.tproxy.enabled)
@@ -463,6 +403,36 @@ constexpr std::uint32_t kHandshakeRecordsLimitMax = 4096;
     if (const auto mode_reality_result = validate_mode_reality_dependencies(cfg); !mode_reality_result)
     {
         return std::unexpected(mode_reality_result.error());
+    }
+    return {};
+}
+
+[[nodiscard]] std::expected<void, config_error> validate_removed_fields(const rapidjson::Document& reader)
+{
+    if (!reader.IsObject())
+    {
+        return {};
+    }
+
+    if (reader.HasMember("fallbacks"))
+    {
+        return std::unexpected(make_config_error("/fallbacks", "has been removed in reality-native mode"));
+    }
+
+    const auto reality_it = reader.FindMember("reality");
+    if (reality_it == reader.MemberEnd() || !reality_it->value.IsObject())
+    {
+        return {};
+    }
+
+    const auto& reality = reality_it->value;
+    if (reality.HasMember("strict_cert_verify"))
+    {
+        return std::unexpected(make_config_error("/reality/strict_cert_verify", "has been removed in reality-native mode"));
+    }
+    if (reality.HasMember("type"))
+    {
+        return std::unexpected(make_config_error("/reality/type", "has been removed in reality-native mode"));
     }
     return {};
 }
@@ -509,6 +479,10 @@ constexpr std::uint32_t kHandshakeRecordsLimitMax = 4096;
     {
         return std::unexpected(make_config_error(
             "/", "json parse error at offset " + std::to_string(parse_result.Offset()) + ": " + rapidjson::GetParseError_En(parse_result.Code())));
+    }
+    if (const auto removed_fields_result = validate_removed_fields(reader); !removed_fields_result)
+    {
+        return std::unexpected(removed_fields_result.error());
     }
 
     config cfg;
@@ -567,7 +541,6 @@ std::string dump_default_config()
         cfg.reality.public_key = reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(public_key, public_key + 32));
     }
     wipe_keys();
-    cfg.fallbacks.push_back({});
     return dump_config(cfg);
 }
 

@@ -316,7 +316,6 @@ def run_valgrind_test(traffic_count, server_ready_timeout, client_ready_timeout)
         "mode": "server", "log": {"level": "info", "file": "val_server.log"},
         "inbound": {"host": "127.0.0.1", "port": server_port},
         "reality": { "sni": "valgrind.test.com", "private_key": keys["private_key"], "public_key": keys["public_key"], "short_id": SHORT_ID },
-        "fallbacks": [{"sni": "valgrind.test.com", "host": "127.0.0.1", "port": str(tls_port)}],
         "timeout": {"idle": 10}
     }
     client_cfg = {
@@ -324,7 +323,7 @@ def run_valgrind_test(traffic_count, server_ready_timeout, client_ready_timeout)
         "inbound": {"host": "127.0.0.1", "port": client_socks_port},
         "outbound": {"host": "127.0.0.1", "port": server_port},
         "socks": {"host": "127.0.0.1", "port": client_socks_port, "auth": False},
-        "reality": { "sni": "valgrind.test.com", "public_key": keys["public_key"], "private_key": keys["private_key"], "short_id": SHORT_ID, "strict_cert_verify": False },
+        "reality": { "sni": "valgrind.test.com", "public_key": keys["public_key"], "private_key": keys["private_key"], "short_id": SHORT_ID },
         "timeout": {"idle": 10}
     }
 

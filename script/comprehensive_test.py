@@ -253,9 +253,6 @@ def test_routing_rules():
             "public_key": pk,
             "short_id": SHORT_ID
         },
-        "fallbacks": [
-            {"sni": "www.example.com", "host": "127.0.0.1", "port": "14443"}
-        ],
         "timeout": {"idle": 60}
     }
     client_cfg = {
@@ -330,9 +327,6 @@ def test_authentication():
         "log": {"level": "debug", "file": "server_auth_internal.log"},
         "inbound": {"host": "127.0.0.1", "port": 20002}, # 不同端口避免冲突
         "reality": { "sni": "www.microsoft.com", "private_key": sk, "public_key": pk, "short_id": SHORT_ID },
-        "fallbacks": [
-            {"sni": "www.microsoft.com", "host": "127.0.0.1", "port": "14444"}
-        ],
         "timeout": {"idle": 60}
     }
     client_cfg = {
@@ -400,9 +394,6 @@ def test_udp_function():
         "mode": "server", "log": {"level": "debug", "file": "server_udp_internal.log"},
         "inbound": {"host": "127.0.0.1", "port": 20003},
         "reality": { "sni": "www.google.com", "private_key": sk, "public_key": pk, "short_id": SHORT_ID },
-        "fallbacks": [
-            {"sni": "www.google.com", "host": "127.0.0.1", "port": "14445"}
-        ],
         "timeout": {"idle": 60}
     }
     client_cfg = {

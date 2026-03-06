@@ -183,7 +183,6 @@ async def run_stress_test():
         "mode": "server", "log": {"level": "warn", "file": "stress_server.log"}, # Warn level to reduce IO
         "inbound": {"host": "127.0.0.1", "port": 20006},
         "reality": { "sni": "stress.test.com", "private_key": sk, "public_key": pk, "short_id": sid },
-        "fallbacks": [{"sni": "stress.test.com", "host": "127.0.0.1", "port": "14447"}],
         "timeout": {"idle": 120},
         "limits": {"max_connections": 20000} # Ensure limit is high enough
     }

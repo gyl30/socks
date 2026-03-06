@@ -255,7 +255,6 @@ def run_test():
         "log": {"level": "info", "file": "chaos_server.log"},
         "inbound": {"host": "127.0.0.1", "port": 20005},
         "reality": { "sni": sni, "private_key": sk, "public_key": pk, "short_id": sid },
-        "fallbacks": [{"sni": sni, "host": "127.0.0.1", "port": "14446"}],
         "timeout": {"idle": 120}
     }
     client_cfg = {

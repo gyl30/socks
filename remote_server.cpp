@@ -53,7 +53,6 @@ extern "C"
 #include "transcript.h"
 #include "crypto_util.h"
 #include "log_context.h"
-#include "cert_fetcher.h"
 #include "context_pool.h"
 #include "reality_auth.h"
 #include "reality_core.h"
@@ -82,8 +81,8 @@ struct reality_context
     std::vector<std::uint8_t> server_random;
     std::vector<std::uint8_t> server_x25519_pub;
     std::vector<std::uint8_t> server_shared_secret;
+    std::vector<std::uint8_t> auth_key;
     std::vector<std::uint8_t> cert_msg;
-    reality::server_fingerprint fingerprint;
 };
 
 namespace
@@ -318,7 +317,7 @@ std::expected<handshake_crypto_result, boost::system::error_code> build_handshak
     out.c_hs_keys = std::move(*c_hs);
     out.s_hs_keys = std::move(*s_hs);
 
-    const auto enc_ext = reality::construct_encrypted_extensions(reality_ctx.fingerprint.alpn);
+    const auto enc_ext = reality::construct_encrypted_extensions("");
     reality_ctx.transcript.update(enc_ext);
     reality_ctx.transcript.update(reality_ctx.cert_msg);
 
@@ -368,7 +367,7 @@ std::expected<handshake_crypto_result, boost::system::error_code> build_handshak
     return out;
 }
 
-std::expected<reality::auth_payload, boost::system::error_code> decrypt_auth_payload(const reality_context& reality_ctx,
+std::expected<reality::auth_payload, boost::system::error_code> decrypt_auth_payload(reality_context& reality_ctx,
                                                                                      const std::vector<std::uint8_t>& private_key)
 {
     const auto inputs_result = build_auth_decrypt_inputs(reality_ctx, private_key);
@@ -377,6 +376,7 @@ std::expected<reality::auth_payload, boost::system::error_code> decrypt_auth_pay
         return std::unexpected(inputs_result.error());
     }
     const auto& inputs = *inputs_result;
+    reality_ctx.auth_key = inputs.auth_key;
 
     const EVP_CIPHER* auth_cipher = EVP_aes_128_gcm();
     auto pt =
@@ -420,9 +420,44 @@ std::expected<std::vector<std::uint8_t>, boost::system::error_code> generate_ser
     return server_random;
 }
 
-std::uint16_t select_cipher_suite_from_fingerprint(const reality::server_fingerprint& fingerprint)
+std::expected<std::vector<std::uint8_t>, boost::system::error_code> build_reality_bound_certificate(
+    const std::vector<std::uint8_t>& cert_template,
+    const std::vector<std::uint8_t>& auth_key,
+    const std::vector<std::uint8_t>& cert_public_key)
 {
-    return normalize_cipher_suite(fingerprint.cipher_suite != 0 ? fingerprint.cipher_suite : 0x1301);
+    auto template_signature = reality::crypto_util::extract_certificate_signature(cert_template);
+    if (!template_signature)
+    {
+        return std::unexpected(template_signature.error());
+    }
+    if (template_signature->size() != 64 || cert_template.size() < template_signature->size())
+    {
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+    }
+    const auto signature_offset = cert_template.size() - template_signature->size();
+    if (!std::equal(template_signature->begin(), template_signature->end(), cert_template.begin() + static_cast<std::ptrdiff_t>(signature_offset)))
+    {
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+    }
+
+    auto reality_signature = reality::crypto_util::hmac_sha512(auth_key, cert_public_key);
+    if (!reality_signature)
+    {
+        return std::unexpected(reality_signature.error());
+    }
+    if (reality_signature->size() != template_signature->size())
+    {
+        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+    }
+
+    std::vector<std::uint8_t> cert_der = cert_template;
+    std::copy(reality_signature->begin(), reality_signature->end(), cert_der.begin() + static_cast<std::ptrdiff_t>(signature_offset));
+    return cert_der;
+}
+
+std::uint16_t select_reality_cipher_suite()
+{
+    return normalize_cipher_suite(reality::tls_consts::cipher::kTlsAes128GcmSha256);
 }
 
 boost::asio::awaitable<void> consume_tls13_compat_ccs(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
@@ -584,6 +619,25 @@ remote_server::remote_server(io_context_pool& pool, const config& cfg)
     boost::algorithm::unhex(cfg.reality.short_id, std::back_inserter(short_id_bytes_));
     auto pub = reality::crypto_util::extract_public_key(private_key_);
     LOG_INFO("server public key size {}", pub ? pub->size() : 0);
+
+    std::uint8_t cert_public_key[32] = {};
+    if (!reality::crypto_util::generate_ed25519_keypair(cert_public_key, reality_cert_private_key_.data()))
+    {
+        LOG_ERROR("failed to generate REALITY certificate identity");
+        OPENSSL_cleanse(reality_cert_private_key_.data(), reality_cert_private_key_.size());
+        return;
+    }
+    reality_cert_public_key_.assign(cert_public_key, cert_public_key + 32);
+    auto cert_template = reality::crypto_util::create_self_signed_ed25519_certificate(
+        std::vector<std::uint8_t>(reality_cert_private_key_.begin(), reality_cert_private_key_.end()));
+    if (!cert_template)
+    {
+        LOG_ERROR("failed to build REALITY certificate template {}", cert_template.error().message());
+        reality_cert_public_key_.clear();
+        OPENSSL_cleanse(reality_cert_private_key_.data(), reality_cert_private_key_.size());
+        return;
+    }
+    reality_cert_template_ = std::move(*cert_template);
 }
 
 remote_server::~remote_server()
@@ -592,6 +646,7 @@ remote_server::~remote_server()
     {
         OPENSSL_cleanse(private_key_.data(), private_key_.size());
     }
+    OPENSSL_cleanse(reality_cert_private_key_.data(), reality_cert_private_key_.size());
 }
 
 void remote_server::start()
@@ -1000,46 +1055,25 @@ boost::asio::awaitable<remote_server::server_handshake_res> remote_server::perfo
     reality_ctx.server_shared_secret = std::move(*sh_shared_result);
     reality_ctx.server_x25519_pub.assign(public_key, public_key + 32);
 
-    struct certificate_target
+    if (reality_ctx.auth_key.empty() || reality_cert_public_key_.size() != 32 || reality_cert_template_.empty())
     {
-        std::string cert_sni;
-        std::string fetch_host;
-        std::uint16_t fetch_port = 443;
-    } target;
-    target.cert_sni = reality_ctx.client_hello.sni;
-    target.fetch_host = "www.apple.com";
-    target.fetch_port = 443;
-
-    const auto fb = find_fallback_target_by_sni(reality_ctx.client_hello.sni);
-    if (!fb.first.empty())
-    {
-        target.fetch_host = fb.first;
-        target.fetch_port = static_cast<uint16_t>(atoi(fb.second.c_str()));
-    }
-    const auto cached_entry = cert_manager_.get_certificate(target.cert_sni);
-    if (cached_entry.has_value())
-    {
-        reality_ctx.cert_msg = cached_entry->cert_msg;
-        reality_ctx.fingerprint = cached_entry->fingerprint;
-    }
-    else
-    {
-        LOG_CTX_INFO(ctx, "{} certificate miss fetching {} {}", log_event::kCert, target.fetch_host, target.fetch_port);
-        const auto fetch_res =
-            co_await reality::cert_fetcher::fetch(io_context_, target.fetch_host, target.fetch_port, target.cert_sni, ctx.trace_id());
-        if (!fetch_res.has_value())
-        {
-            LOG_CTX_ERROR(ctx, "{} fetch certificate failed", log_event::kCert);
-            ec = boost::asio::error::connection_refused;
-            co_return res;
-        }
-        reality_ctx.cert_msg = fetch_res->cert_msg;
-        reality_ctx.fingerprint = fetch_res->fingerprint;
-        cert_manager_.set_certificate(target.cert_sni, reality_ctx.cert_msg, reality_ctx.fingerprint, ctx.trace_id());
+        LOG_CTX_ERROR(ctx, "{} REALITY certificate identity unavailable", log_event::kHandshake);
+        ec = boost::asio::error::fault;
+        co_return res;
     }
 
-    const std::uint16_t cipher_suite = select_cipher_suite_from_fingerprint(reality_ctx.fingerprint);
-    auto crypto_result = build_handshake_crypto(reality_ctx, cipher_suite, private_key_);
+    auto cert_der = build_reality_bound_certificate(reality_cert_template_, reality_ctx.auth_key, reality_cert_public_key_);
+    if (!cert_der)
+    {
+        LOG_CTX_ERROR(ctx, "{} build REALITY certificate failed {}", log_event::kHandshake, cert_der.error().message());
+        ec = cert_der.error();
+        co_return res;
+    }
+    reality_ctx.cert_msg = reality::construct_certificate(*cert_der);
+
+    const std::uint16_t cipher_suite = select_reality_cipher_suite();
+    auto crypto_result = build_handshake_crypto(
+        reality_ctx, cipher_suite, std::vector<std::uint8_t>(reality_cert_private_key_.begin(), reality_cert_private_key_.end()));
     if (!crypto_result)
     {
         ec = crypto_result.error();
@@ -1124,45 +1158,4 @@ boost::asio::awaitable<void> remote_server::verify_client_finished(reality_conte
     co_return;
 }
 
-static std::optional<std::pair<std::string, std::string>> find_exact_sni_fallback(const std::vector<config::fallback_entry>& fallbacks,
-                                                                                  const std::string& sni)
-{
-    if (sni.empty())
-    {
-        return std::nullopt;
-    }
-    for (const auto& fb : fallbacks)
-    {
-        if (fb.sni == sni)
-        {
-            return std::make_pair(fb.host, fb.port);
-        }
-    }
-    return std::nullopt;
-}
-
-static std::optional<std::pair<std::string, std::string>> find_wildcard_fallback(const std::vector<config::fallback_entry>& fallbacks)
-{
-    for (const auto& fb : fallbacks)
-    {
-        if (fb.sni.empty() || fb.sni == "*")
-        {
-            return std::make_pair(fb.host, fb.port);
-        }
-    }
-    return std::nullopt;
-}
-
-std::pair<std::string, std::string> remote_server::find_fallback_target_by_sni(const std::string& sni) const
-{
-    if (const auto exact = find_exact_sni_fallback(cfg_.fallbacks, sni); exact.has_value())
-    {
-        return *exact;
-    }
-    if (const auto wildcard = find_wildcard_fallback(cfg_.fallbacks); wildcard.has_value())
-    {
-        return *wildcard;
-    }
-    return {};
-}
 }    // namespace mux

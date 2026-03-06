@@ -220,9 +220,6 @@ PY
   "log": { "level": "info", "file": "server_test.log" },
   "socks": { "enabled": false },
   "inbound": { "host": "${SERVER_IP}", "port": ${REMOTE_PORT} },
-  "fallbacks": [
-    { "sni": "example.com", "host": "${SERVER_IP}", "port": "${TLS_PORT}" }
-  ],
   "reality": {
     "sni": "example.com",
     "private_key": "${PRIV_KEY}",
@@ -278,8 +275,7 @@ cat >"${TMPDIR}/config.json" <<EOF
   "reality": {
     "sni": "example.com",
     "public_key": "${REALITY_PUB}",
-    "short_id": "",
-    "strict_cert_verify": false
+    "short_id": ""
   },
   "limits": { "max_connections": 1 },
   "timeout": { "idle": 5 },
