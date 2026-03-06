@@ -1093,13 +1093,18 @@ void remote_server::start()
 
 void remote_server::stop()
 {
-    boost::system::error_code ec;
-    acceptor_.close(ec);
-    if (ec && ec != boost::asio::error::bad_descriptor)
-    {
-        LOG_ERROR("remote acceptor close error {}", ec.message());
-    }
-    group_.emit(boost::asio::cancellation_type::all);
+    boost::asio::post(
+        io_context_,
+        [self = shared_from_this()]()
+        {
+            boost::system::error_code ec;
+            self->acceptor_.close(ec);
+            if (ec && ec != boost::asio::error::bad_descriptor)
+            {
+                LOG_ERROR("remote acceptor close error {}", ec.message());
+            }
+            self->group_.emit(boost::asio::cancellation_type::all);
+        });
 }
 
 bool remote_server::try_acquire_fallback_budget(const connection_context& ctx, const char* reason)
