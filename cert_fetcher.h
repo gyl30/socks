@@ -35,7 +35,7 @@ class handshake_reassembler
 {
    public:
     void append(std::span<const std::uint8_t> data);
-    std::expected<bool, boost::system::error_code> next(std::vector<std::uint8_t>& out);
+    bool next(std::vector<std::uint8_t>& out, boost::system::error_code& ec);
 
    private:
     std::vector<std::uint8_t> buffer_;
@@ -76,27 +76,33 @@ class cert_fetcher
         [[nodiscard]] bool validate_server_hello_body(const std::vector<std::uint8_t>& sh_body) const;
 
         boost::asio::awaitable<std::vector<std::uint8_t>> find_certificate();
-        boost::asio::awaitable<std::expected<void, boost::system::error_code>> append_next_handshake_record(handshake_reassembler& assembler,
-                                                                                                            std::vector<std::uint8_t>& pt_buf,
-                                                                                                            int record_index);
-        std::expected<bool, boost::system::error_code> consume_handshake_messages(handshake_reassembler& assembler,
-                                                                                  std::vector<std::uint8_t>& msg,
-                                                                                  std::vector<std::uint8_t>& cert_msg);
+        boost::asio::awaitable<void> append_next_handshake_record(handshake_reassembler& assembler,
+                                                                  std::vector<std::uint8_t>& pt_buf,
+                                                                  int record_index,
+                                                                  boost::system::error_code& ec);
+        bool consume_handshake_messages(handshake_reassembler& assembler,
+                                        std::vector<std::uint8_t>& msg,
+                                        std::vector<std::uint8_t>& cert_msg,
+                                        boost::system::error_code& ec);
         bool process_handshake_message(const std::vector<std::uint8_t>& msg, std::vector<std::uint8_t>& cert_msg);
 
         boost::system::error_code process_server_hello(const std::vector<std::uint8_t>& sh_body);
 
         boost::asio::awaitable<std::pair<boost::system::error_code, std::vector<std::uint8_t>>> read_record_plaintext();
 
-        static std::expected<void, boost::system::error_code> validate_record_length(std::uint16_t len);
-        boost::asio::awaitable<std::expected<void, boost::system::error_code>> read_record_body(std::uint16_t len, std::vector<std::uint8_t>& rec);
-        std::expected<std::pair<std::uint8_t, std::span<std::uint8_t>>, boost::system::error_code> decrypt_application_record(
-            const std::uint8_t head[5], const std::vector<std::uint8_t>& rec, std::vector<std::uint8_t>& pt_buf);
-        std::expected<std::pair<std::uint8_t, std::span<std::uint8_t>>, boost::system::error_code> handle_record_by_content_type(
-            const std::uint8_t head[5], const std::vector<std::uint8_t>& rec, std::vector<std::uint8_t>& pt_buf);
+        static void validate_record_length(std::uint16_t len, boost::system::error_code& ec);
+        boost::asio::awaitable<void> read_record_body(std::uint16_t len, std::vector<std::uint8_t>& rec, boost::system::error_code& ec);
+        std::pair<std::uint8_t, std::span<std::uint8_t>> decrypt_application_record(const std::uint8_t head[5],
+                                                                                     const std::vector<std::uint8_t>& rec,
+                                                                                     std::vector<std::uint8_t>& pt_buf,
+                                                                                     boost::system::error_code& ec);
+        std::pair<std::uint8_t, std::span<std::uint8_t>> handle_record_by_content_type(const std::uint8_t head[5],
+                                                                                        const std::vector<std::uint8_t>& rec,
+                                                                                        std::vector<std::uint8_t>& pt_buf,
+                                                                                        boost::system::error_code& ec);
 
-        boost::asio::awaitable<std::expected<std::pair<std::uint8_t, std::span<std::uint8_t>>, boost::system::error_code>> read_record(
-            std::vector<std::uint8_t>& pt_buf);
+        boost::asio::awaitable<std::pair<std::uint8_t, std::span<std::uint8_t>>> read_record(std::vector<std::uint8_t>& pt_buf,
+                                                                                              boost::system::error_code& ec);
 
        private:
         mux::connection_context ctx_;

@@ -105,8 +105,9 @@ bool is_hex_separator(const char ch)
     return ch == ':' || ch == '-' || std::isspace(value) != 0;
 }
 
-std::expected<const EVP_MD*, boost::system::error_code> tls13_signature_digest(const std::uint16_t signature_scheme)
+const EVP_MD* tls13_signature_digest(const std::uint16_t signature_scheme, boost::system::error_code& ec)
 {
+    ec.clear();
     using reality::tls_consts::sig_alg::kEcdsaSecp256r1Sha256;
     using reality::tls_consts::sig_alg::kEcdsaSecp384r1Sha384;
     using reality::tls_consts::sig_alg::kEcdsaSecp521r1Sha512;
@@ -135,7 +136,8 @@ std::expected<const EVP_MD*, boost::system::error_code> tls13_signature_digest(c
         case kRsaPssRsaeSha512:
             return EVP_sha512();
         default:
-            return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+            ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+            return nullptr;
     }
 }
 
@@ -181,206 +183,247 @@ bool tls13_signature_scheme_is_rsa_pss(const std::uint16_t signature_scheme)
     return signature_scheme == kRsaPssRsaeSha256 || signature_scheme == kRsaPssRsaeSha384 || signature_scheme == kRsaPssRsaeSha512;
 }
 
-std::expected<openssl_ptrs::evp_pkey_ctx_ptr, boost::system::error_code> create_hkdf_context(const EVP_MD* md, const int mode)
+openssl_ptrs::evp_pkey_ctx_ptr create_hkdf_context(const EVP_MD* md, const int mode, boost::system::error_code& ec)
 {
+    ec.clear();
     openssl_ptrs::evp_pkey_ctx_ptr ctx(EVP_PKEY_CTX_new_id(EVP_PKEY_HKDF, nullptr));
     if (ctx == nullptr || EVP_PKEY_derive_init(ctx.get()) <= 0)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::not_enough_memory));
+        ec = boost::system::errc::make_error_code(boost::system::errc::not_enough_memory);
+        return nullptr;
     }
 
     if (EVP_PKEY_CTX_set_hkdf_md(ctx.get(), md) <= 0 || EVP_PKEY_CTX_set_hkdf_mode(ctx.get(), mode) <= 0)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return nullptr;
     }
     return ctx;
 }
 
-std::expected<void, boost::system::error_code> set_hkdf_key_material(const openssl_ptrs::evp_pkey_ctx_ptr& ctx, const std::vector<std::uint8_t>& key)
+void set_hkdf_key_material(const openssl_ptrs::evp_pkey_ctx_ptr& ctx, const std::vector<std::uint8_t>& key, boost::system::error_code& ec)
 {
+    ec.clear();
     if (key.empty())
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
+        ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
+        return;
     }
     if (EVP_PKEY_CTX_set1_hkdf_key(ctx.get(), key.data(), static_cast<int>(key.size())) <= 0)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return;
     }
-    return {};
+    return;
 }
 
-std::expected<void, boost::system::error_code> set_optional_hkdf_salt(const openssl_ptrs::evp_pkey_ctx_ptr& ctx,
-                                                                      const std::vector<std::uint8_t>& salt)
+void set_optional_hkdf_salt(const openssl_ptrs::evp_pkey_ctx_ptr& ctx, const std::vector<std::uint8_t>& salt, boost::system::error_code& ec)
 {
+    ec.clear();
     if (salt.empty())
     {
-        return {};
+        return;
     }
     if (EVP_PKEY_CTX_set1_hkdf_salt(ctx.get(), salt.data(), static_cast<int>(salt.size())) <= 0)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return;
     }
-    return {};
+    return;
 }
 
-std::expected<void, boost::system::error_code> validate_x25519_keys(const std::vector<std::uint8_t>& private_key,
-                                                                    const std::vector<std::uint8_t>& peer_public_key)
+void validate_x25519_keys(const std::vector<std::uint8_t>& private_key,
+                          const std::vector<std::uint8_t>& peer_public_key,
+                          boost::system::error_code& ec)
 {
+    ec.clear();
     if (private_key.size() != 32 || peer_public_key.size() != 32)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
+        ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
+        return;
     }
-    return {};
+    return;
 }
 
-std::expected<std::pair<openssl_ptrs::evp_pkey_ptr, openssl_ptrs::evp_pkey_ptr>, boost::system::error_code> create_x25519_key_objects(
-    const std::vector<std::uint8_t>& private_key, const std::vector<std::uint8_t>& peer_public_key)
+std::pair<openssl_ptrs::evp_pkey_ptr, openssl_ptrs::evp_pkey_ptr> create_x25519_key_objects(const std::vector<std::uint8_t>& private_key,
+                                                                                             const std::vector<std::uint8_t>& peer_public_key,
+                                                                                             boost::system::error_code& ec)
 {
+    ec.clear();
     openssl_ptrs::evp_pkey_ptr pkey(EVP_PKEY_new_raw_private_key(EVP_PKEY_X25519, nullptr, private_key.data(), 32));
     openssl_ptrs::evp_pkey_ptr pub(EVP_PKEY_new_raw_public_key(EVP_PKEY_X25519, nullptr, peer_public_key.data(), 32));
     if (pkey == nullptr || pub == nullptr)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return {};
     }
     return std::pair{std::move(pkey), std::move(pub)};
 }
 
-std::expected<std::vector<std::uint8_t>, boost::system::error_code> derive_x25519_shared_secret(const openssl_ptrs::evp_pkey_ptr& pkey,
-                                                                                                const openssl_ptrs::evp_pkey_ptr& pub)
+std::vector<std::uint8_t> derive_x25519_shared_secret(const openssl_ptrs::evp_pkey_ptr& pkey,
+                                                      const openssl_ptrs::evp_pkey_ptr& pub,
+                                                      boost::system::error_code& ec)
 {
+    ec.clear();
     const openssl_ptrs::evp_pkey_ctx_ptr ctx(EVP_PKEY_CTX_new(pkey.get(), nullptr));
     if (ctx == nullptr)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::not_enough_memory));
+        ec = boost::system::errc::make_error_code(boost::system::errc::not_enough_memory);
+        return {};
     }
     std::size_t len = 32;
     std::vector<std::uint8_t> shared(32, 0);
     if (EVP_PKEY_derive_init(ctx.get()) <= 0 || EVP_PKEY_derive_set_peer(ctx.get(), pub.get()) <= 0 ||
         EVP_PKEY_derive(ctx.get(), shared.data(), &len) <= 0)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return {};
     }
     return shared;
 }
 
-std::expected<openssl_ptrs::evp_pkey_ptr, boost::system::error_code> create_ed25519_private_key(
-    const std::vector<std::uint8_t>& private_key)
+openssl_ptrs::evp_pkey_ptr create_ed25519_private_key(const std::vector<std::uint8_t>& private_key, boost::system::error_code& ec)
 {
+    ec.clear();
     if (private_key.size() != 32)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
+        ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
+        return nullptr;
     }
 
     openssl_ptrs::evp_pkey_ptr pkey(EVP_PKEY_new_raw_private_key(EVP_PKEY_ED25519, nullptr, private_key.data(), private_key.size()));
     if (pkey == nullptr)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return nullptr;
     }
     return pkey;
 }
 
-std::expected<openssl_ptrs::x509_ptr, boost::system::error_code> parse_x509_from_der(const std::vector<std::uint8_t>& cert_der)
+openssl_ptrs::x509_ptr parse_x509_from_der(const std::vector<std::uint8_t>& cert_der, boost::system::error_code& ec)
 {
+    ec.clear();
     if (cert_der.empty() || cert_der.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
+        ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
+        return nullptr;
     }
 
     using bio_ptr = std::unique_ptr<BIO, decltype(&BIO_free)>;
     const bio_ptr cert_bio(BIO_new_mem_buf(cert_der.data(), static_cast<int>(cert_der.size())), &BIO_free);
     if (cert_bio == nullptr)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::not_enough_memory));
+        ec = boost::system::errc::make_error_code(boost::system::errc::not_enough_memory);
+        return nullptr;
     }
 
     openssl_ptrs::x509_ptr x509(d2i_X509_bio(cert_bio.get(), nullptr));
     if (x509 == nullptr)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return nullptr;
     }
     return x509;
 }
 
-std::expected<std::vector<std::uint8_t>, boost::system::error_code> serialize_x509_to_der(X509* cert)
+std::vector<std::uint8_t> serialize_x509_to_der(X509* cert, boost::system::error_code& ec)
 {
+    ec.clear();
     if (cert == nullptr)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
+        ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
+        return {};
     }
 
     const int der_len = i2d_X509(cert, nullptr);
     if (der_len <= 0)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return {};
     }
 
     std::vector<std::uint8_t> der(static_cast<std::size_t>(der_len));
     unsigned char* out = der.data();
     if (i2d_X509(cert, &out) != der_len)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return {};
     }
     return der;
 }
 
-std::expected<void, boost::system::error_code> validate_aead_decrypt_inputs(const EVP_CIPHER* cipher,
-                                                                            const std::vector<std::uint8_t>& key,
-                                                                            const std::span<const std::uint8_t> nonce,
-                                                                            const std::span<const std::uint8_t> ciphertext,
-                                                                            const std::span<std::uint8_t> output_buffer,
-                                                                            std::size_t& plaintext_len)
+void validate_aead_decrypt_inputs(const EVP_CIPHER* cipher,
+                                  const std::vector<std::uint8_t>& key,
+                                  const std::span<const std::uint8_t> nonce,
+                                  const std::span<const std::uint8_t> ciphertext,
+                                  const std::span<std::uint8_t> output_buffer,
+                                  std::size_t& plaintext_len,
+                                  boost::system::error_code& ec)
 {
+    ec.clear();
     if (cipher == nullptr)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
+        ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
+        return;
     }
     if (key.size() != static_cast<std::size_t>(EVP_CIPHER_key_length(cipher)))
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
+        ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
+        return;
     }
     if (nonce.size() != 12)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
+        ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
+        return;
     }
     if (ciphertext.size() < kAeadTagSize)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::message_size));
+        ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
+        return;
     }
 
     plaintext_len = ciphertext.size() - kAeadTagSize;
     if (plaintext_len > static_cast<std::size_t>(std::numeric_limits<int>::max()))
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::message_size));
+        ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
+        return;
     }
     if (output_buffer.size() < plaintext_len)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::no_buffer_space));
+        ec = boost::system::errc::make_error_code(boost::system::errc::no_buffer_space);
+        return;
     }
-    return {};
+    return;
 }
 
-std::expected<void, boost::system::error_code> apply_aead_tag(const cipher_context& ctx,
-                                                              const std::span<const std::uint8_t> ciphertext,
-                                                              const std::size_t plaintext_len)
+void apply_aead_tag(const cipher_context& ctx,
+                    const std::span<const std::uint8_t> ciphertext,
+                    const std::size_t plaintext_len,
+                    boost::system::error_code& ec)
 {
+    ec.clear();
     const std::uint8_t* tag = ciphertext.data() + plaintext_len;
     if (EVP_CIPHER_CTX_ctrl(ctx.get(), EVP_CTRL_GCM_SET_TAG, kAeadTagSize, const_cast<void*>(static_cast<const void*>(tag))) != 1)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::bad_message));
+        ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
+        return;
     }
-    return {};
+    return;
 }
 
-std::expected<std::size_t, boost::system::error_code> decrypt_aead_payload(const cipher_context& ctx,
-                                                                           const std::span<const std::uint8_t> aad,
-                                                                           const std::span<const std::uint8_t> ciphertext,
-                                                                           const std::size_t plaintext_len,
-                                                                           const std::span<std::uint8_t> output_buffer)
+std::size_t decrypt_aead_payload(const cipher_context& ctx,
+                                 const std::span<const std::uint8_t> aad,
+                                 const std::span<const std::uint8_t> ciphertext,
+                                 const std::size_t plaintext_len,
+                                 const std::span<std::uint8_t> output_buffer,
+                                 boost::system::error_code& ec)
 {
+    ec.clear();
     if (aad.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()) ||
         plaintext_len > static_cast<std::size_t>(std::numeric_limits<int>::max()))
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::message_size));
+        ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
+        return 0;
     }
 
     int update_len = 0;
@@ -388,18 +431,21 @@ std::expected<std::size_t, boost::system::error_code> decrypt_aead_payload(const
 
     if (!aad.empty() && EVP_DecryptUpdate(ctx.get(), nullptr, &update_len, aad.data(), static_cast<int>(aad.size())) != 1)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::bad_message));
+        ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
+        return 0;
     }
 
     if (EVP_DecryptUpdate(ctx.get(), output_buffer.data(), &plaintext_update_len, ciphertext.data(), static_cast<int>(plaintext_len)) != 1)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::bad_message));
+        ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
+        return 0;
     }
 
     int final_len = 0;
     if (EVP_DecryptFinal_ex(ctx.get(), output_buffer.data() + plaintext_update_len, &final_len) <= 0)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::bad_message));
+        ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
+        return 0;
     }
 
     return static_cast<std::size_t>(plaintext_update_len) + static_cast<std::size_t>(final_len);
@@ -573,116 +619,135 @@ bool crypto_util::generate_ed25519_keypair(std::uint8_t out_public[32], std::uin
     return false;
 }
 
-std::expected<std::vector<std::uint8_t>, boost::system::error_code> crypto_util::extract_public_key(const std::vector<std::uint8_t>& private_key)
+std::vector<std::uint8_t> crypto_util::extract_public_key(const std::vector<std::uint8_t>& private_key, boost::system::error_code& ec)
 {
+    ec.clear();
     ensure_openssl_initialized();
 
     if (private_key.size() != 32)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
+        ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
+        return {};
     }
 
     const openssl_ptrs::evp_pkey_ptr pkey(EVP_PKEY_new_raw_private_key(EVP_PKEY_X25519, nullptr, private_key.data(), 32));
     if (pkey == nullptr)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return {};
     }
 
     std::size_t len = 32;
     std::vector<std::uint8_t> public_key(32);
     if (EVP_PKEY_get_raw_public_key(pkey.get(), public_key.data(), &len) != 1)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return {};
     }
 
     return public_key;
 }
 
-std::expected<std::vector<std::uint8_t>, boost::system::error_code> crypto_util::extract_ed25519_public_key(
-    const std::vector<std::uint8_t>& private_key)
+std::vector<std::uint8_t> crypto_util::extract_ed25519_public_key(const std::vector<std::uint8_t>& private_key,
+                                                                  boost::system::error_code& ec)
 {
+    ec.clear();
     ensure_openssl_initialized();
 
     if (private_key.size() != 32)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
+        ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
+        return {};
     }
 
     const openssl_ptrs::evp_pkey_ptr pkey(EVP_PKEY_new_raw_private_key(EVP_PKEY_ED25519, nullptr, private_key.data(), 32));
     if (pkey == nullptr)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return {};
     }
 
     std::size_t len = 32;
     std::vector<std::uint8_t> public_key(32);
     if (EVP_PKEY_get_raw_public_key(pkey.get(), public_key.data(), &len) != 1)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return {};
     }
 
     return public_key;
 }
 
-std::expected<std::vector<std::uint8_t>, boost::system::error_code> crypto_util::x25519_derive(const std::vector<std::uint8_t>& private_key,
-                                                                                               const std::vector<std::uint8_t>& peer_public_key)
+std::vector<std::uint8_t> crypto_util::x25519_derive(const std::vector<std::uint8_t>& private_key,
+                                                     const std::vector<std::uint8_t>& peer_public_key,
+                                                     boost::system::error_code& ec)
 {
+    ec.clear();
     ensure_openssl_initialized();
 
-    if (auto r = validate_x25519_keys(private_key, peer_public_key); !r)
+    validate_x25519_keys(private_key, peer_public_key, ec);
+    if (ec)
     {
-        return std::unexpected(r.error());
+        return {};
     }
-    auto keys = create_x25519_key_objects(private_key, peer_public_key);
-    if (!keys)
+    auto keys = create_x25519_key_objects(private_key, peer_public_key, ec);
+    if (ec)
     {
-        return std::unexpected(keys.error());
+        return {};
     }
-    return derive_x25519_shared_secret(keys->first, keys->second);
+    return derive_x25519_shared_secret(keys.first, keys.second, ec);
 }
 
-std::expected<std::vector<std::uint8_t>, boost::system::error_code> crypto_util::hkdf_extract(const std::vector<std::uint8_t>& salt,
-                                                                                              const std::vector<std::uint8_t>& ikm,
-                                                                                              const EVP_MD* md)
+std::vector<std::uint8_t> crypto_util::hkdf_extract(const std::vector<std::uint8_t>& salt,
+                                                    const std::vector<std::uint8_t>& ikm,
+                                                    const EVP_MD* md,
+                                                    boost::system::error_code& ec)
 {
+    ec.clear();
     ensure_openssl_initialized();
 
-    auto evp_pkey_ctx = create_hkdf_context(md, EVP_PKEY_HKDEF_MODE_EXTRACT_ONLY);
-    if (!evp_pkey_ctx)
+    auto evp_pkey_ctx = create_hkdf_context(md, EVP_PKEY_HKDEF_MODE_EXTRACT_ONLY, ec);
+    if (ec)
     {
-        return std::unexpected(evp_pkey_ctx.error());
+        return {};
     }
 
-    if (auto r = set_optional_hkdf_salt(*evp_pkey_ctx, salt); !r)
+    set_optional_hkdf_salt(evp_pkey_ctx, salt, ec);
+    if (ec)
     {
-        return std::unexpected(r.error());
+        return {};
     }
 
-    if (auto r = set_hkdf_key_material(*evp_pkey_ctx, ikm); !r)
+    set_hkdf_key_material(evp_pkey_ctx, ikm, ec);
+    if (ec)
     {
-        return std::unexpected(r.error());
+        return {};
     }
 
     const int md_size = EVP_MD_size(md);
     if (md_size <= 0)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return {};
     }
     auto out_len = static_cast<std::size_t>(md_size);
     std::vector<std::uint8_t> prk(out_len);
-    if (EVP_PKEY_derive(evp_pkey_ctx->get(), prk.data(), &out_len) <= 0)
+    if (EVP_PKEY_derive(evp_pkey_ctx.get(), prk.data(), &out_len) <= 0)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return {};
     }
     prk.resize(out_len);
     return prk;
 }
 
-std::expected<std::vector<std::uint8_t>, boost::system::error_code> crypto_util::hkdf_expand(const std::vector<std::uint8_t>& prk,
-                                                                                             const std::vector<std::uint8_t>& info,
-                                                                                             const std::size_t len,
-                                                                                             const EVP_MD* md)
+std::vector<std::uint8_t> crypto_util::hkdf_expand(const std::vector<std::uint8_t>& prk,
+                                                   const std::vector<std::uint8_t>& info,
+                                                   const std::size_t len,
+                                                   const EVP_MD* md,
+                                                   boost::system::error_code& ec)
 {
+    ec.clear();
     ensure_openssl_initialized();
 
     if (len == 0)
@@ -690,40 +755,49 @@ std::expected<std::vector<std::uint8_t>, boost::system::error_code> crypto_util:
         return std::vector<std::uint8_t>{};
     }
 
-    auto evp_pkey_ctx = create_hkdf_context(md, EVP_PKEY_HKDEF_MODE_EXPAND_ONLY);
-    if (!evp_pkey_ctx)
+    auto evp_pkey_ctx = create_hkdf_context(md, EVP_PKEY_HKDEF_MODE_EXPAND_ONLY, ec);
+    if (ec)
     {
-        return std::unexpected(evp_pkey_ctx.error());
+        return {};
     }
 
-    if (auto r = set_hkdf_key_material(*evp_pkey_ctx, prk); !r)
+    set_hkdf_key_material(evp_pkey_ctx, prk, ec);
+    if (ec)
     {
-        return std::unexpected(r.error());
+        return {};
     }
 
-    if (EVP_PKEY_CTX_add1_hkdf_info(evp_pkey_ctx->get(), info.data(), static_cast<int>(info.size())) <= 0)
+    if (EVP_PKEY_CTX_add1_hkdf_info(evp_pkey_ctx.get(), info.data(), static_cast<int>(info.size())) <= 0)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return {};
     }
 
     std::size_t out_len = len;
     std::vector<std::uint8_t> okm(out_len);
-    if (EVP_PKEY_derive(evp_pkey_ctx->get(), okm.data(), &out_len) <= 0)
+    if (EVP_PKEY_derive(evp_pkey_ctx.get(), okm.data(), &out_len) <= 0)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return {};
     }
     okm.resize(out_len);
     return okm;
 }
 
-std::expected<std::vector<std::uint8_t>, boost::system::error_code> crypto_util::hkdf_expand_label(
-    const std::vector<std::uint8_t>& secret, const std::string& label, const std::vector<std::uint8_t>& context, std::size_t length, const EVP_MD* md)
+std::vector<std::uint8_t> crypto_util::hkdf_expand_label(const std::vector<std::uint8_t>& secret,
+                                                         const std::string& label,
+                                                         const std::vector<std::uint8_t>& context,
+                                                         std::size_t length,
+                                                         const EVP_MD* md,
+                                                         boost::system::error_code& ec)
 {
+    ec.clear();
     std::string full_label = "tls13 " + label;
     if (length > std::numeric_limits<std::uint16_t>::max() || full_label.size() > std::numeric_limits<std::uint8_t>::max() ||
         context.size() > std::numeric_limits<std::uint8_t>::max())
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
+        ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
+        return {};
     }
     std::vector<std::uint8_t> hkdf_label;
     hkdf_label.reserve(2 + 1 + full_label.size() + 1 + context.size());
@@ -734,89 +808,104 @@ std::expected<std::vector<std::uint8_t>, boost::system::error_code> crypto_util:
     hkdf_label.push_back(static_cast<std::uint8_t>(context.size()));
     hkdf_label.insert(hkdf_label.end(), context.begin(), context.end());
 
-    return hkdf_expand(secret, hkdf_label, length, md);
+    return hkdf_expand(secret, hkdf_label, length, md, ec);
 }
 
-std::expected<std::size_t, boost::system::error_code> crypto_util::aead_decrypt(const cipher_context& ctx,
-                                                                                const EVP_CIPHER* cipher,
-                                                                                const std::vector<std::uint8_t>& key,
-                                                                                const std::span<const std::uint8_t> nonce,
-                                                                                const std::span<const std::uint8_t> ciphertext,
-                                                                                const std::span<const std::uint8_t> aad,
-                                                                                const std::span<std::uint8_t> output_buffer)
+std::size_t crypto_util::aead_decrypt(const cipher_context& ctx,
+                                      const EVP_CIPHER* cipher,
+                                      const std::vector<std::uint8_t>& key,
+                                      const std::span<const std::uint8_t> nonce,
+                                      const std::span<const std::uint8_t> ciphertext,
+                                      const std::span<const std::uint8_t> aad,
+                                      const std::span<std::uint8_t> output_buffer,
+                                      boost::system::error_code& ec)
 {
+    ec.clear();
     ensure_openssl_initialized();
 
     std::size_t pt_len = 0;
-    if (auto r = validate_aead_decrypt_inputs(cipher, key, nonce, ciphertext, output_buffer, pt_len); !r)
+    validate_aead_decrypt_inputs(cipher, key, nonce, ciphertext, output_buffer, pt_len, ec);
+    if (ec)
     {
-        return std::unexpected(r.error());
+        return 0;
     }
 
     if (!ctx.init(false, cipher, key.data(), nonce.data(), nonce.size()))
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return 0;
     }
 
-    if (auto r = apply_aead_tag(ctx, ciphertext, pt_len); !r)
+    apply_aead_tag(ctx, ciphertext, pt_len, ec);
+    if (ec)
     {
-        return std::unexpected(r.error());
+        return 0;
     }
 
-    return decrypt_aead_payload(ctx, aad, ciphertext, pt_len, output_buffer);
+    return decrypt_aead_payload(ctx, aad, ciphertext, pt_len, output_buffer, ec);
 }
 
-std::expected<std::vector<std::uint8_t>, boost::system::error_code> crypto_util::aead_decrypt(const EVP_CIPHER* cipher,
-                                                                                              const std::vector<std::uint8_t>& key,
-                                                                                              const std::vector<std::uint8_t>& nonce,
-                                                                                              const std::vector<std::uint8_t>& ciphertext,
-                                                                                              const std::vector<std::uint8_t>& aad)
+std::vector<std::uint8_t> crypto_util::aead_decrypt(const EVP_CIPHER* cipher,
+                                                    const std::vector<std::uint8_t>& key,
+                                                    const std::vector<std::uint8_t>& nonce,
+                                                    const std::vector<std::uint8_t>& ciphertext,
+                                                    const std::vector<std::uint8_t>& aad,
+                                                    boost::system::error_code& ec)
 {
+    ec.clear();
     const cipher_context ctx;
     if (ciphertext.size() < kAeadTagSize)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::message_size));
+        ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
+        return {};
     }
     std::vector<std::uint8_t> out(ciphertext.size() - kAeadTagSize);
-    auto n = aead_decrypt(ctx, cipher, key, nonce, ciphertext, aad, out);
-    if (!n)
+    auto n = aead_decrypt(ctx, cipher, key, nonce, ciphertext, aad, out, ec);
+    if (ec)
     {
-        return std::unexpected(n.error());
+        return {};
     }
-    out.resize(*n);
+    out.resize(n);
     return out;
 }
 
-std::expected<void, boost::system::error_code> crypto_util::aead_encrypt_append(const cipher_context& ctx,
-                                                                                const EVP_CIPHER* cipher,
-                                                                                const std::vector<std::uint8_t>& key,
-                                                                                const std::vector<std::uint8_t>& nonce,
-                                                                                const std::vector<std::uint8_t>& plaintext,
-                                                                                std::span<const std::uint8_t> aad,
-                                                                                std::vector<std::uint8_t>& output_buffer)
+void crypto_util::aead_encrypt_append(const cipher_context& ctx,
+                                      const EVP_CIPHER* cipher,
+                                      const std::vector<std::uint8_t>& key,
+                                      const std::vector<std::uint8_t>& nonce,
+                                      const std::vector<std::uint8_t>& plaintext,
+                                      std::span<const std::uint8_t> aad,
+                                      std::vector<std::uint8_t>& output_buffer,
+                                      boost::system::error_code& ec)
 {
+    ec.clear();
     ensure_openssl_initialized();
 
     if (cipher == nullptr)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
+        ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
+        return;
     }
     if (key.size() != static_cast<std::size_t>(EVP_CIPHER_key_length(cipher)))
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
+        ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
+        return;
     }
     if (nonce.size() != 12)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
+        ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
+        return;
     }
     if (aad.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()) ||
         plaintext.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::message_size));
+        ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
+        return;
     }
     if (!ctx.init(true, cipher, key.data(), nonce.data(), nonce.size()))
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return;
     }
 
     int out_len = 0;
@@ -835,201 +924,231 @@ std::expected<void, boost::system::error_code> crypto_util::aead_encrypt_append(
         if (EVP_EncryptUpdate(ctx.get(), nullptr, &len, aad.data(), static_cast<int>(aad.size())) != 1)
         {
             rollback_output();
-            return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+            ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+            return;
         }
     }
 
     if (EVP_EncryptUpdate(ctx.get(), out_ptr, &out_len, plaintext.data(), static_cast<int>(plaintext.size())) != 1)
     {
         rollback_output();
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return;
     }
 
     int final_len = 0;
     if (EVP_EncryptFinal_ex(ctx.get(), out_ptr + out_len, &final_len) != 1)
     {
         rollback_output();
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return;
     }
 
     if (out_len < 0 || final_len < 0)
     {
         rollback_output();
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return;
     }
     if (EVP_CIPHER_CTX_ctrl(ctx.get(), EVP_CTRL_GCM_GET_TAG, kAeadTagSize, out_ptr + out_len + final_len) != 1)
     {
         rollback_output();
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return;
     }
     output_buffer.resize(current_size + static_cast<std::size_t>(out_len) + static_cast<std::size_t>(final_len) + kAeadTagSize);
-    return {};
+    return;
 }
 
-std::expected<std::vector<std::uint8_t>, boost::system::error_code> crypto_util::aead_encrypt(const EVP_CIPHER* cipher,
-                                                                                              const std::vector<std::uint8_t>& key,
-                                                                                              const std::vector<std::uint8_t>& nonce,
-                                                                                              const std::vector<std::uint8_t>& plaintext,
-                                                                                              const std::vector<std::uint8_t>& aad)
+std::vector<std::uint8_t> crypto_util::aead_encrypt(const EVP_CIPHER* cipher,
+                                                    const std::vector<std::uint8_t>& key,
+                                                    const std::vector<std::uint8_t>& nonce,
+                                                    const std::vector<std::uint8_t>& plaintext,
+                                                    const std::vector<std::uint8_t>& aad,
+                                                    boost::system::error_code& ec)
 {
+    ec.clear();
     const cipher_context ctx;
     std::vector<std::uint8_t> out;
-    auto r = aead_encrypt_append(ctx, cipher, key, nonce, plaintext, aad, out);
-    if (!r)
+    aead_encrypt_append(ctx, cipher, key, nonce, plaintext, aad, out, ec);
+    if (ec)
     {
-        return std::unexpected(r.error());
+        return {};
     }
     return out;
 }
 
-std::expected<openssl_ptrs::evp_pkey_ptr, boost::system::error_code> crypto_util::extract_pubkey_from_cert(const std::vector<std::uint8_t>& cert_der)
+openssl_ptrs::evp_pkey_ptr crypto_util::extract_pubkey_from_cert(const std::vector<std::uint8_t>& cert_der, boost::system::error_code& ec)
 {
+    ec.clear();
     ensure_openssl_initialized();
-    auto x509 = parse_x509_from_der(cert_der);
-    if (!x509)
+    auto x509 = parse_x509_from_der(cert_der, ec);
+    if (ec)
     {
-        return std::unexpected(x509.error());
+        return nullptr;
     }
 
-    EVP_PKEY* pkey = X509_get_pubkey(x509->get());
+    EVP_PKEY* pkey = X509_get_pubkey(x509.get());
     if (pkey == nullptr)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return nullptr;
     }
 
     return openssl_ptrs::evp_pkey_ptr(pkey);
 }
 
-std::expected<std::vector<std::uint8_t>, boost::system::error_code> crypto_util::extract_raw_public_key(EVP_PKEY* key)
+std::vector<std::uint8_t> crypto_util::extract_raw_public_key(EVP_PKEY* key, boost::system::error_code& ec)
 {
+    ec.clear();
     ensure_openssl_initialized();
 
     if (key == nullptr)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
+        ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
+        return {};
     }
 
     std::size_t key_len = 0;
     if (EVP_PKEY_get_raw_public_key(key, nullptr, &key_len) != 1 || key_len == 0)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return {};
     }
 
     std::vector<std::uint8_t> raw_key(key_len);
     if (EVP_PKEY_get_raw_public_key(key, raw_key.data(), &key_len) != 1 || key_len == 0)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return {};
     }
     raw_key.resize(key_len);
     return raw_key;
 }
 
-std::expected<std::vector<std::uint8_t>, boost::system::error_code> crypto_util::extract_certificate_signature(
-    const std::vector<std::uint8_t>& cert_der)
+std::vector<std::uint8_t> crypto_util::extract_certificate_signature(const std::vector<std::uint8_t>& cert_der,
+                                                                     boost::system::error_code& ec)
 {
+    ec.clear();
     ensure_openssl_initialized();
 
-    auto x509 = parse_x509_from_der(cert_der);
-    if (!x509)
+    auto x509 = parse_x509_from_der(cert_der, ec);
+    if (ec)
     {
-        return std::unexpected(x509.error());
+        return {};
     }
 
     const ASN1_BIT_STRING* signature = nullptr;
     const X509_ALGOR* algorithm = nullptr;
-    X509_get0_signature(&signature, &algorithm, x509->get());
+    X509_get0_signature(&signature, &algorithm, x509.get());
     (void)algorithm;
     if (signature == nullptr || signature->data == nullptr || signature->length <= 0)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return {};
     }
 
     return std::vector<std::uint8_t>(signature->data, signature->data + signature->length);
 }
 
-std::expected<std::vector<std::uint8_t>, boost::system::error_code> crypto_util::create_self_signed_ed25519_certificate(
-    const std::vector<std::uint8_t>& private_key)
+std::vector<std::uint8_t> crypto_util::create_self_signed_ed25519_certificate(const std::vector<std::uint8_t>& private_key,
+                                                                               boost::system::error_code& ec)
 {
+    ec.clear();
     ensure_openssl_initialized();
 
-    auto pkey = create_ed25519_private_key(private_key);
-    if (!pkey)
+    auto pkey = create_ed25519_private_key(private_key, ec);
+    if (ec)
     {
-        return std::unexpected(pkey.error());
+        return {};
     }
 
     openssl_ptrs::x509_ptr cert(X509_new());
     if (cert == nullptr)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::not_enough_memory));
+        ec = boost::system::errc::make_error_code(boost::system::errc::not_enough_memory);
+        return {};
     }
     if (X509_set_version(cert.get(), 2) != 1)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return {};
     }
     if (ASN1_INTEGER_set(X509_get_serialNumber(cert.get()), 1) != 1)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return {};
     }
     if (X509_gmtime_adj(X509_getm_notBefore(cert.get()), -86400) == nullptr ||
         X509_gmtime_adj(X509_getm_notAfter(cert.get()), 31536000L) == nullptr)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return {};
     }
-    if (X509_set_pubkey(cert.get(), pkey->get()) != 1)
+    if (X509_set_pubkey(cert.get(), pkey.get()) != 1)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return {};
     }
 
     X509_NAME* subject = X509_get_subject_name(cert.get());
     if (subject == nullptr)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return {};
     }
     static constexpr unsigned char kCommonName[] = "REALITY";
     if (X509_NAME_add_entry_by_txt(subject, "CN", MBSTRING_ASC, kCommonName, -1, -1, 0) != 1)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return {};
     }
     if (X509_set_issuer_name(cert.get(), subject) != 1)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return {};
     }
 
     const openssl_ptrs::evp_md_ctx_ptr mctx(EVP_MD_CTX_new());
     if (mctx == nullptr)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::not_enough_memory));
+        ec = boost::system::errc::make_error_code(boost::system::errc::not_enough_memory);
+        return {};
     }
-    if (EVP_DigestSignInit(mctx.get(), nullptr, nullptr, nullptr, pkey->get()) != 1)
+    if (EVP_DigestSignInit(mctx.get(), nullptr, nullptr, nullptr, pkey.get()) != 1)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return {};
     }
     if (X509_sign_ctx(cert.get(), mctx.get()) <= 0)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return {};
     }
 
-    auto cert_der = serialize_x509_to_der(cert.get());
-    if (!cert_der)
+    auto cert_der = serialize_x509_to_der(cert.get(), ec);
+    if (ec)
     {
-        return std::unexpected(cert_der.error());
+        return {};
     }
-    auto signature = extract_certificate_signature(*cert_der);
-    if (!signature)
+    auto signature = extract_certificate_signature(cert_der, ec);
+    if (ec)
     {
-        return std::unexpected(signature.error());
+        return {};
     }
-    if (signature->size() != 64)
+    if (signature.size() != 64)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return {};
     }
     return cert_der;
 }
 
-std::expected<std::vector<std::uint8_t>, boost::system::error_code> crypto_util::hmac_sha512(const std::vector<std::uint8_t>& key,
-                                                                                              const std::vector<std::uint8_t>& data)
+std::vector<std::uint8_t> crypto_util::hmac_sha512(const std::vector<std::uint8_t>& key,
+                                                   const std::vector<std::uint8_t>& data,
+                                                   boost::system::error_code& ec)
 {
+    ec.clear();
     ensure_openssl_initialized();
 
     unsigned int out_len = 0;
@@ -1039,34 +1158,39 @@ std::expected<std::vector<std::uint8_t>, boost::system::error_code> crypto_util:
              static_cast<int>(key.size()),
              data.data(),
              data.size(),
-             out.data(),
-             &out_len) == nullptr ||
+        out.data(),
+        &out_len) == nullptr ||
         out_len == 0)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return {};
     }
 
     return std::vector<std::uint8_t>(out.begin(), out.begin() + static_cast<std::ptrdiff_t>(out_len));
 }
 
-std::expected<void, boost::system::error_code> crypto_util::verify_tls13_signature(EVP_PKEY* pub_key,
-                                                                                   const std::uint16_t signature_scheme,
-                                                                                   const std::vector<std::uint8_t>& transcript_hash,
-                                                                                   const std::vector<std::uint8_t>& signature)
+void crypto_util::verify_tls13_signature(EVP_PKEY* pub_key,
+                                         const std::uint16_t signature_scheme,
+                                         const std::vector<std::uint8_t>& transcript_hash,
+                                         const std::vector<std::uint8_t>& signature,
+                                         boost::system::error_code& ec)
 {
+    ec.clear();
     ensure_openssl_initialized();
     if (pub_key == nullptr || signature.empty())
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return;
     }
     if (!tls13_signature_scheme_matches_key(signature_scheme, pub_key))
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return;
     }
-    auto md = tls13_signature_digest(signature_scheme);
-    if (!md)
+    const auto md = tls13_signature_digest(signature_scheme, ec);
+    if (ec)
     {
-        return std::unexpected(md.error());
+        return;
     }
 
     std::vector<std::uint8_t> to_verify(64, 0x20);
@@ -1081,27 +1205,32 @@ std::expected<void, boost::system::error_code> crypto_util::verify_tls13_signatu
     const openssl_ptrs::evp_md_ctx_ptr mctx(EVP_MD_CTX_new());
     if (mctx == nullptr)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::not_enough_memory));
+        ec = boost::system::errc::make_error_code(boost::system::errc::not_enough_memory);
+        return;
     }
 
     EVP_PKEY_CTX* pctx = nullptr;
-    if (EVP_DigestVerifyInit(mctx.get(), &pctx, *md, nullptr, pub_key) <= 0)
+    if (EVP_DigestVerifyInit(mctx.get(), &pctx, md, nullptr, pub_key) <= 0)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return;
     }
     if (tls13_signature_scheme_is_rsa_pss(signature_scheme))
     {
         if (pctx == nullptr)
         {
-            return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+            ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+            return;
         }
         if (EVP_PKEY_CTX_set_rsa_padding(pctx, RSA_PKCS1_PSS_PADDING) <= 0)
         {
-            return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+            ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+            return;
         }
         if (EVP_PKEY_CTX_set_rsa_pss_saltlen(pctx, RSA_PSS_SALTLEN_DIGEST) <= 0)
         {
-            return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+            ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+            return;
         }
     }
 
@@ -1110,10 +1239,11 @@ std::expected<void, boost::system::error_code> crypto_util::verify_tls13_signatu
     if (res != 1)
     {
         LOG_ERROR("signature verification failed");
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return;
     }
 
-    return {};
+    return;
 }
 
 }    // namespace reality

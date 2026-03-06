@@ -91,9 +91,10 @@ boost::asio::awaitable<void> direct_upstream::connect(const std::string& host, c
         const auto connect_mark = cfg_.tproxy.enabled ? cfg_.tproxy.mark : 0U;
         if (connect_mark != 0)
         {
-            if (auto r = net::set_socket_mark(socket_.native_handle(), connect_mark); !r)
+            net::set_socket_mark(socket_.native_handle(), connect_mark, op_ec);
+            if (op_ec)
             {
-                last_ec = r.error();
+                last_ec = op_ec;
                 continue;
             }
         }

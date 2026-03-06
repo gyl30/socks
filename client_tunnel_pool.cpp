@@ -285,104 +285,121 @@ struct handshake_validation_state
     reality::openssl_ptrs::evp_pkey_ptr server_pub_key = nullptr;
 };
 
-std::expected<void, boost::system::error_code> verify_reality_bound_certificate(const std::vector<std::uint8_t>& cert_der,
-                                                                                const std::vector<std::uint8_t>& auth_key,
-                                                                                handshake_validation_state& validation_state)
+void verify_reality_bound_certificate(const std::vector<std::uint8_t>& cert_der,
+                                      const std::vector<std::uint8_t>& auth_key,
+                                      handshake_validation_state& validation_state,
+                                      boost::system::error_code& ec)
 {
-    auto server_pub_key = reality::crypto_util::extract_pubkey_from_cert(cert_der);
-    if (!server_pub_key || *server_pub_key == nullptr)
+    ec.clear();
+    auto server_pub_key = reality::crypto_util::extract_pubkey_from_cert(cert_der, ec);
+    if (ec || server_pub_key == nullptr)
     {
         LOG_ERROR("extract server pubkey failed");
-        return std::unexpected(server_pub_key ? boost::asio::error::invalid_argument : server_pub_key.error());
+        if (!ec)
+        {
+            ec = boost::asio::error::invalid_argument;
+        }
+        return;
     }
-    if (EVP_PKEY_base_id(server_pub_key->get()) != EVP_PKEY_ED25519)
+    if (EVP_PKEY_base_id(server_pub_key.get()) != EVP_PKEY_ED25519)
     {
         LOG_ERROR("server certificate pubkey is not ed25519");
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::permission_denied));
+        ec = boost::system::errc::make_error_code(boost::system::errc::permission_denied);
+        return;
     }
 
-    auto raw_pub_key = reality::crypto_util::extract_raw_public_key(server_pub_key->get());
-    if (!raw_pub_key)
+    auto raw_pub_key = reality::crypto_util::extract_raw_public_key(server_pub_key.get(), ec);
+    if (ec)
     {
-        return std::unexpected(raw_pub_key.error());
+        return;
     }
-    auto cert_signature = reality::crypto_util::extract_certificate_signature(cert_der);
-    if (!cert_signature)
+    auto cert_signature = reality::crypto_util::extract_certificate_signature(cert_der, ec);
+    if (ec)
     {
-        return std::unexpected(cert_signature.error());
+        return;
     }
-    auto expected_signature = reality::crypto_util::hmac_sha512(auth_key, *raw_pub_key);
-    if (!expected_signature)
+    auto expected_signature = reality::crypto_util::hmac_sha512(auth_key, raw_pub_key, ec);
+    if (ec)
     {
-        return std::unexpected(expected_signature.error());
+        return;
     }
-    if (expected_signature->size() != cert_signature->size() ||
-        CRYPTO_memcmp(expected_signature->data(), cert_signature->data(), expected_signature->size()) != 0)
+    if (expected_signature.size() != cert_signature.size() ||
+        CRYPTO_memcmp(expected_signature.data(), cert_signature.data(), expected_signature.size()) != 0)
     {
         LOG_ERROR("server certificate reality binding mismatch");
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::permission_denied));
+        ec = boost::system::errc::make_error_code(boost::system::errc::permission_denied);
+        return;
     }
 
-    validation_state.server_pub_key = std::move(*server_pub_key);
+    validation_state.server_pub_key = std::move(server_pub_key);
     validation_state.reality_cert_verified = true;
-    return {};
+    return;
 }
 
-std::expected<void, boost::system::error_code> load_server_public_key_from_certificate(const std::vector<std::uint8_t>& msg_data,
-                                                                                       const std::vector<std::uint8_t>& auth_key,
-                                                                                       handshake_validation_state& validation_state)
+void load_server_public_key_from_certificate(const std::vector<std::uint8_t>& msg_data,
+                                             const std::vector<std::uint8_t>& auth_key,
+                                             handshake_validation_state& validation_state,
+                                             boost::system::error_code& ec)
 {
+    ec.clear();
     LOG_DEBUG("received certificate message size {}", msg_data.size());
     if (validation_state.cert_checked)
     {
-        return {};
+        return;
     }
 
     const auto cert_der = extract_first_cert_der(msg_data);
     if (!cert_der.has_value())
     {
         LOG_ERROR("certificate message parse failed");
-        return std::unexpected(boost::asio::error::invalid_argument);
+        ec = boost::asio::error::invalid_argument;
+        return;
     }
-    if (const auto res = verify_reality_bound_certificate(*cert_der, auth_key, validation_state); !res)
+    verify_reality_bound_certificate(*cert_der, auth_key, validation_state, ec);
+    if (ec)
     {
-        return std::unexpected(res.error());
+        return;
     }
 
     validation_state.cert_checked = true;
-    return {};
+    return;
 }
 
-std::expected<void, boost::system::error_code> verify_server_certificate_verify_message(const std::vector<std::uint8_t>& msg_data,
-                                                                                        const reality::transcript& trans,
-                                                                                        handshake_validation_state& validation_state)
+void verify_server_certificate_verify_message(const std::vector<std::uint8_t>& msg_data,
+                                              const reality::transcript& trans,
+                                              handshake_validation_state& validation_state,
+                                              boost::system::error_code& ec)
 {
+    ec.clear();
     if (!validation_state.cert_checked)
     {
         LOG_ERROR("certificate verify received before certificate");
-        return std::unexpected(boost::asio::error::invalid_argument);
+        ec = boost::asio::error::invalid_argument;
+        return;
     }
 
     const auto cert_verify = reality::parse_certificate_verify(msg_data);
     if (!cert_verify.has_value())
     {
         LOG_ERROR("certificate verify parse failed");
-        return std::unexpected(boost::asio::error::invalid_argument);
+        ec = boost::asio::error::invalid_argument;
+        return;
     }
     if (!reality::is_supported_certificate_verify_scheme(cert_verify->scheme))
     {
         LOG_ERROR("unsupported certificate verify scheme {:x}", cert_verify->scheme);
-        return std::unexpected(boost::asio::error::no_protocol_option);
+        ec = boost::asio::error::no_protocol_option;
+        return;
     }
 
     if (validation_state.server_pub_key != nullptr)
     {
         const auto transcript_hash = trans.finish();
-        auto verify_result = reality::crypto_util::verify_tls13_signature(
-            validation_state.server_pub_key.get(), cert_verify->scheme, transcript_hash, cert_verify->signature);
-        if (!verify_result)
+        reality::crypto_util::verify_tls13_signature(
+            validation_state.server_pub_key.get(), cert_verify->scheme, transcript_hash, cert_verify->signature, ec);
+        if (ec)
         {
-            LOG_DEBUG("certificate verify signature check failed code {} message {}", verify_result.error().value(), verify_result.error().message());
+            LOG_DEBUG("certificate verify signature check failed code {} message {}", ec.value(), ec.message());
         }
         else
         {
@@ -391,37 +408,41 @@ std::expected<void, boost::system::error_code> verify_server_certificate_verify_
     }
 
     validation_state.cert_verify_checked = true;
-    return {};
+    return;
 }
 
-std::expected<void, boost::system::error_code> verify_server_finished_message(const std::vector<std::uint8_t>& msg_data,
-                                                                              const reality::handshake_keys& hs_keys,
-                                                                              const EVP_MD* md,
-                                                                              const reality::transcript& trans)
+void verify_server_finished_message(const std::vector<std::uint8_t>& msg_data,
+                                    const reality::handshake_keys& hs_keys,
+                                    const EVP_MD* md,
+                                    const reality::transcript& trans,
+                                    boost::system::error_code& ec)
 {
+    ec.clear();
     const std::uint32_t msg_len =
         (static_cast<std::uint32_t>(msg_data[1]) << 16) | (static_cast<std::uint32_t>(msg_data[2]) << 8) | static_cast<std::uint32_t>(msg_data[3]);
 
     const auto expected_verify_data =
-        reality::tls_key_schedule::compute_finished_verify_data(hs_keys.server_handshake_traffic_secret, trans.finish(), md);
-    if (!expected_verify_data)
+        reality::tls_key_schedule::compute_finished_verify_data(hs_keys.server_handshake_traffic_secret, trans.finish(), md, ec);
+    if (ec)
     {
-        LOG_ERROR("server finished verify derive failed {}", expected_verify_data.error().message());
-        return std::unexpected(expected_verify_data.error());
+        LOG_ERROR("server finished verify derive failed {}", ec.message());
+        return;
     }
 
-    if (expected_verify_data->size() != msg_len)
+    if (expected_verify_data.size() != msg_len)
     {
-        LOG_ERROR("server finished verify size mismatch {} {}", expected_verify_data->size(), msg_len);
-        return std::unexpected(boost::asio::error::invalid_argument);
+        LOG_ERROR("server finished verify size mismatch {} {}", expected_verify_data.size(), msg_len);
+        ec = boost::asio::error::invalid_argument;
+        return;
     }
 
-    if (CRYPTO_memcmp(msg_data.data() + 4, expected_verify_data->data(), expected_verify_data->size()) != 0)
+    if (CRYPTO_memcmp(msg_data.data() + 4, expected_verify_data.data(), expected_verify_data.size()) != 0)
     {
         LOG_ERROR("server finished verify mismatch");
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::permission_denied));
+        ec = boost::system::errc::make_error_code(boost::system::errc::permission_denied);
+        return;
     }
-    return {};
+    return;
 }
 
 std::optional<std::vector<std::uint8_t>> extract_first_cert_der(const std::vector<std::uint8_t>& cert_msg)
@@ -443,23 +464,24 @@ struct encrypted_record
     std::vector<std::uint8_t> ciphertext;
 };
 
-boost::asio::awaitable<std::expected<encrypted_record, boost::system::error_code>> read_encrypted_record(boost::asio::ip::tcp::socket& socket,
-                                                                                                         const std::uint32_t timeout_sec)
+boost::asio::awaitable<encrypted_record> read_encrypted_record(boost::asio::ip::tcp::socket& socket,
+                                                               const std::uint32_t timeout_sec,
+                                                               boost::system::error_code& ec)
 {
-    boost::system::error_code ec;
+    ec.clear();
     std::array<std::uint8_t, 5> record_header{};
     auto read_size = co_await timeout_io::wait_read_with_timeout(socket, boost::asio::buffer(record_header), timeout_sec, ec);
     if (ec)
     {
         LOG_ERROR("error reading record header {}", ec.message());
-        co_return std::unexpected(ec);
+        co_return encrypted_record{};
     }
 
     if (read_size != record_header.size())
     {
         ec = boost::asio::error::fault;
         LOG_ERROR("short read record header {} of {}", read_size, record_header.size());
-        co_return std::unexpected(ec);
+        co_return encrypted_record{};
     }
 
     const auto record_body_size = static_cast<std::uint16_t>((record_header[3] << 8) | record_header[4]);
@@ -467,20 +489,21 @@ boost::asio::awaitable<std::expected<encrypted_record, boost::system::error_code
     if (record_body_size > kMaxRecordBodySize)
     {
         LOG_ERROR("record body too large {}", record_body_size);
-        co_return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::message_size));
+        ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
+        co_return encrypted_record{};
     }
     std::vector<std::uint8_t> record_body(record_body_size);
     read_size = co_await timeout_io::wait_read_with_timeout(socket, boost::asio::buffer(record_body), timeout_sec, ec);
     if (ec)
     {
         LOG_ERROR("error reading record payload {}", ec.message());
-        co_return std::unexpected(ec);
+        co_return encrypted_record{};
     }
     if (read_size != record_body_size)
     {
-        const auto ec = boost::asio::error::fault;
+        ec = boost::asio::error::fault;
         LOG_ERROR("short read record payload {} of {}", read_size, record_body_size);
-        co_return std::unexpected(ec);
+        co_return encrypted_record{};
     }
     if (record_header[0] == reality::kContentTypeChangeCipherSpec)
     {
@@ -488,13 +511,15 @@ boost::asio::awaitable<std::expected<encrypted_record, boost::system::error_code
         if (!reality::is_valid_tls13_compat_ccs(record_header, ccs_body))
         {
             LOG_ERROR("invalid tls13 compat ccs len {} body {}", record_body_size, ccs_body);
-            co_return std::unexpected(boost::asio::error::invalid_argument);
+            ec = boost::asio::error::invalid_argument;
+            co_return encrypted_record{};
         }
     }
     else if (record_header[0] != reality::kContentTypeApplicationData)
     {
         LOG_ERROR("unexpected encrypted record type {}", static_cast<int>(record_header[0]));
-        co_return std::unexpected(boost::asio::error::invalid_argument);
+        ec = boost::asio::error::invalid_argument;
+        co_return encrypted_record{};
     }
 
     std::vector<std::uint8_t> ciphertext(record_header.size() + record_body_size);
@@ -503,87 +528,92 @@ boost::asio::awaitable<std::expected<encrypted_record, boost::system::error_code
     co_return encrypted_record{.content_type = record_header[0], .ciphertext = std::move(ciphertext)};
 }
 
-std::expected<void, boost::system::error_code> handle_handshake_message(const std::uint8_t msg_type,
-                                                                        const std::vector<std::uint8_t>& msg_data,
-                                                                        const std::vector<std::uint8_t>& auth_key,
-                                                                        handshake_validation_state& validation_state,
-                                                                        bool& handshake_fin,
-                                                                        const reality::handshake_keys& hs_keys,
-                                                                        const EVP_MD* md,
-                                                                        reality::transcript& trans)
+void handle_handshake_message(const std::uint8_t msg_type,
+                              const std::vector<std::uint8_t>& msg_data,
+                              const std::vector<std::uint8_t>& auth_key,
+                              handshake_validation_state& validation_state,
+                              bool& handshake_fin,
+                              const reality::handshake_keys& hs_keys,
+                              const EVP_MD* md,
+                              reality::transcript& trans,
+                              boost::system::error_code& ec)
 {
+    ec.clear();
     if (msg_type == 0x08)
     {
         if (validation_state.encrypted_extensions_checked || validation_state.cert_checked || validation_state.cert_verify_checked || handshake_fin)
         {
             LOG_ERROR("unexpected encrypted extensions order");
-            return std::unexpected(boost::asio::error::invalid_argument);
+            ec = boost::asio::error::invalid_argument;
+            return;
         }
         validation_state.encrypted_extensions_checked = true;
-        return {};
+        return;
     }
     if (msg_type == 0x0b)
     {
         if (!validation_state.encrypted_extensions_checked)
         {
             LOG_ERROR("certificate received before encrypted extensions");
-            return std::unexpected(boost::asio::error::invalid_argument);
+            ec = boost::asio::error::invalid_argument;
+            return;
         }
         if (validation_state.cert_checked || validation_state.cert_verify_checked || handshake_fin)
         {
             LOG_ERROR("unexpected certificate message order");
-            return std::unexpected(boost::asio::error::invalid_argument);
+            ec = boost::asio::error::invalid_argument;
+            return;
         }
-        if (const auto res = load_server_public_key_from_certificate(msg_data, auth_key, validation_state); !res)
-        {
-            return std::unexpected(res.error());
-        }
-        return {};
+        load_server_public_key_from_certificate(msg_data, auth_key, validation_state, ec);
+        return;
     }
     else if (msg_type == 0x0f)
     {
         if (validation_state.cert_verify_checked || handshake_fin)
         {
             LOG_ERROR("unexpected certificate verify message order");
-            return std::unexpected(boost::asio::error::invalid_argument);
+            ec = boost::asio::error::invalid_argument;
+            return;
         }
-        if (const auto res = verify_server_certificate_verify_message(msg_data, trans, validation_state); !res)
-        {
-            return std::unexpected(res.error());
-        }
-        return {};
+        verify_server_certificate_verify_message(msg_data, trans, validation_state, ec);
+        return;
     }
     else if (msg_type == 0x14)
     {
         if (handshake_fin)
         {
             LOG_ERROR("duplicate server finished");
-            return std::unexpected(boost::asio::error::invalid_argument);
+            ec = boost::asio::error::invalid_argument;
+            return;
         }
         if (!validation_state.cert_verify_checked)
         {
             LOG_ERROR("server finished before certificate verify");
-            return std::unexpected(boost::asio::error::invalid_argument);
+            ec = boost::asio::error::invalid_argument;
+            return;
         }
-        if (const auto res = verify_server_finished_message(msg_data, hs_keys, md, trans); !res)
+        verify_server_finished_message(msg_data, hs_keys, md, trans, ec);
+        if (ec)
         {
-            return std::unexpected(res.error());
+            return;
         }
         handshake_fin = true;
-        return {};
+        return;
     }
     LOG_ERROR("unexpected handshake message type {}", msg_type);
-    return std::unexpected(boost::asio::error::invalid_argument);
+    ec = boost::asio::error::invalid_argument;
 }
 
-std::expected<std::size_t, boost::system::error_code> consume_handshake_buffer(std::vector<std::uint8_t>& handshake_buffer,
-                                                                               const std::vector<std::uint8_t>& auth_key,
-                                                                               handshake_validation_state& validation_state,
-                                                                               bool& handshake_fin,
-                                                                               const reality::handshake_keys& hs_keys,
-                                                                               const EVP_MD* md,
-                                                                               reality::transcript& trans)
+std::size_t consume_handshake_buffer(std::vector<std::uint8_t>& handshake_buffer,
+                                     const std::vector<std::uint8_t>& auth_key,
+                                     handshake_validation_state& validation_state,
+                                     bool& handshake_fin,
+                                     const reality::handshake_keys& hs_keys,
+                                     const EVP_MD* md,
+                                     reality::transcript& trans,
+                                     boost::system::error_code& ec)
 {
+    ec.clear();
     std::size_t offset = 0;
     while (offset <= handshake_buffer.size() && handshake_buffer.size() - offset >= 4)
     {
@@ -596,7 +626,8 @@ std::expected<std::size_t, boost::system::error_code> consume_handshake_buffer(s
         if (msg_len > kMaxHandshakeMessageSize)
         {
             LOG_ERROR("handshake message too large {}", msg_len);
-            return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::message_size));
+            ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
+            return 0;
         }
 
         const auto full_msg_len = static_cast<std::size_t>(msg_len) + 4;
@@ -608,9 +639,10 @@ std::expected<std::size_t, boost::system::error_code> consume_handshake_buffer(s
         const auto msg_begin = handshake_buffer.begin() + static_cast<std::ptrdiff_t>(offset);
         const auto msg_end = msg_begin + static_cast<std::ptrdiff_t>(full_msg_len);
         const std::vector<std::uint8_t> msg_data(msg_begin, msg_end);
-        if (const auto res = handle_handshake_message(msg_type, msg_data, auth_key, validation_state, handshake_fin, hs_keys, md, trans); !res)
+        handle_handshake_message(msg_type, msg_data, auth_key, validation_state, handshake_fin, hs_keys, md, trans, ec);
+        if (ec)
         {
-            return std::unexpected(res.error());
+            return 0;
         }
         trans.update(msg_data);
         offset += full_msg_len;
@@ -618,38 +650,44 @@ std::expected<std::size_t, boost::system::error_code> consume_handshake_buffer(s
     return offset;
 }
 
-std::expected<void, boost::system::error_code> consume_handshake_plaintext(const std::vector<std::uint8_t>& plaintext,
-                                                                           std::vector<std::uint8_t>& handshake_buffer,
-                                                                           const std::vector<std::uint8_t>& auth_key,
-                                                                           handshake_validation_state& validation_state,
-                                                                           bool& handshake_fin,
-                                                                           const reality::handshake_keys& hs_keys,
-                                                                           const EVP_MD* md,
-                                                                           reality::transcript& trans)
+void consume_handshake_plaintext(const std::vector<std::uint8_t>& plaintext,
+                                 std::vector<std::uint8_t>& handshake_buffer,
+                                 const std::vector<std::uint8_t>& auth_key,
+                                 handshake_validation_state& validation_state,
+                                 bool& handshake_fin,
+                                 const reality::handshake_keys& hs_keys,
+                                 const EVP_MD* md,
+                                 reality::transcript& trans,
+                                 boost::system::error_code& ec)
 {
+    ec.clear();
     if (plaintext.size() > kMaxHandshakeBufferSize || handshake_buffer.size() > kMaxHandshakeBufferSize - plaintext.size())
     {
         LOG_ERROR("handshake buffer too large {} {}", handshake_buffer.size(), plaintext.size());
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::message_size));
+        ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
+        return;
     }
     handshake_buffer.insert(handshake_buffer.end(), plaintext.begin(), plaintext.end());
-    const auto consumed = consume_handshake_buffer(handshake_buffer, auth_key, validation_state, handshake_fin, hs_keys, md, trans);
-    if (!consumed)
+    const auto consumed = consume_handshake_buffer(handshake_buffer, auth_key, validation_state, handshake_fin, hs_keys, md, trans, ec);
+    if (ec)
     {
-        return std::unexpected(consumed.error());
+        return;
     }
-    auto consumed_bytes = static_cast<uint32_t>(*consumed);
+    auto consumed_bytes = static_cast<uint32_t>(consumed);
     handshake_buffer.erase(handshake_buffer.begin(), handshake_buffer.begin() + consumed_bytes);
-    return {};
+    return;
 }
 
-std::expected<void, boost::system::error_code> validate_server_handshake_chain(const handshake_validation_state& validation_state,
-                                                                               const std::string& sni)
+void validate_server_handshake_chain(const handshake_validation_state& validation_state,
+                                     const std::string& sni,
+                                     boost::system::error_code& ec)
 {
+    ec.clear();
     if (!validation_state.cert_checked || !validation_state.cert_verify_checked)
     {
         LOG_ERROR("server auth chain incomplete");
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::permission_denied));
+        ec = boost::system::errc::make_error_code(boost::system::errc::permission_denied);
+        return;
     }
     if (!validation_state.reality_cert_verified)
     {
@@ -657,7 +695,8 @@ std::expected<void, boost::system::error_code> validate_server_handshake_chain(c
         stats.inc_cert_verify_failures();
         stats.inc_handshake_failure_by_sni(statistics::handshake_failure_reason::kCertVerify, sni);
         LOG_ERROR("server certificate reality binding verification failed");
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::permission_denied));
+        ec = boost::system::errc::make_error_code(boost::system::errc::permission_denied);
+        return;
     }
     if (!validation_state.cert_verify_signature_checked)
     {
@@ -665,33 +704,38 @@ std::expected<void, boost::system::error_code> validate_server_handshake_chain(c
         stats.inc_cert_verify_failures();
         stats.inc_handshake_failure_by_sni(statistics::handshake_failure_reason::kCertVerify, sni);
         LOG_ERROR("server certificate verify signature check failed");
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::permission_denied));
+        ec = boost::system::errc::make_error_code(boost::system::errc::permission_denied);
+        return;
     }
-    return {};
+    return;
 }
 
-boost::asio::awaitable<std::expected<std::vector<std::uint8_t>, boost::system::error_code>> read_handshake_record_body(
-    boost::asio::ip::tcp::socket& socket, const char* step, const std::uint32_t timeout_sec)
+boost::asio::awaitable<std::vector<std::uint8_t>> read_handshake_record_body(boost::asio::ip::tcp::socket& socket,
+                                                                             const char* step,
+                                                                             const std::uint32_t timeout_sec,
+                                                                             boost::system::error_code& ec)
 {
     std::uint8_t header[5];
-    boost::system::error_code ec;
+    ec.clear();
     auto read_size = co_await timeout_io::wait_read_with_timeout(socket, boost::asio::buffer(header, 5), timeout_sec, ec);
     if (ec)
     {
         LOG_ERROR("error reading {} header {}", step, ec.message());
-        co_return std::unexpected(ec);
+        co_return std::vector<std::uint8_t>{};
     }
     if (header[0] != reality::kContentTypeHandshake)
     {
         LOG_ERROR("unexpected record type for {} {}", step, header[0]);
-        co_return std::unexpected(boost::asio::error::invalid_argument);
+        ec = boost::asio::error::invalid_argument;
+        co_return std::vector<std::uint8_t>{};
     }
 
     const auto body_len = static_cast<std::uint16_t>((header[3] << 8) | header[4]);
     if (body_len > reality::kMaxTlsPlaintextLen)
     {
         LOG_ERROR("oversized {} body {}", step, body_len);
-        co_return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::message_size));
+        ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
+        co_return std::vector<std::uint8_t>{};
     }
 
     std::vector<std::uint8_t> body(body_len);
@@ -699,92 +743,100 @@ boost::asio::awaitable<std::expected<std::vector<std::uint8_t>, boost::system::e
     if (ec)
     {
         LOG_ERROR("error reading {} body {}", step, ec.message());
-        co_return std::unexpected(ec);
+        co_return std::vector<std::uint8_t>{};
     }
     if (read_size != body_len)
     {
-        const auto ec = boost::asio::error::fault;
+        ec = boost::asio::error::fault;
         LOG_ERROR("short read {} body {} of {}", step, read_size, body_len);
-        co_return std::unexpected(ec);
+        co_return std::vector<std::uint8_t>{};
     }
 
     co_return body;
 }
 
-std::expected<std::uint16_t, boost::system::error_code> parse_server_hello_cipher_suite(const std::vector<std::uint8_t>& sh_data)
+std::uint16_t parse_server_hello_cipher_suite(const std::vector<std::uint8_t>& sh_data, boost::system::error_code& ec)
 {
+    ec.clear();
     std::size_t pos = 4 + 2 + 32;
     if (pos >= sh_data.size())
     {
-        const boost::system::error_code ec = boost::asio::error::fault;
+        ec = boost::asio::error::fault;
         LOG_ERROR("bad server hello {}", ec.message());
-        return std::unexpected(ec);
+        return 0;
     }
 
     const std::uint8_t sid_len = sh_data[pos];
     pos += 1 + sid_len;
     if (pos + 2 > sh_data.size())
     {
-        const boost::system::error_code ec = boost::asio::error::fault;
+        ec = boost::asio::error::fault;
         LOG_ERROR("bad server hello session data {}", ec.message());
-        return std::unexpected(ec);
+        return 0;
     }
 
     const auto cipher_suite = static_cast<std::uint16_t>((sh_data[pos] << 8) | sh_data[pos + 1]);
     return cipher_suite;
 }
 
-std::expected<std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>, boost::system::error_code> derive_client_auth_key_material(
-    const std::uint8_t* private_key, const std::vector<std::uint8_t>& server_pub_key)
+std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> derive_client_auth_key_material(const std::uint8_t* private_key,
+                                                                                                 const std::vector<std::uint8_t>& server_pub_key,
+                                                                                                 boost::system::error_code& ec)
 {
-    auto shared_result = reality::crypto_util::x25519_derive(std::vector<std::uint8_t>(private_key, private_key + 32), server_pub_key);
+    ec.clear();
+    auto shared = reality::crypto_util::x25519_derive(std::vector<std::uint8_t>(private_key, private_key + 32), server_pub_key, ec);
     LOG_DEBUG("using server pub key size {}", server_pub_key.size());
-    if (!shared_result)
+    if (ec)
     {
-        return std::unexpected(shared_result.error());
+        return {};
     }
 
     std::vector<std::uint8_t> client_random(32);
     if (RAND_bytes(client_random.data(), 32) != 1)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::operation_canceled));
+        ec = boost::system::errc::make_error_code(boost::system::errc::operation_canceled);
+        return {};
     }
 
     const std::vector<std::uint8_t> salt(client_random.begin(), client_random.begin() + constants::auth::kSaltLen);
     const auto reality_label_info = reality::crypto_util::hex_to_bytes("5245414c495459");
-    auto pseudo_random_key_result = reality::crypto_util::hkdf_extract(salt, *shared_result, EVP_sha256());
-    if (!pseudo_random_key_result)
+    auto pseudo_random_key = reality::crypto_util::hkdf_extract(salt, shared, EVP_sha256(), ec);
+    if (ec)
     {
-        return std::unexpected(pseudo_random_key_result.error());
+        return {};
     }
-    auto auth_key_result = reality::crypto_util::hkdf_expand(*pseudo_random_key_result, reality_label_info, 16, EVP_sha256());
-    if (!auth_key_result)
+    auto auth_key = reality::crypto_util::hkdf_expand(pseudo_random_key, reality_label_info, 16, EVP_sha256(), ec);
+    if (ec)
     {
-        return std::unexpected(auth_key_result.error());
+        return {};
     }
     LOG_DEBUG("client auth material ready random {} bytes eph pub {} bytes", client_random.size(), 32);
-    return std::make_pair(std::move(client_random), std::move(*auth_key_result));
+    return std::make_pair(std::move(client_random), std::move(auth_key));
 }
 
-std::expected<void, boost::system::error_code> build_client_hello_with_placeholder_sid(const reality::fingerprint_spec& spec,
-                                                                                       const std::vector<std::uint8_t>& client_random,
-                                                                                       const std::uint8_t* public_key,
-                                                                                       const std::string& sni,
-                                                                                       std::vector<std::uint8_t>& hello_body,
-                                                                                       std::uint32_t& absolute_sid_offset)
+void build_client_hello_with_placeholder_sid(const reality::fingerprint_spec& spec,
+                                             const std::vector<std::uint8_t>& client_random,
+                                             const std::uint8_t* public_key,
+                                             const std::string& sni,
+                                             std::vector<std::uint8_t>& hello_body,
+                                             std::uint32_t& absolute_sid_offset,
+                                             boost::system::error_code& ec)
 {
+    ec.clear();
     const std::vector<std::uint8_t> placeholder_session_id(32, 0);
     hello_body = reality::client_hello_builder::build(
         spec, placeholder_session_id, client_random, std::vector<std::uint8_t>(public_key, public_key + 32), sni);
     if (hello_body.empty())
     {
         LOG_ERROR("generated client hello body invalid for configured sni");
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
+        ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
+        return;
     }
     if (hello_body.size() > std::numeric_limits<std::uint16_t>::max())
     {
         LOG_ERROR("generated client hello body too large {}", hello_body.size());
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::message_size));
+        ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
+        return;
     }
 
     std::vector<std::uint8_t> dummy_record =
@@ -795,36 +847,40 @@ std::expected<void, boost::system::error_code> build_client_hello_with_placehold
     if (ch_info.sid_offset < 5)
     {
         LOG_ERROR("generated client hello session id offset invalid {}", ch_info.sid_offset);
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
+        ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
+        return;
     }
 
     absolute_sid_offset = ch_info.sid_offset - 5;
     if (absolute_sid_offset + 32 > hello_body.size())
     {
         LOG_ERROR("session id offset out of bounds {} {}", absolute_sid_offset, hello_body.size());
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
+        ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
+        return;
     }
-    return std::expected<void, boost::system::error_code>{};
+    return;
 }
 
-std::expected<std::vector<std::uint8_t>, boost::system::error_code> encrypt_client_session_id(
-    const std::vector<std::uint8_t>& auth_key,
-    const std::vector<std::uint8_t>& client_random,
-    const std::array<std::uint8_t, reality::kAuthPayloadLen>& payload,
-    const std::vector<std::uint8_t>& hello_body)
+std::vector<std::uint8_t> encrypt_client_session_id(const std::vector<std::uint8_t>& auth_key,
+                                                    const std::vector<std::uint8_t>& client_random,
+                                                    const std::array<std::uint8_t, reality::kAuthPayloadLen>& payload,
+                                                    const std::vector<std::uint8_t>& hello_body,
+                                                    boost::system::error_code& ec)
 {
-    auto sid_result =
-        reality::crypto_util::aead_encrypt(EVP_aes_128_gcm(),
-                                           auth_key,
-                                           std::vector<std::uint8_t>(client_random.begin() + constants::auth::kSaltLen, client_random.end()),
-                                           std::vector<std::uint8_t>(payload.begin(), payload.end()),
-                                           hello_body);
-    if (!sid_result || sid_result->size() != 32)
+    ec.clear();
+    auto sid = reality::crypto_util::aead_encrypt(EVP_aes_128_gcm(),
+                                                  auth_key,
+                                                  std::vector<std::uint8_t>(client_random.begin() + constants::auth::kSaltLen, client_random.end()),
+                                                  std::vector<std::uint8_t>(payload.begin(), payload.end()),
+                                                  hello_body,
+                                                  ec);
+    if (ec || sid.size() != 32)
     {
-        LOG_ERROR("auth encryption failed ct size {}", sid_result ? sid_result->size() : 0);
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::operation_canceled));
+        LOG_ERROR("auth encryption failed ct size {}", sid.size());
+        ec = boost::system::errc::make_error_code(boost::system::errc::operation_canceled);
+        return {};
     }
-    return std::move(*sid_result);
+    return sid;
 }
 
 struct authenticated_client_hello
@@ -833,44 +889,47 @@ struct authenticated_client_hello
     std::vector<std::uint8_t> auth_key;
 };
 
-std::expected<authenticated_client_hello, boost::system::error_code> build_authenticated_client_hello(const std::uint8_t* public_key,
-                                                                                                       const std::uint8_t* private_key,
-                                                                                                       const std::vector<std::uint8_t>& server_pub_key,
-                                                                                                       const std::vector<std::uint8_t>& short_id_bytes,
-                                                                                                       const std::array<std::uint8_t, 3>& client_ver,
-                                                                                                       const reality::fingerprint_spec& spec,
-                                                                                                       const std::string& sni)
+authenticated_client_hello build_authenticated_client_hello(const std::uint8_t* public_key,
+                                                            const std::uint8_t* private_key,
+                                                            const std::vector<std::uint8_t>& server_pub_key,
+                                                            const std::vector<std::uint8_t>& short_id_bytes,
+                                                            const std::array<std::uint8_t, 3>& client_ver,
+                                                            const reality::fingerprint_spec& spec,
+                                                            const std::string& sni,
+                                                            boost::system::error_code& ec)
 {
-    auto auth_material_result = derive_client_auth_key_material(private_key, server_pub_key);
-    if (!auth_material_result)
+    ec.clear();
+    auto auth_material = derive_client_auth_key_material(private_key, server_pub_key, ec);
+    if (ec)
     {
-        return std::unexpected(auth_material_result.error());
+        return {};
     }
-    auto [client_random, auth_key] = std::move(*auth_material_result);
+    auto [client_random, auth_key] = std::move(auth_material);
 
     const auto now_seconds = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
     const auto now = static_cast<std::uint32_t>(now_seconds);
     std::array<std::uint8_t, reality::kAuthPayloadLen> payload{};
     if (!reality::build_auth_payload(short_id_bytes, client_ver, now, payload))
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
+        ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
+        return {};
     }
 
     std::vector<std::uint8_t> hello_body;
     std::uint32_t absolute_sid_offset = 0;
-    const auto build_hello_result = build_client_hello_with_placeholder_sid(spec, client_random, public_key, sni, hello_body, absolute_sid_offset);
-    if (!build_hello_result)
+    build_client_hello_with_placeholder_sid(spec, client_random, public_key, sni, hello_body, absolute_sid_offset, ec);
+    if (ec)
     {
-        return std::unexpected(build_hello_result.error());
+        return {};
     }
 
-    auto sid_result = encrypt_client_session_id(auth_key, client_random, payload, hello_body);
-    if (!sid_result)
+    auto sid = encrypt_client_session_id(auth_key, client_random, payload, hello_body, ec);
+    if (ec)
     {
-        return std::unexpected(sid_result.error());
+        return {};
     }
 
-    std::memcpy(hello_body.data() + absolute_sid_offset, sid_result->data(), 32);
+    std::memcpy(hello_body.data() + absolute_sid_offset, sid.data(), 32);
     return authenticated_client_hello{.hello_body = std::move(hello_body), .auth_key = std::move(auth_key)};
 }
 
@@ -898,69 +957,84 @@ struct handshake_traffic_keys
     std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> s_hs_keys;
 };
 
-std::expected<handshake_traffic_keys, boost::system::error_code> derive_handshake_traffic_keys(const reality::handshake_keys& hs_keys,
-                                                                                               const std::uint16_t cipher_suite,
-                                                                                               const EVP_MD* negotiated_md)
+handshake_traffic_keys derive_handshake_traffic_keys(const reality::handshake_keys& hs_keys,
+                                                     const std::uint16_t cipher_suite,
+                                                     const EVP_MD* negotiated_md,
+                                                     boost::system::error_code& ec)
 {
+    ec.clear();
     const std::size_t key_len = (cipher_suite == 0x1302 || cipher_suite == 0x1303) ? constants::crypto::kKeyLen256 : constants::crypto::kKeyLen128;
     constexpr std::size_t iv_len = constants::crypto::kIvLen;
-    auto c_hs = reality::tls_key_schedule::derive_traffic_keys(hs_keys.client_handshake_traffic_secret, key_len, iv_len, negotiated_md);
-    auto s_hs = reality::tls_key_schedule::derive_traffic_keys(hs_keys.server_handshake_traffic_secret, key_len, iv_len, negotiated_md);
-    if (!c_hs || !s_hs)
+    auto c_hs = reality::tls_key_schedule::derive_traffic_keys(hs_keys.client_handshake_traffic_secret, ec, key_len, iv_len, negotiated_md);
+    if (ec)
     {
-        return std::unexpected(c_hs ? s_hs.error() : c_hs.error());
+        return {};
     }
-    return handshake_traffic_keys{.c_hs_keys = std::move(*c_hs), .s_hs_keys = std::move(*s_hs)};
+    auto s_hs = reality::tls_key_schedule::derive_traffic_keys(hs_keys.server_handshake_traffic_secret, ec, key_len, iv_len, negotiated_md);
+    if (ec)
+    {
+        return {};
+    }
+    return handshake_traffic_keys{.c_hs_keys = std::move(c_hs), .s_hs_keys = std::move(s_hs)};
 }
 
-std::expected<void, boost::system::error_code> prepare_server_hello_crypto(
-    const std::vector<std::uint8_t>& sh_data, reality::transcript& trans, std::uint16_t& cipher_suite, const EVP_MD*& md, const EVP_CIPHER*& cipher)
+void prepare_server_hello_crypto(const std::vector<std::uint8_t>& sh_data,
+                                 reality::transcript& trans,
+                                 std::uint16_t& cipher_suite,
+                                 const EVP_MD*& md,
+                                 const EVP_CIPHER*& cipher,
+                                 boost::system::error_code& ec)
 {
+    ec.clear();
     trans.update(sh_data);
-    const auto parse_suite_res = parse_server_hello_cipher_suite(sh_data);
-    if (!parse_suite_res)
+    cipher_suite = parse_server_hello_cipher_suite(sh_data, ec);
+    if (ec)
     {
-        return std::unexpected(parse_suite_res.error());
+        return;
     }
-    cipher_suite = *parse_suite_res;
     const auto suite = reality::select_tls13_suite(cipher_suite);
     if (!suite.has_value())
     {
         LOG_ERROR("unsupported server hello cipher suite {:x}", cipher_suite);
-        return std::unexpected(boost::asio::error::no_protocol_option);
+        ec = boost::asio::error::no_protocol_option;
+        return;
     }
 
     md = suite->md;
     cipher = suite->cipher;
     trans.set_protocol_hash(md);
-    return {};
+    return;
 }
 
-std::expected<std::vector<std::uint8_t>, boost::system::error_code> derive_server_hello_shared_secret(const std::uint8_t* private_key,
-                                                                                                      const std::uint16_t key_share_group,
-                                                                                                      const std::vector<std::uint8_t>& key_share_data)
+std::vector<std::uint8_t> derive_server_hello_shared_secret(const std::uint8_t* private_key,
+                                                            const std::uint16_t key_share_group,
+                                                            const std::vector<std::uint8_t>& key_share_data,
+                                                            boost::system::error_code& ec)
 {
+    ec.clear();
     if (key_share_group != reality::tls_consts::group::kX25519)
     {
         LOG_ERROR("unsupported key share group {}", key_share_group);
-        return std::unexpected(boost::asio::error::no_protocol_option);
+        ec = boost::asio::error::no_protocol_option;
+        return {};
     }
     if (key_share_data.size() != 32)
     {
         LOG_ERROR("invalid x25519 key share length {}", key_share_data.size());
-        return std::unexpected(boost::asio::error::invalid_argument);
+        ec = boost::asio::error::invalid_argument;
+        return {};
     }
 
-    auto hs_shared_result = reality::crypto_util::x25519_derive(std::vector<std::uint8_t>(private_key, private_key + 32), key_share_data);
-    if (!hs_shared_result)
+    auto hs_shared = reality::crypto_util::x25519_derive(std::vector<std::uint8_t>(private_key, private_key + 32), key_share_data, ec);
+    if (ec)
     {
-        LOG_ERROR("handshake shared secret failed {}", hs_shared_result.error().message());
-        return std::unexpected(hs_shared_result.error());
+        LOG_ERROR("handshake shared secret failed {}", ec.message());
+        return {};
     }
-    return std::move(*hs_shared_result);
+    return hs_shared;
 }
 
-boost::asio::awaitable<std::expected<void, boost::system::error_code>> process_handshake_record(
+boost::asio::awaitable<void> process_handshake_record(
     boost::asio::ip::tcp::socket& socket,
     const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& s_hs_keys,
     const std::vector<std::uint8_t>& auth_key,
@@ -973,51 +1047,50 @@ boost::asio::awaitable<std::expected<void, boost::system::error_code>> process_h
     const EVP_MD* md,
     std::uint64_t& seq,
     std::uint32_t& tls13_compat_ccs_count,
-    const std::uint32_t timeout_sec)
+    const std::uint32_t timeout_sec,
+    boost::system::error_code& ec)
 {
-    const auto record_res = co_await read_encrypted_record(socket, timeout_sec);
-    if (!record_res)
+    ec.clear();
+    const auto record = co_await read_encrypted_record(socket, timeout_sec, ec);
+    if (ec)
     {
-        co_return std::unexpected(record_res.error());
+        co_return;
     }
-    const auto& record = *record_res;
     if (record.content_type == reality::kContentTypeChangeCipherSpec)
     {
         if (tls13_compat_ccs_count >= kMaxTlsCompatCcsRecords)
         {
             LOG_ERROR("received too many tls13 compat ccs records {}", tls13_compat_ccs_count);
-            co_return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::bad_message));
+            ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
+            co_return;
         }
         tls13_compat_ccs_count++;
         LOG_DEBUG("received change cipher spec skip count {}", tls13_compat_ccs_count);
-        co_return std::expected<void, boost::system::error_code>{};
+        co_return;
     }
 
     std::uint8_t type = 0;
-    auto plaintext_result = reality::tls_record_layer::decrypt_record(cipher, s_hs_keys.first, s_hs_keys.second, seq++, record.ciphertext, type);
-    if (!plaintext_result)
+    auto plaintext = reality::tls_record_layer::decrypt_record(cipher, s_hs_keys.first, s_hs_keys.second, seq++, record.ciphertext, type, ec);
+    if (ec)
     {
-        LOG_ERROR("error decrypting record {}", plaintext_result.error().message());
-        co_return std::unexpected(plaintext_result.error());
+        LOG_ERROR("error decrypting record {}", ec.message());
+        co_return;
     }
     if (type == reality::kContentTypeAlert)
     {
         LOG_ERROR("received alert during handshake");
-        co_return std::unexpected(boost::asio::error::eof);
+        ec = boost::asio::error::eof;
+        co_return;
     }
     if (type != reality::kContentTypeHandshake)
     {
         LOG_ERROR("unexpected record content type during handshake {}", type);
-        co_return std::unexpected(boost::asio::error::invalid_argument);
+        ec = boost::asio::error::invalid_argument;
+        co_return;
     }
 
-    if (const auto consume_res =
-            consume_handshake_plaintext(*plaintext_result, handshake_buffer, auth_key, validation_state, handshake_fin, hs_keys, md, trans);
-        !consume_res)
-    {
-        co_return std::unexpected(consume_res.error());
-    }
-    co_return std::expected<void, boost::system::error_code>{};
+    consume_handshake_plaintext(plaintext, handshake_buffer, auth_key, validation_state, handshake_fin, hs_keys, md, trans, ec);
+    co_return;
 }
 
 void prepare_socket_for_connect(boost::asio::ip::tcp::socket& socket,
@@ -1036,10 +1109,10 @@ void prepare_socket_for_connect(boost::asio::ip::tcp::socket& socket,
     }
     if (mark != 0)
     {
-        if (auto set_mark_result = net::set_socket_mark(socket.native_handle(), mark); !set_mark_result)
+        net::set_socket_mark(socket.native_handle(), mark, ec);
+        if (ec)
         {
-            LOG_WARN("set mark failed {}", set_mark_result.error().message());
-            ec = set_mark_result.error();
+            LOG_WARN("set mark failed {}", ec.message());
         }
     }
 }
@@ -1116,37 +1189,45 @@ std::shared_ptr<mux_tunnel_impl> client_tunnel_pool::build_tunnel(boost::asio::i
 {
     const std::size_t key_len = (handshake_ret.cipher_suite == 0x1302 || handshake_ret.cipher_suite == 0x1303) ? constants::crypto::kKeyLen256
                                                                                                                : constants::crypto::kKeyLen128;
+    boost::system::error_code ec;
     auto c_app_keys =
-        reality::tls_key_schedule::derive_traffic_keys(handshake_ret.c_app_secret, key_len, constants::crypto::kIvLen, handshake_ret.md);
+        reality::tls_key_schedule::derive_traffic_keys(handshake_ret.c_app_secret, ec, key_len, constants::crypto::kIvLen, handshake_ret.md);
+    if (ec)
+    {
+        LOG_ERROR("derive app traffic keys failed");
+        return nullptr;
+    }
     auto s_app_keys =
-        reality::tls_key_schedule::derive_traffic_keys(handshake_ret.s_app_secret, key_len, constants::crypto::kIvLen, handshake_ret.md);
-    if (!c_app_keys || !s_app_keys)
+        reality::tls_key_schedule::derive_traffic_keys(handshake_ret.s_app_secret, ec, key_len, constants::crypto::kIvLen, handshake_ret.md);
+    if (ec)
     {
         LOG_ERROR("derive app traffic keys failed");
         return nullptr;
     }
 
-    reality_engine re(s_app_keys->first, s_app_keys->second, c_app_keys->first, c_app_keys->second, handshake_ret.cipher);
+    reality_engine re(s_app_keys.first, s_app_keys.second, c_app_keys.first, c_app_keys.second, handshake_ret.cipher);
     return std::make_shared<mux_tunnel_impl>(std::move(socket), io_context, std::move(re), cfg_, group_, cid, trace_id);
 }
 
-boost::asio::awaitable<std::expected<client_tunnel_pool::handshake_result, boost::system::error_code>>
+boost::asio::awaitable<client_tunnel_pool::handshake_result>
 client_tunnel_pool::perform_reality_handshake_with_timeout(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
-                                                           const connection_context& ctx) const
+                                                           const connection_context& ctx,
+                                                           boost::system::error_code& ec) const
 {
+    ec.clear();
     if (!socket)
     {
         statistics::instance().inc_client_tunnel_pool_handshake_errors();
         LOG_CTX_ERROR(ctx, "{} stage=handshake target={}:{} error=invalid_socket", log_event::kHandshake, remote_host_, remote_port_);
-        co_return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
+        ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
+        co_return handshake_result{};
     }
-    auto handshake_res = co_await perform_reality_handshake(*socket);
-    if (!handshake_res)
+    auto handshake_res = co_await perform_reality_handshake(*socket, ec);
+    if (ec)
     {
         auto& stats = statistics::instance();
         stats.inc_client_tunnel_pool_handshake_errors();
-        LOG_CTX_ERROR(
-            ctx, "{} stage=handshake target={}:{} error={}", log_event::kHandshake, remote_host_, remote_port_, handshake_res.error().message());
+        LOG_CTX_ERROR(ctx, "{} stage=handshake target={}:{} error={}", log_event::kHandshake, remote_host_, remote_port_, ec.message());
     }
     co_return handshake_res;
 }
@@ -1191,14 +1272,13 @@ boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::
             continue;
         }
         // step 3 handshake
-        const auto handshake_res = co_await perform_reality_handshake_with_timeout(socket, ctx);
-        if (!handshake_res)
+        auto handshake_ret = co_await perform_reality_handshake_with_timeout(socket, ctx, ec);
+        if (ec)
         {
-            LOG_CTX_ERROR(ctx, "{} handshake error {}", log_event::kHandshake, handshake_res.error().message());
+            LOG_CTX_ERROR(ctx, "{} handshake error {}", log_event::kHandshake, ec.message());
             co_await wait_before_retry(ctx, "handshake");
             continue;
         }
-        const auto& handshake_ret = *handshake_res;
 
         LOG_CTX_INFO(ctx, "{} handshake success cipher 0x{:04x}", log_event::kHandshake, handshake_ret.cipher_suite);
         // step 4 build tunnel
@@ -1301,15 +1381,17 @@ boost::asio::awaitable<void> client_tunnel_pool::tcp_connect_remote(boost::asio:
     co_return;
 }
 
-boost::asio::awaitable<std::expected<client_tunnel_pool::handshake_result, boost::system::error_code>> client_tunnel_pool::perform_reality_handshake(
-    boost::asio::ip::tcp::socket& socket) const
+boost::asio::awaitable<client_tunnel_pool::handshake_result> client_tunnel_pool::perform_reality_handshake(
+    boost::asio::ip::tcp::socket& socket, boost::system::error_code& ec) const
 {
+    ec.clear();
     std::uint8_t public_key[32];
     std::uint8_t private_key[32];
 
     if (!reality::crypto_util::generate_x25519_keypair(public_key, private_key))
     {
-        co_return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::operation_canceled));
+        ec = boost::system::errc::make_error_code(boost::system::errc::operation_canceled);
+        co_return handshake_result{};
     }
 
     const std::shared_ptr<void> defer_cleanse(nullptr, [&](void*) { OPENSSL_cleanse(private_key, 32); });
@@ -1317,120 +1399,126 @@ boost::asio::awaitable<std::expected<client_tunnel_pool::handshake_result, boost
     const auto spec = select_fingerprint_spec(fingerprint_type_);
     reality::transcript trans;
     std::vector<std::uint8_t> auth_key;
-    if (const auto res = co_await generate_and_send_client_hello(socket, public_key, private_key, spec, trans, auth_key); !res)
+    co_await generate_and_send_client_hello(socket, public_key, private_key, spec, trans, auth_key, ec);
+    if (ec)
     {
-        co_return std::unexpected(res.error());
+        co_return handshake_result{};
     }
 
-    const auto server_hello_result = co_await process_server_hello(socket, private_key, trans);
-    if (!server_hello_result)
+    const auto server_hello_result = co_await process_server_hello(socket, private_key, trans, ec);
+    if (ec)
     {
-        co_return std::unexpected(server_hello_result.error());
+        co_return handshake_result{};
     }
 
-    const auto handshake_traffic_keys_result =
-        derive_handshake_traffic_keys(server_hello_result->hs_keys, server_hello_result->cipher_suite, server_hello_result->negotiated_md);
-    if (!handshake_traffic_keys_result)
+    const auto hs_keys =
+        derive_handshake_traffic_keys(server_hello_result.hs_keys, server_hello_result.cipher_suite, server_hello_result.negotiated_md, ec);
+    if (ec)
     {
-        co_return std::unexpected(handshake_traffic_keys_result.error());
+        co_return handshake_result{};
     }
-    const auto& hs_keys = *handshake_traffic_keys_result;
 
-    auto handshake_read_result = co_await handshake_read_loop(socket,
-                                                              hs_keys.s_hs_keys,
-                                                              server_hello_result->hs_keys,
-                                                              auth_key,
-                                                              sni_,
-                                                              trans,
-                                                              server_hello_result->negotiated_cipher,
-                                                              server_hello_result->negotiated_md,
-                                                              max_handshake_records_,
-                                                              cfg_.timeout.read);
-    if (!handshake_read_result)
+    auto app_secrets = co_await handshake_read_loop(socket,
+                                                    hs_keys.s_hs_keys,
+                                                    server_hello_result.hs_keys,
+                                                    auth_key,
+                                                    sni_,
+                                                    trans,
+                                                    server_hello_result.negotiated_cipher,
+                                                    server_hello_result.negotiated_md,
+                                                    max_handshake_records_,
+                                                    cfg_.timeout.read,
+                                                    ec);
+    if (ec)
     {
-        co_return std::unexpected(handshake_read_result.error());
+        co_return handshake_result{};
     }
-    auto [c_app_secret, s_app_secret] = std::move(*handshake_read_result);
+    auto [c_app_secret, s_app_secret] = std::move(app_secrets);
 
-    if (const auto res = co_await send_client_finished(socket,
-                                                       hs_keys.c_hs_keys,
-                                                       server_hello_result->hs_keys.client_handshake_traffic_secret,
-                                                       trans,
-                                                       server_hello_result->negotiated_cipher,
-                                                       server_hello_result->negotiated_md,
-                                                       cfg_.timeout.write);
-        !res)
+    co_await send_client_finished(socket,
+                                  hs_keys.c_hs_keys,
+                                  server_hello_result.hs_keys.client_handshake_traffic_secret,
+                                  trans,
+                                  server_hello_result.negotiated_cipher,
+                                  server_hello_result.negotiated_md,
+                                  cfg_.timeout.write,
+                                  ec);
+    if (ec)
     {
-        co_return std::unexpected(res.error());
+        co_return handshake_result{};
     }
 
     handshake_result result{.c_app_secret = std::move(c_app_secret),
                             .s_app_secret = std::move(s_app_secret),
-                            .cipher_suite = server_hello_result->cipher_suite,
-                            .md = server_hello_result->negotiated_md,
-                            .cipher = server_hello_result->negotiated_cipher};
+                            .cipher_suite = server_hello_result.cipher_suite,
+                            .md = server_hello_result.negotiated_md,
+                            .cipher = server_hello_result.negotiated_cipher};
     co_return result;
 }
 
-boost::asio::awaitable<std::expected<void, boost::system::error_code>> client_tunnel_pool::generate_and_send_client_hello(
+boost::asio::awaitable<void> client_tunnel_pool::generate_and_send_client_hello(
     boost::asio::ip::tcp::socket& socket,
     const std::uint8_t* public_key,
     const std::uint8_t* private_key,
     const reality::fingerprint_spec& spec,
     reality::transcript& trans,
-    std::vector<std::uint8_t>& auth_key) const
+    std::vector<std::uint8_t>& auth_key,
+    boost::system::error_code& ec) const
 {
+    ec.clear();
     std::array<std::uint8_t, 3> client_ver_{1, 0, 0};
     auto client_hello_result =
-        build_authenticated_client_hello(public_key, private_key, server_pub_key_, short_id_bytes_, client_ver_, spec, sni_);
-    if (!client_hello_result)
+        build_authenticated_client_hello(public_key, private_key, server_pub_key_, short_id_bytes_, client_ver_, spec, sni_, ec);
+    if (ec)
     {
-        co_return std::unexpected(client_hello_result.error());
+        co_return;
     }
-    const auto& hello_body = client_hello_result->hello_body;
+    const auto& hello_body = client_hello_result.hello_body;
     if (hello_body.size() > std::numeric_limits<std::uint16_t>::max())
     {
         LOG_ERROR("client hello too large {}", hello_body.size());
-        co_return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::message_size));
+        ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
+        co_return;
     }
 
     auto client_hello_record = reality::write_record_header(reality::kContentTypeHandshake, static_cast<std::uint16_t>(hello_body.size()));
     client_hello_record.insert(client_hello_record.end(), hello_body.begin(), hello_body.end());
-    boost::system::error_code ec;
     const auto write_size = co_await timeout_io::wait_write_with_timeout(socket, boost::asio::buffer(client_hello_record), cfg_.timeout.write, ec);
     if (ec)
     {
         LOG_ERROR("error sending client hello {}", ec.message());
-        co_return std::unexpected(ec);
+        co_return;
     }
     if (write_size != client_hello_record.size())
     {
         LOG_ERROR("short write client hello {} of {}", write_size, client_hello_record.size());
-        co_return std::unexpected(boost::asio::error::fault);
+        ec = boost::asio::error::fault;
+        co_return;
     }
     LOG_DEBUG("sending client hello record size {}", client_hello_record.size());
-    auth_key = std::move(client_hello_result->auth_key);
+    auth_key = std::move(client_hello_result.auth_key);
     trans.update(hello_body);
-    co_return std::expected<void, boost::system::error_code>{};
+    co_return;
 }
 
-boost::asio::awaitable<std::expected<client_tunnel_pool::server_hello_res, boost::system::error_code>> client_tunnel_pool::process_server_hello(
-    boost::asio::ip::tcp::socket& socket, const std::uint8_t* private_key, reality::transcript& trans) const
+boost::asio::awaitable<client_tunnel_pool::server_hello_res> client_tunnel_pool::process_server_hello(
+    boost::asio::ip::tcp::socket& socket, const std::uint8_t* private_key, reality::transcript& trans, boost::system::error_code& ec) const
 {
-    const auto server_hello_data_result = co_await read_handshake_record_body(socket, "server hello", cfg_.timeout.read);
-    if (!server_hello_data_result)
+    ec.clear();
+    const auto sh_data = co_await read_handshake_record_body(socket, "server hello", cfg_.timeout.read, ec);
+    if (ec)
     {
-        co_return std::unexpected(server_hello_data_result.error());
+        co_return server_hello_res{};
     }
-    const auto& sh_data = *server_hello_data_result;
     LOG_DEBUG("server hello received size {}", sh_data.size());
 
     std::uint16_t cipher_suite = 0;
     const EVP_MD* md = nullptr;
     const EVP_CIPHER* cipher = nullptr;
-    if (const auto res = prepare_server_hello_crypto(sh_data, trans, cipher_suite, md, cipher); !res)
+    prepare_server_hello_crypto(sh_data, trans, cipher_suite, md, cipher, ec);
+    if (ec)
     {
-        co_return std::unexpected(res.error());
+        co_return server_hello_res{};
     }
 
     const auto key_share = reality::extract_server_key_share(sh_data);
@@ -1438,26 +1526,27 @@ boost::asio::awaitable<std::expected<client_tunnel_pool::server_hello_res, boost
     if (!key_share.has_value())
     {
         LOG_ERROR("bad server hello key share");
-        co_return std::unexpected(boost::asio::error::invalid_argument);
+        ec = boost::asio::error::invalid_argument;
+        co_return server_hello_res{};
     }
 
-    auto handshake_shared_secret_result = derive_server_hello_shared_secret(private_key, key_share->group, key_share->data);
-    if (!handshake_shared_secret_result)
+    auto handshake_shared_secret = derive_server_hello_shared_secret(private_key, key_share->group, key_share->data, ec);
+    if (ec)
     {
-        co_return std::unexpected(handshake_shared_secret_result.error());
+        co_return server_hello_res{};
     }
 
-    auto hs_keys = reality::tls_key_schedule::derive_handshake_keys(*handshake_shared_secret_result, trans.finish(), md);
-    if (!hs_keys)
+    auto hs_keys = reality::tls_key_schedule::derive_handshake_keys(handshake_shared_secret, trans.finish(), md, ec);
+    if (ec)
     {
-        LOG_ERROR("derive handshake keys failed {}", hs_keys.error().message());
-        co_return std::unexpected(hs_keys.error());
+        LOG_ERROR("derive handshake keys failed {}", ec.message());
+        co_return server_hello_res{};
     }
 
-    co_return server_hello_res{.hs_keys = *hs_keys, .negotiated_md = md, .negotiated_cipher = cipher, .cipher_suite = cipher_suite};
+    co_return server_hello_res{.hs_keys = hs_keys, .negotiated_md = md, .negotiated_cipher = cipher, .cipher_suite = cipher_suite};
 }
 
-boost::asio::awaitable<std::expected<std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>, boost::system::error_code>>
+boost::asio::awaitable<std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>>
 client_tunnel_pool::handshake_read_loop(boost::asio::ip::tcp::socket& socket,
                                         const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& s_hs_keys,
                                         const reality::handshake_keys& hs_keys,
@@ -1467,8 +1556,10 @@ client_tunnel_pool::handshake_read_loop(boost::asio::ip::tcp::socket& socket,
                                         const EVP_CIPHER* cipher,
                                         const EVP_MD* md,
                                         const std::uint32_t max_handshake_records,
-                                        const std::uint32_t read_timeout_sec)
+                                        const std::uint32_t read_timeout_sec,
+                                        boost::system::error_code& ec)
 {
+    ec.clear();
     bool handshake_fin = false;
     handshake_validation_state validation_state;
     std::uint64_t seq = 0;
@@ -1481,76 +1572,80 @@ client_tunnel_pool::handshake_read_loop(boost::asio::ip::tcp::socket& socket,
         if (handshake_record_count >= max_handshake_records)
         {
             LOG_ERROR("too many handshake records {} limit {}", handshake_record_count, max_handshake_records);
-            co_return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::bad_message));
+            ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
+            co_return std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>{};
         }
-        if (const auto res = co_await process_handshake_record(socket,
-                                                               s_hs_keys,
-                                                               auth_key,
-                                                               trans,
-                                                               cipher,
-                                                               handshake_buffer,
-                                                               validation_state,
-                                                               handshake_fin,
-                                                               hs_keys,
-                                                               md,
-                                                               seq,
-                                                               tls13_compat_ccs_count,
-                                                               read_timeout_sec);
-            !res)
+        co_await process_handshake_record(socket,
+                                          s_hs_keys,
+                                          auth_key,
+                                          trans,
+                                          cipher,
+                                          handshake_buffer,
+                                          validation_state,
+                                          handshake_fin,
+                                          hs_keys,
+                                          md,
+                                          seq,
+                                          tls13_compat_ccs_count,
+                                          read_timeout_sec,
+                                          ec);
+        if (ec)
         {
-            co_return std::unexpected(res.error());
+            co_return std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>{};
         }
         handshake_record_count++;
     }
 
-    if (const auto res = validate_server_handshake_chain(validation_state, sni); !res)
+    validate_server_handshake_chain(validation_state, sni, ec);
+    if (ec)
     {
-        co_return std::unexpected(res.error());
+        co_return std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>{};
     }
 
-    auto app_sec = reality::tls_key_schedule::derive_application_secrets(hs_keys.master_secret, trans.finish(), md);
-    if (!app_sec)
+    auto app_sec = reality::tls_key_schedule::derive_application_secrets(hs_keys.master_secret, trans.finish(), md, ec);
+    if (ec)
     {
-        LOG_ERROR("derive app secrets failed {}", app_sec.error().message());
-        co_return std::unexpected(app_sec.error());
+        LOG_ERROR("derive app secrets failed {}", ec.message());
+        co_return std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>{};
     }
-    co_return *app_sec;
+    co_return app_sec;
 }
 
-boost::asio::awaitable<std::expected<void, boost::system::error_code>> client_tunnel_pool::send_client_finished(
+boost::asio::awaitable<void> client_tunnel_pool::send_client_finished(
     boost::asio::ip::tcp::socket& socket,
     const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& c_hs_keys,
     const std::vector<std::uint8_t>& c_hs_secret,
     const reality::transcript& trans,
     const EVP_CIPHER* cipher,
     const EVP_MD* md,
-    const std::uint32_t write_timeout_sec)
+    const std::uint32_t write_timeout_sec,
+    boost::system::error_code& ec)
 {
-    auto fin_verify_result = reality::tls_key_schedule::compute_finished_verify_data(c_hs_secret, trans.finish(), md);
-    if (!fin_verify_result)
+    ec.clear();
+    auto fin_verify = reality::tls_key_schedule::compute_finished_verify_data(c_hs_secret, trans.finish(), md, ec);
+    if (ec)
     {
-        co_return std::unexpected(fin_verify_result.error());
+        co_return;
     }
-    const auto fin_msg = reality::construct_finished(*fin_verify_result);
-    auto fin_rec_result =
-        reality::tls_record_layer::encrypt_record(cipher, c_hs_keys.first, c_hs_keys.second, 0, fin_msg, reality::kContentTypeHandshake);
-    if (!fin_rec_result)
+    const auto fin_msg = reality::construct_finished(fin_verify);
+    auto fin_rec =
+        reality::tls_record_layer::encrypt_record(cipher, c_hs_keys.first, c_hs_keys.second, 0, fin_msg, reality::kContentTypeHandshake, ec);
+    if (ec)
     {
-        co_return std::unexpected(fin_rec_result.error());
+        co_return;
     }
 
     std::vector<std::uint8_t> out_flight = {0x14, 0x03, 0x03, 0x00, 0x01, 0x01};
-    out_flight.insert(out_flight.end(), fin_rec_result->begin(), fin_rec_result->end());
+    out_flight.insert(out_flight.end(), fin_rec.begin(), fin_rec.end());
 
-    boost::system::error_code ec;
     const auto write_res = co_await timeout_io::wait_write_with_timeout(socket, boost::asio::buffer(out_flight), write_timeout_sec, ec);
     if (ec)
     {
         LOG_ERROR("send client finished flight error {}", ec.message());
-        co_return std::unexpected(ec);
+        co_return;
     }
     LOG_DEBUG("sending client finished flight size {}", write_res);
-    co_return std::expected<void, boost::system::error_code>{};
+    co_return;
 }
 
 }    // namespace mux

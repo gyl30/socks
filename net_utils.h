@@ -16,19 +16,19 @@ struct sockaddr_storage;
 namespace mux::net
 {
 
-[[nodiscard]] std::expected<void, boost::system::error_code> set_socket_mark(int fd, std::uint32_t mark);
+void set_socket_mark(int fd, std::uint32_t mark, boost::system::error_code& ec);
 
-[[nodiscard]] std::expected<void, boost::system::error_code> set_socket_transparent_v4(int fd);
+void set_socket_transparent_v4(int fd, boost::system::error_code& ec);
 
-[[nodiscard]] std::expected<void, boost::system::error_code> set_socket_transparent_v6(int fd);
+void set_socket_transparent_v6(int fd, boost::system::error_code& ec);
 
-[[nodiscard]] std::expected<void, boost::system::error_code> set_socket_transparent(int fd, bool ipv6);
+void set_socket_transparent(int fd, bool ipv6, boost::system::error_code& ec);
 
-[[nodiscard]] std::expected<void, boost::system::error_code> set_socket_recv_origdst_v4(int fd);
+void set_socket_recv_origdst_v4(int fd, boost::system::error_code& ec);
 
-[[nodiscard]] std::expected<void, boost::system::error_code> set_socket_recv_origdst_v6(int fd);
+void set_socket_recv_origdst_v6(int fd, boost::system::error_code& ec);
 
-[[nodiscard]] std::expected<void, boost::system::error_code> set_socket_recv_origdst(int fd, bool ipv6);
+void set_socket_recv_origdst(int fd, bool ipv6, boost::system::error_code& ec);
 
 [[nodiscard]] boost::asio::ip::address normalize_address(const boost::asio::ip::address& addr);
 

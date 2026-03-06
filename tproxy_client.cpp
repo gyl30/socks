@@ -69,9 +69,9 @@ void open_tcp_listener(boost::asio::ip::tcp::acceptor& acceptor, const std::stri
             return;
         }
     }
-    if (auto r = net::set_socket_transparent(acceptor.native_handle(), is_v6); !r)
+    net::set_socket_transparent(acceptor.native_handle(), is_v6, ec);
+    if (ec)
     {
-        ec = r.error();
         return;
     }
 
