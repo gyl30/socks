@@ -889,7 +889,8 @@ std::vector<std::uint8_t> construct_server_hello(const std::vector<std::uint8_t>
 
 std::vector<std::uint8_t> construct_encrypted_extensions(const std::string& alpn,
                                                          std::span<const std::uint16_t> extension_order,
-                                                         const bool include_padding)
+                                                         const bool include_padding,
+                                                         const std::optional<std::uint16_t> padding_len)
 {
     std::vector<std::uint8_t> msg;
     msg.push_back(0x08);
@@ -913,12 +914,20 @@ std::vector<std::uint8_t> construct_encrypted_extensions(const std::string& alpn
     std::vector<std::uint8_t> padding_ext;
     if (include_padding)
     {
-        static thread_local std::mt19937 gen(std::random_device{}());
-        std::uniform_int_distribution<std::size_t> dist(10, 100);
-        const std::size_t padding_len = dist(gen);
+        std::uint16_t resolved_padding_len = 0;
+        if (padding_len.has_value())
+        {
+            resolved_padding_len = *padding_len;
+        }
+        else
+        {
+            static thread_local std::mt19937 gen(std::random_device{}());
+            std::uniform_int_distribution<std::uint16_t> dist(10, 100);
+            resolved_padding_len = dist(gen);
+        }
         message_builder::push_u16(padding_ext, tls_consts::ext::kPadding);
-        message_builder::push_u16(padding_ext, static_cast<std::uint16_t>(padding_len));
-        for (std::size_t i = 0; i < padding_len; ++i)
+        message_builder::push_u16(padding_ext, resolved_padding_len);
+        for (std::uint16_t i = 0; i < resolved_padding_len; ++i)
         {
             padding_ext.push_back(0x00);
         }
@@ -959,21 +968,29 @@ std::vector<std::uint8_t> construct_encrypted_extensions(const std::string& alpn
     return msg;
 }
 
-std::vector<std::uint8_t> construct_certificate(const std::vector<std::uint8_t>& cert_der)
+std::vector<std::uint8_t> construct_certificate(std::span<const std::vector<std::uint8_t>> cert_chain)
 {
     std::vector<std::uint8_t> msg;
     msg.push_back(0x0b);
     std::vector<std::uint8_t> body;
     body.push_back(0x00);
     std::vector<std::uint8_t> list;
-    message_builder::push_u24(list, static_cast<std::uint32_t>(cert_der.size()));
-    message_builder::push_bytes(list, cert_der);
-    message_builder::push_u16(list, 0x0000);
+    for (const auto& cert_der : cert_chain)
+    {
+        message_builder::push_u24(list, static_cast<std::uint32_t>(cert_der.size()));
+        message_builder::push_bytes(list, cert_der);
+        message_builder::push_u16(list, 0x0000);
+    }
     message_builder::push_u24(body, static_cast<std::uint32_t>(list.size()));
     message_builder::push_bytes(body, list);
     message_builder::push_u24(msg, static_cast<std::uint32_t>(body.size()));
     message_builder::push_bytes(msg, body);
     return msg;
+}
+
+std::vector<std::uint8_t> construct_certificate(const std::vector<std::uint8_t>& cert_der)
+{
+    return construct_certificate(std::span<const std::vector<std::uint8_t>>(&cert_der, 1));
 }
 
 std::vector<std::uint8_t> construct_certificate_verify(EVP_PKEY* signing_key, const std::vector<std::uint8_t>& handshake_hash)

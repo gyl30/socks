@@ -1,4 +1,5 @@
 #include <span>
+#include <array>
 #include <string>
 #include <vector>
 #include <cstddef>
@@ -47,6 +48,30 @@ namespace
 constexpr std::size_t kMaxMsgSize = 64L * 1024;
 constexpr std::size_t kMaxEncryptedRecordLen = 18432;
 
+constexpr std::array<fingerprint_type, 4> kFetchFingerprints = {
+    fingerprint_type::kChrome120,
+    fingerprint_type::kIOS14,
+    fingerprint_type::kFirefox120,
+    fingerprint_type::kAndroid11OkHttp,
+};
+
+const char* fingerprint_name(const fingerprint_type fingerprint)
+{
+    switch (fingerprint)
+    {
+        case fingerprint_type::kChrome120:
+            return "chrome120";
+        case fingerprint_type::kFirefox120:
+            return "firefox120";
+        case fingerprint_type::kIOS14:
+            return "ios14";
+        case fingerprint_type::kAndroid11OkHttp:
+            return "android11_okhttp";
+        default:
+            return "unknown";
+    }
+}
+
 struct negotiated_suite
 {
     const EVP_CIPHER* cipher = nullptr;
@@ -77,9 +102,15 @@ bool read_u24_at(const std::vector<std::uint8_t>& buf, std::size_t& pos, std::ui
     return true;
 }
 
-bool parse_extension_types(std::span<const std::uint8_t> ext_block, std::vector<std::uint16_t>& out)
+bool parse_extension_types(std::span<const std::uint8_t> ext_block,
+                           std::vector<std::uint16_t>& out,
+                           std::optional<std::uint16_t>* padding_len = nullptr)
 {
     out.clear();
+    if (padding_len != nullptr)
+    {
+        padding_len->reset();
+    }
     std::size_t pos = 0;
     while (pos < ext_block.size())
     {
@@ -97,6 +128,10 @@ bool parse_extension_types(std::span<const std::uint8_t> ext_block, std::vector<
             return false;
         }
         out.push_back(ext_type);
+        if (padding_len != nullptr && ext_type == tls_consts::ext::kPadding)
+        {
+            *padding_len = ext_len;
+        }
         pos += ext_len;
     }
     return true;
@@ -130,7 +165,9 @@ bool parse_server_hello_extension_types(const std::vector<std::uint8_t>& sh_real
     return parse_extension_types(std::span<const std::uint8_t>(sh_real.data() + pos, ext_len), out);
 }
 
-bool parse_encrypted_extension_types(const std::vector<std::uint8_t>& ee_msg, std::vector<std::uint16_t>& out)
+bool parse_encrypted_extension_types(const std::vector<std::uint8_t>& ee_msg,
+                                     std::vector<std::uint16_t>& out,
+                                     std::optional<std::uint16_t>* padding_len = nullptr)
 {
     if (ee_msg.size() < 6 || ee_msg[0] != 0x08)
     {
@@ -146,7 +183,7 @@ bool parse_encrypted_extension_types(const std::vector<std::uint8_t>& ee_msg, st
     {
         return false;
     }
-    return parse_extension_types(std::span<const std::uint8_t>(ee_msg.data() + pos, ext_len), out);
+    return parse_extension_types(std::span<const std::uint8_t>(ee_msg.data() + pos, ext_len), out, padding_len);
 }
 
 bool parse_certificate_chain(const std::vector<std::uint8_t>& cert_msg, std::vector<std::vector<std::uint8_t>>& out)
@@ -375,14 +412,37 @@ boost::asio::awaitable<std::expected<fetch_result, fetch_error>> cert_fetcher::f
                                                                                      const std::uint32_t read_timeout_sec,
                                                                                      const std::uint32_t write_timeout_sec)
 {
-    fetch_session session(io_context, std::move(host), port, std::move(sni), trace_id, connect_timeout_sec, read_timeout_sec, write_timeout_sec);
-    co_return co_await session.run();
+    std::optional<fetch_error> last_error;
+    for (const auto fingerprint : kFetchFingerprints)
+    {
+        fetch_session session(io_context,
+                              host,
+                              port,
+                              sni,
+                              fingerprint,
+                              trace_id,
+                              connect_timeout_sec,
+                              read_timeout_sec,
+                              write_timeout_sec);
+        auto result = co_await session.run();
+        if (result.has_value())
+        {
+            co_return result;
+        }
+
+        auto error = result.error();
+        error.stage = std::string(fingerprint_name(fingerprint)) + ":" + error.stage;
+        last_error = std::move(error);
+    }
+
+    co_return std::unexpected(last_error.value_or(fetch_error{.stage = "fetch", .reason = "all fingerprints failed"}));
 }
 
 cert_fetcher::fetch_session::fetch_session(boost::asio::io_context& io_context,
                                            std::string host,
                                            const std::uint16_t port,
                                            std::string sni,
+                                           const fingerprint_type fingerprint,
                                            const std::string& trace_id,
                                            const std::uint32_t connect_timeout_sec,
                                            const std::uint32_t read_timeout_sec,
@@ -392,6 +452,7 @@ cert_fetcher::fetch_session::fetch_session(boost::asio::io_context& io_context,
       host_(std::move(host)),
       port_(port),
       sni_(std::move(sni)),
+      fingerprint_(fingerprint),
       connect_timeout_sec_(connect_timeout_sec),
       read_timeout_sec_(read_timeout_sec),
       write_timeout_sec_(write_timeout_sec)
@@ -404,7 +465,7 @@ cert_fetcher::fetch_session::fetch_session(boost::asio::io_context& io_context,
 
 boost::asio::awaitable<std::expected<fetch_result, fetch_error>> cert_fetcher::fetch_session::run()
 {
-    LOG_CTX_INFO(ctx_, "{} starting fetch", mux::log_event::kCert);
+    LOG_CTX_INFO(ctx_, "{} starting fetch fingerprint={}", mux::log_event::kCert, fingerprint_name(fingerprint_));
 
     if (const auto ec = co_await connect(); ec)
     {
@@ -479,11 +540,11 @@ boost::asio::awaitable<boost::system::error_code> cert_fetcher::fetch_session::p
         co_return boost::asio::error::operation_aborted;
     }
 
-    auto spec = fingerprint_factory::get(fingerprint_type::kChrome120);
+    auto spec = fingerprint_factory::get(fingerprint_);
     auto ch = client_hello_builder::build(spec, session_id, client_random, std::vector<std::uint8_t>(client_public_, client_public_ + 32), sni_);
     if (ch.empty())
     {
-        LOG_CTX_ERROR(ctx_, "{} invalid client hello for sni '{}'", mux::log_event::kCert, sni_);
+        LOG_CTX_ERROR(ctx_, "{} invalid client hello for sni '{}' fingerprint={}", mux::log_event::kCert, sni_, fingerprint_name(fingerprint_));
         co_return boost::asio::error::invalid_argument;
     }
 
@@ -588,6 +649,12 @@ boost::asio::awaitable<bool> cert_fetcher::fetch_session::collect_site_material(
         }
     }
 
+    if (saw_certificate_)
+    {
+        LOG_CTX_WARN(ctx_, "{} server finished not observed before fetch stopped", mux::log_event::kCert);
+        co_return true;
+    }
+
     LOG_CTX_WARN(ctx_, "{} certificate not found", mux::log_event::kCert);
     co_return false;
 }
@@ -607,9 +674,18 @@ boost::asio::awaitable<void> cert_fetcher::fetch_session::append_next_handshake_
 
     auto [type, pt_data] = read_res;
 
+    if (type == kContentTypeChangeCipherSpec)
+    {
+        observed_material_.sends_change_cipher_spec = true;
+        co_return;
+    }
     if (type != kContentTypeHandshake)
     {
         co_return;
+    }
+    if (!pt_data.empty())
+    {
+        observed_material_.encrypted_handshake_record_sizes.push_back(static_cast<std::uint16_t>(pt_data.size()));
     }
 
     assembler.append(pt_data);
@@ -655,7 +731,8 @@ bool cert_fetcher::fetch_session::process_handshake_message(const std::vector<st
             LOG_CTX_INFO(ctx_, "{} learned alpn {}", mux::log_event::kCert, *alpn);
             observed_material_.fingerprint.alpn = *alpn;
         }
-        if (!parse_encrypted_extension_types(msg, observed_material_.encrypted_extension_types))
+        if (!parse_encrypted_extension_types(
+                msg, observed_material_.encrypted_extension_types, &observed_material_.encrypted_extensions_padding_len))
         {
             LOG_CTX_WARN(ctx_, "{} parse encrypted extensions layout failed", mux::log_event::kCert);
         }
@@ -669,11 +746,16 @@ bool cert_fetcher::fetch_session::process_handshake_message(const std::vector<st
             LOG_CTX_ERROR(ctx_, "{} parse certificate chain failed", mux::log_event::kCert);
             return false;
         }
-        return true;
+        saw_certificate_ = true;
+    }
+    else if (msg_type == 0x14)
+    {
+        LOG_CTX_INFO(ctx_, "{} observed server finished", mux::log_event::kCert);
+        saw_server_finished_ = true;
     }
 
     trans_.update(msg);
-    return false;
+    return saw_certificate_ && saw_server_finished_;
 }
 
 boost::system::error_code cert_fetcher::fetch_session::process_server_hello(const std::vector<std::uint8_t>& sh_body)
