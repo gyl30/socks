@@ -128,7 +128,7 @@ boost::asio::awaitable<void> socks_session::run_loop()
     else if (cmd == socks::kCmdUdpAssociate)
     {
         const auto udp_sess =
-            std::make_shared<udp_socks_session>(std::move(socket_), ioc_, tunnel_manager_, sid_, cfg_, group_, std::move(active_guard_));
+            std::make_shared<udp_socks_session>(std::move(socket_), ioc_, tunnel_manager_, router_, sid_, cfg_, group_, std::move(active_guard_));
         udp_sess->start(host, port);
     }
     else

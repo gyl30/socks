@@ -5,6 +5,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <vector>
 #include <cstddef>
 #include <cstdint>
@@ -20,6 +21,8 @@
 #include <boost/asio/experimental/concurrent_channel.hpp>
 
 #include "config.h"
+#include "protocol.h"
+#include "router.h"
 #include "mux_tunnel.h"
 #include "task_group.h"
 #include "log_context.h"
@@ -40,6 +43,7 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
     udp_socks_session(boost::asio::ip::tcp::socket socket,
                       boost::asio::io_context& io_context,
                       std::shared_ptr<mux_tunnel_impl> tunnel_manager,
+                      std::shared_ptr<router> router,
                       std::uint32_t sid,
                       const config& cfg,
                       task_group& group,
@@ -54,10 +58,18 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
    private:
     void apply_request_peer_constraint(const std::string& host, std::uint16_t port);
     [[nodiscard]] bool sender_matches_request_peer(const boost::asio::ip::udp::endpoint& sender) const;
-    boost::asio::awaitable<void> udp_sock_to_stream(std::shared_ptr<mux_stream> stream);
-
+    [[nodiscard]] static std::string endpoint_key(const boost::asio::ip::udp::endpoint& endpoint);
+    [[nodiscard]] boost::asio::awaitable<route_type> decide_udp_route(const socks_udp_header& header) const;
+    boost::asio::awaitable<void> udp_socket_loop(std::shared_ptr<mux_stream> stream);
+    boost::asio::awaitable<void> forward_direct_packet(const socks_udp_header& header,
+                                                       const std::uint8_t* payload,
+                                                       std::size_t payload_len,
+                                                       boost::system::error_code& ec);
+    boost::asio::awaitable<void> forward_direct_reply_to_client(const boost::asio::ip::udp::endpoint& sender,
+                                                                const std::uint8_t* payload,
+                                                                std::size_t payload_len,
+                                                                boost::system::error_code& ec);
     boost::asio::awaitable<void> stream_to_udp_sock(std::shared_ptr<mux_stream> stream);
-
     boost::asio::awaitable<void> keep_tcp_alive();
     boost::asio::awaitable<void> idle_watchdog();
     void close_impl();
@@ -71,6 +83,7 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
     boost::asio::steady_timer idle_timer_;
     boost::asio::ip::tcp::socket socket_;
     boost::asio::ip::udp::socket udp_socket_;
+    std::shared_ptr<router> router_;
     std::shared_ptr<mux_tunnel_impl> tunnel_manager_;
     std::uint64_t last_activity_time_ms_{0};
     bool has_client_addr_ = false;
@@ -79,6 +92,7 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
     boost::asio::ip::address request_client_addr_;
     bool has_request_client_port_ = false;
     std::uint16_t request_client_port_ = 0;
+    std::unordered_set<std::string> direct_peers_;
     std::shared_ptr<void> active_connection_guard_;
 };
 
