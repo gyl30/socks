@@ -22,12 +22,14 @@
 namespace mux
 {
 
+class client_tunnel_pool;
+
 class tcp_socks_session : public std::enable_shared_from_this<tcp_socks_session>
 {
    public:
     tcp_socks_session(boost::asio::ip::tcp::socket socket,
                       boost::asio::io_context& io_context,
-                      std::shared_ptr<mux_tunnel_impl> tunnel_manager,
+                      std::shared_ptr<client_tunnel_pool> tunnel_pool,
                       std::shared_ptr<router> router,
                       std::uint32_t sid,
                       const config& cfg,
@@ -65,7 +67,7 @@ class tcp_socks_session : public std::enable_shared_from_this<tcp_socks_session>
     std::uint64_t last_activity_time_ms_{0};
     std::atomic<bool> backend_closed_{false};
     std::shared_ptr<router> router_;
-    std::shared_ptr<mux_tunnel_impl> tunnel_manager_;
+    std::shared_ptr<client_tunnel_pool> tunnel_pool_;
     std::shared_ptr<void> active_connection_guard_;
 };
 

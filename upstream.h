@@ -22,6 +22,8 @@
 namespace mux
 {
 
+class client_tunnel_pool;
+
 class upstream
 {
    public:
@@ -64,7 +66,8 @@ class direct_upstream : public upstream
 class proxy_upstream : public upstream
 {
    public:
-    explicit proxy_upstream(std::shared_ptr<mux_tunnel_impl> tunnel, connection_context ctx);
+    explicit proxy_upstream(std::shared_ptr<mux_tunnel_impl> tunnel, boost::asio::io_context& io_context, connection_context ctx);
+    explicit proxy_upstream(std::shared_ptr<client_tunnel_pool> tunnel_pool, boost::asio::io_context& io_context, connection_context ctx);
 
    public:
     boost::asio::awaitable<void> close() override;
@@ -85,6 +88,8 @@ class proxy_upstream : public upstream
    private:
     connection_context ctx_;
     std::shared_ptr<mux_stream> stream_;
+    boost::asio::io_context& io_context_;
+    std::shared_ptr<client_tunnel_pool> tunnel_pool_;
     std::shared_ptr<mux_tunnel_impl> tunnel_;
     boost::asio::ip::address bind_addr_;
     std::uint16_t bind_port_ = 0;
