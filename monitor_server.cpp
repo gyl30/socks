@@ -253,13 +253,18 @@ int monitor_server::start()
 
 void monitor_server::stop()
 {
-    boost::system::error_code ec;
-    ec = acceptor_.close(ec);
-    if (ec && ec != boost::asio::error::bad_descriptor)
-    {
-        LOG_ERROR("acceptor close error {}", ec.message());
-    }
-    group_.emit(::boost::asio::cancellation_type::all);
+    boost::asio::post(
+        ioc_,
+        [self = shared_from_this()]()
+        {
+            boost::system::error_code ec;
+            ec = self->acceptor_.close(ec);
+            if (ec && ec != boost::asio::error::bad_descriptor)
+            {
+                LOG_ERROR("acceptor close error {}", ec.message());
+            }
+            self->group_.emit(::boost::asio::cancellation_type::all);
+        });
 }
 
 boost::asio::awaitable<void> monitor_server::accept_loop()
