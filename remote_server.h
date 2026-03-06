@@ -28,6 +28,7 @@
 #include "replay_cache.h"
 #include "mux_connection.h"
 #include "reality_messages.h"
+#include "cert_manager.h"
 
 namespace mux
 {
@@ -57,6 +58,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
 
    private:
     boost::asio::awaitable<void> accept_loop();
+    boost::asio::awaitable<void> refresh_site_material_loop();
     boost::asio::awaitable<void> handle(std::shared_ptr<boost::asio::ip::tcp::socket> s, std::uint32_t conn_id);
 
     boost::asio::awaitable<server_handshake_res> perform_handshake_response(reality_context& reality_ctx, boost::system::error_code& ec);
@@ -82,6 +84,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     std::uint32_t next_conn_id_{1};
     replay_cache replay_cache_;
     reality::key_rotator key_rotator_;
+    reality::site_material_manager site_material_manager_;
 };
 
 }    // namespace mux

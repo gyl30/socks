@@ -98,6 +98,9 @@ std::string build_metrics_payload()
     append_metric_line(metrics_payload, "socks_fallback_write_failures_total", stats.fallback_write_failures());
     append_metric_line(metrics_payload, "socks_fallback_write_timeouts_total", stats.fallback_write_timeouts());
     append_metric_line(metrics_payload, "socks_fallback_write_errors_total", stats.fallback_write_errors());
+    append_metric_line(metrics_payload, "socks_site_material_fetch_attempts_total", stats.site_material_fetch_attempts());
+    append_metric_line(metrics_payload, "socks_site_material_fetch_successes_total", stats.site_material_fetch_successes());
+    append_metric_line(metrics_payload, "socks_site_material_fetch_failures_total", stats.site_material_fetch_failures());
     append_metric_line(metrics_payload, "socks_direct_upstream_resolve_timeouts_total", stats.direct_upstream_resolve_timeouts());
     append_metric_line(metrics_payload, "socks_direct_upstream_resolve_errors_total", stats.direct_upstream_resolve_errors());
     append_metric_line(metrics_payload, "socks_direct_upstream_connect_timeouts_total", stats.direct_upstream_connect_timeouts());

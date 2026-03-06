@@ -54,6 +54,7 @@ extern "C"
 #include "crypto_util.h"
 #include "scoped_exit.h"
 #include "log_context.h"
+#include "cert_fetcher.h"
 #include "context_pool.h"
 #include "reality_auth.h"
 #include "reality_core.h"
@@ -95,6 +96,22 @@ constexpr std::uint16_t kMaxTlsCiphertextRecordLen = static_cast<std::uint16_t>(
 constexpr std::uint32_t kMaxTlsCompatCcsRecords = 8;
 constexpr std::uint16_t kFallbackTlsPort = 443;
 constexpr std::size_t kFallbackRelayBufferSize = 16 * 1024;
+constexpr std::uint32_t kSiteMaterialFetchSuccessTtlSec = 6 * 60 * 60;
+constexpr std::uint32_t kSiteMaterialFetchFailureRetrySec = 5 * 60;
+constexpr std::size_t kSiteMaterialCacheCapacity = 4;
+
+std::string format_fetch_error(const reality::fetch_error& error)
+{
+    if (error.stage.empty())
+    {
+        return error.reason;
+    }
+    if (error.reason.empty())
+    {
+        return error.stage;
+    }
+    return error.stage + ": " + error.reason;
+}
 
 boost::asio::awaitable<void> read_tls_record_header(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
                                                     std::vector<std::uint8_t>& buf,
@@ -845,7 +862,11 @@ connection_context build_connection_context(const std::shared_ptr<boost::asio::i
 }    // namespace
 
 remote_server::remote_server(io_context_pool& pool, const config& cfg)
-    : cfg_(cfg), pool_(pool), io_context_(pool.get_io_context()), replay_cache_(static_cast<std::size_t>(cfg.reality.replay_cache_max_entries))
+    : cfg_(cfg),
+      pool_(pool),
+      io_context_(pool.get_io_context()),
+      replay_cache_(static_cast<std::size_t>(cfg.reality.replay_cache_max_entries)),
+      site_material_manager_(kSiteMaterialCacheCapacity)
 {
     private_key_ = reality::crypto_util::hex_to_bytes(cfg.reality.private_key);
     if (private_key_.size() != 32)
@@ -889,6 +910,10 @@ remote_server::~remote_server()
 
 void remote_server::start()
 {
+    if (!cfg_.reality.sni.empty())
+    {
+        boost::asio::co_spawn(io_context_, [self = shared_from_this()] { return self->refresh_site_material_loop(); }, group_.adapt(boost::asio::detached));
+    }
     boost::asio::co_spawn(io_context_, [self = shared_from_this()] { return self->accept_loop(); }, group_.adapt(boost::asio::detached));
 }
 
@@ -903,6 +928,64 @@ void remote_server::stop()
             co_await group_.async_wait(::boost::asio::redirect_error(::boost::asio::use_awaitable, ec));
         },
         boost::asio::detached);
+}
+
+boost::asio::awaitable<void> remote_server::refresh_site_material_loop()
+{
+    const auto target_host = cfg_.reality.sni;
+    if (target_host.empty())
+    {
+        LOG_INFO("REALITY site material refresh disabled because reality.sni is empty");
+        co_return;
+    }
+
+    const std::string trace_id = "site-material:" + target_host;
+    boost::asio::steady_timer refresh_timer(io_context_);
+
+    for (;;)
+    {
+        const auto attempt_at = timeout_io::now_second();
+        site_material_manager_.mark_fetch_started(target_host, target_host, target_host, kFallbackTlsPort, attempt_at, trace_id);
+        statistics::instance().inc_site_material_fetch_attempts();
+
+        auto fetch_result = co_await reality::cert_fetcher::fetch(
+            io_context_, target_host, kFallbackTlsPort, target_host, trace_id, cfg_.timeout.connect, cfg_.timeout.connect, cfg_.timeout.connect);
+
+        std::uint32_t sleep_seconds = kSiteMaterialFetchFailureRetrySec;
+        if (fetch_result)
+        {
+            statistics::instance().inc_site_material_fetch_successes();
+            const auto next_refresh_at = timeout_io::now_second() + kSiteMaterialFetchSuccessTtlSec;
+            site_material_manager_.set_material(
+                target_host, target_host, target_host, kFallbackTlsPort, std::move(fetch_result->material), next_refresh_at, trace_id);
+            sleep_seconds = kSiteMaterialFetchSuccessTtlSec;
+        }
+        else
+        {
+            statistics::instance().inc_site_material_fetch_failures();
+            const auto next_refresh_at = timeout_io::now_second() + kSiteMaterialFetchFailureRetrySec;
+            site_material_manager_.set_fetch_failure(target_host,
+                                                     target_host,
+                                                     target_host,
+                                                     kFallbackTlsPort,
+                                                     format_fetch_error(fetch_result.error()),
+                                                     attempt_at,
+                                                     next_refresh_at,
+                                                     trace_id);
+        }
+
+        boost::system::error_code timer_ec;
+        refresh_timer.expires_after(std::chrono::seconds(sleep_seconds));
+        co_await refresh_timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, timer_ec));
+        if (timer_ec == boost::asio::error::operation_aborted)
+        {
+            co_return;
+        }
+        if (timer_ec)
+        {
+            LOG_WARN("REALITY site material refresh timer error {}", timer_ec.message());
+        }
+    }
 }
 
 boost::asio::awaitable<void> remote_server::accept_loop()

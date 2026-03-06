@@ -20,15 +20,20 @@
 #include "transcript.h"
 #include "log_context.h"
 #include "cipher_context.h"
-#include "reality_messages.h"
+#include "site_material.h"
 
 namespace reality
 {
 
+struct fetch_error
+{
+    std::string stage;
+    std::string reason;
+};
+
 struct fetch_result
 {
-    std::vector<std::uint8_t> cert_msg;
-    server_fingerprint fingerprint;
+    site_material material;
 };
 
 class handshake_reassembler
@@ -47,12 +52,14 @@ class cert_fetcher
     static std::string hex(const std::vector<std::uint8_t>& data);
     static std::string hex(const std::uint8_t* data, std::size_t len);
 
-    static boost::asio::awaitable<std::optional<fetch_result>> fetch(boost::asio::io_context& io_context,
-                                                                     std::string host,
-                                                                     std::uint16_t port,
-                                                                     std::string sni,
-                                                                     const std::string& trace_id = "",
-                                                                     std::uint32_t connect_timeout_sec = 10);
+    static boost::asio::awaitable<std::expected<fetch_result, fetch_error>> fetch(boost::asio::io_context& io_context,
+                                                                                  std::string host,
+                                                                                  std::uint16_t port,
+                                                                                  std::string sni,
+                                                                                  const std::string& trace_id = "",
+                                                                                  std::uint32_t connect_timeout_sec = 10,
+                                                                                  std::uint32_t read_timeout_sec = 10,
+                                                                                  std::uint32_t write_timeout_sec = 10);
 
    private:
     class fetch_session
@@ -63,9 +70,11 @@ class cert_fetcher
                       std::uint16_t port,
                       std::string sni,
                       const std::string& trace_id,
-                      std::uint32_t connect_timeout_sec = 10);
+                      std::uint32_t connect_timeout_sec = 10,
+                      std::uint32_t read_timeout_sec = 10,
+                      std::uint32_t write_timeout_sec = 10);
 
-        boost::asio::awaitable<std::optional<fetch_result>> run();
+        boost::asio::awaitable<std::expected<fetch_result, fetch_error>> run();
 
        private:
         boost::asio::awaitable<boost::system::error_code> connect();
@@ -75,18 +84,18 @@ class cert_fetcher
         boost::asio::awaitable<boost::system::error_code> send_client_hello_record(const std::vector<std::uint8_t>& client_hello);
         [[nodiscard]] bool validate_server_hello_body(const std::vector<std::uint8_t>& sh_body) const;
 
-        boost::asio::awaitable<std::vector<std::uint8_t>> find_certificate();
+        boost::asio::awaitable<bool> collect_site_material();
         boost::asio::awaitable<void> append_next_handshake_record(handshake_reassembler& assembler,
                                                                   std::vector<std::uint8_t>& pt_buf,
                                                                   int record_index,
                                                                   boost::system::error_code& ec);
         bool consume_handshake_messages(handshake_reassembler& assembler,
                                         std::vector<std::uint8_t>& msg,
-                                        std::vector<std::uint8_t>& cert_msg,
                                         boost::system::error_code& ec);
-        bool process_handshake_message(const std::vector<std::uint8_t>& msg, std::vector<std::uint8_t>& cert_msg);
+        bool process_handshake_message(const std::vector<std::uint8_t>& msg);
 
         boost::system::error_code process_server_hello(const std::vector<std::uint8_t>& sh_body);
+        [[nodiscard]] std::expected<fetch_result, fetch_error> make_error(std::string stage, std::string reason) const;
 
         boost::asio::awaitable<std::pair<boost::system::error_code, std::vector<std::uint8_t>>> read_record_plaintext();
 
@@ -112,7 +121,9 @@ class cert_fetcher
         std::uint16_t port_;
         std::string sni_;
         std::uint32_t connect_timeout_sec_ = 10;
-        server_fingerprint fingerprint_;
+        std::uint32_t read_timeout_sec_ = 10;
+        std::uint32_t write_timeout_sec_ = 10;
+        site_material observed_material_;
 
         transcript trans_;
         std::uint8_t client_public_[32] = {0};
