@@ -26,8 +26,6 @@ OUTBOUND_MARK=${OUTBOUND_MARK:-18}
 REMOTE_PORT=${REMOTE_PORT:-18444}
 TLS_PORT=${TLS_PORT:-24443}
 BIN=${BIN:-"$(pwd)/build/socks"}
-TPROXY_QUEUE_CAPACITY=${TPROXY_QUEUE_CAPACITY:-512}
-UDP_SESSION_QUEUE_CAPACITY=${UDP_SESSION_QUEUE_CAPACITY:-512}
 MONITOR_PORT=${MONITOR_PORT:-19090}
 UDP_BURST_COUNT=${UDP_BURST_COUNT:-0}
 UDP_BURST_PAYLOAD_BYTES=${UDP_BURST_PAYLOAD_BYTES:-256}
@@ -279,10 +277,6 @@ cat >"${TMPDIR}/config.json" <<EOF
   },
   "limits": { "max_connections": 1 },
   "timeout": { "idle": 5 },
-  "queues": {
-    "udp_session_recv_channel_capacity": ${UDP_SESSION_QUEUE_CAPACITY},
-    "tproxy_udp_dispatch_queue_capacity": ${TPROXY_QUEUE_CAPACITY}
-  },
   "monitor": {
     "enabled": true,
     "port": ${MONITOR_PORT}
@@ -481,50 +475,7 @@ print(
 )
 PY
 )
-
-    DISPATCH_JSON=$(ip netns exec "${NS_PROXY}" python3 - <<PY
-import json
-import socket
-
-sock = socket.create_connection(("127.0.0.1", int("${MONITOR_PORT}")), timeout=3)
-sock.sendall(
-    b"GET /metrics HTTP/1.1\r\n"
-    b"Host: 127.0.0.1\r\n"
-    b"Connection: close\r\n"
-    b"\r\n"
-)
-parts = []
-while True:
-    chunk = sock.recv(4096)
-    if not chunk:
-        break
-    parts.append(chunk)
-sock.close()
-text = b"".join(parts).decode("utf-8", errors="ignore")
-dropped = 0.0
-enqueued = 0.0
-for line in text.splitlines():
-    if line.startswith("socks_tproxy_udp_dispatch_dropped_total "):
-        dropped = float(line.split()[1])
-    elif line.startswith("socks_tproxy_udp_dispatch_enqueued_total "):
-        enqueued = float(line.split()[1])
-total = dropped + enqueued
-drop_ratio = (dropped / total) if total > 0 else 0.0
-print(
-    json.dumps(
-        {
-            "dropped_total": int(dropped),
-            "enqueued_total": int(enqueued),
-            "drop_ratio": round(drop_ratio, 6),
-        },
-        separators=(",", ":"),
-    )
-)
-PY
-)
-
     echo "TPROXY_PERF_BURST ${BURST_JSON}"
-    echo "TPROXY_PERF_DISPATCH ${DISPATCH_JSON}"
 fi
 
 echo "tproxy ci test done"
