@@ -344,11 +344,6 @@ constexpr std::uint32_t kHandshakeRecordsLimitMax = 4096;
     {
         return std::unexpected(make_config_error("/reality/public_key", "must be non-empty in client mode"));
     }
-    if (cfg.mode == "client" && cfg.reality.strict_cert_verify)
-    {
-        return std::unexpected(
-            make_config_error("/reality/strict_cert_verify", "is not supported by current reality certificate workflow"));
-    }
     if (cfg.mode == "server" && cfg.reality.private_key.empty())
     {
         return std::unexpected(make_config_error("/reality/private_key", "must be non-empty in server mode"));
