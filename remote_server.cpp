@@ -76,6 +76,7 @@ struct reality_context
     std::shared_ptr<boost::asio::ip::tcp::socket> socket;
     connection_context ctx;
     std::vector<std::uint8_t> client_hello_record;
+    std::vector<std::uint8_t> client_hello_handshake;
     client_hello_info client_hello;
     std::uint16_t x25519_group = 0;
     std::vector<std::uint8_t> x25519_peer_pub;
@@ -156,6 +157,85 @@ boost::asio::awaitable<void> read_tls_record_body(const std::shared_ptr<boost::a
     co_return;
 }
 
+boost::asio::awaitable<const char*> read_client_hello_handshake(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
+                                                                std::vector<std::uint8_t>& wire_buf,
+                                                                std::vector<std::uint8_t>& handshake_buf,
+                                                                const connection_context& ctx,
+                                                                const std::uint32_t timeout,
+                                                                const std::size_t max_handshake_len,
+                                                                boost::system::error_code& ec)
+{
+    ec.clear();
+    wire_buf.clear();
+    handshake_buf.clear();
+    while (true)
+    {
+        std::vector<std::uint8_t> record_buf;
+        co_await read_tls_record_header(socket, record_buf, timeout, ec);
+        if (ec)
+        {
+            LOG_CTX_ERROR(ctx, "{} read tls record header failed {}", log_event::kHandshake, ec.message());
+            co_return "read_tls_record_header_failed";
+        }
+        if (record_buf[0] != 0x16)
+        {
+            LOG_CTX_ERROR(ctx, "{} unexpected tls record type {}", log_event::kHandshake, record_buf[0]);
+            ec = boost::asio::error::invalid_argument;
+            co_return "unexpected_tls_record_type";
+        }
+
+        const auto record_len = static_cast<std::uint16_t>((record_buf[3] << 8) | record_buf[4]);
+        if (record_len > kMaxTlsPlaintextRecordLen)
+        {
+            LOG_CTX_ERROR(ctx, "{} client hello record too large {}", log_event::kHandshake, record_len);
+            ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
+            co_return "client_hello_record_too_large";
+        }
+
+        co_await read_tls_record_body(socket, record_buf, record_len, timeout, ec);
+        if (ec)
+        {
+            statistics::instance().inc_client_finished_failures();
+            LOG_CTX_ERROR(ctx, "{} read tls record body failed {}", log_event::kHandshake, ec.message());
+            co_return "read_tls_record_body_failed";
+        }
+
+        wire_buf.insert(wire_buf.end(), record_buf.begin(), record_buf.end());
+        handshake_buf.insert(handshake_buf.end(), record_buf.begin() + static_cast<std::ptrdiff_t>(kTlsRecordHeaderSize), record_buf.end());
+        if (handshake_buf.size() < 4)
+        {
+            continue;
+        }
+        if (handshake_buf[0] != 0x01)
+        {
+            LOG_CTX_ERROR(ctx, "{} unexpected client hello type {}", log_event::kHandshake, handshake_buf[0]);
+            ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
+            co_return "unexpected_client_hello_type";
+        }
+
+        const auto hello_msg_len = (static_cast<std::uint32_t>(handshake_buf[1]) << 16) | (static_cast<std::uint32_t>(handshake_buf[2]) << 8) |
+                                   static_cast<std::uint32_t>(handshake_buf[3]);
+        const auto total_len = static_cast<std::size_t>(hello_msg_len) + 4;
+        if (total_len > max_handshake_len)
+        {
+            LOG_CTX_ERROR(ctx, "{} client hello message too large {}", log_event::kHandshake, total_len);
+            ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
+            co_return "client_hello_message_too_large";
+        }
+        if (handshake_buf.size() < total_len)
+        {
+            continue;
+        }
+        if (handshake_buf.size() != total_len)
+        {
+            LOG_CTX_ERROR(ctx, "{} client hello message has trailing data {}", log_event::kHandshake, handshake_buf.size() - total_len);
+            ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
+            co_return "client_hello_message_has_trailing_data";
+        }
+        co_return nullptr;
+    }
+}
+
 struct auth_inputs
 {
     std::vector<std::uint8_t> auth_key;
@@ -193,15 +273,15 @@ auth_inputs build_auth_decrypt_inputs(const reality_context& reality_ctx,
     out.nonce.assign(reality_ctx.client_hello.random.begin() + 20, reality_ctx.client_hello.random.end());
     LOG_CTX_DEBUG(reality_ctx.ctx, "auth key derived");
 
-    if (reality_ctx.client_hello.sid_offset < 5)
+    if (reality_ctx.client_hello.sid_offset == 0)
     {
         LOG_CTX_ERROR(reality_ctx.ctx, "{} auth fail invalid sid offset {}", log_event::kAuth, reality_ctx.client_hello.sid_offset);
         ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
         return {};
     }
 
-    out.aad.assign(reality_ctx.client_hello_record.begin() + 5, reality_ctx.client_hello_record.end());
-    const std::uint32_t aad_sid_offset = reality_ctx.client_hello.sid_offset - 5;
+    out.aad = reality_ctx.client_hello_handshake;
+    const std::uint32_t aad_sid_offset = reality_ctx.client_hello.sid_offset;
     if (aad_sid_offset + constants::auth::kSessionIdLen > out.aad.size())
     {
         LOG_CTX_ERROR(reality_ctx.ctx, "{} auth fail aad size mismatch", log_event::kAuth);
@@ -1325,7 +1405,8 @@ boost::asio::awaitable<void> remote_server::handle(std::shared_ptr<boost::asio::
     reality_ctx.socket = std::move(s);
     reality_ctx.ctx = build_connection_context(reality_ctx.socket, conn_id);
     auto& ctx = reality_ctx.ctx;
-    auto& buf = reality_ctx.client_hello_record;
+    auto& client_hello_wire = reality_ctx.client_hello_record;
+    auto& client_hello_handshake = reality_ctx.client_hello_handshake;
     auto fallback = [&](const char* reason) -> boost::asio::awaitable<void>
     {
         co_await fallback_to_target_site(reality_ctx, reason);
@@ -1333,39 +1414,22 @@ boost::asio::awaitable<void> remote_server::handle(std::shared_ptr<boost::asio::
     LOG_CTX_INFO(ctx, "{} accepted {}", log_event::kConnInit, ctx.connection_info());
     boost::system::error_code ec;
     // tls handshake
-    // step 1 tls header
-    co_await read_tls_record_header(reality_ctx.socket, buf, cfg_.timeout.read, ec);
-    if (ec)
+    const auto max_client_hello_len =
+        static_cast<std::size_t>(std::max(cfg_.limits.max_handshake_records, 1U)) * static_cast<std::size_t>(kMaxTlsPlaintextRecordLen);
+    const auto read_failure_reason = co_await read_client_hello_handshake(
+        reality_ctx.socket, client_hello_wire, client_hello_handshake, ctx, cfg_.timeout.read, max_client_hello_len, ec);
+    if (read_failure_reason != nullptr)
     {
-        LOG_CTX_ERROR(ctx, "{} read tls record header failed {}", log_event::kHandshake, ec.message());
-        co_await fallback("read_tls_record_header_failed");
+        co_await fallback(read_failure_reason);
         co_return;
     }
-    if (buf[0] != 0x16)
-    {
-        LOG_CTX_ERROR(ctx, "{} unexpected tls record type {}", log_event::kHandshake, buf[0]);
-        co_await fallback("unexpected_tls_record_type");
-        co_return;
-    }
-    const uint32_t len = static_cast<std::uint16_t>((buf[3] << 8) | buf[4]);
-    if (len > kMaxTlsPlaintextRecordLen)
-    {
-        LOG_CTX_ERROR(ctx, "{} client hello record too large {}", log_event::kHandshake, len);
-        co_await fallback("client_hello_record_too_large");
-        co_return;
-    }
-    // step 2 tls body
-    co_await read_tls_record_body(reality_ctx.socket, buf, len, cfg_.timeout.read, ec);
-    if (ec)
-    {
-        statistics::instance().inc_client_finished_failures();
-        LOG_CTX_ERROR(ctx, "{} read tls record body failed {}", log_event::kHandshake, ec.message());
-        co_await fallback("read_tls_record_body_failed");
-        co_return;
-    }
-    LOG_CTX_DEBUG(ctx, "{} received client hello record size {}", log_event::kHandshake, buf.size());
+    LOG_CTX_DEBUG(ctx,
+                  "{} received client hello wire size {} handshake size {}",
+                  log_event::kHandshake,
+                  client_hello_wire.size(),
+                  client_hello_handshake.size());
 
-    reality_ctx.client_hello = ch_parser::parse(buf);
+    reality_ctx.client_hello = ch_parser::parse(client_hello_handshake);
     ctx.sni(reality_ctx.client_hello.sni);
     if (reality_ctx.client_hello.malformed_sni)
     {
@@ -1427,13 +1491,13 @@ boost::asio::awaitable<void> remote_server::handle(std::shared_ptr<boost::asio::
         co_return;
     }
     LOG_CTX_INFO(ctx, "{} authorized sni {}", log_event::kAuth, reality_ctx.client_hello.sni);
-    if (buf.size() <= 5)
+    if (client_hello_handshake.size() < 4)
     {
         LOG_CTX_ERROR(ctx, "{} buffer too short", log_event::kHandshake);
-        co_await fallback("client_hello_record_too_short");
+        co_await fallback("client_hello_message_too_short");
         co_return;
     }
-    reality_ctx.transcript.update(std::vector<std::uint8_t>(buf.begin() + 5, buf.end()));
+    reality_ctx.transcript.update(client_hello_handshake);
     auto response = co_await perform_handshake_response(reality_ctx, ec);
     if (ec)
     {
