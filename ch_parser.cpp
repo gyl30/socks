@@ -61,14 +61,32 @@ bool ch_parser::read_session_id(reader& r, client_hello_info& info)
     return r.read_vector(info.session_id, sid_len);
 }
 
-bool ch_parser::skip_cipher_suites_and_compression(reader& r)
+bool ch_parser::parse_cipher_suites_and_compression(reader& r, client_hello_info& info)
 {
     std::uint16_t cs_len = 0;
     if (!r.read_u16(cs_len))
     {
         return false;
     }
-    if (!r.skip(cs_len))
+    if ((cs_len % 2) != 0)
+    {
+        return false;
+    }
+    reader suites_r = r.slice(cs_len);
+    if (!suites_r.valid())
+    {
+        return false;
+    }
+    while (suites_r.remaining() >= 2)
+    {
+        std::uint16_t suite = 0;
+        if (!suites_r.read_u16(suite))
+        {
+            return false;
+        }
+        info.cipher_suites.push_back(suite);
+    }
+    if (suites_r.remaining() != 0)
     {
         return false;
     }
@@ -146,7 +164,7 @@ bool ch_parser::parse_before_extensions(reader& r, client_hello_info& info)
     {
         return false;
     }
-    return skip_cipher_suites_and_compression(r);
+    return parse_cipher_suites_and_compression(r, info);
 }
 
 void ch_parser::parse_extension_block(reader& r, client_hello_info& info)
@@ -197,6 +215,10 @@ void ch_parser::parse_extensions(reader& r, client_hello_info& info)
         if (type == reality::tls_consts::ext::kSni)
         {
             parse_sni(val, info);
+        }
+        else if (type == reality::tls_consts::ext::kAlpn)
+        {
+            parse_alpn(val, info);
         }
         else if (type == reality::tls_consts::ext::kKeyShare)
         {
@@ -261,6 +283,41 @@ void ch_parser::parse_sni(reader& r, client_hello_info& info)
     if (list_r.remaining() != 0)
     {
         info.malformed_sni = true;
+    }
+}
+
+void ch_parser::parse_alpn(reader& r, client_hello_info& info)
+{
+    std::uint16_t list_len = 0;
+    if (!r.read_u16(list_len))
+    {
+        return;
+    }
+
+    reader list_r = r.slice(list_len);
+    if (!list_r.valid() || r.remaining() != 0)
+    {
+        return;
+    }
+
+    while (list_r.remaining() >= 1)
+    {
+        std::uint8_t proto_len = 0;
+        if (!list_r.read_u8(proto_len) || proto_len == 0 || !list_r.has(proto_len))
+        {
+            info.alpn_protocols.clear();
+            return;
+        }
+        info.alpn_protocols.emplace_back(reinterpret_cast<const char*>(list_r.data()), proto_len);
+        if (!list_r.skip(proto_len))
+        {
+            info.alpn_protocols.clear();
+            return;
+        }
+    }
+    if (list_r.remaining() != 0)
+    {
+        info.alpn_protocols.clear();
     }
 }
 
