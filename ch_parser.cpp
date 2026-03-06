@@ -7,22 +7,6 @@
 namespace mux
 {
 
-bool ch_parser::read_tls_record_header(reader& r)
-{
-    if (r.remaining() < 5)
-    {
-        return false;
-    }
-
-    std::uint8_t record_type = 0;
-    if (!r.read_u8(record_type) || record_type != 0x16)
-    {
-        return false;
-    }
-
-    return r.skip(2 + 2);
-}
-
 bool ch_parser::read_client_hello_prefix(reader& r, client_hello_info& info)
 {
     std::uint8_t handshake_type = 0;
@@ -152,10 +136,6 @@ void ch_parser::finalize_key_share_info(client_hello_info& info)
 
 bool ch_parser::parse_before_extensions(reader& r, client_hello_info& info)
 {
-    if (!read_tls_record_header(r))
-    {
-        return false;
-    }
     if (!read_client_hello_prefix(r, info))
     {
         return false;
