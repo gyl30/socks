@@ -70,6 +70,22 @@ extern "C"
 namespace mux
 {
 
+struct reality_context
+{
+    std::shared_ptr<boost::asio::ip::tcp::socket> socket;
+    connection_context ctx;
+    std::vector<std::uint8_t> client_hello_record;
+    client_hello_info client_hello;
+    std::uint16_t x25519_group = 0;
+    std::vector<std::uint8_t> x25519_peer_pub;
+    reality::transcript transcript;
+    std::vector<std::uint8_t> server_random;
+    std::vector<std::uint8_t> server_x25519_pub;
+    std::vector<std::uint8_t> server_shared_secret;
+    std::vector<std::uint8_t> cert_msg;
+    reality::server_fingerprint fingerprint;
+};
+
 namespace
 {
 
@@ -124,22 +140,19 @@ struct auth_inputs
     std::vector<std::uint8_t> aad;
 };
 
-std::expected<auth_inputs, boost::system::error_code> build_auth_decrypt_inputs(const client_hello_info& info,
-                                                                                const std::vector<std::uint8_t>& buf,
-                                                                                const std::vector<std::uint8_t>& server_private_key,
-                                                                                const std::vector<std::uint8_t>& peer_pub_key,
-                                                                                const connection_context& ctx)
+std::expected<auth_inputs, boost::system::error_code> build_auth_decrypt_inputs(const reality_context& reality_ctx,
+                                                                                const std::vector<std::uint8_t>& server_private_key)
 {
-    auto shared_result = reality::crypto_util::x25519_derive(server_private_key, peer_pub_key);
+    auto shared_result = reality::crypto_util::x25519_derive(server_private_key, reality_ctx.x25519_peer_pub);
     if (!shared_result)
     {
         const auto ec = shared_result.error();
-        LOG_CTX_ERROR(ctx, "{} auth fail x25519 derive failed {}", log_event::kAuth, ec.message());
+        LOG_CTX_ERROR(reality_ctx.ctx, "{} auth fail x25519 derive failed {}", log_event::kAuth, ec.message());
         return std::unexpected(ec);
     }
     const auto& shared = *shared_result;
 
-    const auto salt = std::vector<std::uint8_t>(info.random.begin(), info.random.begin() + 20);
+    const auto salt = std::vector<std::uint8_t>(reality_ctx.client_hello.random.begin(), reality_ctx.client_hello.random.begin() + 20);
     const auto reality_label_info = reality::crypto_util::hex_to_bytes("5245414c495459");
     auto pseudo_random_key_result = reality::crypto_util::hkdf_extract(salt, shared, EVP_sha256());
     if (!pseudo_random_key_result)
@@ -154,20 +167,20 @@ std::expected<auth_inputs, boost::system::error_code> build_auth_decrypt_inputs(
 
     auth_inputs out;
     out.auth_key = std::move(*auth_key_result);
-    out.nonce.assign(info.random.begin() + 20, info.random.end());
-    LOG_CTX_DEBUG(ctx, "auth key derived");
+    out.nonce.assign(reality_ctx.client_hello.random.begin() + 20, reality_ctx.client_hello.random.end());
+    LOG_CTX_DEBUG(reality_ctx.ctx, "auth key derived");
 
-    if (info.sid_offset < 5)
+    if (reality_ctx.client_hello.sid_offset < 5)
     {
-        LOG_CTX_ERROR(ctx, "{} auth fail invalid sid offset {}", log_event::kAuth, info.sid_offset);
+        LOG_CTX_ERROR(reality_ctx.ctx, "{} auth fail invalid sid offset {}", log_event::kAuth, reality_ctx.client_hello.sid_offset);
         return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
     }
 
-    out.aad.assign(buf.begin() + 5, buf.end());
-    const std::uint32_t aad_sid_offset = info.sid_offset - 5;
+    out.aad.assign(reality_ctx.client_hello_record.begin() + 5, reality_ctx.client_hello_record.end());
+    const std::uint32_t aad_sid_offset = reality_ctx.client_hello.sid_offset - 5;
     if (aad_sid_offset + constants::auth::kSessionIdLen > out.aad.size())
     {
-        LOG_CTX_ERROR(ctx, "{} auth fail aad size mismatch", log_event::kAuth);
+        LOG_CTX_ERROR(reality_ctx.ctx, "{} auth fail aad size mismatch", log_event::kAuth);
         return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
     }
     std::fill_n(out.aad.begin() + aad_sid_offset, constants::auth::kSessionIdLen, 0);
@@ -176,14 +189,13 @@ std::expected<auth_inputs, boost::system::error_code> build_auth_decrypt_inputs(
 
 bool verify_auth_payload_fields(const reality::auth_payload& auth,
                                 const std::vector<std::uint8_t>& short_id_bytes,
-                                const std::string& sni,
-                                const connection_context& ctx)
+                                const reality_context& reality_ctx)
 {
     if (auth.version_x != 1 || auth.version_y != 0 || auth.version_z != 0)
     {
         auto& stats = statistics::instance();
         stats.inc_auth_failures();
-        LOG_CTX_WARN(ctx, "{} auth fail version mismatch {}.{}.{}", log_event::kAuth, auth.version_x, auth.version_y, auth.version_z);
+        LOG_CTX_WARN(reality_ctx.ctx, "{} auth fail version mismatch {}.{}.{}", log_event::kAuth, auth.version_x, auth.version_y, auth.version_z);
         return false;
     }
 
@@ -194,7 +206,7 @@ bool verify_auth_payload_fields(const reality::auth_payload& auth,
 
     if (short_id_bytes.size() > reality::kShortIdMaxLen)
     {
-        LOG_CTX_ERROR(ctx, "{} auth fail short id length invalid {}", log_event::kAuth, short_id_bytes.size());
+        LOG_CTX_ERROR(reality_ctx.ctx, "{} auth fail short id length invalid {}", log_event::kAuth, short_id_bytes.size());
         return false;
     }
 
@@ -205,14 +217,14 @@ bool verify_auth_payload_fields(const reality::auth_payload& auth,
         auto& stats = statistics::instance();
         stats.inc_auth_failures();
         stats.inc_auth_short_id_failures();
-        stats.inc_handshake_failure_by_sni(statistics::handshake_failure_reason::kShortId, sni);
-        LOG_CTX_WARN(ctx, "{} auth fail short id mismatch", log_event::kAuth);
+        stats.inc_handshake_failure_by_sni(statistics::handshake_failure_reason::kShortId, reality_ctx.client_hello.sni);
+        LOG_CTX_WARN(reality_ctx.ctx, "{} auth fail short id mismatch", log_event::kAuth);
         return false;
     }
     return true;
 }
 
-bool verify_auth_timestamp(const std::uint32_t timestamp, const std::string& sni, const connection_context& ctx)
+bool verify_auth_timestamp(const std::uint32_t timestamp, const reality_context& reality_ctx)
 {
     const auto now_tp = std::chrono::system_clock::now();
     const auto ts_tp = std::chrono::system_clock::time_point(std::chrono::seconds(timestamp));
@@ -224,8 +236,8 @@ bool verify_auth_timestamp(const std::uint32_t timestamp, const std::string& sni
         auto& stats = statistics::instance();
         stats.inc_auth_failures();
         stats.inc_auth_clock_skew_failures();
-        stats.inc_handshake_failure_by_sni(statistics::handshake_failure_reason::kClockSkew, sni);
-        LOG_CTX_WARN(ctx, "{} clock skew too large diff {}s", log_event::kAuth, diff_sec);
+        stats.inc_handshake_failure_by_sni(statistics::handshake_failure_reason::kClockSkew, reality_ctx.client_hello.sni);
+        LOG_CTX_WARN(reality_ctx.ctx, "{} clock skew too large diff {}s", log_event::kAuth, diff_sec);
         return false;
     }
     return true;
@@ -274,25 +286,21 @@ const EVP_CIPHER* cipher_from_cipher_suite(const std::uint16_t cipher_suite)
 }
 std::size_t key_len_from_cipher_suite(const std::uint16_t cipher_suite) { return (cipher_suite == 0x1302) ? 32 : 16; }
 
-std::expected<handshake_crypto_result, boost::system::error_code> build_handshake_crypto(const std::vector<std::uint8_t>& server_random,
-                                                                                         const std::vector<std::uint8_t>& session_id,
+std::expected<handshake_crypto_result, boost::system::error_code> build_handshake_crypto(reality_context& reality_ctx,
                                                                                          const std::uint16_t cipher_suite,
-                                                                                         const std::uint16_t key_share_group,
-                                                                                         const std::vector<std::uint8_t>& key_share_data,
-                                                                                         const std::vector<std::uint8_t>& shared_secret,
-                                                                                         const std::vector<std::uint8_t>& cert_msg,
-                                                                                         const std::string& alpn,
-                                                                                         const std::vector<std::uint8_t>& sign_key_bytes,
-                                                                                         reality::transcript& trans,
-                                                                                         const connection_context& ctx)
+                                                                                         const std::vector<std::uint8_t>& sign_key_bytes)
 {
     handshake_crypto_result out;
-    out.sh_msg = reality::construct_server_hello(server_random, session_id, cipher_suite, key_share_group, key_share_data);
-    trans.update(out.sh_msg);
+    out.sh_msg = reality::construct_server_hello(reality_ctx.server_random,
+                                                 reality_ctx.client_hello.session_id,
+                                                 cipher_suite,
+                                                 reality_ctx.x25519_group,
+                                                 reality_ctx.server_x25519_pub);
+    reality_ctx.transcript.update(out.sh_msg);
 
     out.md = digest_from_cipher_suite(cipher_suite);
-    trans.set_protocol_hash(out.md);
-    auto hs_keys_result = reality::tls_key_schedule::derive_handshake_keys(shared_secret, trans.finish(), out.md);
+    reality_ctx.transcript.set_protocol_hash(out.md);
+    auto hs_keys_result = reality::tls_key_schedule::derive_handshake_keys(reality_ctx.server_shared_secret, reality_ctx.transcript.finish(), out.md);
     if (!hs_keys_result)
     {
         return std::unexpected(hs_keys_result.error());
@@ -310,39 +318,39 @@ std::expected<handshake_crypto_result, boost::system::error_code> build_handshak
     out.c_hs_keys = std::move(*c_hs);
     out.s_hs_keys = std::move(*s_hs);
 
-    const auto enc_ext = reality::construct_encrypted_extensions(alpn);
-    trans.update(enc_ext);
-    trans.update(cert_msg);
+    const auto enc_ext = reality::construct_encrypted_extensions(reality_ctx.fingerprint.alpn);
+    reality_ctx.transcript.update(enc_ext);
+    reality_ctx.transcript.update(reality_ctx.cert_msg);
 
     const reality::openssl_ptrs::evp_pkey_ptr sign_key(EVP_PKEY_new_raw_private_key(EVP_PKEY_ED25519, nullptr, sign_key_bytes.data(), 32));
     if (sign_key == nullptr)
     {
-        LOG_CTX_ERROR(ctx, "{} failed to load private key", log_event::kHandshake);
+        LOG_CTX_ERROR(reality_ctx.ctx, "{} failed to load private key", log_event::kHandshake);
         return std::unexpected(boost::asio::error::fault);
     }
 
-    const auto cv = reality::construct_certificate_verify(sign_key.get(), trans.finish());
+    const auto cv = reality::construct_certificate_verify(sign_key.get(), reality_ctx.transcript.finish());
     if (cv.empty())
     {
-        LOG_CTX_ERROR(ctx, "{} certificate verify construct failed", log_event::kHandshake);
+        LOG_CTX_ERROR(reality_ctx.ctx, "{} certificate verify construct failed", log_event::kHandshake);
         return std::unexpected(boost::asio::error::fault);
     }
-    trans.update(cv);
+    reality_ctx.transcript.update(cv);
 
     const auto s_fin_result =
-        reality::tls_key_schedule::compute_finished_verify_data(out.hs_keys.server_handshake_traffic_secret, trans.finish(), out.md);
+        reality::tls_key_schedule::compute_finished_verify_data(out.hs_keys.server_handshake_traffic_secret, reality_ctx.transcript.finish(), out.md);
     if (!s_fin_result)
     {
         const auto ec = s_fin_result.error();
-        LOG_CTX_ERROR(ctx, "{} compute server finished failed {}", log_event::kHandshake, ec.message());
+        LOG_CTX_ERROR(reality_ctx.ctx, "{} compute server finished failed {}", log_event::kHandshake, ec.message());
         return std::unexpected(ec);
     }
     const auto s_fin = reality::construct_finished(*s_fin_result);
-    trans.update(s_fin);
+    reality_ctx.transcript.update(s_fin);
 
     std::vector<std::uint8_t> flight2_plain;
     flight2_plain.insert(flight2_plain.end(), enc_ext.begin(), enc_ext.end());
-    flight2_plain.insert(flight2_plain.end(), cert_msg.begin(), cert_msg.end());
+    flight2_plain.insert(flight2_plain.end(), reality_ctx.cert_msg.begin(), reality_ctx.cert_msg.end());
     flight2_plain.insert(flight2_plain.end(), cv.begin(), cv.end());
     flight2_plain.insert(flight2_plain.end(), s_fin.begin(), s_fin.end());
 
@@ -352,7 +360,7 @@ std::expected<handshake_crypto_result, boost::system::error_code> build_handshak
     if (!flight2_result)
     {
         const auto ec = flight2_result.error();
-        LOG_CTX_ERROR(ctx, "{} auth fail flight2 encrypt failed {}", log_event::kAuth, ec.message());
+        LOG_CTX_ERROR(reality_ctx.ctx, "{} auth fail flight2 encrypt failed {}", log_event::kAuth, ec.message());
         return std::unexpected(ec);
     }
     out.flight2_enc = std::move(*flight2_result);
@@ -360,13 +368,10 @@ std::expected<handshake_crypto_result, boost::system::error_code> build_handshak
     return out;
 }
 
-std::expected<reality::auth_payload, boost::system::error_code> decrypt_auth_payload(const client_hello_info& info,
-                                                                                     const std::vector<std::uint8_t>& buf,
-                                                                                     const std::vector<std::uint8_t>& private_key,
-                                                                                     const std::vector<std::uint8_t>& peer_pub_key,
-                                                                                     const connection_context& ctx)
+std::expected<reality::auth_payload, boost::system::error_code> decrypt_auth_payload(const reality_context& reality_ctx,
+                                                                                     const std::vector<std::uint8_t>& private_key)
 {
-    const auto inputs_result = build_auth_decrypt_inputs(info, buf, private_key, peer_pub_key, ctx);
+    const auto inputs_result = build_auth_decrypt_inputs(reality_ctx, private_key);
     if (!inputs_result)
     {
         return std::unexpected(inputs_result.error());
@@ -374,10 +379,12 @@ std::expected<reality::auth_payload, boost::system::error_code> decrypt_auth_pay
     const auto& inputs = *inputs_result;
 
     const EVP_CIPHER* auth_cipher = EVP_aes_128_gcm();
-    auto pt = reality::crypto_util::aead_decrypt(auth_cipher, inputs.auth_key, inputs.nonce, info.session_id, inputs.aad);
+    auto pt =
+        reality::crypto_util::aead_decrypt(auth_cipher, inputs.auth_key, inputs.nonce, reality_ctx.client_hello.session_id, inputs.aad);
     if (!pt || pt->size() != 16)
     {
-        LOG_CTX_ERROR(ctx, "{} auth fail decrypt failed tag mismatch pt size {}", log_event::kAuth, pt ? pt->size() : 0);
+        LOG_CTX_ERROR(
+            reality_ctx.ctx, "{} auth fail decrypt failed tag mismatch pt size {}", log_event::kAuth, pt ? pt->size() : 0);
         return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::bad_message));
     }
 
@@ -389,18 +396,15 @@ std::expected<reality::auth_payload, boost::system::error_code> decrypt_auth_pay
     return *payload;
 }
 
-bool verify_replay_guard(replay_cache& replay_cache,
-                         const std::vector<std::uint8_t>& session_id,
-                         const std::string& sni,
-                         const connection_context& ctx)
+bool verify_replay_guard(replay_cache& replay_cache, const reality_context& reality_ctx)
 {
-    if (!replay_cache.check_and_insert(session_id))
+    if (!replay_cache.check_and_insert(reality_ctx.client_hello.session_id))
     {
         auto& stats = statistics::instance();
         stats.inc_auth_failures();
         stats.inc_auth_replay_failures();
-        stats.inc_handshake_failure_by_sni(statistics::handshake_failure_reason::kReplay, sni);
-        LOG_CTX_WARN(ctx, "{} replay attack detected", log_event::kAuth);
+        stats.inc_handshake_failure_by_sni(statistics::handshake_failure_reason::kReplay, reality_ctx.client_hello.sni);
+        LOG_CTX_WARN(reality_ctx.ctx, "{} replay attack detected", log_event::kAuth);
         return false;
     }
     return true;
@@ -673,13 +677,16 @@ boost::asio::awaitable<void> remote_server::accept_loop()
 
 boost::asio::awaitable<void> remote_server::handle(std::shared_ptr<boost::asio::ip::tcp::socket> s, std::uint32_t conn_id)
 {
-    auto ctx = build_connection_context(s, conn_id);
+    reality_context reality_ctx;
+    reality_ctx.socket = std::move(s);
+    reality_ctx.ctx = build_connection_context(reality_ctx.socket, conn_id);
+    auto& ctx = reality_ctx.ctx;
+    auto& buf = reality_ctx.client_hello_record;
     LOG_CTX_INFO(ctx, "{} accepted {}", log_event::kConnInit, ctx.connection_info());
     boost::system::error_code ec;
-    std::vector<std::uint8_t> buf;
     // tls handshake
     // step 1 tls header
-    co_await read_tls_record_header(s, buf, cfg_.timeout.read, ec);
+    co_await read_tls_record_header(reality_ctx.socket, buf, cfg_.timeout.read, ec);
     if (ec)
     {
         LOG_CTX_ERROR(ctx, "{} read tls record header failed {}", log_event::kHandshake, ec.message());
@@ -697,7 +704,7 @@ boost::asio::awaitable<void> remote_server::handle(std::shared_ptr<boost::asio::
         co_return;
     }
     // step 2 tls body
-    co_await read_tls_record_body(s, buf, len, cfg_.timeout.read, ec);
+    co_await read_tls_record_body(reality_ctx.socket, buf, len, cfg_.timeout.read, ec);
     if (ec)
     {
         statistics::instance().inc_client_finished_failures();
@@ -705,80 +712,75 @@ boost::asio::awaitable<void> remote_server::handle(std::shared_ptr<boost::asio::
     }
     LOG_CTX_DEBUG(ctx, "{} received client hello record size {}", log_event::kHandshake, buf.size());
 
-    auto client_info = ch_parser::parse(buf);
-    if (client_info.malformed_sni)
+    reality_ctx.client_hello = ch_parser::parse(buf);
+    if (reality_ctx.client_hello.malformed_sni)
     {
         LOG_CTX_ERROR(ctx, "{} auth fail malformed sni extension", log_event::kAuth);
         co_return;
     }
-    if (client_info.malformed_key_share)
+    if (reality_ctx.client_hello.malformed_key_share)
     {
         LOG_CTX_ERROR(ctx, "{} auth fail malformed key share extension", log_event::kAuth);
         co_return;
     }
-    if (!client_info.is_tls13 || client_info.session_id.size() != 32)
+    if (!reality_ctx.client_hello.is_tls13 || reality_ctx.client_hello.session_id.size() != 32)
     {
-        LOG_CTX_ERROR(ctx, "{} auth fail is tls13 {} sid len {}", log_event::kAuth, client_info.is_tls13, client_info.session_id.size());
+        LOG_CTX_ERROR(
+            ctx, "{} auth fail is tls13 {} sid len {}", log_event::kAuth, reality_ctx.client_hello.is_tls13, reality_ctx.client_hello.session_id.size());
         co_return;
     }
-    if (client_info.random.size() != 32)
+    if (reality_ctx.client_hello.random.size() != 32)
     {
-        LOG_CTX_ERROR(ctx, "{} auth fail random len {}", log_event::kAuth, client_info.random.size());
+        LOG_CTX_ERROR(ctx, "{} auth fail random len {}", log_event::kAuth, reality_ctx.client_hello.random.size());
         co_return;
     }
-    struct selected_key_share
+    if (reality_ctx.client_hello.has_x25519_share && reality_ctx.client_hello.x25519_pub.size() == 32)
     {
-        std::uint16_t group = 0;
-        std::vector<std::uint8_t> x25519_pub;
-    } sel;
-    if (client_info.has_x25519_share && client_info.x25519_pub.size() == 32)
-    {
-        sel.group = reality::tls_consts::group::kX25519;
-        sel.x25519_pub = client_info.x25519_pub;
+        reality_ctx.x25519_group = reality::tls_consts::group::kX25519;
+        reality_ctx.x25519_peer_pub = reality_ctx.client_hello.x25519_pub;
     }
-    if (sel.x25519_pub.size() != 32)
+    if (reality_ctx.x25519_peer_pub.size() != 32)
     {
         LOG_CTX_ERROR(ctx, "{} auth fail missing valid x25519 key share", log_event::kAuth);
         co_return;
     }
-    auto auth = decrypt_auth_payload(client_info, buf, private_key_, sel.x25519_pub, ctx);
+    auto auth = decrypt_auth_payload(reality_ctx, private_key_);
     if (!auth.has_value())
     {
         co_return;
     }
-    if (!verify_auth_payload_fields(*auth, short_id_bytes_, client_info.sni, ctx))
+    if (!verify_auth_payload_fields(*auth, short_id_bytes_, reality_ctx))
     {
         co_return;
     }
-    if (!verify_auth_timestamp(auth->timestamp, client_info.sni, ctx))
+    if (!verify_auth_timestamp(auth->timestamp, reality_ctx))
     {
         co_return;
     }
 
-    if (!verify_replay_guard(replay_cache_, client_info.session_id, client_info.sni, ctx))
+    if (!verify_replay_guard(replay_cache_, reality_ctx))
     {
-        LOG_CTX_WARN(ctx, "{} auth failed sni {}", log_event::kAuth, client_info.sni);
+        LOG_CTX_WARN(ctx, "{} auth failed sni {}", log_event::kAuth, reality_ctx.client_hello.sni);
         co_return;
     }
-    LOG_CTX_INFO(ctx, "{} authorized sni {}", log_event::kAuth, client_info.sni);
-    reality::transcript trans;
+    LOG_CTX_INFO(ctx, "{} authorized sni {}", log_event::kAuth, reality_ctx.client_hello.sni);
     if (buf.size() <= 5)
     {
         LOG_CTX_ERROR(ctx, "{} buffer too short", log_event::kHandshake);
         co_return;
     }
-    trans.update(std::vector<std::uint8_t>(buf.begin() + 5, buf.end()));
-    auto response = co_await perform_handshake_response(s, client_info, trans, ctx, ec);
+    reality_ctx.transcript.update(std::vector<std::uint8_t>(buf.begin() + 5, buf.end()));
+    auto response = co_await perform_handshake_response(reality_ctx, ec);
     if (ec)
     {
         co_return;
     }
-    co_await verify_client_finished(s, response, trans, ctx, ec);
+    co_await verify_client_finished(reality_ctx, response, ec);
     if (ec)
     {
         co_return;
     }
-    response.handshake_hash = trans.finish();
+    response.handshake_hash = reality_ctx.transcript.finish();
 
     auto app_sec =
         reality::tls_key_schedule::derive_application_secrets(response.hs_keys.master_secret, response.handshake_hash, response.negotiated_md);
@@ -819,7 +821,8 @@ boost::asio::awaitable<void> remote_server::handle(std::shared_ptr<boost::asio::
     LOG_CTX_INFO(ctx, "{} tunnel starting", log_event::kConnEstablished);
     //
     reality_engine engine(keys.c_app_keys.first, keys.c_app_keys.second, keys.s_app_keys.first, keys.s_app_keys.second, response.cipher);
-    auto tunnel = std::make_shared<mux_tunnel_impl>(std::move(*s), io_context_, std::move(engine), cfg_, group_, conn_id, ctx.trace_id());
+    auto tunnel =
+        std::make_shared<mux_tunnel_impl>(std::move(*reality_ctx.socket), io_context_, std::move(engine), cfg_, group_, conn_id, ctx.trace_id());
 
     std::weak_ptr<remote_server> weak_self = weak_from_this();
     std::weak_ptr<mux_tunnel_impl> weak_tunnel = tunnel;
@@ -958,13 +961,11 @@ static std::vector<std::uint8_t> compose_server_hello_flight(const std::vector<s
     return out_sh;
 }
 
-boost::asio::awaitable<remote_server::server_handshake_res> remote_server::perform_handshake_response(std::shared_ptr<boost::asio::ip::tcp::socket> s,
-                                                                                                      const client_hello_info& info,
-                                                                                                      reality::transcript& trans,
-                                                                                                      const connection_context& ctx,
+boost::asio::awaitable<remote_server::server_handshake_res> remote_server::perform_handshake_response(reality_context& reality_ctx,
                                                                                                       boost::system::error_code& ec)
 {
     server_handshake_res res;
+    auto& ctx = reality_ctx.ctx;
     const auto key_pair = key_rotator_.get_current_key();
     if (key_pair == nullptr)
     {
@@ -975,63 +976,51 @@ boost::asio::awaitable<remote_server::server_handshake_res> remote_server::perfo
     const std::uint8_t* public_key = key_pair->public_key;
     const std::uint8_t* private_key = key_pair->private_key;
 
-    auto server_random_result = generate_server_random();
+    const auto server_random_result = generate_server_random();
     if (!server_random_result)
     {
         ec = server_random_result.error();
         co_return res;
     }
-    const auto& server_random = *server_random_result;
+    reality_ctx.server_random = *server_random_result;
 
     LOG_CTX_TRACE(ctx,
                   "{} generated ephemeral key {}",
                   log_event::kHandshake,
                   reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(public_key, public_key + 32)));
 
-    //
-
-    auto sh_shared_result = reality::crypto_util::x25519_derive(std::vector<std::uint8_t>(private_key, private_key + 32), info.x25519_pub);
+    auto sh_shared_result =
+        reality::crypto_util::x25519_derive(std::vector<std::uint8_t>(private_key, private_key + 32), reality_ctx.x25519_peer_pub);
     if (!sh_shared_result)
     {
         ec = sh_shared_result.error();
         LOG_CTX_ERROR(ctx, "{} x25519 derive failed", log_event::kHandshake);
         co_return res;
     }
-    struct key_share_result
-    {
-        std::vector<std::uint8_t> sh_shared;
-        std::vector<std::uint8_t> key_share_data;
-        std::uint16_t key_share_group;
-    } ks;
-    ks.sh_shared = std::move(*sh_shared_result);
-    ks.key_share_data.assign(public_key, public_key + 32);
-    ks.key_share_group = reality::tls_consts::group::kX25519;
+    reality_ctx.server_shared_secret = std::move(*sh_shared_result);
+    reality_ctx.server_x25519_pub.assign(public_key, public_key + 32);
+
     struct certificate_target
     {
         std::string cert_sni;
         std::string fetch_host;
         std::uint16_t fetch_port = 443;
     } target;
-    target.cert_sni = info.sni;
+    target.cert_sni = reality_ctx.client_hello.sni;
     target.fetch_host = "www.apple.com";
     target.fetch_port = 443;
 
-    const auto fb = find_fallback_target_by_sni(info.sni);
+    const auto fb = find_fallback_target_by_sni(reality_ctx.client_hello.sni);
     if (!fb.first.empty())
     {
         target.fetch_host = fb.first;
         target.fetch_port = static_cast<uint16_t>(atoi(fb.second.c_str()));
     }
-    struct certificate_material
-    {
-        std::vector<std::uint8_t> cert_msg;
-        reality::server_fingerprint fingerprint;
-    } cert;
     const auto cached_entry = cert_manager_.get_certificate(target.cert_sni);
     if (cached_entry.has_value())
     {
-        cert.cert_msg = cached_entry->cert_msg;
-        cert.fingerprint = cached_entry->fingerprint;
+        reality_ctx.cert_msg = cached_entry->cert_msg;
+        reality_ctx.fingerprint = cached_entry->fingerprint;
     }
     else
     {
@@ -1044,36 +1033,24 @@ boost::asio::awaitable<remote_server::server_handshake_res> remote_server::perfo
             ec = boost::asio::error::connection_refused;
             co_return res;
         }
-        cert.cert_msg = fetch_res->cert_msg;
-        cert.fingerprint = fetch_res->fingerprint;
-        cert_manager_.set_certificate(target.cert_sni, cert.cert_msg, cert.fingerprint, ctx.trace_id());
+        reality_ctx.cert_msg = fetch_res->cert_msg;
+        reality_ctx.fingerprint = fetch_res->fingerprint;
+        cert_manager_.set_certificate(target.cert_sni, reality_ctx.cert_msg, reality_ctx.fingerprint, ctx.trace_id());
     }
 
-    const std::uint16_t cipher_suite = select_cipher_suite_from_fingerprint(cert.fingerprint);
-    auto crypto_result = build_handshake_crypto(server_random,
-                                                info.session_id,
-                                                cipher_suite,
-                                                ks.key_share_group,
-                                                ks.key_share_data,
-                                                ks.sh_shared,
-                                                cert.cert_msg,
-                                                cert.fingerprint.alpn,
-                                                private_key_,
-                                                trans,
-                                                ctx);
+    const std::uint16_t cipher_suite = select_cipher_suite_from_fingerprint(reality_ctx.fingerprint);
+    auto crypto_result = build_handshake_crypto(reality_ctx, cipher_suite, private_key_);
     if (!crypto_result)
     {
         ec = crypto_result.error();
         co_return res;
     }
     const auto& crypto = *crypto_result;
-    auto sh_msg = crypto.sh_msg;
-    auto flight2_enc = crypto.flight2_enc;
-    LOG_CTX_INFO(ctx, "generated sh msg size {}", sh_msg.size());
-    const auto out_sh = compose_server_hello_flight(sh_msg, flight2_enc);
+    LOG_CTX_INFO(ctx, "generated sh msg size {}", crypto.sh_msg.size());
+    const auto out_sh = compose_server_hello_flight(crypto.sh_msg, crypto.flight2_enc);
     LOG_CTX_INFO(ctx, "total out sh size {}", out_sh.size());
     LOG_CTX_DEBUG(ctx, "{} sending server hello flight size {}", log_event::kHandshake, out_sh.size());
-    co_await timeout_io::wait_write_with_timeout(*s, boost::asio::buffer(out_sh), cfg_.timeout.write, ec);
+    co_await timeout_io::wait_write_with_timeout(*reality_ctx.socket, boost::asio::buffer(out_sh), cfg_.timeout.write, ec);
     if (ec)
     {
         LOG_CTX_ERROR(ctx, "{} write server hello failed {}", log_event::kHandshake, ec.message());
@@ -1087,14 +1064,14 @@ boost::asio::awaitable<remote_server::server_handshake_res> remote_server::perfo
                                    .negotiated_md = crypto.md,
                                    .handshake_hash = {}};
 }
-boost::asio::awaitable<void> remote_server::verify_client_finished(std::shared_ptr<boost::asio::ip::tcp::socket> s,
+
+boost::asio::awaitable<void> remote_server::verify_client_finished(reality_context& reality_ctx,
                                                                    const server_handshake_res& response,
-                                                                   const reality::transcript& trans,
-                                                                   const connection_context& ctx,
                                                                    boost::system::error_code& ec) const
 {
+    const auto& ctx = reality_ctx.ctx;
     std::array<std::uint8_t, 5> header = {0};
-    co_await read_tls_record_header_allow_ccs(s, header, ctx, cfg_.timeout.read, ec);
+    co_await read_tls_record_header_allow_ccs(reality_ctx.socket, header, ctx, cfg_.timeout.read, ec);
     if (ec)
     {
         co_return;
@@ -1109,7 +1086,7 @@ boost::asio::awaitable<void> remote_server::verify_client_finished(std::shared_p
         co_return;
     }
     std::vector<std::uint8_t> body(body_len);
-    co_await timeout_io::wait_read_with_timeout(*s, boost::asio::buffer(body), cfg_.timeout.read, ec);
+    co_await timeout_io::wait_read_with_timeout(*reality_ctx.socket, boost::asio::buffer(body), cfg_.timeout.read, ec);
     if (ec)
     {
         co_return;
@@ -1129,7 +1106,7 @@ boost::asio::awaitable<void> remote_server::verify_client_finished(std::shared_p
     }
 
     auto expected_fin_verify = reality::tls_key_schedule::compute_finished_verify_data(
-        response.hs_keys.client_handshake_traffic_secret, trans.finish(), response.negotiated_md);
+        response.hs_keys.client_handshake_traffic_secret, reality_ctx.transcript.finish(), response.negotiated_md);
     if (!expected_fin_verify)
     {
         const auto verify_ec = expected_fin_verify.error();
