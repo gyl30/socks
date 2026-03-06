@@ -158,7 +158,7 @@ void site_material_manager::set_material(const std::string& cache_key,
     ctx.sni(key);
 
     LOG_CTX_INFO(ctx,
-                 "{} cached site material certs={} cert_msg={} alpn='{}' cipher=0x{:04x} sh_exts={} ee_exts={} groups={}",
+                 "{} cached site material certs={} cert_msg={} alpn='{}' cipher=0x{:04x} sh_exts={} ee_exts={} ee_padding={} ccs={} hs_records={} groups={}",
                  mux::log_event::kCert,
                  cached_material.certificate_chain.size(),
                  cached_material.certificate_message.size(),
@@ -166,6 +166,9 @@ void site_material_manager::set_material(const std::string& cache_key,
                  cached_material.fingerprint.cipher_suite,
                  cached_material.server_hello_extension_types.size(),
                  cached_material.encrypted_extension_types.size(),
+                 cached_material.encrypted_extensions_padding_len.value_or(0),
+                 cached_material.sends_change_cipher_spec,
+                 cached_material.encrypted_handshake_record_sizes.size(),
                  cached_material.key_share_groups.size());
 }
 

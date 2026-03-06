@@ -276,7 +276,7 @@ struct handshake_crypto_result
     const EVP_CIPHER* cipher = nullptr;
     const EVP_MD* md = nullptr;
     std::vector<std::uint8_t> sh_msg;
-    std::vector<std::uint8_t> flight2_enc;
+    std::vector<std::uint8_t> flight2_plain;
 };
 
 std::uint16_t normalize_cipher_suite(std::uint16_t cipher_suite)
@@ -317,6 +317,7 @@ handshake_crypto_result build_handshake_crypto(reality_context& reality_ctx,
                                                std::span<const std::uint16_t> server_hello_extension_order,
                                                std::span<const std::uint16_t> encrypted_extension_order,
                                                const bool include_encrypted_extensions_padding,
+                                               const std::optional<std::uint16_t> encrypted_extensions_padding_len,
                                                const std::vector<std::uint8_t>& sign_key_bytes,
                                                boost::system::error_code& ec)
 {
@@ -351,7 +352,8 @@ handshake_crypto_result build_handshake_crypto(reality_context& reality_ctx,
         return {};
     }
 
-    const auto enc_ext = reality::construct_encrypted_extensions(alpn, encrypted_extension_order, include_encrypted_extensions_padding);
+    const auto enc_ext = reality::construct_encrypted_extensions(
+        alpn, encrypted_extension_order, include_encrypted_extensions_padding, encrypted_extensions_padding_len);
     reality_ctx.transcript.update(enc_ext);
     reality_ctx.transcript.update(reality_ctx.cert_msg);
 
@@ -388,20 +390,11 @@ handshake_crypto_result build_handshake_crypto(reality_context& reality_ctx,
     }
     reality_ctx.transcript.update(s_fin);
 
-    std::vector<std::uint8_t> flight2_plain;
-    flight2_plain.insert(flight2_plain.end(), enc_ext.begin(), enc_ext.end());
-    flight2_plain.insert(flight2_plain.end(), reality_ctx.cert_msg.begin(), reality_ctx.cert_msg.end());
-    flight2_plain.insert(flight2_plain.end(), cv.begin(), cv.end());
-    flight2_plain.insert(flight2_plain.end(), s_fin.begin(), s_fin.end());
-
     out.cipher = cipher_from_cipher_suite(cipher_suite);
-    out.flight2_enc =
-        reality::tls_record_layer::encrypt_record(out.cipher, out.s_hs_keys.first, out.s_hs_keys.second, 0, flight2_plain, reality::kContentTypeHandshake, ec);
-    if (ec)
-    {
-        LOG_CTX_ERROR(reality_ctx.ctx, "{} auth fail flight2 encrypt failed {}", log_event::kAuth, ec.message());
-        return {};
-    }
+    out.flight2_plain.insert(out.flight2_plain.end(), enc_ext.begin(), enc_ext.end());
+    out.flight2_plain.insert(out.flight2_plain.end(), reality_ctx.cert_msg.begin(), reality_ctx.cert_msg.end());
+    out.flight2_plain.insert(out.flight2_plain.end(), cv.begin(), cv.end());
+    out.flight2_plain.insert(out.flight2_plain.end(), s_fin.begin(), s_fin.end());
 
     return out;
 }
@@ -527,6 +520,22 @@ std::optional<reality::site_material_snapshot> get_cached_site_material_snapshot
     return snapshot;
 }
 
+std::vector<std::vector<std::uint8_t>> build_reality_certificate_chain(
+    const std::vector<std::uint8_t>& leaf_cert_der,
+    const std::optional<reality::site_material_snapshot>& site_material_snapshot)
+{
+    std::vector<std::vector<std::uint8_t>> cert_chain;
+    cert_chain.push_back(leaf_cert_der);
+    if (!site_material_snapshot.has_value())
+    {
+        return cert_chain;
+    }
+
+    const auto& cached_chain = site_material_snapshot->material->certificate_chain;
+    cert_chain.insert(cert_chain.end(), cached_chain.begin(), cached_chain.end());
+    return cert_chain;
+}
+
 std::uint16_t select_reality_cipher_suite(const client_hello_info& hello,
                                           const std::optional<reality::site_material_snapshot>& site_material_snapshot)
 {
@@ -614,6 +623,44 @@ bool should_include_encrypted_extensions_padding(const std::optional<reality::si
     return std::find(site_material_snapshot->material->encrypted_extension_types.begin(),
                      site_material_snapshot->material->encrypted_extension_types.end(),
                      reality::tls_consts::ext::kPadding) != site_material_snapshot->material->encrypted_extension_types.end();
+}
+
+std::optional<std::uint16_t> select_encrypted_extensions_padding_len(
+    const std::optional<reality::site_material_snapshot>& site_material_snapshot)
+{
+    if (!site_material_snapshot.has_value())
+    {
+        return std::nullopt;
+    }
+    return site_material_snapshot->material->encrypted_extensions_padding_len;
+}
+
+bool should_send_change_cipher_spec(const std::optional<reality::site_material_snapshot>& site_material_snapshot)
+{
+    if (!site_material_snapshot.has_value())
+    {
+        return true;
+    }
+    return site_material_snapshot->material->sends_change_cipher_spec;
+}
+
+std::vector<std::uint16_t> select_encrypted_handshake_record_sizes(
+    const std::optional<reality::site_material_snapshot>& site_material_snapshot)
+{
+    if (!site_material_snapshot.has_value())
+    {
+        return {};
+    }
+    return site_material_snapshot->material->encrypted_handshake_record_sizes;
+}
+
+std::size_t select_reality_certificate_chain_size(const std::optional<reality::site_material_snapshot>& site_material_snapshot)
+{
+    if (!site_material_snapshot.has_value())
+    {
+        return 1;
+    }
+    return 1 + site_material_snapshot->material->certificate_chain.size();
 }
 
 void close_tcp_socket(boost::asio::ip::tcp::socket& socket)
@@ -1546,14 +1593,62 @@ boost::asio::awaitable<void> remote_server::process_stream_request(std::shared_p
     co_await send_stream_reset(connection, std::move(frame));
 }
 
-static std::vector<std::uint8_t> compose_server_hello_flight(const std::vector<std::uint8_t>& sh_msg, const std::vector<std::uint8_t>& flight2_enc)
+static std::vector<std::uint8_t> compose_server_hello_flight(
+    const std::vector<std::uint8_t>& sh_msg,
+    const std::vector<std::uint8_t>& flight2_plain,
+    const bool send_change_cipher_spec,
+    std::span<const std::uint16_t> encrypted_handshake_record_sizes,
+    const EVP_CIPHER* cipher,
+    const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& s_hs_keys,
+    boost::system::error_code& ec)
 {
+    ec.clear();
     std::vector<std::uint8_t> out_sh;
     const auto sh_rec = reality::write_record_header(reality::kContentTypeHandshake, static_cast<std::uint16_t>(sh_msg.size()));
     out_sh.insert(out_sh.end(), sh_rec.begin(), sh_rec.end());
     out_sh.insert(out_sh.end(), sh_msg.begin(), sh_msg.end());
-    out_sh.insert(out_sh.end(), {0x14, 0x03, 0x03, 0x00, 0x01, 0x01});
-    out_sh.insert(out_sh.end(), flight2_enc.begin(), flight2_enc.end());
+    if (send_change_cipher_spec)
+    {
+        out_sh.insert(out_sh.end(), {0x14, 0x03, 0x03, 0x00, 0x01, 0x01});
+    }
+
+    std::size_t offset = 0;
+    std::uint64_t seq = 0;
+    const auto append_encrypted_chunk = [&](const std::size_t len) -> bool
+    {
+        if (len == 0 || offset >= flight2_plain.size())
+        {
+            return true;
+        }
+
+        std::vector<std::uint8_t> chunk(flight2_plain.begin() + static_cast<std::ptrdiff_t>(offset),
+                                        flight2_plain.begin() + static_cast<std::ptrdiff_t>(offset + len));
+        auto record = reality::tls_record_layer::encrypt_record(
+            cipher, s_hs_keys.first, s_hs_keys.second, seq++, chunk, reality::kContentTypeHandshake, ec);
+        if (ec)
+        {
+            return false;
+        }
+        out_sh.insert(out_sh.end(), record.begin(), record.end());
+        offset += len;
+        return true;
+    };
+
+    if (!encrypted_handshake_record_sizes.empty())
+    {
+        for (std::size_t i = 0; i + 1 < encrypted_handshake_record_sizes.size() && offset < flight2_plain.size(); ++i)
+        {
+            const auto next_len = std::min<std::size_t>(encrypted_handshake_record_sizes[i], flight2_plain.size() - offset);
+            if (!append_encrypted_chunk(next_len))
+            {
+                return {};
+            }
+        }
+    }
+    if (offset < flight2_plain.size() && !append_encrypted_chunk(flight2_plain.size() - offset))
+    {
+        return {};
+    }
     return out_sh;
 }
 
@@ -1605,23 +1700,31 @@ boost::asio::awaitable<remote_server::server_handshake_res> remote_server::perfo
         LOG_CTX_ERROR(ctx, "{} build REALITY certificate failed {}", log_event::kHandshake, ec.message());
         co_return res;
     }
-    reality_ctx.cert_msg = reality::construct_certificate(cert_der);
-
     const auto site_material_snapshot = get_cached_site_material_snapshot(site_material_manager_, cfg_);
+    const auto cert_chain = build_reality_certificate_chain(cert_der, site_material_snapshot);
+    reality_ctx.cert_msg = reality::construct_certificate(cert_chain);
     const std::uint16_t cipher_suite = select_reality_cipher_suite(reality_ctx.client_hello, site_material_snapshot);
     const std::string selected_alpn = select_reality_alpn(reality_ctx.client_hello, site_material_snapshot);
     const auto server_hello_extension_order = select_server_hello_extension_order(site_material_snapshot);
     const auto encrypted_extension_order = select_encrypted_extensions_order(site_material_snapshot);
     const bool include_ee_padding = should_include_encrypted_extensions_padding(site_material_snapshot);
+    const auto encrypted_extensions_padding_len = select_encrypted_extensions_padding_len(site_material_snapshot);
+    const bool send_change_cipher_spec = should_send_change_cipher_spec(site_material_snapshot);
+    const auto encrypted_handshake_record_sizes = select_encrypted_handshake_record_sizes(site_material_snapshot);
+    const auto cert_chain_size = select_reality_certificate_chain_size(site_material_snapshot);
     LOG_CTX_INFO(ctx,
-                 "{} success_path_material cache={} cipher=0x{:04x} alpn='{}' sh_exts={} ee_exts={} ee_padding={}",
+                 "{} success_path_material cache={} certs={} cipher=0x{:04x} alpn='{}' sh_exts={} ee_exts={} ee_padding={} ee_padding_len={} ccs={} hs_records={}",
                  log_event::kHandshake,
                  site_material_snapshot.has_value(),
+                 cert_chain_size,
                  cipher_suite,
                  selected_alpn,
                  server_hello_extension_order.size(),
                  encrypted_extension_order.size(),
-                 include_ee_padding);
+                 include_ee_padding,
+                 encrypted_extensions_padding_len.value_or(0),
+                 send_change_cipher_spec,
+                 encrypted_handshake_record_sizes.size());
 
     auto crypto = build_handshake_crypto(
         reality_ctx,
@@ -1630,15 +1733,20 @@ boost::asio::awaitable<remote_server::server_handshake_res> remote_server::perfo
         server_hello_extension_order,
         encrypted_extension_order,
         include_ee_padding,
+        encrypted_extensions_padding_len,
         std::vector<std::uint8_t>(reality_cert_private_key_.begin(), reality_cert_private_key_.end()),
         ec);
     if (ec)
     {
         co_return res;
     }
-    LOG_CTX_INFO(ctx, "generated sh msg size {}", crypto.sh_msg.size());
-    const auto out_sh = compose_server_hello_flight(crypto.sh_msg, crypto.flight2_enc);
-    LOG_CTX_INFO(ctx, "total out sh size {}", out_sh.size());
+    const auto out_sh = compose_server_hello_flight(
+        crypto.sh_msg, crypto.flight2_plain, send_change_cipher_spec, encrypted_handshake_record_sizes, crypto.cipher, crypto.s_hs_keys, ec);
+    if (ec)
+    {
+        LOG_CTX_ERROR(ctx, "{} compose server hello flight failed {}", log_event::kHandshake, ec.message());
+        co_return res;
+    }
     LOG_CTX_DEBUG(ctx, "{} sending server hello flight size {}", log_event::kHandshake, out_sh.size());
     co_await timeout_io::wait_write_with_timeout(*reality_ctx.socket, boost::asio::buffer(out_sh), cfg_.timeout.write, ec);
     if (ec)
