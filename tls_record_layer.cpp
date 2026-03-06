@@ -30,22 +30,24 @@ namespace
 
 constexpr std::size_t kNonceSeqXorBytes = 8;
 
-std::expected<void, boost::system::error_code> validate_record_for_decrypt(const std::span<const std::uint8_t> record_data)
+void validate_record_for_decrypt(const std::span<const std::uint8_t> record_data, boost::system::error_code& ec)
 {
+    ec.clear();
     if (record_data.size() >= kTlsRecordHeaderSize + kAeadTagSize)
     {
-        return {};
+        return;
     }
-    return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::message_size));
+    ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
 }
 
-std::expected<void, boost::system::error_code> validate_nonce_iv_size(const std::span<const std::uint8_t> iv)
+void validate_nonce_iv_size(const std::span<const std::uint8_t> iv, boost::system::error_code& ec)
 {
+    ec.clear();
     if (iv.size() >= kNonceSeqXorBytes)
     {
-        return {};
+        return;
     }
-    return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::invalid_argument));
+    ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
 }
 
 std::vector<std::uint8_t> make_record_nonce(const std::span<const std::uint8_t> iv, const std::uint64_t seq)
@@ -59,9 +61,11 @@ std::vector<std::uint8_t> make_record_nonce(const std::span<const std::uint8_t> 
     return nonce;
 }
 
-std::expected<std::size_t, boost::system::error_code> trim_padding_and_read_content_type(const std::span<std::uint8_t> output_buffer,
-                                                                                         std::uint8_t& out_content_type)
+std::size_t trim_padding_and_read_content_type(const std::span<std::uint8_t> output_buffer,
+                                               std::uint8_t& out_content_type,
+                                               boost::system::error_code& ec)
 {
+    ec.clear();
     std::size_t written = output_buffer.size();
     while (written > 0 && output_buffer[written - 1] == 0)
     {
@@ -69,7 +73,8 @@ std::expected<std::size_t, boost::system::error_code> trim_padding_and_read_cont
     }
     if (written == 0)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::bad_message));
+        ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
+        return 0;
     }
     out_content_type = output_buffer[written - 1];
     return written - 1;
@@ -77,24 +82,28 @@ std::expected<std::size_t, boost::system::error_code> trim_padding_and_read_cont
 
 }    // namespace
 
-std::expected<void, boost::system::error_code> tls_record_layer::encrypt_record_append(const cipher_context& ctx,
-                                                                                       const EVP_CIPHER* cipher,
-                                                                                       const std::vector<std::uint8_t>& key,
-                                                                                       const std::vector<std::uint8_t>& iv,
-                                                                                       const std::uint64_t seq,
-                                                                                       const std::vector<std::uint8_t>& plaintext,
-                                                                                       const std::uint8_t content_type,
-                                                                                       std::vector<std::uint8_t>& output_buffer)
+void tls_record_layer::encrypt_record_append(const cipher_context& ctx,
+                                             const EVP_CIPHER* cipher,
+                                             const std::vector<std::uint8_t>& key,
+                                             const std::vector<std::uint8_t>& iv,
+                                             const std::uint64_t seq,
+                                             const std::vector<std::uint8_t>& plaintext,
+                                             const std::uint8_t content_type,
+                                             std::vector<std::uint8_t>& output_buffer,
+                                             boost::system::error_code& ec)
 {
+    ec.clear();
     ensure_openssl_initialized();
 
     if (plaintext.size() > kMaxTlsPlaintextLen)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::message_size));
+        ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
+        return;
     }
-    if (auto validate_iv_result = validate_nonce_iv_size(iv); !validate_iv_result)
+    validate_nonce_iv_size(iv, ec);
+    if (ec)
     {
-        return std::unexpected(validate_iv_result.error());
+        return;
     }
 
     const auto nonce = make_record_nonce(iv, seq);
@@ -107,7 +116,8 @@ std::expected<void, boost::system::error_code> tls_record_layer::encrypt_record_
         std::uint8_t padding_seed = 0;
         if (RAND_bytes(&padding_seed, 1) != 1)
         {
-            return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::operation_canceled));
+            ec = boost::system::errc::make_error_code(boost::system::errc::operation_canceled);
+            return;
         }
 
         padding_len = static_cast<std::size_t>(padding_seed % 64);
@@ -125,7 +135,8 @@ std::expected<void, boost::system::error_code> tls_record_layer::encrypt_record_
     const auto total_ciphertext_len = inner_plaintext.size() + kAeadTagSize;
     if (total_ciphertext_len > std::numeric_limits<std::uint16_t>::max())
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::message_size));
+        ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
+        return;
     }
     const auto ciphertext_len = static_cast<std::uint16_t>(total_ciphertext_len);
 
@@ -137,78 +148,86 @@ std::expected<void, boost::system::error_code> tls_record_layer::encrypt_record_
     temp_header[4] = static_cast<std::uint8_t>(ciphertext_len & 0xFF);
 
     output_buffer.insert(output_buffer.end(), temp_header.begin(), temp_header.end());
-    return crypto_util::aead_encrypt_append(ctx, cipher, key, nonce, inner_plaintext, temp_header, output_buffer);
+    crypto_util::aead_encrypt_append(ctx, cipher, key, nonce, inner_plaintext, temp_header, output_buffer, ec);
 }
 
-std::expected<std::vector<std::uint8_t>, boost::system::error_code> tls_record_layer::encrypt_record(const EVP_CIPHER* cipher,
-                                                                                                     const std::vector<std::uint8_t>& key,
-                                                                                                     const std::vector<std::uint8_t>& iv,
-                                                                                                     const std::uint64_t seq,
-                                                                                                     const std::vector<std::uint8_t>& plaintext,
-                                                                                                     const std::uint8_t content_type)
+std::vector<std::uint8_t> tls_record_layer::encrypt_record(const EVP_CIPHER* cipher,
+                                                           const std::vector<std::uint8_t>& key,
+                                                           const std::vector<std::uint8_t>& iv,
+                                                           const std::uint64_t seq,
+                                                           const std::vector<std::uint8_t>& plaintext,
+                                                           const std::uint8_t content_type,
+                                                           boost::system::error_code& ec)
 {
     const cipher_context ctx;
     std::vector<std::uint8_t> out;
-    auto encrypt_result = encrypt_record_append(ctx, cipher, key, iv, seq, plaintext, content_type, out);
-    if (!encrypt_result)
+    encrypt_record_append(ctx, cipher, key, iv, seq, plaintext, content_type, out, ec);
+    if (ec)
     {
-        return std::unexpected(encrypt_result.error());
+        return {};
     }
     return out;
 }
 
-std::expected<std::size_t, boost::system::error_code> tls_record_layer::decrypt_record(const cipher_context& ctx,
-                                                                                       const EVP_CIPHER* cipher,
-                                                                                       const std::vector<std::uint8_t>& key,
-                                                                                       const std::vector<std::uint8_t>& iv,
-                                                                                       const std::uint64_t seq,
-                                                                                       const std::span<const std::uint8_t> record_data,
-                                                                                       const std::span<std::uint8_t> output_buffer,
-                                                                                       std::uint8_t& out_content_type)
+std::size_t tls_record_layer::decrypt_record(const cipher_context& ctx,
+                                             const EVP_CIPHER* cipher,
+                                             const std::vector<std::uint8_t>& key,
+                                             const std::vector<std::uint8_t>& iv,
+                                             const std::uint64_t seq,
+                                             const std::span<const std::uint8_t> record_data,
+                                             const std::span<std::uint8_t> output_buffer,
+                                             std::uint8_t& out_content_type,
+                                             boost::system::error_code& ec)
 {
+    ec.clear();
     ensure_openssl_initialized();
 
-    if (auto validate_result = validate_record_for_decrypt(record_data); !validate_result)
+    validate_record_for_decrypt(record_data, ec);
+    if (ec)
     {
-        return std::unexpected(validate_result.error());
+        return 0;
     }
-    if (auto validate_iv_result = validate_nonce_iv_size(iv); !validate_iv_result)
+    validate_nonce_iv_size(iv, ec);
+    if (ec)
     {
-        return std::unexpected(validate_iv_result.error());
+        return 0;
     }
 
     const auto aad = record_data.subspan(0, kTlsRecordHeaderSize);
     const auto ciphertext = record_data.subspan(kTlsRecordHeaderSize);
     auto nonce = make_record_nonce(iv, seq);
 
-    auto written = crypto_util::aead_decrypt(ctx, cipher, key, nonce, ciphertext, aad, output_buffer);
-    if (!written)
+    auto written = crypto_util::aead_decrypt(ctx, cipher, key, nonce, ciphertext, aad, output_buffer, ec);
+    if (ec)
     {
-        return std::unexpected(written.error());
+        return 0;
     }
-    return trim_padding_and_read_content_type(output_buffer.subspan(0, *written), out_content_type);
+    return trim_padding_and_read_content_type(output_buffer.subspan(0, written), out_content_type, ec);
 }
 
-std::expected<std::vector<std::uint8_t>, boost::system::error_code> tls_record_layer::decrypt_record(
+std::vector<std::uint8_t> tls_record_layer::decrypt_record(
     const EVP_CIPHER* cipher,
     const std::vector<std::uint8_t>& key,
     const std::vector<std::uint8_t>& iv,
     const std::uint64_t seq,
     const std::vector<std::uint8_t>& ciphertext_with_header,
-    std::uint8_t& out_content_type)
+    std::uint8_t& out_content_type,
+    boost::system::error_code& ec)
 {
+    ec.clear();
     const cipher_context ctx;
     if (ciphertext_with_header.size() < kTlsRecordHeaderSize + kAeadTagSize)
     {
-        return std::unexpected(boost::system::errc::make_error_code(boost::system::errc::message_size));
+        ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
+        return {};
     }
     std::vector<std::uint8_t> out(ciphertext_with_header.size() - kTlsRecordHeaderSize - kAeadTagSize);
-    auto decrypt_result = decrypt_record(ctx, cipher, key, iv, seq, ciphertext_with_header, out, out_content_type);
-    if (!decrypt_result)
+    auto decrypt_result = decrypt_record(ctx, cipher, key, iv, seq, ciphertext_with_header, out, out_content_type, ec);
+    if (ec)
     {
-        return std::unexpected(decrypt_result.error());
+        return {};
     }
-    out.resize(*decrypt_result);
+    out.resize(decrypt_result);
     return out;
 }
 }    // namespace reality
