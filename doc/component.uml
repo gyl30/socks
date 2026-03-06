@@ -74,6 +74,7 @@ end note
 note right of RemoteServer
   REALITY 成功握手路径直接返回协议内临时证书。
   不再依赖按 SNI 抓取外部证书。
+  认证失败时当前直接断开，不做真实站点伪装回退。
 end note
 
 note bottom of TproxyListener
