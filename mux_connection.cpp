@@ -210,6 +210,29 @@ boost::asio::awaitable<void> mux_connection::run_loop()
 
 void mux_connection::stop()
 {
+    if (stopped_.exchange(true))
+    {
+        return;
+    }
+
+    std::vector<std::shared_ptr<mux_stream>> streams_to_close;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        streams_to_close.reserve(streams_.size());
+        for (const auto& [_, stream] : streams_)
+        {
+            if (stream != nullptr)
+            {
+                streams_to_close.push_back(stream);
+            }
+        }
+    }
+
+    for (const auto& stream : streams_to_close)
+    {
+        stream->close();
+    }
+
     if (write_channel_ != nullptr)
     {
         write_channel_->close();

@@ -1,6 +1,7 @@
 #ifndef MUX_CONNECTION_H
 #define MUX_CONNECTION_H
 
+#include <atomic>
 #include <memory>
 #include <string>
 #include <vector>
@@ -87,6 +88,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     std::uint64_t last_non_heartbeat_write_time_ms_{0};
     boost::asio::io_context& io_context_;
     boost::asio::ip::tcp::socket socket_;
+    std::atomic<bool> stopped_{false};
     using channel_type = boost::asio::experimental::concurrent_channel<void(boost::system::error_code, mux_frame)>;
     std::unique_ptr<channel_type> write_channel_;
     std::unordered_map<uint32_t, std::shared_ptr<mux_stream>> streams_;
