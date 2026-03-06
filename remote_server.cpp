@@ -1121,9 +1121,10 @@ boost::asio::awaitable<void> remote_server::verify_client_finished(std::shared_p
         reality::tls_record_layer::decrypt_record(response.cipher, response.c_hs_keys.first, response.c_hs_keys.second, 0, record, ctype);
     if (!plaintext_result)
     {
-        const auto ec = plaintext_result.error();
+        const auto decrypt_ec = plaintext_result.error();
         statistics::instance().inc_client_finished_failures();
-        LOG_CTX_ERROR(ctx, "{} client finished decrypt failed {}", log_event::kHandshake, ec.message());
+        LOG_CTX_ERROR(ctx, "{} client finished decrypt failed {}", log_event::kHandshake, decrypt_ec.message());
+        ec = decrypt_ec;
         co_return;
     }
 
@@ -1131,9 +1132,10 @@ boost::asio::awaitable<void> remote_server::verify_client_finished(std::shared_p
         response.hs_keys.client_handshake_traffic_secret, trans.finish(), response.negotiated_md);
     if (!expected_fin_verify)
     {
-        const auto ec = expected_fin_verify.error();
+        const auto verify_ec = expected_fin_verify.error();
         statistics::instance().inc_client_finished_failures();
-        LOG_CTX_ERROR(ctx, "{} client finished verify data failed {}", log_event::kHandshake, ec.message());
+        LOG_CTX_ERROR(ctx, "{} client finished verify data failed {}", log_event::kHandshake, verify_ec.message());
+        ec = verify_ec;
         co_return;
     }
 
