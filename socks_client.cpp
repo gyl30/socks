@@ -149,9 +149,8 @@ boost::asio::awaitable<void> socks_client::accept_loop()
         {
             LOG_WARN("failed to set no delay on local socket {}", ec.message());
         }
-        auto selected_tunnel = tunnel_pool_->select_tunnel();
         const std::uint32_t sid = tunnel_pool_->next_session_id();
-        std::make_shared<socks_session>(std::move(socket), socket_io, selected_tunnel, router_, sid, cfg_, group_)->start();
+        std::make_shared<socks_session>(std::move(socket), socket_io, tunnel_pool_, router_, sid, cfg_, group_)->start();
     }
     LOG_INFO("local socks5 acceptor stopped");
 }

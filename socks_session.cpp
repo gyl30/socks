@@ -69,7 +69,7 @@ bool secure_string_equals(const std::string& lhs, const std::string& rhs)
 
 socks_session::socks_session(boost::asio::ip::tcp::socket socket,
                              boost::asio::io_context& io_context,
-                             std::shared_ptr<mux_tunnel_impl> tunnel_manager,
+                             std::shared_ptr<client_tunnel_pool> tunnel_pool,
                              std::shared_ptr<router> router,
                              const std::uint32_t sid,
                              const config& cfg,
@@ -83,7 +83,7 @@ socks_session::socks_session(boost::asio::ip::tcp::socket socket,
       ioc_(io_context),
       socket_(std::move(socket)),
       router_(std::move(router)),
-      tunnel_manager_(std::move(tunnel_manager))
+      tunnel_pool_(std::move(tunnel_pool))
 {
     ctx_.new_trace_id();
     ctx_.conn_id(sid);
@@ -121,14 +121,12 @@ boost::asio::awaitable<void> socks_session::run_loop()
 
     if (cmd == socks::kCmdConnect)
     {
-        const auto tcp_sess =
-            std::make_shared<tcp_socks_session>(std::move(socket_), ioc_, tunnel_manager_, router_, sid_, cfg_, group_, std::move(active_guard_));
+        const auto tcp_sess = std::make_shared<tcp_socks_session>(std::move(socket_), ioc_, tunnel_pool_, router_, sid_, cfg_, group_, std::move(active_guard_));
         tcp_sess->start(host, port);
     }
     else if (cmd == socks::kCmdUdpAssociate)
     {
-        const auto udp_sess =
-            std::make_shared<udp_socks_session>(std::move(socket_), ioc_, tunnel_manager_, router_, sid_, cfg_, group_, std::move(active_guard_));
+        const auto udp_sess = std::make_shared<udp_socks_session>(std::move(socket_), ioc_, tunnel_pool_, router_, sid_, cfg_, group_, std::move(active_guard_));
         udp_sess->start(host, port);
     }
     else
