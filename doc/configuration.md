@@ -100,13 +100,13 @@
 - 非 Linux 构建（`SOCKS_HAS_TPROXY=0`）时，`tproxy.enabled=true` 直接报错。
 - `tproxy.enabled=true` 时：
   - `listen_host` 必须是合法 IP。
-  - `tcp_port` 必须非 0。
+  - `tcp_port` 和 `udp_port` 不能同时为 0。
 
 运行行为：
 
-- 当前仅实现 `TPROXY TCP`（`tproxy_client + tproxy_tcp_session`）。
-- `udp_port` 当前仅参与日志/配置，不参与 UDP 代理逻辑。
-- `mark` 用于连接侧 `SO_MARK`（见 `direct_upstream` 和 `client_tunnel_pool`）。
+- `TPROXY TCP` 使用 `SO_ORIGINAL_DST` 提取原始目标地址，再按路由规则选择 `direct` 或 `proxy`。
+- `TPROXY UDP` 使用 `recvmsg + IP_RECVORIGDSTADDR/IPV6_RECVORIGDSTADDR` 提取原始目标地址，并按 `client endpoint + target endpoint` 维护会话。
+- `mark` 用于本地出站 socket 的 `SO_MARK`，包括直连上游 socket、隧道连接 socket，以及回包用的透明 UDP socket。
 
 ## 7. 路由
 
