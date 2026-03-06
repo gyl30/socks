@@ -112,115 +112,134 @@ boost::asio::ip::udp::endpoint endpoint_from_sockaddr_v6(const sockaddr_storage&
 
 }    // namespace
 
-std::expected<void, boost::system::error_code> set_socket_mark(int fd, const std::uint32_t mark)
+void set_socket_mark(int fd, const std::uint32_t mark, boost::system::error_code& ec)
 {
+    ec.clear();
 #ifdef __linux__
     if (mark == 0)
     {
-        return {};
+        return;
     }
     if (setsockopt(fd, SOL_SOCKET, SO_MARK, &mark, sizeof(mark)) != 0)
     {
-        return std::unexpected(boost::system::error_code(errno, boost::system::system_category()));
+        ec = boost::system::error_code(errno, boost::system::system_category());
+        return;
     }
-    return {};
+    return;
 #else
     (void)fd;
     (void)mark;
-    return std::unexpected(std::make_error_code(std::errc::not_supported));
+    ec = std::make_error_code(std::errc::not_supported);
+    return;
 #endif
 }
 
-std::expected<void, boost::system::error_code> set_socket_transparent_v4(const int fd)
+void set_socket_transparent_v4(const int fd, boost::system::error_code& ec)
 {
+    ec.clear();
 #ifdef __linux__
     const int one = 1;
     if (setsockopt(fd, SOL_IP, IP_TRANSPARENT, &one, sizeof(one)) != 0)
     {
-        return std::unexpected(boost::system::error_code(errno, boost::system::system_category()));
+        ec = boost::system::error_code(errno, boost::system::system_category());
+        return;
     }
-    return {};
+    return;
 #else
     (void)fd;
-    return std::unexpected(std::make_error_code(std::errc::not_supported));
+    ec = std::make_error_code(std::errc::not_supported);
+    return;
 #endif
 }
 
-std::expected<void, boost::system::error_code> set_socket_transparent_v6(const int fd)
+void set_socket_transparent_v6(const int fd, boost::system::error_code& ec)
 {
+    ec.clear();
 #ifdef __linux__
     const int one = 1;
     if (setsockopt(fd, SOL_IPV6, IPV6_TRANSPARENT, &one, sizeof(one)) != 0)
     {
-        return std::unexpected(boost::system::error_code(errno, boost::system::system_category()));
+        ec = boost::system::error_code(errno, boost::system::system_category());
+        return;
     }
-    return {};
+    return;
 #else
     (void)fd;
-    return std::unexpected(std::make_error_code(std::errc::not_supported));
+    ec = std::make_error_code(std::errc::not_supported);
+    return;
 #endif
 }
 
-std::expected<void, boost::system::error_code> set_socket_transparent(const int fd, const bool ipv6)
+void set_socket_transparent(const int fd, const bool ipv6, boost::system::error_code& ec)
 {
-    if (auto result = set_socket_transparent_v4(fd); !result)
+    set_socket_transparent_v4(fd, ec);
+    if (ec)
     {
-        return std::unexpected(result.error());
+        return;
     }
     if (ipv6)
     {
-        if (auto result = set_socket_transparent_v6(fd); !result)
+        set_socket_transparent_v6(fd, ec);
+        if (ec)
         {
-            return std::unexpected(result.error());
+            return;
         }
     }
-    return {};
+    return;
 }
 
-std::expected<void, boost::system::error_code> set_socket_recv_origdst_v4(const int fd)
+void set_socket_recv_origdst_v4(const int fd, boost::system::error_code& ec)
 {
+    ec.clear();
 #ifdef __linux__
     const int one = 1;
     if (setsockopt(fd, SOL_IP, IP_RECVORIGDSTADDR, &one, sizeof(one)) != 0)
     {
-        return std::unexpected(boost::system::error_code(errno, boost::system::system_category()));
+        ec = boost::system::error_code(errno, boost::system::system_category());
+        return;
     }
-    return {};
+    return;
 #else
     (void)fd;
-    return std::unexpected(std::make_error_code(std::errc::not_supported));
+    ec = std::make_error_code(std::errc::not_supported);
+    return;
 #endif
 }
 
-std::expected<void, boost::system::error_code> set_socket_recv_origdst_v6(const int fd)
+void set_socket_recv_origdst_v6(const int fd, boost::system::error_code& ec)
 {
+    ec.clear();
 #ifdef __linux__
     const int one = 1;
     if (setsockopt(fd, SOL_IPV6, IPV6_RECVORIGDSTADDR, &one, sizeof(one)) != 0)
     {
-        return std::unexpected(boost::system::error_code(errno, boost::system::system_category()));
+        ec = boost::system::error_code(errno, boost::system::system_category());
+        return;
     }
-    return {};
+    return;
 #else
     (void)fd;
-    return std::unexpected(std::make_error_code(std::errc::not_supported));
+    ec = std::make_error_code(std::errc::not_supported);
+    return;
 #endif
 }
 
-std::expected<void, boost::system::error_code> set_socket_recv_origdst(const int fd, const bool ipv6)
+void set_socket_recv_origdst(const int fd, const bool ipv6, boost::system::error_code& ec)
 {
-    if (auto result = set_socket_recv_origdst_v4(fd); !result)
+    set_socket_recv_origdst_v4(fd, ec);
+    if (ec)
     {
-        return std::unexpected(result.error());
+        return;
     }
     if (ipv6)
     {
-        if (auto result = set_socket_recv_origdst_v6(fd); !result)
+        set_socket_recv_origdst_v6(fd, ec);
+        if (ec)
         {
-            return std::unexpected(result.error());
+            return;
         }
     }
-    return {};
+    return;
 }
 
 boost::asio::ip::address normalize_address(const boost::asio::ip::address& addr)
