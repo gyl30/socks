@@ -50,7 +50,7 @@ namespace
 
 tcp_socks_session::tcp_socks_session(boost::asio::ip::tcp::socket socket,
                                      boost::asio::io_context& io_context,
-                                     std::shared_ptr<mux_tunnel_impl> tunnel_manager,
+                                     std::shared_ptr<client_tunnel_pool> tunnel_pool,
                                      std::shared_ptr<router> router,
                                      const std::uint32_t sid,
                                      const config& cfg,
@@ -62,7 +62,7 @@ tcp_socks_session::tcp_socks_session(boost::asio::ip::tcp::socket socket,
       socket_(std::move(socket)),
       idle_timer_(io_context_),
       router_(std::move(router)),
-      tunnel_manager_(std::move(tunnel_manager)),
+      tunnel_pool_(std::move(tunnel_pool)),
       active_connection_guard_(std::move(active_connection_guard))
 {
     ctx_.new_trace_id();
@@ -148,7 +148,7 @@ std::shared_ptr<upstream> tcp_socks_session::create_backend(const route_type rou
     }
     if (route == route_type::kProxy)
     {
-        return std::make_shared<proxy_upstream>(tunnel_manager_, ctx_);
+        return std::make_shared<proxy_upstream>(tunnel_pool_, io_context_, ctx_);
     }
     return nullptr;
 }
