@@ -1,6 +1,7 @@
 #ifndef REMOTE_UDP_SESSION_H
 #define REMOTE_UDP_SESSION_H
 
+#include <atomic>
 #include <memory>
 #include <vector>
 #include <cstddef>
@@ -75,6 +76,7 @@ class remote_udp_session : public std::enable_shared_from_this<remote_udp_sessio
     std::uint64_t last_write_time_ms_{0};
     std::uint64_t last_activity_time_ms_{0};
     std::weak_ptr<mux_tunnel_impl> manager_;
+    std::atomic<std::uint8_t> stream_close_command_{0};
 };
 
 }    // namespace mux

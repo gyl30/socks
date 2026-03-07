@@ -1,6 +1,7 @@
 #ifndef TPROXY_UDP_SESSION_H
 #define TPROXY_UDP_SESSION_H
 
+#include <atomic>
 #include <memory>
 #include <string>
 #include <vector>
@@ -78,6 +79,7 @@ class tproxy_udp_session : public std::enable_shared_from_this<tproxy_udp_sessio
     std::shared_ptr<client_tunnel_pool> tunnel_pool_;
     std::shared_ptr<mux_tunnel_impl> tunnel_;
     std::shared_ptr<mux_stream> stream_;
+    std::atomic<std::uint8_t> stream_close_command_{0};
     boost::asio::ip::udp::endpoint client_endpoint_;
     boost::asio::ip::udp::endpoint target_endpoint_;
     std::function<void()> on_close_;

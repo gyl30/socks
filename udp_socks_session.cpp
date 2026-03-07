@@ -48,10 +48,37 @@ namespace mux
 namespace
 {
 
+constexpr std::uint8_t kNoStreamControl = 0;
+
 [[nodiscard]] std::uint64_t now_ms()
 {
     return static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
+void update_stream_close_command(std::atomic<std::uint8_t>& stream_close_command, const std::uint8_t next_command)
+{
+    auto current = stream_close_command.load(std::memory_order_relaxed);
+    for (;;)
+    {
+        std::uint8_t desired = current;
+        if (next_command == mux::kCmdRst)
+        {
+            desired = mux::kCmdRst;
+        }
+        else if (next_command == kNoStreamControl && current != mux::kCmdRst)
+        {
+            desired = kNoStreamControl;
+        }
+        if (desired == current)
+        {
+            return;
+        }
+        if (stream_close_command.compare_exchange_weak(current, desired, std::memory_order_relaxed))
+        {
+            return;
+        }
+    }
 }
 
 struct proxy_udp_stream
@@ -306,6 +333,7 @@ udp_socks_session::udp_socks_session(boost::asio::ip::tcp::socket socket,
 {
     ctx_.new_trace_id();
     ctx_.conn_id(sid);
+    stream_close_command_.store(mux::kCmdFin, std::memory_order_relaxed);
     last_activity_time_ms_ = now_ms();
 }
 
@@ -366,14 +394,22 @@ boost::asio::awaitable<void> udp_socks_session::run(const std::string& host, con
     using boost::asio::experimental::awaitable_operators::operator||;
     co_await (udp_socket_loop(stream) || stream_to_udp_sock(stream) || keep_tcp_alive() || idle_watchdog());
 
-    mux_frame fin_frame;
-    fin_frame.h.stream_id = stream->id();
-    fin_frame.h.command = mux::kCmdFin;
-    boost::system::error_code fin_ec;
-    co_await stream->async_write(std::move(fin_frame), fin_ec);
-    if (fin_ec)
+    const auto close_command = stream_close_command_.load(std::memory_order_relaxed);
+    if (close_command != kNoStreamControl)
     {
-        LOG_CTX_WARN(ctx_, "{} send fin failed {}", log_event::kSocks, fin_ec.message());
+        mux_frame close_frame;
+        close_frame.h.stream_id = stream->id();
+        close_frame.h.command = close_command;
+        boost::system::error_code close_ec;
+        co_await stream->async_write(std::move(close_frame), close_ec);
+        if (close_ec)
+        {
+            LOG_CTX_WARN(ctx_,
+                         "{} send {} failed {}",
+                         log_event::kSocks,
+                         close_command == mux::kCmdRst ? "rst" : "fin",
+                         close_ec.message());
+        }
     }
     tunnel->remove_stream(stream);
     LOG_CTX_INFO(ctx_, "{} finished", log_event::kSocks);
@@ -600,6 +636,7 @@ boost::asio::awaitable<void> udp_socks_session::udp_socket_loop(std::shared_ptr<
                 co_await stream->async_write(data_frame, write_ec);
                 if (write_ec)
                 {
+                    update_stream_close_command(stream_close_command_, kNoStreamControl);
                     LOG_CTX_ERROR(ctx_, "{} write to stream failed {}", log_event::kSocks, write_ec.message());
                     break;
                 }
@@ -647,27 +684,31 @@ boost::asio::awaitable<void> udp_socks_session::stream_to_udp_sock(std::shared_p
         auto data_frame = co_await stream->async_read(ec);
         if (ec)
         {
+            update_stream_close_command(stream_close_command_, kNoStreamControl);
+            break;
+        }
+        if (data_frame.h.command == mux::kCmdRst || data_frame.h.command == mux::kCmdFin)
+        {
+            update_stream_close_command(stream_close_command_, kNoStreamControl);
+            LOG_CTX_INFO(ctx_, "{} recv control cmd {} closing", log_event::kSocks, data_frame.h.command);
+            break;
+        }
+        if (data_frame.h.command != mux::kCmdDat)
+        {
+            update_stream_close_command(stream_close_command_, mux::kCmdRst);
+            LOG_CTX_WARN(ctx_, "{} recv unexpected cmd {} dropping session", log_event::kSocks, data_frame.h.command);
             break;
         }
         if (!has_client_addr_)
         {
             continue;
         }
-        if (data_frame.h.command == mux::kCmdRst || data_frame.h.command == mux::kCmdFin)
-        {
-            LOG_CTX_INFO(ctx_, "{} recv control cmd {} closing", log_event::kSocks, data_frame.h.command);
-            break;
-        }
-        if (data_frame.h.command != mux::kCmdDat)
-        {
-            LOG_CTX_WARN(ctx_, "{} recv unexpected cmd {} dropping session", log_event::kSocks, data_frame.h.command);
-            break;
-        }
 
         const auto [send_ec, send_n] = co_await udp_socket_.async_send_to(
             boost::asio::buffer(data_frame.payload), client_addr_, boost::asio::as_tuple(boost::asio::use_awaitable));
         if (send_ec)
         {
+            update_stream_close_command(stream_close_command_, mux::kCmdRst);
             LOG_CTX_ERROR(ctx_, "{} send error {}", log_event::kSocks, send_ec.message());
             co_return;
         }

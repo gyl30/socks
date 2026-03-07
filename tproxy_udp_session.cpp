@@ -48,6 +48,32 @@ namespace
 
 constexpr std::size_t kPacketChannelCapacity = 1024;
 constexpr std::chrono::milliseconds kTunnelPollInterval(200);
+constexpr std::uint8_t kNoStreamControl = 0;
+
+void update_stream_close_command(std::atomic<std::uint8_t>& stream_close_command, const std::uint8_t next_command)
+{
+    auto current = stream_close_command.load(std::memory_order_relaxed);
+    for (;;)
+    {
+        std::uint8_t desired = current;
+        if (next_command == mux::kCmdRst)
+        {
+            desired = mux::kCmdRst;
+        }
+        else if (next_command == kNoStreamControl && current != mux::kCmdRst)
+        {
+            desired = kNoStreamControl;
+        }
+        if (desired == current)
+        {
+            return;
+        }
+        if (stream_close_command.compare_exchange_weak(current, desired, std::memory_order_relaxed))
+        {
+            return;
+        }
+    }
+}
 
 void set_socket_reuse_port(const int fd, boost::system::error_code& ec)
 {
@@ -173,6 +199,7 @@ tproxy_udp_session::tproxy_udp_session(boost::asio::io_context& io_context,
       on_close_(std::move(on_close)),
       packet_channel_(io_context_, kPacketChannelCapacity)
 {
+    stream_close_command_.store(mux::kCmdFin, std::memory_order_relaxed);
 }
 
 void tproxy_udp_session::start()
@@ -247,16 +274,21 @@ boost::asio::awaitable<void> tproxy_udp_session::run()
         }
     }
 
-    if (stream_ != nullptr)
+    const auto close_command = stream_close_command_.load(std::memory_order_relaxed);
+    if (stream_ != nullptr && close_command != kNoStreamControl)
     {
-        mux_frame fin_frame;
-        fin_frame.h.stream_id = stream_->id();
-        fin_frame.h.command = mux::kCmdFin;
-        boost::system::error_code fin_ec;
-        co_await stream_->async_write(std::move(fin_frame), fin_ec);
-        if (fin_ec)
+        mux_frame close_frame;
+        close_frame.h.stream_id = stream_->id();
+        close_frame.h.command = close_command;
+        boost::system::error_code close_ec;
+        co_await stream_->async_write(std::move(close_frame), close_ec);
+        if (close_ec)
         {
-            LOG_CTX_WARN(ctx_, "{} send udp fin failed {}", log_event::kMux, fin_ec.message());
+            LOG_CTX_WARN(ctx_,
+                         "{} send udp {} failed {}",
+                         log_event::kMux,
+                         close_command == mux::kCmdRst ? "rst" : "fin",
+                         close_ec.message());
         }
     }
 
@@ -481,14 +513,17 @@ boost::asio::awaitable<void> tproxy_udp_session::proxy_to_client()
         const auto frame = co_await stream_->async_read(ec);
         if (ec)
         {
+            update_stream_close_command(stream_close_command_, kNoStreamControl);
             break;
         }
         if (frame.h.command == mux::kCmdFin || frame.h.command == mux::kCmdRst)
         {
+            update_stream_close_command(stream_close_command_, kNoStreamControl);
             break;
         }
         if (frame.h.command != mux::kCmdDat)
         {
+            update_stream_close_command(stream_close_command_, mux::kCmdRst);
             LOG_CTX_WARN(ctx_, "{} unexpected proxy udp frame {}", log_event::kMux, frame.h.command);
             break;
         }
@@ -496,11 +531,13 @@ boost::asio::awaitable<void> tproxy_udp_session::proxy_to_client()
         socks_udp_header header;
         if (!socks_codec::decode_udp_header(frame.payload.data(), frame.payload.size(), header))
         {
+            update_stream_close_command(stream_close_command_, mux::kCmdRst);
             LOG_CTX_WARN(ctx_, "{} decode proxy udp header failed", log_event::kMux);
             break;
         }
         if (header.header_len > frame.payload.size())
         {
+            update_stream_close_command(stream_close_command_, mux::kCmdRst);
             LOG_CTX_WARN(ctx_, "{} proxy udp header length invalid {}", log_event::kMux, header.header_len);
             break;
         }
@@ -509,6 +546,7 @@ boost::asio::awaitable<void> tproxy_udp_session::proxy_to_client()
         const auto source_addr = boost::asio::ip::make_address(header.addr, addr_ec);
         if (addr_ec)
         {
+            update_stream_close_command(stream_close_command_, mux::kCmdRst);
             LOG_CTX_WARN(ctx_, "{} parse proxy udp source address failed {}", log_event::kMux, addr_ec.message());
             break;
         }
