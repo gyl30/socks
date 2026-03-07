@@ -17,7 +17,6 @@
 
 extern "C"
 {
-#include <oqs/kem_ml_kem.h>
 #include <openssl/asn1.h>
 #include <openssl/bio.h>
 #include <openssl/evp.h>
@@ -311,6 +310,78 @@ bool validate_mlkem768_ciphertext(const std::vector<std::uint8_t>& ciphertext, b
     if (ciphertext.size() != kMlkem768CiphertextSize)
     {
         ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
+        return false;
+    }
+    return true;
+}
+
+openssl_ptrs::evp_pkey_ptr create_mlkem768_private_key_object(const std::vector<std::uint8_t>& private_key, boost::system::error_code& ec)
+{
+    ec.clear();
+    if (!validate_mlkem768_private_key(private_key, ec))
+    {
+        return nullptr;
+    }
+
+    openssl_ptrs::evp_pkey_ptr pkey(
+        EVP_PKEY_new_raw_private_key_ex(nullptr, "ML-KEM-768", nullptr, private_key.data(), private_key.size()));
+    if (pkey == nullptr)
+    {
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return nullptr;
+    }
+    return pkey;
+}
+
+openssl_ptrs::evp_pkey_ptr create_mlkem768_public_key_object(const std::vector<std::uint8_t>& public_key, boost::system::error_code& ec)
+{
+    ec.clear();
+    if (!validate_mlkem768_public_key(public_key, ec))
+    {
+        return nullptr;
+    }
+
+    openssl_ptrs::evp_pkey_ptr pkey(
+        EVP_PKEY_new_raw_public_key_ex(nullptr, "ML-KEM-768", nullptr, public_key.data(), public_key.size()));
+    if (pkey == nullptr)
+    {
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return nullptr;
+    }
+    return pkey;
+}
+
+bool export_mlkem768_keypair(EVP_PKEY* pkey,
+                             std::vector<std::uint8_t>& public_key,
+                             std::vector<std::uint8_t>& private_key,
+                             boost::system::error_code& ec)
+{
+    ec.clear();
+    std::size_t public_key_len = 0;
+    std::size_t private_key_len = 0;
+    if (EVP_PKEY_get_raw_public_key(pkey, nullptr, &public_key_len) != 1 || EVP_PKEY_get_raw_private_key(pkey, nullptr, &private_key_len) != 1)
+    {
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return false;
+    }
+
+    public_key.assign(public_key_len, 0);
+    private_key.assign(private_key_len, 0);
+    if (EVP_PKEY_get_raw_public_key(pkey, public_key.data(), &public_key_len) != 1 ||
+        EVP_PKEY_get_raw_private_key(pkey, private_key.data(), &private_key_len) != 1)
+    {
+        public_key.clear();
+        private_key.clear();
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return false;
+    }
+
+    public_key.resize(public_key_len);
+    private_key.resize(private_key_len);
+    if (!validate_mlkem768_public_key(public_key, ec) || !validate_mlkem768_private_key(private_key, ec))
+    {
+        public_key.clear();
+        private_key.clear();
         return false;
     }
     return true;
@@ -737,16 +808,15 @@ bool crypto_util::generate_mlkem768_keypair(std::vector<std::uint8_t>& public_ke
                                             boost::system::error_code& ec)
 {
     ec.clear();
-    public_key.assign(kMlkem768PublicKeySize, 0);
-    private_key.assign(kMlkem768PrivateKeySize, 0);
-    if (OQS_KEM_ml_kem_768_keypair(public_key.data(), private_key.data()) != OQS_SUCCESS)
+    ensure_openssl_initialized();
+
+    const openssl_ptrs::evp_pkey_ptr pkey(EVP_PKEY_Q_keygen(nullptr, nullptr, "ML-KEM-768"));
+    if (pkey == nullptr)
     {
-        public_key.clear();
-        private_key.clear();
         ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
         return false;
     }
-    return true;
+    return export_mlkem768_keypair(pkey.get(), public_key, private_key, ec);
 }
 
 std::vector<std::uint8_t> crypto_util::mlkem768_encapsulate(const std::vector<std::uint8_t>& public_key,
@@ -754,19 +824,48 @@ std::vector<std::uint8_t> crypto_util::mlkem768_encapsulate(const std::vector<st
                                                             boost::system::error_code& ec)
 {
     ec.clear();
+    ensure_openssl_initialized();
     shared_secret.clear();
-    if (!validate_mlkem768_public_key(public_key, ec))
+    const auto pkey = create_mlkem768_public_key_object(public_key, ec);
+    if (ec)
     {
         return {};
     }
 
-    std::vector<std::uint8_t> ciphertext(kMlkem768CiphertextSize, 0);
-    shared_secret.assign(kMlkem768SharedSecretSize, 0);
-    if (OQS_KEM_ml_kem_768_encaps(ciphertext.data(), shared_secret.data(), public_key.data()) != OQS_SUCCESS)
+    const openssl_ptrs::evp_pkey_ctx_ptr ctx(EVP_PKEY_CTX_new_from_pkey(nullptr, pkey.get(), nullptr));
+    if (ctx == nullptr || EVP_PKEY_encapsulate_init(ctx.get(), nullptr) <= 0)
+    {
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return {};
+    }
+
+    std::size_t ciphertext_len = 0;
+    std::size_t shared_secret_len = 0;
+    if (EVP_PKEY_encapsulate(ctx.get(), nullptr, &ciphertext_len, nullptr, &shared_secret_len) <= 0)
+    {
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return {};
+    }
+
+    std::vector<std::uint8_t> ciphertext(ciphertext_len, 0);
+    shared_secret.assign(shared_secret_len, 0);
+    if (EVP_PKEY_encapsulate(ctx.get(), ciphertext.data(), &ciphertext_len, shared_secret.data(), &shared_secret_len) <= 0)
     {
         ciphertext.clear();
         shared_secret.clear();
         ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return {};
+    }
+    ciphertext.resize(ciphertext_len);
+    shared_secret.resize(shared_secret_len);
+    if (!validate_mlkem768_ciphertext(ciphertext, ec) || shared_secret.size() != kMlkem768SharedSecretSize)
+    {
+        ciphertext.clear();
+        shared_secret.clear();
+        if (!ec)
+        {
+            ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        }
         return {};
     }
     return ciphertext;
@@ -777,13 +876,41 @@ std::vector<std::uint8_t> crypto_util::mlkem768_decapsulate(const std::vector<st
                                                             boost::system::error_code& ec)
 {
     ec.clear();
-    if (!validate_mlkem768_private_key(private_key, ec) || !validate_mlkem768_ciphertext(ciphertext, ec))
+    ensure_openssl_initialized();
+    if (!validate_mlkem768_ciphertext(ciphertext, ec))
     {
         return {};
     }
 
-    std::vector<std::uint8_t> shared_secret(kMlkem768SharedSecretSize, 0);
-    if (OQS_KEM_ml_kem_768_decaps(shared_secret.data(), ciphertext.data(), private_key.data()) != OQS_SUCCESS)
+    const auto pkey = create_mlkem768_private_key_object(private_key, ec);
+    if (ec)
+    {
+        return {};
+    }
+
+    const openssl_ptrs::evp_pkey_ctx_ptr ctx(EVP_PKEY_CTX_new_from_pkey(nullptr, pkey.get(), nullptr));
+    if (ctx == nullptr || EVP_PKEY_decapsulate_init(ctx.get(), nullptr) <= 0)
+    {
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return {};
+    }
+
+    std::size_t shared_secret_len = 0;
+    if (EVP_PKEY_decapsulate(ctx.get(), nullptr, &shared_secret_len, ciphertext.data(), ciphertext.size()) <= 0)
+    {
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return {};
+    }
+
+    std::vector<std::uint8_t> shared_secret(shared_secret_len, 0);
+    if (EVP_PKEY_decapsulate(ctx.get(), shared_secret.data(), &shared_secret_len, ciphertext.data(), ciphertext.size()) <= 0)
+    {
+        shared_secret.clear();
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return {};
+    }
+    shared_secret.resize(shared_secret_len);
+    if (shared_secret.size() != kMlkem768SharedSecretSize)
     {
         shared_secret.clear();
         ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
