@@ -48,9 +48,9 @@ boost::asio::awaitable<void> mux_dispatcher::on_plaintext_data(std::span<const s
 
 std::vector<std::uint8_t> mux_dispatcher::pack(std::uint32_t stream_id, std::uint8_t cmd, const std::vector<std::uint8_t>& payload)
 {
-    if (payload.size() > mux::kMaxPayloadPerRecord)
+    if (payload.size() > mux::kMaxPayload)
     {
-        LOG_ERROR("mux dispatcher pack payload too large for single record {} max {}", payload.size(), mux::kMaxPayloadPerRecord);
+        LOG_ERROR("mux dispatcher pack payload too large {} max {}", payload.size(), mux::kMaxPayload);
         return {};
     }
 
@@ -84,7 +84,7 @@ boost::asio::awaitable<void> mux_dispatcher::process_frames(boost::system::error
         }
         const std::uint32_t total_frame_len = mux::kHeaderSize + header.length;
 
-        if (header.length > mux::kMaxPayloadPerRecord)
+        if (header.length > mux::kMaxPayload)
         {
             LOG_CTX_ERROR(ctx_, "{} received oversized frame length {} stream {}", log_event::kMux, header.length, header.stream_id);
             buffer_.consume(buffer_.size());

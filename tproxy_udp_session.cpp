@@ -496,9 +496,9 @@ boost::asio::awaitable<void> tproxy_udp_session::packets_to_proxy()
         data_frame.payload.reserve(header_bytes.size() + payload.size());
         data_frame.payload.insert(data_frame.payload.end(), header_bytes.begin(), header_bytes.end());
         data_frame.payload.insert(data_frame.payload.end(), payload.begin(), payload.end());
-        if (data_frame.payload.size() > mux::kMaxPayloadPerRecord)
+        if (data_frame.payload.size() > mux::kMaxPayload)
         {
-            LOG_CTX_WARN(ctx_, "{} proxy udp payload too large {}", log_event::kMux, data_frame.payload.size());
+            LOG_CTX_WARN(ctx_, "{} proxy udp payload too large {} max {}", log_event::kMux, data_frame.payload.size(), mux::kMaxPayload);
             continue;
         }
 

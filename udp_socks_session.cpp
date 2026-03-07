@@ -657,9 +657,9 @@ boost::asio::awaitable<void> udp_socks_session::udp_socket_loop()
             const auto payload_len = n - udp_header.header_len;
             if (route == route_type::kProxy)
             {
-                if (n > mux::kMaxPayloadPerRecord)
+                if (n > mux::kMaxPayload)
                 {
-                    LOG_CTX_WARN(ctx_, "{} udp packet too large for single record {}", log_event::kSocks, n);
+                    LOG_CTX_WARN(ctx_, "{} udp packet too large for mux frame {}", log_event::kSocks, n);
                     continue;
                 }
                 boost::system::error_code open_ec;

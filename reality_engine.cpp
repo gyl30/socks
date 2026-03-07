@@ -1,5 +1,6 @@
 #include <span>
 #include <array>
+#include <algorithm>
 #include <memory>
 #include <vector>
 #include <cstddef>
@@ -53,14 +54,22 @@ std::span<const std::uint8_t> reality_engine::encrypt(const std::vector<std::uin
         return std::span<const std::uint8_t>{};
     }
     ec.clear();
-    reality::tls_record_layer::encrypt_record_append(
-        encrypt_ctx_, cipher_, write_key_, write_iv_, write_seq_, plaintext, reality::kContentTypeApplicationData, tx_buf_, ec);
-    if (ec)
+    std::vector<std::uint8_t> plaintext_chunk;
+    plaintext_chunk.reserve(reality::kMaxTlsApplicationDataPayloadLen);
+    for (std::size_t offset = 0; offset < plaintext.size();)
     {
-        return std::span<const std::uint8_t>{};
+        const auto chunk_len = std::min(plaintext.size() - offset, reality::kMaxTlsApplicationDataPayloadLen);
+        plaintext_chunk.assign(plaintext.begin() + static_cast<std::ptrdiff_t>(offset),
+                               plaintext.begin() + static_cast<std::ptrdiff_t>(offset + chunk_len));
+        reality::tls_record_layer::encrypt_record_append(
+            encrypt_ctx_, cipher_, write_key_, write_iv_, write_seq_, plaintext_chunk, reality::kContentTypeApplicationData, tx_buf_, ec);
+        if (ec)
+        {
+            return std::span<const std::uint8_t>{};
+        }
+        write_seq_++;
+        offset += chunk_len;
     }
-
-    write_seq_++;
 
     return std::span<const std::uint8_t>{tx_buf_.data(), tx_buf_.size()};
 }

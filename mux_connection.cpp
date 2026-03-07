@@ -455,12 +455,6 @@ boost::asio::awaitable<void> mux_connection::send_async_with_timeout(mux_frame m
         ec = boost::asio::error::message_size;
         co_return;
     }
-    if (msg.payload.size() > mux::kMaxPayloadPerRecord)
-    {
-        LOG_ERROR("mux {} payload too large for single record {} max {}", cid_, msg.payload.size(), mux::kMaxPayloadPerRecord);
-        ec = boost::asio::error::message_size;
-        co_return;
-    }
 
     if (msg.h.command != mux::kCmdDat || msg.payload.size() < 128)
     {

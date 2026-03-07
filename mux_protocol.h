@@ -2,6 +2,7 @@
 #define MUX_PROTOCOL_H
 
 #include <string>
+#include <limits>
 #include <cstddef>
 #include <cstdint>
 
@@ -18,7 +19,7 @@ constexpr std::uint8_t kCmdRst = 0x05;
 constexpr std::uint32_t kStreamIdHeartbeat = 0;
 
 constexpr std::size_t kHeaderSize = 7;
-constexpr std::size_t kMaxPayload = (64L * 1024) - 128;
+constexpr std::size_t kMaxPayload = static_cast<std::size_t>(std::numeric_limits<std::uint16_t>::max());
 constexpr std::size_t kMaxPayloadPerRecord = reality::kMaxTlsApplicationDataPayloadLen - kHeaderSize;
 
 struct frame_header
