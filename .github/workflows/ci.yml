@@ -12,6 +12,9 @@ env:
   BOOST_VERSION: "1.89.0"
   BOOST_ARCHIVE: "boost_1_89_0.tar.bz2"
   BOOST_SRC_DIR: "boost_1_89_0"
+  OPENSSL_VERSION: "3.6.0"
+  OPENSSL_ARCHIVE: "openssl-3.6.0.tar.gz"
+  OPENSSL_SRC_DIR: "openssl-3.6.0"
 
 jobs:
   build-linux-matrix:
@@ -44,6 +47,9 @@ jobs:
             -e BOOST_VERSION \
             -e BOOST_ARCHIVE \
             -e BOOST_SRC_DIR \
+            -e OPENSSL_VERSION \
+            -e OPENSSL_ARCHIVE \
+            -e OPENSSL_SRC_DIR \
             -e COMPILER="${{ matrix.compiler }}" \
             ubuntu:24.04 bash -lc '
               set -euo pipefail
@@ -54,13 +60,14 @@ jobs:
                 bzip2 \
                 tar \
                 wget \
+                perl \
+                make \
                 cmake \
                 ninja-build \
                 pkg-config \
                 gcc \
                 g++ \
-                clang \
-                libssl-dev
+                clang
 
               mkdir -p /tmp/boost-cache
               if [ ! -d "/tmp/boost-cache/${BOOST_SRC_DIR}" ]; then
@@ -77,6 +84,11 @@ jobs:
               fi
 
               BOOST_ROOT="/tmp/boost-cache/${BOOST_SRC_DIR}"
+              OPENSSL_ROOT="/tmp/openssl-cache/install-${OPENSSL_VERSION}"
+
+              OPENSSL_INSTALL_DIR="${OPENSSL_ROOT}" \
+              OPENSSL_CACHE_DIR="/tmp/openssl-cache" \
+              bash ./script/install_openssl_from_source.sh
 
               cmake -S . -B build -GNinja \
                 -DCMAKE_BUILD_TYPE=Release \
@@ -87,7 +99,8 @@ jobs:
                 -DBoost_NO_BOOST_CMAKE=ON \
                 -DBoost_NO_SYSTEM_PATHS=ON \
                 -DBOOST_ROOT="${BOOST_ROOT}" \
-                -DCMAKE_PREFIX_PATH="${BOOST_ROOT}"
+                -DOPENSSL_ROOT_DIR="${OPENSSL_ROOT}" \
+                -DCMAKE_PREFIX_PATH="${BOOST_ROOT};${OPENSSL_ROOT}"
 
               cmake --build build --target socks --parallel
               grep -q "SOCKS_HAS_TPROXY=1" build/compile_commands.json
@@ -103,21 +116,25 @@ jobs:
             -e BOOST_VERSION \
             -e BOOST_ARCHIVE \
             -e BOOST_SRC_DIR \
+            -e OPENSSL_VERSION \
+            -e OPENSSL_ARCHIVE \
+            -e OPENSSL_SRC_DIR \
             -e COMPILER="${{ matrix.compiler }}" \
             alpine:3.20 sh -lc '
               set -eu
               apk add --no-cache \
+                bash \
                 ca-certificates \
                 bzip2 \
                 tar \
                 wget \
+                perl \
                 cmake \
                 ninja \
                 pkgconf \
                 build-base \
                 clang \
                 lld \
-                openssl-dev \
                 linux-headers
 
               mkdir -p /tmp/boost-cache
@@ -135,6 +152,11 @@ jobs:
               fi
 
               BOOST_ROOT="/tmp/boost-cache/${BOOST_SRC_DIR}"
+              OPENSSL_ROOT="/tmp/openssl-cache/install-${OPENSSL_VERSION}"
+
+              OPENSSL_INSTALL_DIR="${OPENSSL_ROOT}" \
+              OPENSSL_CACHE_DIR="/tmp/openssl-cache" \
+              bash ./script/install_openssl_from_source.sh
 
               cmake -S . -B build -GNinja \
                 -DCMAKE_BUILD_TYPE=Release \
@@ -145,7 +167,8 @@ jobs:
                 -DBoost_NO_BOOST_CMAKE=ON \
                 -DBoost_NO_SYSTEM_PATHS=ON \
                 -DBOOST_ROOT="${BOOST_ROOT}" \
-                -DCMAKE_PREFIX_PATH="${BOOST_ROOT}"
+                -DOPENSSL_ROOT_DIR="${OPENSSL_ROOT}" \
+                -DCMAKE_PREFIX_PATH="${BOOST_ROOT};${OPENSSL_ROOT}"
 
               cmake --build build --target socks --parallel
               grep -q "SOCKS_HAS_TPROXY=1" build/compile_commands.json
@@ -164,7 +187,7 @@ jobs:
         run: |
           set -euo pipefail
           brew update
-          brew install cmake ninja llvm openssl@3 wget
+          brew install cmake ninja llvm wget
 
       - name: Prepare Boost Headers
         run: |
@@ -175,12 +198,22 @@ jobs:
             tar xf "$HOME/.cache/boost/${BOOST_ARCHIVE}" -C "$HOME/.cache/boost"
           fi
 
+      - name: Build OpenSSL
+        run: |
+          set -euo pipefail
+          OPENSSL_ROOT="$HOME/.cache/openssl/install-${OPENSSL_VERSION}"
+          OPENSSL_INSTALL_DIR="${OPENSSL_ROOT}" \
+          OPENSSL_CACHE_DIR="$HOME/.cache/openssl" \
+          OPENSSL_CONFIG_TARGET="darwin64-arm64-cc" \
+          JOBS="$(sysctl -n hw.ncpu)" \
+          bash ./script/install_openssl_from_source.sh
+
       - name: Configure
         run: |
           set -euo pipefail
           BOOST_ROOT="$HOME/.cache/boost/${BOOST_SRC_DIR}"
           LLVM_ROOT="$(brew --prefix llvm)"
-          OPENSSL_ROOT="$(brew --prefix openssl@3)"
+          OPENSSL_ROOT="$HOME/.cache/openssl/install-${OPENSSL_VERSION}"
           cmake -S . -B build -GNinja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_C_COMPILER="${LLVM_ROOT}/bin/clang" \
@@ -218,9 +251,11 @@ jobs:
           install: >-
             mingw-w64-ucrt-x86_64-clang
             mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-gcc
             mingw-w64-ucrt-x86_64-ninja
-            mingw-w64-ucrt-x86_64-openssl
             mingw-w64-ucrt-x86_64-pkgconf
+            make
+            perl
             wget
             tar
 
@@ -234,11 +269,22 @@ jobs:
             tar xf "$HOME/.cache/boost/${BOOST_ARCHIVE}" -C "$HOME/.cache/boost"
           fi
 
+      - name: Build OpenSSL
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          OPENSSL_ROOT="$HOME/.cache/openssl/install-${OPENSSL_VERSION}"
+          OPENSSL_INSTALL_DIR="${OPENSSL_ROOT}" \
+          OPENSSL_CACHE_DIR="$HOME/.cache/openssl" \
+          OPENSSL_CONFIG_TARGET="mingw64" \
+          bash ./script/install_openssl_from_source.sh
+
       - name: Configure
         shell: msys2 {0}
         run: |
           set -euo pipefail
           BOOST_ROOT="$HOME/.cache/boost/${BOOST_SRC_DIR}"
+          OPENSSL_ROOT="$HOME/.cache/openssl/install-${OPENSSL_VERSION}"
           cmake -S . -B build -GNinja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_C_COMPILER=clang \
@@ -248,7 +294,8 @@ jobs:
             -DBoost_NO_BOOST_CMAKE=ON \
             -DBoost_NO_SYSTEM_PATHS=ON \
             -DBOOST_ROOT="$BOOST_ROOT" \
-            -DCMAKE_PREFIX_PATH="/ucrt64;$BOOST_ROOT"
+            -DOPENSSL_ROOT_DIR="$OPENSSL_ROOT" \
+            -DCMAKE_PREFIX_PATH="/ucrt64;$BOOST_ROOT;$OPENSSL_ROOT"
 
       - name: Build Binary
         shell: msys2 {0}
