@@ -87,6 +87,11 @@ struct proxy_udp_stream
     std::shared_ptr<mux_stream> stream;
 };
 
+[[nodiscard]] std::string udp_target_key(const std::string& host, const std::uint16_t port)
+{
+    return host + "|" + std::to_string(port);
+}
+
 boost::asio::awaitable<void> write_socks_error_reply(boost::asio::ip::tcp::socket& socket,
                                                      const std::uint8_t rep,
                                                      const connection_context& ctx,
@@ -490,27 +495,48 @@ boost::asio::awaitable<route_type> udp_socks_session::decide_udp_route(const soc
     co_return co_await router_->decide_ip(ctx_, socks_codec::normalize_ip_address(addr));
 }
 
+boost::asio::awaitable<boost::asio::ip::udp::endpoint> udp_socks_session::resolve_target_endpoint(const std::string& host,
+                                                                                                   const std::uint16_t port,
+                                                                                                   boost::system::error_code& ec)
+{
+    ec.clear();
+    const auto key = udp_target_key(host, port);
+    const auto cached = resolved_targets_.find(key);
+    if (cached != resolved_targets_.end())
+    {
+        co_return cached->second;
+    }
+
+    boost::asio::ip::udp::resolver resolver(io_context_);
+    auto endpoints = co_await timeout_io::wait_resolve_with_timeout(resolver, host, std::to_string(port), cfg_.timeout.connect, ec);
+    if (ec)
+    {
+        LOG_CTX_WARN(ctx_, "{} udp direct resolve failed {}:{} error={}", log_event::kRoute, host, port, ec.message());
+        co_return boost::asio::ip::udp::endpoint{};
+    }
+    if (endpoints.begin() == endpoints.end())
+    {
+        ec = boost::asio::error::host_not_found;
+        LOG_CTX_WARN(ctx_, "{} udp direct resolve empty {}:{}", log_event::kRoute, host, port);
+        co_return boost::asio::ip::udp::endpoint{};
+    }
+
+    const auto target = net::normalize_endpoint(endpoints.begin()->endpoint());
+    resolved_targets_.emplace(key, target);
+    co_return target;
+}
+
 boost::asio::awaitable<void> udp_socks_session::forward_direct_packet(const socks_udp_header& header,
                                                                       const std::uint8_t* payload,
                                                                       const std::size_t payload_len,
                                                                       boost::system::error_code& ec)
 {
     ec.clear();
-    boost::asio::ip::udp::resolver resolver(io_context_);
-    auto endpoints = co_await timeout_io::wait_resolve_with_timeout(resolver, header.addr, std::to_string(header.port), cfg_.timeout.connect, ec);
+    const auto target = co_await resolve_target_endpoint(header.addr, header.port, ec);
     if (ec)
     {
-        LOG_CTX_WARN(ctx_, "{} udp direct resolve failed {}:{} error={}", log_event::kRoute, header.addr, header.port, ec.message());
         co_return;
     }
-    if (endpoints.begin() == endpoints.end())
-    {
-        ec = boost::asio::error::host_not_found;
-        LOG_CTX_WARN(ctx_, "{} udp direct resolve empty {}:{}", log_event::kRoute, header.addr, header.port);
-        co_return;
-    }
-
-    const auto target = net::normalize_endpoint(endpoints.begin()->endpoint());
     const auto [send_ec, send_n] = co_await udp_socket_.async_send_to(
         boost::asio::buffer(payload, payload_len), target, boost::asio::as_tuple(boost::asio::use_awaitable));
     (void)send_n;

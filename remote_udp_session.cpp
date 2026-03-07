@@ -69,6 +69,11 @@ void update_stream_close_command(std::atomic<std::uint8_t>& stream_close_command
     return normalized_endpoint.address().to_string() + ":" + std::to_string(normalized_endpoint.port());
 }
 
+[[nodiscard]] std::string udp_target_key(const std::string& host, const std::uint16_t port)
+{
+    return host + "|" + std::to_string(port);
+}
+
 }    // namespace
 
 remote_udp_session::remote_udp_session(const std::shared_ptr<mux_connection>& connection,
@@ -342,23 +347,12 @@ boost::asio::awaitable<void> remote_udp_session::on_frame(const mux_frame& frame
         co_return;
     }
 
-    boost::system::error_code resolve_ec;
-    auto res = co_await timeout_io::wait_resolve_with_timeout(
-        udp_resolver_, header.addr, std::to_string(header.port), cfg_.timeout.connect, resolve_ec);
-    if (resolve_ec)
+    auto target_ep = co_await resolve_target_endpoint(header.addr, header.port, ec);
+    if (ec)
     {
-        statistics::instance().inc_remote_udp_session_resolve_errors();
-        LOG_CTX_WARN(ctx_, "{} stage=resolve target={}:{} error={}", log_event::kMux, header.addr, header.port, resolve_ec.message());
         ec.clear();
         co_return;
     }
-    if (res.begin() == res.end())
-    {
-        LOG_CTX_WARN(ctx_, "{} stage=resolve target={}:{} error=empty_result", log_event::kMux, header.addr, header.port);
-        co_return;
-    }
-
-    auto target_ep = net::normalize_endpoint(res.begin()->endpoint());
     const auto payload_len = frame.payload.size() - header.header_len;
     LOG_CTX_DEBUG(ctx_, "{} udp forwarding {} bytes to {}", log_event::kMux, payload_len, target_ep.address().to_string());
     co_await udp_socket_.async_send_to(boost::asio::buffer(frame.payload.data() + header.header_len, payload_len),
@@ -437,6 +431,37 @@ boost::asio::awaitable<void> remote_udp_session::udp_to_mux()
         ctx_.add_tx_bytes(pkt_size);
     }
     LOG_CTX_DEBUG(ctx_, "{} udp recv loop stopped", log_event::kMux);
+}
+
+boost::asio::awaitable<boost::asio::ip::udp::endpoint> remote_udp_session::resolve_target_endpoint(const std::string& host,
+                                                                                                    const std::uint16_t port,
+                                                                                                    boost::system::error_code& ec)
+{
+    ec.clear();
+    const auto key = udp_target_key(host, port);
+    const auto cached = resolved_targets_.find(key);
+    if (cached != resolved_targets_.end())
+    {
+        co_return cached->second;
+    }
+
+    auto res = co_await timeout_io::wait_resolve_with_timeout(udp_resolver_, host, std::to_string(port), cfg_.timeout.connect, ec);
+    if (ec)
+    {
+        statistics::instance().inc_remote_udp_session_resolve_errors();
+        LOG_CTX_WARN(ctx_, "{} stage=resolve target={}:{} error={}", log_event::kMux, host, port, ec.message());
+        co_return boost::asio::ip::udp::endpoint{};
+    }
+    if (res.begin() == res.end())
+    {
+        ec = boost::asio::error::host_not_found;
+        LOG_CTX_WARN(ctx_, "{} stage=resolve target={}:{} error=empty_result", log_event::kMux, host, port);
+        co_return boost::asio::ip::udp::endpoint{};
+    }
+
+    const auto target = net::normalize_endpoint(res.begin()->endpoint());
+    resolved_targets_.emplace(key, target);
+    co_return target;
 }
 
 std::string remote_udp_session::endpoint_key(const boost::asio::ip::udp::endpoint& endpoint)
