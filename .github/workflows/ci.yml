@@ -37,6 +37,20 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Restore Linux Boost Cache
+        uses: actions/cache@v4
+        with:
+          path: .cache/boost
+          key: linux-boost-${{ env.BOOST_VERSION }}
+
+      - name: Restore Linux OpenSSL Cache
+        uses: actions/cache@v4
+        with:
+          path: .cache/openssl/${{ matrix.libc }}-${{ matrix.arch }}
+          key: linux-${{ matrix.arch }}-${{ matrix.libc }}-openssl-${{ env.OPENSSL_VERSION }}-${{ hashFiles('script/install_openssl_from_source.sh') }}
+          restore-keys: |
+            linux-${{ matrix.arch }}-${{ matrix.libc }}-openssl-${{ env.OPENSSL_VERSION }}-
+
       - name: Build Linux glibc Matrix Target
         if: ${{ matrix.libc == 'glibc' }}
         run: |
@@ -69,10 +83,10 @@ jobs:
                 g++ \
                 clang
 
-              mkdir -p /tmp/boost-cache
-              if [ ! -d "/tmp/boost-cache/${BOOST_SRC_DIR}" ]; then
-                wget -O "/tmp/boost-cache/${BOOST_ARCHIVE}" "https://archives.boost.io/release/${BOOST_VERSION}/source/${BOOST_ARCHIVE}"
-                tar xf "/tmp/boost-cache/${BOOST_ARCHIVE}" -C /tmp/boost-cache
+              mkdir -p /workspace/.cache/boost
+              if [ ! -d "/workspace/.cache/boost/${BOOST_SRC_DIR}" ]; then
+                wget -O "/workspace/.cache/boost/${BOOST_ARCHIVE}" "https://archives.boost.io/release/${BOOST_VERSION}/source/${BOOST_ARCHIVE}"
+                tar xf "/workspace/.cache/boost/${BOOST_ARCHIVE}" -C /workspace/.cache/boost
               fi
 
               if [ "${COMPILER}" = "gcc" ]; then
@@ -83,11 +97,12 @@ jobs:
                 CXX_BIN=clang++
               fi
 
-              BOOST_ROOT="/tmp/boost-cache/${BOOST_SRC_DIR}"
-              OPENSSL_ROOT="/tmp/openssl-cache/install-${OPENSSL_VERSION}"
+              BOOST_ROOT="/workspace/.cache/boost/${BOOST_SRC_DIR}"
+              OPENSSL_CACHE_ROOT="/workspace/.cache/openssl/${{ matrix.libc }}-${{ matrix.arch }}"
+              OPENSSL_ROOT="${OPENSSL_CACHE_ROOT}/install-${OPENSSL_VERSION}"
 
               OPENSSL_INSTALL_DIR="${OPENSSL_ROOT}" \
-              OPENSSL_CACHE_DIR="/tmp/openssl-cache" \
+              OPENSSL_CACHE_DIR="${OPENSSL_CACHE_ROOT}" \
               bash ./script/install_openssl_from_source.sh
 
               cmake -S . -B build -GNinja \
@@ -137,10 +152,10 @@ jobs:
                 lld \
                 linux-headers
 
-              mkdir -p /tmp/boost-cache
-              if [ ! -d "/tmp/boost-cache/${BOOST_SRC_DIR}" ]; then
-                wget -O "/tmp/boost-cache/${BOOST_ARCHIVE}" "https://archives.boost.io/release/${BOOST_VERSION}/source/${BOOST_ARCHIVE}"
-                tar xf "/tmp/boost-cache/${BOOST_ARCHIVE}" -C /tmp/boost-cache
+              mkdir -p /workspace/.cache/boost
+              if [ ! -d "/workspace/.cache/boost/${BOOST_SRC_DIR}" ]; then
+                wget -O "/workspace/.cache/boost/${BOOST_ARCHIVE}" "https://archives.boost.io/release/${BOOST_VERSION}/source/${BOOST_ARCHIVE}"
+                tar xf "/workspace/.cache/boost/${BOOST_ARCHIVE}" -C /workspace/.cache/boost
               fi
 
               if [ "${COMPILER}" = "gcc" ]; then
@@ -151,11 +166,12 @@ jobs:
                 CXX_BIN=clang++
               fi
 
-              BOOST_ROOT="/tmp/boost-cache/${BOOST_SRC_DIR}"
-              OPENSSL_ROOT="/tmp/openssl-cache/install-${OPENSSL_VERSION}"
+              BOOST_ROOT="/workspace/.cache/boost/${BOOST_SRC_DIR}"
+              OPENSSL_CACHE_ROOT="/workspace/.cache/openssl/${{ matrix.libc }}-${{ matrix.arch }}"
+              OPENSSL_ROOT="${OPENSSL_CACHE_ROOT}/install-${OPENSSL_VERSION}"
 
               OPENSSL_INSTALL_DIR="${OPENSSL_ROOT}" \
-              OPENSSL_CACHE_DIR="/tmp/openssl-cache" \
+              OPENSSL_CACHE_DIR="${OPENSSL_CACHE_ROOT}" \
               bash ./script/install_openssl_from_source.sh
 
               cmake -S . -B build -GNinja \
@@ -182,6 +198,20 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Restore macOS Boost Cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/boost
+          key: macos-${{ runner.arch }}-boost-${{ env.BOOST_VERSION }}
+
+      - name: Restore macOS OpenSSL Cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/openssl
+          key: macos-${{ runner.arch }}-openssl-${{ env.OPENSSL_VERSION }}-${{ hashFiles('script/install_openssl_from_source.sh') }}
+          restore-keys: |
+            macos-${{ runner.arch }}-openssl-${{ env.OPENSSL_VERSION }}-
 
       - name: Install Dependencies
         run: |
@@ -242,6 +272,20 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Restore Windows Boost Cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/boost
+          key: windows-${{ runner.arch }}-boost-${{ env.BOOST_VERSION }}
+
+      - name: Restore Windows OpenSSL Cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/openssl
+          key: windows-${{ runner.arch }}-openssl-${{ env.OPENSSL_VERSION }}-${{ hashFiles('script/install_openssl_from_source.sh') }}
+          restore-keys: |
+            windows-${{ runner.arch }}-openssl-${{ env.OPENSSL_VERSION }}-
 
       - name: Setup MSYS2 Toolchain
         uses: msys2/setup-msys2@v2
