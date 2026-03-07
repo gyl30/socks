@@ -101,6 +101,8 @@ std::optional<std::uint16_t> extract_cipher_suite_from_server_hello(const std::v
 
 std::optional<server_key_share_info> extract_server_key_share(const std::vector<std::uint8_t>& server_hello);
 
+[[nodiscard]] const char* named_group_name(std::uint16_t group);
+
 std::vector<std::uint8_t> extract_server_public_key(const std::vector<std::uint8_t>& server_hello);
 
 std::optional<std::string> extract_alpn_from_encrypted_extensions(const std::vector<std::uint8_t>& ee_msg);

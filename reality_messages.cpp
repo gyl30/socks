@@ -1291,6 +1291,29 @@ std::optional<server_key_share_info> extract_server_key_share(const std::vector<
     return find_server_key_share_in_extensions(server_hello, pos, end);
 }
 
+const char* named_group_name(const std::uint16_t group)
+{
+    switch (group)
+    {
+        case tls_consts::group::kSecp256r1:
+            return "secp256r1";
+        case tls_consts::group::kSecp384r1:
+            return "secp384r1";
+        case tls_consts::group::kSecp521r1:
+            return "secp521r1";
+        case tls_consts::group::kX25519:
+            return "x25519";
+        case tls_consts::group::kX25519MLKEM768:
+            return "x25519_mlkem768";
+        case tls_consts::group::kFfdhe2048:
+            return "ffdhe2048";
+        case tls_consts::group::kFfdhe3072:
+            return "ffdhe3072";
+        default:
+            return "unknown";
+    }
+}
+
 struct encrypted_extensions_range
 {
     std::size_t pos = 0;
