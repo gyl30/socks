@@ -875,6 +875,7 @@ std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> derive_client_au
 void build_client_hello_with_placeholder_sid(const reality::fingerprint_spec& spec,
                                              const std::vector<std::uint8_t>& client_random,
                                              const std::uint8_t* public_key,
+                                             const std::vector<std::uint8_t>& x25519_mlkem768_key_share,
                                              const std::string& sni,
                                              std::vector<std::uint8_t>& hello_body,
                                              std::uint32_t& absolute_sid_offset,
@@ -883,7 +884,12 @@ void build_client_hello_with_placeholder_sid(const reality::fingerprint_spec& sp
     ec.clear();
     const std::vector<std::uint8_t> placeholder_session_id(32, 0);
     hello_body = reality::client_hello_builder::build(
-        spec, placeholder_session_id, client_random, std::vector<std::uint8_t>(public_key, public_key + 32), sni);
+        spec,
+        placeholder_session_id,
+        client_random,
+        std::vector<std::uint8_t>(public_key, public_key + 32),
+        x25519_mlkem768_key_share,
+        sni);
     if (hello_body.empty())
     {
         LOG_ERROR("generated client hello body invalid for configured sni");
@@ -945,6 +951,7 @@ struct authenticated_client_hello
 
 authenticated_client_hello build_authenticated_client_hello(const std::uint8_t* public_key,
                                                             const std::uint8_t* private_key,
+                                                            const std::vector<std::uint8_t>& x25519_mlkem768_key_share,
                                                             const std::vector<std::uint8_t>& server_pub_key,
                                                             const std::vector<std::uint8_t>& short_id_bytes,
                                                             const std::array<std::uint8_t, 3>& client_ver,
@@ -971,7 +978,7 @@ authenticated_client_hello build_authenticated_client_hello(const std::uint8_t* 
 
     std::vector<std::uint8_t> hello_body;
     std::uint32_t absolute_sid_offset = 0;
-    build_client_hello_with_placeholder_sid(spec, client_random, public_key, sni, hello_body, absolute_sid_offset, ec);
+    build_client_hello_with_placeholder_sid(spec, client_random, public_key, x25519_mlkem768_key_share, sni, hello_body, absolute_sid_offset, ec);
     if (ec)
     {
         return {};
@@ -1003,6 +1010,73 @@ reality::fingerprint_spec select_fingerprint_spec(const std::optional<reality::f
     static thread_local std::mt19937 fp_gen(std::random_device{}());
     std::uniform_int_distribution<std::size_t> fp_dist(0, kFingerprintCandidates.size() - 1);
     return reality::fingerprint_factory::get(kFingerprintCandidates[fp_dist(fp_gen)]);
+}
+
+void insert_hybrid_supported_group(reality::fingerprint_spec& spec)
+{
+    for (const auto& ext_ptr : spec.extensions)
+    {
+        auto groups = std::dynamic_pointer_cast<reality::supported_groups_blueprint>(ext_ptr);
+        if (groups == nullptr)
+        {
+            continue;
+        }
+        auto& values = groups->groups();
+        if (std::ranges::find(values, reality::tls_consts::group::kX25519MLKEM768) != values.end())
+        {
+            return;
+        }
+
+        const auto x25519_it = std::ranges::find(values, reality::tls_consts::group::kX25519);
+        if (x25519_it != values.end())
+        {
+            values.insert(x25519_it, reality::tls_consts::group::kX25519MLKEM768);
+            return;
+        }
+        values.insert(values.begin(), reality::tls_consts::group::kX25519MLKEM768);
+        return;
+    }
+}
+
+void insert_hybrid_key_share(reality::fingerprint_spec& spec)
+{
+    for (const auto& ext_ptr : spec.extensions)
+    {
+        auto key_share = std::dynamic_pointer_cast<reality::key_share_blueprint>(ext_ptr);
+        if (key_share == nullptr)
+        {
+            continue;
+        }
+        auto& values = key_share->key_shares();
+        const auto exists = std::ranges::any_of(values, [](const reality::key_share_blueprint::key_share_entry& entry) {
+            return entry.group == reality::tls_consts::group::kX25519MLKEM768;
+        });
+        if (exists)
+        {
+            return;
+        }
+
+        const auto x25519_it = std::ranges::find_if(values, [](const reality::key_share_blueprint::key_share_entry& entry) {
+            return entry.group == reality::tls_consts::group::kX25519;
+        });
+        const reality::key_share_blueprint::key_share_entry hybrid_entry{
+            .group = reality::tls_consts::group::kX25519MLKEM768,
+            .data = {},
+        };
+        if (x25519_it != values.end())
+        {
+            values.insert(x25519_it, hybrid_entry);
+            return;
+        }
+        values.insert(values.begin(), hybrid_entry);
+        return;
+    }
+}
+
+void enable_hybrid_key_share(reality::fingerprint_spec& spec)
+{
+    insert_hybrid_supported_group(spec);
+    insert_hybrid_key_share(spec);
 }
 
 struct handshake_traffic_keys
@@ -1061,31 +1135,67 @@ void prepare_server_hello_crypto(const std::vector<std::uint8_t>& sh_data,
 }
 
 std::vector<std::uint8_t> derive_server_hello_shared_secret(const std::uint8_t* private_key,
+                                                            const std::vector<std::uint8_t>& mlkem768_private_key,
                                                             const std::uint16_t key_share_group,
                                                             const std::vector<std::uint8_t>& key_share_data,
                                                             boost::system::error_code& ec)
 {
     ec.clear();
-    if (key_share_group != reality::tls_consts::group::kX25519)
+    if (key_share_group == reality::tls_consts::group::kX25519)
+    {
+        if (key_share_data.size() != 32)
+        {
+            LOG_ERROR("invalid x25519 key share length {}", key_share_data.size());
+            ec = boost::asio::error::invalid_argument;
+            return {};
+        }
+
+        auto hs_shared = reality::crypto_util::x25519_derive(std::vector<std::uint8_t>(private_key, private_key + 32), key_share_data, ec);
+        if (ec)
+        {
+            LOG_ERROR("handshake shared secret failed {}", ec.message());
+            return {};
+        }
+        return hs_shared;
+    }
+    if (key_share_group != reality::tls_consts::group::kX25519MLKEM768)
     {
         LOG_ERROR("unsupported key share group {}", key_share_group);
         ec = boost::asio::error::no_protocol_option;
         return {};
     }
-    if (key_share_data.size() != 32)
+    if (key_share_data.size() != reality::kMlkem768CiphertextSize + 32)
     {
-        LOG_ERROR("invalid x25519 key share length {}", key_share_data.size());
+        LOG_ERROR("invalid x25519 mlkem768 key share length {}", key_share_data.size());
         ec = boost::asio::error::invalid_argument;
         return {};
     }
-
-    auto hs_shared = reality::crypto_util::x25519_derive(std::vector<std::uint8_t>(private_key, private_key + 32), key_share_data, ec);
-    if (ec)
+    if (mlkem768_private_key.empty())
     {
-        LOG_ERROR("handshake shared secret failed {}", ec.message());
+        LOG_ERROR("missing mlkem768 private key");
+        ec = boost::asio::error::operation_not_supported;
         return {};
     }
-    return hs_shared;
+
+    const std::vector<std::uint8_t> ciphertext(
+        key_share_data.begin(), key_share_data.begin() + static_cast<std::ptrdiff_t>(reality::kMlkem768CiphertextSize));
+    auto mlkem768_shared = reality::crypto_util::mlkem768_decapsulate(mlkem768_private_key, ciphertext, ec);
+    if (ec)
+    {
+        LOG_ERROR("mlkem768 decapsulate failed {}", ec.message());
+        return {};
+    }
+
+    const std::vector<std::uint8_t> peer_pub(key_share_data.end() - 32, key_share_data.end());
+    auto x25519_shared = reality::crypto_util::x25519_derive(std::vector<std::uint8_t>(private_key, private_key + 32), peer_pub, ec);
+    if (ec)
+    {
+        LOG_ERROR("x25519 derive failed {}", ec.message());
+        return {};
+    }
+
+    mlkem768_shared.insert(mlkem768_shared.end(), x25519_shared.begin(), x25519_shared.end());
+    return mlkem768_shared;
 }
 
 boost::asio::awaitable<void> process_handshake_record(
@@ -1472,25 +1582,41 @@ boost::asio::awaitable<client_tunnel_pool::handshake_result> client_tunnel_pool:
     ec.clear();
     std::uint8_t public_key[32];
     std::uint8_t private_key[32];
+    std::vector<std::uint8_t> mlkem768_public_key;
+    std::vector<std::uint8_t> mlkem768_private_key;
+    std::vector<std::uint8_t> x25519_mlkem768_key_share;
 
     if (!reality::crypto_util::generate_x25519_keypair(public_key, private_key))
     {
         ec = boost::system::errc::make_error_code(boost::system::errc::operation_canceled);
         co_return handshake_result{};
     }
+    if (!reality::crypto_util::generate_mlkem768_keypair(mlkem768_public_key, mlkem768_private_key, ec))
+    {
+        co_return handshake_result{};
+    }
+    x25519_mlkem768_key_share = mlkem768_public_key;
+    x25519_mlkem768_key_share.insert(x25519_mlkem768_key_share.end(), public_key, public_key + 32);
 
-    const std::shared_ptr<void> defer_cleanse(nullptr, [&](void*) { OPENSSL_cleanse(private_key, 32); });
+    const std::shared_ptr<void> defer_cleanse(nullptr, [&](void*) {
+        OPENSSL_cleanse(private_key, 32);
+        if (!mlkem768_private_key.empty())
+        {
+            OPENSSL_cleanse(mlkem768_private_key.data(), mlkem768_private_key.size());
+        }
+    });
 
-    const auto spec = select_fingerprint_spec(fingerprint_type_);
+    auto spec = select_fingerprint_spec(fingerprint_type_);
+    enable_hybrid_key_share(spec);
     reality::transcript trans;
     std::vector<std::uint8_t> auth_key;
-    co_await generate_and_send_client_hello(socket, public_key, private_key, spec, trans, auth_key, ec);
+    co_await generate_and_send_client_hello(socket, public_key, private_key, x25519_mlkem768_key_share, spec, trans, auth_key, ec);
     if (ec)
     {
         co_return handshake_result{};
     }
 
-    const auto server_hello_result = co_await process_server_hello(socket, private_key, trans, ec);
+    const auto server_hello_result = co_await process_server_hello(socket, private_key, mlkem768_private_key, trans, ec);
     if (ec)
     {
         co_return handshake_result{};
@@ -1545,6 +1671,7 @@ boost::asio::awaitable<void> client_tunnel_pool::generate_and_send_client_hello(
     boost::asio::ip::tcp::socket& socket,
     const std::uint8_t* public_key,
     const std::uint8_t* private_key,
+    const std::vector<std::uint8_t>& x25519_mlkem768_key_share,
     const reality::fingerprint_spec& spec,
     reality::transcript& trans,
     std::vector<std::uint8_t>& auth_key,
@@ -1552,8 +1679,8 @@ boost::asio::awaitable<void> client_tunnel_pool::generate_and_send_client_hello(
 {
     ec.clear();
     std::array<std::uint8_t, 3> client_ver_{1, 0, 0};
-    auto client_hello_result =
-        build_authenticated_client_hello(public_key, private_key, server_pub_key_, short_id_bytes_, client_ver_, spec, sni_, ec);
+    auto client_hello_result = build_authenticated_client_hello(
+        public_key, private_key, x25519_mlkem768_key_share, server_pub_key_, short_id_bytes_, client_ver_, spec, sni_, ec);
     if (ec)
     {
         co_return;
@@ -1587,7 +1714,11 @@ boost::asio::awaitable<void> client_tunnel_pool::generate_and_send_client_hello(
 }
 
 boost::asio::awaitable<client_tunnel_pool::server_hello_res> client_tunnel_pool::process_server_hello(
-    boost::asio::ip::tcp::socket& socket, const std::uint8_t* private_key, reality::transcript& trans, boost::system::error_code& ec) const
+    boost::asio::ip::tcp::socket& socket,
+    const std::uint8_t* private_key,
+    const std::vector<std::uint8_t>& mlkem768_private_key,
+    reality::transcript& trans,
+    boost::system::error_code& ec) const
 {
     ec.clear();
     const auto sh_data = co_await read_handshake_record_body(socket, "server hello", cfg_.timeout.read, ec);
@@ -1615,7 +1746,7 @@ boost::asio::awaitable<client_tunnel_pool::server_hello_res> client_tunnel_pool:
         co_return server_hello_res{};
     }
 
-    auto handshake_shared_secret = derive_server_hello_shared_secret(private_key, key_share->group, key_share->data, ec);
+    auto handshake_shared_secret = derive_server_hello_shared_secret(private_key, mlkem768_private_key, key_share->group, key_share->data, ec);
     if (ec)
     {
         co_return server_hello_res{};
