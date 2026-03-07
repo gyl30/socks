@@ -1142,53 +1142,6 @@ bool is_supported_certificate_verify_scheme(std::uint16_t scheme)
     return std::ranges::find(supported_schemes, scheme) != supported_schemes.end();
 }
 
-std::optional<std::uint16_t> extract_cipher_suite_from_server_hello(const std::vector<std::uint8_t>& server_hello)
-{
-    if (server_hello.size() < 4 + 2 + 32 + 1)
-    {
-        return std::nullopt;
-    }
-
-    std::uint32_t pos = 4 + 2 + 32;
-    const std::uint8_t sid_len = server_hello[pos];
-    pos += 1 + sid_len;
-
-    if (pos + 2 > server_hello.size())
-    {
-        return std::nullopt;
-    }
-
-    return static_cast<std::uint16_t>((server_hello[pos] << 8) | server_hello[pos + 1]);
-}
-
-static bool locate_server_hello_extensions(const std::vector<std::uint8_t>& server_hello, std::size_t& pos, std::size_t& end)
-{
-    if (server_hello[pos] != 0x02)
-    {
-        return false;
-    }
-
-    pos += 4 + 2 + 32;
-    if (pos >= server_hello.size())
-    {
-        return false;
-    }
-
-    const std::uint8_t sid_len = server_hello[pos];
-    pos += 1 + sid_len;
-    pos += 3;
-
-    if (pos + 2 > server_hello.size())
-    {
-        return false;
-    }
-    const auto ext_len = static_cast<std::uint16_t>((server_hello[pos] << 8) | server_hello[pos + 1]);
-    pos += 2;
-
-    end = pos + ext_len;
-    return end >= pos && end <= server_hello.size();
-}
-
 static std::optional<server_key_share_info> parse_server_key_share_entry(const std::vector<std::uint8_t>& server_hello,
                                                                          const std::size_t pos,
                                                                          const std::size_t ext_end)
@@ -1224,6 +1177,24 @@ static bool skip_server_hello_prefix(const std::vector<std::uint8_t>& server_hel
     return pos + 4 <= server_hello.size();
 }
 
+static bool locate_server_hello_body(const std::vector<std::uint8_t>& server_hello, std::size_t& pos, std::size_t& end)
+{
+    if (!skip_server_hello_prefix(server_hello, pos))
+    {
+        return false;
+    }
+    if (server_hello[pos] != 0x02)
+    {
+        return false;
+    }
+    const auto payload_len = (static_cast<std::uint32_t>(server_hello[pos + 1]) << 16) |
+                             (static_cast<std::uint32_t>(server_hello[pos + 2]) << 8) |
+                             static_cast<std::uint32_t>(server_hello[pos + 3]);
+    pos += 4;
+    end = pos + payload_len;
+    return end >= pos && end == server_hello.size();
+}
+
 static bool parse_extension_header(
     const std::vector<std::uint8_t>& server_hello, const std::size_t end, std::size_t& pos, std::uint16_t& type, std::uint16_t& ext_len)
 {
@@ -1247,9 +1218,40 @@ static bool advance_extension_payload(std::size_t& pos, const std::size_t end, c
     return true;
 }
 
-static std::optional<server_key_share_info> find_server_key_share_in_extensions(const std::vector<std::uint8_t>& server_hello,
-                                                                                std::size_t pos,
-                                                                                const std::size_t end)
+static bool is_forbidden_tls13_server_hello_extension(const std::uint16_t ext_type)
+{
+    switch (ext_type)
+    {
+        case tls_consts::ext::kStatusRequest:
+        case tls_consts::ext::kSessionTicket:
+        case tls_consts::ext::kExtMasterSecret:
+        case tls_consts::ext::kRenegotiationInfo:
+        case tls_consts::ext::kAlpn:
+        case tls_consts::ext::kSct:
+            return true;
+        default:
+            return false;
+    }
+}
+
+static bool parse_supported_version_extension(const std::vector<std::uint8_t>& server_hello,
+                                              const std::size_t pos,
+                                              const std::size_t ext_end,
+                                              server_hello_info& info)
+{
+    if (pos + 2 != ext_end)
+    {
+        return false;
+    }
+    info.supported_version = static_cast<std::uint16_t>((server_hello[pos] << 8) | server_hello[pos + 1]);
+    info.has_supported_version = true;
+    return true;
+}
+
+static bool parse_server_hello_extensions(const std::vector<std::uint8_t>& server_hello,
+                                          std::size_t pos,
+                                          const std::size_t end,
+                                          server_hello_info& info)
 {
     while (pos + 4 <= end)
     {
@@ -1257,38 +1259,111 @@ static std::optional<server_key_share_info> find_server_key_share_in_extensions(
         std::uint16_t ext_len = 0;
         if (!parse_extension_header(server_hello, end, pos, type, ext_len))
         {
-            return std::nullopt;
+            return false;
         }
         if (pos + ext_len > end)
         {
-            return std::nullopt;
+            return false;
         }
-        if (type == tls_consts::ext::kKeyShare && ext_len >= 4)
+
+        const auto ext_end = pos + ext_len;
+        if (type == tls_consts::ext::kSupportedVersions)
         {
-            return parse_server_key_share_entry(server_hello, pos, pos + ext_len);
+            if (info.has_supported_version || !parse_supported_version_extension(server_hello, pos, ext_end, info))
+            {
+                return false;
+            }
         }
+        else if (type == tls_consts::ext::kKeyShare)
+        {
+            if (info.has_key_share)
+            {
+                return false;
+            }
+            const auto key_share = parse_server_key_share_entry(server_hello, pos, ext_end);
+            if (!key_share.has_value())
+            {
+                return false;
+            }
+            info.key_share = *key_share;
+            info.has_key_share = true;
+        }
+        else if (is_forbidden_tls13_server_hello_extension(type))
+        {
+            info.has_forbidden_tls13_extension = true;
+        }
+
         if (!advance_extension_payload(pos, end, ext_len))
         {
-            return std::nullopt;
+            return false;
         }
     }
-    return std::nullopt;
+    return pos == end;
+}
+
+std::optional<server_hello_info> parse_server_hello(const std::vector<std::uint8_t>& server_hello)
+{
+    std::size_t pos = 0;
+    std::size_t end = 0;
+    if (!locate_server_hello_body(server_hello, pos, end))
+    {
+        return std::nullopt;
+    }
+    if (pos + 2 + 32 + 1 > end)
+    {
+        return std::nullopt;
+    }
+
+    server_hello_info info;
+    info.legacy_version = static_cast<std::uint16_t>((server_hello[pos] << 8) | server_hello[pos + 1]);
+    pos += 2 + 32;
+
+    const auto sid_len = static_cast<std::size_t>(server_hello[pos]);
+    ++pos;
+    if (pos + sid_len + 2 + 1 + 2 > end)
+    {
+        return std::nullopt;
+    }
+    info.session_id.assign(server_hello.begin() + static_cast<std::ptrdiff_t>(pos),
+                           server_hello.begin() + static_cast<std::ptrdiff_t>(pos + sid_len));
+    pos += sid_len;
+
+    info.cipher_suite = static_cast<std::uint16_t>((server_hello[pos] << 8) | server_hello[pos + 1]);
+    pos += 2;
+    info.compression_method = server_hello[pos];
+    ++pos;
+
+    const auto ext_len = static_cast<std::uint16_t>((server_hello[pos] << 8) | server_hello[pos + 1]);
+    pos += 2;
+    if (pos + ext_len != end)
+    {
+        return std::nullopt;
+    }
+    if (!parse_server_hello_extensions(server_hello, pos, end, info))
+    {
+        return std::nullopt;
+    }
+    return info;
+}
+
+std::optional<std::uint16_t> extract_cipher_suite_from_server_hello(const std::vector<std::uint8_t>& server_hello)
+{
+    const auto info = parse_server_hello(server_hello);
+    if (!info.has_value())
+    {
+        return std::nullopt;
+    }
+    return info->cipher_suite;
 }
 
 std::optional<server_key_share_info> extract_server_key_share(const std::vector<std::uint8_t>& server_hello)
 {
-    std::size_t pos = 0;
-    if (!skip_server_hello_prefix(server_hello, pos))
+    const auto info = parse_server_hello(server_hello);
+    if (!info.has_value() || !info->has_key_share)
     {
         return std::nullopt;
     }
-
-    std::size_t end = 0;
-    if (!locate_server_hello_extensions(server_hello, pos, end))
-    {
-        return std::nullopt;
-    }
-    return find_server_key_share_in_extensions(server_hello, pos, end);
+    return info->key_share;
 }
 
 const char* named_group_name(const std::uint16_t group)
