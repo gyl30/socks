@@ -36,6 +36,25 @@ inline std::uint64_t now_ms()
     return static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
 }
+inline std::uint32_t remaining_timeout_seconds(const std::uint64_t start_ms, const std::uint32_t timeout_sec, boost::system::error_code& ec)
+{
+    ec.clear();
+    if (timeout_sec == 0)
+    {
+        return 0;
+    }
+
+    const auto timeout_ms = timeout_seconds_to_milliseconds(timeout_sec);
+    const auto elapsed_ms = now_ms() - start_ms;
+    if (elapsed_ms >= timeout_ms)
+    {
+        ec = boost::asio::error::timed_out;
+        return 0;
+    }
+
+    const auto remaining_ms = timeout_ms - elapsed_ms;
+    return static_cast<std::uint32_t>((remaining_ms + 999ULL) / 1000ULL);
+}
 inline std::uint64_t now_second()
 {
     return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
