@@ -120,13 +120,19 @@ std::string format_fetch_error(const reality::fetch_error& error)
 
 boost::asio::awaitable<void> read_tls_record_header(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
                                                     std::vector<std::uint8_t>& buf,
+                                                    std::uint64_t start_ms,
                                                     std::uint32_t timeout,
                                                     boost::system::error_code& ec)
 {
     while (buf.size() < kTlsRecordHeaderSize)
     {
         std::vector<std::uint8_t> header_remaining(kTlsRecordHeaderSize - buf.size());
-        auto read_size = co_await timeout_io::wait_read_with_timeout(*socket, boost::asio::buffer(header_remaining), timeout, ec);
+        const auto read_timeout = timeout_io::remaining_timeout_seconds(start_ms, timeout, ec);
+        if (ec)
+        {
+            co_return;
+        }
+        auto read_size = co_await timeout_io::wait_read_with_timeout(*socket, boost::asio::buffer(header_remaining), read_timeout, ec);
         if (ec)
         {
             co_return;
@@ -140,13 +146,19 @@ boost::asio::awaitable<void> read_tls_record_header(const std::shared_ptr<boost:
 boost::asio::awaitable<void> read_tls_record_body(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
                                                   std::vector<std::uint8_t>& buf,
                                                   std::uint32_t payload_len,
+                                                  std::uint64_t start_ms,
                                                   std::uint32_t timeout,
                                                   boost::system::error_code& ec)
 {
     while (buf.size() < kTlsRecordHeaderSize + payload_len)
     {
         std::vector<std::uint8_t> extra(kTlsRecordHeaderSize + payload_len - buf.size());
-        const auto read_size = co_await timeout_io::wait_read_with_timeout(*socket, boost::asio::buffer(extra), timeout, ec);
+        const auto read_timeout = timeout_io::remaining_timeout_seconds(start_ms, timeout, ec);
+        if (ec)
+        {
+            co_return;
+        }
+        const auto read_size = co_await timeout_io::wait_read_with_timeout(*socket, boost::asio::buffer(extra), read_timeout, ec);
         if (ec)
         {
             co_return;
@@ -168,10 +180,11 @@ boost::asio::awaitable<const char*> read_client_hello_handshake(const std::share
     ec.clear();
     wire_buf.clear();
     handshake_buf.clear();
+    const auto handshake_start_ms = timeout_io::now_ms();
     while (true)
     {
         std::vector<std::uint8_t> record_buf;
-        co_await read_tls_record_header(socket, record_buf, timeout, ec);
+        co_await read_tls_record_header(socket, record_buf, handshake_start_ms, timeout, ec);
         if (ec)
         {
             LOG_CTX_ERROR(ctx, "{} read tls record header failed {}", log_event::kHandshake, ec.message());
@@ -192,7 +205,7 @@ boost::asio::awaitable<const char*> read_client_hello_handshake(const std::share
             co_return "client_hello_record_too_large";
         }
 
-        co_await read_tls_record_body(socket, record_buf, record_len, timeout, ec);
+        co_await read_tls_record_body(socket, record_buf, record_len, handshake_start_ms, timeout, ec);
         if (ec)
         {
             statistics::instance().inc_client_finished_failures();
