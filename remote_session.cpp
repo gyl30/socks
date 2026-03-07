@@ -53,6 +53,28 @@ namespace
     }
 }
 
+[[nodiscard]] std::uint8_t map_connect_error_to_socks_rep(const boost::system::error_code& ec)
+{
+    if (ec == boost::asio::error::connection_refused)
+    {
+        return socks::kRepConnRefused;
+    }
+    if (ec == boost::asio::error::network_unreachable)
+    {
+        return socks::kRepNetUnreach;
+    }
+    if (ec == boost::asio::error::host_unreachable || ec == boost::asio::error::host_not_found ||
+        ec == boost::asio::error::host_not_found_try_again)
+    {
+        return socks::kRepHostUnreach;
+    }
+    if (ec == boost::asio::error::timed_out)
+    {
+        return socks::kRepTtlExpired;
+    }
+    return socks::kRepGenFail;
+}
+
 }    // namespace
 
 boost::asio::awaitable<void> send_stream_control_frame(const std::shared_ptr<mux_stream>& stream,
@@ -154,7 +176,7 @@ boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
     auto resolve_res = co_await timeout_io::wait_resolve_with_timeout(resolver_, syn.addr, std::to_string(syn.port), cfg_.timeout.connect, ec);
     if (ec)
     {
-        co_await send_fail_ack(socks::kRepHostUnreach);
+        co_await send_fail_ack(map_connect_error_to_socks_rep(ec));
         co_return;
     }
     if (resolve_res.begin() == resolve_res.end())
@@ -183,7 +205,7 @@ boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
     }
     if (connect_ec)
     {
-        co_await send_fail_ack(socks::kRepHostUnreach);
+        co_await send_fail_ack(map_connect_error_to_socks_rep(connect_ec));
         co_return;
     }
     ec.clear();
