@@ -14,6 +14,7 @@ struct client_hello_info
     std::vector<std::uint8_t> session_id;
     std::vector<std::uint8_t> random;
     std::vector<std::uint8_t> x25519_pub;
+    std::vector<std::uint8_t> x25519_mlkem768_share;
     std::vector<std::uint16_t> cipher_suites;
     std::vector<std::string> alpn_protocols;
     std::string sni;
@@ -21,6 +22,7 @@ struct client_hello_info
     bool malformed_key_share = false;
     bool is_tls13 = false;
     bool has_x25519_share = false;
+    bool has_x25519_mlkem768_share = false;
     std::uint16_t key_share_group = 0;
     std::uint32_t sid_offset = 0;
 };

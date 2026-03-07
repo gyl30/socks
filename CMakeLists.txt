@@ -126,6 +126,8 @@ endif()
 find_package(Threads REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(Boost 1.89 REQUIRED)
+find_path(OQS_INCLUDE_DIR oqs/oqs.h PATHS /usr/local/include /usr/include REQUIRED)
+find_library(OQS_LIBRARY NAMES oqs PATHS /usr/local/lib /usr/lib /usr/lib/x86_64-linux-gnu REQUIRED)
 
 set(SOCKS_SOURCES
     log.cpp
@@ -184,11 +186,11 @@ target_include_directories(core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 target_include_directories(
   core SYSTEM
-  PUBLIC ${OPENSSL_INCLUDE_DIR} ${Boost_INCLUDE_DIRS}
+  PUBLIC ${OPENSSL_INCLUDE_DIR} ${Boost_INCLUDE_DIRS} ${OQS_INCLUDE_DIR}
          ${CMAKE_CURRENT_SOURCE_DIR}/third/spdlog/include
          ${CMAKE_CURRENT_SOURCE_DIR}/third/rapidjson/include)
 
-target_link_libraries(core PUBLIC OpenSSL::SSL OpenSSL::Crypto Threads::Threads)
+target_link_libraries(core PUBLIC OpenSSL::SSL OpenSSL::Crypto Threads::Threads ${OQS_LIBRARY})
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
   target_link_libraries(core PUBLIC ws2_32 mswsock)
