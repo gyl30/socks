@@ -63,6 +63,12 @@ void update_stream_close_command(std::atomic<std::uint8_t>& stream_close_command
     }
 }
 
+[[nodiscard]] std::string endpoint_key_impl(const boost::asio::ip::udp::endpoint& endpoint)
+{
+    const auto normalized_endpoint = net::normalize_endpoint(endpoint);
+    return normalized_endpoint.address().to_string() + ":" + std::to_string(normalized_endpoint.port());
+}
+
 }    // namespace
 
 remote_udp_session::remote_udp_session(const std::shared_ptr<mux_connection>& connection,
@@ -352,7 +358,7 @@ boost::asio::awaitable<void> remote_udp_session::on_frame(const mux_frame& frame
         co_return;
     }
 
-    auto target_ep = res.begin()->endpoint();
+    auto target_ep = net::normalize_endpoint(res.begin()->endpoint());
     const auto payload_len = frame.payload.size() - header.header_len;
     LOG_CTX_DEBUG(ctx_, "{} udp forwarding {} bytes to {}", log_event::kMux, payload_len, target_ep.address().to_string());
     co_await udp_socket_.async_send_to(boost::asio::buffer(frame.payload.data() + header.header_len, payload_len),
@@ -367,6 +373,7 @@ boost::asio::awaitable<void> remote_udp_session::on_frame(const mux_frame& frame
     last_write_time_ms_ = ts;
     last_activity_time_ms_ = ts;
     ctx_.add_tx_bytes(payload_len);
+    allowed_reply_peers_.insert(endpoint_key(target_ep));
 }
 
 boost::asio::awaitable<void> remote_udp_session::udp_to_mux()
@@ -384,12 +391,21 @@ boost::asio::awaitable<void> remote_udp_session::udp_to_mux()
         }
 
         LOG_CTX_DEBUG(ctx_, "{} udp recv {} bytes from {}", log_event::kMux, n, ep.address().to_string());
+        const auto normalized_ep = net::normalize_endpoint(ep);
+        if (!allowed_reply_peers_.contains(endpoint_key(normalized_ep)))
+        {
+            LOG_CTX_WARN(ctx_,
+                         "{} ignore udp packet from unexpected peer {}:{}",
+                         log_event::kMux,
+                         normalized_ep.address().to_string(),
+                         normalized_ep.port());
+            continue;
+        }
+
         const auto ts = timeout_io::now_ms();
         last_read_time_ms_ = ts;
         last_activity_time_ms_ = ts;
         ctx_.add_rx_bytes(n);
-
-        const auto normalized_ep = net::normalize_endpoint(ep);
         socks_udp_header h;
         h.addr = normalized_ep.address().to_string();
         h.port = normalized_ep.port();
@@ -421,6 +437,11 @@ boost::asio::awaitable<void> remote_udp_session::udp_to_mux()
         ctx_.add_tx_bytes(pkt_size);
     }
     LOG_CTX_DEBUG(ctx_, "{} udp recv loop stopped", log_event::kMux);
+}
+
+std::string remote_udp_session::endpoint_key(const boost::asio::ip::udp::endpoint& endpoint)
+{
+    return endpoint_key_impl(endpoint);
 }
 
 boost::asio::awaitable<void> remote_udp_session::idle_watchdog()
