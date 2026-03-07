@@ -25,6 +25,10 @@ static constexpr std::uint8_t kContentTypeApplicationData = 0x17;
 static constexpr std::size_t kTlsRecordHeaderSize = 5;
 static constexpr std::size_t kAeadTagSize = 16;
 static constexpr std::size_t kMaxTlsPlaintextLen = 16384;
+static constexpr std::size_t kMlkem768PublicKeySize = 1184;
+static constexpr std::size_t kMlkem768PrivateKeySize = 2400;
+static constexpr std::size_t kMlkem768CiphertextSize = 1088;
+static constexpr std::size_t kMlkem768SharedSecretSize = 32;
 
 static constexpr std::uint16_t kGreasePlaceholder = 0x0A0A;
 
@@ -70,6 +74,7 @@ constexpr std::uint16_t kSecp256r1 = 0x0017;
 constexpr std::uint16_t kSecp384r1 = 0x0018;
 constexpr std::uint16_t kSecp521r1 = 0x0019;
 constexpr std::uint16_t kX25519 = 0x001d;
+constexpr std::uint16_t kX25519MLKEM768 = 0x11ec;
 constexpr std::uint16_t kFfdhe2048 = 0x0100;
 constexpr std::uint16_t kFfdhe3072 = 0x0101;
 
