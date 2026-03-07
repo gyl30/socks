@@ -80,6 +80,16 @@ std::size_t trim_padding_and_read_content_type(const std::span<std::uint8_t> out
     return written - 1;
 }
 
+void validate_inner_plaintext_len(const std::size_t plaintext_len, boost::system::error_code& ec)
+{
+    ec.clear();
+    if (plaintext_len <= kMaxTlsInnerPlaintextLen)
+    {
+        return;
+    }
+    ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
+}
+
 }    // namespace
 
 void tls_record_layer::encrypt_record_append(const cipher_context& ctx,
@@ -130,6 +140,11 @@ void tls_record_layer::encrypt_record_append(const cipher_context& ctx,
     if (padding_len > 0)
     {
         inner_plaintext.insert(inner_plaintext.end(), padding_len, 0x00);
+    }
+    validate_inner_plaintext_len(inner_plaintext.size(), ec);
+    if (ec)
+    {
+        return;
     }
 
     const auto total_ciphertext_len = inner_plaintext.size() + kAeadTagSize;
@@ -198,6 +213,11 @@ std::size_t tls_record_layer::decrypt_record(const cipher_context& ctx,
     auto nonce = make_record_nonce(iv, seq);
 
     auto written = crypto_util::aead_decrypt(ctx, cipher, key, nonce, ciphertext, aad, output_buffer, ec);
+    if (ec)
+    {
+        return 0;
+    }
+    validate_inner_plaintext_len(written, ec);
     if (ec)
     {
         return 0;
