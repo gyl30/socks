@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <vector>
 #include <cstdint>
 
@@ -136,18 +137,53 @@ void ch_parser::handle_key_share_item(reader& r, const std::uint16_t group, cons
 
 void ch_parser::finalize_key_share_info(client_hello_info& info)
 {
+    info.key_share_group = 0;
     if (info.has_x25519_mlkem768_share)
     {
-        info.is_tls13 = true;
         info.key_share_group = reality::tls_consts::group::kX25519MLKEM768;
         return;
     }
-    if (!info.has_x25519_share)
+    if (info.has_x25519_share)
     {
+        info.key_share_group = reality::tls_consts::group::kX25519;
+    }
+}
+
+void ch_parser::finalize_tls13_info(client_hello_info& info)
+{
+    info.is_tls13 = false;
+    if (info.malformed_key_share || info.malformed_supported_groups || info.malformed_supported_versions)
+    {
+        info.key_share_group = 0;
         return;
     }
-    info.is_tls13 = true;
-    info.key_share_group = reality::tls_consts::group::kX25519;
+    if (std::find(info.supported_versions.begin(), info.supported_versions.end(), reality::tls_consts::kVer13) == info.supported_versions.end())
+    {
+        info.key_share_group = 0;
+        return;
+    }
+    if (info.has_x25519_mlkem768_share)
+    {
+        const auto hybrid_it =
+            std::find(info.supported_groups.begin(), info.supported_groups.end(), reality::tls_consts::group::kX25519MLKEM768);
+        if (hybrid_it != info.supported_groups.end())
+        {
+            info.is_tls13 = true;
+            info.key_share_group = reality::tls_consts::group::kX25519MLKEM768;
+            return;
+        }
+    }
+    if (info.has_x25519_share)
+    {
+        const auto x25519_it = std::find(info.supported_groups.begin(), info.supported_groups.end(), reality::tls_consts::group::kX25519);
+        if (x25519_it != info.supported_groups.end())
+        {
+            info.is_tls13 = true;
+            info.key_share_group = reality::tls_consts::group::kX25519;
+            return;
+        }
+    }
+    info.key_share_group = 0;
 }
 
 bool ch_parser::parse_before_extensions(reader& r, client_hello_info& info)
@@ -188,6 +224,7 @@ client_hello_info ch_parser::parse(const std::vector<std::uint8_t>& buf)
         return info;
     }
     parse_extension_block(r, info);
+    finalize_tls13_info(info);
     return info;
 }
 
@@ -215,6 +252,14 @@ void ch_parser::parse_extensions(reader& r, client_hello_info& info)
         else if (type == reality::tls_consts::ext::kAlpn)
         {
             parse_alpn(val, info);
+        }
+        else if (type == reality::tls_consts::ext::kSupportedGroups)
+        {
+            parse_supported_groups(val, info);
+        }
+        else if (type == reality::tls_consts::ext::kSupportedVersions)
+        {
+            parse_supported_versions(val, info);
         }
         else if (type == reality::tls_consts::ext::kKeyShare)
         {
@@ -378,6 +423,70 @@ void ch_parser::parse_key_share(reader& r, client_hello_info& info)
         return;
     }
     finalize_key_share_info(info);
+}
+
+void ch_parser::parse_supported_groups(reader& r, client_hello_info& info)
+{
+    std::uint16_t groups_len = 0;
+    if (!r.read_u16(groups_len) || groups_len == 0 || (groups_len % 2) != 0)
+    {
+        info.malformed_supported_groups = true;
+        return;
+    }
+
+    reader groups_r = r.slice(groups_len);
+    if (!groups_r.valid() || r.remaining() != 0)
+    {
+        info.malformed_supported_groups = true;
+        return;
+    }
+
+    while (groups_r.remaining() >= 2)
+    {
+        std::uint16_t group = 0;
+        if (!groups_r.read_u16(group))
+        {
+            info.malformed_supported_groups = true;
+            return;
+        }
+        info.supported_groups.push_back(group);
+    }
+    if (groups_r.remaining() != 0)
+    {
+        info.malformed_supported_groups = true;
+    }
+}
+
+void ch_parser::parse_supported_versions(reader& r, client_hello_info& info)
+{
+    std::uint8_t versions_len = 0;
+    if (!r.read_u8(versions_len) || versions_len == 0 || (versions_len % 2) != 0)
+    {
+        info.malformed_supported_versions = true;
+        return;
+    }
+
+    reader versions_r = r.slice(versions_len);
+    if (!versions_r.valid() || r.remaining() != 0)
+    {
+        info.malformed_supported_versions = true;
+        return;
+    }
+
+    while (versions_r.remaining() >= 2)
+    {
+        std::uint16_t version = 0;
+        if (!versions_r.read_u16(version))
+        {
+            info.malformed_supported_versions = true;
+            return;
+        }
+        info.supported_versions.push_back(version);
+    }
+    if (versions_r.remaining() != 0)
+    {
+        info.malformed_supported_versions = true;
+    }
 }
 
 }    // namespace mux
