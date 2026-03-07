@@ -33,6 +33,38 @@
 namespace mux
 {
 
+namespace
+{
+
+constexpr std::uint8_t kNoStreamControl = 0;
+
+void update_stream_close_command(std::atomic<std::uint8_t>& stream_close_command, const std::uint8_t next_command)
+{
+    auto current = stream_close_command.load(std::memory_order_relaxed);
+    for (;;)
+    {
+        std::uint8_t desired = current;
+        if (next_command == mux::kCmdRst)
+        {
+            desired = mux::kCmdRst;
+        }
+        else if (next_command == kNoStreamControl && current != mux::kCmdRst)
+        {
+            desired = kNoStreamControl;
+        }
+        if (desired == current)
+        {
+            return;
+        }
+        if (stream_close_command.compare_exchange_weak(current, desired, std::memory_order_relaxed))
+        {
+            return;
+        }
+    }
+}
+
+}    // namespace
+
 remote_udp_session::remote_udp_session(const std::shared_ptr<mux_connection>& connection,
                                        const std::uint32_t id,
                                        boost::asio::io_context& io_context,
@@ -51,6 +83,7 @@ remote_udp_session::remote_udp_session(const std::shared_ptr<mux_connection>& co
 {
     ctx_ = ctx;
     ctx_.stream_id(id);
+    stream_close_command_.store(mux::kCmdFin, std::memory_order_relaxed);
     const auto ts = timeout_io::now_ms();
     last_read_time_ms_ = ts;
     last_write_time_ms_ = ts;
@@ -167,16 +200,21 @@ boost::asio::awaitable<void> remote_udp_session::start_impl()
     using boost::asio::experimental::awaitable_operators::operator||;
     co_await (mux_to_udp() || udp_to_mux() || idle_watchdog());
 
-    if (stream_ != nullptr)
+    const auto close_command = stream_close_command_.load(std::memory_order_relaxed);
+    if (stream_ != nullptr && close_command != kNoStreamControl)
     {
-        mux_frame fin_frame;
-        fin_frame.h.stream_id = stream_->id();
-        fin_frame.h.command = mux::kCmdFin;
-        boost::system::error_code fin_ec;
-        co_await stream_->async_write(std::move(fin_frame), fin_ec);
-        if (fin_ec)
+        mux_frame close_frame;
+        close_frame.h.stream_id = stream_->id();
+        close_frame.h.command = close_command;
+        boost::system::error_code close_ec;
+        co_await stream_->async_write(std::move(close_frame), close_ec);
+        if (close_ec)
         {
-            LOG_CTX_WARN(ctx_, "{} send fin failed {}", log_event::kMux, fin_ec.message());
+            LOG_CTX_WARN(ctx_,
+                         "{} send {} failed {}",
+                         log_event::kMux,
+                         close_command == mux::kCmdRst ? "rst" : "fin",
+                         close_ec.message());
         }
     }
 
@@ -228,20 +266,31 @@ boost::asio::awaitable<void> remote_udp_session::mux_to_udp()
         const auto data_frame = co_await stream_->async_read(ec);
         if (ec)
         {
+            update_stream_close_command(stream_close_command_, kNoStreamControl);
             break;
         }
         if (data_frame.h.command == mux::kCmdRst || data_frame.h.command == mux::kCmdFin)
         {
+            update_stream_close_command(stream_close_command_, kNoStreamControl);
             break;
         }
         if (data_frame.h.command != mux::kCmdDat)
         {
+            update_stream_close_command(stream_close_command_, mux::kCmdRst);
             ec = boost::asio::error::invalid_argument;
             break;
         }
         co_await on_frame(data_frame, ec);
         if (ec)
         {
+            if (ec == boost::asio::error::invalid_argument || ec == boost::system::errc::make_error_code(boost::system::errc::bad_message))
+            {
+                update_stream_close_command(stream_close_command_, mux::kCmdRst);
+            }
+            else
+            {
+                update_stream_close_command(stream_close_command_, kNoStreamControl);
+            }
             break;
         }
     }
