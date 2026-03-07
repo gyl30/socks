@@ -5,6 +5,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 #include <cstddef>
@@ -62,6 +63,9 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
     [[nodiscard]] static std::string endpoint_key(const boost::asio::ip::udp::endpoint& endpoint);
     [[nodiscard]] boost::asio::awaitable<route_type> decide_udp_route(const socks_udp_header& header) const;
     [[nodiscard]] boost::asio::awaitable<bool> ensure_proxy_stream(boost::system::error_code& ec);
+    [[nodiscard]] boost::asio::awaitable<boost::asio::ip::udp::endpoint> resolve_target_endpoint(const std::string& host,
+                                                                                                  std::uint16_t port,
+                                                                                                  boost::system::error_code& ec);
     boost::asio::awaitable<void> udp_socket_loop();
     boost::asio::awaitable<void> forward_direct_packet(const socks_udp_header& header,
                                                        const std::uint8_t* payload,
@@ -101,6 +105,7 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
     boost::asio::ip::address request_client_addr_;
     bool has_request_client_port_ = false;
     std::uint16_t request_client_port_ = 0;
+    std::unordered_map<std::string, boost::asio::ip::udp::endpoint> resolved_targets_;
     std::unordered_set<std::string> direct_peers_;
     std::shared_ptr<void> active_connection_guard_;
     proxy_stream_channel_type proxy_stream_channel_;

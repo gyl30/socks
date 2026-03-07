@@ -4,6 +4,7 @@
 #include <atomic>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 #include <cstddef>
@@ -60,6 +61,9 @@ class remote_udp_session : public std::enable_shared_from_this<remote_udp_sessio
     boost::asio::awaitable<void> mux_to_udp();
     boost::asio::awaitable<void> udp_to_mux();
     boost::asio::awaitable<void> idle_watchdog();
+    [[nodiscard]] boost::asio::awaitable<boost::asio::ip::udp::endpoint> resolve_target_endpoint(const std::string& host,
+                                                                                                  std::uint16_t port,
+                                                                                                  boost::system::error_code& ec);
     [[nodiscard]] static std::string endpoint_key(const boost::asio::ip::udp::endpoint& endpoint);
     void request_stop();
     void close_socket();
@@ -78,6 +82,7 @@ class remote_udp_session : public std::enable_shared_from_this<remote_udp_sessio
     std::uint64_t last_read_time_ms_{0};
     std::uint64_t last_write_time_ms_{0};
     std::uint64_t last_activity_time_ms_{0};
+    std::unordered_map<std::string, boost::asio::ip::udp::endpoint> resolved_targets_;
     std::unordered_set<std::string> allowed_reply_peers_;
     std::weak_ptr<mux_tunnel_impl> manager_;
     std::atomic<std::uint8_t> stream_close_command_{0};
