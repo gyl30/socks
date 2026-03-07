@@ -630,8 +630,8 @@ std::vector<std::vector<std::uint8_t>> build_reality_certificate_chain(
     return cert_chain;
 }
 
-std::uint16_t select_reality_cipher_suite(const client_hello_info& hello,
-                                          const std::optional<reality::site_material_snapshot>& site_material_snapshot)
+std::optional<std::uint16_t> select_reality_cipher_suite(const client_hello_info& hello,
+                                                         const std::optional<reality::site_material_snapshot>& site_material_snapshot)
 {
     if (site_material_snapshot.has_value())
     {
@@ -653,7 +653,7 @@ std::uint16_t select_reality_cipher_suite(const client_hello_info& hello,
             return cipher_suite;
         }
     }
-    return normalize_cipher_suite(reality::tls_consts::cipher::kTlsAes128GcmSha256);
+    return std::nullopt;
 }
 
 std::string select_reality_alpn(const client_hello_info& hello, const std::optional<reality::site_material_snapshot>& site_material_snapshot)
@@ -1833,7 +1833,13 @@ boost::asio::awaitable<remote_server::server_handshake_res> remote_server::perfo
     const auto site_material_snapshot = get_cached_site_material_snapshot(site_material_manager_, cfg_);
     const auto cert_chain = build_reality_certificate_chain(cert_der, site_material_snapshot);
     reality_ctx.cert_msg = reality::construct_certificate(cert_chain);
-    const std::uint16_t cipher_suite = select_reality_cipher_suite(reality_ctx.client_hello, site_material_snapshot);
+    const auto cipher_suite = select_reality_cipher_suite(reality_ctx.client_hello, site_material_snapshot);
+    if (!cipher_suite.has_value())
+    {
+        LOG_CTX_ERROR(ctx, "{} no mutual tls13 cipher suite", log_event::kHandshake);
+        ec = boost::asio::error::no_protocol_option;
+        co_return res;
+    }
     const std::string selected_alpn = select_reality_alpn(reality_ctx.client_hello, site_material_snapshot);
     const auto server_hello_extension_order = select_server_hello_extension_order(site_material_snapshot);
     const auto encrypted_extension_order = select_encrypted_extensions_order(site_material_snapshot);
@@ -1850,7 +1856,7 @@ boost::asio::awaitable<remote_server::server_handshake_res> remote_server::perfo
                  reality_ctx.key_share_group,
                  reality::named_group_name(reality_ctx.key_share_group),
                  reality_ctx.server_key_share_data.size(),
-                 cipher_suite,
+                 *cipher_suite,
                  selected_alpn,
                  server_hello_extension_order.size(),
                  encrypted_extension_order.size(),
@@ -1861,7 +1867,7 @@ boost::asio::awaitable<remote_server::server_handshake_res> remote_server::perfo
 
     auto crypto = build_handshake_crypto(
         reality_ctx,
-        cipher_suite,
+        *cipher_suite,
         selected_alpn,
         server_hello_extension_order,
         encrypted_extension_order,

@@ -24,6 +24,7 @@ extern "C"
 }
 
 #include "config.h"
+#include "ch_parser.h"
 #include "mux_tunnel.h"
 #include "task_group.h"
 #include "context_pool.h"
@@ -103,6 +104,7 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
         const reality::fingerprint_spec& spec,
         reality::transcript& trans,
         std::vector<std::uint8_t>& auth_key,
+        client_hello_info& client_hello,
         boost::system::error_code& ec) const;
 
     struct server_hello_res
@@ -118,6 +120,7 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
         boost::asio::ip::tcp::socket& socket,
         const std::uint8_t* private_key,
         const std::vector<std::uint8_t>& mlkem768_private_key,
+        const client_hello_info& client_hello,
         reality::transcript& trans,
         const connection_context& ctx,
         boost::system::error_code& ec) const;

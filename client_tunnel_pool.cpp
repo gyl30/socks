@@ -947,6 +947,7 @@ struct authenticated_client_hello
 {
     std::vector<std::uint8_t> hello_body;
     std::vector<std::uint8_t> auth_key;
+    client_hello_info hello_info;
 };
 
 authenticated_client_hello build_authenticated_client_hello(const std::uint8_t* public_key,
@@ -991,7 +992,11 @@ authenticated_client_hello build_authenticated_client_hello(const std::uint8_t* 
     }
 
     std::memcpy(hello_body.data() + absolute_sid_offset, sid.data(), 32);
-    return authenticated_client_hello{.hello_body = std::move(hello_body), .auth_key = std::move(auth_key)};
+    return authenticated_client_hello{
+        .hello_body = std::move(hello_body),
+        .auth_key = std::move(auth_key),
+        .hello_info = ch_parser::parse(hello_body),
+    };
 }
 
 reality::fingerprint_spec select_fingerprint_spec(const std::optional<reality::fingerprint_type>& fingerprint_type)
@@ -1107,6 +1112,7 @@ handshake_traffic_keys derive_handshake_traffic_keys(const reality::handshake_ke
 }
 
 void prepare_server_hello_crypto(const std::vector<std::uint8_t>& sh_data,
+                                 const client_hello_info& client_hello,
                                  reality::transcript& trans,
                                  std::uint16_t& cipher_suite,
                                  const EVP_MD*& md,
@@ -1125,6 +1131,12 @@ void prepare_server_hello_crypto(const std::vector<std::uint8_t>& sh_data,
     {
         LOG_ERROR("unsupported server hello cipher suite {:x}", cipher_suite);
         ec = boost::asio::error::no_protocol_option;
+        return;
+    }
+    if (std::find(client_hello.cipher_suites.begin(), client_hello.cipher_suites.end(), cipher_suite) == client_hello.cipher_suites.end())
+    {
+        LOG_ERROR("server hello selected unoffered cipher suite {:x}", cipher_suite);
+        ec = boost::asio::error::invalid_argument;
         return;
     }
 
@@ -1622,13 +1634,15 @@ boost::asio::awaitable<client_tunnel_pool::handshake_result> client_tunnel_pool:
                  mlkem768_public_key.size());
     reality::transcript trans;
     std::vector<std::uint8_t> auth_key;
-    co_await generate_and_send_client_hello(socket, public_key, private_key, x25519_mlkem768_key_share, spec, trans, auth_key, ec);
+    client_hello_info client_hello;
+    co_await generate_and_send_client_hello(
+        socket, public_key, private_key, x25519_mlkem768_key_share, spec, trans, auth_key, client_hello, ec);
     if (ec)
     {
         co_return handshake_result{};
     }
 
-    const auto server_hello_result = co_await process_server_hello(socket, private_key, mlkem768_private_key, trans, ctx, ec);
+    const auto server_hello_result = co_await process_server_hello(socket, private_key, mlkem768_private_key, client_hello, trans, ctx, ec);
     if (ec)
     {
         co_return handshake_result{};
@@ -1688,6 +1702,7 @@ boost::asio::awaitable<void> client_tunnel_pool::generate_and_send_client_hello(
     const reality::fingerprint_spec& spec,
     reality::transcript& trans,
     std::vector<std::uint8_t>& auth_key,
+    client_hello_info& client_hello,
     boost::system::error_code& ec) const
 {
     ec.clear();
@@ -1722,6 +1737,7 @@ boost::asio::awaitable<void> client_tunnel_pool::generate_and_send_client_hello(
     }
     LOG_DEBUG("sending client hello record size {}", client_hello_record.size());
     auth_key = std::move(client_hello_result.auth_key);
+    client_hello = std::move(client_hello_result.hello_info);
     trans.update(hello_body);
     co_return;
 }
@@ -1730,6 +1746,7 @@ boost::asio::awaitable<client_tunnel_pool::server_hello_res> client_tunnel_pool:
     boost::asio::ip::tcp::socket& socket,
     const std::uint8_t* private_key,
     const std::vector<std::uint8_t>& mlkem768_private_key,
+    const client_hello_info& client_hello,
     reality::transcript& trans,
     const connection_context& ctx,
     boost::system::error_code& ec) const
@@ -1745,7 +1762,7 @@ boost::asio::awaitable<client_tunnel_pool::server_hello_res> client_tunnel_pool:
     std::uint16_t cipher_suite = 0;
     const EVP_MD* md = nullptr;
     const EVP_CIPHER* cipher = nullptr;
-    prepare_server_hello_crypto(sh_data, trans, cipher_suite, md, cipher, ec);
+    prepare_server_hello_crypto(sh_data, client_hello, trans, cipher_suite, md, cipher, ec);
     if (ec)
     {
         co_return server_hello_res{};
