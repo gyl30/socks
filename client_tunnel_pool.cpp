@@ -1154,6 +1154,12 @@ void prepare_server_hello_crypto(const std::vector<std::uint8_t>& sh_data,
         return;
     }
     server_hello = *parsed_server_hello;
+    if (server_hello.is_hello_retry_request)
+    {
+        LOG_ERROR("hello retry request not supported");
+        ec = boost::asio::error::operation_not_supported;
+        return;
+    }
     if (!server_hello.has_supported_version)
     {
         LOG_ERROR("server hello missing supported version");
