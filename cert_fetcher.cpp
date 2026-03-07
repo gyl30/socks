@@ -541,7 +541,8 @@ boost::asio::awaitable<boost::system::error_code> cert_fetcher::fetch_session::p
     }
 
     auto spec = fingerprint_factory::get(fingerprint_);
-    auto ch = client_hello_builder::build(spec, session_id, client_random, std::vector<std::uint8_t>(client_public_, client_public_ + 32), sni_);
+    auto ch = client_hello_builder::build(
+        spec, session_id, client_random, std::vector<std::uint8_t>(client_public_, client_public_ + 32), {}, sni_);
     if (ch.empty())
     {
         LOG_CTX_ERROR(ctx_, "{} invalid client hello for sni '{}' fingerprint={}", mux::log_event::kCert, sni_, fingerprint_name(fingerprint_));
