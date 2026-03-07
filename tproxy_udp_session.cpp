@@ -459,7 +459,10 @@ boost::asio::awaitable<void> tproxy_udp_session::direct_to_client()
         }
 
         const auto normalized_sender = net::normalize_endpoint(sender);
-        co_await send_to_client(normalized_sender, buffer.data(), bytes_recv);
+        if (!(co_await send_to_client(normalized_sender, buffer.data(), bytes_recv)))
+        {
+            break;
+        }
         last_activity_time_ms_ = timeout_io::now_ms();
     }
 }
@@ -554,7 +557,11 @@ boost::asio::awaitable<void> tproxy_udp_session::proxy_to_client()
         const boost::asio::ip::udp::endpoint source_endpoint(net::normalize_address(source_addr), header.port);
         const auto* payload = frame.payload.data() + header.header_len;
         const auto payload_len = frame.payload.size() - header.header_len;
-        co_await send_to_client(source_endpoint, payload, payload_len);
+        if (!(co_await send_to_client(source_endpoint, payload, payload_len)))
+        {
+            update_stream_close_command(stream_close_command_, mux::kCmdRst);
+            break;
+        }
         last_activity_time_ms_ = timeout_io::now_ms();
     }
 }
@@ -578,7 +585,7 @@ boost::asio::awaitable<void> tproxy_udp_session::idle_watchdog()
     }
 }
 
-boost::asio::awaitable<void> tproxy_udp_session::send_to_client(const boost::asio::ip::udp::endpoint& source,
+boost::asio::awaitable<bool> tproxy_udp_session::send_to_client(const boost::asio::ip::udp::endpoint& source,
                                                                 const std::uint8_t* payload,
                                                                 const std::size_t payload_len)
 {
@@ -591,7 +598,7 @@ boost::asio::awaitable<void> tproxy_udp_session::send_to_client(const boost::asi
             ec = boost::asio::error::operation_aborted;
         }
         LOG_CTX_WARN(ctx_, "{} get reply socket failed {}", log_event::kMux, ec.message());
-        co_return;
+        co_return false;
     }
 
     const auto [send_ec, bytes_sent] =
@@ -599,10 +606,11 @@ boost::asio::awaitable<void> tproxy_udp_session::send_to_client(const boost::asi
     if (send_ec)
     {
         LOG_CTX_WARN(ctx_, "{} send udp reply to client failed {}", log_event::kMux, send_ec.message());
-        co_return;
+        co_return false;
     }
 
     ctx_.add_rx_bytes(bytes_sent);
+    co_return true;
 }
 
 std::shared_ptr<boost::asio::ip::udp::socket> tproxy_udp_session::get_or_create_reply_socket(const boost::asio::ip::udp::endpoint& source,
