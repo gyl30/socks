@@ -58,7 +58,7 @@ class tproxy_udp_session : public std::enable_shared_from_this<tproxy_udp_sessio
     [[nodiscard]] boost::asio::awaitable<void> packets_to_proxy();
     [[nodiscard]] boost::asio::awaitable<void> proxy_to_client();
     [[nodiscard]] boost::asio::awaitable<void> idle_watchdog();
-    [[nodiscard]] boost::asio::awaitable<void> send_to_client(const boost::asio::ip::udp::endpoint& source,
+    [[nodiscard]] boost::asio::awaitable<bool> send_to_client(const boost::asio::ip::udp::endpoint& source,
                                                               const std::uint8_t* payload,
                                                               std::size_t payload_len);
     [[nodiscard]] std::shared_ptr<boost::asio::ip::udp::socket> get_or_create_reply_socket(const boost::asio::ip::udp::endpoint& source,
