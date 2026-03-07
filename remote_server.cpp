@@ -29,6 +29,7 @@
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/ip/address_v4.hpp>
 #include <boost/asio/ip/address_v6.hpp>
+#include <boost/asio/ip/v6_only.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/system/detail/errc.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
@@ -1362,6 +1363,7 @@ boost::asio::awaitable<void> remote_server::accept_loop()
         co_return;
     }
     auto ep = boost::asio::ip::tcp::endpoint(addr, cfg_.inbound.port);
+    const bool enable_dual_stack = addr.is_v6() && addr.to_v6().is_unspecified();
     ec = acceptor_.open(ep.protocol(), ec);
     if (ec)
     {
@@ -1371,6 +1373,14 @@ boost::asio::awaitable<void> remote_server::accept_loop()
     if (ec)
     {
         co_return;
+    }
+    if (enable_dual_stack)
+    {
+        ec = acceptor_.set_option(boost::asio::ip::v6_only(false), ec);
+        if (ec)
+        {
+            co_return;
+        }
     }
     ec = acceptor_.bind(ep, ec);
     if (ec)

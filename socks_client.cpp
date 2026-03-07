@@ -11,6 +11,7 @@
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/address.hpp>
+#include <boost/asio/ip/v6_only.hpp>
 #include <boost/asio/socket_base.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/redirect_error.hpp>
@@ -41,6 +42,7 @@ void setup_acceptor(boost::asio::ip::tcp::acceptor& acceptor, const std::string&
         return;
     }
     const boost::asio::ip::tcp::endpoint ep{listen_addr, port};
+    const bool enable_dual_stack = listen_addr.is_v6() && listen_addr.to_v6().is_unspecified();
     ec = acceptor.open(ep.protocol(), ec);
     if (ec)
     {
@@ -50,6 +52,14 @@ void setup_acceptor(boost::asio::ip::tcp::acceptor& acceptor, const std::string&
     if (ec)
     {
         return;
+    }
+    if (enable_dual_stack)
+    {
+        ec = acceptor.set_option(boost::asio::ip::v6_only(false), ec);
+        if (ec)
+        {
+            return;
+        }
     }
     ec = acceptor.bind(ep, ec);
     if (ec)
