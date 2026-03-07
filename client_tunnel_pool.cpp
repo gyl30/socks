@@ -717,6 +717,7 @@ boost::asio::awaitable<std::vector<std::uint8_t>> read_handshake_record_body(boo
                                                                              boost::system::error_code& ec)
 {
     ec.clear();
+    const auto handshake_start_ms = timeout_io::now_ms();
     auto read_exact = [&](const boost::asio::mutable_buffer& buffer) -> boost::asio::awaitable<bool>
     {
         auto* data = static_cast<std::uint8_t*>(buffer.data());
@@ -724,8 +725,13 @@ boost::asio::awaitable<std::vector<std::uint8_t>> read_handshake_record_body(boo
         std::size_t total_read = 0;
         while (total_read < size)
         {
+            const auto read_timeout = timeout_io::remaining_timeout_seconds(handshake_start_ms, timeout_sec, ec);
+            if (ec)
+            {
+                co_return false;
+            }
             const auto read_size =
-                co_await timeout_io::wait_read_with_timeout(socket, boost::asio::buffer(data + total_read, size - total_read), timeout_sec, ec);
+                co_await timeout_io::wait_read_with_timeout(socket, boost::asio::buffer(data + total_read, size - total_read), read_timeout, ec);
             if (ec)
             {
                 co_return false;
