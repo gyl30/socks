@@ -107,6 +107,40 @@ constexpr std::uint32_t kSiteMaterialFetchSuccessTtlSec = 6 * 60 * 60;
 constexpr std::uint32_t kSiteMaterialFetchFailureRetrySec = 5 * 60;
 constexpr std::size_t kSiteMaterialCacheCapacity = 4;
 
+bool equal_server_name_ascii(const std::string& lhs, const std::string& rhs)
+{
+    if (lhs.size() != rhs.size())
+    {
+        return false;
+    }
+
+    for (std::size_t i = 0; i < lhs.size(); ++i)
+    {
+        const auto lhs_ch = static_cast<unsigned char>(lhs[i]);
+        const auto rhs_ch = static_cast<unsigned char>(rhs[i]);
+        if (std::tolower(lhs_ch) != std::tolower(rhs_ch))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool verify_client_hello_sni(const client_hello_info& client_hello, const config& cfg)
+{
+    if (cfg.reality.sni.empty())
+    {
+        return true;
+    }
+    if (client_hello.sni.empty())
+    {
+        return false;
+    }
+
+    return equal_server_name_ascii(client_hello.sni, cfg.reality.sni);
+}
+
 std::string format_fetch_error(const reality::fetch_error& error)
 {
     if (error.stage.empty())
@@ -1459,6 +1493,17 @@ boost::asio::awaitable<void> remote_server::handle(std::shared_ptr<boost::asio::
     {
         LOG_CTX_ERROR(ctx, "{} auth fail malformed sni extension", log_event::kAuth);
         co_await fallback("malformed_sni");
+        co_return;
+    }
+    if (!verify_client_hello_sni(reality_ctx.client_hello, cfg_))
+    {
+        const auto client_sni = reality_ctx.client_hello.sni.empty() ? std::string("empty") : reality_ctx.client_hello.sni;
+        LOG_CTX_WARN(ctx,
+                     "{} auth fail server name mismatch client={} expected={}",
+                     log_event::kAuth,
+                     client_sni,
+                     cfg_.reality.sni);
+        co_await fallback("server_name_mismatch");
         co_return;
     }
     if (reality_ctx.client_hello.malformed_key_share)
