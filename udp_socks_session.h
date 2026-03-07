@@ -86,6 +86,7 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
     boost::asio::ip::udp::socket udp_socket_;
     std::shared_ptr<router> router_;
     std::shared_ptr<client_tunnel_pool> tunnel_pool_;
+    std::atomic<std::uint8_t> stream_close_command_{0};
     std::uint64_t last_activity_time_ms_{0};
     bool has_client_addr_ = false;
     boost::asio::ip::udp::endpoint client_addr_;
