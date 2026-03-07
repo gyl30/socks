@@ -97,6 +97,7 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
         boost::asio::ip::tcp::socket& socket,
         const std::uint8_t* public_key,
         const std::uint8_t* private_key,
+        const std::vector<std::uint8_t>& x25519_mlkem768_key_share,
         const reality::fingerprint_spec& spec,
         reality::transcript& trans,
         std::vector<std::uint8_t>& auth_key,
@@ -111,7 +112,11 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
     };
 
     [[nodiscard]] boost::asio::awaitable<server_hello_res> process_server_hello(
-        boost::asio::ip::tcp::socket& socket, const std::uint8_t* private_key, reality::transcript& trans, boost::system::error_code& ec) const;
+        boost::asio::ip::tcp::socket& socket,
+        const std::uint8_t* private_key,
+        const std::vector<std::uint8_t>& mlkem768_private_key,
+        reality::transcript& trans,
+        boost::system::error_code& ec) const;
 
     [[nodiscard]] static boost::asio::awaitable<std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>> handshake_read_loop(
         boost::asio::ip::tcp::socket& socket,

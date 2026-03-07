@@ -17,6 +17,7 @@
 
 extern "C"
 {
+#include <oqs/kem_ml_kem.h>
 #include <openssl/asn1.h>
 #include <openssl/bio.h>
 #include <openssl/evp.h>
@@ -280,6 +281,39 @@ std::vector<std::uint8_t> derive_x25519_shared_secret(const openssl_ptrs::evp_pk
         return {};
     }
     return shared;
+}
+
+bool validate_mlkem768_public_key(const std::vector<std::uint8_t>& public_key, boost::system::error_code& ec)
+{
+    ec.clear();
+    if (public_key.size() != kMlkem768PublicKeySize)
+    {
+        ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
+        return false;
+    }
+    return true;
+}
+
+bool validate_mlkem768_private_key(const std::vector<std::uint8_t>& private_key, boost::system::error_code& ec)
+{
+    ec.clear();
+    if (private_key.size() != kMlkem768PrivateKeySize)
+    {
+        ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
+        return false;
+    }
+    return true;
+}
+
+bool validate_mlkem768_ciphertext(const std::vector<std::uint8_t>& ciphertext, boost::system::error_code& ec)
+{
+    ec.clear();
+    if (ciphertext.size() != kMlkem768CiphertextSize)
+    {
+        ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
+        return false;
+    }
+    return true;
 }
 
 openssl_ptrs::evp_pkey_ptr create_ed25519_private_key(const std::vector<std::uint8_t>& private_key, boost::system::error_code& ec)
@@ -696,6 +730,66 @@ std::vector<std::uint8_t> crypto_util::x25519_derive(const std::vector<std::uint
         return {};
     }
     return derive_x25519_shared_secret(keys.first, keys.second, ec);
+}
+
+bool crypto_util::generate_mlkem768_keypair(std::vector<std::uint8_t>& public_key,
+                                            std::vector<std::uint8_t>& private_key,
+                                            boost::system::error_code& ec)
+{
+    ec.clear();
+    public_key.assign(kMlkem768PublicKeySize, 0);
+    private_key.assign(kMlkem768PrivateKeySize, 0);
+    if (OQS_KEM_ml_kem_768_keypair(public_key.data(), private_key.data()) != OQS_SUCCESS)
+    {
+        public_key.clear();
+        private_key.clear();
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return false;
+    }
+    return true;
+}
+
+std::vector<std::uint8_t> crypto_util::mlkem768_encapsulate(const std::vector<std::uint8_t>& public_key,
+                                                            std::vector<std::uint8_t>& shared_secret,
+                                                            boost::system::error_code& ec)
+{
+    ec.clear();
+    shared_secret.clear();
+    if (!validate_mlkem768_public_key(public_key, ec))
+    {
+        return {};
+    }
+
+    std::vector<std::uint8_t> ciphertext(kMlkem768CiphertextSize, 0);
+    shared_secret.assign(kMlkem768SharedSecretSize, 0);
+    if (OQS_KEM_ml_kem_768_encaps(ciphertext.data(), shared_secret.data(), public_key.data()) != OQS_SUCCESS)
+    {
+        ciphertext.clear();
+        shared_secret.clear();
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return {};
+    }
+    return ciphertext;
+}
+
+std::vector<std::uint8_t> crypto_util::mlkem768_decapsulate(const std::vector<std::uint8_t>& private_key,
+                                                            const std::vector<std::uint8_t>& ciphertext,
+                                                            boost::system::error_code& ec)
+{
+    ec.clear();
+    if (!validate_mlkem768_private_key(private_key, ec) || !validate_mlkem768_ciphertext(ciphertext, ec))
+    {
+        return {};
+    }
+
+    std::vector<std::uint8_t> shared_secret(kMlkem768SharedSecretSize, 0);
+    if (OQS_KEM_ml_kem_768_decaps(shared_secret.data(), ciphertext.data(), private_key.data()) != OQS_SUCCESS)
+    {
+        shared_secret.clear();
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return {};
+    }
+    return shared_secret;
 }
 
 std::vector<std::uint8_t> crypto_util::hkdf_extract(const std::vector<std::uint8_t>& salt,

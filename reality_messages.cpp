@@ -120,6 +120,7 @@ struct extension_build_context
     const grease_context& grease_ctx;
     int& grease_ext_count;
     const std::vector<std::uint8_t>& x25519_pubkey;
+    const std::vector<std::uint8_t>& x25519_mlkem768_key_share;
     const std::string& hostname;
     std::size_t hello_size;
     std::size_t exts_size;
@@ -254,6 +255,10 @@ std::vector<std::uint8_t> resolve_key_share_data(const key_share_blueprint::key_
     if (key_share.group == tls_consts::group::kX25519)
     {
         return ctx.x25519_pubkey;
+    }
+    if (key_share.group == tls_consts::group::kX25519MLKEM768)
+    {
+        return ctx.x25519_mlkem768_key_share;
     }
     if (key_share.group == kGreasePlaceholder)
     {
@@ -723,6 +728,7 @@ std::vector<std::uint8_t> client_hello_builder::build(const fingerprint_spec& sp
                                                       const std::vector<std::uint8_t>& session_id,
                                                       const std::vector<std::uint8_t>& random,
                                                       const std::vector<std::uint8_t>& x25519_pubkey,
+                                                      const std::vector<std::uint8_t>& x25519_mlkem768_key_share,
                                                       const std::string& hostname)
 {
     const bool has_hostname = !hostname.empty();
@@ -774,6 +780,7 @@ std::vector<std::uint8_t> client_hello_builder::build(const fingerprint_spec& sp
             .grease_ctx = grease_ctx,
             .grease_ext_count = grease_ext_count,
             .x25519_pubkey = x25519_pubkey,
+            .x25519_mlkem768_key_share = x25519_mlkem768_key_share,
             .hostname = hostname,
             .hello_size = hello.size(),
             .exts_size = exts.size(),

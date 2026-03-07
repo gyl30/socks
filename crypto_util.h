@@ -49,6 +49,18 @@ class crypto_util
                                                                  const std::vector<std::uint8_t>& peer_public_key,
                                                                  boost::system::error_code& ec);
 
+    [[nodiscard]] static bool generate_mlkem768_keypair(std::vector<std::uint8_t>& public_key,
+                                                        std::vector<std::uint8_t>& private_key,
+                                                        boost::system::error_code& ec);
+
+    [[nodiscard]] static std::vector<std::uint8_t> mlkem768_encapsulate(const std::vector<std::uint8_t>& public_key,
+                                                                        std::vector<std::uint8_t>& shared_secret,
+                                                                        boost::system::error_code& ec);
+
+    [[nodiscard]] static std::vector<std::uint8_t> mlkem768_decapsulate(const std::vector<std::uint8_t>& private_key,
+                                                                        const std::vector<std::uint8_t>& ciphertext,
+                                                                        boost::system::error_code& ec);
+
     [[nodiscard]] static std::vector<std::uint8_t> hkdf_extract(const std::vector<std::uint8_t>& salt,
                                                                 const std::vector<std::uint8_t>& ikm,
                                                                 const EVP_MD* md,

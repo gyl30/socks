@@ -78,11 +78,12 @@ struct reality_context
     std::vector<std::uint8_t> client_hello_record;
     std::vector<std::uint8_t> client_hello_handshake;
     client_hello_info client_hello;
-    std::uint16_t x25519_group = 0;
+    std::uint16_t key_share_group = 0;
+    std::vector<std::uint8_t> mlkem768_peer_pub;
     std::vector<std::uint8_t> x25519_peer_pub;
     reality::transcript transcript;
     std::vector<std::uint8_t> server_random;
-    std::vector<std::uint8_t> server_x25519_pub;
+    std::vector<std::uint8_t> server_key_share_data;
     std::vector<std::uint8_t> server_shared_secret;
     std::vector<std::uint8_t> auth_key;
     std::vector<std::uint8_t> cert_msg;
@@ -419,8 +420,8 @@ handshake_crypto_result build_handshake_crypto(reality_context& reality_ctx,
     out.sh_msg = reality::construct_server_hello(reality_ctx.server_random,
                                                  reality_ctx.client_hello.session_id,
                                                  cipher_suite,
-                                                 reality_ctx.x25519_group,
-                                                 reality_ctx.server_x25519_pub,
+                                                 reality_ctx.key_share_group,
+                                                 reality_ctx.server_key_share_data,
                                                  server_hello_extension_order);
     reality_ctx.transcript.update(out.sh_msg);
 
@@ -1469,9 +1470,19 @@ boost::asio::awaitable<void> remote_server::handle(std::shared_ptr<boost::asio::
         co_await fallback("invalid_client_random");
         co_return;
     }
-    if (reality_ctx.client_hello.has_x25519_share && reality_ctx.client_hello.x25519_pub.size() == 32)
+    if (reality_ctx.client_hello.has_x25519_mlkem768_share &&
+        reality_ctx.client_hello.x25519_mlkem768_share.size() == reality::kMlkem768PublicKeySize + 32)
     {
-        reality_ctx.x25519_group = reality::tls_consts::group::kX25519;
+        reality_ctx.key_share_group = reality::tls_consts::group::kX25519MLKEM768;
+        reality_ctx.mlkem768_peer_pub.assign(reality_ctx.client_hello.x25519_mlkem768_share.begin(),
+                                             reality_ctx.client_hello.x25519_mlkem768_share.begin() +
+                                                 static_cast<std::ptrdiff_t>(reality::kMlkem768PublicKeySize));
+        reality_ctx.x25519_peer_pub.assign(reality_ctx.client_hello.x25519_mlkem768_share.end() - 32,
+                                           reality_ctx.client_hello.x25519_mlkem768_share.end());
+    }
+    else if (reality_ctx.client_hello.has_x25519_share && reality_ctx.client_hello.x25519_pub.size() == 32)
+    {
+        reality_ctx.key_share_group = reality::tls_consts::group::kX25519;
         reality_ctx.x25519_peer_pub = reality_ctx.client_hello.x25519_pub;
     }
     if (reality_ctx.x25519_peer_pub.size() != 32)
@@ -1773,14 +1784,31 @@ boost::asio::awaitable<remote_server::server_handshake_res> remote_server::perfo
                   log_event::kHandshake,
                   reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(public_key, public_key + 32)));
 
-    reality_ctx.server_shared_secret =
-        reality::crypto_util::x25519_derive(std::vector<std::uint8_t>(private_key, private_key + 32), reality_ctx.x25519_peer_pub, ec);
+    auto x25519_shared = reality::crypto_util::x25519_derive(std::vector<std::uint8_t>(private_key, private_key + 32), reality_ctx.x25519_peer_pub, ec);
     if (ec)
     {
         LOG_CTX_ERROR(ctx, "{} x25519 derive failed", log_event::kHandshake);
         co_return res;
     }
-    reality_ctx.server_x25519_pub.assign(public_key, public_key + 32);
+    if (reality_ctx.key_share_group == reality::tls_consts::group::kX25519MLKEM768)
+    {
+        std::vector<std::uint8_t> mlkem768_shared;
+        auto ciphertext = reality::crypto_util::mlkem768_encapsulate(reality_ctx.mlkem768_peer_pub, mlkem768_shared, ec);
+        if (ec)
+        {
+            LOG_CTX_ERROR(ctx, "{} mlkem768 encapsulate failed {}", log_event::kHandshake, ec.message());
+            co_return res;
+        }
+        reality_ctx.server_shared_secret = std::move(mlkem768_shared);
+        reality_ctx.server_shared_secret.insert(reality_ctx.server_shared_secret.end(), x25519_shared.begin(), x25519_shared.end());
+        reality_ctx.server_key_share_data = std::move(ciphertext);
+        reality_ctx.server_key_share_data.insert(reality_ctx.server_key_share_data.end(), public_key, public_key + 32);
+    }
+    else
+    {
+        reality_ctx.server_shared_secret = std::move(x25519_shared);
+        reality_ctx.server_key_share_data.assign(public_key, public_key + 32);
+    }
 
     if (reality_ctx.auth_key.empty() || reality_cert_public_key_.size() != 32 || reality_cert_template_.empty())
     {

@@ -55,6 +55,7 @@ class client_hello_builder
                                            const std::vector<std::uint8_t>& session_id,
                                            const std::vector<std::uint8_t>& random,
                                            const std::vector<std::uint8_t>& x25519_pubkey,
+                                           const std::vector<std::uint8_t>& x25519_mlkem768_key_share,
                                            const std::string& hostname);
 };
 

@@ -112,20 +112,36 @@ bool ch_parser::read_key_share_item_header(reader& r, std::uint16_t& group, std:
 
 void ch_parser::handle_key_share_item(reader& r, const std::uint16_t group, const std::uint16_t len, client_hello_info& info)
 {
-    if (group != reality::tls_consts::group::kX25519)
+    if (group == reality::tls_consts::group::kX25519)
+    {
+        if (len != 32 || !r.has(32))
+        {
+            return;
+        }
+        info.x25519_pub.assign(r.data(), r.data() + 32);
+        info.has_x25519_share = true;
+        return;
+    }
+    if (group != reality::tls_consts::group::kX25519MLKEM768)
     {
         return;
     }
-    if (len != 32 || !r.has(32))
+    if (len != reality::kMlkem768PublicKeySize + 32 || !r.has(len))
     {
         return;
     }
-    info.x25519_pub.assign(r.data(), r.data() + 32);
-    info.has_x25519_share = true;
+    info.x25519_mlkem768_share.assign(r.data(), r.data() + static_cast<std::ptrdiff_t>(len));
+    info.has_x25519_mlkem768_share = true;
 }
 
 void ch_parser::finalize_key_share_info(client_hello_info& info)
 {
+    if (info.has_x25519_mlkem768_share)
+    {
+        info.is_tls13 = true;
+        info.key_share_group = reality::tls_consts::group::kX25519MLKEM768;
+        return;
+    }
     if (!info.has_x25519_share)
     {
         return;
@@ -335,6 +351,11 @@ void ch_parser::parse_key_share(reader& r, client_hello_info& info)
             info.malformed_key_share = true;
             break;
         }
+        if (group == reality::tls_consts::group::kX25519MLKEM768 && len != reality::kMlkem768PublicKeySize + 32)
+        {
+            info.malformed_key_share = true;
+            break;
+        }
         handle_key_share_item(shares_r, group, len, info);
         if (!shares_r.skip(len))
         {
@@ -349,7 +370,9 @@ void ch_parser::parse_key_share(reader& r, client_hello_info& info)
     if (info.malformed_key_share)
     {
         info.has_x25519_share = false;
+        info.has_x25519_mlkem768_share = false;
         info.x25519_pub.clear();
+        info.x25519_mlkem768_share.clear();
         info.is_tls13 = false;
         info.key_share_group = 0;
         return;
