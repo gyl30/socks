@@ -80,9 +80,9 @@ constexpr std::uint32_t kHandshakeRecordsLimitMax = 4096;
     {
         return std::unexpected(make_config_error("/heartbeat/min_padding", "must be less than or equal to max_padding"));
     }
-    if (heartbeat.max_padding > mux::kMaxPayloadPerRecord)
+    if (heartbeat.max_padding > mux::kMaxPayload)
     {
-        return std::unexpected(make_config_error("/heartbeat/max_padding", "must be less than or equal to max mux single record payload"));
+        return std::unexpected(make_config_error("/heartbeat/max_padding", "must be less than or equal to max mux payload"));
     }
     return {};
 }
