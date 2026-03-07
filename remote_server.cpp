@@ -1457,6 +1457,16 @@ boost::asio::awaitable<void> remote_server::handle(std::shared_ptr<boost::asio::
         co_await fallback("malformed_key_share");
         co_return;
     }
+    if (reality_ctx.client_hello.malformed_supported_groups || reality_ctx.client_hello.malformed_supported_versions)
+    {
+        LOG_CTX_ERROR(ctx,
+                      "{} auth fail malformed tls13 extensions supported_groups={} supported_versions={}",
+                      log_event::kAuth,
+                      reality_ctx.client_hello.malformed_supported_groups,
+                      reality_ctx.client_hello.malformed_supported_versions);
+        co_await fallback("malformed_tls13_extensions");
+        co_return;
+    }
     if (!reality_ctx.client_hello.is_tls13 || reality_ctx.client_hello.session_id.size() != 32)
     {
         LOG_CTX_ERROR(
@@ -1470,7 +1480,7 @@ boost::asio::awaitable<void> remote_server::handle(std::shared_ptr<boost::asio::
         co_await fallback("invalid_client_random");
         co_return;
     }
-    if (reality_ctx.client_hello.has_x25519_mlkem768_share &&
+    if (reality_ctx.client_hello.key_share_group == reality::tls_consts::group::kX25519MLKEM768 &&
         reality_ctx.client_hello.x25519_mlkem768_share.size() == reality::kMlkem768PublicKeySize + 32)
     {
         reality_ctx.key_share_group = reality::tls_consts::group::kX25519MLKEM768;
@@ -1480,7 +1490,8 @@ boost::asio::awaitable<void> remote_server::handle(std::shared_ptr<boost::asio::
         reality_ctx.x25519_peer_pub.assign(reality_ctx.client_hello.x25519_mlkem768_share.end() - 32,
                                            reality_ctx.client_hello.x25519_mlkem768_share.end());
     }
-    else if (reality_ctx.client_hello.has_x25519_share && reality_ctx.client_hello.x25519_pub.size() == 32)
+    else if (reality_ctx.client_hello.key_share_group == reality::tls_consts::group::kX25519 &&
+             reality_ctx.client_hello.x25519_pub.size() == 32)
     {
         reality_ctx.key_share_group = reality::tls_consts::group::kX25519;
         reality_ctx.x25519_peer_pub = reality_ctx.client_hello.x25519_pub;

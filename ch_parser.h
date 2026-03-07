@@ -16,10 +16,14 @@ struct client_hello_info
     std::vector<std::uint8_t> x25519_pub;
     std::vector<std::uint8_t> x25519_mlkem768_share;
     std::vector<std::uint16_t> cipher_suites;
+    std::vector<std::uint16_t> supported_groups;
+    std::vector<std::uint16_t> supported_versions;
     std::vector<std::string> alpn_protocols;
     std::string sni;
     bool malformed_sni = false;
     bool malformed_key_share = false;
+    bool malformed_supported_groups = false;
+    bool malformed_supported_versions = false;
     bool is_tls13 = false;
     bool has_x25519_share = false;
     bool has_x25519_mlkem768_share = false;
@@ -114,12 +118,15 @@ class ch_parser
     static bool read_key_share_item_header(reader& r, std::uint16_t& group, std::uint16_t& len);
     static void handle_key_share_item(reader& r, std::uint16_t group, std::uint16_t len, client_hello_info& info);
     static void finalize_key_share_info(client_hello_info& info);
+    static void finalize_tls13_info(client_hello_info& info);
     static bool parse_before_extensions(reader& r, client_hello_info& info);
     static void parse_extension_block(reader& r, client_hello_info& info);
 
     static void parse_extensions(reader& r, client_hello_info& info);
     static void parse_sni(reader& r, client_hello_info& info);
     static void parse_alpn(reader& r, client_hello_info& info);
+    static void parse_supported_groups(reader& r, client_hello_info& info);
+    static void parse_supported_versions(reader& r, client_hello_info& info);
     static void parse_key_share(reader& r, client_hello_info& info);
 };
 
