@@ -19,7 +19,7 @@ constexpr std::uint32_t kStreamIdHeartbeat = 0;
 
 constexpr std::size_t kHeaderSize = 7;
 constexpr std::size_t kMaxPayload = (64L * 1024) - 128;
-constexpr std::size_t kMaxPayloadPerRecord = reality::kMaxTlsPlaintextLen - kHeaderSize;
+constexpr std::size_t kMaxPayloadPerRecord = reality::kMaxTlsApplicationDataPayloadLen - kHeaderSize;
 
 struct frame_header
 {

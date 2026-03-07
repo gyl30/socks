@@ -25,6 +25,10 @@ static constexpr std::uint8_t kContentTypeApplicationData = 0x17;
 static constexpr std::size_t kTlsRecordHeaderSize = 5;
 static constexpr std::size_t kAeadTagSize = 16;
 static constexpr std::size_t kMaxTlsPlaintextLen = 16384;
+static constexpr std::size_t kMaxTlsInnerPlaintextLen = kMaxTlsPlaintextLen + 1;
+static constexpr std::size_t kMaxTlsApplicationDataPaddingLen = 63;
+static constexpr std::size_t kMaxTlsApplicationDataPayloadLen =
+    kMaxTlsInnerPlaintextLen - 1 - kMaxTlsApplicationDataPaddingLen;
 static constexpr std::size_t kMlkem768PublicKeySize = 1184;
 static constexpr std::size_t kMlkem768PrivateKeySize = 2400;
 static constexpr std::size_t kMlkem768CiphertextSize = 1088;
