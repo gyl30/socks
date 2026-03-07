@@ -32,6 +32,53 @@ namespace reality
 namespace
 {
 
+constexpr std::array<std::uint8_t, 32> kHelloRetryRequestRandom = {
+    0xcf,
+    0x21,
+    0xad,
+    0x74,
+    0xe5,
+    0x9a,
+    0x61,
+    0x11,
+    0xbe,
+    0x1d,
+    0x8c,
+    0x02,
+    0x1e,
+    0x65,
+    0xb8,
+    0x91,
+    0xc2,
+    0xa2,
+    0x11,
+    0x16,
+    0x7a,
+    0xbb,
+    0x8c,
+    0x5e,
+    0x07,
+    0x9e,
+    0x09,
+    0xe2,
+    0xc8,
+    0xa8,
+    0x33,
+    0x9c,
+};
+
+bool is_hello_retry_request_random(const std::vector<std::uint8_t>& server_hello, const std::size_t random_pos)
+{
+    if (random_pos + kHelloRetryRequestRandom.size() > server_hello.size())
+    {
+        return false;
+    }
+
+    return std::equal(kHelloRetryRequestRandom.begin(),
+                      kHelloRetryRequestRandom.end(),
+                      server_hello.begin() + static_cast<std::ptrdiff_t>(random_pos));
+}
+
 std::vector<std::uint8_t> fallback_secp256r1_public_key()
 {
     return {0x04, 0x6b, 0x17, 0xd1, 0xf2, 0xe1, 0x2c, 0x42, 0x47, 0xf8, 0xbc, 0xe6, 0xe5, 0x63, 0xa4, 0x40, 0xf2, 0x77, 0x03, 0x7d, 0x81, 0x2d,
@@ -1248,10 +1295,27 @@ static bool parse_supported_version_extension(const std::vector<std::uint8_t>& s
     return true;
 }
 
+static bool parse_hrr_key_share_extension(const std::vector<std::uint8_t>& server_hello,
+                                          const std::size_t pos,
+                                          const std::size_t ext_end,
+                                          server_hello_info& info)
+{
+    if (pos + 2 != ext_end)
+    {
+        return false;
+    }
+
+    info.key_share.group = static_cast<std::uint16_t>((server_hello[pos] << 8) | server_hello[pos + 1]);
+    info.key_share.data.clear();
+    info.has_key_share = true;
+    return true;
+}
+
 static bool parse_server_hello_extensions(const std::vector<std::uint8_t>& server_hello,
                                           std::size_t pos,
                                           const std::size_t end,
-                                          server_hello_info& info)
+                                          server_hello_info& info,
+                                          const bool is_hello_retry_request)
 {
     while (pos + 4 <= end)
     {
@@ -1280,13 +1344,23 @@ static bool parse_server_hello_extensions(const std::vector<std::uint8_t>& serve
             {
                 return false;
             }
-            const auto key_share = parse_server_key_share_entry(server_hello, pos, ext_end);
-            if (!key_share.has_value())
+            if (is_hello_retry_request)
             {
-                return false;
+                if (!parse_hrr_key_share_extension(server_hello, pos, ext_end, info))
+                {
+                    return false;
+                }
             }
-            info.key_share = *key_share;
-            info.has_key_share = true;
+            else
+            {
+                const auto key_share = parse_server_key_share_entry(server_hello, pos, ext_end);
+                if (!key_share.has_value())
+                {
+                    return false;
+                }
+                info.key_share = *key_share;
+                info.has_key_share = true;
+            }
         }
         else if (is_forbidden_tls13_server_hello_extension(type))
         {
@@ -1316,6 +1390,7 @@ std::optional<server_hello_info> parse_server_hello(const std::vector<std::uint8
 
     server_hello_info info;
     info.legacy_version = static_cast<std::uint16_t>((server_hello[pos] << 8) | server_hello[pos + 1]);
+    info.is_hello_retry_request = is_hello_retry_request_random(server_hello, pos + 2);
     pos += 2 + 32;
 
     const auto sid_len = static_cast<std::size_t>(server_hello[pos]);
@@ -1339,7 +1414,7 @@ std::optional<server_hello_info> parse_server_hello(const std::vector<std::uint8
     {
         return std::nullopt;
     }
-    if (!parse_server_hello_extensions(server_hello, pos, end, info))
+    if (!parse_server_hello_extensions(server_hello, pos, end, info, info.is_hello_retry_request))
     {
         return std::nullopt;
     }

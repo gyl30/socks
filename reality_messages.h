@@ -103,6 +103,7 @@ struct server_hello_info
     bool has_supported_version = false;
     bool has_key_share = false;
     bool has_forbidden_tls13_extension = false;
+    bool is_hello_retry_request = false;
     server_key_share_info key_share;
 };
 
