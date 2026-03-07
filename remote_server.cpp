@@ -1515,6 +1515,13 @@ boost::asio::awaitable<void> remote_server::handle(std::shared_ptr<boost::asio::
         co_return;
     }
     LOG_CTX_INFO(ctx, "{} authorized sni {}", log_event::kAuth, reality_ctx.client_hello.sni);
+    LOG_CTX_INFO(ctx,
+                 "{} client_hello selected_key_share_group=0x{:04x} {} client_hybrid={} client_x25519={}",
+                 log_event::kHandshake,
+                 reality_ctx.key_share_group,
+                 reality::named_group_name(reality_ctx.key_share_group),
+                 reality_ctx.client_hello.has_x25519_mlkem768_share,
+                 reality_ctx.client_hello.has_x25519_share);
     if (client_hello_handshake.size() < 4)
     {
         LOG_CTX_ERROR(ctx, "{} buffer too short", log_event::kHandshake);
@@ -1836,10 +1843,13 @@ boost::asio::awaitable<remote_server::server_handshake_res> remote_server::perfo
     const auto encrypted_handshake_record_sizes = select_encrypted_handshake_record_sizes(site_material_snapshot);
     const auto cert_chain_size = select_reality_certificate_chain_size(site_material_snapshot);
     LOG_CTX_INFO(ctx,
-                 "{} success_path_material cache={} certs={} cipher=0x{:04x} alpn='{}' sh_exts={} ee_exts={} ee_padding={} ee_padding_len={} ccs={} hs_records={}",
+                 "{} success_path_material cache={} certs={} group=0x{:04x} {} key_share_len={} cipher=0x{:04x} alpn='{}' sh_exts={} ee_exts={} ee_padding={} ee_padding_len={} ccs={} hs_records={}",
                  log_event::kHandshake,
                  site_material_snapshot.has_value(),
                  cert_chain_size,
+                 reality_ctx.key_share_group,
+                 reality::named_group_name(reality_ctx.key_share_group),
+                 reality_ctx.server_key_share_data.size(),
                  cipher_suite,
                  selected_alpn,
                  server_hello_extension_order.size(),

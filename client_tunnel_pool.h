@@ -67,6 +67,7 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
         std::vector<std::uint8_t> c_app_secret;
         std::vector<std::uint8_t> s_app_secret;
         std::uint16_t cipher_suite = 0;
+        std::uint16_t key_share_group = 0;
         const EVP_MD* md = nullptr;
         const EVP_CIPHER* cipher = nullptr;
     };
@@ -84,6 +85,7 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
                                                                   const connection_context& ctx,
                                                                   boost::system::error_code& ec) const;
     [[nodiscard]] boost::asio::awaitable<handshake_result> perform_reality_handshake(boost::asio::ip::tcp::socket& socket,
+                                                                                     const connection_context& ctx,
                                                                                      boost::system::error_code& ec) const;
     [[nodiscard]] boost::asio::awaitable<handshake_result> perform_reality_handshake_with_timeout(
         const std::shared_ptr<boost::asio::ip::tcp::socket>& socket, const connection_context& ctx, boost::system::error_code& ec) const;
@@ -109,6 +111,7 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
         const EVP_MD* negotiated_md = nullptr;
         const EVP_CIPHER* negotiated_cipher = nullptr;
         std::uint16_t cipher_suite = 0;
+        std::uint16_t key_share_group = 0;
     };
 
     [[nodiscard]] boost::asio::awaitable<server_hello_res> process_server_hello(
@@ -116,6 +119,7 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
         const std::uint8_t* private_key,
         const std::vector<std::uint8_t>& mlkem768_private_key,
         reality::transcript& trans,
+        const connection_context& ctx,
         boost::system::error_code& ec) const;
 
     [[nodiscard]] static boost::asio::awaitable<std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>> handshake_read_loop(
