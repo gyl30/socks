@@ -130,6 +130,7 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
         const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& s_hs_keys,
         const reality::handshake_keys& hs_keys,
         const std::vector<std::uint8_t>& auth_key,
+        const client_hello_info& client_hello,
         const std::string& sni,
         reality::transcript& trans,
         const EVP_CIPHER* cipher,

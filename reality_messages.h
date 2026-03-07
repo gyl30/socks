@@ -106,6 +106,12 @@ struct server_hello_info
     server_key_share_info key_share;
 };
 
+struct encrypted_extensions_info
+{
+    bool has_alpn = false;
+    std::string alpn;
+};
+
 std::optional<certificate_verify_info> parse_certificate_verify(const std::vector<std::uint8_t>& msg);
 
 [[nodiscard]] bool is_supported_certificate_verify_scheme(std::uint16_t scheme);
@@ -119,6 +125,8 @@ std::optional<server_key_share_info> extract_server_key_share(const std::vector<
 [[nodiscard]] const char* named_group_name(std::uint16_t group);
 
 std::vector<std::uint8_t> extract_server_public_key(const std::vector<std::uint8_t>& server_hello);
+
+std::optional<encrypted_extensions_info> parse_encrypted_extensions(const std::vector<std::uint8_t>& ee_msg);
 
 std::optional<std::string> extract_alpn_from_encrypted_extensions(const std::vector<std::uint8_t>& ee_msg);
 
