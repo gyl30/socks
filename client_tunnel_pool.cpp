@@ -813,30 +813,6 @@ boost::asio::awaitable<std::vector<std::uint8_t>> read_handshake_record_body(boo
     }
 }
 
-std::uint16_t parse_server_hello_cipher_suite(const std::vector<std::uint8_t>& sh_data, boost::system::error_code& ec)
-{
-    ec.clear();
-    std::size_t pos = 4 + 2 + 32;
-    if (pos >= sh_data.size())
-    {
-        ec = boost::asio::error::fault;
-        LOG_ERROR("bad server hello {}", ec.message());
-        return 0;
-    }
-
-    const std::uint8_t sid_len = sh_data[pos];
-    pos += 1 + sid_len;
-    if (pos + 2 > sh_data.size())
-    {
-        ec = boost::asio::error::fault;
-        LOG_ERROR("bad server hello session data {}", ec.message());
-        return 0;
-    }
-
-    const auto cipher_suite = static_cast<std::uint16_t>((sh_data[pos] << 8) | sh_data[pos + 1]);
-    return cipher_suite;
-}
-
 std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>> derive_client_auth_key_material(const std::uint8_t* private_key,
                                                                                                  const std::vector<std::uint8_t>& server_pub_key,
                                                                                                  boost::system::error_code& ec)
@@ -992,10 +968,11 @@ authenticated_client_hello build_authenticated_client_hello(const std::uint8_t* 
     }
 
     std::memcpy(hello_body.data() + absolute_sid_offset, sid.data(), 32);
+    auto hello_info = ch_parser::parse(hello_body);
     return authenticated_client_hello{
         .hello_body = std::move(hello_body),
         .auth_key = std::move(auth_key),
-        .hello_info = ch_parser::parse(hello_body),
+        .hello_info = std::move(hello_info),
     };
 }
 
@@ -1114,6 +1091,7 @@ handshake_traffic_keys derive_handshake_traffic_keys(const reality::handshake_ke
 void prepare_server_hello_crypto(const std::vector<std::uint8_t>& sh_data,
                                  const client_hello_info& client_hello,
                                  reality::transcript& trans,
+                                 reality::server_hello_info& server_hello,
                                  std::uint16_t& cipher_suite,
                                  const EVP_MD*& md,
                                  const EVP_CIPHER*& cipher,
@@ -1121,11 +1099,58 @@ void prepare_server_hello_crypto(const std::vector<std::uint8_t>& sh_data,
 {
     ec.clear();
     trans.update(sh_data);
-    cipher_suite = parse_server_hello_cipher_suite(sh_data, ec);
-    if (ec)
+    const auto parsed_server_hello = reality::parse_server_hello(sh_data);
+    if (!parsed_server_hello.has_value())
     {
+        LOG_ERROR("bad server hello");
+        ec = boost::asio::error::invalid_argument;
         return;
     }
+    server_hello = *parsed_server_hello;
+    if (!server_hello.has_supported_version)
+    {
+        LOG_ERROR("server hello missing supported version");
+        ec = boost::asio::error::invalid_argument;
+        return;
+    }
+    if (server_hello.supported_version != reality::tls_consts::kVer13)
+    {
+        LOG_ERROR("server hello selected invalid tls version {:x}", server_hello.supported_version);
+        ec = boost::asio::error::invalid_argument;
+        return;
+    }
+    if (server_hello.legacy_version != reality::tls_consts::kVer12)
+    {
+        LOG_ERROR("server hello legacy version invalid {:x}", server_hello.legacy_version);
+        ec = boost::asio::error::invalid_argument;
+        return;
+    }
+    if (server_hello.session_id != client_hello.session_id)
+    {
+        LOG_ERROR("server hello session id mismatch");
+        ec = boost::asio::error::invalid_argument;
+        return;
+    }
+    if (server_hello.compression_method != 0x00)
+    {
+        LOG_ERROR("server hello compression method invalid {:x}", server_hello.compression_method);
+        ec = boost::asio::error::invalid_argument;
+        return;
+    }
+    if (server_hello.has_forbidden_tls13_extension)
+    {
+        LOG_ERROR("server hello has forbidden tls13 extension");
+        ec = boost::asio::error::invalid_argument;
+        return;
+    }
+    if (!server_hello.has_key_share)
+    {
+        LOG_ERROR("bad server hello key share");
+        ec = boost::asio::error::invalid_argument;
+        return;
+    }
+
+    cipher_suite = server_hello.cipher_suite;
     const auto suite = reality::select_tls13_suite(cipher_suite);
     if (!suite.has_value())
     {
@@ -1759,31 +1784,26 @@ boost::asio::awaitable<client_tunnel_pool::server_hello_res> client_tunnel_pool:
     }
     LOG_DEBUG("server hello received size {}", sh_data.size());
 
+    reality::server_hello_info server_hello;
     std::uint16_t cipher_suite = 0;
     const EVP_MD* md = nullptr;
     const EVP_CIPHER* cipher = nullptr;
-    prepare_server_hello_crypto(sh_data, client_hello, trans, cipher_suite, md, cipher, ec);
+    prepare_server_hello_crypto(sh_data, client_hello, trans, server_hello, cipher_suite, md, cipher, ec);
     if (ec)
     {
         co_return server_hello_res{};
     }
 
-    const auto key_share = reality::extract_server_key_share(sh_data);
     LOG_DEBUG("rx server hello size {}", sh_data.size());
-    if (!key_share.has_value())
-    {
-        LOG_ERROR("bad server hello key share");
-        ec = boost::asio::error::invalid_argument;
-        co_return server_hello_res{};
-    }
     LOG_CTX_INFO(ctx,
                  "{} server_hello key_share_group=0x{:04x} {} key_share_len={}",
                  log_event::kHandshake,
-                 key_share->group,
-                 reality::named_group_name(key_share->group),
-                 key_share->data.size());
+                 server_hello.key_share.group,
+                 reality::named_group_name(server_hello.key_share.group),
+                 server_hello.key_share.data.size());
 
-    auto handshake_shared_secret = derive_server_hello_shared_secret(private_key, mlkem768_private_key, key_share->group, key_share->data, ec);
+    auto handshake_shared_secret =
+        derive_server_hello_shared_secret(private_key, mlkem768_private_key, server_hello.key_share.group, server_hello.key_share.data, ec);
     if (ec)
     {
         co_return server_hello_res{};
@@ -1797,7 +1817,11 @@ boost::asio::awaitable<client_tunnel_pool::server_hello_res> client_tunnel_pool:
     }
 
     co_return server_hello_res{
-        .hs_keys = hs_keys, .negotiated_md = md, .negotiated_cipher = cipher, .cipher_suite = cipher_suite, .key_share_group = key_share->group};
+        .hs_keys = hs_keys,
+        .negotiated_md = md,
+        .negotiated_cipher = cipher,
+        .cipher_suite = cipher_suite,
+        .key_share_group = server_hello.key_share.group};
 }
 
 boost::asio::awaitable<std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>>

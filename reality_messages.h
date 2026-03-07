@@ -93,9 +93,24 @@ struct server_key_share_info
     std::vector<std::uint8_t> data;
 };
 
+struct server_hello_info
+{
+    std::uint16_t legacy_version = 0;
+    std::vector<std::uint8_t> session_id;
+    std::uint16_t cipher_suite = 0;
+    std::uint8_t compression_method = 0xff;
+    std::uint16_t supported_version = 0;
+    bool has_supported_version = false;
+    bool has_key_share = false;
+    bool has_forbidden_tls13_extension = false;
+    server_key_share_info key_share;
+};
+
 std::optional<certificate_verify_info> parse_certificate_verify(const std::vector<std::uint8_t>& msg);
 
 [[nodiscard]] bool is_supported_certificate_verify_scheme(std::uint16_t scheme);
+
+std::optional<server_hello_info> parse_server_hello(const std::vector<std::uint8_t>& server_hello);
 
 std::optional<std::uint16_t> extract_cipher_suite_from_server_hello(const std::vector<std::uint8_t>& server_hello);
 
