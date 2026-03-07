@@ -1465,7 +1465,7 @@ static std::optional<std::string> parse_alpn_extension_body(const std::vector<st
     {
         return std::nullopt;
     }
-    if (pos + 3 + proto_len > ext_end)
+    if (pos + 3 + proto_len != ext_end)
     {
         return std::nullopt;
     }
@@ -1490,7 +1490,7 @@ std::vector<std::uint8_t> extract_server_public_key(const std::vector<std::uint8
     return {};
 }
 
-std::optional<std::string> extract_alpn_from_encrypted_extensions(const std::vector<std::uint8_t>& ee_msg)
+std::optional<encrypted_extensions_info> parse_encrypted_extensions(const std::vector<std::uint8_t>& ee_msg)
 {
     const auto range = parse_encrypted_extensions_range(ee_msg);
     if (!range.has_value())
@@ -1498,6 +1498,7 @@ std::optional<std::string> extract_alpn_from_encrypted_extensions(const std::vec
         return std::nullopt;
     }
 
+    encrypted_extensions_info info;
     auto pos = range->pos;
     const auto end = range->end;
 
@@ -1507,19 +1508,39 @@ std::optional<std::string> extract_alpn_from_encrypted_extensions(const std::vec
         std::uint16_t len = 0;
         if (!read_extension_header(ee_msg, pos, end, type, len))
         {
-            break;
+            return std::nullopt;
         }
         if (type == tls_consts::ext::kAlpn)
         {
-            const auto alpn = parse_alpn_extension_body(ee_msg, pos, len);
-            if (alpn.has_value())
+            if (info.has_alpn)
             {
-                return alpn;
+                return std::nullopt;
             }
+            const auto alpn = parse_alpn_extension_body(ee_msg, pos, len);
+            if (!alpn.has_value())
+            {
+                return std::nullopt;
+            }
+            info.has_alpn = true;
+            info.alpn = *alpn;
         }
         pos += len;
     }
-    return std::nullopt;
+    if (pos != end)
+    {
+        return std::nullopt;
+    }
+    return info;
+}
+
+std::optional<std::string> extract_alpn_from_encrypted_extensions(const std::vector<std::uint8_t>& ee_msg)
+{
+    const auto info = parse_encrypted_extensions(ee_msg);
+    if (!info.has_value() || !info->has_alpn)
+    {
+        return std::nullopt;
+    }
+    return info->alpn;
 }
 
 }    // namespace reality
