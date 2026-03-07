@@ -329,7 +329,8 @@ udp_socks_session::udp_socks_session(boost::asio::ip::tcp::socket socket,
       udp_socket_(io_context_),
       router_(std::move(router)),
       tunnel_pool_(std::move(tunnel_pool)),
-      active_connection_guard_(std::move(active_connection_guard))
+      active_connection_guard_(std::move(active_connection_guard)),
+      proxy_stream_channel_(io_context_, 1)
 {
     ctx_.new_trace_id();
     ctx_.conn_id(sid);
@@ -348,6 +349,7 @@ void udp_socks_session::close_impl()
 {
     timer_.cancel();
     idle_timer_.cancel();
+    proxy_stream_channel_.close();
     boost::system::error_code tcp_close_ec;
     tcp_close_ec = socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, tcp_close_ec);
     tcp_close_ec = socket_.close(tcp_close_ec);
@@ -373,16 +375,7 @@ boost::asio::awaitable<void> udp_socks_session::run(const std::string& host, con
         co_await write_socks_error_reply(socket_, socks::kRepGenFail, ctx_, cfg_.timeout.write);
         co_return;
     }
-    // step 2 connect remote address
-    const auto proxy_stream = co_await connect_remote_address(tunnel_pool_, io_context_, ctx_, ec);
-    if (ec || proxy_stream.stream == nullptr || proxy_stream.tunnel == nullptr)
-    {
-        co_await write_socks_error_reply(socket_, socks::kRepGenFail, ctx_, cfg_.timeout.write);
-        co_return;
-    }
-    const auto& tunnel = proxy_stream.tunnel;
-    const auto& stream = proxy_stream.stream;
-    // step 3 reply to tcp socket
+    // step 2 reply to tcp socket
     const auto final_rep = detail::build_udp_associate_reply(local_addr, udp_port);
     co_await timeout_io::wait_write_with_timeout(socket_, boost::asio::buffer(final_rep), cfg_.timeout.write, ec);
     if (ec)
@@ -390,18 +383,18 @@ boost::asio::awaitable<void> udp_socks_session::run(const std::string& host, con
         LOG_CTX_WARN(ctx_, "{} write failed {}", log_event::kSocks, ec.message());
         co_return;
     }
-    // step 4 forward data
+    // step 3 forward data
     using boost::asio::experimental::awaitable_operators::operator||;
-    co_await (udp_socket_loop(stream) || stream_to_udp_sock(stream) || keep_tcp_alive() || idle_watchdog());
+    co_await (udp_socket_loop() || wait_and_stream_to_udp_sock() || keep_tcp_alive() || idle_watchdog());
 
     const auto close_command = stream_close_command_.load(std::memory_order_relaxed);
-    if (close_command != kNoStreamControl)
+    if (stream_ != nullptr && close_command != kNoStreamControl)
     {
         mux_frame close_frame;
-        close_frame.h.stream_id = stream->id();
+        close_frame.h.stream_id = stream_->id();
         close_frame.h.command = close_command;
         boost::system::error_code close_ec;
-        co_await stream->async_write(std::move(close_frame), close_ec);
+        co_await stream_->async_write(std::move(close_frame), close_ec);
         if (close_ec)
         {
             LOG_CTX_WARN(ctx_,
@@ -411,7 +404,10 @@ boost::asio::awaitable<void> udp_socks_session::run(const std::string& host, con
                          close_ec.message());
         }
     }
-    tunnel->remove_stream(stream);
+    if (tunnel_ != nullptr && stream_ != nullptr)
+    {
+        tunnel_->remove_stream(stream_);
+    }
     LOG_CTX_INFO(ctx_, "{} finished", log_event::kSocks);
 }
 
@@ -568,7 +564,46 @@ boost::asio::awaitable<void> udp_socks_session::forward_direct_reply_to_client(c
     }
 }
 
-boost::asio::awaitable<void> udp_socks_session::udp_socket_loop(std::shared_ptr<mux_stream> stream)
+boost::asio::awaitable<bool> udp_socks_session::ensure_proxy_stream(boost::system::error_code& ec)
+{
+    ec.clear();
+    if (stream_ != nullptr && tunnel_ != nullptr)
+    {
+        co_return true;
+    }
+
+    const auto proxy_stream = co_await connect_remote_address(tunnel_pool_, io_context_, ctx_, ec);
+    if (ec || proxy_stream.stream == nullptr || proxy_stream.tunnel == nullptr)
+    {
+        if (!ec)
+        {
+            ec = boost::asio::error::not_connected;
+        }
+        LOG_CTX_WARN(ctx_, "{} connect proxy udp stream failed {}", log_event::kSocks, ec.message());
+        co_return false;
+    }
+
+    tunnel_ = proxy_stream.tunnel;
+    stream_ = proxy_stream.stream;
+    if (!proxy_stream_started_)
+    {
+        const auto [send_ec] = co_await proxy_stream_channel_.async_send(
+            boost::system::error_code{}, stream_, boost::asio::as_tuple(boost::asio::use_awaitable));
+        if (send_ec)
+        {
+            ec = send_ec;
+            LOG_CTX_WARN(ctx_, "{} start proxy udp reader failed {}", log_event::kSocks, ec.message());
+            tunnel_->remove_stream(stream_);
+            stream_.reset();
+            tunnel_.reset();
+            co_return false;
+        }
+        proxy_stream_started_ = true;
+    }
+    co_return true;
+}
+
+boost::asio::awaitable<void> udp_socks_session::udp_socket_loop()
 {
     std::vector<std::uint8_t> buf(65535);
     boost::asio::ip::udp::endpoint sender;
@@ -627,13 +662,20 @@ boost::asio::awaitable<void> udp_socks_session::udp_socket_loop(std::shared_ptr<
                     LOG_CTX_WARN(ctx_, "{} udp packet too large for single record {}", log_event::kSocks, n);
                     continue;
                 }
+                boost::system::error_code open_ec;
+                const auto ready = co_await ensure_proxy_stream(open_ec);
+                if (!ready)
+                {
+                    update_stream_close_command(stream_close_command_, kNoStreamControl);
+                    break;
+                }
 
                 mux_frame data_frame;
-                data_frame.h.stream_id = stream->id();
+                data_frame.h.stream_id = stream_->id();
                 data_frame.h.command = mux::kCmdDat;
                 data_frame.payload.assign(buf.begin(), buf.begin() + static_cast<std::ptrdiff_t>(n));
                 boost::system::error_code write_ec;
-                co_await stream->async_write(data_frame, write_ec);
+                co_await stream_->async_write(data_frame, write_ec);
                 if (write_ec)
                 {
                     update_stream_close_command(stream_close_command_, kNoStreamControl);
@@ -674,6 +716,16 @@ boost::asio::awaitable<void> udp_socks_session::udp_socket_loop(std::shared_ptr<
         }
         last_activity_time_ms_ = now_ms();
     }
+}
+
+boost::asio::awaitable<void> udp_socks_session::wait_and_stream_to_udp_sock()
+{
+    auto [read_ec, stream] = co_await proxy_stream_channel_.async_receive(boost::asio::as_tuple(boost::asio::use_awaitable));
+    if (read_ec || stream == nullptr)
+    {
+        co_return;
+    }
+    co_await stream_to_udp_sock(stream);
 }
 
 boost::asio::awaitable<void> udp_socks_session::stream_to_udp_sock(std::shared_ptr<mux_stream> stream)
