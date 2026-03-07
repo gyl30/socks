@@ -334,6 +334,12 @@ boost::asio::awaitable<bool> tproxy_udp_session::open_direct_socket()
         LOG_CTX_WARN(ctx_, "{} bind direct udp socket failed {}", log_event::kConnInit, ec.message());
         co_return false;
     }
+    ec = upstream_socket_.connect(target_endpoint_, ec);
+    if (ec)
+    {
+        LOG_CTX_WARN(ctx_, "{} connect direct udp socket failed {}", log_event::kConnInit, ec.message());
+        co_return false;
+    }
 
     LOG_CTX_INFO(ctx_,
                  "{} opened direct udp socket client {}:{} target {}:{}",
@@ -430,8 +436,8 @@ boost::asio::awaitable<void> tproxy_udp_session::packets_to_direct()
             break;
         }
 
-        const auto [send_ec, bytes_sent] = co_await upstream_socket_.async_send_to(
-            boost::asio::buffer(payload), target_endpoint_, boost::asio::as_tuple(boost::asio::use_awaitable));
+        const auto [send_ec, bytes_sent] =
+            co_await upstream_socket_.async_send(boost::asio::buffer(payload), boost::asio::as_tuple(boost::asio::use_awaitable));
         ec = send_ec;
         if (ec)
         {
@@ -446,20 +452,19 @@ boost::asio::awaitable<void> tproxy_udp_session::packets_to_direct()
 boost::asio::awaitable<void> tproxy_udp_session::direct_to_client()
 {
     std::vector<std::uint8_t> buffer(65535);
-    boost::asio::ip::udp::endpoint sender;
+    const auto normalized_target = net::normalize_endpoint(target_endpoint_);
     boost::system::error_code ec;
     for (;;)
     {
-        const auto [recv_ec, bytes_recv] =
-            co_await upstream_socket_.async_receive_from(boost::asio::buffer(buffer), sender, boost::asio::as_tuple(boost::asio::use_awaitable));
+        const auto [recv_ec, bytes_recv] = co_await upstream_socket_.async_receive(boost::asio::buffer(buffer),
+                                                                                   boost::asio::as_tuple(boost::asio::use_awaitable));
         ec = recv_ec;
         if (ec)
         {
             break;
         }
 
-        const auto normalized_sender = net::normalize_endpoint(sender);
-        if (!(co_await send_to_client(normalized_sender, buffer.data(), bytes_recv)))
+        if (!(co_await send_to_client(normalized_target, buffer.data(), bytes_recv)))
         {
             break;
         }
