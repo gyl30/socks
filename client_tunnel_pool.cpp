@@ -283,8 +283,44 @@ struct handshake_validation_state
     bool cert_verify_checked = false;
     bool cert_verify_signature_checked = false;
     bool reality_cert_verified = false;
+    const client_hello_info* client_hello = nullptr;
     reality::openssl_ptrs::evp_pkey_ptr server_pub_key = nullptr;
 };
+
+bool client_offers_alpn(const client_hello_info& client_hello, const std::string& alpn)
+{
+    return std::find(client_hello.alpn_protocols.begin(), client_hello.alpn_protocols.end(), alpn) != client_hello.alpn_protocols.end();
+}
+
+void validate_encrypted_extensions_message(const std::vector<std::uint8_t>& msg_data,
+                                           const client_hello_info& client_hello,
+                                           boost::system::error_code& ec)
+{
+    ec.clear();
+    const auto encrypted_extensions = reality::parse_encrypted_extensions(msg_data);
+    if (!encrypted_extensions.has_value())
+    {
+        LOG_ERROR("encrypted extensions parse failed");
+        ec = boost::asio::error::invalid_argument;
+        return;
+    }
+    if (!encrypted_extensions->has_alpn)
+    {
+        return;
+    }
+    if (client_hello.alpn_protocols.empty())
+    {
+        LOG_ERROR("server advertised unrequested alpn");
+        ec = boost::asio::error::invalid_argument;
+        return;
+    }
+    if (!client_offers_alpn(client_hello, encrypted_extensions->alpn))
+    {
+        LOG_ERROR("server selected unadvertised alpn {}", encrypted_extensions->alpn);
+        ec = boost::asio::error::invalid_argument;
+        return;
+    }
+}
 
 void verify_reality_bound_certificate(const std::vector<std::uint8_t>& cert_der,
                                       const std::vector<std::uint8_t>& auth_key,
@@ -546,6 +582,17 @@ void handle_handshake_message(const std::uint8_t msg_type,
         {
             LOG_ERROR("unexpected encrypted extensions order");
             ec = boost::asio::error::invalid_argument;
+            return;
+        }
+        if (validation_state.client_hello == nullptr)
+        {
+            LOG_ERROR("missing client hello for encrypted extensions");
+            ec = boost::asio::error::fault;
+            return;
+        }
+        validate_encrypted_extensions_message(msg_data, *validation_state.client_hello, ec);
+        if (ec)
+        {
             return;
         }
         validation_state.encrypted_extensions_checked = true;
@@ -1684,6 +1731,7 @@ boost::asio::awaitable<client_tunnel_pool::handshake_result> client_tunnel_pool:
                                                     hs_keys.s_hs_keys,
                                                     server_hello_result.hs_keys,
                                                     auth_key,
+                                                    client_hello,
                                                     sni_,
                                                     trans,
                                                     server_hello_result.negotiated_cipher,
@@ -1829,6 +1877,7 @@ client_tunnel_pool::handshake_read_loop(boost::asio::ip::tcp::socket& socket,
                                         const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& s_hs_keys,
                                         const reality::handshake_keys& hs_keys,
                                         const std::vector<std::uint8_t>& auth_key,
+                                        const client_hello_info& client_hello,
                                         const std::string& sni,
                                         reality::transcript& trans,
                                         const EVP_CIPHER* cipher,
@@ -1840,6 +1889,7 @@ client_tunnel_pool::handshake_read_loop(boost::asio::ip::tcp::socket& socket,
     ec.clear();
     bool handshake_fin = false;
     handshake_validation_state validation_state;
+    validation_state.client_hello = &client_hello;
     std::uint64_t seq = 0;
     std::uint32_t tls13_compat_ccs_count = 0;
     std::uint32_t handshake_record_count = 0;
