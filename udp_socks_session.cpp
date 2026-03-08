@@ -341,6 +341,13 @@ udp_socks_session::udp_socks_session(boost::asio::ip::tcp::socket socket,
     ctx_.conn_id(sid);
     stream_close_command_.store(mux::kCmdFin, std::memory_order_relaxed);
     last_activity_time_ms_ = now_ms();
+    boost::system::error_code peer_ec;
+    const auto peer_ep = socket_.remote_endpoint(peer_ec);
+    if (!peer_ec)
+    {
+        has_control_peer_addr_ = true;
+        control_peer_addr_ = socks_codec::normalize_ip_address(peer_ep.address());
+    }
 }
 
 void udp_socks_session::start(const std::string& host, const std::uint16_t port)
@@ -454,17 +461,26 @@ void udp_socks_session::apply_request_peer_constraint(const std::string& host, c
                      has_request_client_addr_ ? request_client_addr_.to_string() : "*",
                      has_request_client_port_ ? std::to_string(request_client_port_) : "*");
     }
+    if (has_control_peer_addr_ && has_request_client_addr_ && request_client_addr_ != control_peer_addr_)
+    {
+        LOG_CTX_WARN(ctx_,
+                     "{} udp associate request host {} mismatches tcp peer {}",
+                     log_event::kSocks,
+                     request_client_addr_.to_string(),
+                     control_peer_addr_.to_string());
+    }
 }
 
 bool udp_socks_session::sender_matches_request_peer(const boost::asio::ip::udp::endpoint& sender) const
 {
-    if (has_request_client_addr_)
+    const auto sender_addr = socks_codec::normalize_ip_address(sender.address());
+    if (has_control_peer_addr_ && sender_addr != control_peer_addr_)
     {
-        const auto sender_addr = socks_codec::normalize_ip_address(sender.address());
-        if (sender_addr != request_client_addr_)
-        {
-            return false;
-        }
+        return false;
+    }
+    if (has_request_client_addr_ && sender_addr != request_client_addr_)
+    {
+        return false;
     }
     if (has_request_client_port_ && sender.port() != request_client_port_)
     {
@@ -649,12 +665,13 @@ boost::asio::awaitable<void> udp_socks_session::udp_socket_loop()
                 if (!sender_matches_request_peer(sender))
                 {
                     LOG_CTX_WARN(ctx_,
-                                 "{} ignore udp packet from unexpected peer {}:{} request expects {}:{}",
+                                 "{} ignore udp packet from unexpected peer {}:{} request expects {}:{} tcp peer {}",
                                  log_event::kSocks,
                                  sender.address().to_string(),
                                  sender.port(),
                                  has_request_client_addr_ ? request_client_addr_.to_string() : "*",
-                                 has_request_client_port_ ? std::to_string(request_client_port_) : "*");
+                                 has_request_client_port_ ? std::to_string(request_client_port_) : "*",
+                                 has_control_peer_addr_ ? control_peer_addr_.to_string() : "*");
                     continue;
                 }
                 client_addr_ = sender;
