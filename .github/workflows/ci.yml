@@ -16,6 +16,8 @@ env:
   OPENSSL_ARCHIVE: "openssl-3.6.0.tar.gz"
   OPENSSL_SRC_DIR: "openssl-3.6.0"
   OPENSSL_CACHE_REV: "inline-v1"
+  CCACHE_CACHE_REV: "v1"
+  CCACHE_MAXSIZE: "400M"
 
 jobs:
   build-linux-matrix:
@@ -52,6 +54,14 @@ jobs:
           restore-keys: |
             linux-${{ matrix.arch }}-${{ matrix.libc }}-openssl-${{ env.OPENSSL_VERSION }}-
 
+      - name: Restore Linux ccache
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache/ccache/linux-${{ matrix.libc }}-${{ matrix.arch }}-${{ matrix.compiler }}
+          key: linux-${{ matrix.arch }}-${{ matrix.compiler }}-${{ matrix.libc }}-ccache-${{ env.CCACHE_CACHE_REV }}-${{ github.sha }}
+          restore-keys: |
+            linux-${{ matrix.arch }}-${{ matrix.compiler }}-${{ matrix.libc }}-ccache-${{ env.CCACHE_CACHE_REV }}-
+
       - name: Build Linux glibc Matrix Target
         if: ${{ matrix.libc == 'glibc' }}
         run: |
@@ -62,6 +72,7 @@ jobs:
             -e BOOST_VERSION \
             -e BOOST_ARCHIVE \
             -e BOOST_SRC_DIR \
+            -e CCACHE_MAXSIZE \
             -e OPENSSL_VERSION \
             -e OPENSSL_ARCHIVE \
             -e OPENSSL_SRC_DIR \
@@ -80,6 +91,7 @@ jobs:
                 cmake \
                 ninja-build \
                 pkg-config \
+                ccache \
                 gcc \
                 g++ \
                 clang
@@ -104,8 +116,17 @@ jobs:
               OPENSSL_ARCHIVE_PATH="${OPENSSL_CACHE_ROOT}/${OPENSSL_ARCHIVE}"
               OPENSSL_SOURCE_DIR="${OPENSSL_CACHE_ROOT}/${OPENSSL_SRC_DIR}"
               OPENSSL_CMAKE_DIR="${OPENSSL_ROOT}/lib64/cmake/OpenSSL"
+              CCACHE_DIR="/workspace/.cache/ccache/linux-${{ matrix.libc }}-${{ matrix.arch }}-${{ matrix.compiler }}"
 
               mkdir -p "${OPENSSL_CACHE_ROOT}"
+              mkdir -p "${CCACHE_DIR}"
+              export CCACHE_DIR
+              export CCACHE_BASEDIR=/workspace
+              export CCACHE_COMPILERCHECK=content
+              export CCACHE_NOHASHDIR=true
+              export CCACHE_COMPRESS=1
+              ccache -M "${CCACHE_MAXSIZE}"
+              ccache -z
               if ! grep -q "OPENSSL_VERSION_STR \"${OPENSSL_VERSION}\"" "${OPENSSL_ROOT}/include/openssl/opensslv.h" 2>/dev/null; then
                 if [ ! -f "${OPENSSL_ARCHIVE_PATH}" ]; then
                   wget -O "${OPENSSL_ARCHIVE_PATH}" "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/${OPENSSL_ARCHIVE}"
@@ -133,6 +154,8 @@ jobs:
                 -DCMAKE_BUILD_TYPE=Release \
                 -DCMAKE_C_COMPILER="${CC_BIN}" \
                 -DCMAKE_CXX_COMPILER="${CXX_BIN}" \
+                -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+                -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
                 -DENABLE_TSAN=OFF \
                 -DENABLE_ASAN=OFF \
                 -DBoost_NO_BOOST_CMAKE=ON \
@@ -143,6 +166,7 @@ jobs:
                 -DCMAKE_PREFIX_PATH="${BOOST_ROOT};${OPENSSL_ROOT}"
 
               cmake --build build --target socks --parallel
+              ccache -s
               grep -q "SOCKS_HAS_TPROXY=1" build/compile_commands.json
             '
 
@@ -156,6 +180,7 @@ jobs:
             -e BOOST_VERSION \
             -e BOOST_ARCHIVE \
             -e BOOST_SRC_DIR \
+            -e CCACHE_MAXSIZE \
             -e OPENSSL_VERSION \
             -e OPENSSL_ARCHIVE \
             -e OPENSSL_SRC_DIR \
@@ -172,6 +197,7 @@ jobs:
                 cmake \
                 ninja \
                 pkgconf \
+                ccache \
                 build-base \
                 clang \
                 lld \
@@ -197,8 +223,17 @@ jobs:
               OPENSSL_ARCHIVE_PATH="${OPENSSL_CACHE_ROOT}/${OPENSSL_ARCHIVE}"
               OPENSSL_SOURCE_DIR="${OPENSSL_CACHE_ROOT}/${OPENSSL_SRC_DIR}"
               OPENSSL_CMAKE_DIR="${OPENSSL_ROOT}/lib64/cmake/OpenSSL"
+              CCACHE_DIR="/workspace/.cache/ccache/linux-${{ matrix.libc }}-${{ matrix.arch }}-${{ matrix.compiler }}"
 
               mkdir -p "${OPENSSL_CACHE_ROOT}"
+              mkdir -p "${CCACHE_DIR}"
+              export CCACHE_DIR
+              export CCACHE_BASEDIR=/workspace
+              export CCACHE_COMPILERCHECK=content
+              export CCACHE_NOHASHDIR=true
+              export CCACHE_COMPRESS=1
+              ccache -M "${CCACHE_MAXSIZE}"
+              ccache -z
               if ! grep -q "OPENSSL_VERSION_STR \"${OPENSSL_VERSION}\"" "${OPENSSL_ROOT}/include/openssl/opensslv.h" 2>/dev/null; then
                 if [ ! -f "${OPENSSL_ARCHIVE_PATH}" ]; then
                   wget -O "${OPENSSL_ARCHIVE_PATH}" "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/${OPENSSL_ARCHIVE}"
@@ -226,6 +261,8 @@ jobs:
                 -DCMAKE_BUILD_TYPE=Release \
                 -DCMAKE_C_COMPILER="${CC_BIN}" \
                 -DCMAKE_CXX_COMPILER="${CXX_BIN}" \
+                -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+                -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
                 -DENABLE_TSAN=OFF \
                 -DENABLE_ASAN=OFF \
                 -DBoost_NO_BOOST_CMAKE=ON \
@@ -236,8 +273,16 @@ jobs:
                 -DCMAKE_PREFIX_PATH="${BOOST_ROOT};${OPENSSL_ROOT}"
 
               cmake --build build --target socks --parallel
+              ccache -s
               grep -q "SOCKS_HAS_TPROXY=1" build/compile_commands.json
             '
+
+      - name: Save Linux ccache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .cache/ccache/linux-${{ matrix.libc }}-${{ matrix.arch }}-${{ matrix.compiler }}
+          key: linux-${{ matrix.arch }}-${{ matrix.compiler }}-${{ matrix.libc }}-ccache-${{ env.CCACHE_CACHE_REV }}-${{ github.sha }}
 
   build-macos:
     name: Build macOS (socks5)
@@ -262,11 +307,19 @@ jobs:
           restore-keys: |
             macos-${{ runner.arch }}-openssl-${{ env.OPENSSL_VERSION }}-
 
+      - name: Restore macOS ccache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/ccache/macos-${{ runner.arch }}
+          key: macos-${{ runner.arch }}-ccache-${{ env.CCACHE_CACHE_REV }}-${{ github.sha }}
+          restore-keys: |
+            macos-${{ runner.arch }}-ccache-${{ env.CCACHE_CACHE_REV }}-
+
       - name: Install Dependencies
         run: |
           set -euo pipefail
           brew update
-          brew install cmake ninja llvm wget
+          brew install ccache cmake ninja llvm wget
 
       - name: Prepare Boost Headers
         run: |
@@ -311,6 +364,15 @@ jobs:
           LLVM_ROOT="$(brew --prefix llvm)"
           OPENSSL_ROOT="$HOME/.cache/openssl/install-${OPENSSL_VERSION}"
           OPENSSL_CMAKE_DIR="${OPENSSL_ROOT}/lib64/cmake/OpenSSL"
+          CCACHE_DIR="$HOME/.cache/ccache/macos-${{ runner.arch }}"
+          mkdir -p "${CCACHE_DIR}"
+          export CCACHE_DIR
+          export CCACHE_BASEDIR="$PWD"
+          export CCACHE_COMPILERCHECK=content
+          export CCACHE_NOHASHDIR=true
+          export CCACHE_COMPRESS=1
+          ccache -M "${CCACHE_MAXSIZE}"
+          ccache -z
           if [ ! -d "${OPENSSL_CMAKE_DIR}" ]; then
             OPENSSL_CMAKE_DIR="${OPENSSL_ROOT}/lib/cmake/OpenSSL"
           fi
@@ -318,6 +380,8 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_C_COMPILER="${LLVM_ROOT}/bin/clang" \
             -DCMAKE_CXX_COMPILER="${LLVM_ROOT}/bin/clang++" \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DENABLE_TSAN=OFF \
             -DENABLE_ASAN=OFF \
             -DBoost_NO_BOOST_CMAKE=ON \
@@ -328,12 +392,27 @@ jobs:
             -DCMAKE_PREFIX_PATH="$BOOST_ROOT;${OPENSSL_ROOT};${LLVM_ROOT}"
 
       - name: Build Binary
-        run: cmake --build build --target socks --parallel
+        run: |
+          set -euo pipefail
+          export CCACHE_DIR="$HOME/.cache/ccache/macos-${{ runner.arch }}"
+          export CCACHE_BASEDIR="$PWD"
+          export CCACHE_COMPILERCHECK=content
+          export CCACHE_NOHASHDIR=true
+          export CCACHE_COMPRESS=1
+          cmake --build build --target socks --parallel
+          ccache -s
 
       - name: Verify macOS Feature Set
         run: |
           set -euo pipefail
           grep -q 'SOCKS_HAS_TPROXY=0' build/compile_commands.json
+
+      - name: Save macOS ccache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/ccache/macos-${{ runner.arch }}
+          key: macos-${{ runner.arch }}-ccache-${{ env.CCACHE_CACHE_REV }}-${{ github.sha }}
 
   build-windows:
     name: Build Windows (socks5)
@@ -358,12 +437,21 @@ jobs:
           restore-keys: |
             windows-${{ runner.arch }}-openssl-${{ env.OPENSSL_VERSION }}-
 
+      - name: Restore Windows ccache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/ccache/windows-${{ runner.arch }}-ucrt64-clang
+          key: windows-${{ runner.arch }}-ccache-${{ env.CCACHE_CACHE_REV }}-${{ github.sha }}
+          restore-keys: |
+            windows-${{ runner.arch }}-ccache-${{ env.CCACHE_CACHE_REV }}-
+
       - name: Setup MSYS2 Toolchain
         uses: msys2/setup-msys2@v2
         with:
           update: true
           msystem: UCRT64
           install: >-
+            mingw-w64-ucrt-x86_64-ccache
             mingw-w64-ucrt-x86_64-clang
             mingw-w64-ucrt-x86_64-cmake
             mingw-w64-ucrt-x86_64-gcc
@@ -419,6 +507,15 @@ jobs:
           BOOST_ROOT="$HOME/.cache/boost/${BOOST_SRC_DIR}"
           OPENSSL_ROOT="$HOME/.cache/openssl/install-${OPENSSL_VERSION}"
           OPENSSL_CMAKE_DIR="${OPENSSL_ROOT}/lib64/cmake/OpenSSL"
+          CCACHE_DIR="$HOME/.cache/ccache/windows-${{ runner.arch }}-ucrt64-clang"
+          mkdir -p "${CCACHE_DIR}"
+          export CCACHE_DIR
+          export CCACHE_BASEDIR="$PWD"
+          export CCACHE_COMPILERCHECK=content
+          export CCACHE_NOHASHDIR=true
+          export CCACHE_COMPRESS=1
+          ccache -M "${CCACHE_MAXSIZE}"
+          ccache -z
           if [ ! -d "${OPENSSL_CMAKE_DIR}" ]; then
             OPENSSL_CMAKE_DIR="${OPENSSL_ROOT}/lib/cmake/OpenSSL"
           fi
@@ -426,6 +523,8 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_C_COMPILER=clang \
             -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DENABLE_TSAN=OFF \
             -DENABLE_ASAN=OFF \
             -DBoost_NO_BOOST_CMAKE=ON \
@@ -437,10 +536,25 @@ jobs:
 
       - name: Build Binary
         shell: msys2 {0}
-        run: cmake --build build --target socks --parallel
+        run: |
+          set -euo pipefail
+          export CCACHE_DIR="$HOME/.cache/ccache/windows-${{ runner.arch }}-ucrt64-clang"
+          export CCACHE_BASEDIR="$PWD"
+          export CCACHE_COMPILERCHECK=content
+          export CCACHE_NOHASHDIR=true
+          export CCACHE_COMPRESS=1
+          cmake --build build --target socks --parallel
+          ccache -s
 
       - name: Verify Windows Feature Set
         shell: msys2 {0}
         run: |
           set -euo pipefail
           grep -q 'SOCKS_HAS_TPROXY=0' build/compile_commands.json
+
+      - name: Save Windows ccache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/ccache/windows-${{ runner.arch }}-ucrt64-clang
+          key: windows-${{ runner.arch }}-ccache-${{ env.CCACHE_CACHE_REV }}-${{ github.sha }}
