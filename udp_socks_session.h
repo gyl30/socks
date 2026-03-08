@@ -68,6 +68,7 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
                                                                                                   boost::system::error_code& ec);
     boost::asio::awaitable<void> udp_socket_loop();
     boost::asio::awaitable<void> direct_udp_socket_loop(boost::asio::ip::udp::socket& direct_socket);
+    boost::asio::awaitable<void> run_direct_udp_socket_loops();
     boost::asio::awaitable<void> forward_direct_packet(const socks_udp_header& header,
                                                        const std::uint8_t* payload,
                                                        std::size_t payload_len,
