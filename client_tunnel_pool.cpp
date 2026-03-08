@@ -310,6 +310,12 @@ bool client_offers_alpn(const client_hello_info& client_hello, const std::string
     return std::find(client_hello.alpn_protocols.begin(), client_hello.alpn_protocols.end(), alpn) != client_hello.alpn_protocols.end();
 }
 
+bool client_offers_signature_scheme(const client_hello_info& client_hello, const std::uint16_t scheme)
+{
+    return std::find(client_hello.signature_algorithms.begin(), client_hello.signature_algorithms.end(), scheme) !=
+           client_hello.signature_algorithms.end();
+}
+
 void validate_encrypted_extensions_message(const std::vector<std::uint8_t>& msg_data,
                                            const client_hello_info& client_hello,
                                            boost::system::error_code& ec)
@@ -643,6 +649,18 @@ void verify_server_certificate_verify_message(const std::vector<std::uint8_t>& m
     if (!reality::is_supported_certificate_verify_scheme(cert_verify->scheme))
     {
         LOG_ERROR("unsupported certificate verify scheme {:x}", cert_verify->scheme);
+        ec = boost::asio::error::no_protocol_option;
+        return;
+    }
+    if (validation_state.client_hello == nullptr || validation_state.client_hello->signature_algorithms.empty())
+    {
+        LOG_ERROR("certificate verify validation missing client signature algorithms");
+        ec = boost::asio::error::invalid_argument;
+        return;
+    }
+    if (!client_offers_signature_scheme(*validation_state.client_hello, cert_verify->scheme))
+    {
+        LOG_ERROR("server selected certificate verify scheme {:x} not advertised by client", cert_verify->scheme);
         ec = boost::asio::error::no_protocol_option;
         return;
     }
@@ -1148,6 +1166,13 @@ void build_client_hello_with_placeholder_sid(const reality::fingerprint_spec& sp
     if (ch_info.sid_offset == 0)
     {
         LOG_ERROR("generated client hello session id offset invalid {}", ch_info.sid_offset);
+        ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
+        return;
+    }
+    if (ch_info.malformed_signature_algorithms || ch_info.signature_algorithms.empty() ||
+        !client_offers_signature_scheme(ch_info, reality::tls_consts::sig_alg::kEd25519))
+    {
+        LOG_ERROR("generated client hello missing usable signature algorithms");
         ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
         return;
     }
