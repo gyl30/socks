@@ -1,4 +1,5 @@
 #include <chrono>
+#include <cerrno>
 #include <memory>
 #include <vector>
 #include <cstddef>
@@ -15,7 +16,6 @@
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/system/error_code.hpp>
-#include <boost/system/errc.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/redirect_error.hpp>
 #include <boost/asio/bind_cancellation_slot.hpp>
@@ -41,9 +41,7 @@ namespace
 
 bool should_fallback_to_local_endpoint(const boost::system::error_code& ec)
 {
-    return ec == boost::system::errc::make_error_code(boost::system::errc::no_such_file_or_directory)
-           || ec == boost::system::errc::make_error_code(boost::system::errc::no_protocol_option)
-           || ec == boost::system::errc::make_error_code(boost::system::errc::operation_not_supported);
+    return ec.value() == ENOENT || ec.value() == ENOPROTOOPT || ec.value() == EOPNOTSUPP;
 }
 
 bool try_get_tproxy_target_from_local_endpoint(boost::asio::ip::tcp::socket& socket,
