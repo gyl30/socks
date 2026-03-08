@@ -635,6 +635,11 @@ bool client_offers_alpn(const client_hello_info& hello, const std::string& alpn)
     return std::find(hello.alpn_protocols.begin(), hello.alpn_protocols.end(), alpn) != hello.alpn_protocols.end();
 }
 
+bool client_offers_signature_scheme(const client_hello_info& hello, const std::uint16_t scheme)
+{
+    return std::find(hello.signature_algorithms.begin(), hello.signature_algorithms.end(), scheme) != hello.signature_algorithms.end();
+}
+
 std::optional<reality::site_material_snapshot> get_cached_site_material_snapshot(reality::site_material_manager& manager, const config& cfg)
 {
     if (cfg.reality.sni.empty())
@@ -1520,6 +1525,24 @@ boost::asio::awaitable<void> remote_server::handle(std::shared_ptr<boost::asio::
                       reality_ctx.client_hello.malformed_supported_groups,
                       reality_ctx.client_hello.malformed_supported_versions);
         co_await fallback("malformed_tls13_extensions");
+        co_return;
+    }
+    if (reality_ctx.client_hello.malformed_signature_algorithms)
+    {
+        LOG_CTX_ERROR(ctx, "{} auth fail malformed signature algorithms extension", log_event::kAuth);
+        co_await fallback("malformed_signature_algorithms");
+        co_return;
+    }
+    if (reality_ctx.client_hello.signature_algorithms.empty())
+    {
+        LOG_CTX_ERROR(ctx, "{} auth fail missing signature algorithms extension", log_event::kAuth);
+        co_await fallback("missing_signature_algorithms");
+        co_return;
+    }
+    if (!client_offers_signature_scheme(reality_ctx.client_hello, reality::tls_consts::sig_alg::kEd25519))
+    {
+        LOG_CTX_WARN(ctx, "{} auth fail missing ed25519 signature algorithm", log_event::kAuth);
+        co_await fallback("missing_ed25519_signature_algorithm");
         co_return;
     }
     if (!reality_ctx.client_hello.is_tls13 || reality_ctx.client_hello.session_id.size() != 32)
