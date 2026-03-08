@@ -261,6 +261,10 @@ void ch_parser::parse_extensions(reader& r, client_hello_info& info)
         {
             parse_supported_versions(val, info);
         }
+        else if (type == reality::tls_consts::ext::kSignatureAlg)
+        {
+            parse_signature_algorithms(val, info);
+        }
         else if (type == reality::tls_consts::ext::kKeyShare)
         {
             parse_key_share(val, info);
@@ -486,6 +490,43 @@ void ch_parser::parse_supported_versions(reader& r, client_hello_info& info)
     if (versions_r.remaining() != 0)
     {
         info.malformed_supported_versions = true;
+    }
+}
+
+void ch_parser::parse_signature_algorithms(reader& r, client_hello_info& info)
+{
+    std::uint16_t algorithms_len = 0;
+    if (!r.read_u16(algorithms_len) || algorithms_len == 0 || (algorithms_len % 2) != 0)
+    {
+        info.malformed_signature_algorithms = true;
+        info.signature_algorithms.clear();
+        return;
+    }
+
+    reader algorithms_r = r.slice(algorithms_len);
+    if (!algorithms_r.valid() || r.remaining() != 0)
+    {
+        info.malformed_signature_algorithms = true;
+        info.signature_algorithms.clear();
+        return;
+    }
+
+    while (algorithms_r.remaining() >= 2)
+    {
+        std::uint16_t sig_alg = 0;
+        if (!algorithms_r.read_u16(sig_alg))
+        {
+            info.malformed_signature_algorithms = true;
+            info.signature_algorithms.clear();
+            return;
+        }
+        info.signature_algorithms.push_back(sig_alg);
+    }
+
+    if (algorithms_r.remaining() != 0)
+    {
+        info.malformed_signature_algorithms = true;
+        info.signature_algorithms.clear();
     }
 }
 

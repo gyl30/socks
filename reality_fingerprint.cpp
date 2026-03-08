@@ -119,6 +119,7 @@ fingerprint_spec build_firefox120_spec()
 
     auto sig = std::make_shared<signature_algorithms_blueprint>();
     sig->algorithms() = {tls_consts::sig_alg::kEcdsaSecp256r1Sha256,
+                         tls_consts::sig_alg::kEd25519,
                          tls_consts::sig_alg::kEcdsaSecp384r1Sha384,
                          tls_consts::sig_alg::kEcdsaSecp521r1Sha512,
                          tls_consts::sig_alg::kRsaPssRsaeSha256,
@@ -198,6 +199,7 @@ fingerprint_spec build_ios14_spec()
 
     auto sig = std::make_shared<signature_algorithms_blueprint>();
     sig->algorithms() = {tls_consts::sig_alg::kEcdsaSecp256r1Sha256,
+                         tls_consts::sig_alg::kEd25519,
                          tls_consts::sig_alg::kRsaPssRsaeSha256,
                          tls_consts::sig_alg::kRsaPkcs1Sha256,
                          tls_consts::sig_alg::kEcdsaSecp384r1Sha384,
@@ -265,6 +267,7 @@ fingerprint_spec build_android11_spec()
 
     auto sig = std::make_shared<signature_algorithms_blueprint>();
     sig->algorithms() = {tls_consts::sig_alg::kEcdsaSecp256r1Sha256,
+                         tls_consts::sig_alg::kEd25519,
                          tls_consts::sig_alg::kRsaPssRsaeSha256,
                          tls_consts::sig_alg::kRsaPkcs1Sha256,
                          tls_consts::sig_alg::kEcdsaSecp384r1Sha384,
@@ -330,6 +333,7 @@ fingerprint_spec build_chrome120_spec()
 
     auto sigs = std::make_shared<signature_algorithms_blueprint>();
     sigs->algorithms() = {tls_consts::sig_alg::kEcdsaSecp256r1Sha256,
+                          tls_consts::sig_alg::kEd25519,
                           tls_consts::sig_alg::kRsaPssRsaeSha256,
                           tls_consts::sig_alg::kRsaPkcs1Sha256,
                           tls_consts::sig_alg::kEcdsaSecp384r1Sha384,
