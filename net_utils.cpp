@@ -306,16 +306,6 @@ bool get_original_tcp_dst(boost::asio::ip::tcp::socket& socket, boost::asio::ip:
     boost::system::error_code peer_ec;
     const auto peer_endpoint = socket.remote_endpoint(peer_ec);
     const bool prefer_ipv6 = !peer_ec && peer_endpoint.address().is_v6();
-    const auto try_local_endpoint_fallback = [&](boost::system::error_code& op_ec) -> bool
-    {
-        const auto local_endpoint = socket.local_endpoint(op_ec);
-        if (op_ec)
-        {
-            return false;
-        }
-        endpoint = local_endpoint;
-        return true;
-    };
 
     const auto try_get_original_dst = [&](const int level, const int option, boost::system::error_code& op_ec) -> bool
     {
@@ -352,10 +342,6 @@ bool get_original_tcp_dst(boost::asio::ip::tcp::socket& socket, boost::asio::ip:
             return true;
         }
         ec = ec ? ec : last_ec;
-        if (ec.value() == ENOENT || ec.value() == ENOPROTOOPT || ec.value() == EOPNOTSUPP)
-        {
-            return try_local_endpoint_fallback(ec);
-        }
         return false;
     }
 
@@ -369,10 +355,6 @@ bool get_original_tcp_dst(boost::asio::ip::tcp::socket& socket, boost::asio::ip:
         return true;
     }
     ec = ec ? ec : last_ec;
-    if (ec.value() == ENOENT || ec.value() == ENOPROTOOPT || ec.value() == EOPNOTSUPP)
-    {
-        return try_local_endpoint_fallback(ec);
-    }
     return false;
 #else
     (void)socket;
