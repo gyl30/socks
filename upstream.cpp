@@ -332,6 +332,7 @@ boost::asio::awaitable<void> proxy_upstream::connect(const std::string& host, co
     bind_port_ = 0;
     fin_sent_ = false;
     reset_received_ = false;
+    protocol_error_ = false;
     last_remote_rep_ = socks::kRepSuccess;
     co_await send_syn_request(stream, host, port, ec);
     if (ec)
@@ -392,6 +393,7 @@ boost::asio::awaitable<std::size_t> proxy_upstream::read(std::vector<std::uint8_
                      data_frame.h.command,
                      mux_command_name(data_frame.h.command),
                      data_frame.payload.size());
+        protocol_error_ = true;
         ec = boost::asio::error::invalid_argument;
         co_return 0;
     }
@@ -457,7 +459,19 @@ boost::asio::awaitable<void> proxy_upstream::close()
 {
     if (stream_ != nullptr && tunnel_ != nullptr)
     {
-        if (!fin_sent_ && !reset_received_)
+        if (protocol_error_)
+        {
+            mux_frame rst_frame;
+            rst_frame.h.stream_id = stream_->id();
+            rst_frame.h.command = mux::kCmdRst;
+            boost::system::error_code rst_ec;
+            co_await stream_->async_write(std::move(rst_frame), rst_ec);
+            if (rst_ec)
+            {
+                LOG_CTX_WARN(ctx_.with_stream(stream_->id()), "{} stage=send_rst error={}", log_event::kRoute, rst_ec.message());
+            }
+        }
+        else if (!fin_sent_ && !reset_received_)
         {
             boost::system::error_code fin_ec;
             co_await shutdown_send(fin_ec);
@@ -470,6 +484,7 @@ boost::asio::awaitable<void> proxy_upstream::close()
     }
     fin_sent_ = false;
     reset_received_ = false;
+    protocol_error_ = false;
     stream_.reset();
     co_return;
 }
