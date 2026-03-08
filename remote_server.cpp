@@ -1836,15 +1836,17 @@ boost::asio::awaitable<remote_server::server_handshake_res> remote_server::perfo
 {
     server_handshake_res res;
     auto& ctx = reality_ctx.ctx;
-    const auto key_pair = key_rotator_.get_current_key();
-    if (key_pair == nullptr)
+    std::array<std::uint8_t, 32> ephemeral_public_key{};
+    std::array<std::uint8_t, 32> ephemeral_private_key{};
+    DEFER(OPENSSL_cleanse(ephemeral_private_key.data(), ephemeral_private_key.size()));
+    if (!reality::crypto_util::generate_x25519_keypair(ephemeral_public_key.data(), ephemeral_private_key.data()))
     {
-        LOG_CTX_ERROR(ctx, "{} key rotation unavailable", log_event::kHandshake);
+        LOG_CTX_ERROR(ctx, "{} generate ephemeral x25519 key failed", log_event::kHandshake);
         ec = boost::asio::error::fault;
         co_return res;
     }
-    const std::uint8_t* public_key = key_pair->public_key;
-    const std::uint8_t* private_key = key_pair->private_key;
+    const std::uint8_t* public_key = ephemeral_public_key.data();
+    const std::uint8_t* private_key = ephemeral_private_key.data();
 
     reality_ctx.server_random = generate_server_random(ec);
     if (ec)

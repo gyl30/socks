@@ -24,7 +24,6 @@
 #include "task_group.h"
 #include "mux_tunnel.h"
 #include "transcript.h"
-#include "key_rotator.h"
 #include "log_context.h"
 #include "context_pool.h"
 #include "mux_protocol.h"
@@ -91,7 +90,6 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     std::vector<std::uint8_t> reality_cert_template_;
     std::uint32_t next_conn_id_{1};
     replay_cache replay_cache_;
-    reality::key_rotator key_rotator_;
     reality::site_material_manager site_material_manager_;
     std::atomic<std::uint32_t> active_fallbacks_{0};
     std::mutex fallback_budget_mu_;
