@@ -95,6 +95,7 @@ class proxy_upstream : public upstream
     std::uint16_t bind_port_ = 0;
     bool fin_sent_ = false;
     bool reset_received_ = false;
+    bool protocol_error_ = false;
     std::uint8_t last_remote_rep_ = socks::kRepSuccess;
     bool has_bind_endpoint_ = false;
     using channel_type =
