@@ -150,7 +150,6 @@ package "Server Side" {
     }
 
     class replay_cache
-    class key_rotator
     class cert_manager
 }
 
@@ -194,7 +193,6 @@ mux_stream ..> mux_connection : weak ref
 remote_server o-- io_context_pool
 remote_server *-- task_group
 remote_server *-- replay_cache
-remote_server *-- key_rotator
 remote_server *-- cert_manager
 remote_server ..> mux_tunnel_impl : creates per tunnel
 remote_server ..> remote_tcp_session : on SYN CONNECT
