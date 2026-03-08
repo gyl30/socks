@@ -52,14 +52,53 @@ jobs:
           restore-keys: |
             linux-${{ matrix.arch }}-${{ matrix.libc }}-openssl-${{ env.OPENSSL_VERSION }}-
 
-      - name: Build OpenSSL
+      - name: Build Linux glibc Matrix Target
+        if: ${{ matrix.libc == 'glibc' }}
         run: |
-          docker run --rm             -v "$PWD":/workspace             -w /workspace             -e OPENSSL_VERSION             -e OPENSSL_ARCHIVE             -e OPENSSL_SRC_DIR             ubuntu:24.04 bash -lc '
+          set -euo pipefail
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            -e BOOST_VERSION \
+            -e BOOST_ARCHIVE \
+            -e BOOST_SRC_DIR \
+            -e OPENSSL_VERSION \
+            -e OPENSSL_ARCHIVE \
+            -e OPENSSL_SRC_DIR \
+            -e COMPILER="${{ matrix.compiler }}" \
+            ubuntu:24.04 bash -lc '
               set -euo pipefail
               export DEBIAN_FRONTEND=noninteractive
               apt-get update
-              apt-get install -y --no-install-recommends                 ca-certificates                 wget                 perl                 make                 gcc
+              apt-get install -y --no-install-recommends \
+                ca-certificates \
+                bzip2 \
+                tar \
+                wget \
+                perl \
+                make \
+                cmake \
+                ninja-build \
+                pkg-config \
+                gcc \
+                g++ \
+                clang
 
+              mkdir -p /workspace/.cache/boost
+              if [ ! -d "/workspace/.cache/boost/${BOOST_SRC_DIR}" ]; then
+                wget -O "/workspace/.cache/boost/${BOOST_ARCHIVE}" "https://archives.boost.io/release/${BOOST_VERSION}/source/${BOOST_ARCHIVE}"
+                tar xf "/workspace/.cache/boost/${BOOST_ARCHIVE}" -C /workspace/.cache/boost
+              fi
+
+              if [ "${COMPILER}" = "gcc" ]; then
+                CC_BIN=gcc
+                CXX_BIN=g++
+              else
+                CC_BIN=clang
+                CXX_BIN=clang++
+              fi
+
+              BOOST_ROOT="/workspace/.cache/boost/${BOOST_SRC_DIR}"
               OPENSSL_CACHE_ROOT="/workspace/.cache/openssl/${{ matrix.libc }}-${{ matrix.arch }}"
               OPENSSL_ROOT="${OPENSSL_CACHE_ROOT}/install-${OPENSSL_VERSION}"
               OPENSSL_ARCHIVE_PATH="${OPENSSL_CACHE_ROOT}/${OPENSSL_ARCHIVE}"
@@ -76,7 +115,10 @@ jobs:
                 tar xf "${OPENSSL_ARCHIVE_PATH}" -C "${OPENSSL_CACHE_ROOT}"
                 cd "${OPENSSL_SOURCE_DIR}"
                 JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
-                perl ./Configure                   --prefix="${OPENSSL_ROOT}"                   --openssldir="${OPENSSL_ROOT}/ssl"                   shared
+                perl ./Configure \
+                  --prefix="${OPENSSL_ROOT}" \
+                  --openssldir="${OPENSSL_ROOT}/ssl" \
+                  shared
                 make -j"${JOBS}"
                 make install_sw
                 grep -q "OPENSSL_VERSION_STR \"${OPENSSL_VERSION}\"" "${OPENSSL_ROOT}/include/openssl/opensslv.h"
@@ -86,15 +128,70 @@ jobs:
               if [ ! -d "${OPENSSL_CMAKE_DIR}" ]; then
                 OPENSSL_CMAKE_DIR="${OPENSSL_ROOT}/lib/cmake/OpenSSL"
               fi
-            '
-      - name: Build OpenSSL
-        run: |
-          docker run --rm             -v "$PWD":/workspace             -w /workspace             -e OPENSSL_VERSION             -e OPENSSL_ARCHIVE             -e OPENSSL_SRC_DIR             ubuntu:24.04 bash -lc '
-              set -euo pipefail
-              export DEBIAN_FRONTEND=noninteractive
-              apt-get update
-              apt-get install -y --no-install-recommends                 ca-certificates                 wget                 perl                 make                 gcc
 
+              cmake -S . -B build -GNinja \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_C_COMPILER="${CC_BIN}" \
+                -DCMAKE_CXX_COMPILER="${CXX_BIN}" \
+                -DENABLE_TSAN=OFF \
+                -DENABLE_ASAN=OFF \
+                -DBoost_NO_BOOST_CMAKE=ON \
+                -DBoost_NO_SYSTEM_PATHS=ON \
+                -DBOOST_ROOT="${BOOST_ROOT}" \
+                -DOpenSSL_DIR="${OPENSSL_CMAKE_DIR}" \
+                -DOPENSSL_ROOT_DIR="${OPENSSL_ROOT}" \
+                -DCMAKE_PREFIX_PATH="${BOOST_ROOT};${OPENSSL_ROOT}"
+
+              cmake --build build --target socks --parallel
+              grep -q "SOCKS_HAS_TPROXY=1" build/compile_commands.json
+            '
+
+      - name: Build Linux musl Matrix Target
+        if: ${{ matrix.libc == 'musl' }}
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            -e BOOST_VERSION \
+            -e BOOST_ARCHIVE \
+            -e BOOST_SRC_DIR \
+            -e OPENSSL_VERSION \
+            -e OPENSSL_ARCHIVE \
+            -e OPENSSL_SRC_DIR \
+            -e COMPILER="${{ matrix.compiler }}" \
+            alpine:3.20 sh -lc '
+              set -eu
+              apk add --no-cache \
+                bash \
+                ca-certificates \
+                bzip2 \
+                tar \
+                wget \
+                perl \
+                cmake \
+                ninja \
+                pkgconf \
+                build-base \
+                clang \
+                lld \
+                linux-headers
+
+              mkdir -p /workspace/.cache/boost
+              if [ ! -d "/workspace/.cache/boost/${BOOST_SRC_DIR}" ]; then
+                wget -O "/workspace/.cache/boost/${BOOST_ARCHIVE}" "https://archives.boost.io/release/${BOOST_VERSION}/source/${BOOST_ARCHIVE}"
+                tar xf "/workspace/.cache/boost/${BOOST_ARCHIVE}" -C /workspace/.cache/boost
+              fi
+
+              if [ "${COMPILER}" = "gcc" ]; then
+                CC_BIN=gcc
+                CXX_BIN=g++
+              else
+                CC_BIN=clang
+                CXX_BIN=clang++
+              fi
+
+              BOOST_ROOT="/workspace/.cache/boost/${BOOST_SRC_DIR}"
               OPENSSL_CACHE_ROOT="/workspace/.cache/openssl/${{ matrix.libc }}-${{ matrix.arch }}"
               OPENSSL_ROOT="${OPENSSL_CACHE_ROOT}/install-${OPENSSL_VERSION}"
               OPENSSL_ARCHIVE_PATH="${OPENSSL_CACHE_ROOT}/${OPENSSL_ARCHIVE}"
@@ -111,7 +208,10 @@ jobs:
                 tar xf "${OPENSSL_ARCHIVE_PATH}" -C "${OPENSSL_CACHE_ROOT}"
                 cd "${OPENSSL_SOURCE_DIR}"
                 JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
-                perl ./Configure                   --prefix="${OPENSSL_ROOT}"                   --openssldir="${OPENSSL_ROOT}/ssl"                   shared
+                perl ./Configure \
+                  --prefix="${OPENSSL_ROOT}" \
+                  --openssldir="${OPENSSL_ROOT}/ssl" \
+                  shared
                 make -j"${JOBS}"
                 make install_sw
                 grep -q "OPENSSL_VERSION_STR \"${OPENSSL_VERSION}\"" "${OPENSSL_ROOT}/include/openssl/opensslv.h"
@@ -121,7 +221,24 @@ jobs:
               if [ ! -d "${OPENSSL_CMAKE_DIR}" ]; then
                 OPENSSL_CMAKE_DIR="${OPENSSL_ROOT}/lib/cmake/OpenSSL"
               fi
+
+              cmake -S . -B build -GNinja \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_C_COMPILER="${CC_BIN}" \
+                -DCMAKE_CXX_COMPILER="${CXX_BIN}" \
+                -DENABLE_TSAN=OFF \
+                -DENABLE_ASAN=OFF \
+                -DBoost_NO_BOOST_CMAKE=ON \
+                -DBoost_NO_SYSTEM_PATHS=ON \
+                -DBOOST_ROOT="${BOOST_ROOT}" \
+                -DOpenSSL_DIR="${OPENSSL_CMAKE_DIR}" \
+                -DOPENSSL_ROOT_DIR="${OPENSSL_ROOT}" \
+                -DCMAKE_PREFIX_PATH="${BOOST_ROOT};${OPENSSL_ROOT}"
+
+              cmake --build build --target socks --parallel
+              grep -q "SOCKS_HAS_TPROXY=1" build/compile_commands.json
             '
+
   build-macos:
     name: Build macOS (socks5)
     runs-on: macos-14
@@ -177,17 +294,26 @@ jobs:
             tar xf "${OPENSSL_ARCHIVE_PATH}" -C "${OPENSSL_CACHE_DIR}"
             cd "${OPENSSL_SOURCE_DIR}"
             JOBS="$(sysctl -n hw.ncpu)"
-            perl ./Configure               darwin64-arm64-cc               --prefix="${OPENSSL_ROOT}"               --openssldir="${OPENSSL_ROOT}/ssl"               shared
+            perl ./Configure \
+              darwin64-arm64-cc \
+              --prefix="${OPENSSL_ROOT}" \
+              --openssldir="${OPENSSL_ROOT}/ssl" \
+              shared
             make -j"${JOBS}"
             make install_sw
             grep -q "OPENSSL_VERSION_STR \"${OPENSSL_VERSION}\"" "${OPENSSL_ROOT}/include/openssl/opensslv.h"
           fi
+
       - name: Configure
         run: |
           set -euo pipefail
           BOOST_ROOT="$HOME/.cache/boost/${BOOST_SRC_DIR}"
           LLVM_ROOT="$(brew --prefix llvm)"
           OPENSSL_ROOT="$HOME/.cache/openssl/install-${OPENSSL_VERSION}"
+          OPENSSL_CMAKE_DIR="${OPENSSL_ROOT}/lib64/cmake/OpenSSL"
+          if [ ! -d "${OPENSSL_CMAKE_DIR}" ]; then
+            OPENSSL_CMAKE_DIR="${OPENSSL_ROOT}/lib/cmake/OpenSSL"
+          fi
           cmake -S . -B build -GNinja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_C_COMPILER="${LLVM_ROOT}/bin/clang" \
@@ -197,8 +323,8 @@ jobs:
             -DBoost_NO_BOOST_CMAKE=ON \
             -DBoost_NO_SYSTEM_PATHS=ON \
             -DBOOST_ROOT="$BOOST_ROOT" \
-            -DOPENSSL_ROOT_DIR="${OPENSSL_ROOT}" \
             -DOpenSSL_DIR="${OPENSSL_CMAKE_DIR}" \
+            -DOPENSSL_ROOT_DIR="${OPENSSL_ROOT}" \
             -DCMAKE_PREFIX_PATH="$BOOST_ROOT;${OPENSSL_ROOT};${LLVM_ROOT}"
 
       - name: Build Binary
@@ -276,17 +402,26 @@ jobs:
             tar xf "${OPENSSL_ARCHIVE_PATH}" -C "${OPENSSL_CACHE_DIR}"
             cd "${OPENSSL_SOURCE_DIR}"
             JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
-            perl ./Configure               mingw64               --prefix="${OPENSSL_ROOT}"               --openssldir="${OPENSSL_ROOT}/ssl"               shared
+            perl ./Configure \
+              mingw64 \
+              --prefix="${OPENSSL_ROOT}" \
+              --openssldir="${OPENSSL_ROOT}/ssl" \
+              shared
             make -j"${JOBS}"
             make install_sw
             grep -q "OPENSSL_VERSION_STR \"${OPENSSL_VERSION}\"" "${OPENSSL_ROOT}/include/openssl/opensslv.h"
           fi
+
       - name: Configure
         shell: msys2 {0}
         run: |
           set -euo pipefail
           BOOST_ROOT="$HOME/.cache/boost/${BOOST_SRC_DIR}"
           OPENSSL_ROOT="$HOME/.cache/openssl/install-${OPENSSL_VERSION}"
+          OPENSSL_CMAKE_DIR="${OPENSSL_ROOT}/lib64/cmake/OpenSSL"
+          if [ ! -d "${OPENSSL_CMAKE_DIR}" ]; then
+            OPENSSL_CMAKE_DIR="${OPENSSL_ROOT}/lib/cmake/OpenSSL"
+          fi
           cmake -S . -B build -GNinja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_C_COMPILER=clang \
@@ -296,6 +431,7 @@ jobs:
             -DBoost_NO_BOOST_CMAKE=ON \
             -DBoost_NO_SYSTEM_PATHS=ON \
             -DBOOST_ROOT="$BOOST_ROOT" \
+            -DOpenSSL_DIR="${OPENSSL_CMAKE_DIR}" \
             -DOPENSSL_ROOT_DIR="$OPENSSL_ROOT" \
             -DCMAKE_PREFIX_PATH="/ucrt64;$BOOST_ROOT;$OPENSSL_ROOT"
 
