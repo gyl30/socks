@@ -101,6 +101,8 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
     bool proxy_stream_started_ = false;
     bool has_client_addr_ = false;
     boost::asio::ip::udp::endpoint client_addr_;
+    bool has_control_peer_addr_ = false;
+    boost::asio::ip::address control_peer_addr_;
     bool has_request_client_addr_ = false;
     boost::asio::ip::address request_client_addr_;
     bool has_request_client_port_ = false;
