@@ -15,6 +15,7 @@
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/system/error_code.hpp>
+#include <boost/system/errc.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/redirect_error.hpp>
 #include <boost/asio/bind_cancellation_slot.hpp>
@@ -34,6 +35,37 @@
 
 namespace mux
 {
+
+namespace
+{
+
+bool should_fallback_to_local_endpoint(const boost::system::error_code& ec)
+{
+    return ec == boost::system::errc::make_error_code(boost::system::errc::no_such_file_or_directory)
+           || ec == boost::system::errc::make_error_code(boost::system::errc::no_protocol_option)
+           || ec == boost::system::errc::make_error_code(boost::system::errc::operation_not_supported);
+}
+
+bool try_get_tproxy_target_from_local_endpoint(boost::asio::ip::tcp::socket& socket,
+                                               boost::asio::ip::tcp::endpoint& endpoint,
+                                               boost::system::error_code& ec)
+{
+    ec.clear();
+    const auto local_endpoint = socket.local_endpoint(ec);
+    if (ec)
+    {
+        return false;
+    }
+    if (local_endpoint.port() == 0)
+    {
+        ec = boost::asio::error::address_family_not_supported;
+        return false;
+    }
+    endpoint = local_endpoint;
+    return true;
+}
+
+}    // namespace
 
 tproxy_tcp_session::tproxy_tcp_session(boost::asio::ip::tcp::socket socket,
                                        boost::asio::io_context& io_context,
@@ -70,8 +102,31 @@ boost::asio::awaitable<void> tproxy_tcp_session::run()
     boost::asio::ip::tcp::endpoint target_ep;
     if (!net::get_original_tcp_dst(socket_, target_ep, ec))
     {
-        LOG_ERROR("tproxy tcp original dst failed {}", ec.message());
-        co_return;
+        const auto original_dst_ec = ec;
+        boost::system::error_code fallback_ec;
+        if (should_fallback_to_local_endpoint(original_dst_ec) && try_get_tproxy_target_from_local_endpoint(socket_, target_ep, fallback_ec))
+        {
+            const auto fallback_addr = net::normalize_address(target_ep.address());
+            LOG_CTX_INFO(ctx_,
+                         "{} original dst source local_endpoint_fallback target {}:{} reason {}",
+                         log_event::kConnInit,
+                         fallback_addr.to_string(),
+                         target_ep.port(),
+                         original_dst_ec.message());
+            ec.clear();
+        }
+        else
+        {
+            if (fallback_ec)
+            {
+                LOG_ERROR("tproxy tcp original dst failed source getsockopt error {} fallback {}", original_dst_ec.message(), fallback_ec.message());
+            }
+            else
+            {
+                LOG_ERROR("tproxy tcp original dst failed source getsockopt error {}", original_dst_ec.message());
+            }
+            co_return;
+        }
     }
     boost::system::error_code peer_ec;
     const auto peer_ep = socket_.remote_endpoint(peer_ec);
