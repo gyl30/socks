@@ -174,7 +174,6 @@ set(SOCKS_SOURCES
     replay_cache.cpp
     reality_engine.cpp
     domain_matcher.cpp
-    key_rotator.cpp
     reality_auth.cpp
     monitor_server.cpp
     cert_fetcher.cpp
