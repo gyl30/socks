@@ -332,6 +332,8 @@ udp_socks_session::udp_socks_session(boost::asio::ip::tcp::socket socket,
       idle_timer_(io_context_),
       socket_(std::move(socket)),
       udp_socket_(io_context_),
+      direct_udp_socket_v4_(io_context_),
+      direct_udp_socket_v6_(io_context_),
       router_(std::move(router)),
       tunnel_pool_(std::move(tunnel_pool)),
       active_connection_guard_(std::move(active_connection_guard)),
@@ -359,6 +361,11 @@ void udp_socks_session::start(const std::string& host, const std::uint16_t port)
 
 void udp_socks_session::close_impl()
 {
+    if (stopped_)
+    {
+        return;
+    }
+    stopped_ = true;
     timer_.cancel();
     idle_timer_.cancel();
     proxy_stream_channel_.close();
@@ -371,6 +378,16 @@ void udp_socks_session::close_impl()
     if (close_ec && close_ec != boost::asio::error::bad_descriptor)
     {
         LOG_CTX_WARN(ctx_, "{} close udp socket failed {}", log_event::kSocks, close_ec.message());
+    }
+    close_ec = direct_udp_socket_v4_.close(close_ec);
+    if (close_ec && close_ec != boost::asio::error::bad_descriptor)
+    {
+        LOG_CTX_WARN(ctx_, "{} close direct udp v4 socket failed {}", log_event::kSocks, close_ec.message());
+    }
+    close_ec = direct_udp_socket_v6_.close(close_ec);
+    if (close_ec && close_ec != boost::asio::error::bad_descriptor)
+    {
+        LOG_CTX_WARN(ctx_, "{} close direct udp v6 socket failed {}", log_event::kSocks, close_ec.message());
     }
 }
 
@@ -394,6 +411,22 @@ boost::asio::awaitable<void> udp_socks_session::run(const std::string& host, con
     {
         LOG_CTX_WARN(ctx_, "{} write failed {}", log_event::kSocks, ec.message());
         co_return;
+    }
+    boost::system::error_code direct_socket_ec;
+    open_direct_udp_socket(direct_udp_socket_v4_, boost::asio::ip::udp::v4(), "v4", direct_socket_ec);
+    open_direct_udp_socket(direct_udp_socket_v6_, boost::asio::ip::udp::v6(), "v6", direct_socket_ec);
+    const auto self = shared_from_this();
+    if (direct_udp_socket_v4_.is_open())
+    {
+        boost::asio::co_spawn(io_context_,
+                              [self]() -> boost::asio::awaitable<void> { co_await self->direct_udp_socket_loop(self->direct_udp_socket_v4_); },
+                              group_.adapt(boost::asio::detached));
+    }
+    if (direct_udp_socket_v6_.is_open())
+    {
+        boost::asio::co_spawn(io_context_,
+                              [self]() -> boost::asio::awaitable<void> { co_await self->direct_udp_socket_loop(self->direct_udp_socket_v6_); },
+                              group_.adapt(boost::asio::detached));
     }
     // step 3 forward data
     using boost::asio::experimental::awaitable_operators::operator||;
@@ -420,6 +453,7 @@ boost::asio::awaitable<void> udp_socks_session::run(const std::string& host, con
     {
         tunnel_->remove_stream(stream_);
     }
+    close_impl();
     LOG_CTX_INFO(ctx_, "{} finished", log_event::kSocks);
 }
 
@@ -495,6 +529,46 @@ std::string udp_socks_session::endpoint_key(const boost::asio::ip::udp::endpoint
     return normalized_endpoint.address().to_string() + ":" + std::to_string(normalized_endpoint.port());
 }
 
+void udp_socks_session::open_direct_udp_socket(boost::asio::ip::udp::socket& direct_socket,
+                                               const boost::asio::ip::udp& protocol,
+                                               const char* family,
+                                               boost::system::error_code& ec)
+{
+    ec.clear();
+    ec = direct_socket.open(protocol, ec);
+    if (ec)
+    {
+        LOG_CTX_WARN(ctx_, "{} open direct udp {} socket failed {}", log_event::kRoute, family, ec.message());
+        return;
+    }
+    ec = direct_socket.bind(boost::asio::ip::udp::endpoint(protocol, 0), ec);
+    if (ec)
+    {
+        LOG_CTX_WARN(ctx_, "{} bind direct udp {} socket failed {}", log_event::kRoute, family, ec.message());
+        boost::system::error_code close_ec;
+        close_ec = direct_socket.close(close_ec);
+        (void)close_ec;
+        return;
+    }
+}
+
+boost::asio::ip::udp::socket* udp_socks_session::select_direct_udp_socket(const boost::asio::ip::udp::endpoint& target)
+{
+    if (target.address().is_v6())
+    {
+        if (!direct_udp_socket_v6_.is_open())
+        {
+            return nullptr;
+        }
+        return &direct_udp_socket_v6_;
+    }
+    if (!direct_udp_socket_v4_.is_open())
+    {
+        return nullptr;
+    }
+    return &direct_udp_socket_v4_;
+}
+
 boost::asio::awaitable<route_type> udp_socks_session::decide_udp_route(const socks_udp_header& header) const
 {
     if (router_ == nullptr)
@@ -553,7 +627,19 @@ boost::asio::awaitable<void> udp_socks_session::forward_direct_packet(const sock
     {
         co_return;
     }
-    const auto [send_ec, send_n] = co_await udp_socket_.async_send_to(
+    auto* direct_socket = select_direct_udp_socket(target);
+    if (direct_socket == nullptr)
+    {
+        ec = boost::asio::error::address_family_not_supported;
+        LOG_CTX_WARN(ctx_,
+                     "{} udp direct socket unavailable {}:{} error={}",
+                     log_event::kRoute,
+                     target.address().to_string(),
+                     target.port(),
+                     ec.message());
+        co_return;
+    }
+    const auto [send_ec, send_n] = co_await direct_socket->async_send_to(
         boost::asio::buffer(payload, payload_len), target, boost::asio::as_tuple(boost::asio::use_awaitable));
     (void)send_n;
     ec = send_ec;
@@ -569,6 +655,42 @@ boost::asio::awaitable<void> udp_socks_session::forward_direct_packet(const sock
     }
 
     direct_peers_.insert(endpoint_key(target));
+}
+
+boost::asio::awaitable<void> udp_socks_session::direct_udp_socket_loop(boost::asio::ip::udp::socket& direct_socket)
+{
+    std::vector<std::uint8_t> buf(65535);
+    boost::asio::ip::udp::endpoint sender;
+    while (true)
+    {
+        const auto [recv_ec, n] =
+            co_await direct_socket.async_receive_from(boost::asio::buffer(buf), sender, boost::asio::as_tuple(boost::asio::use_awaitable));
+        if (recv_ec)
+        {
+            if (recv_ec != boost::asio::error::operation_aborted && recv_ec != boost::asio::error::bad_descriptor)
+            {
+                LOG_CTX_WARN(ctx_, "{} direct udp receive error {}", log_event::kRoute, recv_ec.message());
+            }
+            break;
+        }
+        if (!direct_peers_.contains(endpoint_key(sender)))
+        {
+            LOG_CTX_WARN(ctx_,
+                         "{} ignore udp packet from unexpected direct peer {}:{}",
+                         log_event::kRoute,
+                         sender.address().to_string(),
+                         sender.port());
+            continue;
+        }
+
+        boost::system::error_code ec;
+        co_await forward_direct_reply_to_client(sender, buf.data(), n, ec);
+        if (ec)
+        {
+            break;
+        }
+        last_activity_time_ms_ = now_ms();
+    }
 }
 
 boost::asio::awaitable<void> udp_socks_session::forward_direct_reply_to_client(const boost::asio::ip::udp::endpoint& sender,
@@ -739,25 +861,13 @@ boost::asio::awaitable<void> udp_socks_session::udp_socket_loop()
             continue;
         }
 
-        boost::system::error_code ec;
-        if (!direct_peers_.contains(endpoint_key(sender)))
-        {
-            LOG_CTX_WARN(ctx_,
-                         "{} ignore udp packet from unexpected peer {}:{} expected {}:{}",
-                         log_event::kSocks,
-                         sender.address().to_string(),
-                         sender.port(),
-                         client_addr_.address().to_string(),
-                         client_addr_.port());
-            continue;
-        }
-
-        co_await forward_direct_reply_to_client(sender, buf.data(), n, ec);
-        if (ec)
-        {
-            break;
-        }
-        last_activity_time_ms_ = now_ms();
+        LOG_CTX_WARN(ctx_,
+                     "{} ignore udp packet from unexpected relay peer {}:{} expected client {}:{}",
+                     log_event::kSocks,
+                     sender.address().to_string(),
+                     sender.port(),
+                     client_addr_.address().to_string(),
+                     client_addr_.port());
     }
 }
 

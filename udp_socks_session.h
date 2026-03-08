@@ -67,6 +67,7 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
                                                                                                   std::uint16_t port,
                                                                                                   boost::system::error_code& ec);
     boost::asio::awaitable<void> udp_socket_loop();
+    boost::asio::awaitable<void> direct_udp_socket_loop(boost::asio::ip::udp::socket& direct_socket);
     boost::asio::awaitable<void> forward_direct_packet(const socks_udp_header& header,
                                                        const std::uint8_t* payload,
                                                        std::size_t payload_len,
@@ -75,6 +76,11 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
                                                                 const std::uint8_t* payload,
                                                                 std::size_t payload_len,
                                                                 boost::system::error_code& ec);
+    void open_direct_udp_socket(boost::asio::ip::udp::socket& direct_socket,
+                                const boost::asio::ip::udp& protocol,
+                                const char* family,
+                                boost::system::error_code& ec);
+    [[nodiscard]] boost::asio::ip::udp::socket* select_direct_udp_socket(const boost::asio::ip::udp::endpoint& target);
     boost::asio::awaitable<void> wait_and_stream_to_udp_sock();
     boost::asio::awaitable<void> stream_to_udp_sock(std::shared_ptr<mux_stream> stream);
     boost::asio::awaitable<void> keep_tcp_alive();
@@ -92,12 +98,15 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
     boost::asio::steady_timer idle_timer_;
     boost::asio::ip::tcp::socket socket_;
     boost::asio::ip::udp::socket udp_socket_;
+    boost::asio::ip::udp::socket direct_udp_socket_v4_;
+    boost::asio::ip::udp::socket direct_udp_socket_v6_;
     std::shared_ptr<router> router_;
     std::shared_ptr<client_tunnel_pool> tunnel_pool_;
     std::shared_ptr<mux_tunnel_impl> tunnel_;
     std::shared_ptr<mux_stream> stream_;
     std::atomic<std::uint8_t> stream_close_command_{0};
     std::uint64_t last_activity_time_ms_{0};
+    bool stopped_ = false;
     bool proxy_stream_started_ = false;
     bool has_client_addr_ = false;
     boost::asio::ip::udp::endpoint client_addr_;
