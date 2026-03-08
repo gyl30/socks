@@ -1366,7 +1366,11 @@ void prepare_socket_for_connect(boost::asio::ip::tcp::socket& socket,
         net::set_socket_mark(socket.native_handle(), mark, ec);
         if (ec)
         {
-            LOG_WARN("set mark failed {}", ec.message());
+            LOG_WARN("set mark failed target {}:{} error {}", endpoint.address().to_string(), endpoint.port(), ec.message());
+            boost::system::error_code close_ec;
+            close_ec = socket.close(close_ec);
+            (void)close_ec;
+            return;
         }
     }
 }
