@@ -108,6 +108,8 @@ std::uint32_t resolve_worker_threads(const mux::config& cfg)
 
 int run_services(mux::io_context_pool& pool, const mux::config& cfg, runtime_services& services)
 {
+    const bool is_client_mode = (cfg.mode == "client");
+
     if (cfg.monitor.enabled)
     {
         services.monitor = std::make_shared<mux::monitor_server>(pool.get_io_context(), cfg.monitor.port);
@@ -123,13 +125,13 @@ int run_services(mux::io_context_pool& pool, const mux::config& cfg, runtime_ser
         services.server->start();
     }
 
-    if (cfg.socks.enabled)
+    if (is_client_mode && cfg.socks.enabled)
     {
         services.socks = std::make_shared<mux::socks_client>(pool, cfg);
         services.socks->start();
     }
 #if SOCKS_HAS_TPROXY
-    if (cfg.tproxy.enabled)
+    if (is_client_mode && cfg.tproxy.enabled)
     {
         services.tproxy = std::make_shared<mux::tproxy_client>(pool, cfg);
         services.tproxy->start();
