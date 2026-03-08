@@ -75,7 +75,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
 
     boost::asio::awaitable<void> process_stream_request(std::shared_ptr<mux_tunnel_impl> tunnel,
                                                         const connection_context& ctx,
-                                                        mux_frame frame) const;
+                                                        mux_frame frame);
 
    private:
     const config& cfg_;
