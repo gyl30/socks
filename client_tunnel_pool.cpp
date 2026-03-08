@@ -1259,33 +1259,7 @@ reality::fingerprint_spec select_fingerprint_spec(const std::optional<reality::f
     return reality::fingerprint_factory::get(kFingerprintCandidates[fp_dist(fp_gen)]);
 }
 
-void insert_hybrid_supported_group(reality::fingerprint_spec& spec)
-{
-    for (const auto& ext_ptr : spec.extensions)
-    {
-        auto groups = std::dynamic_pointer_cast<reality::supported_groups_blueprint>(ext_ptr);
-        if (groups == nullptr)
-        {
-            continue;
-        }
-        auto& values = groups->groups();
-        if (std::ranges::find(values, reality::tls_consts::group::kX25519MLKEM768) != values.end())
-        {
-            return;
-        }
-
-        const auto x25519_it = std::ranges::find(values, reality::tls_consts::group::kX25519);
-        if (x25519_it != values.end())
-        {
-            values.insert(x25519_it, reality::tls_consts::group::kX25519MLKEM768);
-            return;
-        }
-        values.insert(values.begin(), reality::tls_consts::group::kX25519MLKEM768);
-        return;
-    }
-}
-
-void insert_hybrid_key_share(reality::fingerprint_spec& spec)
+bool fingerprint_uses_hybrid_key_share(const reality::fingerprint_spec& spec)
 {
     for (const auto& ext_ptr : spec.extensions)
     {
@@ -1294,36 +1268,13 @@ void insert_hybrid_key_share(reality::fingerprint_spec& spec)
         {
             continue;
         }
-        auto& values = key_share->key_shares();
-        const auto exists = std::ranges::any_of(values, [](const reality::key_share_blueprint::key_share_entry& entry) {
+
+        const auto& values = key_share->key_shares();
+        return std::ranges::any_of(values, [](const reality::key_share_blueprint::key_share_entry& entry) {
             return entry.group == reality::tls_consts::group::kX25519MLKEM768;
         });
-        if (exists)
-        {
-            return;
-        }
-
-        const auto x25519_it = std::ranges::find_if(values, [](const reality::key_share_blueprint::key_share_entry& entry) {
-            return entry.group == reality::tls_consts::group::kX25519;
-        });
-        const reality::key_share_blueprint::key_share_entry hybrid_entry{
-            .group = reality::tls_consts::group::kX25519MLKEM768,
-            .data = {},
-        };
-        if (x25519_it != values.end())
-        {
-            values.insert(x25519_it, hybrid_entry);
-            return;
-        }
-        values.insert(values.begin(), hybrid_entry);
-        return;
     }
-}
-
-void enable_hybrid_key_share(reality::fingerprint_spec& spec)
-{
-    insert_hybrid_supported_group(spec);
-    insert_hybrid_key_share(spec);
+    return false;
 }
 
 struct handshake_traffic_keys
@@ -1911,18 +1862,23 @@ boost::asio::awaitable<client_tunnel_pool::handshake_result> client_tunnel_pool:
     std::vector<std::uint8_t> mlkem768_public_key;
     std::vector<std::uint8_t> mlkem768_private_key;
     std::vector<std::uint8_t> x25519_mlkem768_key_share;
+    auto spec = select_fingerprint_spec(fingerprint_type_);
+    const bool use_hybrid = fingerprint_uses_hybrid_key_share(spec);
 
     if (!reality::crypto_util::generate_x25519_keypair(public_key, private_key))
     {
         ec = boost::system::errc::make_error_code(boost::system::errc::operation_canceled);
         co_return handshake_result{};
     }
-    if (!reality::crypto_util::generate_mlkem768_keypair(mlkem768_public_key, mlkem768_private_key, ec))
+    if (use_hybrid)
     {
-        co_return handshake_result{};
+        if (!reality::crypto_util::generate_mlkem768_keypair(mlkem768_public_key, mlkem768_private_key, ec))
+        {
+            co_return handshake_result{};
+        }
+        x25519_mlkem768_key_share = mlkem768_public_key;
+        x25519_mlkem768_key_share.insert(x25519_mlkem768_key_share.end(), public_key, public_key + 32);
     }
-    x25519_mlkem768_key_share = mlkem768_public_key;
-    x25519_mlkem768_key_share.insert(x25519_mlkem768_key_share.end(), public_key, public_key + 32);
 
     const std::shared_ptr<void> defer_cleanse(nullptr, [&](void*) {
         OPENSSL_cleanse(private_key, 32);
@@ -1932,15 +1888,21 @@ boost::asio::awaitable<client_tunnel_pool::handshake_result> client_tunnel_pool:
         }
     });
 
-    auto spec = select_fingerprint_spec(fingerprint_type_);
-    enable_hybrid_key_share(spec);
-    LOG_CTX_INFO(ctx,
-                 "{} client_hello key_share_offer group=0x{:04x} {} hybrid_share_len={} mlkem768_pub_len={}",
-                 log_event::kHandshake,
-                 reality::tls_consts::group::kX25519MLKEM768,
-                 reality::named_group_name(reality::tls_consts::group::kX25519MLKEM768),
-                 x25519_mlkem768_key_share.size(),
-                 mlkem768_public_key.size());
+    if (use_hybrid)
+    {
+        LOG_CTX_INFO(ctx,
+                     "{} client_hello keep fingerprint hybrid key_share group=0x{:04x} {} hybrid_share_len={} mlkem768_pub_len={}",
+                     log_event::kHandshake,
+                     reality::tls_consts::group::kX25519MLKEM768,
+                     reality::named_group_name(reality::tls_consts::group::kX25519MLKEM768),
+                     x25519_mlkem768_key_share.size(),
+                     mlkem768_public_key.size());
+    }
+    else
+    {
+        // 没有 hybrid 指纹时严格保持原始指纹 不再动态插入额外 key share
+        LOG_CTX_INFO(ctx, "{} client_hello preserve fingerprint without forced hybrid key_share", log_event::kHandshake);
+    }
     reality::transcript trans;
     std::vector<std::uint8_t> auth_key;
     client_hello_info client_hello;
