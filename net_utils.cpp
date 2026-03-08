@@ -180,19 +180,26 @@ void set_socket_transparent_v6(const int fd, boost::system::error_code& ec)
 
 void set_socket_transparent(const int fd, const bool ipv6, boost::system::error_code& ec)
 {
-    set_socket_transparent_v4(fd, ec);
-    if (ec)
+    ec.clear();
+    if (!ipv6)
     {
+        set_socket_transparent_v4(fd, ec);
         return;
     }
-    if (ipv6)
+
+    boost::system::error_code v4_ec;
+    boost::system::error_code v6_ec;
+    set_socket_transparent_v4(fd, v4_ec);
+    set_socket_transparent_v6(fd, v6_ec);
+
+    // 双栈或纯 ipv6 场景下只要有一侧成功即可 避免把可用 socket 误判为失败
+    if (!v4_ec || !v6_ec)
     {
-        set_socket_transparent_v6(fd, ec);
-        if (ec)
-        {
-            return;
-        }
+        ec.clear();
+        return;
     }
+
+    ec = v6_ec;
     return;
 }
 
@@ -234,19 +241,26 @@ void set_socket_recv_origdst_v6(const int fd, boost::system::error_code& ec)
 
 void set_socket_recv_origdst(const int fd, const bool ipv6, boost::system::error_code& ec)
 {
-    set_socket_recv_origdst_v4(fd, ec);
-    if (ec)
+    ec.clear();
+    if (!ipv6)
     {
+        set_socket_recv_origdst_v4(fd, ec);
         return;
     }
-    if (ipv6)
+
+    boost::system::error_code v4_ec;
+    boost::system::error_code v6_ec;
+    set_socket_recv_origdst_v4(fd, v4_ec);
+    set_socket_recv_origdst_v6(fd, v6_ec);
+
+    // 原始目标地址辅助信息和透明代理选项保持同样策略 任一协议栈成功即可继续
+    if (!v4_ec || !v6_ec)
     {
-        set_socket_recv_origdst_v6(fd, ec);
-        if (ec)
-        {
-            return;
-        }
+        ec.clear();
+        return;
     }
+
+    ec = v6_ec;
     return;
 }
 
