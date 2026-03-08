@@ -63,6 +63,12 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
         kStopLoop,
     };
 
+    enum class handshake_auth_mode : std::uint8_t
+    {
+        kRealityTunnel,
+        kRealCertificateFallback,
+    };
+
     struct handshake_result
     {
         std::vector<std::uint8_t> c_app_secret;
@@ -71,6 +77,14 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
         std::uint16_t key_share_group = 0;
         const EVP_MD* md = nullptr;
         const EVP_CIPHER* cipher = nullptr;
+        handshake_auth_mode auth_mode = handshake_auth_mode::kRealityTunnel;
+    };
+
+    struct handshake_read_result
+    {
+        std::vector<std::uint8_t> c_app_secret;
+        std::vector<std::uint8_t> s_app_secret;
+        handshake_auth_mode auth_mode = handshake_auth_mode::kRealityTunnel;
     };
 
     boost::asio::awaitable<void> connect_remote_loop(std::uint32_t index, boost::asio::io_context& io_context);
@@ -125,7 +139,7 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
         const connection_context& ctx,
         boost::system::error_code& ec) const;
 
-    [[nodiscard]] static boost::asio::awaitable<std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>> handshake_read_loop(
+    [[nodiscard]] static boost::asio::awaitable<handshake_read_result> handshake_read_loop(
         boost::asio::ip::tcp::socket& socket,
         const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& s_hs_keys,
         const reality::handshake_keys& hs_keys,

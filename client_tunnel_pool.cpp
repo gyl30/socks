@@ -33,10 +33,13 @@
 
 extern "C"
 {
+#include <openssl/bio.h>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
 #include <openssl/types.h>
 #include <openssl/crypto.h>
+#include <openssl/x509.h>
+#include <openssl/x509_vfy.h>
 }
 
 #include "log.h"
@@ -283,9 +286,24 @@ struct handshake_validation_state
     bool cert_verify_checked = false;
     bool cert_verify_signature_checked = false;
     bool reality_cert_verified = false;
+    bool real_cert_chain_verified = false;
     const client_hello_info* client_hello = nullptr;
     reality::openssl_ptrs::evp_pkey_ptr server_pub_key = nullptr;
 };
+
+using x509_store_ptr = std::unique_ptr<X509_STORE, decltype(&X509_STORE_free)>;
+using x509_store_ctx_ptr = std::unique_ptr<X509_STORE_CTX, decltype(&X509_STORE_CTX_free)>;
+
+class x509_stack_deleter
+{
+   public:
+    void operator()(STACK_OF(X509)* p) const
+    {
+        sk_X509_free(p);
+    }
+};
+
+using x509_stack_ptr = std::unique_ptr<STACK_OF(X509), x509_stack_deleter>;
 
 bool client_offers_alpn(const client_hello_info& client_hello, const std::string& alpn)
 {
@@ -373,6 +391,185 @@ void verify_reality_bound_certificate(const std::vector<std::uint8_t>& cert_der,
     return;
 }
 
+reality::openssl_ptrs::x509_ptr parse_x509_from_der_local(const std::vector<std::uint8_t>& cert_der, boost::system::error_code& ec)
+{
+    ec.clear();
+    if (cert_der.empty() || cert_der.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+    {
+        ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
+        return nullptr;
+    }
+
+    using bio_ptr = std::unique_ptr<BIO, decltype(&BIO_free)>;
+    const bio_ptr cert_bio(BIO_new_mem_buf(cert_der.data(), static_cast<int>(cert_der.size())), &BIO_free);
+    if (cert_bio == nullptr)
+    {
+        ec = boost::system::errc::make_error_code(boost::system::errc::not_enough_memory);
+        return nullptr;
+    }
+
+    reality::openssl_ptrs::x509_ptr x509(d2i_X509_bio(cert_bio.get(), nullptr));
+    if (x509 == nullptr)
+    {
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return nullptr;
+    }
+    return x509;
+}
+
+bool extract_certificate_chain_der(const std::vector<std::uint8_t>& cert_msg, std::vector<std::vector<std::uint8_t>>& cert_chain_der)
+{
+    cert_chain_der.clear();
+    if (!is_certificate_message_header_valid(cert_msg))
+    {
+        return false;
+    }
+
+    std::size_t pos = 4;
+    if (pos >= cert_msg.size())
+    {
+        return false;
+    }
+
+    const auto context_len = static_cast<std::size_t>(cert_msg[pos]);
+    pos += 1;
+    if (pos + context_len + 3 > cert_msg.size())
+    {
+        return false;
+    }
+    pos += context_len;
+
+    std::uint32_t cert_list_len = 0;
+    if (!read_u24_and_advance(cert_msg, pos, cert_list_len))
+    {
+        return false;
+    }
+
+    const auto list_end = pos + static_cast<std::size_t>(cert_list_len);
+    if (list_end != cert_msg.size())
+    {
+        return false;
+    }
+
+    while (pos < list_end)
+    {
+        std::uint32_t cert_len = 0;
+        if (!read_u24_and_advance(cert_msg, pos, cert_len))
+        {
+            return false;
+        }
+
+        const auto cert_len_size = static_cast<std::size_t>(cert_len);
+        if (cert_len_size == 0 || pos + cert_len_size + 2 > list_end)
+        {
+            return false;
+        }
+
+        cert_chain_der.emplace_back(cert_msg.begin() + static_cast<std::ptrdiff_t>(pos),
+                                    cert_msg.begin() + static_cast<std::ptrdiff_t>(pos + cert_len_size));
+        pos += cert_len_size;
+
+        std::uint16_t ext_len = 0;
+        if (!read_u16_field(cert_msg, pos, ext_len))
+        {
+            return false;
+        }
+        pos += 2;
+        if (pos + ext_len > list_end)
+        {
+            return false;
+        }
+        pos += ext_len;
+    }
+
+    return !cert_chain_der.empty() && pos == list_end;
+}
+
+void verify_real_certificate_chain(const std::vector<std::uint8_t>& msg_data,
+                                   handshake_validation_state& validation_state,
+                                   boost::system::error_code& ec)
+{
+    ec.clear();
+    if (validation_state.client_hello == nullptr || validation_state.client_hello->sni.empty())
+    {
+        ec = boost::asio::error::invalid_argument;
+        return;
+    }
+
+    std::vector<std::vector<std::uint8_t>> cert_chain_der;
+    if (!extract_certificate_chain_der(msg_data, cert_chain_der))
+    {
+        ec = boost::asio::error::invalid_argument;
+        return;
+    }
+
+    std::vector<reality::openssl_ptrs::x509_ptr> cert_chain;
+    cert_chain.reserve(cert_chain_der.size());
+    for (const auto& cert_der : cert_chain_der)
+    {
+        auto cert = parse_x509_from_der_local(cert_der, ec);
+        if (ec || cert == nullptr)
+        {
+            return;
+        }
+        cert_chain.push_back(std::move(cert));
+    }
+
+    x509_store_ptr store(X509_STORE_new(), &X509_STORE_free);
+    x509_store_ctx_ptr store_ctx(X509_STORE_CTX_new(), &X509_STORE_CTX_free);
+    x509_stack_ptr untrusted(sk_X509_new_null());
+    if (store == nullptr || store_ctx == nullptr || untrusted == nullptr)
+    {
+        ec = boost::system::errc::make_error_code(boost::system::errc::not_enough_memory);
+        return;
+    }
+
+    if (X509_STORE_set_default_paths(store.get()) != 1)
+    {
+        ec = boost::asio::error::fault;
+        return;
+    }
+
+    for (std::size_t i = 1; i < cert_chain.size(); ++i)
+    {
+        if (sk_X509_push(untrusted.get(), cert_chain[i].get()) == 0)
+        {
+            ec = boost::asio::error::fault;
+            return;
+        }
+    }
+
+    if (X509_STORE_CTX_init(store_ctx.get(), store.get(), cert_chain.front().get(), untrusted.get()) != 1)
+    {
+        ec = boost::asio::error::fault;
+        return;
+    }
+
+    auto* verify_param = X509_STORE_CTX_get0_param(store_ctx.get());
+    if (verify_param == nullptr || X509_VERIFY_PARAM_set1_host(verify_param, validation_state.client_hello->sni.c_str(), 0) != 1)
+    {
+        ec = boost::asio::error::invalid_argument;
+        return;
+    }
+
+    // 真实证书路径改走系统信任链验证 通过后继续复用叶子证书公钥验 TLS 1.3 签名
+    if (X509_verify_cert(store_ctx.get()) != 1)
+    {
+        ec = boost::system::errc::make_error_code(boost::system::errc::permission_denied);
+        return;
+    }
+
+    EVP_PKEY* leaf_pub_key = X509_get_pubkey(cert_chain.front().get());
+    if (leaf_pub_key == nullptr)
+    {
+        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+        return;
+    }
+
+    validation_state.server_pub_key.reset(leaf_pub_key);
+    validation_state.real_cert_chain_verified = true;
+}
+
 void load_server_public_key_from_certificate(const std::vector<std::uint8_t>& msg_data,
                                              const std::vector<std::uint8_t>& auth_key,
                                              handshake_validation_state& validation_state,
@@ -392,13 +589,34 @@ void load_server_public_key_from_certificate(const std::vector<std::uint8_t>& ms
         ec = boost::asio::error::invalid_argument;
         return;
     }
-    verify_reality_bound_certificate(*cert_der, auth_key, validation_state, ec);
-    if (ec)
+    // 先尝试识别 REALITY 临时证书 失败后再退回真实证书链校验
+    boost::system::error_code reality_ec;
+    verify_reality_bound_certificate(*cert_der, auth_key, validation_state, reality_ec);
+    if (!reality_ec)
     {
+        validation_state.cert_checked = true;
         return;
     }
 
-    validation_state.cert_checked = true;
+    boost::system::error_code real_cert_ec;
+    verify_real_certificate_chain(msg_data, validation_state, real_cert_ec);
+    if (!real_cert_ec)
+    {
+        LOG_WARN("received real certificate for sni {}", validation_state.client_hello->sni);
+        validation_state.cert_checked = true;
+        return;
+    }
+
+    ec = reality_ec;
+    if (!ec)
+    {
+        ec = real_cert_ec;
+    }
+    if (!ec)
+    {
+        ec = boost::system::errc::make_error_code(boost::system::errc::permission_denied);
+    }
+    LOG_ERROR("server certificate verification failed on reality and real certificate path");
     return;
 }
 
@@ -737,12 +955,12 @@ void validate_server_handshake_chain(const handshake_validation_state& validatio
         ec = boost::system::errc::make_error_code(boost::system::errc::permission_denied);
         return;
     }
-    if (!validation_state.reality_cert_verified)
+    if (!validation_state.reality_cert_verified && !validation_state.real_cert_chain_verified)
     {
         auto& stats = statistics::instance();
         stats.inc_cert_verify_failures();
         stats.inc_handshake_failure_by_sni(statistics::handshake_failure_reason::kCertVerify, sni);
-        LOG_ERROR("server certificate reality binding verification failed");
+        LOG_ERROR("server certificate verification failed on all supported path");
         ec = boost::system::errc::make_error_code(boost::system::errc::permission_denied);
         return;
     }
@@ -1575,6 +1793,15 @@ boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::
                      handshake_ret.cipher_suite,
                      handshake_ret.key_share_group,
                      reality::named_group_name(handshake_ret.key_share_group));
+        if (handshake_ret.auth_mode == handshake_auth_mode::kRealCertificateFallback)
+        {
+            // 真实证书链路不能进入 mux 隧道 这里只记录并丢弃当前连接
+            LOG_CTX_WARN(ctx, "{} received real certificate fallback skip mux tunnel", log_event::kHandshake);
+            boost::system::error_code close_ec;
+            socket->close(close_ec);
+            co_await wait_before_retry(ctx, "real_certificate_fallback");
+            continue;
+        }
         // step 4 build tunnel
         auto tunnel = build_tunnel(std::move(*socket), io_context, cid, handshake_ret, ctx.trace_id());
         if (tunnel == nullptr)
@@ -1737,23 +1964,22 @@ boost::asio::awaitable<client_tunnel_pool::handshake_result> client_tunnel_pool:
         co_return handshake_result{};
     }
 
-    auto app_secrets = co_await handshake_read_loop(socket,
-                                                    hs_keys.s_hs_keys,
-                                                    server_hello_result.hs_keys,
-                                                    auth_key,
-                                                    client_hello,
-                                                    sni_,
-                                                    trans,
-                                                    server_hello_result.negotiated_cipher,
-                                                    server_hello_result.negotiated_md,
-                                                    max_handshake_records_,
-                                                    cfg_.timeout.read,
-                                                    ec);
+    auto handshake_read_result = co_await handshake_read_loop(socket,
+                                                              hs_keys.s_hs_keys,
+                                                              server_hello_result.hs_keys,
+                                                              auth_key,
+                                                              client_hello,
+                                                              sni_,
+                                                              trans,
+                                                              server_hello_result.negotiated_cipher,
+                                                              server_hello_result.negotiated_md,
+                                                              max_handshake_records_,
+                                                              cfg_.timeout.read,
+                                                              ec);
     if (ec)
     {
         co_return handshake_result{};
     }
-    auto [c_app_secret, s_app_secret] = std::move(app_secrets);
 
     co_await send_client_finished(socket,
                                   hs_keys.c_hs_keys,
@@ -1768,12 +1994,13 @@ boost::asio::awaitable<client_tunnel_pool::handshake_result> client_tunnel_pool:
         co_return handshake_result{};
     }
 
-    handshake_result result{.c_app_secret = std::move(c_app_secret),
-                            .s_app_secret = std::move(s_app_secret),
+    handshake_result result{.c_app_secret = std::move(handshake_read_result.c_app_secret),
+                            .s_app_secret = std::move(handshake_read_result.s_app_secret),
                             .cipher_suite = server_hello_result.cipher_suite,
                             .key_share_group = server_hello_result.key_share_group,
                             .md = server_hello_result.negotiated_md,
-                            .cipher = server_hello_result.negotiated_cipher};
+                            .cipher = server_hello_result.negotiated_cipher,
+                            .auth_mode = handshake_read_result.auth_mode};
     co_return result;
 }
 
@@ -1882,7 +2109,7 @@ boost::asio::awaitable<client_tunnel_pool::server_hello_res> client_tunnel_pool:
         .key_share_group = server_hello.key_share.group};
 }
 
-boost::asio::awaitable<std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>>
+boost::asio::awaitable<client_tunnel_pool::handshake_read_result>
 client_tunnel_pool::handshake_read_loop(boost::asio::ip::tcp::socket& socket,
                                         const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& s_hs_keys,
                                         const reality::handshake_keys& hs_keys,
@@ -1911,7 +2138,7 @@ client_tunnel_pool::handshake_read_loop(boost::asio::ip::tcp::socket& socket,
         {
             LOG_ERROR("too many handshake records {} limit {}", handshake_record_count, max_handshake_records);
             ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
-            co_return std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>{};
+            co_return handshake_read_result{};
         }
         co_await process_handshake_record(socket,
                                           s_hs_keys,
@@ -1929,7 +2156,7 @@ client_tunnel_pool::handshake_read_loop(boost::asio::ip::tcp::socket& socket,
                                           ec);
         if (ec)
         {
-            co_return std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>{};
+            co_return handshake_read_result{};
         }
         handshake_record_count++;
     }
@@ -1937,16 +2164,23 @@ client_tunnel_pool::handshake_read_loop(boost::asio::ip::tcp::socket& socket,
     validate_server_handshake_chain(validation_state, sni, ec);
     if (ec)
     {
-        co_return std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>{};
+        co_return handshake_read_result{};
     }
 
     auto app_sec = reality::tls_key_schedule::derive_application_secrets(hs_keys.master_secret, trans.finish(), md, ec);
     if (ec)
     {
         LOG_ERROR("derive app secrets failed {}", ec.message());
-        co_return std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>{};
+        co_return handshake_read_result{};
     }
-    co_return app_sec;
+
+    // 握手阶段只区分证书类型 是否进入 mux 隧道由上层连接循环决定
+    handshake_read_result result{
+        .c_app_secret = std::move(app_sec.first),
+        .s_app_secret = std::move(app_sec.second),
+        .auth_mode = validation_state.real_cert_chain_verified ? handshake_auth_mode::kRealCertificateFallback
+                                                               : handshake_auth_mode::kRealityTunnel};
+    co_return result;
 }
 
 boost::asio::awaitable<void> client_tunnel_pool::send_client_finished(
