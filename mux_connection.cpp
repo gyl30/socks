@@ -43,6 +43,13 @@ extern "C"
 namespace mux
 {
 
+namespace
+{
+
+constexpr std::uint32_t kControlFrameSendTimeoutSec = 1;
+
+}    // namespace
+
 mux_connection::mux_connection(boost::asio::ip::tcp::socket socket,
                                boost::asio::io_context& io_context,
                                reality_engine engine,
@@ -117,7 +124,13 @@ boost::asio::awaitable<void> mux_connection::handle_unknown_stream(mux::frame_he
             mux_frame rst;
             rst.h.command = mux::kCmdRst;
             rst.h.stream_id = header.stream_id;
-            co_await write_channel_->async_send({}, rst, boost::asio::as_tuple(boost::asio::use_awaitable));
+            boost::system::error_code rst_ec;
+            co_await send_async_with_timeout(std::move(rst), kControlFrameSendTimeoutSec, rst_ec);
+            if (rst_ec)
+            {
+                LOG_WARN("mux {} reject stream {} send rst failed {}", cid_, header.stream_id, rst_ec.message());
+                stop();
+            }
             co_return;
         }
         if (cb_)
@@ -134,7 +147,13 @@ boost::asio::awaitable<void> mux_connection::handle_unknown_stream(mux::frame_he
     mux_frame frame;
     frame.h.command = mux::kCmdRst;
     frame.h.stream_id = header.stream_id;
-    co_await write_channel_->async_send({}, frame, boost::asio::as_tuple(boost::asio::use_awaitable));
+    boost::system::error_code rst_ec;
+    co_await send_async_with_timeout(std::move(frame), kControlFrameSendTimeoutSec, rst_ec);
+    if (rst_ec)
+    {
+        LOG_WARN("mux {} unknown stream {} send rst failed {}", cid_, header.stream_id, rst_ec.message());
+        stop();
+    }
 }
 
 boost::asio::awaitable<void> mux_connection::handle_stream_frame(const mux::frame_header& header, std::vector<std::uint8_t> payload)
