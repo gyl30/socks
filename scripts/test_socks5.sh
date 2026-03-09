@@ -276,3 +276,7 @@ fi
 echo "socks5 tcp smoke ok"
 echo "socks5 mux parallel ok"
 echo "socks5 udp associate ok"
+
+python3 "$repo_root/scripts/socks5_edge_cases.py" \
+    --socks-host 127.0.0.1 \
+    --socks-port "$socks_port"
