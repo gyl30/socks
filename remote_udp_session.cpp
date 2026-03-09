@@ -205,7 +205,14 @@ boost::asio::awaitable<void> remote_udp_session::start_impl()
     }
 
     using boost::asio::experimental::awaitable_operators::operator||;
-    co_await (mux_to_udp() || udp_to_mux() || idle_watchdog());
+    if (cfg_.timeout.idle == 0)
+    {
+        co_await (mux_to_udp() || udp_to_mux());
+    }
+    else
+    {
+        co_await (mux_to_udp() || udp_to_mux() || idle_watchdog());
+    }
 
     const auto close_command = stream_close_command_.load(std::memory_order_relaxed);
     if (stream_ != nullptr && close_command != kNoStreamControl)
