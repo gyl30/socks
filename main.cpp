@@ -11,6 +11,9 @@
 #include <string_view>
 
 #include <boost/system/errc.hpp>
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/detached.hpp>
+#include <boost/asio/awaitable.hpp>
 #include <boost/asio/signal_set.hpp>
 #include <boost/system/detail/errc.hpp>
 
@@ -161,6 +164,30 @@ void stop_services(runtime_services& services)
         services.server->stop();
     }
 }
+
+boost::asio::awaitable<void> wait_services_stopped(runtime_services& services, mux::io_context_pool& pool)
+{
+    if (services.monitor != nullptr)
+    {
+        co_await services.monitor->wait_stopped();
+    }
+    if (services.socks != nullptr)
+    {
+        co_await services.socks->wait_stopped();
+    }
+#if SOCKS_HAS_TPROXY
+    if (services.tproxy != nullptr)
+    {
+        co_await services.tproxy->wait_stopped();
+    }
+#endif
+    if (services.server != nullptr)
+    {
+        co_await services.server->wait_stopped();
+    }
+    pool.shutdown();
+}
+
 int run_with_config(const char* prog, const char* config_path)
 {
     mux::config cfg;
@@ -206,7 +233,7 @@ int run_with_config(const char* prog, const char* config_path)
         [&](boost::system::error_code, int)
         {
             stop_services(services);
-            pool.shutdown();
+            boost::asio::co_spawn(pool.get_io_context(), wait_services_stopped(services, pool), boost::asio::detached);
         });
 
     pool.run();

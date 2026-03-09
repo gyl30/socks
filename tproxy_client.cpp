@@ -177,6 +177,11 @@ void tproxy_client::start()
 
 void tproxy_client::stop()
 {
+    if (stopping_.exchange(true))
+    {
+        return;
+    }
+
     boost::asio::post(
         io_context_,
         [self = shared_from_this()]()
@@ -211,6 +216,15 @@ void tproxy_client::stop()
 
             self->group_.emit(boost::asio::cancellation_type::all);
         });
+}
+
+boost::asio::awaitable<void> tproxy_client::wait_stopped()
+{
+    const auto [ec] = co_await group_.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
+    if (ec)
+    {
+        LOG_ERROR("tproxy client wait stopped failed {}", ec.message());
+    }
 }
 
 boost::asio::awaitable<void> tproxy_client::accept_tcp_loop()

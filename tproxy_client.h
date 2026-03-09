@@ -1,6 +1,7 @@
 #ifndef TPROXY_CLIENT_H
 #define TPROXY_CLIENT_H
 
+#include <atomic>
 #include <memory>
 #include <string>
 #include <vector>
@@ -31,6 +32,7 @@ class tproxy_client : public std::enable_shared_from_this<tproxy_client>
    public:
     void start();
     void stop();
+    boost::asio::awaitable<void> wait_stopped();
 
    private:
     boost::asio::awaitable<void> accept_tcp_loop();
@@ -52,6 +54,7 @@ class tproxy_client : public std::enable_shared_from_this<tproxy_client>
     boost::asio::ip::tcp::acceptor tcp_acceptor_{io_context_};
     boost::asio::ip::udp::socket udp_socket_{io_context_};
     std::unordered_map<std::string, std::shared_ptr<tproxy_udp_session>> udp_sessions_;
+    std::atomic<bool> stopping_{false};
 };
 
 }    // namespace mux

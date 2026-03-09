@@ -38,6 +38,7 @@ class socks_client : public std::enable_shared_from_this<socks_client>
 
     int start();
     void stop();
+    boost::asio::awaitable<void> wait_stopped();
 
    private:
     boost::asio::awaitable<void> accept_loop();
@@ -50,6 +51,7 @@ class socks_client : public std::enable_shared_from_this<socks_client>
     boost::asio::ip::tcp::acceptor acceptor_{ioc_};
     std::shared_ptr<mux::router> router_;
     std::shared_ptr<client_tunnel_pool> tunnel_pool_;
+    std::atomic<bool> stopping_{false};
 };
 
 }    // namespace mux

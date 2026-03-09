@@ -1,6 +1,7 @@
 #ifndef MONITOR_SERVER_H
 #define MONITOR_SERVER_H
 
+#include <atomic>
 #include <memory>
 #include <string>
 #include <cstdint>
@@ -25,6 +26,7 @@ class monitor_server : public std::enable_shared_from_this<monitor_server>
    public:
     int start();
     void stop();
+    boost::asio::awaitable<void> wait_stopped();
 
    private:
     boost::asio::awaitable<void> accept_loop();
@@ -35,6 +37,7 @@ class monitor_server : public std::enable_shared_from_this<monitor_server>
     boost::asio::io_context& ioc_;
     task_group group_{ioc_};
     boost::asio::ip::tcp::acceptor acceptor_{ioc_};
+    std::atomic<bool> stopping_{false};
 };
 
 }    // namespace mux

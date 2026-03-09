@@ -47,7 +47,7 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
 
     void start();
 
-    void stop() {};
+    void stop();
 
     [[nodiscard]] std::shared_ptr<mux_tunnel_impl> select_tunnel();
     [[nodiscard]] boost::asio::awaitable<std::shared_ptr<mux_tunnel_impl>> wait_for_tunnel(boost::asio::io_context& io_context,
@@ -179,6 +179,7 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
     std::optional<reality::fingerprint_type> fingerprint_type_;
     std::mutex tunnel_mutex_;
     std::vector<std::shared_ptr<mux_tunnel_impl>> tunnel_pool_;
+    std::once_flag stop_once_;
 };
 
 }    // namespace mux

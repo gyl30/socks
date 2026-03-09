@@ -1239,6 +1239,11 @@ void remote_server::start()
 
 void remote_server::stop()
 {
+    if (stopping_.exchange(true))
+    {
+        return;
+    }
+
     boost::asio::post(
         io_context_,
         [self = shared_from_this()]()
@@ -1251,6 +1256,15 @@ void remote_server::stop()
             }
             self->group_.emit(boost::asio::cancellation_type::all);
         });
+}
+
+boost::asio::awaitable<void> remote_server::wait_stopped()
+{
+    const auto [ec] = co_await group_.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
+    if (ec)
+    {
+        LOG_ERROR("remote server wait stopped failed {}", ec.message());
+    }
 }
 
 bool remote_server::try_acquire_fallback_budget(const connection_context& ctx, const char* reason)

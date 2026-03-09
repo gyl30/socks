@@ -47,6 +47,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
    public:
     void start();
     void stop();
+    boost::asio::awaitable<void> wait_stopped();
 
    private:
     struct server_handshake_res
@@ -94,6 +95,7 @@ class remote_server : public std::enable_shared_from_this<remote_server>
     std::atomic<std::uint32_t> active_fallbacks_{0};
     std::mutex fallback_budget_mu_;
     std::unordered_map<std::string, std::deque<std::uint64_t>> fallback_attempts_by_remote_;
+    std::atomic<bool> stopping_{false};
 };
 
 }    // namespace mux
