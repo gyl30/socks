@@ -57,7 +57,6 @@ class remote_udp_session : public std::enable_shared_from_this<remote_udp_sessio
     boost::asio::awaitable<void> run_udp_session_loops();
     boost::asio::awaitable<void> cleanup_after_stop();
     void record_udp_write(std::size_t bytes);
-    boost::asio::awaitable<void> watchdog();
     boost::asio::awaitable<void> mux_to_udp();
     boost::asio::awaitable<void> udp_to_mux();
     boost::asio::awaitable<void> idle_watchdog();
@@ -73,14 +72,11 @@ class remote_udp_session : public std::enable_shared_from_this<remote_udp_sessio
     const config& cfg_;
     connection_context ctx_;
     boost::asio::io_context& io_context_;
-    boost::asio::steady_timer timer_;
     boost::asio::steady_timer idle_timer_;
     boost::asio::ip::udp::socket udp_socket_;
     boost::asio::ip::udp::resolver udp_resolver_;
     std::shared_ptr<mux_stream> stream_;
     std::weak_ptr<mux_connection> connection_;
-    std::uint64_t last_read_time_ms_{0};
-    std::uint64_t last_write_time_ms_{0};
     std::uint64_t last_activity_time_ms_{0};
     std::unordered_map<std::string, boost::asio::ip::udp::endpoint> resolved_targets_;
     std::unordered_set<std::string> allowed_reply_peers_;

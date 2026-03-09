@@ -84,7 +84,6 @@ remote_udp_session::remote_udp_session(const std::shared_ptr<mux_connection>& co
     : id_(id),
       cfg_(cfg),
       io_context_(io_context),
-      timer_(io_context_),
       idle_timer_(io_context_),
       udp_socket_(io_context_),
       udp_resolver_(io_context_),
@@ -95,10 +94,7 @@ remote_udp_session::remote_udp_session(const std::shared_ptr<mux_connection>& co
     ctx_ = ctx;
     ctx_.stream_id(id);
     stream_close_command_.store(mux::kCmdFin, std::memory_order_relaxed);
-    const auto ts = timeout_io::now_ms();
-    last_read_time_ms_ = ts;
-    last_write_time_ms_ = ts;
-    last_activity_time_ms_ = ts;
+    last_activity_time_ms_ = timeout_io::now_ms();
     if (connection != nullptr)
     {
         connection->register_stream(stream_);
@@ -232,43 +228,6 @@ boost::asio::awaitable<void> remote_udp_session::start_impl()
     LOG_CTX_INFO(ctx_, "{} finished {}", log_event::kConnClose, ctx_.stats_summary());
 }
 
-boost::asio::awaitable<void> remote_udp_session::watchdog()
-{
-    const auto read_timeout_ms = static_cast<std::uint64_t>(cfg_.timeout.read) * 1000ULL;
-    const auto write_timeout_ms = static_cast<std::uint64_t>(cfg_.timeout.write) * 1000ULL;
-    while (udp_socket_.is_open())
-    {
-        timer_.expires_after(std::chrono::seconds(1));
-        const auto [wait_ec] = co_await timer_.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
-        if (wait_ec)
-        {
-            if (wait_ec == boost::asio::error::operation_aborted)
-            {
-                LOG_CTX_DEBUG(ctx_, "{} watchdog stopped {}", log_event::kTimeout, wait_ec.message());
-            }
-            else
-            {
-                LOG_CTX_WARN(ctx_, "{} watchdog error {}", log_event::kTimeout, wait_ec.message());
-            }
-            break;
-        }
-        const auto current_ms = timeout_io::now_ms();
-        const auto read_elapsed_ms = current_ms - last_read_time_ms_;
-        const auto write_elapsed_ms = current_ms - last_write_time_ms_;
-        if (read_timeout_ms > 0 && read_elapsed_ms > read_timeout_ms)
-        {
-            LOG_CTX_WARN(ctx_, "{} read idle {}s", log_event::kTimeout, read_elapsed_ms / 1000ULL);
-            break;
-        }
-        if (write_timeout_ms > 0 && write_elapsed_ms > write_timeout_ms)
-        {
-            LOG_CTX_WARN(ctx_, "{} write idle {}s", log_event::kTimeout, write_elapsed_ms / 1000ULL);
-            break;
-        }
-    }
-    LOG_CTX_DEBUG(ctx_, "{} watchdog finished", log_event::kMux);
-}
-
 boost::asio::awaitable<void> remote_udp_session::mux_to_udp()
 {
     boost::system::error_code ec;
@@ -363,9 +322,7 @@ boost::asio::awaitable<void> remote_udp_session::on_frame(const mux_frame& frame
         LOG_CTX_WARN(ctx_, "{} stage=send target={}:{} error={}", log_event::kMux, target_ep.address().to_string(), target_ep.port(), ec.message());
         co_return;
     }
-    const auto ts = timeout_io::now_ms();
-    last_write_time_ms_ = ts;
-    last_activity_time_ms_ = ts;
+    last_activity_time_ms_ = timeout_io::now_ms();
     ctx_.add_tx_bytes(payload_len);
     allowed_reply_peers_.insert(endpoint_key(target_ep));
 }
@@ -396,9 +353,7 @@ boost::asio::awaitable<void> remote_udp_session::udp_to_mux()
             continue;
         }
 
-        const auto ts = timeout_io::now_ms();
-        last_read_time_ms_ = ts;
-        last_activity_time_ms_ = ts;
+        last_activity_time_ms_ = timeout_io::now_ms();
         ctx_.add_rx_bytes(n);
         socks_udp_header h;
         h.addr = normalized_ep.address().to_string();
@@ -425,9 +380,7 @@ boost::asio::awaitable<void> remote_udp_session::udp_to_mux()
             LOG_CTX_WARN(ctx_, "{} send udp packet to mux failed {}", log_event::kMux, ec.message());
             break;
         }
-        const auto write_ts = timeout_io::now_ms();
-        last_write_time_ms_ = write_ts;
-        last_activity_time_ms_ = write_ts;
+        last_activity_time_ms_ = timeout_io::now_ms();
         ctx_.add_tx_bytes(pkt_size);
     }
     LOG_CTX_DEBUG(ctx_, "{} udp recv loop stopped", log_event::kMux);
