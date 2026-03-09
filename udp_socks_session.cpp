@@ -422,7 +422,14 @@ boost::asio::awaitable<void> udp_socks_session::run(const std::string& host, con
     open_direct_udp_socket(direct_udp_socket_v6_, boost::asio::ip::udp::v6(), "v6", direct_socket_ec);
     // step 3 forward data
     using boost::asio::experimental::awaitable_operators::operator||;
-    co_await (udp_socket_loop() || wait_and_stream_to_udp_sock() || keep_tcp_alive() || idle_watchdog() || run_direct_udp_socket_loops());
+    if (cfg_.timeout.idle == 0)
+    {
+        co_await (udp_socket_loop() || wait_and_stream_to_udp_sock() || keep_tcp_alive() || run_direct_udp_socket_loops());
+    }
+    else
+    {
+        co_await (udp_socket_loop() || wait_and_stream_to_udp_sock() || keep_tcp_alive() || idle_watchdog() || run_direct_udp_socket_loops());
+    }
 
     const auto close_command = stream_close_command_.load(std::memory_order_relaxed);
     if (stream_ != nullptr && close_command != kNoStreamControl)
