@@ -214,17 +214,31 @@ void tproxy_udp_session::stop()
     close_impl();
 }
 
-boost::asio::awaitable<bool> tproxy_udp_session::enqueue_packet(std::vector<std::uint8_t> payload)
+udp_enqueue_result tproxy_udp_session::try_enqueue_packet(std::vector<std::uint8_t> payload)
 {
-    last_activity_time_ms_ = timeout_io::now_ms();
-    const auto [send_ec] =
-        co_await packet_channel_.async_send(boost::system::error_code{}, std::move(payload), boost::asio::as_tuple(boost::asio::use_awaitable));
-    if (send_ec)
+    if (stopped_)
     {
-        LOG_CTX_WARN(ctx_, "{} queue udp packet failed {}", log_event::kMux, send_ec.message());
-        co_return false;
+        return udp_enqueue_result::kClosed;
     }
-    co_return true;
+
+    last_activity_time_ms_ = timeout_io::now_ms();
+    if (!packet_channel_.try_send(boost::system::error_code{}, std::move(payload)))
+    {
+        if (stopped_)
+        {
+            return udp_enqueue_result::kClosed;
+        }
+
+        LOG_CTX_WARN(ctx_,
+                     "{} drop udp packet because session queue is full client {}:{} target {}:{}",
+                     log_event::kMux,
+                     client_endpoint_.address().to_string(),
+                     client_endpoint_.port(),
+                     target_endpoint_.address().to_string(),
+                     target_endpoint_.port());
+        return udp_enqueue_result::kDroppedOverflow;
+    }
+    return udp_enqueue_result::kEnqueued;
 }
 
 boost::asio::awaitable<void> tproxy_udp_session::run()

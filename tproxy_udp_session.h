@@ -29,6 +29,13 @@ namespace mux
 class mux_stream;
 class client_tunnel_pool;
 
+enum class udp_enqueue_result
+{
+    kEnqueued,
+    kDroppedOverflow,
+    kClosed,
+};
+
 class tproxy_udp_session : public std::enable_shared_from_this<tproxy_udp_session>
 {
    public:
@@ -44,7 +51,7 @@ class tproxy_udp_session : public std::enable_shared_from_this<tproxy_udp_sessio
 
     void start();
     void stop();
-    [[nodiscard]] boost::asio::awaitable<bool> enqueue_packet(std::vector<std::uint8_t> payload);
+    [[nodiscard]] udp_enqueue_result try_enqueue_packet(std::vector<std::uint8_t> payload);
 
    private:
     using packet_channel_type = boost::asio::experimental::concurrent_channel<void(boost::system::error_code, std::vector<std::uint8_t>)>;
