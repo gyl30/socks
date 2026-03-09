@@ -399,6 +399,12 @@ void udp_socks_session::close_impl()
 boost::asio::awaitable<void> udp_socks_session::run(const std::string& host, const std::uint16_t port)
 {
     apply_request_peer_constraint(host, port);
+    if (has_conflicting_peer_constraint())
+    {
+        LOG_CTX_WARN(ctx_, "{} udp associate peer constraint rejected", log_event::kSocks);
+        co_await write_socks_error_reply(socket_, socks::kRepNotAllowed, ctx_, cfg_.timeout.write);
+        co_return;
+    }
     boost::system::error_code ec;
     std::uint16_t udp_port = 0;
     boost::asio::ip::address local_addr;
@@ -502,6 +508,16 @@ void udp_socks_session::apply_request_peer_constraint(const std::string& host, c
                      request_client_addr_.to_string(),
                      control_peer_addr_.to_string());
     }
+}
+
+bool udp_socks_session::has_conflicting_peer_constraint() const
+{
+    if (!has_control_peer_addr_ || !has_request_client_addr_)
+    {
+        return false;
+    }
+
+    return request_client_addr_ != control_peer_addr_;
 }
 
 bool udp_socks_session::sender_matches_request_peer(const boost::asio::ip::udp::endpoint& sender) const
