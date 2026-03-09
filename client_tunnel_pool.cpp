@@ -1602,6 +1602,41 @@ void client_tunnel_pool::start()
     }
 }
 
+void client_tunnel_pool::stop()
+{
+    std::call_once(
+        stop_once_,
+        [this]()
+        {
+            std::vector<std::shared_ptr<mux_tunnel_impl>> tunnels;
+            {
+                std::lock_guard<std::mutex> lock(tunnel_mutex_);
+                tunnels.reserve(tunnel_pool_.size());
+                for (auto& tunnel : tunnel_pool_)
+                {
+                    if (tunnel != nullptr)
+                    {
+                        tunnels.push_back(tunnel);
+                        tunnel.reset();
+                    }
+                }
+            }
+
+            for (const auto& tunnel : tunnels)
+            {
+                if (tunnel == nullptr)
+                {
+                    continue;
+                }
+                const auto connection = tunnel->connection();
+                if (connection != nullptr)
+                {
+                    connection->stop();
+                }
+            }
+        });
+}
+
 std::shared_ptr<mux_tunnel_impl> client_tunnel_pool::select_tunnel()
 {
     std::lock_guard<std::mutex> lock(tunnel_mutex_);

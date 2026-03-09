@@ -9,6 +9,7 @@
 
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
+#include <boost/asio/as_tuple.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/redirect_error.hpp>
 
@@ -248,6 +249,11 @@ int monitor_server::start()
 
 void monitor_server::stop()
 {
+    if (stopping_.exchange(true))
+    {
+        return;
+    }
+
     boost::asio::post(
         ioc_,
         [self = shared_from_this()]()
@@ -260,6 +266,15 @@ void monitor_server::stop()
             }
             self->group_.emit(::boost::asio::cancellation_type::all);
         });
+}
+
+boost::asio::awaitable<void> monitor_server::wait_stopped()
+{
+    const auto [ec] = co_await group_.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
+    if (ec)
+    {
+        LOG_ERROR("monitor server wait stopped failed {}", ec.message());
+    }
 }
 
 boost::asio::awaitable<void> monitor_server::accept_loop()

@@ -92,7 +92,22 @@ void tproxy_tcp_session::start()
     boost::asio::co_spawn(io_context_, [this, self]() -> boost::asio::awaitable<void> { co_await run(); }, group_.adapt(boost::asio::detached));
 }
 
-void tproxy_tcp_session::stop() {}
+void tproxy_tcp_session::stop()
+{
+    idle_timer_.cancel();
+
+    boost::system::error_code ec;
+    ec = socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
+    if (ec && ec != boost::asio::error::not_connected)
+    {
+        LOG_CTX_WARN(ctx_, "{} shutdown client failed {}", log_event::kSocks, ec.message());
+    }
+    ec = socket_.close(ec);
+    if (ec && ec != boost::asio::error::bad_descriptor)
+    {
+        LOG_CTX_WARN(ctx_, "{} close client failed {}", log_event::kSocks, ec.message());
+    }
+}
 
 boost::asio::awaitable<void> tproxy_tcp_session::run()
 {
