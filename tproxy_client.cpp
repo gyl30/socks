@@ -392,8 +392,8 @@ boost::asio::awaitable<void> tproxy_client::on_udp_packet(boost::asio::ip::udp::
         co_return;
     }
 
-    const auto queued = co_await session_it->second->enqueue_packet(std::move(payload));
-    if (!queued)
+    const auto enqueue_result = session_it->second->try_enqueue_packet(std::move(payload));
+    if (enqueue_result == udp_enqueue_result::kClosed)
     {
         erase_udp_session(key);
     }
