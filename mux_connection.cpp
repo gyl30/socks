@@ -47,6 +47,37 @@ namespace
 {
 
 constexpr std::uint32_t kControlFrameSendTimeoutSec = 1;
+constexpr std::uint8_t kHandshakeTypeNewSessionTicket = 0x04;
+constexpr std::uint8_t kHandshakeTypeKeyUpdate = 0x18;
+
+void handle_post_handshake_record(const std::uint32_t cid,
+                                  const std::span<const std::uint8_t> plaintext,
+                                  boost::system::error_code& ec)
+{
+    ec.clear();
+    if (plaintext.empty())
+    {
+        LOG_WARN("mux {} empty post handshake record", cid);
+        ec = boost::asio::error::invalid_argument;
+        return;
+    }
+
+    const auto handshake_type = plaintext.front();
+    if (handshake_type == kHandshakeTypeNewSessionTicket)
+    {
+        LOG_DEBUG("mux {} ignore new session ticket", cid);
+        return;
+    }
+    if (handshake_type == kHandshakeTypeKeyUpdate)
+    {
+        LOG_WARN("mux {} key update unsupported", cid);
+        ec = boost::asio::error::operation_not_supported;
+        return;
+    }
+
+    LOG_WARN("mux {} unsupported post handshake type {}", cid, handshake_type);
+    ec = boost::asio::error::invalid_argument;
+}
 
 }    // namespace
 
@@ -312,6 +343,14 @@ boost::asio::awaitable<void> mux_connection::read_loop()
                 {
                     co_return;
                 }
+                if (type == reality::kContentTypeHandshake)
+                {
+                    handle_post_handshake_record(cid_, plaintext, ec);
+                    co_return;
+                }
+
+                LOG_WARN("mux {} unsupported record type {}", cid_, type);
+                ec = boost::asio::error::invalid_argument;
             },
             ec);
         if (ec)
