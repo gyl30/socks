@@ -568,6 +568,18 @@ boost::asio::awaitable<void> tproxy_udp_session::proxy_to_client()
             LOG_CTX_WARN(ctx_, "{} proxy udp header length invalid {}", log_event::kMux, header.header_len);
             break;
         }
+        if (header.frag != 0x00)
+        {
+            update_stream_close_command(stream_close_command_, mux::kCmdRst);
+            LOG_CTX_WARN(ctx_, "{} proxy udp fragment unsupported {}", log_event::kMux, header.frag);
+            break;
+        }
+        if (header.port == 0)
+        {
+            update_stream_close_command(stream_close_command_, mux::kCmdRst);
+            LOG_CTX_WARN(ctx_, "{} proxy udp source port invalid", log_event::kMux);
+            break;
+        }
 
         boost::system::error_code addr_ec;
         const auto source_addr = boost::asio::ip::make_address(header.addr, addr_ec);
