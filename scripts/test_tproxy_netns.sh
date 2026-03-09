@@ -53,13 +53,13 @@ direct_udp_port=18081
 direct_udp_blackhole_ip="36.1.0.4"
 direct_udp_blackhole_port=18082
 
-proxy_tcp_ip="203.0.113.2"
+proxy_tcp_ip="9.9.9.2"
 proxy_tcp_port=28080
-proxy_tcp_drop_ip="203.0.113.3"
+proxy_tcp_drop_ip="9.9.9.3"
 proxy_tcp_drop_port=28083
-proxy_udp_ip="203.0.113.2"
+proxy_udp_ip="9.9.9.2"
 proxy_udp_port=28081
-proxy_udp_blackhole_ip="203.0.113.4"
+proxy_udp_blackhole_ip="9.9.9.4"
 proxy_udp_blackhole_port=28082
 
 client_log="$tmp_dir/tproxy-client.log"
