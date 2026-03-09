@@ -997,6 +997,7 @@ void validate_server_handshake_chain(const handshake_validation_state& validatio
 boost::asio::awaitable<std::vector<std::uint8_t>> read_handshake_record_body(boost::asio::ip::tcp::socket& socket,
                                                                              const char* step,
                                                                              const std::uint32_t timeout_sec,
+                                                                             std::uint32_t& tls13_compat_ccs_count,
                                                                              boost::system::error_code& ec)
 {
     ec.clear();
@@ -1038,12 +1039,6 @@ boost::asio::awaitable<std::vector<std::uint8_t>> read_handshake_record_body(boo
             LOG_ERROR("error reading {} header {}", step, ec.message());
             co_return std::vector<std::uint8_t>{};
         }
-        if (header[0] != reality::kContentTypeHandshake)
-        {
-            LOG_ERROR("unexpected record type for {} {}", step, header[0]);
-            ec = boost::asio::error::invalid_argument;
-            co_return std::vector<std::uint8_t>{};
-        }
 
         const auto body_len = static_cast<std::uint16_t>((header[3] << 8) | header[4]);
         if (body_len > reality::kMaxTlsPlaintextLen)
@@ -1057,6 +1052,39 @@ boost::asio::awaitable<std::vector<std::uint8_t>> read_handshake_record_body(boo
         if (!(co_await read_exact(boost::asio::buffer(body))))
         {
             LOG_ERROR("error reading {} body {}", step, ec.message());
+            co_return std::vector<std::uint8_t>{};
+        }
+
+        if (header[0] == reality::kContentTypeChangeCipherSpec)
+        {
+            const std::uint8_t ccs_body = body_len == 1 ? body[0] : 0;
+            if (!handshake_data.empty())
+            {
+                LOG_ERROR("unexpected ccs during fragmented {}", step);
+                ec = boost::asio::error::invalid_argument;
+                co_return std::vector<std::uint8_t>{};
+            }
+            if (!reality::is_valid_tls13_compat_ccs(header, ccs_body))
+            {
+                LOG_ERROR("invalid tls13 compat ccs before {}", step);
+                ec = boost::asio::error::invalid_argument;
+                co_return std::vector<std::uint8_t>{};
+            }
+            if (tls13_compat_ccs_count >= kMaxTlsCompatCcsRecords)
+            {
+                LOG_ERROR("too many tls13 compat ccs before {}", step);
+                ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
+                co_return std::vector<std::uint8_t>{};
+            }
+
+            tls13_compat_ccs_count++;
+            LOG_DEBUG("skip tls13 compat ccs before {} count {}", step, tls13_compat_ccs_count);
+            continue;
+        }
+        if (header[0] != reality::kContentTypeHandshake)
+        {
+            LOG_ERROR("unexpected record type for {} {}", step, header[0]);
+            ec = boost::asio::error::invalid_argument;
             co_return std::vector<std::uint8_t>{};
         }
         handshake_data.insert(handshake_data.end(), body.begin(), body.end());
@@ -2121,7 +2149,8 @@ boost::asio::awaitable<client_tunnel_pool::server_hello_res> client_tunnel_pool:
     boost::system::error_code& ec) const
 {
     ec.clear();
-    const auto sh_data = co_await read_handshake_record_body(socket, "server hello", cfg_.timeout.read, ec);
+    std::uint32_t tls13_compat_ccs_count = 0;
+    const auto sh_data = co_await read_handshake_record_body(socket, "server hello", cfg_.timeout.read, tls13_compat_ccs_count, ec);
     if (ec)
     {
         co_return server_hello_res{};
