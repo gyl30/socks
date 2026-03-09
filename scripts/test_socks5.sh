@@ -280,3 +280,8 @@ echo "socks5 udp associate ok"
 python3 "$repo_root/scripts/socks5_edge_cases.py" \
     --socks-host 127.0.0.1 \
     --socks-port "$socks_port"
+
+python3 "$repo_root/scripts/socks5_udp_edge_cases.py" \
+    --socks-host 127.0.0.1 \
+    --socks-port "$socks_port" \
+    --target-port "$udp_port"
