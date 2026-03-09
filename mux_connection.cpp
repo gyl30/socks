@@ -334,10 +334,7 @@ boost::asio::awaitable<void> mux_connection::read_loop()
                 if (type == reality::kContentTypeApplicationData)
                 {
                     co_await mux_dispatcher_.on_plaintext_data(plaintext, ec);
-                    if (ec)
-                    {
-                        co_return;
-                    }
+                    co_return;
                 }
                 if (type == reality::kContentTypeAlert)
                 {
