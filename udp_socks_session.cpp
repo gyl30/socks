@@ -640,32 +640,42 @@ boost::asio::awaitable<void> udp_socks_session::forward_direct_packet(const sock
     const auto target = co_await resolve_target_endpoint(header.addr, header.port, ec);
     if (ec)
     {
+        if (!is_normal_close_error(ec))
+        {
+            ec.clear();
+        }
         co_return;
     }
     auto* direct_socket = select_direct_udp_socket(target);
     if (direct_socket == nullptr)
     {
-        ec = boost::asio::error::address_family_not_supported;
+        const auto direct_socket_ec = boost::system::error_code(boost::asio::error::address_family_not_supported);
         LOG_CTX_WARN(ctx_,
                      "{} udp direct socket unavailable {}:{} error={}",
                      log_event::kRoute,
                      target.address().to_string(),
                      target.port(),
-                     ec.message());
+                     direct_socket_ec.message());
         co_return;
     }
     const auto [send_ec, send_n] = co_await direct_socket->async_send_to(
         boost::asio::buffer(payload, payload_len), target, boost::asio::as_tuple(boost::asio::use_awaitable));
     (void)send_n;
-    ec = send_ec;
-    if (ec)
+    if (send_ec)
     {
-        LOG_CTX_WARN(ctx_,
-                     "{} udp direct send failed {}:{} error={}",
-                     log_event::kRoute,
-                     target.address().to_string(),
-                     target.port(),
-                     ec.message());
+        if (is_normal_close_error(send_ec))
+        {
+            ec = send_ec;
+        }
+        else
+        {
+            LOG_CTX_WARN(ctx_,
+                         "{} udp direct send failed {}:{} error={}",
+                         log_event::kRoute,
+                         target.address().to_string(),
+                         target.port(),
+                         send_ec.message());
+        }
         co_return;
     }
 
