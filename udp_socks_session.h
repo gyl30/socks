@@ -83,6 +83,7 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
                                 const char* family,
                                 boost::system::error_code& ec);
     [[nodiscard]] boost::asio::ip::udp::socket* select_direct_udp_socket(const boost::asio::ip::udp::endpoint& target);
+    void clear_proxy_stream_if_current(const std::shared_ptr<mux_stream>& stream);
     boost::asio::awaitable<void> wait_and_stream_to_udp_sock();
     boost::asio::awaitable<void> stream_to_udp_sock(std::shared_ptr<mux_stream> stream);
     boost::asio::awaitable<void> keep_tcp_alive();
