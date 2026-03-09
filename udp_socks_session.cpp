@@ -557,6 +557,19 @@ void udp_socks_session::open_direct_udp_socket(boost::asio::ip::udp::socket& dir
         LOG_CTX_WARN(ctx_, "{} open direct udp {} socket failed {}", log_event::kRoute, family, ec.message());
         return;
     }
+    const auto connect_mark = cfg_.tproxy.enabled ? cfg_.tproxy.mark : 0U;
+    if (connect_mark != 0)
+    {
+        net::set_socket_mark(direct_socket.native_handle(), connect_mark, ec);
+        if (ec)
+        {
+            LOG_CTX_WARN(ctx_, "{} set direct udp {} mark failed {}", log_event::kRoute, family, ec.message());
+            boost::system::error_code close_ec;
+            close_ec = direct_socket.close(close_ec);
+            (void)close_ec;
+            return;
+        }
+    }
     ec = direct_socket.bind(boost::asio::ip::udp::endpoint(protocol, 0), ec);
     if (ec)
     {
