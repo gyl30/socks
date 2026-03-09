@@ -825,6 +825,22 @@ boost::asio::awaitable<bool> udp_socks_session::ensure_proxy_stream(boost::syste
     co_return true;
 }
 
+void udp_socks_session::clear_proxy_stream_if_current(const std::shared_ptr<mux_stream>& stream)
+{
+    if (stream == nullptr || stream_ != stream)
+    {
+        return;
+    }
+
+    if (tunnel_ != nullptr)
+    {
+        tunnel_->remove_stream(stream_);
+    }
+    stream_.reset();
+    tunnel_.reset();
+    proxy_stream_started_ = false;
+}
+
 boost::asio::awaitable<void> udp_socks_session::udp_socket_loop()
 {
     std::vector<std::uint8_t> buf(65535);
@@ -893,17 +909,19 @@ boost::asio::awaitable<void> udp_socks_session::udp_socket_loop()
                     break;
                 }
 
+                const auto stream = stream_;
                 mux_frame data_frame;
-                data_frame.h.stream_id = stream_->id();
+                data_frame.h.stream_id = stream->id();
                 data_frame.h.command = mux::kCmdDat;
                 data_frame.payload.assign(buf.begin(), buf.begin() + static_cast<std::ptrdiff_t>(n));
                 boost::system::error_code write_ec;
-                co_await stream_->async_write(data_frame, write_ec);
+                co_await stream->async_write(data_frame, write_ec);
                 if (write_ec)
                 {
                     update_stream_close_command(stream_close_command_, kNoStreamControl);
-                    LOG_CTX_ERROR(ctx_, "{} write to stream failed {}", log_event::kSocks, write_ec.message());
-                    break;
+                    clear_proxy_stream_if_current(stream);
+                    LOG_CTX_WARN(ctx_, "{} write to stream failed {}", log_event::kSocks, write_ec.message());
+                    continue;
                 }
                 last_activity_time_ms_ = now_ms();
                 continue;
@@ -931,12 +949,20 @@ boost::asio::awaitable<void> udp_socks_session::udp_socket_loop()
 
 boost::asio::awaitable<void> udp_socks_session::wait_and_stream_to_udp_sock()
 {
-    auto [read_ec, stream] = co_await proxy_stream_channel_.async_receive(boost::asio::as_tuple(boost::asio::use_awaitable));
-    if (read_ec || stream == nullptr)
+    while (true)
     {
-        co_return;
+        auto [read_ec, stream] = co_await proxy_stream_channel_.async_receive(boost::asio::as_tuple(boost::asio::use_awaitable));
+        if (read_ec)
+        {
+            co_return;
+        }
+        if (stream == nullptr)
+        {
+            continue;
+        }
+
+        co_await stream_to_udp_sock(stream);
     }
-    co_await stream_to_udp_sock(stream);
 }
 
 boost::asio::awaitable<void> udp_socks_session::stream_to_udp_sock(std::shared_ptr<mux_stream> stream)
@@ -948,11 +974,13 @@ boost::asio::awaitable<void> udp_socks_session::stream_to_udp_sock(std::shared_p
         if (ec)
         {
             update_stream_close_command(stream_close_command_, kNoStreamControl);
+            clear_proxy_stream_if_current(stream);
             break;
         }
         if (data_frame.h.command == mux::kCmdRst || data_frame.h.command == mux::kCmdFin)
         {
             update_stream_close_command(stream_close_command_, kNoStreamControl);
+            clear_proxy_stream_if_current(stream);
             LOG_CTX_INFO(ctx_, "{} recv control cmd {} closing", log_event::kSocks, data_frame.h.command);
             break;
         }
@@ -960,7 +988,8 @@ boost::asio::awaitable<void> udp_socks_session::stream_to_udp_sock(std::shared_p
         {
             update_stream_close_command(stream_close_command_, mux::kCmdRst);
             LOG_CTX_WARN(ctx_, "{} recv unexpected cmd {} dropping session", log_event::kSocks, data_frame.h.command);
-            break;
+            close_impl();
+            co_return;
         }
         if (!has_client_addr_)
         {
@@ -973,6 +1002,7 @@ boost::asio::awaitable<void> udp_socks_session::stream_to_udp_sock(std::shared_p
         {
             update_stream_close_command(stream_close_command_, mux::kCmdRst);
             LOG_CTX_ERROR(ctx_, "{} send error {}", log_event::kSocks, send_ec.message());
+            close_impl();
             co_return;
         }
         (void)send_n;
