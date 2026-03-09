@@ -1720,7 +1720,7 @@ boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::
     boost::system::error_code ec;
     static thread_local std::mt19937 reconnect_gen(std::random_device{}());
     std::uint32_t retry_delay_ms = kReconnectBaseDelayMs;
-    const auto wait_before_retry = [&](const connection_context& ctx, const char* stage) -> boost::asio::awaitable<void>
+    const auto wait_before_retry = [&](const connection_context& ctx, const char* stage) -> boost::asio::awaitable<bool>
     {
         std::uniform_int_distribution<std::uint32_t> jitter_dist(0, retry_delay_ms / 4);
         const auto sleep_ms = retry_delay_ms + jitter_dist(reconnect_gen);
@@ -1729,12 +1729,16 @@ boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::
         boost::asio::steady_timer retry_timer(io_context);
         retry_timer.expires_after(std::chrono::milliseconds(sleep_ms));
         const auto [wait_ec] = co_await retry_timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
-        if (wait_ec && wait_ec != boost::asio::error::operation_aborted)
+        if (wait_ec == boost::asio::error::operation_aborted)
+        {
+            co_return false;
+        }
+        if (wait_ec)
         {
             LOG_CTX_WARN(ctx, "{} stage={} retry_backoff_wait_failed {}", log_event::kConnInit, stage, wait_ec.message());
         }
         retry_delay_ms = std::min(retry_delay_ms * 2, kReconnectMaxDelayMs);
-        co_return;
+        co_return true;
     };
 
     while (true)
@@ -1750,16 +1754,30 @@ boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::
         co_await tcp_connect_remote(io_context, *socket, ctx, ec);
         if (ec)
         {
+            if (ec == boost::asio::error::operation_aborted)
+            {
+                break;
+            }
             LOG_CTX_ERROR(ctx, "{} stage=connect target={}:{} error={}", log_event::kConnInit, remote_host_, remote_port_, ec.message());
-            co_await wait_before_retry(ctx, "connect");
+            if (!(co_await wait_before_retry(ctx, "connect")))
+            {
+                break;
+            }
             continue;
         }
         // step 3 handshake
         auto handshake_ret = co_await perform_reality_handshake_with_timeout(socket, ctx, ec);
         if (ec)
         {
+            if (ec == boost::asio::error::operation_aborted)
+            {
+                break;
+            }
             LOG_CTX_ERROR(ctx, "{} handshake error {}", log_event::kHandshake, ec.message());
-            co_await wait_before_retry(ctx, "handshake");
+            if (!(co_await wait_before_retry(ctx, "handshake")))
+            {
+                break;
+            }
             continue;
         }
 
@@ -1775,7 +1793,10 @@ boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::
             LOG_CTX_WARN(ctx, "{} received real certificate fallback skip mux tunnel", log_event::kHandshake);
             boost::system::error_code close_ec;
             socket->close(close_ec);
-            co_await wait_before_retry(ctx, "real_certificate_fallback");
+            if (!(co_await wait_before_retry(ctx, "real_certificate_fallback")))
+            {
+                break;
+            }
             continue;
         }
         // step 4 build tunnel
@@ -1783,7 +1804,10 @@ boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::
         if (tunnel == nullptr)
         {
             LOG_CTX_ERROR(ctx, "{} build tunnel failed", log_event::kHandshake);
-            co_await wait_before_retry(ctx, "build_tunnel");
+            if (!(co_await wait_before_retry(ctx, "build_tunnel")))
+            {
+                break;
+            }
             continue;
         }
         // step 5 tunnel run
@@ -1798,6 +1822,7 @@ boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::
             }
         }
 
+        bool stop_loop = false;
         while (true)
         {
             boost::asio::steady_timer hold_timer(io_context);
@@ -1805,6 +1830,10 @@ boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::
             const auto [wait_ec] = co_await hold_timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
             if (wait_ec)
             {
+                if (wait_ec == boost::asio::error::operation_aborted)
+                {
+                    stop_loop = true;
+                }
                 break;
             }
 
@@ -1823,6 +1852,11 @@ boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::
             }
         }
 
+        if (stop_loop)
+        {
+            break;
+        }
+
         const auto tunnel_alive_ms = timeout_io::now_ms() - tunnel_start_ms;
         if (tunnel_alive_ms >= kReconnectStableDurationMs)
         {
@@ -1830,7 +1864,10 @@ boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::
             continue;
         }
         LOG_CTX_WARN(ctx, "{} stage=tunnel_closed short_lived={}ms backoff_before_retry", log_event::kConnInit, tunnel_alive_ms);
-        co_await wait_before_retry(ctx, "tunnel_closed");
+        if (!(co_await wait_before_retry(ctx, "tunnel_closed")))
+        {
+            break;
+        }
     }
     LOG_INFO("{} connect remote loop {} exited", log_event::kConnClose, index);
 }
