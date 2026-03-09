@@ -382,7 +382,14 @@ boost::asio::awaitable<void> mux_connection::write_loop()
             break;
         }
 
-        const auto [we, n] = co_await boost::asio::async_write(socket_, boost::asio::buffer(ct), boost::asio::as_tuple(boost::asio::use_awaitable));
+        boost::system::error_code write_ec;
+        const auto n =
+            co_await timeout_io::wait_write_with_timeout(socket_, boost::asio::buffer(ct.data(), ct.size()), cfg_.timeout.write, write_ec);
+        if (!write_ec && n != ct.size())
+        {
+            write_ec = boost::asio::error::fault;
+        }
+        const auto& we = write_ec;
         if (we)
         {
             LOG_ERROR("mux {} write error {}", cid_, we.message());
