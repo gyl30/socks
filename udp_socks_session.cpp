@@ -426,15 +426,16 @@ boost::asio::awaitable<void> udp_socks_session::run(const std::string& host, con
     boost::system::error_code direct_socket_ec;
     open_direct_udp_socket(direct_udp_socket_v4_, boost::asio::ip::udp::v4(), "v4", direct_socket_ec);
     open_direct_udp_socket(direct_udp_socket_v6_, boost::asio::ip::udp::v6(), "v6", direct_socket_ec);
+    start_direct_udp_socket_loops();
     // step 3 forward data
     using boost::asio::experimental::awaitable_operators::operator||;
     if (cfg_.timeout.idle == 0)
     {
-        co_await (udp_socket_loop() || wait_and_stream_to_udp_sock() || keep_tcp_alive() || run_direct_udp_socket_loops());
+        co_await (udp_socket_loop() || wait_and_stream_to_udp_sock() || keep_tcp_alive());
     }
     else
     {
-        co_await (udp_socket_loop() || wait_and_stream_to_udp_sock() || keep_tcp_alive() || idle_watchdog() || run_direct_udp_socket_loops());
+        co_await (udp_socket_loop() || wait_and_stream_to_udp_sock() || keep_tcp_alive() || idle_watchdog());
     }
 
     const auto close_command = stream_close_command_.load(std::memory_order_relaxed);
@@ -694,8 +695,9 @@ boost::asio::awaitable<void> udp_socks_session::direct_udp_socket_loop(boost::as
         {
             if (!is_normal_close_error(recv_ec))
             {
-                update_stream_close_command(stream_close_command_, mux::kCmdRst);
                 LOG_CTX_WARN(ctx_, "{} direct udp receive error {}", log_event::kRoute, recv_ec.message());
+                boost::system::error_code close_ec;
+                direct_socket.close(close_ec);
             }
             break;
         }
@@ -715,7 +717,8 @@ boost::asio::awaitable<void> udp_socks_session::direct_udp_socket_loop(boost::as
         {
             if (!is_normal_close_error(ec))
             {
-                update_stream_close_command(stream_close_command_, mux::kCmdRst);
+                boost::system::error_code close_ec;
+                direct_socket.close(close_ec);
             }
             break;
         }
@@ -723,26 +726,29 @@ boost::asio::awaitable<void> udp_socks_session::direct_udp_socket_loop(boost::as
     }
 }
 
-boost::asio::awaitable<void> udp_socks_session::run_direct_udp_socket_loops()
+void udp_socks_session::start_direct_udp_socket_loops()
 {
-    using boost::asio::experimental::awaitable_operators::operator||;
-
-    if (direct_udp_socket_v4_.is_open() && direct_udp_socket_v6_.is_open())
-    {
-        co_await (direct_udp_socket_loop(direct_udp_socket_v4_) || direct_udp_socket_loop(direct_udp_socket_v6_));
-        co_return;
-    }
+    const auto self = shared_from_this();
     if (direct_udp_socket_v4_.is_open())
     {
-        co_await direct_udp_socket_loop(direct_udp_socket_v4_);
-        co_return;
+        boost::asio::co_spawn(
+            io_context_,
+            [self]() -> boost::asio::awaitable<void>
+            {
+                co_await self->direct_udp_socket_loop(self->direct_udp_socket_v4_);
+            },
+            group_.adapt(boost::asio::detached));
     }
     if (direct_udp_socket_v6_.is_open())
     {
-        co_await direct_udp_socket_loop(direct_udp_socket_v6_);
-        co_return;
+        boost::asio::co_spawn(
+            io_context_,
+            [self]() -> boost::asio::awaitable<void>
+            {
+                co_await self->direct_udp_socket_loop(self->direct_udp_socket_v6_);
+            },
+            group_.adapt(boost::asio::detached));
     }
-    co_return;
 }
 
 boost::asio::awaitable<void> udp_socks_session::forward_direct_reply_to_client(const boost::asio::ip::udp::endpoint& sender,
