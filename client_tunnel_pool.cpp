@@ -78,6 +78,53 @@ constexpr std::uint32_t kReconnectBaseDelayMs = 200;
 constexpr std::uint32_t kReconnectMaxDelayMs = 10000;
 constexpr std::uint32_t kReconnectStableDurationMs = 30000;
 constexpr std::chrono::milliseconds kTunnelPollInterval(200);
+constexpr std::uint16_t kFallbackTlsPort = 443;
+constexpr std::uint32_t kFallbackIoTimeoutSec = 2;
+constexpr std::uint32_t kFallbackMaxReadIterations = 8;
+constexpr std::size_t kFallbackResponseCaptureLimit = 16 * 1024;
+constexpr std::size_t kFallbackResponseSufficientBytes = 512;
+constexpr std::array<std::uint8_t, 4> kHttpHeaderTerminator = {'\r', '\n', '\r', '\n'};
+constexpr std::array<std::uint8_t, 2> kHttpCrlf = {'\r', '\n'};
+
+std::uint32_t clamp_fallback_timeout(const std::uint32_t configured_timeout_sec)
+{
+    if (configured_timeout_sec == 0)
+    {
+        return kFallbackIoTimeoutSec;
+    }
+    return std::min(configured_timeout_sec, kFallbackIoTimeoutSec);
+}
+
+std::string build_minimal_fallback_request(const std::string& host)
+{
+    std::string request;
+    request.reserve(host.size() + 256);
+    request.append("GET / HTTP/1.1\r\n");
+    request.append("Host: ");
+    request.append(host);
+    request.append("\r\n");
+    request.append("User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36\r\n");
+    request.append("Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8\r\n");
+    request.append("Accept-Language: en-US,en;q=0.9\r\n");
+    request.append("Connection: close\r\n");
+    request.append("\r\n");
+    return request;
+}
+
+bool contains_http_header_terminator(const std::vector<std::uint8_t>& data)
+{
+    return std::search(data.begin(), data.end(), kHttpHeaderTerminator.begin(), kHttpHeaderTerminator.end()) != data.end();
+}
+
+std::string extract_http_status_line(const std::vector<std::uint8_t>& data)
+{
+    const auto line_end = std::search(data.begin(), data.end(), kHttpCrlf.begin(), kHttpCrlf.end());
+    if (line_end == data.end())
+    {
+        return {};
+    }
+    return std::string(data.begin(), line_end);
+}
 
 reality::fingerprint_type parse_fingerprint_type(const std::string& name)
 {
@@ -1755,6 +1802,161 @@ std::shared_ptr<mux_tunnel_impl> client_tunnel_pool::build_tunnel(boost::asio::i
     return std::make_shared<mux_tunnel_impl>(std::move(socket), io_context, std::move(re), cfg_, group_, cid, trace_id);
 }
 
+boost::asio::awaitable<void> client_tunnel_pool::run_real_certificate_fallback(
+    boost::asio::ip::tcp::socket& socket, const handshake_result& handshake_ret, const connection_context& ctx) const
+{
+    connection_context fallback_ctx = ctx;
+    fallback_ctx.sni(sni_);
+    fallback_ctx.set_target(sni_, kFallbackTlsPort);
+
+    const std::size_t key_len = (handshake_ret.cipher_suite == 0x1302 || handshake_ret.cipher_suite == 0x1303) ? constants::crypto::kKeyLen256
+                                                                                                               : constants::crypto::kKeyLen128;
+    boost::system::error_code ec;
+    auto c_app_keys =
+        reality::tls_key_schedule::derive_traffic_keys(handshake_ret.c_app_secret, ec, key_len, constants::crypto::kIvLen, handshake_ret.md);
+    if (ec)
+    {
+        LOG_CTX_WARN(fallback_ctx, "{} stage=derive_client_app_keys error={}", log_event::kFallback, ec.message());
+        co_return;
+    }
+    auto s_app_keys =
+        reality::tls_key_schedule::derive_traffic_keys(handshake_ret.s_app_secret, ec, key_len, constants::crypto::kIvLen, handshake_ret.md);
+    if (ec)
+    {
+        LOG_CTX_WARN(fallback_ctx, "{} stage=derive_server_app_keys error={}", log_event::kFallback, ec.message());
+        co_return;
+    }
+
+    reality_engine engine(s_app_keys.first, s_app_keys.second, c_app_keys.first, c_app_keys.second, handshake_ret.cipher);
+    const auto request_text = build_minimal_fallback_request(sni_);
+    const std::vector<std::uint8_t> request_bytes(request_text.begin(), request_text.end());
+    const auto ciphertext = engine.encrypt(request_bytes, ec);
+    if (ec)
+    {
+        LOG_CTX_WARN(fallback_ctx, "{} stage=encrypt_request error={}", log_event::kFallback, ec.message());
+        co_return;
+    }
+
+    const auto write_timeout_sec = clamp_fallback_timeout(cfg_.timeout.write);
+    const auto written =
+        co_await timeout_io::wait_write_with_timeout(socket, boost::asio::buffer(ciphertext.data(), ciphertext.size()), write_timeout_sec, ec);
+    if (ec || written != ciphertext.size())
+    {
+        if (!ec)
+        {
+            ec = boost::asio::error::fault;
+        }
+        LOG_CTX_WARN(fallback_ctx,
+                     "{} stage=write_request host={} bytes={} error={}",
+                     log_event::kFallback,
+                     sni_,
+                     ciphertext.size(),
+                     ec.message());
+        co_return;
+    }
+    fallback_ctx.add_tx_bytes(request_bytes.size());
+
+    bool saw_application_data = false;
+    bool saw_alert = false;
+    bool header_complete = false;
+    bool response_complete = false;
+    std::size_t captured_bytes = 0;
+    std::vector<std::uint8_t> response_capture;
+    response_capture.reserve(2048);
+    const auto read_timeout_sec = clamp_fallback_timeout(cfg_.timeout.read);
+
+    for (std::uint32_t attempt = 0; attempt < kFallbackMaxReadIterations && !response_complete; ++attempt)
+    {
+        const auto buf = engine.read_buffer(4096);
+        const auto n = co_await timeout_io::wait_read_some_with_timeout(socket, buf, read_timeout_sec, ec);
+        if (ec)
+        {
+            if ((ec == boost::asio::error::timed_out || ec == boost::asio::error::eof) && saw_application_data)
+            {
+                ec.clear();
+                break;
+            }
+            LOG_CTX_WARN(fallback_ctx, "{} stage=read_response attempt={} error={}", log_event::kFallback, attempt + 1, ec.message());
+            co_return;
+        }
+        if (n == 0)
+        {
+            break;
+        }
+
+        engine.commit_read(n);
+        boost::system::error_code process_ec;
+        co_await engine.process_available_records(
+            [&](const std::uint8_t type, const std::span<const std::uint8_t> plaintext, boost::system::error_code& cb_ec)
+                -> boost::asio::awaitable<void>
+            {
+                if (type == reality::kContentTypeApplicationData)
+                {
+                    saw_application_data = true;
+                    fallback_ctx.add_rx_bytes(plaintext.size());
+                    const auto remaining = kFallbackResponseCaptureLimit - response_capture.size();
+                    const auto copy_len = std::min(remaining, plaintext.size());
+                    response_capture.insert(
+                        response_capture.end(), plaintext.begin(), plaintext.begin() + static_cast<std::ptrdiff_t>(copy_len));
+                    captured_bytes += plaintext.size();
+                    header_complete = header_complete || contains_http_header_terminator(response_capture);
+                    if (header_complete && (captured_bytes >= kFallbackResponseSufficientBytes || response_capture.size() >= 2048))
+                    {
+                        response_complete = true;
+                    }
+                    if (captured_bytes >= kFallbackResponseCaptureLimit)
+                    {
+                        response_complete = true;
+                    }
+                    co_return;
+                }
+                if (type == reality::kContentTypeAlert)
+                {
+                    saw_alert = true;
+                    co_return;
+                }
+
+                LOG_CTX_DEBUG(fallback_ctx, "{} stage=read_response ignored_record_type={}", log_event::kFallback, type);
+                cb_ec.clear();
+                co_return;
+            },
+            process_ec);
+        if (process_ec)
+        {
+            if (process_ec == boost::asio::error::eof)
+            {
+                process_ec.clear();
+                saw_alert = true;
+                break;
+            }
+            LOG_CTX_WARN(fallback_ctx, "{} stage=process_response error={}", log_event::kFallback, process_ec.message());
+            co_return;
+        }
+    }
+
+    const auto status_line = extract_http_status_line(response_capture);
+    if (saw_application_data)
+    {
+        LOG_CTX_INFO(fallback_ctx,
+                     "{} stage=lightweight_visit_complete status=\"{}\" tx_plain={}B rx_plain={}B header_complete={} alert={}",
+                     log_event::kFallback,
+                     status_line.empty() ? "unknown" : status_line,
+                     fallback_ctx.tx_bytes(),
+                     fallback_ctx.rx_bytes(),
+                     header_complete,
+                     saw_alert);
+    }
+    else
+    {
+        LOG_CTX_WARN(fallback_ctx,
+                     "{} stage=lightweight_visit_no_response tx_plain={}B alert={}",
+                     log_event::kFallback,
+                     fallback_ctx.tx_bytes(),
+                     saw_alert);
+    }
+    co_return;
+}
+
 boost::asio::awaitable<client_tunnel_pool::handshake_result>
 client_tunnel_pool::perform_reality_handshake_with_timeout(const std::shared_ptr<boost::asio::ip::tcp::socket>& socket,
                                                            const connection_context& ctx,
@@ -1852,9 +2054,10 @@ boost::asio::awaitable<void> client_tunnel_pool::connect_remote_loop(const std::
                      reality::named_group_name(handshake_ret.key_share_group));
         if (handshake_ret.auth_mode == handshake_auth_mode::kRealCertificateFallback)
         {
-            // 真实证书链路不能进入 mux 隧道 这里只记录并丢弃当前连接
-            LOG_CTX_WARN(ctx, "{} received real certificate fallback skip mux tunnel", log_event::kHandshake);
+            LOG_CTX_WARN(ctx, "{} received real certificate fallback run lightweight visit", log_event::kHandshake);
+            co_await run_real_certificate_fallback(*socket, handshake_ret, ctx);
             boost::system::error_code close_ec;
+            socket->shutdown(boost::asio::ip::tcp::socket::shutdown_both, close_ec);
             socket->close(close_ec);
             if (!(co_await wait_before_retry(ctx, "real_certificate_fallback")))
             {
