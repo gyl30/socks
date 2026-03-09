@@ -198,11 +198,25 @@ boost::asio::awaitable<void> mux_connection::run_loop()
     using boost::asio::experimental::awaitable_operators::operator||;
     if (cfg_.heartbeat.enabled)
     {
-        co_await (read_loop() || write_loop() || timeout_loop() || heartbeat_loop());
+        if (cfg_.timeout.idle == 0)
+        {
+            co_await (read_loop() || write_loop() || heartbeat_loop());
+        }
+        else
+        {
+            co_await (read_loop() || write_loop() || timeout_loop() || heartbeat_loop());
+        }
     }
     else
     {
-        co_await (read_loop() || write_loop() || timeout_loop());
+        if (cfg_.timeout.idle == 0)
+        {
+            co_await (read_loop() || write_loop());
+        }
+        else
+        {
+            co_await (read_loop() || write_loop() || timeout_loop());
+        }
     }
     stop();
     LOG_INFO("mux {} loops finished stopped", cid_);
