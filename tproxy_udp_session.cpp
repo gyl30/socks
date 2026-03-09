@@ -50,6 +50,11 @@ constexpr std::size_t kPacketChannelCapacity = 1024;
 constexpr std::chrono::milliseconds kTunnelPollInterval(200);
 constexpr std::uint8_t kNoStreamControl = 0;
 
+[[nodiscard]] bool is_normal_close_error(const boost::system::error_code& ec)
+{
+    return ec == boost::asio::error::operation_aborted || ec == boost::asio::error::bad_descriptor;
+}
+
 void update_stream_close_command(std::atomic<std::uint8_t>& stream_close_command, const std::uint8_t next_command)
 {
     auto current = stream_close_command.load(std::memory_order_relaxed);
@@ -608,7 +613,13 @@ boost::asio::awaitable<bool> tproxy_udp_session::send_to_client(const boost::asi
                                                                 const std::uint8_t* payload,
                                                                 const std::size_t payload_len)
 {
+    if (stopped_)
+    {
+        co_return false;
+    }
+
     boost::system::error_code ec;
+    const auto key = endpoint_key(source);
     const auto reply_socket = get_or_create_reply_socket(source, ec);
     if (ec || reply_socket == nullptr)
     {
@@ -616,16 +627,29 @@ boost::asio::awaitable<bool> tproxy_udp_session::send_to_client(const boost::asi
         {
             ec = boost::asio::error::operation_aborted;
         }
+        if (stopped_ || is_normal_close_error(ec))
+        {
+            co_return false;
+        }
         LOG_CTX_WARN(ctx_, "{} get reply socket failed {}", log_event::kMux, ec.message());
-        co_return false;
+        co_return true;
     }
 
     const auto [send_ec, bytes_sent] =
         co_await reply_socket->async_send_to(boost::asio::buffer(payload, payload_len), client_endpoint_, boost::asio::as_tuple(boost::asio::use_awaitable));
     if (send_ec)
     {
+        if (stopped_ || is_normal_close_error(send_ec))
+        {
+            co_return false;
+        }
+
+        boost::system::error_code close_ec;
+        close_ec = reply_socket->close(close_ec);
+        (void)close_ec;
+        reply_sockets_.erase(key);
         LOG_CTX_WARN(ctx_, "{} send udp reply to client failed {}", log_event::kMux, send_ec.message());
-        co_return false;
+        co_return true;
     }
 
     ctx_.add_rx_bytes(bytes_sent);
