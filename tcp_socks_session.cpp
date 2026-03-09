@@ -78,7 +78,10 @@ void tcp_socks_session::start(const std::string& host, const std::uint16_t port)
         group_.adapt(boost::asio::detached));
 }
 
-void tcp_socks_session::stop() {}
+void tcp_socks_session::stop()
+{
+    close_client_socket();
+}
 
 boost::asio::awaitable<void> tcp_socks_session::run(const std::string& host, const std::uint16_t port)
 {
