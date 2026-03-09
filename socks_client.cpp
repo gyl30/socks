@@ -5,6 +5,7 @@
 #include <utility>
 
 #include <boost/asio/error.hpp>
+#include <boost/asio/as_tuple.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
@@ -167,6 +168,11 @@ boost::asio::awaitable<void> socks_client::accept_loop()
 
 void socks_client::stop()
 {
+    if (stopping_.exchange(true))
+    {
+        return;
+    }
+
     boost::asio::post(
         ioc_,
         [self = shared_from_this()]()
@@ -183,6 +189,15 @@ void socks_client::stop()
             }
             self->group_.emit(::boost::asio::cancellation_type::all);
         });
+}
+
+boost::asio::awaitable<void> socks_client::wait_stopped()
+{
+    const auto [ec] = co_await group_.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
+    if (ec)
+    {
+        LOG_ERROR("socks client wait stopped failed {}", ec.message());
+    }
 }
 
 }    // namespace mux

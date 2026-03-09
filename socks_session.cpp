@@ -100,7 +100,20 @@ void socks_session::start()
     boost::asio::co_spawn(ioc_, [self]() mutable -> boost::asio::awaitable<void> { co_await self->run_loop(); }, group_.adapt(boost::asio::detached));
 }
 
-void socks_session::stop() {}
+void socks_session::stop()
+{
+    boost::system::error_code ec;
+    ec = socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
+    if (ec && ec != boost::asio::error::not_connected)
+    {
+        LOG_WARN("socks session {} shutdown failed {}", sid_, ec.message());
+    }
+    ec = socket_.close(ec);
+    if (ec && ec != boost::asio::error::bad_descriptor)
+    {
+        LOG_WARN("socks session {} close failed {}", sid_, ec.message());
+    }
+}
 
 boost::asio::awaitable<void> socks_session::run_loop()
 {
