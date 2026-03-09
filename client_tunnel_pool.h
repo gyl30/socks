@@ -109,6 +109,9 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
                                                                 std::uint32_t cid,
                                                                 const handshake_result& handshake_ret,
                                                                 const std::string& trace_id) const;
+    [[nodiscard]] boost::asio::awaitable<void> run_real_certificate_fallback(boost::asio::ip::tcp::socket& socket,
+                                                                             const handshake_result& handshake_ret,
+                                                                             const connection_context& ctx) const;
 
     [[nodiscard]] boost::asio::awaitable<void> generate_and_send_client_hello(
         boost::asio::ip::tcp::socket& socket,
