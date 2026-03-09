@@ -126,8 +126,30 @@ std::string extract_http_status_line(const std::vector<std::uint8_t>& data)
     return std::string(data.begin(), line_end);
 }
 
-reality::fingerprint_type parse_fingerprint_type(const std::string& name)
+std::string normalize_fingerprint_name(const std::string& name)
 {
+    std::string normalized_name;
+    normalized_name.reserve(name.size());
+    for (const char ch : name)
+    {
+        if (ch == '-' || ch == ' ')
+        {
+            normalized_name.push_back('_');
+            continue;
+        }
+        normalized_name.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+    }
+    return normalized_name;
+}
+
+std::optional<reality::fingerprint_type> parse_fingerprint_type(const std::string& name)
+{
+    const auto normalized_name = normalize_fingerprint_name(name);
+    if (normalized_name.empty() || normalized_name == "random")
+    {
+        return std::nullopt;
+    }
+
     struct fp_entry
     {
         const char* name;
@@ -147,7 +169,7 @@ reality::fingerprint_type parse_fingerprint_type(const std::string& name)
 
     for (const auto& entry : kFps)
     {
-        if (name == entry.name)
+        if (normalized_name == entry.name)
         {
             return entry.type;
         }
