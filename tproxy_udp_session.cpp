@@ -537,7 +537,10 @@ boost::asio::awaitable<void> tproxy_udp_session::proxy_to_client()
     boost::system::error_code ec;
     for (;;)
     {
-        const auto frame = co_await stream_->async_read(ec);
+        const auto read_timeout = (cfg_.timeout.idle == 0)
+                                      ? cfg_.timeout.read
+                                      : std::max(cfg_.timeout.read, cfg_.timeout.idle + 2);
+        const auto frame = co_await stream_->async_read(read_timeout, ec);
         if (ec)
         {
             update_stream_close_command(stream_close_command_, kNoStreamControl);

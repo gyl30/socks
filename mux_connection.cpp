@@ -420,7 +420,16 @@ boost::asio::awaitable<void> mux_connection::timeout_loop()
         co_return;
     }
 
-    const auto idle_timeout_ms = static_cast<std::uint64_t>(cfg_.timeout.idle) * 1000ULL;
+    auto idle_timeout_ms = static_cast<std::uint64_t>(cfg_.timeout.idle) * 1000ULL;
+    if (cfg_.heartbeat.enabled && cfg_.heartbeat.idle_timeout > 0 && cfg_.heartbeat.min_interval > 0)
+    {
+        const auto heartbeat_guard_ms =
+            (static_cast<std::uint64_t>(cfg_.heartbeat.idle_timeout) + static_cast<std::uint64_t>(cfg_.heartbeat.min_interval)) * 1000ULL;
+        if (heartbeat_guard_ms > idle_timeout_ms)
+        {
+            idle_timeout_ms = heartbeat_guard_ms;
+        }
+    }
     boost::system::error_code ec;
     boost::asio::steady_timer timer{io_context_};
     while (true)

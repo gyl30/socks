@@ -240,7 +240,10 @@ boost::asio::awaitable<void> remote_udp_session::mux_to_udp()
     boost::system::error_code ec;
     for (;;)
     {
-        const auto data_frame = co_await stream_->async_read(ec);
+        const auto read_timeout = (cfg_.timeout.idle == 0)
+                                      ? cfg_.timeout.read
+                                      : std::max(cfg_.timeout.read, cfg_.timeout.idle + 2);
+        const auto data_frame = co_await stream_->async_read(read_timeout, ec);
         if (ec)
         {
             update_stream_close_command(stream_close_command_, kNoStreamControl);
