@@ -73,6 +73,7 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
     {
         std::vector<std::uint8_t> c_app_secret;
         std::vector<std::uint8_t> s_app_secret;
+        std::string negotiated_alpn;
         std::uint16_t cipher_suite = 0;
         std::uint16_t key_share_group = 0;
         const EVP_MD* md = nullptr;
@@ -84,6 +85,7 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
     {
         std::vector<std::uint8_t> c_app_secret;
         std::vector<std::uint8_t> s_app_secret;
+        std::string negotiated_alpn;
         handshake_auth_mode auth_mode = handshake_auth_mode::kRealityTunnel;
     };
 
