@@ -399,6 +399,12 @@ void udp_socks_session::close_impl()
 boost::asio::awaitable<void> udp_socks_session::run(const std::string& host, const std::uint16_t port)
 {
     apply_request_peer_constraint(host, port);
+    if (has_invalid_request_peer_constraint_)
+    {
+        LOG_CTX_WARN(ctx_, "{} udp associate request host {} must be literal ip", log_event::kSocks, host);
+        co_await write_socks_error_reply(socket_, socks::kRepAddrTypeNotSupported, ctx_, cfg_.timeout.write);
+        co_return;
+    }
     if (has_conflicting_peer_constraint())
     {
         LOG_CTX_WARN(ctx_, "{} udp associate peer constraint rejected", log_event::kSocks);
@@ -465,6 +471,7 @@ boost::asio::awaitable<void> udp_socks_session::run(const std::string& host, con
 
 void udp_socks_session::apply_request_peer_constraint(const std::string& host, const std::uint16_t port)
 {
+    has_invalid_request_peer_constraint_ = false;
     has_request_client_addr_ = false;
     has_request_client_port_ = false;
     request_client_port_ = 0;
@@ -487,10 +494,8 @@ void udp_socks_session::apply_request_peer_constraint(const std::string& host, c
     }
     else if (!host.empty())
     {
-        LOG_CTX_WARN(ctx_,
-                     "{} udp associate request host {} is not ip ignore host constraint",
-                     log_event::kSocks,
-                     host);
+        has_invalid_request_peer_constraint_ = true;
+        LOG_CTX_WARN(ctx_, "{} udp associate request host {} is not literal ip", log_event::kSocks, host);
     }
 
     if (has_request_client_addr_ || has_request_client_port_)
