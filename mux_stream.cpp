@@ -41,7 +41,13 @@ boost::asio::awaitable<void> mux_stream::on_frame(mux_frame frame, boost::system
 }
 boost::asio::awaitable<mux_frame> mux_stream::async_read(boost::system::error_code& ec)
 {
-    auto data = co_await timeout_io::wait_receive_with_timeout<mux_frame>(recv_channel_, cfg_.timeout.read, ec);
+    auto data = co_await async_read(cfg_.timeout.read, ec);
+    co_return data;
+}
+
+boost::asio::awaitable<mux_frame> mux_stream::async_read(const std::uint32_t timeout_sec, boost::system::error_code& ec)
+{
+    auto data = co_await timeout_io::wait_receive_with_timeout<mux_frame>(recv_channel_, timeout_sec, ec);
     rx_bytes_ += data.payload.size();
     co_return data;
 }

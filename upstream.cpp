@@ -194,14 +194,30 @@ boost::asio::awaitable<void> direct_upstream::shutdown_send(boost::system::error
     co_return;
 }
 
-proxy_upstream::proxy_upstream(std::shared_ptr<mux_tunnel_impl> tunnel, boost::asio::io_context& io_context, connection_context ctx)
-    : ctx_(std::move(ctx)), io_context_(io_context), tunnel_(std::move(tunnel))
+proxy_upstream::proxy_upstream(std::shared_ptr<mux_tunnel_impl> tunnel,
+                               boost::asio::io_context& io_context,
+                               connection_context ctx,
+                               const config& cfg)
+    : cfg_(cfg), ctx_(std::move(ctx)), io_context_(io_context), tunnel_(std::move(tunnel))
 {
 }
 
-proxy_upstream::proxy_upstream(std::shared_ptr<client_tunnel_pool> tunnel_pool, boost::asio::io_context& io_context, connection_context ctx)
-    : ctx_(std::move(ctx)), io_context_(io_context), tunnel_pool_(std::move(tunnel_pool))
+proxy_upstream::proxy_upstream(std::shared_ptr<client_tunnel_pool> tunnel_pool,
+                               boost::asio::io_context& io_context,
+                               connection_context ctx,
+                               const config& cfg)
+    : cfg_(cfg), ctx_(std::move(ctx)), io_context_(io_context), tunnel_pool_(std::move(tunnel_pool))
 {
+}
+
+std::uint32_t proxy_upstream::connect_ack_timeout() const
+{
+    if (cfg_.timeout.connect == 0)
+    {
+        return cfg_.timeout.read;
+    }
+
+    return std::max(cfg_.timeout.read, cfg_.timeout.connect + 1);
 }
 
 boost::asio::awaitable<void> proxy_upstream::send_syn_request(const std::shared_ptr<mux_stream>& stream,
@@ -243,7 +259,7 @@ boost::asio::awaitable<bool> proxy_upstream::wait_connect_ack(const std::shared_
 {
     const auto stream_ctx = ctx_.with_stream(stream->id());
     boost::system::error_code ack_ec;
-    auto ack_frame = co_await stream->async_read(ack_ec);
+    auto ack_frame = co_await stream->async_read(connect_ack_timeout(), ack_ec);
     if (ack_ec)
     {
         LOG_CTX_ERROR(stream_ctx, "{} stage=wait_ack target={}:{} error={}", log_event::kRoute, host, port, ack_ec.message());
