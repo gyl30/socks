@@ -544,12 +544,6 @@ bool udp_socks_session::sender_matches_request_peer(const boost::asio::ip::udp::
     return true;
 }
 
-std::string udp_socks_session::endpoint_key(const boost::asio::ip::udp::endpoint& endpoint)
-{
-    const auto normalized_endpoint = net::normalize_endpoint(endpoint);
-    return normalized_endpoint.address().to_string() + ":" + std::to_string(normalized_endpoint.port());
-}
-
 void udp_socks_session::open_direct_udp_socket(boost::asio::ip::udp::socket& direct_socket,
                                                const boost::asio::ip::udp& protocol,
                                                const char* family,
@@ -698,7 +692,7 @@ boost::asio::awaitable<void> udp_socks_session::forward_direct_packet(const sock
         co_return;
     }
 
-    direct_peers_.insert(endpoint_key(target));
+    direct_peers_.insert(net::normalize_endpoint(target).address().to_string());
 }
 
 boost::asio::awaitable<void> udp_socks_session::direct_udp_socket_loop(boost::asio::ip::udp::socket& direct_socket)
@@ -719,7 +713,7 @@ boost::asio::awaitable<void> udp_socks_session::direct_udp_socket_loop(boost::as
             }
             break;
         }
-        if (!direct_peers_.contains(endpoint_key(sender)))
+        if (!direct_peers_.contains(net::normalize_endpoint(sender).address().to_string()))
         {
             LOG_CTX_WARN(ctx_,
                          "{} ignore udp packet from unexpected direct peer {}:{}",

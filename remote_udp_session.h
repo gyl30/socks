@@ -63,7 +63,6 @@ class remote_udp_session : public std::enable_shared_from_this<remote_udp_sessio
     [[nodiscard]] boost::asio::awaitable<boost::asio::ip::udp::endpoint> resolve_target_endpoint(const std::string& host,
                                                                                                   std::uint16_t port,
                                                                                                   boost::system::error_code& ec);
-    [[nodiscard]] static std::string endpoint_key(const boost::asio::ip::udp::endpoint& endpoint);
     void request_stop();
     void close_socket();
 
