@@ -337,7 +337,7 @@ boost::asio::awaitable<void> proxy_upstream::connect(const std::string& host, co
     co_await send_syn_request(stream, host, port, ec);
     if (ec)
     {
-        tunnel_->remove_stream(stream);
+        tunnel_->close_and_remove_stream(stream);
         co_return;
     }
 
@@ -345,7 +345,7 @@ boost::asio::awaitable<void> proxy_upstream::connect(const std::string& host, co
     if (!(co_await wait_connect_ack(stream, host, port)))
     {
         ec = boost::asio::error::connection_refused;
-        tunnel_->remove_stream(stream);
+        tunnel_->close_and_remove_stream(stream);
         co_return;
     }
 
@@ -354,21 +354,22 @@ boost::asio::awaitable<void> proxy_upstream::connect(const std::string& host, co
 
 boost::asio::awaitable<std::size_t> proxy_upstream::read(std::vector<std::uint8_t>& buf, boost::system::error_code& ec)
 {
-    if (stream_ == nullptr)
+    const auto stream = stream_;
+    if (stream == nullptr)
     {
         ec = boost::asio::error::not_connected;
         co_return 0;
     }
 
-    auto data_frame = co_await stream_->async_read(ec);
+    auto data_frame = co_await stream->async_read(ec);
     if (ec)
     {
-        LOG_CTX_WARN(ctx_.with_stream(stream_->id()), "{} stage=read_frame error={}", log_event::kRoute, ec.message());
+        LOG_CTX_WARN(ctx_.with_stream(stream->id()), "{} stage=read_frame error={}", log_event::kRoute, ec.message());
         co_return 0;
     }
     if (data_frame.h.command == mux::kCmdRst || data_frame.h.command == mux::kCmdFin)
     {
-        LOG_CTX_INFO(ctx_.with_stream(stream_->id()),
+        LOG_CTX_INFO(ctx_.with_stream(stream->id()),
                      "{} stage=read_frame recv_control cmd={}({}) payload_size={}",
                      log_event::kRoute,
                      data_frame.h.command,
@@ -387,7 +388,7 @@ boost::asio::awaitable<std::size_t> proxy_upstream::read(std::vector<std::uint8_
     }
     if (data_frame.h.command != mux::kCmdDat)
     {
-        LOG_CTX_WARN(ctx_.with_stream(stream_->id()),
+        LOG_CTX_WARN(ctx_.with_stream(stream->id()),
                      "{} stage=read_frame unexpected_cmd={}({}) payload_size={}",
                      log_event::kRoute,
                      data_frame.h.command,
@@ -408,25 +409,33 @@ boost::asio::awaitable<std::size_t> proxy_upstream::read(std::vector<std::uint8_
 
 boost::asio::awaitable<void> proxy_upstream::write(const std::vector<std::uint8_t>& data, boost::system::error_code& ec)
 {
+    const auto stream = stream_;
+    if (stream == nullptr)
+    {
+        ec = boost::asio::error::not_connected;
+        co_return;
+    }
+
     mux_frame data_frame;
-    data_frame.h.stream_id = stream_->id();
+    data_frame.h.stream_id = stream->id();
     data_frame.h.command = mux::kCmdDat;
     data_frame.payload = data;
-    co_return co_await stream_->async_write(data_frame, ec);
+    co_return co_await stream->async_write(data_frame, ec);
 }
 
 boost::asio::awaitable<void> proxy_upstream::shutdown_send(boost::system::error_code& ec)
 {
     ec.clear();
-    if (stream_ == nullptr || fin_sent_)
+    const auto stream = stream_;
+    if (stream == nullptr || fin_sent_)
     {
         co_return;
     }
 
     mux_frame fin_frame;
-    fin_frame.h.stream_id = stream_->id();
+    fin_frame.h.stream_id = stream->id();
     fin_frame.h.command = mux::kCmdFin;
-    co_await stream_->async_write(fin_frame, ec);
+    co_await stream->async_write(fin_frame, ec);
     if (!ec)
     {
         fin_sent_ = true;
@@ -457,18 +466,20 @@ std::uint8_t proxy_upstream::suggested_socks_rep(const boost::system::error_code
 
 boost::asio::awaitable<void> proxy_upstream::close()
 {
-    if (stream_ != nullptr && tunnel_ != nullptr)
+    const auto stream = stream_;
+    const auto tunnel = tunnel_;
+    if (stream != nullptr && tunnel != nullptr)
     {
         if (protocol_error_)
         {
             mux_frame rst_frame;
-            rst_frame.h.stream_id = stream_->id();
+            rst_frame.h.stream_id = stream->id();
             rst_frame.h.command = mux::kCmdRst;
             boost::system::error_code rst_ec;
-            co_await stream_->async_write(std::move(rst_frame), rst_ec);
+            co_await stream->async_write(std::move(rst_frame), rst_ec);
             if (rst_ec)
             {
-                LOG_CTX_WARN(ctx_.with_stream(stream_->id()), "{} stage=send_rst error={}", log_event::kRoute, rst_ec.message());
+                LOG_CTX_WARN(ctx_.with_stream(stream->id()), "{} stage=send_rst error={}", log_event::kRoute, rst_ec.message());
             }
         }
         else if (!fin_sent_ && !reset_received_)
@@ -477,10 +488,10 @@ boost::asio::awaitable<void> proxy_upstream::close()
             co_await shutdown_send(fin_ec);
             if (fin_ec)
             {
-                LOG_CTX_WARN(ctx_.with_stream(stream_->id()), "{} stage=send_fin error={}", log_event::kRoute, fin_ec.message());
+                LOG_CTX_WARN(ctx_.with_stream(stream->id()), "{} stage=send_fin error={}", log_event::kRoute, fin_ec.message());
             }
         }
-        tunnel_->remove_stream(stream_);
+        tunnel->close_and_remove_stream(stream);
     }
     fin_sent_ = false;
     reset_received_ = false;
