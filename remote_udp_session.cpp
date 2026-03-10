@@ -63,12 +63,6 @@ void update_stream_close_command(std::atomic<std::uint8_t>& stream_close_command
     }
 }
 
-[[nodiscard]] std::string endpoint_key_impl(const boost::asio::ip::udp::endpoint& endpoint)
-{
-    const auto normalized_endpoint = net::normalize_endpoint(endpoint);
-    return normalized_endpoint.address().to_string() + ":" + std::to_string(normalized_endpoint.port());
-}
-
 [[nodiscard]] std::string udp_target_key(const std::string& host, const std::uint16_t port)
 {
     return host + "|" + std::to_string(port);
@@ -334,7 +328,7 @@ boost::asio::awaitable<void> remote_udp_session::on_frame(const mux_frame& frame
     }
     last_activity_time_ms_ = timeout_io::now_ms();
     ctx_.add_tx_bytes(payload_len);
-    allowed_reply_peers_.insert(endpoint_key(target_ep));
+    allowed_reply_peers_.insert(net::normalize_endpoint(target_ep).address().to_string());
 }
 
 boost::asio::awaitable<void> remote_udp_session::udp_to_mux()
@@ -353,7 +347,7 @@ boost::asio::awaitable<void> remote_udp_session::udp_to_mux()
 
         LOG_CTX_DEBUG(ctx_, "{} udp recv {} bytes from {}", log_event::kMux, n, ep.address().to_string());
         const auto normalized_ep = net::normalize_endpoint(ep);
-        if (!allowed_reply_peers_.contains(endpoint_key(normalized_ep)))
+        if (!allowed_reply_peers_.contains(normalized_ep.address().to_string()))
         {
             LOG_CTX_WARN(ctx_,
                          "{} ignore udp packet from unexpected peer {}:{}",
@@ -425,11 +419,6 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> remote_udp_session::resol
     const auto target = net::normalize_endpoint(res.begin()->endpoint());
     resolved_targets_.emplace(key, target);
     co_return target;
-}
-
-std::string remote_udp_session::endpoint_key(const boost::asio::ip::udp::endpoint& endpoint)
-{
-    return endpoint_key_impl(endpoint);
 }
 
 boost::asio::awaitable<void> remote_udp_session::idle_watchdog()

@@ -61,7 +61,6 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
     void apply_request_peer_constraint(const std::string& host, std::uint16_t port);
     [[nodiscard]] bool has_conflicting_peer_constraint() const;
     [[nodiscard]] bool sender_matches_request_peer(const boost::asio::ip::udp::endpoint& sender) const;
-    [[nodiscard]] static std::string endpoint_key(const boost::asio::ip::udp::endpoint& endpoint);
     [[nodiscard]] boost::asio::awaitable<route_type> decide_udp_route(const socks_udp_header& header) const;
     [[nodiscard]] boost::asio::awaitable<bool> ensure_proxy_stream(boost::system::error_code& ec);
     [[nodiscard]] boost::asio::awaitable<boost::asio::ip::udp::endpoint> resolve_target_endpoint(const std::string& host,
