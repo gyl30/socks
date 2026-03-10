@@ -85,6 +85,31 @@ namespace
     return socks::kRepGenFail;
 }
 
+[[nodiscard]] boost::system::error_code map_socks_rep_to_connect_error(const std::uint8_t rep)
+{
+    switch (rep)
+    {
+        case socks::kRepSuccess:
+            return {};
+        case socks::kRepNotAllowed:
+            return boost::system::errc::make_error_code(boost::system::errc::permission_denied);
+        case socks::kRepNetUnreach:
+            return boost::asio::error::network_unreachable;
+        case socks::kRepHostUnreach:
+            return boost::asio::error::host_unreachable;
+        case socks::kRepConnRefused:
+            return boost::asio::error::connection_refused;
+        case socks::kRepTtlExpired:
+            return boost::asio::error::timed_out;
+        case socks::kRepCmdNotSupported:
+            return boost::asio::error::operation_not_supported;
+        case socks::kRepAddrTypeNotSupported:
+            return boost::asio::error::address_family_not_supported;
+        default:
+            return boost::asio::error::connection_aborted;
+    }
+}
+
 boost::asio::awaitable<void> direct_upstream::connect(const std::string& host, const std::uint16_t port, boost::system::error_code& ec)
 {
     auto endpoints = co_await timeout_io::wait_resolve_with_timeout(resolver_, host, std::to_string(port), cfg_.timeout.connect, ec);
@@ -255,14 +280,17 @@ boost::asio::awaitable<void> proxy_upstream::send_syn_request(const std::shared_
 
 boost::asio::awaitable<bool> proxy_upstream::wait_connect_ack(const std::shared_ptr<mux_stream>& stream,
                                                               const std::string& host,
-                                                              const std::uint16_t port)
+                                                              const std::uint16_t port,
+                                                              boost::system::error_code& ec)
 {
+    ec.clear();
     const auto stream_ctx = ctx_.with_stream(stream->id());
     boost::system::error_code ack_ec;
     auto ack_frame = co_await stream->async_read(connect_ack_timeout(), ack_ec);
     if (ack_ec)
     {
         LOG_CTX_ERROR(stream_ctx, "{} stage=wait_ack target={}:{} error={}", log_event::kRoute, host, port, ack_ec.message());
+        ec = ack_ec;
         co_return false;
     }
     if (ack_frame.h.command != kCmdAck)
@@ -275,6 +303,7 @@ boost::asio::awaitable<bool> proxy_upstream::wait_connect_ack(const std::shared_
                      ack_frame.h.command,
                      mux_command_name(ack_frame.h.command),
                      ack_frame.payload.size());
+        ec = boost::asio::error::connection_aborted;
         co_return false;
     }
 
@@ -282,12 +311,14 @@ boost::asio::awaitable<bool> proxy_upstream::wait_connect_ack(const std::shared_
     if (!mux_codec::decode_ack(ack_frame.payload.data(), ack_frame.payload.size(), ack))
     {
         LOG_CTX_WARN(stream_ctx, "{} stage=decode_ack target={}:{} error=invalid_ack_payload", log_event::kRoute, host, port);
+        ec = boost::asio::error::invalid_argument;
         co_return false;
     }
     last_remote_rep_ = ack.socks_rep;
     if (ack.socks_rep != socks::kRepSuccess)
     {
         LOG_CTX_WARN(stream_ctx, "{} stage=wait_ack target={}:{} remote_rep={}", log_event::kRoute, host, port, ack.socks_rep);
+        ec = map_socks_rep_to_connect_error(ack.socks_rep);
         co_return false;
     }
 
@@ -358,9 +389,8 @@ boost::asio::awaitable<void> proxy_upstream::connect(const std::string& host, co
     }
 
     last_remote_rep_ = socks::kRepGenFail;
-    if (!(co_await wait_connect_ack(stream, host, port)))
+    if (!(co_await wait_connect_ack(stream, host, port, ec)))
     {
-        ec = boost::asio::error::connection_refused;
         tunnel_->close_and_remove_stream(stream);
         co_return;
     }
