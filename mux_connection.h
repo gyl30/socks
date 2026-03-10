@@ -52,6 +52,7 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     [[nodiscard]] bool is_active() const;
     std::shared_ptr<mux_stream> create_stream();
     void register_stream(const std::shared_ptr<mux_stream>& stream);
+    void close_and_remove_stream(const std::shared_ptr<mux_stream>& stream);
     void remove_stream(const std::shared_ptr<mux_stream>&);
     [[nodiscard]] std::shared_ptr<mux_stream> find_stream(std::uint32_t stream_id);
     boost::asio::awaitable<void> send_async(mux_frame msg, boost::system::error_code& ec);

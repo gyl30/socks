@@ -204,8 +204,7 @@ boost::asio::awaitable<void> mux_connection::handle_stream_frame(const mux::fram
         if (ec == boost::asio::error::timed_out)
         {
             LOG_WARN("mux {} stream {} backpressure timeout reset only this stream", cid_, header.stream_id);
-            stream->close();
-            remove_stream(stream);
+            close_and_remove_stream(stream);
 
             constexpr std::uint32_t kRstSendTimeoutSec = 1;
             mux_frame rst_frame;
@@ -229,6 +228,17 @@ void mux_connection::remove_stream(const std::shared_ptr<mux_stream>& stream)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     streams_.erase(stream->id());
+}
+
+void mux_connection::close_and_remove_stream(const std::shared_ptr<mux_stream>& stream)
+{
+    if (stream == nullptr)
+    {
+        return;
+    }
+
+    stream->close();
+    remove_stream(stream);
 }
 
 void mux_connection::start()
