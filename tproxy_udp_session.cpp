@@ -129,7 +129,7 @@ boost::asio::awaitable<std::shared_ptr<mux_stream>> connect_remote_udp_stream(co
     {
         ec = boost::asio::error::invalid_argument;
         LOG_CTX_WARN(ctx, "{} encode udp syn failed", log_event::kMux);
-        tunnel->remove_stream(stream);
+        tunnel->close_and_remove_stream(stream);
         co_return nullptr;
     }
 
@@ -141,7 +141,7 @@ boost::asio::awaitable<std::shared_ptr<mux_stream>> connect_remote_udp_stream(co
     if (ec)
     {
         LOG_CTX_WARN(ctx, "{} send udp syn failed {}", log_event::kMux, ec.message());
-        tunnel->remove_stream(stream);
+        tunnel->close_and_remove_stream(stream);
         co_return nullptr;
     }
 
@@ -149,14 +149,14 @@ boost::asio::awaitable<std::shared_ptr<mux_stream>> connect_remote_udp_stream(co
     if (ec)
     {
         LOG_CTX_WARN(ctx, "{} read udp ack failed {}", log_event::kMux, ec.message());
-        tunnel->remove_stream(stream);
+        tunnel->close_and_remove_stream(stream);
         co_return nullptr;
     }
     if (ack_frame.h.command != mux::kCmdAck)
     {
         ec = boost::asio::error::invalid_argument;
         LOG_CTX_WARN(ctx, "{} unexpected udp ack command {}", log_event::kMux, ack_frame.h.command);
-        tunnel->remove_stream(stream);
+        tunnel->close_and_remove_stream(stream);
         co_return nullptr;
     }
 
@@ -165,14 +165,14 @@ boost::asio::awaitable<std::shared_ptr<mux_stream>> connect_remote_udp_stream(co
     {
         ec = boost::asio::error::invalid_argument;
         LOG_CTX_WARN(ctx, "{} invalid udp ack payload", log_event::kMux);
-        tunnel->remove_stream(stream);
+        tunnel->close_and_remove_stream(stream);
         co_return nullptr;
     }
     if (ack.socks_rep != socks::kRepSuccess)
     {
         ec = boost::asio::error::operation_aborted;
         LOG_CTX_WARN(ctx, "{} udp ack rejected {}", log_event::kMux, ack.socks_rep);
-        tunnel->remove_stream(stream);
+        tunnel->close_and_remove_stream(stream);
         co_return nullptr;
     }
 
@@ -313,7 +313,7 @@ boost::asio::awaitable<void> tproxy_udp_session::run()
 
     if (tunnel_ != nullptr && stream_ != nullptr)
     {
-        tunnel_->remove_stream(stream_);
+        tunnel_->close_and_remove_stream(stream_);
     }
     stream_.reset();
     tunnel_.reset();

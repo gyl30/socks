@@ -112,7 +112,7 @@ boost::asio::awaitable<void> remote_udp_session::start_impl()
     DEFER(
         if (auto connection = connection_.lock(); connection != nullptr && stream_ != nullptr)
         {
-            connection->remove_stream(stream_);
+            connection->close_and_remove_stream(stream_);
         });
     DEFER(
         boost::system::error_code ignore;
