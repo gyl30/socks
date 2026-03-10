@@ -81,7 +81,7 @@ bool ch_parser::parse_cipher_suites_and_compression(reader& r, client_hello_info
     {
         return false;
     }
-    return r.skip(comp_len);
+    return r.read_vector(info.compression_methods, comp_len);
 }
 
 bool ch_parser::read_extension_header(reader& r, std::uint16_t& type, std::uint16_t& len) { return r.read_u16(type) && r.read_u16(len); }
@@ -268,6 +268,10 @@ void ch_parser::parse_extensions(reader& r, client_hello_info& info)
         else if (type == reality::tls_consts::ext::kKeyShare)
         {
             parse_key_share(val, info);
+        }
+        else if (type == reality::tls_consts::ext::kRenegotiationInfo)
+        {
+            parse_renegotiation_info(val, info);
         }
     }
 }
@@ -527,6 +531,25 @@ void ch_parser::parse_signature_algorithms(reader& r, client_hello_info& info)
     {
         info.malformed_signature_algorithms = true;
         info.signature_algorithms.clear();
+    }
+}
+
+void ch_parser::parse_renegotiation_info(reader& r, client_hello_info& info)
+{
+    info.has_renegotiation_info = true;
+    info.secure_renegotiation.clear();
+
+    std::uint8_t renegotiation_len = 0;
+    if (!r.read_u8(renegotiation_len))
+    {
+        info.malformed_renegotiation_info = true;
+        return;
+    }
+
+    if (!r.read_vector(info.secure_renegotiation, renegotiation_len) || r.remaining() != 0)
+    {
+        info.malformed_renegotiation_info = true;
+        info.secure_renegotiation.clear();
     }
 }
 
