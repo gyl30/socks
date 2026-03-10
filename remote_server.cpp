@@ -1531,13 +1531,15 @@ boost::asio::awaitable<void> remote_server::handle(std::shared_ptr<boost::asio::
         co_await fallback("malformed_key_share");
         co_return;
     }
-    if (reality_ctx.client_hello.malformed_supported_groups || reality_ctx.client_hello.malformed_supported_versions)
+    if (reality_ctx.client_hello.malformed_supported_groups || reality_ctx.client_hello.malformed_supported_versions ||
+        reality_ctx.client_hello.malformed_renegotiation_info)
     {
         LOG_CTX_ERROR(ctx,
-                      "{} auth fail malformed tls13 extensions supported_groups={} supported_versions={}",
+                      "{} auth fail malformed tls13 extensions supported_groups={} supported_versions={} renegotiation_info={}",
                       log_event::kAuth,
                       reality_ctx.client_hello.malformed_supported_groups,
-                      reality_ctx.client_hello.malformed_supported_versions);
+                      reality_ctx.client_hello.malformed_supported_versions,
+                      reality_ctx.client_hello.malformed_renegotiation_info);
         co_await fallback("malformed_tls13_extensions");
         co_return;
     }
@@ -1570,6 +1572,39 @@ boost::asio::awaitable<void> remote_server::handle(std::shared_ptr<boost::asio::
     {
         LOG_CTX_ERROR(ctx, "{} auth fail random len {}", log_event::kAuth, reality_ctx.client_hello.random.size());
         co_await fallback("invalid_client_random");
+        co_return;
+    }
+    if (client_offers_cipher_suite(reality_ctx.client_hello, reality::tls_consts::cipher::kTlsFallbackScsv))
+    {
+        LOG_CTX_WARN(ctx, "{} auth fail unexpected tls fallback scsv", log_event::kAuth);
+        co_await fallback("unexpected_tls_fallback_scsv");
+        co_return;
+    }
+    if (reality_ctx.client_hello.compression_methods.size() != 1)
+    {
+        LOG_CTX_ERROR(ctx,
+                      "{} auth fail illegal tls13 compression method count {}",
+                      log_event::kAuth,
+                      reality_ctx.client_hello.compression_methods.size());
+        co_await fallback("illegal_tls13_compression_methods");
+        co_return;
+    }
+    if (reality_ctx.client_hello.compression_methods[0] != 0x00)
+    {
+        LOG_CTX_ERROR(ctx,
+                      "{} auth fail illegal tls13 compression method {:02x}",
+                      log_event::kAuth,
+                      reality_ctx.client_hello.compression_methods[0]);
+        co_await fallback("illegal_tls13_compression_methods");
+        co_return;
+    }
+    if (!reality_ctx.client_hello.secure_renegotiation.empty())
+    {
+        LOG_CTX_WARN(ctx,
+                     "{} auth fail non-empty renegotiation info len {}",
+                     log_event::kAuth,
+                     reality_ctx.client_hello.secure_renegotiation.size());
+        co_await fallback("non_empty_renegotiation_info");
         co_return;
     }
     if (reality_ctx.client_hello.key_share_group == reality::tls_consts::group::kX25519MLKEM768 &&

@@ -115,6 +115,7 @@ namespace cipher
 constexpr std::uint16_t kTlsAes128GcmSha256 = 0x1301;
 constexpr std::uint16_t kTlsAes256GcmSha384 = 0x1302;
 constexpr std::uint16_t kTlsChacha20Poly1305Sha256 = 0x1303;
+constexpr std::uint16_t kTlsFallbackScsv = 0x5600;
 
 constexpr std::uint16_t kTlsEcdheEcdsaWithAes128GcmSha256 = 0xc02b;
 constexpr std::uint16_t kTlsEcdheRsaWithAes128GcmSha256 = 0xc02f;
