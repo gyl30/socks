@@ -139,6 +139,8 @@ set(CMAKE_FIND_PACKAGE_PREFER_CONFIG TRUE)
 find_package(Threads REQUIRED)
 find_package(OpenSSL REQUIRED CONFIG)
 find_package(Boost 1.89 REQUIRED)
+find_library(BROTLIDEC_LIBRARY NAMES brotlidec REQUIRED)
+find_library(BROTLICOMMON_LIBRARY NAMES brotlicommon REQUIRED)
 
 set(SOCKS_SOURCES
     log.cpp
@@ -177,7 +179,8 @@ set(SOCKS_SOURCES
     reality_auth.cpp
     monitor_server.cpp
     cert_fetcher.cpp
-    cert_manager.cpp)
+    cert_manager.cpp
+    certificate_compression.cpp)
 
 if(SOCKS_HAS_TPROXY)
   list(APPEND SOCKS_SOURCES tproxy_client.cpp tproxy_tcp_session.cpp
@@ -200,7 +203,7 @@ target_include_directories(
          ${CMAKE_CURRENT_SOURCE_DIR}/third/spdlog/include
          ${CMAKE_CURRENT_SOURCE_DIR}/third/rapidjson/include)
 
-target_link_libraries(core PUBLIC OpenSSL::SSL OpenSSL::Crypto Threads::Threads)
+target_link_libraries(core PUBLIC OpenSSL::SSL OpenSSL::Crypto Threads::Threads ${BROTLIDEC_LIBRARY} ${BROTLICOMMON_LIBRARY})
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
   target_link_libraries(core PUBLIC ws2_32 mswsock)
