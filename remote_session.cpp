@@ -176,11 +176,20 @@ boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
     auto resolve_res = co_await timeout_io::wait_resolve_with_timeout(resolver_, syn.addr, std::to_string(syn.port), cfg_.timeout.connect, ec);
     if (ec)
     {
-        co_await send_fail_ack(map_connect_error_to_socks_rep(ec));
+        const auto rep = map_connect_error_to_socks_rep(ec);
+        LOG_CTX_WARN(ctx_,
+                     "{} resolve failed target {}:{} error={} rep={}",
+                     log_event::kMux,
+                     syn.addr,
+                     syn.port,
+                     ec.message(),
+                     rep);
+        co_await send_fail_ack(rep);
         co_return;
     }
     if (resolve_res.begin() == resolve_res.end())
     {
+        LOG_CTX_WARN(ctx_, "{} resolve empty target {}:{} rep={}", log_event::kMux, syn.addr, syn.port, socks::kRepHostUnreach);
         co_await send_fail_ack(socks::kRepHostUnreach);
         co_return;
     }
@@ -205,7 +214,15 @@ boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
     }
     if (connect_ec)
     {
-        co_await send_fail_ack(map_connect_error_to_socks_rep(connect_ec));
+        const auto rep = map_connect_error_to_socks_rep(connect_ec);
+        LOG_CTX_WARN(ctx_,
+                     "{} connect failed target {}:{} error={} rep={}",
+                     log_event::kMux,
+                     syn.addr,
+                     syn.port,
+                     connect_ec.message(),
+                     rep);
+        co_await send_fail_ack(rep);
         co_return;
     }
     ec.clear();
