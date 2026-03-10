@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y \
     cmake \
     ninja-build \
     libssl-dev \
+    libbrotli-dev \
     git \
     && rm -rf /var/lib/apt/lists/*
 
@@ -23,6 +24,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y \
     libssl3 \
+    libbrotli1 \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
