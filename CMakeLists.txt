@@ -141,6 +141,7 @@ find_package(OpenSSL REQUIRED CONFIG)
 find_package(Boost 1.89 REQUIRED)
 find_library(BROTLIDEC_LIBRARY NAMES brotlidec REQUIRED)
 find_library(BROTLICOMMON_LIBRARY NAMES brotlicommon REQUIRED)
+find_path(BROTLI_INCLUDE_DIR NAMES brotli/decode.h REQUIRED)
 
 set(SOCKS_SOURCES
     log.cpp
@@ -200,6 +201,7 @@ target_include_directories(core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(
   core SYSTEM
   PUBLIC ${Boost_INCLUDE_DIRS}
+         ${BROTLI_INCLUDE_DIR}
          ${CMAKE_CURRENT_SOURCE_DIR}/third/spdlog/include
          ${CMAKE_CURRENT_SOURCE_DIR}/third/rapidjson/include)
 

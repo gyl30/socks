@@ -94,6 +94,7 @@ jobs:
                 ccache \
                 gcc \
                 g++ \
+                libbrotli-dev \
                 clang
 
               mkdir -p /workspace/.cache/boost
@@ -201,7 +202,8 @@ jobs:
                 build-base \
                 clang \
                 lld \
-                linux-headers
+                linux-headers \
+                brotli-dev
 
               mkdir -p /workspace/.cache/boost
               if [ ! -d "/workspace/.cache/boost/${BOOST_SRC_DIR}" ]; then
@@ -319,7 +321,7 @@ jobs:
         run: |
           set -euo pipefail
           brew update
-          brew install ccache cmake ninja llvm wget
+          brew install brotli ccache cmake ninja llvm wget
 
       - name: Prepare Boost Headers
         run: |
@@ -426,13 +428,13 @@ jobs:
       - name: Restore Windows Boost Cache
         uses: actions/cache@v4
         with:
-          path: ~/.cache/boost
+          path: .cache/boost
           key: windows-${{ runner.arch }}-boost-${{ env.BOOST_VERSION }}
 
       - name: Restore Windows OpenSSL Cache
         uses: actions/cache@v4
         with:
-          path: ~/.cache/openssl
+          path: .cache/openssl
           key: windows-${{ runner.arch }}-openssl-${{ env.OPENSSL_VERSION }}-${{ env.OPENSSL_CACHE_REV }}
           restore-keys: |
             windows-${{ runner.arch }}-openssl-${{ env.OPENSSL_VERSION }}-
@@ -440,7 +442,7 @@ jobs:
       - name: Restore Windows ccache
         uses: actions/cache/restore@v4
         with:
-          path: ~/.cache/ccache/windows-${{ runner.arch }}-ucrt64-clang
+          path: .cache/ccache/windows-${{ runner.arch }}-ucrt64-clang
           key: windows-${{ runner.arch }}-ccache-${{ env.CCACHE_CACHE_REV }}-${{ github.sha }}
           restore-keys: |
             windows-${{ runner.arch }}-ccache-${{ env.CCACHE_CACHE_REV }}-
@@ -457,6 +459,7 @@ jobs:
             mingw-w64-ucrt-x86_64-gcc
             mingw-w64-ucrt-x86_64-ninja
             mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-brotli
             make
             perl
             wget
@@ -466,18 +469,21 @@ jobs:
         shell: msys2 {0}
         run: |
           set -euo pipefail
-          mkdir -p "$HOME/.cache/boost"
-          if [ ! -d "$HOME/.cache/boost/${BOOST_SRC_DIR}" ]; then
-            wget -O "$HOME/.cache/boost/${BOOST_ARCHIVE}" "https://archives.boost.io/release/${BOOST_VERSION}/source/${BOOST_ARCHIVE}"
-            tar xf "$HOME/.cache/boost/${BOOST_ARCHIVE}" -C "$HOME/.cache/boost"
+          CACHE_ROOT="$PWD/.cache"
+          BOOST_CACHE_DIR="${CACHE_ROOT}/boost"
+          mkdir -p "${BOOST_CACHE_DIR}"
+          if [ ! -d "${BOOST_CACHE_DIR}/${BOOST_SRC_DIR}" ]; then
+            wget -O "${BOOST_CACHE_DIR}/${BOOST_ARCHIVE}" "https://archives.boost.io/release/${BOOST_VERSION}/source/${BOOST_ARCHIVE}"
+            tar xf "${BOOST_CACHE_DIR}/${BOOST_ARCHIVE}" -C "${BOOST_CACHE_DIR}"
           fi
 
       - name: Build OpenSSL
         shell: msys2 {0}
         run: |
           set -euo pipefail
-          OPENSSL_ROOT="$HOME/.cache/openssl/install-${OPENSSL_VERSION}"
-          OPENSSL_CACHE_DIR="$HOME/.cache/openssl"
+          CACHE_ROOT="$PWD/.cache"
+          OPENSSL_CACHE_DIR="${CACHE_ROOT}/openssl"
+          OPENSSL_ROOT="${OPENSSL_CACHE_DIR}/install-${OPENSSL_VERSION}"
           OPENSSL_ARCHIVE_PATH="${OPENSSL_CACHE_DIR}/${OPENSSL_ARCHIVE}"
           OPENSSL_SOURCE_DIR="${OPENSSL_CACHE_DIR}/${OPENSSL_SRC_DIR}"
           mkdir -p "${OPENSSL_CACHE_DIR}"
@@ -504,10 +510,11 @@ jobs:
         shell: msys2 {0}
         run: |
           set -euo pipefail
-          BOOST_ROOT="$HOME/.cache/boost/${BOOST_SRC_DIR}"
-          OPENSSL_ROOT="$HOME/.cache/openssl/install-${OPENSSL_VERSION}"
+          CACHE_ROOT="$PWD/.cache"
+          BOOST_ROOT="${CACHE_ROOT}/boost/${BOOST_SRC_DIR}"
+          OPENSSL_ROOT="${CACHE_ROOT}/openssl/install-${OPENSSL_VERSION}"
           OPENSSL_CMAKE_DIR="${OPENSSL_ROOT}/lib64/cmake/OpenSSL"
-          CCACHE_DIR="$HOME/.cache/ccache/windows-${{ runner.arch }}-ucrt64-clang"
+          CCACHE_DIR="$PWD/.cache/ccache/windows-${{ runner.arch }}-ucrt64-clang"
           mkdir -p "${CCACHE_DIR}"
           export CCACHE_DIR
           export CCACHE_BASEDIR="$PWD"
@@ -538,7 +545,7 @@ jobs:
         shell: msys2 {0}
         run: |
           set -euo pipefail
-          export CCACHE_DIR="$HOME/.cache/ccache/windows-${{ runner.arch }}-ucrt64-clang"
+          export CCACHE_DIR="$PWD/.cache/ccache/windows-${{ runner.arch }}-ucrt64-clang"
           export CCACHE_BASEDIR="$PWD"
           export CCACHE_COMPILERCHECK=content
           export CCACHE_NOHASHDIR=true
@@ -556,5 +563,5 @@ jobs:
         if: always()
         uses: actions/cache/save@v4
         with:
-          path: ~/.cache/ccache/windows-${{ runner.arch }}-ucrt64-clang
+          path: .cache/ccache/windows-${{ runner.arch }}-ucrt64-clang
           key: windows-${{ runner.arch }}-ccache-${{ env.CCACHE_CACHE_REV }}-${{ github.sha }}
