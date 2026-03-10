@@ -494,8 +494,8 @@ void udp_socks_session::apply_request_peer_constraint(const std::string& host, c
     }
     else if (!host.empty())
     {
-        has_invalid_request_peer_constraint_ = true;
-        LOG_CTX_WARN(ctx_, "{} udp associate request host {} is not literal ip", log_event::kSocks, host);
+        // RFC 1928 允许 UDP ASSOCIATE 使用域名，这里不做约束即可
+        LOG_CTX_INFO(ctx_, "{} udp associate request host {} is domain ignore peer constraint", log_event::kSocks, host);
     }
 
     if (has_request_client_addr_ || has_request_client_port_)
