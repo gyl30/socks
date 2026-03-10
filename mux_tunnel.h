@@ -66,6 +66,14 @@ class mux_tunnel_impl : public std::enable_shared_from_this<mux_tunnel_impl>
         }
     }
 
+    void close_and_remove_stream(const std::shared_ptr<mux_stream>& stream) const
+    {
+        if (connection_ != nullptr)
+        {
+            connection_->close_and_remove_stream(stream);
+        }
+    }
+
    private:
     std::shared_ptr<mux_connection> connection_;
 };

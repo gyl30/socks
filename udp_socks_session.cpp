@@ -201,7 +201,7 @@ boost::asio::awaitable<proxy_udp_stream> connect_remote_address(const std::share
     DEFER(
         if (!keep_stream)
         {
-            tunnel->remove_stream(stream);
+            tunnel->close_and_remove_stream(stream);
         });
 
     const syn_payload syn{.socks_cmd = socks::kCmdUdpAssociate, .addr = "0.0.0.0", .port = 0, .trace_id = ctx.trace_id()};
@@ -457,7 +457,7 @@ boost::asio::awaitable<void> udp_socks_session::run(const std::string& host, con
     }
     if (tunnel_ != nullptr && stream_ != nullptr)
     {
-        tunnel_->remove_stream(stream_);
+        tunnel_->close_and_remove_stream(stream_);
     }
     close_impl();
     LOG_CTX_INFO(ctx_, "{} finished", log_event::kSocks);
@@ -828,7 +828,7 @@ boost::asio::awaitable<bool> udp_socks_session::ensure_proxy_stream(boost::syste
         {
             ec = send_ec;
             LOG_CTX_WARN(ctx_, "{} start proxy udp reader failed {}", log_event::kSocks, ec.message());
-            tunnel_->remove_stream(stream_);
+            tunnel_->close_and_remove_stream(stream_);
             stream_.reset();
             tunnel_.reset();
             co_return false;
@@ -847,7 +847,7 @@ void udp_socks_session::clear_proxy_stream_if_current(const std::shared_ptr<mux_
 
     if (tunnel_ != nullptr)
     {
-        tunnel_->remove_stream(stream_);
+        tunnel_->close_and_remove_stream(stream_);
     }
     stream_.reset();
     tunnel_.reset();
