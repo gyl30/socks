@@ -34,6 +34,7 @@ extern "C"
 #include "crypto_util.h"
 #include "log_context.h"
 #include "cert_fetcher.h"
+#include "certificate_compression.h"
 #include "reality_core.h"
 #include "reality_messages.h"
 #include "tls_key_schedule.h"
@@ -745,6 +746,28 @@ bool cert_fetcher::fetch_session::process_handshake_message(const std::vector<st
         if (!parse_certificate_chain(msg, observed_material_.certificate_chain))
         {
             LOG_CTX_ERROR(ctx_, "{} parse certificate chain failed", mux::log_event::kCert);
+            return false;
+        }
+        saw_certificate_ = true;
+    }
+    else if (msg_type == 0x19)
+    {
+        boost::system::error_code ec;
+        std::vector<std::uint8_t> certificate_msg;
+        if (!decompress_certificate_message(msg, kMaxMsgSize, certificate_msg, ec))
+        {
+            LOG_CTX_ERROR(ctx_, "{} decompress certificate failed {}", mux::log_event::kCert, ec.message());
+            return false;
+        }
+        LOG_CTX_INFO(ctx_,
+                     "{} found compressed certificate len {} decompressed_len {}",
+                     mux::log_event::kCert,
+                     msg_len,
+                     certificate_msg.size());
+        observed_material_.certificate_message = std::move(certificate_msg);
+        if (!parse_certificate_chain(observed_material_.certificate_message, observed_material_.certificate_chain))
+        {
+            LOG_CTX_ERROR(ctx_, "{} parse decompressed certificate chain failed", mux::log_event::kCert);
             return false;
         }
         saw_certificate_ = true;
