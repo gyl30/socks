@@ -169,13 +169,15 @@ boost::asio::awaitable<void> tproxy_tcp_session::run()
     co_await backend->connect(target_addr.to_string(), target_port, ec);
     if (ec)
     {
+        const auto rep = backend->suggested_socks_rep(ec);
         LOG_CTX_WARN(ctx_,
-                     "{} backend connect failed target {}:{} route {} error {}",
+                     "{} backend connect failed target {}:{} route {} error {} rep {}",
                      log_event::kConnInit,
                      target_addr.to_string(),
                      target_port,
                      mux::to_string(route),
-                     ec.message());
+                     ec.message(),
+                     rep);
         co_await backend->close();
         co_return;
     }
