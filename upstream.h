@@ -86,7 +86,10 @@ class proxy_upstream : public upstream
                                                   const std::string& host,
                                                   std::uint16_t port,
                                                   boost::system::error_code& ec);
-    boost::asio::awaitable<bool> wait_connect_ack(const std::shared_ptr<mux_stream>& stream, const std::string& host, std::uint16_t port);
+    boost::asio::awaitable<bool> wait_connect_ack(const std::shared_ptr<mux_stream>& stream,
+                                                  const std::string& host,
+                                                  std::uint16_t port,
+                                                  boost::system::error_code& ec);
     [[nodiscard]] std::uint32_t connect_ack_timeout() const;
 
    private:
