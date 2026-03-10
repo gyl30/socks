@@ -56,6 +56,7 @@ extern "C"
 #include "context_pool.h"
 #include "reality_auth.h"
 #include "reality_core.h"
+#include "certificate_compression.h"
 #include "reality_engine.h"
 #include "reality_messages.h"
 #include "tls_cipher_suite.h"
@@ -918,6 +919,30 @@ void handle_handshake_message(const std::uint8_t msg_type,
             return;
         }
         load_server_public_key_from_certificate(msg_data, auth_key, validation_state, ec);
+        return;
+    }
+    else if (msg_type == 0x19)
+    {
+        if (!validation_state.encrypted_extensions_checked)
+        {
+            LOG_ERROR("compressed certificate received before encrypted extensions");
+            ec = boost::asio::error::invalid_argument;
+            return;
+        }
+        if (validation_state.cert_checked || validation_state.cert_verify_checked || handshake_fin)
+        {
+            LOG_ERROR("unexpected compressed certificate message order");
+            ec = boost::asio::error::invalid_argument;
+            return;
+        }
+
+        std::vector<std::uint8_t> certificate_msg;
+        if (!reality::decompress_certificate_message(msg_data, kMaxHandshakeMessageSize, certificate_msg, ec))
+        {
+            LOG_ERROR("compressed certificate decode failed {}", ec.message());
+            return;
+        }
+        load_server_public_key_from_certificate(certificate_msg, auth_key, validation_state, ec);
         return;
     }
     else if (msg_type == 0x0f)
