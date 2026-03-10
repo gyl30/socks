@@ -357,6 +357,7 @@ struct handshake_validation_state
     bool cert_verify_signature_checked = false;
     bool reality_cert_verified = false;
     bool real_cert_chain_verified = false;
+    std::string negotiated_alpn;
     const client_hello_info* client_hello = nullptr;
     reality::openssl_ptrs::evp_pkey_ptr server_pub_key = nullptr;
 };
@@ -388,9 +389,11 @@ bool client_offers_signature_scheme(const client_hello_info& client_hello, const
 
 void validate_encrypted_extensions_message(const std::vector<std::uint8_t>& msg_data,
                                            const client_hello_info& client_hello,
+                                           std::string& negotiated_alpn,
                                            boost::system::error_code& ec)
 {
     ec.clear();
+    negotiated_alpn.clear();
     const auto encrypted_extensions = reality::parse_encrypted_extensions(msg_data);
     if (!encrypted_extensions.has_value())
     {
@@ -414,6 +417,7 @@ void validate_encrypted_extensions_message(const std::vector<std::uint8_t>& msg_
         ec = boost::asio::error::invalid_argument;
         return;
     }
+    negotiated_alpn = encrypted_extensions->alpn;
 }
 
 void verify_reality_bound_certificate(const std::vector<std::uint8_t>& cert_der,
@@ -896,7 +900,7 @@ void handle_handshake_message(const std::uint8_t msg_type,
             ec = boost::asio::error::fault;
             return;
         }
-        validate_encrypted_extensions_message(msg_data, *validation_state.client_hello, ec);
+        validate_encrypted_extensions_message(msg_data, *validation_state.client_hello, validation_state.negotiated_alpn, ec);
         if (ec)
         {
             return;
@@ -1856,6 +1860,16 @@ boost::asio::awaitable<void> client_tunnel_pool::run_real_certificate_fallback(
     fallback_ctx.sni(sni_);
     fallback_ctx.set_target(sni_, kFallbackTlsPort);
 
+    if (!handshake_ret.negotiated_alpn.empty() && handshake_ret.negotiated_alpn != "http/1.1")
+    {
+        LOG_CTX_INFO(fallback_ctx,
+                     "{} stage=skip_request host={} negotiated_alpn={}",
+                     log_event::kFallback,
+                     sni_,
+                     handshake_ret.negotiated_alpn);
+        co_return;
+    }
+
     const std::size_t key_len = (handshake_ret.cipher_suite == 0x1302 || handshake_ret.cipher_suite == 0x1303) ? constants::crypto::kKeyLen256
                                                                                                                : constants::crypto::kKeyLen128;
     boost::system::error_code ec;
@@ -2333,6 +2347,7 @@ boost::asio::awaitable<client_tunnel_pool::handshake_result> client_tunnel_pool:
 
     handshake_result result{.c_app_secret = std::move(handshake_read_result.c_app_secret),
                             .s_app_secret = std::move(handshake_read_result.s_app_secret),
+                            .negotiated_alpn = std::move(handshake_read_result.negotiated_alpn),
                             .cipher_suite = server_hello_result.cipher_suite,
                             .key_share_group = server_hello_result.key_share_group,
                             .md = server_hello_result.negotiated_md,
@@ -2516,6 +2531,7 @@ client_tunnel_pool::handshake_read_loop(boost::asio::ip::tcp::socket& socket,
     handshake_read_result result{
         .c_app_secret = std::move(app_sec.first),
         .s_app_secret = std::move(app_sec.second),
+        .negotiated_alpn = std::move(validation_state.negotiated_alpn),
         .auth_mode = validation_state.real_cert_chain_verified ? handshake_auth_mode::kRealCertificateFallback
                                                                : handshake_auth_mode::kRealityTunnel};
     co_return result;
