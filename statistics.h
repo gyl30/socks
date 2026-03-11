@@ -203,10 +203,10 @@ class statistics
             return;
         }
 
-        const std::string_view key = normalize_sni_metric_key(sni);           // GCOVR_EXCL_LINE
-        const std::lock_guard<std::mutex> lock(handshake_failure_sni_mu_);    // GCOVR_EXCL_LINE
+        const std::string key = normalize_sni_metric_key(sni);
+        const std::lock_guard<std::mutex> lock(handshake_failure_sni_mu_);
         auto& counters = handshake_failure_sni_counters_[reason_index];
-        const auto it = counters.by_sni.find(key);    // GCOVR_EXCL_LINE
+        const auto it = counters.by_sni.find(key);
         if (it != counters.by_sni.end())
         {
             it->second++;
@@ -214,7 +214,7 @@ class statistics
         }
         if (counters.by_sni.size() < kMaxTrackedSniPerReason)
         {
-            counters.by_sni.emplace(std::string(key), 1);    // GCOVR_EXCL_LINE
+            counters.by_sni.emplace(key, 1);
             return;
         }
         counters.others++;
@@ -246,7 +246,7 @@ class statistics
             }
             if (counters.others > 0)
             {
-                out.push_back({.reason = reason_label, .sni = "others", .count = counters.others});    // GCOVR_EXCL_LINE
+                out.push_back({.reason = reason_label, .sni = "others", .count = counters.others});
             }
         }
         std::ranges::sort(out,
@@ -283,13 +283,30 @@ class statistics
     }
 
    private:
-    static std::string_view normalize_sni_metric_key(const std::string_view sni)
+    static std::string normalize_sni_metric_key(const std::string_view sni)
     {
         if (sni.empty())
         {
-            return "empty";    // GCOVR_EXCL_LINE
+            return "empty";
         }
-        return sni;    // GCOVR_EXCL_LINE
+        constexpr std::size_t kMaxSniLabelLen = 128;
+        std::string out;
+        out.reserve(std::min(sni.size(), kMaxSniLabelLen));
+        for (const char c : sni)
+        {
+            if (out.size() >= kMaxSniLabelLen)
+            {
+                break;
+            }
+            const unsigned char uc = static_cast<unsigned char>(c);
+            if (uc < 0x20 || uc == 0x7F)
+            {
+                out.push_back('_');
+                continue;
+            }
+            out.push_back(c);
+        }
+        return out.empty() ? std::string("empty") : out;
     }
 
     struct transparent_string_hash
