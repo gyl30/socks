@@ -161,14 +161,21 @@ def send_and_expect_echo(udp_sock, relay_host, relay_port, packet, expected_host
         raise RuntimeError(f"unexpected udp payload {payload!r}")
 
 
-def expect_udp_associate_host_mismatch_rejected(host, port, timeout):
+def expect_udp_associate_host_mismatch_allowed(host, port, timeout, target_port):
     tcp_sock = socket.create_connection((host, port), timeout=timeout)
     tcp_sock.settimeout(timeout)
     try:
         handshake_no_auth(tcp_sock)
         reply = udp_associate(tcp_sock, request_host="127.0.0.2", request_port=0)
-        if reply[1] != 0x02:
-            raise RuntimeError(f"unexpected udp associate mismatch reply rep={reply[1]}")
+        if reply[1] != 0x00:
+            raise RuntimeError(f"unexpected udp associate reply rep={reply[1]}")
+        relay_host, relay_port = parse_reply_address(reply)
+        udp_sock = bind_udp_socket(timeout)
+        try:
+            packet = encode_udp_packet("127.0.0.1", target_port, b"udp-associate-mismatch-allowed")
+            send_and_expect_echo(udp_sock, relay_host, relay_port, packet, "127.0.0.1", target_port, b"udp-associate-mismatch-allowed")
+        finally:
+            udp_sock.close()
     finally:
         tcp_sock.close()
 
@@ -252,10 +259,10 @@ def expect_udp_request_port_constraint(host, port, timeout, target_port):
     )
     try:
         bad_packet = encode_udp_packet("127.0.0.1", target_port, b"udp-bad-port")
-        send_and_expect_timeout(bad_sock, relay_host, relay_port, bad_packet)
+        send_and_expect_echo(bad_sock, relay_host, relay_port, bad_packet, "127.0.0.1", target_port, b"udp-bad-port")
 
         good_packet = encode_udp_packet("127.0.0.1", target_port, b"udp-good-port")
-        send_and_expect_echo(good_sock, relay_host, relay_port, good_packet, "127.0.0.1", target_port, b"udp-good-port")
+        send_and_expect_timeout(good_sock, relay_host, relay_port, good_packet)
     finally:
         tcp_sock.close()
         bad_sock.close()
@@ -289,8 +296,8 @@ def main():
     parser.add_argument("--timeout", type=float, default=1.5)
     args = parser.parse_args()
 
-    expect_udp_associate_host_mismatch_rejected(args.socks_host, args.socks_port, args.timeout)
-    print("socks5 udp associate host mismatch rejected ok")
+    expect_udp_associate_host_mismatch_allowed(args.socks_host, args.socks_port, args.timeout, args.target_port)
+    print("socks5 udp associate host mismatch allowed ok")
 
     expect_udp_associate_domain_allowed(args.socks_host, args.socks_port, args.timeout, args.target_port)
     print("socks5 udp associate domain allowed ok")
@@ -308,7 +315,7 @@ def main():
     print("socks5 udp zero domain ignored and recovered ok")
 
     expect_udp_request_port_constraint(args.socks_host, args.socks_port, args.timeout, args.target_port)
-    print("socks5 udp request port constraint ok")
+    print("socks5 udp request port ignored ok")
 
     expect_udp_bound_peer_rebind_ignored(args.socks_host, args.socks_port, args.timeout, args.target_port)
     print("socks5 udp bound peer rebind ignored ok")
