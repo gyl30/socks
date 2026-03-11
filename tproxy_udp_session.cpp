@@ -1,4 +1,5 @@
 #include <chrono>
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <vector>
@@ -671,6 +672,8 @@ boost::asio::awaitable<bool> tproxy_udp_session::send_to_client(const boost::asi
         close_ec = reply_socket->close(close_ec);
         (void)close_ec;
         reply_sockets_.erase(key);
+        reply_socket_order_.erase(std::remove(reply_socket_order_.begin(), reply_socket_order_.end(), key),
+                                  reply_socket_order_.end());
         LOG_CTX_WARN(ctx_, "{} send udp reply to client failed {}", log_event::kMux, send_ec.message());
         co_return true;
     }
