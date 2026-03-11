@@ -143,14 +143,21 @@ void evict_expired(Map& data, std::unordered_map<std::string, std::uint64_t>& ex
 {
     while (!order.empty())
     {
-        const auto& key = order.front();
+        const auto& entry = order.front();
+        const auto& key = entry.first;
+        const auto entry_expire = entry.second;
         const auto it_exp = expires.find(key);
         if (it_exp == expires.end())
         {
             order.pop_front();
             continue;
         }
-        if (it_exp->second > now_ms)
+        if (it_exp->second != entry_expire)
+        {
+            order.pop_front();
+            continue;
+        }
+        if (entry_expire > now_ms)
         {
             break;
         }
@@ -165,10 +172,17 @@ void evict_overflow(Map& data, std::unordered_map<std::string, std::uint64_t>& e
 {
     while (data.size() > kMaxUdpCacheEntries && !order.empty())
     {
-        const auto key = order.front();
-        data.erase(key);
-        expires.erase(key);
+        const auto entry = order.front();
+        const auto& key = entry.first;
+        const auto entry_expire = entry.second;
         order.pop_front();
+        const auto it_exp = expires.find(key);
+        if (it_exp == expires.end() || it_exp->second != entry_expire)
+        {
+            continue;
+        }
+        data.erase(key);
+        expires.erase(it_exp);
     }
 }
 
@@ -576,7 +590,9 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> udp_socks_session::resolv
     const auto cached = resolved_targets_.find(key);
     if (cached != resolved_targets_.end())
     {
-        resolved_expires_[key] = now_ms_value + kUdpCacheTtlMs;
+        const auto expires_at = now_ms_value + kUdpCacheTtlMs;
+        resolved_expires_[key] = expires_at;
+        resolved_order_.push_back({key, expires_at});
         co_return cached->second;
     }
 
@@ -595,8 +611,9 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> udp_socks_session::resolv
     }
 
     const auto target = net::normalize_endpoint(endpoints.begin()->endpoint());
-    resolved_order_.push_back(key);
-    resolved_expires_[key] = now_ms_value + kUdpCacheTtlMs;
+    const auto expires_at = now_ms_value + kUdpCacheTtlMs;
+    resolved_order_.push_back({key, expires_at});
+    resolved_expires_[key] = expires_at;
     resolved_targets_.emplace(key, target);
     evict_overflow(resolved_targets_, resolved_expires_, resolved_order_);
     co_return target;
@@ -654,8 +671,9 @@ boost::asio::awaitable<void> udp_socks_session::forward_direct_packet(const sock
     const auto now_ms_value = now_ms();
     evict_expired(direct_peers_, direct_peers_expires_, direct_peers_order_, now_ms_value);
     direct_peers_.insert(normalized_addr);
-    direct_peers_expires_[normalized_addr] = now_ms_value + kUdpCacheTtlMs;
-    direct_peers_order_.push_back(normalized_addr);
+    const auto expires_at = now_ms_value + kUdpCacheTtlMs;
+    direct_peers_expires_[normalized_addr] = expires_at;
+    direct_peers_order_.push_back({normalized_addr, expires_at});
     evict_overflow(direct_peers_, direct_peers_expires_, direct_peers_order_);
 }
 
