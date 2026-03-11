@@ -347,6 +347,12 @@ boost::asio::awaitable<bool> proxy_upstream::wait_connect_ack(const std::shared_
 
 boost::asio::awaitable<void> proxy_upstream::connect(const std::string& host, const std::uint16_t port, boost::system::error_code& ec)
 {
+    has_bind_endpoint_ = false;
+    bind_port_ = 0;
+    fin_sent_ = false;
+    reset_received_ = false;
+    protocol_error_ = false;
+    last_remote_rep_ = socks::kRepSuccess;
     if (tunnel_pool_ != nullptr)
     {
         tunnel_.reset();
@@ -375,12 +381,6 @@ boost::asio::awaitable<void> proxy_upstream::connect(const std::string& host, co
         LOG_CTX_ERROR(ctx_, "{} create stream failed", log_event::kRoute);
         co_return;
     }
-    has_bind_endpoint_ = false;
-    bind_port_ = 0;
-    fin_sent_ = false;
-    reset_received_ = false;
-    protocol_error_ = false;
-    last_remote_rep_ = socks::kRepSuccess;
     co_await send_syn_request(stream, host, port, ec);
     if (ec)
     {
