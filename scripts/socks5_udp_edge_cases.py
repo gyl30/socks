@@ -173,15 +173,21 @@ def expect_udp_associate_host_mismatch_rejected(host, port, timeout):
         tcp_sock.close()
 
 
-def expect_udp_associate_domain_constraint_rejected(host, port, timeout):
-    tcp_sock = socket.create_connection((host, port), timeout=timeout)
-    tcp_sock.settimeout(timeout)
+def expect_udp_associate_domain_allowed(host, port, timeout, target_port):
+    tcp_sock, relay_host, relay_port = create_associated_session(
+        host,
+        port,
+        timeout,
+        request_host="client.invalid",
+        request_port=0,
+        force_domain=True,
+    )
+    udp_sock = bind_udp_socket(timeout)
     try:
-        handshake_no_auth(tcp_sock)
-        reply = udp_associate(tcp_sock, request_host="client.invalid", request_port=0, force_domain=True)
-        if reply[1] != 0x08:
-            raise RuntimeError(f"unexpected udp associate domain constraint reply rep={reply[1]}")
+        packet = encode_udp_packet("127.0.0.1", target_port, b"udp-associate-domain-echo")
+        send_and_expect_echo(udp_sock, relay_host, relay_port, packet, "127.0.0.1", target_port, b"udp-associate-domain-echo")
     finally:
+        udp_sock.close()
         tcp_sock.close()
 
 
@@ -286,8 +292,8 @@ def main():
     expect_udp_associate_host_mismatch_rejected(args.socks_host, args.socks_port, args.timeout)
     print("socks5 udp associate host mismatch rejected ok")
 
-    expect_udp_associate_domain_constraint_rejected(args.socks_host, args.socks_port, args.timeout)
-    print("socks5 udp associate domain constraint rejected ok")
+    expect_udp_associate_domain_allowed(args.socks_host, args.socks_port, args.timeout, args.target_port)
+    print("socks5 udp associate domain allowed ok")
 
     expect_udp_domain_encoded_target_ok(args.socks_host, args.socks_port, args.timeout, args.target_port)
     print("socks5 udp domain encoded target ok")
