@@ -7,6 +7,8 @@ package "Client Process" {
     [SOCKS Session] as SocksSession
     [TPROXY TCP Listener] as TproxyListener
     [TPROXY TCP Session] as TproxySession
+    [TPROXY UDP Listener] as TproxyUdpListener
+    [TPROXY UDP Session] as TproxyUdpSession
 
     [Router] as Router
     [direct_upstream] as DirectUpstream
@@ -41,8 +43,12 @@ SocksListener --> SocksSession : create
 App --> TproxyListener : redirected TCP (Linux)
 TproxyListener --> TproxySession : create
 
+App --> TproxyUdpListener : redirected UDP (Linux)
+TproxyUdpListener --> TproxyUdpSession : create
+
 SocksSession --> Router : decide_ip / decide_domain
 TproxySession --> Router : decide_ip
+TproxyUdpSession --> Router : decide_ip
 
 Router --> DirectUpstream : route=direct
 Router --> ProxyUpstream : route=proxy
@@ -64,6 +70,9 @@ ServerMux --> RemoteUdp : SYN UDP_ASSOCIATE
 RemoteTcp --> Target : TCP connect + relay
 RemoteUdp --> Target : UDP relay
 
+TproxyUdpSession --> TunnelPool : route=proxy
+TproxyUdpSession --> Target : direct UDP
+
 MetricsClient --> Monitor : GET /metrics
 
 note right of ProxyUpstream
@@ -80,8 +89,7 @@ note right of RemoteServer
 end note
 
 note bottom of TproxyListener
-  当前仅 TPROXY TCP。
-  UDP 尚未实现。
+  TPROXY TCP/UDP 均已实现。
 end note
 
 @enduml
