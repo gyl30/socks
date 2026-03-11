@@ -60,8 +60,6 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
 
    private:
     void apply_request_peer_constraint(const std::string& host, std::uint16_t port);
-    [[nodiscard]] bool has_conflicting_peer_constraint() const;
-    [[nodiscard]] bool sender_matches_request_peer(const boost::asio::ip::udp::endpoint& sender) const;
     [[nodiscard]] boost::asio::awaitable<route_type> decide_udp_route(const socks_udp_header& header) const;
     [[nodiscard]] boost::asio::awaitable<bool> ensure_proxy_stream(boost::system::error_code& ec);
     [[nodiscard]] boost::asio::awaitable<boost::asio::ip::udp::endpoint> resolve_target_endpoint(const std::string& host,
@@ -113,14 +111,6 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
     bool proxy_stream_started_ = false;
     bool has_client_addr_ = false;
     boost::asio::ip::udp::endpoint client_addr_;
-    bool has_control_peer_addr_ = false;
-    boost::asio::ip::address control_peer_addr_;
-    bool has_invalid_request_peer_constraint_ = false;
-    bool has_request_client_addr_ = false;
-    std::string requested_host_;
-    boost::asio::ip::address request_client_addr_;
-    bool has_request_client_port_ = false;
-    std::uint16_t request_client_port_ = 0;
     std::unordered_map<std::string, boost::asio::ip::udp::endpoint> resolved_targets_;
     std::unordered_map<std::string, std::uint64_t> resolved_expires_;
     std::deque<std::string> resolved_order_;
