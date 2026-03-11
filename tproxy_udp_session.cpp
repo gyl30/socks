@@ -248,75 +248,81 @@ udp_enqueue_result tproxy_udp_session::try_enqueue_packet(std::vector<std::uint8
 
 boost::asio::awaitable<void> tproxy_udp_session::run()
 {
-    bool ready = false;
+    using boost::asio::experimental::awaitable_operators::operator||;
+
     if (route_ == route_type::kDirect)
     {
-        ready = co_await open_direct_socket();
-    }
-    else if (route_ == route_type::kProxy)
-    {
-        ready = co_await open_proxy_stream();
-    }
-
-    if (!ready)
-    {
-        close_impl();
-        if (on_close_ != nullptr)
+        const bool direct_ready = co_await open_direct_socket();
+        if (!direct_ready)
         {
-            on_close_();
-            on_close_ = nullptr;
+            close_impl();
+            if (on_close_ != nullptr)
+            {
+                on_close_();
+                on_close_ = nullptr;
+            }
+            co_return;
         }
-        co_return;
-    }
 
-    using boost::asio::experimental::awaitable_operators::operator||;
-    if (cfg_.timeout.idle == 0)
-    {
-        if (route_ == route_type::kDirect)
+        if (cfg_.timeout.idle == 0)
         {
             co_await (packets_to_direct() || direct_to_client());
         }
         else
         {
-            co_await (packets_to_proxy() || proxy_to_client());
+            co_await (packets_to_direct() || direct_to_client() || idle_watchdog());
         }
     }
     else
     {
-        if (route_ == route_type::kDirect)
+        const bool ready = co_await open_proxy_stream();
+
+        if (!ready)
         {
-            co_await (packets_to_direct() || direct_to_client() || idle_watchdog());
+            close_impl();
+            if (on_close_ != nullptr)
+            {
+                on_close_();
+                on_close_ = nullptr;
+            }
+            co_return;
+        }
+
+        if (cfg_.timeout.idle == 0)
+        {
+            co_await (packets_to_proxy() || proxy_to_client());
         }
         else
         {
             co_await (packets_to_proxy() || proxy_to_client() || idle_watchdog());
         }
-    }
 
-    const auto close_command = stream_close_command_.load(std::memory_order_relaxed);
-    if (stream_ != nullptr && close_command != kNoStreamControl)
-    {
-        mux_frame close_frame;
-        close_frame.h.stream_id = stream_->id();
-        close_frame.h.command = close_command;
-        boost::system::error_code close_ec;
-        co_await stream_->async_write(std::move(close_frame), close_ec);
-        if (close_ec)
+        const auto close_command = stream_close_command_.load(std::memory_order_relaxed);
+        if (stream_ != nullptr && close_command != kNoStreamControl)
         {
-            LOG_CTX_WARN(ctx_,
-                         "{} send udp {} failed {}",
-                         log_event::kMux,
-                         close_command == mux::kCmdRst ? "rst" : "fin",
-                         close_ec.message());
+            mux_frame close_frame;
+            close_frame.h.stream_id = stream_->id();
+            close_frame.h.command = close_command;
+            boost::system::error_code close_ec;
+            co_await stream_->async_write(std::move(close_frame), close_ec);
+            if (close_ec)
+            {
+                LOG_CTX_WARN(ctx_,
+                             "{} send udp {} failed {}",
+                             log_event::kMux,
+                             close_command == mux::kCmdRst ? "rst" : "fin",
+                             close_ec.message());
+            }
         }
+
+        if (tunnel_ != nullptr && stream_ != nullptr)
+        {
+            tunnel_->close_and_remove_stream(stream_);
+        }
+        stream_.reset();
+        tunnel_.reset();
     }
 
-    if (tunnel_ != nullptr && stream_ != nullptr)
-    {
-        tunnel_->close_and_remove_stream(stream_);
-    }
-    stream_.reset();
-    tunnel_.reset();
     close_impl();
     if (on_close_ != nullptr)
     {
@@ -337,6 +343,23 @@ boost::asio::awaitable<bool> tproxy_udp_session::open_direct_socket()
         co_return false;
     }
 
+    ec = upstream_socket_.set_option(boost::asio::socket_base::reuse_address(true), ec);
+    if (ec)
+    {
+        LOG_CTX_WARN(ctx_, "{} set direct udp reuse_address failed {}", log_event::kConnInit, ec.message());
+        co_return false;
+    }
+    boost::system::error_code reuse_port_ec;
+    set_socket_reuse_port(upstream_socket_.native_handle(), reuse_port_ec);
+    (void)reuse_port_ec;
+
+    net::set_socket_transparent(upstream_socket_.native_handle(), target_endpoint_.address().is_v6(), ec);
+    if (ec)
+    {
+        LOG_CTX_WARN(ctx_, "{} set direct udp transparent failed {}", log_event::kConnInit, ec.message());
+        co_return false;
+    }
+
     if (cfg_.tproxy.mark != 0)
     {
         net::set_socket_mark(upstream_socket_.native_handle(), cfg_.tproxy.mark, ec);
@@ -347,7 +370,7 @@ boost::asio::awaitable<bool> tproxy_udp_session::open_direct_socket()
         }
     }
 
-    ec = upstream_socket_.bind(boost::asio::ip::udp::endpoint(protocol, 0), ec);
+    ec = upstream_socket_.bind(client_endpoint_, ec);
     if (ec)
     {
         LOG_CTX_WARN(ctx_, "{} bind direct udp socket failed {}", log_event::kConnInit, ec.message());
@@ -455,15 +478,16 @@ boost::asio::awaitable<void> tproxy_udp_session::packets_to_direct()
             break;
         }
 
-        const auto [send_ec, bytes_sent] =
+        const auto [send_ec, sent] =
             co_await upstream_socket_.async_send(boost::asio::buffer(payload), boost::asio::as_tuple(boost::asio::use_awaitable));
+        (void)sent;
         ec = send_ec;
         if (ec)
         {
             LOG_CTX_WARN(ctx_, "{} send direct udp payload failed {}", log_event::kMux, ec.message());
             break;
         }
-        ctx_.add_tx_bytes(bytes_sent);
+        ctx_.add_tx_bytes(payload.size());
         last_activity_time_ms_ = timeout_io::now_ms();
     }
 }
