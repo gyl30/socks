@@ -2,6 +2,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <deque>
 #include <cstddef>
 #include <cstdint>
 #include <utility>
@@ -49,6 +50,8 @@ namespace
 {
 
 constexpr std::uint8_t kNoStreamControl = 0;
+constexpr std::size_t kMaxUdpCacheEntries = 1024;
+constexpr std::uint64_t kUdpCacheTtlMs = 10 * 60 * 1000;
 
 [[nodiscard]] bool is_normal_close_error(const boost::system::error_code& ec)
 {
@@ -132,6 +135,40 @@ void open_and_bind_udp_socket(boost::asio::ip::udp::socket& sock, const boost::a
     if (ec)
     {
         return;
+    }
+}
+
+template <typename Map, typename Queue>
+void evict_expired(Map& data, std::unordered_map<std::string, std::uint64_t>& expires, Queue& order, const std::uint64_t now_ms)
+{
+    while (!order.empty())
+    {
+        const auto& key = order.front();
+        const auto it_exp = expires.find(key);
+        if (it_exp == expires.end())
+        {
+            order.pop_front();
+            continue;
+        }
+        if (it_exp->second > now_ms)
+        {
+            break;
+        }
+        data.erase(key);
+        expires.erase(it_exp);
+        order.pop_front();
+    }
+}
+
+template <typename Map, typename Queue>
+void evict_overflow(Map& data, std::unordered_map<std::string, std::uint64_t>& expires, Queue& order)
+{
+    while (data.size() > kMaxUdpCacheEntries && !order.empty())
+    {
+        const auto key = order.front();
+        data.erase(key);
+        expires.erase(key);
+        order.pop_front();
     }
 }
 
@@ -475,6 +512,7 @@ void udp_socks_session::apply_request_peer_constraint(const std::string& host, c
     has_request_client_addr_ = false;
     has_request_client_port_ = false;
     request_client_port_ = 0;
+    requested_host_.clear();
     if (port != 0)
     {
         has_request_client_port_ = true;
@@ -494,8 +532,9 @@ void udp_socks_session::apply_request_peer_constraint(const std::string& host, c
     }
     else if (!host.empty())
     {
-        // RFC 1928 允许 UDP ASSOCIATE 使用域名，这里不做约束即可
-        LOG_CTX_INFO(ctx_, "{} udp associate request host {} is domain ignore peer constraint", log_event::kSocks, host);
+        // 域名稍后解析
+        requested_host_ = host;
+        LOG_CTX_INFO(ctx_, "{} udp associate request host {} will resolve later", log_event::kSocks, host);
     }
 
     if (has_request_client_addr_ || has_request_client_port_)
@@ -619,9 +658,13 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> udp_socks_session::resolv
 {
     ec.clear();
     const auto key = udp_target_key(host, port);
+    const auto now_ms_value = now_ms();
+    evict_expired(resolved_targets_, resolved_expires_, resolved_order_, now_ms_value);
+
     const auto cached = resolved_targets_.find(key);
     if (cached != resolved_targets_.end())
     {
+        resolved_expires_[key] = now_ms_value + kUdpCacheTtlMs;
         co_return cached->second;
     }
 
@@ -640,7 +683,10 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> udp_socks_session::resolv
     }
 
     const auto target = net::normalize_endpoint(endpoints.begin()->endpoint());
+    resolved_order_.push_back(key);
+    resolved_expires_[key] = now_ms_value + kUdpCacheTtlMs;
     resolved_targets_.emplace(key, target);
+    evict_overflow(resolved_targets_, resolved_expires_, resolved_order_);
     co_return target;
 }
 
@@ -692,7 +738,13 @@ boost::asio::awaitable<void> udp_socks_session::forward_direct_packet(const sock
         co_return;
     }
 
-    direct_peers_.insert(net::normalize_endpoint(target).address().to_string());
+    const auto normalized_addr = net::normalize_endpoint(target).address().to_string();
+    const auto now_ms_value = now_ms();
+    evict_expired(direct_peers_, direct_peers_expires_, direct_peers_order_, now_ms_value);
+    direct_peers_.insert(normalized_addr);
+    direct_peers_expires_[normalized_addr] = now_ms_value + kUdpCacheTtlMs;
+    direct_peers_order_.push_back(normalized_addr);
+    evict_overflow(direct_peers_, direct_peers_expires_, direct_peers_order_);
 }
 
 boost::asio::awaitable<void> udp_socks_session::direct_udp_socket_loop(boost::asio::ip::udp::socket& direct_socket)
@@ -713,7 +765,10 @@ boost::asio::awaitable<void> udp_socks_session::direct_udp_socket_loop(boost::as
             }
             break;
         }
-        if (!direct_peers_.contains(net::normalize_endpoint(sender).address().to_string()))
+        const auto now_ms_value = now_ms();
+        evict_expired(direct_peers_, direct_peers_expires_, direct_peers_order_, now_ms_value);
+        const auto normalized_sender_addr = net::normalize_endpoint(sender).address().to_string();
+        if (!direct_peers_.contains(normalized_sender_addr))
         {
             LOG_CTX_WARN(ctx_,
                          "{} ignore udp packet from unexpected direct peer {}:{}",

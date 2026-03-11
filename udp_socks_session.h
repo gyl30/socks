@@ -7,6 +7,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <deque>
 #include <vector>
 #include <cstddef>
 #include <cstdint>
@@ -116,11 +117,16 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
     boost::asio::ip::address control_peer_addr_;
     bool has_invalid_request_peer_constraint_ = false;
     bool has_request_client_addr_ = false;
+    std::string requested_host_;
     boost::asio::ip::address request_client_addr_;
     bool has_request_client_port_ = false;
     std::uint16_t request_client_port_ = 0;
     std::unordered_map<std::string, boost::asio::ip::udp::endpoint> resolved_targets_;
+    std::unordered_map<std::string, std::uint64_t> resolved_expires_;
+    std::deque<std::string> resolved_order_;
     std::unordered_set<std::string> direct_peers_;
+    std::unordered_map<std::string, std::uint64_t> direct_peers_expires_;
+    std::deque<std::string> direct_peers_order_;
     std::shared_ptr<void> active_connection_guard_;
     proxy_stream_channel_type proxy_stream_channel_;
 };
