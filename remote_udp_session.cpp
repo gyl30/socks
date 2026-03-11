@@ -485,7 +485,34 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> remote_udp_session::resol
         co_return boost::asio::ip::udp::endpoint{};
     }
 
-    const auto target = net::normalize_endpoint(res.begin()->endpoint());
+    boost::system::error_code local_ep_ec;
+    const auto local_ep = udp_socket_.local_endpoint(local_ep_ec);
+    if (local_ep_ec)
+    {
+        ec = local_ep_ec;
+        LOG_CTX_WARN(ctx_, "{} stage=resolve target={}:{} error=local_endpoint_failed", log_event::kMux, host, port);
+        co_return boost::asio::ip::udp::endpoint{};
+    }
+    const bool v4_only = local_ep.address().is_v4();
+    boost::asio::ip::udp::endpoint target;
+    bool found = false;
+    for (const auto& endpoint : res)
+    {
+        const auto normalized = net::normalize_endpoint(endpoint.endpoint());
+        if (v4_only && normalized.address().is_v6())
+        {
+            continue;
+        }
+        target = normalized;
+        found = true;
+        break;
+    }
+    if (!found)
+    {
+        ec = boost::asio::error::address_family_not_supported;
+        LOG_CTX_WARN(ctx_, "{} stage=resolve target={}:{} error=no_compatible_endpoint", log_event::kMux, host, port);
+        co_return boost::asio::ip::udp::endpoint{};
+    }
     const auto expires_at = now_ms + kUdpCacheTtlMs;
     resolved_order_.push_back({key, expires_at});
     resolved_expires_[key] = expires_at;

@@ -610,7 +610,25 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> udp_socks_session::resolv
         co_return boost::asio::ip::udp::endpoint{};
     }
 
-    const auto target = net::normalize_endpoint(endpoints.begin()->endpoint());
+    boost::asio::ip::udp::endpoint target;
+    bool found = false;
+    for (const auto& endpoint : endpoints)
+    {
+        const auto normalized = net::normalize_endpoint(endpoint.endpoint());
+        if (select_direct_udp_socket(normalized) == nullptr)
+        {
+            continue;
+        }
+        target = normalized;
+        found = true;
+        break;
+    }
+    if (!found)
+    {
+        ec = boost::asio::error::address_family_not_supported;
+        LOG_CTX_WARN(ctx_, "{} udp direct resolve no compatible endpoint {}:{}", log_event::kRoute, host, port);
+        co_return boost::asio::ip::udp::endpoint{};
+    }
     const auto expires_at = now_ms_value + kUdpCacheTtlMs;
     resolved_order_.push_back({key, expires_at});
     resolved_expires_[key] = expires_at;
