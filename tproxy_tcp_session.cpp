@@ -111,6 +111,21 @@ boost::asio::awaitable<void> tproxy_tcp_session::run()
             co_return;
         }
     }
+    if (cfg_.tproxy.tcp_port != 0)
+    {
+        boost::system::error_code local_ec;
+        const auto local_ep = socket_.local_endpoint(local_ec);
+        if (!local_ec)
+        {
+            const auto target_addr = net::normalize_address(target_ep.address());
+            const auto local_addr = net::normalize_address(local_ep.address());
+            if (target_ep.port() == cfg_.tproxy.tcp_port && target_addr == local_addr)
+            {
+                LOG_CTX_WARN(ctx_, "{} tproxy routing loop detected drop", log_event::kConnInit);
+                co_return;
+            }
+        }
+    }
     boost::system::error_code peer_ec;
     const auto peer_ep = socket_.remote_endpoint(peer_ec);
     auto target_addr = net::normalize_address(target_ep.address());

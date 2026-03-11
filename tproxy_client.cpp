@@ -364,6 +364,22 @@ boost::asio::awaitable<void> tproxy_client::on_udp_packet(boost::asio::ip::udp::
     client_endpoint = net::normalize_endpoint(client_endpoint);
     target_endpoint = net::normalize_endpoint(target_endpoint);
 
+    if (cfg_.tproxy.udp_port != 0)
+    {
+        boost::system::error_code addr_ec;
+        const auto local_addr = boost::asio::ip::make_address(cfg_.tproxy.listen_host, addr_ec);
+        if (!addr_ec)
+        {
+            const auto target_addr = net::normalize_address(target_endpoint.address());
+            const auto local_norm = net::normalize_address(local_addr);
+            if (target_endpoint.port() == cfg_.tproxy.udp_port && target_addr == local_norm)
+            {
+                LOG_CTX_WARN(ctx, "{} tproxy udp routing loop detected drop", log_event::kConnInit);
+                co_return;
+            }
+        }
+    }
+
     const auto key = make_udp_session_key(client_endpoint, target_endpoint);
     auto session_it = udp_sessions_.find(key);
     if (session_it == udp_sessions_.end())
