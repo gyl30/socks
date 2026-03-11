@@ -80,6 +80,9 @@ boost::asio::awaitable<void> mux_dispatcher::process_frames(boost::system::error
         mux::frame_header header;
         if (!mux::mux_codec::decode_header(header_bytes.data(), header_bytes.size(), header))
         {
+            LOG_CTX_ERROR(ctx_, "{} mux dispatcher invalid header", log_event::kMux);
+            buffer_.consume(buffer_.size());
+            ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
             break;
         }
         const std::uint32_t total_frame_len = mux::kHeaderSize + header.length;
