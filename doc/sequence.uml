@@ -97,8 +97,9 @@ SocksSession -> Upstream: close()
 Upstream -> ClientMux: remove_stream()
 
 note over SocksSession, RemoteTcp
-  当前实现不支持 TCP 半关闭。
-  会话结束以 stream 移除或连接关闭为主。
+  支持 TCP 半关闭：
+  任一侧读到 EOF，会对另一侧执行 shutdown_send。
+  会话结束仍以 stream 移除或连接关闭为主。
 end note
 
 @enduml

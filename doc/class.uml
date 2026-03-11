@@ -51,9 +51,16 @@ package "Client Inbound" {
         + start()
         + stop()
         - accept_tcp_loop()
+        - accept_udp_loop()
     }
 
     class tproxy_tcp_session {
+        + start()
+        - run()
+        - idle_watchdog()
+    }
+
+    class tproxy_udp_session {
         + start()
         - run()
         - idle_watchdog()
@@ -176,6 +183,7 @@ tproxy_client *-- task_group
 tproxy_client *-- router
 tproxy_client *-- client_tunnel_pool
 tproxy_client ..> tproxy_tcp_session : creates
+tproxy_client ..> tproxy_udp_session : creates
 
 tproxy_tcp_session ..> router
 tproxy_tcp_session ..> upstream : select_backend
@@ -205,9 +213,8 @@ monitor_server o-- io_context_pool
 monitor_server *-- task_group
 
 note right of tproxy_client
-  当前仅实现 TPROXY TCP。
-  udp_port 仅保留配置字段，
-  启动时会记录 UDP 未实现。
+  TPROXY TCP/UDP 均已实现。
+  UDP 会话按 client/target endpoint 维护。
 end note
 
 note right of mux_stream_interface
