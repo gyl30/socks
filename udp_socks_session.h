@@ -5,6 +5,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <unordered_map>
 #include <unordered_set>
 #include <deque>
@@ -113,10 +114,10 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
     boost::asio::ip::udp::endpoint client_addr_;
     std::unordered_map<std::string, boost::asio::ip::udp::endpoint> resolved_targets_;
     std::unordered_map<std::string, std::uint64_t> resolved_expires_;
-    std::deque<std::string> resolved_order_;
+    std::deque<std::pair<std::string, std::uint64_t>> resolved_order_;
     std::unordered_set<std::string> direct_peers_;
     std::unordered_map<std::string, std::uint64_t> direct_peers_expires_;
-    std::deque<std::string> direct_peers_order_;
+    std::deque<std::pair<std::string, std::uint64_t>> direct_peers_order_;
     std::shared_ptr<void> active_connection_guard_;
     proxy_stream_channel_type proxy_stream_channel_;
 };
