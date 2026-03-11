@@ -326,6 +326,14 @@ boost::asio::awaitable<void> tproxy_client::accept_udp_loop()
             LOG_ERROR("tproxy udp recvmsg failed {}", std::strerror(errno));
             continue;
         }
+        if ((msg.msg_flags & (MSG_TRUNC | MSG_CTRUNC)) != 0)
+        {
+            LOG_WARN("tproxy udp recvmsg truncated drop flags {} bytes {} controllen {}",
+                     msg.msg_flags,
+                     bytes_recv,
+                     msg.msg_controllen);
+            continue;
+        }
 
         const auto client_endpoint = net::normalize_endpoint(net::endpoint_from_sockaddr(source_addr, msg.msg_namelen));
         const auto target_endpoint_opt = net::parse_original_dst(msg);
@@ -374,9 +382,15 @@ boost::asio::awaitable<void> tproxy_client::on_udp_packet(boost::asio::ip::udp::
         {
             route = co_await router_->decide_ip(ctx, target_endpoint.address());
         }
+        LOG_CTX_INFO(ctx,
+                     "{} udp route decision target {}:{} route {}",
+                     log_event::kRoute,
+                     target_endpoint.address().to_string(),
+                     target_endpoint.port(),
+                     mux::to_string(route));
         if (route == route_type::kBlock)
         {
-            LOG_CTX_INFO(ctx, "{} block udp target {}:{}", log_event::kRoute, target_endpoint.address().to_string(), target_endpoint.port());
+            LOG_CTX_INFO(ctx, "{} udp blocked {}:{}", log_event::kRoute, target_endpoint.address().to_string(), target_endpoint.port());
             co_return;
         }
 

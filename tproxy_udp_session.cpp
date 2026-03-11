@@ -343,23 +343,6 @@ boost::asio::awaitable<bool> tproxy_udp_session::open_direct_socket()
         co_return false;
     }
 
-    ec = upstream_socket_.set_option(boost::asio::socket_base::reuse_address(true), ec);
-    if (ec)
-    {
-        LOG_CTX_WARN(ctx_, "{} set direct udp reuse_address failed {}", log_event::kConnInit, ec.message());
-        co_return false;
-    }
-    boost::system::error_code reuse_port_ec;
-    set_socket_reuse_port(upstream_socket_.native_handle(), reuse_port_ec);
-    (void)reuse_port_ec;
-
-    net::set_socket_transparent(upstream_socket_.native_handle(), target_endpoint_.address().is_v6(), ec);
-    if (ec)
-    {
-        LOG_CTX_WARN(ctx_, "{} set direct udp transparent failed {}", log_event::kConnInit, ec.message());
-        co_return false;
-    }
-
     if (cfg_.tproxy.mark != 0)
     {
         net::set_socket_mark(upstream_socket_.native_handle(), cfg_.tproxy.mark, ec);
@@ -370,7 +353,7 @@ boost::asio::awaitable<bool> tproxy_udp_session::open_direct_socket()
         }
     }
 
-    ec = upstream_socket_.bind(client_endpoint_, ec);
+    ec = upstream_socket_.bind(boost::asio::ip::udp::endpoint(protocol, 0), ec);
     if (ec)
     {
         LOG_CTX_WARN(ctx_, "{} bind direct udp socket failed {}", log_event::kConnInit, ec.message());

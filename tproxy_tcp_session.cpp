@@ -1,5 +1,4 @@
 #include <chrono>
-#include <cerrno>
 #include <memory>
 #include <vector>
 #include <cstddef>
@@ -38,30 +37,6 @@ namespace mux
 
 namespace
 {
-
-bool should_fallback_to_local_endpoint(const boost::system::error_code& ec)
-{
-    return ec.value() == ENOENT || ec.value() == ENOPROTOOPT || ec.value() == EOPNOTSUPP;
-}
-
-bool try_get_tproxy_target_from_local_endpoint(boost::asio::ip::tcp::socket& socket,
-                                               boost::asio::ip::tcp::endpoint& endpoint,
-                                               boost::system::error_code& ec)
-{
-    ec.clear();
-    const auto local_endpoint = socket.local_endpoint(ec);
-    if (ec)
-    {
-        return false;
-    }
-    if (local_endpoint.port() == 0)
-    {
-        ec = boost::asio::error::address_family_not_supported;
-        return false;
-    }
-    endpoint = local_endpoint;
-    return true;
-}
 
 }    // namespace
 
@@ -116,28 +91,23 @@ boost::asio::awaitable<void> tproxy_tcp_session::run()
     if (!net::get_original_tcp_dst(socket_, target_ep, ec))
     {
         const auto original_dst_ec = ec;
-        boost::system::error_code fallback_ec;
-        if (should_fallback_to_local_endpoint(original_dst_ec) && try_get_tproxy_target_from_local_endpoint(socket_, target_ep, fallback_ec))
+        boost::system::error_code local_ec;
+        const auto local_ep = socket_.local_endpoint(local_ec);
+        const bool can_use_local = !local_ec && local_ep.port() != cfg_.tproxy.tcp_port;
+        if (can_use_local)
         {
-            const auto fallback_addr = net::normalize_address(target_ep.address());
-            LOG_CTX_INFO(ctx_,
-                         "{} original dst source local_endpoint_fallback target {}:{} reason {}",
+            target_ep = local_ep;
+            LOG_CTX_WARN(ctx_,
+                         "{} original dst failed fallback to local endpoint {}:{} reason {}",
                          log_event::kConnInit,
-                         fallback_addr.to_string(),
+                         target_ep.address().to_string(),
                          target_ep.port(),
                          original_dst_ec.message());
             ec.clear();
         }
         else
         {
-            if (fallback_ec)
-            {
-                LOG_ERROR("tproxy tcp original dst failed source getsockopt error {} fallback {}", original_dst_ec.message(), fallback_ec.message());
-            }
-            else
-            {
-                LOG_ERROR("tproxy tcp original dst failed source getsockopt error {}", original_dst_ec.message());
-            }
+            LOG_CTX_WARN(ctx_, "{} original dst failed drop connection reason {}", log_event::kConnInit, original_dst_ec.message());
             co_return;
         }
     }
