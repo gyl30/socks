@@ -49,6 +49,7 @@ namespace
 constexpr std::size_t kPacketChannelCapacity = 1024;
 constexpr std::chrono::milliseconds kTunnelPollInterval(200);
 constexpr std::uint8_t kNoStreamControl = 0;
+constexpr std::size_t kMaxReplySockets = 512;
 
 [[nodiscard]] bool is_normal_close_error(const boost::system::error_code& ec)
 {
@@ -729,6 +730,23 @@ std::shared_ptr<boost::asio::ip::udp::socket> tproxy_udp_session::get_or_create_
     }
 
     reply_sockets_.emplace(key, socket);
+    reply_socket_order_.push_back(key);
+    while (reply_sockets_.size() > kMaxReplySockets && !reply_socket_order_.empty())
+    {
+        const auto old_key = reply_socket_order_.front();
+        reply_socket_order_.pop_front();
+        const auto it = reply_sockets_.find(old_key);
+        if (it == reply_sockets_.end())
+        {
+            continue;
+        }
+        if (it->second != nullptr)
+        {
+            boost::system::error_code close_ec;
+            it->second->close(close_ec);
+        }
+        reply_sockets_.erase(it);
+    }
     return socket;
 }
 

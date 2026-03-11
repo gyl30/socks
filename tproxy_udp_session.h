@@ -4,6 +4,7 @@
 #include <atomic>
 #include <memory>
 #include <string>
+#include <deque>
 #include <vector>
 #include <cstddef>
 #include <cstdint>
@@ -92,6 +93,7 @@ class tproxy_udp_session : public std::enable_shared_from_this<tproxy_udp_sessio
     std::function<void()> on_close_;
     packet_channel_type packet_channel_;
     std::unordered_map<std::string, std::shared_ptr<boost::asio::ip::udp::socket>> reply_sockets_;
+    std::deque<std::string> reply_socket_order_;
 };
 
 }    // namespace mux
