@@ -515,15 +515,28 @@ boost::asio::awaitable<void> mux_connection::on_mux_frame(const mux::frame_heade
 
 std::shared_ptr<mux_stream> mux_connection::create_stream()
 {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (cfg_.limits.max_streams > 0 && streams_.size() >= cfg_.limits.max_streams)
+    std::shared_ptr<mux_stream> stream;
+    std::uint32_t stream_id = mux::kStreamIdHeartbeat;
     {
-        LOG_WARN("mux {} create stream rejected max_streams {}", cid_, cfg_.limits.max_streams);
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (cfg_.limits.max_streams > 0 && streams_.size() >= cfg_.limits.max_streams)
+        {
+            LOG_WARN("mux {} create stream rejected max_streams {}", cid_, cfg_.limits.max_streams);
+            return nullptr;
+        }
+        stream_id = acquire_next_id();
+        if (stream_id != mux::kStreamIdHeartbeat)
+        {
+            stream = std::make_shared<mux_stream>(stream_id, cfg_, io_context_, shared_from_this());
+            streams_.emplace(stream_id, stream);
+        }
+    }
+    if (stream_id == mux::kStreamIdHeartbeat)
+    {
+        LOG_ERROR("mux {} stream id exhausted closing connection", cid_);
+        stop();
         return nullptr;
     }
-    const std::uint32_t stream_id = acquire_next_id();
-    auto stream = std::make_shared<mux_stream>(stream_id, cfg_, io_context_, shared_from_this());
-    streams_.emplace(stream_id, stream);
     return stream;
 }
 
