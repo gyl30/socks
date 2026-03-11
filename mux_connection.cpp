@@ -567,14 +567,24 @@ boost::asio::awaitable<void> mux_connection::send_async_with_timeout(mux_frame m
 
 std::uint32_t mux_connection::acquire_next_id()
 {
-    for (;;)
+    const std::size_t max_attempts =
+        (cfg_.limits.max_streams > 0 ? cfg_.limits.max_streams : (streams_.size() + 1)) * 2 + 2;
+
+    for (std::size_t i = 0; i < max_attempts; ++i)
     {
         next_stream_id_ += 2;
-        if (next_stream_id_ != mux::kStreamIdHeartbeat)
+        if (next_stream_id_ == mux::kStreamIdHeartbeat)
+        {
+            continue;
+        }
+        if (!streams_.contains(next_stream_id_))
         {
             return next_stream_id_;
         }
     }
+
+    LOG_ERROR("mux {} stream id exhausted", cid_);
+    return mux::kStreamIdHeartbeat;
 }
 
 }    // namespace mux
