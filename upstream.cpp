@@ -407,7 +407,8 @@ boost::asio::awaitable<std::size_t> proxy_upstream::read(std::vector<std::uint8_
         co_return 0;
     }
 
-    auto data_frame = co_await stream->async_read(ec);
+    // 数据面读取不设超时，交由 idle watchdog 统一判定
+    auto data_frame = co_await stream->async_read(0, ec);
     if (ec)
     {
         LOG_CTX_WARN(ctx_.with_stream(stream->id()), "{} stage=read_frame error={}", log_event::kRoute, ec.message());
