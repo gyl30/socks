@@ -4,6 +4,7 @@
 #include <atomic>
 #include <memory>
 #include <string>
+#include <utility>
 #include <unordered_map>
 #include <unordered_set>
 #include <deque>
@@ -80,10 +81,10 @@ class remote_udp_session : public std::enable_shared_from_this<remote_udp_sessio
     std::uint64_t last_activity_time_ms_{0};
     std::unordered_map<std::string, boost::asio::ip::udp::endpoint> resolved_targets_;
     std::unordered_map<std::string, std::uint64_t> resolved_expires_;
-    std::deque<std::string> resolved_order_;
+    std::deque<std::pair<std::string, std::uint64_t>> resolved_order_;
     std::unordered_set<std::string> allowed_reply_peers_;
     std::unordered_map<std::string, std::uint64_t> allowed_reply_peers_expires_;
-    std::deque<std::string> allowed_reply_peers_order_;
+    std::deque<std::pair<std::string, std::uint64_t>> allowed_reply_peers_order_;
     std::weak_ptr<mux_tunnel_impl> manager_;
     std::atomic<std::uint8_t> stream_close_command_{0};
 };

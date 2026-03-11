@@ -76,14 +76,21 @@ void evict_expired(Map& data, std::unordered_map<std::string, std::uint64_t>& ex
 {
     while (!order.empty())
     {
-        const auto& key = order.front();
+        const auto& entry = order.front();
+        const auto& key = entry.first;
+        const auto entry_expire = entry.second;
         const auto it_exp = expires.find(key);
         if (it_exp == expires.end())
         {
             order.pop_front();
             continue;
         }
-        if (it_exp->second > now_ms)
+        if (it_exp->second != entry_expire)
+        {
+            order.pop_front();
+            continue;
+        }
+        if (entry_expire > now_ms)
         {
             break;
         }
@@ -98,10 +105,17 @@ void evict_overflow(Map& data, std::unordered_map<std::string, std::uint64_t>& e
 {
     while (data.size() > kMaxUdpCacheEntries && !order.empty())
     {
-        const auto key = order.front();
-        data.erase(key);
-        expires.erase(key);
+        const auto entry = order.front();
+        const auto& key = entry.first;
+        const auto entry_expire = entry.second;
         order.pop_front();
+        const auto it_exp = expires.find(key);
+        if (it_exp == expires.end() || it_exp->second != entry_expire)
+        {
+            continue;
+        }
+        data.erase(key);
+        expires.erase(it_exp);
     }
 }
 
@@ -369,8 +383,9 @@ boost::asio::awaitable<void> remote_udp_session::on_frame(const mux_frame& frame
     const auto now_ms = timeout_io::now_ms();
     evict_expired(allowed_reply_peers_, allowed_reply_peers_expires_, allowed_reply_peers_order_, now_ms);
     allowed_reply_peers_.insert(normalized_addr);
-    allowed_reply_peers_expires_[normalized_addr] = now_ms + kUdpCacheTtlMs;
-    allowed_reply_peers_order_.push_back(normalized_addr);
+    const auto expires_at = now_ms + kUdpCacheTtlMs;
+    allowed_reply_peers_expires_[normalized_addr] = expires_at;
+    allowed_reply_peers_order_.push_back({normalized_addr, expires_at});
     evict_overflow(allowed_reply_peers_, allowed_reply_peers_expires_, allowed_reply_peers_order_);
 }
 
@@ -402,7 +417,9 @@ boost::asio::awaitable<void> remote_udp_session::udp_to_mux()
                          normalized_ep.port());
             continue;
         }
-        allowed_reply_peers_expires_[addr_key] = now_ms + kUdpCacheTtlMs;
+        const auto expires_at = now_ms + kUdpCacheTtlMs;
+        allowed_reply_peers_expires_[addr_key] = expires_at;
+        allowed_reply_peers_order_.push_back({addr_key, expires_at});
 
         last_activity_time_ms_ = timeout_io::now_ms();
         ctx_.add_rx_bytes(n);
@@ -448,7 +465,9 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> remote_udp_session::resol
     const auto cached = resolved_targets_.find(key);
     if (cached != resolved_targets_.end())
     {
-        resolved_expires_[key] = now_ms + kUdpCacheTtlMs;
+        const auto expires_at = now_ms + kUdpCacheTtlMs;
+        resolved_expires_[key] = expires_at;
+        resolved_order_.push_back({key, expires_at});
         co_return cached->second;
     }
 
@@ -467,8 +486,9 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> remote_udp_session::resol
     }
 
     const auto target = net::normalize_endpoint(res.begin()->endpoint());
-    resolved_order_.push_back(key);
-    resolved_expires_[key] = now_ms + kUdpCacheTtlMs;
+    const auto expires_at = now_ms + kUdpCacheTtlMs;
+    resolved_order_.push_back({key, expires_at});
+    resolved_expires_[key] = expires_at;
     resolved_targets_.emplace(key, target);
     evict_overflow(resolved_targets_, resolved_expires_, resolved_order_);
     co_return target;
