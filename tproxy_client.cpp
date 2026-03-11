@@ -374,7 +374,7 @@ boost::asio::awaitable<void> tproxy_client::on_udp_packet(boost::asio::ip::udp::
             const auto local_norm = net::normalize_address(local_addr);
             if (target_endpoint.port() == cfg_.tproxy.udp_port && target_addr == local_norm)
             {
-                LOG_CTX_WARN(ctx, "{} tproxy udp routing loop detected drop", log_event::kConnInit);
+                LOG_WARN("tproxy udp routing loop detected drop");
                 co_return;
             }
         }
