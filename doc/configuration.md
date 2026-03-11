@@ -26,10 +26,10 @@
 1. 解析并校验配置（`parse_config_with_error`）。
 2. 启动 `monitor_server`（当 `monitor.enabled=true`）。
 3. 当 `mode=server` 时启动 `remote_server`。
-4. 只要 `socks.enabled=true` 就启动 `socks_client`。
-5. Linux 且编译启用 TPROXY 时，若 `tproxy.enabled=true` 启动 `tproxy_client`。
+4. 当 `mode=client` 且 `socks.enabled=true` 时启动 `socks_client`。
+5. Linux 且编译启用 TPROXY 时，若 `mode=client` 且 `tproxy.enabled=true` 启动 `tproxy_client`。
 
-说明：`socks_client` 的启动与 `mode` 没有硬性绑定，属于当前实现行为。
+说明：`socks_client` / `tproxy_client` 仅在 `mode=client` 启动；`mode=server` 下即使配置了 `socks/tproxy` 也不会启动。
 
 ## 3. 基础字段
 
@@ -37,6 +37,7 @@
 
 - 可选：`client` / `server`。
 - 其他值直接报错：`/mode must be client or server`。
+- `mode=client` 时要求至少启用 `socks` 或 `tproxy` 之一（非 Linux 构建不支持 `tproxy`）。
 
 ### `workers`
 
@@ -122,6 +123,12 @@
 
 `router` 决策输出：`direct` / `proxy` / `block`。
 
+注意：
+- IP 规则仅支持 CIDR（如 `1.2.3.4/32`、`2001:db8::/32`），不带 `/` 的行会被忽略。
+- 域名规则为后缀匹配（`example.com` 会匹配 `foo.example.com`）。
+- 任一规则文件缺失或加载失败会导致 `router.load()` 返回失败，`socks/tproxy` 启动会直接返回错误。
+- 默认路由：IP 未命中规则时走 `proxy`，域名未命中规则时走 `direct`。
+
 ## 8. 超时与心跳
 
 ### `timeout`
@@ -135,6 +142,10 @@
 
 - `read/write/connect` 为 `0` 时禁用该类超时（`timeout_io.h`）。
 - `idle=0` 时禁用空闲超时 watchdog。
+
+注意：
+
+- 使用 MUX 时，`timeout.write` 禁止为 `0`，避免单个 stream 反压导致整条连接无进度。
 
 ### `heartbeat`
 
@@ -151,7 +162,7 @@
 - `max_interval > 0`
 - `min_interval <= max_interval`
 - `min_padding <= max_padding`
-- `max_padding <= kMaxPayloadPerRecord`
+- `max_padding <= kMaxPayload`（单个 mux 帧最大 payload）
 
 运行行为：
 
@@ -227,3 +238,4 @@
 
 - `monitor_server` 默认监听 `127.0.0.1:<port>`。
 - 仅支持 `GET /metrics`（Prometheus 文本格式）。
+- 当前实现不包含鉴权或限流逻辑。
