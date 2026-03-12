@@ -152,6 +152,7 @@ boost::asio::awaitable<void> mux_connection::handle_unknown_stream(mux::frame_he
         }
         if (stream_limit_reached)
         {
+            statistics::instance().inc_stream_limit_rejected();
             LOG_WARN("mux {} reject stream {} max_streams {}", cid_, header.stream_id, cfg_.limits.max_streams);
             mux_frame rst;
             rst.h.command = mux::kCmdRst;
@@ -530,6 +531,7 @@ std::shared_ptr<mux_stream> mux_connection::create_stream()
         std::lock_guard<std::mutex> lock(mutex_);
         if (cfg_.limits.max_streams > 0 && streams_.size() >= cfg_.limits.max_streams)
         {
+            statistics::instance().inc_stream_limit_rejected();
             LOG_WARN("mux {} create stream rejected max_streams {}", cid_, cfg_.limits.max_streams);
             return nullptr;
         }
