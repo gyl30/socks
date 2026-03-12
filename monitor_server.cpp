@@ -23,6 +23,8 @@ namespace mux
 namespace
 {
 
+constexpr std::size_t kMaxMonitorRequestBytes = 1024;
+
 std::string escape_prometheus_label(const std::string_view value)
 {
     std::string out;
@@ -165,9 +167,10 @@ static boost::asio::awaitable<void> handle_request(boost::beast::tcp_stream stre
     auto remote_addr_str = remote_addr.address().to_string() + ":" + std::to_string(remote_addr.port());
     auto stream_id = local_addr_str + "<->" + remote_addr_str;
     stream_.expires_after(std::chrono::seconds(30));
-    boost::beast::http::request<boost::beast::http::string_body> request;
     boost::beast::flat_buffer buffer;
-    co_await boost::beast::http::async_read(stream_, buffer, request, boost::asio::redirect_error(boost::asio::use_awaitable, ec));
+    boost::beast::http::request_parser<boost::beast::http::string_body> parser;
+    parser.body_limit(kMaxMonitorRequestBytes);
+    co_await boost::beast::http::async_read(stream_, buffer, parser, boost::asio::redirect_error(boost::asio::use_awaitable, ec));
     do
     {
         if (ec)
@@ -175,6 +178,7 @@ static boost::asio::awaitable<void> handle_request(boost::beast::tcp_stream stre
             LOG_ERROR("{} read http request error {}", stream_id, ec.message());
             break;
         }
+        const auto& request = parser.get();
         if (request.method() == boost::beast::http::verb::get && is_metrics_target(request.target()))
         {
             auto response = make_text_response(200, request.version(), build_metrics_payload(), "text/plain; version=0.0.4; charset=utf-8");
