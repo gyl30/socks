@@ -141,6 +141,22 @@ bool verify_client_hello_sni(const client_hello_info& client_hello, const config
     return equal_server_name_ascii(client_hello.sni, cfg.reality.sni);
 }
 
+[[nodiscard]] bool is_invalid_sni(const std::string& sni)
+{
+    if (sni.empty() || sni.size() > 255)
+    {
+        return true;
+    }
+    for (const unsigned char ch : sni)
+    {
+        if (ch < 0x20 || ch == 0x7F)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 std::string format_fetch_error(const reality::fetch_error& error)
 {
     if (error.stage.empty())
@@ -1507,13 +1523,25 @@ boost::asio::awaitable<void> remote_server::handle(std::shared_ptr<boost::asio::
                   client_hello_handshake.size());
 
     reality_ctx.client_hello = ch_parser::parse(client_hello_handshake);
-    ctx.sni(reality_ctx.client_hello.sni);
     if (reality_ctx.client_hello.malformed_sni)
     {
-        LOG_CTX_ERROR(ctx, "{} auth fail malformed sni extension", log_event::kAuth);
-        co_await fallback("malformed_sni");
+        LOG_CTX_WARN(ctx, "{} auth fail malformed sni extension drop", log_event::kAuth);
+        if (reality_ctx.socket != nullptr)
+        {
+            close_tcp_socket(*reality_ctx.socket);
+        }
         co_return;
     }
+    if (is_invalid_sni(reality_ctx.client_hello.sni))
+    {
+        LOG_CTX_WARN(ctx, "{} auth fail invalid sni drop", log_event::kAuth);
+        if (reality_ctx.socket != nullptr)
+        {
+            close_tcp_socket(*reality_ctx.socket);
+        }
+        co_return;
+    }
+    ctx.sni(reality_ctx.client_hello.sni);
     if (!verify_client_hello_sni(reality_ctx.client_hello, cfg_))
     {
         const auto client_sni = reality_ctx.client_hello.sni.empty() ? std::string("empty") : reality_ctx.client_hello.sni;
