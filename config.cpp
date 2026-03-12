@@ -100,6 +100,15 @@ constexpr std::uint32_t kHandshakeRecordsLimitMax = 4096;
     return {};
 }
 
+[[nodiscard]] std::expected<void, config_error> validate_timeout_config(const config::timeout_t& timeout)
+{
+    if (timeout.idle == 0)
+    {
+        return std::unexpected(make_config_error("/timeout/idle", "must be greater than 0"));
+    }
+    return {};
+}
+
 [[nodiscard]] std::expected<void, config_error> validate_socks_config(const config::socks_t& socks)
 {
     constexpr std::size_t kSocksAuthFieldMaxLen = 255;
@@ -348,6 +357,10 @@ constexpr std::uint32_t kHandshakeRecordsLimitMax = 4096;
     if (const auto limits_result = validate_limits_config(cfg.limits); !limits_result)
     {
         return std::unexpected(limits_result.error());
+    }
+    if (const auto timeout_result = validate_timeout_config(cfg.timeout); !timeout_result)
+    {
+        return std::unexpected(timeout_result.error());
     }
     if (const auto heartbeat_result = validate_heartbeat_config(cfg.heartbeat); !heartbeat_result)
     {
