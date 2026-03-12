@@ -233,6 +233,7 @@ boost::asio::awaitable<const char*> read_client_hello_handshake(const std::share
     wire_buf.clear();
     handshake_buf.clear();
     const auto handshake_start_ms = timeout_io::now_ms();
+    std::uint32_t ccs_count = 0;
     while (true)
     {
         std::vector<std::uint8_t> record_buf;
@@ -242,14 +243,48 @@ boost::asio::awaitable<const char*> read_client_hello_handshake(const std::share
             LOG_CTX_ERROR(ctx, "{} read tls record header failed {}", log_event::kHandshake, ec.message());
             co_return "read_tls_record_header_failed";
         }
+        const auto record_len = static_cast<std::uint16_t>((record_buf[3] << 8) | record_buf[4]);
+        if (record_buf[0] == 0x14)
+        {
+            if (ccs_count >= kMaxTlsCompatCcsRecords)
+            {
+                statistics::instance().inc_client_finished_failures();
+                LOG_CTX_ERROR(ctx, "{} too many ccs records {}", log_event::kHandshake, ccs_count);
+                ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
+                co_return "tls13_ccs_too_many";
+            }
+            ccs_count++;
+            if (record_len != 1)
+            {
+                statistics::instance().inc_client_finished_failures();
+                LOG_CTX_ERROR(ctx, "{} invalid ccs length {}", log_event::kHandshake, record_len);
+                ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
+                co_return "tls13_ccs_len_invalid";
+            }
+            co_await read_tls_record_body(socket, record_buf, record_len, handshake_start_ms, timeout, ec);
+            if (ec)
+            {
+                statistics::instance().inc_client_finished_failures();
+                LOG_CTX_ERROR(ctx, "{} read tls record body failed {}", log_event::kHandshake, ec.message());
+                co_return "read_tls_record_body_failed";
+            }
+            const std::array<std::uint8_t, 5> header = {record_buf[0], record_buf[1], record_buf[2], record_buf[3], record_buf[4]};
+            const auto ccs_body = record_buf[kTlsRecordHeaderSize];
+            if (!reality::is_valid_tls13_compat_ccs(header, ccs_body))
+            {
+                statistics::instance().inc_client_finished_failures();
+                LOG_CTX_ERROR(ctx, "{} invalid ccs body {}", log_event::kHandshake, ccs_body);
+                ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
+                co_return "tls13_ccs_body_invalid";
+            }
+            continue;
+        }
         if (record_buf[0] != 0x16)
         {
             LOG_CTX_ERROR(ctx, "{} unexpected tls record type {}", log_event::kHandshake, record_buf[0]);
             ec = boost::asio::error::invalid_argument;
             co_return "unexpected_tls_record_type";
         }
-
-        const auto record_len = static_cast<std::uint16_t>((record_buf[3] << 8) | record_buf[4]);
         if (record_len > kMaxTlsPlaintextRecordLen)
         {
             LOG_CTX_ERROR(ctx, "{} client hello record too large {}", log_event::kHandshake, record_len);
