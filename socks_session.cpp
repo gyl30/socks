@@ -65,6 +65,23 @@ bool secure_string_equals(const std::string& lhs, const std::string& rhs)
     return diff == 0;
 }
 
+[[nodiscard]] bool is_valid_domain_char(const std::uint8_t c)
+{
+    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '-' || c == '.' || c == '_';
+}
+
+[[nodiscard]] bool is_valid_domain(const std::string& domain)
+{
+    for (const unsigned char c : domain)
+    {
+        if (!is_valid_domain_char(c))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 }    // namespace
 
 socks_session::socks_session(boost::asio::ip::tcp::socket socket,
@@ -417,6 +434,12 @@ boost::asio::awaitable<bool> socks_session::read_request_domain(std::string& hos
     if (host.find('\0') != std::string::npos)
     {
         LOG_ERROR("socks session {} request domain contains nul", sid_);
+        co_await reply_error(socks::kRepGenFail);
+        co_return false;
+    }
+    if (!is_valid_domain(host))
+    {
+        LOG_ERROR("socks session {} request domain invalid", sid_);
         co_await reply_error(socks::kRepGenFail);
         co_return false;
     }
