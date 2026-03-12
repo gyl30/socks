@@ -976,7 +976,18 @@ boost::asio::awaitable<void> udp_socks_session::stream_to_udp_sock(std::shared_p
         auto data_frame = co_await stream->async_read(ec);
         if (ec)
         {
-            update_stream_close_command(stream_close_command_, kNoStreamControl);
+            if (ec == boost::asio::error::timed_out)
+            {
+                mux_frame fin_frame;
+                fin_frame.h.stream_id = stream->id();
+                fin_frame.h.command = mux::kCmdFin;
+                boost::system::error_code fin_ec;
+                co_await stream->async_write(std::move(fin_frame), fin_ec);
+            }
+            else
+            {
+                update_stream_close_command(stream_close_command_, kNoStreamControl);
+            }
             clear_proxy_stream_if_current(stream);
             break;
         }
