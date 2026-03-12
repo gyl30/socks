@@ -287,6 +287,12 @@ boost::asio::awaitable<void> remote_tcp_session::upstream()
         if (ec)
         {
             LOG_CTX_INFO(ctx_, "{} upstream stream read finished {}", log_event::kMux, ec.message());
+            if (ec == boost::asio::error::timed_out)
+            {
+                boost::system::error_code fin_ec;
+                co_await send_stream_control_frame(stream_, mux::kCmdFin, fin_ec);
+                stream_->close();
+            }
             break;
         }
         if (frame.h.command == mux::kCmdFin)
