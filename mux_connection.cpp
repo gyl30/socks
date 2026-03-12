@@ -22,6 +22,7 @@
 #include <boost/system/error_code.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/redirect_error.hpp>
+#include <boost/asio/experimental/channel_error.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
 
 extern "C"
@@ -216,6 +217,14 @@ boost::asio::awaitable<void> mux_connection::handle_stream_frame(const mux::fram
             {
                 LOG_WARN("mux {} stream {} send rst failed {}", cid_, header.stream_id, rst_ec.message());
             }
+            co_return;
+        }
+
+        if (ec == boost::asio::error::operation_aborted || ec == boost::asio::error::bad_descriptor ||
+            ec == boost::asio::experimental::channel_error::channel_closed)
+        {
+            LOG_WARN("mux {} stream {} channel closed drop frame", cid_, header.stream_id);
+            close_and_remove_stream(stream);
             co_return;
         }
 
