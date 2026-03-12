@@ -21,6 +21,7 @@
 #include "log.h"
 #include "protocol.h"
 #include "mux_codec.h"
+#include "statistics.h"
 #include "timeout_io.h"
 #include "scoped_exit.h"
 #include "log_context.h"
@@ -176,6 +177,15 @@ boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
     auto resolve_res = co_await timeout_io::wait_resolve_with_timeout(resolver_, syn.addr, std::to_string(syn.port), cfg_.timeout.connect, ec);
     if (ec)
     {
+        auto& stats = statistics::instance();
+        if (ec == boost::asio::error::timed_out)
+        {
+            stats.inc_remote_session_resolve_timeouts();
+        }
+        else
+        {
+            stats.inc_remote_session_resolve_errors();
+        }
         const auto rep = map_connect_error_to_socks_rep(ec);
         LOG_CTX_WARN(ctx_,
                      "{} resolve failed target {}:{} error={} rep={}",
@@ -189,6 +199,7 @@ boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
     }
     if (resolve_res.begin() == resolve_res.end())
     {
+        statistics::instance().inc_remote_session_resolve_errors();
         LOG_CTX_WARN(ctx_, "{} resolve empty target {}:{} rep={}", log_event::kMux, syn.addr, syn.port, socks::kRepHostUnreach);
         co_await send_fail_ack(socks::kRepHostUnreach);
         co_return;
@@ -214,6 +225,15 @@ boost::asio::awaitable<void> remote_tcp_session::run(const syn_payload& syn)
     }
     if (connect_ec)
     {
+        auto& stats = statistics::instance();
+        if (connect_ec == boost::asio::error::timed_out)
+        {
+            stats.inc_remote_session_connect_timeouts();
+        }
+        else
+        {
+            stats.inc_remote_session_connect_errors();
+        }
         const auto rep = map_connect_error_to_socks_rep(connect_ec);
         LOG_CTX_WARN(ctx_,
                      "{} connect failed target {}:{} error={} rep={}",

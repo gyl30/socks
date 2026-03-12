@@ -477,13 +477,22 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> remote_udp_session::resol
     auto res = co_await timeout_io::wait_resolve_with_timeout(udp_resolver_, host, std::to_string(port), cfg_.timeout.connect, ec);
     if (ec)
     {
-        statistics::instance().inc_remote_udp_session_resolve_errors();
+        auto& stats = statistics::instance();
+        if (ec == boost::asio::error::timed_out)
+        {
+            stats.inc_remote_udp_session_resolve_timeouts();
+        }
+        else
+        {
+            stats.inc_remote_udp_session_resolve_errors();
+        }
         LOG_CTX_WARN(ctx_, "{} stage=resolve target={}:{} error={}", log_event::kMux, host, port, ec.message());
         co_return boost::asio::ip::udp::endpoint{};
     }
     if (res.begin() == res.end())
     {
         ec = boost::asio::error::host_not_found;
+        statistics::instance().inc_remote_udp_session_resolve_errors();
         LOG_CTX_WARN(ctx_, "{} stage=resolve target={}:{} error=empty_result", log_event::kMux, host, port);
         co_return boost::asio::ip::udp::endpoint{};
     }
@@ -493,6 +502,7 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> remote_udp_session::resol
     if (local_ep_ec)
     {
         ec = local_ep_ec;
+        statistics::instance().inc_remote_udp_session_resolve_errors();
         LOG_CTX_WARN(ctx_, "{} stage=resolve target={}:{} error=local_endpoint_failed", log_event::kMux, host, port);
         co_return boost::asio::ip::udp::endpoint{};
     }
@@ -513,6 +523,7 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> remote_udp_session::resol
     if (!found)
     {
         ec = boost::asio::error::address_family_not_supported;
+        statistics::instance().inc_remote_udp_session_resolve_errors();
         LOG_CTX_WARN(ctx_, "{} stage=resolve target={}:{} error=no_compatible_endpoint", log_event::kMux, host, port);
         co_return boost::asio::ip::udp::endpoint{};
     }

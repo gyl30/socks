@@ -116,7 +116,14 @@ boost::asio::awaitable<void> direct_upstream::connect(const std::string& host, c
     if (ec)
     {
         auto& stats = statistics::instance();
-        stats.inc_direct_upstream_resolve_errors();
+        if (ec == boost::asio::error::timed_out)
+        {
+            stats.inc_direct_upstream_resolve_timeouts();
+        }
+        else
+        {
+            stats.inc_direct_upstream_resolve_errors();
+        }
         LOG_CTX_WARN(ctx_, "{} stage=resolve target={}:{} error={}", log_event::kRoute, host, port, ec.message());
         co_return;
     }
@@ -162,6 +169,18 @@ boost::asio::awaitable<void> direct_upstream::connect(const std::string& host, c
         co_return;
     }
     ec = last_ec;
+    if (ec)
+    {
+        auto& stats = statistics::instance();
+        if (ec == boost::asio::error::timed_out)
+        {
+            stats.inc_direct_upstream_connect_timeouts();
+        }
+        else
+        {
+            stats.inc_direct_upstream_connect_errors();
+        }
+    }
 }
 
 boost::asio::awaitable<std::size_t> direct_upstream::read(std::vector<std::uint8_t>& buf, boost::system::error_code& ec)
