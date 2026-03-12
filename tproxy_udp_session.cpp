@@ -552,7 +552,10 @@ boost::asio::awaitable<void> tproxy_udp_session::proxy_to_client()
         const auto frame = co_await stream_->async_read(read_timeout, ec);
         if (ec)
         {
-            update_stream_close_command(stream_close_command_, kNoStreamControl);
+            if (ec != boost::asio::error::timed_out)
+            {
+                update_stream_close_command(stream_close_command_, kNoStreamControl);
+            }
             break;
         }
         if (frame.h.command == mux::kCmdFin || frame.h.command == mux::kCmdRst)
