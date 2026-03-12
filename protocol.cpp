@@ -26,6 +26,23 @@ constexpr std::uint8_t kSocks5AuthVer = 0x01;
     return len - pos >= need;
 }    // namespace
 
+[[nodiscard]] bool is_valid_domain_char(const std::uint8_t c)
+{
+    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '-' || c == '.' || c == '_';
+}
+
+[[nodiscard]] bool is_valid_domain(const std::uint8_t* begin, const std::uint8_t* end)
+{
+    for (auto* it = begin; it != end; ++it)
+    {
+        if (!is_valid_domain_char(*it))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool parse_ipv4_address(const std::uint8_t* data, const std::size_t len, std::size_t& pos, std::string& addr)
 {
     if (!has_remaining(len, pos, 4))
@@ -58,6 +75,10 @@ bool parse_domain_address(const std::uint8_t* data, const std::size_t len, std::
     const auto* domain_begin = data + pos;
     const auto* domain_end = domain_begin + domain_len;
     if (std::find(domain_begin, domain_end, static_cast<std::uint8_t>(0x00)) != domain_end)
+    {
+        return false;
+    }
+    if (!is_valid_domain(domain_begin, domain_end))
     {
         return false;
     }
