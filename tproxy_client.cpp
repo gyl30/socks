@@ -33,6 +33,7 @@
 #include "config.h"
 #include "router.h"
 #include "net_utils.h"
+#include "statistics.h"
 #include "context_pool.h"
 #include "tproxy_client.h"
 #include "client_tunnel_pool.h"
@@ -44,6 +45,8 @@ namespace mux
 
 namespace
 {
+constexpr std::size_t kMaxUdpSessions = 1024;
+
 void open_tcp_listener(boost::asio::ip::tcp::acceptor& acceptor, const std::string& host, std::uint16_t port, boost::system::error_code& ec)
 {
     auto listen_addr = boost::asio::ip::make_address(host, ec);
@@ -208,6 +211,8 @@ void tproxy_client::stop()
                 }
             }
             self->udp_sessions_.clear();
+            self->udp_session_lru_.clear();
+            self->udp_session_lru_index_.clear();
 
             if (self->tunnel_pool_ != nullptr)
             {
@@ -384,6 +389,14 @@ boost::asio::awaitable<void> tproxy_client::on_udp_packet(boost::asio::ip::udp::
     auto session_it = udp_sessions_.find(key);
     if (session_it == udp_sessions_.end())
     {
+        evict_udp_sessions_if_needed();
+        if (udp_sessions_.size() >= kMaxUdpSessions)
+        {
+            statistics::instance().inc_connection_limit_rejected();
+            LOG_WARN("tproxy udp session limit reached drop packet");
+            co_return;
+        }
+
         connection_context ctx;
         ctx.new_trace_id();
         ctx.conn_id(tunnel_pool_->next_session_id());
@@ -428,7 +441,12 @@ boost::asio::awaitable<void> tproxy_client::on_udp_packet(boost::asio::ip::udp::
                                                             });
         udp_sessions_.emplace(key, session);
         session->start();
+        touch_udp_session(key);
         session_it = udp_sessions_.find(key);
+    }
+    else
+    {
+        touch_udp_session(key);
     }
 
     if (session_it == udp_sessions_.end() || session_it->second == nullptr)
@@ -443,9 +461,56 @@ boost::asio::awaitable<void> tproxy_client::on_udp_packet(boost::asio::ip::udp::
     }
 }
 
+void tproxy_client::touch_udp_session(const std::string& key)
+{
+    const auto it = udp_session_lru_index_.find(key);
+    if (it != udp_session_lru_index_.end())
+    {
+        udp_session_lru_.erase(it->second);
+        udp_session_lru_index_.erase(it);
+    }
+
+    udp_session_lru_.push_back(key);
+    auto tail = udp_session_lru_.end();
+    --tail;
+    udp_session_lru_index_[key] = tail;
+}
+
+void tproxy_client::evict_udp_sessions_if_needed()
+{
+    while (udp_sessions_.size() >= kMaxUdpSessions)
+    {
+        if (udp_session_lru_.empty())
+        {
+            break;
+        }
+
+        const auto key = udp_session_lru_.front();
+        udp_session_lru_.pop_front();
+        udp_session_lru_index_.erase(key);
+
+        const auto it = udp_sessions_.find(key);
+        if (it == udp_sessions_.end())
+        {
+            continue;
+        }
+        if (it->second != nullptr)
+        {
+            it->second->stop();
+        }
+        udp_sessions_.erase(it);
+    }
+}
+
 void tproxy_client::erase_udp_session(const std::string& key)
 {
     udp_sessions_.erase(key);
+    const auto it = udp_session_lru_index_.find(key);
+    if (it != udp_session_lru_index_.end())
+    {
+        udp_session_lru_.erase(it->second);
+        udp_session_lru_index_.erase(it);
+    }
 }
 
 std::string tproxy_client::make_udp_session_key(const boost::asio::ip::udp::endpoint& client_endpoint,

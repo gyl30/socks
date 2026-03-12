@@ -1,6 +1,7 @@
 #ifndef TPROXY_CLIENT_H
 #define TPROXY_CLIENT_H
 
+#include <list>
 #include <atomic>
 #include <memory>
 #include <string>
@@ -41,6 +42,8 @@ class tproxy_client : public std::enable_shared_from_this<tproxy_client>
     [[nodiscard]] boost::asio::awaitable<void> on_udp_packet(boost::asio::ip::udp::endpoint client_endpoint,
                                                              boost::asio::ip::udp::endpoint target_endpoint,
                                                              std::vector<std::uint8_t> payload);
+    void touch_udp_session(const std::string& key);
+    void evict_udp_sessions_if_needed();
     void erase_udp_session(const std::string& key);
     [[nodiscard]] static std::string make_udp_session_key(const boost::asio::ip::udp::endpoint& client_endpoint,
                                                           const boost::asio::ip::udp::endpoint& target_endpoint);
@@ -54,6 +57,8 @@ class tproxy_client : public std::enable_shared_from_this<tproxy_client>
     boost::asio::ip::tcp::acceptor tcp_acceptor_{io_context_};
     boost::asio::ip::udp::socket udp_socket_{io_context_};
     std::unordered_map<std::string, std::shared_ptr<tproxy_udp_session>> udp_sessions_;
+    std::list<std::string> udp_session_lru_;
+    std::unordered_map<std::string, std::list<std::string>::iterator> udp_session_lru_index_;
     std::atomic<bool> stopping_{false};
 };
 
