@@ -111,6 +111,8 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
     bool stopped_ = false;
     bool proxy_stream_started_ = false;
     bool has_client_addr_ = false;
+    bool direct_udp_v4_running_ = false;
+    bool direct_udp_v6_running_ = false;
     boost::asio::ip::udp::endpoint client_addr_;
     std::unordered_map<std::string, boost::asio::ip::udp::endpoint> resolved_targets_;
     std::unordered_map<std::string, std::uint64_t> resolved_expires_;
