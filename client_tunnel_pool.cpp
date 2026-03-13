@@ -1137,6 +1137,12 @@ boost::asio::awaitable<std::vector<std::uint8_t>> read_handshake_record_body(boo
             LOG_ERROR("error reading {} header {}", step, ec.message());
             co_return std::vector<std::uint8_t>{};
         }
+        if (header[1] != 0x03 || header[2] != 0x03)
+        {
+            LOG_ERROR("invalid tls record version for {} {} {}", step, header[1], header[2]);
+            ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
+            co_return std::vector<std::uint8_t>{};
+        }
 
         const auto body_len = static_cast<std::uint16_t>((header[3] << 8) | header[4]);
         if (body_len > reality::kMaxTlsPlaintextLen)

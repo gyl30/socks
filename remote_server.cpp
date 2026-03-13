@@ -243,6 +243,12 @@ boost::asio::awaitable<const char*> read_client_hello_handshake(const std::share
             LOG_CTX_ERROR(ctx, "{} read tls record header failed {}", log_event::kHandshake, ec.message());
             co_return "read_tls_record_header_failed";
         }
+        if (record_buf[1] != 0x03 || record_buf[2] != 0x03)
+        {
+            LOG_CTX_ERROR(ctx, "{} invalid tls record version {} {}", log_event::kHandshake, record_buf[1], record_buf[2]);
+            ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
+            co_return "invalid_tls_record_version";
+        }
         const auto record_len = static_cast<std::uint16_t>((record_buf[3] << 8) | record_buf[4]);
         if (record_buf[0] == 0x14)
         {
@@ -1054,6 +1060,12 @@ boost::asio::awaitable<void> read_tls_record_header_allow_ccs(const std::shared_
     {
         co_return;
     }
+    if (header[1] != 0x03 || header[2] != 0x03)
+    {
+        LOG_CTX_ERROR(ctx, "{} invalid tls record version {} {}", log_event::kHandshake, header[1], header[2]);
+        ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
+        co_return;
+    }
 
     std::uint32_t ccs_count = 0;
     while (header[0] == 0x14)
@@ -1084,6 +1096,12 @@ boost::asio::awaitable<void> read_tls_record_header_allow_ccs(const std::shared_
         co_await timeout_io::wait_read_with_timeout(*socket, boost::asio::buffer(header), timeout_sec, ec);
         if (ec)
         {
+            co_return;
+        }
+        if (header[1] != 0x03 || header[2] != 0x03)
+        {
+            LOG_CTX_ERROR(ctx, "{} invalid tls record version {} {}", log_event::kHandshake, header[1], header[2]);
+            ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
             co_return;
         }
     }
