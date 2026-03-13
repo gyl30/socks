@@ -236,8 +236,8 @@ inline boost::asio::awaitable<std::size_t> wait_write_some_with_timeout(boost::a
 template <typename InternetProtocol>
 inline boost::asio::awaitable<typename boost::asio::ip::basic_resolver<InternetProtocol>::results_type> wait_resolve_with_timeout(
     boost::asio::ip::basic_resolver<InternetProtocol>& resolver,
-    const std::string_view host,
-    const std::string_view service,
+    std::string host,
+    std::string service,
     const std::uint32_t timeout_sec,
     boost::system::error_code& ec)
 {
