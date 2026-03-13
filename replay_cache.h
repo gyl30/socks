@@ -2,6 +2,7 @@
 #define REPLAY_CACHE_H
 
 #include <deque>
+#include <mutex>
 #include <chrono>
 #include <string>
 #include <vector>
@@ -30,6 +31,7 @@ class replay_cache
         std::string sid;
     };
 
+    std::mutex mutex_;
     std::size_t max_entries_ = 100000;
     std::chrono::steady_clock::duration window_;
     std::unordered_set<std::string> cache_;
