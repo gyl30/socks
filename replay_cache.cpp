@@ -30,6 +30,7 @@ bool replay_cache::check_and_insert(const std::vector<std::uint8_t>& sid)
     }
     const std::string key(sid.begin(), sid.end());
 
+    std::lock_guard<std::mutex> lock(mutex_);
     cleanup();
 
     if (cache_.contains(key))
