@@ -37,7 +37,21 @@ void mux_stream::close() { recv_channel_.close(); }
 
 boost::asio::awaitable<void> mux_stream::on_frame(mux_frame frame, boost::system::error_code& ec)
 {
+    const auto payload_len = frame.payload.size();
+    if (payload_len > 0)
+    {
+        if (payload_len > kMaxPendingBytes || pending_bytes_ > kMaxPendingBytes - payload_len)
+        {
+            ec = boost::asio::error::timed_out;
+            co_return;
+        }
+    }
+
     co_await timeout_io::wait_send_with_timeout<mux_frame>(recv_channel_, std::move(frame), cfg_.timeout.write, ec);
+    if (!ec && payload_len > 0)
+    {
+        pending_bytes_ += payload_len;
+    }
 }
 boost::asio::awaitable<mux_frame> mux_stream::async_read(boost::system::error_code& ec)
 {
@@ -48,6 +62,17 @@ boost::asio::awaitable<mux_frame> mux_stream::async_read(boost::system::error_co
 boost::asio::awaitable<mux_frame> mux_stream::async_read(const std::uint32_t timeout_sec, boost::system::error_code& ec)
 {
     auto data = co_await timeout_io::wait_receive_with_timeout<mux_frame>(recv_channel_, timeout_sec, ec);
+    if (!ec && !data.payload.empty())
+    {
+        if (pending_bytes_ >= data.payload.size())
+        {
+            pending_bytes_ -= data.payload.size();
+        }
+        else
+        {
+            pending_bytes_ = 0;
+        }
+    }
     rx_bytes_ += data.payload.size();
     co_return data;
 }
