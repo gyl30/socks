@@ -355,6 +355,16 @@ auth_inputs build_auth_decrypt_inputs(const reality_context& reality_ctx,
         return {};
     }
 
+    if (reality_ctx.client_hello.random.size() != 32 ||
+        reality_ctx.client_hello.session_id.size() != constants::auth::kSessionIdLen ||
+        reality_ctx.client_hello.sid_offset == 0 ||
+        reality_ctx.client_hello.sid_offset + constants::auth::kSessionIdLen > reality_ctx.client_hello_handshake.size())
+    {
+        LOG_CTX_ERROR(reality_ctx.ctx, "{} auth fail invalid client hello fields", log_event::kAuth);
+        ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
+        return {};
+    }
+
     const auto salt = std::vector<std::uint8_t>(reality_ctx.client_hello.random.begin(), reality_ctx.client_hello.random.begin() + 20);
     const auto reality_label_info = reality::crypto_util::hex_to_bytes("5245414c495459");
     auto pseudo_random_key = reality::crypto_util::hkdf_extract(salt, shared, EVP_sha256(), ec);
