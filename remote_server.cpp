@@ -355,8 +355,7 @@ auth_inputs build_auth_decrypt_inputs(const reality_context& reality_ctx,
         return {};
     }
 
-    if (reality_ctx.client_hello.random.size() != 32 ||
-        reality_ctx.client_hello.session_id.size() != constants::auth::kSessionIdLen ||
+    if (reality_ctx.client_hello.random.size() != 32 || reality_ctx.client_hello.session_id.size() != constants::auth::kSessionIdLen ||
         reality_ctx.client_hello.sid_offset == 0 ||
         reality_ctx.client_hello.sid_offset + constants::auth::kSessionIdLen > reality_ctx.client_hello_handshake.size())
     {
@@ -564,8 +563,8 @@ handshake_crypto_result build_handshake_crypto(reality_context& reality_ctx,
     }
     reality_ctx.transcript.update(cv);
 
-    const auto s_fin_verify =
-        reality::tls_key_schedule::compute_finished_verify_data(out.hs_keys.server_handshake_traffic_secret, reality_ctx.transcript.finish(), out.md, ec);
+    const auto s_fin_verify = reality::tls_key_schedule::compute_finished_verify_data(
+        out.hs_keys.server_handshake_traffic_secret, reality_ctx.transcript.finish(), out.md, ec);
     if (ec)
     {
         LOG_CTX_ERROR(reality_ctx.ctx, "{} compute server finished failed {}", log_event::kHandshake, ec.message());
@@ -589,9 +588,7 @@ handshake_crypto_result build_handshake_crypto(reality_context& reality_ctx,
     return out;
 }
 
-reality::auth_payload decrypt_auth_payload(reality_context& reality_ctx,
-                                           const std::vector<std::uint8_t>& private_key,
-                                           boost::system::error_code& ec)
+reality::auth_payload decrypt_auth_payload(reality_context& reality_ctx, const std::vector<std::uint8_t>& private_key, boost::system::error_code& ec)
 {
     ec.clear();
     const auto inputs = build_auth_decrypt_inputs(reality_ctx, private_key, ec);
@@ -602,12 +599,10 @@ reality::auth_payload decrypt_auth_payload(reality_context& reality_ctx,
     reality_ctx.auth_key = inputs.auth_key;
 
     const EVP_CIPHER* auth_cipher = EVP_aes_128_gcm();
-    auto pt = reality::crypto_util::aead_decrypt(
-        auth_cipher, inputs.auth_key, inputs.nonce, reality_ctx.client_hello.session_id, inputs.aad, ec);
+    auto pt = reality::crypto_util::aead_decrypt(auth_cipher, inputs.auth_key, inputs.nonce, reality_ctx.client_hello.session_id, inputs.aad, ec);
     if (ec || pt.size() != 16)
     {
-        LOG_CTX_ERROR(
-            reality_ctx.ctx, "{} auth fail decrypt failed tag mismatch pt size {}", log_event::kAuth, pt.size());
+        LOG_CTX_ERROR(reality_ctx.ctx, "{} auth fail decrypt failed tag mismatch pt size {}", log_event::kAuth, pt.size());
         ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
         return {};
     }
@@ -715,9 +710,8 @@ std::optional<reality::site_material_snapshot> get_cached_site_material_snapshot
     return snapshot;
 }
 
-std::vector<std::vector<std::uint8_t>> build_reality_certificate_chain(
-    const std::vector<std::uint8_t>& leaf_cert_der,
-    const std::optional<reality::site_material_snapshot>& site_material_snapshot)
+std::vector<std::vector<std::uint8_t>> build_reality_certificate_chain(const std::vector<std::uint8_t>& leaf_cert_der,
+                                                                       const std::optional<reality::site_material_snapshot>& site_material_snapshot)
 {
     std::vector<std::vector<std::uint8_t>> cert_chain;
     cert_chain.push_back(leaf_cert_der);
@@ -743,10 +737,9 @@ std::optional<std::uint16_t> select_reality_cipher_suite(const client_hello_info
         }
     }
 
-    constexpr std::array<std::uint16_t, 3> kFallbackCipherSuites = {
-        reality::tls_consts::cipher::kTlsAes128GcmSha256,
-        reality::tls_consts::cipher::kTlsAes256GcmSha384,
-        reality::tls_consts::cipher::kTlsChacha20Poly1305Sha256};
+    constexpr std::array<std::uint16_t, 3> kFallbackCipherSuites = {reality::tls_consts::cipher::kTlsAes128GcmSha256,
+                                                                    reality::tls_consts::cipher::kTlsAes256GcmSha384,
+                                                                    reality::tls_consts::cipher::kTlsChacha20Poly1305Sha256};
     for (const auto cipher_suite : kFallbackCipherSuites)
     {
         if (client_offers_cipher_suite(hello, cipher_suite))
@@ -820,8 +813,7 @@ bool should_include_encrypted_extensions_padding(const std::optional<reality::si
                      reality::tls_consts::ext::kPadding) != site_material_snapshot->material->encrypted_extension_types.end();
 }
 
-std::optional<std::uint16_t> select_encrypted_extensions_padding_len(
-    const std::optional<reality::site_material_snapshot>& site_material_snapshot)
+std::optional<std::uint16_t> select_encrypted_extensions_padding_len(const std::optional<reality::site_material_snapshot>& site_material_snapshot)
 {
     if (!site_material_snapshot.has_value())
     {
@@ -839,8 +831,7 @@ bool should_send_change_cipher_spec(const std::optional<reality::site_material_s
     return site_material_snapshot->material->sends_change_cipher_spec;
 }
 
-std::vector<std::uint16_t> select_encrypted_handshake_record_sizes(
-    const std::optional<reality::site_material_snapshot>& site_material_snapshot)
+std::vector<std::uint16_t> select_encrypted_handshake_record_sizes(const std::optional<reality::site_material_snapshot>& site_material_snapshot)
 {
     if (!site_material_snapshot.has_value())
     {
@@ -980,11 +971,8 @@ boost::asio::awaitable<void> connect_fallback_target(boost::asio::io_context& io
     co_return;
 }
 
-boost::asio::awaitable<void> relay_fallback_data(boost::asio::ip::tcp::socket& src,
-                                                 boost::asio::ip::tcp::socket& dst,
-                                                 const connection_context& ctx,
-                                                 const config& cfg,
-                                                 const char* direction)
+boost::asio::awaitable<void> relay_fallback_data(
+    boost::asio::ip::tcp::socket& src, boost::asio::ip::tcp::socket& dst, const connection_context& ctx, const config& cfg, const char* direction)
 {
     const auto read_timeout = cfg.timeout.idle;
     boost::system::error_code ec;
@@ -1206,13 +1194,8 @@ boost::asio::awaitable<void> remote_server::fallback_to_target_site(reality_cont
                  reality_ctx.client_hello_record.size());
 
     boost::asio::ip::tcp::socket upstream_socket(io_context_);
-    DEFER(
-        release_fallback_budget();
-        if (reality_ctx.socket != nullptr)
-        {
-            close_tcp_socket(*reality_ctx.socket);
-        }
-        close_tcp_socket(upstream_socket););
+    DEFER(release_fallback_budget();
+          if (reality_ctx.socket != nullptr) { close_tcp_socket(*reality_ctx.socket); } close_tcp_socket(upstream_socket););
 
     boost::system::error_code ec;
     co_await connect_fallback_target(io_context_, upstream_socket, ctx, cfg_, host, kFallbackTlsPort, ec);
@@ -1221,8 +1204,8 @@ boost::asio::awaitable<void> remote_server::fallback_to_target_site(reality_cont
         co_return;
     }
 
-    const auto initial_write = co_await timeout_io::wait_write_with_timeout(
-        upstream_socket, boost::asio::buffer(reality_ctx.client_hello_record), cfg_.timeout.write, ec);
+    const auto initial_write =
+        co_await timeout_io::wait_write_with_timeout(upstream_socket, boost::asio::buffer(reality_ctx.client_hello_record), cfg_.timeout.write, ec);
     if (ec || initial_write != reality_ctx.client_hello_record.size())
     {
         if (!ec)
@@ -1293,7 +1276,8 @@ void remote_server::start()
 {
     if (!cfg_.reality.sni.empty())
     {
-        boost::asio::co_spawn(io_context_, [self = shared_from_this()] { return self->refresh_site_material_loop(); }, group_.adapt(boost::asio::detached));
+        boost::asio::co_spawn(
+            io_context_, [self = shared_from_this()] { return self->refresh_site_material_loop(); }, group_.adapt(boost::asio::detached));
     }
     boost::asio::co_spawn(io_context_, [self = shared_from_this()] { return self->accept_loop(); }, group_.adapt(boost::asio::detached));
 }
@@ -1305,18 +1289,17 @@ void remote_server::stop()
         return;
     }
 
-    boost::asio::post(
-        io_context_,
-        [self = shared_from_this()]()
-        {
-            boost::system::error_code ec;
-            self->acceptor_.close(ec);
-            if (ec && ec != boost::asio::error::bad_descriptor)
-            {
-                LOG_ERROR("remote acceptor close error {}", ec.message());
-            }
-            self->group_.emit(boost::asio::cancellation_type::all);
-        });
+    boost::asio::post(io_context_,
+                      [self = shared_from_this()]()
+                      {
+                          boost::system::error_code ec;
+                          self->acceptor_.close(ec);
+                          if (ec && ec != boost::asio::error::bad_descriptor)
+                          {
+                              LOG_ERROR("remote acceptor close error {}", ec.message());
+                          }
+                          self->group_.emit(boost::asio::cancellation_type::all);
+                      });
 }
 
 boost::asio::awaitable<void> remote_server::wait_stopped()
@@ -1509,7 +1492,8 @@ boost::asio::awaitable<void> remote_server::accept_loop()
     boost::asio::steady_timer retry_timer(io_context_);
     while (true)
     {
-        const auto s = std::make_shared<boost::asio::ip::tcp::socket>(io_context_);
+        auto& io = pool_.get_io_context();
+        const auto s = std::make_shared<boost::asio::ip::tcp::socket>(io);
         const auto [accept_ec] = co_await acceptor_.async_accept(*s, boost::asio::as_tuple(boost::asio::use_awaitable));
         if (accept_ec)
         {
@@ -1532,12 +1516,14 @@ boost::asio::awaitable<void> remote_server::accept_loop()
         ec = s->set_option(boost::asio::ip::tcp::no_delay(true), ec);
         (void)ec;
         const std::uint32_t conn_id = next_conn_id_++;
-        boost::asio::co_spawn(io_context_, [this, self, s, conn_id]() { return handle(s, conn_id); }, group_.adapt(boost::asio::detached));
+        boost::asio::co_spawn(io, [this, self, io = &io, s, conn_id]() { return handle(*io, s, conn_id); }, group_.adapt(boost::asio::detached));
     }
     LOG_INFO("accept loop exited");
 }
 
-boost::asio::awaitable<void> remote_server::handle(std::shared_ptr<boost::asio::ip::tcp::socket> s, std::uint32_t conn_id)
+boost::asio::awaitable<void> remote_server::handle(boost::asio::io_context& io,
+                                                   std::shared_ptr<boost::asio::ip::tcp::socket> s,
+                                                   std::uint32_t conn_id)
 {
     reality_context reality_ctx;
     reality_ctx.socket = std::move(s);
@@ -1545,10 +1531,7 @@ boost::asio::awaitable<void> remote_server::handle(std::shared_ptr<boost::asio::
     auto& ctx = reality_ctx.ctx;
     auto& client_hello_wire = reality_ctx.client_hello_record;
     auto& client_hello_handshake = reality_ctx.client_hello_handshake;
-    auto fallback = [&](const char* reason) -> boost::asio::awaitable<void>
-    {
-        co_await fallback_to_target_site(reality_ctx, reason);
-    };
+    auto fallback = [&](const char* reason) -> boost::asio::awaitable<void> { co_await fallback_to_target_site(reality_ctx, reason); };
     LOG_CTX_INFO(ctx, "{} accepted {}", log_event::kConnInit, ctx.connection_info());
     boost::system::error_code ec;
     // tls handshake
@@ -1590,11 +1573,7 @@ boost::asio::awaitable<void> remote_server::handle(std::shared_ptr<boost::asio::
     if (!verify_client_hello_sni(reality_ctx.client_hello, cfg_))
     {
         const auto client_sni = reality_ctx.client_hello.sni.empty() ? std::string("empty") : reality_ctx.client_hello.sni;
-        LOG_CTX_WARN(ctx,
-                     "{} auth fail server name mismatch client={} expected={}",
-                     log_event::kAuth,
-                     client_sni,
-                     cfg_.reality.sni);
+        LOG_CTX_WARN(ctx, "{} auth fail server name mismatch client={} expected={}", log_event::kAuth, client_sni, cfg_.reality.sni);
         co_await fallback("server_name_mismatch");
         co_return;
     }
@@ -1636,8 +1615,11 @@ boost::asio::awaitable<void> remote_server::handle(std::shared_ptr<boost::asio::
     }
     if (!reality_ctx.client_hello.is_tls13 || reality_ctx.client_hello.session_id.size() != 32)
     {
-        LOG_CTX_ERROR(
-            ctx, "{} auth fail is tls13 {} sid len {}", log_event::kAuth, reality_ctx.client_hello.is_tls13, reality_ctx.client_hello.session_id.size());
+        LOG_CTX_ERROR(ctx,
+                      "{} auth fail is tls13 {} sid len {}",
+                      log_event::kAuth,
+                      reality_ctx.client_hello.is_tls13,
+                      reality_ctx.client_hello.session_id.size());
         co_await fallback("invalid_tls13_client_hello");
         co_return;
     }
@@ -1655,28 +1637,20 @@ boost::asio::awaitable<void> remote_server::handle(std::shared_ptr<boost::asio::
     }
     if (reality_ctx.client_hello.compression_methods.size() != 1)
     {
-        LOG_CTX_ERROR(ctx,
-                      "{} auth fail illegal tls13 compression method count {}",
-                      log_event::kAuth,
-                      reality_ctx.client_hello.compression_methods.size());
+        LOG_CTX_ERROR(
+            ctx, "{} auth fail illegal tls13 compression method count {}", log_event::kAuth, reality_ctx.client_hello.compression_methods.size());
         co_await fallback("illegal_tls13_compression_methods");
         co_return;
     }
     if (reality_ctx.client_hello.compression_methods[0] != 0x00)
     {
-        LOG_CTX_ERROR(ctx,
-                      "{} auth fail illegal tls13 compression method {:02x}",
-                      log_event::kAuth,
-                      reality_ctx.client_hello.compression_methods[0]);
+        LOG_CTX_ERROR(ctx, "{} auth fail illegal tls13 compression method {:02x}", log_event::kAuth, reality_ctx.client_hello.compression_methods[0]);
         co_await fallback("illegal_tls13_compression_methods");
         co_return;
     }
     if (!reality_ctx.client_hello.secure_renegotiation.empty())
     {
-        LOG_CTX_WARN(ctx,
-                     "{} auth fail non-empty renegotiation info len {}",
-                     log_event::kAuth,
-                     reality_ctx.client_hello.secure_renegotiation.size());
+        LOG_CTX_WARN(ctx, "{} auth fail non-empty renegotiation info len {}", log_event::kAuth, reality_ctx.client_hello.secure_renegotiation.size());
         co_await fallback("non_empty_renegotiation_info");
         co_return;
     }
@@ -1684,14 +1658,13 @@ boost::asio::awaitable<void> remote_server::handle(std::shared_ptr<boost::asio::
         reality_ctx.client_hello.x25519_mlkem768_share.size() == reality::kMlkem768PublicKeySize + 32)
     {
         reality_ctx.key_share_group = reality::tls_consts::group::kX25519MLKEM768;
-        reality_ctx.mlkem768_peer_pub.assign(reality_ctx.client_hello.x25519_mlkem768_share.begin(),
-                                             reality_ctx.client_hello.x25519_mlkem768_share.begin() +
-                                                 static_cast<std::ptrdiff_t>(reality::kMlkem768PublicKeySize));
+        reality_ctx.mlkem768_peer_pub.assign(
+            reality_ctx.client_hello.x25519_mlkem768_share.begin(),
+            reality_ctx.client_hello.x25519_mlkem768_share.begin() + static_cast<std::ptrdiff_t>(reality::kMlkem768PublicKeySize));
         reality_ctx.x25519_peer_pub.assign(reality_ctx.client_hello.x25519_mlkem768_share.end() - 32,
                                            reality_ctx.client_hello.x25519_mlkem768_share.end());
     }
-    else if (reality_ctx.client_hello.key_share_group == reality::tls_consts::group::kX25519 &&
-             reality_ctx.client_hello.x25519_pub.size() == 32)
+    else if (reality_ctx.client_hello.key_share_group == reality::tls_consts::group::kX25519 && reality_ctx.client_hello.x25519_pub.size() == 32)
     {
         reality_ctx.key_share_group = reality::tls_consts::group::kX25519;
         reality_ctx.x25519_peer_pub = reality_ctx.client_hello.x25519_pub;
@@ -1752,8 +1725,8 @@ boost::asio::awaitable<void> remote_server::handle(std::shared_ptr<boost::asio::
     }
     response.handshake_hash = reality_ctx.transcript.finish();
 
-    auto app_sec = reality::tls_key_schedule::derive_application_secrets(
-        response.hs_keys.master_secret, response.handshake_hash, response.negotiated_md, ec);
+    auto app_sec =
+        reality::tls_key_schedule::derive_application_secrets(response.hs_keys.master_secret, response.handshake_hash, response.negotiated_md, ec);
     if (ec)
     {
         co_return;
@@ -1788,24 +1761,24 @@ boost::asio::awaitable<void> remote_server::handle(std::shared_ptr<boost::asio::
     LOG_CTX_INFO(ctx, "{} tunnel starting", log_event::kConnEstablished);
     //
     reality_engine engine(keys.c_app_keys.first, keys.c_app_keys.second, keys.s_app_keys.first, keys.s_app_keys.second, response.cipher);
-    auto tunnel =
-        std::make_shared<mux_tunnel_impl>(std::move(*reality_ctx.socket), io_context_, std::move(engine), cfg_, group_, conn_id, ctx.trace_id());
+    auto tunnel = std::make_shared<mux_tunnel_impl>(std::move(*reality_ctx.socket), io, std::move(engine), cfg_, group_, conn_id, ctx.trace_id());
 
     std::weak_ptr<remote_server> weak_self = weak_from_this();
     std::weak_ptr<mux_tunnel_impl> weak_tunnel = tunnel;
-    tunnel->set_new_stream_cb([weak_self, weak_tunnel, ctx](mux_frame frame) -> boost::asio::awaitable<void>
-                              {
-                                  const auto self = weak_self.lock();
-                                  const auto tunnel_ref = weak_tunnel.lock();
-                                  if (self == nullptr || tunnel_ref == nullptr)
-                                  {
-                                      co_return;
-                                  }
-                                  co_await self->process_stream_request(tunnel_ref, ctx, std::move(frame));
-                              });
+    tunnel->set_new_stream_cb(
+        [weak_self, weak_tunnel, ctx, io = &io](mux_frame frame) -> boost::asio::awaitable<void>
+        {
+            const auto self = weak_self.lock();
+            const auto tunnel_ref = weak_tunnel.lock();
+            if (self == nullptr || tunnel_ref == nullptr)
+            {
+                co_return;
+            }
+            co_await self->process_stream_request(*io, tunnel_ref, ctx, std::move(frame));
+        });
     tunnel->run();
 
-    boost::asio::steady_timer hold_timer(io_context_);
+    boost::asio::steady_timer hold_timer(io);
     while (true)
     {
         const auto tunnel_ref = weak_tunnel.lock();
@@ -1859,9 +1832,7 @@ static boost::asio::awaitable<void> handle_tcp_connect_stream(const std::shared_
     const auto sess = std::make_shared<remote_tcp_session>(connection, frame.h.stream_id, io_context, stream_ctx, cfg);
     sess->set_manager(tunnel);
     boost::asio::co_spawn(
-        io_context,
-        [sess, syn]() mutable -> boost::asio::awaitable<void> { co_await sess->start(syn); },
-        group.adapt(boost::asio::detached));
+        io_context, [sess, syn]() mutable -> boost::asio::awaitable<void> { co_await sess->start(syn); }, group.adapt(boost::asio::detached));
     co_return;
 }
 
@@ -1877,13 +1848,12 @@ static boost::asio::awaitable<void> handle_udp_associate_stream(const std::share
     const auto sess = std::make_shared<remote_udp_session>(connection, frame.h.stream_id, io_context, stream_ctx, cfg);
     sess->set_manager(tunnel);
     boost::asio::co_spawn(
-        io_context,
-        [sess]() mutable -> boost::asio::awaitable<void> { co_await sess->start(); },
-        group.adapt(boost::asio::detached));
+        io_context, [sess]() mutable -> boost::asio::awaitable<void> { co_await sess->start(); }, group.adapt(boost::asio::detached));
     co_return;
 }
 
-boost::asio::awaitable<void> remote_server::process_stream_request(std::shared_ptr<mux_tunnel_impl> tunnel,
+boost::asio::awaitable<void> remote_server::process_stream_request(boost::asio::io_context& io,
+                                                                   std::shared_ptr<mux_tunnel_impl> tunnel,
                                                                    const connection_context& ctx,
                                                                    mux_frame frame)
 {
@@ -1914,25 +1884,24 @@ boost::asio::awaitable<void> remote_server::process_stream_request(std::shared_p
 
     if (syn.socks_cmd == socks::kCmdConnect)
     {
-        co_return co_await handle_tcp_connect_stream(tunnel, stream_ctx, std::move(frame), syn, cfg_, pool_.get_io_context(), group_);
+        co_return co_await handle_tcp_connect_stream(tunnel, stream_ctx, std::move(frame), syn, cfg_, io, group_);
     }
     if (syn.socks_cmd == socks::kCmdUdpAssociate)
     {
-        co_return co_await handle_udp_associate_stream(tunnel, stream_ctx, std::move(frame), cfg_, pool_.get_io_context(), group_);
+        co_return co_await handle_udp_associate_stream(tunnel, stream_ctx, std::move(frame), cfg_, io, group_);
     }
 
     LOG_CTX_WARN(stream_ctx, "{} stream {} unknown cmd {}", log_event::kMux, frame.h.stream_id, syn.socks_cmd);
     co_await send_stream_reset(connection, std::move(frame));
 }
 
-static std::vector<std::uint8_t> compose_server_hello_flight(
-    const std::vector<std::uint8_t>& sh_msg,
-    const std::vector<std::uint8_t>& flight2_plain,
-    const bool send_change_cipher_spec,
-    std::span<const std::uint16_t> encrypted_handshake_record_sizes,
-    const EVP_CIPHER* cipher,
-    const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& s_hs_keys,
-    boost::system::error_code& ec)
+static std::vector<std::uint8_t> compose_server_hello_flight(const std::vector<std::uint8_t>& sh_msg,
+                                                             const std::vector<std::uint8_t>& flight2_plain,
+                                                             const bool send_change_cipher_spec,
+                                                             std::span<const std::uint16_t> encrypted_handshake_record_sizes,
+                                                             const EVP_CIPHER* cipher,
+                                                             const std::pair<std::vector<std::uint8_t>, std::vector<std::uint8_t>>& s_hs_keys,
+                                                             boost::system::error_code& ec)
 {
     ec.clear();
     std::vector<std::uint8_t> out_sh;
@@ -1955,8 +1924,8 @@ static std::vector<std::uint8_t> compose_server_hello_flight(
 
         std::vector<std::uint8_t> chunk(flight2_plain.begin() + static_cast<std::ptrdiff_t>(offset),
                                         flight2_plain.begin() + static_cast<std::ptrdiff_t>(offset + len));
-        auto record = reality::tls_record_layer::encrypt_record(
-            cipher, s_hs_keys.first, s_hs_keys.second, seq++, chunk, reality::kContentTypeHandshake, ec);
+        auto record =
+            reality::tls_record_layer::encrypt_record(cipher, s_hs_keys.first, s_hs_keys.second, seq++, chunk, reality::kContentTypeHandshake, ec);
         if (ec)
         {
             return false;
@@ -2012,7 +1981,8 @@ boost::asio::awaitable<remote_server::server_handshake_res> remote_server::perfo
                   log_event::kHandshake,
                   reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(public_key, public_key + 32)));
 
-    auto x25519_shared = reality::crypto_util::x25519_derive(std::vector<std::uint8_t>(private_key, private_key + 32), reality_ctx.x25519_peer_pub, ec);
+    auto x25519_shared =
+        reality::crypto_util::x25519_derive(std::vector<std::uint8_t>(private_key, private_key + 32), reality_ctx.x25519_peer_pub, ec);
     if (ec)
     {
         LOG_CTX_ERROR(ctx, "{} x25519 derive failed", log_event::kHandshake);
@@ -2070,7 +2040,8 @@ boost::asio::awaitable<remote_server::server_handshake_res> remote_server::perfo
     const auto encrypted_handshake_record_sizes = select_encrypted_handshake_record_sizes(site_material_snapshot);
     const auto cert_chain_size = select_reality_certificate_chain_size(site_material_snapshot);
     LOG_CTX_INFO(ctx,
-                 "{} success_path_material cache={} certs={} group=0x{:04x} {} key_share_len={} cipher=0x{:04x} alpn='{}' sh_exts={} ee_exts={} ee_padding={} ee_padding_len={} ccs={} hs_records={}",
+                 "{} success_path_material cache={} certs={} group=0x{:04x} {} key_share_len={} cipher=0x{:04x} alpn='{}' sh_exts={} ee_exts={} "
+                 "ee_padding={} ee_padding_len={} ccs={} hs_records={}",
                  log_event::kHandshake,
                  site_material_snapshot.has_value(),
                  cert_chain_size,
@@ -2086,16 +2057,15 @@ boost::asio::awaitable<remote_server::server_handshake_res> remote_server::perfo
                  send_change_cipher_spec,
                  encrypted_handshake_record_sizes.size());
 
-    auto crypto = build_handshake_crypto(
-        reality_ctx,
-        *cipher_suite,
-        selected_alpn,
-        server_hello_extension_order,
-        encrypted_extension_order,
-        include_ee_padding,
-        encrypted_extensions_padding_len,
-        std::vector<std::uint8_t>(reality_cert_private_key_.begin(), reality_cert_private_key_.end()),
-        ec);
+    auto crypto = build_handshake_crypto(reality_ctx,
+                                         *cipher_suite,
+                                         selected_alpn,
+                                         server_hello_extension_order,
+                                         encrypted_extension_order,
+                                         include_ee_padding,
+                                         encrypted_extensions_padding_len,
+                                         std::vector<std::uint8_t>(reality_cert_private_key_.begin(), reality_cert_private_key_.end()),
+                                         ec);
     if (ec)
     {
         co_return res;
@@ -2152,8 +2122,8 @@ boost::asio::awaitable<void> remote_server::verify_client_finished(reality_conte
 
     const auto record = compose_tls_record(header, body);
     std::uint8_t ctype = 0;
-    auto plaintext = reality::tls_record_layer::decrypt_record(
-        response.cipher, response.c_hs_keys.first, response.c_hs_keys.second, 0, record, ctype, ec);
+    auto plaintext =
+        reality::tls_record_layer::decrypt_record(response.cipher, response.c_hs_keys.first, response.c_hs_keys.second, 0, record, ctype, ec);
     if (ec)
     {
         statistics::instance().inc_client_finished_failures();
