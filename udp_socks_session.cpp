@@ -1,3 +1,4 @@
+#include <array>
 #include <chrono>
 #include <memory>
 #include <string>
@@ -52,6 +53,8 @@ namespace
 constexpr std::uint8_t kNoStreamControl = 0;
 constexpr std::size_t kMaxUdpCacheEntries = 1024;
 constexpr std::uint64_t kUdpCacheTtlMs = 10 * 60 * 1000;
+constexpr std::size_t kTcpControlReadBufferSize = 1024;
+constexpr std::size_t kTcpControlIgnoreLimitBytes = 4096;
 
 [[nodiscard]] bool is_normal_close_error(const boost::system::error_code& ec)
 {
@@ -1038,16 +1041,29 @@ boost::asio::awaitable<void> udp_socks_session::stream_to_udp_sock(std::shared_p
 
 boost::asio::awaitable<void> udp_socks_session::keep_tcp_alive()
 {
+    std::array<char, kTcpControlReadBufferSize> buf{};
+    std::size_t ignored_bytes = 0;
     for (;;)
     {
-        char b[1];
-        const auto [ec, n] = co_await socket_.async_read_some(boost::asio::buffer(b), boost::asio::as_tuple(boost::asio::use_awaitable));
-        if (!ec)
+        const auto [ec, n] =
+            co_await socket_.async_read_some(boost::asio::buffer(buf), boost::asio::as_tuple(boost::asio::use_awaitable));
+        if (ec)
+        {
+            LOG_CTX_ERROR(ctx_, "{} keep tcp alive error {}", log_event::kSocks, ec.message());
+            break;
+        }
+        if (n == 0)
         {
             continue;
         }
-        LOG_CTX_ERROR(ctx_, "{} keep tcp alive error {}", log_event::kSocks, ec.message());
-        break;
+        ignored_bytes += n;
+        if (ignored_bytes >= kTcpControlIgnoreLimitBytes)
+        {
+            update_stream_close_command(stream_close_command_, mux::kCmdRst);
+            LOG_CTX_WARN(ctx_, "{} tcp control channel flooded ignored_bytes {}", log_event::kSocks, ignored_bytes);
+            close_impl();
+            co_return;
+        }
     }
 }
 
