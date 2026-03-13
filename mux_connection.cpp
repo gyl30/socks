@@ -222,7 +222,7 @@ boost::asio::awaitable<void> mux_connection::handle_stream_frame(const mux::fram
         }
 
         if (ec == boost::asio::error::operation_aborted || ec == boost::asio::error::bad_descriptor ||
-            ec == boost::asio::experimental::channel_error::channel_closed)
+            ec == boost::asio::experimental::error::channel_errors::channel_closed)
         {
             LOG_WARN("mux {} stream {} channel closed drop frame", cid_, header.stream_id);
             close_and_remove_stream(stream);
