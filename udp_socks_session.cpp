@@ -554,9 +554,27 @@ boost::asio::ip::udp::socket* udp_socks_session::select_direct_udp_socket(const 
     {
         if (!direct_udp_socket_v6_.is_open())
         {
+            boost::system::error_code direct_socket_ec;
+            open_direct_udp_socket(direct_udp_socket_v6_, boost::asio::ip::udp::v6(), "v6", direct_socket_ec);
+            if (direct_udp_socket_v6_.is_open())
+            {
+                start_direct_udp_socket_loops();
+            }
+        }
+        if (!direct_udp_socket_v6_.is_open())
+        {
             return nullptr;
         }
         return &direct_udp_socket_v6_;
+    }
+    if (!direct_udp_socket_v4_.is_open())
+    {
+        boost::system::error_code direct_socket_ec;
+        open_direct_udp_socket(direct_udp_socket_v4_, boost::asio::ip::udp::v4(), "v4", direct_socket_ec);
+        if (direct_udp_socket_v4_.is_open())
+        {
+            start_direct_udp_socket_loops();
+        }
     }
     if (!direct_udp_socket_v4_.is_open())
     {
@@ -761,23 +779,33 @@ void udp_socks_session::start_direct_udp_socket_loops()
     const auto self = shared_from_this();
     if (direct_udp_socket_v4_.is_open())
     {
-        boost::asio::co_spawn(
-            io_context_,
-            [self]() -> boost::asio::awaitable<void>
-            {
-                co_await self->direct_udp_socket_loop(self->direct_udp_socket_v4_);
-            },
-            group_.adapt(boost::asio::detached));
+        if (!direct_udp_v4_running_)
+        {
+            direct_udp_v4_running_ = true;
+            boost::asio::co_spawn(
+                io_context_,
+                [self]() -> boost::asio::awaitable<void>
+                {
+                    co_await self->direct_udp_socket_loop(self->direct_udp_socket_v4_);
+                    self->direct_udp_v4_running_ = false;
+                },
+                group_.adapt(boost::asio::detached));
+        }
     }
     if (direct_udp_socket_v6_.is_open())
     {
-        boost::asio::co_spawn(
-            io_context_,
-            [self]() -> boost::asio::awaitable<void>
-            {
-                co_await self->direct_udp_socket_loop(self->direct_udp_socket_v6_);
-            },
-            group_.adapt(boost::asio::detached));
+        if (!direct_udp_v6_running_)
+        {
+            direct_udp_v6_running_ = true;
+            boost::asio::co_spawn(
+                io_context_,
+                [self]() -> boost::asio::awaitable<void>
+                {
+                    co_await self->direct_udp_socket_loop(self->direct_udp_socket_v6_);
+                    self->direct_udp_v6_running_ = false;
+                },
+                group_.adapt(boost::asio::detached));
+        }
     }
 }
 
