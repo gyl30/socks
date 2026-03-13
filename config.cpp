@@ -52,7 +52,7 @@ namespace
 {
 
 constexpr std::uint32_t kHandshakeRecordsLimitMin = 1;
-constexpr std::uint32_t kHandshakeRecordsLimitMax = 4096;
+constexpr std::uint32_t kHandshakeRecordsLimitMax = 256;
 
 [[nodiscard]] config_error make_config_error(std::string path, std::string reason)
 {
@@ -95,7 +95,7 @@ constexpr std::uint32_t kHandshakeRecordsLimitMax = 4096;
     }
     if (limits.max_handshake_records < kHandshakeRecordsLimitMin || limits.max_handshake_records > kHandshakeRecordsLimitMax)
     {
-        return std::unexpected(make_config_error("/limits/max_handshake_records", "must be between 1 and 4096"));
+        return std::unexpected(make_config_error("/limits/max_handshake_records", "must be between 1 and 256"));
     }
     return {};
 }
