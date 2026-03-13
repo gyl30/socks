@@ -39,8 +39,10 @@ class mux_stream : public std::enable_shared_from_this<mux_stream>
    private:
     std::uint32_t id_ = 0;
     const config& cfg_;
-    std::uint64_t tx_bytes_{0};
-    std::uint64_t rx_bytes_{0};
+   std::uint64_t tx_bytes_{0};
+   std::uint64_t rx_bytes_{0};
+    static constexpr std::size_t kMaxPendingBytes = 256 * 1024;
+    std::size_t pending_bytes_{0};
     std::weak_ptr<mux_connection> connection_;
     boost::asio::experimental::concurrent_channel<void(boost::system::error_code, mux_frame)> recv_channel_;
 };
