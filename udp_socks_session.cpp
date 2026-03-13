@@ -691,6 +691,18 @@ boost::asio::awaitable<void> udp_socks_session::forward_direct_packet(const sock
     direct_peers_.insert(normalized_addr);
     const auto expires_at = now_ms_value + kUdpCacheTtlMs;
     direct_peers_expires_[normalized_addr] = expires_at;
+    if (direct_peers_.contains(normalized_addr))
+    {
+        for (auto it = direct_peers_order_.begin(); it != direct_peers_order_.end();)
+        {
+            if (it->first == normalized_addr)
+            {
+                it = direct_peers_order_.erase(it);
+                continue;
+            }
+            ++it;
+        }
+    }
     direct_peers_order_.push_back({normalized_addr, expires_at});
     evict_overflow(direct_peers_, direct_peers_expires_, direct_peers_order_);
 }
