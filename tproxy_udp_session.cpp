@@ -51,6 +51,7 @@ constexpr std::size_t kPacketChannelCapacity = 1024;
 constexpr std::chrono::milliseconds kTunnelPollInterval(200);
 constexpr std::uint8_t kNoStreamControl = 0;
 constexpr std::size_t kMaxReplySockets = 512;
+constexpr std::size_t kMaxUdpPacketSize = 8192;
 
 [[nodiscard]] bool is_normal_close_error(const boost::system::error_code& ec)
 {
@@ -229,6 +230,15 @@ udp_enqueue_result tproxy_udp_session::try_enqueue_packet(std::vector<std::uint8
     }
 
     last_activity_time_ms_ = timeout_io::now_ms();
+    if (payload.size() > kMaxUdpPacketSize)
+    {
+        LOG_CTX_WARN(ctx_,
+                     "{} drop udp packet because payload too large size {} max {}",
+                     log_event::kMux,
+                     payload.size(),
+                     kMaxUdpPacketSize);
+        return udp_enqueue_result::kDroppedOverflow;
+    }
     if (!packet_channel_.try_send(boost::system::error_code{}, std::move(payload)))
     {
         if (stopped_)
