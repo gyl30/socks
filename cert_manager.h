@@ -1,14 +1,12 @@
 #ifndef CERT_MANAGER_H
 #define CERT_MANAGER_H
 
-#include <list>
-#include <mutex>
 #include <string>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
-#include <unordered_map>
 
+#include "lru_cache_sharded.h"
 #include "site_material.h"
 
 namespace reality
@@ -46,19 +44,7 @@ class site_material_manager
                            const std::string& trace_id = "");
 
    private:
-    struct cache_node
-    {
-        std::string cache_key;
-        site_material_snapshot snapshot;
-    };
-
-    void touch(const std::list<cache_node>::iterator& it);
-    void evict_if_needed();
-
-    std::size_t capacity_ = 16;
-    std::list<cache_node> lru_;
-    std::unordered_map<std::string, std::list<cache_node>::iterator> index_;
-    mutable std::mutex mutex_;
+    mux::sharded_lru_cache<std::string, site_material_snapshot> cache_;
 };
 
 }    // namespace reality
