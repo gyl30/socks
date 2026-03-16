@@ -40,6 +40,7 @@ constexpr std::uint8_t kNoStreamControl = 0;
 constexpr std::size_t kMaxUdpCacheEntries = 1024;
 constexpr std::uint64_t kUdpCacheTtlMs = 10 * 60 * 1000;
 constexpr std::uint64_t kUdpNegativeCacheTtlMs = 3 * 1000;
+constexpr std::size_t kMaxUdpPayload = 65507;
 
 void update_stream_close_command(std::atomic<std::uint8_t>& stream_close_command, const std::uint8_t next_command)
 {
@@ -331,6 +332,11 @@ boost::asio::awaitable<void> remote_udp_session::on_frame(const mux_frame& frame
         co_return;
     }
     const auto payload_len = frame.payload.size() - header.header_len;
+    if (payload_len > kMaxUdpPayload)
+    {
+        LOG_CTX_WARN(ctx_, "{} drop oversized udp payload size {} max {}", log_event::kMux, payload_len, kMaxUdpPayload);
+        co_return;
+    }
     LOG_CTX_DEBUG(ctx_, "{} udp forwarding {} bytes to {}", log_event::kMux, payload_len, target_ep.address().to_string());
     co_await udp_socket_.async_send_to(boost::asio::buffer(frame.payload.data() + header.header_len, payload_len),
                                        target_ep,
