@@ -5,9 +5,6 @@
 #include <memory>
 #include <string>
 #include <utility>
-#include <unordered_map>
-#include <unordered_set>
-#include <deque>
 #include <vector>
 #include <cstddef>
 #include <cstdint>
@@ -23,6 +20,7 @@
 #include "mux_tunnel.h"
 #include "log_context.h"
 #include "mux_protocol.h"
+#include "lru_cache.h"
 
 namespace mux
 {
@@ -69,6 +67,17 @@ class remote_udp_session : public std::enable_shared_from_this<remote_udp_sessio
     void close_socket();
 
    private:
+    struct endpoint_cache_entry
+    {
+        boost::asio::ip::udp::endpoint endpoint;
+        std::uint64_t expires_at = 0;
+    };
+
+    struct peer_cache_entry
+    {
+        std::uint64_t expires_at = 0;
+    };
+
     std::uint32_t id_;
     const config& cfg_;
     connection_context ctx_;
@@ -79,12 +88,8 @@ class remote_udp_session : public std::enable_shared_from_this<remote_udp_sessio
     std::shared_ptr<mux_stream> stream_;
     std::weak_ptr<mux_connection> connection_;
     std::uint64_t last_activity_time_ms_{0};
-    std::unordered_map<std::string, boost::asio::ip::udp::endpoint> resolved_targets_;
-    std::unordered_map<std::string, std::uint64_t> resolved_expires_;
-    std::deque<std::pair<std::string, std::uint64_t>> resolved_order_;
-    std::unordered_set<std::string> allowed_reply_peers_;
-    std::unordered_map<std::string, std::uint64_t> allowed_reply_peers_expires_;
-    std::deque<std::pair<std::string, std::uint64_t>> allowed_reply_peers_order_;
+    lru_cache<std::string, endpoint_cache_entry> resolved_targets_;
+    lru_cache<std::string, peer_cache_entry> allowed_reply_peers_;
     std::weak_ptr<mux_tunnel_impl> manager_;
     std::atomic<std::uint8_t> stream_close_command_{0};
 };
