@@ -89,7 +89,7 @@ class remote_udp_session : public std::enable_shared_from_this<remote_udp_sessio
     std::weak_ptr<mux_connection> connection_;
     std::uint64_t last_activity_time_ms_{0};
     lru_cache<std::string, endpoint_cache_entry> resolved_targets_;
-    lru_cache<std::string, peer_cache_entry> allowed_reply_peers_;
+    lru_cache<std::uint64_t, peer_cache_entry> allowed_reply_peers_;
     std::weak_ptr<mux_tunnel_impl> manager_;
     std::atomic<std::uint8_t> stream_close_command_{0};
 };

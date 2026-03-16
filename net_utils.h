@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <expected>
 #include <optional>
+#include <string_view>
 
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/ip/udp.hpp>
@@ -34,6 +35,10 @@ void set_socket_recv_origdst(int fd, bool ipv6, boost::system::error_code& ec);
 [[nodiscard]] boost::asio::ip::address normalize_address(const boost::asio::ip::address& addr);
 
 [[nodiscard]] boost::asio::ip::udp::endpoint normalize_endpoint(const boost::asio::ip::udp::endpoint& ep);
+
+[[nodiscard]] std::uint64_t fnv1a_64(std::string_view data);
+
+[[nodiscard]] std::uint64_t endpoint_hash(const boost::asio::ip::udp::endpoint& endpoint);
 
 [[nodiscard]] std::optional<boost::asio::ip::udp::endpoint> parse_original_dst(const msghdr& msg);
 

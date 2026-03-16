@@ -48,6 +48,19 @@ namespace mux::net
 namespace
 {
 
+constexpr std::uint64_t kFnvOffsetBasis64 = 14695981039346656037ULL;
+constexpr std::uint64_t kFnvPrime64 = 1099511628211ULL;
+
+std::uint64_t fnv1a_update(std::uint64_t hash, const unsigned char* data, const std::size_t len)
+{
+    for (std::size_t i = 0; i < len; ++i)
+    {
+        hash ^= static_cast<std::uint64_t>(data[i]);
+        hash *= kFnvPrime64;
+    }
+    return hash;
+}
+
 #ifdef __linux__
 std::uint64_t monotonic_ms()
 {
@@ -320,6 +333,32 @@ boost::asio::ip::address normalize_address(const boost::asio::ip::address& addr)
 }
 
 boost::asio::ip::udp::endpoint normalize_endpoint(const boost::asio::ip::udp::endpoint& ep) { return {normalize_address(ep.address()), ep.port()}; }
+
+std::uint64_t fnv1a_64(const std::string_view data)
+{
+    return fnv1a_update(kFnvOffsetBasis64, reinterpret_cast<const unsigned char*>(data.data()), data.size());
+}
+
+std::uint64_t endpoint_hash(const boost::asio::ip::udp::endpoint& endpoint)
+{
+    const auto normalized = normalize_endpoint(endpoint);
+    std::uint64_t hash = kFnvOffsetBasis64;
+    const std::uint8_t family = normalized.address().is_v4() ? 4U : 6U;
+    hash = fnv1a_update(hash, &family, sizeof(family));
+    if (normalized.address().is_v4())
+    {
+        const auto bytes = normalized.address().to_v4().to_bytes();
+        hash = fnv1a_update(hash, bytes.data(), bytes.size());
+    }
+    else
+    {
+        const auto bytes = normalized.address().to_v6().to_bytes();
+        hash = fnv1a_update(hash, bytes.data(), bytes.size());
+    }
+    const auto port_be = boost::endian::native_to_big(normalized.port());
+    hash = fnv1a_update(hash, reinterpret_cast<const unsigned char*>(&port_be), sizeof(port_be));
+    return hash;
+}
 
 std::optional<boost::asio::ip::udp::endpoint> parse_original_dst(const msghdr& msg)
 {
