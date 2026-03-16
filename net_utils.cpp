@@ -1,5 +1,7 @@
 #include <array>
+#include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <expected>
@@ -38,12 +40,49 @@
 #include <boost/endian/conversion.hpp>
 
 #include "net_utils.h"
+#include "log.h"
 
 namespace mux::net
 {
 
 namespace
 {
+
+#ifdef __linux__
+std::uint64_t monotonic_ms()
+{
+    return static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
+void log_original_dst_getsockopt_failure(const int level, const int option, const boost::system::error_code& ec)
+{
+    constexpr std::uint64_t kLogIntervalMs = 10'000;
+    static std::atomic<std::uint64_t> last_log_ms{0};
+    static std::atomic<std::uint32_t> suppressed{0};
+
+    const auto now = monotonic_ms();
+    auto last = last_log_ms.load(std::memory_order_relaxed);
+    if (now - last < kLogIntervalMs)
+    {
+        suppressed.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    if (!last_log_ms.compare_exchange_strong(last, now, std::memory_order_relaxed))
+    {
+        suppressed.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+
+    const auto dropped = suppressed.exchange(0, std::memory_order_relaxed);
+    LOG_INFO("get original tcp dst getsockopt failed level={} opt={} errno={} error={} suppressed={}",
+             level,
+             option,
+             ec.value(),
+             ec.message(),
+             dropped);
+}
+#endif
 
 boost::asio::ip::udp::endpoint make_v4_endpoint(const in_addr& addr, const std::uint16_t port)
 {
@@ -328,6 +367,9 @@ bool get_original_tcp_dst(boost::asio::ip::tcp::socket& socket, boost::asio::ip:
         if (getsockopt(socket.native_handle(), level, option, &addr, &addr_len) != 0)
         {
             op_ec = boost::system::error_code(errno, boost::system::system_category());
+#ifdef __linux__
+            log_original_dst_getsockopt_failure(level, option, op_ec);
+#endif
             return false;
         }
 
