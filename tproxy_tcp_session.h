@@ -55,6 +55,7 @@ class tproxy_tcp_session : public std::enable_shared_from_this<tproxy_tcp_sessio
     std::shared_ptr<router> router_;
     const config& cfg_;
     task_group& group_;
+    std::shared_ptr<void> active_guard_;
     std::uint64_t last_activity_time_ms_{0};
     std::atomic<bool> backend_closed_{false};
 };

@@ -107,6 +107,16 @@ constexpr std::uint32_t kSiteMaterialFetchSuccessTtlSec = 6 * 60 * 60;
 constexpr std::uint32_t kSiteMaterialFetchFailureRetrySec = 5 * 60;
 constexpr std::size_t kSiteMaterialCacheCapacity = 4;
 
+std::shared_ptr<void> make_active_connection_guard()
+{
+    return {new int(0),
+            [](void* ptr)
+            {
+                delete static_cast<int*>(ptr);
+                statistics::instance().dec_active_connections();
+            }};
+}
+
 bool equal_server_name_ascii(const std::string& lhs, const std::string& rhs)
 {
     if (lhs.size() != rhs.size())
@@ -1530,11 +1540,25 @@ boost::asio::awaitable<void> remote_server::accept_loop()
             continue;
         }
 
+        auto& stats = statistics::instance();
+        if (stats.active_connections() >= cfg_.limits.max_connections)
+        {
+            stats.inc_connection_limit_rejected();
+            close_tcp_socket(*s);
+            LOG_WARN("remote server connection limit reached drop");
+            continue;
+        }
+
         boost::system::error_code ec;
         ec = s->set_option(boost::asio::ip::tcp::no_delay(true), ec);
         (void)ec;
         const std::uint32_t conn_id = next_conn_id_++;
-        boost::asio::co_spawn(io, [this, self, io = &io, s, conn_id]() { return handle(*io, s, conn_id); }, group_.adapt(boost::asio::detached));
+        stats.inc_active_connections();
+        auto active_guard = make_active_connection_guard();
+        boost::asio::co_spawn(
+            io,
+            [this, self, io = &io, s, conn_id, active_guard]() { return handle(*io, s, conn_id); },
+            group_.adapt(boost::asio::detached));
     }
     LOG_INFO("accept loop exited");
 }

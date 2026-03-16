@@ -35,6 +35,7 @@
 #include "protocol.h"
 #include "timeout_io.h"
 #include "mux_tunnel.h"
+#include "statistics.h"
 #include "task_group.h"
 #include "log_context.h"
 #include "mux_protocol.h"
@@ -81,6 +82,16 @@ void update_stream_close_command(std::atomic<std::uint8_t>& stream_close_command
             return;
         }
     }
+}
+
+std::shared_ptr<void> make_active_connection_guard()
+{
+    return {new int(0),
+            [](void* ptr)
+            {
+                delete static_cast<int*>(ptr);
+                statistics::instance().dec_active_connections();
+            }};
 }
 
 void set_socket_reuse_port(const int fd, boost::system::error_code& ec)
@@ -207,6 +218,8 @@ tproxy_udp_session::tproxy_udp_session(boost::asio::io_context& io_context,
       on_close_(std::move(on_close)),
       packet_channel_(io_context_, kPacketChannelCapacity)
 {
+    statistics::instance().inc_active_connections();
+    active_guard_ = make_active_connection_guard();
     stream_close_command_.store(mux::kCmdFin, std::memory_order_relaxed);
 }
 

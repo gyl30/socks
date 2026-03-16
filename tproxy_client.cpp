@@ -280,6 +280,17 @@ void tproxy_client::on_tcp_socket(boost::asio::ip::tcp::socket&& socket)
         LOG_WARN("tproxy tcp set no delay failed code {}", ec.value());
     }
 
+    auto& stats = statistics::instance();
+    if (stats.active_connections() >= cfg_.limits.max_connections)
+    {
+        stats.inc_connection_limit_rejected();
+        boost::system::error_code close_ec;
+        socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, close_ec);
+        socket.close(close_ec);
+        LOG_WARN("tproxy tcp connection limit reached drop");
+        return;
+    }
+
     const std::uint32_t sid = tunnel_pool_->next_session_id();
     std::make_shared<tproxy_tcp_session>(std::move(socket), io_context_, tunnel_pool_, router_, sid, cfg_, group_)->start();
 }
@@ -394,6 +405,13 @@ boost::asio::awaitable<void> tproxy_client::on_udp_packet(boost::asio::ip::udp::
         {
             statistics::instance().inc_connection_limit_rejected();
             LOG_WARN("tproxy udp session limit reached drop packet");
+            co_return;
+        }
+        auto& stats = statistics::instance();
+        if (stats.active_connections() >= cfg_.limits.max_connections)
+        {
+            stats.inc_connection_limit_rejected();
+            LOG_WARN("tproxy udp connection limit reached drop packet");
             co_return;
         }
 

@@ -24,6 +24,7 @@
 #include "log.h"
 #include "config.h"
 #include "router.h"
+#include "statistics.h"
 #include "context_pool.h"
 #include "socks_client.h"
 #include "socks_session.h"
@@ -151,6 +152,17 @@ boost::asio::awaitable<void> socks_client::accept_loop()
                 LOG_ERROR("accept retry timer error {}", ec.message());
                 break;
             }
+            continue;
+        }
+
+        auto& stats = statistics::instance();
+        if (stats.active_connections() >= cfg_.limits.max_connections)
+        {
+            stats.inc_connection_limit_rejected();
+            boost::system::error_code close_ec;
+            socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, close_ec);
+            socket.close(close_ec);
+            LOG_WARN("socks5 connection limit reached drop");
             continue;
         }
 

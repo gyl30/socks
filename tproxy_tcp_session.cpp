@@ -38,6 +38,16 @@ namespace mux
 namespace
 {
 
+std::shared_ptr<void> make_active_connection_guard()
+{
+    return {new int(0),
+            [](void* ptr)
+            {
+                delete static_cast<int*>(ptr);
+                statistics::instance().dec_active_connections();
+            }};
+}
+
 }    // namespace
 
 tproxy_tcp_session::tproxy_tcp_session(boost::asio::ip::tcp::socket socket,
@@ -59,6 +69,8 @@ tproxy_tcp_session::tproxy_tcp_session(boost::asio::ip::tcp::socket socket,
     ctx_.new_trace_id();
     ctx_.conn_id(sid);
     last_activity_time_ms_ = timeout_io::now_ms();
+    statistics::instance().inc_active_connections();
+    active_guard_ = make_active_connection_guard();
 }
 
 void tproxy_tcp_session::start()
