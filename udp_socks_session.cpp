@@ -3,7 +3,6 @@
 #include <memory>
 #include <string>
 #include <vector>
-#include <deque>
 #include <cstddef>
 #include <cstdint>
 #include <utility>
@@ -141,52 +140,10 @@ void open_and_bind_udp_socket(boost::asio::ip::udp::socket& sock, const boost::a
     }
 }
 
-template <typename Map, typename Queue>
-void evict_expired(Map& data, std::unordered_map<std::string, std::uint64_t>& expires, Queue& order, const std::uint64_t now_ms)
+template <typename Cache>
+void evict_expired(Cache& cache, const std::uint64_t now_ms)
 {
-    while (!order.empty())
-    {
-        const auto& entry = order.front();
-        const auto& key = entry.first;
-        const auto entry_expire = entry.second;
-        const auto it_exp = expires.find(key);
-        if (it_exp == expires.end())
-        {
-            order.pop_front();
-            continue;
-        }
-        if (it_exp->second != entry_expire)
-        {
-            order.pop_front();
-            continue;
-        }
-        if (entry_expire > now_ms)
-        {
-            break;
-        }
-        data.erase(key);
-        expires.erase(it_exp);
-        order.pop_front();
-    }
-}
-
-template <typename Map, typename Queue>
-void evict_overflow(Map& data, std::unordered_map<std::string, std::uint64_t>& expires, Queue& order)
-{
-    while (data.size() > kMaxUdpCacheEntries && !order.empty())
-    {
-        const auto entry = order.front();
-        const auto& key = entry.first;
-        const auto entry_expire = entry.second;
-        order.pop_front();
-        const auto it_exp = expires.find(key);
-        if (it_exp == expires.end() || it_exp->second != entry_expire)
-        {
-            continue;
-        }
-        data.erase(key);
-        expires.erase(it_exp);
-    }
+    cache.evict_while([&](const auto&, const auto& entry) { return entry.expires_at <= now_ms; });
 }
 
 void bind_local_udp_address(boost::asio::ip::tcp::socket& tcp_socket,
@@ -395,6 +352,8 @@ udp_socks_session::udp_socks_session(boost::asio::ip::tcp::socket socket,
       direct_udp_socket_v6_(io_context_),
       router_(std::move(router)),
       tunnel_pool_(std::move(tunnel_pool)),
+      resolved_targets_(kMaxUdpCacheEntries),
+      direct_peers_(kMaxUdpCacheEntries),
       active_connection_guard_(std::move(active_connection_guard)),
       proxy_stream_channel_(io_context_, 1)
 {
@@ -606,15 +565,20 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> udp_socks_session::resolv
     ec.clear();
     const auto key = udp_target_key(host, port);
     const auto now_ms_value = now_ms();
-    evict_expired(resolved_targets_, resolved_expires_, resolved_order_, now_ms_value);
+    evict_expired(resolved_targets_, now_ms_value);
 
-    const auto cached = resolved_targets_.find(key);
-    if (cached != resolved_targets_.end())
+    auto* cached = resolved_targets_.get(key);
+    if (cached != nullptr)
     {
-        const auto expires_at = now_ms_value + kUdpCacheTtlMs;
-        resolved_expires_[key] = expires_at;
-        resolved_order_.push_back({key, expires_at});
-        co_return cached->second;
+        if (cached->expires_at <= now_ms_value)
+        {
+            resolved_targets_.erase(key);
+        }
+        else
+        {
+            cached->expires_at = now_ms_value + kUdpCacheTtlMs;
+            co_return cached->endpoint;
+        }
     }
 
     boost::asio::ip::udp::resolver resolver(io_context_);
@@ -651,10 +615,7 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> udp_socks_session::resolv
         co_return boost::asio::ip::udp::endpoint{};
     }
     const auto expires_at = now_ms_value + kUdpCacheTtlMs;
-    resolved_order_.push_back({key, expires_at});
-    resolved_expires_[key] = expires_at;
-    resolved_targets_.emplace(key, target);
-    evict_overflow(resolved_targets_, resolved_expires_, resolved_order_);
+    resolved_targets_.put(key, endpoint_cache_entry{target, expires_at});
     co_return target;
 }
 
@@ -708,24 +669,9 @@ boost::asio::awaitable<void> udp_socks_session::forward_direct_packet(const sock
 
     const auto normalized_addr = net::normalize_endpoint(target).address().to_string();
     const auto now_ms_value = now_ms();
-    evict_expired(direct_peers_, direct_peers_expires_, direct_peers_order_, now_ms_value);
-    direct_peers_.insert(normalized_addr);
     const auto expires_at = now_ms_value + kUdpCacheTtlMs;
-    direct_peers_expires_[normalized_addr] = expires_at;
-    if (direct_peers_.contains(normalized_addr))
-    {
-        for (auto it = direct_peers_order_.begin(); it != direct_peers_order_.end();)
-        {
-            if (it->first == normalized_addr)
-            {
-                it = direct_peers_order_.erase(it);
-                continue;
-            }
-            ++it;
-        }
-    }
-    direct_peers_order_.push_back({normalized_addr, expires_at});
-    evict_overflow(direct_peers_, direct_peers_expires_, direct_peers_order_);
+    evict_expired(direct_peers_, now_ms_value);
+    direct_peers_.put(normalized_addr, peer_cache_entry{expires_at});
 }
 
 boost::asio::awaitable<void> udp_socks_session::direct_udp_socket_loop(boost::asio::ip::udp::socket& direct_socket)
@@ -747,10 +693,15 @@ boost::asio::awaitable<void> udp_socks_session::direct_udp_socket_loop(boost::as
             break;
         }
         const auto now_ms_value = now_ms();
-        evict_expired(direct_peers_, direct_peers_expires_, direct_peers_order_, now_ms_value);
+        evict_expired(direct_peers_, now_ms_value);
         const auto normalized_sender_addr = net::normalize_endpoint(sender).address().to_string();
-        if (!direct_peers_.contains(normalized_sender_addr))
+        const auto* peer = direct_peers_.peek(normalized_sender_addr);
+        if (peer == nullptr || peer->expires_at <= now_ms_value)
         {
+            if (peer != nullptr && peer->expires_at <= now_ms_value)
+            {
+                direct_peers_.erase(normalized_sender_addr);
+            }
             LOG_CTX_WARN(ctx_,
                          "{} ignore udp packet from unexpected direct peer {}:{}",
                          log_event::kRoute,
