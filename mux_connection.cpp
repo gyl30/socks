@@ -423,7 +423,7 @@ void mux_connection::stop()
     ec = socket_.close(ec);
 }
 
-bool mux_connection::is_active() const { return socket_.is_open(); }
+bool mux_connection::is_active() const { return !stopped_.load(std::memory_order_relaxed); }
 
 boost::asio::awaitable<void> mux_connection::read_loop()
 {
