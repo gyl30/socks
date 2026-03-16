@@ -97,10 +97,7 @@ struct proxy_udp_stream
     std::shared_ptr<mux_stream> stream;
 };
 
-[[nodiscard]] std::string udp_target_key(const std::string& host, const std::uint16_t port)
-{
-    return host + "|" + std::to_string(port);
-}
+[[nodiscard]] std::string udp_target_key(const std::string& host, const std::uint16_t port) { return host + "|" + std::to_string(port); }
 
 boost::asio::awaitable<void> write_socks_error_reply(boost::asio::ip::tcp::socket& socket,
                                                      const std::uint8_t rep,
@@ -209,11 +206,7 @@ boost::asio::awaitable<proxy_udp_stream> connect_remote_address(const std::share
         co_return proxy_udp_stream{};
     }
     bool keep_stream = false;
-    DEFER(
-        if (!keep_stream)
-        {
-            tunnel->close_and_remove_stream(stream);
-        });
+    DEFER(if (!keep_stream) { tunnel->close_and_remove_stream(stream); });
 
     const syn_payload syn{.socks_cmd = socks::kCmdUdpAssociate, .addr = "0.0.0.0", .port = 0, .trace_id = ctx.trace_id()};
     std::vector<std::uint8_t> syn_data;
@@ -415,6 +408,15 @@ boost::asio::awaitable<void> udp_socks_session::run(const std::string& host, con
         co_await write_socks_error_reply(socket_, socks::kRepGenFail, ctx_, cfg_.timeout.write);
         co_return;
     }
+    const auto tcp_remote_ep = socket_.remote_endpoint(ec);
+    if (ec)
+    {
+        LOG_CTX_ERROR(ctx_, "{} get tcp peer failed {}", log_event::kSocks, ec.message());
+        co_await write_socks_error_reply(socket_, socks::kRepGenFail, ctx_, cfg_.timeout.write);
+        co_return;
+    }
+    client_ip_ = net::normalize_address(tcp_remote_ep.address());
+    has_client_ip_ = true;
     // step 2 reply to tcp socket
     const auto final_rep = detail::build_udp_associate_reply(local_addr, udp_port);
     co_await timeout_io::wait_write_with_timeout(socket_, boost::asio::buffer(final_rep), cfg_.timeout.write, ec);
@@ -448,11 +450,7 @@ boost::asio::awaitable<void> udp_socks_session::run(const std::string& host, con
         co_await stream_->async_write(std::move(close_frame), close_ec);
         if (close_ec)
         {
-            LOG_CTX_WARN(ctx_,
-                         "{} send {} failed {}",
-                         log_event::kSocks,
-                         close_command == mux::kCmdRst ? "rst" : "fin",
-                         close_ec.message());
+            LOG_CTX_WARN(ctx_, "{} send {} failed {}", log_event::kSocks, close_command == mux::kCmdRst ? "rst" : "fin", close_ec.message());
         }
     }
     if (tunnel_ != nullptr && stream_ != nullptr)
@@ -559,8 +557,8 @@ boost::asio::awaitable<route_type> udp_socks_session::decide_udp_route(const soc
 }
 
 boost::asio::awaitable<boost::asio::ip::udp::endpoint> udp_socks_session::resolve_target_endpoint(const std::string& host,
-                                                                                                   const std::uint16_t port,
-                                                                                                   boost::system::error_code& ec)
+                                                                                                  const std::uint16_t port,
+                                                                                                  boost::system::error_code& ec)
 {
     ec.clear();
     const auto key = udp_target_key(host, port);
@@ -646,8 +644,8 @@ boost::asio::awaitable<void> udp_socks_session::forward_direct_packet(const sock
                      direct_socket_ec.message());
         co_return;
     }
-    const auto [send_ec, send_n] = co_await direct_socket->async_send_to(
-        boost::asio::buffer(payload, payload_len), target, boost::asio::as_tuple(boost::asio::use_awaitable));
+    const auto [send_ec, send_n] =
+        co_await direct_socket->async_send_to(boost::asio::buffer(payload, payload_len), target, boost::asio::as_tuple(boost::asio::use_awaitable));
     (void)send_n;
     if (send_ec)
     {
@@ -657,12 +655,8 @@ boost::asio::awaitable<void> udp_socks_session::forward_direct_packet(const sock
         }
         else
         {
-            LOG_CTX_WARN(ctx_,
-                         "{} udp direct send failed {}:{} error={}",
-                         log_event::kRoute,
-                         target.address().to_string(),
-                         target.port(),
-                         send_ec.message());
+            LOG_CTX_WARN(
+                ctx_, "{} udp direct send failed {}:{} error={}", log_event::kRoute, target.address().to_string(), target.port(), send_ec.message());
         }
         co_return;
     }
@@ -702,11 +696,8 @@ boost::asio::awaitable<void> udp_socks_session::direct_udp_socket_loop(boost::as
             {
                 direct_peers_.erase(normalized_sender_addr);
             }
-            LOG_CTX_WARN(ctx_,
-                         "{} ignore udp packet from unexpected direct peer {}:{}",
-                         log_event::kRoute,
-                         sender.address().to_string(),
-                         sender.port());
+            LOG_CTX_WARN(
+                ctx_, "{} ignore udp packet from unexpected direct peer {}:{}", log_event::kRoute, sender.address().to_string(), sender.port());
             continue;
         }
 
@@ -761,9 +752,9 @@ void udp_socks_session::start_direct_udp_socket_loops()
 }
 
 boost::asio::awaitable<void> udp_socks_session::forward_direct_reply_to_client(const boost::asio::ip::udp::endpoint& sender,
-                                                                                const std::uint8_t* payload,
-                                                                                const std::size_t payload_len,
-                                                                                boost::system::error_code& ec)
+                                                                               const std::uint8_t* payload,
+                                                                               const std::size_t payload_len,
+                                                                               boost::system::error_code& ec)
 {
     ec.clear();
     if (!has_client_addr_)
@@ -818,8 +809,8 @@ boost::asio::awaitable<bool> udp_socks_session::ensure_proxy_stream(boost::syste
     stream_ = proxy_stream.stream;
     if (!proxy_stream_started_)
     {
-        const auto [send_ec] = co_await proxy_stream_channel_.async_send(
-            boost::system::error_code{}, stream_, boost::asio::as_tuple(boost::asio::use_awaitable));
+        const auto [send_ec] =
+            co_await proxy_stream_channel_.async_send(boost::system::error_code{}, stream_, boost::asio::as_tuple(boost::asio::use_awaitable));
         if (send_ec)
         {
             ec = send_ec;
@@ -863,84 +854,82 @@ boost::asio::awaitable<void> udp_socks_session::udp_socket_loop()
             LOG_CTX_WARN(ctx_, "{} receive error {}", log_event::kSocks, recv_ec.message());
             break;
         }
-        if (!has_client_addr_ || sender == client_addr_)
+        const auto normalized_sender = net::normalize_endpoint(sender);
+        if (has_client_ip_ && normalized_sender.address() != client_ip_)
         {
-            if (!has_client_addr_)
-            {
-                client_addr_ = sender;
-                has_client_addr_ = true;
-                LOG_CTX_INFO(ctx_,
-                             "{} udp peer bound to {}:{}",
-                             log_event::kSocks,
-                             client_addr_.address().to_string(),
-                             client_addr_.port());
-            }
+            LOG_CTX_WARN(ctx_,
+                         "{} ignore udp packet from unexpected peer {} expected {}",
+                         log_event::kSocks,
+                         normalized_sender.address().to_string(),
+                         client_ip_.to_string());
+            continue;
+        }
+        if (!has_client_addr_)
+        {
+            client_addr_ = normalized_sender;
+            has_client_addr_ = true;
+            LOG_CTX_INFO(ctx_, "{} udp peer bound to {}:{}", log_event::kSocks, client_addr_.address().to_string(), client_addr_.port());
+        }
+        else if (normalized_sender.port() != client_addr_.port())
+        {
+            client_addr_ = normalized_sender;
+        }
 
-            socks_udp_header udp_header;
-            if (!decode_client_udp_header(buf, n, udp_header, ctx_))
+        socks_udp_header udp_header;
+        if (!decode_client_udp_header(buf, n, udp_header, ctx_))
+        {
+            continue;
+        }
+
+        const auto route = co_await decide_udp_route(udp_header);
+        if (route == route_type::kBlock)
+        {
+            LOG_CTX_INFO(ctx_, "{} udp blocked {}:{}", log_event::kRoute, udp_header.addr, udp_header.port);
+            last_activity_time_ms_ = now_ms();
+            continue;
+        }
+
+        const auto payload_len = n - udp_header.header_len;
+        if (route == route_type::kProxy)
+        {
+            if (n > mux::kMaxPayload)
             {
+                LOG_CTX_WARN(ctx_, "{} udp packet too large for mux frame {}", log_event::kSocks, n);
                 continue;
             }
-
-            const auto route = co_await decide_udp_route(udp_header);
-            if (route == route_type::kBlock)
+            boost::system::error_code open_ec;
+            const auto ready = co_await ensure_proxy_stream(open_ec);
+            if (!ready)
             {
-                LOG_CTX_INFO(ctx_, "{} udp blocked {}:{}", log_event::kRoute, udp_header.addr, udp_header.port);
-                last_activity_time_ms_ = now_ms();
-                continue;
-            }
-
-            const auto payload_len = n - udp_header.header_len;
-            if (route == route_type::kProxy)
-            {
-                if (n > mux::kMaxPayload)
-                {
-                    LOG_CTX_WARN(ctx_, "{} udp packet too large for mux frame {}", log_event::kSocks, n);
-                    continue;
-                }
-                boost::system::error_code open_ec;
-                const auto ready = co_await ensure_proxy_stream(open_ec);
-                if (!ready)
-                {
-                    update_stream_close_command(stream_close_command_, kNoStreamControl);
-                    break;
-                }
-
-                const auto stream = stream_;
-                mux_frame data_frame;
-                data_frame.h.stream_id = stream->id();
-                data_frame.h.command = mux::kCmdDat;
-                data_frame.payload.assign(buf.begin(), buf.begin() + static_cast<std::ptrdiff_t>(n));
-                boost::system::error_code write_ec;
-                co_await stream->async_write(data_frame, write_ec);
-                if (write_ec)
-                {
-                    update_stream_close_command(stream_close_command_, kNoStreamControl);
-                    clear_proxy_stream_if_current(stream);
-                    LOG_CTX_WARN(ctx_, "{} write to stream failed {}", log_event::kSocks, write_ec.message());
-                    continue;
-                }
-                last_activity_time_ms_ = now_ms();
-                continue;
-            }
-
-            boost::system::error_code ec;
-            co_await forward_direct_packet(udp_header, buf.data() + udp_header.header_len, payload_len, ec);
-            if (ec)
-            {
+                update_stream_close_command(stream_close_command_, kNoStreamControl);
                 break;
+            }
+
+            const auto stream = stream_;
+            mux_frame data_frame;
+            data_frame.h.stream_id = stream->id();
+            data_frame.h.command = mux::kCmdDat;
+            data_frame.payload.assign(buf.begin(), buf.begin() + static_cast<std::ptrdiff_t>(n));
+            boost::system::error_code write_ec;
+            co_await stream->async_write(data_frame, write_ec);
+            if (write_ec)
+            {
+                update_stream_close_command(stream_close_command_, kNoStreamControl);
+                clear_proxy_stream_if_current(stream);
+                LOG_CTX_WARN(ctx_, "{} write to stream failed {}", log_event::kSocks, write_ec.message());
+                continue;
             }
             last_activity_time_ms_ = now_ms();
             continue;
         }
 
-        LOG_CTX_WARN(ctx_,
-                     "{} ignore udp packet from unexpected relay peer {}:{} expected client {}:{}",
-                     log_event::kSocks,
-                     sender.address().to_string(),
-                     sender.port(),
-                     client_addr_.address().to_string(),
-                     client_addr_.port());
+        boost::system::error_code ec;
+        co_await forward_direct_packet(udp_header, buf.data() + udp_header.header_len, payload_len, ec);
+        if (ec)
+        {
+            break;
+        }
+        last_activity_time_ms_ = now_ms();
     }
 }
 
@@ -1024,8 +1013,7 @@ boost::asio::awaitable<void> udp_socks_session::keep_tcp_alive()
     std::size_t ignored_bytes = 0;
     for (;;)
     {
-        const auto [ec, n] =
-            co_await socket_.async_read_some(boost::asio::buffer(buf), boost::asio::as_tuple(boost::asio::use_awaitable));
+        const auto [ec, n] = co_await socket_.async_read_some(boost::asio::buffer(buf), boost::asio::as_tuple(boost::asio::use_awaitable));
         if (ec)
         {
             LOG_CTX_ERROR(ctx_, "{} keep tcp alive error {}", log_event::kSocks, ec.message());
