@@ -102,26 +102,8 @@ boost::asio::awaitable<void> tproxy_tcp_session::run()
     boost::asio::ip::tcp::endpoint target_ep;
     if (!net::get_original_tcp_dst(socket_, target_ep, ec))
     {
-        const auto original_dst_ec = ec;
-        boost::system::error_code local_ec;
-        const auto local_ep = socket_.local_endpoint(local_ec);
-        const bool can_use_local = !local_ec && local_ep.port() != cfg_.tproxy.tcp_port;
-        if (can_use_local)
-        {
-            target_ep = local_ep;
-            LOG_CTX_WARN(ctx_,
-                         "{} original dst failed fallback to local endpoint {}:{} reason {}",
-                         log_event::kConnInit,
-                         target_ep.address().to_string(),
-                         target_ep.port(),
-                         original_dst_ec.message());
-            ec.clear();
-        }
-        else
-        {
-            LOG_CTX_WARN(ctx_, "{} original dst failed drop connection reason {}", log_event::kConnInit, original_dst_ec.message());
-            co_return;
-        }
+        LOG_CTX_WARN(ctx_, "{} original dst failed drop connection reason {}", log_event::kConnInit, ec.message());
+        co_return;
     }
     if (cfg_.tproxy.tcp_port != 0)
     {
