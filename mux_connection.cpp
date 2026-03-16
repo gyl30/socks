@@ -173,6 +173,55 @@ void mux_connection::release_pending(const std::uint64_t bytes)
     }
 }
 
+std::uint64_t mux_connection::reserve_write_bytes(const std::uint64_t bytes)
+{
+    if (bytes == 0)
+    {
+        return 0;
+    }
+    const auto limit = cfg_.limits.max_buffer;
+    if (limit == 0)
+    {
+        write_pending_bytes_.fetch_add(bytes, std::memory_order_relaxed);
+        return bytes;
+    }
+    auto cur = write_pending_bytes_.load(std::memory_order_relaxed);
+    while (true)
+    {
+        if (cur >= limit)
+        {
+            return 0;
+        }
+        const auto avail = limit - cur;
+        const auto grant = (bytes < avail) ? bytes : avail;
+        if (grant == 0)
+        {
+            return 0;
+        }
+        if (write_pending_bytes_.compare_exchange_weak(cur, cur + grant, std::memory_order_relaxed))
+        {
+            return grant;
+        }
+    }
+}
+
+void mux_connection::release_write_bytes(const std::uint64_t bytes)
+{
+    if (bytes == 0)
+    {
+        return;
+    }
+    auto cur = write_pending_bytes_.load(std::memory_order_relaxed);
+    while (true)
+    {
+        const auto next = (cur > bytes) ? (cur - bytes) : 0;
+        if (write_pending_bytes_.compare_exchange_weak(cur, next, std::memory_order_relaxed))
+        {
+            return;
+        }
+    }
+}
+
 std::shared_ptr<mux_stream> mux_connection::find_stream(const std::uint32_t stream_id)
 {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -442,6 +491,10 @@ boost::asio::awaitable<void> mux_connection::write_loop()
         {
             break;
         }
+        if (!msg.payload.empty())
+        {
+            release_write_bytes(msg.payload.size());
+        }
 
         const auto mux_frame = mux_dispatcher::pack(msg.h.stream_id, msg.h.command, msg.payload);
 
@@ -629,6 +682,22 @@ boost::asio::awaitable<void> mux_connection::send_async_with_timeout(mux_frame m
         co_return;
     }
 
+    const auto payload_len = msg.payload.size();
+    std::uint64_t reserved = 0;
+    if (payload_len > 0)
+    {
+        reserved = reserve_write_bytes(payload_len);
+        if (reserved != payload_len)
+        {
+            if (reserved > 0)
+            {
+                release_write_bytes(reserved);
+            }
+            ec = boost::asio::error::no_buffer_space;
+            co_return;
+        }
+    }
+
     if (msg.h.command != mux::kCmdDat || msg.payload.size() < 128)
     {
         LOG_TRACE("mux {} send frame stream {} cmd {} size {}", cid_, msg.h.stream_id, msg.h.command, msg.payload.size());
@@ -637,6 +706,10 @@ boost::asio::awaitable<void> mux_connection::send_async_with_timeout(mux_frame m
     co_await timeout_io::wait_send_with_timeout<mux_frame>(*write_channel_, std::move(msg), timeout_sec, ec);
     if (ec)
     {
+        if (reserved > 0)
+        {
+            release_write_bytes(reserved);
+        }
         LOG_ERROR("mux {} send failed error {}", cid_, ec.message());
         co_return;
     }
