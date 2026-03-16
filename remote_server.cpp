@@ -920,7 +920,8 @@ std::string select_fallback_target_host(const reality_context& reality_ctx, cons
     {
         return cfg.reality.sni;
     }
-    return reality_ctx.client_hello.sni;
+    (void)reality_ctx;
+    return {};
 }
 
 boost::asio::awaitable<void> connect_fallback_target(boost::asio::io_context& io_context,
