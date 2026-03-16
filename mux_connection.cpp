@@ -334,7 +334,12 @@ boost::asio::awaitable<void> mux_connection::read_loop()
     boost::system::error_code ec;
     while (true)
     {
-        const auto buf = reality_engine_.read_buffer(8192);
+        const auto buf = reality_engine_.read_buffer(8192, ec);
+        if (ec)
+        {
+            LOG_ERROR("mux {} read buffer error {}", cid_, ec.message());
+            break;
+        }
         const auto n = co_await socket_.async_read_some(buf, boost::asio::redirect_error(boost::asio::use_awaitable, ec));
         if (ec)
         {

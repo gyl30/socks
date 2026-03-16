@@ -1934,7 +1934,12 @@ boost::asio::awaitable<void> client_tunnel_pool::run_real_certificate_fallback(
 
     for (std::uint32_t attempt = 0; attempt < kFallbackMaxReadIterations && !response_complete; ++attempt)
     {
-        const auto buf = engine.read_buffer(4096);
+        const auto buf = engine.read_buffer(4096, ec);
+        if (ec)
+        {
+            LOG_CTX_WARN(fallback_ctx, "{} stage=read_response attempt={} error={}", log_event::kFallback, attempt + 1, ec.message());
+            co_return;
+        }
         const auto n = co_await timeout_io::wait_read_some_with_timeout(socket, buf, read_timeout_sec, ec);
         if (ec)
         {
