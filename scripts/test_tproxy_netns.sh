@@ -607,6 +607,10 @@ wait_log_pattern_since "$client_log" "$start_line" "udp session idle timeout" 8 
 }
 
 echo "[summary]"
+if grep -Fq "original dst failed" "$client_log"; then
+    echo "SO_ORIGINAL_DST failed; TPROXY not verified" >&2
+    exit 1
+fi
 print_log_count "client_route_direct" "$client_log" "selecting backend route direct"
 print_log_count "client_route_proxy" "$client_log" "selecting backend route proxy"
 print_log_count "client_udp_direct_open" "$client_log" "opened direct udp socket"
