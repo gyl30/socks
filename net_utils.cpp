@@ -406,9 +406,6 @@ bool get_original_tcp_dst(boost::asio::ip::tcp::socket& socket, boost::asio::ip:
         if (getsockopt(socket.native_handle(), level, option, &addr, &addr_len) != 0)
         {
             op_ec = boost::system::error_code(errno, boost::system::system_category());
-#ifdef __linux__
-            log_original_dst_getsockopt_failure(level, option, op_ec);
-#endif
             return false;
         }
 
@@ -427,29 +424,41 @@ bool get_original_tcp_dst(boost::asio::ip::tcp::socket& socket, boost::asio::ip:
     boost::system::error_code last_ec;
     if (prefer_ipv6)
     {
-        if (try_get_original_dst(SOL_IPV6, IP6T_SO_ORIGINAL_DST, ec))
+        boost::system::error_code v6_ec;
+        boost::system::error_code v4_ec;
+        if (try_get_original_dst(SOL_IPV6, IP6T_SO_ORIGINAL_DST, v6_ec))
         {
             return true;
         }
-        last_ec = ec;
-        if (try_get_original_dst(SOL_IP, SO_ORIGINAL_DST, ec))
+        last_ec = v6_ec;
+        if (try_get_original_dst(SOL_IP, SO_ORIGINAL_DST, v4_ec))
         {
             return true;
         }
-        ec = ec ? ec : last_ec;
+#ifdef __linux__
+        log_original_dst_getsockopt_failure(SOL_IPV6, IP6T_SO_ORIGINAL_DST, v6_ec);
+        log_original_dst_getsockopt_failure(SOL_IP, SO_ORIGINAL_DST, v4_ec);
+#endif
+        ec = v4_ec ? v4_ec : last_ec;
         return false;
     }
 
-    if (try_get_original_dst(SOL_IP, SO_ORIGINAL_DST, ec))
+    boost::system::error_code v4_ec;
+    boost::system::error_code v6_ec;
+    if (try_get_original_dst(SOL_IP, SO_ORIGINAL_DST, v4_ec))
     {
         return true;
     }
-    last_ec = ec;
-    if (try_get_original_dst(SOL_IPV6, IP6T_SO_ORIGINAL_DST, ec))
+    last_ec = v4_ec;
+    if (try_get_original_dst(SOL_IPV6, IP6T_SO_ORIGINAL_DST, v6_ec))
     {
         return true;
     }
-    ec = ec ? ec : last_ec;
+#ifdef __linux__
+    log_original_dst_getsockopt_failure(SOL_IP, SO_ORIGINAL_DST, v4_ec);
+    log_original_dst_getsockopt_failure(SOL_IPV6, IP6T_SO_ORIGINAL_DST, v6_ec);
+#endif
+    ec = v6_ec ? v6_ec : last_ec;
     return false;
 #else
     (void)socket;
