@@ -36,6 +36,48 @@ void set_socket_recv_origdst(int fd, bool ipv6, boost::system::error_code& ec);
 
 [[nodiscard]] boost::asio::ip::udp::endpoint normalize_endpoint(const boost::asio::ip::udp::endpoint& ep);
 
+struct udp_endpoint_hash
+{
+    std::size_t operator()(const boost::asio::ip::udp::endpoint& ep) const noexcept
+    {
+        const auto normalized = normalize_endpoint(ep);
+        std::size_t h = 1469598103934665603ull;
+        auto mix = [&](std::uint8_t b)
+        {
+            h ^= b;
+            h *= 1099511628211ull;
+        };
+        if (normalized.address().is_v4())
+        {
+            const auto bytes = normalized.address().to_v4().to_bytes();
+            for (const auto b : bytes)
+            {
+                mix(b);
+            }
+        }
+        else
+        {
+            const auto bytes = normalized.address().to_v6().to_bytes();
+            for (const auto b : bytes)
+            {
+                mix(b);
+            }
+        }
+        const auto port = normalized.port();
+        mix(static_cast<std::uint8_t>(port >> 8));
+        mix(static_cast<std::uint8_t>(port & 0xFF));
+        return h;
+    }
+};
+
+struct udp_endpoint_equal
+{
+    bool operator()(const boost::asio::ip::udp::endpoint& lhs, const boost::asio::ip::udp::endpoint& rhs) const noexcept
+    {
+        return normalize_endpoint(lhs) == normalize_endpoint(rhs);
+    }
+};
+
 [[nodiscard]] std::uint64_t fnv1a_64(std::string_view data);
 
 [[nodiscard]] std::uint64_t endpoint_hash(const boost::asio::ip::udp::endpoint& endpoint);
