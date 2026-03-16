@@ -124,6 +124,55 @@ mux_connection::mux_connection(boost::asio::ip::tcp::socket socket,
 
 mux_connection::~mux_connection() { statistics::instance().dec_active_mux_sessions(); }
 
+std::uint64_t mux_connection::reserve_pending(const std::uint64_t bytes)
+{
+    if (bytes == 0)
+    {
+        return 0;
+    }
+    const auto limit = cfg_.limits.max_buffer;
+    if (limit == 0)
+    {
+        pending_bytes_total_.fetch_add(bytes, std::memory_order_relaxed);
+        return bytes;
+    }
+    auto cur = pending_bytes_total_.load(std::memory_order_relaxed);
+    while (true)
+    {
+        if (cur >= limit)
+        {
+            return 0;
+        }
+        const auto avail = limit - cur;
+        const auto grant = (bytes < avail) ? bytes : avail;
+        if (grant == 0)
+        {
+            return 0;
+        }
+        if (pending_bytes_total_.compare_exchange_weak(cur, cur + grant, std::memory_order_relaxed))
+        {
+            return grant;
+        }
+    }
+}
+
+void mux_connection::release_pending(const std::uint64_t bytes)
+{
+    if (bytes == 0)
+    {
+        return;
+    }
+    auto cur = pending_bytes_total_.load(std::memory_order_relaxed);
+    while (true)
+    {
+        const auto next = (cur > bytes) ? (cur - bytes) : 0;
+        if (pending_bytes_total_.compare_exchange_weak(cur, next, std::memory_order_relaxed))
+        {
+            return;
+        }
+    }
+}
+
 std::shared_ptr<mux_stream> mux_connection::find_stream(const std::uint32_t stream_id)
 {
     std::lock_guard<std::mutex> lock(mutex_);

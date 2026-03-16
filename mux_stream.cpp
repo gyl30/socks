@@ -29,7 +29,18 @@ mux_stream::mux_stream(std::uint32_t id, const config& cfg, boost::asio::io_cont
 {
 }
 
-mux_stream::~mux_stream() {}
+mux_stream::~mux_stream()
+{
+    const auto left = pending_bytes_.exchange(0, std::memory_order_relaxed);
+    if (left > 0)
+    {
+        const auto connection = connection_.lock();
+        if (connection)
+        {
+            connection->release_pending(left);
+        }
+    }
+}
 
 std::uint32_t mux_stream::id() const { return id_; }
 
@@ -38,6 +49,8 @@ void mux_stream::close() { recv_channel_.close(); }
 boost::asio::awaitable<void> mux_stream::on_frame(mux_frame frame, boost::system::error_code& ec)
 {
     const auto payload_len = frame.payload.size();
+    std::shared_ptr<mux_connection> connection;
+    std::uint64_t reserved = 0;
     if (payload_len > 0)
     {
         if (payload_len > kMaxPendingBytes || pending_bytes_ > kMaxPendingBytes - payload_len)
@@ -45,9 +58,33 @@ boost::asio::awaitable<void> mux_stream::on_frame(mux_frame frame, boost::system
             ec = boost::asio::error::timed_out;
             co_return;
         }
+        connection = connection_.lock();
+        if (!connection)
+        {
+            ec = boost::asio::error::connection_aborted;
+            co_return;
+        }
+        reserved = connection->reserve_pending(payload_len);
+        if (reserved != payload_len)
+        {
+            if (reserved > 0)
+            {
+                connection->release_pending(reserved);
+            }
+            ec = boost::asio::error::timed_out;
+            co_return;
+        }
     }
 
     co_await timeout_io::wait_send_with_timeout<mux_frame>(recv_channel_, std::move(frame), cfg_.timeout.write, ec);
+    if (ec)
+    {
+        if (reserved > 0 && connection)
+        {
+            connection->release_pending(reserved);
+        }
+        co_return;
+    }
     if (!ec && payload_len > 0)
     {
         pending_bytes_ += payload_len;
@@ -71,6 +108,11 @@ boost::asio::awaitable<mux_frame> mux_stream::async_read(const std::uint32_t tim
         else
         {
             pending_bytes_ = 0;
+        }
+        const auto connection = connection_.lock();
+        if (connection)
+        {
+            connection->release_pending(data.payload.size());
         }
     }
     rx_bytes_ += data.payload.size();
