@@ -101,13 +101,15 @@ boost::asio::awaitable<mux_frame> mux_stream::async_read(const std::uint32_t tim
     auto data = co_await timeout_io::wait_receive_with_timeout<mux_frame>(recv_channel_, timeout_sec, ec);
     if (!ec && !data.payload.empty())
     {
-        if (pending_bytes_ >= data.payload.size())
+        const auto dec = static_cast<std::uint64_t>(data.payload.size());
+        auto cur = pending_bytes_.load(std::memory_order_relaxed);
+        while (true)
         {
-            pending_bytes_ -= data.payload.size();
-        }
-        else
-        {
-            pending_bytes_ = 0;
+            const auto next = (cur > dec) ? (cur - dec) : 0;
+            if (pending_bytes_.compare_exchange_weak(cur, next, std::memory_order_relaxed))
+            {
+                break;
+            }
         }
         const auto connection = connection_.lock();
         if (connection)
