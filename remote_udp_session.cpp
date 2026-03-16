@@ -348,11 +348,11 @@ boost::asio::awaitable<void> remote_udp_session::on_frame(const mux_frame& frame
     }
     last_activity_time_ms_ = timeout_io::now_ms();
     ctx_.add_tx_bytes(payload_len);
-    const auto normalized_addr = net::endpoint_hash(target_ep);
+    const auto normalized_target = net::normalize_endpoint(target_ep);
     const auto now_ms = timeout_io::now_ms();
     const auto expires_at = now_ms + kUdpCacheTtlMs;
     evict_expired(allowed_reply_peers_, now_ms);
-    allowed_reply_peers_.put(normalized_addr, peer_cache_entry{expires_at});
+    allowed_reply_peers_.put(normalized_target, peer_cache_entry{expires_at});
 }
 
 boost::asio::awaitable<void> remote_udp_session::udp_to_mux()
@@ -373,13 +373,12 @@ boost::asio::awaitable<void> remote_udp_session::udp_to_mux()
         const auto normalized_ep = net::normalize_endpoint(ep);
         const auto now_ms = timeout_io::now_ms();
         evict_expired(allowed_reply_peers_, now_ms);
-        const auto addr_key = net::endpoint_hash(normalized_ep);
-        auto* peer = allowed_reply_peers_.get(addr_key);
+        auto* peer = allowed_reply_peers_.get(normalized_ep);
         if (peer == nullptr || peer->expires_at <= now_ms)
         {
             if (peer != nullptr && peer->expires_at <= now_ms)
             {
-                allowed_reply_peers_.erase(addr_key);
+                allowed_reply_peers_.erase(normalized_ep);
             }
             LOG_CTX_WARN(ctx_,
                          "{} ignore udp packet from unexpected peer {}:{}",

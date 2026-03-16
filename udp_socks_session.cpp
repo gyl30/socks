@@ -671,11 +671,11 @@ boost::asio::awaitable<void> udp_socks_session::forward_direct_packet(const sock
         co_return;
     }
 
-    const auto normalized_addr = net::endpoint_hash(target);
+    const auto normalized_target = net::normalize_endpoint(target);
     const auto now_ms_value = now_ms();
     const auto expires_at = now_ms_value + kUdpCacheTtlMs;
     evict_expired(direct_peers_, now_ms_value);
-    direct_peers_.put(normalized_addr, peer_cache_entry{expires_at});
+    direct_peers_.put(normalized_target, peer_cache_entry{expires_at});
 }
 
 boost::asio::awaitable<void> udp_socks_session::direct_udp_socket_loop(boost::asio::ip::udp::socket& direct_socket)
@@ -698,13 +698,13 @@ boost::asio::awaitable<void> udp_socks_session::direct_udp_socket_loop(boost::as
         }
         const auto now_ms_value = now_ms();
         evict_expired(direct_peers_, now_ms_value);
-        const auto normalized_sender_addr = net::endpoint_hash(sender);
-        const auto* peer = direct_peers_.peek(normalized_sender_addr);
+        const auto normalized_sender = net::normalize_endpoint(sender);
+        const auto* peer = direct_peers_.peek(normalized_sender);
         if (peer == nullptr || peer->expires_at <= now_ms_value)
         {
             if (peer != nullptr && peer->expires_at <= now_ms_value)
             {
-                direct_peers_.erase(normalized_sender_addr);
+                direct_peers_.erase(normalized_sender);
             }
             LOG_CTX_WARN(
                 ctx_, "{} ignore udp packet from unexpected direct peer {}:{}", log_event::kRoute, sender.address().to_string(), sender.port());
