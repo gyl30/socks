@@ -82,6 +82,8 @@ bool secure_string_equals(const std::string& lhs, const std::string& rhs)
     return true;
 }
 
+constexpr std::uint32_t kAuthFailDelayMs = 200;
+
 }    // namespace
 
 socks_session::socks_session(boost::asio::ip::tcp::socket socket,
@@ -297,6 +299,10 @@ boost::asio::awaitable<bool> socks_session::do_password_auth()
     {
         LOG_WARN("socks session {} auth failed", sid_);
         statistics::instance().inc_auth_failures();
+        boost::asio::steady_timer delay_timer(ioc_);
+        delay_timer.expires_after(std::chrono::milliseconds(kAuthFailDelayMs));
+        boost::system::error_code delay_ec;
+        co_await delay_timer.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, delay_ec));
     }
     else
     {
