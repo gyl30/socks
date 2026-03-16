@@ -62,8 +62,8 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
     [[nodiscard]] boost::asio::awaitable<route_type> decide_udp_route(const socks_udp_header& header) const;
     [[nodiscard]] boost::asio::awaitable<bool> ensure_proxy_stream(boost::system::error_code& ec);
     [[nodiscard]] boost::asio::awaitable<boost::asio::ip::udp::endpoint> resolve_target_endpoint(const std::string& host,
-                                                                                                  std::uint16_t port,
-                                                                                                  boost::system::error_code& ec);
+                                                                                                 std::uint16_t port,
+                                                                                                 boost::system::error_code& ec);
     boost::asio::awaitable<void> udp_socket_loop();
     boost::asio::awaitable<void> direct_udp_socket_loop(boost::asio::ip::udp::socket& direct_socket);
     void start_direct_udp_socket_loops();
@@ -119,9 +119,11 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
     std::uint64_t last_activity_time_ms_{0};
     bool stopped_ = false;
     bool proxy_stream_started_ = false;
+    bool has_client_ip_ = false;
     bool has_client_addr_ = false;
     bool direct_udp_v4_running_ = false;
     bool direct_udp_v6_running_ = false;
+    boost::asio::ip::address client_ip_;
     boost::asio::ip::udp::endpoint client_addr_;
     lru_cache<std::string, endpoint_cache_entry> resolved_targets_;
     lru_cache<std::string, peer_cache_entry> direct_peers_;
