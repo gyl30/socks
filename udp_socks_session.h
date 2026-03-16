@@ -126,7 +126,7 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
     boost::asio::ip::address client_ip_;
     boost::asio::ip::udp::endpoint client_addr_;
     lru_cache<std::string, endpoint_cache_entry> resolved_targets_;
-    lru_cache<std::string, peer_cache_entry> direct_peers_;
+    lru_cache<std::uint64_t, peer_cache_entry> direct_peers_;
     std::shared_ptr<void> active_connection_guard_;
     proxy_stream_channel_type proxy_stream_channel_;
 };
