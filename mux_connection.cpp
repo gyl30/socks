@@ -260,7 +260,6 @@ boost::asio::awaitable<void> mux_connection::handle_unknown_stream(mux::frame_he
             if (rst_ec)
             {
                 LOG_WARN("mux {} reject stream {} send rst failed {}", cid_, header.stream_id, rst_ec.message());
-                stop();
             }
             co_return;
         }
@@ -283,7 +282,6 @@ boost::asio::awaitable<void> mux_connection::handle_unknown_stream(mux::frame_he
     if (rst_ec)
     {
         LOG_WARN("mux {} unknown stream {} send rst failed {}", cid_, header.stream_id, rst_ec.message());
-        stop();
     }
 }
 
