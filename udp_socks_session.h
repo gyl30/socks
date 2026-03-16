@@ -6,9 +6,6 @@
 #include <optional>
 #include <string>
 #include <utility>
-#include <unordered_map>
-#include <unordered_set>
-#include <deque>
 #include <vector>
 #include <cstddef>
 #include <cstdint>
@@ -30,6 +27,7 @@
 #include "task_group.h"
 #include "log_context.h"
 #include "mux_stream_interface.h"
+#include "lru_cache.h"
 
 namespace mux
 {
@@ -90,6 +88,17 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
     void close_impl();
 
    private:
+    struct endpoint_cache_entry
+    {
+        boost::asio::ip::udp::endpoint endpoint;
+        std::uint64_t expires_at = 0;
+    };
+
+    struct peer_cache_entry
+    {
+        std::uint64_t expires_at = 0;
+    };
+
     using proxy_stream_channel_type = boost::asio::experimental::concurrent_channel<void(boost::system::error_code, std::shared_ptr<mux_stream>)>;
 
     connection_context ctx_;
@@ -114,12 +123,8 @@ class udp_socks_session : public std::enable_shared_from_this<udp_socks_session>
     bool direct_udp_v4_running_ = false;
     bool direct_udp_v6_running_ = false;
     boost::asio::ip::udp::endpoint client_addr_;
-    std::unordered_map<std::string, boost::asio::ip::udp::endpoint> resolved_targets_;
-    std::unordered_map<std::string, std::uint64_t> resolved_expires_;
-    std::deque<std::pair<std::string, std::uint64_t>> resolved_order_;
-    std::unordered_set<std::string> direct_peers_;
-    std::unordered_map<std::string, std::uint64_t> direct_peers_expires_;
-    std::deque<std::pair<std::string, std::uint64_t>> direct_peers_order_;
+    lru_cache<std::string, endpoint_cache_entry> resolved_targets_;
+    lru_cache<std::string, peer_cache_entry> direct_peers_;
     std::shared_ptr<void> active_connection_guard_;
     proxy_stream_channel_type proxy_stream_channel_;
 };
