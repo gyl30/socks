@@ -20,6 +20,7 @@
 #include "mux_tunnel.h"
 #include "log_context.h"
 #include "mux_protocol.h"
+#include "net_utils.h"
 #include "lru_cache.h"
 
 namespace mux
@@ -91,7 +92,7 @@ class remote_udp_session : public std::enable_shared_from_this<remote_udp_sessio
     std::weak_ptr<mux_connection> connection_;
     std::uint64_t last_activity_time_ms_{0};
     lru_cache<std::string, endpoint_cache_entry> resolved_targets_;
-    lru_cache<std::uint64_t, peer_cache_entry> allowed_reply_peers_;
+    lru_cache<boost::asio::ip::udp::endpoint, peer_cache_entry, net::udp_endpoint_hash, net::udp_endpoint_equal> allowed_reply_peers_;
     std::weak_ptr<mux_tunnel_impl> manager_;
     std::atomic<std::uint8_t> stream_close_command_{0};
 };
