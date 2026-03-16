@@ -53,6 +53,7 @@ constexpr std::uint8_t kNoStreamControl = 0;
 constexpr std::size_t kMaxUdpCacheEntries = 1024;
 constexpr std::uint64_t kUdpCacheTtlMs = 10 * 60 * 1000;
 constexpr std::uint64_t kUdpNegativeCacheTtlMs = 3 * 1000;
+constexpr std::size_t kMaxUdpPayload = 65507;
 constexpr std::size_t kTcpControlReadBufferSize = 1024;
 constexpr std::size_t kTcpControlIgnoreLimitBytes = 4096;
 
@@ -774,9 +775,15 @@ boost::asio::awaitable<void> udp_socks_session::forward_direct_reply_to_client(c
     const auto normalized_sender = net::normalize_endpoint(sender);
     const socks_udp_header header{.frag = 0, .addr = normalized_sender.address().to_string(), .port = normalized_sender.port()};
     const auto udp_header = socks_codec::encode_udp_header(header);
+    const auto packet_len = udp_header.size() + payload_len;
+    if (packet_len > kMaxUdpPayload)
+    {
+        LOG_CTX_WARN(ctx_, "{} udp reply oversized drop size {} max {}", log_event::kRoute, packet_len, kMaxUdpPayload);
+        co_return;
+    }
 
     std::vector<std::uint8_t> packet;
-    packet.reserve(udp_header.size() + payload_len);
+    packet.reserve(packet_len);
     packet.insert(packet.end(), udp_header.begin(), udp_header.end());
     packet.insert(packet.end(), payload, payload + payload_len);
 
@@ -999,6 +1006,12 @@ boost::asio::awaitable<void> udp_socks_session::stream_to_udp_sock(std::shared_p
         }
         if (!has_client_addr_)
         {
+            continue;
+        }
+
+        if (data_frame.payload.size() > kMaxUdpPayload)
+        {
+            LOG_CTX_WARN(ctx_, "{} udp reply oversized drop size {} max {}", log_event::kSocks, data_frame.payload.size(), kMaxUdpPayload);
             continue;
         }
 
