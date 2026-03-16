@@ -812,12 +812,19 @@ struct encrypted_record
 };
 
 boost::asio::awaitable<encrypted_record> read_encrypted_record(boost::asio::ip::tcp::socket& socket,
+                                                               const std::uint64_t handshake_start_ms,
                                                                const std::uint32_t timeout_sec,
                                                                boost::system::error_code& ec)
 {
     ec.clear();
     std::array<std::uint8_t, 5> record_header{};
-    auto read_size = co_await timeout_io::wait_read_with_timeout(socket, boost::asio::buffer(record_header), timeout_sec, ec);
+    const auto header_timeout = timeout_io::remaining_timeout_seconds(handshake_start_ms, timeout_sec, ec);
+    if (ec)
+    {
+        LOG_ERROR("handshake overall timeout {}", ec.message());
+        co_return encrypted_record{};
+    }
+    auto read_size = co_await timeout_io::wait_read_with_timeout(socket, boost::asio::buffer(record_header), header_timeout, ec);
     if (ec)
     {
         LOG_ERROR("error reading record header {}", ec.message());
@@ -840,7 +847,13 @@ boost::asio::awaitable<encrypted_record> read_encrypted_record(boost::asio::ip::
         co_return encrypted_record{};
     }
     std::vector<std::uint8_t> record_body(record_body_size);
-    read_size = co_await timeout_io::wait_read_with_timeout(socket, boost::asio::buffer(record_body), timeout_sec, ec);
+    const auto body_timeout = timeout_io::remaining_timeout_seconds(handshake_start_ms, timeout_sec, ec);
+    if (ec)
+    {
+        LOG_ERROR("handshake overall timeout {}", ec.message());
+        co_return encrypted_record{};
+    }
+    read_size = co_await timeout_io::wait_read_with_timeout(socket, boost::asio::buffer(record_body), body_timeout, ec);
     if (ec)
     {
         LOG_ERROR("error reading record payload {}", ec.message());
@@ -1627,11 +1640,12 @@ boost::asio::awaitable<void> process_handshake_record(
     const EVP_MD* md,
     std::uint64_t& seq,
     std::uint32_t& tls13_compat_ccs_count,
+    const std::uint64_t handshake_start_ms,
     const std::uint32_t timeout_sec,
     boost::system::error_code& ec)
 {
     ec.clear();
-    const auto record = co_await read_encrypted_record(socket, timeout_sec, ec);
+    const auto record = co_await read_encrypted_record(socket, handshake_start_ms, timeout_sec, ec);
     if (ec)
     {
         co_return;
@@ -2504,6 +2518,7 @@ client_tunnel_pool::handshake_read_loop(boost::asio::ip::tcp::socket& socket,
                                         boost::system::error_code& ec)
 {
     ec.clear();
+    const auto handshake_start_ms = timeout_io::now_ms();
     bool handshake_fin = false;
     handshake_validation_state validation_state;
     validation_state.client_hello = &client_hello;
@@ -2532,6 +2547,7 @@ client_tunnel_pool::handshake_read_loop(boost::asio::ip::tcp::socket& socket,
                                           md,
                                           seq,
                                           tls13_compat_ccs_count,
+                                          handshake_start_ms,
                                           read_timeout_sec,
                                           ec);
         if (ec)
