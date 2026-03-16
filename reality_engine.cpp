@@ -45,6 +45,21 @@ reality_engine::reality_engine(std::vector<std::uint8_t> r_key,
     record_buf_.reserve(kMaxBufSize);
 }
 
+boost::asio::streambuf::mutable_buffers_type reality_engine::read_buffer(std::size_t size_hint, boost::system::error_code& ec) const
+{
+    ec.clear();
+    const auto max_size = rx_buf_->max_size();
+    const auto current_size = rx_buf_->size();
+    if (current_size >= max_size)
+    {
+        ec = boost::asio::error::no_buffer_space;
+        return rx_buf_->prepare(0);
+    }
+    const auto remaining = max_size - current_size;
+    size_hint = std::min(size_hint, remaining);
+    return rx_buf_->prepare(size_hint);
+}
+
 std::span<const std::uint8_t> reality_engine::encrypt(const std::vector<std::uint8_t>& plaintext, boost::system::error_code& ec)
 {
     tx_buf_.clear();
