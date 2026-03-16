@@ -52,6 +52,7 @@ namespace
 constexpr std::uint8_t kNoStreamControl = 0;
 constexpr std::size_t kMaxUdpCacheEntries = 1024;
 constexpr std::uint64_t kUdpCacheTtlMs = 10 * 60 * 1000;
+constexpr std::uint64_t kUdpNegativeCacheTtlMs = 3 * 1000;
 constexpr std::size_t kTcpControlReadBufferSize = 1024;
 constexpr std::size_t kTcpControlIgnoreLimitBytes = 4096;
 
@@ -574,6 +575,11 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> udp_socks_session::resolv
         }
         else
         {
+            if (cached->negative)
+            {
+                ec = cached->last_error;
+                co_return boost::asio::ip::udp::endpoint{};
+            }
             cached->expires_at = now_ms_value + kUdpCacheTtlMs;
             co_return cached->endpoint;
         }
@@ -584,12 +590,14 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> udp_socks_session::resolv
     if (ec)
     {
         LOG_CTX_WARN(ctx_, "{} udp direct resolve failed {}:{} error={}", log_event::kRoute, host, port, ec.message());
+        resolved_targets_.put(key, endpoint_cache_entry{{}, now_ms_value + kUdpNegativeCacheTtlMs, ec, true});
         co_return boost::asio::ip::udp::endpoint{};
     }
     if (endpoints.begin() == endpoints.end())
     {
         ec = boost::asio::error::host_not_found;
         LOG_CTX_WARN(ctx_, "{} udp direct resolve empty {}:{}", log_event::kRoute, host, port);
+        resolved_targets_.put(key, endpoint_cache_entry{{}, now_ms_value + kUdpNegativeCacheTtlMs, ec, true});
         co_return boost::asio::ip::udp::endpoint{};
     }
 
@@ -610,6 +618,7 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> udp_socks_session::resolv
     {
         ec = boost::asio::error::address_family_not_supported;
         LOG_CTX_WARN(ctx_, "{} udp direct resolve no compatible endpoint {}:{}", log_event::kRoute, host, port);
+        resolved_targets_.put(key, endpoint_cache_entry{{}, now_ms_value + kUdpNegativeCacheTtlMs, ec, true});
         co_return boost::asio::ip::udp::endpoint{};
     }
     const auto expires_at = now_ms_value + kUdpCacheTtlMs;

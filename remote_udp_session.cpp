@@ -39,6 +39,7 @@ namespace
 constexpr std::uint8_t kNoStreamControl = 0;
 constexpr std::size_t kMaxUdpCacheEntries = 1024;
 constexpr std::uint64_t kUdpCacheTtlMs = 10 * 60 * 1000;
+constexpr std::uint64_t kUdpNegativeCacheTtlMs = 3 * 1000;
 
 void update_stream_close_command(std::atomic<std::uint8_t>& stream_close_command, const std::uint8_t next_command)
 {
@@ -433,6 +434,11 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> remote_udp_session::resol
         }
         else
         {
+            if (cached->negative)
+            {
+                ec = cached->last_error;
+                co_return boost::asio::ip::udp::endpoint{};
+            }
             cached->expires_at = now_ms + kUdpCacheTtlMs;
             co_return cached->endpoint;
         }
@@ -451,6 +457,7 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> remote_udp_session::resol
             stats.inc_remote_udp_session_resolve_errors();
         }
         LOG_CTX_WARN(ctx_, "{} stage=resolve target={}:{} error={}", log_event::kMux, host, port, ec.message());
+        resolved_targets_.put(key, endpoint_cache_entry{{}, now_ms + kUdpNegativeCacheTtlMs, ec, true});
         co_return boost::asio::ip::udp::endpoint{};
     }
     if (res.begin() == res.end())
@@ -458,6 +465,7 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> remote_udp_session::resol
         ec = boost::asio::error::host_not_found;
         statistics::instance().inc_remote_udp_session_resolve_errors();
         LOG_CTX_WARN(ctx_, "{} stage=resolve target={}:{} error=empty_result", log_event::kMux, host, port);
+        resolved_targets_.put(key, endpoint_cache_entry{{}, now_ms + kUdpNegativeCacheTtlMs, ec, true});
         co_return boost::asio::ip::udp::endpoint{};
     }
 
@@ -468,6 +476,7 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> remote_udp_session::resol
         ec = local_ep_ec;
         statistics::instance().inc_remote_udp_session_resolve_errors();
         LOG_CTX_WARN(ctx_, "{} stage=resolve target={}:{} error=local_endpoint_failed", log_event::kMux, host, port);
+        resolved_targets_.put(key, endpoint_cache_entry{{}, now_ms + kUdpNegativeCacheTtlMs, ec, true});
         co_return boost::asio::ip::udp::endpoint{};
     }
     const bool v4_only = local_ep.address().is_v4();
@@ -489,6 +498,7 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> remote_udp_session::resol
         ec = boost::asio::error::address_family_not_supported;
         statistics::instance().inc_remote_udp_session_resolve_errors();
         LOG_CTX_WARN(ctx_, "{} stage=resolve target={}:{} error=no_compatible_endpoint", log_event::kMux, host, port);
+        resolved_targets_.put(key, endpoint_cache_entry{{}, now_ms + kUdpNegativeCacheTtlMs, ec, true});
         co_return boost::asio::ip::udp::endpoint{};
     }
     const auto expires_at = now_ms + kUdpCacheTtlMs;

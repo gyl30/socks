@@ -71,6 +71,8 @@ class remote_udp_session : public std::enable_shared_from_this<remote_udp_sessio
     {
         boost::asio::ip::udp::endpoint endpoint;
         std::uint64_t expires_at = 0;
+        boost::system::error_code last_error;
+        bool negative = false;
     };
 
     struct peer_cache_entry
