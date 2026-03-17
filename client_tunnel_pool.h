@@ -141,6 +141,7 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
         const std::vector<std::uint8_t>& mlkem768_private_key,
         const client_hello_info& client_hello,
         reality::transcript& trans,
+        std::vector<std::uint8_t>& extra_handshake_data,
         const connection_context& ctx,
         boost::system::error_code& ec) const;
 
@@ -152,6 +153,7 @@ class client_tunnel_pool : public std::enable_shared_from_this<client_tunnel_poo
         const client_hello_info& client_hello,
         const std::string& sni,
         reality::transcript& trans,
+        std::vector<std::uint8_t> initial_handshake_data,
         const EVP_CIPHER* cipher,
         const EVP_MD* md,
         std::uint32_t max_handshake_records,
