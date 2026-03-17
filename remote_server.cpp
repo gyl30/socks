@@ -1942,6 +1942,12 @@ boost::asio::awaitable<void> remote_server::process_stream_request(boost::asio::
     {
         LOG_CTX_DEBUG(stream_ctx, "{} linked client trace id {}", log_event::kMux, syn.trace_id);
     }
+    if (syn.addr.empty())
+    {
+        LOG_CTX_WARN(stream_ctx, "{} stream {} invalid target empty", log_event::kMux, frame.h.stream_id);
+        co_await send_stream_reset(connection, std::move(frame));
+        co_return;
+    }
     if (syn.socks_cmd == socks::kCmdConnect && syn.port == 0)
     {
         LOG_CTX_WARN(stream_ctx, "{} stream {} invalid target {} {}", log_event::kMux, frame.h.stream_id, syn.addr, syn.port);
