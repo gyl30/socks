@@ -50,7 +50,7 @@ class ch_parser
         reader(const std::uint8_t* p, const std::size_t len, const std::uint8_t* s) : ptr_(p), end_(p + len), start_(s) {}
 
         [[nodiscard]] bool valid() const { return ptr_ != nullptr; }
-        [[nodiscard]] bool has(const std::size_t n) const { return valid() && (ptr_ + n <= end_); }
+        [[nodiscard]] bool has(const std::size_t n) const { return valid() && (n <= static_cast<std::size_t>(end_ - ptr_)); }
         [[nodiscard]] std::size_t remaining() const { return valid() ? static_cast<std::size_t>(end_ - ptr_) : 0; }
         [[nodiscard]] std::size_t offset() const { return valid() ? static_cast<std::size_t>(ptr_ - start_) : 0; }
         [[nodiscard]] std::uint8_t peek(const std::size_t off) const { return has(off + 1) ? ptr_[off] : static_cast<std::uint8_t>(0); }
