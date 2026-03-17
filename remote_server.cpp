@@ -1868,6 +1868,10 @@ boost::asio::awaitable<void> remote_server::handle(boost::asio::io_context& io,
 static boost::asio::awaitable<void> send_stream_reset(const std::shared_ptr<mux_connection>& connection, mux_frame frame)
 {
     frame.h.command = mux::kCmdRst;
+    if (!frame.payload.empty())
+    {
+        std::vector<std::uint8_t>().swap(frame.payload);
+    }
     boost::system::error_code ec;
     co_await connection->send_async(std::move(frame), ec);
     if (ec)
