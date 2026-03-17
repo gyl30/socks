@@ -48,6 +48,7 @@ namespace
 {
 constexpr std::size_t kMaxMsgSize = 64L * 1024;
 constexpr std::size_t kMaxEncryptedRecordLen = 18432;
+constexpr int kMaxHandshakeRecords = 256;
 
 constexpr std::array<fingerprint_type, 4> kFetchFingerprints = {
     fingerprint_type::kChrome120,
@@ -629,7 +630,7 @@ boost::asio::awaitable<bool> cert_fetcher::fetch_session::collect_site_material(
     std::vector<std::uint8_t> pt_buf(kMaxTlsPlaintextLen + 256);
     std::vector<std::uint8_t> msg;
 
-    for (int i = 0; i < 100; ++i)
+    for (int i = 0; i < kMaxHandshakeRecords; ++i)
     {
         boost::system::error_code ec;
         co_await append_next_handshake_record(assembler, pt_buf, i, ec);
