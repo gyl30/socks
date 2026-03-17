@@ -1109,9 +1109,11 @@ boost::asio::awaitable<std::vector<std::uint8_t>> read_handshake_record_body(boo
                                                                              const char* step,
                                                                              const std::uint32_t timeout_sec,
                                                                              std::uint32_t& tls13_compat_ccs_count,
+                                                                             std::vector<std::uint8_t>& extra_handshake_data,
                                                                              boost::system::error_code& ec)
 {
     ec.clear();
+    extra_handshake_data.clear();
     const auto handshake_start_ms = timeout_io::now_ms();
     auto read_exact = [&](const boost::asio::mutable_buffer& buffer) -> boost::asio::awaitable<bool>
     {
@@ -1231,11 +1233,11 @@ boost::asio::awaitable<std::vector<std::uint8_t>> read_handshake_record_body(boo
         {
             continue;
         }
-        if (handshake_data.size() != total_len)
+        if (handshake_data.size() > total_len)
         {
-            ec = boost::asio::error::invalid_argument;
-            LOG_ERROR("unexpected extra bytes in {} {}", step, handshake_data.size() - total_len);
-            co_return std::vector<std::uint8_t>{};
+            extra_handshake_data.assign(handshake_data.begin() + static_cast<std::ptrdiff_t>(total_len), handshake_data.end());
+            handshake_data.resize(total_len);
+            LOG_DEBUG("extra handshake bytes in {} {}", step, extra_handshake_data.size());
         }
         co_return handshake_data;
     }
@@ -2343,7 +2345,9 @@ boost::asio::awaitable<client_tunnel_pool::handshake_result> client_tunnel_pool:
         co_return handshake_result{};
     }
 
-    const auto server_hello_result = co_await process_server_hello(socket, private_key, mlkem768_private_key, client_hello, trans, ctx, ec);
+    std::vector<std::uint8_t> extra_handshake_data;
+    const auto server_hello_result =
+        co_await process_server_hello(socket, private_key, mlkem768_private_key, client_hello, trans, extra_handshake_data, ctx, ec);
     if (ec)
     {
         co_return handshake_result{};
@@ -2363,6 +2367,7 @@ boost::asio::awaitable<client_tunnel_pool::handshake_result> client_tunnel_pool:
                                                               client_hello,
                                                               sni_,
                                                               trans,
+                                                              std::move(extra_handshake_data),
                                                               server_hello_result.negotiated_cipher,
                                                               server_hello_result.negotiated_md,
                                                               max_handshake_records_,
@@ -2451,12 +2456,14 @@ boost::asio::awaitable<client_tunnel_pool::server_hello_res> client_tunnel_pool:
     const std::vector<std::uint8_t>& mlkem768_private_key,
     const client_hello_info& client_hello,
     reality::transcript& trans,
+    std::vector<std::uint8_t>& extra_handshake_data,
     const connection_context& ctx,
     boost::system::error_code& ec) const
 {
     ec.clear();
     std::uint32_t tls13_compat_ccs_count = 0;
-    const auto sh_data = co_await read_handshake_record_body(socket, "server hello", cfg_.timeout.read, tls13_compat_ccs_count, ec);
+    const auto sh_data =
+        co_await read_handshake_record_body(socket, "server hello", cfg_.timeout.read, tls13_compat_ccs_count, extra_handshake_data, ec);
     if (ec)
     {
         co_return server_hello_res{};
@@ -2511,6 +2518,7 @@ client_tunnel_pool::handshake_read_loop(boost::asio::ip::tcp::socket& socket,
                                         const client_hello_info& client_hello,
                                         const std::string& sni,
                                         reality::transcript& trans,
+                                        std::vector<std::uint8_t> initial_handshake_data,
                                         const EVP_CIPHER* cipher,
                                         const EVP_MD* md,
                                         const std::uint32_t max_handshake_records,
@@ -2526,6 +2534,15 @@ client_tunnel_pool::handshake_read_loop(boost::asio::ip::tcp::socket& socket,
     std::uint32_t tls13_compat_ccs_count = 0;
     std::uint32_t handshake_record_count = 0;
     std::vector<std::uint8_t> handshake_buffer;
+
+    if (!initial_handshake_data.empty())
+    {
+        consume_handshake_plaintext(initial_handshake_data, handshake_buffer, auth_key, validation_state, handshake_fin, hs_keys, md, trans, ec);
+        if (ec)
+        {
+            co_return handshake_read_result{};
+        }
+    }
 
     while (!handshake_fin)
     {
