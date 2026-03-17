@@ -8,6 +8,11 @@
 namespace mux
 {
 
+namespace
+{
+constexpr std::uint16_t kMaxSniLen = 255;
+}
+
 bool ch_parser::read_client_hello_prefix(reader& r, client_hello_info& info)
 {
     std::uint8_t handshake_type = 0;
@@ -92,7 +97,7 @@ bool ch_parser::handle_sni_item(reader& r, const std::uint8_t type, const std::u
 {
     if (type == 0x00)
     {
-        if (len == 0 || !r.has(len))
+        if (len == 0 || len > kMaxSniLen || !r.has(len))
         {
             info.malformed_sni = true;
             return true;
@@ -309,7 +314,7 @@ void ch_parser::parse_sni(reader& r, client_hello_info& info)
         }
         if (type == 0x00)
         {
-            if (host_name_seen || len == 0 || !list_r.has(len))
+            if (host_name_seen || len == 0 || len > kMaxSniLen || !list_r.has(len))
             {
                 info.malformed_sni = true;
                 return;
