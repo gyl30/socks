@@ -886,10 +886,6 @@ boost::asio::awaitable<void> udp_socks_session::udp_socket_loop()
             has_client_addr_ = true;
             LOG_CTX_INFO(ctx_, "{} udp peer bound to {}:{}", log_event::kSocks, client_addr_.address().to_string(), client_addr_.port());
         }
-        else if (normalized_sender.port() != client_addr_.port())
-        {
-            client_addr_ = normalized_sender;
-        }
 
         socks_udp_header udp_header;
         if (!decode_client_udp_header(buf, n, udp_header, ctx_))
