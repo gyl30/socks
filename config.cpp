@@ -16,13 +16,15 @@
 #include <boost/asio/ip/address.hpp>
 #include <openssl/crypto.h>
 
+#include "rapidjson/document.h"
+#include "rapidjson/error/en.h"
+#include "rapidjson/error/error.h"
+
 #include "config.h"
 #include "reflect.h"
 #include "crypto_util.h"
 #include "mux_protocol.h"
-#include "rapidjson/document.h"
-#include "rapidjson/error/en.h"
-#include "rapidjson/error/error.h"
+#include "reality_messages.h"
 
 namespace reflect
 {
@@ -232,7 +234,7 @@ constexpr std::uint32_t kHandshakeRecordsLimitMax = 256;
 {
     constexpr std::size_t kRealityKeyLen = 32;
     constexpr std::size_t kRealityShortIdMaxLen = 8;
-    constexpr std::size_t kRealitySniMaxLen = 65530;
+    constexpr std::size_t kRealitySniMaxLen = 255;
 
     const auto private_key_bytes = decode_optional_hex_field(reality.private_key, "/reality/private_key");
     if (!private_key_bytes)
@@ -269,11 +271,15 @@ constexpr std::uint32_t kHandshakeRecordsLimitMax = 256;
     }
     if (reality.sni.size() > kRealitySniMaxLen)
     {
-        return std::unexpected(make_config_error("/reality/sni", "must be at most 65530 bytes when provided"));
+        return std::unexpected(make_config_error("/reality/sni", "must be at most 255 bytes when provided"));
     }
     if (!reality.sni.empty() && normalize_sni_key(reality.sni).empty())
     {
         return std::unexpected(make_config_error("/reality/sni", "must be non-empty after normalization when provided"));
+    }
+    if (!reality.sni.empty() && !reality::valid_sni_hostname(reality.sni))
+    {
+        return std::unexpected(make_config_error("/reality/sni", "must be a valid ascii hostname when provided"));
     }
 
     return {};

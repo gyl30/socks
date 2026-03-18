@@ -1,13 +1,14 @@
 #ifndef REALITY_MESSAGES_H
 #define REALITY_MESSAGES_H
 
+#include <span>
 #include <string>
 #include <vector>
-#include <span>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <optional>
+#include <string_view>
 
 #include <openssl/types.h>
 
@@ -19,6 +20,8 @@ extern "C"
 
 namespace reality
 {
+
+[[nodiscard]] bool valid_sni_hostname(std::string_view hostname);
 
 struct server_fingerprint
 {
