@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <functional>
 #include <list>
+#include <optional>
 #include <unordered_map>
 #include <utility>
 
@@ -72,20 +73,37 @@ class lru_cache
     template <typename K, typename V>
     void put(K&& key, V&& value)
     {
+        auto ignored = put_and_evict(std::forward<K>(key), std::forward<V>(value));
+        (void)ignored;
+    }
+
+    template <typename K, typename V>
+    [[nodiscard]] std::optional<std::pair<Key, Value>> put_and_evict(K&& key, V&& value)
+    {
         if (capacity_ == 0)
         {
-            return;
+            return std::nullopt;
         }
         auto it = index_.find(key);
         if (it != index_.end())
         {
             it->second->value = std::forward<V>(value);
             touch(it->second);
-            return;
+            return std::nullopt;
         }
         items_.push_front(node{Key(std::forward<K>(key)), Value(std::forward<V>(value))});
         index_[items_.front().key] = items_.begin();
-        evict_if_needed();
+        if (index_.size() <= capacity_)
+        {
+            return std::nullopt;
+        }
+
+        auto last = std::prev(items_.end());
+        auto last_index = index_.find(last->key);
+        std::optional<std::pair<Key, Value>> evicted(std::in_place, std::move(last->key), std::move(last->value));
+        index_.erase(last_index);
+        items_.pop_back();
+        return evicted;
     }
 
     bool erase(const Key& key)

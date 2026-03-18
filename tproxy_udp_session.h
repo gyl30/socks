@@ -4,12 +4,10 @@
 #include <atomic>
 #include <memory>
 #include <string>
-#include <deque>
 #include <vector>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
-#include <unordered_map>
 
 #include <boost/asio/ip/udp.hpp>
 #include <boost/asio/awaitable.hpp>
@@ -19,6 +17,7 @@
 #include <boost/asio/experimental/concurrent_channel.hpp>
 
 #include "config.h"
+#include "lru_cache.h"
 #include "router.h"
 #include "task_group.h"
 #include "mux_tunnel.h"
@@ -93,8 +92,7 @@ class tproxy_udp_session : public std::enable_shared_from_this<tproxy_udp_sessio
     boost::asio::ip::udp::endpoint target_endpoint_;
     std::function<void()> on_close_;
     packet_channel_type packet_channel_;
-    std::unordered_map<std::string, std::shared_ptr<boost::asio::ip::udp::socket>> reply_sockets_;
-    std::deque<std::string> reply_socket_order_;
+    lru_cache<std::string, std::shared_ptr<boost::asio::ip::udp::socket>> reply_sockets_;
 };
 
 }    // namespace mux
