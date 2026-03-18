@@ -208,7 +208,7 @@
 
 - `private_key` / `public_key`：提供时必须是 32 字节十六进制。
 - `short_id`：提供时最多 8 字节十六进制。
-- `sni`：不得含 `NUL`，长度 <= 65530。
+- `sni`：提供时必须是合法 ASCII hostname；不能为空白、控制字符或非 ASCII；总长度 <= 255，单个 label 长度 <= 63，且 label 不能以前后缀 `-` 或空 label 形式出现。
 - `mode=client`：`public_key` 必填，`fingerprint` 必须是允许值（`random/chrome/firefox/ios/android` 或版本别名）。
 - `mode=server`：`private_key` 必填。
 
