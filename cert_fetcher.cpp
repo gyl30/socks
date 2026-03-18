@@ -48,6 +48,7 @@ namespace
 {
 constexpr std::size_t kMaxMsgSize = 64L * 1024;
 constexpr std::size_t kMaxEncryptedRecordLen = 18432;
+constexpr std::size_t kMaxHandshakeReassembleBuffer = kMaxMsgSize + 4;
 constexpr int kMaxHandshakeRecords = 256;
 
 constexpr std::array<fingerprint_type, 4> kFetchFingerprints = {
@@ -367,11 +368,32 @@ boost::system::error_code derive_server_record_protection(const std::vector<std:
 }
 }    // namespace
 
-void handshake_reassembler::append(std::span<const std::uint8_t> data) { buffer_.insert(buffer_.end(), data.begin(), data.end()); }
+handshake_reassembler::handshake_reassembler() : buffer_(kMaxHandshakeReassembleBuffer) {}
+
+void handshake_reassembler::append(std::span<const std::uint8_t> data)
+{
+    if (data.empty())
+    {
+        return;
+    }
+    if (data.size() > buffer_.capacity() - buffer_.size())
+    {
+        buffer_.clear();
+        overflowed_ = true;
+        return;
+    }
+    buffer_.insert(buffer_.end(), data.begin(), data.end());
+}
 
 bool handshake_reassembler::next(std::vector<std::uint8_t>& out, boost::system::error_code& ec)
 {
     ec.clear();
+    if (overflowed_)
+    {
+        overflowed_ = false;
+        ec = std::make_error_code(std::errc::message_size);
+        return false;
+    }
     if (buffer_.size() < 4)
     {
         return false;
@@ -394,7 +416,7 @@ bool handshake_reassembler::next(std::vector<std::uint8_t>& out, boost::system::
     }
 
     out.assign(buffer_.begin(), buffer_.begin() + full_len);
-    buffer_.erase(buffer_.begin(), buffer_.begin() + full_len);
+    buffer_.erase_begin(static_cast<std::size_t>(full_len));
     return true;
 }
 
