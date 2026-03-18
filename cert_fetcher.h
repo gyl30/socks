@@ -12,6 +12,7 @@
 #include <optional>
 
 #include <openssl/types.h>
+#include <boost/circular_buffer.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/io_context.hpp>
@@ -40,11 +41,13 @@ struct fetch_result
 class handshake_reassembler
 {
    public:
+    handshake_reassembler();
     void append(std::span<const std::uint8_t> data);
     bool next(std::vector<std::uint8_t>& out, boost::system::error_code& ec);
 
    private:
-    std::vector<std::uint8_t> buffer_;
+    boost::circular_buffer<std::uint8_t> buffer_;
+    bool overflowed_ = false;
 };
 
 class cert_fetcher
