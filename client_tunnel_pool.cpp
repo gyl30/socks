@@ -75,6 +75,7 @@ namespace
 constexpr std::size_t kMaxHandshakeBufferSize = 1024L * 1024;
 constexpr std::uint32_t kMaxHandshakeMessageSize = static_cast<std::uint32_t>(kMaxHandshakeBufferSize - 4);
 constexpr std::uint32_t kMaxTlsCompatCcsRecords = 8;
+constexpr std::size_t kHandshakeBufferCompactThreshold = 32L * 1024;
 constexpr std::uint32_t kReconnectBaseDelayMs = 200;
 constexpr std::uint32_t kReconnectMaxDelayMs = 10000;
 constexpr std::uint32_t kReconnectStableDurationMs = 30000;
@@ -347,6 +348,35 @@ bool read_handshake_message_header(const std::vector<std::uint8_t>& handshake_bu
     msg_len = (static_cast<std::uint32_t>(handshake_buffer[offset + 1]) << 16) | (static_cast<std::uint32_t>(handshake_buffer[offset + 2]) << 8) |
               static_cast<std::uint32_t>(handshake_buffer[offset + 3]);
     return true;
+}
+
+void compact_handshake_buffer(std::vector<std::uint8_t>& handshake_buffer, std::size_t& handshake_buffer_pos)
+{
+    if (handshake_buffer_pos == 0)
+    {
+        return;
+    }
+    if (handshake_buffer_pos > handshake_buffer.size())
+    {
+        LOG_ERROR("handshake buffer position invalid {} {}", handshake_buffer_pos, handshake_buffer.size());
+        handshake_buffer.clear();
+        handshake_buffer_pos = 0;
+        return;
+    }
+    if (handshake_buffer_pos == handshake_buffer.size())
+    {
+        handshake_buffer.clear();
+        handshake_buffer_pos = 0;
+        return;
+    }
+    if (handshake_buffer_pos < kHandshakeBufferCompactThreshold && handshake_buffer_pos * 2 < handshake_buffer.size())
+    {
+        return;
+    }
+
+    std::move(handshake_buffer.begin() + static_cast<std::ptrdiff_t>(handshake_buffer_pos), handshake_buffer.end(), handshake_buffer.begin());
+    handshake_buffer.resize(handshake_buffer.size() - handshake_buffer_pos);
+    handshake_buffer_pos = 0;
 }
 
 struct handshake_validation_state
@@ -999,17 +1029,25 @@ void handle_handshake_message(const std::uint8_t msg_type,
     ec = boost::asio::error::invalid_argument;
 }
 
-std::size_t consume_handshake_buffer(std::vector<std::uint8_t>& handshake_buffer,
-                                     const std::vector<std::uint8_t>& auth_key,
-                                     handshake_validation_state& validation_state,
-                                     bool& handshake_fin,
-                                     const reality::handshake_keys& hs_keys,
-                                     const EVP_MD* md,
-                                     reality::transcript& trans,
-                                     boost::system::error_code& ec)
+void consume_handshake_buffer(std::vector<std::uint8_t>& handshake_buffer,
+                              std::size_t& handshake_buffer_pos,
+                              const std::vector<std::uint8_t>& auth_key,
+                              handshake_validation_state& validation_state,
+                              bool& handshake_fin,
+                              const reality::handshake_keys& hs_keys,
+                              const EVP_MD* md,
+                              reality::transcript& trans,
+                              boost::system::error_code& ec)
 {
     ec.clear();
-    std::size_t offset = 0;
+    if (handshake_buffer_pos > handshake_buffer.size())
+    {
+        LOG_ERROR("handshake buffer position invalid {} {}", handshake_buffer_pos, handshake_buffer.size());
+        ec = boost::asio::error::invalid_argument;
+        return;
+    }
+
+    std::size_t offset = handshake_buffer_pos;
     while (offset <= handshake_buffer.size() && handshake_buffer.size() - offset >= 4)
     {
         std::uint8_t msg_type = 0;
@@ -1022,7 +1060,7 @@ std::size_t consume_handshake_buffer(std::vector<std::uint8_t>& handshake_buffer
         {
             LOG_ERROR("handshake message too large {}", msg_len);
             ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
-            return 0;
+            return;
         }
 
         const auto full_msg_len = static_cast<std::size_t>(msg_len) + 4;
@@ -1037,16 +1075,18 @@ std::size_t consume_handshake_buffer(std::vector<std::uint8_t>& handshake_buffer
         handle_handshake_message(msg_type, msg_data, auth_key, validation_state, handshake_fin, hs_keys, md, trans, ec);
         if (ec)
         {
-            return 0;
+            return;
         }
         trans.update(msg_data);
         offset += full_msg_len;
     }
-    return offset;
+    handshake_buffer_pos = offset;
+    return;
 }
 
 void consume_handshake_plaintext(const std::vector<std::uint8_t>& plaintext,
                                  std::vector<std::uint8_t>& handshake_buffer,
+                                 std::size_t& handshake_buffer_pos,
                                  const std::vector<std::uint8_t>& auth_key,
                                  handshake_validation_state& validation_state,
                                  bool& handshake_fin,
@@ -1056,20 +1096,31 @@ void consume_handshake_plaintext(const std::vector<std::uint8_t>& plaintext,
                                  boost::system::error_code& ec)
 {
     ec.clear();
-    if (plaintext.size() > kMaxHandshakeBufferSize || handshake_buffer.size() > kMaxHandshakeBufferSize - plaintext.size())
+    if (handshake_buffer_pos > handshake_buffer.size())
     {
-        LOG_ERROR("handshake buffer too large {} {}", handshake_buffer.size(), plaintext.size());
+        LOG_ERROR("handshake buffer position invalid {} {}", handshake_buffer_pos, handshake_buffer.size());
+        ec = boost::asio::error::invalid_argument;
+        return;
+    }
+    if (handshake_buffer_pos > 0 && handshake_buffer.size() + plaintext.size() > kMaxHandshakeBufferSize)
+    {
+        compact_handshake_buffer(handshake_buffer, handshake_buffer_pos);
+    }
+
+    const auto active_size = handshake_buffer.size() - handshake_buffer_pos;
+    if (plaintext.size() > kMaxHandshakeBufferSize || active_size > kMaxHandshakeBufferSize - plaintext.size())
+    {
+        LOG_ERROR("handshake buffer too large {} {}", active_size, plaintext.size());
         ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
         return;
     }
     handshake_buffer.insert(handshake_buffer.end(), plaintext.begin(), plaintext.end());
-    const auto consumed = consume_handshake_buffer(handshake_buffer, auth_key, validation_state, handshake_fin, hs_keys, md, trans, ec);
+    consume_handshake_buffer(handshake_buffer, handshake_buffer_pos, auth_key, validation_state, handshake_fin, hs_keys, md, trans, ec);
     if (ec)
     {
         return;
     }
-    auto consumed_bytes = static_cast<uint32_t>(consumed);
-    handshake_buffer.erase(handshake_buffer.begin(), handshake_buffer.begin() + consumed_bytes);
+    compact_handshake_buffer(handshake_buffer, handshake_buffer_pos);
     return;
 }
 
@@ -1636,6 +1687,7 @@ boost::asio::awaitable<void> process_handshake_record(
     reality::transcript& trans,
     const EVP_CIPHER* cipher,
     std::vector<std::uint8_t>& handshake_buffer,
+    std::size_t& handshake_buffer_pos,
     handshake_validation_state& validation_state,
     bool& handshake_fin,
     const reality::handshake_keys& hs_keys,
@@ -1685,7 +1737,7 @@ boost::asio::awaitable<void> process_handshake_record(
         co_return;
     }
 
-    consume_handshake_plaintext(plaintext, handshake_buffer, auth_key, validation_state, handshake_fin, hs_keys, md, trans, ec);
+    consume_handshake_plaintext(plaintext, handshake_buffer, handshake_buffer_pos, auth_key, validation_state, handshake_fin, hs_keys, md, trans, ec);
     co_return;
 }
 
@@ -2534,10 +2586,11 @@ client_tunnel_pool::handshake_read_loop(boost::asio::ip::tcp::socket& socket,
     std::uint32_t tls13_compat_ccs_count = 0;
     std::uint32_t handshake_record_count = 0;
     std::vector<std::uint8_t> handshake_buffer;
+    std::size_t handshake_buffer_pos = 0;
 
     if (!initial_handshake_data.empty())
     {
-        consume_handshake_plaintext(initial_handshake_data, handshake_buffer, auth_key, validation_state, handshake_fin, hs_keys, md, trans, ec);
+        consume_handshake_plaintext(initial_handshake_data, handshake_buffer, handshake_buffer_pos, auth_key, validation_state, handshake_fin, hs_keys, md, trans, ec);
         if (ec)
         {
             co_return handshake_read_result{};
@@ -2558,6 +2611,7 @@ client_tunnel_pool::handshake_read_loop(boost::asio::ip::tcp::socket& socket,
                                           trans,
                                           cipher,
                                           handshake_buffer,
+                                          handshake_buffer_pos,
                                           validation_state,
                                           handshake_fin,
                                           hs_keys,
