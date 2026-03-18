@@ -243,6 +243,10 @@ boost::asio::awaitable<const char*> read_client_hello_handshake(const std::share
     wire_buf.clear();
     handshake_buf.clear();
     const auto handshake_start_ms = timeout_io::now_ms();
+    std::size_t record_count = 0;
+    const auto max_records =
+        std::max<std::size_t>(1, (max_handshake_len + kMaxTlsPlaintextRecordLen - 1) / kMaxTlsPlaintextRecordLen);
+    const auto max_wire_len = max_handshake_len + max_records * kTlsRecordHeaderSize;
     std::uint32_t ccs_count = 0;
     while (true)
     {
@@ -307,6 +311,19 @@ boost::asio::awaitable<const char*> read_client_hello_handshake(const std::share
             ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
             co_return "client_hello_record_too_large";
         }
+        if (record_len == 0)
+        {
+            LOG_CTX_ERROR(ctx, "{} client hello record empty", log_event::kHandshake);
+            ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
+            co_return "client_hello_record_empty";
+        }
+        if (record_count >= max_records)
+        {
+            LOG_CTX_ERROR(ctx, "{} client hello record too many {}", log_event::kHandshake, record_count);
+            ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
+            co_return "client_hello_record_too_many";
+        }
+        record_count++;
 
         co_await read_tls_record_body(socket, record_buf, record_len, handshake_start_ms, timeout, ec);
         if (ec)
@@ -316,6 +333,12 @@ boost::asio::awaitable<const char*> read_client_hello_handshake(const std::share
             co_return "read_tls_record_body_failed";
         }
 
+        if (record_buf.size() > max_wire_len - wire_buf.size())
+        {
+            LOG_CTX_ERROR(ctx, "{} client hello wire too large {}", log_event::kHandshake, wire_buf.size() + record_buf.size());
+            ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
+            co_return "client_hello_wire_too_large";
+        }
         wire_buf.insert(wire_buf.end(), record_buf.begin(), record_buf.end());
         handshake_buf.insert(handshake_buf.end(), record_buf.begin() + static_cast<std::ptrdiff_t>(kTlsRecordHeaderSize), record_buf.end());
         if (handshake_buf.size() < 4)
