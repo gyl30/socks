@@ -173,12 +173,10 @@ struct extension_build_context
     std::size_t exts_size;
 };
 
-constexpr std::size_t kMaxSniHostLen = 65530;
+}    // namespace
 
-bool contains_nul(std::string_view text)
-{
-    return text.find('\0') != std::string_view::npos;
-}
+constexpr std::size_t kMaxSniHostLen = 255;
+constexpr std::size_t kMaxSniLabelLen = 63;
 
 bool valid_sni_hostname(std::string_view hostname)
 {
@@ -190,8 +188,59 @@ bool valid_sni_hostname(std::string_view hostname)
     {
         return false;
     }
-    return !contains_nul(hostname);
+
+    std::size_t label_len = 0;
+    bool label_has_content = false;
+    bool label_ends_with_hyphen = false;
+    for (const unsigned char ch : hostname)
+    {
+        if (ch >= 0x80 || ch <= 0x20 || ch == 0x7F)
+        {
+            return false;
+        }
+        if (ch == '.')
+        {
+            if (!label_has_content || label_ends_with_hyphen || label_len > kMaxSniLabelLen)
+            {
+                return false;
+            }
+            label_len = 0;
+            label_has_content = false;
+            label_ends_with_hyphen = false;
+            continue;
+        }
+
+        const bool is_alpha = (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z');
+        const bool is_digit = ch >= '0' && ch <= '9';
+        if (is_alpha || is_digit)
+        {
+            ++label_len;
+            label_has_content = true;
+            label_ends_with_hyphen = false;
+            continue;
+        }
+        if (ch == '-')
+        {
+            if (!label_has_content)
+            {
+                return false;
+            }
+            ++label_len;
+            label_ends_with_hyphen = true;
+            continue;
+        }
+        return false;
+    }
+
+    if (!label_has_content || label_ends_with_hyphen || label_len > kMaxSniLabelLen)
+    {
+        return false;
+    }
+    return true;
 }
+
+namespace
+{
 
 bool build_grease_ext(std::vector<std::uint8_t>& ext_buffer, std::uint16_t& ext_type, const extension_build_context& ctx)
 {

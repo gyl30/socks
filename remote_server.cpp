@@ -153,18 +153,7 @@ bool verify_client_hello_sni(const client_hello_info& client_hello, const config
 
 [[nodiscard]] bool is_invalid_sni(const std::string& sni)
 {
-    if (sni.empty() || sni.size() > 255)
-    {
-        return true;
-    }
-    for (const unsigned char ch : sni)
-    {
-        if (ch < 0x20 || ch == 0x7F)
-        {
-            return true;
-        }
-    }
-    return false;
+    return !reality::valid_sni_hostname(sni);
 }
 
 std::string format_fetch_error(const reality::fetch_error& error)
