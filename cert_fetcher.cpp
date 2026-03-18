@@ -891,7 +891,7 @@ boost::asio::awaitable<std::pair<boost::system::error_code, std::vector<std::uin
             if (ccs_count >= kMaxTlsCompatCcsRecords)
             {
                 LOG_CTX_ERROR(ctx_, "{} too many tls13 compat ccs before server hello {}", mux::log_event::kCert, ccs_count);
-                co_return std::make_pair(boost::asio::error::bad_message, std::vector<std::uint8_t>{});
+                co_return std::make_pair(std::make_error_code(std::errc::bad_message), std::vector<std::uint8_t>{});
             }
 
             ++ccs_count;
