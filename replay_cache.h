@@ -1,7 +1,6 @@
 #ifndef REPLAY_CACHE_H
 #define REPLAY_CACHE_H
 
-#include <deque>
 #include <mutex>
 #include <chrono>
 #include <string>
@@ -22,20 +21,15 @@ class replay_cache
     bool check_and_insert(const std::vector<std::uint8_t>& sid);
 
    private:
-    void cleanup();
-    void evict_excess();
-
-    struct entry
-    {
-        std::chrono::steady_clock::time_point time;
-        std::string sid;
-    };
+    void rotate_if_needed(std::chrono::steady_clock::time_point now);
 
     std::mutex mutex_;
     std::size_t max_entries_ = 100000;
     std::chrono::steady_clock::duration window_;
-    std::unordered_set<std::string> cache_;
-    std::deque<entry> history_;
+    std::chrono::steady_clock::time_point current_start_{};
+    bool current_ready_ = false;
+    std::unordered_set<std::string> current_;
+    std::unordered_set<std::string> previous_;
 };
 
 }    // namespace mux

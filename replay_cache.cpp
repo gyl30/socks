@@ -31,36 +31,40 @@ bool replay_cache::check_and_insert(const std::vector<std::uint8_t>& sid)
     const std::string key(sid.begin(), sid.end());
 
     std::lock_guard<std::mutex> lock(mutex_);
-    cleanup();
+    rotate_if_needed(std::chrono::steady_clock::now());
 
-    if (cache_.contains(key))
+    if (current_.contains(key) || previous_.contains(key))
     {
         return false;
     }
 
-    cache_.insert(key);
-    history_.push_back({.time = std::chrono::steady_clock::now(), .sid = key});
-    evict_excess();
+    if (current_.size() + previous_.size() >= max_entries_)
+    {
+        return false;
+    }
+
+    current_.insert(key);
     return true;
 }
 
-void replay_cache::cleanup()
+void replay_cache::rotate_if_needed(const std::chrono::steady_clock::time_point now)
 {
-    const auto now = std::chrono::steady_clock::now();
-    while (!history_.empty() && (now - history_.front().time > window_))
+    if (!current_ready_)
     {
-        cache_.erase(history_.front().sid);
-        history_.pop_front();
+        current_start_ = now;
+        current_ready_ = true;
+        return;
     }
-}
 
-void replay_cache::evict_excess()
-{
-    while (cache_.size() > max_entries_ && !history_.empty())
+    if (now - current_start_ < window_)
     {
-        cache_.erase(history_.front().sid);
-        history_.pop_front();
+        return;
     }
+
+    previous_.clear();
+    previous_.swap(current_);
+    current_.clear();
+    current_start_ = now;
 }
 
 }    // namespace mux
