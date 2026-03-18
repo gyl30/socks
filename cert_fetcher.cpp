@@ -48,6 +48,7 @@ namespace
 {
 constexpr std::size_t kMaxMsgSize = 64L * 1024;
 constexpr std::size_t kMaxEncryptedRecordLen = 18432;
+constexpr std::uint32_t kMaxTlsCompatCcsRecords = 8;
 constexpr std::size_t kMaxHandshakeReassembleBuffer = kMaxMsgSize + 4;
 constexpr int kMaxHandshakeRecords = 256;
 
@@ -848,42 +849,65 @@ boost::system::error_code cert_fetcher::fetch_session::process_server_hello(cons
 
 boost::asio::awaitable<std::pair<boost::system::error_code, std::vector<std::uint8_t>>> cert_fetcher::fetch_session::read_record_plaintext()
 {
-    std::uint8_t head[5];
-    boost::system::error_code ec;
-    const auto n = co_await mux::timeout_io::wait_read_with_timeout(socket_, boost::asio::buffer(head), read_timeout_sec_, ec);
-    (void)n;
-    if (ec)
+    std::uint32_t ccs_count = 0;
+    for (;;)
     {
-        LOG_CTX_ERROR(ctx_, "{} read header failed {}", mux::log_event::kCert, ec.message());
-        co_return std::make_pair(ec, std::vector<std::uint8_t>{});
-    }
+        std::uint8_t head[5];
+        boost::system::error_code ec;
+        const auto n = co_await mux::timeout_io::wait_read_with_timeout(socket_, boost::asio::buffer(head), read_timeout_sec_, ec);
+        (void)n;
+        if (ec)
+        {
+            LOG_CTX_ERROR(ctx_, "{} read header failed {}", mux::log_event::kCert, ec.message());
+            co_return std::make_pair(ec, std::vector<std::uint8_t>{});
+        }
 
-    if (head[0] != kContentTypeHandshake)
-    {
-        LOG_CTX_ERROR(ctx_, "{} expected handshake type {}", mux::log_event::kCert, head[0]);
-        co_return std::make_pair(boost::asio::error::fault, std::vector<std::uint8_t>{});
-    }
+        const auto len = static_cast<std::uint16_t>((static_cast<std::uint16_t>(head[3]) << 8) | static_cast<std::uint16_t>(head[4]));
+        boost::system::error_code len_ec;
+        validate_record_length(len, len_ec);
+        if (len_ec)
+        {
+            LOG_CTX_ERROR(ctx_, "{} plaintext record too large {}", mux::log_event::kCert, len);
+            co_return std::make_pair(len_ec, std::vector<std::uint8_t>{});
+        }
 
-    const auto len = static_cast<std::uint16_t>((static_cast<std::uint16_t>(head[3]) << 8) | static_cast<std::uint16_t>(head[4]));
-    boost::system::error_code len_ec;
-    validate_record_length(len, len_ec);
-    if (len_ec)
-    {
-        LOG_CTX_ERROR(ctx_, "{} plaintext record too large {}", mux::log_event::kCert, len);
-        co_return std::make_pair(len_ec, std::vector<std::uint8_t>{});
-    }
+        std::vector<std::uint8_t> body(len);
+        boost::system::error_code ec2;
+        const auto n2 = co_await mux::timeout_io::wait_read_with_timeout(socket_, boost::asio::buffer(body), read_timeout_sec_, ec2);
+        (void)n2;
+        if (ec2)
+        {
+            LOG_CTX_ERROR(ctx_, "{} read body failed {}", mux::log_event::kCert, ec2.message());
+            co_return std::make_pair(ec2, std::vector<std::uint8_t>{});
+        }
 
-    std::vector<std::uint8_t> body(len);
-    boost::system::error_code ec2;
-    const auto n2 = co_await mux::timeout_io::wait_read_with_timeout(socket_, boost::asio::buffer(body), read_timeout_sec_, ec2);
-    (void)n2;
-    if (ec2)
-    {
-        LOG_CTX_ERROR(ctx_, "{} read body failed {}", mux::log_event::kCert, ec2.message());
-        co_return std::make_pair(ec2, std::vector<std::uint8_t>{});
-    }
+        if (head[0] == kContentTypeChangeCipherSpec)
+        {
+            if (len != 1 || body[0] != 0x01)
+            {
+                LOG_CTX_ERROR(ctx_, "{} invalid tls13 compat ccs len {}", mux::log_event::kCert, len);
+                co_return std::make_pair(boost::asio::error::invalid_argument, std::vector<std::uint8_t>{});
+            }
+            if (ccs_count >= kMaxTlsCompatCcsRecords)
+            {
+                LOG_CTX_ERROR(ctx_, "{} too many tls13 compat ccs before server hello {}", mux::log_event::kCert, ccs_count);
+                co_return std::make_pair(boost::asio::error::bad_message, std::vector<std::uint8_t>{});
+            }
 
-    co_return std::make_pair(boost::system::error_code{}, std::move(body));
+            ++ccs_count;
+            observed_material_.sends_change_cipher_spec = true;
+            LOG_CTX_DEBUG(ctx_, "{} skip tls13 compat ccs before server hello count {}", mux::log_event::kCert, ccs_count);
+            continue;
+        }
+
+        if (head[0] != kContentTypeHandshake)
+        {
+            LOG_CTX_ERROR(ctx_, "{} expected handshake type {}", mux::log_event::kCert, head[0]);
+            co_return std::make_pair(boost::asio::error::fault, std::vector<std::uint8_t>{});
+        }
+
+        co_return std::make_pair(boost::system::error_code{}, std::move(body));
+    }
 }
 
 void cert_fetcher::fetch_session::validate_record_length(const std::uint16_t len, boost::system::error_code& ec)
