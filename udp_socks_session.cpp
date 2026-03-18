@@ -699,7 +699,7 @@ boost::asio::awaitable<void> udp_socks_session::direct_udp_socket_loop(boost::as
         const auto now_ms_value = now_ms();
         evict_expired(direct_peers_, now_ms_value);
         const auto normalized_sender = net::normalize_endpoint(sender);
-        const auto* peer = direct_peers_.peek(normalized_sender);
+        auto* peer = direct_peers_.get(normalized_sender);
         if (peer == nullptr || peer->expires_at <= now_ms_value)
         {
             if (peer != nullptr && peer->expires_at <= now_ms_value)
