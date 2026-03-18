@@ -216,7 +216,8 @@ tproxy_udp_session::tproxy_udp_session(boost::asio::io_context& io_context,
       client_endpoint_(net::normalize_endpoint(client_endpoint)),
       target_endpoint_(net::normalize_endpoint(target_endpoint)),
       on_close_(std::move(on_close)),
-      packet_channel_(io_context_, kPacketChannelCapacity)
+      packet_channel_(io_context_, kPacketChannelCapacity),
+      reply_sockets_(kMaxReplySockets)
 {
     statistics::instance().inc_active_connections();
     active_guard_ = make_active_connection_guard();
@@ -698,8 +699,6 @@ boost::asio::awaitable<bool> tproxy_udp_session::send_to_client(const boost::asi
         close_ec = reply_socket->close(close_ec);
         (void)close_ec;
         reply_sockets_.erase(key);
-        reply_socket_order_.erase(std::remove(reply_socket_order_.begin(), reply_socket_order_.end(), key),
-                                  reply_socket_order_.end());
         LOG_CTX_WARN(ctx_, "{} send udp reply to client failed {}", log_event::kMux, send_ec.message());
         co_return true;
     }
@@ -714,10 +713,9 @@ std::shared_ptr<boost::asio::ip::udp::socket> tproxy_udp_session::get_or_create_
     ec.clear();
     const auto normalized_source = net::normalize_endpoint(source);
     const auto key = endpoint_key(normalized_source);
-    const auto it = reply_sockets_.find(key);
-    if (it != reply_sockets_.end())
+    if (auto* cached = reply_sockets_.get(key); cached != nullptr)
     {
-        return it->second;
+        return *cached;
     }
 
     auto socket = std::make_shared<boost::asio::ip::udp::socket>(io_context_);
@@ -758,23 +756,11 @@ std::shared_ptr<boost::asio::ip::udp::socket> tproxy_udp_session::get_or_create_
         return nullptr;
     }
 
-    reply_sockets_.emplace(key, socket);
-    reply_socket_order_.push_back(key);
-    while (reply_sockets_.size() > kMaxReplySockets && !reply_socket_order_.empty())
+    if (auto evicted = reply_sockets_.put_and_evict(key, socket); evicted && evicted->second != nullptr)
     {
-        const auto old_key = reply_socket_order_.front();
-        reply_socket_order_.pop_front();
-        const auto it = reply_sockets_.find(old_key);
-        if (it == reply_sockets_.end())
-        {
-            continue;
-        }
-        if (it->second != nullptr)
-        {
-            boost::system::error_code close_ec;
-            it->second->close(close_ec);
-        }
-        reply_sockets_.erase(it);
+        boost::system::error_code close_ec;
+        evicted->second->close(close_ec);
+        (void)close_ec;
     }
     return socket;
 }
@@ -804,16 +790,15 @@ void tproxy_udp_session::close_impl()
     ec = upstream_socket_.close(ec);
     (void)ec;
 
-    for (auto& [_, socket] : reply_sockets_)
-    {
+    reply_sockets_.evict_while([](const auto&, const auto& socket) {
         if (socket != nullptr)
         {
             boost::system::error_code close_ec;
             close_ec = socket->close(close_ec);
             (void)close_ec;
         }
-    }
-    reply_sockets_.clear();
+        return true;
+    });
 }
 
 }    // namespace mux
