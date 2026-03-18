@@ -24,6 +24,7 @@ namespace
 {
 
 constexpr std::size_t kMaxMonitorRequestBytes = 1024;
+constexpr std::size_t kMaxMonitorHeaderBytes = 16 * 1024;
 
 std::string escape_prometheus_label(const std::string_view value)
 {
@@ -168,7 +169,9 @@ static boost::asio::awaitable<void> handle_request(boost::beast::tcp_stream stre
     auto stream_id = local_addr_str + "<->" + remote_addr_str;
     stream_.expires_after(std::chrono::seconds(30));
     boost::beast::flat_buffer buffer;
+    buffer.max_size(kMaxMonitorHeaderBytes);
     boost::beast::http::request_parser<boost::beast::http::string_body> parser;
+    parser.header_limit(static_cast<std::uint32_t>(kMaxMonitorHeaderBytes));
     parser.body_limit(kMaxMonitorRequestBytes);
     co_await boost::beast::http::async_read(stream_, buffer, parser, boost::asio::redirect_error(boost::asio::use_awaitable, ec));
     do
