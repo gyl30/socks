@@ -104,11 +104,11 @@ boost::asio::ip::udp::endpoint make_v4_endpoint(const in_addr& addr, const std::
     return {boost::asio::ip::address_v4(bytes), boost::endian::big_to_native(port)};
 }
 
-boost::asio::ip::udp::endpoint make_v6_endpoint(const in6_addr& addr, const std::uint16_t port)
+boost::asio::ip::udp::endpoint make_v6_endpoint(const in6_addr& addr, const std::uint16_t port, const std::uint32_t scope_id)
 {
     boost::asio::ip::address_v6::bytes_type bytes{};
     std::memcpy(bytes.data(), &addr, bytes.size());
-    return {boost::asio::ip::address_v6(bytes), boost::endian::big_to_native(port)};
+    return {boost::asio::ip::address_v6(bytes, static_cast<unsigned long>(scope_id)), boost::endian::big_to_native(port)};
 }
 
 #ifdef __linux__
@@ -131,7 +131,7 @@ std::optional<boost::asio::ip::udp::endpoint> parse_ipv6_original_dst(const cmsg
         return std::nullopt;
     }
     const auto* addr = reinterpret_cast<const sockaddr_in6*>(CMSG_DATA(cm));
-    return make_v6_endpoint(addr->sin6_addr, addr->sin6_port);
+    return make_v6_endpoint(addr->sin6_addr, addr->sin6_port, addr->sin6_scope_id);
 }
 #endif
 
@@ -167,7 +167,7 @@ boost::asio::ip::udp::endpoint endpoint_from_sockaddr_v6(const sockaddr_storage&
         return {};
     }
     const auto* v6 = reinterpret_cast<const sockaddr_in6*>(&addr);
-    return make_v6_endpoint(v6->sin6_addr, v6->sin6_port);
+    return make_v6_endpoint(v6->sin6_addr, v6->sin6_port, v6->sin6_scope_id);
 }
 
 }    // namespace
@@ -332,7 +332,16 @@ boost::asio::ip::address normalize_address(const boost::asio::ip::address& addr)
     return addr;
 }
 
-boost::asio::ip::udp::endpoint normalize_endpoint(const boost::asio::ip::udp::endpoint& ep) { return {normalize_address(ep.address()), ep.port()}; }
+boost::asio::ip::udp::endpoint normalize_endpoint(const boost::asio::ip::udp::endpoint& ep)
+{
+    const auto addr = normalize_address(ep.address());
+    if (addr.is_v6())
+    {
+        const auto v6 = addr.to_v6();
+        return {boost::asio::ip::address_v6(v6.to_bytes(), v6.scope_id()), ep.port()};
+    }
+    return {addr, ep.port()};
+}
 
 std::uint64_t fnv1a_64(const std::string_view data)
 {
