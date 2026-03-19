@@ -137,6 +137,24 @@ class lru_cache
         return count;
     }
 
+    template <typename Pred>
+    std::size_t evict_if(Pred&& pred)
+    {
+        std::size_t count = 0;
+        for (auto it = items_.begin(); it != items_.end(); )
+        {
+            if (!pred(it->key, it->value))
+            {
+                ++it;
+                continue;
+            }
+            index_.erase(it->key);
+            it = items_.erase(it);
+            ++count;
+        }
+        return count;
+    }
+
    private:
     struct node
     {
