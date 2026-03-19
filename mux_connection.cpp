@@ -1,4 +1,5 @@
 #include <span>
+#include <algorithm>
 #include <chrono>
 #include <memory>
 #include <random>
@@ -50,6 +51,11 @@ namespace
 constexpr std::uint32_t kControlFrameSendTimeoutSec = 1;
 constexpr std::uint8_t kHandshakeTypeNewSessionTicket = 0x04;
 constexpr std::uint8_t kHandshakeTypeKeyUpdate = 0x18;
+
+[[nodiscard]] bool track_stream_write_budget(const std::uint32_t stream_id, const std::uint8_t command)
+{
+    return command == mux::kCmdDat && stream_id != mux::kStreamIdHeartbeat;
+}
 
 void handle_post_handshake_record(const std::uint32_t cid,
                                   const std::span<const std::uint8_t> plaintext,
@@ -219,6 +225,54 @@ void mux_connection::release_write_bytes(const std::uint64_t bytes)
         {
             return;
         }
+    }
+}
+
+std::uint64_t mux_connection::reserve_write_bytes(const std::uint32_t stream_id, const std::uint8_t command, const std::uint64_t bytes)
+{
+    if (bytes == 0 || !track_stream_write_budget(stream_id, command))
+    {
+        return bytes;
+    }
+
+    const auto limit = std::max<std::uint64_t>(1ULL, cfg_.limits.max_buffer / 4ULL);
+    std::lock_guard<std::mutex> lock(write_limit_mutex_);
+    auto& used = write_pending_bytes_by_stream_[stream_id];
+    if (used >= limit || limit - used < bytes)
+    {
+        return 0;
+    }
+
+    used += bytes;
+    return bytes;
+}
+
+void mux_connection::release_write_bytes(const std::uint32_t stream_id, const std::uint8_t command, const std::uint64_t bytes)
+{
+    if (bytes == 0 || !track_stream_write_budget(stream_id, command))
+    {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(write_limit_mutex_);
+    const auto it = write_pending_bytes_by_stream_.find(stream_id);
+    if (it == write_pending_bytes_by_stream_.end())
+    {
+        return;
+    }
+
+    if (it->second > bytes)
+    {
+        it->second -= bytes;
+    }
+    else
+    {
+        it->second = 0;
+    }
+
+    if (it->second == 0)
+    {
+        write_pending_bytes_by_stream_.erase(it);
     }
 }
 
@@ -418,6 +472,12 @@ void mux_connection::stop()
         write_channel_->close();
     }
 
+    {
+        std::lock_guard<std::mutex> lock(write_limit_mutex_);
+        write_pending_bytes_by_stream_.clear();
+    }
+    write_pending_bytes_.store(0, std::memory_order_relaxed);
+
     boost::system::error_code ec;
     ec = socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
     ec = socket_.close(ec);
@@ -492,6 +552,7 @@ boost::asio::awaitable<void> mux_connection::write_loop()
         if (!msg.payload.empty())
         {
             release_write_bytes(msg.payload.size());
+            release_write_bytes(msg.h.stream_id, msg.h.command, msg.payload.size());
         }
 
         const auto mux_frame = mux_dispatcher::pack(msg.h.stream_id, msg.h.command, msg.payload);
@@ -681,6 +742,17 @@ boost::asio::awaitable<void> mux_connection::send_async_with_timeout(mux_frame m
     }
 
     const auto payload_len = msg.payload.size();
+    std::uint64_t stream_reserved = 0;
+    if (payload_len > 0)
+    {
+        stream_reserved = reserve_write_bytes(msg.h.stream_id, msg.h.command, payload_len);
+        if (stream_reserved != payload_len)
+        {
+            ec = boost::asio::error::no_buffer_space;
+            co_return;
+        }
+    }
+
     std::uint64_t reserved = 0;
     if (payload_len > 0)
     {
@@ -690,6 +762,10 @@ boost::asio::awaitable<void> mux_connection::send_async_with_timeout(mux_frame m
             if (reserved > 0)
             {
                 release_write_bytes(reserved);
+            }
+            if (stream_reserved > 0)
+            {
+                release_write_bytes(msg.h.stream_id, msg.h.command, stream_reserved);
             }
             ec = boost::asio::error::no_buffer_space;
             co_return;
@@ -707,6 +783,10 @@ boost::asio::awaitable<void> mux_connection::send_async_with_timeout(mux_frame m
         if (reserved > 0)
         {
             release_write_bytes(reserved);
+        }
+        if (stream_reserved > 0)
+        {
+            release_write_bytes(msg.h.stream_id, msg.h.command, stream_reserved);
         }
         LOG_ERROR("mux {} send failed error {}", cid_, ec.message());
         co_return;
