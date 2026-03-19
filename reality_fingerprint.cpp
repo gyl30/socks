@@ -372,6 +372,41 @@ fingerprint_spec build_chrome120_spec()
     return spec;
 }
 
+fingerprint_spec build_chrome120_mlkem768_spec()
+{
+    fingerprint_spec spec = build_chrome120_spec();
+    for (auto& ext_ptr : spec.extensions)
+    {
+        auto groups = std::dynamic_pointer_cast<supported_groups_blueprint>(ext_ptr);
+        if (groups == nullptr)
+        {
+            continue;
+        }
+
+        auto& group_list = groups->groups();
+        if (std::find(group_list.begin(), group_list.end(), tls_consts::group::kX25519MLKEM768) == group_list.end())
+        {
+            group_list.insert(group_list.begin(), tls_consts::group::kX25519MLKEM768);
+        }
+        break;
+    }
+    for (auto& ext_ptr : spec.extensions)
+    {
+        auto key_share = std::dynamic_pointer_cast<key_share_blueprint>(ext_ptr);
+        if (key_share == nullptr)
+        {
+            continue;
+        }
+
+        key_share->key_shares() = {
+            {.group = kGreasePlaceholder, .data = {}},
+            {.group = tls_consts::group::kX25519MLKEM768, .data = {}},
+        };
+        break;
+    }
+    return spec;
+}
+
 }    // namespace
 
 fingerprint_spec fingerprint_factory::get(const fingerprint_type type)
@@ -380,6 +415,8 @@ fingerprint_spec fingerprint_factory::get(const fingerprint_type type)
     {
         case fingerprint_type::kChrome120:
             return build_chrome120_spec();
+        case fingerprint_type::kChrome120Mlkem768:
+            return build_chrome120_mlkem768_spec();
         case fingerprint_type::kFirefox120:
             return build_firefox120_spec();
         case fingerprint_type::kIOS14:

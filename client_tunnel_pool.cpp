@@ -161,6 +161,9 @@ std::optional<reality::fingerprint_type> parse_fingerprint_type(const std::strin
     static const fp_entry kFps[] = {
         {.name = "chrome", .type = reality::fingerprint_type::kChrome120},
         {.name = "chrome_120", .type = reality::fingerprint_type::kChrome120},
+        {.name = "chrome_mlkem", .type = reality::fingerprint_type::kChrome120Mlkem768},
+        {.name = "chrome_mlkem768", .type = reality::fingerprint_type::kChrome120Mlkem768},
+        {.name = "chrome_hybrid", .type = reality::fingerprint_type::kChrome120Mlkem768},
         {.name = "firefox", .type = reality::fingerprint_type::kFirefox120},
         {.name = "firefox_120", .type = reality::fingerprint_type::kFirefox120},
         {.name = "ios", .type = reality::fingerprint_type::kIOS14},
