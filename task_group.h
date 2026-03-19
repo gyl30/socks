@@ -20,7 +20,12 @@ class task_group
     auto adapt(CompletionToken&& completion_token)
     {
         auto lg = std::lock_guard<::std::mutex>{mtx_};
+        const bool was_empty = css_.empty();
         auto cs = css_.emplace(css_.end());
+        if (was_empty)
+        {
+            cv_.expires_at(::boost::asio::steady_timer::time_point::max());
+        }
 
         class remover
         {
@@ -37,7 +42,7 @@ class task_group
                     auto lg = std::lock_guard<::std::mutex>{tg_->mtx_};
                     if (tg_->css_.erase(cs_) == tg_->css_.end())
                     {
-                        tg_->cv_.cancel();
+                        tg_->cv_.expires_at(::boost::asio::steady_timer::time_point::min());
                     }
                 }
             }
