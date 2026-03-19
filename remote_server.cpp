@@ -652,7 +652,7 @@ bool verify_replay_guard(replay_cache& replay_cache, const reality_context& real
         stats.inc_auth_failures();
         stats.inc_auth_replay_failures();
         stats.inc_handshake_failure_by_sni(statistics::handshake_failure_reason::kReplay, reality_ctx.client_hello.sni);
-        LOG_CTX_WARN(reality_ctx.ctx, "{} replay attack detected", log_event::kAuth);
+        LOG_CTX_WARN(reality_ctx.ctx, "{} replay attack detected sni {}", log_event::kAuth, reality_ctx.client_hello.sni);
         return false;
     }
     return true;
@@ -1766,14 +1766,6 @@ boost::asio::awaitable<void> remote_server::handle(boost::asio::io_context& io,
         co_await fallback("verify_auth_timestamp_failed");
         co_return;
     }
-
-    if (!verify_replay_guard(replay_cache_, reality_ctx))
-    {
-        LOG_CTX_WARN(ctx, "{} auth failed sni {}", log_event::kAuth, reality_ctx.client_hello.sni);
-        co_await fallback("replay_guard_rejected");
-        co_return;
-    }
-    LOG_CTX_INFO(ctx, "{} authorized sni {}", log_event::kAuth, reality_ctx.client_hello.sni);
     LOG_CTX_INFO(ctx,
                  "{} client_hello selected_key_share_group=0x{:04x} {} client_hybrid={} client_x25519={}",
                  log_event::kHandshake,
@@ -1798,6 +1790,11 @@ boost::asio::awaitable<void> remote_server::handle(boost::asio::io_context& io,
     {
         co_return;
     }
+    if (!verify_replay_guard(replay_cache_, reality_ctx))
+    {
+        co_return;
+    }
+    LOG_CTX_INFO(ctx, "{} authorized sni {}", log_event::kAuth, reality_ctx.client_hello.sni);
     response.handshake_hash = reality_ctx.transcript.finish();
 
     auto app_sec =
