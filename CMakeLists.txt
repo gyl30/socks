@@ -4,6 +4,8 @@ project(
   VERSION 0.0.1
   LANGUAGES C CXX)
 
+enable_testing()
+
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -82,6 +84,7 @@ endif()
 option(ENABLE_TSAN "Enable ThreadSanitizer" OFF)
 option(ENABLE_ASAN "Enable AddressSanitizer" ON)
 option(ENABLE_FUZZ "Enable libFuzzer targets" OFF)
+option(SOCKS_BUILD_TESTS "Build regression tests" ON)
 
 if(ENABLE_FUZZ)
   if(NOT (CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR CMAKE_CXX_COMPILER_ID MATCHES
@@ -239,6 +242,12 @@ endif()
 
 add_executable(socks main.cpp)
 target_link_libraries(socks PRIVATE core)
+
+if(SOCKS_BUILD_TESTS)
+  add_executable(mux_backpressure_test tests/mux_backpressure_test.cpp)
+  target_link_libraries(mux_backpressure_test PRIVATE core)
+  add_test(NAME mux_backpressure_test COMMAND mux_backpressure_test)
+endif()
 
 if(ENABLE_FUZZ)
   add_executable(ch_parser_fuzz fuzz/ch_parser_fuzz.cpp)
