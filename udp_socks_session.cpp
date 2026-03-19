@@ -676,6 +676,7 @@ boost::asio::awaitable<void> udp_socks_session::forward_direct_packet(const sock
     const auto expires_at = now_ms_value + kUdpCacheTtlMs;
     evict_expired(direct_peers_, now_ms_value);
     direct_peers_.put(normalized_target, peer_cache_entry{expires_at});
+    last_activity_time_ms_ = now_ms_value;
 }
 
 boost::asio::awaitable<void> udp_socks_session::direct_udp_socket_loop(boost::asio::ip::udp::socket& direct_socket)
@@ -897,7 +898,6 @@ boost::asio::awaitable<void> udp_socks_session::udp_socket_loop()
         if (route == route_type::kBlock)
         {
             LOG_CTX_INFO(ctx_, "{} udp blocked {}:{}", log_event::kRoute, udp_header.addr, udp_header.port);
-            last_activity_time_ms_ = now_ms();
             continue;
         }
 
@@ -941,7 +941,6 @@ boost::asio::awaitable<void> udp_socks_session::udp_socket_loop()
         {
             break;
         }
-        last_activity_time_ms_ = now_ms();
     }
 }
 
