@@ -332,13 +332,14 @@ constexpr std::uint32_t kHandshakeRecordsLimitMax = 256;
             "ios",
             "ios_14",
             "android",
-            "android_11_okhttp"};
+            "android_11_okhttp",
+        };
         if (!normalized_fingerprint.empty() && normalized_fingerprint != "random" &&
-            std::find(kSupportedFingerprints.begin(), kSupportedFingerprints.end(), normalized_fingerprint) == kSupportedFingerprints.end())
+            std::ranges::find(kSupportedFingerprints, normalized_fingerprint) == kSupportedFingerprints.end())
         {
-            return std::unexpected(
-                make_config_error("/reality/fingerprint",
-                                  "must be random/chrome/firefox/ios/android/chrome_mlkem/chrome_mlkem768/chrome_hybrid (or version aliases) in client mode"));
+            return std::unexpected(make_config_error(
+                "/reality/fingerprint",
+                "must be random/chrome/firefox/ios/android/chrome_mlkem/chrome_mlkem768/chrome_hybrid (or version aliases) in client mode"));
         }
     }
     return {};
