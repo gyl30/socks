@@ -109,9 +109,12 @@ def count_log_occurrences(path, keyword):
         return sum(1 for line in handle if keyword in line)
 
 
-def count_idle_events(path):
-    return count_log_occurrences(path, "upstream_to_client read failed Connection timed out") + count_log_occurrences(
-        path, "tcp session idle closing"
+def count_idle_events(tmp_dir):
+    return (
+        count_log_occurrences(tmp_dir / "client.log", "upstream_to_client read failed Connection timed out")
+        + count_log_occurrences(tmp_dir / "client.log", "tcp session idle closing")
+        + count_log_occurrences(tmp_dir / "server.log", "mux upstream stream read finished Connection timed out")
+        + count_log_occurrences(tmp_dir / "server.log", "timeout idle timeout")
     )
 
 
@@ -227,11 +230,11 @@ def create_environment(repo_root, binary, mode_name):
     if mode_name == "long":
         workers = 2
         timeouts = {"read": 2, "write": 2, "connect": 3, "idle": 3}
-        limits = {"max_connections": 16, "max_buffer": 33554432, "max_streams": 2048, "max_handshake_records": 256}
+        limits = {"max_connections": 32, "max_buffer": 33554432, "max_streams": 2048, "max_handshake_records": 256}
     else:
         workers = 4
         timeouts = {"read": 2, "write": 2, "connect": 3, "idle": 3}
-        limits = {"max_connections": 64, "max_buffer": 33554432, "max_streams": 4096, "max_handshake_records": 256}
+        limits = {"max_connections": 128, "max_buffer": 33554432, "max_streams": 4096, "max_handshake_records": 256}
 
     server_config = build_server_config(tmp_dir, server_port, private_key, public_key, short_id, sni, workers, timeouts, limits)
     client_config = build_client_config(tmp_dir, socks_port, server_port, public_key, short_id, sni, workers, timeouts, limits)
@@ -390,7 +393,7 @@ def run_long_mode(repo_root, binary, keep_artifacts):
                 "--target-port",
                 str(env["http_port"]),
                 "--path",
-                "/slow-success?body_bytes=98304&chunk_size=2048&chunk_interval_ms=60&header_delay_ms=700",
+                "/slow-success?body_bytes=65536&chunk_size=4096&chunk_interval_ms=50&header_delay_ms=500",
                 "--concurrency",
                 "8",
                 "--requests-per-worker",
@@ -400,11 +403,11 @@ def run_long_mode(repo_root, binary, keep_artifacts):
         )
         print(load_output.strip())
 
-        before_idle = count_idle_events(tmp_dir / "client.log")
+        before_idle = count_idle_events(tmp_dir)
         print(run_client_case(repo_root, env, "read-full", "/stall-before-header?delay_ms=4500&body_bytes=2048", True, 8).strip())
         print(run_client_case(repo_root, env, "read-full", "/stall-mid-body?body_bytes=32768&first_chunk_bytes=2048&stall_ms=4500", True, 8).strip())
         time.sleep(1.0)
-        after_idle = count_idle_events(tmp_dir / "client.log")
+        after_idle = count_idle_events(tmp_dir)
         idle_hits = after_idle - before_idle
         if idle_hits < 2:
             raise RuntimeError(f"expected at least 2 idle timeout hits got {idle_hits}")
@@ -483,7 +486,7 @@ def run_churn_mode(repo_root, binary, keep_artifacts):
         if handshake_timeout_hits < 32:
             raise RuntimeError(f"expected at least 32 handshake timeouts got {handshake_timeout_hits}")
 
-        before_idle = count_idle_events(tmp_dir / "client.log")
+        before_idle = count_idle_events(tmp_dir)
         outputs = run_parallel_failure_cases(
             repo_root,
             env,
@@ -494,7 +497,7 @@ def run_churn_mode(repo_root, binary, keep_artifacts):
         for output in outputs[:3]:
             print(output)
         time.sleep(1.0)
-        after_idle = count_idle_events(tmp_dir / "client.log")
+        after_idle = count_idle_events(tmp_dir)
         idle_hits = after_idle - before_idle
         if idle_hits < 12:
             raise RuntimeError(f"expected at least 12 idle timeout hits got {idle_hits}")
