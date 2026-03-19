@@ -400,13 +400,6 @@ boost::asio::awaitable<void> tproxy_client::on_udp_packet(boost::asio::ip::udp::
     auto session_it = udp_sessions_.find(key);
     if (session_it == udp_sessions_.end())
     {
-        evict_udp_sessions_if_needed();
-        if (udp_sessions_.size() >= kMaxUdpSessions)
-        {
-            statistics::instance().inc_connection_limit_rejected();
-            LOG_WARN("tproxy udp session limit reached drop packet");
-            co_return;
-        }
         auto& stats = statistics::instance();
         if (stats.active_connections() >= cfg_.limits.max_connections)
         {
@@ -457,25 +450,37 @@ boost::asio::awaitable<void> tproxy_client::on_udp_packet(boost::asio::ip::udp::
                                                                     self->erase_udp_session(key);
                                                                 }
                                                             });
+        const auto enqueue_result = session->try_enqueue_packet(std::move(payload));
+        if (enqueue_result != udp_enqueue_result::kEnqueued)
+        {
+            co_return;
+        }
+
+        evict_udp_sessions_if_needed();
+        if (udp_sessions_.size() >= kMaxUdpSessions)
+        {
+            statistics::instance().inc_connection_limit_rejected();
+            LOG_WARN("tproxy udp session limit reached drop packet");
+            co_return;
+        }
+
         udp_sessions_.emplace(key, session);
         session->start();
         touch_udp_session(key);
-        session_it = udp_sessions_.find(key);
+        co_return;
     }
     else
     {
-        touch_udp_session(key);
-    }
-
-    if (session_it == udp_sessions_.end() || session_it->second == nullptr)
-    {
+        const auto enqueue_result = session_it->second->try_enqueue_packet(std::move(payload));
+        if (enqueue_result == udp_enqueue_result::kEnqueued)
+        {
+            touch_udp_session(key);
+        }
+        else if (enqueue_result == udp_enqueue_result::kClosed)
+        {
+            erase_udp_session(key);
+        }
         co_return;
-    }
-
-    const auto enqueue_result = session_it->second->try_enqueue_packet(std::move(payload));
-    if (enqueue_result == udp_enqueue_result::kClosed)
-    {
-        erase_udp_session(key);
     }
 }
 
