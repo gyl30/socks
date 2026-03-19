@@ -19,6 +19,7 @@ namespace reality
 enum class fingerprint_type : std::uint8_t
 {
     kChrome120,
+    kChrome120Mlkem768,
     kFirefox120,
     kIOS14,
     kAndroid11OkHttp

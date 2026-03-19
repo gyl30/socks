@@ -321,13 +321,24 @@ constexpr std::uint32_t kHandshakeRecordsLimitMax = 256;
             }
             normalized_fingerprint.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
         }
-        static constexpr std::array<const char*, 8> kSupportedFingerprints = {
-            "chrome", "chrome_120", "firefox", "firefox_120", "ios", "ios_14", "android", "android_11_okhttp"};
+        static constexpr std::array<const char*, 11> kSupportedFingerprints = {
+            "chrome",
+            "chrome_120",
+            "chrome_mlkem",
+            "chrome_mlkem768",
+            "chrome_hybrid",
+            "firefox",
+            "firefox_120",
+            "ios",
+            "ios_14",
+            "android",
+            "android_11_okhttp"};
         if (!normalized_fingerprint.empty() && normalized_fingerprint != "random" &&
             std::find(kSupportedFingerprints.begin(), kSupportedFingerprints.end(), normalized_fingerprint) == kSupportedFingerprints.end())
         {
             return std::unexpected(
-                make_config_error("/reality/fingerprint", "must be random/chrome/firefox/ios/android (or version aliases) in client mode"));
+                make_config_error("/reality/fingerprint",
+                                  "must be random/chrome/firefox/ios/android/chrome_mlkem/chrome_mlkem768/chrome_hybrid (or version aliases) in client mode"));
         }
     }
     return {};
