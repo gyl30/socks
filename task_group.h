@@ -2,9 +2,11 @@
 #define TASK_GROUP_H
 
 #include <list>
+#include <memory>
 #include <mutex>
 #include <cstdio>
 #include <utility>
+#include <vector>
 #include <boost/asio.hpp>
 #include <boost/asio/consign.hpp>
 #include <boost/asio/as_tuple.hpp>
@@ -21,7 +23,7 @@ class task_group
     {
         auto lg = std::lock_guard<::std::mutex>{mtx_};
         const bool was_empty = css_.empty();
-        auto cs = css_.emplace(css_.end());
+        auto cs = css_.emplace(css_.end(), std::make_shared<::boost::asio::cancellation_signal>());
         if (was_empty)
         {
             cv_.expires_at(::boost::asio::steady_timer::time_point::max());
@@ -40,7 +42,8 @@ class task_group
                 if (tg_)
                 {
                     auto lg = std::lock_guard<::std::mutex>{tg_->mtx_};
-                    if (tg_->css_.erase(cs_) == tg_->css_.end())
+                    tg_->css_.erase(cs_);
+                    if (tg_->css_.empty())
                     {
                         tg_->cv_.expires_at(::boost::asio::steady_timer::time_point::min());
                     }
@@ -48,16 +51,24 @@ class task_group
             }
         };
 
-        return boost::asio::bind_cancellation_slot(cs->slot(),
+        return boost::asio::bind_cancellation_slot((*cs)->slot(),
                                                    boost::asio::consign(::std::forward<CompletionToken>(completion_token), remover{this, cs}));
     }
 
     void emit(::boost::asio::cancellation_type type)
     {
-        auto lg = std::lock_guard<::std::mutex>{mtx_};
-        for (auto& cs : css_)
+        std::vector<std::shared_ptr<::boost::asio::cancellation_signal>> snapshot;
         {
-            cs.emit(type);
+            auto lg = std::lock_guard<::std::mutex>{mtx_};
+            snapshot.reserve(css_.size());
+            for (auto& cs : css_)
+            {
+                snapshot.push_back(cs);
+            }
+        }
+        for (auto& cs : snapshot)
+        {
+            cs->emit(type);
         }
     }
 
@@ -106,6 +117,6 @@ class task_group
    private:
     std::mutex mtx_;
     boost::asio::steady_timer cv_;
-    std::list<::boost::asio::cancellation_signal> css_;
+    std::list<std::shared_ptr<::boost::asio::cancellation_signal>> css_;
 };
 #endif
