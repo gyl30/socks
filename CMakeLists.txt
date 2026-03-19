@@ -81,6 +81,17 @@ endif()
 
 option(ENABLE_TSAN "Enable ThreadSanitizer" OFF)
 option(ENABLE_ASAN "Enable AddressSanitizer" ON)
+option(ENABLE_FUZZ "Enable libFuzzer targets" OFF)
+
+if(ENABLE_FUZZ)
+  if(NOT (CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR CMAKE_CXX_COMPILER_ID MATCHES
+                                                   "AppleClang"))
+    message(FATAL_ERROR "ENABLE_FUZZ requires Clang toolchain.")
+  endif()
+  add_compile_options(-fno-common)
+  set(ENABLE_TSAN OFF)
+  set(ENABLE_ASAN OFF)
+endif()
 
 add_compile_options(-fno-omit-frame-pointer)
 
@@ -188,31 +199,58 @@ if(SOCKS_HAS_TPROXY)
        tproxy_udp_session.cpp)
 endif()
 
+function(configure_core_target target_name)
+  if(SOCKS_HAS_TPROXY)
+    target_compile_definitions(${target_name} PUBLIC SOCKS_HAS_TPROXY=1)
+  else()
+    target_compile_definitions(${target_name} PUBLIC SOCKS_HAS_TPROXY=0)
+  endif()
+
+  target_include_directories(${target_name} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+
+  target_include_directories(
+    ${target_name} SYSTEM
+    PUBLIC ${Boost_INCLUDE_DIRS}
+           ${BROTLI_INCLUDE_DIR}
+           ${CMAKE_CURRENT_SOURCE_DIR}/third/spdlog/include
+           ${CMAKE_CURRENT_SOURCE_DIR}/third/rapidjson/include)
+
+  target_link_libraries(${target_name} PUBLIC OpenSSL::SSL OpenSSL::Crypto Threads::Threads ${BROTLIDEC_LIBRARY} ${BROTLICOMMON_LIBRARY})
+
+  if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    target_link_libraries(${target_name} PUBLIC ws2_32 mswsock)
+  endif()
+endfunction()
+
 add_library(core STATIC ${SOCKS_SOURCES})
+configure_core_target(core)
 
-if(SOCKS_HAS_TPROXY)
-  target_compile_definitions(core PUBLIC SOCKS_HAS_TPROXY=1)
-else()
-  target_compile_definitions(core PUBLIC SOCKS_HAS_TPROXY=0)
-endif()
-
-target_include_directories(core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-
-target_include_directories(
-  core SYSTEM
-  PUBLIC ${Boost_INCLUDE_DIRS}
-         ${BROTLI_INCLUDE_DIR}
-         ${CMAKE_CURRENT_SOURCE_DIR}/third/spdlog/include
-         ${CMAKE_CURRENT_SOURCE_DIR}/third/rapidjson/include)
-
-target_link_libraries(core PUBLIC OpenSSL::SSL OpenSSL::Crypto Threads::Threads ${BROTLIDEC_LIBRARY} ${BROTLICOMMON_LIBRARY})
-
-if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
-  target_link_libraries(core PUBLIC ws2_32 mswsock)
+if(ENABLE_FUZZ)
+  add_library(
+    fuzz_core STATIC
+    log.cpp
+    ch_parser.cpp
+    reality_fingerprint.cpp
+    reality_messages.cpp
+    mux_codec.cpp)
+  configure_core_target(fuzz_core)
+  target_compile_options(fuzz_core PRIVATE -fsanitize=fuzzer-no-link,address,undefined)
 endif()
 
 add_executable(socks main.cpp)
 target_link_libraries(socks PRIVATE core)
+
+if(ENABLE_FUZZ)
+  add_executable(ch_parser_fuzz fuzz/ch_parser_fuzz.cpp)
+  target_link_libraries(ch_parser_fuzz PRIVATE fuzz_core)
+  target_compile_options(ch_parser_fuzz PRIVATE -fsanitize=fuzzer-no-link,address,undefined)
+  target_link_options(ch_parser_fuzz PRIVATE -fsanitize=fuzzer,address,undefined)
+
+  add_executable(mux_codec_fuzz fuzz/mux_codec_fuzz.cpp)
+  target_link_libraries(mux_codec_fuzz PRIVATE fuzz_core)
+  target_compile_options(mux_codec_fuzz PRIVATE -fsanitize=fuzzer-no-link,address,undefined)
+  target_link_options(mux_codec_fuzz PRIVATE -fsanitize=fuzzer,address,undefined)
+endif()
 
 if(DEFINED OPENSSL_ROOT_DIR)
   set(OPENSSL_RUNTIME_DIRS "")
