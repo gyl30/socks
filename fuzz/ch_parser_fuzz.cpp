@@ -1,0 +1,118 @@
+#include <algorithm>
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <string>
+#include <vector>
+
+#include "ch_parser.h"
+#include "reality_fingerprint.h"
+#include "reality_messages.h"
+
+namespace
+{
+
+constexpr std::array<const char*, 4> kHostnames = {"example.com", "www.example.com", "localhost", "a.example.net"};
+
+std::vector<std::uint8_t> take_bytes(const std::uint8_t* data, const std::size_t size, const std::size_t offset, const std::size_t len)
+{
+    std::vector<std::uint8_t> out(len, 0x00);
+    if (data == nullptr || size == 0 || len == 0)
+    {
+        return out;
+    }
+
+    for (std::size_t i = 0; i < len; ++i)
+    {
+        out[i] = data[(offset + i) % size];
+    }
+    return out;
+}
+
+reality::fingerprint_type select_fingerprint_type(const std::uint8_t* data, const std::size_t size)
+{
+    if (data == nullptr || size == 0)
+    {
+        return reality::fingerprint_type::kChrome120;
+    }
+
+    switch (data[0] & 0x03)
+    {
+        case 0:
+            return reality::fingerprint_type::kChrome120;
+        case 1:
+            return reality::fingerprint_type::kFirefox120;
+        case 2:
+            return reality::fingerprint_type::kIOS14;
+        default:
+            return reality::fingerprint_type::kAndroid11OkHttp;
+    }
+}
+
+std::string select_hostname(const std::uint8_t* data, const std::size_t size, const bool with_sni)
+{
+    if (!with_sni)
+    {
+        return {};
+    }
+    if (data == nullptr || size == 0)
+    {
+        return kHostnames[0];
+    }
+
+    const std::size_t idx = (size > 1 ? static_cast<std::size_t>(data[1]) : static_cast<std::size_t>(data[0])) % kHostnames.size();
+    return kHostnames[idx];
+}
+
+std::vector<std::uint8_t> build_client_hello(const std::uint8_t* data, const std::size_t size, const bool with_sni)
+{
+    auto spec = reality::fingerprint_factory::get(select_fingerprint_type(data, size));
+    const auto session_id_len = (data == nullptr || size == 0) ? std::size_t{0} : static_cast<std::size_t>(data[0] % 33);
+    const auto session_id = take_bytes(data, size, 1, session_id_len);
+    const auto random = take_bytes(data, size, 2, 32);
+    const auto x25519_pubkey = take_bytes(data, size, 34, 32);
+    std::vector<std::uint8_t> x25519_mlkem768_key_share;
+
+    if (data != nullptr && size != 0 && (data[0] & 0x04) != 0)
+    {
+        x25519_mlkem768_key_share = take_bytes(data, size, 66, reality::kMlkem768PublicKeySize + 32);
+        const auto key_share_it = std::find_if(spec.extensions.begin(), spec.extensions.end(), [](const auto& ext) {
+            return ext->type() == reality::extension_type::kKeyShare;
+        });
+        if (key_share_it != spec.extensions.end())
+        {
+            const auto key_share = std::static_pointer_cast<reality::key_share_blueprint>(*key_share_it);
+            key_share->key_shares().push_back({.group = reality::tls_consts::group::kX25519MLKEM768, .data = {}});
+        }
+    }
+
+    const auto hostname = select_hostname(data, size, with_sni);
+    return reality::client_hello_builder::build(spec, session_id, random, x25519_pubkey, x25519_mlkem768_key_share, hostname);
+}
+
+}    // namespace
+
+extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size)
+{
+    std::vector<std::uint8_t> raw;
+    if (data != nullptr && size != 0)
+    {
+        raw.assign(data, data + size);
+    }
+
+    (void)mux::ch_parser::parse(raw);
+
+    const auto hello_with_sni = build_client_hello(data, size, true);
+    if (!hello_with_sni.empty())
+    {
+        (void)mux::ch_parser::parse(hello_with_sni);
+    }
+
+    const auto hello_without_sni = build_client_hello(data, size, false);
+    if (!hello_without_sni.empty())
+    {
+        (void)mux::ch_parser::parse(hello_without_sni);
+    }
+
+    return 0;
+}
