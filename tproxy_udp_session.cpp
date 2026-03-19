@@ -243,7 +243,6 @@ udp_enqueue_result tproxy_udp_session::try_enqueue_packet(std::vector<std::uint8
         return udp_enqueue_result::kClosed;
     }
 
-    last_activity_time_ms_ = timeout_io::now_ms();
     if (payload.size() > kMaxUdpPacketSize)
     {
         LOG_CTX_WARN(ctx_,
@@ -269,6 +268,7 @@ udp_enqueue_result tproxy_udp_session::try_enqueue_packet(std::vector<std::uint8
                      target_endpoint_.port());
         return udp_enqueue_result::kDroppedOverflow;
     }
+    last_activity_time_ms_ = timeout_io::now_ms();
     return udp_enqueue_result::kEnqueued;
 }
 
