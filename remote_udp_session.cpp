@@ -429,7 +429,7 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> remote_udp_session::resol
     ec.clear();
     const auto key = udp_target_key(host, port);
     const auto now_ms = timeout_io::now_ms();
-    evict_expired(resolved_targets_, now_ms);
+    resolved_targets_.evict_if([&](const auto&, const auto& entry) { return entry.expires_at <= now_ms; });
     auto* cached = resolved_targets_.get(key);
     if (cached != nullptr)
     {
