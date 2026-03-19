@@ -384,7 +384,7 @@ fingerprint_spec build_chrome120_mlkem768_spec()
         }
 
         auto& group_list = groups->groups();
-        if (std::find(group_list.begin(), group_list.end(), tls_consts::group::kX25519MLKEM768) == group_list.end())
+        if (std::ranges::find(group_list, tls_consts::group::kX25519MLKEM768) == group_list.end())
         {
             group_list.insert(group_list.begin(), tls_consts::group::kX25519MLKEM768);
         }
