@@ -565,7 +565,7 @@ boost::asio::awaitable<boost::asio::ip::udp::endpoint> udp_socks_session::resolv
     ec.clear();
     const auto key = udp_target_key(host, port);
     const auto now_ms_value = now_ms();
-    evict_expired(resolved_targets_, now_ms_value);
+    resolved_targets_.evict_if([&](const auto&, const auto& entry) { return entry.expires_at <= now_ms_value; });
 
     auto* cached = resolved_targets_.get(key);
     if (cached != nullptr)
