@@ -387,9 +387,6 @@ boost::asio::awaitable<void> remote_udp_session::udp_to_mux()
                          normalized_ep.port());
             continue;
         }
-        peer->expires_at = now_ms + kUdpCacheTtlMs;
-
-        last_activity_time_ms_ = timeout_io::now_ms();
         ctx_.add_rx_bytes(n);
         socks_udp_header h;
         h.addr = normalized_ep.address().to_string();
@@ -416,6 +413,7 @@ boost::asio::awaitable<void> remote_udp_session::udp_to_mux()
             LOG_CTX_WARN(ctx_, "{} send udp packet to mux failed {}", log_event::kMux, ec.message());
             break;
         }
+        peer->expires_at = now_ms + kUdpCacheTtlMs;
         last_activity_time_ms_ = timeout_io::now_ms();
         ctx_.add_tx_bytes(pkt_size);
     }
