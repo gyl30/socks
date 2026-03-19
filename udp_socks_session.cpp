@@ -881,6 +881,17 @@ boost::asio::awaitable<void> udp_socks_session::udp_socket_loop()
                          client_ip_.to_string());
             continue;
         }
+        if (has_client_addr_ && normalized_sender != client_addr_)
+        {
+            LOG_CTX_WARN(ctx_,
+                         "{} ignore udp packet from unexpected peer {}:{} expected {}:{}",
+                         log_event::kSocks,
+                         normalized_sender.address().to_string(),
+                         normalized_sender.port(),
+                         client_addr_.address().to_string(),
+                         client_addr_.port());
+            continue;
+        }
         if (!has_client_addr_)
         {
             client_addr_ = normalized_sender;
