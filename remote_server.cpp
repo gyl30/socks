@@ -1882,10 +1882,8 @@ static boost::asio::awaitable<void> send_stream_reset(const std::shared_ptr<mux_
         std::vector<std::uint8_t>().swap(frame.payload);
     }
     boost::system::error_code ec;
-    co_await connection->send_async(std::move(frame), ec);
-    if (ec)
-    {
-    }
+    constexpr std::uint32_t kRstSendTimeoutSec = 1;
+    co_await connection->send_async_with_timeout(std::move(frame), kRstSendTimeoutSec, ec);
 }
 
 static boost::asio::awaitable<void> handle_tcp_connect_stream(const std::shared_ptr<mux_tunnel_impl>& tunnel,
