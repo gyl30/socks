@@ -56,8 +56,25 @@ void replay_cache::rotate_if_needed(const std::chrono::steady_clock::time_point 
         return;
     }
 
-    if (now - current_start_ < window_)
+    if (window_ <= std::chrono::steady_clock::duration::zero())
     {
+        current_.clear();
+        previous_.clear();
+        current_start_ = now;
+        return;
+    }
+
+    const auto elapsed = now - current_start_;
+    if (elapsed < window_)
+    {
+        return;
+    }
+
+    if (elapsed - window_ >= window_)
+    {
+        current_.clear();
+        previous_.clear();
+        current_start_ = now;
         return;
     }
 
