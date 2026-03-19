@@ -2,11 +2,14 @@
 #define MUX_CONNECTION_H
 
 #include <atomic>
+#include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 #include <cstddef>
 #include <cstdint>
+#include <unordered_map>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/io_context.hpp>
@@ -61,6 +64,8 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     void release_pending(std::uint64_t bytes);
     std::uint64_t reserve_write_bytes(std::uint64_t bytes);
     void release_write_bytes(std::uint64_t bytes);
+    std::uint64_t reserve_write_bytes(std::uint32_t stream_id, std::uint8_t command, std::uint64_t bytes);
+    void release_write_bytes(std::uint32_t stream_id, std::uint8_t command, std::uint64_t bytes);
 
    private:
     boost::asio::awaitable<void> run_loop();
@@ -96,6 +101,8 @@ class mux_connection : public std::enable_shared_from_this<mux_connection>
     std::atomic<bool> stopped_{false};
     std::atomic<std::uint64_t> pending_bytes_total_{0};
     std::atomic<std::uint64_t> write_pending_bytes_{0};
+    std::mutex write_limit_mutex_;
+    std::unordered_map<std::uint32_t, std::uint64_t> write_pending_bytes_by_stream_;
     using channel_type = boost::asio::experimental::concurrent_channel<void(boost::system::error_code, mux_frame)>;
     std::unique_ptr<channel_type> write_channel_;
     std::unordered_map<uint32_t, std::shared_ptr<mux_stream>> streams_;
