@@ -230,7 +230,7 @@ def start_client_server_pair(repo_root, temp_root, binary, socks_port, server_po
         },
         "limits": {
             "max_connections": 64,
-            "max_buffer": 10485760,
+            "max_buffer": 33554432,
             "max_streams": 256,
             "max_handshake_records": 256,
         },
@@ -278,7 +278,7 @@ def start_client_server_pair(repo_root, temp_root, binary, socks_port, server_po
         },
         "limits": {
             "max_connections": 32,
-            "max_buffer": 10485760,
+            "max_buffer": 33554432,
             "max_streams": 256,
             "max_handshake_records": 256,
         },
@@ -502,7 +502,7 @@ def main():
     parser = argparse.ArgumentParser(description="Reality benchmark for throughput, TTFB, and resource usage")
     parser.add_argument("--binary", default=str(pathlib.Path("build") / "socks"), help="path to the socks binary")
     parser.add_argument("--ttfb-samples", type=int, default=5)
-    parser.add_argument("--throughput-body-bytes", type=int, default=16 * 1024 * 1024)
+    parser.add_argument("--throughput-body-bytes", type=int, default=8 * 1024 * 1024)
     parser.add_argument("--throughput-concurrency", type=int, default=4)
     parser.add_argument("--keep-artifacts", action="store_true")
     parser.add_argument("--json-output", default="")
