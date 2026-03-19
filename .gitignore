@@ -28,5 +28,7 @@ Testing/
 .ccls-cache
 .vscode
 .tasks
+__pycache__/
+*.pyc
 all
 1
