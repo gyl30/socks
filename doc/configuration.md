@@ -226,7 +226,7 @@
 - `reality.public_key`
   - 仅 `mode=client` 生效，用于客户端认证相关密钥计算。
 - `reality.short_id`
-  - 客户端写入认证载荷，服务端用于校验；可为空。
+  - 客户端写入认证载荷，服务端用于校验；`mode=server` 时必须非空。
 
 ## 11. 监控
 
