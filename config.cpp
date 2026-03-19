@@ -15,6 +15,7 @@
 
 #include <boost/asio/ip/address.hpp>
 #include <openssl/crypto.h>
+#include <openssl/rand.h>
 
 #include "rapidjson/document.h"
 #include "rapidjson/error/en.h"
@@ -303,6 +304,10 @@ constexpr std::uint32_t kHandshakeRecordsLimitMax = 256;
     {
         return std::unexpected(make_config_error("/reality/private_key", "must be non-empty in server mode"));
     }
+    if (cfg.mode == "server" && cfg.reality.short_id.empty())
+    {
+        return std::unexpected(make_config_error("/reality/short_id", "must be non-empty in server mode"));
+    }
     if (cfg.mode == "client")
     {
         std::string normalized_fingerprint;
@@ -545,16 +550,23 @@ std::string dump_default_config()
     config cfg;
     std::uint8_t public_key[32] = {0};
     std::uint8_t private_key[32] = {0};
+    std::uint8_t short_id[8] = {0};
     const auto wipe_keys = [&]()
     {
         OPENSSL_cleanse(private_key, sizeof(private_key));
         OPENSSL_cleanse(public_key, sizeof(public_key));
+        OPENSSL_cleanse(short_id, sizeof(short_id));
     };
     if (reality::crypto_util::generate_x25519_keypair(public_key, private_key))
     {
         cfg.reality.private_key = reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(private_key, private_key + 32));
         cfg.reality.public_key = reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(public_key, public_key + 32));
     }
+    if (RAND_bytes(short_id, sizeof(short_id)) != 1)
+    {
+        std::memcpy(short_id, private_key, sizeof(short_id));
+    }
+    cfg.reality.short_id = reality::crypto_util::bytes_to_hex(std::vector<std::uint8_t>(short_id, short_id + sizeof(short_id)));
     wipe_keys();
     return dump_config(cfg);
 }
