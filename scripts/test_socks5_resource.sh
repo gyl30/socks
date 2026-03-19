@@ -17,8 +17,8 @@ for cmd in python3; do
     fi
 done
 
-concurrency="${CONCURRENCY:-32}"
-requests_per_worker="${REQUESTS_PER_WORKER:-2}"
+concurrency="${CONCURRENCY:-1}"
+requests_per_worker="${REQUESTS_PER_WORKER:-1}"
 bytes_per_response="${BYTES_PER_RESPONSE:-4194304}"
 client_workers="${CLIENT_WORKERS:-2}"
 server_workers="${SERVER_WORKERS:-2}"
@@ -109,7 +109,7 @@ cat >"$tmp_dir/server.json" <<EOF
     "idle": 60
   },
   "limits": {
-    "max_connections": 256,
+    "max_connections": 64,
     "max_buffer": 33554432,
     "max_streams": 2048,
     "max_handshake_records": 256
