@@ -866,11 +866,15 @@ boost::asio::awaitable<std::pair<boost::system::error_code, std::vector<std::uin
         std::uint8_t head[5];
         boost::system::error_code ec;
         const auto n = co_await mux::timeout_io::wait_read_with_timeout(socket_, boost::asio::buffer(head), read_timeout_sec_, ec);
-        (void)n;
         if (ec)
         {
             LOG_CTX_ERROR(ctx_, "{} read header failed {}", mux::log_event::kCert, ec.message());
             co_return std::make_pair(ec, std::vector<std::uint8_t>{});
+        }
+        if (n != sizeof(head))
+        {
+            LOG_CTX_ERROR(ctx_, "{} short read header {} of {}", mux::log_event::kCert, n, sizeof(head));
+            co_return std::make_pair(boost::asio::error::fault, std::vector<std::uint8_t>{});
         }
 
         const auto len = static_cast<std::uint16_t>((static_cast<std::uint16_t>(head[3]) << 8) | static_cast<std::uint16_t>(head[4]));
@@ -885,11 +889,15 @@ boost::asio::awaitable<std::pair<boost::system::error_code, std::vector<std::uin
         std::vector<std::uint8_t> body(len);
         boost::system::error_code ec2;
         const auto n2 = co_await mux::timeout_io::wait_read_with_timeout(socket_, boost::asio::buffer(body), read_timeout_sec_, ec2);
-        (void)n2;
         if (ec2)
         {
             LOG_CTX_ERROR(ctx_, "{} read body failed {}", mux::log_event::kCert, ec2.message());
             co_return std::make_pair(ec2, std::vector<std::uint8_t>{});
+        }
+        if (n2 != body.size())
+        {
+            LOG_CTX_ERROR(ctx_, "{} short read body {} of {}", mux::log_event::kCert, n2, body.size());
+            co_return std::make_pair(boost::asio::error::fault, std::vector<std::uint8_t>{});
         }
 
         if (head[0] == kContentTypeChangeCipherSpec)
@@ -938,9 +946,14 @@ boost::asio::awaitable<void> cert_fetcher::fetch_session::read_record_body(const
     ec.clear();
     rec.assign(len, 0);
     const auto body_n = co_await mux::timeout_io::wait_read_with_timeout(socket_, boost::asio::buffer(rec), read_timeout_sec_, ec);
-    (void)body_n;
     if (ec)
     {
+        co_return;
+    }
+    if (body_n != len)
+    {
+        LOG_CTX_ERROR(ctx_, "{} short read record body {} of {}", mux::log_event::kCert, body_n, len);
+        ec = boost::asio::error::fault;
         co_return;
     }
     co_return;
@@ -992,9 +1005,14 @@ boost::asio::awaitable<std::pair<std::uint8_t, std::span<std::uint8_t>>> cert_fe
     ec.clear();
     std::uint8_t head[5];
     const auto n = co_await mux::timeout_io::wait_read_with_timeout(socket_, boost::asio::buffer(head), read_timeout_sec_, ec);
-    (void)n;
     if (ec)
     {
+        co_return std::pair<std::uint8_t, std::span<std::uint8_t>>{};
+    }
+    if (n != sizeof(head))
+    {
+        LOG_CTX_ERROR(ctx_, "{} short read record header {} of {}", mux::log_event::kCert, n, sizeof(head));
+        ec = boost::asio::error::fault;
         co_return std::pair<std::uint8_t, std::span<std::uint8_t>>{};
     }
 
