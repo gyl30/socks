@@ -386,8 +386,15 @@ boost::asio::awaitable<void> mux_connection::handle_stream_frame(const mux::fram
 
 void mux_connection::remove_stream(const std::shared_ptr<mux_stream>& stream)
 {
-    std::lock_guard<std::mutex> lock(mutex_);
-    streams_.erase(stream->id());
+    const auto stream_id = stream->id();
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        streams_.erase(stream_id);
+    }
+    {
+        std::lock_guard<std::mutex> lock(write_limit_mutex_);
+        write_pending_bytes_by_stream_.erase(stream_id);
+    }
 }
 
 void mux_connection::close_and_remove_stream(const std::shared_ptr<mux_stream>& stream)
