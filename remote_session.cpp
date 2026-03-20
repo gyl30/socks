@@ -312,6 +312,7 @@ boost::asio::awaitable<void> remote_tcp_session::upstream()
                 boost::system::error_code fin_ec;
                 co_await send_stream_control_frame(stream_, mux::kCmdFin, fin_ec);
                 stream_->close();
+                close_from_fin();
             }
             break;
         }
